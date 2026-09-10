@@ -94,6 +94,11 @@ type Hub struct {
 	notifs       map[string]*convBinding // notification messageID → binding (for in-place edit, e.g. compaction ⏳→✅)
 	toolCalls    *toolCallRegistry       // InvocationID → waiting InvokeTool caller
 
+	// pinsMu serialises the read-modify-write on a chat's pinned-message set
+	// (handlePin). Deliberately not h.mu: it is held across a SessionIndex
+	// read+write, and h.mu is held across conversation fan-out.
+	pinsMu sync.Mutex
+
 	wizardMu      sync.Mutex
 	wizards       map[string]*wizardSession // wizardId → live out-of-band wizard session
 	wizardByScope map[string]string         // wizard scope (session key) → wizardId
@@ -1180,7 +1185,9 @@ func (h *Hub) mintFacetConversation(agentID, sessionKey string) (string, error) 
 	if !present {
 		ids = append(ids, b.convID)
 		h.storeOpenChats(ids)
-		h.broadcastOpenSetExcept(ids, nil)
+		// sender=nil: this mint is server-initiated (a /facet command), so there is
+		// no originating device to exclude — every client must learn the new tab.
+		h.broadcastExcept(nil, fap.ConversationOpenSync{ConversationIDs: ids})
 	}
 	h.pushRosterAll()
 	return b.convID, nil
@@ -1613,13 +1620,7 @@ func (h *Hub) pushSettings(client *wsClient) {
 // change on one device reconciles on the others without a reconnect.
 func (h *Hub) broadcastSettings(settings map[string]string) {
 	snap := fap.SettingsSnapshot{Settings: settings}
-	h.mu.RLock()
-	clients := make([]*wsClient, 0, len(h.clients))
-	for c := range h.clients {
-		clients = append(clients, c)
-	}
-	h.mu.RUnlock()
-	for _, c := range clients {
+	for _, c := range h.snapshotClients() {
 		c.mu.Lock()
 		_, ok := c.features[featureSettingsSync]
 		c.mu.Unlock()
@@ -1629,58 +1630,39 @@ func (h *Hub) broadcastSettings(settings map[string]string) {
 	}
 }
 
-// broadcastReadExcept fans a read watermark out to every client EXCEPT the one
-// that sent it (which already advanced locally). Safe to send to a client that
-// lacks the conversation — its read advance is monotonic and no-ops.
-func (h *Hub) broadcastReadExcept(convID, messageID string, sender *wsClient) {
-	frame := fap.ReadSync{ConversationID: convID, MessageID: messageID}
+// snapshotClients copies the live-socket set under the hub read lock and returns
+// it, so callers iterate (and send, which can block on a slow writer) OUTSIDE the
+// lock. Every broadcast helper below takes this shape; keeping the copy in one
+// place is what stops a future one from sending with h.mu held.
+func (h *Hub) snapshotClients() []*wsClient {
 	h.mu.RLock()
+	defer h.mu.RUnlock()
 	clients := make([]*wsClient, 0, len(h.clients))
 	for c := range h.clients {
-		if c != sender {
-			clients = append(clients, c)
-		}
+		clients = append(clients, c)
 	}
-	h.mu.RUnlock()
-	for _, c := range clients {
-		c.sendRaw(frame)
-	}
+	return clients
 }
 
-// broadcastDraftExcept fans a conversation's draft out to every client EXCEPT
-// the one that put it (whose composer already holds it). A client that lacks
-// the conversation just stores the draft for its next open; a client actively
-// typing in it suppresses the apply, so this never clobbers in-progress input.
-func (h *Hub) broadcastDraftExcept(convID, text string, sender *wsClient) {
-	frame := fap.DraftSync{ConversationID: convID, Text: text}
-	h.mu.RLock()
-	clients := make([]*wsClient, 0, len(h.clients))
-	for c := range h.clients {
-		if c != sender {
-			clients = append(clients, c)
+// broadcastExcept fans one already-built server frame out to every live client
+// EXCEPT sender — the device whose action produced it, which already applied the
+// change locally and must not be echoed back into its own optimistic state.
+//
+// This is the shared shape behind the cross-device mirrors (read.sync,
+// draft.sync, conversation.openSync, pin.sync). Every one of those frames is
+// idempotent and last-write-wins by design, so it is deliberately sent to
+// clients that do not currently hold the conversation too: a read advance is
+// monotonic, a draft is stored for the chat's next open, an open-set is a full
+// replace, and a pin set is absolute. There is no per-frame recipient filter and
+// adding one would be a behaviour change, not an optimisation.
+//
+// The frame is built by the CALLER, before this returns — one value shared by
+// every recipient, never rebuilt per client.
+func (h *Hub) broadcastExcept(sender *wsClient, frame fap.ServerFrame) {
+	for _, c := range h.snapshotClients() {
+		if c == sender {
+			continue
 		}
-	}
-	h.mu.RUnlock()
-	for _, c := range clients {
-		c.sendRaw(frame)
-	}
-}
-
-// broadcastOpenSetExcept fans the user's open-set out to every client EXCEPT the
-// one that sent it (whose pager already holds it). The receiving client
-// reconciles its open tabs to match; the sender is skipped so its own change
-// doesn't echo back.
-func (h *Hub) broadcastOpenSetExcept(ids []string, sender *wsClient) {
-	frame := fap.ConversationOpenSync{ConversationIDs: ids}
-	h.mu.RLock()
-	clients := make([]*wsClient, 0, len(h.clients))
-	for c := range h.clients {
-		if c != sender {
-			clients = append(clients, c)
-		}
-	}
-	h.mu.RUnlock()
-	for _, c := range clients {
 		c.sendRaw(frame)
 	}
 }
@@ -1730,6 +1712,32 @@ func (h *Hub) pushDrafts(client *wsClient) {
 func (h *Hub) pushReads(client *wsClient) {
 	h.pushChatScalar(client, "last_read", false, func(convID, v string) fap.ServerFrame {
 		return fap.ReadSync{ConversationID: convID, MessageID: v}
+	})
+}
+
+// pushPins replays the stored pinned-message set of every live conversation to a
+// just-connected client, so a device that was offline when a message was pinned
+// (or unpinned) catches up. This — not the live fan-out — is the path the
+// reported bug actually needed: the Mac was not connected when the pin happened
+// (#1882).
+//
+// replayEmpty is FALSE, and unlike drafts that is not a weaker choice — for pins
+// the two states drafts conflate are distinguishable. A conversation that has
+// been pinned and then fully unpinned stores "[]", which is a NON-empty string
+// and so replays either way; the unpin therefore still reaches a device that was
+// offline for it. A truly empty stored value means something different: this chat
+// has never had its pin set written at all.
+//
+// Replaying THAT as a clear would be a data-loss bug at upgrade. Message pins
+// existed as a client-local bookmark long before this sync did (#893), so every
+// device already holds pins the server has never heard of. Sending "nothing is
+// pinned here" for every never-written chat on the first post-upgrade hello would
+// wipe them. Skipping it lets the local pins stand until the user's next pin or
+// unpin in that chat writes the key and makes the server's set authoritative.
+// It also drops one frame per conversation from every handshake.
+func (h *Hub) pushPins(client *wsClient) {
+	h.pushChatScalar(client, chatMetaPins, false, func(convID, v string) fap.ServerFrame {
+		return fap.PinSync{ConversationID: convID, MessageIDs: decodePinSet(v)}
 	})
 }
 

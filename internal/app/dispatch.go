@@ -91,6 +91,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.pushSettings(client)
 		h.pushReads(client)
 		h.pushDrafts(client)
+		h.pushPins(client)
 		h.pushOpenSet(client)
 		// Reconnect resume: re-attach (which recomputes the capability union across
 		// attached clients) + replay each conversation the client still has
@@ -133,6 +134,8 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 
 	case fap.DraftPut:
 		h.handleDraft(client, f)
+	case fap.PinPut:
+		h.handlePin(client, f)
 	case fap.ConfigGet:
 		h.handleConfigGet(client)
 
@@ -458,7 +461,7 @@ func (h *Hub) handleRead(client *wsClient, f fap.Read) {
 	if idx := h.deps.SessionIndex; idx != nil {
 		_ = idx.SetChatMetadata(b.agentID, "app", b.chatID, "last_read", f.MessageID)
 	}
-	h.broadcastReadExcept(f.ConversationID, f.MessageID, client)
+	h.broadcastExcept(client, fap.ReadSync{ConversationID: f.ConversationID, MessageID: f.MessageID})
 }
 
 // handleDraft persists a conversation's unsent composer text and mirrors it to
@@ -497,7 +500,7 @@ func (h *Hub) handleConversationOpenSet(client *wsClient, f fap.ConversationOpen
 		b.attach(client)
 		b.seedClientAck(client, b.currentSeq())
 	}
-	h.broadcastOpenSetExcept(f.ConversationIDs, client)
+	h.broadcastExcept(client, fap.ConversationOpenSync{ConversationIDs: f.ConversationIDs})
 }
 
 func (h *Hub) handleDraft(client *wsClient, f fap.DraftPut) {
@@ -510,7 +513,53 @@ func (h *Hub) handleDraft(client *wsClient, f fap.DraftPut) {
 	if idx := h.deps.SessionIndex; idx != nil {
 		_ = idx.SetChatMetadata(b.agentID, "app", b.chatID, "draft", f.Text)
 	}
-	h.broadcastDraftExcept(f.ConversationID, f.Text, client)
+	h.broadcastExcept(client, fap.DraftSync{ConversationID: f.ConversationID, Text: f.Text})
+}
+
+// handlePin folds one message's pin toggle into the conversation's stored pinned
+// set and mirrors the WHOLE resulting set to the user's other devices. Message
+// pin only: the roster's conversation pin is a deliberate per-device preference
+// and is NOT synced (#1882).
+//
+// Unlike handleDraft/handleRead this is a read-modify-write, so it is serialised
+// on pinsMu: two devices toggling different messages in the same chat at the same
+// instant would otherwise each write a set computed from the same stale base and
+// one pin would vanish. Fire-and-forget on the wire like DraftPut (no ack), but
+// the store update is not an idempotent overwrite the way a draft is, which is
+// why the lock is here and not there.
+//
+// With no SessionIndex there is nowhere to fold the change into, so nothing is
+// broadcast either — a PinSync computed from an unreadable set would tell the
+// other devices to unpin everything.
+func (h *Hub) handlePin(client *wsClient, f fap.PinPut) {
+	if f.MessageID == "" {
+		return
+	}
+	h.mu.RLock()
+	b := h.convs[f.ConversationID]
+	h.mu.RUnlock()
+	if b == nil {
+		return
+	}
+	idx := h.deps.SessionIndex
+	if idx == nil {
+		return
+	}
+	h.pinsMu.Lock()
+	stored, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, chatMetaPins)
+	if err != nil {
+		h.pinsMu.Unlock()
+		appLog.Warnf("pin %s/%s: read pins: %v", f.ConversationID, f.MessageID, err)
+		return
+	}
+	ids := applyPin(decodePinSet(stored), f.MessageID, f.Pinned)
+	if err := idx.SetChatMetadata(b.agentID, "app", b.chatID, chatMetaPins, encodePinSet(ids)); err != nil {
+		h.pinsMu.Unlock()
+		appLog.Warnf("pin %s/%s: write pins: %v", f.ConversationID, f.MessageID, err)
+		return
+	}
+	h.pinsMu.Unlock()
+	h.broadcastExcept(client, fap.PinSync{ConversationID: f.ConversationID, MessageIDs: ids})
 }
 
 // routeCommand dispatches a slash command through the agent's command registry,

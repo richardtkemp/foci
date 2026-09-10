@@ -89,6 +89,15 @@ const (
 	// TypeDraftSync (server->app) fans it to the user's other devices.
 	TypeDraftPut  = "draft.put"
 	TypeDraftSync = "draft.sync"
+	// TypePinPut (app->server) toggles ONE message's pin; TypePinSync
+	// (server->app) carries the conversation's WHOLE resulting pinned set. The
+	// asymmetry is deliberate: the app knows only the message it just toggled,
+	// while a receiver that was offline needs the absolute set, not a delta it
+	// missed the base for. One frame therefore serves both live fan-out and the
+	// post-hello replay. Message pin only — the roster's conversation pin stays a
+	// deliberate per-device preference and has no wire representation (#1882).
+	TypePinPut  = "pin.put"
+	TypePinSync = "pin.sync"
 	// TypeTyping is the app->server "user is typing" signal (ClientTyping). It is
 	// distinct from the server->app agent activity indicator, which is now the
 	// unified Activity frame (TypeActivity) with an "typing" ActivityKind.
@@ -824,6 +833,37 @@ type DraftSync struct {
 }
 
 func (DraftSync) Type() string { return TypeDraftSync }
+
+// PinPut toggles one message's pinned flag for the whole account (app->server).
+// The app sends it when the user taps Pin/Unpin on a bubble; Pinned carries the
+// NEW state, so the frame is idempotent and a re-delivery cannot flip the pin
+// back. The server is a dumb store: it folds the change into the chat's "pins"
+// metadata set and rebroadcasts a PinSync to the user's other devices.
+// Fire-and-forget like DraftPut — not conversation-reliability-scoped (see
+// inboundConvID), so there is no ack to fold.
+type PinPut struct {
+	ConversationID string `json:"conversationId"`
+	MessageID      string `json:"messageId"`
+	Pinned         bool   `json:"pinned"`
+}
+
+// PinSync mirrors a conversation's COMPLETE pinned-message set to a user's other
+// devices (server->client). Sent when one device pins or unpins (a PinPut), and
+// replayed per-conversation after a hello so a device offline during the change
+// catches up — the replay is the half that matters, because the reported bug was
+// a Mac that was not connected when the pin happened (#1882).
+//
+// Absolute, not a delta: the receiver sets pinned=true for exactly MessageIDs
+// and false for every other message in the conversation. That makes it
+// idempotent and order-independent, and lets one frame serve both paths. An
+// empty MessageIDs is a valid "nothing is pinned here" and MUST be applied (it
+// is how an unpin reaches a device that was offline for it).
+type PinSync struct {
+	ConversationID string   `json:"conversationId"`
+	MessageIDs     []string `json:"messageIds"`
+}
+
+func (PinSync) Type() string { return TypePinSync }
 
 // ConversationRename sets (or clears, when Title is empty) a user-friendly alias
 // for a conversation. Persisted server-side; echoed back in ConversationInfo.Title.

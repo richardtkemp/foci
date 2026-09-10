@@ -412,6 +412,7 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		Pong{},
 		ToolInvoke{InvocationID: "inv", Tool: "android", Action: "list", Args: json.RawMessage(`{}`)},
 		ConversationForeground{ConversationID: "c"},
+		PinSync{ConversationID: "c", MessageIDs: []string{"m1", "m2"}},
 	}
 	for _, f := range frames {
 		wire, err := Encode(f, 0, 0, "id", "ts")
@@ -475,5 +476,33 @@ func TestULIDTime_RejectsMalformed(t *testing.T) {
 		if _, ok := ULIDTime(id); ok {
 			t.Errorf("ULIDTime(%q) = ok, want rejected", id)
 		}
+	}
+}
+
+// TestDecode_PinPut proves the app->server half of message-pin sync decodes, so
+// the Kotlin encoder's field names are pinned on this side too (#1882).
+func TestDecode_PinPut(t *testing.T) {
+	in, err := Decode(`{"t":"pin.put","id":"i1","d":{"conversationId":"c1","messageId":"m7","pinned":true}}`)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	f, ok := in.Frame.(PinPut)
+	if !ok {
+		t.Fatalf("frame = %T, want PinPut", in.Frame)
+	}
+	if f.ConversationID != "c1" || f.MessageID != "m7" || !f.Pinned {
+		t.Errorf("decoded = %+v, want c1/m7/true", f)
+	}
+}
+
+// An absent "pinned" must decode as false (an unpin), matching the peer's
+// default-filling decoder rather than erroring.
+func TestDecode_PinPut_DefaultsUnpinned(t *testing.T) {
+	in, err := Decode(`{"t":"pin.put","id":"i1","d":{"conversationId":"c1","messageId":"m7"}}`)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if f := in.Frame.(PinPut); f.Pinned {
+		t.Errorf("absent pinned decoded as %v, want false", f.Pinned)
 	}
 }
