@@ -28,6 +28,21 @@ type costBreakdown struct {
 	writeTop cacheWriteSplit
 	writeSub cacheWriteSplit
 
+	// turnDur is how long the turn itself ran; pricedDur is the span the
+	// ModelUsage delta being priced actually covers, measured from the
+	// previous snapshot of the SAME model. They are equal only when nothing
+	// outlived the turn.
+	//
+	// Printed together because either alone is misleading. On 2026-09-10 a
+	// 3.5-minute turn was priced over a 34-minute window — a background
+	// subagent had outlived its parent by half an hour — and the row was
+	// indistinguishable from a genuinely expensive turn (#1880). A reader who
+	// can see both can tell those apart at a glance; a reader who cannot will
+	// reconstruct the span by hand from turn_lifecycle, which is how most of a
+	// session went missing that morning.
+	turnDur   time.Duration
+	pricedDur time.Duration
+
 	// Every model this turn actually used. More than one means the turn's cost
 	// cannot be read off ModelUsage[resultModel], which is keyed by a single
 	// model — naming them here is what makes that visible in the log rather
@@ -53,7 +68,29 @@ func (b costBreakdown) String() string {
 		c.Output, price(0, c.Output, 0, 0),
 		c.CacheRead, price(0, 0, c.CacheRead, 0),
 		c.CacheWrite, price(0, 0, 0, c.CacheWrite),
-	) + b.writeSplitSuffix()
+	) + b.spanSuffix() + b.writeSplitSuffix()
+}
+
+// spanSuffix names the turn's own duration and the window the priced delta
+// covers, and flags them when they disagree.
+//
+// Silent when pricedDur is unknown (the first snapshot for a model has no
+// previous one to measure from) — a zero would read as "instantaneous" rather
+// than "not measured", and inventing a span is exactly the class of guess this
+// field exists to remove.
+func (b costBreakdown) spanSuffix() string {
+	if b.pricedDur <= 0 {
+		return ""
+	}
+	s := fmt.Sprintf(" | turn=%s priced_span=%s", b.turnDur.Round(time.Second), b.pricedDur.Round(time.Second))
+	// A priced window materially longer than the turn means spend from outside
+	// this turn is being booked to it. Named explicitly rather than left for
+	// the reader to divide, because the whole failure mode is that nobody
+	// divides.
+	if b.turnDur > 0 && b.pricedDur > 2*b.turnDur {
+		s += fmt.Sprintf(" (SPAN %.1fx TURN — includes work from outside this turn)", b.pricedDur.Seconds()/b.turnDur.Seconds())
+	}
+	return s
 }
 
 // writeSplitSuffix names the cache-write TTL mix behind the single
