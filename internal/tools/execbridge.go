@@ -616,7 +616,7 @@ var todoActions = []struct {
 	{"drop", "drop <id> [--reason|--notes|--note|--text TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason --notes --note --text"},
 	{"reopen", "reopen <id>   (status→open, clears completed_at/close_reason; or --id N / --ids 1,2,3)", "--id --ids"},
 	{"start", "start <id>   (status→started; or --id N / --ids 1,2,3)", "--id --ids"},
-	{"edit", "edit <id> [--text TEXT] [--append-text|--note|--add TEXT] [--append] [--priority P] [--tag T]   (alias: update; or --id N / --ids 1,2,3)", "--id --ids --text --append --append-text --add --note --notes --priority --tag"},
+	{"edit", "edit <id> [--text TEXT] [--title TEXT] [--append-text|--note|--add TEXT] [--append] [--priority P] [--tag T]   (alias: update; or --id N / --ids 1,2,3)", "--id --ids --text --title --append --append-text --add --note --notes --priority --tag"},
 	{"remove", "remove --id N   (or --ids 1,2,3)", "--id --ids"},
 }
 
@@ -959,6 +959,7 @@ func generateShellFunc(t *Tool) string {
       [ -n "$id" ] && params="$(echo "$params" | jq --argjson i "$id" '. + {id: $i}')"
       [ -n "$ids" ] && params="$(echo "$params" | jq --argjson i "$ids" '. + {ids: $i}')"
       [ -n "$text" ] && params="$(echo "$params" | jq --arg t "$text" '. + {text: $t}')"
+      [ -n "$title" ] && params="$(echo "$params" | jq --arg ti "$title" '. + {title: $ti}')"
       [ -n "$append" ] && params="$(echo "$params" | jq '. + {append: true}')"
       [ -n "$priority" ] && params="$(echo "$params" | jq --arg p "$priority" '. + {priority: $p}')"
       [ -n "$tag" ] && params="$(echo "$params" | jq --arg g "$tag" '. + {tag: $g}')"
