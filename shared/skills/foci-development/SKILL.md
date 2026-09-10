@@ -53,14 +53,13 @@ Gotchas: the changelog line (`foci: changelog staged (<old> -> <new>)`) is the c
 
 ## Verifying a change (three traps)
 
-**Running ONE package.** `make test` has no package filter and bare `go test ./<pkg>/` panics — several packages need the sandboxed HOME the Makefile sets. Replicate it:
+**Running ONE package.** `make test` has no package filter and bare `go test ./<pkg>/` panics — several packages need the sandboxed HOME the Makefile sets. Use `make test-one PKG=./internal/<pkg>/ RUN=<Name>` (foci_todo #1709) — it reuses `scripts/seal-test.sh`'s exact env construction (same TESTENV/SEAL arrays as `make test`), so a fail-arm loop never has to hand-assemble FOCI_TMPDIR/GOCACHE/etc itself, which is the thing that goes silently wrong: a hand-rolled env that's missing something doesn't look like an environment failure, it looks like a test failure (or, worse, a "confirmed" flake — see #1709's repro). Do NOT hand-roll the env yourself:
 
 ```
-T=/tmp/fgw/test-$(date +%s); mkdir -p $T/home
-HOME=$T/home TMPDIR=$T FOCI_TMPDIR=$T FOCI_TEST_TMPDIR=$T go test ./internal/<pkg>/ -run <Name> -count=1
+make test-one PKG=./internal/<pkg>/ RUN=<Name>
 ```
 
-That sandboxed HOME also strips git's `safe.directory`, so anything invoking `go build` with VCS stamping fails as "dubious ownership" — add `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=<repo>`.
+`RUN` is optional — omit it to run the whole package. `PKG` is required.
 
 **You cannot sandbox a `foci` CLI probe.** The CLI prefers the gateway's unix socket, so `FOCI_ADDR` is never read when you run as an agent — pointing it at a dead port does nothing and the command really executes. A `foci send` you run "as a test" is delivered for real.
 

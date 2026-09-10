@@ -88,15 +88,15 @@ func guardLiveRootInTest(override, resolvedRoot string) {
 	// Those show only Go's "--- FAIL: <arbitrary test>" line, which is how this
 	// got misread as a flaky test in an unrelated package (2026-08-15).
 	panic(fmt.Sprintf(
-		"tempdir: ENVIRONMENT ERROR, NOT A TEST FAILURE — run `make test`, not a bare `go test`. "+
-			"The test named in the --- FAIL: line is NOT at fault; this guard fires in whichever "+
-			"test resolves a temp root first, so that name is arbitrary. Do not debug it, and do "+
-			"not read it as a flake.\n\n"+
+		"tempdir: ENVIRONMENT ERROR, NOT A TEST FAILURE — iterating on one package? run `make "+
+			"test-one PKG=./internal/<pkg>/ [RUN=<Name>]`; whole suite: `make test`. Never a bare "+
+			"`go test`. The test named in the --- FAIL: line is NOT at fault; this guard fires in "+
+			"whichever test resolves a temp root first, so that name is arbitrary. Do not debug it, "+
+			"and do not read it as a flake.\n\n"+
 			"Cause: the run resolved the temp root to the LIVE shared root %s because %s, which "+
-			"would write test fixtures into a real foci install's state. The Makefile test targets "+
-			"(`make test`, `make integration`) set %s for you.\n\n"+
-			"To run ONE package directly — the only reason to bypass make — set a scratch root "+
-			"yourself:\n\n"+
+			"would write test fixtures into a real foci install's state. `make test`/`make "+
+			"integration`/`make test-one` all set %s for you.\n\n"+
+			"Bypassing make entirely (rare) still needs a scratch root set by hand:\n\n"+
 			"    %s=$(mktemp -d) go test ./internal/<pkg>/\n",
 		Root, cause, EnvOverride, EnvOverride))
 }
