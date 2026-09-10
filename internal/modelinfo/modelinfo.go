@@ -869,6 +869,40 @@ func familyPricingAsOf(bare string, at time.Time) (Model, bool) {
 // since that call was actually made. Never persisted: callers recompute
 // fresh on every read (foci_todo #1407).
 func CostAsOf(model string, at time.Time, input, output, cacheRead, cacheWrite int) float64 {
+	// A flat cache-write figure carries no TTL, so it maps to Unknown — which
+	// prices at cacheWriteRate(), exactly what this function did before the
+	// split existed. Behaviour-preserving by construction, and the existing
+	// cost tests are the proof.
+	return CostAsOfSplit(model, at, input, output, cacheRead, CacheWrites{Unknown: cacheWrite})
+}
+
+// CacheWrites is cache-write tokens separated by the TTL they were written at.
+//
+// Unknown is its own class rather than being folded into either rate. CC
+// reporting cache-write tokens with no breakdown means the TTL was NOT
+// OBSERVED, which is a different fact from "they were 5m" — and assuming
+// either one is the mistake that caused #1866. It prices at the 1h rate: the
+// higher of the two, so an unobserved TTL errs toward over-charging, and the
+// pre-split behaviour is preserved exactly.
+type CacheWrites struct {
+	Ephemeral5m int
+	Ephemeral1h int
+	Unknown     int
+}
+
+// CostAsOfSplit is CostAsOf with cache writes separated by TTL.
+//
+// Ephemeral5m prices at Model.CacheWritePer1M (the 5-minute rate);
+// Ephemeral1h and Unknown price at Model.cacheWriteRate(), which prefers the
+// registry's 1h figure and falls back to the 5m one where no 1h rate exists.
+//
+// This exists because Claude Code's MAIN THREAD caches at 1h while its
+// SUBAGENTS cache at 5m, and foci priced every write at the 1h rate — a 60%
+// overcharge on subagent writes, reconciled to six decimals on four separate
+// production turns (#1866). The split is observable only on per-message usage;
+// the result's ModelUsage merges it into one figure, so a turn summarised from
+// the result alone can no longer be priced correctly.
+func CostAsOfSplit(model string, at time.Time, input, output, cacheRead int, w CacheWrites) float64 {
 	segs, bare := splitSegs(model)
 	if IsSynthetic(model) || IsSynthetic(bare) {
 		return 0
@@ -897,7 +931,8 @@ func CostAsOf(model string, at time.Time, input, output, cacheRead, cacheWrite i
 	return float64(input)/mtok*m.InputPer1M +
 		float64(output)/mtok*m.OutputPer1M +
 		float64(cacheRead)/mtok*m.CacheReadPer1M +
-		float64(cacheWrite)/mtok*m.cacheWriteRate()
+		float64(w.Ephemeral5m)/mtok*m.CacheWritePer1M +
+		float64(w.Ephemeral1h+w.Unknown)/mtok*m.cacheWriteRate()
 }
 
 // ModelMeta holds structural metadata about a model from [models.*] config.
