@@ -51,7 +51,7 @@ LDFLAGS = -s -w -X main.version=$(VERSION) \
 # referencing it before this assignment would silently expand to nothing.
 SIMPLE_BINS := foci-gw foci foci-call foci-cc-hook foci-codex-hook
 
-.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-unscoped-logging llbox test integration coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check land clean setup-hooks
+.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-unscoped-logging llbox test test-one integration coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check land clean setup-hooks
 
 all: $(SIMPLE_BINS) nosgid find-disconnected-tests find-static-config-reads find-unscoped-logging llbox
 
@@ -158,6 +158,33 @@ test: llbox
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:' $(LOGFILE) || true; fi ; \
 	  rm -rf $(TESTDIR) ; \
 	  if [ -n "$(CI_HOOK)" ]; then mkdir -p "$$(dirname "$(CI_HOOK)")" && printf '%s,foci,%s,unit,%s,%s\n' "$$(date -Is)" "$(GIT_COMMIT)" "$$([ $$STATUS -eq 0 ] && echo pass || echo fail)" "$$(bash scripts/ci-failed-tests.sh go $(LOGFILE))" >> "$(CI_HOOK)" || true; fi ; \
+	  exit $$STATUS ) 9</tmp/heavy
+
+# `make test-one PKG=./internal/<pkg>/ [RUN=<TestName>]` — the single-package
+# counterpart to `make test` for a fail-arm iteration loop (foci_todo #1709).
+# `make test` has no package filter, and a bare `go test ./<pkg>/` drops the
+# harness environment (FOCI_TMPDIR et al — some packages panic without it,
+# #1510) and can silently diverge from the harness in other ways too, which
+# is invisible right up until it produces a misleading failure (#1709's
+# repro: a hand-rolled run + a "control" that shared the SAME missing env
+# both failed identically, reading as a pre-existing flake). This target
+# reuses scripts/seal-test.sh's env construction verbatim (same TESTENV/SEAL
+# arrays as `test`/`integration`, see that script) rather than re-deriving
+# it here — do NOT hand-roll FOCI_TMPDIR/GOCACHE/etc in this recipe; that is
+# the exact anti-pattern #1709 exists to make unnecessary.
+test-one: llbox
+	@if [ -z "$(PKG)" ]; then echo "usage: make test-one PKG=./internal/<pkg>/ [RUN=<TestName>]" >&2; exit 2; fi
+	$(eval TESTDIR := /tmp/fgw/test-one-$(shell date +%s))
+	$(eval LOGFILE := $(TESTDIR).log)
+	@mkdir -p $(TESTDIR)/home
+	@# Same /tmp/heavy compute lock as `test`/`integration` — see those targets
+	@# for the rationale (serialises against other heavy builds; read-only lock
+	@# fd so go test's children don't inherit it).
+	@[ -e /tmp/heavy ] || : > /tmp/heavy
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; bash scripts/seal-test.sh one $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) $(PKG) $(RUN) 9<&- ; STATUS=$$? ; \
+	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
+	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:' $(LOGFILE) || true; fi ; \
+	  rm -rf $(TESTDIR) ; \
 	  exit $$STATUS ) 9</tmp/heavy
 
 # Integration tests (L2): real foci-gw subprocess against stubbed CC and

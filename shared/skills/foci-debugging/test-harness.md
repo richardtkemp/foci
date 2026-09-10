@@ -21,8 +21,17 @@ things a bare `go test` does not:
    fork+exec, so one seal at the top covers `go test`, every package binary, and anything they
    spawn (tmux, git, chrome…).
 
-**Read `TESTENV` out of `seal-test.sh` and copy it verbatim.** Do not reconstruct it — it has
-grown over time and the variable you omit is the one that mattered. As of #1523 it is:
+**If you just want one package run under the harness env — not to isolate a specific ingredient —
+use `make test-one PKG=./internal/<pkg>/ [RUN=<Name>]` (foci_todo #1709) instead of anything below.**
+It calls `scripts/seal-test.sh one`, which reuses the exact same `TESTENV`/seal construction as
+`make test` — so it cannot omit a variable by hand-rolling mistake. The manual reconstruction below
+still earns its place for the isolation table further down (running WITHOUT the seal, WITHOUT the
+env redirect, etc., to find out which ingredient a failure actually depends on) — `test-one` cannot
+do that, because it always applies the full harness env by design.
+
+**When you DO need to peel a layer off (the isolation table below), read `TESTENV` out of
+`seal-test.sh` and copy it verbatim. Do not reconstruct it** — it has grown over time and the
+variable you omit is the one that mattered. As of #1523 it is:
 
 ```bash
 TESTDIR=$(mktemp -d /tmp/fgw/probe-XXXXXX); mkdir -p "$TESTDIR/home"
@@ -31,12 +40,14 @@ WL="$TESTDIR,$GC,$GMC,/dev/null,/dev/ptmx,/dev/pts,/dev/shm"
 TESTENV=(env "TMPDIR=$TESTDIR" "FOCI_TMPDIR=$TESTDIR" "FOCI_TEST_TMPDIR=$TESTDIR" \
   "HOME=$TESTDIR/home" "GOCACHE=$GC" "GOMODCACHE=$GMC" "GOPATH=$GP")
 
-# one package, sealed, exactly as make test would run it
+# one package, sealed, exactly as make test would run it (this specific arm is now
+# `make test-one PKG=./internal/tools/tmux/` — kept here only as the ingredient this
+# manual form isolates: sealed-but-not-whole-suite)
 "${TESTENV[@]}" bin/llbox -w "$WL" -- go test -C /home/rich/git/foci ./internal/tools/tmux/ -count=1
 ```
 
-`FOCI_TEST_UNSEALED=1` makes `seal-test.sh` skip Landlock entirely — the cheapest way to split
-"sandbox artifact" from "real bug" without hand-building the command above.
+`FOCI_TEST_UNSEALED=1` makes `seal-test.sh` (and `make test-one`) skip Landlock entirely — the
+cheapest way to split "sandbox artifact" from "real bug" without hand-building the command above.
 
 ## Isolating which ingredient matters
 

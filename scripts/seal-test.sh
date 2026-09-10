@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
-# seal-test.sh — runs the `make test` / `make integration` go-test invocation
-# sealed under a Landlock write-whitelist BY DEFAULT (foci_todo #1523,
-# implementing the investigation in #1517). Invoked by the Makefile, not run
-# directly by a person.
+# seal-test.sh — runs the `make test` / `make integration` / `make test-one`
+# go-test invocation sealed under a Landlock write-whitelist BY DEFAULT
+# (foci_todo #1523, implementing the investigation in #1517). Invoked by the
+# Makefile, not run directly by a person.
 #
-# Usage: seal-test.sh <unit|integration> <TESTDIR> <LOGFILE> <parallel-n> \
-#          <GOCACHE_PIN> <GOMODCACHE_PIN> <GOPATH_PIN>
+# Usage: seal-test.sh <unit|integration|one> <TESTDIR> <LOGFILE> <parallel-n> \
+#          <GOCACHE_PIN> <GOMODCACHE_PIN> <GOPATH_PIN> [PKG] [RUN]
+#
+#   PKG and RUN are only used (and required/optional respectively) by the
+#   `one` mode — see run_one below. foci_todo #1709: this is the ONE place
+#   the harness environment (TESTENV/SEAL) is constructed; unit/integration/
+#   one all consume the SAME arrays below rather than each deriving their
+#   own, so a single-package run cannot silently diverge from `make test`'s
+#   environment — the exact failure mode (a hand-rolled `go test ./<pkg>/`
+#   dropping FOCI_TMPDIR et al.) this mode exists to make unnecessary.
 #
 #   TESTDIR must already exist, with a TESTDIR/home subdir (the Makefile
 #   creates both — see #1521, which redirects $HOME there so tests can't
@@ -67,13 +75,15 @@
 # or a code fix, not that the test suite as a whole should be reported green.
 set -u
 
-MODE="${1:?usage: seal-test.sh <unit|integration> <TESTDIR> <LOGFILE> <parallel-n> <GOCACHE_PIN> <GOMODCACHE_PIN> <GOPATH_PIN>}"
+MODE="${1:?usage: seal-test.sh <unit|integration|one> <TESTDIR> <LOGFILE> <parallel-n> <GOCACHE_PIN> <GOMODCACHE_PIN> <GOPATH_PIN> [PKG] [RUN]}"
 TESTDIR="${2:?}"
 LOGFILE="${3:?}"
 PARALLEL="${4:?}"
 GOCACHE_DIR="${5:?}"
 GOMODCACHE_DIR="${6:?}"
 GOPATH_DIR="${7:?}"
+PKG="${8:-}"
+RUNFILTER="${9:-}"
 
 LLBOX="bin/llbox"
 
@@ -123,8 +133,18 @@ diagnostic_rerun() {
   done <<<"$failed"
 }
 
+# env_header <label>
+# Logs the label plus the exact TESTENV assignments (skipping TESTENV[0],
+# which is just the literal "env" command name) this run is about to use.
+# Same array for every mode (see the top-of-file note) — this line is what
+# lets a peer (or foci_todo #1709's own verification) DIFF two runs' logs and
+# see the environment matched, instead of taking it on faith.
+env_header() {
+  echo "=== $1 (env: ${TESTENV[*]:1}) ===" >> "$LOGFILE"
+}
+
 run_unit() {
-  echo "=== sealed unit suite ===" >> "$LOGFILE"
+  env_header "sealed unit suite"
   "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -p="$PARALLEL" -parallel=16 ./... >> "$LOGFILE" 2>&1
   local status=$?
 
@@ -133,7 +153,7 @@ run_unit() {
 }
 
 run_integration() {
-  echo "=== sealed integration suite ===" >> "$LOGFILE"
+  env_header "sealed integration suite"
   "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -tags=integration -count=1 -timeout 600s \
     -parallel="$PARALLEL" -v ./test/integration/... ./internal/testharness/... >> "$LOGFILE" 2>&1
   local status=$?
@@ -142,11 +162,31 @@ run_integration() {
   return "$status"
 }
 
+# run_one — the fail-arm iteration target (foci_todo #1709): one package
+# (required), optionally narrowed with -run, through the IDENTICAL
+# SEAL/TESTENV arrays run_unit uses — never re-derive them here. RUNFILTER
+# empty means "whole package", same as `go test ./pkg/` with no -run.
+run_one() {
+  if [ -z "$PKG" ]; then
+    echo "seal-test.sh: mode 'one' requires PKG (arg 8), e.g. ./internal/agent/" >&2
+    exit 2
+  fi
+  env_header "sealed single-package run: $PKG${RUNFILTER:+ -run $RUNFILTER}"
+  local extra=(-count=1)
+  [ -n "$RUNFILTER" ] && extra+=(-run "$RUNFILTER")
+  "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test "${extra[@]}" "$PKG" >> "$LOGFILE" 2>&1
+  local status=$?
+
+  diagnostic_rerun
+  return "$status"
+}
+
 case "$MODE" in
 unit) run_unit ;;
 integration) run_integration ;;
+one) run_one ;;
 *)
-  echo "seal-test.sh: unknown mode '$MODE' (want unit|integration)" >&2
+  echo "seal-test.sh: unknown mode '$MODE' (want unit|integration|one)" >&2
   exit 2
   ;;
 esac
