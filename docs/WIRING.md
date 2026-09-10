@@ -1411,8 +1411,30 @@ Four outputs:
    unique per API call, so a message must be counted once EVER, and clearing the set
    each turn let a message spanning a boundary be counted twice.
 
-   Still observe-only: #1866 P3 moves pricing onto this source once the live coverage
-   table reads ~100%.
+   **P3 landed: pricing now uses it — for the TTL SPLIT ONLY.** Turn TOTALS come from
+   `ModelUsage`, iterating EVERY key (before P3 it read `resultModel` alone and dropped
+   every other model's spend: a measured turn charged $0.54 against a true $1.68, silently,
+   because both sides of the divergence check omitted the same model — #1870). Totals do
+   NOT come from the accumulator: probe-verified 2026-09-10 that the stream matches
+   `ModelUsage` EXACTLY for input, cache-read and cache-write, understates OUTPUT by ~89%
+   (a placeholder never revised), and never carries CC's own internal utility calls at all
+   (916 haiku input tokens in one probe turn, on no stream line anywhere).
+
+   `splitFor` (`ccstream/ttlsplit.go`) allocates the authoritative cache-write total across
+   the TTL classes using what the accumulator observed. **It is not a ratio.** At exact
+   coverage the observed split is used verbatim — 100.00% on a production turn
+   (369,913 = 369,913) and on a probe (30,921 = 30,921), so that is the normal path. Any
+   shortfall lands in `Unknown`, which prices at the 1h rate: an unobserved TTL is not
+   evidence of a cheap one. Scaling a partial observation onto an authoritative total would
+   manufacture a number nobody measured, and `TestSplitFor_NeverScalesProportionally` pins
+   that refusal. The classes always sum to the authoritative total, so pricing still
+   reconciles against the figure the divergence check compares to.
+
+   **Fixtures in this package must set `Message.ID`.** The accumulator drops empty-id
+   messages, and no pre-P3 fixture set one — so every earlier end-to-end cost test ran
+   against an EMPTY accumulator and passed whether pricing was per-model or not, 5m or 1h.
+   The whole suite stayed green through P3 for that reason. A cost test without a message
+   id proves nothing.
 
    Since #1880 phase A the warning also carries `turn=<dur> priced_span=<dur>`, and flags
    `SPAN Nx TURN` when the priced window exceeds twice the turn — the two measurements that
