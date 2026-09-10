@@ -3,6 +3,7 @@ package ccstream
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -434,11 +435,40 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	mu, haveModelUsage := msg.ModelUsage[resultModel]
 	var usageDelta ModelUsage
 	var pricedSpanFrom time.Time
-	if haveModelUsage {
+
+	// EVERY model this result reports, deltas taken together under one lock and
+	// one `now` so they share a window edge (#1866 P3).
+	//
+	// The predecessor read ONE key — resultModel — and dropped every other
+	// model's spend entirely. Not an edge case: 73% of subagents run a
+	// different model from their parent and the delegate skill prescribes it. A
+	// measured turn charged $0.54 against a true $1.68, understating by 209%,
+	// and NOTHING reported it: the divergence check's two sides were BOTH
+	// accumulated from resultModel alone, so they agreed with each other while
+	// both omitted the same model (#1870).
+	//
+	// Sorted so the log and the arithmetic are deterministic across runs.
+	pricedModels := make([]string, 0, len(msg.ModelUsage))
+	for m := range msg.ModelUsage {
+		pricedModels = append(pricedModels, m)
+	}
+	sort.Strings(pricedModels)
+
+	deltas := make(map[string]ModelUsage, len(pricedModels))
+	if len(pricedModels) > 0 {
+		now := time.Now()
 		b.mu.Lock()
-		pricedSpanFrom = b.pricedSpanStart(resultModel, time.Now())
-		usageDelta = b.modelUsageDelta(resultModel, mu)
+		for _, m := range pricedModels {
+			at := b.pricedSpanStart(m, now)
+			deltas[m] = b.modelUsageDelta(m, msg.ModelUsage[m])
+			if m == resultModel {
+				pricedSpanFrom = at
+			}
+		}
 		b.mu.Unlock()
+	}
+	if haveModelUsage {
+		usageDelta = deltas[resultModel]
 	}
 
 	authoritativeOutput := msg.Usage.OutputTokens
@@ -461,24 +491,54 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	// FINAL call's context fill (what compaction needs), not turn totals, so
 	// pricing them would undercount a multi-call turn by roughly the call
 	// count.
-	if haveModelUsage {
-		priced := modelinfo.CostAsOf(
-			prefixedModel("claude", resultModel), time.Now(),
-			usageDelta.InputTokens, usageDelta.OutputTokens,
-			usageDelta.CacheReadInputTokens, usageDelta.CacheCreationInputTokens,
-		)
-		provided := mu.CostUSD
-		turnUsage.ProvidedCostUSD = &provided
+	if len(pricedModels) > 0 {
+		// The cache-write TTL split, per model, from the accumulator. Read under
+		// turnMu (which guards it) and BEFORE pricing, which takes no lock.
+		b.turnMu.Lock()
+		observed := b.turnUsageAcc.writeSplitByModel()
+		b.turnMu.Unlock()
+
+		var cyclePriced, cycleProvided float64
+		var cycleCounts modelinfo.TokenCounts
+		now := time.Now()
+		for _, m := range pricedModels {
+			d := deltas[m]
+			// Totals come from ModelUsage, which is authoritative and complete:
+			// probe-verified 2026-09-10 that the stream matches it EXACTLY for
+			// input, cache-read and cache-write, understates OUTPUT by ~89%
+			// (a placeholder that is never revised), and never carries CC's own
+			// internal utility calls at all — 916 input tokens on haiku in one
+			// probe turn, on no stream line anywhere. Sourcing totals from the
+			// accumulator would silently drop those.
+			//
+			// The accumulator supplies the one thing ModelUsage cannot: the TTL
+			// split, which the result merges into a single figure.
+			w := splitFor(observed[m], d.CacheCreationInputTokens)
+			cyclePriced += modelinfo.CostAsOfSplit(
+				prefixedModel("claude", m), now,
+				d.InputTokens, d.OutputTokens, d.CacheReadInputTokens, w,
+			)
+			cycleProvided += d.CostUSD
+			cycleCounts = cycleCounts.Add(modelinfo.TokenCounts{
+				Input:      d.InputTokens,
+				Output:     d.OutputTokens,
+				CacheRead:  d.CacheReadInputTokens,
+				CacheWrite: d.CacheCreationInputTokens,
+			})
+		}
+
+		if haveModelUsage {
+			provided := mu.CostUSD
+			turnUsage.ProvidedCostUSD = &provided
+		}
 
 		b.turnMu.Lock()
-		b.turnCalcCostUSD += priced
-		b.turnProvidedUSD += usageDelta.CostUSD
-		b.turnCalc = b.turnCalc.Add(modelinfo.TokenCounts{
-			Input:      usageDelta.InputTokens,
-			Output:     usageDelta.OutputTokens,
-			CacheRead:  usageDelta.CacheReadInputTokens,
-			CacheWrite: usageDelta.CacheCreationInputTokens,
-		})
+		b.turnCalcCostUSD += cyclePriced
+		// Cross-model on BOTH sides, or the check fires on every multi-model
+		// turn for a discrepancy that is really just the two sides measuring
+		// different sets of models (#1870).
+		b.turnProvidedUSD += cycleProvided
+		b.turnCalc = b.turnCalc.Add(cycleCounts)
 		b.turnProvidedSeen = true
 		b.turnMu.Unlock()
 	}
