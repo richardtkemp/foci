@@ -1386,19 +1386,33 @@ Four outputs:
    The tail runs ONLY for foreground subagents (`maybeStart` gates on `expectFg`);
    background ones arrive by the stream alone.
 
-   **The accumulator is NOT yet a complete source — measured, do not price from it (#1880).**
-   Against the cache-write total each turn is actually priced on, it has seen 1-15%:
-   4.3% and 1.1% on 2026-09-10 02:48/03:36 (P1), 15.0% and 4.7% at 14:47/15:32 (P2).
-   The 15:32 turn ran one subagent, `agent-affb669c`, on the SAME model as its parent
-   (197,503 cache-write tokens, 100% ephemeral_5m); the accumulator's subagent bucket
-   recorded ZERO of them. Both post-P2 warnings reconcile to under one token: the gap
-   divided by opus-5's $3.75/MTok 1h-vs-5m spread equals `cache_write` minus what the
-   accumulator saw, exactly — so the unseen tokens ARE the mispriced ones.
-   The measured cause is a SPAN mismatch, not a missing feed: `reset()` runs at
-   `beginTurnLocked` (turn START) while `modelUsageDelta` prices from the PREVIOUS
-   RESULT, a window measured at 34 minutes against a 3.5-minute turn on 2026-09-10.
-   Everything in the delta window but before the turn opened is priced and never
-   accumulated. Phase B closes this; until it does, the accumulator is observe-only.
+   **The totals are CUMULATIVE for the Backend's life; a turn's figure is a DIFFERENCE
+   (#1880 phase B).** `beginTurn` moves the per-turn baseline to `atLastResult` — the
+   totals as of the last RESULT before the turn opened, the same boundary
+   `modelUsageDelta` snapshots at — and `writeSplit`/`models()` measure from there.
+   `markResult` moves that baseline, called from `OnResult` under `turnMu`. The only
+   full wipe is `reset()`, from `finalizeExit`: the dedupe set holds one entry per API
+   call ever seen, so the subprocess going away is the point it must be cleared.
+
+   It used to WIPE at `beginTurnLocked` — turn START — while pricing measures from the
+   previous RESULT, so every message inside the priced window that arrived before the
+   turn opened was charged for and never accumulated. Measured coverage against the
+   cache-write total each turn was priced on: 4.3% and 1.1% on 2026-09-10 02:48/03:36,
+   15.0% and 4.7% at 14:47/15:32. The 15:32 turn ran one subagent, `agent-affb669c`, on
+   the SAME model as its parent (197,503 cache-write tokens, 100% ephemeral_5m) and the
+   subagent bucket recorded ZERO of them. Both warnings reconcile to under one token —
+   the gap over opus-5's $3.75/MTok 1h-vs-5m spread equals `cache_write` minus what the
+   accumulator saw — so the unseen tokens were exactly the mispriced ones.
+
+   Diffing rather than wiping also bounds the failure mode: a message can now only be
+   attributed to the WRONG turn, never dropped from every turn. Losing tokens is a
+   pricing error; misfiling them is an attribution error (phase C), and only one of
+   those costs money. Dedupe is session-scoped for the same reason — message ids are
+   unique per API call, so a message must be counted once EVER, and clearing the set
+   each turn let a message spanning a boundary be counted twice.
+
+   Still observe-only: #1866 P3 moves pricing onto this source once the live coverage
+   table reads ~100%.
 
    Since #1880 phase A the warning also carries `turn=<dur> priced_span=<dur>`, and flags
    `SPAN Nx TURN` when the priced window exceeds twice the turn — the two measurements that
