@@ -100,6 +100,7 @@ func (b *Backend) AwaitingAutonomousRun() bool {
 // beginTurnLocked initialises per-turn state. Caller must hold turnMu.
 func (b *Backend) beginTurnLocked(turn *delegator.TurnEvents) {
 	b.turnActive = true
+	b.turnStartedAt = time.Now()
 	b.turnEvents = turn
 	b.turnText.Reset()
 	b.turnTools = 0

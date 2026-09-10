@@ -1,5 +1,7 @@
 package ccstream
 
+import "time"
+
 // Cost and token accounting for CC turns (#1674).
 //
 // The one fact everything here exists for: EVERY counter in CC's per-result
@@ -69,4 +71,34 @@ func (b *Backend) modelUsageDelta(model string, cur ModelUsage) ModelUsage {
 		d.CostUSD = cur.CostUSD - prev.CostUSD
 	}
 	return d
+}
+
+// pricedSpanStart records that model's snapshot was just taken at `now`, and
+// returns when the PREVIOUS one was — i.e. the start of the window the delta
+// being computed right now actually covers. A zero time means this is the first
+// snapshot for that model, so the window has no measured start.
+//
+// Deliberately separate from modelUsageDelta rather than folded into its return
+// value: the delta's arithmetic is covered by nine tests that pin exact token
+// counts, and widening its signature would have edited all of them to prove
+// nothing about the timestamps. Caller must hold b.mu, the same lock
+// modelUsageDelta requires, and must call this BEFORE (or with) that call so
+// the two agree on which snapshot they are describing.
+func (b *Backend) pricedSpanStart(model string, now time.Time) time.Time {
+	prev := b.lastModelUsageAt[model]
+	if b.lastModelUsageAt == nil {
+		b.lastModelUsageAt = make(map[string]time.Time)
+	}
+	b.lastModelUsageAt[model] = now
+	return prev
+}
+
+// turnElapsed is time since `from`, or zero when `from` is unset. A zero return
+// means NOT MEASURED, never "no time passed" — callers must not print it as a
+// duration.
+func turnElapsed(from time.Time) time.Duration {
+	if from.IsZero() {
+		return 0
+	}
+	return time.Since(from)
 }

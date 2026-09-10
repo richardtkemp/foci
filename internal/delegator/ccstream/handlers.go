@@ -433,8 +433,10 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	// 28 Jul - 4 Aug: $32,566 reported against ~$2,500 real).
 	mu, haveModelUsage := msg.ModelUsage[resultModel]
 	var usageDelta ModelUsage
+	var pricedSpanFrom time.Time
 	if haveModelUsage {
 		b.mu.Lock()
+		pricedSpanFrom = b.pricedSpanStart(resultModel, time.Now())
 		usageDelta = b.modelUsageDelta(resultModel, mu)
 		b.mu.Unlock()
 	}
@@ -505,12 +507,14 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	calcSoFar, providedSoFar := b.turnCalcCostUSD, b.turnProvidedUSD
 	cycles := b.turnCalls
 	bd := costBreakdown{
-		model:    prefixedModel("claude", resultModel),
-		cycles:   cycles,
-		counts:   b.turnCalc,
-		writeTop: b.turnUsageAcc.writeSplit(false),
-		writeSub: b.turnUsageAcc.writeSplit(true),
-		models:   b.turnUsageAcc.models(),
+		model:     prefixedModel("claude", resultModel),
+		cycles:    cycles,
+		counts:    b.turnCalc,
+		turnDur:   turnElapsed(b.turnStartedAt),
+		pricedDur: turnElapsed(pricedSpanFrom),
+		writeTop:  b.turnUsageAcc.writeSplit(false),
+		writeSub:  b.turnUsageAcc.writeSplit(true),
+		models:    b.turnUsageAcc.models(),
 	}
 	if checkCost {
 		calc := calcSoFar

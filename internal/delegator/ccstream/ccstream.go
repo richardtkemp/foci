@@ -136,6 +136,14 @@ type Backend struct {
 	// Turn state
 	turnMu     sync.Mutex
 	turnActive bool
+	// turnStartedAt is when beginTurnLocked opened the current turn. Recorded
+	// so the divergence warning can print the turn's OWN duration beside the
+	// span the priced ModelUsage delta actually covers (#1880). Those two are
+	// routinely different — a background subagent outliving its parent made a
+	// 3.5-minute turn carry 34 minutes of spend on 2026-09-10 — and a reader
+	// with only one of them cannot tell an expensive turn from a cheap turn
+	// that happened to close last.
+	turnStartedAt time.Time
 	// turnAutonomous marks a turn foci did NOT open with a send: CC started the
 	// run itself (a background-agent completion, task-notification, or back-to-
 	// back continuation) and foci adopted it as a first-class turn (#1261). Set
@@ -234,6 +242,13 @@ type Backend struct {
 	// starts with an empty map and therefore treats the first snapshot as the
 	// whole delta, which is correct.
 	lastModelUsage map[string]ModelUsage
+
+	// lastModelUsageAt is when each model's snapshot in lastModelUsage was
+	// taken — i.e. the START of the window the next delta for that model will
+	// cover. Kept per model, not as one scalar, because the snapshots are per
+	// model and a turn routinely touches several; a single timestamp would
+	// report one model's window for another's delta.
+	lastModelUsageAt map[string]time.Time
 
 	// Compares foci's priced cost against CC's reported one (#1674). Shared
 	// implementation so this means the same thing across backends.
