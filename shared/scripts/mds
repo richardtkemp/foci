@@ -39,11 +39,18 @@ set -euo pipefail
 # parsing below sees exactly the argv it saw before this flag existed. When
 # neither flag is present, this loop is a no-op passthrough — same args, same
 # order — so the rest of the script's behaviour is unchanged byte-for-byte.
-raw=0
+# Mirrors mdq's inversion (#1705, Dick 2026-09-10): source bytes by default,
+# the re-render on request. mds delegates extraction to mdq, so the two MUST
+# agree — if mds kept the old default while mdq flipped, the same section would
+# come back in different shapes depending on which tool you happened to reach
+# for, which is a worse footgun than the one being fixed.
+raw=1
+render_flag=()
 args=()
 for a in "$@"; do
     case "$a" in
-        --raw|--source) raw=1 ;;
+        --raw|--source) raw=1; render_flag=() ;;
+        --render|--no-raw) raw=0; render_flag=(--render) ;;
         *) args+=("$a") ;;
     esac
 done
@@ -106,5 +113,7 @@ clean=$(echo "$match" | sed 's/^#* //' | sed 's/`//g')
 if (( raw )); then
     mdq --raw "# \"$clean\"" "$file"
 else
-    mdq "# \"$clean\"" "$file"
+    # Forward the opt-out explicitly: mdq's own default is now raw, so calling
+    # it bare here would hand back source bytes and quietly ignore --render.
+    mdq --render "# \"$clean\"" "$file"
 fi

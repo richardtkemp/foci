@@ -30,6 +30,14 @@
 # Usage: mdq-test.sh [-h]
 # Exit:  0 all assertions passed; 1 otherwise (prints which).
 set -uo pipefail
+
+# Close stdin for the whole suite. The upstream mdq binary reads stdin when it
+# is given no selector, so ANY assertion that reaches that shape blocks forever
+# on an open stdin — which is how this suite hung rather than failed. That is a
+# PRE-EXISTING property of the binary (reproduced identically against the
+# pre-change wrapper), not something the wrapper introduces; the suite just must
+# not be the thing that discovers it by deadlocking. Filed separately.
+exec 0</dev/null
 case "${1:-}" in -h|--help) sed -n '2,25p' "$0" | sed 's/^#//; s/^ //'; exit 0;; esac
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
@@ -93,7 +101,10 @@ b_start=$(grep -n '^## Section B$' "$FIX" | head -1 | cut -d: -f1)
 total_lines=$(wc -l < "$FIX")
 a_end=$(( b_start - 1 ))
 
-rendered=$("$MDQ" '## Section A' "$FIX")
+# --render, not bare: since #1705's default was inverted (Dick, 2026-09-10)
+# the no-flag path emits SOURCE BYTES, so the normalisation this red arm exists
+# to demonstrate is only visible on the explicit opt-out.
+rendered=$("$MDQ" --render '## Section A' "$FIX")
 sed_slice=$(sed -n "${a_start},${a_end}p" "$FIX")
 
 case "$rendered" in
@@ -176,11 +187,16 @@ if git -C "$REPO" show main:shared/scripts/mdq > "$OLD" 2>/tmp/mdq-test-err-gits
         local label=$1; shift
         local out_old rc_old out_new rc_new
         out_old=$(MDQ_BIN="$REAL_MDQ" "$OLD" "$@" 2>&1); rc_old=$?
-        out_new=$(MDQ_BIN="$REAL_MDQ" "$MDQ" "$@" 2>&1); rc_new=$?
+        # --render is the NEW spelling of the OLD default (#1705 default inverted,
+        # Dick 2026-09-10). Comparing bare-vs-bare would now compare source bytes
+        # against a render and fail by design, proving nothing; this asserts the
+        # opt-out still reproduces the old behaviour exactly, which is the promise
+        # that matters to every agent reading markdown through this wrapper.
+        out_new=$(MDQ_BIN="$REAL_MDQ" "$MDQ" --render "$@" 2>&1); rc_new=$?
         if [[ "$out_old" == "$out_new" && "$rc_old" == "$rc_new" ]]; then
-            echo "ok   no-flag regression: $label (rc=$rc_old)"
+            echo "ok   render-equivalence: $label (rc=$rc_old)"
         else
-            echo "FAIL no-flag regression: $label — output or exit code changed"
+            echo "FAIL render-equivalence: $label — --render no longer matches the pre-#1705 default"
             echo "       old (rc=$rc_old): $out_old"
             echo "       new (rc=$rc_new): $out_new"
             RC=1
@@ -207,12 +223,18 @@ check "mds --raw matches mdq --raw for the same section" "$raw_out" "$mds_raw"
 OLDS="$TMP/mds-old"
 if git -C "$REPO" show main:shared/scripts/mds > "$OLDS" 2>/tmp/mds-test-err-gitshow; then
     chmod +x "$OLDS"
-    out_old=$(MDQ_BIN="$REAL_MDQ" "$OLDS" "$FIX" "Section A" 2>&1); rc_old=$?
-    out_new=$(MDQ_BIN="$REAL_MDQ" "$MDS" "$FIX" "Section A" 2>&1); rc_new=$?
+    # mds delegates extraction to whatever `mdq` is on PATH, so the OLD mds must
+    # be paired with the OLD mdq or this compares new-against-new and proves
+    # nothing. (It silently did exactly that once #1705's default was inverted:
+    # old mds + new mdq returned source bytes, which is neither tool's old
+    # behaviour.) Give each side its own PATH.
+    oldbin="$TMP/oldbin"; mkdir -p "$oldbin"; cp "$OLD" "$oldbin/mdq"; chmod +x "$oldbin/mdq"
+    out_old=$(PATH="$oldbin:$PATH" MDQ_BIN="$REAL_MDQ" "$OLDS" "$FIX" "Section A" 2>&1); rc_old=$?
+    out_new=$(MDQ_BIN="$REAL_MDQ" "$MDS" --render "$FIX" "Section A" 2>&1); rc_new=$?
     if [[ "$out_old" == "$out_new" && "$rc_old" == "$rc_new" ]]; then
-        echo "ok   mds no-flag regression: pattern match (rc=$rc_old)"
+        echo "ok   mds render-equivalence: pattern match (rc=$rc_old)"
     else
-        echo "FAIL mds no-flag regression: pattern match — output or exit code changed"
+        echo "FAIL mds render-equivalence: pattern match — --render no longer matches the pre-#1705 default"
         RC=1
     fi
 else
@@ -227,3 +249,35 @@ else
 fi
 
 exit $RC
+
+# ---------------------------------------------------------------------------
+# Default-is-raw (#1705, inverted 2026-09-10). The whole point of the inversion
+# is that a caller who knows nothing about this footgun gets honest bytes, so
+# assert the DEFAULT — not the flag — for both tools. A suite that only ever
+# tested --raw would stay green if the default silently reverted.
+# ---------------------------------------------------------------------------
+default_mdq=$("$MDQ" '## Section A' "$FIX")
+check "mdq DEFAULT (no flag) emits source bytes" "$raw_out" "$default_mdq"
+default_mds=$("$MDS" "$FIX" "Section A")
+check "mds DEFAULT (no flag) emits source bytes" "$raw_out" "$default_mds"
+
+# Fallback: a stream cannot be sliced. stdout must still carry the render and
+# stderr must SAY so — silence here would be the original footgun wearing a
+# different hat, and an error would break every existing stdin caller.
+fb_out=$(printf '# S\n\nWith *emph*.\n' | "$MDQ" '# S' 2>/tmp/mdq-fb-err); fb_rc=$?
+if [[ $fb_rc -eq 0 && -n "$fb_out" ]]; then
+    echo "ok   stream fallback still produces output on stdout"
+else
+    echo "FAIL stream fallback produced no output (rc=$fb_rc)"; RC=1
+fi
+if grep -q "RE-RENDER" /tmp/mdq-fb-err; then
+    echo "ok   stream fallback announces the substitution on stderr"
+else
+    echo "FAIL stream fallback was silent — the footgun is back"; RC=1
+fi
+# ...but an EXPLICIT --raw must never be answered with a render.
+if printf '# S\n' | "$MDQ" --raw '# S' >/dev/null 2>/dev/null; then
+    echo "FAIL explicit --raw on a stream succeeded; it must fail rather than substitute a render"; RC=1
+else
+    echo "ok   explicit --raw on a stream fails instead of silently rendering"
+fi
