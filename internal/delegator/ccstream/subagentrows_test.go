@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"foci/internal/delegator"
 	"foci/internal/modelinfo"
 )
 
@@ -196,5 +197,111 @@ func TestOnResult_ParentKeepsItsOwnTTLWhenTheSubagentSharesItsModel(t *testing.T
 	// And the writes still reconstruct exactly.
 	if sum := got.Usage.Turn.CacheWrite + got.Usage.Subagents[0].Counts.CacheWrite; sum != 100000 {
 		t.Errorf("cache writes parent+sub = %d, want 100000", sum)
+	}
+}
+
+// onResultInTurn runs one turn end-to-end with a named turn id, so a test can
+// span more than one turn and see where spend lands.
+func onResultInTurn(b *Backend, turnID string, before func(), mu map[string]ModelUsage) *delegator.TurnResult {
+	var got *delegator.TurnResult
+	applyHandler(b, &testHandler{
+		TurnID:         turnID,
+		OnTurnComplete: func(r *delegator.TurnResult) { got = r },
+	})
+	b.mu.Lock()
+	b.lastModel = "claude-opus-5"
+	b.mu.Unlock()
+	if before != nil {
+		before()
+	}
+	b.OnResult(&ResultMessage{Subtype: "success", Result: "ok", ModelUsage: mu})
+	return got
+}
+
+// TestOnResult_StragglerBooksToTheTurnThatSpawnedIt is the second half of #1880
+// phase C, and the case the ticket was opened for.
+//
+// A background subagent keeps working after the turn that spawned it has
+// finished. CC bills continuously, so its remaining tokens arrive during some
+// LATER turn — often a short one. Measured: a 3.5-minute turn recorded as
+// costing $11.71 because it had inherited 34 minutes of a subagent's work
+// (api_calls 47495), and again at $11.97 and $13.60. An expensive turn and a
+// cheap turn that closed at the wrong moment were indistinguishable.
+//
+// Turn 2 here does no work of its own beyond the straggler's arrival. Its own
+// row must be free of that spend, and the straggler's row must name TURN 1.
+func TestOnResult_StragglerBooksToTheTurnThatSpawnedIt(t *testing.T) {
+	t.Parallel()
+	b := &Backend{}
+
+	// Turn 1 spawns agent-x, which reports 100 output tokens before the turn ends.
+	turn1 := onResultInTurn(b, "sess@1", func() {
+		b.noteAssistantUsage(fullMsg("claude-sonnet-5", "msg_s1", "agent-x", 0, 100, 0, 0, 0))
+	}, map[string]ModelUsage{
+		"claude-sonnet-5": {OutputTokens: 100, CostUSD: 0.01},
+	})
+	if turn1 == nil || len(turn1.Usage.Subagents) != 1 {
+		t.Fatalf("turn 1 subagents = %+v, want one", turn1.Usage.Subagents)
+	}
+	if got := turn1.Usage.Subagents[0].TurnID; got != "sess@1" {
+		t.Errorf("turn 1 subagent TurnID = %q, want sess@1", got)
+	}
+
+	// Turn 2: agent-x is still running and its remaining 900 output tokens land
+	// here. The parent did nothing else.
+	turn2 := onResultInTurn(b, "sess@2", func() {
+		b.noteAssistantUsage(fullMsg("claude-sonnet-5", "msg_s2", "agent-x", 0, 900, 0, 0, 0))
+	}, map[string]ModelUsage{
+		"claude-sonnet-5": {OutputTokens: 1000, CostUSD: 0.1},
+	})
+	if turn2 == nil || turn2.Usage == nil || turn2.Usage.CalculatedCostUSD == nil {
+		t.Fatal("turn 2 produced no cost")
+	}
+
+	// The straggler's row names the turn that STARTED the work, not the one it
+	// arrived during. This is the assertion the whole ticket is about.
+	if len(turn2.Usage.Subagents) != 1 {
+		t.Fatalf("turn 2 subagents = %+v, want one", turn2.Usage.Subagents)
+	}
+	sc := turn2.Usage.Subagents[0]
+	if sc.TurnID != "sess@1" {
+		t.Errorf("straggler TurnID = %q, want sess@1 — late spend books to the turn that spawned the agent, not the one that closed",
+			sc.TurnID)
+	}
+	if sc.Counts.Output != 900 {
+		t.Errorf("straggler output = %d, want 900 (the delta, not the running total)", sc.Counts.Output)
+	}
+
+	// And turn 2's own row carries none of it.
+	if *turn2.Usage.CalculatedCostUSD != 0 || turn2.Usage.Turn.Output != 0 {
+		t.Errorf("turn 2 parent = $%.9f / %d output, want 0/0 — a turn that did no work of its own must not inherit a straggler's",
+			*turn2.Usage.CalculatedCostUSD, turn2.Usage.Turn.Output)
+	}
+}
+
+// TestOnResult_SecondAgentInALaterTurnGetsThatTurn is the disambiguating
+// control for the test above. Without it, "always return the first turn ever
+// seen" would pass — the mapping has to be PER AGENT, not a single remembered
+// turn.
+func TestOnResult_SecondAgentInALaterTurnGetsThatTurn(t *testing.T) {
+	t.Parallel()
+	b := &Backend{}
+
+	onResultInTurn(b, "sess@1", func() {
+		b.noteAssistantUsage(fullMsg("claude-sonnet-5", "msg_a", "agent-old", 0, 100, 0, 0, 0))
+	}, map[string]ModelUsage{"claude-sonnet-5": {OutputTokens: 100, CostUSD: 0.01}})
+
+	// Turn 2 spawns a DIFFERENT agent, which must book to turn 2.
+	turn2 := onResultInTurn(b, "sess@2", func() {
+		b.noteAssistantUsage(fullMsg("claude-sonnet-5", "msg_b", "agent-new", 0, 50, 0, 0, 0))
+	}, map[string]ModelUsage{"claude-sonnet-5": {OutputTokens: 150, CostUSD: 0.02}})
+
+	if len(turn2.Usage.Subagents) != 1 {
+		t.Fatalf("turn 2 subagents = %+v, want one (agent-old did no work this turn)", turn2.Usage.Subagents)
+	}
+	sc := turn2.Usage.Subagents[0]
+	if sc.AgentID != "agent-new" || sc.TurnID != "sess@2" {
+		t.Errorf("agent=%q turn=%q, want agent-new/sess@2 — a new agent belongs to the turn that spawned IT",
+			sc.AgentID, sc.TurnID)
 	}
 }

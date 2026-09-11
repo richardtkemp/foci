@@ -165,6 +165,18 @@ type usageAccumulator struct {
 	// atLastResult is the running total as of the most recent RESULT message —
 	// the same boundary modelUsageDelta snapshots at. Marked by markResult.
 	atLastResult usageTotals
+	// curTurn is the turn_id of the turn currently open, and agentTurn is the
+	// turn each subagent was FIRST seen during (#1880 phase C). Together they
+	// answer "which turn spawned this agent" when its tokens arrive later —
+	// possibly much later, and possibly after the turn has closed.
+	//
+	// agentTurn is written once per agent and never at a turn boundary, because
+	// the spawning turn is a property of the agent, not of the window its
+	// tokens happen to land in. It is session-scoped like the totals: reset()
+	// clears it, beginTurn does not.
+	curTurn   string
+	agentTurn map[string]string
+
 	// atTurnStart is atLastResult's value when the current turn opened, i.e.
 	// the total as of the last result BEFORE this turn. Every per-turn figure
 	// is measured from here. Deliberately NOT the total at turn start itself:
@@ -201,7 +213,10 @@ func (a *usageAccumulator) markResult() { a.atLastResult = a.snapshot() }
 // It does NOT snapshot the current totals: messages that arrived between the
 // last result and this turn opening are inside the window that will be priced,
 // so the baseline has to sit before them, not after.
-func (a *usageAccumulator) beginTurn() { a.atTurnStart = a.atLastResult }
+func (a *usageAccumulator) beginTurn(turnID string) {
+	a.atTurnStart = a.atLastResult
+	a.curTurn = turnID
+}
 
 // note folds one API call's usage into the accumulator, ignoring a message
 // already counted.
@@ -227,6 +242,26 @@ func (a *usageAccumulator) note(model, agent string, isSub bool, id string, u To
 	}
 	if a.applied == nil {
 		a.applied = make(map[string]turnUsage)
+	}
+	// First sight of this agent fixes the turn it belongs to, and nothing
+	// afterwards moves it. A background subagent can outlive its parent by half
+	// an hour — one was seen pruned at 30m20s — and its late tokens must still
+	// book to the turn that started the work, not to whichever short turn
+	// happened to be open when they arrived. That misfiling is the whole of
+	// #1880: a 3.5-minute turn was recorded carrying 34 minutes and $11.71.
+	//
+	// Between turns curTurn still names the turn that just closed, which is the
+	// right answer for a straggler. The one case it misses is an agent whose
+	// very first message arrives after a LATER turn has opened; the transcript
+	// tail was measured landing within ~60ms of the result, so that window is
+	// narrow, and misfiling one agent is what this used to do to all of them.
+	if isSub && agent != "" {
+		if a.agentTurn == nil {
+			a.agentTurn = make(map[string]string)
+		}
+		if _, seen := a.agentTurn[agent]; !seen {
+			a.agentTurn[agent] = a.curTurn
+		}
 	}
 
 	// HIGH-WATER MARK PER CLASS, not first-wins.
@@ -533,6 +568,16 @@ func sortedSubagentCosts(m map[subKey]modelinfo.SubagentCost) []modelinfo.Subage
 	out := make([]modelinfo.SubagentCost, 0, len(keys))
 	for _, k := range keys {
 		out = append(out, m[k])
+	}
+	return out
+}
+
+// agentTurns copies the agent-to-spawning-turn map, so pricing (which runs
+// without the lock) cannot read a map another goroutine is writing.
+func (a *usageAccumulator) agentTurns() map[string]string {
+	out := make(map[string]string, len(a.agentTurn))
+	for k, v := range a.agentTurn {
+		out[k] = v
 	}
 	return out
 }

@@ -506,6 +506,7 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 	}
 
 	turnEvents := &delegator.TurnEvents{
+		TurnID:             ts.RowID(),
 		PostToolNudgeFunc:  postToolNudgeFunc,
 		PreAnswerNudgeFunc: preAnswerNudgeFunc,
 	}
@@ -708,6 +709,20 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 		for _, sc := range u.Subagents {
 			turnCost += sc.CostUSD
 			counts, cost := sc.Counts, sc.CostUSD
+			// The turn that SPAWNED this subagent, which is not always the one
+			// being written: a background subagent can outlive its parent by
+			// half an hour, and its spend belongs to the work that started it.
+			// That is the whole of #1880 — a 3.5-minute turn was recorded
+			// carrying 34 minutes and $11.71 of someone else's work. The
+			// fallback is this turn, which is the pre-#1880 answer.
+			//
+			// The row's TIMESTAMP stays this turn's: it records when the spend
+			// was booked, which is true and is what a time-window query wants.
+			// turn_id is what carries the attribution.
+			turnID := sc.TurnID
+			if turnID == "" {
+				turnID = ts.RowID()
+			}
 			log.API(log.APIEntry{
 				Timestamp: ts0,
 				Provider:  "anthropic",
@@ -725,7 +740,7 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 				DurationMS:        time.Since(ts.StartedAt).Milliseconds(),
 				StopReason:        "end_turn",
 				CallType:          "subagent_turn",
-				TurnID:            ts.RowID(),
+				TurnID:            turnID,
 				AgentID:           sc.AgentID,
 				SessionFile:       sessionFile,
 			})

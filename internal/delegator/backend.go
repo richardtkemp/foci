@@ -748,6 +748,16 @@ type SessionEvents struct {
 // tolerate that. These are bookkeeping only — delivery (text, tool events)
 // flows through SessionEvents regardless.
 type TurnEvents struct {
+	// TurnID is the agent layer's durable identity for this turn — the same
+	// string that becomes api_calls.turn_id (agent.TurnState.RowID()). The
+	// backend needs it because it is the only layer that knows WHICH turn
+	// spawned a given subagent, and a subagent's spend has to book to that turn
+	// however long afterwards it arrives (#1880 phase C).
+	//
+	// Empty from a caller that has no turn identity; the row then falls back to
+	// the turn that wrote it, which is the pre-#1880 behaviour.
+	TurnID string
+
 	// OnTurnComplete fires once when the turn finishes. The backend
 	// captures-then-nils TurnEvents under turnMu in OnResult so this
 	// invariant holds by construction (no counters needed).

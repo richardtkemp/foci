@@ -72,8 +72,16 @@ func (t TokenCounts) SubClamped(o TokenCounts) (TokenCounts, bool) {
 // usage that arrived before its task_started named the agent; that still
 // separates subagent spend from the parent's, which is the point.
 type SubagentCost struct {
-	AgentID string      `json:"agent_id"`
-	Model   string      `json:"model"`
+	AgentID string `json:"agent_id"`
+	Model   string `json:"model"`
+
+	// TurnID is the turn that SPAWNED this subagent, which is not always the
+	// turn whose books this share lands in: a background subagent can outlive
+	// its parent by half an hour, and its spend belongs to the work that
+	// started it (#1880 phase C). Empty when the backend could not name one, in
+	// which case the writer falls back to the turn it is writing.
+	TurnID string `json:"turn_id,omitempty"`
+
 	Counts  TokenCounts `json:"counts"`
 	CostUSD float64     `json:"cost_usd"`
 }
