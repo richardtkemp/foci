@@ -34,14 +34,35 @@
 // Arguments are unguardable in general (`bash -c` is the limiting case), so this
 // is a documented boundary, not a gap awaiting a patch.
 //
-// SCOPE: WHAT THE FILE IS, NEVER WHAT ITS DIRECTORY ALLOWS THROUGH A SYMLINK.
-// Shape 2 tests filepath.Dir of the path it was GIVEN, and filepath.Dir does not
-// follow symlinks; shape 1 uses access(2), which does. So for a symlink, this
-// package tests the TARGET's permissions and the SYMLINK's directory — never the
-// target's directory. A non-writable target inside a writable directory can
-// still be unlinked and recreated, and this package returns false for it.
-// Hardening a symlinked executable therefore has to cover both directories, not
-// just the two things the check happens to look at (#1898).
+// SYMLINKS: BOTH ENDS ARE CHECKED, AND THEY ARE DIFFERENT ATTACKS (#1893).
+// A symlinked command offers two independent substitutions, and until #1893
+// this package tested one thing from each end and so caught neither reliably:
+// access(2) follows the link (so shape 1 judged the TARGET), while filepath.Dir
+// is string manipulation and does not (so shape 2 judged the LINK's directory).
+// A read-only target in a writable directory therefore passed — its bytes can
+// be unlinked and recreated through that directory, which is exactly the
+// substitution this package exists to report. Every path is now resolved with
+// Env.EvalSymlinks first, shapes 1 and 2 are applied to the RESOLVED target,
+// and the link's own directory is checked as well, because a writable link
+// directory lets the link be re-pointed at different bytes entirely.
+//
+// NOT CHECKED: intermediate directories on the resolved path. A writable
+// ancestor (e.g. /home/foci for /home/foci/bin/tool) also permits substitution,
+// by renaming the directory component rather than the file. Deliberately out of
+// scope for #1893: on the live config it adds no finding the file/directory
+// tests do not already make, and a naive access(2) walk reports every path
+// under a sticky world-writable directory (/tmp, so every test fixture) as
+// substitutable — distinguishing those needs the mode/owner reconstruction
+// processCanWrite exists to avoid. Tracked separately rather than guessed at.
+//
+// Env IS A SNAPSHOT, NOT A HANDLE — DO NOT CACHE IT (#1900). PathDirs is read
+// from the process environment when Live() is called, and that environment
+// CHANGES after startup: cmd/foci-gw/main.go calls shellenv.Apply() from
+// main(), which os.Setenv()s the operator's dotfile PATH over the unit's. A
+// caller that builds an Env once — a package-level var is the trap, since Go
+// runs those initialisers before main() — pins the pre-shellenv PATH forever
+// and then judges a different file than the agent shell runs. Call Live() at
+// check time. See autoapprove.guardEnv for the shape that does this.
 package execguard
 
 import (
@@ -55,10 +76,17 @@ import (
 
 // Env supplies everything the check needs from the outside world. Injected so
 // tests exercise the logic without depending on the host's filesystem or PATH.
+//
+// EvalSymlinks may be nil, in which case paths are used as given. That is the
+// right default for the map-backed fakes in the unit tests — a set of strings
+// cannot model a link target — but it also means those fakes CANNOT exercise
+// symlink behaviour at all, in either direction. Symlink coverage lives in
+// execguard_symlink_test.go, against a real temp filesystem (#1893).
 type Env struct {
 	CanWrite     func(path string) bool
 	PathDirs     []string
 	IsExecutable func(path string) bool
+	EvalSymlinks func(path string) (string, error)
 	HomeDir      string
 }
 
@@ -78,26 +106,33 @@ func processCanExecute(path string) bool {
 	return unix.Access(path, unix.X_OK) == nil
 }
 
-// Live builds the Env describing this process.
+// Live builds the Env describing this process AT THE MOMENT IT IS CALLED.
 //
-// PATH comes from the daemon's own environment, which is the closest available
-// proxy for the PATH an agent's Bash tool will use. It is a PROXY, not the
-// truth: an agent shell is initialised from the user profile and may prepend
-// further directories.
+// PATH is read from os.Getenv here, so the value it captures depends entirely
+// on WHEN the call happens. foci-gw's PATH is written twice: the unit supplies
+// one (Makefile SERVICE_PATH -> deploy/foci.service.tmpl) and shellenv.Apply()
+// replaces it from the operator's dotfiles partway through main(). Tool shells
+// inherit the second one. So a Live() taken before shellenv.Apply() — anything
+// at package-init time, and config.Load — describes a PATH nothing will ever
+// execute under.
 //
 // That divergence is NOT merely permissive-at-the-margin. A directory the agent
-// searches and the daemon does not changes WHICH FILE this package judges, so it
+// searches and this Env does not changes WHICH FILE this package judges, so it
 // can report a bare name safe on the strength of a file the agent will never
-// run. Measured on the live host, 2026-09-11 (#1898): ~/.shellcommon prepends
-// $HOME/bin, which the unit's PATH omitted, so `mdq` resolved here to the
-// root-owned /usr/local/bin/mdq while the agent ran the writable
-// ~/bin/mdq wrapper that shadows it, and `mds` resolved to nothing at all —
-// which is also a pass, since an unresolvable token yields no verdict.
+// run. Measured on the live host, 2026-09-11 (#1900): ~/.shellcommon prepends
+// $HOME/scripts, which is agent-writable and sits ahead of /usr/bin, while the
+// unit's PATH has no such entry. Every bare-name allowlist rule — git, gh,
+// make, jq, sed, grep — resolved here to the root-owned /usr/bin copy and ran
+// from an agent-authored shadow. The fix is not to keep the two PATH lists in
+// sync (there are four hand-maintained copies and they were already out of
+// sync); it is to call Live() at check time so there is only ever one PATH.
 //
-// The unit's PATH (Makefile SERVICE_PATH -> deploy/foci.service.tmpl) must
-// therefore mirror the agent shell's, and a new directory added to one belongs
-// in the other. Verify with: diff <(systemctl show -p Environment foci) against
-// the PATH an agent's Bash tool reports.
+// /proc/<pid>/environ CANNOT be used to audit this. It records the environment
+// at EXEC time and is never updated by os.Setenv, so it shows the unit's PATH
+// no matter what shellenv installed. Two independent readings of it produced
+// the same wrong diagnosis for #1900 and the agreement looked like
+// corroboration. To see a running process's live PATH, read it from a child it
+// spawned.
 func Live() Env {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -107,6 +142,7 @@ func Live() Env {
 		CanWrite:     processCanWrite,
 		PathDirs:     filepath.SplitList(os.Getenv("PATH")),
 		IsExecutable: processCanExecute,
+		EvalSymlinks: filepath.EvalSymlinks,
 		HomeDir:      home,
 	}
 }
@@ -166,14 +202,42 @@ func Substitutable(token string, env Env) (bool, string, string) {
 	return checkBareCommand(token, env)
 }
 
-// checkResolvedPath applies shapes 1 and 2 to a known path.
-func checkResolvedPath(path string, env Env) (bool, string, string) {
-	if env.CanWrite(path) {
-		return true, path, "the file is writable by the foci process"
+// evalSymlinks resolves path to the file whose bytes actually execute. A nil
+// resolver or a resolution error (the commonest cause being a path that does
+// not exist, which every injected-Env unit test relies on) leaves the path
+// untouched — never a verdict, just no extra information.
+func evalSymlinks(path string, env Env) string {
+	if env.EvalSymlinks == nil {
+		return path
 	}
-	dir := filepath.Dir(path)
-	if env.CanWrite(dir) {
-		return true, path, fmt.Sprintf("its directory %s is writable by the foci process, so the file can be replaced", dir)
+	real, err := env.EvalSymlinks(path)
+	if err != nil || real == "" {
+		return path
+	}
+	return real
+}
+
+// checkResolvedPath applies shapes 1 and 2 to a known path, against the file
+// the path RESOLVES to rather than the path itself, plus the symlink-specific
+// third vector. See the package doc (#1893) for why all three are needed.
+func checkResolvedPath(path string, env Env) (bool, string, string) {
+	real := evalSymlinks(path, env)
+
+	// Shape 1: the bytes that execute are directly writable.
+	if env.CanWrite(real) {
+		return true, real, "the file is writable by the foci process"
+	}
+	// Shape 2: the directory holding those bytes is writable, so a read-only
+	// file there can still be unlinked and recreated.
+	if dir := filepath.Dir(real); env.CanWrite(dir) {
+		return true, real, fmt.Sprintf("its directory %s is writable by the foci process, so the file can be replaced", dir)
+	}
+	// Shape 3, symlinks only: the LINK's directory is writable, so the link can
+	// be re-pointed at other bytes without touching the target at all.
+	if real != path {
+		if dir := filepath.Dir(path); env.CanWrite(dir) {
+			return true, path, fmt.Sprintf("it is a symlink in %s, which is writable by the foci process, so the link can be re-pointed", dir)
+		}
 	}
 	return false, "", ""
 }
@@ -187,18 +251,55 @@ func checkResolvedPath(path string, env Env) (bool, string, string) {
 // trains the operator to ignore the warning. If the shadow is ever created, it
 // becomes the PATH winner and this check catches it on the next startup.
 func checkBareCommand(name string, env Env) (bool, string, string) {
+	winner, found := lookPath(name, env)
+	if !found {
+		// Not found on PATH: a shell function, or absent, or — the case that
+		// hid #1900 for a month — present, but only on a PATH this Env does
+		// not describe. Nothing to substitute that we can SEE, so no verdict.
+		// Callers that can afford to be loud should ask UnresolvedBareName
+		// first; a silent pass here is indistinguishable from "safe".
+		return false, "", ""
+	}
+	return checkResolvedPath(winner, env)
+}
+
+// lookPath performs the shell's own PATH search: the first executable of that
+// name wins, and later directories are unreachable.
+func lookPath(name string, env Env) (string, bool) {
 	for _, dir := range env.PathDirs {
 		if dir == "" {
 			continue
 		}
 		candidate := filepath.Join(dir, name)
-		if !env.IsExecutable(candidate) {
-			continue
+		if env.IsExecutable(candidate) {
+			return candidate, true
 		}
-		// First match wins the search; later directories are unreachable.
-		return checkResolvedPath(candidate, env)
 	}
-	// Not found on PATH: a shell builtin, a shell function, or simply absent.
-	// Nothing to substitute that we can see, so no verdict.
-	return false, "", ""
+	return "", false
+}
+
+// UnresolvedBareName reports whether token is a plain command name that no
+// directory on env.PathDirs provides.
+//
+// Substitutable answers false for such a token, which is correct — it has no
+// file to judge — but that false is INDISTINGUISHABLE from "checked and safe",
+// and the two mean opposite things for an auto_approve entry. #1900 lived in
+// that gap: `mds` was absent from the daemon's PATH, read as nothing to
+// substitute, and ran from an agent-writable directory every time. A rule
+// naming a command the guard cannot locate is a configuration error — either
+// the entry is dead, or the guard is looking at the wrong PATH — and either way
+// it deserves a warning rather than a silent approval.
+//
+// Tokens Substitutable deliberately declines to judge (builtins, globs, and
+// anything with a path separator, which is resolved directly) are not
+// "unresolved" and yield false.
+func UnresolvedBareName(token string, env Env) bool {
+	if token == "" || hasGlobMeta(token) || bashBuiltins[token] {
+		return false
+	}
+	if strings.HasPrefix(token, "~") || strings.Contains(token, "/") {
+		return false
+	}
+	_, found := lookPath(token, env)
+	return !found
 }

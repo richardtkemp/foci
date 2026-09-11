@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"foci/internal/execguard"
 	"os"
 	"path/filepath"
 
@@ -313,11 +312,14 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
-	// Drop auto_approve entries naming an executable the foci process can
-	// replace — approving such an entry approves whatever the path holds at run
-	// time, not the command the operator read. Runs before Validate so a dropped
-	// entry cannot satisfy any later check.
-	cfg.dropWritableAutoApproveRules(execguard.Live())
+	// NOTE: auto_approve entries naming an executable the foci process can
+	// replace are dropped by DropSubstitutableAutoApproveRules, which is
+	// deliberately NOT called here. That check resolves command names against
+	// the process PATH, and shellenv.Apply() rewrites the PATH from the
+	// operator's dotfiles after Load returns — Load cannot run earlier, because
+	// it is what supplies shell_env_file. Judging binaries against a PATH that
+	// is about to be replaced is what #1900 was. cmd/foci-gw/main.go calls it
+	// immediately after shellenv.Apply() instead.
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)

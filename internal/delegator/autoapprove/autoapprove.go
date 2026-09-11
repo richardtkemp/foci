@@ -838,12 +838,23 @@ func isSpecialParam(name string) bool {
 
 // ---------- Command segment validation ----------
 
-// guardEnv describes the filesystem/PATH this process sees, for the
-// substitutability check below. It is a package-level value rather than a
-// parameter because it would otherwise have to thread through three backends'
-// call sites; the freshness that matters comes from the CanWrite/IsExecutable
-// calls, which hit the filesystem on every check, not from re-reading PATH.
-var guardEnv = execguard.Live()
+// guardEnv supplies the filesystem/PATH view for the substitutability check
+// below. It is package-level rather than a parameter because it would otherwise
+// have to thread through three backends' call sites, and tests swap it.
+//
+// IT IS A FUNCTION, AND THAT IS THE WHOLE POINT (#1900). It used to be
+// `var guardEnv = execguard.Live()` — a value — whose comment claimed PATH did
+// not need re-reading because CanWrite/IsExecutable hit the filesystem on every
+// check. That premise was wrong twice over. Go evaluates package-level
+// initialisers before main(), and cmd/foci-gw/main.go calls shellenv.Apply()
+// from inside main(), so the value captured the PATH the daemon was EXECd with
+// and never the one shellenv installed from the operator's dotfiles — which is
+// the PATH every tool shell actually uses. Re-reading PATH is exactly what
+// matters: which directories are searched decides WHICH FILE gets judged, and a
+// root-owned /usr/bin/git passing tells you nothing when an agent-writable
+// ~/scripts/git is what runs. Calling Live() per check means there is one PATH,
+// whatever shellenv last installed, with no list to keep in sync.
+var guardEnv = execguard.Live
 
 // commandIsSubstitutable reports whether the foci process could swap out the
 // executable this segment will run. Vetoing here — at match time — is what
@@ -858,7 +869,7 @@ func commandIsSubstitutable(segment string) bool {
 	if len(tokens) == 0 {
 		return false
 	}
-	substitutable, _, _ := execguard.Substitutable(tokens[0], guardEnv)
+	substitutable, _, _ := execguard.Substitutable(tokens[0], guardEnv())
 	return substitutable
 }
 

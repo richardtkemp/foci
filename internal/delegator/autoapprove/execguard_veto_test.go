@@ -16,20 +16,25 @@ import (
 // and unrelated tests fail. Those failures were correct behaviour but useless
 // signal. Tests that care about the veto set guardEnv themselves.
 func TestMain(m *testing.M) {
-	guardEnv = execguard.Env{
+	hermetic := execguard.Env{
 		CanWrite:     func(string) bool { return false },
 		PathDirs:     []string{"/usr/bin"},
 		IsExecutable: func(p string) bool { return filepath.Dir(p) == "/usr/bin" },
 		HomeDir:      "/home/foci",
 	}
+	guardEnv = func() execguard.Env { return hermetic }
 	os.Exit(m.Run())
 }
 
 // withGuardEnv swaps the package guard for one test and restores it after.
+// Note what this CANNOT test: a fixed Env pinned here proves only that
+// Substitutable respects whatever PathDirs it is handed, which was never the
+// bug. The init-vs-shellenv ordering that #1900 was about needs the real
+// execguard.Live — see execguard_pathorder_test.go.
 func withGuardEnv(t *testing.T, env execguard.Env) {
 	t.Helper()
 	prev := guardEnv
-	guardEnv = env
+	guardEnv = func() execguard.Env { return env }
 	t.Cleanup(func() { guardEnv = prev })
 }
 
