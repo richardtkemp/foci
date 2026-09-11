@@ -54,7 +54,7 @@ func TestRunInject_DefersWhileAskPending(t *testing.T) {
 
 	// Resolve the ask → DrainDeferredInjects re-enqueues the deferred injection.
 	pending.Store(false)
-	ag.DrainDeferredInjects(sk)
+	ag.DrainDeferredInjects(sk, "req1")
 	select {
 	case env := <-inb.ch:
 		if env.Inject == nil {
@@ -107,7 +107,7 @@ func TestInbox_Inject_DefersThroughWorker(t *testing.T) {
 	}
 
 	pending.Store(false)
-	a.DrainDeferredInjects(sk)
+	a.DrainDeferredInjects(sk, "ask-1")
 	if !waitFor(time.Second, func() bool { return ran.Load() == 1 }) {
 		t.Fatalf("redelivered injection did not run after ask resolved; ran=%d", ran.Load())
 	}

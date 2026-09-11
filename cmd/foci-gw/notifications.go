@@ -187,7 +187,7 @@ func handleRestartAndFirstRun(
 			}
 
 			msg := prompts.FormatInjectedMessage(tag, time.Now(), body)
-			deliverToSessionChat(inst.ag, ctx, "restart", connMgr, agentID, sk, msg)
+			deliverToSessionChat(inst.ag, ctx, "restart", connMgr, agentID, sk, msg, "")
 		}()
 	}
 

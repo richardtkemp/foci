@@ -51,7 +51,7 @@ type toolDeps struct {
 	wakeCancelFn tools.CancelWakeFn
 
 	sessionNotify tools.SessionNotifyFn // send_to_session → via=agent
-	askDeliver    tools.SessionNotifyFn // ask answer/grader delivery → via=ask-grader
+	askDeliver    tools.AskDeliverFn    // ask answer/grader delivery → via=ask-grader
 	agentTTS      func() voice.TTS
 	blockedPaths  []config.BlockedPath // API-only (write/edit)
 
@@ -322,14 +322,16 @@ var toolTable = []toolEntry{
 		t, router := tools.NewAskTool(
 			newAskPresentFn(d.p.acfg.ID, d.connMgr),
 			newAskRestoreFn(d.p.acfg.ID, d.connMgr),
-			tools.AskDeliverFn(d.askDeliver),
+			d.askDeliver,
 			func(msgID, finalText string) { _ = platform.CancelInteractiveMessage(msgID, finalText) },
 			d.p.sessionIndex, d.p.acfg.ID,
 			tools.WithBatchPresent(newAskPresentBatchFn(d.p.acfg.ID, d.connMgr)),
 			tools.WithBatchRestore(newAskRestoreBatchFn(d.p.acfg.ID, d.connMgr)),
-			tools.WithOnResolve(func(sk string) {
+			// Per-ask (#1711 ruling 5): release only what THIS ask was holding,
+			// so a sibling ask's backlog stays deferred (#1712).
+			tools.WithOnResolve(func(sk, reqID string) {
 				if ag := d.agLazy(); ag != nil {
-					ag.DrainDeferredInjects(sk)
+					ag.DrainDeferredInjects(sk, reqID)
 				}
 			}),
 			// Gate the trivial "ask cancelled" injection away from cold-cache

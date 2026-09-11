@@ -252,7 +252,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 		wakeFn:           shared.wakeScheduleFn,
 		wakeCancelFn:     shared.wakeCancelFn,
 		sessionNotify:    newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr, "session_notify"),
-		askDeliver:       newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr, "ask_grader"),
+		askDeliver:       newAskDeliverFn(p.agentResolverFn, p.ctx, connMgr),
 		agentTTS:         agentTTS,
 		blockedPaths:     blockedPaths,
 		client:           client,

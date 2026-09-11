@@ -119,7 +119,7 @@ func newAsyncNotifier(
 			return
 		}
 		// DELIVER-TO-CHAT: the result belongs to the target's own chat.
-		deliverToSessionChat(targetAg, ctx, trigger, connMgr, targetAgentID, target, message)
+		deliverToSessionChat(targetAg, ctx, trigger, connMgr, targetAgentID, target, message, "")
 	})
 }
 
@@ -140,7 +140,7 @@ func relayResponseToCaller(
 	targetAg *agent.Agent,
 	targetSession, callerSession, message, trigger string,
 ) {
-	enqueueInject(targetAg, targetSession, trigger, func() {
+	enqueueInject(targetAg, targetSession, trigger, "", func() {
 		// Capture the target's output instead of delivering it to a chat.
 		buf := turnevent.NewBufferSink()
 		notifyCtx := turnevent.WithSink(agent.WithTrigger(ctx, trigger), buf)
@@ -159,7 +159,7 @@ func relayResponseToCaller(
 		formattedResp := "Response from session " + targetSession + ":\n" + resp
 		injected := prompts.FormatInjectedMessage("SESSION RESPONSE", time.Now(), formattedResp,
 			"[Inter-session response — the target session processed your message and returned this result. Relay the result to the user.]")
-		deliverToSessionChat(getAgent(), ctx, trigger, connMgr, callerAgentID, callerSession, injected)
+		deliverToSessionChat(getAgent(), ctx, trigger, connMgr, callerAgentID, callerSession, injected, "")
 	})
 }
 
@@ -176,18 +176,45 @@ func newSessionNotifyFn(
 	trigger string,
 ) tools.SessionNotifyFn {
 	return tools.SessionNotifyFn(func(targetSessionKey, message string) {
-		sk, err := session.ParseSessionKey(targetSessionKey)
-		if err != nil {
-			log.NewComponentLogger(trigger).Errorf("invalid session key %q: %v", targetSessionKey, err)
-			return
-		}
-		inst := agentResolverFn(sk.AgentID)
-		if inst == nil {
-			log.NewComponentLogger(trigger).Errorf("unknown agent %q for session %s", sk.AgentID, targetSessionKey)
-			return
-		}
-		deliverToSessionChat(inst.ag, ctx, trigger, connMgr, sk.AgentID, targetSessionKey, message)
+		deliverToResolvedSession(agentResolverFn, ctx, connMgr, trigger, targetSessionKey, "", message)
 	})
+}
+
+// newAskDeliverFn is newSessionNotifyFn for the ask tool's answer/grader
+// delivery: identical resolution and delivery, but it tags the injection with the
+// requestID of the ask that produced the message. That tag is what lets the inbox
+// tell a verdict for the ask that just resolved from a proactive interruption, so
+// it is no longer held behind the NEXT ask (#1712).
+func newAskDeliverFn(
+	agentResolverFn func(agentID string) *agentInstance,
+	ctx context.Context,
+	connMgr platform.ConnectionManager,
+) tools.AskDeliverFn {
+	return func(targetSessionKey, requestID, message string) {
+		deliverToResolvedSession(agentResolverFn, ctx, connMgr, "ask_grader", targetSessionKey, requestID, message)
+	}
+}
+
+// deliverToResolvedSession resolves targetSessionKey's owning agent and delivers
+// message into its chat as an injected turn. Shared by newSessionNotifyFn and
+// newAskDeliverFn so the two cannot drift.
+func deliverToResolvedSession(
+	agentResolverFn func(agentID string) *agentInstance,
+	ctx context.Context,
+	connMgr platform.ConnectionManager,
+	trigger, targetSessionKey, askReqID, message string,
+) {
+	sk, err := session.ParseSessionKey(targetSessionKey)
+	if err != nil {
+		log.NewComponentLogger(trigger).Errorf("invalid session key %q: %v", targetSessionKey, err)
+		return
+	}
+	inst := agentResolverFn(sk.AgentID)
+	if inst == nil {
+		log.NewComponentLogger(trigger).Errorf("unknown agent %q for session %s", sk.AgentID, targetSessionKey)
+		return
+	}
+	deliverToSessionChat(inst.ag, ctx, trigger, connMgr, sk.AgentID, targetSessionKey, message, askReqID)
 }
 
 // turnSinkForConn returns the best turn-event sink for a connection. For app
@@ -238,7 +265,7 @@ func logInjectionError(trigger string, err error, format string, args ...interfa
 // and a rejected enqueue (full inbox) is logged and dropped. Queueing serialises
 // the turn with the session's platform turns and defers it behind a pending
 // foci_ask — a system injection waits for an in-flight turn, never steers it.
-func enqueueInject(ag *agent.Agent, sessionKey, trigger string, body func()) {
+func enqueueInject(ag *agent.Agent, sessionKey, trigger, askReqID string, body func()) {
 	run := func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -249,7 +276,7 @@ func enqueueInject(ag *agent.Agent, sessionKey, trigger string, body func()) {
 	}
 	if !ag.Enqueue(agent.Envelope{
 		SessionKey: sessionKey,
-		Inject:     &agent.InjectMeta{Trigger: trigger, Run: run},
+		Inject:     &agent.InjectMeta{Trigger: trigger, Run: run, AskReqID: askReqID},
 	}) {
 		log.NewComponentLogger(trigger).Warnf("inbox rejected injected turn for session %s", sessionKey)
 	}
@@ -271,8 +298,9 @@ func deliverToSessionChat(
 	trigger string,
 	connMgr platform.ConnectionManager,
 	agentID, sessionKey, message string,
+	askReqID string,
 ) {
-	enqueueInject(ag, sessionKey, trigger, func() {
+	enqueueInject(ag, sessionKey, trigger, askReqID, func() {
 		conn, outcome := route.ConnFor(connMgr, agentID, sessionKey, route.PolicyFallback)
 		notifyCtx := agent.WithTrigger(ctx, trigger)
 		if conn == nil {
@@ -348,7 +376,7 @@ func buildWakeScheduler(
 				// no manual in-flight wait needed. A facet key queues on the
 				// facet's own inbox, so a turn on another session does not
 				// delay the wake (#719).
-				deliverToSessionChat(getAgent(), ctx, "scheduled_wake", connMgr, agentID, sk, prompts.FormatInjectedMessage("SCHEDULED WAKE", time.Now(), message))
+				deliverToSessionChat(getAgent(), ctx, "scheduled_wake", connMgr, agentID, sk, prompts.FormatInjectedMessage("SCHEDULED WAKE", time.Now(), message), "")
 				wakesMu.Lock()
 				delete(wakes, id)
 				wakesMu.Unlock()
