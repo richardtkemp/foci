@@ -27,6 +27,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/defersend"
 	"foci/internal/display"
+	"foci/internal/execguard"
 	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/modelcaps"
@@ -143,6 +144,15 @@ Subcommands:
 	// Load the operator's shell env into this process before any backend
 	// spawns, so tool shells inherit it via os.Environ().
 	shellenv.Apply(cfg.ShellEnvFile)
+
+	// Only NOW is the PATH final, so only now can the auto_approve entries be
+	// judged against the PATH their commands will actually run under. Dropping
+	// entries whose executable this process could replace has to happen after
+	// shellenv, not inside config.Load: before this line the PATH is the unit's,
+	// which is a hand-maintained copy of what the dotfiles build and was
+	// measurably out of sync with it (#1900). Keep this call adjacent to
+	// shellenv.Apply — separating them is how the defect comes back.
+	cfg.DropSubstitutableAutoApproveRules(execguard.Live())
 
 	// Inject the nosgid LD_PRELOAD shim (same inheritance mechanism) so shell
 	// tools and delegated backends get POSIX "drop the setgid bit" chmod

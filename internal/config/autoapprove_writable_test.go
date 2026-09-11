@@ -90,7 +90,7 @@ func TestFilterWritableAutoApproveRules(t *testing.T) {
 			p == "/home/foci/scripts/x.py"
 	}
 
-	kept, dropped := filterWritableAutoApproveRules(rules, env)
+	kept, dropped, _ := filterWritableAutoApproveRules(rules, env)
 
 	wantKept := []string{"Bash:/usr/bin/sqlite3 -readonly", "Bash:git *", "Bash:cd *", "Read:/home/foci/data/*"}
 	if len(kept) != len(wantKept) {
@@ -112,9 +112,9 @@ func TestFilterWritableAutoApproveRules(t *testing.T) {
 }
 
 func TestFilterWritableAutoApproveRules_NoRules(t *testing.T) {
-	kept, dropped := filterWritableAutoApproveRules(nil, readOnlyPath())
-	if len(kept) != 0 || len(dropped) != 0 {
-		t.Fatalf("kept=%v dropped=%v, want both empty", kept, dropped)
+	kept, dropped, unlocatable := filterWritableAutoApproveRules(nil, readOnlyPath())
+	if len(kept) != 0 || len(dropped) != 0 || len(unlocatable) != 0 {
+		t.Fatalf("kept=%v dropped=%v unlocatable=%v, want all empty", kept, dropped, unlocatable)
 	}
 }
 
@@ -127,7 +127,7 @@ func TestDropWritableAutoApproveRules_GlobalAndPerAgent(t *testing.T) {
 	}
 	env := testEnv(nil, []string{"/bad/g.sh", "/bad/a.sh"}, nil)
 
-	cfg.dropWritableAutoApproveRules(env)
+	cfg.DropSubstitutableAutoApproveRules(env)
 
 	if got := cfg.Permissions.AutoApprove; len(got) != 1 || got[0] != "Bash:/good/g.sh *" {
 		t.Errorf("global AutoApprove = %v, want [Bash:/good/g.sh *]", got)
@@ -137,5 +137,35 @@ func TestDropWritableAutoApproveRules_GlobalAndPerAgent(t *testing.T) {
 	}
 	if got := cfg.Agents[1].Permissions.AutoApprove; len(got) != 1 || got[0] != "Bash:/good/s.sh *" {
 		t.Errorf("scout AutoApprove = %v, want [Bash:/good/s.sh *]", got)
+	}
+}
+
+// #1900 fix direction (c): "the guard cannot find this command" must be a
+// distinct, reportable outcome. Substitutable answers false for such an entry,
+// identically to "checked and safe" — and that silence is what let a
+// PATH-divergence hide for a month.
+func TestFilterWritableAutoApproveRules_ReportsCommandsItCannotLocate(t *testing.T) {
+	rules := []string{
+		"Bash:git *",       // on PATH, read-only: kept, located
+		"Bash:mds *",       // on NO directory of this PATH: kept, but reported
+		"Bash:cd *",        // builtin: the shell never searches PATH, not a finding
+		"Bash:foci_* ",     // glob: names no single file, not a finding
+		"Bash:/opt/x.sh *", // explicit path: resolved directly, not a bare name
+		"Read:/data/*",     // not a Bash entry at all
+	}
+
+	kept, dropped, unlocatable := filterWritableAutoApproveRules(rules, readOnlyPath())
+
+	if len(kept) != len(rules) {
+		t.Fatalf("kept %d of %d — an unlocatable command must not DROP the entry, only report it: %v", len(kept), len(rules), kept)
+	}
+	if len(dropped) != 0 {
+		t.Fatalf("dropped = %+v, want none", dropped)
+	}
+	if len(unlocatable) != 1 {
+		t.Fatalf("unlocatable = %+v, want exactly one (mds). Builtins, globs and explicit paths are not 'missing from PATH'.", unlocatable)
+	}
+	if unlocatable[0].Command != "mds" || unlocatable[0].Rule != "Bash:mds *" {
+		t.Errorf("unlocatable[0] = %+v, want {Rule:\"Bash:mds *\" Command:\"mds\"}", unlocatable[0])
 	}
 }
