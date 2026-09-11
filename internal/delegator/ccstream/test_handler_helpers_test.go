@@ -21,6 +21,10 @@ type testHandler struct {
 	OnSubagentPrompt func(groupKey, prompt string, runIndex int)
 	OnTurnComplete   func(result *delegator.TurnResult)
 
+	// TurnID is the agent layer's durable turn identity (#1880 phase C). Only
+	// the tests that span more than one turn set it.
+	TurnID string
+
 	PostToolNudgeFunc  func(toolName, toolInput string, isError bool) []string
 	PreAnswerNudgeFunc func(result *delegator.TurnResult) string
 }
@@ -48,6 +52,7 @@ func (h *testHandler) turn() *delegator.TurnEvents {
 		return nil
 	}
 	return &delegator.TurnEvents{
+		TurnID:             h.TurnID,
 		OnTurnComplete:     h.OnTurnComplete,
 		PostToolNudgeFunc:  h.PostToolNudgeFunc,
 		PreAnswerNudgeFunc: h.PreAnswerNudgeFunc,
@@ -71,6 +76,7 @@ func applyHandler(b *Backend, h *testHandler) {
 		OnSubagentPrompt: h.OnSubagentPrompt,
 	})
 	b.beginTurn(&delegator.TurnEvents{
+		TurnID:             h.TurnID,
 		OnTurnComplete:     h.OnTurnComplete,
 		PostToolNudgeFunc:  h.PostToolNudgeFunc,
 		PreAnswerNudgeFunc: h.PreAnswerNudgeFunc,

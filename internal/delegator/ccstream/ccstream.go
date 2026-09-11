@@ -203,7 +203,12 @@ type Backend struct {
 	turnParentCostUSD float64
 	turnParentCalc    modelinfo.TokenCounts
 	turnSubagents     map[subKey]modelinfo.SubagentCost
-	turnProvidedSeen  bool // CC reported a cost for ≥1 cycle this turn; distinguishes "$0" from "absent"
+	// turnRowID is TurnEvents.TurnID for the turn currently open — the agent
+	// layer's durable turn identity, handed to the accumulator so a subagent's
+	// spend can name the turn that SPAWNED it rather than the one that closed
+	// while its tokens were in flight (#1880 phase C).
+	turnRowID        string
+	turnProvidedSeen bool // CC reported a cost for ≥1 cycle this turn; distinguishes "$0" from "absent"
 	// This turn's usage accumulated PER ASSISTANT MESSAGE, bucketed by model
 	// and by subagent-or-not (#1866). Per-message because only there does CC
 	// report the cache-write TTL split and the message's own model; the result's

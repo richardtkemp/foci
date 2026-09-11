@@ -182,5 +182,5 @@ func (b *Backend) resetTurnCostAccumulatorsLocked() {
 	// window a turn is priced over starts at the PREVIOUS RESULT, before this
 	// turn opened. Wiping here is what lost 85-99% of the cache-write tokens
 	// (#1880).
-	b.turnUsageAcc.beginTurn()
+	b.turnUsageAcc.beginTurn(b.turnRowID)
 }

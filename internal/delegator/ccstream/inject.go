@@ -102,6 +102,13 @@ func (b *Backend) beginTurnLocked(turn *delegator.TurnEvents) {
 	b.turnActive = true
 	b.turnStartedAt = time.Now()
 	b.turnEvents = turn
+	// BEFORE resetTurnCostAccumulatorsLocked below, which hands this to the
+	// accumulator's beginTurn. Setting it after would open every turn with the
+	// PREVIOUS turn's id in the accumulator.
+	b.turnRowID = ""
+	if turn != nil {
+		b.turnRowID = turn.TurnID
+	}
 	b.turnText.Reset()
 	b.turnTools = 0
 	b.turnResultCh = make(chan *ResultMessage, 1)

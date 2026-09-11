@@ -505,6 +505,7 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		b.turnMu.Lock()
 		topObserved := b.turnUsageAcc.topWriteSplitByModel()
 		subDelta := b.turnUsageAcc.subagentDelta()
+		spawnedBy := b.turnUsageAcc.agentTurns()
 		b.turnMu.Unlock()
 
 		now := time.Now()
@@ -541,6 +542,10 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 			cycleSubs[k] = modelinfo.SubagentCost{
 				AgentID: k.Agent,
 				Model:   prefixedModel(k.Model),
+				// The turn that SPAWNED this agent, not the one closing now.
+				// They differ exactly when a background subagent outlives its
+				// parent — the case #1880 exists for.
+				TurnID:  spawnedBy[k.Agent],
 				Counts:  c,
 				CostUSD: cost,
 			}
@@ -619,7 +624,7 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		for k, sc := range cycleSubs {
 			e, seen := b.turnSubagents[k]
 			if !seen {
-				e = modelinfo.SubagentCost{AgentID: sc.AgentID, Model: sc.Model}
+				e = modelinfo.SubagentCost{AgentID: sc.AgentID, Model: sc.Model, TurnID: sc.TurnID}
 			}
 			e.Counts = e.Counts.Add(sc.Counts)
 			e.CostUSD += sc.CostUSD

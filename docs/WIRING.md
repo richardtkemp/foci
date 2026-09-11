@@ -1533,11 +1533,35 @@ Four outputs:
    the first version of the fix: with parent and subagent on DIFFERENT models the two splits
    are identical, so swapping them reddened nothing.
 
-   **Still open (phase C, second half):** a subagent that outlives its parent turn books to
-   whichever turn is open when its tokens arrive. Its spend is now in a `subagent_turn` row
-   rather than polluting the next parent row — so "the next turn shows only its own cost"
-   holds — but the row carries that turn's `turn_id`, not the spawning turn's. Fixing it
-   needs the spawning turn's id plumbed into the backend and held per agent.
+   **Phase C second half: a straggler books to the turn that SPAWNED it.** The agent layer's
+   `TurnState.RowID()` now travels into the backend on `TurnEvents.TurnID`, which
+   `beginTurnLocked` stores as `b.turnRowID` and hands to `usageAccumulator.beginTurn`.
+   `note()` records, once per agent, the turn open when that agent was FIRST seen
+   (`agentTurn`), and that is what `SubagentCost.TurnID` and therefore the row carries.
+   Written once and never moved, because the spawning turn is a property of the agent, not
+   of the window its tokens land in; session-scoped, so `reset()` clears it and `beginTurn`
+   does not.
+
+   Ordering is load-bearing: `b.turnRowID` is assigned in `beginTurnLocked` BEFORE
+   `resetTurnCostAccumulatorsLocked`, which is what passes it on. Assigning it after opens
+   every turn with the previous turn's id in the accumulator, and the fail-arm for that
+   reddens both straggler tests.
+
+   Between turns `curTurn` still names the turn that just closed, which is the right answer
+   for a straggler. The one case this misses is an agent whose very first message arrives
+   after a LATER turn has opened; the transcript tail was measured landing within ~60ms of
+   the result, so the window is narrow — and misfiling one agent is what this used to do to
+   all of them.
+
+   The row's TIMESTAMP stays the writing turn's: it records when the spend was booked,
+   which is true and is what a time-window query wants. `turn_id` carries the attribution.
+
+   **A pruned subagent does not lose its spend.** `SubagentTracker.pruneLocked` drops an
+   agent after 30 minutes without a completion signal (one was observed pruned at 30m20s),
+   but that tracker exists only for the pending-work gate and the status line. It touches
+   neither the tail — only `stopAll` at backend shutdown stops those — nor the accumulator,
+   whose maps are cumulative for the Backend's life. So a pruned agent's tokens keep
+   arriving, keep accumulating, and still emit a row against their spawning turn.
 
    **Fixtures in this package must set `Message.ID`.** The accumulator drops empty-id
    messages, and no pre-P3 fixture set one — so every earlier end-to-end cost test ran
