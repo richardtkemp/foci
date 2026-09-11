@@ -1399,8 +1399,16 @@ Four outputs:
      usage before, and independently of, the text sink — a consumer with no text sink still
      spends real money.
 
-   The tail runs ONLY for foreground subagents (`maybeStart` gates on `expectFg`);
-   background ones arrive by the stream alone.
+   The tail runs for EVERY subagent; `expectFg` now decides only whether it also forwards
+   TEXT (#1880 phase C prerequisite). It used to start for foreground subagents alone,
+   which was right about text and wrong about money: a foreground subagent's text is
+   filtered out of the parent stream, and a background subagent's is not — but the stream
+   NEVER completes `output_tokens` for either. Every assistant line carries
+   `stop_reason: null` and a running count of 1-3 that is never revised, so background
+   subagents' output had no second source to correct it. Their transcripts carry the
+   completed figure exactly like foreground ones (verified by starting one and reading the
+   file it wrote: a message reading 2, then 319). Cost is one goroutine and one file handle
+   per live subagent.
 
    **The totals are CUMULATIVE for the Backend's life; a turn's figure is a DIFFERENCE
    (#1880 phase B).** `beginTurn` moves the per-turn baseline to `atLastResult` — the
