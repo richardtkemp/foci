@@ -195,8 +195,15 @@ type Backend struct {
 	// fill (what compaction needs), so this is the only record of which class
 	// foci charged for (#1695); it is emitted as TurnUsage.Turn so api.db can
 	// re-price a row to its own cost (#1854).
-	turnCalc         modelinfo.TokenCounts
-	turnProvidedSeen bool // CC reported a cost for ≥1 cycle this turn; distinguishes "$0" from "absent"
+	turnCalc modelinfo.TokenCounts
+	// The PARENT's share of the two above — the whole turn minus what its
+	// subagents spent (#1880 phase C). These are what the parent api_calls row
+	// carries; turnSubagents becomes one extra row each, so the turn's rows sum
+	// back to turnCalcCostUSD/turnCalc with nothing counted twice.
+	turnParentCostUSD float64
+	turnParentCalc    modelinfo.TokenCounts
+	turnSubagents     map[subKey]modelinfo.SubagentCost
+	turnProvidedSeen  bool // CC reported a cost for ≥1 cycle this turn; distinguishes "$0" from "absent"
 	// This turn's usage accumulated PER ASSISTANT MESSAGE, bucketed by model
 	// and by subagent-or-not (#1866). Per-message because only there does CC
 	// report the cache-write TTL split and the message's own model; the result's

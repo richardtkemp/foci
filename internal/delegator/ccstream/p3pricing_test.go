@@ -70,10 +70,39 @@ func TestOnResult_SubagentCacheWritesPriceAtTheFiveMinuteRate(t *testing.T) {
 	}
 	want5m := 100000 * 6.25 / 1e6  // $0.625
 	want1h := 100000 * 10.00 / 1e6 // $1.000 — what the bug charged
-	if math.Abs(*got.Usage.CalculatedCostUSD-want5m) > 1e-9 {
+	// The TURN total, which since #1880 phase C is the parent row plus its
+	// subagent rows. Asserted on the total rather than the parent because the
+	// rate is what this test is about; the split is asserted right below, and
+	// the two together are what stop either half from drifting.
+	if got := turnTotalCost(got); math.Abs(got-want5m) > 1e-9 {
 		t.Errorf("cost = %.9f, want %.9f (5m rate). The 1h rate would give %.9f — a 60%% overcharge.",
-			*got.Usage.CalculatedCostUSD, want5m, want1h)
+			got, want5m, want1h)
 	}
+	// Every token here was a SUBAGENT'S, so the parent must be charged nothing
+	// and the whole figure must sit on the subagent's own row.
+	if *got.Usage.CalculatedCostUSD != 0 {
+		t.Errorf("parent cost = %.9f, want 0 — the turn's only spend was a subagent's",
+			*got.Usage.CalculatedCostUSD)
+	}
+	if len(got.Usage.Subagents) != 1 || got.Usage.Subagents[0].AgentID != "tool_1" {
+		t.Fatalf("Subagents = %+v, want one entry for tool_1", got.Usage.Subagents)
+	}
+	if math.Abs(got.Usage.Subagents[0].CostUSD-want5m) > 1e-9 {
+		t.Errorf("subagent cost = %.9f, want %.9f", got.Usage.Subagents[0].CostUSD, want5m)
+	}
+}
+
+// turnTotalCost is the whole turn: the parent row plus every subagent row.
+// Since #1880 phase C, Usage.CalculatedCostUSD is the PARENT'S share alone.
+func turnTotalCost(r *delegator.TurnResult) float64 {
+	var total float64
+	if r != nil && r.Usage != nil && r.Usage.CalculatedCostUSD != nil {
+		total = *r.Usage.CalculatedCostUSD
+		for _, sc := range r.Usage.Subagents {
+			total += sc.CostUSD
+		}
+	}
+	return total
 }
 
 // TestOnResult_UnobservedTTLPricesAtTheOneHourRate pins the safe fallback.

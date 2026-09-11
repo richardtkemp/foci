@@ -175,6 +175,9 @@ func (b *Backend) resetTurnCostAccumulatorsLocked() {
 	b.turnProvidedUSD = 0
 	b.turnProvidedSeen = false
 	b.turnCalc = modelinfo.TokenCounts{}
+	b.turnParentCostUSD = 0
+	b.turnParentCalc = modelinfo.TokenCounts{}
+	b.turnSubagents = nil
 	// beginTurn, NOT reset: the accumulator's totals are cumulative and the
 	// window a turn is priced over starts at the PREVIOUS RESULT, before this
 	// turn opened. Wiping here is what lost 85-99% of the cache-write tokens

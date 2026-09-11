@@ -35,3 +35,45 @@ func (t TokenCounts) Add(o TokenCounts) TokenCounts {
 func (t TokenCounts) CostAsOf(model string, at time.Time) float64 {
 	return CostAsOf(model, at, t.Input, t.Output, t.CacheRead, t.CacheWrite)
 }
+
+// SubClamped returns t minus o class by class, with any class that would go
+// negative pinned at zero. ok is false when a class was pinned.
+//
+// It exists for splitting an authoritative total into a parent share and the
+// subagent shares taken out of it (#1880 phase C). A negative parent share can
+// only mean the subagent bucket counted something the authoritative total does
+// not, so the honest response is to stop at zero and let the caller say so —
+// the alternative, a negative token count, prices as a CREDIT and would quietly
+// reduce the bill.
+func (t TokenCounts) SubClamped(o TokenCounts) (TokenCounts, bool) {
+	ok := true
+	clamp := func(a, b int) int {
+		if a-b < 0 {
+			ok = false
+			return 0
+		}
+		return a - b
+	}
+	return TokenCounts{
+		Input:      clamp(t.Input, o.Input),
+		Output:     clamp(t.Output, o.Output),
+		CacheRead:  clamp(t.CacheRead, o.CacheRead),
+		CacheWrite: clamp(t.CacheWrite, o.CacheWrite),
+	}, ok
+}
+
+// SubagentCost is one subagent's priced share of a turn, on ONE model.
+//
+// Keyed by both because a row carries one model in its model column while the
+// spend is attributed to the agent — and a subagent that spawns its own
+// children can touch more than one. AgentID is the Agent tool's tool_use id,
+// which also names the transcript (.../subagents/agent-<id>.jsonl), so a row
+// written from this traces back to the work that incurred it. It is empty for
+// usage that arrived before its task_started named the agent; that still
+// separates subagent spend from the parent's, which is the point.
+type SubagentCost struct {
+	AgentID string      `json:"agent_id"`
+	Model   string      `json:"model"`
+	Counts  TokenCounts `json:"counts"`
+	CostUSD float64     `json:"cost_usd"`
+}

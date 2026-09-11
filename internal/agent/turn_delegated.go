@@ -530,6 +530,7 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 						ProvidedCostUSD:          result.Usage.ProvidedCostUSD,
 						CalculatedCostUSD:        result.Usage.CalculatedCostUSD,
 						Turn:                     result.Usage.Turn,
+						Subagents:                result.Usage.Subagents,
 					}
 				}
 			}
@@ -693,6 +694,42 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 			TurnID:            ts.RowID(),
 			SessionFile:       sessionFile,
 		})
+
+		// One row per subagent, sharing the parent's turn_id (#1880 phase C,
+		// #1863). Their cost has already been SUBTRACTED from the parent row's
+		// CalculatedCostUSD, so it has to be added back here: turnCost is the
+		// whole turn's figure for the sink header, while the rows are the split
+		// version of the same money.
+		//
+		// Before this, a subagent's spend landed on whichever parent turn
+		// happened to close while it was running — one measured 3.5-minute turn
+		// carried 34 minutes of work and $11.71. There was no way to ask what a
+		// delegation cost.
+		for _, sc := range u.Subagents {
+			turnCost += sc.CostUSD
+			counts, cost := sc.Counts, sc.CostUSD
+			log.API(log.APIEntry{
+				Timestamp: ts0,
+				Provider:  "anthropic",
+				Session:   ts.SessionKey,
+				Model:     sc.Model,
+				// Only Output of the un-prefixed four is set. Those columns mean
+				// "the turn's FINAL cycle context fill" (#1854) and a subagent
+				// row has no such thing — writing its sums there would rebuild
+				// exactly the two-meanings-one-column confusion #1891 removed.
+				// Output is the exception because output_tokens has always been
+				// a turn SUM by meaning, which is why it needed a turn_ twin.
+				Output:            counts.Output,
+				CalculatedCostUSD: &cost,
+				Turn:              &counts,
+				DurationMS:        time.Since(ts.StartedAt).Milliseconds(),
+				StopReason:        "end_turn",
+				CallType:          "subagent_turn",
+				TurnID:            ts.RowID(),
+				AgentID:           sc.AgentID,
+				SessionFile:       sessionFile,
+			})
+		}
 	}
 
 	// One row per turn. A pre-answer re-dispatch folds into this row exactly
