@@ -117,6 +117,11 @@ type Envelope struct {
 type InjectMeta struct {
 	Trigger string
 	Run     func()
+	// AskReqID names the foci_ask this injection is the RESULT of (empty for a
+	// proactive injection that no ask produced). Ask-deferral is keyed to it:
+	// a verdict for ask N is not a proactive interruption of ask N+1, so it is not
+	// held behind it (#1712). Set by the ask tool's delivery path only.
+	AskReqID string
 }
 
 // controlInjectTriggers are exempt from ask-deferral: they resume/drive the agent
@@ -241,9 +246,9 @@ type sessionInbox struct {
 	turnActive atomic.Bool
 
 	// injMu guards deferredInjects: proactive injections held while a foci_ask
-	// was pending on this session, drained (re-enqueued) when the ask resolves.
+	// was pending on this session, drained (re-enqueued) when THAT ask resolves.
 	injMu           sync.Mutex
-	deferredInjects []Envelope
+	deferredInjects []deferredInject
 
 	workerStarted sync.Once
 
@@ -856,17 +861,35 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 	}
 }
 
+// deferredInject is one injection held behind a pending ask, tagged with the
+// requestID of the ask that is holding it so DrainDeferredInjects can release
+// exactly that ask's backlog and nothing else.
+type deferredInject struct {
+	env    Envelope
+	heldBy string
+}
+
 // runInject executes a system injection's closure inside the worker goroutine,
 // recovering from panics so a bad injection can't take down the session worker.
 // A proactive (non-control) injection arriving while a foci_ask is pending is
-// deferred instead — buffered and re-enqueued when the ask resolves (via
+// deferred instead — buffered and re-enqueued when THAT ask resolves (via
 // DrainDeferredInjects) — so it can't race the pending ask.
+//
+// The gate is keyed to the pending ask's requestID (#1712). An injection carrying
+// an AskReqID is the RESULT of that ask — an answer batch or a grader verdict —
+// and once that ask has resolved it is not racing anything: holding it behind the
+// NEXT ask left the agent permanently one verdict behind, and unbounded if the
+// user stopped answering (the held verdict was the very thing that would have told
+// the agent the previous batch was graded). An injection whose AskReqID matches the
+// ask still pending is still deferred: that is the same-ask race the gate was
+// written for, and it stays closed.
 func (a *Agent) runInject(inb *sessionInbox, env Envelope) {
-	if !IsControlInjectTrigger(env.Inject.Trigger) && a.askPending(env.SessionKey) {
+	if pending := a.pendingAskFor(env.SessionKey); pending != "" && !IsControlInjectTrigger(env.Inject.Trigger) &&
+		(env.Inject.AskReqID == "" || env.Inject.AskReqID == pending) {
 		inb.injMu.Lock()
-		inb.deferredInjects = append(inb.deferredInjects, env)
+		inb.deferredInjects = append(inb.deferredInjects, deferredInject{env: env, heldBy: pending})
 		inb.injMu.Unlock()
-		a.logger().Debugf("inbox: deferred injection sk=%s trigger=%s (ask pending)", inb.sk, env.Inject.Trigger)
+		a.logger().Debugf("inbox: deferred injection sk=%s trigger=%s (held by ask %s)", inb.sk, env.Inject.Trigger, pending)
 		return
 	}
 	defer func() {
@@ -879,22 +902,34 @@ func (a *Agent) runInject(inb *sessionInbox, env Envelope) {
 	}
 }
 
-// askPending reports whether an unpaused foci_ask is awaiting an answer on sk.
-func (a *Agent) askPending(sk string) bool {
+// pendingAskFor returns the requestID of the unpaused foci_ask awaiting an answer
+// on sk, or "" when none is. Only the session's PRIMARY (on-screen) ask counts —
+// a queued ask is on nobody's screen and can be answered by nothing, so it defers
+// nothing (#1711 ruling Q4).
+func (a *Agent) pendingAskFor(sk string) string {
 	r := a.AskRouter
 	if r == nil || r.PendingForSession == nil {
-		return false
+		return ""
 	}
-	if r.PendingForSession(sk) == "" {
-		return false
+	reqID := r.PendingForSession(sk)
+	if reqID == "" {
+		return ""
 	}
-	return !(r.IsPaused != nil && r.IsPaused(sk))
+	if r.IsPaused != nil && r.IsPaused(sk) {
+		return ""
+	}
+	return reqID
 }
 
-// DrainDeferredInjects re-enqueues any injections that were deferred while an ask
-// was pending on sk, so they run now that it has resolved. Called from the
-// ask-resolve hook. Safe on a nil/unknown session.
-func (a *Agent) DrainDeferredInjects(sk string) {
+// DrainDeferredInjects re-enqueues the injections that ask reqID was holding on
+// sk, so they run now that it has resolved. Called per-ask from the ask-resolve
+// hook. Safe on a nil/unknown session.
+//
+// Keyed, not blanket (#1712): with two asks live on one session, resolving one
+// must not release what the OTHER is still holding — that would reintroduce
+// exactly the race the deferral exists to prevent. Entries held by a different,
+// still-live ask stay buffered until that one resolves.
+func (a *Agent) DrainDeferredInjects(sk, reqID string) {
 	a.inboxesMu.Lock()
 	inb := a.inboxes[sk]
 	a.inboxesMu.Unlock()
@@ -903,9 +938,18 @@ func (a *Agent) DrainDeferredInjects(sk string) {
 	}
 	inb.injMu.Lock()
 	held := inb.deferredInjects
-	inb.deferredInjects = nil
+	kept := held[:0:0]
+	release := make([]Envelope, 0, len(held))
+	for _, d := range held {
+		if d.heldBy == reqID {
+			release = append(release, d.env)
+			continue
+		}
+		kept = append(kept, d)
+	}
+	inb.deferredInjects = kept
 	inb.injMu.Unlock()
-	for _, env := range held {
+	for _, env := range release {
 		a.Enqueue(env)
 	}
 }

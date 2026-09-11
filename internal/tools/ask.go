@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -85,7 +86,12 @@ type AskPresentBatchFn func(sessionKey, promptID string, qs []question.Question,
 
 // AskDeliverFn delivers the assembled answer batch into sessionKey as a new
 // inbound user message, waking the agent. Backend-agnostic (delegated + API).
-type AskDeliverFn func(sessionKey, message string)
+//
+// requestID names the ask the message is the RESULT of. The inbox tags the
+// resulting injection with it so ask-deferral can tell "the verdict for the ask
+// that just resolved" from "a proactive interruption", and stop holding the
+// former behind an unrelated, later ask (#1712).
+type AskDeliverFn func(sessionKey, requestID, message string)
 
 // AskCloseFn edits an already-displayed question message to finalText and
 // removes its buttons. The button-click path closes the message itself (the
@@ -138,6 +144,14 @@ type pendingAsk struct {
 	// the ask. Buttons still resolve it. Toggled by /pause and /resume; persisted
 	// so the pause survives a restart mid-ask.
 	paused bool
+	// queued, when true, means this ask has NEVER been presented: the session
+	// already had an active ask when it was started and the client cannot show two
+	// asks unambiguously, so it waits its turn (#1711 ruling 1). A queued ask owns
+	// none of the session-keyed paths (typed answers, /pause, the {ask} statusline
+	// field) and does not count as pending for injection deferral (ruling Q4) — it
+	// is on nobody's screen and can be answered by nothing. Persisted so a queue
+	// survives a restart (ruling Q3) rather than being silently lost.
+	queued bool
 	// batched records that this ask was presented as a single native-app form
 	// (tryPresentBatch succeeded), so the app answers via InteractiveResponse.Answers.
 	// Persisted so restore re-registers the BATCHED callback (restoreBatch) rather
@@ -146,7 +160,13 @@ type pendingAsk struct {
 }
 
 // askState is the registry of in-flight asks. Keyed by requestID for click
-// routing and by sessionKey for typed-answer routing (latest ask wins).
+// routing and by sessionKey for typed-answer routing.
+//
+// A session maps to an ORDERED queue of request ids (oldest first), not to a
+// single "latest" id (#1711). The session's PRIMARY ask — the oldest one actually
+// on screen — owns every session-keyed path; the rest are either coexisting
+// native-app forms (the only UI where two open asks are unambiguous) or queued,
+// waiting for the primary to resolve.
 //
 // Pending asks are persisted to the session index (agent_metadata) on every
 // change and restored on startup — mirroring the tmux tool's persist-on-change →
@@ -157,7 +177,7 @@ type pendingAsk struct {
 type askState struct {
 	mu           sync.Mutex
 	byReqID      map[string]*pendingAsk
-	bySession    map[string]string // sessionKey → latest requestID
+	bySession    map[string][]string // sessionKey → its asks' requestIDs, oldest first
 	present      AskPresentFn
 	presentBatch AskPresentBatchFn // app-only batched presentation; nil = always sequential
 	restore      AskRestoreFn
@@ -166,13 +186,14 @@ type askState struct {
 	closeMsg     AskCloseFn
 	store        *session.SessionIndex // nil = no persistence
 	agentID      string
-	onResolve    func(sessionKey string)      // fired when a session's pending ask clears; nil = disabled
-	cacheWarm    func(sessionKey string) bool // reports whether a session's prompt cache is live; nil = always warm (never suppress)
+	onResolve    func(sessionKey, requestID string) // fired when ONE ask resolves; nil = disabled
+	cacheWarm    func(sessionKey string) bool       // reports whether a session's prompt cache is live; nil = always warm (never suppress)
 }
 
-// WithOnResolve sets a callback fired (async) when a session's pending ask
-// resolves, so the caller can redeliver injections deferred while it was pending.
-func WithOnResolve(fn func(sessionKey string)) AskOption {
+// WithOnResolve sets a callback fired (async) when ONE ask resolves — per-ask,
+// not only when the session's pending set empties (#1711 ruling 5) — so the caller
+// can redeliver the injections that THAT ask was holding (#1712).
+func WithOnResolve(fn func(sessionKey, requestID string)) AskOption {
 	return func(s *askState) { s.onResolve = fn }
 }
 
@@ -196,7 +217,7 @@ func (a *askState) deliverCancel(sessionKey, requestID string, answered, total i
 			sessionKey, requestID, answered, total)
 		return
 	}
-	a.deliverMsg(sessionKey, fmt.Sprintf(
+	a.deliverMsg(sessionKey, requestID, fmt.Sprintf(
 		"[SYSTEM: the user CANCELLED your `ask` request after %d of %d answers. Do not retry unless they ask.]",
 		answered, total))
 }
@@ -235,7 +256,7 @@ const pendingAskTTL = 24 * time.Hour
 func newAskState(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn, closeMsg AskCloseFn, store *session.SessionIndex, agentID string) *askState {
 	return &askState{
 		byReqID:   make(map[string]*pendingAsk),
-		bySession: make(map[string]string),
+		bySession: make(map[string][]string),
 		present:   present,
 		restore:   restore,
 		deliver:   deliver,
@@ -275,8 +296,17 @@ func (a *askState) nextRequestID() string {
 	return "ask-" + a.agentID + "-" + fap.NewULID()
 }
 
-// start registers a new ask and presents its first question.
-func (a *askState) start(sessionKey string, qs []question.Question, originalInput json.RawMessage, grader graderConfig) string {
+// start registers a new ask and presents its first question, reporting whether it
+// was QUEUED instead of shown — the tool's ack must say so rather than claim it was
+// posted (#1711 ruling Q2: a queued ask returns immediately, queued).
+//
+// A second ask in a session is ALLOWED and never displaces the first (#1711
+// ruling 3): it joins the session's queue in created_at order. Whether it also
+// goes live immediately is app-only (ruling 1) — the native app renders each ask
+// as its own self-contained form, which is what makes it unambiguous which ask a
+// typed answer belongs to; a chat transport has no such affordance, so there the
+// ask waits and promoteQueued presents it when the primary resolves.
+func (a *askState) start(sessionKey string, qs []question.Question, originalInput json.RawMessage, grader graderConfig) (string, bool) {
 	reqID := a.nextRequestID()
 	p := &pendingAsk{
 		requestID:     reqID,
@@ -287,19 +317,104 @@ func (a *askState) start(sessionKey string, qs []question.Question, originalInpu
 		grader:        grader,
 	}
 	a.mu.Lock()
+	siblings := a.bySession[sessionKey]
+	busy := len(siblings) > 0
+	// Strict FIFO: if an ask is already waiting its turn, this one takes the back
+	// of the queue rather than jumping it (possible when the app drops offline
+	// between two asks and comes back).
+	waiting := a.headQueuedLocked(sessionKey) != nil
+	p.queued = busy
 	a.byReqID[reqID] = p
-	a.bySession[sessionKey] = reqID
+	a.bySession[sessionKey] = append(siblings, reqID)
 	a.persistLocked()
 	a.mu.Unlock()
 
 	// Native app clients that advertised the capability get ALL questions as one
 	// batched form; everything else (and any uncapable client) falls through to the
-	// unchanged sequential path.
-	if a.tryPresentBatch(p) {
-		return reqID
+	// unchanged sequential path. tryPresentBatch shows nothing and reports false
+	// when the client cannot render a self-contained form, so using it as the
+	// coexistence test cannot leak a second prompt onto a chat transport.
+	presented := false
+	if !waiting {
+		if a.tryPresentBatch(p) {
+			presented = true
+		} else if !busy {
+			a.presentCurrent(p)
+			presented = true
+		}
 	}
-	a.presentCurrent(p)
-	return reqID
+	if !presented {
+		askLog.Infof("session=%s req=%s queued behind the session's active ask (%d ahead of it) — coexisting asks are app-only",
+			sessionKey, reqID, len(siblings))
+	}
+	return reqID, !presented
+}
+
+// primaryLocked returns the session's PRIMARY ask: the oldest one that is actually
+// on screen. Every session-keyed path targets it and only it — typed-answer
+// routing, /pause, /resume, /complete, the {ask} statusline field, and the
+// injection-deferral gate (#1711 rulings 2 and Q4). Nil when the session has no
+// live ask (a session holding only QUEUED asks reads as "nothing pending", which
+// is the point: a queued ask is racing nothing). Caller holds a.mu.
+func (a *askState) primaryLocked(sessionKey string) *pendingAsk {
+	for _, id := range a.bySession[sessionKey] {
+		if p := a.byReqID[id]; p != nil && !p.queued {
+			return p
+		}
+	}
+	return nil
+}
+
+// headQueuedLocked returns the session's next queued ask in created_at order (nil
+// if none is waiting). Caller holds a.mu.
+func (a *askState) headQueuedLocked(sessionKey string) *pendingAsk {
+	for _, id := range a.bySession[sessionKey] {
+		if p := a.byReqID[id]; p != nil && p.queued {
+			return p
+		}
+	}
+	return nil
+}
+
+// promoteQueued presents the session's next queued ask now that the primary has
+// resolved. A no-op while a live ask still holds the session (two coexisting app
+// forms: resolving one leaves the other in charge) or when nothing is queued.
+//
+// The pendingAskTTL is applied HERE, aged from created_at (#1711 ruling Q3):
+// a queue draining hours later must not surface a question that went stale while
+// it waited, so an expired entry is dropped with a notice to the agent — which
+// never saw an answer for it — and the next one is considered.
+func (a *askState) promoteQueued(sessionKey string) {
+	for {
+		a.mu.Lock()
+		if a.primaryLocked(sessionKey) != nil {
+			a.mu.Unlock()
+			return
+		}
+		p := a.headQueuedLocked(sessionKey)
+		if p == nil {
+			a.mu.Unlock()
+			return
+		}
+		if waited := time.Since(p.createdAt); waited > pendingAskTTL {
+			a.removeLocked(p)
+			a.persistLocked()
+			a.mu.Unlock()
+			askLog.Warnf("session=%s req=%s queued ask expired (%s old) before it could be shown — dropped", sessionKey, p.requestID, waited.Round(time.Minute))
+			a.deliverMsg(sessionKey, p.requestID, fmt.Sprintf(
+				"[SYSTEM: your queued `ask` request (req %s) expired after waiting %s behind an earlier question and was NEVER shown to the user. Nothing was answered. Re-ask if you still need it.]",
+				p.requestID, waited.Round(time.Minute)))
+			continue
+		}
+		p.queued = false
+		a.persistLocked()
+		a.mu.Unlock()
+		askLog.Infof("session=%s req=%s promoted from the queue — presenting now", sessionKey, p.requestID)
+		if !a.tryPresentBatch(p) {
+			a.presentCurrent(p)
+		}
+		return
+	}
 }
 
 // tryPresentBatch presents p's whole question set as a single batched prompt via
@@ -320,6 +435,7 @@ func (a *askState) tryPresentBatch(p *pendingAsk) bool {
 	a.mu.Lock()
 	p.platformMsgID = promptID
 	p.batched = true
+	p.queued = false // a form is on screen: this ask is live, not waiting
 	a.persistLocked()
 	a.mu.Unlock()
 	return true
@@ -378,9 +494,7 @@ func (a *askState) handleResponse(requestID, data string) {
 	}
 	if cancelled {
 		answered, total, sk, reqID := p.acc.Index(), p.acc.Total(), p.sessionKey, p.requestID
-		a.removeLocked(p)
-		a.persistLocked()
-		a.mu.Unlock()
+		a.resolveLocked(p)
 		a.deliverCancel(sk, reqID, answered, total)
 		return
 	}
@@ -405,9 +519,7 @@ func (a *askState) handleResponse(requestID, data string) {
 
 	// All answered — assemble and deliver the batch.
 	a.mu.Lock()
-	a.removeLocked(p)
-	a.persistLocked()
-	a.mu.Unlock()
+	a.resolveLocked(p)
 
 	a.deliverBatch(p)
 }
@@ -418,7 +530,7 @@ func (a *askState) handleResponse(requestID, data string) {
 // Caller has already removed p from the registry.
 func (a *askState) deliverBatch(p *pendingAsk) {
 	if p.grader.path == "" {
-		a.deliverMsg(p.sessionKey, formatAnswerBatch(p.acc.Questions(), p.acc.Answers()))
+		a.deliverMsg(p.sessionKey, p.requestID, formatAnswerBatch(p.acc.Questions(), p.acc.Answers()))
 		return
 	}
 	// A grader is set: it may run for up to its timeout. Run it (and deliver
@@ -427,7 +539,7 @@ func (a *askState) deliverBatch(p *pendingAsk) {
 	go func() {
 		raw := formatAnswerBatch(p.acc.Questions(), p.acc.Answers())
 		total := p.acc.Total()
-		a.deliverMsg(p.sessionKey, runGrader(p, p.acc.Questions(), p.acc.Answers(), raw, false, total, total))
+		a.deliverMsg(p.sessionKey, p.requestID, runGrader(p, p.acc.Questions(), p.acc.Answers(), raw, false, total, total))
 	}()
 }
 
@@ -459,9 +571,7 @@ func (a *askState) handleBatchResponse(requestID string, answers []string) {
 		}
 		if cancelled {
 			answered, total, sk, reqID := p.acc.Index(), p.acc.Total(), p.sessionKey, p.requestID
-			a.removeLocked(p)
-			a.persistLocked()
-			a.mu.Unlock()
+			a.resolveLocked(p)
 			a.deliverCancel(sk, reqID, answered, total)
 			return
 		}
@@ -477,23 +587,48 @@ func (a *askState) handleBatchResponse(requestID string, answers []string) {
 			p.sessionKey, requestID, p.acc.Index(), p.acc.Total())
 		return
 	}
-	a.removeLocked(p)
-	a.persistLocked()
-	a.mu.Unlock()
+	a.resolveLocked(p)
 	a.deliverBatch(p)
 }
 
-// removeLocked deletes a pending ask from both indexes. Caller holds a.mu.
+// removeLocked deletes a pending ask from both indexes and notifies the resolve
+// hook FOR THAT ASK. Caller holds a.mu.
+//
+// Symmetric by construction (#1711): the session holds an ordered list, so
+// removing any member — oldest, newest, or one still queued — leaves the rest
+// exactly as they were, and onResolve fires once per ask rather than only when the
+// session's set empties (ruling 5). Firing with the resolved ask's requestID is
+// what lets the inbox release only the injections THAT ask was holding (#1712);
+// the old "session emptied" signal could not distinguish them.
 func (a *askState) removeLocked(p *pendingAsk) {
 	delete(a.byReqID, p.requestID)
-	if a.bySession[p.sessionKey] == p.requestID {
-		delete(a.bySession, p.sessionKey)
-		// The session now has no pending ask — notify async (off a.mu) so any
-		// injections deferred while it was pending can be redelivered.
-		if a.onResolve != nil {
-			go a.onResolve(p.sessionKey)
+	ids := a.bySession[p.sessionKey]
+	for i, id := range ids {
+		if id == p.requestID {
+			ids = append(ids[:i:i], ids[i+1:]...)
+			break
 		}
 	}
+	if len(ids) == 0 {
+		delete(a.bySession, p.sessionKey)
+	} else {
+		a.bySession[p.sessionKey] = ids
+	}
+	// Notify async (off a.mu): the hook reaches into the agent inbox.
+	if a.onResolve != nil {
+		go a.onResolve(p.sessionKey, p.requestID)
+	}
+}
+
+// resolveLocked removes p, checkpoints, RELEASES a.mu, and then presents the
+// session's next queued ask if the slot is now free. Every resolution path
+// (answered, cancelled, batched, /complete) funnels through it so promotion can
+// never be forgotten at one of them. Caller holds a.mu and must not touch it after.
+func (a *askState) resolveLocked(p *pendingAsk) {
+	a.removeLocked(p)
+	a.persistLocked()
+	a.mu.Unlock()
+	a.promoteQueued(p.sessionKey)
 }
 
 // persistedAsk is the JSON-serialisable form of one in-flight ask. The
@@ -511,6 +646,11 @@ type persistedAsk struct {
 	PlatformMsgID string              `json:"platform_msg_id,omitempty"`
 	Paused        bool                `json:"paused,omitempty"`
 	Batched       bool                `json:"batched,omitempty"`
+	// Queued marks an ask that has never been shown, waiting behind the session's
+	// primary. It must persist: a queued ask is WORSE to lose than a live one
+	// because the user never saw it, and the agent is still waiting on an answer
+	// (#1711 ruling Q3).
+	Queued bool `json:"queued,omitempty"`
 }
 
 // persistedGrader mirrors graderConfig with exported, JSON-friendly fields
@@ -526,12 +666,25 @@ type persistedGrader struct {
 // Caller holds a.mu. No-op when persistence is disabled. Best-effort: a write
 // failure is logged, never propagated — persistence is a convenience, and an
 // ask still works in-memory for the life of the process without it.
+//
+// The output is sorted by created_at (requestID breaking ties): byReqID is a Go
+// map, so writing it in range order produced a differently-ordered blob on every
+// write. restorePending sorts on the way back in, which is what actually makes the
+// primary deterministic, but persisting in order keeps the stored artifact
+// readable and stable instead of reshuffling on every keystroke.
 func (a *askState) persistLocked() {
 	if a.store == nil {
 		return
 	}
-	out := make([]persistedAsk, 0, len(a.byReqID))
+	ordered := make([]*pendingAsk, 0, len(a.byReqID))
 	for _, p := range a.byReqID {
+		ordered = append(ordered, p)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		return askOlder(ordered[i].createdAt, ordered[i].requestID, ordered[j].createdAt, ordered[j].requestID)
+	})
+	out := make([]persistedAsk, 0, len(ordered))
+	for _, p := range ordered {
 		out = append(out, persistedAsk{
 			RequestID:     p.requestID,
 			SessionKey:    p.sessionKey,
@@ -549,6 +702,7 @@ func (a *askState) persistLocked() {
 			PlatformMsgID: p.platformMsgID,
 			Paused:        p.paused,
 			Batched:       p.batched,
+			Queued:        p.queued,
 		})
 	}
 	data, err := json.Marshal(out)
@@ -561,11 +715,28 @@ func (a *askState) persistLocked() {
 	}
 }
 
+// askOlder orders two asks by created_at, breaking ties on requestID so the order
+// is total. Shared by persistLocked and restorePending so the written and the read
+// order cannot disagree.
+func askOlder(aAt time.Time, aID string, bAt time.Time, bID string) bool {
+	if !aAt.Equal(bAt) {
+		return aAt.Before(bAt)
+	}
+	return aID < bID
+}
+
 // restorePending rehydrates asks saved before a restart and re-attaches each
 // one's interactive callback to the buttons the platform still displays. Stale
 // asks (older than pendingAskTTL) and malformed/complete entries are dropped, and
 // the cleaned set is re-persisted. Best-effort throughout: any decode failure
 // leaves the tool empty rather than blocking startup.
+//
+// The saved entries are SORTED by created_at first (#1711). The stored order is
+// whatever a Go map range produced when it was written — a real artifact holds
+// three asks for one session stored 19:58 / 08:00 / 02:14 — so restoring in slice
+// order re-elected a different primary on every restart, silently moving which ask
+// owns typed answers and /pause. Sorted, the session's queue rehydrates
+// oldest-first and the primary is the same every time.
 func (a *askState) restorePending() {
 	if a.store == nil {
 		return
@@ -580,8 +751,13 @@ func (a *askState) restorePending() {
 		return
 	}
 
+	sort.SliceStable(saved, func(i, j int) bool {
+		return askOlder(saved[i].CreatedAt, saved[i].RequestID, saved[j].CreatedAt, saved[j].RequestID)
+	})
+
 	now := time.Now()
 	restored := make([]*pendingAsk, 0, len(saved))
+	sessions := make([]string, 0, len(saved))
 	a.mu.Lock()
 	for _, s := range saved {
 		if now.Sub(s.CreatedAt) > pendingAskTTL {
@@ -605,17 +781,32 @@ func (a *askState) restorePending() {
 			platformMsgID: s.PlatformMsgID,
 			paused:        s.Paused,
 			batched:       s.Batched,
+			queued:        s.Queued,
 		}
 		a.byReqID[p.requestID] = p
-		a.bySession[p.sessionKey] = p.requestID
+		if _, seen := a.bySession[p.sessionKey]; !seen {
+			sessions = append(sessions, p.sessionKey)
+		}
+		a.bySession[p.sessionKey] = append(a.bySession[p.sessionKey], p.requestID)
 		restored = append(restored, p)
 	}
 	a.persistLocked() // drop stale entries from the durable set
 	a.mu.Unlock()
 
 	// Re-attach outside the lock: the restore fn reaches into the platform layer.
+	// A QUEUED ask has nothing on screen to re-attach to — re-binding it would
+	// claim buttons that were never sent.
 	for _, p := range restored {
+		if p.queued {
+			continue
+		}
 		a.reattach(p)
+	}
+	// A session whose live ask did not survive (expired, or every entry was
+	// queued) still has a queue to drain — promoting here applies the same
+	// presentation-time TTL as the live path rather than stranding it.
+	for _, sk := range sessions {
+		a.promoteQueued(sk)
 	}
 	if len(restored) > 0 {
 		askLog.Debugf("restored %d pending ask(s) from state", len(restored))
@@ -675,33 +866,40 @@ func (a *askState) handleBatchByPrompt(promptID string, answers []string) {
 	a.handleBatchResponse(reqID, answers)
 }
 
-func (a *askState) deliverMsg(sessionKey, msg string) {
+// deliverMsg delivers a message produced BY an ask back into its session.
+// requestID names the ask it came from, so the inbox can tell this apart from a
+// proactive interruption when deciding whether a pending ask should hold it
+// (#1712).
+func (a *askState) deliverMsg(sessionKey, requestID, msg string) {
 	if a.deliver != nil {
-		a.deliver(sessionKey, msg)
+		a.deliver(sessionKey, requestID, msg)
 	}
 }
 
-// pendingForSession returns the request id of the latest in-flight ask for a
-// session (empty if none). Used by the inbound path to route a typed reply to a
-// waiting ask instead of starting a fresh turn.
+// pendingForSession returns the request id of the session's PRIMARY ask — the
+// oldest one actually on screen — or "" when the session has no live ask. Used by
+// the inbound path to route a typed reply to the waiting ask instead of starting a
+// fresh turn, and by the inbox's ask-deferral gate.
+//
+// A QUEUED ask deliberately reads as "nothing pending" (#1711 ruling Q4): it is on
+// nobody's screen and can be answered by nothing, so it is racing no injection.
 func (a *askState) pendingForSession(sessionKey string) string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.bySession[sessionKey]
+	if p := a.primaryLocked(sessionKey); p != nil {
+		return p.requestID
+	}
+	return ""
 }
 
-// setPaused toggles the pause flag on the latest in-flight ask for a session and
-// checkpoints it. Returns false (a no-op) when no ask is pending — the caller
+// setPaused toggles the pause flag on the session's PRIMARY ask (#1711 ruling 2)
+// and checkpoints it. Returns false (a no-op) when no ask is live — the caller
 // uses this to report "no active question". While paused, the inbound path's
 // answer-capture guard is skipped so the user's typed replies run as normal turns.
 func (a *askState) setPaused(sessionKey string, paused bool) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	reqID := a.bySession[sessionKey]
-	if reqID == "" {
-		return false
-	}
-	p := a.byReqID[reqID]
+	p := a.primaryLocked(sessionKey)
 	if p == nil {
 		return false
 	}
@@ -710,16 +908,12 @@ func (a *askState) setPaused(sessionKey string, paused bool) bool {
 	return true
 }
 
-// isPaused reports whether the latest in-flight ask for a session is paused.
-// False when nothing is pending (so a stale flag can never strand a session).
+// isPaused reports whether the session's PRIMARY ask is paused. False when
+// nothing is live (so a stale flag can never strand a session).
 func (a *askState) isPaused(sessionKey string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	reqID := a.bySession[sessionKey]
-	if reqID == "" {
-		return false
-	}
-	p := a.byReqID[reqID]
+	p := a.primaryLocked(sessionKey)
 	return p != nil && p.paused
 }
 
@@ -732,12 +926,7 @@ func (a *askState) isPaused(sessionKey string) bool {
 // told the set is partial so it can grade a short answer set.
 func (a *askState) completeSession(sessionKey string) (answered, total int, ok bool) {
 	a.mu.Lock()
-	reqID := a.bySession[sessionKey]
-	if reqID == "" {
-		a.mu.Unlock()
-		return 0, 0, false
-	}
-	p := a.byReqID[reqID]
+	p := a.primaryLocked(sessionKey)
 	if p == nil {
 		a.mu.Unlock()
 		return 0, 0, false
@@ -755,9 +944,7 @@ func (a *askState) completeSession(sessionKey string) (answered, total int, ok b
 	sess := p.sessionKey
 	curMsgID := questionMsgID(p.requestID, idx) // the still-displayed question
 	hasGrader := p.grader.path != ""
-	a.removeLocked(p)
-	a.persistLocked()
-	a.mu.Unlock()
+	a.resolveLocked(p)
 
 	// Close the still-live current question so its Cancel/option buttons can't be
 	// clicked now that the ask is gone (the button/typed paths self-close; a
@@ -768,14 +955,14 @@ func (a *askState) completeSession(sessionKey string) (answered, total int, ok b
 
 	raw := formatPartialBatch(answeredQs, answers, idx, total)
 	if !hasGrader {
-		a.deliverMsg(sess, raw)
+		a.deliverMsg(sess, p.requestID, raw)
 		return idx, total, true
 	}
 	// Grader configured: run it on the partial set off the caller's goroutine
 	// (mirrors the full-answer path) so the slash-command handler returns at once;
 	// the graded result is delivered to the agent when ready.
 	go func() {
-		a.deliverMsg(sess, runGrader(p, answeredQs, answers, raw, true, idx, total))
+		a.deliverMsg(sess, p.requestID, runGrader(p, answeredQs, answers, raw, true, idx, total))
 	}()
 	return idx, total, true
 }
@@ -951,8 +1138,9 @@ type askInput struct {
 
 // AskRouter exposes the typed-answer routing hooks so the inbound-message path
 // can divert a user's typed reply to a waiting ask (instead of starting a fresh
-// turn). PendingForSession reports the request id of the latest in-flight ask
-// for a session (empty if none); HandleResponse feeds a typed answer to it.
+// turn). PendingForSession reports the request id of the session's PRIMARY ask —
+// the oldest one on screen, "" if none is live and "" for a session holding only
+// QUEUED asks; HandleResponse feeds a typed answer to it.
 type AskRouter struct {
 	PendingForSession func(sessionKey string) string
 	HandleResponse    func(requestID, data string)
@@ -960,8 +1148,9 @@ type AskRouter struct {
 	// its on-screen promptID — into the waiting ask. Used by the app hub as a
 	// fallback when a restart dropped the in-memory batched registration (#1473).
 	HandleBatchByPrompt func(promptID string, answers []string)
-	// PauseSession / ResumeSession toggle answer-capture for a session's pending
-	// ask. While paused, the inbound routing guard skips answer-capture so the
+	// PauseSession / ResumeSession toggle answer-capture for a session's PRIMARY
+	// ask (#1711 ruling 2 — the platforms carrying these commands only ever have
+	// one live ask). While paused, the inbound routing guard skips answer-capture so the
 	// user's typed replies run as normal turns; buttons still resolve the ask.
 	// Both return false when no ask is pending (the command reports a no-op).
 	PauseSession  func(sessionKey string) bool
@@ -1086,12 +1275,16 @@ func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn
 				return ToolResult{}, fmt.Errorf("ask: grader_args set but no grader executable given")
 			}
 
-			reqID := state.start(sessionKey, in.Questions, params, grader)
+			reqID, queued := state.start(sessionKey, in.Questions, params, grader)
+			status, note := "asked", "Posted to the user. Their answers will arrive later as a new message — end your turn now; do not wait."
+			if queued {
+				status, note = "queued", "NOT posted yet: this session already has a question on the user's screen, and this transport cannot show two at once. Your ask is queued and will be presented when that one is answered. Its answers still arrive later as a new message — end your turn now; do not wait, and do not re-ask."
+			}
 			out, _ := json.Marshal(map[string]any{
-				"status":     "asked",
+				"status":     status,
 				"request_id": reqID,
 				"questions":  len(in.Questions),
-				"note":       "Posted to the user. Their answers will arrive later as a new message — end your turn now; do not wait.",
+				"note":       note,
 			})
 			return TextResult(string(out)), nil
 		},

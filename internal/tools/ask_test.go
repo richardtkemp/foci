@@ -66,18 +66,31 @@ func (c *fakeCloser) calls() int {
 	return len(c.msgIDs)
 }
 
-// fakeDeliver records messages delivered back into the session.
+// fakeDeliver records messages delivered back into the session, with the request
+// id of the ask each one came from.
 type fakeDeliver struct {
 	mu       sync.Mutex
 	messages []string
 	sessions []string
+	reqIDs   []string
 }
 
-func (d *fakeDeliver) deliver(sessionKey, message string) {
+func (d *fakeDeliver) deliver(sessionKey, requestID, message string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.sessions = append(d.sessions, sessionKey)
+	d.reqIDs = append(d.reqIDs, requestID)
 	d.messages = append(d.messages, message)
+}
+
+// lastReqID returns the request id the most recent delivery was tagged with.
+func (d *fakeDeliver) lastReqID() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.reqIDs) == 0 {
+		return ""
+	}
+	return d.reqIDs[len(d.reqIDs)-1]
 }
 
 func (d *fakeDeliver) last() (string, bool) {
@@ -121,16 +134,17 @@ func execAsk(t *testing.T, tool *Tool, raw string) ToolResult {
 	return res
 }
 
-// TestAsk_OnResolveFiresWhenAnswered proves the ask-resolve hook (#984): when a
-// session's pending ask clears, WithOnResolve's callback fires with that session
-// key so deferred injections can be redelivered.
+// TestAsk_OnResolveFiresWhenAnswered proves the ask-resolve hook (#984): when an
+// ask resolves, WithOnResolve's callback fires with that session key and the
+// resolved ask's request id, so the injections that ask was holding can be
+// redelivered.
 func TestAsk_OnResolveFiresWhenAnswered(t *testing.T) {
 	t.Parallel()
 	p := &fakePresenter{}
 	d := &fakeDeliver{}
 	resolved := make(chan string, 1)
 	tool, _ := NewAskTool(p.present, nil, d.deliver, nil, nil, "test",
-		WithOnResolve(func(sk string) { resolved <- sk }))
+		WithOnResolve(func(sk, _ string) { resolved <- sk }))
 
 	execAsk(t, tool, `{"questions":[{"question":"Which color?","header":"Color","options":[{"label":"Red"},{"label":"Blue"}]}]}`)
 

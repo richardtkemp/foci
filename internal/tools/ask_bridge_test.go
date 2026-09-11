@@ -53,7 +53,7 @@ func TestAsk_ExecBridgeRoundTrip(t *testing.T) {
 		delivered   []string
 		deliveredSK []string
 	)
-	deliver := func(sessionKey, msg string) {
+	deliver := func(sessionKey, _, msg string) {
 		dmu.Lock()
 		defer dmu.Unlock()
 		delivered = append(delivered, msg)
