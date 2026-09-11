@@ -24,7 +24,14 @@ const (
 	syntheticNoResponseText = "No response requested."
 )
 
-func prefixedModel(prefix, model string) string {
+// prefixedModel qualifies a bare CC model id with its provider.
+//
+// The prefix is a constant, not a parameter: this is the Claude Code backend,
+// so every model it reports is Anthropic's. It WAS a parameter, and unparam
+// flagged it once #1880 phase C added enough call sites to trip the threshold —
+// every one of them, including the pre-existing three, passed "claude".
+func prefixedModel(model string) string {
+	const prefix = "claude"
 	if model == "" {
 		return ""
 	}
@@ -492,15 +499,56 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	// pricing them would undercount a multi-call turn by roughly the call
 	// count.
 	if len(pricedModels) > 0 {
-		// The cache-write TTL split, per model, from the accumulator. Read under
-		// turnMu (which guards it) and BEFORE pricing, which takes no lock.
+		// The cache-write TTL split and the per-subagent shares, from the
+		// accumulator. Read under turnMu (which guards it) and BEFORE pricing,
+		// which takes no lock.
 		b.turnMu.Lock()
-		observed := b.turnUsageAcc.writeSplitByModel()
+		topObserved := b.turnUsageAcc.topWriteSplitByModel()
+		subDelta := b.turnUsageAcc.subagentDelta()
 		b.turnMu.Unlock()
 
-		var cyclePriced, cycleProvided float64
-		var cycleCounts modelinfo.TokenCounts
 		now := time.Now()
+
+		// Subagent shares first. Each is priced from the accumulator's OWN
+		// figures — so its TTL coverage is exact by construction and splitFor
+		// returns the observed split verbatim — and is then TAKEN OUT of the
+		// authoritative per-model total, leaving the parent charged for its own
+		// work only (#1880 phase C, #1863).
+		//
+		// EXACT SUBTRACTION, NEVER A RATIO. The accumulator agrees with
+		// ModelUsage to the token on input, cache-read and cache-write
+		// (probe-verified 2026-09-10: 4=4, 30,673=30,673, 30,921=30,921), and
+		// since the background-tail fix every subagent's output comes from its
+		// transcript rather than the stream's never-revised placeholder. What
+		// ModelUsage holds that no stream line does — CC's own internal utility
+		// calls, 916 haiku input tokens on one probe turn — is not a subagent's,
+		// so leaving it on the parent is the right answer, not a residue.
+		subByModel := make(map[string]modelinfo.TokenCounts, len(subDelta))
+		cycleSubs := make(map[subKey]modelinfo.SubagentCost, len(subDelta))
+		var subPriced float64
+		for k, u := range subDelta {
+			c := modelinfo.TokenCounts{
+				Input:      u.Input,
+				Output:     u.Output,
+				CacheRead:  u.CacheRead,
+				CacheWrite: u.Write.total(),
+			}
+			cost := modelinfo.CostAsOfSplit(
+				prefixedModel(k.Model), now,
+				c.Input, c.Output, c.CacheRead, splitFor(u.Write, c.CacheWrite),
+			)
+			subByModel[k.Model] = subByModel[k.Model].Add(c)
+			cycleSubs[k] = modelinfo.SubagentCost{
+				AgentID: k.Agent,
+				Model:   prefixedModel(k.Model),
+				Counts:  c,
+				CostUSD: cost,
+			}
+			subPriced += cost
+		}
+
+		var cyclePriced, cycleProvided float64
+		var cycleCounts, cycleParent modelinfo.TokenCounts
 		for _, m := range pricedModels {
 			d := deltas[m]
 			// Totals come from ModelUsage, which is authoritative and complete:
@@ -513,18 +561,34 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 			//
 			// The accumulator supplies the one thing ModelUsage cannot: the TTL
 			// split, which the result merges into a single figure.
-			w := splitFor(observed[m], d.CacheCreationInputTokens)
-			cyclePriced += modelinfo.CostAsOfSplit(
-				prefixedModel("claude", m), now,
-				d.InputTokens, d.OutputTokens, d.CacheReadInputTokens, w,
-			)
-			cycleProvided += d.CostUSD
-			cycleCounts = cycleCounts.Add(modelinfo.TokenCounts{
+			total := modelinfo.TokenCounts{
 				Input:      d.InputTokens,
 				Output:     d.OutputTokens,
 				CacheRead:  d.CacheReadInputTokens,
 				CacheWrite: d.CacheCreationInputTokens,
-			})
+			}
+			// The parent is the authoritative total minus what its subagents
+			// took. A class pinned at zero means the subagent bucket counted
+			// something ModelUsage does not, which is worth saying out loud:
+			// the turn is then priced ABOVE the authoritative total and the
+			// divergence check is about to fire for a reason this line explains.
+			parent, ok := total.SubClamped(subByModel[m])
+			if !ok {
+				b.logger().Warnf("subagent share exceeds ModelUsage for %s: total=%+v sub=%+v — parent clamped at zero (#1880)",
+					m, total, subByModel[m])
+			}
+			// The parent's OWN observed TTL split, not the combined one: the
+			// subagents' writes have already been priced and subtracted, so
+			// handing their (5m) split to the parent would charge those tokens
+			// at the 5m rate twice and leave the parent's real writes unsplit.
+			w := splitFor(topObserved[m], parent.CacheWrite)
+			cyclePriced += modelinfo.CostAsOfSplit(
+				prefixedModel(m), now,
+				parent.Input, parent.Output, parent.CacheRead, w,
+			)
+			cycleProvided += d.CostUSD
+			cycleCounts = cycleCounts.Add(total)
+			cycleParent = cycleParent.Add(parent)
 		}
 
 		if haveModelUsage {
@@ -533,19 +597,41 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		}
 
 		b.turnMu.Lock()
-		b.turnCalcCostUSD += cyclePriced
+		// turnCalcCostUSD and turnCalc stay the WHOLE turn — parent plus every
+		// subagent. They back the divergence check, whose other side is CC's
+		// cost for everything the process did, and the breakdown line, which
+		// describes the turn a reader asked about. Splitting them here would
+		// make the check fire on every turn that ran a subagent.
+		//
 		// Cross-model on BOTH sides, or the check fires on every multi-model
 		// turn for a discrepancy that is really just the two sides measuring
 		// different sets of models (#1870).
+		b.turnCalcCostUSD += cyclePriced + subPriced
 		b.turnProvidedUSD += cycleProvided
 		b.turnCalc = b.turnCalc.Add(cycleCounts)
+		// The parent figures are what the parent ROW carries, so that
+		// row + its subagent rows reconstruct the turn exactly once each.
+		b.turnParentCostUSD += cyclePriced
+		b.turnParentCalc = b.turnParentCalc.Add(cycleParent)
+		if b.turnSubagents == nil {
+			b.turnSubagents = make(map[subKey]modelinfo.SubagentCost, len(cycleSubs))
+		}
+		for k, sc := range cycleSubs {
+			e, seen := b.turnSubagents[k]
+			if !seen {
+				e = modelinfo.SubagentCost{AgentID: sc.AgentID, Model: sc.Model}
+			}
+			e.Counts = e.Counts.Add(sc.Counts)
+			e.CostUSD += sc.CostUSD
+			b.turnSubagents[k] = e
+		}
 		b.turnProvidedSeen = true
 		b.turnMu.Unlock()
 	}
 
 	result := &delegator.TurnResult{
 		Text:      text,
-		Model:     prefixedModel("claude", resultModel),
+		Model:     prefixedModel(resultModel),
 		ToolCalls: turnTools,
 		Usage:     turnUsage,
 	}
@@ -565,9 +651,11 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	result.Usage.OutputTokens = b.turnOutputTokens
 	checkCost := b.turnProvidedSeen
 	calcSoFar, providedSoFar := b.turnCalcCostUSD, b.turnProvidedUSD
+	parentSoFar, parentCounts := b.turnParentCostUSD, b.turnParentCalc
+	turnSubs := sortedSubagentCosts(b.turnSubagents)
 	cycles := b.turnCalls
 	bd := costBreakdown{
-		model:     prefixedModel("claude", resultModel),
+		model:     prefixedModel(resultModel),
 		cycles:    cycles,
 		counts:    b.turnCalc,
 		turnDur:   turnElapsed(b.turnStartedAt),
@@ -586,13 +674,22 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	// protected by different locks, so they cannot be marked together.
 	b.turnUsageAcc.markResult()
 	if checkCost {
-		calc := calcSoFar
+		// The PARENT's cost and counts, not the turn's: since #1880 phase C a
+		// turn with subagents writes one row per subagent beside this one, and
+		// each figure must be emitted exactly once or the session total
+		// double-counts. calc + every Subagents[i].CostUSD == the turn total
+		// (b.turnCalcCostUSD), which is what the divergence check sees.
+		//
+		// The counts are carried so the row that persists them can be re-priced
+		// back to its cost (#1854) — an identity that now holds per ROW, which
+		// is why the parent's counts have to be parent-only too. Gated with the
+		// cost: without a ModelUsage delta there is nothing summed, and NULL
+		// beats a zero.
+		calc := parentSoFar
 		result.Usage.CalculatedCostUSD = &calc
-		// The counts that calc was priced from, copied so the row that persists
-		// them can be re-priced to calc (#1854). Gated with the cost: without a
-		// ModelUsage delta there is nothing summed, and NULL beats a zero.
-		turn := b.turnCalc
+		turn := parentCounts
 		result.Usage.Turn = &turn
+		result.Usage.Subagents = turnSubs
 	}
 	b.stashedResult = result
 	b.stashedResultMsg = msg

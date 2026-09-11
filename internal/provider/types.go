@@ -387,6 +387,12 @@ type Usage struct {
 	// measure them; a direct API call is a single cycle, so AsTurn() is its
 	// turn total (#1854).
 	Turn *modelinfo.TokenCounts `json:"turn,omitempty"`
+
+	// Subagents is the per-subagent share already subtracted from
+	// CalculatedCostUSD and Turn (delegator.TurnUsage.Subagents), passed
+	// through. Each becomes its own api_calls row. Empty on the direct API
+	// path, which has no subagents.
+	Subagents []modelinfo.SubagentCost `json:"subagents,omitempty"`
 }
 
 // AsTurn returns this usage's four classes as the turn total, for a writer

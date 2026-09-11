@@ -928,4 +928,16 @@ type TurnUsage struct {
 	// accumulate per-cycle usage leaves this nil (persisted as NULL); it must
 	// never copy the context-fill fields in as a stand-in.
 	Turn *modelinfo.TokenCounts
+
+	// Subagents is the per-subagent share ALREADY SUBTRACTED from
+	// CalculatedCostUSD and Turn above (#1880 phase C, #1863). Each entry
+	// becomes its own api_calls row, so the turn's cost is this row plus these
+	// and every token is emitted exactly once.
+	//
+	// It exists because a subagent's spend used to land on whichever parent
+	// turn happened to close while it was running: a 3.5-minute turn was
+	// measured carrying 34 minutes of someone else's work and $11.71 of cost,
+	// which defeats the obvious diagnostic — an expensive turn looks like an
+	// expensive turn. nil when the turn ran no subagents.
+	Subagents []modelinfo.SubagentCost
 }

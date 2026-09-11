@@ -14,8 +14,8 @@ func TestPrefixedModel(t *testing.T) {
 		{syntheticModel, syntheticModel},
 	}
 	for _, c := range cases {
-		if got := prefixedModel("claude", c.in); got != c.want {
-			t.Errorf("prefixedModel(claude, %q) = %q, want %q", c.in, got, c.want)
+		if got := prefixedModel(c.in); got != c.want {
+			t.Errorf("prefixedModel(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }

@@ -314,29 +314,6 @@ func (a *usageAccumulator) writeSplit(sub bool) cacheWriteSplit {
 	return out
 }
 
-// writeSplitByModel returns this turn's cache-write TTL split for EACH model,
-// both buckets combined.
-//
-// Per model because pricing is per model: a turn routinely spans several (73%
-// of subagents run a different model from their parent), and each has its own
-// 5m and 1h rates. The aggregate writeSplit above answers "what did this turn
-// cache" for the warning text; this answers "what do I charge whom".
-//
-// Buckets are combined because the TTL is read from the OBSERVED split, never
-// derived from subagent-vs-top-level. That mapping happens to be clean today —
-// subagents 5m, main thread 1h — and asserting it here would rebuild, one layer
-// down, the assumption that caused #1866.
-func (a *usageAccumulator) writeSplitByModel() map[string]cacheWriteSplit {
-	out := make(map[string]cacheWriteSplit, len(a.top)+len(a.sub))
-	for model, tu := range a.top {
-		out[model] = out[model].addSplit(deltaWrite(tu.Write, a.atTurnStart.top[model].Write))
-	}
-	for k, tu := range a.sub {
-		out[k.Model] = out[k.Model].addSplit(deltaWrite(tu.Write, a.atTurnStart.sub[k].Write))
-	}
-	return out
-}
-
 // splitFor allocates `total` authoritative cache-write tokens for one model
 // across the TTL classes, using what the accumulator actually observed.
 //
@@ -466,14 +443,96 @@ func deltaWrite(cur, base cacheWriteSplit) cacheWriteSplit {
 // close while it was running.
 func (a *usageAccumulator) subagentUsage() map[string]turnUsage {
 	out := make(map[string]turnUsage, len(a.sub))
+	for k, d := range a.subagentDelta() {
+		e := out[k.Agent]
+		e.Input += d.Input
+		e.Output += d.Output
+		e.CacheRead += d.CacheRead
+		e.Write = e.Write.addSplit(d.Write)
+		out[k.Agent] = e
+	}
+	return out
+}
+
+// subagentDelta returns this turn's usage per (agent, model) — the accumulator's
+// own key, kept whole rather than summed across models the way subagentUsage
+// does.
+//
+// Both dimensions are needed to WRITE a row: the agent is what the row is
+// attributed to and the model is what it is priced at, and a row carries one
+// model in its model column. Entries whose delta is entirely zero are dropped,
+// because the maps are cumulative for the Backend's life (phase B) and every
+// subagent the session ever ran is a key — emitting those would write a
+// zero-cost row per historical subagent on every turn.
+func (a *usageAccumulator) subagentDelta() map[subKey]turnUsage {
+	out := make(map[subKey]turnUsage, len(a.sub))
 	for k, tu := range a.sub {
 		b := a.atTurnStart.sub[k]
-		e := out[k.Agent]
-		e.Input += tu.Input - b.Input
-		e.Output += tu.Output - b.Output
-		e.CacheRead += tu.CacheRead - b.CacheRead
-		e.Write = e.Write.addSplit(deltaWrite(tu.Write, b.Write))
-		out[k.Agent] = e
+		if *tu == b {
+			continue
+		}
+		out[k] = turnUsage{
+			Input:     tu.Input - b.Input,
+			Output:    tu.Output - b.Output,
+			CacheRead: tu.CacheRead - b.CacheRead,
+			Write:     deltaWrite(tu.Write, b.Write),
+		}
+	}
+	return out
+}
+
+// topWriteSplitByModel returns this turn's cache-write TTL split for each model,
+// MAIN THREAD ONLY — the subagents' writes are priced from their own entries in
+// subagentDelta.
+//
+// Per model because pricing is per model: a turn routinely spans several (73% of
+// subagents run a different model from their parent), and each has its own 5m
+// and 1h rates.
+//
+// Split by bucket only since #1880 phase C, and only because the buckets are now
+// priced onto SEPARATE ROWS. This is NOT the inference that caused #1866. The
+// TTL is still read from what each bucket actually OBSERVED — a subagent whose
+// messages report 1h writes is charged at 1h — and nothing here derives a TTL
+// from "it was a subagent, so it must be 5m". The mapping happens to be clean
+// today (main thread 1h, subagents 5m) and is still never assumed;
+// TestOnResult_ParentKeepsItsOwnTTLWhenTheSubagentSharesItsModel runs it the
+// other way round on purpose.
+//
+// The combined figure cannot be used for the parent: with the subagents' share
+// already subtracted off the total, splitFor would allocate the parent's
+// remaining tokens out of a split that still includes the subagents' — measured
+// at $0.525 against a true $0.375 on the test turn, a 40% overcharge on exactly
+// the tokens #1866 was about.
+func (a *usageAccumulator) topWriteSplitByModel() map[string]cacheWriteSplit {
+	out := make(map[string]cacheWriteSplit, len(a.top))
+	for model, tu := range a.top {
+		out[model] = out[model].addSplit(deltaWrite(tu.Write, a.atTurnStart.top[model].Write))
+	}
+	return out
+}
+
+// sortedSubagentCosts flattens the per-(agent, model) map into a stable slice.
+//
+// Sorted because the order becomes the order of api_calls rows, and an
+// unordered map would make two identical turns produce different row sequences
+// — which shows up as spurious diffs in any test or report that compares them.
+func sortedSubagentCosts(m map[subKey]modelinfo.SubagentCost) []modelinfo.SubagentCost {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := make([]subKey, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Agent != keys[j].Agent {
+			return keys[i].Agent < keys[j].Agent
+		}
+		return keys[i].Model < keys[j].Model
+	})
+	out := make([]modelinfo.SubagentCost, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, m[k])
 	}
 	return out
 }

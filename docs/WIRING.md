@@ -1469,7 +1469,9 @@ Four outputs:
    unit spend is ATTRIBUTED to, the model is the unit it is PRICED at, and one subagent can
    touch several models if it spawns its own. `subagentUsage()` returns this turn's per-agent
    totals; the divergence warning renders them as `by_subagent <id>=<n> …` when more than one
-   contributed.
+   contributed. `subagentDelta()` keeps both dimensions and is what phase C writes rows from —
+   entries whose delta is entirely zero are dropped, because the maps are cumulative for the
+   Backend's life and every subagent the session ever ran is still a key.
 
 **P3 landed: pricing now uses it — for the TTL SPLIT ONLY.** Turn TOTALS come from
    `ModelUsage`, iterating EVERY key (before P3 it read `resultModel` alone and dropped
@@ -1489,6 +1491,53 @@ Four outputs:
    manufacture a number nobody measured, and `TestSplitFor_NeverScalesProportionally` pins
    that refusal. The classes always sum to the authoritative total, so pricing still
    reconciles against the figure the divergence check compares to.
+
+   **Phase C landed: the turn is SPLIT ACROSS ROWS.** A turn with subagents writes one
+   `delegated_turn` row for the parent plus one `subagent_turn` row per (agent, model),
+   all sharing a `turn_id`. `Usage.CalculatedCostUSD` and `Usage.Turn` are the PARENT'S
+   share alone; `Usage.Subagents` carries the rest, and `turn_delegated.go`'s `logCall`
+   emits a row for each. Every token is emitted exactly once, so
+   `SUM(calculated_cost_usd) GROUP BY turn_id` is the turn and a plain `SUM` over the
+   table is still the session.
+
+   Why: a subagent's spend used to land on whichever parent turn happened to close while
+   it was running — a measured 3.5-minute turn carried 34 minutes of someone else's work
+   and **$11.71** (api_calls 47495), and the same shape recurred at $11.97 and $13.60.
+   That defeats the obvious diagnostic, because an expensive turn looks like an expensive
+   turn. It also meant there was no way to ask what a delegation cost: one subagent
+   measured $4.2578 across 29 calls, more than the parent turn it was charged to.
+
+   **The split is exact subtraction, never a ratio.** Each subagent is priced from the
+   accumulator's own per-`{Agent, Model}` delta — whose TTL coverage is therefore exact by
+   construction, so `splitFor` returns the observed split verbatim — and that share is then
+   taken out of the authoritative `ModelUsage` total with `TokenCounts.SubClamped`. The
+   parent gets the remainder. What `ModelUsage` holds that no stream line does (CC's
+   internal utility calls) stays on the parent, which is correct: it is not a subagent's.
+   A class that would go negative pins at **zero**, never below — a negative token count
+   prices as a CREDIT and would quietly reduce the bill — and logs a WARN, because the turn
+   is then priced above the authoritative total and the divergence check is about to fire.
+
+   `turnCalcCostUSD`/`turnCalc` deliberately stay the WHOLE turn. They back the divergence
+   check, whose other side is CC's cost for everything the process did, and the breakdown
+   line, which describes the turn a reader asked about. Splitting them would make the check
+   fire on every turn that ran a subagent.
+
+   The parent is priced from `topWriteSplitByModel` — the main-thread bucket only — not the
+   combined per-model split. With the subagents' share already subtracted, the combined
+   split would allocate the parent's remaining tokens out of a split that still includes
+   theirs: **$0.525 against a true $0.375** on the regression turn, a 40% overcharge on
+   exactly the tokens #1866 was about. This is NOT #1866's inference returning: the TTL is
+   still read from what each bucket OBSERVED, and nothing derives "subagent, therefore 5m".
+   `TestOnResult_ParentKeepsItsOwnTTLWhenTheSubagentSharesItsModel` runs it the other way
+   round — parent 5m, subagent 1h, one model — on purpose, and it is the arm that caught
+   the first version of the fix: with parent and subagent on DIFFERENT models the two splits
+   are identical, so swapping them reddened nothing.
+
+   **Still open (phase C, second half):** a subagent that outlives its parent turn books to
+   whichever turn is open when its tokens arrive. Its spend is now in a `subagent_turn` row
+   rather than polluting the next parent row — so "the next turn shows only its own cost"
+   holds — but the row carries that turn's `turn_id`, not the spawning turn's. Fixing it
+   needs the spawning turn's id plumbed into the backend and held per agent.
 
    **Fixtures in this package must set `Message.ID`.** The accumulator drops empty-id
    messages, and no pre-P3 fixture set one — so every earlier end-to-end cost test ran
