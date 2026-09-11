@@ -22,10 +22,17 @@ import (
 // consistent with EffectiveCost's total for entries with no golden cost.
 func categoryCosts(entries []log.APIEntry) (cacheRead, cacheWrite, input, output float64) {
 	for _, e := range entries {
-		cacheRead += modelinfo.CostAsOf(e.Model, e.Timestamp, 0, 0, e.CacheRead, 0)
-		cacheWrite += modelinfo.CostAsOf(e.Model, e.Timestamp, 0, 0, 0, e.CacheWrite)
-		input += modelinfo.CostAsOf(e.Model, e.Timestamp, e.Input, 0, 0, 0)
-		output += modelinfo.CostAsOf(e.Model, e.Timestamp, 0, e.Output, 0, 0)
+		// PricedCounts, never the fields: for a delegated turn the un-suffixed
+		// four are the final cycle's CONTEXT FILL, not what the row was priced
+		// from, so this table used to sit beside a correct Total it could not
+		// add up to. Measured 2026-09-11 over 810 rows: 3,845,629 cache-write
+		// tokens in the fields against 55,728,618 in Turn, a 14.5x shortfall
+		// (#1854, #1863).
+		c := e.PricedCounts()
+		cacheRead += modelinfo.CostAsOf(e.Model, e.Timestamp, 0, 0, c.CacheRead, 0)
+		cacheWrite += modelinfo.CostAsOf(e.Model, e.Timestamp, 0, 0, 0, c.CacheWrite)
+		input += modelinfo.CostAsOf(e.Model, e.Timestamp, c.Input, 0, 0, 0)
+		output += modelinfo.CostAsOf(e.Model, e.Timestamp, 0, c.Output, 0, 0)
 	}
 	return
 }
@@ -74,16 +81,28 @@ func CacheCommand() *Command {
 			}
 			rows := make([]cacheRow, len(recent))
 			for i, e := range recent {
+				// PricedCounts, not the raw fields: a subagent row leaves the
+				// context-fill columns at zero (it has no final cycle of its
+				// own), which read as a call that cost money and cached
+				// nothing. The turn counts are what it actually used.
+				c := e.PricedCounts()
 				hitRate := 0.0
-				inp := e.Input + e.CacheRead + e.CacheWrite
+				inp := c.Input + c.CacheRead + c.CacheWrite
 				if inp > 0 {
-					hitRate = float64(e.CacheRead) / float64(inp) * 100
+					hitRate = float64(c.CacheRead) / float64(inp) * 100
+				}
+				when := e.Timestamp.Format("15:04:05")
+				if e.IsSubagent() {
+					// Marked, not hidden: its cost is real and was taken OUT of
+					// the parent row beside it, so dropping it would leave the
+					// column short against the session total.
+					when += " ↳"
 				}
 				rows[i] = cacheRow{
-					time:   e.Timestamp.Format("15:04:05"),
-					input:  display.FormatCommas(e.Input),
-					cRead:  display.FormatCommas(e.CacheRead),
-					cWrite: display.FormatCommas(e.CacheWrite),
+					time:   when,
+					input:  display.FormatCommas(c.Input),
+					cRead:  display.FormatCommas(c.CacheRead),
+					cWrite: display.FormatCommas(c.CacheWrite),
 					cost:   fmt.Sprintf("$%.3f", e.EffectiveCost()),
 					hitPct: fmt.Sprintf("%.0f%%", hitRate),
 				}
@@ -159,6 +178,14 @@ func LastCommand() *Command {
 			latest := make(map[string]log.APIEntry)
 			var order []string
 			for i := len(entries) - 1; i >= 0; i-- {
+				// A subagent row is not the agent's last API CALL — it is a
+				// share of a turn, written at the same moment as the parent row
+				// beside it, and carries the subagent's model and no context
+				// fill. Showing it here answers a different question than the
+				// one asked (#1880 phase C).
+				if entries[i].IsSubagent() {
+					continue
+				}
 				agent := agentFromSession(entries[i].Session)
 				if filter != "" && agent != filter {
 					continue
@@ -195,6 +222,9 @@ func LastCommand() *Command {
 					agent,
 					display.CompactRelativeTime(e.Timestamp),
 					e.Model,
+					// Context fill, deliberately, not PricedCounts: this view
+					// answers "how big is the session now", which is what the
+					// un-suffixed columns mean.
 					fmt.Sprintf("in=%d out=%d cR=%d", e.Input, e.Output, e.CacheRead),
 					fmt.Sprintf("%.4f", e.EffectiveCost()),
 					truncateSession(e.Session),

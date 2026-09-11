@@ -86,8 +86,46 @@ func (e APIEntry) EffectiveCost() float64 {
 	if e.CalculatedCostUSD != nil {
 		return *e.CalculatedCostUSD
 	}
-	return modelinfo.CostAsOf(e.Model, e.Timestamp, e.Input, e.Output, e.CacheRead, e.CacheWrite)
+	c := e.PricedCounts()
+	return modelinfo.CostAsOf(e.Model, e.Timestamp, c.Input, c.Output, c.CacheRead, c.CacheWrite)
 }
+
+// PricedCounts is the token counts this row's cost was priced from: Turn when
+// the writer measured it, and only otherwise the four un-suffixed fields.
+//
+// ALWAYS USE THIS to price a row, never the fields directly. For a delegated
+// turn the un-suffixed four are the FINAL ask cycle's context fill — what
+// /context and compaction read — not the turn's totals, so pricing them
+// recovers a fraction of the real cost with no error to show for it. Measured
+// 2026-09-11 over 810 rows since 2026-09-04: the un-suffixed columns hold
+// 3,845,629 cache-write tokens where Turn holds 55,728,618, a 14.5x shortfall,
+// and 6,054 input against 79,728. A per-category table built from the fields
+// therefore sits next to a correct total it cannot add up to (#1854, #1863).
+//
+// A direct API call is the one writer for which the two coincide, and
+// provider.Usage.AsTurn() exists so that writer can say so explicitly.
+func (e APIEntry) PricedCounts() modelinfo.TokenCounts {
+	if e.Turn != nil {
+		return *e.Turn
+	}
+	return modelinfo.TokenCounts{
+		Input:      e.Input,
+		Output:     e.Output,
+		CacheRead:  e.CacheRead,
+		CacheWrite: e.CacheWrite,
+	}
+}
+
+// IsSubagent reports whether this row records a SUBAGENT's work rather than a
+// turn's own (#1880 phase C). Such a row shares its parent's turn_id and names
+// the agent in AgentID.
+//
+// Cost consumers must NOT filter these out — the parent row's cost had this
+// subtracted from it, so a sum over every row is still the right total. What
+// must filter them out is anything COUNTING calls or turns, or reading the
+// context-fill columns: a subagent row has no final-cycle context fill of its
+// own and leaves those at zero.
+func (e APIEntry) IsSubagent() bool { return e.CallType == "subagent_turn" }
 
 // PayloadEntry is a full API request/response record.
 type PayloadEntry struct {
