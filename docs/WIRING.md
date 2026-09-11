@@ -1330,15 +1330,27 @@ Four outputs:
    | columns | scope | use for |
    |---|---|---|
    | `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens` | a delegated turn's FINAL ask cycle's context fill (output is the exception: summed) | `/context`, `/status`, compaction sizing |
-   | `turn_input_tokens`, `turn_cache_read_tokens`, `turn_cache_write_tokens` + `output_tokens` | SUM of every cycle's own tokens — what `calculated_cost_usd` was priced from | pricing, per-class cost splits |
+   | `turn_input_tokens`, `turn_cache_read_tokens`, `turn_cache_write_tokens`, `turn_output_tokens` | SUM of every cycle's own tokens **across every model** — what `calculated_cost_usd` was priced from | pricing, per-class cost splits |
 
    Pricing a row from the first group recovers ~20% of its recorded cost (measured
    2026-09-05 over 14 days: $402 reconstructed against $2,040 recorded) with no error,
    because those columns mix a last-cycle snapshot with a summed output. The `turn_*`
    group is carried as `modelinfo.TokenCounts` on `delegator.TurnUsage.Turn` →
-   `provider.Usage.Turn` → `log.APIEntry.Turn`. Its `Output` is not stored separately —
-   `output_tokens` is already the turn sum, so there is no `turn_output_tokens` and a
-   scanned `Turn.Output` is `output_tokens`. The three stored columns are NULL as a group when the writer
+   `provider.Usage.Turn` → `log.APIEntry.Turn`. Its `Output` **is** stored, in `turn_output_tokens` (#1891).
+   It was not until #1866 P3 made pricing CROSS-MODEL: the three `turn_` columns became
+   all-model sums while `output_tokens` stayed PARENT-ONLY, so the two stopped being the
+   same number on any turn whose subagent ran another model. Measured live
+   (2026-09-11T03:10, opus-5 parent + `claude-sonnet-5` subagent): **27,305 output tokens
+   priced, 10,212 stored** — 63% of the turn's output absent from the row, and the
+   re-price identity failing by the difference. No live cost figure was wrong
+   (`EffectiveCost` prefers `calculated_cost_usd`), but anything re-deriving cost from
+   the columns under-reported.
+   The migration is `DROP` then `ADD`, in that order: the DROP clears the stale duplicate
+   #1854 left behind so the ADD yields NULL — *not measured* — for historical rows rather
+   than something silently wrong on the cross-model ones. **Do not re-drop it as a
+   duplicate; it is only a duplicate on single-model turns.** A scanned `Turn.Output`
+   falls back to `output_tokens` when the twin is NULL, so pre-#1891 rows stay
+   re-priceable instead of reading as zero. The three stored columns are NULL as a group when the writer
    measured no turn total (rows before the change; opencode, which does not
    yet accumulate per-cycle usage). Never fill it from the context-fill fields as a
    stand-in — a direct API call is the one case where the two coincide, and
