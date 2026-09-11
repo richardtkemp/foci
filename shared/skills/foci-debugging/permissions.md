@@ -60,3 +60,26 @@ across all agents — a new CC release can deprecate a different rule type the s
 
 *(Swept and fixed everywhere found on 2026-07-17: the shared global settings, several per-agent
 local overrides, and the `DefaultCCAllowedTools` seed.)*
+
+## "Why is/isn't this command auto-approved?" — read the DAEMON's environment, not your shell's
+
+Beyond rule matching, `internal/execguard` vetoes any command whose executable the foci process
+could overwrite — independently of which rule matched, **including the built-in read-only group**.
+It resolves bare command names against **foci-gw's own PATH**, which `foci.service` pins and which
+is *not* the PATH your Bash tool sees. A probe run in an agent shell resolves different binaries and
+yields a confidently wrong answer. Measure the real one:
+
+```
+pid=$(systemctl show -p MainPID --value foci.service)
+tr '\0' '\n' < /proc/$pid/environ | grep '^PATH='
+```
+
+(`pgrep -f foci-gw` does not find it — go via `MainPID`.)
+
+- **`-check-config` lists dropped *config entries* only.** The match-time veto is broader, so a
+  command can stop auto-approving without ever appearing in that output. Never treat the pre-flight
+  count as the set of affected commands.
+- **Before concluding a `chown` will help, check per-leg which path each test actually resolves** —
+  file vs parent directory, symlink-following vs not — and note that only the **first word** of each
+  `&&`/`||`/`;`/`|` segment is inspected at all. Arguments are never checked, so wrapping a script in
+  an interpreter restores the auto-approval without restoring the safety.
