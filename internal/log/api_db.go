@@ -31,13 +31,19 @@ func InitAPIDB(path string) error {
 		//                          the backend's figure verbatim. Never SUM.
 		//   calculated_cost_usd  — per TURN (one row per turn since #1856).
 		//                          foci's own priced figure. SUM this.
-		//   output_tokens        — per TURN sum of every cycle's output.
+		//   output_tokens        — per TURN sum of every cycle's output, for the
+		//                          PARENT model only.
+		//   turn_output_tokens   — per TURN sum across EVERY model (#1891).
+		//                          Differs from output_tokens exactly when a
+		//                          subagent ran on another model.
 		//   input_tokens, cache_read_tokens, cache_write_tokens
 		//                        — the turn's FINAL cycle context fill (a
 		//                          snapshot, what /context reads); NOT what
 		//                          the cost was priced from.
 		//   turn_input_tokens, turn_cache_read_tokens, turn_cache_write_tokens
-		//                        — per TURN sums (#1854); with output_tokens
+		//                        — per TURN sums across every model (#1854,
+		//                          made cross-model by #1866 P3); with
+		//                          turn_output_tokens
 		//                          these are what calculated_cost_usd priced.
 		//                          NULL as a group where the writer measured
 		//                          no turn total.
@@ -88,15 +94,29 @@ func InitAPIDB(path string) error {
 	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN turn_input_tokens INTEGER`)
 	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN turn_cache_read_tokens INTEGER`)
 	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN turn_cache_write_tokens INTEGER`)
-	// Briefly added pre-deploy as a duplicate of output_tokens; no-op once gone.
+	// turn_output_tokens: DROP then ADD, in that order and for a reason.
+	//
+	// #1854 gave the group no output twin because output_tokens already held the
+	// turn sum — true then, and a column added at that time was correctly dropped
+	// as a duplicate. #1866 P3 made pricing CROSS-MODEL, so the three turn_
+	// columns became all-model sums while output_tokens stayed parent-only.
+	// Measured on a live turn: 27,305 output tokens priced, 10,212 stored, and
+	// the #1854 re-price identity failed by the difference (#1891).
+	//
+	// The DROP clears any stale duplicate still carrying parent-only values, so
+	// the ADD yields a column that is NULL — "not measured" — for every historical
+	// row rather than silently wrong for the cross-model ones. Do NOT collapse
+	// these into one statement, and do NOT re-drop this column as a duplicate: it
+	// is only a duplicate on single-model turns.
 	_, _ = db.Exec(`ALTER TABLE api_calls DROP COLUMN turn_output_tokens`)
+	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN turn_output_tokens INTEGER`)
 
 	stmt, err := db.Prepare(`INSERT INTO api_calls
 		(ts, provider, session, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
 		 cost_usd, duration_ms, stop_reason, call_type, session_file, session_line, pre_messages,
 		 calculated_cost_usd,
-		 turn_input_tokens, turn_cache_read_tokens, turn_cache_write_tokens)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		 turn_input_tokens, turn_cache_read_tokens, turn_cache_write_tokens, turn_output_tokens)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		_ = db.Close()
 		return fmt.Errorf("prepare insert: %w", err)
@@ -195,7 +215,8 @@ const apiRowCols = `ts, COALESCE(provider, ''), session, model,
 	       COALESCE(stop_reason, ''), call_type,
 	       COALESCE(session_file, ''), COALESCE(session_line, 0),
 	       COALESCE(pre_messages, 0), calculated_cost_usd,
-	       turn_input_tokens, turn_cache_read_tokens, turn_cache_write_tokens`
+	       turn_input_tokens, turn_cache_read_tokens, turn_cache_write_tokens,
+	       turn_output_tokens`
 
 // scanAPIRows drains rows selected via apiRowCols into []APIEntry. Both cost
 // columns are nullable: cost_usd (ProvidedCostUSD) is NULL when the backend
@@ -209,23 +230,31 @@ func scanAPIRows(rows *sql.Rows) []APIEntry {
 		var e APIEntry
 		var tsStr string
 		var providedCost, calculatedCost sql.NullFloat64
-		var turnIn, turnCR, turnCW sql.NullInt64
+		var turnIn, turnCR, turnCW, turnOut sql.NullInt64
 		if err := rows.Scan(
 			&tsStr, &e.Provider, &e.Session, &e.Model,
 			&e.Input, &e.Output, &e.CacheRead, &e.CacheWrite,
 			&providedCost, &e.DurationMS, &e.StopReason, &e.CallType,
 			&e.SessionFile, &e.SessionLine, &e.PreMessages, &calculatedCost,
-			&turnIn, &turnCR, &turnCW,
+			&turnIn, &turnCR, &turnCW, &turnOut,
 		); err != nil {
 			continue
 		}
-		// All three are written together or not at all (see insert), so one
-		// column's validity speaks for the group. Output has no turn_ column:
-		// output_tokens is already the turn sum.
+		// All four are written together or not at all (see insert), so one
+		// column's validity speaks for the group.
+		//
+		// Output falls back to output_tokens when turn_output_tokens is NULL:
+		// every row written before #1891 has the parent-only figure there, and on
+		// a single-model turn the two are the same number. That keeps historical
+		// rows re-priceable instead of reading as zero output.
 		if turnIn.Valid {
+			out := e.Output
+			if turnOut.Valid {
+				out = int(turnOut.Int64)
+			}
 			e.Turn = &modelinfo.TokenCounts{
 				Input:      int(turnIn.Int64),
-				Output:     e.Output,
+				Output:     out,
 				CacheRead:  int(turnCR.Int64),
 				CacheWrite: int(turnCW.Int64),
 			}
@@ -312,9 +341,9 @@ func (a *apiDB) insert(entry APIEntry) {
 	// turn total — a zero there would price as "free", which is a wrong
 	// answer, where NULL is "not measured". Turn.Output is not stored:
 	// output_tokens already holds the turn sum for every writer.
-	var turnIn, turnCR, turnCW *int
+	var turnIn, turnCR, turnCW, turnOut *int
 	if t := entry.Turn; t != nil {
-		turnIn, turnCR, turnCW = &t.Input, &t.CacheRead, &t.CacheWrite
+		turnIn, turnCR, turnCW, turnOut = &t.Input, &t.CacheRead, &t.CacheWrite, &t.Output
 	}
 
 	a.mu.Lock()
@@ -326,7 +355,7 @@ func (a *apiDB) insert(entry APIEntry) {
 		entry.ProvidedCostUSD, entry.DurationMS, entry.StopReason,
 		entry.CallType, sessionFile, sessionLine,
 		preMessages, entry.CalculatedCostUSD,
-		turnIn, turnCR, turnCW,
+		turnIn, turnCR, turnCW, turnOut,
 	)
 	if err != nil {
 		std.event(ERROR, "api_db", "insert error: %v", err)

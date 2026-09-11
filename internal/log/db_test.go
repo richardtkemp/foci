@@ -304,22 +304,68 @@ func TestAPIDB_TurnCountsRoundTrip(t *testing.T) {
 		t.Errorf("rows with NULL turn_input_tokens = %d, want 1", nulls)
 	}
 
-	// Output has no turn_ twin: output_tokens is already the turn sum, so a
-	// Turn.Output that disagrees with Output is not persisted and reads back
-	// as Output.
+	// Output HAS a turn_ twin since #1891. It did not until #1866 P3 made
+	// pricing cross-model: the three turn_ columns became all-model sums while
+	// output_tokens stayed PARENT-ONLY, so on a turn with a subagent on another
+	// model they stopped being the same number. Measured live: 27,305 output
+	// tokens priced, 10,212 stored, and the #1854 re-price identity failed by
+	// the difference.
+	//
+	// This block used to assert the OPPOSITE — that a disagreeing Turn.Output
+	// is discarded and reads back as output_tokens, and that the column must
+	// not exist at all. That was correct while the two figures were always
+	// equal. It is kept as a rewrite rather than a deletion so the inversion is
+	// visible in the history.
 	apiLog.insert(APIEntry{Timestamp: t1.Add(2 * time.Minute), Session: "s/c/1", Model: "m",
 		Input: 3, Output: 815, CacheRead: 121000, CacheWrite: 300,
 		Turn:     &modelinfo.TokenCounts{Input: 10, Output: 999, CacheRead: 201000, CacheWrite: 41300},
 		CallType: "delegated_turn"})
 	got = ReadAPIDBLog()
-	if len(got) != 3 || got[2].Turn == nil || got[2].Turn.Output != 815 {
-		t.Errorf("entry[2].Turn.Output should read back as output_tokens (815); got %+v", got[2].Turn)
+	if len(got) != 3 || got[2].Turn == nil {
+		t.Fatalf("entry[2].Turn missing: %+v", got)
+	}
+	if got[2].Turn.Output != 999 {
+		t.Errorf("entry[2].Turn.Output = %d, want 999 — the CROSS-MODEL turn total, "+
+			"not output_tokens' parent-only 815 (#1891)", got[2].Turn.Output)
+	}
+	if got[2].Output != 815 {
+		t.Errorf("entry[2].Output = %d, want 815 — output_tokens keeps its own "+
+			"parent-only meaning; the new column is additive", got[2].Output)
 	}
 	var hasOut int
 	if err := apiLog.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('api_calls') WHERE name='turn_output_tokens'`).Scan(&hasOut); err != nil {
 		t.Fatal(err)
 	}
-	if hasOut != 0 {
-		t.Errorf("turn_output_tokens column exists; it duplicates output_tokens")
+	if hasOut != 1 {
+		t.Errorf("turn_output_tokens column missing — the DROP must be followed by the ADD (#1891)")
+	}
+}
+
+// TestAPIDB_TurnOutputFallsBackForPre1891Rows: a row written before the column
+// existed has NULL there, and must still re-price. Reading it as zero output
+// would silently under-report every historical turn.
+func TestAPIDB_TurnOutputFallsBackForPre1891Rows(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "fallback_api.db")
+	if err := InitAPIDB(dbPath); err != nil {
+		t.Fatalf("InitAPIDB: %v", err)
+	}
+	defer CloseAPIDB()
+
+	t1 := time.Date(2026, 9, 5, 10, 0, 0, 0, time.UTC)
+	apiLog.insert(APIEntry{Timestamp: t1, Session: "s/c/1", Model: "m",
+		Input: 3, Output: 815, CacheRead: 121000, CacheWrite: 300,
+		Turn:     &modelinfo.TokenCounts{Input: 10, Output: 999, CacheRead: 201000, CacheWrite: 41300},
+		CallType: "delegated_turn"})
+	// Simulate a pre-#1891 row: the turn group is present, the output twin is not.
+	if _, err := apiLog.db.Exec(`UPDATE api_calls SET turn_output_tokens = NULL`); err != nil {
+		t.Fatal(err)
+	}
+	got := ReadAPIDBLog()
+	if len(got) != 1 || got[0].Turn == nil {
+		t.Fatalf("Turn missing: %+v", got)
+	}
+	if got[0].Turn.Output != 815 {
+		t.Errorf("Turn.Output = %d, want 815 (output_tokens) — a NULL twin must fall "+
+			"back, not read as zero", got[0].Turn.Output)
 	}
 }
