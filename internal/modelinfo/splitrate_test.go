@@ -1,7 +1,9 @@
 package modelinfo
 
 import (
+	"encoding/json"
 	"math"
+	"strings"
 	"testing"
 	"time"
 )
@@ -50,16 +52,67 @@ func TestCostAsOf_IsCostAsOfSplitWithUnknown(t *testing.T) {
 	}
 }
 
-func TestCostAsOfSplit_ModelWithNoOneHourRateChargesTheSameEitherWay(t *testing.T) {
-	// sonnet-4-5 and haiku-4-5 carry no 1h figure, so cacheWriteRate falls back
-	// to the 5m rate and the split is a no-op for them. Asserted so that ADDING
-	// a 1h rate later (#1704) shows up as a deliberate change here rather than
-	// as a silent price movement.
+func TestCostAsOfSplit_SubagentModelsHaveRealOneHourRates(t *testing.T) {
+	// claude-haiku-4-5 and claude-sonnet-4-5 carried NO 1h rate, so
+	// cacheWriteRate fell back to the 5m figure and a MAIN-THREAD 1h write on
+	// either was under-priced by 1.6x — the mirror image of #1866, and
+	// invisible because it errs cheap. These are exactly the models the
+	// delegate skill sends subagents to (#1704).
+	//
+	// This test previously asserted the OPPOSITE: that the split was a no-op
+	// for them, with a note that adding a rate later should surface HERE as a
+	// deliberate change rather than a silent price movement. It did exactly
+	// that. Rates read off Anthropic's published table 2026-09-11
+	// (platform.claude.com/docs/en/build-with-claude/prompt-caching.md), not
+	// derived from the 2x rule.
 	at := time.Now()
 	const mtok = 1_000_000
-	for _, model := range []string{"claude-sonnet-4-5", "claude-haiku-4-5"} {
-		five := CostAsOfSplit(model, at, 0, 0, 0, CacheWrites{Ephemeral5m: mtok})
-		hour := CostAsOfSplit(model, at, 0, 0, 0, CacheWrites{Ephemeral1h: mtok})
-		closeTo(t, five, hour, model+" (no 1h rate in the registry)")
+	for _, c := range []struct {
+		model          string
+		want5m, want1h float64
+	}{
+		{"claude-haiku-4-5", 1.25, 2.00},
+		{"claude-sonnet-4-5", 3.75, 6.00},
+	} {
+		closeTo(t, CostAsOfSplit(c.model, at, 0, 0, 0, CacheWrites{Ephemeral5m: mtok}), c.want5m, c.model+" 5m")
+		closeTo(t, CostAsOfSplit(c.model, at, 0, 0, 0, CacheWrites{Ephemeral1h: mtok}), c.want1h, c.model+" 1h")
+	}
+}
+
+// TestOneHourRateIsTwiceBaseInput is the invariant behind every 1h figure, and
+// it replaces checking a hardcoded list of model ids (#1704).
+//
+// Anthropic states it as policy in the same doc that carries the price table:
+// "1-hour cache write tokens are 2 times the base input tokens price". Measured
+// 2026-09-11 across every registry row carrying both figures: 27 models, ZERO
+// violations. So a row that breaks it is a bad sync or a typo, not a new
+// pricing tier — and the failure names the row rather than leaving a 1.6x
+// mispricing to be found by a divergence warning months later.
+//
+// A row with NO 1h rate is not a violation here: absence means "not recorded",
+// and cacheWriteRate falls back to the 5m figure. That gap is #1704's subject.
+func TestOneHourRateIsTwiceBaseInput(t *testing.T) {
+	var checked int
+	for _, line := range strings.Split(string(builtInData), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var e jsonlEntry
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatalf("models.jsonl is not parseable: %v", err)
+		}
+		if e.CacheWrite1hPer1M <= 0 || e.InputPer1M <= 0 {
+			continue
+		}
+		checked++
+		if want := e.InputPer1M * 2; math.Abs(e.CacheWrite1hPer1M-want) > 1e-9 {
+			t.Errorf("%s (%s): 1h cache write $%.2f, want $%.2f (2x base input $%.2f)",
+				e.ID, e.Provider, e.CacheWrite1hPer1M, want, e.InputPer1M)
+		}
+	}
+	if checked < 20 {
+		t.Fatalf("only %d rows carried a 1h rate — the test is not reading models.jsonl "+
+			"as expected and would pass vacuously", checked)
 	}
 }
