@@ -1435,7 +1435,18 @@ Four outputs:
    unique per API call, so a message must be counted once EVER, and clearing the set
    each turn let a message spanning a boundary be counted twice.
 
-   **P3 landed: pricing now uses it — for the TTL SPLIT ONLY.** Turn TOTALS come from
+      The subagent bucket is keyed by `{Agent, Model}` (#1880 phase C), not by model alone.
+   Two subagents on one model were otherwise indistinguishable, and a background subagent
+   outliving its parent could only be described as "some subagent". Both feeds already
+   carried the identity and discarded it — the parent stream's `ParentToolUseID` and the
+   tail's `groupKey` are both the Agent tool_use id, which also names the transcript file.
+   Both dimensions are load-bearing and answer different questions: the subagent is the
+   unit spend is ATTRIBUTED to, the model is the unit it is PRICED at, and one subagent can
+   touch several models if it spawns its own. `subagentUsage()` returns this turn's per-agent
+   totals; the divergence warning renders them as `by_subagent <id>=<n> …` when more than one
+   contributed.
+
+**P3 landed: pricing now uses it — for the TTL SPLIT ONLY.** Turn TOTALS come from
    `ModelUsage`, iterating EVERY key (before P3 it read `resultModel` alone and dropped
    every other model's spend: a measured turn charged $0.54 against a true $1.68, silently,
    because both sides of the divergence check omitted the same model — #1870). Totals do

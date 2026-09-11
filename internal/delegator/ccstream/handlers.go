@@ -575,6 +575,7 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		writeTop:  b.turnUsageAcc.writeSplit(false),
 		writeSub:  b.turnUsageAcc.writeSplit(true),
 		models:    b.turnUsageAcc.models(),
+		subagents: b.turnUsageAcc.subagentUsage(),
 	}
 	// Move the accumulator's result baseline in step with modelUsageDelta's
 	// snapshot above, so the next turn measures from the same point pricing

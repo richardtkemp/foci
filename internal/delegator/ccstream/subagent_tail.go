@@ -99,9 +99,12 @@ func (b *Backend) loadSubagentMeta(taskID string) (groupKey, label string, ok bo
 // forward each newly-appended assistant text block via OnSubagentText under the
 // run's group key (the Agent tool_use id, matching OnSubagentStart/End).
 //
-// Foreground-ONLY: background subagents already surface their text in the
-// parent stdout stream as parent_tool_use_id-tagged assistant messages
-// (OnAssistant → OnSubagentText), so tailing them too would double-deliver.
+// TEXT is foreground-only: background subagents already surface their text in
+// the parent stdout stream as parent_tool_use_id-tagged assistant messages
+// (OnAssistant → OnSubagentText), so forwarding it from the transcript too
+// would double-deliver. USAGE is tailed for BOTH — the parent stream never
+// completes output_tokens, so a background subagent's output would otherwise
+// stay a 1-3 placeholder with no second source to correct it (#1880).
 var (
 	// subagentTailPoll is how often the tailer checks the transcript file for
 	// newly-appended bytes (and, before the file exists, for its creation).
@@ -128,7 +131,7 @@ type subagentTailManager struct {
 	// deliver because the two have different failure modes: dropping a text
 	// block loses display, dropping usage loses money. May be nil in tests
 	// that only exercise text forwarding.
-	noteUsage func(model, id string, u TokenUsage)
+	noteUsage func(agent, model, id string, u TokenUsage)
 	lg        *log.ComponentLogger
 }
 
@@ -143,7 +146,7 @@ type subagentTail struct {
 	done     chan struct{}
 }
 
-func newSubagentTailManager(deliver func(groupKey, text string), noteUsage func(model, id string, u TokenUsage), lg *log.ComponentLogger) *subagentTailManager {
+func newSubagentTailManager(deliver func(groupKey, text string), noteUsage func(agent, model, id string, u TokenUsage), lg *log.ComponentLogger) *subagentTailManager {
 	if lg == nil {
 		lg = log.NewComponentLogger("ccstream")
 	}
@@ -349,7 +352,10 @@ func (m *subagentTailManager) deliverLine(groupKey string, line []byte, wantText
 	// the previous early return on a nil deliver would have discarded every
 	// token it spent.
 	if m.noteUsage != nil {
-		m.noteUsage(rec.Message.Model, rec.Message.ID, rec.Message.Usage)
+		// groupKey IS the Agent tool_use id, so the usage carries the identity of
+		// the subagent that spent it, not merely the fact that a subagent spent it
+		// (#1880 phase C).
+		m.noteUsage(groupKey, rec.Message.Model, rec.Message.ID, rec.Message.Usage)
 	}
 	// Text only when this tail was started for a FOREGROUND subagent. A
 	// background subagent's text already reaches the parent stream, so

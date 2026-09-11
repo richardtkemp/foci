@@ -2,6 +2,7 @@ package ccstream
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -43,6 +44,12 @@ type costBreakdown struct {
 	turnDur   time.Duration
 	pricedDur time.Duration
 
+	// This turn's cache-write tokens per SUBAGENT, keyed by the Agent tool_use
+	// id (#1880 phase C). Named individually because "subagent 344112 of
+	// 369913" says a subagent spent it and not WHICH — and with several running
+	// concurrently, which one is the question a reader actually has.
+	subagents map[string]turnUsage
+
 	// Every model this turn actually used. More than one means the turn's cost
 	// cannot be read off ModelUsage[resultModel], which is keyed by a single
 	// model — naming them here is what makes that visible in the log rather
@@ -68,7 +75,7 @@ func (b costBreakdown) String() string {
 		c.Output, price(0, c.Output, 0, 0),
 		c.CacheRead, price(0, 0, c.CacheRead, 0),
 		c.CacheWrite, price(0, 0, 0, c.CacheWrite),
-	) + b.spanSuffix() + b.writeSplitSuffix()
+	) + b.spanSuffix() + b.writeSplitSuffix() + b.subagentSuffix()
 }
 
 // spanSuffix names the turn's own duration and the window the priced delta
@@ -91,6 +98,37 @@ func (b costBreakdown) spanSuffix() string {
 		s += fmt.Sprintf(" (SPAN %.1fx TURN — includes work from outside this turn)", b.pricedDur.Seconds()/b.turnDur.Seconds())
 	}
 	return s
+}
+
+// subagentSuffix names each subagent's cache-write tokens, largest first.
+//
+// Printed only when more than one subagent contributed: with a single one the
+// existing "(subagent N of M)" already says everything, and the id adds noise.
+func (b costBreakdown) subagentSuffix() string {
+	type ent struct {
+		id string
+		n  int
+	}
+	var es []ent
+	for id, u := range b.subagents {
+		if n := u.Write.total(); n > 0 {
+			es = append(es, ent{id, n})
+		}
+	}
+	if len(es) < 2 {
+		return ""
+	}
+	sort.Slice(es, func(i, j int) bool {
+		if es[i].n != es[j].n {
+			return es[i].n > es[j].n
+		}
+		return es[i].id < es[j].id // stable for equal counts
+	})
+	parts := make([]string, 0, len(es))
+	for _, e := range es {
+		parts = append(parts, fmt.Sprintf("%s=%d", e.id, e.n))
+	}
+	return " | by_subagent " + strings.Join(parts, " ")
 }
 
 // writeSplitSuffix names the cache-write TTL mix behind the single
