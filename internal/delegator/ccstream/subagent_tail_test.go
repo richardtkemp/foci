@@ -141,9 +141,19 @@ func fileOpened(m *subagentTailManager, key string) bool {
 	return ok
 }
 
-// TestSubagentTail_BackgroundNotTailed verifies maybeStart is a no-op when no
-// foreground start was recorded (background subagents already stream text).
-func TestSubagentTail_BackgroundNotTailed(t *testing.T) {
+// TestSubagentTail_BackgroundIsTailedForUsageButNotText replaces
+// TestSubagentTail_BackgroundNotTailed, which asserted that maybeStart was a
+// no-op for background subagents.
+//
+// That was right about TEXT and wrong about MONEY. A background subagent's text
+// does already stream to the parent, so forwarding it from the transcript would
+// double it. But its USAGE came from the stream alone, and the stream never
+// completes output_tokens — every assistant line carries stop_reason null and a
+// running count of 1-3 that is never revised. Verified on a live background
+// subagent's own transcript, where one message reads 2 and then 319.
+//
+// So the tail now runs for background subagents with text delivery OFF.
+func TestSubagentTail_BackgroundIsTailedForUsageButNotText(t *testing.T) {
 	withFastTail(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent-z.jsonl")
@@ -152,18 +162,29 @@ func TestSubagentTail_BackgroundNotTailed(t *testing.T) {
 	}
 
 	rec := &tailRecorder{}
-	mgr := newSubagentTailManager(rec.deliver, nil, nil)
+	noted := 0
+	mgr := newSubagentTailManager(rec.deliver, func(string, string, TokenUsage) { noted++ }, nil)
 	// No expectForeground → background path.
 	mgr.maybeStart("tool-bg", path)
 
+	waitFor(t, func() bool { return fileOpened(mgr, "tool-bg") })
 	time.Sleep(30 * time.Millisecond)
+
 	if got := rec.texts(); len(got) != 0 {
-		t.Fatalf("background subagent should not be tailed, got %v", got)
+		t.Fatalf("background subagent text was forwarded (%v) — it already streams to "+
+			"the parent, so this would double it in the chat", got)
 	}
-	// No tail registered.
-	if fileOpened(mgr, "tool-bg") {
-		t.Fatal("a tail was started for a background subagent")
+	mgr.mu.Lock()
+	tail := mgr.tails["tool-bg"]
+	mgr.mu.Unlock()
+	if tail == nil {
+		t.Fatal("no tail for a background subagent — its usage would come from the " +
+			"stream alone, where output_tokens is a placeholder")
 	}
+	if tail.wantText {
+		t.Error("background tail must not deliver text")
+	}
+	mgr.finalize("tool-bg")
 }
 
 // TestSubagentTail_DeliverLineFilters checks that only assistant text blocks are
@@ -180,10 +201,93 @@ func TestSubagentTail_DeliverLineFilters(t *testing.T) {
 		``,
 	}
 	for _, l := range lines {
-		mgr.deliverLine("g", []byte(l))
+		mgr.deliverLine("g", []byte(l), true)
 	}
 	got := rec.texts()
 	if len(got) != 1 || got[0] != "REAL" {
 		t.Fatalf("filter failed: got %v want [REAL]", got)
 	}
+}
+
+// TestSubagentTail_BackgroundRecordsUsageWithoutText: a background subagent's
+// text ALREADY reaches the parent stream, so forwarding it from the transcript
+// too would render it twice in the chat. Its USAGE is the opposite case — the
+// stream never completes output_tokens (every line carries stop_reason null and
+// a running count of 1-3), so the transcript is the only complete source.
+//
+// The tail therefore runs for background subagents with text delivery OFF.
+func TestSubagentTail_BackgroundRecordsUsageWithoutText(t *testing.T) {
+	rec := &tailRecorder{}
+	var gotModel, gotID string
+	var gotUsage TokenUsage
+	mgr := newSubagentTailManager(rec.deliver, func(model, id string, u TokenUsage) {
+		gotModel, gotID, gotUsage = model, id, u
+	}, nil)
+
+	line := `{"type":"assistant","isSidechain":true,"message":{"id":"msg_A","model":"claude-sonnet-5",` +
+		`"content":[{"type":"text","text":"SHOULD NOT BE DELIVERED"}],` +
+		`"usage":{"output_tokens":319,"cache_creation_input_tokens":39122}}}`
+
+	mgr.deliverLine("g", []byte(line), false) // background: usage only
+
+	if texts := rec.texts(); len(texts) != 0 {
+		t.Errorf("background subagent text was forwarded (%v) — it already streams to the "+
+			"parent, so this would double it in the chat", texts)
+	}
+	if gotID != "msg_A" || gotModel != "claude-sonnet-5" {
+		t.Errorf("usage not recorded: model=%q id=%q", gotModel, gotID)
+	}
+	if gotUsage.OutputTokens != 319 || gotUsage.CacheCreationInputTokens != 39122 {
+		t.Errorf("usage = out:%d cw:%d, want 319/39122 — the completed figures the "+
+			"parent stream never supplies", gotUsage.OutputTokens, gotUsage.CacheCreationInputTokens)
+	}
+}
+
+// TestSubagentTail_MaybeStartRunsForBackgroundToo: the tail used to start only
+// when a foreground Agent start had been recorded, which left background
+// subagents' usage coming from the parent stream alone — where output is a
+// placeholder that is never revised.
+func TestSubagentTail_MaybeStartRunsForBackgroundToo(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent-bg.jsonl")
+	if err := os.WriteFile(path, []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mgr := newSubagentTailManager(nil, func(string, string, TokenUsage) {}, nil)
+
+	mgr.maybeStart("toolu_bg", path) // no expectForeground call: background
+
+	mgr.mu.Lock()
+	tail, running := mgr.tails["toolu_bg"]
+	mgr.mu.Unlock()
+	if !running {
+		t.Fatal("no tail started for a background subagent — its usage would come " +
+			"from the stream alone, where output_tokens is a placeholder")
+	}
+	if tail.wantText {
+		t.Error("background tail has wantText=true — its text already streams to the parent")
+	}
+	mgr.stopAll()
+}
+
+// TestSubagentTail_MaybeStartKeepsTextForForeground guards the other half: the
+// foreground case must still deliver text, which is why the tail exists at all.
+func TestSubagentTail_MaybeStartKeepsTextForForeground(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent-fg.jsonl")
+	if err := os.WriteFile(path, []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mgr := newSubagentTailManager(func(string, string) {}, nil, nil)
+
+	mgr.expectForeground("toolu_fg")
+	mgr.maybeStart("toolu_fg", path)
+
+	mgr.mu.Lock()
+	tail := mgr.tails["toolu_fg"]
+	mgr.mu.Unlock()
+	if tail == nil || !tail.wantText {
+		t.Fatal("foreground tail must forward text — CC filters it from the parent stream")
+	}
+	mgr.stopAll()
 }
