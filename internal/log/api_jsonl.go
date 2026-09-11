@@ -47,9 +47,25 @@ type APIEntry struct {
 	// that do not accumulate per-cycle usage.
 	Turn *modelinfo.TokenCounts `json:"turn,omitempty"`
 
+	// TurnID names the turn this row belongs to, and is the ONLY durable turn
+	// identity in api.db: before it, "a turn is a row" was the whole story, so
+	// turn boundaries had to be inferred (#1695) and a turn that writes more
+	// than one row could not be reassembled at all. Format is
+	// "<session>@<StartedAt UnixNano>" — unique because turns are serialised
+	// per session, and stable across a foci restart, which the in-memory
+	// TurnState.TurnID counter is not. Empty for writers that have no turn.
+	TurnID string `json:"turn_id,omitempty"`
+
+	// AgentID names the SUBAGENT whose work this row records, for
+	// call_type="subagent_turn" (#1880 phase C / #1863). It is the Agent tool's
+	// tool_use id, which is also what names the transcript
+	// (.../subagents/agent-<id>.jsonl), so a row can be traced back to the work
+	// that incurred it. Empty on a parent row.
+	AgentID string `json:"agent_id,omitempty"`
+
 	DurationMS  int64  `json:"duration_ms"`
 	StopReason  string `json:"stop_reason"`
-	CallType    string `json:"call_type"`              // "conversation", "compaction", "summary", "spawn"
+	CallType    string `json:"call_type"`              // "conversation", "compaction", "summary", "spawn", "subagent_turn"
 	SessionFile string `json:"session_file,omitempty"` // path to session JSONL file
 	SessionLine int    `json:"session_line,omitempty"` // line number in session file (conversation calls)
 	PreMessages int    `json:"pre_messages,omitempty"` // message count before compaction

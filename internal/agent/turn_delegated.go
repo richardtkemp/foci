@@ -690,6 +690,7 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 			DurationMS:        time.Since(ts.StartedAt).Milliseconds(),
 			StopReason:        "end_turn",
 			CallType:          "delegated_turn",
+			TurnID:            ts.RowID(),
 			SessionFile:       sessionFile,
 		})
 	}

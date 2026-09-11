@@ -372,7 +372,7 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 			return ts.Ctx.Err()
 		}
 
-		cost := a.logAPIResponse(ts.SessionKey, ts.TurnModel, start, duration, req, resp, len(ts.Messages))
+		cost := a.logAPIResponse(ts, ts.TurnModel, start, duration, req, resp, len(ts.Messages))
 		a.processAPIResponse(ts.SessionKey, ts.SessionMeta, resp, cost, ts.StartedAt, maxOutput)
 
 		assistantMsg := provider.Message{

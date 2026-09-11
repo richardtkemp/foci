@@ -369,3 +369,69 @@ func TestAPIDB_TurnOutputFallsBackForPre1891Rows(t *testing.T) {
 			"back, not read as zero", got[0].Turn.Output)
 	}
 }
+
+// TestAPIDB_TurnIDAndAgentIDRoundTrip covers #1880 phase C's schema half: a
+// turn is no longer always one row, so rows need a shared turn identity and a
+// subagent row needs to name its subagent.
+//
+// The NULL assertion is the load-bearing one. An empty turn_id stored as ""
+// would split un-attributed rows into two populations — historical rows (NULL)
+// and new ones ("") — so "WHERE turn_id IS NULL" would silently under-report
+// and every caller would need to test for both.
+func TestAPIDB_TurnIDAndAgentIDRoundTrip(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test_api.db")
+	if err := InitAPIDB(dbPath); err != nil {
+		t.Fatalf("InitAPIDB: %v", err)
+	}
+	defer CloseAPIDB()
+
+	t1 := time.Date(2026, 9, 11, 11, 0, 0, 0, time.UTC)
+	const turnID = "clutch/c123@1757585000000000000"
+
+	// A parent row and its two subagent rows — one turn, three rows.
+	apiLog.insert(APIEntry{Timestamp: t1, Session: "clutch/c123", Model: "m",
+		Output: 100, CallType: "delegated_turn", TurnID: turnID})
+	apiLog.insert(APIEntry{Timestamp: t1.Add(time.Second), Session: "clutch/c123", Model: "m2",
+		Output: 200, CallType: "subagent_turn", TurnID: turnID, AgentID: "agent-aaa"})
+	apiLog.insert(APIEntry{Timestamp: t1.Add(2 * time.Second), Session: "clutch/c123", Model: "m2",
+		Output: 300, CallType: "subagent_turn", TurnID: turnID, AgentID: "agent-bbb"})
+	// A row from a writer with no turn identity at all.
+	apiLog.insert(APIEntry{Timestamp: t1.Add(3 * time.Second), Session: "clutch/c123", Model: "m",
+		Output: 7, CallType: "summary"})
+
+	got := ReadAPIDBLog()
+	if len(got) != 4 {
+		t.Fatalf("ReadAPIDBLog len = %d, want 4", len(got))
+	}
+	for i, want := range []struct{ turn, agent string }{
+		{turnID, ""}, {turnID, "agent-aaa"}, {turnID, "agent-bbb"}, {"", ""},
+	} {
+		if got[i].TurnID != want.turn || got[i].AgentID != want.agent {
+			t.Errorf("entry[%d] turn_id=%q agent_id=%q, want %q/%q",
+				i, got[i].TurnID, got[i].AgentID, want.turn, want.agent)
+		}
+	}
+
+	// The whole turn reassembles from the id — the query shape the column exists
+	// for, and the one that was impossible before it (#1695).
+	var rows, out int
+	if err := apiLog.db.QueryRow(
+		`SELECT COUNT(*), COALESCE(SUM(output_tokens), 0) FROM api_calls WHERE turn_id = ?`,
+		turnID).Scan(&rows, &out); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 3 || out != 600 {
+		t.Errorf("turn %s reassembled to %d rows / %d output, want 3/600", turnID, rows, out)
+	}
+
+	// Absent means NULL, not "".
+	var nullTurn, emptyTurn int
+	if err := apiLog.db.QueryRow(
+		`SELECT COUNT(CASE WHEN turn_id IS NULL THEN 1 END), COUNT(CASE WHEN turn_id = '' THEN 1 END) FROM api_calls`,
+	).Scan(&nullTurn, &emptyTurn); err != nil {
+		t.Fatal(err)
+	}
+	if nullTurn != 1 || emptyTurn != 0 {
+		t.Errorf("turn_id NULL=%d empty-string=%d, want 1/0", nullTurn, emptyTurn)
+	}
+}
