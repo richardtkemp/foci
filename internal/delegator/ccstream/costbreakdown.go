@@ -19,8 +19,15 @@ import (
 // priced, so a single-cycle turn whose row prices at $0.74 can legitimately
 // carry a calculated cost of $4.39 and look like a pricing bug.
 type costBreakdown struct {
-	model  string
+	model string
+	// cycles counts RESULT messages — ask cycles — not API calls. It is 1 for a
+	// normal turn and rises only on a steer or a pre-answer re-dispatch. It was
+	// read as an API-call count and reported as broken (#1877 saw cycles=1 on a
+	// turn with 16.0M cache-read against a 1M context window); msgs is the
+	// counter that answers that question, and both are printed under names that
+	// say which is which (#1866 P5).
 	cycles int
+	msgs   int
 	counts modelinfo.TokenCounts
 
 	// Cache-write tokens split by TTL, top-level and subagent separately
@@ -69,8 +76,8 @@ func (b costBreakdown) String() string {
 	}
 	c := b.counts
 	return fmt.Sprintf(
-		"cycles=%d in=%d ($%.6f) out=%d ($%.6f) cache_read=%d ($%.6f) cache_write=%d ($%.6f)",
-		b.cycles,
+		"ask_cycles=%d msgs=%d in=%d ($%.6f) out=%d ($%.6f) cache_read=%d ($%.6f) cache_write=%d ($%.6f)",
+		b.cycles, b.msgs,
 		c.Input, price(c.Input, 0, 0, 0),
 		c.Output, price(0, c.Output, 0, 0),
 		c.CacheRead, price(0, 0, c.CacheRead, 0),

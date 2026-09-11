@@ -662,6 +662,7 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	bd := costBreakdown{
 		model:     prefixedModel(resultModel),
 		cycles:    cycles,
+		msgs:      b.turnUsageAcc.messages(),
 		counts:    b.turnCalc,
 		turnDur:   turnElapsed(b.turnStartedAt),
 		pricedDur: turnElapsed(pricedSpanFrom),

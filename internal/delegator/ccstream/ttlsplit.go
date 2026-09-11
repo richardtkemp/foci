@@ -177,6 +177,12 @@ type usageAccumulator struct {
 	curTurn   string
 	agentTurn map[string]string
 
+	// appliedAtTurnStart is len(applied) when the current turn opened, so
+	// len(applied) minus it is how many DISTINCT assistant messages this turn
+	// accumulated (#1866 P5). applied only ever grows — a repeat of a known id
+	// updates in place — so the difference is exactly the new ones.
+	appliedAtTurnStart int
+
 	// atTurnStart is atLastResult's value when the current turn opened, i.e.
 	// the total as of the last result BEFORE this turn. Every per-turn figure
 	// is measured from here. Deliberately NOT the total at turn start itself:
@@ -216,6 +222,25 @@ func (a *usageAccumulator) markResult() { a.atLastResult = a.snapshot() }
 func (a *usageAccumulator) beginTurn(turnID string) {
 	a.atTurnStart = a.atLastResult
 	a.curTurn = turnID
+	a.appliedAtTurnStart = len(a.applied)
+}
+
+// messages is how many distinct assistant messages this turn accumulated — the
+// closest thing to an API-call count that the stream actually carries.
+//
+// It exists because the breakdown's cycles= is not that number and was read as
+// if it were: #1877 flagged cycles=1 on turns with 16.0M cache-read against a
+// 1M context window, which is many calls, and concluded the counter was broken.
+// It was not — it counts RESULT messages (ask cycles), which is 1 for a normal
+// turn and rises only on a steer or a pre-answer re-dispatch. Both numbers are
+// worth having and neither substitutes for the other, so the line now prints
+// both under names that say which is which.
+func (a *usageAccumulator) messages() int {
+	n := len(a.applied) - a.appliedAtTurnStart
+	if n < 0 {
+		return 0
+	}
+	return n
 }
 
 // note folds one API call's usage into the accumulator, ignoring a message

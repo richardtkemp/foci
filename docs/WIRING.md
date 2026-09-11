@@ -1388,6 +1388,31 @@ Four outputs:
    turn that is not knowable — and would split un-attributed rows into two
    populations, making `WHERE turn_id IS NULL` silently under-report.
 
+   **Reading a split turn: two rules, and they point opposite ways (#1863).**
+   Cost consumers must sum EVERY row including `subagent_turn` — a subagent row's
+   cost was *subtracted* from the parent row beside it, so skipping it under-reports.
+   Anything COUNTING calls or turns must skip them: one turn that spawned three
+   subagents is one call and four rows. `APIEntry.IsSubagent()` is the predicate;
+   `sumCosts` does both halves in one function precisely so the pair cannot drift.
+   `QuerySessionStats`'s `turn_count` and its context-tokens query already exclude
+   them by `call_type`.
+
+   **Price a row with `APIEntry.PricedCounts()`, never the un-suffixed fields.** It
+   returns `Turn` when the writer measured it and the four fields only otherwise.
+   The fields are the final ask cycle's context fill, so pricing them recovers a
+   fraction of the real cost with no error to show for it — measured 2026-09-11 over
+   810 rows since 2026-09-04: **3,845,629 cache-write tokens in the fields against
+   55,728,618 in `Turn`**, 14.5x short, and 6,054 input against 79,728. `/cost`'s
+   category table was built from the fields and therefore sat beside a correct total
+   it could not add up to, which is #1854 resurfacing on the read side. A subagent
+   row makes it visible rather than causing it: those rows leave the context-fill
+   columns at zero deliberately (a subagent has no final cycle of its own), so they
+   read as a call that cost money and cached nothing.
+
+   The exception, kept on purpose: `/last` prints `in=/out=/cR=` from the un-suffixed
+   fields, because that view answers "how big is the session now" — which is exactly
+   what those columns mean. It skips subagent rows instead.
+
    **Always read cost via `APIEntry.EffectiveCost()`**, which prefers the calculated
    figure and falls back to a live `modelinfo.CostAsOf` from stored tokens. Never read
    either column directly, and never `SUM` in SQL — `QuerySessionStats` deliberately

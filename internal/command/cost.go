@@ -44,6 +44,9 @@ func costUsage() string {
 //  4. duration = week → daily table
 //  5. default → summary with category breakdown
 func costRender(entries []log.APIEntry, args costArgs, scopeLabel, sessionKey string, idx *session.SessionIndex) string {
+	// Appended to whichever view runs below, rather than added to each, so one
+	// place owns it and no view can silently miss it.
+	suffix := subagentBreakdown(entries)
 	header := costHeader(args, scopeLabel)
 
 	// 1. Breakdown — group by session type
@@ -56,26 +59,26 @@ func costRender(entries []log.APIEntry, args costArgs, scopeLabel, sessionKey st
 				}
 			}
 		}
-		return renderTypeBreakdown(entries, buildSessionTypeMap(idx), breakdownHeader)
+		return renderTypeBreakdown(entries, buildSessionTypeMap(idx), breakdownHeader) + suffix
 	}
 
 	// 2. Session-family scope → category detail
 	if hasSessionScope(args.scopes) {
-		return costCategoryView(entries, header, sessionKey, idx, args.scopes)
+		return costCategoryView(entries, header, sessionKey, idx, args.scopes) + suffix
 	}
 
 	// 3. Today → per-session table
 	if args.durKind == durToday {
-		return costPerSessionView(entries, header)
+		return costPerSessionView(entries, header) + suffix
 	}
 
 	// 4. Week → daily table
 	if args.durKind == durWindow && args.durLabel == "7 days" {
-		return costDailyView(entries, header)
+		return costDailyView(entries, header) + suffix
 	}
 
 	// 5. Default → summary with category breakdown
-	return costSummaryView(entries, header)
+	return costSummaryView(entries, header) + suffix
 }
 
 // costHeader builds the header label from the duration and scope.
@@ -151,7 +154,9 @@ func costPerSessionView(entries []log.APIEntry, header string) string {
 	counts := make(map[string]int)
 	for _, e := range entries {
 		costs[e.Session] += e.EffectiveCost()
-		counts[e.Session]++
+		if !e.IsSubagent() {
+			counts[e.Session]++
+		}
 	}
 
 	if len(costs) == 0 {
@@ -273,6 +278,92 @@ func costSummaryView(entries []log.APIEntry, header string) string {
 	return b.String()
 }
 
+// subagentBreakdown renders per-subagent spend, or "" when the window contains
+// no subagent rows.
+//
+// This is the question #1863 was opened for and that nothing could answer: the
+// delegate skill spawns subagents constantly and their spend was attributed to
+// whatever parent turn happened to be open, so "what did that delegation cost"
+// had no answer at all. One subagent measured $4.2578 across 29 calls — more
+// than the parent turn it was charged to.
+//
+// Grouped by agent rather than by (agent, model) because the agent is the unit
+// a reader is asking about; a subagent that used more than one model shows them
+// joined, which is rare and worth seeing when it happens.
+func subagentBreakdown(entries []log.APIEntry) string {
+	type sub struct {
+		cost   float64
+		models map[string]struct{}
+		rows   int
+	}
+	subs := make(map[string]*sub)
+	var total float64
+	for _, e := range entries {
+		if !e.IsSubagent() {
+			continue
+		}
+		id := e.AgentID
+		if id == "" {
+			// Usage that arrived before its task_started named the agent. Kept
+			// rather than dropped: the money is real and belongs to SOME
+			// subagent, and hiding it would leave this table short against the
+			// total above it.
+			id = "(unnamed)"
+		}
+		x := subs[id]
+		if x == nil {
+			x = &sub{models: make(map[string]struct{})}
+			subs[id] = x
+		}
+		x.cost += e.EffectiveCost()
+		x.models[e.Model] = struct{}{}
+		x.rows++
+		total += e.EffectiveCost()
+	}
+	if len(subs) == 0 {
+		return ""
+	}
+
+	ids := make([]string, 0, len(subs))
+	for id := range subs {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return subs[ids[i]].cost > subs[ids[j]].cost })
+
+	cols := []display.Column{
+		{Header: "Subagent"},
+		{Header: "Model"},
+		{Header: "Turns", Align: display.AlignRight},
+		{Header: "Cost", Align: display.AlignRight},
+	}
+	rows := make([][]string, 0, len(ids))
+	costs := make([]float64, 0, len(ids))
+	for _, id := range ids {
+		costs = append(costs, subs[id].cost)
+	}
+	cells := moneyCol(costs, 4)
+	for i, id := range ids {
+		x := subs[id]
+		ms := make([]string, 0, len(x.models))
+		for m := range x.models {
+			ms = append(ms, strings.TrimPrefix(m, "claude/"))
+		}
+		sort.Strings(ms)
+		rows = append(rows, []string{id, strings.Join(ms, ", "), strconv.Itoa(x.rows), cells[i]})
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n\n🔻 Subagent spend: $%.4f across %d", total, len(ids))
+	if len(ids) == 1 {
+		b.WriteString(" subagent")
+	} else {
+		b.WriteString(" subagents")
+	}
+	b.WriteString("\n")
+	b.WriteString(display.MarkdownTable(cols, rows))
+	return b.String()
+}
+
 // --- Shared helpers ---
 
 // renderTypeBreakdown groups the given entries by session type and renders a
@@ -297,10 +388,13 @@ func renderTypeBreakdown(filtered []log.APIEntry, typeMap map[string]string, hea
 			aggs[t] = a
 		}
 		a.cost += e.EffectiveCost()
-		a.calls++
 		a.sessions[e.Session] = struct{}{}
 		total += e.EffectiveCost()
-		totalCalls++
+		// Cost counts every row, calls do not — see sumCosts.
+		if !e.IsSubagent() {
+			a.calls++
+			totalCalls++
+		}
 	}
 
 	var b strings.Builder
@@ -481,10 +575,19 @@ func filterEntries(entries []log.APIEntry, pred func(log.APIEntry) bool) []log.A
 }
 
 // sumCosts returns total cost and call count.
+//
+// The two halves treat subagent rows differently on purpose. Cost sums EVERY
+// row: a subagent row's cost was SUBTRACTED from the parent row beside it, so
+// skipping it would under-report the session. The count skips them, because
+// they are not calls the user made — one turn that spawned three subagents is
+// one call and four rows, and counting four would inflate every "N calls"
+// figure the moment #1880 phase C shipped.
 func sumCosts(entries []log.APIEntry) (total float64, count int) {
 	for _, e := range entries {
 		total += e.EffectiveCost()
-		count++
+		if !e.IsSubagent() {
+			count++
+		}
 	}
 	return
 }
