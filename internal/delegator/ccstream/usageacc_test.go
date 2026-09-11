@@ -152,7 +152,7 @@ func TestDeliverLine_RecordsUsageWithNoTextSink(t *testing.T) {
 		`"usage":{"input_tokens":2,"output_tokens":138,"cache_creation_input_tokens":11534,` +
 		`"cache_creation":{"ephemeral_5m_input_tokens":11534,"ephemeral_1h_input_tokens":0}},` +
 		`"content":[{"type":"text","text":"hi"}]}}`)
-	mgr.deliverLine("toolu_x", line)
+	mgr.deliverLine("toolu_x", line, false)
 
 	if gotID != "msg_Z" || gotModel != "claude-opus-5" {
 		t.Errorf("id/model = %q/%q, want msg_Z/claude-opus-5", gotID, gotModel)
@@ -168,8 +168,8 @@ func TestDeliverLine_IgnoresNonAssistantRecords(t *testing.T) {
 	t.Parallel()
 	calls := 0
 	mgr := newSubagentTailManager(nil, func(string, string, TokenUsage) { calls++ }, nil)
-	mgr.deliverLine("toolu_x", []byte(`{"type":"user","message":{"id":"msg_U","content":[]}}`))
-	mgr.deliverLine("toolu_x", []byte(`not json`))
+	mgr.deliverLine("toolu_x", []byte(`{"type":"user","message":{"id":"msg_U","content":[]}}`), false)
+	mgr.deliverLine("toolu_x", []byte(`not json`), false)
 	if calls != 0 {
 		t.Errorf("noteUsage called %d times for non-assistant records, want 0", calls)
 	}

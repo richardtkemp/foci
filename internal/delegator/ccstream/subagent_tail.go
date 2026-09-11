@@ -132,9 +132,15 @@ type subagentTailManager struct {
 	lg        *log.ComponentLogger
 }
 
+// wantText is whether this tail forwards the subagent's TEXT to the session,
+// as opposed to only recording its usage. Foreground subagents need both: CC
+// filters their assistant text out of the parent stream. Background subagents
+// need only the accounting — their text already streams to the parent, so
+// delivering it again would double it in the chat.
 type subagentTail struct {
-	stop chan struct{}
-	done chan struct{}
+	wantText bool
+	stop     chan struct{}
+	done     chan struct{}
 }
 
 func newSubagentTailManager(deliver func(groupKey, text string), noteUsage func(model, id string, u TokenUsage), lg *log.ComponentLogger) *subagentTailManager {
@@ -162,24 +168,35 @@ func (m *subagentTailManager) expectForeground(toolUseID string) {
 	m.mu.Unlock()
 }
 
-// maybeStart begins tailing path for toolUseID iff a foreground Agent start was
-// recorded for it (expectForeground). Background subagents — for which no
-// foreground start was recorded — are ignored, as are non-Agent task events.
+// maybeStart begins tailing path for EVERY subagent, foreground or background.
+// Whether a foreground Agent start was recorded (expectForeground) decides only
+// whether the tail also forwards TEXT.
+//
+// It used to start for foreground subagents alone, because the text was the
+// only thing it existed to recover. That left background subagents' USAGE
+// coming from the parent stream only — and the stream never completes
+// output_tokens: every assistant line carries stop_reason null and a running
+// count of 1-3 that is never revised (probe-verified 2026-09-10 on two
+// captures, and again on a background subagent's own transcript, where the
+// same message reads 2 then 319). Their transcripts DO carry the completed
+// figure, exactly like foreground ones — verified by starting a background
+// subagent and reading the file it wrote.
+//
+// So the gate was right about text and wrong about money. Tailing everything
+// costs one goroutine and one file handle per live subagent, bounded by how
+// many can run at once.
 func (m *subagentTailManager) maybeStart(toolUseID, path string) {
 	if m == nil || toolUseID == "" || path == "" {
 		return
 	}
 	m.mu.Lock()
-	if !m.expectFg[toolUseID] {
-		m.mu.Unlock()
-		return
-	}
+	wantText := m.expectFg[toolUseID]
 	delete(m.expectFg, toolUseID)
 	if _, running := m.tails[toolUseID]; running {
 		m.mu.Unlock()
 		return
 	}
-	t := &subagentTail{stop: make(chan struct{}), done: make(chan struct{})}
+	t := &subagentTail{wantText: wantText, stop: make(chan struct{}), done: make(chan struct{})}
 	m.tails[toolUseID] = t
 	m.mu.Unlock()
 
@@ -247,7 +264,7 @@ func (m *subagentTailManager) run(groupKey, path string, t *subagentTail) {
 					if i < 0 {
 						break
 					}
-					m.deliverLine(groupKey, acc[:i])
+					m.deliverLine(groupKey, acc[:i], t.wantText)
 					acc = acc[i+1:]
 				}
 			}
@@ -315,7 +332,7 @@ type transcriptLine struct {
 // deliverLine parses one transcript line and forwards each assistant text block
 // as subagent progress. Non-assistant records (the input prompt, tool_use,
 // tool_result, attachments) and non-text blocks are skipped.
-func (m *subagentTailManager) deliverLine(groupKey string, line []byte) {
+func (m *subagentTailManager) deliverLine(groupKey string, line []byte, wantText bool) {
 	line = bytes.TrimSpace(line)
 	if len(line) == 0 {
 		return
@@ -334,7 +351,10 @@ func (m *subagentTailManager) deliverLine(groupKey string, line []byte) {
 	if m.noteUsage != nil {
 		m.noteUsage(rec.Message.Model, rec.Message.ID, rec.Message.Usage)
 	}
-	if m.deliver == nil {
+	// Text only when this tail was started for a FOREGROUND subagent. A
+	// background subagent's text already reaches the parent stream, so
+	// forwarding it here would render it twice.
+	if !wantText || m.deliver == nil {
 		return
 	}
 	for _, blk := range rec.Message.Content {
