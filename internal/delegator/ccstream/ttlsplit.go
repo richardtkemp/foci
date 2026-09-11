@@ -138,9 +138,23 @@ type turnUsage struct {
 // message can now only be attributed to the WRONG turn, never dropped from
 // every turn. Losing tokens is a pricing error; misfiling them is an
 // attribution error (#1880 phase C), and only one of those costs money.
+// subKey identifies one subagent's usage on one model. Keyed by BOTH because a
+// subagent is the unit spend should be ATTRIBUTED to (#1880 phase C) while the
+// model is the unit it is PRICED at — and one subagent can touch more than one
+// model if it spawns its own.
+//
+// Agent is the Agent tool_use id, which is also what names the transcript file,
+// so a row written from this key can be traced back to the work that incurred
+// it. It is empty only for a subagent message that arrived before its
+// task_started named it; those aggregate under "" rather than being dropped.
+type subKey struct {
+	Agent string
+	Model string
+}
+
 type usageAccumulator struct {
 	top map[string]*turnUsage
-	sub map[string]*turnUsage
+	sub map[subKey]*turnUsage
 	// applied is what has already been folded into the buckets for each
 	// message id — the high-water mark per class, so a later delivery of the
 	// same message contributes only its INCREASE. Replaces a plain seen-set:
@@ -162,19 +176,20 @@ type usageAccumulator struct {
 // held BY VALUE so a later note() cannot mutate a baseline already taken.
 type usageTotals struct {
 	top map[string]turnUsage
-	sub map[string]turnUsage
+	sub map[subKey]turnUsage
 }
 
 // snapshot copies the current totals by value.
 func (a *usageAccumulator) snapshot() usageTotals {
-	cp := func(m map[string]*turnUsage) map[string]turnUsage {
-		out := make(map[string]turnUsage, len(m))
-		for k, v := range m {
-			out[k] = *v
-		}
-		return out
+	top := make(map[string]turnUsage, len(a.top))
+	for k, v := range a.top {
+		top[k] = *v
 	}
-	return usageTotals{top: cp(a.top), sub: cp(a.sub)}
+	sub := make(map[subKey]turnUsage, len(a.sub))
+	for k, v := range a.sub {
+		sub[k] = *v
+	}
+	return usageTotals{top: top, sub: sub}
 }
 
 // markResult records the totals as of a result message. Called at the same
@@ -200,7 +215,7 @@ func (a *usageAccumulator) beginTurn() { a.atTurnStart = a.atLastResult }
 // messages — the probe saw 2 of its 3 reach the stream, and all 3 are in the
 // transcript. Background subagents get no tail at all, so they arrive by the
 // stream alone.
-func (a *usageAccumulator) note(model string, isSub bool, id string, u TokenUsage) {
+func (a *usageAccumulator) note(model, agent string, isSub bool, id string, u TokenUsage) {
 	// An empty id cannot be reconciled against an earlier delivery of the same
 	// message, so it is dropped rather than risking a multiple. That makes
 	// totals read LOW against ModelUsage, which the divergence check reports —
@@ -244,17 +259,24 @@ func (a *usageAccumulator) note(model string, isSub bool, id string, u TokenUsag
 	}
 	a.applied[id] = cur
 
-	bucket := &a.top
+	var tu *turnUsage
 	if isSub {
-		bucket = &a.sub
-	}
-	if *bucket == nil {
-		*bucket = make(map[string]*turnUsage)
-	}
-	tu := (*bucket)[model]
-	if tu == nil {
-		tu = &turnUsage{}
-		(*bucket)[model] = tu
+		if a.sub == nil {
+			a.sub = make(map[subKey]*turnUsage)
+		}
+		k := subKey{Agent: agent, Model: model}
+		if tu = a.sub[k]; tu == nil {
+			tu = &turnUsage{}
+			a.sub[k] = tu
+		}
+	} else {
+		if a.top == nil {
+			a.top = make(map[string]*turnUsage)
+		}
+		if tu = a.top[model]; tu == nil {
+			tu = &turnUsage{}
+			a.top[model] = tu
+		}
 	}
 	tu.Input += cur.Input - prev.Input
 	tu.Output += cur.Output - prev.Output
@@ -279,19 +301,15 @@ func maxInt(a, b int) int {
 // beside a per-TURN cost, which is the shape of #1848 and reads as a wildly
 // mispriced turn.
 func (a *usageAccumulator) writeSplit(sub bool) cacheWriteSplit {
-	m, base := a.top, a.atTurnStart.top
-	if sub {
-		m, base = a.sub, a.atTurnStart.sub
-	}
 	var out cacheWriteSplit
-	for model, tu := range m {
-		w := tu.Write
-		if b, ok := base[model]; ok {
-			w.Ephemeral5m -= b.Write.Ephemeral5m
-			w.Ephemeral1h -= b.Write.Ephemeral1h
-			w.Unknown -= b.Write.Unknown
+	if sub {
+		for k, tu := range a.sub {
+			out = out.addSplit(deltaWrite(tu.Write, a.atTurnStart.sub[k].Write))
 		}
-		out = out.addSplit(w)
+		return out
+	}
+	for model, tu := range a.top {
+		out = out.addSplit(deltaWrite(tu.Write, a.atTurnStart.top[model].Write))
 	}
 	return out
 }
@@ -310,19 +328,11 @@ func (a *usageAccumulator) writeSplit(sub bool) cacheWriteSplit {
 // down, the assumption that caused #1866.
 func (a *usageAccumulator) writeSplitByModel() map[string]cacheWriteSplit {
 	out := make(map[string]cacheWriteSplit, len(a.top)+len(a.sub))
-	for _, p := range []struct {
-		cur  map[string]*turnUsage
-		base map[string]turnUsage
-	}{{a.top, a.atTurnStart.top}, {a.sub, a.atTurnStart.sub}} {
-		for model, tu := range p.cur {
-			w := tu.Write
-			if b, ok := p.base[model]; ok {
-				w.Ephemeral5m -= b.Write.Ephemeral5m
-				w.Ephemeral1h -= b.Write.Ephemeral1h
-				w.Unknown -= b.Write.Unknown
-			}
-			out[model] = out[model].addSplit(w)
-		}
+	for model, tu := range a.top {
+		out[model] = out[model].addSplit(deltaWrite(tu.Write, a.atTurnStart.top[model].Write))
+	}
+	for k, tu := range a.sub {
+		out[k.Model] = out[k.Model].addSplit(deltaWrite(tu.Write, a.atTurnStart.sub[k].Write))
 	}
 	return out
 }
@@ -379,17 +389,14 @@ func (a *usageAccumulator) models() []string {
 	// Backend's life (#1880 phase B), so listing every key would name every
 	// model the session ever touched and make the multi-model warning fire
 	// permanently after the first cross-model turn.
-	for _, p := range []struct {
-		cur  map[string]*turnUsage
-		base map[string]turnUsage
-	}{{a.top, a.atTurnStart.top}, {a.sub, a.atTurnStart.sub}} {
-		for k, tu := range p.cur {
-			b, had := p.base[k]
-			if had && tu.Input == b.Input && tu.Output == b.Output &&
-				tu.CacheRead == b.CacheRead && tu.Write == b.Write {
-				continue
-			}
-			seen[k] = struct{}{}
+	for model, tu := range a.top {
+		if *tu != a.atTurnStart.top[model] {
+			seen[model] = struct{}{}
+		}
+	}
+	for k, tu := range a.sub {
+		if *tu != a.atTurnStart.sub[k] {
+			seen[k.Model] = struct{}{}
 		}
 	}
 	out := make([]string, 0, len(seen))
@@ -416,7 +423,13 @@ func (b *Backend) noteAssistantUsage(msg *AssistantMessage) {
 	}
 	b.turnMu.Lock()
 	defer b.turnMu.Unlock()
-	b.turnUsageAcc.note(msg.Message.Model, msg.ParentToolUseID != nil, msg.Message.ID, msg.Message.Usage)
+	// ParentToolUseID is BOTH the subagent flag and the subagent's identity —
+	// it is the Agent tool_use id that names the transcript file.
+	var agent string
+	if msg.ParentToolUseID != nil {
+		agent = *msg.ParentToolUseID
+	}
+	b.turnUsageAcc.note(msg.Message.Model, agent, msg.ParentToolUseID != nil, msg.Message.ID, msg.Message.Usage)
 }
 
 // noteSubagentTranscriptUsage records one assistant message read from a
@@ -430,8 +443,37 @@ func (b *Backend) noteAssistantUsage(msg *AssistantMessage) {
 // the usage.
 //
 // Always the subagent bucket: this file only exists for a subagent.
-func (b *Backend) noteSubagentTranscriptUsage(model, id string, u TokenUsage) {
+func (b *Backend) noteSubagentTranscriptUsage(agent, model, id string, u TokenUsage) {
 	b.turnMu.Lock()
 	defer b.turnMu.Unlock()
-	b.turnUsageAcc.note(model, true, id, u)
+	b.turnUsageAcc.note(model, agent, true, id, u)
+}
+
+// deltaWrite is cur minus base, class by class. The zero value of turnUsage is
+// a valid base, so a key absent from the baseline correctly yields cur.
+func deltaWrite(cur, base cacheWriteSplit) cacheWriteSplit {
+	return cacheWriteSplit{
+		Ephemeral5m: cur.Ephemeral5m - base.Ephemeral5m,
+		Ephemeral1h: cur.Ephemeral1h - base.Ephemeral1h,
+		Unknown:     cur.Unknown - base.Unknown,
+	}
+}
+
+// subagentUsage returns this turn's usage per SUBAGENT, summed across whatever
+// models each one used. This is the attribution #1880 phase C needs: the map
+// key is the Agent tool_use id that also names the transcript, so spend can be
+// traced to the work that incurred it rather than to whichever turn happened to
+// close while it was running.
+func (a *usageAccumulator) subagentUsage() map[string]turnUsage {
+	out := make(map[string]turnUsage, len(a.sub))
+	for k, tu := range a.sub {
+		b := a.atTurnStart.sub[k]
+		e := out[k.Agent]
+		e.Input += tu.Input - b.Input
+		e.Output += tu.Output - b.Output
+		e.CacheRead += tu.CacheRead - b.CacheRead
+		e.Write = e.Write.addSplit(deltaWrite(tu.Write, b.Write))
+		out[k.Agent] = e
+	}
+	return out
 }

@@ -254,3 +254,39 @@ func TestCostBreakdown_SilentWhenNoCacheWrites(t *testing.T) {
 		t.Errorf("breakdown named a TTL mix with no cache writes at all\ngot: %s", got)
 	}
 }
+
+// TestCostBreakdown_NamesEachSubagent: "(subagent 344112 of 369913)" says a
+// subagent spent it, not WHICH — and with several running concurrently, which
+// one is the question a reader actually has (#1880 phase C).
+func TestCostBreakdown_NamesEachSubagent(t *testing.T) {
+	t.Parallel()
+	bd := costBreakdown{
+		model: "claude/claude-opus-5",
+		subagents: map[string]turnUsage{
+			"toolu_small": {Write: cacheWriteSplit{Ephemeral5m: 1000}},
+			"toolu_big":   {Write: cacheWriteSplit{Ephemeral5m: 90000}},
+		},
+	}
+	got := bd.subagentSuffix()
+	if !strings.Contains(got, "toolu_big=90000") || !strings.Contains(got, "toolu_small=1000") {
+		t.Fatalf("both subagents must be named with their totals, got %q", got)
+	}
+	if strings.Index(got, "toolu_big") > strings.Index(got, "toolu_small") {
+		t.Errorf("largest spender must come first, got %q", got)
+	}
+}
+
+// TestCostBreakdown_SilentForASingleSubagent: with one subagent the existing
+// "(subagent N of M)" already says everything and the id is noise.
+func TestCostBreakdown_SilentForASingleSubagent(t *testing.T) {
+	t.Parallel()
+	bd := costBreakdown{subagents: map[string]turnUsage{
+		"toolu_only": {Write: cacheWriteSplit{Ephemeral5m: 5000}},
+	}}
+	if got := bd.subagentSuffix(); got != "" {
+		t.Errorf("single subagent should add nothing, got %q", got)
+	}
+	if got := (costBreakdown{}).subagentSuffix(); got != "" {
+		t.Errorf("no subagents should add nothing, got %q", got)
+	}
+}

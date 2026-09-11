@@ -1,6 +1,10 @@
 package ccstream
 
-import "testing"
+import (
+	"testing"
+
+	"foci/internal/delegator"
+)
 
 // usage builds a TokenUsage with an explicit TTL split.
 func usage(in, out, cr, cw, e5m, e1h int) TokenUsage {
@@ -44,7 +48,7 @@ func TestUsageAccumulator_ReconcilesToModelUsage_Foreground(t *testing.T) {
 	}
 
 	// The transcript supplies the suppressed message.
-	b.noteSubagentTranscriptUsage("claude-sonnet-4-5", "msg_sub3", usage(2, 138, 0, 237, 237, 0))
+	b.noteSubagentTranscriptUsage("toolu_x", "claude-sonnet-4-5", "msg_sub3", usage(2, 138, 0, 237, 237, 0))
 
 	got := b.turnUsageAcc.writeSplit(false).addSplit(b.turnUsageAcc.writeSplit(true)).total()
 	if got != modelUsageCacheCreation {
@@ -66,7 +70,7 @@ func TestUsageAccumulator_ForegroundArrivesTwiceAndIsCountedOnce(t *testing.T) {
 	t.Parallel()
 	b := &Backend{}
 	b.noteAssistantUsage(msgModel("claude-opus-5", "msg_A", "toolu_x", 11959, 11959, 0))
-	b.noteSubagentTranscriptUsage("claude-opus-5", "msg_A", usage(2, 5, 0, 11959, 11959, 0))
+	b.noteSubagentTranscriptUsage("toolu_x", "claude-opus-5", "msg_A", usage(2, 5, 0, 11959, 11959, 0))
 
 	if got := b.turnUsageAcc.writeSplit(true).total(); got != 11959 {
 		t.Errorf("total = %d, want 11959 — counted %.1fx across the two routes", got, float64(got)/11959)
@@ -91,11 +95,21 @@ func TestUsageAccumulator_BucketsByModel(t *testing.T) {
 	// missing bucket aborts the whole binary, so every other test in the
 	// package reports nothing. That turns one clear failure into six silent
 	// ones, which is worse than the bug being caught.
-	write5m := func(m map[string]*turnUsage, model string) int {
-		if tu := m[model]; tu != nil {
-			return tu.Write.Ephemeral5m
+	// The sub bucket is keyed by agent AND model (#1880 phase C), so sum every
+	// agent that used the model rather than indexing one key.
+	subWrite := func(model string, pick func(cacheWriteSplit) int) int {
+		found := false
+		total := 0
+		for k, tu := range b.turnUsageAcc.sub {
+			if k.Model == model {
+				found = true
+				total += pick(tu.Write)
+			}
 		}
-		return -1
+		if !found {
+			return -1
+		}
+		return total
 	}
 	write1h := func(m map[string]*turnUsage, model string) int {
 		if tu := m[model]; tu != nil {
@@ -103,10 +117,10 @@ func TestUsageAccumulator_BucketsByModel(t *testing.T) {
 		}
 		return -1
 	}
-	if got := write5m(b.turnUsageAcc.sub, "claude-sonnet-5"); got != 19357 {
+	if got := subWrite("claude-sonnet-5", func(w cacheWriteSplit) int { return w.Ephemeral5m }); got != 19357 {
 		t.Errorf("sonnet-5 subagent 5m = %d, want 19357 (-1 = no such bucket)", got)
 	}
-	if got := write5m(b.turnUsageAcc.sub, "claude-haiku-4-5"); got != 51591 {
+	if got := subWrite("claude-haiku-4-5", func(w cacheWriteSplit) int { return w.Ephemeral5m }); got != 51591 {
 		t.Errorf("haiku subagent 5m = %d, want 51591 (-1 = no such bucket)", got)
 	}
 	if got := write1h(b.turnUsageAcc.top, "claude-opus-5"); got != 8320 {
@@ -125,9 +139,9 @@ func TestUsageAccumulator_AllFourClasses(t *testing.T) {
 	t.Parallel()
 	b := &Backend{}
 	b.noteAssistantUsage(msgModel("claude-opus-5", "msg_A", "", 690, 0, 690))
-	b.noteSubagentTranscriptUsage("claude-opus-5", "msg_B", usage(30, 11693, 1038737, 1022, 1022, 0))
+	b.noteSubagentTranscriptUsage("toolu_x", "claude-opus-5", "msg_B", usage(30, 11693, 1038737, 1022, 1022, 0))
 
-	sub := b.turnUsageAcc.sub["claude-opus-5"]
+	sub := b.turnUsageAcc.sub[subKey{Agent: "toolu_x", Model: "claude-opus-5"}]
 	if sub == nil {
 		t.Fatal("no subagent bucket for claude-opus-5 — transcript usage was not recorded at all")
 	}
@@ -144,7 +158,7 @@ func TestDeliverLine_RecordsUsageWithNoTextSink(t *testing.T) {
 	t.Parallel()
 	var gotModel, gotID string
 	var gotUsage TokenUsage
-	mgr := newSubagentTailManager(nil, func(model, id string, u TokenUsage) {
+	mgr := newSubagentTailManager(nil, func(_, model, id string, u TokenUsage) {
 		gotModel, gotID, gotUsage = model, id, u
 	}, nil)
 
@@ -167,10 +181,66 @@ func TestDeliverLine_RecordsUsageWithNoTextSink(t *testing.T) {
 func TestDeliverLine_IgnoresNonAssistantRecords(t *testing.T) {
 	t.Parallel()
 	calls := 0
-	mgr := newSubagentTailManager(nil, func(string, string, TokenUsage) { calls++ }, nil)
+	mgr := newSubagentTailManager(nil, func(string, string, string, TokenUsage) { calls++ }, nil)
 	mgr.deliverLine("toolu_x", []byte(`{"type":"user","message":{"id":"msg_U","content":[]}}`), false)
 	mgr.deliverLine("toolu_x", []byte(`not json`), false)
 	if calls != 0 {
 		t.Errorf("noteUsage called %d times for non-assistant records, want 0", calls)
+	}
+}
+
+// TestUsageAccumulator_AttributesSpendPerSubagent is the #1880 phase C
+// capability: spend traced to the subagent that INCURRED it, not merely to the
+// fact that some subagent did.
+//
+// The sub bucket used to be keyed by model alone, so two subagents on the same
+// model were indistinguishable — and a background subagent outliving its parent
+// was attributed to whichever turn happened to close while it ran. The agent
+// key is the Agent tool_use id, which also names the transcript file, so a row
+// written from it can be traced back to the work.
+func TestUsageAccumulator_AttributesSpendPerSubagent(t *testing.T) {
+	t.Parallel()
+	b := &Backend{}
+	// Parent.
+	b.noteAssistantUsage(msgModel("claude-opus-5", "msg_top", "", 8320, 0, 8320))
+	// Two subagents on the SAME model — indistinguishable under the old key.
+	b.noteAssistantUsage(msgModel("claude-sonnet-5", "msg_a1", "toolu_A", 1000, 1000, 0))
+	b.noteAssistantUsage(msgModel("claude-sonnet-5", "msg_b1", "toolu_B", 2000, 2000, 0))
+	// One of them also uses a second model (it spawned its own).
+	b.noteAssistantUsage(msgModel("claude-haiku-4-5", "msg_a2", "toolu_A", 500, 500, 0))
+
+	got := b.turnUsageAcc.subagentUsage()
+	if len(got) != 2 {
+		t.Fatalf("subagents = %d, want 2 (toolu_A, toolu_B); got %+v", len(got), got)
+	}
+	if w := got["toolu_A"].Write.Ephemeral5m; w != 1500 {
+		t.Errorf("toolu_A 5m = %d, want 1500 — both its models must sum under one agent", w)
+	}
+	if w := got["toolu_B"].Write.Ephemeral5m; w != 2000 {
+		t.Errorf("toolu_B 5m = %d, want 2000", w)
+	}
+	// The parent's own spend must not appear as a subagent's.
+	if _, leaked := got[""]; leaked {
+		t.Error("top-level spend leaked into the subagent attribution")
+	}
+}
+
+// TestUsageAccumulator_SubagentAttributionIsTurnScoped: like every other
+// accessor, per-agent usage is measured from the turn baseline. Returning
+// running totals would report a subagent's whole life against one turn — the
+// same per-SESSION-beside-per-TURN error as #1848.
+func TestUsageAccumulator_SubagentAttributionIsTurnScoped(t *testing.T) {
+	t.Parallel()
+	b := &Backend{}
+	b.noteAssistantUsage(msgModel("claude-sonnet-5", "msg_old", "toolu_A", 5000, 5000, 0))
+	b.turnUsageAcc.markResult()
+	b.beginTurnLocked(&delegator.TurnEvents{})
+
+	if got := b.turnUsageAcc.subagentUsage()["toolu_A"].Write.Ephemeral5m; got != 0 {
+		t.Errorf("carried %d tokens of a previous turn into this one", got)
+	}
+	b.noteAssistantUsage(msgModel("claude-sonnet-5", "msg_new", "toolu_A", 700, 700, 0))
+	if got := b.turnUsageAcc.subagentUsage()["toolu_A"].Write.Ephemeral5m; got != 700 {
+		t.Errorf("this turn's figure = %d, want 700", got)
 	}
 }
