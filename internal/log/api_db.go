@@ -47,7 +47,16 @@ func InitAPIDB(path string) error {
 		//                          these are what calculated_cost_usd priced.
 		//                          NULL as a group where the writer measured
 		//                          no turn total.
-		// There is no turn id or cycle ordinal; a "turn" is a row.
+		//   turn_id              — names the turn a row belongs to
+		//                          ("<session>@<UnixNano>"); the only durable
+		//                          turn identity (#1695). A turn is no longer
+		//                          always ONE row: since #1880 phase C a turn
+		//                          with subagents writes one parent row plus a
+		//                          call_type='subagent_turn' row per subagent,
+		//                          all sharing this id. SUM per turn_id to get
+		//                          what a single row used to hold.
+		//   agent_id             — the subagent that did the work, on a
+		//                          subagent_turn row; empty on a parent row.
 		// docs/WIRING.md "Cost columns" has the full table and history.
 		`CREATE TABLE IF NOT EXISTS api_calls (
 			id                 INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,13 +119,21 @@ func InitAPIDB(path string) error {
 	// is only a duplicate on single-model turns.
 	_, _ = db.Exec(`ALTER TABLE api_calls DROP COLUMN turn_output_tokens`)
 	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN turn_output_tokens INTEGER`)
+	// #1880 phase C / #1695. Historical rows get NULL: their turn identity was
+	// never recorded and cannot be reconstructed, so "" would assert a turn
+	// that is not knowable. The index is on turn_id alone because the only
+	// query shape is "give me every row of this turn".
+	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN turn_id TEXT`)
+	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN agent_id TEXT`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_api_calls_turn_id ON api_calls(turn_id)`)
 
 	stmt, err := db.Prepare(`INSERT INTO api_calls
 		(ts, provider, session, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
 		 cost_usd, duration_ms, stop_reason, call_type, session_file, session_line, pre_messages,
 		 calculated_cost_usd,
-		 turn_input_tokens, turn_cache_read_tokens, turn_cache_write_tokens, turn_output_tokens)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		 turn_input_tokens, turn_cache_read_tokens, turn_cache_write_tokens, turn_output_tokens,
+		 turn_id, agent_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		_ = db.Close()
 		return fmt.Errorf("prepare insert: %w", err)
@@ -216,7 +233,8 @@ const apiRowCols = `ts, COALESCE(provider, ''), session, model,
 	       COALESCE(session_file, ''), COALESCE(session_line, 0),
 	       COALESCE(pre_messages, 0), calculated_cost_usd,
 	       turn_input_tokens, turn_cache_read_tokens, turn_cache_write_tokens,
-	       turn_output_tokens`
+	       turn_output_tokens,
+	       COALESCE(turn_id, ''), COALESCE(agent_id, '')`
 
 // scanAPIRows drains rows selected via apiRowCols into []APIEntry. Both cost
 // columns are nullable: cost_usd (ProvidedCostUSD) is NULL when the backend
@@ -237,6 +255,7 @@ func scanAPIRows(rows *sql.Rows) []APIEntry {
 			&providedCost, &e.DurationMS, &e.StopReason, &e.CallType,
 			&e.SessionFile, &e.SessionLine, &e.PreMessages, &calculatedCost,
 			&turnIn, &turnCR, &turnCW, &turnOut,
+			&e.TurnID, &e.AgentID,
 		); err != nil {
 			continue
 		}
@@ -321,6 +340,17 @@ func querySessionCostRows(sessionKey string) []APIEntry {
 	return scanAPIRows(rows)
 }
 
+// nullIfEmpty maps "" to a SQL NULL. An empty turn_id or agent_id means the
+// writer had no turn identity to record, which is "unknown", not "the turn
+// whose id is the empty string" — and NULL is what every historical row holds,
+// so a query for un-attributed rows finds one population, not two.
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 func (a *apiDB) insert(entry APIEntry) {
 	ts := timeutil.Format(entry.Timestamp)
 
@@ -356,6 +386,7 @@ func (a *apiDB) insert(entry APIEntry) {
 		entry.CallType, sessionFile, sessionLine,
 		preMessages, entry.CalculatedCostUSD,
 		turnIn, turnCR, turnCW, turnOut,
+		nullIfEmpty(entry.TurnID), nullIfEmpty(entry.AgentID),
 	)
 	if err != nil {
 		std.event(ERROR, "api_db", "insert error: %v", err)

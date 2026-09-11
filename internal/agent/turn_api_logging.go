@@ -14,7 +14,8 @@ import (
 )
 
 // logAPIResponse logs usage, cost, and optionally the full request/response payload.
-func (a *Agent) logAPIResponse(sessionKey, model string, start time.Time, duration time.Duration, req *provider.MessageRequest, resp *provider.MessageResponse, msgCount int) float64 {
+func (a *Agent) logAPIResponse(ts *TurnState, model string, start time.Time, duration time.Duration, req *provider.MessageRequest, resp *provider.MessageResponse, msgCount int) float64 {
+	sessionKey := ts.SessionKey
 	cost := modelinfo.Cost(model,
 		resp.Usage.InputTokens, resp.Usage.OutputTokens,
 		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
@@ -30,18 +31,23 @@ func (a *Agent) logAPIResponse(sessionKey, model string, start time.Time, durati
 		}
 	}
 	log.API(log.APIEntry{
-		Timestamp:   start,
-		Provider:    a.SessionFormat(sessionKey),
-		Session:     sessionKey,
-		Model:       model,
-		Input:       resp.Usage.InputTokens,
-		Output:      resp.Usage.OutputTokens,
-		CacheRead:   resp.Usage.CacheReadInputTokens,
-		CacheWrite:  resp.Usage.CacheCreationInputTokens,
-		Turn:        resp.Usage.AsTurn(), // single call: its own counts are the turn total (#1854)
-		DurationMS:  duration.Milliseconds(),
-		StopReason:  resp.StopReason,
-		CallType:    "conversation",
+		Timestamp:  start,
+		Provider:   a.SessionFormat(sessionKey),
+		Session:    sessionKey,
+		Model:      model,
+		Input:      resp.Usage.InputTokens,
+		Output:     resp.Usage.OutputTokens,
+		CacheRead:  resp.Usage.CacheReadInputTokens,
+		CacheWrite: resp.Usage.CacheCreationInputTokens,
+		Turn:       resp.Usage.AsTurn(), // single call: its own counts are the turn total (#1854)
+		DurationMS: duration.Milliseconds(),
+		StopReason: resp.StopReason,
+		CallType:   "conversation",
+		// The API path writes one row PER CALL, so a tool-loop turn is several
+		// rows — exactly the inference #1695 wanted removed. They share a
+		// turn_id; the delegated path writes one parent row per turn plus its
+		// subagent rows, which also share one.
+		TurnID:      ts.RowID(),
 		SessionFile: sessionFile,
 		SessionLine: msgCount + 2, // +2 for the user message and assistant response being appended
 	})

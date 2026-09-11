@@ -1312,7 +1312,7 @@ Four outputs:
    - Use: `log.API(log.APIEntry{...})`
    - Queryable with `jq`
 
-3. **API log — SQLite** (`api.db`): Same data as JSONL but in a `api_calls` table with indexes on `ts` and `session`. Includes `call_type` column (conversation, compaction, summary, spawn).
+3. **API log — SQLite** (`api.db`): Same data as JSONL but in a `api_calls` table with indexes on `ts` and `session`. Includes `call_type` column (conversation, compaction, summary, spawn, subagent_turn) and `turn_id`/`agent_id` (see "Turn identity" below).
    - Written automatically by `log.API()` when `api_db` is configured
    - Queryable: `sqlite3 api.db "SELECT call_type, count(*) FROM api_calls GROUP BY call_type"`
 
@@ -1362,6 +1362,31 @@ Four outputs:
    have caught the defect, and now holds: price the `turn_*` columns over a window and
    compare to `SUM(calculated_cost_usd)` — the ccstream unit test asserts equality per
    turn (`turn_totals_test.go`).
+
+   **Turn identity: `turn_id` and `agent_id` (#1695, #1880 phase C).**
+   Until 2026-09-11 there was no turn id at all — "a turn is a row" was the whole
+   story, so turn boundaries had to be *inferred*, and an earlier investigation
+   invented a population by grouping rows on an `output_tokens` decrease (#1695
+   records the correction). `turn_id` is `"<session>@<StartedAt UnixNano>"`, from
+   `TurnState.RowID()`. It is **not** `TurnState.TurnID`, which is an in-process
+   `atomic.AddUint64` counter: fine for the in-flight turn registry it was built
+   for, useless in a database that outlives the process, because it restarts at 1
+   on every foci restart and is not unique across agents. Session key plus start
+   nanosecond is unique because turns are serialised per session.
+
+   Both row writers set it, and both can write MORE than one row per turn:
+   the API path writes one row per call, so a tool-loop turn is several rows; the
+   delegated path writes one parent row plus a `call_type='subagent_turn'` row per
+   subagent. They share the id — `WHERE turn_id = ?` reassembles the turn, and
+   `SUM(calculated_cost_usd) GROUP BY turn_id` is the turn's cost. `agent_id` is the
+   Agent tool's `tool_use` id, which also names the transcript
+   (`.../subagents/agent-<id>.jsonl`), so a subagent row traces to the work that
+   incurred it.
+
+   Absent is **NULL, not `''`** (`nullIfEmpty` at the insert). Historical rows have
+   no recorded turn identity and it cannot be reconstructed, so `''` would assert a
+   turn that is not knowable — and would split un-attributed rows into two
+   populations, making `WHERE turn_id IS NULL` silently under-report.
 
    **Always read cost via `APIEntry.EffectiveCost()`**, which prefers the calculated
    figure and falls back to a live `modelinfo.CostAsOf` from stored tokens. Never read

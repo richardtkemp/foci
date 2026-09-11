@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -163,6 +164,7 @@ type TurnState struct {
 	TurnID     uint64
 
 	// StartedAt is when the turn began. Set once by the orchestrator.
+	// Also the basis of RowID() — see there before changing when it is set.
 	// Used as the lastMessageTime fallback for system turns (no ReceivedAt).
 	StartedAt time.Time
 
@@ -335,3 +337,24 @@ func (s *sharedTurnOps) TouchActivityPost(ts *TurnState) {
 // APITransport method implementations live in turn_api.go (Stage 3).
 
 // DelegatedTransport method implementations live in turn_delegated.go (Stage 4).
+
+// RowID is the durable turn identity persisted as api_calls.turn_id.
+//
+// It exists because TurnState.TurnID is an in-process counter
+// (atomic.AddUint64 on the Agent), so it restarts at 1 on every foci restart
+// and is not unique across agents — fine for the in-flight turn registry it
+// was built for, useless as a key in a database that outlives the process.
+//
+// Session key plus StartedAt in nanoseconds is unique because turns are
+// serialised per session: two turns of one session cannot share a start
+// instant. It sorts chronologically within a session and names its own
+// session, so a row is self-describing without a join.
+//
+// Empty when there is no turn to name; the column is NULL there rather than
+// "", so un-attributed rows are one population (see nullIfEmpty).
+func (ts *TurnState) RowID() string {
+	if ts == nil || ts.SessionKey == "" || ts.StartedAt.IsZero() {
+		return ""
+	}
+	return ts.SessionKey + "@" + strconv.FormatInt(ts.StartedAt.UnixNano(), 10)
+}
