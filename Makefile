@@ -403,6 +403,26 @@ lint: find-disconnected-tests find-static-config-reads find-unscoped-logging
 		echo "foci-own binary resolved off \$$PATH in production code — use hookbin.Resolve:"; \
 		echo "$$bad"; exit 1; \
 	fi
+	@echo "=== install-scripts ships the agent's bin root-owned ==="
+	@# install-scripts re-installs mds/mdq into $(FOCI_HOME)/bin on EVERY deploy.
+	@# Both are on the agent's PATH and both are in the built-in read-only
+	@# auto-approve group, which internal/execguard vetoes when the foci process
+	@# can rewrite the executable OR the directory holding it. Dropping
+	@# `-o root -g root` from either line — the `install -d` for the directory or
+	@# the `install -m` for the files — fails no test and breaks no deploy; it
+	@# silently un-earns those entries at the NEXT deploy, and it overwrites any
+	@# chown applied by hand (#1898). Nothing downstream notices, so guard the
+	@# install lines themselves.
+	@lines=$$(sed -n '/^install-scripts:/,/^$$/p' Makefile | grep -E '^[[:space:]]*install ' || true); \
+	n=$$(printf '%s\n' "$$lines" | grep -c . || true); \
+	if [ "$$n" -lt 2 ]; then \
+		echo "gate is broken, not the code: expected both the 'install -d' (bin dir) and 'install -m' (files) lines in install-scripts, found $$n"; exit 1; \
+	fi; \
+	bad=$$(printf '%s\n' "$$lines" | grep -v -- '-o root -g root' || true); \
+	if [ -n "$$bad" ]; then \
+		echo "install-scripts must install the agent bin root-owned (-o root -g root), see #1898:"; \
+		echo "$$bad"; exit 1; \
+	fi
 	@echo "=== skill provenance (shipped skills declare seed-if-missing vs golden) ==="
 	@bash scripts/check-skill-provenance.sh
 
@@ -474,8 +494,28 @@ SECRETS_FILE  := $(FOCI_HOME)/config/secrets.toml
 DEPLOY_BINS   := foci-gw foci foci-call foci-cc-hook foci-codex-hook
 
 # Base PATH baked into the unit (shellenv layers the operator dotfile env on top
-# at startup): FOCI_HOME/.local/bin plus the standard system dirs that exist.
-SERVICE_PATH := $(FOCI_HOME)/.local/bin$(shell for d in /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin; do [ -d "$$d" ] && printf ':%s' "$$d"; done)
+# at startup): FOCI_HOME/.local/bin, FOCI_HOME/bin, plus the standard system dirs
+# that exist.
+#
+# FOCI_HOME/bin is here for internal/execguard (#1898). The guard resolves a bare
+# command name against THIS process's PATH and then asks whether the winner is
+# substitutable — so if a directory the agent's shell searches is missing here,
+# the guard judges a different file than the one that will run. That was measured,
+# not hypothesised: ~/.shellcommon prepends $HOME/bin, so an agent's `mdq` is
+# $(FOCI_HOME)/bin/mdq (the wrapper script), while the daemon without this entry
+# resolved `mdq` to /usr/local/bin/mdq (the unrelated upstream binary) and
+# approved the entry on that file's root ownership; `mds` resolved to nothing at
+# all and so got no verdict, which also approves. The order mirrors
+# ~/.shellcommon: .local/bin first, then bin.
+#
+# ORDERING IS LOAD-BEARING. Adding an AGENT-WRITABLE directory to the daemon's
+# own PATH would be strictly worse than omitting it — foci-gw execs
+# bash/go/python3/systemctl/tmux/zsh by bare name, and any of those could then be
+# shadowed. install-scripts is what asserts $(FOCI_HOME)/bin is root-owned, and
+# both `update` and `setup` run it BEFORE install-unit and before the restart, so
+# the directory is safe by the time this PATH takes effect. Do not reorder those
+# targets, and do not add a directory here that foci can write.
+SERVICE_PATH := $(FOCI_HOME)/.local/bin:$(FOCI_HOME)/bin$(shell for d in /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin; do [ -d "$$d" ] && printf ':%s' "$$d"; done)
 
 # first-run wizard: interactive by default; non-interactive when a token is set.
 WIZARD_ARGS := --config-dir $(FOCI_HOME)/config
@@ -635,7 +675,29 @@ install-docs:
 	  chown -R "$$user:$$user" "$$home/shared/docs"; \
 	done
 
-# Ship shared/scripts/* into each agent home's shared/scripts on every update.
+# Ship shared/scripts/* into each agent home's BIN on every update, root-owned.
+#
+# Destination is $$home/bin, NOT $$home/shared/scripts (#1898, Dick 2026-09-11).
+# $$home/bin is the agent's PATH directory and is to hold ONLY platform-provided
+# executables — real files, no symlinks out to anywhere an agent can write.
+# That shape is what makes the auto-approve entries for these commands earned:
+# internal/execguard vetoes an approved Bash command whose executable the foci
+# process could swap, and it tests (a) the file, via access(2), which FOLLOWS
+# symlinks, and (b) filepath.Dir of the path it was given, which does NOT. A real
+# root-owned file in a root-owned bin fails both legs; a symlink into an
+# agent-writable directory passes leg (b) while the target stays replaceable, and
+# the guard cannot see it. `mds` and `mdq` are in the built-in read-only group,
+# so this is the difference between those entries being earned and assumed.
+#
+# Ownership root:root, mode 755 — agent-executable, agent-unwritable. Anything an
+# agent legitimately needs to WRITE does not belong in this target: it would be
+# overwritten on every deploy anyway. The `lint` gate fails if either install
+# line loses `-o root -g root`; that regression is silent and shows up a deploy
+# later, which is exactly how #1867 lost two days.
+#
+# `install -d` on $$home/bin asserts the directory's ownership on every deploy
+# rather than trusting a one-off chown to survive — the mistake this ticket is
+# about was assuming a manual fix persists.
 #
 # Deliberately NOT folded into install-shared: that does `cp -r shared/*`, which
 # would also overwrite the deployed prompts/ and skill SKILL.md files — the
@@ -643,9 +705,17 @@ install-docs:
 # is therefore first-run only, and this target is the narrow slice that is safe to
 # re-run.
 #
-# Deliberately NOT `rsync --delete` (unlike install-docs): the deployed
-# shared/scripts holds operator-authored scripts foci knows nothing about, and
-# deleting them would be catastrophic and silent. Copy only what we ship.
+# Deliberately NOT `rsync --delete` (unlike install-docs): $$home/bin also holds
+# entries this target does not ship — `sudo -> /usr/local/bin/aisudo` above all —
+# and deleting the aisudo shim would remove the host's only privileged path.
+# Copy only what we ship.
+#
+# NAMING (flagged, not changed — #1898 item 4): with the destination now bin,
+# both "install-scripts" and the repo's "shared/scripts" source directory are
+# misnamed. `install-agent-bin` shipping from `shared/bin/` would say what this
+# does. Repo-root `bin/` is already taken by the lint helper binaries. Not
+# renamed here because the comment above about install-shared is load-bearing and
+# a rename should move it deliberately, not as a drive-by.
 install-scripts:
 	@[ -d shared/scripts ] || exit 0; \
 	for svcfile in /etc/systemd/system/foci*.service; do \
@@ -653,11 +723,11 @@ install-scripts:
 	  home=$$(grep '^WorkingDirectory=' "$$svcfile" | cut -d= -f2); \
 	  user=$$(grep '^User=' "$$svcfile" | cut -d= -f2); \
 	  [ -n "$$home" ] && [ -n "$$user" ] || continue; \
-	  mkdir -p "$$home/shared/scripts"; \
+	  install -d -m 755 -o root -g root "$$home/bin"; \
 	  for f in shared/scripts/*; do \
 	    [ -f "$$f" ] || continue; \
-	    echo "  install $$f -> $$home/shared/scripts/"; \
-	    install -m 755 -o "$$user" -g "$$user" "$$f" "$$home/shared/scripts/$$(basename $$f)"; \
+	    echo "  install $$f -> $$home/bin/"; \
+	    install -m 755 -o root -g root "$$f" "$$home/bin/$$(basename $$f)"; \
 	  done; \
 	done
 
