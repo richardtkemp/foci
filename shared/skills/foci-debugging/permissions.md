@@ -61,25 +61,31 @@ across all agents — a new CC release can deprecate a different rule type the s
 *(Swept and fixed everywhere found on 2026-07-17: the shared global settings, several per-agent
 local overrides, and the `DefaultCCAllowedTools` seed.)*
 
-## "Why is/isn't this command auto-approved?" — read the DAEMON's environment, not your shell's
+## "Why is/isn't this command auto-approved?" — read the env a CHILD has, not `/proc/environ`
 
 Beyond rule matching, `internal/execguard` vetoes any command whose executable the foci process
 could overwrite — independently of which rule matched, **including the built-in read-only group**.
-It resolves bare command names against **foci-gw's own PATH**, which `foci.service` pins and which
-is *not* the PATH your Bash tool sees. A probe run in an agent shell resolves different binaries and
-yields a confidently wrong answer. Measure the real one:
+It resolves bare names against the PATH **at check time**, so it sees what a tool shell sees.
+
+To read a running process's live environment, read it from a **child it spawned**:
 
 ```
-pid=$(systemctl show -p MainPID --value foci.service)
-tr '\0' '\n' < /proc/$pid/environ | grep '^PATH='
+mp=$(systemctl show -p MainPID --value foci.service)   # pgrep -f foci-gw does NOT find it
+tr '\0' '\n' < /proc/$(pgrep -A -P $mp | head -1)/environ | grep '^PATH='
 ```
 
-(`pgrep -f foci-gw` does not find it — go via `MainPID`.)
+**Never `/proc/<the daemon's own pid>/environ`.** That is the environment at *exec* time and is
+never updated by `os.Setenv` — and `main()` calls `shellenv.Apply()`, which sets the operator's
+dotfile env over the unit's. Reading it gives a confident, wrong answer that looks authoritative;
+two independent investigations of the same bug were both misled by it. Agreement between two
+readings of one broken instrument is not corroboration.
 
-- **`-check-config` lists dropped *config entries* only.** The match-time veto is broader, so a
-  command can stop auto-approving without ever appearing in that output. Never treat the pre-flight
-  count as the set of affected commands.
-- **Before concluding a `chown` will help, check per-leg which path each test actually resolves** —
-  file vs parent directory, symlink-following vs not — and note that only the **first word** of each
-  `&&`/`||`/`;`/`|` segment is inspected at all. Arguments are never checked, so wrapping a script in
-  an interpreter restores the auto-approval without restoring the safety.
+- **`-check-config` no longer previews dropped entries.** The hygiene pass had to move after
+  `shellenv.Apply`, and as root every `access(2)` succeeds so the preview was lying anyway. The
+  per-entry warnings fire at **startup** — read the log, not the pre-flight.
+- **Built-in rule groups never appear in that report at all.** `CommonReadonlyRules` is assembled
+  at backend rule-build time, not from `cfg.Permissions.AutoApprove`. The match-time veto still
+  covers them, so this is a reporting gap — but a built-in can stop working with no warning.
+- **Only the FIRST WORD of each `&&`/`||`/`;`/`|` segment is inspected.** Arguments are never
+  checked, so wrapping a script in an interpreter restores the auto-approval without restoring the
+  safety. Do not "fix" a vetoed entry that way.
