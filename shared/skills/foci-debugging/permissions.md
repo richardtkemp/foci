@@ -89,3 +89,8 @@ readings of one broken instrument is not corroboration.
 - **Only the FIRST WORD of each `&&`/`||`/`;`/`|` segment is inspected.** Arguments are never
   checked, so wrapping a script in an interpreter restores the auto-approval without restoring the
   safety. Do not "fix" a vetoed entry that way.
+
+- **The guard only governs commands an *agent* issues.** foci-gw's own launches (`bash`, `tmux`,
+  `go`, `git`, by bare name via `procx.Spawn`) get no approval prompt and no substitutability
+  check. If you are asking "why wasn't this checked", first ask *who ran it* — the daemon's own
+  execution path is outside every control foci has.
