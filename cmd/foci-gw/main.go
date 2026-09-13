@@ -147,13 +147,11 @@ Subcommands:
 	// from every operator-facing spawn site and from internal/execguard, so
 	// the environment agents get and the environment the guard predicts are
 	// the same object rather than two lists that can drift (#1914).
+	// It is NEVER applied to foci-gw's own process. That is the whole change:
+	// foci's own machinery keeps the environment systemd gave it, so it cannot
+	// be made to exec an agent-writable `bash`, `git` or `tmux`.
 	operatorEnv, operatorEnvFile, _ := shellenv.Load(cfg.ShellEnvFile)
 	procx.SetOperatorEnv(operatorEnv)
-
-	// PHASE 3 DELETES THIS LINE. Until then the captured env is ALSO applied
-	// to foci-gw's own process, so both populations still resolve to the same
-	// mutated global and phases 1-2 change no behaviour.
-	shellenv.Apply(operatorEnv, operatorEnvFile)
 
 	// Only NOW is the PATH final, so only now can the auto_approve entries be
 	// judged against the PATH their commands will actually run under. Dropping
@@ -163,6 +161,13 @@ Subcommands:
 	// measurably out of sync with it (#1900). Keep this call adjacent to
 	// shellenv.Apply — separating them is how the defect comes back.
 	cfg.DropSubstitutableAutoApproveRules(execguard.Live())
+
+	// Announce the split. Both ways of misclassifying a spawn site are silent
+	// (see cmd/foci-gw/spawn_env.go), so the flip has to carry its own alarm:
+	// this prints both PATHs, their difference, and whether any directory on
+	// the TRUSTED path is writable by this process.
+	home, _ := os.UserHomeDir()
+	reportPopulations(operatorEnvFile, home, liveCanWrite())
 
 	// Inject the nosgid LD_PRELOAD shim (same inheritance mechanism) so shell
 	// tools and delegated backends get POSIX "drop the setgid bit" chmod

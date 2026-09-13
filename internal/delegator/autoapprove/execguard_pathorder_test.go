@@ -118,16 +118,21 @@ func TestUnresolvedBareNameFollowsTheLivePath(t *testing.T) {
 	}
 }
 
-// applyDotfile performs today's two-step: capture the operator env as a value
-// (shellenv.Load) and ALSO install it on this process (shellenv.Apply), which
-// is what these tests assert the guard tracks. Phase 3 of #1914 removes the
-// second step from production; these tests keep it because their subject is
-// the guard's PATH source, not shellenv's side effect.
+// applyDotfile captures the rc file and installs it on THIS PROCESS.
+//
+// Production no longer does the second half — #1914 phase 3 deleted the
+// os.Setenv loop, which is the point of the whole change. These tests keep it
+// because their subject is where the GUARD reads its PATH from, and until
+// phase 4 that source is still the live process environment. The test does
+// explicitly, and only for itself, what shellenv.Apply used to do for the
+// whole daemon.
 func applyDotfile(t *testing.T, rc *string) {
 	t.Helper()
-	env, path, ok := shellenv.Load(rc)
+	env, _, ok := shellenv.Load(rc)
 	if !ok {
 		t.Fatalf("shellenv.Load(%q) captured nothing", *rc)
 	}
-	shellenv.Apply(env, path)
+	for k, v := range env {
+		t.Setenv(k, v)
+	}
 }
