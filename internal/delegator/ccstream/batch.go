@@ -43,7 +43,8 @@ func (b *Backend) RunBatch(ctx context.Context, req delegator.BatchRequest) (str
 	err := procx.RunWithETXTBSYRetry(ctx, func() *exec.Cmd {
 		stdout.Reset()
 		stderr.Reset()
-		cmd := procx.Spawn(ctx, b.resolveBinary(), args...)
+		// Operator: a Claude Code process — the canonical agent population.
+		cmd := procx.Spawn(ctx, procx.Operator, b.resolveBinary(), args...)
 		cmd.Dir = req.WorkDir
 		cmd.Stdin = strings.NewReader(req.Prompt)
 		cmd.Stdout = &stdout

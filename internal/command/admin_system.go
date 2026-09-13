@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"syscall"
 
 	"foci/internal/procx"
@@ -42,8 +41,10 @@ func Restart() (string, error) { return restartFunc() }
 // doRestart attempts to restart the service via systemctl, falling back to
 // SIGTERM (relying on a process supervisor or Docker restart policy).
 func doRestart() (string, error) {
-	if _, err := exec.LookPath("systemctl"); err == nil {
-		cmd := procx.Spawn(context.Background(), "systemctl", "restart", "foci")
+	if _, err := procx.LookPath(procx.Trusted, "systemctl"); err == nil {
+		// Trusted: restarting the service is foci acting on itself, and systemctl
+		// is a privileged entry point — never resolve it on an agent-writable PATH.
+		cmd := procx.Spawn(context.Background(), procx.Trusted, "systemctl", "restart", "foci")
 		if err := cmd.Start(); err != nil {
 			return "", fmt.Errorf("systemctl restart failed: %w", err)
 		}

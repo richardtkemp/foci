@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -16,6 +15,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/modelinfo"
 	"foci/internal/platform"
+	"foci/internal/procx"
 	"foci/internal/provider"
 	"foci/internal/secrets"
 	"foci/internal/tempdir"
@@ -360,7 +360,8 @@ func spawnExploreToolSet(reg *Registry) ([]provider.ToolDef, map[string]*Tool) {
 
 	// Add conditional tools if their binary is available.
 	for _, opt := range optionalExploreTools {
-		if binPath, err := exec.LookPath(opt.binary); err == nil {
+		// Operator: optional explore tools are agent-facing.
+		if binPath, err := procx.LookPath(procx.Operator, opt.binary); err == nil {
 			t := opt.create(binPath)
 			defs = append(defs, provider.NewCustomTool(t.Name, t.Description, t.Parameters))
 			tools[t.Name] = t

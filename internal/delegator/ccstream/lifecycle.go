@@ -109,7 +109,9 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// caller's context — otherwise the process is killed when the turn
 	// context expires or is cancelled.
 	cmdCtx, cmdCancel := context.WithCancel(context.Background())
-	cmd := procx.Spawn(cmdCtx, claudeBin, args...)
+	// Operator: THE agent shell. Everything CC's Bash tool runs inherits this,
+	// so it must be the operator's full environment.
+	cmd := procx.Spawn(cmdCtx, procx.Operator, claudeBin, args...)
 	cmd.Dir = opts.WorkDir
 	cmd.Env = buildEnv(opts.Env)
 	b.autoApproveEnv = autoapprove.EnvironmentFromList(cmd.Env)

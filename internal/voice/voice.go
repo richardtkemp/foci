@@ -219,7 +219,8 @@ func (e *EdgeTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
 		args = append(args, "--rate", rateToEdgeTTS(e.Rate))
 	}
 
-	ttsCmd := procx.Spawn(ctx, cmd, args...)
+	// Trusted: foci's own TTS pipeline.
+	ttsCmd := procx.Spawn(ctx, procx.Trusted, cmd, args...)
 	if output, err := ttsCmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("edge-tts: %w: %s", err, string(output))
 	}

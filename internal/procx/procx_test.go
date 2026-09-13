@@ -108,7 +108,7 @@ func TestSpawnStillWorks(t *testing.T) {
 	// A subprocess launched via Spawn should run normally regardless of
 	// whether the credential mechanism is active.
 	t.Parallel()
-	proc := Spawn(context.Background(), "echo", "hello")
+	proc := Spawn(context.Background(), Trusted, "echo", "hello")
 	out, err := proc.CombinedOutput()
 	if err != nil {
 		t.Fatalf("exec failed: %v\noutput: %s", err, out)
@@ -121,7 +121,7 @@ func TestSpawnStillWorks(t *testing.T) {
 func TestSpawnSetsidStillWorks(t *testing.T) {
 	// Same for SpawnSetsid.
 	t.Parallel()
-	proc := SpawnSetsid(context.Background(), "echo", "hello")
+	proc := SpawnSetsid(context.Background(), Trusted, "echo", "hello")
 	out, err := proc.CombinedOutput()
 	if err != nil {
 		t.Fatalf("exec failed: %v\noutput: %s", err, out)
@@ -161,7 +161,7 @@ func TestRunWithETXTBSYRetry_Recovers(t *testing.T) {
 
 	ctx := context.Background()
 	if err := runWithETXTBSYRetry(ctx, ETXTBSYRetries, ETXTBSYBackoff, func() *exec.Cmd {
-		return Spawn(ctx, prog)
+		return Spawn(ctx, Trusted, prog)
 	}); err != nil {
 		t.Fatalf("expected retry to recover past ETXTBSY, got: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestRunWithETXTBSYRetry_NoRetryFails(t *testing.T) {
 
 	ctx := context.Background()
 	err = runWithETXTBSYRetry(ctx, 0, ETXTBSYBackoff, func() *exec.Cmd {
-		return Spawn(ctx, prog)
+		return Spawn(ctx, Trusted, prog)
 	})
 	if !errors.Is(err, syscall.ETXTBSY) {
 		t.Fatalf("with retries=0 and fd held open, want ETXTBSY, got: %v", err)

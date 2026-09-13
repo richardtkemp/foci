@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"sync"
 	"time"
@@ -273,8 +272,11 @@ func (a *Agent) runCanRunBackground(ctx context.Context, sessionKey, endpoint st
 
 	// procx.Spawn strips the foci-secrets group from the child and puts it in
 	// its own process group.
-	cmd := procx.Spawn(cctx, a.canRunBackground())
-	cmd.Env = append(os.Environ(),
+	// Operator: can_run_background is an OPERATOR-AUTHORED script whose whole
+	// job is to consult the operator's own tools. Trusted would silently strip
+	// them. See docs/WIRING.md on the operator-hook sub-case.
+	cmd := procx.Spawn(cctx, procx.Operator, a.canRunBackground())
+	cmd.Env = append(procx.Env(procx.Operator),
 		"FOCI_SESSION_KEY="+sessionKey,
 		"FOCI_AGENT_ID="+a.AgentID,
 		"FOCI_ENDPOINT="+endpoint,

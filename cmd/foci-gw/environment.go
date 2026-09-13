@@ -62,7 +62,9 @@ func checkSkillSizes(registry *skills.Registry, maxResultChars int, agentID stri
 
 // countCrontabJobs counts the number of active cron jobs for the current user
 func countCrontabJobs() int {
-	cmd := procx.Spawn(context.Background(), "sh", "-c", "crontab -l 2>/dev/null | grep -v '^#' | grep -v '^$' | wc -l")
+	// Trusted: foci counting its own cron jobs for the /environment block.
+	// `sh` and `crontab` here are foci's machinery, not the user's.
+	cmd := procx.Spawn(context.Background(), procx.Trusted, "sh", "-c", "crontab -l 2>/dev/null | grep -v '^#' | grep -v '^$' | wc -l")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0

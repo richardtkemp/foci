@@ -47,7 +47,8 @@ var cmdSeparatorRe = regexp.MustCompile(`\|{1,2}|;|&&`)
 // execShell is the shell binary used by exec. Prefer bash (needed for pipefail
 // and tool-piping shell functions); fall back to sh if bash is not installed.
 var execShell = sync.OnceValue(func() string {
-	if path, err := exec.LookPath("bash"); err == nil {
+	// Operator: this is the shell the Bash TOOL runs under.
+	if path, err := procx.LookPath(procx.Operator, "bash"); err == nil {
 		execLog.Debugf("using bash: %s", path)
 		return "bash"
 	}
@@ -203,10 +204,12 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 
 	var proc *exec.Cmd
 	if background {
-		proc = procx.SpawnSetsid(ctx, execShell(), "-c", cmd)
+		// Operator: the Bash tool.
+		proc = procx.SpawnSetsid(ctx, procx.Operator, execShell(), "-c", cmd)
 		proc.WaitDelay = 2 * time.Second
 	} else {
-		proc = procx.Spawn(ctx, execShell(), "-c", cmd)
+		// Operator: the Bash tool.
+		proc = procx.Spawn(ctx, procx.Operator, execShell(), "-c", cmd)
 		proc.Cancel = func() error {
 			return syscall.Kill(-proc.Process.Pid, syscall.SIGKILL)
 		}
@@ -219,7 +222,7 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 	// session).
 	sk := tools.SessionKeyFromContext(ctx)
 	if len(extraEnv) > 0 || bridge != nil || sk != "" {
-		proc.Env = append(os.Environ(), extraEnv...)
+		proc.Env = append(procx.Env(procx.Operator), extraEnv...)
 		if bridge != nil {
 			proc.Env = append(proc.Env, "FOCI_SOCK="+bridge.SockPath())
 		}
@@ -283,13 +286,14 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 	// Use context.Background() (not the caller's ctx) so timeout doesn't
 	// kill the process. Auto-backgrounded commands should run to completion
 	// regardless of timeout.
-	proc := procx.Spawn(context.Background(), execShell(), "-c", cmd)
+	// Operator: the Bash tool (auto-backgrounded).
+	proc := procx.Spawn(context.Background(), procx.Operator, execShell(), "-c", cmd)
 	proc.Dir = workDir
 
 	// Inject extra env vars (FOCI_ADDR, FOCI_GW_SOCK, etc.), FOCI_SOCK, and
 	// FOCI_SESSION_KEY (see execDirect for rationale).
 	if len(extraEnv) > 0 || bridge != nil || sessionKey != "" {
-		proc.Env = append(os.Environ(), extraEnv...)
+		proc.Env = append(procx.Env(procx.Operator), extraEnv...)
 		if bridge != nil {
 			proc.Env = append(proc.Env, "FOCI_SOCK="+bridge.SockPath())
 		}

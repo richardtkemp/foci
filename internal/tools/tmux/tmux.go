@@ -417,7 +417,9 @@ func runTmuxWithSocket(ctx context.Context, socket string, args ...string) (stri
 	// procx.SpawnSetsid puts the tmux process in its own session so it (and
 	// the tmux server it may spawn) won't be killed when the parent process
 	// group is cleaned up. Also drops the foci-secrets supplementary group.
-	cmd := procx.SpawnSetsid(cmdCtx, "tmux", args...)
+	// Operator: the Tmux TOOL. The agent's command runs directly in the pane
+	// (no login shell re-derives anything), so the server's env IS the agent's.
+	cmd := procx.SpawnSetsid(cmdCtx, procx.Operator, "tmux", args...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -529,7 +531,9 @@ func tmuxStartDiag(socket string) string {
 
 	cmdCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := procx.SpawnSetsid(cmdCtx, "tmux", args...)
+	// Operator, to match runTmuxWithSocket: this probe can START the server on
+	// the same socket, and the first starter fixes the server's environment.
+	cmd := procx.SpawnSetsid(cmdCtx, procx.Operator, "tmux", args...)
 	cmd.Dir = dir // -vv writes tmux-server-*.log / tmux-client-*.log into cwd
 	out, _ := cmd.CombinedOutput()
 

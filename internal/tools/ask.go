@@ -1081,7 +1081,9 @@ func runGrader(p *pendingAsk, qs []question.Question, answers map[string]string,
 	runErr := procx.RunWithETXTBSYRetry(ctx, func() *exec.Cmd {
 		stdout.Reset()
 		stderr.Reset()
-		cmd := procx.Spawn(ctx, p.grader.path, spawnArgs...)
+		// Operator: the grader is an operator-authored executable (absolute path
+		// from config, so no bare-name lookup) that calls the operator's tools.
+		cmd := procx.Spawn(ctx, procx.Operator, p.grader.path, spawnArgs...)
 		cmd.Stdin = bytes.NewReader(payload)
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr

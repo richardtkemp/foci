@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -15,6 +14,7 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/modelinfo"
+	"foci/internal/procx"
 	"foci/internal/provider"
 	"foci/internal/tools"
 )
@@ -31,7 +31,9 @@ var (
 func checkMissingQueryTools() map[string]bool {
 	missing := make(map[string]bool)
 	for _, name := range []string{"jq", "mdq", "yq"} {
-		if _, err := exec.LookPath(name); err != nil {
+		// Operator: the guard advertises tools to the AGENT, so it must ask
+		// about the agent's PATH, not the daemon's.
+		if _, err := procx.LookPath(procx.Operator, name); err != nil {
 			missing[name] = true
 		}
 	}

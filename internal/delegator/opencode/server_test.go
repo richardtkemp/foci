@@ -710,7 +710,7 @@ func TestServer_FinalizeExit_DoesNotEvictSuccessor(t *testing.T) {
 func launchStubDirectly(t *testing.T, s *Server) error {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := procx.Spawn(ctx, stubBinary(t))
+	cmd := procx.Spawn(ctx, procx.Trusted, stubBinary(t))
 	cmd.Dir = s.workDir
 	if err := cmd.Start(); err != nil {
 		cancel()

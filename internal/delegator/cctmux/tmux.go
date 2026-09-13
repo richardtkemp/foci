@@ -23,7 +23,10 @@ func execTmuxProc(ctx context.Context, stdin string, args ...string) (string, er
 	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	cmd := procx.SpawnSetsid(cmdCtx, "tmux", args...)
+	// Operator: this tmux server hosts an interactive `claude`. NB a tmux SERVER
+	// is a per-socket singleton whose environment is fixed by whoever starts it,
+	// so every tmux spawn sharing a socket must declare the SAME population.
+	cmd := procx.SpawnSetsid(cmdCtx, procx.Operator, "tmux", args...)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}

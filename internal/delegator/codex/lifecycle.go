@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -143,7 +142,7 @@ func (b *Backend) launchAppServer(ctx context.Context, opts delegator.StartOptio
 	b.autoApproveEnv = autoapprove.EnvironmentFromList(b.buildEnv())
 
 	bin := b.codexBinary()
-	if _, err := exec.LookPath(bin); err != nil {
+	if _, err := procx.LookPath(procx.Operator, bin); err != nil {
 		return fmt.Errorf("codex: binary %q not found: %w", bin, err)
 	}
 
@@ -167,7 +166,8 @@ func (b *Backend) launchAppServer(ctx context.Context, opts delegator.StartOptio
 	args = append(args, b.prepareHookArgs(ctx)...)
 
 	cmdCtx, cancel := context.WithCancel(context.Background())
-	cmd := procx.Spawn(cmdCtx, bin, args...)
+	// Operator: the codex agent backend.
+	cmd := procx.Spawn(cmdCtx, procx.Operator, bin, args...)
 	cmd.Dir = b.workDir
 
 	// Build env
@@ -254,7 +254,7 @@ func (b *Backend) WaitReady(ctx context.Context) error {
 // CheckReady verifies the codex binary is installed.
 func (b *Backend) CheckReady(ctx context.Context) (bool, error) {
 	bin := b.codexBinary()
-	if _, err := exec.LookPath(bin); err != nil {
+	if _, err := procx.LookPath(procx.Operator, bin); err != nil {
 		return false, fmt.Errorf("codex binary %q not found: %w", bin, err)
 	}
 	return true, nil

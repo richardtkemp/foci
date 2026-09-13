@@ -261,7 +261,9 @@ func (a *Agent) runStatuslineCommand(ctx context.Context, command string) string
 
 	// procx.Spawn strips the foci-secrets group from the child and puts it in
 	// its own process group.
-	cmd := procx.Spawn(cctx, "sh", "-c", command)
+	// Operator: the statusline command is operator-authored and typically pipes
+	// the operator's own tools (jq, mdq, ...).
+	cmd := procx.Spawn(cctx, procx.Operator, "sh", "-c", command)
 	// WaitDelay forces the pipes closed shortly after the context is cancelled,
 	// so a grandchild that inherits stdout can't hang the turn (the backstop for
 	// the case a per-turn timeout alone can't cover).

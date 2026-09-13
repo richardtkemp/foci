@@ -16,7 +16,9 @@ import (
 // runCmd runs a command via procx.Spawn with process group kill on cancel.
 // Returns combined stdout+stderr output.
 func runCmd(ctx context.Context, binary string, args ...string) (string, error) {
-	cmd := procx.Spawn(ctx, binary, args...)
+	// Operator: ls/find/grep/git/jq/mdq/yq/sqlite on the agent's behalf. These
+	// are agent-facing tools and several live only on the operator's PATH.
+	cmd := procx.Spawn(ctx, procx.Operator, binary, args...)
 	cmd.Cancel = func() error {
 		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
@@ -42,7 +44,9 @@ func handleCmdOutput(output string, err error) (ToolResult, error) {
 // Preference: rg > ack > ag > grep.
 func resolveGrepBinary() (binaryPath, binaryName string) {
 	for _, name := range []string{"rg", "ack", "ag", "grep"} {
-		if path, err := exec.LookPath(name); err == nil {
+		// Operator: these are the agent's search tools (rg often lives only
+		// on the operator's PATH).
+		if path, err := procx.LookPath(procx.Operator, name); err == nil {
 			return path, name
 		}
 	}

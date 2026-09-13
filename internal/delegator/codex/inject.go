@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"foci/internal/delegator"
+	"foci/internal/procx"
 )
 
 // AttachSessionEvents installs the session-scoped delivery callbacks.
@@ -153,7 +153,10 @@ func isNoActiveTurnError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "no active turn to steer")
 }
 
-// environ returns the current process environment.
+// environ returns the OPERATOR population's environment — the daemon's own
+// env overlaid with the operator's captured shell env (#1914). Not
+// os.Environ(): the codex app-server is an agent backend and must see the
+// operator's tools, which the daemon's own process deliberately does not.
 func environ() []string {
-	return os.Environ()
+	return procx.Env(procx.Operator)
 }

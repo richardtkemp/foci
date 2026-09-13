@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -51,7 +50,7 @@ func bitwardenSetup() string {
 	sb.WriteString("Bitwarden Setup\n")
 	sb.WriteString(strings.Repeat("─", 40) + "\n\n")
 
-	bwPath, err := exec.LookPath("bw")
+	bwPath, err := procx.LookPath(procx.Trusted, "bw")
 	if err != nil {
 		sb.WriteString("✗ bw CLI: NOT FOUND\n")
 		sb.WriteString("  Install: https://bitwarden.com/help/cli/\n")
@@ -60,19 +59,23 @@ func bitwardenSetup() string {
 	}
 	sb.WriteString(fmt.Sprintf("✓ bw CLI: %s\n", bwPath))
 
-	if out, err := procx.Spawn(context.Background(), "bw", "--version").Output(); err == nil {
+	// Trusted: foci's own prerequisite probe.
+	if out, err := procx.Spawn(context.Background(), procx.Trusted, "bw", "--version").Output(); err == nil {
 		sb.WriteString(fmt.Sprintf("  Version: %s\n", strings.TrimSpace(string(out))))
 	}
 
 	userExists := false
-	if _, err := procx.Spawn(context.Background(), "id", "bitwarden").Output(); err == nil {
+	// Trusted: foci's own prerequisite probe.
+	if _, err := procx.Spawn(context.Background(), procx.Trusted, "id", "bitwarden").Output(); err == nil {
 		userExists = true
 		sb.WriteString("✓ bitwarden user: exists\n")
 	} else {
 		sb.WriteString("✗ bitwarden user: NOT FOUND\n")
 
 		sb.WriteString("  Creating bitwarden system user via aisudo...\n")
-		cmd := procx.Spawn(context.Background(), "sudo", "useradd", "--system", "--create-home", "--shell", "/usr/sbin/nologin", "bitwarden")
+		// Trusted: privileged (sudo useradd). A substitutable `sudo` here would be
+		// a root-equivalent hole.
+		cmd := procx.Spawn(context.Background(), procx.Trusted, "sudo", "useradd", "--system", "--create-home", "--shell", "/usr/sbin/nologin", "bitwarden")
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
@@ -85,7 +88,8 @@ func bitwardenSetup() string {
 	}
 
 	if userExists {
-		cmd := procx.Spawn(context.Background(), "sudo", "-u", "bitwarden", "bw", "status", "--nointeraction")
+		// Trusted: privileged (sudo -u bitwarden).
+		cmd := procx.Spawn(context.Background(), procx.Trusted, "sudo", "-u", "bitwarden", "bw", "status", "--nointeraction")
 		out, err := cmd.Output()
 		if err != nil {
 			sb.WriteString("✗ bw status: cannot check (aisudo may need approval)\n")

@@ -59,7 +59,7 @@ func TestConvertBoundedKillsRunaway(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := procx.Spawn(ctx, "sh", "-c", "while true; do printf 'spamspamspamspam'; done")
+	cmd := procx.Spawn(ctx, procx.Trusted, "sh", "-c", "while true; do printf 'spamspamspamspam'; done")
 	_, _, overflowed, _ := runBounded(cmd, cancel)
 	if !overflowed {
 		t.Error("expected overflow + kill on runaway output")

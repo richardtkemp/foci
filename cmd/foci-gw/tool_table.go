@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 	"foci/internal/config"
 	mcpkg "foci/internal/mcp"
 	"foci/internal/platform"
+	"foci/internal/procx"
 	"foci/internal/provider"
 	"foci/internal/route"
 	"foci/internal/secrets"
@@ -106,7 +106,8 @@ func registerTools(d *toolDeps) {
 }
 
 func tmuxAvailable(*toolDeps) bool {
-	_, err := exec.LookPath("tmux")
+	// Operator: matches the population internal/tools/tmux spawns under.
+	_, err := procx.LookPath(procx.Operator, "tmux")
 	return err == nil
 }
 

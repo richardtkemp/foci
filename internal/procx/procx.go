@@ -45,6 +45,7 @@ import (
 	"os/exec"
 	"os/user"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -232,21 +233,68 @@ func childAttrSetsid() *syscall.SysProcAttr {
 	return attr
 }
 
-// Spawn returns an *exec.Cmd configured with the foci-secrets group
-// stripped (via childAttr) and Setpgid set so the child is in its own
-// process group (allows clean process-group kill).
-func Spawn(ctx context.Context, name string, args ...string) *exec.Cmd {
+// Spawn returns an *exec.Cmd for the given population, configured with the
+// foci-secrets group stripped (via childAttr) and Setpgid set so the child is
+// in its own process group (allows clean process-group kill).
+//
+// pop is REQUIRED and has no default. It decides two things (see env.go):
+// which PATH a bare name resolves against, and what the child's environment
+// is. Callers that need to add variables should start from the population's
+// value — procx.Env(pop) — rather than os.Environ(), and assign the result to
+// cmd.Env; the population's env is pre-assigned here so a caller that adds
+// nothing already gets the right one.
+//
+// Passing the zero Population panics. That is deliberate: both ways of
+// getting the population wrong are SILENT (a tool shell marked trusted
+// quietly strips agents of tools; a daemon site marked operator quietly
+// leaves the hole open), so the one failure mode we can make loud, we do.
+func Spawn(ctx context.Context, pop Population, name string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, args...) //nolint:forbidigo // sole permitted use; see package doc
+	applyPopulation(cmd, pop, name)
 	cmd.SysProcAttr = childAttr()
 	return cmd
 }
 
 // SpawnSetsid is the Setsid variant for daemonised children (tmux
 // clients/servers that need their own session). Otherwise matches Spawn.
-func SpawnSetsid(ctx context.Context, name string, args ...string) *exec.Cmd {
+func SpawnSetsid(ctx context.Context, pop Population, name string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, args...) //nolint:forbidigo // sole permitted use; see package doc
+	applyPopulation(cmd, pop, name)
 	cmd.SysProcAttr = childAttrSetsid()
 	return cmd
+}
+
+// resolveForPopulation re-points cmd at the file the population's PATH says
+// the name means. os/exec has already resolved it against the daemon's PATH
+// by the time we get the *exec.Cmd, so this OVERRIDES that answer — which is
+// the whole point: cmd.Env does not affect resolution, only the child's view.
+//
+// A resolution failure is recorded in cmd.Err, exactly as exec.Command does,
+// so the error surfaces from Run/Start rather than here.
+func resolveForPopulation(cmd *exec.Cmd, p Population, name string) {
+	if strings.Contains(name, string(os.PathSeparator)) {
+		return // absolute/relative path: os/exec already did the right thing
+	}
+	// Mirrors exec.Command's own handling: take the path when we got one,
+	// record the error when there was one (ErrDot yields both).
+	cmd.Err = nil
+	path, err := lookPathIn(PathDirs(p), name)
+	if path != "" {
+		cmd.Path = path
+	}
+	if err != nil {
+		cmd.Err = err
+	}
+}
+
+// applyPopulation re-resolves a bare name against the population's PATH and
+// installs the population's environment on the child.
+func applyPopulation(cmd *exec.Cmd, pop Population, name string) {
+	if !pop.Valid() {
+		panic("procx: spawn of " + name + " with no population declared — pass procx.Trusted (foci's own machinery) or procx.Operator (agent/tool shells)")
+	}
+	resolveForPopulation(cmd, pop, name)
+	cmd.Env = Env(pop)
 }
 
 // ETXTBSY fork/exec retry budget (golang/go#22315). Under concurrent

@@ -9,7 +9,6 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -93,11 +92,14 @@ func checkXML(content []byte) error {
 }
 
 func checkPython(content []byte) error {
-	path, err := exec.LookPath("python3")
+	// Trusted: foci's own validator — see the spawn below.
+	path, err := procx.LookPath(procx.Trusted, "python3")
 	if err != nil {
 		return nil // python3 not available, skip
 	}
-	cmd := procx.Spawn(context.Background(), path, "-c", "import ast,sys; ast.parse(sys.stdin.read())")
+	// Trusted: foci validating content before a write. A substitutable python3
+	// would be arbitrary code execution in the daemon dressed as a syntax check.
+	cmd := procx.Spawn(context.Background(), procx.Trusted, path, "-c", "import ast,sys; ast.parse(sys.stdin.read())")
 	cmd.Stdin = bytes.NewReader(content)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -107,11 +109,13 @@ func checkPython(content []byte) error {
 }
 
 func checkShell(content []byte) error {
-	path, err := exec.LookPath("bash")
+	// Trusted: foci's own validator — see the spawn below.
+	path, err := procx.LookPath(procx.Trusted, "bash")
 	if err != nil {
 		return nil // bash not available, skip
 	}
-	cmd := procx.Spawn(context.Background(), path, "-n")
+	// Trusted: as checkPython — `bash -n` must be the real bash.
+	cmd := procx.Spawn(context.Background(), procx.Trusted, path, "-n")
 	cmd.Stdin = bytes.NewReader(content)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
-	"os/exec"
 	"time"
 
 	"foci/internal/app"
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/platform"
+	"foci/internal/procx"
 	"foci/internal/resources"
 	"foci/internal/tools/tmux"
 )
@@ -49,7 +49,8 @@ func setupTmuxMemoryMonitor(
 	connMgr platform.ConnectionManager,
 	ctx context.Context,
 ) func() {
-	if _, err := exec.LookPath("tmux"); err != nil {
+	// Operator: asks about the PATH the Tmux TOOL will actually resolve on.
+	if _, err := procx.LookPath(procx.Operator, "tmux"); err != nil {
 		return nil
 	}
 	if cfg.Tools.TmuxMemoryCheckInterval == "0" {
