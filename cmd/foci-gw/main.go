@@ -34,6 +34,7 @@ import (
 	"foci/internal/modelinfo"
 	"foci/internal/platform"
 	"foci/internal/preload"
+	"foci/internal/procx"
 	"foci/internal/provision"
 	"foci/internal/shellenv"
 	"foci/internal/skills"
@@ -141,9 +142,18 @@ Subcommands:
 		mainLog.Infof("timezone set to %s", cfg.Timezone)
 	}
 
-	// Load the operator's shell env into this process before any backend
-	// spawns, so tool shells inherit it via os.Environ().
-	shellenv.Apply(cfg.ShellEnvFile)
+	// Capture the operator's shell environment ONCE, as a value, before any
+	// backend spawns. procx.SetOperatorEnv is what makes it reachable BY NAME
+	// from every operator-facing spawn site and from internal/execguard, so
+	// the environment agents get and the environment the guard predicts are
+	// the same object rather than two lists that can drift (#1914).
+	operatorEnv, operatorEnvFile, _ := shellenv.Load(cfg.ShellEnvFile)
+	procx.SetOperatorEnv(operatorEnv)
+
+	// PHASE 3 DELETES THIS LINE. Until then the captured env is ALSO applied
+	// to foci-gw's own process, so both populations still resolve to the same
+	// mutated global and phases 1-2 change no behaviour.
+	shellenv.Apply(operatorEnv, operatorEnvFile)
 
 	// Only NOW is the PATH final, so only now can the auto_approve entries be
 	// judged against the PATH their commands will actually run under. Dropping

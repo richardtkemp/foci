@@ -79,7 +79,7 @@ func TestGuardSeesThePathShellenvInstallsAfterPackageInit(t *testing.T) {
 		t.Fatal("control failed: the shim must not be reachable before the dotfile is loaded")
 	}
 
-	shellenv.Apply(&rc)
+	applyDotfile(t, &rc)
 
 	// Precondition: the dotfile really did land in this process's environment.
 	// Note that /proc/self/environ still shows the OLD PATH here — os.Setenv
@@ -108,7 +108,7 @@ func TestUnresolvedBareNameFollowsTheLivePath(t *testing.T) {
 		t.Fatalf("control failed: %s must be unresolvable before the dotfile is loaded", probe)
 	}
 
-	shellenv.Apply(&rc)
+	applyDotfile(t, &rc)
 	if !slices.Contains(filepath.SplitList(os.Getenv("PATH")), shimDir) {
 		t.Fatalf("precondition failed: shellenv did not install %s on PATH", shimDir)
 	}
@@ -116,4 +116,18 @@ func TestUnresolvedBareNameFollowsTheLivePath(t *testing.T) {
 	if execguard.UnresolvedBareName(probe, guardEnv()) {
 		t.Errorf("%s is on the live PATH and must resolve; reporting it unresolvable is the 'looking in the wrong place' half of #1900", probe)
 	}
+}
+
+// applyDotfile performs today's two-step: capture the operator env as a value
+// (shellenv.Load) and ALSO install it on this process (shellenv.Apply), which
+// is what these tests assert the guard tracks. Phase 3 of #1914 removes the
+// second step from production; these tests keep it because their subject is
+// the guard's PATH source, not shellenv's side effect.
+func applyDotfile(t *testing.T, rc *string) {
+	t.Helper()
+	env, path, ok := shellenv.Load(rc)
+	if !ok {
+		t.Fatalf("shellenv.Load(%q) captured nothing", *rc)
+	}
+	shellenv.Apply(env, path)
 }
