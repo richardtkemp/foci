@@ -72,6 +72,8 @@ import (
 	"strings"
 
 	"golang.org/x/sys/unix"
+
+	"foci/internal/procx"
 )
 
 // Env supplies everything the check needs from the outside world. Injected so
@@ -106,33 +108,39 @@ func processCanExecute(path string) bool {
 	return unix.Access(path, unix.X_OK) == nil
 }
 
-// Live builds the Env describing this process AT THE MOMENT IT IS CALLED.
+// Live builds the Env describing what an AGENT SHELL will run, at the moment
+// it is called.
 //
-// PATH is read from os.Getenv here, so the value it captures depends entirely
-// on WHEN the call happens. foci-gw's PATH is written twice: the unit supplies
-// one (Makefile SERVICE_PATH -> deploy/foci.service.tmpl) and shellenv.Apply()
-// replaces it from the operator's dotfiles partway through main(). Tool shells
-// inherit the second one. So a Live() taken before shellenv.Apply() — anything
-// at package-init time, and config.Load — describes a PATH nothing will ever
-// execute under.
+// PATH comes from procx.PathDirs(procx.Operator) — the operator population,
+// asked for BY NAME. That is the whole correctness condition of this package:
+// the guard's job is to PREDICT what a tool shell resolves a bare name to, so
+// it must search the same PATH that shell searches. Naming the population
+// rather than copying its value means there is no list to keep in sync and no
+// moment at which the two can differ.
 //
-// That divergence is NOT merely permissive-at-the-margin. A directory the agent
-// searches and this Env does not changes WHICH FILE this package judges, so it
-// can report a bare name safe on the strength of a file the agent will never
-// run. Measured on the live host, 2026-09-11 (#1900): ~/.shellcommon prepends
-// $HOME/scripts, which is agent-writable and sits ahead of /usr/bin, while the
-// unit's PATH has no such entry. Every bare-name allowlist rule — git, gh,
-// make, jq, sed, grep — resolved here to the root-owned /usr/bin copy and ran
-// from an agent-authored shadow. The fix is not to keep the two PATH lists in
-// sync (there are four hand-maintained copies and they were already out of
-// sync); it is to call Live() at check time so there is only ever one PATH.
+// A divergence here is NOT merely permissive-at-the-margin. A directory the
+// agent searches and this Env does not changes WHICH FILE this package judges,
+// so it can report a bare name safe on the strength of a file the agent will
+// never run. Measured on the live host, 2026-09-11 (#1900): ~/.shellcommon
+// prepends $HOME/scripts, which is agent-writable and sits ahead of /usr/bin,
+// while the unit's PATH has no such entry. Every bare-name allowlist rule —
+// git, gh, make, jq, sed, grep — resolved here to the root-owned /usr/bin copy
+// and ran from an agent-authored shadow.
 //
-// /proc/<pid>/environ CANNOT be used to audit this. It records the environment
-// at EXEC time and is never updated by os.Setenv, so it shows the unit's PATH
-// no matter what shellenv installed. Two independent readings of it produced
-// the same wrong diagnosis for #1900 and the agreement looked like
-// corroboration. To see a running process's live PATH, read it from a child it
-// spawned.
+// That bug had two fixes in sequence, and the second is why this reads a
+// population rather than a global. #1900 made the call happen at CHECK time,
+// so there was only ever one PATH — correct while shellenv.Apply() mutated the
+// process and the daemon and the agent shared an environment. #1914 ended that
+// sharing: foci's own machinery now keeps the unit's PATH and only the agent
+// shells get the operator's. os.Getenv("PATH") is therefore no longer the
+// agent's PATH at all, and reading it would reintroduce #1900 wearing the
+// opposite mask. Asking for procx.Operator says which of the two is meant.
+//
+// /proc/<pid>/environ CANNOT be used to audit any of this. It records the
+// environment at EXEC time, so it shows neither os.Setenv's effects nor a
+// per-spawn cmd.Env. Two independent readings of it produced the same wrong
+// diagnosis for #1900 and the agreement looked like corroboration. To see a
+// running process's live environment, read it from a child it spawned.
 func Live() Env {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -140,7 +148,7 @@ func Live() Env {
 	}
 	return Env{
 		CanWrite:     processCanWrite,
-		PathDirs:     filepath.SplitList(os.Getenv("PATH")),
+		PathDirs:     procx.PathDirs(procx.Operator),
 		IsExecutable: processCanExecute,
 		EvalSymlinks: filepath.EvalSymlinks,
 		HomeDir:      home,
