@@ -453,6 +453,22 @@ lint: find-disconnected-tests find-static-config-reads find-unscoped-logging
 		echo "shellenv/procx must never mutate the daemon's own environment (#1914) — capture it as a value and declare a population at the spawn site:"; \
 		echo "$$bad"; exit 1; \
 	fi
+	@# (3) An OPERATOR spawn may not name a bare INTERPRETER. The population is
+	@# about which environment the child gets; it is not a licence to resolve the
+	@# interpreter itself on an agent-influenced PATH. The operator PATH contains
+	@# agent-writable directories by design (~/scripts is one, ahead of /usr/bin),
+	@# so a bare "sh" here is executable-by-any-agent, with no approval and no
+	@# guard — statusline alone would run it every turn. Pin the interpreter to an
+	@# absolute root-owned path; the child still receives the full operator
+	@# environment, so the script's own tools still resolve.
+	@pat='procx\.Spawn(Setsid)?\([^,]+, *procx\.Operator, *"(sh|bash|zsh|python3?|perl|env)"'; \
+	printf '%s\n' 'c := procx.Spawn(ctx, procx.Operator, "sh", "-c", s)' | grep -qE "$$pat" || { \
+		echo "gate is broken, not the code: the bare-interpreter pattern no longer matches a known-bad line"; exit 1; }; \
+	bad=$$(grep -rnE "$$pat" internal/ cmd/ --include='*.go' | grep -v '_test\.go' || true); \
+	if [ -n "$$bad" ]; then \
+		echo "OPERATOR spawn names a bare interpreter — pin it absolute (e.g. /bin/sh); the env stays Operator (#1914):"; \
+		echo "$$bad"; exit 1; \
+	fi
 	@echo "=== skill provenance (shipped skills declare seed-if-missing vs golden) ==="
 	@bash scripts/check-skill-provenance.sh
 
