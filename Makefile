@@ -423,6 +423,36 @@ lint: find-disconnected-tests find-static-config-reads find-unscoped-logging
 		echo "install-scripts must install the agent bin root-owned (-o root -g root), see #1898:"; \
 		echo "$$bad"; exit 1; \
 	fi
+	@echo "=== spawn populations (every spawn and lookup declares one) ==="
+	@# #1914. procx.Spawn/SpawnSetsid take a REQUIRED procx.Population, so the
+	@# compiler already refuses a site that declares nothing — this gate exists
+	@# for the two things the compiler cannot see.
+	@#
+	@# (1) The population must be a LITERAL at the call site. Threading it
+	@# through a variable or a struct field puts the decision somewhere other
+	@# than the spawn, which is precisely the invisibility #1914 removed: the
+	@# whole point is that you can read a spawn site and know which environment
+	@# it gets. Multi-line calls put the population on the same line as the
+	@# function name, so a line-based grep is exact here.
+	@bad=$$(grep -rnE 'procx\.Spawn(Setsid)?\(' internal/ cmd/ --include='*.go' \
+		| grep -v '_test\.go' \
+		| grep -vE 'procx\.(Trusted|Operator)' \
+		| grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' || true); \
+	if [ -n "$$bad" ]; then \
+		echo "spawn site does not name a population literal — pass procx.Trusted (foci's own machinery) or procx.Operator (agent/tool shells):"; \
+		echo "$$bad"; exit 1; \
+	fi
+	@# (2) Nothing may put the operator environment back onto the daemon's own
+	@# process. That single os.Setenv loop in shellenv.Apply was the entire
+	@# defect: it fused foci's machinery with the agent shells and the agent
+	@# side won, so the daemon searched an agent-writable directory ahead of
+	@# /usr/bin. A revert of phase 3 would reintroduce it silently.
+	@bad=$$(grep -rnE 'os\.Setenv\(' internal/shellenv/ internal/procx/ --include='*.go' \
+		| grep -v '_test\.go' || true); \
+	if [ -n "$$bad" ]; then \
+		echo "shellenv/procx must never mutate the daemon's own environment (#1914) — capture it as a value and declare a population at the spawn site:"; \
+		echo "$$bad"; exit 1; \
+	fi
 	@echo "=== skill provenance (shipped skills declare seed-if-missing vs golden) ==="
 	@bash scripts/check-skill-provenance.sh
 
