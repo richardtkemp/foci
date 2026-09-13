@@ -136,8 +136,10 @@ func reportPopulations(envFile string, home string, canWrite func(string) bool) 
 	} else {
 		startupLog.Infof("  operator env file: %s", envFile)
 	}
-	startupLog.Infof("  trusted  PATH: %s", strings.Join(trustedDirs, ":"))
-	startupLog.Infof("  operator PATH: %s", strings.Join(operatorDirs, ":"))
+	// Labelled with Population.String so the log lines and the argument you
+	// pass at a spawn site are literally the same word.
+	startupLog.Infof("  %-8s PATH: %s", procx.Trusted.String(), strings.Join(trustedDirs, ":"))
+	startupLog.Infof("  %-8s PATH: %s", procx.Operator.String(), strings.Join(operatorDirs, ":"))
 
 	operatorOnly := pathDelta(operatorDirs, trustedDirs)
 	trustedOnly := pathDelta(trustedDirs, operatorDirs)

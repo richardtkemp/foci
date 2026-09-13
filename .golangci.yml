@@ -43,6 +43,15 @@ linters-settings:
     # Allowed callers: internal/procx/procx.go (the helper itself, which
     # holds the bootstrap probe and the spawn entry points).
     #
+    # Ban raw exec.LookPath. It resolves against os.Getenv("PATH") — the
+    # DAEMON's PATH. Since #1914 that is the TRUSTED population only; the
+    # agent/tool shells run on the operator's PATH, which is a different list.
+    # A site asking "is rg installed?" on an agent's behalf must ask about the
+    # agent's PATH, and a site resolving `systemctl` for foci must ask about
+    # the trusted one — so the population has to be named:
+    # procx.LookPath(procx.Operator, "rg") / procx.LookPath(procx.Trusted, ...).
+    # internal/procx implements the lookup itself and does not call this.
+    #
     # Ban raw os.MkdirTemp / os.CreateTemp. All temp file/dir creation
     # must go through tempdir.Mkdir / tempdir.Create / tempdir.SpawnMkdir
     # (production) or testtemp.Mkdir / testtemp.Create (tests) so temp
@@ -58,6 +67,8 @@ linters-settings:
         msg: "use tempdir.Mkdir / tempdir.SpawnMkdir / testtemp.Mkdir (raw os.MkdirTemp scatters files in /tmp)"
       - p: ^os\.CreateTemp$
         msg: "use tempdir.Create / testtemp.Create (raw os.CreateTemp scatters files in /tmp)"
+      - p: ^exec\.LookPath$
+        msg: "use procx.LookPath(pop, name) — exec.LookPath reads the DAEMON's PATH, which since #1914 is not the agent's; a site must say which population it is asking about"
     analyze-types: false
 
   errcheck:
