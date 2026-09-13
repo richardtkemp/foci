@@ -311,7 +311,9 @@ func ScriptCommand(name, description, script string, timeout int) *Command {
 			ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 			defer cancel()
 
-			cmd := procx.Spawn(ctx, "sh", "-c", script)
+			// Operator: a [[commands]] script is operator-authored config, run on the
+			// operator's behalf with the operator's tools.
+			cmd := procx.Spawn(ctx, procx.Operator, "sh", "-c", script)
 			cmd.Cancel = func() error {
 				return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			}

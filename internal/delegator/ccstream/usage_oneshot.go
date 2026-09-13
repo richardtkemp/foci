@@ -85,7 +85,8 @@ func QueryUsage(ctx context.Context) (*UsageInfo, error) {
 	}
 	defer func() { _ = os.RemoveAll(scratch) }()
 
-	cmd := procx.Spawn(ctx, "claude",
+	// Operator: a scratch Claude Code process; same binary and credentials.
+	cmd := procx.Spawn(ctx, procx.Operator, "claude",
 		"--print",
 		"--input-format", "stream-json",
 		"--output-format", "stream-json",

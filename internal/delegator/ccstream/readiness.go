@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -50,17 +49,18 @@ func (b *Backend) CheckReady(ctx context.Context) (bool, error) {
 }
 
 // queryAuthStatus runs `claude auth status` and parses its JSON output. It uses
-// the same binary resolution as Start (resolveBinary) and inherits the
-// gateway process environment — foci-gw runs as the agent's user, so HOME
-// points at the ~/.claude that holds the shared OAuth credential.
+// the same binary resolution as Start (resolveBinary) and the same OPERATOR
+// population — foci-gw runs as the agent's user, so HOME points at the
+// ~/.claude that holds the shared OAuth credential. procx.Spawn installs the
+// population's environment, so there is nothing to assign here.
 func (b *Backend) queryAuthStatus(ctx context.Context) (authStatus, error) {
 	claudeBin := b.resolveBinary()
 
 	cctx, cancel := context.WithTimeout(ctx, authStatusTimeout)
 	defer cancel()
 
-	cmd := procx.Spawn(cctx, claudeBin, "auth", "status")
-	cmd.Env = os.Environ()
+	// Operator: same binary and credentials as the session spawn.
+	cmd := procx.Spawn(cctx, procx.Operator, claudeBin, "auth", "status")
 	if b.workDir != "" {
 		cmd.Dir = b.workDir
 	}

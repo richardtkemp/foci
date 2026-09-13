@@ -44,7 +44,9 @@ func (p *tmuxPane) run(ctx context.Context, args ...string) (string, error) {
 	}
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	cmd := procx.SpawnSetsid(cctx, "tmux", args...)
+	// Operator: hosts an interactive `claude` on the DEFAULT tmux socket, which
+	// internal/tools/tmux may also use — see the singleton note in cctmux.
+	cmd := procx.SpawnSetsid(cctx, procx.Operator, "tmux", args...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

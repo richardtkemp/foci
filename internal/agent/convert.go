@@ -133,7 +133,9 @@ func runBounded(cmd *exec.Cmd, cancel context.CancelFunc) (stdout, stderr string
 func convertWithPandoc(path, format string) convertResult {
 	ctx, cancel := context.WithTimeout(context.Background(), convertTimeout)
 	defer cancel()
-	cmd := procx.Spawn(ctx, "pandoc", "-f", format, "-t", "plain", "--wrap=none", path)
+	// Trusted: foci converting an inbound attachment. pandoc runs on bytes a
+	// remote sender chose, so the binary itself must not be agent-substitutable.
+	cmd := procx.Spawn(ctx, procx.Trusted, "pandoc", "-f", format, "-t", "plain", "--wrap=none", path)
 	stdout, stderr, overflowed, err := runBounded(cmd, cancel)
 	if overflowed {
 		return convertResult{Err: fmt.Sprintf(".%s conversion produced more than %d MB of text — refusing (possible zip bomb)", format, maxConvertOutputBytes/(1<<20))}
@@ -160,7 +162,8 @@ func convertXlsx(path string) convertResult {
 	// Try ssconvert first (produces clean CSV output)
 	ctx, cancel := context.WithTimeout(context.Background(), convertTimeout)
 	defer cancel()
-	cmd := procx.Spawn(ctx, "ssconvert", "--export-type=Gnumeric_stf:stf_csv", path, "fd://1")
+	// Trusted: as convertWithPandoc — foci's own document machinery.
+	cmd := procx.Spawn(ctx, procx.Trusted, "ssconvert", "--export-type=Gnumeric_stf:stf_csv", path, "fd://1")
 	stdout, _, overflowed, err := runBounded(cmd, cancel)
 	if overflowed {
 		return convertResult{Err: fmt.Sprintf("xlsx conversion produced more than %d MB of text — refusing (possible zip bomb)", maxConvertOutputBytes/(1<<20))}

@@ -29,7 +29,8 @@ func CLIOneShot(ctx context.Context, binary, model, systemPrompt string, userMes
 	if model == "" {
 		model = "haiku"
 	}
-	cmd := procx.Spawn(ctx, binary,
+	// Operator: a `claude --print` auxiliary call on the agent's credentials.
+	cmd := procx.Spawn(ctx, procx.Operator, binary,
 		"--print",
 		"--no-session-persistence",
 		"--model", model,

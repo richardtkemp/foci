@@ -163,7 +163,11 @@ func makeTransport(cfg ServerConfig) (mcp.Transport, error) {
 	if cfg.Command == "" {
 		return nil, fmt.Errorf("server %q has neither command nor url", cfg.Name)
 	}
-	cmd := procx.Spawn(context.Background(), cfg.Command, cfg.Args...)
+	// Operator for RESOLUTION only: MCP servers are operator-configured
+	// third-party commands (npx/uvx/node) that live on the operator's PATH.
+	// The child's env is then REPLACED by the allowlist below — an MCP server
+	// must not inherit FOCI_SOCK or secret-bearing operator vars.
+	cmd := procx.Spawn(context.Background(), procx.Operator, cfg.Command, cfg.Args...)
 	// MCP servers are third-party subprocesses. Never inherit the gateway's
 	// full environment — that would hand them FOCI_GW_SOCK / FOCI_SOCK (the
 	// unauthenticated control + exec-bridge sockets) and any secret-bearing
@@ -194,7 +198,10 @@ var mcpEnvAllowlist = map[string]bool{
 // third-party MCP server cannot read FOCI_* socket paths or operator secrets.
 func allowlistedEnv(extra []string) []string {
 	env := make([]string, 0, len(mcpEnvAllowlist)+len(extra))
-	for _, kv := range os.Environ() {
+	// Filter the OPERATOR population, not os.Environ(): PATH is on the
+	// allowlist and an MCP server launched via npx/uvx needs the operator's
+	// PATH to find its own helpers, not the daemon's unit PATH (#1914).
+	for _, kv := range procx.Env(procx.Operator) {
 		name, _, ok := strings.Cut(kv, "=")
 		if !ok {
 			continue

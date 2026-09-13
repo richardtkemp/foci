@@ -39,7 +39,8 @@ func resolveModel(ctx context.Context, binaryPath, workDir, model string) (strin
 	if binaryPath == "" {
 		binaryPath = "opencode"
 	}
-	cmd := procx.Spawn(ctx, binaryPath, "models")
+	// Operator: same opencode binary as the server spawn.
+	cmd := procx.Spawn(ctx, procx.Operator, binaryPath, "models")
 	cmd.Dir = workDir
 	output, err := cmd.Output()
 	if err != nil {

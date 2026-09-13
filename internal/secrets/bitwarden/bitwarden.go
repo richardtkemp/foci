@@ -84,7 +84,9 @@ func (e *DefaultExecutor) ShellCommand(args ...string) string {
 func (e *DefaultExecutor) Run(args ...string) (string, error) {
 	// Wrap: sudo -u bitwarden sh -c 'export BW_SESSION=$(cat FILE) && bw ...'
 	shellCmd := e.ShellCommand(args...)
-	cmd := procx.Spawn(context.Background(), "sudo", "-u", "bitwarden", "sh", "-c", shellCmd)
+	// Trusted: privileged (sudo -u bitwarden) and it reads the session token.
+	// This is the single most important site in the trusted population.
+	cmd := procx.Spawn(context.Background(), procx.Trusted, "sudo", "-u", "bitwarden", "sh", "-c", shellCmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

@@ -73,5 +73,6 @@ func AppendCrontab(lines []string) error {
 // RunCrontabCmd is the function used to append crontab entries.
 // Overridden in tests to avoid real exec.
 var RunCrontabCmd = func(shellCmd string) error {
-	return procx.Spawn(context.Background(), "sh", "-c", shellCmd).Run()
+	// Trusted: foci editing the service user's crontab — its own machinery.
+	return procx.Spawn(context.Background(), procx.Trusted, "sh", "-c", shellCmd).Run()
 }

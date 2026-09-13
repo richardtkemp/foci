@@ -105,7 +105,8 @@ func touchedFiles(c SkillChange) []string {
 func isGitRepo(ctx context.Context, dir string) bool {
 	octx, cancel := context.WithTimeout(ctx, gitOpTimeout)
 	defer cancel()
-	cmd := procx.Spawn(octx, "git", "-C", dir, "rev-parse", "--is-inside-work-tree")
+	// Trusted: foci's own skill-change accounting, not an agent's git.
+	cmd := procx.Spawn(octx, procx.Trusted, "git", "-C", dir, "rev-parse", "--is-inside-work-tree")
 	out, err := cmd.Output()
 	return err == nil && strings.TrimSpace(string(out)) == "true"
 }
@@ -132,7 +133,8 @@ func commitsInWindow(ctx context.Context, dir string, files []string, start, end
 		"--until=" + end.Add(gitWindowPad).Format(time.RFC3339),
 		"--format=%H", "--"}
 	args = append(args, files...)
-	cmd := procx.Spawn(octx, "git", args...)
+	// Trusted: as isGitRepo — foci's own skill-change accounting.
+	cmd := procx.Spawn(octx, procx.Trusted, "git", args...)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -177,7 +179,8 @@ func gitShow(ctx context.Context, dir, hash string, files []string) (string, err
 	octx, cancel := context.WithTimeout(ctx, gitOpTimeout)
 	defer cancel()
 	args := append([]string{"-C", dir, "show", "--no-color", hash, "--"}, files...)
-	cmd := procx.Spawn(octx, "git", args...)
+	// Trusted: as isGitRepo — foci's own skill-change accounting.
+	cmd := procx.Spawn(octx, procx.Trusted, "git", args...)
 	out, err := cmd.Output()
 	return string(out), err
 }

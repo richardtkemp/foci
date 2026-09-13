@@ -22,9 +22,10 @@
 package hookbin
 
 import (
+	"foci/internal/procx"
+
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -66,7 +67,12 @@ func Resolve(name string) (string, error) {
 				"executable to exercise the hook-present branch", name, EnvOverride)
 	}
 
-	return resolveFromSystem(name, os.Executable, exec.LookPath)
+	// Trusted: foci's OWN helper binaries, shipped root-owned alongside
+	// foci-gw. Resolving them on the operator PATH would let an agent-writable
+	// directory supply the hook foci hands to a backend.
+	return resolveFromSystem(name, os.Executable, func(n string) (string, error) {
+		return procx.LookPath(procx.Trusted, n)
+	})
 }
 
 // resolveFromSystem is Resolve's production lookup, with its two environment

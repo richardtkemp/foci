@@ -17,7 +17,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"syscall"
 	"time"
@@ -99,7 +98,8 @@ func (s *Server) Start(ctx context.Context) error {
 		args = append(args, "--log-level", s.logLevel)
 	}
 	cmdCtx, cmdCancel := context.WithCancel(context.Background())
-	cmd := procx.Spawn(cmdCtx, binary, args...)
+	// Operator: the opencode agent backend.
+	cmd := procx.Spawn(cmdCtx, procx.Operator, binary, args...)
 	cmd.Dir = s.workDir
 	cmd.Env = s.buildCmdEnv()
 	s.effectiveEnv = autoapprove.EnvironmentFromList(cmd.Env)
@@ -533,12 +533,12 @@ func pickFreePort(hostname string) (int, error) {
 }
 
 // buildCmdEnv assembles the environment for the opencode subprocess.
-// Starts with the parent process's environment, adds OPENCODE_SERVER_
+// Starts with the OPERATOR population (#1914), adds OPENCODE_SERVER_
 // PASSWORD (if set), then applies extraEnv (BASH_ENV, FOCI_SOCK from
 // the exec bridge). Extracted from Start so tests can verify the env
 // composition without spawning a subprocess.
 func (s *Server) buildCmdEnv() []string {
-	env := os.Environ()
+	env := procx.Env(procx.Operator)
 	if s.serverPassword != "" {
 		env = append(env, "OPENCODE_SERVER_PASSWORD="+s.serverPassword)
 	}

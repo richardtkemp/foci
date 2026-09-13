@@ -1,6 +1,6 @@
 package ccstream
 
-import "os"
+import "foci/internal/procx"
 
 // bashMaxTimeoutMS raises the ceiling the CC model may request for a single
 // foreground Bash tool call, from CC's built-in 600000 ms (10 min) to 20
@@ -30,7 +30,9 @@ import "os"
 const bashMaxTimeoutMS = "1200000"
 
 // buildEnv assembles the environment for the `claude` subprocess: the
-// gateway's own environment, then foci's CC-specific defaults, then the
+// OPERATOR population (procx.Env — the daemon's env overlaid with the
+// operator's captured shell env, never the daemon's mutated global), then
+// foci's CC-specific defaults, then the
 // per-session extras from StartOptions.Env (BASH_ENV / FOCI_SOCK from the
 // exec bridge, FOCI_SESSION_KEY, and any per-agent backend_config.env).
 //
@@ -42,7 +44,7 @@ const bashMaxTimeoutMS = "1200000"
 // opencode, codex and api backends build their environments in their own
 // packages and never see these.
 func buildEnv(extra map[string]string) []string {
-	env := os.Environ()
+	env := procx.Env(procx.Operator)
 
 	// Turn completion is keyed to CC's session_state_changed running/idle SDK
 	// events (see OnSystem / onSessionIdle) — opt-in in CC, so the backend

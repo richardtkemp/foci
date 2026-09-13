@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -79,13 +78,18 @@ func expandHome(p, home string) string {
 func Capture(path string) (map[string]string, error) {
 	shell := "bash"
 	if strings.HasSuffix(path, "zshenv") {
-		if _, err := exec.LookPath("zsh"); err == nil {
+		// Trusted, for the same reason the capture spawn below is: the shell
+		// that derives the operator env must not be chosen by it.
+		if _, err := procx.LookPath(procx.Trusted, "zsh"); err == nil {
 			shell = "zsh"
 		}
 	}
 	// NUL-delimit so values containing newlines survive parsing.
-	cmd := procx.Spawn(context.Background(), shell, "-c", ". "+shellQuote(path)+" >/dev/null 2>&1; env -0")
-	cmd.Env = os.Environ()
+	// Trusted, and load-bearing: this subshell DERIVES the operator population.
+	// Resolving it on the operator PATH would let an agent-planted `bash`
+	// dictate the very environment the guard then predicts — a cycle with no
+	// floor. The capture shell must come from the unit's PATH.
+	cmd := procx.Spawn(context.Background(), procx.Trusted, shell, "-c", ". "+shellQuote(path)+" >/dev/null 2>&1; env -0")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("source %s via %s: %w", path, shell, err)

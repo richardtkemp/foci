@@ -183,7 +183,8 @@ func probeHookTrust(ctx context.Context, bin string, cfgArgs []string, workDir s
 	defer cancel()
 
 	args := append([]string{"app-server", "-c", "sandbox_policy.mode=danger-full-access"}, cfgArgs...)
-	cmd := procx.Spawn(ctx, bin, args...)
+	// Operator: a disposable codex app-server — same binary as the real launch.
+	cmd := procx.Spawn(ctx, procx.Operator, bin, args...)
 	cmd.Dir = workDir
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
