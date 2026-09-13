@@ -112,23 +112,49 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// Apply resolves the configured file, captures it, and sets each variable on
-// the current process (overriding the inherited value on collision — the rc
-// file is tier 2, above the inherited base). No-op when nothing resolves.
-func Apply(cfg *string) {
+// Load resolves the configured file and captures it, returning the operator's
+// environment AS A VALUE. It does not touch this process's environment.
+//
+// This is the one derivation (#1914). The caller hands the result to
+// procx.SetOperatorEnv, which is what every operator-facing spawn site then
+// reads by name — so the environment agents get and the environment
+// internal/execguard predicts cannot drift apart, because they are the same
+// value.
+//
+// Returns (nil, "", false) when nothing should be loaded (no rc file
+// configured or found) or when the capture failed; both are ordinary,
+// supported states in which Operator and Trusted are simply identical. A
+// capture failure is logged at WARN, a no-op at DEBUG.
+func Load(cfg *string) (map[string]string, string, bool) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		shellenvLog.Warnf("cannot resolve home dir: %v", err)
-		return
+		return nil, "", false
 	}
 	path, load := Resolve(cfg, home)
 	if !load {
 		shellenvLog.Debugf("no shell env file loaded (cfg=%v)", derefOr(cfg, "<ladder>"))
-		return
+		return nil, "", false
 	}
 	env, err := Capture(path)
 	if err != nil {
 		shellenvLog.Warnf("capture %s failed: %v", path, err)
+		return nil, path, false
+	}
+	return env, path, true
+}
+
+// Apply is the legacy side effect, kept separate from Load so it is a single
+// call site to delete: it sets each captured variable on THIS process, so
+// children inherit them implicitly via os.Environ().
+//
+// Deprecated: mutating the daemon's own environment is the defect #1914
+// removes — it fuses foci's own machinery with the agent-facing shells, and
+// the agent-facing side wins, so the daemon ends up resolving `bash`, `git`
+// and `tmux` on agent-writable directories. Use Load + procx.SetOperatorEnv
+// and declare a population at each spawn site instead.
+func Apply(env map[string]string, path string) {
+	if len(env) == 0 {
 		return
 	}
 	for k, v := range env {
