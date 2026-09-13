@@ -1,15 +1,24 @@
-// Package shellenv loads a shell rc/env file into the process environment at
-// startup, so tool shells spawned by the delegated backends inherit the
-// operator's common environment (PATH additions, GOPATH, …) the same way an
-// interactive login would — without the service unit having to duplicate those
-// values.
+// Package shellenv captures a shell rc/env file's exports at startup, so the
+// tool shells spawned by the delegated backends get the operator's common
+// environment (PATH additions, GOPATH, …) the same way an interactive login
+// would — without the service unit having to duplicate those values.
 //
 // Rationale: the Bash-tool shells the CC/opencode backends spawn are
 // non-interactive+non-login, so bash sources only $BASH_ENV — never .bashrc or
-// .profile. This package bridges that gap by capturing the rc file's exports
-// once and applying them to foci-gw's own environment, which every spawned
-// process then inherits via os.Environ(). A per-agent backend_config.env is
-// still appended at spawn time, so it overrides these values on collision.
+// .profile. This package bridges that gap.
+//
+// It captures the rc file ONCE, as a VALUE, and does NOT apply it to
+// foci-gw's own environment (#1914). Applying it was the defect: there is one
+// environment serving two consumers with opposite requirements — foci's own
+// machinery, which needs a trusted PATH no agent can influence, and the agent
+// shells, which need the operator's full PATH — and mutating the process
+// global let the agent-facing side win, so the daemon inherited
+// agent-writable directories ahead of /usr/bin.
+//
+// The captured value is handed to procx.SetOperatorEnv and read back by name
+// at each spawn site that declares procx.Operator. A per-agent
+// backend_config.env is still appended at spawn time, so it overrides these
+// values on collision.
 package shellenv
 
 import (
@@ -146,25 +155,6 @@ func Load(cfg *string) (map[string]string, string, bool) {
 		return nil, path, false
 	}
 	return env, path, true
-}
-
-// Apply is the legacy side effect, kept separate from Load so it is a single
-// call site to delete: it sets each captured variable on THIS process, so
-// children inherit them implicitly via os.Environ().
-//
-// Deprecated: mutating the daemon's own environment is the defect #1914
-// removes — it fuses foci's own machinery with the agent-facing shells, and
-// the agent-facing side wins, so the daemon ends up resolving `bash`, `git`
-// and `tmux` on agent-writable directories. Use Load + procx.SetOperatorEnv
-// and declare a population at each spawn site instead.
-func Apply(env map[string]string, path string) {
-	if len(env) == 0 {
-		return
-	}
-	for k, v := range env {
-		_ = os.Setenv(k, v)
-	}
-	shellenvLog.Infof("loaded %d vars from %s", len(env), path)
 }
 
 func derefOr(p *string, dflt string) string {

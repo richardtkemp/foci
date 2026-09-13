@@ -71,3 +71,35 @@ func TestCapture(t *testing.T) {
 		t.Errorf("shell-noise vars leaked: SHLVL=%q PWD=%q", env["SHLVL"], env["PWD"])
 	}
 }
+
+// The flip (#1914 phase 3): capturing the operator environment must NOT touch
+// this process. If it ever does again, the daemon starts resolving its own
+// `bash`, `git` and `tmux` on whatever the operator's dotfiles prepend — which
+// on the live host is an agent-writable directory ahead of /usr/bin.
+func TestLoadDoesNotMutateTheProcessEnvironment(t *testing.T) {
+	home := t.TempDir()
+	rc := filepath.Join(home, "custom.env")
+	const probe = "FOCI_SHELLENV_PROBE"
+	if err := os.WriteFile(rc, []byte("export "+probe+"=from-dotfile\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := os.LookupEnv(probe); ok {
+		t.Fatalf("control failed: %s must be unset before the capture", probe)
+	}
+
+	env, path, ok := Load(strp(rc))
+	if !ok {
+		t.Fatalf("Load(%q) captured nothing", rc)
+	}
+	if path != rc {
+		t.Errorf("Load returned path %q, want %q", path, rc)
+	}
+	if env[probe] != "from-dotfile" {
+		t.Fatalf("captured value = %q, want %q", env[probe], "from-dotfile")
+	}
+
+	if v, ok := os.LookupEnv(probe); ok {
+		t.Fatalf("Load installed %s=%q on this process — the capture must stay a VALUE (#1914)", probe, v)
+	}
+}
