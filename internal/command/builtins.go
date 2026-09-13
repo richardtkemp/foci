@@ -313,7 +313,11 @@ func ScriptCommand(name, description, script string, timeout int) *Command {
 
 			// Operator: a [[commands]] script is operator-authored config, run on the
 			// operator's behalf with the operator's tools.
-			cmd := procx.Spawn(ctx, procx.Operator, "sh", "-c", script)
+			// The INTERPRETER is pinned to an absolute root-owned path while the
+			// environment stays Operator: the script needs the operator's tools,
+			// but "sh" resolved on the operator PATH would be shadowable by any
+			// agent-writable dir on it (~/scripts is one, ahead of /usr/bin).
+			cmd := procx.Spawn(ctx, procx.Operator, "/bin/sh", "-c", script)
 			cmd.Cancel = func() error {
 				return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			}

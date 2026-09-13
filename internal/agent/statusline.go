@@ -263,7 +263,10 @@ func (a *Agent) runStatuslineCommand(ctx context.Context, command string) string
 	// its own process group.
 	// Operator: the statusline command is operator-authored and typically pipes
 	// the operator's own tools (jq, mdq, ...).
-	cmd := procx.Spawn(cctx, procx.Operator, "sh", "-c", command)
+	// Interpreter pinned absolute, environment left Operator — see the same
+	// note in internal/command/builtins.go. This one runs EVERY turn, so a
+	// shadowed "sh" would execute on every statusline refresh.
+	cmd := procx.Spawn(cctx, procx.Operator, "/bin/sh", "-c", command)
 	// WaitDelay forces the pipes closed shortly after the context is cancelled,
 	// so a grandchild that inherits stdout can't hang the turn (the backstop for
 	// the case a per-turn timeout alone can't cover).
