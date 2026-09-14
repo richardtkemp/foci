@@ -203,6 +203,10 @@ type Backend struct {
 	turnParentCostUSD float64
 	turnParentCalc    modelinfo.TokenCounts
 	turnSubagents     map[subKey]modelinfo.SubagentCost
+	// turnCorrections is #1918's payload: spend found to belong to a row that
+	// was written before it arrived. Accumulated across result cycles exactly
+	// like turnSubagents, so the final result carries every one.
+	turnCorrections []modelinfo.CostCorrection
 	// turnRowID is TurnEvents.TurnID for the turn currently open — the agent
 	// layer's durable turn identity, handed to the accumulator so a subagent's
 	// spend can name the turn that SPAWNED it rather than the one that closed
