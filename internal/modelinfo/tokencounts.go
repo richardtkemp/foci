@@ -129,4 +129,23 @@ type CostCorrection struct {
 
 	Counts  TokenCounts `json:"counts"`
 	CostUSD float64     `json:"cost_usd"`
+
+	// StrandedUSD is the cache-write SURCHARGE this correction leaves behind on
+	// the parent row, and it is reported rather than repaired (#1929).
+	//
+	// The parent absorbed these tokens as an unobserved residue, which splitFor
+	// puts in the Unknown class and Unknown prices at the 1h rate ($10/MTok on
+	// opus-5). The correction removes them at the subagent's OWN observed split,
+	// which is 5m ($6.25). So $3.75 per million stays on a row that no longer has
+	// the tokens, the #1854 re-price identity breaks for that row, and an
+	// over-charge the divergence check flagged at pricing time is never repaired.
+	//
+	// It is NOT a rounding artefact: those really were 5m tokens billed at the 1h
+	// rate. Repairing it properly means debiting the parent at the basis it was
+	// charged and crediting the subagent at its own — two figures, and a turn
+	// total that legitimately FALLS. That trades dollar-conservation for
+	// token-conservation, which is the invariant this whole arc leans on, so it
+	// is not a change to make before the size is known. This field is what makes
+	// it knowable: #1920 reads it out of the log after deploy.
+	StrandedUSD float64 `json:"stranded_usd,omitempty"`
 }

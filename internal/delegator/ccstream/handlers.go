@@ -577,6 +577,21 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 					prefixedModel(ck.Model), now,
 					c.Input, c.Output, c.CacheRead, splitFor(u.Write, c.CacheWrite),
 				),
+				// What the parent was charged for these same cache writes, minus
+				// what the correction takes back. The parent absorbed them as an
+				// unobserved residue, which splitFor classes Unknown and prices at
+				// the 1h rate; the correction removes them at the subagent's own
+				// observed split. Priced both ways here rather than by subtracting
+				// rate constants, so it stays right if a model's rates change or a
+				// subagent genuinely writes at 1h (then it is zero). Reported, not
+				// repaired — see CostCorrection.StrandedUSD (#1929).
+				StrandedUSD: modelinfo.CostAsOfSplit(
+					prefixedModel(ck.Model), now, 0, 0, 0,
+					modelinfo.CacheWrites{Unknown: c.CacheWrite},
+				) - modelinfo.CostAsOfSplit(
+					prefixedModel(ck.Model), now, 0, 0, 0,
+					splitFor(u.Write, c.CacheWrite),
+				),
 			})
 		}
 
