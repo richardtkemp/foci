@@ -317,6 +317,33 @@ func (a *usageAccumulator) note(model, agent string, isSub bool, id string, at t
 	if id == "" {
 		return
 	}
+	// BEFORE the completion gate below (#1924). Which turn spawned an agent is a
+	// fact about the AGENT, not about the message that revealed it, and the first
+	// line the parent stream carries arrives synchronously with the spawn. Behind
+	// the gate, attribution would wait for the first COMPLETED line off the
+	// transcript tail — which for a background subagent can land after a later
+	// turn has opened, filing every one of its rows under the wrong turn.
+	// First sight of this agent fixes the turn it belongs to, and nothing
+	// afterwards moves it. A background subagent can outlive its parent by half
+	// an hour — one was seen pruned at 30m20s — and its late tokens must still
+	// book to the turn that started the work, not to whichever short turn
+	// happened to be open when they arrived. That misfiling is the whole of
+	// #1880: a 3.5-minute turn was recorded carrying 34 minutes and $11.71.
+	//
+	// Between turns curTurn still names the turn that just closed, which is the
+	// right answer for a straggler. The one case it misses is an agent whose
+	// very first message arrives after a LATER turn has opened; the transcript
+	// tail was measured landing within ~60ms of the result, so that window is
+	// narrow, and misfiling one agent is what this used to do to all of them.
+	if isSub && agent != "" {
+		if a.agentTurn == nil {
+			a.agentTurn = make(map[string]string)
+		}
+		if _, seen := a.agentTurn[agent]; !seen {
+			a.agentTurn[agent] = a.curTurn
+		}
+	}
+
 	// A SUBAGENT message counts only once it has COMPLETED, because that is when
 	// CC's result.modelUsage counts it — and the parent's share is modelUsage
 	// MINUS this bucket, so the two must agree about when a message exists.
@@ -357,26 +384,6 @@ func (a *usageAccumulator) note(model, agent string, isSub bool, id string, at t
 	}
 	if a.applied == nil {
 		a.applied = make(map[string]turnUsage)
-	}
-	// First sight of this agent fixes the turn it belongs to, and nothing
-	// afterwards moves it. A background subagent can outlive its parent by half
-	// an hour — one was seen pruned at 30m20s — and its late tokens must still
-	// book to the turn that started the work, not to whichever short turn
-	// happened to be open when they arrived. That misfiling is the whole of
-	// #1880: a 3.5-minute turn was recorded carrying 34 minutes and $11.71.
-	//
-	// Between turns curTurn still names the turn that just closed, which is the
-	// right answer for a straggler. The one case it misses is an agent whose
-	// very first message arrives after a LATER turn has opened; the transcript
-	// tail was measured landing within ~60ms of the result, so that window is
-	// narrow, and misfiling one agent is what this used to do to all of them.
-	if isSub && agent != "" {
-		if a.agentTurn == nil {
-			a.agentTurn = make(map[string]string)
-		}
-		if _, seen := a.agentTurn[agent]; !seen {
-			a.agentTurn[agent] = a.curTurn
-		}
 	}
 
 	// HIGH-WATER MARK PER CLASS, not first-wins.

@@ -1699,6 +1699,25 @@ Four outputs:
    carry no `stop_reason`, so gating them would discard the observed split and dump the
    residue into `Unknown`, which prices at the dearer rate.
 
+   **The gate makes the tail load-bearing, and the tail was being killed at launch (#1924).**
+   A subagent's completed line appears only in its TRANSCRIPT, never on the parent stream, so
+   once usage counts at completion the tail is the ONLY source. `hooks.go` finalized the tail
+   on every Agent PostToolUse under a comment claiming it was a "No-op for background /
+   untailed subagents" — true until `55faa1d8` tailed every subagent, and never updated. A
+   BACKGROUND Agent tool_use resolves the INSTANT the task is launched (the same comment says
+   so), so the tail died before CC had written a byte. Measured on a live background subagent:
+   47,438 output tokens across 13 completed transcript messages against 86 in its rows.
+
+   So PostToolUse now calls `finalizeForeground`, which acts only on a tail started with
+   `wantText`; background tails end at `task_notification:completed`, which the same comment
+   already named as the real end for both kinds.
+
+   **Spawn attribution sits BEFORE the gate.** Which turn spawned an agent is a fact about the
+   AGENT, not the message that revealed it, and the stream's first line arrives synchronously
+   with the spawn. Behind the gate it would wait for the first COMPLETED line off the tail,
+   which for a background subagent can land after a later turn has opened — filing every one
+   of its rows under the wrong turn, the exact failure phase C exists to prevent.
+
    `turnCalcCostUSD`/`turnCalc` deliberately stay the WHOLE turn. They back the divergence
    check, whose other side is CC's cost for everything the process did, and the breakdown
    line, which describes the turn a reader asked about. Splitting them would make the check

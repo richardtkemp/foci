@@ -21,8 +21,15 @@ func seedTurn(t *testing.T, parentTurn, spawnTurn, agentID, model string,
 	// so the row's session column and the turn id must agree or nothing matches.
 	sess, _, _ := strings.Cut(parentTurn, "@")
 	API(APIEntry{
-		Timestamp: closedAt,
-		Session:   sess, Model: model, CallType: "delegated_turn", TurnID: parentTurn,
+		// DurationMS is not decoration. api_calls.ts is the turn's START and the
+		// resolver asks for the first turn to CLOSE at or after the billing time,
+		// i.e. ts + duration_ms. A fixture that leaves it NULL makes
+		// COALESCE(duration_ms,0) collapse the query back to `ts >= ?` — the
+		// pre-fix form — so the test passes against the very code it is meant to
+		// reject. Five fixtures here did exactly that (#1924).
+		DurationMS: 15648,
+		Timestamp:  closedAt,
+		Session:    sess, Model: model, CallType: "delegated_turn", TurnID: parentTurn,
 		Output: parent.Output, Turn: &p, CalculatedCostUSD: &pc,
 	})
 	API(APIEntry{
@@ -204,44 +211,55 @@ func TestApplyCostCorrections_CrossTurnMovesBetweenDifferentTurns(t *testing.T) 
 // test for the mechanism that replaced the ring buffer.
 //
 // A turn is priced from the PREVIOUS result, so its window runs from the
-// previous turn's close to its own and the timeline TILES — idle time belongs
-// to the turn that follows it, not to the one before. Spend billed in a gap must
-// therefore debit the NEXT turn to close, not the previous one.
+// previous turn's close to its own and the timeline TILES — idle time belongs to
+// the turn that FOLLOWS it. The absorbing turn is therefore the first of the
+// session to CLOSE at or after the billing time, where close is ts +
+// duration_ms (ts being the turn's START).
 //
-// Verified against the live incident of 2026-09-13: spend billed at 15:41:40
-// belongs to the turn closing 16:06:29, whose window opened at the 15:41:35
-// result — twenty-five minutes of it idle.
+// The numbers are the real rows from 2026-09-13, durations included:
+//
+//	EARLY  start 15:39:47  +29,919ms -> close 15:40:16
+//	MID    start 15:41:35  +15,648ms -> close 15:41:50
+//	LATE   start 16:06:29  +87,910ms -> close 16:07:57
+//
+// An earlier version of this test asserted that spend billed 15:41:40 belonged
+// to LATE. That was wrong, and it was wrong for the exact reason D1 exists: it
+// inserted the turns as zero-length instants, so 15:41:40 looked like it fell in
+// a gap when it is in fact INSIDE MID's run. The test encoded the author's
+// misreading of ts as the close and would have passed against the broken code
+// (#1924).
 func TestApplyCostCorrections_ResolvesTheTurnWhoseWindowContainsTheBilling(t *testing.T) {
 	withAPIDB(t)
 
-	mk := func(turn string, closedAt time.Time, cost float64) {
+	// startedAt + durMS, never a bare instant: a zero-length turn cannot
+	// distinguish start-based from close-based resolution, which is the whole
+	// point of this test.
+	mk := func(turn string, startedAt time.Time, durMS int, cost float64) {
 		c := modelinfo.TokenCounts{Input: 100, Output: 50, CacheRead: 1000, CacheWrite: 200}
 		cc := cost
 		API(APIEntry{
-			Timestamp: closedAt, Session: "sess", Model: "claude-opus-5",
+			Timestamp: startedAt, Session: "sess", Model: "claude-opus-5",
 			CallType: "delegated_turn", TurnID: turn, Output: c.Output,
-			Turn: &c, CalculatedCostUSD: &cc,
+			DurationMS: int64(durMS), Turn: &c, CalculatedCostUSD: &cc,
 		})
 	}
-	early := time.Date(2026, 9, 13, 15, 39, 47, 0, time.UTC)
-	mid := time.Date(2026, 9, 13, 15, 41, 35, 0, time.UTC)
-	late := time.Date(2026, 9, 13, 16, 6, 29, 0, time.UTC)
-	mk(sessTurn("EARLY"), early, 1.00)
-	mk(sessTurn("MID"), mid, 1.00)
-	mk(sessTurn("LATE"), late, 1.00)
+	mk(sessTurn("EARLY"), time.Date(2026, 9, 13, 14, 39, 47, 0, time.UTC), 29919, 1.00)
+	mk(sessTurn("MID"), time.Date(2026, 9, 13, 14, 41, 35, 0, time.UTC), 15648, 1.00)
+	mk(sessTurn("LATE"), time.Date(2026, 9, 13, 15, 6, 29, 0, time.UTC), 87910, 1.00)
 
 	sub := modelinfo.TokenCounts{Input: 10, Output: 5, CacheRead: 100, CacheWrite: 20}
 	sc := 0.10
-	s := sub
+	sCopy := sub
 	API(APIEntry{
-		Timestamp: early, Session: "sess", Model: "claude-opus-5",
-		CallType: "subagent_turn", TurnID: sessTurn("EARLY"), AgentID: "agent-1",
-		Output: sub.Output, Turn: &s, CalculatedCostUSD: &sc,
+		Timestamp: time.Date(2026, 9, 13, 14, 39, 47, 0, time.UTC),
+		Session:   "sess", Model: "claude-opus-5", CallType: "subagent_turn",
+		TurnID: sessTurn("EARLY"), AgentID: "agent-1",
+		Output: sub.Output, Turn: &sCopy, CalculatedCostUSD: &sc,
 	})
 
-	// Billed at 15:41:40 — AFTER MID closed, inside LATE's window.
+	// Billed 14:41:40Z — INSIDE MID's run (14:41:35 .. 14:41:50).
 	ApplyCostCorrections([]modelinfo.CostCorrection{{
-		BilledAt:       time.Date(2026, 9, 13, 15, 41, 40, 0, time.UTC),
+		BilledAt:       time.Date(2026, 9, 13, 14, 41, 40, 0, time.UTC),
 		SubagentTurnID: sessTurn("EARLY"), AgentID: "agent-1", Model: "claude-opus-5",
 		Counts:  modelinfo.TokenCounts{Input: 40, Output: 20, CacheRead: 400, CacheWrite: 80},
 		CostUSD: 0.30,
@@ -250,21 +268,68 @@ func TestApplyCostCorrections_ResolvesTheTurnWhoseWindowContainsTheBilling(t *te
 	for _, tc := range []struct {
 		turn string
 		want float64
+		why  string
 	}{
-		{"LATE", 0.70},  // debited: its window contains 15:41:40
-		{"MID", 1.00},   // untouched: it had already closed
-		{"EARLY", 1.00}, // untouched
+		{"MID", 0.70, "the billing instant is inside MID's run, so MID absorbed it"},
+		{"LATE", 1.00, "LATE had not started and cannot have absorbed it"},
+		{"EARLY", 1.00, "EARLY had already closed"},
 	} {
 		_, cost := readRow(t, "turn_id = ? AND call_type = 'delegated_turn'", sessTurn(tc.turn))
 		if d := cost - tc.want; d > 1e-9 || d < -1e-9 {
-			t.Errorf("%s parent = $%.6f, want $%.6f — spend billed in the gap after "+
-				"MID belongs to the turn that FOLLOWS it, because a turn is priced "+
-				"from the previous result", tc.turn, cost, tc.want)
+			t.Errorf("%s parent = $%.6f, want $%.6f — %s", tc.turn, cost, tc.want, tc.why)
 		}
 	}
 	_, subCost := readRow(t, "turn_id = ? AND call_type = 'subagent_turn'", sessTurn("EARLY"))
 	if d := subCost - 0.40; d > 1e-9 || d < -1e-9 {
 		t.Errorf("subagent = $%.6f, want $0.400000", subCost)
+	}
+}
+
+// TestApplyCostCorrections_IdleGapBelongsToTheFollowingTurn: the other half of
+// the tiling rule. Spend billed after a turn CLOSED but before the next one
+// STARTED is inside the next turn's priced window, because pricing measures from
+// the previous result.
+func TestApplyCostCorrections_IdleGapBelongsToTheFollowingTurn(t *testing.T) {
+	withAPIDB(t)
+
+	mk := func(turn string, startedAt time.Time, durMS int, cost float64) {
+		c := modelinfo.TokenCounts{Input: 100, Output: 50, CacheRead: 1000, CacheWrite: 200}
+		cc := cost
+		API(APIEntry{
+			Timestamp: startedAt, Session: "sess", Model: "claude-opus-5",
+			CallType: "delegated_turn", TurnID: turn, Output: c.Output,
+			DurationMS: int64(durMS), Turn: &c, CalculatedCostUSD: &cc,
+		})
+	}
+	mk(sessTurn("EARLY"), time.Date(2026, 9, 13, 14, 39, 47, 0, time.UTC), 29919, 1.00)
+	mk(sessTurn("MID"), time.Date(2026, 9, 13, 14, 41, 35, 0, time.UTC), 15648, 1.00)
+
+	sub := modelinfo.TokenCounts{Input: 10, Output: 5, CacheRead: 100, CacheWrite: 20}
+	sc := 0.10
+	sCopy := sub
+	API(APIEntry{
+		Timestamp: time.Date(2026, 9, 13, 14, 39, 47, 0, time.UTC),
+		Session:   "sess", Model: "claude-opus-5", CallType: "subagent_turn",
+		TurnID: sessTurn("EARLY"), AgentID: "agent-1",
+		Output: sub.Output, Turn: &sCopy, CalculatedCostUSD: &sc,
+	})
+
+	// 14:41:00Z — after EARLY closed (14:40:16), before MID started (14:41:35).
+	ApplyCostCorrections([]modelinfo.CostCorrection{{
+		BilledAt:       time.Date(2026, 9, 13, 14, 41, 0, 0, time.UTC),
+		SubagentTurnID: sessTurn("EARLY"), AgentID: "agent-1", Model: "claude-opus-5",
+		Counts:  modelinfo.TokenCounts{Input: 40, Output: 20, CacheRead: 400, CacheWrite: 80},
+		CostUSD: 0.30,
+	}})
+
+	_, mid := readRow(t, "turn_id = ? AND call_type = 'delegated_turn'", sessTurn("MID"))
+	_, early := readRow(t, "turn_id = ? AND call_type = 'delegated_turn'", sessTurn("EARLY"))
+	if d := mid - 0.70; d > 1e-9 || d < -1e-9 {
+		t.Errorf("MID parent = $%.6f, want $0.700000 — idle spend belongs to the turn "+
+			"that FOLLOWS it, whose priced window opened at the previous result", mid)
+	}
+	if d := early - 1.00; d > 1e-9 || d < -1e-9 {
+		t.Errorf("EARLY parent = $%.6f, want $1.000000 — it had already closed", early)
 	}
 }
 

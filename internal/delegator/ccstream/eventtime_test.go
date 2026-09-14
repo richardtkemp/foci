@@ -424,3 +424,42 @@ func TestDeliverLine_ReportsCompletionFromStopReason(t *testing.T) {
 		}
 	}
 }
+
+// TestNote_SpawnAttributionIsSetByTheFirstLineNotTheFirstCompletion.
+//
+// The #1923 completion gate is about MONEY: a message's tokens count when
+// modelUsage counts them. Which turn SPAWNED an agent is a different fact, about
+// the agent rather than the message, and the parent stream's first line arrives
+// synchronously with the spawn.
+//
+// Behind the gate, attribution waited for the first COMPLETED line off the
+// transcript tail. For a background subagent that can land after a later turn
+// has opened, and then every row for that agent — and every correction naming it
+// — is filed under the wrong turn, which is exactly what #1880 phase C exists to
+// prevent (#1924).
+func TestNote_SpawnAttributionIsSetByTheFirstLineNotTheFirstCompletion(t *testing.T) {
+	t.Parallel()
+
+	a := &usageAccumulator{}
+	a.markResult(at(0, 0))
+	a.beginTurn("T-spawn")
+
+	// The stream's first line for a freshly spawned subagent: in flight, so its
+	// tokens must NOT count yet.
+	a.note("claude-opus-5", "agent-1", true, "m1", at(0, 30), false, usage(0, 0, 5000, 0, 0, 0))
+	if got := a.subagentDelta()[subKey{Agent: "agent-1", Model: "claude-opus-5"}].CacheRead; got != 0 {
+		t.Errorf("in-flight tokens counted = %d, want 0", got)
+	}
+
+	// A later turn opens before the transcript tail delivers anything completed.
+	a.markResult(at(1, 0))
+	a.beginTurn("T-later")
+	a.note("claude-opus-5", "agent-1", true, "m1", at(1, 30), true, usage(0, 0, 5000, 0, 0, 0))
+
+	if got := a.agentTurns()["agent-1"]; got != "T-spawn" {
+		t.Errorf("spawn turn = %q, want T-spawn — attribution must come from the "+
+			"agent's FIRST line, not its first completed one, or a background "+
+			"subagent's rows all land on whichever turn was open when the tail "+
+			"caught up (#1924)", got)
+	}
+}
