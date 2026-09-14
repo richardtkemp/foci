@@ -2,6 +2,7 @@ package autoapprove
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -102,7 +103,10 @@ func Compile(rules []string) []Rule { return parseAutoApproveRules(rules) }
 // inherited by the delegated backend. This is required for shell-interceptor
 // variable expansion: the gateway process environment may differ from the
 // backend's environment after per-agent overrides and BASH_ENV are applied.
-func MatchWithEnv(rules []Rule, toolName string, input json.RawMessage, env map[string]string) bool {
+// The second return is a human-readable reason present ONLY when the request
+// was denied by the substitutability veto despite matching a rule (#1906).
+// Empty otherwise, including for an ordinary no-rule-matched denial.
+func MatchWithEnv(rules []Rule, toolName string, input json.RawMessage, env map[string]string) (bool, string) {
 	return matchAutoApproveWithEnv(rules, toolName, input, env)
 }
 
@@ -161,11 +165,11 @@ func parseAutoApproveRules(rules []string) []Rule {
 	return parsed
 }
 
-func matchAutoApproveWithEnv(rules []Rule, toolName string, input json.RawMessage, env map[string]string) bool {
+func matchAutoApproveWithEnv(rules []Rule, toolName string, input json.RawMessage, env map[string]string) (bool, string) {
 	if toolName == "Bash" {
 		return matchBashAutoApprove(rules, input, env)
 	}
-	return matchToolAutoApprove(rules, toolName, input)
+	return matchToolAutoApprove(rules, toolName, input), ""
 }
 
 // EnvironmentFromList converts an exec.Cmd-style environment into the
@@ -271,18 +275,22 @@ var varSettingCommands = map[string]bool{
 //   - Commands with known unsafe flags (sed -i, find -exec, sort -o, etc.) are rejected
 //   - sed script arguments are scanned for dangerous commands (w, e)
 //   - Commands that set variables opaquely (eval, source, read, etc.) are rejected
-func matchBashAutoApprove(rules []Rule, input json.RawMessage, env map[string]string) bool {
+func matchBashAutoApprove(rules []Rule, input json.RawMessage, env map[string]string) (bool, string) {
 	command := extractMatchString("Bash", input)
 	if command == "" {
-		return false
+		return false, ""
 	}
 
 	stmts, ok := parseShellScript(command)
 	if !ok {
-		return false // unparseable → fail safe (prompt user)
+		return false, "" // unparseable → fail safe (prompt user)
 	}
 
-	return validateParsedCommand(rules, stmts, 0, newVarCtx(env))
+	vc := newVarCtx(env)
+	if validateParsedCommand(rules, stmts, 0, vc) {
+		return true, ""
+	}
+	return false, vc.denialReason()
 }
 
 // parseShellScript parses a command string as bash and returns the top-level
@@ -461,7 +469,7 @@ func validateParsedStmt(rules []Rule, stmt *syntax.Stmt, depth int, vc *varCtx) 
 			return false
 		}
 
-		if !matchBashSegment(rules, cmdStr) {
+		if !matchBashSegment(rules, cmdStr, vc) {
 			return false
 		}
 	}
@@ -683,18 +691,50 @@ func resolveWordPart(part syntax.WordPart, vc *varCtx) (string, bool) {
 // varCtx holds statically known shell variables at one precise point in a
 // script. Variables not assigned in the command fall through to the process
 // environment (os.LookupEnv), which the gateway and delegated shell share.
+// vetoNote records the FIRST substitutability veto of an evaluation, so the
+// caller can explain a denial instead of returning a bare false. It is held
+// behind a pointer and shared by clone() ON PURPOSE: clones are made for
+// subshells and compound statements, and a veto raised inside one of those is
+// exactly as much a reason for the denial as one raised at the top level.
+// Copying it by value would silently drop those.
+type vetoNote struct {
+	segment string
+	path    string
+	reason  string
+}
+
 type varCtx struct {
 	symbolTable map[string]string // known literal assignments: name → value
 	unknown     map[string]bool   // assignments whose value/scope is not modelled
 	environment map[string]string // exact environment inherited by the shell
+	veto        *vetoNote         // shared across clones; see vetoNote
 }
 
 func newVarCtx(environment map[string]string) *varCtx {
-	return &varCtx{symbolTable: make(map[string]string), unknown: make(map[string]bool), environment: environment}
+	return &varCtx{symbolTable: make(map[string]string), unknown: make(map[string]bool), environment: environment, veto: &vetoNote{}}
+}
+
+// noteVeto records the first veto only. A command with several offending
+// segments denies on the first one the walker reaches, and reporting that one
+// is both stable and the one to fix first.
+func (vc *varCtx) noteVeto(segment, path, reason string) {
+	if vc.veto != nil && vc.veto.reason == "" {
+		vc.veto.segment, vc.veto.path, vc.veto.reason = segment, path, reason
+	}
+}
+
+// DenialReason renders the recorded veto for a human, or "" if none was raised.
+func (vc *varCtx) denialReason() string {
+	if vc.veto == nil || vc.veto.reason == "" {
+		return ""
+	}
+	return fmt.Sprintf("not auto-approved despite matching a rule: %s — %s. Approving here runs it anyway.",
+		vc.veto.path, vc.veto.reason)
 }
 
 func (vc *varCtx) clone() *varCtx {
 	copy := newVarCtx(vc.environment)
+	copy.veto = vc.veto // SHARED, not copied — see vetoNote
 	for name, value := range vc.symbolTable {
 		copy.symbolTable[name] = value
 	}
@@ -864,24 +904,28 @@ var guardEnv = execguard.Live
 // The veto is deliberately independent of WHICH rule matched, including the
 // built-in read-only group. The question "can this binary be swapped" does not
 // depend on the provenance of the rule that allowed it.
-func commandIsSubstitutable(segment string) bool {
+// The path and reason are returned so the caller can SAY why it declined. A
+// veto is otherwise invisible: the command simply falls through to an ordinary
+// approval prompt, and the user is asked about a command that is on the
+// allowlist with nothing anywhere explaining the discrepancy (#1906).
+func commandIsSubstitutable(segment string) (bool, string, string) {
 	tokens := tokenizeCommand(segment)
 	if len(tokens) == 0 {
-		return false
+		return false, "", ""
 	}
-	substitutable, _, _ := execguard.Substitutable(tokens[0], guardEnv())
-	return substitutable
+	return execguard.Substitutable(tokens[0], guardEnv())
 }
 
 // matchBashSegment checks whether a single command string matches at least one
 // Bash rule. If the command contains flags or arguments that are known to be
 // unsafe (e.g. sed -i, sort -o), or if its executable could be substituted by
 // this process, the match is rejected regardless of which rule matched.
-func matchBashSegment(rules []Rule, segment string) bool {
+func matchBashSegment(rules []Rule, segment string, vc *varCtx) bool {
 	if containsUnsafeFlags(segment) {
 		return false
 	}
-	if commandIsSubstitutable(segment) {
+	if sub, path, reason := commandIsSubstitutable(segment); sub {
+		vc.noteVeto(segment, path, reason)
 		return false
 	}
 	for _, r := range rules {

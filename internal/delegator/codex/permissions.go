@@ -15,7 +15,13 @@ func (b *Backend) tryAutoApprove(rpcID int64, itemID, command string) bool {
 		return false
 	}
 	input, _ := json.Marshal(map[string]string{"command": command})
-	if !autoapprove.MatchWithEnv(b.autoApproveRules, "Bash", input, b.autoApproveEnv) {
+	matched, vetoReason := autoapprove.MatchWithEnv(b.autoApproveRules, "Bash", input, b.autoApproveEnv)
+	if !matched {
+		// A rule matched but the substitutability guard overrode it — say why,
+		// or the refusal is invisible to everyone (#1906).
+		if vetoReason != "" {
+			b.logWarnf("auto-approve VETOED: command=%q item=%s — %s", command, itemID, vetoReason)
+		}
 		return false
 	}
 	b.logInfof("auto-approved: command=%q item=%s", command, itemID)
