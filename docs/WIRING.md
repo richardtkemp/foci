@@ -1518,10 +1518,44 @@ Four outputs:
    `usageTotals` copies its struct but SHARES its maps, which was harmless while baselines
    were only ever replaced wholesale and a silent cross-write once they could be raised.
 
-   Neither mechanism repairs an EARLIER turn whose parent row absorbed subagent spend while
-   it was still undelivered — that turn's total is right and its shares are not. Correcting
-   that is #1918, and by ruling it must UPDATE the existing row rather than append a
-   signed correction.
+   **Repairing the EARLIER turn is #1918.** A turn whose parent row absorbed subagent spend
+   while it was still undelivered has a right total and wrong shares. `note()` therefore
+   records, beside the baseline raise, a `modelinfo.CostCorrection` naming BOTH ends: the
+   turn whose ModelUsage window the spend was BILLED in (its parent row loses the amount)
+   and the turn that SPAWNED the agent (its subagent row gains it, because phase C files
+   every subagent row under the spawning turn). Those differ whenever a background subagent
+   outlives its parent, so per-turn totals shift while the SESSION total is conserved —
+   already true of straggler rows, and the phase C attribution model rather than a new
+   inconsistency.
+
+   Resolving the billing turn needs `usageAccumulator.windows`, a 16-entry ring of
+   `turnWindow{ID, Start, End}` — one per TURN, not per result cycle, because rows are
+   written per turn. `openWindow` at `beginTurn`, `closeWindowAt` at every `markResult` so a
+   multi-cycle turn extends one window. If `at` falls in no retained window the correction
+   is DROPPED ENTIRELY: crediting the subagent without debiting anyone inflates the record,
+   which is the failure #1909 closed.
+
+   Corrections ride `delegator.TurnUsage.Corrections` -> `provider.Usage.Corrections` to
+   `turn_delegated.go`, which calls `log.ApplyCostCorrections` **after** `logCall` — a
+   correction may target the row this very turn just wrote (late spend from an earlier
+   CYCLE of the same turn), and an UPDATE before the INSERT would match nothing.
+
+   `ApplyCostCorrections` UPDATEs the two existing rows; it never appends a signed third row
+   (Dick, 2026-09-14: *"I don't want a correcting pair, I just want a single correct
+   entry"*). Each correction is ONE TRANSACTION and both halves must match EXACTLY ONE row —
+   neither target has a unique constraint, so the row count is all that stands between a
+   correction and rewriting an unrelated row. It also refuses a parent row that cannot cover
+   the amount rather than clamping: a negative count prices as a CREDIT, and an uncoverable
+   correction means the model behind it is wrong, which is worth a warning.
+
+   This is safe to mutate because **api.db is authoritative**: `readDurableAPIEntries`
+   prefers `ReadAPIDBLog()` and falls back to the JSONL only when the db is empty, the JSONL
+   being RESET ON EVERY SERVICE RESTART. Every reader (/cost, /last, `QuerySessionStats`,
+   the morning briefing) runs a live query and none caches. The JSONL copy of a corrected
+   row keeps the old values until the next restart wipes it — bounded, fallback-only.
+
+   NOT covered: a subagent whose spend was ENTIRELY late has no row to credit, so the
+   correction is skipped and logged. Sizing that needs live data.
 
    It used to WIPE at `beginTurnLocked` — turn START — while pricing measures from the
    previous RESULT, so every message inside the priced window that arrived before the

@@ -85,3 +85,37 @@ type SubagentCost struct {
 	Counts  TokenCounts `json:"counts"`
 	CostUSD float64     `json:"cost_usd"`
 }
+
+// CostCorrection moves spend that was booked to the wrong row after that row
+// was already written (#1918, following #1909).
+//
+// A subagent's spend reaches foci by tailing its transcript, which can lag the
+// billing by anything from a poll interval to the 60s the tailer will wait for
+// the file to exist. Spend still undelivered when a turn's result closes is
+// nonetheless inside that turn's authoritative ModelUsage, so the parent share
+// — computed as ModelUsage minus what had been delivered — silently absorbs it.
+// The turn's TOTAL is right; its split is not.
+//
+// The correction moves exactly that amount off the parent row of the turn that
+// absorbed it and onto the subagent row of the turn that spawned the agent.
+// Those are different turns whenever a background subagent outlives its parent,
+// which is why both ids are carried rather than one.
+//
+// It is applied as an UPDATE of the two existing rows, never as a third signed
+// row: a reader must get the truth from a plain lookup, without summing
+// corrections (Dick, 2026-09-14 — "I don't want a correcting pair, I just want
+// a single correct entry").
+type CostCorrection struct {
+	// ParentTurnID is the turn whose parent row absorbed the spend — the turn
+	// whose ModelUsage window the tokens were BILLED in. Loses the amount.
+	ParentTurnID string `json:"parent_turn_id"`
+	// SubagentTurnID is the turn that SPAWNED the agent, under which phase C
+	// files every one of its rows. Gains the amount.
+	SubagentTurnID string `json:"subagent_turn_id"`
+
+	AgentID string `json:"agent_id"`
+	Model   string `json:"model"`
+
+	Counts  TokenCounts `json:"counts"`
+	CostUSD float64     `json:"cost_usd"`
+}

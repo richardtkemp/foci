@@ -532,6 +532,7 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 						CalculatedCostUSD:        result.Usage.CalculatedCostUSD,
 						Turn:                     result.Usage.Turn,
 						Subagents:                result.Usage.Subagents,
+						Corrections:              result.Usage.Corrections,
 					}
 				}
 			}
@@ -751,6 +752,12 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 	// like a steer: the backend keeps accumulating output/cost/Turn across
 	// the rounds, and input/cache stay the final cycle's fill (#1856).
 	logCall(ts.FinalUsage, ts.StartedAt)
+
+	// AFTER logCall, and that ordering is load-bearing. A correction may target
+	// the row this very turn just wrote — late spend billed in an earlier CYCLE
+	// of this same turn — and an UPDATE issued before the INSERT would match no
+	// row and be skipped as unresolvable (#1918).
+	log.ApplyCostCorrections(ts.FinalUsage.Corrections)
 
 	ts.FinalCost = turnCost
 
