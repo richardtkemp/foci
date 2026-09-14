@@ -187,6 +187,12 @@ type usageAccumulator struct {
 	// rather than excluded from one of them.
 	lastResultAt time.Time
 
+	// pendingCorrections is late spend that an already-written row absorbed —
+	// the raw material for #1918. Keyed by the agent, model and BILLING TIME;
+	// the turn that absorbed it is resolved at apply time from api_calls, which
+	// already holds every turn's id beside its timestamp.
+	pendingCorrections map[corrKey]turnUsage
+
 	// appliedAtTurnStart is len(applied) when the current turn opened, so
 	// len(applied) minus it is how many DISTINCT assistant messages this turn
 	// accumulated (#1866 P5). applied only ever grows — a repeat of a known id
@@ -458,6 +464,31 @@ func (a *usageAccumulator) note(model, agent string, isSub bool, id string, at t
 	k := subKey{Agent: agent, Model: model}
 	a.atLastResult.raiseSub(k, late)
 	a.atTurnStart.raiseSub(k, late)
+
+	// The raise alone makes the spend invisible, which is enough for the money
+	// to be right but leaves it filed under the parent of whichever turn
+	// absorbed it. Record what would put it back on the right row (#1918).
+	//
+	// The billing TIME is recorded, not a resolved turn: api_calls holds every
+	// turn's id beside its timestamp, so the row that absorbed the spend is one
+	// indexed lookup at apply time — durable across restarts, with no retention
+	// bound to get wrong. Still both-or-nothing there: a correction that knows
+	// where the spend should GO but not where it came FROM would add without
+	// subtracting and inflate the session total.
+	spawn := a.agentTurn[agent]
+	if spawn == "" {
+		return
+	}
+	if a.pendingCorrections == nil {
+		a.pendingCorrections = make(map[corrKey]turnUsage)
+	}
+	ck := corrKey{BilledAt: at.Truncate(time.Second), Spawn: spawn, Agent: agent, Model: model}
+	c := a.pendingCorrections[ck]
+	c.Input += late.Input
+	c.Output += late.Output
+	c.CacheRead += late.CacheRead
+	c.Write = c.Write.addSplit(late.Write)
+	a.pendingCorrections[ck] = c
 }
 
 func maxInt(a, b int) int {
@@ -746,5 +777,28 @@ func (a *usageAccumulator) agentTurns() map[string]string {
 	for k, v := range a.agentTurn {
 		out[k] = v
 	}
+	return out
+}
+
+// corrKey identifies one correction: spend to move OFF parent turn Bill and
+// ONTO the subagent row filed under turn Spawn, for one agent on one model.
+// Model is part of the key because a row carries one model and is priced at
+// that model's rates.
+type corrKey struct {
+	// BilledAt is truncated to the second so a burst of messages billed within
+	// the same second coalesces into one correction instead of one per message.
+	// They resolve to the same turn regardless, and a turn is never shorter
+	// than a second.
+	BilledAt time.Time
+	Spawn    string
+	Agent    string
+	Model    string
+}
+
+// drainCorrections returns the pending corrections and clears them, so a
+// correction is handed to the writer exactly once.
+func (a *usageAccumulator) drainCorrections() map[corrKey]turnUsage {
+	out := a.pendingCorrections
+	a.pendingCorrections = nil
 	return out
 }

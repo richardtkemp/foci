@@ -145,11 +145,30 @@ type PayloadEntry struct {
 
 // api writes a structured API log entry to JSONL and SQLite.
 func (l *Logger) api(entry APIEntry) {
+	l.apiJSONL(entry)
+	// SQLite
+	if apiLog != nil {
+		apiLog.insert(entry)
+	}
+}
+
+// APIJSONLOnly appends to the JSONL without touching SQLite.
+//
+// For the one writer that collapses rows in the database but must stay
+// append-only on disk: AccumulateSubagentRow folds a delegation's later spend
+// into its existing db row, so the db holds ONE row per delegation and a lookup
+// is correct. The JSONL cannot be updated, so it receives every instalment as
+// its own line — and since every JSONL reader SUMS rows, that file stays correct
+// too. Writing only the first instalment there would make the fallback
+// under-report a delegation's spend (#1922).
+func APIJSONLOnly(entry APIEntry) { std.apiJSONL(entry) }
+
+// apiJSONL appends one entry to the JSONL log.
+func (l *Logger) apiJSONL(entry APIEntry) {
 	if entry.CallType == "" {
 		entry.CallType = "conversation"
 	}
 
-	// JSONL (backward compatible)
 	l.mu.Lock()
 	staleWarn := l.reopenAPIIfStaleLocked()
 	if l.apiFile != nil {
@@ -162,11 +181,6 @@ func (l *Logger) api(entry APIEntry) {
 	// Logged after releasing l.mu above — Warnf ultimately locks l.mu itself.
 	if staleWarn != "" {
 		Warnf("log", "%s", staleWarn)
-	}
-
-	// SQLite
-	if apiLog != nil {
-		apiLog.insert(entry)
 	}
 }
 

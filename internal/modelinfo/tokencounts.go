@@ -85,3 +85,48 @@ type SubagentCost struct {
 	Counts  TokenCounts `json:"counts"`
 	CostUSD float64     `json:"cost_usd"`
 }
+
+// CostCorrection moves spend that was booked to the wrong row after that row
+// was already written (#1918, following #1909).
+//
+// A subagent's spend reaches foci by tailing its transcript, which can lag the
+// billing by anything from a poll interval to the 60s the tailer will wait for
+// the file to exist. Spend still undelivered when a turn's result closes is
+// nonetheless inside that turn's authoritative ModelUsage, so the parent share
+// — computed as ModelUsage minus what had been delivered — silently absorbs it.
+// The turn's TOTAL is right; its split is not.
+//
+// The correction moves exactly that amount off the parent row of the turn that
+// absorbed it and onto the subagent row of the turn that spawned the agent.
+// Those are different turns whenever a background subagent outlives its parent,
+// which is why both ids are carried rather than one.
+//
+// It is applied as an UPDATE of the two existing rows, never as a third signed
+// row: a reader must get the truth from a plain lookup, without summing
+// corrections (Dick, 2026-09-14 — "I don't want a correcting pair, I just want
+// a single correct entry").
+type CostCorrection struct {
+	// BilledAt is when CC billed the spend — the transcript line's own
+	// timestamp. The turn whose parent row absorbed it is resolved FROM THIS,
+	// at apply time, by asking api_calls for the first turn of this session to
+	// close at or after it. A turn is priced from the PREVIOUS result, so its
+	// window runs from the previous turn's close to its own and the timeline
+	// tiles with no gaps — idle time belongs to the turn that follows it.
+	//
+	// Deliberately not a resolved turn id. An earlier version carried one,
+	// resolved against a 16-entry in-memory ring of turn windows; that ring was
+	// a bounded cache of a mapping api_calls already holds durably, unbounded
+	// and indexed, on the same connection this correction writes through. Its
+	// bound was also wrong: measured over 26,836 turns, 2.4% of 30-minute
+	// windows contain more than 16 turns and the worst holds 155.
+	BilledAt time.Time `json:"billed_at"`
+	// SubagentTurnID is the turn that SPAWNED the agent, under which phase C
+	// files every one of its rows. Gains the amount.
+	SubagentTurnID string `json:"subagent_turn_id"`
+
+	AgentID string `json:"agent_id"`
+	Model   string `json:"model"`
+
+	Counts  TokenCounts `json:"counts"`
+	CostUSD float64     `json:"cost_usd"`
+}
