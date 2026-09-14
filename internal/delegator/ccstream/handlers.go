@@ -506,6 +506,10 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		topObserved := b.turnUsageAcc.topWriteSplitByModel()
 		subDelta := b.turnUsageAcc.subagentDelta()
 		spawnedBy := b.turnUsageAcc.agentTurns()
+		// Drained, not read: a correction must be handed to the writer exactly
+		// once, and it describes rows that already exist rather than this
+		// turn's figures, so it takes no part in the pricing below.
+		corrections := b.turnUsageAcc.drainCorrections()
 		b.turnMu.Unlock()
 
 		now := time.Now()
@@ -550,6 +554,30 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 				CostUSD: cost,
 			}
 			subPriced += cost
+		}
+
+		// Corrections are priced at the SAME rates as the share they are moving,
+		// because they ARE that share — spend that reached foci after the row
+		// which should have carried it was written (#1918).
+		cycleCorr := make([]modelinfo.CostCorrection, 0, len(corrections))
+		for ck, u := range corrections {
+			c := modelinfo.TokenCounts{
+				Input:      u.Input,
+				Output:     u.Output,
+				CacheRead:  u.CacheRead,
+				CacheWrite: u.Write.total(),
+			}
+			cycleCorr = append(cycleCorr, modelinfo.CostCorrection{
+				BilledAt:       ck.BilledAt,
+				SubagentTurnID: ck.Spawn,
+				AgentID:        ck.Agent,
+				Model:          prefixedModel(ck.Model),
+				Counts:         c,
+				CostUSD: modelinfo.CostAsOfSplit(
+					prefixedModel(ck.Model), now,
+					c.Input, c.Output, c.CacheRead, splitFor(u.Write, c.CacheWrite),
+				),
+			})
 		}
 
 		var cyclePriced, cycleProvided float64
@@ -630,6 +658,7 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 			e.CostUSD += sc.CostUSD
 			b.turnSubagents[k] = e
 		}
+		b.turnCorrections = append(b.turnCorrections, cycleCorr...)
 		b.turnProvidedSeen = true
 		b.turnMu.Unlock()
 	}
@@ -658,6 +687,7 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	calcSoFar, providedSoFar := b.turnCalcCostUSD, b.turnProvidedUSD
 	parentSoFar, parentCounts := b.turnParentCostUSD, b.turnParentCalc
 	turnSubs := sortedSubagentCosts(b.turnSubagents)
+	turnCorr := append([]modelinfo.CostCorrection(nil), b.turnCorrections...)
 	cycles := b.turnCalls
 	bd := costBreakdown{
 		model:     prefixedModel(resultModel),
@@ -696,6 +726,7 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		turn := parentCounts
 		result.Usage.Turn = &turn
 		result.Usage.Subagents = turnSubs
+		result.Usage.Corrections = turnCorr
 	}
 	b.stashedResult = result
 	b.stashedResultMsg = msg

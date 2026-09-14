@@ -1518,10 +1518,79 @@ Four outputs:
    `usageTotals` copies its struct but SHARES its maps, which was harmless while baselines
    were only ever replaced wholesale and a silent cross-write once they could be raised.
 
-   Neither mechanism repairs an EARLIER turn whose parent row absorbed subagent spend while
-   it was still undelivered — that turn's total is right and its shares are not. Correcting
-   that is #1918, and by ruling it must UPDATE the existing row rather than append a
-   signed correction.
+   **Repairing the EARLIER turn is #1918.** A turn whose parent row absorbed subagent spend
+   while it was still undelivered has a right total and wrong shares. `note()` therefore
+   records, beside the baseline raise, a `modelinfo.CostCorrection` naming BOTH ends: the
+   turn whose ModelUsage window the spend was BILLED in (its parent row loses the amount)
+   and the turn that SPAWNED the agent (its subagent row gains it, because phase C files
+   every subagent row under the spawning turn). Those differ whenever a background subagent
+   outlives its parent, so per-turn totals shift while the SESSION total is conserved —
+   already true of straggler rows, and the phase C attribution model rather than a new
+   inconsistency.
+
+   The correction carries the BILLING TIME, not a resolved parent turn. The turn that
+   absorbed the spend is resolved at apply time by asking `api_calls` for the first
+   `delegated_turn` of that session to CLOSE at or after it — the session being the part of
+   the turn id before `@`. That works because **a turn is priced from the PREVIOUS result**,
+   so its window runs from the previous turn's close to its own and the timeline TILES with
+   no gaps: idle time belongs to the turn that FOLLOWS it.
+
+   ⚠️ **The close is `ts + duration_ms`. `api_calls.ts` is the turn's START** —
+   `turn_delegated.go` passes `ts.StartedAt`, and the turn_id nanos match `ts` exactly.
+   Verified against the log's own `turn_lifecycle event=complete` lines: start 15:41:35 +
+   15,648ms = 15:41:50, logged 15:41:50. The first version compared against `ts` alone, i.e.
+   "first turn to START at or after t", so spend billed while a turn was RUNNING skipped that
+   turn and debited the NEXT one — and since every subagent bills while its spawning turn
+   runs, that was the entire target population (#1922). Its "live verification" passed only
+   because the example sat in a 25-minute IDLE GAP, the one case where start-based and
+   close-based resolution agree.
+
+   The comparison is `unixepoch(ts, 'utc')` on BOTH sides, never a bare `ts >= ?`. `ts` is
+   local ISO WITH OFFSET, so across a DST boundary string order and time order disagree —
+   `01:15:00+00:00` sorts before `01:30:00+01:00` and happens 45 minutes later. That is the
+   trap that made the morning cost report read $172.06 against a true $161.17 (#1896).
+
+   *An earlier version resolved this against a 16-entry in-memory ring of turn windows. The
+   ring was a bounded cache of a mapping `api_calls` already holds durably, unbounded and
+   indexed, on the same connection the correction writes through — and its bound was wrong:
+   measured over 26,836 turns, 2.4% of 30-minute windows hold more than 16 turns and the
+   worst holds 155. Removed rather than enlarged; a bigger guess is still a guess.*
+
+   Corrections ride `delegator.TurnUsage.Corrections` -> `provider.Usage.Corrections` to
+   `turn_delegated.go`, which calls `log.ApplyCostCorrections` **after** `logCall` — a
+   correction may target the row this very turn just wrote (late spend from an earlier
+   CYCLE of the same turn), and an UPDATE before the INSERT would match nothing.
+
+   **One row per delegation, so the credit has a unique target.** `AccumulateSubagentRow`
+   folds a subagent's later spend into its existing row instead of inserting a new one. Phase C
+   used to INSERT unconditionally, so a subagent outliving its parent got one row per turn it
+   straddled — all under the spawning turn id — and live data holds keys with 2 and 3 rows.
+   That made "what did that delegation cost" a SUM rather than a lookup, and it made the
+   correction below, which requires exactly one match, unapplicable to background subagents:
+   the population it exists for (#1922). Rows written before this keep their duplicates, and a
+   correction against one of those refuses, safely and loudly.
+
+   The DB collapses; the JSONL does not and must not. It is append-only, every reader SUMS
+   its rows, so each instalment is appended there via `APIJSONLOnly` — both stores then agree
+   on the money by different means. Writing only the first instalment would make the fallback
+   under-report.
+
+   `ApplyCostCorrections` UPDATEs the two existing rows; it never appends a signed third row
+   (Dick, 2026-09-14: *"I don't want a correcting pair, I just want a single correct
+   entry"*). Each correction is ONE TRANSACTION and both halves must match EXACTLY ONE row —
+   neither target has a unique constraint, so the row count is all that stands between a
+   correction and rewriting an unrelated row. It also refuses a parent row that cannot cover
+   the amount rather than clamping: a negative count prices as a CREDIT, and an uncoverable
+   correction means the model behind it is wrong, which is worth a warning.
+
+   This is safe to mutate because **api.db is authoritative**: `readDurableAPIEntries`
+   prefers `ReadAPIDBLog()` and falls back to the JSONL only when the db is empty, the JSONL
+   being RESET ON EVERY SERVICE RESTART. Every reader (/cost, /last, `QuerySessionStats`,
+   the morning briefing) runs a live query and none caches. The JSONL copy of a corrected
+   row keeps the old values until the next restart wipes it — bounded, fallback-only.
+
+   NOT covered: a subagent whose spend was ENTIRELY late has no row to credit, so the
+   correction is skipped and logged. Sizing that needs live data.
 
    It used to WIPE at `beginTurnLocked` — turn START — while pricing measures from the
    previous RESULT, so every message inside the priced window that arrived before the

@@ -532,6 +532,7 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 						CalculatedCostUSD:        result.Usage.CalculatedCostUSD,
 						Turn:                     result.Usage.Turn,
 						Subagents:                result.Usage.Subagents,
+						Corrections:              result.Usage.Corrections,
 					}
 				}
 			}
@@ -723,7 +724,13 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 			if turnID == "" {
 				turnID = ts.RowID()
 			}
-			log.API(log.APIEntry{
+			// ACCUMULATE, do not insert. A subagent that outlives its parent
+			// is written once per turn it straddles, all under the SPAWNING
+			// turn id — which used to mean several rows sharing one key, so
+			// "what did that delegation cost" needed a SUM and the #1918
+			// correction (which requires exactly one match) could never apply
+			// to the background subagents it exists for (#1922).
+			log.AccumulateSubagentRow(log.APIEntry{
 				Timestamp: ts0,
 				Provider:  "anthropic",
 				Session:   ts.SessionKey,
@@ -751,6 +758,12 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 	// like a steer: the backend keeps accumulating output/cost/Turn across
 	// the rounds, and input/cache stay the final cycle's fill (#1856).
 	logCall(ts.FinalUsage, ts.StartedAt)
+
+	// AFTER logCall, and that ordering is load-bearing. A correction may target
+	// the row this very turn just wrote — late spend billed in an earlier CYCLE
+	// of this same turn — and an UPDATE issued before the INSERT would match no
+	// row and be skipped as unresolvable (#1918).
+	log.ApplyCostCorrections(ts.FinalUsage.Corrections)
 
 	ts.FinalCost = turnCost
 

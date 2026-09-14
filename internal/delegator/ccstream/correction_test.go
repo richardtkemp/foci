@@ -1,0 +1,134 @@
+package ccstream
+
+import (
+	"testing"
+	"time"
+)
+
+func at(mins, secs int) time.Time {
+	return time.Date(2026, 9, 13, 14, mins, secs, 0, time.UTC)
+}
+
+// TestPendingCorrection_CarriesBillingTimeAndSpawnTurn.
+//
+// A correction records WHEN the spend was billed and WHICH turn spawned the
+// agent. It deliberately does NOT resolve the turn that absorbed it: api_calls
+// already holds every turn's id beside its timestamp, so that lookup belongs at
+// apply time against a durable, unbounded, indexed store — not against an
+// in-memory ring with a retention bound to get wrong.
+func TestPendingCorrection_CarriesBillingTimeAndSpawnTurn(t *testing.T) {
+	t.Parallel()
+
+	a := &usageAccumulator{}
+	a.markResult(at(0, 0))
+	a.beginTurn("T1")
+	a.note("claude-opus-5", "agent-1", true, "m1", at(0, 30), true, usage(0, 0, 100, 0, 0, 0))
+	a.markResult(at(1, 0))
+	a.beginTurn("T2")
+	a.markResult(at(2, 0))
+	a.beginTurn("T3")
+	// The tail finally delivers spend billed back during T2.
+	a.note("claude-opus-5", "agent-1", true, "m3", at(1, 45), true, usage(0, 0, 5000, 0, 0, 0))
+
+	got := a.drainCorrections()
+	if len(got) != 1 {
+		t.Fatalf("corrections = %d, want 1: %+v", len(got), got)
+	}
+	for k, u := range got {
+		if !k.BilledAt.Equal(at(1, 45)) {
+			t.Errorf("BilledAt = %v, want %v — the correction must carry when the "+
+				"spend was BILLED, not when it was delivered", k.BilledAt, at(1, 45))
+		}
+		if k.Spawn != "T1" {
+			t.Errorf("Spawn = %q, want T1 — phase C files every subagent row under "+
+				"the spawning turn", k.Spawn)
+		}
+		if u.CacheRead != 5000 {
+			t.Errorf("amount = %d, want 5000", u.CacheRead)
+		}
+	}
+	if len(a.drainCorrections()) != 0 {
+		t.Error("drain did not clear — a correction applied twice moves the spend twice")
+	}
+}
+
+// TestPendingCorrection_SurvivesArbitrarilyOldSpend is the regression for what
+// the ring got wrong.
+//
+// The first implementation resolved the absorbing turn against a 16-entry ring
+// of turn windows and DROPPED any correction whose window had aged out.
+// Measured over 26,836 live turns, 2.4% of 30-minute windows hold more than 16
+// turns and the worst holds 155 — so that bound silently discarded corrections
+// in one window in forty. Nothing may age out now.
+func TestPendingCorrection_SurvivesArbitrarilyOldSpend(t *testing.T) {
+	t.Parallel()
+
+	a := &usageAccumulator{}
+	a.markResult(at(0, 0))
+	a.beginTurn("T1")
+	a.note("claude-opus-5", "agent-1", true, "m1", at(0, 30), true, usage(0, 0, 100, 0, 0, 0))
+	a.markResult(at(1, 0))
+	for i := 0; i < 200; i++ {
+		a.beginTurn("T-filler")
+		a.markResult(at(2+i, 0))
+	}
+	a.beginTurn("T-last")
+	a.drainCorrections()
+
+	// Billed 200 turns ago.
+	a.note("claude-opus-5", "agent-1", true, "m-late", at(0, 45), true, usage(0, 0, 9999, 0, 0, 0))
+
+	got := a.drainCorrections()
+	if len(got) != 1 {
+		t.Fatalf("corrections = %d, want 1 — spend billed 200 turns ago is still "+
+			"attributable, because api_calls retains every turn", len(got))
+	}
+	for k := range got {
+		if !k.BilledAt.Equal(at(0, 45)) {
+			t.Errorf("BilledAt = %v, want %v", k.BilledAt, at(0, 45))
+		}
+	}
+}
+
+// TestPendingCorrection_NotRaisedForOnTimeUsage: usage billed INSIDE the current
+// window is attributed correctly already. Correcting it would move spend that
+// was never misfiled.
+func TestPendingCorrection_NotRaisedForOnTimeUsage(t *testing.T) {
+	t.Parallel()
+
+	a := &usageAccumulator{}
+	a.markResult(at(0, 0))
+	a.beginTurn("T1")
+	a.note("claude-opus-5", "agent-1", true, "m1", at(0, 30), true, usage(0, 0, 100, 0, 0, 0))
+
+	if got := a.drainCorrections(); len(got) != 0 {
+		t.Errorf("corrections = %+v, want none for on-time usage", got)
+	}
+}
+
+// TestPendingCorrection_CoalescesWithinOneSecond: a catch-up burst delivers many
+// messages billed within the same second. They resolve to the same turn, so one
+// correction is enough and one UPDATE per message is waste.
+func TestPendingCorrection_CoalescesWithinOneSecond(t *testing.T) {
+	t.Parallel()
+
+	a := &usageAccumulator{}
+	a.markResult(at(1, 0))
+	a.beginTurn("T2")
+	base := time.Date(2026, 9, 13, 14, 0, 30, 0, time.UTC)
+	for i := 0; i < 5; i++ {
+		a.note("claude-opus-5", "agent-1", true, "m"+string(rune('a'+i)),
+			base.Add(time.Duration(i*100)*time.Millisecond), true, usage(0, 0, 100, 0, 0, 0))
+	}
+	// agentTurn is set on first sight, which happens above.
+	got := a.drainCorrections()
+	if len(got) != 1 {
+		t.Fatalf("corrections = %d, want 1 — five messages in one second resolve to "+
+			"one turn and should coalesce", len(got))
+	}
+	for _, u := range got {
+		if u.CacheRead != 500 {
+			t.Errorf("coalesced amount = %d, want 500", u.CacheRead)
+		}
+	}
+}
