@@ -1575,6 +1575,21 @@ Four outputs:
    on the money by different means. Writing only the first instalment would make the fallback
    under-report.
 
+   **A correction leaves a TTL surcharge behind, and reports it rather than repairing it
+   (#1929).** The parent absorbed the late writes as an unobserved residue — `splitFor` puts
+   the excess over the parent's own observed writes into `Unknown`, and `Unknown` prices with
+   `Ephemeral1h` — while the correction removes them at the subagent's observed 5m split. On
+   opus-5 that strands $3.75 per million cache-write tokens on a row that no longer holds
+   them, so the #1854 re-price identity breaks for that row.
+
+   Repairing it means debiting at one basis and crediting at another, which makes the turn
+   total legitimately FALL (they really were 5m tokens billed at 1h) and trades
+   dollar-conservation for token-conservation. That invariant is what catches the bugs in
+   this file, so it is not weakened before the size is known. `CostCorrection.StrandedUSD`
+   carries the figure and the apply logs it as `stranded=$…`; #1920 reads it after deploy.
+   It is priced BOTH ways rather than by subtracting rate constants, so a subagent that
+   genuinely wrote at 1h reports zero.
+
    `ApplyCostCorrections` UPDATEs the two existing rows; it never appends a signed third row
    (Dick, 2026-09-14: *"I don't want a correcting pair, I just want a single correct
    entry"*). Each correction is ONE TRANSACTION and both halves must match EXACTLY ONE row —

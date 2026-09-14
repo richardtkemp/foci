@@ -51,10 +51,15 @@ func ApplyCostCorrections(cs []modelinfo.CostCorrection) {
 				timeutil.Format(c.BilledAt), c.AgentID, c.SubagentTurnID, c.CostUSD, err)
 			continue
 		}
+		// stranded= is the surcharge left on the parent because it absorbed these
+		// cache writes at the Unknown/1h rate while the correction removes them at
+		// the subagent's observed 5m rate. Logged, not repaired: fixing it means
+		// trading dollar-conservation for token-conservation, and the size is not
+		// yet known (#1929, measured by #1920).
 		std.event(INFO, "api_db", "cost correction applied: $%.6f (%d cache-read, %d cache-write) "+
-			"moved from parent turn %s to subagent %s on turn %s (#1918)",
+			"moved from parent turn %s to subagent %s on turn %s; stranded=$%.6f (#1918)",
 			c.CostUSD, c.Counts.CacheRead, c.Counts.CacheWrite,
-			parentTurn, c.AgentID, c.SubagentTurnID)
+			parentTurn, c.AgentID, c.SubagentTurnID, c.StrandedUSD)
 	}
 }
 
