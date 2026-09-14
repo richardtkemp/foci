@@ -3,8 +3,10 @@ package log
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"foci/internal/modelinfo"
+	"foci/internal/timeutil"
 )
 
 // ApplyCostCorrections moves late-arriving subagent spend off the parent row
@@ -40,33 +42,67 @@ func ApplyCostCorrections(cs []modelinfo.CostCorrection) {
 	defer apiLog.mu.Unlock()
 
 	for _, c := range cs {
-		if c.ParentTurnID == "" || c.SubagentTurnID == "" || c.AgentID == "" {
+		if c.SubagentTurnID == "" || c.AgentID == "" || c.BilledAt.IsZero() {
 			continue
 		}
-		if err := applyOneCorrection(apiLog.db, c); err != nil {
-			std.event(WARN, "api_db", "cost correction skipped (%s -> %s, agent=%s, $%.6f): %v",
-				c.ParentTurnID, c.SubagentTurnID, c.AgentID, c.CostUSD, err)
+		parentTurn, err := applyOneCorrection(apiLog.db, c)
+		if err != nil {
+			std.event(WARN, "api_db", "cost correction skipped (billed %s -> subagent %s on turn %s, $%.6f): %v",
+				timeutil.Format(c.BilledAt), c.AgentID, c.SubagentTurnID, c.CostUSD, err)
 			continue
 		}
 		std.event(INFO, "api_db", "cost correction applied: $%.6f (%d cache-read, %d cache-write) "+
 			"moved from parent turn %s to subagent %s on turn %s (#1918)",
 			c.CostUSD, c.Counts.CacheRead, c.Counts.CacheWrite,
-			c.ParentTurnID, c.AgentID, c.SubagentTurnID)
+			parentTurn, c.AgentID, c.SubagentTurnID)
 	}
 }
 
-// applyOneCorrection performs one correction atomically, returning an error
-// that names which half failed — the caller logs it and moves on.
-func applyOneCorrection(db *sql.DB, c modelinfo.CostCorrection) (err error) {
+// applyOneCorrection performs one correction atomically, returning the parent
+// turn it debited, or an error naming which half failed.
+func applyOneCorrection(db *sql.DB, c modelinfo.CostCorrection) (parentTurn string, err error) {
 	tx, err := db.Begin()
 	if err != nil {
-		return fmt.Errorf("begin: %w", err)
+		return "", fmt.Errorf("begin: %w", err)
 	}
 	defer func() {
 		if err != nil {
 			_ = tx.Rollback()
 		}
 	}()
+
+	// WHICH parent row absorbed the spend, resolved from the billing time.
+	//
+	// A turn is priced from the PREVIOUS result, so its window runs from the
+	// previous turn's close to its own: the timeline tiles with no gaps, and
+	// idle time belongs to the turn that follows it. The turn that absorbed
+	// spend billed at t is therefore the first of this session to close at or
+	// after t. (Verified against the live 2026-09-13 incident: spend billed
+	// 15:41:40 resolves to the turn closing 16:06:29, whose window opened at
+	// the 15:41:35 result — 25 minutes of it idle.)
+	//
+	// The session is the part of the turn id before '@' — the format is
+	// "<session>@<StartedAt UnixNano>".
+	//
+	// unixepoch() on BOTH sides, never a string compare: ts is stored as local
+	// ISO WITH OFFSET, and SQLite reads a bare comparison lexically while
+	// date() silently converts to UTC. That mismatch cost 6.8% on the morning
+	// cost report (#1896).
+	session, _, ok := strings.Cut(c.SubagentTurnID, "@")
+	if !ok || session == "" {
+		return "", fmt.Errorf("subagent turn id %q has no session prefix", c.SubagentTurnID)
+	}
+	if err = tx.QueryRow(`SELECT turn_id FROM api_calls
+		WHERE session = ? AND call_type = 'delegated_turn' AND turn_id IS NOT NULL AND turn_id <> ''
+		  AND unixepoch(ts, 'utc') >= unixepoch(?, 'utc')
+		ORDER BY unixepoch(ts, 'utc') ASC LIMIT 1`,
+		session, timeutil.Format(c.BilledAt)).Scan(&parentTurn); err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("no turn of session %s closed at or after %s",
+				session, timeutil.Format(c.BilledAt))
+		}
+		return "", fmt.Errorf("resolve parent turn: %w", err)
+	}
 
 	// The parent row must be able to give up the amount. Read it first rather
 	// than subtracting and inspecting the result: a row that cannot cover the
@@ -76,24 +112,24 @@ func applyOneCorrection(db *sql.DB, c modelinfo.CostCorrection) (err error) {
 	var cost sql.NullFloat64
 	row := tx.QueryRow(`SELECT turn_input_tokens, turn_output_tokens, turn_cache_read_tokens,
 		turn_cache_write_tokens, calculated_cost_usd
-		FROM api_calls WHERE turn_id = ? AND call_type = 'delegated_turn'`, c.ParentTurnID)
+		FROM api_calls WHERE turn_id = ? AND call_type = 'delegated_turn'`, parentTurn)
 	if err = row.Scan(&in, &out, &cr, &cw, &cost); err != nil {
 		if err == sql.ErrNoRows {
-			return fmt.Errorf("no parent row for turn %s", c.ParentTurnID)
+			return "", fmt.Errorf("no parent row for turn %s", parentTurn)
 		}
-		return fmt.Errorf("read parent row: %w", err)
+		return "", fmt.Errorf("read parent row: %w", err)
 	}
 	// A NULL count is "never measured", not zero, and subtracting from it would
 	// assert a measurement that was never made.
 	if !in.Valid || !out.Valid || !cr.Valid || !cw.Valid || !cost.Valid {
-		return fmt.Errorf("parent row for turn %s has unmeasured columns", c.ParentTurnID)
+		return "", fmt.Errorf("parent row for turn %s has unmeasured columns", parentTurn)
 	}
 	if in.Int64 < int64(c.Counts.Input) || out.Int64 < int64(c.Counts.Output) ||
 		cr.Int64 < int64(c.Counts.CacheRead) || cw.Int64 < int64(c.Counts.CacheWrite) ||
 		cost.Float64 < c.CostUSD {
-		return fmt.Errorf("parent row for turn %s cannot cover the correction "+
+		return "", fmt.Errorf("parent row for turn %s cannot cover the correction "+
 			"(has in=%d out=%d cr=%d cw=%d $%.6f, needs in=%d out=%d cr=%d cw=%d $%.6f)",
-			c.ParentTurnID, in.Int64, out.Int64, cr.Int64, cw.Int64, cost.Float64,
+			parentTurn, in.Int64, out.Int64, cr.Int64, cw.Int64, cost.Float64,
 			c.Counts.Input, c.Counts.Output, c.Counts.CacheRead, c.Counts.CacheWrite, c.CostUSD)
 	}
 
@@ -105,12 +141,12 @@ func applyOneCorrection(db *sql.DB, c modelinfo.CostCorrection) (err error) {
 			calculated_cost_usd     = calculated_cost_usd - ?
 		WHERE turn_id = ? AND call_type = 'delegated_turn'`,
 		c.Counts.Input, c.Counts.Output, c.Counts.CacheRead, c.Counts.CacheWrite,
-		c.CostUSD, c.ParentTurnID)
+		c.CostUSD, parentTurn)
 	if err != nil {
-		return fmt.Errorf("update parent row: %w", err)
+		return "", fmt.Errorf("update parent row: %w", err)
 	}
-	if err = exactlyOne(res, "parent row for turn "+c.ParentTurnID); err != nil {
-		return err
+	if err = exactlyOne(res, "parent row for turn "+parentTurn); err != nil {
+		return "", err
 	}
 
 	// output_tokens moves with turn_output_tokens on a SUBAGENT row only: there
@@ -129,16 +165,16 @@ func applyOneCorrection(db *sql.DB, c modelinfo.CostCorrection) (err error) {
 		c.Counts.Input, c.Counts.Output, c.Counts.CacheRead, c.Counts.CacheWrite,
 		c.Counts.Output, c.CostUSD, c.SubagentTurnID, c.AgentID, c.Model)
 	if err != nil {
-		return fmt.Errorf("update subagent row: %w", err)
+		return "", fmt.Errorf("update subagent row: %w", err)
 	}
 	if err = exactlyOne(res, "subagent row for turn "+c.SubagentTurnID+" agent "+c.AgentID); err != nil {
-		return err
+		return "", err
 	}
 
 	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("commit: %w", err)
+		return "", fmt.Errorf("commit: %w", err)
 	}
-	return nil
+	return parentTurn, nil
 }
 
 // exactlyOne rejects an UPDATE that matched no row or several. Neither target

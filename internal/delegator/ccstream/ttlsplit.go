@@ -187,11 +187,10 @@ type usageAccumulator struct {
 	// rather than excluded from one of them.
 	lastResultAt time.Time
 
-	// windows is the recent turn-window history, and pendingCorrections is the
-	// late spend found to belong to one of them — the raw material for #1918.
-	// Both exist only because a correction must name the turn whose ModelUsage
-	// ALREADY included the spend, which by definition is not the current one.
-	windows            []turnWindow
+	// pendingCorrections is late spend that an already-written row absorbed —
+	// the raw material for #1918. Keyed by the agent, model and BILLING TIME;
+	// the turn that absorbed it is resolved at apply time from api_calls, which
+	// already holds every turn's id beside its timestamp.
 	pendingCorrections map[corrKey]turnUsage
 
 	// appliedAtTurnStart is len(applied) when the current turn opened, so
@@ -262,10 +261,6 @@ func (a *usageAccumulator) snapshot() usageTotals {
 // two describe one window — in tokens AND in time.
 func (a *usageAccumulator) markResult(at time.Time) {
 	a.atLastResult = a.snapshot()
-	// Before lastResultAt moves: the window being closed is the one that ends
-	// HERE, and a turn with several result cycles keeps a single window that
-	// simply extends, because rows are written per TURN.
-	a.closeWindowAt(at)
 	a.lastResultAt = at
 }
 
@@ -278,7 +273,6 @@ func (a *usageAccumulator) beginTurn(turnID string) {
 	// CLONE, not assign: note() raises both baselines when late usage arrives,
 	// and shared maps would make a raise to one show up in the other.
 	a.atTurnStart = a.atLastResult.clone()
-	a.openWindow(turnID)
 	a.curTurn = turnID
 	a.appliedAtTurnStart = len(a.applied)
 }
@@ -437,19 +431,20 @@ func (a *usageAccumulator) note(model, agent string, isSub bool, id string, at t
 	// to be right but leaves it filed under the parent of whichever turn
 	// absorbed it. Record what would put it back on the right row (#1918).
 	//
-	// Both ids or neither: a correction that knows where the spend should GO
-	// but not where it came FROM would add without subtracting, inflating the
-	// session total. If the billing window has aged out of the ring, the
-	// attribution is simply lost — which is the status quo, and safe.
-	bill, ok := a.turnAt(at)
+	// The billing TIME is recorded, not a resolved turn: api_calls holds every
+	// turn's id beside its timestamp, so the row that absorbed the spend is one
+	// indexed lookup at apply time — durable across restarts, with no retention
+	// bound to get wrong. Still both-or-nothing there: a correction that knows
+	// where the spend should GO but not where it came FROM would add without
+	// subtracting and inflate the session total.
 	spawn := a.agentTurn[agent]
-	if !ok || bill == "" || spawn == "" {
+	if spawn == "" {
 		return
 	}
 	if a.pendingCorrections == nil {
 		a.pendingCorrections = make(map[corrKey]turnUsage)
 	}
-	ck := corrKey{Bill: bill, Spawn: spawn, Agent: agent, Model: model}
+	ck := corrKey{BilledAt: at.Truncate(time.Second), Spawn: spawn, Agent: agent, Model: model}
 	c := a.pendingCorrections[ck]
 	c.Input += late.Input
 	c.Output += late.Output
@@ -751,10 +746,14 @@ func (a *usageAccumulator) agentTurns() map[string]string {
 // Model is part of the key because a row carries one model and is priced at
 // that model's rates.
 type corrKey struct {
-	Bill  string
-	Spawn string
-	Agent string
-	Model string
+	// BilledAt is truncated to the second so a burst of messages billed within
+	// the same second coalesces into one correction instead of one per message.
+	// They resolve to the same turn regardless, and a turn is never shorter
+	// than a second.
+	BilledAt time.Time
+	Spawn    string
+	Agent    string
+	Model    string
 }
 
 // drainCorrections returns the pending corrections and clears them, so a
@@ -763,59 +762,4 @@ func (a *usageAccumulator) drainCorrections() map[corrKey]turnUsage {
 	out := a.pendingCorrections
 	a.pendingCorrections = nil
 	return out
-}
-
-// turnWindow is one turn's priced span: from the result that closed the
-// previous window to the result that closed this one. Start is exclusive and
-// End inclusive, matching how a delta is measured.
-//
-// Kept only so late-arriving usage can be told WHICH turn's ModelUsage already
-// included it (#1918). The current window alone cannot answer that: the whole
-// point of a late delivery is that it belongs to an earlier one.
-type turnWindow struct {
-	ID    string
-	Start time.Time
-	End   time.Time
-}
-
-// maxTurnWindows bounds the history. Sixteen covers a background subagent
-// outliving its parent by several turns — the longest observed was 30m20s,
-// which is a handful of turns — while staying small enough that the linear scan
-// is free. Usage older than the oldest retained window is not corrected at all
-// rather than guessed at.
-const maxTurnWindows = 16
-
-// openWindow starts a new window for turnID at the last result's time.
-func (a *usageAccumulator) openWindow(turnID string) {
-	if turnID == "" {
-		return
-	}
-	a.windows = append(a.windows, turnWindow{ID: turnID, Start: a.lastResultAt, End: a.lastResultAt})
-	if len(a.windows) > maxTurnWindows {
-		a.windows = append(a.windows[:0], a.windows[len(a.windows)-maxTurnWindows:]...)
-	}
-}
-
-// closeWindowAt extends the open window's End to a result at `at`. A turn with
-// several result cycles keeps ONE window, ending at its last result, because
-// rows are written per TURN and that is the granularity a correction can name.
-func (a *usageAccumulator) closeWindowAt(at time.Time) {
-	if len(a.windows) == 0 {
-		return
-	}
-	a.windows[len(a.windows)-1].End = at
-}
-
-// turnAt returns the id of the turn whose priced window contains `at`, and
-// whether one was found. A miss means the window has aged out of the ring, and
-// the caller must then apply NO correction at all — half a correction inflates
-// one turn and deflates another, which is the failure #1909 just closed.
-func (a *usageAccumulator) turnAt(at time.Time) (string, bool) {
-	for i := len(a.windows) - 1; i >= 0; i-- {
-		w := a.windows[i]
-		if at.After(w.Start) && !at.After(w.End) {
-			return w.ID, true
-		}
-	}
-	return "", false
 }

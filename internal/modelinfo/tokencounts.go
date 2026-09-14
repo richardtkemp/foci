@@ -106,9 +106,20 @@ type SubagentCost struct {
 // corrections (Dick, 2026-09-14 — "I don't want a correcting pair, I just want
 // a single correct entry").
 type CostCorrection struct {
-	// ParentTurnID is the turn whose parent row absorbed the spend — the turn
-	// whose ModelUsage window the tokens were BILLED in. Loses the amount.
-	ParentTurnID string `json:"parent_turn_id"`
+	// BilledAt is when CC billed the spend — the transcript line's own
+	// timestamp. The turn whose parent row absorbed it is resolved FROM THIS,
+	// at apply time, by asking api_calls for the first turn of this session to
+	// close at or after it. A turn is priced from the PREVIOUS result, so its
+	// window runs from the previous turn's close to its own and the timeline
+	// tiles with no gaps — idle time belongs to the turn that follows it.
+	//
+	// Deliberately not a resolved turn id. An earlier version carried one,
+	// resolved against a 16-entry in-memory ring of turn windows; that ring was
+	// a bounded cache of a mapping api_calls already holds durably, unbounded
+	// and indexed, on the same connection this correction writes through. Its
+	// bound was also wrong: measured over 26,836 turns, 2.4% of 30-minute
+	// windows contain more than 16 turns and the worst holds 155.
+	BilledAt time.Time `json:"billed_at"`
 	// SubagentTurnID is the turn that SPAWNED the agent, under which phase C
 	// files every one of its rows. Gains the amount.
 	SubagentTurnID string `json:"subagent_turn_id"`

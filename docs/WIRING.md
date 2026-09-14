@@ -1528,12 +1528,25 @@ Four outputs:
    already true of straggler rows, and the phase C attribution model rather than a new
    inconsistency.
 
-   Resolving the billing turn needs `usageAccumulator.windows`, a 16-entry ring of
-   `turnWindow{ID, Start, End}` — one per TURN, not per result cycle, because rows are
-   written per turn. `openWindow` at `beginTurn`, `closeWindowAt` at every `markResult` so a
-   multi-cycle turn extends one window. If `at` falls in no retained window the correction
-   is DROPPED ENTIRELY: crediting the subagent without debiting anyone inflates the record,
-   which is the failure #1909 closed.
+   The correction carries the BILLING TIME, not a resolved parent turn. The turn that
+   absorbed the spend is resolved at apply time by asking `api_calls` for the first
+   `delegated_turn` of that session to close at or after it — the session being the part of
+   the turn id before `@`. That works because **a turn is priced from the PREVIOUS result**,
+   so its window runs from the previous turn's close to its own and the timeline TILES with
+   no gaps: idle time belongs to the turn that FOLLOWS it. Verified on the live incident —
+   spend billed 15:41:40 resolves to the turn closing 16:06:29, whose window opened at the
+   15:41:35 result, twenty-five minutes of it idle.
+
+   The comparison is `unixepoch(ts, 'utc')` on BOTH sides, never a bare `ts >= ?`. `ts` is
+   local ISO WITH OFFSET, so across a DST boundary string order and time order disagree —
+   `01:15:00+00:00` sorts before `01:30:00+01:00` and happens 45 minutes later. That is the
+   trap that made the morning cost report read $172.06 against a true $161.17 (#1896).
+
+   *An earlier version resolved this against a 16-entry in-memory ring of turn windows. The
+   ring was a bounded cache of a mapping `api_calls` already holds durably, unbounded and
+   indexed, on the same connection the correction writes through — and its bound was wrong:
+   measured over 26,836 turns, 2.4% of 30-minute windows hold more than 16 turns and the
+   worst holds 155. Removed rather than enlarged; a bigger guess is still a guess.*
 
    Corrections ride `delegator.TurnUsage.Corrections` -> `provider.Usage.Corrections` to
    `turn_delegated.go`, which calls `log.ApplyCostCorrections` **after** `logCall` — a
