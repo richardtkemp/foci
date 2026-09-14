@@ -1597,11 +1597,38 @@ Four outputs:
    prices as a CREDIT and would quietly reduce the bill — and logs a WARN, because the turn
    is then priced above the authoritative total and the divergence check is about to fire.
 
-   Since #1909 put both sides on one clock the clamp should never fire: a window's subagent
-   share is a subset of that window's bill by construction. It is kept as an EXACT detector
-   rather than a repair — if no class clamps then `parent + subagents == total` identically,
-   so an overcharge is possible if and only if the clamp fires. A WARN here now means a
-   third source of skew, not a known one being absorbed.
+   The clamp is an EXACT detector rather than a repair: if no class clamps then
+   `parent + subagents == total` identically, so an overcharge is possible if and only if the
+   clamp fires. Do NOT read that as "it can no longer fire" — an earlier version of this
+   paragraph did, and the clamp fired the same afternoon (#1923).
+
+   **A subagent message counts only at COMPLETION, because that is when `result.modelUsage`
+   counts it.** Directly observed on the turn of 2026-09-14 14:29:09 (`ask_cycles=1`, so
+   neither #1909 cause applied); the result landed at 13:29:09Z:
+
+   ```
+   msg1  first line 13:29:03.792  COMPLETED 13:29:06.049  in=2  out=200 cr=0     cw=13778
+   msg2  first line 13:29:08.395  COMPLETED 13:29:10.669  in=32 out=319 cr=13778 cw=3810
+   modelUsage = {In:2 Out:200 CR:0 CW:13778}   -- exactly msg1, with its FINAL output
+   ```
+
+   msg2 was wholly absent. The accumulator folded its input/cache from the FIRST line, so the
+   subagent bucket held 13,778 cache-read tokens against an authoritative 0 — the parent
+   clamped and the turn priced above its own bill. It also DOUBLE-CHARGED: those tokens were
+   billed in that window via the subagent row, then `markResult` baselined them, so the next
+   window's `modelUsage` held them while the subagent delta did not and the next parent
+   absorbed them again.
+
+   `note()` therefore ignores a subagent line with a nil `stop_reason`. That makes the
+   subagent bucket a SUBSET of `modelUsage` by construction — it can fall short through
+   delivery lag (#1909's territory) but can no longer exceed. It also fixes the EVENT TIME:
+   the completion line's timestamp is the instant `modelUsage` counts the message, so the
+   late-arrival gate now measures against the same event the authority uses.
+
+   SUBAGENTS ONLY. The main-thread bucket contributes no amount to pricing — it supplies the
+   TTL PROPORTIONS `splitFor` allocates the parent's writes by — and most main-thread lines
+   carry no `stop_reason`, so gating them would discard the observed split and dump the
+   residue into `Unknown`, which prices at the dearer rate.
 
    `turnCalcCostUSD`/`turnCalc` deliberately stay the WHOLE turn. They back the divergence
    check, whose other side is CC's cost for everything the process did, and the breakdown

@@ -27,6 +27,20 @@ func msgModel(model, id, parent string, cacheWrite int, e5m, e1h int) *Assistant
 	if parent != "" {
 		m.ParentToolUseID = &parent
 	}
+	// COMPLETE by default. A subagent message counts only at completion, because
+	// that is when result.modelUsage counts it (#1923). These fixtures represent
+	// finished messages; msgModelPartial builds the in-flight shape.
+	stop := "end_turn"
+	m.Message.StopReason = &stop
+	return m
+}
+
+// msgModelPartial is msgModel for a message still IN FLIGHT — no stop_reason,
+// which is every line a message emits before its last. CC emits one line per
+// content block, so this is the majority of lines on the wire.
+func msgModelPartial(model, id, parent string, cacheWrite int, e5m, e1h int) *AssistantMessage {
+	m := msgModel(model, id, parent, cacheWrite, e5m, e1h)
+	m.Message.StopReason = nil
 	return m
 }
 

@@ -19,12 +19,12 @@ func TestAccumulator_MessagesCountsThisTurnOnly(t *testing.T) {
 	var a usageAccumulator
 	a.beginTurn("t1")
 
-	a.note("claude-opus-5", "", false, "msg_a", time.Time{}, TokenUsage{OutputTokens: 1})
+	a.note("claude-opus-5", "", false, "msg_a", time.Time{}, true, TokenUsage{OutputTokens: 1})
 	// The same message redelivered — CC emits one line per content block, each
 	// repeating the whole message's usage. A repeat is not another call.
-	a.note("claude-opus-5", "", false, "msg_a", time.Time{}, TokenUsage{OutputTokens: 5})
-	a.note("claude-opus-5", "", false, "msg_b", time.Time{}, TokenUsage{OutputTokens: 2})
-	a.note("claude-sonnet-5", "agent-x", true, "msg_c", time.Time{}, TokenUsage{OutputTokens: 3})
+	a.note("claude-opus-5", "", false, "msg_a", time.Time{}, true, TokenUsage{OutputTokens: 5})
+	a.note("claude-opus-5", "", false, "msg_b", time.Time{}, true, TokenUsage{OutputTokens: 2})
+	a.note("claude-sonnet-5", "agent-x", true, "msg_c", time.Time{}, true, TokenUsage{OutputTokens: 3})
 
 	if got := a.messages(); got != 3 {
 		t.Errorf("messages() = %d, want 3 — distinct ids, counting a content-block repeat once", got)
@@ -35,7 +35,7 @@ func TestAccumulator_MessagesCountsThisTurnOnly(t *testing.T) {
 	if got := a.messages(); got != 0 {
 		t.Errorf("messages() after beginTurn = %d, want 0 — the map is cumulative, the COUNT is per turn", got)
 	}
-	a.note("claude-opus-5", "", false, "msg_d", time.Time{}, TokenUsage{OutputTokens: 1})
+	a.note("claude-opus-5", "", false, "msg_d", time.Time{}, true, TokenUsage{OutputTokens: 1})
 	if got := a.messages(); got != 1 {
 		t.Errorf("messages() = %d, want 1 — turn 1's three messages must not carry over", got)
 	}

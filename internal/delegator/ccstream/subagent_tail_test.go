@@ -163,7 +163,7 @@ func TestSubagentTail_BackgroundIsTailedForUsageButNotText(t *testing.T) {
 
 	rec := &tailRecorder{}
 	noted := 0
-	mgr := newSubagentTailManager(rec.deliver, func(string, string, string, time.Time, TokenUsage) { noted++ }, nil)
+	mgr := newSubagentTailManager(rec.deliver, func(string, string, string, time.Time, bool, TokenUsage) { noted++ }, nil)
 	// No expectForeground → background path.
 	mgr.maybeStart("tool-bg", path)
 
@@ -220,7 +220,7 @@ func TestSubagentTail_BackgroundRecordsUsageWithoutText(t *testing.T) {
 	rec := &tailRecorder{}
 	var gotModel, gotID string
 	var gotUsage TokenUsage
-	mgr := newSubagentTailManager(rec.deliver, func(_, model, id string, _ time.Time, u TokenUsage) {
+	mgr := newSubagentTailManager(rec.deliver, func(_, model, id string, _ time.Time, _ bool, u TokenUsage) {
 		gotModel, gotID, gotUsage = model, id, u
 	}, nil)
 
@@ -253,7 +253,7 @@ func TestSubagentTail_MaybeStartRunsForBackgroundToo(t *testing.T) {
 	if err := os.WriteFile(path, []byte(""), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	mgr := newSubagentTailManager(nil, func(string, string, string, time.Time, TokenUsage) {}, nil)
+	mgr := newSubagentTailManager(nil, func(string, string, string, time.Time, bool, TokenUsage) {}, nil)
 
 	mgr.maybeStart("toolu_bg", path) // no expectForeground call: background
 

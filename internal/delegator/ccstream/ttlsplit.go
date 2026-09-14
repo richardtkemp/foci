@@ -301,7 +301,7 @@ func (a *usageAccumulator) messages() int {
 // messages — the probe saw 2 of its 3 reach the stream, and all 3 are in the
 // transcript. Background subagents get no tail at all, so they arrive by the
 // stream alone.
-func (a *usageAccumulator) note(model, agent string, isSub bool, id string, at time.Time, u TokenUsage) {
+func (a *usageAccumulator) note(model, agent string, isSub bool, id string, at time.Time, complete bool, u TokenUsage) {
 	// An empty id cannot be reconciled against an earlier delivery of the same
 	// message, so it is dropped rather than risking a multiple. That makes
 	// totals read LOW against ModelUsage, which the divergence check reports —
@@ -309,6 +309,44 @@ func (a *usageAccumulator) note(model, agent string, isSub bool, id string, at t
 	// assistant records on this host: zero had an empty id, so this is a guard,
 	// not a live loss.
 	if id == "" {
+		return
+	}
+	// A SUBAGENT message counts only once it has COMPLETED, because that is when
+	// CC's result.modelUsage counts it — and the parent's share is modelUsage
+	// MINUS this bucket, so the two must agree about when a message exists.
+	//
+	// Directly observed on the turn of 2026-09-14 14:29:09 (ask_cycles=1, so
+	// neither known #1909 cause applied). The result landed at 13:29:09Z:
+	//
+	//   msg …1Qoy  first line 13:29:03.792  COMPLETED 13:29:06.049  cw=13778 cr=0
+	//   msg …nVFsM first line 13:29:08.395  COMPLETED 13:29:10.669  cw=3810  cr=13778
+	//
+	// modelUsage held {In:2 Out:200 CR:0 CW:13778} — exactly msg1, with its
+	// FINAL output. msg2, still in flight, was wholly absent. The accumulator
+	// had folded msg2's input/cache from its FIRST line, so the subagent bucket
+	// held 13,778 cache-read tokens against a modelUsage total of ZERO: the
+	// parent clamped and the turn priced above its own authority.
+	//
+	// It also DOUBLE-CHARGED. msg2's tokens were billed in that window via the
+	// subagent row; markResult then baselined them, so the next window's
+	// modelUsage contained them while the subagent delta did not, and the next
+	// parent absorbed them again.
+	//
+	// Gating on completion makes sub a SUBSET of modelUsage by construction:
+	// modelUsage at a result holds every message completed before it, and this
+	// bucket now holds only completed messages delivered by then. It can fall
+	// short (delivery lag — that is #1909's territory) but can no longer exceed.
+	//
+	// It also fixes the event time: the completion line's timestamp is the
+	// instant modelUsage counts the message, so the #1909 late-arrival gate is
+	// now measured against the same event the authority uses.
+	//
+	// Only subagents. The main-thread bucket contributes no AMOUNT to pricing —
+	// the parent's figures come from modelUsage, and `top` supplies only the
+	// TTL proportions splitFor allocates them by — and the parent stream never
+	// carries a completed subagent line anyway (verified 2026-08-05: the
+	// completed line appears in the subagent TRANSCRIPT, never on the stream).
+	if isSub && !complete {
 		return
 	}
 	if a.applied == nil {
@@ -544,7 +582,8 @@ func (b *Backend) noteAssistantUsage(msg *AssistantMessage) {
 	}
 	// No event time: parent-stream messages arrive synchronously with the run,
 	// so arrival IS the event time to within the stream's latency.
-	b.turnUsageAcc.note(msg.Message.Model, agent, msg.ParentToolUseID != nil, msg.Message.ID, time.Time{}, msg.Message.Usage)
+	b.turnUsageAcc.note(msg.Message.Model, agent, msg.ParentToolUseID != nil, msg.Message.ID,
+		time.Time{}, msg.Message.StopReason != nil, msg.Message.Usage)
 }
 
 // noteSubagentTranscriptUsage records one assistant message read from a
@@ -560,10 +599,10 @@ func (b *Backend) noteAssistantUsage(msg *AssistantMessage) {
 // Always the subagent bucket: this file only exists for a subagent.
 // at is the message's own transcript timestamp — when CC billed it, not when
 // the tail read it. That distinction is the whole of #1909.
-func (b *Backend) noteSubagentTranscriptUsage(agent, model, id string, at time.Time, u TokenUsage) {
+func (b *Backend) noteSubagentTranscriptUsage(agent, model, id string, at time.Time, complete bool, u TokenUsage) {
 	b.turnMu.Lock()
 	defer b.turnMu.Unlock()
-	b.turnUsageAcc.note(model, agent, true, id, at, u)
+	b.turnUsageAcc.note(model, agent, true, id, at, complete, u)
 }
 
 // deltaWrite is cur minus base, class by class. The zero value of turnUsage is
