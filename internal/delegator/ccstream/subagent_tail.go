@@ -131,7 +131,7 @@ type subagentTailManager struct {
 	// deliver because the two have different failure modes: dropping a text
 	// block loses display, dropping usage loses money. May be nil in tests
 	// that only exercise text forwarding.
-	noteUsage func(agent, model, id string, at time.Time, u TokenUsage)
+	noteUsage func(agent, model, id string, at time.Time, complete bool, u TokenUsage)
 	lg        *log.ComponentLogger
 }
 
@@ -146,7 +146,7 @@ type subagentTail struct {
 	done     chan struct{}
 }
 
-func newSubagentTailManager(deliver func(groupKey, text string), noteUsage func(agent, model, id string, at time.Time, u TokenUsage), lg *log.ComponentLogger) *subagentTailManager {
+func newSubagentTailManager(deliver func(groupKey, text string), noteUsage func(agent, model, id string, at time.Time, complete bool, u TokenUsage), lg *log.ComponentLogger) *subagentTailManager {
 	if lg == nil {
 		lg = log.NewComponentLogger("ccstream")
 	}
@@ -336,6 +336,11 @@ type transcriptLine struct {
 		ID    string     `json:"id"`
 		Model string     `json:"model"`
 		Usage TokenUsage `json:"usage"`
+		// StopReason is non-nil only on the line where the message COMPLETED.
+		// CC's result.modelUsage counts a message at completion, so this is the
+		// line whose usage may be folded into the accounting — see note()
+		// (#1923).
+		StopReason *string `json:"stop_reason"`
 	} `json:"message"`
 }
 
@@ -367,7 +372,8 @@ func (m *subagentTailManager) deliverLine(groupKey string, line []byte, wantText
 		// pre-#1909 behaviour, so a format change degrades to the old bucketing
 		// rather than dropping the usage.
 		at, _ := time.Parse(time.RFC3339Nano, rec.Timestamp)
-		m.noteUsage(groupKey, rec.Message.Model, rec.Message.ID, at, rec.Message.Usage)
+		m.noteUsage(groupKey, rec.Message.Model, rec.Message.ID, at,
+			rec.Message.StopReason != nil, rec.Message.Usage)
 	}
 	// Text only when this tail was started for a FOREGROUND subagent. A
 	// background subagent's text already reaches the parent stream, so

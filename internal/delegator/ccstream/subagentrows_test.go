@@ -27,6 +27,10 @@ func fullMsg(model, id, parent string, in, out, cr, cw5m, cw1h int) *AssistantMe
 	if parent != "" {
 		m.ParentToolUseID = &parent
 	}
+	// COMPLETE. A subagent message counts only at completion, matching when
+	// result.modelUsage counts it (#1923); these fixtures are finished messages.
+	stop := "end_turn"
+	m.Message.StopReason = &stop
 	return m
 }
 

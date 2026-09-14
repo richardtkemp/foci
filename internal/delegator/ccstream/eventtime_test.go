@@ -34,10 +34,10 @@ func TestSubagentDelta_RetroactiveUsageStaysOutOfThisTurn(t *testing.T) {
 	a.beginTurn("turn-B")    // windowStart = prevResult
 
 	// The catch-up burst: billed 11 minutes before this window opened.
-	a.note("claude-opus-5", "agent-1", true, "msg_late", duringPrevTurn,
+	a.note("claude-opus-5", "agent-1", true, "msg_late", duringPrevTurn, true,
 		usage(0, 0, 2445048, 0, 0, 0))
 	// Work genuinely done inside this window.
-	a.note("claude-opus-5", "agent-1", true, "msg_now", duringThisTurn,
+	a.note("claude-opus-5", "agent-1", true, "msg_now", duringThisTurn, true,
 		usage(0, 0, 120000, 0, 0, 0))
 
 	d := a.subagentDelta()[subKey{Agent: "agent-1", Model: "claude-opus-5"}]
@@ -47,9 +47,12 @@ func TestSubagentDelta_RetroactiveUsageStaysOutOfThisTurn(t *testing.T) {
 			"ModelUsage and must not be charged again (#1909)", d.CacheRead)
 	}
 
-	// The clamp is an EXACT detector: with both sides on one clock the
-	// subagent share can never exceed the window's authoritative total, so
-	// the parent never clamps and parent+sub reconstructs the total.
+	// With both sides on one clock the subagent share cannot exceed the
+	// window's authoritative total FOR THIS REASON. That is not the same as
+	// "the clamp can no longer fire": an earlier version of this comment said
+	// so, and the clamp fired the same afternoon on a one-cycle turn, from a
+	// message counted at its first line while modelUsage counts it at
+	// COMPLETION (#1923). One cause closed is one cause closed.
 	const modelUsageCacheRead = 2155142 // the live figure for that turn
 	if d.CacheRead > modelUsageCacheRead {
 		t.Errorf("subagent share %d still exceeds ModelUsage %d — the parent would "+
@@ -83,7 +86,7 @@ func TestSubagentDelta_WindowStartIsTheLastResultNotTheTurnOpen(t *testing.T) {
 	a.markResult(lastResult)
 	a.beginTurn("turn-B")
 
-	a.note("claude-opus-5", "agent-1", true, "msg_gap", inTheGap, usage(0, 0, 50000, 0, 0, 0))
+	a.note("claude-opus-5", "agent-1", true, "msg_gap", inTheGap, true, usage(0, 0, 50000, 0, 0, 0))
 
 	d := a.subagentDelta()[subKey{Agent: "agent-1", Model: "claude-opus-5"}]
 	if d.CacheRead != 50000 {
@@ -106,7 +109,7 @@ func TestNote_UntimestampedUsageIsNeverTreatedAsRetroactive(t *testing.T) {
 	a.markResult(time.Date(2026, 9, 13, 14, 41, 35, 0, time.UTC))
 	a.beginTurn("turn-B")
 
-	a.note("claude-opus-5", "agent-1", true, "msg_nots", time.Time{}, usage(0, 0, 77000, 0, 0, 0))
+	a.note("claude-opus-5", "agent-1", true, "msg_nots", time.Time{}, true, usage(0, 0, 77000, 0, 0, 0))
 
 	d := a.subagentDelta()[subKey{Agent: "agent-1", Model: "claude-opus-5"}]
 	if d.CacheRead != 77000 {
@@ -123,7 +126,7 @@ func TestDeliverLine_ParsesTranscriptTimestamp(t *testing.T) {
 	t.Parallel()
 
 	var got time.Time
-	mgr := newSubagentTailManager(nil, func(_, _, _ string, at time.Time, _ TokenUsage) {
+	mgr := newSubagentTailManager(nil, func(_, _, _ string, at time.Time, _ bool, _ TokenUsage) {
 		got = at
 	}, nil)
 
@@ -166,7 +169,7 @@ func TestSubagentDelta_IsPerResultCycleNotPerTurn(t *testing.T) {
 	a.beginTurn("turn-live")
 
 	a.note("claude-opus-5", "agent-1", true, "msg_sub",
-		time.Date(2026, 9, 13, 14, 41, 40, 0, time.UTC), usage(0, 0, subCacheRead, 0, 0, 0))
+		time.Date(2026, 9, 13, 14, 41, 40, 0, time.UTC), true, usage(0, 0, subCacheRead, 0, 0, 0))
 
 	// ---- cycle 1 ----
 	c1 := a.subagentDelta()[k]
@@ -214,10 +217,10 @@ func TestSubagentUsage_StaysWholeTurnAcrossCycles(t *testing.T) {
 	a.beginTurn("turn-live")
 
 	inTurn := time.Date(2026, 9, 13, 14, 41, 40, 0, time.UTC)
-	a.note("claude-opus-5", "agent-1", true, "msg_c1", inTurn, usage(0, 0, 1000000, 0, 0, 0))
+	a.note("claude-opus-5", "agent-1", true, "msg_c1", inTurn, true, usage(0, 0, 1000000, 0, 0, 0))
 	a.markResult(time.Date(2026, 9, 13, 14, 41, 49, 0, time.UTC))
 	a.note("claude-opus-5", "agent-1", true, "msg_c2",
-		time.Date(2026, 9, 13, 14, 41, 50, 0, time.UTC), usage(0, 0, 222524, 0, 0, 0))
+		time.Date(2026, 9, 13, 14, 41, 50, 0, time.UTC), true, usage(0, 0, 222524, 0, 0, 0))
 
 	if got := a.subagentDelta()[subKey{Agent: "agent-1", Model: "claude-opus-5"}].CacheRead; got != 222524 {
 		t.Errorf("pricing delta = %d, want 222524 (cycle 2 only)", got)
@@ -266,13 +269,158 @@ func TestSubagentUsage_ExcludesRetroactiveUsageToo(t *testing.T) {
 	// Billed 11 minutes before this window opened: already inside an earlier
 	// turn's ModelUsage, already paid for there.
 	a.note("claude-opus-5", "agent-1", true, "msg_late",
-		time.Date(2026, 9, 13, 14, 30, 0, 0, time.UTC), usage(0, 0, 2445048, 0, 0, 0))
+		time.Date(2026, 9, 13, 14, 30, 0, 0, time.UTC), true, usage(0, 0, 2445048, 0, 0, 0))
 	// Genuinely this turn's.
 	a.note("claude-opus-5", "agent-1", true, "msg_now",
-		time.Date(2026, 9, 13, 14, 41, 40, 0, time.UTC), usage(0, 0, 120000, 0, 0, 0))
+		time.Date(2026, 9, 13, 14, 41, 40, 0, time.UTC), true, usage(0, 0, 120000, 0, 0, 0))
 
 	if got := a.subagentUsage()["agent-1"].CacheRead; got != 120000 {
 		t.Errorf("breakdown subagent = %d, want 120000 — the breakdown reports spend "+
 			"an earlier turn was already charged for", got)
+	}
+}
+
+// TestNote_InFlightSubagentMessageDoesNotCountYet replays the live clamp of
+// 2026-09-14 14:29:09 (#1923). ask_cycles=1, so neither #1909 cause applied.
+//
+// CC emits one transcript line per content block; result.modelUsage counts a
+// message at COMPLETION. Observed on that turn, result at 13:29:09Z:
+//
+//	msg1  first 13:29:03.792  COMPLETED 13:29:06.049  in=2  out=200 cr=0     cw=13778
+//	msg2  first 13:29:08.395  COMPLETED 13:29:10.669  in=32 out=319 cr=13778 cw=3810
+//
+// modelUsage held exactly msg1 with its FINAL output. msg2 was wholly absent.
+// The accumulator had folded msg2's input/cache from its first line, putting
+// 13,778 cache-read tokens in the subagent bucket against a modelUsage total of
+// ZERO.
+func TestNote_InFlightSubagentMessageDoesNotCountYet(t *testing.T) {
+	t.Parallel()
+
+	k := subKey{Agent: "agent-1", Model: "claude-fable-5-1"}
+	a := &usageAccumulator{}
+	a.markResult(time.Date(2026, 9, 14, 13, 29, 0, 0, time.UTC))
+	a.beginTurn("T1")
+
+	// msg1: completed before the result.
+	a.note("claude-fable-5-1", "agent-1", true, "msg1",
+		time.Date(2026, 9, 14, 13, 29, 6, 49000000, time.UTC), true, usage(2, 200, 0, 13778, 13778, 0))
+	// msg2: first line only — still in flight when the result lands.
+	a.note("claude-fable-5-1", "agent-1", true, "msg2",
+		time.Date(2026, 9, 14, 13, 29, 8, 395000000, time.UTC), false, usage(32, 8, 13778, 3810, 3810, 0))
+
+	d := a.subagentDelta()[k]
+	const modelUsageCacheRead = 0 // what modelUsage actually held for that model
+	if d.CacheRead != modelUsageCacheRead {
+		t.Errorf("subagent cache-read = %d, want %d — msg2 had not completed, so "+
+			"modelUsage does not contain it and neither may this bucket; %d against "+
+			"an authoritative 0 is what clamped the parent and priced the turn "+
+			"above its own bill (#1923)", d.CacheRead, modelUsageCacheRead, d.CacheRead)
+	}
+	if cw := d.Write.total(); cw != 13778 {
+		t.Errorf("subagent cache-write = %d, want 13778 (msg1 only)", cw)
+	}
+	if d.Output != 200 {
+		t.Errorf("subagent output = %d, want 200 — msg1's COMPLETED figure", d.Output)
+	}
+}
+
+// TestNote_CompletedLaterCountsExactlyOnce is the other half: an in-flight
+// message must not be lost, only deferred. It counts in the window its
+// COMPLETION falls in — the same window modelUsage puts it in.
+//
+// Before the gate this double-charged. msg2's tokens were billed in window 1 via
+// the subagent row; markResult then baselined them, so window 2's modelUsage
+// contained them while the subagent delta did not, and window 2's parent — which
+// is modelUsage MINUS the subagent bucket — absorbed them a second time.
+func TestNote_CompletedLaterCountsExactlyOnce(t *testing.T) {
+	t.Parallel()
+
+	k := subKey{Agent: "agent-1", Model: "claude-fable-5-1"}
+	a := &usageAccumulator{}
+	a.markResult(time.Date(2026, 9, 14, 13, 29, 0, 0, time.UTC))
+	a.beginTurn("T1")
+
+	a.note("claude-fable-5-1", "agent-1", true, "msg2",
+		time.Date(2026, 9, 14, 13, 29, 8, 395000000, time.UTC), false, usage(32, 8, 13778, 3810, 3810, 0))
+	if got := a.subagentDelta()[k].CacheRead; got != 0 {
+		t.Fatalf("window 1 cache-read = %d, want 0", got)
+	}
+
+	// Result at 13:29:09, then msg2 completes at 13:29:10.669.
+	a.markResult(time.Date(2026, 9, 14, 13, 29, 9, 0, time.UTC))
+	a.beginTurn("T2")
+	a.note("claude-fable-5-1", "agent-1", true, "msg2",
+		time.Date(2026, 9, 14, 13, 29, 10, 669000000, time.UTC), true, usage(32, 319, 13778, 3810, 3810, 0))
+
+	d := a.subagentDelta()[k]
+	if d.CacheRead != 13778 {
+		t.Errorf("window 2 cache-read = %d, want 13778 — the message completed in "+
+			"this window, which is where modelUsage counts it; dropping it here "+
+			"leaves the parent to absorb it", d.CacheRead)
+	}
+	if d.Output != 319 {
+		t.Errorf("window 2 output = %d, want 319 (the completed figure)", d.Output)
+	}
+	// Counted once across both windows, never twice.
+	if total := a.sub[k].CacheRead; total != 13778 {
+		t.Errorf("cumulative cache-read = %d, want 13778 — counted once", total)
+	}
+}
+
+// TestNote_MainThreadPartialMessagesStillCount: the completion gate is for
+// SUBAGENTS only, and a fail-arm that widened it to the main thread reddened
+// nothing — so nothing covered this.
+//
+// The main thread's bucket contributes no AMOUNT to pricing (the parent's
+// figures come from modelUsage), but it does supply the TTL PROPORTIONS
+// splitFor allocates the parent's cache writes by. CC emits one line per content
+// block, so most main-thread lines carry no stop_reason; gating them would throw
+// away the observed split and dump the residue into Unknown, which prices at the
+// more expensive rate.
+func TestNote_MainThreadPartialMessagesStillCount(t *testing.T) {
+	t.Parallel()
+
+	a := &usageAccumulator{}
+	a.markResult(time.Date(2026, 9, 14, 13, 29, 0, 0, time.UTC))
+	a.beginTurn("T1")
+
+	// In flight: no stop_reason, exactly as a mid-message content block arrives.
+	a.note("claude-opus-5", "", false, "msg_top", time.Time{}, false, usage(0, 0, 0, 5000, 5000, 0))
+
+	w := a.topWriteSplitByModel()["claude-opus-5"]
+	if w.Ephemeral5m != 5000 {
+		t.Errorf("main-thread 5m split = %d, want 5000 — gating the main thread on "+
+			"completion discards the observed TTL split, and the residue prices at "+
+			"the 1h rate", w.Ephemeral5m)
+	}
+}
+
+// TestDeliverLine_ReportsCompletionFromStopReason: a fail-arm that made the tail
+// call every line complete reddened nothing, because no test checked the flag
+// the tail derives. Without this, the accumulator's gate could be perfect and the
+// tail would still feed it in-flight messages marked complete.
+func TestDeliverLine_ReportsCompletionFromStopReason(t *testing.T) {
+	t.Parallel()
+
+	var got []bool
+	mgr := newSubagentTailManager(nil, func(_, _, _ string, _ time.Time, complete bool, _ TokenUsage) {
+		got = append(got, complete)
+	}, nil)
+
+	base := `{"type":"assistant","isSidechain":true,"timestamp":"2026-09-14T13:29:08.395Z",` +
+		`"message":{"id":"msg_1","model":"claude-fable-5-1","usage":{"cache_read_input_tokens":5}`
+	mgr.deliverLine("agent-1", []byte(base+`}}`), false)                          // in flight
+	mgr.deliverLine("agent-1", []byte(base+`,"stop_reason":"tool_use"}}`), false) // completed
+
+	want := []bool{false, true}
+	if len(got) != len(want) {
+		t.Fatalf("noteUsage called %d times, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("line %d complete = %v, want %v — the tail is not reading "+
+				"stop_reason, so every in-flight line would count as a finished "+
+				"message (#1923)", i, got[i], want[i])
+		}
 	}
 }
