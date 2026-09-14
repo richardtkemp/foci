@@ -393,12 +393,6 @@ type Usage struct {
 	// through. Each becomes its own api_calls row. Empty on the direct API
 	// path, which has no subagents.
 	Subagents []modelinfo.SubagentCost `json:"subagents,omitempty"`
-
-	// Corrections move spend off an ALREADY-WRITTEN row and onto another
-	// (#1918) — passed through from delegator.TurnUsage.Corrections so the
-	// writer can apply them after it has written this turn's own rows. Unlike
-	// Subagents these describe no new row; nil in the normal case.
-	Corrections []modelinfo.CostCorrection `json:"corrections,omitempty"`
 }
 
 // AsTurn returns this usage's four classes as the turn total, for a writer
