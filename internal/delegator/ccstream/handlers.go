@@ -990,6 +990,11 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 					b.agents.OnStatus("")
 				}
 				if groupKey != "" {
+					// The real end for BOTH kinds, and the only safe place to stop a
+					// BACKGROUND tail: its Agent PostToolUse fired at launch, before
+					// CC had written a byte of the transcript (#1924). Drains any
+					// lines appended right before completion.
+					b.subagentTails().finalize(groupKey)
 					b.logger().Infof("subagent_end signal=task_notification group=%s run=%d", groupKey, runIndex)
 					if se := b.sessionEvents.Load(); se != nil && se.OnSubagentEnd != nil {
 						se.OnSubagentEnd(groupKey, runIndex)

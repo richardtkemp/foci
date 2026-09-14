@@ -291,3 +291,101 @@ func TestSubagentTail_MaybeStartKeepsTextForForeground(t *testing.T) {
 	}
 	mgr.stopAll()
 }
+
+// TestSubagentTail_BackgroundSurvivesPostToolUseAtLaunch reproduces the ORDER
+// production always follows for a background subagent (#1924).
+//
+// A background Agent tool_use resolves the INSTANT the task is launched, so its
+// PostToolUse hook fires immediately — before CC has created the transcript.
+// hooks.go finalized the tail there, on the strength of a comment saying it was
+// a "No-op for background / untailed subagents". That was true until 55faa1d8
+// made maybeStart tail EVERY subagent, and nothing updated the comment: the tail
+// was killed before its first byte.
+//
+// Live proof (agent toolu_01B4Qnwq7ifHthnSbngXzaCR): the transcript holds 13
+// completed messages totalling 47,438 output tokens; its api_calls rows hold 86
+// — the parent stream's placeholders. The tail delivered nothing.
+//
+// The existing background test calls maybeStart and reads lines, but never
+// finalize, so it could not see this.
+func TestSubagentTail_BackgroundSurvivesPostToolUseAtLaunch(t *testing.T) {
+	withFastTail(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent-bg.jsonl")
+
+	var mu sync.Mutex
+	var outputs []int
+	mgr := newSubagentTailManager(nil, func(_, _, _ string, _ time.Time, complete bool, u TokenUsage) {
+		if !complete {
+			return
+		}
+		mu.Lock()
+		outputs = append(outputs, u.OutputTokens)
+		mu.Unlock()
+	}, nil)
+
+	// No expectForeground → background. The transcript does NOT exist yet, which
+	// is the whole point: the task has only just been launched.
+	mgr.maybeStart("tool-bg", path)
+
+	// The background Agent tool_use resolves at once, so PostToolUse fires HERE.
+	mgr.finalizeForeground("tool-bg")
+
+	// CC now creates the transcript and the subagent does its real work.
+	if err := os.WriteFile(path, []byte(
+		`{"type":"assistant","isSidechain":true,"timestamp":"2026-09-14T13:29:06.049Z",`+
+			`"message":{"id":"m1","model":"claude-fable-5-1","stop_reason":"tool_use",`+
+			`"usage":{"output_tokens":47438,"cache_read_input_tokens":951007}}}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(outputs) == 1
+	})
+	mu.Lock()
+	got := append([]int(nil), outputs...)
+	mu.Unlock()
+	if len(got) != 1 || got[0] != 47438 {
+		t.Fatalf("completed usage delivered = %v, want [47438] — the tail was killed by "+
+			"the launch-time PostToolUse, so a background subagent's entire spend never "+
+			"reaches the accounting (#1924)", got)
+	}
+
+	// The REAL end signal, which arrives when the task actually completes.
+	mgr.finalize("tool-bg")
+}
+
+// TestSubagentTail_ForegroundStillFinalizesAtPostToolUse guards the other
+// direction: a foreground subagent's PostToolUse fires when it has genuinely
+// finished, and its text must be drained before the chit closes. Exempting
+// background tails must not exempt foreground ones.
+func TestSubagentTail_ForegroundStillFinalizesAtPostToolUse(t *testing.T) {
+	withFastTail(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent-fg.jsonl")
+
+	rec := &tailRecorder{}
+	mgr := newSubagentTailManager(rec.deliver, nil, nil)
+	mgr.expectForeground("tool-fg")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mgr.maybeStart("tool-fg", path)
+	waitFor(t, func() bool { return fileOpened(mgr, "tool-fg") })
+
+	f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	f.WriteString(assistantLine("FINAL-MSG"))
+	f.Close()
+
+	mgr.finalizeForeground("tool-fg") // must drain and stop, exactly as before
+
+	if got := rec.texts(); len(got) != 1 || got[0] != "FINAL-MSG" {
+		t.Fatalf("foreground finalize did not drain: got %v", got)
+	}
+	if fileOpened(mgr, "tool-fg") {
+		t.Error("foreground tail still running after its PostToolUse — its chit would " +
+			"never close")
+	}
+}

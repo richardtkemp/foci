@@ -227,6 +227,44 @@ func (m *subagentTailManager) finalize(toolUseID string) {
 	<-t.done
 }
 
+// finalizeForeground stops the tail for toolUseID ONLY IF it is a foreground
+// one. Called from the Agent PostToolUse hook (#1924).
+//
+// A FOREGROUND Agent tool_use resolves when the subagent has genuinely finished,
+// so its PostToolUse is the right moment to drain the last text into the chit.
+// A BACKGROUND one resolves the INSTANT the task is launched — the hook's own
+// comment says so — so finalizing there kills the tail before CC has even
+// created the transcript.
+//
+// That used to be harmless: the tail ran for foreground subagents only, and the
+// call site's comment still says "No-op for background / untailed subagents".
+// 55faa1d8 made maybeStart tail EVERY subagent for its USAGE and left the
+// comment behind, so the no-op became a kill. Measured on a live background
+// subagent: 13 completed messages worth 47,438 output tokens in the transcript
+// against 86 in its rows — everything present had come from the parent stream,
+// and the tail had delivered nothing.
+//
+// Background tails end at task_notification:completed instead, which the same
+// comment already names as the real end signal for both kinds.
+//
+// A pending expectForeground entry is cleared either way: a subagent that ended
+// before task_started (an immediate error) has no tail to look up, and leaving
+// the entry would make a later, unrelated tail deliver text.
+func (m *subagentTailManager) finalizeForeground(toolUseID string) {
+	if m == nil || toolUseID == "" {
+		return
+	}
+	m.mu.Lock()
+	delete(m.expectFg, toolUseID)
+	t := m.tails[toolUseID]
+	if t == nil || !t.wantText {
+		m.mu.Unlock()
+		return
+	}
+	m.mu.Unlock()
+	m.finalize(toolUseID)
+}
+
 // stopAll cancels every running tail without waiting. Called on backend
 // teardown so no tailer goroutine outlives the process.
 func (m *subagentTailManager) stopAll() {

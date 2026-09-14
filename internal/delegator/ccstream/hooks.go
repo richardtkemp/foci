@@ -353,14 +353,22 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 	// here: the Agent tool runs at the parent level, so the sidechain filter above
 	// already let it through).
 	if parsed.ToolName == "Agent" {
-		// Drain and stop the foreground transcript tail so every subagent text block
-		// lands in the chit. No-op for background / untailed subagents.
+		// Drain and stop the FOREGROUND transcript tail so every subagent text block
+		// lands in the chit.
 		//
-		// The END signal is NOT fired here: a BACKGROUND Agent tool_use resolves the
-		// instant the task is launched, so this PostToolUse fires while the subagent
-		// runs on — marking the chit complete prematurely. The real end (fg and bg
-		// alike) is task_notification:completed (handlers.go). Logged for comparison.
-		b.subagentTails().finalize(parsed.ToolUseID)
+		// FOREGROUND ONLY, and that is load-bearing (#1924). The END signal is not
+		// fired here because a BACKGROUND Agent tool_use resolves the instant the
+		// task is launched, so this PostToolUse fires while the subagent runs on —
+		// and for exactly the same reason the tail must not be stopped here either.
+		// This used to call finalize() unconditionally under a comment claiming it
+		// was a "No-op for background / untailed subagents", which stopped being
+		// true when 55faa1d8 began tailing every subagent for its usage: the tail
+		// was then killed before CC had created the transcript, and a background
+		// subagent's whole spend never reached the accounting.
+		//
+		// The real end for both kinds is task_notification:completed (handlers.go),
+		// which now finalizes the background tail. Logged for comparison.
+		b.subagentTails().finalizeForeground(parsed.ToolUseID)
 		b.logger().Infof("subagent_end signal=agent_post_tool_use tuid=%s", parsed.ToolUseID)
 	}
 
