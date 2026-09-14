@@ -178,30 +178,14 @@ type usageAccumulator struct {
 	curTurn   string
 	agentTurn map[string]string
 
-	// lastResultAt is the wall-clock time of the most recent RESULT, and
-	// windowStart is that time as of when the current turn opened — the EVENT-TIME
-	// twin of atLastResult/atTurnStart. Every per-turn figure is a difference
-	// from atTurnStart, so the time boundary has to sit at exactly the same
-	// place as the token boundary: the previous result, not the turn's open.
+	// lastResultAt is the wall-clock time of the most recent RESULT — the
+	// EVENT-TIME twin of atLastResult, and the start of the window currently
+	// being priced. Usage BILLED before it was already inside an earlier
+	// window's authoritative ModelUsage and has already been paid for there
+	// (#1909); note() keeps such usage out of every live delta by raising the
+	// baselines along with the total, so it is invisible to both windows
+	// rather than excluded from one of them.
 	lastResultAt time.Time
-	windowStart  time.Time
-
-	// subRetro is subagent usage this turn that was BILLED BEFORE windowStart —
-	// delivered late by the transcript tail, but already inside an earlier
-	// turn's authoritative ModelUsage total, and therefore already paid for by
-	// that turn's parent share. subagentDelta takes it back out.
-	//
-	// This is #1909. The parent share is computed as ModelUsage minus the
-	// subagent bucket, and those two were measured on different clocks:
-	// ModelUsage buckets by when CC BILLED a token, the accumulator by when
-	// foci HEARD of it. A background subagent's catch-up burst therefore
-	// subtracted 2,445,048 cache-read tokens from a turn whose entire
-	// authoritative bill was 2,155,142 — the parent clamped at zero and the
-	// turn was priced $2.7853 against a true $1.8745, a 48.6% overcharge.
-	// Excluding the retroactive share puts both sides back on one clock, so
-	// parent+subagents reconstructs the total by construction and the clamp
-	// has nothing left to catch.
-	subRetro map[subKey]turnUsage
 
 	// appliedAtTurnStart is len(applied) when the current turn opened, so
 	// len(applied) minus it is how many DISTINCT assistant messages this turn
@@ -221,6 +205,36 @@ type usageAccumulator struct {
 type usageTotals struct {
 	top map[string]turnUsage
 	sub map[subKey]turnUsage
+}
+
+// clone deep-copies the maps so a baseline can be RAISED without mutating the
+// other baseline it was copied from. beginTurn used to assign usageTotals
+// straight across, which copies the struct but SHARES its maps — harmless while
+// baselines were only ever replaced wholesale, and a silent cross-write once
+// note() began raising them (#1909).
+func (t usageTotals) clone() usageTotals {
+	top := make(map[string]turnUsage, len(t.top))
+	for k, v := range t.top {
+		top[k] = v
+	}
+	sub := make(map[subKey]turnUsage, len(t.sub))
+	for k, v := range t.sub {
+		sub[k] = v
+	}
+	return usageTotals{top: top, sub: sub}
+}
+
+// raiseSub adds u to the subagent baseline for k, allocating if needed.
+func (t *usageTotals) raiseSub(k subKey, u turnUsage) {
+	if t.sub == nil {
+		t.sub = make(map[subKey]turnUsage)
+	}
+	e := t.sub[k]
+	e.Input += u.Input
+	e.Output += u.Output
+	e.CacheRead += u.CacheRead
+	e.Write = e.Write.addSplit(u.Write)
+	t.sub[k] = e
 }
 
 // snapshot copies the current totals by value.
@@ -250,15 +264,11 @@ func (a *usageAccumulator) markResult(at time.Time) {
 // last result and this turn opening are inside the window that will be priced,
 // so the baseline has to sit before them, not after.
 func (a *usageAccumulator) beginTurn(turnID string) {
-	a.atTurnStart = a.atLastResult
-	// The event-time boundary mirrors the token baseline exactly. Taking
-	// time.Now() here instead would open a gap between the last result and the
-	// turn's start in which real spend belongs to this turn by tokens but to no
-	// turn by time.
-	a.windowStart = a.lastResultAt
+	// CLONE, not assign: note() raises both baselines when late usage arrives,
+	// and shared maps would make a raise to one show up in the other.
+	a.atTurnStart = a.atLastResult.clone()
 	a.curTurn = turnID
 	a.appliedAtTurnStart = len(a.applied)
-	a.subRetro = nil
 }
 
 // messages is how many distinct assistant messages this turn accumulated — the
@@ -382,28 +392,34 @@ func (a *usageAccumulator) note(model, agent string, isSub bool, id string, at t
 	tu.Write.Unknown += cur.Write.Unknown - prev.Write.Unknown
 
 	// Cumulative totals above are unconditional — they are the session's record
-	// of what each agent spent and the event time does not change that. Only
-	// the TURN's share is gated, by recording the retroactive part so
-	// subagentDelta can take it back out.
+	// of what each agent spent, and when foci heard about it does not change
+	// that. What IS conditional is whether the spend belongs to a live window.
+	//
+	// Usage billed before the current window opened was already inside an
+	// earlier window's ModelUsage and has already been paid for by that
+	// window's parent share. Charging it again is #1909. Raising every live
+	// baseline by the same amount makes it invisible to EVERY delta measured
+	// from them — the per-cycle one and the whole-turn one alike — which is
+	// what "already accounted for" means. Excluding it from one window only
+	// would leave it charged in the other.
 	//
 	// Restricted to subagents because they are the only class that arrives
 	// late: the main thread's messages come in on the parent stream with the
 	// result, carry no timestamp at all, and so pass through with a zero `at`.
-	if !isSub || at.IsZero() || a.windowStart.IsZero() || !at.Before(a.windowStart) {
+	// A zero `at` means "unknown, treat as now" and never "billed at the
+	// epoch" — getting that backwards would zero every subagent share.
+	if !isSub || at.IsZero() || a.lastResultAt.IsZero() || !at.Before(a.lastResultAt) {
 		return
 	}
-	if a.subRetro == nil {
-		a.subRetro = make(map[subKey]turnUsage)
+	late := turnUsage{
+		Input:     cur.Input - prev.Input,
+		Output:    cur.Output - prev.Output,
+		CacheRead: cur.CacheRead - prev.CacheRead,
+		Write:     deltaWrite(cur.Write, prev.Write),
 	}
 	k := subKey{Agent: agent, Model: model}
-	r := a.subRetro[k]
-	r.Input += cur.Input - prev.Input
-	r.Output += cur.Output - prev.Output
-	r.CacheRead += cur.CacheRead - prev.CacheRead
-	r.Write.Ephemeral5m += cur.Write.Ephemeral5m - prev.Write.Ephemeral5m
-	r.Write.Ephemeral1h += cur.Write.Ephemeral1h - prev.Write.Ephemeral1h
-	r.Write.Unknown += cur.Write.Unknown - prev.Write.Unknown
-	a.subRetro[k] = r
+	a.atLastResult.raiseSub(k, late)
+	a.atTurnStart.raiseSub(k, late)
 }
 
 func maxInt(a, b int) int {
@@ -567,7 +583,10 @@ func deltaWrite(cur, base cacheWriteSplit) cacheWriteSplit {
 // close while it was running.
 func (a *usageAccumulator) subagentUsage() map[string]turnUsage {
 	out := make(map[string]turnUsage, len(a.sub))
-	for k, d := range a.subagentDelta() {
+	// WHOLE TURN, deliberately — this backs the breakdown line, which describes
+	// the turn a reader asked about. subagentDelta is per RESULT CYCLE because
+	// pricing is; the two must not be conflated (#1909).
+	for k, d := range a.subagentDeltaFrom(a.atTurnStart) {
 		e := out[k.Agent]
 		e.Input += d.Input
 		e.Output += d.Output
@@ -588,29 +607,39 @@ func (a *usageAccumulator) subagentUsage() map[string]turnUsage {
 // because the maps are cumulative for the Backend's life (phase B) and every
 // subagent the session ever ran is a key — emitting those would write a
 // zero-cost row per historical subagent on every turn.
+// It is measured from the LAST RESULT, not from the turn's start, because the
+// figure it is subtracted from — modelUsageDelta — is measured from there too.
+// Mixing the two is #1909's second and larger half: on a turn with two result
+// cycles the handler added this map once PER CYCLE while it still reported
+// cumulative-since-turn-start, so a subagent was charged twice, and cycle 2's
+// parent was subtracted from a per-cycle total it could not cover and pinned at
+// zero. Reconstructed exactly from the live 2026-09-13 15:41:50 turn:
+//
+//	cycle 1:  sub 1,222,524 < total 1,843,451 -> parent   620,927  (row matched)
+//	cycle 2:  sub 1,222,524 > total   311,691 -> parent         0  (CLAMPED)
+//	charged   620,927 + 0 + 1,222,524*2 = 3,065,975 against a bill of 2,155,142
+//
+// Both clamp warnings foci has ever emitted were on ask_cycles=2 turns.
 func (a *usageAccumulator) subagentDelta() map[subKey]turnUsage {
+	return a.subagentDeltaFrom(a.atLastResult)
+}
+
+// subagentDeltaFrom is subagentDelta against an explicit baseline, so the
+// per-cycle window (pricing) and the whole-turn window (the breakdown line) can
+// share one implementation and cannot drift apart.
+func (a *usageAccumulator) subagentDeltaFrom(base usageTotals) map[subKey]turnUsage {
 	out := make(map[subKey]turnUsage, len(a.sub))
 	for k, tu := range a.sub {
-		b := a.atTurnStart.sub[k]
+		b := base.sub[k]
 		if *tu == b {
 			continue
 		}
-		// Minus the retroactive share: tokens this agent spent BEFORE the
-		// window opened but delivered inside it. They belong to an earlier
-		// turn's ModelUsage, which has already been priced (#1909).
-		r := a.subRetro[k]
-		d := turnUsage{
-			Input:     tu.Input - b.Input - r.Input,
-			Output:    tu.Output - b.Output - r.Output,
-			CacheRead: tu.CacheRead - b.CacheRead - r.CacheRead,
-			Write:     deltaWrite(deltaWrite(tu.Write, b.Write), r.Write),
+		out[k] = turnUsage{
+			Input:     tu.Input - b.Input,
+			Output:    tu.Output - b.Output,
+			CacheRead: tu.CacheRead - b.CacheRead,
+			Write:     deltaWrite(tu.Write, b.Write),
 		}
-		// A delta that is entirely retroactive nets to zero, and an empty
-		// entry would write a zero-cost row per catch-up burst.
-		if d == (turnUsage{}) {
-			continue
-		}
-		out[k] = d
 	}
 	return out
 }
@@ -640,7 +669,7 @@ func (a *usageAccumulator) subagentDelta() map[subKey]turnUsage {
 func (a *usageAccumulator) topWriteSplitByModel() map[string]cacheWriteSplit {
 	out := make(map[string]cacheWriteSplit, len(a.top))
 	for model, tu := range a.top {
-		out[model] = out[model].addSplit(deltaWrite(tu.Write, a.atTurnStart.top[model].Write))
+		out[model] = out[model].addSplit(deltaWrite(tu.Write, a.atLastResult.top[model].Write))
 	}
 	return out
 }
