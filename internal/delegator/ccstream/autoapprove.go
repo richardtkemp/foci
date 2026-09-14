@@ -30,13 +30,21 @@ func parseAutoApproveRules(rules []string) []autoApproveRule {
 
 // autoApprovePermission checks the request against compiled rules and, if
 // matched, sends an allow response directly. Returns true if auto-approved.
-func (b *Backend) autoApprovePermission(msg *PermissionRequest) bool {
+// The second return is the substitutability veto's reason, set only when a rule
+// DID match but the guard refused it (#1906). Before this, that refusal was
+// entirely silent: the user got an ordinary prompt for a command sitting on
+// their own allowlist, with nothing anywhere saying why.
+func (b *Backend) autoApprovePermission(msg *PermissionRequest) (bool, string) {
 	if len(b.autoApproveRules) == 0 {
-		return false
+		return false, ""
 	}
 
-	if !autoapprove.MatchWithEnv(b.autoApproveRules, msg.Request.ToolName, msg.Request.Input, b.autoApproveEnv) {
-		return false
+	matched, vetoReason := autoapprove.MatchWithEnv(b.autoApproveRules, msg.Request.ToolName, msg.Request.Input, b.autoApproveEnv)
+	if !matched {
+		if vetoReason != "" {
+			b.logger().Warnf("auto-approve VETOED: tool=%s summary=%q req_id=%s — %s", msg.Request.ToolName, msg.Request.Summary(), msg.RequestID, vetoReason)
+		}
+		return false, vetoReason
 	}
 
 	summary := msg.Request.Summary()
@@ -50,8 +58,8 @@ func (b *Backend) autoApprovePermission(msg *PermissionRequest) bool {
 	}
 	if err := b.writer.SendControlResponse(msg.RequestID, resp); err != nil {
 		b.logger().Warnf("auto-approve send failed: %v", err)
-		return false
+		return false, ""
 	}
 
-	return true
+	return true, ""
 }

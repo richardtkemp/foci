@@ -185,7 +185,13 @@ func (b *Backend) checkAutoApprove(pp pendingPermission) bool {
 			input, _ = json.Marshal(map[string]string{"pattern": pattern})
 		}
 
-		if !autoapprove.MatchWithEnv(b.autoApproveRules, toolName, input, b.autoApproveEnv) {
+		matched, vetoReason := autoapprove.MatchWithEnv(b.autoApproveRules, toolName, input, b.autoApproveEnv)
+		if !matched {
+			// See the ccstream equivalent: a veto means a rule DID match and the
+			// guard overrode it, which is otherwise silent (#1906).
+			if vetoReason != "" {
+				log.NewComponentLogger(b.logComponent()).Warnf("auto-approve VETOED: tool=%s — %s", toolName, vetoReason)
+			}
 			return false
 		}
 	}

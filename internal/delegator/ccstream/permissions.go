@@ -42,12 +42,20 @@ func (b *Backend) handleToolRequest(msg *PermissionRequest) {
 	}
 
 	// Check auto-approve rules before prompting the user.
-	if b.autoApprovePermission(msg) {
+	approved, vetoReason := b.autoApprovePermission(msg)
+	if approved {
 		return
 	}
 
 	summary := msg.Request.Summary()
 	text := msg.Request.DisplayText()
+	// A veto means a rule DID match and the guard overrode it. Say so HERE, in
+	// the prompt, rather than only in the log: this is the moment the user is
+	// wondering why they are being asked about a command they allowlisted, and
+	// a log line they would have to go and find does not answer it (#1906).
+	if vetoReason != "" {
+		text += "\n\n⚠️ " + vetoReason
+	}
 	choices := msg.Request.Choices()
 
 	// ExitPlanMode: the plan markdown is large, and the generic formatter would

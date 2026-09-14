@@ -57,7 +57,7 @@ func TestMatchTimeVeto_WritableExecutableIsNotApproved(t *testing.T) {
 		HomeDir:      "/home/foci",
 	})
 	rules := Compile([]string{"Bash:sqlite3 *"})
-	if MatchWithEnv(rules, "Bash", bashInput(t, "sqlite3 -readonly /tmp/x.db 'SELECT 1'"), nil) {
+	if ok, _ := MatchWithEnv(rules, "Bash", bashInput(t, "sqlite3 -readonly /tmp/x.db 'SELECT 1'"), nil); ok {
 		t.Error("a writable executable must not be auto-approved despite a matching rule")
 	}
 }
@@ -73,7 +73,7 @@ func TestMatchTimeVeto_ReadOnlyExecutableIsApproved(t *testing.T) {
 		HomeDir:      "/home/foci",
 	})
 	rules := Compile([]string{"Bash:sqlite3 *"})
-	if !MatchWithEnv(rules, "Bash", bashInput(t, "sqlite3 -readonly /tmp/x.db 'SELECT 1'"), nil) {
+	if ok, _ := MatchWithEnv(rules, "Bash", bashInput(t, "sqlite3 -readonly /tmp/x.db 'SELECT 1'"), nil); !ok {
 		t.Error("a read-only executable with a matching rule must be auto-approved")
 	}
 }
@@ -89,7 +89,7 @@ func TestMatchTimeVeto_AppliesToBuiltinReadonlyRules(t *testing.T) {
 		HomeDir:      "/home/foci",
 	})
 	rules := Compile(CommonReadonlyRules)
-	if MatchWithEnv(rules, "Bash", bashInput(t, "cat /etc/hostname"), nil) {
+	if ok, _ := MatchWithEnv(rules, "Bash", bashInput(t, "cat /etc/hostname"), nil); ok {
 		t.Error("a built-in readonly rule must not approve a substitutable binary")
 	}
 }
@@ -132,7 +132,7 @@ func TestMatchTimeVeto_CatchesAShadowPlantedAfterStartup(t *testing.T) {
 	cmd := bashInput(t, "mytool --version")
 
 	// Before: resolves to the read-only real tool, so it is approved.
-	if !MatchWithEnv(rules, "Bash", cmd, nil) {
+	if ok, _ := MatchWithEnv(rules, "Bash", cmd, nil); !ok {
 		t.Fatal("precondition failed: the read-only tool should be approved")
 	}
 	// Plant the shadow, exactly as a running agent could at any time.
@@ -140,7 +140,7 @@ func TestMatchTimeVeto_CatchesAShadowPlantedAfterStartup(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	// After: the SAME rules object, no restart, no reload.
-	if MatchWithEnv(rules, "Bash", cmd, nil) {
+	if ok, _ := MatchWithEnv(rules, "Bash", cmd, nil); ok {
 		t.Error("a shadow planted after the rules were compiled must be caught")
 	}
 }

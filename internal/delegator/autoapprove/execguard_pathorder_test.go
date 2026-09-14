@@ -83,7 +83,7 @@ func TestGuardSeesTheOperatorPathAndNotTheDaemonsOwn(t *testing.T) {
 
 	// Control: the shim is nowhere near either PATH yet, so the guard must
 	// have nothing to say about it.
-	if commandIsSubstitutable(probe + " --version") {
+	if sub, _, _ := commandIsSubstitutable(probe + " --version"); sub {
 		t.Fatal("control failed: the shim must not be reachable before the dotfile is loaded")
 	}
 
@@ -101,7 +101,7 @@ func TestGuardSeesTheOperatorPathAndNotTheDaemonsOwn(t *testing.T) {
 		t.Fatalf("precondition failed: %s leaked onto the DAEMON's own PATH — the capture must stay a value (#1914)", shimDir)
 	}
 
-	if !commandIsSubstitutable(probe + " --version") {
+	if sub, _, _ := commandIsSubstitutable(probe + " --version"); !sub {
 		t.Fatal("the guard did not see a writable shim that IS on the operator PATH: it is judging the daemon's PATH, so it clears a different binary than the one the agent runs (#1900, #1914)")
 	}
 }

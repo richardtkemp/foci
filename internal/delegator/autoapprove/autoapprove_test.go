@@ -11,7 +11,8 @@ import (
 )
 
 func matchAutoApprove(rules []Rule, toolName string, input json.RawMessage) bool {
-	return matchAutoApproveWithEnv(rules, toolName, input, EnvironmentFromList(os.Environ()))
+	ok, _ := matchAutoApproveWithEnv(rules, toolName, input, EnvironmentFromList(os.Environ()))
+	return ok
 }
 
 // TestPathTypedToolsMatchToolMatchKeys proves pathTypedTools stays in sync with
@@ -1410,10 +1411,10 @@ func TestShellInterceptorUsesProvidedEnvironment(t *testing.T) {
 	rules := parseAutoApproveRules([]string{"Bash:ls"})
 	input := json.RawMessage(`{"command":"bash -c \"$BASHC_TEST_VAR\""}`)
 
-	if !MatchWithEnv(rules, "Bash", input, map[string]string{"BASHC_TEST_VAR": "ls"}) {
+	if ok, _ := MatchWithEnv(rules, "Bash", input, map[string]string{"BASHC_TEST_VAR": "ls"}); !ok {
 		t.Fatal("safe backend environment should be auto-approved")
 	}
-	if MatchWithEnv(rules, "Bash", input, map[string]string{"BASHC_TEST_VAR": "rm -rf /"}) {
+	if ok, _ := MatchWithEnv(rules, "Bash", input, map[string]string{"BASHC_TEST_VAR": "rm -rf /"}); ok {
 		t.Fatal("dangerous backend environment must not be auto-approved")
 	}
 }
