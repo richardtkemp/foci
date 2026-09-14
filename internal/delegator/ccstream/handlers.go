@@ -678,7 +678,7 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	// Under turnMu because the accumulator is turnMu-guarded, not b.mu-guarded
 	// like lastModelUsage — the two baselines describe one window but are
 	// protected by different locks, so they cannot be marked together.
-	b.turnUsageAcc.markResult()
+	b.turnUsageAcc.markResult(time.Now())
 	if checkCost {
 		// The PARENT's cost and counts, not the turn's: since #1880 phase C a
 		// turn with subagents writes one row per subagent beside this one, and

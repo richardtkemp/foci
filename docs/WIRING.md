@@ -1481,6 +1481,25 @@ Four outputs:
    full wipe is `reset()`, from `finalizeExit`: the dedupe set holds one entry per API
    call ever seen, so the subprocess going away is the point it must be cleared.
 
+   **The baseline has an EVENT-TIME twin, and it sits in the same place (#1909).**
+   `markResult` also records `lastResultAt`, and `beginTurn` copies it to `windowStart`
+   exactly as it copies `atLastResult` to `atTurnStart`. Every subagent message carries
+   its own top-level `timestamp` in the transcript — when CC BILLED it, as against when
+   the tail READ it — and `note` takes that time. Usage billed before `windowStart` goes
+   into `subRetro`, which `subagentDelta` subtracts back out: it was already inside an
+   earlier turn's `ModelUsage` and has already been paid for by that turn's parent share.
+   The zero time means "unknown, treat as now" (parent-stream messages carry none), never
+   "billed at the epoch".
+
+   Without it the two sides of the subtraction below were on different clocks —
+   `ModelUsage` by billing, the accumulator by arrival — and a background subagent's
+   catch-up burst put 2,445,048 cache-read tokens into a turn whose whole authoritative
+   bill was 2,155,142, pricing it $2.7853 against a true $1.8745 (live, 2026-09-13
+   15:41:50). Re-bucketing is CONSERVATIVE: it moves spend between windows and never
+   creates or destroys any, so session totals are untouched. It does not repair the
+   earlier turn, whose parent row absorbed that spend while it was still unknown — that
+   turn's total is right and its shares are not.
+
    It used to WIPE at `beginTurnLocked` — turn START — while pricing measures from the
    previous RESULT, so every message inside the priced window that arrived before the
    turn opened was charged for and never accumulated. Measured coverage against the
@@ -1554,6 +1573,12 @@ Four outputs:
    A class that would go negative pins at **zero**, never below — a negative token count
    prices as a CREDIT and would quietly reduce the bill — and logs a WARN, because the turn
    is then priced above the authoritative total and the divergence check is about to fire.
+
+   Since #1909 put both sides on one clock the clamp should never fire: a window's subagent
+   share is a subset of that window's bill by construction. It is kept as an EXACT detector
+   rather than a repair — if no class clamps then `parent + subagents == total` identically,
+   so an overcharge is possible if and only if the clamp fires. A WARN here now means a
+   third source of skew, not a known one being absorbed.
 
    `turnCalcCostUSD`/`turnCalc` deliberately stay the WHOLE turn. They back the divergence
    check, whose other side is CC's cost for everything the process did, and the breakdown
