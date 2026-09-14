@@ -1481,24 +1481,47 @@ Four outputs:
    full wipe is `reset()`, from `finalizeExit`: the dedupe set holds one entry per API
    call ever seen, so the subprocess going away is the point it must be cleared.
 
-   **The baseline has an EVENT-TIME twin, and it sits in the same place (#1909).**
-   `markResult` also records `lastResultAt`, and `beginTurn` copies it to `windowStart`
-   exactly as it copies `atLastResult` to `atTurnStart`. Every subagent message carries
-   its own top-level `timestamp` in the transcript — when CC BILLED it, as against when
-   the tail READ it — and `note` takes that time. Usage billed before `windowStart` goes
-   into `subRetro`, which `subagentDelta` subtracts back out: it was already inside an
-   earlier turn's `ModelUsage` and has already been paid for by that turn's parent share.
-   The zero time means "unknown, treat as now" (parent-stream messages carry none), never
-   "billed at the epoch".
+   **There are TWO windows, and which one you want depends on what you are computing
+   (#1909).** `atTurnStart` is the WHOLE TURN — it moves only at `beginTurn` and backs
+   `writeSplit`, `models()` and `subagentUsage()`, i.e. the breakdown line, which
+   describes the turn a reader asked about. `atLastResult` is ONE RESULT CYCLE — it moves
+   at every `markResult` and backs `subagentDelta()` and `topWriteSplitByModel()`, i.e.
+   everything that is PRICED, because the figure they are subtracted from
+   (`modelUsageDelta`) is per cycle too. `subagentDeltaFrom(base)` is the shared
+   implementation so the two cannot drift apart.
 
-   Without it the two sides of the subtraction below were on different clocks —
-   `ModelUsage` by billing, the accumulator by arrival — and a background subagent's
-   catch-up burst put 2,445,048 cache-read tokens into a turn whose whole authoritative
-   bill was 2,155,142, pricing it $2.7853 against a true $1.8745 (live, 2026-09-13
-   15:41:50). Re-bucketing is CONSERVATIVE: it moves spend between windows and never
-   creates or destroys any, so session totals are untouched. It does not repair the
-   earlier turn, whose parent row absorbed that spend while it was still unknown — that
-   turn's total is right and its shares are not.
+   Mixing them is what actually fired. `subagentDelta` reported cumulative-since-TURN-start
+   while the handler added it once PER CYCLE and subtracted it from a per-cycle
+   `ModelUsage`, so on an `ask_cycles=2` turn the subagent was charged twice and cycle 2's
+   parent was subtracted from a total it could not cover. Reconstructed exactly from the
+   live turn of 2026-09-13 15:41:50:
+
+   ```
+   cycle 1:  sub 1,222,524 < total 1,843,451 -> parent  620,927   (matches the api.db row)
+   cycle 2:  sub 1,222,524 > total   311,691 -> parent        0   (CLAMPED)
+   charged   620,927 + 0 + 1,222,524*2 = 3,065,975  vs a bill of 2,155,142  ($2.7853 vs $1.8745)
+   ```
+
+   Both clamp warnings foci has ever emitted were on `ask_cycles=2` turns.
+
+   **The baselines also have an EVENT-TIME twin.** `markResult` records `lastResultAt`, and
+   every subagent transcript line carries its own top-level `timestamp` — when CC BILLED
+   it, as against when the tail READ it. Usage billed before `lastResultAt` was already
+   inside an earlier window's `ModelUsage` and paid for by that window's parent share, so
+   `note` RAISES both baselines by it (`usageTotals.raiseSub`) rather than excluding it
+   from one: raising makes it invisible to every delta measured from them, which is what
+   "already accounted for" means. Excluding it from the priced window alone would leave it
+   showing in the breakdown. A zero timestamp means "unknown, treat as now" — parent-stream
+   messages carry none — and never "billed at the epoch".
+
+   Because `note` raises baselines, `beginTurn` must `clone()` rather than assign:
+   `usageTotals` copies its struct but SHARES its maps, which was harmless while baselines
+   were only ever replaced wholesale and a silent cross-write once they could be raised.
+
+   Neither mechanism repairs an EARLIER turn whose parent row absorbed subagent spend while
+   it was still undelivered — that turn's total is right and its shares are not. Correcting
+   that is #1918, and by ruling it must UPDATE the existing row rather than append a
+   signed correction.
 
    It used to WIPE at `beginTurnLocked` — turn START — while pricing measures from the
    previous RESULT, so every message inside the priced window that arrived before the

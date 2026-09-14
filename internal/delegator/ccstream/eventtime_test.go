@@ -140,3 +140,139 @@ func TestDeliverLine_ParsesTranscriptTimestamp(t *testing.T) {
 			got, want)
 	}
 }
+
+// TestSubagentDelta_IsPerResultCycleNotPerTurn replays the OTHER half of
+// #1909 — the one that actually fired, twice.
+//
+// The handler adds subagentDelta to the turn's rows once per RESULT CYCLE, and
+// subtracts it from modelUsageDelta, which is itself per cycle. While
+// subagentDelta reported cumulative-since-TURN-start, a two-cycle turn charged
+// its subagent twice and pinned cycle 2's parent at zero.
+//
+// Numbers are the live turn of 2026-09-13 15:41:50 (clutch, ask_cycles=2).
+func TestSubagentDelta_IsPerResultCycleNotPerTurn(t *testing.T) {
+	t.Parallel()
+
+	const (
+		subCacheRead   = 1222524 // the subagent's spend, delivered during cycle 1
+		cycle1ModelUse = 1843451 // ModelUsage delta for cycle 1
+		cycle2ModelUse = 311691  // ModelUsage delta for cycle 2 (from the WARN)
+		wantParent     = 620927  // the parent row api.db actually holds
+	)
+	k := subKey{Agent: "agent-1", Model: "claude-opus-5"}
+
+	a := &usageAccumulator{}
+	a.markResult(time.Date(2026, 9, 13, 14, 41, 35, 0, time.UTC))
+	a.beginTurn("turn-live")
+
+	a.note("claude-opus-5", "agent-1", true, "msg_sub",
+		time.Date(2026, 9, 13, 14, 41, 40, 0, time.UTC), usage(0, 0, subCacheRead, 0, 0, 0))
+
+	// ---- cycle 1 ----
+	c1 := a.subagentDelta()[k]
+	if c1.CacheRead != subCacheRead {
+		t.Fatalf("cycle 1 subagent = %d, want %d", c1.CacheRead, subCacheRead)
+	}
+	parent1 := cycle1ModelUse - c1.CacheRead
+	if parent1 != wantParent {
+		t.Errorf("cycle 1 parent = %d, want %d (the row api.db holds)", parent1, wantParent)
+	}
+	a.markResult(time.Date(2026, 9, 13, 14, 41, 49, 0, time.UTC))
+
+	// ---- cycle 2: the subagent contributed NOTHING new ----
+	c2 := a.subagentDelta()[k]
+	if c2.CacheRead != 0 {
+		t.Errorf("cycle 2 subagent = %d, want 0 — nothing new arrived, so re-reporting "+
+			"the turn's cumulative figure charges it a second time (#1909)", c2.CacheRead)
+	}
+	if c2.CacheRead > cycle2ModelUse {
+		t.Errorf("cycle 2 subagent %d exceeds that cycle's authoritative total %d — "+
+			"the parent clamps at zero and the turn prices above its own bill",
+			c2.CacheRead, cycle2ModelUse)
+	}
+
+	// The turn's charge is the sum over cycles, exactly as the handler builds it.
+	charged := parent1 + (cycle2ModelUse - c2.CacheRead) + c1.CacheRead + c2.CacheRead
+	const bill = cycle1ModelUse + cycle2ModelUse // 2,155,142, the authoritative turn total
+	if charged != bill {
+		t.Errorf("turn charged %d against a bill of %d — parent+subagents must "+
+			"reconstruct the total exactly once each", charged, bill)
+	}
+}
+
+// TestSubagentUsage_StaysWholeTurnAcrossCycles guards the other direction.
+//
+// subagentDelta went per-cycle for pricing; the BREAKDOWN line must not follow
+// it. costBreakdown.subagents describes the turn a reader asked about, so on a
+// two-cycle turn it still has to report everything the subagent spent, not just
+// whatever landed after the last result.
+func TestSubagentUsage_StaysWholeTurnAcrossCycles(t *testing.T) {
+	t.Parallel()
+
+	a := &usageAccumulator{}
+	a.markResult(time.Date(2026, 9, 13, 14, 41, 35, 0, time.UTC))
+	a.beginTurn("turn-live")
+
+	inTurn := time.Date(2026, 9, 13, 14, 41, 40, 0, time.UTC)
+	a.note("claude-opus-5", "agent-1", true, "msg_c1", inTurn, usage(0, 0, 1000000, 0, 0, 0))
+	a.markResult(time.Date(2026, 9, 13, 14, 41, 49, 0, time.UTC))
+	a.note("claude-opus-5", "agent-1", true, "msg_c2",
+		time.Date(2026, 9, 13, 14, 41, 50, 0, time.UTC), usage(0, 0, 222524, 0, 0, 0))
+
+	if got := a.subagentDelta()[subKey{Agent: "agent-1", Model: "claude-opus-5"}].CacheRead; got != 222524 {
+		t.Errorf("pricing delta = %d, want 222524 (cycle 2 only)", got)
+	}
+	if got := a.subagentUsage()["agent-1"].CacheRead; got != 1222524 {
+		t.Errorf("breakdown = %d, want 1222524 (the whole turn) — the breakdown line "+
+			"would under-report every multi-cycle turn", got)
+	}
+}
+
+// TestBeginTurn_BaselinesDoNotShareMaps pins the aliasing hazard the late-usage
+// path introduced. beginTurn used to assign usageTotals straight across, which
+// copies the struct but SHARES its maps; note() now RAISES both baselines, so a
+// shared map would apply one raise twice and silently discard live spend.
+func TestBeginTurn_BaselinesDoNotShareMaps(t *testing.T) {
+	t.Parallel()
+
+	k := subKey{Agent: "agent-1", Model: "claude-opus-5"}
+	a := &usageAccumulator{}
+	a.markResult(time.Date(2026, 9, 13, 14, 41, 35, 0, time.UTC))
+	a.beginTurn("turn-A")
+
+	a.atLastResult.raiseSub(k, turnUsage{CacheRead: 5})
+	if got := a.atTurnStart.sub[k].CacheRead; got != 0 {
+		t.Errorf("raising atLastResult moved atTurnStart to %d — the baselines share "+
+			"their maps, so every raise lands twice", got)
+	}
+}
+
+// TestSubagentUsage_ExcludesRetroactiveUsageToo exists because a fail-arm found
+// nothing to break.
+//
+// Late usage raises BOTH baselines, and removing the atTurnStart raise reddened
+// no test at all — every retro assertion went through subagentDelta, which
+// reads the other one. So the whole-turn breakdown could have gone on reporting
+// spend that an earlier turn had already been charged for, with no test to say
+// so. Money is priced from subagentDelta and was never at risk; the number a
+// reader is shown was.
+func TestSubagentUsage_ExcludesRetroactiveUsageToo(t *testing.T) {
+	t.Parallel()
+
+	a := &usageAccumulator{}
+	a.markResult(time.Date(2026, 9, 13, 14, 41, 35, 0, time.UTC))
+	a.beginTurn("turn-B")
+
+	// Billed 11 minutes before this window opened: already inside an earlier
+	// turn's ModelUsage, already paid for there.
+	a.note("claude-opus-5", "agent-1", true, "msg_late",
+		time.Date(2026, 9, 13, 14, 30, 0, 0, time.UTC), usage(0, 0, 2445048, 0, 0, 0))
+	// Genuinely this turn's.
+	a.note("claude-opus-5", "agent-1", true, "msg_now",
+		time.Date(2026, 9, 13, 14, 41, 40, 0, time.UTC), usage(0, 0, 120000, 0, 0, 0))
+
+	if got := a.subagentUsage()["agent-1"].CacheRead; got != 120000 {
+		t.Errorf("breakdown subagent = %d, want 120000 — the breakdown reports spend "+
+			"an earlier turn was already charged for", got)
+	}
+}
