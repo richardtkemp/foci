@@ -568,7 +568,7 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 				CacheWrite: u.Write.total(),
 			}
 			cycleCorr = append(cycleCorr, modelinfo.CostCorrection{
-				ParentTurnID:   ck.Bill,
+				BilledAt:       ck.BilledAt,
 				SubagentTurnID: ck.Spawn,
 				AgentID:        ck.Agent,
 				Model:          prefixedModel(ck.Model),
