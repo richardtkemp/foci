@@ -950,15 +950,4 @@ type TurnUsage struct {
 	// which defeats the obvious diagnostic — an expensive turn looks like an
 	// expensive turn. nil when the turn ran no subagents.
 	Subagents []modelinfo.SubagentCost
-
-	// Corrections move spend off a PREVIOUSLY WRITTEN row and onto another
-	// (#1918). Unlike Subagents, which describes rows about to be created,
-	// each entry here names two rows that already exist and the amount to
-	// shift between them — a subagent's spend that reached foci too late to be
-	// attributed when the turn that paid for it closed.
-	//
-	// Applied as an UPDATE of both rows, never as a third signed row, and only
-	// if BOTH are found: half a correction inflates one turn and deflates
-	// another. nil when nothing arrived late, which is the normal case.
-	Corrections []modelinfo.CostCorrection
 }
