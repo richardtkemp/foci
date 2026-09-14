@@ -131,7 +131,7 @@ type subagentTailManager struct {
 	// deliver because the two have different failure modes: dropping a text
 	// block loses display, dropping usage loses money. May be nil in tests
 	// that only exercise text forwarding.
-	noteUsage func(agent, model, id string, u TokenUsage)
+	noteUsage func(agent, model, id string, at time.Time, u TokenUsage)
 	lg        *log.ComponentLogger
 }
 
@@ -146,7 +146,7 @@ type subagentTail struct {
 	done     chan struct{}
 }
 
-func newSubagentTailManager(deliver func(groupKey, text string), noteUsage func(agent, model, id string, u TokenUsage), lg *log.ComponentLogger) *subagentTailManager {
+func newSubagentTailManager(deliver func(groupKey, text string), noteUsage func(agent, model, id string, at time.Time, u TokenUsage), lg *log.ComponentLogger) *subagentTailManager {
 	if lg == nil {
 		lg = log.NewComponentLogger("ccstream")
 	}
@@ -317,7 +317,14 @@ func (m *subagentTailManager) waitForFile(path string, stop <-chan struct{}) *os
 type transcriptLine struct {
 	Type        string `json:"type"`
 	IsSidechain bool   `json:"isSidechain"`
-	Message     struct {
+	// Timestamp is when CC WROTE this message — the moment the tokens were
+	// billed, as against the moment foci read the line. The two differ by the
+	// tail's delivery lag, which is ~60ms for a foreground subagent and can be
+	// half an hour for a background one. Accounting must bucket by this field
+	// and not by arrival, or a burst of catch-up lines books a previous turn's
+	// spend onto whichever turn happened to be open when they landed (#1909).
+	Timestamp string `json:"timestamp"`
+	Message   struct {
 		Content []struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
@@ -355,7 +362,12 @@ func (m *subagentTailManager) deliverLine(groupKey string, line []byte, wantText
 		// groupKey IS the Agent tool_use id, so the usage carries the identity of
 		// the subagent that spent it, not merely the fact that a subagent spent it
 		// (#1880 phase C).
-		m.noteUsage(groupKey, rec.Message.Model, rec.Message.ID, rec.Message.Usage)
+		// A line whose timestamp is absent or unparseable yields the zero
+		// time, which the accumulator reads as "unknown, treat as now" — the
+		// pre-#1909 behaviour, so a format change degrades to the old bucketing
+		// rather than dropping the usage.
+		at, _ := time.Parse(time.RFC3339Nano, rec.Timestamp)
+		m.noteUsage(groupKey, rec.Message.Model, rec.Message.ID, at, rec.Message.Usage)
 	}
 	// Text only when this tail was started for a FOREGROUND subagent. A
 	// background subagent's text already reaches the parent stream, so

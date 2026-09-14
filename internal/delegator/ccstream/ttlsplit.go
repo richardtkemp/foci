@@ -2,6 +2,7 @@ package ccstream
 
 import (
 	"sort"
+	"time"
 
 	"foci/internal/modelinfo"
 )
@@ -177,6 +178,31 @@ type usageAccumulator struct {
 	curTurn   string
 	agentTurn map[string]string
 
+	// lastResultAt is the wall-clock time of the most recent RESULT, and
+	// windowStart is that time as of when the current turn opened — the EVENT-TIME
+	// twin of atLastResult/atTurnStart. Every per-turn figure is a difference
+	// from atTurnStart, so the time boundary has to sit at exactly the same
+	// place as the token boundary: the previous result, not the turn's open.
+	lastResultAt time.Time
+	windowStart  time.Time
+
+	// subRetro is subagent usage this turn that was BILLED BEFORE windowStart —
+	// delivered late by the transcript tail, but already inside an earlier
+	// turn's authoritative ModelUsage total, and therefore already paid for by
+	// that turn's parent share. subagentDelta takes it back out.
+	//
+	// This is #1909. The parent share is computed as ModelUsage minus the
+	// subagent bucket, and those two were measured on different clocks:
+	// ModelUsage buckets by when CC BILLED a token, the accumulator by when
+	// foci HEARD of it. A background subagent's catch-up burst therefore
+	// subtracted 2,445,048 cache-read tokens from a turn whose entire
+	// authoritative bill was 2,155,142 — the parent clamped at zero and the
+	// turn was priced $2.7853 against a true $1.8745, a 48.6% overcharge.
+	// Excluding the retroactive share puts both sides back on one clock, so
+	// parent+subagents reconstructs the total by construction and the clamp
+	// has nothing left to catch.
+	subRetro map[subKey]turnUsage
+
 	// appliedAtTurnStart is len(applied) when the current turn opened, so
 	// len(applied) minus it is how many DISTINCT assistant messages this turn
 	// accumulated (#1866 P5). applied only ever grows — a repeat of a known id
@@ -210,9 +236,13 @@ func (a *usageAccumulator) snapshot() usageTotals {
 	return usageTotals{top: top, sub: sub}
 }
 
-// markResult records the totals as of a result message. Called at the same
-// point modelUsageDelta takes its snapshot, so the two describe one window.
-func (a *usageAccumulator) markResult() { a.atLastResult = a.snapshot() }
+// markResult records the totals as of a result message, and the time it
+// happened. Called at the same point modelUsageDelta takes its snapshot, so the
+// two describe one window — in tokens AND in time.
+func (a *usageAccumulator) markResult(at time.Time) {
+	a.atLastResult = a.snapshot()
+	a.lastResultAt = at
+}
 
 // beginTurn moves the per-turn baseline to the last result's totals.
 //
@@ -221,8 +251,14 @@ func (a *usageAccumulator) markResult() { a.atLastResult = a.snapshot() }
 // so the baseline has to sit before them, not after.
 func (a *usageAccumulator) beginTurn(turnID string) {
 	a.atTurnStart = a.atLastResult
+	// The event-time boundary mirrors the token baseline exactly. Taking
+	// time.Now() here instead would open a gap between the last result and the
+	// turn's start in which real spend belongs to this turn by tokens but to no
+	// turn by time.
+	a.windowStart = a.lastResultAt
 	a.curTurn = turnID
 	a.appliedAtTurnStart = len(a.applied)
+	a.subRetro = nil
 }
 
 // messages is how many distinct assistant messages this turn accumulated — the
@@ -255,7 +291,7 @@ func (a *usageAccumulator) messages() int {
 // messages — the probe saw 2 of its 3 reach the stream, and all 3 are in the
 // transcript. Background subagents get no tail at all, so they arrive by the
 // stream alone.
-func (a *usageAccumulator) note(model, agent string, isSub bool, id string, u TokenUsage) {
+func (a *usageAccumulator) note(model, agent string, isSub bool, id string, at time.Time, u TokenUsage) {
 	// An empty id cannot be reconciled against an earlier delivery of the same
 	// message, so it is dropped rather than risking a multiple. That makes
 	// totals read LOW against ModelUsage, which the divergence check reports —
@@ -344,6 +380,30 @@ func (a *usageAccumulator) note(model, agent string, isSub bool, id string, u To
 	tu.Write.Ephemeral5m += cur.Write.Ephemeral5m - prev.Write.Ephemeral5m
 	tu.Write.Ephemeral1h += cur.Write.Ephemeral1h - prev.Write.Ephemeral1h
 	tu.Write.Unknown += cur.Write.Unknown - prev.Write.Unknown
+
+	// Cumulative totals above are unconditional — they are the session's record
+	// of what each agent spent and the event time does not change that. Only
+	// the TURN's share is gated, by recording the retroactive part so
+	// subagentDelta can take it back out.
+	//
+	// Restricted to subagents because they are the only class that arrives
+	// late: the main thread's messages come in on the parent stream with the
+	// result, carry no timestamp at all, and so pass through with a zero `at`.
+	if !isSub || at.IsZero() || a.windowStart.IsZero() || !at.Before(a.windowStart) {
+		return
+	}
+	if a.subRetro == nil {
+		a.subRetro = make(map[subKey]turnUsage)
+	}
+	k := subKey{Agent: agent, Model: model}
+	r := a.subRetro[k]
+	r.Input += cur.Input - prev.Input
+	r.Output += cur.Output - prev.Output
+	r.CacheRead += cur.CacheRead - prev.CacheRead
+	r.Write.Ephemeral5m += cur.Write.Ephemeral5m - prev.Write.Ephemeral5m
+	r.Write.Ephemeral1h += cur.Write.Ephemeral1h - prev.Write.Ephemeral1h
+	r.Write.Unknown += cur.Write.Unknown - prev.Write.Unknown
+	a.subRetro[k] = r
 }
 
 func maxInt(a, b int) int {
@@ -466,7 +526,9 @@ func (b *Backend) noteAssistantUsage(msg *AssistantMessage) {
 	if msg.ParentToolUseID != nil {
 		agent = *msg.ParentToolUseID
 	}
-	b.turnUsageAcc.note(msg.Message.Model, agent, msg.ParentToolUseID != nil, msg.Message.ID, msg.Message.Usage)
+	// No event time: parent-stream messages arrive synchronously with the run,
+	// so arrival IS the event time to within the stream's latency.
+	b.turnUsageAcc.note(msg.Message.Model, agent, msg.ParentToolUseID != nil, msg.Message.ID, time.Time{}, msg.Message.Usage)
 }
 
 // noteSubagentTranscriptUsage records one assistant message read from a
@@ -480,10 +542,12 @@ func (b *Backend) noteAssistantUsage(msg *AssistantMessage) {
 // the usage.
 //
 // Always the subagent bucket: this file only exists for a subagent.
-func (b *Backend) noteSubagentTranscriptUsage(agent, model, id string, u TokenUsage) {
+// at is the message's own transcript timestamp — when CC billed it, not when
+// the tail read it. That distinction is the whole of #1909.
+func (b *Backend) noteSubagentTranscriptUsage(agent, model, id string, at time.Time, u TokenUsage) {
 	b.turnMu.Lock()
 	defer b.turnMu.Unlock()
-	b.turnUsageAcc.note(model, agent, true, id, u)
+	b.turnUsageAcc.note(model, agent, true, id, at, u)
 }
 
 // deltaWrite is cur minus base, class by class. The zero value of turnUsage is
@@ -531,12 +595,22 @@ func (a *usageAccumulator) subagentDelta() map[subKey]turnUsage {
 		if *tu == b {
 			continue
 		}
-		out[k] = turnUsage{
-			Input:     tu.Input - b.Input,
-			Output:    tu.Output - b.Output,
-			CacheRead: tu.CacheRead - b.CacheRead,
-			Write:     deltaWrite(tu.Write, b.Write),
+		// Minus the retroactive share: tokens this agent spent BEFORE the
+		// window opened but delivered inside it. They belong to an earlier
+		// turn's ModelUsage, which has already been priced (#1909).
+		r := a.subRetro[k]
+		d := turnUsage{
+			Input:     tu.Input - b.Input - r.Input,
+			Output:    tu.Output - b.Output - r.Output,
+			CacheRead: tu.CacheRead - b.CacheRead - r.CacheRead,
+			Write:     deltaWrite(deltaWrite(tu.Write, b.Write), r.Write),
 		}
+		// A delta that is entirely retroactive nets to zero, and an empty
+		// entry would write a zero-cost row per catch-up burst.
+		if d == (turnUsage{}) {
+			continue
+		}
+		out[k] = d
 	}
 	return out
 }

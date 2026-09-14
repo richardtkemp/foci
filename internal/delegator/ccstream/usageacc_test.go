@@ -2,6 +2,7 @@ package ccstream
 
 import (
 	"testing"
+	"time"
 
 	"foci/internal/delegator"
 )
@@ -48,7 +49,7 @@ func TestUsageAccumulator_ReconcilesToModelUsage_Foreground(t *testing.T) {
 	}
 
 	// The transcript supplies the suppressed message.
-	b.noteSubagentTranscriptUsage("toolu_x", "claude-sonnet-4-5", "msg_sub3", usage(2, 138, 0, 237, 237, 0))
+	b.noteSubagentTranscriptUsage("toolu_x", "claude-sonnet-4-5", "msg_sub3", time.Time{}, usage(2, 138, 0, 237, 237, 0))
 
 	got := b.turnUsageAcc.writeSplit(false).addSplit(b.turnUsageAcc.writeSplit(true)).total()
 	if got != modelUsageCacheCreation {
@@ -70,7 +71,7 @@ func TestUsageAccumulator_ForegroundArrivesTwiceAndIsCountedOnce(t *testing.T) {
 	t.Parallel()
 	b := &Backend{}
 	b.noteAssistantUsage(msgModel("claude-opus-5", "msg_A", "toolu_x", 11959, 11959, 0))
-	b.noteSubagentTranscriptUsage("toolu_x", "claude-opus-5", "msg_A", usage(2, 5, 0, 11959, 11959, 0))
+	b.noteSubagentTranscriptUsage("toolu_x", "claude-opus-5", "msg_A", time.Time{}, usage(2, 5, 0, 11959, 11959, 0))
 
 	if got := b.turnUsageAcc.writeSplit(true).total(); got != 11959 {
 		t.Errorf("total = %d, want 11959 — counted %.1fx across the two routes", got, float64(got)/11959)
@@ -139,7 +140,7 @@ func TestUsageAccumulator_AllFourClasses(t *testing.T) {
 	t.Parallel()
 	b := &Backend{}
 	b.noteAssistantUsage(msgModel("claude-opus-5", "msg_A", "", 690, 0, 690))
-	b.noteSubagentTranscriptUsage("toolu_x", "claude-opus-5", "msg_B", usage(30, 11693, 1038737, 1022, 1022, 0))
+	b.noteSubagentTranscriptUsage("toolu_x", "claude-opus-5", "msg_B", time.Time{}, usage(30, 11693, 1038737, 1022, 1022, 0))
 
 	sub := b.turnUsageAcc.sub[subKey{Agent: "toolu_x", Model: "claude-opus-5"}]
 	if sub == nil {
@@ -158,7 +159,7 @@ func TestDeliverLine_RecordsUsageWithNoTextSink(t *testing.T) {
 	t.Parallel()
 	var gotModel, gotID string
 	var gotUsage TokenUsage
-	mgr := newSubagentTailManager(nil, func(_, model, id string, u TokenUsage) {
+	mgr := newSubagentTailManager(nil, func(_, model, id string, _ time.Time, u TokenUsage) {
 		gotModel, gotID, gotUsage = model, id, u
 	}, nil)
 
@@ -181,7 +182,7 @@ func TestDeliverLine_RecordsUsageWithNoTextSink(t *testing.T) {
 func TestDeliverLine_IgnoresNonAssistantRecords(t *testing.T) {
 	t.Parallel()
 	calls := 0
-	mgr := newSubagentTailManager(nil, func(string, string, string, TokenUsage) { calls++ }, nil)
+	mgr := newSubagentTailManager(nil, func(string, string, string, time.Time, TokenUsage) { calls++ }, nil)
 	mgr.deliverLine("toolu_x", []byte(`{"type":"user","message":{"id":"msg_U","content":[]}}`), false)
 	mgr.deliverLine("toolu_x", []byte(`not json`), false)
 	if calls != 0 {
@@ -233,7 +234,7 @@ func TestUsageAccumulator_SubagentAttributionIsTurnScoped(t *testing.T) {
 	t.Parallel()
 	b := &Backend{}
 	b.noteAssistantUsage(msgModel("claude-sonnet-5", "msg_old", "toolu_A", 5000, 5000, 0))
-	b.turnUsageAcc.markResult()
+	b.turnUsageAcc.markResult(time.Now())
 	b.beginTurnLocked(&delegator.TurnEvents{})
 
 	if got := b.turnUsageAcc.subagentUsage()["toolu_A"].Write.Ephemeral5m; got != 0 {

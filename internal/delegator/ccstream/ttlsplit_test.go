@@ -3,6 +3,7 @@ package ccstream
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"foci/internal/delegator"
 	"foci/internal/modelinfo"
@@ -152,7 +153,7 @@ func TestBeginTurn_MovesBaselineWithoutWiping(t *testing.T) {
 	b := &Backend{}
 	b.noteAssistantUsage(msgWith("msg_A", "", 8320, 0, 8320))
 	b.noteAssistantUsage(msgWith("msg_B", "tool_1", 11959, 11959, 0))
-	b.turnUsageAcc.markResult() // a result closes the window those two fell in
+	b.turnUsageAcc.markResult(time.Now()) // a result closes the window those two fell in
 
 	b.beginTurnLocked(&delegator.TurnEvents{})
 
@@ -188,7 +189,7 @@ func TestBeginTurn_MovesBaselineWithoutWiping(t *testing.T) {
 func TestUsageAccumulator_CountsUsageFromBeforeTheTurnOpened(t *testing.T) {
 	t.Parallel()
 	b := &Backend{}
-	b.turnUsageAcc.markResult() // R0: the result the next delta measures from
+	b.turnUsageAcc.markResult(time.Now()) // R0: the result the next delta measures from
 
 	// A background subagent is still working; its message lands before foci
 	// opens the next turn. This is the token that used to vanish.
@@ -214,7 +215,7 @@ func TestUsageAccumulator_DedupeSurvivesTurnBoundary(t *testing.T) {
 	t.Parallel()
 	b := &Backend{}
 	b.noteAssistantUsage(msgWith("msg_A", "", 8320, 0, 8320))
-	b.turnUsageAcc.markResult()
+	b.turnUsageAcc.markResult(time.Now())
 	b.beginTurnLocked(&delegator.TurnEvents{})
 
 	b.noteAssistantUsage(msgWith("msg_A", "", 8320, 0, 8320)) // same id again
