@@ -58,26 +58,42 @@ tail -200 ~/logs/api-payload.jsonl | jq -c '
 ## "Where did the cost go?"
 
 ```bash
-# Total cost in last N hours
-sqlite3 ~/data/api.db "SELECT SUM(calculated_cost_usd), COUNT(*) FROM api_calls WHERE ts > datetime('now', '-3 hours')"
-
-# Biggest individual calls
-sqlite3 ~/data/api.db "SELECT ts, call_type, cost_usd, cache_read, cache_write FROM api_calls WHERE ts > datetime('now', '-3 hours') ORDER BY cost_usd DESC LIMIT 10"
-
-# Cache busts (cache_read = 0 with large cache_write)
-sqlite3 ~/data/api.db "SELECT ts, cost_usd, cache_write FROM api_calls WHERE cache_read = 0 AND cache_write > 10000 ORDER BY ts DESC LIMIT 10"
+# Biggest calls / cache busts. Columns are *_tokens; cost is calculated_cost_usd.
+sqlite3 -readonly ~/data/api.db "SELECT ts, call_type, calculated_cost_usd, cache_read_tokens, cache_write_tokens FROM api_calls WHERE ts > datetime('now','-3 hours') ORDER BY calculated_cost_usd DESC LIMIT 10"
+sqlite3 -readonly ~/data/api.db "SELECT ts, calculated_cost_usd, cache_write_tokens FROM api_calls WHERE cache_read_tokens = 0 AND cache_write_tokens > 10000 ORDER BY ts DESC LIMIT 10"
 ```
 
 For *why* a cache bust happened (diffing the system prompt), see **cache.md**.
+
+## A `cost divergence` WARN: decompose it, don't theorise
+
+The WARN carries every field needed to attribute the gap. Unpriced-TTL residue
+is the usual culprit — Unknown prices at the 1h rate:
+
+    Unknown = cache_write - ttl_1h - ttl_5m         # all three are in the WARN
+    gap =~ Unknown x (rate_1h - rate_5m)            # opus-5: 10.00 - 6.25 $/M
+
+Match to a few microdollars and the cause is settled. Cross-check against the
+subagent's own transcript, which is the authority:
+
+    ~/.claude/projects/<slug>/<parent-session-uuid>/subagents/agent-<id>.jsonl
+    jq -r 'select(.message.stop_reason != null)
+           | .message.usage.cache_creation_input_tokens' FILE
+
+Its completed-message cache-write total equals Unknown exactly. Two matching
+numbers from unrelated artifacts is a diagnosis; one is a coincidence.
+
+Zero `call_type='subagent_turn'` rows means the correction path was never
+REACHED — missing `stranded=`/`cost correction` lines then say nothing about
+whether that code works.
 
 ## Joining cost to session metadata (`state.db:session_index`)
 
 To break cost down by `session_type` (chat / reflection / keepalive / unknown), join `api_calls.session` to `session_index.session_key`. The join key is **verbatim equal** — no suffix, no transform:
 
 ```bash
-# /usr/bin/sqlite3 (real binary) — the readonly `sqlite3` wrapper BLOCKS ATTACH
-# ("write operation detected"). -readonly makes the ATTACHed db read-only too.
-# The -uri flag is NOT supported in this build (no file:...?mode=ro URIs).
+# /usr/bin/sqlite3 (real binary): the readonly `sqlite3` wrapper BLOCKS ATTACH.
+# -readonly covers the ATTACHed db too; -uri is unsupported in this build.
 /usr/bin/sqlite3 -readonly -column -header ~/data/state.db "
 ATTACH '$HOME/data/api.db' AS api;
 SELECT si.session_type,
