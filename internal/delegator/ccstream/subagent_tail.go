@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"foci/internal/log"
@@ -144,6 +145,10 @@ type subagentTail struct {
 	wantText bool
 	stop     chan struct{}
 	done     chan struct{}
+	// lines counts transcript lines this tail delivered. Reported at close so
+	// a tail that opened its file but read nothing is distinguishable from one
+	// that never opened it at all (#1934).
+	lines atomic.Int64
 }
 
 func newSubagentTailManager(deliver func(groupKey, text string), noteUsage func(agent, model, id string, at time.Time, complete bool, u TokenUsage), lg *log.ComponentLogger) *subagentTailManager {
@@ -292,6 +297,10 @@ func (m *subagentTailManager) run(groupKey, path string, t *subagentTail) {
 		return
 	}
 	defer f.Close()
+	m.lg.Debugf("subagent tail: opened %s (group=%s wantText=%v)", path, groupKey, t.wantText)
+	defer func() {
+		m.lg.Debugf("subagent tail: closed group=%s lines=%d", groupKey, t.lines.Load())
+	}()
 
 	var acc []byte
 	drain := func() {
@@ -306,6 +315,7 @@ func (m *subagentTailManager) run(groupKey, path string, t *subagentTail) {
 						break
 					}
 					m.deliverLine(groupKey, acc[:i], t.wantText)
+					t.lines.Add(1)
 					acc = acc[i+1:]
 				}
 			}
@@ -341,6 +351,12 @@ func (m *subagentTailManager) waitForFile(path string, stop <-chan struct{}) *os
 			if f, err := os.Open(path); err == nil {
 				return f
 			}
+			// SILENT UNTIL #1934. A tail stopped before its transcript appeared
+			// logged nothing at all, because only the DEADLINE branch below
+			// reported. Anything shorter-lived than subagentTailFileWait —
+			// which is every subagent that finishes inside 60s — vanished
+			// without trace, and the missing usage looked like no subagent.
+			m.lg.Debugf("subagent tail: stopped before transcript appeared: %s", path)
 			return nil
 		case <-time.After(subagentTailPoll):
 		}

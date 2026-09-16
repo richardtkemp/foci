@@ -919,10 +919,25 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 			// forward that text into the chit. maybeStart is a no-op unless a
 			// foreground Agent PreToolUse was recorded for this tool_use id, so
 			// background subagents (whose text already streams) are skipped.
-			if task.ToolUseID != "" && task.TaskID != "" {
-				if path := b.subagentTranscriptPath(task.TaskID); path != "" {
-					b.subagentTails().maybeStart(task.ToolUseID, path)
+			// NARRATE EVERY OUTCOME (#1934). Each of the three ways this can
+			// decline to tail was previously silent, so "no usage for that
+			// subagent" was indistinguishable from "no subagent ran" — which
+			// cost a full day of probing a production system one 100-second
+			// experiment at a time.
+			switch {
+			case task.ToolUseID == "" || task.TaskID == "":
+				b.logger().Debugf("subagent tail: NOT started, task_started missing ids (tool_use_id=%q task_id=%q)",
+					task.ToolUseID, task.TaskID)
+			default:
+				path := b.subagentTranscriptPath(task.TaskID)
+				if path == "" {
+					b.logger().Debugf("subagent tail: NOT started, no transcript path for task_id=%s (session id or workdir unknown)",
+						task.TaskID)
+					break
 				}
+				b.logger().Debugf("subagent tail: starting for group=%s task_id=%s path=%s",
+					task.ToolUseID, task.TaskID, path)
+				b.subagentTails().maybeStart(task.ToolUseID, path)
 			}
 			// Bind or advance the reactivation run state (#1355). The FIRST
 			// task_started binds the run — run 1's SubagentStart is NORMALLY
