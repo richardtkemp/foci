@@ -26,13 +26,19 @@ sqlite3 ~/data/api.db "SELECT SUM(calculated_cost_usd) FROM api_calls WHERE ts >
 **Column scopes differ (#1806):** `input/cache_read/cache_write_tokens` = the turn's FINAL-cycle context fill (a snapshot; pricing them recovers ~20% of cost). `output_tokens` + `turn_input/turn_cache_read/turn_cache_write_tokens` = per-TURN sums, what `calculated_cost_usd` priced. One row = one turn; no cycle ordinal. Table: WIRING.md "Cost columns".
 
 **`cost_usd` is CUMULATIVE over the CC process — never `SUM` it; sum `calculated_cost_usd`.**
-Two consequences. (1) Summing inflates ~quadratically in turns-per-process: 5.0x on 2026-08-21
-($1028 vs $206), 13x over 28 Jul-4 Aug ($32,566 vs ~$2,500) — but 1.0x on quiet days, which is
-what lets it survive review. (2) It does not reconcile against the token columns, which hold one
+Two consequences. (1) Summing inflates ~quadratically in turns-per-process (5x on a busy day, 13x
+over a busy week) — but 1.0x on quiet days, which is what lets it survive review. (2) It does not reconcile against the token columns, which hold one
 round's snapshot: cost / a token column is a ROUND COUNT dressed as a rate — 3 rounds at Opus-5's
 $0.50/M cache-read reads as "$1.50/M", indistinguishable from a stale-pricing fallback. Check
 per-round usage in the CC transcript before calling a rate wrong. `calculated_cost_usd` is foci's
 own priced figure and is authoritative (WIRING.md "Cost columns"); rows before #1674 have it NULL.
+
+**Counting mispriced turns: query the table, not the log.** The `cost divergence` WARN is a
+sampler — four gates, including **one warning per model per 10 min** (plus a 3% tolerance and a
+$0.01 floor), so log lines undercount by an unknown factor. Get the backend's per-turn figure by
+differencing the cumulative column per session (`LAG(cost_usd) OVER (PARTITION BY session ORDER BY
+id)`; reset where `cost_usd` DROPS = a new process). **Control every run:** single-turn branch
+sessions (`session LIKE '%/b%'`, no predecessor) must equal `calculated_cost_usd` exactly.
 
 ## Payload Logs (JSONL)
 
