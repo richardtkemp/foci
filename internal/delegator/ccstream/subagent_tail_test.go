@@ -329,7 +329,7 @@ func TestSubagentTail_BackgroundSurvivesPostToolUseAtLaunch(t *testing.T) {
 	mgr.maybeStart("tool-bg", path)
 
 	// The background Agent tool_use resolves at once, so PostToolUse fires HERE.
-	mgr.finalizeForeground("tool-bg")
+	mgr.clearPendingForeground("tool-bg")
 
 	// CC now creates the transcript and the subagent does its real work.
 	if err := os.WriteFile(path, []byte(
@@ -379,13 +379,24 @@ func TestSubagentTail_ForegroundStillFinalizesAtPostToolUse(t *testing.T) {
 	f.WriteString(assistantLine("FINAL-MSG"))
 	f.Close()
 
-	mgr.finalizeForeground("tool-fg") // must drain and stop, exactly as before
+	// PostToolUse no longer stops ANY tail (#1934) — it only clears the pending
+	// foreground expectation. Measured on CC 2.1.261, a foreground Agent
+	// PostToolUse fires ~30ms AFTER the subagent has genuinely ended, so
+	// task_notification:completed is already arriving; there is nothing to gain
+	// by stopping here and a background tail is killed at launch if we do.
+	mgr.clearPendingForeground("tool-fg")
+	if !fileOpened(mgr, "tool-fg") {
+		t.Fatal("PostToolUse stopped the tail — it must not stop any tail")
+	}
+
+	// The real end signal drains and stops it, for foreground and background alike.
+	mgr.finalize("tool-fg")
 
 	if got := rec.texts(); len(got) != 1 || got[0] != "FINAL-MSG" {
-		t.Fatalf("foreground finalize did not drain: got %v", got)
+		t.Fatalf("finalize did not drain the last text: got %v", got)
 	}
 	if fileOpened(mgr, "tool-fg") {
-		t.Error("foreground tail still running after its PostToolUse — its chit would " +
+		t.Error("tail still running after task_notification finalize — its chit would " +
 			"never close")
 	}
 }

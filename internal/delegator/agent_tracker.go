@@ -264,5 +264,19 @@ func ExtractBashBackground(raw json.RawMessage) bool {
 // tailing. Same `run_in_background` field as Bash; kept separate for a clear
 // call site.
 func ExtractAgentBackground(raw json.RawMessage) bool {
-	return ExtractBashBackground(raw)
+	// TRI-STATE, and the difference from Bash is the whole point. The Agent tool
+	// BACKGROUNDS BY DEFAULT — its own documentation says to pass
+	// run_in_background:false only when the next action depends on the result —
+	// so the field is ABSENT from an ordinary spawn. Aliasing this to
+	// ExtractBashBackground read that absence as foreground and armed a
+	// foreground transcript tail for every default subagent, which the Agent
+	// PostToolUse then stopped at launch (#1934). Bash is genuinely
+	// foreground-by-default, so the two cannot share an implementation.
+	var input struct {
+		RunInBackground *bool `json:"run_in_background"`
+	}
+	if json.Unmarshal(raw, &input) == nil && input.RunInBackground != nil {
+		return *input.RunInBackground
+	}
+	return true
 }

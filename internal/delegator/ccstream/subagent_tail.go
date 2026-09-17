@@ -232,42 +232,33 @@ func (m *subagentTailManager) finalize(toolUseID string) {
 	<-t.done
 }
 
-// finalizeForeground stops the tail for toolUseID ONLY IF it is a foreground
-// one. Called from the Agent PostToolUse hook (#1924).
+// clearPendingForeground drops a pending expectForeground entry for toolUseID.
+// Called from the Agent PostToolUse hook — which MUST NOT stop a tail (#1934).
 //
-// A FOREGROUND Agent tool_use resolves when the subagent has genuinely finished,
-// so its PostToolUse is the right moment to drain the last text into the chit.
-// A BACKGROUND one resolves the INSTANT the task is launched — the hook's own
-// comment says so — so finalizing there kills the tail before CC has even
-// created the transcript.
+// Measured on CC 2.1.261 (timing.sh, 4 scenarios): a BACKGROUND Agent
+// PostToolUse fires at +0.03s, the instant the task is launched, with the whole
+// run still ahead of it; a FOREGROUND one fires ~30ms AFTER the subagent has
+// genuinely ended. So stopping here is fatal for one kind and redundant for the
+// other, and task_notification:completed — the real end for BOTH — is the only
+// place a tail should be finalized.
 //
-// That used to be harmless: the tail ran for foreground subagents only, and the
-// call site's comment still says "No-op for background / untailed subagents".
-// 55faa1d8 made maybeStart tail EVERY subagent for its USAGE and left the
-// comment behind, so the no-op became a kill. Measured on a live background
-// subagent: 13 completed messages worth 47,438 output tokens in the transcript
-// against 86 in its rows — everything present had come from the parent stream,
-// and the tail had delivered nothing.
+// This used to be finalizeForeground, which stopped the tail when it was
+// labelled foreground. That guard never protected the subagents it was written
+// for: the Agent tool backgrounds BY DEFAULT, so run_in_background is absent and
+// was read as false, and every ordinary subagent was armed foreground and killed
+// at launch — before CC had created the transcript. Its usage then reached no
+// row at all and was absorbed by the parent turn at the dearer unobserved rate.
 //
-// Background tails end at task_notification:completed instead, which the same
-// comment already names as the real end signal for both kinds.
-//
-// A pending expectForeground entry is cleared either way: a subagent that ended
+// The expectForeground entry must still be cleared here: a subagent that ended
 // before task_started (an immediate error) has no tail to look up, and leaving
-// the entry would make a later, unrelated tail deliver text.
-func (m *subagentTailManager) finalizeForeground(toolUseID string) {
+// the entry would make a later, unrelated tail forward text.
+func (m *subagentTailManager) clearPendingForeground(toolUseID string) {
 	if m == nil || toolUseID == "" {
 		return
 	}
 	m.mu.Lock()
 	delete(m.expectFg, toolUseID)
-	t := m.tails[toolUseID]
-	if t == nil || !t.wantText {
-		m.mu.Unlock()
-		return
-	}
 	m.mu.Unlock()
-	m.finalize(toolUseID)
 }
 
 // stopAll cancels every running tail without waiting. Called on backend

@@ -353,23 +353,22 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 	// here: the Agent tool runs at the parent level, so the sidechain filter above
 	// already let it through).
 	if parsed.ToolName == "Agent" {
-		// Drain and stop the FOREGROUND transcript tail so every subagent text block
-		// lands in the chit.
+		// THIS HOOK NEVER STOPS A TAIL (#1934). Only the pending foreground
+		// expectation is cleared. A BACKGROUND Agent tool_use resolves the instant
+		// the task is launched (+0.03s, measured on CC 2.1.261), so anything
+		// stopped here dies before CC has written the transcript; a FOREGROUND one
+		// resolves ~30ms AFTER the subagent has genuinely ended, by which time
+		// task_notification:completed is already stopping it. One stop site, both
+		// kinds, in handlers.go.
 		//
-		// FOREGROUND ONLY, and that is load-bearing (#1924). The END signal is not
-		// fired here because a BACKGROUND Agent tool_use resolves the instant the
-		// task is launched, so this PostToolUse fires while the subagent runs on —
-		// and for exactly the same reason the tail must not be stopped here either.
-		// This used to call finalize() unconditionally under a comment claiming it
-		// was a "No-op for background / untailed subagents", which stopped being
-		// true when 55faa1d8 began tailing every subagent for its usage: the tail
-		// was then killed before CC had created the transcript, and a background
-		// subagent's whole spend never reached the accounting.
-		//
-		// The real end for both kinds is task_notification:completed (handlers.go),
-		// which now finalizes the background tail. Logged for comparison.
-		b.subagentTails().finalizeForeground(parsed.ToolUseID)
-		b.logger().Infof("subagent_end signal=agent_post_tool_use tuid=%s", parsed.ToolUseID)
+		// Two earlier attempts stopped the tail here. The first called finalize()
+		// unconditionally under a comment claiming it was a "No-op for background /
+		// untailed subagents" — untrue from 55faa1d8, which began tailing every
+		// subagent for its usage. The second (#1924) made it foreground-only, which
+		// looked correct and was inert: the Agent tool backgrounds by default, so
+		// every ordinary subagent was labelled foreground and killed anyway.
+		b.subagentTails().clearPendingForeground(parsed.ToolUseID)
+		b.logger().Infof("subagent_tool_resolved tuid=%s (NOT an end signal)", parsed.ToolUseID)
 	}
 
 	// Fire any post-tool nudges the caller wants to inject for this tool.
