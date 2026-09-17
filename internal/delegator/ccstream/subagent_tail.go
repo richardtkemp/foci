@@ -115,6 +115,16 @@ var (
 	// the transcript file before giving up (CC creates it a few seconds into
 	// the run). A subagent that errors before writing anything just times out.
 	subagentTailFileWait = 60 * time.Second
+
+	// subagentTailSettle bounds the post-stop drain. finalize() fires on CC's
+	// task_notification:completed, which arrives on CC's STDOUT STREAM — a
+	// different channel from CC's append to the transcript FILE, with no ordering
+	// between them. So the last record can still be in flight when we are told
+	// the subagent finished (#1938; measured at ~110ms on live probes). The tail
+	// keeps draining until it reads a TERMINAL record or this expires, whichever
+	// comes first — so the happy path costs nothing and a subagent that never
+	// writes one (killed, errored, rate-limited) still terminates.
+	subagentTailSettle = 3 * time.Second
 )
 
 // subagentTailManager tails foreground subagent transcript files and forwards
@@ -145,6 +155,10 @@ type subagentTail struct {
 	wantText bool
 	stop     chan struct{}
 	done     chan struct{}
+	// sawTerminal records that a record with a TERMINAL stop_reason has been
+	// read — the run's own end-of-stream marker, on the SAME channel as the data,
+	// so it cannot race the data the way the stream event does (#1938).
+	sawTerminal atomic.Bool
 	// lines counts transcript lines this tail delivered. Reported at close so
 	// a tail that opened its file but read nothing is distinguishable from one
 	// that never opened it at all (#1934).
@@ -305,7 +319,9 @@ func (m *subagentTailManager) run(groupKey, path string, t *subagentTail) {
 					if i < 0 {
 						break
 					}
-					m.deliverLine(groupKey, acc[:i], t.wantText)
+					if m.deliverLine(groupKey, acc[:i], t.wantText) {
+						t.sawTerminal.Store(true)
+					}
 					t.lines.Add(1)
 					acc = acc[i+1:]
 				}
@@ -320,8 +336,22 @@ func (m *subagentTailManager) run(groupKey, path string, t *subagentTail) {
 		drain()
 		select {
 		case <-t.stop:
-			drain() // final read: catch text flushed just before completion
-			return
+			// The stream event said "finished". The FILE has not necessarily
+			// caught up, and the two are not ordered (#1938). Keep draining until
+			// the run's own terminal record arrives or the settle window closes.
+			deadline := time.Now().Add(subagentTailSettle)
+			for {
+				drain()
+				if t.sawTerminal.Load() {
+					return
+				}
+				if time.Now().After(deadline) {
+					m.lg.Debugf("subagent tail: no terminal record within %s, closing anyway (group=%s lines=%d)",
+						subagentTailSettle, groupKey, t.lines.Load())
+					return
+				}
+				time.Sleep(subagentTailPoll)
+			}
 		case <-time.After(subagentTailPoll):
 		}
 	}
@@ -392,7 +422,11 @@ type transcriptLine struct {
 // deliverLine parses one transcript line and forwards each assistant text block
 // as subagent progress. Non-assistant records (the input prompt, tool_use,
 // tool_result, attachments) and non-text blocks are skipped.
-func (m *subagentTailManager) deliverLine(groupKey string, line []byte, wantText bool) {
+// deliverLine reports whether the record ENDS the run: a non-nil stop_reason
+// that is not "tool_use". "tool_use" means the assistant will be called again,
+// so it is explicitly NOT terminal — the live probe that exposed #1938 had
+// exactly that shape (tool_use, then the end_turn that was lost).
+func (m *subagentTailManager) deliverLine(groupKey string, line []byte, wantText bool) (terminal bool) {
 	line = bytes.TrimSpace(line)
 	if len(line) == 0 {
 		return
@@ -420,15 +454,17 @@ func (m *subagentTailManager) deliverLine(groupKey string, line []byte, wantText
 		m.noteUsage(groupKey, rec.Message.Model, rec.Message.ID, at,
 			rec.Message.StopReason != nil, rec.Message.Usage)
 	}
+	terminal = rec.Message.StopReason != nil && *rec.Message.StopReason != "tool_use"
 	// Text only when this tail was started for a FOREGROUND subagent. A
 	// background subagent's text already reaches the parent stream, so
 	// forwarding it here would render it twice.
 	if !wantText || m.deliver == nil {
-		return
+		return terminal
 	}
 	for _, blk := range rec.Message.Content {
 		if blk.Type == "text" && blk.Text != "" {
 			m.deliver(groupKey, blk.Text)
 		}
 	}
+	return terminal
 }

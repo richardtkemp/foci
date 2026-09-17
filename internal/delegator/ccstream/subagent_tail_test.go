@@ -31,12 +31,16 @@ func (r *tailRecorder) texts() []string {
 // withFastTail shortens the poll interval for the duration of a test.
 func withFastTail(t *testing.T) {
 	t.Helper()
-	origPoll, origWait := subagentTailPoll, subagentTailFileWait
+	origPoll, origWait, origSettle := subagentTailPoll, subagentTailFileWait, subagentTailSettle
 	subagentTailPoll = 2 * time.Millisecond
 	subagentTailFileWait = 2 * time.Second
+	// Long enough to outlast a deliberately-late cross-process write, short
+	// enough that a test with no terminal record does not stall the suite.
+	subagentTailSettle = 1 * time.Second
 	t.Cleanup(func() {
 		subagentTailPoll = origPoll
 		subagentTailFileWait = origWait
+		subagentTailSettle = origSettle
 	})
 }
 
