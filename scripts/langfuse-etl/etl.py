@@ -231,13 +231,14 @@ class Convo:
         if not msgs:
             return None, None
         inp = out = None
+        grace = timedelta(seconds=2)
         for t, direction, text in msgs:
-            if direction == "recv" and lo <= t <= start:
-                inp = text  # keep the latest recv before the turn
+            if t > hi:
+                break
+            if direction == "recv" and lo <= t <= start + grace:
+                inp = text  # latest recv at/just after the turn start
             elif direction == "sent" and start <= t <= hi and out is None:
                 out = text
-            elif t > hi:
-                break
         return inp, out
 
 
@@ -259,13 +260,16 @@ def turn_times(db: sqlite3.Connection) -> dict[str, list[datetime]]:
 
 def content_bounds(db: sqlite3.Connection, session: str | None, start: datetime, end: datetime) -> tuple[datetime, datetime]:
     import bisect
+    # api.db stamps the turn start to the second and slightly BEFORE the inbound message is logged, so the
+    # triggering recv can sit a few hundred ms after `start`; give both edges a 2 s grace.
+    grace = timedelta(seconds=2)
     lo, hi = start - timedelta(minutes=15), end + timedelta(minutes=2)
     ts = turn_times(db).get(session or "", [])
     i = bisect.bisect_left(ts, start)
     if i > 0:
-        lo = max(lo, ts[i - 1])           # not before the previous turn in this session
+        lo = max(lo, ts[i - 1] + grace)   # not the previous turn's own message
     if i + 1 < len(ts):
-        hi = min(hi, ts[i + 1])           # not after the next turn starts
+        hi = min(hi, ts[i + 1] + grace)   # not past the next turn's start
     return lo, hi
 
 
