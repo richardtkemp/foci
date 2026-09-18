@@ -69,6 +69,7 @@ from opentelemetry.trace import SpanKind
 HOME = Path.home()
 API_DB = os.environ.get("API_DB", str(HOME / "data" / "api.db"))
 WATERMARK = Path(os.environ.get("LANGFUSE_ETL_WATERMARK", str(HOME / "data" / "langfuse-etl.watermark")))
+LOCK = WATERMARK.with_suffix(".lock")  # present while a backfill/rebuild runs: tail exits without sending
 ENVIRONMENT = os.environ.get("LANGFUSE_ENVIRONMENT", "production")
 CONTENT = os.environ.get("LANGFUSE_ETL_CONTENT", "0") == "1"
 REDACT_HASHES = Path(os.environ.get("LANGFUSE_ETL_REDACT_HASHES", str(HOME / ".config" / "langfuse-etl.redact-hashes")))
@@ -404,6 +405,14 @@ def run_rows(rows, rate: float, verbose: bool, db: sqlite3.Connection) -> int:
 
 
 def cmd_backfill(a) -> None:
+    LOCK.write_text(str(os.getpid()))
+    try:
+        _backfill(a)
+    finally:
+        LOCK.unlink(missing_ok=True)
+
+
+def _backfill(a) -> None:
     db = open_db()
     to_id = a.to_id if a.to_id is not None else 2**62
     rows = db.execute(f"SELECT {COLS} FROM api_calls WHERE id BETWEEN ? AND ? ORDER BY id", (a.from_id, to_id))
@@ -420,6 +429,8 @@ def cmd_backfill(a) -> None:
 
 
 def cmd_tail(a) -> None:
+    if LOCK.exists():
+        return  # a backfill owns the pipeline; the cron will catch up once the lock is gone
     wm = int(WATERMARK.read_text().strip()) if WATERMARK.exists() else 0
     if not healthy(env("LANGFUSE_HOST")):
         sys.exit(2)  # nothing sent, watermark untouched; cron retries in 5 min
