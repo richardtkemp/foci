@@ -39,6 +39,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -108,6 +109,36 @@ def parse_ts(ts: str) -> datetime:
     return d.astimezone(timezone.utc)
 
 
+ROUTE_SEGMENTS = {"anthropic", "claude", "openrouter", "codex", "gemini", "openai"}
+
+
+def normalize_model(model: str | None) -> tuple[str, list[str]]:
+    """Mirror modelinfo.Normalize: bare leaf id, lowercased, trailing -YYYYMMDD stripped; route segments returned as tags.
+    'anthropic/claude-opus-4-6' and 'claude/claude-opus-4-8' both become their leaf; 'claude-opus-4-6[1m]' keeps its suffix."""
+    m = (model or "").strip()
+    if not m:
+        return "unknown", []
+    parts = m.split("/")
+    leaf = parts[-1].lower()
+    leaf = re.sub(r"-\d{8}$", "", leaf)
+    routes = [f"route:{p.lower().lstrip('~')}" for p in parts[:-1] if p]
+    return leaf, routes
+
+
+def agent_of(session: str | None) -> str | None:
+    """Both key grammars: pre-stable-identity 'agent:<name>:<kind>:<id>' and current '<name>/c<chat>[/b<ts>]'."""
+    if not session:
+        return None
+    if session.startswith("agent:"):
+        seg = session.split(":")
+        return seg[1] if len(seg) > 1 and seg[1] else None
+    return session.split("/", 1)[0] or None
+
+
+TRACE_NAME = {"conversation": "turn", "delegated_turn": "turn"}  # same thing, direct-API era vs delegated era (c3613d54)
+BACKEND_OF = {"conversation": "backend:api", "delegated_turn": "backend:delegated", "subagent_turn": "backend:delegated"}
+
+
 def open_db() -> sqlite3.Connection:
     db = sqlite3.connect(f"file:{API_DB}?mode=ro", uri=True, timeout=30)
     db.row_factory = sqlite3.Row
@@ -158,25 +189,34 @@ def emit(tracer: trace.Tracer, gen: SeededIdGenerator, r: sqlite3.Row) -> None:
                  "cache_read_input_tokens": r["cache_read_tokens"] or 0, "cache_creation_input_tokens": r["cache_write_tokens"] or 0}
     usage["total"] = sum(usage.values())
 
-    agent = r["agent_id"] or (r["session"].split("/", 1)[0] if r["session"] and "/" in r["session"] else None)
     call_type = r["call_type"] or "turn"
+    model, route_tags = normalize_model(r["model"])
+    # Subagent rows (#1880) carry the Agent tool_use id as agent_id; book them under the parent agent (the session's owner).
+    is_subagent = call_type == "subagent_turn" or (r["agent_id"] or "").startswith("toolu_")
+    agent = agent_of(r["session"]) if is_subagent or not r["agent_id"] else r["agent_id"]
+    tags = [t for t in (BACKEND_OF.get(call_type), f"call_type:{call_type}", f"tokens:{scope}", *route_tags) if t]
+    if is_subagent:
+        tags.append("subagent")
     attrs = {
         "langfuse.observation.type": "generation",
-        "langfuse.observation.model.name": r["model"] or "unknown",
+        "langfuse.observation.model.name": model,
         "langfuse.observation.usage_details": json.dumps(usage),
         "langfuse.observation.cost_details": json.dumps({"total": r["calculated_cost_usd"] if r["calculated_cost_usd"] is not None else 0.0}),
         "langfuse.observation.level": "DEFAULT",
-        "langfuse.trace.name": call_type,
+        "langfuse.trace.name": TRACE_NAME.get(call_type, call_type),
         "langfuse.environment": ENVIRONMENT,
-        "langfuse.trace.tags": [x for x in (r["provider"], call_type, f"tokens:{scope}") if x],
+        "langfuse.trace.tags": tags,
         "langfuse.observation.metadata.api_db_id": int(r["id"]),
         "langfuse.observation.metadata.token_scope": scope,
         "langfuse.observation.metadata.source": "api.db",
+        "langfuse.observation.metadata.model_raw": r["model"] or "",
     }
     if agent:
         attrs["user.id"] = agent
     if r["session"]:
         attrs["session.id"] = r["session"]
+    if is_subagent and (r["agent_id"] or "").startswith("toolu_"):
+        attrs["langfuse.observation.metadata.subagent_tool_use_id"] = r["agent_id"]
     for k in ("turn_id", "stop_reason", "provider", "call_type"):
         if r[k]:
             attrs[f"langfuse.observation.metadata.{k}"] = r[k]
@@ -185,7 +225,7 @@ def emit(tracer: trace.Tracer, gen: SeededIdGenerator, r: sqlite3.Row) -> None:
     if r["duration_ms"] is not None:
         attrs["langfuse.observation.metadata.duration_ms"] = int(r["duration_ms"])
 
-    span = tracer.start_span(f"{call_type} {r['model'] or ''}".strip(), kind=SpanKind.CLIENT, attributes=attrs, start_time=start_ns)
+    span = tracer.start_span(f"{TRACE_NAME.get(call_type, call_type)} {model}", kind=SpanKind.CLIENT, attributes=attrs, start_time=start_ns)
     span.end(end_time=end_ns)
 
 
@@ -277,14 +317,23 @@ def cmd_reconcile(a) -> None:
         sys.exit(1)
 
 
+def cmd_show(a) -> None:
+    db = open_db()
+    for r in db.execute(f"SELECT {COLS} FROM api_calls WHERE id IN ({','.join('?'*len(a.ids))}) ORDER BY id", a.ids):
+        model, routes = normalize_model(r["model"]); ct = r["call_type"] or "turn"
+        sub = ct == "subagent_turn" or (r["agent_id"] or "").startswith("toolu_")
+        print(f"{r['id']} {r['ts'][:19]} name={TRACE_NAME.get(ct, ct)!r} user={agent_of(r['session']) if sub or not r['agent_id'] else r['agent_id']!r} model={model!r} routes={routes} session={r['session']!r} sub={sub}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("backfill"); b.add_argument("--from-id", type=int, default=1); b.add_argument("--to-id", type=int, default=None); b.add_argument("--rate", type=float, default=40.0); b.add_argument("--no-watermark", action="store_true")
     t = sub.add_parser("tail"); t.add_argument("--overlap", type=int, default=0, help="re-send this many rows below the watermark (0: never; see docstring)"); t.add_argument("--verbose", action="store_true")
+    sh = sub.add_parser("show"); sh.add_argument("ids", type=int, nargs="+")
     r = sub.add_parser("reconcile"); r.add_argument("--days", type=int, default=14); r.add_argument("--tolerance", type=float, default=0.05)
     a = ap.parse_args()
-    {"backfill": cmd_backfill, "tail": cmd_tail, "reconcile": cmd_reconcile}[a.cmd](a)
+    {"backfill": cmd_backfill, "tail": cmd_tail, "reconcile": cmd_reconcile, "show": cmd_show}[a.cmd](a)
 
 
 if __name__ == "__main__":
