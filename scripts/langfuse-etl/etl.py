@@ -29,8 +29,18 @@ itself is not used because it offers no way to set a historical start time on an
 Trace id = sha256("api.db:<id>")[:32], span id = sha256("api.db:<id>:gen")[:16] -> a re-run of unchanged rows is
 absorbed by Langfuse; a re-run of CHANGED rows duplicates them (see --tail). Backfill only over ranges not yet sent.
 
+Content (LANGFUSE_ETL_CONTENT=1): each turn's prompt and reply are attached as observation input/output, verbatim
+(nothing stripped; only Langfuse's own 2 MB field cap applies). Source: <agent>/.data/conversation.db — input is the
+last `recv` in the same session within 15 min before the turn, output the first `sent` between the turn's start and
+its end + 2 min. Turns with no human message (cron, keepalive, branches) get no content and content_source=none.
+Secrets are redacted before anything is sent: every token-like substring is SHA-256 hashed and compared against
+the hash list produced by build-redactions.sh (secret values never reach this process), plus generic key-shaped
+patterns. Content is refused if the hash list is missing.
+
 Env: LANGFUSE_HOST, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY; optional API_DB (~/data/api.db),
-     LANGFUSE_ETL_WATERMARK (~/data/langfuse-etl.watermark), LANGFUSE_ENVIRONMENT (production)
+     LANGFUSE_ETL_WATERMARK (~/data/langfuse-etl.watermark), LANGFUSE_ENVIRONMENT (production),
+     LANGFUSE_ETL_CONTENT (0/1), LANGFUSE_ETL_REDACT_HASHES (~/.config/langfuse-etl.redact-hashes),
+     FOCI_HOME (/home/foci) for <agent>/.data/conversation.db
 """
 from __future__ import annotations
 
@@ -60,6 +70,10 @@ HOME = Path.home()
 API_DB = os.environ.get("API_DB", str(HOME / "data" / "api.db"))
 WATERMARK = Path(os.environ.get("LANGFUSE_ETL_WATERMARK", str(HOME / "data" / "langfuse-etl.watermark")))
 ENVIRONMENT = os.environ.get("LANGFUSE_ENVIRONMENT", "production")
+CONTENT = os.environ.get("LANGFUSE_ETL_CONTENT", "0") == "1"
+REDACT_HASHES = Path(os.environ.get("LANGFUSE_ETL_REDACT_HASHES", str(HOME / ".config" / "langfuse-etl.redact-hashes")))
+FOCI_HOME = Path(os.environ.get("FOCI_HOME", "/home/foci"))
+FIELD_CAP = 2_000_000  # Langfuse LANGFUSE_OBSERVATION_FIELD_SIZE_LIMIT_BYTES default is 2 MiB
 
 
 def env(name: str) -> str:
@@ -139,6 +153,122 @@ TRACE_NAME = {"conversation": "turn", "delegated_turn": "turn"}  # same thing, d
 BACKEND_OF = {"conversation": "backend:api", "delegated_turn": "backend:delegated", "subagent_turn": "backend:delegated"}
 
 
+# ---------------------------------------------------------------- redaction
+GENERIC_SECRET_PATTERNS = [
+    re.compile(r"sk-[A-Za-z0-9_\-]{16,}"),                       # OpenAI/Anthropic/Langfuse-style keys
+    re.compile(r"pk-lf-[0-9a-f\-]{20,}"),
+    re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"),                    # GitHub tokens
+    re.compile(r"xox[abpr]-[A-Za-z0-9\-]{10,}"),                  # Slack
+    re.compile(r"AKIA[0-9A-Z]{16}"),                               # AWS access key id
+    re.compile(r"AIza[0-9A-Za-z_\-]{30,}"),                       # Google API key
+    re.compile(r"\d{8,10}:[A-Za-z0-9_\-]{30,}"),                  # Telegram bot token
+    re.compile(r"eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"),  # JWT
+    re.compile(r"(?i)bearer\s+[A-Za-z0-9._\-]{16,}"),
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S),
+]
+TOKEN_PATTERNS = [re.compile(r"[A-Za-z0-9_\-]{8,}"), re.compile(r"[A-Za-z0-9_\-.:+/=]{8,}")]
+_hashes: set[str] | None = None
+
+
+def load_hashes() -> set[str]:
+    global _hashes
+    if _hashes is None:
+        if not REDACT_HASHES.exists():
+            sys.exit(f"content enabled but {REDACT_HASHES} is missing — run build-redactions.sh (sudo) first")
+        _hashes = {l.strip() for l in REDACT_HASHES.read_text().splitlines() if l.strip()}
+    return _hashes
+
+
+def redact(text: str) -> tuple[str, int]:
+    """Replace known-secret tokens (by hash) and key-shaped strings. Returns (text, replacements)."""
+    if not text:
+        return text, 0
+    hashes = load_hashes()
+    n = 0
+
+    def sub_hash(m):
+        nonlocal n
+        if hashlib.sha256(m.group(0).encode()).hexdigest() in hashes:
+            n += 1
+            return "[REDACTED]"
+        return m.group(0)
+
+    for pat in TOKEN_PATTERNS:
+        text = pat.sub(sub_hash, text)
+    for pat in GENERIC_SECRET_PATTERNS:
+        text, k = pat.subn("[REDACTED]", text)
+        n += k
+    return text, n
+
+
+# ---------------------------------------------------------------- content join (conversation.db)
+class Convo:
+    """Per-agent conversation.db, indexed by session: sorted (ts, direction, text)."""
+
+    def __init__(self) -> None:
+        self.by_agent: dict[str, dict[str, list]] = {}
+
+    def _load(self, agent: str) -> dict[str, list]:
+        if agent in self.by_agent:
+            return self.by_agent[agent]
+        idx: dict[str, list] = {}
+        path = FOCI_HOME / agent / ".data" / "conversation.db"
+        if path.exists():
+            db = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30)
+            db.text_factory = lambda b: b.decode("utf-8", "replace")  # a few rows hold invalid UTF-8
+            for ts, direction, sess, text in db.execute("SELECT ts, direction, session, text FROM messages WHERE session IS NOT NULL AND session != ''"):
+                idx.setdefault(sess, []).append((parse_ts(ts), direction, text))
+            db.close()
+            for v in idx.values():
+                v.sort(key=lambda x: x[0])
+        self.by_agent[agent] = idx
+        return idx
+
+    def lookup(self, agent: str | None, session: str | None, start: datetime, lo: datetime, hi: datetime) -> tuple[str | None, str | None]:
+        if not agent or not session:
+            return None, None
+        msgs = self._load(agent).get(session)
+        if not msgs:
+            return None, None
+        inp = out = None
+        for t, direction, text in msgs:
+            if direction == "recv" and lo <= t <= start:
+                inp = text  # keep the latest recv before the turn
+            elif direction == "sent" and start <= t <= hi and out is None:
+                out = text
+            elif t > hi:
+                break
+        return inp, out
+
+
+CONVO = Convo()
+_turns: dict[str, list[datetime]] | None = None
+
+
+def turn_times(db: sqlite3.Connection) -> dict[str, list[datetime]]:
+    """session -> sorted turn start times, so content is bounded by the previous/next turn in that session."""
+    global _turns
+    if _turns is None:
+        _turns = {}
+        for sess, ts in db.execute("SELECT session, ts FROM api_calls WHERE session IS NOT NULL"):
+            _turns.setdefault(sess, []).append(parse_ts(ts))
+        for v in _turns.values():
+            v.sort()
+    return _turns
+
+
+def content_bounds(db: sqlite3.Connection, session: str | None, start: datetime, end: datetime) -> tuple[datetime, datetime]:
+    import bisect
+    lo, hi = start - timedelta(minutes=15), end + timedelta(minutes=2)
+    ts = turn_times(db).get(session or "", [])
+    i = bisect.bisect_left(ts, start)
+    if i > 0:
+        lo = max(lo, ts[i - 1])           # not before the previous turn in this session
+    if i + 1 < len(ts):
+        hi = min(hi, ts[i + 1])           # not after the next turn starts
+    return lo, hi
+
+
 def open_db() -> sqlite3.Connection:
     db = sqlite3.connect(f"file:{API_DB}?mode=ro", uri=True, timeout=30)
     db.row_factory = sqlite3.Row
@@ -173,7 +303,7 @@ def make_tracer(host: str, pk: str, sk: str) -> tuple[trace.Tracer, TracerProvid
     return provider.get_tracer("foci.api_db_etl"), provider, gen
 
 
-def emit(tracer: trace.Tracer, gen: SeededIdGenerator, r: sqlite3.Row) -> None:
+def emit(tracer: trace.Tracer, gen: SeededIdGenerator, r: sqlite3.Row, db: sqlite3.Connection) -> None:
     start = parse_ts(r["ts"])
     end = start + timedelta(milliseconds=r["duration_ms"] or 0)
     start_ns, end_ns = int(start.timestamp() * 1e9), int(end.timestamp() * 1e9)
@@ -217,6 +347,21 @@ def emit(tracer: trace.Tracer, gen: SeededIdGenerator, r: sqlite3.Row) -> None:
         attrs["session.id"] = r["session"]
     if is_subagent and (r["agent_id"] or "").startswith("toolu_"):
         attrs["langfuse.observation.metadata.subagent_tool_use_id"] = r["agent_id"]
+    if CONTENT and not is_subagent:  # a subagent's prompt is the Agent tool call, not the human's message
+        lo, hi = content_bounds(db, r["session"], start, end)
+        inp, out = CONVO.lookup(agent, r["session"], start, lo, hi)
+        redactions = 0
+        if inp is not None:
+            attrs["langfuse.observation.metadata.input_chars"] = len(inp)
+            inp, k = redact(inp); redactions += k
+            attrs["langfuse.observation.input"] = inp[:FIELD_CAP]
+        if out is not None:
+            attrs["langfuse.observation.metadata.output_chars"] = len(out)
+            out, k = redact(out); redactions += k
+            attrs["langfuse.observation.output"] = out[:FIELD_CAP]
+        attrs["langfuse.observation.metadata.content_source"] = "conversation.db" if (inp is not None or out is not None) else "none"
+        if redactions:
+            attrs["langfuse.observation.metadata.redactions"] = redactions
     for k in ("turn_id", "stop_reason", "provider", "call_type"):
         if r[k]:
             attrs[f"langfuse.observation.metadata.{k}"] = r[k]
@@ -229,12 +374,12 @@ def emit(tracer: trace.Tracer, gen: SeededIdGenerator, r: sqlite3.Row) -> None:
     span.end(end_time=end_ns)
 
 
-def run_rows(rows, rate: float, verbose: bool) -> int:
+def run_rows(rows, rate: float, verbose: bool, db: sqlite3.Connection) -> int:
     host, pk, sk = env("LANGFUSE_HOST"), env("LANGFUSE_PUBLIC_KEY"), env("LANGFUSE_SECRET_KEY")
     tracer, provider, gen = make_tracer(host, pk, sk)
     n, t0, last_id = 0, time.monotonic(), None
     for r in rows:
-        emit(tracer, gen, r)
+        emit(tracer, gen, r, db)
         n += 1
         last_id = r["id"]
         if rate > 0:
@@ -257,7 +402,7 @@ def cmd_backfill(a) -> None:
     rows = db.execute(f"SELECT {COLS} FROM api_calls WHERE id BETWEEN ? AND ? ORDER BY id", (a.from_id, to_id))
     total = db.execute("SELECT COUNT(*) FROM api_calls WHERE id BETWEEN ? AND ?", (a.from_id, to_id)).fetchone()[0]
     print(f"backfill: {total} rows, ids {a.from_id}..{to_id if a.to_id is not None else 'end'} at {a.rate} rows/s", flush=True)
-    last = run_rows(rows, a.rate, True)
+    last = run_rows(rows, a.rate, True, db)
     if last < 0:
         sys.exit(1)
     if not a.no_watermark:
@@ -270,10 +415,12 @@ def cmd_tail(a) -> None:
     if not healthy(env("LANGFUSE_HOST")):
         sys.exit(2)  # nothing sent, watermark untouched; cron retries in 5 min
     db = open_db()
-    rows = db.execute(f"SELECT {COLS} FROM api_calls WHERE id > ? ORDER BY id", (max(0, wm - a.overlap),)).fetchall()
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=a.min_age)).isoformat()
+    rows = [r for r in db.execute(f"SELECT {COLS} FROM api_calls WHERE id > ? ORDER BY id", (max(0, wm - a.overlap),)).fetchall()
+            if parse_ts(r["ts"]).isoformat() <= cutoff]
     if not rows:
         return
-    last = run_rows(rows, 0, False)
+    last = run_rows(rows, 0, False, db)
     if last < 0:
         sys.exit(1)
     if last > wm:
@@ -322,14 +469,21 @@ def cmd_show(a) -> None:
     for r in db.execute(f"SELECT {COLS} FROM api_calls WHERE id IN ({','.join('?'*len(a.ids))}) ORDER BY id", a.ids):
         model, routes = normalize_model(r["model"]); ct = r["call_type"] or "turn"
         sub = ct == "subagent_turn" or (r["agent_id"] or "").startswith("toolu_")
-        print(f"{r['id']} {r['ts'][:19]} name={TRACE_NAME.get(ct, ct)!r} user={agent_of(r['session']) if sub or not r['agent_id'] else r['agent_id']!r} model={model!r} routes={routes} session={r['session']!r} sub={sub}")
+        agent = agent_of(r['session']) if sub or not r['agent_id'] else r['agent_id']
+        print(f"{r['id']} {r['ts'][:19]} name={TRACE_NAME.get(ct, ct)!r} user={agent!r} model={model!r} routes={routes} session={r['session']!r} sub={sub}")
+        if CONTENT:
+            st = parse_ts(r["ts"]); lo, hi = content_bounds(db, r["session"], st, st + timedelta(milliseconds=r["duration_ms"] or 0))
+            inp, out = (None, None) if sub else CONVO.lookup(agent, r["session"], st, lo, hi)
+            ri, ki = redact(inp) if inp else (None, 0); ro, ko = redact(out) if out else (None, 0)
+            print(f"   input ({len(inp) if inp else 0} chars, {ki} redacted): {(ri or '')[:120]!r}")
+            print(f"   output({len(out) if out else 0} chars, {ko} redacted): {(ro or '')[:120]!r}")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("backfill"); b.add_argument("--from-id", type=int, default=1); b.add_argument("--to-id", type=int, default=None); b.add_argument("--rate", type=float, default=40.0); b.add_argument("--no-watermark", action="store_true")
-    t = sub.add_parser("tail"); t.add_argument("--overlap", type=int, default=0, help="re-send this many rows below the watermark (0: never; see docstring)"); t.add_argument("--verbose", action="store_true")
+    t = sub.add_parser("tail"); t.add_argument("--overlap", type=int, default=0, help="re-send this many rows below the watermark (0: never; see docstring)"); t.add_argument("--verbose", action="store_true"); t.add_argument("--min-age", type=int, default=120, help="seconds a row must be old before it is sent (lets the reply land in conversation.db)")
     sh = sub.add_parser("show"); sh.add_argument("ids", type=int, nargs="+")
     r = sub.add_parser("reconcile"); r.add_argument("--days", type=int, default=14); r.add_argument("--tolerance", type=float, default=0.05)
     a = ap.parse_args()
