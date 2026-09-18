@@ -74,6 +74,7 @@ CONTENT = os.environ.get("LANGFUSE_ETL_CONTENT", "0") == "1"
 REDACT_HASHES = Path(os.environ.get("LANGFUSE_ETL_REDACT_HASHES", str(HOME / ".config" / "langfuse-etl.redact-hashes")))
 FOCI_HOME = Path(os.environ.get("FOCI_HOME", "/home/foci"))
 FIELD_CAP = 2_000_000  # Langfuse LANGFUSE_OBSERVATION_FIELD_SIZE_LIMIT_BYTES default is 2 MiB
+STATS = {"rows": 0, "with_input": 0, "with_output": 0, "redactions": 0}
 
 
 def env(name: str) -> str:
@@ -366,6 +367,8 @@ def emit(tracer: trace.Tracer, gen: SeededIdGenerator, r: sqlite3.Row, db: sqlit
         attrs["langfuse.observation.metadata.content_source"] = "conversation.db" if (inp is not None or out is not None) else "none"
         if redactions:
             attrs["langfuse.observation.metadata.redactions"] = redactions
+        STATS["with_input"] += inp is not None; STATS["with_output"] += out is not None; STATS["redactions"] += redactions
+    STATS["rows"] += 1
     for k in ("turn_id", "stop_reason", "provider", "call_type"):
         if r[k]:
             attrs[f"langfuse.observation.metadata.{k}"] = r[k]
@@ -411,6 +414,8 @@ def cmd_backfill(a) -> None:
         sys.exit(1)
     if not a.no_watermark:
         WATERMARK.write_text(str(last))
+    if CONTENT and STATS["rows"]:
+        print(f"content: input on {STATS['with_input']}/{STATS['rows']} rows, output on {STATS['with_output']}, {STATS['redactions']} redactions", flush=True)
     print(f"done; last id {last}", flush=True)
 
 
