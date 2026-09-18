@@ -15,15 +15,19 @@ session key, agent id, timings). No prompt or completion content, by constructio
 
 Modes
   --backfill            every row (or --from-id N onwards), paced with --rate rows/s
-  --tail                rows above the watermark file, plus the last --overlap rows again (rows are upserted
-                        by deterministic id, and #1918 cost corrections rewrite recent rows after the fact)
+  --tail                rows above the watermark file, strictly. Langfuse v4 is append-only: re-sending an
+                        observation whose content changed stores a second version and aggregations count both
+                        (measured 2026-09-18: 40 rows re-sent after #1918 corrections -> 67 observations, +65% cost).
+                        Byte-identical re-sends are absorbed. So rows are sent exactly once and later corrections
+                        are NOT mirrored; `reconcile` shows that drift.
   --reconcile [--days N] per-UTC-day SUM(calculated_cost_usd) from api.db vs Langfuse Metrics API v2 sum(totalCost)
 
 Transport is plain OpenTelemetry over OTLP/HTTP (protobuf) to Langfuse's /api/public/otel endpoint, using the
 same span attributes the official Python SDK emits (langfuse.observation.*, session.id, user.id, ...). The SDK
 itself is not used because it offers no way to set a historical start time on an observation.
 
-Trace id = sha256("api.db:<id>")[:32], span id = sha256("api.db:<id>:gen")[:16] -> re-runs overwrite, never duplicate.
+Trace id = sha256("api.db:<id>")[:32], span id = sha256("api.db:<id>:gen")[:16] -> a re-run of unchanged rows is
+absorbed by Langfuse; a re-run of CHANGED rows duplicates them (see --tail). Backfill only over ranges not yet sent.
 
 Env: LANGFUSE_HOST, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY; optional API_DB (~/data/api.db),
      LANGFUSE_ETL_WATERMARK (~/data/langfuse-etl.watermark), LANGFUSE_ENVIRONMENT (production)
@@ -217,14 +221,19 @@ def cmd_reconcile(a) -> None:
         d = parse_ts(ts)
         if frm <= d < to:
             local[d.strftime("%Y-%m-%d")] += c
-    q = {"view": "observations", "metrics": [{"measure": "totalCost", "aggregation": "sum"}], "dimensions": [],
-         "timeDimension": {"granularity": "day"}, "fromTimestamp": frm.isoformat(), "toTimestamp": to.isoformat(),
-         "orderBy": [{"field": "time_dimension", "direction": "asc"}]}
-    r = httpx.get(f"{host.rstrip('/')}/api/public/v2/metrics", params={"query": json.dumps(q)}, auth=(pk, sk), timeout=60)
-    r.raise_for_status()
     remote = {}
-    for row in r.json().get("data", []):
-        remote[str(row.get("time_dimension"))[:10]] = float(row.get("sum_totalCost") or 0)
+    step = timedelta(days=60)  # the Metrics API returns at most 100 rows per query; keep each window under that
+    w0 = frm
+    while w0 < to:
+        w1 = min(w0 + step, to)
+        q = {"view": "observations", "metrics": [{"measure": "totalCost", "aggregation": "sum"}], "dimensions": [],
+             "timeDimension": {"granularity": "day"}, "fromTimestamp": w0.isoformat(), "toTimestamp": w1.isoformat(),
+             "orderBy": [{"field": "time_dimension", "direction": "asc"}]}
+        r = httpx.get(f"{host.rstrip('/')}/api/public/v2/metrics", params={"query": json.dumps(q)}, auth=(pk, sk), timeout=60)
+        r.raise_for_status()
+        for row in r.json().get("data", []):
+            remote[str(row.get("time_dimension"))[:10]] = float(row.get("sum_totalCost") or 0)
+        w0 = w1
     days = sorted(set(local) | set(remote))
     print(f"{'day':10} {'api.db':>10} {'langfuse':>10} {'diff':>9}")
     worst = 0.0
@@ -241,7 +250,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("backfill"); b.add_argument("--from-id", type=int, default=1); b.add_argument("--to-id", type=int, default=None); b.add_argument("--rate", type=float, default=40.0); b.add_argument("--no-watermark", action="store_true")
-    t = sub.add_parser("tail"); t.add_argument("--overlap", type=int, default=300); t.add_argument("--verbose", action="store_true")
+    t = sub.add_parser("tail"); t.add_argument("--overlap", type=int, default=0, help="re-send this many rows below the watermark (0: never; see docstring)"); t.add_argument("--verbose", action="store_true")
     r = sub.add_parser("reconcile"); r.add_argument("--days", type=int, default=14); r.add_argument("--tolerance", type=float, default=0.05)
     a = ap.parse_args()
     {"backfill": cmd_backfill, "tail": cmd_tail, "reconcile": cmd_reconcile}[a.cmd](a)
