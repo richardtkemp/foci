@@ -68,6 +68,19 @@ def env(name: str) -> str:
     return v
 
 
+class RecordingExporter(OTLPSpanExporter):
+    """The batch processor swallows export failures; remember them so a tail run can refuse to advance the watermark."""
+
+    failed = 0
+
+    def export(self, spans):
+        from opentelemetry.sdk.trace.export import SpanExportResult
+        res = super().export(spans)
+        if res != SpanExportResult.SUCCESS:
+            RecordingExporter.failed += len(spans)
+        return res
+
+
 class SeededIdGenerator(IdGenerator):
     """OTel generates ids at span start; we pre-set the next pair so ids are a pure function of the row id."""
 
@@ -107,9 +120,18 @@ COLS = """id, ts, session, model, provider, call_type, agent_id, turn_id, stop_r
           cost_usd, calculated_cost_usd"""
 
 
+def healthy(host: str) -> bool:
+    try:
+        r = httpx.get(f"{host.rstrip('/')}/api/public/health", timeout=15)
+        return r.status_code == 200 and r.json().get("status") == "OK"
+    except Exception as e:  # noqa: BLE001
+        print(f"langfuse health check failed: {e}", file=sys.stderr)
+        return False
+
+
 def make_tracer(host: str, pk: str, sk: str) -> tuple[trace.Tracer, TracerProvider, SeededIdGenerator]:
     auth = "Basic " + base64.b64encode(f"{pk}:{sk}".encode()).decode()
-    exporter = OTLPSpanExporter(
+    exporter = RecordingExporter(
         endpoint=f"{host.rstrip('/')}/api/public/otel/v1/traces",
         headers={"Authorization": auth, "x-langfuse-public-key": pk, "x-langfuse-sdk-name": "foci-api-db-etl"},
         timeout=30,
@@ -183,6 +205,9 @@ def run_rows(rows, rate: float, verbose: bool) -> int:
             print(f"{n} rows, at id {last_id} ({r['ts']})", flush=True)
     provider.force_flush(60_000)
     provider.shutdown()
+    if RecordingExporter.failed:
+        print(f"export failed for {RecordingExporter.failed} spans; watermark not advanced", file=sys.stderr)
+        return -1
     return last_id if last_id is not None else -1
 
 
@@ -193,18 +218,24 @@ def cmd_backfill(a) -> None:
     total = db.execute("SELECT COUNT(*) FROM api_calls WHERE id BETWEEN ? AND ?", (a.from_id, to_id)).fetchone()[0]
     print(f"backfill: {total} rows, ids {a.from_id}..{to_id if a.to_id is not None else 'end'} at {a.rate} rows/s", flush=True)
     last = run_rows(rows, a.rate, True)
-    if last >= 0 and not a.no_watermark:
+    if last < 0:
+        sys.exit(1)
+    if not a.no_watermark:
         WATERMARK.write_text(str(last))
     print(f"done; last id {last}", flush=True)
 
 
 def cmd_tail(a) -> None:
     wm = int(WATERMARK.read_text().strip()) if WATERMARK.exists() else 0
+    if not healthy(env("LANGFUSE_HOST")):
+        sys.exit(2)  # nothing sent, watermark untouched; cron retries in 5 min
     db = open_db()
     rows = db.execute(f"SELECT {COLS} FROM api_calls WHERE id > ? ORDER BY id", (max(0, wm - a.overlap),)).fetchall()
     if not rows:
         return
     last = run_rows(rows, 0, False)
+    if last < 0:
+        sys.exit(1)
     if last > wm:
         WATERMARK.write_text(str(last))
     if a.verbose:
