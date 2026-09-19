@@ -63,7 +63,14 @@ const frameWriteQueue = 1024 // async write backlog before Append falls back to 
 
 // newFrameStore opens (or creates) the durable frame DB and starts its writer.
 func newFrameStore(path string, ttl time.Duration) (*frameStore, error) {
-	db, err := sqlite.OpenInit(path,
+	// auto_vacuum(incremental) MUST arrive as a CONNECTION pragma, not as a
+	// statement after the CREATEs: it is a file-header property settable only
+	// while the database is still empty, so the old `PRAGMA auto_vacuum =
+	// INCREMENTAL` that trailed this list never once took effect. Every
+	// app-frames.db this code ever made was auto_vacuum=NONE, which is why the
+	// hourly `PRAGMA incremental_vacuum` below reclaimed nothing and the live
+	// file reached 1.47 GB holding 29 MB of frames (#1942).
+	db, err := sqlite.OpenInitPragmas(path, []string{"auto_vacuum(incremental)"},
 		`CREATE TABLE IF NOT EXISTS app_frames (
 			conv_id  TEXT    NOT NULL,
 			seq      INTEGER NOT NULL,
@@ -84,7 +91,6 @@ func newFrameStore(path string, ttl time.Duration) (*frameStore, error) {
 			agent_id   TEXT    NOT NULL,
 			created_ms INTEGER NOT NULL
 		)`,
-		`PRAGMA auto_vacuum = INCREMENTAL`,
 	)
 	if err != nil {
 		return nil, err
