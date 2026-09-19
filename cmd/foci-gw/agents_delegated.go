@@ -242,6 +242,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	ag.DelegatedManager = &agent.DelegatedManager{
 		SessionIndex: p.sessionIndex,
 		AgentID:      agentID,
+		BackendType:  backendName,
 		NewBackend: func() (delegator.Delegator, error) {
 			cfgMap := bc.ToMap()
 			cfgMap["foci_version"] = version

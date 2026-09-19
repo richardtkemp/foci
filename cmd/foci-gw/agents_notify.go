@@ -14,6 +14,7 @@ import (
 	"foci/internal/platform"
 	"foci/internal/route"
 	"foci/internal/session"
+	"foci/internal/telemetry"
 	"foci/internal/tools"
 	"foci/internal/turn"
 	"foci/shared/prompts"
@@ -159,6 +160,10 @@ func relayResponseToCaller(
 		formattedResp := "Response from session " + targetSession + ":\n" + resp
 		injected := prompts.FormatInjectedMessage("SESSION RESPONSE", time.Now(), formattedResp,
 			"[Inter-session response — the target session processed your message and returned this result. Relay the result to the user.]")
+		// The caller's relay turn descends from the target turn that just
+		// answered (its last completed turn) — the reverse edge of the link
+		// send_to_session staged on the way out.
+		telemetry.LinkPending(callerSession, targetSession)
 		deliverToSessionChat(getAgent(), ctx, trigger, connMgr, callerAgentID, callerSession, injected, "")
 	})
 }

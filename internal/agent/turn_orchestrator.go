@@ -2,10 +2,13 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"foci/internal/agent/turnevent"
 	"foci/internal/delegator"
+	"foci/internal/provider"
+	"foci/internal/telemetry"
 )
 
 // OrchestrateFullTurn executes a complete turn through the TurnContract pipeline.
@@ -28,6 +31,10 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	if ts.ReceivedAt.IsZero() {
 		ts.ReceivedAt = ts.StartedAt
 	}
+	// The trace's root span opens the instant the turn has an identity
+	// (RowID needs StartedAt), before any gate can fail — so a rate-limited
+	// or stale turn is still a (short, errored) trace.
+	a.traceBegin(ctx, ts)
 
 	// Phase 1: Pre-lock
 	if err := tc.RateLimitGate(ts); err != nil {
@@ -94,6 +101,7 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	}
 	tc.BuildSystemAndTools(ts)
 	tc.InjectNudges(ts)
+	a.traceInput(ctx, ts)
 
 	// Phase 3: Execution
 	if err := tc.RunInference(ts); err != nil {
@@ -210,4 +218,60 @@ done:
 	tc.LogConversationSent(ts)
 	tc.TouchActivityPost(ts)
 	a.logger().Debugf("runPostTurn: exit sk=%s", ts.SessionKey)
+}
+
+// traceBegin opens the turn's root span with everything known at this point.
+// Nil-safe: with tracing off, TurnFromContext is nil and every Turn method
+// is a no-op.
+func (a *Agent) traceBegin(ctx context.Context, ts *TurnState) {
+	t := telemetry.TurnFromContext(ctx)
+	if t == nil {
+		return
+	}
+	backend := "api"
+	if a.DelegatedManager != nil {
+		backend = "delegated"
+		if a.DelegatedManager.BackendType != "" {
+			backend = a.DelegatedManager.BackendType
+		}
+	}
+	info := telemetry.TurnInfo{
+		TurnID:     ts.RowID(),
+		SessionKey: ts.SessionKey,
+		AgentID:    a.AgentID,
+		Trigger:    ts.Trigger,
+		Via:        triggerToPlatform(ts.Trigger),
+		Backend:    backend,
+		StartedAt:  ts.StartedAt,
+	}
+	if ts.ReceivedAt != ts.StartedAt {
+		info.ReceivedAt = ts.ReceivedAt
+	}
+	if ts.Meta != nil {
+		info.ChatID, info.UserID, info.Username = ts.Meta.ChatID, ts.Meta.UserID, ts.Meta.Username
+	}
+	t.Begin(info)
+}
+
+// traceInput attaches the prompt as sent (delegated: the flat composed
+// prompt; API: the user message text) and the resolved model, and registers
+// the API path's system blocks — the delegated path registers its prompt at
+// backend launch (DelegatedManager.Get), where it is actually sent.
+func (a *Agent) traceInput(ctx context.Context, ts *TurnState) {
+	t := telemetry.TurnFromContext(ctx)
+	if t == nil {
+		return
+	}
+	prompt := ts.Prompt
+	if prompt == "" {
+		prompt = provider.TextOf(ts.UserMsg.Content)
+	}
+	t.SetInput(prompt, ts.TurnModel)
+	if len(ts.System) > 0 {
+		texts := make([]string, 0, len(ts.System))
+		for _, b := range ts.System {
+			texts = append(texts, b.Text)
+		}
+		telemetry.RegisterSystemPrompt(ts.SessionKey, strings.Join(texts, "\n\n"), "api")
+	}
 }

@@ -233,6 +233,12 @@ Subcommands:
 
 	// ========== Secrets & Bitwarden ==========
 	sec := initSecrets(configPath, cfg)
+
+	// ========== Tracing ==========
+	// After secrets (auth pair + redaction values), before any agent can run
+	// a turn: a turn that starts before Init would export nothing.
+	stopTracing := initTracing(context.Background(), cfg, sec.store)
+	defer stopTracing()
 	if sec.cleanup != nil {
 		defer sec.cleanup()
 	}

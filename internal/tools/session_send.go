@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"foci/internal/session"
+	"foci/internal/telemetry"
 	"foci/shared/prompts"
 )
 
@@ -179,6 +180,10 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 			)
 
 			send_to_sessionLog.Infof("from=%s to=%s reply_to=%s oneshot_caller=%v len=%d", originSession, targetKey, p.ReplyTo, oneshotCaller, len(p.Message))
+			// The target's injected turn will record this turn as its parent
+			// trace (metadata parent_trace_id); Langfuse has no cross-trace
+			// edge, so the link is by id.
+			telemetry.LinkPending(targetKey, originSession)
 
 			if p.ReplyTo == "session" {
 				// Route the response to the target session's own chat.

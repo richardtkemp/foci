@@ -19,6 +19,7 @@ import (
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
+	"foci/internal/telemetry"
 	"foci/internal/tools"
 	"foci/internal/warnings"
 	"foci/internal/workspace"
@@ -604,7 +605,12 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, texts []st
 		return err
 	}
 
-	sink := turnevent.SinkFromContext(ctx)
+	// Tracing rides the same event stream every transport already emits:
+	// wrapping the sink here (and in OpenAutonomousTurn, the one other turn
+	// entry) is what makes every turn — platform, injected, cron, memory —
+	// a trace without per-backend hooks. No-op wrap when tracing is off.
+	sink, tspan := telemetry.NewTurnSink(turnevent.SinkFromContext(ctx))
+	ctx = telemetry.WithTurn(turnevent.WithSink(ctx, sink), tspan)
 	sink.Emit(ctx, turnevent.TurnStart{})
 
 	var tc TurnContract
