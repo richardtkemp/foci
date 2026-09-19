@@ -210,6 +210,20 @@ Ask gateway — a Unix-socket (and optionally HTTP) gateway for the `foci ask` c
 | `max_frame_bytes` | int | varies | Max size in bytes of a single NDJSON frame on the ask socket. Oversized frames close the connection. |
 | `http_enabled` | bool | `false` | Also expose the ask gateway over HTTP (alongside the Unix socket). |
 
+### `[tracing]`
+
+OpenTelemetry trace export of every agent turn (root span + tool/subagent children + one generation per `api.db` row) to an OTLP/HTTP collector — in practice a self-hosted Langfuse. Off by default. When enabled, requires the secrets `langfuse.public_key` and `langfuse.secret_key` (OTLP basic-auth username/password).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Export a trace for every agent turn (tool calls, subagents, prompt/reply content, usage and cost) over OTLP/HTTP to the endpoint below. |
+| `endpoint` | string | `""` | OTLP/HTTP base URL; spans are POSTed to `<endpoint>/v1/traces`. For self-hosted Langfuse: `http://127.0.0.1:3100/api/public/otel`. |
+| `environment` | string | `"production"` | Value of the `langfuse.environment` attribute stamped on every span (e.g. production, dev). |
+| `content` | bool | `true` | Attach prompt, reply, thinking and tool input/output text to spans (secret values are redacted before export); false exports shape, timing, usage and cost only. |
+| `system_prompt` | bool | `true` | Also export the full system prompt text as a child event the first time a session launches with a new prompt hash (the hash and length are always recorded). |
+| `max_field_bytes` | int | `2097152` | Longest text field exported on a span before truncation, in bytes. |
+| `flush_timeout` | string | `"5s"` | How long shutdown waits for buffered spans to export. |
+
 ### `[logging]`
 
 Logging and diagnostics. The `messages_in_log` field can be overridden per-agent — see [Global-or-Agent: Notifications & Logging](#notifications--logging).

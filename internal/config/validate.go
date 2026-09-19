@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -221,6 +222,10 @@ func (cfg *Config) Validate() error {
 	}
 
 	if err := cfg.validateAskgw(); err != nil {
+		return err
+	}
+
+	if err := cfg.validateTracing(); err != nil {
 		return err
 	}
 
@@ -618,6 +623,36 @@ func (cfg *Config) validateAskgw() error {
 		if !found {
 			return fmt.Errorf("[askgw] default_agent = %q: no such agent configured", a.DefaultAgent)
 		}
+	}
+	return nil
+}
+
+// validateTracing checks [tracing] when enabled: endpoint must be a non-empty
+// absolute http(s) URL, flush_timeout (if set) must parse as a Go duration,
+// and max_field_bytes must be positive. Disabled tracing is never validated —
+// an unused endpoint/timeout typo shouldn't block startup.
+func (cfg *Config) validateTracing() error {
+	t := cfg.Tracing
+	if !t.Enabled {
+		return nil
+	}
+	if t.Endpoint == "" {
+		return fmt.Errorf("[tracing] enabled = true but endpoint is empty")
+	}
+	u, err := url.Parse(t.Endpoint)
+	if err != nil {
+		return fmt.Errorf("[tracing] endpoint = %q: %w", t.Endpoint, err)
+	}
+	if !u.IsAbs() || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("[tracing] endpoint = %q: must be an absolute http or https URL", t.Endpoint)
+	}
+	if t.FlushTimeout != "" {
+		if _, err := time.ParseDuration(t.FlushTimeout); err != nil {
+			return fmt.Errorf("[tracing] flush_timeout = %q: %w", t.FlushTimeout, err)
+		}
+	}
+	if t.MaxFieldBytes <= 0 {
+		return fmt.Errorf("[tracing] max_field_bytes = %d: must be > 0", t.MaxFieldBytes)
 	}
 	return nil
 }

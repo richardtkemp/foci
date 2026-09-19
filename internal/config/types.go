@@ -1266,6 +1266,7 @@ type Config struct {
 	CCBackend          CCBackendConfig           `toml:"cc_backend"`       // shared defaults for Claude Code delegator backends
 	OpencodeBackend    OpencodeBackendConfig     `toml:"opencode_backend"` // shared defaults for opencode delegator backend
 	Askgw              AskgwConfig               `toml:"askgw"`            // ask-gateway: local socket for external Apps to ask humans questions
+	Tracing            TracingConfig             `toml:"tracing"`          // OpenTelemetry trace export of agent turns to an OTLP/HTTP collector (e.g. Langfuse)
 	Commands           []CommandConfig           `toml:"commands"`
 	MessageTransforms  []MessageTransform        `toml:"message_transforms"` // regex find/replace rules applied to inbound messages
 	BlockedPaths       []BlockedPath             `toml:"blocked_paths"`      // path prefixes that write/edit tools refuse (with rebuke message)
