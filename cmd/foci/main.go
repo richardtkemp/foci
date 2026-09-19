@@ -230,6 +230,10 @@ func main() {
 		err = cmdBranch(base, args)
 	case "status":
 		err = cmdStatus(base, args)
+	case "score":
+		err = cmdScore(base, args)
+	case "evals":
+		err = cmdEvals(base, args)
 	case "eval":
 		err = cmdEval(base, args)
 	case "command":
@@ -281,6 +285,8 @@ Commands:
                          --no-reset-hook   Skip pre-reset memory hook
                          --oneshot          Quick task: no compaction, no reset hook
   status               Query agent status
+  score <name> <value> Record a human score on a turn's trace (see foci score -h)
+  evals list           List the loaded scoring rubrics
   eval <command>       Ask the agent to run a shell command
   command </cmd>       Dispatch a slash command (e.g. /ping, /cache)
   ping                 Shorthand for 'command /ping'

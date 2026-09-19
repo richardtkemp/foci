@@ -239,6 +239,8 @@ Subcommands:
 	// a turn: a turn that starts before Init would export nothing.
 	stopTracing := initTracing(context.Background(), cfg, sec.store)
 	defer stopTracing()
+	rubrics, stopEvals := initEvals(cfg)
+	defer stopEvals()
 	if sec.cleanup != nil {
 		defer sec.cleanup()
 	}
@@ -641,6 +643,7 @@ Subcommands:
 		pprofGate:         &pprofGate,
 		deferStore:        deferStore,
 		createDefault:     app.CreateDefaultConversation,
+		rubrics:           rubrics,
 	}
 
 	if deferStore != nil {

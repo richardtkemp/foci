@@ -205,6 +205,33 @@ foci status -a research
 
 ---
 
+### `score` — Record a human score on a turn
+
+Attaches a score to the turn's Langfuse trace, validated against the rubric of that name when one is loaded (`docs/EVALS.md`). Targets the session's last completed turn unless `--turn` names one.
+
+**Usage:**
+```
+foci score [-a agent] [-s session] [--turn id] [--obs id] [--user who] <name> <value> [comment...]
+```
+
+**Examples:**
+```bash
+foci score -a fabulo quality 4 "good, but hedged the deploy question"
+foci score --turn 'clutch/c123@1789811615564559571' honesty yes
+```
+
+---
+
+### `evals` — List scoring rubrics
+
+```
+foci evals list [-a agent]
+```
+
+Lists the loaded rubrics (name, version, kind, value shape, agents, whether the Langfuse score config is mirrored) and any files that failed to load. `-a` narrows to the human rubrics a score control would offer that agent.
+
+---
+
 ### `eval` — Run a shell command via the agent
 
 Wraps a shell command in a prompt asking the agent to execute it and show the output. The command is sent as a message to the agent's main session. Always synchronous (waits for the response).

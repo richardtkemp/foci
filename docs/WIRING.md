@@ -271,7 +271,8 @@ main
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
  ├── app           → agent, agent/turnevent, app/fap, command, config, dispatch, log, platform, question, secrets, session, sqlite, tempdir, tools, turn, voice (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
  ├── askgw         → log, peercred, question (opt-in ask-gateway for external Apps — see Ask Gateway section)
- └── telemetry     → agent/turnevent, log, modelinfo, provider, go.opentelemetry.io/otel (+ sdk, otlptracehttp) — OpenTelemetry export of every turn to an OTLP/HTTP collector (Langfuse); wired from cmd/foci-gw (init), agent (turn spans), tools + cmd/foci-gw (cross-agent links). See "Tracing".
+ ├── telemetry     → agent/turnevent, log, modelinfo, provider, go.opentelemetry.io/otel (+ sdk, otlptracehttp) — OpenTelemetry export of every turn to an OTLP/HTTP collector (Langfuse) plus scores/score configs over its REST API; wired from cmd/foci-gw (init), agent (turn spans), tools + cmd/foci-gw (cross-agent links). See "Tracing".
+ └── evals         → log, fsnotify, yaml.v3 — rubric registry (scoring axes as files, watched); consumed by cmd/foci-gw (/score validation, score-config mirroring). See "Tracing" → "Scores and rubrics".
 ```
 
 No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `resources`, `tempdir`, `warnings`, `modelinfo`, `modelcaps`, `messages`, `ratelimit`, `timeutil`, `turn`, `dispatch`, `procx`, `peercred`, `question` are leaf packages (no internal foci deps beyond what's shown). `platform` depends on leaf packages only (config, log, secrets, session, voice, warnings). `provision` depends on the leaf `modelinfo` only.
@@ -1929,6 +1930,27 @@ status_message|model.name|usage_details|cost_details|metadata.<k>`,
 `langfuse.trace.name|input|output|tags`, `langfuse.environment`, `user.id` (= the
 foci agent), `session.id` (= the foci session key). Trace-level ones are set on the
 root; `user.id`/`session.id`/environment on every span.
+
+**Scores and rubrics (`telemetry/score.go`, `internal/evals/`).** A score is
+Langfuse's evaluation primitive — a named value on a trace or one observation,
+posted over its REST API (`<api base>/scores`; the base is derived from the OTLP
+endpoint by stripping `/otel`, so scoring is available exactly when tracing points
+at Langfuse). Every score carries a **deterministic id**, sha256 of (trace,
+observation, name, source, user): scores are upsertable, so a re-grade overwrites.
+The axes are **rubrics** — `<name>.md` files with YAML front matter in `[evals]
+rubrics_dir` (default `<home>/shared/evals`), loaded by `evals.Load`, followed by
+fsnotify (`Registry.Watch`, 500 ms debounce) and mirrored to Langfuse score configs
+on every load that adds/changes one (`cmd/foci-gw/evals_init.go mirrorScoreConfigs`
+→ `telemetry.EnsureScoreConfig`, which creates but never modifies — drift is a
+logged warning). Three kinds: `human` (graded by a person), `derive` (from trace
+metadata), `judge` (an LLM against the body prompt); only `human` is *acted on* in
+phase 1–2 — the other two are validated at load so a runner never meets a bad file.
+Entry points: `POST /score` (`cmd/foci-gw/http_score.go scoreTurn` — resolves the
+turn: explicit → `telemetry.LastTurnID` for this process → `log.LastTurnIDForSession`
+from api.db; validates against the rubric when one exists; posts with source
+`human`), `GET /evals/rubrics`, and the `foci score` / `foci evals list` CLI. The
+path is deliberately agent-free: the value is written as validated, nothing
+interprets it. Format and phases: `docs/EVALS.md`.
 
 **History**: the shape+cost split exists because the backfill (`scripts/langfuse-etl`,
 one generation per api.db row, content joined from conversation.db) came first and

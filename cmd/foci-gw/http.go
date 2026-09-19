@@ -16,6 +16,7 @@ import (
 	"foci/internal/app"
 	"foci/internal/config"
 	"foci/internal/defersend"
+	"foci/internal/evals"
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/route"
@@ -44,6 +45,9 @@ type httpHandlerDeps struct {
 	// /branch, /webhook); defaultSessionKey (command dispatch) leaves it nil so
 	// /status and /command never mint a conversation (#1859).
 	createDefault func(agentID string) (string, error)
+	// rubrics is the evals registry (nil when it failed to load): /score
+	// validates against it, /evals/rubrics lists it.
+	rubrics *evals.Registry
 }
 
 // checkActivityGate evaluates the four activity gate conditions and returns
@@ -170,6 +174,8 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 
 	mux.HandleFunc("/send", handleSend(d, resolveAgent, gate))
 	mux.HandleFunc("/status", handleStatus(d, resolveAgent))
+	mux.HandleFunc("/score", handleScore(d, resolveAgent))
+	mux.HandleFunc("/evals/rubrics", handleEvalsRubrics(d))
 	mux.HandleFunc("/command", handleCommand(d, resolveAgent, gate))
 	mux.HandleFunc("/branch", handleBranch(d, resolveAgent, gate))
 	mux.HandleFunc("/webhook/", handleWebhook(d, resolveAgent, gate))
