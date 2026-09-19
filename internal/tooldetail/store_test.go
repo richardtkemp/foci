@@ -211,3 +211,24 @@ func TestStore_DbFileCreated(t *testing.T) {
 		t.Fatal("database file was not created")
 	}
 }
+
+// TestStoreAutoVacuumIncremental pins the property the periodic
+// `PRAGMA incremental_vacuum` in Cleanup depends on. It read NONE on every
+// database this code made: auto_vacuum is a connection pragma, and the version
+// that headed OpenInit's statement list ran after the header was already
+// written, so it no-opped in silence (#1942 — same defect as app-frames.db).
+func TestStoreAutoVacuumIncremental(t *testing.T) {
+	s, err := NewStore(filepath.Join(t.TempDir(), "tool_details.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	var av int
+	if err := s.db.QueryRow(`PRAGMA auto_vacuum`).Scan(&av); err != nil {
+		t.Fatal(err)
+	}
+	if av != 2 {
+		t.Errorf("auto_vacuum = %d, want 2 (INCREMENTAL); incremental_vacuum reclaims nothing at %d", av, av)
+	}
+}
