@@ -563,6 +563,15 @@ func TurnFromContext(ctx context.Context) *Turn {
 
 func (s *turnSink) DeliversToPlatform() bool { return s.inner.DeliversToPlatform() }
 
+// Unwrap exposes the decorated sink so the agent's session router can tell a
+// wrapped router from a fresh per-turn sink. Without it, HandleMessage's
+// wrap of a platform turn (whose ctx sink IS the router) defeated the
+// orchestrator's identity guard and the wrapper was registered into the
+// router it forwards to — a mutual recursion on the first event (#1944).
+func (s *turnSink) Unwrap() turnevent.Sink { return s.inner }
+
+var _ turnevent.Unwrapper = (*turnSink)(nil)
+
 func (s *turnSink) Emit(ctx context.Context, ev turnevent.Event) {
 	switch e := ev.(type) {
 	case turnevent.ToolCall:

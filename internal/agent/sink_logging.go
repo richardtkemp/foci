@@ -104,6 +104,10 @@ func (s *loggingSink) DeliversToPlatform() bool {
 	return s.inner.DeliversToPlatform()
 }
 
+// Unwrap implements turnevent.Unwrapper so router identity checks see through
+// the logging decoration (see sessionRouter.routesTo).
+func (s *loggingSink) Unwrap() turnevent.Sink { return s.inner }
+
 // WrapConversationLogging wraps sink so the session's outbound text reaches the
 // conversation DB. Turn paths that build their own delivery sink instead of
 // going through Agent.RunTurn — the async HTTP /send path and every

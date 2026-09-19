@@ -123,7 +123,12 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	// concurrent autonomous run's delivery (the #1068 poison). Cleared after
 	// post-turn's completion wait so a later autonomous run falls through to
 	// late-delivery.
-	if router := a.sessionRouter(ts.SessionKey); turnevent.SinkFromContext(ctx) != turnevent.Sink(router) {
+	//
+	// "Is the router" must see through decorators: HandleMessage wraps the ctx
+	// sink for tracing, so on a platform turn the ctx sink is a turnSink whose
+	// inner is the router. A plain identity compare registered that wrapper
+	// INTO the router and the first event recursed to a stack overflow (#1944).
+	if router := a.sessionRouter(ts.SessionKey); !router.routesTo(turnevent.SinkFromContext(ctx)) {
 		router.Register(turnevent.SinkFromContext(ctx))
 		defer router.Clear()
 	}

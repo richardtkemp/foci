@@ -36,6 +36,9 @@ import (
 type sessionRouter struct {
 	fallback turnevent.Sink
 	current  atomic.Pointer[sinkRef]
+	// warnf reports a refused self-registration (see Register). Optional;
+	// nil in unit tests that build the router directly.
+	warnf func(format string, args ...any)
 }
 
 // sinkRef wraps a Sink so atomic.Pointer stores a single pointer per
@@ -61,7 +64,31 @@ func (r *sessionRouter) Register(sink turnevent.Sink) {
 		r.current.Store(nil)
 		return
 	}
+	if r.routesTo(sink) {
+		// Registering the router (or any decoration of it) as its own current
+		// sink makes Emit recurse until the stack overflows — this took the
+		// gateway down on 2026-09-19 when the tracing wrapper around a platform
+		// turn's ctx sink (the router) slipped past the orchestrator's identity
+		// guard (#1944). The existing registration stays; nothing is lost,
+		// because events through the wrapper reach the router anyway.
+		if r.warnf != nil {
+			r.warnf("sessionRouter: refused to register a sink that routes back to this router (%T) — would recurse (#1944)", sink)
+		}
+		return
+	}
 	r.current.Store(&sinkRef{s: sink})
+}
+
+// routesTo reports whether emitting to sink would land on this router —
+// i.e. sink is the router itself or a decorator chain (tracing, logging)
+// whose innermost sink is the router. Callers deciding whether a ctx sink
+// "already is the router" must use this rather than an identity compare, so
+// a wrapped router is never registered into itself.
+func (r *sessionRouter) routesTo(sink turnevent.Sink) bool {
+	if sink == nil {
+		return false
+	}
+	return turnevent.Unwrap(sink) == turnevent.Sink(r)
 }
 
 // Clear removes the current per-turn sink. Subsequent Emit calls fall

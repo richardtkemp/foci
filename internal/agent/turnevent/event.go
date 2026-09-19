@@ -205,3 +205,30 @@ type Sink interface {
 	Emit(ctx context.Context, ev Event)
 	DeliversToPlatform() bool
 }
+
+// Unwrapper is implemented by decorating sinks (tracing, conversation
+// logging) that forward every event to an inner sink. Routing code that
+// compares sink identities — "is this ctx sink the session router?" — must
+// look through decorations, or it will register a wrapper of the router INTO
+// the router and every Emit ping-pongs until the stack is gone (#1944).
+type Unwrapper interface {
+	Unwrap() Sink
+}
+
+// Unwrap peels every decorating layer off s and returns the innermost sink.
+// Non-decorating sinks are returned as-is. Depth is capped so a malformed
+// cycle degrades to "not the same sink" rather than spinning.
+func Unwrap(s Sink) Sink {
+	for i := 0; i < 32; i++ {
+		u, ok := s.(Unwrapper)
+		if !ok {
+			return s
+		}
+		inner := u.Unwrap()
+		if inner == nil {
+			return s
+		}
+		s = inner
+	}
+	return s
+}
