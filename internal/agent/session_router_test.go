@@ -216,3 +216,72 @@ func TestSessionRouter_DeliversToPlatformDelegates(t *testing.T) {
 		t.Errorf("router with nil (NopSink) fallback: DeliversToPlatform = true, want false")
 	}
 }
+
+// wrappedRouterSink stands in for the decorators (telemetry.turnSink,
+// loggingSink) that forward to an inner sink and expose it via Unwrap.
+type wrappedRouterSink struct{ inner turnevent.Sink }
+
+func (w *wrappedRouterSink) Emit(ctx context.Context, ev turnevent.Event) { w.inner.Emit(ctx, ev) }
+func (w *wrappedRouterSink) DeliversToPlatform() bool                     { return w.inner.DeliversToPlatform() }
+func (w *wrappedRouterSink) Unwrap() turnevent.Sink                       { return w.inner }
+
+// #1944: a decorator of the router must never become the router's current
+// sink — Emit would ping-pong between them until the stack overflows. The
+// guard has to look through the decoration, because the wrapper is a
+// different value from the router.
+func TestSessionRouter_RefusesToRegisterWrappedSelf(t *testing.T) {
+	t.Parallel()
+	fallback := &recordingRouterSink{id: "fallback"}
+	r := newSessionRouter(fallback)
+	var warned int
+	r.warnf = func(string, ...any) { warned++ }
+
+	platform := &recordingRouterSink{id: "platform"}
+	r.Register(platform) // what RunTurn does for a platform turn
+
+	for name, sink := range map[string]turnevent.Sink{
+		"router itself": r,
+		"wrapped once":  &wrappedRouterSink{inner: r},
+		"wrapped twice": &wrappedRouterSink{inner: &wrappedRouterSink{inner: r}},
+	} {
+		if !r.routesTo(sink) {
+			t.Errorf("%s: routesTo = false, want true", name)
+		}
+		r.Register(sink) // what Phase 3.5 did before the fix
+		// The platform registration must survive, and Emit must terminate.
+		r.Emit(context.Background(), turnevent.ToolCall{ID: "t1", Name: "Bash"})
+	}
+	if got := platform.count.Load(); got != 3 {
+		t.Errorf("platform sink events = %d, want 3 (registration replaced or events lost)", got)
+	}
+	if fallback.count.Load() != 0 {
+		t.Errorf("fallback received events; the platform registration was dropped")
+	}
+	if warned != 3 {
+		t.Errorf("warnf calls = %d, want 3", warned)
+	}
+}
+
+func TestSessionRouter_RoutesTo_FalseForUnrelatedSinks(t *testing.T) {
+	t.Parallel()
+	r := newSessionRouter(&recordingRouterSink{id: "fallback"})
+	other := newSessionRouter(&recordingRouterSink{id: "other-fallback"})
+	for name, sink := range map[string]turnevent.Sink{
+		"plain sink":           &recordingRouterSink{id: "x"},
+		"wrapped plain sink":   &wrappedRouterSink{inner: &recordingRouterSink{id: "y"}},
+		"a different router":   other,
+		"wrapped other router": &wrappedRouterSink{inner: other},
+		"nil":                  nil,
+	} {
+		if r.routesTo(sink) {
+			t.Errorf("%s: routesTo = true, want false", name)
+		}
+	}
+	// And a fresh sink still registers normally.
+	fresh := &recordingRouterSink{id: "fresh"}
+	r.Register(fresh)
+	r.Emit(context.Background(), turnevent.TextBlock{Text: "hi", Phase: turnevent.PhaseIntermediate})
+	if fresh.count.Load() != 1 {
+		t.Errorf("fresh sink events = %d, want 1", fresh.count.Load())
+	}
+}

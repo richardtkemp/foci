@@ -1849,6 +1849,17 @@ every entry point is one atomic load and no span is ever allocated.
 | `turnevent.Sink` stream | `Agent.HandleMessage` and `Agent.OpenAutonomousTurn` wrap the ctx sink with `telemetry.NewTurnSink` (a `turnSink` that forwards every event and mirrors the ones it cares about) | the trace's **shape**: root `turn` span (type `agent`), a `tool` child per `ToolCall`/`ToolResult`, an `agent` child per `SubagentStart`/`Text`/`End` run, intermediate texts, thinking, retries, error status |
 | `log.APIHook` (every api.db row) | `log.API`, `log.AccumulateSubagentRow` | exactly one `generation` observation per row — model, `usage_details`, `cost_details.total = calculated_cost_usd` — parented onto the row's turn (or its subagent span for a `subagent_turn` row). **Cost lives only here**; root/tool/subagent spans carry cost as read-only metadata. So `SUM(observation cost)` per day equals `SUM(calculated_cost_usd)` per day by construction — `scripts/langfuse-etl/etl.py reconcile` is the check. |
 
+**Invariant — the wrapper must never be registered into the router it wraps.** On a
+platform turn the ctx sink at `HandleMessage` *is* the session router (RunTurn
+registered the real streaming sink and put the router in ctx), so the tracing wrapper
+there is `turnSink{inner: router}`. Anything that asks "is this ctx sink the router?"
+(the orchestrator's Phase-3.5 register) must compare through `turnevent.Unwrap`, and
+`sessionRouter.Register` refuses a sink that `routesTo` itself. Both were added after
+the 2026-09-19 stack overflow (#1944): an identity compare registered the wrapper as
+the router's current sink and the first `ToolCall` ping-ponged `turnSink.Emit ↔
+sessionRouter.Emit` until the goroutine stack was gone. Every decorating sink
+(`telemetry.turnSink`, `agent.loggingSink`) implements `turnevent.Unwrapper` for this.
+
 The orchestrator supplies what the sink cannot see: `traceBegin` opens the root the
 instant `ts.StartedAt` is set (before any gate can fail, so a rate-limited turn is
 still a short errored trace), and `traceInput` — after `InjectNudges` — attaches the

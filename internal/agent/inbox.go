@@ -1027,6 +1027,7 @@ func (a *Agent) sessionRouterLocked(sk string) *sessionRouter {
 		a.routers = make(map[string]*sessionRouter)
 	}
 	r := newSessionRouter(resolvingLateSink{a: a, sk: sk})
+	r.warnf = a.logger().Warnf
 	a.routers[sk] = r
 	return r
 }
