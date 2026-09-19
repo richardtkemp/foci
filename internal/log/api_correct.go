@@ -60,6 +60,9 @@ func ApplyCostCorrections(cs []modelinfo.CostCorrection) {
 			"moved from parent turn %s to subagent %s on turn %s; stranded=$%.6f (#1918)",
 			c.CostUSD, c.Counts.CacheRead, c.Counts.CacheWrite,
 			parentTurn, c.AgentID, c.SubagentTurnID, c.StrandedUSD)
+		if CorrectionHook != nil {
+			CorrectionHook(c, parentTurn)
+		}
 	}
 }
 
@@ -260,6 +263,9 @@ func AccumulateSubagentRow(entry APIEntry) bool {
 			// correct (if un-collapsed) record — whereas dropping the line
 			// would make the fallback under-report the delegation.
 			APIJSONLOnly(entry)
+			if APIHook != nil {
+				APIHook(entry, true)
+			}
 			return true
 		}
 	}

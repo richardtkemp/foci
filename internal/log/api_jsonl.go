@@ -208,6 +208,20 @@ func PayloadEnabled() bool {
 	return std.payloadFile != nil
 }
 
+// APIHook, when set, observes every api.db row as it is written — the one
+// point all four backends' usage converges on, which is why the trace
+// exporter (internal/telemetry) hangs its cost observations here rather than
+// in any transport. instalment is true when AccumulateSubagentRow folded the
+// entry into an EXISTING row (the db collapsed it; an append-only consumer
+// must still see each instalment). Nil when tracing is off. Called
+// synchronously on the writer's goroutine, so implementations must be quick
+// and never call back into log.API.
+var APIHook func(entry APIEntry, instalment bool)
+
+// CorrectionHook, when set, observes each #1918 cost correction that
+// ApplyCostCorrections successfully applied, with the parent turn it debited.
+var CorrectionHook func(c modelinfo.CostCorrection, parentTurn string)
+
 // API logs a structured API call entry (package-level).
 func API(entry APIEntry) {
 	// Auto-infer provider from model name when not explicitly set.
@@ -221,6 +235,9 @@ func API(entry APIEntry) {
 		}
 	}
 	std.api(entry)
+	if APIHook != nil {
+		APIHook(entry, false)
+	}
 }
 
 // Payload logs a full API request/response record (package-level).
