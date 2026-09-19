@@ -240,6 +240,23 @@ func conventionSecretRefs(cfg *Config) []SecretRef {
 		}
 	}
 
+	// --- Tracing (Langfuse OTLP basic auth) ---
+	// Convention: [tracing] enabled = true needs OTLP basic-auth credentials.
+	// Not optional — a tracing config without keys is a misconfiguration, not a
+	// gracefully-degrading feature (contrast brave.api_key above).
+	if cfg.Tracing.Enabled {
+		refs = append(refs,
+			SecretRef{
+				Key:     "langfuse.public_key",
+				Context: "[tracing] OTLP basic-auth username/password (Langfuse project keys)",
+			},
+			SecretRef{
+				Key:     "langfuse.secret_key",
+				Context: "[tracing] OTLP basic-auth username/password (Langfuse project keys)",
+			},
+		)
+	}
+
 	return refs
 }
 
