@@ -13,6 +13,7 @@ import (
 	"foci/internal/delegator/codex"
 	"foci/internal/log"
 	"foci/internal/session"
+	"foci/internal/telemetry"
 	"foci/internal/tools"
 
 	"golang.org/x/sync/singleflight"
@@ -72,6 +73,11 @@ type DelegatedManager struct {
 	// StartOpts returns the StartOptions for a new Backend.
 	// Label and ResumeSessionID are set by the manager.
 	StartOpts delegator.StartOptions
+
+	// BackendType is the registered delegator name ("claude-code", "opencode",
+	// "codex", …) — recorded on every trace so a turn says which transport
+	// ran it. Empty in tests that build the manager by hand.
+	BackendType string
 
 	// PermissionPromptFunc sends a permission prompt with keyboard choices.
 	// requestID is the CC protocol request ID. The platform layer should
@@ -335,6 +341,9 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 	// Fingerprint the effective prompt this session launches with, so a later
 	// compaction can skip the reload-bounce when nothing on disk changed.
 	promptHash := log.SystemHash([]string{opts.SystemPrompt})
+	// The prompt the backend actually launches with is the one worth tracing;
+	// the next turn on this session records its hash (and the text, once).
+	telemetry.RegisterSystemPrompt(sessionKey, opts.SystemPrompt, "launch")
 
 	// Resolve the launch effort fresh for this session so a post-/effort
 	// bounce relaunches at the latest level (apply_flag_settings is runtime-

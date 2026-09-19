@@ -1,8 +1,19 @@
 # langfuse-etl
 
 Mirrors `api.db` (`api_calls`, one row per turn, all backends) into a self-hosted Langfuse as traces, so the
-household's LLM spend, volume and latency are browsable per agent / model / session. Metadata only — nothing
-from the payload logs is read, so no prompt or completion text leaves the host.
+household's LLM spend, volume and latency are browsable per agent / model / session. Content (each turn's
+prompt and reply) is joined from the per-agent `conversation.db` when `LANGFUSE_ETL_CONTENT=1` and a
+redaction hash file is present (see `build-redactions.sh`); the payload logs are never read.
+
+**Status: historical backfill + reconcile only.** Live turns are exported from inside the gateway by
+`internal/telemetry` (`[tracing]` in foci.toml — see `docs/WIRING.md` "Tracing"), which sends the full
+trace shape (tool calls, subagents, prompt/reply/thinking, system prompt, cross-agent links) that a
+row-level mirror cannot. The two agree on the contract that matters: one `generation` observation per
+api.db row with `cost = calculated_cost_usd`, so `reconcile` checks both eras with one query. **Do not run
+`tail` while the Go exporter is enabled** — the ids differ (ETL: sha256 of the row id; Go: sha256 of the
+turn id), so the same row would be counted twice. Cutover: stop the `tail` cron *before* deploying the
+tracing build, then `backfill --from-id <watermark+1> --to-id <last row written by the old binary>` to
+cover the gap between the last tail and the deploy.
 
 Runs with [uv](https://docs.astral.sh/uv/) (inline script deps, no venv to manage):
 

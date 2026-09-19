@@ -270,7 +270,8 @@ main
  ├── discord       → agent, agent/turnevent, chatmeta, command, config, dispatch, display, log, platform, provider, secrets, session, timeutil, tooldetail, toolformat, turn, voice
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
  ├── app           → agent, agent/turnevent, app/fap, command, config, dispatch, log, platform, question, secrets, session, sqlite, tempdir, tools, turn, voice (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
- └── askgw         → log, peercred, question (opt-in ask-gateway for external Apps — see Ask Gateway section)
+ ├── askgw         → log, peercred, question (opt-in ask-gateway for external Apps — see Ask Gateway section)
+ └── telemetry     → agent/turnevent, log, modelinfo, provider, go.opentelemetry.io/otel (+ sdk, otlptracehttp) — OpenTelemetry export of every turn to an OTLP/HTTP collector (Langfuse); wired from cmd/foci-gw (init), agent (turn spans), tools + cmd/foci-gw (cross-agent links). See "Tracing".
 ```
 
 No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `resources`, `tempdir`, `warnings`, `modelinfo`, `modelcaps`, `messages`, `ratelimit`, `timeutil`, `turn`, `dispatch`, `procx`, `peercred`, `question` are leaf packages (no internal foci deps beyond what's shown). `platform` depends on leaf packages only (config, log, secrets, session, voice, warnings). `provision` depends on the leaf `modelinfo` only.
@@ -1333,6 +1334,7 @@ Four outputs:
 
 3. **API log — SQLite** (`api.db`): Same data as JSONL but in a `api_calls` table with indexes on `ts` and `session`. Includes `call_type` column (conversation, compaction, summary, spawn, subagent_turn) and `turn_id`/`agent_id` (see "Turn identity" below).
    - Written automatically by `log.API()` when `api_db` is configured
+   - **`log.APIHook` / `log.CorrectionHook`** (nil unless `[tracing]` is on): `API()` and `AccumulateSubagentRow` (the folded-instalment path, `instalment=true`) hand every row to the hook synchronously; `ApplyCostCorrections` reports each applied #1918 move. This is where the trace exporter gets its cost observations — see "Tracing". Implementations must not call back into `log.API`.
    - Queryable: `sqlite3 api.db "SELECT call_type, count(*) FROM api_calls GROUP BY call_type"`
 
    **Two cost columns, and only one of them is a cost you may total (#1674):**
@@ -1831,6 +1833,97 @@ Four outputs:
    - Use: `log.Conversation(log.ConversationEntry{...})`
    - Queryable with `sqlite3 conversation-clutch.db "SELECT * FROM messages"`
    - Useful for debugging formatting (see exact markdown sent vs plain text fallback)
+
+## Tracing (`telemetry/`)
+
+Every turn becomes an OpenTelemetry trace exported over OTLP/HTTP (`[tracing]` in
+foci.toml; secrets `langfuse.public_key` / `langfuse.secret_key`). The target is a
+self-hosted Langfuse, whose OTel endpoint reads the `langfuse.*` span attributes the
+package sets; any OTLP collector accepts the same spans. Off by default; when off,
+every entry point is one atomic load and no span is ever allocated.
+
+**Two producers, both already shared by all four backends — no per-backend hooks:**
+
+| Producer | Hooked at | Yields |
+|---|---|---|
+| `turnevent.Sink` stream | `Agent.HandleMessage` and `Agent.OpenAutonomousTurn` wrap the ctx sink with `telemetry.NewTurnSink` (a `turnSink` that forwards every event and mirrors the ones it cares about) | the trace's **shape**: root `turn` span (type `agent`), a `tool` child per `ToolCall`/`ToolResult`, an `agent` child per `SubagentStart`/`Text`/`End` run, intermediate texts, thinking, retries, error status |
+| `log.APIHook` (every api.db row) | `log.API`, `log.AccumulateSubagentRow` | exactly one `generation` observation per row — model, `usage_details`, `cost_details.total = calculated_cost_usd` — parented onto the row's turn (or its subagent span for a `subagent_turn` row). **Cost lives only here**; root/tool/subagent spans carry cost as read-only metadata. So `SUM(observation cost)` per day equals `SUM(calculated_cost_usd)` per day by construction — `scripts/langfuse-etl/etl.py reconcile` is the check. |
+
+The orchestrator supplies what the sink cannot see: `traceBegin` opens the root the
+instant `ts.StartedAt` is set (before any gate can fail, so a rate-limited turn is
+still a short errored trace), and `traceInput` — after `InjectNudges` — attaches the
+prompt *as sent* (`ts.Prompt` for delegated, the user message for API) and the
+resolved model, and registers the API path's system blocks. The delegated path
+registers its system prompt where it is actually sent, `DelegatedManager.Get` at
+backend launch. Each turn's `Complete` records the prompt's sha256 + length; the
+full text goes out once per session per distinct hash as a `system_prompt` event
+child (so a character-file edit shows up on the first turn after it).
+
+**Identity is derived, never random** (`ids.go`): trace = sha256 of the api.db
+`turn_id` (`<session>@<StartedAt UnixNano>`), root = sha256(role + turn_id), tool =
+(turn_id, tool_use id), subagent run = (turn_id, Agent tool_use id[, run]),
+generation = (turn_id, call_type, agent_id, model, ts, …). Consequences the design
+leans on: a background subagent that books its spend 30 min after its parent
+closed still lands in the *spawning* turn's trace (the row carries that turn_id);
+its generation parents onto the subagent span by the same tool_use id without any
+in-memory lookup; and a peer agent can compute the caller's trace id from the turn
+id alone. Rows with no turn id (compaction, summariser, spawn) become their own
+one-observation traces named after the call type.
+
+**Subagent spans outlive turns** (`subagent.go`): a run's text/end events reach
+whichever sink the session router holds *at that moment*, which for a background
+Agent is a later turn's. Open runs therefore live in a package registry keyed by
+(session, group key, run), and whichever turn sees the end closes it; runs with no
+end signal are closed as `end_unobserved` after 2 h.
+
+**Instalments and corrections vs. an append-only sink.** `AccumulateSubagentRow`
+folds a delegation's later spend into its existing db row; Langfuse cannot update,
+and re-sending an observation with new numbers double-counts (learned on the ETL),
+so each instalment is its own generation (`metadata.instalment=true`) and the
+delegation's cost is their sum — the same arithmetic as the JSONL mirror. A #1918
+cost correction (an UPDATE that moves spend parent→subagent) is exported as a
+zero-cost `cost_correction` **event** under the subagent span: daily totals are
+unaffected (the move sums to zero); per-observation attribution differs from api.db
+by exactly the amount the event shows.
+
+**Cross-agent links** (`links.go`): Langfuse has no cross-trace edge, so the two
+turns of a `send_to_session` exchange are joined by metadata. The tool
+(`tools/session_send.go`) stages `LinkPending(target, origin)` as it enqueues the
+inject; the target's next injected turn (trigger `session_notify` / `async_notify` /
+`ask_grader`) consumes it in `Begin` and records `parent_trace_id`, `parent_turn_id`,
+`caller_session`, `caller_agent` plus a `from:<agent>` tag; the caller's tool span
+records `target_session`. `relayResponseToCaller` stages the reverse edge so the
+caller's `[SESSION RESPONSE]` turn descends from the target turn that answered.
+Injects queue in order on the session's inbox, so the pairing holds unless another
+injection was already queued ahead; a link older than 10 min expires rather than
+mis-attaching.
+
+**Content and redaction.** With `content = true` (default) the prompt, reply,
+thinking, tool args/output, subagent prompt/output and system prompt are exported,
+each capped at `max_field_bytes`. The gateway holds the secrets store, so
+`cmd/foci-gw/tracing_init.go` hands the exporter every secret *value* and
+`Redactor` replaces them outright (longest first, ≥ 8 chars) before the generic
+credential patterns run — no hashing dance, unlike the backfill ETL which runs
+outside the process. `content = false` keeps shape, timing, usage and cost only.
+
+**Export path**: OTel SDK `BatchSpanProcessor` (2 s / 256 spans / 4096 queue) →
+`otlptracehttp` with basic auth → `<endpoint>/v1/traces`. Exporter errors go through
+`otel.SetErrorHandler` to the `telemetry` component log, debounced to one per minute.
+`Shutdown` (deferred in `main.go` right after `initTracing`) flushes for
+`flush_timeout`. A turn cut off by shutdown still completes its root via
+`HandleMessage`'s deferred `TurnComplete`.
+
+**Attribute vocabulary** (Langfuse's): `langfuse.observation.type|input|output|level|
+status_message|model.name|usage_details|cost_details|metadata.<k>`,
+`langfuse.trace.name|input|output|tags`, `langfuse.environment`, `user.id` (= the
+foci agent), `session.id` (= the foci session key). Trace-level ones are set on the
+root; `user.id`/`session.id`/environment on every span.
+
+**History**: the shape+cost split exists because the backfill (`scripts/langfuse-etl`,
+one generation per api.db row, content joined from conversation.db) came first and
+its reconcile is the contract; the Go exporter had to stay row-exact with it. The
+ETL's `tail` is retired once this is deployed (it would double-emit); `backfill`
+(historical) and the weekly `reconcile` stay.
 
 ## Tool System (`tools/`)
 

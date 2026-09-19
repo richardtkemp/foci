@@ -8,6 +8,7 @@ import (
 	"foci/internal/delegator"
 	"foci/internal/platform"
 	"foci/internal/session"
+	"foci/internal/telemetry"
 	"foci/internal/turn"
 )
 
@@ -254,18 +255,21 @@ func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator) {
 	autoMeta := &TurnMetadata{}
 	chatID := session.ChatIDFromKey(sessionKey)
 	sink = newLoggingSink(sink, a, chatID, autoMeta, sessionKey)
+	sink, tspan := telemetry.NewTurnSink(sink)
 
 	router := a.sessionRouter(sessionKey)
 	router.Register(sink) // synchronous — registered before the run's first delta
 
 	t := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ctx := turnevent.WithSink(WithTrigger(context.Background(), "autonomous"), sink)
+	ctx = telemetry.WithTurn(ctx, tspan)
 	ts := NewTurnState(ctx, sessionKey, nil, nil)
 	ts.StartedAt = time.Now()
 	ts.Meta = autoMeta
 	ts.ConvChatID = chatID // conv-DB logging (thinking + wrapped sink) needs it
 	ts.Trigger = "autonomous"
 	ts.Backend = be
+	a.traceBegin(ctx, ts)
 	t.LoadSessionMeta(ts)
 	ts.sessionFilePath = be.SessionFilePath()
 	turnEvents := t.buildTurnEvents(ts, be)
