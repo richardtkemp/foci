@@ -410,3 +410,28 @@ func TestServeReplay_ReturnsStoredFrames(t *testing.T) {
 		t.Fatalf("final page = %+v more=%v, want [seq 5] more=false", res.Frames, res.More)
 	}
 }
+
+// TestFrameStoreAutoVacuumIncremental pins the file-header property that makes
+// the hourly `PRAGMA incremental_vacuum` in TrimOlderThan mean anything. It was
+// NONE on every database this code ever created (#1942): auto_vacuum can only be
+// set while the file is empty, and the old trailing `PRAGMA auto_vacuum =
+// INCREMENTAL` ran after journal_mode(WAL) had already written the header, so it
+// no-opped in silence and the live app-frames.db grew to 1.47 GB holding 29 MB.
+func TestFrameStoreAutoVacuumIncremental(t *testing.T) {
+	t.Parallel()
+
+	s, err := newFrameStore(filepath.Join(t.TempDir(), "frames.db"), 30*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	var av int
+	if err := s.db.QueryRow(`PRAGMA auto_vacuum`).Scan(&av); err != nil {
+		t.Fatal(err)
+	}
+	// 0 = NONE, 1 = FULL, 2 = INCREMENTAL.
+	if av != 2 {
+		t.Errorf("auto_vacuum = %d, want 2 (INCREMENTAL); incremental_vacuum cannot reclaim anything at %d", av, av)
+	}
+}

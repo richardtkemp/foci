@@ -45,7 +45,16 @@ func OpenReadOnly(path string) (*sql.DB, error) {
 // OpenInit opens a database and executes DDL statements (e.g. CREATE TABLE).
 // If any statement fails, the database is closed and the error returned.
 func OpenInit(path string, stmts ...string) (*sql.DB, error) {
-	db, err := Open(path)
+	return OpenInitPragmas(path, nil, stmts...)
+}
+
+// OpenInitPragmas is OpenInit with extra connection pragmas on the DSN. Use it
+// for any pragma that must reach the database as part of opening it rather than
+// as a statement afterwards — auto_vacuum(incremental) is the case this exists
+// for: it can only be set while the file is empty, so running it as a post-open
+// Exec (after the CREATEs) silently does nothing.
+func OpenInitPragmas(path string, pragmas []string, stmts ...string) (*sql.DB, error) {
+	db, err := openDSN(path, pragmas...)
 	if err != nil {
 		return nil, err
 	}
