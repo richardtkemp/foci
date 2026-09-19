@@ -40,10 +40,13 @@ type Store struct {
 }
 
 // NewStore opens (or creates) the SQLite database for tool call details.
-// Sets PRAGMA auto_vacuum=INCREMENTAL so incremental_vacuum reclaims space.
+// auto_vacuum(incremental) is a CONNECTION pragma, not a statement: the header
+// is already written by the time OpenInit runs the statement list, so the
+// `PRAGMA auto_vacuum=INCREMENTAL` that used to head that list no-opped even
+// though it preceded the CREATEs. The live tool_details.db proves it — 426 of
+// its 429 pages are on the freelist and auto_vacuum reads NONE (#1942).
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sqlite.OpenInit(dbPath,
-		"PRAGMA auto_vacuum=INCREMENTAL",
+	db, err := sqlite.OpenInitPragmas(dbPath, []string{"auto_vacuum(incremental)"},
 		`CREATE TABLE IF NOT EXISTS tool_call_details (
 			message_id  INTEGER PRIMARY KEY,
 			compact_text TEXT NOT NULL,
