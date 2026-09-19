@@ -43,8 +43,10 @@ func CLIOneShot(ctx context.Context, binary, model, systemPrompt string, userMes
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		if stderrStr := strings.TrimSpace(stderr.String()); stderrStr != "" {
-			return "", fmt.Errorf("claude --print failed: %w (stderr: %s)", err, stderrStr)
+		// Both streams: claude reports usage-limit/auth refusals on stdout
+		// and exits non-zero with stderr empty (see procx.FailureDetail).
+		if d := procx.FailureDetail(stderr.String(), stdout.String()); d != "" {
+			return "", fmt.Errorf("claude --print failed: %w (%s)", err, d)
 		}
 		return "", fmt.Errorf("claude --print failed: %w", err)
 	}

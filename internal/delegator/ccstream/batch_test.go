@@ -104,3 +104,28 @@ func TestRunBatch_ErrorIncludesStderr(t *testing.T) {
 		t.Errorf("error should carry stderr, got: %v", err)
 	}
 }
+
+// TestRunBatch_ErrorIncludesStdout is the 2026-09-19 nudge-extraction failure
+// in miniature: `claude --print` refuses on STDOUT (usage limit reached) and
+// exits non-zero with stderr EMPTY, so a stderr-only error message would carry
+// no reason at all.
+func TestRunBatch_ErrorIncludesStdout(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "claude")
+	script := "#!/bin/sh\necho 'Claude AI usage limit reached|1789791000'\nexit 1\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	be, _ := newFromConfig(map[string]any{"binary": stub})
+	b := be.(*Backend)
+
+	_, err := b.RunBatch(context.Background(), delegator.BatchRequest{Prompt: "p"})
+	if err == nil {
+		t.Fatal("expected error from exit 1")
+	}
+	if !strings.Contains(err.Error(), "usage limit reached") {
+		t.Errorf("error must carry the stdout refusal, got: %v", err)
+	}
+}

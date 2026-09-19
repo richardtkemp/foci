@@ -52,8 +52,8 @@ func (b *Backend) RunBatch(ctx context.Context, req delegator.BatchRequest) (str
 		return cmd
 	})
 	if err != nil {
-		if s := strings.TrimSpace(stderr.String()); s != "" {
-			return "", fmt.Errorf("claude --print failed: %w (stderr: %s)", err, s)
+		if d := procx.FailureDetail(stderr.String(), stdout.String()); d != "" {
+			return "", fmt.Errorf("claude --print failed: %w (%s)", err, d)
 		}
 		return "", fmt.Errorf("claude --print failed: %w", err)
 	}
