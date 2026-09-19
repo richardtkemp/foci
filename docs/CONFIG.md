@@ -224,6 +224,14 @@ OpenTelemetry trace export of every agent turn (root span + tool/subagent childr
 | `max_field_bytes` | int | `2097152` | Longest text field exported on a span before truncation, in bytes. |
 | `flush_timeout` | string | `"5s"` | How long shutdown waits for buffered spans to export. |
 
+### `[evals]`
+
+Rubric registry — the axes a trace can be scored on (see `docs/EVALS.md`). Each rubric is a `<name>.md` file with YAML front matter in the directory below; the gateway watches it and mirrors each rubric as a Langfuse score config. Does nothing unless `[tracing]` is enabled.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `rubrics_dir` | string | `<home>/shared/evals` | Directory of rubric files, watched for changes. |
+
 ### `[logging]`
 
 Logging and diagnostics. The `messages_in_log` field can be overridden per-agent — see [Global-or-Agent: Notifications & Logging](#notifications--logging).

@@ -125,6 +125,7 @@ var globalSections = map[string]reflect.Type{
 	"opencode_backend": reflect.TypeOf(OpencodeBackendConfig{}),
 	"askgw":            reflect.TypeOf(AskgwConfig{}),
 	"tracing":          reflect.TypeOf(TracingConfig{}),
+	"evals":            reflect.TypeOf(EvalsConfig{}),
 	"bitwarden":        reflect.TypeOf(BitwardenConfig{}),
 	"skills":           reflect.TypeOf(SkillsConfig{}),
 	"scheduler":        reflect.TypeOf(SchedulerConfig{}),

@@ -51,6 +51,18 @@ func clearActiveTurn(session, turnID string) {
 	linkMu.Unlock()
 }
 
+// LastTurnID returns the most recently completed turn on session, or "" —
+// the default target of a human score ("that reply"). Only turns since this
+// process started are known here; a caller wanting older ones reads api.db.
+func LastTurnID(session string) string {
+	if !Enabled() {
+		return ""
+	}
+	linkMu.Lock()
+	defer linkMu.Unlock()
+	return last[session]
+}
+
 // LinkPending stages fromSession's current turn (or, if it has none in
 // flight, its last completed one) as the parent of the next injected turn on
 // targetSession. No-op when tracing is off or fromSession has no known turn.

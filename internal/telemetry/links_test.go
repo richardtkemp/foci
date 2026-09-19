@@ -26,7 +26,7 @@ func TestActiveAndLastTurn(t *testing.T) {
 	if got := activeTurnID(session); got != "" {
 		t.Errorf("ActiveTurnID after Complete = %q, want \"\"", got)
 	}
-	if got := lastTurnID(session); got != turnID {
+	if got := LastTurnID(session); got != turnID {
 		t.Errorf("LastTurnID = %q, want %q", got, turnID)
 	}
 }
@@ -153,13 +153,4 @@ func activeTurnID(session string) string {
 	linkMu.Lock()
 	defer linkMu.Unlock()
 	return active[session]
-}
-
-func lastTurnID(session string) string {
-	if !Enabled() {
-		return ""
-	}
-	linkMu.Lock()
-	defer linkMu.Unlock()
-	return last[session]
 }

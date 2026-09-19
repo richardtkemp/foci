@@ -54,8 +54,18 @@ func resetForTest() {
 	pending = map[string][]Link{}
 	linkMu.Unlock()
 
+	ResetScoreConfigCache()
+
 	spMu.Lock()
 	spCurrent = map[string]systemPrompt{}
 	spExported = map[string]string{}
 	spMu.Unlock()
+}
+
+// ResetScoreConfigCache forgets the cached score-config list so a test's
+// fake server is re-read.
+func ResetScoreConfigCache() {
+	configMu.Lock()
+	configCache = nil
+	configMu.Unlock()
 }

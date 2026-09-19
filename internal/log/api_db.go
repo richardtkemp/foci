@@ -392,3 +392,19 @@ func (a *apiDB) insert(entry APIEntry) {
 		std.event(ERROR, "api_db", "insert error: %v", err)
 	}
 }
+
+// LastTurnIDForSession returns the turn_id of the newest row written for
+// sessionKey, or "" — the durable counterpart of telemetry.LastTurnID for a
+// session whose last turn predates this process.
+func LastTurnIDForSession(sessionKey string) string {
+	if apiLog == nil || apiLog.db == nil {
+		return ""
+	}
+	apiLog.mu.Lock()
+	defer apiLog.mu.Unlock()
+	var id sql.NullString
+	_ = apiLog.db.QueryRow(`SELECT turn_id FROM api_calls
+		WHERE session = ? AND turn_id IS NOT NULL AND turn_id <> ''
+		ORDER BY id DESC LIMIT 1`, sessionKey).Scan(&id)
+	return id.String
+}
