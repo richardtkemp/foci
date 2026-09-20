@@ -116,6 +116,7 @@ GROUP BY si.session_type ORDER BY total_usd DESC;"
 ```
 
 **Gotchas that will mislead you:**
+- **Two tables, one column name, different meanings.** `session_index.agent_id` is the AGENT (`'clutch'`, as above). `api_calls.agent_id` is the **subagent's** Agent-tool `tool_use` id and is empty on every ordinary row *by design* — its emptiness is not a missing feature. For per-agent cost use the session prefix: `substr(session,1,instr(session,'/')-1)`.
 - **The `|` in `SELECT session_key, session_type` output is sqlite's default column separator, NOT part of the key.** Don't build a `substr(...,instr(...,'|'))` strip — it matches nothing and silently yields zero join hits. Use `-column` mode to see the real values.
 - **Key-form encodes the cost model.** `chat` sessions are **root-form** (`agent/c<chatID>`) and accumulate the whole conversation's cost on one key (expensive). `reflection`/`keepalive`/most `unknown` are **branch-form** (`agent/c<chatID>/b<epoch>`) — typically one cheap spawned call each. A chatID hosts *mixed* types across its branches, so you cannot partition a root key's cost by type.
 - **Coverage is partial.** `api_calls.session` migrated from a legacy `agent:<id>:<kind>:<name>` grammar (e.g. `agent:clutch:cron:background-<epoch>`) to the current `agent/c/b` grammar. Legacy rows predate `session_index` and won't join — expect a large *untyped* remainder (check with `WHERE ac.session LIKE 'agent:%'`). Report the unmatched total as a coverage caveat, don't present the join as complete.

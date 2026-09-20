@@ -79,7 +79,7 @@ zcat ~/logs/archive/foci-<range>.log.gz | grep '<SESSION_KEY>'
 - **Archives are named `foci-<START>--<END>.log.gz`, by their START.** An event at time T lives in the file whose *range contains* T — normally one starting the previous day. So `ls foci-<the-date-you-want>*` returns nothing and reads exactly like the data was deleted. List the ranges (`ls ~/logs/archive/`) and pick, or `zgrep` across `foci-*.gz`. Same trap after a restart: the live log begins at the restart, so everything earlier is already archived.
 - **Archives are `.gz`** — `zgrep`/`zcat` them. A bare `grep -r` over `~/logs/` silently returns 0 on gzipped files (it doesn't decompress), so you'll miss everything in rotated logs. A zero result from `grep -r … *.gz` is a tooling false-negative, **not evidence that the thing never occurred**.
 - **Filter errors on the level column** (`awk '$2=="ERROR"'`), not a bare `grep ERROR` — the word "error" appears in plenty of non-error lines (payloads, messages), giving false positives.
-- **A real panic** starts with `^panic:` at column 0.
+- **A Go crash is not always a `panic:`.** Runtime fatals print `fatal error:` at column 0 with no `panic:` line anywhere (stack overflow, OOM), so grepping `^panic:` returns nothing on a real crash — search both. The dump goes to the **journal**, not `foci.log`.
 
 ## Crash vs clean restart
 
@@ -90,8 +90,9 @@ journalctl -u foci | grep -E 'Deactivated successfully|Stopped|Failed|signal|kil
 ```
 - `Deactivated successfully` / `Stopped` = a **clean** stop (deploy/restart).
 - `Result=signal` / `killed` / `Failed` = a **crash**.
+- `Main process exited, code=exited, status=2/INVALIDARGUMENT` = a **Go crash**, not a bad argument: 2 is Go's exit code for an unrecovered panic/fatal, and systemd merely labels code 2 that way.
 
-foci also prints its own restart classification at startup (`internal/startup/diagnosis.go`: crash / reboot / clean, from proof-of-life timestamps — `last_startup`, `last_alive`, `last_clean_shutdown` — plus a host-uptime-vs-gap reboot check). **That label can misfire** when the silence gap exceeds foci's proof-of-life window (a long-idle clean process can look like a crash), so cross-check it against the journal rather than trusting it alone.
+foci's own startup label (`internal/startup/diagnosis.go`: crash/reboot/clean from proof-of-life timestamps) **can misfire** — a long-idle clean process looks like a crash once the gap exceeds its proof-of-life window. Cross-check against the journal; never trust it alone.
 
 **Diagnostic order** for "why did it restart":
 1. `uptime` — did the *host* reboot?
