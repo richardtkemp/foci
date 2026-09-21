@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -774,6 +775,95 @@ func TestTodoToolStatusFilterStarted(t *testing.T) {
 		if strings.Contains(result, "Open task") {
 			t.Errorf("list with status %q should not show Open task, got: %s", alias, result)
 		}
+	}
+}
+
+func TestTodoToolListTruncationNotice(t *testing.T) {
+	// #1957: a capped `list` result must say so — otherwise it's
+	// byte-for-byte identical to a complete one, and a reader has no way to
+	// tell "no more matches" from "44% of them didn't fit".
+	t.Parallel()
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	for i := 0; i < 5; i++ {
+		store.Add("agent1", "Task", "medium", "")
+	}
+
+	// Capped: limit=2 against 5 matching rows must announce the total.
+	capped, err := executeTodoTool(tool, map[string]interface{}{
+		"action": "list",
+		"limit":  2,
+	})
+	if err != nil {
+		t.Fatalf("list limit=2: %v", err)
+	}
+	if !strings.Contains(capped, "showing 2 of 5") {
+		t.Errorf("capped list result missing truncation notice, got: %s", capped)
+	}
+
+	// Uncapped: limit >= total rows must NOT show a truncation notice.
+	uncapped, err := executeTodoTool(tool, map[string]interface{}{
+		"action": "list",
+		"limit":  10,
+	})
+	if err != nil {
+		t.Fatalf("list limit=10: %v", err)
+	}
+	if strings.Contains(uncapped, "showing") {
+		t.Errorf("uncapped list result should not carry a truncation notice, got: %s", uncapped)
+	}
+}
+
+func TestTodoToolSearchTruncationNotice(t *testing.T) {
+	// #1957, search side: Search has no cheap exact total (bleve doesn't
+	// index status/tags/priority), so the bar is a bare "may be truncated"
+	// marker rather than an exact count — but it must still fire whenever
+	// the limit was actually hit.
+	t.Parallel()
+	dir := t.TempDir()
+	memDir := filepath.Join(dir, "memory")
+	if err := os.MkdirAll(memDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	idx, err := memory.NewBleveIndex(filepath.Join(dir, "search.bleve"), map[string]memory.SourceConfig{
+		"memory": {Dir: memDir, Weight: 1.0},
+	}, 0, 0.1)
+	if err != nil {
+		t.Fatalf("NewBleveIndex: %v", err)
+	}
+	defer idx.Close()
+
+	store := newTestTodoStore(t)
+	store.SetSearchIndex(idx)
+	tool := NewTodoTool(store, "agent1")
+
+	for i := 0; i < 5; i++ {
+		store.Add("agent1", "Deploy the new release", "medium", "")
+	}
+
+	capped, err := executeTodoTool(tool, map[string]interface{}{
+		"action": "search",
+		"query":  "deploy",
+		"limit":  2,
+	})
+	if err != nil {
+		t.Fatalf("search limit=2: %v", err)
+	}
+	if !strings.Contains(capped, "may be truncated at the --limit of 2") {
+		t.Errorf("capped search result missing truncation notice, got: %s", capped)
+	}
+
+	uncapped, err := executeTodoTool(tool, map[string]interface{}{
+		"action": "search",
+		"query":  "deploy",
+		"limit":  10,
+	})
+	if err != nil {
+		t.Fatalf("search limit=10: %v", err)
+	}
+	if strings.Contains(uncapped, "truncated") {
+		t.Errorf("uncapped search result should not carry a truncation notice, got: %s", uncapped)
 	}
 }
 

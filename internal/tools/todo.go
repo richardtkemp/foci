@@ -373,7 +373,17 @@ func todoList(store *memory.TodoStore, agentID, status, tag, priority, sort stri
 			return TextResult(fmt.Sprintf("No %s todos.", status)), nil
 		}
 	}
-	return TextResult(FormatTodoLines(items)), nil
+	out := FormatTodoLines(items)
+	// A capped result and a complete one are otherwise byte-for-byte
+	// identical (#1957) — the reader's only defence is already knowing the
+	// population size, which is exactly what they were asking to find out.
+	// Only worth a COUNT query when the cap was actually hit.
+	if len(items) == limit {
+		if total, cerr := store.CountList(agentID, status, tags, priority); cerr == nil && total > len(items) {
+			out += fmt.Sprintf("\n\n— showing %d of %d matches; pass --limit higher to see the rest", len(items), total)
+		}
+	}
+	return TextResult(out), nil
 }
 
 func todoSearch(store *memory.TodoStore, agentID, query, status, sort string, reverse bool, limit int) (ToolResult, error) {
@@ -405,7 +415,21 @@ func todoSearch(store *memory.TodoStore, agentID, query, status, sort string, re
 	if len(items) == 0 {
 		return TextResult(fmt.Sprintf("No todos matching %q.", query)), nil
 	}
-	return TextResult(FormatTodoLines(items)), nil
+	out := FormatTodoLines(items)
+	// Search has no cheap exact total: bleve doesn't index status/tags/
+	// priority, so results are post-filtered in Go after an overfetch and an
+	// exact count would need to reconstruct that overfetch itself. Per
+	// #1957, a bare truncation marker (no total) still fixes the dangerous
+	// case — the harm is the silence, not the missing number — so flag it
+	// whenever the cap was hit rather than pretend to know the true count.
+	effectiveLimit := limit
+	if effectiveLimit <= 0 {
+		effectiveLimit = 10
+	}
+	if len(items) == effectiveLimit {
+		out += fmt.Sprintf("\n\n— result may be truncated at the --limit of %d; pass --limit higher to see more", effectiveLimit)
+	}
+	return TextResult(out), nil
 }
 
 func todoGet(store *memory.TodoStore, agentID string, id int64) (ToolResult, error) {

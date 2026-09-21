@@ -184,34 +184,9 @@ func (s *TodoStore) List(agentID, status string, tags []string, priority, sort s
 	query := `SELECT id, text, status, priority, tags, close_reason, agent_id, created_at, updated_at, completed_at FROM todos WHERE agent_id = ?`
 	args := []any{agentID}
 
-	switch status {
-	case "":
-		// No filter — return all statuses.
-	case "active":
-		// Exclude terminal statuses (done, dropped).
-		query += ` AND status NOT IN ('done', 'dropped')`
-	default:
-		query += ` AND status = ?`
-		args = append(args, status)
-	}
-	for _, tag := range tags {
-		if negated, val := isNegated(tag); negated {
-			query += ` AND (',' || tags || ',' NOT LIKE '%,' || ? || ',%')`
-			args = append(args, val)
-		} else {
-			query += ` AND (',' || tags || ',' LIKE '%,' || ? || ',%')`
-			args = append(args, tag)
-		}
-	}
-	if priority != "" {
-		if negated, val := isNegated(priority); negated {
-			query += ` AND priority != ?`
-			args = append(args, val)
-		} else {
-			query += ` AND priority = ?`
-			args = append(args, priority)
-		}
-	}
+	filterClause, filterArgs := buildListFilter(status, tags, priority)
+	query += filterClause
+	args = append(args, filterArgs...)
 
 	// Apply sort order. Default direction is descending (newest/highest first);
 	// reverse=true flips to ascending (oldest/lowest first).
@@ -256,6 +231,65 @@ func (s *TodoStore) List(agentID, status string, tags []string, priority, sort s
 	}
 	defer func() { _ = rows.Close() }()
 	return scanTodos(rows)
+}
+
+// buildListFilter builds the status/tags/priority WHERE-clause fragment (and
+// its bind args) shared by List and CountList. Keeping the two in lockstep
+// through one function matters: if they drifted, CountList's total would
+// answer a subtly different question than the List it's meant to describe
+// (#1957 — a silently truncated result is worse than no total at all).
+func buildListFilter(status string, tags []string, priority string) (string, []any) {
+	var clause strings.Builder
+	var args []any
+
+	switch status {
+	case "":
+		// No filter — return all statuses.
+	case "active":
+		// Exclude terminal statuses (done, dropped).
+		clause.WriteString(` AND status NOT IN ('done', 'dropped')`)
+	default:
+		clause.WriteString(` AND status = ?`)
+		args = append(args, status)
+	}
+	for _, tag := range tags {
+		if negated, val := isNegated(tag); negated {
+			clause.WriteString(` AND (',' || tags || ',' NOT LIKE '%,' || ? || ',%')`)
+			args = append(args, val)
+		} else {
+			clause.WriteString(` AND (',' || tags || ',' LIKE '%,' || ? || ',%')`)
+			args = append(args, tag)
+		}
+	}
+	if priority != "" {
+		if negated, val := isNegated(priority); negated {
+			clause.WriteString(` AND priority != ?`)
+			args = append(args, val)
+		} else {
+			clause.WriteString(` AND priority = ?`)
+			args = append(args, priority)
+		}
+	}
+	return clause.String(), args
+}
+
+// CountList returns the total number of todos matching the same status/tags/
+// priority filters as List, ignoring sort and limit. Callers use it to tell
+// a truncated result from a complete one (#1957): List alone returns a
+// capped slice that is byte-for-byte identical whether or not more rows
+// exist beyond the limit.
+func (s *TodoStore) CountList(agentID, status string, tags []string, priority string) (int, error) {
+	query := `SELECT COUNT(*) FROM todos WHERE agent_id = ?`
+	args := []any{agentID}
+	filterClause, filterArgs := buildListFilter(status, tags, priority)
+	query += filterClause
+	args = append(args, filterArgs...)
+
+	var count int
+	if err := s.db.QueryRow(query, args...).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 // CountOpenByTag counts open todos with the given tag for an agent.

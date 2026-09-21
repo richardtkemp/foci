@@ -287,6 +287,76 @@ func TestTodoListLimit(t *testing.T) {
 	}
 }
 
+func TestTodoCountList(t *testing.T) {
+	// #1957: CountList must answer "how many rows match, ignoring limit" for
+	// the exact same filters List applies — otherwise a caller using it to
+	// detect truncation could report a total that doesn't correspond to the
+	// list it capped.
+	store := newTestTodoStore(t)
+
+	store.Add("agent1", "Task 1", "high", "work")
+	store.Add("agent1", "Task 2", "medium", "work")
+	store.Add("agent1", "Task 3", "low", "home")
+	store.Add("agent1", "Task 4", "medium", "")
+	id5, _ := store.Add("agent1", "Task 5", "medium", "")
+	store.Transition("agent1", id5, "done", "finished")
+
+	// No filter: all 5 rows, independent of any List limit.
+	total, err := store.CountList("agent1", "", nil, "")
+	if err != nil {
+		t.Fatalf("CountList: %v", err)
+	}
+	if total != 5 {
+		t.Errorf("CountList(no filter) = %d, want 5", total)
+	}
+
+	// Matches List's own count when unfiltered and unlimited.
+	all, err := store.List("agent1", "", nil, "", "", false, 0)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(all) != total {
+		t.Errorf("List returned %d items but CountList says %d", len(all), total)
+	}
+
+	// status=active excludes the done item.
+	activeTotal, err := store.CountList("agent1", "active", nil, "")
+	if err != nil {
+		t.Fatalf("CountList(active): %v", err)
+	}
+	if activeTotal != 4 {
+		t.Errorf("CountList(active) = %d, want 4", activeTotal)
+	}
+
+	// tag filter.
+	tagTotal, err := store.CountList("agent1", "", []string{"work"}, "")
+	if err != nil {
+		t.Fatalf("CountList(tag=work): %v", err)
+	}
+	if tagTotal != 2 {
+		t.Errorf("CountList(tag=work) = %d, want 2", tagTotal)
+	}
+
+	// priority filter.
+	priTotal, err := store.CountList("agent1", "", nil, "medium")
+	if err != nil {
+		t.Fatalf("CountList(priority=medium): %v", err)
+	}
+	if priTotal != 3 {
+		t.Errorf("CountList(priority=medium) = %d, want 3", priTotal)
+	}
+
+	// A different agent's todos never leak into the count.
+	store.Add("agent2", "Other agent's task", "high", "")
+	total2, err := store.CountList("agent1", "", nil, "")
+	if err != nil {
+		t.Fatalf("CountList after cross-agent add: %v", err)
+	}
+	if total2 != 5 {
+		t.Errorf("CountList leaked cross-agent row: got %d, want 5", total2)
+	}
+}
+
 func TestTodoPriorityOrdering(t *testing.T) {
 	// Verifies that List orders items by priority (high → medium → low) when no explicit sort is specified.
 	store := newTestTodoStore(t)

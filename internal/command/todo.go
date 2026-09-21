@@ -419,7 +419,15 @@ func todoListCmd(store *memory.TodoStore, agentID string, args todoArgs, format 
 		return Response{Text: fmt.Sprintf("No %s todos.", label)}, nil
 	}
 	header := fmt.Sprintf("Todos (%d)", len(items))
-	return Response{Text: header + "\n\n" + formatTodoList(items, format)}, nil
+	text := header + "\n\n" + formatTodoList(items, format)
+	// See #1957: a capped result and a complete one otherwise look
+	// identical, so flag it whenever the cap was actually hit.
+	if args.limit > 0 && len(items) == args.limit {
+		if total, cerr := store.CountList(agentID, args.status, args.tags, args.priority); cerr == nil && total > len(items) {
+			text += fmt.Sprintf("\n\n— showing %d of %d matches; pass a higher limit (<N>) to see the rest", len(items), total)
+		}
+	}
+	return Response{Text: text}, nil
 }
 
 // todoNewCmd creates a new todo item.
@@ -503,7 +511,26 @@ func todoSearchCmd(store *memory.TodoStore, agentID string, args todoArgs, forma
 	if len(items) == 0 {
 		return Response{Text: fmt.Sprintf("No todos matching %q.", args.text)}, nil
 	}
-	return Response{Text: fmt.Sprintf("Search: %q (%d)\n\n%s", args.text, len(items), formatTodoList(items, format))}, nil
+	text := fmt.Sprintf("Search: %q (%d)\n\n%s", args.text, len(items), formatTodoList(items, format))
+	text += searchTruncationNotice(len(items), args.limit)
+	return Response{Text: text}, nil
+}
+
+// searchTruncationNotice returns a trailing note when a search result may
+// have been capped by --limit. Unlike List, Search has no cheap exact total
+// (bleve doesn't index status/tags/priority, so matches are post-filtered
+// after an overfetch) — so per #1957 this flags the cap without claiming to
+// know the true count; a bare marker still turns the dangerous silence into
+// a signal.
+func searchTruncationNotice(returned, limit int) string {
+	effectiveLimit := limit
+	if effectiveLimit <= 0 {
+		effectiveLimit = 10
+	}
+	if returned != effectiveLimit {
+		return ""
+	}
+	return fmt.Sprintf("\n\n— result may be truncated at the limit of %d; pass a higher limit (<N>) to see more", effectiveLimit)
 }
 
 // todoGetCmd combines structured filters with optional full-text search.
@@ -538,7 +565,9 @@ func todoGetCmd(store *memory.TodoStore, agentID string, args todoArgs, format s
 		if len(items) == 0 {
 			return Response{Text: fmt.Sprintf("No todos matching %q.", args.text)}, nil
 		}
-		return Response{Text: fmt.Sprintf("Get: %q (%d)\n\n%s", args.text, len(items), formatTodoList(items, format))}, nil
+		text := fmt.Sprintf("Get: %q (%d)\n\n%s", args.text, len(items), formatTodoList(items, format))
+		text += searchTruncationNotice(len(items), args.limit)
+		return Response{Text: text}, nil
 	}
 
 	// No search query — pure filter mode via List.
