@@ -49,3 +49,9 @@ docker/memory/*
 # Orphan from a bare `go build` in scripts/find-disconnected-tests/ (module
 # name = foci-find-disconnected-tests). The real build output goes to bin/.
 scripts/find-disconnected-tests/foci-find-disconnected-tests
+
+# Python bytecode cache. `scripts/langfuse-etl/__pycache__/etl.cpython-312.pyc` was
+# tracked, so every run of the langfuse ETL cron re-dirtied the tree and blocked the
+# deploy's repo-wide clean-tree gate (2026-09-21).
+__pycache__/
+*.pyc
