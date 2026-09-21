@@ -142,7 +142,10 @@ def normalize_model(model: str | None) -> tuple[str, list[str]]:
 
 
 def agent_of(session: str | None) -> str | None:
-    """Both key grammars: pre-stable-identity 'agent:<name>:<kind>:<id>' and current '<name>/c<chat>[/b<ts>]'."""
+    """Both key grammars: pre-stable-identity 'agent:<name>:<kind>:<id>' and current '<name>/c<chat>[/b<ts>]'.
+    Mirrors session.AgentIDFromAnyKey (internal/session/key.go) — the Go-side canonical parser five
+    duplicate Go implementations were consolidated onto in #1946. Python can't import it directly, so
+    keep this in sync by hand, same as normalize_model above mirrors modelinfo.Normalize."""
     if not session:
         return None
     if session.startswith("agent:"):
@@ -281,7 +284,7 @@ def open_db() -> sqlite3.Connection:
     return db
 
 
-COLS = """id, ts, session, model, provider, call_type, agent_id, turn_id, stop_reason, duration_ms,
+COLS = """id, ts, session, model, provider, call_type, agent_id, subagent_id, turn_id, stop_reason, duration_ms,
           input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
           turn_input_tokens, turn_output_tokens, turn_cache_read_tokens, turn_cache_write_tokens,
           cost_usd, calculated_cost_usd"""
@@ -327,9 +330,12 @@ def emit(tracer: trace.Tracer, gen: SeededIdGenerator, r: sqlite3.Row, db: sqlit
 
     call_type = r["call_type"] or "turn"
     model, route_tags = normalize_model(r["model"])
-    # Subagent rows (#1880) carry the Agent tool_use id as agent_id; book them under the parent agent (the session's owner).
-    is_subagent = call_type == "subagent_turn" or (r["agent_id"] or "").startswith("toolu_")
-    agent = agent_of(r["session"]) if is_subagent or not r["agent_id"] else r["agent_id"]
+    # #1946: agent_id now holds the AGENT on every row (subagent rows included —
+    # the parent session's owner); subagent_id holds the Agent tool_use id, set
+    # only on subagent rows. Prefer the column; agent_of(session) is only a
+    # fallback for a row written before the #1946 backfill reached it.
+    is_subagent = call_type == "subagent_turn" or bool(r["subagent_id"])
+    agent = r["agent_id"] or agent_of(r["session"])
     tags = [t for t in (BACKEND_OF.get(call_type), f"call_type:{call_type}", f"tokens:{scope}", *route_tags) if t]
     if is_subagent:
         tags.append("subagent")
@@ -351,8 +357,8 @@ def emit(tracer: trace.Tracer, gen: SeededIdGenerator, r: sqlite3.Row, db: sqlit
         attrs["user.id"] = agent
     if r["session"]:
         attrs["session.id"] = r["session"]
-    if is_subagent and (r["agent_id"] or "").startswith("toolu_"):
-        attrs["langfuse.observation.metadata.subagent_tool_use_id"] = r["agent_id"]
+    if is_subagent and r["subagent_id"]:
+        attrs["langfuse.observation.metadata.subagent_tool_use_id"] = r["subagent_id"]
     if CONTENT and not is_subagent:  # a subagent's prompt is the Agent tool call, not the human's message
         lo, hi = content_bounds(db, r["session"], start, end)
         inp, out = CONVO.lookup(agent, r["session"], start, lo, hi)
@@ -488,8 +494,8 @@ def cmd_show(a) -> None:
     db = open_db()
     for r in db.execute(f"SELECT {COLS} FROM api_calls WHERE id IN ({','.join('?'*len(a.ids))}) ORDER BY id", a.ids):
         model, routes = normalize_model(r["model"]); ct = r["call_type"] or "turn"
-        sub = ct == "subagent_turn" or (r["agent_id"] or "").startswith("toolu_")
-        agent = agent_of(r['session']) if sub or not r['agent_id'] else r['agent_id']
+        sub = ct == "subagent_turn" or bool(r["subagent_id"])
+        agent = r["agent_id"] or agent_of(r['session'])
         print(f"{r['id']} {r['ts'][:19]} name={TRACE_NAME.get(ct, ct)!r} user={agent!r} model={model!r} routes={routes} session={r['session']!r} sub={sub}")
         if CONTENT:
             st = parse_ts(r["ts"]); lo, hi = content_bounds(db, r["session"], st, st + timedelta(milliseconds=r["duration_ms"] or 0))

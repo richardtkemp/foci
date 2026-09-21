@@ -433,3 +433,30 @@ func TestChatID(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentIDFromAnyKey(t *testing.T) {
+	// Consolidates the coverage of the five duplicate agentFromSession/
+	// agent_of implementations this replaces (#1946): current grammar,
+	// legacy "agent:<name>:<kind>:<id>" grammar, and the malformed/empty
+	// edge cases each of them handled slightly differently.
+	tests := []struct {
+		name    string
+		session string
+		want    string
+	}{
+		{name: "chat root", session: "clutch/c123", want: "clutch"},
+		{name: "independent", session: "otto/i0", want: "otto"},
+		{name: "branch", session: "fotini/c5970082313/b2000", want: "fotini"},
+		{name: "legacy grammar", session: "agent:helen:kind:42", want: "helen"},
+		{name: "legacy grammar, no id", session: "agent:helen", want: "helen"},
+		{name: "empty", session: "", want: ""},
+		{name: "no separator", session: "noslash", want: "noslash"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := AgentIDFromAnyKey(tt.session); got != tt.want {
+				t.Errorf("AgentIDFromAnyKey(%q) = %q, want %q", tt.session, got, tt.want)
+			}
+		})
+	}
+}

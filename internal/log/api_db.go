@@ -55,8 +55,15 @@ func InitAPIDB(path string) error {
 		//                          call_type='subagent_turn' row per subagent,
 		//                          all sharing this id. SUM per turn_id to get
 		//                          what a single row used to hold.
-		//   agent_id             — the subagent that did the work, on a
-		//                          subagent_turn row; empty on a parent row.
+		//   agent_id             — the AGENT that owns this row, on EVERY row
+		//                          (#1946). Before #1946 this held the
+		//                          SUBAGENT's tool_use id on a subagent_turn
+		//                          row and was empty everywhere else; that
+		//                          value now lives in subagent_id.
+		//   subagent_id          — the subagent that did the work (the Agent
+		//                          tool's tool_use id), on a subagent_turn
+		//                          row; empty on a parent row (#1946, split
+		//                          out of agent_id's old, dual meaning).
 		// docs/WIRING.md "Cost columns" has the full table and history.
 		`CREATE TABLE IF NOT EXISTS api_calls (
 			id                 INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -126,14 +133,20 @@ func InitAPIDB(path string) error {
 	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN turn_id TEXT`)
 	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN agent_id TEXT`)
 	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_api_calls_turn_id ON api_calls(turn_id)`)
+	// #1946: agent_id is repurposed (see the CREATE TABLE comment above) —
+	// subagent_id takes over its old "subagent's tool_use id" role. New rows
+	// are written with the split already applied; BackfillAgentIDs (called
+	// from main, which can import internal/session where this package cannot)
+	// fixes up rows written before this column existed.
+	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN subagent_id TEXT`)
 
 	stmt, err := db.Prepare(`INSERT INTO api_calls
 		(ts, provider, session, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
 		 cost_usd, duration_ms, stop_reason, call_type, session_file, session_line, pre_messages,
 		 calculated_cost_usd,
 		 turn_input_tokens, turn_cache_read_tokens, turn_cache_write_tokens, turn_output_tokens,
-		 turn_id, agent_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		 turn_id, agent_id, subagent_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		_ = db.Close()
 		return fmt.Errorf("prepare insert: %w", err)
@@ -234,7 +247,7 @@ const apiRowCols = `ts, COALESCE(provider, ''), session, model,
 	       COALESCE(pre_messages, 0), calculated_cost_usd,
 	       turn_input_tokens, turn_cache_read_tokens, turn_cache_write_tokens,
 	       turn_output_tokens,
-	       COALESCE(turn_id, ''), COALESCE(agent_id, '')`
+	       COALESCE(turn_id, ''), COALESCE(agent_id, ''), COALESCE(subagent_id, '')`
 
 // scanAPIRows drains rows selected via apiRowCols into []APIEntry. Both cost
 // columns are nullable: cost_usd (ProvidedCostUSD) is NULL when the backend
@@ -255,7 +268,7 @@ func scanAPIRows(rows *sql.Rows) []APIEntry {
 			&providedCost, &e.DurationMS, &e.StopReason, &e.CallType,
 			&e.SessionFile, &e.SessionLine, &e.PreMessages, &calculatedCost,
 			&turnIn, &turnCR, &turnCW, &turnOut,
-			&e.TurnID, &e.AgentID,
+			&e.TurnID, &e.AgentID, &e.SubagentID,
 		); err != nil {
 			continue
 		}
@@ -340,10 +353,11 @@ func querySessionCostRows(sessionKey string) []APIEntry {
 	return scanAPIRows(rows)
 }
 
-// nullIfEmpty maps "" to a SQL NULL. An empty turn_id or agent_id means the
-// writer had no turn identity to record, which is "unknown", not "the turn
-// whose id is the empty string" — and NULL is what every historical row holds,
-// so a query for un-attributed rows finds one population, not two.
+// nullIfEmpty maps "" to a SQL NULL. An empty turn_id, agent_id, or
+// subagent_id means the writer had no such identity to record, which is
+// "unknown", not "the turn/agent/subagent whose id is the empty string" —
+// and NULL is what every historical row holds, so a query for un-attributed
+// rows finds one population, not two.
 func nullIfEmpty(s string) any {
 	if s == "" {
 		return nil
@@ -386,7 +400,7 @@ func (a *apiDB) insert(entry APIEntry) {
 		entry.CallType, sessionFile, sessionLine,
 		preMessages, entry.CalculatedCostUSD,
 		turnIn, turnCR, turnCW, turnOut,
-		nullIfEmpty(entry.TurnID), nullIfEmpty(entry.AgentID),
+		nullIfEmpty(entry.TurnID), nullIfEmpty(entry.AgentID), nullIfEmpty(entry.SubagentID),
 	)
 	if err != nil {
 		std.event(ERROR, "api_db", "insert error: %v", err)
@@ -407,4 +421,96 @@ func LastTurnIDForSession(sessionKey string) string {
 		WHERE session = ? AND turn_id IS NOT NULL AND turn_id <> ''
 		ORDER BY id DESC LIMIT 1`, sessionKey).Scan(&id)
 	return id.String
+}
+
+// BackfillAgentIDs gives every api_calls row the AGENT its session belongs
+// to, and moves a pre-#1946 subagent row's tool_use id off agent_id and onto
+// subagent_id (#1946). Idempotent and cheap once done — both passes are
+// guarded by a WHERE clause that finds nothing once every row is fixed.
+//
+// agentOf computes the agent from a session key. This package cannot import
+// internal/session to do that itself: internal/session already imports
+// internal/log (for its own logging), so the reverse import would cycle —
+// hence dependency injection. The caller (cmd/foci-gw, which sits above both)
+// passes session.AgentIDFromAnyKey, which understands both the current and
+// the pre-stable-identity session-key grammars, since historical rows can
+// carry either.
+//
+// Safe to call on every startup: after the first run finds nothing left to
+// fix, both queries below return zero rows and this is two cheap SELECTs.
+func BackfillAgentIDs(agentOf func(session string) string) error {
+	if apiLog == nil || apiLog.db == nil {
+		return nil
+	}
+	apiLog.mu.Lock()
+	defer apiLog.mu.Unlock()
+
+	// Move the tool_use id off agent_id and onto subagent_id BEFORE agent_id
+	// is recomputed below — it is the only place that value still lives, and
+	// once agent_id is overwritten it is gone for good. Scoped to
+	// subagent_turn rows only (the sole call_type agent_id's old meaning ever
+	// populated), so this is a handful of rows even years from now.
+	if _, err := apiLog.db.Exec(`
+		UPDATE api_calls SET subagent_id = agent_id
+		WHERE call_type = 'subagent_turn' AND subagent_id IS NULL
+		  AND agent_id IS NOT NULL AND agent_id <> ''`); err != nil {
+		return fmt.Errorf("backfill subagent_id: %w", err)
+	}
+
+	// Recompute agent_id for: every row that has never had one (the ~48.5k
+	// pre-#1946 rows, on the first run only — every row written since always
+	// arrives with agent_id already set), plus every subagent_turn row (still
+	// carrying its old tool_use id in agent_id until this rewrites it; a tiny,
+	// bounded population each time this runs).
+	rows, err := apiLog.db.Query(`
+		SELECT id, session FROM api_calls
+		WHERE agent_id IS NULL OR agent_id = '' OR call_type = 'subagent_turn'`)
+	if err != nil {
+		return fmt.Errorf("select rows needing agent_id: %w", err)
+	}
+	type fix struct {
+		id    int64
+		agent string
+	}
+	var fixes []fix
+	for rows.Next() {
+		var id int64
+		var session string
+		if err := rows.Scan(&id, &session); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan row needing agent_id: %w", err)
+		}
+		fixes = append(fixes, fix{id: id, agent: agentOf(session)})
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate rows needing agent_id: %w", err)
+	}
+	_ = rows.Close()
+	if len(fixes) == 0 {
+		return nil
+	}
+
+	tx, err := apiLog.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	stmt, err := tx.Prepare(`UPDATE api_calls SET agent_id = ? WHERE id = ?`)
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("prepare update: %w", err)
+	}
+	for _, f := range fixes {
+		if _, err := stmt.Exec(nullIfEmpty(f.agent), f.id); err != nil {
+			_ = stmt.Close()
+			_ = tx.Rollback()
+			return fmt.Errorf("update row %d: %w", f.id, err)
+		}
+	}
+	_ = stmt.Close()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	std.event(INFO, "api_db", "backfilled agent_id on %d row(s) (#1946)", len(fixes))
+	return nil
 }

@@ -372,7 +372,9 @@ func TestAPIDB_TurnOutputFallsBackForPre1891Rows(t *testing.T) {
 
 // TestAPIDB_TurnIDAndAgentIDRoundTrip covers #1880 phase C's schema half: a
 // turn is no longer always one row, so rows need a shared turn identity and a
-// subagent row needs to name its subagent.
+// subagent row needs to name its subagent — plus #1946's split of that
+// naming into two columns: agent_id (the OWNING agent, on every row) and
+// subagent_id (the Agent tool_use id, subagent rows only).
 //
 // The NULL assertion is the load-bearing one. An empty turn_id stored as ""
 // would split un-attributed rows into two populations — historical rows (NULL)
@@ -388,27 +390,29 @@ func TestAPIDB_TurnIDAndAgentIDRoundTrip(t *testing.T) {
 	t1 := time.Date(2026, 9, 11, 11, 0, 0, 0, time.UTC)
 	const turnID = "clutch/c123@1757585000000000000"
 
-	// A parent row and its two subagent rows — one turn, three rows.
+	// A parent row and its two subagent rows — one turn, three rows, all
+	// owned by the same agent; the subagent rows additionally name their
+	// subagent.
 	apiLog.insert(APIEntry{Timestamp: t1, Session: "clutch/c123", Model: "m",
-		Output: 100, CallType: "delegated_turn", TurnID: turnID})
+		Output: 100, CallType: "delegated_turn", TurnID: turnID, AgentID: "clutch"})
 	apiLog.insert(APIEntry{Timestamp: t1.Add(time.Second), Session: "clutch/c123", Model: "m2",
-		Output: 200, CallType: "subagent_turn", TurnID: turnID, AgentID: "agent-aaa"})
+		Output: 200, CallType: "subagent_turn", TurnID: turnID, AgentID: "clutch", SubagentID: "agent-aaa"})
 	apiLog.insert(APIEntry{Timestamp: t1.Add(2 * time.Second), Session: "clutch/c123", Model: "m2",
-		Output: 300, CallType: "subagent_turn", TurnID: turnID, AgentID: "agent-bbb"})
-	// A row from a writer with no turn identity at all.
+		Output: 300, CallType: "subagent_turn", TurnID: turnID, AgentID: "clutch", SubagentID: "agent-bbb"})
+	// A row from a writer with no turn identity at all, but still owned.
 	apiLog.insert(APIEntry{Timestamp: t1.Add(3 * time.Second), Session: "clutch/c123", Model: "m",
-		Output: 7, CallType: "summary"})
+		Output: 7, CallType: "summary", AgentID: "clutch"})
 
 	got := ReadAPIDBLog()
 	if len(got) != 4 {
 		t.Fatalf("ReadAPIDBLog len = %d, want 4", len(got))
 	}
-	for i, want := range []struct{ turn, agent string }{
-		{turnID, ""}, {turnID, "agent-aaa"}, {turnID, "agent-bbb"}, {"", ""},
+	for i, want := range []struct{ turn, agent, subagent string }{
+		{turnID, "clutch", ""}, {turnID, "clutch", "agent-aaa"}, {turnID, "clutch", "agent-bbb"}, {"", "clutch", ""},
 	} {
-		if got[i].TurnID != want.turn || got[i].AgentID != want.agent {
-			t.Errorf("entry[%d] turn_id=%q agent_id=%q, want %q/%q",
-				i, got[i].TurnID, got[i].AgentID, want.turn, want.agent)
+		if got[i].TurnID != want.turn || got[i].AgentID != want.agent || got[i].SubagentID != want.subagent {
+			t.Errorf("entry[%d] turn_id=%q agent_id=%q subagent_id=%q, want %q/%q/%q",
+				i, got[i].TurnID, got[i].AgentID, got[i].SubagentID, want.turn, want.agent, want.subagent)
 		}
 	}
 
@@ -433,5 +437,147 @@ func TestAPIDB_TurnIDAndAgentIDRoundTrip(t *testing.T) {
 	}
 	if nullTurn != 1 || emptyTurn != 0 {
 		t.Errorf("turn_id NULL=%d empty-string=%d, want 1/0", nullTurn, emptyTurn)
+	}
+}
+
+// legacyAgentOf is a test stand-in for session.AgentIDFromAnyKey. Kept
+// independent — this package cannot import internal/session (see
+// BackfillAgentIDs's doc comment) — so these tests exercise BackfillAgentIDs'
+// own SQL, not the parser it delegates to (covered separately by
+// internal/session/key_test.go's TestAgentIDFromAnyKey).
+func legacyAgentOf(session string) string {
+	if strings.HasPrefix(session, "agent:") {
+		parts := strings.SplitN(session, ":", 3)
+		if len(parts) >= 2 {
+			return parts[1]
+		}
+	}
+	if i := strings.Index(session, "/"); i > 0 {
+		return session[:i]
+	}
+	return session
+}
+
+// TestBackfillAgentIDs_SplitsHistoricalRows is the #1946 migration: rows
+// written before agent_id/subagent_id had their new meaning get an honest
+// agent_id on every row, and a subagent_turn row's old value (the tool_use
+// id, once agent_id's only occupant) moves to subagent_id.
+func TestBackfillAgentIDs_SplitsHistoricalRows(t *testing.T) {
+	withAPIDB(t)
+
+	// Simulate pre-#1946 rows via raw INSERT: agent_id NULL everywhere except
+	// a subagent_turn row, which carries the tool_use id — the exact shape
+	// #1946 found on the live db (48,630 of 48,650 rows blank, 20 holding a
+	// toolu_ id). One row uses the legacy "agent:<name>:kind:<id>" session
+	// grammar to prove the injected parser, not a hardcoded slash-split, does
+	// the deriving.
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := apiLog.db.Exec(q, args...); err != nil {
+			t.Fatalf("exec: %v", err)
+		}
+	}
+	mustExec(`INSERT INTO api_calls (ts, session, model, call_type, turn_id)
+		VALUES ('2026-09-11T11:00:00Z', 'clutch/c123', 'm', 'delegated_turn', 'T1')`)
+	mustExec(`INSERT INTO api_calls (ts, session, model, call_type, turn_id, agent_id)
+		VALUES ('2026-09-11T11:00:01Z', 'clutch/c123', 'm2', 'subagent_turn', 'T1', 'toolu_01ABC')`)
+	mustExec(`INSERT INTO api_calls (ts, session, model, call_type)
+		VALUES ('2026-09-11T11:00:02Z', 'agent:helen:kind:1', 'm', 'summary')`)
+
+	if err := BackfillAgentIDs(legacyAgentOf); err != nil {
+		t.Fatalf("BackfillAgentIDs: %v", err)
+	}
+
+	type row struct{ callType, agentID, subagentID string }
+	rows, err := apiLog.db.Query(`SELECT call_type, COALESCE(agent_id, ''), COALESCE(subagent_id, '') FROM api_calls ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	var got []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.callType, &r.agentID, &r.subagentID); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, r)
+	}
+	want := []row{
+		{"delegated_turn", "clutch", ""},
+		{"subagent_turn", "clutch", "toolu_01ABC"},
+		{"summary", "helen", ""},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("rows = %d, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("row %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// TestBackfillAgentIDs_IdempotentOnSecondRun proves the guard clauses find
+// nothing left to fix once a row has been backfilled — a real concern since
+// this runs on every foci-gw startup, not once.
+func TestBackfillAgentIDs_IdempotentOnSecondRun(t *testing.T) {
+	withAPIDB(t)
+
+	if _, err := apiLog.db.Exec(`INSERT INTO api_calls (ts, session, model, call_type, turn_id, agent_id)
+		VALUES ('2026-09-11T11:00:00Z', 'clutch/c123', 'm2', 'subagent_turn', 'T1', 'toolu_01ABC')`); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := 0
+	counting := func(session string) string {
+		calls++
+		return legacyAgentOf(session)
+	}
+	if err := BackfillAgentIDs(counting); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("first run called agentOf %d times, want 1", calls)
+	}
+
+	var agentID, subagentID string
+	if err := apiLog.db.QueryRow(`SELECT agent_id, subagent_id FROM api_calls`).Scan(&agentID, &subagentID); err != nil {
+		t.Fatal(err)
+	}
+	if agentID != "clutch" || subagentID != "toolu_01ABC" {
+		t.Fatalf("after first run agent_id=%q subagent_id=%q, want clutch/toolu_01ABC", agentID, subagentID)
+	}
+
+	// Second run: a subagent_turn row is always back in scope (recomputed
+	// every time by design — its old agent_id value is a tool_use id, not
+	// this row's own, until the FIRST run overwrites it; after that it is
+	// its real, stable agent_id, so a THIRD run would be the true steady
+	// state). What must not happen is the VALUES changing.
+	if err := BackfillAgentIDs(counting); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if err := apiLog.db.QueryRow(`SELECT agent_id, subagent_id FROM api_calls`).Scan(&agentID, &subagentID); err != nil {
+		t.Fatal(err)
+	}
+	if agentID != "clutch" || subagentID != "toolu_01ABC" {
+		t.Fatalf("after second run agent_id=%q subagent_id=%q, want unchanged clutch/toolu_01ABC", agentID, subagentID)
+	}
+}
+
+// TestBackfillAgentIDs_NewRowsAreLeftAlone proves the backfill does not even
+// consult agentOf for a row a caller already wrote with agent_id set — the
+// common case for everything written after #1946 ships.
+func TestBackfillAgentIDs_NewRowsAreLeftAlone(t *testing.T) {
+	withAPIDB(t)
+
+	apiLog.insert(APIEntry{Timestamp: time.Now(), Session: "clutch/c123", Model: "m",
+		CallType: "delegated_turn", TurnID: "T1", AgentID: "clutch"})
+
+	agentOf := func(string) string {
+		t.Fatal("agentOf must not be called for a row that already has agent_id and is not a subagent row")
+		return ""
+	}
+	if err := BackfillAgentIDs(agentOf); err != nil {
+		t.Fatalf("BackfillAgentIDs: %v", err)
 	}
 }

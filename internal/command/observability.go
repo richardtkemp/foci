@@ -11,6 +11,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
+	"foci/internal/session"
 	"foci/internal/tools"
 )
 
@@ -126,14 +127,6 @@ func CacheCommand() *Command {
 	}
 }
 
-// agentFromSession extracts the agent ID (first segment) from a session key.
-func agentFromSession(session string) string {
-	if i := strings.Index(session, "/"); i > 0 {
-		return session[:i]
-	}
-	return session
-}
-
 // truncateSession returns a short prefix of a session key for display.
 func truncateSession(session string) string {
 	parts := strings.SplitN(session, "/", 3)
@@ -186,7 +179,7 @@ func LastCommand() *Command {
 				if entries[i].IsSubagent() {
 					continue
 				}
-				agent := agentFromSession(entries[i].Session)
+				agent := session.AgentIDFromAnyKey(entries[i].Session)
 				if filter != "" && agent != filter {
 					continue
 				}

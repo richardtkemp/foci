@@ -9,6 +9,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
+	"foci/internal/session"
 )
 
 // APISummariser implements Summariser by calling provider.Send directly.
@@ -107,6 +108,7 @@ func (s *APISummariser) Summarise(ctx context.Context, content []byte, prompt, f
 		DurationMS: duration.Milliseconds(),
 		StopReason: resp.StopReason,
 		CallType:   "summary",
+		AgentID:    session.AgentIDFromKey(sessionKey),
 	})
 
 	text := provider.TextOf(resp.Content)

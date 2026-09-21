@@ -423,6 +423,7 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 		StopReason:  resp.StopReason,
 		CallType:    "compaction",
 		PreMessages: len(messages),
+		AgentID:     c.AgentID,
 	})
 
 	summary := provider.TextOf(resp.Content)

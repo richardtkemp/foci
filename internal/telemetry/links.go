@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/trace"
+
+	"foci/internal/session"
 )
 
 // Cross-agent linking. Langfuse has no cross-trace edge, so the two turns of
@@ -83,7 +85,7 @@ func LinkPending(targetSession, fromSession string) {
 		TraceID:     TraceIDForTurn(turnID),
 		TurnID:      turnID,
 		FromSession: fromSession,
-		FromAgent:   agentFromSession(fromSession),
+		FromAgent:   session.AgentIDFromAnyKey(fromSession),
 		at:          time.Now(),
 	})
 }

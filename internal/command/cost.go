@@ -302,7 +302,10 @@ func subagentBreakdown(entries []log.APIEntry) string {
 		if !e.IsSubagent() {
 			continue
 		}
-		id := e.AgentID
+		// SubagentID (NOT AgentID, which #1946 made the OWNING agent — the
+		// same value for every row of a delegation) is what distinguishes
+		// one subagent from another here.
+		id := e.SubagentID
 		if id == "" {
 			// Usage that arrived before its task_started named the agent. Kept
 			// rather than dropped: the money is real and belongs to SOME

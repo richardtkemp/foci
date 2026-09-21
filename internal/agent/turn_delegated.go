@@ -10,6 +10,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
+	"foci/internal/session"
 )
 
 // systemInjectRetryInterval bounds each WaitForTurn cycle in RunInference's
@@ -656,6 +657,11 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 	// by ensureWatcher when this is called from the OnTurnComplete callback.
 	sessionFile := ts.sessionFilePath
 
+	// The AGENT this turn belongs to, populated on every api_calls row
+	// (#1946) — including a subagent_turn row below, where it names the
+	// OWNING agent (same as its parent), not the subagent.
+	agentID := session.AgentIDFromKey(ts.SessionKey)
+
 	// Emit one row per terminal call, prior rounds first then the final call,
 	// in chronological order. Sum per-call cost into FinalCost (turn total).
 	var turnCost float64
@@ -694,6 +700,7 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 			StopReason:        "end_turn",
 			CallType:          "delegated_turn",
 			TurnID:            ts.RowID(),
+			AgentID:           agentID,
 			SessionFile:       sessionFile,
 		})
 
@@ -748,8 +755,12 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 				StopReason:        "end_turn",
 				CallType:          "subagent_turn",
 				TurnID:            turnID,
-				AgentID:           sc.AgentID,
-				SessionFile:       sessionFile,
+				// AgentID is the OWNING agent (same as the parent row above),
+				// not the subagent — sc.AgentID is the Agent tool_use id,
+				// which now belongs in SubagentID (#1946).
+				AgentID:     agentID,
+				SubagentID:  sc.AgentID,
+				SessionFile: sessionFile,
 			})
 		}
 	}

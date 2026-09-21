@@ -35,7 +35,7 @@ func seedTurn(t *testing.T, parentTurn, spawnTurn, agentID, model string,
 	API(APIEntry{
 		Timestamp: closedAt,
 		Session:   sess, Model: model, CallType: "subagent_turn", TurnID: spawnTurn,
-		AgentID: agentID, Output: sub.Output, Turn: &s, CalculatedCostUSD: &sc,
+		SubagentID: agentID, Output: sub.Output, Turn: &s, CalculatedCostUSD: &sc,
 	})
 }
 
@@ -253,7 +253,7 @@ func TestApplyCostCorrections_ResolvesTheTurnWhoseWindowContainsTheBilling(t *te
 	API(APIEntry{
 		Timestamp: time.Date(2026, 9, 13, 14, 39, 47, 0, time.UTC),
 		Session:   "sess", Model: "claude-opus-5", CallType: "subagent_turn",
-		TurnID: sessTurn("EARLY"), AgentID: "agent-1",
+		TurnID: sessTurn("EARLY"), SubagentID: "agent-1",
 		Output: sub.Output, Turn: &sCopy, CalculatedCostUSD: &sc,
 	})
 
@@ -310,7 +310,7 @@ func TestApplyCostCorrections_IdleGapBelongsToTheFollowingTurn(t *testing.T) {
 	API(APIEntry{
 		Timestamp: time.Date(2026, 9, 13, 14, 39, 47, 0, time.UTC),
 		Session:   "sess", Model: "claude-opus-5", CallType: "subagent_turn",
-		TurnID: sessTurn("EARLY"), AgentID: "agent-1",
+		TurnID: sessTurn("EARLY"), SubagentID: "agent-1",
 		Output: sub.Output, Turn: &sCopy, CalculatedCostUSD: &sc,
 	})
 
@@ -393,7 +393,7 @@ func TestApplyCostCorrections_OrdersChronologicallyNotLexically(t *testing.T) {
 	ins := func(turn, ts, callType, agent string, cost float64) {
 		t.Helper()
 		_, err := apiLog.db.Exec(`INSERT INTO api_calls
-			(ts, session, model, call_type, turn_id, agent_id, output_tokens,
+			(ts, session, model, call_type, turn_id, subagent_id, output_tokens,
 			 turn_input_tokens, turn_output_tokens, turn_cache_read_tokens,
 			 turn_cache_write_tokens, calculated_cost_usd)
 			VALUES (?, 'sess', 'claude-opus-5', ?, ?, ?, 50, 100, 50, 1000, 200, ?)`,
@@ -446,7 +446,7 @@ func TestApplyCostCorrections_DebitsTheTurnThatWasRUNNING(t *testing.T) {
 	ins := func(turn, ts string, durMS int, callType, agent string, cost float64) {
 		t.Helper()
 		if _, err := apiLog.db.Exec(`INSERT INTO api_calls
-			(ts, session, model, call_type, turn_id, agent_id, duration_ms, output_tokens,
+			(ts, session, model, call_type, turn_id, subagent_id, duration_ms, output_tokens,
 			 turn_input_tokens, turn_output_tokens, turn_cache_read_tokens,
 			 turn_cache_write_tokens, calculated_cost_usd)
 			VALUES (?, 'sess', 'claude-opus-5', ?, ?, ?, ?, 50, 100, 50, 1000, 200, ?)`,
@@ -495,7 +495,7 @@ func TestAccumulateSubagentRow_KeepsOneRowPerDelegation(t *testing.T) {
 		cc := cost
 		AccumulateSubagentRow(APIEntry{
 			Timestamp: closeT1, Session: "sess", Model: "claude-opus-5",
-			CallType: "subagent_turn", TurnID: sessTurn("T1"), AgentID: "agent-1",
+			CallType: "subagent_turn", TurnID: sessTurn("T1"), SubagentID: "agent-1",
 			Output: out, Turn: &c, CalculatedCostUSD: &cc, DurationMS: 1000,
 		})
 	}
@@ -506,7 +506,7 @@ func TestAccumulateSubagentRow_KeepsOneRowPerDelegation(t *testing.T) {
 
 	var n int
 	if err := apiLog.db.QueryRow(`SELECT COUNT(*) FROM api_calls
-		WHERE call_type='subagent_turn' AND turn_id=? AND agent_id=? AND model=?`,
+		WHERE call_type='subagent_turn' AND turn_id=? AND subagent_id=? AND model=?`,
 		sessTurn("T1"), "agent-1", "claude-opus-5").Scan(&n); err != nil {
 		t.Fatal(err)
 	}
@@ -553,7 +553,7 @@ func TestApplyCostCorrections_CollapsedRowIsCreditable(t *testing.T) {
 		cc := 0.05
 		AccumulateSubagentRow(APIEntry{
 			Timestamp: closeT1, Session: "sess", Model: "claude-opus-5",
-			CallType: "subagent_turn", TurnID: sessTurn("T1"), AgentID: "agent-1",
+			CallType: "subagent_turn", TurnID: sessTurn("T1"), SubagentID: "agent-1",
 			Output: 5, Turn: &c, CalculatedCostUSD: &cc, DurationMS: 1000,
 		})
 	}
@@ -595,7 +595,7 @@ func TestApplyCostCorrections_LegacyDuplicateRowsAreRefused(t *testing.T) {
 	// The pre-#1922 shape: three rows sharing one key, as live data holds.
 	for i := 0; i < 3; i++ {
 		if _, err := apiLog.db.Exec(`INSERT INTO api_calls
-			(ts, session, model, call_type, turn_id, agent_id, duration_ms, output_tokens,
+			(ts, session, model, call_type, turn_id, subagent_id, duration_ms, output_tokens,
 			 turn_input_tokens, turn_output_tokens, turn_cache_read_tokens,
 			 turn_cache_write_tokens, calculated_cost_usd)
 			VALUES ('2026-09-13T15:41:35+01:00','sess','claude-opus-5','subagent_turn',?,
@@ -647,7 +647,7 @@ func TestAccumulateSubagentRow_JSONLKeepsEveryInstalment(t *testing.T) {
 		cc := 0.05
 		AccumulateSubagentRow(APIEntry{
 			Timestamp: closeT1, Session: "sess", Model: "claude-opus-5",
-			CallType: "subagent_turn", TurnID: sessTurn("T1"), AgentID: "agent-1",
+			CallType: "subagent_turn", TurnID: sessTurn("T1"), SubagentID: "agent-1",
 			Output: 5, Turn: &c, CalculatedCostUSD: &cc, DurationMS: 1000,
 		})
 	}

@@ -1400,10 +1400,26 @@ Four outputs:
    the API path writes one row per call, so a tool-loop turn is several rows; the
    delegated path writes one parent row plus a `call_type='subagent_turn'` row per
    subagent. They share the id — `WHERE turn_id = ?` reassembles the turn, and
-   `SUM(calculated_cost_usd) GROUP BY turn_id` is the turn's cost. `agent_id` is the
-   Agent tool's `tool_use` id, which also names the transcript
+   `SUM(calculated_cost_usd) GROUP BY turn_id` is the turn's cost.
+
+   **`agent_id` and `subagent_id` (#1946).** `agent_id` is the AGENT that owns the
+   row, populated on EVERY row — including a `subagent_turn` row, where it is the
+   parent session's owner, not the subagent. `subagent_id` is the Agent tool's
+   `tool_use` id, which also names the transcript
    (`.../subagents/agent-<id>.jsonl`), so a subagent row traces to the work that
-   incurred it.
+   incurred it; empty on every other row. Before #1946 there was only one column:
+   it held the tool_use id on a `subagent_turn` row and was NULL everywhere else
+   (48,630 of 48,650 rows), so a join against `state.db`'s `session_index.agent_id`
+   (the agent NAME, indexed) silently returned nothing on all but 20 rows — read as
+   "no data" rather than an error. The split makes the two tables' `agent_id`
+   columns agree. `session.AgentIDFromKey`/`AgentIDFromAnyKey` (`internal/session/key.go`)
+   is the ONE parser for deriving an agent from a session key — five independent
+   reimplementations were consolidated onto it (`internal/telemetry`,
+   `internal/command`, `internal/platform`); `scripts/langfuse-etl/etl.py`'s
+   `agent_of` mirrors it by hand since Python can't import Go. `BackfillAgentIDs`
+   (`internal/log/api_db.go`, called from `cmd/foci-gw` to dodge the import cycle —
+   `internal/session` already imports `internal/log`) fixes up rows written before
+   the split, on every startup, cheaply once done.
 
    Absent is **NULL, not `''`** (`nullIfEmpty` at the insert). Historical rows have
    no recorded turn identity and it cannot be reconstructed, so `''` would assert a
@@ -1874,7 +1890,10 @@ child (so a character-file edit shows up on the first turn after it).
 **Identity is derived, never random** (`ids.go`): trace = sha256 of the api.db
 `turn_id` (`<session>@<StartedAt UnixNano>`), root = sha256(role + turn_id), tool =
 (turn_id, tool_use id), subagent run = (turn_id, Agent tool_use id[, run]),
-generation = (turn_id, call_type, agent_id, model, ts, …). Consequences the design
+generation = (turn_id, call_type, subagent_id, model, ts, …) — subagent_id, NOT
+agent_id: #1946 made agent_id the same value for every row of a turn, so keying
+on it there would collapse every subagent's generation onto one span id.
+Consequences the design
 leans on: a background subagent that books its spend 30 min after its parent
 closed still lands in the *spawning* turn's trace (the row carries that turn_id);
 its generation parents onto the subagent span by the same tool_use id without any

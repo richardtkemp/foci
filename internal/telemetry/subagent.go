@@ -57,8 +57,9 @@ func itoa(n int) string {
 }
 
 // SubagentStart opens an "agent" child under this turn's root for the run.
-// groupKey is the Agent tool's tool_use id — also api.db's agent_id for the
-// run's spend, which is why SubagentSpanID keys on it.
+// groupKey is the Agent tool's tool_use id — also api.db's subagent_id for
+// the run's spend (#1946; agent_id there is the OWNING agent, not this),
+// which is why SubagentSpanID keys on it.
 func (t *Turn) SubagentStart(groupKey, label, prompt string, run int) {
 	if t == nil {
 		return

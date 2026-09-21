@@ -71,6 +71,7 @@ func TestFullTurn(t *testing.T) {
 		Model:             "claude-opus-5",
 		CallType:          "delegated_turn",
 		TurnID:            turnID,
+		AgentID:           "agent",
 		DurationMS:        1200,
 		CalculatedCostUSD: ptr(0.4),
 		Turn:              &modelinfo.TokenCounts{Input: 10, Output: 5},
@@ -81,7 +82,8 @@ func TestFullTurn(t *testing.T) {
 		Model:             "claude-opus-5",
 		CallType:          "subagent_turn",
 		TurnID:            turnID,
-		AgentID:           "toolu_2",
+		AgentID:           "agent",
+		SubagentID:        "toolu_2",
 		DurationMS:        300,
 		CalculatedCostUSD: ptr(0.1),
 	}, false)
@@ -211,6 +213,17 @@ func TestFullTurn(t *testing.T) {
 	wantSubParent := SubagentSpanID(turnID, "toolu_2", 1)
 	if subGen.Parent.SpanID() != wantSubParent {
 		t.Errorf("subagent_turn parent = %s, want %s", subGen.Parent.SpanID(), wantSubParent)
+	}
+	// #1946: the subagent row's user.id is the OWNING agent (same as the
+	// parent turn's), and the tool_use id that used to double as both moves
+	// to its own metadata field. Parentage above is keyed by SubagentID —
+	// using AgentID there instead would collapse every subagent's span onto
+	// one id, since #1946 made AgentID the same for every row of a turn.
+	if got := attrStr(t, subGen.Attributes, attrUserID); got != "agent" {
+		t.Errorf("subagent_turn %s = %q, want %q", attrUserID, got, "agent")
+	}
+	if got := attrStr(t, subGen.Attributes, attrObsMetaPrefix+"subagent_tool_use_id"); got != "toolu_2" {
+		t.Errorf("subagent_turn subagent_tool_use_id = %q, want %q", got, "toolu_2")
 	}
 
 	// --- nothing extra leaked in ---

@@ -7,10 +7,10 @@ package convo
 import (
 	"database/sql"
 	"fmt"
-	"strings"
 	"sync"
 
 	"foci/internal/log"
+	"foci/internal/session"
 	"foci/internal/sqlite"
 	"foci/internal/timeutil"
 )
@@ -120,26 +120,16 @@ func Record(entry Entry) {
 
 // resolveLog picks the per-agent log for a session key, falling back to the
 // default log when the session can't be routed.
-func resolveLog(session string) *agentLog {
+func resolveLog(sessionKey string) *agentLog {
 	if len(convLogs) == 0 {
 		return nil
 	}
-	if agentID := agentFromSession(session); agentID != "" {
+	if agentID := session.AgentIDFromKey(sessionKey); agentID != "" {
 		if cl, ok := convLogs[agentID]; ok {
 			return cl
 		}
 	}
 	return convFallback
-}
-
-// agentFromSession extracts the agent ID from a session key. Session keys use
-// slash-separated format: "{agentID}/{type}{id}[/{child}]". Returns "" if the
-// format doesn't match.
-func agentFromSession(session string) string {
-	if idx := strings.IndexByte(session, '/'); idx > 0 {
-		return session[:idx]
-	}
-	return ""
 }
 
 // insert writes a conversation entry and returns the SQLite row ID (0 on error).

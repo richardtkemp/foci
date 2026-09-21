@@ -184,7 +184,7 @@ func applyOneCorrection(db *sql.DB, c modelinfo.CostCorrection) (parentTurn stri
 			turn_cache_write_tokens = turn_cache_write_tokens + ?,
 			output_tokens           = output_tokens + ?,
 			calculated_cost_usd     = calculated_cost_usd + ?
-		WHERE turn_id = ? AND call_type = 'subagent_turn' AND agent_id = ? AND model = ?`,
+		WHERE turn_id = ? AND call_type = 'subagent_turn' AND subagent_id = ? AND model = ?`,
 		c.Counts.Input, c.Counts.Output, c.Counts.CacheRead, c.Counts.CacheWrite,
 		c.Counts.Output, c.CostUSD, c.SubagentTurnID, c.AgentID, c.Model)
 	if err != nil {
@@ -215,7 +215,7 @@ func exactlyOne(res sql.Result, what string) error {
 }
 
 // AccumulateSubagentRow folds one subagent's spend into THE single row for
-// (turn_id, agent_id, model), creating it on first sight (#1922).
+// (turn_id, subagent_id, model), creating it on first sight (#1922).
 //
 // Phase C used to INSERT unconditionally, so a subagent that outlived its parent
 // got one row per turn it straddled — all under the SPAWNING turn id, because
@@ -224,7 +224,7 @@ func exactlyOne(res sql.Result, what string) error {
 //
 //   - "What did that delegation cost?" needed a SUM across rows, when the whole
 //     point of phase C was to make it a lookup.
-//   - The #1918 correction targets a row by (turn_id, agent_id, model) and
+//   - The #1918 correction targets a row by (turn_id, subagent_id, model) and
 //     requires exactly one match, so it could NEVER apply to a background
 //     subagent — precisely the population it exists for.
 //
@@ -233,9 +233,14 @@ func exactlyOne(res sql.Result, what string) error {
 // around at the reader. Rows written before this change keep their duplicates;
 // a correction against one of those still refuses, safely and loudly.
 //
+// Keyed on subagent_id, NOT agent_id (#1946): agent_id is now the OWNING agent,
+// populated on every row including this one, so it is shared by every subagent
+// of the same delegation and cannot distinguish them — subagent_id (the Agent
+// tool_use id) is the field that names THIS subagent.
+//
 // Returns true if an existing row was extended, false if a new one was written.
 func AccumulateSubagentRow(entry APIEntry) bool {
-	if apiLog == nil || apiLog.db == nil || entry.TurnID == "" || entry.AgentID == "" {
+	if apiLog == nil || apiLog.db == nil || entry.TurnID == "" || entry.SubagentID == "" {
 		API(entry)
 		return false
 	}
@@ -248,13 +253,13 @@ func AccumulateSubagentRow(entry APIEntry) bool {
 			output_tokens           = COALESCE(output_tokens, 0)           + ?,
 			calculated_cost_usd     = COALESCE(calculated_cost_usd, 0)     + ?,
 			duration_ms             = ?
-		WHERE turn_id = ? AND call_type = 'subagent_turn' AND agent_id = ? AND model = ?
+		WHERE turn_id = ? AND call_type = 'subagent_turn' AND subagent_id = ? AND model = ?
 		  AND id = (SELECT MIN(id) FROM api_calls
-		            WHERE turn_id = ? AND call_type = 'subagent_turn' AND agent_id = ? AND model = ?)`,
+		            WHERE turn_id = ? AND call_type = 'subagent_turn' AND subagent_id = ? AND model = ?)`,
 		counts(entry).Input, counts(entry).Output, counts(entry).CacheRead, counts(entry).CacheWrite,
 		counts(entry).Output, effectiveCalculated(entry), entry.DurationMS,
-		entry.TurnID, entry.AgentID, entry.Model,
-		entry.TurnID, entry.AgentID, entry.Model)
+		entry.TurnID, entry.SubagentID, entry.Model,
+		entry.TurnID, entry.SubagentID, entry.Model)
 	apiLog.mu.Unlock()
 	if err == nil {
 		if n, _ := res.RowsAffected(); n == 1 {

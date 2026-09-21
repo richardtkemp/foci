@@ -222,13 +222,13 @@ func scopePredicate(scopes []string, sessionKey string, idx *session.SessionInde
 				// sessions are exactly those under its key prefix. This works
 				// without an index and also covers any session the index has
 				// not (yet) recorded.
-				agentID := agentFromSession(sessionKey)
+				agentID := session.AgentIDFromAnyKey(sessionKey)
 				if agentID == "" {
 					continue
 				}
 				label = "agent " + agentID
 				match = func(sk string) bool {
-					return agentFromSession(sk) == agentID
+					return session.AgentIDFromAnyKey(sk) == agentID
 				}
 			default:
 				label = scope
@@ -253,7 +253,7 @@ func scopePredicate(scopes []string, sessionKey string, idx *session.SessionInde
 			// Prefix match rather than an index lookup: session keys are
 			// "<agent>/<session-id>", so ownership is derivable from the key
 			// itself and cannot under-report a session the index is missing.
-			agentID := agentFromSession(sessionKey)
+			agentID := session.AgentIDFromAnyKey(sessionKey)
 			if agentID == "" {
 				// Caller's agent is unknown — filtering on it would silently
 				// report zero. Fall through to no ownership filter instead.
@@ -261,7 +261,7 @@ func scopePredicate(scopes []string, sessionKey string, idx *session.SessionInde
 			}
 			labelParts = append(labelParts, "agent "+agentID)
 			pred = func(sk string) bool {
-				return prev(sk) && agentFromSession(sk) == agentID
+				return prev(sk) && session.AgentIDFromAnyKey(sk) == agentID
 			}
 			continue
 		}
@@ -295,7 +295,7 @@ func resolveScopeKeys(scope, sessionKey string, idx *session.SessionIndex) (map[
 		}
 		return result, "descendants"
 	case "agent":
-		agentID := agentFromSession(sessionKey)
+		agentID := session.AgentIDFromAnyKey(sessionKey)
 		entries, err := idx.Query(session.QueryOptions{AgentID: agentID})
 		if err != nil {
 			return map[string]struct{}{}, "agent " + agentID

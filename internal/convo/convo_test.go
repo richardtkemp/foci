@@ -167,26 +167,6 @@ func TestConversationBusyTimeout(t *testing.T) {
 	}
 }
 
-func TestAgentFromSession(t *testing.T) {
-	// Verifies extraction of agent IDs from session key strings.
-	tests := []struct {
-		session string
-		want    string
-	}{
-		{"clutch/c123", "clutch"},
-		{"otto/i0", "otto"},
-		{"fotini/c5970082313/b2000", "fotini"},
-		{"", ""},
-		{"noslash", ""},
-	}
-	for _, tt := range tests {
-		got := agentFromSession(tt.session)
-		if got != tt.want {
-			t.Errorf("agentFromSession(%q) = %q, want %q", tt.session, got, tt.want)
-		}
-	}
-}
-
 func TestConversationHook(t *testing.T) {
 	// Verifies that Hook is called for non-empty text entries.
 	dbPath := filepath.Join(t.TempDir(), "test_conv.db")

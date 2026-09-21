@@ -36,9 +36,9 @@ func ToolSpanID(turnID, toolUseID string) trace.SpanID {
 }
 
 // SubagentSpanID is the span of one CC subagent RUN. Run 1 — the Agent tool
-// spawn — has no run suffix, so log rows (which carry only the tool_use id as
-// agent_id) can parent onto it without knowing the run count; SendMessage
-// reactivations get their own spans keyed by run index.
+// spawn — has no run suffix, so log rows (which carry the tool_use id as
+// subagent_id — #1946) can parent onto it without knowing the run count;
+// SendMessage reactivations get their own spans keyed by run index.
 func SubagentSpanID(turnID, groupKey string, run int) trace.SpanID {
 	if run <= 1 {
 		return spanID("foci:subagent:", turnID+":"+groupKey)

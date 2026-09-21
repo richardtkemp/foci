@@ -234,6 +234,39 @@ func AgentIDFromKey(key string) string {
 	return key[:idx]
 }
 
+// AgentIDFromAnyKey extracts the agent ID from a session key in EITHER
+// grammar: the current stable form ("{agentID}/{type}{id}[/{child}]") or the
+// legacy telemetry form ("agent:<name>:<kind>:<id>") that predates it and
+// still appears in old api.db/telemetry rows (#1946). Unlike AgentIDFromKey,
+// it does not fail closed on a key with no recognizable separator — it
+// returns the input unchanged in that case, matching how the api.db/telemetry
+// call sites this consolidates have always treated an unparseable session:
+// as a best-effort label rather than "no agent". Returns "" only for "".
+//
+// This is the ONE place that understands both grammars — export/relocate
+// target for the five call sites that used to reimplement it independently
+// (foci_todo #1946): internal/telemetry, internal/command (cost views),
+// scripts/langfuse-etl/etl.py's agent_of (which cannot literally share this
+// Go code, but mirrors it — keep the two in sync by hand, same as
+// normalize_model mirrors modelinfo.Normalize there).
+//
+// Use AgentIDFromKey instead when the caller wants strict, fail-closed
+// parsing of a CURRENT-grammar key only (e.g. routing a live session) —
+// this one is for reading historical/legacy data whose grammar you don't
+// control.
+func AgentIDFromAnyKey(session string) string {
+	if strings.HasPrefix(session, "agent:") {
+		parts := strings.SplitN(session, ":", 3)
+		if len(parts) >= 2 {
+			return parts[1]
+		}
+	}
+	if idx := strings.Index(session, "/"); idx > 0 {
+		return session[:idx]
+	}
+	return session
+}
+
 // branchFromSession creates a branch child key from a parent session key string.
 func branchFromSession(parentKey string) (string, error) {
 	parent, err := ParseSessionKey(parentKey)

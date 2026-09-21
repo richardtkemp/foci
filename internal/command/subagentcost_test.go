@@ -10,7 +10,10 @@ import (
 	"foci/internal/modelinfo"
 )
 
-func costEntry(callType, agentID string, cost float64, turn modelinfo.TokenCounts) log.APIEntry {
+// costEntry's agentID param is a SUBAGENT id (the Agent tool_use id): every
+// row it builds shares one owning AgentID ("clutch", the session's agent),
+// while subagentID distinguishes one subagent's rows from another's (#1946).
+func costEntry(callType, subagentID string, cost float64, turn modelinfo.TokenCounts) log.APIEntry {
 	c := cost
 	tc := turn
 	return log.APIEntry{
@@ -18,7 +21,8 @@ func costEntry(callType, agentID string, cost float64, turn modelinfo.TokenCount
 		Session:           "clutch/c1",
 		Model:             "claude/claude-opus-5",
 		CallType:          callType,
-		AgentID:           agentID,
+		AgentID:           "clutch",
+		SubagentID:        subagentID,
 		TurnID:            "clutch/c1@1",
 		CalculatedCostUSD: &c,
 		Turn:              &tc,

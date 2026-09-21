@@ -3,7 +3,6 @@ package platform
 import (
 	"context"
 	"sort"
-	"strings"
 
 	"foci/internal/session"
 )
@@ -204,13 +203,10 @@ func (a *aggregatingConnMgr) Wait() {
 	}
 }
 
-// extractSessionInfo extracts the agentID and chatID from a session key string.
-// Returns ("", 0) if the key cannot be parsed.
+// extractSessionInfo extracts the agentID and chatID from a session key
+// string. Returns ("", 0) if the key cannot be parsed. Used to reimplement
+// the agent-ID half via its own SplitN — now a thin wrapper over the single
+// session-key parser (#1946).
 func extractSessionInfo(sessionKey string) (string, int64) {
-	parts := strings.SplitN(sessionKey, "/", 3)
-	if len(parts) < 2 {
-		return "", 0
-	}
-	chatID := session.ChatIDFromKey(sessionKey)
-	return parts[0], chatID
+	return session.AgentIDFromKey(sessionKey), session.ChatIDFromKey(sessionKey)
 }

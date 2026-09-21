@@ -7,6 +7,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/convo"
 	"foci/internal/log"
+	"foci/internal/session"
 	"foci/internal/tempdir"
 )
 
@@ -99,6 +100,11 @@ func initLogging(cfg *config.Config) func() {
 			log.Fatalf("main", "init API db: %v", err)
 		}
 		cleanups = append(cleanups, log.CloseAPIDB)
+		// #1946: give agent_id one honest meaning across every row. Non-fatal —
+		// a failed backfill leaves historical rows as they were, not broken.
+		if err := log.BackfillAgentIDs(session.AgentIDFromAnyKey); err != nil {
+			mainLog.Warnf("backfill api_calls agent_id (#1946): %v", err)
+		}
 	}
 
 	// Conversation log (per-agent SQLite databases in workspace .data)

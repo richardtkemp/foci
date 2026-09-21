@@ -18,6 +18,7 @@ import (
 	"foci/internal/procx"
 	"foci/internal/provider"
 	"foci/internal/secrets"
+	"foci/internal/session"
 	"foci/internal/tempdir"
 )
 
@@ -485,6 +486,7 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 			DurationMS:  duration.Milliseconds(),
 			StopReason:  resp.StopReason,
 			CallType:    "spawn",
+			AgentID:     session.AgentIDFromKey(sessionKey),
 			SessionFile: sessionFile,
 		})
 

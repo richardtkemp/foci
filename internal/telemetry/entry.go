@@ -12,6 +12,7 @@ import (
 
 	"foci/internal/log"
 	"foci/internal/modelinfo"
+	"foci/internal/session"
 )
 
 // recordEntry is log.APIHook: one api.db row → one "generation" observation.
@@ -42,7 +43,9 @@ func recordEntry(e log.APIEntry, instalment bool) {
 	if end.Before(start) {
 		end = start
 	}
-	agent := agentFromSession(e.Session)
+	// e.AgentID is populated on every row by the writer now (#1946) — no need
+	// to re-derive it from the session key here.
+	agent := e.AgentID
 
 	// Token scope: the turn_* group is what calculated_cost_usd priced; the
 	// un-suffixed four are the final cycle's context fill (#1854) and only
@@ -96,8 +99,8 @@ func recordEntry(e log.APIEntry, instalment bool) {
 	if e.TurnID != "" {
 		attrs = append(attrs, attribute.String(attrObsMetaPrefix+"turn_id", e.TurnID))
 	}
-	if e.AgentID != "" {
-		attrs = append(attrs, attribute.String(attrObsMetaPrefix+"subagent_tool_use_id", e.AgentID))
+	if e.SubagentID != "" {
+		attrs = append(attrs, attribute.String(attrObsMetaPrefix+"subagent_tool_use_id", e.SubagentID))
 	}
 	if instalment {
 		attrs = append(attrs, attribute.Bool(attrObsMetaPrefix+"instalment", true))
@@ -117,8 +120,8 @@ func recordEntry(e log.APIEntry, instalment bool) {
 	if e.TurnID != "" {
 		traceID = TraceIDForTurn(e.TurnID)
 		parent := RootSpanID(e.TurnID)
-		if e.IsSubagent() && e.AgentID != "" {
-			parent = SubagentSpanID(e.TurnID, e.AgentID, 1)
+		if e.IsSubagent() && e.SubagentID != "" {
+			parent = SubagentSpanID(e.TurnID, e.SubagentID, 1)
 		}
 		ctx = parentContext(ctx, traceID, parent)
 	} else {
@@ -128,7 +131,10 @@ func recordEntry(e log.APIEntry, instalment bool) {
 			attribute.StringSlice(attrTraceTags, []string{"agent:" + agent, "call_type:" + callType, "backend:" + backendFromEntry(e)}),
 		)
 	}
-	spanID := GenerationSpanID(e.TurnID, e.Session, callType, e.AgentID, e.Model,
+	// The generation span itself is also keyed by SubagentID (NOT AgentID,
+	// which #1946 made the same for every row of a turn — using it here would
+	// collapse every subagent's span into one).
+	spanID := GenerationSpanID(e.TurnID, e.Session, callType, e.SubagentID, e.Model,
 		strconv.FormatInt(start.UnixNano(), 10), strconv.Itoa(counts.Output), strconv.FormatBool(instalment))
 	ctx = withIDs(ctx, traceID, spanID)
 	_, span := tr.Start(ctx, callType, trace.WithTimestamp(start), trace.WithAttributes(attrs...))
@@ -151,7 +157,7 @@ func recordCorrection(c modelinfo.CostCorrection, parentTurn string) {
 	if at.IsZero() {
 		at = time.Now()
 	}
-	session, _, _ := strings.Cut(c.SubagentTurnID, "@")
+	sessionKey, _, _ := strings.Cut(c.SubagentTurnID, "@")
 	traceID := TraceIDForTurn(c.SubagentTurnID)
 	ctx := parentContext(context.Background(), traceID, SubagentSpanID(c.SubagentTurnID, c.AgentID, 1))
 	ctx = withIDs(ctx, traceID, EventSpanID("correction", c.SubagentTurnID, c.AgentID, c.Model,
@@ -160,8 +166,8 @@ func recordCorrection(c modelinfo.CostCorrection, parentTurn string) {
 		attribute.String(attrObsType, "event"),
 		attribute.String(attrObsLevel, "WARNING"),
 		attribute.String(attrObsStatus, "spend re-attributed from parent turn "+parentTurn+" (api.db updated in place; this sink is append-only, so totals here keep the original split)"),
-		attribute.String(attrUserID, agentFromSession(session)),
-		attribute.String(attrSessionID, session),
+		attribute.String(attrUserID, session.AgentIDFromAnyKey(sessionKey)),
+		attribute.String(attrSessionID, sessionKey),
 		attribute.String(attrEnvironment, o.Environment),
 		attribute.String(attrObsMetaPrefix+"source", "foci"),
 		attribute.String(attrObsMetaPrefix+"parent_turn_id", parentTurn),
@@ -176,21 +182,6 @@ func recordCorrection(c modelinfo.CostCorrection, parentTurn string) {
 		attribute.Int(attrObsMetaPrefix+"moved_cache_write", c.Counts.CacheWrite),
 	))
 	span.End(trace.WithTimestamp(at))
-}
-
-// agentFromSession reads the agent out of either session-key grammar:
-// "agent/c123[/b…]" (current) or "agent:<name>:kind:…" (legacy rows).
-func agentFromSession(session string) string {
-	if strings.HasPrefix(session, "agent:") {
-		parts := strings.SplitN(session, ":", 3)
-		if len(parts) >= 2 {
-			return parts[1]
-		}
-	}
-	if i := strings.Index(session, "/"); i > 0 {
-		return session[:i]
-	}
-	return session
 }
 
 // backendFromEntry guesses the transport for a turn-less row from what the

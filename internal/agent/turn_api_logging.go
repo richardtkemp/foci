@@ -11,6 +11,7 @@ import (
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
 	"foci/internal/ratelimit"
+	"foci/internal/session"
 )
 
 // logAPIResponse logs usage, cost, and optionally the full request/response payload.
@@ -48,6 +49,7 @@ func (a *Agent) logAPIResponse(ts *TurnState, model string, start time.Time, dur
 		// turn_id; the delegated path writes one parent row per turn plus its
 		// subagent rows, which also share one.
 		TurnID:      ts.RowID(),
+		AgentID:     session.AgentIDFromKey(sessionKey),
 		SessionFile: sessionFile,
 		SessionLine: msgCount + 2, // +2 for the user message and assistant response being appended
 	})

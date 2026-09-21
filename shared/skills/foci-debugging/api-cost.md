@@ -115,6 +115,15 @@ WHERE si.agent_id='clutch'
 GROUP BY si.session_type ORDER BY total_usd DESC;"
 ```
 
+**Before #1946, `WHERE ac.agent_id='clutch'` here would have silently returned
+nothing** (48,630 of 48,650 `api_calls` rows had `agent_id` NULL — it held the
+Agent tool's tool_use id on a `subagent_turn` row, empty everywhere else, despite
+sharing its name with `session_index.agent_id`'s "agent NAME" meaning). Since
+#1946 `api_calls.agent_id` IS the agent name on every row — `si.agent_id` above
+still works for the join through `session_index`, but `ac.agent_id='clutch'`
+alone (no join needed) is now also a correct, cheaper filter. The old tool_use id
+moved to `api_calls.subagent_id`.
+
 **Gotchas that will mislead you:**
 - **Two tables, one column name, different meanings.** `session_index.agent_id` is the AGENT (`'clutch'`, as above). `api_calls.agent_id` is the **subagent's** Agent-tool `tool_use` id and is empty on every ordinary row *by design* — its emptiness is not a missing feature. For per-agent cost use the session prefix: `substr(session,1,instr(session,'/')-1)`.
 - **The `|` in `SELECT session_key, session_type` output is sqlite's default column separator, NOT part of the key.** Don't build a `substr(...,instr(...,'|'))` strip — it matches nothing and silently yields zero join hits. Use `-column` mode to see the real values.

@@ -56,12 +56,27 @@ type APIEntry struct {
 	// TurnState.TurnID counter is not. Empty for writers that have no turn.
 	TurnID string `json:"turn_id,omitempty"`
 
-	// AgentID names the SUBAGENT whose work this row records, for
-	// call_type="subagent_turn" (#1880 phase C / #1863). It is the Agent tool's
-	// tool_use id, which is also what names the transcript
-	// (.../subagents/agent-<id>.jsonl), so a row can be traced back to the work
-	// that incurred it. Empty on a parent row.
+	// AgentID names the AGENT this row belongs to — populated on EVERY row,
+	// including a subagent_turn row, where it is the parent session's owner
+	// (the same value the row's own delegated_turn parent carries), NOT the
+	// subagent. Callers should set it from the row's Session via
+	// session.AgentIDFromKey (internal/log cannot import internal/session
+	// itself: session already imports log, so the reverse would cycle — see
+	// writers in internal/agent, internal/compaction, internal/tools).
+	//
+	// Before #1946 this field held the SUBAGENT's tool_use id on a
+	// subagent_turn row and was empty everywhere else — the column's name
+	// promised the agent but the value was something else, and NULL on
+	// 48,630 of 48,650 rows read as "no data" to anyone joining on it. That
+	// value now lives in SubagentID below; AgentID has one honest meaning.
 	AgentID string `json:"agent_id,omitempty"`
+
+	// SubagentID names the SUBAGENT whose work this row records, for
+	// call_type="subagent_turn" (#1880 phase C / #1863; split from AgentID by
+	// #1946). It is the Agent tool's tool_use id, which is also what names the
+	// transcript (.../subagents/agent-<id>.jsonl), so a row can be traced back
+	// to the work that incurred it. Empty on every other row.
+	SubagentID string `json:"subagent_id,omitempty"`
 
 	DurationMS  int64  `json:"duration_ms"`
 	StopReason  string `json:"stop_reason"`
@@ -118,7 +133,8 @@ func (e APIEntry) PricedCounts() modelinfo.TokenCounts {
 
 // IsSubagent reports whether this row records a SUBAGENT's work rather than a
 // turn's own (#1880 phase C). Such a row shares its parent's turn_id and names
-// the agent in AgentID.
+// the subagent in SubagentID (AgentID is the OWNING agent on this row too, same
+// as its parent — #1946).
 //
 // Cost consumers must NOT filter these out — the parent row's cost had this
 // subtracted from it, so a sum over every row is still the right total. What
