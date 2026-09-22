@@ -156,6 +156,48 @@ func (m Model) cacheWriteRate() float64 {
 // Populated from models.jsonl at init. Guarded by registryMu.
 var registry = map[string]map[string]Model{}
 
+// modelFieldsKnown records, per registry row, which of the optional
+// capability/context fields the source JSONL row actually SET explicitly —
+// as opposed to a Go zero value (false / 0) that really means "the JSON key
+// was absent". This distinction matters only for the punctuation-fold retry
+// (see punctuationPick / punctuationPickAsOf, #1966/#1969): OpenRouter-synced
+// rows routinely omit effort/thinking/speed/caching (and sometimes
+// context_window) entirely, while the hand-added rows that share the same
+// version under a different spelling are exactly the ones that carry those
+// fields. Folding punctuation to find a PRICE must not let a field-sparse
+// row's absent-therefore-false values silently overwrite what the family
+// fallback would otherwise have supplied for the CAPABILITY fields.
+//
+// A plain bool can't tell "explicitly false" from "absent" once parsed — see
+// jsonlEntry, which uses *bool for these four fields specifically so
+// parseModelsJSONL can tell nil (absent) from a real false apart. models.jsonl
+// has never actually written an explicit "false" for any of these (checked:
+// zero occurrences of "effort":false/"thinking":false/"speed":false/
+// "caching":false in the file today) but the pointer distinction is kept
+// so a future row that DOES write an explicit false is honoured rather than
+// silently misread as "unknown, use the family default".
+type modelFieldsKnown struct {
+	ContextWindow bool
+	Effort        bool
+	Thinking      bool
+	Speed         bool
+	Caching       bool
+}
+
+// fullyKnown marks every field as explicitly set — used for Register()
+// entries (config overrides / live-apply), which are always caller-supplied
+// in full and must never be back-filled with a family fallback via the
+// punctuation-fold merge.
+var fullyKnown = modelFieldsKnown{ContextWindow: true, Effort: true, Thinking: true, Speed: true, Caching: true}
+
+// knownFields is registry's parallel "which fields are real" map, keyed the
+// same way (bare id → provKey). Guarded by registryMu, same as registry.
+var knownFields = map[string]map[string]modelFieldsKnown{}
+
+// builtInKnownFields mirrors builtIn for knownFields, so ResetToBuiltIn
+// restores both together.
+var builtInKnownFields = map[string]map[string]modelFieldsKnown{}
+
 // builtInData is the raw embedded model pricing data, parsed at init.
 //
 //go:embed models.jsonl
@@ -165,14 +207,17 @@ var builtInData []byte
 // It maps directly to the Model struct; the Comment field is informational
 // only and not stored in the registry.
 type jsonlEntry struct {
-	ID              string  `json:"id"`
-	Provider        string  `json:"provider"`
-	Dev             string  `json:"dev,omitempty"`
-	ContextWindow   int     `json:"context_window,omitempty"`
-	Effort          bool    `json:"effort,omitempty"`
-	Thinking        bool    `json:"thinking,omitempty"`
-	Speed           bool    `json:"speed,omitempty"`
-	Caching         bool    `json:"caching,omitempty"`
+	ID            string `json:"id"`
+	Provider      string `json:"provider"`
+	Dev           string `json:"dev,omitempty"`
+	ContextWindow int    `json:"context_window,omitempty"`
+	// Effort/Thinking/Speed/Caching are *bool (not bool) so parseModelsJSONL can
+	// tell "the JSON key was absent" (nil) apart from "explicitly false" — see
+	// modelFieldsKnown for why that distinction matters.
+	Effort          *bool   `json:"effort,omitempty"`
+	Thinking        *bool   `json:"thinking,omitempty"`
+	Speed           *bool   `json:"speed,omitempty"`
+	Caching         *bool   `json:"caching,omitempty"`
 	InputPer1M      float64 `json:"input_per_1m,omitempty"`
 	OutputPer1M     float64 `json:"output_per_1m,omitempty"`
 	CacheReadPer1M  float64 `json:"cache_read_per_1m,omitempty"`
@@ -219,6 +264,10 @@ var builtIn = map[string]map[string]Model{}
 type historyRow struct {
 	fetched string
 	model   Model
+	// known is model's modelFieldsKnown — see that type's doc. Carried per-row
+	// (not just per latest-registry-row) so an as-of lookup that lands on an
+	// older row still knows which of ITS fields were real vs absent.
+	known modelFieldsKnown
 }
 
 // history maps bare model ID → provider → that (id,provider)'s rows in
@@ -245,12 +294,13 @@ var historyMu sync.RWMutex
 var builtInHistory = map[string]map[string][]historyRow{}
 
 func init() {
-	reg, hist, err := parseModelsJSONL(builtInData)
+	reg, hist, known, err := parseModelsJSONL(builtInData)
 	if err != nil {
 		panic(err.Error())
 	}
 	registry = reg
 	history = hist
+	knownFields = known
 
 	// Snapshot for ResetToBuiltIn.
 	for k, v := range registry {
@@ -267,6 +317,12 @@ func init() {
 			builtInHistory[k][pk] = rows
 		}
 	}
+	for k, v := range knownFields {
+		builtInKnownFields[k] = map[string]modelFieldsKnown{}
+		for pk, pv := range v {
+			builtInKnownFields[k][pk] = pv
+		}
+	}
 }
 
 // parseModelsJSONL parses the append-only models.jsonl into BOTH the
@@ -279,9 +335,10 @@ func init() {
 // order), and an empty `fetched` (pre-history baseline rows) treated as
 // oldest. `history` retains every row (sorted ascending by `fetched`) for the
 // as-of lookups. Factored out of init for testability.
-func parseModelsJSONL(data []byte) (registry map[string]map[string]Model, history map[string]map[string][]historyRow, err error) {
+func parseModelsJSONL(data []byte) (registry map[string]map[string]Model, history map[string]map[string][]historyRow, known map[string]map[string]modelFieldsKnown, err error) {
 	registry = map[string]map[string]Model{}
 	history = map[string]map[string][]historyRow{}
+	known = map[string]map[string]modelFieldsKnown{}
 	// fetchedAt[id][provider] = the `fetched` of the row currently stored in
 	// `registry`, so we only overwrite with a same-or-newer one.
 	fetchedAt := map[string]map[string]string{}
@@ -292,10 +349,10 @@ func parseModelsJSONL(data []byte) (registry map[string]map[string]Model, histor
 		}
 		var e jsonlEntry
 		if uerr := json.Unmarshal([]byte(line), &e); uerr != nil {
-			return nil, nil, fmt.Errorf("modelinfo: parse models.jsonl line %q: %v", line, uerr)
+			return nil, nil, nil, fmt.Errorf("modelinfo: parse models.jsonl line %q: %v", line, uerr)
 		}
 		if e.ID == "" {
-			return nil, nil, fmt.Errorf("modelinfo: models.jsonl entry missing id: %q", line)
+			return nil, nil, nil, fmt.Errorf("modelinfo: models.jsonl entry missing id: %q", line)
 		}
 		provider := strings.ToLower(e.Provider)
 		id := strings.ToLower(e.ID)
@@ -305,24 +362,32 @@ func parseModelsJSONL(data []byte) (registry map[string]map[string]Model, histor
 			Provider:          provider,
 			Dev:               dev,
 			ContextWindow:     e.ContextWindow,
-			Effort:            e.Effort,
-			Thinking:          e.Thinking,
-			Speed:             e.Speed,
-			Caching:           e.Caching,
+			Effort:            e.Effort != nil && *e.Effort,
+			Thinking:          e.Thinking != nil && *e.Thinking,
+			Speed:             e.Speed != nil && *e.Speed,
+			Caching:           e.Caching != nil && *e.Caching,
 			InputPer1M:        e.InputPer1M,
 			OutputPer1M:       e.OutputPer1M,
 			CacheReadPer1M:    e.CacheReadPer1M,
 			CacheWritePer1M:   e.CacheWritePer1M,
 			CacheWrite1hPer1M: e.CacheWrite1hPer1M,
 		}
+		fieldsKnown := modelFieldsKnown{
+			ContextWindow: e.ContextWindow != 0,
+			Effort:        e.Effort != nil,
+			Thinking:      e.Thinking != nil,
+			Speed:         e.Speed != nil,
+			Caching:       e.Caching != nil,
+		}
 
 		if history[id] == nil {
 			history[id] = map[string][]historyRow{}
 		}
-		history[id][key] = append(history[id][key], historyRow{fetched: e.Fetched, model: m})
+		history[id][key] = append(history[id][key], historyRow{fetched: e.Fetched, model: m, known: fieldsKnown})
 
 		if registry[id] == nil {
 			registry[id] = map[string]Model{}
+			known[id] = map[string]modelFieldsKnown{}
 			fetchedAt[id] = map[string]string{}
 		}
 		// `fetched` is a YYYY-MM-DD date, so lexical compare is chronological;
@@ -334,6 +399,7 @@ func parseModelsJSONL(data []byte) (registry map[string]map[string]Model, histor
 			continue // an older historical row — keep the newer one already stored
 		}
 		registry[id][key] = m
+		known[id][key] = fieldsKnown
 		fetchedAt[id][key] = e.Fetched
 	}
 
@@ -349,7 +415,7 @@ func parseModelsJSONL(data []byte) (registry map[string]map[string]Model, histor
 			byProvider[provider] = rows
 		}
 	}
-	return registry, history, nil
+	return registry, history, known, nil
 }
 
 // Register adds or overrides a registry entry. Called at startup from
@@ -366,6 +432,13 @@ func Register(provider, modelID string, m Model) {
 		registry[modelID] = map[string]Model{}
 	}
 	registry[modelID][key] = m
+	// A Register call is always caller-supplied in full (config override /
+	// live-apply) — mark every field known so a later punctuation-fold match
+	// (#1966/#1969) never back-fills it with a family default it doesn't need.
+	if knownFields[modelID] == nil {
+		knownFields[modelID] = map[string]modelFieldsKnown{}
+	}
+	knownFields[modelID][key] = fullyKnown
 	registryMu.Unlock()
 
 	// Also append to `history` so an as-of lookup made after this call sees
@@ -377,7 +450,7 @@ func Register(provider, modelID string, m Model) {
 		history[modelID] = map[string][]historyRow{}
 	}
 	today := time.Now().UTC().Format("2006-01-02")
-	history[modelID][key] = append(history[modelID][key], historyRow{fetched: today, model: m})
+	history[modelID][key] = append(history[modelID][key], historyRow{fetched: today, model: m, known: fullyKnown})
 	historyMu.Unlock()
 }
 
@@ -539,6 +612,19 @@ func punctFold(s string) string {
 // produce a silently wrong price. A refusal here is not a dead end: the
 // caller (registryLookupSegs) returns ok=false and its own caller (Cost, …)
 // falls through to familyPricing exactly as it would for any other miss.
+//
+// FIELD-LEVEL MERGE (#1969): before returning, the matched row's
+// capability/context fields are passed through fillUnknownFields, which
+// back-fills anything the SOURCE row left unset with the ordinary family
+// default. This is necessary because the two spellings are not always full
+// duplicates of each other in practice: OpenRouter-synced dot-form rows
+// routinely omit effort/thinking/speed/caching, while a hand-added
+// hyphen-form row of the same version is exactly where those fields live
+// (e.g. claude-opus-4.6 has none of them set; claude-opus-4-6 has all three
+// true). Pricing fields are exempt — a punctuation match IS authoritative for
+// price (that's this ticket's whole purpose), and a zero rate can be a real
+// free-tier price, so there is no "unknown, use a default" case for them the
+// way there is for a bool/int capability field.
 func punctuationPick(segs map[string]bool, bare string) (Model, bool) {
 	folded := punctFold(bare)
 	var matchKeys []string
@@ -551,11 +637,19 @@ func punctuationPick(segs map[string]bool, bare string) (Model, bool) {
 	case 0:
 		return Model{}, false
 	case 1:
-		return registryPick(segs, matchKeys[0])
+		m, ok := registryPick(segs, matchKeys[0])
+		if !ok {
+			return Model{}, false
+		}
+		return fillUnknownFields(m, knownFields[matchKeys[0]][provKey(m.Provider, m.Dev)], bare), true
 	}
 	var all []Model
+	var allKnown []modelFieldsKnown
 	for _, key := range matchKeys {
-		all = append(all, candidates(key)...)
+		for _, m := range candidates(key) {
+			all = append(all, m)
+			allKnown = append(allKnown, knownFields[key][provKey(m.Provider, m.Dev)])
+		}
 	}
 	if len(all) == 0 {
 		return Model{}, false
@@ -565,7 +659,34 @@ func punctuationPick(segs map[string]bool, bare string) (Model, bool) {
 			return Model{}, false // genuine collision, not a duplicate — refuse
 		}
 	}
-	return all[0], true
+	return fillUnknownFields(all[0], allKnown[0], bare), true
+}
+
+// fillUnknownFields back-fills any capability/context field a punctuation-fold
+// match left UNKNOWN (its source row never set it — see modelFieldsKnown) with
+// the same family default the caller would have used on a total miss. See
+// punctuationPick's FIELD-LEVEL MERGE section for why this exists. Pricing
+// fields are untouched — see the same section for why they're exempt.
+func fillUnknownFields(m Model, known modelFieldsKnown, bare string) Model {
+	if !known.ContextWindow {
+		m.ContextWindow = contextWindowFallback(bare)
+	}
+	if !known.Effort || !known.Thinking || !known.Speed {
+		effort, thinking, speed := capabilitiesFallback(bare)
+		if !known.Effort {
+			m.Effort = effort
+		}
+		if !known.Thinking {
+			m.Thinking = thinking
+		}
+		if !known.Speed {
+			m.Speed = speed
+		}
+	}
+	if !known.Caching {
+		m.Caching = cachingFallback(bare)
+	}
+	return m
 }
 
 // registryPick resolves exactly the given leaf (no variant fallback).
@@ -597,6 +718,14 @@ func ResetToBuiltIn() {
 			inner[pk] = pv
 		}
 		registry[k] = inner
+	}
+	knownFields = make(map[string]map[string]modelFieldsKnown, len(builtInKnownFields))
+	for k, v := range builtInKnownFields {
+		inner := make(map[string]modelFieldsKnown, len(v))
+		for pk, pv := range v {
+			inner[pk] = pv
+		}
+		knownFields[k] = inner
 	}
 	registryMu.Unlock()
 
@@ -708,7 +837,13 @@ func ContextWindow(model string) int {
 	if ok {
 		return m.ContextWindow
 	}
-	// Family fallbacks
+	return contextWindowFallback(bare)
+}
+
+// contextWindowFallback is ContextWindow's family-default table, factored out
+// so punctuationPick's field-level merge (#1969) can apply the SAME defaults
+// to just the fields a folded row left unset, not only to a total miss.
+func contextWindowFallback(bare string) int {
 	switch {
 	case strings.Contains(bare, "gemini-1.5"):
 		return 2_000_000
@@ -732,7 +867,12 @@ func Capabilities(model string) (effort, thinking, speed bool) {
 	if ok {
 		return m.Effort, m.Thinking, m.Speed
 	}
-	// Family fallbacks for unregistered claude variants
+	return capabilitiesFallback(bare)
+}
+
+// capabilitiesFallback is Capabilities' family-default table, factored out for
+// the same reason as contextWindowFallback — see its doc comment.
+func capabilitiesFallback(bare string) (effort, thinking, speed bool) {
 	if strings.Contains(bare, "claude") {
 		if strings.Contains(bare, "haiku") {
 			return false, false, false
@@ -763,6 +903,12 @@ func Caching(model string) bool {
 	if ok {
 		return m.Caching
 	}
+	return cachingFallback(bare)
+}
+
+// cachingFallback is Caching's family-default rule, factored out for the same
+// reason as contextWindowFallback — see its doc comment.
+func cachingFallback(bare string) bool {
 	return strings.Contains(bare, "claude")
 }
 
@@ -876,11 +1022,15 @@ func historyLookupAsOfSegs(segs map[string]bool, bare string, at time.Time) (Mod
 
 // punctuationPickAsOf mirrors punctuationPick for the as-of/history path: it
 // retries with '.' and '-' folded together, resolving each candidate key's
-// price AS OF `at` (via historyPickAsOf, which applies the usual provider/dev
+// price AS OF `at` (via historyRowAsOf, which applies the usual provider/dev
 // disambiguation). Same ambiguity rule as punctuationPick — a single other
 // folded-matching key resolves directly; several that resolve (as of `at`) to
 // identical Models resolve to that shared value; several that diverge refuse,
-// so the caller falls through to familyPricingAsOf. Caller must hold historyMu.
+// so the caller falls through to familyPricingAsOf. Also mirrors
+// punctuationPick's FIELD-LEVEL MERGE: the resolved row's capability/context
+// fields are back-filled via fillUnknownFields using THAT ROW's own known
+// bits (not the latest row's — an as-of match can land on an older row with a
+// different known-set). Caller must hold historyMu.
 func punctuationPickAsOf(segs map[string]bool, bare string, at time.Time) (Model, bool) {
 	folded := punctFold(bare)
 	var matchKeys []string
@@ -893,36 +1043,52 @@ func punctuationPickAsOf(segs map[string]bool, bare string, at time.Time) (Model
 	case 0:
 		return Model{}, false
 	case 1:
-		return historyPickAsOf(segs, matchKeys[0], at)
+		row, ok := historyRowAsOf(segs, matchKeys[0], at)
+		if !ok {
+			return Model{}, false
+		}
+		return fillUnknownFields(row.model, row.known, bare), true
 	}
-	var all []Model
+	var all []historyRow
 	for _, key := range matchKeys {
-		if m, ok := historyPickAsOf(segs, key, at); ok {
-			all = append(all, m)
+		if row, ok := historyRowAsOf(segs, key, at); ok {
+			all = append(all, row)
 		}
 	}
 	if len(all) == 0 {
 		return Model{}, false
 	}
-	for _, m := range all[1:] {
-		if m != all[0] {
+	for _, row := range all[1:] {
+		if row.model != all[0].model {
 			return Model{}, false // genuine collision, not a duplicate — refuse
 		}
 	}
-	return all[0], true
+	return fillUnknownFields(all[0].model, all[0].known, bare), true
 }
 
 // historyPickAsOf resolves exactly the given leaf as-of `at` (no variant
 // fallback). Caller must hold historyMu.
 func historyPickAsOf(segs map[string]bool, bare string, at time.Time) (Model, bool) {
-	byKey := history[bare]
-	if len(byKey) == 0 {
+	row, ok := historyRowAsOf(segs, bare, at)
+	if !ok {
 		return Model{}, false
 	}
+	return row.model, true
+}
+
+// historyRowAsOf is historyPickAsOf's body, additionally returning the full
+// historyRow (not just its Model) so punctuationPickAsOf can read the row's
+// own modelFieldsKnown for the field-level merge (#1969) — the ordinary exact
+// / variant-stripped callers only need the Model. Caller must hold historyMu.
+func historyRowAsOf(segs map[string]bool, bare string, at time.Time) (historyRow, bool) {
+	byKey := history[bare]
+	if len(byKey) == 0 {
+		return historyRow{}, false
+	}
 	atDate := at.UTC().Format("2006-01-02")
-	pick := func(rows []historyRow) (Model, bool) {
+	pick := func(rows []historyRow) (historyRow, bool) {
 		if len(rows) == 0 {
-			return Model{}, false
+			return historyRow{}, false
 		}
 		// rows is ascending by fetched (parseModelsJSONL/Register append
 		// order); pick the latest row whose fetched <= atDate, falling back to
@@ -934,7 +1100,7 @@ func historyPickAsOf(segs map[string]bool, bare string, at time.Time) (Model, bo
 			}
 			best = r
 		}
-		return best.model, true
+		return best, true
 	}
 	// Parallel candidate slices: a representative (latest) model per
 	// (provider, dev) group carries the fields pickIndex matches on; groups[i]
@@ -950,7 +1116,7 @@ func historyPickAsOf(segs map[string]bool, bare string, at time.Time) (Model, bo
 	}
 	i, ok := pickIndex(reps, segs, bare)
 	if !ok {
-		return Model{}, false
+		return historyRow{}, false
 	}
 	return pick(groups[i])
 }

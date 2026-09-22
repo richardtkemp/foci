@@ -353,7 +353,7 @@ func TestBuildRegistryLatestFetchedWins(t *testing.T) {
 	data := []byte(`{"id":"hist-model","provider":"openrouter","input_per_1m":1.0}
 {"id":"hist-model","provider":"openrouter","input_per_1m":3.0,"fetched":"2026-03-01"}
 {"id":"hist-model","provider":"openrouter","input_per_1m":2.0,"fetched":"2026-01-01"}`)
-	reg, _, err := parseModelsJSONL(data)
+	reg, _, _, err := parseModelsJSONL(data)
 	if err != nil {
 		t.Fatalf("parseModelsJSONL: %v", err)
 	}
@@ -366,7 +366,7 @@ func TestBuildRegistryLatestFetchedWins(t *testing.T) {
 func TestBuildRegistryTieBreaksByFileOrder(t *testing.T) {
 	data := []byte(`{"id":"tie","provider":"","input_per_1m":1.0,"fetched":"2026-05-01"}
 {"id":"tie","provider":"","input_per_1m":9.0,"fetched":"2026-05-01"}`)
-	reg, _, err := parseModelsJSONL(data)
+	reg, _, _, err := parseModelsJSONL(data)
 	if err != nil {
 		t.Fatalf("parseModelsJSONL: %v", err)
 	}
@@ -383,7 +383,7 @@ func TestLookupAsOfPicksHistoricalPrice(t *testing.T) {
 	data := []byte(`{"id":"asof-model","provider":"openrouter","input_per_1m":1.0,"fetched":"2026-01-01"}
 {"id":"asof-model","provider":"openrouter","input_per_1m":2.0,"fetched":"2026-03-01"}
 {"id":"asof-model","provider":"openrouter","input_per_1m":4.0,"fetched":"2026-06-01"}`)
-	reg, hist, err := parseModelsJSONL(data)
+	reg, hist, known, err := parseModelsJSONL(data)
 	if err != nil {
 		t.Fatalf("parseModelsJSONL: %v", err)
 	}
@@ -392,22 +392,7 @@ func TestLookupAsOfPicksHistoricalPrice(t *testing.T) {
 		t.Fatalf("registry InputPer1M = %v, want 4.0 (latest)", got)
 	}
 
-	registryMu.Lock()
-	savedReg := registry
-	registry = reg
-	registryMu.Unlock()
-	historyMu.Lock()
-	savedHist := history
-	history = hist
-	historyMu.Unlock()
-	t.Cleanup(func() {
-		registryMu.Lock()
-		registry = savedReg
-		registryMu.Unlock()
-		historyMu.Lock()
-		history = savedHist
-		historyMu.Unlock()
-	})
+	swapRegistry(t, reg, hist, known)
 
 	tests := []struct {
 		name string
@@ -438,27 +423,11 @@ func TestLookupAsOfPicksHistoricalPrice(t *testing.T) {
 func TestCostAsOfUsesHistoricalPrice(t *testing.T) {
 	data := []byte(`{"id":"asof-cost-model","provider":"","input_per_1m":1.0,"output_per_1m":2.0,"fetched":"2026-01-01"}
 {"id":"asof-cost-model","provider":"","input_per_1m":3.0,"output_per_1m":6.0,"fetched":"2026-05-01"}`)
-	reg, hist, err := parseModelsJSONL(data)
+	reg, hist, known, err := parseModelsJSONL(data)
 	if err != nil {
 		t.Fatalf("parseModelsJSONL: %v", err)
 	}
-
-	registryMu.Lock()
-	savedReg := registry
-	registry = reg
-	registryMu.Unlock()
-	historyMu.Lock()
-	savedHist := history
-	history = hist
-	historyMu.Unlock()
-	t.Cleanup(func() {
-		registryMu.Lock()
-		registry = savedReg
-		registryMu.Unlock()
-		historyMu.Lock()
-		history = savedHist
-		historyMu.Unlock()
-	})
+	swapRegistry(t, reg, hist, known)
 
 	// At a timestamp before the price change: 1M input @ $1.0 + 1M output @ $2.0 = $3.0.
 	early := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)

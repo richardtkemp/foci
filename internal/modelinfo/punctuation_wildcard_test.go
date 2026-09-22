@@ -20,10 +20,20 @@ import (
 // 2026-02-04) instead of the real, already-known claude-opus-4.8 rates
 // (fetched 2026-07-20: input 5, output 25, cache_read 0.5, cache_write 6.25,
 // cache_write_1h 10).
+//
+// PRICING fields must come from claude-opus-4.8's row exactly. CAPABILITY
+// fields (effort/thinking/speed) must NOT — the real claude-opus-4.8 row is
+// OpenRouter-synced and leaves those unset (false), while claude-opus-4-8 is
+// a genuine opus model that DOES support them; the merge (#1969,
+// fillUnknownFields) is what supplies true,true,true here via the ordinary
+// opus family default rather than the dot row's unset false.
 func TestPunctuationWildcardMatchesRealCatalogue(t *testing.T) {
-	want, ok := Lookup("", "claude-opus-4.8")
+	dotRow, ok := Lookup("", "claude-opus-4.8")
 	if !ok {
 		t.Fatal("setup: claude-opus-4.8 must exist in the real registry for this test to mean anything")
+	}
+	if dotRow.Effort || dotRow.Thinking || dotRow.Speed {
+		t.Fatal("setup: claude-opus-4.8 is expected to have NO capability fields set in the real catalogue (openrouter sync never populates them) — this test's premise no longer holds, re-check the fixture")
 	}
 
 	var familyWarned, unpriced []string
@@ -44,8 +54,17 @@ func TestPunctuationWildcardMatchesRealCatalogue(t *testing.T) {
 	if !ok {
 		t.Fatal("Lookup(\"claude-opus-4-8\") missed — punctuation wildcard did not fire")
 	}
-	if got != want {
-		t.Errorf("Lookup(\"claude-opus-4-8\") = %+v, want %+v (claude-opus-4.8's real row)", got, want)
+	// Pricing: authoritative from the matched row, unmerged.
+	if got.InputPer1M != dotRow.InputPer1M || got.OutputPer1M != dotRow.OutputPer1M ||
+		got.CacheReadPer1M != dotRow.CacheReadPer1M || got.CacheWritePer1M != dotRow.CacheWritePer1M ||
+		got.CacheWrite1hPer1M != dotRow.CacheWrite1hPer1M {
+		t.Errorf("Lookup(\"claude-opus-4-8\") pricing = %+v, want claude-opus-4.8's pricing %+v", got, dotRow)
+	}
+	// Capabilities: back-filled from the opus family default, NOT the dot
+	// row's unset false — the sharpest case from #1969's regression report.
+	if !got.Effort || !got.Thinking || !got.Speed {
+		t.Errorf("Lookup(\"claude-opus-4-8\") capabilities = (effort=%v thinking=%v speed=%v), want (true,true,true) — the opus family default, not the dot row's unset fields",
+			got.Effort, got.Thinking, got.Speed)
 	}
 
 	// A wildcard hit is an EXACT hit by another spelling — it must not warn as
@@ -59,9 +78,42 @@ func TestPunctuationWildcardMatchesRealCatalogue(t *testing.T) {
 	}
 
 	// Cost must use the real rate too, not the family canonical.
-	wantCost := want.InputPer1M // 1M input tokens => InputPer1M dollars
+	wantCost := dotRow.InputPer1M // 1M input tokens => InputPer1M dollars
 	if cost := Cost("claude-opus-4-8", 1_000_000, 0, 0, 0); cost != wantCost {
 		t.Errorf("Cost(\"claude-opus-4-8\") = %v, want %v", cost, wantCost)
+	}
+}
+
+// TestPunctuationWildcardCapabilitiesFallBackWhenSourceRowUnset is the direct
+// regression for #1969: ModelCapabilities("claude-sonnet-4-6") must return
+// the sonnet family default (true, true, false), not the false/false/false
+// that claude-sonnet-4.6's OpenRouter-synced row leaves unset. Before the
+// punctuation retry existed, "claude-sonnet-4-6" matched nothing at all and
+// Capabilities() went straight to its family-default branch; the retry must
+// not let a field-sparse punctuation match silently downgrade that answer.
+func TestPunctuationWildcardCapabilitiesFallBackWhenSourceRowUnset(t *testing.T) {
+	dotRow, ok := Lookup("", "claude-sonnet-4.6")
+	if !ok {
+		t.Fatal("setup: claude-sonnet-4.6 must exist in the real registry for this test to mean anything")
+	}
+	if dotRow.Effort || dotRow.Thinking {
+		t.Fatal("setup: claude-sonnet-4.6 is expected to have NO capability fields set in the real catalogue — this test's premise no longer holds, re-check the fixture")
+	}
+	// claude-sonnet-4-6 (hyphen) must have no LITERAL registry row of its own —
+	// checked directly against the registry map (not via Lookup, which would
+	// already resolve it through the very punctuation retry this test is
+	// exercising) — so this test actually exercises the fold-then-merge path
+	// rather than an exact hit.
+	registryMu.RLock()
+	_, literalHit := registry["claude-sonnet-4-6"]
+	registryMu.RUnlock()
+	if literalHit {
+		t.Fatal("setup: claude-sonnet-4-6 (hyphen) must NOT exist as its own literal registry row for this test to exercise the punctuation-fold merge")
+	}
+
+	effort, thinking, speed := Capabilities("claude-sonnet-4-6")
+	if !effort || !thinking || speed {
+		t.Errorf("Capabilities(\"claude-sonnet-4-6\") = (%v, %v, %v), want (true, true, false) — the sonnet family default", effort, thinking, speed)
 	}
 }
 
@@ -101,11 +153,11 @@ func TestPunctuationWildcardNoMatchStillFallsThrough(t *testing.T) {
 func TestPunctuationWildcardDuplicateSpellingsResolve(t *testing.T) {
 	data := []byte(`{"id":"dup-4-9-2","provider":"openrouter","input_per_1m":7.0}
 {"id":"dup-4.9.2","provider":"openrouter","input_per_1m":7.0}`)
-	reg, hist, err := parseModelsJSONL(data)
+	reg, hist, known, err := parseModelsJSONL(data)
 	if err != nil {
 		t.Fatalf("parseModelsJSONL: %v", err)
 	}
-	swapRegistry(t, reg, hist)
+	swapRegistry(t, reg, hist, known)
 
 	// "dup-4-9.2" matches neither literal key exactly (mixed punctuation) but
 	// folds to the same form as both.
@@ -126,11 +178,11 @@ func TestPunctuationWildcardDuplicateSpellingsResolve(t *testing.T) {
 func TestPunctuationWildcardCollisionRefuses(t *testing.T) {
 	data := []byte(`{"id":"coll-4-9-2","provider":"openrouter","input_per_1m":3.0}
 {"id":"coll-4.9.2","provider":"openrouter","input_per_1m":9.0}`)
-	reg, hist, err := parseModelsJSONL(data)
+	reg, hist, known, err := parseModelsJSONL(data)
 	if err != nil {
 		t.Fatalf("parseModelsJSONL: %v", err)
 	}
-	swapRegistry(t, reg, hist)
+	swapRegistry(t, reg, hist, known)
 
 	if _, ok := Lookup("", "coll-4-9.2"); ok {
 		t.Error("Lookup resolved a genuine punctuation collision instead of refusing")
@@ -184,11 +236,12 @@ func TestPunctuationWildcardVariantSuffixInteraction(t *testing.T) {
 // test, restoring the real one on cleanup. Mirrors withCannedDevRegistry
 // (dev_lookup_test.go) but takes already-parsed maps so callers can build
 // small, purpose-built fixtures inline.
-func swapRegistry(t *testing.T, reg map[string]map[string]Model, hist map[string]map[string][]historyRow) {
+func swapRegistry(t *testing.T, reg map[string]map[string]Model, hist map[string]map[string][]historyRow, known map[string]map[string]modelFieldsKnown) {
 	t.Helper()
-	savedReg, savedHist := registry, history
+	savedReg, savedHist, savedKnown := registry, history, knownFields
 	registryMu.Lock()
 	registry = reg
+	knownFields = known
 	registryMu.Unlock()
 	historyMu.Lock()
 	history = hist
@@ -196,6 +249,7 @@ func swapRegistry(t *testing.T, reg map[string]map[string]Model, hist map[string
 	t.Cleanup(func() {
 		registryMu.Lock()
 		registry = savedReg
+		knownFields = savedKnown
 		registryMu.Unlock()
 		historyMu.Lock()
 		history = savedHist

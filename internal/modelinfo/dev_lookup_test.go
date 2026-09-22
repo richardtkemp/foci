@@ -45,25 +45,11 @@ const cannedDevRegistry = `
 // for the duration of the test.
 func withCannedDevRegistry(t *testing.T) {
 	t.Helper()
-	reg, hist, err := parseModelsJSONL([]byte(cannedDevRegistry))
+	reg, hist, known, err := parseModelsJSONL([]byte(cannedDevRegistry))
 	if err != nil {
 		t.Fatalf("parseModelsJSONL(canned): %v", err)
 	}
-	savedReg, savedHist := registry, history
-	registryMu.Lock()
-	registry = reg
-	registryMu.Unlock()
-	historyMu.Lock()
-	history = hist
-	historyMu.Unlock()
-	t.Cleanup(func() {
-		registryMu.Lock()
-		registry = savedReg
-		registryMu.Unlock()
-		historyMu.Lock()
-		history = savedHist
-		historyMu.Unlock()
-	})
+	swapRegistry(t, reg, hist, known)
 }
 
 // costMarker returns Cost for 1M input tokens only, which equals the picked
