@@ -17,7 +17,12 @@ func TestUnpricedModelWarnsOnce(t *testing.T) {
 	Cost("mystery-model-x", 100, 0, 0, 0)
 	Cost("mystery-model-x", 200, 0, 0, 0) // same model again
 	Cost("gpt-7", 100, 0, 0, 0)           // openai fallback also counts
-	Cost("claude-opus-4-8", 100, 0, 0, 0) // family match → NO warn
+	// claude-opus-4-8 has no hyphen row, but models.jsonl carries the dot
+	// spelling (claude-opus-4.8) with real rates — the punctuation-wildcard
+	// retry (#1966) resolves it as an exact hit by another spelling, so this
+	// must NOT warn either as unpriced or (see TestPunctuationWildcard*) as a
+	// family fallback.
+	Cost("claude-opus-4-8", 100, 0, 0, 0)
 
 	want := []string{"mystery-model-x", "gpt-7"}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {

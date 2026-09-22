@@ -487,15 +487,85 @@ func pickIndex(cands []Model, segs map[string]bool, bare string) (int, bool) {
 // registryLookupSegs resolves a leaf id against the registry using the caller's
 // segment set. A routing-variant leaf (":x") is tried EXACT first, then falls
 // back to its base — so a distinct variant entry keeps its own attributes while
-// an unlisted variant inherits the base's. Caller must hold registryMu.
+// an unlisted variant inherits the base's. If neither the exact leaf nor its
+// variant-stripped base has a registry row, retry both treating '.' and '-' as
+// interchangeable (see punctuationPick) before giving up — this is still an
+// EXACT hit by another spelling, so it is tried before the caller falls
+// through to family pricing, not after. Caller must hold registryMu.
 func registryLookupSegs(segs map[string]bool, bare string) (Model, bool) {
 	if m, ok := registryPick(segs, bare); ok {
 		return m, true
 	}
-	if base := stripVariantSuffix(bare); base != bare {
-		return registryPick(segs, base)
+	base := stripVariantSuffix(bare)
+	if base != bare {
+		if m, ok := registryPick(segs, base); ok {
+			return m, true
+		}
+	}
+	if m, ok := punctuationPick(segs, bare); ok {
+		return m, true
+	}
+	if base != bare {
+		return punctuationPick(segs, base)
 	}
 	return Model{}, false
+}
+
+// punctFold canonicalizes '.' to '-' so a dotted and a hyphenated spelling of
+// the same id compare equal. It folds ONLY the punctuation characters — every
+// other rune, and its position, is preserved — so it is a precise
+// punctuation-only equivalence, never a fuzzy or substring match:
+// "claude-opus-4-8" and "claude-opus-4.8" fold to the same string;
+// "claude-opus-48" does not (different length/position).
+func punctFold(s string) string {
+	return strings.ReplaceAll(s, ".", "-")
+}
+
+// punctuationPick retries a registry leaf lookup with '.' and '-' folded
+// together — OpenRouter's models.jsonl catalogue spells versions with dots
+// (claude-opus-4.8) while Claude Code reports the same model with hyphens
+// (claude-opus-4-8); an exact lookup misses on that one character even though
+// the price is already in the registry under the other spelling. Only called
+// after the exact leaf has already missed (registryLookupSegs tries that
+// first), and `bare` itself is excluded from the scan since it's already been
+// tried and failed.
+//
+// AMBIGUITY RULE: more than one OTHER registry key can fold to the same form.
+// If every Model reachable under those keys is identical, that's the expected
+// dot/hyphen duplicate of a single model and resolves to it (also running the
+// usual provider/dev disambiguation within that one key, via registryPick).
+// If they genuinely differ, that is a real collision, not a match — refuse
+// (return false) rather than guess, so a punctuation-folded lookup can never
+// produce a silently wrong price. A refusal here is not a dead end: the
+// caller (registryLookupSegs) returns ok=false and its own caller (Cost, …)
+// falls through to familyPricing exactly as it would for any other miss.
+func punctuationPick(segs map[string]bool, bare string) (Model, bool) {
+	folded := punctFold(bare)
+	var matchKeys []string
+	for key := range registry {
+		if key != bare && punctFold(key) == folded {
+			matchKeys = append(matchKeys, key)
+		}
+	}
+	switch len(matchKeys) {
+	case 0:
+		return Model{}, false
+	case 1:
+		return registryPick(segs, matchKeys[0])
+	}
+	var all []Model
+	for _, key := range matchKeys {
+		all = append(all, candidates(key)...)
+	}
+	if len(all) == 0 {
+		return Model{}, false
+	}
+	for _, m := range all[1:] {
+		if m != all[0] {
+			return Model{}, false // genuine collision, not a duplicate — refuse
+		}
+	}
+	return all[0], true
 }
 
 // registryPick resolves exactly the given leaf (no variant fallback).
@@ -782,15 +852,64 @@ func LookupAsOf(provider, modelID string, at time.Time) (Model, bool) {
 // Provider resolution mirrors registryLookup: provider-specific row set first,
 // then providerless, then a sole remaining provider.
 // historyLookupAsOfSegs tries the exact variant leaf first, then falls back to
-// the base leaf (mirrors registryLookupSegs). Caller must hold historyMu.
+// the base leaf, then the punctuation-folded retry on each (mirrors
+// registryLookupSegs — see punctuationPick/punctuationPickAsOf for the
+// dot/hyphen equivalence and its ambiguity rule). Caller must hold historyMu.
 func historyLookupAsOfSegs(segs map[string]bool, bare string, at time.Time) (Model, bool) {
 	if m, ok := historyPickAsOf(segs, bare, at); ok {
 		return m, true
 	}
-	if base := stripVariantSuffix(bare); base != bare {
-		return historyPickAsOf(segs, base, at)
+	base := stripVariantSuffix(bare)
+	if base != bare {
+		if m, ok := historyPickAsOf(segs, base, at); ok {
+			return m, true
+		}
+	}
+	if m, ok := punctuationPickAsOf(segs, bare, at); ok {
+		return m, true
+	}
+	if base != bare {
+		return punctuationPickAsOf(segs, base, at)
 	}
 	return Model{}, false
+}
+
+// punctuationPickAsOf mirrors punctuationPick for the as-of/history path: it
+// retries with '.' and '-' folded together, resolving each candidate key's
+// price AS OF `at` (via historyPickAsOf, which applies the usual provider/dev
+// disambiguation). Same ambiguity rule as punctuationPick — a single other
+// folded-matching key resolves directly; several that resolve (as of `at`) to
+// identical Models resolve to that shared value; several that diverge refuse,
+// so the caller falls through to familyPricingAsOf. Caller must hold historyMu.
+func punctuationPickAsOf(segs map[string]bool, bare string, at time.Time) (Model, bool) {
+	folded := punctFold(bare)
+	var matchKeys []string
+	for key := range history {
+		if key != bare && punctFold(key) == folded {
+			matchKeys = append(matchKeys, key)
+		}
+	}
+	switch len(matchKeys) {
+	case 0:
+		return Model{}, false
+	case 1:
+		return historyPickAsOf(segs, matchKeys[0], at)
+	}
+	var all []Model
+	for _, key := range matchKeys {
+		if m, ok := historyPickAsOf(segs, key, at); ok {
+			all = append(all, m)
+		}
+	}
+	if len(all) == 0 {
+		return Model{}, false
+	}
+	for _, m := range all[1:] {
+		if m != all[0] {
+			return Model{}, false // genuine collision, not a duplicate — refuse
+		}
+	}
+	return all[0], true
 }
 
 // historyPickAsOf resolves exactly the given leaf as-of `at` (no variant
