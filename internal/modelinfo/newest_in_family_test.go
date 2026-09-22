@@ -78,8 +78,19 @@ func TestNewestInFamily_UnknownInputs(t *testing.T) {
 			t.Errorf("NewestInFamily(%q, %q) = %q, true; want ok=false", tc.dev, tc.family, id)
 		}
 	}
-	if id, ok := NewestInFamily("ANTHROPIC", "Opus"); !ok || id != "claude-opus-5" {
-		t.Errorf("NewestInFamily(\"ANTHROPIC\", \"Opus\") = %q, %v; want claude-opus-5, true "+
-			"(inputs are case-insensitive)", id, ok)
+	// Case-insensitivity is the property under test, so assert the two spellings
+	// AGREE rather than pinning the flagship's id. This line used to hardcode
+	// "claude-opus-5" and failed the moment claude-opus-5-5 was added to
+	// models.jsonl (2026-09-22) — a green-to-red flip that said nothing about
+	// the code and everything about the data. A test that breaks on every model
+	// release is a tripwire, not a guard.
+	lower, lowerOK := NewestInFamily("anthropic", "opus")
+	upper, upperOK := NewestInFamily("ANTHROPIC", "Opus")
+	if !lowerOK || !upperOK || lower != upper {
+		t.Errorf("NewestInFamily case-folding: lower=(%q,%v) upper=(%q,%v); want both ok and equal",
+			lower, lowerOK, upper, upperOK)
+	}
+	if lower == "" {
+		t.Errorf("NewestInFamily(\"anthropic\", \"opus\") returned an empty id with ok=true")
 	}
 }

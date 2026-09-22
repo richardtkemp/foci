@@ -11,12 +11,12 @@ import "testing"
 func TestResolveModelAlias_TracksNewestInFamily(t *testing.T) {
 	for _, tc := range []struct{ alias, want string }{
 		{"fable", "anthropic/claude-fable-5-1"},
-		{"opus", "anthropic/claude-opus-5"},
+		{"opus", "anthropic/claude-opus-5-5"},
 		{"sonnet", "anthropic/claude-sonnet-5"},
 		{"haiku", "anthropic/claude-haiku-4-5"},
 		{"", "anthropic/claude-sonnet-5"},       // empty defaults to sonnet
 		{"FABLE", "anthropic/claude-fable-5-1"}, // case-insensitive
-		{" opus ", "anthropic/claude-opus-5"},   // trimmed
+		{" opus ", "anthropic/claude-opus-5-5"}, // trimmed
 	} {
 		if got := ResolveModelAlias(tc.alias); got != tc.want {
 			t.Errorf("ResolveModelAlias(%q) = %q, want %q", tc.alias, got, tc.want)
