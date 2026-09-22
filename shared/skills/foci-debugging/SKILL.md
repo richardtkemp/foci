@@ -16,7 +16,8 @@ How to investigate a running foci: where the data lives and how to read it. This
 | Subfile | Read it when you need… |
 |---|---|
 | **logs.md** | Service logs (`~/logs/foci.log`, the journal), the data-source scope map, per-agent SQLite DBs, and the log-reading gotchas (`.gz` archives, awk-not-grep, panics). |
-| **api-cost.md** | Provider auth, the API call log (`api.db`), payload logs, and "where did the cost go?" — cost/token/cache-stat queries. |
+| **api-cost.md** | Provider auth, the API call log (`api.db`), payload logs, per-agent cost and the `session_index` join — where the data is. |
+| **api-cost-accounting.md** | The traps before you state a cost NUMBER: `cost_usd` is cumulative, token columns have different scopes, the `cost divergence` WARN is a sampler. |
 | **cache.md** | Anthropic prompt-cache mechanics and cache-bust diagnosis (companion to the `cache-diagnosis` skill). |
 | **sessions.md** | Session history files (stable-key JSONL), CC backend transcripts, the `state.db` session/archive/resume tables, and compaction/reset/cron lifecycle. |
 | **test-harness.md** | A test fails under `make test` but not under a plain `go test` — the sealed/redirected environment `scripts/seal-test.sh` builds, how to replicate it for one package, which arm isolates which variable, and how to triage a red-main CI-runner notification. |
