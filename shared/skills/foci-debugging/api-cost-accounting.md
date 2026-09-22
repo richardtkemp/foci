@@ -41,3 +41,7 @@ Match to a few microdollars and the cause is settled. Cross-check against the su
 Its completed-message cache-write total equals Unknown exactly. Two matching numbers from unrelated artifacts is a diagnosis; one is a coincidence.
 
 Zero `call_type='subagent_turn'` rows means the correction path was never REACHED — missing `stranded=`/`cost correction` lines then say nothing about whether that code works.
+
+## An unexpected model in the cost table
+
+**A model nobody configured means CC switched it, not you.** CC can change model mid-session (Opus safeguards refusing a turn -> a `model_refusal_fallback` record) and foci logs nothing — the only trace is the CC transcript's `type=="system"` line. Searching foci.log first finds nothing and invites a wrong theory. The switch is sticky (later branches relaunch with the new id) but per-session, so other agents resolving normally does NOT rule it out.
