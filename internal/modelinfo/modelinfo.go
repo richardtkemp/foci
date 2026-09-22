@@ -827,22 +827,51 @@ func Normalize(model string) string {
 }
 
 // ContextWindow returns the context window for a model.
-// Falls back to family defaults: gemini-1.5-* → 2M, gemini-* → 1M,
-// everything else (including claude) → 200k.
+//
+// An unregistered anthropic family member (opus/sonnet/fable/haiku) is priced
+// off the newest plain member of that family, same as familyPricing — unlike
+// Capabilities below, models.jsonl's OpenRouter-synced rows DO carry
+// context_window on every row inspected (foci_todo #1967), so following
+// "newest" doesn't land on a field-sparse row here. Falls back to a literal
+// only where the registry has no anthropic family match at all: gemini-1.5-*
+// → 2M, gemini-* → 1M, everything else → 200k.
 func ContextWindow(model string) int {
 	segs, bare := splitSegs(model)
 	registryMu.RLock()
-	m, ok := registryLookupSegs(segs, bare)
-	registryMu.RUnlock()
-	if ok {
+	defer registryMu.RUnlock()
+	if m, ok := registryLookupSegs(segs, bare); ok {
 		return m.ContextWindow
+	}
+	var anthropicFamily string
+	switch {
+	case strings.Contains(bare, "fable"), strings.Contains(bare, "mythos"):
+		anthropicFamily = "fable"
+	case strings.Contains(bare, "opus"):
+		anthropicFamily = "opus"
+	case strings.Contains(bare, "sonnet"):
+		anthropicFamily = "sonnet"
+	case strings.Contains(bare, "haiku"):
+		anthropicFamily = "haiku"
+	}
+	if anthropicFamily != "" {
+		if fam, ok := familyCanonicalPrice(anthropicFamily); ok && fam.ContextWindow > 0 {
+			return fam.ContextWindow
+		}
 	}
 	return contextWindowFallback(bare)
 }
 
-// contextWindowFallback is ContextWindow's family-default table, factored out
-// so punctuationPick's field-level merge (#1969) can apply the SAME defaults
-// to just the fields a folded row left unset, not only to a total miss.
+// contextWindowFallback is ContextWindow's LITERAL family-default table,
+// factored out so punctuationPick's field-level merge (#1969) can apply the
+// same defaults to just the fields a folded row left unset, not only to a
+// total miss.
+//
+// Deliberately does NOT do the newest-in-family resolution ContextWindow does
+// above it (#1967), and this must not be "simplified" into it: the as-of path
+// reaches here via punctuationPickAsOf -> fillUnknownFields holding only
+// historyMu, while newestInFamilyLocked reads `registry` and requires
+// registryMu. Folding the family lookup in here would make that an unlocked
+// registry read — a data race the tests would not reliably catch.
 func contextWindowFallback(bare string) int {
 	switch {
 	case strings.Contains(bare, "gemini-1.5"):
@@ -859,6 +888,17 @@ func contextWindowFallback(bare string) int {
 // Capabilities returns whether a model supports effort, thinking, and speed.
 // Falls back to family defaults: claude-sonnet → effort+thinking,
 // claude-opus → effort+thinking+speed, everything else → none.
+//
+// DELIBERATELY NOT routed through familyCanonicalPrice/newest-in-family, unlike
+// familyPricing and ContextWindow (foci_todo #1967) — this is the opposite
+// choice, on purpose. The newest rows in models.jsonl are OpenRouter-synced
+// and leave effort/thinking/speed UNSET (nil), so "follow newest" would land
+// on a field-sparse row and answer false/false/false for a model that plainly
+// has these capabilities — precisely the regression 9eabc7e7 (foci_todo #1966)
+// just fixed. Nothing else in the catalogue carries capability data at all, so
+// this hand-written family table is the ONLY authority for it and must stay a
+// literal. A later reader may be tempted to "tidy" this into consistency with
+// familyPricing/ContextWindow below — don't; that reintroduces the bug.
 func Capabilities(model string) (effort, thinking, speed bool) {
 	segs, bare := splitSegs(model)
 	registryMu.RLock()
@@ -891,6 +931,14 @@ func capabilitiesFallback(bare string) (effort, thinking, speed bool) {
 // Gemini caching is implicit/automatic (no ping warms it) and OpenAI's is
 // automatic too. Falls back to the claude family so unregistered/dated claude
 // variants still resolve true.
+//
+// Unlike ContextWindow/familyPricing, this fallback carries no per-version
+// literal to go stale (foci_todo #1967) — it is already family-agnostic
+// ("any claude id" → true), so there was nothing here for newest-in-family to
+// fix. Checked, not assumed: models.jsonl's `caching` field IS populated on
+// the newest row of every family inspected, so this would be safe to route
+// through familyCanonicalPrice too if a per-family literal ever gets added
+// here — it just isn't needed today.
 //
 // This answers a STATIC capability question for API agents (resolved.ModelID).
 // Delegated/claude-code agents have no resolved model and are handled at the
@@ -956,22 +1004,46 @@ func Cost(model string, input, output, cacheRead, cacheWrite int) float64 {
 
 // familyPricing maps a bare model name to a canonical per-family price entry by
 // family keyword, so pricing tracks the family ("opus costs this much") rather
-// than an exact version string. The canonical entries are the registry's
-// built-in members of each family. Caller must hold registryMu.
+// than an exact version string. The canonical entry is the NEWEST plain
+// (non-variant) member of the family currently in the registry — resolved via
+// newestInFamilyLocked, not a hand-picked literal, so it stops going stale
+// every time a new version ships (foci_todo #1967: a claude-opus-4-6 literal
+// fetched 2026-02-04 was still being used to price claude-opus-4-8 seven
+// months later, by luck rather than design). Caller must hold registryMu.
+//
+// gemini is the one exception, kept as a literal: its ids carry a VARIANT name
+// ("flash"/"pro"), not a trailing version number, so familyVersion's
+// all-numeric-after-the-family-token rule (see NewestInFamily) never matches
+// any gemini id and newestInFamilyLocked would always report ok=false.
 func familyPricing(bare string) (Model, bool) {
 	switch {
 	case strings.Contains(bare, "fable"), strings.Contains(bare, "mythos"):
-		return registryLookup("claude-fable-5")
+		return familyCanonicalPrice("fable")
 	case strings.Contains(bare, "opus"):
-		return registryLookup("claude-opus-4-6")
+		return familyCanonicalPrice("opus")
 	case strings.Contains(bare, "sonnet"):
-		return registryLookup("claude-sonnet-4-5")
+		return familyCanonicalPrice("sonnet")
 	case strings.Contains(bare, "haiku"):
-		return registryLookup("claude-haiku-4-5")
+		return familyCanonicalPrice("haiku")
 	case strings.Contains(bare, "gemini"):
 		return registryLookup("gemini-2.5-flash")
 	}
 	return Model{}, false
+}
+
+// familyCanonicalPrice resolves the newest plain member of the given
+// anthropic model family in the registry and returns its price row. Every
+// caller passes "anthropic" — the only dev in the registry whose ids carry a
+// trailing numeric version (see familyPricing's gemini comment) — so that
+// argument to newestInFamilyLocked is fixed here rather than threaded through
+// as a parameter unparam would flag as always-constant. Caller must hold
+// registryMu.
+func familyCanonicalPrice(family string) (Model, bool) {
+	id, ok := newestInFamilyLocked("anthropic", family)
+	if !ok {
+		return Model{}, false
+	}
+	return registryLookup(id)
 }
 
 // LookupAsOf returns the model attributes effective AT THE GIVEN TIME `at` —
@@ -1270,9 +1342,19 @@ func IsOpenAI(model string) bool {
 // mixes real models with price/context variants and moving pointers, so the
 // non-numeric text is exactly what has to be honoured here.
 func NewestInFamily(dev, family string) (string, bool) {
-	dev, family = strings.ToLower(dev), strings.ToLower(family)
 	registryMu.RLock()
 	defer registryMu.RUnlock()
+	return newestInFamilyLocked(dev, family)
+}
+
+// newestInFamilyLocked is NewestInFamily's body, factored out so familyPricing
+// (and other registryMu-holding callers, mirroring registryLookup) can reuse
+// the exact same ranking without a recursive RLock — sync.RWMutex's RLock is
+// NOT safe to call twice on the same goroutine, because a Lock() request
+// queued in between the two RLocks blocks the second one, deadlocking against
+// itself (foci_todo #1967). Caller must hold registryMu.
+func newestInFamilyLocked(dev, family string) (string, bool) {
+	dev, family = strings.ToLower(dev), strings.ToLower(family)
 	var bestID string
 	var bestVer []int
 	for id, byKey := range registry {
