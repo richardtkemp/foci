@@ -68,7 +68,12 @@ $(SIMPLE_BINS):
 
 # Back-compat aliases: both predate SIMPLE_BINS, are in muscle memory, and
 # `make build` is documented in CLAUDE.md and docs/INSTALL.md.
-build: foci-gw
+# `build` and `vet` take the /tmp/heavy compute lock, like test/lint (Dick,
+# 2026-09-23). Nothing that already holds the lock may call them (flock is not
+# re-entrant across processes); deploy-build runs `make all`, not `build`.
+build:
+	@[ -e /tmp/heavy ] || : > /tmp/heavy
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; $(MAKE) --no-print-directory foci-gw 9<&- ) 9</tmp/heavy
 cli: foci
 
 # nosgid.so — LD_PRELOAD shim that strips setuid/setgid bits from chmod-family
@@ -137,7 +142,7 @@ test: llbox
 	@# (e.g. a concurrent `update.sh` deploy build) that holds the same lock,
 	@# so they do not starve each other for CPU and memory. It is NOT a
 	@# correctness tool: tests must pass under heavy load anyway (Dick,
-	@# 2026-09-23), since agent go build/test and clickhouse never take it.
+	@# 2026-09-23).
 	@# Other heavy builds should flock the same path reciprocally.
 	@# Open the lock READ-ONLY (9<): /tmp is world-writable + sticky, and with
 	@# fs.protected_regular=2 the kernel denies WRITE-opening a lock file there
@@ -372,7 +377,8 @@ setup-hooks:
 	@echo "✅ Git hooks configured to use .githooks/"
 
 vet:
-	go vet ./...
+	@[ -e /tmp/heavy ] || : > /tmp/heavy
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; go vet ./... 9<&- ) 9</tmp/heavy
 
 # lint takes the /tmp/heavy compute lock (Dick, 2026-09-23): deadcode alone peaks
 # at ~3.7 GB, and running it beside a test run or a gradle build got it killed by
