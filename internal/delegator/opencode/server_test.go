@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -303,47 +304,85 @@ func TestServer_Close_BoundedWait(t *testing.T) {
 }
 
 func TestServer_Close_GracefulDisposeBeforeSIGTERM(t *testing.T) {
-	// Verifies Close calls POST /instance/dispose BEFORE falling back
-	// to SIGTERM. We point a Server at an httptest server that records
-	// the dispose call and immediately "exits" (closes waitCh) to
-	// simulate the subprocess honouring the request. Asserts the
-	// dispose endpoint was hit and the waitCh path didn't escalate.
+	// Verifies the kill ladder's first rung: Close POSTs /instance/dispose
+	// while the subprocess is still alive, and only THEN signals it with
+	// SIGTERM. The Server must be genuinely started (s.cmd set) — a bare
+	// struct literal makes closeInner return at its `!started` guard before
+	// either rung runs, which is how this test once passed with the dispose
+	// POST deleted (#2001).
+	//
+	// The subprocess is a plain `sleep`: default SIGTERM disposition, so it
+	// dies the instant it is signalled and its wait status names the signal.
+	// That makes both halves observable without any shell trap latency:
+	//   - "dispose came first": when the POST arrives, the process must not
+	//     have died. Close is blocked inside that POST, so under the correct
+	//     ordering the process CANNOT die while the handler holds it — the
+	//     handler's window only bounds how long a wrong ordering (SIGTERM
+	//     already sent) gets to show itself; it can never fail the good arm.
+	//   - "SIGTERM followed": the process's exit status is signal SIGTERM,
+	//     i.e. the ladder reached rung 3 rather than dying some other way.
+	srv := newTestServer(t, "agent-dispose")
+	// The courtesy wait after dispose is pure delay here (sleep ignores
+	// dispose); shrink it. The SIGTERM/SIGKILL waits keep their defaults so
+	// a loaded host can't push a SIGTERM death past closeSigtermWait into
+	// the SIGKILL rung.
+	srv.closeGracefulWait = 50 * time.Millisecond
+
+	if err := launchDirectly(t, srv, "sleep", "600"); err != nil {
+		t.Fatalf("launchDirectly: %v", err)
+	}
+
+	// Captured before the handler exists, so its reads are ordered after the
+	// write by goroutine creation rather than by the socket (invisible to -race).
+	procDone := srv.done
+
+	var (
+		mu                sync.Mutex
+		disposeCalls      int
+		diedBeforeDispose bool
+	)
 	hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/instance/dispose" {
-			t.Logf("dispose called")
-			w.WriteHeader(http.StatusOK)
+		if r.URL.Path != "/instance/dispose" {
+			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		w.WriteHeader(http.StatusNotFound)
+		died := false
+		select {
+		case <-procDone:
+			died = true
+		case <-time.After(300 * time.Millisecond):
+		}
+		mu.Lock()
+		disposeCalls++
+		if died {
+			diedBeforeDispose = true
+		}
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
 	}))
 	defer hs.Close()
+	srv.baseURL = hs.URL
 
-	srv := &Server{
-		baseURL:  hs.URL,
-		agentID:  "agent-dispose",
-		sessions: map[string]*Backend{},
-	}
-	srv.done = make(chan struct{})
-	srv.waitCh = make(chan error, 1)
-	// Simulate the subprocess exiting immediately on dispose.
-	go func() {
-		time.Sleep(20 * time.Millisecond)
-		srv.waitCh <- nil
-		close(srv.done)
-	}()
-
-	start := time.Now()
 	if err := srv.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	elapsed := time.Since(start)
+	select {
+	case <-srv.done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("subprocess not reaped after Close")
+	}
 
-	// Close should return quickly because the "subprocess" exited on
-	// its own (no SIGTERM/SIGKILL fallback needed). With closeGracefulWait
-	// at its default 500ms, an ungraceful path would take ≥500ms; the dispose
-	// path returns in ~20ms.
-	if elapsed > time.Second {
-		t.Errorf("Close took %s; expected dispose path to exit fast", elapsed)
+	mu.Lock()
+	defer mu.Unlock()
+	if disposeCalls != 1 {
+		t.Fatalf("POST /instance/dispose calls = %d, want 1", disposeCalls)
+	}
+	if diedBeforeDispose {
+		t.Error("subprocess was already dead when dispose arrived — SIGTERM was sent before the dispose POST")
+	}
+	ws, ok := srv.cmd.ProcessState.Sys().(syscall.WaitStatus)
+	if !ok || !ws.Signaled() || ws.Signal() != syscall.SIGTERM {
+		t.Errorf("subprocess exit = %v, want killed by SIGTERM (ladder rung after dispose)", srv.cmd.ProcessState)
 	}
 }
 
@@ -725,8 +764,15 @@ func TestServer_FinalizeExit_DoesNotEvictSuccessor(t *testing.T) {
 // for Close to kill but don't need HTTP readiness.
 func launchStubDirectly(t *testing.T, s *Server) error {
 	t.Helper()
+	return launchDirectly(t, s, stubBinary(t))
+}
+
+// launchDirectly is launchStubDirectly for an arbitrary command, for tests
+// that need a subprocess with different signal behaviour than opc-stub.
+func launchDirectly(t *testing.T, s *Server, name string, args ...string) error {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := procx.Spawn(ctx, procx.Trusted, stubBinary(t))
+	cmd := procx.Spawn(ctx, procx.Trusted, name, args...)
 	cmd.Dir = s.workDir
 	if err := cmd.Start(); err != nil {
 		cancel()
