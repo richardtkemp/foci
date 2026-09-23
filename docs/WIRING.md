@@ -217,6 +217,7 @@ main
  ├── secrets       → BurntSushi/toml
  │   └── secrets/bitwarden → log
  ├── provider      (no deps — provider-neutral types and Client interface)
+ ├── turnevent     → provider (leaf — the agent's per-turn event stream: event types, Sink interface, context helpers, and pure-utility sinks (BufferSink, NopSink); no platform or turn deps; moved out of agent/ per #1983 since tools and telemetry both import it too)
  ├── platform      → config, log, secrets, session, voice, warnings
  │                  (messaging types, interfaces, provider registry, Messaging facade,
  │                   MessageQueue thin filter+throttle helper + GroupThrottle for group chat batching)
@@ -234,7 +235,7 @@ main
  ├── question      (no internal deps — backend-agnostic AskUserQuestion core: parsing, formatting, choice buttons, answer resolution/merge; shared by ccstream and tools so the two surfaces can't drift)
  ├── defersend     → sqlite, timeutil (leaf — SQLite-backed queue for `foci send --wait-*` deferred sends; a pending send that isn't yet warm/cold/user-active/-inactive, OR whose target endpoint is currently rate-limited (#1417), is persisted and delivered by a background sweep, surviving a restart. Wired in `cmd/foci-gw/wait_defer.go`.)
  ├── mcp           → log, procx, provider, tools, BurntSushi/toml, go-sdk/mcp
- ├── tools         → agent/turnevent, app/fap, config, convo, display, log, memory, modelinfo, peercred, platform, procx, provider, question, secrets, secrets/bitwarden, session, tempdir, tools/spill, voice (Registry, Tool, shared helpers, the exec-bridge generator, web, http, and most tool impls)
+ ├── tools         → turnevent, app/fap, config, convo, display, log, memory, modelinfo, peercred, platform, procx, provider, question, secrets, secrets/bitwarden, session, tempdir, tools/spill, voice (Registry, Tool, shared helpers, the exec-bridge generator, web, http, and most tool impls)
  │     ├── tools/spill    → (stdlib only) shared spill-to-disk writer: bounded in-RAM head + overflow to temp file, optional total cap; used by tools/shell and the http tool
  │     ├── tools/shell    → tools, tools/spill, log, procx, secrets, secrets/bitwarden (the exec/shell tool; execbridge generator stays at root)
  │     ├── tools/tmux     → tools, log, display, session, procx (tmux session tool — 8 files)
@@ -261,17 +262,17 @@ main
   │   ├── delegator/sessionenv → tempdir (shared by codex/opencode + cmd/foci-codex-hook — per-session exec-bridge env file format, lifecycle, and the codex command wrap/unwrap)
   │   ├── delegator/codex      → delegator, delegator/autoapprove, delegator/sessionenv, log, modelcaps, modelinfo, procx, tempdir (Codex app-server JSON-RPC; registers "codex" via init())
   │   └── delegator/opencode   → delegator, delegator/autoapprove, delegator/sessionenv, log, procx, ratelimit, tempdir (HTTP/SSE OpenCode; registers "opencode" via init())
- ├── agent         → agent/turnevent, compaction, config, convo, delegator, display, log, memory, messages, modelcaps, modelinfo, nudge, platform, procx, provider, ratelimit, relogin, session, skills, timeutil, tools, turn, warnings, workspace
+ ├── agent         → turnevent, compaction, config, convo, delegator, display, log, memory, messages, modelcaps, modelinfo, nudge, platform, procx, provider, ratelimit, relogin, session, skills, timeutil, tools, turn, warnings, workspace
  ├── periodic      → config, log, memory, provider, session, skills, timeutil, warnings (NO agent)
  ├── dispatch      → command, platform, session, tools (shared command dispatch logic; platform wrappers delegate here)
- ├── turn          → agent/turnevent, display, log, platform, tooldetail (shared turn rendering, tool call tracking, and tool-result display store for all platforms)
- ├── telegram      → agent, agent/turnevent, chatmeta, command, config, dispatch, display, log, platform, provider, secrets, session, timeutil, tooldetail, toolformat, turn, voice
+ ├── turn          → turnevent, display, log, platform, tooldetail (shared turn rendering, tool call tracking, and tool-result display store for all platforms)
+ ├── telegram      → agent, turnevent, chatmeta, command, config, dispatch, display, log, platform, provider, secrets, session, timeutil, tooldetail, toolformat, turn, voice
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
- ├── discord       → agent, agent/turnevent, chatmeta, command, config, dispatch, display, log, platform, provider, secrets, session, timeutil, tooldetail, toolformat, turn, voice
+ ├── discord       → agent, turnevent, chatmeta, command, config, dispatch, display, log, platform, provider, secrets, session, timeutil, tooldetail, toolformat, turn, voice
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
- ├── app           → agent, agent/turnevent, app/fap, command, config, dispatch, log, platform, question, secrets, session, sqlite, tempdir, tools, turn, voice (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
+ ├── app           → agent, turnevent, app/fap, command, config, dispatch, log, platform, question, secrets, session, sqlite, tempdir, tools, turn, voice (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
  ├── askgw         → log, peercred, question (opt-in ask-gateway for external Apps — see Ask Gateway section)
- ├── telemetry     → agent/turnevent, log, modelinfo, provider, go.opentelemetry.io/otel (+ sdk, otlptracehttp) — OpenTelemetry export of every turn to an OTLP/HTTP collector (Langfuse) plus scores/score configs over its REST API; wired from cmd/foci-gw (init), agent (turn spans), tools + cmd/foci-gw (cross-agent links). See "Tracing".
+ ├── telemetry     → turnevent, log, modelinfo, provider, go.opentelemetry.io/otel (+ sdk, otlptracehttp) — OpenTelemetry export of every turn to an OTLP/HTTP collector (Langfuse) plus scores/score configs over its REST API; wired from cmd/foci-gw (init), agent (turn spans), tools + cmd/foci-gw (cross-agent links). See "Tracing".
  └── evals         → log, fsnotify, yaml.v3 — rubric registry (scoring axes as files, watched); consumed by cmd/foci-gw (/score validation, score-config mirroring). See "Tracing" → "Scores and rubrics".
 ```
 
@@ -884,12 +885,12 @@ Per-session state is tracked in `sessionMeta` (in-memory map on Agent). The meta
 
 ## Turn Event Stream (Sink Architecture)
 
-All per-turn output — text, thinking, tool calls, retries, typing-indicator lifecycle — flows through a single ordered event stream defined in `internal/agent/turnevent`. The agent is the sole producer; consumers attach a `Sink` to the turn context and receive events as they happen.
+All per-turn output — text, thinking, tool calls, retries, typing-indicator lifecycle — flows through a single ordered event stream defined in `internal/turnevent`. The agent is the sole producer; consumers attach a `Sink` to the turn context and receive events as they happen.
 
 ### Contract
 
 ```go
-// internal/agent/turnevent/event.go
+// internal/turnevent/event.go
 type Event interface{ turnEvent() }
 
 type (
@@ -919,7 +920,7 @@ type Sink interface {
 
 | Package | Sinks | Role |
 |---|---|---|
-| `internal/agent/turnevent` | `BufferSink`, `NopSink` | Leaf package: event types, Sink interface, context helpers, and pure-utility sinks. No platform or turn deps. |
+| `internal/turnevent` | `BufferSink`, `NopSink` | Leaf package: event types, Sink interface, context helpers, and pure-utility sinks. No platform or turn deps. |
 | `internal/turn/sink.go` | `StreamingSink`, `SessionSink` | Shared platform sinks. `StreamingSink` wraps a `TurnRenderer`, `SinkTracker`, and `platform.Connection` — used by Telegram and Discord workers. `SessionSink` delivers via `conn.SendToSession` — used by injected-turn and cross-session notify flows. |
 
 ### How interactive platforms wire it
@@ -980,7 +981,7 @@ What used to be at `StreamingSink.Emit` on `TurnComplete` (a single sink-level `
 Steering is deliberately separate from the event stream because it flows the other way — the agent needs to ask the platform for pending user input at safe points inside the turn and receive a return value.
 
 ```go
-// internal/agent/turnevent/steerer.go
+// internal/turnevent/steerer.go
 type Steerer interface {
     PendingSteers() []string
 }

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/agent/turnevent"
 	"foci/internal/config"
 	"foci/internal/display"
 	"foci/internal/log"
@@ -20,6 +19,7 @@ import (
 	"foci/internal/secrets"
 	"foci/internal/session"
 	"foci/internal/tempdir"
+	"foci/internal/turnevent"
 )
 
 // SystemBlocksProvider returns the system prompt blocks (for full context mode).

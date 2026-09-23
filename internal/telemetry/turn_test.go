@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/agent/turnevent"
 	"foci/internal/log"
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
+	"foci/internal/turnevent"
 )
 
 var errBoom = errors.New("boom: something went wrong")

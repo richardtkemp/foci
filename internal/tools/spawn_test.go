@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/agent/turnevent"
 	"foci/internal/platform"
 	"foci/internal/provider"
+	"foci/internal/turnevent"
 )
 
 // mockBootstrap implements SystemBlocksProvider for tests.

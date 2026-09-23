@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"foci/internal/agent/turnevent"
 	"foci/internal/convo"
 	"foci/internal/session"
+	"foci/internal/turnevent"
 )
 
 // activityHeartbeatInterval bounds how often a single turn's loggingSink

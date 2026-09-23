@@ -5,11 +5,11 @@ import (
 	"errors"
 
 	"foci/internal/agent"
-	"foci/internal/agent/turnevent"
 	"foci/internal/app/fap"
 	"foci/internal/platform"
 	"foci/internal/ratelimit"
 	"foci/internal/turn"
+	"foci/internal/turnevent"
 	"foci/internal/voice"
 )
 

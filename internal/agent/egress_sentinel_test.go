@@ -5,12 +5,12 @@ import (
 	"strings"
 	"testing"
 
-	"foci/internal/agent/turnevent"
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
 	"foci/internal/turn"
+	"foci/internal/turnevent"
 	"foci/internal/workspace"
 )
 

@@ -444,7 +444,7 @@ type SetupResult struct {
 
 // MessageHandler processes user messages through an agent. Text delivery,
 // tool visibility, thinking, retries, and typing lifecycle flow through the
-// turnevent.Sink attached to ctx (see internal/agent/turnevent) — callers that
+// turnevent.Sink attached to ctx (see internal/turnevent) — callers that
 // want the final text wire a BufferSink; interactive platforms wire a
 // StreamingSink for per-turn rendering.
 type MessageHandler interface {

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/agent/turnevent"
+	"foci/internal/turnevent"
 )
 
 // TestSubagentEndOnLaterTurn: a background subagent can outlive the turn

@@ -3,7 +3,7 @@ package telemetry
 import (
 	"testing"
 
-	"foci/internal/agent/turnevent"
+	"foci/internal/turnevent"
 )
 
 // The agent's session router relies on this to see through the tracing

@@ -11,13 +11,13 @@ import (
 	"time"
 
 	"foci/internal/agent"
-	"foci/internal/agent/turnevent"
 	"foci/internal/app/fap"
 	"foci/internal/command"
 	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/tools"
 	"foci/internal/turn"
+	"foci/internal/turnevent"
 	"foci/internal/voice"
 )
 

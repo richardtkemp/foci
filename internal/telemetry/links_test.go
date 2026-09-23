@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/agent/turnevent"
+	"foci/internal/turnevent"
 )
 
 // TestActiveAndLastTurn: ActiveTurnID tracks the in-flight turn on a session

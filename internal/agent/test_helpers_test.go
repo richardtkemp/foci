@@ -3,8 +3,8 @@ package agent
 import (
 	"context"
 
-	"foci/internal/agent/turnevent"
 	"foci/internal/platform"
+	"foci/internal/turnevent"
 )
 
 // fnSink is a closure-to-Sink adapter used by tests in this package to

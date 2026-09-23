@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"foci/internal/agent/turnevent"
+	"foci/internal/turnevent"
 )
 
 // recordingRouterSink is a turnevent.Sink that counts calls — used by

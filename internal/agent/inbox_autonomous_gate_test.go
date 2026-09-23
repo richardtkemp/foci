@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/agent/turnevent"
 	"foci/internal/turn"
+	"foci/internal/turnevent"
 )
 
 // TestWaitInjectGate_HoldsUntilClear covers the Phase 3 extracted gate helper

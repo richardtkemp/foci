@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/agent/turnevent"
 	"foci/internal/compaction"
 	"foci/internal/convo"
 	"foci/internal/delegator"
@@ -20,6 +19,7 @@ import (
 	"foci/internal/nudge"
 	"foci/internal/provider"
 	"foci/internal/session"
+	"foci/internal/turnevent"
 
 	_ "modernc.org/sqlite"
 )

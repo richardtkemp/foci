@@ -80,7 +80,7 @@ func (m recordingConnMgr) Wait()                                                
 // #1385 ("agent response to injected prompts seems to go through a basic
 // sink... no activity indicator, no streaming"). Before the fix, the async
 // /send path buffered the whole turn behind a bare turnevent.BufferSink
-// (internal/agent/turnevent/sinks.go) — which discards every event except
+// (internal/turnevent/sinks.go) — which discards every event except
 // TurnComplete — then did exactly one flat SendToSession call at the very
 // end: SetTyping is never invoked, so this test fails red against the
 // pre-fix code (typingSeq stays empty). After the fix, the async chat-

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"foci/internal/agent/turnevent"
 	"foci/internal/platform"
 	"foci/internal/turn"
+	"foci/internal/turnevent"
 )
 
 // RunTurn executes a single batched turn for sk, using driver for the

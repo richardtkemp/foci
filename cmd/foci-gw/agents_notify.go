@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"foci/internal/agent"
-	"foci/internal/agent/turnevent"
 	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/memory"
@@ -17,6 +16,7 @@ import (
 	"foci/internal/telemetry"
 	"foci/internal/tools"
 	"foci/internal/turn"
+	"foci/internal/turnevent"
 	"foci/shared/prompts"
 )
 

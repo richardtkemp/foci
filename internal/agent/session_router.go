@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync/atomic"
 
-	"foci/internal/agent/turnevent"
+	"foci/internal/turnevent"
 )
 
 // sessionRouter is a session-scoped dispatch layer between a backend's

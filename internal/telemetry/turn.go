@@ -11,9 +11,9 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	"foci/internal/agent/turnevent"
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
+	"foci/internal/turnevent"
 )
 
 // Langfuse's OTel endpoint reads these attribute names (the same ones its

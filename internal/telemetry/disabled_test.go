@@ -3,8 +3,8 @@ package telemetry
 import (
 	"testing"
 
-	"foci/internal/agent/turnevent"
 	"foci/internal/log"
+	"foci/internal/turnevent"
 )
 
 // TestDisabled: without initWith ever having been called, the package is a

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/agent/turnevent"
+	"foci/internal/turnevent"
 )
 
 // TestReceivedAtContextRoundtrip proves that WithReceivedAt / ReceivedAtFromContext

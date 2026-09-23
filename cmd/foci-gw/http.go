@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"foci/internal/agent"
-	"foci/internal/agent/turnevent"
 	"foci/internal/app"
 	"foci/internal/config"
 	"foci/internal/defersend"
@@ -21,6 +20,7 @@ import (
 	"foci/internal/platform"
 	"foci/internal/route"
 	"foci/internal/session"
+	"foci/internal/turnevent"
 	"foci/internal/voice"
 )
 
@@ -373,7 +373,7 @@ func defaultSessionKey(d httpHandlerDeps, agentID string) string {
 // part of this fix (#1385).
 //
 // #1385: before this, the async path ran the turn behind a bare
-// turnevent.BufferSink (internal/agent/turnevent/sinks.go — discards every
+// turnevent.BufferSink (internal/turnevent/sinks.go — discards every
 // event but TurnComplete) and did exactly one flat SendToSession call at the
 // end: no typing indicator ever fired and nothing was visible until the
 // whole turn finished — the "basic sink / fallback" the bug report described.

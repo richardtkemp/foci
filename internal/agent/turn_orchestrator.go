@@ -5,10 +5,10 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/agent/turnevent"
 	"foci/internal/delegator"
 	"foci/internal/provider"
 	"foci/internal/telemetry"
+	"foci/internal/turnevent"
 )
 
 // OrchestrateFullTurn executes a complete turn through the TurnContract pipeline.

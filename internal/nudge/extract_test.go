@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"foci/internal/agent/turnevent"
 	"foci/internal/platform"
+	"foci/internal/turnevent"
 )
 
 func TestParseExtractionResponse(t *testing.T) {

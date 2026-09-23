@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"foci/internal/agent"
-	"foci/internal/agent/turnevent"
 	"foci/internal/convo"
 	"foci/internal/platform"
+	"foci/internal/turnevent"
 
 	_ "modernc.org/sqlite"
 )

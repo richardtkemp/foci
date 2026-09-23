@@ -5,9 +5,9 @@ import (
 	"strconv"
 
 	"foci/internal/agent"
-	"foci/internal/agent/turnevent"
 	"foci/internal/platform"
 	"foci/internal/turn"
+	"foci/internal/turnevent"
 
 	"github.com/bwmarrin/discordgo"
 )

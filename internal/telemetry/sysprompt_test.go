@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/agent/turnevent"
+	"foci/internal/turnevent"
 )
 
 // TestSystemPrompt covers the export-once-per-session-per-hash rule: the

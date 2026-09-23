@@ -9,10 +9,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"foci/internal/agent/turnevent"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
+	"foci/internal/turnevent"
 	"foci/internal/workspace"
 )
 

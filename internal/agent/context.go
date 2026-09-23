@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"foci/internal/agent/turnevent"
 	"foci/internal/provider"
+	"foci/internal/turnevent"
 )
 
 var platformTriggers sync.Map // trigger string → true

@@ -14,12 +14,12 @@ import (
 	"time"
 
 	"foci/internal/agent"
-	"foci/internal/agent/turnevent"
 	"foci/internal/app/fap"
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/platform"
 	"foci/internal/session"
+	"foci/internal/turnevent"
 	"foci/internal/voice"
 
 	"golang.org/x/oauth2"

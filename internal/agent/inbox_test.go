@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/agent/turnevent"
 	"foci/internal/delegator"
 	"foci/internal/platform"
 	"foci/internal/tools"
+	"foci/internal/turnevent"
 )
 
 // --- Test fixtures ---

@@ -4,12 +4,12 @@ import (
 	"context"
 	"time"
 
-	"foci/internal/agent/turnevent"
 	"foci/internal/delegator"
 	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/telemetry"
 	"foci/internal/turn"
+	"foci/internal/turnevent"
 )
 
 // IsTurnInFlight returns true if any turn is currently executing under

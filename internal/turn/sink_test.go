@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"foci/internal/agent/turnevent"
+	"foci/internal/turnevent"
 )
 
 // fakeSinkTracker is a minimal SinkTracker for sink tests. It records which

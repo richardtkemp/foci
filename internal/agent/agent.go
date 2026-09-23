@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"foci/internal/agent/turnevent"
 	"foci/internal/compaction"
 	"foci/internal/config"
 	"foci/internal/delegator"
@@ -21,6 +20,7 @@ import (
 	"foci/internal/session"
 	"foci/internal/telemetry"
 	"foci/internal/tools"
+	"foci/internal/turnevent"
 	"foci/internal/warnings"
 	"foci/internal/workspace"
 	"foci/shared/prompts"
@@ -594,7 +594,7 @@ func (a *Agent) turnLock(sessionKey string) *sync.Mutex {
 //
 // Text delivery (intermediate and final), thinking, tool call visibility,
 // retries, and typing-indicator lifecycle flow through the turnevent.Sink
-// attached to ctx (see internal/agent/turnevent). Callers that want the final
+// attached to ctx (see internal/turnevent). Callers that want the final
 // text wire a BufferSink; callers that want streaming UI wire a StreamingSink.
 //
 // TurnStart fires at entry; TurnComplete always fires via defer, carrying the
