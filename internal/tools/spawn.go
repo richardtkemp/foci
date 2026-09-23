@@ -474,20 +474,25 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 			}
 		}
 		log.API(log.APIEntry{
-			Timestamp:   start,
-			Provider:    format,
-			Session:     sessionKey,
-			Model:       model,
-			Input:       resp.Usage.InputTokens,
-			Output:      resp.Usage.OutputTokens,
-			CacheRead:   resp.Usage.CacheReadInputTokens,
-			CacheWrite:  resp.Usage.CacheCreationInputTokens,
-			Turn:        resp.Usage.AsTurn(), // single call: its own counts are the turn total (#1854)
-			DurationMS:  duration.Milliseconds(),
-			StopReason:  resp.StopReason,
-			CallType:    "spawn",
-			AgentID:     session.AgentIDFromKey(sessionKey),
-			SessionFile: sessionFile,
+			Timestamp:  start,
+			Provider:   format,
+			Session:    sessionKey,
+			Model:      model,
+			Input:      resp.Usage.InputTokens,
+			Output:     resp.Usage.OutputTokens,
+			CacheRead:  resp.Usage.CacheReadInputTokens,
+			CacheWrite: resp.Usage.CacheCreationInputTokens,
+			Turn:       resp.Usage.AsTurn(), // single call: its own counts are the turn total (#1854)
+			// See turn_api_logging.go's logAPIResponse for why this is
+			// load-bearing (#1964): without it, a spawn call's cost is computed
+			// for the log line but never persisted, so it reads as $0 to any
+			// SUM(calculated_cost_usd) total.
+			CalculatedCostUSD: &cost,
+			DurationMS:        duration.Milliseconds(),
+			StopReason:        resp.StopReason,
+			CallType:          "spawn",
+			AgentID:           session.AgentIDFromKey(sessionKey),
+			SessionFile:       sessionFile,
 		})
 
 		// If no tool use, return text.

@@ -1354,6 +1354,10 @@ Four outputs:
    inflates roughly quadratically in turns-per-session — 13x measured over
    28 Jul - 4 Aug 2026 ($32,566 against ~$2,500 real). Rows written before #1674
    have `calculated_cost_usd` NULL and are not repaired.
+   Direct-API rows (conversation, spawn, summary and compaction calls made without a
+   delegated backend) also stayed NULL AFTER #1674 until #1964: #1674 wired the field
+   into the delegated backends only. An agent on a direct provider (e.g. gilette on
+   OpenRouter) therefore read as $0 in every total. Those rows are not backfilled either.
 
    **Two scopes of token columns, and only one of them prices (#1854):**
 

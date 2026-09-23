@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/log"
+	"foci/internal/modelinfo"
 	"foci/internal/nudge"
 	"foci/internal/provider"
 	"foci/internal/session"
@@ -1270,6 +1273,63 @@ func TestRunInference_SimpleEndToEnd(t *testing.T) {
 	}
 	if !found {
 		t.Error("assistant message not found in Messages")
+	}
+}
+
+// TestRunInference_PersistsCalculatedCost is a regression test for #1964: the
+// direct-API path (call_type="conversation" — used by e.g. gilette, which
+// talks to OpenRouter directly rather than through a delegated CC/opencode
+// backend) computed a cost figure for its log LINE but never attached it to
+// the persisted api.db row, so calculated_cost_usd stayed NULL for every
+// direct-API call — invisible to any report that SUMs the column, which is
+// the documented, authoritative way to total cost (foci-debugging/
+// api-cost-accounting.md). Surfaced when gilette resumed activity on
+// deepseek-v4-pro and contributed $0 to every total despite real, priced
+// traffic (tokens present, model registered with real rates).
+func TestRunInference_PersistsCalculatedCost(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "api.db")
+	if err := log.InitAPIDB(dbPath); err != nil {
+		t.Fatalf("InitAPIDB: %v", err)
+	}
+	t.Cleanup(log.CloseAPIDB)
+
+	client := &mockClient{
+		sendFn: func(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
+			return &provider.MessageResponse{
+				Role:       "assistant",
+				Content:    provider.TextContent("hi"),
+				StopReason: "end_turn",
+				Usage: provider.Usage{
+					InputTokens:  500,
+					OutputTokens: 20,
+				},
+			}, nil
+		},
+	}
+	a := newInferenceAgent(t, client)
+	tr := &APITransport{sharedTurnOps{agent: a}}
+	ts := newInferenceTS(t, a, client)
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+
+	rows := log.ReadAPIDBLog()
+	if len(rows) != 1 {
+		t.Fatalf("api.db rows = %d, want 1", len(rows))
+	}
+	r := rows[0]
+	if r.CallType != "conversation" {
+		t.Fatalf("row.CallType = %q, want conversation", r.CallType)
+	}
+	wantCost := modelinfo.Cost(ts.TurnModel, 500, 20, 0, 0)
+	if r.CalculatedCostUSD == nil {
+		t.Fatalf("row.CalculatedCostUSD = nil, want %.6f — the direct-API path priced "+
+			"this call but never persisted it, so it silently contributes $0 to any "+
+			"SUM(calculated_cost_usd) total", wantCost)
+	}
+	if *r.CalculatedCostUSD != wantCost {
+		t.Errorf("row.CalculatedCostUSD = %.6f, want %.6f", *r.CalculatedCostUSD, wantCost)
 	}
 }
 

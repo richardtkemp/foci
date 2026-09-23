@@ -41,9 +41,18 @@ func (a *Agent) logAPIResponse(ts *TurnState, model string, start time.Time, dur
 		CacheRead:  resp.Usage.CacheReadInputTokens,
 		CacheWrite: resp.Usage.CacheCreationInputTokens,
 		Turn:       resp.Usage.AsTurn(), // single call: its own counts are the turn total (#1854)
-		DurationMS: duration.Milliseconds(),
-		StopReason: resp.StopReason,
-		CallType:   "conversation",
+		// CalculatedCostUSD: this path priced the call above (for the log line
+		// and the sink header) but, until #1964, never attached it here — so
+		// EVERY direct-API row silently carried a NULL calculated_cost_usd, the
+		// column foci-debugging/api-cost-accounting.md documents as the
+		// authoritative one to SUM. Historically masked because most traffic
+		// runs the delegated (CC/opencode) backends, which do set it; it
+		// surfaced when gilette (a direct-OpenRouter agent) contributed $0 to
+		// every cost total despite real, priced calls.
+		CalculatedCostUSD: &cost,
+		DurationMS:        duration.Milliseconds(),
+		StopReason:        resp.StopReason,
+		CallType:          "conversation",
 		// The API path writes one row PER CALL, so a tool-loop turn is several
 		// rows — exactly the inference #1695 wanted removed. They share a
 		// turn_id; the delegated path writes one parent row per turn plus its

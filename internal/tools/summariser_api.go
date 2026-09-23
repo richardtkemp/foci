@@ -105,10 +105,15 @@ func (s *APISummariser) Summarise(ctx context.Context, content []byte, prompt, f
 		CacheRead:  resp.Usage.CacheReadInputTokens,
 		CacheWrite: resp.Usage.CacheCreationInputTokens,
 		Turn:       resp.Usage.AsTurn(), // single call: its own counts are the turn total (#1854)
-		DurationMS: duration.Milliseconds(),
-		StopReason: resp.StopReason,
-		CallType:   "summary",
-		AgentID:    session.AgentIDFromKey(sessionKey),
+		// See turn_api_logging.go's logAPIResponse for why this is
+		// load-bearing (#1964): without it, a summary call's cost is computed
+		// for the log line but never persisted, so it reads as $0 to any
+		// SUM(calculated_cost_usd) total.
+		CalculatedCostUSD: &cost,
+		DurationMS:        duration.Milliseconds(),
+		StopReason:        resp.StopReason,
+		CallType:          "summary",
+		AgentID:           session.AgentIDFromKey(sessionKey),
 	})
 
 	text := provider.TextOf(resp.Content)

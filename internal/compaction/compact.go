@@ -409,21 +409,29 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 	}
 
 	duration := time.Since(start)
+	cost := modelinfo.Cost(model,
+		resp.Usage.InputTokens, resp.Usage.OutputTokens,
+		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 	log.API(log.APIEntry{
-		Timestamp:   start,
-		Provider:    format,
-		Session:     sessionKey,
-		Model:       model,
-		Input:       resp.Usage.InputTokens,
-		Output:      resp.Usage.OutputTokens,
-		CacheRead:   resp.Usage.CacheReadInputTokens,
-		CacheWrite:  resp.Usage.CacheCreationInputTokens,
-		Turn:        resp.Usage.AsTurn(), // single call: its own counts are the turn total (#1854)
-		DurationMS:  duration.Milliseconds(),
-		StopReason:  resp.StopReason,
-		CallType:    "compaction",
-		PreMessages: len(messages),
-		AgentID:     c.AgentID,
+		Timestamp:  start,
+		Provider:   format,
+		Session:    sessionKey,
+		Model:      model,
+		Input:      resp.Usage.InputTokens,
+		Output:     resp.Usage.OutputTokens,
+		CacheRead:  resp.Usage.CacheReadInputTokens,
+		CacheWrite: resp.Usage.CacheCreationInputTokens,
+		Turn:       resp.Usage.AsTurn(), // single call: its own counts are the turn total (#1854)
+		// See internal/agent/turn_api_logging.go's logAPIResponse for why this
+		// is load-bearing (#1964): without it, a compaction call's cost was
+		// never computed OR persisted, so it read as $0 to any
+		// SUM(calculated_cost_usd) total.
+		CalculatedCostUSD: &cost,
+		DurationMS:        duration.Milliseconds(),
+		StopReason:        resp.StopReason,
+		CallType:          "compaction",
+		PreMessages:       len(messages),
+		AgentID:           c.AgentID,
 	})
 
 	summary := provider.TextOf(resp.Content)
