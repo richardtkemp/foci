@@ -247,30 +247,43 @@ bucket-audit:
 	-@HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 480s -parallel=$(IPARALLEL) -v ./test/integration/... 2>&1 | grep -E '^--- FAIL' || echo "  (clean)"
 	@rm -rf $(TESTDIR)
 
-# `make land` — the sanctioned path to main (merge-lock landing, #1448 pieces 1+2).
+# `make land` — the sanctioned path to main (merge-lock landing, #1448 pieces
+# 1+2, converged with foci-client's copy under #1973).
 # Run FROM the feature-branch worktree you want to land. Serialises every landing
 # through a dedicated MERGE lock (/tmp/foci-merge.lock), separate from the
-# /tmp/heavy COMPUTE lock. The merge lock spans the WHOLE landing including
-# `make test` (so a second lander blocks and then tests once against the final
-# main — blocks, never redoes), so a lander briefly holds merge + heavy together.
-# Order is invariant BY CONSTRUCTION: land is the only taker of the merge lock and
-# always takes it before heavy, so no cycle is possible — just don't add a
-# heavy-holding target that also lands.
+# /tmp/heavy COMPUTE lock `make test` itself takes. The merge lock spans the
+# WHOLE landing including `make test` (so a second lander blocks and then tests
+# once against the final main — blocks, never redoes), so a lander briefly holds
+# merge + heavy together. Order is invariant BY CONSTRUCTION: land is the only
+# taker of the merge lock and always takes it before heavy, so no cycle is
+# possible — just don't add a heavy-holding target that also lands.
+#
+# THE SCRIPT ITSELF IS NOT IN THIS REPO (#1973): foci and foci-client used to
+# each carry their own scripts/land.sh, and the two copies drifted (#1902,
+# #1943 were both defects born from that drift — one fix landing in one copy
+# and not the other). There is now exactly one copy of the bytes, at
+# /home/foci/shared/scripts/land.sh (the shared agent-home repo, already the
+# established home for cross-repo automation — see e.g. foci-client's
+# mk/local.mk referencing shared/scripts/gradle-init-foci-client.gradle the
+# same way). This repo's only per-repo inputs are passed as env vars, never
+# forked into a second copy of the logic: LAND_LOCK (this repo's own merge
+# lock, so foci and foci-client landings never block each other) and
+# LAND_TEST_TARGET (the `make` target land runs as its test gate).
 #
 # Cheap repo-state work (fetch, rebase, conflict/dirty detection) runs BEFORE
 # the compute step, so merge-lock hold time is ~= the unit suite + heavy
 # queueing, not a full rebuild. Pushes HEAD:main to origin (atomic remote ff);
-# does NOT touch the local main checkout — deploys read origin/main directly
-# (piece #4), so the local main ref is non-load-bearing.
+# best-effort fast-forwards the local main checkout too, and now tells BEHIND
+# from DIVERGED there rather than treating every non-ff the same way (#1973).
 #
-# The logic lives in scripts/land.sh, NOT inline here, on purpose: an inline
+# The logic lives in the external script, NOT inline here, on purpose: an inline
 # recipe would need `$(MAKE) test` for the compute step, and GNU make's
 # recursive-make heuristic RUNS any recipe line containing $(MAKE) even under
 # `make -n` — so a `make -n land` "dry run" on a clean tree would really fetch,
 # rebase, test, and PUSH TO MAIN. A script keeps `make test` inside bash (not
 # make-scanned), so `make -n land` just prints the script call and runs nothing.
 land:
-	@bash scripts/land.sh
+	@LAND_LOCK=/tmp/foci-merge.lock LAND_TEST_TARGET=test bash /home/foci/shared/scripts/land.sh
 
 coverage:
 	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
