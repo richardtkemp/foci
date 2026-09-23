@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"foci/internal/log"
 	"foci/internal/provider"
@@ -121,7 +122,7 @@ func (b *Bootstrap) SectionSizes() []SectionSize {
 		if i < len(b.cachedNames) {
 			name = b.cachedNames[i]
 		}
-		sizes = append(sizes, SectionSize{Name: name, Chars: len(block.Text)})
+		sizes = append(sizes, SectionSize{Name: name, Chars: utf8.RuneCountInString(block.Text)})
 	}
 	return sizes
 }
@@ -148,7 +149,7 @@ func (b *Bootstrap) CheckSizes(maxFileChars, maxTotalChars int) []string {
 	var warnings []string
 	total := 0
 	for i, block := range blocks {
-		size := len(block.Text)
+		size := utf8.RuneCountInString(block.Text)
 		total += size
 		if maxFileChars > 0 && size > maxFileChars {
 			name := "unknown"

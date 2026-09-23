@@ -301,6 +301,61 @@ func TestCheckSizes(t *testing.T) {
 	}
 }
 
+func TestCheckSizesCountsCharactersNotBytes(t *testing.T) {
+	// Regression (#1959): the warning message and config key both say
+	// "chars", but CheckSizes measured len(string), which in Go is the
+	// UTF-8 BYTE length. A file dense in multi-byte runes (em-dashes,
+	// arrows, curly quotes — all 3 bytes in UTF-8) then reports a size
+	// bigger than its actual character count and can trip a char
+	// threshold it is genuinely under.
+	//
+	// 100 em-dashes ("—", U+2014) = 100 characters but 300 bytes.
+	dir := t.TempDir()
+	content := strings.Repeat("—", 100)
+	os.WriteFile(filepath.Join(dir, "DASHES.md"), []byte(content), 0644)
+
+	b := NewBootstrap(dir, []string{"DASHES.md"})
+
+	// A threshold of 200 is above the 100-character count but below the
+	// 300-byte count. If CheckSizes measures bytes, this wrongly warns.
+	warnings := b.CheckSizes(200, 200000)
+	if len(warnings) != 0 {
+		t.Errorf("expected 0 warnings for a 100-char/300-byte file against a 200 threshold, got %d: %v", len(warnings), warnings)
+	}
+
+	// A threshold of 100 exactly matches the character count, so it must
+	// NOT warn either (size > threshold is strict).
+	warnings = b.CheckSizes(100, 200000)
+	if len(warnings) != 0 {
+		t.Errorf("expected 0 warnings when char count equals threshold, got %d: %v", len(warnings), warnings)
+	}
+
+	// A threshold of 99 is genuinely below the character count, so this
+	// SHOULD warn.
+	warnings = b.CheckSizes(99, 200000)
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning when char count exceeds threshold, got %d: %v", len(warnings), warnings)
+	}
+}
+
+func TestSectionSizesCountsCharactersNotBytes(t *testing.T) {
+	// Regression (#1959): SectionSizes.Chars must be a character count,
+	// not a byte count, for the same reason as CheckSizes above.
+	dir := t.TempDir()
+	content := strings.Repeat("—", 100) // 100 chars, 300 bytes
+	os.WriteFile(filepath.Join(dir, "DASHES.md"), []byte(content), 0644)
+
+	b := NewBootstrap(dir, []string{"DASHES.md"})
+	sizes := b.SectionSizes()
+
+	if len(sizes) != 1 {
+		t.Fatalf("len = %d, want 1", len(sizes))
+	}
+	if sizes[0].Chars != 100 {
+		t.Errorf("sizes[0].Chars = %d, want 100 (character count, not byte count 300)", sizes[0].Chars)
+	}
+}
+
 func TestCheckSizesMissingFileBeforeBig(t *testing.T) {
 	// Regression: when fileOrder lists a missing file before a present
 	// over-threshold file, the warning must name the real file, not the
