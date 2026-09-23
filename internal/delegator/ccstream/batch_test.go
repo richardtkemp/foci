@@ -2,6 +2,7 @@ package ccstream
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -93,6 +94,19 @@ func TestRunBatch(t *testing.T) {
 	if !strings.Contains(cap, "SYSPROMPTCONTENT:CHARACTER FILES HERE") {
 		t.Errorf("system prompt file content missing/wrong:\n%s", cap)
 	}
+
+	// On this (Linux, memfd-capable) test host, RunBatch must take the
+	// memfd path, not the temp-file fallback: /dev/fd/<N>, never a real
+	// filesystem path.
+	if !strings.Contains(cap, "/dev/fd/") {
+		t.Errorf("expected the memfd path (--system-prompt-file /dev/fd/<N>), got:\n%s", cap)
+	}
+	// "/system-prompt-" (leading slash) is the writeSystemPromptFile temp
+	// path's basename prefix; NOT a plain "system-prompt-" substring check,
+	// which would also match the "--system-prompt-file" flag name itself.
+	if strings.Contains(cap, "/system-prompt-") {
+		t.Errorf("expected memfd, not the temp-file fallback (found a '/system-prompt-' path):\n%s", cap)
+	}
 }
 
 func TestRunBatch_ModelOverrideAndNoSystemPrompt(t *testing.T) {
@@ -168,7 +182,7 @@ func TestRunBatch_ErrorIncludesStdout(t *testing.T) {
 // hits that cliff and fork/exec fails with E2BIG before claude ever starts
 // ("argument list too long") — no model or API problem, so retries can't
 // help. The fix is to stop passing it as an argv element at all; a prompt
-// safely over the cap must still succeed.
+// safely over the cap must still succeed via the memfd path.
 func TestRunBatch_LargeSystemPromptDoesNotHitArgvLimit(t *testing.T) {
 	t.Parallel()
 
@@ -205,5 +219,57 @@ func TestRunBatch_LargeSystemPromptDoesNotHitArgvLimit(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "SYSPROMPTCONTENT:"+big) {
 		t.Errorf("oversized SystemPrompt must still reach claude via the file")
+	}
+	if !strings.Contains(argsLine, "/dev/fd/") {
+		t.Errorf("oversized SystemPrompt should still take the memfd path, got argv:\n%s", argsLine)
+	}
+}
+
+// TestRunBatch_MemfdUnavailableFallsBackToTempFile forces
+// createMemfdSystemPromptFn to fail (simulating memfd_create failing at
+// runtime, or a non-Linux build) and checks RunBatch degrades to the
+// pre-memfd temp-file path (writeSystemPromptFile) instead of failing the
+// batch outright.
+func TestRunBatch_MemfdUnavailableFallsBackToTempFile(t *testing.T) {
+	// Not parallel: mutates the package-level createMemfdSystemPromptFn.
+	orig := createMemfdSystemPromptFn
+	createMemfdSystemPromptFn = func(string) (*os.File, error) {
+		return nil, errors.New("simulated memfd_create failure")
+	}
+	t.Cleanup(func() { createMemfdSystemPromptFn = orig })
+
+	stub, capture := stubClaude(t)
+	be, _ := newFromConfig(map[string]any{"binary": stub})
+	b := be.(*Backend)
+
+	got, err := b.RunBatch(context.Background(), delegator.BatchRequest{
+		Prompt:       "extract the rules",
+		SystemPrompt: "CHARACTER FILES HERE",
+		WorkDir:      t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if got != "batch response" {
+		t.Errorf("result = %q, want trimmed canned response", got)
+	}
+
+	data, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cap := string(data)
+	if strings.Contains(cap, "/dev/fd/") {
+		t.Errorf("expected the temp-file fallback, but the memfd path was used despite the forced failure:\n%s", cap)
+	}
+	// See the comment in TestRunBatch: check for "/system-prompt-" (leading
+	// slash — the writeSystemPromptFile basename prefix), not a bare
+	// "system-prompt-" substring, which the "--system-prompt-file" flag
+	// name itself would also match.
+	if !strings.Contains(cap, "/system-prompt-") {
+		t.Errorf("expected a writeSystemPromptFile-pattern temp path (contains %q):\n%s", "/system-prompt-", cap)
+	}
+	if !strings.Contains(cap, "SYSPROMPTCONTENT:CHARACTER FILES HERE") {
+		t.Errorf("system prompt content missing via fallback temp file:\n%s", cap)
 	}
 }
