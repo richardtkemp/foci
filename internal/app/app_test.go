@@ -17,6 +17,7 @@ import (
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/fap"
+	flog "foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/question"
 	"foci/internal/session"
@@ -1016,6 +1017,42 @@ func TestDispatchPing_RepliesPong(t *testing.T) {
 	got := drain(t, c)
 	if len(got) != 1 || got[0].t != fap.TypePong {
 		t.Fatalf("ping must reply pong, got %v", types(got))
+	}
+}
+
+// An unknown inbound frame type is still ignored (forward-compat), but leaves
+// one log line naming the type and device (#1884) — otherwise a zero-hit grep
+// cannot tell "never sent" from "sent and dropped". Prod logs at DEBUG, so the
+// line is emitted once per (socket, type): a mismatched client repeating the
+// frame every turn must not flood the log.
+func TestDispatchUnknownFrame_LoggedOncePerType(t *testing.T) {
+	var buf bytes.Buffer
+	flog.SetOutput(&buf)
+	flog.SetLevel(flog.DEBUG)
+	t.Cleanup(func() { flog.SetOutput(os.Stderr); flog.SetLevel(flog.INFO) })
+
+	h := newTestHub()
+	c := fakeClient()
+	c.hub = h
+	c.deviceID = "dev-1884"
+
+	for i := 0; i < 3; i++ {
+		h.dispatchInbound(c, []byte(`{"t":"future.thing","id":"u1","d":{}}`))
+	}
+	h.dispatchInbound(c, []byte(`{"t":"other.thing","id":"u2"}`))
+
+	if got := drain(t, c); len(got) != 0 {
+		t.Fatalf("unknown frame must still be ignored, got %v", types(got))
+	}
+	out := buf.String()
+	if n := strings.Count(out, `"future.thing"`); n != 1 {
+		t.Fatalf("want exactly one log line for future.thing, got %d:\n%s", n, out)
+	}
+	if !strings.Contains(out, "dev-1884") {
+		t.Fatalf("log line must name the device:\n%s", out)
+	}
+	if n := strings.Count(out, `"other.thing"`); n != 1 {
+		t.Fatalf("a second unknown type must get its own line, got %d:\n%s", n, out)
 	}
 }
 

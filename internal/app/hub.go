@@ -2649,6 +2649,24 @@ type wsClient struct {
 	closeErr  string                  // why the read loop ended, for the hello-less diagnostic (#1713)
 	features  map[string]struct{}     // advertised client capabilities (from the hello)
 	convByID  map[string]*convBinding // conversationId → binding
+	// unknownTypes: inbound frame types this socket sent that the server does
+	// not recognise, so each is logged once per socket, not per frame (#1884).
+	unknownTypes map[string]struct{}
+}
+
+// firstUnknownType records t as an unknown inbound type seen on this socket and
+// reports whether this is its first sighting.
+func (c *wsClient) firstUnknownType(t string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, seen := c.unknownTypes[t]; seen {
+		return false
+	}
+	if c.unknownTypes == nil {
+		c.unknownTypes = make(map[string]struct{})
+	}
+	c.unknownTypes[t] = struct{}{}
+	return true
 }
 
 // attachedBindings snapshots the conversations this socket is currently a live

@@ -2461,7 +2461,7 @@ attach trigger alongside `resumeConversations`/`conversation.open`/an active sen
 so a conversation learned AFTER hello, mirrored via `conversation.openSync` and
 backfilled over HTTP, still gets live fan-out without waiting for the next resume;
 ack seeded to the current high-water, idempotent for an already-attached reader);
-`ping`→`pong`; unknown→ignored. No agent → `error` frame.
+`ping`→`pong`; unknown→ignored, logged once per (socket, type) (#1884). No agent → `error` frame.
 
 **Platform lifecycle callbacks:** `SetLifecycleCallback` stores the gateway's
 `OnUserMessage`/`OnTurnComplete`/`OnTurnEnd` hooks on the per-agent `appConn`

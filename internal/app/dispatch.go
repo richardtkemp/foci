@@ -195,7 +195,14 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.deliverToolResult(f)
 
 	default:
-		// nil Frame (unknown t) — forward-compat, ignore.
+		// nil Frame (unknown t) — forward-compat, ignore. But say so (#1884):
+		// without a line here a zero-hit log grep can't tell "never sent" from
+		// "sent and dropped". Once per (socket, type), since prod logs at DEBUG
+		// and a mismatched client may repeat the frame every turn.
+		if client.firstUnknownType(in.T) {
+			appLog.Infof("ignoring unknown inbound frame type %q from device %s (id=%s; repeats on this socket not logged)",
+				in.T, client.device(), in.ID)
+		}
 	}
 }
 
