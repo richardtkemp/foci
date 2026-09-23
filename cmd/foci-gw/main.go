@@ -561,6 +561,16 @@ Subcommands:
 	})
 	plat.StartAll(ctx)
 
+	// Tell each agent about asks that expired across the restart (#1894). The ask
+	// tool's restore runs inside setupAgent, before the agent is in `agents` (so
+	// agentResolverFn can't route to it) and before its inbox or chats are up, so
+	// it holds these until now.
+	for _, id := range agentOrder {
+		if r := agents[id].ag.AskRouter; r != nil && r.DeliverRestoreNotices != nil {
+			r.DeliverRestoreNotices()
+		}
+	}
+
 	// ========== Startup notifications ==========
 	logsDir := filepath.Dir(cfg.Logging.EventFile)
 	if logsDir == "" || logsDir == "." {

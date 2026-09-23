@@ -235,6 +235,75 @@ func TestAskRestoreDropsStale(t *testing.T) {
 	}
 }
 
+// restoreExpiredNotices seeds one expired entry, restarts the tool, and returns
+// what the agent was sent BEFORE and AFTER DeliverRestoreNotices. The split is the
+// ordering contract (#1894): restore runs inside NewAskTool, before the agent is
+// registered with the gateway's resolver or its inbox is running, so a notice
+// sent there is lost. Restore must HOLD it until the caller releases it.
+func restoreExpiredNotices(t *testing.T, stale persistedAsk) (before, after *fakeDeliver) {
+	t.Helper()
+	idx := newStateDB(t)
+	data, err := json.Marshal([]persistedAsk{stale})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.SetAgentMetadata("test", askMetaKey, string(data)); err != nil {
+		t.Fatal(err)
+	}
+	d := &fakeDeliver{}
+	_, router := NewAskTool((&fakePresenter{}).present, (&fakeRestore{}).restore, d.deliver, nil, idx, "test")
+	before = &fakeDeliver{messages: append([]string(nil), d.messages...), reqIDs: append([]string(nil), d.reqIDs...)}
+	router.DeliverRestoreNotices()
+	router.DeliverRestoreNotices() // one-shot: a second release must not re-send
+	return before, d
+}
+
+// An ask that expired across a restart used to be dropped by restorePending with
+// no word to the agent, which then waited forever for an answer that could not
+// come (#1894). A LIVE (on-screen) ask must now produce an expiry notice.
+func TestAskRestoreExpiredLiveAskNotifiesAgent(t *testing.T) {
+	t.Parallel()
+	stale := seedAsk("ask-test-expired-live", time.Now().Add(-2*pendingAskTTL))
+	stale.Questions = append(stale.Questions, question.Question{Question: "second"})
+	stale.Idx = 1
+	stale.Answers = map[string]string{"0": "yes"}
+
+	before, after := restoreExpiredNotices(t, stale)
+	if len(before.messages) != 0 {
+		t.Errorf("notice delivered during restore (%q) — the agent is not resolvable yet, so it would be lost", before.messages)
+	}
+	if len(after.messages) != 1 || after.reqIDs[0] != stale.RequestID {
+		t.Fatalf("delivered after release = %q (reqIDs %q), want exactly one notice for %s", after.messages, after.reqIDs, stale.RequestID)
+	}
+	msg := after.messages[0]
+	for _, want := range []string{"[SYSTEM:", stale.RequestID, "expired", "NEVER arrive", "1 of 2"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("expiry notice = %q, missing %q", msg, want)
+		}
+	}
+}
+
+// A QUEUED ask that expired across a restart was never shown at all; it gets the
+// same never-shown notice the presentation-time TTL sends (#1711 Q3).
+func TestAskRestoreExpiredQueuedAskNotifiesAgent(t *testing.T) {
+	t.Parallel()
+	stale := seedAsk("ask-test-expired-queued", time.Now().Add(-2*pendingAskTTL))
+	stale.Batched = false
+	stale.PlatformMsgID = ""
+	stale.Queued = true
+
+	before, after := restoreExpiredNotices(t, stale)
+	if len(before.messages) != 0 {
+		t.Errorf("notice delivered during restore (%q) — the agent is not resolvable yet, so it would be lost", before.messages)
+	}
+	if len(after.messages) != 1 || after.reqIDs[0] != stale.RequestID {
+		t.Fatalf("delivered after release = %q (reqIDs %q), want exactly one notice for %s", after.messages, after.reqIDs, stale.RequestID)
+	}
+	if msg := after.messages[0]; !strings.Contains(msg, "expired") || !strings.Contains(msg, "NEVER shown") {
+		t.Errorf("expiry notice = %q, want an explicit never-shown expiry notice", msg)
+	}
+}
+
 // TestAskPausePersistsAcrossRestart verifies a /pause set on one instance
 // survives a simulated restart: the rehydrated ask is still paused.
 func TestAskPausePersistsAcrossRestart(t *testing.T) {

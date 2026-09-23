@@ -188,6 +188,19 @@ type askState struct {
 	agentID      string
 	onResolve    func(sessionKey, requestID string) // fired when ONE ask resolves; nil = disabled
 	cacheWarm    func(sessionKey string) bool       // reports whether a session's prompt cache is live; nil = always warm (never suppress)
+	// restoring is set for the duration of restorePending; while it is, deliverMsg
+	// parks messages in held instead of sending them. Restore runs inside
+	// NewAskTool, before the gateway has registered the agent with its resolver or
+	// started its inbox, so a notice sent then is dropped as "unknown agent"
+	// (#1894). held is released by deliverRestoreNotices once startup is done.
+	restoring bool
+	held      []heldNotice
+}
+
+// heldNotice is a restore-time message to the agent, parked until the gateway can
+// deliver it (see askState.restoring).
+type heldNotice struct {
+	sessionKey, requestID, msg string
 }
 
 // WithOnResolve sets a callback fired (async) when ONE ask resolves — per-ask,
@@ -401,9 +414,7 @@ func (a *askState) promoteQueued(sessionKey string) {
 			a.persistLocked()
 			a.mu.Unlock()
 			askLog.Warnf("session=%s req=%s queued ask expired (%s old) before it could be shown — dropped", sessionKey, p.requestID, waited.Round(time.Minute))
-			a.deliverMsg(sessionKey, p.requestID, fmt.Sprintf(
-				"[SYSTEM: your queued `ask` request (req %s) expired after waiting %s behind an earlier question and was NEVER shown to the user. Nothing was answered. Re-ask if you still need it.]",
-				p.requestID, waited.Round(time.Minute)))
+			a.deliverMsg(sessionKey, p.requestID, expiredAskNotice(p.requestID, true, waited, 0, 0))
 			continue
 		}
 		p.queued = false
@@ -415,6 +426,22 @@ func (a *askState) promoteQueued(sessionKey string) {
 		}
 		return
 	}
+}
+
+// expiredAskNotice is the agent-facing notice for an ask dropped because it aged
+// past pendingAskTTL — whether at presentation (promoteQueued) or at restore
+// (restorePending). Without it the agent waits forever for answers that cannot
+// come. A queued ask was never on screen; a live one may be part-answered.
+func expiredAskNotice(requestID string, queued bool, age time.Duration, answered, total int) string {
+	age = age.Round(time.Minute)
+	if queued {
+		return fmt.Sprintf(
+			"[SYSTEM: your queued `ask` request (req %s) expired after waiting %s behind an earlier question and was NEVER shown to the user. Nothing was answered. Re-ask if you still need it.]",
+			requestID, age)
+	}
+	return fmt.Sprintf(
+		"[SYSTEM: your `ask` request (req %s) expired unanswered after %s and was dropped. Its buttons no longer work and its answers will NEVER arrive (%d of %d questions had been answered). Re-ask if you still need it.]",
+		requestID, age, answered, total)
 }
 
 // tryPresentBatch presents p's whole question set as a single batched prompt via
@@ -751,6 +778,16 @@ func (a *askState) restorePending() {
 		return
 	}
 
+	// Hold every agent notice this restore produces (see askState.restoring).
+	a.mu.Lock()
+	a.restoring = true
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		a.restoring = false
+		a.mu.Unlock()
+	}()
+
 	sort.SliceStable(saved, func(i, j int) bool {
 		return askOlder(saved[i].CreatedAt, saved[i].RequestID, saved[j].CreatedAt, saved[j].RequestID)
 	})
@@ -760,11 +797,16 @@ func (a *askState) restorePending() {
 	sessions := make([]string, 0, len(saved))
 	a.mu.Lock()
 	for _, s := range saved {
-		if now.Sub(s.CreatedAt) > pendingAskTTL {
-			continue // stale — its buttons have expired on the platform too
-		}
 		if len(s.Questions) == 0 || s.Idx < 0 || s.Idx >= len(s.Questions) {
 			continue // malformed or already complete — nothing to wait on
+		}
+		if age := now.Sub(s.CreatedAt); age > pendingAskTTL {
+			// Stale — its buttons have expired on the platform too. The agent is
+			// still waiting on it, so say so (#1894).
+			askLog.Warnf("session=%s req=%s ask expired (%s old, queued=%v) across restart — dropped", s.SessionKey, s.RequestID, age.Round(time.Minute), s.Queued)
+			a.held = append(a.held, heldNotice{s.SessionKey, s.RequestID,
+				expiredAskNotice(s.RequestID, s.Queued, age, s.Idx, len(s.Questions))})
+			continue
 		}
 		p := &pendingAsk{
 			requestID:     s.RequestID,
@@ -871,8 +913,26 @@ func (a *askState) handleBatchByPrompt(promptID string, answers []string) {
 // proactive interruption when deciding whether a pending ask should hold it
 // (#1712).
 func (a *askState) deliverMsg(sessionKey, requestID, msg string) {
+	a.mu.Lock()
+	if a.restoring {
+		a.held = append(a.held, heldNotice{sessionKey, requestID, msg})
+		a.mu.Unlock()
+		return
+	}
+	a.mu.Unlock()
 	if a.deliver != nil {
 		a.deliver(sessionKey, requestID, msg)
+	}
+}
+
+// deliverRestoreNotices sends, once, the notices restorePending held back.
+func (a *askState) deliverRestoreNotices() {
+	a.mu.Lock()
+	held := a.held
+	a.held = nil
+	a.mu.Unlock()
+	for _, n := range held {
+		a.deliverMsg(n.sessionKey, n.requestID, n.msg)
 	}
 }
 
@@ -1165,6 +1225,11 @@ type AskRouter struct {
 	// is partial). Returns (answered, total, true) on success; ok=false with
 	// total==0 when no ask is pending, or total>0 when nothing is answered yet.
 	CompleteSession func(sessionKey string) (answered, total int, ok bool)
+	// DeliverRestoreNotices sends the agent notices restore produced (asks that
+	// expired across the restart, #1894). Restore runs at construction, before the
+	// gateway can route an injection to the agent, so these are held until the
+	// caller invokes this once startup is complete. One-shot.
+	DeliverRestoreNotices func()
 }
 
 // NewAskTool builds the `ask` / `foci_ask` tool. present shows questions to the
@@ -1292,13 +1357,14 @@ func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn
 		},
 	}
 	router := &AskRouter{
-		PendingForSession:   state.pendingForSession,
-		HandleResponse:      state.handleResponse,
-		HandleBatchByPrompt: state.handleBatchByPrompt,
-		PauseSession:        func(sk string) bool { return state.setPaused(sk, true) },
-		ResumeSession:       func(sk string) bool { return state.setPaused(sk, false) },
-		IsPaused:            state.isPaused,
-		CompleteSession:     state.completeSession,
+		PendingForSession:     state.pendingForSession,
+		HandleResponse:        state.handleResponse,
+		HandleBatchByPrompt:   state.handleBatchByPrompt,
+		PauseSession:          func(sk string) bool { return state.setPaused(sk, true) },
+		ResumeSession:         func(sk string) bool { return state.setPaused(sk, false) },
+		IsPaused:              state.isPaused,
+		CompleteSession:       state.completeSession,
+		DeliverRestoreNotices: state.deliverRestoreNotices,
 	}
 	return t, router
 }
