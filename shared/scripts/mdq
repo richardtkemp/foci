@@ -311,6 +311,57 @@ if [[ $# -ge 1 && "$1" == \#* ]]; then
     fi
     exec "$MDQ" "$selector" "$@"
 else
+    # #1887: never let a file-mode call depend on stdin. The binary's first
+    # positional is ALWAYS the selector, so 'mdq file.md' meant "selector
+    # 'file.md', document on stdin" — and the binary drains stdin BEFORE it
+    # finds the selector is a syntax error, so an open pipe with a slow writer
+    # blocked forever. Find the positionals (skipping the binary's options that
+    # take a separate value) and handle the one-positional case here; two or
+    # more means a file was named, so stdin is never read.
+    pos=()
+    skip_next=0
+    after_dd=0
+    for ((i = 1; i <= $#; i++)); do
+        a=${!i}
+        if (( skip_next )); then skip_next=0; continue; fi
+        if (( ! after_dd )); then
+            case "$a" in
+                --) after_dd=1; continue ;;
+                -o|--output|-l|--link-format|--link-pos|--footnote-pos|--renumber-footnotes|--wrap-width)
+                    skip_next=1; continue ;;
+                -?*) continue ;;
+            esac
+        fi
+        pos+=("$i")
+    done
+    if [[ ${#pos[@]} -eq 1 ]]; then
+        p=${!pos[0]}
+        if [[ "$p" != "-" && -e "$p" ]]; then
+            # An existing path in selector position is a file, not a selector
+            # (a bare path is never valid selector syntax). No selector means
+            # the whole document: its source bytes by default (nothing to slice
+            # — it is the file), the render on --render or when render options
+            # were passed alongside it.
+            if (( raw )) && [[ -f "$p" && -r "$p" ]] && { [[ $# -eq 1 ]] || (( raw_explicit )); }; then
+                exec cat -- "$p"
+            fi
+            # '' is the binary's select-everything selector.
+            set -- "${@:1:pos[0]-1}" '' "${@:pos[0]}"
+            exec "$MDQ" "$@"
+        fi
+        # A selector with the document on stdin — the genuine stream mode. Check
+        # the selector's syntax against an empty file first, so a bad selector
+        # (a mistyped path, most often) errors now instead of after draining
+        # stdin. On /dev/null a valid selector can only produce "no match",
+        # which is silent; any stderr is a parse error.
+        chk=$("$MDQ" "$p" /dev/null 2>&1 >/dev/null)
+        chk_rc=$?
+        if [[ $chk_rc -ne 0 && -n "$chk" ]]; then
+            printf '%s\n' "$chk" >&2
+            echo "mdq: '$p' is not a valid selector, and no such file exists. Usage: mdq [SELECTOR] FILE... (selector first)." >&2
+            exit "$chk_rc"
+        fi
+    fi
     if (( raw )); then
         emit_raw_or_render "" "$@"
         rc=$?

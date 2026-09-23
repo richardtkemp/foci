@@ -40,7 +40,10 @@ set -uo pipefail
 # on an open stdin — which is how this suite hung rather than failed. That is a
 # PRE-EXISTING property of the binary (reproduced identically against the
 # pre-change wrapper), not something the wrapper introduces; the suite just must
-# not be the thing that discovers it by deadlocking. Filed separately.
+# not be the thing that discovers it by deadlocking. Filed as #1887; the wrapper
+# now keeps file-mode calls off stdin (asserted by the #1887 block, which
+# reopens stdin on purpose). The close stays because 'no args at all' below
+# legitimately reads stdin.
 exec 0</dev/null
 case "${1:-}" in -h|--help) sed -n '2,25p' "$0" | sed 's/^#//; s/^ //'; exit 0;; esac
 
@@ -213,7 +216,11 @@ if git -C "$REPO" show "$PRE_1705":shared/scripts/mdq > "$OLD" 2>/tmp/mdq-test-e
     run_both "heading selector, '#'-prefixed branch" '## Section A' "$FIX"
     run_both "heading selector, no match" '# NoSuchHeading' "$FIX"
     run_both "non-heading passthrough branch (raw selector string)" 'p: "Other text"' "$FIX"
-    run_both "flags-only passthrough branch" -o json "$FIX"
+    # Explicit '' selector: before #1887, '-o json FILE' (no selector) parsed
+    # the path AS the selector and errored after draining stdin — that old
+    # output was the bug, so it is not an equivalence baseline any more. The
+    # #1887 block below asserts the new no-selector behaviour instead.
+    run_both "flags-only passthrough branch" -o json '' "$FIX"
     run_both "no args at all"
 else
     echo "FAIL could not fetch pre-change shared/scripts/mdq from main to diff against"
@@ -266,7 +273,45 @@ case "$toc_bare" in
     *) echo "FAIL mds no-pattern TOC missing expected heading; got: $toc_bare"; RC=1;;
 esac
 
-exit $RC
+# ---------------------------------------------------------------------------
+# #1887: a FILE with NO SELECTOR must never depend on stdin. The upstream
+# binary takes the selector first, so 'mdq file.md' made it treat the path as
+# a selector and read stdin for the document; it drains stdin BEFORE it notices
+# the selector is a syntax error, so an open pipe with a slow writer blocked
+# forever (repro 2026-09-23 on the deployed wrapper:
+#   sleep 8 | timeout 4 mdq /tmp/m.md   -> exit 124).
+# The suite closes its own stdin at the top, so each case here re-opens one: a
+# pipe whose writer (sleep) never writes and outlives the timeout. rc 124 means
+# the wrapper hung on it.
+# ---------------------------------------------------------------------------
+NOSEL="$TMP/nosel.md"
+printf '# A\ntext\n' > "$NOSEL"
+open_stdin_run() { # open_stdin_run <args...>: sets os_out / os_rc
+    local spid
+    exec 3< <(exec sleep 30)
+    spid=$!
+    os_out=$(timeout 4 "$MDQ" "$@" <&3 2>/dev/null); os_rc=$?
+    exec 3<&-
+    kill "$spid" 2>/dev/null
+}
+open_stdin_run "$NOSEL"
+check "#1887 file, no selector, open stdin: does not hang (rc)" "0" "$os_rc"
+check "#1887 file, no selector: DEFAULT emits the whole file's source bytes" "$(cat "$NOSEL")" "$os_out"
+open_stdin_run --render "$NOSEL"
+check "#1887 file, no selector, --render, open stdin: does not hang (rc)" "0" "$os_rc"
+check "#1887 file, no selector, --render: renders the whole document" "$("$REAL_MDQ" '' "$NOSEL")" "$os_out"
+open_stdin_run --wrap-width 20 "$NOSEL"
+check "#1887 file after a valued option, no selector, open stdin: does not hang (rc)" "0" "$os_rc"
+# A path that does NOT exist is still a selector to the binary — and not a
+# valid one. It must fail fast on the syntax error, not drain stdin first.
+open_stdin_run "$TMP/no-such-file.md"
+check "#1887 missing file / invalid selector, open stdin: fails fast (rc)" "1" "$os_rc"
+# A VALID selector with no file still reads stdin — that's the real stream mode
+# and must keep working.
+st_out=$(printf '# S\n\nbody\n' | "$MDQ" --render '# S' 2>/dev/null); st_rc=$?
+check "#1887 valid selector + piped document still reads stdin (rc)" "0" "$st_rc"
+check "#1887 valid selector + piped document still reads stdin (out)" "$(printf '# S\n\nbody')" "$st_out"
+
 
 # ---------------------------------------------------------------------------
 # Default-is-raw (#1705, inverted 2026-09-10). The whole point of the inversion
@@ -299,3 +344,4 @@ if printf '# S\n' | "$MDQ" --raw '# S' >/dev/null 2>/dev/null; then
 else
     echo "ok   explicit --raw on a stream fails instead of silently rendering"
 fi
+exit $RC
