@@ -5,7 +5,7 @@
 # Makefile, not run directly by a person.
 #
 # Usage: seal-test.sh <unit|integration|one> <TESTDIR> <LOGFILE> <parallel-n> \
-#          <GOCACHE_PIN> <GOMODCACHE_PIN> <GOPATH_PIN> [PKG] [RUN] [VERBOSE]
+#          <GOCACHE_PIN> <GOMODCACHE_PIN> <GOPATH_PIN> [PKG] [RUN] [VERBOSE] [COUNT]
 #
 #   PKG, RUN and VERBOSE are only used by the `one` mode — see run_one below.
 #   VERBOSE (make's V=1) adds go test's own -v so a PASSING test's t.Logf
@@ -90,6 +90,7 @@ GOPATH_DIR="${7:?}"
 PKG="${8:-}"
 RUNFILTER="${9:-}"
 VERBOSE="${10:-}"
+COUNT="${11:-}"
 
 LLBOX="bin/llbox"
 
@@ -192,8 +193,14 @@ run_one() {
     echo "seal-test.sh: mode 'one' requires PKG (arg 8), e.g. ./internal/agent/" >&2
     exit 2
   fi
-  env_header "sealed single-package run: $PKG${RUNFILTER:+ -run $RUNFILTER}${VERBOSE:+ -v}"
-  local extra=(-count=1)
+  # COUNT (make's COUNT=N) repeats the run N times, e.g. to check a flake
+  # fix. It replaces a bare `go test -count=N`, which agents may not run.
+  if [ -n "$COUNT" ] && ! [[ "$COUNT" =~ ^[1-9][0-9]*$ ]]; then
+    echo "seal-test.sh: COUNT must be a positive integer, got '$COUNT'" >&2
+    exit 2
+  fi
+  env_header "sealed single-package run: $PKG${RUNFILTER:+ -run $RUNFILTER}${VERBOSE:+ -v} -count=${COUNT:-1}"
+  local extra=(-count="${COUNT:-1}")
   [ -n "$RUNFILTER" ] && extra+=(-run "$RUNFILTER")
   [ -n "$VERBOSE" ] && extra+=(-v)
   "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test "${extra[@]}" "$PKG" >> "$LOGFILE" 2>&1

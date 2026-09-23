@@ -22,10 +22,15 @@ things a bare `go test` does not:
    spawn (tmux, git, chrome…).
 
 **If you just want one package run under the harness env — not to isolate a specific ingredient —
-use `make test-one PKG=./internal/<pkg>/ [RUN=<Name>] [V=1]` (foci_todo #1709) instead of anything
-below.** `V=1` adds go test's own `-v`, so a PASSING test's `t.Logf` lines actually land in the log
+use `make test-one PKG=./internal/<pkg>/ [RUN=<Name>] [V=1] [COUNT=N]` (foci_todo #1709) instead of anything
+below.** `COUNT=N` repeats the run N times (go test's `-count`), for flake checks. `V=1` adds go test's own `-v`, so a PASSING test's `t.Logf` lines actually land in the log
 (foci_todo #1982) — without it a pass swallows them silently, and forcing a `t.Errorf` just to see
 them turns a passing test into a fake failure.
+
+**Agents cannot run a bare `go build`/`go test`/`go vet` (Dick, 2026-09-23).** Claude Code's
+`permissions.deny` refuses them, including the `/usr/bin/go` and `go -C <dir>` forms. Use
+`make build`, `make vet`, `make test-one`: those take the `/tmp/heavy` lock. The manual recipe
+below is reference for a human at a terminal.
 It calls `scripts/seal-test.sh one`, which reuses the exact same `TESTENV`/seal construction as
 `make test` — so it cannot omit a variable by hand-rolling mistake. The manual reconstruction below
 still earns its place for the isolation table further down (running WITHOUT the seal, WITHOUT the
@@ -58,7 +63,7 @@ Run the arms separately; each rules out one variable. Compare **rates**, not sin
 
 | Arm | Isolates |
 |---|---|
-| `go test -run <Test> -count=8` | the test's own logic |
+| `make test-one PKG=<pkg> RUN=<Test> COUNT=8` | the test's own logic |
 | full package, idle | intra-package interference |
 | full package + `nproc+2` `nice -19` spinners | CPU contention |
 | full package, sealed under `llbox` (above) | the Landlock seal |
@@ -77,7 +82,7 @@ real parallel test binaries competing at equal priority.
   nothing. Always set it.
 - **Never rely on inherited cwd.** Background tool invocations do not reliably inherit the previous
   one's directory; a bare `go test ./internal/...` can run from your agent home and die with
-  `cannot find main module, but found .git/config in /home/foci`. Always `go test -C <repo>`.
+  `cannot find main module, but found .git/config in /home/foci`. Always `make -C <repo> test-one …`.
 - **`go` needs a writable `TMPDIR`.** Sealing without it fails at
   `go: creating work dir: mkdir /tmp/go-build…: permission denied` before a single test runs.
 - **Never pipe the run into `tail`/`grep`.** The pipe reports the *filter's* status; a failed
@@ -123,7 +128,7 @@ tip. Treat the name as a timestamp, not an accusation. Method, in order:
    `git log --oneline <last-green>..<failing> -- <failing/package/>` for the commit that actually
    touched it.
 4. **Settle flake-vs-real with a control, never a guess.** Reproduce the single test
-   (`go test ./pkg/ -run TestX -count=10`), and a serialized low-load run (`-parallel=1`) to rule out
+   (`make test-one PKG=./pkg/ RUN=TestX COUNT=10`), and a serialized low-load run (`-parallel=1`) to rule out
    self-induced timing. Deterministic ≠ your fault — it can be the tree's state.
 
 **Recurring causes** (three in one day, 2026-07-21):
