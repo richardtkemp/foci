@@ -512,7 +512,16 @@ func TestEnsureWatcher_TimesOutWithLastError(t *testing.T) {
 	b := &Backend{}
 	b.pane = &tmuxPane{windowName: "cc-x", exec: f.exec, pid: -1} // PID -1 → no child ever
 
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	// ensureWatcher's discovery loop races a 300ms ticker against this ctx's
+	// own deadline in a single select; with only ~200ms of margin (500ms
+	// deadline over a 300ms tick), a host-load stall that delays the whole
+	// goroutine past the deadline before it's scheduled even once leaves
+	// both the ticker and ctx.Done() ready together, and select's random
+	// pick can take the deadline branch with lastErr still empty — failing
+	// the "no child process" assertion below for a reason that has nothing
+	// to do with the code under test. A several-second margin over the
+	// 300ms tick keeps this from racing.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	err := b.ensureWatcher(ctx)

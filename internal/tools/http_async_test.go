@@ -44,7 +44,7 @@ func TestHTTPRequestAutoBackgroundSlow(t *testing.T) {
 	// Proves that when a request exceeds the auto-background threshold, the tool returns a "still running" message immediately and delivers the final result via the notifier.
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(1500 * time.Millisecond)
+		time.Sleep(5 * time.Second)
 		fmt.Fprint(w, "slow response")
 	}))
 	defer srv.Close()
@@ -54,6 +54,11 @@ func TestHTTPRequestAutoBackgroundSlow(t *testing.T) {
 		completeCh <- msg
 	}), 0640)
 
+	// The response must clearly outlast the 1s auto-background threshold —
+	// not just nominally (1.5s previously), which raced the response's
+	// arrival against the threshold timer's select under host load (same
+	// shape as #1975 in internal/tools/shell/shell_test.go). A wide margin
+	// makes the outcome deterministic regardless of scheduling delay.
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":     srv.URL,
 		"timeout": 10,
@@ -87,7 +92,7 @@ func TestHTTPRequestAutoBackgroundSessionKey(t *testing.T) {
 	// Proves that the session key embedded in the context is propagated to the notifier callback when a request auto-backgrounds.
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(1500 * time.Millisecond)
+		time.Sleep(5 * time.Second)
 		fmt.Fprint(w, "done")
 	}))
 	defer srv.Close()
@@ -100,6 +105,8 @@ func TestHTTPRequestAutoBackgroundSessionKey(t *testing.T) {
 		ch <- result{sk, msg}
 	}), 0640)
 
+	// See the identical comment in TestHTTPRequestAutoBackgroundSlow above:
+	// the response must clearly outlast the 1s threshold, not just nominally.
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":     srv.URL,
 		"timeout": 10,

@@ -24,6 +24,15 @@ func TestConcurrentTurnSerialization(t *testing.T) {
 	var mu sync.Mutex
 	var apiCallOrder []string // tracks which turn's messages were seen by API
 
+	// turnAEntered closes the instant Turn A's request reaches the API
+	// callback — which happens strictly after AcquireTurnLock (Phase 1 of
+	// OrchestrateFullTurn runs the lock before RunInference/Phase 3 dispatches
+	// the request), so this is a deterministic "Turn A holds the lock" signal.
+	// Used instead of a fixed sleep-and-hope that Turn A's goroutine got
+	// scheduled first, which flaked under host load.
+	turnAEntered := make(chan struct{})
+	var turnAEnteredOnce sync.Once
+
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		// Identify which turn this is by looking at the last user message
 		lastMsg := req.Messages[len(req.Messages)-1]
@@ -35,6 +44,7 @@ func TestConcurrentTurnSerialization(t *testing.T) {
 
 		// Slow down the first turn so concurrent callers pile up
 		if strings.Contains(text, "Turn A") {
+			turnAEnteredOnce.Do(func() { close(turnAEntered) })
 			time.Sleep(100 * time.Millisecond)
 		}
 
@@ -69,8 +79,13 @@ func TestConcurrentTurnSerialization(t *testing.T) {
 		ag.hmTest(context.Background(), sessionKey, "Turn A")
 	}()
 
-	// Small delay to ensure Turn A acquires the lock first
-	time.Sleep(10 * time.Millisecond)
+	// Wait for Turn A to actually hold the lock (see turnAEntered comment
+	// above) before starting Turn B — no sleep-and-hope needed.
+	select {
+	case <-turnAEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Turn A's request never reached the API within 5s")
+	}
 
 	go func() {
 		defer wg.Done()
@@ -200,7 +215,16 @@ func TestConcurrentTurnsDifferentSessions(t *testing.T) {
 func TestConcurrentTurnCancellation(t *testing.T) {
 	// Verify that a cancelled context while waiting for the turn lock
 	// returns immediately without processing.
+	// turnStarted closes the instant the slow turn's request reaches the API
+	// callback — a deterministic "the lock is held" signal (AcquireTurnLock
+	// runs in Phase 1 of OrchestrateFullTurn, strictly before RunInference/
+	// Phase 3 dispatches the request), used instead of a fixed sleep-and-hope
+	// that the slow turn's goroutine got scheduled first under host load.
+	turnStarted := make(chan struct{})
+	var turnStartedOnce sync.Once
+
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
+		turnStartedOnce.Do(func() { close(turnStarted) })
 		time.Sleep(200 * time.Millisecond) // slow turn
 		return &provider.MessageResponse{
 			ID:         "msg_test",
@@ -232,7 +256,13 @@ func TestConcurrentTurnCancellation(t *testing.T) {
 		ag.hmTest(context.Background(), sessionKey, "Slow turn")
 	}()
 
-	time.Sleep(20 * time.Millisecond) // let the slow turn start
+	// Wait for the slow turn to actually hold the lock before racing the
+	// canceled second call against it.
+	select {
+	case <-turnStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("slow turn's request never reached the API within 5s")
+	}
 
 	// Start a second turn with a context that we'll cancel
 	ctx, cancel := context.WithCancel(context.Background())

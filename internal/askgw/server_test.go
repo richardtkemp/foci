@@ -239,13 +239,23 @@ func TestE2E_Cancel(t *testing.T) {
 		Reason:   "timeout",
 	})
 
-	time.Sleep(50 * time.Millisecond)
-
-	cancelMu.Lock()
-	cc := cancelCalled
-	cancelMu.Unlock()
-	if !cc {
-		t.Fatal("cancelPrompt should have been called")
+	// handleCancel sends no reply frame (fire-and-forget over the socket —
+	// see server.go), so there's no protocol event to synchronize on; poll
+	// for cancelCalled with a generous deadline instead of a fixed
+	// sleep-and-sample, which flaked if the server's read goroutine hadn't
+	// processed the cancel frame yet under host load (#2000).
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		cancelMu.Lock()
+		cc := cancelCalled
+		cancelMu.Unlock()
+		if cc {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("cancelPrompt should have been called")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 
 	if cb != nil {
@@ -413,13 +423,22 @@ func TestE2E_ConnectionDropCancelsPending(t *testing.T) {
 
 	conn.Close()
 
-	time.Sleep(100 * time.Millisecond)
-
-	cancelMu.Lock()
-	cc := cancelCalled
-	cancelMu.Unlock()
-	if !cc {
-		t.Fatal("cancelPrompt should fire when connection drops")
+	// The server detects the drop asynchronously in its read loop; poll for
+	// cancelCalled with a generous deadline instead of a fixed
+	// sleep-and-sample, which flaked if the close hadn't been observed yet
+	// under host load (#2000).
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		cancelMu.Lock()
+		cc := cancelCalled
+		cancelMu.Unlock()
+		if cc {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("cancelPrompt should fire when connection drops")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
@@ -714,9 +733,25 @@ func TestE2E_NotifyEditsAnsweredMessage(t *testing.T) {
 		ID:       "notify-edit-1",
 		ExitCode: &exitCode,
 	})
-	time.Sleep(50 * time.Millisecond)
 
-	calls, _, fellBack := nr.snapshot()
+	// handleNotify sends no reply frame (fire-and-forget — see server.go), so
+	// there's no protocol event to synchronize on; poll for the edit call
+	// with a generous deadline instead of a fixed sleep-and-sample, which
+	// flaked if the server's read goroutine hadn't processed the notify
+	// frame yet under host load (#2000).
+	deadline := time.Now().Add(2 * time.Second)
+	var calls []editCall
+	var fellBack bool
+	for {
+		calls, _, fellBack = nr.snapshot()
+		if len(calls) > 0 || fellBack {
+			break
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	if fellBack {
 		t.Fatal("expected the edit path to be used, not the standalone fallback")
 	}
@@ -786,9 +821,23 @@ func TestE2E_NotifyFallsBackWhenNoPlatformMsgID(t *testing.T) {
 		ExitCode: &exitCode,
 		Message:  "custom failure detail",
 	})
-	time.Sleep(50 * time.Millisecond)
 
-	calls, text, fellBack := nr.snapshot()
+	// Same fire-and-forget reasoning as TestE2E_NotifyEditsAnsweredMessage:
+	// poll instead of sleep-and-sample (#2000).
+	deadline := time.Now().Add(2 * time.Second)
+	var calls []editCall
+	var text string
+	var fellBack bool
+	for {
+		calls, text, fellBack = nr.snapshot()
+		if len(calls) > 0 || fellBack {
+			break
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	if len(calls) != 0 {
 		t.Fatalf("edit calls = %d, want 0 (no platform msgID to edit)", len(calls))
 	}

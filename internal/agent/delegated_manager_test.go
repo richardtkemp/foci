@@ -871,14 +871,18 @@ func TestResetSession_DoesNotHoldManagerLockDuringClose(t *testing.T) {
 		t.Fatalf("Get(stuck): %v", err)
 	}
 
-	// Wire its Close to block until we let it through.
+	// Wire its Close to signal entry (deterministic "Close is now running"
+	// event) and then block until we let it through. Replaces a fixed
+	// sleep-and-hope that ResetSession had reached Close by some guessed
+	// offset, which flaked under host load (#2000).
+	closeEntered := make(chan struct{})
 	release := make(chan struct{})
 	mgr.mu.Lock()
 	stuckMB := mgr.backends[stuck]
 	mgr.mu.Unlock()
 	stuckMock := stuckMB.be.(*mockBackendDM)
 	stuckMock.mu.Lock()
-	stuckMock.closeFn = func() error { <-release; return nil }
+	stuckMock.closeFn = func() error { close(closeEntered); <-release; return nil }
 	stuckMock.mu.Unlock()
 
 	// Reset in the background — Close will block.
@@ -888,11 +892,19 @@ func TestResetSession_DoesNotHoldManagerLockDuringClose(t *testing.T) {
 		close(resetDone)
 	}()
 
-	// Give ResetSession time to enter Close.
-	time.Sleep(20 * time.Millisecond)
+	// Wait for ResetSession to actually enter Close before probing the
+	// unrelated session — no sleep-and-hope needed.
+	select {
+	case <-closeEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ResetSession never entered Close within 5s")
+	}
 
 	// An unrelated session should still be reachable. If m.mu was held
-	// during Close, this would block.
+	// during Close, this would block until we release Close below — a
+	// generous multi-second hang-guard (not a precision check: the healthy
+	// path resolves in microseconds) distinguishes "genuinely stuck" from
+	// scheduler jitter under host load (#2000; was 500ms).
 	getDone := make(chan error, 1)
 	go func() {
 		_, err := mgr.Get(context.Background(), other)
@@ -904,7 +916,7 @@ func TestResetSession_DoesNotHoldManagerLockDuringClose(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Get(other) while stuck close in progress: %v", err)
 		}
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		t.Fatal("Get(other) blocked while ResetSession's Close was in progress — m.mu is being held across Close")
 	}
 
@@ -1117,8 +1129,9 @@ func TestCloseIdle_DoesNotHoldManagerLockDuringClose(t *testing.T) {
 		t.Fatalf("Get(stuck): %v", err)
 	}
 
-	// Wire its Close to block until we let it through, and backdate
-	// lastActive so closeIdle picks it up.
+	// Wire its Close to signal entry and block until we let it through, and
+	// backdate lastActive so closeIdle picks it up.
+	closeEntered := make(chan struct{})
 	release := make(chan struct{})
 	mgr.mu.Lock()
 	stuckMB := mgr.backends[stuck]
@@ -1126,7 +1139,7 @@ func TestCloseIdle_DoesNotHoldManagerLockDuringClose(t *testing.T) {
 	mgr.mu.Unlock()
 	stuckMock := stuckMB.be.(*mockBackendDM)
 	stuckMock.mu.Lock()
-	stuckMock.closeFn = func() error { <-release; return nil }
+	stuckMock.closeFn = func() error { close(closeEntered); <-release; return nil }
 	stuckMock.mu.Unlock()
 
 	// Run closeIdle in the background — Close on the stuck backend will block.
@@ -1136,11 +1149,19 @@ func TestCloseIdle_DoesNotHoldManagerLockDuringClose(t *testing.T) {
 		close(closeDone)
 	}()
 
-	// Give closeIdle time to enter the stuck Close.
-	time.Sleep(20 * time.Millisecond)
+	// Wait for closeIdle to actually enter the stuck Close — no
+	// sleep-and-hope needed (#2000).
+	select {
+	case <-closeEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("closeIdle never entered Close within 5s")
+	}
 
 	// An unrelated session should still be reachable. If m.mu was held
-	// during Close, this would block.
+	// during Close, this would block until we release Close below — a
+	// generous multi-second hang-guard (not a precision check) distinguishes
+	// "genuinely stuck" from scheduler jitter under host load (#2000; was
+	// 500ms).
 	getDone := make(chan error, 1)
 	go func() {
 		_, err := mgr.Get(context.Background(), other)
@@ -1152,7 +1173,7 @@ func TestCloseIdle_DoesNotHoldManagerLockDuringClose(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Get(other) while stuck close in progress: %v", err)
 		}
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		t.Fatal("Get(other) blocked while closeIdle's Close was in progress — m.mu is being held across Close")
 	}
 
@@ -1178,13 +1199,14 @@ func TestClose_DoesNotHoldManagerLockDuringBackendClose(t *testing.T) {
 		t.Fatalf("Get(stuck): %v", err)
 	}
 
+	closeEntered := make(chan struct{})
 	release := make(chan struct{})
 	mgr.mu.Lock()
 	stuckMB := mgr.backends[stuck]
 	mgr.mu.Unlock()
 	stuckMock := stuckMB.be.(*mockBackendDM)
 	stuckMock.mu.Lock()
-	stuckMock.closeFn = func() error { <-release; return nil }
+	stuckMock.closeFn = func() error { close(closeEntered); <-release; return nil }
 	stuckMock.mu.Unlock()
 
 	closeDone := make(chan struct{})
@@ -1193,10 +1215,18 @@ func TestClose_DoesNotHoldManagerLockDuringBackendClose(t *testing.T) {
 		close(closeDone)
 	}()
 
-	// Give Close time to enter the stuck backend's Close.
-	time.Sleep(20 * time.Millisecond)
+	// Wait for Close to actually enter the stuck backend's Close — no
+	// sleep-and-hope needed (#2000).
+	select {
+	case <-closeEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("manager Close never entered the stuck backend's Close within 5s")
+	}
 
-	// m.mu must be acquirable while the slow Close runs.
+	// m.mu must be acquirable while the slow Close runs. A generous
+	// multi-second hang-guard (not a precision check) distinguishes
+	// "genuinely stuck" from scheduler jitter under host load (#2000; was
+	// 500ms).
 	lockAcquired := make(chan struct{})
 	go func() {
 		mgr.mu.Lock()
@@ -1208,7 +1238,7 @@ func TestClose_DoesNotHoldManagerLockDuringBackendClose(t *testing.T) {
 	select {
 	case <-lockAcquired:
 		// good
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		t.Fatal("m.mu still held while manager Close's slow be.Close was in progress")
 	}
 
@@ -1251,15 +1281,22 @@ func TestGet_TypingFuncBoundedWhenManagerLockHeld(t *testing.T) {
 	select {
 	case <-done:
 		elapsed := time.Since(start)
-		if elapsed > typingFuncTimeout+500*time.Millisecond {
+		// Upper bound is a hang-guard against the wrapper NOT bounding sk(),
+		// not a precision check on the internal timer — widened from a 500ms
+		// margin (host load can delay the racing goroutine's scheduling past
+		// the nominal 2s well before anything is actually stuck) to several
+		// seconds of slack (#2000).
+		if elapsed > typingFuncTimeout+5*time.Second {
 			t.Errorf("tf returned in %s — slower than typingFuncTimeout (%s) + slack", elapsed, typingFuncTimeout)
 		}
+		// Lower bound is safe under load: time.After(typingFuncTimeout) cannot
+		// fire early, so elapsed can only grow, not shrink, below nominal.
 		if elapsed < typingFuncTimeout-200*time.Millisecond {
 			t.Errorf("tf returned in %s — faster than typingFuncTimeout (%s); did the 2s bound actually fire?", elapsed, typingFuncTimeout)
 		}
-	case <-time.After(typingFuncTimeout + 2*time.Second):
+	case <-time.After(typingFuncTimeout + 10*time.Second):
 		mgr.mu.Unlock()
-		t.Fatalf("tf did not return within %s — sk() is still running outside the inner goroutine and blocking the wrapper", typingFuncTimeout+2*time.Second)
+		t.Fatalf("tf did not return within %s — sk() is still running outside the inner goroutine and blocking the wrapper", typingFuncTimeout+10*time.Second)
 	}
 
 	mgr.mu.Unlock()
@@ -1376,11 +1413,14 @@ func TestGet_TypingFuncBoundedWhenDownstreamHangs(t *testing.T) {
 		if elapsed < 100*time.Millisecond {
 			t.Errorf("tf returned in %s — too fast, downstream should have been invoked", elapsed)
 		}
-		if elapsed > typingFuncTimeout+500*time.Millisecond {
+		// Hang-guard, not a precision check — widened from a 500ms margin for
+		// the same reason as TestGet_TypingFuncBoundedWhenManagerLockHeld
+		// (#2000).
+		if elapsed > typingFuncTimeout+5*time.Second {
 			t.Errorf("tf returned in %s — slower than typingFuncTimeout (%s) + slack", elapsed, typingFuncTimeout)
 		}
-	case <-time.After(typingFuncTimeout + 2*time.Second):
-		t.Fatalf("tf did not return within %s — bounded-timeout fix not working", typingFuncTimeout+2*time.Second)
+	case <-time.After(typingFuncTimeout + 10*time.Second):
+		t.Fatalf("tf did not return within %s — bounded-timeout fix not working", typingFuncTimeout+10*time.Second)
 	}
 }
 
@@ -1409,7 +1449,12 @@ func TestGet_TypingFuncReturnsImmediatelyWhenFast(t *testing.T) {
 	start := time.Now()
 	tf(true)
 	elapsed := time.Since(start)
-	if elapsed > 100*time.Millisecond {
+	// Widened from 100ms: the wrapper's internal goroutine dispatch/select
+	// can be delayed by scheduler jitter under host load even though the
+	// downstream call itself is a no-op; this only needs to distinguish
+	// "near-instant" from "hit the 2s typingFuncTimeout", not measure
+	// precise overhead (#2000).
+	if elapsed > 2*time.Second {
 		t.Errorf("tf with fast downstream took %s — wrapper should be near-zero overhead", elapsed)
 	}
 }

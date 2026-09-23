@@ -113,15 +113,17 @@ func TestMessageQueue_GroupThrottleBuffers(t *testing.T) {
 	case <-time.After(10 * time.Millisecond):
 	}
 
-	// Wait for throttle to fire.
-	time.Sleep(50 * time.Millisecond)
-
+	// Wait for throttle to fire and flush into the channel. This blocks on
+	// the channel receive itself (the event), with a generous hang-guard
+	// ceiling rather than a fixed sleep followed by a tight-margin receive —
+	// under heavy host load the throttle's 30ms timer can fire well past a
+	// sleep(50ms)+select(100ms) combination (#2000).
 	select {
 	case msg := <-mq.Chan():
 		if msg.Text != "group msg" {
 			t.Fatalf("unexpected text: %s", msg.Text)
 		}
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(2 * time.Second):
 		t.Fatal("throttle did not flush message to channel")
 	}
 }
@@ -237,12 +239,15 @@ func TestMessageQueue_SetThrottleIsLiveNotBaked(t *testing.T) {
 	}
 
 	mq.Enqueue(QueuedMessage{Text: "now buffered", ChatID: 1, IsGroupChat: true, IsMention: false})
+	// Hang-guard ceiling widened to a floor of seconds rather than a ~20x
+	// multiple of the throttle's 10ms window: a tight multiple of a shrunk
+	// internal timeout can still be blown under heavy host load (#2000).
 	select {
 	case msg := <-mq.Chan():
 		if msg.Text != "now buffered" {
 			t.Fatalf("unexpected text: %s", msg.Text)
 		}
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(2 * time.Second):
 		t.Fatal("message never flushed through the newly set throttle")
 	}
 }

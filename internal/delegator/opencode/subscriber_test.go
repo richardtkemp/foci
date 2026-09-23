@@ -1039,8 +1039,14 @@ func TestBackend_Dispatcher_DefaultHandlerIsNoOp(t *testing.T) {
 		srv.route(rawEvent{Type: "default", Properties: []byte(`{"sessionID":"sess-default"}`)})
 	}
 
-	// Wait briefly for the dispatcher to drain.
-	time.Sleep(50 * time.Millisecond)
+	// Poll for the dispatcher to drain rather than sleeping a fixed amount
+	// and sampling once — a loaded host can starve the dispatcher goroutine
+	// past a short fixed sleep with nothing actually wrong (mirrors
+	// TestBackend_Dispatcher_DrainsChannel/HandsEventsToHandler above).
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && len(be.events) != 0 {
+		time.Sleep(time.Millisecond)
+	}
 
 	// Channel should be empty (drained).
 	if len(be.events) != 0 {

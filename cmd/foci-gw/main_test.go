@@ -26,7 +26,14 @@ func TestGracefulShutdown_AllIdle(t *testing.T) {
 	}
 	start := time.Now()
 	gracefulShutdown(agents, 5*time.Second)
-	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
+	// The idle path returns on gracefulShutdown's first loop iteration with no
+	// tick sleep at all (see cmd/foci-gw/shutdown.go), so real work here is
+	// sub-millisecond; a regression that reintroduced polling would balloon
+	// this toward the 5s internal deadline, not creep up by tens of ms. The
+	// bound is a generous hang-guard against that class of bug, not a
+	// precision check — under host load a scheduling delay on a trivial map
+	// iteration could plausibly exceed a tight window (was 200ms; #2000).
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Errorf("shutdown took %v, expected near-instant when all idle", elapsed)
 	}
 }
@@ -50,10 +57,16 @@ func TestGracefulShutdown_WaitsForProcessing(t *testing.T) {
 	gracefulShutdown(agents, 5*time.Second)
 	elapsed := time.Since(start)
 
+	// The lower bound is safe under load: time.Sleep(300ms) never returns
+	// early, so elapsed can only grow, not shrink, below the nominal delay.
+	// The upper bound used to be 2s (6.6x nominal); widened to comfortably
+	// clear scheduling jitter on both the background clearer and
+	// gracefulShutdown's 100ms poll tick, while staying well under the 5s
+	// internal deadline passed to gracefulShutdown (#2000).
 	if elapsed < 250*time.Millisecond {
 		t.Errorf("shutdown returned too early (%v), should wait for processing", elapsed)
 	}
-	if elapsed > 2*time.Second {
+	if elapsed > 4*time.Second {
 		t.Errorf("shutdown took too long (%v), should complete soon after agent finishes", elapsed)
 	}
 }
@@ -71,7 +84,12 @@ func TestGracefulShutdown_TimesOut(t *testing.T) {
 	gracefulShutdown(agents, 500*time.Millisecond)
 	elapsed := time.Since(start)
 
-	if elapsed < 400*time.Millisecond || elapsed > 2*time.Second {
+	// Lower bound is safe under load (time.After(500ms) cannot fire early).
+	// Upper bound guards "did it respect the configured timeout" rather than
+	// exact precision — widened from 2s (4x nominal) to clear scheduling
+	// jitter on the poll loop while still failing fast if the timeout were
+	// ignored entirely (#2000).
+	if elapsed < 400*time.Millisecond || elapsed > 5*time.Second {
 		t.Errorf("shutdown took %v, expected ~500ms timeout", elapsed)
 	}
 

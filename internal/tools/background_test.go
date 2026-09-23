@@ -59,17 +59,22 @@ func TestRunInBackgroundThresholdExceeded(t *testing.T) {
 		close(signal)
 	}()
 
+	// RunInBackground races Done against a threshold timer in a select
+	// (background.go); a 200ms-vs-1s margin is the same shape that flaked
+	// under full-suite load in #1975 (shell auto-background tests) — widen
+	// the threshold so the outcome is deterministic regardless of
+	// scheduling delay.
 	result, err := RunInBackground(context.Background(), BackgroundParams{
 		SessionKey:    "test-threshold",
 		Notifier:      notifier,
-		ThresholdSecs: 1, // 1s threshold but we use a short sleep above
+		ThresholdSecs: 5, // work finishes in 200ms, well under threshold
 		Done:          signal,
 		SyncResult:    func() (ToolResult, error) { return TextResult("sync"), nil },
 		NotifyMessage: func() string { return "[TEST] async result" },
 		PendingResult: TextResult("pending"),
 	})
 
-	// Threshold is 1s but work finishes in 200ms — should complete sync.
+	// Threshold is 5s but work finishes in 200ms — should complete sync.
 	// Let's use a different test for threshold exceeded.
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

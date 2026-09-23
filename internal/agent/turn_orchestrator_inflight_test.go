@@ -280,8 +280,12 @@ func TestOrchestrator_BranchTurnKeysInFlightAndCacheByBranchOnly(t *testing.T) {
 	seedCacheTestRow(idx, orchestratorTestKey)
 	seedCacheTestRow(idx, orchestratorTestBranchKey)
 
-	const delay = 100 * time.Millisecond
-	tc := &asyncStubContract{completionDelay: delay}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	tc := &asyncStubContract{
+		onRunInference: func() { close(started) },
+		gate:           release,
+	}
 	ts := NewTurnState(context.Background(), orchestratorTestBranchKey, []string{"hi"}, nil)
 
 	resultErr := make(chan error, 1)
@@ -290,14 +294,24 @@ func TestOrchestrator_BranchTurnKeysInFlightAndCacheByBranchOnly(t *testing.T) {
 		resultErr <- err
 	}()
 
-	// Sample mid-turn: in-flight must be lit for the branch key only.
-	time.Sleep(40 * time.Millisecond)
+	// Wait for RunInference to be entered — markInFlight (Phase 1) has already
+	// run by then, so the in-flight counter is deterministically set. No
+	// sleep-and-sample: the stub is held open on `release` until we say so.
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunInference was not entered within 5s")
+	}
+
+	// In-flight must be lit for the branch key only.
 	if !a.IsTurnInFlight(orchestratorTestBranchKey) {
 		t.Errorf("mid-turn: IsTurnInFlight(%s) = false, want true", orchestratorTestBranchKey)
 	}
 	if a.IsTurnInFlight(orchestratorTestKey) {
 		t.Errorf("mid-turn: IsTurnInFlight(%s) = true, want false — branch must not couple to root", orchestratorTestKey)
 	}
+
+	close(release)
 
 	select {
 	case err := <-resultErr:

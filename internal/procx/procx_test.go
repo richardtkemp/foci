@@ -10,7 +10,6 @@ import (
 	"strings"
 	"syscall"
 	"testing"
-	"time"
 )
 
 // TestCredentialSetupError proves the fail-closed decision: a process that
@@ -146,6 +145,15 @@ func writeExecutable(t *testing.T) string {
 // deterministically: an open O_WRONLY fd to the target makes exec fail with
 // ETXTBSY, and the fd is released inside the retry budget so a later attempt
 // lands once the file is free.
+//
+// The fd close is causally ordered on the retry loop's own clock, not a
+// wall-clock guess: build (called fresh on every attempt, see
+// runWithETXTBSYRetry) closes the fd on its second invocation, i.e. right
+// before the attempt that must observe the file free — after the first
+// attempt has already failed with ETXTBSY but before that attempt's Run()
+// executes. Previously a goroutine slept 4ms hoping to beat the retry loop's
+// 10ms budget (ETXTBSYRetries*ETXTBSYBackoff); under heavy host load that
+// 6ms margin could vanish (#1703).
 func TestRunWithETXTBSYRetry_Recovers(t *testing.T) {
 	t.Parallel()
 	prog := writeExecutable(t)
@@ -154,15 +162,22 @@ func TestRunWithETXTBSYRetry_Recovers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open for write: %v", err)
 	}
-	go func() {
-		time.Sleep(4 * time.Millisecond) // < ETXTBSYRetries*ETXTBSYBackoff (10ms)
-		_ = wf.Close()
-	}()
+	defer func() { _ = wf.Close() }() // no-op if already closed below
+
+	attempt := 0
+	build := func() *exec.Cmd {
+		attempt++
+		if attempt == 2 {
+			// Release the fd right before the retry attempt that needs it
+			// free — Spawn below only constructs the *exec.Cmd, it does not
+			// start it, so this happens strictly before that attempt execs.
+			_ = wf.Close()
+		}
+		return Spawn(context.Background(), Trusted, prog)
+	}
 
 	ctx := context.Background()
-	if err := runWithETXTBSYRetry(ctx, ETXTBSYRetries, ETXTBSYBackoff, func() *exec.Cmd {
-		return Spawn(ctx, Trusted, prog)
-	}); err != nil {
+	if err := runWithETXTBSYRetry(ctx, ETXTBSYRetries, ETXTBSYBackoff, build); err != nil {
 		t.Fatalf("expected retry to recover past ETXTBSY, got: %v", err)
 	}
 }

@@ -87,11 +87,19 @@ func TestSendControl_SetModel_Rejected(t *testing.T) {
 }
 
 // waitForPendingControl polls until exactly one pendingControls entry is
-// registered (the in-flight set_model request) and returns its request_id.
+// registered (the in-flight control request — set_model, get_context_usage,
+// ...) and returns its request_id.
+//
+// Polls with a generous deadline (not a fixed sleep-then-sample) since the
+// registering goroutine's scheduling isn't otherwise observable from here;
+// the deadline is a hang-guard floor of seconds, not a tight multiple of the
+// 1ms poll interval — a heavily loaded host can starve that goroutine for
+// longer than a few tens of ms without anything actually being stuck.
 func waitForPendingControl(t *testing.T, b *Backend) string {
 	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
 	var reqID string
-	for i := 0; i < 100; i++ {
+	for time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 		b.pendingControlMu.Lock()
 		for k := range b.pendingControls {
@@ -102,7 +110,7 @@ func waitForPendingControl(t *testing.T, b *Backend) string {
 			return reqID
 		}
 	}
-	t.Fatal("set_model didn't register a pending control request")
+	t.Fatal("no control request registered a pendingControls entry in time")
 	return ""
 }
 

@@ -3530,22 +3530,11 @@ func TestGetContextWindow(t *testing.T) {
 		resCh <- result{w, err}
 	}()
 
-	// Wait for the pending control to be registered.
-	var reqID string
-	for i := 0; i < 100; i++ {
-		time.Sleep(time.Millisecond)
-		b.pendingControlMu.Lock()
-		for k := range b.pendingControls {
-			reqID = k
-		}
-		b.pendingControlMu.Unlock()
-		if reqID != "" {
-			break
-		}
-	}
-	if reqID == "" {
-		t.Fatal("GetContextWindow didn't register a pending control request")
-	}
+	// Wait for the pending control to be registered. waitForPendingControl
+	// (control_test.go) polls with a seconds-floor deadline rather than a
+	// tight fixed count of 1ms ticks, so a loaded host that delays the
+	// GetContextWindow goroutine's scheduling doesn't spuriously fail this.
+	reqID := waitForPendingControl(t, b)
 
 	// Simulate CC returning the response via OnControlResponse.
 	resp := fmt.Sprintf(`{"type":"control_response","response":{"subtype":"success","request_id":"%s","response":{"totalTokens":50000,"maxTokens":200000,"percentage":25,"autoCompactThreshold":160000,"model":"claude-sonnet-4-6","categories":[{"name":"System prompt","tokens":12000},{"name":"Messages","tokens":38000}]}}}`, reqID)

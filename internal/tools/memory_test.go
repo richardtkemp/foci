@@ -14,6 +14,33 @@ import (
 	"foci/internal/sqlite"
 )
 
+// pollMemorySearch repeatedly executes tool with params until the result
+// text contains want, or a generous deadline elapses, then returns the last
+// result seen. bleve's scorch backend introduces a newly indexed doc into
+// the searchable snapshot asynchronously (IndexConversation returns before
+// that introduction completes), so sampling once after a fixed sleep races
+// the introducer goroutine under host load. Poll the actual searchable
+// state — the event itself — instead.
+func pollMemorySearch(t *testing.T, tool *Tool, params json.RawMessage, want string) ToolResult {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	var last ToolResult
+	for {
+		result, err := tool.Execute(context.Background(), params)
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		last = result
+		if strings.Contains(result.Text, want) {
+			return last
+		}
+		if time.Now().After(deadline) {
+			return last
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func testMemoryTool(t *testing.T) (*Tool, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -468,19 +495,13 @@ func TestMemorySearchBleveRowID(t *testing.T) {
 	defer bleveIdx.Close()
 
 	bleveIdx.IndexConversation("The platypus is an unusual creature", "agent/c100", 42)
-	// Allow bleve to process
-	time.Sleep(50 * time.Millisecond)
 
 	backends := map[string]memory.Searcher{"bleve": bleveIdx}
 	tool := NewMemorySearchTool(backends, func() string { return "bleve" }, nil)
 	params, _ := json.Marshal(map[string]string{"query": "platypus"})
 
-	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-
 	// Should include session#rowID in the output
+	result := pollMemorySearch(t, tool, params, "agent/c100#42")
 	if !strings.Contains(result.Text, "agent/c100#42") {
 		t.Errorf("expected session#rowID in result, got: %q", result.Text)
 	}
@@ -607,7 +628,6 @@ func TestMemorySearchLinesParam(t *testing.T) {
 	for i, msg := range messages {
 		bleveIdx.IndexConversation(msg, session, int64(i+1))
 	}
-	time.Sleep(50 * time.Millisecond)
 
 	backends := map[string]memory.Searcher{"bleve": bleveIdx}
 	tool := NewMemorySearchTool(backends, func() string { return "bleve" }, convReader)
@@ -617,10 +637,7 @@ func TestMemorySearchLinesParam(t *testing.T) {
 		"query": "forecast",
 		"lines": 4,
 	})
-	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
+	result := pollMemorySearch(t, tool, params, "»")
 
 	// Should have the search result line
 	if !strings.Contains(result.Text, "[conversation") {
