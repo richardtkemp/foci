@@ -56,7 +56,7 @@ web_fetch_max_bytes = 2097152
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -116,7 +116,7 @@ id = "test"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -187,7 +187,7 @@ id = "bare"
 id = "override"
 `), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -343,7 +343,7 @@ workspace = "/ws/clutch"
 `
 		os.WriteFile(path, []byte(toml), 0644)
 
-		cfg, err := Load(path)
+		cfg, err := Load(path, nil)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -382,7 +382,7 @@ weight = 0.8
 `
 		os.WriteFile(path, []byte(toml), 0644)
 
-		cfg, err := Load(path)
+		cfg, err := Load(path, nil)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -412,7 +412,7 @@ workspace = "/ws/clutch"
 `
 		os.WriteFile(path, []byte(toml), 0644)
 
-		cfg, err := Load(path)
+		cfg, err := Load(path, nil)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -440,7 +440,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 id = "test"
 `), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -467,7 +467,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 id = "test"
 `), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

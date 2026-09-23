@@ -384,7 +384,7 @@ model = "sonnet"
 		t.Errorf("leaf key/value not found:\n%s", result)
 	}
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v\n%s", err, result)
 	}
@@ -425,7 +425,7 @@ existing-site = "fast"
 		t.Errorf("wrote an inline dotted key instead of reusing the existing table:\n%s", result)
 	}
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v\n%s", err, result)
 	}
@@ -461,7 +461,7 @@ existing-site = "fast"
 		t.Fatalf("SetInFile: %v", err)
 	}
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		data, _ := os.ReadFile(path)
 		t.Fatalf("Load: %v\n%s", err, data)
@@ -610,7 +610,7 @@ port = 8080
 		t.Fatalf("SetInFile: %v", err)
 	}
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load after set: %v", err)
 	}
@@ -635,7 +635,7 @@ func setDirectRoundTrip(t *testing.T, path, settPath, rawValue string) *Config {
 	if _, err := SetInFile(path, SetTarget{Section: field.Section, Key: field.Key}, formatted, 0640); err != nil {
 		t.Fatalf("SetInFile: %v", err)
 	}
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		data, _ := os.ReadFile(path)
 		t.Fatalf("Load after set: %v\n--- resulting file ---\n%s", err, data)
@@ -834,7 +834,7 @@ workspace = "`+filepath.Join(dir, "beta")+`"
 		if _, err := SetInFile(path, SetTarget{Section: "agents", AgentID: agentID, Key: field.Key}, formatted, 0640); err != nil {
 			t.Fatalf("SetInFile: %v", err)
 		}
-		cfg, err := Load(path)
+		cfg, err := Load(path, nil)
 		if err != nil {
 			data, _ := os.ReadFile(path)
 			t.Fatalf("Load: %v\n--- resulting file ---\n%s", err, data)
@@ -908,7 +908,7 @@ webhooks = { deploy = "deploy.md" }
 		t.Fatalf("SetInFile itself should still succeed (it's a pure text edit): %v", err)
 	}
 
-	if _, err := Load(path); err == nil {
+	if _, err := Load(path, nil); err == nil {
 		data, _ := os.ReadFile(path)
 		t.Fatalf("Load unexpectedly succeeded on a file with both inline and expanded [system.webhooks] — silent corruption risk:\n%s", data)
 	}

@@ -88,7 +88,7 @@ allowed_users = ["111"]
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -206,7 +206,7 @@ id = "scout"
 name = "Scout Override"
 `), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -243,7 +243,7 @@ dir = "/custom/memory"
 weight = 0.5
 `), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -284,7 +284,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 id = "test"
 `), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -311,7 +311,7 @@ nudge_default_braindead_threshold = 5
 nudge_default_braindead_prompt = "custom warning"
 `), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -347,7 +347,7 @@ nudge_default_braindead_threshold = 5
 nudge_default_braindead_prompt = "agent prompt"
 `), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -387,7 +387,7 @@ nudge_default_braindead_threshold = 0
 id = "test"
 `), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -419,7 +419,7 @@ nudge_default_braindead_threshold = 0
 id = "inherits"
 `), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -459,7 +459,7 @@ max_system_prompt_chars_file = 24000
 id = "plain"
 `), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

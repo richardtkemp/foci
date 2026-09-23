@@ -95,7 +95,7 @@ id = "test"
 				t.Fatalf("WriteFile: %v", err)
 			}
 
-			cfg, err := Load(path)
+			cfg, err := Load(path, nil)
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}

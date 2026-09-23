@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/secrets"
 	"foci/internal/session"
 
@@ -113,7 +114,7 @@ func cmdDebugSession(args []string, configPath string) error {
 	}
 
 	// Load config for paths
-	cfg, err := config.Load(configPath)
+	cfg, err := config.Load(configPath, delegator.RegisteredNames())
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
@@ -452,7 +453,7 @@ func cmdDebugAt(args []string, configPath string) error {
 		return err
 	}
 
-	cfg, err := config.Load(configPath)
+	cfg, err := config.Load(configPath, delegator.RegisteredNames())
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
@@ -674,7 +675,7 @@ func cmdDebugRebuildIndex(configPath string) error {
 		home, _ := os.UserHomeDir()
 		configPath = filepath.Join(home, "config", "foci.toml")
 	}
-	cfg, err := config.Load(configPath)
+	cfg, err := config.Load(configPath, delegator.RegisteredNames())
 	if err != nil {
 		return fmt.Errorf("load config %s: %w", configPath, err)
 	}

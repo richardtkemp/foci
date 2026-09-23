@@ -45,7 +45,7 @@ api_file = "/tmp/api.jsonl"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -100,7 +100,7 @@ id = "test"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -153,7 +153,7 @@ timeout = 30
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -186,7 +186,7 @@ workspace = "/tmp/workspace"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -235,7 +235,7 @@ allowed_users = ["111"]
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -337,7 +337,7 @@ foo = "bar"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -351,7 +351,7 @@ foo = "bar"
 
 func TestLoadMissingFile(t *testing.T) {
 	// Proves that Load returns an error when the config file does not exist.
-	_, err := Load("/nonexistent/path/foci.toml")
+	_, err := Load("/nonexistent/path/foci.toml", nil)
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
@@ -364,7 +364,7 @@ func TestLoadInvalidTOML(t *testing.T) {
 	path := filepath.Join(dir, "bad.toml")
 	os.WriteFile(path, []byte("this is not valid toml [[["), 0644)
 
-	_, err := Load(path)
+	_, err := Load(path, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid TOML")
 	}
@@ -399,7 +399,7 @@ allowed_users = ["789"]
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -452,7 +452,7 @@ stream_output = false
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -561,7 +561,7 @@ id = "beta"
 workspace = "`+filepath.Join(dir, "beta")+`"
 `), 0o644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

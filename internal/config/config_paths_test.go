@@ -97,7 +97,7 @@ id = "test"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -128,7 +128,7 @@ branch_orientation_facet_prompt = "/home/foci/shared/prompts/branch-orientation-
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -151,7 +151,7 @@ id = "test"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -178,7 +178,7 @@ id = "test"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -233,7 +233,7 @@ dir = "/var/sessions"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/modelinfo"
 )
@@ -79,7 +80,7 @@ func (la *liveApply) Apply(section, key string) (bool, error) {
 	if fn == nil {
 		return false, nil
 	}
-	fresh, err := config.Load(la.configPath)
+	fresh, err := config.Load(la.configPath, delegator.RegisteredNames())
 	if err != nil {
 		return true, fmt.Errorf("live apply %s.%s: reload config: %w", section, key, err)
 	}

@@ -23,7 +23,7 @@ id = "test"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -54,7 +54,7 @@ startup_notify = false
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -85,7 +85,7 @@ id = "test"
 `
 		os.WriteFile(path, []byte(toml), 0644)
 
-		cfg, err := Load(path)
+		cfg, err := Load(path, nil)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -108,7 +108,7 @@ startup_notify = true
 `
 		os.WriteFile(path, []byte(toml), 0644)
 
-		cfg, err := Load(path)
+		cfg, err := Load(path, nil)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -131,7 +131,7 @@ startup_notify = false
 `
 		os.WriteFile(path, []byte(toml), 0644)
 
-		cfg, err := Load(path)
+		cfg, err := Load(path, nil)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -204,7 +204,7 @@ show_tool_calls = "full"
 [[agents]]
 id = "b"
 `), 0644)
-		cfg, err := Load(path)
+		cfg, err := Load(path, nil)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -233,7 +233,7 @@ id = "telegram"
 [platforms.display]
 show_tool_calls = "full"
 `), 0644)
-		cfg, err := Load(path)
+		cfg, err := Load(path, nil)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -251,7 +251,7 @@ show_tool_calls = "full"
 [groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 `), 0644)
-		cfg, err := Load(path)
+		cfg, err := Load(path, nil)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -320,7 +320,7 @@ enabled = "true"
 [logging]
 log_rotation = "false"
 `), 0644)
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -362,7 +362,7 @@ allowed_users = ["111"]
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -402,7 +402,7 @@ facet_bots = ["spare1", "spare2"]
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -438,7 +438,7 @@ id = "test"
 compaction_preserve_messages = 10
 `), 0644)
 
-		cfg, err := Load(path)
+		cfg, err := Load(path, nil)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -459,7 +459,7 @@ id = "test"
 compaction_preserve_messages = 0
 `), 0644)
 
-		cfg, err := Load(path)
+		cfg, err := Load(path, nil)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -486,7 +486,7 @@ compaction_preserve_messages = 5
 id = "b"
 `), 0644)
 
-		cfg, err := Load(path)
+		cfg, err := Load(path, nil)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -513,7 +513,7 @@ id = "test"
 compaction_preserve_messages = -1
 `), 0644)
 
-		_, err := Load(path)
+		_, err := Load(path, nil)
 		if err == nil {
 			t.Fatal("expected error for negative value")
 		}
@@ -536,7 +536,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 id = "test"
 `), 0644)
 
-		cfg, err := Load(path)
+		cfg, err := Load(path, nil)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -557,7 +557,7 @@ id = "test"
 messages_in_log = true
 `), 0644)
 
-		cfg, err := Load(path)
+		cfg, err := Load(path, nil)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -584,7 +584,7 @@ messages_in_log = true
 id = "b"
 `), 0644)
 
-		cfg, err := Load(path)
+		cfg, err := Load(path, nil)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -619,7 +619,7 @@ log_api_key_suffix = true
 [notify]
 compaction_debug = true
 `), 0644)
-		cfg, err := Load(filepath.Join(dir, "foci.toml"))
+		cfg, err := Load(filepath.Join(dir, "foci.toml"), nil)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -641,7 +641,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 [[agents]]
 id = "a"
 `), 0644)
-		cfg, err := Load(filepath.Join(dir, "foci.toml"))
+		cfg, err := Load(filepath.Join(dir, "foci.toml"), nil)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -668,7 +668,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 id = "test"
 `), 0644)
 
-		cfg, err := Load(path)
+		cfg, err := Load(path, nil)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -690,7 +690,7 @@ id = "test"
 facet_no_compact = true
 `), 0644)
 
-		cfg, err := Load(path)
+		cfg, err := Load(path, nil)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -712,7 +712,7 @@ id = "test"
 facet_no_compact = false
 `), 0644)
 
-		cfg, err := Load(path)
+		cfg, err := Load(path, nil)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}

@@ -209,7 +209,7 @@ DiagnoseRestart(sessionIndex, startTime, logsDir)
 
 ```
 main
- ├── config        → display, modelinfo
+ ├── config        → display, execguard, log, modelinfo, provider
  ├── sqlite        → modernc.org/sqlite (shared Open, AgentPath, MigrateFile utilities)
  ├── log           → sqlite, modelinfo, timeutil (the first two only for API-call usage logging; conversation storage was extracted to convo)
  ├── convo         → log, sqlite, timeutil (per-agent conversation SQLite store + memory-index Hook; extracted from log so log stays lean)
@@ -256,7 +256,7 @@ main
  ├── messages      → provider (shared message-inspection utilities: HasToolUse, ToolUseIDs)
  ├── timeutil      (no deps — centralised timestamp formatting with configurable timezone)
  ├── relogin       → log, procx (automated CC re-login on 401 — see Backend Session Lifecycle)
- ├── delegator     (no deps — Delegator interface, registry, StartOptions, SessionEvents/TurnEvents)
+ ├── delegator     → log, modelinfo (Delegator interface, registry, StartOptions, SessionEvents/TurnEvents)
   │   ├── delegator/autoapprove → (shared by ccstream/codex/opencode — auto-approve rule compilation/matching)
   │   ├── delegator/cctmux     → delegator, log, modelinfo, procx, fsnotify (tmux-based Claude Code; registers "claude-code-tmux" via init())
   │   ├── delegator/ccstream   → delegator, delegator/autoapprove, log, modelinfo, procx, question, ratelimit, tempdir, timeutil (stream-json Claude Code; registers "claude-code" via init())

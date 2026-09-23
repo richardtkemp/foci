@@ -26,6 +26,7 @@ import (
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/defersend"
+	"foci/internal/delegator"
 	"foci/internal/display"
 	"foci/internal/execguard"
 	"foci/internal/log"
@@ -126,7 +127,7 @@ Subcommands:
 		modelinfoLog.Warnf("no exact price for %q — inheriting its family's rates; verify against the pricing page and add a models.jsonl row", model)
 	}
 
-	cfg, err := config.Load(configPath)
+	cfg, err := config.Load(configPath, delegator.RegisteredNames())
 	if err != nil {
 		log.Fatalf("main", "load config: %v", err)
 	}

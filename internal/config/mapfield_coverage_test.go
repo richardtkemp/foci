@@ -91,7 +91,7 @@ func TestMapFieldSections_RoundTripCoverage(t *testing.T) {
 			if _, err := SetInFile(path, SetTarget{Section: field.Section, Key: field.Key}, formatted, 0640); err != nil {
 				t.Fatalf("SetInFile: %v", err)
 			}
-			cfg, err := Load(path)
+			cfg, err := Load(path, nil)
 			if err != nil {
 				data, _ := os.ReadFile(path)
 				t.Fatalf("Load: %v\n--- resulting file ---\n%s", err, data)
@@ -121,7 +121,7 @@ func TestMapFieldSections_RoundTripCoverage(t *testing.T) {
 			if _, err := SetInFile(path, SetTarget{Section: "agents", AgentID: "a", Key: field.Key}, formatted, 0640); err != nil {
 				t.Fatalf("SetInFile: %v", err)
 			}
-			cfg, err := Load(path)
+			cfg, err := Load(path, nil)
 			if err != nil {
 				data, _ := os.ReadFile(path)
 				t.Fatalf("Load: %v\n--- resulting file ---\n%s", err, data)

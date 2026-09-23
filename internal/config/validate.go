@@ -5,8 +5,6 @@ import (
 	"net/url"
 	"strings"
 	"time"
-
-	"foci/internal/delegator"
 )
 
 // validate checks semantic validity of config values after parsing and defaults.
@@ -183,7 +181,11 @@ func (cfg *Config) HasAPIAgent() bool {
 	return false
 }
 
-func (cfg *Config) Validate() error {
+// Validate checks semantic validity of the config, using knownBackends (the
+// registered delegated-backend names, e.g. from delegator.RegisteredNames())
+// to validate each agent's backend value — see validateAgentBackends and
+// Load's doc comment.
+func (cfg *Config) Validate(knownBackends []string) error {
 	// Validate agent IDs don't collide with reserved directory names
 	for _, a := range cfg.Agents {
 		if a.ID == "" {
@@ -198,7 +200,7 @@ func (cfg *Config) Validate() error {
 	}
 
 	// Validate each agent's delegated backend name is real (#947).
-	if err := validateAgentBackends(cfg.Agents, delegator.RegisteredNames()); err != nil {
+	if err := validateAgentBackends(cfg.Agents, knownBackends); err != nil {
 		return err
 	}
 

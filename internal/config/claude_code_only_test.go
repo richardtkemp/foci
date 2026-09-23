@@ -36,7 +36,7 @@ func loadClaudeCodeOnly(t *testing.T) *Config {
 	if err := os.WriteFile(path, []byte(claudeCodeOnlyTOML), 0644); err != nil {
 		t.Fatalf("write temp config: %v", err)
 	}
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load() of a claude-code-only config failed (it should validate cleanly with no groups): %v", err)
 	}

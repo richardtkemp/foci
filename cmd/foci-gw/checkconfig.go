@@ -30,12 +30,13 @@ import (
 	"os"
 
 	"foci/internal/config"
+	"foci/internal/delegator"
 )
 
 // runConfigCheck loads the config at path and returns the process exit code.
 // It performs no side effects beyond reading the file and printing a verdict.
 func runConfigCheck(path string) int {
-	cfg, err := config.Load(path)
+	cfg, err := config.Load(path, delegator.RegisteredNames())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config check FAILED: %v\n", err)
 		return 1

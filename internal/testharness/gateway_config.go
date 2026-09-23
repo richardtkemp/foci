@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"foci/internal/config"
+	"foci/internal/delegator"
 )
 
 // testConfigOpts collects parameters for writing a synthetic foci.toml
@@ -301,7 +302,7 @@ model = "stub"
 // evaluates once the config parses successfully.
 func verifyGeneratedLogPaths(t *testing.T, configPath string) {
 	t.Helper()
-	cfg, err := config.Load(configPath)
+	cfg, err := config.Load(configPath, delegator.RegisteredNames())
 	if err != nil {
 		return
 	}

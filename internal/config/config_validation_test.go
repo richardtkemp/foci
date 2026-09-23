@@ -38,7 +38,7 @@ func TestValidateCompactionThreshold(t *testing.T) {
 			path := filepath.Join(dir, "foci.toml")
 			os.WriteFile(path, []byte(tt.toml), 0644)
 
-			_, err := Load(path)
+			_, err := Load(path, nil)
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -86,7 +86,7 @@ func TestValidateHTTPPort(t *testing.T) {
 			path := filepath.Join(dir, "foci.toml")
 			os.WriteFile(path, []byte(tt.toml), 0644)
 
-			_, err := Load(path)
+			_, err := Load(path, nil)
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -110,7 +110,7 @@ func TestValidateLoggingLevel(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte("[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[logging]\nlevel = \"BOGUS\""), 0644)
 
-	_, err := Load(path)
+	_, err := Load(path, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid logging level")
 	}
@@ -137,7 +137,7 @@ cache_strategy = "invalid"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	_, err := Load(path)
+	_, err := Load(path, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid cache strategy")
 	}
@@ -228,7 +228,7 @@ model = "openrouter/deepseek/deepseek-v4-pro"
 `, tc.provider)
 			os.WriteFile(path, []byte(toml), 0644)
 
-			_, err := Load(path)
+			_, err := Load(path, nil)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatal("expected validation error")
@@ -261,7 +261,7 @@ model = "anthropic/claude-haiku-4-5-20251001"
 cache_ttl = %q
 `, ttl)
 		os.WriteFile(path, []byte(toml), 0644)
-		cfg, err := Load(path)
+		cfg, err := Load(path, nil)
 		if err != nil {
 			t.Errorf("cache_ttl=%q: unexpected error: %v", ttl, err)
 		}
@@ -278,7 +278,7 @@ func TestValidateWarningWindowDuration(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte("[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[logging]\nwarning_window_duration = \"bogus\""), 0644)
 
-	_, err := Load(path)
+	_, err := Load(path, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid warning_window_duration")
 	}
@@ -306,7 +306,7 @@ weight = 2.0
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	_, err := Load(path)
+	_, err := Load(path, nil)
 	if err == nil {
 		t.Fatal("expected error for weight > 1.0")
 	}
@@ -329,7 +329,7 @@ id = "test"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -356,7 +356,7 @@ conversation_weight = 0.25
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
-	cfg, err := Load(path)
+	cfg, err := Load(path, nil)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -396,7 +396,7 @@ func TestValidateMemoryConversationWeight(t *testing.T) {
 			path := filepath.Join(dir, "foci.toml")
 			os.WriteFile(path, []byte(tt.toml), 0644)
 
-			_, err := Load(path)
+			_, err := Load(path, nil)
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -486,7 +486,7 @@ tmux_command_timeout = "invalid"
 			path := filepath.Join(dir, "foci.toml")
 			os.WriteFile(path, []byte(tt.toml), 0644)
 
-			_, err := Load(path)
+			_, err := Load(path, nil)
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -513,7 +513,7 @@ func TestValidateReservedAgentIDs(t *testing.T) {
 			path := filepath.Join(dir, "foci.toml")
 			os.WriteFile(path, []byte(fmt.Sprintf("[[agents]]\nid = %q", id)), 0644)
 
-			_, err := Load(path)
+			_, err := Load(path, nil)
 			if err == nil {
 				t.Fatalf("expected error for reserved agent id %q", id)
 			}
@@ -530,7 +530,7 @@ func TestValidateReservedAgentIDs(t *testing.T) {
 			path := filepath.Join(dir, "foci.toml")
 			os.WriteFile(path, []byte(fmt.Sprintf("[[agents]]\nid = %q", id)), 0644)
 
-			_, err := Load(path)
+			_, err := Load(path, nil)
 			if err == nil {
 				t.Fatalf("expected error for dot-prefixed agent id %q", id)
 			}
@@ -547,7 +547,7 @@ func TestValidateReservedAgentIDs(t *testing.T) {
 			path := filepath.Join(dir, "foci.toml")
 			os.WriteFile(path, []byte(fmt.Sprintf("[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = %q", id)), 0644)
 
-			_, err := Load(path)
+			_, err := Load(path, nil)
 			if err != nil {
 				t.Fatalf("unexpected error for valid agent id %q: %v", id, err)
 			}
@@ -641,7 +641,7 @@ func TestValidateMasterAgent(t *testing.T) {
 			path := filepath.Join(dir, "foci.toml")
 			os.WriteFile(path, []byte(tt.toml), 0644)
 
-			_, err := Load(path)
+			_, err := Load(path, nil)
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -688,7 +688,7 @@ func TestValidateDefaultPlatform(t *testing.T) {
 			path := filepath.Join(dir, "foci.toml")
 			os.WriteFile(path, []byte(tt.toml), 0644)
 
-			_, err := Load(path)
+			_, err := Load(path, nil)
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -733,7 +733,7 @@ func TestValidateRateLimitNotifyTo(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tt.toml), 0644); err != nil {
 				t.Fatal(err)
 			}
-			_, err := Load(path)
+			_, err := Load(path, nil)
 			switch {
 			case tt.wantErr == "" && err != nil:
 				t.Fatalf("unexpected error: %v", err)

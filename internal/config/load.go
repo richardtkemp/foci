@@ -130,7 +130,16 @@ func ApplyProviderDefaults(cfg *Config, getDefaults PlatformDefaulter) {
 }
 
 // Load reads config from the given TOML file path.
-func Load(path string) (*Config, error) {
+//
+// knownBackends is the set of registered delegated-backend names (e.g.
+// "claude-code", "codex"), used to validate each agent's backend value.
+// Callers pass delegator.RegisteredNames(); config itself does not import
+// internal/delegator so the base config package stays free of the backend
+// layer. An empty/nil knownBackends means "registry not populated" (e.g. a
+// config-only test binary that never imported the backend packages) and
+// skips backend-name validation rather than rejecting every backend — see
+// validateAgentBackends.
+func Load(path string, knownBackends []string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config %s: %w", path, err)
@@ -321,7 +330,7 @@ func Load(path string) (*Config, error) {
 	// is about to be replaced is what #1900 was. cmd/foci-gw/main.go calls it
 	// immediately after shellenv.Apply() instead.
 
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.Validate(knownBackends); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
