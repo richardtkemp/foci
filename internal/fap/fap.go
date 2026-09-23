@@ -62,6 +62,21 @@ const (
 	// and open-set sync to all devices; focus stays device-local, so this is
 	// sent only to the requesting socket.
 	TypeConversationForeground = "conversation.foreground"
+	// TypeConversationAck (server->app) is the "bare ack frame" §3 of the wire
+	// protocol always said MAY be sent "if there's nothing else to say" — until
+	// #1988, nothing ever sent one. Acks normally piggyback on the next
+	// server->app frame for a conversation (convBinding.send stamps the
+	// client's own inbound high-water as that frame's envelope `ack`), which
+	// silently assumed every accepted inbound frame is eventually followed by
+	// SOME outbound frame. A conversation can go quiet right after an inbound
+	// frame (e.g. an archive: the server sends no more frames for an archived
+	// conversation), stranding that ack forever — the client's durable outbox
+	// entry then resends on every reconnect. This frame is the fallback: sent
+	// directly to the originating client after dispatchInbound has processed
+	// ANY conversation-scoped inbound frame (a new frame after its handler
+	// runs; a recognized dup at once), so the client always learns its frame
+	// landed.
+	TypeConversationAck = "conversation.ack"
 
 	// app -> server
 	TypeCommand                = "command"
@@ -690,6 +705,21 @@ type ToolInvoke struct {
 }
 
 func (ToolInvoke) Type() string { return TypeToolInvoke }
+
+// ConversationAck is a payload-only-carries-the-conversationId frame whose
+// entire purpose is to be a vehicle for the envelope `ack` field (see
+// TypeConversationAck's doc). It carries no content of its own — the client
+// applies the piggybacked ack the same way it does for any other frame, then
+// otherwise ignores this type (forward-compat: an older client that doesn't
+// recognize it still decodes the envelope and applies the ack from the raw
+// JSON's conversationId, exactly like any other unknown frame — but it also
+// raises the client's one-per-type "unknown frame" warning, so ship the
+// client that knows this type before the server that sends it).
+type ConversationAck struct {
+	ConversationID string `json:"conversationId"`
+}
+
+func (ConversationAck) Type() string { return TypeConversationAck }
 
 // --- App -> Server frame payloads (mirror Kotlin ClientFrame) ---
 

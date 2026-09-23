@@ -1588,6 +1588,63 @@ func TestReliability_OutboundAckStampsClientSeq(t *testing.T) {
 	}
 }
 
+// TestReliability_SendAckDeliversExplicitAck proves convBinding.sendAck
+// (#1988) emits a conversation.ack frame carrying this client's own inbound
+// high-water, and sends nothing when that high-water is still zero (the
+// client hasn't sent anything for this conversation yet, so there is nothing
+// to ack).
+func TestReliability_SendAckDeliversExplicitAck(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}, seen: make(map[string]struct{})}
+
+	b.sendAck(c) // nothing accepted yet: must send nothing
+	if ds := drainEnv(t, c); len(ds) != 0 {
+		t.Fatalf("sendAck with zero high-water sent %v, want nothing", ds)
+	}
+
+	b.acceptInbound(c, "u1", 5) // this client's inbound seq high-water is 5
+	b.sendAck(c)
+	ds := drainEnv(t, c)
+	if len(ds) != 1 || ds[0].t != fap.TypeConversationAck || ds[0].ack != 5 {
+		t.Fatalf("sendAck = %v, want one conversation.ack frame with ack=5", ds)
+	}
+}
+
+// TestReliability_QuietConversationEventuallyAcked is the #1988 regression: a
+// client frame on a conversation that then goes QUIET (nothing else is ever
+// sent to that client for it — the exact archive shape from the ticket) must
+// still eventually be acked, or the client's durable outbox entry is resent
+// forever. Before the fix, acks only piggybacked on a LATER server->app frame
+// for the same conversation; an archive triggers only a roster broadcast
+// (fap.HelloServer via sendRaw, seq=0/ack=0 always — never conversation-
+// scoped), so nothing ever carried the archive's own ack. This goes red on
+// the pre-fix code: dispatchInbound sends the roster hello (ack=0) but
+// nothing with ack=1.
+func TestReliability_QuietConversationEventuallyAcked(t *testing.T) {
+	h := newTestHub()
+	c := fakeClient()
+	c.hub = h
+	h.clients[c] = struct{}{} // registered live socket, as ServeWS does before readPump
+	h.ensureBinding(c, "ag", "conv-1")
+	drainEnv(t, c) // discard nothing (no frames sent on binding creation)
+
+	// The client's own archive frame — after this, the conversation goes
+	// quiet: handleConversationArchive only broadcasts a non-conversation-
+	// scoped roster, and no further per-conversation frame is ever sent.
+	h.dispatchInbound(c, []byte(`{"t":"conversation.archive","id":"arch-1","seq":1,"d":{"conversationId":"conv-1","archived":true}}`))
+
+	ds := drainEnv(t, c)
+	acked := false
+	for _, d := range ds {
+		if d.ack == 1 {
+			acked = true
+		}
+	}
+	if !acked {
+		t.Fatalf("frames after the archive = %v, want one carrying ack=1 — otherwise the client's outbox entry for the archive is never acked and resends forever (#1988)", ds)
+	}
+}
+
 func TestReliability_AckTrimsBuffer(t *testing.T) {
 	c := fakeClient()
 	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}, seen: make(map[string]struct{})}

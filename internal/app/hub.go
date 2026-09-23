@@ -2417,25 +2417,31 @@ func (b *convBinding) ackInbound(client *wsClient, ack int64) {
 }
 
 // acceptInbound dedups an inbound frame by envelope id and advances THIS
-// client's inbound seq high-water (stamped as the ack on frames sent back to it).
-// Returns false if the frame is a duplicate (a resent outbox entry after
-// reconnect) and must be dropped.
+// client's inbound seq high-water (stamped as the ack on frames sent back to
+// it, and by sendAck below). Returns false if the frame is a duplicate (a
+// resent outbox entry after reconnect) — the caller must not reprocess its
+// side effects — but seqHW is still advanced either way: a dup means we HAVE
+// seen this seq before (possibly in an earlier connection, whose clientState
+// this socket doesn't inherit), and #1988 needs every accepted-or-recognized
+// frame to be ackable, not just first-time accepts.
 func (b *convBinding) acceptInbound(client *wsClient, id string, seq int64) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.seen == nil {
 		b.seen = make(map[string]struct{})
 	}
+	isNew := true
 	if id != "" {
 		if _, dup := b.seen[id]; dup {
-			return false
-		}
-		b.seen[id] = struct{}{}
-		b.seenOrder = append(b.seenOrder, id)
-		if len(b.seenOrder) > maxSeenInbound {
-			old := b.seenOrder[0]
-			b.seenOrder = b.seenOrder[1:]
-			delete(b.seen, old)
+			isNew = false
+		} else {
+			b.seen[id] = struct{}{}
+			b.seenOrder = append(b.seenOrder, id)
+			if len(b.seenOrder) > maxSeenInbound {
+				old := b.seenOrder[0]
+				b.seenOrder = b.seenOrder[1:]
+				delete(b.seen, old)
+			}
 		}
 	}
 	// Created even if attach hasn't run yet: the gate can fire before
@@ -2451,7 +2457,33 @@ func (b *convBinding) acceptInbound(client *wsClient, id string, seq int64) bool
 	if seq > st.seqHW {
 		st.seqHW = seq
 	}
-	return true
+	return isNew
+}
+
+// sendAck delivers an explicit ConversationAck directly to `client`, carrying
+// its current inbound high-water for this conversation as the envelope `ack`
+// (see TypeConversationAck's doc for why this exists — #1988). Not
+// buffered/persisted/broadcast: it carries no durable content of its own, so a
+// drop in flight is harmless — the client's next reconnect resends the still-
+// outboxed frame and gets another chance at an ack. A zero high-water (this
+// client has sent nothing yet for this conversation) sends nothing.
+func (b *convBinding) sendAck(client *wsClient) {
+	b.mu.Lock()
+	convID := b.convID
+	var ack int64
+	if st := b.clientStates[client]; st != nil {
+		ack = st.seqHW
+	}
+	b.mu.Unlock()
+	if ack <= 0 {
+		return
+	}
+	wire, err := fap.Encode(fap.ConversationAck{ConversationID: convID}, 0, ack, "", "")
+	if err != nil {
+		appLog.Errorf("encode conversation.ack (conv=%s): %v", convID, err)
+		return
+	}
+	client.enqueue(wire)
 }
 
 // substituteResolvedAsk rewrites the wire of an `interactive` frame whose prompt

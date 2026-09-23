@@ -413,6 +413,7 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		ToolInvoke{InvocationID: "inv", Tool: "android", Action: "list", Args: json.RawMessage(`{}`)},
 		ConversationForeground{ConversationID: "c"},
 		PinSync{ConversationID: "c", MessageIDs: []string{"m1", "m2"}},
+		ConversationAck{ConversationID: "c"},
 	}
 	for _, f := range frames {
 		wire, err := Encode(f, 0, 0, "id", "ts")

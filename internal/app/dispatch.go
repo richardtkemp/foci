@@ -42,12 +42,26 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 	// outbox entry after reconnect — and fold the piggybacked ack to trim our
 	// replay buffer. The first message of a brand-new conversation has no state
 	// yet; its binding is created downstream in routeUserText.
+	//
+	// sendAck (#1988) fires for BOTH outcomes, new or a recognized dup (a dup
+	// immediately; a new frame after its handler): acceptInbound advanced this client's
+	// seqHW either way, and a dup by definition means the server processed this
+	// frame before — the client's outbox entry may be stuck from THAT accept
+	// never having been followed by an outbound frame (e.g. an archive, after
+	// which the server sends nothing more for that conversation). Without this,
+	// only downstream processing that happens to call b.send() ever acks a
+	// frame, which silently assumed one always follows.
 	if convID := inboundConvID(in.Frame); convID != "" {
 		if b := h.convForReliability(convID); b != nil {
 			if !b.acceptInbound(client, in.ID, in.Seq) {
+				b.sendAck(client) // a dup was processed before: ack now
 				return
 			}
 			b.ackInbound(client, in.Ack)
+			// A NEW frame is acked only AFTER its handler below has run, so
+			// the client never drops an outbox entry for a frame whose side
+			// effects have not happened yet (ack-after-apply).
+			defer b.sendAck(client)
 		}
 	}
 
