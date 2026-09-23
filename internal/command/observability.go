@@ -21,7 +21,11 @@ import (
 // each entry's own request timestamp rather than today's latest rate
 // (modelinfo.CostAsOf — foci_todo #1407) so the category split stays
 // consistent with EffectiveCost's total for entries with no golden cost.
-func categoryCosts(entries []log.APIEntry) (cacheRead, cacheWrite, input, output float64) {
+//
+// search is the turn's server-side web searches, billed per CALL rather than
+// per token (#1913). Without it the categories would sum short of Total by
+// $0.01 per search.
+func categoryCosts(entries []log.APIEntry) (cacheRead, cacheWrite, input, output, search float64) {
 	for _, e := range entries {
 		// PricedCounts, never the fields: for a delegated turn the un-suffixed
 		// four are the final cycle's CONTEXT FILL, not what the row was priced
@@ -34,6 +38,8 @@ func categoryCosts(entries []log.APIEntry) (cacheRead, cacheWrite, input, output
 		cacheWrite += modelinfo.CostAsOf(e.Model, e.Timestamp, 0, 0, 0, c.CacheWrite)
 		input += modelinfo.CostAsOf(e.Model, e.Timestamp, c.Input, 0, 0, 0)
 		output += modelinfo.CostAsOf(e.Model, e.Timestamp, 0, c.Output, 0, 0)
+		s, _ := modelinfo.WebSearchCostAsOf(e.Model, e.Timestamp, c.WebSearches)
+		search += s
 	}
 	return
 }

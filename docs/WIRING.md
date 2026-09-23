@@ -1369,6 +1369,7 @@ Four outputs:
    |---|---|---|
    | `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens` | a delegated turn's FINAL ask cycle's context fill (output is the exception: summed) | `/context`, `/status`, compaction sizing |
    | `turn_input_tokens`, `turn_cache_read_tokens`, `turn_cache_write_tokens`, `turn_output_tokens` | SUM of every cycle's own tokens **across every model** — what `calculated_cost_usd` was priced from | pricing, per-class cost splits |
+   | `turn_web_searches` | COUNT of server-side web searches in the turn (#1913) — billed per CALL ($0.01 each), so no token column can carry them; priced into `calculated_cost_usd` at `modelinfo.Model.WebSearchPerCall` | pricing, the "Web search" `/cost` row |
 
    Pricing a row from the first group recovers ~20% of its recorded cost (measured
    2026-09-05 over 14 days: $402 reconstructed against $2,040 recorded) with no error,
@@ -1396,6 +1397,16 @@ Four outputs:
    have caught the defect, and now holds: price the `turn_*` columns over a window and
    compare to `SUM(calculated_cost_usd)` — the ccstream unit test asserts equality per
    turn (`turn_totals_test.go`).
+
+   **Web search is priced from a COUNT, not tokens (#1913).** The count's only source
+   is CC's `result.modelUsage[model].webSearchRequests` — cumulative per process like
+   every other counter there, so `modelUsageDelta` subtracts it, and it lands on the
+   model that ran CC's search sub-call (haiku), not the turn's model. The result's
+   `usage.server_tool_use` and every per-message usage report ZERO on the same turns,
+   so do not count from those. All searches stay on the PARENT row: subagent shares are
+   built from the stream, which never sees one. A searched model whose row has no
+   `web_search_per_call` logs a warning and prices the searches at $0. Only ccstream
+   populates the count; the direct-API, opencode and codex writers leave it zero.
 
    **Turn identity: `turn_id` and `agent_id` (#1695, #1880 phase C).**
    Until 2026-09-11 there was no turn id at all — "a turn is a row" was the whole

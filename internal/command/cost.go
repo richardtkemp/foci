@@ -127,13 +127,12 @@ func costCategoryView(entries []log.APIEntry, header, sessionKey string, idx *se
 		return b.String()
 	}
 
-	cr, cw, inp, out := categoryCosts(entries)
+	labels, vals := categoryRows(entries, total)
 	cols := []display.Column{
 		{Header: "Category"},
 		{Header: "Cost", Align: display.AlignRight},
 	}
-	labels := []string{"Cache reads", "Cache writes", "Input", "Output", "Total"}
-	costCells := moneyCol([]float64{cr, cw, inp, out, total}, 4)
+	costCells := moneyCol(vals, 4)
 	tableRows := make([][]string, len(labels))
 	for i, l := range labels {
 		tableRows[i] = []string{l, costCells[i]}
@@ -141,6 +140,20 @@ func costCategoryView(entries []log.APIEntry, header, sessionKey string, idx *se
 	b.WriteString("\n\n")
 	b.WriteString(display.MarkdownTable(cols, tableRows))
 	return b.String()
+}
+
+// categoryRows is the per-category table's labels and values, ending in Total.
+// Web search gets a row only when the entries made any: it is absent from
+// nearly every window, and a permanent $0.0000 line would be noise.
+func categoryRows(entries []log.APIEntry, total float64) ([]string, []float64) {
+	cr, cw, inp, out, search := categoryCosts(entries)
+	labels := []string{"Cache reads", "Cache writes", "Input", "Output"}
+	vals := []float64{cr, cw, inp, out}
+	if search > 0 {
+		labels = append(labels, "Web search")
+		vals = append(vals, search)
+	}
+	return append(labels, "Total"), append(vals, total)
 }
 
 // costPerSessionView shows a per-session breakdown table sorted by cost.
@@ -262,13 +275,12 @@ func costSummaryView(entries []log.APIEntry, header string) string {
 		return b.String()
 	}
 
-	cr, cw, inp, out := categoryCosts(entries)
+	labels, vals := categoryRows(entries, total)
 	cols := []display.Column{
 		{Header: "Category"},
 		{Header: "Cost", Align: display.AlignRight},
 	}
-	labels := []string{"Cache reads", "Cache writes", "Input", "Output", "Total"}
-	costCells := moneyCol([]float64{cr, cw, inp, out, total}, 2)
+	costCells := moneyCol(vals, 2)
 	tableRows := make([][]string, len(labels))
 	for i, l := range labels {
 		tableRows[i] = []string{l, costCells[i]}

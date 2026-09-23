@@ -614,6 +614,8 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 				Output:     d.OutputTokens,
 				CacheRead:  d.CacheReadInputTokens,
 				CacheWrite: d.CacheCreationInputTokens,
+
+				WebSearches: d.WebSearchRequests,
 			}
 			// The parent is the authoritative total minus what its subagents
 			// took. A class pinned at zero means the subagent bucket counted
@@ -634,6 +636,17 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 				prefixedModel(m), now,
 				parent.Input, parent.Output, parent.CacheRead, w,
 			)
+			// Web search is billed per CALL, so no token class carries it
+			// (#1913). Every search stays on the parent: the subagent shares
+			// come from the stream, which never reports one, so there is
+			// nothing to attribute them by — the same position as CC's own
+			// utility calls above.
+			search, priced := modelinfo.WebSearchCostAsOf(prefixedModel(m), now, parent.WebSearches)
+			if !priced {
+				b.logger().Warnf("%d web search(es) on %s have no per-call rate in modelinfo — priced at $0, so this turn reads low (#1913)",
+					parent.WebSearches, m)
+			}
+			cyclePriced += search
 			cycleProvided += d.CostUSD
 			cycleCounts = cycleCounts.Add(total)
 			cycleParent = cycleParent.Add(parent)

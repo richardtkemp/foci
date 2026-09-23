@@ -3,7 +3,8 @@ package modelinfo
 import "time"
 
 // TokenCounts is one API call's (or one turn's summed) four billable token
-// classes. It is the unit that Cost/CostAsOf price, held as a value so the
+// classes, plus the count of server-side web searches, which are billed per
+// call rather than per token (#1913). It is the unit that Cost/CostAsOf price, held as a value so the
 // same shape can be accumulated across a delegated backend's ask cycles,
 // carried on a TurnUsage/Usage/APIEntry, and persisted to api.db (#1854).
 //
@@ -17,6 +18,10 @@ type TokenCounts struct {
 	Output     int `json:"output"`
 	CacheRead  int `json:"cache_read"`
 	CacheWrite int `json:"cache_write"`
+
+	// WebSearches is the number of server-side web searches. Omitted from JSON
+	// when zero so every row written before #1913 reads back unchanged.
+	WebSearches int `json:"web_searches,omitempty"`
 }
 
 // Add returns t with o's counts added, class by class.
@@ -26,6 +31,8 @@ func (t TokenCounts) Add(o TokenCounts) TokenCounts {
 		Output:     t.Output + o.Output,
 		CacheRead:  t.CacheRead + o.CacheRead,
 		CacheWrite: t.CacheWrite + o.CacheWrite,
+
+		WebSearches: t.WebSearches + o.WebSearches,
 	}
 }
 
@@ -33,7 +40,8 @@ func (t TokenCounts) Add(o TokenCounts) TokenCounts {
 // caller prices with, so a stored turn total re-priced through it lands on
 // the CalculatedCostUSD it was recorded beside.
 func (t TokenCounts) CostAsOf(model string, at time.Time) float64 {
-	return CostAsOf(model, at, t.Input, t.Output, t.CacheRead, t.CacheWrite)
+	search, _ := WebSearchCostAsOf(model, at, t.WebSearches)
+	return CostAsOf(model, at, t.Input, t.Output, t.CacheRead, t.CacheWrite) + search
 }
 
 // SubClamped returns t minus o class by class, with any class that would go
@@ -59,6 +67,8 @@ func (t TokenCounts) SubClamped(o TokenCounts) (TokenCounts, bool) {
 		Output:     clamp(t.Output, o.Output),
 		CacheRead:  clamp(t.CacheRead, o.CacheRead),
 		CacheWrite: clamp(t.CacheWrite, o.CacheWrite),
+
+		WebSearches: clamp(t.WebSearches, o.WebSearches),
 	}, ok
 }
 

@@ -341,6 +341,26 @@ func TestAPIDB_TurnCountsRoundTrip(t *testing.T) {
 	}
 }
 
+// #1913: web searches are billed per call, so a row that made any cannot be
+// re-priced from its token columns alone — the count has to survive the round
+// trip, or the #1854 identity fails by $0.01 per search.
+func TestAPIDB_TurnWebSearchesRoundTrip(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test_api.db")
+	if err := InitAPIDB(dbPath); err != nil {
+		t.Fatalf("InitAPIDB: %v", err)
+	}
+	defer CloseAPIDB()
+
+	t1 := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
+	turn := modelinfo.TokenCounts{Input: 10, Output: 20, CacheRead: 30, CacheWrite: 40, WebSearches: 2}
+	apiLog.insert(APIEntry{Timestamp: t1, Session: "s/c/1", Model: "m", Turn: &turn, CallType: "delegated_turn"})
+
+	got := ReadAPIDBLog()
+	if len(got) != 1 || got[0].Turn == nil || *got[0].Turn != turn {
+		t.Fatalf("round trip = %+v, want Turn %+v", got, turn)
+	}
+}
+
 // TestAPIDB_TurnOutputFallsBackForPre1891Rows: a row written before the column
 // existed has NULL there, and must still re-price. Reading it as zero output
 // would silently under-report every historical turn.

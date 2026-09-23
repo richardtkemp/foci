@@ -119,6 +119,12 @@ type Model struct {
 	// cacheWriteRate. Zero means the registry has no 1h figure for this model,
 	// not that 1h caching is free.
 	CacheWrite1hPer1M float64
+
+	// WebSearchPerCall is the price of ONE server-side web search, in USD.
+	// Anthropic bills search per CALL ($10 per 1,000), not per token, so no
+	// token count can reveal it (#1913). Zero means the registry carries no
+	// figure for this model — not that search is free.
+	WebSearchPerCall float64
 }
 
 // cacheWriteRate returns the rate to price cache-WRITE tokens at.
@@ -222,9 +228,9 @@ type jsonlEntry struct {
 	OutputPer1M     float64 `json:"output_per_1m,omitempty"`
 	CacheReadPer1M  float64 `json:"cache_read_per_1m,omitempty"`
 	CacheWritePer1M float64 `json:"cache_write_per_1m,omitempty"`
-	// Extended pricing + quality captured by sync-modelinfo. Parsed but NOT yet
-	// used at runtime (see TODO #1407 — cost calc still uses only the flat base
-	// rates above). Kept here so the parser documents the full schema.
+	// Extended pricing + quality captured by sync-modelinfo. Of these, only
+	// cache_write_1h_per_1m and web_search_per_call (#1913) are priced at
+	// runtime; the rest are parsed so the parser documents the full schema.
 	CacheWrite1hPer1M      float64          `json:"cache_write_1h_per_1m,omitempty"`
 	InternalReasoningPer1M float64          `json:"internal_reasoning_per_1m,omitempty"`
 	WebSearchPerCall       float64          `json:"web_search_per_call,omitempty"`
@@ -371,6 +377,7 @@ func parseModelsJSONL(data []byte) (registry map[string]map[string]Model, histor
 			CacheReadPer1M:    e.CacheReadPer1M,
 			CacheWritePer1M:   e.CacheWritePer1M,
 			CacheWrite1hPer1M: e.CacheWrite1hPer1M,
+			WebSearchPerCall:  e.WebSearchPerCall,
 		}
 		fieldsKnown := modelFieldsKnown{
 			ContextWindow: e.ContextWindow != 0,
@@ -1260,9 +1267,43 @@ type CacheWrites struct {
 // the result's ModelUsage merges it into one figure, so a turn summarised from
 // the result alone can no longer be priced correctly.
 func CostAsOfSplit(model string, at time.Time, input, output, cacheRead int, w CacheWrites) float64 {
+	m, ok := rateRowAsOf(model, at)
+	if !ok {
+		return 0
+	}
+	mtok := 1_000_000.0
+	return float64(input)/mtok*m.InputPer1M +
+		float64(output)/mtok*m.OutputPer1M +
+		float64(cacheRead)/mtok*m.CacheReadPer1M +
+		float64(w.Ephemeral5m)/mtok*m.CacheWritePer1M +
+		float64(w.Ephemeral1h+w.Unknown)/mtok*m.cacheWriteRate()
+}
+
+// WebSearchCostAsOf prices n server-side web searches for model at time at,
+// resolving the rate row exactly as CostAsOfSplit does (#1913).
+//
+// priced is false when searches were made but the resolved row carries no
+// per-call rate: the searches were billed, foci just cannot say for how much,
+// and the caller should say so rather than treat the zero as "free".
+func WebSearchCostAsOf(model string, at time.Time, n int) (cost float64, priced bool) {
+	if n <= 0 {
+		return 0, true
+	}
+	m, ok := rateRowAsOf(model, at)
+	if !ok {
+		return 0, true
+	}
+	return float64(n) * m.WebSearchPerCall, m.WebSearchPerCall > 0
+}
+
+// rateRowAsOf resolves the price row a call on model at time at is billed
+// from: history as of at, then the family canonical, then the unpriced
+// fallback. ok is false only for CC's synthetic sentinel, which has nothing to
+// price.
+func rateRowAsOf(model string, at time.Time) (Model, bool) {
 	segs, bare := splitSegs(model)
 	if IsSynthetic(model) || IsSynthetic(bare) {
-		return 0
+		return Model{}, false
 	}
 	historyMu.RLock()
 	m, ok := historyLookupAsOfSegs(segs, bare, at)
@@ -1283,13 +1324,7 @@ func CostAsOfSplit(model string, at time.Time, input, output, cacheRead int, w C
 			m, _ = LookupAsOf("", "claude-haiku-4-5", at)
 		}
 	}
-
-	mtok := 1_000_000.0
-	return float64(input)/mtok*m.InputPer1M +
-		float64(output)/mtok*m.OutputPer1M +
-		float64(cacheRead)/mtok*m.CacheReadPer1M +
-		float64(w.Ephemeral5m)/mtok*m.CacheWritePer1M +
-		float64(w.Ephemeral1h+w.Unknown)/mtok*m.cacheWriteRate()
+	return m, true
 }
 
 // ModelMeta holds structural metadata about a model from [models.*] config.

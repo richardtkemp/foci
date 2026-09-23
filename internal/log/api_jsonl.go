@@ -101,8 +101,7 @@ func (e APIEntry) EffectiveCost() float64 {
 	if e.CalculatedCostUSD != nil {
 		return *e.CalculatedCostUSD
 	}
-	c := e.PricedCounts()
-	return modelinfo.CostAsOf(e.Model, e.Timestamp, c.Input, c.Output, c.CacheRead, c.CacheWrite)
+	return e.PricedCounts().CostAsOf(e.Model, e.Timestamp)
 }
 
 // PricedCounts is the token counts this row's cost was priced from: Turn when

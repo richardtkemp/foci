@@ -65,6 +65,7 @@ func (b *Backend) modelUsageDelta(model string, cur ModelUsage) ModelUsage {
 	d.OutputTokens = sub(cur.OutputTokens, prev.OutputTokens)
 	d.CacheReadInputTokens = sub(cur.CacheReadInputTokens, prev.CacheReadInputTokens)
 	d.CacheCreationInputTokens = sub(cur.CacheCreationInputTokens, prev.CacheCreationInputTokens)
+	d.WebSearchRequests = sub(cur.WebSearchRequests, prev.WebSearchRequests)
 	if cur.CostUSD < prev.CostUSD {
 		d.CostUSD = cur.CostUSD
 	} else {

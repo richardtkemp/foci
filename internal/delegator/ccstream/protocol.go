@@ -70,11 +70,20 @@ type CacheCreationSplit struct {
 }
 
 // ModelUsage holds per-model token and cost accounting in a ResultMessage.
+//
+// WebSearchRequests counts CC's WebSearch tool calls, each billed per call and
+// included in CostUSD (#1913). Like every counter here it is CUMULATIVE over the
+// CC process. Probe-verified 2026-09-23 (one process, three turns: search,
+// none, search): 1, 1, 2 — and it lands on the model that RAN the search
+// (claude-haiku-4-5, CC's search sub-call), not the turn's model. It is the
+// ONLY place the count appears: the result's usage.server_tool_use and every
+// per-message usage report zero on the same turns.
 type ModelUsage struct {
 	InputTokens              int     `json:"inputTokens"`
 	OutputTokens             int     `json:"outputTokens"`
 	CacheReadInputTokens     int     `json:"cacheReadInputTokens"`
 	CacheCreationInputTokens int     `json:"cacheCreationInputTokens"`
+	WebSearchRequests        int     `json:"webSearchRequests"`
 	CostUSD                  float64 `json:"costUSD"`
 	ContextWindow            int     `json:"contextWindow"`
 	MaxOutputTokens          int     `json:"maxOutputTokens"`

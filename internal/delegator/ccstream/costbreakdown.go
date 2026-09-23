@@ -82,7 +82,21 @@ func (b costBreakdown) String() string {
 		c.Output, price(0, c.Output, 0, 0),
 		c.CacheRead, price(0, 0, c.CacheRead, 0),
 		c.CacheWrite, price(0, 0, 0, c.CacheWrite),
-	) + b.spanSuffix() + b.writeSplitSuffix() + b.subagentSuffix()
+	) + b.webSearchSuffix(now) + b.spanSuffix() + b.writeSplitSuffix() + b.subagentSuffix()
+}
+
+// webSearchSuffix names the turn's web searches, which are billed per call and
+// so appear in no token class above (#1913). A turn off by exactly $0.01 per
+// search is the signature of those searches going unpriced; naming them is
+// what lets a reader see that without reconstructing the turn. Silent when the
+// turn made none.
+func (b costBreakdown) webSearchSuffix(now time.Time) string {
+	n := b.counts.WebSearches
+	if n == 0 {
+		return ""
+	}
+	cost, _ := modelinfo.WebSearchCostAsOf(b.model, now, n)
+	return fmt.Sprintf(" web_search=%d ($%.6f)", n, cost)
 }
 
 // spanSuffix names the turn's own duration and the window the priced delta

@@ -68,7 +68,7 @@ func TestCategoryCosts_PricesTurnCountsNotContextFill(t *testing.T) {
 	e.CacheWrite = 300
 	entries := []log.APIEntry{e}
 
-	_, cacheWrite, _, _ := categoryCosts(entries)
+	_, cacheWrite, _, _, _ := categoryCosts(entries)
 	want := modelinfo.CostAsOf(e.Model, e.Timestamp, 0, 0, 0, 100000)
 	if cacheWrite != want {
 		t.Errorf("cacheWrite = %.6f, want %.6f — priced from Turn (100000), not the 300-token context fill",
@@ -80,7 +80,7 @@ func TestCategoryCosts_PricesTurnCountsNotContextFill(t *testing.T) {
 	// rather than for bit equality.
 	e2 := costEntry("delegated_turn", "", 0, modelinfo.TokenCounts{Input: 10, Output: 20, CacheRead: 30, CacheWrite: 40})
 	e2.CalculatedCostUSD = nil // no recorded cost → EffectiveCost re-prices
-	cr, cw, in, out := categoryCosts([]log.APIEntry{e2})
+	cr, cw, in, out, _ := categoryCosts([]log.APIEntry{e2})
 	if got, want := cr+cw+in+out, e2.EffectiveCost(); math.Abs(got-want) > 1e-12 {
 		t.Errorf("categories sum to %.12f but EffectiveCost is %.12f — the table must add up to its own total", got, want)
 	}

@@ -47,6 +47,10 @@ func InitAPIDB(path string) error {
 		//                          these are what calculated_cost_usd priced.
 		//                          NULL as a group where the writer measured
 		//                          no turn total.
+		//   turn_web_searches    — per TURN count of server-side web searches,
+		//                          billed per CALL (#1913) and included in
+		//                          calculated_cost_usd. NULL for rows written
+		//                          before it existed; read back as zero.
 		//   turn_id              — names the turn a row belongs to
 		//                          ("<session>@<UnixNano>"); the only durable
 		//                          turn identity (#1695). A turn is no longer
@@ -139,14 +143,19 @@ func InitAPIDB(path string) error {
 	// from main, which can import internal/session where this package cannot)
 	// fixes up rows written before this column existed.
 	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN subagent_id TEXT`)
+	// #1913: web searches are billed per call, so the token columns cannot
+	// re-price a row that made any — without this count the #1854 identity
+	// fails by $0.01 per search. NULL on historical rows, which were priced
+	// without searches and so re-price correctly as zero.
+	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN turn_web_searches INTEGER`)
 
 	stmt, err := db.Prepare(`INSERT INTO api_calls
 		(ts, provider, session, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
 		 cost_usd, duration_ms, stop_reason, call_type, session_file, session_line, pre_messages,
 		 calculated_cost_usd,
 		 turn_input_tokens, turn_cache_read_tokens, turn_cache_write_tokens, turn_output_tokens,
-		 turn_id, agent_id, subagent_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		 turn_id, agent_id, subagent_id, turn_web_searches)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		_ = db.Close()
 		return fmt.Errorf("prepare insert: %w", err)
@@ -247,7 +256,8 @@ const apiRowCols = `ts, COALESCE(provider, ''), session, model,
 	       COALESCE(pre_messages, 0), calculated_cost_usd,
 	       turn_input_tokens, turn_cache_read_tokens, turn_cache_write_tokens,
 	       turn_output_tokens,
-	       COALESCE(turn_id, ''), COALESCE(agent_id, ''), COALESCE(subagent_id, '')`
+	       COALESCE(turn_id, ''), COALESCE(agent_id, ''), COALESCE(subagent_id, ''),
+	       COALESCE(turn_web_searches, 0)`
 
 // scanAPIRows drains rows selected via apiRowCols into []APIEntry. Both cost
 // columns are nullable: cost_usd (ProvidedCostUSD) is NULL when the backend
@@ -262,6 +272,7 @@ func scanAPIRows(rows *sql.Rows) []APIEntry {
 		var tsStr string
 		var providedCost, calculatedCost sql.NullFloat64
 		var turnIn, turnCR, turnCW, turnOut sql.NullInt64
+		var turnSearches int
 		if err := rows.Scan(
 			&tsStr, &e.Provider, &e.Session, &e.Model,
 			&e.Input, &e.Output, &e.CacheRead, &e.CacheWrite,
@@ -269,6 +280,7 @@ func scanAPIRows(rows *sql.Rows) []APIEntry {
 			&e.SessionFile, &e.SessionLine, &e.PreMessages, &calculatedCost,
 			&turnIn, &turnCR, &turnCW, &turnOut,
 			&e.TurnID, &e.AgentID, &e.SubagentID,
+			&turnSearches,
 		); err != nil {
 			continue
 		}
@@ -289,6 +301,8 @@ func scanAPIRows(rows *sql.Rows) []APIEntry {
 				Output:     out,
 				CacheRead:  int(turnCR.Int64),
 				CacheWrite: int(turnCW.Int64),
+
+				WebSearches: turnSearches,
 			}
 		}
 		if providedCost.Valid {
@@ -385,9 +399,10 @@ func (a *apiDB) insert(entry APIEntry) {
 	// turn total — a zero there would price as "free", which is a wrong
 	// answer, where NULL is "not measured". Turn.Output is not stored:
 	// output_tokens already holds the turn sum for every writer.
-	var turnIn, turnCR, turnCW, turnOut *int
+	var turnIn, turnCR, turnCW, turnOut, turnSearches *int
 	if t := entry.Turn; t != nil {
 		turnIn, turnCR, turnCW, turnOut = &t.Input, &t.CacheRead, &t.CacheWrite, &t.Output
+		turnSearches = &t.WebSearches
 	}
 
 	a.mu.Lock()
@@ -401,6 +416,7 @@ func (a *apiDB) insert(entry APIEntry) {
 		preMessages, entry.CalculatedCostUSD,
 		turnIn, turnCR, turnCW, turnOut,
 		nullIfEmpty(entry.TurnID), nullIfEmpty(entry.AgentID), nullIfEmpty(entry.SubagentID),
+		turnSearches,
 	)
 	if err != nil {
 		std.event(ERROR, "api_db", "insert error: %v", err)
