@@ -142,6 +142,17 @@ func TestTransportSelection_Delegated(t *testing.T) {
 type asyncStubContract struct {
 	completionDelay time.Duration
 	onSave          func()
+
+	// onRunInference, if set, is called synchronously the instant RunInference
+	// is entered — i.e. after markInFlight has already run (Phase 1 precedes
+	// Phase 3 in OrchestrateFullTurn). Tests use this as a deterministic
+	// "in-flight is now set" signal instead of a fixed sleep-and-hope.
+	onRunInference func()
+	// gate, if non-nil, blocks the completion goroutine from closing
+	// CompletionChan until the channel is closed by the test. Combined with
+	// completionDelay==0, this lets a test hold a delegated turn "mid-wait"
+	// for as long as it likes without racing a wall clock.
+	gate <-chan struct{}
 }
 
 func (s *asyncStubContract) RateLimitGate(*TurnState) error        { return nil }
@@ -158,8 +169,16 @@ func (s *asyncStubContract) ResolveModelEffort(*TurnState)         {}
 func (s *asyncStubContract) BuildSystemAndTools(*TurnState)        {}
 func (s *asyncStubContract) InjectNudges(*TurnState)               {}
 func (s *asyncStubContract) RunInference(ts *TurnState) error {
+	if s.onRunInference != nil {
+		s.onRunInference()
+	}
 	go func() {
-		time.Sleep(s.completionDelay)
+		if s.completionDelay > 0 {
+			time.Sleep(s.completionDelay)
+		}
+		if s.gate != nil {
+			<-s.gate
+		}
 		close(ts.CompletionChan)
 	}()
 	return nil

@@ -83,43 +83,58 @@ func TestOrchestrator_InFlightRisesAndFalls_API(t *testing.T) {
 // blocked CC turn must keep the gate signal lit until the user actually
 // decides.
 //
-// Plan B3 specifies a 30s wait; we use 200ms here because the property is
-// duration-independent (the orchestrator blocks on CompletionChan via
-// runPostTurn — same code path regardless of how long the wait actually
-// is). 200ms is long enough to sample twice with margin and short enough
-// not to slow the suite.
+// Plan B3 specifies a 30s wait; the property is duration-independent (the
+// orchestrator blocks on CompletionChan via runPostTurn — same code path
+// regardless of how long the wait actually is), so the test holds the
+// delegated turn open on a `gate` channel it controls directly rather than
+// timing a real wait. This used to sample IsTurnInFlight at fixed wall-clock
+// offsets (50ms/120ms into a 200ms delay) and flaked under load (#1991):
+// the margins assumed the orchestrator goroutine got scheduled promptly,
+// which a loaded host doesn't guarantee. Gating on a channel makes the
+// property hold regardless of scheduling delay — nothing can advance the
+// stub's completion until the test says so.
 func TestOrchestrator_InFlightStaysTrueDuringDelegatedWait(t *testing.T) {
 	a := &Agent{}
 
-	const delay = 200 * time.Millisecond
-	tc := &asyncStubContract{completionDelay: delay}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	tc := &asyncStubContract{
+		onRunInference: func() { close(started) },
+		gate:           release,
+	}
 	ts := NewTurnState(context.Background(), orchestratorTestKey, []string{"hi"}, nil)
 
-	// Run the orchestrator in a goroutine and sample IsTurnInFlight while
-	// it's blocked in runPostTurn.
+	// Run the orchestrator in a goroutine; it will block in runPostTurn
+	// until we close `release`.
 	resultErr := make(chan error, 1)
-	start := time.Now()
 	go func() {
 		_, err := a.OrchestrateFullTurn(context.Background(), tc, ts)
 		resultErr <- err
 	}()
 
-	// Give the goroutine a moment to enter OrchestrateFullTurn and bump
-	// the counter.
-	time.Sleep(20 * time.Millisecond)
-
-	// Sample at 50ms and 120ms relative to start — both should observe
-	// the in-flight signal while the asyncStub's goroutine is still
-	// asleep (it closes CompletionChan at 200ms). The 80ms safety margin
-	// before the 200ms close keeps the test non-flaky under load.
-	for _, sampleAt := range []time.Duration{50 * time.Millisecond, 120 * time.Millisecond} {
-		if remaining := sampleAt - time.Since(start); remaining > 0 {
-			time.Sleep(remaining)
-		}
-		if !a.IsTurnInFlight(orchestratorTestKey) {
-			t.Fatalf("at sample %v during delegated wait: IsTurnInFlight(%s) = false, want true", sampleAt, orchestratorTestKey)
-		}
+	// Wait for RunInference to be entered. markInFlight runs in Phase 1,
+	// strictly before RunInference (Phase 3) — so by the time this fires,
+	// the in-flight counter is already bumped. No sleep-and-hope needed.
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunInference was not entered within 5s")
 	}
+
+	if !a.IsTurnInFlight(orchestratorTestKey) {
+		t.Fatalf("on entering the delegated wait: IsTurnInFlight(%s) = false, want true", orchestratorTestKey)
+	}
+
+	// The stub is gated on `release`, so CompletionChan cannot close yet —
+	// this second check (after a real, but non-load-bearing, pause) proves
+	// the signal stays lit for the DURATION of the wait, not just at entry,
+	// while remaining immune to scheduler jitter: nothing times out here.
+	time.Sleep(20 * time.Millisecond)
+	if !a.IsTurnInFlight(orchestratorTestKey) {
+		t.Fatalf("mid delegated wait: IsTurnInFlight(%s) = false, want true", orchestratorTestKey)
+	}
+
+	close(release)
 
 	// Wait for orchestrator to return (CompletionChan close + post-turn).
 	select {
@@ -128,7 +143,7 @@ func TestOrchestrator_InFlightStaysTrueDuringDelegatedWait(t *testing.T) {
 			t.Fatalf("OrchestrateFullTurn: %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatalf("orchestrator did not return within 5s of completion delay %v", delay)
+		t.Fatalf("orchestrator did not return within 5s of release")
 	}
 
 	if a.IsTurnInFlight(orchestratorTestKey) {
