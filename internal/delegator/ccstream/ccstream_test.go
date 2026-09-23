@@ -3164,10 +3164,23 @@ func TestClose_BoundedWaitWhenWaiterStalls(t *testing.T) {
 	b.running = true
 	b.mu.Unlock()
 
-	// Cap the test to 5x the worst-case bounded shutdown — generous enough to
-	// tolerate scheduler jitter, tight enough to fail fast if the bound regresses.
+	// Cap the test at a generous multiple of the worst-case bounded shutdown,
+	// with an absolute floor. What this test guards against is Close hanging
+	// FOREVER (the original #749-shaped deadlock) — not the shutdown landing
+	// within some precise multiple of worst, which is a wall-clock assertion
+	// scheduler jitter can blow through under load. 5x (500ms absolute, given
+	// the shrunk waits above) was tight enough that a loaded host — several
+	// concurrent `make test-one`/`make lint` runs plus a busy clickhouse-server,
+	// none holding the /tmp/heavy lock this test itself respects — pushed
+	// goroutine scheduling past it although Close was never actually stuck
+	// (#1978). 20x plus a 2s floor keeps the same "must terminate, not hang"
+	// guarantee while tolerating that level of contention.
 	worst := closeGracefulWait + closeSigtermWait + closeSigkillWait
-	deadline := time.Now().Add(5 * worst)
+	margin := 20 * worst
+	if margin < 2*time.Second {
+		margin = 2 * time.Second
+	}
+	deadline := time.Now().Add(margin)
 
 	doneCh := make(chan struct{})
 	go func() {
@@ -3179,7 +3192,7 @@ func TestClose_BoundedWaitWhenWaiterStalls(t *testing.T) {
 	case <-doneCh:
 		// Close returned within the bound — exactly what we want.
 	case <-time.After(time.Until(deadline)):
-		t.Fatalf("Close did not return within %s; expected ~%s when waiter stalls", 5*worst, worst)
+		t.Fatalf("Close did not return within %s; expected ~%s when waiter stalls", margin, worst)
 	}
 }
 
