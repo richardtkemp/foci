@@ -931,6 +931,14 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 			case task.ToolUseID == "" || task.TaskID == "":
 				b.logger().Debugf("subagent tail: NOT started, task_started missing ids (tool_use_id=%q task_id=%q)",
 					task.ToolUseID, task.TaskID)
+			case task.TaskType == taskTypeBash:
+				// task_started also fires for run_in_background Bash, which has no
+				// agent transcript: a tail would poll a path that never appears for
+				// subagentTailFileWait (#1935). Skip ONLY the known non-agent kind:
+				// an unknown kind still tails, because a wasted 60s tail is cheap
+				// and a skipped real subagent silently loses its usage.
+				b.logger().Debugf("subagent tail: NOT started, task_type=%s is a background Bash task, no transcript (tool_use_id=%s task_id=%s)",
+					task.TaskType, task.ToolUseID, task.TaskID)
 			default:
 				path := b.subagentTranscriptPath(task.TaskID)
 				if path == "" {

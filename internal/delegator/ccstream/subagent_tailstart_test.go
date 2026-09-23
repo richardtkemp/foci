@@ -48,6 +48,7 @@ func TestOnSystem_TaskStarted_StartsTheTailForAnAgent(t *testing.T) {
 		Subtype:   "task_started",
 		TaskID:    agentID,
 		ToolUseID: toolUseID,
+		TaskType:  "local_agent",
 	})
 	b.OnSystem("task_started", raw)
 
@@ -92,5 +93,38 @@ func TestOnSystem_TaskStarted_NoTailWithoutASessionID(t *testing.T) {
 	m.mu.Unlock()
 	if running {
 		t.Fatal("a tail was started with no transcript path — it can never open a file")
+	}
+}
+
+// TestOnSystem_TaskStarted_NoTailForABackgroundBash pins #1935. CC emits
+// task_started for a run_in_background Bash command as well as for an Agent
+// spawn; the event below is the Bash shape captured live from CC 2.1.280. A
+// Bash task has no agent transcript, so a tail started for it can only poll a
+// path that never appears until subagentTailFileWait expires.
+func TestOnSystem_TaskStarted_NoTailForABackgroundBash(t *testing.T) {
+	withFastTail(t)
+	t.Setenv("HOME", t.TempDir())
+
+	const toolUseID = "toolu_bgbash"
+
+	b := &Backend{workDir: "/home/foci/clutch"}
+	b.sessionID = "6bd15e3c-0000-0000-0000-000000000000"
+
+	raw, _ := json.Marshal(TaskEvent{
+		Type:      "system",
+		Subtype:   "task_started",
+		TaskID:    "bbaflrc31",
+		ToolUseID: toolUseID,
+		TaskType:  "local_bash",
+	})
+	b.OnSystem("task_started", raw)
+
+	m := b.subagentTails()
+	m.mu.Lock()
+	_, running := m.tails[toolUseID]
+	m.mu.Unlock()
+	if running {
+		m.finalize(toolUseID)
+		t.Fatal("a subagent tail was started for a background Bash task — it has no transcript to open")
 	}
 }

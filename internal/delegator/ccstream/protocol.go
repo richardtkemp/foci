@@ -583,7 +583,17 @@ type TaskEvent struct {
 	Description string `json:"description,omitempty"`
 	Status      string `json:"status,omitempty"`
 	Summary     string `json:"summary,omitempty"`
+	// TaskType names what KIND of task this is: "local_agent" for an Agent
+	// subagent, "local_bash" for a run_in_background Bash command, and others
+	// (workflows, teammates, remote agents). task_started fires for all of them,
+	// so this is the only field that says whether a subagent transcript exists
+	// (#1935). Captured live from CC 2.1.280; empty on CCs that predate it.
+	TaskType string `json:"task_type,omitempty"`
 }
+
+// taskTypeBash is TaskEvent.TaskType for a run_in_background Bash command,
+// which has no subagent transcript, so the subagent tail skips it (#1935).
+const taskTypeBash = "local_bash"
 
 // RateLimitEvent carries rate limit utilization from the Anthropic API,
 // emitted by CC on status transitions (allowed → allowed_warning → rejected).
