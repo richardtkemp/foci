@@ -311,8 +311,16 @@ func TestExecAutoBackgroundSlowCommand(t *testing.T) {
 		completeCh <- msg
 	}), "", nil, func() int64 { return 0 }, "", nil, 0)
 
+	// The command must clearly outlast the 1s threshold — not just nominally
+	// (1.5s previously), which raced the real subprocess's exit against the
+	// threshold timer under full-suite CPU contention (#1975: a 0.5s margin
+	// let a loaded scheduler delay the goroutine past BOTH becoming ready,
+	// so `select` could pick the just-completed branch instead of "still
+	// running" — the same shape TestExecAutoBackgroundCtxCancelled below
+	// already had to fix once). A wide margin makes the outcome deterministic
+	// regardless of scheduling delay.
 	params, _ := json.Marshal(map[string]interface{}{
-		"command": "timeout 1.5 tail -f /dev/null",
+		"command": "timeout 5 tail -f /dev/null",
 		"timeout": 10,
 	})
 
@@ -349,8 +357,11 @@ func TestExecAutoBackgroundSessionKeyPropagated(t *testing.T) {
 		ch <- result{sk, msg}
 	}), "", nil, func() int64 { return 0 }, "", nil, 0)
 
+	// See the identical comment in TestExecAutoBackgroundSlowCommand above:
+	// the command must clearly outlast the 1s threshold, not just nominally
+	// (#1975 suite-only flake from a 0.5s margin).
 	params, _ := json.Marshal(map[string]interface{}{
-		"command": "timeout 1.5 tail -f /dev/null",
+		"command": "timeout 5 tail -f /dev/null",
 		"timeout": 10,
 	})
 
