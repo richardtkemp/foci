@@ -10,7 +10,9 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -26,7 +28,75 @@ var (
 	goVersion = runtime.Version()
 )
 
-const maxResponseBytes = 1024 * 1024 // 1MB
+const maxResponseBytes = 1024 * 1024 // 1MB — accepted response cap; do not raise (#1933)
+
+// maxMeasureBytes bounds how far we'll keep reading an over-cap response
+// purely to report its actual size in the error message below. It is NOT an
+// acceptance limit -- data beyond maxResponseBytes is never parsed or used,
+// only counted, so an oversized response is still rejected exactly as before.
+const maxMeasureBytes = 16 * maxResponseBytes
+
+// errResponseTooLarge reports that a response exceeded maxResponseBytes. It
+// names the cap and the measured size so the caller knows the request itself
+// was fine and only the RESULT was too big -- unlike the raw
+// "bufio.Scanner: token too long" this replaces, which names neither (#1933).
+type errResponseTooLarge struct {
+	size   int  // bytes read; exact unless approx is true
+	approx bool // true if size is a lower bound (measurement itself hit maxMeasureBytes)
+}
+
+func (e *errResponseTooLarge) Error() string {
+	if e.approx {
+		return fmt.Sprintf("response too large (>%d bytes, cap %d bytes)", e.size, maxResponseBytes)
+	}
+	return fmt.Sprintf("response too large (%d bytes, cap %d bytes)", e.size, maxResponseBytes)
+}
+
+// readResponseLine reads one newline-terminated response from conn.
+//
+// The exec-bridge gateway spills any result over maxResponseBytes to a file
+// and sends only a small JSON reference (see resp.ResultFile below), so a
+// legitimate response should never approach the cap. If one still does, we
+// want a message that names the cap and the actual size rather than
+// bufio.Scanner's raw "token too long" -- so unlike a plain bufio.Scanner
+// (which discards how much it had read once the token overflows its buffer),
+// this keeps reading past the cap, bounded by maxMeasureBytes, purely to
+// measure the true size before giving up. The cap on what's ACCEPTED is
+// unchanged: anything over maxResponseBytes is always rejected.
+func readResponseLine(conn net.Conn) ([]byte, error) {
+	r := bufio.NewReaderSize(conn, 64*1024)
+	var buf []byte
+	for {
+		chunk, err := r.ReadSlice('\n')
+		buf = append(buf, chunk...)
+		switch {
+		case err == nil:
+			line := bytes.TrimSuffix(buf, []byte("\n"))
+			line = bytes.TrimSuffix(line, []byte("\r"))
+			if len(line) > maxResponseBytes {
+				return nil, &errResponseTooLarge{size: len(line)}
+			}
+			return line, nil
+		case errors.Is(err, bufio.ErrBufferFull):
+			if len(buf) > maxMeasureBytes {
+				return nil, &errResponseTooLarge{size: len(buf), approx: true}
+			}
+			continue
+		case errors.Is(err, io.EOF):
+			if len(buf) == 0 {
+				return nil, io.EOF
+			}
+			// Connection closed without a trailing newline: treat what we
+			// have as the final token, mirroring bufio.Scanner's behaviour.
+			if len(buf) > maxResponseBytes {
+				return nil, &errResponseTooLarge{size: len(buf)}
+			}
+			return buf, nil
+		default:
+			return nil, err
+		}
+	}
+}
 
 func printUsage() {
 	fmt.Fprintf(os.Stderr, `foci-call — invoke foci tools via the exec bridge socket
@@ -89,13 +159,16 @@ func main() {
 	}
 
 	// Read response
-	scanner := bufio.NewScanner(conn)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxResponseBytes)
-	if !scanner.Scan() {
-		if err := scanner.Err(); err != nil {
-			fmt.Fprintf(os.Stderr, "foci-call: read: %v\n", err)
-		} else {
+	line, err := readResponseLine(conn)
+	if err != nil {
+		var tooLarge *errResponseTooLarge
+		switch {
+		case errors.As(err, &tooLarge):
+			fmt.Fprintf(os.Stderr, "foci-call: %v -- narrow the request, e.g. a smaller --limit\n", tooLarge)
+		case errors.Is(err, io.EOF):
 			fmt.Fprintln(os.Stderr, "foci-call: empty response")
+		default:
+			fmt.Fprintf(os.Stderr, "foci-call: read: %v\n", err)
 		}
 		os.Exit(1)
 	}
@@ -106,7 +179,7 @@ func main() {
 		ResultFile string `json:"result_file"`
 		ResultSize int64  `json:"result_size"`
 	}
-	if err := json.Unmarshal(scanner.Bytes(), &resp); err != nil {
+	if err := json.Unmarshal(line, &resp); err != nil {
 		fmt.Fprintf(os.Stderr, "foci-call: parse response: %v\n", err)
 		os.Exit(1)
 	}

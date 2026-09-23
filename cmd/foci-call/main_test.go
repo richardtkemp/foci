@@ -219,6 +219,37 @@ func TestFociCallInvalidJSON(t *testing.T) {
 	}
 }
 
+// TestFociCallOversizedResponse verifies that a response over the 1 MB cap
+// produces a diagnostic naming the cause, the cap, the actual size, and the
+// remedy -- not the raw Go internal ("bufio.Scanner: token too long") that
+// names none of those. See #1933.
+//
+// disconnected-test-ok: black-box CLI integration test; execs compiled binary
+func TestFociCallOversizedResponse(t *testing.T) {
+	bin := buildBinary(t)
+	const overBy = 500 * 1024
+	oversize := 1024*1024 + overBy // 1.5 MB, well over the 1 MB cap
+	sockPath := startTestServer(t, func(req string) string {
+		return strings.Repeat("x", oversize)
+	})
+
+	cmd := exec.Command(bin, `{"tool":"foci_todo","params":{"limit":500}}`)
+	cmd.Env = append(os.Environ(), "FOCI_SOCK="+sockPath)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected non-zero exit code for an over-cap response, got output %q", out)
+	}
+	output := string(out)
+	if strings.Contains(output, "bufio.Scanner") || strings.Contains(output, "token too long") {
+		t.Errorf("output leaks the raw Go internal error: %q", output)
+	}
+	for _, want := range []string{"too large", "1048576", fmt.Sprintf("%d", oversize), "--limit"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output = %q, want it to contain %q", output, want)
+		}
+	}
+}
+
 // TestFociCallHelp verifies that -h, --help, and help all print a Usage:
 // header and exit zero.
 //
