@@ -22,7 +22,10 @@ things a bare `go test` does not:
    spawn (tmux, git, chrome…).
 
 **If you just want one package run under the harness env — not to isolate a specific ingredient —
-use `make test-one PKG=./internal/<pkg>/ [RUN=<Name>]` (foci_todo #1709) instead of anything below.**
+use `make test-one PKG=./internal/<pkg>/ [RUN=<Name>] [V=1]` (foci_todo #1709) instead of anything
+below.** `V=1` adds go test's own `-v`, so a PASSING test's `t.Logf` lines actually land in the log
+(foci_todo #1982) — without it a pass swallows them silently, and forcing a `t.Errorf` just to see
+them turns a passing test into a fake failure.
 It calls `scripts/seal-test.sh one`, which reuses the exact same `TESTENV`/seal construction as
 `make test` — so it cannot omit a variable by hand-rolling mistake. The manual reconstruction below
 still earns its place for the isolation table further down (running WITHOUT the seal, WITHOUT the

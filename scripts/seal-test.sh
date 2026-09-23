@@ -5,10 +5,15 @@
 # Makefile, not run directly by a person.
 #
 # Usage: seal-test.sh <unit|integration|one> <TESTDIR> <LOGFILE> <parallel-n> \
-#          <GOCACHE_PIN> <GOMODCACHE_PIN> <GOPATH_PIN> [PKG] [RUN]
+#          <GOCACHE_PIN> <GOMODCACHE_PIN> <GOPATH_PIN> [PKG] [RUN] [VERBOSE]
 #
-#   PKG and RUN are only used (and required/optional respectively) by the
-#   `one` mode — see run_one below. foci_todo #1709: this is the ONE place
+#   PKG, RUN and VERBOSE are only used by the `one` mode — see run_one below.
+#   VERBOSE (make's V=1) adds go test's own -v so a PASSING test's t.Logf
+#   output actually reaches LOGFILE — foci_todo #1982: before this, the only
+#   way to see it was to force a FAIL (t.Errorf), because a bare ARGS=-v on
+#   the make command line isn't a real make var and was silently dropped.
+#
+#   foci_todo #1709: this is the ONE place
 #   the harness environment (TESTENV/SEAL) is constructed; unit/integration/
 #   one all consume the SAME arrays below rather than each deriving their
 #   own, so a single-package run cannot silently diverge from `make test`'s
@@ -84,6 +89,7 @@ GOMODCACHE_DIR="${6:?}"
 GOPATH_DIR="${7:?}"
 PKG="${8:-}"
 RUNFILTER="${9:-}"
+VERBOSE="${10:-}"
 
 LLBOX="bin/llbox"
 
@@ -165,15 +171,17 @@ run_integration() {
 # run_one — the fail-arm iteration target (foci_todo #1709): one package
 # (required), optionally narrowed with -run, through the IDENTICAL
 # SEAL/TESTENV arrays run_unit uses — never re-derive them here. RUNFILTER
-# empty means "whole package", same as `go test ./pkg/` with no -run.
+# empty means "whole package", same as `go test ./pkg/` with no -run. VERBOSE
+# (foci_todo #1982) adds -v so t.Logf reaches LOGFILE even on a PASS.
 run_one() {
   if [ -z "$PKG" ]; then
     echo "seal-test.sh: mode 'one' requires PKG (arg 8), e.g. ./internal/agent/" >&2
     exit 2
   fi
-  env_header "sealed single-package run: $PKG${RUNFILTER:+ -run $RUNFILTER}"
+  env_header "sealed single-package run: $PKG${RUNFILTER:+ -run $RUNFILTER}${VERBOSE:+ -v}"
   local extra=(-count=1)
   [ -n "$RUNFILTER" ] && extra+=(-run "$RUNFILTER")
+  [ -n "$VERBOSE" ] && extra+=(-v)
   "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test "${extra[@]}" "$PKG" >> "$LOGFILE" 2>&1
   local status=$?
 

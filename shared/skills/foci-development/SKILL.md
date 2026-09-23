@@ -59,7 +59,10 @@ Gotchas: the changelog line (`foci: changelog staged (<old> -> <new>)`) is the c
 make test-one PKG=./internal/<pkg>/ RUN=<Name>
 ```
 
-`RUN` is optional — omit it to run the whole package. `PKG` is required.
+`RUN` is optional — omit it to run the whole package. `PKG` is required. `V=1` adds go test's `-v`
+so `t.Logf` output reaches the log on a PASS too (foci_todo #1982) — without it, only a FAIL surfaces
+that output, so a bare `ARGS=-v` (not a real make var — silently dropped) used to force `t.Errorf`
+just to see it.
 
 **You cannot sandbox a `foci` CLI probe.** The CLI prefers the gateway's unix socket, so `FOCI_ADDR` is never read when you run as an agent — pointing it at a dead port does nothing and the command really executes. A `foci send` you run "as a test" is delivered for real.
 
