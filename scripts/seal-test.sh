@@ -155,6 +155,20 @@ run_unit() {
   local status=$?
 
   diagnostic_rerun
+
+  # Shell-script suites (shared/scripts/tests/*.sh). They ran nowhere before,
+  # so mdq-test.sh sat red on main unnoticed (#1976). Run unsealed: they need
+  # git and the real mdq/jq binaries. Each prints its own "FAIL ..." lines,
+  # which the Makefile's failure grep picks up.
+  local t
+  for t in shared/scripts/tests/*.sh; do
+    [ -e "$t" ] || continue
+    echo "=== script test: $t ===" >> "$LOGFILE"
+    if ! bash "$t" >> "$LOGFILE" 2>&1; then
+      echo "FAIL script test: $t" >> "$LOGFILE"
+      status=1
+    fi
+  done
   return "$status"
 }
 
