@@ -266,9 +266,9 @@ main
  ├── periodic      → config, log, memory, provider, session, skills, timeutil, warnings (NO agent)
  ├── dispatch      → command, platform, session, tools (shared command dispatch logic; platform wrappers delegate here)
  ├── turn          → turnevent, display, log, platform, tooldetail (shared turn rendering, tool call tracking, and tool-result display store for all platforms)
- ├── telegram      → agent, turnevent, chatmeta, command, config, dispatch, display, log, platform, provider, secrets, session, timeutil, tooldetail, toolformat, turn, voice
+ ├── telegram      → agent, turnevent, chatmeta, command, config, dispatch, display, log, platform, secrets, session, timeutil, tooldetail, toolformat, turn, voice
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
- ├── discord       → agent, turnevent, chatmeta, command, config, dispatch, display, log, platform, provider, secrets, session, timeutil, tooldetail, toolformat, turn, voice
+ ├── discord       → agent, turnevent, chatmeta, command, config, dispatch, display, log, platform, secrets, session, timeutil, tooldetail, toolformat, turn, voice
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
  ├── app           → agent, turnevent, app/fap, command, config, dispatch, log, platform, question, secrets, session, sqlite, tempdir, tools, turn, voice (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
  ├── askgw         → log, peercred, question (opt-in ask-gateway for external Apps — see Ask Gateway section)

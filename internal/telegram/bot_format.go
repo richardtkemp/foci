@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"foci/internal/platform"
-	"foci/internal/provider"
 	"foci/internal/toolformat"
 )
 
@@ -196,7 +195,7 @@ func (b *Bot) formatToolCall(toolName string, params json.RawMessage, showMode s
 		maxChars = 450
 	}
 	// Pretty-print params; truncate only in preview mode
-	paramStr := provider.UnescapeUnicodeJSON(string(params))
+	paramStr := toolformat.UnescapeUnicodeJSON(string(params))
 	var pretty bytes.Buffer
 	if json.Indent(&pretty, json.RawMessage(paramStr), "", "  ") == nil {
 		paramStr = pretty.String()

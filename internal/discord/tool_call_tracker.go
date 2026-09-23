@@ -7,7 +7,6 @@ import (
 
 	"foci/internal/log"
 	"foci/internal/platform"
-	"foci/internal/provider"
 	"foci/internal/toolformat"
 	"foci/internal/turn"
 
@@ -143,7 +142,7 @@ func formatToolCallFull(toolName string, params json.RawMessage, showMode string
 	if maxChars == 0 {
 		maxChars = 450
 	}
-	paramStr := provider.UnescapeUnicodeJSON(string(params))
+	paramStr := toolformat.UnescapeUnicodeJSON(string(params))
 	var pretty bytes.Buffer
 	if json.Indent(&pretty, json.RawMessage(paramStr), "", "  ") == nil {
 		paramStr = pretty.String()

@@ -646,26 +646,6 @@ func TestMarshalRaw_NoHTMLEscape(t *testing.T) {
 	}
 }
 
-func TestUnescapeUnicodeJSON(t *testing.T) {
-	t.Parallel()
-	// Proves that UnescapeUnicodeJSON converts \u003e → >, \u003c → <, \u0026 → &
-	// while leaving other content untouched.
-	tests := []struct {
-		in, want string
-	}{
-		{`cat 2\u003e/dev/null`, `cat 2>/dev/null`},
-		{`\u003chtml\u003e`, `<html>`},
-		{`foo \u0026 bar`, `foo & bar`},
-		{`no escapes here`, `no escapes here`},
-		{`\u00`, `\u00`}, // incomplete sequence left alone
-	}
-	for _, tc := range tests {
-		if got := UnescapeUnicodeJSON(tc.in); got != tc.want {
-			t.Errorf("UnescapeUnicodeJSON(%q) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
-}
-
 func TestComputeSessionStats_ApproxTokensRounding(t *testing.T) {
 	t.Parallel()
 	// Verifies integer division truncation

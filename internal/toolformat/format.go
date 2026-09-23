@@ -215,3 +215,38 @@ func Truncate(s string, max int) string {
 	}
 	return s[:max] + "..."
 }
+
+// UnescapeUnicodeJSON converts JSON unicode escape sequences like > back
+// to their literal characters. Handles the case where json.Marshal has escaped
+// HTML-sensitive characters (>, <, &) that appear in tool call parameters.
+func UnescapeUnicodeJSON(s string) string {
+	var result strings.Builder
+	for i := 0; i < len(s); i++ {
+		if i+5 < len(s) && s[i] == '\\' && s[i+1] == 'u' {
+			hexStr := s[i+2 : i+6]
+			if isHexString(hexStr) {
+				var cp int64
+				if _, err := fmt.Sscanf(hexStr, "%x", &cp); err == nil {
+					result.WriteRune(rune(cp))
+					i += 5
+					continue
+				}
+			}
+		}
+		result.WriteByte(s[i])
+	}
+	return result.String()
+}
+
+// isHexString returns true if s is exactly 4 hex digits.
+func isHexString(s string) bool {
+	if len(s) != 4 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}

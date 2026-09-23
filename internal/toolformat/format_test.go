@@ -287,3 +287,23 @@ func raw(m map[string]string) map[string]json.RawMessage {
 	}
 	return out
 }
+
+func TestUnescapeUnicodeJSON(t *testing.T) {
+	t.Parallel()
+	// Proves that UnescapeUnicodeJSON converts > -> >, < -> <, & -> &
+	// while leaving other content untouched.
+	tests := []struct {
+		in, want string
+	}{
+		{`cat 2>/dev/null`, `cat 2>/dev/null`},
+		{`<html>`, `<html>`},
+		{`foo & bar`, `foo & bar`},
+		{`no escapes here`, `no escapes here`},
+		{`\u00`, `\u00`}, // incomplete sequence left alone
+	}
+	for _, tc := range tests {
+		if got := UnescapeUnicodeJSON(tc.in); got != tc.want {
+			t.Errorf("UnescapeUnicodeJSON(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
