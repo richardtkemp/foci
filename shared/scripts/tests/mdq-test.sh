@@ -20,9 +20,13 @@
 # read path for every agent, right now. A regression in the default
 # (no-flag) path breaks markdown reading for everyone the moment this
 # script is deployed. So this test also diffs the CURRENT script's no-flag
-# output against the PRE-CHANGE script's (fetched from `main` via git show)
-# for representative invocations, and requires them to be byte-identical —
-# asserted, not eyeballed.
+# output against the PRE-CHANGE script's (fetched via git show, pinned to
+# a4caf43f^ — the commit immediately before #1705 landed, NOT `main`: this
+# suite was written while #1705 was still on a branch, so `main` meant
+# "pre-change" only until it landed; once merged, `main` IS the change,
+# and comparing against it compares new-vs-new-with-flag and fails by
+# construction — see #1976) for representative invocations, and requires
+# them to be byte-identical — asserted, not eyeballed.
 #
 # Requires: the real mdq binary (not this wrapper) and jq, both on a
 # discoverable path; git (to diff against the pre-change script).
@@ -180,8 +184,12 @@ fi
 # This is the "must not break the live read path for every agent" gate.
 # ---------------------------------------------------------------------------
 REPO=$(cd "$HERE/../.." && pwd)
+# Pinned to the commit immediately before #1705 landed (a4caf43f^), NOT
+# `main` — see the header comment and #1976 for why `main` fails by
+# construction once #1705 is merged.
+PRE_1705=a4caf43f^
 OLD="$TMP/mdq-old"
-if git -C "$REPO" show main:shared/scripts/mdq > "$OLD" 2>/tmp/mdq-test-err-gitshow; then
+if git -C "$REPO" show "$PRE_1705":shared/scripts/mdq > "$OLD" 2>/tmp/mdq-test-err-gitshow; then
     chmod +x "$OLD"
     run_both() { # run_both <label> <args...>
         local label=$1; shift
@@ -221,7 +229,7 @@ mds_raw=$("$MDS" "$FIX" "Section A" --raw)
 check "mds --raw matches mdq --raw for the same section" "$raw_out" "$mds_raw"
 
 OLDS="$TMP/mds-old"
-if git -C "$REPO" show main:shared/scripts/mds > "$OLDS" 2>/tmp/mds-test-err-gitshow; then
+if git -C "$REPO" show "$PRE_1705":shared/scripts/mds > "$OLDS" 2>/tmp/mds-test-err-gitshow; then
     chmod +x "$OLDS"
     # mds delegates extraction to whatever `mdq` is on PATH, so the OLD mds must
     # be paired with the OLD mdq or this compares new-against-new and proves
