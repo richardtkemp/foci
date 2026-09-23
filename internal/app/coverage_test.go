@@ -14,8 +14,8 @@ import (
 	"golang.org/x/oauth2"
 
 	"foci/internal/agent"
-	"foci/internal/app/fap"
 	"foci/internal/command"
+	"foci/internal/fap"
 	"foci/internal/platform"
 )
 

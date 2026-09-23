@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"foci/internal/app/fap"
+	"foci/internal/fap"
 	"foci/internal/sqlite"
 )
 

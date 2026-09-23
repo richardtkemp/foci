@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/app/fap"
+	"foci/internal/fap"
 	"foci/internal/platform"
 )
 

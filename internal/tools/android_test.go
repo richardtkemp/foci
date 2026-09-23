@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/app/fap"
+	"foci/internal/fap"
 )
 
 type fakeInvoker struct {

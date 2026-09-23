@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"foci/internal/app/fap"
+	"foci/internal/fap"
 )
 import
 

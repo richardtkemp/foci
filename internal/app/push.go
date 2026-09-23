@@ -14,8 +14,8 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
-	"foci/internal/app/fap"
 	"foci/internal/config"
+	"foci/internal/fap"
 )
 
 const (

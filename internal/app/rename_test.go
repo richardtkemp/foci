@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"foci/internal/app/fap"
+	"foci/internal/fap"
 	"foci/internal/platform"
 	"foci/internal/session"
 )

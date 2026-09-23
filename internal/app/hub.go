@@ -17,9 +17,9 @@ import (
 	"github.com/gorilla/websocket"
 
 	"foci/internal/agent"
-	"foci/internal/app/fap"
 	"foci/internal/command"
 	"foci/internal/config"
+	"foci/internal/fap"
 	flog "foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"

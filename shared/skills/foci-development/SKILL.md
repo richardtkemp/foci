@@ -22,7 +22,7 @@ For working ON foci's Go codebase (`/home/rich/git/foci`, public `github.com/ric
 | **routing.md** | Outbound delivery: the `internal/route` cascade (`ConnFor`, policies, outcomes, `Broadcast`), `send_to_session`, and how an agent-initiated/unsolicited message reaches a chat. |
 | **turns.md** | The turn lifecycle: steer vs SourceUser folding, `foci_ask` (async, persistence), and the app-vs-typed ask-capture gates. |
 
-> **Adding a server↔app FAP wire frame** (a new WebSocket frame in `internal/app/fap/`) is a cross-repo task — the Go server half **and** the foci-client Kotlin half must stay byte-compatible. The full end-to-end chain lives in the **foci-client-dev** skill's `add-fap-frame.md` (it includes the Go steps); use it rather than reconstructing the sequence here.
+> **Adding a server↔app FAP wire frame** (a new WebSocket frame in `internal/fap/`) is a cross-repo task — the Go server half **and** the foci-client Kotlin half must stay byte-compatible. The full end-to-end chain lives in the **foci-client-dev** skill's `add-fap-frame.md` (it includes the Go steps); use it rather than reconstructing the sequence here.
 
 ## Landing & deploy invariants (post-`make land`, #1448)
 

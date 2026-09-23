@@ -235,7 +235,8 @@ main
  ├── question      (no internal deps — backend-agnostic AskUserQuestion core: parsing, formatting, choice buttons, answer resolution/merge; shared by ccstream and tools so the two surfaces can't drift)
  ├── defersend     → sqlite, timeutil (leaf — SQLite-backed queue for `foci send --wait-*` deferred sends; a pending send that isn't yet warm/cold/user-active/-inactive, OR whose target endpoint is currently rate-limited (#1417), is persisted and delivered by a background sweep, surviving a restart. Wired in `cmd/foci-gw/wait_defer.go`.)
  ├── mcp           → log, procx, provider, tools, BurntSushi/toml, go-sdk/mcp
- ├── tools         → turnevent, app/fap, config, convo, display, log, memory, modelinfo, peercred, platform, procx, provider, question, secrets, secrets/bitwarden, session, tempdir, tools/spill, voice (Registry, Tool, shared helpers, the exec-bridge generator, web, http, and most tool impls)
+ ├── fap           (no internal deps — Foci App Protocol (FAP v1) wire types/codec: Envelope, ServerFrame/ClientFrame, ToolResult, ToolStatus* constants, NewULID; pure protocol leaf shared by app and tools so neither sits above the other)
+ ├── tools         → turnevent, config, convo, display, fap, log, memory, modelinfo, peercred, platform, procx, provider, question, secrets, secrets/bitwarden, session, tempdir, tools/spill, voice (Registry, Tool, shared helpers, the exec-bridge generator, web, http, and most tool impls)
  │     ├── tools/spill    → (stdlib only) shared spill-to-disk writer: bounded in-RAM head + overflow to temp file, optional total cap; used by tools/shell and the http tool
  │     ├── tools/shell    → tools, tools/spill, log, procx, secrets, secrets/bitwarden (the exec/shell tool; execbridge generator stays at root)
  │     ├── tools/tmux     → tools, log, display, session, procx (tmux session tool — 8 files)
@@ -270,7 +271,7 @@ main
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
  ├── discord       → agent, turnevent, chatmeta, command, config, dispatch, display, log, platform, secrets, session, timeutil, tooldetail, toolformat, turn, voice
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
- ├── app           → agent, turnevent, app/fap, command, config, dispatch, log, platform, question, secrets, session, sqlite, tempdir, tools, turn, voice (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
+ ├── app           → agent, turnevent, command, config, dispatch, fap, log, platform, question, secrets, session, sqlite, tempdir, tools, turn, voice (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
  ├── askgw         → log, peercred, question (opt-in ask-gateway for external Apps — see Ask Gateway section)
  ├── telemetry     → turnevent, log, modelinfo, provider, go.opentelemetry.io/otel (+ sdk, otlptracehttp) — OpenTelemetry export of every turn to an OTLP/HTTP collector (Langfuse) plus scores/score configs over its REST API; wired from cmd/foci-gw (init), agent (turn spans), tools + cmd/foci-gw (cross-agent links). See "Tracing".
  └── evals         → log, fsnotify, yaml.v3 — rubric registry (scoring axes as files, watched); consumed by cmd/foci-gw (/score validation, score-config mirroring). See "Tracing" → "Scores and rubrics".
@@ -2246,7 +2247,7 @@ tokens + revocation + rate-limited auth), slice 8 (voice: inbound STT
 transcription). The full §11 build order is implemented
 (`foci-android/docs/02-foci-server-changes.md`).
 
-**Wire layer (`internal/app/fap/`):** pure Go mirror of the client's Kotlin
+**Wire layer (`internal/fap/`):** pure Go mirror of the client's Kotlin
 `:protocol` module. `Envelope{t,id,seq,ack,ts,v,d}` wraps a type-specific
 payload selected by `t`. `fap.Encode(ServerFrame, seq, ack, id, ts)` →
 wire string; `fap.Decode(text)` → `Inbound{…, Frame}` (a concrete `Client*`

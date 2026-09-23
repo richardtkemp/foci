@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"foci/internal/app/fap"
+	"foci/internal/fap"
 )
 
 // TestInteractiveResponse_BatchedAskAfterRestartLostRegistration reproduces #1473

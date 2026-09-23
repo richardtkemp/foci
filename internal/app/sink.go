@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	"foci/internal/agent"
-	"foci/internal/app/fap"
+	"foci/internal/fap"
 	"foci/internal/platform"
 	"foci/internal/ratelimit"
 	"foci/internal/turn"

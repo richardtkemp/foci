@@ -20,8 +20,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"foci/internal/app/fap"
 	"foci/internal/config"
+	"foci/internal/fap"
 	flog "foci/internal/log"
 	"foci/internal/platform"
 )

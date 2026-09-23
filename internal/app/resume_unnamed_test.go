@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/app/fap"
+	"foci/internal/fap"
 )
 
 // The hello's resume list is BOUNDED (#1737) — the app sends its open tabs plus the

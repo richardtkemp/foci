@@ -6,7 +6,7 @@ import (
 	"errors"
 	"sync"
 
-	"foci/internal/app/fap"
+	"foci/internal/fap"
 )
 
 // ErrNoLiveDevice is returned by InvokeTool when the agent has no connected

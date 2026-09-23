@@ -30,8 +30,8 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/app/fap"
 	"foci/internal/command"
+	"foci/internal/fap"
 	"foci/internal/question"
 )
 

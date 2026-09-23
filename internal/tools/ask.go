@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"foci/internal/app/fap"
+	"foci/internal/fap"
 	"foci/internal/procx"
 	"foci/internal/question"
 	"foci/internal/session"

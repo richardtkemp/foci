@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"foci/internal/app/fap"
 	"foci/internal/config"
+	"foci/internal/fap"
 )
 
 // featureConfigEdit is the ClientHello capability a client advertises to view

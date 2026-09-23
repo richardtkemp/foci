@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"foci/internal/app/fap"
 	"foci/internal/config"
+	"foci/internal/fap"
 	"foci/internal/platform"
 )
 

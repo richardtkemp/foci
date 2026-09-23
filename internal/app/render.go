@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"foci/internal/app/fap"
+	"foci/internal/fap"
 	"foci/internal/log"
 	"foci/internal/turn"
 )

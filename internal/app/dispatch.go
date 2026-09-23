@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"foci/internal/agent"
-	"foci/internal/app/fap"
 	"foci/internal/command"
 	"foci/internal/dispatch"
+	"foci/internal/fap"
 	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/tools"

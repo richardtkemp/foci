@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"foci/internal/agent"
-	"foci/internal/app/fap"
 	"foci/internal/command"
 	"foci/internal/config"
+	"foci/internal/fap"
 	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/turnevent"

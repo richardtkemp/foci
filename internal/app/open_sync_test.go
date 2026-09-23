@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"foci/internal/app/fap"
+	"foci/internal/fap"
 	"foci/internal/platform"
 )
 
