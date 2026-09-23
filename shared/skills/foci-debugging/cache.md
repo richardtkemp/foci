@@ -11,7 +11,7 @@
 
 ## Cache-bust diagnosis
 
-A "bust" is a call with `cache_read = 0` where you'd expect a hit. Find the last call with `cache_read > 0` before the first `cache_read = 0`, then extract and **diff their system-prompt blocks** to see what changed.
+A "bust" is a call with `cache_read_tokens = 0` where you'd expect a hit. Find the last call with `cache_read_tokens > 0` before the first `cache_read_tokens = 0`, then extract and **diff their system-prompt blocks** to see what changed.
 
 Common causes:
 - a character/system-prompt file edit picked up by `bootstrap.Reload()`,
@@ -21,7 +21,7 @@ Common causes:
 
 ```bash
 # Find the bust boundary
-sqlite3 ~/data/api.db "SELECT ts, cost_usd, cache_read, cache_write FROM api_calls ORDER BY ts DESC LIMIT 20"
+sqlite3 -readonly ~/data/api.db "SELECT ts, cost_usd, cache_read_tokens, cache_write_tokens FROM api_calls ORDER BY ts DESC LIMIT 20"
 
 # Then pull the two calls' system blocks from the payload log and diff (see api-cost.md
 # for the jq to extract .request.system[] block sizes; extract each to a file, then diff).
