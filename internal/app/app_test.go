@@ -18,6 +18,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/fap"
 	"foci/internal/platform"
+	"foci/internal/question"
 	"foci/internal/session"
 	"foci/internal/turnevent"
 	"foci/internal/voice"
@@ -1247,6 +1248,47 @@ func TestInteractive_BatchProgressSyncAndStreamedResolve(t *testing.T) {
 	dd := drain(t, c)
 	if len(dd) != 1 || dd[0].t != fap.TypeInteractiveProgressEdit || dd[0].d["done"] != true {
 		t.Fatalf("resolve frames = %v, want one Done progressEdit", types(dd))
+	}
+}
+
+// TestInteractive_BatchExpirySweep (#1895): an unanswered batched ask is swept on
+// the same schedule as a sequential prompt. Past the cutoff it resolves exactly
+// like the form's own Cancel — the callback gets the qa:cancel payload (so the ask
+// layer tells the agent and releases the session's queue), a Done edit closes the
+// form on every attached client, and the registration is gone. A younger ask is
+// left untouched.
+func TestInteractive_BatchExpirySweep(t *testing.T) {
+	h, c, b, conn := boundConn(t)
+	c.features = map[string]struct{}{featureInteractiveBatch: {}}
+	b.attach(c)
+
+	qs := []platform.BatchQuestion{{Text: "Q?", Choices: []platform.ButtonChoice{{Label: "A", Data: "qa:0"}}}}
+	var oldGot, newGot []string
+	oldFired, newFired := false, false
+	conn.SendInteractiveBatch("req-old", qs, func(a []string) { oldGot, oldFired = a, true })
+	conn.SendInteractiveBatch("req-new", qs, func(a []string) { newGot, newFired = a, true })
+	drain(t, c) // consume both interactive frames
+
+	bp, _ := h.batchPromptByID("req-old")
+	bp.created = time.Now().Add(-2 * time.Hour)
+	h.expireBatchPrompts(time.Now().Add(-time.Hour))
+
+	if !oldFired || len(oldGot) != 1 || oldGot[0] != question.CancelData {
+		t.Errorf("expired ask callback: fired=%v answers=%v, want [%s]", oldFired, oldGot, question.CancelData)
+	}
+	if _, ok := h.batchPromptByID("req-old"); ok {
+		t.Error("expired registration should be removed")
+	}
+	ds := drain(t, c)
+	if len(ds) != 1 || ds[0].t != fap.TypeInteractiveProgressEdit || ds[0].d["done"] != true || ds[0].d["promptId"] != "req-old" {
+		t.Fatalf("expiry frames = %v, want one Done progressEdit for req-old", types(ds))
+	}
+
+	if newFired {
+		t.Errorf("younger ask must not be resolved, got %v", newGot)
+	}
+	if _, ok := h.batchPromptByID("req-new"); !ok {
+		t.Error("younger registration must survive the sweep")
 	}
 }
 

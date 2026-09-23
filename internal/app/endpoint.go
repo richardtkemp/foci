@@ -61,6 +61,20 @@ func ActiveConnCount() int {
 	return h.ConnCount()
 }
 
+// ExpireBatchPrompts resolves, as cancelled, every batched (app-form) ask on the
+// configured hub that has been waiting longer than maxAge. No-op if the app
+// provider is not running. Called from the same periodic sweep as
+// platform.CleanupExpiredInteractive so both ask shapes share one TTL (#1895).
+func ExpireBatchPrompts(maxAge time.Duration) {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return
+	}
+	h.expireBatchPrompts(time.Now().Add(-maxAge))
+}
+
 // MintActivePairKey mints a single-use, short-TTL pairing key on the live app
 // hub (#862) and returns it with its expiry. A device exchanges this key at
 // POST /app/pair for its own revocable token. The key lives only in memory and

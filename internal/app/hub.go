@@ -22,6 +22,7 @@ import (
 	"foci/internal/fap"
 	flog "foci/internal/log"
 	"foci/internal/platform"
+	"foci/internal/question"
 	"foci/internal/session"
 	"foci/internal/tools"
 )
@@ -134,6 +135,8 @@ const systemStateOpenChats = "open_chats"
 type batchPrompt struct {
 	b      *convBinding
 	onResp func(answers []string)
+
+	created time.Time // registration time; the expiry sweep ages from here
 
 	mu      sync.Mutex
 	answers []string // accumulated per-question answers (streamed via InteractiveProgress)
@@ -1816,12 +1819,12 @@ func (h *Hub) deleteNotification(msgID string) {
 //
 // Entries survive a socket disconnect on purpose: the app replays the buffered
 // form on reconnect and a later submit must still route. An ask that is never
-// answered leaks its entry until process exit — bounded by the (rare) count of
-// unanswered batched asks, which the ask layer's 24h TTL caps in practice.
+// answered is swept by expireBatchPrompts on the same schedule and TTL as the
+// single-prompt imStore sweep (CleanupExpiredInteractive), #1895.
 
 func (h *Hub) registerBatchPrompt(promptID string, b *convBinding, questionCount int, onResp func(answers []string)) {
 	h.mu.Lock()
-	h.batchPrompts[promptID] = &batchPrompt{b: b, onResp: onResp, answers: make([]string, questionCount)}
+	h.batchPrompts[promptID] = &batchPrompt{b: b, onResp: onResp, answers: make([]string, questionCount), created: time.Now()}
 	h.mu.Unlock()
 	h.frames.PutPrompt(promptID, b.convID, b.agentID, time.Now().UnixMilli())
 }
@@ -1831,6 +1834,36 @@ func (h *Hub) batchPromptByID(promptID string) (*batchPrompt, bool) {
 	defer h.mu.RUnlock()
 	bp, ok := h.batchPrompts[promptID]
 	return bp, ok
+}
+
+// expireBatchPrompts resolves every batched ask registered before cutoff as if
+// the user had pressed the form's Cancel: the ask layer gets the qa:cancel
+// payload (so the agent is told and the session's queued asks advance) and a
+// Done edit closes the form on every attached client. This is the batched
+// counterpart of CleanupExpiredInteractive's onExpire, which cancels a
+// sequential ask the same way.
+func (h *Hub) expireBatchPrompts(cutoff time.Time) {
+	type expired struct {
+		id string
+		bp *batchPrompt
+	}
+	var due []expired
+	h.mu.Lock()
+	for id, bp := range h.batchPrompts {
+		if bp.created.Before(cutoff) {
+			due = append(due, expired{id, bp})
+			delete(h.batchPrompts, id)
+		}
+	}
+	h.mu.Unlock()
+
+	// Resolve outside h.mu: the callback re-enters the ask layer, which may
+	// present the session's next queued ask back through this hub.
+	for _, e := range due {
+		h.frames.DeletePrompt(e.id)
+		appLog.Infof("batched ask %s expired unanswered — resolved as cancelled", e.id)
+		h.resolveBatchedAsk(e.bp.b, e.id, []string{question.CancelData}, e.bp.onResp)
+	}
 }
 
 func (h *Hub) deleteBatchPrompt(promptID string) {
