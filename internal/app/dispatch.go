@@ -410,6 +410,22 @@ func (h *Hub) handleConversationSetDefault(f fap.ConversationSetDefault) {
 // be archived would silently degrade session-blind delivery. Mirrors
 // handleConversationSetDefault (the established per-chat-metadata round-trip).
 // (#app-archive-flag)
+//
+// A re-applied archive that MATCHES the current flag is a no-op: skip both the
+// write and the broadcast (#1989, part 2 of #1981). This matters because an
+// archived conversation gets no further server frames — the server skips
+// commands and replay for archived chats — so the archive frame that caused it
+// is never acked by a later piggyback and sits in the client's durable outbox
+// forever, resent on every reconnect. The server's inbound dedup is in-memory
+// only, so the first reconnect after any gateway restart re-applies the whole
+// backlog as "fresh" events. Without this guard, 50 stuck archives in one
+// burst became 50 full pushRosterAll broadcasts (observed 2026-09-23,
+// triggering a client backfill storm and SQLITE_BUSY). No reply is needed for
+// the no-op: the sender's optimistic local flag already matches the server, so
+// there is nothing to revert (unlike the refused-default case above). Getting
+// the stuck frame ACKED so it leaves the client's outbox is a separate fix
+// (#1988) — note that dispatchInbound's ackInbound consumes the CLIENT's ack of
+// our frames; it does not ack this frame.
 func (h *Hub) handleConversationArchive(client *wsClient, f fap.ConversationArchive) {
 	h.mu.RLock()
 	b := h.convs[f.ConversationID]
@@ -425,6 +441,12 @@ func (h *Hub) handleConversationArchive(client *wsClient, f fap.ConversationArch
 			// Per-socket, deliberately: nothing changed server-side, and only this
 			// device applied the optimistic flag that needs reverting.
 			h.pushRoster(client)
+			return
+		}
+		if current, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, "is_archived"); err != nil {
+			appLog.Warnf("archive %s: read current state: %v", f.ConversationID, err)
+		} else if (current == "true") == f.Archived {
+			appLog.Debugf("archive %s: already archived=%v, no-op (no broadcast)", f.ConversationID, f.Archived)
 			return
 		}
 		if err := idx.SetArchivedChat(b.agentID, "app", b.chatID, f.Archived); err != nil {

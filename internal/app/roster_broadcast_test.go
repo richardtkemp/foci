@@ -193,6 +193,40 @@ func TestConversationArchive_RosterReachesOtherDevices(t *testing.T) {
 	}
 }
 
+// TestConversationArchive_NoopDoesNotBroadcast is the #1989 regression (part 2
+// of #1981): re-applying an archive that matches the CURRENT server state must
+// not broadcast. #1981's root cause is a stuck client outbox entry — an
+// archived conversation gets no further server frames, so the archive frame
+// that caused it is never acked and is resent on every reconnect forever. A
+// gateway restart drops the server's in-memory inbound dedup, so the first
+// reconnect after every restart re-applies the whole backlog as "fresh"
+// events. Observed: 50 re-applied archives in one burst, each a no-op (state
+// was already archived=true), each still calling pushRosterAll — 50 full
+// roster broadcasts to every socket, which triggered a client backfill storm
+// and SQLITE_BUSY errors on 2026-09-23.
+func TestConversationArchive_NoopDoesNotBroadcast(t *testing.T) {
+	const agentID = "arnix"
+	h, sender, other := rosterTestHub(t, agentID)
+	b := h.ensureBinding(sender, agentID, "conv-1")
+	// Put the conversation into the archived state first, exactly as chat_metadata
+	// already holds it server-side when the stuck outbox entry gets resent.
+	if err := h.deps.SessionIndex.SetArchivedChat(agentID, "app", b.chatID, true); err != nil {
+		t.Fatalf("SetArchivedChat: %v", err)
+	}
+	drain(t, sender)
+	drain(t, other)
+
+	// Re-apply the SAME state — the resent frame, not a real change.
+	h.handleConversationArchive(sender, fap.ConversationArchive{ConversationID: b.convID, Archived: true})
+
+	if _, seen := rosterConvs(t, sender); seen {
+		t.Error("a no-op archive (already in that state) must not broadcast to the sender either — nothing changed")
+	}
+	if _, seen := rosterConvs(t, other); seen {
+		t.Error("a no-op archive (already in that state) broadcast a roster to another device — #1989: a burst of re-applied no-op archives storms every socket")
+	}
+}
+
 // TestConversationSetDefault_RosterReachesOtherDevices proves the set-default
 // half of #1558. This one is more than cosmetic: the default chat is what
 // session-blind delivery (keepalive, cron) routes to, so a device holding a
