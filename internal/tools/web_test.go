@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -196,6 +198,90 @@ func TestWebFetchMarkdownStructure(t *testing.T) {
 	// No raw HTML tags
 	if strings.Contains(result.Text, "<h1>") || strings.Contains(result.Text, "<p>") {
 		t.Errorf("should not contain HTML tags, got: %q", result.Text)
+	}
+}
+
+func TestIsThinExtraction(t *testing.T) {
+	// #1960: flags an extraction that captures less than half of the page's
+	// own VISIBLE text (not raw HTML bytes — scripts/CSS/markup inflate that
+	// without bound and don't correlate with what a reader sees), but not a
+	// short extraction from an already-short page (nothing lost) nor a large
+	// extraction from a large page (a real, full article). The concrete
+	// numbers below are the measured ratios from the three fixtures in
+	// TestWebFetchThinExtraction (see that test for how they were obtained).
+	t.Parallel()
+	cases := []struct {
+		name           string
+		extractedChars int
+		visibleChars   int
+		want           bool
+	}{
+		{"real repro: darioamodei.com (~48% of visible text)", 620, 1298, true},
+		{"real control: go.dev blog post (~58%)", 2742, 4693, false},
+		{"real control: trimmed Wikipedia article (~83%)", 37205, 44824, false},
+		{"short page, short extraction — nothing to lose", 200, 400, false},
+		{"just under the visible-size floor", 100, 799, false},
+		{"just at the visible-size floor, thin extraction", 100, 800, true},
+		{"extraction at exactly half — not thin (strict <)", 400, 800, false},
+	}
+	for _, c := range cases {
+		if got := isThinExtraction(c.extractedChars, c.visibleChars); got != c.want {
+			t.Errorf("%s: isThinExtraction(%d, %d) = %v, want %v", c.name, c.extractedChars, c.visibleChars, got, c.want)
+		}
+	}
+}
+
+// webFetchThinExtractionFixtures are real pages captured live (2026-09-23) and
+// checked in under testdata, chosen to prove the #1960 heuristic against the
+// actual page that motivated the ticket rather than a synthetic HTML snippet
+// shaped to pass. wikipedia_potato_trimmed.html is the real
+// https://en.wikipedia.org/wiki/Potato page with its citation-list bulk
+// (hundreds of <li> footnotes, ~340KB alone) trimmed to 6 representative
+// entries and one navbox kept — everything that is actual article body
+// (every section, the infobox) is untouched, so the extracted:visible ratio
+// still matches the live page's (measured ~0.83 here vs ~0.85 on the
+// untrimmed live fetch).
+var webFetchThinExtractionFixtures = []struct {
+	name        string
+	file        string
+	wantFlagged bool
+}{
+	{"darioamodei.com — link-hub/author-landing page (#1960 repro)", "dario_amodei_dev.html", true},
+	{"go.dev/blog/go1.22 — normal article, real nav chrome", "go_dev_blog_go122.html", false},
+	{"en.wikipedia.org/wiki/Potato (trimmed) — long normal article, heavy boilerplate", "wikipedia_potato_trimmed.html", false},
+}
+
+func TestWebFetchThinExtraction(t *testing.T) {
+	// Proves the #1960 note fires on the actual page that motivated the
+	// ticket, and does NOT fire on two real-world control pages — a short
+	// article and a long one, both with realistic nav/footer chrome. Fixture
+	// HTML is served verbatim by httptest so this stays hermetic (no network
+	// call in the test) while still exercising the read fetched bytes.
+	t.Parallel()
+	for _, c := range webFetchThinExtractionFixtures {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			body, err := os.ReadFile(filepath.Join("testdata", "webfetch_thin", c.file))
+			if err != nil {
+				t.Fatalf("read fixture: %v", err)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Write(body)
+			}))
+			defer server.Close()
+
+			tool := NewWebFetchTool()
+			params, _ := json.Marshal(map[string]interface{}{"url": server.URL})
+			result, err := tool.Execute(context.Background(), params)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			gotFlagged := strings.Contains(result.Text, "may have been dropped")
+			if gotFlagged != c.wantFlagged {
+				t.Errorf("thin-extraction note present = %v, want %v (result len=%d)", gotFlagged, c.wantFlagged, len(result.Text))
+			}
+		})
 	}
 }
 

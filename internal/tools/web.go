@@ -13,6 +13,7 @@ import (
 
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	readability "github.com/go-shiori/go-readability"
+	"golang.org/x/net/html"
 )
 
 func NewWebFetchTool() *Tool {
@@ -94,6 +95,70 @@ func parseReadableWithTimeout(body []byte, parsed *url.URL, timeout time.Duratio
 	}
 }
 
+// thinExtractionNote is appended to the markdown result when readability's
+// extracted article is suspiciously small next to the page's own visible text
+// (#1960): a link-hub / index / author-landing page reads as mostly
+// navigation to readability, which strips it — the caller is left with a
+// short, well-formed result and no signal that most of the page was
+// discarded.
+const thinExtractionNote = "\n\n---\n_[foci: extraction returned very little text relative to the page's visible content — content such as a link list may have been dropped. If this looks incomplete, retry with `raw=true`.]_"
+
+// bodyVisibleTextLen returns the length (in characters, whitespace
+// collapsed) of the text a reader would actually see in the page's <body> —
+// walking the parsed DOM and summing text-node content, skipping
+// <script>/<style>/<noscript>/<template> subtrees entirely. This is deliberately
+// NOT a byte count of the raw HTML (scripts/CSS/markup inflate that without
+// bound, see #1960) and NOT the markdown-converted length of the full body
+// (markdown's "[text](url)" link syntax over-counts link-dense boilerplate,
+// which compresses the gap between a genuine link-hub page and a normal
+// article with header/footer nav). Returns 0 if the body doesn't parse.
+func bodyVisibleTextLen(body []byte) int {
+	doc, err := html.Parse(bytes.NewReader(body))
+	if err != nil {
+		return 0
+	}
+	var sb strings.Builder
+	var walk func(n *html.Node, inBody bool)
+	walk = func(n *html.Node, inBody bool) {
+		if n.Type == html.ElementNode {
+			switch n.Data {
+			case "script", "style", "noscript", "template":
+				return
+			case "body":
+				inBody = true
+			}
+		}
+		if n.Type == html.TextNode && inBody {
+			sb.WriteString(n.Data)
+			sb.WriteByte(' ')
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c, inBody)
+		}
+	}
+	walk(doc, false)
+	return len(strings.TrimSpace(strings.Join(strings.Fields(sb.String()), " ")))
+}
+
+// isThinExtraction reports whether readability's extracted text captures
+// less than half of the page's own visible text — likely dropped content
+// (e.g. a link list misread as navigation) rather than a genuinely short
+// article. The visible-text floor guards pages with little content to begin
+// with, where a short extraction is expected and not worth flagging.
+// Measured against the #1960 repro + two control articles (a Go blog post, a
+// long Wikipedia article) — see internal/tools/testdata/webfetch_thin/:
+// darioamodei.com ratio ~0.48 (flagged), controls ~0.58 and ~0.85 (not).
+func isThinExtraction(extractedChars, visibleChars int) bool {
+	const (
+		minVisibleChars = 800 // below this the page has little to lose either way
+		thinRatio       = 0.5 // extraction captured less than half the visible text
+	)
+	if visibleChars < minVisibleChars {
+		return false
+	}
+	return float64(extractedChars) < thinRatio*float64(visibleChars)
+}
+
 // isStructuredContentType reports whether a Content-Type header denotes a
 // non-HTML, machine-parseable payload (JSON/XML/CSV/plain/YAML) that web_fetch
 // should return verbatim rather than run through readability (#966). xhtml is
@@ -168,7 +233,8 @@ func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 	// bounded by an independent wall-clock timeout (P2-1 defence-in-depth).
 	var htmlContent string
 	article, err := parseReadableWithTimeout(body, parsed, defaultFetchParseTimeout)
-	if err == nil && strings.TrimSpace(article.Content) != "" {
+	usedArticle := err == nil && strings.TrimSpace(article.Content) != ""
+	if usedArticle {
 		htmlContent = article.Content
 	} else {
 		// Fallback: convert full HTML body to markdown
@@ -183,6 +249,10 @@ func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 		} else {
 			md = string(body)
 		}
+	} else if usedArticle && isThinExtraction(len(strings.TrimSpace(article.TextContent)), bodyVisibleTextLen(body)) {
+		// #1960: flag the "broken instrument reports success" case rather than
+		// silently handing back a confident-looking but gutted result.
+		md += thinExtractionNote
 	}
 
 	return TextResult(md), nil
