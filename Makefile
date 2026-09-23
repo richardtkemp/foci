@@ -135,8 +135,10 @@ test: llbox
 	@mkdir -p $(TESTDIR)/home
 	@# /tmp/heavy serialises the test runner against any other heavy build
 	@# (e.g. a concurrent `update.sh` deploy build) that holds the same lock,
-	@# so they don't starve each other for CPU and trip deadline-sensitive
-	@# waits. Other heavy builds should flock the same path reciprocally.
+	@# so they do not starve each other for CPU and memory. It is NOT a
+	@# correctness tool: tests must pass under heavy load anyway (Dick,
+	@# 2026-09-23), since agent go build/test and clickhouse never take it.
+	@# Other heavy builds should flock the same path reciprocally.
 	@# Open the lock READ-ONLY (9<): /tmp is world-writable + sticky, and with
 	@# fs.protected_regular=2 the kernel denies WRITE-opening a lock file there
 	@# owned by the other shared account (rich vs foci). A read-only fd is exempt,
