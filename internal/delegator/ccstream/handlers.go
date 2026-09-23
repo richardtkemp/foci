@@ -1050,6 +1050,36 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		// helper defined in hooks.go.
 		b.handleHookResponse(raw)
 
+	case "model_refusal_fallback":
+		// CC can swap a session's model mid-process, silently: a safeguard
+		// flags the primary model's turn (stop_reason "refusal") and CC
+		// retries once on a fallback model. Nothing else in foci.log records
+		// this — the per-turn cost INFO line just starts naming a different
+		// model, which reads as normal output (#1968). This is the ONLY
+		// wire event carrying the fact, and its `content` is the ONLY place
+		// that states which model refused and which it switched to in
+		// prose (structured fields give the model IDs; the WHY — the
+		// refusal category — is comparatively terse). Log it at WARN
+		// unconditionally: a silent model change moves both cost and
+		// capability underneath the agent.
+		var mrf ModelRefusalFallbackMessage
+		if err := json.Unmarshal(raw, &mrf); err != nil {
+			b.logger().Warnf("drop model_refusal_fallback message (unmarshal failed): %v — model switch will go unlogged", err)
+			return
+		}
+		scope := mrf.Scope
+		if scope == "" {
+			scope = "session" // absent on older CLIs; "session" is the documented default
+		}
+		sessionID := mrf.SessionID
+		if sessionID == "" {
+			b.mu.Lock()
+			sessionID = b.sessionID
+			b.mu.Unlock()
+		}
+		b.logger().Warnf("model_refusal_fallback session=%s scope=%s from_model=%s to_model=%s content=%q",
+			sessionID, scope, mrf.OriginalModel, mrf.FallbackModel, mrf.Content)
+
 	case "elicitation_complete":
 		// CC re-broadcasts an MCP server's elicitation_complete notification
 		// when a URL-mode flow was completed externally. Match by

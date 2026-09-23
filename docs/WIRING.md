@@ -604,7 +604,7 @@ The CC-only defaults are:
 |------|---------|
 | `assistant` | Model response with content blocks (text, thinking, tool_use) |
 | `result` | Turn completion with accumulated metrics (success, error, max_turns) |
-| `system` | Lifecycle events — subtypes: `init`, `status`, `compact_boundary`, `session_state_changed`, `task_*`, `api_retry`, `hook_started` / `hook_progress` / `hook_response` (from `--include-hook-events`), `elicitation_complete` (URL-mode MCP elicitation finished externally) |
+| `system` | Lifecycle events — subtypes: `init`, `status`, `compact_boundary`, `session_state_changed`, `task_*`, `api_retry`, `hook_started` / `hook_progress` / `hook_response` (from `--include-hook-events`), `elicitation_complete` (URL-mode MCP elicitation finished externally), `model_refusal_fallback` (a safeguard refused the primary model's turn and CC silently retried on a fallback model — logged at WARN, see below) |
 | `control_request` | CC requesting user interaction — subtypes: `can_use_tool` (tool permission), `elicitation` (MCP structured-input request) |
 | `control_cancel_request` | CC cancelling a pending permission request |
 | `tool_progress` | Heartbeat during long-running tool execution |
@@ -713,6 +713,8 @@ CC consumes tool_result blocks internally — they never surface on stdout the w
 For events that pass all three, `handler.OnToolEnd(tool_use_id, tool_name, tool_response_or_error, is_error)` fires. The id plumbs through `turn_delegated.go` → `turnevent.ToolResult{ID, Name, Output, IsError}` → `StreamingSink.Emit` → `tracker.ObserveToolResult(id, name, result, isError)` which looks up the entry by id (see Tool Call Visibility below) and updates the correct message.
 
 **Required CC flags:** `--include-hook-events` + `--verbose` in `ccstream.go:Start` (both already set) enable the `hook_response` system message subtype on CC's stream-json output. Without them, hooks would run but their output would never reach foci.
+
+**Silent model swap (`system/model_refusal_fallback`, #1968):** CC can fall back a session's model mid-process without asking — a safeguard flags the primary model's turn (`stop_reason: "refusal"`) and CC silently retries once on a fallback model. Before this, foci logged nothing about it at all: the only observable trace was the model name changing in the per-turn cost INFO line, indistinguishable from normal output. `OnSystem("model_refusal_fallback", ...)` (`handlers.go`) now unmarshals `ModelRefusalFallbackMessage` (`protocol.go`) and logs a WARN naming the session, the refusing (`original_model`) and fallback (`fallback_model`) models, and CC's own `content` prose VERBATIM — `content` is the only place that states in human language which model refused and what it switched to (Dick's ruling, 2026-09-23). **Field-name gotcha:** the wire record's fields are snake_case (`original_model`, `fallback_model`, `session_id`, ...) and are NOT the same shape as the camelCase record CC writes to its own on-disk transcript for the same event (`originalModel`, `fallbackModel`, plus transcript-only envelope fields like `level`/`isMeta`/`timestamp` that the wire record doesn't carry) — confirmed by decompiling the shipped CLI binary rather than assumed from the transcript. `scope` (`"session"` vs `"local"`) is absent on older CLIs; treat absence as `"session"`.
 
 ### Interactive Messages (`platform/interactive.go`)
 

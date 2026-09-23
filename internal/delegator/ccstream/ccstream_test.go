@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/log"
 )
 
 // ---------------------------------------------------------------------------
@@ -2456,6 +2457,104 @@ func TestOnSystem_CompactBoundary(t *testing.T) {
 	if gotTokens != 150000 {
 		t.Errorf("preTokens = %d, want 150000", gotTokens)
 	}
+}
+
+// TestOnSystem_ModelRefusalFallback_LogsWarnWithContentVerbatim covers #1968:
+// CC can swap a session's model mid-process (a safeguard refusal + silent
+// fallback retry) and foci.log records nothing about it — the only visible
+// trace is the model name changing in the per-turn cost INFO line, which
+// reads as normal output. Dick's ruling (2026-09-23): log a WARN naming the
+// event, with the record's `content` text included VERBATIM — content is the
+// only place that states in prose which model refused and which it switched
+// to.
+//
+// The fixture below uses the WIRE (stream-json) field names — snake_case
+// (original_model, fallback_model, session_id, ...) — NOT the camelCase
+// shape CC writes to its own on-disk transcript for the same event
+// (originalModel, fallbackModel, sessionId, plus envelope fields like level/
+// isMeta/timestamp that the wire record does not carry at all). Confirmed by
+// decompiling the shipped CLI binary (see protocol.go's ModelRefusalFallbackMessage
+// doc comment) rather than assumed from the transcript, per the ticket's
+// explicit instruction not to guess the wire shape from the recorded shape.
+//
+// Not parallel: log.SetWarnHook is process-global (mirrors the codex package's
+// TestDispatch_WarningsAreLoggedAtWarnLevel).
+func TestOnSystem_ModelRefusalFallback_LogsWarnWithContentVerbatim(t *testing.T) {
+	b := &Backend{}
+
+	var mu sync.Mutex
+	var got []string
+	log.SetWarnHook(func(level log.Level, component, msg string) {
+		mu.Lock()
+		defer mu.Unlock()
+		got = append(got, level.String()+" "+msg)
+	})
+	t.Cleanup(func() { log.SetWarnHook(nil) })
+
+	const content = `Opus 5's safeguards flagged this message. Our intentionally broad safeguards allow us to deliver more capabilities faster, but can sometimes flag legitimate coding, cybersecurity, and biology tasks. Switched to Opus 4.8. Send feedback with /feedback or learn more: https://support.claude.com/en/articles/16049681
+
+Details: ` + "`[cyber]`"
+
+	// Real wire shape, snake_case, as CC's stream-json emitter actually sends
+	// it (see the decompiled-source citation in protocol.go).
+	raw := []byte(`{"type":"system","subtype":"model_refusal_fallback","trigger":"refusal","direction":"retry","scope":"session","original_model":"claude-opus-5","fallback_model":"claude-opus-4-8","request_id":"req_011CfHG8yMvffjGmB9aKA6cu","api_refusal_category":"cyber","api_refusal_explanation":"This request triggered restrictions on violative cyber content and was blocked under Anthropic's Usage Policy.","retracted_message_uuids":["1960c8d8-b249-4a8e-a156-694441d5f153"],"refused_user_message_uuid":"313c7acf-d752-4340-bf42-64714e4c6948","content":` + jsonQuote(content) + `,"uuid":"497c01af-eab6-4b12-9b69-bd65ae6e6366","session_id":"7f21195c-2279-43a9-a046-c4b8785deae9"}`)
+
+	b.OnSystem("model_refusal_fallback", json.RawMessage(raw))
+
+	find := func(substr string) string {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, e := range got {
+			if strings.Contains(e, substr) {
+				return e
+			}
+		}
+		return ""
+	}
+
+	e := find("model_refusal_fallback")
+	if e == "" {
+		t.Fatal("model_refusal_fallback never reached log.SetWarnHook — the silent-model-switch WARN #1968 asked for was not logged at WARN, so it stays invisible in foci.log exactly like the bug report")
+	}
+	if !strings.HasPrefix(e, "WARN ") {
+		t.Errorf("level = %q, want WARN", strings.SplitN(e, " ", 2)[0])
+	}
+	if !strings.Contains(e, "claude-opus-5") {
+		t.Errorf("log line missing the refusing (from) model claude-opus-5: %q", e)
+	}
+	if !strings.Contains(e, "claude-opus-4-8") {
+		t.Errorf("log line missing the model it switched to (claude-opus-4-8): %q", e)
+	}
+	if !strings.Contains(e, "7f21195c-2279-43a9-a046-c4b8785deae9") {
+		t.Errorf("log line missing the session id: %q", e)
+	}
+	// The content text must survive VERBATIM -- it is the only place naming
+	// which model refused and what it switched to in prose, per the ruling.
+	// event() collapses internal newlines to "\\n", so compare against that
+	// same transform rather than the raw multi-line string.
+	wantContent := strings.ReplaceAll(content, "\n", "\\n")
+	if !strings.Contains(e, wantContent) {
+		t.Errorf("log line does not contain the content field verbatim.\ngot:  %s\nwant substring: %s", e, wantContent)
+	}
+}
+
+// jsonQuote JSON-encodes a Go string for splicing into a hand-built JSON
+// fixture literal above (keeps the fixture readable as a raw string while
+// still producing valid embedded JSON for a multi-line value).
+func jsonQuote(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
+
+// TestOnSystem_ModelRefusalFallback_BadJSONDoesNotPanic mirrors the existing
+// "bad json" coverage for other system subtypes (e.g. compact_boundary): a
+// malformed record must be dropped, not crash the reader goroutine.
+func TestOnSystem_ModelRefusalFallback_BadJSONDoesNotPanic(t *testing.T) {
+	b := &Backend{}
+	b.OnSystem("model_refusal_fallback", json.RawMessage(`{bad json`)) // must not panic
 }
 
 func TestOnSystem_CompactBoundaryBadJSON(t *testing.T) {

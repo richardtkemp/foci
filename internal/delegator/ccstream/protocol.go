@@ -508,6 +508,41 @@ type APIRetryMessage struct {
 	Error        string `json:"error"`
 }
 
+// ModelRefusalFallbackMessage is CC's "system / model_refusal_fallback"
+// event: the primary model ended a turn with stop_reason "refusal" (a
+// safeguard flag) and CC retried once on a fallback model, silently. Field
+// names here are SNAKE_CASE and deliberately differ from the CAMELCASE shape
+// CC writes into its own on-disk transcript (~/.claude/projects/.../*.jsonl)
+// for the same event — the two are related but NOT the same struct. Confirmed
+// 2026-09-23 by decompiling the shipped CLI binary (strings on
+// ~/.local/share/claude/versions/<ver>, minified source): the stream-json
+// emitter does `original_model: oe.originalModel, fallback_model:
+// oe.fallbackModel, ...` — an explicit rename on the way to stdout, not a
+// pass-through. Do not copy the transcript's field names here without
+// re-checking against a live/decompiled wire capture (#1968).
+type ModelRefusalFallbackMessage struct {
+	Type      string `json:"type"`            // "system"
+	Subtype   string `json:"subtype"`         // "model_refusal_fallback"
+	Trigger   string `json:"trigger"`         // "refusal"
+	Direction string `json:"direction"`       // "retry" is the only value CC still emits ("revert"/"sticky" are retained in its enum for SDK-consumer compat only)
+	Scope     string `json:"scope,omitempty"` // "session" (main thread fell back, sticky for the session) | "local" (a subagent/side-question/background fork fell back; session model unchanged). Absent on older CLIs — treat as "session".
+	// OriginalModel/FallbackModel name the model that refused and the model
+	// CC switched to — the two facts this WARN exists to surface (#1968).
+	OriginalModel          string   `json:"original_model"`
+	FallbackModel          string   `json:"fallback_model"`
+	RequestID              *string  `json:"request_id"`
+	APIRefusalCategory     *string  `json:"api_refusal_category,omitempty"`    // e.g. "cyber", "bio"; open string, new categories can ship ahead of any schema update
+	APIRefusalExplanation  *string  `json:"api_refusal_explanation,omitempty"` // unstable human prose from the API — display only, never parse
+	RetractedMessageUUIDs  []string `json:"retracted_message_uuids,omitempty"`
+	RefusedUserMessageUUID *string  `json:"refused_user_message_uuid,omitempty"`
+	// Content is the human-readable notice CC itself generated — it is the
+	// ONLY place that states which model refused and which it switched to in
+	// prose, per Dick's 2026-09-23 ruling on #1968. Logged verbatim.
+	Content   string `json:"content"`
+	UUID      string `json:"uuid"`
+	SessionID string `json:"session_id"`
+}
+
 // PermissionRequest is a control_request from CC asking foci to approve a
 // tool invocation.
 type PermissionRequest struct {
