@@ -763,6 +763,18 @@ func generateShellFunc(t *Tool) string {
   local action_usage="" action_flags=""
   case "$action" in
 %s  esac
+  # #1901: validate the action against todoActions BEFORE any flag parsing
+  # (including the --help intercept just below). A lookup miss for a
+  # non-empty action means the action itself is unrecognized — report that
+  # directly instead of letting a later unrecognized-flag or missing-help
+  # branch misattribute the failure to the flag ("'frobnicate' takes no
+  # flags") or the specific flag ("unrecognized flag: --bar") when the real
+  # problem is the action name.
+  if [ -n "$action" ] && [ -z "$action_usage" ]; then
+    echo "error: unknown action '$action'" >&2
+    echo "usage: foci_todo <add|list|list-all|search|get|complete|drop|reopen|start|edit|remove> [args...]" >&2
+    return 1
+  fi
   if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
     if [ -n "$action_usage" ]; then
       echo "usage: foci_todo $action_usage"

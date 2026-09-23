@@ -856,6 +856,137 @@ func TestTodoShellFunc_UnknownFlagErrorScopedToAction(t *testing.T) {
 	}
 }
 
+// TestTodoShellFunc_UnknownActionRejectedBeforeFlagParsing is the #1901 fix.
+// A typo'd/nonexistent action (e.g. "frobnicate") used to reach the flag
+// loop before anything validated the action itself, so an unrecognized flag
+// after it produced a misleading message that blamed the FLAG for a
+// subcommand that never existed:
+//
+//	$ foci_todo frobnicate 123 --bar x
+//	error: unrecognized flag: --bar
+//	'frobnicate' takes no flags
+//
+// That sends you hunting for the right flag for an action that does not
+// exist. The fix validates the action against todoActions BEFORE any flag
+// parsing, so an unknown action is reported as such regardless of what
+// (if anything) follows it on the command line.
+func TestTodoShellFunc_UnknownActionRejectedBeforeFlagParsing(t *testing.T) {
+	t.Parallel()
+
+	if _, err := osexec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	if _, err := osexec.LookPath("jq"); err != nil {
+		t.Skip("jq not available")
+	}
+
+	binDir := t.TempDir()
+	binPath := binDir + "/foci-call"
+	build := osexec.Command("go", "build", "-buildvcs=false", "-o", binPath, "foci/cmd/foci-call")
+	build.Dir = findModuleRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build foci-call: %v\n%s", err, out)
+	}
+
+	var mu sync.Mutex
+	var calls int
+
+	r := NewRegistry()
+	r.Register(&Tool{
+		Name:       "todo",
+		Positional: []string{"action"},
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"}}}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+			return TextResult("ok"), nil
+		},
+	})
+
+	bridge, err := NewExecBridge(r, context.Background())
+	if err != nil {
+		t.Fatalf("NewExecBridge: %v", err)
+	}
+	defer bridge.Close()
+
+	run := func(args string) (out string, exitCode int) {
+		t.Helper()
+		mu.Lock()
+		calls = 0
+		mu.Unlock()
+		script := fmt.Sprintf(
+			"set -o pipefail -o nounset; shopt -s failglob; source %s; foci_todo %s",
+			bridge.FuncsPath(), args,
+		)
+		cmd := osexec.Command("bash", "-c", script)
+		cmd.Env = append(os.Environ(),
+			"FOCI_SOCK="+bridge.SockPath(),
+			"PATH="+binDir+":"+os.Getenv("PATH"),
+		)
+		outBytes, err := cmd.CombinedOutput()
+		exitCode = 0
+		if err != nil {
+			if ee, ok := err.(*osexec.ExitError); ok {
+				exitCode = ee.ExitCode()
+			} else {
+				t.Fatalf("bash invocation error for %q: %v\noutput: %s", args, err, outBytes)
+			}
+		}
+		return string(outBytes), exitCode
+	}
+
+	// Exact repro from #1901: an unknown action followed by an unrecognized
+	// flag used to blame the flag, not the action.
+	out, code := run(`frobnicate 123 --bar x`)
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1\noutput: %s", code, out)
+	}
+	if !strings.Contains(out, "error: unknown action 'frobnicate'") {
+		t.Errorf("expected \"error: unknown action 'frobnicate'\" in output, got: %s", out)
+	}
+	if strings.Contains(out, "takes no flags") {
+		t.Errorf("must not blame the flag for a nonexistent action, got: %s", out)
+	}
+	if strings.Contains(out, "unrecognized flag: --bar") {
+		t.Errorf("must not report the flag as the problem when the action itself is unknown, got: %s", out)
+	}
+	// The usage alternation must still be present — alongside the new
+	// "unknown action" line, not instead of it.
+	if !strings.Contains(out, "usage: foci_todo <add|list") {
+		t.Errorf("expected the usage line to still be printed, got: %s", out)
+	}
+	mu.Lock()
+	if calls != 0 {
+		t.Errorf("tool invoked %d times for an unknown action, want 0", calls)
+	}
+	mu.Unlock()
+
+	// Same unknown action, no flag at all — must ALSO be reported as an
+	// unknown action (not silently fall through to only the generic usage
+	// line), since the fix validates before any flag parsing regardless of
+	// whether a flag follows.
+	out2, code2 := run(`frobnicate 123`)
+	if code2 != 1 {
+		t.Errorf("no-flag case: exit code = %d, want 1\noutput: %s", code2, out2)
+	}
+	if !strings.Contains(out2, "error: unknown action 'frobnicate'") {
+		t.Errorf("no-flag case: expected \"error: unknown action 'frobnicate'\" in output, got: %s", out2)
+	}
+
+	// Control: a real action must be unaffected.
+	out3, code3 := run(`get 1`)
+	if code3 != 0 {
+		t.Errorf("control 'get 1': exit code = %d, want 0\noutput: %s", code3, out3)
+	}
+	mu.Lock()
+	if calls != 1 {
+		t.Errorf("control 'get 1': tool invoked %d times, want 1", calls)
+	}
+	mu.Unlock()
+}
+
 // TestTodoShellFunc_RejectsCrossActionFlag verifies the #1218 fix: a flag that
 // is globally-known to foci_todo but not valid for the current action (e.g.
 // `edit --status done`) is rejected in the flag loop instead of being parsed
