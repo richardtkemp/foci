@@ -61,6 +61,8 @@ Use instead of `cat` for large markdown files. Extract just the section you need
 
 **mdq selects sections, not headings.** `mdq '# Foo'` returns the heading AND all its content.
 
+**mdq prints the section's source bytes** (the wrapper slices the file on disk), so its output is safe as an exact-match Edit `old_string`. `--render` opts into mdq's normalised re-render (`*x*` becomes `_x_`). When there is no single file to slice — stdin, several files, or a selector that matches something other than whole heading sections — it falls back to the re-render and says so on stderr; treat that output as not byte-exact.
+
 ### mds — find the section you need without reading the file
 
 `mds` (shipped in `shared/scripts/`, on PATH as `mds`) is the discovery front-end to mdq, for
