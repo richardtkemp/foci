@@ -212,72 +212,72 @@ main
  ├── config        → display, execguard, log, modelinfo, provider
  ├── sqlite        → modernc.org/sqlite (shared Open, AgentPath, MigrateFile utilities)
  ├── log           → sqlite, modelinfo, timeutil (the first two only for API-call usage logging; conversation storage was extracted to convo)
- ├── convo         → log, sqlite, timeutil (per-agent conversation SQLite store + memory-index Hook; extracted from log so log stays lean)
+ ├── convo         → log, session, sqlite, timeutil (per-agent conversation SQLite store + memory-index Hook; extracted from log so log stays lean)
  ├── display       (no deps — table rendering with Unicode display-width handling)
  ├── secrets       → BurntSushi/toml
- │   └── secrets/bitwarden → log
- ├── provider      (no deps — provider-neutral types and Client interface)
+ │   └── secrets/bitwarden → log, procx
+ ├── provider      → clock, log, modelinfo (provider-neutral types and Client interface)
  ├── turnevent     → provider (leaf — the agent's per-turn event stream: event types, Sink interface, context helpers, and pure-utility sinks (BufferSink, NopSink); no platform or turn deps; moved out of agent/ per #1983 since tools and telemetry both import it too)
- ├── platform      → config, log, secrets, session, voice, warnings
+ ├── platform      → clock, config, log, secrets, session, voice, warnings
  │                  (messaging types, interfaces, provider registry, Messaging facade,
  │                   MessageQueue thin filter+throttle helper + GroupThrottle for group chat batching)
- ├── anthropic     → provider, github.com/anthropics/anthropic-sdk-go
- ├── gemini        → provider, google.golang.org/genai
- ├── openai        → provider, github.com/openai/openai-go/v3
+ ├── anthropic     → config, log, modelcaps, modelinfo, provider, secrets, github.com/anthropics/anthropic-sdk-go
+ ├── gemini        → config, log, messages, provider, google.golang.org/genai
+ ├── openai        → config, log, messages, provider, github.com/openai/openai-go/v3
  ├── session       → provider, log, messages, sqlite, timeutil
- ├── memory        → sqlite, fsnotify, blevesearch/bleve/v2 (FTS5 + bleve backends)
- ├── voice         → config, log, procx, session, tempdir, gorilla/websocket
- ├── skills        → log (leaf package)
+ ├── memory        → log, session, sqlite, timeutil, fsnotify, blevesearch/bleve/v2 (FTS5 + bleve backends)
+ ├── voice         → config, log, procx, ratelimit, session, tempdir, gorilla/websocket
+ ├── skills        → log, procx
  ├── startup       → log, session (leaf package for crash detection)
  ├── resources     → log (goroutine monitor, memory guard)
- ├── procx         (no internal deps — process-spawn helper: strips foci-secrets/foci-askgw supplementary groups from child processes, own process group; used by every subprocess spawn site)
+ ├── procx         → log (process-spawn helper: strips foci-secrets/foci-askgw supplementary groups from child processes, own process group; used by every subprocess spawn site)
  ├── peercred      (stdlib syscall only — SO_PEERCRED extraction for Unix-socket auth; see HTTP Gateway)
  ├── question      (no internal deps — backend-agnostic AskUserQuestion core: parsing, formatting, choice buttons, answer resolution/merge; shared by ccstream and tools so the two surfaces can't drift)
  ├── defersend     → sqlite, timeutil (leaf — SQLite-backed queue for `foci send --wait-*` deferred sends; a pending send that isn't yet warm/cold/user-active/-inactive, OR whose target endpoint is currently rate-limited (#1417), is persisted and delivered by a background sweep, surviving a restart. Wired in `cmd/foci-gw/wait_defer.go`.)
  ├── mcp           → log, procx, provider, tools, BurntSushi/toml, go-sdk/mcp
  ├── fap           (no internal deps — Foci App Protocol (FAP v1) wire types/codec: Envelope, ServerFrame/ClientFrame, ToolResult, ToolStatus* constants, NewULID; pure protocol leaf shared by app and tools so neither sits above the other)
- ├── tools         → turnevent, config, convo, display, fap, log, memory, modelinfo, peercred, platform, procx, provider, question, secrets, secrets/bitwarden, session, tempdir, tools/spill, voice (Registry, Tool, shared helpers, the exec-bridge generator, web, http, and most tool impls)
+ ├── tools         → turnevent, config, convo, delegator, display, fap, log, memory, modelinfo, peercred, platform, procx, prompts, provider, question, ratelimit, secrets, secrets/bitwarden, session, telemetry, tempdir, tools/spill, voice (Registry, Tool, shared helpers, the exec-bridge generator, web, http, and most tool impls)
  │     ├── tools/spill    → (stdlib only) shared spill-to-disk writer: bounded in-RAM head + overflow to temp file, optional total cap; used by tools/shell and the http tool
  │     ├── tools/shell    → tools, tools/spill, log, procx, secrets, secrets/bitwarden (the exec/shell tool; execbridge generator stays at root)
- │     ├── tools/tmux     → tools, log, display, session, procx (tmux session tool — 8 files)
- │     ├── tools/browser  → tools, log, tools/browserjs (browser automation — imports root for Tool/ToolResult)
+ │     ├── tools/tmux     → tools, log, display, session, procx, prompts, tempdir (tmux session tool — 8 files)
+ │     ├── tools/browser  → tools, config, log, tempdir, tools/browserjs (browser automation — imports root for Tool/ToolResult)
  │     └── tools/browserjs (no foci deps — vendored go-rod JS snippets)
  ├── workspace     → log, provider
- ├── nudge         → log (leaf — rule extraction, scheduling, file I/O)
- ├── prompts       (top-level package, not internal — lives at `shared/prompts/`) → log (embedded .md files incl. nudge framing + ResolveOrientationTemplate helpers)
+ ├── nudge         → log, platform, turnevent, workspace (rule extraction, scheduling, file I/O)
+ ├── prompts       (top-level package, not internal — lives at `shared/prompts/`) → log, timeutil (embedded .md files incl. nudge framing + ResolveOrientationTemplate helpers)
  ├── modelinfo     (no deps — stdlib-only leaf package for model attributes: context window, capabilities, pricing)
  ├── ratelimit     (no deps — neutral limit signals + shared reset/fallback policy)
  ├── modelcaps     → modelinfo, log (leaf — per-backend live capability cache; Fetcher + Persister seams injected at startup so it imports no anthropic/session/DB)
- ├── compaction    → config, log, memory, messages, modelcaps, modelinfo, provider, session, tools
+ ├── compaction    → config, log, memory, messages, modelcaps, modelinfo, prompts, provider, session, tools
  ├── tempdir       (no deps — stdlib-only leaf package for canonical temp dir)
- ├── provision     → modelinfo (agent creation; modelinfo only so a bare model alias — "opus", "fable" — resolves to the newest member of that family instead of a literal that goes stale)
- ├── command       → agent, config, delegator, delegator/ccstream, display, log, memory, modelcaps, modelinfo, platform, procx, provider, provision, question, session, tempdir, timeutil, tools, workspace
+ ├── provision     → modelinfo, procx (agent creation; modelinfo so a bare model alias — "opus", "fable" — resolves to the newest member of that family instead of a literal that goes stale)
+ ├── command       → agent, config, delegator, delegator/ccstream, display, log, memory, modelcaps, modelinfo, platform, procx, prompts, provider, provision, question, session, tempdir, timeutil, tools, workspace
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
  ├── messages      → provider (shared message-inspection utilities: HasToolUse, ToolUseIDs)
  ├── timeutil      (no deps — centralised timestamp formatting with configurable timezone)
  ├── relogin       → log, procx (automated CC re-login on 401 — see Backend Session Lifecycle)
  ├── delegator     → log, modelinfo (Delegator interface, registry, StartOptions, SessionEvents/TurnEvents)
-  │   ├── delegator/autoapprove → (shared by ccstream/codex/opencode — auto-approve rule compilation/matching)
+  │   ├── delegator/autoapprove → execguard, secrets (shared by ccstream/codex/opencode — auto-approve rule compilation/matching)
   │   ├── delegator/cctmux     → delegator, log, modelinfo, procx, fsnotify (tmux-based Claude Code; registers "claude-code-tmux" via init())
-  │   ├── delegator/ccstream   → delegator, delegator/autoapprove, log, modelinfo, procx, question, ratelimit, tempdir, timeutil (stream-json Claude Code; registers "claude-code" via init())
+  │   ├── delegator/ccstream   → delegator, delegator/autoapprove, delegator/hookbin, log, modelinfo, procx, question, ratelimit, tempdir, timeutil (stream-json Claude Code; registers "claude-code" via init())
   │   ├── delegator/sessionenv → tempdir (shared by codex/opencode + cmd/foci-codex-hook — per-session exec-bridge env file format, lifecycle, and the codex command wrap/unwrap)
-  │   ├── delegator/codex      → delegator, delegator/autoapprove, delegator/sessionenv, log, modelcaps, modelinfo, procx, tempdir (Codex app-server JSON-RPC; registers "codex" via init())
-  │   └── delegator/opencode   → delegator, delegator/autoapprove, delegator/sessionenv, log, procx, ratelimit, tempdir (HTTP/SSE OpenCode; registers "opencode" via init())
- ├── agent         → turnevent, compaction, config, convo, delegator, display, log, memory, messages, modelcaps, modelinfo, nudge, platform, procx, provider, ratelimit, relogin, session, skills, timeutil, tools, turn, warnings, workspace
- ├── periodic      → config, log, memory, provider, session, skills, timeutil, warnings (NO agent)
+  │   ├── delegator/codex      → delegator, delegator/autoapprove, delegator/hookbin, delegator/keyedmutex, delegator/sessionenv, log, modelcaps, modelinfo, procx (Codex app-server JSON-RPC; registers "codex" via init())
+  │   └── delegator/opencode   → delegator, delegator/autoapprove, delegator/keyedmutex, delegator/sessionenv, log, modelinfo, procx, ratelimit, tempdir, timeutil (HTTP/SSE OpenCode; registers "opencode" via init())
+ ├── agent         → turnevent, compaction, config, convo, delegator, delegator/codex, display, log, memory, messages, modelcaps, modelinfo, nudge, platform, procx, prompts, provider, ratelimit, relogin, session, skills, telemetry, timeutil, tools, turn, warnings, workspace
+ ├── periodic      → config, log, memory, prompts, provider, session, skills, timeutil, warnings (NO agent)
  ├── dispatch      → command, platform, session, tools (shared command dispatch logic; platform wrappers delegate here)
  ├── turn          → turnevent, display, log, platform, tooldetail (shared turn rendering, tool call tracking, and tool-result display store for all platforms)
  ├── telegram      → agent, turnevent, chatmeta, command, config, dispatch, display, log, platform, secrets, session, timeutil, tooldetail, toolformat, turn, voice
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
  ├── discord       → agent, turnevent, chatmeta, command, config, dispatch, display, log, platform, secrets, session, timeutil, tooldetail, toolformat, turn, voice
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
- ├── app           → agent, turnevent, command, config, dispatch, fap, log, platform, question, secrets, session, sqlite, tempdir, tools, turn, voice (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
- ├── askgw         → log, peercred, question (opt-in ask-gateway for external Apps — see Ask Gateway section)
- ├── telemetry     → turnevent, log, modelinfo, provider, go.opentelemetry.io/otel (+ sdk, otlptracehttp) — OpenTelemetry export of every turn to an OTLP/HTTP collector (Langfuse) plus scores/score configs over its REST API; wired from cmd/foci-gw (init), agent (turn spans), tools + cmd/foci-gw (cross-agent links). See "Tracing".
+ ├── app           → agent, turnevent, command, config, dispatch, fap, log, platform, question, ratelimit, secrets, session, sqlite, tempdir, tools, turn, voice (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
+ ├── askgw         → clock, log, peercred, question (opt-in ask-gateway for external Apps — see Ask Gateway section)
+ ├── telemetry     → turnevent, log, modelinfo, provider, session, go.opentelemetry.io/otel (+ sdk, otlptracehttp) — OpenTelemetry export of every turn to an OTLP/HTTP collector (Langfuse) plus scores/score configs over its REST API; wired from cmd/foci-gw (init), agent (turn spans), tools + cmd/foci-gw (cross-agent links). See "Tracing".
  └── evals         → log, fsnotify, yaml.v3 — rubric registry (scoring axes as files, watched); consumed by cmd/foci-gw (/score validation, score-config mirroring). See "Tracing" → "Scores and rubrics".
 ```
 
-No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `resources`, `tempdir`, `warnings`, `modelinfo`, `modelcaps`, `messages`, `ratelimit`, `timeutil`, `turn`, `dispatch`, `procx`, `peercred`, `question` are leaf packages (no internal foci deps beyond what's shown). `platform` depends on leaf packages only (config, log, secrets, session, voice, warnings). `provision` depends on the leaf `modelinfo` only.
+No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `resources`, `tempdir`, `warnings`, `modelinfo`, `modelcaps`, `messages`, `ratelimit`, `timeutil`, `turn`, `dispatch`, `procx`, `peercred`, `question` are leaf packages (no internal foci deps beyond what's shown). `platform` depends on leaf packages only (clock, config, log, secrets, session, voice, warnings). `provision` depends only on the leaves `modelinfo` and `procx`. The tree above is checked against `go list` by `make lint` (`scripts/find-wiring-drift`), so a change that moves imports must update its line.
 
 **`internal/state` no longer exists.** The former `state` package (`system_state` crash-detection row, `state.json`/state.db key-value store, `agent/ID/default_chat`, `facet:<bot>` bot→session mapping, ask/wizard persistence) was folded into `internal/session`'s `SessionIndex` (SQLite-backed) before this doc's tracked baseline — every dependency line that used to read "state" above has been corrected to "session" (or dropped where session wasn't otherwise a dependency). If you see "state" cited anywhere else in this doc or in `shared/skills/`, it's stale.
 
@@ -291,7 +291,7 @@ No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `sk
 
 Most packages depend on `provider` for types; only `main.go` (`cmd/foci-gw/credentials.go`) imports `anthropic` directly in production code (for Anthropic-specific features — `tools` only references it from test-only helpers now). `periodic` still imports `session` directly (it holds a `*session.SessionIndex` to pick keepalive/reflection/background candidates) but never imports `agent` — warning dispatch is handled by the `warnings` package, wired together in `main.go`.
 
-**`provision` package:** Shared agent creation logic used by both `cmd/foci/setup.go` (first-run wizard) and `command/agents_new.go` (`/agents new` runtime command). Imports `modelinfo` and nothing else. Provides `AgentSpec` + `Provision()` (workspace creation, character file copying, SOUL.md templating), validation (`IsValidAgentID`), config block generation (`GenerateAgentBlock`), and crontab templating (`GenerateCrontab`, `AppendCrontab`). `ResolveModelAlias` turns a family word (`opus`, `sonnet`, `haiku`, `fable`; empty ⇒ sonnet) into `anthropic/<newest id in that family>` via `modelinfo.NewestInFamily`, and passes anything else through untouched — an alias names a family, not a version, so pinning it to a literal guarantees drift (the old fixed map still returned `claude-opus-4-6` long after every real turn ran opus-5). `NewestInFamily` ranks only the numeric segments FOLLOWING the family token, which excludes `-latest` pointers, `-fast`/`[1m]` variants, and `claude-3-haiku` (version before the token). This affects agent CREATION only; a delegated backend still resolves its own `backend_config.model` string itself. Platform-specific validators (e.g. `IsValidBotToken`, `IsValidUserID`) live in their respective platform packages (e.g. `internal/telegram/validate.go`).
+**`provision` package:** Shared agent creation logic used by both `cmd/foci/setup.go` (first-run wizard) and `command/agents_new.go` (`/agents new` runtime command). Imports only `modelinfo` and `procx`. Provides `AgentSpec` + `Provision()` (workspace creation, character file copying, SOUL.md templating), validation (`IsValidAgentID`), config block generation (`GenerateAgentBlock`), and crontab templating (`GenerateCrontab`, `AppendCrontab`). `ResolveModelAlias` turns a family word (`opus`, `sonnet`, `haiku`, `fable`; empty ⇒ sonnet) into `anthropic/<newest id in that family>` via `modelinfo.NewestInFamily`, and passes anything else through untouched — an alias names a family, not a version, so pinning it to a literal guarantees drift (the old fixed map still returned `claude-opus-4-6` long after every real turn ran opus-5). `NewestInFamily` ranks only the numeric segments FOLLOWING the family token, which excludes `-latest` pointers, `-fast`/`[1m]` variants, and `claude-3-haiku` (version before the token). This affects agent CREATION only; a delegated backend still resolves its own `backend_config.model` string itself. Platform-specific validators (e.g. `IsValidBotToken`, `IsValidUserID`) live in their respective platform packages (e.g. `internal/telegram/validate.go`).
 
 ## Command Dispatch Architecture
 

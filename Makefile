@@ -56,9 +56,9 @@ SIMPLE_BINS := foci-gw foci foci-call foci-cc-hook foci-codex-hook
 # same lock (~6 GB resident). Absent script (another host) = no-op.
 REAP_GRADLE = { [ -f /home/foci/shared/scripts/heavy-lock-reap-gradle.sh ] && bash /home/foci/shared/scripts/heavy-lock-reap-gradle.sh 9<&- ; true; };
 
-.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-unscoped-logging llbox test test-one integration coverage coverage-report coverage-html coverage-check vet lint lint-unlocked lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check land clean setup-hooks
+.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-unscoped-logging find-wiring-drift llbox test test-one integration coverage coverage-report coverage-html coverage-check vet lint lint-unlocked lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check land clean setup-hooks
 
-all: $(SIMPLE_BINS) nosgid find-disconnected-tests find-static-config-reads find-unscoped-logging llbox
+all: $(SIMPLE_BINS) nosgid find-disconnected-tests find-static-config-reads find-unscoped-logging find-wiring-drift llbox
 
 BUILDVCS := $(shell git rev-parse --git-dir >/dev/null 2>&1 && echo true || echo false)
 
@@ -116,6 +116,13 @@ find-static-config-reads:
 find-unscoped-logging:
 	@mkdir -p bin
 	cd scripts/find-unscoped-logging && go build -o ../../bin/find-unscoped-logging .
+
+# find-wiring-drift checks docs/WIRING.md's package dependency tree against
+# `go list` imports, so an import change that forgets its WIRING line fails
+# lint (#1995). Stdlib-only, so it lives in the main module.
+find-wiring-drift:
+	@mkdir -p bin
+	go build -o bin/find-wiring-drift ./scripts/find-wiring-drift
 
 # llbox — Landlock write-whitelist sealer, promoted from a throwaway POC
 # (foci_todo #1517) into a proper repo tool for #1523. `make test`/`make
@@ -389,13 +396,15 @@ lint:
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
 	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; $(REAP_GRADLE) $(MAKE) --no-print-directory lint-unlocked 9<&- ) 9</tmp/heavy
 
-lint-unlocked: find-disconnected-tests find-static-config-reads find-unscoped-logging
+lint-unlocked: find-disconnected-tests find-static-config-reads find-unscoped-logging find-wiring-drift
 	@echo "=== golangci-lint ==="
 	@$(GOBIN)/golangci-lint run
 	@echo "=== find-static-config-reads (static reads of *config.ResolvedAgentConfig) ==="
 	@./bin/find-static-config-reads ./...
 	@echo "=== find-unscoped-logging (any package-level log.Xf component call) ==="
 	@./bin/find-unscoped-logging ./...
+	@echo "=== find-wiring-drift (docs/WIRING.md dependency tree vs go list) ==="
+	@./bin/find-wiring-drift
 	@echo "=== deadcode (whole-program reachability, app code only) ==="
 	@# internal/testharness and internal/testtemp are test-only scaffolding:
 	# reachable solely from -tags=integration tests and _test.go files, which
