@@ -17,8 +17,10 @@
 # --raw through to it, and get the section's original source bytes instead of
 # a re-render. See mdq's own header comment for the full rationale and the
 # constraints (requires jq, one concrete file, selector must resolve to whole
-# section(s)). Only meaningful with a pattern — there is no single section to
-# slice for a bare TOC listing.
+# section(s)). Only meaningful with a pattern — with no pattern there is no
+# single section to slice, so raw/render is silently ignored and the TOC is
+# printed either way (#1921: a bare 'mds file.md' erroring here was a
+# regression, since that's the documented primary invocation).
 #
 # Matching is tiered, most precise first, so an ID-like query ('N1') picks 'N1'
 # rather than ranking the longer 'N11' above it:
@@ -58,7 +60,7 @@ set -- "${args[@]+"${args[@]}"}"
 
 if [[ $# -lt 1 ]] || [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
     echo "Usage: mds <file.md> [pattern] [--raw]"
-    echo "  No pattern: list headings"
+    echo "  No pattern: list headings (--raw/--render are ignored — there's no section to slice)"
     echo "  With pattern: match a heading, extract that section"
     echo "  --raw / --source: extract as original source bytes, not mdq's re-render"
     exit 0
@@ -66,11 +68,6 @@ fi
 
 file="$1"
 pattern="${2:-}"
-
-if (( raw )) && [[ -z "$pattern" ]]; then
-    echo "mds --raw: needs a pattern — there's no single section to slice for a bare TOC listing." >&2
-    exit 1
-fi
 
 headings=$(grep '^#' "$file" 2>/dev/null) || { echo "No headings found in $file" >&2; exit 1; }
 

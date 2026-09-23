@@ -242,11 +242,21 @@ else
     RC=1
 fi
 
-if "$MDS" "$FIX" --raw >/dev/null 2>/tmp/mds-test-err-noraw; then
-    echo "FAIL mds --raw with no pattern should refuse (no single section to slice)"; RC=1
-else
-    echo "ok   mds --raw with no pattern refuses cleanly"
-fi
+# #1921: a bare 'mds file.md' (no pattern) is the documented primary TOC
+# invocation, and MUST succeed regardless of --raw/--render — there's no
+# single section to slice with no pattern, so those flags are meaningless
+# here and are silently ignored rather than erroring. This used to error
+# ("mds --raw: needs a pattern...") because raw defaulted on after #1705;
+# assert success + the heading list, both with and without an explicit --raw.
+toc_bare=$("$MDS" "$FIX" 2>/tmp/mds-test-err-bare); rc_bare=$?
+toc_raw=$("$MDS" "$FIX" --raw 2>/tmp/mds-test-err-raw); rc_raw=$?
+check "mds with no pattern succeeds (rc)" "0" "$rc_bare"
+check "mds with no pattern, explicit --raw, still succeeds (rc)" "0" "$rc_raw"
+check "mds --raw with no pattern prints the same TOC as bare (raw is a no-op here)" "$toc_bare" "$toc_raw"
+case "$toc_bare" in
+    *'## Section A'*) echo "ok   mds no-pattern TOC includes a heading from the fixture";;
+    *) echo "FAIL mds no-pattern TOC missing expected heading; got: $toc_bare"; RC=1;;
+esac
 
 exit $RC
 
