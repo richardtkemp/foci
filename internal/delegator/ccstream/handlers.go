@@ -268,12 +268,12 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 				b.setAgentLabel(block.ID, desc)
 				b.setAgentPrompt(block.ID, delegator.ExtractAgentPrompt(block.Input))
 				// A FOREGROUND subagent's assistant text never reaches the parent
-				// stdout stream, so arm a transcript tail for it (started once
-				// task_started supplies the agent_id). Arm HERE — the earliest,
+				// stdout stream, so mark its (always-started) transcript tail to
+				// forward TEXT as well as usage. Arm HERE — the earliest,
 				// race-free point: the model emits this tool_use before the task
 				// can start, so expectForeground is set before task_started. A
-				// background subagent already streams its text and must NOT be
-				// tailed (double-delivery).
+				// background subagent is still tailed (for usage, #1880) but its
+				// text already streams, so it must NOT be marked (double-delivery).
 				if !delegator.ExtractAgentBackground(block.Input) {
 					b.subagentTails().expectForeground(block.ID)
 				}
@@ -914,11 +914,14 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		}
 		switch subtype {
 		case "task_started":
-			// A foreground subagent's assistant text never reaches the parent
-			// stdout stream (CC filters it), so start tailing its transcript to
-			// forward that text into the chit. maybeStart is a no-op unless a
-			// foreground Agent PreToolUse was recorded for this tool_use id, so
-			// background subagents (whose text already streams) are skipped.
+			// Start tailing EVERY subagent's transcript, foreground or
+			// background: the tail is the only source of its completed USAGE
+			// (the parent stream never finalises output_tokens, #1880).
+			// maybeStart's recorded foreground flag (wantText) decides only
+			// whether the tail ALSO forwards TEXT — a foreground subagent's text
+			// never reaches the parent stream (CC filters it), a background
+			// one's already does. The foreground flag is not consulted when
+			// stopping: the tail ends at task_notification for both kinds.
 			// NARRATE EVERY OUTCOME (#1934). Each of the three ways this can
 			// decline to tail was previously silent, so "no usage for that
 			// subagent" was indistinguishable from "no subagent ran" — which
