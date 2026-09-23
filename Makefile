@@ -51,7 +51,12 @@ LDFLAGS = -s -w -X main.version=$(VERSION) \
 # referencing it before this assignment would silently expand to nothing.
 SIMPLE_BINS := foci-gw foci foci-call foci-cc-hook foci-codex-hook
 
-.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-unscoped-logging llbox test test-one integration coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check land clean setup-hooks
+# Run right after acquiring /tmp/heavy in every NON-gradle heavy target: stops this
+# user's idle Gradle/Kotlin daemons, which outlive a foci-client build's hold on the
+# same lock (~6 GB resident). Absent script (another host) = no-op.
+REAP_GRADLE = { [ -f /home/foci/shared/scripts/heavy-lock-reap-gradle.sh ] && bash /home/foci/shared/scripts/heavy-lock-reap-gradle.sh 9<&- ; true; };
+
+.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-unscoped-logging llbox test test-one integration coverage coverage-report coverage-html coverage-check vet lint lint-unlocked lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check land clean setup-hooks
 
 all: $(SIMPLE_BINS) nosgid find-disconnected-tests find-static-config-reads find-unscoped-logging llbox
 
@@ -153,7 +158,7 @@ test: llbox
 	@# #1498). The /tmp/fgw daily cron sweep (entries >24h) remains as a backstop
 	@# for anything this recipe doesn't reach (e.g. an aborted run).
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; bash scripts/seal-test.sh unit $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) 9<&- ; STATUS=$$? ; \
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; $(REAP_GRADLE) bash scripts/seal-test.sh unit $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:' $(LOGFILE) || true; fi ; \
 	  rm -rf $(TESTDIR) ; \
@@ -181,7 +186,7 @@ test-one: llbox
 	@# for the rationale (serialises against other heavy builds; read-only lock
 	@# fd so go test's children don't inherit it).
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; bash scripts/seal-test.sh one $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) $(PKG) $(RUN) 9<&- ; STATUS=$$? ; \
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; $(REAP_GRADLE) bash scripts/seal-test.sh one $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) $(PKG) $(RUN) 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:' $(LOGFILE) || true; fi ; \
 	  rm -rf $(TESTDIR) ; \
@@ -222,7 +227,7 @@ integration: llbox
 	@# any runaway foci-gw/cc-stub first avoids racing a still-open binary FD
 	@# against the removal (harmless on Linux either way, but tidier).
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; bash scripts/seal-test.sh integration $(TESTDIR) $(LOGFILE) $(IPARALLEL) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) 9<&- ; STATUS=$$? ; \
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; $(REAP_GRADLE) bash scripts/seal-test.sh integration $(TESTDIR) $(LOGFILE) $(IPARALLEL) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -ne 0 ]; then echo ">>> non-zero exit ($$STATUS) — sweeping any orphaned foci-gw/cc-stub subprocesses from this run ..." >&2; pkill -f "$(TESTDIR)/foci-l2-bin[0-9]" 2>/dev/null || true; fi ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:' $(LOGFILE) || true; fi ; \
@@ -363,7 +368,16 @@ setup-hooks:
 vet:
 	go vet ./...
 
-lint: find-disconnected-tests find-static-config-reads find-unscoped-logging
+# lint takes the /tmp/heavy compute lock (Dick, 2026-09-23): deadcode alone peaks
+# at ~3.7 GB, and running it beside a test run or a gradle build got it killed by
+# memory_guard four times in one afternoon. The body is lint-unlocked; call that
+# directly ONLY from something that already holds /tmp/heavy (flock is not
+# re-entrant across processes, so nesting lint under heavy would deadlock).
+lint:
+	@[ -e /tmp/heavy ] || : > /tmp/heavy
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; $(REAP_GRADLE) $(MAKE) --no-print-directory lint-unlocked 9<&- ) 9</tmp/heavy
+
+lint-unlocked: find-disconnected-tests find-static-config-reads find-unscoped-logging
 	@echo "=== golangci-lint ==="
 	@$(GOBIN)/golangci-lint run
 	@echo "=== find-static-config-reads (static reads of *config.ResolvedAgentConfig) ==="
@@ -628,7 +642,7 @@ sync-main:
 # lock). Lock-order invariant (see below): a deploy takes ONLY /tmp/heavy and
 # never lands, so it cannot participate in a merge-lock→heavy cycle.
 deploy-build:
-	sudo -u $(FOCI_USER) bash -c "cd '$(CURDIR)' && { [ -e /tmp/heavy ] || : > /tmp/heavy; }; ( echo '>>> waiting for heavy lock (/tmp/heavy; another build may be running) ...' >&2; flock 9; echo '>>> acquired heavy lock' >&2; $(MAKE) -s all 9<&- ) 9</tmp/heavy"
+	sudo -u $(FOCI_USER) bash -c "cd '$(CURDIR)' && { [ -e /tmp/heavy ] || : > /tmp/heavy; }; ( echo '>>> waiting for heavy lock (/tmp/heavy; another build may be running) ...' >&2; flock 9; echo '>>> acquired heavy lock' >&2; $(REAP_GRADLE) $(MAKE) -s all 9<&- ) 9</tmp/heavy"
 
 install-bin:
 	@for b in $(DEPLOY_BINS); do echo "  install $$b"; install -m 755 bin/$$b $(INSTALL_DIR)/$$b; done
