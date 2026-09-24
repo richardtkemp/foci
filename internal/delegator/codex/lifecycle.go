@@ -451,10 +451,11 @@ func (b *Backend) initialize() error {
 			Version: v,
 		},
 	}
-	_, err := b.sendAndWait("initialize", params)
+	raw, err := b.sendAndWait("initialize", params)
 	if err != nil {
 		return err
 	}
+	b.noteInitializeVersion(raw)
 	// Acknowledge initialization.
 	return b.process().writer.sendNotification("initialized", struct{}{})
 }

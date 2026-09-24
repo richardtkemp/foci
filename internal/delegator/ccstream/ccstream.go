@@ -270,6 +270,21 @@ type Backend struct {
 	// implementation so this means the same thing across backends.
 	costCheck delegator.CostDivergenceChecker
 
+	// expect receives backend-expectation violations (#2013). nil means the
+	// process-wide delegator.Expectations; tests inject their own so the
+	// shared rate limit cannot couple parallel tests.
+	expect *delegator.ExpectationGuard
+
+	// resultSeen is set by the first result that carries ModelUsage. Until
+	// then lastModelUsage holds only the baseline Start seeded. Guarded by mu.
+	resultSeen bool
+
+	// compactSeen is set when CC compacts in this process. Guarded by turnMu.
+	// A compaction's own API call is billed into ModelUsage but was never
+	// verified to appear on the stream, so the fresh-process usage check
+	// stands down once one has happened rather than guess.
+	compactSeen bool
+
 	// Auto-approve rules (compiled from config, immutable after Start)
 	autoApproveRules []autoApproveRule
 	autoApproveEnv   map[string]string // exact environment inherited by Claude

@@ -105,6 +105,17 @@ type Backend struct {
 	// tokenUsage notification with its turn, so a change is a turn boundary
 	// even if no local reset ran (e.g. an autonomous turn foci never opened).
 	usageTurnID string
+	// threadTotal is the last tokenUsage.total seen per thread, for the
+	// running-sum check (#2013). Guarded by turnMu.
+	threadTotal map[string]tokenUsageBreakdown
+
+	// expect receives backend-expectation violations; nil means the
+	// process-wide delegator.Expectations. Tests inject their own.
+	expect *delegator.ExpectationGuard
+
+	// codexVersion is the app-server's version, parsed from the initialize
+	// response's userAgent. Set on the process owner; read via version().
+	codexVersion string
 
 	// Activity tracking
 	lastActivity atomic.Int64

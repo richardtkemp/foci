@@ -485,10 +485,32 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	sort.Strings(pricedModels)
 
 	deltas := make(map[string]ModelUsage, len(pricedModels))
+	// freshProcess: this is the process's first priced result, so its delta
+	// is measured from the baseline Start seeded (empty, or the cost-state
+	// record CC restores on --resume, #2012) rather than from a snapshot this
+	// process reported. baseCache is that baseline's cache traffic, captured
+	// before the loop below overwrites it. regressions collects counters that
+	// went down between two of THIS process's results, which modelUsageDelta
+	// silently reads as a restart; a first result falling below the seeded
+	// baseline is the fresh-process check's business, not this one's. Both are
+	// reported after the lock (#2013).
+	var freshProcess bool
+	var baseCache int
+	var regressions []string
 	if len(pricedModels) > 0 {
 		now := time.Now()
 		b.mu.Lock()
+		freshProcess = !b.resultSeen
+		b.resultSeen = true
+		if freshProcess {
+			baseCache = modelUsageCache(b.lastModelUsage)
+		}
 		for _, m := range pricedModels {
+			if prev, seen := b.lastModelUsage[m]; seen && !freshProcess {
+				if r := modelUsageRegression(prev, msg.ModelUsage[m]); r != "" {
+					regressions = append(regressions, m+": "+r)
+				}
+			}
 			at := b.pricedSpanStart(m, now)
 			deltas[m] = b.modelUsageDelta(m, msg.ModelUsage[m])
 			if m == resultModel {
@@ -496,6 +518,12 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 			}
 		}
 		b.mu.Unlock()
+	}
+	if len(regressions) > 0 {
+		b.violated(invModelUsageMonotonic, fmt.Sprintf(
+			"counters went DOWN within one CC process (%s); foci treats that as a restart and books the "+
+				"current value as this turn's whole usage, so per-turn figures are now unreliable",
+			strings.Join(regressions, "; ")))
 	}
 	if haveModelUsage {
 		usageDelta = deltas[resultModel]
@@ -526,6 +554,13 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		// accumulator. Read under turnMu (which guards it) and BEFORE pricing,
 		// which takes no lock.
 		b.turnMu.Lock()
+		// Taken BEFORE markResult moves the baseline: on a fresh process the
+		// running totals are exactly what this process has been seen to do.
+		var seenSinceStart usageTotals
+		checkFresh := freshProcess && !b.compactSeen
+		if checkFresh {
+			seenSinceStart = b.turnUsageAcc.snapshot()
+		}
 		topObserved := b.turnUsageAcc.topWriteSplitByModel()
 		subDelta := b.turnUsageAcc.subagentDelta()
 		spawnedBy := b.turnUsageAcc.agentTurns()
@@ -712,6 +747,10 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		b.turnCorrections = append(b.turnCorrections, cycleCorr...)
 		b.turnProvidedSeen = true
 		b.turnMu.Unlock()
+
+		if checkFresh {
+			b.checkFreshProcessUsage(msg, baseCache, seenSinceStart)
+		}
 	}
 
 	result := &delegator.TurnResult{
@@ -857,6 +896,8 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		b.permMode = init.PermissionMode
 		b.lastModel = init.Model
 		b.mu.Unlock()
+		// So an expectation violation can be tied to the CC update behind it.
+		b.expectations().NoteVersion(b.logger(), expectBackend, init.ClaudeCodeVersion)
 		b.readyOnce.Do(func() { close(b.readyCh) })
 		if b.onSessionReady != nil {
 			b.onSessionReady(init.SessionID)
@@ -898,6 +939,7 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		// the following idle's abort check (signalCompactionAbort) a no-op —
 		// see resolveCompactionWait.
 		b.turnMu.Lock()
+		b.compactSeen = true
 		b.resolveCompactionWait(nil)
 		b.turnMu.Unlock()
 

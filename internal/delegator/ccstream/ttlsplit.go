@@ -610,6 +610,8 @@ func (b *Backend) noteAssistantUsage(msg *AssistantMessage) {
 	if msg == nil {
 		return
 	}
+	// Outside turnMu: a violation logs, and the log sink is not ours to reason about.
+	b.checkCacheWriteSplit(msg)
 	b.turnMu.Lock()
 	defer b.turnMu.Unlock()
 	// ParentToolUseID is BOTH the subagent flag and the subagent's identity —

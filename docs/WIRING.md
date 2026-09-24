@@ -256,7 +256,7 @@ main
  ├── messages      → provider (shared message-inspection utilities: HasToolUse, ToolUseIDs)
  ├── timeutil      (no deps — centralised timestamp formatting with configurable timezone)
  ├── relogin       → log, procx (automated CC re-login on 401 — see Backend Session Lifecycle)
- ├── delegator     → log, modelinfo (Delegator interface, registry, StartOptions, SessionEvents/TurnEvents)
+ ├── delegator     → clock, log, modelinfo (Delegator interface, registry, StartOptions, SessionEvents/TurnEvents)
   │   ├── delegator/autoapprove → execguard, secrets (shared by ccstream/codex/opencode — auto-approve rule compilation/matching)
   │   ├── delegator/cctmux     → delegator, log, modelinfo, procx, fsnotify (tmux-based Claude Code; registers "claude-code-tmux" via init())
   │   ├── delegator/ccstream   → delegator, delegator/autoapprove, delegator/hookbin, log, modelinfo, procx, question, ratelimit, tempdir, timeutil (stream-json Claude Code; registers "claude-code" via init())
@@ -2084,6 +2084,19 @@ Wired in `main.go` after agent setup. Notification callback sends to agents whos
 Background goroutine monitoring total RSS of all processes owned by the foci user. Reads `/proc/[pid]/status` directly — no external commands. Two thresholds (warn at 25%, kill at 40% of RAM), both gated by memory pressure (PSI `avg10` from `/proc/pressure/memory` > configurable threshold). Warn pushes to all agents' `WarningQueue` (surfaces via proactive warning dispatch). Kill finds the largest non-foci process by RSS (excludes `os.Getpid()`), sends SIGTERM, waits 5s, SIGKILL if still alive.
 
 Wired in `main.go` after tmux memory monitor. Warning callback iterates `agents` map and pushes to any `inst.ag.Warnings` that's non-nil (agents with `inject_agent_warnings` enabled).
+
+### Backend Expectation Guards (`internal/delegator/expectations.go`, #2013)
+
+Live checks that the backend behaviours foci's accounting assumes still hold, so an auto-update that changes one is reported rather than silently corrupting data (#2012 overstated costs up to 128x for ~36h with nothing firing). Each check compares data the backend already hands foci; a failure calls `ExpectationGuard.Violated`, which logs `BACKEND EXPECTATION VIOLATED: <backend> <version> broke "<invariant>" — <figures>` at **ERROR**. ERROR is the level `log.SetWarnHook` forwards to both `notify.inject_chat_warnings` and `inject_agent_warnings` even when either is set to `"errors"`, so no extra delivery path exists. Rate limit is process-wide (`delegator.Expectations`, since CC gets a new Backend per process) and keyed per backend+invariant: first violation reports at once, repeats are counted into the next report at most hourly, and a violation under a version the last report did not name reports at once. Backends take an optional `expect` field so tests use a private guard.
+
+Versions: `NoteVersion` logs INFO for the first version of a backend a foci process sees and WARN for any version not seen before (`backend version CHANGED: claude-code 2.1.261 -> 2.1.280`). Every violation names the version. CC's comes from `system/init`'s `claude_code_version` (`OnSystem`); codex's from the `initialize` response's `userAgent` (`<client>/<version> (...)`, `noteInitializeVersion`). In memory only, so a change across a foci restart shows up as a first-seen INFO line.
+
+The checks:
+- **ccstream, first result vs the seeded resume baseline** (`checkFreshProcessUsage`, called from `OnResult` on the process's first priced result, `resultSeen`). The #2012 fix assumes a new process's counters start at exactly what `Start` seeded into `lastModelUsage` (`resumeBaselineFor`: empty for a fresh session, the transcript's last `cost-state` record for a `--resume`). So the summed cache read+write DELTA (ModelUsage minus that baseline, all models) must match what the process was seen doing: `max(accumulator main-thread, result.usage) + accumulator subagents`, from `turnUsageAcc.snapshot()` taken before `markResult`. It fires in both directions, with slack of 5,000 tokens and 25%: delta above the seen work (CC restored more than foci read; the unseeded #2012 probe is 45,769 against 23,003), and delta below it or negative (CC restored less, or stopped restoring, which `modelUsageDelta`'s per-field clamp would otherwise hide). Skipped once a `compact_boundary` has arrived. Fixtures in `ccstream/testdata/`: the probe's t1/t2 streams and both `cost-state` records.
+- **ccstream, ModelUsage monotonic within a process** (`modelUsageRegression`, in `OnResult`'s delta loop). A counter going down between two of one process's results is reported. The first result is compared against the seeded baseline by the check above instead. `modelUsageDelta` still treats that as a restart, as before.
+- **ccstream, per-message cache-write TTL split present** (`checkCacheWriteSplit`, in `noteAssistantUsage`). `cache_creation_input_tokens > 0` with no `cache_creation` means `splitFor` prices at 1h.
+- **codex, total grows by exactly last** (`totalGrowthMismatch`, via `checkTokenUsage` at the top of `onTokenUsage`). Per-thread history in `threadTotal`. The first notification on a thread, a total that goes down, and an exact repeat are not judged.
+- **codex, cached is a subset of input**: `last.totalTokens == input + output` and `cached <= input`. Skipped when `last` is all zero (codex emits zero-`last` context-estimate updates).
 
 ### Warning Injection Architecture
 

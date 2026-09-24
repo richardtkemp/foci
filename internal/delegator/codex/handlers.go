@@ -506,6 +506,7 @@ func (b *Backend) onTokenUsage(params *tokenUsageParams) {
 	// the cached portion out of InputTokens here. Reporting it in both fields
 	// otherwise double-counts the cache: context occupancy inflates (premature
 	// auto-compaction) and cost double-charges the cached tokens.
+	b.checkTokenUsage(params)
 	last := params.TokenUsage.Last
 	inputTokens := last.InputTokens - last.CachedInputTokens
 	if inputTokens < 0 {
