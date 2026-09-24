@@ -1360,6 +1360,15 @@ Four outputs:
    inflates roughly quadratically in turns-per-session — 13x measured over
    28 Jul - 4 Aug 2026 ($32,566 against ~$2,500 real). Rows written before #1674
    have `calculated_cost_usd` NULL and are not repaired.
+   `calculated_cost_usd` is priced from DELTAS of those cumulative counters,
+   against a per-model baseline held on the ccstream `Backend` (`lastModelUsage`).
+   `Start` sets that baseline to what the new process's counters start from. For a
+   fresh session that is empty. For a `--resume` it is the `modelUsage` of the last
+   `type:"cost-state"` record for that session in its transcript, because since CC
+   2.1.280 a resumed process (including a foci fork, whose copied transcript carries
+   the parent's records) restores those totals instead of starting at zero (#2012).
+   Seeding it empty booked the conversation's whole history to the first turn, which
+   produced $111 rows for forks that did $0.87 of work.
    Direct-API rows (conversation, spawn, summary and compaction calls made without a
    delegated backend) also stayed NULL AFTER #1674 until #1964: #1674 wired the field
    into the delegated backends only. An agent on a direct provider (e.g. gilette on

@@ -73,6 +73,12 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	if opts.ResumeSessionID != "" {
 		args = append(args, "--resume", opts.ResumeSessionID)
 	}
+	// The totals CC's counters will start from. Read before the process
+	// starts, because it appends its own record when it exits (#2012).
+	baseline := b.resumeBaselineFor(opts.WorkDir, opts.ResumeSessionID)
+	b.mu.Lock()
+	b.lastModelUsage = baseline
+	b.mu.Unlock()
 	// skip_permissions bypasses all CC permission prompts (unattended). When
 	// set, CC never asks, so foci's auto-approve hook has nothing to answer.
 	if delegator.SkipPermissions(b.cfg) {

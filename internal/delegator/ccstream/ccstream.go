@@ -250,13 +250,13 @@ type Backend struct {
 	// and cacheRead 21624/46722/72545/98434 for four identical trivial prompts.
 	//
 	// Deliberately keyed on nothing but the model, and deliberately NOT reset
-	// between turns: this map's lifetime IS the Backend's, which IS the CC
-	// process's, which is exactly the counters' reset boundary. A resumed
-	// session in a NEW process restarts them at zero even though the session id
-	// is unchanged (probe-verified: 0.0243 -> 0.0035 across a --resume), so
-	// keying on the session would silently miss the reset. A fresh Backend
-	// starts with an empty map and therefore treats the first snapshot as the
-	// whole delta, which is correct.
+	// between turns: its lifetime is the CC process's, and Start sets it to
+	// whatever the new process's counters start from. That is empty for a fresh
+	// session. For a --resume it is the totals CC restores from the
+	// transcript's last cost-state record, because since CC 2.1.280 a resumed
+	// process starts its counters at the conversation's history, not at zero
+	// (#2012; before that a resume did restart at zero, 0.0243 -> 0.0035). An
+	// empty seed there booked the whole history to the first turn.
 	lastModelUsage map[string]ModelUsage
 
 	// lastModelUsageAt is when each model's snapshot in lastModelUsage was
