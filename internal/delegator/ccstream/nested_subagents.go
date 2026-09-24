@@ -22,10 +22,13 @@ package ccstream
 //  3. after a foci restart, when neither was seen: CC's agent-<task_id>.meta.json
 //     sidecar, which records spawnDepth and parentAgentId.
 //
-// Scope: this fixes foci's rendering and bookkeeping only. Where CC delivers a
-// grandchild's completion notification (observed 2026-09-22: to the top-level
-// session rather than to the spawning subagent) is CC's own routing, outside
-// anything foci sees or controls, and is NOT changed here.
+// Delivery (probed live on CC 2.1.280, 2026-09-24): CC delivers a nested
+// subagent's completion notification TWICE -- to its spawner, but only while the
+// spawner is mid-turn, and ALWAYS to the main thread too. So the main-thread
+// task_notification for a grandchild is expected, not a misroute, and is why the
+// suppression in handlers.go is needed. A spawner that ENDS its turn to "wait"
+// never sees its children's results; that is what happened on 2026-09-22 (the
+// scanner went idle at 19:13:48 and all three children finished after it).
 
 // registerNestedAgent records that nestedID is an Agent spawn made BY a subagent
 // whose group is parentGroupKey. Idempotent. The two spawn signals race, and the
