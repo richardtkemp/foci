@@ -27,7 +27,7 @@ Install these before running setup:
 
 - **Go 1.24+** — downloaded automatically by `make setup` if not available (requires `curl` or `wget`)
 - **git** — for cloning the repo
-- **gcc / build-essential** — C compiler (needed for SQLite CGO)
+- **gcc / build-essential** — C compiler for the `nosgid.so` LD_PRELOAD shim only; the Go binaries build with `CGO_ENABLED=0` (SQLite is pure Go, and the ambient-capability clear in `procx` requires a cgo-free binary — see SECRETS.md)
 - **make** — build tool
 - **tmux** — terminal multiplexing (optional but recommended)
 - **jq** — JSON processing (optional but recommended)

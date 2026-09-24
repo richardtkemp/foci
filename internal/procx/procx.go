@@ -195,12 +195,19 @@ func setupImpl() {
 	}
 
 	// The probe proved CAP_SETGID is in our permitted/effective sets. Now clear
-	// the AMBIENT set so children don't inherit CAP_SETGID across execve and
-	// re-add the dropped groups themselves (P0-1). The credential mechanism
-	// keeps working because it relies on the parent's effective caps, not the
-	// ambient set.
+	// the AMBIENT set — on every OS thread, since children fork from whichever
+	// thread the caller is on — so children don't inherit CAP_SETGID across
+	// execve and re-add the dropped groups themselves (P0-1, #2007). The
+	// credential mechanism keeps working because it relies on the parent's
+	// effective caps, not the ambient set.
+	//
+	// A failed clear is the same fail-closed condition as a failed probe: the
+	// group would be dropped at fork and silently re-addable by the child. The
+	// credential is still installed (strictly better than nothing under
+	// skip_security_checks) but Setup reports the error so startup aborts.
 	if err := clearAmbientCaps(); err != nil {
-		execLog.Warnf("could not clear ambient capabilities: %v — children may inherit CAP_SETGID", err)
+		execLog.Warnf("could not clear ambient capabilities: %v — children would inherit CAP_SETGID and could re-add the dropped groups", err)
+		setupErr = fmt.Errorf("process holds a security group but cannot stop children re-acquiring it: %w", err)
 	}
 
 	childCredential = cred

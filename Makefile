@@ -25,6 +25,16 @@ LDFLAGS = -s -w -X main.version=$(VERSION) \
           -X main.gitCommit=$(GIT_COMMIT) \
           -X main.buildTime=$(BUILD_TIME)
 
+# No cgo, for every go build/test/vet/lint recipe below. Nothing in this repo
+# imports "C" (SQLite is modernc, pure Go), but with CGO_ENABLED=1 the net and
+# os/user packages link runtime/cgo — and a cgo-linked binary makes
+# syscall.AllThreadsSyscall return ENOTSUP, which procx.clearAmbientCaps needs
+# to strip ambient CAP_SETGID from EVERY OS thread before spawning children
+# (#2007; see internal/procx/cap_linux.go). With cgo the gateway fails closed at
+# startup; test binaries must match so TestClearAmbientCaps exercises the real
+# path. The remote-build check already builds CGO_ENABLED=0.
+export CGO_ENABLED = 0
+
 # CI test-history hook: CI_HOOK is the path to the shared results CSV.
 # Row shape (6 cols): time,repo,commit,target,pass|fail,failing-test-names
 # Column 6 (foci_todo #1754) is '|'-joined failing test names, empty on pass, so
