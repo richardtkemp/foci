@@ -247,7 +247,8 @@ type hookScriptOutput struct {
 //     fires its own hook_response; we only act on our own.
 //  3. Sub-agent tool calls (agent_id non-empty) are filtered out — their
 //     tool results belong to the sub-agent's own transcript rather than
-//     the parent turn.
+//     the parent turn. A nested Agent PreToolUse is inspected first, to
+//     record its parentage (#1554).
 //
 // Malformed stdout (parse failure) degrades gracefully: log at debug and
 // drop the event, keeping the rest of the turn flowing.
@@ -290,7 +291,16 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 	// Sidechain filter: sub-agent tool calls have a non-empty agent_id per
 	// claude-code src/utils/hooks.ts:createBaseHookInput. Skip so they
 	// don't fire OnToolEnd on the parent turn's tracker.
+	//
+	// One is read before it is dropped: a PreToolUse for an Agent call made BY a
+	// subagent is a nested spawn (#1554), and its agent_id is the SPAWNER's task_id
+	// (verified live, CC 2.1.280). Record the parentage so the grandchild's task_*
+	// events, which carry none, are recognised later. It still returns: a nested
+	// spawn opens no chit of its own and must not touch the parent turn's tracker.
 	if parsed.AgentID != "" {
+		if env.HookEvent == eventPreToolUse && parsed.ToolName == "Agent" {
+			b.registerNestedAgent(parsed.ToolUseID, b.groupKeyForTask(parsed.AgentID))
+		}
 		return
 	}
 
@@ -348,10 +358,9 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 		se.OnToolEnd(parsed.ToolUseID, parsed.ToolName, output, parsed.IsError)
 	}
 
-	// The top-level Agent tool completing is a subagent run finishing — its
-	// tool_use id is the run's group key. Precise per-run end (agent_id is empty
-	// here: the Agent tool runs at the parent level, so the sidechain filter above
-	// already let it through).
+	// The top-level Agent tool resolving. Only a DEPTH-1 Agent call gets here:
+	// agent_id is empty only when the main thread made the call, and the sidechain
+	// filter above returned for a nested one (whose agent_id names its spawner).
 	if parsed.ToolName == "Agent" {
 		// THIS HOOK NEVER STOPS A TAIL (#1934). Only the pending foreground
 		// expectation is cleared. A BACKGROUND Agent tool_use resolves the instant

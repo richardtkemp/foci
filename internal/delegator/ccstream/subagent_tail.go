@@ -54,10 +54,15 @@ func (b *Backend) subagentFilePath(agentID, suffix string) string {
 // the bridge from a subagent's stable task_id (the filename) to the ORIGINAL Agent
 // tool_use id (== the run's group key) and its description (== the chit label). CC
 // writes this next to the subagent transcript when the Agent tool spawns the
-// subagent, and it persists across a restart.
+// subagent, and it persists across a restart. SpawnDepth (1 for a subagent the
+// main thread spawned) and ParentAgentID (the spawner's task_id, set only when
+// nested) identify a nested subagent after a restart (#1554; captured live on CC
+// 2.1.280).
 type subagentMeta struct {
-	Description string `json:"description"`
-	ToolUseID   string `json:"toolUseId"`
+	Description   string `json:"description"`
+	ToolUseID     string `json:"toolUseId"`
+	SpawnDepth    int    `json:"spawnDepth"`
+	ParentAgentID string `json:"parentAgentId"`
 }
 
 // loadSubagentMeta reads the task_id -> {groupKey, label} bridge from CC's on-disk
@@ -67,19 +72,25 @@ type subagentMeta struct {
 // ok=false when the sidecar is absent/unreadable or carries no tool_use id (so the
 // caller can fall through to "not a subagent we can identify").
 func (b *Backend) loadSubagentMeta(taskID string) (groupKey, label string, ok bool) {
+	m, ok := b.readSubagentMeta(taskID)
+	return m.ToolUseID, m.Description, ok
+}
+
+// readSubagentMeta parses the whole sidecar; see loadSubagentMeta for ok.
+func (b *Backend) readSubagentMeta(taskID string) (subagentMeta, bool) {
 	path := b.subagentFilePath(taskID, ".meta.json")
 	if path == "" {
-		return "", "", false
+		return subagentMeta{}, false
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", "", false
+		return subagentMeta{}, false
 	}
 	var m subagentMeta
 	if json.Unmarshal(data, &m) != nil || m.ToolUseID == "" {
-		return "", "", false
+		return subagentMeta{}, false
 	}
-	return m.ToolUseID, m.Description, true
+	return m, true
 }
 
 // Foreground subagents (Task/Agent tool run synchronously) do NOT stream their

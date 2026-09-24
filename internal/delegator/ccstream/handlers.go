@@ -191,6 +191,29 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 		if msg.ParentToolUseID != nil {
 			groupKey = *msg.ParentToolUseID
 		}
+		// A subagent calling the Agent tool spawns a grandchild (#1554). This
+		// block is the one event carrying both the nested Agent id and the
+		// spawner's group, and it precedes the nested task_started, so record the
+		// parentage now: the task_* events that follow carry none.
+		for _, block := range msg.Message.Content {
+			if block.Type == "tool_use" && block.Name == "Agent" {
+				b.registerNestedAgent(block.ID, groupKey)
+			}
+		}
+		// A BACKGROUND grandchild's text is tagged with its OWN Agent id, a group
+		// the app never opened (verified live). Attribute it to the depth-1 chit
+		// it belongs to; if no ancestor is known, drop it rather than let the
+		// client open a provisional chit for a nested agent.
+		if ancestor, nested := b.topLevelAncestor(groupKey); nested {
+			if ancestor == "" {
+				b.logger().Debugf("subagent text dropped: nested group=%s has no resolved ancestor", groupKey)
+				if b.typingFunc != nil {
+					b.typingFunc(true)
+				}
+				return
+			}
+			groupKey = ancestor
+		}
 		if se != nil {
 			for _, block := range msg.Message.Content {
 				if block.Type != "text" || block.Text == "" {
@@ -976,7 +999,14 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 			// SendMessage. groupKey stays the ORIGINAL Agent tool_use_id (the
 			// subagent's text keeps it as parent_tool_use_id across resumes), so all
 			// runs collapse into one continuous view.
-			if run, reactivated, prompt := b.onTaskStarted(task.TaskID, task.ToolUseID); reactivated {
+			//
+			// A nested (depth >= 2) subagent gets neither (#1554). Its tail above
+			// still runs, for its usage. Without this, onTaskStarted would find no
+			// label stash and rehydrate it from the meta sidecar as a spurious
+			// "reactivation" chit whenever the sidecar was already on disk.
+			if nestedKey, nested := b.nestedTask(task.TaskID, task.ToolUseID); nested {
+				b.logger().Infof("subagent_start suppressed=nested group=%s task_id=%s", nestedKey, task.TaskID)
+			} else if run, reactivated, prompt := b.onTaskStarted(task.TaskID, task.ToolUseID); reactivated {
 				b.agents.Add(run.groupKey, run.label)
 				b.logger().Infof("subagent_reactivate task_id=%s group=%s run=%d", task.TaskID, run.groupKey, run.runIndex)
 				if se := b.sessionEvents.Load(); se != nil && se.OnSubagentStart != nil {
@@ -990,6 +1020,16 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 			}
 		case "task_notification":
 			if task.Status == "completed" {
+				// A nested (depth >= 2) subagent finishing (#1554). Stop its OWN tail
+				// (keyed by the id its task_started carried) and nothing else: it was
+				// never Add()ed to the tracker and opened no chit, so there is no entry
+				// to retire and no end to send, and its spawner's group is still
+				// running and must be neither finalized nor tail-stopped.
+				if nestedKey, nested := b.nestedTask(task.TaskID, task.ToolUseID); nested {
+					b.subagentTails().finalize(task.ToolUseID)
+					b.logger().Infof("subagent_end suppressed=nested group=%s task_id=%s", nestedKey, task.TaskID)
+					break
+				}
 				// The subagent RUN's true end, for foreground AND background alike (a
 				// background Agent tool_use resolves at launch, so its PostToolUse end
 				// is premature; this fires at actual completion). Map task_id -> the

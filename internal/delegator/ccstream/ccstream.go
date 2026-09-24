@@ -307,6 +307,11 @@ type Backend struct {
 	agentLabels     map[string]string       // Agent tool_use_id (groupKey) -> label
 	agentPrompts    map[string]string       // Agent tool_use_id (groupKey) -> prompt
 	subagentStarted map[string]bool         // Agent tool_use_id (groupKey) -> SubagentStart already emitted
+	// Nested subagents (#1554): a subagent that itself calls the Agent tool.
+	// CC's task_* events carry no parentage, so a grandchild's lifecycle is only
+	// recognisable from what was recorded at SPAWN. See nested_subagents.go.
+	nestedAgents map[string]string // nested Agent tool_use_id -> spawner's groupKey ("" = spawner unresolved)
+	nestedTasks  map[string]string // nested task_id -> its own Agent tool_use_id
 
 	// subagentTails tails foreground subagent transcript files and forwards
 	// their assistant text as subagent progress (foreground subagent text is
