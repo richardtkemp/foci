@@ -1471,6 +1471,46 @@ input.command = '(;|\n|\|\|)\s*git\b[^;&|\n]*\bworktree\s+remove'  # ...then a r
 reason = "Chain the cleanup on the merge with &&."
 ```
 
+**`when`: checking live state (#2034).** Patterns only see the call's text. For a rule that depends on state (the branch a repo is on, whether a file has uncommitted edits, what a file's head says), add a `when` bash script. It runs only after every other constraint holds, and the rule denies **iff it exits 0**. Exit 1 is the ordinary "no". Anything else (another exit status, a timeout, bash failing to start) **fails open**: the call is not denied, and the failure is logged at WARN as `pretool_when_error` (and shown by `foci pretool test`). Each run is limited to 2 s, and all the checks for one call to 5 s, well inside CC's 10 s hook timeout.
+
+The script gets:
+
+| | |
+|---|---|
+| `$1`, `$2`, ... | For a `Bash` rule with `command` patterns, the words of the matched command (`git -C /r checkout -- f` gives `$1=git $2=-C $3=/r ...`). Quotes are removed; expansions arrive in their `$` form, unexpanded. If several commands match, the script runs once for each until one exits 0. |
+| `$0` | The rule name. |
+| `$TOOL_INPUT_<FIELD>` | Each top-level string field of the tool input, upper-cased, other characters as `_`: `$TOOL_INPUT_FILE_PATH`, `$TOOL_INPUT_COMMAND`. |
+| `$TOOL_INPUT`, stdin | The whole tool input as JSON. |
+| `$TOOL_NAME`, `$TOOL_CWD` | The tool, and the session's working directory. The script also runs in that directory. |
+
+The rest of its environment is the CC session's, minus `BASH_ENV` and `ENV`. It runs as the agent's user, so it sees what the agent sees. Keep checks fast and read-only: one runs for every call the patterns match. A check that makes an exit status other than 0 or 1 mean "no" (for example `git diff --quiet`, which exits 1 when there ARE changes) must map it explicitly, since `!` would turn an error into a deny:
+
+```toml
+[[agents.backend_config.pretool_rules]]
+name = "golden_skill_edit"
+tool = "Edit"
+input.file_path = '^/home/foci/shared/skills/'
+when = 'head -n 5 -- "$TOOL_INPUT_FILE_PATH" 2>/dev/null | grep -q "GOLDEN:"'
+reason = "This skill file ships with foci and is overwritten on restart. Edit it in the foci repo."
+
+[[agents.backend_config.pretool_rules]]
+name = "commit_on_main"
+tool = "Bash"
+command = 'git (\S+ )*commit( |$)'
+when = '''
+shift; repo=.
+while [ $# -gt 0 ]; do
+  case $1 in -C) repo=$2; shift 2 ;; -c) shift 2 ;; *) break ;; esac
+done
+top=$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null) || exit 1
+[ "$top" = /home/rich/git/foci ] || exit 1
+[ "$(git -C "$repo" symbolic-ref --short -q HEAD)" = main ]
+'''
+reason = "Do not commit on main in the foci main checkout. Work in a worktree."
+```
+
+A `cd` earlier in the same command is not reflected in `$TOOL_CWD` (see `cwd` above), so a check that resolves a repo from the cwd should also honour `git -C`.
+
 Check rules offline with `foci pretool list --agent <id>` and `foci pretool test --agent <id> --bash '<command>' [--cwd <dir>] [-v]` (see CLI.md). Rules are read from the config file each time foci launches a CC process (a new session, or a session resumed after an idle shutdown or a foci restart), so an edit applies from the next launch without a restart. A CC process already running keeps the rules it was launched with. If the file does not load at that moment, the session keeps the last rules that did. Each deny is logged as `pretool_rule_deny`.
 
 ### Available backends

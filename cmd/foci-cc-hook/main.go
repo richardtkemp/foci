@@ -17,7 +17,9 @@
 // hookSpecificOutput.permissionDecision="deny" to the same JSON object; CC
 // honours it and returns permissionDecisionReason to the model as the tool's
 // error result, ignoring the object's other fields (verified live, CC
-// 2.1.280). It never emits "allow" — see the pretool package doc.
+// 2.1.280). It never emits "allow" — see the pretool package doc. A rule's
+// when-check runs here as a bash child; one that fails (timeout, error)
+// never denies, and is reported in when_errors for foci to log.
 //
 // The helper always exits 0 regardless of parse errors — CC uses
 // exit codes to gate tool execution (exit 2 blocks), so we must not
@@ -106,6 +108,9 @@ type hookOutput struct {
 	// DeniedRule names the pretool rule that refused this call, so foci can
 	// log the deny. Empty when no rule matched.
 	DeniedRule string `json:"denied_rule,omitempty"`
+	// WhenErrors reports pretool when-checks that failed open (#2034), so
+	// foci can log them.
+	WhenErrors []string `json:"when_errors,omitempty"`
 	// HookSpecificOutput is the part CC acts on. Set only for a deny.
 	HookSpecificOutput *preToolDecision `json:"hookSpecificOutput,omitempty"`
 }
@@ -202,7 +207,12 @@ func applyRules(out *hookOutput, encoded string, call pretool.Call) {
 	if err != nil {
 		return
 	}
-	r := pretool.Match(rules, call)
+	res := pretool.Match(rules, call)
+	// Each error is short: runWhen keeps at most 512 bytes of stderr.
+	for _, e := range res.WhenErrors {
+		out.WhenErrors = append(out.WhenErrors, e.Error())
+	}
+	r := res.Rule
 	if r == nil {
 		return
 	}

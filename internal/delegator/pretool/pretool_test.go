@@ -25,11 +25,11 @@ func TestDefaults_BlockAndPass(t *testing.T) {
 		t.Fatalf("defaults skipped: %v", skipped)
 	}
 	for _, r := range rules {
-		if got := Match(rules, Call{Tool: r.Tool, Input: json.RawMessage(`{}`)}); got == nil || got.Name != r.Name {
+		if got := Match(rules, Call{Tool: r.Tool, Input: json.RawMessage(`{}`)}).Rule; got == nil || got.Name != r.Name {
 			t.Errorf("%s: Match(%s) = %v, want the rule", r.Name, r.Tool, got)
 		}
 	}
-	if got := Match(rules, Call{Tool: "Bash", Input: json.RawMessage(`{"command":"ls"}`)}); got != nil {
+	if got := Match(rules, Call{Tool: "Bash", Input: json.RawMessage(`{"command":"ls"}`)}).Rule; got != nil {
 		t.Errorf("Bash matched %q", got.Name)
 	}
 }
@@ -57,7 +57,7 @@ func TestResolve_DisableDefault(t *testing.T) {
 	if got := names(rules); !reflect.DeepEqual(got, []string{"cron_create"}) {
 		t.Errorf("rules = %v, want only cron_create", got)
 	}
-	if Match(rules, Call{Tool: "AskUserQuestion"}) != nil {
+	if Match(rules, Call{Tool: "AskUserQuestion"}).Rule != nil {
 		t.Error("disabled rule still matches")
 	}
 }
@@ -119,7 +119,7 @@ func TestMatch_InputRegex(t *testing.T) {
 	}
 	for _, c := range cases {
 		got := ""
-		if r := Match(rules, Call{Tool: c.tool, Input: json.RawMessage(c.input)}); r != nil {
+		if r := Match(rules, Call{Tool: c.tool, Input: json.RawMessage(c.input)}).Rule; r != nil {
 			got = r.Name
 		}
 		if got != c.want {

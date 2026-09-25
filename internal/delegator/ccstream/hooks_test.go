@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"foci/internal/delegator/pretool"
+	"foci/internal/log"
 )
 
 // ---------------------------------------------------------------------------
@@ -324,6 +326,49 @@ func TestHandleHookResponse_PreToolRuleDeny(t *testing.T) {
 	}
 	if b.agents.Remove("toolu_Agent") {
 		t.Error("denied Agent still tracked as pending work")
+	}
+}
+
+// TestHandleHookResponse_WhenErrorLogged proves a when-check that failed open
+// in the hook reaches foci's log at WARN (#2034), for a main-thread call and
+// a subagent's alike, without ending the call.
+//
+// Not parallel: log.SetWarnHook is process-global.
+func TestHandleHookResponse_WhenErrorLogged(t *testing.T) {
+	var mu sync.Mutex
+	var got []string
+	log.SetWarnHook(func(level log.Level, component, msg string) {
+		mu.Lock()
+		defer mu.Unlock()
+		got = append(got, level.String()+" "+msg)
+	})
+	t.Cleanup(func() { log.SetWarnHook(nil) })
+
+	b := &Backend{hookInstallID: "install-w"}
+	ends := 0
+	applyHandler(b, &testHandler{OnToolEnd: func(id, name, output string, isError bool) { ends++ }})
+	for _, agentID := range []string{"", "sub-1"} {
+		out := hookScriptOutput{
+			HookEvent: "PreToolUse", InstallID: "install-w", ToolUseID: "toolu_w" + agentID,
+			ToolName: "Bash", AgentID: agentID, WhenErrors: []string{"rule x: when: timed out (2s)"},
+		}
+		stdout, _ := json.Marshal(out)
+		env, _ := json.Marshal(hookResponseEnvelope{HookEvent: "PreToolUse", Stdout: string(stdout)})
+		b.handleHookResponse(env)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	n := 0
+	for _, e := range got {
+		if strings.HasPrefix(e, "WARN") && strings.Contains(e, "pretool_when_error") && strings.Contains(e, "rule x: when: timed out") {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Errorf("want 2 pretool_when_error warnings, got %q", got)
+	}
+	if ends != 0 {
+		t.Errorf("a failed-open check ended the call (%d OnToolEnd)", ends)
 	}
 }
 

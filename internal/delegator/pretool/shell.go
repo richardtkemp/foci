@@ -30,6 +30,23 @@ const WordSpace = "␣"
 // ok is false when the script does not parse as bash; command patterns then
 // cannot match, and the call falls through to the normal permission flow.
 func Commands(script string) (cmds []string, ok bool) {
+	parsed, ok := parseCommands(script)
+	for _, c := range parsed {
+		cmds = append(cmds, c.text)
+	}
+	return cmds, ok
+}
+
+// shellCmd is one simple command: text is what command patterns see (see
+// Commands); args are its words as they would reach the program, with quotes
+// removed and quoted whitespace kept as real whitespace. A when-check gets
+// args as its positional parameters.
+type shellCmd struct {
+	text string
+	args []string
+}
+
+func parseCommands(script string) (cmds []shellCmd, ok bool) {
 	f, err := syntax.NewParser(syntax.KeepComments(false), syntax.Variant(syntax.LangBash)).
 		Parse(strings.NewReader(script), "")
 	if err != nil {
@@ -41,14 +58,28 @@ func Commands(script string) (cmds []string, ok bool) {
 		if !isCall || len(call.Args) == 0 {
 			return true
 		}
-		words := make([]string, len(call.Args))
+		args := make([]string, len(call.Args))
+		shown := make([]string, len(call.Args))
 		for i, w := range call.Args {
-			words[i] = wordText(pr, w)
+			args[i] = wordText(pr, w)
+			shown[i] = strings.Map(func(r rune) rune {
+				if unicode.IsSpace(r) {
+					return []rune(WordSpace)[0]
+				}
+				return r
+			}, args[i])
 		}
-		cmds = append(cmds, strings.Join(words, " "))
+		cmds = append(cmds, shellCmd{text: strings.Join(shown, " "), args: args})
 		return true
 	})
 	return cmds, true
+}
+
+// parsesAsBash reports whether script parses with the same parser Commands
+// uses; config validation holds a rule's when-check to it.
+func parsesAsBash(script string) error {
+	_, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(script), "")
+	return err
 }
 
 func wordText(pr *syntax.Printer, w *syntax.Word) string {
@@ -56,12 +87,7 @@ func wordText(pr *syntax.Printer, w *syntax.Word) string {
 	for _, p := range w.Parts {
 		partText(&b, pr, p, false)
 	}
-	return strings.Map(func(r rune) rune {
-		if unicode.IsSpace(r) {
-			return []rune(WordSpace)[0]
-		}
-		return r
-	}, b.String())
+	return b.String()
 }
 
 func partText(b *strings.Builder, pr *syntax.Printer, p syntax.WordPart, inDbl bool) {

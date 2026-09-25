@@ -387,7 +387,7 @@ foci pretool list [--agent <id>] [--config <path>]
 foci pretool test [--agent <id>] [--config <path>] (--bash <command> | --tool <name> [--input <json>]) [--cwd <dir>] [-v]
 ```
 
-`list` prints the resolved rules. `test` prints the name of the rule that denies the call, or `no match`. `-v` adds the rule's reason and, for Bash, each simple command the `command` patterns are matched against. `--bash -` reads the command from stdin. `--agent` defaults to the agent in `FOCI_SESSION_KEY`; `--config` to `$FOCI_CONFIG`, else `~/config/foci.toml`.
+`list` prints the resolved rules. `test` prints the name of the rule that denies the call, or `no match`. `-v` adds the rule's reason and, for Bash, each simple command the `command` patterns are matched against. `--bash -` reads the command from stdin. Rules' `when` checks run for real, in `--cwd` (default: the current directory); a check that fails open is always printed as `when failed open: ...`. `--agent` defaults to the agent in `FOCI_SESSION_KEY`; `--config` to `$FOCI_CONFIG`, else `~/config/foci.toml`.
 
 **Examples:**
 ```bash
@@ -395,6 +395,7 @@ foci pretool list --agent clutch
 foci pretool test --agent clutch --bash 'cd /r && git add -A'
 foci pretool test --agent clutch --bash 'git commit -m x' --cwd /home/rich/git/foci -v
 foci pretool test --agent clutch --tool Read --input '{"file_path":"/etc/passwd"}'
+foci pretool test --agent clutch --tool Edit --input '{"file_path":"/home/foci/shared/skills/foci-usage/SKILL.md"}'
 ```
 
 ---

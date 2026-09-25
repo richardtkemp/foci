@@ -423,3 +423,28 @@ func TestPreToolUse_CwdReachesRules(t *testing.T) {
 		}
 	}
 }
+
+// TestPreToolUse_WhenCheck proves a rule's when-check decides in the hook
+// (#2034): exit 0 denies, exit 1 doesn't, and a failing check never denies
+// but is reported in when_errors for foci to log.
+func TestPreToolUse_WhenCheck(t *testing.T) {
+	for when, want := range map[string]struct {
+		rule string
+		errs int
+	}{
+		`[ "$TOOL_INPUT_FILE_PATH" = /golden ]`: {"guard", 0},
+		`[ "$TOOL_INPUT_FILE_PATH" = /other ]`:  {"", 0},
+		"exit 9":                                {"", 1},
+	} {
+		enc, err := pretool.Encode([]pretool.Rule{{
+			Name: "guard", Tool: "Edit", Action: pretool.ActionDeny, Reason: "r", When: when,
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, ok := process([]string{"foci-cc-hook", rulesFlag, enc}, preToolBody("Edit", `{"file_path":"/golden"}`))
+		if !ok || out.DeniedRule != want.rule || (out.HookSpecificOutput != nil) != (want.rule != "") || len(out.WhenErrors) != want.errs {
+			t.Errorf("when %q: out = %+v, want rule %q and %d errors", when, out, want.rule, want.errs)
+		}
+	}
+}

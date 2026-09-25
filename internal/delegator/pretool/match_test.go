@@ -15,7 +15,7 @@ func bashCall(cmd string) Call {
 }
 
 func matchName(rules []Rule, c Call) string {
-	if r := Match(rules, c); r != nil {
+	if r := Match(rules, c).Rule; r != nil {
 		return r.Name
 	}
 	return ""

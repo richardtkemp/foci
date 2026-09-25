@@ -4,15 +4,17 @@
 // "deny": the hook refuses the call and hands the rule's reason to the model
 // in place of the tool result.
 //
-// A rule can constrain three things, all of which must hold (#2033):
+// A rule can constrain four things, all of which must hold (#2033, #2034):
 //   - input: raw tool-input fields, each matched against one or more regexes.
 //   - command: Bash only. The command is parsed as a shell script and each
 //     simple command in it is matched on its own, from its first word. See
 //     Commands for exactly what the patterns see.
 //   - cwd: the session's working directory when the call was made.
+//   - when: a bash script run after the others hold, to check live state;
+//     the rule denies iff it exits 0, and fails open. See when.go.
 //
-// Every constraint takes one regex or a list of them, and any one of a list
-// may match.
+// Every pattern constraint takes one regex or a list of them, and any one of
+// a list may match.
 //
 // There is deliberately no "allow". A PreToolUse allow short-circuits CC's
 // permission check, so emitting one would let a rule bypass foci's approval
@@ -21,7 +23,8 @@
 //
 // The package imports only the stdlib and the mvdan.cc/sh parser, because it
 // is linked into the foci-cc-hook helper, which CC spawns once per matched
-// tool call.
+// tool call. For the same reason when-checks spawn bash directly rather than
+// through procx.
 package pretool
 
 import (
@@ -52,10 +55,12 @@ type Rule struct {
 	// the script, anchored at its first word.
 	Command Patterns `toml:"command" json:"command,omitempty"`
 	// Cwd holds regexes matched against the session's working directory.
-	Cwd     Patterns `toml:"cwd"     json:"cwd,omitempty"`
-	Action  string   `toml:"action"  json:"action,omitempty"`
-	Reason  string   `toml:"reason"  json:"reason"`
-	Enabled *bool    `toml:"enabled" json:"-"`
+	Cwd Patterns `toml:"cwd"     json:"cwd,omitempty"`
+	// When is a bash script run once the patterns match; exit 0 denies.
+	When    string `toml:"when"    json:"when,omitempty"`
+	Action  string `toml:"action"  json:"action,omitempty"`
+	Reason  string `toml:"reason"  json:"reason"`
+	Enabled *bool  `toml:"enabled" json:"-"`
 }
 
 // Defaults are the rules foci ships preinstalled. Config disables one with
@@ -117,6 +122,11 @@ func ValidateLayer(rules []Rule) error {
 		if err := r.Cwd.validate(); err != nil {
 			return fmt.Errorf("pretool_rules %q: cwd: %w", r.Name, err)
 		}
+		if r.When != "" {
+			if err := parsesAsBash(r.When); err != nil {
+				return fmt.Errorf("pretool_rules %q: when: %w", r.Name, err)
+			}
+		}
 	}
 	return nil
 }
@@ -173,6 +183,9 @@ func overlay(base, over Rule) Rule {
 	}
 	if over.Cwd != nil {
 		base.Cwd = over.Cwd
+	}
+	if over.When != "" {
+		base.When = over.When
 	}
 	if over.Action != "" {
 		base.Action = over.Action

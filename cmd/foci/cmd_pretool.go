@@ -129,11 +129,16 @@ func pretoolTest(out *strings.Builder, rules []pretool.Rule, args []string) erro
 	}
 	call.Cwd = cwd
 
-	r := pretool.Match(rules, call)
+	res := pretool.Match(rules, call)
+	r := res.Rule
 	if r == nil {
 		fmt.Fprintln(out, "no match")
 	} else {
 		fmt.Fprintln(out, r.Name)
+	}
+	// Always shown: a failed when-check silently lets calls through.
+	for _, e := range res.WhenErrors {
+		fmt.Fprintf(out, "  when failed open: %v\n", e)
 	}
 	if !verbose {
 		return nil
@@ -173,6 +178,9 @@ func printPretoolRules(w *strings.Builder, rules []pretool.Rule) {
 		}
 		printPatterns(w, "command", r.Command)
 		printPatterns(w, "cwd", r.Cwd)
+		if r.When != "" {
+			fmt.Fprintf(w, "  when: %s\n", strings.ReplaceAll(strings.TrimSpace(r.When), "\n", "\n        "))
+		}
 		fmt.Fprintf(w, "  reason: %s\n", r.Reason)
 	}
 }
@@ -194,6 +202,7 @@ Subcommands:
   list                 Print the agent's resolved rules
   test                 Run one sample tool call past the rules. Prints the
                        name of the rule that denies it, or "no match".
+                       Rules' when-checks run for real, from --cwd.
 
 Flags:
   --agent <id>         Agent whose rules to use (default: from FOCI_SESSION_KEY)
@@ -204,6 +213,7 @@ test flags:
   --tool <name>        Any other tool, with
   --input <json>       its tool_input object (default {})
   --cwd <dir>          The session working directory the call is made from
+                       (when-checks run there; default: the current directory)
   -v, --verbose        Also print the reason, and for Bash the commands the
                        command patterns are matched against
 

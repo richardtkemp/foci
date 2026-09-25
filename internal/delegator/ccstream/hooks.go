@@ -276,6 +276,8 @@ type hookScriptOutput struct {
 	AgentID      string `json:"agent_id,omitempty"`
 	IsError      bool   `json:"is_error"`
 	DeniedRule   string `json:"denied_rule,omitempty"`
+	// WhenErrors are pretool when-checks that failed open (#2034).
+	WhenErrors []string `json:"when_errors,omitempty"`
 	// HookSpecificOutput is read only for a deny's reason.
 	HookSpecificOutput struct {
 		PermissionDecisionReason string `json:"permissionDecisionReason"`
@@ -333,6 +335,13 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 	b.mu.Unlock()
 	if ourInstallID == "" || parsed.InstallID != ourInstallID {
 		return
+	}
+
+	// A when-check failed open: the call was not denied by that rule. Logged
+	// before the sidechain filter so a subagent's call is covered too.
+	for _, e := range parsed.WhenErrors {
+		b.logger().Warnf("pretool_when_error tool=%s tuid=%s agent_id=%s: %s",
+			parsed.ToolName, parsed.ToolUseID, parsed.AgentID, e)
 	}
 
 	// A pretool rule refused this call. Checked before the sidechain filter so
