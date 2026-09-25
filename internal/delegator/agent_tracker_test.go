@@ -175,8 +175,24 @@ func TestSubagentTracker_PruneExpired(t *testing.T) {
 	}
 }
 
+// TestSubagentTracker_DefaultMaxAgeIsTwoHours pins the unconfigured prune age
+// at 2h (#2009). Durations are literal, not derived from defaultAgentMaxAge, so
+// a change to the constant fails here. At the old 30m default, healthy 30-40
+// minute delegated subagents were pruned and released held system injects early.
+func TestSubagentTracker_DefaultMaxAgeIsTwoHours(t *testing.T) {
+	t.Parallel()
+	tr := &SubagentTracker{}
+	tr.pending = []TrackedSubagent{
+		{ID: "long-but-live", added: time.Now().Add(-(2*time.Hour - time.Minute))},
+		{ID: "stale", added: time.Now().Add(-(2*time.Hour + time.Minute))},
+	}
+	if n := tr.Pending(); n != 1 || tr.pending[0].ID != "long-but-live" {
+		t.Fatalf("Pending() = %d, remaining %v; want only the 1h59m spawn kept and the 2h01m one pruned (default max age 2h)", n, tr.pending)
+	}
+}
+
 // TestSubagentTracker_MaxAgeConfigurable verifies a custom MaxAge overrides the
-// 30m default — the unwedge backstop is tunable for long background jobs
+// 2h default — the unwedge backstop is tunable for long background jobs
 // ([cc_backend].background_task_max_age).
 func TestSubagentTracker_MaxAgeConfigurable(t *testing.T) {
 	t.Parallel()
@@ -189,12 +205,12 @@ func TestSubagentTracker_MaxAgeConfigurable(t *testing.T) {
 		t.Fatalf("Pending() = %d, want 1 (spawn older than MaxAge=1m pruned)", n)
 	}
 	// A spawn younger than the custom MaxAge but older than nothing survives.
-	tr2 := &SubagentTracker{MaxAge: time.Hour}
+	tr2 := &SubagentTracker{MaxAge: 3 * time.Hour}
 	tr2.pending = []TrackedSubagent{
-		{ID: "old-but-within", added: time.Now().Add(-40 * time.Minute)}, // pruned at 30m default, kept at 1h
+		{ID: "old-but-within", added: time.Now().Add(-150 * time.Minute)}, // pruned at 2h default, kept at 3h
 	}
 	if n := tr2.Pending(); n != 1 {
-		t.Fatalf("Pending() = %d, want 1 (40m spawn kept under MaxAge=1h)", n)
+		t.Fatalf("Pending() = %d, want 1 (2h30m spawn kept under MaxAge=3h)", n)
 	}
 }
 

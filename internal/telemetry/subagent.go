@@ -31,7 +31,7 @@ var (
 )
 
 // subagentTTL bounds how long an un-ended run is kept; the ccstream tracker
-// prunes its own pending subagents at 30 min, so anything older here has
+// prunes its own pending subagents at 2h by default, so anything older here has
 // lost its end signal and is closed as unresolved.
 const subagentTTL = 2 * time.Hour
 

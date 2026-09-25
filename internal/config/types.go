@@ -275,9 +275,9 @@ type CCBackendConfig struct {
 	// completion signal before the prune drops it. The prune is the unwedge
 	// backstop for the pending-work gate that holds system injects while
 	// background work is outstanding (spec §4): a task whose completion
-	// notification is missed can't hold injects forever. Empty → 30m. Set well
+	// notification is missed can't hold injects forever. Empty → 2h. Set well
 	// beyond any real background job's runtime.
-	BackgroundTaskMaxAge string `toml:"background_task_max_age" desc:"Max time a background task can run before being dropped from tracking if no completion signal arrives, freeing up any reminders waiting on it. Empty = 30m" type:"duration"`
+	BackgroundTaskMaxAge string `toml:"background_task_max_age" desc:"Max time a background task can run before being dropped from tracking if no completion signal arrives, freeing up any reminders waiting on it. Empty = 2h" type:"duration"`
 }
 
 // BackendConfig holds per-agent settings for delegated backends

@@ -672,7 +672,7 @@ type StartOptions struct {
 	TmuxCols         int               // tmux window width (0 = use tools.tmux_cols default)
 	TmuxRows         int               // tmux window height (0 = use tools.tmux_rows default)
 	AutoApproveRules []string          // foci-level auto-approve patterns (e.g. "Bash:git *", "Read")
-	SubagentMaxAge   time.Duration     // prune threshold for tracked background tasks (0 = tracker default 30m); from [cc_backend].background_task_max_age
+	SubagentMaxAge   time.Duration     // prune threshold for tracked background tasks (0 = tracker default 2h); from [cc_backend].background_task_max_age
 
 	// ClaudeBinary overrides the path to the `claude` executable that
 	// delegated/RunOnce launches. Empty = use "claude" (resolved via

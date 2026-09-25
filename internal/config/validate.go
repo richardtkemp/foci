@@ -378,8 +378,8 @@ func (cfg *Config) Validate(knownBackends []string) error {
 		}
 	}
 
-	// background_task_max_age is optional (empty → 30m default at use-time), so
-	// validate only when set — else a typo would silently fall back to 30m.
+	// background_task_max_age is optional (empty → 2h default at use-time), so
+	// validate only when set — else a typo would silently fall back to 2h.
 	if v := cfg.CCBackend.BackgroundTaskMaxAge; v != "" {
 		if _, err := time.ParseDuration(v); err != nil {
 			return fmt.Errorf("[cc_backend] background_task_max_age = %q: %w", v, err)

@@ -1505,8 +1505,8 @@ func TestOnResult_KeepsTrackedAgentsAcrossTurn(t *testing.T) {
 // running orphans that subagent's SubagentTracker entry — CC's subprocess
 // survives the interrupt (only the current ask aborts), so finalizeExit's
 // existing ClearAll() ("subprocess gone: pending agents can never complete")
-// never runs, and nothing else clears the entry until the 30-minute
-// defaultAgentMaxAge prune. For the whole 30 minutes, AwaitingAutonomousRun()
+// never runs, and nothing else clears the entry until the
+// defaultAgentMaxAge prune (2h). Until then, AwaitingAutonomousRun()
 // stays true, which (via inbox.go's #767 sink-delivery gate and the spec §4
 // pending-work gate) can hold the session's turn dispatcher — including a
 // genuine user's own next message — hostage to a subagent that will never
@@ -1546,7 +1546,7 @@ func TestOnResult_InterruptClearsPendingSubagents(t *testing.T) {
 	b.OnResult(&ResultMessage{Subtype: "error_during_execution", IsError: true})
 
 	if b.agents.Pending() != 0 {
-		t.Fatalf("Pending() = %d, want 0 — an interrupted ask must not leave an orphaned subagent blocking the session for up to 30 minutes (clutch #1350)", b.agents.Pending())
+		t.Fatalf("Pending() = %d, want 0 — an interrupted ask must not leave an orphaned subagent blocking the session until the max-age prune (clutch #1350)", b.agents.Pending())
 	}
 	if b.AwaitingAutonomousRun() {
 		t.Fatal("AwaitingAutonomousRun() = true after an interrupted result cleared the tracker — the pending-work gate (spec §4) would still hold a fresh user message")

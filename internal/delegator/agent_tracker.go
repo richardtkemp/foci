@@ -53,9 +53,11 @@ type TrackedSubagent struct {
 // outlives the turn that spawned it), so a missed completion — RemoveOne is
 // FIFO, not ID-matched, in ccstream — can no longer be swept by a per-turn
 // clear; this prune is the backstop so Pending() can't stay stuck > 0. Set
-// well beyond any real subagent's runtime. Overridable per-tracker via MaxAge
+// well beyond any real subagent's runtime: the old 30m default pruned healthy
+// delegated subagents that ran 30-40 minutes and released held injects early
+// (#2009). Overridable per-tracker via MaxAge
 // (config [cc_backend].background_task_max_age).
-const defaultAgentMaxAge = 30 * time.Minute
+const defaultAgentMaxAge = 2 * time.Hour
 
 // maxAge resolves the effective prune threshold — the configured MaxAge, or the
 // default when unset.
@@ -98,7 +100,7 @@ func (t *SubagentTracker) pruneLocked() {
 			// backstop, not the normal path — a run_in_background Bash whose
 			// task_notification CC never emits would sit here holding system
 			// injects until now. Warn so that quiet failure is visible rather
-			// than a silent 30m stall (raise background_task_max_age if it was a
+			// than a silent stall (raise background_task_max_age if it was a
 			// genuinely long job).
 			delegatedLog.Warnf("subagent tracker: pruned %q (id=%s) after %s with no completion signal — background work held system injects until this prune",
 				ag.Description, ag.ID, time.Since(ag.added).Round(time.Second))

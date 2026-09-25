@@ -358,7 +358,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			AutoApproveRules: autoApproveRules,
 			// Prune threshold for tracked background tasks (subagents,
 			// run_in_background Bash). Empty/invalid → 0, and the tracker falls
-			// back to its 30m default. Unwedge backstop for the pending-work gate.
+			// back to its 2h default. Unwedge backstop for the pending-work gate.
 			SubagentMaxAge: func() time.Duration {
 				d, _ := time.ParseDuration(p.cfg.CCBackend.BackgroundTaskMaxAge)
 				return d

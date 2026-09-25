@@ -1409,15 +1409,15 @@ Applies to every agent whose `backend` is `claude-code` or `claude-code-tmux`:
 # signal before it is pruned. The tracker holds system injections (reflection,
 # keepalive, memory) while background work is outstanding so their output can't
 # poison the resulting autonomous run's delivery; the prune is the backstop that
-# unwedges the gate if a completion notification is ever missed. Empty → 30m.
+# unwedges the gate if a completion notification is ever missed. Empty → 2h.
 # Raise it above your longest background job's runtime so a genuinely-long job
 # isn't pruned (and its injections released) while still running.
-# background_task_max_age = "30m"
+# background_task_max_age = "2h"
 ```
 
 The factory default grants CC agents free read/write access to `/tmp` so they can use the system scratch directory without a permission round-trip. Override if your deployment uses a different scratch path or wants a tighter default.
 
-`background_task_max_age` only needs raising if you routinely background jobs (subagents or `run_in_background` Bash) that run longer than 30 minutes; the default is well beyond any typical run.
+`background_task_max_age` only needs raising if you routinely background jobs (subagents or `run_in_background` Bash) that run longer than 2 hours; the default is well beyond any typical run.
 
 ### Available backends
 

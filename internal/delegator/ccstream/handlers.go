@@ -824,7 +824,7 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	// here the PROCESS survives, only the current ask aborted, so
 	// finalizeExit's ClearAll() never runs. Without this, an interrupted
 	// background subagent's tracker entry sits pending for the full
-	// defaultAgentMaxAge (30m), blocking the session via the sink-delivery
+	// defaultAgentMaxAge (2h), blocking the session via the sink-delivery
 	// gate (#767) and the pending-work gate (spec §4) the whole time — clutch
 	// #1350, 2026-07-17: a /stop mid-subagent-spawn wedged the session for
 	// ~29 minutes waiting on a task_notification that never arrived because

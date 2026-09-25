@@ -235,7 +235,7 @@ func TestInbox_PlatformTurn_NotBlockedByOrphanedAutonomousAdoption(t *testing.T)
 		// expected — a genuine user message must not wait on the user's own
 		// background subagent, however that subagent's state is tracked.
 	case <-time.After(time.Second):
-		t.Fatal("platform turn was blocked by an orphaned autonomous adoption (backend awaiting + adopted turn in flight) — spec §4 says a user's own follow-up must never wait on their background subagent; this is the clutch #1350 wedge (up to 30 minutes in production, bounded only by SubagentTracker's prune backstop)")
+		t.Fatal("platform turn was blocked by an orphaned autonomous adoption (backend awaiting + adopted turn in flight) — spec §4 says a user's own follow-up must never wait on their background subagent; this is the clutch #1350 wedge (bounded only by SubagentTracker's prune backstop, background_task_max_age)")
 	}
 	<-done
 }
