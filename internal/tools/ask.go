@@ -188,6 +188,12 @@ type askState struct {
 	agentID      string
 	onResolve    func(sessionKey, requestID string) // fired when ONE ask resolves; nil = disabled
 	cacheWarm    func(sessionKey string) bool       // reports whether a session's prompt cache is live; nil = always warm (never suppress)
+	// onGraderAttempt, when set, is called with the 1-based attempt number at
+	// the start of each grader exec attempt (before that attempt's Cmd is built
+	// or started). Test seam only (#2002): it lets a test release a held write
+	// fd on a specific retry attempt, so ETXTBSY recovery is causally ordered
+	// rather than racing the retry budget on the wall clock. nil in production.
+	onGraderAttempt func(attempt int)
 	// restoring is set for the duration of restorePending; while it is, deliverMsg
 	// parks messages in held instead of sending them. Restore runs inside
 	// NewAskTool, before the gateway has registered the agent with its resolver or
@@ -566,7 +572,7 @@ func (a *askState) deliverBatch(p *pendingAsk) {
 	go func() {
 		raw := formatAnswerBatch(p.acc.Questions(), p.acc.Answers())
 		total := p.acc.Total()
-		a.deliverMsg(p.sessionKey, p.requestID, runGrader(p, p.acc.Questions(), p.acc.Answers(), raw, false, total, total))
+		a.deliverMsg(p.sessionKey, p.requestID, a.runGrader(p, p.acc.Questions(), p.acc.Answers(), raw, false, total, total))
 	}()
 }
 
@@ -1022,7 +1028,7 @@ func (a *askState) completeSession(sessionKey string) (answered, total int, ok b
 	// (mirrors the full-answer path) so the slash-command handler returns at once;
 	// the graded result is delivered to the agent when ready.
 	go func() {
-		a.deliverMsg(sess, p.requestID, runGrader(p, answeredQs, answers, raw, true, idx, total))
+		a.deliverMsg(sess, p.requestID, a.runGrader(p, answeredQs, answers, raw, true, idx, total))
 	}()
 	return idx, total, true
 }
@@ -1106,7 +1112,7 @@ type graderInput struct {
 // stdout (verbatim, capped) replaces the raw answer batch. On any failure —
 // missing/blank output is allowed; non-zero exit, timeout, or launch error is not
 // — it applies the on-error policy so the user's real answers are never lost.
-func runGrader(p *pendingAsk, qs []question.Question, answers map[string]string, rawBatch string, partial bool, answered, total int) string {
+func (a *askState) runGrader(p *pendingAsk, qs []question.Question, answers map[string]string, rawBatch string, partial bool, answered, total int) string {
 	payload, err := json.Marshal(graderInput{
 		RequestID:   p.requestID,
 		Questions:   qs,
@@ -1138,7 +1144,12 @@ func runGrader(p *pendingAsk, qs []question.Question, answers map[string]string,
 	// concurrent fork/exec (golang/go#22315); the build closure rebuilds the
 	// Cmd with a fresh stdin reader and reset buffers each attempt. Safe to
 	// retry: the grader has no side effects until it actually starts.
+	attempt := 0
 	runErr := procx.RunWithETXTBSYRetry(ctx, func() *exec.Cmd {
+		attempt++
+		if a.onGraderAttempt != nil {
+			a.onGraderAttempt(attempt)
+		}
 		stdout.Reset()
 		stderr.Reset()
 		// Operator: the grader is an operator-authored executable (absolute path

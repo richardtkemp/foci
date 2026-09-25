@@ -507,24 +507,37 @@ func TestAsk_CompleteRunsGraderOnPartial(t *testing.T) {
 // TestAsk_GraderRetriesOnETXTBSY proves the grader exec recovers from a
 // transient "text file busy" (golang/go#22315). It forces the condition
 // deterministically: an open write fd to the grader script makes exec fail with
-// ETXTBSY, and the fd is released inside the retry budget so a later attempt
-// lands once the file is free. Without the retry loop the first exec fails and
-// the fallback ("could not run") is delivered instead of the grader's output.
+// ETXTBSY. Without the retry loop the first exec fails and the fallback
+// ("could not run") is delivered instead of the grader's output.
+//
+// The fd release is causally ordered on the retry loop's own attempts, not a
+// wall-clock guess: the onGraderAttempt seam closes it at the start of attempt
+// 2, i.e. after attempt 1 has already failed with ETXTBSY and before attempt 2
+// execs. Previously a goroutine slept 4ms hoping to beat the 10ms retry budget
+// (procx.ETXTBSYRetries*ETXTBSYBackoff); under heavy host load that 6ms margin
+// could vanish (#2002; same fix as procx's #1703).
 func TestAsk_GraderRetriesOnETXTBSY(t *testing.T) {
 	t.Parallel()
-	tool, router, p, d := newAskFixture()
 	grader := writeGrader(t, "#!/bin/sh\necho graded-ok\n")
 
-	// Hold a write fd open BEFORE triggering the grader so the exec sees the
-	// file as text-busy, then release it well within the retry window.
+	// Hold a write fd open BEFORE triggering the grader so attempt 1 sees the
+	// file as text-busy.
 	wf, err := os.OpenFile(grader, os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatalf("open grader for write: %v", err)
 	}
-	go func() {
-		time.Sleep(4 * time.Millisecond) // < procx.ETXTBSYRetries*procx.ETXTBSYBackoff
-		_ = wf.Close()
-	}()
+	defer func() { _ = wf.Close() }() // no-op if already closed below
+
+	releaseOnAttempt2 := AskOption(func(s *askState) {
+		s.onGraderAttempt = func(attempt int) {
+			if attempt == 2 {
+				_ = wf.Close()
+			}
+		}
+	})
+	p := &fakePresenter{}
+	d := &fakeDeliver{}
+	tool, router := NewAskTool(p.present, nil, d.deliver, nil, nil, "test", releaseOnAttempt2)
 
 	// Two questions, answer one, then CompleteSession — this drives the grader
 	// on the partial set (a single fully-answered question auto-delivers with
