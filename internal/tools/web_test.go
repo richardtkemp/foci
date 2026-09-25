@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -447,5 +448,150 @@ func TestWebFetchToolName(t *testing.T) {
 	tool := NewWebFetchTool()
 	if tool.Name != "web_fetch" {
 		t.Errorf("name = %q, want %q", tool.Name, "web_fetch")
+	}
+}
+
+// webFetchCorpus is the #2011 regression corpus: real pages served verbatim,
+// each with text that must survive extraction and nav/footer boilerplate that
+// must not leak in. It guards the "li" TagsToScore change (a global scoring
+// change, so a nav-heavy page is included) and the list-drop note.
+// lever_palantir_fdae.html is the live #2011 page with its <script>/<style>/
+// <svg> bodies stripped (726KB -> 11KB, markup untouched); mdn_ul_element.html
+// is the live MDN <ul> reference page (~400 <li>, mostly sidebar/nav) stripped
+// the same way plus <link> tags. Both captured 2026-09-25.
+var webFetchCorpus = []struct {
+	name           string
+	file           string
+	mustContain    []string
+	mustNotContain []string
+}{
+	{
+		name: "jobs.lever.co posting — list-only sibling sections (#2011 repro)",
+		file: "webfetch_corpus/lever_palantir_fdae.html",
+		mustContain: []string{
+			"Core Responsibilities", "Life at Palantir",
+			"What We Value", "Solving real business problems, not academic benchmarks.",
+			"What We Require", "Strong foundation in Machine Learning basics",
+			"travelling up to 25%",
+		},
+		mustNotContain: []string{"Jobs powered by", "Palantir Technologies Home Page"},
+	},
+	{
+		name: "developer.mozilla.org <ul> reference — nav-heavy (hundreds of sidebar <li>)",
+		file: "webfetch_corpus/mdn_ul_element.html",
+		mustContain: []string{
+			"This Boolean attribute hints that the list should be rendered in a compact style",
+			"may be nested as deeply as desired", "Nesting a list",
+		},
+		mustNotContain: []string{"HTML cheatsheet", "Date & time formats", "Telemetry Settings", "Community Participation Guidelines"},
+	},
+	{
+		name:        "darioamodei.com (#1960 repro)",
+		file:        "webfetch_thin/dario_amodei_dev.html",
+		mustContain: []string{"Dario Amodei is the CEO of", "co-inventor of reinforcement learning from human feedback"},
+	},
+	{
+		name: "go.dev/blog/go1.22 (#1960 control)",
+		file: "webfetch_thin/go_dev_blog_go122.html",
+		mustContain: []string{
+			"Today the Go team is thrilled to release Go 1.22",
+			"support for ranging over integers",
+		},
+		mustNotContain: []string{"Skip to Main Content", "Common problems companies solve with Go", "Tips for writing clear", "Terms of Service"},
+	},
+	{
+		name:           "en.wikipedia.org/wiki/Potato trimmed (#1960 control)",
+		file:           "webfetch_thin/wikipedia_potato_trimmed.html",
+		mustContain:    []string{"## Etymology", "## Cultivation", "### Genetic engineering"},
+		mustNotContain: []string{"Main menu", "Random article", "Community portal", "Cookie statement"},
+	},
+}
+
+// fetchFixture serves a testdata fixture verbatim over httptest and runs it
+// through the web_fetch tool, so the full extraction path is exercised.
+func fetchFixture(t *testing.T, file string) string {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("testdata", file))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(body)
+	}))
+	defer server.Close()
+	params, _ := json.Marshal(map[string]interface{}{"url": server.URL})
+	result, err := NewWebFetchTool().Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	return result.Text
+}
+
+func TestWebFetchExtractionCorpus(t *testing.T) {
+	// #2011: key content survives, boilerplate stays out, and no page in the
+	// corpus trips the list-drop note once extraction is correct.
+	t.Parallel()
+	for _, c := range webFetchCorpus {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			got := fetchFixture(t, c.file)
+			t.Logf("extracted len=%d", len(got))
+			for _, s := range c.mustContain {
+				if !strings.Contains(got, s) {
+					t.Errorf("extraction missing %q", s)
+				}
+			}
+			for _, s := range c.mustNotContain {
+				if strings.Contains(got, s) {
+					t.Errorf("boilerplate %q leaked into extraction", s)
+				}
+			}
+			if i := strings.Index(got, "list-item text"); i >= 0 {
+				t.Errorf("list-drop note fired on a correctly extracted page: %s", got[i:])
+			}
+		})
+	}
+}
+
+func TestMissingListText(t *testing.T) {
+	// #2011 safety net: with readability's DEFAULT scoring (no "li"), the
+	// Lever page loses its two list sections — the detector must see that
+	// loss. With web_fetch's parser it must see none. The nav-heavy MDN page
+	// must not count its sidebar/footer menus as missing.
+	t.Parallel()
+	u, _ := url.Parse("https://jobs.lever.co/palantir/ff1029bd-bb6d-4d78-a03e-5f9744d0b798")
+	read := func(file string) []byte {
+		b, err := os.ReadFile(filepath.Join("testdata", file))
+		if err != nil {
+			t.Fatalf("read fixture: %v", err)
+		}
+		return b
+	}
+
+	lever := read("webfetch_corpus/lever_palantir_fdae.html")
+	def, err := readability.FromReader(bytes.NewReader(lever), u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing, example := missingListText(lever, def.TextContent)
+	if missing < listDropMinChars || !strings.Contains(example, "Engineering mindset") {
+		t.Errorf("default readability on Lever: missing=%d example=%q, want >= %d chars starting at the What We Value list", missing, example, listDropMinChars)
+	}
+
+	fixed, err := parseArticle(bytes.NewReader(lever), u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if missing, example := missingListText(lever, fixed.TextContent); missing != 0 {
+		t.Errorf("web_fetch parser on Lever: missing=%d (%q), want 0", missing, example)
+	}
+
+	mdn := read("webfetch_corpus/mdn_ul_element.html")
+	art, err := parseArticle(bytes.NewReader(mdn), u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if missing, example := missingListText(mdn, art.TextContent); missing >= listDropMinChars {
+		t.Errorf("MDN nav-heavy page: missing=%d (%q), want < %d", missing, example, listDropMinChars)
 	}
 }

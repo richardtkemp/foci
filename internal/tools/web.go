@@ -66,7 +66,20 @@ func NewWebSearchTool(braveAPIKey string) *Tool {
 
 // readabilityFromReader is the readability entry point, indirected through a
 // package var so tests can substitute a slow/blocking parse.
-var readabilityFromReader = readability.FromReader
+var readabilityFromReader = parseArticle
+
+// parseArticle is readability.FromReader with "li" added to the tags that
+// score content (#2011). Readability only appends a sibling of the top
+// candidate if that sibling has a score, and by default nothing inside a
+// list-only block scores (li isn't scored, short headings are skipped, and a
+// div holding a <ul> never becomes a scoreable <p>) — so a section made only
+// of a heading plus bullets (Lever's "What We Require") was silently dropped.
+// A fresh Parser per call: Parser holds per-parse state and isn't safe to share.
+func parseArticle(r io.Reader, pageURL *url.URL) (readability.Article, error) {
+	p := readability.NewParser()
+	p.TagsToScore = append(p.TagsToScore, "li")
+	return p.Parse(r, pageURL)
+}
 
 // parseReadableWithTimeout runs readability extraction under a wall-clock
 // timeout. readability/html.Parse is not context-cancellable, so on timeout the
@@ -157,6 +170,127 @@ func isThinExtraction(extractedChars, visibleChars int) bool {
 		return false
 	}
 	return float64(extractedChars) < thinRatio*float64(visibleChars)
+}
+
+// listDropNote is appended when substantive list-item text on the page is
+// absent from the extraction (#2011). The whole-page ratio check above can't
+// see this loss: dropping a page's requirement lists costs ~25% of its text,
+// which is inside the range of a normal article with nav chrome.
+const listDropNote = "\n\n---\n_[foci: %d chars of list-item text on the page are missing from this extraction (e.g. %q) — a section made of bullet lists was probably skipped by the extractor. If this looks incomplete, retry with `raw=true`.]_"
+
+const (
+	// listDropMinChars is the missing list text that triggers listDropNote:
+	// a couple of real bullets, more than stray menu items that slip past the
+	// nav filters.
+	listDropMinChars = 200
+	// listItemMinChars skips short items (menu entries, tags, "Apply").
+	listItemMinChars = 25
+)
+
+// missingListText sums the length of substantive <li> text in the page body
+// that doesn't appear in the extracted text, and returns the first such item
+// as an example. Items inside nav/header/footer/aside/form (or ARIA
+// equivalents), items shorter than listItemMinChars, and items that are
+// mostly link text (menus, link lists) are ignored — those are boilerplate
+// readability is right to drop. Only an item's own text counts, not that of
+// lists nested inside it, so a nested list is judged on its own items.
+// Presence is checked with all whitespace removed from both sides.
+func missingListText(body []byte, extracted string) (missing int, example string) {
+	doc, err := html.Parse(bytes.NewReader(body))
+	if err != nil {
+		return 0, ""
+	}
+	have := stripSpace(extracted)
+	var walk func(n *html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode {
+			if isBoilerplateElement(n) {
+				return
+			}
+			if n.Data == "li" {
+				text, linkText := listItemText(n)
+				if len(text) >= listItemMinChars && 2*len(linkText) < len(text) && !strings.Contains(have, stripSpace(text)) {
+					missing += len(text)
+					if example == "" {
+						example = text
+					}
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+	return missing, example
+}
+
+// isBoilerplateElement reports whether n is page chrome whose subtree
+// missingListText skips.
+func isBoilerplateElement(n *html.Node) bool {
+	switch n.Data {
+	case "nav", "header", "footer", "aside", "form", "script", "style", "noscript", "template":
+		return true
+	}
+	for _, a := range n.Attr {
+		if a.Key == "role" {
+			switch a.Val {
+			case "navigation", "banner", "contentinfo", "complementary", "menu", "menubar":
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// listItemText returns li's own whitespace-collapsed text (excluding nested
+// lists) and the part of it that sits inside links.
+func listItemText(li *html.Node) (text, linkText string) {
+	var all, links strings.Builder
+	var walk func(n *html.Node, inLink bool)
+	walk = func(n *html.Node, inLink bool) {
+		if n.Type == html.ElementNode {
+			switch n.Data {
+			case "ul", "ol", "script", "style":
+				return
+			case "a":
+				inLink = true
+			}
+		}
+		if n.Type == html.TextNode {
+			all.WriteString(n.Data)
+			if inLink {
+				links.WriteString(n.Data)
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c, inLink)
+		}
+	}
+	for c := li.FirstChild; c != nil; c = c.NextSibling {
+		walk(c, false)
+	}
+	return collapseSpace(all.String()), collapseSpace(links.String())
+}
+
+func collapseSpace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// stripSpace removes all whitespace, so the presence check is immune to
+// how readability and the raw DOM differ in spacing around inline elements.
+func stripSpace(s string) string {
+	return strings.Join(strings.Fields(s), "")
+}
+
+// truncateRunes caps s at n runes (never splitting a UTF-8 sequence),
+// appending "…" when it cuts.
+func truncateRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 // isStructuredContentType reports whether a Content-Type header denotes a
@@ -253,6 +387,11 @@ func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 		// #1960: flag the "broken instrument reports success" case rather than
 		// silently handing back a confident-looking but gutted result.
 		md += thinExtractionNote
+	}
+	if usedArticle {
+		if missing, example := missingListText(body, article.TextContent); missing >= listDropMinChars {
+			md += fmt.Sprintf(listDropNote, missing, truncateRunes(example, 80))
+		}
 	}
 
 	return TextResult(md), nil
