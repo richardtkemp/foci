@@ -1,5 +1,6 @@
 // Command foci-cc-hook is a tiny helper that foci installs as a
-// PostToolUse and PostToolUseFailure hook on Claude Code sessions.
+// PostToolUse and PostToolUseFailure hook on Claude Code sessions, and as a
+// PreToolUse hook for the Agent tool plus every tool a pretool rule names.
 // CC invokes the configured hook binary after each tool execution,
 // pipes a JSON envelope containing the tool call + its response (or
 // error) into the binary's stdin, and captures the binary's stdout
@@ -10,6 +11,13 @@
 // tool_name, tool_response, error, agent_id), truncates large
 // response payloads to keep stream-json lines under ccstream's
 // scanner limit, and writes a compact JSON object to stdout.
+//
+// On PreToolUse it also evaluates the pretool rules foci passed via --rules
+// (internal/delegator/pretool). A matching deny rule adds a
+// hookSpecificOutput.permissionDecision="deny" to the same JSON object; CC
+// honours it and returns permissionDecisionReason to the model as the tool's
+// error result, ignoring the object's other fields (verified live, CC
+// 2.1.280). It never emits "allow" — see the pretool package doc.
 //
 // The helper always exits 0 regardless of parse errors — CC uses
 // exit codes to gate tool execution (exit 2 blocks), so we must not
@@ -23,6 +31,8 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+
+	"foci/internal/delegator/pretool"
 )
 
 // installIDFlag is the argv flag foci sets when installing the hook so the
@@ -32,6 +42,10 @@ import (
 // Without the ID round-trip, multiple backends sharing a workdir can't tell
 // which hook_response events belong to which backend.
 const installIDFlag = "--install"
+
+// rulesFlag carries the encoded pretool rules (pretool.Encode). Only the
+// PreToolUse command line has it; must match internal/delegator/ccstream.
+const rulesFlag = "--rules"
 
 // maxFieldBytes bounds the size of tool_response / tool_input / error fields
 // in the emitted JSON. Two independent constraints, the tighter of which sets
@@ -87,6 +101,18 @@ type hookOutput struct {
 	Error        string `json:"error,omitempty"`
 	AgentID      string `json:"agent_id,omitempty"`
 	IsError      bool   `json:"is_error"`
+	// DeniedRule names the pretool rule that refused this call, so foci can
+	// log the deny. Empty when no rule matched.
+	DeniedRule string `json:"denied_rule,omitempty"`
+	// HookSpecificOutput is the part CC acts on. Set only for a deny.
+	HookSpecificOutput *preToolDecision `json:"hookSpecificOutput,omitempty"`
+}
+
+// preToolDecision is CC's PreToolUse hookSpecificOutput shape.
+type preToolDecision struct {
+	HookEventName            string `json:"hookEventName"`
+	PermissionDecision       string `json:"permissionDecision"`
+	PermissionDecisionReason string `json:"permissionDecisionReason"`
 }
 
 // parseInstallID extracts the value of the --install flag from argv.
@@ -94,12 +120,18 @@ type hookOutput struct {
 // and `--install=X` (one arg) forms. Silent on malformed input — foci's
 // stream parser handles missing install_ids by treating them as "not ours".
 func parseInstallID(args []string) string {
+	return parseFlag(args, installIDFlag)
+}
+
+// parseFlag returns the value of flag from argv in either `flag X` or
+// `flag=X` form, or "" when absent.
+func parseFlag(args []string, flag string) string {
 	for i := 1; i < len(args); i++ {
 		a := args[i]
-		if a == installIDFlag && i+1 < len(args) {
+		if a == flag && i+1 < len(args) {
 			return args[i+1]
 		}
-		const eq = installIDFlag + "="
+		eq := flag + "="
 		if len(a) > len(eq) && a[:len(eq)] == eq {
 			return a[len(eq):]
 		}
@@ -108,24 +140,37 @@ func parseInstallID(args []string) string {
 }
 
 func main() {
-	installID := parseInstallID(os.Args)
-
 	body, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return // exit 0 — silent drop, don't interfere with the turn
 	}
+	out, ok := process(os.Args, body)
+	if !ok {
+		return
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(out)
+}
+
+// process reduces one CC hook envelope to the hookOutput main writes. ok is
+// false when the envelope doesn't parse (silent drop).
+func process(args []string, body []byte) (hookOutput, bool) {
 	var in hookInput
 	if err := json.Unmarshal(body, &in); err != nil {
-		return
+		return hookOutput{}, false
 	}
 
 	out := hookOutput{
 		HookEvent: in.HookEventName,
-		InstallID: installID,
+		InstallID: parseInstallID(args),
 		ToolUseID: in.ToolUseID,
 		ToolName:  in.ToolName,
 		AgentID:   in.AgentID,
 		IsError:   in.HookEventName == "PostToolUseFailure" || in.IsInterrupt || in.IsTimeout,
+	}
+	if in.HookEventName == "PreToolUse" {
+		applyRules(&out, parseFlag(args, rulesFlag), in.ToolInput)
 	}
 	if len(in.ToolInput) > 0 {
 		// Forward the raw tool_input JSON so downstream nudge rules can match
@@ -141,10 +186,30 @@ func main() {
 	if in.Error != "" {
 		out.Error = truncate(in.Error, maxFieldBytes)
 	}
+	return out, true
+}
 
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetEscapeHTML(false)
-	_ = enc.Encode(out)
+// applyRules marks out as a deny when an encoded pretool rule matches the
+// call. Undecodable rules are ignored: a broken rule set must fail open to
+// CC's normal permission flow rather than block every tool.
+func applyRules(out *hookOutput, encoded string, toolInput json.RawMessage) {
+	if encoded == "" {
+		return
+	}
+	rules, err := pretool.Decode(encoded)
+	if err != nil {
+		return
+	}
+	r := pretool.Match(rules, out.ToolName, toolInput)
+	if r == nil {
+		return
+	}
+	out.DeniedRule = r.Name
+	out.HookSpecificOutput = &preToolDecision{
+		HookEventName:            "PreToolUse",
+		PermissionDecision:       pretool.ActionDeny,
+		PermissionDecisionReason: r.Reason,
+	}
 }
 
 // truncate caps s at max bytes, appending a visible marker when it had to

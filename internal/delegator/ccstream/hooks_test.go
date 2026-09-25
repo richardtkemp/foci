@@ -3,8 +3,11 @@ package ccstream
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
+
+	"foci/internal/delegator/pretool"
 )
 
 // ---------------------------------------------------------------------------
@@ -17,7 +20,7 @@ import (
 // loads this via --settings <json> as a flagSettings source.
 func TestBuildHookSettingsJSON(t *testing.T) {
 	cmd := buildHookCommand("/bin/foci-cc-hook", "abc123")
-	body, err := buildHookSettingsJSON(cmd)
+	body, err := buildHookSettingsJSON(cmd, nil)
 	if err != nil {
 		t.Fatalf("buildHookSettingsJSON: %v", err)
 	}
@@ -66,6 +69,52 @@ func TestBuildHookSettingsJSON(t *testing.T) {
 	}
 	if pre[0].Matcher != agentToolMatcher {
 		t.Errorf("PreToolUse matcher = %q, want %q", pre[0].Matcher, agentToolMatcher)
+	}
+	if got := pre[0].Hooks[0].Command; got != cmd {
+		t.Errorf("PreToolUse command with no rules = %q, want %q", got, cmd)
+	}
+}
+
+// TestBuildHookSettingsJSON_PreToolRules proves rules widen ONLY the PreToolUse
+// matcher (Agent + each ruled tool, exact names) and ride ONLY its command
+// line, decodable back to the same rules; the Post hooks are unchanged.
+func TestBuildHookSettingsJSON_PreToolRules(t *testing.T) {
+	cmd := buildHookCommand("/bin/foci-cc-hook", "abc123")
+	rules := []pretool.Rule{
+		{Name: "c", Tool: "CronCreate", Action: "deny", Reason: "r1"},
+		{Name: "a", Tool: "AskUserQuestion", Action: "deny", Reason: "r2"},
+		{Name: "g", Tool: "Agent", Action: "deny", Reason: "r3", Input: map[string]string{"prompt": "x"}},
+	}
+	body, err := buildHookSettingsJSON(cmd, rules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		Hooks map[string][]hookMatcher `json:"hooks"`
+	}
+	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	pre := parsed.Hooks[eventPreToolUse]
+	if len(pre) != 1 {
+		t.Fatalf("PreToolUse matchers = %d, want 1", len(pre))
+	}
+	if pre[0].Matcher != "Agent|AskUserQuestion|CronCreate" {
+		t.Errorf("PreToolUse matcher = %q", pre[0].Matcher)
+	}
+	preCmd := pre[0].Hooks[0].Command
+	prefix := cmd + " " + rulesFlag + " "
+	if !strings.HasPrefix(preCmd, prefix) {
+		t.Fatalf("PreToolUse command = %q, want prefix %q", preCmd, prefix)
+	}
+	got, err := pretool.Decode(strings.TrimPrefix(preCmd, prefix))
+	if err != nil || len(got) != len(rules) || got[0].Reason != "r1" {
+		t.Errorf("decoded rules = %+v err=%v", got, err)
+	}
+	for _, ev := range []string{eventPostToolUse, eventPostToolUseFailure} {
+		if c := parsed.Hooks[ev][0].Hooks[0].Command; c != cmd {
+			t.Errorf("%s command = %q, want %q (no rules)", ev, c, cmd)
+		}
 	}
 }
 
@@ -232,6 +281,49 @@ func TestHandleHookResponse_AgentPreToolUseFiresSubagentStart(t *testing.T) {
 	}
 	if toolEnds != 0 {
 		t.Errorf("PreToolUse fired OnToolEnd %d times, want 0", toolEnds)
+	}
+}
+
+// TestHandleHookResponse_PreToolRuleDeny proves a denied call's hook_response
+// is its end signal (CC sends no Post hook for it): a main-thread deny fires
+// OnToolEnd with the reason as an error and releases the pending-work entry;
+// a denied Agent never fires a subagent start; a subagent's deny fires nothing
+// on the parent turn.
+func TestHandleHookResponse_PreToolRuleDeny(t *testing.T) {
+	b := &Backend{hookInstallID: "install-a"}
+	type end struct {
+		id, name, output string
+		isError          bool
+	}
+	var ends []end
+	starts := 0
+	applyHandler(b, &testHandler{
+		OnToolEnd:       func(id, name, output string, isError bool) { ends = append(ends, end{id, name, output, isError}) },
+		OnSubagentStart: func(groupKey, label, prompt string, runIndex int) { starts++ },
+	})
+	b.agents.Add("toolu_Agent", "spawn")
+	for _, c := range []struct{ tool, agentID string }{{"Agent", ""}, {"AskUserQuestion", ""}, {"CronCreate", "sub-1"}} {
+		out := hookScriptOutput{
+			HookEvent: "PreToolUse", InstallID: "install-a", ToolUseID: "toolu_" + c.tool,
+			ToolName: c.tool, AgentID: c.agentID, DeniedRule: "r",
+		}
+		out.HookSpecificOutput.PermissionDecisionReason = "because " + c.tool
+		stdout, _ := json.Marshal(out)
+		env, _ := json.Marshal(hookResponseEnvelope{HookEvent: "PreToolUse", Stdout: string(stdout)})
+		b.handleHookResponse(env)
+	}
+	want := []end{
+		{"toolu_Agent", "Agent", "because Agent", true},
+		{"toolu_AskUserQuestion", "AskUserQuestion", "because AskUserQuestion", true},
+	}
+	if !reflect.DeepEqual(ends, want) {
+		t.Errorf("OnToolEnd = %+v, want %+v", ends, want)
+	}
+	if starts != 0 {
+		t.Errorf("denied Agent fired %d subagent starts", starts)
+	}
+	if b.agents.Remove("toolu_Agent") {
+		t.Error("denied Agent still tracked as pending work")
 	}
 }
 

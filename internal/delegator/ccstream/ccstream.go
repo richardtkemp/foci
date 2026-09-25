@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/delegator/pretool"
 	"foci/internal/modelinfo"
 	"foci/internal/ratelimit"
 )
@@ -299,6 +300,10 @@ type Backend struct {
 	// process. See hooks.go for the full flow.
 	hookCmd       string
 	hookInstallID string
+
+	// preToolRules are the resolved pretool rules (#2028) baked into the
+	// PreToolUse hook command at Start. Set via SetPreToolRules.
+	preToolRules []pretool.Rule
 
 	// Agent tracking (shared with tmux backend via AgentTracker).
 	agents delegator.SubagentTracker

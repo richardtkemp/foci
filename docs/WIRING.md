@@ -209,7 +209,7 @@ DiagnoseRestart(sessionIndex, startTime, logsDir)
 
 ```
 main
- ├── config        → display, execguard, log, modelinfo, provider
+ ├── config        → delegator/pretool, display, execguard, log, modelinfo, provider
  ├── sqlite        → modernc.org/sqlite (shared Open, AgentPath, MigrateFile utilities)
  ├── log           → sqlite, modelinfo, timeutil (the first two only for API-call usage logging; conversation storage was extracted to convo)
  ├── convo         → log, session, sqlite, timeutil (per-agent conversation SQLite store + memory-index Hook; extracted from log so log stays lean)
@@ -259,7 +259,8 @@ main
  ├── delegator     → clock, log, modelinfo (Delegator interface, registry, StartOptions, SessionEvents/TurnEvents)
   │   ├── delegator/autoapprove → execguard, secrets (shared by ccstream/codex/opencode — auto-approve rule compilation/matching)
   │   ├── delegator/cctmux     → delegator, log, modelinfo, procx, fsnotify (tmux-based Claude Code; registers "claude-code-tmux" via init())
-  │   ├── delegator/ccstream   → delegator, delegator/autoapprove, delegator/hookbin, log, modelinfo, procx, question, ratelimit, tempdir, timeutil (stream-json Claude Code; registers "claude-code" via init())
+  │   ├── delegator/ccstream   → delegator, delegator/autoapprove, delegator/hookbin, delegator/pretool, log, modelinfo, procx, question, ratelimit, tempdir, timeutil (stream-json Claude Code; registers "claude-code" via init())
+  │   ├── delegator/pretool    (no deps — PreToolUse deny-rule engine, #2028; shared by config, ccstream and cmd/foci-cc-hook)
   │   ├── delegator/sessionenv → tempdir (shared by codex/opencode + cmd/foci-codex-hook — per-session exec-bridge env file format, lifecycle, and the codex command wrap/unwrap)
   │   ├── delegator/codex      → delegator, delegator/autoapprove, delegator/hookbin, delegator/keyedmutex, delegator/sessionenv, log, modelcaps, modelinfo, procx (Codex app-server JSON-RPC; registers "codex" via init())
   │   └── delegator/opencode   → delegator, delegator/autoapprove, delegator/keyedmutex, delegator/sessionenv, log, modelinfo, procx, ratelimit, tempdir, timeutil (HTTP/SSE OpenCode; registers "opencode" via init())
@@ -698,7 +699,7 @@ CC consumes tool_result blocks internally — they never surface on stdout the w
 1. Resolve hook binary path via `os.Executable()` + sibling lookup, falling back to `exec.LookPath("foci-cc-hook")` on `$PATH`. If neither finds an executable (dev builds, broken packaging), log at **Warn** and skip — the backend runs without tool-result display rather than failing to start.
 2. Generate a unique 16-hex-char install ID via `crypto/rand`.
 3. Build the shell command string: `"<path>" --install <id>` (path double-quoted so spaces survive bash parsing).
-4. Build a JSON settings object: `{"hooks": {"PostToolUse": [{"matcher":"*", "hooks":[{"type":"command","command":<cmd>,"timeout":10}]}], "PostToolUseFailure": [...]}}`.
+4. Build a JSON settings object: `{"hooks": {"PostToolUse": [{"matcher":"*", "hooks":[{"type":"command","command":<cmd>,"timeout":10}]}], "PostToolUseFailure": [...], "PreToolUse": [{"matcher":"Agent|<ruled tools>", "hooks":[{..."command":<cmd> --rules <b64>}]}]}}` (`buildHookSettingsJSON`). The PreToolUse entry carries the pretool rules — see "PreToolUse rules" below.
 5. Append `--settings <json>` to the claude argv before spawning.
 6. Record `hookCmd` / `hookInstallID` on the Backend struct so `handleHookResponse` can filter events by matching install ID.
 
@@ -712,9 +713,11 @@ CC consumes tool_result blocks internally — they never surface on stdout the w
 
 **Dispatch path:** `OnSystem("hook_response", ...)` calls `handleHookResponse`, which applies three filters before firing `handler.OnToolEnd`:
 
-1. **Hook event type:** only `PostToolUse` and `PostToolUseFailure` are processed. Other hook events (user-configured `PreToolUse`, lifecycle events) are silently ignored.
+1. **Hook event type:** only `PreToolUse` (foci's own: Agent spawns and pretool-rule denies), `PostToolUse` and `PostToolUseFailure` are processed. Other hook events (lifecycle events) are silently ignored; a user's own PreToolUse hook is dropped by the install-ID filter.
 2. **Install ID match:** parses `install_id` from the helper's stdout JSON; events whose ID doesn't match the current backend's `hookInstallID` are dropped. This is what keeps user-authored hook responses out of foci's tracker.
 3. **Sidechain filter:** events with non-empty `agent_id` are dropped — sub-agent tool calls belong to the sub-agent's own transcript rather than the parent turn, consistent with the `isSidechain` filter in the cctmux backend. One is read first: an `Agent` `PreToolUse` with a non-empty `agent_id` is a NESTED spawn, whose `agent_id` is the spawner's task_id, so it is recorded via `registerNestedAgent` before being dropped (#1554, see "Nested subagents").
+
+**PreToolUse rules (#2028, `internal/delegator/pretool`).** The same helper enforces configurable deny rules. Layers, merged by rule `name` with field-level override (`pretool.Resolve`): the preinstalled `pretool.Defaults` (`ask_user_question` → redirect to `foci_ask`; `cron_create` → crontab for repeating events, `foci_remind` for one-shots) ← `[[cc_backend.pretool_rules]]` ← `[[agents.backend_config.pretool_rules]]`; `enabled = false` switches a rule off. Each rule is `{name, tool (exact name), input (field → regex, ANDed; optional), action ("deny" only), reason}`; `config.validatePreToolRules` rejects any other action at load, so no rule can ever emit `allow` (a PreToolUse allow would skip foci's permission flow). `configureDelegated` resolves the rules once per claude-code agent and hands them to each Backend via `SetPreToolRules`; `prepareHooks` bakes them into the PreToolUse command as base64url JSON (`--rules`) and widens its matcher to `Agent|<each ruled tool>` (CC treats a `[A-Za-z0-9_|]` matcher as an exact name list). On a match `foci-cc-hook` adds `denied_rule` and `hookSpecificOutput{permissionDecision:"deny", permissionDecisionReason}` to its usual stdout object. **Verified live on CC 2.1.280:** the deny preempts CC's permission check (no `can_use_tool` control_request reaches foci), the tool does not run, the reason reaches the model as the tool_result error (`PreToolUse:<Tool> hook error: <reason>`), the extra foci fields in the same object are tolerated, and CC fires **no** PostToolUse/PostToolUseFailure for the denied call. So `handleHookResponse` treats a `denied_rule` hook_response (checked before the sidechain filter, logged as `pretool_rule_deny`) as the call's end: for a main-thread call `endDeniedCall` fires `OnToolEnd(reason, is_error)`, drops any pending-work tracker entry and clears a pending foreground-tail expectation; no subagent start fires.
 
 For events that pass all three, `handler.OnToolEnd(tool_use_id, tool_name, tool_response_or_error, is_error)` fires. The id plumbs through `turn_delegated.go` → `turnevent.ToolResult{ID, Name, Output, IsError}` → `StreamingSink.Emit` → `tracker.ObserveToolResult(id, name, result, isError)` which looks up the entry by id (see Tool Call Visibility below) and updates the correct message.
 

@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"foci/internal/delegator/pretool"
 )
 
 // validate checks semantic validity of config values after parsing and defaults.
@@ -228,6 +230,10 @@ func (cfg *Config) Validate(knownBackends []string) error {
 	}
 
 	if err := cfg.validateTracing(); err != nil {
+		return err
+	}
+
+	if err := cfg.validatePreToolRules(); err != nil {
 		return err
 	}
 
@@ -672,4 +678,20 @@ func validateRateLimitNotifyTo(where string, v *string) error {
 		}
 	}
 	return fmt.Errorf("%s rate_limit_notify_to = %q: must be one of %s", where, *v, strings.Join(ValidRateLimitNotifyTargets, ", "))
+}
+
+// validatePreToolRules checks each [cc_backend] / per-agent backend_config
+// pretool_rules layer on its own (#2028). Cross-layer completeness (a rule
+// ending up with no tool or reason after merging) is only knowable at
+// resolution and is logged there instead.
+func (cfg *Config) validatePreToolRules() error {
+	if err := pretool.ValidateLayer(cfg.CCBackend.PreToolRules); err != nil {
+		return fmt.Errorf("[cc_backend] %w", err)
+	}
+	for _, a := range cfg.Agents {
+		if err := pretool.ValidateLayer(a.BackendConfig.PreToolRules); err != nil {
+			return fmt.Errorf("agent %q backend_config.%w", a.ID, err)
+		}
+	}
+	return nil
 }

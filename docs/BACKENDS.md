@@ -85,6 +85,7 @@ All of this works unchanged when you delegate to CC:
 - **Memory formation** — injected into the live CC session as a prompt (not branched).
 - **Memory consolidation / nudge extraction** — run via `RunOnce` (`claude --print`), a headless one-shot subprocess with no tmux / no watcher / no session.
 - **Auto-approval** — foci-level `[permissions]` rules are checked before any CC permission request reaches the user. Plus a static `--allowedTools` list at CC launch (merged from `[cc_backend] default_allowed_tools` and per-agent `backend_config.allowed_tools`) for rules CC can evaluate without a round-trip.
+- **PreToolUse deny rules** (`claude-code` only): configurable rules, plus two preinstalled ones for `AskUserQuestion` and `CronCreate`, refuse named tool calls before they run and tell the agent why. See CONFIG.md → `[[cc_backend.pretool_rules]]`.
 - **First-run onboarding** — the new-agent setup prompt is delivered on both backends. It is stored in `FirstRunMessage` and consumed exactly-once via `consumeFirstRunMessage`, which both transports call (the delegated path prepends it in `ComposePrompt`). Earlier it was consumed only on the API path, so claude-code agents silently lost it (#853). See WIRING.md → first-run onboarding delivery.
 
 ## Startup readiness check

@@ -2,6 +2,7 @@ package ccstream
 
 import (
 	"foci/internal/delegator"
+	"foci/internal/delegator/pretool"
 	"foci/internal/ratelimit"
 )
 
@@ -57,6 +58,11 @@ func (b *Backend) SetOnRateLimited(fn func(sessionKey, detail string)) { b.onRat
 // own first-seen warning for the same account-wide limit. Must be set before
 // Start.
 func (b *Backend) SetRateLimitThrottle(t *RateLimitThrottle) { b.rlThrottle = t }
+
+// SetPreToolRules installs the resolved pretool rules (#2028) the PreToolUse
+// hook enforces. The rules are baked into the hook command line, so they take
+// effect at the next Start. Must be set before Start.
+func (b *Backend) SetPreToolRules(rules []pretool.Rule) { b.preToolRules = rules }
 
 // SetOnSessionLimit registers a hook fired when CC reports a session limit was
 // hit — a synthetic "You've hit your session limit · resets <time>" message,

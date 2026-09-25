@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"foci/internal/delegator/pretool"
 )
 
 // TestTruncate_ShortPassThrough proves values below the limit are returned
@@ -40,32 +42,14 @@ func decodeOutput(t *testing.T, raw string) hookOutput {
 	return out
 }
 
-// runHook invokes the same logic main() runs, but against an in-memory
-// input/output pair so the tests don't need to shell out. Keeps the unit
-// test deterministic and fast. installID simulates the --install argv
-// foci passes in at install time.
+// runHook invokes process — the same path main() runs — against an
+// in-memory input so the tests don't need to shell out. installID simulates
+// the --install argv foci passes in at install time.
 func runHook(t *testing.T, body []byte, installID string) hookOutput {
 	t.Helper()
-	var in hookInput
-	if err := json.Unmarshal(body, &in); err != nil {
-		t.Fatalf("decode hookInput fixture: %v", err)
-	}
-	out := hookOutput{
-		HookEvent: in.HookEventName,
-		InstallID: installID,
-		ToolUseID: in.ToolUseID,
-		ToolName:  in.ToolName,
-		AgentID:   in.AgentID,
-		IsError:   in.HookEventName == "PostToolUseFailure" || in.IsInterrupt || in.IsTimeout,
-	}
-	if len(in.ToolInput) > 0 {
-		out.ToolInput = truncate(string(in.ToolInput), maxFieldBytes)
-	}
-	if len(in.ToolResponse) > 0 {
-		out.ToolResponse = truncate(decodeToolResponse(in.ToolResponse), maxFieldBytes)
-	}
-	if in.Error != "" {
-		out.Error = truncate(in.Error, maxFieldBytes)
+	out, ok := process([]string{"foci-cc-hook", installIDFlag, installID}, body)
+	if !ok {
+		t.Fatalf("process rejected fixture: %s", body)
 	}
 	enc, err := json.Marshal(out)
 	if err != nil {
@@ -343,5 +327,77 @@ func TestMain_ToolInputAbsent(t *testing.T) {
 	out := runHook(t, body, "test-id")
 	if out.ToolInput != "" {
 		t.Errorf("ToolInput = %q, want empty when tool_input absent", out.ToolInput)
+	}
+}
+
+// preToolBody is a PreToolUse envelope for toolName with the given input.
+func preToolBody(toolName, input string) []byte {
+	return []byte(`{"hook_event_name":"PreToolUse","tool_name":"` + toolName +
+		`","tool_use_id":"toolu_pre","tool_input":` + input + `}`)
+}
+
+// runWithRules runs process with the default pretool rules on the command line.
+func runWithRules(t *testing.T, body []byte) hookOutput {
+	t.Helper()
+	enc, err := pretool.Encode(pretool.Defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, ok := process([]string{"foci-cc-hook", installIDFlag, "id", rulesFlag, enc}, body)
+	if !ok {
+		t.Fatal("process rejected fixture")
+	}
+	return out
+}
+
+// TestPreToolUse_DefaultRulesDeny proves each preinstalled rule turns its
+// tool's PreToolUse into a CC deny carrying the rule's reason — and that the
+// decision is never "allow".
+func TestPreToolUse_DefaultRulesDeny(t *testing.T) {
+	for _, r := range pretool.Defaults {
+		t.Run(r.Name, func(t *testing.T) {
+			out := runWithRules(t, preToolBody(r.Tool, `{}`))
+			if out.DeniedRule != r.Name {
+				t.Errorf("DeniedRule = %q, want %q", out.DeniedRule, r.Name)
+			}
+			d := out.HookSpecificOutput
+			if d == nil {
+				t.Fatal("no hookSpecificOutput — CC would run the tool")
+			}
+			if d.PermissionDecision != "deny" || d.HookEventName != "PreToolUse" || d.PermissionDecisionReason != r.Reason {
+				t.Errorf("decision = %+v", d)
+			}
+		})
+	}
+}
+
+// TestPreToolUse_NoRuleNoDecision proves a tool no rule names gets no
+// hookSpecificOutput at all, so CC's normal permission flow runs.
+func TestPreToolUse_NoRuleNoDecision(t *testing.T) {
+	out := runWithRules(t, preToolBody("Agent", `{"prompt":"x"}`))
+	if out.HookSpecificOutput != nil || out.DeniedRule != "" {
+		t.Errorf("unexpected decision for an unruled tool: %+v", out)
+	}
+	raw, _ := json.Marshal(out)
+	if strings.Contains(string(raw), "permissionDecision") {
+		t.Errorf("output carries a permission decision: %s", raw)
+	}
+}
+
+// TestPreToolUse_RulesIgnoredOnPost proves rules only act on PreToolUse — a
+// PostToolUse for a ruled tool is reported normally.
+func TestPreToolUse_RulesIgnoredOnPost(t *testing.T) {
+	body := []byte(`{"hook_event_name":"PostToolUse","tool_name":"CronCreate","tool_use_id":"t","tool_input":{}}`)
+	if out := runWithRules(t, body); out.HookSpecificOutput != nil {
+		t.Errorf("PostToolUse got a decision: %+v", out.HookSpecificOutput)
+	}
+}
+
+// TestPreToolUse_BadRulesFailOpen proves an undecodable --rules value blocks
+// nothing.
+func TestPreToolUse_BadRulesFailOpen(t *testing.T) {
+	out, ok := process([]string{"foci-cc-hook", rulesFlag, "!!not-base64!!"}, preToolBody("AskUserQuestion", `{}`))
+	if !ok || out.HookSpecificOutput != nil {
+		t.Errorf("bad rules produced a decision: ok=%v out=%+v", ok, out)
 	}
 }

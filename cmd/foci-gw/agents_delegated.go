@@ -13,6 +13,7 @@ import (
 	"foci/internal/delegator/ccstream"
 	"foci/internal/delegator/codex"
 	"foci/internal/delegator/opencode"
+	"foci/internal/delegator/pretool"
 	"foci/internal/log"
 	"foci/internal/modelcaps"
 	"foci/internal/platform"
@@ -239,6 +240,14 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// rate limit.
 	rlThrottle := ccstream.NewRateLimitThrottle()
 
+	// PreToolUse rules (#2028): built-in defaults, then [cc_backend], then this
+	// agent's backend_config, merged by name. Resolved once — like
+	// allowed_tools they are baked into the CC command line at launch.
+	var preToolRules []pretool.Rule
+	if backendName == "claude-code" {
+		preToolRules = resolvePreToolRules(agentID, p.cfg.CCBackend.PreToolRules, backendConfig.PreToolRules)
+	}
+
 	ag.DelegatedManager = &agent.DelegatedManager{
 		SessionIndex: p.sessionIndex,
 		AgentID:      agentID,
@@ -252,6 +261,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			}
 			if sb, ok := be.(*ccstream.Backend); ok {
 				sb.SetRateLimitThrottle(rlThrottle)
+				sb.SetPreToolRules(preToolRules)
 				// On a 401, run the automated re-login (#843) via the shared
 				// trigger built above (same path as the manual /login command).
 				sb.SetOnAuthFailure(func(detail string) {
@@ -768,4 +778,15 @@ func resumeRetentionFor(backendName string) time.Duration {
 		return ccstream.CleanupPeriod()
 	}
 	return 0
+}
+
+// resolvePreToolRules layers the global and per-agent pretool rules over the
+// preinstalled defaults. A rule the merge leaves unusable is dropped with a
+// warning rather than failing the agent: the rest must still apply.
+func resolvePreToolRules(agentID string, global, perAgent []pretool.Rule) []pretool.Rule {
+	rules, skipped := pretool.Resolve(pretool.Defaults, global, perAgent)
+	for _, msg := range skipped {
+		log.NewComponentLogger("agent:"+agentID).Warnf("pretool rule skipped: %s", msg)
+	}
+	return rules
 }

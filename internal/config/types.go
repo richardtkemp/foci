@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"foci/internal/delegator/pretool"
 	"foci/internal/provider"
 )
 
@@ -278,6 +279,13 @@ type CCBackendConfig struct {
 	// notification is missed can't hold injects forever. Empty → 2h. Set well
 	// beyond any real background job's runtime.
 	BackgroundTaskMaxAge string `toml:"background_task_max_age" desc:"Max time a background task can run before being dropped from tracking if no completion signal arrives, freeing up any reminders waiting on it. Empty = 2h" type:"duration"`
+
+	// PreToolRules are global PreToolUse rules for every CC-backed agent
+	// (#2028), layered over the preinstalled pretool.Defaults by name and
+	// under each agent's backend_config.pretool_rules. See internal/delegator/pretool.
+	// TOML-only ([[cc_backend.pretool_rules]]): not in the app editor's
+	// objectFieldSpecs registry, whose sub-fields can't express the input map.
+	PreToolRules []pretool.Rule `toml:"pretool_rules"`
 }
 
 // BackendConfig holds per-agent settings for delegated backends
@@ -288,6 +296,7 @@ type CCBackendConfig struct {
 type BackendConfig struct {
 	Model             *string           `toml:"model"              desc:"Model ID for the delegated backend (e.g. opus, sonnet)"`
 	AllowedTools      []string          `toml:"allowed_tools"      desc:"Claude Code permission rules (e.g. Edit(/tmp/**)). Merged with global [cc_backend] defaults"`
+	PreToolRules      []pretool.Rule    `toml:"pretool_rules"` // per-agent PreToolUse deny rules, merged by name over [cc_backend] pretool_rules (#2028)
 	Binary            *string           `toml:"binary"             desc:"Path to the backend executable (default: resolved via $PATH)"`
 	IdleTimeout       *string           `toml:"idle_timeout"       desc:"How long a delegated session can sit idle before shutdown. Empty = 3h" type:"duration"`
 	SkipPermissions   *bool             `toml:"skip_permissions"   desc:"Skip all permission prompts (CC --dangerously-skip-permissions). For unattended agents only"`

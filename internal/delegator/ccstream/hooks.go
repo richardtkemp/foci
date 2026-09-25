@@ -5,9 +5,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"foci/internal/delegator/hookbin"
+	"strings"
 
 	"foci/internal/delegator"
+	"foci/internal/delegator/hookbin"
+	"foci/internal/delegator/pretool"
 	"foci/internal/log"
 )
 
@@ -51,6 +53,15 @@ import (
 // originated. This is also the path that keeps user-authored PostToolUse
 // hooks out of foci's tracker: they fire, CC emits hook_response messages,
 // but the install_id filter drops them cleanly.
+//
+// PreToolUse rules (#2028): the same helper also enforces foci's configurable
+// pretool rules (internal/delegator/pretool). The PreToolUse entry's matcher
+// widens from "Agent" to "Agent|<every ruled tool>", and its command line
+// carries the encoded rules via --rules. A matching rule makes the helper emit
+// hookSpecificOutput.permissionDecision="deny"; CC then skips the tool and
+// hands the reason to the model as the tool's error result. The helper never
+// emits "allow". The deny still reaches foci as a hook_response (with
+// denied_rule set), which handleHookResponse logs.
 // ---------------------------------------------------------------------------
 
 // hookCommandName is the binary filename foci looks for alongside foci-gw or
@@ -62,6 +73,9 @@ const hookCommandName = "foci-cc-hook"
 // foci passes in. Kept as a constant in both places so rename refactors
 // surface as build errors in the tests.
 const installIDFlag = "--install"
+
+// rulesFlag must match cmd/foci-cc-hook/main.go rulesFlag.
+const rulesFlag = "--rules"
 
 // hookTimeoutSeconds is the CC hook-script timeout foci configures. 10
 // seconds is comfortable for the helper binary's ~10ms startup cost while
@@ -76,9 +90,23 @@ const (
 )
 
 // agentToolMatcher scopes the PreToolUse hook to the Agent (subagent-spawn) tool
-// only, so ordinary tool calls don't each spawn an extra hook process — the Pre
-// hook exists solely to surface a precise subagent start.
+// plus any tool a pretool rule names, so ordinary tool calls don't each spawn
+// an extra hook process.
 const agentToolMatcher = "Agent"
+
+// preToolMatcher is the PreToolUse matcher: Agent plus each ruled tool, joined
+// with "|". CC treats a matcher of only [A-Za-z0-9_|] as an exact name list
+// (verified live, CC 2.1.280: "Agent|Bash" fired for Bash), and
+// pretool.ValidateLayer holds tool names to that alphabet.
+func preToolMatcher(rules []pretool.Rule) string {
+	names := []string{agentToolMatcher}
+	for _, t := range pretool.ToolNames(rules) {
+		if t != agentToolMatcher {
+			names = append(names, t)
+		}
+	}
+	return strings.Join(names, "|")
+}
 
 // newInstallID generates a short random identifier used to distinguish one
 // backend's hook events from another's when multiple backends share a
@@ -140,21 +168,31 @@ func fociHookSpec(hookCmd string) hookSpec {
 }
 
 // buildHookSettingsJSON returns a JSON string encoding a settings object
-// containing PostToolUse and PostToolUseFailure hook entries pointing at
-// the given hook command. CC accepts this string via `--settings <json>`
-// and loads it as an additional merged-in settings source. No filesystem
-// I/O happens here — the caller passes the returned JSON as an argv to
-// the claude subprocess.
-func buildHookSettingsJSON(hookCmd string) (string, error) {
+// containing PreToolUse, PostToolUse and PostToolUseFailure hook entries
+// pointing at the given hook command. rules (may be empty) are appended to the
+// PreToolUse command only, and widen its matcher. CC accepts this string via
+// `--settings <json>` and loads it as an additional merged-in settings source.
+// No filesystem I/O happens here — the caller passes the returned JSON as an
+// argv to the claude subprocess.
+func buildHookSettingsJSON(hookCmd string, rules []pretool.Rule) (string, error) {
 	spec := fociHookSpec(hookCmd)
 	allTools := []hookMatcher{{
 		Matcher: "*",
 		Hooks:   []hookSpec{spec},
 	}}
+	preCmd := hookCmd
+	if len(rules) > 0 {
+		enc, err := pretool.Encode(rules)
+		if err != nil {
+			return "", fmt.Errorf("encode pretool rules: %w", err)
+		}
+		preCmd = hookCmd + " " + rulesFlag + " " + enc
+	}
 	top := map[string]any{
 		"hooks": hooksConfig{
-			// PreToolUse only for the Agent tool — a precise subagent start.
-			eventPreToolUse:         {{Matcher: agentToolMatcher, Hooks: []hookSpec{spec}}},
+			// PreToolUse for the Agent tool (a precise subagent start) and the
+			// tools pretool rules police.
+			eventPreToolUse:         {{Matcher: preToolMatcher(rules), Hooks: []hookSpec{fociHookSpec(preCmd)}}},
 			eventPostToolUse:        allTools,
 			eventPostToolUseFailure: allTools,
 		},
@@ -185,7 +223,7 @@ func (b *Backend) prepareHooks() (string, bool) {
 	}
 	installID := newInstallID()
 	hookCmd := buildHookCommand(hookPath, installID)
-	settingsJSON, err := buildHookSettingsJSON(hookCmd)
+	settingsJSON, err := buildHookSettingsJSON(hookCmd, b.preToolRules)
 	if err != nil {
 		b.logger().Warnf("CC hook install skipped: %v", err)
 		return "", false
@@ -195,7 +233,7 @@ func (b *Backend) prepareHooks() (string, bool) {
 	b.hookCmd = hookCmd
 	b.hookInstallID = installID
 	b.mu.Unlock()
-	b.logger().Infof("CC hooks installed via --settings (install_id=%s)", installID)
+	b.logger().Infof("CC hooks installed via --settings (install_id=%s pretool_rules=%d)", installID, len(b.preToolRules))
 	return settingsJSON, true
 }
 
@@ -233,6 +271,11 @@ type hookScriptOutput struct {
 	Error        string `json:"error,omitempty"`
 	AgentID      string `json:"agent_id,omitempty"`
 	IsError      bool   `json:"is_error"`
+	DeniedRule   string `json:"denied_rule,omitempty"`
+	// HookSpecificOutput is read only for a deny's reason.
+	HookSpecificOutput struct {
+		PermissionDecisionReason string `json:"permissionDecisionReason"`
+	} `json:"hookSpecificOutput"`
 }
 
 // handleHookResponse parses a system/hook_response envelope and dispatches
@@ -285,6 +328,17 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 	ourInstallID := b.hookInstallID
 	b.mu.Unlock()
 	if ourInstallID == "" || parsed.InstallID != ourInstallID {
+		return
+	}
+
+	// A pretool rule refused this call. Checked before the sidechain filter so
+	// a subagent's denied call is logged too.
+	if parsed.DeniedRule != "" {
+		b.logger().Infof("pretool_rule_deny rule=%s tool=%s tuid=%s agent_id=%s",
+			parsed.DeniedRule, parsed.ToolName, parsed.ToolUseID, parsed.AgentID)
+		if parsed.AgentID == "" {
+			b.endDeniedCall(parsed)
+		}
 		return
 	}
 
@@ -407,6 +461,22 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 					parsed.ToolName, parsed.IsError, len(text)+len("[user] "), preview)
 			}
 		}
+	}
+}
+
+// endDeniedCall closes out a main-thread tool call a pretool rule refused.
+// CC fires NO PostToolUse or PostToolUseFailure for a PreToolUse-denied call
+// (verified live, CC 2.1.280), so this is the call's only end signal: without
+// it the tool display opened by OnToolStart never resolves, and a denied Agent
+// or background Bash stays counted as pending work until the tracker's prune.
+// No subagent start fires — the subagent never existed.
+func (b *Backend) endDeniedCall(parsed hookScriptOutput) {
+	b.agents.Remove(parsed.ToolUseID)
+	if parsed.ToolName == "Agent" {
+		b.subagentTails().clearPendingForeground(parsed.ToolUseID)
+	}
+	if se := b.sessionEvents.Load(); se != nil && se.OnToolEnd != nil {
+		se.OnToolEnd(parsed.ToolUseID, parsed.ToolName, parsed.HookSpecificOutput.PermissionDecisionReason, true)
 	}
 }
 
