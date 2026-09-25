@@ -633,7 +633,7 @@ WIZARD_ARGS += --api-key $(FOCI_API_KEY)
 endif
 endif
 
-.PHONY: deploy-build sync-main install-bin install-lib install-unit install-polkit provision install-shared install-docs install-scripts wizard check-config stage-changelog reload restart enable setup update
+.PHONY: deploy-build sync-main install-bin install-lib install-unit install-polkit provision install-shared install-docs install-scripts wizard check-config stage-changelog reload restart enable setup update deploy-from-snapshot
 
 # sync-main (#1448 piece 4): deploy exactly origin/main, never a dirty or stale
 # local working tree. `make update` builds the working tree, so without this a
@@ -868,9 +868,37 @@ setup:
 
 # Deploy new code to an existing install. check-config runs against the FRESH
 # binary before anything is installed, so a bad config aborts untouched.
+#
+# Everything after sync-main runs from a SNAPSHOT: a detached worktree pinned
+# to the commit sync-main settled on (#2037). The live main checkout is not
+# safe to build from — a concurrent `make land` fast-forwards it under the
+# merge lock, which a deploy never takes, and a build that straddles that ff
+# compiles a half-updated tree (seen 2026-09-25: undefined symbols and a
+# missing file, exit 2, no restart). The snapshot also guarantees the deploy
+# builds, installs and changelogs exactly the commit it announced.
+#
+# The worktree is created and removed as $(FOCI_USER) (never root, so no
+# root-owned entries land in .git/worktrees). umask 022 because sudo/aisudo
+# hand us umask 0117, which would check the snapshot out with no execute bit
+# on its directories.
+DEPLOY_SNAP_ROOT ?= /tmp
 update:
 	$(REQUIRE_ROOT)
 	$(MAKE) sync-main
+	@umask 022; \
+	sha=$$(git -c safe.directory='$(CURDIR)' -C '$(CURDIR)' rev-parse HEAD) || exit 1; \
+	snap='$(DEPLOY_SNAP_ROOT)'/foci-deploy-$$(echo $$sha | cut -c1-12); \
+	echo ">>> update: building from snapshot $$snap ($$sha)" >&2; \
+	sudo -u $(FOCI_USER) git -C '$(CURDIR)' worktree remove --force "$$snap" 2>/dev/null; rm -rf "$$snap"; \
+	sudo -u $(FOCI_USER) git -c core.sharedRepository=false -C '$(CURDIR)' worktree add -q --detach "$$snap" $$sha || exit 1; \
+	rc=0; $(MAKE) -C "$$snap" deploy-from-snapshot || rc=$$?; \
+	rm -rf "$$snap"; sudo -u $(FOCI_USER) git -C '$(CURDIR)' worktree prune; \
+	exit $$rc
+
+# The post-sync half of `update`. Run by `update` inside the snapshot worktree;
+# not meant to be invoked on the live checkout.
+deploy-from-snapshot:
+	$(REQUIRE_ROOT)
 	$(MAKE) deploy-build
 	$(MAKE) check-config
 	$(MAKE) install-bin
