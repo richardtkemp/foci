@@ -114,9 +114,10 @@ subagent's `tool_result` came back near-instantly ("Async agent launched success
 call resolves at LAUNCH for a background task, not at completion) and that `tool_use_id` never
 appears again anywhere later in the transcript, the interrupt orphaned it — its real completion
 (`task_notification: completed`) never arrived. `internal/delegator/ccstream/handlers.go`'s
-`task_notification` handler only clears `SubagentTracker` on `Status=="completed"` — any other
-terminal status is silently dropped, **no log line at all** — so foci.log alone can't distinguish
-"orphaned" from "still genuinely running." The tracker's defensive `defaultAgentMaxAge` prune (30 min,
+`task_notification` handler clears `SubagentTracker` on any terminal status (`completed`, `failed`,
+`stopped` — before #2022 only `completed`, and the others were dropped with no log line) and logs
+`subagent_end signal=task_notification status=<s>`. No such line for the subagent = no notification
+arrived, which foci.log alone can't distinguish from "still genuinely running." The tracker's defensive `defaultAgentMaxAge` prune (30 min,
 `internal/delegator/agent_tracker.go`) is the only backstop, and it blocks the WHOLE session's turn
 dispatch for its entire duration (`agents.Pending()>0` gates the pending-work gate, spec §4) — grep
 `subagent tracker: pruned` in foci.log for a definitive "this is what was stuck" line, timestamped

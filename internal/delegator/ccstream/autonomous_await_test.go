@@ -122,10 +122,14 @@ func TestBashBackgroundTracked(t *testing.T) {
 	}
 }
 
-// TestTaskStopClearsPending verifies a TaskStop tool_use decrements the tracker.
-// A stopped background task never emits a task_notification, so without this the
-// entry would linger in Pending() until the 30-min prune, holding the gate.
-func TestTaskStopClearsPending(t *testing.T) {
+// TestTaskStopClearsViaNotification: a TaskStop'd task leaves the tracker on the
+// task_notification status "stopped" that CC sends for it (verified live on CC
+// 2.1.280, #2022), and ONLY there. The TaskStop tool_use used to RemoveOne itself,
+// on the belief that no notification follows a stop; with the notification now
+// handled, that would retire a second, unrelated entry: stopping the NEWER of two
+// commands removed the older one at the tool_use and the stopped one at the
+// notification, leaving nothing tracked while the older command still ran.
+func TestTaskStopClearsViaNotification(t *testing.T) {
 	t.Parallel()
 
 	mkTool := func(id, name, input string) *AssistantMessage {
@@ -137,29 +141,81 @@ func TestTaskStopClearsPending(t *testing.T) {
 	b := &Backend{}
 	applyHandler(b, &testHandler{})
 
-	// Two background commands → Pending() == 2.
 	b.OnAssistant(mkTool("bg1", "Bash", `{"command":"sleep 60","run_in_background":true}`))
 	b.OnAssistant(mkTool("bg2", "Bash", `{"command":"sleep 60","run_in_background":true}`))
 	if n := b.agents.Pending(); n != 2 {
 		t.Fatalf("setup: Pending() = %d, want 2", n)
 	}
 
-	// A TaskStop decrements one.
-	b.OnAssistant(mkTool("stop1", "TaskStop", `{"task_id":"bg1abcd"}`))
+	// Stop the newer one. The stream order is the TaskStop tool_use, then the
+	// notification naming the stopped task's own tool_use_id.
+	b.OnAssistant(mkTool("stop1", "TaskStop", `{"task_id":"bg2abcd"}`))
+	raw, _ := json.Marshal(TaskEvent{
+		Subtype: "task_notification", Status: "stopped", TaskID: "bg2abcd", ToolUseID: "bg2",
+	})
+	b.OnSystem("task_notification", raw)
+
 	if n := b.agents.Pending(); n != 1 {
-		t.Fatalf("after one TaskStop: Pending() = %d, want 1", n)
+		t.Fatalf("after stopping one of two: Pending() = %d, want 1 (bg1 still running)", n)
+	}
+	if b.agents.Remove("bg2") {
+		t.Fatal("the stopped entry bg2 is still tracked")
+	}
+	if !b.agents.Remove("bg1") {
+		t.Fatal("the still-running entry bg1 was retired by the stop of bg2")
+	}
+}
+
+// TestTaskNotificationTerminalStatuses: every terminal task_notification status
+// ends the task, not only "completed" (#2022). A background Bash exiting non-zero
+// arrives as "failed" and a stopped one as "stopped"; handling only "completed"
+// left both tracked, and their chits running, until the max-age prune. A
+// non-terminal status must still change nothing.
+func TestTaskNotificationTerminalStatuses(t *testing.T) {
+	t.Parallel()
+
+	mkBash := func(id string) *AssistantMessage {
+		return &AssistantMessage{Message: BetaMessage{
+			Content: []ContentBlock{{Type: "tool_use", ID: id, Name: "Bash",
+				Input: json.RawMessage(`{"command":"sleep 60","run_in_background":true}`)}},
+		}}
 	}
 
-	// A second TaskStop clears the last.
-	b.OnAssistant(mkTool("stop2", "TaskStop", `{"task_id":"bg2abcd"}`))
-	if n := b.agents.Pending(); n != 0 {
-		t.Fatalf("after two TaskStops: Pending() = %d, want 0", n)
-	}
+	for _, tc := range []struct {
+		status string
+		ends   bool
+	}{
+		{"completed", true},
+		{"failed", true},
+		{"stopped", true},
+		{"running", false},
+		{"", false},
+	} {
+		t.Run("status="+tc.status, func(t *testing.T) {
+			t.Parallel()
+			var ended []string
+			b := &Backend{}
+			applyHandler(b, &testHandler{
+				OnSubagentEnd: func(groupKey string, _ int) { ended = append(ended, groupKey) },
+			})
 
-	// A TaskStop against an empty tracker is a safe no-op (stays 0, no panic).
-	b.OnAssistant(mkTool("stop3", "TaskStop", `{"task_id":"gone"}`))
-	if n := b.agents.Pending(); n != 0 {
-		t.Fatalf("TaskStop on empty tracker: Pending() = %d, want 0", n)
+			b.OnAssistant(mkBash("toolu_bg"))
+			raw, _ := json.Marshal(TaskEvent{
+				Subtype: "task_notification", Status: tc.status, TaskID: "bxyz", ToolUseID: "toolu_bg",
+			})
+			b.OnSystem("task_notification", raw)
+
+			wantPending, wantEnded := 1, 0
+			if tc.ends {
+				wantPending, wantEnded = 0, 1
+			}
+			if n := b.agents.Pending(); n != wantPending {
+				t.Errorf("Pending() = %d, want %d", n, wantPending)
+			}
+			if len(ended) != wantEnded {
+				t.Errorf("OnSubagentEnd fired %d times (%v), want %d", len(ended), ended, wantEnded)
+			}
+		})
 	}
 }
 

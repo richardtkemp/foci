@@ -302,27 +302,6 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 				}
 			} else if block.Name == "Bash" && delegator.ExtractBashBackground(block.Input) {
 				b.agents.Add(block.ID, "background command")
-			} else if block.Name == "TaskStop" {
-				// TaskStop kills a background task, but CC emits NO
-				// task_notification for a stopped task (only for one that
-				// completes naturally) — so the Add above would never be
-				// balanced, leaving the entry stuck in Pending() until the
-				// 30-min max-age prune and needlessly holding the pending-work
-				// gate (spec §4). Decrement one pending entry here.
-				//
-				// Still COUNT-based, unlike the completion path — which moved to
-				// exact-match under #1770. Not an oversight: TaskStop's argument is
-				// the BACKGROUND TASK id, and the tracker is keyed by tool_use id /
-				// groupKey. For a stopped Agent subagent the two could be bridged via
-				// subagentRuns, but for a stopped background Bash there is no mapping
-				// to bridge, so there is no id to match on. RemoveOne on an empty
-				// tracker is a safe no-op. Residual, accepted: stopping one of several
-				// concurrent background commands retires the oldest entry rather than
-				// the stopped one. Harmless while counts stay balanced, and TaskStop is
-				// explicit and rare — unlike the prune, which fires unbidden.
-				if !b.agents.RemoveOne() && b.agents.OnStatus != nil {
-					b.agents.OnStatus("")
-				}
 			} else if block.Name == "SendMessage" {
 				// A SendMessage can target a subagent (keyed by task_id == the
 				// SendMessage `to`) in either of two states (#1419):
@@ -1061,7 +1040,10 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 				}
 			}
 		case "task_notification":
-			if task.Status == "completed" {
+			if !isTerminalTaskStatus(task.Status) {
+				b.logger().Debugf("task_notification status=%q is not terminal, ignored (task_id=%s tool_use_id=%s)",
+					task.Status, task.TaskID, task.ToolUseID)
+			} else {
 				// A nested (depth >= 2) subagent finishing (#1554). Stop its OWN tail
 				// (keyed by the id its task_started carried) and nothing else: it was
 				// never Add()ed to the tracker and opened no chit, so there is no entry
@@ -1072,9 +1054,15 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 					b.logger().Infof("subagent_end suppressed=nested group=%s task_id=%s", nestedKey, task.TaskID)
 					break
 				}
-				// The subagent RUN's true end, for foreground AND background alike (a
+				// The task's true end, for foreground AND background alike (a
 				// background Agent tool_use resolves at launch, so its PostToolUse end
-				// is premature; this fires at actual completion). Map task_id -> the
+				// is premature; this fires at actual completion). EVERY terminal status
+				// ends it, not only "completed" (#2022): a background Bash that exits
+				// non-zero arrives as "failed", and a TaskStop'd or killed task as
+				// "stopped", carrying the task's own tool_use_id. That is also why a
+				// TaskStop tool_use no longer decrements the tracker itself: it used to
+				// (count-based, on the belief that no notification follows a stop),
+				// and would now retire a second, unrelated entry. Map task_id -> the
 				// stable groupKey + runIndex (#1355): a resumed run's task_notification
 				// carries the SendMessage tool_use_id, NOT the group key, so ending on
 				// task.ToolUseID would close a group the app never opened. Fall back to
@@ -1131,7 +1119,7 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 					// CC had written a byte of the transcript (#1924). Drains any
 					// lines appended right before completion.
 					b.subagentTails().finalize(groupKey)
-					b.logger().Infof("subagent_end signal=task_notification group=%s run=%d", groupKey, runIndex)
+					b.logger().Infof("subagent_end signal=task_notification status=%s group=%s run=%d", task.Status, groupKey, runIndex)
 					if se := b.sessionEvents.Load(); se != nil && se.OnSubagentEnd != nil {
 						se.OnSubagentEnd(groupKey, runIndex)
 					}

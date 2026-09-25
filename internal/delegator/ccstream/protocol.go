@@ -600,6 +600,21 @@ type TaskEvent struct {
 	TaskType string `json:"task_type,omitempty"`
 }
 
+// isTerminalTaskStatus reports whether a task_notification status ends the
+// task. CC sends "completed", "failed" (a background Bash exiting non-zero) and
+// "stopped" (TaskStop, or killed) — all verified live on CC 2.1.280 (#2022).
+// Handling only "completed" left a failed or stopped task in the tracker and its
+// chit running. Anything other than an explicitly live status counts as the end,
+// so a status CC adds later cannot strand a task the same way; an empty status
+// names nothing and is not treated as an end.
+func isTerminalTaskStatus(status string) bool {
+	switch status {
+	case "", "running", "pending":
+		return false
+	}
+	return true
+}
+
 // taskTypeBash is TaskEvent.TaskType for a run_in_background Bash command,
 // which has no subagent transcript, so the subagent tail skips it (#1935).
 const taskTypeBash = "local_bash"
