@@ -49,7 +49,8 @@ var Defaults = []Rule{
 		Tool:   "AskUserQuestion",
 		Action: ActionDeny,
 		Reason: "AskUserQuestion is disabled in foci. To ask the user something, use the foci_ask shell " +
-			"function instead: it delivers the question to the user's chat and returns their answer.",
+			"function instead. It is asynchronous: it posts the question to the user's chat and returns " +
+			"at once, and the answer arrives later as a new message, so end your turn after asking.",
 	},
 	{
 		Name:   "cron_create",
