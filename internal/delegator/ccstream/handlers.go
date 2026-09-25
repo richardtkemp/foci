@@ -1029,6 +1029,10 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 				b.logger().Infof("subagent_start suppressed=nested group=%s task_id=%s", nestedKey, task.TaskID)
 			} else if run, reactivated, prompt := b.onTaskStarted(task.TaskID, task.ToolUseID); reactivated {
 				b.agents.Add(run.groupKey, run.label)
+				// Unconditional start, but still recorded: a run rehydrated after a
+				// restart has no run-1 mark, and without one its end would be
+				// suppressed below as a group never opened.
+				b.markSubagentStarted(run.groupKey)
 				b.logger().Infof("subagent_reactivate task_id=%s group=%s run=%d", task.TaskID, run.groupKey, run.runIndex)
 				if se := b.sessionEvents.Load(); se != nil && se.OnSubagentStart != nil {
 					se.OnSubagentStart(run.groupKey, run.label, prompt, run.runIndex)
@@ -1119,6 +1123,17 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 					// CC had written a byte of the transcript (#1924). Drains any
 					// lines appended right before completion.
 					b.subagentTails().finalize(groupKey)
+					// End only a group this backend opened (#2010). CC notifies for
+					// every task kind, but only an Agent run sends a SubagentStart: a
+					// background Bash — the main thread's own, or one CC auto-
+					// backgrounded inside a subagent — never does, so its end closed
+					// a group the app never had. The tracker removal above still
+					// runs for it.
+					if !b.subagentStartEmitted(groupKey) {
+						b.logger().Infof("subagent_end suppressed=never_started status=%s group=%s task_id=%s",
+							task.Status, groupKey, task.TaskID)
+						break
+					}
 					b.logger().Infof("subagent_end signal=task_notification status=%s group=%s run=%d", task.Status, groupKey, runIndex)
 					if se := b.sessionEvents.Load(); se != nil && se.OnSubagentEnd != nil {
 						se.OnSubagentEnd(groupKey, runIndex)

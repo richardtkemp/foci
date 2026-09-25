@@ -315,6 +315,8 @@ type Backend struct {
 	// first time EITHER the PreToolUse hook or the task_started fallback emits
 	// its SubagentStart, so whichever fires first wins and the other no-ops —
 	// exactly one start per groupKey regardless of arrival order (#1423/#1425).
+	// A reactivation's start marks it too, so the set also answers "did the app
+	// get a group here?", which gates SubagentEnd (#2010).
 	// Touched only from the single stdout-stream goroutine (handlers), but
 	// guarded for safety. See handlers.go.
 	subagentRunsMu  sync.Mutex

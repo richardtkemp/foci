@@ -346,17 +346,22 @@ func TestSubagentPromptWhileRunning(t *testing.T) {
 
 // TestSubagentEndUntrackedFallsBackToToolUseID keeps the pre-#1355 behaviour for a
 // task_notification whose task_started was never seen (untracked): end on the raw
-// tool_use id at run index 0, so a missed start still finalizes a group.
+// tool_use id at run index 0, so a missed task_started still finalizes a group.
+// The group itself was opened by the PreToolUse start; without any start there
+// is no group to finalize and no end is sent (#2010).
 func TestSubagentEndUntrackedFallsBackToToolUseID(t *testing.T) {
-	b := &Backend{}
+	b := &Backend{hookInstallID: "install-a"}
 	var ends []string
+	var runs []int
 	applyHandler(b, &testHandler{
-		OnSubagentEnd: func(g string, r int) { ends = append(ends, g) },
+		OnSubagentStart: func(string, string, string, int) {},
+		OnSubagentEnd:   func(g string, r int) { ends = append(ends, g); runs = append(runs, r) },
 	})
+	fireAgentPreToolUse(b, "toolu_orphan", "install-a", `{"description":"d","prompt":"p"}`)
 	raw, _ := json.Marshal(TaskEvent{Subtype: "task_notification", Status: "completed", ToolUseID: "toolu_orphan", TaskID: "task_unseen"})
 	b.OnSystem("task_notification", raw)
-	if len(ends) != 1 || ends[0] != "toolu_orphan" {
-		t.Fatalf("untracked end = %v, want [toolu_orphan]", ends)
+	if len(ends) != 1 || ends[0] != "toolu_orphan" || runs[0] != 0 {
+		t.Fatalf("untracked end = %v runs %v, want [toolu_orphan] run [0]", ends, runs)
 	}
 }
 

@@ -168,16 +168,18 @@ func TestTaskStopClearsViaNotification(t *testing.T) {
 
 // TestTaskNotificationTerminalStatuses: every terminal task_notification status
 // ends the task, not only "completed" (#2022). A background Bash exiting non-zero
-// arrives as "failed" and a stopped one as "stopped"; handling only "completed"
+// arrives as "failed" and a stopped task as "stopped"; handling only "completed"
 // left both tracked, and their chits running, until the max-age prune. A
-// non-terminal status must still change nothing.
+// non-terminal status must still change nothing. Pinned on an Agent run, the
+// kind that has a chit to end; a Bash's tracker removal on "failed" is pinned by
+// TestTaskNotification_NoSubagentEndForBash.
 func TestTaskNotificationTerminalStatuses(t *testing.T) {
 	t.Parallel()
 
-	mkBash := func(id string) *AssistantMessage {
+	mkAgent := func(id string) *AssistantMessage {
 		return &AssistantMessage{Message: BetaMessage{
-			Content: []ContentBlock{{Type: "tool_use", ID: id, Name: "Bash",
-				Input: json.RawMessage(`{"command":"sleep 60","run_in_background":true}`)}},
+			Content: []ContentBlock{{Type: "tool_use", ID: id, Name: "Agent",
+				Input: json.RawMessage(`{"description":"researcher","prompt":"go"}`)}},
 		}}
 	}
 
@@ -194,14 +196,16 @@ func TestTaskNotificationTerminalStatuses(t *testing.T) {
 		t.Run("status="+tc.status, func(t *testing.T) {
 			t.Parallel()
 			var ended []string
-			b := &Backend{}
+			b := &Backend{hookInstallID: "install-a"}
 			applyHandler(b, &testHandler{
-				OnSubagentEnd: func(groupKey string, _ int) { ended = append(ended, groupKey) },
+				OnSubagentStart: func(string, string, string, int) {},
+				OnSubagentEnd:   func(groupKey string, _ int) { ended = append(ended, groupKey) },
 			})
 
-			b.OnAssistant(mkBash("toolu_bg"))
+			b.OnAssistant(mkAgent("toolu_agent"))
+			fireAgentPreToolUse(b, "toolu_agent", "install-a", `{"description":"researcher","prompt":"go"}`)
 			raw, _ := json.Marshal(TaskEvent{
-				Subtype: "task_notification", Status: tc.status, TaskID: "bxyz", ToolUseID: "toolu_bg",
+				Subtype: "task_notification", Status: tc.status, TaskID: "axyz", ToolUseID: "toolu_agent",
 			})
 			b.OnSystem("task_notification", raw)
 
@@ -289,4 +293,107 @@ func TestTaskNotificationRemovesNamedEntry(t *testing.T) {
 			t.Fatalf("a stranger's completion retired a live entry: Pending() = %d, want 1", n)
 		}
 	})
+}
+
+// TestTaskNotification_NoSubagentEndForBash pins #2010: a background Bash task
+// sends NEITHER a SubagentStart NOR a SubagentEnd, whether the main thread ran
+// it or a subagent did (CC auto-backgrounds a subagent's long Bash). CC sends
+// task_started/task_notification for both, and the notification used to fire
+// OnSubagentEnd for a group that was never opened — 837 of 844 orphan
+// subagent.end frames in the 7 days to 2026-09-25. The tracker entry must still
+// be retired, or the spec-§4 inject gate stays held until the max-age prune.
+// The Agent case is the control: its end must still go out.
+func TestTaskNotification_NoSubagentEndForBash(t *testing.T) {
+	t.Parallel()
+
+	mkTool := func(id, name, input string) *AssistantMessage {
+		return &AssistantMessage{Message: BetaMessage{
+			Content: []ContentBlock{{Type: "tool_use", ID: id, Name: name, Input: json.RawMessage(input)}},
+		}}
+	}
+	// The shapes below are the ones captured live from CC 2.1.280 (#1554 probe,
+	// /tmp/cc-nestbg.zRjuKf): task_notification carries no task_type.
+	started := func(taskID, toolUseID, taskType string, ownedBySubagent bool) []byte {
+		raw, _ := json.Marshal(map[string]any{
+			"type": "system", "subtype": "task_started", "task_id": taskID, "tool_use_id": toolUseID,
+			"task_type": taskType, "owned_by_subagent": ownedBySubagent,
+		})
+		return raw
+	}
+	notified := func(taskID, toolUseID, status string) []byte {
+		raw, _ := json.Marshal(map[string]any{
+			"type": "system", "subtype": "task_notification", "task_id": taskID, "tool_use_id": toolUseID,
+			"status": status,
+		})
+		return raw
+	}
+
+	for _, tc := range []struct {
+		name      string
+		setup     func(b *Backend)
+		taskID    string
+		toolUseID string
+		taskType  string
+		ownedBySA bool
+		status    string
+		wantEnd   bool
+	}{
+		{
+			name: "top-level run_in_background Bash",
+			setup: func(b *Backend) {
+				b.OnAssistant(mkTool("toolu_bash", "Bash", `{"command":"sleep 60","run_in_background":true}`))
+			},
+			taskID: "bxyz", toolUseID: "toolu_bash", taskType: taskTypeBash, status: "completed",
+		},
+		{
+			name: "top-level Bash that failed",
+			setup: func(b *Backend) {
+				b.OnAssistant(mkTool("toolu_bash", "Bash", `{"command":"exit 3","run_in_background":true}`))
+			},
+			taskID: "bxyz", toolUseID: "toolu_bash", taskType: taskTypeBash, status: "failed",
+		},
+		{
+			// The subagent's Bash tool_use never reaches the main thread as a
+			// top-level block, so nothing was tracked for it.
+			name:   "subagent-owned auto-backgrounded Bash",
+			setup:  func(*Backend) {},
+			taskID: "bzqu24t0r", toolUseID: "toolu_subbash", taskType: taskTypeBash, ownedBySA: true, status: "completed",
+		},
+		{
+			name: "Agent (control)",
+			setup: func(b *Backend) {
+				b.OnAssistant(mkTool("toolu_agent", "Agent", `{"description":"researcher","prompt":"go"}`))
+			},
+			taskID: "a19604ed24b221564", toolUseID: "toolu_agent", taskType: "local_agent", status: "completed",
+			wantEnd: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var starts, ends []string
+			b := &Backend{}
+			applyHandler(b, &testHandler{
+				OnSubagentStart: func(groupKey, _, _ string, _ int) { starts = append(starts, groupKey) },
+				OnSubagentEnd:   func(groupKey string, _ int) { ends = append(ends, groupKey) },
+			})
+
+			tc.setup(b)
+			b.OnSystem("task_started", started(tc.taskID, tc.toolUseID, tc.taskType, tc.ownedBySA))
+			b.OnSystem("task_notification", notified(tc.taskID, tc.toolUseID, tc.status))
+
+			if n := b.agents.Pending(); n != 0 {
+				t.Errorf("Pending() = %d after the task ended, want 0 (tracker entry not retired)", n)
+			}
+			wantN := 0
+			if tc.wantEnd {
+				wantN = 1
+			}
+			if len(starts) != wantN {
+				t.Errorf("OnSubagentStart fired %d times (%v), want %d", len(starts), starts, wantN)
+			}
+			if len(ends) != wantN {
+				t.Errorf("OnSubagentEnd fired %d times (%v), want %d", len(ends), ends, wantN)
+			}
+		})
+	}
 }

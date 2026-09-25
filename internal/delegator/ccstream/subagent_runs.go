@@ -108,6 +108,17 @@ func (b *Backend) markSubagentStarted(groupKey string) (alreadyStarted bool) {
 	return false
 }
 
+// subagentStartEmitted reports whether a SubagentStart has gone out for
+// groupKey, i.e. whether the app has a group that a SubagentEnd could close.
+// task_notification ends every kind of task, and only an Agent run opens a
+// group: a background Bash (top-level or subagent-owned) never does, and its
+// notification carries no task_type to say so (#2010).
+func (b *Backend) subagentStartEmitted(groupKey string) bool {
+	b.subagentRunsMu.Lock()
+	defer b.subagentRunsMu.Unlock()
+	return b.subagentStarted[groupKey]
+}
+
 // stashResumePrompt records the message a SendMessage block sent to a subagent
 // (keyed by its task_id == the SendMessage `to`), to be surfaced as the prompt on
 // the reactivation's SubagentStart. When the task_id isn't tracked in memory it

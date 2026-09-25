@@ -182,12 +182,16 @@ func TestHandleHookResponse_AgentToolNoLongerFiresSubagentEnd(t *testing.T) {
 // TestOnSystem_TaskNotificationCompleted_FiresSubagentEnd proves the subagent's
 // true end — task_notification:completed — fires OnSubagentEnd keyed by the
 // carried tool_use id (the group key), for both foreground and background runs.
+// The run's start went out first (PreToolUse): an end is sent only for a group
+// the app was given (#2010).
 func TestOnSystem_TaskNotificationCompleted_FiresSubagentEnd(t *testing.T) {
-	b := &Backend{}
+	b := &Backend{hookInstallID: "install-a"}
 	var ended []string
 	applyHandler(b, &testHandler{
-		OnSubagentEnd: func(groupKey string, runIndex int) { ended = append(ended, groupKey) },
+		OnSubagentStart: func(string, string, string, int) {},
+		OnSubagentEnd:   func(groupKey string, runIndex int) { ended = append(ended, groupKey) },
 	})
+	fireAgentPreToolUse(b, "toolu_agent", "install-a", `{"description":"d","prompt":"p"}`)
 
 	raw, _ := json.Marshal(TaskEvent{
 		Subtype: "task_notification", Status: "completed", ToolUseID: "toolu_agent",
