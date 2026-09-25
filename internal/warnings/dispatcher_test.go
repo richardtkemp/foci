@@ -54,7 +54,7 @@ func TestDispatcher_ActiveUser_RateLimit(t *testing.T) {
 	// First dispatch should fire
 	q.Push("WARN", "test", "disk full")
 	d.MaybeFire()
-	time.Sleep(50 * time.Millisecond)
+	waitDispatched(t, d)
 
 	mu.Lock()
 	got := calls
@@ -63,10 +63,15 @@ func TestDispatcher_ActiveUser_RateLimit(t *testing.T) {
 		t.Fatalf("first dispatch: expected 1 call, got %d", got)
 	}
 
-	// Second dispatch immediately should be rate-limited (5m not elapsed)
+	// Second dispatch immediately should be rate-limited (5m not elapsed).
+	// A dispatch drains the queue synchronously, so a still-pending warning
+	// right after MaybeFire returns proves the rate limit held it back.
 	q.Push("WARN", "test", "disk still full")
 	d.MaybeFire()
-	time.Sleep(50 * time.Millisecond)
+	if !q.Pending() {
+		t.Error("second MaybeFire drained the queue; want it held by the 5m active interval")
+	}
+	waitDispatched(t, d)
 
 	mu.Lock()
 	got = calls
@@ -98,7 +103,7 @@ func TestDispatcher_InactiveUser_RateLimit(t *testing.T) {
 	// First dispatch should fire (no prior dispatch)
 	q.Push("WARN", "test", "disk full")
 	d.MaybeFire()
-	time.Sleep(50 * time.Millisecond)
+	waitDispatched(t, d)
 
 	mu.Lock()
 	got := calls
@@ -107,10 +112,14 @@ func TestDispatcher_InactiveUser_RateLimit(t *testing.T) {
 		t.Fatalf("first dispatch: expected 1 call, got %d", got)
 	}
 
-	// Second dispatch should be rate-limited (1h not elapsed)
+	// Second dispatch should be rate-limited (1h not elapsed); see
+	// ActiveUser_RateLimit for why Pending is the synchronous observable.
 	q.Push("WARN", "test", "still full")
 	d.MaybeFire()
-	time.Sleep(50 * time.Millisecond)
+	if !q.Pending() {
+		t.Error("second MaybeFire drained the queue; want it held by the 1h inactive interval")
+	}
+	waitDispatched(t, d)
 
 	mu.Lock()
 	got = calls
@@ -145,7 +154,7 @@ func TestDispatcher_Dispatches(t *testing.T) {
 	q.Push("WARN", "disk", "filesystem 95% full")
 	q.Push("ERROR", "tmux", "OOM killed")
 	d.MaybeFire()
-	time.Sleep(50 * time.Millisecond)
+	waitDispatched(t, d)
 
 	mu.Lock()
 	got := dispatched
@@ -161,10 +170,12 @@ func TestDispatcher_ConcurrentGuard(t *testing.T) {
 	q := NewQueue(0, 0)
 	var mu sync.Mutex
 	calls := 0
+	started := make(chan struct{}, 2) // room for a second dispatch if the guard fails
+	release := make(chan struct{})
 
 	d := NewDispatcher(DispatcherConfig{
 		Queue:                 q,
-		ActiveInterval:        0,
+		ActiveInterval:        0, // no rate limit: only the in-flight guard can block
 		InactiveInterval:      0,
 		ActivityThreshold:     10 * time.Minute,
 		LastUserMessageTimeFn: func() time.Time { return time.Now() },
@@ -172,19 +183,34 @@ func TestDispatcher_ConcurrentGuard(t *testing.T) {
 			mu.Lock()
 			calls++
 			mu.Unlock()
-			time.Sleep(200 * time.Millisecond) // simulate slow dispatch
+			started <- struct{}{}
+			<-release // hold the dispatch in flight until the test lets go
 		},
 	})
 
 	q.Push("WARN", "test", "first")
 	d.MaybeFire()
-	time.Sleep(20 * time.Millisecond) // let goroutine start
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first dispatch never started")
+	}
 
-	// Push more and try again while first is still dispatching
-	q.Push("WARN", "test", "second")
+	// The queue is suppressed while a dispatch is in flight, so a plain Push
+	// would be dropped and MaybeFire would return on !Pending before ever
+	// reaching the guard. A Push that read the suppression counter just before
+	// Suppress() still lands, though; model that entry directly.
+	q.mu.Lock()
+	q.pushLocked("WARN", "test", "second")
+	q.mu.Unlock()
+
 	d.MaybeFire()
+	if !q.Pending() {
+		t.Error("MaybeFire drained the queue while a dispatch was in flight; the in-flight guard should hold it")
+	}
 
-	time.Sleep(300 * time.Millisecond) // wait for first to finish
+	close(release)
+	waitDispatched(t, d)
 
 	mu.Lock()
 	got := calls
@@ -216,7 +242,7 @@ func TestDispatcher_SkipsWhenProcessing(t *testing.T) {
 
 	q.Push("WARN", "test", "deferred warning")
 	d.MaybeFire()
-	time.Sleep(50 * time.Millisecond)
+	waitDispatched(t, d)
 
 	mu.Lock()
 	got := calls
@@ -248,7 +274,7 @@ func TestDispatcher_FlushPending(t *testing.T) {
 
 	q.Push("WARN", "test", "flush me")
 	d.FlushPending()
-	time.Sleep(50 * time.Millisecond)
+	waitDispatched(t, d)
 
 	mu.Lock()
 	got := calls
@@ -272,11 +298,14 @@ func TestDispatcher_FlushPending_Floored(t *testing.T) {
 
 	q.Push("WARN", "test", "one")
 	d.FlushPending()
-	time.Sleep(50 * time.Millisecond)
+	waitDispatched(t, d)
 
 	q.Push("WARN", "test", "two")
 	d.FlushPending() // within the floor → suppressed
-	time.Sleep(50 * time.Millisecond)
+	if !q.Pending() {
+		t.Error("second FlushPending drained the queue; want it held by the flushMinInterval floor")
+	}
+	waitDispatched(t, d)
 
 	mu.Lock()
 	got := calls
@@ -306,7 +335,7 @@ func TestDispatcher_FiresWhenNotProcessing(t *testing.T) {
 
 	q.Push("WARN", "test", "should fire")
 	d.MaybeFire()
-	time.Sleep(50 * time.Millisecond)
+	waitDispatched(t, d)
 
 	mu.Lock()
 	got := calls
@@ -341,7 +370,7 @@ func TestDispatcher_SuppressesFeedbackLoop(t *testing.T) {
 
 	q.Push("WARN", "startup", "skills dir not found")
 	d.MaybeFire()
-	time.Sleep(50 * time.Millisecond)
+	waitDispatched(t, d)
 
 	mu.Lock()
 	got := calls
@@ -384,7 +413,7 @@ func TestDispatcher_SuppressesCrossQueueFeedback(t *testing.T) {
 
 	chatQ.Push("WARN", "startup", "skills dir not found")
 	d.MaybeFire()
-	time.Sleep(50 * time.Millisecond)
+	waitDispatched(t, d)
 
 	mu.Lock()
 	got := calls
@@ -496,7 +525,10 @@ func TestDispatcher_CadenceSurvivesRestart(t *testing.T) {
 	}
 }
 
-// waitDispatched waits for an in-flight dispatch goroutine to finish.
+// waitDispatched waits for an in-flight dispatch goroutine to finish. The
+// goroutine clears d.dispatching as its last step (after unsuppressing the
+// queues), so a false flag means DispatchFn has returned and its effects are
+// visible. Returns at once when no dispatch was launched.
 func waitDispatched(t *testing.T, d *Dispatcher) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
