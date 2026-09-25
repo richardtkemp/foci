@@ -1,6 +1,10 @@
 package periodic
 
-import "context"
+import (
+	"context"
+
+	"foci/internal/delegator"
+)
 
 // fakeBackgroundAgent is a configurable test double for BackgroundAgent. Its
 // fields mirror the closures the Runner formerly took directly, so tests inject
@@ -14,7 +18,7 @@ type fakeBackgroundAgent struct {
 	sessionKeyFn     func() string
 	canFireFn        func(ctx context.Context, sessionKey string) (bool, string)
 	rateLimitedFn    func(sessionKey string) (bool, string)
-	runOnceFn        func(ctx context.Context, prompt, systemPrompt string) (string, error)
+	runBatchFn       func(ctx context.Context, req delegator.BatchRequest) (string, error)
 	resetFn          func(ctx context.Context, sessionKey string) error
 	cleanupFn        func(ctx context.Context, retentionDays int) int
 }
@@ -69,9 +73,9 @@ func (f *fakeBackgroundAgent) RateLimited(sessionKey string) (bool, string) {
 	return false, ""
 }
 
-func (f *fakeBackgroundAgent) RunOnce(ctx context.Context, prompt, systemPrompt string) (string, error) {
-	if f.runOnceFn != nil {
-		return f.runOnceFn(ctx, prompt, systemPrompt)
+func (f *fakeBackgroundAgent) RunBatch(ctx context.Context, req delegator.BatchRequest) (string, error) {
+	if f.runBatchFn != nil {
+		return f.runBatchFn(ctx, req)
 	}
 	return "", nil
 }

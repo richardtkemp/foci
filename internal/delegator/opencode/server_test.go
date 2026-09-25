@@ -623,8 +623,8 @@ func TestServer_Pool_AcquireEvictsDeadAndRespawns(t *testing.T) {
 func TestServer_Pool_AcquireWritesPluginsBeforeSpawn(t *testing.T) {
 	// Invariant: acquireServer materialises the foci workspace plugins
 	// (session-env routing + blank-system) BEFORE it spawns the subprocess, at
-	// the single spawn chokepoint — so EVERY spawner (interactive Start, batch
-	// RunBatch, any future caller) gets a fully-wired server by construction.
+	// the single spawn chokepoint — so EVERY spawner (interactive Start, the
+	// cleanup scope, any future caller) gets a fully-wired server by construction.
 	// Regression for the batch-spawn gap: a batch that spawns the shared server
 	// first must not strand later interactive sessions on a plugin-less server
 	// (no per-session FOCI_SOCK/BASH_ENV override → misrouted session tools).

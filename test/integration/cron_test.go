@@ -1003,9 +1003,9 @@ func TestL2_Cron_ReflectionDisabledWhenIntervalEnabledFalse(t *testing.T) {
 }
 
 // TestL2_Cron_ConsolidationFiresOnLongerInterval proves consolidation
-// dispatches via RunOnceFunc (when set) or branchFn (otherwise) with
+// dispatches as a batch run (delegated) or via branchFn (API) with
 // the memory-consolidation prompt. With a short ConsolidationTime
-// and recent interaction, the scheduler should call the RunOnce path
+// and recent interaction, the scheduler should call the batch path
 // once per interval. Asserts on the recorder for a consolidation
 // prompt invocation in the agent's workdir.
 func TestL2_Cron_ConsolidationFiresOnLongerInterval(t *testing.T) {
@@ -1149,7 +1149,7 @@ func TestL2_Cron_ConsolidationSkippedWhileReflectionRunning(t *testing.T) {
 			continue
 		}
 		ts, _ := time.Parse(time.RFC3339Nano, e.Timestamp)
-		// Skip startup invocations (nudge-rule RunOnce, etc.) by requiring
+		// Skip startup invocations (nudge-rule batch run, etc.) by requiring
 		// the invocation to land AFTER the reflection prompt was injected.
 		if ts.After(reflectionTS) {
 			consolidationTS = ts
@@ -1205,7 +1205,7 @@ func TestL2_Cron_ConsolidationTimestampPersistsAcrossRestart(t *testing.T) {
 		ExtraConfigTOML:   "\n[reflection]\ninterval_enabled = false\n\n[maintenance]\nconsolidation_enabled = true\nconsolidation_time = \"24h\"\n",
 		SeedAgentMetadata: map[string]map[string]string{"alpha": {"consolidation_last": overdue}},
 		ReadyTimeout:      30 * time.Second,
-		// This test counts the startup nudge-rule RunOnce as one of its 3
+		// This test counts the startup nudge-rule batch run as one of its 3
 		// expected invocations (nudge + bootstrap + consolidation) and relies
 		// on the post-restart boot reusing the cached rules (adding no nudge
 		// invocation). Opt into extraction so that logic holds — the harness
@@ -1235,7 +1235,7 @@ func TestL2_Cron_ConsolidationTimestampPersistsAcrossRestart(t *testing.T) {
 
 	// The seeded overdue timestamp makes consolidation fire on the first cron
 	// tick; that fire rewrites consolidation_last via SetAgentMetadata. Three
-	// invocations on first boot: the startup nudge-rule RunOnce, the bootstrap
+	// invocations on first boot: the startup nudge-rule batch run, the bootstrap
 	// turn, then the first consolidation — poll for all three so we KNOW
 	// consolidation has fired (a count of 2 is only nudge + bootstrap). The
 	// post-restart boot reuses the cached nudge rules, so it adds no nudge
@@ -1248,7 +1248,7 @@ func TestL2_Cron_ConsolidationTimestampPersistsAcrossRestart(t *testing.T) {
 	firstInvocations := len(firstEntries)
 
 	// The invocation is recorded when consolidation DISPATCHES, but
-	// consolidation_last is persisted only after the RunOnce completes. Settle
+	// consolidation_last is persisted only after the batch run completes. Settle
 	// briefly so the timestamp is on disk before we restart — otherwise the
 	// new process races the write and re-fires (the bug this test guards
 	// would be indistinguishable from that race).
@@ -2070,7 +2070,7 @@ func TestL2_Cron_BranchOneshotMalformedPromptFile(t *testing.T) {
 	missingPath := filepath.Join(h.TempDir(), "does-not-exist", "prompt.txt")
 
 	// Snapshot recorder entries before invocation so we can assert no
-	// NEW invocations follow (filters out any startup-time RunOnce work).
+	// NEW invocations follow (filters out any startup-time batch work).
 	before := len(readRecorderEntries(t, h.RecorderPath()))
 
 	cmd := exec.Command(cliBin,

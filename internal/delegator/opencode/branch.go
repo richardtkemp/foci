@@ -104,12 +104,10 @@ func (b *Backend) OpenCleanupScope(_ context.Context, req delegator.CleanupReque
 	if req.AgentID == "" {
 		return nil, fmt.Errorf("opencode cleanup scope: empty agent id")
 	}
-	// Same acquire path as RunBatch, which fixed this identical bug class for
-	// background batches (no live session → "no running server" hard-fail):
 	// acquireServerFn is the shared pool/key/config path Backend.Start uses, so
 	// a cleanup-triggered spawn is indistinguishable from an interactive one.
-	// Env is nil for the same reason a batch's is — there is no interactive
-	// session whose FOCI_SOCK/BASH_ENV would need routing.
+	// Env is nil: there is no interactive session whose FOCI_SOCK/BASH_ENV
+	// would need routing.
 	cfg := b.serverConfigFromOpts(delegator.StartOptions{WorkDir: req.WorkDir})
 	srv, err := acquireServerFn(req.AgentID, cfg, nil)
 	if err != nil {

@@ -53,6 +53,10 @@ type TurnInfo struct {
 	ChatID     int64
 	UserID     string // platform user id, as the platform reports it
 	Username   string
+	// Purpose labels a batch run (consolidation, nudge_extraction, summary —
+	// delegator.BatchPurpose*); empty for every other turn (#1962). Tagged so
+	// a rubric can select, say, every consolidation trace.
+	Purpose string
 }
 
 // Turn is the live tracing state of one turn: the root span plus the child
@@ -120,6 +124,9 @@ func (t *Turn) Begin(info TurnInfo) {
 	if t.link != nil {
 		tags = append(tags, "from:"+t.link.FromAgent)
 	}
+	if info.Purpose != "" {
+		tags = append(tags, "purpose:"+info.Purpose)
+	}
 	attrs := []attribute.KeyValue{
 		attribute.String(attrObsType, "agent"),
 		attribute.String(attrTraceName, "turn"),
@@ -135,6 +142,9 @@ func (t *Turn) Begin(info TurnInfo) {
 	}
 	if info.ChatID != 0 {
 		attrs = append(attrs, attribute.Int64(attrObsMetaPrefix+"chat_id", info.ChatID))
+	}
+	if info.Purpose != "" {
+		attrs = append(attrs, attribute.String(attrObsMetaPrefix+"purpose", info.Purpose))
 	}
 	if info.UserID != "" {
 		attrs = append(attrs, attribute.String(attrObsMetaPrefix+"platform_user_id", info.UserID))

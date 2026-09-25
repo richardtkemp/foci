@@ -57,7 +57,8 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// Permission handling. skip_permissions bypasses all prompts (unattended).
 	// allowed_tools pre-approves specific tools but CC may still prompt for
 	// directory access etc. — those are detected and forwarded to the user.
-	if delegator.SkipPermissions(b.cfg) {
+	// A batch session (opts.SkipPermissions) has no user to forward to.
+	if delegator.SkipPermissions(b.cfg) || opts.SkipPermissions {
 		args = append(args, "--dangerously-skip-permissions")
 	}
 	if v, ok := b.cfg["allowed_tools"].(string); ok && v != "" {

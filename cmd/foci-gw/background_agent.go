@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 
+	"foci/internal/delegator"
 	"foci/internal/periodic"
 	"foci/internal/platform"
 )
@@ -69,11 +70,11 @@ func (b *backgroundAgent) RateLimited(sessionKey string) (bool, string) {
 	return b.inst.ag.SessionRateLimited(sessionKey)
 }
 
-func (b *backgroundAgent) RunOnce(ctx context.Context, prompt, systemPrompt string) (string, error) {
+func (b *backgroundAgent) RunBatch(ctx context.Context, req delegator.BatchRequest) (string, error) {
 	if b.inst.ag.DelegatedManager == nil {
 		return "", nil
 	}
-	return b.inst.ag.DelegatedManager.RunOnce(ctx, prompt, systemPrompt)
+	return b.inst.ag.DelegatedManager.RunBatch(ctx, req)
 }
 
 func (b *backgroundAgent) ResetSession(ctx context.Context, sessionKey string) error {

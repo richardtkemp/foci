@@ -167,7 +167,6 @@ type Backend struct {
 	sessionThreads map[string]string
 	threadSessions map[string]string
 	threadBackends map[string]*Backend
-	batchRuns      map[string]*batchRun
 }
 
 var sharedPool = struct {
@@ -199,32 +198,7 @@ func (b *Backend) facadeForThread(id string) *Backend {
 	return f
 }
 
-// processDone returns the shared app-server process's terminal channel,
-// closed by onReaderStopped once the process is confirmed gone. A batch's
-// deferred cleanup (waiting for a still-live turn to actually finish before
-// unregistering its thread, see RunBatch) selects on this too, so a process
-// that dies mid-turn can't leak that cleanup goroutine forever.
-func (b *Backend) processDone() <-chan struct{} {
-	p := b.process()
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.done
-}
-
 // pendingApproval tracks an outstanding server-initiated approval request.
-type batchRun struct {
-	fociSessionID string
-	turnID        string
-	text          strings.Builder
-	done          chan batchResult
-	mu            sync.Mutex
-}
-
-type batchResult struct {
-	text string
-	err  error
-}
-
 type pendingApproval struct {
 	rpcID   int64
 	itemID  string
@@ -333,7 +307,7 @@ func (b *Backend) logWarnf(format string, args ...any) {
 // side, and a thread that has one without the other runs its shell tools under
 // whichever session happened to launch the shared app-server. That was a live
 // gap: bindThreadEnv used to be called by hand next to two of this function's
-// four call sites, so batch threads (batch.go) and threads first seen via a
+// four call sites, so the old batch threads and threads first seen via a
 // thread/started notification (handlers.go) were registered with no env of
 // their own. Keeping the two writes in one place makes the drift impossible
 // rather than merely fixed.
@@ -372,7 +346,7 @@ func (b *Backend) threadForSession(fociSessionID string) string {
 }
 
 // unregisterThread is registerThread's exact inverse, including the session-env
-// file — a facade or batch that closed used to drop its map entries and leave
+// file — a facade that closed used to drop its map entries and leave
 // the env file behind.
 func (b *Backend) unregisterThread(codexThreadID string) {
 	p := b.process()

@@ -68,6 +68,12 @@ func InitAPIDB(path string) error {
 		//                          tool's tool_use id), on a subagent_turn
 		//                          row; empty on a parent row (#1946, split
 		//                          out of agent_id's old, dual meaning).
+		//   purpose              — what a BATCH run was for (consolidation,
+		//                          nudge_extraction, summary) on every row
+		//                          of a batch turn (#1962); NULL on every
+		//                          other turn. A batch is an ordinary
+		//                          delegated_turn otherwise, and its cost is
+		//                          in the agent's totals like any turn's.
 		// docs/WIRING.md "Cost columns" has the full table and history.
 		`CREATE TABLE IF NOT EXISTS api_calls (
 			id                 INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -148,14 +154,18 @@ func InitAPIDB(path string) error {
 	// fails by $0.01 per search. NULL on historical rows, which were priced
 	// without searches and so re-price correctly as zero.
 	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN turn_web_searches INTEGER`)
+	// #1962: batch runs (consolidation, nudge extraction, the summary tool)
+	// became ordinary delegated turns; this says which one a row was. NULL on
+	// historical rows and on every non-batch turn.
+	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN purpose TEXT`)
 
 	stmt, err := db.Prepare(`INSERT INTO api_calls
 		(ts, provider, session, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
 		 cost_usd, duration_ms, stop_reason, call_type, session_file, session_line, pre_messages,
 		 calculated_cost_usd,
 		 turn_input_tokens, turn_cache_read_tokens, turn_cache_write_tokens, turn_output_tokens,
-		 turn_id, agent_id, subagent_id, turn_web_searches)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		 turn_id, agent_id, subagent_id, turn_web_searches, purpose)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		_ = db.Close()
 		return fmt.Errorf("prepare insert: %w", err)
@@ -257,7 +267,7 @@ const apiRowCols = `ts, COALESCE(provider, ''), session, model,
 	       turn_input_tokens, turn_cache_read_tokens, turn_cache_write_tokens,
 	       turn_output_tokens,
 	       COALESCE(turn_id, ''), COALESCE(agent_id, ''), COALESCE(subagent_id, ''),
-	       COALESCE(turn_web_searches, 0)`
+	       COALESCE(turn_web_searches, 0), COALESCE(purpose, '')`
 
 // scanAPIRows drains rows selected via apiRowCols into []APIEntry. Both cost
 // columns are nullable: cost_usd (ProvidedCostUSD) is NULL when the backend
@@ -280,7 +290,7 @@ func scanAPIRows(rows *sql.Rows) []APIEntry {
 			&e.SessionFile, &e.SessionLine, &e.PreMessages, &calculatedCost,
 			&turnIn, &turnCR, &turnCW, &turnOut,
 			&e.TurnID, &e.AgentID, &e.SubagentID,
-			&turnSearches,
+			&turnSearches, &e.Purpose,
 		); err != nil {
 			continue
 		}
@@ -416,7 +426,7 @@ func (a *apiDB) insert(entry APIEntry) {
 		preMessages, entry.CalculatedCostUSD,
 		turnIn, turnCR, turnCW, turnOut,
 		nullIfEmpty(entry.TurnID), nullIfEmpty(entry.AgentID), nullIfEmpty(entry.SubagentID),
-		turnSearches,
+		turnSearches, nullIfEmpty(entry.Purpose),
 	)
 	if err != nil {
 		std.event(ERROR, "api_db", "insert error: %v", err)

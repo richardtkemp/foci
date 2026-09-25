@@ -315,6 +315,7 @@ func main() {
 		allowedTools    string
 		settings        string
 		appendSysPrompt string
+		skipPermissions bool
 		helpFlag        bool
 	)
 	fs := flag.NewFlagSet("cc-stub", flag.ContinueOnError)
@@ -331,6 +332,7 @@ func main() {
 	fs.StringVar(&allowedTools, "allowedTools", "", "permission rules")
 	fs.StringVar(&settings, "settings", "", "hook settings JSON")
 	fs.StringVar(&appendSysPrompt, "append-system-prompt", "", "")
+	fs.BoolVar(&skipPermissions, "dangerously-skip-permissions", false, "")
 	fs.BoolVar(&helpFlag, "h", false, "show usage")
 	fs.BoolVar(&helpFlag, "help", false, "show usage")
 	if err := fs.Parse(os.Args[1:]); err != nil {
@@ -581,8 +583,22 @@ func main() {
 				turnCount++
 				continue
 			}
-			script := loadScript()
+			// A skip-permissions session is a foci BATCH run (nudge
+			// extraction, consolidation, foci_summary — #1962); no harness
+			// agent sets skip_permissions. It shares the agent's workdir, so
+			// it must not consume the per-workdir script a test wrote for
+			// the agent's own next turn, and it answers "[]" — a well-formed
+			// empty result for nudge extraction (zero rules), ignored by the
+			// other batch callers — the way a compliant model would answer
+			// a structured request, rather than echoing the prompt back.
+			var script *stubScript
+			if !skipPermissions {
+				script = loadScript()
+			}
 			reply := respText
+			if skipPermissions && reply == "" {
+				reply = "[]"
+			}
 			if script != nil && script.Text != "" {
 				reply = script.Text
 			}

@@ -26,6 +26,7 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 		ts.Meta = &TurnMetadata{}
 	}
 	ts.Trigger = TriggerFromContext(ctx)
+	ts.Purpose = batchPurposeFromContext(ctx)
 	ts.StartedAt = time.Now()
 	ts.ReceivedAt = ReceivedAtFromContext(ctx)
 	if ts.ReceivedAt.IsZero() {
@@ -248,6 +249,7 @@ func (a *Agent) traceBegin(ctx context.Context, ts *TurnState) {
 		Via:        triggerToPlatform(ts.Trigger),
 		Backend:    backend,
 		StartedAt:  ts.StartedAt,
+		Purpose:    ts.Purpose,
 	}
 	if ts.ReceivedAt != ts.StartedAt {
 		info.ReceivedAt = ts.ReceivedAt

@@ -1101,19 +1101,11 @@ func TestL2_SessionLifecycle_ResetWhileProcessingRefused(t *testing.T) {
 	}
 	// Soft reset must not have rotated the session: only ONE long-lived
 	// agent cc-stub invocation should be live for alpha. The auto-extract
-	// nudge spawns a separate cc-stub with --no-session-persistence —
-	// filter those out so the assertion is about backend respawning, not
-	// total subprocess count.
+	// nudge spawns a separate batch-session cc-stub — filter those out so
+	// the assertion is about backend respawning, not total subprocess count.
 	var liveInvs []recorderEntry
 	for _, inv := range invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha") {
-		extract := false
-		for _, f := range inv.Flags {
-			if f == "--no-session-persistence" {
-				extract = true
-				break
-			}
-		}
-		if !extract {
+		if !isBatchInvocation(inv) {
 			liveInvs = append(liveInvs, inv)
 		}
 	}

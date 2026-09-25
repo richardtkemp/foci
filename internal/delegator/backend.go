@@ -605,49 +605,59 @@ type ForkResult struct {
 	SessionID string
 }
 
-// BatchRunner is optionally implemented by backends that can execute a
-// one-shot, non-interactive prompt outside any persistent session — the
-// backend-agnostic replacement for shelling `claude --print` directly.
-// Consumers: nudge extraction, memory consolidation, first-run onboarding
-// (via DelegatedManager.RunOnce).
+// BatchRequest describes a batch run: a one-shot, non-interactive prompt
+// whose answer goes back to an in-process caller (memory consolidation, nudge
+// extraction, the delegated foci_summary tool) and never to a chat.
 //
-// Like BackendBrancher, RunBatch MUST NOT require a started/running backend:
-// callers invoke it on a freshly-constructed (unstarted) instance, which
-// carries only its config (binary override etc.). Implementations run
-// ephemerally — no session persistence, no platform delivery, no session
-// index entry — and return the model's final text.
-type BatchRunner interface {
-	RunBatch(ctx context.Context, req BatchRequest) (string, error)
+// There is no per-backend batch mechanism (#1962). DelegatedManager.RunBatch
+// runs the request as an ordinary delegated turn on a fresh, ephemeral child
+// session — the same backend Start and turn path a branch uses — so the
+// api.db row and the trace come from the turn code every other turn goes
+// through. The fields below are the only ways a batch differs from a branch.
+type BatchRequest struct {
+	// Prompt is the user-turn text, sent verbatim (no [meta] header, nudges,
+	// onboarding or orientation — a batch prompt is self-contained).
+	Prompt string
+	// SystemPrompt REPLACES the agent's composed session prompt for the batch
+	// session (via the backend's normal Start system-prompt handling). Empty
+	// means the backend CLI's own default prompt, not the agent's.
+	SystemPrompt string
+	// Model, when non-empty, overrides the model. Empty = the backend's cheap
+	// batch default (BatchModelDefaulter; CC: sonnet), else the agent's model.
+	Model string
+	// WorkDir is the working directory for the run. Empty = the agent
+	// workspace.
+	WorkDir string
+	// AgentID identifies the agent. Empty = the manager's own agent.
+	AgentID string
+	// OwnerSessionKey is the foci session the batch runs on behalf of. The
+	// batch session is minted as its child (<root>/b<ts>), so the run is
+	// attributed to that conversation's family. Empty = a synthetic
+	// <agent>/ibatch root.
+	OwnerSessionKey string
+	// Purpose labels what the batch is for (BatchPurpose* below). Recorded on
+	// the api.db row and the trace, and used as the turn's trigger.
+	Purpose string
 }
 
-// BatchRequest describes a one-shot batch run.
-type BatchRequest struct {
-	// Prompt is the user-turn text (delivered via stdin where possible —
-	// it can be large).
-	Prompt string
-	// SystemPrompt, when non-empty, REPLACES the backend CLI's default
-	// system prompt / base instructions. Empty = backend default.
-	SystemPrompt string
-	// Model, when non-empty, overrides the model. Empty = the backend's
-	// cheap batch default (CC: sonnet; codex: its configured default).
-	Model string
-	// WorkDir is the working directory for the run (usually the agent
-	// workspace).
-	WorkDir string
-	// AgentID identifies the agent, for log attribution.
-	AgentID string
-	// SessionKey identifies this batch execution itself. It must be unique and
-	// explicit when the caller wants the execution recorded in session_index.
-	SessionKey string
-	// OwnerSessionKey identifies the persistent foci session whose backend
-	// process should host this batch. It is deliberately separate from
-	// SessionKey: the batch is its own indexed ephemeral session, never an
-	// implicit/default turn on the owner thread.
-	OwnerSessionKey string
+// Batch purposes — the api_calls.purpose label for each RunBatch caller.
+const (
+	BatchPurposeConsolidation   = "consolidation"
+	BatchPurposeNudgeExtraction = "nudge_extraction"
+	BatchPurposeSummary         = "summary"
+)
+
+// BatchModelDefaulter is optionally implemented by backends that have a
+// cheaper model to use for a batch run whose request names none. A backend
+// without it runs batches on the agent's own model.
+type BatchModelDefaulter interface {
+	BatchDefaultModel() string
 }
 
 // SkipPermissions reports whether the backend config disables the permission
-// prompt flow entirely (CC's --dangerously-skip-permissions). The single
+// prompt flow entirely (CC's --dangerously-skip-permissions). A batch session
+// also skips prompts via StartOptions.SkipPermissions, but that is per-session
+// and never reaches the agent's environment block. The single config
 // accessor for every reader — backend launch args (ccstream/cctmux) and the
 // environment block's Command Approval gate — so the system prompt can never
 // describe an approval regime the backend isn't actually enforcing.
@@ -666,20 +676,17 @@ type StartOptions struct {
 	ResumeSessionID string // resume a previous CC session (e.g. --resume <uuid>); empty = new session
 	SessionKey      string // foci session key — used by exec bridge tools for routing (e.g. send_to_chat)
 	// BatchOnly starts the app-server without a durable initial thread.
-	BatchOnly        bool
+	BatchOnly bool
+	// SkipPermissions runs this session with no permission prompts at all,
+	// whatever the agent's backend config says. Set for batch sessions, which
+	// run unattended and must never put a prompt in front of a user.
+	SkipPermissions  bool
 	ExecRegistry     any               // *tools.Registry — if set, used by DelegatedManager to create exec bridges
 	Env              map[string]string // extra environment variables to inject (e.g. BASH_ENV, FOCI_SOCK from exec bridge)
 	TmuxCols         int               // tmux window width (0 = use tools.tmux_cols default)
 	TmuxRows         int               // tmux window height (0 = use tools.tmux_rows default)
 	AutoApproveRules []string          // foci-level auto-approve patterns (e.g. "Bash:git *", "Read")
 	SubagentMaxAge   time.Duration     // prune threshold for tracked background tasks (0 = tracker default 2h); from [cc_backend].background_task_max_age
-
-	// ClaudeBinary overrides the path to the `claude` executable that
-	// delegated/RunOnce launches. Empty = use "claude" (resolved via
-	// $PATH). Folded from [cc_backend].claude_binary by
-	// cmd/foci-gw/agents_delegated.go. Used by integration tests to
-	// point at bin/cc-stub.
-	ClaudeBinary string
 
 	// SystemPromptFunc, when non-nil, is the single per-session prompt
 	// generator: called at each session Start with the session key to produce

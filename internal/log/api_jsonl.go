@@ -78,6 +78,11 @@ type APIEntry struct {
 	// to the work that incurred it. Empty on every other row.
 	SubagentID string `json:"subagent_id,omitempty"`
 
+	// Purpose labels a BATCH run's turn — what it was for (consolidation,
+	// nudge_extraction, summary; delegator.BatchPurpose*). Empty on every
+	// other turn (#1962).
+	Purpose string `json:"purpose,omitempty"`
+
 	DurationMS  int64  `json:"duration_ms"`
 	StopReason  string `json:"stop_reason"`
 	CallType    string `json:"call_type"`              // "conversation", "compaction", "summary", "spawn", "subagent_turn"

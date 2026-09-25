@@ -10,12 +10,11 @@ import (
 
 // BatchRunner is the minimal one-shot capability BatchSummariser needs from
 // the agent's DelegatedManager (foci/internal/agent). It is declared here
-// narrowly — matching delegator.BatchRunner's own RunBatch shape rather than
-// depending on *agent.DelegatedManager directly — because internal/agent
-// already imports internal/tools (for the exec bridge); importing agent back
-// from tools would cycle. DelegatedManager satisfies this interface
-// structurally via its own RunBatch method (a thin wrapper around dispatching
-// to the agent's configured backend's delegator.BatchRunner).
+// narrowly rather than depending on *agent.DelegatedManager directly because
+// internal/agent already imports internal/tools (for the exec bridge);
+// importing agent back from tools would cycle. DelegatedManager satisfies it
+// structurally via RunBatch, which runs the request as an ordinary turn on an
+// ephemeral child of the calling session (#1962).
 type BatchRunner interface {
 	RunBatch(ctx context.Context, req delegator.BatchRequest) (string, error)
 }
@@ -28,8 +27,8 @@ type BatchRunner interface {
 // always shelled `claude --print` directly, so a delegated agent configured
 // for codex or opencode still ran its foci_summary calls on the claude CLI
 // (foci_todo #1317) — silently mismatched auth/billing/model family from the
-// agent's actual backend, exactly the bug #1312 fixed for RunOnce's other
-// three consumers (nudge extraction, memory consolidation, onboarding).
+// agent's actual backend, exactly the bug #1312 fixed for the other batch
+// consumers (nudge extraction, memory consolidation).
 type BatchSummariser struct {
 	// runner is a lazy accessor rather than a captured value: the tool
 	// registry (and this summariser) is built by buildExecRegistry BEFORE
@@ -49,8 +48,8 @@ type BatchSummariser struct {
 // fresh on each Summarise to resolve the current BatchRunner (nil if the
 // agent's delegation isn't wired up yet — reported as an error, not a panic).
 // model is the cheap-batch model preference (e.g. "haiku"); workDir/agentID
-// populate the delegator.BatchRequest the same way DelegatedManager.RunOnce
-// does for its own callers.
+// populate the delegator.BatchRequest (empty values fall back to the
+// manager's own StartOpts).
 func NewBatchSummariser(runner func() BatchRunner, model, workDir, agentID string, maxInputChars func() int) *BatchSummariser {
 	return &BatchSummariser{
 		runner:        runner,
@@ -75,11 +74,13 @@ func (s *BatchSummariser) Summarise(ctx context.Context, content []byte, prompt,
 	}
 
 	result, err := br.RunBatch(ctx, delegator.BatchRequest{
-		Prompt:       summaryUserMessage(content, prompt, filePath),
-		SystemPrompt: summarySystemPrompt,
-		Model:        s.model,
-		WorkDir:      s.workDir,
-		AgentID:      s.agentID,
+		Prompt:          summaryUserMessage(content, prompt, filePath),
+		SystemPrompt:    summarySystemPrompt,
+		Model:           s.model,
+		WorkDir:         s.workDir,
+		AgentID:         s.agentID,
+		OwnerSessionKey: SessionKeyFromContext(ctx),
+		Purpose:         delegator.BatchPurposeSummary,
 	})
 	if err != nil {
 		return "", err

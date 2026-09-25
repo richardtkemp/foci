@@ -137,6 +137,10 @@ type TurnState struct {
 
 	Meta    *TurnMetadata // user/chat metadata from context
 	Trigger string        // trigger source ("telegram", "keepalive", etc.)
+	// Purpose is set only on a batch turn (DelegatedManager.RunBatch): what
+	// the batch is for, recorded on its api.db rows and trace (#1962). A
+	// non-empty Purpose also makes ComposePrompt send the prompt verbatim.
+	Purpose string
 
 	// --- Phase 2 outputs ---
 

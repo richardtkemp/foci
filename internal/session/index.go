@@ -64,7 +64,7 @@ func (t SessionType) IsUserFacing() bool {
 }
 
 // IsOneshot reports whether this session type runs a single headless turn and
-// then terminates (reflection/consolidation via RunOnce, keepalive, background-
+// then terminates (reflection/consolidation, batch runs, keepalive, background-
 // task, spawn) — as opposed to a persistent interactive session (chat/facet/
 // independent). A oneshot cannot meaningfully RECEIVE an async reply: the relay
 // would spin up a fresh, unusable turn whose output has nowhere sane to go

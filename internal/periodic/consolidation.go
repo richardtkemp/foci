@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"foci/internal/delegator"
 	"foci/internal/timeutil"
 	"foci/shared/prompts"
 )
@@ -88,20 +89,27 @@ func (r *Runner) maybeConsolidation() {
 			r.saveTimer(timerConsolidation, now)
 		}()
 		if r.isDelegatedAgent {
-			// Backend: one-shot batch run on the agent's own backend, with the
-			// character files as the system prompt — the same corpus a branch
-			// session inherits on the API path (#1310).
+			// Backend: a batch run on the agent's own backend — an ordinary
+			// turn on an ephemeral child of the parent session, so its spend
+			// is recorded like any turn (#1962) — with the character files as
+			// the system prompt, the same corpus a branch session inherits on
+			// the API path (#1310).
 			sys := ""
 			if r.characterSystemPromptFunc != nil {
 				sys = r.characterSystemPromptFunc()
 			}
-			resp, err := r.agent.RunOnce(context.Background(), promptText, sys)
+			resp, err := r.agent.RunBatch(context.Background(), delegator.BatchRequest{
+				Prompt:          promptText,
+				SystemPrompt:    sys,
+				OwnerSessionKey: parentKey,
+				Purpose:         delegator.BatchPurposeConsolidation,
+			})
 			if err != nil {
-				r.log.Warnf("consolidation RunOnce failed: %v", err)
+				r.log.Warnf("consolidation batch failed: %v", err)
 				return
 			}
 			_ = resp // consolidation writes to files directly via tools
-			r.log.Infof("consolidation RunOnce complete")
+			r.log.Infof("consolidation batch complete")
 		} else {
 			r.agent.Branch("consolidation", parentKey, promptText, true)
 		}

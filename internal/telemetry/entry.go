@@ -102,6 +102,9 @@ func recordEntry(e log.APIEntry, instalment bool) {
 	if e.SubagentID != "" {
 		attrs = append(attrs, attribute.String(attrObsMetaPrefix+"subagent_tool_use_id", e.SubagentID))
 	}
+	if e.Purpose != "" {
+		attrs = append(attrs, attribute.String(attrObsMetaPrefix+"purpose", e.Purpose))
+	}
 	if instalment {
 		attrs = append(attrs, attribute.Bool(attrObsMetaPrefix+"instalment", true))
 	}

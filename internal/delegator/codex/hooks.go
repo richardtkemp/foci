@@ -20,7 +20,7 @@ import (
 //
 // An app-server process has ONE environment. Where foci runs one app-server
 // per session that environment is right by construction; where it shares one
-// across an agent's sessions (batch threads today, session facades next) the
+// across an agent's sessions (session facades) the
 // FOCI_SOCK / FOCI_SESSION_KEY / BASH_ENV baked in at spawn belong to whoever
 // started the process, and every other thread's bash calls quietly route to
 // that thread's exec bridge — wrong chat, no error. Codex offers no per-thread

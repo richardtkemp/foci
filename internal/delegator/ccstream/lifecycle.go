@@ -81,7 +81,9 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	b.mu.Unlock()
 	// skip_permissions bypasses all CC permission prompts (unattended). When
 	// set, CC never asks, so foci's auto-approve hook has nothing to answer.
-	if delegator.SkipPermissions(b.cfg) {
+	// A batch session (opts.SkipPermissions) always runs this way: it has no
+	// user to answer a prompt, and must never put one in a chat (#1962).
+	if delegator.SkipPermissions(b.cfg) || opts.SkipPermissions {
 		args = append(args, "--dangerously-skip-permissions")
 	}
 	// Permission pre-approval rules. cfg["allowed_tools"] is the merged

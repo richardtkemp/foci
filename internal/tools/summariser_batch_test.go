@@ -45,6 +45,9 @@ func TestBatchSummariser_DispatchesViaRunner(t *testing.T) {
 	if runner.gotReq.WorkDir != "/workdir" || runner.gotReq.AgentID != "agent-1" {
 		t.Errorf("workdir/agent not threaded: %+v", runner.gotReq)
 	}
+	if runner.gotReq.Purpose != delegator.BatchPurposeSummary {
+		t.Errorf("Purpose = %q, want %q (it labels the api.db row)", runner.gotReq.Purpose, delegator.BatchPurposeSummary)
+	}
 	if runner.gotReq.SystemPrompt != summarySystemPrompt {
 		t.Errorf("SystemPrompt = %q, want the shared summarySystemPrompt", runner.gotReq.SystemPrompt)
 	}

@@ -41,6 +41,21 @@ func TurnMetadataFromContext(ctx context.Context) *TurnMetadata {
 	return meta
 }
 
+// batchPurposeKey is the context key marking a turn as a batch run.
+type batchPurposeKey struct{}
+
+// withBatchPurpose marks ctx's turn as a batch run for purpose
+// (delegator.BatchPurpose*). Set only by Agent.RunBatchTurn.
+func withBatchPurpose(ctx context.Context, purpose string) context.Context {
+	return context.WithValue(ctx, batchPurposeKey{}, purpose)
+}
+
+// batchPurposeFromContext returns the batch purpose, or "" for a normal turn.
+func batchPurposeFromContext(ctx context.Context) string {
+	s, _ := ctx.Value(batchPurposeKey{}).(string)
+	return s
+}
+
 // triggerKey is the context key for the turn trigger type.
 type triggerKey struct{}
 

@@ -972,9 +972,9 @@ func TestL2_Config_DelegatedBackendReceivesModelVerbatim(t *testing.T) {
 	})
 
 	// Poll for the BACKEND invocation entry under alpha's workdir. Note:
-	// the recorder also captures the nudge-extractor RunOnce spawn (which
-	// runs without --model), so we filter for invocations with a non-empty
-	// Model — that's the long-lived ccstream backend. If group resolution
+	// the recorder also captures the nudge-extractor batch session (which
+	// runs on the batch default model), so we skip batch invocations —
+	// what remains is the long-lived ccstream backend. If group resolution
 	// were leaking into the delegated path, Model would be
 	// "anthropic/claude-haiku-4-5-20251001" (the value at
 	// [models.stub].model) instead of "stub" (the literal
@@ -982,8 +982,8 @@ func TestL2_Config_DelegatedBackendReceivesModelVerbatim(t *testing.T) {
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		for _, inv := range invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha") {
-			if inv.Model == "" {
-				continue // skip the nudge-extractor RunOnce spawn
+			if isBatchInvocation(inv) || inv.Model == "" {
+				continue // skip the nudge-extractor batch session
 			}
 			if inv.Model != "stub" {
 				t.Errorf("delegated backend received --model %q, want %q (backend_config.model literal). Group resolution may have leaked into the delegated path.", inv.Model, "stub")

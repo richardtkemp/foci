@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"foci/internal/delegator"
-	"foci/internal/delegator/codex"
 	"foci/internal/log"
 	"foci/internal/session"
 	"foci/internal/telemetry"
@@ -120,6 +119,15 @@ type DelegatedManager struct {
 	// run as a first-class foci turn — streaming sink, in-flight tracking,
 	// accounting, meta (#1261). Nil = adoption disabled (tests, non-CC backends).
 	OpenAutonomousTurn func(sessionKey string, be delegator.Delegator)
+
+	// RunBatchTurn runs ONE ordinary turn on sessionKey with prompt, marked as
+	// a batch for purpose, and returns its final text without delivering it
+	// anywhere. Wired to Agent.RunBatchTurn; RunBatch is the only caller.
+	RunBatchTurn func(ctx context.Context, sessionKey, prompt, purpose string) (string, error)
+
+	// batchSpecs holds the launch overrides of live batch sessions, keyed by
+	// session key (see RunBatch). Guarded by mu.
+	batchSpecs map[string]batchSpec
 
 	// IdleTimeout is how long a backend can be idle before being closed.
 	// Zero uses DefaultIdleTimeout.
@@ -328,6 +336,32 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 	opts.Label = strings.ReplaceAll(sessionKey, "/", "-")
 	opts.ResumeSessionID = resumeID
 	opts.SessionKey = sessionKey
+
+	// A batch session (RunBatch) launches with the caller's system prompt,
+	// model and workdir instead of the agent's, at the model's default effort,
+	// and never asks for permission. The per-session resolvers are cleared so
+	// no backend re-resolves the agent's own values over these (opencode's
+	// Start calls SystemPromptFunc itself).
+	if spec, ok := m.batchSpecFor(sessionKey); ok {
+		opts.SystemPrompt = spec.systemPrompt
+		opts.SystemPromptFunc = nil
+		if spec.model != "" {
+			opts.Model = spec.model
+		} else if d, ok := be.(delegator.BatchModelDefaulter); ok {
+			opts.Model = d.BatchDefaultModel()
+		} else if opts.ModelFunc != nil {
+			if mdl := opts.ModelFunc(sessionKey); mdl != "" {
+				opts.Model = mdl
+			}
+		}
+		opts.ModelFunc = nil
+		opts.Effort = ""
+		opts.EffortFunc = nil
+		opts.SkipPermissions = true
+		if spec.workDir != "" {
+			opts.WorkDir = spec.workDir
+		}
+	}
 
 	// Rebuild the system prompt from disk at every session-start, so a fresh
 	// session (reset, idle-respawn, emulated compaction) picks up character-
@@ -855,7 +889,12 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 	mb.be.SetOnPromptsCleared(func() {
 		m.SetPermissionPending(sk(), false)
 	})
-	if m.TypingFunc != nil {
+	// A batch session's activity belongs to no chat: no typing indicator,
+	// subagent status or autonomous-run adoption (whose streaming sink would
+	// deliver to the owner's chat). Permission prompts cannot arise — batch
+	// sessions launch with SkipPermissions.
+	_, isBatch := m.batchSpecFor(mb.sessionKey)
+	if m.TypingFunc != nil && !isBatch {
 		mb.be.SetTypingFunc(func(typing bool) {
 			// Typing indicator is fire-and-forget — no return value, no error.
 			// Run with a bounded timeout so a hung downstream call (e.g. a
@@ -897,7 +936,7 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 	// sink) are left untouched. Fixes the ccstream gap where the tracker's
 	// OnStatus was never wired at all. sk() resolves the current session key
 	// dynamically, mirroring the typing/session-ready wiring above.
-	if m.SubagentStatusFunc != nil {
+	if m.SubagentStatusFunc != nil && !isBatch {
 		if setter, ok := mb.be.(interface {
 			SetOnSubagentStatus(fn func(detail string))
 		}); ok {
@@ -922,7 +961,7 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 	// narrow type assertion (mirrors SetOnSubagentStatus). The backend fires
 	// onAutonomousOpen at the running edge; openAutonomousTurn adopts the run
 	// (streaming sink + TurnEvents + AdoptRunningTurn) and owns its completion.
-	if m.OpenAutonomousTurn != nil {
+	if m.OpenAutonomousTurn != nil && !isBatch {
 		if setter, ok := mb.be.(interface{ SetOnAutonomousOpen(fn func()) }); ok {
 			be := mb.be
 			setter.SetOnAutonomousOpen(func() {
@@ -1186,142 +1225,134 @@ func (m *DelegatedManager) idleReaper(ctx context.Context) {
 	}
 }
 
-// RunOnce executes a one-shot prompt via claude --print and returns the
-// response synchronously. No tmux session, watcher, or platform delivery;
-// Codex batches are indexed against their owning foci session. Ideal for internal tasks like nudge
-// extraction and memory consolidation.
+// RunBatch runs a batch — a one-shot prompt whose answer goes back to the
+// caller, never to a chat (memory consolidation, nudge extraction, the
+// delegated foci_summary tool) — and returns the turn's final text.
 //
-// systemPrompt is passed via --system-prompt; empty uses CC's default. This is
-// a thin wrapper over RunBatch with no model override (the backend picks its
-// own cheap batch default) — kept as its own method because it's the stable
-// two-arg shape callers outside this package depend on structurally
-// (nudge.OneShotRunner, periodic.BackgroundAgent).
-func (m *DelegatedManager) RunOnce(ctx context.Context, prompt string, systemPrompt string) (string, error) {
-	return m.RunBatch(ctx, delegator.BatchRequest{
-		Prompt:       prompt,
-		SystemPrompt: systemPrompt,
-		WorkDir:      m.StartOpts.WorkDir,
-		AgentID:      m.StartOpts.AgentID,
-		SessionKey:   tools.SessionKeyFromContext(ctx),
-	})
-}
-
-// RunOnceWithModel is RunOnce with an explicit model override, implementing
-// nudge.ModelOneShotRunner. Added for #1309 (nudge extraction previously had
-// no way to use anything but the hardcoded ccstream default): callers that
-// want extraction (or any other one-shot RunOnce use) on a specific model —
-// e.g. a cheaper one — pass it here instead of leaving req.Model empty.
-func (m *DelegatedManager) RunOnceWithModel(ctx context.Context, prompt, systemPrompt, model string) (string, error) {
-	return m.RunBatch(ctx, delegator.BatchRequest{
-		Prompt:       prompt,
-		SystemPrompt: systemPrompt,
-		Model:        model,
-		WorkDir:      m.StartOpts.WorkDir,
-		AgentID:      m.StartOpts.AgentID,
-		SessionKey:   tools.SessionKeyFromContext(ctx),
-	})
-}
-
-// RunBatch executes a one-shot batch run described by req and returns the
-// response synchronously. No tmux session, watcher, or platform delivery;
-// Codex batches are indexed against their owning foci session. It is the general entry point behind RunOnce
-// (nudge extraction, memory consolidation, onboarding) and the tool-layer
-// summary tool (tools.BatchSummariser, #1317) — the latter needs req.Model
-// (e.g. "haiku") where the former leave it empty for the backend's own cheap
-// batch default.
+// It is NOT a separate execution path (#1962). The batch is a fresh,
+// ephemeral child session of the owner's root chat (<root>/b<ns>, indexed as
+// background-task), started through the same getOrCreate → backend Start that
+// every session uses and driven by an ordinary delegated turn (RunBatchTurn →
+// Agent.HandleMessage). So the api.db row, the Langfuse trace and the
+// cost accounting come from the turn code, exactly as for a branch. What
+// makes it a batch is only what getOrCreate applies from the registered
+// batchSpec (the caller's system prompt instead of the agent's, the model
+// override or the backend's batch default, no launch effort, no permission
+// prompts), the verbatim prompt (ComposePrompt), and the teardown here: the
+// backend is closed the moment the turn ends. Its transcript is left for the
+// daily ephemeral-session GC like any branch's.
 //
-// req.WorkDir / req.AgentID default to the manager's own StartOpts values
-// when left empty, so callers that don't care can omit them (as RunOnce does).
+// Historically RunBatch shelled `claude --print` (and codex/opencode
+// equivalents) outside the turn path, so batch spend was invisible to api.db,
+// to the daily cost briefing, and to the evals machinery.
 func (m *DelegatedManager) RunBatch(ctx context.Context, req delegator.BatchRequest) (string, error) {
-	if req.WorkDir == "" {
-		req.WorkDir = m.StartOpts.WorkDir
+	if m.RunBatchTurn == nil {
+		return "", fmt.Errorf("RunBatch: no turn runner wired")
 	}
-	if req.AgentID == "" {
-		req.AgentID = m.StartOpts.AgentID
+	if req.Purpose == "" {
+		return "", fmt.Errorf("RunBatch: purpose is required (it labels the api.db row)")
+	}
+	agentID := req.AgentID
+	if agentID == "" {
+		agentID = m.StartOpts.AgentID
+	}
+	if agentID == "" {
+		agentID = m.AgentID
 	}
 
-	// Every batch is a real, distinct foci session. The owner is only the
-	// explicit process to multiplex onto; it is never reused as the batch's
-	// own session key or thread target.
 	ownerKey := req.OwnerSessionKey
-	if ownerKey == "" {
-		ownerKey = req.SessionKey
-	}
 	if ownerKey == "" {
 		ownerKey = tools.SessionKeyFromContext(ctx)
 	}
-	// A batch session is a CHILD of the owning chat, so its key must be a
-	// well-formed <agent>/<c|i><id>/b<ts>: ParseSessionKey only accepts c/i as
-	// the second segment's type rune, and a key it can't parse indexes with
-	// chat_id=0/is_root=0, which no family query can ever reach.
-	batchRoot := req.AgentID
+	// The batch key must be a well-formed <agent>/<c|i><id>/b<ts>: a key
+	// ParseSessionKey can't read indexes with chat_id=0/is_root=0, which no
+	// family query can reach. With no parseable owner, the batch hangs off a
+	// synthetic independent root so it is still a non-root (ephemeral,
+	// GC-eligible) session.
+	root := session.SessionKey{AgentID: agentID, Type: 'i', ID: "batch"}.String()
+	parent := root
 	if sk, err := session.ParseSessionKey(ownerKey); err == nil {
-		batchRoot = sk.Root().String()
+		root = sk.Root().String()
+		parent = ownerKey
 	}
-	batchKey := fmt.Sprintf("%s/b%d", batchRoot, time.Now().UnixNano())
-	req.OwnerSessionKey = ownerKey
-	req.SessionKey = batchKey
+	batchKey := fmt.Sprintf("%s/b%d", root, time.Now().UnixNano())
 
-	// A running Codex backend is the app-server multiplexing host: when the
-	// owner session already has a live *codex.Backend, m.NewBackend() below
-	// constructs a FRESH facade for the batch -- never mb.be, the owner's own
-	// object -- and starts it with req.AgentID equal to the owner's AgentID.
-	// Start's pool-attach path (keyed on AgentID) then multiplexes that
-	// facade onto the SAME app-server process, so the app-server is still
-	// shared; only the object is not. This replaces the old special case that
-	// called cb.RunBatch(ctx, req) directly on the owner's live backend:
-	// routing the batch's turn onto the very Go object that also holds the
-	// owner's own turn/callback state meant a mis-delivered notification
-	// (e.g. a late turn/completed arriving after RunBatch's cancel/timeout
-	// path, #1570) could complete the owner's in-flight turn. With a
-	// distinct facade object, thread-ID routing failing can no longer reach
-	// the owner's state at all.
-	isCodexMultiplex := false
-	if ownerKey != "" {
-		if mb, ok := m.getManaged(ownerKey); ok && mb.be.IsRunning() {
-			if _, ok := mb.be.(*codex.Backend); ok {
-				isCodexMultiplex = true
-			}
-		}
-	}
-	// Index the batch session ONLY on the path that actually multiplexes onto
-	// a live app-server. This bookkeeping is codex-specific; running it
-	// unconditionally made every ccstream agent write a permanent row per
-	// nudge-extraction/consolidation one-shot. Such a row is unreclaimable by
-	// construction: PruneOrphans skips empty file_path ("backend session, not
-	// an orphan"), so it never prunes, and a self-parented row makes
-	// ArchiveSweep's active-branch guard match it against ITSELF, so it never
-	// archives either -- while ArchiveSweep runs a full index query per
-	// candidate. Guard on a real, distinct parent so neither can recur.
-	if isCodexMultiplex && m.SessionIndex != nil && batchKey != ownerKey {
+	m.setBatchSpec(batchKey, batchSpec{systemPrompt: req.SystemPrompt, model: req.Model, workDir: req.WorkDir})
+	defer func() {
+		m.ResetSession(batchKey)
+		m.clearBatchSpec(batchKey)
+	}()
+
+	// Index it as a background-task child up front: RecordTurnActivity's upsert
+	// preserves session_type and parent, so the turn's own index write keeps
+	// this classification rather than "unknown".
+	if m.SessionIndex != nil {
 		m.SessionIndex.Upsert(session.SessionIndexEntry{
-			SessionKey: batchKey, ParentSessionKey: ownerKey,
+			SessionKey: batchKey, ParentSessionKey: parent,
 			CreatedAt: time.Now(), SessionType: session.SessionTypeBackgroundTask,
 			Status: session.SessionStatusActive,
 		})
 	}
 
-	if m.NewBackend == nil {
-		return "", fmt.Errorf("RunBatch: no backend factory configured")
-	}
-	be, err := m.NewBackend()
-	if err != nil {
-		return "", fmt.Errorf("RunBatch: construct backend: %w", err)
-	}
-	br, ok := be.(delegator.BatchRunner)
-	if !ok {
-		m.logger().Errorf("RunBatch: backend %T does not implement delegator.BatchRunner", be)
-		return "", fmt.Errorf("backend %T does not implement delegator.BatchRunner", be)
-	}
+	// A turn waits for its backend to report completion, not for ctx. So a
+	// caller that gives up (a foci_summary deadline, shutdown) would otherwise
+	// sit out the whole turn: close the batch's backend instead, which ends
+	// the turn through the backend's process-exit path.
+	finished := make(chan struct{})
+	defer close(finished)
+	go func() {
+		select {
+		case <-ctx.Done():
+			m.logger().Warnf("RunBatch: %s batch on %s abandoned (%v) — closing its backend", req.Purpose, batchKey, ctx.Err())
+			m.ResetSession(batchKey)
+		case <-finished:
+		}
+	}()
 
-	m.logger().Infof("RunBatch: batch via %T (workdir=%s, model=%s, system_prompt=%d bytes, session=%s, owner=%s)",
-		be, req.WorkDir, req.Model, len(req.SystemPrompt), req.SessionKey, ownerKey)
-	result, err := br.RunBatch(ctx, req)
+	m.logger().Infof("RunBatch: %s batch on %s (owner=%s, model=%q, system_prompt=%d bytes)",
+		req.Purpose, batchKey, ownerKey, req.Model, len(req.SystemPrompt))
+	text, err := m.RunBatchTurn(ctx, batchKey, req.Prompt, req.Purpose)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%s batch: %w", req.Purpose, err)
 	}
-	m.logger().Infof("RunBatch: complete (%d bytes, session=%s)", len(result), req.SessionKey)
-	return result, nil
+	if ctx.Err() != nil {
+		return "", fmt.Errorf("%s batch: %w", req.Purpose, ctx.Err())
+	}
+	text = strings.TrimSpace(text)
+	m.logger().Infof("RunBatch: complete (%d bytes, session=%s)", len(text), batchKey)
+	return text, nil
+}
+
+// batchSpec is what makes a batch session's backend launch differ from any
+// other session's. Registered by RunBatch for the life of the batch and read
+// by getOrCreate / setBackendCallbacks.
+type batchSpec struct {
+	systemPrompt string // replaces the agent's composed prompt ("" = backend default)
+	model        string // "" = the backend's BatchDefaultModel, else the agent's
+	workDir      string // "" = the agent workspace
+}
+
+func (m *DelegatedManager) setBatchSpec(sessionKey string, spec batchSpec) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.batchSpecs == nil {
+		m.batchSpecs = make(map[string]batchSpec)
+	}
+	m.batchSpecs[sessionKey] = spec
+}
+
+func (m *DelegatedManager) clearBatchSpec(sessionKey string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.batchSpecs, sessionKey)
+}
+
+// batchSpecFor reports the batch spec for sessionKey, if it is a live batch.
+func (m *DelegatedManager) batchSpecFor(sessionKey string) (batchSpec, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	spec, ok := m.batchSpecs[sessionKey]
+	return spec, ok
 }
 
 // BackendInfo returns a human-readable status line for the backend serving

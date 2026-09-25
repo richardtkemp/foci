@@ -138,7 +138,6 @@ func (b *Backend) launchAppServer(ctx context.Context, opts delegator.StartOptio
 	b.sessionThreads = make(map[string]string)
 	b.threadSessions = make(map[string]string)
 	b.threadBackends = make(map[string]*Backend)
-	b.batchRuns = make(map[string]*batchRun)
 	b.autoApproveEnv = autoapprove.EnvironmentFromList(b.buildEnv())
 
 	bin := b.codexBinary()
@@ -228,8 +227,8 @@ func (b *Backend) launchAppServer(ctx context.Context, opts delegator.StartOptio
 // runs inside an outer sandbox that deliberately removes setuid/capability assumptions.
 //
 // When compactPrompt is non-empty it is layered in as a per-process
-// `-c compact_prompt=<value>` config override (the value parses as TOML — same
-// escaping the batch runner's `-c instructions=` uses). This is an in-memory
+// `-c compact_prompt=<value>` config override (the value parses as TOML, via
+// tomlBasicString). This is an in-memory
 // override scoped to THIS app-server process; it never touches the shared
 // ~/.codex/config.toml, so foci's compaction prompt can't leak into the user's
 // own codex CLI or race a concurrent codex agent (#1327 sub-issue 2).
@@ -321,7 +320,7 @@ func (b *Backend) Close() error {
 
 	// The owner's own thread never goes through unregisterThread — the whole
 	// process and its maps are being torn down — so this is the one place the
-	// session-env unbind still stands alone. Every facade and batch thread
+	// session-env unbind still stands alone. Every facade thread
 	// unbinds via unregisterThread, and refs hitting zero means they all
 	// already have.
 	b.unbindThreadEnv(threadID)

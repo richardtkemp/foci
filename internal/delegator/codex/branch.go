@@ -78,8 +78,8 @@ const noRolloutFoundMarker = "no rollout found for thread id"
 // 2026-08-15 but left codex out, because WIRING recorded codex as deleting
 // straight from disk. It does not.
 //
-// Acquisition is deliberately Start, the SAME path an interactive session or a
-// background batch uses, so a cleanup-triggered spawn is indistinguishable from
+// Acquisition is deliberately Start, the SAME path an interactive session (or
+// a batch session, which is one) uses, so a cleanup-triggered spawn is indistinguishable from
 // any other: it attaches to the pooled app-server for this agent, or launches
 // one if none exists. BatchOnly is what makes it safe to reuse — it returns as
 // soon as the connection is ready, BEFORE Start would otherwise start or resume

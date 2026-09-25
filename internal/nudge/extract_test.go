@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"foci/internal/delegator"
 	"foci/internal/platform"
 	"foci/internal/turnevent"
 )
@@ -343,22 +344,23 @@ func TestExtractEndToEnd(t *testing.T) {
 	}
 }
 
-// mockRunner implements OneShotRunner for testing.
+// mockRunner implements BatchRunner for testing.
 type mockRunner struct {
-	response     string
-	err          error
-	gotPrompt    string
-	gotSysPrompt string
+	response string
+	err      error
+	gotReq   delegator.BatchRequest
+	called   bool
 }
 
-func (m *mockRunner) RunOnce(_ context.Context, prompt string, systemPrompt string) (string, error) {
-	m.gotPrompt = prompt
-	m.gotSysPrompt = systemPrompt
+func (m *mockRunner) RunBatch(_ context.Context, req delegator.BatchRequest) (string, error) {
+	m.called = true
+	m.gotReq = req
 	return m.response, m.err
 }
 
-func TestExtractViaRunOnce(t *testing.T) {
-	// Verifies ExtractViaRunOnce uses OneShotRunner and saves rules.
+func TestExtractViaBatch(t *testing.T) {
+	// Verifies ExtractViaBatch runs the extraction as a labelled batch and
+	// saves rules.
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -371,23 +373,32 @@ func TestExtractViaRunOnce(t *testing.T) {
 		response: `[{"text": "Check first", "source_file": "CRAFT.md", "source_text": "Check before acting", "trigger": {"type": "pre_answer"}, "priority": "high"}]`,
 	}
 
-	if err := e.ExtractViaRunOnce(context.Background(), runner); err != nil {
-		t.Fatalf("ExtractViaRunOnce: %v", err)
+	if err := e.ExtractViaBatch(context.Background(), runner, "test/c1"); err != nil {
+		t.Fatalf("ExtractViaBatch: %v", err)
 	}
 
 	// Verify the prompt was the extraction prompt.
-	expectedPrompt := e.buildExtractionPrompt()
-	if runner.gotPrompt != expectedPrompt {
-		t.Errorf("expected extraction prompt, got %q", runner.gotPrompt[:50])
+	if runner.gotReq.Prompt != e.buildExtractionPrompt() {
+		t.Errorf("expected extraction prompt, got %q", runner.gotReq.Prompt)
 	}
 	// Verify the character files ARE the system prompt — the CLI's default
 	// system prompt must be replaced, or the model extracts rules from the
 	// harness's own instructions instead of the character files (#1307).
-	if !strings.Contains(runner.gotSysPrompt, "===== CRAFT.md =====") {
-		t.Errorf("system prompt missing CRAFT.md header: %q", runner.gotSysPrompt)
+	if !strings.Contains(runner.gotReq.SystemPrompt, "===== CRAFT.md =====") {
+		t.Errorf("system prompt missing CRAFT.md header: %q", runner.gotReq.SystemPrompt)
 	}
-	if !strings.Contains(runner.gotSysPrompt, "Check before acting") {
-		t.Errorf("system prompt missing character file content: %q", runner.gotSysPrompt)
+	if !strings.Contains(runner.gotReq.SystemPrompt, "Check before acting") {
+		t.Errorf("system prompt missing character file content: %q", runner.gotReq.SystemPrompt)
+	}
+	// Labelled and attributed (#1962); no model override → backend default.
+	if runner.gotReq.Purpose != delegator.BatchPurposeNudgeExtraction {
+		t.Errorf("purpose = %q, want %q", runner.gotReq.Purpose, delegator.BatchPurposeNudgeExtraction)
+	}
+	if runner.gotReq.OwnerSessionKey != "test/c1" {
+		t.Errorf("owner = %q, want test/c1", runner.gotReq.OwnerSessionKey)
+	}
+	if runner.gotReq.Model != "" {
+		t.Errorf("model = %q, want empty (the backend's batch default)", runner.gotReq.Model)
 	}
 
 	// Verify rules were saved.
@@ -404,62 +415,16 @@ func TestExtractViaRunOnce(t *testing.T) {
 
 	// Second call: hash matches → should skip.
 	runner2 := &mockRunner{response: "should not be called"}
-	if err := e.ExtractViaRunOnce(context.Background(), runner2); err != nil {
-		t.Fatalf("second ExtractViaRunOnce: %v", err)
+	if err := e.ExtractViaBatch(context.Background(), runner2, "test/c1"); err != nil {
+		t.Fatalf("second ExtractViaBatch: %v", err)
 	}
-	if runner2.gotPrompt != "" {
-		t.Error("expected RunOnce not to be called on unchanged files")
-	}
-}
-
-// mockModelRunner implements ModelOneShotRunner for testing the
-// nudge_extraction_model override path (#1309).
-type mockModelRunner struct {
-	mockRunner
-	gotModel string
-}
-
-func (m *mockModelRunner) RunOnceWithModel(_ context.Context, prompt, systemPrompt, model string) (string, error) {
-	m.gotPrompt = prompt
-	m.gotSysPrompt = systemPrompt
-	m.gotModel = model
-	return m.response, m.err
-}
-
-func TestExtractViaRunOnceWithModelOverride(t *testing.T) {
-	// #1309: when Extractor.Model is set and the runner supports
-	// ModelOneShotRunner, ExtractViaRunOnce must use RunOnceWithModel
-	// (carrying the model through) rather than the plain RunOnce.
-	t.Parallel()
-
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "CRAFT.md"), []byte("Check before acting"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	e := NewExtractor("test", dir, []string{"CRAFT.md"}, 0640, true, true)
-	e.Model = "haiku"
-	runner := &mockModelRunner{
-		mockRunner: mockRunner{
-			response: `[{"text": "Check first", "source_file": "CRAFT.md", "source_text": "Check before acting", "trigger": {"type": "pre_answer"}, "priority": "high"}]`,
-		},
-	}
-
-	if err := e.ExtractViaRunOnce(context.Background(), runner); err != nil {
-		t.Fatalf("ExtractViaRunOnce: %v", err)
-	}
-	if runner.gotModel != "haiku" {
-		t.Errorf("expected RunOnceWithModel called with model=haiku, got %q", runner.gotModel)
-	}
-	if runner.gotPrompt == "" {
-		t.Error("expected RunOnceWithModel to receive the extraction prompt")
+	if runner2.called {
+		t.Error("expected RunBatch not to be called on unchanged files")
 	}
 }
 
-func TestExtractViaRunOnceModelSetButRunnerUnsupported(t *testing.T) {
-	// #1309: when Extractor.Model is set but the runner is a plain
-	// OneShotRunner (no ModelOneShotRunner), extraction must still succeed —
-	// falling back to RunOnce rather than failing outright.
+func TestExtractViaBatchWithModelOverride(t *testing.T) {
+	// #1309: Extractor.Model is carried onto the batch request.
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -473,19 +438,14 @@ func TestExtractViaRunOnceModelSetButRunnerUnsupported(t *testing.T) {
 		response: `[{"text": "Check first", "source_file": "CRAFT.md", "source_text": "Check before acting", "trigger": {"type": "pre_answer"}, "priority": "high"}]`,
 	}
 
-	if err := e.ExtractViaRunOnce(context.Background(), runner); err != nil {
-		t.Fatalf("ExtractViaRunOnce: %v", err)
+	if err := e.ExtractViaBatch(context.Background(), runner, "test/c1"); err != nil {
+		t.Fatalf("ExtractViaBatch: %v", err)
 	}
-	if runner.gotPrompt == "" {
-		t.Error("expected fallback to RunOnce to still receive the extraction prompt")
+	if runner.gotReq.Model != "haiku" {
+		t.Errorf("expected model=haiku on the batch request, got %q", runner.gotReq.Model)
 	}
-
-	rs, err := LoadRules(RulesPath(dir))
-	if err != nil {
-		t.Fatalf("LoadRules: %v", err)
-	}
-	if rs == nil || len(rs.Rules) != 1 {
-		t.Fatalf("expected 1 rule saved via fallback path, got %v", rs)
+	if runner.gotReq.Prompt == "" {
+		t.Error("expected the batch request to carry the extraction prompt")
 	}
 }
 

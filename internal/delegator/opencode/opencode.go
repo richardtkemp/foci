@@ -78,9 +78,9 @@ func acquireServer(agentID string, cfg serverConfig, env map[string]string) (*Se
 	// per-session FOCI_SOCK/BASH_ENV routing (shell.env hook) and blank-system
 	// (suppresses opencode's default prompt). This is the single spawn
 	// chokepoint, so ensuring here means EVERY spawner (interactive Start,
-	// batch RunBatch, any future caller) gets a fully-wired server by
-	// construction — a caller can't forget it (batch did, which stranded
-	// interactive sessions on a plugin-less batch-spawned server). Both are
+	// the cleanup scope, any future caller) gets a fully-wired server by
+	// construction — a caller can't forget it (the old batch path did, which
+	// stranded interactive sessions on a plugin-less batch-spawned server). Both are
 	// idempotent and no-op on an empty workDir.
 	EnsureSessionEnvPlugin(cfg.workDir)
 	EnsureBlankSystemPlugin(cfg.workDir)
@@ -94,9 +94,8 @@ func acquireServer(agentID string, cfg serverConfig, env map[string]string) (*Se
 	// Defensive: if a concurrent acquire for the same agent raced ahead
 	// and inserted a Server while we were starting this one, prefer the
 	// existing one and close ours. DelegatedManager's createGroup only
-	// serialises per sessionKey (not per agentID), and RunOnce/RunBatch
-	// bypass that serialization entirely — so two sessions on the same
-	// agent (or a batch run racing an interactive Start) CAN both reach
+	// serialises per sessionKey (not per agentID), so two sessions on the
+	// same agent (or a cleanup scope racing an interactive Start) CAN both reach
 	// here concurrently in production; this is not just cheap insurance.
 	if existing, ok := serverPool[agentID]; ok {
 		// UNREACHABLE while the keyed lock above holds: acquireServer is the only

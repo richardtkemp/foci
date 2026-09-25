@@ -26,7 +26,7 @@ When `nudge_auto_extract` is false, the LLM is never called; nudges still fire f
 
 The extraction prompt asks the model to keep `tool_pattern` (not just `every_n_tools`) frequency-disciplined, and to merge overlapping `tool_pattern`/`regex` rules into one instead of emitting several near-duplicates that would all fire on the same event (#1309) — this is best-effort at generation time; the runtime cross-rule cooldown/cap above is the enforced backstop.
 
-The one-shot extraction call (`ExtractViaRunOnce`, used by delegated agents) uses `nudge_extraction_model` when set; otherwise it falls back to whatever model the runner defaults to.
+The extraction batch run (`ExtractViaBatch`, used by delegated agents — an ordinary turn on an ephemeral child session, recorded in api.db with `purpose='nudge_extraction'`, #1962) uses `nudge_extraction_model` when set; otherwise the backend's batch default (`sonnet` on Claude Code).
 
 ## Trigger types
 

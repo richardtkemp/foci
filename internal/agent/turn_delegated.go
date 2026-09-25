@@ -71,6 +71,16 @@ func (t *DelegatedTransport) ResolveModelEffort(ts *TurnState) {
 func (t *DelegatedTransport) ComposePrompt(ts *TurnState) error {
 	a := t.agent
 
+	// A batch run's prompt is a self-contained task written for a fresh
+	// session (consolidation, nudge extraction, a summary). It goes out
+	// verbatim: no [meta]/[state] header, and it must not consume the
+	// first-run onboarding message or a branch orientation meant for a real
+	// conversation (#1962).
+	if ts.Purpose != "" {
+		ts.Prompt = strings.Join(ts.Texts, "\n\n")
+		return nil
+	}
+
 	parts := a.composeTurnText(ts.Ctx, ts.SessionKey, ts.TurnModel, ts.Texts, ts.Attachments)
 	ts.Prompt = parts.JoinPrompt()
 
@@ -702,6 +712,7 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 			TurnID:            ts.RowID(),
 			AgentID:           agentID,
 			SessionFile:       sessionFile,
+			Purpose:           ts.Purpose,
 		})
 
 		// One row per subagent, sharing the parent's turn_id (#1880 phase C,
@@ -761,6 +772,7 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 				AgentID:     agentID,
 				SubagentID:  sc.AgentID,
 				SessionFile: sessionFile,
+				Purpose:     ts.Purpose,
 			})
 		}
 	}

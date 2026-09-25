@@ -694,18 +694,17 @@ func TestL2_Nudges_CooldownSuppressesRepeatedAfterToolsNudge(t *testing.T) {
 // TestL2_Nudges_AutoExtractInvocationRunsOnFirstActivity proves the
 // extraction path is reached when no rules file exists and
 // nudge_auto_extract is enabled. With CRAFT.md present but no
-// nudge-rules.json, the first OnActivity fires `claude --print` via
-// DelegatedManager.RunOnce for extraction. Asserts an EXTRA cc-stub
+// nudge-rules.json, the first OnActivity fires a batch run via
+// DelegatedManager.RunBatch for extraction. Asserts an EXTRA cc-stub
 // invocation entry appears (beyond the long-lived agent CC) — the
-// extractor's one-shot subprocess. Distinguished by either resume_id
-// being empty AND a workdir that matches but a separate PID.
+// extractor's batch session (isBatchInvocation).
 func TestL2_Nudges_AutoExtractInvocationRunsOnFirstActivity(t *testing.T) {
 	testharness.ParallelWait(t)
 	const userID = 7400
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:                []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
 		ReadyTimeout:          30 * time.Second,
-		EnableNudgeExtraction: true, // this test asserts the extractor RunOnce fires
+		EnableNudgeExtraction: true, // this test asserts the extractor batch fires
 	})
 
 	// Deliberately do NOT seed nudge-rules.json — that's the precondition
@@ -713,25 +712,19 @@ func TestL2_Nudges_AutoExtractInvocationRunsOnFirstActivity(t *testing.T) {
 	// keeps nudge_auto_extract=true (the harness suppresses it by default).
 	pushUserMessage(t, h, "alpha", userID, "trigger first activity")
 
-	// The extractor uses DelegatedManager.RunOnce which spawns cc-stub
-	// with flags unique to one-shot mode: --dangerously-skip-permissions
-	// and --no-session-persistence. The long-lived agent CC spawn
-	// instead carries --input-format stream-json. Use the presence of
-	// --no-session-persistence as the discriminator — it's only set by
-	// the RunOnce code path (delegated_manager.go:602-606), so its
-	// presence in any recorded invocation is a definitive signal the
-	// extractor ran.
+	// The extractor runs as a batch session, which spawns cc-stub like any
+	// session but always with --dangerously-skip-permissions — no harness
+	// agent sets skip_permissions, so its presence is a definitive signal
+	// the extractor ran (isBatchInvocation).
 	deadline := time.Now().Add(20 * time.Second)
 	var sawExtract bool
 	var allInvocations []recorderEntry
 	for time.Now().Before(deadline) && !sawExtract {
 		allInvocations = invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
 		for _, inv := range allInvocations {
-			for _, f := range inv.Flags {
-				if f == "--no-session-persistence" {
-					sawExtract = true
-					break
-				}
+			if isBatchInvocation(inv) {
+				sawExtract = true
+				break
 			}
 		}
 		if sawExtract {
@@ -740,7 +733,7 @@ func TestL2_Nudges_AutoExtractInvocationRunsOnFirstActivity(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	if !sawExtract {
-		t.Errorf("never observed an extractor (--no-session-persistence) invocation for alpha — auto-extractor did not run.\ninvocations seen:\n%s\nstderr:\n%s",
+		t.Errorf("never observed an extractor (batch session) invocation for alpha — auto-extractor did not run.\ninvocations seen:\n%s\nstderr:\n%s",
 			invocationsTail(allInvocations), stderrTail(h.Stderr()))
 	}
 }
@@ -749,7 +742,7 @@ func TestL2_Nudges_AutoExtractInvocationRunsOnFirstActivity(t *testing.T) {
 // hash-gated skip in Extractor.NeedsExtraction: a pre-seeded
 // nudge-rules.json whose content_hash matches the SHA-256 of the
 // agent's character files causes the extractor to no-op. Asserts no
-// extra `claude --print` invocation entry appears in the recorder
+// extra batch-session invocation entry appears in the recorder
 // beyond the normal agent CC spawn.
 func TestL2_Nudges_AutoExtractSkippedWhenContentHashMatches(t *testing.T) {
 	testharness.ParallelWait(t)
@@ -782,11 +775,9 @@ func TestL2_Nudges_AutoExtractSkippedWhenContentHashMatches(t *testing.T) {
 
 	invocations := invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
 	for _, inv := range invocations {
-		for _, f := range inv.Flags {
-			if f == "--no-session-persistence" {
-				t.Errorf("auto-extract ran despite matching content_hash — saw extractor invocation:\n%s",
-					invocationsTail([]recorderEntry{inv}))
-			}
+		if isBatchInvocation(inv) {
+			t.Errorf("auto-extract ran despite matching content_hash — saw extractor invocation:\n%s",
+				invocationsTail([]recorderEntry{inv}))
 		}
 	}
 }

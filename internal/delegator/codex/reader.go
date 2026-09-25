@@ -146,9 +146,6 @@ func (b *Backend) handleServerRequest(line []byte, id int64, method string) {
 
 func (b *Backend) handleNotification(line []byte, method string) {
 	params := extractParams(line)
-	if b.handleBatchNotification(method, params) {
-		return
-	}
 	if len(params) == 0 {
 		b.logWarnf("dropping %s: missing params", method)
 		return

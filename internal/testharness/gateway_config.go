@@ -32,7 +32,7 @@ type testConfigOpts struct {
 	SocketPath      string // short /tmp path for the same-user unix socket; "" lets foci default to DataDir (sun_path hazard)
 	ExtraConfigTOML string // appended verbatim at the end of the config
 	// SuppressNudgeExtraction emits nudge_auto_extract=false per agent so the
-	// startup nudge-rule RunOnce (a delegated cc-stub spawn) doesn't race the
+	// startup nudge-rule batch run (a delegated cc-stub spawn) doesn't race the
 	// one-shot script tests write. Default-on for the harness; the handful of
 	// tests that assert extraction runs clear it via EnableNudgeExtraction.
 	SuppressNudgeExtraction bool
@@ -196,7 +196,7 @@ model = "stub"
 			fmt.Fprintf(&sb, "binary = %q\n", a.ClaudeBinary)
 		}
 
-		// Suppress the startup nudge-rule extraction RunOnce (a delegated
+		// Suppress the startup nudge-rule extraction batch run (a delegated
 		// cc-stub spawn on first activity) unless the test opts in. It
 		// otherwise races the one-shot script tests write. Per-agent
 		// [agents.nudge] overrides global [nudge] via config.Merge, so this

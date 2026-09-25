@@ -259,11 +259,11 @@ The orchestrator (`OrchestrateFullTurn` in `turn_orchestrator.go`) calls all 19 
 
 The sync/async split is handled by `TurnState.CompletionChan`: API closes it synchronously; delegated closes it when the backend fires `OnTurnComplete` (ccstream: on `result` message; cctmux: on `end_turn` in JSONL). Post-turn methods (save, metadata, compaction, logging) run after `CompletionChan` closes, with an activity-based timeout (2 minutes of stream silence) rather than a fixed deadline.
 
-**RunOnce mode:** `DelegatedManager.RunOnce(ctx, prompt, systemPrompt)` runs `claude --print` synchronously for headless tasks (nudge extraction, consolidation). No tmux, no watcher — one-shot subprocess with stdout capture.
+**Batch runs:** `DelegatedManager.RunBatch(ctx, BatchRequest)` runs a headless task (nudge extraction, consolidation, foci_summary) synchronously as an ordinary delegated turn on an ephemeral child session, returning the final text to the caller and delivering nothing to any chat. Being a normal turn, it is recorded in api.db (with a `purpose` label) and traced like any other (#1962).
 
 **Session lifecycle:**
 - **Session ID persistence:** CC session UUID is persisted on discovery. On restart, `--resume <sessionID>` reconnects to the existing session.
-- **Branch rejection:** Delegated agents return HTTP 400 for `/branch`. Three strategies by task type: inject into main session (reflection, compaction-memory), spawn independent `RunOnce` process (consolidation, background, nudge extraction), or reject (HTTP endpoint).
+- **Branch rejection:** Delegated agents return HTTP 400 for `/branch`. Three strategies by task type: inject into main session (reflection, compaction-memory), run on a fresh independent session (background) or as a batch run (consolidation, nudge extraction), or reject (HTTP endpoint).
 - **/reset:** Sends memory formation prompt, waits for completion, kills tmux pane, starts fresh CC session. `/reset hard` cancels the in-flight turn, skips memory formation, and destroys the backend without saving — used to recover from stuck turns.
 - **/stop:** Sends Escape×2 + Ctrl-C to the CC TUI to interrupt the current turn.
 - **Stable exec bridge sockets:** Socket path derived from session key (not random), so CC keeps the same `FOCI_SOCK` path across foci restarts.

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/log"
 
 	"foci/internal/memory"
@@ -59,7 +60,7 @@ type BranchFunc func(branchType, parentKey, promptText string, noCompact bool) b
 // honest dependency: "an agent the scheduler can poke between turns". The single
 // production implementation is an adapter in cmd/foci-gw; tests use a configurable
 // fake. Methods are only invoked once their owning scheduler passes its config and
-// gate checks (e.g. RunOnce only when delegated, ResetSession only when a
+// gate checks (e.g. RunBatch only when delegated, ResetSession only when a
 // reset_time is configured).
 type BackgroundAgent interface {
 	// Branch dispatches a background prompt as a branch turn (keepalive,
@@ -81,9 +82,10 @@ type BackgroundAgent interface {
 	// rate-limited. The shared gate for every model-calling scheduler
 	// (keepalive/reflection/consolidation/reset); does NOT run can_run_background.
 	RateLimited(sessionKey string) (limited bool, reason string)
-	// RunOnce executes a one-shot headless prompt (delegated agents only); used by
+	// RunBatch runs a batch — a headless one-shot turn on an ephemeral child
+	// session whose answer comes back here (delegated agents only); used by
 	// consolidation. Only called when the agent is delegated.
-	RunOnce(ctx context.Context, prompt, systemPrompt string) (string, error)
+	RunBatch(ctx context.Context, req delegator.BatchRequest) (string, error)
 	// ResetSession performs a soft session reset (memory formation + key rotation).
 	// Only called when a reset_time is configured.
 	ResetSession(ctx context.Context, sessionKey string) error
@@ -125,7 +127,7 @@ type Runner struct {
 	warningDispatcher     *warnings.Dispatcher
 	chatWarningDispatcher *warnings.Dispatcher
 
-	isDelegatedAgent          bool // reflection needs quiet period in delegated mode; consolidation uses RunOnce
+	isDelegatedAgent          bool // reflection needs quiet period in delegated mode; consolidation uses RunBatch
 	characterSystemPromptFunc func() string
 
 	// skillDirs are the skill directories to scan for creation/update detection
@@ -273,11 +275,11 @@ type RunnerConfig struct {
 	// IsDelegatedAgent indicates this agent uses a delegated transport (CC).
 	// When true, reflection requires a quiet period (no recent user activity)
 	// because reflection runs IN the live session, and consolidation dispatches
-	// via Agent.RunOnce rather than Agent.Branch.
+	// via Agent.RunBatch rather than Agent.Branch.
 	IsDelegatedAgent bool
 
 	// CharacterSystemPromptFunc composes the agent's character files for the
-	// system prompt of delegated one-shot runs (consolidation via RunOnce) —
+	// system prompt of delegated batch runs (consolidation via RunBatch) —
 	// the same corpus a branch session inherits on the API path. nil = no
 	// character context (the pre-#1310 behaviour).
 	CharacterSystemPromptFunc func() string

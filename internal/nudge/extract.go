@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/turnevent"
@@ -161,16 +162,15 @@ type Extractor struct {
 	canPostTool  bool
 	canPreAnswer bool
 
-	// Model optionally overrides the model ExtractViaRunOnce uses for the
-	// one-shot extraction call. Empty (the default, set by the constructor)
-	// preserves prior behaviour: the runner picks its own cheap-batch
-	// default (currently "sonnet", hardcoded in ccstream's RunBatch). Set
-	// via the exported field rather than a constructor param so existing
-	// callers/tests are unaffected. Only honoured by ExtractViaRunOnce when
-	// the runner implements ModelOneShotRunner — the branch-session path
-	// (Extract) has no equivalent model override since it inherits the
-	// live session's own model. (#1309: extraction previously had no way to
-	// use a cheaper/different model than the hardcoded default.)
+	// Model optionally overrides the model ExtractViaBatch uses for the
+	// batch extraction run. Empty (the default, set by the constructor)
+	// leaves it to the backend's cheap batch default
+	// (delegator.BatchModelDefaulter; CC: sonnet). Set via the exported field
+	// rather than a constructor param so existing callers/tests are
+	// unaffected. The branch-session path (Extract) has no equivalent model
+	// override since it inherits the live session's own model. (#1309:
+	// extraction previously had no way to use a cheaper/different model than
+	// the hardcoded default.)
 	Model string
 }
 
@@ -215,21 +215,12 @@ type BranchHandler interface {
 	HandleMessage(ctx context.Context, sessionKey string, texts []string, attachments []platform.Attachment) error
 }
 
-// OneShotRunner executes a one-shot prompt and returns the response.
-// DelegatedManager implements this via claude --print.
-type OneShotRunner interface {
-	RunOnce(ctx context.Context, prompt string, systemPrompt string) (string, error)
-}
-
-// ModelOneShotRunner is an optional extension of OneShotRunner for runners
-// that support overriding the model for a single one-shot call. Kept
-// separate from OneShotRunner (rather than widening its signature) because
-// OneShotRunner's two-arg shape is a stable contract other callers
-// (periodic.BackgroundAgent) depend on structurally. DelegatedManager
-// implements this via RunOnceWithModel.
-type ModelOneShotRunner interface {
-	OneShotRunner
-	RunOnceWithModel(ctx context.Context, prompt, systemPrompt, model string) (string, error)
+// BatchRunner runs a batch (delegator.BatchRequest) and returns its final
+// text. DelegatedManager implements it: the batch is an ordinary delegated
+// turn on an ephemeral child session, so extraction is accounted in api.db
+// like any turn (#1962).
+type BatchRunner interface {
+	RunBatch(ctx context.Context, req delegator.BatchRequest) (string, error)
 }
 
 // NeedsExtraction checks if character files have changed since the last extraction.
@@ -318,41 +309,33 @@ func (e *Extractor) Extract(ctx context.Context, handler BranchHandler, sessionK
 	return nil
 }
 
-// ExtractViaRunOnce runs rule extraction using a one-shot runner (claude --print).
-// This is the backend-agent path: no interactive session, no platform delivery.
-func (e *Extractor) ExtractViaRunOnce(ctx context.Context, runner OneShotRunner) error {
+// ExtractViaBatch runs rule extraction as a batch run on the agent's own
+// backend, attributed to ownerKey's conversation family. This is the
+// delegated-agent path: no interactive session, no platform delivery.
+func (e *Extractor) ExtractViaBatch(ctx context.Context, runner BatchRunner, ownerKey string) error {
 	hash, needed := e.NeedsExtraction()
 	if !needed {
 		e.logger().Infof("character files unchanged, skipping extraction")
 		return nil
 	}
 
-	e.logger().Infof("extracting nudge rules via RunOnce (hash=%s, model=%s)", hash[:16], e.modelOrDefault())
+	e.logger().Infof("extracting nudge rules via batch run (hash=%s, model=%s)", hash[:16], e.modelOrDefault())
 
-	// Replace the CLI's default system prompt with the agent's character files
-	// (the same replacement ccstream's initialize performs for live sessions).
-	// Without this the one-shot run sees only the harness's own system prompt
-	// and — told "your character files are loaded in the system prompt" —
-	// extracts rules from THAT (the 2026-07-16 wrong-corpus rule sets, #1307).
-	//
-	// Use the model override when both configured (e.Model) and supported by
-	// the runner (ModelOneShotRunner) — otherwise fall back to the runner's
-	// own default (RunOnce), preserving prior behaviour for callers/tests
-	// that don't set Model or use a plain OneShotRunner.
-	var response string
-	var err error
-	if e.Model != "" {
-		if mr, ok := runner.(ModelOneShotRunner); ok {
-			response, err = mr.RunOnceWithModel(ctx, e.buildExtractionPrompt(), e.characterSystemPrompt(), e.Model)
-		} else {
-			e.logger().Warnf("nudge_extraction_model=%q set but runner %T doesn't support a model override — using its default", e.Model, runner)
-			response, err = runner.RunOnce(ctx, e.buildExtractionPrompt(), e.characterSystemPrompt())
-		}
-	} else {
-		response, err = runner.RunOnce(ctx, e.buildExtractionPrompt(), e.characterSystemPrompt())
-	}
+	// Replace the backend's default system prompt with the agent's character
+	// files (the same replacement ccstream's initialize performs for live
+	// sessions). Without this the run sees only the harness's own system
+	// prompt and — told "your character files are loaded in the system
+	// prompt" — extracts rules from THAT (the 2026-07-16 wrong-corpus rule
+	// sets, #1307).
+	response, err := runner.RunBatch(ctx, delegator.BatchRequest{
+		Prompt:          e.buildExtractionPrompt(),
+		SystemPrompt:    e.characterSystemPrompt(),
+		Model:           e.Model,
+		OwnerSessionKey: ownerKey,
+		Purpose:         delegator.BatchPurposeNudgeExtraction,
+	})
 	if err != nil {
-		return fmt.Errorf("nudge extraction (RunOnce): %w", err)
+		return fmt.Errorf("nudge extraction (batch): %w", err)
 	}
 
 	rules, err := ParseExtractionResponse(response)

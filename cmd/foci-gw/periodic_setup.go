@@ -252,7 +252,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 
 		// The schedulers' single dependency: branch dispatch, in-flight checks,
 		// rate-limit/can_run_background gating, reset, etc. (see background_agent.go). Test
-		// overrides and the consolidation RunOnce/Branch and reset_time feature
+		// overrides and the consolidation RunBatch/Branch and reset_time feature
 		// flags are resolved inside the adapter / by IsDelegatedAgent + ResetTime.
 		Agent: &backgroundAgent{inst: inst, connMgr: p.connMgr, agentID: agentID, branch: branchFn},
 

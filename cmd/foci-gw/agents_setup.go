@@ -246,10 +246,10 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 				// re-run.
 				var attempt func() error
 				if ag.DelegatedManager != nil {
-					// Delegated: use claude --print for one-shot extraction.
-					// No interactive session, no platform delivery, no session index.
-					nudgeLog.Infof("agent %s: delegated extraction via RunOnce", acfg.ID)
-					attempt = func() error { return extractor.ExtractViaRunOnce(ctx, ag.DelegatedManager) }
+					// Delegated: a batch run — an ordinary turn on an ephemeral
+					// child of the default session, no platform delivery (#1962).
+					nudgeLog.Infof("agent %s: delegated extraction via batch run", acfg.ID)
+					attempt = func() error { return extractor.ExtractViaBatch(ctx, ag.DelegatedManager, parentKey) }
 				} else {
 					// API: branch from the most recent session.
 					parentKey := defaultSessionKeyFor(ag, acfg.ID)

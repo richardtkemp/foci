@@ -373,13 +373,6 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 				d, _ := time.ParseDuration(p.cfg.CCBackend.BackgroundTaskMaxAge)
 				return d
 			}(),
-			// claude_binary is read from the same merged map ccstream
-			// consumes, but RunOnce doesn't see backendConfig — fold it
-			// onto StartOpts so DelegatedManager.RunOnce honours it.
-			ClaudeBinary: func() string {
-				v := config.DerefStr(bc.Binary)
-				return v
-			}(),
 			// Per-agent backend_config.env propagates to the backend
 			// subprocess. Used by integration tests to inject CCSTUB_*
 			// env vars per agent (e.g. one agent gets CCSTUB_HANG, others
@@ -495,7 +488,10 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		// (#1261).
 		OpenAutonomousTurn: ag.OpenAutonomousTurn,
 		AttachDelivery:     ag.AttachDelivery,
-		IdleTimeout:        idleTimeout,
+		// Batch runs (consolidation, nudge extraction, foci_summary) are
+		// ordinary turns on an ephemeral child session (#1962).
+		RunBatchTurn: ag.RunBatchTurn,
+		IdleTimeout:  idleTimeout,
 		// Resume-missed wording: only claude-code's retention is known to foci.
 		LastUseFunc:     ag.PrevRequestTime,
 		ResumeRetention: resumeRetentionFor(backendName),

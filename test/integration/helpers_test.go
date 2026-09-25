@@ -205,6 +205,20 @@ func readRecorderEntries(t *testing.T, path string) []recorderEntry {
 
 // invocationsByWorkdir filters to invocation entries whose workdir
 // contains the given substring. Order-preserving.
+// isBatchInvocation reports whether a recorded cc-stub spawn is a batch
+// session (nudge extraction, consolidation, foci_summary): since #1962 a batch
+// is an ordinary stream-json session, and what marks it apart is that it
+// always launches with --dangerously-skip-permissions, which no harness agent
+// does.
+func isBatchInvocation(inv recorderEntry) bool {
+	for _, f := range inv.Flags {
+		if f == "--dangerously-skip-permissions" {
+			return true
+		}
+	}
+	return false
+}
+
 func invocationsByWorkdir(entries []recorderEntry, workdirSubstr string) []recorderEntry {
 	var out []recorderEntry
 	for _, e := range entries {

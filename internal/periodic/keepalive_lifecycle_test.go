@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/session"
 )
@@ -593,12 +594,13 @@ func TestMaybeConsolidation_Fires(t *testing.T) {
 	}
 }
 
-func TestMaybeConsolidation_UsesRunOnce(t *testing.T) {
-	// Verifies that when runOnceFn is set, consolidation uses it instead of branchFn.
+func TestMaybeConsolidation_UsesRunBatch(t *testing.T) {
+	// Verifies that a delegated agent's consolidation is a batch run, not a branch.
 	var branchCalls int
 	var runOnceCalls int
 	var gotPrompt string
 	var gotSystemPrompt string
+	var gotReq delegator.BatchRequest
 	now := time.Now()
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
@@ -618,10 +620,11 @@ func TestMaybeConsolidation_UsesRunOnce(t *testing.T) {
 				branchCalls++
 				return true
 			},
-			runOnceFn: func(_ context.Context, prompt, systemPrompt string) (string, error) {
+			runBatchFn: func(_ context.Context, req delegator.BatchRequest) (string, error) {
 				runOnceCalls++
-				gotPrompt = prompt
-				gotSystemPrompt = systemPrompt
+				gotReq = req
+				gotPrompt = req.Prompt
+				gotSystemPrompt = req.SystemPrompt
 				return "done", nil
 			},
 		},
@@ -632,10 +635,18 @@ func TestMaybeConsolidation_UsesRunOnce(t *testing.T) {
 	waitIdle(t, r)
 
 	if branchCalls != 0 {
-		t.Errorf("branchFn should not be called when runOnceFn is set, got %d calls", branchCalls)
+		t.Errorf("branchFn should not be called for a delegated agent, got %d calls", branchCalls)
 	}
 	if runOnceCalls != 1 {
-		t.Errorf("expected 1 runOnceFn call, got %d", runOnceCalls)
+		t.Errorf("expected 1 RunBatch call, got %d", runOnceCalls)
+	}
+	// Labelled and attributed: the purpose lands on the api.db row, and the
+	// batch session is minted as a child of the parent session (#1962).
+	if gotReq.Purpose != delegator.BatchPurposeConsolidation {
+		t.Errorf("purpose = %q, want %q", gotReq.Purpose, delegator.BatchPurposeConsolidation)
+	}
+	if gotReq.OwnerSessionKey != "test/c1/1" {
+		t.Errorf("owner = %q, want the parent session test/c1/1", gotReq.OwnerSessionKey)
 	}
 	if gotPrompt == "" {
 		t.Error("expected non-empty prompt")

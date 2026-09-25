@@ -193,9 +193,9 @@ type HarnessOptions struct {
 	EnableOnboarding bool
 	// EnableNudgeExtraction opts INTO startup nudge-rule extraction. By
 	// default (false) the harness writes nudge_auto_extract=false per agent,
-	// suppressing the delegated `claude --print` RunOnce foci fires on first
-	// activity to extract nudge rules from the character files. That RunOnce
-	// spawns the SAME one-shot cc-stub and races the script a test writes via
+	// suppressing the delegated nudge-extraction batch run foci fires on first
+	// activity to extract nudge rules from the character files. That batch
+	// spawns the SAME cc-stub and races the script a test writes via
 	// WriteCCStubScript — the extraction turn consumes the queued script, so
 	// the test's own turn gets "no file" and the assertion that keyed off the
 	// script never fires (a dominant flake source across the Ask/Permissions/

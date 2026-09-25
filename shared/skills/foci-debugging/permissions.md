@@ -8,7 +8,8 @@ task failing for no visible reason, not as "your config is wrong."
 
 ## `Permission allow rule Write(...) is not matched by file permission checks`
 
-Seen in `~/logs/foci.log` as:
+Seen in `~/logs/foci.log` as (the pre-#1962 wording; batch runs now log
+`consolidation batch failed: consolidation batch: ...`):
 
 ```
 [keepalive:<agent>] consolidation RunOnce failed: claude --print failed: exit status 1
@@ -16,9 +17,11 @@ Seen in `~/logs/foci.log` as:
  — only Edit(path) rules are...)
 ```
 
-**First, don't go looking for a transcript.** `RunOnce` — used by consolidation, nudge extraction
-and onboarding — calls `claude --print --no-session-persistence`, so **nothing is left behind**.
-And don't assume the failing task actually tried to write that path: the failure is a
+**Where the transcript is.** Since #1962 a batch run (consolidation, nudge extraction,
+foci_summary) is an ordinary stream-json session on an ephemeral child key
+(`<agent>/c<id>/b<ns>`, session_type `background-task`), so it DOES leave a CC transcript (until
+the ephemeral-session GC) and an api.db row with `purpose` set. Before #1962 it was
+`claude --print --no-session-persistence` and left nothing behind. And don't assume the failing task actually tried to write that path: the failure is a
 permission-*list* artifact, raised while validating rules, not evidence about the task's content.
 
 **Mechanism.** Claude Code rejects `Write(<path>)` as an invalid rule type for file paths —
@@ -32,7 +35,7 @@ not presence-dependent:
   Write rule sits there harmlessly.
 - If the only rule for that path comes from the shared global file (an agent with no local
   override), or a local file that *also* orders Write before Edit, the invalid rule is hit first
-  and `RunOnce` hard-fails.
+  and the batch run hard-fails.
 
 **Auditing exposure across agents.** Read the *order*, not just the presence:
 
@@ -41,8 +44,8 @@ jq '.permissions.allow' <agent>/.claude/settings.local.json   # and the project 
 ```
 
 Cross-reference with
-`grep -E '\[keepalive:<agent>\] (firing memory consolidation|consolidation RunOnce)' ~/logs/foci.log`.
-An agent can be **latently exposed** — bad order, but its RunOnce tasks simply haven't touched that
+`grep -E '\[keepalive:<agent>\] (firing memory consolidation|consolidation (RunOnce|batch))' ~/logs/foci.log`.
+An agent can be **latently exposed** — bad order, but its batch runs simply haven't touched that
 path yet — without ever having logged a failure. Absence of a failure is not absence of the bug.
 
 **Fix.** Remove the invalid `Write(path)` lines; `Edit(path)` already grants the same access, per
