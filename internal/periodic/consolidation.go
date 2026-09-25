@@ -83,11 +83,9 @@ func (r *Runner) maybeConsolidation() {
 			r.mu.Lock()
 			r.consolidationRunning = false
 			r.mu.Unlock()
-			if r.sessionIndex != nil {
-				if err := r.sessionIndex.SetAgentMetadata(r.agentID, "consolidation_last", timeutil.Format(timeutil.Now())); err != nil {
-					r.log.Warnf("persist consolidation timestamp: %v", err)
-				}
-			}
+			// Persist the same fire time the in-memory schedule uses, so a
+			// restart computes exactly the next fire this process would have.
+			r.saveTimer(timerConsolidation, now)
 		}()
 		if r.isDelegatedAgent {
 			// Backend: one-shot batch run on the agent's own backend, with the
@@ -111,6 +109,7 @@ func (r *Runner) maybeConsolidation() {
 }
 
 // maybeEphemeralCleanup runs the daily GC of stale ephemeral (branch/fork)
-// backend transcript files. Fires at most once per 24h (and shortly after
-// boot). Disabled when ephemeral_retention_days is 0. Files only — session_index
+// backend transcript files. Fires at most once per 24h, across restarts too:
+// the last run is persisted, so boot only triggers it when a day has passed
+// (or it never ran). Disabled when ephemeral_retention_days is 0. Files only — session_index
 // rows are left intact.

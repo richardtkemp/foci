@@ -137,10 +137,12 @@ func (r *Runner) maybeReflection() {
 
 	go func() {
 		defer func() {
+			ended := time.Now()
 			r.mu.Lock()
 			r.reflectionRunning = false
-			r.lastReflection = time.Now()
+			r.lastReflection = ended
 			r.mu.Unlock()
+			r.saveTimer(timerReflection, ended)
 		}()
 		// Snapshot before each reflection branch and diff after it, so a skill
 		// create/update is attributed to the session that was reflected (the

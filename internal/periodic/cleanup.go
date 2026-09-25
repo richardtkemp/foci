@@ -34,6 +34,7 @@ func (r *Runner) maybeEphemeralCleanup(ctx context.Context) {
 			r.mu.Lock()
 			r.ephemeralCleanupRunning = false
 			r.mu.Unlock()
+			r.saveTimer(timerEphemeralCleanup, now)
 		}()
 		if n := r.agent.CleanupEphemeralSessions(ctx, r.ephemeralRetentionDays); n > 0 {
 			r.log.Infof("ephemeral cleanup: deleted %d stale transcript(s) older than %dd", n, r.ephemeralRetentionDays)
@@ -117,11 +118,8 @@ func (r *Runner) maybeReset(ctx context.Context) {
 			r.mu.Lock()
 			r.resetRunning = false
 			r.mu.Unlock()
-			if r.sessionIndex != nil {
-				if err := r.sessionIndex.SetAgentMetadata(r.agentID, "reset_last", timeutil.Format(timeutil.Now())); err != nil {
-					r.log.Warnf("persist reset timestamp: %v", err)
-				}
-			}
+			// Same fire time as the in-memory schedule (see consolidation).
+			r.saveTimer(timerReset, now)
 		}()
 		if err := r.agent.ResetSession(ctx, parentKey); err != nil {
 			r.log.Warnf("scheduled reset failed for %s: %v", parentKey, err)

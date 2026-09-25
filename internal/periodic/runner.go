@@ -153,9 +153,9 @@ type Runner struct {
 	bootedAt            time.Time
 	keepaliveRunning    bool
 	backgroundRunning   bool
-	lastBackgroundEnded time.Time // when the last background session finished
+	lastBackgroundEnded time.Time // when the last background session finished (persisted, #2026)
 
-	// Reflection state
+	// Reflection state. The last* timers are persisted (persist.go, #2026).
 	lastReflection       time.Time
 	lastConsolidation    time.Time
 	lastReset            time.Time
@@ -165,7 +165,7 @@ type Runner struct {
 
 	// Ephemeral-session cleanup
 	ephemeralRetentionDays  int       // 0 = disabled
-	lastEphemeralCleanup    time.Time // last daily GC run
+	lastEphemeralCleanup    time.Time // last daily GC run (persisted, #2026)
 	ephemeralCleanupRunning bool      // guards against overlapping async cleanup runs
 
 	// updateCh delivers live Settings updates into the run loop, so all config
@@ -336,15 +336,18 @@ func New(cfg RunnerConfig) *Runner {
 		notifySkillChange:         cfg.NotifySkillChange,
 		notifySkillChangeText:     cfg.NotifySkillChangeText,
 		bootedAt:                  now,
-		lastReflection:            now,
+		// Boot anchors below apply only to a FRESH agent: restoreTimers
+		// replaces each with its persisted value when one exists, so a restart
+		// neither delays (re-anchoring to boot) nor skips (zero) a schedule.
+		// A fresh agent waits a full interval before its first reflection.
+		lastReflection: now,
 		// Like lastReflection, anchor to boot so a FRESH agent waits a full
 		// interval before its first consolidation rather than firing one
 		// immediately on init (the zero value's Truncate(interval).Add(interval)
-		// lands in the distant past). A persisted value below overrides this.
+		// lands in the distant past).
 		lastConsolidation: now,
 		// Anchor reset to boot so a fresh agent waits for the next scheduled
-		// slot rather than resetting immediately on startup (a persisted value
-		// below overrides this).
+		// slot rather than resetting immediately on startup.
 		lastReset: now,
 		updateCh:  make(chan Settings, 1),
 		done:      make(chan struct{}),
@@ -356,19 +359,8 @@ func New(cfg RunnerConfig) *Runner {
 			r.tickInterval = d
 		}
 	}
-	// Restore consolidation timestamp from persistent state
-	if cfg.SessionIndex != nil {
-		if raw, err := cfg.SessionIndex.GetAgentMetadata(cfg.AgentID, "consolidation_last"); err == nil && raw != "" {
-			if ts, err := time.Parse(time.RFC3339, raw); err == nil {
-				r.lastConsolidation = ts
-			}
-		}
-		if raw, err := cfg.SessionIndex.GetAgentMetadata(cfg.AgentID, "reset_last"); err == nil && raw != "" {
-			if ts, err := time.Parse(time.RFC3339, raw); err == nil {
-				r.lastReset = ts
-			}
-		}
-	}
+	// Restore every restart-sensitive timer from agent_metadata (#2026).
+	r.restoreTimers()
 	return r
 }
 

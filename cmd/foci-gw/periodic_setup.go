@@ -207,6 +207,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		InactiveInterval:      warningInactiveInterval,
 		ActivityThreshold:     warningActivityThreshold,
 		LastUserMessageTimeFn: lastUserMsgFn,
+		LastDispatchStore:     p.sessionIndex.PersistedTime(agentID, "warnings_dispatch_last:agent"),
 	})
 
 	// Chat warning dispatcher (platform notifications).
@@ -229,6 +230,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		InactiveInterval:      warningInactiveInterval,
 		ActivityThreshold:     warningActivityThreshold,
 		LastUserMessageTimeFn: lastUserMsgFn,
+		LastDispatchStore:     p.sessionIndex.PersistedTime(agentID, "warnings_dispatch_last:chat"),
 	})
 
 	ka.Enabled = kaEnabled

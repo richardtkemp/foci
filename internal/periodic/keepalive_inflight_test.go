@@ -36,7 +36,7 @@ func waitIdle(t *testing.T, r *Runner) {
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		r.mu.Lock()
-		busy := r.keepaliveRunning || r.backgroundRunning || r.reflectionRunning || r.consolidationRunning
+		busy := r.keepaliveRunning || r.backgroundRunning || r.reflectionRunning || r.consolidationRunning || r.resetRunning || r.ephemeralCleanupRunning
 		r.mu.Unlock()
 		if !busy {
 			return

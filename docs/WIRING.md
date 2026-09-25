@@ -2894,6 +2894,15 @@ Reflection and consolidation run on the shared `periodic.Runner` tick (30s defau
 
 **User-activity lookup** (`internal/periodic/user_activity.go`, #2023). Every agent-scoped "has the human been idle?" check goes through `Runner.LastUserActivity()` / `sinceUserActivity()`: the reflection interval + backend quiet-period gates, `consolidation_max_idle`, the background-work idle interval, the `reset_idle_guard`, and the warning dispatchers' active/inactive cadence (`lastUserMsgFn` in `periodic_setup.go`). It returns the max of the **persisted** `session_index.last_user_activity_at` (`SessionIndex.LastUserActivityForAgent`, read live each call — written by the turn path on interactive human turns only) and the runner's **in-process receipt stamp** (`NotifyInteraction`, fed by the platforms' `OnUserMessage`; zero at boot, covers slash commands and messages still queued behind an in-flight turn). Nothing is seeded from boot time, so a restart cannot make an idle agent look active. The one boot fallback: an agent with **no** recorded interaction at all uses `bootedAt` in the scheduler gates (pre-#2023 behaviour, kept on purpose); the dispatchers see zero there (inactive cadence), also as before. Session-scoped checks read the same column per session instead: keepalive `max_user_idle` (`SessionIndex.LastUserActivity`) and the `/send --if-user-active` gate.
 
+**Restart-surviving timers** (`session.PersistedTime`, `internal/session/persisted_time.go`; runner side `internal/periodic/persist.go`, #2026). Every scheduler/gate timestamp that must not reset on a restart is an `agent_metadata` row read and written through this one helper (RFC3339Nano; a zero Save deletes the row; a nil index is a no-op). `New()` boots each runner timer to its fresh-agent default and then `restoreTimers()` overwrites it with the persisted value; each run saves on COMPLETION (so a run cut short by the restart is retried, not skipped), persisting the same value the in-memory schedule uses. Members — add a row here when you add one:
+- `reflection_last` → `lastReflection` (fresh default: boot)
+- `consolidation_last` → `lastConsolidation` (fire time; fresh default: boot)
+- `reset_last` → `lastReset` (fire time; fresh default: boot)
+- `background_last_ended` → `lastBackgroundEnded` (background cooldown; fresh default: zero = no cooldown)
+- `ephemeral_cleanup_last` → `lastEphemeralCleanup` (daily GC; fresh default: zero = run at boot)
+- `warnings_dispatch_last:agent` / `:chat` → `warnings.Dispatcher.lastDispatch` (via `DispatcherConfig.LastDispatchStore`, saved at dispatch)
+- `ratelimit_until:<endpoint>` → `RateLimitGate.until` (restored in `getOrCreateRateLimitGate`, saved in `engageRateLimit`, cleared in `releaseRateLimit`; the replay queue and missing-hint streak stay process-scoped)
+
 **Interval reflection** (`maybeReflection`, `internal/periodic/reflection.go`):
 1. Check `interval_enabled` (nil = true)
 2. Check wall-clock interval elapsed and user not idle (`sinceUserActivity()` must be ≤ interval — see **User-activity lookup** below)
@@ -2908,12 +2917,12 @@ Reflection runs before consolidation so the latest memory content is available. 
 
 **Consolidation** (`maybeConsolidation`, `internal/periodic/consolidation.go`) — config now under `[maintenance]` (`r.maintCfg`):
 1. Check `consolidation_enabled` (nil = true)
-2. Compute next-fire via `parseSchedule(consolidation_time).nextFire(...)` — `consolidation_time` is `"HH:MM"` daily (process tz) or a Go duration; persisted last-run in state store
+2. Compute next-fire via `parseSchedule(consolidation_time).nextFire(...)` — `consolidation_time` is `"HH:MM"` daily (process tz) or a Go duration; last run persisted as `consolidation_last` (see **Restart-surviving timers**)
 3. Check recent user activity (`sinceUserActivity()` ≤ `consolidation_max_idle`)
 4. Check reflection / reset is not running
 5. Resolve prompt via `prompts.ResolvePrompt`
 6. Fire branch on default session: `branchFn("consolidation", parentKey, promptText, true)`
-7. On completion: persist timestamp to state store
+7. On completion: persist the fire time as `consolidation_last`
 
 **Scheduled reset** (`maybeReset`, `internal/periodic/cleanup.go`) — `[maintenance].reset_time` (default off):
 1. Skip if `resetFn` nil or `reset_time` empty
@@ -2921,7 +2930,7 @@ Reflection runs before consolidation so the latest memory content is available. 
 3. Skip if reflection/consolidation/reset already running
 4. Inactivity guard: skip if user active within `reset_idle_guard` (default `"55m"`) — mirrors the `foci command --if-inactive` crontab it replaces
 5. Skip if no default session or a turn is in flight on it
-6. Fire `resetFn(ctx, parentKey)` (→ `Agent.ResetSession`: memory formation + in-place archive, the same path as a manual `/reset`) in a goroutine; persist `reset_last` on completion
+6. Fire `resetFn(ctx, parentKey)` (→ `Agent.ResetSession`: memory formation + in-place archive, the same path as a manual `/reset`) in a goroutine; persist the fire time as `reset_last` on completion
 
 The shared schedule parser lives in `internal/periodic/schedule.go` (`parseSchedule` / `schedule.nextFire`): a daemon asleep past a clock time fires once on wake (catch-up), never once per missed day; clock times are rebuilt via `time.Date` so they stay stable across DST.
 
@@ -2930,7 +2939,7 @@ The shared schedule parser lives in `internal/periodic/schedule.go` (`parseSched
 2. Check `queue.Pending()` — skip if no warnings
 3. Check `dispatching` guard — skip if dispatch in flight
 4. Determine rate limit interval: call `lastUserMessageTimeFn()`, if within `activityThreshold` → use active interval, else → inactive interval
-5. Check `sinceLastDispatch < interval` — skip if too soon
+5. Check `sinceLastDispatch < interval` — skip if too soon (`lastDispatch` is persisted, so this holds across a restart)
 6. Drain warnings, format as `- ...\n- ...`, wrap via `formatFn` (wired to `prompts.FormatInjectedMessage`)
 7. Dispatch in goroutine: `dispatchFn(text)`, clear `dispatching` on return
 

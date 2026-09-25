@@ -416,3 +416,100 @@ func containsAll(s string, subs ...string) bool {
 	}
 	return true
 }
+
+// memTimeStore is an in-memory TimeStore standing in for the agent_metadata
+// row (session.PersistedTime) that outlives the process.
+type memTimeStore struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (m *memTimeStore) Load() (time.Time, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.t, !m.t.IsZero()
+}
+
+func (m *memTimeStore) Save(t time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.t = t
+	return nil
+}
+
+// #2026: the dispatch cadence survives a restart. A dispatch just before the
+// restart must still throttle the first pending warning after it; before, a
+// fresh Dispatcher's zero lastDispatch let it through immediately.
+func TestDispatcher_CadenceSurvivesRestart(t *testing.T) {
+	store := &memTimeStore{}
+	var mu sync.Mutex
+	calls := 0
+	boot := func() (*Dispatcher, *Queue) {
+		q := NewQueue(0, 0)
+		return NewDispatcher(DispatcherConfig{
+			Queue:             q,
+			ActiveInterval:    5 * time.Minute,
+			InactiveInterval:  time.Hour,
+			ActivityThreshold: 10 * time.Minute,
+			LastDispatchStore: store,
+			DispatchFn: func(string) {
+				mu.Lock()
+				calls++
+				mu.Unlock()
+			},
+		}), q
+	}
+	count := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return calls
+	}
+
+	d1, q1 := boot()
+	q1.Push("WARN", "test", "before restart")
+	d1.MaybeFire()
+	waitDispatched(t, d1)
+	if count() != 1 {
+		t.Fatalf("premise: first dispatch should fire, calls=%d", count())
+	}
+	if _, ok := store.Load(); !ok {
+		t.Fatal("dispatch did not persist its time")
+	}
+
+	d2, q2 := boot()
+	q2.Push("WARN", "test", "after restart")
+	d2.MaybeFire()
+	waitDispatched(t, d2)
+	if count() != 1 {
+		t.Errorf("dispatch after restart fired (calls=%d), want throttled by the 1h inactive interval", count())
+	}
+
+	// Control: once the persisted dispatch is older than the interval, the
+	// restarted dispatcher fires.
+	_ = store.Save(time.Now().Add(-2 * time.Hour))
+	d3, q3 := boot()
+	q3.Push("WARN", "test", "much later")
+	d3.MaybeFire()
+	waitDispatched(t, d3)
+	if count() != 2 {
+		t.Errorf("calls=%d, want 2 (persisted dispatch 2h old, interval 1h)", count())
+	}
+}
+
+// waitDispatched waits for an in-flight dispatch goroutine to finish.
+func waitDispatched(t *testing.T, d *Dispatcher) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		d.mu.Lock()
+		busy := d.dispatching
+		d.mu.Unlock()
+		if !busy {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("dispatch goroutine did not finish")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}

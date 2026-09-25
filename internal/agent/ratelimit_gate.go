@@ -10,6 +10,7 @@ import (
 
 	"foci/internal/procx"
 	"foci/internal/ratelimit"
+	"foci/internal/session"
 )
 
 // RateLimitGate suppresses non-user API work while an endpoint is rate-limited.
@@ -172,10 +173,33 @@ func (a *Agent) getOrCreateRateLimitGate(endpoint string) *RateLimitGate {
 		a.rateLimitGates = make(map[string]*RateLimitGate)
 	}
 
-	// Create new gate
+	// Create new gate, reopening at a deadline a previous process persisted
+	// (#2026) — otherwise every scheduler fires into a live cap after a
+	// restart until one of them trips it again. A past deadline is harmless:
+	// IsLimited treats it as open.
 	gate := &RateLimitGate{}
+	if until, ok := a.rateLimitDeadline(endpoint).Load(); ok {
+		gate.until = until
+	}
 	a.rateLimitGates[endpoint] = gate
 	return gate
+}
+
+// rateLimitDeadline is the persisted close-deadline of one endpoint's gate.
+// Only the deadline survives a restart; the replay queue and the missing-hint
+// backoff streak are process-scoped.
+func (a *Agent) rateLimitDeadline(endpoint string) session.PersistedTime {
+	if endpoint == "" {
+		endpoint = a.Endpoint // same default as getOrCreateRateLimitGate
+	}
+	return a.SessionIndex.PersistedTime(a.AgentID, "ratelimit_until:"+endpoint)
+}
+
+// persistRateLimitDeadline saves (or, for zero, clears) an endpoint's deadline.
+func (a *Agent) persistRateLimitDeadline(endpoint string, until time.Time) {
+	if err := a.rateLimitDeadline(endpoint).Save(until); err != nil {
+		a.logger().Warnf("persist rate limit deadline (%s): %v", endpoint, err)
+	}
 }
 
 // resolveEndpoint returns the endpoint a session's turns run against: its
@@ -214,6 +238,7 @@ func (a *Agent) SessionRateLimited(sessionKey string) (limited bool, reason stri
 func (a *Agent) engageRateLimit(endpoint string, signal ratelimit.Signal, notify bool) time.Time {
 	gate := a.getOrCreateRateLimitGate(endpoint)
 	until := gate.CloseFor(signal)
+	a.persistRateLimitDeadline(endpoint, until)
 	a.logger().Infof("rate limit gate (%s) closed until %s (kind=%s)", endpoint, until.Format(time.Kitchen), signal.Kind)
 	if notify {
 		for _, fn := range a.RateLimitFunc {
@@ -235,6 +260,7 @@ func (a *Agent) EngageRateLimit(signal ratelimit.Signal) {
 func (a *Agent) releaseRateLimit(endpoint string) {
 	gate := a.getOrCreateRateLimitGate(endpoint)
 	if gate.Open() {
+		a.persistRateLimitDeadline(endpoint, time.Time{})
 		a.logger().Infof("rate limit gate (%s) released early after successful probe", endpoint)
 	}
 }

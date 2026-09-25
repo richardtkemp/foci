@@ -90,10 +90,12 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 
 	go func() {
 		defer func() {
+			ended := time.Now()
 			r.mu.Lock()
 			r.backgroundRunning = false
-			r.lastBackgroundEnded = time.Now()
+			r.lastBackgroundEnded = ended
 			r.mu.Unlock()
+			r.saveTimer(timerBackgroundEnded, ended)
 		}()
 		r.agent.Branch("background", parentKey, promptText, true)
 	}()

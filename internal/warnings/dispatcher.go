@@ -25,6 +25,18 @@ type DispatcherConfig struct {
 	ActivityThreshold     time.Duration
 	LastUserMessageTimeFn func() time.Time
 	IsProcessingFn        func() bool // if non-nil and returns true, defer dispatch until turn ends
+	// LastDispatchStore persists the last-dispatch time so the cadence
+	// survives a restart (#2026): without it a restart reset lastDispatch to
+	// zero and the first pending warning after boot bypassed the interval.
+	// nil = in-memory only. Wired to a session.PersistedTime.
+	LastDispatchStore TimeStore
+}
+
+// TimeStore loads and saves one restart-surviving timestamp.
+// session.PersistedTime is the production implementation.
+type TimeStore interface {
+	Load() (time.Time, bool)
+	Save(time.Time) error
 }
 
 // Dispatcher checks for pending warnings and dispatches them proactively
@@ -41,6 +53,7 @@ type Dispatcher struct {
 	activityThreshold     time.Duration
 	lastUserMessageTimeFn func() time.Time
 	isProcessingFn        func() bool
+	lastDispatchStore     TimeStore
 
 	mu           sync.Mutex
 	lastDispatch time.Time
@@ -56,7 +69,7 @@ func NewDispatcher(cfg DispatcherConfig) *Dispatcher {
 	if cfg.AgentID != "" {
 		component += ":" + cfg.AgentID
 	}
-	return &Dispatcher{
+	d := &Dispatcher{
 		log:                   log.NewComponentLogger(component),
 		queue:                 cfg.Queue,
 		peerQueues:            cfg.PeerQueues,
@@ -67,7 +80,14 @@ func NewDispatcher(cfg DispatcherConfig) *Dispatcher {
 		activityThreshold:     cfg.ActivityThreshold,
 		lastUserMessageTimeFn: cfg.LastUserMessageTimeFn,
 		isProcessingFn:        cfg.IsProcessingFn,
+		lastDispatchStore:     cfg.LastDispatchStore,
 	}
+	if d.lastDispatchStore != nil {
+		if t, ok := d.lastDispatchStore.Load(); ok {
+			d.lastDispatch = t
+		}
+	}
+	return d
 }
 
 // MaybeFire checks for pending warnings and dispatches them if the rate limit allows.
@@ -162,9 +182,10 @@ func (d *Dispatcher) dispatchDrained() {
 		text = d.formatFn(body)
 	}
 
+	dispatchedAt := time.Now()
 	d.mu.Lock()
 	d.dispatching = true
-	d.lastDispatch = time.Now()
+	d.lastDispatch = dispatchedAt
 	d.mu.Unlock()
 
 	d.log.Infof("dispatching %d proactive warnings", len(warnings))
@@ -173,6 +194,13 @@ func (d *Dispatcher) dispatchDrained() {
 	for _, pq := range d.peerQueues {
 		if pq != nil {
 			pq.Suppress()
+		}
+	}
+	// Inside the suppressed window, so a failure warning can't re-enter the
+	// queue it is reporting on.
+	if d.lastDispatchStore != nil {
+		if err := d.lastDispatchStore.Save(dispatchedAt); err != nil {
+			d.log.Warnf("persist last dispatch time: %v", err)
 		}
 	}
 	go func() {
