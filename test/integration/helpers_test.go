@@ -4,6 +4,7 @@ package integration
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -189,18 +190,37 @@ func readRecorderEntries(t *testing.T, path string) []recorderEntry {
 	if err != nil {
 		return nil
 	}
+	out, err := parseRecorderEntries(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// parseRecorderEntries decodes the complete lines of a cc-stub recorder file.
+// A final segment with no trailing newline is a line cc-stub is still
+// appending (a respawn can write its invocation line while the test reads),
+// so it is skipped, not decoded: decoding it failed on a torn line under load
+// (TestL2_SessionLifecycle_ResumeIDSurvivesRespawn, 2026-09-25). A malformed
+// COMPLETE line is still an error.
+func parseRecorderEntries(b []byte) ([]recorderEntry, error) {
+	s := string(b)
+	i := strings.LastIndexByte(s, '\n')
+	if i < 0 {
+		return nil, nil
+	}
 	var out []recorderEntry
-	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
-		if line == "" {
+	for _, line := range strings.Split(s[:i], "\n") {
+		if strings.TrimSpace(line) == "" {
 			continue
 		}
 		var r recorderEntry
 		if err := json.Unmarshal([]byte(line), &r); err != nil {
-			t.Fatalf("decode recorder line %q: %v", line, err)
+			return nil, fmt.Errorf("decode recorder line %q: %v", line, err)
 		}
 		out = append(out, r)
 	}
-	return out
+	return out, nil
 }
 
 // invocationsByWorkdir filters to invocation entries whose workdir
@@ -227,4 +247,21 @@ func invocationsByWorkdir(entries []recorderEntry, workdirSubstr string) []recor
 		}
 	}
 	return out
+}
+
+// TestParseRecorderEntries_SkipsTornFinalLine pins the torn-read fix: a final
+// segment with no newline is a line cc-stub is still writing, so it is skipped;
+// a malformed complete line is still an error.
+func TestParseRecorderEntries_SkipsTornFinalLine(t *testing.T) {
+	torn := "{\"kind\":\"user_message\",\"session_id\":\"s1\"}\n{\"kind\":\"invocation\",\"flags\":[\"--pr"
+	got, err := parseRecorderEntries([]byte(torn))
+	if err != nil {
+		t.Fatalf("torn final line must be skipped, got error: %v", err)
+	}
+	if len(got) != 1 || got[0].Kind != "user_message" {
+		t.Fatalf("got %+v, want only the complete user_message line", got)
+	}
+	if _, err := parseRecorderEntries([]byte("{\"kind\":\"inv\n")); err == nil {
+		t.Fatal("a malformed COMPLETE line must still be an error")
+	}
 }
