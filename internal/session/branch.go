@@ -59,6 +59,14 @@ func resolveOrientation(template, branchKey, parentKey, branchType string) strin
 	return r.Replace(template)
 }
 
+// Test seams for CreateBranchWithOptions: branch keys are b<unix seconds>, so
+// forcing a collision deterministically needs control of both the key and the
+// retry sleep.
+var (
+	newBranchKey     = branchFromSession
+	branchRetrySleep = time.Sleep
+)
+
 // CreateBranchWithOptions creates a branch session from parentKey.
 // Generates the branch key internally, resolves orientation template
 // placeholders, and writes the branch file. On same-second key collision,
@@ -69,11 +77,14 @@ func (s *Store) CreateBranchWithOptions(parentKey string, opts BranchOptions) (s
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			time.Sleep(time.Second)
-			sessionLog(parentKey).Warnf("branch key collision on %s, retrying (attempt %d/%d)", parentKey, attempt, maxRetries)
+			branchRetrySleep(time.Second)
+			// INFO, not WARN: two branches off one parent in the same second
+			// (e.g. consolidation + nudge extraction) is routine and a retry
+			// resolves it. Only the give-up below is worth a WARN (#2024).
+			sessionLog(parentKey).Infof("branch key collision on %s, retrying (attempt %d/%d)", parentKey, attempt, maxRetries)
 		}
 
-		branchKey, err := branchFromSession(parentKey)
+		branchKey, err := newBranchKey(parentKey)
 		if err != nil {
 			return "", fmt.Errorf("generate branch key: %w", err)
 		}
@@ -87,6 +98,7 @@ func (s *Store) CreateBranchWithOptions(parentKey string, opts BranchOptions) (s
 			return "", err
 		}
 	}
+	sessionLog(parentKey).Warnf("branch key collision on %s, giving up after %d retries", parentKey, maxRetries)
 	return "", fmt.Errorf("branch creation failed: key collision after %d attempts (parent=%s)", maxRetries+1, parentKey)
 }
 

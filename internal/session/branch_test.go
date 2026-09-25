@@ -1,11 +1,14 @@
 package session
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"foci/internal/log"
 	"foci/internal/provider"
 )
 
@@ -581,5 +584,89 @@ func TestCreateBranchCollision(t *testing.T) {
 	}
 	if info.Size() == 0 {
 		t.Error("branch file was truncated to zero")
+	}
+}
+
+// stubBranchRetry makes CreateBranchWithOptions deterministic: keys come from
+// the given sequence (the last one repeats), retry sleeps are skipped, and the
+// event log is captured.
+func stubBranchRetry(t *testing.T, keys ...string) *bytes.Buffer {
+	t.Helper()
+	origKey, origSleep := newBranchKey, branchRetrySleep
+	calls := 0
+	newBranchKey = func(string) (string, error) {
+		k := keys[min(calls, len(keys)-1)]
+		calls++
+		return k, nil
+	}
+	branchRetrySleep = func(time.Duration) {}
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		newBranchKey, branchRetrySleep = origKey, origSleep
+		log.SetOutput(os.Stderr)
+	})
+	return &buf
+}
+
+// logLinesAt returns the captured log lines at level that mention substr.
+func logLinesAt(buf *bytes.Buffer, level, substr string) []string {
+	var out []string
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if strings.Contains(line, " "+level+" ") && strings.Contains(line, substr) {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func TestCreateBranchCollisionRetryLogsInfo(t *testing.T) {
+	// #2024: a single same-second collision that a retry resolves is routine —
+	// the retry is logged at INFO and nothing is logged at WARN.
+	s := NewStore(t.TempDir())
+	parentKey := "main/imain"
+	taken := "main/imain/b1000000001"
+	fresh := "main/imain/b1000000002"
+	s.TestAppend(parentKey, msg("user", "hello"))
+	if err := s.createBranchFile(parentKey, taken, false, "", ""); err != nil {
+		t.Fatalf("pre-create taken branch: %v", err)
+	}
+
+	buf := stubBranchRetry(t, taken, fresh)
+	got, err := s.CreateBranchWithOptions(parentKey, BranchOptions{})
+	if err != nil {
+		t.Fatalf("CreateBranchWithOptions: %v", err)
+	}
+	if got != fresh {
+		t.Fatalf("branch key = %q, want %q", got, fresh)
+	}
+	if n := len(logLinesAt(buf, "INFO", "branch key collision")); n != 1 {
+		t.Errorf("INFO collision lines = %d, want 1\nlog:\n%s", n, buf)
+	}
+	if w := logLinesAt(buf, "WARN", "branch key collision"); len(w) != 0 {
+		t.Errorf("unexpected WARN on a resolved collision: %v", w)
+	}
+}
+
+func TestCreateBranchCollisionGiveUpWarns(t *testing.T) {
+	// #2024: when every attempt collides, each retry is INFO and the give-up
+	// is a single WARN, alongside the returned error.
+	s := NewStore(t.TempDir())
+	parentKey := "main/imain"
+	taken := "main/imain/b1000000001"
+	s.TestAppend(parentKey, msg("user", "hello"))
+	if err := s.createBranchFile(parentKey, taken, false, "", ""); err != nil {
+		t.Fatalf("pre-create taken branch: %v", err)
+	}
+
+	buf := stubBranchRetry(t, taken)
+	if _, err := s.CreateBranchWithOptions(parentKey, BranchOptions{}); err == nil {
+		t.Fatal("expected error when every attempt collides, got nil")
+	}
+	if n := len(logLinesAt(buf, "INFO", "branch key collision")); n != 3 {
+		t.Errorf("INFO retry lines = %d, want 3\nlog:\n%s", n, buf)
+	}
+	if w := logLinesAt(buf, "WARN", "branch key collision"); len(w) != 1 || !strings.Contains(w[0], "giving up") {
+		t.Errorf("WARN lines = %v, want exactly one give-up WARN", w)
 	}
 }
