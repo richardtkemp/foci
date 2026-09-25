@@ -25,11 +25,11 @@ func TestDefaults_BlockAndPass(t *testing.T) {
 		t.Fatalf("defaults skipped: %v", skipped)
 	}
 	for _, r := range rules {
-		if got := Match(rules, r.Tool, json.RawMessage(`{}`)); got == nil || got.Name != r.Name {
+		if got := Match(rules, Call{Tool: r.Tool, Input: json.RawMessage(`{}`)}); got == nil || got.Name != r.Name {
 			t.Errorf("%s: Match(%s) = %v, want the rule", r.Name, r.Tool, got)
 		}
 	}
-	if got := Match(rules, "Bash", json.RawMessage(`{"command":"ls"}`)); got != nil {
+	if got := Match(rules, Call{Tool: "Bash", Input: json.RawMessage(`{"command":"ls"}`)}); got != nil {
 		t.Errorf("Bash matched %q", got.Name)
 	}
 }
@@ -57,7 +57,7 @@ func TestResolve_DisableDefault(t *testing.T) {
 	if got := names(rules); !reflect.DeepEqual(got, []string{"cron_create"}) {
 		t.Errorf("rules = %v, want only cron_create", got)
 	}
-	if Match(rules, "AskUserQuestion", nil) != nil {
+	if Match(rules, Call{Tool: "AskUserQuestion"}) != nil {
 		t.Error("disabled rule still matches")
 	}
 }
@@ -98,12 +98,12 @@ func TestMatch_InputRegex(t *testing.T) {
 	rules, _ := Resolve([]Rule{{
 		Name:   "no_force_push",
 		Tool:   "Bash",
-		Input:  map[string]string{"command": `git push .*--force`},
+		Input:  map[string]Patterns{"command": {`git push .*--force`}},
 		Reason: "no force pushes",
 	}, {
 		Name:   "no_tmp_bg",
 		Tool:   "Bash",
-		Input:  map[string]string{"command": `^sleep`, "run_in_background": `^true$`},
+		Input:  map[string]Patterns{"command": {`^sleep`}, "run_in_background": {`^true$`}},
 		Reason: "r",
 	}})
 	cases := []struct {
@@ -119,7 +119,7 @@ func TestMatch_InputRegex(t *testing.T) {
 	}
 	for _, c := range cases {
 		got := ""
-		if r := Match(rules, c.tool, json.RawMessage(c.input)); r != nil {
+		if r := Match(rules, Call{Tool: c.tool, Input: json.RawMessage(c.input)}); r != nil {
 			got = r.Name
 		}
 		if got != c.want {
@@ -130,11 +130,15 @@ func TestMatch_InputRegex(t *testing.T) {
 
 func TestValidateLayer(t *testing.T) {
 	bad := map[string][]Rule{
-		"no name":      {{Tool: "Bash"}},
-		"duplicate":    {{Name: "a"}, {Name: "a"}},
-		"regex tool":   {{Name: "a", Tool: "Bash|Read"}},
-		"allow action": {{Name: "a", Action: "allow"}},
-		"bad regex":    {{Name: "a", Input: map[string]string{"command": "("}}},
+		"no name":             {{Tool: "Bash"}},
+		"duplicate":           {{Name: "a"}, {Name: "a"}},
+		"regex tool":          {{Name: "a", Tool: "Bash|Read"}},
+		"allow action":        {{Name: "a", Action: "allow"}},
+		"bad regex":           {{Name: "a", Input: map[string]Patterns{"command": {"("}}}},
+		"bad 2nd regex":       {{Name: "a", Input: map[string]Patterns{"command": {"ok", "("}}}},
+		"bad command":         {{Name: "a", Command: Patterns{"("}}},
+		"bad cwd":             {{Name: "a", Cwd: Patterns{"("}}},
+		"command on non-Bash": {{Name: "a", Tool: "Read", Command: Patterns{"x"}}},
 	}
 	for label, rules := range bad {
 		if err := ValidateLayer(rules); err == nil {

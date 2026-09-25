@@ -695,3 +695,17 @@ func (cfg *Config) validatePreToolRules() error {
 	}
 	return nil
 }
+
+// PreToolRules resolves the pretool rules an agent's CC sessions enforce
+// (#2028): the preinstalled defaults, then [cc_backend], then the agent's
+// backend_config, merged by name. skipped lists rules the merge left unusable.
+// ok is false when no agent has that id.
+func (cfg *Config) PreToolRules(agentID string) (rules []pretool.Rule, skipped []string, ok bool) {
+	for _, a := range cfg.Agents {
+		if a.ID == agentID {
+			rules, skipped = pretool.Resolve(pretool.Defaults, cfg.CCBackend.PreToolRules, a.BackendConfig.PreToolRules)
+			return rules, skipped, true
+		}
+	}
+	return nil, nil, false
+}

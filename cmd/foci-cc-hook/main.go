@@ -82,6 +82,8 @@ type hookInput struct {
 	AgentID       string          `json:"agent_id,omitempty"`
 	IsInterrupt   bool            `json:"is_interrupt,omitempty"`
 	IsTimeout     bool            `json:"is_timeout,omitempty"`
+	// Cwd is the session's working directory; pretool rules can match it.
+	Cwd string `json:"cwd,omitempty"`
 }
 
 // hookOutput is the compact JSON foci's ccstream handleHookResponse parser
@@ -170,7 +172,7 @@ func process(args []string, body []byte) (hookOutput, bool) {
 		IsError:   in.HookEventName == "PostToolUseFailure" || in.IsInterrupt || in.IsTimeout,
 	}
 	if in.HookEventName == "PreToolUse" {
-		applyRules(&out, parseFlag(args, rulesFlag), in.ToolInput)
+		applyRules(&out, parseFlag(args, rulesFlag), pretool.Call{Tool: in.ToolName, Input: in.ToolInput, Cwd: in.Cwd})
 	}
 	if len(in.ToolInput) > 0 {
 		// Forward the raw tool_input JSON so downstream nudge rules can match
@@ -192,7 +194,7 @@ func process(args []string, body []byte) (hookOutput, bool) {
 // applyRules marks out as a deny when an encoded pretool rule matches the
 // call. Undecodable rules are ignored: a broken rule set must fail open to
 // CC's normal permission flow rather than block every tool.
-func applyRules(out *hookOutput, encoded string, toolInput json.RawMessage) {
+func applyRules(out *hookOutput, encoded string, call pretool.Call) {
 	if encoded == "" {
 		return
 	}
@@ -200,7 +202,7 @@ func applyRules(out *hookOutput, encoded string, toolInput json.RawMessage) {
 	if err != nil {
 		return
 	}
-	r := pretool.Match(rules, out.ToolName, toolInput)
+	r := pretool.Match(rules, call)
 	if r == nil {
 		return
 	}

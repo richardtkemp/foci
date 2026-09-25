@@ -1,16 +1,27 @@
 // Package pretool is the rule engine behind foci's configurable Claude Code
 // PreToolUse hook (#2028). Rules are data: each names a tool, optionally
-// constrains fields of that tool's input with regexes, and carries an action.
-// The only action is "deny" — the hook refuses the call and hands the rule's
-// reason to the model in place of the tool result.
+// constrains the call with regexes, and carries an action. The only action is
+// "deny": the hook refuses the call and hands the rule's reason to the model
+// in place of the tool result.
+//
+// A rule can constrain three things, all of which must hold (#2033):
+//   - input: raw tool-input fields, each matched against one or more regexes.
+//   - command: Bash only. The command is parsed as a shell script and each
+//     simple command in it is matched on its own, from its first word. See
+//     Commands for exactly what the patterns see.
+//   - cwd: the session's working directory when the call was made.
+//
+// Every constraint takes one regex or a list of them, and any one of a list
+// may match.
 //
 // There is deliberately no "allow". A PreToolUse allow short-circuits CC's
 // permission check, so emitting one would let a rule bypass foci's approval
 // flow; a rule that doesn't match simply stays silent and the normal permission
 // path runs.
 //
-// The package is a leaf (stdlib only) because it is linked into the
-// foci-cc-hook helper, which CC spawns once per matched tool call.
+// The package imports only the stdlib and the mvdan.cc/sh parser, because it
+// is linked into the foci-cc-hook helper, which CC spawns once per matched
+// tool call.
 package pretool
 
 import (
@@ -33,12 +44,18 @@ const ActionDeny = "deny"
 // `{name = "ask_user_question", enabled = false}` switches a default off and
 // `{name = "cron_create", reason = "..."}` rewords one without restating it.
 type Rule struct {
-	Name    string            `toml:"name"    json:"name"`
-	Tool    string            `toml:"tool"    json:"tool"`
-	Input   map[string]string `toml:"input"   json:"input,omitempty"`
-	Action  string            `toml:"action"  json:"action,omitempty"`
-	Reason  string            `toml:"reason"  json:"reason"`
-	Enabled *bool             `toml:"enabled" json:"-"`
+	Name string `toml:"name"    json:"name"`
+	Tool string `toml:"tool"    json:"tool"`
+	// Input maps a tool-input field to regexes matched against its raw value.
+	Input map[string]Patterns `toml:"input"   json:"input,omitempty"`
+	// Command holds Bash-only regexes matched against each simple command in
+	// the script, anchored at its first word.
+	Command Patterns `toml:"command" json:"command,omitempty"`
+	// Cwd holds regexes matched against the session's working directory.
+	Cwd     Patterns `toml:"cwd"     json:"cwd,omitempty"`
+	Action  string   `toml:"action"  json:"action,omitempty"`
+	Reason  string   `toml:"reason"  json:"reason"`
+	Enabled *bool    `toml:"enabled" json:"-"`
 }
 
 // Defaults are the rules foci ships preinstalled. Config disables one with
@@ -86,10 +103,19 @@ func ValidateLayer(rules []Rule) error {
 		if r.Action != "" && r.Action != ActionDeny {
 			return fmt.Errorf("pretool_rules %q: action %q unsupported (only %q)", r.Name, r.Action, ActionDeny)
 		}
-		for field, pat := range r.Input {
-			if _, err := regexp.Compile(pat); err != nil {
+		if len(r.Command) > 0 && r.Tool != "" && r.Tool != bashTool {
+			return fmt.Errorf("pretool_rules %q: command applies only to tool %q, not %q", r.Name, bashTool, r.Tool)
+		}
+		for field, pats := range r.Input {
+			if err := pats.validate(); err != nil {
 				return fmt.Errorf("pretool_rules %q: input.%s: %w", r.Name, field, err)
 			}
+		}
+		if err := r.Command.validate(); err != nil {
+			return fmt.Errorf("pretool_rules %q: command: %w", r.Name, err)
+		}
+		if err := r.Cwd.validate(); err != nil {
+			return fmt.Errorf("pretool_rules %q: cwd: %w", r.Name, err)
 		}
 	}
 	return nil
@@ -142,6 +168,12 @@ func overlay(base, over Rule) Rule {
 	if over.Input != nil {
 		base.Input = over.Input
 	}
+	if over.Command != nil {
+		base.Command = over.Command
+	}
+	if over.Cwd != nil {
+		base.Cwd = over.Cwd
+	}
 	if over.Action != "" {
 		base.Action = over.Action
 	}
@@ -191,51 +223,4 @@ func Decode(s string) ([]Rule, error) {
 		return nil, err
 	}
 	return rules, nil
-}
-
-// Match returns the first rule that denies this call, or nil. toolInput is
-// the raw tool_input object from the hook payload.
-//
-// Input constraints are ANDed: every listed field must be present and its
-// value must match the regex. A string field is matched as-is; any other JSON
-// value is matched against its JSON text. A rule whose regex fails to
-// compile never matches (Resolve already rejected it; this is the hook's own
-// guard against a hand-edited command line).
-func Match(rules []Rule, toolName string, toolInput json.RawMessage) *Rule {
-	var fields map[string]json.RawMessage
-	for i := range rules {
-		r := &rules[i]
-		if r.Tool != toolName || r.Action != ActionDeny {
-			continue
-		}
-		if len(r.Input) > 0 && fields == nil {
-			fields = map[string]json.RawMessage{}
-			_ = json.Unmarshal(toolInput, &fields)
-		}
-		if inputMatches(r.Input, fields) {
-			return r
-		}
-	}
-	return nil
-}
-
-func inputMatches(want map[string]string, fields map[string]json.RawMessage) bool {
-	for field, pat := range want {
-		raw, ok := fields[field]
-		if !ok {
-			return false
-		}
-		re, err := regexp.Compile(pat)
-		if err != nil {
-			return false
-		}
-		var s string
-		if json.Unmarshal(raw, &s) != nil {
-			s = string(raw)
-		}
-		if !re.MatchString(s) {
-			return false
-		}
-	}
-	return true
 }

@@ -1433,13 +1433,13 @@ Two rules ship preinstalled:
 Rules merge by `name` in three layers: the preinstalled rules, then `[[cc_backend.pretool_rules]]`, then the agent's `[[agents.backend_config.pretool_rules]]`. A later layer only needs to give the fields it changes:
 
 ```toml
-# Global: add a rule. input maps tool-input fields to regexes; all must match.
+# Global: add a rule.
 [[cc_backend.pretool_rules]]
 name = "no_force_push"
-tool = "Bash"                                # exact tool name
-input = { command = "git push .*--force" }   # optional
+tool = "Bash"                                  # exact tool name
+command = 'git (\S+ )*push (\S+ )*--force'      # Bash only; see below
 reason = "Force-pushing is not allowed. Push normally, or ask the user."
-# action = "deny"                            # the default, and the only action
+# action = "deny"                              # the default, and the only action
 
 # Per agent: switch a preinstalled rule off, or reword it.
 [[agents]]
@@ -1449,7 +1449,28 @@ name = "ask_user_question"
 enabled = false
 ```
 
-A string input field is matched as-is. Any other value is matched against its JSON text. A missing field means the rule does not match. Rules are fixed when the CC session starts, so a change applies to new sessions. Each deny is logged as `pretool_rule_deny`.
+A rule matches a call to its `tool` when every constraint it gives holds. Each constraint takes one regex or a list of them, and any one of a list may match:
+
+| key | matched against |
+|---|---|
+| `command` | `Bash` only. Each simple command in the script, separately. See below. |
+| `input.<field>` | The raw value of that tool-input field, e.g. `input.command` or `input.file_path`. A string is matched as-is; any other value against its JSON text. A missing field means no match. |
+| `cwd` | The session's working directory when the call is made. It follows a `cd` from an earlier Bash call, but not a `cd` earlier in the same command. |
+
+**`command` patterns.** The command is parsed as a bash script and split into its simple commands: `cd /r && git add .` is `cd /r` and `git add .`, and commands inside `( )`, `$( )`, `if` and loops count too. Each pattern is matched from the start of each command, so `git add` matches `git add x` but not `echo git add`. The text a pattern sees is the command's words joined by single spaces, with quotes removed and whitespace inside a quoted word shown as `␣`. `git commit -m "fix merge; add -A"` is seen as `git commit -m fix␣merge;␣add␣-A`, so `\S+` is always exactly one word and a pattern cannot match text inside a message or a quoted argument. Leading `VAR=x` assignments and redirections, including heredoc bodies, are left out. Expansions keep their `$` form (`"$HOME/x"` is seen as `$HOME/x`). A command that does not parse as bash matches no `command` pattern. `(\S+ )*` is the idiom for "any words", e.g. to skip git's global options: `git (\S+ )*worktree add`.
+
+For a condition that spans several commands, use a raw `input.command` pattern alongside, or instead of, `command`:
+
+```toml
+[[agents.backend_config.pretool_rules]]
+name = "worktree_remove_gated"
+tool = "Bash"
+command = ['git (\S+ )*merge( |$)', 'make (\S+ )*land( |$)']     # a merge or a land...
+input.command = '(;|\n|\|\|)\s*git\b[^;&|\n]*\bworktree\s+remove'  # ...then a remove not chained with &&
+reason = "Chain the cleanup on the merge with &&."
+```
+
+Check rules offline with `foci pretool list --agent <id>` and `foci pretool test --agent <id> --bash '<command>' [--cwd <dir>] [-v]` (see CLI.md). Rules are read from the config file each time foci launches a CC process (a new session, or a session resumed after an idle shutdown or a foci restart), so an edit applies from the next launch without a restart. A CC process already running keeps the rules it was launched with. If the file does not load at that moment, the session keeps the last rules that did. Each deny is logged as `pretool_rule_deny`.
 
 ### Available backends
 

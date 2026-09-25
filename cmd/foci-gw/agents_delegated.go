@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"foci/internal/agent"
@@ -241,11 +242,12 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	rlThrottle := ccstream.NewRateLimitThrottle()
 
 	// PreToolUse rules (#2028): built-in defaults, then [cc_backend], then this
-	// agent's backend_config, merged by name. Resolved once — like
-	// allowed_tools they are baked into the CC command line at launch.
-	var preToolRules []pretool.Rule
+	// agent's backend_config, merged by name. Re-resolved from the config file
+	// at every CC launch (#2033), so an edit reaches the next session.
+	var preToolRules func() []pretool.Rule
 	if backendName == "claude-code" {
-		preToolRules = resolvePreToolRules(agentID, p.cfg.CCBackend.PreToolRules, backendConfig.PreToolRules)
+		preToolRules = livePreToolRules(agentID, p.configPath,
+			resolvePreToolRules(agentID, p.cfg.CCBackend.PreToolRules, backendConfig.PreToolRules))
 	}
 
 	ag.DelegatedManager = &agent.DelegatedManager{
@@ -781,8 +783,44 @@ func resumeRetentionFor(backendName string) time.Duration {
 // warning rather than failing the agent: the rest must still apply.
 func resolvePreToolRules(agentID string, global, perAgent []pretool.Rule) []pretool.Rule {
 	rules, skipped := pretool.Resolve(pretool.Defaults, global, perAgent)
+	warnSkippedPreToolRules(agentID, skipped)
+	return rules
+}
+
+func warnSkippedPreToolRules(agentID string, skipped []string) {
 	for _, msg := range skipped {
 		log.NewComponentLogger("agent:"+agentID).Warnf("pretool rule skipped: %s", msg)
 	}
-	return rules
+}
+
+// livePreToolRules returns the pretool rule source for an agent's CC backends
+// (#2033). Each call re-reads the config file, so a rule edit reaches the next
+// CC launch without a foci restart. The file carries no live-apply registry
+// row for the rules, and a hand edit never goes through /config set, so
+// reading the file at launch is what makes an edit land. A file that fails to
+// load or validate (e.g. saved mid-edit), or no longer has the agent, keeps
+// the last good rules, starting from the startup ones.
+func livePreToolRules(agentID, configPath string, startup []pretool.Rule) func() []pretool.Rule {
+	var mu sync.Mutex
+	last := startup
+	return func() []pretool.Rule {
+		mu.Lock()
+		defer mu.Unlock()
+		if configPath == "" {
+			return last
+		}
+		fresh, err := config.Load(configPath, delegator.RegisteredNames())
+		if err != nil {
+			log.NewComponentLogger("agent:"+agentID).Warnf("pretool rules: config reload failed, keeping the previous rules: %v", err)
+			return last
+		}
+		rules, skipped, ok := fresh.PreToolRules(agentID)
+		if !ok {
+			log.NewComponentLogger("agent:" + agentID).Warnf("pretool rules: agent missing from reloaded config, keeping the previous rules")
+			return last
+		}
+		warnSkippedPreToolRules(agentID, skipped)
+		last = rules
+		return last
+	}
 }

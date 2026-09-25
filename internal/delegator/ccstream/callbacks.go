@@ -59,10 +59,12 @@ func (b *Backend) SetOnRateLimited(fn func(sessionKey, detail string)) { b.onRat
 // Start.
 func (b *Backend) SetRateLimitThrottle(t *RateLimitThrottle) { b.rlThrottle = t }
 
-// SetPreToolRules installs the resolved pretool rules (#2028) the PreToolUse
-// hook enforces. The rules are baked into the hook command line, so they take
-// effect at the next Start. Must be set before Start.
-func (b *Backend) SetPreToolRules(rules []pretool.Rule) { b.preToolRules = rules }
+// SetPreToolRules installs the source of the pretool rules (#2028) the
+// PreToolUse hook enforces. It is called at every Start and the result is
+// baked into that CC process's hook command line, so a source that reads the
+// live config makes an edit reach the next session start (#2033). Must be set
+// before Start.
+func (b *Backend) SetPreToolRules(rules func() []pretool.Rule) { b.preToolRules = rules }
 
 // SetOnSessionLimit registers a hook fired when CC reports a session limit was
 // hit — a synthetic "You've hit your session limit · resets <time>" message,

@@ -223,7 +223,11 @@ func (b *Backend) prepareHooks() (string, bool) {
 	}
 	installID := newInstallID()
 	hookCmd := buildHookCommand(hookPath, installID)
-	settingsJSON, err := buildHookSettingsJSON(hookCmd, b.preToolRules)
+	var rules []pretool.Rule
+	if b.preToolRules != nil {
+		rules = b.preToolRules()
+	}
+	settingsJSON, err := buildHookSettingsJSON(hookCmd, rules)
 	if err != nil {
 		b.logger().Warnf("CC hook install skipped: %v", err)
 		return "", false
@@ -233,7 +237,7 @@ func (b *Backend) prepareHooks() (string, bool) {
 	b.hookCmd = hookCmd
 	b.hookInstallID = installID
 	b.mu.Unlock()
-	b.logger().Infof("CC hooks installed via --settings (install_id=%s pretool_rules=%d)", installID, len(b.preToolRules))
+	b.logger().Infof("CC hooks installed via --settings (install_id=%s pretool_rules=%d)", installID, len(rules))
 	return settingsJSON, true
 }
 

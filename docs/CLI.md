@@ -377,6 +377,28 @@ foci debug session clutch/c12345
 
 ---
 
+### `pretool` — Check PreToolUse rules offline
+
+Runs sample tool calls past an agent's PreToolUse deny rules (CONFIG.md → `[[cc_backend.pretool_rules]]`) without a gateway or a CC session. The config file is loaded and validated as the gateway loads it, and the agent's rules are resolved as they are at each CC launch, so what `test` reports is what the next session will enforce.
+
+**Usage:**
+```
+foci pretool list [--agent <id>] [--config <path>]
+foci pretool test [--agent <id>] [--config <path>] (--bash <command> | --tool <name> [--input <json>]) [--cwd <dir>] [-v]
+```
+
+`list` prints the resolved rules. `test` prints the name of the rule that denies the call, or `no match`. `-v` adds the rule's reason and, for Bash, each simple command the `command` patterns are matched against. `--bash -` reads the command from stdin. `--agent` defaults to the agent in `FOCI_SESSION_KEY`; `--config` to `$FOCI_CONFIG`, else `~/config/foci.toml`.
+
+**Examples:**
+```bash
+foci pretool list --agent clutch
+foci pretool test --agent clutch --bash 'cd /r && git add -A'
+foci pretool test --agent clutch --bash 'git commit -m x' --cwd /home/rich/git/foci -v
+foci pretool test --agent clutch --tool Read --input '{"file_path":"/etc/passwd"}'
+```
+
+---
+
 ### `pair` — Mint Android pairing key
 
 Mints a single-use Android pairing key for registering a new device with the gateway. The key can be used once to complete the `/android` onboarding flow.

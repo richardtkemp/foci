@@ -306,9 +306,9 @@ type Backend struct {
 	hookCmd       string
 	hookInstallID string
 
-	// preToolRules are the resolved pretool rules (#2028) baked into the
-	// PreToolUse hook command at Start. Set via SetPreToolRules.
-	preToolRules []pretool.Rule
+	// preToolRules yields the resolved pretool rules (#2028) baked into the
+	// PreToolUse hook command at each Start. Set via SetPreToolRules.
+	preToolRules func() []pretool.Rule
 
 	// Agent tracking (shared with tmux backend via AgentTracker).
 	agents delegator.SubagentTracker

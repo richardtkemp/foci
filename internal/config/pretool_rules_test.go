@@ -42,7 +42,7 @@ enabled = false
 		t.Fatalf("Load: %v", err)
 	}
 	g := cfg.CCBackend.PreToolRules
-	if len(g) != 1 || g[0].Tool != "Bash" || g[0].Input["command"] != "git push .*--force" || g[0].Reason != "no force pushes" {
+	if len(g) != 1 || g[0].Tool != "Bash" || len(g[0].Input["command"]) != 1 || g[0].Input["command"][0] != "git push .*--force" || g[0].Reason != "no force pushes" {
 		t.Errorf("global rules = %+v", g)
 	}
 	a := cfg.Agents[0].BackendConfig.PreToolRules

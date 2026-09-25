@@ -401,3 +401,25 @@ func TestPreToolUse_BadRulesFailOpen(t *testing.T) {
 		t.Errorf("bad rules produced a decision: ok=%v out=%+v", ok, out)
 	}
 }
+
+// TestPreToolUse_CwdReachesRules proves the payload's top-level cwd is what a
+// cwd rule sees (#2033): the same command is denied from one directory and
+// not from another.
+func TestPreToolUse_CwdReachesRules(t *testing.T) {
+	enc, err := pretool.Encode([]pretool.Rule{{
+		Name: "no_commit_here", Tool: "Bash", Action: pretool.ActionDeny, Reason: "r",
+		Command: pretool.Patterns{`git commit( |$)`},
+		Cwd:     pretool.Patterns{`^/repo$`},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for cwd, want := range map[string]string{"/repo": "no_commit_here", "/repo-wt": ""} {
+		body := []byte(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_use_id":"t","cwd":"` + cwd +
+			`","tool_input":{"command":"git commit -m x"}}`)
+		out, ok := process([]string{"foci-cc-hook", rulesFlag, enc}, body)
+		if !ok || out.DeniedRule != want {
+			t.Errorf("cwd %s: DeniedRule = %q, want %q", cwd, out.DeniedRule, want)
+		}
+	}
+}

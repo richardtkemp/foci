@@ -83,7 +83,7 @@ func TestBuildHookSettingsJSON_PreToolRules(t *testing.T) {
 	rules := []pretool.Rule{
 		{Name: "c", Tool: "CronCreate", Action: "deny", Reason: "r1"},
 		{Name: "a", Tool: "AskUserQuestion", Action: "deny", Reason: "r2"},
-		{Name: "g", Tool: "Agent", Action: "deny", Reason: "r3", Input: map[string]string{"prompt": "x"}},
+		{Name: "g", Tool: "Agent", Action: "deny", Reason: "r3", Input: map[string]pretool.Patterns{"prompt": {"x"}}},
 	}
 	body, err := buildHookSettingsJSON(cmd, rules)
 	if err != nil {
