@@ -1219,8 +1219,8 @@ func TestL2_Cron_ConsolidationTimestampPersistsAcrossRestart(t *testing.T) {
 	}
 	h.WriteCCStubScript(t, "alpha", scriptBody)
 
-	// Bootstrap the agent so lastInteraction is recent (consolidation's
-	// idle guard at keepalive.go:625 skips when idle > 1h).
+	// Bootstrap the agent so its last user activity is recent (consolidation's
+	// consolidation_max_idle guard skips when idle > 1h).
 	token := h.AgentBotToken("alpha")
 	h.TelegramStub().PushUpdate(token, gotgbot.Update{
 		Message: &gotgbot.Message{

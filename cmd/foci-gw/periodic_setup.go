@@ -156,15 +156,20 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	warningActivityThreshold, _ := time.ParseDuration(p.cfg.Logging.WarningProactiveActivityThreshold)
 	agentID := acfg.ID
 	// The dispatcher's active/inactive cadence keys off genuine human attention,
-	// so read the clean per-session last_user_activity signal (derived max over
-	// the agent's sessions) — NOT lastMessageTime, which any system-initiated
-	// turn (keepalive/reflection/cron) advances, making keepalive agents look
-	// permanently user-active.
+	// so it reads the same lookup as the runner's idle gates
+	// (Runner.LastUserActivity: persisted last_user_activity_at + in-process
+	// receipts) — NOT lastMessageTime, which any system-initiated turn
+	// (keepalive/reflection/cron) advances, making keepalive agents look
+	// permanently user-active. No record → zero → the inactive cadence, as
+	// before. `runner` is assigned below, before Start; the dispatchers are
+	// only ticked from the runner's loop, so it is always set by the time this
+	// runs.
+	var runner *periodic.Runner
 	lastUserMsgFn := func() time.Time {
-		if inst.ag == nil || inst.ag.SessionIndex == nil {
+		if runner == nil {
 			return time.Time{}
 		}
-		last, _ := inst.ag.SessionIndex.LastUserActivityForAgent(agentID)
+		last, _ := runner.LastUserActivity()
 		return last
 	}
 
@@ -227,7 +232,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	})
 
 	ka.Enabled = kaEnabled
-	runner := periodic.New(periodic.RunnerConfig{
+	runner = periodic.New(periodic.RunnerConfig{
 		AgentID:          acfg.ID,
 		Client:           client,
 		CachingOverride:  cachingOverride,

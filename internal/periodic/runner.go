@@ -141,8 +141,16 @@ type Runner struct {
 	// change). nil = disabled.
 	notifySkillChangeText func(sessionKey, text string)
 
-	mu                  sync.Mutex
-	lastInteraction     time.Time
+	mu sync.Mutex
+	// lastInteraction is the in-process receipt stamp set by NotifyInteraction
+	// (inbound human message or slash command). Zero at boot and never
+	// persisted — it only supplements the durable record for interactions that
+	// start no turn. Read it via LastUserActivity/sinceUserActivity, never
+	// directly (#2023).
+	lastInteraction time.Time
+	// bootedAt is when New() ran: the last-activity fallback for an agent with
+	// no recorded human interaction at all (see sinceUserActivity).
+	bootedAt            time.Time
 	keepaliveRunning    bool
 	backgroundRunning   bool
 	lastBackgroundEnded time.Time // when the last background session finished
@@ -327,7 +335,7 @@ func New(cfg RunnerConfig) *Runner {
 		skillDirs:                 cfg.SkillDirs,
 		notifySkillChange:         cfg.NotifySkillChange,
 		notifySkillChangeText:     cfg.NotifySkillChangeText,
-		lastInteraction:           now,
+		bootedAt:                  now,
 		lastReflection:            now,
 		// Like lastReflection, anchor to boot so a FRESH agent waits a full
 		// interval before its first consolidation rather than firing one
@@ -378,7 +386,8 @@ func (r *Runner) Stop() {
 	}
 }
 
-// NotifyInteraction records user interaction (message received or background branch completed).
+// NotifyInteraction records an inbound human interaction (message or slash
+// command received) in the in-process receipt stamp. See LastUserActivity.
 func (r *Runner) NotifyInteraction() {
 	r.mu.Lock()
 	r.lastInteraction = time.Now()

@@ -76,8 +76,8 @@ type appConn struct {
 
 	// Platform lifecycle callbacks, wired by the gateway via
 	// SetLifecycleCallback (mirror of telegram.Bot's hooks). OnUserMessage
-	// fires on each inbound user message/command (drives the periodic runner's
-	// lastInteraction — reflection/consolidation/reset-idle-guard gate on it).
+	// fires on each inbound user message/command (the periodic runner's
+	// in-process receipt stamp, folded into Runner.LastUserActivity).
 	// Stored on the per-agent PrimaryBot instance; set once at startup, read
 	// concurrently during turns — the same set-once contract as telegram. The
 	// turn-boundary hooks (cache-warm, warning flush) moved to the Agent (see

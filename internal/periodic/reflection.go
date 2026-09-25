@@ -29,9 +29,9 @@ func (r *Runner) maybeReflection() {
 
 	now := time.Now()
 
+	sinceLastInteraction := r.sinceUserActivity()
 	r.mu.Lock()
 	lastReflection := r.lastReflection
-	sinceLastInteraction := time.Since(r.lastInteraction)
 	running := r.reflectionRunning
 	consolidationRunning := r.consolidationRunning
 	resetRunning := r.resetRunning

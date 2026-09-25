@@ -25,8 +25,8 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 		return
 	}
 
+	elapsed := r.sinceUserActivity()
 	r.mu.Lock()
-	elapsed := time.Since(r.lastInteraction)
 	running := r.backgroundRunning
 	sinceLastBgEnd := time.Since(r.lastBackgroundEnded)
 	lastBgEndZero := r.lastBackgroundEnded.IsZero()

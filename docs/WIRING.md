@@ -2501,10 +2501,11 @@ ack seeded to the current high-water, idempotent for an already-attached reader)
 **Platform lifecycle callbacks:** `SetLifecycleCallback` stores the gateway's
 `OnUserMessage`/`OnTurnComplete`/`OnTurnEnd` hooks on the per-agent `appConn`
 (`PrimaryBot`), mirroring telegram's `Bot` fields. `OnUserMessage` fires from
-`routeUserTurn` (right before `agent.Enqueue`) and `routeCommand` — it is the
-**only** signal the periodic runner's `lastInteraction` receives on this
-transport, so reflection / consolidation / the reset idle-guard all depend on
-it. `OnTurnComplete`/`OnTurnEnd` fire from `appConn.WrapTurn` (complete after
+`routeUserTurn` (right before `agent.Enqueue`) and `routeCommand` — it feeds
+the periodic runner's in-process receipt stamp, which `Runner.LastUserActivity`
+folds into the persisted `last_user_activity_at` (see Reflection & Consolidation
+Timers); for `routeCommand` it is the only activity signal, since a command
+starts no turn. `OnTurnComplete`/`OnTurnEnd` fire from `appConn.WrapTurn` (complete after
 the turn body returns, end deferred last) — same shape as `telegram.Bot.WrapTurn`.
 
 **Outbound — `appConn` (`conn.go`)** implements `platform.Connection`,
@@ -2891,9 +2892,11 @@ Entry points:
 
 Reflection and consolidation run on the shared `periodic.Runner` tick (30s default, see the package doc comment on `internal/periodic/runner.go`). `keepalive.go` split (2026-07-16) along its timer families — one file per mechanism, all methods on the same `*Runner`: `internal/periodic/background.go` (`maybeBackgroundWork`), `cleanup.go` (`maybeReset` + idle/stale cleanup), `consolidation.go` (`maybeConsolidation`), `reflection.go` (`maybeReflection`); `keepalive.go` itself now holds only the keepalive-proper mechanism. `runner.go` owns the shared tick loop and `RunnerConfig`.
 
+**User-activity lookup** (`internal/periodic/user_activity.go`, #2023). Every agent-scoped "has the human been idle?" check goes through `Runner.LastUserActivity()` / `sinceUserActivity()`: the reflection interval + backend quiet-period gates, `consolidation_max_idle`, the background-work idle interval, the `reset_idle_guard`, and the warning dispatchers' active/inactive cadence (`lastUserMsgFn` in `periodic_setup.go`). It returns the max of the **persisted** `session_index.last_user_activity_at` (`SessionIndex.LastUserActivityForAgent`, read live each call — written by the turn path on interactive human turns only) and the runner's **in-process receipt stamp** (`NotifyInteraction`, fed by the platforms' `OnUserMessage`; zero at boot, covers slash commands and messages still queued behind an in-flight turn). Nothing is seeded from boot time, so a restart cannot make an idle agent look active. The one boot fallback: an agent with **no** recorded interaction at all uses `bootedAt` in the scheduler gates (pre-#2023 behaviour, kept on purpose); the dispatchers see zero there (inactive cadence), also as before. Session-scoped checks read the same column per session instead: keepalive `max_user_idle` (`SessionIndex.LastUserActivity`) and the `/send --if-user-active` gate.
+
 **Interval reflection** (`maybeReflection`, `internal/periodic/reflection.go`):
 1. Check `interval_enabled` (nil = true)
-2. Check wall-clock interval elapsed and user not idle (`sinceLastInteraction` must be ≤ interval; `lastInteraction` is fed by the platform `OnUserMessage` lifecycle callback — wired on telegram, discord, and app providers. A transport that doesn't fire it leaves `lastInteraction` frozen at boot, so this gate skips forever for that agent.)
+2. Check wall-clock interval elapsed and user not idle (`sinceUserActivity()` must be ≤ interval — see **User-activity lookup** below)
 3. Query `session_index` for active chat sessions with `last_activity_at > last_reflection` (per-session tracking)
 4. Resolve prompt via `prompts.ResolvePrompt`
 5. Iterate all matching sessions: `branchFn("reflection", sessionKey, promptText, true)` for each
@@ -2906,7 +2909,7 @@ Reflection runs before consolidation so the latest memory content is available. 
 **Consolidation** (`maybeConsolidation`, `internal/periodic/consolidation.go`) — config now under `[maintenance]` (`r.maintCfg`):
 1. Check `consolidation_enabled` (nil = true)
 2. Compute next-fire via `parseSchedule(consolidation_time).nextFire(...)` — `consolidation_time` is `"HH:MM"` daily (process tz) or a Go duration; persisted last-run in state store
-3. Check recent user activity (within 1h)
+3. Check recent user activity (`sinceUserActivity()` ≤ `consolidation_max_idle`)
 4. Check reflection / reset is not running
 5. Resolve prompt via `prompts.ResolvePrompt`
 6. Fire branch on default session: `branchFn("consolidation", parentKey, promptText, true)`

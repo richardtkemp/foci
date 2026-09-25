@@ -67,9 +67,9 @@ func (r *Runner) maybeReset(ctx context.Context) {
 
 	now := timeutil.Now()
 
+	sinceLastInteraction := r.sinceUserActivity()
 	r.mu.Lock()
 	lastReset := r.lastReset
-	sinceLastInteraction := time.Since(r.lastInteraction)
 	running := r.resetRunning
 	reflectionRunning := r.reflectionRunning
 	consolidationRunning := r.consolidationRunning

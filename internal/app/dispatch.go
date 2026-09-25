@@ -895,10 +895,10 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 	if text != "" {
 		b.send(fap.ServerMessage{ConversationID: convID, MessageID: inID, Role: "user", Text: text})
 	}
-	// User message confirmed bound for the agent — record interaction. This is
-	// the app transport's only lastInteraction signal (the periodic runner gates
-	// reflection/consolidation/reset-idle-guard on it); without it those timers
-	// see "idle since boot" forever and never fire on app-driven agents.
+	// User message confirmed bound for the agent — record interaction. The turn
+	// it starts also writes last_user_activity_at, but only once it runs; this
+	// receipt stamp covers the gap while it queues behind an in-flight turn
+	// (both feed Runner.LastUserActivity).
 	if conn.OnUserMessage != nil {
 		conn.OnUserMessage()
 	}
