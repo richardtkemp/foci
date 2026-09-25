@@ -44,18 +44,18 @@ jq -s 'sort_by(.cost_usd) | reverse | .[:5]' file.jsonl
 # Extract a section by heading
 mdq '# Section Name' file.md
 
-# Nested section
-mdq '## Parent > ### Child' file.md
-
-# List items
-mdq '# Section > list' file.md
-
-# Code blocks
-mdq '# Section > code' file.md
-
-# Tables
-mdq '# Section > table' file.md
+# Narrow within a section: chain selectors with ' | '
+mdq '# Parent | # "Child"' file.md        # nested section
+mdq '# Section | - *' file.md             # bullet-list items (numbered: '1. *')
+mdq '# Section | ```' file.md             # code blocks (by language: '```bash')
+mdq '# Section | :-: * :-: *' file.md     # tables (columns :-: rows)
 ```
+
+The wrapper auto-quotes only the FIRST heading (before the first ` | `), so it may be pasted
+verbatim at any level. Headings later in the chain are raw mdq syntax: write a single `#` and
+quote the text (`# "2. Setup"`). `## Child` there is invalid, and unquoted text with punctuation
+can miss — both just print nothing, exit 1. Sub-element matches aren't whole sections, so they come
+back as the re-render (stderr says so).
 
 Use instead of `cat` for large markdown files. Extract just the section you need.
 

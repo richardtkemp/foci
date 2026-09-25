@@ -39,6 +39,8 @@
 #        mdq '# Exact' file.md
 #        mdq '## 7. Open: ship now or defer?' file.md   # would be a syntax error unwrapped
 #        mdq --raw '## Some Heading' file.md             # source bytes, not the render
+#        mdq '## Some Heading | - *' file.md             # only the heading is quoted;
+#                                                        # the list selector passes through
 
 set -uo pipefail
 
@@ -296,13 +298,29 @@ if [[ $# -ge 1 && "$1" == \#* ]]; then
     # Strip the leading run of '#' plus one optional space to get heading text.
     text=$(sed -E 's/^#+[[:space:]]?//' <<<"$1")
     shift
-    if [[ "$text" == '"'*'"' ]]; then
-        # Caller already quoted it — preserve verbatim.
+    # #2006: only the HEADING TEXT is ours to quote. mdq chains selectors with
+    # ' | ' ('# A | - *' = the list items under section A), and quoting the whole
+    # argument turned that into a heading literally named 'A | - *' — nothing
+    # matched. So quote the text before the first ' | ' and pass the rest
+    # through as selector syntax. A heading can itself contain ' | ' (a pasted
+    # '## Cost | Benefit'), so the split is kept only if mdq accepts the result
+    # as a selector; otherwise the whole text is one heading, as before. On
+    # /dev/null a valid selector can only produce "no match", which is silent;
+    # any stderr is a parse error.
+    qre='^"([^"\\]|\\.)*"'
+    if [[ "$text" =~ $qre ]]; then
+        # Caller already quoted the heading — preserve it and any chained
+        # selector after it verbatim.
         selector="# $text"
     else
         # Escape any embedded double-quotes, then wrap as a literal substring.
         esc=${text//\"/\\\"}
         selector="# \"$esc\""
+        if [[ "$text" == *' | '* ]]; then
+            h=${text%% | *}
+            split="# \"${h//\"/\\\"}\" | ${text#* | }"
+            [[ -z $("$MDQ" "$split" /dev/null 2>&1 >/dev/null) ]] && selector=$split
+        fi
     fi
     if (( raw )); then
         emit_raw_or_render "$selector" "$@"

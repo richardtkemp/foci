@@ -344,4 +344,78 @@ if printf '# S\n' | "$MDQ" --raw '# S' >/dev/null 2>/dev/null; then
 else
     echo "ok   explicit --raw on a stream fails instead of silently rendering"
 fi
+# ---------------------------------------------------------------------------
+# #2006: sub-element selectors must pass through the heading auto-quote.
+# The #737 auto-quote wrapped the WHOLE first argument as one literal heading,
+# so mdq's own chaining ('# A | - *' = the list items under section A) became
+# '# "A | - *"' — a heading nobody has — and printed nothing, exit 1, while the
+# real binary with the same args worked. Only the heading text before the first
+# ' | ' may be quoted; the rest is mdq selector syntax and passes through.
+# Each case compares against the REAL binary given the equivalent hand-quoted
+# selector, so the expectation is mdq's own behaviour, not a transcription.
+# ---------------------------------------------------------------------------
+SUB="$TMP/sub.md"
+cat > "$SUB" <<'EOF'
+# Top
+
+## Parent
+
+intro
+
+### Child
+
+- item one
+- item two
+
+```bash
+echo hi
+```
+
+| a | b |
+|---|---|
+| 1 | 2 |
+
+## What? (really)
+
+- odd item
+
+## Cost | Benefit
+
+pipe heading body
+
+## Other
+
+- other item
+EOF
+sub_case() { # sub_case <label> <wrapper-selector> <equivalent real-binary selector>
+    local want got rc
+    want=$("$REAL_MDQ" "$3" "$SUB" 2>&1)
+    got=$("$MDQ" "$2" "$SUB" 2>/dev/null); rc=$?
+    if [[ -z "$want" ]]; then
+        echo "FAIL #2006 $1: the real binary printed nothing for '$3' — bad test fixture"; RC=1; return
+    fi
+    check "#2006 $1 (rc)" "0" "$rc"
+    check "#2006 $1 (out)" "$want" "$got"
+}
+sub_case "list items under a section"      '# Parent | - *'          '# "Parent" | - *'
+sub_case "multi-# heading + code block"    '## Parent | ```bash'     '# "Parent" | ```bash'
+sub_case "table under a section"           '# Parent | :-: * :-: *'  '# "Parent" | :-: * :-: *'
+sub_case "pre-quoted heading + list"       '# "Parent" | - *'        '# "Parent" | - *'
+# The heading part must STILL be auto-quoted: regex specials in it are literal.
+sub_case "regex-special heading + list"    '## What? (really) | - *' '# "What? (really)" | - *'
+# A section-to-section chain is still a whole section, so the default
+# source-bytes path applies to it: the Child section verbatim.
+child_start=$(grep -n '^### Child$' "$SUB" | cut -d: -f1)
+child_end=$(( $(grep -n '^## What' "$SUB" | cut -d: -f1) - 1 ))
+chain_out=$("$MDQ" '# Parent | # Child' "$SUB" 2>/dev/null); chain_rc=$?
+check "#2006 section chain (rc)" "0" "$chain_rc"
+check "#2006 section chain emits the child section's source bytes" \
+    "$(sed -n "${child_start},${child_end}p" "$SUB")" "$chain_out"
+# A heading that itself contains ' | ' (and whose tail is not selector syntax)
+# must keep resolving as one pasted heading — #737's promise.
+pipe_out=$("$MDQ" --render '## Cost | Benefit' "$SUB" 2>/dev/null); pipe_rc=$?
+check "#2006 pasted heading containing ' | ' still resolves (rc)" "0" "$pipe_rc"
+check "#2006 pasted heading containing ' | ' still resolves (out)" \
+    "$("$REAL_MDQ" '# "Cost | Benefit"' "$SUB")" "$pipe_out"
+
 exit $RC
