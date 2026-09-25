@@ -49,7 +49,7 @@ done
 git -C "$repo" diff --quiet HEAD -- "${files[@]}"
 case $? in 0) exit 1 ;; 1) exit 0 ;; *) exit 2 ;; esac
 '''
-reason = "That checkout/restore would discard uncommitted edits. To revert a file for a fail-arm, use git stash push -- <file> instead: the file goes back to HEAD the same way, and git stash pop brings the edits back."
+reason = "That checkout/restore would discard uncommitted edits. To revert a file for a fail-arm, stash it with a unique tag and restore it by SHA; the stash stack is shared with other sessions, so never use a bare pop. git stash push -m <tag> -- <file>; sha=$(git stash list --format='%H %gs' | grep <tag> | cut -d' ' -f1); run the test; git stash apply $sha; then drop that entry, finding its stash@{n} by tag."
 
 # 9: a commit on main in a shared repo's main checkout, wherever it is aimed.
 [[agents.backend_config.pretool_rules]]
