@@ -144,7 +144,7 @@ func (t *HTTPTransport) Submit(body []byte) (id string, ok bool, code, msg strin
 	t.asks[envID] = ha
 	t.mu.Unlock()
 
-	if err := t.srv.handleFrame(connID, &httpConnWriter{t: t}, body); err != nil {
+	if err := t.srv.handleFrame(connID, "http", &httpConnWriter{t: t}, body); err != nil {
 		t.mu.Lock()
 		delete(t.asks, envID)
 		t.mu.Unlock()

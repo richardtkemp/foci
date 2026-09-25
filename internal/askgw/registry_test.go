@@ -58,12 +58,12 @@ func TestRegistryAnswerIsolation(t *testing.T) {
 	w1 := &mockWriter{}
 	w2 := &mockWriter{}
 
-	_, err := r.Add(conn1, "same-id", "agent1", "agent1/chat1", w1, makeQuestions(), "msg1", 0, nil)
+	_, err := r.Add(conn1, "same-id", "agent1", "agent1/chat1", w1, makeQuestions(), "msg1", "", 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = r.Add(conn2, "same-id", "agent2", "agent2/chat2", w2, makeQuestions(), "msg2", 0, nil)
+	_, err = r.Add(conn2, "same-id", "agent2", "agent2/chat2", w2, makeQuestions(), "msg2", "", 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestRegistryCancel(t *testing.T) {
 	w := &mockWriter{}
 	cancelCalled := false
 
-	_, err := r.Add(connID, "ask-1", "agent", "agent/chat", w, makeQuestions(), "msg-1", 0, func() {
+	_, err := r.Add(connID, "ask-1", "agent", "agent/chat", w, makeQuestions(), "msg-1", "", 0, func() {
 		cancelCalled = true
 	})
 	if err != nil {
@@ -143,7 +143,7 @@ func TestRegistryTimeout(t *testing.T) {
 	connID := r.RegisterConn()
 	w := &mockWriter{}
 
-	_, err := r.Add(connID, "ask-1", "agent", "agent/chat", w, makeQuestions(), "msg-1", 50*time.Millisecond, nil)
+	_, err := r.Add(connID, "ask-1", "agent", "agent/chat", w, makeQuestions(), "msg-1", "", 50*time.Millisecond, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestRegistryUnregisterCleansUp(t *testing.T) {
 	w := &mockWriter{}
 	cancelCalled := false
 
-	_, _ = r.Add(connID, "ask-1", "agent", "agent/chat", w, makeQuestions(), "msg-1", 0, func() {
+	_, _ = r.Add(connID, "ask-1", "agent", "agent/chat", w, makeQuestions(), "msg-1", "", 0, func() {
 		cancelCalled = true
 	})
 
@@ -216,7 +216,7 @@ func TestRegistryMultiQuestionFlow(t *testing.T) {
 	connID := r.RegisterConn()
 	w := &mockWriter{}
 
-	_, err := r.Add(connID, "ask-1", "agent", "agent/chat", w, qs, "msg-1", 0, nil)
+	_, err := r.Add(connID, "ask-1", "agent", "agent/chat", w, qs, "msg-1", "", 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

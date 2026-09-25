@@ -43,7 +43,7 @@ Reports an out-of-band update about a previously **answered** ask — e.g. `aisu
 **Rendering:** the server looks up the answered-ask's chat message (recorded when the human's answer was sent — see Registry's `recordAnswered`) and renders the notify onto it:
 - **Primary: edit in place.** The message the human answered is edited to show the completion status — a checkmark/cross plus `completed, exit N` when `exit_code` is present (`✅ completed, exit 0` / `❌ completed, exit 1`), else a status line built from `status`, plus `message` appended if given.
 - **Fallback: standalone message.** If the platform message ID wasn't captured (e.g. the connection only supports the plain-text button fallback) or the edit itself fails, the same text is sent as a new message to the session's chat instead.
-- **Unknown/expired `id`:** a notify referencing an ask that was never answered (wrong id, never asked, or the answer aged out — answered-ask info is retained for 15 minutes, mirroring the HTTP transport's own abandoned-answer TTL) is logged and dropped. There's no reply frame to report that back through.
+- **Unknown/expired `id`:** a notify referencing an ask that was never answered (wrong id, never asked, or the answer aged out — answered-ask info is retained for 15 minutes, mirroring the HTTP transport's own abandoned-answer TTL) is logged (INFO) and dropped. There's no reply frame to report that back through.
 
 This lights up for **both** transports at once: the Unix-socket path acts on an inbound `notify` frame the same way regardless of which transport originally submitted the `ask` (socket or HTTP — see HTTP transport below for a remote client that can't hold a socket connection open to send one).
 

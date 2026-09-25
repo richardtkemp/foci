@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -187,13 +188,18 @@ func (s *Server) handleConn(conn net.Conn) {
 	}
 
 	connID := s.registry.RegisterConn()
+	askgwLog.Infof("conn=%d opened uid=%d", connID, uid)
 	defer func() {
-		for _, e := range s.registry.UnregisterConn(connID) {
+		pending := s.registry.UnregisterConn(connID)
+		for _, e := range pending {
 			if e.cancelFn != nil {
 				e.cancelFn()
 			}
+			askgwLog.Infof("ask abandoned id=%s conn=%d: connection closed after %s summary=%q", e.askID, connID, s.registry.waited(e), e.summary)
 		}
+		askgwLog.Infof("conn=%d closed uid=%d pending_cancelled=%d", connID, uid, len(pending))
 	}()
+	client := "socket uid=" + strconv.FormatUint(uint64(uid), 10)
 
 	cw := &syncConnWriter{conn: conn}
 	scanner := bufio.NewScanner(conn)
@@ -204,7 +210,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		if len(line) == 0 {
 			continue
 		}
-		if err := s.handleFrame(connID, cw, line); err != nil {
+		if err := s.handleFrame(connID, client, cw, line); err != nil {
 			askgwLog.Warnf("conn=%d: %v", connID, err)
 			if ef, ok := err.(*frameError); ok {
 				_ = cw.WriteFrame(ErrorFrame{
@@ -248,7 +254,9 @@ func errFrame(id, code, msg string) *frameError {
 
 func (e *frameError) Fatal() *frameError { e.fatal = true; return e }
 
-func (s *Server) handleFrame(connID uint64, cw connWriter, line []byte) error {
+// handleFrame dispatches one inbound frame. client names the transport and
+// caller ("socket uid=N" / "http") for the lifecycle log lines only.
+func (s *Server) handleFrame(connID uint64, client string, cw connWriter, line []byte) error {
 	proto, typ, id, err := DecodeEnvelope(line)
 	if err != nil {
 		return errFrame("", "malformed", err.Error()).Fatal()
@@ -259,7 +267,7 @@ func (s *Server) handleFrame(connID uint64, cw connWriter, line []byte) error {
 
 	switch typ {
 	case TypeAsk:
-		return s.handleAsk(connID, cw, id, line)
+		return s.handleAsk(connID, client, cw, id, line)
 	case TypeCancel:
 		return s.handleCancel(connID, id, line)
 	case TypeNotify:
@@ -271,7 +279,7 @@ func (s *Server) handleFrame(connID uint64, cw connWriter, line []byte) error {
 	}
 }
 
-func (s *Server) handleAsk(connID uint64, cw connWriter, id string, line []byte) error {
+func (s *Server) handleAsk(connID uint64, client string, cw connWriter, id string, line []byte) error {
 	ask, err := DecodeAsk(line)
 	if err != nil {
 		return errFrame(id, "malformed", err.Error())
@@ -280,8 +288,16 @@ func (s *Server) handleAsk(connID uint64, cw connWriter, id string, line []byte)
 		return errFrame(id, "malformed", err.Error())
 	}
 
+	// INFO on arrival (#2021): before this line existed, an ask that was
+	// never answered left no trace until its DEBUG timeout line hours later.
+	summary := askSummary(ask)
+	timeout := s.frameTimeout(ask)
+	askgwLog.Infof("ask arrived id=%s conn=%d via=%s source=%q agent=%q questions=%d timeout=%s summary=%q",
+		id, connID, client, ask.Source, ask.Agent, len(ask.Questions), formatTimeout(timeout), summary)
+
 	agentID, sessionKey := s.resolveSession(ask.Agent)
 	if sessionKey == "" {
+		askgwLog.Warnf("ask unavailable id=%s conn=%d: no chat session for agent %q", id, connID, ask.Agent)
 		s.registry.ResolveUnavailable(cw, id)
 		return nil
 	}
@@ -289,7 +305,7 @@ func (s *Server) handleAsk(connID uint64, cw connWriter, id string, line []byte)
 	qs := askFrameToQuestions(ask)
 	firstIdx := 0
 	msgID := askgwMsgID(id, firstIdx)
-	e, err := s.registry.Add(connID, id, agentID, sessionKey, cw, qs, msgID, s.frameTimeout(ask), func() {
+	e, err := s.registry.Add(connID, id, agentID, sessionKey, cw, qs, msgID, summary, timeout, func() {
 		s.cancelPrompt(askgwMsgID(id, firstIdx), "⌛ Cancelled by askgw")
 	})
 	if err != nil {
@@ -324,10 +340,13 @@ func (s *Server) presentQuestion(e *entry, connID uint64, askID string, idx int)
 	platformMsgID, ok := s.present(e.agentID, e.sessionKey, msgID, text, summary, choices, func(data string) {
 		s.onAnswer(connID, askID, data)
 	})
-	if ok {
-		s.registry.SetPresentedMsgID(connID, askID, platformMsgID)
+	if !ok {
+		askgwLog.Warnf("ask present failed id=%s conn=%d agent=%s session=%s question=%d/%d", askID, connID, e.agentID, e.sessionKey, idx+1, len(e.questions))
+		return false
 	}
-	return ok
+	s.registry.SetPresentedMsgID(connID, askID, platformMsgID)
+	askgwLog.Infof("ask posted id=%s conn=%d agent=%s session=%s question=%d/%d platform_msg=%q", askID, connID, e.agentID, e.sessionKey, idx+1, len(e.questions), platformMsgID)
+	return true
 }
 
 func (s *Server) onAnswer(connID uint64, askID, data string) {
@@ -427,7 +446,7 @@ func (s *Server) HandleNotifyFrame(body []byte) (id string, ok bool, code, msg s
 func (s *Server) renderNotify(nf *NotifyFrame) {
 	info := s.registry.getAnswered(nf.ID)
 	if info == nil {
-		askgwLog.Debugf("notify for unknown or expired ask id=%s", nf.ID)
+		askgwLog.Infof("notify for unknown or expired ask id=%s", nf.ID)
 		return
 	}
 	text := formatNotifyText(nf)
@@ -461,6 +480,40 @@ func formatNotifyText(nf *NotifyFrame) string {
 		status += "\n" + nf.Message
 	}
 	return status
+}
+
+// askSummaryMax bounds askSummary's output in runes, so one ask is one
+// readable log line however long the question text is.
+const askSummaryMax = 120
+
+// askSummary is a one-line description of ask for the lifecycle log lines:
+// its Title if set, else the first question's "Header: Question" (for aisudo
+// that is the command being approved). Whitespace is collapsed and the result
+// truncated to askSummaryMax runes. It carries only what the human is shown
+// in chat anyway.
+func askSummary(ask *AskFrame) string {
+	s := ask.Title
+	if s == "" && len(ask.Questions) > 0 {
+		q := ask.Questions[0]
+		s = q.Question
+		if q.Header != "" {
+			s = q.Header + ": " + s
+		}
+	}
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > askSummaryMax {
+		s = string(r[:askSummaryMax-1]) + "…"
+	}
+	return s
+}
+
+// formatTimeout renders an ask's timeout for the arrival log line; zero
+// means the ask never times out.
+func formatTimeout(d time.Duration) string {
+	if d <= 0 {
+		return "none"
+	}
+	return d.String()
 }
 
 func (s *Server) frameTimeout(ask *AskFrame) time.Duration {

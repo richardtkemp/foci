@@ -3,6 +3,8 @@ package askgw
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +28,13 @@ type entry struct {
 	msgID      string
 	timer      clock.Timer
 	cancelFn   func()
+
+	// summary is the one-line description of the ask (see askSummary) and
+	// arrivedAt the registry-clock time it was added — both exist only so
+	// the lifecycle log lines (answered/dismissed/timeout/cancelled) can say
+	// WHAT resolved and how long it waited (#2021).
+	summary   string
+	arrivedAt time.Time
 
 	// platformMsgID is the platform-native message ID of the most recently
 	// presented question (overwritten as a multi-question ask advances), set
@@ -148,7 +157,7 @@ func (r *Registry) UnregisterConn(connID uint64) []*entry {
 	return entries
 }
 
-func (r *Registry) Add(connID uint64, askID, agentID, sessionKey string, w connWriter, questions []AskQuestion, msgID string, timeout time.Duration, cancelFn func()) (*entry, error) {
+func (r *Registry) Add(connID uint64, askID, agentID, sessionKey string, w connWriter, questions []AskQuestion, msgID, summary string, timeout time.Duration, cancelFn func()) (*entry, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	m := r.conns[connID]
@@ -168,6 +177,8 @@ func (r *Registry) Add(connID uint64, askID, agentID, sessionKey string, w connW
 		answers:    make(map[string]json.RawMessage),
 		msgID:      msgID,
 		cancelFn:   cancelFn,
+		summary:    summary,
+		arrivedAt:  r.clock.Now(),
 	}
 	if timeout > 0 {
 		e.timer = r.clock.AfterFunc(timeout, func() {
@@ -225,7 +236,13 @@ func (r *Registry) Cancel(connID uint64, askID string) bool {
 	if e.cancelFn != nil {
 		e.cancelFn()
 	}
+	askgwLog.Infof("ask cancelled by client id=%s conn=%d after %s summary=%q", askID, connID, r.waited(e), e.summary)
 	return true
+}
+
+// waited is how long e has been pending, on the registry's clock.
+func (r *Registry) waited(e *entry) time.Duration {
+	return r.clock.Now().Sub(e.arrivedAt).Round(time.Millisecond)
 }
 
 func (r *Registry) ResolveTimeout(connID uint64, askID string) {
@@ -239,7 +256,9 @@ func (r *Registry) ResolveTimeout(connID uint64, askID string) {
 		ID:       askID,
 		Status:   StatusTimeout,
 	})
-	askgwLog.Debugf("timeout conn=%d id=%s", connID, askID)
+	// WARN, not INFO: an ask nobody answered is usually a missed approval
+	// (#2021 — two sudo requests timed out silently at DEBUG).
+	askgwLog.Warnf("ask timed out id=%s conn=%d after waiting %s with no answer session=%s summary=%q", askID, connID, r.waited(e), e.sessionKey, e.summary)
 }
 
 func (r *Registry) resolveDismissed(connID uint64, askID string) {
@@ -253,7 +272,7 @@ func (r *Registry) resolveDismissed(connID uint64, askID string) {
 		ID:       askID,
 		Status:   StatusDismissed,
 	})
-	askgwLog.Debugf("dismissed conn=%d id=%s", connID, askID)
+	askgwLog.Infof("ask dismissed id=%s conn=%d after %s summary=%q", askID, connID, r.waited(e), e.summary)
 }
 
 func (r *Registry) ResolveUnavailable(w connWriter, askID string) {
@@ -297,5 +316,21 @@ func (r *Registry) sendAnswer(connID uint64, askID string) {
 		Status:   StatusAnswered,
 		Answers:  e.answers,
 	})
-	askgwLog.Debugf("answered conn=%d id=%s answers=%d", connID, askID, len(e.answers))
+	askgwLog.Infof("ask answered id=%s conn=%d after %s answers=%s summary=%q", askID, connID, r.waited(e), formatAnswers(e.answers), e.summary)
+}
+
+// formatAnswers renders an ask's answers as "key=value" pairs in key order,
+// for the answered log line. Values are the raw JSON the client receives
+// (option labels — never free text the human typed).
+func formatAnswers(answers map[string]json.RawMessage) string {
+	keys := make([]string, 0, len(answers))
+	for k := range answers {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		parts[i] = k + "=" + string(answers[k])
+	}
+	return "[" + strings.Join(parts, " ") + "]"
 }
