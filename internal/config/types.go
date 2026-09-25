@@ -495,6 +495,9 @@ type SummaryConfig struct {
 	SummaryContextChars  *int  `toml:"summary_context_chars"                  hot:"immediate" desc:"Maximum characters of conversation context sent to the model when auto-summarizing an oversized tool result. Default 6000"`
 	MaxSummaryInputChars *int  `toml:"max_summary_input_chars"                hot:"immediate" desc:"Maximum characters of the oversized tool result itself fed into the summarizer; the full result is still saved to disk regardless. Default 100000"`
 	MaxImagePixels       *int  `toml:"max_image_pixels"                       hot:"immediate" desc:"Images larger than this many total pixels, width times height, are resized down before being sent to the model. 0 disables downscaling; default is roughly 1920x1080"`
+	// SummaryModel is delegated-only: API agents pick the summary model from
+	// the cheap model group, a namespace a delegated backend can't resolve.
+	SummaryModel *string `toml:"summary_model" hot:"immediate" desc:"Delegated agents only: model for foci_summary and the /prompts diff summary, named as the agent's backend expects it (e.g. haiku for Claude Code, provider/model for opencode). Leave unset for the backend's own cheap model (Claude Code: haiku), or the agent's own model on backends without one. API agents use the cheap model group instead"`
 }
 
 // Voice WebSocket resource limits (P1-10). Defaults live in the VoiceConfig

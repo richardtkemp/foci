@@ -239,7 +239,13 @@ type defaultingBackend struct{ batchTurnBackend }
 
 func (*defaultingBackend) BatchDefaultModel() string { return "sonnet" }
 
-// TestRunBatch_ModelSelection: an explicit model wins; otherwise the backend's
+// cheapBackend also has a cheap tier, as ccstream does.
+type cheapBackend struct{ defaultingBackend }
+
+func (*cheapBackend) BatchCheapModel() string { return "haiku" }
+
+// TestRunBatch_ModelSelection: an explicit model wins; otherwise, for a Cheap
+// request, the backend's cheap model (CC: haiku); otherwise the backend's
 // batch default (CC: sonnet); otherwise the agent's own model.
 func TestRunBatch_ModelSelection(t *testing.T) {
 	type batchBackend interface {
@@ -251,18 +257,24 @@ func TestRunBatch_ModelSelection(t *testing.T) {
 		name  string
 		be    batchBackend
 		model string
+		cheap bool
 		want  string
 	}{
-		{"explicit override", &defaultingBackend{}, "haiku", "haiku"},
-		{"backend batch default", &defaultingBackend{}, "", "sonnet"},
-		{"no default: agent model", &batchTurnBackend{}, "", "opus"},
+		{"explicit override", &defaultingBackend{}, "haiku", false, "haiku"},
+		{"explicit override beats cheap", &cheapBackend{}, "sonnet", true, "sonnet"},
+		{"backend batch default", &defaultingBackend{}, "", false, "sonnet"},
+		{"cheap not asked: batch default", &cheapBackend{}, "", false, "sonnet"},
+		{"backend cheap model", &cheapBackend{}, "", true, "haiku"},
+		{"cheap, none: batch default", &defaultingBackend{}, "", true, "sonnet"},
+		{"no default: agent model", &batchTurnBackend{}, "", false, "opus"},
+		{"cheap, no defaults: agent model", &batchTurnBackend{}, "", true, "opus"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			c.be.completeTurns()
 			a := newBatchTestAgent(t, c.be)
 			if _, err := a.DelegatedManager.RunBatch(context.Background(), delegator.BatchRequest{
-				Prompt: "p", Model: c.model, OwnerSessionKey: "helen/c1", Purpose: delegator.BatchPurposeSummary,
+				Prompt: "p", Model: c.model, Cheap: c.cheap, OwnerSessionKey: "helen/c1", Purpose: delegator.BatchPurposeSummary,
 			}); err != nil {
 				t.Fatalf("RunBatch: %v", err)
 			}

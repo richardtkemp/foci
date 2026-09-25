@@ -240,6 +240,7 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	add("tools", "max_summary_chars", cfg.Tools.MaxSummaryChars)
 	add("tools", "max_summary_input_chars", cfg.Tools.MaxSummaryInputChars)
 	add("tools", "max_image_pixels", cfg.Tools.MaxImagePixels)
+	add("tools", "summary_model", cfg.Tools.SummaryModel)
 	add("tools", "auto_summarise", cfg.Tools.AutoSummarise)
 	add("tools", "tmux_command_timeout", cfg.Tools.TmuxCommandTimeout)
 	add("tools", "web_fetch_max_bytes", cfg.Tools.WebFetchMaxBytes)

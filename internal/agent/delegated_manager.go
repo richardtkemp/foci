@@ -345,8 +345,11 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 	if spec, ok := m.batchSpecFor(sessionKey); ok {
 		opts.SystemPrompt = spec.systemPrompt
 		opts.SystemPromptFunc = nil
+		cheap, hasCheap := be.(delegator.BatchCheapModeler)
 		if spec.model != "" {
 			opts.Model = spec.model
+		} else if spec.cheap && hasCheap {
+			opts.Model = cheap.BatchCheapModel()
 		} else if d, ok := be.(delegator.BatchModelDefaulter); ok {
 			opts.Model = d.BatchDefaultModel()
 		} else if opts.ModelFunc != nil {
@@ -1277,7 +1280,7 @@ func (m *DelegatedManager) RunBatch(ctx context.Context, req delegator.BatchRequ
 	}
 	batchKey := fmt.Sprintf("%s/b%d", root, time.Now().UnixNano())
 
-	m.setBatchSpec(batchKey, batchSpec{systemPrompt: req.SystemPrompt, model: req.Model, workDir: req.WorkDir})
+	m.setBatchSpec(batchKey, batchSpec{systemPrompt: req.SystemPrompt, model: req.Model, cheap: req.Cheap, workDir: req.WorkDir})
 	defer func() {
 		m.ResetSession(batchKey)
 		m.clearBatchSpec(batchKey)
@@ -1329,6 +1332,7 @@ func (m *DelegatedManager) RunBatch(ctx context.Context, req delegator.BatchRequ
 type batchSpec struct {
 	systemPrompt string // replaces the agent's composed prompt ("" = backend default)
 	model        string // "" = the backend's BatchDefaultModel, else the agent's
+	cheap        bool   // with model "": prefer the backend's BatchCheapModel
 	workDir      string // "" = the agent workspace
 }
 

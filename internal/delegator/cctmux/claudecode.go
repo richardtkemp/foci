@@ -25,6 +25,12 @@ func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {
 	return b, nil
 }
 
+// BatchCheapModel implements delegator.BatchCheapModeler: like ccstream, a
+// cheap-tier batch (foci_summary, the /prompts diff summary) runs on haiku.
+func (b *Backend) BatchCheapModel() string { return "haiku" }
+
+var _ delegator.BatchCheapModeler = (*Backend)(nil)
+
 // Backend drives Claude Code as a subprocess in a tmux pane.
 type Backend struct {
 	cfg        map[string]any

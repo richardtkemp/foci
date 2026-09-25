@@ -65,7 +65,7 @@ func resolveSharedSetup(p setupParams) *sharedAgentSetup {
 	// backend and never resolve a model group — so they get no resolver at all.
 	// A nil groupResolver cascades cleanly: configureAPI never runs for them,
 	// command/tool deps see nil (their call sites are nil-guarded), and the
-	// prompt-diff command falls back to a one-shot `claude --print`. Building one
+	// prompt-diff command runs as a RunBatch on the agent's backend. Building one
 	// here would also trip the resolver's no-API-agent guard on every use.
 	var groupResolver *config.GroupResolver
 	if !p.acfg.IsDelegated() {

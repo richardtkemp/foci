@@ -65,6 +65,12 @@ func (b *Backend) resolveBinary() string {
 // the agent's own, usually larger, model.
 func (b *Backend) BatchDefaultModel() string { return "sonnet" }
 
+// BatchCheapModel implements delegator.BatchCheapModeler: a batch that asks
+// for the cheap tier (foci_summary, the /prompts diff summary) runs on haiku.
+func (b *Backend) BatchCheapModel() string { return "haiku" }
+
+var _ delegator.BatchCheapModeler = (*Backend)(nil)
+
 // Backend implements delegator.Delegator using Claude Code's stream-json
 // NDJSON protocol. CC runs as a subprocess with structured stdin/stdout
 // communication — no tmux, no pane scraping, no JSONL file watching.

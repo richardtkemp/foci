@@ -708,10 +708,10 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, wakeC
 	// Delegated agents dispatch the summary tool through the agent's own
 	// DelegatedManager.RunBatch (BatchSummariser) — i.e. through whichever
 	// backend (claude-code, codex, opencode) the agent is actually configured
-	// to use, rather than always shelling `claude --print` (the old
-	// CLISummariser behaviour, which ran every delegated agent's foci_summary
-	// on claude even on codex/opencode backends — foci_todo #1317). (API
-	// agents use APISummariser.)
+	// to use (#1317). The model is [tools] summary_model when set, else the
+	// backend's cheap tier (CC: haiku), else the agent's own model — never a
+	// fixed name the backend may not resolve (#2032). (API agents use
+	// APISummariser.)
 	//
 	// The runner closure resolves ag.DelegatedManager lazily: buildExecRegistry
 	// runs BEFORE configureDelegated assigns ag.DelegatedManager (see below),
@@ -726,7 +726,8 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, wakeC
 			return nil
 		}
 		return a.DelegatedManager
-	}, "haiku", acfg.Workspace, acfg.ID, func() int { return p.resolvedLive.Load().Summary.MaxSummaryInputChars })
+	}, func() string { return p.resolvedLive.Load().Summary.SummaryModel },
+		acfg.Workspace, acfg.ID, func() int { return p.resolvedLive.Load().Summary.MaxSummaryInputChars })
 
 	// Register the exec-exported subset from the single data-driven table (see
 	// tool_table.go) — the same source of truth that drives the API path. The

@@ -149,6 +149,7 @@ var (
 		"background.can_run_background", "agent.background.can_run_background",
 		"tools.max_result_chars", "agent.tools.max_result_chars",
 		"tools.max_summary_input_chars", "agent.tools.max_summary_input_chars",
+		"tools.summary_model", "agent.tools.summary_model",
 		"tools.exec_auto_background", "agent.tools.exec_auto_background",
 		"tools.max_upload_file_size", "agent.tools.max_upload_file_size",
 		"tools.max_file_read_bytes", "agent.tools.max_file_read_bytes",

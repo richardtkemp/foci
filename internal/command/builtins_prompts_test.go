@@ -6,6 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"foci/internal/agent"
+	"foci/internal/config"
+	"foci/internal/delegator"
+	"foci/internal/tools"
 )
 
 // promptsCC returns a CommandContext with the given PromptsData injected via PromptsDataFn.
@@ -761,4 +766,71 @@ func TestDiffLines(t *testing.T) {
 			t.Errorf("missing +new line in:\n%s", result)
 		}
 	})
+}
+
+// startModelBackend records the model each session launches with.
+type startModelBackend struct {
+	mockPassBackend
+	models []string
+}
+
+func (b *startModelBackend) Start(_ context.Context, opts delegator.StartOptions) error {
+	b.models = append(b.models, opts.Model)
+	return nil
+}
+
+// TestPromptsCommandDiffDelegatedRunsBatch (#2032): on a delegated agent the
+// diff summary is a RunBatch on the agent's own backend (purpose prompt_diff,
+// so it is costed and traced like any turn) — not a `claude --print` shell-out,
+// and not skipped for want of an API client. The model is [tools]
+// summary_model when set.
+func TestPromptsCommandDiffDelegatedRunsBatch(t *testing.T) {
+	be := &startModelBackend{}
+	dm := &agent.DelegatedManager{
+		AgentID:    "helen",
+		StartOpts:  delegator.StartOptions{AgentID: "helen", WorkDir: t.TempDir(), Model: "opus"},
+		NewBackend: func() (delegator.Delegator, error) { return be, nil },
+	}
+	var purposes, prompts []string
+	dm.RunBatchTurn = func(ctx context.Context, sessionKey, prompt, purpose string) (string, error) {
+		purposes = append(purposes, purpose)
+		prompts = append(prompts, prompt)
+		if _, err := dm.Get(ctx, sessionKey); err != nil {
+			return "", err
+		}
+		return "BATCH SUMMARY", nil
+	}
+	resolved := &config.ResolvedAgentConfig{}
+	resolved.Summary.SummaryModel = "sonnet"
+
+	cc := promptsCC(PromptsData{
+		AgentID:       "helen",
+		Prompts:       []PromptInfo{{Label: "keepalive"}},
+		ResolvedTexts: map[string]string{"keepalive": "custom keepalive"},
+		DefaultTexts:  map[string]string{"keepalive": "default keepalive"},
+	})
+	cc.Agent = &agent.Agent{AgentID: "helen", DelegatedManager: dm}
+	cc.ResolvedLive = config.NewLiveValue(resolved)
+
+	result, err := PromptsCommand().Execute(tools.WithSessionKey(context.Background(), "helen/c1"), Request{Args: "diff keepalive"}, cc)
+	if err != nil {
+		t.Fatalf("Execute diff: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(result.DocPath) })
+	if len(purposes) != 1 || purposes[0] != delegator.BatchPurposePromptDiff {
+		t.Fatalf("batch purposes = %q, want one %q batch", purposes, delegator.BatchPurposePromptDiff)
+	}
+	if !strings.Contains(prompts[0], "custom keepalive") || !strings.Contains(prompts[0], "default keepalive") {
+		t.Errorf("batch prompt does not carry both versions:\n%s", prompts[0])
+	}
+	if len(be.models) != 1 || be.models[0] != "sonnet" {
+		t.Errorf("batch launched with models %q, want the configured [sonnet]", be.models)
+	}
+	body, err := os.ReadFile(result.DocPath)
+	if err != nil {
+		t.Fatalf("read DocPath: %v", err)
+	}
+	if !strings.Contains(string(body), "## Summary\n\nBATCH SUMMARY") {
+		t.Errorf("diff file lacks the batch summary:\n%s", body)
+	}
 }

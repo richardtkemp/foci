@@ -8,9 +8,8 @@ import (
 
 // Summariser produces a short response to a prompt over an arbitrary content
 // blob. Implementations differ only in transport: API mode goes through
-// provider.Send (foci's API client); CC mode shells out to `claude --print`,
-// reusing the parent CC subprocess's auth so the call charges subscription
-// mana rather than separate API spend.
+// provider.Send (foci's API client); delegated mode runs a batch turn on the
+// agent's own backend (BatchSummariser).
 //
 // The interface stays narrow so the dispatch decision can be made once at
 // agent setup time, where the agent's Backend/Delegator is visible.

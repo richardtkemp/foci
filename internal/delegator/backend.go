@@ -607,7 +607,8 @@ type ForkResult struct {
 
 // BatchRequest describes a batch run: a one-shot, non-interactive prompt
 // whose answer goes back to an in-process caller (memory consolidation, nudge
-// extraction, the delegated foci_summary tool) and never to a chat.
+// extraction, the delegated foci_summary tool and /prompts diff summary) and
+// never to a chat.
 //
 // There is no per-backend batch mechanism (#1962). DelegatedManager.RunBatch
 // runs the request as an ordinary delegated turn on a fresh, ephemeral child
@@ -625,6 +626,12 @@ type BatchRequest struct {
 	// Model, when non-empty, overrides the model. Empty = the backend's cheap
 	// batch default (BatchModelDefaulter; CC: sonnet), else the agent's model.
 	Model string
+	// Cheap asks, when Model is empty, for the backend's cheap model
+	// (BatchCheapModeler; CC: haiku) — for trivial one-shots like a summary.
+	// A backend without one runs the batch as if Cheap were unset. A model
+	// name is backend-specific, so a caller that wants "something cheap" sets
+	// this rather than naming a model the backend may not resolve (#2032).
+	Cheap bool
 	// WorkDir is the working directory for the run. Empty = the agent
 	// workspace.
 	WorkDir string
@@ -645,6 +652,7 @@ const (
 	BatchPurposeConsolidation   = "consolidation"
 	BatchPurposeNudgeExtraction = "nudge_extraction"
 	BatchPurposeSummary         = "summary"
+	BatchPurposePromptDiff      = "prompt_diff"
 )
 
 // BatchModelDefaulter is optionally implemented by backends that have a
@@ -652,6 +660,14 @@ const (
 // without it runs batches on the agent's own model.
 type BatchModelDefaulter interface {
 	BatchDefaultModel() string
+}
+
+// BatchCheapModeler is optionally implemented by backends that have a model
+// cheaper still than their batch default, for a BatchRequest with Cheap set.
+// The name must be one the backend itself resolves. A backend without it
+// falls back to its BatchModelDefaulter, else the agent's own model.
+type BatchCheapModeler interface {
+	BatchCheapModel() string
 }
 
 // SkipPermissions reports whether the backend config disables the permission

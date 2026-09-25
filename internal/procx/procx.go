@@ -326,8 +326,8 @@ const (
 // loop and returns the last error.
 //
 // Only safe to retry when the command has no observable side effects until it
-// actually execs (true for the grader and the batch `claude --print` spawn:
-// nothing happens until the child starts).
+// actually execs (true for the grader: nothing happens until the child
+// starts).
 func RunWithETXTBSYRetry(ctx context.Context, build func() *exec.Cmd) error {
 	return runWithETXTBSYRetry(ctx, ETXTBSYRetries, ETXTBSYBackoff, build)
 }

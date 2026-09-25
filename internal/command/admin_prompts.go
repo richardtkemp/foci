@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/display"
 	"foci/internal/provider"
 	"foci/internal/tempdir"
@@ -544,9 +545,10 @@ func promptsDiff(ctx context.Context, data PromptsData, name string, cc CommandC
 		return Response{Text: fmt.Sprintf("Prompt %q matches the embedded default — no differences.", label)}, nil
 	}
 
-	// Get AI summary
+	// Get AI summary: delegated agents run it on their own backend, API agents
+	// through their client. Neither → diff only.
 	summary := ""
-	if cc.Client != nil {
+	if isDelegated(cc) || cc.Client != nil {
 		var err error
 		summary, err = buildDiffSummary(ctx, cc, customText, defaultText, label)
 		if err != nil {
@@ -585,25 +587,53 @@ func promptsDiff(ctx context.Context, data PromptsData, name string, cc CommandC
 	}, nil
 }
 
-// promptDiffSystemPrompt is the system prompt for the delegated (claude-code)
-// one-shot diff summary. The user message carries the full instructions and the
-// two prompt versions; this just sets tone and suppresses preamble.
+// promptDiffSystemPrompt is the system prompt for the delegated batch diff
+// summary. The user message carries the full instructions and the two prompt
+// versions; this just sets tone and suppresses preamble.
 const promptDiffSystemPrompt = "You are a concise technical assistant. Compare the two prompt versions in the user message and summarise them exactly as instructed. Output plain prose only — no preamble, no markdown headers."
+
+// A delegated diff summary launches a fresh backend session (a CC or codex
+// cold start) before it can answer, so it gets longer than an API call.
+const (
+	promptDiffAPITimeout       = 30 * time.Second
+	promptDiffDelegatedTimeout = 90 * time.Second
+)
+
+func isDelegated(cc CommandContext) bool {
+	return cc.Agent != nil && cc.Agent.DelegatedManager != nil
+}
 
 // buildDiffSummary generates an AI summary comparing custom vs default prompt text.
 func buildDiffSummary(ctx context.Context, cc CommandContext, customText, defaultText, name string) (string, error) {
-	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
 	prompt := fmt.Sprintf("Below are two versions of the %q prompt. These prompts are injected into AI agent sessions to guide agent behaviour during specific operations (compaction, keepalive, memory formation, etc).\n\n--- DEFAULT (embedded) ---\n%s\n\n--- CURRENT (resolved from config) ---\n%s\n\nConcisely summarise: 1) what the default version instructs the agent to do, 2) what the current version instructs, 3) key differences.", name, defaultText, customText)
 
-	// Delegated (claude-code) agents have no model resolver or API client — run a
-	// one-shot `claude --print` instead, reusing the parent's subscription auth
-	// (charges mana, not API spend). Same pattern as the CLI summariser.
+	// Delegated agents have no model resolver or API client: run the summary
+	// as a batch on the agent's own backend, so it is costed and traced like
+	// any turn. The model is [tools] summary_model when set, else the
+	// backend's cheap tier (CC: haiku), else the agent's own (#2032).
+	if isDelegated(cc) {
+		callCtx, cancel := context.WithTimeout(ctx, promptDiffDelegatedTimeout)
+		defer cancel()
+		var model string
+		if cc.ResolvedLive != nil {
+			model = cc.ResolvedLive.Load().Summary.SummaryModel
+		}
+		text, err := cc.Agent.DelegatedManager.RunBatch(callCtx, delegator.BatchRequest{
+			Prompt:          prompt,
+			SystemPrompt:    promptDiffSystemPrompt,
+			Model:           model,
+			Cheap:           true,
+			OwnerSessionKey: tools.SessionKeyFromContext(ctx),
+			Purpose:         delegator.BatchPurposePromptDiff,
+		})
+		return strings.TrimSpace(text), err
+	}
 	if cc.GroupResolver == nil {
-		return tools.CLIOneShot(callCtx, "", "haiku", promptDiffSystemPrompt, []byte(prompt))
+		return "", fmt.Errorf("no model resolver")
 	}
 
+	callCtx, cancel := context.WithTimeout(ctx, promptDiffAPITimeout)
+	defer cancel()
 	diffClient := cc.Client
 	var cheapModel string
 	if resolved := cc.GroupResolver.ResolveCall(config.CallPromptDiff); resolved != nil {

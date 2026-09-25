@@ -21,15 +21,17 @@ func (m *mockBatchRunner) RunBatch(_ context.Context, req delegator.BatchRequest
 	return m.resp, m.err
 }
 
+// noModel is an unset [tools] summary_model: the backend picks its cheap tier.
+func noModel() string { return "" }
+
 func TestBatchSummariser_DispatchesViaRunner(t *testing.T) {
 	// Proves BatchSummariser routes the summarise call through the resolved
-	// BatchRunner — with the model preference (haiku) threaded onto the
-	// request — rather than shelling `claude --print` directly (the
-	// CLISummariser behaviour foci_todo #1317 replaces).
+	// BatchRunner, with the configured model and the cheap tier threaded onto
+	// the request.
 	t.Parallel()
 
 	runner := &mockBatchRunner{resp: "  the summary  "}
-	s := NewBatchSummariser(func() BatchRunner { return runner }, "haiku", "/workdir", "agent-1", func() int { return 0 })
+	s := NewBatchSummariser(func() BatchRunner { return runner }, func() string { return "sonnet" }, "/workdir", "agent-1", func() int { return 0 })
 
 	got, err := s.Summarise(context.Background(), []byte("file content"), "what does this do?", "foo.go")
 	if err != nil {
@@ -39,8 +41,8 @@ func TestBatchSummariser_DispatchesViaRunner(t *testing.T) {
 		t.Errorf("result = %q, want trimmed %q", got, "the summary")
 	}
 
-	if runner.gotReq.Model != "haiku" {
-		t.Errorf("Model = %q, want haiku", runner.gotReq.Model)
+	if runner.gotReq.Model != "sonnet" || !runner.gotReq.Cheap {
+		t.Errorf("Model/Cheap = %q/%v, want the configured sonnet and the cheap tier", runner.gotReq.Model, runner.gotReq.Cheap)
 	}
 	if runner.gotReq.WorkDir != "/workdir" || runner.gotReq.AgentID != "agent-1" {
 		t.Errorf("workdir/agent not threaded: %+v", runner.gotReq)
@@ -66,7 +68,7 @@ func TestBatchSummariser_EmptyResponse(t *testing.T) {
 	t.Parallel()
 
 	runner := &mockBatchRunner{resp: "   "}
-	s := NewBatchSummariser(func() BatchRunner { return runner }, "haiku", "", "", func() int { return 0 })
+	s := NewBatchSummariser(func() BatchRunner { return runner }, noModel, "", "", func() int { return 0 })
 
 	got, err := s.Summarise(context.Background(), []byte("x"), "prompt", "")
 	if err != nil {
@@ -82,7 +84,7 @@ func TestBatchSummariser_RunnerError(t *testing.T) {
 	t.Parallel()
 
 	runner := &mockBatchRunner{err: errBoom}
-	s := NewBatchSummariser(func() BatchRunner { return runner }, "haiku", "", "", func() int { return 0 })
+	s := NewBatchSummariser(func() BatchRunner { return runner }, noModel, "", "", func() int { return 0 })
 
 	_, err := s.Summarise(context.Background(), []byte("x"), "prompt", "")
 	if err == nil {
@@ -99,7 +101,7 @@ func TestBatchSummariser_NilRunner(t *testing.T) {
 	// ag.DelegatedManager (see agents_delegated.go).
 	t.Parallel()
 
-	s := NewBatchSummariser(func() BatchRunner { return nil }, "haiku", "", "", func() int { return 0 })
+	s := NewBatchSummariser(func() BatchRunner { return nil }, noModel, "", "", func() int { return 0 })
 
 	_, err := s.Summarise(context.Background(), []byte("x"), "prompt", "")
 	if err == nil || !strings.Contains(err.Error(), "no BatchRunner available") {
@@ -113,7 +115,7 @@ func TestBatchSummariser_CapsInput(t *testing.T) {
 	t.Parallel()
 
 	runner := &mockBatchRunner{resp: "ok"}
-	s := NewBatchSummariser(func() BatchRunner { return runner }, "haiku", "", "", func() int { return 5 })
+	s := NewBatchSummariser(func() BatchRunner { return runner }, noModel, "", "", func() int { return 5 })
 
 	_, err := s.Summarise(context.Background(), []byte("0123456789"), "prompt", "")
 	if err != nil {
