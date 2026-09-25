@@ -246,7 +246,7 @@ func TestWebhook_NoSession_StartsIndependent(t *testing.T) {
 // TestWebhook_IfInactive tests that the if_inactive query param skips when
 // the targeted session has recent activity. "Activity" here means cache
 // freshness — read from session_index.last_cache_touch (bumped by any turn-init
-// path, memory turns included) rather than agent_metadata.last_user_activity
+// path, memory turns included) rather than session_index.last_user_activity_at
 // (user inbound only). The narrower user-only behaviour lives behind
 // --if-user-inactive.
 func TestWebhook_IfInactive(t *testing.T) {
