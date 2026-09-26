@@ -129,6 +129,11 @@ type DelegatedManager struct {
 	// session key (see RunBatch). Guarded by mu.
 	batchSpecs map[string]batchSpec
 
+	// forkPrompts holds, per branch session key, the system prompt a backend
+	// fork must launch with: its parent process's launch prompt. Set by
+	// InheritParentPrompt, consumed once by getOrCreate. Guarded by mu.
+	forkPrompts map[string]string
+
 	// IdleTimeout is how long a backend can be idle before being closed.
 	// Zero uses DefaultIdleTimeout.
 	IdleTimeout time.Duration
@@ -168,6 +173,10 @@ type managedBackend struct {
 	// Set once at creation; immutable for the backend's lifetime. Lets a later
 	// compaction skip the reload-bounce when the on-disk prompt is unchanged.
 	systemPromptHash string
+
+	// systemPrompt is the launch prompt itself, kept so a backend fork of this
+	// session can launch with the exact same prompt (InheritParentPrompt).
+	systemPrompt string
 
 	// Permission prompt gating. When a permission prompt is outstanding,
 	// incoming messages and injections must wait — the backend cannot
@@ -370,8 +379,20 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 	// session (reset, idle-respawn, emulated compaction) picks up character-
 	// file edits instead of the prompt frozen at agent setup. Non-empty result
 	// wins over the static SystemPrompt. See #828 / #706.
+	//
+	// A backend fork is the exception: it launches with its parent process's
+	// launch prompt, byte for byte. The prompt cache is prefix-matched and the
+	// whole copied history sits after the system prompt, so a fork given a
+	// prompt rebuilt from disk shares no cache with its parent whenever any
+	// prompt input changed since the parent launched — and a keepalive fork
+	// then rewrites the whole conversation every hour instead of refreshing
+	// the parent's entry (#2051).
+	inherited, hasInherited := m.takeForkPrompt(sessionKey)
 	if opts.SystemPromptFunc != nil {
-		if p := opts.SystemPromptFunc(sessionKey); p != "" {
+		if hasInherited {
+			opts.SystemPrompt = inherited
+			opts.SystemPromptFunc = nil // no backend may re-resolve over it (opencode's Start would)
+		} else if p := opts.SystemPromptFunc(sessionKey); p != "" {
 			opts.SystemPrompt = p
 		}
 	}
@@ -450,6 +471,7 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 		lastActive:       time.Now(),
 		sessionKey:       sessionKey,
 		systemPromptHash: promptHash,
+		systemPrompt:     opts.SystemPrompt,
 	}
 	m.setBackendCallbacks(mb)
 
@@ -1349,6 +1371,34 @@ func (m *DelegatedManager) clearBatchSpec(sessionKey string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.batchSpecs, sessionKey)
+}
+
+// InheritParentPrompt makes branchKey's next backend launch use the launch
+// prompt of parentKey's live backend process. With no live parent process
+// there is nothing to inherit: the parent's own next turn will rebuild its
+// prompt from disk, which is exactly what the fork does by default.
+func (m *DelegatedManager) InheritParentPrompt(parentKey, branchKey string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	mb, ok := m.backends[parentKey]
+	if !ok || mb.systemPrompt == "" {
+		return
+	}
+	if m.forkPrompts == nil {
+		m.forkPrompts = make(map[string]string)
+	}
+	m.forkPrompts[branchKey] = mb.systemPrompt
+}
+
+// takeForkPrompt returns and forgets the inherited prompt for sessionKey.
+func (m *DelegatedManager) takeForkPrompt(sessionKey string) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.forkPrompts[sessionKey]
+	if ok {
+		delete(m.forkPrompts, sessionKey)
+	}
+	return p, ok
 }
 
 // batchSpecFor reports the batch spec for sessionKey, if it is a live batch.

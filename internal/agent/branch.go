@@ -167,6 +167,7 @@ func (a *Agent) ForkBackendBranch(ctx context.Context, parentKey string, opts se
 	// Point the branch key at the forked backend session so the next turn on it
 	// resumes the clone (full parent context) via the normal getOrCreate path.
 	a.DelegatedManager.saveResumeID(branchKey, forkedID)
+	a.DelegatedManager.InheritParentPrompt(parentKey, branchKey)
 	a.TouchRootCacheForBranch(branchKey) // branching warms root's shared prefix once
 	a.taggedLog(opts.BranchType).Infof("backend fork %s → %s (%s)", parentKey, branchKey, forkedID)
 	return branchKey, true
