@@ -547,7 +547,7 @@ func TestSendToSessionBarsBarredCaller(t *testing.T) {
 			if err == nil {
 				t.Fatalf("Execute (%s caller): expected error, got nil", tc.name)
 			}
-			const wantSubstr = "tool disabled in oneshot forks"
+			const wantSubstr = "send_to_session is disabled in reflection/keepalive branches"
 			if !strings.Contains(err.Error(), wantSubstr) {
 				t.Errorf("Execute (%s caller) error = %q, want substring %q", tc.name, err.Error(), wantSubstr)
 			}

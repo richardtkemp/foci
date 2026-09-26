@@ -44,7 +44,7 @@ messages: [only messages after branch point]
 API payload assembly: system prompt + parent.messages[:branch_point] + branch.messages
 
 **Branch orientation:** All branches (facet, cron/wake, spawn) receive an orientation message as their first user message. The orientation tells the branch its type, keys, and communication rules:
-- **Headless** (cron, spawn, keepalive — `direct_chat=false`): must NEVER use `send_to_chat`; reports significant work or errors to parent via `send_to_session`; stays silent when nothing happened.
+- **Headless** (cron, spawn, keepalive — `direct_chat=false`): must NEVER use `send_to_chat`; reports significant work or errors to parent via `send_to_session` — except reflection/keepalive branches, which are barred from `send_to_session` and are told so instead (the `{report_rule}` template variable renders the right instruction per branch type); stays silent when nothing happened.
 - **Facet** (`direct_chat=true`): has its own Telegram bot for direct user replies; keeps the main session informed of visible work via `send_to_session`; sends a completion summary before going idle.
 
 Default orientation text is embedded in `shared/prompts/branch-orientation-headless.md` and `shared/prompts/branch-orientation-facet.md`. Config override via `branch_orientation_prompt` (per-agent or global) takes precedence. Template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}` are replaced at branch creation time.

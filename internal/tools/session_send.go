@@ -124,9 +124,15 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 			// clutch session this way, confusing it. If such a branch has
 			// state worth preserving, that belongs in a handoff FILE on disk,
 			// not a cross-session message — so refuse before resolving or
-			// delivering anything.
+			// delivering anything. The refusal names that channel rather than
+			// arguing the caller has nothing to say: the parent already has
+			// the parent's history, but not what this branch itself did — a
+			// commit, an unlanded branch, a finding — which is exactly when a
+			// branch reaches for this tool (#1951).
 			if originSession != "" && callerSessionTypeFn != nil && callerSessionTypeFn(originSession).IsBarredFromSessionSend() {
-				return ToolResult{}, fmt.Errorf("tool disabled in oneshot forks, attempting to communicate with your parent or other branches is discouraged, they already have all the same info you have, don't worry!")
+				return ToolResult{}, fmt.Errorf("send_to_session is disabled in reflection/keepalive branches: you cannot message the main session or other branches. " +
+					"If you produced something the main session needs (a commit, an unlanded branch, a finding, an error you couldn't resolve), " +
+					"leave it somewhere durable that gets read — whatever channel your task instructions name, or failing that a file on disk")
 			}
 
 			// Resolve loose targets — bare agent names, session names, chat

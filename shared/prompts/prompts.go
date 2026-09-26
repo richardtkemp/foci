@@ -44,7 +44,9 @@ func Platform(name string) string {
 }
 
 // BranchOrientationHeadless returns the default orientation for headless branches
-// (heartbeat, cron, spawn). Template vars: {branch_key}, {parent_key}, {branch_type}.
+// (heartbeat, cron, spawn). Template vars: {branch_key}, {parent_key}, {branch_type},
+// {report_rule} (how to report back — depends on whether the branch type may
+// use send_to_session; see session.reportRule).
 func BranchOrientationHeadless() string { return read("branch-orientation-headless.md") }
 
 // BranchOrientationFacet returns the default orientation for user-attached

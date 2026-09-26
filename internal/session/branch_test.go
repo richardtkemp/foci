@@ -10,6 +10,7 @@ import (
 
 	"foci/internal/log"
 	"foci/internal/provider"
+	"foci/shared/prompts"
 )
 
 func newTestSessionIndex(t *testing.T) *SessionIndex {
@@ -59,6 +60,37 @@ func TestCreateBranchAndLoadFull(t *testing.T) {
 	}
 	if provider.TextOf(msgs[5].Content) != "branch answer" {
 		t.Errorf("msgs[5] = %q", provider.TextOf(msgs[5].Content))
+	}
+}
+
+func TestHeadlessOrientationReportRuleMatchesSendBar(t *testing.T) {
+	// #1951: the headless orientation told EVERY branch to report to its
+	// parent via send_to_session — including reflection/keepalive branches,
+	// for which #1409 disables that tool. Each such fork discovered the
+	// contradiction by calling it. The rendered orientation must name
+	// send_to_session only for branch types that may actually use it, and
+	// tell a barred branch plainly that it has no such channel.
+	const parentKey = "main/c1"
+	tmpl := prompts.BranchOrientationHeadless()
+	for _, bt := range []string{
+		"reflection", "consolidation", "compaction-memory", "session-end-memory", "keepalive", // barred
+		"spawn", "background", "nudge-extraction", "branch", "cron", // may send
+	} {
+		barred := SessionTypeForBranch(bt).IsBarredFromSessionSend()
+		got := resolveOrientation(tmpl, parentKey+"/b1", parentKey, bt)
+		if strings.Contains(got, ReportRuleVar) {
+			t.Errorf("%s: %s left unsubstituted:\n%s", bt, ReportRuleVar, got)
+		}
+		offersSend := strings.Contains(got, "via `send_to_session` targeting `"+parentKey+"`")
+		if barred && offersSend {
+			t.Errorf("%s (barred from send_to_session) is told to report via send_to_session:\n%s", bt, got)
+		}
+		if !barred && !offersSend {
+			t.Errorf("%s (may send) is not told to report via send_to_session to %s:\n%s", bt, parentKey, got)
+		}
+		if barred && !strings.Contains(got, "cannot message the main session") {
+			t.Errorf("%s (barred) is not told it has no session channel:\n%s", bt, got)
+		}
 	}
 }
 

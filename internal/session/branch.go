@@ -37,13 +37,14 @@ const (
 	BranchKeyVar  = "{branch_key}"
 	ParentKeyVar  = "{parent_key}"
 	BranchTypeVar = "{branch_type}"
+	ReportRuleVar = "{report_rule}"
 )
 
 // BranchOptions configures a new branch session.
 type BranchOptions struct {
 	NoResetHook         bool   // skip pre-reset memory hook when this branch is reclaimed
 	BranchType          string // e.g. "cron", "compaction-memory" — resolves {branch_type}
-	OrientationTemplate string // template with {branch_key}, {parent_key}, {branch_type} placeholders
+	OrientationTemplate string // template with {branch_key}, {parent_key}, {branch_type}, {report_rule} placeholders
 }
 
 // resolveOrientation substitutes template placeholders in the orientation text.
@@ -55,8 +56,25 @@ func resolveOrientation(template, branchKey, parentKey, branchType string) strin
 		BranchKeyVar, branchKey,
 		ParentKeyVar, parentKey,
 		BranchTypeVar, branchType,
+		ReportRuleVar, reportRule(parentKey, branchType),
 	)
 	return r.Replace(template)
+}
+
+// reportRule renders {report_rule}: how a headless branch should report back.
+// One orientation template serves every headless branch type, but #1409 bars
+// reflection/keepalive branches from send_to_session, so a static instruction
+// to use it told those branches to call a tool they don't have — and each one
+// found out by calling it (#1951). Deriving the rule from the same predicate
+// the tool enforces keeps the prompt and the bar from drifting apart.
+func reportRule(parentKey, branchType string) string {
+	if SessionTypeForBranch(branchType).IsBarredFromSessionSend() {
+		return "- **You cannot message the main session or other branches** — `send_to_session` is disabled for " + branchType + " branches, and you have no chat. " +
+			"Anything the main session needs from you (a commit you made, a branch you left unlanded, a finding, an error you couldn't resolve) must be left somewhere durable that gets read — " +
+			"use whatever channel your task instructions name; failing that, a file on disk."
+	}
+	return "- **Report significant work** to the main session via `send_to_session` targeting `" + parentKey + "`. Keep it brief — the message header already identifies your session.\n" +
+		"- **Report errors you can't resolve** to the main session the same way."
 }
 
 // Test seams for CreateBranchWithOptions: branch keys are b<unix seconds>, so
