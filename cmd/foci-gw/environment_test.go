@@ -203,18 +203,20 @@ func TestWriteBackend(t *testing.T) {
 	}
 }
 
-// TestWriteBackend_CronCreateIsCCOnly pins the CC-specific durability warning to
-// the claude-code Backend section. CronCreate is a Claude Code tool backed by an
-// in-memory session store; the guidance is meaningless (and misleading) for
-// backends that have no such tool, so it must not leak into their sections.
+// TestWriteBackend_CronCreateIsCCOnly pins the CC-specific "CronCreate is
+// blocked" note to the claude-code Backend section. CronCreate is a Claude Code
+// tool; the note is meaningless (and misleading) for backends that have no such
+// tool, so it must not leak into their sections.
 func TestWriteBackend_CronCreateIsCCOnly(t *testing.T) {
 	var cc strings.Builder
 	writeBackend(&cc, "claude-code", nil)
 	if !strings.Contains(cc.String(), "CronCreate") {
-		t.Errorf("claude-code Backend section should carry the CronCreate durability warning, got:\n%s", cc.String())
+		t.Errorf("claude-code Backend section should carry the CronCreate note, got:\n%s", cc.String())
 	}
-	if !strings.Contains(cc.String(), "crontab") {
-		t.Errorf("claude-code Backend section should point at the durable alternative (crontab), got:\n%s", cc.String())
+	for _, alt := range []string{"foci_remind", "crontab"} {
+		if !strings.Contains(cc.String(), alt) {
+			t.Errorf("claude-code Backend section should point at the alternative %q, got:\n%s", alt, cc.String())
+		}
 	}
 	for _, backend := range []string{"opencode", "api", ""} {
 		var b strings.Builder
@@ -222,6 +224,19 @@ func TestWriteBackend_CronCreateIsCCOnly(t *testing.T) {
 		if strings.Contains(b.String(), "CronCreate") {
 			t.Errorf("backend=%q: CronCreate is a Claude Code tool and must not appear, got:\n%s", backend, b.String())
 		}
+	}
+}
+
+// TestWriteBackend_CCFinalMessageRule pins the "verbatim content goes in the
+// final message" rule to the claude-code Backend section. On Opus 5.5 / Fable 5.1
+// text written before a tool call comes back as a progress-update thinking block,
+// which foci does not render, so a result written there never reaches the user
+// (#1303).
+func TestWriteBackend_CCFinalMessageRule(t *testing.T) {
+	var cc strings.Builder
+	writeBackend(&cc, "claude-code", nil)
+	if !strings.Contains(cc.String(), "final message") {
+		t.Errorf("claude-code Backend section should carry the final-message rule, got:\n%s", cc.String())
 	}
 }
 
