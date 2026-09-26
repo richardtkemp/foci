@@ -1450,6 +1450,8 @@ name = "ask_user_question"
 enabled = false
 ```
 
+An unknown key in a rule (a typo, or a key newer than the running binary) is a config load error, not the usual unknown-key warning: ignored, it would leave the rule with fewer constraints than written, and a rule whose only constraint is dropped denies every call of its tool. `foci pretool list` and `foci-gw -check-config` report it; a gateway that hits it on a rule re-read keeps its last good rules.
+
 A rule matches a call to its `tool` when every constraint it gives holds. Each constraint takes one regex or a list of them, and any one of a list may match:
 
 | key | matched against |

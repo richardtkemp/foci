@@ -684,7 +684,22 @@ func validateRateLimitNotifyTo(where string, v *string) error {
 // pretool_rules layer on its own (#2028). Cross-layer completeness (a rule
 // ending up with no tool or reason after merging) is only knowable at
 // resolution and is logged there instead.
+//
+// A rule key the decoder doesn't know is an error, not the usual unknown-key
+// warning (#2047): dropping it leaves the rule with fewer constraints than
+// written, and a rule whose only constraint is a typo denies every call of its
+// tool. The allowed keys are whatever pretool.Rule decodes, read from the TOML
+// metadata's undecoded keys, so there is no second list to keep in step.
 func (cfg *Config) validatePreToolRules() error {
+	var unknown []string
+	for _, k := range cfg.UndefinedKeys {
+		if strings.HasPrefix(k, "cc_backend.pretool_rules.") || strings.HasPrefix(k, "agents.backend_config.pretool_rules.") {
+			unknown = append(unknown, k)
+		}
+	}
+	if len(unknown) > 0 {
+		return fmt.Errorf("pretool_rules: unknown key(s) %s (a rule ignoring a key it was meant to have can deny every call of its tool)", strings.Join(unknown, ", "))
+	}
 	if err := pretool.ValidateLayer(cfg.CCBackend.PreToolRules); err != nil {
 		return fmt.Errorf("[cc_backend] %w", err)
 	}
