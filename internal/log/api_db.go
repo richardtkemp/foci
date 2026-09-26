@@ -129,12 +129,16 @@ func InitAPIDB(path string) error {
 	// Measured on a live turn: 27,305 output tokens priced, 10,212 stored, and
 	// the #1854 re-price identity failed by the difference (#1891).
 	//
-	// The DROP clears any stale duplicate still carrying parent-only values, so
-	// the ADD yields a column that is NULL — "not measured" — for every historical
-	// row rather than silently wrong for the cross-model ones. Do NOT collapse
-	// these into one statement, and do NOT re-drop this column as a duplicate: it
-	// is only a duplicate on single-model turns.
-	_, _ = db.Exec(`ALTER TABLE api_calls DROP COLUMN turn_output_tokens`)
+	// Rows written before #1891 hold NULL here — "not measured" — which readers
+	// treat as "fall back to output_tokens". Do NOT re-drop this column as a
+	// duplicate: it is only a duplicate on single-model turns.
+	//
+	// This used to be an unconditional DROP then ADD, meant to clear a stale
+	// parent-only duplicate once. Nothing made it run once: every foci start
+	// wiped the column for every row, so the cross-model output total survived
+	// only until the next restart (found 2026-09-26: 100% NULL before the last
+	// start). ADD COLUMN is idempotent (it errors once the column exists, which
+	// is ignored); the one-time cleanup has long since run everywhere.
 	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN turn_output_tokens INTEGER`)
 	// #1880 phase C / #1695. Historical rows get NULL: their turn identity was
 	// never recorded and cannot be reconstructed, so "" would assert a turn

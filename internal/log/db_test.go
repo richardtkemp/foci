@@ -601,3 +601,31 @@ func TestBackfillAgentIDs_NewRowsAreLeftAlone(t *testing.T) {
 		t.Fatalf("BackfillAgentIDs: %v", err)
 	}
 }
+
+// TestInitAPIDBPreservesTurnOutputTokens: reopening api.db (every foci start)
+// must not touch stored data. InitAPIDB used to DROP and re-ADD
+// turn_output_tokens on every start, so the cross-model output total (#1891)
+// survived only until the next restart.
+func TestInitAPIDBPreservesTurnOutputTokens(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "api.db")
+	if err := InitAPIDB(dbPath); err != nil {
+		t.Fatalf("InitAPIDB: %v", err)
+	}
+	if _, err := apiLog.db.Exec(`INSERT INTO api_calls (ts, session, model, call_type, turn_output_tokens)
+		VALUES ('2026-09-26T14:00:00Z', 'a/c1', 'm', 'delegated_turn', 27305)`); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	CloseAPIDB()
+
+	if err := InitAPIDB(dbPath); err != nil { // a restart
+		t.Fatalf("InitAPIDB (reopen): %v", err)
+	}
+	defer CloseAPIDB()
+	var got sql.NullInt64
+	if err := apiLog.db.QueryRow(`SELECT turn_output_tokens FROM api_calls WHERE session = 'a/c1'`).Scan(&got); err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if !got.Valid || got.Int64 != 27305 {
+		t.Errorf("turn_output_tokens after reopen = %v, want 27305 (a restart wiped it)", got)
+	}
+}
