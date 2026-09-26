@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -110,6 +112,23 @@ func TestConvertHTML(t *testing.T) {
 	// The output should contain some text from the original HTML
 	if !strings.Contains(result.Text, "paragraph") && !strings.Contains(result.Text, "bold") {
 		t.Errorf("converted HTML doesn't contain expected content: %q", result.Text)
+	}
+}
+
+// TestConvertHTMLKeepsListOnlySections proves an HTML attachment goes through
+// web_fetch's readability config (#2049): on the #2011 Lever page, default
+// readability drops the heading-plus-bullets "What We Value" section.
+func TestConvertHTMLKeepsListOnlySections(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "tools", "testdata", "webfetch_corpus", "lever_palantir_fdae.html"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	result := convertDocument(data, mimeHTML, "/tmp/test.html")
+	if result.Err != "" {
+		t.Fatalf("unexpected error: %s", result.Err)
+	}
+	if !strings.Contains(result.Text, "Engineering mindset") {
+		t.Errorf("list-only section dropped from converted HTML:\n%s", result.Text)
 	}
 }
 

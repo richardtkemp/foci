@@ -66,16 +66,18 @@ func NewWebSearchTool(braveAPIKey string) *Tool {
 
 // readabilityFromReader is the readability entry point, indirected through a
 // package var so tests can substitute a slow/blocking parse.
-var readabilityFromReader = parseArticle
+var readabilityFromReader = ParseArticle
 
-// parseArticle is readability.FromReader with "li" added to the tags that
+// ParseArticle is readability.FromReader with "li" added to the tags that
 // score content (#2011). Readability only appends a sibling of the top
 // candidate if that sibling has a score, and by default nothing inside a
 // list-only block scores (li isn't scored, short headings are skipped, and a
 // div holding a <ul> never becomes a scoreable <p>) — so a section made only
 // of a heading plus bullets (Lever's "What We Require") was silently dropped.
 // A fresh Parser per call: Parser holds per-parse state and isn't safe to share.
-func parseArticle(r io.Reader, pageURL *url.URL) (readability.Article, error) {
+// Shared with HTML attachment conversion (agent.convertHTML, #2049) so both
+// paths extract the same content.
+func ParseArticle(r io.Reader, pageURL *url.URL) (readability.Article, error) {
 	p := readability.NewParser()
 	p.TagsToScore = append(p.TagsToScore, "li")
 	return p.Parse(r, pageURL)

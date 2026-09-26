@@ -578,7 +578,7 @@ func TestMissingListText(t *testing.T) {
 		t.Errorf("default readability on Lever: missing=%d example=%q, want >= %d chars starting at the What We Value list", missing, example, listDropMinChars)
 	}
 
-	fixed, err := parseArticle(bytes.NewReader(lever), u)
+	fixed, err := ParseArticle(bytes.NewReader(lever), u)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -587,7 +587,7 @@ func TestMissingListText(t *testing.T) {
 	}
 
 	mdn := read("webfetch_corpus/mdn_ul_element.html")
-	art, err := parseArticle(bytes.NewReader(mdn), u)
+	art, err := ParseArticle(bytes.NewReader(mdn), u)
 	if err != nil {
 		t.Fatal(err)
 	}

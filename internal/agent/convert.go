@@ -12,9 +12,9 @@ import (
 
 	"foci/internal/platform"
 	"foci/internal/procx"
+	"foci/internal/tools"
 
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
-	"github.com/go-shiori/go-readability"
 )
 
 // Convertible MIME types and their required tools.
@@ -54,11 +54,12 @@ func convertDocument(data []byte, mimeType, savedPath string) convertResult {
 	}
 }
 
-// convertHTML extracts readable content from HTML using readability,
-// then converts to markdown. Reuses the same libraries as web_fetch.
+// convertHTML extracts readable content from HTML using web_fetch's
+// readability config (tools.ParseArticle, which keeps list-only sections —
+// #2011/#2049), then converts to markdown.
 func convertHTML(data []byte) convertResult {
 	var htmlContent string
-	article, err := readability.FromReader(bytes.NewReader(data), nil)
+	article, err := tools.ParseArticle(bytes.NewReader(data), nil)
 	if err == nil && strings.TrimSpace(article.Content) != "" {
 		htmlContent = article.Content
 	} else {
