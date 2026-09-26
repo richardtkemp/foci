@@ -11,28 +11,35 @@ const (
 	anchorSuccess = "Login successful"
 )
 
-// extractLoginURL pulls the sign-in URL from a captured tmux pane. It isolates
-// the text between the sign-in and paste anchors, drops everything that can't
-// be part of a URL (whitespace, newlines, TUI box-drawing glyphs the pane
-// capture leaves around the URL), and returns the https URL. Returns "" if the
-// anchors or a URL aren't present yet (the caller polls until they are).
+// extractLoginURL pulls the sign-in URL from a captured tmux pane. Claude Code
+// hard-wraps the URL at the pane edge with explicit newlines (so tmux -J can't
+// rejoin it), so the URL is reassembled line by line from the first line
+// containing "https://": each line is trimmed of edge whitespace and TUI
+// box-drawing glyphs, and the URL ends at the first line that is blank or still
+// contains a non-URL character after trimming. That second rule is what stops
+// the indented prose hint Claude Code prints under the URL ("Hold Shift (Option
+// in iTerm2, ...) while selecting ...") from being glued onto the state param
+// (#1931) — a URL fragment never contains a space; prose always does.
+// Returns "" if the anchors or a URL aren't present yet (the caller polls).
 func extractLoginURL(pane string) string {
 	between, ok := sliceBetween(pane, anchorSignIn, anchorPaste)
 	if !ok {
 		return ""
 	}
-	var b strings.Builder
-	for _, r := range between {
-		if isURLRune(r) {
-			b.WriteRune(r)
-		}
-	}
-	joined := b.String()
-	k := strings.Index(joined, "https://")
+	k := strings.Index(between, "https://")
 	if k < 0 {
 		return ""
 	}
-	return joined[k:]
+	notURL := func(r rune) bool { return !isURLRune(r) }
+	var b strings.Builder
+	for _, line := range strings.Split(between[k:], "\n") {
+		frag := strings.TrimFunc(line, notURL)
+		if frag == "" || strings.IndexFunc(frag, notURL) >= 0 {
+			break
+		}
+		b.WriteString(frag)
+	}
+	return b.String()
 }
 
 // sliceBetween returns the substring strictly between the first occurrence of
@@ -52,8 +59,8 @@ func sliceBetween(s, start, end string) (string, bool) {
 }
 
 // isURLRune reports whether r is a character that can legitimately appear in a
-// URL (RFC 3986 unreserved + reserved + percent). Everything else — spaces,
-// newlines, the │ box glyph the TUI wraps the URL in — is stripped.
+// URL (RFC 3986 unreserved + reserved + percent). Spaces, newlines and the │
+// box glyph the TUI wraps the URL in are not.
 func isURLRune(r rune) bool {
 	switch {
 	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
