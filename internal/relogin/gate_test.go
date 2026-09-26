@@ -75,3 +75,30 @@ func TestGateInactiveNoCapture(t *testing.T) {
 	// SubmitCode on inactive gate is a no-op (no panic on nil channel).
 	g.SubmitCode("x")
 }
+
+// TestGateReleased: Released blocks while a re-login is active, closes on
+// Release, and is already closed when no re-login is in progress — so a waiter
+// that raced a Release never blocks forever.
+func TestGateReleased(t *testing.T) {
+	g := &Gate{}
+	select {
+	case <-g.Released():
+	default:
+		t.Fatal("Released on an inactive gate should be closed")
+	}
+
+	g.Start()
+	ch := g.Released()
+	select {
+	case <-ch:
+		t.Fatal("Released should block while active")
+	default:
+	}
+	g.Release()
+	select {
+	case <-ch:
+	case <-time.After(time.Second):
+		t.Fatal("Released channel not closed by Release")
+	}
+	g.Release() // idempotent: must not double-close
+}

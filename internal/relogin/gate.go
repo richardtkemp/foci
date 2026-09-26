@@ -10,9 +10,11 @@
 // every delegated agent, and a tmux-driven login flow that relays the sign-in
 // URL to the user and feeds back the pasted code.
 //
-// The gate is a DROP gate, not a queue: while a re-login is in progress, inbound
-// user messages for delegated agents are ignored, except for one capture window
-// where the next message from the triggering agent is taken as the login code.
+// The gate is a HOLD gate, not a queue of its own: while a re-login is in
+// progress, delegated agents' session inbox workers hold dispatch (inbound
+// messages keep queuing on their inbox channels) until Released fires, except
+// for one capture window where the next message from the triggering agent is
+// taken as the login code.
 package relogin
 
 import (
@@ -27,8 +29,9 @@ import (
 type Gate struct {
 	mu             sync.Mutex
 	active         bool
-	captureAgentID string      // when non-empty, the agent whose next inbound message is the login code
-	codeCh         chan string // buffered(1); delivers the captured code to the driver
+	captureAgentID string        // when non-empty, the agent whose next inbound message is the login code
+	codeCh         chan string   // buffered(1); delivers the captured code to the driver
+	released       chan struct{} // closed by Release; nil while inactive
 }
 
 // G is the process-wide re-login gate.
@@ -45,15 +48,30 @@ func (g *Gate) Start() bool {
 	g.active = true
 	g.captureAgentID = ""
 	g.codeCh = make(chan string, 1)
+	g.released = make(chan struct{})
 	return true
 }
 
-// Active reports whether a re-login is in progress (delegated-agent input
-// should be dropped).
+// Active reports whether a re-login is in progress (delegated-agent dispatch
+// should be held).
 func (g *Gate) Active() bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.active
+}
+
+// Released returns a channel closed when the in-progress re-login ends. With no
+// re-login in progress it returns an already-closed channel, so a caller that
+// read Active()==true and raced a Release never blocks on a dead channel.
+func (g *Gate) Released() <-chan struct{} {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.released == nil {
+		ch := make(chan struct{})
+		close(ch)
+		return ch
+	}
+	return g.released
 }
 
 // OpenCapture opens the code-capture window for agentID: the next inbound
@@ -115,4 +133,8 @@ func (g *Gate) Release() {
 	g.active = false
 	g.captureAgentID = ""
 	g.codeCh = nil
+	if g.released != nil {
+		close(g.released)
+		g.released = nil
+	}
 }

@@ -386,7 +386,7 @@ func (a *Agent) StartInbox(ctx context.Context) {
 // Returns true when the envelope was accepted — queued, dispatched, or
 // intentionally consumed (steer, plan-cancel, ask answer, re-login code) —
 // and false when it was dropped (empty session key, full queue, failed
-// dispatch, re-login gate). Fire-and-forget callers may ignore the result;
+// dispatch). Fire-and-forget callers may ignore the result;
 // callers that wait on the envelope's effect (EnqueueInjectWait) must not.
 //
 // Drops envelopes with empty session keys (logged) — caller is expected
@@ -400,17 +400,20 @@ func (a *Agent) Enqueue(env Envelope) bool {
 	// CC re-login gate (#843). A 401 on the shared OAuth credential pauses every
 	// delegated agent while an automated re-login runs. DelegatedManager != nil
 	// is the cheap "this is a delegated (CC) agent" test — it avoids spinning up
-	// a backend just to classify. While the gate is active these messages are
-	// dropped, except the one capture window where the triggering agent's next
-	// message is the pasted-back login code.
+	// a backend just to classify. The one capture window diverts the triggering
+	// agent's next message as the pasted-back login code; everything else
+	// queues straight to the worker, which holds dispatch until the gate
+	// releases (#1932 — this used to drop, after the front end had already
+	// shown the message as sent). Mid-turn routing (steer, plan-cancel, ask
+	// capture) is skipped: the backend it would write to cannot authenticate.
+	reloginHold := false
 	if a.DelegatedManager != nil && relogin.G.Active() {
 		if relogin.G.ShouldCapture(a.AgentID) {
 			relogin.G.SubmitCode(env.Text)
 			a.logger().Infof("inbox: captured CC login code sk=%s", env.SessionKey)
 			return true
 		}
-		a.logger().Warnf("inbox: dropping message during CC re-login sk=%s (%dB)", env.SessionKey, len(env.Text))
-		return false
+		reloginHold = true
 	}
 
 	inb := a.getOrCreateInbox(env.SessionKey)
@@ -423,6 +426,16 @@ func (a *Agent) Enqueue(env Envelope) bool {
 			return true
 		default:
 			a.logger().Warnf("inbox: queue full for sk=%s, dropping injection trigger=%s", env.SessionKey, env.Inject.Trigger)
+			return false
+		}
+	}
+	if reloginHold {
+		select {
+		case inb.ch <- env:
+			a.logger().Infof("inbox: holding message during CC re-login sk=%s (%dB)", env.SessionKey, len(env.Text))
+			return true
+		default:
+			a.logger().Warnf("inbox: queue full for sk=%s during CC re-login, dropping message (%dB)", env.SessionKey, len(env.Text))
 			return false
 		}
 	}
@@ -665,6 +678,28 @@ func (a *Agent) waitInjectGate(ctx context.Context, sk string) bool {
 	return true
 }
 
+// waitReloginGate blocks while a CC re-login is in progress for a delegated
+// agent (#843/#1932). The shared OAuth credential is dead until it completes,
+// so dispatching now would only 401 again; the envelope is held instead and
+// runs once the gate releases (success or abort — the driver always releases).
+// Event-driven via relogin.G.Released. Returns false if ctx ends while waiting.
+func (a *Agent) waitReloginGate(ctx context.Context, sk string) bool {
+	if a.DelegatedManager == nil {
+		return true
+	}
+	if relogin.G.Active() {
+		log.Extra("inbox", "gate_wait sk=%s reason=cc_relogin — holding dispatch until re-login ends (#1932)", sk)
+	}
+	for relogin.G.Active() {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-relogin.G.Released():
+		}
+	}
+	return true
+}
+
 // InboxTurnActive reports whether the given session has a turn in flight,
 // according to the per-session inbox flag. Returns false for unknown
 // sessions. Used by tests and diagnostics.
@@ -749,6 +784,13 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 		case <-ctx.Done():
 			return
 		case env := <-inb.ch:
+			// Re-login hold (#1932): no turn or injection may reach a backend
+			// that cannot authenticate. Further arrivals accumulate in inb.ch
+			// and batch via drainAvailable once the gate opens, as with the
+			// #767 and compaction holds below.
+			if !a.waitReloginGate(ctx, env.SessionKey) {
+				return
+			}
 			// System injection: run it serialised with this session's platform
 			// turns (the worker is idle between turns here) rather than in a
 			// detached goroutine that races them.
@@ -852,7 +894,7 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 			// delivery — so each held inject passes the same gate as the dequeue
 			// path, not a direct runInject (the Phase 3 bypass fix).
 			for _, inj := range heldInjects {
-				if !a.waitInjectGate(ctx, inj.SessionKey) {
+				if !a.waitReloginGate(ctx, inj.SessionKey) || !a.waitInjectGate(ctx, inj.SessionKey) {
 					return
 				}
 				a.runInject(inb, inj)
