@@ -52,12 +52,16 @@ func (t *APITransport) AcquireTurnLock(ts *TurnState) func() {
 	return sessionLock.Unlock
 }
 
-// RegisterTurn adds a TurnDetail for shutdown diagnostics.
+// RegisterTurn adds a TurnDetail for shutdown diagnostics. An API turn is
+// dispatched the moment it registers: the only wait (the session turn lock)
+// is already behind it.
 func (t *APITransport) RegisterTurn(ts *TurnState) func() {
+	now := time.Now()
 	td := &TurnDetail{
-		SessionKey: ts.SessionKey,
-		Trigger:    ts.Trigger,
-		StartTime:  time.Now(),
+		SessionKey:   ts.SessionKey,
+		Trigger:      ts.Trigger,
+		StartTime:    now,
+		DispatchedAt: now,
 	}
 	ts.TurnDetail = td
 	ts.TurnID = t.agent.registerTurn(td)

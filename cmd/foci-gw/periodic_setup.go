@@ -192,6 +192,8 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 			sk := defaultSessionKeyFor(inst.ag, agentID)
 			return sk != "" && inst.ag.IsTurnInFlight(sk)
 		},
+		// A dispatch runs a turn; none may begin once shutdown drains (#2059).
+		HoldFn: inst.ag.ShuttingDown,
 		FormatFn: func(body string) string {
 			return prompts.FormatInjectedMessage("PROACTIVE WARNINGS", time.Now(), body)
 		},

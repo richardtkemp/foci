@@ -268,6 +268,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 			return err
 		}
 		t.logger().Debugf("RunInference: Inject(SourceUser, follow-up) done sk=%s", ts.SessionKey)
+		a.markTurnDispatched(ts.TurnDetail)
 		// Backend has received the message — signal the inbox so steer
 		// routing opens for any further follow-ups arriving on the heels
 		// of this one. See WithOnPrimaryWritten / TODO #777.
@@ -351,6 +352,13 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 
 	t.logger().Debugf("RunInference: Inject(%s, begin-turn) start sk=%s attachments=%d", src, ts.SessionKey, len(atts))
 	for waited := false; ; waited = true {
+		// Drain gate (#2059): a system turn waiting here for an in-flight turn
+		// must not begin once shutdown has started, however long it waited.
+		if src == delegator.SourceSystem && a.ShuttingDown() {
+			err = ErrShuttingDown
+			t.logger().Infof("session=%s system turn (trigger=%q) not dispatched: shutting down", ts.SessionKey, ts.Trigger)
+			break
+		}
 		err = be.ImmediateInject(ts.Ctx, delegator.Inject{
 			Source:      src,
 			Text:        ts.Prompt,
@@ -370,7 +378,9 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 			t.logger().Infof("session=%s system turn (trigger=%q) waiting for in-flight turn to complete before dispatch", ts.SessionKey, ts.Trigger)
 		}
 		wctx, cancel := context.WithTimeout(ts.Ctx, systemInjectRetryInterval)
+		stopOnShutdown := cancelOnClose(a.shutdown.done(), cancel)
 		werr := be.WaitForTurn(wctx)
+		stopOnShutdown()
 		cancel()
 		if werr != nil && ts.Ctx.Err() != nil {
 			if voiceMode != nil {
@@ -381,6 +391,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	}
 	t.logger().Debugf("RunInference: Inject(%s, begin-turn) done sk=%s err=%v", src, ts.SessionKey, err)
 	if err == nil {
+		a.markTurnDispatched(ts.TurnDetail)
 		// Primary has reached the backend. Signal the inbox so turnActive
 		// flips true and any further follow-ups can safely steer via
 		// Inject(SourceSteer) instead of racing the primary's write. See

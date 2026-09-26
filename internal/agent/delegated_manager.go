@@ -148,6 +148,12 @@ type DelegatedManager struct {
 	// reaperStop cancels the idle reaper goroutine.
 	reaperStop context.CancelFunc
 
+	// noNewBackends refuses every backend creation and respawn once the agent
+	// is draining for shutdown or the manager has been closed (#2059): a
+	// backend spawned then is killed moments later, and a resume-spawn after
+	// Close would outlive the manager that owns it. Guarded by mu.
+	noNewBackends bool
+
 	// createGroup serializes backend creation per session key so concurrent
 	// Get callers for the same key spawn exactly one CC instead of racing to
 	// create (and orphan) duplicates. (P2-3.)
@@ -321,6 +327,7 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 		delete(m.backends, sessionKey)
 		dead = mb
 	}
+	refuse := m.noNewBackends
 
 	// Check for a saved session UUID to resume.
 	resumeID := m.loadResumeID(sessionKey)
@@ -333,6 +340,11 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 		if dead.bridge != nil {
 			dead.bridge.Close()
 		}
+	}
+
+	if refuse {
+		m.logger().Infof("not creating backend for %s: shutting down", sessionKey)
+		return nil, fmt.Errorf("create delegated backend for %s: %w", sessionKey, ErrShuttingDown)
 	}
 
 	// Create and start a new Backend for this session.
@@ -513,6 +525,17 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 	}
 
 	m.mu.Lock()
+	if m.noNewBackends {
+		// Shutdown began (or Close ran) while this one was starting: Close
+		// cannot see a backend that is not in the map yet, so it would
+		// outlive the manager. Tear it down here instead.
+		m.mu.Unlock()
+		_ = mb.be.Close()
+		if bridge != nil {
+			bridge.Close()
+		}
+		return nil, fmt.Errorf("create delegated backend for %s: %w", sessionKey, ErrShuttingDown)
+	}
 	if m.backends == nil {
 		m.backends = make(map[string]*managedBackend)
 	}
@@ -860,6 +883,7 @@ func (m *DelegatedManager) closeManaged(sessionKey string, clearResume bool) boo
 // via the ccstream bounded-shutdown fallback. See TODO #749.
 func (m *DelegatedManager) Close() {
 	m.mu.Lock()
+	m.noNewBackends = true
 	if m.reaperStop != nil {
 		m.reaperStop()
 		m.reaperStop = nil
@@ -886,6 +910,15 @@ func (m *DelegatedManager) Close() {
 			mb.bridge.Close()
 		}
 	}
+}
+
+// refuseNewBackends makes every later Get that would create or respawn a
+// backend fail with ErrShuttingDown. Running backends are still returned, so
+// turns already in flight finish on them. Called by Agent.BeginShutdown.
+func (m *DelegatedManager) refuseNewBackends() {
+	m.mu.Lock()
+	m.noNewBackends = true
+	m.mu.Unlock()
 }
 
 // Count returns the number of active delegated backends.

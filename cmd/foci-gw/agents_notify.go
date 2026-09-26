@@ -257,6 +257,11 @@ func turnSinkForConn(ag *agent.Agent, conn platform.Connection, sessionKey, trig
 // panics, permanent backend faults) still log at ERROR.
 func logInjectionError(trigger string, err error, format string, args ...interface{}) {
 	logger := log.NewComponentLogger(trigger)
+	if errors.Is(err, agent.ErrShuttingDown) {
+		// Refused, not failed: the turn never began (#2059).
+		logger.Infof(format+" (not started: shutting down)", args...)
+		return
+	}
 	if errors.Is(err, delegator.ErrBackendClosed) {
 		logger.Warnf(format+" (backend closed mid-inject — self-heals on next turn): %v", append(args, err)...)
 		return
@@ -305,13 +310,34 @@ func deliverToSessionChat(
 	agentID, sessionKey, message string,
 	askReqID string,
 ) {
+	deliverToSessionChatThen(ag, ctx, trigger, connMgr, agentID, sessionKey, message, askReqID, nil)
+}
+
+// deliverToSessionChatThen is deliverToSessionChat with a completion hook:
+// after (when non-nil) is called with HandleMessage's result once the injected
+// turn has run. It is NOT called when the inbox never runs the injection
+// (shutdown drain, full inbox), so a caller that consumes a durable record in
+// after — a scheduled wake dismissing its row — leaves that record pending.
+func deliverToSessionChatThen(
+	ag *agent.Agent,
+	ctx context.Context,
+	trigger string,
+	connMgr platform.ConnectionManager,
+	agentID, sessionKey, message string,
+	askReqID string,
+	after func(err error),
+) {
 	enqueueInject(ag, sessionKey, trigger, askReqID, func() {
+		var err error
+		if after != nil {
+			defer func() { after(err) }()
+		}
 		conn, outcome := route.ConnFor(connMgr, agentID, sessionKey, route.PolicyFallback)
 		notifyCtx := agent.WithTrigger(ctx, trigger)
 		if conn == nil {
 			// No deliverable connection anywhere. Still run the turn (it lands
 			// in the session JSONL); just don't render to a chat.
-			if err := ag.HandleMessage(notifyCtx, sessionKey, []string{message}, nil); err != nil {
+			if err = ag.HandleMessage(notifyCtx, sessionKey, []string{message}, nil); err != nil {
 				logInjectionError(trigger, err, "error for session %s", sessionKey)
 				return
 			}
@@ -330,10 +356,23 @@ func deliverToSessionChat(
 		}
 		notifyCtx = turnevent.WithSink(notifyCtx, sink)
 
-		if err := ag.HandleMessage(notifyCtx, sessionKey, []string{message}, nil); err != nil {
+		if err = ag.HandleMessage(notifyCtx, sessionKey, []string{message}, nil); err != nil {
 			logInjectionError(trigger, err, "error for session %s", sessionKey)
 		}
 	})
+}
+
+// wakeTurnDone returns the completion hook for wake id's turn: it dismisses the
+// wake's row, unless the turn was refused because foci is shutting down — then
+// the row stays pending and the next process re-fires it (#2059).
+func wakeTurnDone(store *memory.ReminderStore, id int64) func(error) {
+	return func(err error) {
+		if errors.Is(err, agent.ErrShuttingDown) {
+			remindLog.Infof("wake id=%d not run (shutting down) — left pending for restart", id)
+			return
+		}
+		_ = store.Dismiss(id)
+	}
 }
 
 // buildWakeScheduler creates the agent-scoped wake-scheduling machinery and
@@ -365,7 +404,6 @@ func buildWakeScheduler(
 			select {
 			case <-time.After(delay):
 				remindLog.Infof("firing wake id=%d after %v for agent %s: %q", id, delay, agentID, message)
-				_ = reminderStore.Dismiss(id)
 				// Use the originating session key if stored, otherwise
 				// pick the most recently active session.
 				sk := sessionKey
@@ -374,6 +412,7 @@ func buildWakeScheduler(
 				}
 				if sk == "" {
 					remindLog.Warnf("no session for agent %s, skipping", agentID)
+					_ = reminderStore.Dismiss(id)
 					return
 				}
 				// deliverToSessionChat queues on the session's inbox worker,
@@ -381,7 +420,14 @@ func buildWakeScheduler(
 				// no manual in-flight wait needed. A facet key queues on the
 				// facet's own inbox, so a turn on another session does not
 				// delay the wake (#719).
-				deliverToSessionChat(getAgent(), ctx, "scheduled_wake", connMgr, agentID, sk, prompts.FormatInjectedMessage("SCHEDULED WAKE", time.Now(), message), "")
+				//
+				// The row is dismissed only once the wake's turn has actually
+				// run (#2059). A wake the inbox never runs, or whose turn is
+				// refused because foci is shutting down, stays pending and is
+				// re-fired by the restore below in the next process.
+				deliverToSessionChatThen(getAgent(), ctx, "scheduled_wake", connMgr, agentID, sk,
+					prompts.FormatInjectedMessage("SCHEDULED WAKE", time.Now(), message), "",
+					wakeTurnDone(reminderStore, id))
 				wakesMu.Lock()
 				delete(wakes, id)
 				wakesMu.Unlock()

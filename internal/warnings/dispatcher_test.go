@@ -2,6 +2,7 @@ package warnings
 
 import (
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -603,5 +604,39 @@ func waitDispatched(t *testing.T, d *Dispatcher) {
 			t.Fatal("dispatch goroutine did not finish")
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestDispatcher_HoldFnBlocksEveryDispatch(t *testing.T) {
+	// #2059: while HoldFn is true (the agent is draining for shutdown) neither
+	// the periodic MaybeFire nor the turn-end FlushPending dispatches — a
+	// dispatch runs a turn — and the warnings stay queued. Releasing the hold
+	// is the positive control that the same dispatcher does fire.
+	q := NewQueue(0, 0)
+	var calls atomic.Int32
+	var hold atomic.Bool
+	hold.Store(true)
+	d := NewDispatcher(DispatcherConfig{
+		Queue:      q,
+		DispatchFn: func(string) { calls.Add(1) },
+		HoldFn:     hold.Load,
+	})
+
+	q.Push("WARN", "test", "held warning")
+	d.MaybeFire()
+	d.FlushPending()
+	waitDispatched(t, d)
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("dispatched %d time(s) while held, want 0", got)
+	}
+	if !q.Pending() {
+		t.Fatal("held warnings were drained from the queue")
+	}
+
+	hold.Store(false)
+	d.MaybeFire()
+	waitDispatched(t, d)
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("dispatched %d time(s) after release, want 1", got)
 	}
 }

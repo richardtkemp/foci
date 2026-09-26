@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/agent"
 	"foci/internal/delegator/opencode"
 	"foci/internal/gemini"
 	"foci/internal/platform"
@@ -39,6 +40,15 @@ func runShutdown(
 	}
 
 	mainLog.Infof("shutting down...")
+
+	// Drain mode first (#2059): from here no agent begins a system turn,
+	// post-turn compaction or backend. Turns already running still finish —
+	// gracefulShutdown below waits for them — and queued work (a scheduled
+	// wake) stays pending for the next process instead of being consumed by a
+	// turn that the backend close would cut off.
+	for _, inst := range agents {
+		inst.ag.BeginShutdown()
+	}
 
 	// Stop keepalive runners — prevents new timer-triggered branches
 	for _, inst := range agents {
@@ -136,15 +146,7 @@ func logBusyAgents(agents map[string]*agentInstance, timeout time.Duration) {
 	now := time.Now()
 	for id, inst := range agents {
 		for _, d := range inst.ag.ProcessingDetails() {
-			s := fmt.Sprintf("%s(session=%s", id, d.SessionKey)
-			if d.ToolName != "" {
-				s += fmt.Sprintf(", tool=%s", d.ToolName)
-			}
-			if d.Trigger != "" {
-				s += fmt.Sprintf(", trigger=%s", d.Trigger)
-			}
-			s += fmt.Sprintf(", elapsed=%s)", now.Sub(d.StartTime).Truncate(time.Second))
-			parts = append(parts, s)
+			parts = append(parts, describeBusyTurn(id, d, now))
 		}
 	}
 	if len(parts) == 0 {
@@ -152,4 +154,27 @@ func logBusyAgents(agents map[string]*agentInstance, timeout time.Duration) {
 	} else {
 		mainLog.Warnf("graceful shutdown timed out after %s — blocking: %s", timeout, strings.Join(parts, ", "))
 	}
+}
+
+// describeBusyTurn renders one in-flight turn for the drain-timeout warning.
+// elapsed counts from when the turn began on its backend, not from when it was
+// registered: a turn can wait minutes behind another before it starts (#2059),
+// and folding that wait into elapsed made a seconds-old turn look like the
+// one that had been running all along. The wait is reported separately.
+func describeBusyTurn(agentID string, d agent.TurnDetail, now time.Time) string {
+	s := fmt.Sprintf("%s(session=%s", agentID, d.SessionKey)
+	if d.ToolName != "" {
+		s += fmt.Sprintf(", tool=%s", d.ToolName)
+	}
+	if d.Trigger != "" {
+		s += fmt.Sprintf(", trigger=%s", d.Trigger)
+	}
+	if d.DispatchedAt.IsZero() {
+		return s + fmt.Sprintf(", not dispatched, waiting=%s)", now.Sub(d.StartTime).Truncate(time.Second))
+	}
+	s += fmt.Sprintf(", elapsed=%s", now.Sub(d.DispatchedAt).Truncate(time.Second))
+	if waited := d.DispatchedAt.Sub(d.StartTime).Truncate(time.Second); waited > 0 {
+		s += fmt.Sprintf(", waited=%s before dispatch", waited)
+	}
+	return s + ")"
 }

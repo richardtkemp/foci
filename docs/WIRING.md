@@ -186,6 +186,7 @@ config.Load(path)                                        ← validates values; l
 ```
 SIGTERM/SIGINT received
   → runShutdown(agents, httpServer, botMgr, ...)   ← shutdown.go
+    → Agent.BeginShutdown() (per-agent)             ← drain mode (#2059), see below
     → stop keepalive timers (per-agent)
     → close HTTP server
     → gracefulShutdown(agents, timeout)             ← wait for in-flight agent turns
@@ -195,6 +196,17 @@ SIGTERM/SIGINT received
     → connMgr.Wait()                                ← block until all platform connections finish
   → deferred closes run (SQLite DBs, log files)
 ```
+
+**Drain mode (#2059, `internal/agent/shutdown.go`).** `BeginShutdown` latches the agent: turns already running finish (graceful shutdown waits for them), but nothing new begins. The gate is at the backend-agnostic layer, so it holds for the API transport and every delegated backend alike:
+
+- **Inbox** — `runInject` runs no injection (it calls `InjectMeta.Refused`, so `EnqueueInjectWait` returns `ErrShuttingDown`), and `waitInjectGate` opens on shutdown so a held injection is refused rather than pinning the worker.
+- **Turn dispatch** — `OrchestrateFullTurn` refuses a non-interactive (system) turn with `ErrShuttingDown` after `AcquireTurnLock`; `DelegatedTransport.RunInference`'s `SourceSystem` retry loop re-checks on every attempt and its bounded wait is cancelled by shutdown, so a system turn queued behind an in-flight turn is never dispatched into the draining session. Interactive (real-time user) turns are not refused — they have no durable record to fall back on.
+- **Post-turn** — `runPostTurn` skips `RunCompaction`; the threshold is re-checked after the next turn.
+- **Backend creation** — `DelegatedManager.refuseNewBackends` (also set by `Close`) makes `getOrCreate` fail with `ErrShuttingDown` for a new or respawned backend, rechecked at map insertion so a spawn racing `Close` is torn down; running backends are still returned.
+- **Warnings** — the agent-queue `warnings.Dispatcher` is wired with `HoldFn: ag.ShuttingDown`, so neither `MaybeFire` nor the turn-end `FlushPending` dispatches (warnings stay queued).
+- **Scheduled wakes** — the row is dismissed by `wakeTurnDone` only after the wake's turn ran (`deliverToSessionChatThen`'s completion hook), never on a refused/unrun one, so a wake caught by the drain stays pending and is re-fired by the restore at next startup.
+
+The drain-timeout warning (`describeBusyTurn`) reports `elapsed` from `TurnDetail.DispatchedAt` (stamped by `markTurnDispatched` when the turn actually began on its backend), and the time spent waiting before that separately — not from registration, which counted minutes of queueing as run time.
 
 ## Startup Diagnosis (`startup/diagnosis.go`)
 
@@ -1078,6 +1090,8 @@ The agent can defer thoughts for later via the `remind` tool. Reminders are stor
 **Tool registration:** `remind` is `ExecExport: true`, so it is exposed both as a native API tool (in API-mode agents) and as a `foci_remind` shell function via the exec bridge (in delegated/Claude Code agents). The wake-scheduling machinery (`buildWakeScheduler` in `cmd/foci-gw/agents_notify.go`) is built once per agent in `setupAgent` — transport-independent — and returns **two** callbacks: `tools.ScheduleWakeFn` and `tools.CancelWakeFn`. They are held on `sharedAgentSetup.wakeScheduleFn` / `.wakeCancelFn` and passed into `toolDeps.wakeFn` / `.wakeCancelFn`. The `remind` row in the unified tool table (`cmd/foci-gw/tool_table.go`) is `pathBoth` and gated on `reminderStore != nil && wakeFn != nil`, so the single `registerTools` driver adds it to whichever registry (API or exec) is being built.
 
 **Cancelling a wake (#1648):** a scheduled wake is an **in-process timer**, not a DB row that gets polled — `ReminderStore.Due` explicitly excludes `wake = 1` rows. So deleting the row does **not** stop the wake: the goroutine fires anyway and delivers. Cancellation must go through `wakeCancelFn`, which cancels the wake's context; the goroutine's `Done` branch then dismisses the row and removes the map entry, keeping row cleanup in one place. `wakeCancelFn` reports `false` when no live timer exists for the id. The tool's `cancel` path looks the id up via the **agent-scoped** `PendingWakes(agentID)` first, so one agent cannot cancel another's wake.
+
+**Firing a wake (#2059):** the fire branch does NOT dismiss the row up front. It delivers via `deliverToSessionChatThen` with `wakeTurnDone` as the completion hook, which dismisses the row once the wake's turn has run — unless the turn returned `agent.ErrShuttingDown`. An injection the inbox never runs (shutdown drain, full inbox) never calls the hook at all. Either way the row stays pending and the startup restore re-fires it (a past-due wake fires immediately). The one early dismissal is a wake with no resolvable session, which could never run.
 
 **Storage:** `ReminderStore` in `memory/remind.go`. Table `reminders` with columns: `id`, `agent_id`, `text`, `due_at`, `due_tag`, `created`. Scoped per-agent — each agent sees only its own reminders.
 

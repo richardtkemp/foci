@@ -122,6 +122,10 @@ type InjectMeta struct {
 	// a verdict for ask N is not a proactive interruption of ask N+1, so it is not
 	// held behind it (#1712). Set by the ask tool's delivery path only.
 	AskReqID string
+	// Refused, if set, is called instead of Run when the inbox declines to run
+	// the injection because the agent is shutting down (#2059), so a caller
+	// waiting on Run's effect is released rather than left waiting forever.
+	Refused func()
 }
 
 // controlInjectTriggers are exempt from ask-deferral: they resume/drive the agent
@@ -595,15 +599,18 @@ func (a *Agent) Enqueue(env Envelope) bool {
 // inside the outer turn's post-turn phase) call HandleMessage directly.
 //
 // Returns ctx.Err() if ctx ends first; the injection still runs when the
-// worker reaches it (Run closures are not cancellable once queued).
+// worker reaches it (Run closures are not cancellable once queued). Returns
+// ErrShuttingDown if the worker declined to run it because the agent is
+// draining (#2059).
 func (a *Agent) EnqueueInjectWait(ctx context.Context, sessionKey, trigger string, run func()) error {
 	done := make(chan struct{})
+	refused := make(chan struct{})
 	accepted := a.Enqueue(Envelope{
 		SessionKey: sessionKey,
 		Inject: &InjectMeta{Trigger: trigger, Run: func() {
 			defer close(done)
 			run()
-		}},
+		}, Refused: func() { close(refused) }},
 	})
 	if !accepted {
 		return fmt.Errorf("inbox rejected injection for session %s (trigger=%s)", sessionKey, trigger)
@@ -611,6 +618,8 @@ func (a *Agent) EnqueueInjectWait(ctx context.Context, sessionKey, trigger strin
 	select {
 	case <-done:
 		return nil
+	case <-refused:
+		return ErrShuttingDown
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -658,8 +667,10 @@ func (a *Agent) backendAwaitingAutonomousRun(sk string) bool {
 // transition has no channel, so it also polls at injectGatePollInterval. Applied
 // at every runInject site — the dequeue path and the post-batch heldInjects loop.
 func (a *Agent) waitInjectGate(ctx context.Context, sk string) bool {
+	// Shutdown opens the gate: runInject then refuses the injection, so the
+	// worker is not left holding it until the process dies (#2059).
 	gated := func() bool {
-		return a.IsInFlightDelivering(sk) || a.backendAwaitingAutonomousRun(sk)
+		return !a.ShuttingDown() && (a.IsInFlightDelivering(sk) || a.backendAwaitingAutonomousRun(sk))
 	}
 	if gated() {
 		log.Extra("inbox", "gate_wait sk=%s reason=autonomous_or_pending — holding injection until the run and any pending background work clear (#1070/spec§4)", sk)
@@ -671,6 +682,8 @@ func (a *Agent) waitInjectGate(ctx context.Context, sk string) bool {
 			return false
 		case <-wait:
 			// Adoption edge fired — re-check.
+		case <-a.shutdown.done():
+			// Draining — re-check (the gate opens).
 		case <-time.After(injectGatePollInterval):
 			// Pending-work transitions have no broadcast — poll.
 		}
@@ -926,6 +939,18 @@ type deferredInject struct {
 // ask still pending is still deferred: that is the same-ask race the gate was
 // written for, and it stays closed.
 func (a *Agent) runInject(inb *sessionInbox, env Envelope) {
+	// Drain gate (#2059): an injection is a new system turn, and none begins
+	// once shutdown has started. It is dropped unrun — its producer's durable
+	// record (a scheduled wake's row) is still pending, so the next process
+	// re-fires it; running it now would start a turn on a backend about to be
+	// closed under it and consume the record for nothing.
+	if a.ShuttingDown() {
+		a.logger().Infof("inbox: injection not run sk=%s trigger=%s: shutting down", inb.sk, env.Inject.Trigger)
+		if env.Inject.Refused != nil {
+			env.Inject.Refused()
+		}
+		return
+	}
 	if pending := a.pendingAskFor(env.SessionKey); pending != "" && !IsControlInjectTrigger(env.Inject.Trigger) &&
 		(env.Inject.AskReqID == "" || env.Inject.AskReqID == pending) {
 		inb.injMu.Lock()

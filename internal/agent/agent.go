@@ -192,6 +192,7 @@ type Agent struct {
 	turnDetails        map[uint64]*TurnDetail // keyed by unique turn ID
 	turnIDCounter      uint64                 // atomic: monotonic turn ID
 	turnLocksMu        sync.Mutex
+	shutdown           shutdownGate           // drain latch — see BeginShutdown (#2059)
 	turnLocks          map[string]*sync.Mutex // per-session turn serialization
 	metaMu             sync.Mutex
 	meta               map[string]*sessionMeta // per-session metadata
@@ -557,6 +558,10 @@ type TurnDetail struct {
 	Trigger    string // "user", "keepalive", "branch", "scheduled_wake", "telegram", "async_notify"
 	ToolName   string // currently executing tool, or empty
 	StartTime  time.Time
+	// DispatchedAt is when the turn actually began on its backend — later than
+	// StartTime when it first waited behind an in-flight turn. Zero while it
+	// is still waiting. Set via markTurnDispatched.
+	DispatchedAt time.Time
 }
 
 // ProcessingDetails returns detail for every in-flight turn.

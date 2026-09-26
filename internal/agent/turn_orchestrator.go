@@ -43,6 +43,12 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	}
 	unlock := tc.AcquireTurnLock(ts)
 	defer unlock()
+	// Drain gate (#2059), checked after the lock so a system turn that queued
+	// behind the lock while shutdown began is refused rather than started.
+	if err := a.refuseSystemTurn(ts.Trigger); err != nil {
+		a.logger().Infof("session=%s system turn (trigger=%q) not started: shutting down", ts.SessionKey, ts.Trigger)
+		return "", err
+	}
 	// markInFlight is the sole in-flight tracker; it covers both API and
 	// delegated transports. Session keys are stable identities: a facet/branch
 	// (a 'b' child on its own backend, an independent conversation) has its own
@@ -218,9 +224,16 @@ done:
 		a.logger().Errorf("session=%s post-turn save: %v", ts.SessionKey, err)
 	}
 	tc.UpdateSessionMeta(ts)
-	a.logger().Debugf("runPostTurn: entering RunCompaction sk=%s", ts.SessionKey)
-	tc.RunCompaction(ts)
-	a.logger().Debugf("runPostTurn: RunCompaction returned sk=%s", ts.SessionKey)
+	// A compaction begun while draining runs against a backend that is about
+	// to be closed under it (#2059). The threshold is re-evaluated after the
+	// next turn, so skipping here defers it rather than losing it.
+	if a.ShuttingDown() {
+		a.logger().Infof("session=%s post-turn compaction skipped: shutting down", ts.SessionKey)
+	} else {
+		a.logger().Debugf("runPostTurn: entering RunCompaction sk=%s", ts.SessionKey)
+		tc.RunCompaction(ts)
+		a.logger().Debugf("runPostTurn: RunCompaction returned sk=%s", ts.SessionKey)
+	}
 	tc.LogConversationSent(ts)
 	tc.TouchActivityPost(ts)
 	a.logger().Debugf("runPostTurn: exit sk=%s", ts.SessionKey)

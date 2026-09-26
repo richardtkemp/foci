@@ -25,6 +25,10 @@ type DispatcherConfig struct {
 	ActivityThreshold     time.Duration
 	LastUserMessageTimeFn func() time.Time
 	IsProcessingFn        func() bool // if non-nil and returns true, defer dispatch until turn ends
+	// HoldFn, if non-nil and true, stops every dispatch — periodic and flush —
+	// and leaves the warnings queued. Wired to the agent's shutdown drain
+	// (#2059) so a turn-end flush during shutdown does not start a new turn.
+	HoldFn func() bool
 	// LastDispatchStore persists the last-dispatch time so the cadence
 	// survives a restart (#2026): without it a restart reset lastDispatch to
 	// zero and the first pending warning after boot bypassed the interval.
@@ -53,6 +57,7 @@ type Dispatcher struct {
 	activityThreshold     time.Duration
 	lastUserMessageTimeFn func() time.Time
 	isProcessingFn        func() bool
+	holdFn                func() bool
 	lastDispatchStore     TimeStore
 
 	mu           sync.Mutex
@@ -80,6 +85,7 @@ func NewDispatcher(cfg DispatcherConfig) *Dispatcher {
 		activityThreshold:     cfg.ActivityThreshold,
 		lastUserMessageTimeFn: cfg.LastUserMessageTimeFn,
 		isProcessingFn:        cfg.IsProcessingFn,
+		holdFn:                cfg.HoldFn,
 		lastDispatchStore:     cfg.LastDispatchStore,
 	}
 	if d.lastDispatchStore != nil {
@@ -98,7 +104,7 @@ func (d *Dispatcher) MaybeFire() {
 		return
 	}
 
-	if !d.queue.Pending() {
+	if !d.queue.Pending() || d.held() {
 		return
 	}
 
@@ -148,7 +154,7 @@ func (d *Dispatcher) FlushPending() {
 		d.log.Warnf("FlushPending: dispatcher not fully wired (queue=%v dispatchFn=%v) — pending warnings dropped", d.queue != nil, d.dispatchFn != nil)
 		return
 	}
-	if !d.queue.Pending() {
+	if !d.queue.Pending() || d.held() {
 		return
 	}
 
@@ -165,6 +171,15 @@ func (d *Dispatcher) FlushPending() {
 	}
 
 	d.dispatchDrained()
+}
+
+// held reports whether HoldFn is currently stopping dispatch.
+func (d *Dispatcher) held() bool {
+	if d.holdFn != nil && d.holdFn() {
+		d.log.Debugf("held: pending warnings stay queued")
+		return true
+	}
+	return false
 }
 
 // dispatchDrained drains the warning queue, formats the result, and launches
