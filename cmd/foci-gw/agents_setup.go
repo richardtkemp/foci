@@ -343,6 +343,7 @@ func applyWarningQueueLevels(ag *agent.Agent, rc *config.ResolvedAgentConfig, cf
 type platformConnectionResult struct {
 	configureFacetFn  func(platform.Connection)
 	displayDefaultsFn func() platform.DisplaySettings
+	platforms         []string // platforms the agent has a connection on, connected or still connecting (#2043)
 }
 
 // setupPlatformConnections creates and registers platform connections for the agent.
@@ -414,6 +415,7 @@ func setupPlatformConnections(
 		ResolvedLive: p.resolvedLive,
 	})
 	for _, r := range results {
+		result.platforms = append(result.platforms, r.Platform)
 		if r.ConfigureFacetConn != nil {
 			result.configureFacetFn = r.ConfigureFacetConn
 		}

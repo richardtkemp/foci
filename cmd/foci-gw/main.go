@@ -730,7 +730,7 @@ Subcommands:
 	checkDelegatedReadiness(ctx, agents, agentOrder)
 
 	// ========== Welcome & first-run ==========
-	handleRestartAndFirstRun(agents, agentOrder, si.sessionIndex, cfg, ctx, connMgr, diagnosis)
+	handleRestartAndFirstRun(agents, agentOrder, si.sessionIndex, cfg, ctx, connMgr, plat.WhenPrimaryConnected, diagnosis)
 
 	// ========== Wait for signal & shutdown ==========
 	sig := <-sigCh

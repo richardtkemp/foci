@@ -57,10 +57,20 @@ type AgentSetupParams struct {
 	// ResolvedLive lets config-derived handles (the group throttle) subscribe
 	// to live config edits and rebuild themselves.
 	ResolvedLive *config.LiveValue[*config.ResolvedAgentConfig]
+
+	// OnFacetConnected runs for each facet bot once its background connect
+	// succeeds and before it is live (the provider restores its persisted
+	// facet session there, which needs the username getMe returns). May be nil.
+	OnFacetConnected func(*Bot)
 }
 
 // SetupAgent creates and registers platform bots for an agent.
 // Returns the result containing a DefaultSessionKeyFn, or nil if no platform was configured.
+//
+// No network happens here: each bot connects in the background once the
+// manager starts (BotManager.ConnectBeforeRun, #2043), so a Telegram outage
+// cannot hold up foci startup. A non-nil result therefore means "configured",
+// not "connected".
 //
 // Note: notification callback wiring (CacheBustAlert, ManaWarnFunc, etc.) and
 // ag.AddPlatform are handled by the caller (agents.go wireAgentPlatformCallbacks),
@@ -71,7 +81,8 @@ func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 	setupTelegramBots(mgr, p)
 
 	// Return result with default session key function wired to the primary bot.
-	bot := mgr.PrimaryBot(acfg.ID)
+	// RegisteredPrimary: the bot may still be connecting.
+	bot := mgr.RegisteredPrimary(acfg.ID)
 	if bot == nil {
 		return nil
 	}
@@ -154,12 +165,8 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 
 	allowedUsers := resolveAllowedUsers(acfg, cfg)
 	allowedOnly := resolveAllowedUsersOnly(acfg, cfg)
-	primaryBot, err := NewBot(telegramToken, allowedUsers, p.Agent, p.Commands, p.LastMsgStore, acfg.ID,
+	primaryBot := NewBot(telegramToken, allowedUsers, p.Agent, p.Commands, p.LastMsgStore, acfg.ID,
 		telegramAPIBaseOf(tg))
-	if err != nil {
-		telegramLog.Errorf("agent %q: create bot: %v (agent will run without platform)", acfg.ID, err)
-		return
-	}
 	primaryBot.SetAllowedUsersOnly(allowedOnly)
 
 	// Resolve require_mention: per-agent platform > global platform (default true).
@@ -262,6 +269,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	}
 
 	mgr.AddPrimary(acfg.ID, primaryBot)
+	mgr.ConnectBeforeRun(primaryBot, fmt.Sprintf("agent %q: create bot", acfg.ID), connectThen(primaryBot, nil))
 
 	// Per-agent facet bots
 	facetBots := tg.FacetBots
@@ -271,12 +279,8 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 			telegramLog.Errorf("agent %q: facet bot %q: token not found", acfg.ID, facetName)
 			continue
 		}
-		facetBot, err := NewBot(facetToken, allowedUsers, p.Agent, p.Commands, p.LastMsgStore, "",
+		facetBot := NewBot(facetToken, allowedUsers, p.Agent, p.Commands, p.LastMsgStore, "",
 			telegramAPIBaseOf(tg))
-		if err != nil {
-			telegramLog.Errorf("agent %q: create facet bot %q: %v", acfg.ID, facetName, err)
-			continue
-		}
 		facetBot.SetAllowedUsersOnly(allowedOnly)
 		ConfigureFacetBot(facetBot, FacetBotConfig{
 			STTProvider:     p.ResolveSTT(p.STTMap, cfg.STT, config.DerefStr(acfg.Voice.STT), voice.MergeReplacements(cfg.Voice.STTReplacements, acfg.Voice.STTReplacements)),
@@ -288,9 +292,10 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 			SessionIndex:    p.SessionIndex,
 		})
 		mgr.AddFacet(acfg.ID, facetBot)
+		mgr.ConnectBeforeRun(facetBot, fmt.Sprintf("agent %q: create facet bot %q", acfg.ID, facetName), connectThen(facetBot, p.OnFacetConnected))
 	}
 	if pool := mgr.Pool(acfg.ID); pool != nil && pool.Size() > 0 {
-		telegramLog.Infof("agent %q: %d per-agent facet bots ready", acfg.ID, pool.Size())
+		telegramLog.Infof("agent %q: %d per-agent facet bots registered", acfg.ID, pool.Size())
 	}
 
 	// Configure session TTL for per-agent facet pool
@@ -303,6 +308,21 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 		if p.ReclaimHook != nil {
 			pool.ReclaimHook = p.ReclaimHook
 		}
+	}
+}
+
+// connectThen returns the background connect for bot: the getMe handshake,
+// then after (if non-nil) while the bot is still pending — so whatever after
+// sets up is in place before anything can route to the bot.
+func connectThen(bot *Bot, after func(*Bot)) func(context.Context) error {
+	return func(ctx context.Context) error {
+		if err := bot.connect(ctx); err != nil {
+			return err
+		}
+		if after != nil {
+			after(bot)
+		}
+		return nil
 	}
 }
 

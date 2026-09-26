@@ -10,7 +10,6 @@ import (
 	"foci/internal/config"
 	"foci/internal/netretry"
 
-	"github.com/bwmarrin/discordgo"
 	"github.com/gorilla/websocket"
 )
 
@@ -22,23 +21,6 @@ func withFastGatewayBackoff(t *testing.T) {
 	orig := gatewayBackoff
 	gatewayBackoff = netretry.Backoff{InitialDelay: time.Millisecond, MaxDelay: time.Millisecond, Multiplier: 2}
 	t.Cleanup(func() { gatewayBackoff = orig })
-}
-
-// withFakeGateway replaces openGateway with a fake that fails the first
-// `failures` calls with err, then connects. Returns the attempt counter.
-func withFakeGateway(t *testing.T, failures int, err error) *int {
-	t.Helper()
-	attempts := 0
-	orig := openGateway
-	openGateway = func(*discordgo.Session) error {
-		attempts++
-		if attempts <= failures {
-			return err
-		}
-		return nil
-	}
-	t.Cleanup(func() { openGateway = orig })
-	return &attempts
 }
 
 // setupDiscordAgent runs SetupAgent for an agent with a configured discord
@@ -69,40 +51,9 @@ func bootDNSError() error {
 	}}
 }
 
-// TestSetupAgent_RetriesGatewayThroughBootDNS is the #1954 regression: a
-// transient DNS failure opening the gateway must be retried, not leave the
-// agent running without discord until the next restart.
-func TestSetupAgent_RetriesGatewayThroughBootDNS(t *testing.T) {
-	withFastGatewayBackoff(t)
-	attempts := withFakeGateway(t, 3, bootDNSError())
-
-	mgr := setupDiscordAgent(t)
-
-	if mgr.PrimaryBot("clutch") == nil {
-		t.Fatalf("no discord bot registered after %d gateway attempt(s): transient DNS error was not retried", *attempts)
-	}
-	if *attempts != 4 {
-		t.Errorf("gateway attempts = %d, want 4 (3 transient failures + 1 success)", *attempts)
-	}
-}
-
-// TestSetupAgent_BadTokenFailsFast: Discord rejects a bad token by closing
-// the gateway with 4004 during Open. Retrying cannot fix that, so setup must
-// give up on the first attempt.
-func TestSetupAgent_BadTokenFailsFast(t *testing.T) {
-	withFastGatewayBackoff(t)
-	authErr := &websocket.CloseError{Code: 4004, Text: "Authentication failed."}
-	attempts := withFakeGateway(t, 99, authErr)
-
-	mgr := setupDiscordAgent(t)
-
-	if mgr.PrimaryBot("clutch") != nil {
-		t.Fatal("bot registered despite a rejected token")
-	}
-	if *attempts != 1 {
-		t.Errorf("gateway attempts = %d, want 1 (auth failure must not retry)", *attempts)
-	}
-}
+// The #1954 regressions — a transient boot DNS failure is retried, close 4004
+// stops at once — now run in the background: see background_connect_test.go
+// (#2043).
 
 func TestIsPermanentDiscordErr(t *testing.T) {
 	cases := []struct {

@@ -6,7 +6,9 @@
 //
 // connectBot wraps gotgbot.NewBot in netretry.Do, the startup-connect retry
 // shared with Discord's gateway open (#1954): unbounded exponential backoff
-// on transient errors, fail fast on auth/token errors. See the netretry
+// on transient errors, fail fast on auth/token errors. It runs in the bot's
+// own goroutine, off the startup path (Bot.connect via
+// BotManager.ConnectBeforeRun, #2043), so an outage delays only this bot. See the netretry
 // package doc for why "unbounded" and for the 2026-05-20 incident (#796:
 // foci restarted with DNS not yet up, all six bots failed getMe with "server
 // misbehaving", 27.5h silence until manual restart).
@@ -31,11 +33,12 @@ var botFactory = gotgbot.NewBot
 var defaultConnectBackoff = netretry.StartupBackoff
 
 // connectBot calls botFactory with exponential backoff. Transient errors
-// are retried (forever, if MaxAttempts == 0); permanent (auth/token) errors
-// fail fast. All log lines have the bot token redacted before emit.
-func connectBot(token string, opts *gotgbot.BotOpts, lg *log.ComponentLogger, bo netretry.Backoff) (*gotgbot.Bot, error) {
+// are retried (forever, if MaxAttempts == 0) until ctx ends; permanent
+// (auth/token) errors fail fast. All log lines have the bot token redacted
+// before emit.
+func connectBot(ctx context.Context, token string, opts *gotgbot.BotOpts, lg *log.ComponentLogger, bo netretry.Backoff) (*gotgbot.Bot, error) {
 	var bot *gotgbot.Bot
-	err := netretry.Do(context.Background(), netretry.Policy{
+	err := netretry.Do(ctx, netretry.Policy{
 		Name:      "create telegram bot",
 		Backoff:   bo,
 		Permanent: isPermanentTelegramErr,

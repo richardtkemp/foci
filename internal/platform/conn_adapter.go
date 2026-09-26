@@ -72,3 +72,22 @@ func (a *ConnectionManagerAdapter[B]) Wait()                        { a.source.W
 func (a *ConnectionManagerAdapter[B]) HasFacet(agentID string) bool {
 	return a.source.HasFacet(agentID)
 }
+
+// primaryLiveNotifier is implemented by sources whose primary bot may still be
+// connecting in the background (BotManager, #2043).
+type primaryLiveNotifier[B any] interface {
+	WhenPrimaryLive(agentID string, fn func(B))
+}
+
+// WhenPrimaryConnected implements PrimaryConnectNotifier. A source with no
+// background connect (the app hub) has nothing pending, so its current
+// primary is the whole answer.
+func (a *ConnectionManagerAdapter[B]) WhenPrimaryConnected(agentID string, fn func(Connection)) {
+	if n, ok := a.source.(primaryLiveNotifier[B]); ok {
+		n.WhenPrimaryLive(agentID, func(b B) { fn(b) })
+		return
+	}
+	for _, c := range a.AllForAgent(agentID) {
+		fn(c)
+	}
+}

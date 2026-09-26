@@ -48,11 +48,11 @@ var isPermanentDiscordErr = netretry.PermanentMarkers(
 // foci booted before systemd-resolved answered, the single Open failed with
 // "server misbehaving", and the agent ran without discord until restart).
 //
-// It blocks, as Telegram's connectBot does: Bot.Run and the rest of
-// setupDiscordBots read dg.State.User and assume a live gateway, and a
-// consistent startup model beats a second, background one. In the boot-DNS
-// case this costs nothing extra — Telegram is already waiting out the same
-// window. ctx cancellation (shutdown) ends the wait.
+// It runs in the bot's own goroutine, off the startup path, exactly like
+// Telegram's getMe (BotManager.ConnectBeforeRun, #2043): the bot is wired at
+// setup but not live until the gateway opens, and Bot.Run — which reads
+// dg.State.User for the bot's own ID — starts only after. ctx cancellation
+// (shutdown) ends the wait.
 func connectGateway(ctx context.Context, dg *discordgo.Session, agentID string) error {
 	return netretry.Do(ctx, netretry.Policy{
 		Name:      "open gateway",
@@ -102,13 +102,18 @@ type AgentSetupParams struct {
 
 // SetupAgent creates and registers Discord bots for an agent.
 // Returns the result containing a DefaultSessionKeyFn, or nil if no platform was configured.
+//
+// No network happens here: the gateway opens in the background once the
+// manager starts (#2043), so a non-nil result means "configured", not
+// "connected".
 func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 	acfg := p.AgentConfig
 
 	setupDiscordBots(mgr, p)
 
 	// Return result with default session key function wired to the primary bot.
-	bot := mgr.PrimaryBot(acfg.ID)
+	// RegisteredPrimary: the bot may still be connecting.
+	bot := mgr.RegisteredPrimary(acfg.ID)
 	if bot == nil {
 		return nil
 	}
@@ -202,20 +207,9 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 		discordgo.IntentsMessageContent |
 		discordgo.IntentsGuildMessageReactions
 
-	// Open the websocket connection
-	if err := connectGateway(p.Ctx, dg, acfg.ID); err != nil {
-		discordLog.Errorf("agent %q: %v (agent will run without discord)", acfg.ID, err)
-		return
-	}
-
 	allowedUsers := resolveDiscordAllowedUsers(acfg, cfg)
 	primaryBot := NewBot(dg, allowedUsers, p.Agent, p.Commands, p.LastMsgStore, acfg.ID)
 	primaryBot.SetAllowedUsersOnly(resolveDiscordAllowedUsersOnly(acfg, cfg))
-
-	// Set bot user ID from the session
-	if dg.State != nil && dg.State.User != nil {
-		primaryBot.botUserID = dg.State.User.ID
-	}
 
 	// Apply Discord-specific settings from resolved platform config
 	if dc.Discord != nil && dc.Discord.GuildID != "" {
@@ -323,6 +317,11 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 	}
 
 	mgr.AddPrimary(acfg.ID, primaryBot)
+	// The gateway opens in the background; Bot.Run sets botUserID from
+	// dg.State.User once it has.
+	mgr.ConnectBeforeRun(primaryBot, fmt.Sprintf("agent %q", acfg.ID), func(ctx context.Context) error {
+		return connectGateway(ctx, dg, acfg.ID)
+	})
 
 	// Configure session TTL for per-agent facet pool
 	if pool := mgr.Pool(acfg.ID); pool != nil {

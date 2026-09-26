@@ -100,6 +100,7 @@ func handleRestartAndFirstRun(
 	cfg *config.Config,
 	ctx context.Context,
 	connMgr platform.ConnectionManager,
+	whenConnected func(agentID string, fn func(platform.Connection)),
 	diagnosis *startup.DiagnosisResult,
 ) {
 	// Read and consume the welcome/changelog file (written by setup.sh on update).
@@ -115,24 +116,28 @@ func handleRestartAndFirstRun(
 		diagnosis.Class != startup.ClassClean &&
 		diagnosis.Class != startup.ClassUnknown
 
-	// Platform-level notification: short "restarted at ..." message to the user.
+	// Platform-level notification: short "restarted at ..." message to the user,
+	// once per primary connection as soon as it is connected. A platform still
+	// connecting in the background (#2043) gets it when it attaches, stamped
+	// with the restart time rather than the attach time.
 	if needsRestart {
+		restartedAt := time.Now().Format("15:04:05")
 		for _, id := range agentOrder {
 			inst := agents[id]
-			for _, conn := range connMgr.AllForAgent(id) {
+			whenConnected(id, func(conn platform.Connection) {
 				if !inst.LiveConfig().PlatformNotify(conn.PlatformName()).StartupNotify {
-					continue
+					return
 				}
 				name := conn.Username()
 				if name == "" {
 					name = "foci"
 				}
-				text := fmt.Sprintf("%s restarted at %s", name, time.Now().Format("15:04:05"))
+				text := fmt.Sprintf("%s restarted at %s", name, restartedAt)
 				if extra := diagnosis.FormatNotification(); extra != "" {
 					text += "\n\n" + extra
 				}
 				conn.SendNotification(text)
-			}
+			})
 		}
 	}
 
@@ -146,12 +151,14 @@ func handleRestartAndFirstRun(
 		inst := agents[agentID]
 
 		// Respect startup_notify config: skip restart injection if all
-		// platform connections for this agent have it disabled.
+		// platforms this agent is on have it disabled. inst.platforms, not
+		// the live connections: a platform still connecting in the
+		// background (#2043) counts.
 		agentNeedsRestart := needsRestart && (restartOnly == "" || agentID == restartOnly)
 		if agentNeedsRestart {
 			hasStartupNotify := false
-			for _, conn := range connMgr.AllForAgent(agentID) {
-				if inst.LiveConfig().PlatformNotify(conn.PlatformName()).StartupNotify {
+			for _, name := range inst.platforms {
+				if inst.LiveConfig().PlatformNotify(name).StartupNotify {
 					hasStartupNotify = true
 					break
 				}

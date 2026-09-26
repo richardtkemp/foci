@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"context"
 	"errors"
 	"net"
 	"net/url"
@@ -48,7 +49,7 @@ func TestConnectBot_SuccessFirstTry(t *testing.T) {
 	want := &gotgbot.Bot{Token: "tok"}
 	withStubFactory(t, stubBotFactory(0, errors.New("unused"), want, &attempts))
 
-	got, err := connectBot("tok", nil, nil, fastBackoff)
+	got, err := connectBot(context.Background(), "tok", nil, nil, fastBackoff)
 	if err != nil {
 		t.Fatalf("connectBot: unexpected error: %v", err)
 	}
@@ -66,7 +67,7 @@ func TestConnectBot_RetriesTransientThenSucceeds(t *testing.T) {
 	transientErr := &net.OpError{Op: "dial", Err: errors.New("i/o timeout")}
 	withStubFactory(t, stubBotFactory(2, transientErr, want, &attempts))
 
-	got, err := connectBot("tok", nil, nil, fastBackoff)
+	got, err := connectBot(context.Background(), "tok", nil, nil, fastBackoff)
 	if err != nil {
 		t.Fatalf("connectBot: unexpected error: %v", err)
 	}
@@ -83,7 +84,7 @@ func TestConnectBot_FailsFastOnPermanent(t *testing.T) {
 	permErr := errors.New("Unauthorized: 401")
 	withStubFactory(t, stubBotFactory(99, permErr, nil, &attempts))
 
-	_, err := connectBot("tok", nil, nil, fastBackoff)
+	_, err := connectBot(context.Background(), "tok", nil, nil, fastBackoff)
 	if err == nil {
 		t.Fatal("connectBot: expected error, got nil")
 	}
@@ -100,7 +101,7 @@ func TestConnectBot_BoundedGivesUp(t *testing.T) {
 	transientErr := &net.OpError{Op: "dial", Err: errors.New("server misbehaving")}
 	withStubFactory(t, stubBotFactory(99, transientErr, nil, &attempts))
 
-	_, err := connectBot("tok", nil, nil, fastBackoff)
+	_, err := connectBot(context.Background(), "tok", nil, nil, fastBackoff)
 	if err == nil {
 		t.Fatal("connectBot: expected error, got nil")
 	}
@@ -128,7 +129,7 @@ func TestConnectBot_UnboundedRetriesUntilSuccess(t *testing.T) {
 		MaxDelay:     1 * time.Millisecond,
 		Multiplier:   2.0,
 	}
-	got, err := connectBot("tok", nil, nil, unbounded)
+	got, err := connectBot(context.Background(), "tok", nil, nil, unbounded)
 	if err != nil {
 		t.Fatalf("connectBot: unexpected error: %v", err)
 	}
@@ -146,7 +147,7 @@ func TestConnectBot_RedactsTokenInError(t *testing.T) {
 	leaky := errors.New(`Post "https://api.telegram.org/bot` + token + `/getMe": context deadline exceeded`)
 	withStubFactory(t, stubBotFactory(99, leaky, nil, &attempts))
 
-	_, err := connectBot(token, nil, nil, fastBackoff)
+	_, err := connectBot(context.Background(), token, nil, nil, fastBackoff)
 	if err == nil {
 		t.Fatal("connectBot: expected error, got nil")
 	}
@@ -166,7 +167,7 @@ func TestConnectBot_PermanentErrorRedactsToken(t *testing.T) {
 	leaky := errors.New(`Post "https://api.telegram.org/bot` + token + `/getMe": Unauthorized`)
 	withStubFactory(t, stubBotFactory(99, leaky, nil, &attempts))
 
-	_, err := connectBot(token, nil, nil, fastBackoff)
+	_, err := connectBot(context.Background(), token, nil, nil, fastBackoff)
 	if err == nil {
 		t.Fatal("connectBot: expected error, got nil")
 	}

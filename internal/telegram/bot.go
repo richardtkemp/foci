@@ -71,8 +71,9 @@ type queuedMessage struct {
 // Slash commands execute immediately on the receiver goroutine.
 type Bot struct {
 	log                *log.ComponentLogger
-	api                *gotgbot.Bot // for receiving updates (Run)
-	client             botClient    // for sending messages and files (mockable in tests)
+	api                *gotgbot.Bot     // for receiving updates (Run); nil until connect
+	client             botClient        // for sending messages and files (mockable in tests); nil until connect
+	connectOpts        *gotgbot.BotOpts // HTTP client for the API, built by NewBot, used by connect
 	handler            platform.MessageHandler
 	commands           *command.Registry
 	dispatcher         *dispatch.Dispatcher      // platform-agnostic command dispatch
@@ -312,13 +313,14 @@ func telegramAPIBaseOf(pc *config.PlatformConfig) string {
 // false = an empty list allows anyone, a non-empty list still filters.
 func (b *Bot) SetAllowedUsersOnly(v bool) { b.allowedUsersOnly = v }
 
-// NewBot creates a new Telegram bot.
+// NewBot creates a new Telegram bot WITHOUT touching the network: the getMe
+// handshake is connect, run in the background by the BotManager (#2043).
 // agentID is used for per-chat session key derivation (agent:ID:chat:CHATID).
 // For secondary (facet) bots, pass agentID="" — their session key is set dynamically via SetSessionKey.
 // apiBase, if non-empty, overrides the Bot API base URL — used by integration
 // tests to point at an httptest stub. Empty falls back to gotgbot's default
 // ("https://api.telegram.org").
-func NewBot(token string, allowedUsers []string, handler platform.MessageHandler, cmds *command.Registry, lastMsgStore *command.LastMessageStore, agentID string, apiBase string) (*Bot, error) {
+func NewBot(token string, allowedUsers []string, handler platform.MessageHandler, cmds *command.Registry, lastMsgStore *command.LastMessageStore, agentID string, apiBase string) *Bot {
 	// Use a transport with enough connections for concurrent API calls.
 	// The default http.Transport has MaxIdleConnsPerHost=2 which is too low:
 	// GetUpdates long-poll holds 1 connection, the agent worker sends typing
@@ -347,33 +349,15 @@ func NewBot(token string, allowedUsers []string, handler platform.MessageHandler
 		ForceAttemptHTTP2:   true,
 		DialContext:         dialer.DialContext,
 	}
-	// Construct via connectBot so a transient DNS/network blip at boot
-	// (e.g. systemd brings foci up before DNS is ready) doesn't permanently
-	// disable the bot. See bot_connect.go and TODO #796.
 	lg := log.NewComponentLogger("telegram:" + agentID)
-	api, err := connectBot(token, &gotgbot.BotOpts{
-		BotClient: &gotgbot.BaseBotClient{
-			Client: http.Client{
-				Transport: transport,
-			},
-			DefaultRequestOpts: defaultReqOpts,
-		},
-	}, lg, defaultConnectBackoff)
-	if err != nil {
-		// err is already token-redacted by connectBot.
-		return nil, err
-	}
 
 	allowed := make(map[string]bool, len(allowedUsers))
 	for _, u := range allowedUsers {
 		allowed[u] = true
 	}
 
-	lastSendAt := &atomic.Int64{}
 	bot := &Bot{
 		log:              lg,
-		api:              api,
-		client:           activityClient{botClient: api, lastSendAt: lastSendAt},
 		handler:          handler,
 		commands:         cmds,
 		lastMsgStore:     lastMsgStore,
@@ -382,7 +366,15 @@ func NewBot(token string, allowedUsers []string, handler platform.MessageHandler
 		agentID:          agentID,
 		botToken:         token,
 		apiBase:          apiBase,
-		lastSendAt:       lastSendAt,
+		lastSendAt:       &atomic.Int64{},
+		connectOpts: &gotgbot.BotOpts{
+			BotClient: &gotgbot.BaseBotClient{
+				Client: http.Client{
+					Transport: transport,
+				},
+				DefaultRequestOpts: defaultReqOpts,
+			},
+		},
 		chatmeta: &chatmeta.Resolver{
 			AgentID:      agentID,
 			PlatformName: platformName,
@@ -393,7 +385,26 @@ func NewBot(token string, allowedUsers []string, handler platform.MessageHandler
 		Size:   64,
 		Logger: lg,
 	})
-	return bot, nil
+	return bot
+}
+
+// connect runs the getMe handshake that gives the bot its identity and API
+// client, via connectBot: a transient DNS/network failure (e.g. systemd
+// bringing foci up before DNS is ready) is retried until ctx ends instead of
+// disabling the bot (#796). See bot_connect.go.
+//
+// It runs in the background (BotManager.ConnectBeforeRun, #2043) BEFORE the
+// bot is live, so nothing reads api/client concurrently; the manager's
+// pending-to-live transition publishes them to every later reader.
+func (b *Bot) connect(ctx context.Context) error {
+	api, err := connectBot(ctx, b.botToken, b.connectOpts, b.log, defaultConnectBackoff)
+	if err != nil {
+		// err is already token-redacted by connectBot.
+		return err
+	}
+	b.api = api
+	b.client = activityClient{botClient: api, lastSendAt: b.lastSendAt}
+	return nil
 }
 
 // SessionKeyForChatID returns the session key for a given chat ID, accounting

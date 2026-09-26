@@ -425,8 +425,24 @@ type ConnectionManager interface {
 	Wait()
 }
 
+// PrimaryConnectNotifier is implemented by connection managers whose primary
+// connection may attach after startup because it connects in the background
+// (#2043). See Messaging.WhenPrimaryConnected.
+type PrimaryConnectNotifier interface {
+	WhenPrimaryConnected(agentID string, fn func(Connection))
+}
+
 // SetupResult holds the outputs from setting up platform connections for an agent.
+//
+// A non-nil result means the agent HAS a connection on this platform, though
+// it may still be connecting in the background (#2043): it becomes visible to
+// the ConnectionManager only once connected. Until then delivery treats the
+// platform as offline — see route.ConnFor.
 type SetupResult struct {
+	// Platform is the provider name ("telegram", "app", ...). Filled in by
+	// Messaging.SetupAgentConnection.
+	Platform string
+
 	// DefaultSessionKeyFn resolves the current default session key.
 	// Returns "" if no message has been received yet.
 	DefaultSessionKeyFn func() string
@@ -747,10 +763,33 @@ func (m *Messaging) SetupAgentConnection(params AgentConnectionParams) []*SetupR
 	var results []*SetupResult
 	for _, p := range m.providers {
 		if r := p.SetupAgentConnection(params); r != nil {
+			r.Platform = p.Name()
 			results = append(results, r)
 		}
 	}
 	return results
+}
+
+// WhenPrimaryConnected calls fn once for each of the agent's primary
+// connections, across all platforms, as soon as it is connected: immediately
+// for one that already is, later for one still connecting in the background
+// (#2043). A platform whose connect fails for good never calls fn. Use it for
+// once-per-connection work that needs a live connection, such as the restart
+// notice.
+func (m *Messaging) WhenPrimaryConnected(agentID string, fn func(Connection)) {
+	if m == nil {
+		return
+	}
+	for _, p := range m.providers {
+		cm := p.ConnectionManager()
+		if n, ok := cm.(PrimaryConnectNotifier); ok {
+			n.WhenPrimaryConnected(agentID, fn)
+			continue
+		}
+		for _, c := range cm.AllForAgent(agentID) {
+			fn(c)
+		}
+	}
 }
 
 func (m *Messaging) SetupSharedFacet(params SharedFacetParams) {

@@ -107,6 +107,11 @@ func Do(ctx context.Context, p Policy, fn func() error) error {
 				return fmt.Errorf("%s: %w after %d attempt(s): %s", p.Name, err, attempt-1, redact(lastErr.Error()))
 			}
 		}
+		// A timer that fired in the same instant as a cancel can win sleep's
+		// select; re-check so no attempt ever starts after cancellation.
+		if attempt > 1 && ctx.Err() != nil {
+			return fmt.Errorf("%s: %w after %d attempt(s): %s", p.Name, ctx.Err(), attempt-1, redact(lastErr.Error()))
+		}
 
 		err := fn()
 		if err == nil {

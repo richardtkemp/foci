@@ -955,8 +955,8 @@ func TestL2_Failures_TelegramSendMessageMalformedJSONResponse(t *testing.T) {
 // gotgbot's NewBot — which calls getMe to validate — fails, foci's
 // isPermanentTelegramErr classifies it permanent and fast-fails the bot
 // (no retry/backoff), logs ERROR, and the agent continues to run without
-// a platform binding ("agent will run without platform"). The gateway
-// comes ready throughout.
+// a platform binding ("(running without it)"). The gateway comes ready
+// throughout — the connect runs in the background since #2043.
 //
 // This is the safer behavior in production: a *transient* Telegram outage
 // shouldn't tear down a multi-agent gateway (genuine transient errors are
@@ -982,9 +982,16 @@ func TestL2_Failures_TelegramUnknownTokenFailsFast(t *testing.T) {
 	if !waitForStderr(h, "unknown bot token", 10*time.Second) {
 		t.Errorf("expected 'unknown bot token' in stderr; got:\n%s", stderrTail(h.Stderr()))
 	}
-	// Agent continues without platform; bot count is 0.
-	if !waitForStderr(h, "started 0 bot(s)", 5*time.Second) {
-		t.Errorf("expected 'started 0 bot(s)' in stderr; got:\n%s", stderrTail(h.Stderr()))
+	// The connect runs in the background (#2043), so the bot is counted as
+	// connecting at start, then given up on at once: agent continues without it.
+	if !waitForStderr(h, "1 connecting in the background", 5*time.Second) {
+		t.Errorf("expected the bot to start connecting in the background; got:\n%s", stderrTail(h.Stderr()))
+	}
+	if !waitForStderr(h, "(running without it)", 5*time.Second) {
+		t.Errorf("expected the permanent getMe failure to give up with '(running without it)'; got:\n%s", stderrTail(h.Stderr()))
+	}
+	if strings.Contains(h.Stderr(), "attempt 2") {
+		t.Errorf("an auth failure was retried; got:\n%s", stderrTail(h.Stderr()))
 	}
 }
 

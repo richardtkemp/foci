@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"foci/internal/command"
@@ -18,6 +19,12 @@ type telegramProvider struct {
 	connMgr         platform.ConnectionManager
 	toolDetailStore *tooldetail.Store
 	deps            platform.ProviderDeps
+
+	// restoreMu guards restore, the RestoreFacetSessions params kept for facet
+	// bots that connect after it ran (all of them, since connects start with
+	// StartAll — #2043).
+	restoreMu sync.Mutex
+	restore   *platform.RestoreParams
 }
 
 // Compile-time checks.
@@ -87,6 +94,7 @@ func (p *telegramProvider) SetupAgentConnection(params platform.AgentConnectionP
 		DisplayOverrideFn: params.DisplayOverrideFn,
 		Resolved:          params.Resolved, // static-cfg:ignore: plumbing — see comment on the ConfigureFacetConn call in agent_setup.go
 		ResolvedLive:      params.ResolvedLive,
+		OnFacetConnected:  p.restoreConnectedFacet,
 	})
 }
 
@@ -108,13 +116,9 @@ func (p *telegramProvider) SetupSharedFacet(params platform.SharedFacetParams) {
 			telegramLog.Errorf("shared facet bot %q: token not found", botName)
 			continue
 		}
-		facetBot, err := NewBot(facetToken, tgPlat.Access.AllowedUsers,
+		facetBot := NewBot(facetToken, tgPlat.Access.AllowedUsers,
 			params.FirstHandler, cmds, command.NewLastMessageStore(), "",
 			telegramAPIBaseOf(tgPlat))
-		if err != nil {
-			telegramLog.Errorf("shared facet bot %q: create: %v", botName, err)
-			continue
-		}
 		if tgPlat.Access.AllowedUsersOnly != nil {
 			facetBot.SetAllowedUsersOnly(*tgPlat.Access.AllowedUsersOnly)
 		}
@@ -128,6 +132,7 @@ func (p *telegramProvider) SetupSharedFacet(params platform.SharedFacetParams) {
 			SessionIndex:    p.deps.SessionIndex,
 		})
 		p.mgr.AddSharedFacet(facetBot)
+		p.mgr.ConnectBeforeRun(facetBot, fmt.Sprintf("shared facet bot %q: create", botName), connectThen(facetBot, p.restoreConnectedFacet))
 	}
 
 	if pool := p.mgr.SharedPool(); pool != nil && pool.Size() > 0 {
@@ -138,19 +143,45 @@ func (p *telegramProvider) SetupSharedFacet(params platform.SharedFacetParams) {
 		if params.ReclaimHook != nil {
 			pool.ReclaimHook = params.ReclaimHook
 		}
-		telegramLog.Infof("%d shared facet bots ready", pool.Size())
+		telegramLog.Infof("%d shared facet bots registered", pool.Size())
 	}
 }
 
+// RestoreFacetSessions restores facet bots that are already connected and
+// keeps params for those that connect later: a facet's saved session is keyed
+// by its username, which only getMe supplies (restoreConnectedFacet).
 func (p *telegramProvider) RestoreFacetSessions(params platform.RestoreParams) {
 	if p.deps.SessionIndex == nil {
 		return
 	}
+	p.restoreMu.Lock()
+	p.restore = &params
+	p.restoreMu.Unlock()
 	restoreFacetSessions(p.mgr, p.deps.SessionIndex, p.deps.Sessions, p.deps.Config, params)
 }
 
+// restoreConnectedFacet restores one facet bot's persisted session right after
+// its background connect, before it is live. A no-op until
+// RestoreFacetSessions has supplied the resolver (it runs before StartAll, so
+// in production it always has).
+func (p *telegramProvider) restoreConnectedFacet(bot *Bot) {
+	p.restoreMu.Lock()
+	params := p.restore
+	p.restoreMu.Unlock()
+	if params == nil || p.deps.SessionIndex == nil {
+		return
+	}
+	facetMap, err := p.deps.SessionIndex.AgentMetadataByPrefix("_system", "facet:")
+	if err != nil {
+		telegramLog.Errorf("load facet sessions: %v", err)
+		return
+	}
+	restoreFacetBot(bot, facetMap, p.mgr, p.deps.SessionIndex, p.deps.Sessions, p.deps.Config, *params)
+}
+
 func (p *telegramProvider) SetLifecycleCallback(agentID string, event platform.LifecycleEvent, fn func()) {
-	bot := p.mgr.PrimaryBot(agentID)
+	// RegisteredPrimary: set up the callback on a bot that is still connecting.
+	bot := p.mgr.RegisteredPrimary(agentID)
 	if bot == nil {
 		return
 	}
@@ -257,50 +288,68 @@ func restoreFacetSessions(
 	restored := 0
 	for _, pi := range pools {
 		pi.pool.ForEach(func(bot *Bot) {
-			username := bot.Username()
-			if username == "" {
-				return
+			if restoreFacetBot(bot, facetMap, mgr, idx, sessions, cfg, params) {
+				restored++
 			}
-			savedKey, ok := facetMap["facet:"+username]
-			if !ok || savedKey == "" {
-				return
-			}
-
-			if sessions.LastActivity(savedKey) == "n/a" {
-				telegramLog.Infof("facet restore: @%s session %s no longer exists, cleaning up", username, savedKey)
-				_ = idx.DeleteAgentMetadata("_system", "facet:"+username)
-				return
-			}
-
-			bot.SetSessionKeyDirect(savedKey)
-
-			agentID := session.AgentIDFromKey(savedKey)
-			if handler, commands, commandContext, acfg, ok := params.Resolver(agentID); ok {
-				cmds, _ := commands.(*command.Registry)
-				bot.SetHandlerAndCommands(handler, cmds)
-				if cc, ok := commandContext.(command.CommandContext); ok {
-					bot.SetCommandContext(cc)
-				}
-				rc := config.Resolve(cfg, acfg)
-				ApplyAgentDisplaySettings(bot, rc.PlatformDisplay("telegram"), rc.Debug, rc.TelegramLongPollTimeout)
-				bot.fileMode, _ = config.ParseFileMode(cfg.FileMode)
-			}
-
-			if agentID != "" {
-				if primary := mgr.PrimaryBot(agentID); primary != nil {
-					if chatID := primary.ChatID(); chatID != 0 {
-						bot.SetChatID(chatID)
-					}
-				}
-			}
-
-			restored++
-			telegramLog.Infof("facet restore: @%s → %s", username, savedKey)
 		})
 	}
 	if restored > 0 {
 		telegramLog.Infof("restored %d facet session(s) from state", restored)
 	}
+}
+
+// restoreFacetBot reattaches one facet bot to its persisted session, if it has
+// one that still exists. A bot with no username yet (not connected) is
+// skipped; it is restored by restoreConnectedFacet when it connects.
+func restoreFacetBot(
+	bot *Bot,
+	facetMap map[string]string,
+	mgr *BotManager,
+	idx *session.SessionIndex,
+	sessions *session.Store,
+	cfg *config.Config,
+	params platform.RestoreParams,
+) bool {
+	username := bot.Username()
+	if username == "" {
+		return false
+	}
+	savedKey, ok := facetMap["facet:"+username]
+	if !ok || savedKey == "" {
+		return false
+	}
+
+	if sessions.LastActivity(savedKey) == "n/a" {
+		telegramLog.Infof("facet restore: @%s session %s no longer exists, cleaning up", username, savedKey)
+		_ = idx.DeleteAgentMetadata("_system", "facet:"+username)
+		return false
+	}
+
+	bot.SetSessionKeyDirect(savedKey)
+
+	agentID := session.AgentIDFromKey(savedKey)
+	if handler, commands, commandContext, acfg, ok := params.Resolver(agentID); ok {
+		cmds, _ := commands.(*command.Registry)
+		bot.SetHandlerAndCommands(handler, cmds)
+		if cc, ok := commandContext.(command.CommandContext); ok {
+			bot.SetCommandContext(cc)
+		}
+		rc := config.Resolve(cfg, acfg)
+		ApplyAgentDisplaySettings(bot, rc.PlatformDisplay("telegram"), rc.Debug, rc.TelegramLongPollTimeout)
+		bot.fileMode, _ = config.ParseFileMode(cfg.FileMode)
+	}
+
+	if agentID != "" {
+		// RegisteredPrimary: the chat ID is persisted state, not a connection.
+		if primary := mgr.RegisteredPrimary(agentID); primary != nil {
+			if chatID := primary.ChatID(); chatID != 0 {
+				bot.SetChatID(chatID)
+			}
+		}
+	}
+
+	telegramLog.Infof("facet restore: @%s → %s", username, savedKey)
+	return true
 }
 
 // Compile-time check.

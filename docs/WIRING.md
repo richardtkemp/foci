@@ -123,11 +123,12 @@ config.Load(path)                                        ← validates values; l
        → agent.Agent{shared fields + Client, Tools, Bootstrap, EnvironmentBlock, FallbackResolver, ...}
        → shared.finalize(ag, params)                        ← commands, platform, nudge (shared postamble)
          → registerAgentCommands(cmdRegParams)              ← commands.go — all slash command registration
-         → plat.SetupAgentConnection(AgentConnectionParams) ← creates platform connections (bots) for all active providers
-           → the boot-time network connect (telegram connectBot → getMe; discord connectGateway → gateway Open) runs through netretry.Do:
-             unbounded exponential backoff on transient errors, fail fast on auth errors (#796, #1954). It BLOCKS this per-agent loop
-             while retrying (both platforms alike), so a boot DNS window delays startup instead of leaving an agent platform-less
-           → returns []*platform.SetupResult with DefaultSessionKeyFn + ConfigureFacetConn
+         → plat.SetupAgentConnection(AgentConnectionParams) ← creates platform connections (bots) for all active providers — NO network:
+             telegram/discord build + wire each bot and register it PENDING via BotManager.ConnectBeforeRun (#2043). The network connect
+             (telegram Bot.connect → connectBot → getMe; discord connectGateway → gateway Open) runs later, in the bot's own goroutine
+             under BotManager.StartAll, so a Telegram/Discord outage at boot never holds up this loop, later agents, or the app provider
+           → returns []*platform.SetupResult with Platform + DefaultSessionKeyFn + ConfigureFacetConn (a result means "configured",
+             not "connected"); the Platform names are kept on agentInstance.platforms for startup decisions
          → wireAgentPlatformCallbacks(ag, acfg, cfg, plat, connMgr, sessionIndex)
            → ag.AddPlatform() for each connection
            → wires CacheBustAlert, RateLimitFunc, etc. using plat.NotifyAgent()
@@ -150,9 +151,17 @@ config.Load(path)                                        ← validates values; l
   → registerLiveAppliers(gwLiveApply, agents)              ← liveapply.go; wires each agent's hot-reloadable config fields (`hot:"turn"` etc.) into the registry created earlier
 
   → signal.Notify(SIGINT, SIGTERM)
-  → plat.RestoreFacetSessions(...)                     ← restore bot→session mappings from state store
-  → plat.StartAll(ctx)                                     ← starts all provider connections
-  → startup notifications (inline in main.go)              ← uses connMgr.AllForAgent() for fan-out
+  → plat.RestoreFacetSessions(...)                     ← restore bot→session mappings from state store (telegram: for facets that
+                                                            connect later, the params are kept and the facet is restored on connect —
+                                                            restoreConnectedFacet — since its key is the getMe username)
+  → plat.StartAll(ctx)                                     ← starts all provider connections; non-blocking. Per pending bot (#2043):
+                                                            goroutine → connect (netretry.Do(ctx): unbounded backoff on transient
+                                                            errors, fail fast on auth / discord close 4004,4010-4014 → ERROR
+                                                            "(running without it)"; ctx cancel at shutdown ends it) → markLive →
+                                                            WhenPrimaryLive callbacks → Bot.Run
+  → startup notifications (handleRestartAndFirstRun)       ← "restarted at" notice per primary via plat.WhenPrimaryConnected (sent
+                                                            when a still-connecting platform attaches); restart-turn gate reads
+                                                            agentInstance.platforms, not live connections
   → deferStore = defersend.NewStore(deferred-sends.db)     ← wait_defer.go; SQLite-backed queue for `foci send --wait-*` sends whose activity gate isn't yet satisfied, swept by a background goroutine (10s tick, 2h default send-anyway timeout) — see internal/defersend below. Also the queue for ANY `/send` whose target endpoint is currently rate-limited (#1417): a hard capacity constraint, not a scheduling preference, so it defers even under `wait_none`/`--no-gate`, and the sweep withholds it unconditionally (no send-anyway-on-deadline) until `Agent.SessionRateLimited` clears — one record delivered per sweep tick.
   → http.Server{...}                                       ← http.go (registerHTTPHandlers)
   → startUnixSocket(...)                                   ← unix_socket.go (same-user auth, no API key)
@@ -204,7 +213,7 @@ DiagnoseRestart(sessionIndex, startTime, logsDir)
   → return DiagnosisResult{Class, Diagnostics, Summary}
 ```
 
-**Platform notification:** Startup notifications fan out to all connections via `connMgr.AllForAgent()`. The diagnosis text is appended to the restart message. Clean restarts get no extra text. Crashes show "⚠️ Unexpected restart" with error lines. Reboots show "🔄 System reboot detected".
+**Platform notification:** Startup notifications go to each of the agent's primary connections via `plat.WhenPrimaryConnected` — at once for a connected one, on attach for one still connecting in the background (#2043), stamped with the restart time. The diagnosis text is appended to the restart message. Clean restarts get no extra text. Crashes show "⚠️ Unexpected restart" with error lines. Reboots show "🔄 System reboot detected".
 
 **State key:** `system:last_clean_shutdown` holds Unix timestamp of last graceful shutdown.
 
@@ -2801,6 +2810,8 @@ facet_bots = ["spare1"]          # shared pool (fallback)
 Messages to the secondary bot route to the forked session. `/done` on the secondary bot detaches it and returns it to the pool.
 
 **Bot pool** (`platform/botpool.go`): The generic `platform.Pool[B]` / `platform.BotManager[B]` — ONE implementation of LRU acquire, release on `/done`, TTL-based stale-session reclaim, and bot lifecycle, instantiated by both Telegram and Discord (`telegram/manager.go` and `discord/manager.go` are thin type aliases).
+
+**Background connect (#2043)** — also ONE mechanism for both platforms, in `BotManager`: `ConnectBeforeRun(bot, label, connect)` marks a registered bot PENDING. A pending bot is wired but invisible to every lookup that hands out a connection (`PrimaryBot`, `BotForSession`, pool `Acquire`/`Available`, `HasFacet`, `AgentIDs`); setup-time wiring that must reach it anyway uses `RegisteredPrimary` (lifecycle callbacks, display defaults, restore's persisted chat ID). `StartAll` runs `connect` in the bot's goroutine, then `markLive`, then `Run`. Shutdown (ctx cancel) stops a pending retry loop at the next attempt boundary (`netretry.Do` re-checks ctx before every attempt) and `Wait` does not wait for an attempt already in flight (a getMe or gateway dial that only ends on its own network timeout) — it is abandoned and its bot never runs. `WhenPrimaryLive` (surfaced as `ConnectionManagerAdapter.WhenPrimaryConnected` / `Messaging.WhenPrimaryConnected`) runs a callback exactly once when the primary is live. **Delivery to a not-yet-connected platform** is decided as "offline", not queued: `route.ConnFor` sees no connection for it, exactly as for a platform whose connection is down (#990/#1493) — a chat owned by that platform gets `DeliveryNone` (the turn still runs and lands in the JSONL); an unclaimed notice falls to another live platform. Queueing was rejected: it is a second delivery path only for the startup window, and a backlog flushed after a long outage would be stale.
 
 **Shared pool**: `BotManager.shared` is a fallback pool available to any agent. Shared bots are re-wired to the acquiring agent via `SetHandlerAndCommands` at fork time.
 

@@ -206,9 +206,10 @@ func TestBotStartAndStop(t *testing.T) {
 }
 
 func TestNewBot_WiresBotFromFactory(t *testing.T) {
-	// Proves NewBot builds a fully-wired bot off the (stubbed) gotgbot
-	// factory: API client shared for send/receive, allowed users mapped,
-	// agent identity threaded into session key derivation.
+	// Proves NewBot + connect build a fully-wired bot off the (stubbed)
+	// gotgbot factory: API client shared for send/receive, allowed users
+	// mapped, agent identity threaded into session key derivation. NewBot
+	// alone touches no network (#2043): api/client arrive with connect.
 	api := &gotgbot.Bot{User: gotgbot.User{Id: 99, Username: "focibot"}, BotClient: &fakeBotClient{}}
 	withStubFactory(t, func(token string, opts *gotgbot.BotOpts) (*gotgbot.Bot, error) {
 		if token != "tok" {
@@ -217,9 +218,12 @@ func TestNewBot_WiresBotFromFactory(t *testing.T) {
 		return api, nil
 	})
 
-	b, err := NewBot("tok", []string{"111", "222"}, nil, command.NewRegistry(), command.NewLastMessageStore(), "scout", "")
-	if err != nil {
-		t.Fatalf("NewBot: %v", err)
+	b := NewBot("tok", []string{"111", "222"}, nil, command.NewRegistry(), command.NewLastMessageStore(), "scout", "")
+	if b.api != nil || b.client != nil || b.Username() != "" {
+		t.Fatal("NewBot connected: the getMe handshake belongs to connect")
+	}
+	if err := b.connect(context.Background()); err != nil {
+		t.Fatalf("connect: %v", err)
 	}
 	if b.api != api || b.client == nil {
 		t.Error("api/client not wired from factory")
@@ -239,13 +243,13 @@ func TestNewBot_WiresBotFromFactory(t *testing.T) {
 }
 
 func TestNewBot_PermanentErrorFailsFast(t *testing.T) {
-	// Proves a permanent (auth) factory error aborts NewBot immediately with
+	// Proves a permanent (auth) factory error aborts connect immediately with
 	// the token redacted from the message.
 	withStubFactory(t, func(token string, opts *gotgbot.BotOpts) (*gotgbot.Bot, error) {
 		return nil, errors.New("Unauthorized: token tok rejected")
 	})
 
-	_, err := NewBot("tok", nil, nil, command.NewRegistry(), nil, "scout", "")
+	err := NewBot("tok", nil, nil, command.NewRegistry(), nil, "scout", "").connect(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
 	}

@@ -201,6 +201,7 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 	// Slash commands.
 	var configureFacet func(platform.Connection)
 	var displayDefaultsFn func() platform.DisplaySettings
+	var platforms []string
 
 	lastMsgStore := command.NewLastMessageStore()
 	cmds, cc := registerAgentCommands(cmdRegParams{
@@ -254,6 +255,7 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 		platResult := setupPlatformConnections(ag, p, cmds, cc, lastMsgStore, fp.ttsRepls, s.promptSearchDirs)
 		configureFacet = platResult.configureFacetFn
 		displayDefaultsFn = platResult.displayDefaultsFn
+		platforms = platResult.platforms
 	}
 
 	// Nudge: trigger initial extraction on first message.
@@ -280,6 +282,7 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 		tmuxClearAll:     fp.tmuxClearAll,
 		tmuxWatchCount:   fp.tmuxWatchCount,
 		mcpManager:       fp.mcpManager,
+		platforms:        platforms,
 	}
 	// testActiveWorkOverride uses -1 as the "unset" sentinel so the
 	// periodic HasActiveWorkFn closure can distinguish "test asked for

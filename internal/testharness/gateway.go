@@ -201,6 +201,11 @@ type HarnessOptions struct {
 	// script never fires (a dominant flake source across the Ask/Permissions/
 	// Cron families). Set true only in tests that assert the extractor runs.
 	EnableNudgeExtraction bool
+	// BeforeSpawn, if non-nil, runs against the Telegram stub after the bots
+	// are registered and BEFORE foci-gw spawns — the only point at which a
+	// fault can be in place for the gateway's boot-time getMe (e.g. a
+	// persistent getMe 502 to hold Telegram's background connect failing).
+	BeforeSpawn func(*TelegramStub)
 }
 
 // Harness drives one foci-gw subprocess against a Telegram stub. Tests
@@ -510,6 +515,9 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 		seedAgentMetadata(t, filepath.Join(dataDir, "state.db"), seed)
 	}
 
+	if opts.BeforeSpawn != nil {
+		opts.BeforeSpawn(tgStub)
+	}
 	if err := h.spawnGateway(); err != nil {
 		return nil, err
 	}

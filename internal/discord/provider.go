@@ -101,7 +101,8 @@ func (p *discordProvider) RestoreFacetSessions(params platform.RestoreParams) {
 }
 
 func (p *discordProvider) SetLifecycleCallback(agentID string, event platform.LifecycleEvent, fn func()) {
-	bot := p.mgr.PrimaryBot(agentID)
+	// RegisteredPrimary: set up the callback on a bot that is still connecting.
+	bot := p.mgr.RegisteredPrimary(agentID)
 	if bot == nil {
 		return
 	}
@@ -239,7 +240,8 @@ func restoreFacetSessions(
 			}
 
 			if agentID != "" {
-				if primary := mgr.PrimaryBot(agentID); primary != nil {
+				// RegisteredPrimary: the channel ID is persisted state, not a connection.
+				if primary := mgr.RegisteredPrimary(agentID); primary != nil {
 					if channelID := primary.ChatID(); channelID != 0 {
 						bot.SetChatID(channelID)
 					}

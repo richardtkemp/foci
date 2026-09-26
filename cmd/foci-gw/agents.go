@@ -45,6 +45,11 @@ type agentInstance struct {
 	tmuxWatchCount   func() int                                     // returns number of active tmux watches
 	kaRunner         *periodic.Runner                               // keepalive & background work timer
 	mcpManager       *mcpkg.Manager                                 // nil if no MCP servers configured
+	// platforms names every platform the agent has a connection on, including
+	// one still connecting in the background (#2043) — the answer to "which
+	// platforms is this agent on", which the ConnectionManager (live
+	// connections only) cannot give at startup.
+	platforms []string
 
 	// periodicRederive recomputes the runner's live-tunable settings from a
 	// freshly loaded config (set by setupPeriodic, called from liveapply.go).

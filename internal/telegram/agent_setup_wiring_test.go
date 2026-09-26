@@ -78,7 +78,9 @@ func TestSetupAgent_RegistersPrimaryAndFacetBots(t *testing.T) {
 		t.Fatal("SetupAgent returned nil")
 	}
 
-	primary := mgr.PrimaryBot("scout")
+	// RegisteredPrimary: the bot connects in the background once the manager
+	// starts (#2043); the wiring is all in place before that.
+	primary := mgr.RegisteredPrimary("scout")
 	if primary == nil {
 		t.Fatal("primary bot not registered")
 	}
@@ -96,10 +98,8 @@ func TestSetupAgent_RegistersPrimaryAndFacetBots(t *testing.T) {
 	}
 
 	// ConfigureFacetConn rewires a facet connection for this agent.
-	facet, ok := mgr.AcquireFacet("scout")
-	if !ok {
-		t.Fatal("no facet to acquire")
-	}
+	var facet *Bot
+	mgr.Pool("scout").ForEach(func(b *Bot) { facet = b })
 	res.ConfigureFacetConn(facet)
 	if facet.handler == nil || facet.dispatcher == nil {
 		t.Error("ConfigureFacetConn did not rewire handler/dispatcher")
@@ -127,7 +127,7 @@ func TestSetupAgent_DisplaySettingsLiveUpdateViaOnChange(t *testing.T) {
 	if res := SetupAgent(mgr, p); res == nil {
 		t.Fatal("SetupAgent returned nil")
 	}
-	primary := mgr.PrimaryBot("scout")
+	primary := mgr.RegisteredPrimary("scout")
 	if primary == nil {
 		t.Fatal("primary bot not registered")
 	}
