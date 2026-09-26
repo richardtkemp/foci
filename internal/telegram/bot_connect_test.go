@@ -9,13 +9,15 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/netretry"
+
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
-// fastBackoff makes the retry loop near-instant for unit tests. We still
-// exercise the exponential-growth path via nextDelay tests; for the loop
-// tests we keep MaxAttempts bounded so failing cases terminate.
-var fastBackoff = connectBackoff{
+// fastBackoff makes the retry loop near-instant for unit tests (the schedule
+// itself is tested in netretry); MaxAttempts is bounded so failing cases
+// terminate.
+var fastBackoff = netretry.Backoff{
 	MaxAttempts:  4,
 	InitialDelay: 1 * time.Millisecond,
 	MaxDelay:     1 * time.Millisecond,
@@ -120,7 +122,7 @@ func TestConnectBot_UnboundedRetriesUntilSuccess(t *testing.T) {
 	transientErr := &net.OpError{Op: "dial", Err: errors.New("server misbehaving")}
 	withStubFactory(t, stubBotFactory(8, transientErr, want, &attempts))
 
-	unbounded := connectBackoff{
+	unbounded := netretry.Backoff{
 		MaxAttempts:  0, // unbounded
 		InitialDelay: 1 * time.Millisecond,
 		MaxDelay:     1 * time.Millisecond,
@@ -223,55 +225,5 @@ func TestRedactToken(t *testing.T) {
 				t.Errorf("redactToken(%q, %q) = %q, want %q", tc.s, tc.token, got, tc.want)
 			}
 		})
-	}
-}
-
-// TestNextDelay_ExponentialAndCapped verifies the production backoff
-// schedule: doubles each attempt, caps at MaxDelay, attempt 1 has zero
-// delay. This is what protects foci from both a too-eager DNS retry and an
-// hour-long gap between attempts in the long tail.
-func TestNextDelay_ExponentialAndCapped(t *testing.T) {
-	bo := connectBackoff{
-		InitialDelay: 2 * time.Second,
-		MaxDelay:     5 * time.Minute,
-		Multiplier:   2.0,
-	}
-	cases := []struct {
-		attempt int
-		want    time.Duration
-	}{
-		{1, 0},                  // first try, no delay
-		{2, 2 * time.Second},    // initial
-		{3, 4 * time.Second},    // x2
-		{4, 8 * time.Second},    // x2
-		{5, 16 * time.Second},   // x2
-		{6, 32 * time.Second},   // x2
-		{7, 64 * time.Second},   // x2
-		{8, 128 * time.Second},  // x2
-		{9, 256 * time.Second},  // x2
-		{10, 5 * time.Minute},   // capped (would be 512s = 8m32s)
-		{20, 5 * time.Minute},   // stays capped
-		{1000, 5 * time.Minute}, // stays capped, no overflow
-	}
-	for _, tc := range cases {
-		got := bo.nextDelay(tc.attempt)
-		if got != tc.want {
-			t.Errorf("nextDelay(%d) = %v, want %v", tc.attempt, got, tc.want)
-		}
-	}
-}
-
-// TestNextDelay_ZeroMaxDelay disables capping — the delay grows without
-// bound. This isn't used in production but the function should behave
-// sensibly.
-func TestNextDelay_ZeroMaxDelay(t *testing.T) {
-	bo := connectBackoff{
-		InitialDelay: 1 * time.Second,
-		MaxDelay:     0, // no cap
-		Multiplier:   2.0,
-	}
-	// attempt=2 starts at InitialDelay (1s); doubles 3 times to reach attempt 5: 8s.
-	if got := bo.nextDelay(5); got != 8*time.Second {
-		t.Errorf("nextDelay(5) = %v, want 8s", got)
 	}
 }

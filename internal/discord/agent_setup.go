@@ -9,6 +9,7 @@ import (
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/netretry"
 	"foci/internal/platform"
 	"foci/internal/secrets"
 	"foci/internal/session"
@@ -21,6 +22,45 @@ import (
 var (
 	discordLog = log.NewComponentLogger("discord")
 )
+
+// openGateway opens the discordgo websocket. A package var so tests can
+// substitute a fake gateway.
+var openGateway = (*discordgo.Session).Open
+
+// gatewayBackoff is the schedule for the boot-time gateway open. Shared with
+// Telegram's connectBot (#796) so both platforms ride out the same boot DNS
+// window the same way (#1954).
+var gatewayBackoff = netretry.StartupBackoff
+
+// isPermanentDiscordErr reports gateway-open errors that retrying cannot fix:
+// the shared HTTP auth markers, plus the gateway close codes Discord
+// documents as "do not reconnect" — 4004 authentication failed, 4010 invalid
+// shard, 4011 sharding required, 4012 invalid API version, 4013 invalid
+// intents, 4014 disallowed intents. discordgo surfaces these from Open as a
+// *websocket.CloseError whose message is "websocket: close <code>: <text>".
+// Every other close code (4000 unknown, 4008 rate limited, 4009 timed out, …)
+// and every transport/DNS error is transient.
+var isPermanentDiscordErr = netretry.PermanentMarkers(
+	"close 4004", "close 4010", "close 4011", "close 4012", "close 4013", "close 4014",
+)
+
+// connectGateway opens dg's gateway, retrying transient failures (#1954:
+// foci booted before systemd-resolved answered, the single Open failed with
+// "server misbehaving", and the agent ran without discord until restart).
+//
+// It blocks, as Telegram's connectBot does: Bot.Run and the rest of
+// setupDiscordBots read dg.State.User and assume a live gateway, and a
+// consistent startup model beats a second, background one. In the boot-DNS
+// case this costs nothing extra — Telegram is already waiting out the same
+// window. ctx cancellation (shutdown) ends the wait.
+func connectGateway(ctx context.Context, dg *discordgo.Session, agentID string) error {
+	return netretry.Do(ctx, netretry.Policy{
+		Name:      "open gateway",
+		Backoff:   gatewayBackoff,
+		Permanent: isPermanentDiscordErr,
+		Log:       log.NewComponentLogger("discord:" + agentID),
+	}, func() error { return openGateway(dg) })
+}
 
 // AgentSetupParams holds all dependencies needed to set up Discord bots for an agent.
 type AgentSetupParams struct {
@@ -163,8 +203,8 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 		discordgo.IntentsGuildMessageReactions
 
 	// Open the websocket connection
-	if err := dg.Open(); err != nil {
-		discordLog.Errorf("agent %q: open gateway: %v (agent will run without discord)", acfg.ID, err)
+	if err := connectGateway(p.Ctx, dg, acfg.ID); err != nil {
+		discordLog.Errorf("agent %q: %v (agent will run without discord)", acfg.ID, err)
 		return
 	}
 

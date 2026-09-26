@@ -124,6 +124,9 @@ config.Load(path)                                        ← validates values; l
        → shared.finalize(ag, params)                        ← commands, platform, nudge (shared postamble)
          → registerAgentCommands(cmdRegParams)              ← commands.go — all slash command registration
          → plat.SetupAgentConnection(AgentConnectionParams) ← creates platform connections (bots) for all active providers
+           → the boot-time network connect (telegram connectBot → getMe; discord connectGateway → gateway Open) runs through netretry.Do:
+             unbounded exponential backoff on transient errors, fail fast on auth errors (#796, #1954). It BLOCKS this per-agent loop
+             while retrying (both platforms alike), so a boot DNS window delays startup instead of leaving an agent platform-less
            → returns []*platform.SetupResult with DefaultSessionKeyFn + ConfigureFacetConn
          → wireAgentPlatformCallbacks(ag, acfg, cfg, plat, connMgr, sessionIndex)
            → ag.AddPlatform() for each connection
@@ -268,17 +271,18 @@ main
  ├── periodic      → config, delegator, log, memory, prompts, provider, session, skills, timeutil, warnings (NO agent)
  ├── dispatch      → command, platform, session, tools (shared command dispatch logic; platform wrappers delegate here)
  ├── turn          → turnevent, display, log, platform, tooldetail (shared turn rendering, tool call tracking, and tool-result display store for all platforms)
- ├── telegram      → agent, turnevent, chatmeta, command, config, dispatch, display, log, platform, secrets, session, timeutil, tooldetail, toolformat, turn, voice
+ ├── telegram      → agent, turnevent, chatmeta, command, config, dispatch, display, log, netretry, platform, secrets, session, timeutil, tooldetail, toolformat, turn, voice
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
- ├── discord       → agent, turnevent, chatmeta, command, config, dispatch, display, log, platform, secrets, session, timeutil, tooldetail, toolformat, turn, voice
+ ├── discord       → agent, turnevent, chatmeta, command, config, dispatch, display, log, netretry, platform, secrets, session, timeutil, tooldetail, toolformat, turn, voice
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
  ├── app           → agent, turnevent, command, config, dispatch, fap, log, platform, question, ratelimit, secrets, session, sqlite, tempdir, tools, turn, voice (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
+ ├── netretry      → log (startup-connect retry shared by telegram + discord: Backoff schedule, Do loop, PermanentMarkers auth/transient split)
  ├── askgw         → clock, log, peercred, question (opt-in ask-gateway for external Apps — see Ask Gateway section)
  ├── telemetry     → turnevent, log, modelinfo, provider, session, go.opentelemetry.io/otel (+ sdk, otlptracehttp) — OpenTelemetry export of every turn to an OTLP/HTTP collector (Langfuse) plus scores/score configs over its REST API; wired from cmd/foci-gw (init), agent (turn spans), tools + cmd/foci-gw (cross-agent links). See "Tracing".
  └── evals         → log, fsnotify, yaml.v3 — rubric registry (scoring axes as files, watched); consumed by cmd/foci-gw (/score validation, score-config mirroring). See "Tracing" → "Scores and rubrics".
 ```
 
-No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `resources`, `tempdir`, `warnings`, `modelinfo`, `modelcaps`, `messages`, `ratelimit`, `timeutil`, `turn`, `dispatch`, `procx`, `peercred`, `question` are leaf packages (no internal foci deps beyond what's shown). `platform` depends on leaf packages only (clock, config, log, secrets, session, voice, warnings). `provision` depends only on the leaves `modelinfo` and `procx`. The tree above is checked against `go list` by `make lint` (`scripts/find-wiring-drift`), so a change that moves imports must update its line.
+No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `resources`, `tempdir`, `warnings`, `modelinfo`, `modelcaps`, `messages`, `ratelimit`, `timeutil`, `turn`, `dispatch`, `procx`, `peercred`, `question`, `netretry` are leaf packages (no internal foci deps beyond what's shown). `platform` depends on leaf packages only (clock, config, log, secrets, session, voice, warnings). `provision` depends only on the leaves `modelinfo` and `procx`. The tree above is checked against `go list` by `make lint` (`scripts/find-wiring-drift`), so a change that moves imports must update its line.
 
 **`internal/state` no longer exists.** The former `state` package (`system_state` crash-detection row, `state.json`/state.db key-value store, `agent/ID/default_chat`, `facet:<bot>` bot→session mapping, ask/wizard persistence) was folded into `internal/session`'s `SessionIndex` (SQLite-backed) before this doc's tracked baseline — every dependency line that used to read "state" above has been corrected to "session" (or dropped where session wasn't otherwise a dependency). If you see "state" cited anywhere else in this doc or in `shared/skills/`, it's stale.
 
