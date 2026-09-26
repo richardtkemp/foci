@@ -168,6 +168,10 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 	var req struct {
 		Tool   string          `json:"tool"`
 		Params json.RawMessage `json:"params"`
+		// Hints are set by foci-call from the generated wrapper's stdout-piped
+		// detection and --format (#2048); absent from older foci-call builds
+		// and from hand-written requests, which then get the zero value.
+		Hints OutputHints `json:"hints"`
 	}
 	if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
 		writeError(conn, fmt.Sprintf("invalid request: %v", err))
@@ -185,7 +189,11 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 	}
 
 	execbridgeLog.Debugf("session=%s call tool=%s", SessionKeyFromContext(b.ctx), req.Tool)
-	result, err := tool.Execute(b.ctx, req.Params)
+	ctx := b.ctx
+	if req.Hints != (OutputHints{}) {
+		ctx = WithOutputHints(ctx, req.Hints)
+	}
+	result, err := tool.Execute(ctx, req.Params)
 	if err != nil {
 		// Convergence-point logging: every exec-bridge tool error surfaces
 		// here so it appears in service logs (individual tools return errors
@@ -304,6 +312,40 @@ foci__json_arg() {
 export -f foci__json_arg
 
 `
+
+// shellStdoutPipedDetect opens every generated foci_* function (#2048). It
+// tells the tool whether the caller piped this call's stdout, so a tool can
+// switch to a machine-readable form for `foci_todo list | head`/`| jq`.
+//
+// isatty cannot answer that: under an agent's Bash tool stdout is never a TTY.
+// Instead compare this function's own fd 1 (/proc/$BASHPID) with the calling
+// shell's ($$). -ef stats both magic links, so it compares the underlying open
+// files (a pipe's inode) with no fork. Measured in bash 5.2 (see
+// TestShellFuncStdoutPipedDetection):
+//
+//	foci_x                  same fd        → not piped
+//	foci_x | head           forked, pipe   → piped
+//	foci_x 2>&1 | tee f     forked, pipe   → piped
+//	x=$(foci_x)             forked, pipe   → piped (output feeds a program)
+//	( foci_x )              forked, same fd → not piped
+//	foci_x > file           main shell redirects its own fd 1 → not piped
+//	( foci_x > file )       forked, fd differs from $$ → piped
+//
+// "Piped" is relative to the NEAREST enclosing bash: `bash -c 'foci_x' | head`
+// reads as not piped, because the inner bash's own stdout is the pipe. Without
+// /proc (macOS) the -e test fails and every call reads as not piped, i.e.
+// today's behaviour. Both variables are re-declared local on every call so an
+// exported value in the caller's environment never leaks into a call; the
+// todo wrapper sets FOCI_OUTPUT_FORMAT from --format. foci-call forwards both
+// to the gateway as the request's "hints" (OutputHints).
+const shellStdoutPipedDetect = `  local -x FOCI_STDOUT_PIPED=0 FOCI_OUTPUT_FORMAT=; [ -e /proc/$$/fd/1 ] && ! [ /proc/${BASHPID:-x}/fd/1 -ef /proc/$$/fd/1 ] && FOCI_STDOUT_PIPED=1`
+
+// shellFuncPrologue returns the lines every generated function runs after its
+// --help check: the stdout-piped detection, then the JSON passthrough guard
+// (which calls foci-call itself, so it must come after the detection).
+func shellFuncPrologue(toolName, validKeys string) string {
+	return shellStdoutPipedDetect + "\n" + fmt.Sprintf("  foci__json %q %q \"$@\" && return $?", toolName, validKeys)
+}
 
 // writeShellFuncs generates a bash file defining foci_<toolname>() for each
 // exported tool. Functions use jq for safe JSON construction and foci-call
@@ -608,10 +650,10 @@ var todoActions = []struct {
 	Flags string // space-separated --flag list valid for this action; empty = no flags
 }{
 	{"add", "add --text TEXT [--body TEXT] [--title TEXT] [--priority high|medium|low] [--tag TAGS]   (alias: create; --title prepended in bold to --body/--text)", "--text --body --title --priority --tag"},
-	{"list", "list [--tag T] [--status open|done|dropped|all] [--priority P] [--sort F] [--reverse] [--limit N]", "--tag --status --priority --sort --reverse --limit"},
-	{"list-all", "list-all [--tag T] [--priority P] [--sort F] [--reverse] [--limit N]", "--tag --priority --sort --reverse --limit"},
-	{"search", "search <query> [--sort F] [--reverse] [--limit N]   (query may also be given as --query TEXT)", "--query --sort --reverse --limit"},
-	{"get", "get <id>   (alias: show; or --id N)", "--id"},
+	{"list", "list [--tag T] [--status open|done|dropped|all] [--priority P] [--sort F] [--reverse] [--limit N] [--format jsonl|md]", "--tag --status --priority --sort --reverse --limit --format"},
+	{"list-all", "list-all [--tag T] [--priority P] [--sort F] [--reverse] [--limit N] [--format jsonl|md]", "--tag --priority --sort --reverse --limit --format"},
+	{"search", "search <query> [--sort F] [--reverse] [--limit N] [--format jsonl|md]   (query may also be given as --query TEXT)", "--query --sort --reverse --limit --format"},
+	{"get", "get <id> [--format jsonl|md]   (alias: show; or --id N)", "--id --format"},
 	{"complete", "complete <id> [--reason|--notes|--note|--text TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason --notes --note --text"},
 	{"drop", "drop <id> [--reason|--notes|--note|--text TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason --notes --note --text"},
 	{"reopen", "reopen <id>   (status→open, clears completed_at/close_reason; or --id N / --ids 1,2,3)", "--id --ids"},
@@ -665,6 +707,11 @@ func todoSubcommandsHelpBlock() string {
 	for _, a := range todoActions {
 		fmt.Fprintf(&b, "\n  foci_todo %s", a.Usage)
 	}
+	b.WriteString("\n\nOutput: list, list-all, search and get print markdown, but when their stdout is piped" +
+		"\n(foci_todo list | head, | grep, | jq, or captured by $(...)) they print JSONL instead: one JSON" +
+		"\nobject per item per line (id, status, priority, tags, title, created_at, updated_at, body excerpt;" +
+		"\nget gives the full body). A capped list ends with a {\"truncated\":true,...} line." +
+		"\n--format jsonl|md forces either form regardless of piping.")
 	b.WriteString("\n\nRun 'foci_todo <subcommand> --help' for subcommand-specific usage.")
 	return b.String()
 }
@@ -681,7 +728,7 @@ func generateShellFunc(t *Tool) string {
 	// Escape single quotes for embedding in bash single-quoted heredoc.
 	escapedHelp := strings.ReplaceAll(helpText, "'", "'\\''")
 	helpCheck := fmt.Sprintf("  if [ \"${1:-}\" = \"-h\" ] || [ \"${1:-}\" = \"--help\" ]; then\n    echo '%s'\n    return 0\n  fi", escapedHelp)
-	guard := fmt.Sprintf("  foci__json %q %q \"$@\" && return $?", t.Name, validKeys)
+	guard := shellFuncPrologue(t.Name, validKeys)
 
 	switch t.Name {
 	case "http_request":
@@ -828,6 +875,15 @@ func generateShellFunc(t *Tool) string {
       --sort) sort="$2"; shift 2 ;;
       --limit) foci__json_arg --limit number "$2" || return 1; limit="$2"; shift 2 ;;
       --reverse) reverse=true; shift ;;
+      # #2048: explicit output form, overriding the stdout-piped detection in
+      # the prologue. Carried to the tool as a hint, not a schema param, so the
+      # API tool surface is unchanged.
+      --format)
+        case "${2:-}" in
+          jsonl|md) FOCI_OUTPUT_FORMAT="$2" ;;
+          *) echo "error: --format expects jsonl|md, got: ${2:-}" >&2; return 1 ;;
+        esac
+        shift 2 ;;
       --*)
         echo "error: unrecognized flag: $1" >&2
         if [ -n "$action_flags" ]; then
@@ -835,7 +891,7 @@ func generateShellFunc(t *Tool) string {
         elif [ -n "$action" ]; then
           echo "'$action' takes no flags" >&2
         else
-          echo "valid flags: --text --priority --tag --query --status --id --ids --reason --notes --note --append --append-text --add --sort --reverse --limit" >&2
+          echo "valid flags: --text --priority --tag --query --status --id --ids --reason --notes --note --append --append-text --add --sort --reverse --limit --format" >&2
         fi
         return 1 ;;
       *) # positional: first positional is text/query/id depending on action
@@ -1198,7 +1254,7 @@ func generateGenericShellFunc(t *Tool) string {
 	escapedHelp := strings.ReplaceAll(helpText, "'", "'\\''")
 	helpCheck := fmt.Sprintf("  if [ \"${1:-}\" = \"-h\" ] || [ \"${1:-}\" = \"--help\" ]; then\n    echo '%s'\n    return 0\n  fi", escapedHelp)
 	validKeys := toolParamKeys(t)
-	guard := fmt.Sprintf("  foci__json %q %q \"$@\" && return $?", t.Name, validKeys)
+	guard := shellFuncPrologue(t.Name, validKeys)
 
 	var schema struct {
 		Properties map[string]struct {

@@ -56,6 +56,7 @@ Every tool accepts `-h`/`--help`. **Read the `--help` before first use of any to
 - `complete|drop <id>` accept `--reason`/`--note`/`--notes` (all map to the close reason); ID forms `<id>` positional, `--id N`, or `--ids 1,2,3`.
 - **No `reopen` verb.** To reopen a closed item, write the DB directly: `UPDATE todos SET status='open', completed_at=NULL, close_reason='' WHERE agent_id=? AND id=?` on `~/<agent>/.data/todo.db`.
 - Chain with Unix tools to keep output small: `foci_todo list --status open | wc -l`.
+- **Piped output is JSONL.** When `list`/`list-all`/`search`/`get` output is piped (`| head`, `| grep`, `| jq`, or captured with `$(...)`), each item is one JSON object per line: `id, status, priority, tags[], title, created_at, updated_at, body` (a short excerpt; `get` gives the full body), plus `close_reason`/`closed_at` on closed items. A capped list ends with a `{"truncated":true,...}` line; no matches is empty output. A plain call (and `> file`) keeps the markdown. `--format jsonl|md` forces either form.
 
 ### `foci_remind` — defer a thought
 - `--text T --when SPEC`. SPEC: duration (`2h`, `30m`), `tomorrow`, `next_keepalive`, `next_session`, a date (`YYYY-MM-DD`), or an ISO timestamp.

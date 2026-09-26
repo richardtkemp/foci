@@ -1087,9 +1087,9 @@ func TestTodoRejectsUnknownSort(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var err error
 			if tc.action == "list" {
-				_, err = todoList(store, "agent1", "", "", "", tc.sort, false, 0)
+				_, err = todoList(store, "agent1", "", "", "", tc.sort, false, 0, false)
 			} else {
-				_, err = todoSearch(store, "agent1", "task", "", tc.sort, false, 0)
+				_, err = todoSearch(store, "agent1", "task", "", tc.sort, false, 0, false)
 			}
 			// Asserted on the SENTINEL rather than on error/no-error: search needs a
 			// bleve index this store has not got, so an accepted sort still fails

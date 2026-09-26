@@ -290,3 +290,65 @@ func TestFociCallVersion(t *testing.T) {
 		})
 	}
 }
+
+// TestFociCallForwardsOutputHints: the generated foci_* wrappers export
+// FOCI_STDOUT_PIPED / FOCI_OUTPUT_FORMAT (#2048); foci-call forwards them to the
+// gateway as a "hints" object on the request envelope. With neither set the
+// request must go out byte-identical to argv.
+//
+// disconnected-test-ok: black-box CLI integration test; execs compiled binary
+func TestFociCallForwardsOutputHints(t *testing.T) {
+	bin := buildBinary(t)
+	const arg = `{"tool":"todo","params":{"action":"list"}}`
+	for _, c := range []struct {
+		name string
+		env  []string
+		want map[string]any // nil = request must equal arg exactly
+	}{
+		{"none", nil, nil},
+		{"not piped", []string{"FOCI_STDOUT_PIPED=0", "FOCI_OUTPUT_FORMAT="}, nil},
+		{"piped", []string{"FOCI_STDOUT_PIPED=1"}, map[string]any{"stdout_piped": true}},
+		{"format only", []string{"FOCI_STDOUT_PIPED=0", "FOCI_OUTPUT_FORMAT=jsonl"}, map[string]any{"format": "jsonl"}},
+		{"both", []string{"FOCI_STDOUT_PIPED=1", "FOCI_OUTPUT_FORMAT=md"}, map[string]any{"stdout_piped": true, "format": "md"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			reqCh := make(chan string, 1)
+			sockPath := startTestServer(t, func(req string) string {
+				reqCh <- req
+				return `{"result":"ok"}`
+			})
+			cmd := exec.Command(bin, arg)
+			env := []string{"FOCI_SOCK=" + sockPath}
+			for _, kv := range os.Environ() {
+				if !strings.HasPrefix(kv, "FOCI_STDOUT_PIPED=") && !strings.HasPrefix(kv, "FOCI_OUTPUT_FORMAT=") && !strings.HasPrefix(kv, "FOCI_SOCK=") {
+					env = append(env, kv)
+				}
+			}
+			cmd.Env = append(env, c.env...)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("foci-call: %v\n%s", err, out)
+			}
+			req := <-reqCh
+			if c.want == nil {
+				if req != arg {
+					t.Errorf("request = %s, want unchanged %s", req, arg)
+				}
+				return
+			}
+			var got struct {
+				Tool   string          `json:"tool"`
+				Params json.RawMessage `json:"params"`
+				Hints  map[string]any  `json:"hints"`
+			}
+			if err := json.Unmarshal([]byte(req), &got); err != nil {
+				t.Fatalf("request not JSON: %v: %s", err, req)
+			}
+			if got.Tool != "todo" || string(got.Params) != `{"action":"list"}` {
+				t.Errorf("tool/params altered: %s", req)
+			}
+			if fmt.Sprint(got.Hints) != fmt.Sprint(c.want) {
+				t.Errorf("hints = %v, want %v", got.Hints, c.want)
+			}
+		})
+	}
+}

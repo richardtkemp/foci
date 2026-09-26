@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"foci/internal/display"
@@ -118,12 +119,24 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 			case "add":
 				return todoAdd(store, agentID, p.Text, p.Priority, p.Tag)
 			case "list":
+				jsonl, err := todoWantsJSONL(ctx)
+				if err != nil {
+					return ToolResult{}, err
+				}
 				status := normalizeStatusFilter(p.Status)
-				return todoList(store, agentID, status, p.Tag, p.Priority, p.Sort, p.Reverse, p.Limit)
+				return todoList(store, agentID, status, p.Tag, p.Priority, p.Sort, p.Reverse, p.Limit, jsonl)
 			case "search":
-				return todoSearch(store, agentID, p.Query, p.Status, p.Sort, p.Reverse, p.Limit)
+				jsonl, err := todoWantsJSONL(ctx)
+				if err != nil {
+					return ToolResult{}, err
+				}
+				return todoSearch(store, agentID, p.Query, p.Status, p.Sort, p.Reverse, p.Limit, jsonl)
 			case "get":
-				return todoGet(store, agentID, p.ID)
+				jsonl, err := todoWantsJSONL(ctx)
+				if err != nil {
+					return ToolResult{}, err
+				}
+				return todoGet(store, agentID, p.ID, jsonl)
 			case "complete":
 				return todoTransition(store, agentID, p.ID, p.IDs, "done", p.Reason)
 			case "drop":
@@ -344,7 +357,7 @@ func checkSort(action, sort string, valid []string) error {
 	return fmt.Errorf("unknown sort %q for %s; valid: %s", sort, action, strings.Join(valid, ", "))
 }
 
-func todoList(store *memory.TodoStore, agentID, status, tag, priority, sort string, reverse bool, limit int) (ToolResult, error) {
+func todoList(store *memory.TodoStore, agentID, status, tag, priority, sort string, reverse bool, limit int, jsonl bool) (ToolResult, error) {
 	if err := checkSort("list", sort, listSortOrders); err != nil {
 		return ToolResult{}, err
 	}
@@ -362,6 +375,16 @@ func todoList(store *memory.TodoStore, agentID, status, tag, priority, sort stri
 	items, err := store.List(agentID, status, tags, priority, sort, reverse, limit)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("list todos: %w", err)
+	}
+	if jsonl {
+		out := todoJSONL(items)
+		if len(items) == limit {
+			if total, cerr := store.CountList(agentID, status, tags, priority); cerr == nil && total > len(items) {
+				out += jsonLine(map[string]any{"truncated": true, "shown": len(items), "total": total,
+					"note": "pass --limit higher to see the rest"})
+			}
+		}
+		return TextResult(out), nil
 	}
 	if len(items) == 0 {
 		switch status {
@@ -386,7 +409,7 @@ func todoList(store *memory.TodoStore, agentID, status, tag, priority, sort stri
 	return TextResult(out), nil
 }
 
-func todoSearch(store *memory.TodoStore, agentID, query, status, sort string, reverse bool, limit int) (ToolResult, error) {
+func todoSearch(store *memory.TodoStore, agentID, query, status, sort string, reverse bool, limit int, jsonl bool) (ToolResult, error) {
 	if query == "" {
 		return ToolResult{}, fmt.Errorf("query is required for search")
 	}
@@ -412,6 +435,14 @@ func todoSearch(store *memory.TodoStore, agentID, query, status, sort string, re
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("search todos: %w", err)
 	}
+	if jsonl {
+		out := todoJSONL(items)
+		if effective := searchEffectiveLimit(limit); len(items) == effective {
+			out += jsonLine(map[string]any{"truncated": true, "shown": len(items),
+				"note": fmt.Sprintf("result may be truncated at the --limit of %d; pass --limit higher to see more", effective)})
+		}
+		return TextResult(out), nil
+	}
 	if len(items) == 0 {
 		return TextResult(fmt.Sprintf("No todos matching %q.", query)), nil
 	}
@@ -422,17 +453,13 @@ func todoSearch(store *memory.TodoStore, agentID, query, status, sort string, re
 	// #1957, a bare truncation marker (no total) still fixes the dangerous
 	// case — the harm is the silence, not the missing number — so flag it
 	// whenever the cap was hit rather than pretend to know the true count.
-	effectiveLimit := limit
-	if effectiveLimit <= 0 {
-		effectiveLimit = 10
-	}
-	if len(items) == effectiveLimit {
+	if effectiveLimit := searchEffectiveLimit(limit); len(items) == effectiveLimit {
 		out += fmt.Sprintf("\n\n— result may be truncated at the --limit of %d; pass --limit higher to see more", effectiveLimit)
 	}
 	return TextResult(out), nil
 }
 
-func todoGet(store *memory.TodoStore, agentID string, id int64) (ToolResult, error) {
+func todoGet(store *memory.TodoStore, agentID string, id int64, jsonl bool) (ToolResult, error) {
 	if id == 0 {
 		return ToolResult{}, fmt.Errorf("id is required for get")
 	}
@@ -440,7 +467,124 @@ func todoGet(store *memory.TodoStore, agentID string, id int64) (ToolResult, err
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("get todo: %w", err)
 	}
+	if jsonl {
+		return TextResult(jsonLine(todoJSONRecordFor(*item, false))), nil
+	}
 	return TextResult(FormatTodoLine(*item)), nil
+}
+
+// searchEffectiveLimit is the cap store.Search applies for a given --limit.
+func searchEffectiveLimit(limit int) int {
+	if limit <= 0 {
+		return 10
+	}
+	return limit
+}
+
+// JSONL output (#2048). list/list-all/search/get switch to one JSON object per
+// line when the caller pipes foci_todo's stdout (so head/grep/jq work per item)
+// or passes --format jsonl. The markdown path is untouched.
+const (
+	todoJSONLTitleMax    = 120 // runes; list titles only — get is never cut
+	todoJSONLBodyExcerpt = 200 // runes; list body excerpt — get carries the full body
+)
+
+// todoWantsJSONL resolves the output form from the exec-bridge hints: an
+// explicit --format wins, otherwise a piped stdout means JSONL. Callers
+// without hints (the API tool path, a plain shell call) get markdown.
+func todoWantsJSONL(ctx context.Context) (bool, error) {
+	h := OutputHintsFromContext(ctx)
+	switch h.Format {
+	case "jsonl":
+		return true, nil
+	case "md":
+		return false, nil
+	case "":
+		return h.StdoutPiped, nil
+	default:
+		return false, fmt.Errorf("unknown output format %q (use jsonl or md)", h.Format)
+	}
+}
+
+// todoJSONRecord is one JSONL line. Tags is always an array (never null) so
+// `jq '.tags[]'` works on untagged items.
+type todoJSONRecord struct {
+	ID          int64    `json:"id"`
+	Status      string   `json:"status"`
+	Priority    string   `json:"priority"`
+	Tags        []string `json:"tags"`
+	Title       string   `json:"title"`
+	CreatedAt   string   `json:"created_at"`
+	UpdatedAt   string   `json:"updated_at"`
+	ClosedAt    string   `json:"closed_at,omitempty"`
+	CloseReason string   `json:"close_reason,omitempty"`
+	Body        string   `json:"body"`
+}
+
+// todoJSONRecordFor builds the record for item. excerpt=true (list/search)
+// shortens the title and collapses the body to a one-line excerpt; false (get)
+// keeps both verbatim.
+func todoJSONRecordFor(item memory.TodoItem, excerpt bool) todoJSONRecord {
+	title, body := splitTodoTitle(item.Text)
+	if excerpt {
+		title = truncateRunes(title, todoJSONLTitleMax)
+		body = truncateRunes(strings.Join(strings.Fields(body), " "), todoJSONLBodyExcerpt)
+	}
+	tags := []string{}
+	for _, t := range strings.Split(item.Tags, ",") {
+		if t = strings.TrimSpace(t); t != "" {
+			tags = append(tags, t)
+		}
+	}
+	rec := todoJSONRecord{
+		ID:          item.ID,
+		Status:      item.Status,
+		Priority:    item.Priority,
+		Tags:        tags,
+		Title:       title,
+		CreatedAt:   item.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:   item.UpdatedAt.UTC().Format(time.RFC3339),
+		CloseReason: item.CloseReason,
+		Body:        body,
+	}
+	if item.CompletedAt != nil {
+		rec.ClosedAt = item.CompletedAt.UTC().Format(time.RFC3339)
+	}
+	return rec
+}
+
+// splitTodoTitle splits item text into its headline and the rest: the first
+// line, with the bold "*Title*" markers add --title writes stripped off.
+func splitTodoTitle(text string) (title, body string) {
+	title, body, _ = strings.Cut(text, "\n")
+	if len(title) >= 2 && strings.HasPrefix(title, "*") && strings.HasSuffix(title, "*") && !strings.Contains(title[1:len(title)-1], "*") {
+		title = title[1 : len(title)-1]
+	}
+	return title, strings.TrimLeft(body, "\n")
+}
+
+// todoJSONL renders items one record per line; no items is empty output.
+func todoJSONL(items []memory.TodoItem) string {
+	var b strings.Builder
+	for _, item := range items {
+		b.WriteString(jsonLine(todoJSONRecordFor(item, true)))
+	}
+	return b.String()
+}
+
+// jsonLine marshals v as one newline-terminated line. Every line, the last
+// included, ends in a newline so `wc -l` and `while read` see every record.
+//
+// HTML escaping is off so angle brackets and ampersands stay literal for grep.
+func jsonLine(v any) string {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		// Only reachable for unmarshalable types, which the callers never pass.
+		return fmt.Sprintf("{\"error\":%q}\n", err.Error())
+	}
+	return b.String()
 }
 
 // normalizeStatusFilter maps status filter aliases to canonical values for list.

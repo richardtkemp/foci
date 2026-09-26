@@ -98,6 +98,40 @@ func readResponseLine(conn net.Conn) ([]byte, error) {
 	}
 }
 
+// withOutputHints adds a "hints" object to the request envelope from the
+// FOCI_STDOUT_PIPED / FOCI_OUTPUT_FORMAT variables the generated foci_* shell
+// functions export (#2048: whether the caller piped this call's stdout, and an
+// explicit --format). With neither set the request is returned unchanged, byte
+// for byte.
+func withOutputHints(req string) (string, error) {
+	piped := os.Getenv("FOCI_STDOUT_PIPED") == "1"
+	format := os.Getenv("FOCI_OUTPUT_FORMAT")
+	if !piped && format == "" {
+		return req, nil
+	}
+	var env map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(req), &env); err != nil {
+		return "", fmt.Errorf("request is not a JSON object: %w", err)
+	}
+	hints := map[string]any{}
+	if piped {
+		hints["stdout_piped"] = true
+	}
+	if format != "" {
+		hints["format"] = format
+	}
+	h, err := json.Marshal(hints)
+	if err != nil {
+		return "", err
+	}
+	env["hints"] = h
+	out, err := json.Marshal(env)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
 func printUsage() {
 	fmt.Fprintf(os.Stderr, `foci-call — invoke foci tools via the exec bridge socket
 
@@ -107,7 +141,10 @@ The JSON argument must contain a "tool" field and a "params" object.
 Example: foci-call '{"tool":"web_search","params":{"query":"golang"}}'
 
 Environment:
-  FOCI_SOCK    Unix socket path for exec bridge (required)
+  FOCI_SOCK           Unix socket path for exec bridge (required)
+  FOCI_STDOUT_PIPED   "1" = the calling foci_* function's stdout is piped;
+                      forwarded to the tool as a hint (set by the wrapper)
+  FOCI_OUTPUT_FORMAT  explicit output form (e.g. jsonl|md), forwarded likewise
 
 Flags:
   -h, --help       Show this help
@@ -145,6 +182,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	req, err := withOutputHints(arg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "foci-call: %v\n", err)
+		os.Exit(1)
+	}
+
 	conn, err := net.Dial("unix", sock)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "foci-call: connect: %v\n", err)
@@ -153,7 +196,7 @@ func main() {
 	defer func() { _ = conn.Close() }()
 
 	// Send request (newline-terminated)
-	if _, err := fmt.Fprintf(conn, "%s\n", arg); err != nil {
+	if _, err := fmt.Fprintf(conn, "%s\n", req); err != nil {
 		fmt.Fprintf(os.Stderr, "foci-call: send: %v\n", err)
 		os.Exit(1)
 	}

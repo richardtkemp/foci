@@ -17,6 +17,29 @@ func SessionKeyFromContext(ctx context.Context) string {
 	return s
 }
 
+// OutputHints describe where a shell-function caller's output is going (#2048).
+// The generated foci_* wrappers detect whether their stdout is piped and pass
+// that (plus any explicit --format) through foci-call; the exec bridge attaches
+// it to the tool's context. Each tool decides whether to act on it — most
+// ignore it. The API tool path never sets it, so its output is unaffected.
+type OutputHints struct {
+	StdoutPiped bool   `json:"stdout_piped,omitempty"`
+	Format      string `json:"format,omitempty"` // explicit override; "" = decide from StdoutPiped
+}
+
+type outputHintsKey struct{}
+
+// WithOutputHints attaches exec-bridge output hints to a context.
+func WithOutputHints(ctx context.Context, h OutputHints) context.Context {
+	return context.WithValue(ctx, outputHintsKey{}, h)
+}
+
+// OutputHintsFromContext returns the output hints (zero value if absent).
+func OutputHintsFromContext(ctx context.Context) OutputHints {
+	h, _ := ctx.Value(outputHintsKey{}).(OutputHints)
+	return h
+}
+
 // spawnInheritKey is the context key for marking a spawn-inherit session.
 type spawnInheritKey struct{}
 
