@@ -940,16 +940,48 @@ func (h *Harness) SetCanFire(agentID string, allowed bool, reason string) error 
 	return h.sendControl(cmd)
 }
 
+// BackendStatus reports the session's delegated backend as foci's
+// DelegatedManager sees it: "none" when there is no backend, else the
+// BackendInfo status line, which starts with "dead" once foci has observed
+// the subprocess exit ("idle"/"processing"/... while it is live). Tests that
+// make cc-stub exit between turns sync on this before sending the next
+// message — a message sent earlier can be written to the dying stub's stdin
+// and lost (foci_todo #2044).
+func (h *Harness) BackendStatus(agentID, sessionKey string) (string, error) {
+	reply, err := h.controlRoundTrip("backend_status " + agentID + " " + sessionKey)
+	if err != nil {
+		return "", err
+	}
+	status, ok := strings.CutPrefix(reply, "ok ")
+	if !ok {
+		return "", fmt.Errorf("control reply: %s", reply)
+	}
+	return status, nil
+}
+
 // sendControl dials the gateway's control socket, writes one command
 // line, reads the one-line reply, and returns nil on "ok" or an error
 // shaped from the reply text.
 func (h *Harness) sendControl(cmd string) error {
+	reply, err := h.controlRoundTrip(cmd)
+	if err != nil {
+		return err
+	}
+	if reply == "ok" {
+		return nil
+	}
+	return fmt.Errorf("control reply: %s", reply)
+}
+
+// controlRoundTrip dials the gateway's control socket, writes one command
+// line and returns the trimmed one-line reply.
+func (h *Harness) controlRoundTrip(cmd string) (string, error) {
 	if h.controlSock == "" {
-		return fmt.Errorf("testharness control socket not allocated")
+		return "", fmt.Errorf("testharness control socket not allocated")
 	}
 	conn, err := net.DialTimeout("unix", h.controlSock, 5*time.Second)
 	if err != nil {
-		return fmt.Errorf("dial %s: %w", h.controlSock, err)
+		return "", fmt.Errorf("dial %s: %w", h.controlSock, err)
 	}
 	defer func() { _ = conn.Close() }()
 	// 20s budget: DelegatedManager.Close → ccstream.Close worst-case is
@@ -957,21 +989,17 @@ func (h *Harness) sendControl(cmd string) error {
 	// (2s) = 9s per managed backend, and the harness may close multiple
 	// backends in one call. 20s leaves comfortable headroom.
 	if err := conn.SetDeadline(time.Now().Add(20 * time.Second)); err != nil {
-		return fmt.Errorf("set deadline: %w", err)
+		return "", fmt.Errorf("set deadline: %w", err)
 	}
 	if _, err := conn.Write([]byte(cmd + "\n")); err != nil {
-		return fmt.Errorf("write command: %w", err)
+		return "", fmt.Errorf("write command: %w", err)
 	}
 	br := bufio.NewReader(conn)
 	reply, err := br.ReadString('\n')
 	if err != nil {
-		return fmt.Errorf("read reply: %w", err)
+		return "", fmt.Errorf("read reply: %w", err)
 	}
-	reply = strings.TrimSpace(reply)
-	if reply == "ok" {
-		return nil
-	}
-	return fmt.Errorf("control reply: %s", reply)
+	return strings.TrimSpace(reply), nil
 }
 
 // ----- Internal: ready-signal polling --------------------------------

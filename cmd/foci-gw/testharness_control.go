@@ -8,7 +8,8 @@
 //
 // Protocol — one command per line; one reply per line:
 //
-//	close_backend <agentID>\n   -> ok\n   |   error: <msg>\n
+//	close_backend <agentID>\n                -> ok\n   |   error: <msg>\n
+//	backend_status <agentID> <sessionKey>\n  -> ok <status>\n   |   error: <msg>\n
 //
 // The socket is created with 0600 mode and lives at the path the harness
 // supplies (already inside the test's TempDir, so file-perm scoping is
@@ -133,6 +134,29 @@ func dispatchTestharnessControl(line string, agents map[string]*agentInstance) s
 		inst.ag.DelegatedManager.Close()
 		testharness_controlLog.Infof("close_backend %s — closed all backends", agentID)
 		return "ok"
+	case "backend_status":
+		// backend_status <agentID> <sessionKey>: report the session's
+		// backend as DelegatedManager sees it — "none" (no backend), or
+		// BackendInfo's status line ("dead", "idle", "processing", ...).
+		// Lets a test sync on foci having OBSERVED a backend exit, which is
+		// what decides whether the next message respawns or is written to
+		// the dying process's stdin (foci_todo #2044).
+		if len(fields) != 3 {
+			return "error: backend_status requires <agentID> <sessionKey>"
+		}
+		agentID := fields[1]
+		inst, ok := agents[agentID]
+		if !ok {
+			return "error: unknown agent " + agentID
+		}
+		if inst.ag == nil || inst.ag.DelegatedManager == nil {
+			return "error: agent " + agentID + " has no delegated manager"
+		}
+		info := inst.ag.DelegatedManager.BackendInfo(fields[2], false)
+		if info == "" {
+			info = "none"
+		}
+		return "ok " + info
 	case "set_active_work":
 		// set_active_work <agentID> <count>: pin the agent's
 		// HasActiveWorkFn return value to <count> for subsequent

@@ -7,7 +7,9 @@
 # Usage: seal-test.sh <unit|integration|one> <TESTDIR> <LOGFILE> <parallel-n> \
 #          <GOCACHE_PIN> <GOMODCACHE_PIN> <GOPATH_PIN> [PKG] [RUN] [VERBOSE] [COUNT]
 #
-#   PKG, RUN and VERBOSE are only used by the `one` mode — see run_one below.
+#   PKG and VERBOSE are only used by the `one` mode — see run_one below. RUN
+#   and COUNT also apply to `integration` (e.g. looping one L2 test to repro a
+#   flake, foci_todo #2044); PKG is ignored there.
 #   VERBOSE (make's V=1) adds go test's own -v so a PASSING test's t.Logf
 #   output actually reaches LOGFILE — foci_todo #1982: before this, the only
 #   way to see it was to force a FAIL (t.Errorf), because a bare ARGS=-v on
@@ -173,13 +175,37 @@ run_unit() {
   return "$status"
 }
 
+# check_count — COUNT (make's COUNT=N) repeats the run N times, e.g. to check
+# a flake fix. It replaces a bare `go test -count=N`, which agents may not run.
+check_count() {
+  if [ -n "$COUNT" ] && ! [[ "$COUNT" =~ ^[1-9][0-9]*$ ]]; then
+    echo "seal-test.sh: COUNT must be a positive integer, got '$COUNT'" >&2
+    exit 2
+  fi
+}
+
+# run_integration — the whole L2 suite, or (RUN set) only the matching tests,
+# optionally repeated COUNT times (foci_todo #2044). The timeout scales with
+# COUNT so a repeat loop isn't cut off by the single-pass budget.
 run_integration() {
-  env_header "sealed integration suite"
-  "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -tags=integration -count=1 -timeout 600s \
+  check_count
+  local count="${COUNT:-1}"
+  env_header "sealed integration suite${RUNFILTER:+ -run $RUNFILTER} -count=$count"
+  local extra=(-count="$count" -timeout "$((600 * count))s")
+  local filter=()
+  [ -n "$RUNFILTER" ] && filter=(-run "$RUNFILTER")
+  "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -tags=integration "${extra[@]}" "${filter[@]}" \
     -parallel="$PARALLEL" -v ./test/integration/... ./internal/testharness/... >> "$LOGFILE" 2>&1
   local status=$?
 
-  diagnostic_rerun -tags=integration
+  # A filter that matches nothing "passes" with zero tests run — refuse that
+  # rather than report a green that tested nothing.
+  if [ -n "$RUNFILTER" ] && ! grep -q '^=== RUN' "$LOGFILE"; then
+    echo "seal-test.sh: RUN='$RUNFILTER' matched no integration tests" | tee -a "$LOGFILE" >&2
+    return 1
+  fi
+
+  diagnostic_rerun -tags=integration "${filter[@]}"
   return "$status"
 }
 
@@ -193,12 +219,7 @@ run_one() {
     echo "seal-test.sh: mode 'one' requires PKG (arg 8), e.g. ./internal/agent/" >&2
     exit 2
   fi
-  # COUNT (make's COUNT=N) repeats the run N times, e.g. to check a flake
-  # fix. It replaces a bare `go test -count=N`, which agents may not run.
-  if [ -n "$COUNT" ] && ! [[ "$COUNT" =~ ^[1-9][0-9]*$ ]]; then
-    echo "seal-test.sh: COUNT must be a positive integer, got '$COUNT'" >&2
-    exit 2
-  fi
+  check_count
   env_header "sealed single-package run: $PKG${RUNFILTER:+ -run $RUNFILTER}${VERBOSE:+ -v} -count=${COUNT:-1}"
   local extra=(-count="${COUNT:-1}")
   [ -n "$RUNFILTER" ] && extra+=(-run "$RUNFILTER")

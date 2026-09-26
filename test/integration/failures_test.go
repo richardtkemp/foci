@@ -209,6 +209,8 @@ func TestL2_Failures_BackendFailsOnResumeRetriesFresh(t *testing.T) {
 			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
 	}
 
+	waitForStubExitObserved(t, h, "alpha", userID, "workspaces/alpha")
+
 	// Turn 2: foci respawns with --resume, that spawn fails on resume,
 	// foci retries without --resume. Wait until the user_message lands.
 	pushUserMessage(t, h, "alpha", userID, "turn-two-after-resume-fail")

@@ -249,6 +249,43 @@ func invocationsByWorkdir(entries []recorderEntry, workdirSubstr string) []recor
 	return out
 }
 
+// waitForStubExitObserved blocks until foci has OBSERVED the exit of the
+// session's first cc-stub process — the one a CCSTUB_EXIT_AFTER_N_TURNS test
+// arranged to exit after its turn. Call it after that turn and before sending
+// the next message, which must go to a respawned stub.
+//
+// Seeing the turn's user_message in the recorder is NOT enough: the stub
+// records it at the START of the turn and exits only after its result, and
+// foci notices the exit later still. A message arriving in between is
+// written to the dying stub's stdin — steered into the in-flight turn, or
+// begun as a new turn on a backend foci still thinks is live — and the stub
+// exits without reading it, so the next turn never happens (foci_todo #2044).
+//
+// Done when foci's DelegatedManager reports the backend dead (or already
+// removed), or when a second invocation appears in the workdir: foci only
+// respawns after marking the first process dead, so a respawn (e.g. from the
+// post-turn compaction check) proves the same thing.
+func waitForStubExitObserved(t *testing.T, h *testharness.Harness, agentID string, userID int64, workdirSubstr string) {
+	t.Helper()
+	sessionKey := fmt.Sprintf("%s/c%d", agentID, userID)
+	deadline := time.Now().Add(testharness.CorrectnessWaitFloor)
+	var status string
+	for time.Now().Before(deadline) {
+		var err error
+		status, err = h.BackendStatus(agentID, sessionKey)
+		if err != nil {
+			t.Fatalf("backend_status %s: %v", sessionKey, err)
+		}
+		if status == "none" || strings.HasPrefix(status, "dead") ||
+			len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), workdirSubstr)) > 1 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("foci never observed the first cc-stub exit for %s (last backend status %q); recorder:\n%s\nstderr:\n%s",
+		sessionKey, status, recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+}
+
 // TestParseRecorderEntries_SkipsTornFinalLine pins the torn-read fix: a final
 // segment with no newline is a line cc-stub is still writing, so it is skipped;
 // a malformed complete line is still an error.

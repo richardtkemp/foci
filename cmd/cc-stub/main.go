@@ -901,10 +901,14 @@ func main() {
 			// CCSTUB_EXIT_AFTER_N_TURNS: bookend the turn loop so a
 			// clean exit happens AFTER the result envelope has been
 			// flushed. Foci processes the completion, persists the
-			// session id, then sees stdin EOF when the next user msg
-			// can't reach the dead process — DelegatedManager.Get
-			// observes IsRunning()==false on the next inbound message
-			// and respawns with --resume.
+			// session id, and marks the backend dead when it reaps the
+			// process — DelegatedManager.Get then observes
+			// IsRunning()==false on the next inbound message and
+			// respawns with --resume. Anything foci wrote to stdin
+			// before that (a steer mid-turn, a turn begun just before
+			// the exit) is never read: tests must wait for foci to
+			// observe the exit before sending the next message
+			// (waitForStubExitObserved, foci_todo #2044).
 			turnCount++
 			if exitAfterTurns > 0 && turnCount >= exitAfterTurns {
 				_ = out.Flush()

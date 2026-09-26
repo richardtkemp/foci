@@ -20,7 +20,16 @@ make integration
 
 That target runs every test under `./test/integration/...` (build-tagged `//go:build integration`) plus the testharness's own smoke test. About 30 seconds on a warm cache.
 
-To run a single test:
+To run a single test (or loop a flaky one) under the same sealed environment:
+
+```sh
+make integration RUN='TestL2_CrossAgent' [COUNT=20]
+```
+
+`RUN` is a `go test -run` regex (passed through unexpanded, so `'A$|B$'` works); a
+filter that matches nothing fails rather than reporting an empty pass. A filtered
+run is never recorded as a CI verdict. The bare equivalent, for a human at a terminal
+(agents may not run bare `go`):
 
 ```sh
 go test -tags=integration -count=1 -timeout 60s -run TestL2_CrossAgent ./test/integration/...

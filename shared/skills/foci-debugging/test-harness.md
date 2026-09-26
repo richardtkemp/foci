@@ -57,6 +57,7 @@ Run the arms separately; each rules out one variable. Compare **rates**, not sin
 | Arm | Isolates |
 |---|---|
 | `make test-one PKG=<pkg> RUN=<Test> COUNT=8` | the test's own logic |
+| `make integration RUN=<Test> COUNT=20` (L2 tests: `test-one` lacks `-tags=integration`) | the test's own logic |
 | full package, idle | intra-package interference |
 | full package + `nproc+2` `nice -19` spinners | CPU contention |
 | full package, sealed under `llbox` (above) | the Landlock seal |

@@ -521,6 +521,8 @@ func TestL2_SessionLifecycle_ResumeFailureFallsBackToFresh(t *testing.T) {
 			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
 	}
 
+	waitForStubExitObserved(t, h, "alpha", userID, "workspaces/alpha")
+
 	pushUserMessage(t, h, "alpha", userID, "follow-up-after-resume-fail")
 	if !waitForUserMessage(t, h, "workspaces/alpha", "follow-up-after-resume-fail", 30*time.Second) {
 		t.Fatalf("follow-up never processed after resume fallback; recorder:\n%s\nstderr:\n%s",
@@ -578,7 +580,15 @@ func TestL2_SessionLifecycle_BackendDeathMidSessionRespawns(t *testing.T) {
 			// processing one turn. foci's DelegatedManager.Get observes
 			// IsRunning()==false on the next inbound message and
 			// respawns the subprocess with --resume <session_id>.
-			ExtraEnv: map[string]string{"CCSTUB_EXIT_AFTER_N_TURNS": "1"},
+			// HANG_DURING_TURN holds the first turn open after its
+			// user_message is recorded, so the window in which a second
+			// message would be written to the dying stub (#2044) is always
+			// open: without waitForStubExitObserved below this test fails
+			// every run instead of once in a few hundred.
+			ExtraEnv: map[string]string{
+				"CCSTUB_EXIT_AFTER_N_TURNS": "1",
+				"CCSTUB_HANG_DURING_TURN":   "500ms",
+			},
 		}},
 		ReadyTimeout: 30 * time.Second,
 	})
@@ -588,6 +598,7 @@ func TestL2_SessionLifecycle_BackendDeathMidSessionRespawns(t *testing.T) {
 		t.Fatalf("first turn never reached cc-stub; recorder:\n%s\nstderr:\n%s",
 			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
 	}
+	waitForStubExitObserved(t, h, "alpha", userID, "workspaces/alpha")
 
 	pushUserMessage(t, h, "alpha", userID, "second-turn-after-respawn")
 	if !waitForUserMessage(t, h, "workspaces/alpha", "second-turn-after-respawn", 30*time.Second) {
@@ -1148,6 +1159,8 @@ func TestL2_SessionLifecycle_ResumeIDSurvivesRespawn(t *testing.T) {
 		t.Fatalf("first turn never reached cc-stub; recorder:\n%s\nstderr:\n%s",
 			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
 	}
+
+	waitForStubExitObserved(t, h, "alpha", userID, "workspaces/alpha")
 
 	pushUserMessage(t, h, "alpha", userID, "second-turn-B")
 	if !waitForUserMessage(t, h, "workspaces/alpha", "second-turn-B", 30*time.Second) {

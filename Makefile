@@ -226,6 +226,10 @@ test-one: llbox
 # architecture, and internal/testharness/ for the scaffolding.
 # Seals itself under Landlock BY DEFAULT too (#1523) — same scripts/seal-test.sh
 # as `test`.
+# `make integration RUN=<regex> [COUNT=N]` runs only the matching L2 tests,
+# repeated N times — the way to loop one flaky test (foci_todo #2044). A
+# filtered run is not a suite verdict, so it is never recorded to CI_HOOK.
+# RUN is passed unexpanded ($(value RUN)) so RUN='A$|B' reaches go test intact.
 integration: llbox
 	@echo "=== Integration tests (L2: real foci-gw against stubbed edges) ==="
 	$(eval TESTDIR := /tmp/fgw/integration-$(shell date +%s))
@@ -255,12 +259,12 @@ integration: llbox
 	@# any runaway foci-gw/cc-stub first avoids racing a still-open binary FD
 	@# against the removal (harmless on Linux either way, but tidier).
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; $(REAP_GRADLE) bash scripts/seal-test.sh integration $(TESTDIR) $(LOGFILE) $(IPARALLEL) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) 9<&- ; STATUS=$$? ; \
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; $(REAP_GRADLE) bash scripts/seal-test.sh integration $(TESTDIR) $(LOGFILE) $(IPARALLEL) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) "" '$(value RUN)' "" "$(COUNT)" 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -ne 0 ]; then echo ">>> non-zero exit ($$STATUS) — sweeping any orphaned foci-gw/cc-stub subprocesses from this run ..." >&2; pkill -f "$(TESTDIR)/foci-l2-bin[0-9]" 2>/dev/null || true; fi ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:' $(LOGFILE) || true; fi ; \
 	  rm -rf $(TESTDIR) ; \
-	  if [ -n "$(CI_HOOK)" ]; then mkdir -p "$$(dirname "$(CI_HOOK)")" && printf '%s,foci,%s,integration,%s,%s\n' "$$(date -Is)" "$(GIT_COMMIT)" "$$([ $$STATUS -eq 0 ] && echo pass || echo fail)" "$$(bash scripts/ci-failed-tests.sh go $(LOGFILE))" >> "$(CI_HOOK)" || true; fi ; \
+	  if [ -n "$(CI_HOOK)" ] && [ -z '$(value RUN)' ]; then mkdir -p "$$(dirname "$(CI_HOOK)")" && printf '%s,foci,%s,integration,%s,%s\n' "$$(date -Is)" "$(GIT_COMMIT)" "$$([ $$STATUS -eq 0 ] && echo pass || echo fail)" "$$(bash scripts/ci-failed-tests.sh go $(LOGFILE))" >> "$(CI_HOOK)" || true; fi ; \
 	  exit $$STATUS ) 9</tmp/heavy
 
 # bucket-audit: contention-sensitivity diff. Runs the L2 suite at low
