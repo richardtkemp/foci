@@ -278,17 +278,29 @@ func (a *Agent) CacheExpiry(sessionKey string, at time.Time) time.Time {
 	ttl := a.cacheTTLFor(sessionKey)
 	// The truthful expiry is last_cache_touch + TTL — the cache was last warmed
 	// at the touch, not "now". Absent a touch (never warmed, or cleared on
-	// reset) the cache is cold, reported as the zero time. Without an index
+	// reset) there is no cache, reported as the zero time. Without an index
 	// (degenerate/test agents) fall back to at+TTL, the pre-touch behaviour.
 	if a.SessionIndex != nil {
 		touch, ok := a.SessionIndex.LastCacheTouch(sessionKey)
 		if !ok {
+			// A saved backend resume id means the session DID build a cache
+			// (reset clears the id along with the touch), so the missing touch
+			// is lost warmth, not "never cached" — report it long expired
+			// rather than as no-cache, which the client renders WARM (#2061).
+			if id, err := a.SessionIndex.GetSessionMetadata(sessionKey, resumeIDKey); err == nil && id != "" {
+				return expiredLongAgo
+			}
 			return time.Time{}
 		}
 		return touch.Add(ttl)
 	}
 	return at.Add(ttl)
 }
+
+// expiredLongAgo is the expiry reported for a session known to have had a
+// cache whose last touch is unknown: a positive past instant, so it reaches
+// the wire as a small positive unix ms (COLD), never the 0 of "no cache".
+var expiredLongAgo = time.UnixMilli(1)
 
 // cacheTTLFor resolves the prompt-cache TTL for a session: config override
 // (ModelDefaultsFn) first, then the session's LIVE backend TTL, then the
@@ -322,7 +334,8 @@ func (a *Agent) cacheTTLFor(sessionKey string) time.Duration {
 }
 
 // CacheExpiryMs returns the session's truthful prompt-cache expiry as unix ms,
-// normalizing the zero time (no cache: never warmed, or cleared on reset) to 0
+// normalizing the zero time (no cache: never warmed, or cleared on reset — a
+// session with a lost touch but a saved resume id is NOT zero, see CacheExpiry) to 0
 // rather than the raw ~-6.2e13 that time.Time{}.UnixMilli() yields. This is the
 // single "expiry → wire ms" conversion, shared by emitCacheExpiry (the hook) and
 // the app sink's cacheExpiryFn, so every no-cache signal is an identical 0 — the

@@ -107,6 +107,38 @@ func TestCacheExpiryFromTouch(t *testing.T) {
 	}
 }
 
+// TestCacheExpiry_NoTouchButPriorBackendSessionIsCold captures #2061 (b): a
+// session with a saved backend resume id HAS a prompt cache on the provider
+// side, so a missing last_cache_touch means "warmth unknown", not "never
+// cached". It must report COLD (a positive past expiry) — the client reads 0
+// as WARM, which showed a long-cold chat as warm. With no resume id (never
+// ran, or reset cleared it) there is nothing to re-warm, so 0 stays correct.
+func TestCacheExpiry_NoTouchButPriorBackendSessionIsCold(t *testing.T) {
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	defer idx.Close()
+	ag := &Agent{
+		SessionIndex:    idx,
+		ModelDefaultsFn: func(string) config.ModelDefaults { return config.ModelDefaults{CacheTTL: "1h"} },
+	}
+	sk := "test-agent/c1"
+	now := time.Now()
+
+	if got := ag.CacheExpiryMs(sk, now); got != 0 {
+		t.Fatalf("no resume id: CacheExpiryMs = %d, want 0 (no cache)", got)
+	}
+
+	if err := idx.SetSessionMetadata(sk, resumeIDKey, "372f7d38-resume"); err != nil {
+		t.Fatal(err)
+	}
+	got := ag.CacheExpiryMs(sk, now)
+	if got <= 0 || got > now.UnixMilli() {
+		t.Errorf("resume id, no touch: CacheExpiryMs = %d, want a positive past expiry (COLD)", got)
+	}
+}
+
 func TestEmitCacheExpiryHook(t *testing.T) {
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {

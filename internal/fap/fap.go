@@ -247,8 +247,10 @@ type ConversationInfo struct {
 	LastActivityTs int64  `json:"lastActivityTs,omitempty"`
 	LastPreview    string `json:"lastPreview,omitempty"`
 	// CacheExpiryMs is the roster snapshot of the CacheExpiry frame — the unix ms
-	// after which the prompt cache is cold. 0 = unknown/cold (e.g. after a server
-	// restart, which busts the cache). Reseeds a reconnecting client.
+	// after which the prompt cache is cold. 0 = no cache to lose (never warmed,
+	// or reset), which the client renders WARM; a session known to have had a
+	// cache whose touch is lost reports a positive PAST value (COLD), never 0
+	// (#2061). Reseeds a reconnecting client.
 	CacheExpiryMs int64 `json:"cacheExpiryMs,omitempty"`
 }
 

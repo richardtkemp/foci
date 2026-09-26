@@ -1422,7 +1422,7 @@ func TestRebuildIndex_PreservesBackendSessionRows(t *testing.T) {
 	}
 
 	// Rebuild with an empty scan (no files on disk — the delegated case).
-	if _, err := idx.RebuildIndex(nil); err != nil {
+	if _, err := idx.RebuildIndex("", nil); err != nil {
 		t.Fatalf("RebuildIndex: %v", err)
 	}
 
@@ -1462,7 +1462,7 @@ func TestRebuildIndex_PreservesActivityStampsForFileBackedRows(t *testing.T) {
 	idx.TouchCacheTouch("ag/c777", cacheAt)
 
 	// Rebuild re-supplies the same file-backed entry from the "scan".
-	if _, err := idx.RebuildIndex([]SessionIndexEntry{entry}); err != nil {
+	if _, err := idx.RebuildIndex("/tmp", []SessionIndexEntry{entry}); err != nil {
 		t.Fatalf("RebuildIndex: %v", err)
 	}
 
@@ -1913,5 +1913,52 @@ func TestSessionIndex_LastUserActivity_PerSession(t *testing.T) {
 	}
 	if _, ok := idx.LastUserActivity("bot/nonexistent"); ok {
 		t.Errorf("LastUserActivity(unknown) reported activity; want none")
+	}
+}
+
+// TestRebuild_PreservesRowsOutsideTheStore captures #2061: a delegated (CC)
+// session's row carries its BACKEND transcript path (~/.claude/projects/…) as
+// file_path. The rebuild scan only walks the store directory, so it can never
+// re-derive such a row — yet the rebuild used to DELETE every row with a
+// non-empty file_path. A crash/reboot restart therefore silently dropped every
+// CC root row (keeping its session_metadata, since the delete does not cascade),
+// and the app then read the missing last_cache_touch as "no cache" (WARM).
+// Rows under the store are still the scan's to reconcile: one whose file is
+// gone is dropped as before.
+func TestRebuild_PreservesRowsOutsideTheStore(t *testing.T) {
+	idx := tempIndex(t)
+	storeDir := t.TempDir()
+	store := NewStore(storeDir)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	backendKey := "ag/c1"
+	idx.Upsert(SessionIndexEntry{
+		SessionKey: backendKey, FilePath: filepath.Join(t.TempDir(), "cc-transcript.jsonl"),
+		CreatedAt: now.Add(-time.Hour), LastActivityAt: now.Add(-time.Hour),
+		SessionType: SessionTypeChat, Status: SessionStatusActive,
+	})
+	touch := now.Add(-5 * time.Minute)
+	idx.TouchCacheTouch(backendKey, touch)
+
+	// A store-owned row whose file no longer exists: the scan cannot produce
+	// it, so the rebuild still drops it.
+	staleKey := "ag/c2"
+	idx.Upsert(SessionIndexEntry{
+		SessionKey: staleKey, FilePath: filepath.Join(storeDir, "ag", "c2", "root.jsonl"),
+		CreatedAt: now.Add(-time.Hour), SessionType: SessionTypeChat, Status: SessionStatusActive,
+	})
+
+	if _, err := idx.Rebuild(store); err != nil {
+		t.Fatalf("Rebuild: %v", err)
+	}
+
+	if _, err := idx.Get(backendKey); err != nil {
+		t.Fatalf("backend-transcript row dropped by rebuild: %v", err)
+	}
+	if got, ok := idx.LastCacheTouch(backendKey); !ok || !got.Equal(touch) {
+		t.Errorf("last_cache_touch = %v (ok=%v), want %v", got, ok, touch)
+	}
+	if _, err := idx.Get(staleKey); err == nil {
+		t.Errorf("store-owned row with no file survived the rebuild")
 	}
 }

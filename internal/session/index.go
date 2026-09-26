@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -874,10 +875,11 @@ func (idx *SessionIndex) TouchActivity(sessionKey string) {
 	idx.UpdateActivity(sessionKey, time.Now())
 }
 
-// RebuildIndex clears and repopulates the session index from the given entries.
+// RebuildIndex clears the rows the scan owns — those whose file lives under
+// storeDir — and repopulates them from entries (the scan of storeDir).
 // Preserves last_reflection timestamps across the rebuild.
 // Wrapped in a single transaction for performance (~3000x fewer fsyncs).
-func (idx *SessionIndex) RebuildIndex(entries []SessionIndexEntry) (int, error) {
+func (idx *SessionIndex) RebuildIndex(storeDir string, entries []SessionIndexEntry) (int, error) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
@@ -925,15 +927,30 @@ func (idx *SessionIndex) RebuildIndex(entries []SessionIndexEntry) (int, error) 
 	}
 	defer func() { _ = tx.Rollback() }() // no-op after commit
 
-	// Clear only file-backed rows — the scan below re-derives them from
-	// disk. Rows with an empty file_path are BACKEND sessions (delegated
-	// agents whose conversation lives in CC's own store; same rule as
-	// PruneOrphans): they have no file to rescan, and deleting them wipes
-	// their last_activity_at — which is what the default-chat routing
-	// tiebreak orders by. A rebuild right after restart then picked an
-	// arbitrary default chat (the discord-misroute bug).
-	if _, err := tx.Exec(`DELETE FROM session_index WHERE file_path != ''`); err != nil {
-		return 0, fmt.Errorf("clear index: %w", err)
+	// Clear only rows whose file lives under the store — the scan below
+	// re-derives exactly those from disk. Every other row is a BACKEND
+	// session (a delegated agent whose conversation lives in the backend's
+	// own store) that the scan can never reproduce:
+	//   - empty file_path (same rule as PruneOrphans): deleting these wiped
+	//     last_activity_at, which the default-chat routing tiebreak orders
+	//     by, so a rebuild right after restart picked an arbitrary default
+	//     chat (the discord-misroute bug);
+	//   - file_path outside the store — CC turns record the backend
+	//     transcript (~/.claude/projects/…). Deleting these dropped every CC
+	//     root row on a crash/reboot restart, keeping its session_metadata
+	//     (the delete does not cascade), and the missing last_cache_touch
+	//     then showed a cold chat as warm (#2061).
+	// A row whose store file has vanished is still dropped here; one whose
+	// backend transcript vanished is PruneOrphans' job. An empty storeDir
+	// owns nothing, so nothing is cleared.
+	if storeDir != "" {
+		prefix := filepath.Clean(storeDir) + string(filepath.Separator)
+		// substr, not LIKE: '_' and '%' are ordinary path characters.
+		if _, err := tx.Exec(
+			`DELETE FROM session_index WHERE substr(file_path, 1, length(?)) = ?`,
+			prefix, prefix); err != nil {
+			return 0, fmt.Errorf("clear index: %w", err)
+		}
 	}
 
 	stmt, err := tx.Prepare(
@@ -999,7 +1016,7 @@ func (idx *SessionIndex) Rebuild(store *Store) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return idx.RebuildIndex(entries)
+	return idx.RebuildIndex(store.dir, entries)
 }
 
 // IndexCount returns the number of entries in the session index.
