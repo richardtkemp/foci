@@ -412,7 +412,11 @@ lint:
 
 lint-unlocked: find-disconnected-tests find-static-config-reads find-unscoped-logging find-wiring-drift
 	@echo "=== golangci-lint ==="
-	@$(GOBIN)/golangci-lint run
+	@# --allow-serial-runners: golangci-lint has its own lock and by default a second
+	@# instance FAILS ("parallel golangci-lint is running") instead of waiting. The heavy
+	@# lock only serialises foci's own make targets, so a golangci-lint started any other
+	@# way failed peers' pre-commit lint. With the flag, a second instance waits its turn.
+	@$(GOBIN)/golangci-lint run --allow-serial-runners
 	@echo "=== find-static-config-reads (static reads of *config.ResolvedAgentConfig) ==="
 	@./bin/find-static-config-reads ./...
 	@echo "=== find-unscoped-logging (any package-level log.Xf component call) ==="
@@ -536,11 +540,11 @@ lint-unlocked: find-disconnected-tests find-static-config-reads find-unscoped-lo
 
 lint-fix:
 	@echo "=== golangci-lint --fix ==="
-	@$(GOBIN)/golangci-lint run --fix
+	@$(GOBIN)/golangci-lint run --allow-serial-runners --fix
 
 # Run specific linter
 lint-dupl:
-	@$(GOBIN)/golangci-lint run --disable-all -E dupl
+	@$(GOBIN)/golangci-lint run --allow-serial-runners --disable-all -E dupl
 
 # Also runs as part of `lint` — this target is for a quick standalone check.
 lint-static-config: find-static-config-reads
