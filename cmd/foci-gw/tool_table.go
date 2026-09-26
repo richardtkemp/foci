@@ -163,7 +163,11 @@ var toolTable = []toolEntry{
 	// browser.enabled decides whether the tool gets registered at all, and
 	// bc feeds a whole browser-automation manager (opens a real browser
 	// process) — construction-time only, like tmux above.
-	{name: "browser", paths: pathAPI, enabled: func(d *toolDeps) bool { return d.p.resolved.Browser.Enabled }, // static-cfg:ignore: see comment above
+	//
+	// Both paths (#1600): delegated backends reach it as foci_browser. The
+	// pool gives every session (main chat, forks, branches, other chats) its
+	// own browser rather than one per agent.
+	{name: "browser", paths: pathBoth, enabled: func(d *toolDeps) bool { return d.p.resolved.Browser.Enabled }, // static-cfg:ignore: see comment above
 		build: func(d *toolDeps) *tools.Tool {
 			bc := d.p.resolved.Browser // static-cfg:ignore: see comment above
 			// Default the persistent profile to a per-agent dir under the
@@ -174,7 +178,7 @@ var toolTable = []toolEntry{
 				bc.UserDataDir = filepath.Join(d.p.acfg.Workspace, ".data", "browser-profile")
 			}
 			fileMode, _ := config.ParseFileMode(d.p.cfg.FileMode)
-			return browser.NewBrowserTool(browser.NewBrowserManager(&bc, fileMode))
+			return browser.NewSessionBrowserTool(browser.NewSessionPool(&bc, fileMode))
 		}},
 
 	{name: "read", paths: pathAPI, build: func(d *toolDeps) *tools.Tool {

@@ -30,6 +30,9 @@ type BrowserManager struct {
 	FileMode   os.FileMode // permission bits for saved files (screenshots, PDFs)
 	incognito  bool        // runtime-toggleable; default true
 	profileDir string      // owned temp user-data-dir; created on Start, removed on Stop
+	// profile guards the configured persistent UserDataDir. A SessionPool
+	// shares one lock across its managers; a standalone manager owns its own.
+	profile *profileLock
 }
 
 // NewBrowserManager creates a new browser manager with the given config.
@@ -39,6 +42,7 @@ func NewBrowserManager(cfg *config.ResolvedBrowser, fileMode os.FileMode) *Brows
 		FileMode:  fileMode,
 		logger:    log.NewComponentLogger("browser"),
 		incognito: true,
+		profile:   &profileLock{},
 	}
 }
 
@@ -85,7 +89,11 @@ func (m *BrowserManager) Start() error {
 	// collisions when two instances run concurrently. A configured persistent
 	// dir is honored only for non-incognito sessions that must retain state.
 	if m.config.UserDataDir != "" && !m.incognito {
+		if err := m.profile.take(m); err != nil {
+			return err
+		}
 		if err := os.MkdirAll(m.config.UserDataDir, 0o700); err != nil {
+			m.profile.drop(m)
 			return fmt.Errorf("create browser profile dir: %w", err)
 		}
 		l = l.UserDataDir(m.config.UserDataDir)
@@ -100,6 +108,7 @@ func (m *BrowserManager) Start() error {
 
 	url, err := l.Launch()
 	if err != nil {
+		m.profile.drop(m)
 		return fmt.Errorf("launch browser: %w", err)
 	}
 
@@ -129,6 +138,7 @@ func (m *BrowserManager) Stop() error {
 		}
 		m.profileDir = ""
 	}
+	m.profile.drop(m)
 	m.logger.Infof("Browser stopped")
 	return nil
 }
@@ -226,12 +236,15 @@ func (m *BrowserManager) ResetSnapshot() {
 	m.snapshot = nil
 }
 
-// NewBrowserTool creates the browser tool definition using snapshot/ref paradigm.
-func NewBrowserTool(mgr *BrowserManager) *tools.Tool {
+// newBrowserTool builds the tool definition using the snapshot/ref paradigm;
+// run executes one parsed call against whichever manager the caller picks.
+func newBrowserTool(run func(context.Context, browserParams) (tools.ToolResult, error)) *tools.Tool {
 	description := `Control a headless browser via accessibility snapshots and element refs. Navigate to URLs, read the snapshot YAML to find [ref=...] locators, then use click/fill/select/press with refs to interact. Each action auto-returns a fresh snapshot. Read the browser skill (SKILL.md) for the full action and parameter reference.`
 
 	return &tools.Tool{
 		Name:        "browser",
+		ExecExport:  true,
+		Positional:  []string{"action"},
 		Description: description,
 		Parameters: json.RawMessage(`{
 			"type": "object",
@@ -258,7 +271,11 @@ func NewBrowserTool(mgr *BrowserManager) *tools.Tool {
 			"required": ["action"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
-			return executeBrowserTool(ctx, params, mgr)
+			var p browserParams
+			if err := json.Unmarshal(params, &p); err != nil {
+				return tools.ToolResult{}, fmt.Errorf("parse params: %w", err)
+			}
+			return run(ctx, p)
 		},
 	}
 }
@@ -286,12 +303,7 @@ type browserParams struct {
 	Incognito *bool       `json:"incognito"`
 }
 
-func executeBrowserTool(ctx context.Context, params json.RawMessage, mgr *BrowserManager) (tools.ToolResult, error) {
-	var p browserParams
-	if err := json.Unmarshal(params, &p); err != nil {
-		return tools.ToolResult{}, fmt.Errorf("parse params: %w", err)
-	}
-
+func dispatchBrowserAction(mgr *BrowserManager, p browserParams) (tools.ToolResult, error) {
 	switch p.Action {
 	case "start":
 		return browserStart(mgr, p)

@@ -11,6 +11,11 @@ seeded: true
 
 Control a browser using accessibility tree snapshots and element refs.
 
+Available on every backend: API-loop agents call the `browser` tool; delegated
+backends (Claude Code, opencode, codex) call the `foci_browser` shell function,
+e.g. `foci_browser navigate --url https://example.com`. Each session (main chat,
+fork, branch, other chat) gets its own browser, stopped after 30 minutes idle.
+
 ## Concept
 
 The browser renders pages and captures an accessibility tree snapshot as YAML.
@@ -56,4 +61,5 @@ Each interactive element gets a ref like [ref=s1e5]. Use these refs to interact.
 - **waitType** — Either `load` (page load) or `idle` (network idle).
 - **fullPage** — Boolean. Capture full scrollable page instead of viewport.
 - **returnPath** — Boolean. Return file path instead of base64-encoded image.
-- **incognito** — Boolean. Enable (`true`, default) or disable (`false`) incognito mode. Used with `start` action.
+- **incognito** — Boolean. Enable (`true`, default) or disable (`false`) incognito mode. Used with `start` action. From the shell, pass JSON to turn it off (`foci_browser '{"action":"start","incognito":false}'`); the `--incognito` flag can only set it on. Only one session at a time can hold the persistent profile.
+- From the shell, pass `--returnPath` with `screenshot`, or the base64 image is printed into your output.

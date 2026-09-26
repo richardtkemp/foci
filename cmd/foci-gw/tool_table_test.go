@@ -36,7 +36,7 @@ func TestToolTable_PerPathSets(t *testing.T) {
 		"ask", "spawn", "remind", "app_android", "set_session_alias",
 	}
 	wantExec := []string{
-		"summary", "http_request", "web_search", "web_fetch",
+		"browser", "summary", "http_request", "web_search", "web_fetch",
 		"memory_search", "todo", "send_to_chat", "send_to_session",
 		"ask", "spawn", "remind", "app_android", "set_session_alias",
 	}
@@ -112,8 +112,8 @@ func TestToolTable_APISet(t *testing.T) {
 
 // TestToolTable_ExecSet drives registerTools(pathExec) with full deps and
 // asserts the registered set is exactly the exec-exported subset. The exec path
-// touches neither tmux nor browser nor mcp, so the expected set is fully
-// deterministic — this is the per-path counterpart to the buildExecRegistry
+// touches neither tmux nor mcp, and browser is enabled explicitly, so the
+// expected set is fully deterministic — this is the per-path counterpart to the buildExecRegistry
 // integration tests, but exercising the table driver directly.
 func TestToolTable_ExecSet(t *testing.T) {
 	t.Parallel()
@@ -134,6 +134,7 @@ func TestToolTable_ExecSet(t *testing.T) {
 	p.todoStore = ts
 	p.braveKey = "stub-key"
 	p.memBackends = map[string]memory.Searcher{"stub": nil}
+	p.resolved.Browser.Enabled = true
 
 	registry := tools.NewRegistry()
 	registerTools(&toolDeps{
@@ -147,7 +148,7 @@ func TestToolTable_ExecSet(t *testing.T) {
 	})
 
 	want := map[string]bool{
-		"summary": true, "http_request": true, "web_search": true,
+		"browser": true, "summary": true, "http_request": true, "web_search": true,
 		"web_fetch": true, "memory_search": true, "todo": true,
 		"send_to_chat": true, "send_to_session": true, "ask": true,
 		"remind": true, "set_session_alias": true,

@@ -23,9 +23,9 @@ How this works: foci generates a shell-functions file and points `BASH_ENV` at i
 
 **`foci_spawn` is also available, conditionally:** the tool table exposes `spawn` to delegated agents whose backend can fork a session (`Agent.DelegatedManager.BackendCanBranch()` — true for `claude-code`/ccstream, `codex`, and `opencode`; **false for `claude-code-tmux`/cctmux**, which has no fork/branch support). If your backend is streaming CC (the common case), you have it — same four modes (`raw`/`character`/`clone`/`explore`) as the API-loop path; `clone` routes through `Agent.ForkSession`. On cctmux, `spawn` isn't registered at all, so prefer CC's native `Agent` tool for sub-calls there.
 
-There is **no `foci_tmux`** on this backend — that stays API-loop-only. For persistent terminals use `Bash` with `tmux` (see the `coding-agent` skill). foci's file/shell/browser tools are likewise absent — use CC's `Read`/`Write`/`Edit`/`Bash`/browser instead.
+There is **no `foci_tmux`** on this backend — that stays API-loop-only. For persistent terminals use `Bash` with `tmux` (see the `coding-agent` skill). foci's file/shell tools are likewise absent — use CC's `Read`/`Write`/`Edit`/`Bash` instead.
 
-**Two more conditional tools**, present when their backing config is on: `foci_set_session_alias` (backends that don't auto-name sessions — see below) and `foci_app_android` (only when the `app` platform is configured).
+**Three more conditional tools**, present when their backing config is on: `foci_browser` (when `[browser] enabled`, the default — see the `browser` skill), `foci_set_session_alias` (backends that don't auto-name sessions — see below) and `foci_app_android` (only when the `app` platform is configured).
 
 Every tool accepts `-h`/`--help`. **Read the `--help` before first use of any tool this session.**
 
@@ -89,6 +89,12 @@ Every tool accepts `-h`/`--help`. **Read the `--help` before first use of any to
 - **Chat sessions only** — errors on a branch/independent session key.
 - **Won't clobber a manual rename:** if the chat already has an alias that wasn't set by this tool, it replies "Skipped" instead of overwriting it.
 - **Only registered when your backend doesn't auto-name sessions.** Codex generates thread names itself (`TurnResult.ThreadName`) and never gets this tool; streaming CC (ccstream), cctmux, opencode, and API-loop agents all lack auto-naming and get it.
+
+### `foci_browser` — drive a real headless browser
+- Positional `action`, e.g. `foci_browser navigate --url https://example.com`, then `foci_browser click --ref s1e5`. The `browser` skill has the full action and parameter reference.
+- **Your session has its own browser.** Forks, branches and other chats each get a separate one, so page state never leaks between them. A browser left idle for 30 minutes is stopped; the next call starts a fresh one.
+- Booleans are presence-only flags, so `--incognito` can only turn incognito ON. To start on the persistent profile pass JSON: `foci_browser '{"action":"start","incognito":false}'`.
+- Use `--returnPath` on `screenshot`, or the base64 image lands in your output.
 
 ### `foci_app_android` — run a task on the user's connected Android device (via Tasker)
 - Only registered when the `app` platform is configured for this agent — presence of the tool doesn't guarantee a device is actually connected right now (see below).

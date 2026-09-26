@@ -24,7 +24,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 | `mcp` | Call a tool on a connected MCP server. Re-reads `mcp.toml` on each call — servers can be added/removed without restarting. Only registered when `mcp.toml` exists or `configDir` is set. See [CONFIG.md](CONFIG.md#mcptoml) for configuration. |
 | `task_list` | Manage task items. Distinct from `todo`: `task_list` is its own subsystem for tracking task work in progress (see also [HEARTBEAT.md](HEARTBEAT.md)). |
 | `set_session_alias` (foci_set_session_alias) | Set a short descriptive name for the current conversation. The alias is surfaced in session listings and UI surfaces. Disabled for the Codex backend, which manages session naming server-side. |
-| `browser` | Full CDP browser automation via [go-rod](https://github.com/go-rod/rod). Only registered when `[browser] enabled = true`. Provides navigation, DOM interaction, screenshots, and script evaluation against a real Chromium instance. |
+| `browser` (foci_browser) | Full CDP browser automation via [go-rod](https://github.com/go-rod/rod). Only registered when `[browser] enabled = true`. Provides navigation, DOM interaction, screenshots, and script evaluation against a real Chromium instance. Available on the API loop and, as `foci_browser`, on every delegated backend. Each session gets its own browser (never shared across the main chat, forks, branches or other chats); one idle for 30 minutes is stopped. Only one session at a time can open the persistent `user_data_dir` profile. |
 
 ## `ask` — Human-in-the-loop questioning
 

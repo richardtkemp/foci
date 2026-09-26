@@ -691,7 +691,7 @@ Browser automation tool configuration. Enabled by default. Agents get a `browser
 | `enabled` | bool | `true` | Enable browser tool for all agents. |
 | `headless` | bool | `true` | Run browser in headless mode. Set `false` for debugging. |
 | `timeout_sec` | int | `30` | Default timeout for page operations in seconds. |
-| `user_data_dir` | string | `""` | Chrome user data directory. Empty uses a temp profile. Only used when incognito mode is off (controlled at runtime via the browser tool's `incognito` parameter). |
+| `user_data_dir` | string | `""` | Chrome user data directory. Empty uses a temp profile. Only used when incognito mode is off (controlled at runtime via the browser tool's `incognito` parameter). Each session has its own browser, and only one of them at a time can open this profile. |
 | `executable_path` | string | `""` | Path to Chrome/Chromium binary. Empty uses auto-detection via go-rod launcher. |
 | `dom_stable_sec` | float | `1.0` | DOM stability check interval in seconds before capturing auto-snapshots. |
 | `dom_stable_diff` | float | `0.2` | DOM change threshold (0.0–1.0) for stability detection. Lower = stricter. |

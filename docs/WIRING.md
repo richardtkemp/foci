@@ -2067,7 +2067,7 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (ToolResult, error)
 | `todo` | todo.go | Per-agent task list (add, list, complete, remove). SQLite backend with priority ordering (high/medium/low). Scoped by `agent_id`. |
 | `bitwarden_search` | bitwarden.go | Search Bitwarden vault items by name, URI, folder, username. Returns metadata only (never passwords). Max 5 results. Only registered when `[bitwarden] enabled = true`. |
 | `bitwarden_unlock` | bitwarden.go | Unlock a vault item by ID. Calls `sudo -u bitwarden bw get password` via aisudo — blocks until Telegram approval or denial. Caches value for `secret_ttl`. Never returns the actual password. |
-| `browser` | browser.go, browser_actions.go, browser_snapshot.go | Browser automation via accessibility tree snapshots. Uses go-rod to control Chrome, captures ARIA snapshot as YAML with numeric refs (`[ref=s1e5]`). Actions: navigate, click, fill, select, press, screenshot, pdf, evaluate, etc. Each mutation auto-captures a fresh snapshot. JS engine vendored from go-rod/rod-mcp (browserjs/). Registered by default; disable with `[tools.browser] enabled = false`. |
+| `browser` | browser.go, browser_actions.go, browser_snapshot.go | Browser automation via accessibility tree snapshots. Uses go-rod to control Chrome, captures ARIA snapshot as YAML with numeric refs (`[ref=s1e5]`). Actions: navigate, click, fill, select, press, screenshot, pdf, evaluate, etc. Each mutation auto-captures a fresh snapshot. JS engine vendored from go-rod/rod-mcp (browserjs/). Registered by default; disable with `[tools.browser] enabled = false`. `pathBoth` + `ExecExport` (#1600): delegated backends get it as `foci_browser`. **One browser per session, not per agent:** the table row builds a `SessionPool` (session_pool.go) and `NewSessionBrowserTool` picks the manager by `SessionKeyFromContext` — set by the agent loop on the API path and on the exec bridge's ctx for delegated backends — so the main chat, forks, branches and other chats never share page state. Each call holds an in-flight count; when it drops to zero a `SessionIdleTTL` (30 min) timer arms, and on firing stops and forgets that session's browser. The managers share one `profileLock`, so only one session at a time can open the configured persistent `user_data_dir` (chromium cannot open it twice); a second gets a clear error instead. |
 
 ### Exec Bridge / Tool Piping (`tools/execbridge.go`)
 
@@ -2096,7 +2096,7 @@ exec subprocess                       foci process
 
 **For auto-background:** bridge context uses `context.Background()` + session key so it survives agent turn end.
 
-**Tools with `ExecExport: true`:** `http_request`, `web_fetch`, `web_search`, `memory_search`, `todo`, `send_to_chat`, `spawn`, `tmux`.
+**Tools with `ExecExport: true`:** `http_request`, `web_fetch`, `web_search`, `memory_search`, `todo`, `send_to_chat`, `spawn`, `tmux`, `browser`.
 
 **`foci-call` binary** (`cmd/foci-call/`): Reads `FOCI_SOCK`, connects to unix socket, sends JSON request (newline-terminated), prints result to stdout or error to stderr, exits 0/1. 1MB scanner buffer for the response envelope.
 
