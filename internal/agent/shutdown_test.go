@@ -203,7 +203,8 @@ func TestDelegatedManager_NoBackendCreatedWhileShuttingDown(t *testing.T) {
 		stop func(a *Agent)
 	}{
 		{"BeginShutdown", func(a *Agent) { a.BeginShutdown() }},
-		{"Close", func(a *Agent) { a.DelegatedManager.Close() }},
+		// Production shutdown order: BeginShutdown, then Close.
+		{"BeginShutdownThenClose", func(a *Agent) { a.BeginShutdown(); a.DelegatedManager.Close() }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			running := &mockBackendDT{}
@@ -259,5 +260,29 @@ func TestMarkTurnDispatched_StampsOnce(t *testing.T) {
 	a.markTurnDispatched(td)
 	if !td.DispatchedAt.Equal(first) {
 		t.Fatal("DispatchedAt re-stamped by a second call")
+	}
+}
+
+// Close alone is "the gateway closed its backends" (the L2 harness's
+// CloseAgentBackend), not shutdown: the next Get must respawn. Only
+// BeginShutdown latches refusal (#2059 regression: Close used to latch it,
+// failing TestL2_Failures_BackendKilledMidTurnByGateway).
+func TestDelegatedManager_CloseAloneAllowsRespawn(t *testing.T) {
+	var created atomic.Int32
+	mgr := &DelegatedManager{
+		NewBackend: func() (delegator.Delegator, error) {
+			created.Add(1)
+			return &mockBackendDT{}, nil
+		},
+	}
+	if _, err := mgr.Get(context.Background(), "test/s"); err != nil {
+		t.Fatalf("premise Get: %v", err)
+	}
+	mgr.Close()
+	if _, err := mgr.Get(context.Background(), "test/s"); err != nil {
+		t.Fatalf("Get after Close = %v, want a respawned backend", err)
+	}
+	if n := created.Load(); n != 2 {
+		t.Fatalf("NewBackend called %d times, want 2 (initial + respawn)", n)
 	}
 }

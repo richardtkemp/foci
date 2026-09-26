@@ -149,9 +149,12 @@ type DelegatedManager struct {
 	reaperStop context.CancelFunc
 
 	// noNewBackends refuses every backend creation and respawn once the agent
-	// is draining for shutdown or the manager has been closed (#2059): a
-	// backend spawned then is killed moments later, and a resume-spawn after
-	// Close would outlive the manager that owns it. Guarded by mu.
+	// is draining for shutdown (#2059): a backend spawned then is killed
+	// moments later. Set ONLY by refuseNewBackends (Agent.BeginShutdown), never
+	// by Close: Close is also "the gateway closed its backends", after which
+	// the next message must respawn one (L2 BackendKilledMidTurnByGateway).
+	// Shutdown calls BeginShutdown before Close, so the latch is already set
+	// there. Guarded by mu.
 	noNewBackends bool
 
 	// createGroup serializes backend creation per session key so concurrent
@@ -526,7 +529,7 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 
 	m.mu.Lock()
 	if m.noNewBackends {
-		// Shutdown began (or Close ran) while this one was starting: Close
+		// Shutdown began while this one was starting: the shutdown Close
 		// cannot see a backend that is not in the map yet, so it would
 		// outlive the manager. Tear it down here instead.
 		m.mu.Unlock()
@@ -883,7 +886,6 @@ func (m *DelegatedManager) closeManaged(sessionKey string, clearResume bool) boo
 // via the ccstream bounded-shutdown fallback. See TODO #749.
 func (m *DelegatedManager) Close() {
 	m.mu.Lock()
-	m.noNewBackends = true
 	if m.reaperStop != nil {
 		m.reaperStop()
 		m.reaperStop = nil
