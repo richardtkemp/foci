@@ -748,7 +748,7 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 			// "what did that delegation cost" needed a SUM and the #1918
 			// correction (which requires exactly one match) could never apply
 			// to the background subagents it exists for (#1922).
-			log.AccumulateSubagentRow(log.APIEntry{
+			merged := log.AccumulateSubagentRow(log.APIEntry{
 				Timestamp: ts0,
 				Provider:  "anthropic",
 				Session:   ts.SessionKey,
@@ -774,6 +774,10 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 				SessionFile: sessionFile,
 				Purpose:     ts.Purpose,
 			})
+			// The last decision point on a subagent's spend (#1936): pairs with
+			// ccstream's "subagent rows: share" line by group.
+			a.logger().Debugf("subagent rows: wrote group=%s model=%s turn_id=%s merged=%v cost=$%.6f",
+				sc.AgentID, sc.Model, turnID, merged, cost)
 		}
 	}
 

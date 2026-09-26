@@ -174,6 +174,13 @@ type subagentTail struct {
 	// a tail that opened its file but read nothing is distinguishable from one
 	// that never opened it at all (#1934).
 	lines atomic.Int64
+	// usage counts the assistant lines whose usage was handed to the
+	// accumulator, and completed the subset carrying a stop_reason — the only
+	// lines that can reach a subagent_turn row (#1923). Reported at close
+	// beside lines, so "read lines but none were billable" and "billable but
+	// never completed" each have their own number rather than a guess (#1936).
+	usage     atomic.Int64
+	completed atomic.Int64
 }
 
 func newSubagentTailManager(deliver func(groupKey, text string), noteUsage func(agent, model, id string, at time.Time, complete bool, u TokenUsage), lg *log.ComponentLogger) *subagentTailManager {
@@ -227,6 +234,7 @@ func (m *subagentTailManager) maybeStart(toolUseID, path string) {
 	delete(m.expectFg, toolUseID)
 	if _, running := m.tails[toolUseID]; running {
 		m.mu.Unlock()
+		m.lg.Debugf("subagent tail: NOT started, already running for group=%s", toolUseID)
 		return
 	}
 	t := &subagentTail{wantText: wantText, stop: make(chan struct{}), done: make(chan struct{})}
@@ -251,6 +259,9 @@ func (m *subagentTailManager) finalize(toolUseID string) {
 	delete(m.tails, toolUseID)
 	m.mu.Unlock()
 	if t == nil {
+		// Named so a finalize that stopped nothing is not read as one that
+		// stopped a tail: the tail was never started, or already ended (#1936).
+		m.lg.Debugf("subagent tail: finalize found no running tail for group=%s", toolUseID)
 		return
 	}
 	close(t.stop)
@@ -315,7 +326,8 @@ func (m *subagentTailManager) run(groupKey, path string, t *subagentTail) {
 	defer f.Close()
 	m.lg.Debugf("subagent tail: opened %s (group=%s wantText=%v)", path, groupKey, t.wantText)
 	defer func() {
-		m.lg.Debugf("subagent tail: closed group=%s lines=%d", groupKey, t.lines.Load())
+		m.lg.Debugf("subagent tail: closed group=%s lines=%d usage=%d completed=%d terminal=%v",
+			groupKey, t.lines.Load(), t.usage.Load(), t.completed.Load(), t.sawTerminal.Load())
 	}()
 
 	var acc []byte
@@ -330,8 +342,15 @@ func (m *subagentTailManager) run(groupKey, path string, t *subagentTail) {
 					if i < 0 {
 						break
 					}
-					if m.deliverLine(groupKey, acc[:i], t.wantText) {
+					r := m.deliverLine(groupKey, acc[:i], t.wantText)
+					if r.terminal {
 						t.sawTerminal.Store(true)
+					}
+					if r.usage {
+						t.usage.Add(1)
+					}
+					if r.complete {
+						t.completed.Add(1)
 					}
 					t.lines.Add(1)
 					acc = acc[i+1:]
@@ -430,14 +449,24 @@ type transcriptLine struct {
 	} `json:"message"`
 }
 
+// lineResult is what deliverLine observed about one transcript line.
+//
+// terminal: the record ENDS the run — a non-nil stop_reason that is not
+// "tool_use". "tool_use" means the assistant will be called again, so it is
+// explicitly NOT terminal; the live probe that exposed #1938 had exactly that
+// shape (tool_use, then the end_turn that was lost).
+//
+// usage: the line's usage was handed to the accumulator; complete: it carried
+// a stop_reason, so the accumulator counts it (#1923). Both feed the tail's
+// close line (#1936).
+type lineResult struct {
+	terminal, usage, complete bool
+}
+
 // deliverLine parses one transcript line and forwards each assistant text block
 // as subagent progress. Non-assistant records (the input prompt, tool_use,
 // tool_result, attachments) and non-text blocks are skipped.
-// deliverLine reports whether the record ENDS the run: a non-nil stop_reason
-// that is not "tool_use". "tool_use" means the assistant will be called again,
-// so it is explicitly NOT terminal — the live probe that exposed #1938 had
-// exactly that shape (tool_use, then the end_turn that was lost).
-func (m *subagentTailManager) deliverLine(groupKey string, line []byte, wantText bool) (terminal bool) {
+func (m *subagentTailManager) deliverLine(groupKey string, line []byte, wantText bool) (r lineResult) {
 	line = bytes.TrimSpace(line)
 	if len(line) == 0 {
 		return
@@ -464,18 +493,20 @@ func (m *subagentTailManager) deliverLine(groupKey string, line []byte, wantText
 		at, _ := time.Parse(time.RFC3339Nano, rec.Timestamp)
 		m.noteUsage(groupKey, rec.Message.Model, rec.Message.ID, at,
 			rec.Message.StopReason != nil, rec.Message.Usage)
+		r.usage = true
+		r.complete = rec.Message.StopReason != nil
 	}
-	terminal = rec.Message.StopReason != nil && *rec.Message.StopReason != "tool_use"
+	r.terminal = rec.Message.StopReason != nil && *rec.Message.StopReason != "tool_use"
 	// Text only when this tail was started for a FOREGROUND subagent. A
 	// background subagent's text already reaches the parent stream, so
 	// forwarding it here would render it twice.
 	if !wantText || m.deliver == nil {
-		return terminal
+		return r
 	}
 	for _, blk := range rec.Message.Content {
 		if blk.Type == "text" && blk.Text != "" {
 			m.deliver(groupKey, blk.Text)
 		}
 	}
-	return terminal
+	return r
 }

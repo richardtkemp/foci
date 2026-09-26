@@ -337,6 +337,40 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 	}
 }
 
+// logSubagentShares narrates, at DEBUG, what this result cycle decided about
+// subagent rows: each share handed on for a subagent_turn row, or why none was
+// (#1936). Without it, a subagent whose usage reached no row was visible only as
+// a pricing divergence, and one under the 3% tolerance was not visible at all.
+//
+// shares is the turn-so-far (sortedSubagentCosts of turnSubagents), which the
+// agent layer writes at turn end; seen is every agent with usage this turn.
+// An agent in seen but not in shares had usage that no row will carry.
+func (b *Backend) logSubagentShares(priced bool, shares []modelinfo.SubagentCost, seen map[string]turnUsage) {
+	if len(shares) == 0 && len(seen) == 0 {
+		return
+	}
+	if !priced {
+		b.logger().Debugf("subagent rows: NONE, result carried no modelUsage to price against (agents with usage=%d)", len(seen))
+		return
+	}
+	shared := make(map[string]bool, len(shares))
+	for _, sc := range shares {
+		shared[sc.AgentID] = true
+		b.logger().Debugf("subagent rows: share group=%s model=%s spawned_turn=%q out=%d cost=$%.6f",
+			sc.AgentID, sc.Model, sc.TurnID, sc.Counts.Output, sc.CostUSD)
+	}
+	ids := make([]string, 0, len(seen))
+	for id := range seen {
+		if !shared[id] {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		b.logger().Debugf("subagent rows: NONE for group=%s, usage seen this turn but no priced share", id)
+	}
+}
+
 // OnResult handles a result message. Under the idle-keyed lifecycle a result
 // is NOT the turn boundary — it is one internal ask cycle's accounting. CC
 // mints 0, 1 or N results per logical turn (a "now" steer aborts the current
@@ -809,6 +843,8 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	if checkCost {
 		b.costCheck.Check(result.Model, calcSoFar, providedSoFar, bd.String, b.logger().Warnf)
 	}
+
+	b.logSubagentShares(checkCost, turnSubs, bd.subagents)
 
 	b.logger().Debugf("OnResult: stashed ask-cycle result (turn_active=%v cycle=%d textlen=%d out_total=%d)",
 		turnActive, cycle, len(text), result.Usage.OutputTokens)
