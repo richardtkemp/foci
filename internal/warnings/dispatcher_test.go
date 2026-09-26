@@ -315,6 +315,66 @@ func TestDispatcher_FlushPending_Floored(t *testing.T) {
 	}
 }
 
+func TestDispatcher_FlushPending_ConcurrentGuard(t *testing.T) {
+	// Proves FlushPending's own in-flight guard blocks a second dispatch while
+	// one is still running. The flushMinInterval floor would otherwise mask
+	// it (a dispatch just started, so the floor blocks first), so the test
+	// backdates lastDispatch past the floor: only the guard can hold.
+	q := NewQueue(0, 0)
+	var mu sync.Mutex
+	calls := 0
+	started := make(chan struct{}, 2) // room for a second dispatch if the guard fails
+	release := make(chan struct{})
+
+	d := NewDispatcher(DispatcherConfig{
+		Queue: q,
+		DispatchFn: func(string) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+			started <- struct{}{}
+			<-release // hold the dispatch in flight until the test lets go
+		},
+	})
+
+	q.Push("WARN", "test", "first")
+	d.FlushPending()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first dispatch never started")
+	}
+
+	d.mu.Lock()
+	d.lastDispatch = time.Now().Add(-2 * flushMinInterval)
+	inFlight := d.dispatching
+	d.mu.Unlock()
+	if !inFlight {
+		t.Fatal("premise: first dispatch should still be in flight")
+	}
+
+	// The queue is suppressed during the dispatch, so Push would be dropped;
+	// model an entry that raced in just before Suppress() (as ConcurrentGuard does).
+	q.mu.Lock()
+	q.pushLocked("WARN", "test", "second")
+	q.mu.Unlock()
+
+	d.FlushPending()
+	if !q.Pending() {
+		t.Error("FlushPending drained the queue while a dispatch was in flight; the in-flight guard should hold it")
+	}
+
+	close(release)
+	waitDispatched(t, d)
+
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 1 {
+		t.Errorf("expected 1 dispatch (in-flight guard should block the second), got %d", got)
+	}
+}
+
 func TestDispatcher_FiresWhenNotProcessing(t *testing.T) {
 	// Proves that MaybeFire dispatches normally when IsProcessingFn returns false.
 	q := NewQueue(0, 0)
