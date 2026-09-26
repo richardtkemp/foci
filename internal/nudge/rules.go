@@ -64,7 +64,7 @@ type Trigger struct {
 
 	// Tool-context fields (used when Type == "tool_pattern").
 	ToolPattern  string `json:"tool_pattern,omitempty"`  // regex against the tool name
-	InputPattern string `json:"input_pattern,omitempty"` // regex against the raw tool_input JSON
+	InputPattern string `json:"input_pattern,omitempty"` // regex against a shell tool's command text, else the raw tool_input JSON (see inputMatches)
 	Consecutive  int    `json:"consecutive,omitempty"`   // require N consecutive matches in the recent buffer (default 1)
 }
 

@@ -41,6 +41,8 @@ Each rule has one trigger that determines when it fires:
 | `regex(pattern)` | When the user's message matches the regex pattern | `pattern`: Go regex |
 | `pre_answer` | When the model wants to end the turn (gated) | — |
 
+**What `input_pattern` matches (#2038).** For a shell tool (CC's `Bash`, the API transport's `shell`) the pattern is matched against the decoded **command text**, so `^cd\s` means "the command starts with `cd`" and `(?m)^git push` means "some line starts with `git push`". For every other tool it is matched against the **raw tool_input JSON** (e.g. `/character/[^/]+\.md` against Read/Edit's `{"file_path":...}`) — no single field is the obvious subject there. A shell tool's raw JSON is tried too, so rules written against the JSON form before #2038 (`^\{"command":"cd `) keep firing; matching both only ever adds fires. The CC hook truncates tool_input at 4KB, cutting a long heredoc mid-JSON; the command's leading text is still recovered from the truncated form, so command-position rules keep working on it.
+
 Rules also have a **priority** (high/medium/low) which affects extraction guidance — the model assigns higher priority to rules addressing common failure modes.
 
 ## How nudges are delivered

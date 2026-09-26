@@ -25,11 +25,13 @@ var benignExitCommandRe = regexp.MustCompile(`"command"\s*:\s*"\s*((grep|egrep|f
 const recentBufferDepth = 16
 
 // toolEvent records a single tool invocation in the recent-tools ring
-// buffer. ToolInput is the raw JSON (truncated at the helper layer);
-// scheduler regexes match against it directly without re-parsing.
+// buffer. Input is the raw tool_input JSON (truncated at the hook layer);
+// Command is the decoded command text of a shell tool call (see
+// shellCommand), decoded once here so each rule evaluation doesn't re-parse.
 type toolEvent struct {
-	Name  string
-	Input string
+	Name    string
+	Input   string
+	Command string
 }
 
 // Settings holds the live-tunable nudge config (a config-free mirror of the
@@ -389,7 +391,7 @@ func (s *Scheduler) RecordToolCall(name, input string) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	ev := toolEvent{Name: name, Input: input}
+	ev := toolEvent{Name: name, Input: input, Command: shellCommand(name, input)}
 	if len(s.recent) < recentBufferDepth {
 		s.recent = append(s.recent, ev)
 		return
@@ -573,12 +575,23 @@ func (s *Scheduler) matchesRecentLocked(idx int, t Trigger) bool {
 		}
 		if t.InputPattern != "" {
 			re, ok := s.compiledInputRegex[idx]
-			if !ok || !re.MatchString(ev.Input) {
+			if !ok || !inputMatches(re, ev) {
 				return false
 			}
 		}
 	}
 	return true
+}
+
+// inputMatches applies an input_pattern to one tool event. A shell tool's
+// pattern is matched against its command text, so `^cd\s` anchors at the start
+// of the command (#2038) — the form rule authors and the extraction prompt
+// write. The raw tool_input JSON is still tried as well: it is the only subject
+// for other tools, and it keeps rules written against the JSON form (e.g.
+// `^\{"command":"cd `) firing. Matching both can only add fires relative to the
+// old JSON-only matching, never remove one.
+func inputMatches(re *regexp.Regexp, ev toolEvent) bool {
+	return (ev.Command != "" && re.MatchString(ev.Command)) || re.MatchString(ev.Input)
 }
 
 // turnBudgetLocked reports whether one more nudge may be injected this turn

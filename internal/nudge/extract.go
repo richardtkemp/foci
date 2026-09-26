@@ -57,8 +57,12 @@ For each rule you extract, output a JSON object:
 - {"type": "after_error"} — remind when a tool call returns an error
 - {"type": "tool_pattern", "tool_pattern": "regex", "input_pattern": "regex", "consecutive": N}
   — remind when the most recent tool calls match. tool_pattern matches the
-  tool name (e.g. "^Read$", "^(Read|Grep|Glob)$"); input_pattern matches the
-  raw tool_input JSON (e.g. "rm -rf", "/character/[^/]+\\.md"); consecutive
+  tool name (e.g. "^Read$", "^(Read|Grep|Glob)$"). For Bash, input_pattern
+  matches the COMMAND TEXT itself, so "^" is the start of the command (e.g.
+  "^cd\\s", "rm -rf"); add "(?m)" to anchor at the start of any line of a
+  multi-line command. For every other tool it matches the raw tool_input JSON,
+  where "^" is the opening "{" — match a field's value unanchored instead (e.g.
+  "/character/[^/]+\\.md" against a Read/Edit file_path). consecutive
   defaults to 1. Both pattern fields are optional — omitting one means "any".
   Prefer tool_pattern over a high-N every_n_tools when the rule is really
   about a specific kind of work (reading without engaging, editing character
@@ -66,14 +70,15 @@ For each rule you extract, output a JSON object:
   Bash, Grep, Glob, Task, WebFetch, WebSearch, TodoWrite.
 
   For input_pattern, think about false-positive shapes before committing to a
-  pattern — it matches the raw tool_input JSON of every matching tool call:
+  pattern — it is tested against every matching tool call:
   - Distinguish reads from writes: "cat .*\\.md" also matches an append
     ("cat >> notes.md <<EOF"), which is a write with no context cost — the
     opposite of what a dump-and-scan rule targets. Prefer e.g.
     "cat\\s+[^>|]*\\.md" when the rule is about reading.
   - A word can appear in an argument, a path, or heredoc CONTENT, not just as
-    the command — anchor with word boundaries and command position when the
-    rule is about running something.
+    the command — when the rule is about running something, anchor at command
+    position: "^cmd\\b" for the first command, or "(^|[;&|]\\s*)cmd\\b" to also
+    catch it after ";", "&&" or "|".
   - Test mentally against routine calls: would this fire on the innocent
     version of the command? If most matches would be innocent, tighten the
     pattern or pick a different trigger.

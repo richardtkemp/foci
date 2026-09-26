@@ -509,6 +509,45 @@ func TestToolPatternInputMatch(t *testing.T) {
 	}
 }
 
+func TestToolPatternBashInputMatchesCommandText(t *testing.T) {
+	// #2038: a Bash input_pattern anchored at command position (`^cd\s`) must
+	// match the command text, not the raw {"command":...} JSON it arrives in.
+	// Rules written against the JSON form keep matching, and a non-shell tool
+	// is still matched against its raw JSON.
+	t.Parallel()
+
+	cases := []struct {
+		name, pattern, tool, input string
+		want                       bool
+	}{
+		{"anchored cd", `^cd\s`, "Bash", `{"command":"cd /x && ls","description":"list"}`, true},
+		{"anchored cd, API shell tool", `^cd\s`, "shell", `{"command":"cd /x && ls"}`, true},
+		{"anchored cd, not at start", `^cd\s`, "Bash", `{"command":"ls && cd /x"}`, false},
+		{"anchored, escaped quote in command", `^echo "a"$`, "Bash", `{"command":"echo \"a\""}`, true},
+		{"multi-line command, (?m) anchor", `(?m)^git push`, "Bash", `{"command":"cd /x\ngit push"}`, true},
+		{"truncated hook input", `^cd\s`, "Bash", `{"command":"cd /x && cat <<EOF\nlong...[truncated]`, true},
+		{"truncated mid-escape", `^cd /x && echo $`, "Bash", `{"command":"cd /x && echo \...[truncated]`, true},
+		{"legacy JSON-form rule", `^\{"command":"cd `, "Bash", `{"command":"cd /x && ls"}`, true},
+		{"non-shell tool matches raw JSON", `^\{"file_path"`, "Read", `{"file_path":"/x"}`, true},
+		{"non-shell tool has no command text", `^/x$`, "Read", `{"file_path":"/x"}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rs := &RuleSet{Rules: []Rule{
+				{Text: "hit", Trigger: Trigger{Type: "tool_pattern", InputPattern: tc.pattern}, Priority: "high"},
+			}}
+			s := NewScheduler(rs, 1, 1)
+			s.StartTurn("hello")
+			s.RecordToolCall(tc.tool, tc.input)
+			got := len(s.CheckAfterTools(1, false)) == 1
+			if got != tc.want {
+				t.Errorf("pattern %q vs %s %s: fired=%v, want %v", tc.pattern, tc.tool, tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestToolPatternConsecutive(t *testing.T) {
 	// Consecutive: N requires the N most-recent events to all match.
 	// One non-match breaks the streak.
