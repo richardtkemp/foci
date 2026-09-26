@@ -74,7 +74,7 @@ const noRolloutFoundMarker = "no rollout found for thread id"
 // thread by RPC to a live app-server, so an idle agent could never have its
 // expired sessions collected: the daily sweep built a fresh Backend, found no
 // connection, and failed once per session — permanently, for exactly the agents
-// whose sessions were expiring. 1df68081 fixed this bug class for opencode on
+// whose sessions were expiring. 8590df7e fixed this bug class for opencode on
 // 2026-08-15 but left codex out, because WIRING recorded codex as deleting
 // straight from disk. It does not.
 //

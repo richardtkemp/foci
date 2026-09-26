@@ -188,7 +188,7 @@ model = "stub"
 		// when the spec sets it — empty falls through to the global (which
 		// writeTestConfig points at the auto-built cc-stub). Emits the
 		// current 'binary' key, not the deprecated 'claude_binary' alias —
-		// ccstream's Start()/CheckReady() only read cfg["binary"] (#1fa13fde
+		// ccstream's Start()/CheckReady() only read cfg["binary"] (#63d229fc
 		// migrated the readers but missed this writer, which silently made
 		// every L2 test fall back to a real `claude` on $PATH instead of
 		// cc-stub).

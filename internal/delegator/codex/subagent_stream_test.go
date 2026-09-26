@@ -23,7 +23,7 @@ import (
 // OWNER — meaning, while a parent waits on its subagent, the child's
 // turn/completed completes the PARENT's live turn, the child's text streams
 // into the user's chat as the parent's, and the child's token usage overwrites
-// the parent's. Same class as the batch-thread leak fixed in 825ac551, which
+// the parent's. Same class as the batch-thread leak fixed in f3381eb6, which
 // subagent threads never got a guard for.
 func TestSubagentChildThreadDoesNotDisturbTheOwner(t *testing.T) {
 	b := newTestBackend(t)
@@ -75,7 +75,7 @@ func TestSubagentChildThreadDoesNotDisturbTheOwner(t *testing.T) {
 	}
 
 	// And the child's own turn/completed is what ends its run — the signal
-	// afe20cd0 concluded did not exist because SubAgentActivityKind has no
+	// e7a519a6 concluded did not exist because SubAgentActivityKind has no
 	// completion variant. The enum has none; the child's THREAD does.
 	if len(ev.ends) != 1 {
 		t.Errorf("ends = %+v, want 1 — the child's turn/completed is the completion signal", ev.ends)

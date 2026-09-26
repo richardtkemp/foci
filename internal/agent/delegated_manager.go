@@ -875,7 +875,7 @@ func (m *DelegatedManager) closeManaged(sessionKey string, clearResume bool) boo
 //
 // Map mutation happens under m.mu; the (potentially slow) be.Close() calls
 // run after the lock is released. This mirrors the pattern in Get and
-// ResetSession (see 3af4dce5) — and is critical because the bounded
+// ResetSession (see 08bef249) — and is critical because the bounded
 // typingFunc wrapper in setBackendCallbacks acquires m.mu via sk() on the
 // waiter goroutine. Holding m.mu across be.Close would deadlock the
 // waiter against this caller, the 2s typingFunc timer would never arm

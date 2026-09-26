@@ -156,7 +156,7 @@ func (b *chattyBatchBackend) Close() error {
 }
 
 // TestRunBatch_DeliversNothingToAnyChat pins the reason the batch path was ever
-// separate (821ff2ca: the session path "leaked output to platform"). The owner
+// separate (12036174: the session path "leaked output to platform"). The owner
 // session has a live chat — a delivering sink on its router and a connection
 // that late-delivery resolves to for ANY key, the way route.ConnFor resolves a
 // b-child to its root chat — and every platform UI hook is wired. A batch must

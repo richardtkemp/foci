@@ -8,7 +8,7 @@
 // installed on the box, which is not a property any test should have.
 //
 // Concretely (2026-08-06): TestRunBatch_CodexOwnerGetsDistinctFacadeSharedApp
-// Server passed on commit 448192bf at 16:17 and failed on the SAME commit
+// Server passed on commit b6528ff7 at 16:17 and failed on the SAME commit
 // from 11:24 the next morning. Nothing in the repo changed. What changed was
 // /usr/local/bin/foci-codex-hook appearing at 16:23:01 — a deploy, six
 // minutes after the last green run. With the hook resolvable, codex's

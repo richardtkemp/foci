@@ -196,7 +196,7 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 
 	// Nudge system.
 	wsFileMode, _ := config.ParseFileMode(p.cfg.FileMode)
-	setupNudgeSystem(ag, acfg, p.resolved.Nudge, p.sessions, fp.registry, fp.skillRegistry, wsFileMode) // static-cfg:ignore: NudgeConfig has no hot tags yet; NudgeReloadFunc solves a different problem (rules-from-disk reload), see bucket D (a30414b8)
+	setupNudgeSystem(ag, acfg, p.resolved.Nudge, p.sessions, fp.registry, fp.skillRegistry, wsFileMode) // static-cfg:ignore: NudgeConfig has no hot tags yet; NudgeReloadFunc solves a different problem (rules-from-disk reload), see bucket D (7cc4e649)
 
 	// Slash commands.
 	var configureFacet func(platform.Connection)

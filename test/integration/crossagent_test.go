@@ -15,7 +15,7 @@ import (
 )
 
 // TestL2_CrossAgent_SendToSession_RoutesToTargetWorkdir is the
-// regression net for the bug fixed in d87875c1 (foci-gw commit on
+// regression net for the bug fixed in 87c571f6 (foci-gw commit on
 // 2026-05-15): when fotini's session calls send_to_session targeting
 // clutch's session with reply_to=caller, foci must dispatch the message
 // on clutch's Agent (which spawns CC in clutch's workdir), NOT on
@@ -42,7 +42,7 @@ import (
 //
 // Without the fix, the notifier would have called HandleMessage on
 // fotini's Agent with clutch's session key. The invariant guard added
-// in d87875c1 would today reject that as "invariant violation", so the
+// in 87c571f6 would today reject that as "invariant violation", so the
 // user_message entry under clutch's workdir would never appear and the
 // test would fail with a clear "send_to_session never reached clutch"
 // signal. With the fix in place, the entry appears as expected.

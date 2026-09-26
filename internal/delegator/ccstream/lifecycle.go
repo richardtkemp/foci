@@ -350,7 +350,7 @@ func (b *Backend) closeInner() {
 	//
 	// The original trigger was the #749 lock-ordering deadlock, where the
 	// waiter stalled inside finalizeExit behind handler callbacks holding
-	// locks. That root cause is fixed (commit 85e49f26) and has logged zero
+	// locks. That root cause is fixed (commit a2e6b7bc) and has logged zero
 	// stalls since 2026-05-17. The cap stays regardless: it is the backstop
 	// for whatever the next unforeseen stall turns out to be.
 	select {
@@ -378,7 +378,7 @@ func (b *Backend) closeInner() {
 				// waiting for the goroutine to confirm. Without this cap, m.mu
 				// in the caller is held forever and no further messages can be
 				// processed for this agent. Reaching here is unexpected post-#749
-				// (zero occurrences since the 85e49f26 fix) — if it fires, it is
+				// (zero occurrences since the a2e6b7bc fix) — if it fires, it is
 				// a NEW stall worth investigating, not the known deadlock.
 				b.logger().Warnf("waiter goroutine did not report after SIGKILL within %s — abandoning wait (possible zombie)", closeSigkillWait)
 			}

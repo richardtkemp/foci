@@ -347,7 +347,7 @@ func TestL2_Config_PerAgentClaudeBinaryOverridesGlobal(t *testing.T) {
 
 // TestL2_Config_PlatformTelegramSubBlockInheritedWhenNil is the
 // regression net for the ApplyDefaults nil-handling fix area (commit
-// 209b9ba3 lineage). When a per-agent platform entry omits the
+// a091b991 lineage). When a per-agent platform entry omits the
 // `[platforms.telegram]` sub-block entirely, the agent must inherit the
 // whole block from the global platform — including `api_base`. Without
 // the fix, the agent's bot would point at the real Telegram URL instead

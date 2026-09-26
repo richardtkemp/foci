@@ -76,7 +76,7 @@ func setupBootstrapAndSkills(p setupParams, agentStore *secrets.Store) bootstrap
 // buildCompactor creates a Compactor configured for this agent.
 // Returns the compactor and the resolved compaction threshold.
 func buildCompactor(p setupParams, fallbackFn provider.FallbackFunc) (*compaction.Compactor, float64) {
-	cc := p.resolved.Compaction // static-cfg:ignore: initial construction value; live edits flow through the OnChange registered below (bucket D, a30414b8)
+	cc := p.resolved.Compaction // static-cfg:ignore: initial construction value; live edits flow through the OnChange registered below (bucket D, 7cc4e649)
 	compactionThreshold := cc.CompactionThreshold
 	preserveMessages := cc.CompactionPreserveMessages
 	compactor := compaction.NewCompactor(p.sessions, compactionThreshold)

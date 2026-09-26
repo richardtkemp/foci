@@ -186,7 +186,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// request that should fail loudly, a launch-time default that doesn't
 	// resolve is not a reason to fail Start: fall back to opencode's own
 	// config (opencode.json), matching the pre-validation behavior. See
-	// foci bug: 232dc546 turned this into a hard Start failure and broke
+	// foci bug: f1b81ca3 turned this into a hard Start failure and broke
 	// every opencode agent whose config model isn't a real opencode id.
 	if opts.Model != "" {
 		binaryPath, _ := b.cfg["binary"].(string)

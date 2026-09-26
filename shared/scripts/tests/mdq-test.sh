@@ -21,7 +21,7 @@
 # (no-flag) path breaks markdown reading for everyone the moment this
 # script is deployed. So this test also diffs the CURRENT script's no-flag
 # output against the PRE-CHANGE script's (fetched via git show, pinned to
-# a4caf43f^ — the commit immediately before #1705 landed, NOT `main`: this
+# 872a5bd6^ — the commit immediately before #1705 landed, NOT `main`: this
 # suite was written while #1705 was still on a branch, so `main` meant
 # "pre-change" only until it landed; once merged, `main` IS the change,
 # and comparing against it compares new-vs-new-with-flag and fails by
@@ -187,10 +187,10 @@ fi
 # This is the "must not break the live read path for every agent" gate.
 # ---------------------------------------------------------------------------
 REPO=$(cd "$HERE/../.." && pwd)
-# Pinned to the commit immediately before #1705 landed (a4caf43f^), NOT
+# Pinned to the commit immediately before #1705 landed (872a5bd6^), NOT
 # `main` — see the header comment and #1976 for why `main` fails by
 # construction once #1705 is merged.
-PRE_1705=a4caf43f^
+PRE_1705=872a5bd6^
 OLD="$TMP/mdq-old"
 if git -C "$REPO" show "$PRE_1705":shared/scripts/mdq > "$OLD" 2>/tmp/mdq-test-err-gitshow; then
     chmod +x "$OLD"

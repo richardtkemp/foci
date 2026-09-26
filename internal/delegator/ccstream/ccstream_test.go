@@ -1037,7 +1037,7 @@ func TestOnAssistant_CrossMessageSeparation(t *testing.T) {
 //
 // Before the SessionEvents/TurnEvents split, ccstream's text-emit path read
 // `b.turnHandler` under turnMu and dropped on nil with a "text block dropped:
-// handler_nil=true" warning — re-exposed by commit 57445dc6 which removed
+// handler_nil=true" warning — re-exposed by commit 2b054e88 which removed
 // the rearm cascade that had been keeping turnHandler non-nil across stacked
 // CC results. The fix divorces delivery (session lifetime) from bookkeeping
 // (turn lifetime). This test pins that invariant: drive a turn to completion,

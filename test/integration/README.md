@@ -10,7 +10,7 @@ End-to-end tests for foci that spawn a real `foci-gw` subprocess against a stubb
 | **L2 component** | **real subprocess** | stub (httptest) | stub binary | **cross-package wiring** | every PR (`make integration`) |
 | L3 e2e | real subprocess | real bot | real claude | edge-protocol quirks, CC contract drift | nightly (planned, not yet built) |
 
-The bug that prompted this layer — fixed in `d87875c1` (cross-agent `send_to_session` routing) — was structurally invisible to L1. L2 catches that class.
+The bug that prompted this layer — fixed in `87c571f6` (cross-agent `send_to_session` routing) — was structurally invisible to L1. L2 catches that class.
 
 ## Running
 
@@ -66,7 +66,7 @@ If your test needs a custom event log path (e.g. to seed fixture lines), use `sc
 |------|-----------------|
 | `TestL2_Ingress_*` | Telegram message → agent's cc-stub invoked in agent's workspace |
 | `TestL2_Egress_*` | Agent reply → Telegram stub recorded a `sendMessage` with the echo body |
-| `TestL2_CrossAgent_*` | `send_to_session` from fotini to clutch lands in clutch's workdir (regression net for `d87875c1`) |
+| `TestL2_CrossAgent_*` | `send_to_session` from fotini to clutch lands in clutch's workdir (regression net for `87c571f6`) |
 | `TestL2_Tools_HTTPRequest_*` | `foci_http_request` via exec bridge reaches a side HTTP server |
 | `TestL2_Lifecycle_RestartAfterStubExit` | Two sequential messages both process |
 

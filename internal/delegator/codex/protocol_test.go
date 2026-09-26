@@ -142,7 +142,7 @@ func TestDispatch_ItemCompleted(t *testing.T) {
 // regression for #1329 item 6: codex's own generate-json-schema (v0.144.5)
 // documents agentMessage's `phase` field as "commentary" | "final_answer",
 // and a live turn/start -> turn/steer -> turn/completed probe confirmed the
-// running app-server actually emits it (a b3d41c78 attempt to act on this
+// running app-server actually emits it (a 5dee52cf attempt to act on this
 // was reverted minutes later, with no live check either way — the problem it
 // described was left unfixed with no TODO, per #1329's own description).
 // Only "final_answer" (or an unphased item, for backward compat with a

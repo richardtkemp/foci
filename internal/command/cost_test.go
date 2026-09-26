@@ -506,7 +506,7 @@ func f64p(f float64) *float64 { return &f }
 // TestSessionFamily_TransitiveClosure covers. The fix is to stop conflating
 // the two sets.
 //
-// No self-parented row exists in production and f3816f36 closed the one known
+// No self-parented row exists in production and fb70bc10 closed the one known
 // producer, so this is hazard removal rather than a live-bug fix — but the
 // hang is unbounded-memory, and a walk that cannot terminate on malformed
 // input is worth fixing on its own terms.

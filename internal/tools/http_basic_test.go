@@ -121,7 +121,7 @@ func TestHTTPRequestTimeoutCap(t *testing.T) {
 	// Assert the SEMANTIC timeout, not its phrasing. net/http's Client.Timeout
 	// wrapper reformats the message ("...request canceled (Client.Timeout
 	// exceeded...)") so it no longer literally contains "deadline exceeded" —
-	// wrapping the client transport in ratelimit.Transport (4e0af98f) surfaced
+	// wrapping the client transport in ratelimit.Transport (8cc8b74c) surfaced
 	// this — but the wrapped error is still context.DeadlineExceeded (verified
 	// via errors.Is; the timeout is functionally unchanged). String-matching the
 	// phrasing was the fragility; errors.Is is stable across it.

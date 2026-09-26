@@ -333,7 +333,7 @@ func todoAdd(store *memory.TodoStore, agentID, text, priority, tag string) (Tool
 // the schema enum because they DIFFER: "relevance" is meaningful only when there is
 // a query to be relevant to.
 //
-// Validated rather than defaulted (#1773-adjacent, found via db6ee6cc): the store's
+// Validated rather than defaulted (#1773-adjacent, found via 217d8772): the store's
 // ORDER BY switch falls through to PRIORITY for anything it does not recognise, so a
 // typo — or `relevance` passed to list — quietly returned priority order. That is
 // worse than a hard failure, because the caller gets a well-formed, plausibly-ordered

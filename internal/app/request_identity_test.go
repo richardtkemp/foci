@@ -2,7 +2,7 @@ package app
 
 // Every authenticated app endpoint must name the device it served.
 //
-// The WS connect line got this in c667a9ec, but the HTTP endpoints kept
+// The WS connect line got this in af1549d2, but the HTTP endpoints kept
 // discarding the identity they had already resolved — ServeReplay's gate was
 // literally `if _, ok := h.authenticate(w, r); !ok`. On 2026-08-17 that cost a
 // day and a wrong conclusion: 1370 successful GET /app/replay calls proved some

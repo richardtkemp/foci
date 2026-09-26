@@ -182,7 +182,7 @@ func QueryUsage(ctx context.Context) (*UsageInfo, error) {
 // way — otherwise /mana's error text depends on a coin flip. Falling through to
 // the wait produces the single canonical message from the reader's EOF.
 //
-// Note the sentinel differs from Start's version of this race (e1fe3779), which
+// Note the sentinel differs from Start's version of this race (8a2391d4), which
 // saw os.ErrClosed: there a concurrent waiter goroutine's cmd.Wait closed the
 // PARENT's end of the pipe. Here cmd.Wait is deferred to teardown, so nothing
 // closes our end and only the kernel's EPIPE is reachable. transportGone

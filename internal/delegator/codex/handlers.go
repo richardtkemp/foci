@@ -177,7 +177,7 @@ func (b *Backend) onItemStarted(params *itemStartedParams) {
 // thread lookup in dispatch is the whole ownership decision, exactly as it is
 // for batch threads, so the default is to swallow rather than fall through.
 //
-// The child's own turn/completed is what ends a run. afe20cd0 concluded no
+// The child's own turn/completed is what ends a run. e7a519a6 concluded no
 // completion signal existed, reasoning from SubAgentActivityKind being
 // {started, interacted, interrupted} with no terminal variant — true of that
 // enum, but the child has its own THREAD, and codex streams that thread's full

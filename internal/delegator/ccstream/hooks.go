@@ -375,7 +375,7 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 
 	// PreToolUse (installed only for the Agent tool) is the PRIMARY subagent START
 	// signal — its tool_use id is the run's group key. This was originally
-	// designed symmetrically with END (commit 96ef6df0: "a missing/broken hook
+	// designed symmetrically with END (commit 1e1890e3: "a missing/broken hook
 	// yields NEITHER"), but END was later moved off PostToolUse onto the native
 	// task_notification stream event (a background Agent tool_use's PostToolUse
 	// fires at launch, not completion — see verify-cc-stream-hooks/SKILL.md), and
@@ -439,7 +439,7 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 		//
 		// Two earlier attempts stopped the tail here. The first called finalize()
 		// unconditionally under a comment claiming it was a "No-op for background /
-		// untailed subagents" — untrue from 55faa1d8, which began tailing every
+		// untailed subagents" — untrue from 85f5ffb8, which began tailing every
 		// subagent for its usage. The second (#1924) made it foreground-only, which
 		// looked correct and was inert: the Agent tool backgrounds by default, so
 		// every ordinary subagent was labelled foreground and killed anyway.

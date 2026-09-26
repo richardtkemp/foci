@@ -97,7 +97,7 @@ with `visible=0` but ARE present here, so their absence is meaningful too.
   cross-agent `send_to_session`/agent-initiated send: the target had **no pinned
   `is_default` chat**, so `DefaultSessionKeyForAgentOn` resolved "via default" through
   the **activity-fallback rung** to whatever root a human touched most recently — which
-  can be an archived (hidden) chat. Fixed foci **542dab21**: all default-resolution
+  can be an archived (hidden) chat. Fixed foci **7f837286**: all default-resolution
   rungs + `DefaultChatForAgent` now exclude `is_archived`, and delivery paths mint a
   fresh visible conversation when only archived ones remain (`route.Resolver.CreateDefault`).
   If you see this pre-542dab21 behaviour, that's the mechanism.
@@ -122,7 +122,7 @@ with `visible=0` but ARE present here, so their absence is meaningful too.
   an acked-but-unpersisted frame. (Fixed foci-client e157e23; see #1045 for the
   open server-side discard-sink half.)
 - `rp.Ack` (resume) and `fromSeq` (GET /app/replay) are logged as of foci
-  38b246b5 — grep `resumeConversations`/`replayTo`/`replay GET` after a deploy.
+  4dec25e1 — grep `resumeConversations`/`replayTo`/`replay GET` after a deploy.
 - **Absence of `turn_lifecycle` events in foci.log does NOT mean the session was
   idle.** When background sub-agents (CC Agent tool) finish, CC *autonomously*
   resumes the session to process their results, but foci opens no foci-turn for
@@ -165,7 +165,7 @@ with `visible=0` but ARE present here, so their absence is meaningful too.
   `turnActive || autonomousActive` — so a reflection logging `in_flight=false` can still be correctly
   BLOCKED (and looping every 5s) by an orphan run. The retry loop is by-design gating, not the bug.
 - **A follow-up message during an adopted autonomous run DUPLICATES the reply (the mirror of the
-  drop above) — #1274, fixed foci `1b4e2ead`.** foci has THREE "turn active" flags that disagree
+  drop above) — #1274, fixed foci `4ff79251`.** foci has THREE "turn active" flags that disagree
   during an autonomous run: `inb.turnActive` (inbox steer-gate, set only by the worker's dispatch
   loop `inbox.go:808`), `b.turnActive` (ccstream, ground truth of "CC mid-run"), and `a.inFlight`
   (agent counter, `markInFlight`). An adopted autonomous run (`OpenAutonomousTurn`) enters via the

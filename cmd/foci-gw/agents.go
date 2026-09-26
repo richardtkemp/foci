@@ -174,7 +174,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	groupResolver := shared.groupResolver
 	promptSearchDirs := shared.promptSearchDirs
 
-	gc := p.resolved.Groups // static-cfg:ignore: groups.* fields are all maps, invisible to the field registry (walkType skips maps) — no /config set path exists yet, see bucket D (a30414b8)
+	gc := p.resolved.Groups // static-cfg:ignore: groups.* fields are all maps, invisible to the field registry (walkType skips maps) — no /config set path exists yet, see bucket D (7cc4e649)
 
 	// Resolve agent's primary model via the chat call site
 	primaryResolved := groupResolver.ResolveCall(config.CallChat)

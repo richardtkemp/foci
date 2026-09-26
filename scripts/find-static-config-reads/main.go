@@ -2,7 +2,7 @@
 // non-live *config.ResolvedAgentConfig snapshot — the "old way" of getting
 // an agent's resolved config, superseded by config.LiveValue (see
 // internal/config/live.go and the bucket A-D commits that migrated fields
-// to it: ed71e6b3, eada0305, 78ab5007, a30414b8).
+// to it: d2fa3f89, 440f8357, 4b6a303c, 7cc4e649).
 //
 // The convention established by that work: a struct that needs an agent's
 // resolved config holds it two ways —

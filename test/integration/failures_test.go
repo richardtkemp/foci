@@ -1018,7 +1018,7 @@ func TestL2_Failures_ToolReturnsErrorJSONReachesBackend(t *testing.T) {
 	// internal/delegator/ccstream/reader.go case "user"). The
 	// observable surface is the PostToolUse hook_response envelope
 	// (foci's hooks path), which cc-stub now emits per Bash tool_use
-	// (commit ce7a9c3d). To make the bridge's error reachable from a
+	// (commit 6a3e9c9f). To make the bridge's error reachable from a
 	// test assertion, cc-stub now also records each Bash tool_use's
 	// output to the recorder under kind="bash_tool_use" — bypassing
 	// the CC-internal layer entirely and asserting what the bridge

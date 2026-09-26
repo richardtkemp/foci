@@ -600,7 +600,7 @@ func TestL2_SlashCommands_CostTodayReadsAPILog(t *testing.T) {
 		t.Fatalf("seed api.jsonl: %v", err)
 	}
 
-	// "all" is required since a7a618b2: a bare /cost now defaults to the CALLING
+	// "all" is required since 6dc4627d: a bare /cost now defaults to the CALLING
 	// agent's own sessions, and the seeded session names above are deliberately
 	// synthetic ("won't collide with anything foci writes internally"), so they
 	// are not attributable to alpha and the per-agent default filters them out.
@@ -633,7 +633,7 @@ func TestL2_SlashCommands_CostTodayReadsAPILog(t *testing.T) {
 	}
 }
 
-// TestL2_SlashCommands_CostTodayDefaultsToCallingAgent proves the a7a618b2
+// TestL2_SlashCommands_CostTodayDefaultsToCallingAgent proves the 6dc4627d
 // default: a BARE /cost reports only the calling agent's own sessions, not the
 // whole household's. Seeds the api log with rows that belong to no agent and
 // asserts they are excluded — the same fixture the all-scope test above proves

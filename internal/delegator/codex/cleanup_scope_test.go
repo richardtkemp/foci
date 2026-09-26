@@ -7,7 +7,7 @@ import (
 	"foci/internal/delegator"
 )
 
-// The whole of this bug was an absent interface. 1df68081 (2026-08-15) gave
+// The whole of this bug was an absent interface. 8590df7e (2026-08-15) gave
 // opencode a cleanup scope so an idle agent's expired sessions could still be
 // collected; codex has the IDENTICAL requirement — it deletes a thread by RPC to
 // a live app-server — but was left out, because docs/WIRING.md recorded codex as

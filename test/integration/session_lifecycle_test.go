@@ -1012,7 +1012,7 @@ func TestL2_SessionLifecycle_ReloadOnCompactBouncesSession(t *testing.T) {
 	}
 
 	// The post-compaction reload-bounce is gated on the on-disk system prompt
-	// having changed since session start (404aacbf: skip the bounce when the
+	// having changed since session start (584b659b: skip the bounce when the
 	// prompt is unchanged — no reload needed). Edit a character file AFTER the
 	// priming turn so the prompt hash differs and the bounce actually fires;
 	// otherwise the test would never exercise the resume path it asserts on.

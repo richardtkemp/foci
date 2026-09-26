@@ -302,7 +302,7 @@ func TestSubagentTail_MaybeStartKeepsTextForForeground(t *testing.T) {
 // A background Agent tool_use resolves the INSTANT the task is launched, so its
 // PostToolUse hook fires immediately — before CC has created the transcript.
 // hooks.go finalized the tail there, on the strength of a comment saying it was
-// a "No-op for background / untailed subagents". That was true until 55faa1d8
+// a "No-op for background / untailed subagents". That was true until 85f5ffb8
 // made maybeStart tail EVERY subagent, and nothing updated the comment: the tail
 // was killed before its first byte.
 //

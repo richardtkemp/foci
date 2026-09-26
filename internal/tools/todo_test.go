@@ -1065,7 +1065,7 @@ func newTestTodoStore(t *testing.T) *memory.TodoStore {
 // a typo, or `relevance` which only search understands — quietly returned priority
 // order instead. That is worse than a hard failure: the caller gets a well-formed,
 // plausibly-ordered list that answers a different question than the one asked.
-// Found via `--sort id` before it existed (db6ee6cc), which returned priority order
+// Found via `--sort id` before it existed (217d8772), which returned priority order
 // with id as the tiebreak and read as working.
 func TestTodoRejectsUnknownSort(t *testing.T) {
 	t.Parallel()

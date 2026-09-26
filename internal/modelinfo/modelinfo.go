@@ -901,7 +901,7 @@ func contextWindowFallback(bare string) int {
 // choice, on purpose. The newest rows in models.jsonl are OpenRouter-synced
 // and leave effort/thinking/speed UNSET (nil), so "follow newest" would land
 // on a field-sparse row and answer false/false/false for a model that plainly
-// has these capabilities — precisely the regression 9eabc7e7 (foci_todo #1966)
+// has these capabilities — precisely the regression 201ab1a3 (foci_todo #1966)
 // just fixed. Nothing else in the catalogue carries capability data at all, so
 // this hand-written family table is the ONLY authority for it and must stay a
 // literal. A later reader may be tempted to "tidy" this into consistency with

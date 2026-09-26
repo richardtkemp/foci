@@ -154,7 +154,7 @@ def agent_of(session: str | None) -> str | None:
     return session.split("/", 1)[0] or None
 
 
-TRACE_NAME = {"conversation": "turn", "delegated_turn": "turn"}  # same thing, direct-API era vs delegated era (c3613d54)
+TRACE_NAME = {"conversation": "turn", "delegated_turn": "turn"}  # same thing, direct-API era vs delegated era (7844f9a8)
 BACKEND_OF = {"conversation": "backend:api", "delegated_turn": "backend:delegated", "subagent_turn": "backend:delegated"}
 
 

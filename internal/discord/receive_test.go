@@ -53,7 +53,7 @@ func TestBuildReceivedMessageMentionStripping(t *testing.T) {
 
 // TestBuildReceivedMessageReplyContext verifies replied-to message content is
 // prepended as context, stamped with the original message's send time (matching
-// the telegram reply/quote context — commit 7d237367).
+// the telegram reply/quote context — commit 82f40091).
 func TestBuildReceivedMessageReplyContext(t *testing.T) {
 	b, _, _ := newTestBot(t, "a")
 	msg := testDiscordMessage("1", "u", "my answer")

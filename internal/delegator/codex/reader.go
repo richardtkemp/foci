@@ -61,7 +61,7 @@ func (b *Backend) dispatch(line []byte) {
 		// the owner the child's turn/completed (ending the parent's live turn
 		// with the child's answer), the child's message deltas (streamed into
 		// the user's chat as the parent's text) and the child's token usage.
-		// Same class as the batch-thread leak fixed in 825ac551. The child's
+		// Same class as the batch-thread leak fixed in f3381eb6. The child's
 		// events belong to the subagent UI, so consume them here.
 		if b.subagents != nil && b.subagents.isChild(id) {
 			b.handleSubagentNotification(id, env.Method, env.Params)
