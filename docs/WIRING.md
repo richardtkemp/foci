@@ -2066,7 +2066,7 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (ToolResult, error)
 | `read` | files.go | File contents with line numbers, truncates at 2000 lines |
 | `write` | files.go | Create/overwrite files |
 | `edit` | files.go | Find-and-replace (old_string must be unique). Syntax validation for .json, .toml, .go, .yaml/.yml, .xml, .py, .sh/.bash: rejects edits that would break a valid file, warns if file was already invalid. |
-| `web_fetch` | web.go / server | Fetch web content (server-side default, client-side fallback). Client-side fetches use the shared SSRF-safe client (safehttp.go) — resolved-IP validation blocks metadata/private/loopback in all modes. |
+| `web_fetch` | web.go / server | Fetch web content (server-side default, client-side fallback). Client-side fetches use the shared SSRF-safe client (safehttp.go) — resolved-IP validation blocks metadata/private/loopback in all modes. A bot-shield interstitial (vendor header, or a known marker on a page with almost no visible text — `web_challenge.go`) or an empty result is returned as an ERROR, never as success (#1889); a non-2xx markdown result leads with an HTTP-status note. |
 | `web_search` | web.go / server | Web search (server-side default, Brave fallback) |
 | `summary` | summary.go | Summarize/extract from large files via a cheap model (API: `cheap` group; delegated: `[tools] summary_model`, else the backend's cheap tier) |
 | `memory_search` | memory.go | Full-text search over memory files (+ conversation history for FTS5). Pluggable backends: FTS5 (default) and bleve. Porter stemming, weighted ranking, sort by relevance or recency. Optional `backend` parameter when multiple backends are active. |

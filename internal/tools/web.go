@@ -353,6 +353,17 @@ func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 		return ToolResult{}, fmt.Errorf("read response: %w", err)
 	}
 
+	// #1889: a bot-shield interstitial or an empty result is a failed fetch,
+	// not a success carrying the wrong (or no) content. Checked before raw
+	// mode too: raw=true is the suggested retry, and would otherwise hand the
+	// challenge HTML back as if it were the page.
+	if vendor := detectBotChallenge(resp.Header, body); vendor != "" {
+		return ToolResult{}, errBotChallenge(p.URL, resp.StatusCode, vendor)
+	}
+	if len(bytes.TrimSpace(body)) == 0 {
+		return ToolResult{}, errEmptyFetch(p.URL, resp.StatusCode, len(body))
+	}
+
 	// Raw mode: return unprocessed HTML
 	if p.Raw {
 		return TextResult(string(body)), nil
@@ -378,6 +389,9 @@ func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 	}
 
 	md, err := htmltomarkdown.ConvertString(htmlContent)
+	if err == nil && strings.TrimSpace(md) == "" {
+		return ToolResult{}, errEmptyFetch(p.URL, resp.StatusCode, len(body))
+	}
 	if err != nil {
 		// Last resort: return raw text content from readability if available
 		if article.TextContent != "" {
@@ -394,6 +408,9 @@ func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 		if missing, example := missingListText(body, article.TextContent); missing >= listDropMinChars {
 			md += fmt.Sprintf(listDropNote, missing, truncateRunes(example, 80))
 		}
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		md = httpStatusNote(resp.StatusCode) + md
 	}
 
 	return TextResult(md), nil
