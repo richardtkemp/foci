@@ -458,7 +458,8 @@ func TestWebFetchToolName(t *testing.T) {
 // lever_palantir_fdae.html is the live #2011 page with its <script>/<style>/
 // <svg> bodies stripped (726KB -> 11KB, markup untouched); mdn_ul_element.html
 // is the live MDN <ul> reference page (~400 <li>, mostly sidebar/nav) stripped
-// the same way plus <link> tags. Both captured 2026-09-25.
+// the same way plus <link> tags. Both captured 2026-09-25. The two substack_*
+// pages (#2066) were captured 2026-09-26 and stripped the same way.
 var webFetchCorpus = []struct {
 	name           string
 	file           string
@@ -504,6 +505,28 @@ var webFetchCorpus = []struct {
 		file:           "webfetch_thin/wikipedia_potato_trimmed.html",
 		mustContain:    []string{"## Etymology", "## Cultivation", "### Genetic engineering"},
 		mustNotContain: []string{"Main menu", "Random article", "Community portal", "Cookie statement"},
+	},
+	{
+		// In-body headings are h1/h2.header-anchor-post: "header" made them
+		// unlikely candidates, deleted text and all. Footnote bodies sit in
+		// div.footnote, which "footnote" scored negative and cleanConditionally
+		// dropped, leaving only the anchors.
+		name: "chrislakin.blog/p/courage — Substack headings + footnotes (#2066 repro)",
+		file: "webfetch_corpus/substack_chrislakin_courage.html",
+		mustContain: []string{
+			"## Part I: Evaluating the core claims",
+			"## Claim #1: Emotional bottlenecks often have hidden functions",
+			"## Claim #7: You can choose to be present",
+			"## Improvement #4: Validate the rewrite on real people",
+			"## Conclusion",
+			"In the past, when I tried to explain to others",
+			"Also why this blog was named",
+		},
+	},
+	{
+		name:        "rivalvoices.substack.com — ~300-word footnote body (#2066 repro)",
+		file:        "webfetch_corpus/substack_rivalvoices_footnote.html",
+		mustContain: []string{"just feel your feelings", "exclusively", "## **1.**"},
 	},
 }
 

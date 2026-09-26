@@ -12,6 +12,7 @@ import (
 	"time"
 
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
+	"github.com/go-shiori/dom"
 	readability "github.com/go-shiori/go-readability"
 	"golang.org/x/net/html"
 )
@@ -76,11 +77,18 @@ var readabilityFromReader = ParseArticle
 // of a heading plus bullets (Lever's "What We Require") was silently dropped.
 // A fresh Parser per call: Parser holds per-parse state and isn't safe to share.
 // Shared with HTML attachment conversion (agent.convertHTML, #2049) so both
-// paths extract the same content.
+// paths extract the same content. The document is pre-passed through
+// neutralizeMisleadingAttrs so class/id heuristics don't drop headings and
+// footnotes (#2066).
 func ParseArticle(r io.Reader, pageURL *url.URL) (readability.Article, error) {
+	doc, err := dom.Parse(r)
+	if err != nil {
+		return readability.Article{}, fmt.Errorf("failed to parse input: %w", err)
+	}
+	neutralizeMisleadingAttrs(doc)
 	p := readability.NewParser()
 	p.TagsToScore = append(p.TagsToScore, "li")
-	return p.Parse(r, pageURL)
+	return p.ParseDocument(doc, pageURL)
 }
 
 // parseReadableWithTimeout runs readability extraction under a wall-clock
