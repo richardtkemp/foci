@@ -387,7 +387,7 @@ foci pretool list [--agent <id>] [--config <path>]
 foci pretool test [--agent <id>] [--config <path>] (--bash <command> | --tool <name> [--input <json>]) [--cwd <dir>] [-v]
 ```
 
-`list` prints the resolved rules. `test` prints the name of the rule that denies the call, or `no match`. `-v` adds the rule's reason and, for Bash, each simple command the `command` patterns are matched against. `--bash -` reads the command from stdin. Rules' `when` checks run for real, in `--cwd` (default: the current directory); a check that fails open is always printed as `when failed open: ...`. `--agent` defaults to the agent in `FOCI_SESSION_KEY`; `--config` to `$FOCI_CONFIG`, else `~/config/foci.toml`.
+`list` prints the resolved rules. `test` prints the name of the rule that denies the call, or `no match`. `-v` adds the rule's reason and, for Bash, each simple command the `command` patterns are matched against, with its shell facts in brackets (background, subshell, output, `dir=` relative to the cwd or `?` if unknown, `op=`, `pipe=`; CONFIG.md → Shell facts). `--bash -` reads the command from stdin. Rules' `when` checks run for real, in `--cwd` (default: the current directory); a check that fails open is always printed as `when failed open: ...`. `--agent` defaults to the agent in `FOCI_SESSION_KEY`; `--config` to `$FOCI_CONFIG`, else `~/config/foci.toml`.
 
 **Examples:**
 ```bash

@@ -148,18 +148,48 @@ func pretoolTest(out *strings.Builder, rules []pretool.Rule, args []string) erro
 			Command string `json:"command"`
 		}
 		_ = json.Unmarshal(call.Input, &in)
-		cmds, ok := pretool.Commands(in.Command)
+		script, ok := pretool.Parse(in.Command)
 		if !ok {
 			fmt.Fprintln(out, "  command does not parse as bash: command patterns cannot match")
 		}
-		for _, c := range cmds {
-			fmt.Fprintf(out, "  command: %s\n", c)
+		for _, c := range script.Commands {
+			fmt.Fprintf(out, "  command: %s%s\n", c.Text, commandFacts(c))
 		}
 	}
 	if r != nil {
 		fmt.Fprintf(out, "  reason: %s\n", r.Reason)
 	}
 	return nil
+}
+
+// commandFacts renders the facts rules can select a command on (#2040), as
+// a bracketed suffix; see pretool.Command.
+func commandFacts(c pretool.Command) string {
+	var f []string
+	for _, b := range []struct {
+		name string
+		set  bool
+	}{{"background", c.Background}, {"subshell", c.Subshell}, {"output", c.Output}} {
+		if b.set {
+			f = append(f, b.name)
+		}
+	}
+	switch {
+	case !c.DirKnown:
+		f = append(f, "dir=?")
+	case c.Dir != "":
+		f = append(f, "dir="+c.Dir)
+	}
+	if c.Op != "" {
+		f = append(f, "op="+c.Op)
+	}
+	if len(c.Pipe) > 0 {
+		f = append(f, "pipe="+strings.Join(c.Pipe, " | "))
+	}
+	if len(f) == 0 {
+		return ""
+	}
+	return "  [" + strings.Join(f, ", ") + "]"
 }
 
 func printPretoolRules(w *strings.Builder, rules []pretool.Rule) {
@@ -178,6 +208,14 @@ func printPretoolRules(w *strings.Builder, rules []pretool.Rule) {
 		}
 		printPatterns(w, "command", r.Command)
 		printPatterns(w, "cwd", r.Cwd)
+		for _, b := range []struct {
+			name string
+			v    *bool
+		}{{"background", r.Background}, {"subshell", r.Subshell}, {"output", r.Output}} {
+			if b.v != nil {
+				fmt.Fprintf(w, "  %s: %t\n", b.name, *b.v)
+			}
+		}
 		if r.When != "" {
 			fmt.Fprintf(w, "  when: %s\n", strings.ReplaceAll(strings.TrimSpace(r.When), "\n", "\n        "))
 		}
@@ -215,7 +253,8 @@ test flags:
   --cwd <dir>          The session working directory the call is made from
                        (when-checks run there; default: the current directory)
   -v, --verbose        Also print the reason, and for Bash the commands the
-                       command patterns are matched against
+                       command patterns are matched against, with their
+                       facts (background, subshell, output, dir, op, pipe)
 
 Examples:
   foci pretool list --agent clutch

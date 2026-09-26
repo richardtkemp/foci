@@ -4,11 +4,16 @@
 // "deny": the hook refuses the call and hands the rule's reason to the model
 // in place of the tool result.
 //
-// A rule can constrain four things, all of which must hold (#2033, #2034):
+// A rule can constrain these things, all of which must hold (#2033, #2034,
+// #2040):
 //   - input: raw tool-input fields, each matched against one or more regexes.
 //   - command: Bash only. The command is parsed as a shell script and each
 //     simple command in it is matched on its own, from its first word. See
-//     Commands for exactly what the patterns see.
+//     Parse for exactly what the patterns see.
+//   - background, subshell, output: Bash only. Facts about each simple
+//     command from the parsed script (see Command); a rule that sets one
+//     applies only to commands whose fact has that value, with or without
+//     command patterns.
 //   - cwd: the session's working directory when the call was made.
 //   - when: a bash script run after the others hold, to check live state;
 //     the rule denies iff it exits 0, and fails open. See when.go.
@@ -56,6 +61,11 @@ type Rule struct {
 	Command Patterns `toml:"command" json:"command,omitempty"`
 	// Cwd holds regexes matched against the session's working directory.
 	Cwd Patterns `toml:"cwd"     json:"cwd,omitempty"`
+	// Background, Subshell and Output, when set, restrict the rule to
+	// commands whose Command fact of that name has that value (#2040).
+	Background *bool `toml:"background" json:"background,omitempty"`
+	Subshell   *bool `toml:"subshell"   json:"subshell,omitempty"`
+	Output     *bool `toml:"output"     json:"output,omitempty"`
 	// When is a bash script run once the patterns match; exit 0 denies.
 	When    string `toml:"when"    json:"when,omitempty"`
 	Action  string `toml:"action"  json:"action,omitempty"`
@@ -108,8 +118,8 @@ func ValidateLayer(rules []Rule) error {
 		if r.Action != "" && r.Action != ActionDeny {
 			return fmt.Errorf("pretool_rules %q: action %q unsupported (only %q)", r.Name, r.Action, ActionDeny)
 		}
-		if len(r.Command) > 0 && r.Tool != "" && r.Tool != bashTool {
-			return fmt.Errorf("pretool_rules %q: command applies only to tool %q, not %q", r.Name, bashTool, r.Tool)
+		if fs := r.commandFields(); len(fs) > 0 && r.Tool != "" && r.Tool != bashTool {
+			return fmt.Errorf("pretool_rules %q: %s applies only to tool %q, not %q", r.Name, fs[0], bashTool, r.Tool)
 		}
 		for field, pats := range r.Input {
 			if err := pats.validate(); err != nil {
@@ -171,6 +181,23 @@ func Resolve(layers ...[]Rule) (rules []Rule, skipped []string) {
 	return rules, skipped
 }
 
+// commandFields names the Bash-only per-command constraints r sets.
+func (r *Rule) commandFields() []string {
+	var out []string
+	if len(r.Command) > 0 {
+		out = append(out, "command")
+	}
+	for _, f := range []struct {
+		name string
+		v    *bool
+	}{{"background", r.Background}, {"subshell", r.Subshell}, {"output", r.Output}} {
+		if f.v != nil {
+			out = append(out, f.name)
+		}
+	}
+	return out
+}
+
 func overlay(base, over Rule) Rule {
 	if over.Tool != "" {
 		base.Tool = over.Tool
@@ -183,6 +210,15 @@ func overlay(base, over Rule) Rule {
 	}
 	if over.Cwd != nil {
 		base.Cwd = over.Cwd
+	}
+	if over.Background != nil {
+		base.Background = over.Background
+	}
+	if over.Subshell != nil {
+		base.Subshell = over.Subshell
+	}
+	if over.Output != nil {
+		base.Output = over.Output
 	}
 	if over.When != "" {
 		base.When = over.When

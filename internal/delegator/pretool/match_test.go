@@ -21,6 +21,16 @@ func matchName(rules []Rule, c Call) string {
 	return ""
 }
 
+// commandTexts is Parse reduced to each command's Text.
+func commandTexts(script string) ([]string, bool) {
+	s, ok := Parse(script)
+	var out []string
+	for _, c := range s.Commands {
+		out = append(out, c.Text)
+	}
+	return out, ok
+}
+
 func TestCommands(t *testing.T) {
 	cases := []struct {
 		script string
@@ -44,12 +54,12 @@ func TestCommands(t *testing.T) {
 		{"git commit -F - <<'EOF'\ngit add -A\nEOF", []string{"git commit -F -"}},
 	}
 	for _, c := range cases {
-		got, ok := Commands(c.script)
+		got, ok := commandTexts(c.script)
 		if !ok || !reflect.DeepEqual(got, c.want) {
-			t.Errorf("Commands(%q) = %q, %v; want %q", c.script, got, ok, c.want)
+			t.Errorf("Parse(%q) = %q, %v; want %q", c.script, got, ok, c.want)
 		}
 	}
-	if _, ok := Commands("echo 'unterminated"); ok {
+	if _, ok := commandTexts("echo 'unterminated"); ok {
 		t.Error("unparseable script reported ok")
 	}
 }

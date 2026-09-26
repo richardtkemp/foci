@@ -1457,19 +1457,51 @@ A rule matches a call to its `tool` when every constraint it gives holds. Each c
 | `command` | `Bash` only. Each simple command in the script, separately. See below. |
 | `input.<field>` | The raw value of that tool-input field, e.g. `input.command` or `input.file_path`. A string is matched as-is; any other value against its JSON text. A missing field means no match. |
 | `cwd` | The session's working directory when the call is made. It follows a `cd` from an earlier Bash call, but not a `cd` earlier in the same command. |
+| `background`, `subshell`, `output` | `Bash` only. `true` or `false`: the rule applies only to commands with that fact. See "Shell facts" below. |
 
 **`command` patterns.** The command is parsed as a bash script and split into its simple commands: `cd /r && git add .` is `cd /r` and `git add .`, and commands inside `( )`, `$( )`, `if` and loops count too. Each pattern is matched from the start of each command, so `git add` matches `git add x` but not `echo git add`. The text a pattern sees is the command's words joined by single spaces, with quotes removed and whitespace inside a quoted word shown as `␣`. `git commit -m "fix merge; add -A"` is seen as `git commit -m fix␣merge;␣add␣-A`, so `\S+` is always exactly one word and a pattern cannot match text inside a message or a quoted argument. Leading `VAR=x` assignments and redirections, including heredoc bodies, are left out. Expansions keep their `$` form (`"$HOME/x"` is seen as `$HOME/x`). A command that does not parse as bash matches no `command` pattern. `(\S+ )*` is the idiom for "any words", e.g. to skip git's global options: `git (\S+ )*worktree add`.
 
-For a condition that spans several commands, use a raw `input.command` pattern alongside, or instead of, `command`:
+**Shell facts (#2040).** Do not regex the raw command text (`input.command`, or `$TOOL_INPUT_COMMAND` in a `when` check) for shell structure. Raw text cannot tell an operator from data: an `&` or a `cd` line inside a heredoc body or a quoted string reads the same as a real one. The parser already knows the difference, so rules can use what it found instead. For each simple command:
+
+| fact | true when | rule key | `when` input |
+|---|---|---|---|
+| background | It runs asynchronously: its statement ends in `&`, or it is inside one that does, so the call can return before it finishes. `&&`, `&>`, `>&2` and `\|&` are not backgrounding. | `background` | |
+| subshell | It runs in a child shell: inside `( )`, `$( )` or `<( )`, in a pipeline, or backgrounded. A `cd` or variable it sets does not persist. `{ }`, `if`/loop bodies and `&&` chains run in the main shell. | `subshell` | |
+| output | Its stdout reaches the tool result: not redirected (`>&2` still counts), not piped into another command, not captured by `$( )`. A redirect on an enclosing `{ }` or loop applies to what is inside it. | `output` | |
+| directory | The absolute directory it runs in, after any `cd`/`pushd` before it in the same shell. `~` and `$HOME` are resolved; any other expansion (`cd "$W"`), `cd -` or `popd` makes it unknown (empty). A `cd` in a branch is assumed to happen. | | `$CMD_DIR` |
+| operator | What joins it to the command before it: `&&`, `\|\|`, `;` (also a newline), `&`, `\|`, `\|&`, or empty for the first. The first command in a group, subshell or body takes the operator in front of that group; an `if`'s then-branch counts as `&&` and its else-branch as `\|\|`. | | `$CMD_OP` |
+| pipe | The commands downstream of it in its pipeline (`make \| tee l \| tail` gives `make` the pipe `tee l`, `tail`). | | `$CMD_PIPE`, one per line |
+
+And for the whole call: `$TOOL_COMMANDS` (every simple command, one per line, in the form `command` patterns see) and `$TOOL_END_DIR` (the main shell's directory after the call, which is where the next call starts; empty if unknown). `foci pretool test -v` prints each command's facts.
+
+A rule that sets `background`, `subshell` or `output` applies to the commands that have those values and match its `command` patterns, if it has any. With no patterns it applies to any command with those values. A `when` check then runs once for each such command, with that command's `$CMD_*`:
 
 ```toml
 [[agents.backend_config.pretool_rules]]
+name = "no_background"
+tool = "Bash"
+background = true              # a real &, not one in a heredoc, a quote or &&
+reason = "Use the Bash tool's run_in_background parameter instead of &."
+
+[[agents.backend_config.pretool_rules]]
+name = "no_persisted_cd"
+tool = "Bash"
+command = '(cd|pushd)( |$)'
+subshell = false               # (cd /x && make) is fine: it doesn't persist
+reason = "Do not cd in the main shell; use make -C / git -C, or a subshell."
+
+[[agents.backend_config.pretool_rules]]
 name = "worktree_remove_gated"
 tool = "Bash"
-command = ['git (\S+ )*merge( |$)', 'make (\S+ )*land( |$)']     # a merge or a land...
-input.command = '(;|\n|\|\|)\s*git\b[^;&|\n]*\bworktree\s+remove'  # ...then a remove not chained with &&
+command = 'git (\S+ )*worktree remove( |$)'
+when = '''
+case $CMD_OP in ';'|'||') ;; *) exit 1 ;; esac          # not chained with &&...
+printf '%s\n' "$TOOL_COMMANDS" | grep -Eq '^(git (\S+ )*merge|make (\S+ )*land)( |$)'   # ...after a merge
+'''
 reason = "Chain the cleanup on the merge with &&."
 ```
+
+A raw `input.command` pattern still works, for text that is not shell structure.
 
 **`when`: checking live state (#2034).** Patterns only see the call's text. For a rule that depends on state (the branch a repo is on, whether a file has uncommitted edits, what a file's head says), add a `when` bash script. It runs only after every other constraint holds, and the rule denies **iff it exits 0**. Exit 1 is the ordinary "no". Anything else (another exit status, a timeout, bash failing to start) **fails open**: the call is not denied, and the failure is logged at WARN as `pretool_when_error` (and shown by `foci pretool test`). Each run is limited to 2 s, and all the checks for one call to 5 s, well inside CC's 10 s hook timeout.
 
@@ -1477,11 +1509,13 @@ The script gets:
 
 | | |
 |---|---|
-| `$1`, `$2`, ... | For a `Bash` rule with `command` patterns, the words of the matched command (`git -C /r checkout -- f` gives `$1=git $2=-C $3=/r ...`). Quotes are removed; expansions arrive in their `$` form, unexpanded. If several commands match, the script runs once for each until one exits 0. |
+| `$1`, `$2`, ... | For a `Bash` rule with `command` patterns or a shell-fact key, the words of the matched command (`git -C /r checkout -- f` gives `$1=git $2=-C $3=/r ...`). Quotes are removed; expansions arrive in their `$` form, unexpanded. If several commands match, the script runs once for each until one exits 0. |
 | `$0` | The rule name. |
 | `$TOOL_INPUT_<FIELD>` | Each top-level string field of the tool input, upper-cased, other characters as `_`: `$TOOL_INPUT_FILE_PATH`, `$TOOL_INPUT_COMMAND`. |
 | `$TOOL_INPUT`, stdin | The whole tool input as JSON. |
 | `$TOOL_NAME`, `$TOOL_CWD` | The tool, and the session's working directory. The script also runs in that directory. |
+| `$CMD_DIR`, `$CMD_OP`, `$CMD_PIPE` | For a `Bash` rule with `command` patterns or a shell-fact key, the matched command's directory, operator and pipe (see "Shell facts" above). |
+| `$TOOL_COMMANDS`, `$TOOL_END_DIR` | For any `Bash` rule, the script's commands and the main shell's final directory. |
 
 The rest of its environment is the CC session's, minus `BASH_ENV` and `ENV`. It runs as the agent's user, so it sees what the agent sees. Keep checks fast and read-only: one runs for every call the patterns match. A check that makes an exit status other than 0 or 1 mean "no" (for example `git diff --quiet`, which exits 1 when there ARE changes) must map it explicitly, since `!` would turn an error into a deny:
 
@@ -1498,10 +1532,15 @@ name = "commit_on_main"
 tool = "Bash"
 command = 'git (\S+ )*commit( |$)'
 when = '''
-shift; repo=.
+shift; repo=$CMD_DIR                   # after any cd earlier in the command
 while [ $# -gt 0 ]; do
-  case $1 in -C) repo=$2; shift 2 ;; -c) shift 2 ;; *) break ;; esac
+  case $1 in
+    -C) case $2 in /*) repo=$2 ;; *) [ -n "$repo" ] && repo=$repo/$2 ;; esac; shift 2 ;;
+    -c) shift 2 ;;
+    *) break ;;
+  esac
 done
+[ -n "$repo" ] || exit 1               # cd "$W": directory unknown
 top=$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null) || exit 1
 [ "$top" = /home/rich/git/foci ] || exit 1
 [ "$(git -C "$repo" symbolic-ref --short -q HEAD)" = main ]
@@ -1509,7 +1548,7 @@ top=$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null) || exit 1
 reason = "Do not commit on main in the foci main checkout. Work in a worktree."
 ```
 
-A `cd` earlier in the same command is not reflected in `$TOOL_CWD` (see `cwd` above), so a check that resolves a repo from the cwd should also honour `git -C`.
+A `cd` earlier in the same command is not reflected in `$TOOL_CWD` (see `cwd` above), nor in the directory the check runs in. A check that resolves a path or repo for the matched command should start from `$CMD_DIR` (and treat an empty one as unknown), then honour `git -C`/`make -C`.
 
 Check rules offline with `foci pretool list --agent <id>` and `foci pretool test --agent <id> --bash '<command>' [--cwd <dir>] [-v]` (see CLI.md). Rules are read from the config file each time foci launches a CC process (a new session, or a session resumed after an idle shutdown or a foci restart), so an edit applies from the next launch without a restart. A CC process already running keeps the rules it was launched with. If the file does not load at that moment, the session keeps the last rules that did. Each deny is logged as `pretool_rule_deny`.
 

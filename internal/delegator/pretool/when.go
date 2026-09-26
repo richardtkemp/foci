@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"syscall"
@@ -26,8 +27,8 @@ import (
 //
 // What the script gets:
 //   - $0 is the rule name.
-//   - For a Bash rule with command patterns, the words of the matched simple
-//     command are its positional parameters: for `git -C /r checkout -- f`,
+//   - For a Bash rule with command patterns or fact filters, the words of
+//     the matched simple command are its positional parameters: for `git -C /r checkout -- f`,
 //     $1=git $2=-C $3=/r ... Quotes are removed; expansions keep their source
 //     form ("$HOME/x" arrives as the literal $HOME/x). If several commands in
 //     the script match, it runs once per command until one denies.
@@ -36,6 +37,14 @@ import (
 //     e.g. $TOOL_INPUT_FILE_PATH, $TOOL_INPUT_COMMAND.
 //   - $TOOL_NAME is the tool; $TOOL_CWD and the working directory are the
 //     call's cwd.
+//   - For a Bash call, facts from the parsed script (#2040): $TOOL_COMMANDS
+//     is every simple command, one per line, as command patterns see it;
+//     $TOOL_END_DIR is the main shell's directory after the script (empty
+//     if a cd target is dynamic). For a rule with per-command constraints,
+//     the matched command's own: $CMD_DIR (the absolute directory it runs
+//     in, after any cd before it; empty if unknown), $CMD_OP (the operator
+//     before it) and $CMD_PIPE (the commands downstream of it in its
+//     pipeline, one per line). See Command.
 //   - The rest of the environment is the hook's (CC's), minus BASH_ENV and
 //     ENV, so a non-interactive bash sources nothing first.
 //
@@ -75,7 +84,7 @@ func whenEnv(c Call, fields map[string]json.RawMessage) []string {
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
 		// PWD would name the hook's directory, not the call's; bash sets it.
-		if k == "BASH_ENV" || k == "ENV" || k == "PWD" || k == "TOOL_NAME" || k == "TOOL_CWD" || strings.HasPrefix(k, "TOOL_INPUT") {
+		if k == "BASH_ENV" || k == "ENV" || k == "PWD" || strings.HasPrefix(k, "TOOL_") || strings.HasPrefix(k, "CMD_") {
 			continue
 		}
 		env = append(env, kv)
@@ -89,6 +98,46 @@ func whenEnv(c Call, fields map[string]json.RawMessage) []string {
 		env = append(env, "TOOL_INPUT_"+envNameRe.ReplaceAllString(strings.ToUpper(field), "_")+"="+s)
 	}
 	return env
+}
+
+// scriptEnv is the when-check environment for a Bash call's parsed script.
+func scriptEnv(s Script, cwd string) []string {
+	texts := make([]string, len(s.Commands))
+	for i, c := range s.Commands {
+		texts[i] = c.Text
+	}
+	return []string{
+		"TOOL_COMMANDS=" + strings.Join(texts, "\n"),
+		"TOOL_END_DIR=" + absDir(s.EndDir, s.EndDirKnown, cwd),
+	}
+}
+
+// commandEnv is the when-check environment for one matched command.
+func commandEnv(c *Command, cwd string) []string {
+	return []string{
+		"CMD_DIR=" + absDir(c.Dir, c.DirKnown, cwd),
+		"CMD_OP=" + c.Op,
+		"CMD_PIPE=" + strings.Join(c.Pipe, "\n"),
+	}
+}
+
+// absDir resolves a Script directory against the call's cwd (the hook's own
+// directory when the call has none): "" when unknown.
+func absDir(dir string, known bool, cwd string) string {
+	if !known {
+		return ""
+	}
+	if filepath.IsAbs(dir) {
+		return dir
+	}
+	if cwd == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return ""
+		}
+		cwd = wd
+	}
+	return filepath.Join(cwd, dir)
 }
 
 // runWhen runs one when-check. deny is true iff it exited 0; err is set for

@@ -35,8 +35,9 @@ type Result struct {
 // Match returns the first rule that denies this call.
 //
 // A rule's constraints are ANDed: every input field it lists must be present
-// and match, its command patterns (if any) must match some command in the
-// script, its cwd patterns (if any) must match the cwd, and its when-check
+// and match, some command in the script must match its command patterns and
+// have the background/subshell/output facts it sets (if it sets any of
+// those), its cwd patterns (if any) must match the cwd, and its when-check
 // (if any) must exit 0. The when-check runs last, only once everything else
 // holds (see when.go). Within one pattern constraint any listed pattern may
 // match. A string input field is matched as-is; any other JSON value is
@@ -60,10 +61,10 @@ func Match(rules []Rule, c Call) Result {
 
 // matcher lazily decodes the parts of a call that rules need, once per call.
 type matcher struct {
-	call       Call
-	fields     map[string]json.RawMessage
-	cmds       []shellCmd
-	cmdsParsed bool
+	call         Call
+	fields       map[string]json.RawMessage
+	script       Script
+	scriptParsed bool
 
 	// budget bounds every when-check for this call, from the first one.
 	budget   context.Context
@@ -80,7 +81,8 @@ func (m *matcher) close() {
 
 func (m *matcher) matches(r *Rule) bool {
 	c := m.call
-	if len(r.Input) > 0 || len(r.Command) > 0 || r.When != "" {
+	cmdScoped := len(r.commandFields()) > 0
+	if len(r.Input) > 0 || cmdScoped || r.When != "" {
 		if m.fields == nil {
 			m.fields = map[string]json.RawMessage{}
 			_ = json.Unmarshal(c.Input, &m.fields)
@@ -96,22 +98,24 @@ func (m *matcher) matches(r *Rule) bool {
 			return false
 		}
 	}
-	// argSets are the positional parameters for the when-check: one set per
-	// matched command, or a single empty set when the rule has no command
-	// patterns.
-	argSets := [][]string{nil}
-	if len(r.Command) > 0 {
+	// matched are the commands the when-check runs for, once each: the
+	// commands the rule's per-command constraints select, or a single nil
+	// (no command) when it has none.
+	matched := []*Command{nil}
+	if cmdScoped {
 		res, ok := r.Command.compile(commandWrap)
 		if !ok {
 			return false
 		}
-		argSets = nil
-		for _, cmd := range m.commands() {
-			if anyMatch(res, cmd.text) {
-				argSets = append(argSets, cmd.args)
+		matched = nil
+		cmds := m.commands()
+		for i := range cmds {
+			cmd := &cmds[i]
+			if (len(res) == 0 || anyMatch(res, cmd.Text)) && factsMatch(r, cmd) {
+				matched = append(matched, cmd)
 			}
 		}
-		if len(argSets) == 0 {
+		if len(matched) == 0 {
 			return false
 		}
 	}
@@ -124,43 +128,68 @@ func (m *matcher) matches(r *Rule) bool {
 	if r.When == "" {
 		return true
 	}
-	for _, args := range argSets {
-		if m.when(r, args) {
+	for _, cmd := range matched {
+		if m.when(r, cmd) {
 			return true
 		}
 	}
 	return false
 }
 
-// when runs r's when-check with args, recording a failure. A check that
-// would start after the call's budget is spent is reported, not run.
-func (m *matcher) when(r *Rule, args []string) bool {
+// factsMatch reports whether cmd has every fact value r sets.
+func factsMatch(r *Rule, cmd *Command) bool {
+	for _, f := range []struct {
+		want *bool
+		got  bool
+	}{{r.Background, cmd.Background}, {r.Subshell, cmd.Subshell}, {r.Output, cmd.Output}} {
+		if f.want != nil && *f.want != f.got {
+			return false
+		}
+	}
+	return true
+}
+
+// when runs r's when-check for cmd (nil when the rule is not about one
+// command), recording a failure. A check that would start after the call's
+// budget is spent is reported, not run.
+func (m *matcher) when(r *Rule, cmd *Command) bool {
 	if m.budget == nil {
 		m.budget, m.cancel = context.WithTimeout(context.Background(), whenBudget)
 		m.env = whenEnv(m.call, m.fields)
+		if m.call.Tool == bashTool {
+			m.commands()
+			m.env = append(m.env, scriptEnv(m.script, m.call.Cwd)...)
+		}
 	}
 	if m.budget.Err() != nil {
 		m.whenErrs = append(m.whenErrs, WhenError{Rule: r.Name, Err: fmt.Errorf("not run: the call's %s budget for when-checks is spent", whenBudget)})
 		return false
 	}
-	deny, err := runWhen(m.budget, r.Name, r.When, args, m.call, m.env)
+	env, args := m.env, []string(nil)
+	if cmd != nil {
+		args = cmd.Args
+		env = append(env[:len(env):len(env)], commandEnv(cmd, m.call.Cwd)...)
+	}
+	deny, err := runWhen(m.budget, r.Name, r.When, args, m.call, env)
 	if err != nil {
 		m.whenErrs = append(m.whenErrs, WhenError{Rule: r.Name, Err: err})
 	}
 	return deny
 }
 
-func (m *matcher) commands() []shellCmd {
-	if !m.cmdsParsed {
-		m.cmdsParsed = true
+// commands parses the call's command once, and returns its commands (none
+// if it does not parse).
+func (m *matcher) commands() []Command {
+	if !m.scriptParsed {
+		m.scriptParsed = true
 		if raw, ok := m.fields["command"]; ok {
 			var script string
 			if json.Unmarshal(raw, &script) == nil {
-				m.cmds, _ = parseCommands(script)
+				m.script, _ = Parse(script)
 			}
 		}
 	}
-	return m.cmds
+	return m.script.Commands
 }
 
 func fieldText(raw json.RawMessage) string {
