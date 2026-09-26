@@ -205,6 +205,15 @@ type transcriptEnvelope struct {
 	Message *struct {
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
+	// Attachment carries CC's queued_command record: a task-notification that
+	// arrived while a turn was running is stored as the attachment's prompt,
+	// never as a user message. In a busy session that is where nearly every
+	// real completion lives (56 of 57 in one clutch transcript), so reading only
+	// user messages left every delegate "open" forever (#2051).
+	Attachment *struct {
+		Type   string          `json:"type"`
+		Prompt json.RawMessage `json:"prompt"`
+	} `json:"attachment"`
 }
 
 // taskNotificationIDPattern extracts task-ids out of a task-notification's
@@ -216,7 +225,8 @@ var taskNotificationIDPattern = regexp.MustCompile(`<task-id>([^<]+)</task-id>`)
 // observeForSyntheticEnds inspects one already-validated transcript line and
 // updates the fork's running state: (a) a background subagent launch
 // (toolUseResult.status=="async_launched", carrying an agentId) is recorded into
-// openTasks; (b) any task-notification content resolving a task-id removes it
+// openTasks; (b) any task-notification — in a user message or a queued_command
+// attachment — resolving a task-id removes it
 // from openTasks — it already has a resolution in the copied history, no
 // synthetic close is needed; (c) the line's own uuid (if any) becomes the new
 // lastUUID, so a synthetic close can chain off the true last message in the
@@ -234,11 +244,39 @@ func observeForSyntheticEnds(line []byte, openTasks map[string]string, lastUUID 
 		openTasks[r.AgentID] = r.Description
 	}
 	if env.Message != nil {
-		var content string
-		if json.Unmarshal(env.Message.Content, &content) == nil {
-			for _, m := range taskNotificationIDPattern.FindAllStringSubmatch(content, -1) {
-				delete(openTasks, m[1])
+		resolveTaskNotifications(env.Message.Content, openTasks)
+	}
+	if a := env.Attachment; a != nil && a.Type == "queued_command" {
+		resolveTaskNotifications(a.Prompt, openTasks)
+	}
+}
+
+// resolveTaskNotifications removes from openTasks every task-id named by a
+// task-notification in raw, which must be a JSON string (a user message's
+// content, or a queued_command's prompt) or an array of text blocks. Tool
+// results are deliberately not read: a tool that merely PRINTS a notification
+// (a grep over a transcript) is not a completion.
+func resolveTaskNotifications(raw json.RawMessage, openTasks map[string]string) {
+	var texts []string
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		texts = append(texts, s)
+	} else {
+		var blocks []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(raw, &blocks) == nil {
+			for _, b := range blocks {
+				if b.Type == "text" {
+					texts = append(texts, b.Text)
+				}
 			}
+		}
+	}
+	for _, t := range texts {
+		for _, m := range taskNotificationIDPattern.FindAllStringSubmatch(t, -1) {
+			delete(openTasks, m[1])
 		}
 	}
 }

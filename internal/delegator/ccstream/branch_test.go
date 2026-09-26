@@ -388,6 +388,66 @@ func TestForkTranscriptSkipsClosedAsyncTask(t *testing.T) {
 	}
 }
 
+// TestForkTranscriptResolutionForms locks #2051: CC stores a completion that
+// arrives mid-turn as a queued_command ATTACHMENT, not a user message — 56 of 57
+// completions in one clutch transcript. Reading only user messages left every
+// delegate "open", so each fork got one synthetic close per delegate ever
+// dispatched (55), pushing the fork past the API's ~20-block cache look-back
+// and making every keepalive fork miss. A tool result that merely PRINTS a
+// notification (a grep over a transcript) must still not count as one.
+func TestForkTranscriptResolutionForms(t *testing.T) {
+	const oldID, newID = "OLD", "NEW"
+	launch := `{"type":"user","sessionId":"OLD","uuid":"u2","parentUuid":"u1",` +
+		`"message":{"role":"user","content":[{"tool_use_id":"toolu_1","type":"tool_result","content":[{"type":"text","text":"Async agent launched"}]}]},` +
+		`"toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"agent-x","description":"Delegate todo 1"}}`
+	cases := []struct {
+		name       string
+		resolution string
+		wantClosed bool
+	}{
+		{"queued_command attachment (CC's mid-turn form)",
+			`{"type":"attachment","sessionId":"OLD","uuid":"u3","parentUuid":"u2","attachment":{"type":"queued_command","prompt":"<task-notification>\n<task-id>agent-x</task-id>\n<status>completed</status>\n</task-notification>","commandMode":"task-notification"}}`,
+			true},
+		{"user message with text-block array",
+			`{"type":"user","sessionId":"OLD","uuid":"u3","parentUuid":"u2","message":{"role":"user","content":[{"type":"text","text":"<task-notification>\n<task-id>agent-x</task-id>\n<status>completed</status>\n</task-notification>"}]}}`,
+			true},
+		{"tool result quoting a notification is not a completion",
+			`{"type":"user","sessionId":"OLD","uuid":"u3","parentUuid":"u2","message":{"role":"user","content":[{"tool_use_id":"toolu_9","type":"tool_result","content":"<task-notification>\n<task-id>agent-x</task-id>\n</task-notification>"}]}}`,
+			false},
+		{"some other attachment type is not a completion",
+			`{"type":"attachment","sessionId":"OLD","uuid":"u3","parentUuid":"u2","attachment":{"type":"hook_success","content":"<task-id>agent-x</task-id>"}}`,
+			false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src, dst := filepath.Join(dir, "src.jsonl"), filepath.Join(dir, "dst.jsonl")
+			lines := []string{
+				`{"type":"user","sessionId":"OLD","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"hi"}}`,
+				launch, tc.resolution,
+			}
+			if err := os.WriteFile(src, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := forkTranscript(src, dst, oldID, newID, log.NewComponentLogger("test")); err != nil {
+				t.Fatalf("forkTranscript: %v", err)
+			}
+			data, err := os.ReadFile(dst)
+			if err != nil {
+				t.Fatalf("read dst: %v", err)
+			}
+			n := assertAllValidJSONLines(t, tc.name, data)
+			synthetic := strings.Contains(string(data), "[fork boundary]")
+			if tc.wantClosed && (synthetic || n != len(lines)) {
+				t.Errorf("task was resolved in the copied history, yet the fork got a synthetic close (%d lines, want %d)", n, len(lines))
+			}
+			if !tc.wantClosed && !synthetic {
+				t.Errorf("task was NOT resolved, yet no synthetic close was appended")
+			}
+		})
+	}
+}
+
 // TestForkTranscriptSynthesizesMultipleEndsChained covers >1 dangling task: each
 // synthetic close must chain sequentially (one thread), not fan out as siblings
 // of the same parent.
