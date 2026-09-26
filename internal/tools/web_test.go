@@ -487,6 +487,17 @@ var webFetchCorpus = []struct {
 		mustNotContain: []string{"HTML cheatsheet", "Date & time formats", "Telemetry Settings", "Community Participation Guidelines"},
 	},
 	{
+		// The whole page is React-streamed: every segment sits in a
+		// <div hidden id="S:n"> that a script moves into its placeholder.
+		name: "lesswrong.com post — React streaming SSR (#2065 repro)",
+		file: "webfetch_corpus/lesswrong_flaky_breakthroughs.html",
+		mustContain: []string{
+			"Has someone you know ever had a “breakthrough”",
+			"I found that almost no ‘inner work’ practitioners track long-term outcomes.",
+			"A therapist emails former clients asking",
+		},
+	},
+	{
 		name:        "darioamodei.com (#1960 repro)",
 		file:        "webfetch_thin/dario_amodei_dev.html",
 		mustContain: []string{"Dario Amodei is the CEO of", "co-inventor of reinforcement learning from human feedback"},
@@ -616,5 +627,130 @@ func TestMissingListText(t *testing.T) {
 	}
 	if missing, example := missingListText(mdn, art.TextContent); missing >= listDropMinChars {
 		t.Errorf("MDN nav-heavy page: missing=%d (%q), want < %d", missing, example, listDropMinChars)
+	}
+}
+
+func TestWebFetchStreamedPageNotFlaggedThin(t *testing.T) {
+	// #2065: once the streamed segments are resolved the LessWrong post is
+	// most of the page, so neither the thin nor the stub path may fire.
+	t.Parallel()
+	got := fetchFixture(t, "webfetch_corpus/lesswrong_flaky_breakthroughs.html")
+	for _, note := range []string{"very little text", "whole page converted"} {
+		if strings.Contains(got, note) {
+			t.Errorf("note %q fired on the resolved LessWrong page", note)
+		}
+	}
+}
+
+func TestResolveStreamedSegments(t *testing.T) {
+	// #2065: emulates React's $RC/$RS — the segment's content lands where its
+	// placeholder was, the Suspense fallback goes, and the hidden div is gone.
+	t.Parallel()
+	cases := []struct {
+		name, in string
+		want     []string // substrings, in this order
+		absent   []string
+	}{
+		{
+			name: "boundary with fallback ($RC)",
+			in: `<html><body><p>before</p><!--$?--><template id="B:1"></template><p>Loading spinner</p><!--/$--><p>after</p>` +
+				`<div hidden id="S:1"><p>streamed body</p></div></body></html>`,
+			want:   []string{"before", "streamed body", "after"},
+			absent: []string{"Loading spinner", "hidden", `id="S:1"`, `id="B:1"`},
+		},
+		{
+			name: "nested boundary inside the fallback is skipped over",
+			in: `<html><body><!--$?--><template id="B:1"></template><!--$--><p>inner fallback</p><!--/$--><p>outer fallback</p><!--/$--><p>after</p>` +
+				`<div hidden id="S:1"><p>streamed</p></div></body></html>`,
+			want:   []string{"streamed", "after"},
+			absent: []string{"inner fallback", "outer fallback"},
+		},
+		{
+			name: "segment placeholder inside another segment ($RS)",
+			in: `<html><body><template id="B:0"></template>` +
+				`<div hidden id="S:0"><p>outer</p><template id="P:4"></template><p>tail</p></div>` +
+				`<div hidden id="S:4"><p>completed part</p></div></body></html>`,
+			want:   []string{"outer", "completed part", "tail"},
+			absent: []string{"hidden", "template"},
+		},
+		{
+			name: "segment without a placeholder is left alone",
+			in:   `<html><body><template id="B:1"></template><div hidden id="S:2"><p>orphan</p></div></body></html>`,
+			want: []string{`<template id="B:1">`, `hidden id="S:2"`, "orphan"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := string(resolveStreamedSegments([]byte(c.in)))
+			pos := 0
+			for _, w := range c.want {
+				i := strings.Index(got[pos:], w)
+				if i < 0 {
+					t.Fatalf("missing %q (in order) in %s", w, got)
+				}
+				pos += i + len(w)
+			}
+			for _, a := range c.absent {
+				if strings.Contains(got, a) {
+					t.Errorf("%q still present in %s", a, got)
+				}
+			}
+		})
+	}
+
+	plain := []byte(`<html><body><p>no streaming here</p></body></html>`)
+	if got := resolveStreamedSegments(plain); &got[0] != &plain[0] {
+		t.Error("a page with no placeholder must be returned as-is, unparsed")
+	}
+}
+
+func TestWebFetchStubExtractionFallsBackToWholePage(t *testing.T) {
+	// #2065: when readability returns a stub (under a tenth of the visible
+	// text), web_fetch returns the whole page, with a note saying so, rather
+	// than the stub. Not parallel: it swaps readabilityFromReader.
+	orig := readabilityFromReader
+	defer func() { readabilityFromReader = orig }()
+	readabilityFromReader = func(io.Reader, *url.URL) (readability.Article, error) {
+		return readability.Article{Content: "<div><p>x</p></div>", TextContent: "x"}, nil
+	}
+	para := strings.Repeat("The body paragraph that the extractor lost. ", 40)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("<html><body><div><p>" + para + "</p><p>closing sentence of the post</p></div></body></html>"))
+	}))
+	defer server.Close()
+	params, _ := json.Marshal(map[string]interface{}{"url": server.URL})
+	result, err := NewWebFetchTool().Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, w := range []string{"closing sentence of the post", "whole page converted to Markdown"} {
+		if !strings.Contains(result.Text, w) {
+			t.Errorf("result missing %q: %q", w, truncateRunes(result.Text, 300))
+		}
+	}
+	if strings.Contains(result.Text, "very little text") {
+		t.Error("thin note must not fire once the whole page is returned")
+	}
+}
+
+func TestIsStubExtraction(t *testing.T) {
+	// The stub threshold sits well below the #1960 link-hub page (~0.48,
+	// which keeps its article plus the thin note), and small pages are exempt.
+	t.Parallel()
+	cases := []struct {
+		extracted, visible int
+		want               bool
+	}{
+		{93, 45285, true},     // LessWrong before #2065: title + "x"
+		{99, 1000, true},      // just under a tenth
+		{100, 1000, false},    // a tenth
+		{480, 1000, false},    // #1960 link hub
+		{10, 799, false},      // below the visible-text floor
+		{41999, 45285, false}, // LessWrong after #2065
+	}
+	for _, c := range cases {
+		if got := isStubExtraction(c.extracted, c.visible); got != c.want {
+			t.Errorf("isStubExtraction(%d, %d) = %v, want %v", c.extracted, c.visible, got, c.want)
+		}
 	}
 }

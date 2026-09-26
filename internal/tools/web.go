@@ -81,7 +81,13 @@ var readabilityFromReader = ParseArticle
 // neutralizeMisleadingAttrs so class/id heuristics don't drop headings and
 // footnotes (#2066).
 func ParseArticle(r io.Reader, pageURL *url.URL) (readability.Article, error) {
-	doc, err := dom.Parse(r)
+	body, err := io.ReadAll(r)
+	if err != nil {
+		return readability.Article{}, err
+	}
+	// #2065: move React streamed chunks into their slots first; #2066: then
+	// neutralize class/id names that make readability drop real content.
+	doc, err := dom.Parse(bytes.NewReader(resolveStreamedSegments(body)))
 	if err != nil {
 		return readability.Article{}, fmt.Errorf("failed to parse input: %w", err)
 	}
@@ -89,6 +95,122 @@ func ParseArticle(r io.Reader, pageURL *url.URL) (readability.Article, error) {
 	p := readability.NewParser()
 	p.TagsToScore = append(p.TagsToScore, "li")
 	return p.ParseDocument(doc, pageURL)
+}
+
+// streamedPlaceholderMarkers gate resolveStreamedSegments: only pages that
+// carry a React streaming placeholder pay for the extra parse and render.
+var streamedPlaceholderMarkers = [][]byte{[]byte(`<template id="B:`), []byte(`<template id="P:`)}
+
+// resolveStreamedSegments does what React's streaming-SSR runtime ($RC) does
+// in the browser (#2065): each Suspense boundary is sent first as a
+// placeholder, <template id="B:n">, optionally followed by fallback content up
+// to its closing <!--/$--> comment, and the real content arrives later in the
+// same response as <div hidden id="S:n">. A script ($RC) then moves the segment
+// into the placeholder's slot and drops the fallback. A segment that completes
+// a partially-flushed parent uses a bare <template id="P:n"> placeholder with
+// no fallback ($RS) instead. Without a script runtime the
+// content stays inside a hidden div, and readability skips hidden elements.
+// Next.js App Router pages that stream their whole page this way (LessWrong)
+// came back as a single "x" (a hydration-timing div) with the post dropped.
+// Returns body unchanged when there is nothing to resolve.
+func resolveStreamedSegments(body []byte) []byte {
+	if !bytes.Contains(body, streamedPlaceholderMarkers[0]) && !bytes.Contains(body, streamedPlaceholderMarkers[1]) {
+		return body
+	}
+	doc, err := html.Parse(bytes.NewReader(body))
+	if err != nil {
+		return body
+	}
+	placeholders := map[string]*html.Node{}
+	var segments []*html.Node
+	var walk func(n *html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode {
+			id := attrValue(n, "id")
+			switch {
+			case n.Data == "template" && (strings.HasPrefix(id, "B:") || strings.HasPrefix(id, "P:")):
+				placeholders[id[2:]] = n
+			case n.Data == "div" && strings.HasPrefix(id, "S:") && hasAttr(n, "hidden"):
+				segments = append(segments, n)
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+
+	moved := false
+	for _, seg := range segments {
+		ph := placeholders[attrValue(seg, "id")[2:]]
+		if ph == nil || ph.Parent == nil || seg.Parent == nil {
+			continue
+		}
+		if strings.HasPrefix(attrValue(ph, "id"), "B:") {
+			removeSuspenseFallback(ph)
+		}
+		for c := seg.FirstChild; c != nil; {
+			next := c.NextSibling
+			seg.RemoveChild(c)
+			ph.Parent.InsertBefore(c, ph)
+			c = next
+		}
+		ph.Parent.RemoveChild(ph)
+		seg.Parent.RemoveChild(seg)
+		moved = true
+	}
+	if !moved {
+		return body
+	}
+	var buf bytes.Buffer
+	if err := html.Render(&buf, doc); err != nil {
+		return body
+	}
+	return buf.Bytes()
+}
+
+// removeSuspenseFallback removes the fallback nodes that follow a Suspense
+// placeholder, up to the boundary's closing <!--/$--> comment, skipping over
+// nested boundaries (<!--$-->, <!--$?-->, <!--$!--> ... <!--/$-->). If the
+// closing comment is never found, nothing is removed.
+func removeSuspenseFallback(ph *html.Node) {
+	depth := 0
+	var fallback []*html.Node
+	for n := ph.NextSibling; n != nil; n = n.NextSibling {
+		if n.Type == html.CommentNode {
+			switch n.Data {
+			case "$", "$?", "$!":
+				depth++
+			case "/$":
+				if depth == 0 {
+					for _, f := range fallback {
+						f.Parent.RemoveChild(f)
+					}
+					return
+				}
+				depth--
+			}
+		}
+		fallback = append(fallback, n)
+	}
+}
+
+func attrValue(n *html.Node, key string) string {
+	for _, a := range n.Attr {
+		if a.Key == key {
+			return a.Val
+		}
+	}
+	return ""
+}
+
+func hasAttr(n *html.Node, key string) bool {
+	for _, a := range n.Attr {
+		if a.Key == key {
+			return true
+		}
+	}
+	return false
 }
 
 // parseReadableWithTimeout runs readability extraction under a wall-clock
@@ -172,15 +294,33 @@ func bodyVisibleTextLen(body []byte) int {
 // long Wikipedia article) — see internal/tools/testdata/webfetch_thin/:
 // darioamodei.com ratio ~0.48 (flagged), controls ~0.58 and ~0.85 (not).
 func isThinExtraction(extractedChars, visibleChars int) bool {
-	const (
-		minVisibleChars = 800 // below this the page has little to lose either way
-		thinRatio       = 0.5 // extraction captured less than half the visible text
-	)
+	const thinRatio = 0.5 // extraction captured less than half the visible text
 	if visibleChars < minVisibleChars {
 		return false
 	}
 	return float64(extractedChars) < thinRatio*float64(visibleChars)
 }
+
+// minVisibleChars is the visible-text floor for the thin and stub checks:
+// below it the page has little to lose either way.
+const minVisibleChars = 800
+
+// isStubExtraction reports whether readability's result is a stub rather
+// than a partial article: under a tenth of the page's visible text (#2065).
+// That is past anything a normal article with page chrome produces (the
+// #1960 link-hub repro sits at ~0.48), so the extractor has lost the page
+// and web_fetch converts the whole body instead.
+func isStubExtraction(extractedChars, visibleChars int) bool {
+	const stubRatio = 0.1
+	if visibleChars < minVisibleChars {
+		return false
+	}
+	return float64(extractedChars) < stubRatio*float64(visibleChars)
+}
+
+// stubFallbackNote is appended when a stub extraction was replaced by the
+// whole page (#2065), so the caller knows why page chrome is present.
+const stubFallbackNote = "\n\n---\n_[foci: article extraction returned only %d of the page's ~%d chars of visible text, so this is the whole page converted to Markdown — navigation, sidebars and comments included.]_"
 
 // listDropNote is appended when substantive list-item text on the page is
 // absent from the extraction (#2011). The whole-page ratio check above can't
@@ -389,11 +529,21 @@ func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 	var htmlContent string
 	article, err := parseReadableWithTimeout(body, parsed, defaultFetchParseTimeout)
 	usedArticle := err == nil && strings.TrimSpace(article.Content) != ""
+	extractedChars := len(strings.TrimSpace(article.TextContent))
+	var visibleChars int
+	stub := false
+	if usedArticle {
+		visibleChars = bodyVisibleTextLen(body)
+		// #2065: a stub is not a usable article. Hand back the whole page
+		// rather than a title and a stray word.
+		stub = isStubExtraction(extractedChars, visibleChars)
+		usedArticle = !stub
+	}
 	if usedArticle {
 		htmlContent = article.Content
 	} else {
 		// Fallback: convert full HTML body to markdown
-		htmlContent = string(body)
+		htmlContent = string(resolveStreamedSegments(body))
 	}
 
 	md, err := htmltomarkdown.ConvertString(htmlContent)
@@ -407,10 +557,13 @@ func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 		} else {
 			md = string(body)
 		}
-	} else if usedArticle && isThinExtraction(len(strings.TrimSpace(article.TextContent)), bodyVisibleTextLen(body)) {
+	} else if usedArticle && isThinExtraction(extractedChars, visibleChars) {
 		// #1960: flag the "broken instrument reports success" case rather than
 		// silently handing back a confident-looking but gutted result.
 		md += thinExtractionNote
+	}
+	if stub && err == nil {
+		md += fmt.Sprintf(stubFallbackNote, extractedChars, visibleChars)
 	}
 	if usedArticle {
 		if missing, example := missingListText(body, article.TextContent); missing >= listDropMinChars {
