@@ -118,6 +118,9 @@ config.Load(path)                                        ← validates values; l
          link, so most callers need nothing more; walking it does not, so `scanSkillFiles`
          EvalSymlinks its OWN root rather than trusting a caller to hand it a resolved one.
          Resolution sits with the walk that needs it, so no call site can get it wrong.
+         Frontmatter is read by a lenient line parser; `parseSkillFile` also strict-YAML-parses
+         it (`checkFrontmatterYAML`, #2077) and `scanDir` logs a WARN (file + yaml.v3 error,
+         file line numbers, dedup'd daily) when invalid. Advisory only — the skill still loads.
        → compaction.NewCompactor(sessions, model, threshold)
        → config.NewFallbackResolver(global, perAgent, aliases) ← nil if no fallbacks configured
        → agent.Agent{shared fields + Client, Tools, Bootstrap, EnvironmentBlock, FallbackResolver, ...}

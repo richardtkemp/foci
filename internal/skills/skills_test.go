@@ -445,7 +445,7 @@ func TestParseSkillFileEmptyName(t *testing.T) {
 	skillPath := filepath.Join(skillDir, "SKILL.md")
 	os.WriteFile(skillPath, []byte(content), 0644)
 
-	_, err := parseSkillFile(skillPath, skillDir)
+	_, _, err := parseSkillFile(skillPath, skillDir)
 	if err == nil {
 		t.Error("expected error for missing name field")
 	}
