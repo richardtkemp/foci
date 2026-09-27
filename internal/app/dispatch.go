@@ -478,13 +478,18 @@ func (h *Hub) handleConversationArchive(client *wsClient, f fap.ConversationArch
 }
 
 // handleSettingPut persists one synced app-preference to the global bag and
-// re-broadcasts the merged snapshot to every settings-capable client (including
-// the sender, whose local guard drops the echo).
+// re-broadcasts the stored snapshot to every settings-capable client (including
+// the sender, whose local guard drops the echo). Save and send run under one
+// settingsMu hold so every client sees the snapshots in save order (#2081).
 func (h *Hub) handleSettingPut(f fap.SettingPut) {
 	if f.Key == "" {
 		return
 	}
-	h.broadcastSettings(h.storeAppSetting(f.Key, f.Value))
+	h.settingsMu.Lock()
+	defer h.settingsMu.Unlock()
+	if stored, ok := h.storeAppSetting(f.Key, f.Value); ok {
+		h.broadcastSettings(stored)
+	}
 }
 
 // handleRead persists a conversation's read watermark and mirrors it to the

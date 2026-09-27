@@ -100,11 +100,14 @@ type Hub struct {
 	// read+write, and h.mu is held across conversation fan-out.
 	pinsMu sync.Mutex
 
-	// settingsMu serialises storeAppSetting's load-merge-persist of the global
-	// app-settings bag (one system_state row). Two devices putting different
-	// keys at once would otherwise both merge into the same stale base and the
-	// second write would drop the first's key (#1185). Not h.mu, for the same
-	// reason as pinsMu: it is held across a SessionIndex read+write.
+	// settingsMu serialises every read or write of the global app-settings bag
+	// (one system_state row) TOGETHER WITH the snapshot fan-out that follows it.
+	// Two devices putting different keys at once would otherwise both merge
+	// into the same stale base and the second write would drop the first's key
+	// (#1185); and with the send outside the lock, an older snapshot can reach a
+	// client after a newer one and roll its settings back (#2081). Not h.mu,
+	// for the same reason as pinsMu: it is held across a SessionIndex
+	// read+write, and here across the sends too.
 	settingsMu sync.Mutex
 
 	wizardMu      sync.Mutex
@@ -1558,40 +1561,58 @@ func (h *Hub) pushRosterAll() {
 	h.pushCommandsAll()
 }
 
-func (h *Hub) loadAppSettings() map[string]string {
-	idx := h.deps.SessionIndex
-	if idx == nil {
-		return map[string]string{}
-	}
+// loadAppSettings reads the persisted bag. Unset is an empty map with a nil
+// error; a read or parse failure is an ERROR, never an empty map — callers that
+// treated it as empty would broadcast "no settings", or merge one key into
+// nothing and save that over every stored setting (#2081).
+func (h *Hub) loadAppSettings(idx *session.SessionIndex) (map[string]string, error) {
 	raw, err := idx.GetSystemState(systemStateAppSettings)
-	if err != nil || raw == "" {
-		return map[string]string{}
+	if err != nil {
+		return nil, err
 	}
 	m := map[string]string{}
-	if err := json.Unmarshal([]byte(raw), &m); err != nil {
-		return map[string]string{}
+	if raw == "" {
+		return m, nil
 	}
-	return m
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return nil, fmt.Errorf("stored bag is not a JSON object: %w", err)
+	}
+	return m, nil
 }
 
 // storeAppSetting applies one key=value to the persisted bag and returns the
-// merged map for fan-out. Last-write-wins per key; the load-merge-persist runs
-// under settingsMu so concurrent puts of different keys all survive (#1185).
-func (h *Hub) storeAppSetting(key, value string) map[string]string {
-	h.settingsMu.Lock()
-	defer h.settingsMu.Unlock()
-	m := h.loadAppSettings()
-	m[key] = value
-	if idx := h.deps.SessionIndex; idx != nil {
-		b, err := json.Marshal(m)
-		if err == nil {
-			err = idx.SetSystemState(systemStateAppSettings, string(b))
-		}
-		if err != nil {
-			appLog.Warnf("app settings: persist %q: %v", key, err)
-		}
+// bag as it is now STORED, for fan-out. Caller holds settingsMu, so concurrent
+// puts of different keys all survive (#1185). Last-write-wins per key.
+//
+// ok=false means nothing trustworthy can be sent: there is no index, or the
+// stored bag is unreadable (left untouched rather than overwritten, #2081). A
+// failed save returns the pre-merge bag with ok=true, so the sender's
+// optimistic value is rolled back instead of every device showing a setting
+// as synced that a restart would lose.
+func (h *Hub) storeAppSetting(key, value string) (stored map[string]string, ok bool) {
+	idx := h.deps.SessionIndex
+	if idx == nil {
+		return nil, false
 	}
-	return m
+	prev, err := h.loadAppSettings(idx)
+	if err != nil {
+		appLog.Errorf("app settings: not saving %q: cannot read the stored bag, leaving it untouched: %v", key, err)
+		return nil, false
+	}
+	merged := make(map[string]string, len(prev)+1)
+	for k, v := range prev {
+		merged[k] = v
+	}
+	merged[key] = value
+	b, err := json.Marshal(merged)
+	if err == nil {
+		err = idx.SetSystemState(systemStateAppSettings, string(b))
+	}
+	if err != nil {
+		appLog.Errorf("app settings: save %q failed, re-sending the stored bag: %v", key, err)
+		return prev, true
+	}
+	return merged, true
 }
 
 // loadOpenChats reads the persisted shared open-set. Empty (nil) when unset or
@@ -1623,18 +1644,30 @@ func (h *Hub) storeOpenChats(ids []string) {
 	}
 }
 
+// pushSettings sends the stored bag to one client at hello. Under settingsMu so
+// it cannot land after (and roll back) a newer broadcast. An unreadable bag
+// sends nothing: an empty snapshot would claim nothing is set.
 func (h *Hub) pushSettings(client *wsClient) {
 	client.mu.Lock()
 	_, ok := client.features[featureSettingsSync]
 	client.mu.Unlock()
-	if !ok {
+	idx := h.deps.SessionIndex
+	if !ok || idx == nil {
 		return
 	}
-	client.sendRaw(fap.SettingsSnapshot{Settings: h.loadAppSettings()})
+	h.settingsMu.Lock()
+	defer h.settingsMu.Unlock()
+	m, err := h.loadAppSettings(idx)
+	if err != nil {
+		appLog.Errorf("app settings: not pushing at hello: cannot read the stored bag: %v", err)
+		return
+	}
+	client.sendRaw(fap.SettingsSnapshot{Settings: m})
 }
 
 // broadcastSettings fans the bag out to every settings-capable client, so a
-// change on one device reconciles on the others without a reconnect.
+// change on one device reconciles on the others without a reconnect. Caller
+// holds settingsMu, so snapshots go out in save order.
 func (h *Hub) broadcastSettings(settings map[string]string) {
 	snap := fap.SettingsSnapshot{Settings: settings}
 	for _, c := range h.snapshotClients() {
