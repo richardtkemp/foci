@@ -281,19 +281,19 @@ func scopePredicate(scopes []string, sessionKey string, idx *session.SessionInde
 func resolveScopeKeys(scope, sessionKey string, idx *session.SessionIndex) (map[string]struct{}, string) {
 	switch scope {
 	case "session":
-		family, _ := sessionFamily(idx, sessionKey)
-		return family, "this session"
+		family, _, err := sessionFamily(idx, sessionKey)
+		return family, withFamilyErr("this session", err)
 	case "strict-self":
 		return map[string]struct{}{sessionKey: {}}, "this session only"
 	case "descendants":
-		family, _ := sessionFamily(idx, sessionKey)
+		family, _, err := sessionFamily(idx, sessionKey)
 		result := make(map[string]struct{}, len(family))
 		for k := range family {
 			if k != sessionKey {
 				result[k] = struct{}{}
 			}
 		}
-		return result, "descendants"
+		return result, withFamilyErr("descendants", err)
 	case "agent":
 		agentID := session.AgentIDFromAnyKey(sessionKey)
 		entries, err := idx.Query(session.QueryOptions{AgentID: agentID})
@@ -317,6 +317,16 @@ func resolveScopeKeys(scope, sessionKey string, idx *session.SessionIndex) (map[
 		}
 		return set, "type:" + scope
 	}
+}
+
+// withFamilyErr annotates a scope label when the session family could not be
+// resolved, so the report says it is incomplete instead of silently covering
+// only the current session.
+func withFamilyErr(label string, err error) string {
+	if err == nil {
+		return label
+	}
+	return fmt.Sprintf("%s (⚠️ %v — family not resolved)", label, err)
 }
 
 // hasSessionScope reports whether any scope narrows to the current session

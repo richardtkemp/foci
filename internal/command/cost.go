@@ -53,13 +53,17 @@ func costRender(entries []log.APIEntry, args costArgs, scopeLabel, sessionKey st
 	if args.breakdown && idx != nil {
 		breakdownHeader := header
 		if hasSessionScope(args.scopes) {
-			if _, start := sessionFamily(idx, sessionKey); !start.IsZero() {
+			if _, start, _ := sessionFamily(idx, sessionKey); !start.IsZero() {
 				if line := startLine(start); line != "" {
 					breakdownHeader += "\n" + line
 				}
 			}
 		}
-		return renderTypeBreakdown(entries, buildSessionTypeMap(idx), breakdownHeader) + suffix
+		typeMap, err := buildSessionTypeMap(idx)
+		if err != nil {
+			breakdownHeader += fmt.Sprintf("\n⚠️ %v — session types unavailable, rows show as (untyped)", err)
+		}
+		return renderTypeBreakdown(entries, typeMap, breakdownHeader) + suffix
 	}
 
 	// 2. Session-family scope → category detail
@@ -115,7 +119,7 @@ func costCategoryView(entries []log.APIEntry, header, sessionKey string, idx *se
 
 	// Show family start time if a session scope is active.
 	if hasSessionScope(scopes) && idx != nil {
-		if _, start := sessionFamily(idx, sessionKey); !start.IsZero() {
+		if _, start, _ := sessionFamily(idx, sessionKey); !start.IsZero() {
 			if line := startLine(start); line != "" {
 				b.WriteByte('\n')
 				b.WriteString(line)
@@ -469,32 +473,37 @@ func renderTypeBreakdown(filtered []log.APIEntry, typeMap map[string]string, hea
 }
 
 // buildSessionTypeMap returns a session_key → session_type map across all
-// agents (keys are globally unique, so no agent scoping is needed).
-func buildSessionTypeMap(idx *session.SessionIndex) map[string]string {
+// agents (keys are globally unique, so no agent scoping is needed). On a query
+// error the map is empty and the error is returned so the caller can say so —
+// otherwise every row silently renders as (untyped).
+func buildSessionTypeMap(idx *session.SessionIndex) (map[string]string, error) {
 	entries, err := idx.Query(session.QueryOptions{})
 	if err != nil {
-		return map[string]string{}
+		return map[string]string{}, fmt.Errorf("session index query: %w", err)
 	}
 	m := make(map[string]string, len(entries))
 	for _, e := range entries {
 		m[e.SessionKey] = string(e.SessionType)
 	}
-	return m
+	return m, nil
 }
 
 // sessionFamily resolves the full family of a session: its root ancestor plus
 // every transitive branch/child (walked via parent_session_key), returned as a
 // set of session keys. The second return is the earliest CreatedAt in the
 // family (when the conversation began). The requested key is always included.
-func sessionFamily(idx *session.SessionIndex, key string) (map[string]struct{}, time.Time) {
+// On a query error the family is just the requested key and the error is
+// returned, so the caller can say the family is incomplete rather than
+// quietly under-reporting.
+func sessionFamily(idx *session.SessionIndex, key string) (map[string]struct{}, time.Time, error) {
 	family := map[string]struct{}{key: {}}
 	var start time.Time
 	if idx == nil {
-		return family, start
+		return family, start, nil
 	}
 	entries, err := idx.Query(session.QueryOptions{})
 	if err != nil {
-		return family, start
+		return family, start, fmt.Errorf("session index query: %w", err)
 	}
 	byKey := make(map[string]session.SessionIndexEntry, len(entries))
 	children := make(map[string][]string)
@@ -549,7 +558,7 @@ func sessionFamily(idx *session.SessionIndex, key string) (map[string]struct{}, 
 			}
 		}
 	}
-	return family, start
+	return family, start, nil
 }
 
 // startLine formats a start timestamp as "Started <local> (<relative>)".

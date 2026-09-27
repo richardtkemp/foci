@@ -57,7 +57,7 @@ func TestSessionFamily_TransitiveClosure(t *testing.T) {
 	root, earliest := seedFamily(t, idx)
 
 	// Start from a branch, not the root: must still resolve the whole family.
-	family, start := sessionFamily(idx, "bot/c123/b100")
+	family, start, _ := sessionFamily(idx, "bot/c123/b100")
 
 	want := []string{root, "bot/c123/b100", "bot/c123/b200", "bot/ispawn-1"}
 	for _, k := range want {
@@ -526,7 +526,7 @@ func TestSessionFamily_SelfParentedRowTerminates(t *testing.T) {
 
 	done := make(chan map[string]struct{}, 1)
 	go func() {
-		fam, _ := sessionFamily(idx, root)
+		fam, _, _ := sessionFamily(idx, root)
 		done <- fam
 	}()
 
@@ -552,4 +552,68 @@ func keysOf(m map[string]struct{}) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// Called from a non-root key that itself has children: the family must still
+// include that key's own descendants, not just the root's other branches.
+// Regression guard for the #1186 finding fixed by 3f1226ae0 (the old BFS
+// pre-seeded the requested key and then skipped enqueuing its children).
+func TestSessionFamily_NonRootKeyWithChildren(t *testing.T) {
+	idx := costTestIndex(t)
+	root, _ := seedFamily(t, idx)
+	base := time.Date(2026, 7, 11, 9, 0, 0, 0, time.UTC)
+	// b100 (a branch of the root) has its own spawn, which has its own child.
+	idx.Upsert(session.SessionIndexEntry{SessionKey: "bot/c123/b100/s1", CreatedAt: base, ParentSessionKey: "bot/c123/b100", SessionType: session.SessionTypeSpawn, Status: session.SessionStatusActive})
+	idx.Upsert(session.SessionIndexEntry{SessionKey: "bot/c123/b100/s1/s2", CreatedAt: base, ParentSessionKey: "bot/c123/b100/s1", SessionType: session.SessionTypeSpawn, Status: session.SessionStatusActive})
+
+	family, _, err := sessionFamily(idx, "bot/c123/b100")
+	if err != nil {
+		t.Fatalf("sessionFamily: %v", err)
+	}
+	for _, k := range []string{root, "bot/c123/b100", "bot/c123/b200", "bot/ispawn-1", "bot/c123/b100/s1", "bot/c123/b100/s1/s2"} {
+		if _, ok := family[k]; !ok {
+			t.Errorf("family = %v, missing %q", keysOf(family), k)
+		}
+	}
+	if _, ok := family["bot/c999"]; ok {
+		t.Error("family wrongly included unrelated chat bot/c999")
+	}
+}
+
+// brokenIndex returns a session index whose Query always fails (it is closed).
+func brokenIndex(t *testing.T) *session.SessionIndex {
+	t.Helper()
+	idx := costTestIndex(t)
+	_ = idx.Close()
+	if _, err := idx.Query(session.QueryOptions{}); err == nil {
+		t.Fatal("precondition: Query on a closed index should fail")
+	}
+	return idx
+}
+
+// A failing session index must be visible in the breakdown, not silently
+// render every row as (untyped). #1186.
+func TestCostRender_BreakdownSurfacesIndexError(t *testing.T) {
+	idx := brokenIndex(t)
+	args, err := parseCostArgs("breakdown")
+	if err != nil {
+		t.Fatalf("parseCostArgs: %v", err)
+	}
+	entries := []log.APIEntry{{Session: "bot/c123", CalculatedCostUSD: f64p(1.00)}}
+	out := costRender(entries, args, "", "bot/c123", idx)
+	if !strings.Contains(out, "session index") {
+		t.Errorf("breakdown with a failing index gave no warning:\n%s", out)
+	}
+}
+
+// A failing session index must be visible when a session-family scope is
+// resolved, not silently collapse the family to the current session. #1186.
+func TestScopePredicate_SessionScopeSurfacesIndexError(t *testing.T) {
+	idx := brokenIndex(t)
+	for _, scope := range []string{"session", "descendants"} {
+		_, label := scopePredicate([]string{scope}, "bot/c123", idx)
+		if !strings.Contains(label, "session index") {
+			t.Errorf("scope %q: label = %q, want a session-index warning", scope, label)
+		}
+	}
 }
