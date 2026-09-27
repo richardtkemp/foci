@@ -224,8 +224,7 @@ func (h *Hub) handleInteractiveResponse(client *wsClient, f fap.InteractiveRespo
 	// arrived as InteractiveProgress, leaving Answers empty — still resolves here.
 	// Carried Answers reconcile the accumulated set (covering a dropped progress
 	// frame). A Done edit fans out so a second client viewing the form closes it.
-	if bp, ok := h.batchPromptByID(f.PromptID); ok {
-		h.deleteBatchPrompt(f.PromptID)
+	if bp, ok := h.claimBatchPrompt(f.PromptID); ok {
 		bp.mu.Lock()
 		for i, a := range f.Answers {
 			if i < len(bp.answers) && a != "" {

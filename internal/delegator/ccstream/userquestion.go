@@ -98,13 +98,15 @@ func (b *Backend) handleUserQuestion(msg *PermissionRequest) {
 	b.storePendingPerm(pp)
 	b.outstanding.Register(msg.RequestID, delegator.OutstandingPermission)
 
-	b.presentCurrentQuestion(pp)
+	b.presentQuestion(pp, 0)
 }
 
-// presentCurrentQuestion sends the current question as an interactive prompt.
-func (b *Backend) presentCurrentQuestion(pp *pendingPermission) {
-	q := &pp.questions[pp.currentIndex]
-	text := formatQuestionText(q, pp.currentIndex, len(pp.questions))
+// presentQuestion sends question idx of pp as an interactive prompt. idx is
+// passed in rather than read from pp.currentIndex, which an answer may be
+// advancing concurrently under permMu.
+func (b *Backend) presentQuestion(pp *pendingPermission, idx int) {
+	q := &pp.questions[idx]
+	text := formatQuestionText(q, idx, len(pp.questions))
 	summary := q.Header
 	if summary == "" {
 		summary = "Question"
@@ -132,41 +134,21 @@ func (b *Backend) presentCurrentQuestion(pp *pendingPermission) {
 // and the next question is presented. The final answer sends PermissionAllow
 // with all answers in updatedInput.
 func (b *Backend) RespondToQuestion(requestID, choice string) error {
-	pp := b.getPendingPerm(requestID)
-	if pp == nil || pp.questions == nil {
-		return fmt.Errorf("ccstream: no pending question with request ID %q", requestID)
-	}
-
-	q := &pp.questions[pp.currentIndex]
-	answer, cancelled, err := question.ResolveAnswer(q, choice)
+	pp, next, done, err := b.recordQuestionAnswer(requestID, choice)
 	if err != nil {
-		return fmt.Errorf("ccstream: %w", err)
+		return err
 	}
-	if cancelled {
-		// The permission layer routes qa:cancel to CancelQuestion, so a cancel
-		// reaching here is a stray; reject it rather than record it as an answer.
-		return fmt.Errorf("ccstream: cancel is not a valid answer for request %q", requestID)
-	}
-
-	pp.answers[q.Question] = answer
-	pp.currentIndex++
-
-	b.logger().Debugf("answer %d/%d for req_id=%s: %q",
-		pp.currentIndex, len(pp.questions), requestID, answer)
-
-	// More questions to present?
-	if pp.currentIndex < len(pp.questions) {
-		b.presentCurrentQuestion(pp)
+	if !done {
+		b.presentQuestion(pp, next)
 		return nil
 	}
 
-	// All questions answered — send the combined response.
+	// All questions answered, and this call claimed pp, so nothing else reads or
+	// writes it any more: send the combined response.
 	updatedInput, err := buildUpdatedInput(pp.originalInput, pp.answers)
 	if err != nil {
 		return fmt.Errorf("ccstream: build updatedInput: %w", err)
 	}
-
-	b.removePendingPerm(requestID)
 
 	resp := &PermissionAllow{
 		Behavior:               "allow",
@@ -180,6 +162,44 @@ func (b *Backend) RespondToQuestion(requestID, choice string) error {
 
 	b.outstanding.Resolve(requestID)
 	return nil
+}
+
+// recordQuestionAnswer records choice as the answer to requestID's current
+// question and advances it, all under permMu (#2070). A button click, a typed
+// answer, a /stop cancel and CC's own control_cancel can arrive on different
+// goroutines for the same request, so the lookup, the accumulator writes and —
+// on the last answer — the claim (removal from pendingPerms) are one critical
+// section. done=true means this call claimed pp and alone may respond to CC;
+// otherwise next is the question to present.
+func (b *Backend) recordQuestionAnswer(requestID, choice string) (pp *pendingPermission, next int, done bool, err error) {
+	b.permMu.Lock()
+	defer b.permMu.Unlock()
+	pp = b.pendingPerms[requestID]
+	if pp == nil || pp.questions == nil {
+		return nil, 0, false, fmt.Errorf("ccstream: no pending question with request ID %q", requestID)
+	}
+
+	q := &pp.questions[pp.currentIndex]
+	answer, cancelled, err := question.ResolveAnswer(q, choice)
+	if err != nil {
+		return nil, 0, false, fmt.Errorf("ccstream: %w", err)
+	}
+	if cancelled {
+		// The permission layer routes qa:cancel to CancelQuestion, so a cancel
+		// reaching here is a stray; reject it rather than record it as an answer.
+		return nil, 0, false, fmt.Errorf("ccstream: cancel is not a valid answer for request %q", requestID)
+	}
+
+	pp.answers[q.Question] = answer
+	pp.currentIndex++
+	b.logger().Debugf("answer %d/%d for req_id=%s: %q",
+		pp.currentIndex, len(pp.questions), requestID, answer)
+
+	if pp.currentIndex < len(pp.questions) {
+		return pp, pp.currentIndex, false, nil
+	}
+	delete(b.pendingPerms, requestID)
+	return pp, 0, true, nil
 }
 
 // CancelQuestion cancels a pending AskUserQuestion by sending PermissionDeny.

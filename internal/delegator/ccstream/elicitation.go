@@ -37,7 +37,9 @@ type pendingElicitation struct {
 	elicitationID string
 	schema        *elicSchema // nil for url mode or unparsable form schemas
 
-	// Form-mode walk state
+	// Form-mode walk state. currentField and answers change only under elicMu
+	// while the entry is in pendingElicits (recordElicitAnswer); whoever removes
+	// it may read them freely.
 	fieldOrder   []string               // property names in declaration order
 	currentField int                    // next field to collect
 	answers      map[string]interface{} // accumulated answers, coerced to schema type
@@ -252,7 +254,7 @@ func (b *Backend) handleElicitation(msg *ElicitationRequest) {
 		b.presentElicitationFallback(pe)
 		return
 	}
-	b.presentElicitationField(pe, true)
+	b.presentElicitationField(pe, 0, true)
 }
 
 // ---------------------------------------------------------------------------
@@ -308,14 +310,15 @@ func (b *Backend) presentElicitationFallback(pe *pendingElicitation) {
 	b.callPrompt(pe.requestID, body.String(), pe.serverName, choices)
 }
 
-// presentElicitationField renders the current field of a form-mode
-// elicitation. When first==true, the message header is included so the user
-// sees the server's intent alongside the first prompt.
-func (b *Backend) presentElicitationField(pe *pendingElicitation, first bool) {
-	if pe.currentField >= len(pe.fieldOrder) {
+// presentElicitationField renders field idx of a form-mode elicitation. idx is
+// passed in rather than read from pe.currentField, which an answer may be
+// advancing concurrently under elicMu. When first==true, the message header is
+// included so the user sees the server's intent alongside the first prompt.
+func (b *Backend) presentElicitationField(pe *pendingElicitation, idx int, first bool) {
+	if idx >= len(pe.fieldOrder) {
 		return
 	}
-	name := pe.fieldOrder[pe.currentField]
+	name := pe.fieldOrder[idx]
 	prop := pe.schema.Properties[name]
 	total := len(pe.fieldOrder)
 
@@ -336,7 +339,7 @@ func (b *Backend) presentElicitationField(pe *pendingElicitation, first bool) {
 	if label == "" {
 		label = name
 	}
-	body.WriteString(fmt.Sprintf("**Field %d/%d: %s**", pe.currentField+1, total, label))
+	body.WriteString(fmt.Sprintf("**Field %d/%d: %s**", idx+1, total, label))
 	if pe.schema.Required[name] {
 		body.WriteString(" *(required)*")
 	}
@@ -417,26 +420,45 @@ func (b *Backend) callPrompt(requestID, text, summary string, choices []delegato
 // sending the control_response after all fields have been satisfied (or
 // when the user declines/cancels mid-walk).
 func (b *Backend) RespondToElicitation(requestID, choice string) error {
-	pe := b.getPendingElicit(requestID)
-	if pe == nil {
-		return fmt.Errorf("ccstream: no pending elicitation with request ID %q", requestID)
-	}
-
 	switch choice {
 	case "elic:decline":
-		return b.finishElicitation(pe, "decline")
+		return b.claimAndFinishElicitation(requestID, "decline")
 	case "elic:cancel":
-		return b.finishElicitation(pe, "cancel")
+		return b.claimAndFinishElicitation(requestID, "cancel")
 	case "elic:accept":
 		// Only meaningful in URL mode (or in form mode with no schema, where
 		// "accept" means accept-empty). For a walking form we'd never reach
 		// this branch because the user is answering per-field.
-		return b.finishElicitation(pe, "accept")
+		return b.claimAndFinishElicitation(requestID, "accept")
 	}
 
+	pe, next, done, err := b.recordElicitAnswer(requestID, choice)
+	if err != nil {
+		return err
+	}
+	if !done {
+		b.presentElicitationField(pe, next, false)
+		return nil
+	}
+	return b.finishElicitation(pe, "accept")
+}
+
+// recordElicitAnswer records choice as the value of requestID's current form
+// field and advances the walk, all under elicMu (#2070): a button click, a typed
+// answer and CC's own elicitation_complete can arrive on different goroutines
+// for the same request. On the last field it also claims pe (removes it from
+// pendingElicits) — done=true means this call alone may respond to CC;
+// otherwise next is the field to present.
+func (b *Backend) recordElicitAnswer(requestID, choice string) (pe *pendingElicitation, next int, done bool, err error) {
+	b.elicMu.Lock()
+	defer b.elicMu.Unlock()
+	pe = b.pendingElicits[requestID]
+	if pe == nil {
+		return nil, 0, false, fmt.Errorf("ccstream: no pending elicitation with request ID %q", requestID)
+	}
 	// Form-mode field responses must have a schema and an in-bounds cursor.
 	if pe.schema == nil || pe.currentField >= len(pe.fieldOrder) {
-		return fmt.Errorf("ccstream: elicitation %q has no field to answer", requestID)
+		return nil, 0, false, fmt.Errorf("ccstream: elicitation %q has no field to answer", requestID)
 	}
 
 	name := pe.fieldOrder[pe.currentField]
@@ -444,7 +466,7 @@ func (b *Backend) RespondToElicitation(requestID, choice string) error {
 
 	value, err := coerceElicAnswer(prop, choice)
 	if err != nil {
-		return fmt.Errorf("ccstream: elicitation field %q: %w", name, err)
+		return nil, 0, false, fmt.Errorf("ccstream: elicitation field %q: %w", name, err)
 	}
 	pe.answers[name] = value
 	pe.currentField++
@@ -453,10 +475,21 @@ func (b *Backend) RespondToElicitation(requestID, choice string) error {
 		pe.currentField, len(pe.fieldOrder), requestID, name, value)
 
 	if pe.currentField < len(pe.fieldOrder) {
-		b.presentElicitationField(pe, false)
-		return nil
+		return pe, pe.currentField, false, nil
 	}
-	return b.finishElicitation(pe, "accept")
+	delete(b.pendingElicits, requestID)
+	return pe, 0, true, nil
+}
+
+// claimAndFinishElicitation resolves requestID with action if it is still
+// pending. The claim (removal under elicMu) decides the race against any other
+// resolver; a loser gets an error and sends nothing.
+func (b *Backend) claimAndFinishElicitation(requestID, action string) error {
+	pe, ok := b.removePendingElicit(requestID)
+	if !ok {
+		return fmt.Errorf("ccstream: no pending elicitation with request ID %q", requestID)
+	}
+	return b.finishElicitation(pe, action)
 }
 
 // coerceElicAnswer converts a user-supplied choice string into a value of the
@@ -515,9 +548,11 @@ func coerceElicAnswer(prop elicProperty, choice string) (interface{}, error) {
 	return nil, fmt.Errorf("unsupported property type %q", prop.Type)
 }
 
-// finishElicitation sends the final control_response for an elicitation and
-// removes the pending state. accept carries the accumulated answers as a
-// content object; decline/cancel send no content.
+// finishElicitation sends the final control_response for an elicitation the
+// caller has already claimed (removed from pendingElicits), so it runs at most
+// once per request and nothing else touches pe.answers any more. accept
+// carries the accumulated answers as a content object; decline/cancel send no
+// content.
 func (b *Backend) finishElicitation(pe *pendingElicitation, action string) error {
 	resp := &ElicitationResponsePayload{Action: action}
 	if action == "accept" && len(pe.answers) > 0 {
@@ -527,8 +562,6 @@ func (b *Backend) finishElicitation(pe *pendingElicitation, action string) error
 		}
 		resp.Content = raw
 	}
-
-	b.removePendingElicit(pe.requestID)
 
 	if err := b.writer.SendControlResponse(pe.requestID, resp); err != nil {
 		return err
@@ -549,7 +582,7 @@ func (b *Backend) finishElicitation(pe *pendingElicitation, action string) error
 // already clicked Done, or the notification belongs to a previous session).
 func (b *Backend) OnElicitationComplete(msg *ElicitationCompleteMessage) {
 	b.touchActivity()
-	pe := b.findPendingElicitByCompletionID(msg.McpServerName, msg.ElicitationID)
+	pe := b.claimPendingElicitByCompletionID(msg.McpServerName, msg.ElicitationID)
 	if pe == nil {
 		b.logger().Debugf("elicitation_complete for unknown id=%s server=%s (already resolved?)",
 			msg.ElicitationID, msg.McpServerName)
@@ -602,13 +635,6 @@ func (b *Backend) storePendingElicit(pe *pendingElicitation) {
 	b.elicMu.Unlock()
 }
 
-func (b *Backend) getPendingElicit(requestID string) *pendingElicitation {
-	b.elicMu.Lock()
-	pe := b.pendingElicits[requestID]
-	b.elicMu.Unlock()
-	return pe
-}
-
 // removePendingElicit removes and returns a pending elicitation. The
 // "all-clear" signal is fired by delegator.OutstandingRegistry's onEmpty hook, not
 // inferred locally — both perms and elicitations live in one registry, so
@@ -621,16 +647,19 @@ func (b *Backend) removePendingElicit(requestID string) (pe *pendingElicitation,
 	return
 }
 
-// findPendingElicitByCompletionID locates a URL-mode elicitation matching
-// both server name and elicitation_id. Returns nil if none is found.
-func (b *Backend) findPendingElicitByCompletionID(serverName, elicitationID string) *pendingElicitation {
+// claimPendingElicitByCompletionID locates AND removes the URL-mode
+// elicitation matching both server name and elicitation_id, under one hold of
+// elicMu, so the user's Done click and CC's elicitation_complete cannot both
+// resolve it (#2070). Returns nil if none is found.
+func (b *Backend) claimPendingElicitByCompletionID(serverName, elicitationID string) *pendingElicitation {
 	b.elicMu.Lock()
 	defer b.elicMu.Unlock()
-	for _, pe := range b.pendingElicits {
+	for id, pe := range b.pendingElicits {
 		if pe.mode != "url" {
 			continue
 		}
 		if pe.elicitationID == elicitationID && pe.serverName == serverName {
+			delete(b.pendingElicits, id)
 			return pe
 		}
 	}

@@ -44,14 +44,17 @@ const wizardSessionsMetaKey = "wizard_app_sessions"
 // Registry, the last-emitted step (for answer resolution + staleness checks),
 // and the Registry generation of the wizard it fronts.
 type wizardSession struct {
-	id     string // wizardId on the wire
-	stepID string // last-emitted step; a response must echo it
-	scope  string // Registry wizard scope (the conversation's session key)
-	title  string // display title (the invoking command)
-	gen    uint64 // Registry.WizardGen(scope) at activation — rejects replaced wizards
-	step   question.Question
-	b      *convBinding
-	conn   *appConn
+	id    string // wizardId on the wire
+	scope string // Registry wizard scope (the conversation's session key)
+	title string // display title (the invoking command)
+	gen   uint64 // Registry.WizardGen(scope) at activation — rejects replaced wizards
+	b     *convBinding
+	conn  *appConn
+
+	// Guarded by Hub.wizardMu: responses are handled on their own goroutines.
+	stepID    string // last-emitted step; a response must echo it
+	step      question.Question
+	answering bool // a response to stepID has been claimed; later ones for it are stale
 }
 
 // persistedWizardSession is the durable form of a wizardSession. The step
@@ -119,13 +122,17 @@ func (h *Hub) sendWizardStep(s *wizardSession, promptText string, media *fap.Wiz
 	if q == nil {
 		q = &question.Question{Question: promptText}
 	}
-	s.stepID = fap.NewULID()
+	stepID := fap.NewULID()
+	h.wizardMu.Lock()
+	s.stepID = stepID
 	s.step = *q
+	s.answering = false
+	h.wizardMu.Unlock()
 	h.persistWizardSessions(s.b.agentID)
 	s.b.send(fap.WizardStep{
 		ConversationID: s.b.convID,
 		WizardID:       s.id,
-		StepID:         s.stepID,
+		StepID:         stepID,
 		Title:          s.title,
 		Step:           fapWizardQuestion(q),
 		Media:          media,
@@ -136,8 +143,23 @@ func (h *Hub) sendWizardStep(s *wizardSession, promptText string, media *fap.Wiz
 // registry's wizard, then emits the follow-up frame: the next wizard.step
 // while the wizard stays active, or a terminal wizard.end.
 func (h *Hub) handleWizardResponse(f fap.WizardResponse) {
+	// Claim the step under wizardMu (#2070): each response runs on its own
+	// goroutine, so a double-tap or a tap racing a typed answer would otherwise
+	// both pass the stepID check and feed the wizard twice — the second answer
+	// landing on the NEXT step.
 	h.wizardMu.Lock()
 	s := h.wizards[f.WizardID]
+	var claimed bool
+	var step question.Question
+	var wantStep string
+	if s != nil {
+		wantStep = s.stepID
+		if f.ConversationID == s.b.convID && f.StepID == s.stepID && !s.answering {
+			s.answering = true
+			step = s.step
+			claimed = true
+		}
+	}
 	h.wizardMu.Unlock()
 
 	if s == nil {
@@ -152,8 +174,8 @@ func (h *Hub) handleWizardResponse(f fap.WizardResponse) {
 		}
 		return
 	}
-	if f.ConversationID != s.b.convID || f.StepID != s.stepID {
-		appLog.Debugf("wizard response dropped as stale (conv=%s): id=%s step=%s (want %s)", s.b.convID, f.WizardID, f.StepID, s.stepID)
+	if !claimed {
+		appLog.Debugf("wizard response dropped as stale (conv=%s): id=%s step=%s (want %s, or already answered)", s.b.convID, f.WizardID, f.StepID, wantStep)
 		return
 	}
 	reg := s.conn.commands
@@ -165,7 +187,7 @@ func (h *Hub) handleWizardResponse(f fap.WizardResponse) {
 		return
 	}
 
-	text, cancelled := resolveWizardAnswer(&s.step, f.Data)
+	text, cancelled := resolveWizardAnswer(&step, f.Data)
 	resp, docPath, handled := reg.HandleMessage(s.scope, text)
 	if !handled {
 		h.endWizard(s, fap.WizardExpired, "This wizard is no longer active.")

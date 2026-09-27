@@ -5,11 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1326,6 +1329,53 @@ func TestInteractive_BatchExpirySweep(t *testing.T) {
 	}
 	if _, ok := h.batchPromptByID("req-new"); !ok {
 		t.Error("younger registration must survive the sweep")
+	}
+}
+
+// TestInteractive_BatchResolvesOnce (#2070): a batched ask is resolved by exactly
+// one of its racing resolvers. Two devices can submit the same form (each socket
+// has its own reader goroutine) while the hourly expiry sweep runs on its own
+// goroutine; only the caller that claims the registration may deliver. The old
+// code checked the registry and deleted from it in two separate critical
+// sections, so two callers could both pass the check and both deliver.
+//
+// The window is a few instructions wide and has no seam to park a caller in, so
+// the rounds and the extra submitters are what make the old interleaving likely;
+// the assertion itself is exact, so a correct claim passes every round
+// regardless of scheduling.
+func TestInteractive_BatchResolvesOnce(t *testing.T) {
+	h, c, b, _ := boundConn(t)
+	const rounds, submitters = 10000, 4
+	for i := range rounds {
+		id := fmt.Sprintf("req-race-%d", i)
+		var delivered atomic.Int32
+		h.registerBatchPrompt(id, b, 1, func([]string) { delivered.Add(1) })
+		bp, _ := h.batchPromptByID(id)
+		bp.created = time.Now().Add(-2 * time.Hour) // due for the sweep too
+
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		submit := func() {
+			defer wg.Done()
+			<-start
+			h.handleInteractiveResponse(c, fap.InteractiveResponse{ConversationID: "c1", PromptID: id, Answers: []string{"qa:0"}})
+		}
+		wg.Add(submitters + 1)
+		for range submitters {
+			go submit()
+		}
+		go func() {
+			defer wg.Done()
+			<-start
+			h.expireBatchPrompts(time.Now().Add(-time.Hour))
+		}()
+		close(start)
+		wg.Wait()
+		drain(t, c)
+
+		if n := delivered.Load(); n != 1 {
+			t.Fatalf("round %d: batched ask delivered %d times, want exactly 1", i, n)
+		}
 	}
 }
 

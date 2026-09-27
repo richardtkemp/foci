@@ -3,6 +3,7 @@ package ccstream
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -726,7 +727,7 @@ func TestHandleToolRequest_DetectsAskUserQuestion(t *testing.T) {
 	}
 
 	// Verify it stored as a question (has questions field).
-	pp := b.getPendingPerm("req-detect")
+	pp := b.pendingPerms["req-detect"]
 	if pp == nil {
 		t.Fatal("expected pending perm to be stored")
 	}
@@ -798,4 +799,55 @@ func TestRespondToQuestion_ConcurrentAccess(t *testing.T) {
 	}()
 
 	wg.Wait()
+}
+
+// TestRespondToQuestion_OneResponsePerRequest (#2070): a question's answer can
+// arrive as a button click and as typed text on different goroutines, and a
+// /stop cancel on a third; CC must get exactly one control_response for the
+// request. The old answer path looked the entry up without claiming it and sent
+// its Allow even after another path had removed it and responded.
+//
+// The window has no seam to park a caller in, so the rounds are what make the
+// old interleaving likely; the assertion itself is exact, so a correct claim
+// passes every round regardless of scheduling.
+func TestRespondToQuestion_OneResponsePerRequest(t *testing.T) {
+	t.Parallel()
+	b, buf := testBackend(t)
+	b.permPromptFn = func(string, string, string, string, []delegator.PromptChoice) {}
+
+	const rounds = 3000
+	for i := range rounds {
+		reqID := fmt.Sprintf("req-race-%d", i)
+		b.handleUserQuestion(&PermissionRequest{
+			Type:      "control_request",
+			RequestID: reqID,
+			Request: PermissionRequestPayload{
+				Subtype:   "can_use_tool",
+				ToolName:  "AskUserQuestion",
+				ToolUseID: "tu-" + reqID,
+				Input:     json.RawMessage(`{"questions":[{"question":"Pick?","header":"Pick","options":[{"label":"A"},{"label":"B"}]}]}`),
+			},
+		})
+
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		race := func(fn func()) {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				fn()
+			}()
+		}
+		race(func() { _ = b.RespondToQuestion(reqID, "qa:0") })
+		race(func() { _ = b.RespondToQuestion(reqID, "typed answer") })
+		race(func() { _ = b.CancelQuestion(reqID) })
+		close(start)
+		wg.Wait()
+
+		if n := strings.Count(buf.String(), "\n"); n != 1 {
+			t.Fatalf("round %d: %d control responses for %s, want exactly 1", i, n, reqID)
+		}
+		buf.Reset()
+	}
 }

@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"foci/internal/command"
 	"foci/internal/fap"
@@ -419,5 +421,88 @@ func TestWizard_DocOnFinalStepFallsBackInChat(t *testing.T) {
 	end := single(t, c, fap.TypeWizardEnd)
 	if end["status"] != fap.WizardDone {
 		t.Errorf("end status = %v", end["status"])
+	}
+}
+
+// gatedWizard parks its first Handle call until release is closed, so a test
+// can deliver a second response while the first is still being answered.
+type gatedWizard struct {
+	entered chan struct{} // closed when the first Handle call starts
+	release chan struct{} // closed by the test to let it finish
+
+	mu     sync.Mutex
+	inputs []string
+}
+
+func (w *gatedWizard) Handle(text string) (string, bool) {
+	w.mu.Lock()
+	w.inputs = append(w.inputs, text)
+	first := len(w.inputs) == 1
+	w.mu.Unlock()
+	if first {
+		close(w.entered)
+		<-w.release
+	}
+	return "Next?", false
+}
+
+func (w *gatedWizard) got() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]string(nil), w.inputs...)
+}
+
+// TestWizard_DuplicateResponseAnswersOnce (#2070): each wizard.response runs on
+// its own goroutine, so a double-tap (or a tap racing a typed answer) delivers
+// two responses echoing the same stepId. Only one may reach the wizard; the old
+// code checked the stepId without claiming it, so the duplicate passed the check
+// while the first was still inside the wizard and was then fed in as the answer
+// to the NEXT step.
+func TestWizard_DuplicateResponseAnswersOnce(t *testing.T) {
+	h, conn, b, c := wizardTestBed(t, true)
+	w := &gatedWizard{entered: make(chan struct{}), release: make(chan struct{})}
+	startWizard(t, h, conn, b, w, "Name?")
+	first := single(t, c, fap.TypeWizardStep)
+	respond := func(data string) {
+		h.handleWizardResponse(fap.WizardResponse{
+			ConversationID: "c1",
+			WizardID:       first["wizardId"].(string),
+			StepID:         first["stepId"].(string),
+			Data:           data,
+		})
+	}
+	const hangGuard = 10 * time.Second
+
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		respond("George")
+	}()
+	select {
+	case <-w.entered:
+	case <-time.After(hangGuard):
+		t.Fatal("first response never reached the wizard")
+	}
+
+	// The duplicate must be dropped outright, not queued behind the first.
+	dupDone := make(chan struct{})
+	go func() {
+		defer close(dupDone)
+		respond("Fred")
+	}()
+	select {
+	case <-dupDone:
+	case <-time.After(hangGuard):
+		t.Error("duplicate response did not return while the first was being answered: it is queued to feed the wizard")
+	}
+	close(w.release)
+	<-firstDone
+	<-dupDone
+
+	if got := w.got(); len(got) != 1 || got[0] != "George" {
+		t.Errorf("wizard received %v, want [George] (the duplicate must not answer the next step)", got)
+	}
+	if d := single(t, c, fap.TypeWizardStep); d["stepId"] == first["stepId"] {
+		t.Error("the answered step must be followed by a freshly minted step")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -648,4 +649,73 @@ func equalStrSlice(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// TestElicitation_OneResponsePerRequest (#2070): every resolver of an
+// elicitation — the user's buttons, a typed field answer, and CC's own
+// elicitation_complete for a URL-mode request — can arrive on its own goroutine,
+// and CC must get exactly one control_response per request. The old code looked
+// the entry up without claiming it, wrote the form answers outside any lock, and
+// sent its response even when another resolver had already removed the entry.
+//
+// The window has no seam to park a caller in, so the rounds are what make the
+// old interleaving likely; the assertion itself is exact, so a correct claim
+// passes every round regardless of scheduling.
+func TestElicitation_OneResponsePerRequest(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	b := newTestBackend(&buf)
+	b.permPromptFn = func(string, string, string, string, []delegator.PromptChoice) {}
+
+	schema := json.RawMessage(`{"type":"object","properties":{"color":{"type":"string","enum":["red","blue"]}}}`)
+	const rounds = 3000
+	for i := range rounds {
+		reqID := fmt.Sprintf("elic-race-%d", i)
+		var racers []func()
+		if i%2 == 0 {
+			// URL mode: Done click vs the MCP server's own completion signal.
+			elicID := "e-" + reqID
+			b.OnElicitationRequest(&ElicitationRequest{RequestID: reqID, Request: ElicitationRequestPayload{
+				Subtype: "elicitation", McpServerName: "remote", Mode: "url", URL: "https://example.test", ElicitationID: elicID,
+			}})
+			racers = []func(){
+				func() { _ = b.RespondToElicitation(reqID, "elic:accept") },
+				func() {
+					b.OnElicitationComplete(&ElicitationCompleteMessage{
+						Type: "system", Subtype: "elicitation_complete", McpServerName: "remote", ElicitationID: elicID,
+					})
+				},
+				func() { _ = b.RespondToElicitation(reqID, "elic:decline") },
+			}
+		} else {
+			// Form mode: a button pick and a typed answer for the last field, and a
+			// decline.
+			b.OnElicitationRequest(&ElicitationRequest{RequestID: reqID, Request: ElicitationRequestPayload{
+				Subtype: "elicitation", McpServerName: "remote", Mode: "form", RequestedSchema: schema,
+			}})
+			racers = []func(){
+				func() { _ = b.RespondToElicitation(reqID, "elic:enum:0") },
+				func() { _ = b.RespondToElicitation(reqID, "blue") },
+				func() { _ = b.RespondToElicitation(reqID, "elic:decline") },
+			}
+		}
+
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for _, fn := range racers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				fn()
+			}()
+		}
+		close(start)
+		wg.Wait()
+
+		if n := strings.Count(buf.String(), "\n"); n != 1 {
+			t.Fatalf("round %d: %d control responses for %s, want exactly 1", i, n, reqID)
+		}
+		buf.Reset()
+	}
 }

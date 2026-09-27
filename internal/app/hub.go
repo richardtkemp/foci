@@ -1866,11 +1866,19 @@ func (h *Hub) expireBatchPrompts(cutoff time.Time) {
 	}
 }
 
-func (h *Hub) deleteBatchPrompt(promptID string) {
+// claimBatchPrompt looks up AND removes a batched ask's registration under one
+// hold of h.mu, so exactly one caller owns its resolution (#2070). A submit from
+// a second device, or the expiry sweep, racing this one finds nothing and must
+// not resolve the ask again.
+func (h *Hub) claimBatchPrompt(promptID string) (*batchPrompt, bool) {
 	h.mu.Lock()
+	bp, ok := h.batchPrompts[promptID]
 	delete(h.batchPrompts, promptID)
 	h.mu.Unlock()
-	h.frames.DeletePrompt(promptID)
+	if ok {
+		h.frames.DeletePrompt(promptID)
+	}
+	return bp, ok
 }
 
 // resolveBatchedAsk completes a batched (native-app) ask: it fans out the terminal

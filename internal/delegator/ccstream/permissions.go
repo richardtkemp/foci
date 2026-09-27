@@ -22,6 +22,8 @@ type pendingPermission struct {
 	createdAt   time.Time
 
 	// Question-specific fields (zero values for regular permissions).
+	// currentIndex and answers change only under permMu while the entry is in
+	// pendingPerms (recordQuestionAnswer); whoever removes it may read them freely.
 	questions     []userQuestion    // parsed questions from AskUserQuestion input
 	currentIndex  int               // which question is currently being presented
 	answers       map[string]string // accumulated answers (question text → answer)
@@ -238,15 +240,6 @@ func (b *Backend) storePendingPerm(pp *pendingPermission) {
 	b.permMu.Lock()
 	b.pendingPerms[pp.requestID] = pp
 	b.permMu.Unlock()
-}
-
-// getPendingPerm returns a pending permission without removing it.
-// Used by sequential question flows that need to read state across steps.
-func (b *Backend) getPendingPerm(requestID string) *pendingPermission {
-	b.permMu.Lock()
-	pp := b.pendingPerms[requestID]
-	b.permMu.Unlock()
-	return pp
 }
 
 // removePendingPerm removes and returns a pending permission. The
