@@ -229,15 +229,23 @@ func (r *Registry) Remove(connID uint64, askID string) *entry {
 }
 
 func (r *Registry) Cancel(connID uint64, askID string) bool {
+	return r.cancel(connID, askID) != nil
+}
+
+// cancel removes and cancels the entry, returning it only if this call was
+// the one that removed it (nil if it was already answered, timed out or
+// cancelled). Once removed, nothing else writes the entry, so the caller may
+// read e.current without the lock.
+func (r *Registry) cancel(connID uint64, askID string) *entry {
 	e := r.Remove(connID, askID)
 	if e == nil {
-		return false
+		return nil
 	}
 	if e.cancelFn != nil {
 		e.cancelFn()
 	}
 	askgwLog.Infof("ask cancelled by client id=%s conn=%d after %s summary=%q", askID, connID, r.waited(e), e.summary)
-	return true
+	return e
 }
 
 // waited is how long e has been pending, on the registry's clock.

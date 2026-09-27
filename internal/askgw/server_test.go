@@ -888,3 +888,94 @@ func TestE2E_NotifyForUnknownIDIsDropped(t *testing.T) {
 		t.Fatal("notify for an unknown id should be dropped, not delivered")
 	}
 }
+
+// TestCancel_NoCancelledEditWhenAnswerWins covers #2073: handleCancel used to
+// Get the entry, release the lock, then Cancel it and edit the prompt to
+// "Cancelled by App" whatever Cancel returned. An answer that resolved the ask
+// in between left the client showing Cancelled over an answered ask. There is
+// no seam inside that window, so each round races a cancel against an answer
+// and checks that the answered rounds got no "Cancelled by App" edit.
+func TestCancel_NoCancelledEditWhenAnswerWins(t *testing.T) {
+	const rounds = 10000
+	var mu sync.Mutex
+	appEdits := map[string]int{}
+	srv, err := NewServer(ServerDeps{
+		SocketPath: filepath.Join(t.TempDir(), "unused.sock"),
+		CancelPrompt: func(msgID, finalText string) {
+			if strings.Contains(finalText, "Cancelled by App") {
+				mu.Lock()
+				appEdits[msgID]++
+				mu.Unlock()
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := srv.registry
+	connID := reg.RegisterConn()
+
+	answeredRounds, bad := 0, 0
+	for i := 0; i < rounds; i++ {
+		askID := "race-" + strconv.Itoa(i)
+		w := &mockWriter{}
+		if _, err := reg.Add(connID, askID, "agent", "agent/chat", w, makeQuestions(), askgwMsgID(askID, 0), "", 0, func() {
+			srv.cancelPrompt(askgwMsgID(askID, 0), "⌛ Cancelled by askgw")
+		}); err != nil {
+			t.Fatal(err)
+		}
+		line, err := Encode(&CancelFrame{Protocol: ProtocolVersion, Type: TypeCancel, ID: askID})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			_ = srv.handleCancel(connID, askID, line)
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			// handleCancel decodes its frame before its Get, so the answer
+			// would nearly always finish first. Match that cost, then sweep
+			// a small offset across rounds to land inside the window.
+			_, _ = DecodeCancel(line)
+			spin(i % 128)
+			if reg.recordAnswer(connID, askID, "sudo", singleAnswer("Approve")) {
+				reg.sendAnswer(connID, askID)
+			}
+		}()
+		close(start)
+		wg.Wait()
+
+		if w.frameCount() == 0 {
+			continue // the cancel won: a Cancelled edit is correct
+		}
+		answeredRounds++
+		mu.Lock()
+		n := appEdits[askgwMsgID(askID, 0)]
+		mu.Unlock()
+		if n > 0 {
+			bad++
+		}
+	}
+	if bad > 0 {
+		t.Fatalf("%d of %d answered asks were also edited to 'Cancelled by App'", bad, answeredRounds)
+	}
+	if answeredRounds == 0 {
+		t.Fatal("the answer never won a round, so the test checked nothing")
+	}
+}
+
+var spinSink int
+
+// spin burns a few hundred nanoseconds per unit without yielding.
+func spin(n int) {
+	for j := 0; j < n*100; j++ {
+		spinSink += j
+	}
+}

@@ -388,11 +388,11 @@ func (s *Server) handleCancel(connID uint64, id string, line []byte) error {
 	if err != nil {
 		return errFrame(id, "malformed", err.Error())
 	}
-	e := s.registry.Get(connID, cancel.ID)
-	if e != nil {
-		cancelMsgID := askgwMsgID(cancel.ID, e.current)
-		s.registry.Cancel(connID, cancel.ID)
-		s.cancelPrompt(cancelMsgID, "❌ Cancelled by App")
+	// Claim first: only the call that removed the entry edits the prompt. An
+	// ask that was answered or timed out in the meantime keeps its own final
+	// text rather than showing Cancelled over it (#2073).
+	if e := s.registry.cancel(connID, cancel.ID); e != nil {
+		s.cancelPrompt(askgwMsgID(cancel.ID, e.current), "❌ Cancelled by App")
 	}
 	return nil
 }
