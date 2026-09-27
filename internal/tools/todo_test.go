@@ -1114,3 +1114,39 @@ func TestTodoRejectsUnknownSort(t *testing.T) {
 		})
 	}
 }
+
+func TestTodoToolPriorityAliasesCoercedOrRejected(t *testing.T) {
+	// #2071: the tool path coerces an alias (echoing the canonical value) and
+	// rejects an unmappable one before a bulk edit touches any item.
+	t.Parallel()
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	result, err := executeTodoTool(tool, map[string]interface{}{"action": "add", "text": "t", "priority": "Med"})
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if !strings.Contains(result, "(medium)") {
+		t.Errorf("add echo = %q, want it to name the canonical (medium)", result)
+	}
+
+	id2, _ := store.Add("agent1", "t2", "low", "")
+	_, err = executeTodoTool(tool, map[string]interface{}{"action": "edit", "ids": []int64{1, id2}, "priority": "critical", "text": "x"})
+	if err == nil || !strings.Contains(err.Error(), "high, medium, low") {
+		t.Fatalf("edit critical: err = %v, want an error listing high, medium, low", err)
+	}
+	for _, id := range []int64{1, id2} {
+		if item, _ := store.Get("agent1", id); item.Text == "x" {
+			t.Errorf("#%d text changed by a rejected edit", id)
+		}
+	}
+
+	if _, err := executeTodoTool(tool, map[string]interface{}{"action": "edit", "ids": []int64{1, id2}, "priority": "hi"}); err != nil {
+		t.Fatalf("edit hi: %v", err)
+	}
+	for _, id := range []int64{1, id2} {
+		if item, _ := store.Get("agent1", id); item.Priority != "high" {
+			t.Errorf("#%d priority = %q, want high", id, item.Priority)
+		}
+	}
+}

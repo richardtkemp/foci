@@ -435,11 +435,14 @@ func todoNewCmd(store *memory.TodoStore, agentID string, args todoArgs) (Respons
 	if args.text == "" {
 		return Response{Text: "Usage: /todo new <text>"}, nil
 	}
-	id, err := store.Add(agentID, args.text, args.priority, strings.Join(args.tags, ","))
+	pri, err := memory.NormalizePriority(args.priority)
+	if err != nil {
+		return Response{Text: err.Error()}, nil
+	}
+	id, err := store.Add(agentID, args.text, pri, strings.Join(args.tags, ","))
 	if err != nil {
 		return Response{}, fmt.Errorf("add todo: %w", err)
 	}
-	pri := args.priority
 	if pri == "" {
 		pri = "medium"
 	}
@@ -471,6 +474,9 @@ func todoEditCmd(store *memory.TodoStore, agentID string, args todoArgs) (Respon
 	id := args.ids[0]
 	if args.text == "" && args.priority == "" && !args.setTag {
 		return Response{Text: "Nothing to change. Use p:PRIORITY, t:TAG, or provide new text."}, nil
+	}
+	if _, err := memory.NormalizePriority(args.priority); err != nil {
+		return Response{Text: err.Error()}, nil
 	}
 	item, err := store.Edit(agentID, id, args.text, args.priority, strings.Join(args.tags, ","), args.setTag, false)
 	if err != nil {

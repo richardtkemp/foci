@@ -1357,3 +1357,33 @@ func containsStr(s, substr string) bool {
 	}
 	return false
 }
+
+// TestTodoPriorityAliases: /todo new and edit coerce an alias and refuse an
+// unmappable priority with the valid values (#2071).
+func TestTodoPriorityAliases(t *testing.T) {
+	store := newTestTodoStore(t)
+	cc := newTestCC(store)
+	cmd := TodoCommand()
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: "new p:med a thing"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(resp.Text, "(medium)") {
+		t.Errorf("new echo = %q, want (medium)", resp.Text)
+	}
+	if item, _ := store.Get(testAgent, 1); item.Priority != "medium" {
+		t.Errorf("stored priority = %q, want medium", item.Priority)
+	}
+
+	resp, err = cmd.Execute(context.Background(), Request{Args: "edit 1 p:urgent"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(resp.Text, "high, medium, low") {
+		t.Errorf("edit p:urgent = %q, want the valid values listed", resp.Text)
+	}
+	if item, _ := store.Get(testAgent, 1); item.Priority != "medium" {
+		t.Errorf("rejected edit changed priority to %q", item.Priority)
+	}
+}

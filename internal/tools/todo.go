@@ -43,7 +43,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				"priority": {
 					"type": "string",
 					"enum": ["high", "medium", "low"],
-					"description": "Priority level (default: medium)"
+					"description": "Priority level (default: medium). Case-insensitive; hi, med, mid, lo are accepted and stored as the canonical value."
 				},
 				"tag": {
 					"type": "string",
@@ -318,11 +318,16 @@ func todoAdd(store *memory.TodoStore, agentID, text, priority, tag string) (Tool
 	if text == "" {
 		return ToolResult{}, fmt.Errorf("text is required for add")
 	}
-	id, err := store.Add(agentID, text, priority, tag)
+	// Normalised here too (the store repeats it) so the echo names what was
+	// stored — "Added #N (medium)", not the caller's "med".
+	pri, err := memory.NormalizePriority(priority)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	id, err := store.Add(agentID, text, pri, tag)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("add todo: %w", err)
 	}
-	pri := priority
 	if pri == "" {
 		pri = "medium"
 	}
@@ -672,6 +677,11 @@ func todoEdit(store *memory.TodoStore, agentID string, id int64, ids []int64, te
 	// for the tag-style "clear" behaviour here.
 	if text == "" && title == "" && priority == "" && !setTags {
 		return ToolResult{}, fmt.Errorf("edit requires at least one of: text, title, priority, tag")
+	}
+	// Validate once up front: a bad priority is the caller's error, not a
+	// per-item one, and must not half-apply a bulk edit's other fields.
+	if priority, err = memory.NormalizePriority(priority); err != nil {
+		return ToolResult{}, err
 	}
 	if appendText && text == "" {
 		return ToolResult{}, fmt.Errorf("edit: append requires text")

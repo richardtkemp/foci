@@ -82,12 +82,104 @@ func NewTodoStore(dbPath string) (*TodoStore, error) {
 		return closeOnErr("migrate in_progress to started", err)
 	}
 
+	// Rewrite stored priority aliases ('med', 'Hi', ...) to their canonical
+	// spelling (#2071). Done once here rather than normalising on every read
+	// because priority is consumed IN SQL — the ORDER BY CASE and the
+	// "priority = ?" filter — so a read-side normaliser would fix display
+	// but leave sort, filter, and counts wrong unless each SQL site learned
+	// the aliases too. Idempotent; unmappable values are left alone.
+	if err := migratePriorityAliases(db); err != nil {
+		return closeOnErr("normalise stored priorities", err)
+	}
+
 	// Expression index for correct cross-timezone timestamp ordering.
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_todos_created_unix ON todos(unixepoch(created_at))`); err != nil {
 		return closeOnErr("create todos created_at expression index", err)
 	}
 
 	return &TodoStore{db: db}, nil
+}
+
+// Canonical todo priorities, highest first.
+var todoPriorities = []string{"high", "medium", "low"}
+
+// priorityAliases maps every accepted spelling (lower-cased, trimmed) to its
+// canonical priority. Only spellings whose meaning is unambiguous belong here.
+var priorityAliases = map[string]string{
+	"high": "high", "hi": "high", "h": "high",
+	"medium": "medium", "med": "medium", "mid": "medium", "m": "medium",
+	"low": "low", "lo": "low", "l": "low",
+}
+
+// NormalizePriority maps a priority as written by a caller to its canonical
+// value ("high", "medium", "low"), tolerating case, surrounding whitespace, and
+// the short forms in priorityAliases. It rejects anything it cannot map, naming
+// the valid values. An empty input returns "" with no error: callers treat that
+// as "unset" (Add defaults it, Edit leaves the column alone).
+//
+// This is the single normaliser for every write path (#2071): the store's Add
+// and Edit apply it, so the tool, the exec-bridge wrapper, and the /todo slash
+// command all inherit it rather than each keeping a copy.
+func NormalizePriority(p string) (string, error) {
+	key := strings.ToLower(strings.TrimSpace(p))
+	if key == "" {
+		return "", nil
+	}
+	if canon, ok := priorityAliases[key]; ok {
+		return canon, nil
+	}
+	return "", fmt.Errorf("invalid priority %q: valid values are %s (also accepted: hi, med, mid, lo)",
+		p, strings.Join(todoPriorities, ", "))
+}
+
+// normalizePriorityFilter coerces a list/search priority filter (optionally
+// "!"-negated) to canonical form so "p:med" still matches the rows the
+// migration rewrote to "medium". An unmappable filter is passed through
+// unchanged: it simply matches nothing, as before.
+func normalizePriorityFilter(filter string) string {
+	negated, val := isNegated(filter)
+	canon, err := NormalizePriority(val)
+	if err != nil || canon == "" {
+		return filter
+	}
+	if negated {
+		return "!" + canon
+	}
+	return canon
+}
+
+// migratePriorityAliases rewrites any stored priority that NormalizePriority
+// maps to a different canonical value. updated_at is deliberately untouched:
+// this is a spelling repair, not an edit, and bumping it would reshuffle
+// --sort updated for every affected row.
+func migratePriorityAliases(db *sql.DB) error {
+	rows, err := db.Query(`SELECT DISTINCT priority FROM todos`)
+	if err != nil {
+		return err
+	}
+	var stored []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		stored = append(stored, p)
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, p := range stored {
+		canon, err := NormalizePriority(p)
+		if err != nil || canon == "" || canon == p {
+			continue
+		}
+		if _, err := db.Exec(`UPDATE todos SET priority = ? WHERE priority = ?`, canon, p); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // columnExists checks whether a column exists in the given table.
@@ -154,12 +246,16 @@ func (s *TodoStore) IndexAllTodos(agentID string) error {
 // Add creates a new todo item and returns its per-agent ID.
 // Each agent gets its own sequential ID space (1, 2, 3, ...).
 func (s *TodoStore) Add(agentID, text, priority, tags string) (int64, error) {
+	priority, err := NormalizePriority(priority)
+	if err != nil {
+		return 0, err
+	}
 	if priority == "" {
 		priority = "medium"
 	}
 	now := timeutil.FormatNano(timeutil.Now())
 	var nextID int64
-	err := s.db.QueryRow(
+	err = s.db.QueryRow(
 		`INSERT INTO todos (id, text, status, priority, tags, agent_id, created_at, updated_at)
 		 VALUES ((SELECT COALESCE(MAX(id), 0) + 1 FROM todos WHERE agent_id = ?), ?, 'open', ?, ?, ?, ?, ?)
 		 RETURNING id`,
@@ -262,6 +358,7 @@ func buildListFilter(status string, tags []string, priority string) (string, []a
 		}
 	}
 	if priority != "" {
+		priority = normalizePriorityFilter(priority)
 		if negated, val := isNegated(priority); negated {
 			clause.WriteString(` AND priority != ?`)
 			args = append(args, val)
@@ -363,6 +460,10 @@ func (s *TodoStore) Remove(agentID string, id int64) error {
 // happens in SQL so it's atomic against concurrent edits. appendText has no
 // effect when text is empty.
 func (s *TodoStore) Edit(agentID string, id int64, text, priority, tags string, setTags, appendText bool) (*TodoItem, error) {
+	priority, err := NormalizePriority(priority)
+	if err != nil {
+		return nil, err
+	}
 	var setClauses []string
 	var args []any
 
@@ -592,7 +693,7 @@ func matchesPriorityFilter(priority, filter string) bool {
 	if filter == "" {
 		return true
 	}
-	negated, val := isNegated(filter)
+	negated, val := isNegated(normalizePriorityFilter(filter))
 	if negated {
 		return priority != val
 	}
