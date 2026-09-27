@@ -17,6 +17,7 @@ import (
 type RotationConfig struct {
 	Period      time.Duration // how often to check (default 24h)
 	Retention   time.Duration // keep lines newer than this (default 48h)
+	Before      time.Time     // if non-zero, archive lines stamped before this instant instead of applying Retention
 	MaxLineSize int           // scanner buffer size in bytes (default 64MB)
 	ArchiveDir  string        // where to put .gz archives
 	Files       []string      // absolute paths of log files to rotate
@@ -25,7 +26,8 @@ type RotationConfig struct {
 }
 
 // RotateOnce performs a single rotation pass with the given config.
-// Use Retention: 0 to archive all existing content (e.g. on startup).
+// Set Before to the process start time to archive all content from earlier
+// process lifetimes (e.g. on startup).
 func RotateOnce(cfg RotationConfig) {
 	rotateAll(cfg)
 }
@@ -57,8 +59,12 @@ func StartRotation(cfg RotationConfig) func() {
 }
 
 func rotateAll(cfg RotationConfig) {
+	cutoff := cfg.Before
+	if cutoff.IsZero() {
+		cutoff = time.Now().Add(-cfg.Retention)
+	}
 	for _, path := range cfg.Files {
-		if err := rotateFile(path, cfg.Retention, cfg.ArchiveDir, cfg.MaxLineSize, cfg.FileMode); err != nil {
+		if err := rotateFile(path, cutoff, cfg.ArchiveDir, cfg.MaxLineSize, cfg.FileMode); err != nil {
 			Warnf("rotate", "rotate %s: %v", path, err)
 		}
 	}
@@ -71,9 +77,9 @@ func rotateAll(cfg RotationConfig) {
 	}
 }
 
-// rotateFile processes a single log file: lines older than retention go to
-// a gzip archive, recent lines stay in the active file.
-func rotateFile(path string, retention time.Duration, archiveDir string, maxLineSize int, fileMode os.FileMode) error {
+// rotateFile processes a single log file: lines stamped before cutoff go to
+// a gzip archive, later lines stay in the active file.
+func rotateFile(path string, cutoff time.Time, archiveDir string, maxLineSize int, fileMode os.FileMode) error {
 	if fileMode == 0 {
 		fileMode = 0600
 	}
@@ -94,8 +100,6 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 	if info.Size() == 0 {
 		return nil
 	}
-
-	cutoff := time.Now().Add(-retention)
 
 	// Fast path: if the first line is within retention, skip the file entirely.
 	scanner := bufio.NewScanner(f)

@@ -58,6 +58,13 @@ func printVersion() {
 }
 
 func main() {
+	// Taken before anything can log: the startup rotation archives only lines
+	// stamped before this, so this lifetime's early lines (config warnings,
+	// shellenv, preload) stay in the live log (#1869). Truncated to the
+	// second because foci.log timestamps are whole seconds — an unrounded
+	// cutoff would archive this process's own first-second lines.
+	processStart := time.Now().Truncate(time.Second)
+
 	// Handle --version / -v / version before any flag parsing.
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
@@ -199,7 +206,7 @@ Subcommands:
 
 	// ========== Logging ==========
 	// Re-init with full config (level, API log, payload log, etc.).
-	logCleanup := initLogging(cfg)
+	logCleanup := initLogging(cfg, processStart)
 	defer logCleanup()
 
 	// Warn about unrecognised config keys (after logging is fully initialised

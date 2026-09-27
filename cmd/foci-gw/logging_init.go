@@ -12,8 +12,9 @@ import (
 )
 
 // initLogging sets up event logging, log rotation, API DB, and conversation DB.
+// processStart is the cutoff for the startup rotation pass.
 // Returns a cleanup function that should be deferred.
-func initLogging(cfg *config.Config) func() {
+func initLogging(cfg *config.Config, processStart time.Time) func() {
 	logFileMode, err := config.ParseFileMode(cfg.Logging.LogFileMode)
 	if err != nil {
 		log.Fatalf("main", "parse log_file_mode: %v", err)
@@ -71,10 +72,15 @@ func initLogging(cfg *config.Config) func() {
 			}
 		}
 
-		// Archive all existing log content on startup so each process
-		// lifetime begins with a clean log file.
+		// Archive every earlier process lifetime's content on startup so each
+		// lifetime begins with a clean log file. The cutoff is this process's
+		// start, NOT "now": the early log.Init in main has been writing to the
+		// event file since before config load, and archiving by "now" swept
+		// this lifetime's opening lines (config warnings, shellenv, preload)
+		// into the archive, leaving the live log to begin at the rotate line
+		// (#1869).
 		log.RotateOnce(log.RotationConfig{
-			Retention:   0, // archive everything
+			Before:      processStart,
 			MaxLineSize: maxLineSize,
 			ArchiveDir:  archiveDir,
 			Files:       files,

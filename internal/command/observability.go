@@ -146,7 +146,8 @@ func truncateSession(session string) string {
 // SQLite db (survives service restarts, and is a superset of the JSONL —
 // written per call at insert time by log.API) over api.jsonl, which is
 // archived to empty on every process start (initLogging's startup
-// RotateOnce(Retention: 0)) and so under-reports — or, if the JSONL write
+// RotateOnce archives everything stamped before process start, and nothing
+// writes api.jsonl earlier) and so under-reports — or, if the JSONL write
 // path is stalled for any reason, fully misses — everything logged since the
 // last restart. Falls back to the JSONL only when the db is empty/not
 // initialised (e.g. unit tests, very early startup). The db captures both
