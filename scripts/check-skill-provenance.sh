@@ -76,6 +76,15 @@ while IFS= read -r f; do
     echo "  $f: frontmatter missing 'seeded: true'" >&2
     fail=1
   fi
+  # An unquoted ': ' inside a plain scalar is invalid YAML. foci's own
+  # line-based loader tolerates it, but strict YAML readers (the delegate
+  # skill's skills.py) choke on it (#2068). Quote the value instead.
+  bad=$(printf '%s\n' "$fm" | grep -nE "^[A-Za-z_-]+: *[^\"'|> ].*: " || true)
+  if [ -n "$bad" ]; then
+    echo "  $f: frontmatter value has an unquoted ': ' (invalid YAML) — wrap the value in double quotes:" >&2
+    printf '      %s\n' "$bad" >&2
+    fail=1
+  fi
   # The frontmatter is for tooling; this note is for whoever OPENS the
   # deployed copy intending to edit it. It is the only thing that tells them
   # their edit will survive (SKILL.md) while the same edit to a sibling file
