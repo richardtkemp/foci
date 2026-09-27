@@ -100,6 +100,13 @@ type Hub struct {
 	// read+write, and h.mu is held across conversation fan-out.
 	pinsMu sync.Mutex
 
+	// settingsMu serialises storeAppSetting's load-merge-persist of the global
+	// app-settings bag (one system_state row). Two devices putting different
+	// keys at once would otherwise both merge into the same stale base and the
+	// second write would drop the first's key (#1185). Not h.mu, for the same
+	// reason as pinsMu: it is held across a SessionIndex read+write.
+	settingsMu sync.Mutex
+
 	wizardMu      sync.Mutex
 	wizards       map[string]*wizardSession // wizardId → live out-of-band wizard session
 	wizardByScope map[string]string         // wizard scope (session key) → wizardId
@@ -1568,13 +1575,20 @@ func (h *Hub) loadAppSettings() map[string]string {
 }
 
 // storeAppSetting applies one key=value to the persisted bag and returns the
-// merged map for fan-out. Last-write-wins.
+// merged map for fan-out. Last-write-wins per key; the load-merge-persist runs
+// under settingsMu so concurrent puts of different keys all survive (#1185).
 func (h *Hub) storeAppSetting(key, value string) map[string]string {
+	h.settingsMu.Lock()
+	defer h.settingsMu.Unlock()
 	m := h.loadAppSettings()
 	m[key] = value
 	if idx := h.deps.SessionIndex; idx != nil {
-		if b, err := json.Marshal(m); err == nil {
-			_ = idx.SetSystemState(systemStateAppSettings, string(b))
+		b, err := json.Marshal(m)
+		if err == nil {
+			err = idx.SetSystemState(systemStateAppSettings, string(b))
+		}
+		if err != nil {
+			appLog.Warnf("app settings: persist %q: %v", key, err)
 		}
 	}
 	return m

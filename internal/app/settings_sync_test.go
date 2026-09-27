@@ -1,6 +1,9 @@
 package app
 
 import (
+	"encoding/json"
+	"fmt"
+	"sync"
 	"testing"
 
 	"foci/internal/fap"
@@ -90,5 +93,42 @@ func TestHandleSettingPut_IgnoresEmptyKey(t *testing.T) {
 	h.handleSettingPut(fap.SettingPut{Key: "", Value: "x"})
 	if got, _ := idx.GetSystemState(systemStateAppSettings); got != "" {
 		t.Error("empty key must not write the bag")
+	}
+}
+
+// TestHandleSettingPut_ConcurrentPutsKeepEveryKey proves concurrent setting.put
+// frames for DIFFERENT keys (two devices' read pumps) all survive in the
+// persisted bag. The bag is a read-modify-write of one system_state row, so an
+// unserialised load-merge-persist lets two puts read the same base and the
+// second write drops the first's key (#1185).
+func TestHandleSettingPut_ConcurrentPutsKeepEveryKey(t *testing.T) {
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+
+	const n = 16
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			h.handleSettingPut(fap.SettingPut{Key: fmt.Sprintf("k%d", i), Value: "v"})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	raw, err := idx.GetSystemState(systemStateAppSettings)
+	if err != nil {
+		t.Fatalf("GetSystemState: %v", err)
+	}
+	m := map[string]string{}
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		t.Fatalf("unmarshal bag %q: %v", raw, err)
+	}
+	if len(m) != n {
+		t.Errorf("persisted bag has %d keys, want %d (a concurrent put was lost): %v", len(m), n, m)
 	}
 }
