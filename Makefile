@@ -184,7 +184,7 @@ test: llbox
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
 	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; $(REAP_GRADLE) bash scripts/seal-test.sh unit $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
-	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:' $(LOGFILE) || true; fi ; \
+	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; bash scripts/test-fail-summary.sh $(LOGFILE); fi ; \
 	  rm -rf $(TESTDIR) ; \
 	  if [ -n "$(CI_HOOK)" ]; then mkdir -p "$$(dirname "$(CI_HOOK)")" && printf '%s,foci,%s,unit,%s,%s\n' "$$(date -Is)" "$(GIT_COMMIT)" "$$([ $$STATUS -eq 0 ] && echo pass || echo fail)" "$$(bash scripts/ci-failed-tests.sh go $(LOGFILE))" >> "$(CI_HOOK)" || true; fi ; \
 	  exit $$STATUS ) 9</tmp/heavy
@@ -216,7 +216,7 @@ test-one: llbox
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
 	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; $(REAP_GRADLE) bash scripts/seal-test.sh one $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) $(PKG) "$(RUN)" "$(V)" "$(COUNT)" 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
-	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:' $(LOGFILE) || true; fi ; \
+	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; bash scripts/test-fail-summary.sh $(LOGFILE); fi ; \
 	  rm -rf $(TESTDIR) ; \
 	  exit $$STATUS ) 9</tmp/heavy
 
@@ -262,7 +262,7 @@ integration: llbox
 	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; $(REAP_GRADLE) bash scripts/seal-test.sh integration $(TESTDIR) $(LOGFILE) $(IPARALLEL) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) "" '$(value RUN)' "" "$(COUNT)" 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -ne 0 ]; then echo ">>> non-zero exit ($$STATUS) — sweeping any orphaned foci-gw/cc-stub subprocesses from this run ..." >&2; pkill -f "$(TESTDIR)/foci-l2-bin[0-9]" 2>/dev/null || true; fi ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
-	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; grep -E '^(--- FAIL:|FAIL)|panic:' $(LOGFILE) || true; fi ; \
+	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; bash scripts/test-fail-summary.sh $(LOGFILE); fi ; \
 	  rm -rf $(TESTDIR) ; \
 	  if [ -n "$(CI_HOOK)" ] && [ -z '$(value RUN)' ]; then mkdir -p "$$(dirname "$(CI_HOOK)")" && printf '%s,foci,%s,integration,%s,%s\n' "$$(date -Is)" "$(GIT_COMMIT)" "$$([ $$STATUS -eq 0 ] && echo pass || echo fail)" "$$(bash scripts/ci-failed-tests.sh go $(LOGFILE))" >> "$(CI_HOOK)" || true; fi ; \
 	  exit $$STATUS ) 9</tmp/heavy
