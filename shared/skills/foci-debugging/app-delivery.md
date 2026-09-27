@@ -189,24 +189,21 @@ with `visible=0` but ARE present here, so their absence is meaningful too.
   call clobbers. Archived logs that predate the instrumentation structurally CAN'T show it — don't
   "refute" a hypothesis from them (I did, and was wrong). The failure needs the specific ingredient
   (a follow-up folding into an ACTIVE autonomous run); a lone quiet trigger just adopts cleanly.
-- **A third failure class: the message was never EMITTED at all (model-side, upstream
-  anthropics/claude-code #50597) — foci and the app are innocent.** 2026-07-16, twice in
-  one evening: a long report-style reply composed mid-turn between tool calls simply never
-  became a text block — it "landed in thinking" (the agent cannot tell from inside; its
-  closer even referenced the unsent message). Diagnosis chain, most-decisive first:
-  1. `[ccstream:<agent>-…] OnAssistant: text_blocks=N text_bytes=B` summed over the turn —
-     if the whole turn shows one tiny text block, nothing longer ever existed.
-  2. Frame anatomy of a delivered block in `app_frames.db`: `turn.start` → `text.delta`(s)
-     → `text.end` (its `d.finalText` is the per-BLOCK payload) → `meta`. Read the MATCHED
-     frame's `wire` payload — an OR-query hit at the right timestamp proved to be the
-     *other* (short) message once actually read. Match the exact distinctive string of the
-     specific message.
-  3. The CC transcript can't help for thinking content: ALL persisted `thinking` blocks are
-     stripped to `{"thinking":"","signature":…}` (len 0). `text_blocks`/`text_bytes` in the
-     ccstream log is the only per-turn ground truth for "did text go out".
-  Pattern/mitigation: long blocks vanish, short ones survive; heavy per-turn system-reminder
-  injection correlates (unproven). For critical content have the agent use the send_to_chat
-  tool path (a tool call provably executes) and verify the frame payload after. foci #1303.
+- **A third failure class: the message was never EMITTED as text — foci and the app are
+  innocent.** On Opus 5.5 / Fable 5.1 this is DOCUMENTED API behaviour, not a bug (Opus 5.5
+  migration guide, "Text between tool calls is returned in thinking blocks"): text written
+  before a tool call comes back as a progress-update THINKING block, at most one per tool call.
+  foci renders only text blocks, so it is dropped; the agent can't tell from inside (its next
+  text may reference the "sent" message). Measured ~9% of opus-5-5 thinking responses. foci #1303.
+  Fingerprint, in the CC transcript (group lines by `message.id` — one response spans several):
+  `thinking`(empty) + `thinking`(readable) + `tool_use`, no `text`. The readable 2nd thinking
+  block is the tell — ordinary thinking persists as `""` — and is a paraphrase of the lost reply.
+  Cross-check: `[ccstream:<agent>-…] OnAssistant` shows `text_bytes=0` for that response; in
+  `app_frames.db` no `text.end` (its `d.finalText` is the per-block payload) between the
+  neighbouring delivered seqs — match the message's exact distinctive string, not an OR-query.
+  Rule (backend-claude-code.md): anything the user must read verbatim goes in the FINAL message,
+  after the last tool call, or via `foci_send_to_chat`. Text before a tool call = short progress
+  notes only.
 - **A fourth class: subagent output rendered in the MAIN chat instead of a collapsible chit.**
   (foci #1420→#1422/#1424/#1423, 2026-07-20.) Symptom: a background/reactivated Agent-tool
   subagent's text (or a SendMessage-follow-up prompt) appears as a plain `role="agent"`/`role="user"`
