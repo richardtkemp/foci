@@ -76,7 +76,7 @@ func TestSubagentTail_ForegroundStreamsAppendedText(t *testing.T) {
 	if err := os.WriteFile(path, []byte(assistantLine("MSG-ONE")), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mgr.maybeStart("tool-1", path)
+	mgr.maybeStart("tool-1", path, time.Time{})
 
 	waitFor(t, func() bool { return len(rec.texts()) == 1 })
 
@@ -122,7 +122,7 @@ func TestSubagentTail_FinalizeDrainsRemainder(t *testing.T) {
 	if err := os.WriteFile(path, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mgr.maybeStart("tool-2", path)
+	mgr.maybeStart("tool-2", path, time.Time{})
 	// Give the tailer time to open the file, then append + immediately finalize.
 	waitFor(t, func() bool { return fileOpened(mgr, "tool-2") })
 	f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
@@ -169,7 +169,7 @@ func TestSubagentTail_BackgroundIsTailedForUsageButNotText(t *testing.T) {
 	noted := 0
 	mgr := newSubagentTailManager(rec.deliver, func(string, string, string, time.Time, bool, TokenUsage) { noted++ }, nil)
 	// No expectForeground → background path.
-	mgr.maybeStart("tool-bg", path)
+	mgr.maybeStart("tool-bg", path, time.Time{})
 
 	waitFor(t, func() bool { return fileOpened(mgr, "tool-bg") })
 	time.Sleep(30 * time.Millisecond)
@@ -205,7 +205,7 @@ func TestSubagentTail_DeliverLineFilters(t *testing.T) {
 		``,
 	}
 	for _, l := range lines {
-		mgr.deliverLine("g", []byte(l), true)
+		mgr.deliverLine("g", []byte(l), true, nil)
 	}
 	got := rec.texts()
 	if len(got) != 1 || got[0] != "REAL" {
@@ -232,7 +232,7 @@ func TestSubagentTail_BackgroundRecordsUsageWithoutText(t *testing.T) {
 		`"content":[{"type":"text","text":"SHOULD NOT BE DELIVERED"}],` +
 		`"usage":{"output_tokens":319,"cache_creation_input_tokens":39122}}}`
 
-	mgr.deliverLine("g", []byte(line), false) // background: usage only
+	mgr.deliverLine("g", []byte(line), false, nil) // background: usage only
 
 	if texts := rec.texts(); len(texts) != 0 {
 		t.Errorf("background subagent text was forwarded (%v) — it already streams to the "+
@@ -259,7 +259,7 @@ func TestSubagentTail_MaybeStartRunsForBackgroundToo(t *testing.T) {
 	}
 	mgr := newSubagentTailManager(nil, func(string, string, string, time.Time, bool, TokenUsage) {}, nil)
 
-	mgr.maybeStart("toolu_bg", path) // no expectForeground call: background
+	mgr.maybeStart("toolu_bg", path, time.Time{}) // no expectForeground call: background
 
 	mgr.mu.Lock()
 	tail, running := mgr.tails["toolu_bg"]
@@ -285,7 +285,7 @@ func TestSubagentTail_MaybeStartKeepsTextForForeground(t *testing.T) {
 	mgr := newSubagentTailManager(func(string, string) {}, nil, nil)
 
 	mgr.expectForeground("toolu_fg")
-	mgr.maybeStart("toolu_fg", path)
+	mgr.maybeStart("toolu_fg", path, time.Time{})
 
 	mgr.mu.Lock()
 	tail := mgr.tails["toolu_fg"]
@@ -330,7 +330,7 @@ func TestSubagentTail_BackgroundSurvivesPostToolUseAtLaunch(t *testing.T) {
 
 	// No expectForeground → background. The transcript does NOT exist yet, which
 	// is the whole point: the task has only just been launched.
-	mgr.maybeStart("tool-bg", path)
+	mgr.maybeStart("tool-bg", path, time.Time{})
 
 	// The background Agent tool_use resolves at once, so PostToolUse fires HERE.
 	mgr.clearPendingForeground("tool-bg")
@@ -376,7 +376,7 @@ func TestSubagentTail_ForegroundStillFinalizesAtPostToolUse(t *testing.T) {
 	if err := os.WriteFile(path, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mgr.maybeStart("tool-fg", path)
+	mgr.maybeStart("tool-fg", path, time.Time{})
 	waitFor(t, func() bool { return fileOpened(mgr, "tool-fg") })
 
 	f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)

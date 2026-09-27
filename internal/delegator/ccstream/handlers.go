@@ -1033,12 +1033,19 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 			// delegation read short. Key the tail by the subagent's own group key
 			// instead, the same one its task_notification finalizes. Only a task
 			// neither branch identifies keeps the raw id, as it did before.
+			//
+			// A reactivation also gates the tail's ACCOUNTING to its own run
+			// (#2057): the tail reads from byte 0, and after a foci restart the
+			// accumulator no longer knows run 1 was booked. reactivatedAt stays
+			// zero for run 1 and for a nested task, whose runs are not tracked.
 			tailKey := task.ToolUseID
+			var reactivatedAt time.Time
 			if nestedKey, nested := b.nestedTask(task.TaskID, task.ToolUseID); nested {
 				tailKey = nestedKey
 				b.logger().Infof("subagent_start suppressed=nested group=%s task_id=%s", nestedKey, task.TaskID)
 			} else if run, reactivated, prompt := b.onTaskStarted(task.TaskID, task.ToolUseID); reactivated {
 				tailKey = run.groupKey
+				reactivatedAt = time.Now()
 				b.agents.Add(run.groupKey, run.label)
 				// Unconditional start, but still recorded: a run rehydrated after a
 				// restart has no run-1 mark, and without one its end would be
@@ -1091,7 +1098,7 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 				}
 				b.logger().Debugf("subagent tail: starting for group=%s task_id=%s tool_use_id=%s path=%s",
 					tailKey, task.TaskID, task.ToolUseID, path)
-				b.subagentTails().maybeStart(tailKey, path)
+				b.subagentTails().maybeStart(tailKey, path, reactivatedAt)
 			}
 		case "task_notification":
 			if !isTerminalTaskStatus(task.Status) {

@@ -62,7 +62,7 @@ func TestSubagentTail_WaitsForTheTerminalRecordWrittenByAnotherProcess(t *testin
 	if err := os.WriteFile(path, []byte(msgWithStop("m-1", "tool_use", 95, 10630)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mgr.maybeStart("tool-term", path)
+	mgr.maybeStart("tool-term", path, time.Time{})
 	waitFor(t, func() bool { return fileOpened(mgr, "tool-term") })
 
 	// A REAL separate process appends the terminal record shortly AFTER we ask
@@ -166,7 +166,7 @@ func TestSubagentTail_AnEarlierEndTurnDoesNotEndTheTail(t *testing.T) {
 			if err := os.WriteFile(path, hist, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			mgr.maybeStart("tool-sticky", path)
+			mgr.maybeStart("tool-sticky", path, time.Time{})
 			waitForLines(t, mgr, "tool-sticky", int64(len(tc.history)))
 
 			done := make(chan struct{})
@@ -209,7 +209,7 @@ func TestSubagentTail_EndsPromptlyWhenTheFileIsAlreadyAtRest(t *testing.T) {
 		t.Fatal(err)
 	}
 	mgr := newSubagentTailManager(nil, nil, nil)
-	mgr.maybeStart("tool-rest", path)
+	mgr.maybeStart("tool-rest", path, time.Time{})
 	waitForLines(t, mgr, "tool-rest", 6)
 
 	done := make(chan struct{})

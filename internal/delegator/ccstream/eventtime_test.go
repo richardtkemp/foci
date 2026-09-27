@@ -134,7 +134,7 @@ func TestDeliverLine_ParsesTranscriptTimestamp(t *testing.T) {
 	// timestamp is TOP-LEVEL, RFC3339 with millis and a Z.
 	line := `{"type":"assistant","isSidechain":true,"timestamp":"2026-09-13T14:40:13.820Z",` +
 		`"message":{"id":"msg_1","model":"claude-opus-5","usage":{"cache_read_input_tokens":5}}}`
-	mgr.deliverLine("agent-1", []byte(line), false)
+	mgr.deliverLine("agent-1", []byte(line), false, nil)
 
 	want := time.Date(2026, 9, 13, 14, 40, 13, 820000000, time.UTC)
 	if !got.Equal(want) {
@@ -409,8 +409,8 @@ func TestDeliverLine_ReportsCompletionFromStopReason(t *testing.T) {
 
 	base := `{"type":"assistant","isSidechain":true,"timestamp":"2026-09-14T13:29:08.395Z",` +
 		`"message":{"id":"msg_1","model":"claude-fable-5-1","usage":{"cache_read_input_tokens":5}`
-	mgr.deliverLine("agent-1", []byte(base+`}}`), false)                          // in flight
-	mgr.deliverLine("agent-1", []byte(base+`,"stop_reason":"tool_use"}}`), false) // completed
+	mgr.deliverLine("agent-1", []byte(base+`}}`), false, nil)                          // in flight
+	mgr.deliverLine("agent-1", []byte(base+`,"stop_reason":"tool_use"}}`), false, nil) // completed
 
 	want := []bool{false, true}
 	if len(got) != len(want) {
