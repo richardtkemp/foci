@@ -649,7 +649,7 @@ var todoActions = []struct {
 	Usage string // single-line: e.g. "complete <id> [--reason TEXT]"
 	Flags string // space-separated --flag list valid for this action; empty = no flags
 }{
-	{"add", "add --text TEXT [--body TEXT] [--title TEXT] [--priority high|medium|low] [--tag TAGS]   (alias: create; --title prepended in bold to --body/--text)", "--text --body --title --priority --tag"},
+	{"add", "add <text> | --text TEXT | [<title>] --body TEXT  [--title TEXT] [--priority high|medium|low] [--tag TAGS]   (alias: create; with --body, bare words are the title; the title is prepended in bold)", "--text --body --title --priority --tag"},
 	{"list", "list [--tag T] [--status open|done|dropped|all] [--priority P] [--sort F] [--reverse] [--limit N] [--format jsonl|md]", "--tag --status --priority --sort --reverse --limit --format"},
 	{"list-all", "list-all [--tag T] [--priority P] [--sort F] [--reverse] [--limit N] [--format jsonl|md]", "--tag --priority --sort --reverse --limit --format"},
 	{"search", "search <query> [--sort F] [--reverse] [--limit N] [--format jsonl|md]   (query may also be given as --query TEXT)", "--query --sort --reverse --limit --format"},
@@ -831,7 +831,7 @@ func generateShellFunc(t *Tool) string {
     fi
     return 0
   fi
-  local text="" priority="" tag="" query="" status="" id="" ids="" reason="" sort="" reverse="" limit="" append="" append_text="" body="" title=""
+  local text="" priority="" tag="" query="" status="" id="" ids="" reason="" sort="" reverse="" limit="" append="" append_text="" body="" title="" add_words=""
   while [ $# -gt 0 ]; do
     # #1218: reject flags that are globally-known but not valid for THIS action
     # (e.g. edit --status done — --status is a list/search filter that edit's
@@ -896,7 +896,7 @@ func generateShellFunc(t *Tool) string {
         return 1 ;;
       *) # positional: first positional is text/query/id depending on action
         case "$action" in
-          add) text="$text $1" ;;
+          add) add_words="$add_words $1" ;;
           search) query="$query $1" ;;
           get|complete|drop|reopen|start|remove) id="$1" ;;
           edit)
@@ -912,11 +912,31 @@ func generateShellFunc(t *Tool) string {
   done
   text="${text# }"
   query="${query# }"
-  # #941: --body is an alias for the todo text; --title (if set) is prepended in bold.
+  # #941: --body is an alias for the todo text. #2075: with --body, bare words
+  # are the TITLE (add "<title>" --body "<text>"); without it they are the text.
+  # Every combination that would drop one value is refused. The tool composes
+  # the bold title line, so a direct tool call gets the same result.
   if [ "$action" = add ]; then
-    [ -n "$body" ] && text="$body"
-    if [ -n "$title" ]; then
-      if [ -n "$text" ]; then text="$(printf '*%%s*\n\n%%s' "$title" "$text")"; else text="*$title*"; fi
+    add_words="${add_words# }"
+    if [ -n "$body" ]; then
+      if [ -n "$text" ]; then
+        echo "error: add: --text and --body are the same field; use --text OR --body, not both" >&2
+        return 1
+      fi
+      if [ -n "$add_words" ]; then
+        if [ -n "$title" ]; then
+          echo "error: add: with --body, bare words are the title, and the title was already given as --title" >&2
+          return 1
+        fi
+        title="$add_words"
+      fi
+      text="$body"
+    elif [ -n "$add_words" ]; then
+      if [ -n "$text" ]; then
+        echo "error: add: the text was given twice; use --text OR bare words, not both" >&2
+        return 1
+      fi
+      text="$add_words"
     fi
   fi
   # On complete/drop, --text aliases --reason (writes to close_reason).
@@ -962,6 +982,7 @@ func generateShellFunc(t *Tool) string {
     add)
       local params='{"action":"add"}'
       [ -n "$text" ] && params="$(echo "$params" | jq --arg t "$text" '. + {text: $t}')"
+      [ -n "$title" ] && params="$(echo "$params" | jq --arg t "$title" '. + {title: $t}')"
       [ -n "$priority" ] && params="$(echo "$params" | jq --arg p "$priority" '. + {priority: $p}')"
       [ -n "$tag" ] && params="$(echo "$params" | jq --arg g "$tag" '. + {tag: $g}')"
       foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"

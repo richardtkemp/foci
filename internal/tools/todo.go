@@ -30,11 +30,11 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				},
 				"text": {
 					"type": "string",
-					"description": "Text for the todo item — required on add. On complete/drop it aliases --reason"
+					"description": "Text for the todo item — required on add unless title is given. On complete/drop it aliases --reason"
 				},
 				"title": {
 					"type": "string",
-					"description": "Rename the item's headline — the bold '*Title*' line 'add --title' composes at the front of text. Replaces just that leading title line (prepending one if the item doesn't have one yet); the rest of the text is untouched. Empty/absent is always a no-op — a title can never be cleared by omission, or by passing an empty string."
+					"description": "The item's headline — on add, a bold '*Title*' line composed at the front of text. On edit, renames it: replaces just that leading title line (prepending one if the item doesn't have one yet); the rest of the text is untouched. Empty/absent is always a no-op — a title can never be cleared by omission, or by passing an empty string."
 				},
 				"append": {
 					"type": "boolean",
@@ -117,7 +117,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 
 			switch p.Action {
 			case "add":
-				return todoAdd(store, agentID, p.Text, p.Priority, p.Tag)
+				return todoAdd(store, agentID, p.Text, p.Title, p.Priority, p.Tag)
 			case "list":
 				jsonl, err := todoWantsJSONL(ctx)
 				if err != nil {
@@ -314,9 +314,14 @@ func formatCompactAge(item memory.TodoItem) string {
 	return display.CompactRelativeTime(item.CreatedAt)
 }
 
-func todoAdd(store *memory.TodoStore, agentID, text, priority, tag string) (ToolResult, error) {
-	if text == "" {
-		return ToolResult{}, fmt.Errorf("text is required for add")
+func todoAdd(store *memory.TodoStore, agentID, text, title, priority, tag string) (ToolResult, error) {
+	if text == "" && title == "" {
+		return ToolResult{}, fmt.Errorf("text (or title) is required for add")
+	}
+	// #2075: title used to be composed in the foci_todo bash only, so a direct
+	// tool call's title was dropped. Composing here serves every caller.
+	if title != "" {
+		text = composeTitledText(title, text)
 	}
 	// Normalised here too (the store repeats it) so the echo names what was
 	// stored — "Added #N (medium)", not the caller's "med".
@@ -754,7 +759,7 @@ func todoEdit(store *memory.TodoStore, agentID string, id int64, ids []int64, te
 }
 
 // todoTitleLineRe matches the bold "*Title*" headline line that todoAdd's
-// --title composes at the front of an item's text (#941: `*%s*\n\n%s`, or
+// title composes at the front of an item's text (#941: `*%s*\n\n%s`, or
 // bare `*%s*` when there's no body). Captures the body that follows, if any.
 var todoTitleLineRe = regexp.MustCompile(`(?s)\A\*[^\n]*\*(?:\n\n(.*))?\z`)
 
@@ -768,10 +773,16 @@ func retitleItemText(text, newTitle string) string {
 	if m := todoTitleLineRe.FindStringSubmatch(text); m != nil {
 		body = m[1]
 	}
+	return composeTitledText(newTitle, body)
+}
+
+// composeTitledText builds item text from a headline and a body in the bold
+// "*Title*" form splitTodoTitle and todoTitleLineRe read.
+func composeTitledText(title, body string) string {
 	if body == "" {
-		return "*" + newTitle + "*"
+		return "*" + title + "*"
 	}
-	return "*" + newTitle + "*\n\n" + body
+	return "*" + title + "*\n\n" + body
 }
 
 // editSummaryTextBudget is the combined old+new length below which an edit
