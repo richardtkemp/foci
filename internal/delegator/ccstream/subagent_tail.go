@@ -131,10 +131,11 @@ var (
 	// task_notification:completed, which arrives on CC's STDOUT STREAM — a
 	// different channel from CC's append to the transcript FILE, with no ordering
 	// between them. So the last record can still be in flight when we are told
-	// the subagent finished (#1938; measured at ~110ms on live probes). The tail
-	// keeps draining until it reads a TERMINAL record or this expires, whichever
-	// comes first — so the happy path costs nothing and a subagent that never
-	// writes one (killed, errored, rate-limited) still terminates.
+	// the subagent finished (#1938; measured at ~110ms and ~220ms on live
+	// probes). The tail keeps draining until the transcript ENDS at a terminal
+	// record or this expires, whichever comes first — so the happy path costs
+	// nothing and a subagent that never writes one (killed, errored,
+	// rate-limited) still terminates.
 	subagentTailSettle = 3 * time.Second
 )
 
@@ -166,10 +167,6 @@ type subagentTail struct {
 	wantText bool
 	stop     chan struct{}
 	done     chan struct{}
-	// sawTerminal records that a record with a TERMINAL stop_reason has been
-	// read — the run's own end-of-stream marker, on the SAME channel as the data,
-	// so it cannot race the data the way the stream event does (#1938).
-	sawTerminal atomic.Bool
 	// lines counts transcript lines this tail delivered. Reported at close so
 	// a tail that opened its file but read nothing is distinguishable from one
 	// that never opened it at all (#1934).
@@ -314,8 +311,8 @@ func (m *subagentTailManager) stopAll() {
 }
 
 // run tails path, forwarding appended assistant text blocks until stop is
-// closed. On stop it performs one final drain so text written right before
-// completion is not lost. Closes t.done on exit.
+// closed and the transcript has caught up to the run's end (see atRest). Closes
+// t.done on exit.
 func (m *subagentTailManager) run(groupKey, path string, t *subagentTail) {
 	defer close(t.done)
 
@@ -325,9 +322,21 @@ func (m *subagentTailManager) run(groupKey, path string, t *subagentTail) {
 	}
 	defer f.Close()
 	m.lg.Debugf("subagent tail: opened %s (group=%s wantText=%v)", path, groupKey, t.wantText)
+
+	// atRest: the transcript read so far ENDS at a terminal record, i.e. its last
+	// conversational record is an assistant message whose stop_reason ends the
+	// run. This is the run's own end-of-stream marker, on the SAME channel as the
+	// data, so it cannot race the data the way the stream event does (#1938).
+	//
+	// It must track the LAST such record, not remember any: a run can write an
+	// end_turn and carry on (a Stop hook sends it back for SubagentHandback; a
+	// SendMessage reactivates it, and a reactivation tail re-reads run 1 from
+	// byte 0). A sticky "saw one" flag was already set when stop arrived for
+	// those runs, so the tail returned before their final record was written.
+	atRest := false
 	defer func() {
 		m.lg.Debugf("subagent tail: closed group=%s lines=%d usage=%d completed=%d terminal=%v",
-			groupKey, t.lines.Load(), t.usage.Load(), t.completed.Load(), t.sawTerminal.Load())
+			groupKey, t.lines.Load(), t.usage.Load(), t.completed.Load(), atRest)
 	}()
 
 	var acc []byte
@@ -343,8 +352,8 @@ func (m *subagentTailManager) run(groupKey, path string, t *subagentTail) {
 						break
 					}
 					r := m.deliverLine(groupKey, acc[:i], t.wantText)
-					if r.terminal {
-						t.sawTerminal.Store(true)
+					if r.conversational {
+						atRest = r.terminal
 					}
 					if r.usage {
 						t.usage.Add(1)
@@ -362,26 +371,26 @@ func (m *subagentTailManager) run(groupKey, path string, t *subagentTail) {
 		}
 	}
 
+	// stop and settle are the two halves of "finished". stop is the stream event
+	// saying so; the FILE has not necessarily caught up, and the two are not
+	// ordered (#1938). So once stopped, the tail keeps draining until the
+	// transcript itself is at rest, or until the settle window closes for a run
+	// that never writes a terminal record (killed, errored, rate-limited).
+	stop := t.stop
+	var settle <-chan time.Time
 	for {
 		drain()
+		if stop == nil && atRest {
+			return
+		}
 		select {
-		case <-t.stop:
-			// The stream event said "finished". The FILE has not necessarily
-			// caught up, and the two are not ordered (#1938). Keep draining until
-			// the run's own terminal record arrives or the settle window closes.
-			deadline := time.Now().Add(subagentTailSettle)
-			for {
-				drain()
-				if t.sawTerminal.Load() {
-					return
-				}
-				if time.Now().After(deadline) {
-					m.lg.Debugf("subagent tail: no terminal record within %s, closing anyway (group=%s lines=%d)",
-						subagentTailSettle, groupKey, t.lines.Load())
-					return
-				}
-				time.Sleep(subagentTailPoll)
-			}
+		case <-stop:
+			stop = nil
+			settle = time.After(subagentTailSettle)
+		case <-settle:
+			m.lg.Debugf("subagent tail: no terminal record within %s, closing anyway (group=%s lines=%d)",
+				subagentTailSettle, groupKey, t.lines.Load())
+			return
 		case <-time.After(subagentTailPoll):
 		}
 	}
@@ -430,10 +439,11 @@ type transcriptLine struct {
 	// spend onto whichever turn happened to be open when they landed (#1909).
 	Timestamp string `json:"timestamp"`
 	Message   struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
+		// Content stays raw until text delivery needs it: a user record's
+		// content is a plain STRING when it is a prompt (a SendMessage, a Stop
+		// hook's feedback), and decoding it as blocks would fail the whole line,
+		// hiding the one fact the tail needs from it, that the run continued.
+		Content json.RawMessage `json:"content"`
 		// ID/Model/Usage carry the accounting half of the line. A FOREGROUND
 		// subagent's pure-text messages never reach the parent stream, and
 		// their usage goes with them, so the transcript is the only complete
@@ -451,16 +461,22 @@ type transcriptLine struct {
 
 // lineResult is what deliverLine observed about one transcript line.
 //
+// conversational: the record is a turn of the conversation (assistant or
+// user), so it decides whether the transcript is at rest; attachments and other
+// bookkeeping records do not (live transcripts can end with attachments after
+// the final end_turn).
+//
 // terminal: the record ENDS the run — a non-nil stop_reason that is not
 // "tool_use". "tool_use" means the assistant will be called again, so it is
 // explicitly NOT terminal; the live probe that exposed #1938 had exactly that
-// shape (tool_use, then the end_turn that was lost).
+// shape (tool_use, then the end_turn that was lost). A user record is never
+// terminal: whatever the assistant said before it, the run went on.
 //
 // usage: the line's usage was handed to the accumulator; complete: it carried
 // a stop_reason, so the accumulator counts it (#1923). Both feed the tail's
 // close line (#1936).
 type lineResult struct {
-	terminal, usage, complete bool
+	conversational, terminal, usage, complete bool
 }
 
 // deliverLine parses one transcript line and forwards each assistant text block
@@ -475,9 +491,14 @@ func (m *subagentTailManager) deliverLine(groupKey string, line []byte, wantText
 	if err := json.Unmarshal(line, &rec); err != nil {
 		return
 	}
+	if rec.Type == "user" {
+		r.conversational = true
+		return
+	}
 	if rec.Type != "assistant" {
 		return
 	}
+	r.conversational = true
 	// Accounting first, and NOT gated on m.deliver. The two sinks fail
 	// independently: a consumer with no text sink still spends real money, and
 	// the previous early return on a nil deliver would have discarded every
@@ -503,7 +524,14 @@ func (m *subagentTailManager) deliverLine(groupKey string, line []byte, wantText
 	if !wantText || m.deliver == nil {
 		return r
 	}
-	for _, blk := range rec.Message.Content {
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(rec.Message.Content, &blocks) != nil {
+		return r
+	}
+	for _, blk := range blocks {
 		if blk.Type == "text" && blk.Text != "" {
 			m.deliver(groupKey, blk.Text)
 		}
