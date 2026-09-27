@@ -179,9 +179,15 @@ func TestBackgroundConnect_ShutdownCancelsPendingRetry(t *testing.T) {
 	sw := withSwitchableTelegram(t)
 	mgr := NewBotManager()
 	p := setupAgentFixture(t)
+	// One connect loop, so attempts are countable. This must precede
+	// SetupAgent: a facet registered there gets its own retry loop feeding the
+	// same attempt counter, and under load it lands a 4th attempt that was
+	// already in flight when attempt 3 cancelled (#2062).
+	p.AgentConfig.Platforms[0].FacetBots = nil
 	within(t, "SetupAgent", func() { SetupAgent(mgr, p) })
-
-	p.AgentConfig.Platforms[0].FacetBots = nil // one connect loop, so attempts are countable
+	if pool := mgr.Pool("scout"); pool != nil && pool.Size() > 0 {
+		t.Fatalf("%d facet bot(s) registered: each is a second connect loop on the shared attempt counter", pool.Size())
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	sw.cancelAt, sw.shutdownAt = 3, cancel
