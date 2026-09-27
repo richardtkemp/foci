@@ -71,9 +71,9 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 		return
 	}
 
-	targets := r.keepaliveTargets(interval)
+	targets, why := r.keepaliveTargets(interval)
 	if len(targets) == 0 {
-		skip = "no session in the warm window"
+		skip = why
 		return
 	}
 
@@ -105,18 +105,24 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 // there is no live cache to keep alive. An in-flight turn also skips it. A session
 // no human has touched within max_user_idle is skipped too — an abandoned session
 // is left to expire rather than warmed indefinitely.
-func (r *Runner) keepaliveTargets(interval time.Duration) []string {
+//
+// When nothing is ready, why says so. The in-flight check runs LAST, so a
+// session reported as "due but turn in flight" is one that would have been
+// warmed this tick had the in-flight gate not deferred it — the event the L2
+// gate test (TestL2_Cron_KeepaliveSkippedWhenTurnInFlight) syncs on (#2084).
+func (r *Runner) keepaliveTargets(interval time.Duration) (ready []string, why string) {
+	why = "no session in the warm window"
 	var candidates []string
 	if r.kaCfg.WarmOpenAppChats && r.openSessionsFn != nil {
 		candidates = r.openSessionsFn()
 	}
 	if len(candidates) == 0 {
-		if parentKey, skip := r.readyParentKey(); skip == "" {
+		if parentKey := r.defaultParentKey(); parentKey != "" {
 			candidates = []string{parentKey}
 		}
 	}
 	if r.sessionIndex == nil {
-		return nil
+		return nil, why
 	}
 
 	var maxIdle time.Duration
@@ -127,11 +133,7 @@ func (r *Runner) keepaliveTargets(interval time.Duration) []string {
 	}
 
 	now := time.Now()
-	var ready []string
 	for _, sk := range candidates {
-		if r.parentTurnInFlight(sk) {
-			continue
-		}
 		if skip := r.checkRateLimit(sk); skip != "" {
 			continue // endpoint rate-limited — don't warm into a cap
 		}
@@ -151,7 +153,11 @@ func (r *Runner) keepaliveTargets(interval time.Duration) []string {
 		if r.cacheTTL > 0 && elapsed >= r.cacheTTL {
 			continue // cache already expired — don't warm a corpse
 		}
+		if r.parentTurnInFlight(sk) {
+			why = "due but turn in flight on " + sk
+			continue
+		}
 		ready = append(ready, sk)
 	}
-	return ready
+	return ready, why
 }

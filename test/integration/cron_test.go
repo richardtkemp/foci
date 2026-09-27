@@ -177,108 +177,154 @@ func TestL2_Cron_KeepaliveSkippedWhenCachingUnavailable(t *testing.T) {
 
 // TestL2_Cron_KeepaliveSkippedWhenTurnInFlight proves the in-flight
 // guard added by TODO #760: if a user turn is mid-flight on the parent
-// session when the keepalive tick fires, the runner defers rather than
-// queueing the keepalive prompt as a SourceUser follow-up. The test
-// holds a turn open (cc-stub script with a long-running Bash tool_use)
-// while the keepalive interval elapses, then verifies no keepalive
-// invocation was recorded until after the held turn completes.
+// session when keepalive is DUE, the runner defers rather than firing.
+//
+// It observes the gate's DECISION, not the keepalive turn. In this harness
+// the fork of the parent fails (cc-stub keeps no transcript), so keepalive
+// falls back to an in-place inject, which the session inbox serialises
+// behind the in-flight turn. A keepalive the gate wrongly let through would
+// therefore still reach cc-stub only after the held turn ended, so no
+// recorder timestamp can tell a correct gate from a broken one (#2084). The
+// gate's decision is in foci.log: "firing keepalive" when it lets one
+// through, and (at DEBUG) "due but turn in flight" when a due keepalive is
+// deferred because of the in-flight turn.
+//
+// Every step waits on an event, never on elapsed time: the held turn is
+// open until the test releases it, and it is released only once the
+// deferral line has been logged while it was open.
 func TestL2_Cron_KeepaliveSkippedWhenTurnInFlight(t *testing.T) {
 	testharness.ParallelWait(t)
 	const testUserID = 5302
 
+	logDir := t.TempDir()
+	eventLog := filepath.Join(logDir, "foci.log")
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: testUserID},
 		},
-		ExtraConfigTOML: "\n[keepalive]\nenabled = true\ninterval = \"1s\"\n",
-		ReadyTimeout:    30 * time.Second,
+		ExtraConfigTOML: scopedLoggingTOML(logDir, eventLog, false) + "level = \"DEBUG\"\n" +
+			"\n[keepalive]\nenabled = true\ninterval = \"1s\"\n",
+		ReadyTimeout: 30 * time.Second,
 	})
+	token := h.AgentBotToken("alpha")
+	push := func(text string) {
+		h.TelegramStub().PushUpdate(token, gotgbot.Update{
+			Message: &gotgbot.Message{
+				Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+				From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+				Text: text,
+			},
+		})
+	}
+	readLog := func() string {
+		b, err := os.ReadFile(eventLog)
+		if err != nil {
+			t.Fatalf("read foci.log: %v", err)
+		}
+		return string(b)
+	}
+	const (
+		fired    = "firing keepalive for agent alpha"
+		deferred = "skip keepalive: due but turn in flight on "
+	)
+	// until polls cond until it holds; the deadline is a hang guard only.
+	until := func(what string, cond func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(60 * time.Second)
+		for !cond() {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for %s\nrecorder:\n%s", what, recorderTail(t, h.RecorderPath()))
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
 
 	// Bootstrap a parent session so keepalive has a default to fire on.
-	scriptBody, err := json.Marshal(map[string]any{"text": "bootstrap"})
-	if err != nil {
-		t.Fatalf("marshal bootstrap script: %v", err)
-	}
-	h.WriteCCStubScript(t, "alpha", scriptBody)
-
-	token := h.AgentBotToken("alpha")
-	h.TelegramStub().PushUpdate(token, gotgbot.Update{
-		Message: &gotgbot.Message{
-			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
-			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
-			Text: "bootstrap session",
-		},
-	})
+	push("bootstrap session")
 	if !waitForUserMessage(t, h, "workspaces/alpha", "bootstrap session", 15*time.Second) {
 		t.Fatalf("bootstrap user message never processed; stderr:\n%s", stderrTail(h.Stderr()))
 	}
 
-	// Hold the parent session in-flight across the T+30s keepalive tick.
-	// Hold the parent session in-flight long enough to span several scheduler
-	// ticks. With a 1s tick, keepalive is eligible almost immediately and
-	// tries every tick — the in-flight guard must defer each one until the
-	// turn completes. Two `sleep 4` Bash tool_uses give ~8s of in-flight wall
-	// time (cc-stub caps each Bash at 10s); keepalive then fires on the first
-	// tick after the hang.
-	// Bind the hang to the hold message (match) so no other turn — the
-	// bootstrap still finishing, or a keepalive — can take it (#2079).
-	const holdText = "hold turn for keepalive test"
-	hangSleep := map[string]any{"name": "Bash", "input": map[string]any{"command": "sleep 4"}}
-	hangBody, err := json.Marshal(map[string]any{
-		"match": holdText,
-		"text":  "holding",
-		"tool_uses": []map[string]any{
-			hangSleep, hangSleep,
-		},
-	})
-	if err != nil {
-		t.Fatalf("marshal hang script: %v", err)
+	markers := filepath.Join(h.TempDir(), "keepalive-hold")
+	if err := os.MkdirAll(markers, 0o755); err != nil {
+		t.Fatalf("mkdir markers: %v", err)
 	}
-	h.WriteCCStubScript(t, "alpha", hangBody)
+	for attempt := 1; ; attempt++ {
+		if attempt > 5 {
+			t.Fatalf("a keepalive was still queued at the start of every held turn — never got to observe the gate")
+		}
+		started := filepath.Join(markers, fmt.Sprintf("started-%d", attempt))
+		release := filepath.Join(markers, fmt.Sprintf("release-%d", attempt))
+		holdText := fmt.Sprintf("hold turn %d for keepalive test", attempt)
 
-	holdPushTime := time.Now()
-	h.TelegramStub().PushUpdate(token, gotgbot.Update{
-		Message: &gotgbot.Message{
-			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
-			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
-			Text: holdText,
-		},
-	})
+		// Hold the turn open until released. cc-stub caps one Bash call at
+		// 10s but the turn stays in flight across its tool_uses, so a chain
+		// of waits holds for up to a minute; the last reports if it ran out.
+		wait := fmt.Sprintf("until [ -e %q ]; do sleep 0.05; done", release)
+		tools := []map[string]any{{"name": "Bash", "input": map[string]any{"command": fmt.Sprintf("touch %q; %s", started, wait)}}}
+		for range 5 {
+			tools = append(tools, map[string]any{"name": "Bash", "input": map[string]any{"command": wait}})
+		}
+		tools = append(tools, map[string]any{"name": "Bash", "input": map[string]any{"command": fmt.Sprintf("[ -e %q ] || echo HOLD-EXPIRED", release)}})
+		hangBody, err := json.Marshal(map[string]any{"match": holdText, "text": "holding", "tool_uses": tools})
+		if err != nil {
+			t.Fatalf("marshal hang script: %v", err)
+		}
+		h.WriteCCStubScript(t, "alpha", hangBody)
+		push(holdText)
 
-	// Poll for the post-hang keepalive injection. The in-flight guard should
-	// defer every tick during the ~8s hang, so it only appears afterwards.
-	if _, ok := waitForUserMessageContaining(t, h, "alpha", 30*time.Second, "[KEEPALIVE]"); !ok {
-		t.Fatalf("keepalive never fired post-hang within 30s\n%s", recorderTail(t, h.RecorderPath()))
-	}
+		until("the held turn to start", func() bool { _, err := os.Stat(started); return err == nil })
+		// The hold turn is in flight from here until release. Everything
+		// logged after this offset was decided while it was.
+		logAtStart := readLog()
+		off := len(logAtStart)
 
-	// Locate the hold user_message timestamp and any [KEEPALIVE] injection.
-	var holdTS, keepaliveTS time.Time
-	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
-		if e.Kind != "user_message" || !strings.Contains(e.Workdir, "workspaces/alpha") {
+		// A keepalive the gate let through while the session was IDLE, just
+		// before the hold arrived, may still be queued behind the hold (its
+		// line is logged, its prompt not yet delivered). Legitimate — but it
+		// keeps keepaliveRunning set, so the gate is not evaluated this
+		// hold. Release and try again rather than read that as a verdict.
+		if strings.Count(logAtStart, fired) > countUserMessagesContaining(t, h, "alpha", "[KEEPALIVE]") {
+			if err := os.WriteFile(release, nil, 0o600); err != nil {
+				t.Fatalf("release: %v", err)
+			}
+			until("the queued keepalive to run", func() bool {
+				return strings.Count(readLog(), fired) == countUserMessagesContaining(t, h, "alpha", "[KEEPALIVE]")
+			})
 			continue
 		}
-		ts, _ := time.Parse(time.RFC3339Nano, e.Timestamp)
-		if strings.Contains(e.TextPrefix, holdText) && holdTS.IsZero() {
-			holdTS = ts
+
+		// The gate's verdict on a DUE keepalive during the hold.
+		var during string
+		until("the gate to decide on a due keepalive during the hold", func() bool {
+			during = readLog()[off:]
+			return strings.Contains(during, fired) || strings.Contains(during, deferred)
+		})
+		if strings.Contains(during, fired) {
+			holdExpired(t, h)
+			t.Fatalf("keepalive fired while the held turn was in flight — the in-flight guard did not defer it\n%s", during)
 		}
-		if strings.Contains(e.TextPrefix, "[KEEPALIVE]") && keepaliveTS.IsZero() {
-			keepaliveTS = ts
+
+		t.Logf("attempt %d: gate deferred a due keepalive while the turn was held", attempt)
+		if err := os.WriteFile(release, nil, 0o600); err != nil {
+			t.Fatalf("release: %v", err)
 		}
+		// The deferral was a deferral, not a drop: once the turn ends, the
+		// keepalive fires, and it is still the first one since the hold began.
+		until("keepalive to fire after the hold", func() bool { return strings.Contains(readLog()[off:], fired) })
+		return
 	}
-	if holdTS.IsZero() {
-		t.Fatalf("hold-turn user_message never recorded\n%s", recorderTail(t, h.RecorderPath()))
-	}
-	if keepaliveTS.IsZero() {
-		t.Fatalf("keepalive never fired post-hang\n%s", recorderTail(t, h.RecorderPath()))
-	}
-	// The in-flight guard must have deferred keepalive past the ~8s hang.
-	// Keepalive must therefore appear at least ~6s after the hold message was
-	// pushed. If the gap is much smaller the guard fired during the hang (a
-	// failed guard would inject at the first tick, ~1-2s after push).
-	gap := keepaliveTS.Sub(holdPushTime)
-	if gap < 6*time.Second {
-		t.Errorf("keepalive fired %s after hold push — in-flight guard did not defer past hang",
-			gap.Round(time.Second))
+}
+
+// holdExpired fails the test if the held turn's wait chain ran out before
+// the test released it: the turn then ended on its own, so a keepalive after
+// that point says nothing about the in-flight guard.
+func holdExpired(t *testing.T, h *testharness.Harness) {
+	t.Helper()
+	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+		if e.Kind == "bash_tool_use" && strings.Contains(e.BashOutput, "HOLD-EXPIRED") {
+			t.Fatalf("the held turn ran out before release — the hold was not open for the whole window")
+		}
 	}
 }
 
