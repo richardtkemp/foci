@@ -15,6 +15,7 @@ import (
 	"time"
 
 	readability "github.com/go-shiori/go-readability"
+	"golang.org/x/net/html"
 )
 
 func TestIsStructuredContentType(t *testing.T) {
@@ -459,7 +460,8 @@ func TestWebFetchToolName(t *testing.T) {
 // <svg> bodies stripped (726KB -> 11KB, markup untouched); mdn_ul_element.html
 // is the live MDN <ul> reference page (~400 <li>, mostly sidebar/nav) stripped
 // the same way plus <link> tags. Both captured 2026-09-25. The two substack_*
-// pages (#2066) were captured 2026-09-26 and stripped the same way.
+// pages (#2066) were captured 2026-09-26 and stripped the same way, as was
+// lesswrong_unlocking_emotional_brain.html (#2069, captured 2026-09-27).
 var webFetchCorpus = []struct {
 	name           string
 	file           string
@@ -496,6 +498,14 @@ var webFetchCorpus = []struct {
 			"I found that almost no ‘inner work’ practitioners track long-term outcomes.",
 			"A therapist emails former clients asking",
 		},
+	},
+	{
+		// #2069: ~45 comments, several of them bullet lists, which the
+		// extraction rightly leaves out.
+		name:           "lesswrong.com post with a long comment thread (#2069 repro)",
+		file:           "webfetch_corpus/lesswrong_unlocking_emotional_brain.html",
+		mustContain:    []string{"memory reconsolidation"},
+		mustNotContain: []string{"A very clear summary of the core claims"},
 	},
 	{
 		name:        "darioamodei.com (#1960 repro)",
@@ -607,7 +617,7 @@ func TestMissingListText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	missing, example := missingListText(lever, def.TextContent)
+	missing, example := missingListText(contentRegions(lever, def.TextContent), def.TextContent)
 	if missing < listDropMinChars || !strings.Contains(example, "Engineering mindset") {
 		t.Errorf("default readability on Lever: missing=%d example=%q, want >= %d chars starting at the What We Value list", missing, example, listDropMinChars)
 	}
@@ -616,7 +626,7 @@ func TestMissingListText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if missing, example := missingListText(lever, fixed.TextContent); missing != 0 {
+	if missing, example := missingListText(contentRegions(lever, fixed.TextContent), fixed.TextContent); missing != 0 {
 		t.Errorf("web_fetch parser on Lever: missing=%d (%q), want 0", missing, example)
 	}
 
@@ -625,7 +635,7 @@ func TestMissingListText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if missing, example := missingListText(mdn, art.TextContent); missing >= listDropMinChars {
+	if missing, example := missingListText(contentRegions(mdn, art.TextContent), art.TextContent); missing >= listDropMinChars {
 		t.Errorf("MDN nav-heavy page: missing=%d (%q), want < %d", missing, example, listDropMinChars)
 	}
 }
@@ -751,6 +761,79 @@ func TestIsStubExtraction(t *testing.T) {
 	for _, c := range cases {
 		if got := isStubExtraction(c.extracted, c.visible); got != c.want {
 			t.Errorf("isStubExtraction(%d, %d) = %v, want %v", c.extracted, c.visible, got, c.want)
+		}
+	}
+}
+
+func TestWebFetchCommentHeavyPageNoFalseWarnings(t *testing.T) {
+	// #2069: the extraction correctly leaves out the ~45 comments, so the
+	// thin and list-drop warnings must not measure it against a baseline that
+	// still counts them.
+	t.Parallel()
+	got := fetchFixture(t, "webfetch_corpus/lesswrong_unlocking_emotional_brain.html")
+	if !strings.Contains(got, "memory reconsolidation") {
+		t.Fatalf("post body missing from extraction (len=%d)", len(got))
+	}
+	article, _, _ := strings.Cut(got, "\n\n---\n_[foci:")
+	if strings.Contains(article, "A very clear summary of the core claims") {
+		t.Error("comment text leaked into the extraction")
+	}
+	for _, note := range []string{"very little text", "list-item text"} {
+		if i := strings.Index(got, note); i >= 0 {
+			t.Errorf("warning %q fired on a correctly extracted page: %s", note, got[max(0, i-40):])
+		}
+	}
+}
+
+func TestContentRegionsBaseline(t *testing.T) {
+	// #2069: the baseline is what the extractor considered — the post, not
+	// the comment thread. On LessWrong the post sits inside two wrappers
+	// readability's unlikely-candidate rules match (div.commentOnSelection, and
+	// span.Header-headerHeight, which also holds the comments), so pruning
+	// every match would empty the baseline and silently disable both warnings.
+	t.Parallel()
+	body, err := os.ReadFile(filepath.Join("testdata", "webfetch_corpus", "lesswrong_unlocking_emotional_brain.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	art, err := ParseArticle(bytes.NewReader(body), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extracted := len(strings.TrimSpace(art.TextContent))
+	regions := contentRegions(body, art.TextContent)
+	visible := visibleTextLen(regions)
+	if visible < extracted*9/10 || visible > extracted*11/10 {
+		t.Errorf("baseline = %d chars, want within 10%% of the %d-char extraction (whole page: %d)", visible, extracted, bodyVisibleTextLen(body))
+	}
+	var sb strings.Builder
+	if err := html.Render(&sb, regions); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(sb.String(), "A very clear summary of the core claims") {
+		t.Error("comment text still in the baseline")
+	}
+
+	// Synthetic: a rejected region is dropped unless the extraction draws on it.
+	page := []byte(`<html><body>
+<div class="wrapper-header"><article><p>` + strings.Repeat("The article paragraph readability kept. ", 20) + `</p></article>
+<div class="comments"><ul><li>A comment written as a bullet list item, long enough to count.</li></ul></div></div>
+<div class="sidebar"><p>A sidebar paragraph that nobody extracted at all.</p></div>
+<div><p>An unflagged paragraph the extractor lost somewhere along the way.</p></div>
+</body></html>`)
+	kept := strings.Repeat("The article paragraph readability kept. ", 20)
+	var out strings.Builder
+	if err := html.Render(&out, contentRegions(page, kept)); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"readability kept", "the extractor lost"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("baseline lost %q", want)
+		}
+	}
+	for _, gone := range []string{"A comment written", "A sidebar paragraph"} {
+		if strings.Contains(out.String(), gone) {
+			t.Errorf("rejected region %q still in the baseline", gone)
 		}
 	}
 }

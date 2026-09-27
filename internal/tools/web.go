@@ -248,18 +248,27 @@ func parseReadableWithTimeout(body []byte, parsed *url.URL, timeout time.Duratio
 // discarded.
 const thinExtractionNote = "\n\n---\n_[foci: extraction returned very little text relative to the page's visible content — content such as a link list may have been dropped. If this looks incomplete, retry with `raw=true`.]_"
 
-// bodyVisibleTextLen returns the length (in characters, whitespace
-// collapsed) of the text a reader would actually see in the page's <body> —
-// walking the parsed DOM and summing text-node content, skipping
+// bodyVisibleTextLen returns visibleTextLen of the whole page. Returns 0 if
+// the body doesn't parse.
+func bodyVisibleTextLen(body []byte) int {
+	doc, err := html.Parse(bytes.NewReader(body))
+	if err != nil {
+		return 0
+	}
+	return visibleTextLen(doc)
+}
+
+// visibleTextLen returns the length (in characters, whitespace collapsed) of
+// the text a reader would actually see in the document's <body> — walking the
+// parsed DOM and summing text-node content, skipping
 // <script>/<style>/<noscript>/<template> subtrees entirely. This is deliberately
 // NOT a byte count of the raw HTML (scripts/CSS/markup inflate that without
 // bound, see #1960) and NOT the markdown-converted length of the full body
 // (markdown's "[text](url)" link syntax over-counts link-dense boilerplate,
 // which compresses the gap between a genuine link-hub page and a normal
-// article with header/footer nav). Returns 0 if the body doesn't parse.
-func bodyVisibleTextLen(body []byte) int {
-	doc, err := html.Parse(bytes.NewReader(body))
-	if err != nil {
+// article with header/footer nav). Returns 0 for a nil doc.
+func visibleTextLen(doc *html.Node) int {
+	if doc == nil {
 		return 0
 	}
 	var sb strings.Builder
@@ -337,26 +346,23 @@ const (
 	listItemMinChars = 25
 )
 
-// missingListText sums the length of substantive <li> text in the page body
-// that doesn't appear in the extracted text, and returns the first such item
-// as an example. Items inside nav/header/footer/aside/form (or ARIA
-// equivalents), items shorter than listItemMinChars, and items that are
-// mostly link text (menus, link lists) are ignored — those are boilerplate
-// readability is right to drop. Only an item's own text counts, not that of
-// lists nested inside it, so a nested list is judged on its own items.
-// Presence is checked with all whitespace removed from both sides.
-func missingListText(body []byte, extracted string) (missing int, example string) {
-	doc, err := html.Parse(bytes.NewReader(body))
-	if err != nil {
+// missingListText sums the length of substantive <li> text in doc (the
+// contentRegions baseline, so rejected regions such as nav, footers and
+// comment threads are already gone) that doesn't appear in the extracted
+// text, and returns the first such item as an example. Items shorter than
+// listItemMinChars and items that are mostly link text (menus, link lists)
+// are ignored — those are boilerplate readability is right to drop. Only an
+// item's own text counts, not that of lists nested inside it, so a nested
+// list is judged on its own items. Presence is checked with all whitespace
+// removed from both sides.
+func missingListText(doc *html.Node, extracted string) (missing int, example string) {
+	if doc == nil {
 		return 0, ""
 	}
 	have := stripSpace(extracted)
 	var walk func(n *html.Node)
 	walk = func(n *html.Node) {
 		if n.Type == html.ElementNode {
-			if isBoilerplateElement(n) {
-				return
-			}
 			if n.Data == "li" {
 				text, linkText := listItemText(n)
 				if len(text) >= listItemMinChars && 2*len(linkText) < len(text) && !strings.Contains(have, stripSpace(text)) {
@@ -375,8 +381,8 @@ func missingListText(body []byte, extracted string) (missing int, example string
 	return missing, example
 }
 
-// isBoilerplateElement reports whether n is page chrome whose subtree
-// missingListText skips.
+// isBoilerplateElement reports whether n is page chrome, left out of the
+// contentRegions baseline.
 func isBoilerplateElement(n *html.Node) bool {
 	switch n.Data {
 	case "nav", "header", "footer", "aside", "form", "script", "style", "noscript", "template":
@@ -557,16 +563,21 @@ func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 		} else {
 			md = string(body)
 		}
-	} else if usedArticle && isThinExtraction(extractedChars, visibleChars) {
-		// #1960: flag the "broken instrument reports success" case rather than
-		// silently handing back a confident-looking but gutted result.
-		md += thinExtractionNote
 	}
 	if stub && err == nil {
 		md += fmt.Sprintf(stubFallbackNote, extractedChars, visibleChars)
 	}
 	if usedArticle {
-		if missing, example := missingListText(body, article.TextContent); missing >= listDropMinChars {
+		// #2069: the thin and list-drop checks measure against the regions
+		// the extractor considered, not the whole page — comment threads,
+		// sidebars and footers it rightly rejects are no loss.
+		regions := contentRegions(body, article.TextContent)
+		if err == nil && isThinExtraction(extractedChars, visibleTextLen(regions)) {
+			// #1960: flag the "broken instrument reports success" case rather than
+			// silently handing back a confident-looking but gutted result.
+			md += thinExtractionNote
+		}
+		if missing, example := missingListText(regions, article.TextContent); missing >= listDropMinChars {
 			md += fmt.Sprintf(listDropNote, missing, truncateRunes(example, 80))
 		}
 	}
