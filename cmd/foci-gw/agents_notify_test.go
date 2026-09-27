@@ -353,25 +353,68 @@ func TestWakeCancelStopsTimerAndDismissesRow(t *testing.T) {
 		t.Fatal("cancelFn returned false for a live wake")
 	}
 
-	// The goroutine dismisses the row on its Done branch — poll briefly.
-	deadline := time.Now().Add(2 * time.Second)
+	// A second cancel finds no timer, straight away: cancelling claims the
+	// map entry synchronously, so no wait on the wake goroutine is involved
+	// (#2036 — this used to be checked after the row poll below, and flaked
+	// when the goroutine had dismissed the row but not yet removed the entry).
+	if cancelFn(id) {
+		t.Error("second cancelFn returned true, want false (timer already removed)")
+	}
+
+	waitWakeRowsDismissed(t, rs, "test")
+}
+
+// TestWakeNoSessionReleasesTimer covers the fire path that finds no session to
+// deliver to (#2036): it dismisses the row, and must also drop its map entry —
+// otherwise the wake reads as live forever and a later cancel reports success
+// for a timer that no longer exists.
+func TestWakeNoSessionReleasesTimer(t *testing.T) {
+	t.Parallel()
+	rs, err := memory.NewReminderStore(filepath.Join(t.TempDir(), "reminders.db"))
+	if err != nil {
+		t.Fatalf("NewReminderStore: %v", err)
+	}
+	t.Cleanup(func() { rs.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// A nil agent resolves no session, so the wake takes the no-session path.
+	fn, cancelFn := buildWakeScheduler(func() *agent.Agent { return nil }, rs, "test", ctx, stubConnMgr{})
+
+	id, err := rs.AddWake("test", "", "nowhere to go", "1s")
+	if err != nil {
+		t.Fatalf("AddWake: %v", err)
+	}
+	if err := fn(id, 0, "nowhere to go", ""); err != nil {
+		t.Fatalf("schedule: %v", err)
+	}
+
+	waitWakeRowsDismissed(t, rs, "test")
+
+	if cancelFn(id) {
+		t.Error("cancelFn returned true for a wake that already fired and was dismissed")
+	}
+}
+
+// waitWakeRowsDismissed blocks until agentID has no pending wake rows. The row
+// is dismissed on the wake goroutine, so there is no event to wait on; the
+// deadline is a hang guard only.
+func waitWakeRowsDismissed(t *testing.T, rs *memory.ReminderStore, agentID string) {
+	t.Helper()
+	const hangGuard = 10 * time.Second
+	deadline := time.Now().Add(hangGuard)
 	for {
-		pending, err := rs.PendingWakes("test")
+		pending, err := rs.PendingWakes(agentID)
 		if err != nil {
 			t.Fatalf("PendingWakes: %v", err)
 		}
 		if len(pending) == 0 {
-			break
+			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("row still pending %v after cancel, want dismissed", 2*time.Second)
+			t.Fatalf("%d wake row(s) still pending after %v, want dismissed", len(pending), hangGuard)
 		}
 		time.Sleep(10 * time.Millisecond)
-	}
-
-	// A second cancel finds no timer — the map entry is gone.
-	if cancelFn(id) {
-		t.Error("second cancelFn returned true, want false (timer already removed)")
 	}
 }
 

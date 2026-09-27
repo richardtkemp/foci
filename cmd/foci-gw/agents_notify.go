@@ -395,14 +395,38 @@ func buildWakeScheduler(
 		return nil, nil
 	}
 
+	// wakes holds the cancel func of every wake whose timer is still live. The
+	// entry is the wake's claim: whichever of cancel and fire removes it (under
+	// wakesMu) owns the wake, so a cancel that reports true has really stopped
+	// it, and a wake that fires is no longer cancellable (#2036).
 	var wakesMu sync.Mutex
 	wakes := make(map[int64]context.CancelFunc)
 
+	claim := func(id int64) (context.CancelFunc, bool) {
+		wakesMu.Lock()
+		defer wakesMu.Unlock()
+		cancel, ok := wakes[id]
+		delete(wakes, id)
+		return cancel, ok
+	}
+
 	wakeScheduleFn := func(id int64, delay time.Duration, message, sessionKey string) error {
 		wakeCtx, wakeCancel := context.WithCancel(context.Background())
+		// Register before the goroutine starts: a zero-delay (restored,
+		// overdue) wake can fire at once, and its claim must find the entry.
+		wakesMu.Lock()
+		wakes[id] = wakeCancel
+		wakesMu.Unlock()
 		go func() {
 			select {
 			case <-time.After(delay):
+				if _, ok := claim(id); !ok {
+					// A cancel won the claim while the timer fired; it
+					// cancelled wakeCtx, which this select no longer watches.
+					_ = reminderStore.Dismiss(id)
+					return
+				}
+				wakeCancel()
 				remindLog.Infof("firing wake id=%d after %v for agent %s: %q", id, delay, agentID, message)
 				// Use the originating session key if stored, otherwise
 				// pick the most recently active session.
@@ -428,29 +452,20 @@ func buildWakeScheduler(
 				deliverToSessionChatThen(getAgent(), ctx, "scheduled_wake", connMgr, agentID, sk,
 					prompts.FormatInjectedMessage("SCHEDULED WAKE", time.Now(), message), "",
 					wakeTurnDone(reminderStore, id))
-				wakesMu.Lock()
-				delete(wakes, id)
-				wakesMu.Unlock()
 			case <-wakeCtx.Done():
+				// wakeCancelFn already claimed the entry.
 				_ = reminderStore.Dismiss(id)
-				wakesMu.Lock()
-				delete(wakes, id)
-				wakesMu.Unlock()
 			}
 		}()
-		wakesMu.Lock()
-		wakes[id] = wakeCancel
-		wakesMu.Unlock()
 		return nil
 	}
 
-	// wakeCancelFn stops a pending wake. Cancelling the context makes the
-	// wake goroutine take its Done branch, which dismisses the DB row and
-	// removes the map entry — so the row cleanup stays in one place.
+	// wakeCancelFn stops a pending wake. It claims the map entry itself, so the
+	// wake is uncancellable again the moment this returns; cancelling the
+	// context then makes the wake goroutine take its Done branch, which
+	// dismisses the DB row — so the row cleanup stays in one place.
 	wakeCancelFn := func(id int64) bool {
-		wakesMu.Lock()
-		cancel, ok := wakes[id]
-		wakesMu.Unlock()
+		cancel, ok := claim(id)
 		if !ok {
 			return false
 		}
