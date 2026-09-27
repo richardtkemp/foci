@@ -220,9 +220,13 @@ func TestL2_Cron_KeepaliveSkippedWhenTurnInFlight(t *testing.T) {
 	// turn completes. Two `sleep 4` Bash tool_uses give ~8s of in-flight wall
 	// time (cc-stub caps each Bash at 10s); keepalive then fires on the first
 	// tick after the hang.
+	// Bind the hang to the hold message (match) so no other turn — the
+	// bootstrap still finishing, or a keepalive — can take it (#2079).
+	const holdText = "hold turn for keepalive test"
 	hangSleep := map[string]any{"name": "Bash", "input": map[string]any{"command": "sleep 4"}}
 	hangBody, err := json.Marshal(map[string]any{
-		"text": "holding",
+		"match": holdText,
+		"text":  "holding",
 		"tool_uses": []map[string]any{
 			hangSleep, hangSleep,
 		},
@@ -232,7 +236,6 @@ func TestL2_Cron_KeepaliveSkippedWhenTurnInFlight(t *testing.T) {
 	}
 	h.WriteCCStubScript(t, "alpha", hangBody)
 
-	const holdText = "hold turn for keepalive test"
 	holdPushTime := time.Now()
 	h.TelegramStub().PushUpdate(token, gotgbot.Update{
 		Message: &gotgbot.Message{
@@ -1106,6 +1109,24 @@ func TestL2_Cron_ConsolidationSkippedWhileReflectionRunning(t *testing.T) {
 		t.Fatalf("bootstrap reply never sent (turn did not complete); stderr:\n%s", stderrTail(h.Stderr()))
 	}
 	time.Sleep(2 * time.Second)
+
+	// Arm the HANG script so the upcoming reflection turn keeps
+	// reflectionRunning true for ~8s — long enough that several consolidation
+	// ticks (interval=1s) land inside the window and MUST defer. branchFn
+	// (delegated) blocks until cc-stub finishes the turn. One `sleep 8` stays
+	// under cc-stub's 10s Bash cap. It is armed BEFORE the second ping and
+	// bound to the reflection prompt (match): reflection becomes eligible the
+	// moment that ping registers, so arming after seeing the ping raced the
+	// reflection turn — which then ran unscripted and closed at once (#2079).
+	hangBody, _ := json.Marshal(map[string]any{
+		"match": "Reflection Pass",
+		"text":  "reflecting (held open)",
+		"tool_uses": []map[string]any{
+			{"name": "Bash", "input": map[string]any{"command": "sleep 8"}},
+		},
+	})
+	h.WriteCCStubScript(t, "alpha", hangBody)
+
 	h.TelegramStub().PushUpdate(token, gotgbot.Update{
 		Message: &gotgbot.Message{
 			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
@@ -1116,19 +1137,6 @@ func TestL2_Cron_ConsolidationSkippedWhileReflectionRunning(t *testing.T) {
 	if !waitForUserMessage(t, h, "workspaces/alpha", "second ping to advance activity", 15*time.Second) {
 		t.Fatalf("second interaction never processed; stderr:\n%s", stderrTail(h.Stderr()))
 	}
-
-	// Write the HANG script so the upcoming reflection turn keeps
-	// reflectionRunning true for ~8s — long enough that several consolidation
-	// ticks (interval=1s) land inside the window and MUST defer. branchFn
-	// (delegated) blocks until cc-stub finishes the turn. One `sleep 8` stays
-	// under cc-stub's 10s Bash cap.
-	hangBody, _ := json.Marshal(map[string]any{
-		"text": "reflecting (held open)",
-		"tool_uses": []map[string]any{
-			{"name": "Bash", "input": map[string]any{"command": "sleep 8"}},
-		},
-	})
-	h.WriteCCStubScript(t, "alpha", hangBody)
 
 	// Poll for the reflection fire (the turn that runs the hang), capturing
 	// when it started.

@@ -818,9 +818,13 @@ func (h *Harness) Stderr() string {
 //	{"text": "<assistant text>", "tool_uses": [{"name":"Bash","input":{...}}]}
 //
 // cc-stub reads the file from $CCSTUB_SCRIPT_DIR/<workdir-basename>.json
-// on its NEXT user message after spawn, emits the scripted assistant
-// response, and clears its in-memory copy (one-shot). Tests can re-write
-// the file between turns if multi-turn scripting is needed.
+// on its NEXT user message after spawn, claims it (the file is gone from
+// the moment that turn loads it — one-shot), and emits the scripted
+// assistant response. A script written while that turn is still running is
+// left for the following turn. Tests can re-write the file between turns if
+// multi-turn scripting is needed. Add "match": "<substring>" to bind a
+// script to the one user message containing it; other turns (keepalive,
+// reflection, a message the test did not aim at) leave it in place.
 func (h *Harness) WriteCCStubScript(t *testing.T, agentID string, body []byte) {
 	t.Helper()
 	path := filepath.Join(h.scriptDir, agentID+".json")

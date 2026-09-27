@@ -60,8 +60,15 @@
 //	                                                  "im:<reqID>:<idx>"
 //	                                                  callback strings ahead
 //	                                                  of time.
-//	                        Script is consumed one-shot — the file is removed
-//	                        after the next user message processes.
+//	                          • match               — optional substring; when
+//	                                                  set, the script applies
+//	                                                  only to a user message
+//	                                                  containing it and every
+//	                                                  other turn leaves the
+//	                                                  file in place.
+//	                        Script is consumed one-shot — the file is claimed
+//	                        (renamed away) at the moment a turn loads it, so a
+//	                        script the test writes AFTER that point survives.
 //
 // Usage:
 //
@@ -132,6 +139,13 @@ type scriptedPermissionRequest struct {
 // message after the text block; PermissionRequests are emitted as
 // separate control_request envelopes after the assistant message.
 type stubScript struct {
+	// Match binds the script to one turn: when non-empty, only a user
+	// message whose text contains it loads (and consumes) the script; any
+	// other turn — a keepalive, reflection, or a message the test did not
+	// aim at — runs with defaults and leaves the file for its target.
+	// Without it a script goes to whichever turn reaches the file first,
+	// which makes "hold THIS turn open" setups order-dependent (#2079).
+	Match              string                      `json:"match,omitempty"`
 	Text               string                      `json:"text"`
 	ToolUses           []scriptedToolUse           `json:"tool_uses"`
 	PermissionRequests []scriptedPermissionRequest `json:"permission_requests"`
@@ -593,7 +607,7 @@ func main() {
 			// a structured request, rather than echoing the prompt back.
 			var script *stubScript
 			if !skipPermissions {
-				script = loadScript()
+				script = loadScript(userText)
 			}
 			reply := respText
 			if skipPermissions && reply == "" {
@@ -882,21 +896,6 @@ func main() {
 					"session_id": sessionID,
 				})
 				_ = out.Flush()
-			}
-			// One-shot: delete the script file after applying so the
-			// next user message in this long-lived process uses
-			// defaults. Critical for tests that trigger send_to_session
-			// — the SESSION RESPONSE injection comes back as a user
-			// message and would re-trigger the script in an infinite
-			// loop. Tests that need multi-turn scripted behaviour
-			// re-write the file between turns.
-			if script != nil {
-				dir := os.Getenv("CCSTUB_SCRIPT_DIR")
-				if dir != "" {
-					if wd, err := os.Getwd(); err == nil {
-						_ = os.Remove(filepath.Join(dir, filepath.Base(wd)+".json"))
-					}
-				}
 			}
 			// CCSTUB_EXIT_AFTER_N_TURNS: bookend the turn loop so a
 			// clean exit happens AFTER the result envelope has been
@@ -1365,11 +1364,22 @@ func emitHookResponse(w *bufio.Writer, installID, toolUseID, toolName string, to
 	})
 }
 
-// loadScript reads the per-workdir script JSON from $CCSTUB_SCRIPT_DIR.
-// Returns nil if the env var is unset, the file doesn't exist, or the
-// content is unparseable — in any of those cases the stub falls back to
-// its echo-default behaviour.
-func loadScript() *stubScript {
+// loadScript reads the per-workdir script JSON from $CCSTUB_SCRIPT_DIR
+// for the user message userText, consuming it one-shot. Returns nil if the
+// env var is unset, the file doesn't exist, the content is unparseable, or
+// the script's Match does not appear in userText — in any of those cases
+// the stub falls back to its echo-default behaviour.
+//
+// One-shot consumption is a CLAIM at load time: the file is renamed to a
+// private name before it is parsed, so this turn owns exactly the bytes it
+// applies, and the next user message in this long-lived process (e.g. the
+// SESSION RESPONSE injection a send_to_session triggers) finds no file
+// rather than re-running the script in a loop. It used to be deleted after
+// the turn finished instead, which also deleted any script the test wrote
+// for its NEXT turn while this one was still running — tests arm the next
+// script as soon as they see this turn's user_message, which is recorded
+// before the turn even loads (#2079).
+func loadScript(userText string) *stubScript {
 	dir := os.Getenv("CCSTUB_SCRIPT_DIR")
 	if dir == "" {
 		return nil
@@ -1380,14 +1390,43 @@ func loadScript() *stubScript {
 		return nil
 	}
 	path := filepath.Join(dir, filepath.Base(wd)+".json")
+	// Peek first so a turn the script is not aimed at never touches the file.
 	b, err := os.ReadFile(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cc-stub [error] loadScript: no file at %s (wd=%s)\n", path, wd)
 		return nil
 	}
-	var s stubScript
-	if err := json.Unmarshal(b, &s); err != nil {
-		fmt.Fprintf(os.Stderr, "cc-stub [error] failed to parse script %s: %v\n", path, err)
+	if s, ok := parseScript(path, b); !ok || !scriptMatches(s, userText) {
+		if ok {
+			fmt.Fprintf(os.Stderr, "cc-stub [error] script %s left in place: match %q not in this user message\n", path, s.Match)
+		}
+		return nil
+	}
+	claimed := fmt.Sprintf("%s.claimed-%d-%d", path, os.Getpid(), time.Now().UnixNano())
+	if err := os.Rename(path, claimed); err != nil {
+		fmt.Fprintf(os.Stderr, "cc-stub [error] loadScript: claim %s: %v\n", path, err)
+		return nil
+	}
+	// Re-read what was actually claimed: the test may have replaced the
+	// file between the peek and the rename.
+	b, err = os.ReadFile(claimed)
+	if err != nil {
+		_ = os.Remove(claimed)
+		fmt.Fprintf(os.Stderr, "cc-stub [error] loadScript: read claimed %s: %v\n", claimed, err)
+		return nil
+	}
+	s, ok := parseScript(path, b)
+	if ok && !scriptMatches(s, userText) {
+		// A newer script aimed at another turn replaced the peeked one
+		// in between. Put it back — Link refuses to clobber, so a script
+		// written after the claim wins.
+		if err := os.Link(claimed, path); err != nil {
+			fmt.Fprintf(os.Stderr, "cc-stub [error] loadScript: restore %s: %v\n", path, err)
+		}
+		ok = false
+	}
+	_ = os.Remove(claimed)
+	if !ok {
 		return nil
 	}
 	// Log script size, not contents — tests use multi-MB Text payloads
@@ -1395,7 +1434,20 @@ func loadScript() *stubScript {
 	// wedges the stub on its stderr pipe before stdout ever gets the
 	// payload. Length + tool-use count is the diagnostic value.
 	fmt.Fprintf(os.Stderr, "cc-stub [error] loaded script %s (text_len=%d tool_uses=%d)\n", path, len(s.Text), len(s.ToolUses))
-	return &s
+	return s
+}
+
+func parseScript(path string, b []byte) (*stubScript, bool) {
+	var s stubScript
+	if err := json.Unmarshal(b, &s); err != nil {
+		fmt.Fprintf(os.Stderr, "cc-stub [error] failed to parse script %s: %v\n", path, err)
+		return nil, false
+	}
+	return &s, true
+}
+
+func scriptMatches(s *stubScript, userText string) bool {
+	return s.Match == "" || strings.Contains(userText, s.Match)
 }
 
 func ifEmpty(s, fallback string) string {
