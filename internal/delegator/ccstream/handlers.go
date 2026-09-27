@@ -1007,6 +1007,56 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		}
 		switch subtype {
 		case "task_started":
+			// Bind or advance the reactivation run state (#1355). The FIRST
+			// task_started binds the run — run 1's SubagentStart is NORMALLY
+			// hook-driven (fires earlier, at the Agent tool_use itself), but the
+			// PreToolUse hook drops for ~7% of background subagents (#1423), so
+			// this also emits a FALLBACK start, guarded by markSubagentStarted so
+			// exactly one goes out regardless of which signal wins the race
+			// (#1425). A SUBSEQUENT task_started for the same task_id is a
+			// SendMessage resume: re-Add to the tracker so the activity chip
+			// re-opens, and emit a fresh SubagentStart for the new run so the app
+			// draws a new chit — unconditional, since no hook exists for
+			// SendMessage. groupKey stays the ORIGINAL Agent tool_use_id (the
+			// subagent's text keeps it as parent_tool_use_id across resumes), so all
+			// runs collapse into one continuous view.
+			//
+			// A nested (depth >= 2) subagent gets neither (#1554). Its tail below
+			// still runs, for its usage. Without this, onTaskStarted would find no
+			// label stash and rehydrate it from the meta sidecar as a spurious
+			// "reactivation" chit whenever the sidecar was already on disk.
+			//
+			// It also names the TAIL (#2056). A resumed run's task_started carries
+			// the SendMessage tool_use id, and keying the tail by it booked every
+			// run after the first on its own subagent_turn row under that id, so
+			// subagent_id stopped naming the subagent (#1946) and cost per
+			// delegation read short. Key the tail by the subagent's own group key
+			// instead, the same one its task_notification finalizes. Only a task
+			// neither branch identifies keeps the raw id, as it did before.
+			tailKey := task.ToolUseID
+			if nestedKey, nested := b.nestedTask(task.TaskID, task.ToolUseID); nested {
+				tailKey = nestedKey
+				b.logger().Infof("subagent_start suppressed=nested group=%s task_id=%s", nestedKey, task.TaskID)
+			} else if run, reactivated, prompt := b.onTaskStarted(task.TaskID, task.ToolUseID); reactivated {
+				tailKey = run.groupKey
+				b.agents.Add(run.groupKey, run.label)
+				// Unconditional start, but still recorded: a run rehydrated after a
+				// restart has no run-1 mark, and without one its end would be
+				// suppressed below as a group never opened.
+				b.markSubagentStarted(run.groupKey)
+				b.logger().Infof("subagent_reactivate task_id=%s group=%s run=%d", task.TaskID, run.groupKey, run.runIndex)
+				if se := b.sessionEvents.Load(); se != nil && se.OnSubagentStart != nil {
+					se.OnSubagentStart(run.groupKey, run.label, prompt, run.runIndex)
+				}
+			} else if run != nil {
+				tailKey = run.groupKey
+				if !b.markSubagentStarted(run.groupKey) {
+					b.logger().Infof("subagent_start signal=task_started_fallback group=%s run=%d (PreToolUse hook missing/late)", run.groupKey, run.runIndex)
+					if se := b.sessionEvents.Load(); se != nil && se.OnSubagentStart != nil {
+						se.OnSubagentStart(run.groupKey, run.label, prompt, run.runIndex)
+					}
+				}
+			}
 			// Start tailing EVERY subagent's transcript, foreground or
 			// background: the tail is the only source of its completed USAGE
 			// (the parent stream never finalises output_tokens, #1880).
@@ -1039,45 +1089,9 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 						task.TaskID)
 					break
 				}
-				b.logger().Debugf("subagent tail: starting for group=%s task_id=%s path=%s",
-					task.ToolUseID, task.TaskID, path)
-				b.subagentTails().maybeStart(task.ToolUseID, path)
-			}
-			// Bind or advance the reactivation run state (#1355). The FIRST
-			// task_started binds the run — run 1's SubagentStart is NORMALLY
-			// hook-driven (fires earlier, at the Agent tool_use itself), but the
-			// PreToolUse hook drops for ~7% of background subagents (#1423), so
-			// this also emits a FALLBACK start, guarded by markSubagentStarted so
-			// exactly one goes out regardless of which signal wins the race
-			// (#1425). A SUBSEQUENT task_started for the same task_id is a
-			// SendMessage resume: re-Add to the tracker so the activity chip
-			// re-opens, and emit a fresh SubagentStart for the new run so the app
-			// draws a new chit — unconditional, since no hook exists for
-			// SendMessage. groupKey stays the ORIGINAL Agent tool_use_id (the
-			// subagent's text keeps it as parent_tool_use_id across resumes), so all
-			// runs collapse into one continuous view.
-			//
-			// A nested (depth >= 2) subagent gets neither (#1554). Its tail above
-			// still runs, for its usage. Without this, onTaskStarted would find no
-			// label stash and rehydrate it from the meta sidecar as a spurious
-			// "reactivation" chit whenever the sidecar was already on disk.
-			if nestedKey, nested := b.nestedTask(task.TaskID, task.ToolUseID); nested {
-				b.logger().Infof("subagent_start suppressed=nested group=%s task_id=%s", nestedKey, task.TaskID)
-			} else if run, reactivated, prompt := b.onTaskStarted(task.TaskID, task.ToolUseID); reactivated {
-				b.agents.Add(run.groupKey, run.label)
-				// Unconditional start, but still recorded: a run rehydrated after a
-				// restart has no run-1 mark, and without one its end would be
-				// suppressed below as a group never opened.
-				b.markSubagentStarted(run.groupKey)
-				b.logger().Infof("subagent_reactivate task_id=%s group=%s run=%d", task.TaskID, run.groupKey, run.runIndex)
-				if se := b.sessionEvents.Load(); se != nil && se.OnSubagentStart != nil {
-					se.OnSubagentStart(run.groupKey, run.label, prompt, run.runIndex)
-				}
-			} else if run != nil && !b.markSubagentStarted(run.groupKey) {
-				b.logger().Infof("subagent_start signal=task_started_fallback group=%s run=%d (PreToolUse hook missing/late)", run.groupKey, run.runIndex)
-				if se := b.sessionEvents.Load(); se != nil && se.OnSubagentStart != nil {
-					se.OnSubagentStart(run.groupKey, run.label, prompt, run.runIndex)
-				}
+				b.logger().Debugf("subagent tail: starting for group=%s task_id=%s tool_use_id=%s path=%s",
+					tailKey, task.TaskID, task.ToolUseID, path)
+				b.subagentTails().maybeStart(tailKey, path)
 			}
 		case "task_notification":
 			if !isTerminalTaskStatus(task.Status) {
@@ -1085,12 +1099,13 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 					task.Status, task.TaskID, task.ToolUseID)
 			} else {
 				// A nested (depth >= 2) subagent finishing (#1554). Stop its OWN tail
-				// (keyed by the id its task_started carried) and nothing else: it was
+				// (keyed by its own group key, not the id this event carries, which
+				// is a SendMessage's on a resumed run, #2056) and nothing else: it was
 				// never Add()ed to the tracker and opened no chit, so there is no entry
 				// to retire and no end to send, and its spawner's group is still
 				// running and must be neither finalized nor tail-stopped.
 				if nestedKey, nested := b.nestedTask(task.TaskID, task.ToolUseID); nested {
-					b.subagentTails().finalize(task.ToolUseID)
+					b.subagentTails().finalize(nestedKey)
 					b.logger().Infof("subagent_end suppressed=nested group=%s task_id=%s", nestedKey, task.TaskID)
 					break
 				}
