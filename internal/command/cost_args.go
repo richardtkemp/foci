@@ -282,7 +282,7 @@ func resolveScopeKeys(scope, sessionKey string, idx *session.SessionIndex) (map[
 	switch scope {
 	case "session":
 		family, _, err := sessionFamily(idx, sessionKey)
-		return family, withFamilyErr("this session", err)
+		return family, withScopeErr("this session", err, "family not resolved")
 	case "strict-self":
 		return map[string]struct{}{sessionKey: {}}, "this session only"
 	case "descendants":
@@ -293,23 +293,13 @@ func resolveScopeKeys(scope, sessionKey string, idx *session.SessionIndex) (map[
 				result[k] = struct{}{}
 			}
 		}
-		return result, withFamilyErr("descendants", err)
-	case "agent":
-		agentID := session.AgentIDFromAnyKey(sessionKey)
-		entries, err := idx.Query(session.QueryOptions{AgentID: agentID})
-		if err != nil {
-			return map[string]struct{}{}, "agent " + agentID
-		}
-		set := make(map[string]struct{}, len(entries))
-		for _, e := range entries {
-			set[e.SessionKey] = struct{}{}
-		}
-		return set, "agent " + agentID
+		return result, withScopeErr("descendants", err, "family not resolved")
 	default:
-		// Session type scope
+		// Session type scope. ("agent" never reaches here: scopePredicate
+		// resolves it by key prefix, without the index.)
 		entries, err := idx.Query(session.QueryOptions{SessionType: scope})
 		if err != nil {
-			return map[string]struct{}{}, "type:" + scope
+			return map[string]struct{}{}, withScopeErr("type:"+scope, fmt.Errorf("session index query: %w", err), "no sessions matched")
 		}
 		set := make(map[string]struct{}, len(entries))
 		for _, e := range entries {
@@ -319,14 +309,14 @@ func resolveScopeKeys(scope, sessionKey string, idx *session.SessionIndex) (map[
 	}
 }
 
-// withFamilyErr annotates a scope label when the session family could not be
-// resolved, so the report says it is incomplete instead of silently covering
-// only the current session.
-func withFamilyErr(label string, err error) string {
+// withScopeErr annotates a scope label when the scope could not be resolved
+// from the session index, so the report says it is incomplete (and how)
+// instead of silently under-reporting.
+func withScopeErr(label string, err error, effect string) string {
 	if err == nil {
 		return label
 	}
-	return fmt.Sprintf("%s (⚠️ %v — family not resolved)", label, err)
+	return fmt.Sprintf("%s (⚠️ %v — %s)", label, err, effect)
 }
 
 // hasSessionScope reports whether any scope narrows to the current session

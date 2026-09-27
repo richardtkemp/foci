@@ -617,3 +617,13 @@ func TestScopePredicate_SessionScopeSurfacesIndexError(t *testing.T) {
 		}
 	}
 }
+
+// A failing session index must be visible when a session-type scope is
+// resolved, not silently match nothing and report $0. #2085.
+func TestScopePredicate_TypeScopeSurfacesIndexError(t *testing.T) {
+	idx := brokenIndex(t)
+	_, label := scopePredicate([]string{"reflection"}, "bot/c123", idx)
+	if !strings.Contains(label, "session index") {
+		t.Errorf("label = %q, want a session-index warning", label)
+	}
+}
