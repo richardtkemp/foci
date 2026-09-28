@@ -2,6 +2,7 @@ package ccstream
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -281,5 +282,66 @@ func TestExpectationViolation_ReachesTheOperatorWithVersion(t *testing.T) {
 		if !strings.Contains(report, want) {
 			t.Errorf("report missing %q: %s", want, report)
 		}
+	}
+}
+
+// TestFreshProcessUsage_ShortfallNamesBothCauses: a delta below the seen work
+// has two causes, and on 2026-09-27 the real one was foci over-counting
+// (reactivation tails re-booking earlier runs after a CC relaunch, #2087), not
+// CC restoring less. The report must name both, and list each subagent's share
+// largest first so a re-booked subagent stands out.
+//
+// Not parallel: captureDebugLog swaps the process-global log output.
+func TestFreshProcessUsage_ShortfallNamesBothCauses(t *testing.T) {
+	logs := captureDebugLog(t)
+	b, g := guardedBackend(t)
+	const base = 1_000_000
+	seen := usageTotals{sub: map[subKey]turnUsage{
+		{Agent: "toolu_small", Model: "claude-haiku-4-5"}: {CacheRead: 10_000},
+		{Agent: "toolu_big", Model: "claude-haiku-4-5"}:   {CacheRead: 900_000},
+		{Agent: "toolu_big", Model: "claude-sonnet-5"}:    {CacheRead: 100_000},
+	}}
+	b.checkFreshProcessUsage(&ResultMessage{SessionID: "s1", ModelUsage: map[string]ModelUsage{
+		"claude-haiku-4-5": {CacheReadInputTokens: base + 50_000},
+	}}, base, seen)
+
+	if n := g.Count(expectBackend, invFreshProcessUsage); n != 1 {
+		t.Fatalf("fresh-process violations = %d, want 1 for 1,010,000 seen against a 50,000 delta", n)
+	}
+	out := logs.String()
+	for _, want := range []string{
+		"960000 LESS than was seen",
+		"foci over-counted",
+		"CC restored less than the baseline foci read",
+		"subagents 1010000: toolu_big=1000000, toolu_small=10000)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestSubagentShares_BoundedAndNamed(t *testing.T) {
+	t.Parallel()
+	if got := subagentShares(nil); got != "" {
+		t.Errorf("no subagents: %q, want empty", got)
+	}
+	// A message that arrived before task_started named its subagent.
+	sub := map[subKey]turnUsage{{Agent: "", Model: "m"}: {CacheRead: 5}}
+	if got := subagentShares(sub); got != ": (unnamed)=5" {
+		t.Errorf("unnamed share: %q, want %q", got, ": (unnamed)=5")
+	}
+	for i := range maxListedShares + 1 {
+		sub[subKey{Agent: fmt.Sprintf("toolu_%02d", i), Model: "m"}] = turnUsage{CacheRead: 100 + i}
+	}
+	got := subagentShares(sub)
+	if !strings.HasPrefix(got, ": toolu_10=110, toolu_09=109,") {
+		t.Errorf("shares not largest first: %q", got)
+	}
+	if !strings.HasSuffix(got, ", 2 more") {
+		t.Errorf("12 subagents should list %d and count 2 more: %q", maxListedShares, got)
+	}
+	if strings.Contains(got, "(unnamed)") {
+		t.Errorf("the smallest share should be cut, not listed: %q", got)
 	}
 }

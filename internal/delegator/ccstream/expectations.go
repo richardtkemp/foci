@@ -2,6 +2,7 @@ package ccstream
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"foci/internal/delegator"
@@ -98,8 +99,14 @@ func modelUsageCache(mu map[string]ModelUsage) int {
 //     itself if the baseline is missing: the probe's resumed turn reported
 //     45,769 against 23,003 seen.
 //   - the delta FALLS SHORT of the seen work, down to negative: CC restored
-//     less than the record foci read, or stopped restoring at all. The
-//     per-field clamp in modelUsageDelta would then hide a negative delta.
+//     less than the record foci read, or stopped restoring at all (the
+//     per-field clamp in modelUsageDelta would then hide a negative delta),
+//     OR foci counted more than the process did. The second cause is real:
+//     on 2026-09-27 (#2087) a binary without #2057's gate re-booked six
+//     reactivated subagents' earlier runs after a CC relaunch, 15.2M cache
+//     tokens against a correct baseline. The detail therefore names both
+//     causes and lists each subagent's share, which is where re-booked runs
+//     show up.
 //
 // Summed across models rather than per model, because the question is whether
 // the baseline matches what CC restored, not how CC splits a turn by model.
@@ -127,12 +134,56 @@ func (b *Backend) checkFreshProcessUsage(msg *ResultMessage, baseCache int, obse
 	if gap > 0 {
 		what = fmt.Sprintf("%d MORE than was seen: CC restored more than the baseline foci read, so this turn is overcharged by roughly that much", gap)
 	} else {
-		what = fmt.Sprintf("%d LESS than was seen: CC restored less than the baseline foci read (or stopped restoring), so this turn's delta is wrong", -gap)
+		what = fmt.Sprintf("%d LESS than was seen. Either foci over-counted this process's work "+
+			"(for example a subagent tail that booked a reactivated subagent's earlier runs again, #2057/#2087), "+
+			"so the subagent rows are overcharged and the parent may be clamped at zero, "+
+			"or CC restored less than the baseline foci read (or stopped restoring), so this turn's delta is wrong. "+
+			"A subagent share far above its run's real work points at the first", -gap)
 	}
 	b.violated(invFreshProcessUsage, fmt.Sprintf(
 		"first result of this process reports %d cache tokens in ModelUsage against a seeded baseline of %d, "+
-			"a delta of %d; the process was seen doing %d (main thread %d, subagents %d). That is %s (session %s)",
-		reported, baseCache, delta, seen, main, sub, what, msg.SessionID))
+			"a delta of %d; the process was seen doing %d (main thread %d, subagents %d%s). That is %s (session %s)",
+		reported, baseCache, delta, seen, main, sub, subagentShares(observed.sub), what, msg.SessionID))
+}
+
+// maxListedShares bounds the per-subagent list in a fresh-process report.
+const maxListedShares = 10
+
+// subagentShares lists each subagent's cache traffic, largest first, as
+// ": group=tokens, ..." for the fresh-process report, or "" when there is none.
+// Models are summed per subagent: the question it answers is which subagent
+// carried the excess.
+func subagentShares(sub map[subKey]turnUsage) string {
+	per := make(map[string]int, len(sub))
+	for k, u := range sub {
+		per[k.Agent] += cacheTokens(u.CacheRead, u.Write.total())
+	}
+	if len(per) == 0 {
+		return ""
+	}
+	agents := make([]string, 0, len(per))
+	for a := range per {
+		agents = append(agents, a)
+	}
+	sort.Slice(agents, func(i, j int) bool {
+		if per[agents[i]] != per[agents[j]] {
+			return per[agents[i]] > per[agents[j]]
+		}
+		return agents[i] < agents[j]
+	})
+	parts := make([]string, 0, min(len(agents), maxListedShares)+1)
+	for i, a := range agents {
+		if i == maxListedShares {
+			parts = append(parts, fmt.Sprintf("%d more", len(agents)-maxListedShares))
+			break
+		}
+		name := a
+		if name == "" {
+			name = "(unnamed)"
+		}
+		parts = append(parts, fmt.Sprintf("%s=%d", name, per[a]))
+	}
+	return ": " + strings.Join(parts, ", ")
 }
 
 // modelUsageRegression names every ModelUsage counter that went DOWN from prev

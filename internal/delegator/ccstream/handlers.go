@@ -1031,9 +1031,12 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 			// neither branch identifies keeps the raw id, as it did before.
 			//
 			// A reactivation also gates the tail's ACCOUNTING to its own run
-			// (#2057): the tail reads from byte 0, and after a foci restart the
-			// accumulator no longer knows run 1 was booked. reactivatedAt stays
-			// zero for run 1 and for a nested task, whose runs are not tracked.
+			// (#2057): the tail reads from byte 0, and in a new Backend the
+			// accumulator no longer knows run 1 was booked. That is after a foci
+			// restart, and equally after a CC process relaunch inside a running
+			// foci (compaction close + --resume, idle close, crash respawn), which
+			// also builds a new Backend (#2087). reactivatedAt stays zero for run 1
+			// and for a nested task, whose runs are not tracked.
 			tailKey := task.ToolUseID
 			var reactivatedAt time.Time
 			if nestedKey, nested := b.nestedTask(task.TaskID, task.ToolUseID); nested {

@@ -3,6 +3,7 @@ package ccstream
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -114,21 +115,31 @@ func rebookRun(t *testing.T, priorResult bool, write func(b *Backend, now time.T
 
 	write(b, time.Now())
 
-	b.beginTurn(&delegator.TurnEvents{TurnID: "turn-resume", OnTurnComplete: complete})
+	result = reactivateAndPrice(t, b, map[string]ModelUsage{
+		"claude-opus-5": opus,
+		rebookModel:     {InputTokens: 50, OutputTokens: 1000, CacheReadInputTokens: 100000, CacheCreationInputTokens: 20000, CostUSD: 0.03},
+	})
+	return result, logs.String()
+}
+
+// reactivateAndPrice runs the resume's turn through the real handlers: the
+// SendMessage's task_started and task_notification for the subagent, then a
+// result reporting modelUsage. Returns that turn's result.
+func reactivateAndPrice(t *testing.T, b *Backend, modelUsage map[string]ModelUsage) *delegator.TurnResult {
+	t.Helper()
+	var result *delegator.TurnResult
+	b.beginTurn(&delegator.TurnEvents{TurnID: "turn-resume", OnTurnComplete: func(r *delegator.TurnResult) { result = r }})
 	sys := func(ev TaskEvent) {
 		raw, _ := json.Marshal(ev)
 		b.OnSystem(ev.Subtype, raw)
 	}
 	sys(TaskEvent{Type: "system", Subtype: "task_started", TaskID: rebookTaskID, ToolUseID: rebookSendTU, TaskType: "local_agent"})
 	sys(TaskEvent{Type: "system", Subtype: "task_notification", TaskID: rebookTaskID, ToolUseID: rebookSendTU, Status: "completed"})
-	b.OnResult(&ResultMessage{Subtype: "success", Result: "ok", ModelUsage: map[string]ModelUsage{
-		"claude-opus-5": opus,
-		rebookModel:     {InputTokens: 50, OutputTokens: 1000, CacheReadInputTokens: 100000, CacheCreationInputTokens: 20000, CostUSD: 0.03},
-	}})
+	b.OnResult(&ResultMessage{Subtype: "success", Result: "ok", SessionID: b.SessionID(), ModelUsage: modelUsage})
 	if result == nil || result.Usage == nil {
 		t.Fatal("no turn result")
 	}
-	return result, logs.String()
+	return result
 }
 
 // checkRebookShare asserts one share, for the subagent, of wantOut output, and
@@ -306,4 +317,113 @@ func TestReactivationAfterRestart_NoAtRestRecordFallsBack(t *testing.T) {
 	})
 	checkRebookShare(t, result, 30, "fallback: the whole transcript")
 	checkLog(t, logs, "subagent tail: run start NOT found group="+rebookAgentTU+": no at-rest record before task_started")
+}
+
+// The fixture's cache traffic per run, summed over its unique message ids (the
+// accumulator books each id once): read + write.
+const (
+	rebookRun1CacheRead  = 12660 + 14375 + 14559 + 14789 // + 0 on the first message
+	rebookRun1CacheWrite = 12660 + 1715 + 184 + 230 + 22
+	rebookRun2CacheRead  = 15085 + 15253 + 15325 + 15657
+	rebookRun2CacheWrite = 15085 + 168 + 72 + 332 + 22
+)
+
+// TestReactivationAfterCCRelaunch_BooksOnlyItsOwnRun is the #2087 shape: no
+// foci restart, but a CC PROCESS relaunch inside a running foci. After the
+// 2026-09-27 compaction, foci closed CC and started `claude --resume` in a new
+// Backend, and six SendMessage resumes of earlier subagents arrived before that
+// process's first result. The new Backend knew nothing of their earlier runs,
+// so on a binary without #2057's gate each reactivation tail booked them again:
+// 15.2M cache tokens, $10.88 on one turn.
+//
+// This runs the new Backend through the real Start with --resume (so the
+// baseline is seeded from the old process's cost-state record, which already
+// holds run 1), with CC's init streamed by a stub, then the reactivation and
+// the first result. CC's ModelUsage holds run 1 in the baseline and adds only
+// run 2, so the #2013 fresh-process guard is also a witness: re-booking run 1
+// puts the seen work 71,194 cache tokens above the delta and fires it.
+func TestReactivationAfterCCRelaunch_BooksOnlyItsOwnRun(t *testing.T) {
+	withFastTail(t)
+	logs := captureDebugLog(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	const sid = "96438086-09ea-4ec3-a515-c49564b7f96d"
+	workDir := filepath.Join(home, "clutch")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// The old process's shutdown record: the main thread's history, and the
+	// subagent's run 1, which that process had already booked.
+	opusBase := ModelUsage{InputTokens: 1000, OutputTokens: 5000, CacheReadInputTokens: 1_000_000, CacheCreationInputTokens: 50_000, CostUSD: 10}
+	haikuBase := ModelUsage{InputTokens: 54, OutputTokens: rebookRun1Out,
+		CacheReadInputTokens: rebookRun1CacheRead, CacheCreationInputTokens: rebookRun1CacheWrite, CostUSD: 0.02}
+	state, _ := json.Marshal(map[string]any{"type": "cost-state", "sessionId": sid,
+		"modelUsage": map[string]ModelUsage{"claude-opus-5": opusBase, rebookModel: haikuBase}})
+	mainPath, err := ccTranscriptPath(workDir, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTranscript(t, mainPath, string(state))
+
+	// The relaunched CC: reports init, then idles until foci closes stdin.
+	stub := filepath.Join(t.TempDir(), "claude-stub")
+	script := "#!/bin/sh\nprintf '%s\\n' '" +
+		`{"type":"system","subtype":"init","session_id":"` + sid + `","model":"claude-opus-5","claude_code_version":"2.1.280"}` +
+		"'\nexec cat >/dev/null\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	be, err := newFromConfig(map[string]any{"binary": stub})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := be.(*Backend)
+	guard := &delegator.ExpectationGuard{}
+	b.expect = guard
+	if err := b.Start(context.Background(), delegator.StartOptions{WorkDir: workDir, AgentID: "clutch", ResumeSessionID: sid}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := b.WaitReady(ctx); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+
+	writeRebookTranscript(t, b, time.Now().Add(500*time.Millisecond))
+
+	// ModelUsage is the restored baseline plus this process's work: the main
+	// thread's output (no cache, so the main thread adds nothing the guard
+	// weighs) and the subagent's run 2.
+	opus := opusBase
+	opus.OutputTokens += 200
+	haiku := haikuBase
+	haiku.InputTokens += 46
+	haiku.OutputTokens += rebookRun2Out
+	haiku.CacheReadInputTokens += rebookRun2CacheRead
+	haiku.CacheCreationInputTokens += rebookRun2CacheWrite
+	result := reactivateAndPrice(t, b, map[string]ModelUsage{"claude-opus-5": opus, rebookModel: haiku})
+
+	checkRebookShare(t, result, rebookRun2Out,
+		"run 2 alone; run 1's 747 was booked by the CC process that compaction closed")
+	if n := guard.Count(expectBackend, invFreshProcessUsage); n != 0 {
+		t.Errorf("fresh-process guard fired %d time(s): foci saw more subagent work than ModelUsage added over the baseline, "+
+			"so run 1 was booked again", n)
+	}
+	out := logs.String()
+	checkLog(t, out,
+		"--resume "+sid,
+		"resume baseline: 2 model(s)",
+		"subagent_rehydrate task_id="+rebookTaskID,
+		"subagent tail: run start group="+rebookAgentTU,
+		"before_run=11")
+	// Premise: the guard judged this result. It does so only on a process's
+	// first result, and stands down after a compaction in the same process.
+	b.mu.Lock()
+	seen := b.resultSeen
+	b.mu.Unlock()
+	if !seen {
+		t.Fatal("the result never reached the fresh-process check")
+	}
 }

@@ -195,11 +195,16 @@ type usageNote struct {
 // runStartGate keeps a reactivation tail from booking the earlier runs again
 // (#2057). A tail for run 2+ reads the transcript from byte 0, so without a
 // gate every earlier run's messages reach the accumulator a second time.
-// In-session that is harmless, because the accumulator still holds their ids.
-// After a foci restart it holds nothing: run 1 was re-counted in the window when
-// the resume came before the new process's first result, and filed as late
-// spend (#1918 corrections against a parent turn it was never part of) when it
-// came after.
+// Within one Backend that is harmless, because the accumulator still holds
+// their ids. A NEW Backend holds nothing, and there are two ways to get one
+// while the transcript lives on: a foci restart, and a CC process relaunch
+// inside a running foci (the post-compaction close + --resume, an idle close,
+// a crash respawn: DelegatedManager closes the Backend and builds another).
+// Either way run 1 was re-counted in the window when the resume came before
+// the new process's first result, and filed as late spend (#1918 corrections
+// against a parent turn it was never part of) when it came after. The relaunch
+// case is not hypothetical: on 2026-09-27 a compaction relaunch re-booked six
+// reactivated subagents' earlier runs, 15.2M cache tokens (#2087).
 //
 // The boundary is read from the transcript's own ORDER, with no timing window.
 // Run 1 always ends at rest before a resume can start, and a Stop-hook bounce
