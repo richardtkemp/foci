@@ -641,3 +641,152 @@ func TestForkTranscriptConcurrentAppend(t *testing.T) {
 	}
 	<-done
 }
+
+// Shapes of a foreground call as CC 2.1.280 writes it: one assistant line per
+// tool_use (message.id shared by the turn's lines), then the result line
+// parented on it. A PreToolUse hook's attachment is written between the two.
+func fgUse(uuid, msgID, toolUseID, name, desc string) string {
+	return `{"type":"assistant","sessionId":"OLD","uuid":"` + uuid + `","message":{"id":"` + msgID + `","role":"assistant","content":[{"type":"tool_use","id":"` + toolUseID + `","name":"` + name + `","input":{"command":"make land","description":"` + desc + `"}}]}}`
+}
+
+func fgResult(uuid, parent, toolUseID string) string {
+	return `{"type":"user","sessionId":"OLD","uuid":"` + uuid + `","parentUuid":"` + parent + `","message":{"role":"user","content":[{"tool_use_id":"` + toolUseID + `","type":"tool_result","content":"ok","is_error":false}]},"toolUseResult":{"stdout":"ok","stderr":"","interrupted":false},"sourceToolAssistantUUID":"` + parent + `"}`
+}
+
+func hookAttachment(uuid, parent string) string {
+	return `{"type":"attachment","sessionId":"OLD","uuid":"` + uuid + `","parentUuid":"` + parent + `","attachment":{"type":"hook_success"}}`
+}
+
+// toolResultIDs returns the tool_use ids a record's tool_result blocks answer,
+// or nil if its content is not a block array.
+func toolResultIDs(rec map[string]any) []string {
+	msg, _ := rec["message"].(map[string]any)
+	blocks, _ := msg["content"].([]any)
+	var ids []string
+	for _, b := range blocks {
+		if m, _ := b.(map[string]any); m["type"] == "tool_result" {
+			ids = append(ids, m["tool_use_id"].(string))
+		}
+	}
+	return ids
+}
+
+// TestForkTranscriptClosesDanglingForegroundCall locks #2097: a fork taken while
+// the parent is inside a foreground tool call ends on a tool_use with no result.
+// The fork must answer it with a synthetic tool_result saying the call belongs
+// to the parent and must not be re-run — otherwise the fork's CC (2.1.281+ tells
+// it the outcome is unknown) may run the parent's call a second time.
+func TestForkTranscriptClosesDanglingForegroundCall(t *testing.T) {
+	data, recs := forkLines(t, []string{
+		`{"type":"user","sessionId":"OLD","uuid":"u1","message":{"role":"user","content":"land it"}}`,
+		fgUse("a1", "msg_1", "toolu_fg", "Bash", "Land #2097 onto main"),
+		hookAttachment("h1", "a1"),
+	})
+	if len(recs) != 4 {
+		t.Fatalf("want 3 copied + 1 closure line, got %d:\n%s", len(recs), data)
+	}
+	c := recs[3]
+	if got := toolResultIDs(c); len(got) != 1 || got[0] != "toolu_fg" {
+		t.Fatalf("closure answers %v, want [toolu_fg]:\n%s", got, data)
+	}
+	block := c["message"].(map[string]any)["content"].([]any)[0].(map[string]any)
+	text, _ := block["content"].(string)
+	for _, want := range []string{"[fork boundary]", "Bash", `"Land #2097 onto main"`, "belongs to the parent session", "Do not re-run it"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("closure text lacks %q:\n%s", want, text)
+		}
+	}
+	if block["is_error"] != false {
+		t.Errorf("closure is_error = %v, want false", block["is_error"])
+	}
+	if c["type"] != "user" || c["parentUuid"] != "a1" || c["sourceToolAssistantUUID"] != "a1" || c["sessionId"] != "NEW" {
+		t.Errorf("closure type=%v parentUuid=%v source=%v sessionId=%v, want user / a1 / a1 / NEW",
+			c["type"], c["parentUuid"], c["sourceToolAssistantUUID"], c["sessionId"])
+	}
+	if _, ok := c["toolUseResult"].(string); !ok {
+		t.Errorf("closure toolUseResult = %#v, want a string (CC's no-structured-result form)", c["toolUseResult"])
+	}
+}
+
+// TestForkTranscriptToolClosureScope: only calls the copied prefix ENDS on get a
+// closure. A resolved call gets none; of a turn's interleaved calls only the
+// unanswered ones are closed, all in one message; an orphan the conversation
+// has moved past is history CC already carries and is left alone.
+func TestForkTranscriptToolClosureScope(t *testing.T) {
+	cases := map[string]struct {
+		lines []string
+		want  []string
+	}{
+		"resolved": {
+			lines: []string{fgUse("a1", "msg_1", "toolu_a", "Bash", "x"), hookAttachment("h1", "a1"), fgResult("r1", "a1", "toolu_a")},
+		},
+		"interleaved, second open": {
+			lines: []string{
+				fgUse("a1", "msg_1", "toolu_a", "Bash", "x"), fgResult("r1", "a1", "toolu_a"),
+				fgUse("a2", "msg_1", "toolu_b", "Read", ""),
+			},
+			want: []string{"toolu_b"},
+		},
+		"two open in one turn": {
+			lines: []string{fgUse("a1", "msg_1", "toolu_a", "Read", ""), fgUse("a2", "msg_1", "toolu_b", "Grep", "")},
+			want:  []string{"toolu_a", "toolu_b"},
+		},
+		"orphan followed by a new turn": {
+			lines: []string{
+				fgUse("a1", "msg_1", "toolu_a", "Bash", "x"),
+				`{"type":"assistant","sessionId":"OLD","uuid":"a2","message":{"id":"msg_2","role":"assistant","content":[{"type":"text","text":"done"}]}}`,
+			},
+		},
+		"orphan followed by a prompt": {
+			lines: []string{
+				fgUse("a1", "msg_1", "toolu_a", "Bash", "x"),
+				`{"type":"user","sessionId":"OLD","uuid":"u2","message":{"role":"user","content":"next"}}`,
+			},
+		},
+		"sidechain call": {
+			lines: []string{`{"type":"assistant","isSidechain":true,"sessionId":"OLD","uuid":"s1","message":{"id":"msg_s","role":"assistant","content":[{"type":"tool_use","id":"toolu_s","name":"Bash","input":{}}]}}`},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			data, recs := forkLines(t, tc.lines)
+			var got []string
+			closures := 0
+			for _, r := range recs[len(tc.lines):] {
+				if ids := toolResultIDs(r); ids != nil {
+					got = append(got, ids...)
+					closures++
+				}
+			}
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") || closures > 1 {
+				t.Errorf("closed %v in %d messages, want %v in at most one:\n%s", got, closures, tc.want, data)
+			}
+		})
+	}
+}
+
+// TestForkTranscriptToolClosurePrecedesTaskBoundary locks #2097's ordering: the
+// task-notification boundary must never be the record right after a dangling
+// tool_use (the API requires a tool_use be answered by the very next user
+// message), so the tool closure comes first and the boundary chains off it.
+func TestForkTranscriptToolClosurePrecedesTaskBoundary(t *testing.T) {
+	data, recs := forkLines(t, []string{
+		bgBashUse("a0", "toolu_sh", "Land #1982 onto main"),
+		bgBashResult("r0", "toolu_sh", "bshell01"),
+		fgUse("a1", "msg_1", "toolu_fg", "Bash", "sleep"),
+	})
+	if len(recs) != 5 {
+		t.Fatalf("want 3 copied + tool closure + task boundary, got %d lines:\n%s", len(recs), data)
+	}
+	closure, boundary := recs[3], recs[4]
+	if ids := toolResultIDs(closure); len(ids) != 1 || ids[0] != "toolu_fg" {
+		t.Fatalf("record after the dangling tool_use answers %v, want [toolu_fg]:\n%s", ids, data)
+	}
+	content, _ := boundary["message"].(map[string]any)["content"].(string)
+	if !strings.Contains(content, "<task-id>bshell01</task-id>") {
+		t.Errorf("task boundary missing after the tool closure:\n%s", data)
+	}
+	if boundary["parentUuid"] != closure["uuid"] {
+		t.Errorf("boundary parentUuid = %v, want the tool closure's uuid %v", boundary["parentUuid"], closure["uuid"])
+	}
+}

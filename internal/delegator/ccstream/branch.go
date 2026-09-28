@@ -119,6 +119,12 @@ func (b *Backend) CleanupSession(_ context.Context, req delegator.CleanupRequest
 // #1431/#2086: while copying, forkTranscript also tracks background tasks — async
 // subagents and background shell commands — whose launch never resolves within
 // the copied prefix. See appendForkBoundary for why and what's appended.
+//
+// #2097: that same no-quiesce copy can end in the middle of a FOREGROUND tool
+// call — an assistant tool_use whose tool_result the parent has not written yet.
+// Before the task closures, forkTranscript writes a synthetic tool_result for
+// each such call (appendToolClosures), so the fork's first record after its
+// copied history is never a dangling tool_use. See appendToolClosures for why.
 func forkTranscript(src, dst, oldID, newID string, lg *log.ComponentLogger) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -171,7 +177,11 @@ func forkTranscript(src, dst, oldID, newID string, lg *log.ComponentLogger) erro
 			return finishFork(out, w, dst, fmt.Errorf("ccstream fork: read parent: %w", readErr))
 		}
 	}
-	if err := appendForkBoundary(w, newID, scan.lastUUID, scan.open); err != nil {
+	lastUUID, err := appendToolClosures(w, newID, scan.lastUUID, scan.pending)
+	if err != nil {
+		return finishFork(out, w, dst, err)
+	}
+	if err := appendForkBoundary(w, newID, lastUUID, scan.open); err != nil {
 		return finishFork(out, w, dst, err)
 	}
 	if err := w.Flush(); err != nil {
@@ -194,12 +204,15 @@ func forkTranscript(src, dst, oldID, newID string, lg *log.ComponentLogger) erro
 // Everything else in a line is opaque to the fork and copied byte-for-byte —
 // this is read-only enrichment, never mutation.
 type transcriptEnvelope struct {
-	UUID string `json:"uuid"`
+	Type        string `json:"type"`
+	UUID        string `json:"uuid"`
+	IsSidechain bool   `json:"isSidechain"`
 	// ToolUseResult is raw because CC writes a plain STRING here for an errored
 	// tool call; decoding it straight into a struct failed the whole line, which
 	// also dropped that line's uuid from the synthetic block's parent chain.
 	ToolUseResult json.RawMessage `json:"toolUseResult"`
 	Message       *struct {
+		ID      string          `json:"id"`
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
 	// Attachment carries CC's queued_command record: a task-notification that
@@ -226,8 +239,9 @@ type toolUseResult struct {
 }
 
 // contentBlock is the subset of a message content block the fork scan reads:
-// text (task-notifications), tool_use (a Bash call's description) and
-// tool_result (which call a background shell id belongs to).
+// text (task-notifications), tool_use (a Bash call's description; any call still
+// awaiting its result) and tool_result (which call a background shell id belongs
+// to; which call it answers).
 type contentBlock struct {
 	Type      string `json:"type"`
 	Text      string `json:"text"`
@@ -259,10 +273,21 @@ type openTask struct {
 	desc string
 }
 
+// pendingUse is an assistant tool_use in the copied prefix with no tool_result
+// (yet) in it (#2097).
+type pendingUse struct {
+	id            string // tool_use id
+	name          string // tool name
+	desc          string // input.description, when the tool takes one
+	msgID         string // API message id of the assistant turn that made the call
+	assistantUUID string // uuid of the transcript line holding the tool_use
+}
+
 // forkScan is forkTranscript's running state while copying.
 type forkScan struct {
 	open     map[string]openTask // task-id -> task; launched, not yet resolved
 	bashDesc map[string]string   // Bash tool_use id -> description, until its result line
+	pending  []pendingUse        // tool_uses of the current assistant turn still awaiting a result
 	lastUUID string              // uuid of the last real (non-synthetic) copied line
 }
 
@@ -291,6 +316,9 @@ func (s *forkScan) observe(line []byte) {
 	var blocks []contentBlock
 	if env.Message != nil {
 		blocks = s.readContent(env.Message.Content)
+		if !env.IsSidechain {
+			s.trackToolUses(env, blocks)
+		}
 	}
 	var r toolUseResult
 	if len(env.ToolUseResult) > 0 && env.ToolUseResult[0] == '{' && json.Unmarshal(env.ToolUseResult, &r) == nil {
@@ -314,6 +342,60 @@ func (s *forkScan) observe(line []byte) {
 	}
 	if a := env.Attachment; a != nil && a.Type == "queued_command" {
 		s.readContent(a.Prompt)
+	}
+}
+
+// trackToolUses maintains s.pending: the calls of the current assistant turn
+// that have no tool_result yet. Only calls the transcript ENDS on are dangling
+// in the fork; an orphan further back (CC ran and resumed past it long ago) is
+// dropped as soon as the conversation moves on — a new assistant turn (a
+// different message id), or a user message that is not a tool result. A result
+// for it written at the fork's tail would sit far from its call, and CC already
+// carries that history.
+//
+// Calls of one turn are not all written before the first result: CC runs each
+// tool as its block streams in, so a turn's lines interleave as tool_use,
+// tool_result, tool_use, tool_result. Hence a new turn is recognised by
+// message id, not by "an assistant line after a result".
+func (s *forkScan) trackToolUses(env transcriptEnvelope, blocks []contentBlock) {
+	switch env.Type {
+	case "assistant":
+		kept := s.pending[:0]
+		for _, p := range s.pending {
+			if p.msgID == env.Message.ID {
+				kept = append(kept, p)
+			}
+		}
+		s.pending = kept
+		for _, b := range blocks {
+			if b.Type == "tool_use" && b.ID != "" {
+				p := pendingUse{id: b.ID, name: b.Name, msgID: env.Message.ID, assistantUUID: env.UUID}
+				if b.Input != nil {
+					p.desc = b.Input.Description
+				}
+				s.pending = append(s.pending, p)
+			}
+		}
+	case "user":
+		if blocks == nil {
+			// String content: a prompt or a task-notification, never a result.
+			s.pending = nil
+			return
+		}
+		for _, b := range blocks {
+			if b.Type != "tool_result" {
+				s.pending = nil
+				return
+			}
+		}
+		for _, b := range blocks {
+			for i, p := range s.pending {
+				if p.id == b.ToolUseID {
+					s.pending = append(s.pending[:i], s.pending[i+1:]...)
+					break
+				}
+			}
+		}
 	}
 }
 
@@ -345,6 +427,96 @@ func (s *forkScan) readContent(raw json.RawMessage) []contentBlock {
 		}
 	}
 	return blocks
+}
+
+// appendToolClosures writes ONE synthetic user message holding a tool_result
+// for every tool call the copied prefix ends on without a result (#2097), and
+// returns the uuid the next synthetic record must chain off: the closure's own,
+// or lastUUID unchanged when there is nothing to close.
+//
+// Why: the fork is taken without quiescing the parent, so it can land while the
+// parent is inside a foreground tool call. That call is the parent's — it is
+// still running there, and its result will be written to the parent's
+// transcript, never the fork's. Left dangling, the fork's CC answers the call
+// itself on resume — "[Request interrupted by user for tool use]" on 2.1.280,
+// "outcome is unknown ... check whether it took effect" from 2.1.281 — and the
+// fork treats it as its own unfinished work: in live probes on 2.1.280 and
+// 2.1.284 (#2097) the fork ran the parent's command a second time on both. The
+// closure answers the call with what is true for the fork: it belongs to the
+// parent session, its outcome is not visible here, and it must not be re-run;
+// CC keeps it as the call's result, and in the same probes no fork re-ran the
+// call. It also keeps appendForkBoundary's task-notification from being the
+// record directly after a tool_use: the API requires a tool_use be answered by
+// tool_results in the very next user message.
+//
+// The record mirrors CC's own tool-result lines: parentUuid and
+// sourceToolAssistantUUID name the assistant line of the last open call (CC
+// parents a result on its call's line, not on hook attachments written in
+// between), and toolUseResult is a plain string, which is what CC writes for a
+// call that produced no structured result, so stoprule's reader skips it.
+// is_error is false: the call did not fail, it is simply not this fork's.
+func appendToolClosures(w *bufio.Writer, sessionID, lastUUID string, pending []pendingUse) (string, error) {
+	if len(pending) == 0 {
+		return lastUUID, nil
+	}
+	blocks := make([]map[string]any, 0, len(pending))
+	texts := make([]string, 0, len(pending))
+	for _, p := range pending {
+		text := toolClosureText(p)
+		texts = append(texts, text)
+		blocks = append(blocks, map[string]any{
+			"tool_use_id": p.id,
+			"type":        "tool_result",
+			"content":     text,
+			"is_error":    false,
+		})
+	}
+	source := pending[len(pending)-1].assistantUUID
+	var parentUUID any
+	switch {
+	case source != "":
+		parentUUID = source
+	case lastUUID != "":
+		parentUUID = lastUUID
+	}
+	id := uuid.NewString()
+	rec := map[string]any{
+		"parentUuid":  parentUUID,
+		"isSidechain": false,
+		"promptId":    uuid.NewString(),
+		"type":        "user",
+		"message": map[string]any{
+			"role":    "user",
+			"content": blocks,
+		},
+		"uuid":                    id,
+		"timestamp":               time.Now().UTC().Format(time.RFC3339Nano),
+		"toolUseResult":           strings.Join(texts, "\n"),
+		"sourceToolAssistantUUID": source,
+		"sessionId":               sessionID,
+	}
+	b, err := json.Marshal(rec)
+	if err != nil {
+		return "", fmt.Errorf("ccstream fork: marshal fork-boundary tool closures: %w", err)
+	}
+	if _, err := w.Write(append(b, '\n')); err != nil {
+		return "", fmt.Errorf("ccstream fork: write fork-boundary tool closures: %w", err)
+	}
+	return id, nil
+}
+
+// toolClosureText is the tool_result the fork's model reads for one call still
+// running in the parent.
+func toolClosureText(p pendingUse) string {
+	name := p.name
+	if name == "" {
+		name = "tool"
+	}
+	call := fmt.Sprintf("This %s call", name)
+	if p.desc != "" {
+		call += fmt.Sprintf(" (%q)", p.desc)
+	}
+	return "[fork boundary] " + call + " belongs to the parent session: it was still running there when this fork was taken, and its result is not visible to this fork. It was NOT interrupted, stopped or failed. This is a synthetic result inserted at fork time. Do not re-run it from this branch; the parent session is carrying it out."
 }
 
 // appendForkBoundary writes ONE synthetic user message holding a
