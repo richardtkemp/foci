@@ -29,6 +29,22 @@ func classifyRecovery(consecutiveErrors int, activeDuringDowntime bool) (shouldL
 	return true, activeDuringDowntime
 }
 
+// stuckOutageThreshold is how long a getUpdates failure run must last before
+// it's treated as an outage that is no longer transient — a bot that is likely
+// stuck rather than riding out a blip. Failures log only DEBUG while ongoing
+// and are summarised on recovery, so a run that never recovers would otherwise
+// be silent; this is the point at which it earns one mid-outage WARN. Every
+// observed stall has self-recovered well inside an hour, so this is a safety
+// net that should essentially never fire. A var so tests can override it.
+var stuckOutageThreshold = time.Hour
+
+// stuckWarnDue reports whether an ongoing failure run should emit its one
+// "likely stuck" WARN: the run has outlasted stuckOutageThreshold and hasn't
+// already warned. The caller resets warned on recovery, so it's once per run.
+func stuckWarnDue(outage time.Duration, warned bool) bool {
+	return !warned && outage > stuckOutageThreshold
+}
+
 // RegisterCommands registers the bot's slash commands with Telegram via setMyCommands.
 // This makes commands appear as autocomplete suggestions when the user types "/" in chat.
 // Logs a warning on failure but does not return an error.
@@ -121,6 +137,9 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 	// polling is healthy) so recovery can report the outage duration and check
 	// whether an outbound send fell inside the window. Reset on any success.
 	var firstFailureAt time.Time
+	// stuckWarned records that the current failure run has already logged its
+	// one "likely stuck" WARN (see stuckWarnDue). Reset on any success.
+	var stuckWarned bool
 	// Error backoff: exponential from baseBackoff, doubling per consecutive
 	// failure, capped at maxBackoff, reset on first success. This stops a
 	// fast-failing error (e.g. a 502 that returns immediately instead of
@@ -198,6 +217,13 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 				b.logger().Debugf("get updates (failure #%d): %s", consecutiveErrors, sanitized)
 				b.logger().Extra("poll_error consecutive=%d outage=%s err=%s",
 					consecutiveErrors, time.Since(firstFailureAt).Round(time.Second), sanitized)
+				// The one non-DEBUG line during an ongoing outage: a run that
+				// never recovers would otherwise never be summarised at all.
+				if outage := time.Since(firstFailureAt); stuckWarnDue(outage, stuckWarned) {
+					stuckWarned = true
+					b.logger().Warnf("get updates has been failing for %s (%d consecutive) — bot likely stuck: %s",
+						outage.Round(time.Second), consecutiveErrors, sanitized)
+				}
 
 				// Exponential backoff, capped.
 				wait := baseBackoff
@@ -241,6 +267,7 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 			}
 			consecutiveErrors = 0
 			firstFailureAt = time.Time{}
+			stuckWarned = false
 
 			for _, update := range res.updates {
 				if update.UpdateId >= offset {

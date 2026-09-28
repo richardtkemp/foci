@@ -3,6 +3,7 @@ package telegram
 import (
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -54,5 +55,26 @@ func TestActivityClient_StampsOnSend(t *testing.T) {
 	}
 	if last.Load() == 0 {
 		t.Fatal("SendMessage did not stamp lastSendAt")
+	}
+}
+
+func TestStuckWarnDue(t *testing.T) {
+	cases := []struct {
+		name   string
+		outage time.Duration
+		warned bool
+		want   bool
+	}{
+		{"short stall — silent", time.Minute, false, false},
+		{"exactly at threshold — silent", stuckOutageThreshold, false, false},
+		{"past threshold — warn", stuckOutageThreshold + time.Second, false, true},
+		{"past threshold, already warned this run — silent", 3 * stuckOutageThreshold, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := stuckWarnDue(tc.outage, tc.warned); got != tc.want {
+				t.Fatalf("stuckWarnDue(%s, %v) = %v, want %v", tc.outage, tc.warned, got, tc.want)
+			}
+		})
 	}
 }
