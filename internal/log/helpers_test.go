@@ -54,6 +54,20 @@ func captureOutput(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
+// resetWarnHookState puts the process-global warn hook back to its startup
+// state (no hook, empty buffer, buffering on) and restores it on cleanup.
+func resetWarnHookState(t *testing.T) {
+	t.Helper()
+	warnMu.Lock()
+	warnHook, warnBuffer, warnDropping = nil, nil, false
+	warnMu.Unlock()
+	t.Cleanup(func() {
+		warnMu.Lock()
+		warnHook, warnBuffer, warnDropping = nil, nil, false
+		warnMu.Unlock()
+	})
+}
+
 // withDebugLevel sets the log level to DEBUG and registers cleanup to restore INFO.
 func withDebugLevel(t *testing.T) {
 	t.Helper()

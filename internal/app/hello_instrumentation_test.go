@@ -11,24 +11,23 @@ import (
 	flog "foci/internal/log"
 )
 
-// captureWarns collects only THIS feature's warnings for the duration of a test.
+// captureWarns collects every warning logged for the duration of a test.
 //
-// The filter is load-bearing, not tidiness: the warn hook is process-global, and
-// clearing it makes subsequent warnings accumulate in the log package's replay
-// buffer, which is then flushed into the NEXT hook that gets installed. So an
-// unfiltered capture in one test receives a pile of unrelated warnings emitted
-// by other tests in the package — green when run alone, failing under the full
-// suite (observed 2026-08-15).
+// Unfiltered on purpose: the tests assert exact counts, so a warning from
+// anywhere else fails them rather than hiding. The leading SetWarnHook(nil)
+// discards any backlog other tests left behind (warnings logged before the
+// process's first hook are buffered and replayed into it, by design), and
+// after cleanup SetWarnHook(nil) drops rather than buffers (#1717), so
+// nothing accumulates for the next capture. Before #1717, SetWarnHook(nil)
+// panicked on a non-empty backlog, and this capture needed a content filter.
 func captureWarns(t *testing.T) func() []string {
 	t.Helper()
 	var (
 		mu   sync.Mutex
 		msgs []string
 	)
+	flog.SetWarnHook(nil)
 	flog.SetWarnHook(func(_ flog.Level, component, msg string) {
-		if !strings.Contains(msg, "#1713") {
-			return
-		}
 		mu.Lock()
 		msgs = append(msgs, component+": "+msg)
 		mu.Unlock()
@@ -350,9 +349,6 @@ func TestHelloLog_RecordsResumeCount_ViaDispatch(t *testing.T) {
 			var buf bytes.Buffer
 			flog.SetOutput(&buf)
 			flog.SetLevel(flog.DEBUG)
-			// Restore os.Stderr, the package default (log.go:112) — NOT nil.
-			// A nil writer SIGSEGVs the next log write and took down unrelated
-			// tests in this package (observed 2026-08-15).
 			t.Cleanup(func() { flog.SetOutput(os.Stderr); flog.SetLevel(flog.INFO) })
 
 			h := newTestHub()

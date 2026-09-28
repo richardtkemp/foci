@@ -31,8 +31,6 @@ func serveAndCapture(t *testing.T, path string, register func(*http.ServeMux)) (
 	var buf bytes.Buffer
 	flog.SetOutput(&buf)
 	flog.SetLevel(flog.DEBUG)
-	// Restore os.Stderr, the package default — NOT nil, which SIGSEGVs the next
-	// write and takes down unrelated tests in this package.
 	t.Cleanup(func() { flog.SetOutput(os.Stderr); flog.SetLevel(flog.INFO) })
 
 	h := newTestHub()

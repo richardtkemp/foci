@@ -461,24 +461,39 @@ var (
 	// Set via SetWarnHook, which replays any buffered early warnings.
 	warnHook   func(level Level, component string, msg string)
 	warnBuffer []warnHookEntry
-	warnMu     sync.Mutex
+	// warnDropping is set by SetWarnHook(nil): with no hook, warnings are
+	// discarded instead of buffered for replay. Buffering is only for the
+	// startup window before the first hook is installed; after an explicit
+	// clear, a backlog would be replayed into whatever hook comes next.
+	warnDropping bool
+	warnMu       sync.Mutex
 )
 
 // SetWarnHook sets the warn hook and replays any warnings that were
-// buffered before the hook was ready.
+// buffered before the hook was ready. SetWarnHook(nil) disables capture:
+// the backlog is discarded and later warnings are dropped, not buffered for
+// replay into the next hook (#1717).
 func SetWarnHook(fn func(level Level, component string, msg string)) {
 	warnMu.Lock()
 	defer warnMu.Unlock()
 	warnHook = fn
-	for _, e := range warnBuffer {
-		fn(e.level, e.component, e.msg)
+	warnDropping = fn == nil
+	if fn != nil {
+		for _, e := range warnBuffer {
+			fn(e.level, e.component, e.msg)
+		}
 	}
 	warnBuffer = nil
 }
 
 // SetOutput redirects the event output stream. Exported for cross-package test
 // use (e.g. convo tests that assert an error was logged); mirrors SetAPIWriter.
+// SetOutput(nil) restores the default, os.Stderr — a nil writer would panic on
+// the next log write anywhere in the process (#1717).
 func SetOutput(w io.Writer) {
+	if w == nil {
+		w = os.Stderr
+	}
 	std.mu.Lock()
 	std.eventOut = w
 	std.mu.Unlock()
@@ -526,7 +541,9 @@ func (l *Logger) event(level Level, component string, format string, args ...int
 			warnMu.Unlock()
 			warnHook(level, component, msg)
 		} else {
-			warnBuffer = append(warnBuffer, warnHookEntry{level, component, msg})
+			if !warnDropping {
+				warnBuffer = append(warnBuffer, warnHookEntry{level, component, msg})
+			}
 			warnMu.Unlock()
 		}
 	}

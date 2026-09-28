@@ -246,12 +246,7 @@ func TestWarnHookBuffering(t *testing.T) {
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 
-	// Reset warn hook state
-	warnMu.Lock()
-	warnHook = nil
-	warnBuffer = nil
-	warnMu.Unlock()
-
+	resetWarnHookState(t)
 	captureOutput(t)
 
 	// Log warnings before hook is set
@@ -280,11 +275,75 @@ func TestWarnHookBuffering(t *testing.T) {
 		t.Errorf("total hook calls = %d, want 3", len(replayed))
 	}
 
-	// Clean up
-	warnMu.Lock()
-	warnHook = nil
-	warnBuffer = nil
-	warnMu.Unlock()
+}
+
+// #1717: SetOutput(nil) used to install a nil writer, so the NEXT log write
+// anywhere in the process SIGSEGVed — surfacing as a panic in whichever
+// unrelated test logged next. nil must mean "back to the default", os.Stderr.
+func TestSetOutputNilRestoresDefault(t *testing.T) {
+	resetGlobal()
+	t.Cleanup(resetGlobal)
+
+	var buf bytes.Buffer
+	SetOutput(&buf)
+	SetOutput(nil)
+
+	std.mu.Lock()
+	got := std.eventOut
+	std.mu.Unlock()
+	if got != os.Stderr {
+		t.Fatalf("after SetOutput(nil), eventOut = %T(%v), want os.Stderr", got, got)
+	}
+
+	// The write that used to SIGSEGV. A panic here fails the test.
+	Infof("test", "write after SetOutput(nil)")
+	if buf.Len() != 0 {
+		t.Errorf("SetOutput(nil) left the previous writer installed: %q", buf.String())
+	}
+}
+
+// #1717: SetWarnHook(nil) used to put the package back into startup
+// buffering mode, so warnings from unrelated tests piled up and were replayed
+// into the NEXT hook installed. nil must disable capture: drop the backlog and
+// stop buffering.
+func TestSetWarnHookNilStopsBuffering(t *testing.T) {
+	resetGlobal()
+	t.Cleanup(resetGlobal)
+	resetWarnHookState(t)
+	captureOutput(t)
+
+	SetWarnHook(func(Level, string, string) {})
+	SetWarnHook(nil)
+
+	// Emitted while no hook is installed — e.g. by another test in between.
+	Warnf("other", "foreign warning")
+	Errorf("other", "foreign error")
+
+	var got []string
+	SetWarnHook(func(_ Level, _ string, msg string) { got = append(got, msg) })
+	Warnf("test", "own warning")
+
+	if len(got) != 1 || got[0] != "own warning" {
+		t.Fatalf("second hook received %q, want only [own warning] — warnings emitted while the hook was nil were replayed", got)
+	}
+}
+
+// #1717: SetWarnHook(nil) must also discard a startup backlog that was never
+// delivered (it used to call the nil fn on each entry and panic).
+func TestSetWarnHookNilClearsStartupBuffer(t *testing.T) {
+	resetGlobal()
+	t.Cleanup(resetGlobal)
+	resetWarnHookState(t)
+	captureOutput(t)
+
+	Warnf("config", "startup warning")
+	SetWarnHook(nil)
+
+	var got []string
+	SetWarnHook(func(_ Level, _ string, msg string) { got = append(got, msg) })
+	if len(got) != 0 {
+		t.Fatalf("hook installed after SetWarnHook(nil) received %q, want nothing", got)
+	}
 }
 
 func TestMultilineMessageCollapsed(t *testing.T) {
