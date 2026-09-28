@@ -179,7 +179,7 @@ func TestSessionPoolPersistentProfileExclusive(t *testing.T) {
 		for _, e := range pool.entries {
 			_ = e.mgr.Stop()
 		}
-		removeAllRetry(base)
+		removeAfterStop(t, base)
 	})
 	tool := NewSessionBrowserTool(pool)
 	start := marshalParams(t, map[string]any{"action": "start", "incognito": false})

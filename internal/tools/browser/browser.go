@@ -33,6 +33,11 @@ type BrowserManager struct {
 	// profile guards the configured persistent UserDataDir. A SessionPool
 	// shares one lock across its managers; a standalone manager owns its own.
 	profile *profileLock
+	// launcher and exited track the chromium process that Start launched, so
+	// Stop can wait for it to exit (and kill it if it does not). exited is nil
+	// when the exit cannot be watched; Stop then does not wait.
+	launcher *launcher.Launcher
+	exited   <-chan struct{}
 }
 
 // NewBrowserManager creates a new browser manager with the given config.
@@ -111,6 +116,13 @@ func (m *BrowserManager) Start() error {
 		m.profile.drop(m)
 		return fmt.Errorf("launch browser: %w", err)
 	}
+	m.launcher = l
+	// Watch the exit now, while the pid is certainly chromium's. Opened at
+	// Stop time (up to an idle TTL later) the pid could belong to another
+	// process if chromium had crashed in between.
+	if m.exited, err = watchExit(l.PID()); err != nil {
+		m.logger.Warnf("Cannot watch browser pid %d for exit; Stop will not wait for it: %v", l.PID(), err)
+	}
 
 	m.browser = rod.New().ControlURL(url).MustConnect()
 	m.logger.Infof("Browser started (headless=%v, incognito=%v)", m.config.Headless, m.incognito)
@@ -126,9 +138,11 @@ func (m *BrowserManager) Stop() error {
 		return nil
 	}
 
-	if err := m.browser.Close(); err != nil {
-		m.logger.Warnf("Error closing browser: %v", err)
+	closeErr := m.browser.Close()
+	if closeErr != nil {
+		m.logger.Warnf("Error closing browser: %v", closeErr)
 	}
+	m.awaitExit(closeErr == nil)
 	m.browser = nil
 	m.page = nil
 	m.snapshot = nil
@@ -141,6 +155,34 @@ func (m *BrowserManager) Stop() error {
 	m.profile.drop(m)
 	m.logger.Infof("Browser stopped")
 	return nil
+}
+
+// awaitExit blocks until the chromium process has exited. CDP Browser.close
+// only starts chromium's shutdown, and chromium keeps writing its profile dir
+// until it exits, so removing an owned dir earlier fails with "directory not
+// empty", and releasing the persistent profile earlier lets another session
+// launch into a dir that is still locked (#1518). If the close was not
+// acknowledged, or chromium outlives the configured browser operation timeout
+// (the bound this manager already puts on one CDP operation), it is killed;
+// SIGKILL makes the second wait finite.
+func (m *BrowserManager) awaitExit(closed bool) {
+	exited := m.exited
+	l := m.launcher
+	m.exited, m.launcher = nil, nil
+	if exited == nil {
+		return
+	}
+	if closed {
+		timeout := m.Timeout()
+		select {
+		case <-exited:
+			return
+		case <-time.After(timeout):
+			m.logger.Warnf("Browser did not exit within %s of close; killing it", timeout)
+		}
+	}
+	l.Kill()
+	<-exited
 }
 
 func (m *BrowserManager) ensureStarted() error {

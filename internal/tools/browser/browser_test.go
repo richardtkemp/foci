@@ -1,36 +1,35 @@
 package browser
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"foci/internal/config"
 	"foci/internal/testtemp"
 )
 
-// removeAllRetry tolerates chromium's async shutdown: Stop() (browser.go)
-// closes the CDP connection but doesn't wait for the underlying chromium OS
-// process to exit, so a profile-dir write can land after RemoveAll has
-// already walked past that subdirectory, leaving it non-empty and the
-// top-level rmdir failing with ENOTEMPTY. A few short retries absorb that
-// window without masking a real removal failure (foci_todo #1498).
-func removeAllRetry(dir string) {
-	var err error
-	for i := 0; i < 5; i++ {
-		if err = os.RemoveAll(dir); err == nil {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
+// removeAfterStop removes a test-owned dir that held a persistent profile.
+// Stop waits for chromium to exit (#1518), so nothing writes into dir after
+// it returns and a removal failure is a real failure.
+func removeAfterStop(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.RemoveAll(dir); err != nil {
+		t.Errorf("remove %s after Stop: %v", dir, err)
 	}
 }
 
@@ -701,8 +700,7 @@ func extractRef(t *testing.T, snapshot, roleKeyword string) string {
 func TestBrowserPersistentProfile(t *testing.T) {
 	skipIfNoBrowser(t)
 
-	// Own the temp dir (not t.TempDir) so cleanup runs strictly after Stop and
-	// tolerates chromium's async shutdown writes ("directory not empty").
+	// Own the temp dir (not t.TempDir) so cleanup runs strictly after Stop.
 	base, err := os.MkdirTemp(testtemp.Dir(), "foci-persist-test-*")
 	if err != nil {
 		t.Fatal(err)
@@ -714,7 +712,7 @@ func TestBrowserPersistentProfile(t *testing.T) {
 		DOMStableSec: 0.1,
 		UserDataDir:  profile,
 	}, 0640)
-	t.Cleanup(func() { mgr.Stop(); removeAllRetry(base) })
+	t.Cleanup(func() { mgr.Stop(); removeAfterStop(t, base) })
 	tool := NewBrowserTool(mgr)
 
 	// incognito=false so the configured persistent profile is used.
@@ -732,4 +730,111 @@ func TestBrowserPersistentProfile(t *testing.T) {
 	if mgr.profileDir != "" {
 		t.Errorf("owned temp profileDir set (%q) despite configured persistent dir", mgr.profileDir)
 	}
+}
+
+// TestBrowserStopWaitsForExit verifies that Stop returns only after chromium
+// has exited and its owned profile dir is gone (foci_todo #1518). Stop used to
+// send the CDP close and remove the dir while chromium was still shutting
+// down, so a late write could land in the dir after the removal.
+func TestBrowserStopWaitsForExit(t *testing.T) {
+	skipIfNoBrowser(t)
+	if runtime.GOOS != "linux" {
+		t.Skip("finds the chromium process through /proc")
+	}
+
+	mgr := testBrowserManager(t)
+	if err := mgr.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	dir := mgr.profileDir
+	if dir == "" {
+		t.Fatal("premise: incognito start did not create an owned profile dir")
+	}
+	pid := chromiumMainPID(t, dir)
+
+	if err := mgr.Stop(); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	if state := procState(pid); state != "" && state != "Z" {
+		t.Errorf("chromium (pid %d) is still running (state %s) after Stop returned", pid, state)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("profile dir %s still exists after Stop returned (stat err: %v)", dir, err)
+	}
+}
+
+// TestBrowserAwaitExitKillsUnclosedBrowser covers Stop's path for a close that
+// was not acknowledged: chromium was never told to shut down, so awaitExit
+// must kill it and still wait for the exit.
+func TestBrowserAwaitExitKillsUnclosedBrowser(t *testing.T) {
+	skipIfNoBrowser(t)
+	if runtime.GOOS != "linux" {
+		t.Skip("finds the chromium process through /proc")
+	}
+
+	mgr := testBrowserManager(t)
+	if err := mgr.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	pid := chromiumMainPID(t, mgr.profileDir)
+
+	mgr.mu.Lock()
+	mgr.awaitExit(false)
+	mgr.mu.Unlock()
+	if state := procState(pid); state != "" && state != "Z" {
+		t.Errorf("chromium (pid %d) is still running (state %s) after awaitExit(false)", pid, state)
+	}
+}
+
+// chromiumMainPID returns the pid of the chromium browser process launched
+// with dir as its user-data-dir. Chromium's child processes carry --type=, and
+// go-rod's leakless guard carries the same args behind its own binary name, so
+// both are excluded.
+func chromiumMainPID(t *testing.T, dir string) int {
+	t.Helper()
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pids []int
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
+		if err != nil || len(raw) == 0 {
+			continue
+		}
+		args := strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
+		if strings.Contains(filepath.Base(args[0]), "leakless") {
+			continue
+		}
+		if !slices.Contains(args, "--user-data-dir="+dir) {
+			continue
+		}
+		if slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(a, "--type=") }) {
+			continue
+		}
+		pids = append(pids, pid)
+	}
+	if len(pids) != 1 {
+		t.Fatalf("premise: want exactly one chromium browser process for %s, found %v", dir, pids)
+	}
+	return pids[0]
+}
+
+// procState returns the state letter from /proc/<pid>/stat, or "" when the
+// process no longer exists. "Z" means it has exited and awaits reaping.
+func procState(pid int) string {
+	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return ""
+	}
+	// The command name in field 2 may contain spaces; the state follows its ")".
+	fields := strings.Fields(string(raw[bytes.LastIndexByte(raw, ')')+1:]))
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
 }
