@@ -19,7 +19,6 @@ codeql-db/
 coverage.out
 coverage.html
 cover.html
-internal/tools/**/logs/tmux.debug
 *.out
 .test-output.tmp
 /cc-stub

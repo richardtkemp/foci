@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"foci/internal/tempdir"
 )
 
 // tmuxDebugLog provides comprehensive debugging for tmux operations.
@@ -22,15 +24,12 @@ var debugOnce sync.Once
 func initDebugLog() error { // nolint:unparam
 	var err error
 	debugOnce.Do(func() {
-		logsDir := "logs"
-		if _, err := os.Stat(logsDir); os.IsNotExist(err) {
-			if err := os.MkdirAll(logsDir, 0755); err != nil {
-				tmux_debugLog.Warnf("failed to create logs directory: %v", err)
-				return
-			}
-		}
-
-		debugPath := filepath.Join(logsDir, "tmux.debug")
+		// Under the foci temp root, never cwd-relative: under `go test` the cwd
+		// is the package dir, so a relative path left a 0600 file owned by the
+		// test's uid inside the worktree, blocking other uids from removing it
+		// (#1094). tempdir.Dir() is also per-run hermetic under make's
+		// FOCI_TMPDIR.
+		debugPath := filepath.Join(tempdir.Dir(), "tmux.debug")
 		f, err := os.OpenFile(debugPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 		if err != nil {
 			tmux_debugLog.Warnf("failed to open debug log: %v", err)
