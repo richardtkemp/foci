@@ -444,11 +444,12 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 
 	for i := 0; i < maxLoops; i++ {
 		req := &provider.MessageRequest{
-			Model:     model,
-			MaxTokens: 16384,
-			System:    system,
-			Messages:  messages,
-			Tools:     toolDefs,
+			Model:      model,
+			MaxTokens:  16384,
+			System:     system,
+			Messages:   messages,
+			Tools:      toolDefs,
+			SessionKey: sessionKey,
 		}
 
 		start := time.Now()

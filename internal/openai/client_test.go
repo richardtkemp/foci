@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -675,7 +676,7 @@ func TestBuildParams_WithReasoning(t *testing.T) {
 		Thinking: &provider.ThinkingConfig{Type: "adaptive"},
 	}
 
-	params := buildParams(req)
+	params := buildParams(req, false)
 	data, err := json.Marshal(params)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -710,7 +711,7 @@ func TestBuildParams_NoReasoningByDefault(t *testing.T) {
 		},
 	}
 
-	params := buildParams(req)
+	params := buildParams(req, false)
 	data, err := json.Marshal(params)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -738,7 +739,7 @@ func TestBuildParams_WithEffort(t *testing.T) {
 		Output: &provider.OutputConfig{Effort: "high"},
 	}
 
-	params := buildParams(req)
+	params := buildParams(req, false)
 	data, err := json.Marshal(params)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -779,7 +780,7 @@ func TestBuildParams_WithThinkingAndEffort(t *testing.T) {
 		Output:   &provider.OutputConfig{Effort: "high"},
 	}
 
-	params := buildParams(req)
+	params := buildParams(req, false)
 	data, err := json.Marshal(params)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -827,7 +828,7 @@ func TestBuildParams_WithProviderRouting(t *testing.T) {
 		},
 	}
 
-	params := buildParams(req)
+	params := buildParams(req, false)
 	data, err := json.Marshal(params)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -885,7 +886,7 @@ func TestBuildParams_NoProviderRoutingByDefault(t *testing.T) {
 		},
 	}
 
-	params := buildParams(req)
+	params := buildParams(req, false)
 	data, err := json.Marshal(params)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -922,7 +923,7 @@ func TestBuildParams_ReasoningSurvivesAlongsideProviderRouting(t *testing.T) {
 		},
 	}
 
-	params := buildParams(req)
+	params := buildParams(req, false)
 	data, err := json.Marshal(params)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -965,7 +966,7 @@ func TestBuildParams_RoutingVariantSuffixPassesThroughUnchanged(t *testing.T) {
 				{Role: "user", Content: provider.TextContent("hello")},
 			},
 		}
-		params := buildParams(req)
+		params := buildParams(req, false)
 		if params.Model != tc.wantWire {
 			t.Errorf("buildParams(%q).Model = %q, want %q", tc.reqModel, params.Model, tc.wantWire)
 		}
@@ -1185,4 +1186,87 @@ func TestLogGenerationID(t *testing.T) {
 			t.Errorf("expected no debug output for nil result, got: %s", buf.String())
 		}
 	})
+}
+
+// sessionIDOnWire sends one SendMessage through a mock server reached via
+// baseURL (relative to the server root) and returns the request body's
+// top-level "session_id" field, and whether it was present at all.
+func sessionIDOnWire(t *testing.T, basePath, sessionKey string) (any, bool) {
+	t.Helper()
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"id": "gen-1", "object": "chat.completion", "model": "m", "created": 1700000000,
+			"choices": []map[string]any{{"index": 0, "finish_reason": "stop",
+				"message": map[string]any{"role": "assistant", "content": "ok"}}},
+			"usage": map[string]any{"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+		})
+	}))
+	defer srv.Close()
+
+	c := NewClient("test-key", WithBaseURL(srv.URL+basePath))
+	_, err := c.SendMessage(context.Background(), &provider.MessageRequest{
+		Model:      "openai/gpt-4o",
+		MaxTokens:  64,
+		Messages:   []provider.Message{{Role: "user", Content: provider.TextContent("hi")}},
+		SessionKey: sessionKey,
+	})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	v, ok := body["session_id"]
+	return v, ok
+}
+
+func TestSendMessage_SessionIDOpenRouterOnly(t *testing.T) {
+	// Proves #1546 end to end on the wire: the foci session key reaches the
+	// request body as "session_id" when the client's endpoint is OpenRouter
+	// (isOpenRouter matches "openrouter.ai" in the base URL, reproduced here
+	// as a path segment on the mock server), and is absent for any other
+	// OpenAI-compatible endpoint, which may reject unknown fields.
+	if v, ok := sessionIDOnWire(t, "/openrouter.ai/api/v1", "gilette/c123"); !ok || v != "gilette/c123" {
+		t.Errorf("openrouter: session_id = %v (present=%v), want gilette/c123", v, ok)
+	}
+	if v, ok := sessionIDOnWire(t, "", "gilette/c123"); ok {
+		t.Errorf("non-openrouter: session_id = %v, want absent", v)
+	}
+	if v, ok := sessionIDOnWire(t, "/openrouter.ai/api/v1", ""); ok {
+		t.Errorf("openrouter, empty key: session_id = %v, want absent", v)
+	}
+}
+
+func TestBuildParams_SessionIDAlongsideReasoningAndTruncated(t *testing.T) {
+	// Proves session_id joins the single SetExtraFields map rather than
+	// clobbering (or being clobbered by) reasoning/provider — SetExtraFields
+	// overwrites, see buildParams — and that an over-long key is cut to
+	// OpenRouter's documented 256-char cap instead of risking a 400.
+	long := strings.Repeat("k", openRouterSessionIDMax+10)
+	req := &provider.MessageRequest{
+		Model:           "openrouter/qwen/qwen3.5-397b-a17b",
+		MaxTokens:       4096,
+		Messages:        []provider.Message{{Role: "user", Content: provider.TextContent("hello")}},
+		Thinking:        &provider.ThinkingConfig{Type: "adaptive"},
+		ProviderRouting: &provider.ProviderRouting{Only: []string{"deepinfra"}},
+		SessionKey:      long,
+	}
+	data, err := json.Marshal(buildParams(req, true))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, k := range []string{"reasoning", "provider"} {
+		if _, ok := raw[k]; !ok {
+			t.Errorf("%s missing alongside session_id", k)
+		}
+	}
+	if got, _ := raw["session_id"].(string); got != long[:openRouterSessionIDMax] {
+		t.Errorf("session_id len = %d, want %d", len(got), openRouterSessionIDMax)
+	}
 }

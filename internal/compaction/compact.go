@@ -392,6 +392,7 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 		System:          system,
 		Messages:        summaryMessages,
 		ProviderRouting: md.ProviderRouting,
+		SessionKey:      sessionKey,
 	}
 	if mdEffort != "" && mdEffort != "off" {
 		req.Output = &provider.OutputConfig{Effort: mdEffort}

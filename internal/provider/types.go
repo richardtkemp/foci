@@ -325,6 +325,13 @@ type MessageRequest struct {
 	// encoding/json for wire transmission — each translate layer builds its
 	// own SDK params type from these fields).
 	ProviderRouting *ProviderRouting `json:"-"`
+
+	// SessionKey is the foci session key this request belongs to. Only read
+	// by the openai translate layer, which sends it as OpenRouter's top-level
+	// "session_id" (OpenRouter endpoints only) so a session's generations
+	// group together in OpenRouter's logs (foci_todo #1546). json:"-" for
+	// the same reason as ProviderRouting.
+	SessionKey string `json:"-"`
 }
 
 // Usage contains token usage information from a response.

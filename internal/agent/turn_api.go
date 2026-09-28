@@ -281,6 +281,7 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 			CacheStrategy:   a.CacheStrategy,
 			CacheTTL:        md.CacheTTL,
 			ProviderRouting: md.ProviderRouting,
+			SessionKey:      ts.SessionKey,
 		}
 		if ts.TurnEffort != "" && ts.TurnEffort != "off" {
 			req.Output = &provider.OutputConfig{Effort: ts.TurnEffort}

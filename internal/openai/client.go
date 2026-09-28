@@ -106,7 +106,7 @@ func (c *Client) logGenerationID(result *provider.MessageResponse, model string)
 
 // SendMessage sends a message to the OpenAI API and returns a provider-neutral response.
 func (c *Client) SendMessage(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
-	params := buildParams(req)
+	params := buildParams(req, c.isOpenRouter())
 
 	// Non-streaming: total wall-clock deadline via context (replacing the
 	// removed http.Client.Timeout). (P2-6.)

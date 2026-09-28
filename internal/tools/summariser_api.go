@@ -71,6 +71,7 @@ func (s *APISummariser) Summarise(ctx context.Context, content []byte, prompt, f
 				Content: provider.TextContent(summaryUserMessage(content, prompt, filePath)),
 			},
 		},
+		SessionKey: SessionKeyFromContext(ctx),
 	}
 
 	start := time.Now()

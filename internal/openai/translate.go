@@ -14,8 +14,14 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 )
 
+// openRouterSessionIDMax is OpenRouter's documented cap on session_id length
+// (docs: guides/features/broadcast, "up to 256 characters").
+const openRouterSessionIDMax = 256
+
 // buildParams translates a provider.MessageRequest into OpenAI ChatCompletionNewParams.
-func buildParams(req *provider.MessageRequest) openai.ChatCompletionNewParams {
+// openRouter gates fields only OpenRouter accepts (session_id); a strict
+// OpenAI-compatible endpoint may reject unknown top-level fields.
+func buildParams(req *provider.MessageRequest, openRouter bool) openai.ChatCompletionNewParams {
 	// Strip developer prefix (e.g., "openai/gpt-4o" → "gpt-4o")
 	modelID := config.StripDeveloperPrefix(req.Model)
 
@@ -63,6 +69,18 @@ func buildParams(req *provider.MessageRequest) openai.ChatCompletionNewParams {
 	// endpoint check is done at this layer.
 	if req.ProviderRouting != nil {
 		extra["provider"] = req.ProviderRouting
+	}
+
+	// OpenRouter session grouping (foci_todo #1546): the foci session key
+	// groups a conversation's generations in OpenRouter's Logs > Sessions
+	// view and in Broadcast traces. Unlike reasoning/provider above, this is
+	// populated for every request regardless of endpoint, so it IS gated here.
+	if openRouter && req.SessionKey != "" {
+		sid := req.SessionKey
+		if len(sid) > openRouterSessionIDMax {
+			sid = sid[:openRouterSessionIDMax]
+		}
+		extra["session_id"] = sid
 	}
 
 	if len(extra) > 0 {

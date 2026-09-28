@@ -156,6 +156,7 @@ func (a *Agent) summariseToolResult(ctx context.Context, _ provider.Client, sess
 		Messages: []provider.Message{
 			{Role: "user", Content: provider.TextContent(userText)},
 		},
+		SessionKey: sessionKey,
 	}
 
 	start := time.Now()
