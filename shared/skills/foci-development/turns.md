@@ -18,6 +18,7 @@ Asynchronous: the tool posts the question(s) and returns immediately — the age
 - **Persisted** to the session index (`agent_metadata`) on every change and restored on startup (24h TTL) — so a pending ask survives a restart and its message stays addressable for cancel/expiry. `store == nil` disables persistence (in-memory only).
 - Request IDs are colon-free and auto-namespaced by agentID.
 - **Nothing is dropped, nothing lingers (#2080/#1868):** an answer to an ask foci no longer holds (expired, cancelled, dropped across a restart) is delivered as a `[SYSTEM: LATE ANSWER …]` message naming the question text, when it was asked and the choice; the dead prompt is deleted from the app (`interactive.remove`), never shown as "expired". The question comes from the app's stored `interactive` frame — see WIRING "Late answers and dead prompts".
+- **Expiry is not a cancel (#2091):** the TTL sweeps feed the ask layer `question.ExpiredData`, never `CancelData`, so the agent hears "your ask expired" (`expiredAskNotice`), not "the user CANCELLED". A new expiry path must do the same.
 - `/pause` marks the pending ask paused (buttons still resolve; plain text no longer answers it); `/resume` un-pauses.
 
 ## App vs typed ask-capture

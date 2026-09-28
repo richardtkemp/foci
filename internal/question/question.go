@@ -54,6 +54,13 @@ type input struct {
 // CancelData is the button-data sentinel for the Cancel choice.
 const CancelData = "qa:cancel"
 
+// ExpiredData is the payload foci's expiry sweeps feed an unanswered foci `ask`
+// in place of CancelData, so the agent is told the ask EXPIRED rather than that
+// the user cancelled it (#2091). No button carries it: it is server-internal,
+// consumed by the ask layer before ResolveAnswer (which would reject it as a
+// non-numeric "qa:" index).
+const ExpiredData = "qa:expired"
+
 // dataPrefix prefixes per-option button data: "qa:<index>".
 const dataPrefix = "qa:"
 

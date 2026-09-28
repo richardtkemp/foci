@@ -276,7 +276,7 @@ func TestAskRestoreExpiredLiveAskNotifiesAgent(t *testing.T) {
 		t.Fatalf("delivered after release = %q (reqIDs %q), want exactly one notice for %s", after.messages, after.reqIDs, stale.RequestID)
 	}
 	msg := after.messages[0]
-	for _, want := range []string{"[SYSTEM:", stale.RequestID, "expired", "NEVER arrive", "1 of 2"} {
+	for _, want := range []string{"[SYSTEM:", stale.RequestID, "expired", "LATE ANSWER", "1 of 2"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("expiry notice = %q, missing %q", msg, want)
 		}

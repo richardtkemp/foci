@@ -1899,13 +1899,14 @@ func (h *Hub) batchPromptByID(promptID string) (*batchPrompt, bool) {
 	return bp, ok
 }
 
-// expireBatchPrompts resolves every batched ask registered before cutoff as if
-// the user had pressed the form's Cancel: the ask layer gets the qa:cancel
-// payload (so the agent is told and the session's queued asks advance), and the
-// form is REMOVED from every attached client (fap.InteractiveRemove) — an expired
-// question disappears, with no "cancelled"/"expired" marker left behind
-// (#2080/#1868). This is the batched counterpart of CleanupExpiredInteractive,
-// which cancels a sequential ask the same way and removes its prompt.
+// expireBatchPrompts resolves every batched ask registered before cutoff: the ask
+// layer gets the question.ExpiredData payload (so the agent is told the ask
+// EXPIRED — not that the user cancelled it, #2091 — and the session's queued asks
+// advance), and the form is REMOVED from every attached client
+// (fap.InteractiveRemove) — an expired question disappears, with no
+// "cancelled"/"expired" marker left behind (#2080/#1868). This is the batched
+// counterpart of CleanupExpiredInteractive, which expires a sequential ask the
+// same way and removes its prompt.
 func (h *Hub) expireBatchPrompts(cutoff time.Time) {
 	type expired struct {
 		id string
@@ -1926,7 +1927,7 @@ func (h *Hub) expireBatchPrompts(cutoff time.Time) {
 	// present the session's next queued ask back through this hub.
 	for _, e := range due {
 		h.frames.DeletePrompt(e.id)
-		appLog.Infof("batched ask %s expired unanswered — resolved as cancelled, removed from the app", e.id)
+		appLog.Infof("batched ask %s expired unanswered — resolved as expired, removed from the app", e.id)
 		id := e.id
 		release := func() { h.forgetBatchClosure(id) }
 		if e.bp.b != nil {
@@ -1935,7 +1936,7 @@ func (h *Hub) expireBatchPrompts(cutoff time.Time) {
 			release()
 		}
 		if e.bp.onResp != nil {
-			e.bp.onResp([]string{question.CancelData})
+			e.bp.onResp([]string{question.ExpiredData})
 		}
 	}
 }

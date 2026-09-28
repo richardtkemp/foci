@@ -61,6 +61,8 @@ type graderConfig struct {
 // onResponse to be invoked with the chosen data when the user responds:
 //   - "qa:<index>" — a button click selecting that option
 //   - "qa:cancel"  — the Cancel button
+//   - "qa:expired" — the prompt expired unanswered (question.ExpiredData, fed
+//     by the platform's expiry sweep, never by a button; #2091)
 //   - any other string — a typed ("Other") answer
 //
 // It must be non-blocking. msgID is a unique, colon-free identifier for the
@@ -75,7 +77,9 @@ type AskPresentFn func(sessionKey, msgID, text, summary string, choices []questi
 // AskPresentBatchFn presents ALL of an ask's questions at once as a single
 // batched prompt (native app only) and arranges for onResponse to be called once
 // with one RAW answer per question, positionally — each "qa:<index>", the
-// "qa:cancel" sentinel, or a typed string. It must be non-blocking.
+// "qa:cancel" sentinel, or a typed string — or with the single payload
+// [question.ExpiredData] when the form expires unanswered (#2091). It must be
+// non-blocking.
 //
 // It returns true if the prompt was presented as a batch, false if the target
 // transport/client cannot batch (no live app socket, or the client did not
@@ -243,14 +247,38 @@ func WithCacheWarm(fn func(sessionKey string) bool) AskOption {
 // delivering it would run a turn that rebuilds the whole cached prefix, and the
 // asking turn has already ended, so the agent needs nothing from it. (#1302)
 func (a *askState) deliverCancel(sessionKey, requestID string, answered, total int) {
-	if a.cacheWarm != nil && !a.cacheWarm(sessionKey) {
-		askLog.Infof("session=%s req=%s ask cancelled (%d/%d answered) but prompt cache is cold — suppressing trivial cancel injection (would rebuild the prompt cache)",
-			sessionKey, requestID, answered, total)
-		return
-	}
-	a.deliverMsg(sessionKey, requestID, fmt.Sprintf(
+	a.deliverUnlessCold(sessionKey, requestID, "cancelled", answered, total, fmt.Sprintf(
 		"[SYSTEM: the user CANCELLED your `ask` request after %d of %d answers. Do not retry unless they ask.]",
 		answered, total))
+}
+
+// deliverExpired tells the agent a live ask expired unanswered — the expiry
+// sweeps' counterpart of deliverCancel (#2091: expiry used to be reported as the
+// user cancelling). Same #1302 cold-cache gate as the cancel notice it replaces.
+func (a *askState) deliverExpired(sessionKey, requestID string, age time.Duration, answered, total int) {
+	a.deliverUnlessCold(sessionKey, requestID, "expired", answered, total,
+		expiredAskNotice(requestID, false, age, answered, total))
+}
+
+// deliverUnlessCold delivers an ask-ended notice unless the session's prompt
+// cache is cold (#1302). how names the ending for the suppression log line.
+func (a *askState) deliverUnlessCold(sessionKey, requestID, how string, answered, total int, msg string) {
+	if a.cacheWarm != nil && !a.cacheWarm(sessionKey) {
+		askLog.Infof("session=%s req=%s ask %s (%d/%d answered) but prompt cache is cold — suppressing trivial %s injection (would rebuild the prompt cache)",
+			sessionKey, requestID, how, answered, total, how)
+		return
+	}
+	a.deliverMsg(sessionKey, requestID, msg)
+}
+
+// expireLocked resolves p because its prompt expired unanswered (the platform's
+// expiry sweep fed it question.ExpiredData) and tells the agent so. Caller holds
+// a.mu; like resolveLocked, it returns with a.mu released.
+func (a *askState) expireLocked(p *pendingAsk) {
+	answered, total, sk, reqID, age := p.acc.Index(), p.acc.Total(), p.sessionKey, p.requestID, time.Since(p.createdAt)
+	a.resolveLocked(p)
+	askLog.Infof("session=%s req=%s ask expired unanswered (%s old, %d/%d answered)", sk, reqID, age.Round(time.Minute), answered, total)
+	a.deliverExpired(sk, reqID, age, answered, total)
 }
 
 // AskOption customises the ask tool at construction — used to wire optional,
@@ -465,7 +493,7 @@ func expiredAskNotice(requestID string, queued bool, age time.Duration, answered
 			requestID, age)
 	}
 	return fmt.Sprintf(
-		"[SYSTEM: your `ask` request (req %s) expired unanswered after %s and was dropped. Its buttons no longer work and its answers will NEVER arrive (%d of %d questions had been answered). Re-ask if you still need it.]",
+		"[SYSTEM: your `ask` request (req %s) expired unanswered after %s and was dropped. Its buttons no longer work (%d of %d questions had been answered). If the user answers it later anyway, that answer arrives as a separate message marked LATE ANSWER. Re-ask if you still need it.]",
 		requestID, age, answered, total)
 }
 
@@ -536,6 +564,10 @@ func (a *askState) handleResponse(requestID, data string) {
 	q := p.acc.Current()
 	if q == nil {
 		a.mu.Unlock()
+		return
+	}
+	if data == question.ExpiredData {
+		a.expireLocked(p)
 		return
 	}
 	answer, cancelled, err := question.ResolveAnswer(q, data)
@@ -609,6 +641,10 @@ func (a *askState) handleBatchResponse(requestID string, answers []string) {
 	}
 	askLog.Debugf("session=%s req=%s batch response: %d answers, accumulator at idx=%d/%d",
 		p.sessionKey, requestID, len(answers), p.acc.Index(), p.acc.Total())
+	if len(answers) > 0 && answers[0] == question.ExpiredData {
+		a.expireLocked(p)
+		return
+	}
 	for ansIdx, raw := range answers {
 		q := p.acc.Current()
 		if q == nil {

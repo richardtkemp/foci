@@ -29,9 +29,9 @@ func newAskPresentFn(agentID string, connMgr platform.ConnectionManager) tools.A
 			}
 			return "✅ " + choice.Label
 		}, func() {
-			// Expiry: resolve the question as cancelled so the asking session
-			// isn't left waiting on an answer that will never come.
-			onResponse(question.CancelData)
+			// Expiry: resolve the ask so the asking session isn't left waiting on
+			// an answer that will never come — as EXPIRED, not as a user cancel (#2091).
+			onResponse(question.ExpiredData)
 		})
 		if err != nil {
 			askLog.Warnf("present question for session=%s failed: %v", sessionKey, err)
@@ -154,7 +154,7 @@ func newAskRestoreFn(agentID string, connMgr platform.ConnectionManager) tools.A
 			}
 			return "✅ " + choice.Label
 		}, func() {
-			onResponse(question.CancelData)
+			onResponse(question.ExpiredData)
 		}, time.Now())
 	}
 }

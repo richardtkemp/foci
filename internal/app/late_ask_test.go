@@ -188,14 +188,14 @@ func TestRemoveInteractive_EmitsRemoveFrame(t *testing.T) {
 // applied the removal. The answer is delivered late; no second removal is sent.
 func TestLateAnswer_AfterExpirySweep(t *testing.T) {
 	h, b, answerer, sibling, late := lateAskHub(t)
-	var cancelled bool
-	h.registerBatchPrompt(lateBatchPrompt, b, 2, func(a []string) { cancelled = len(a) == 1 && a[0] == question.CancelData })
+	var expired bool
+	h.registerBatchPrompt(lateBatchPrompt, b, 2, func(a []string) { expired = len(a) == 1 && a[0] == question.ExpiredData })
 	sendBatchForm(b)
 	bp, _ := h.batchPromptByID(lateBatchPrompt)
 	bp.created = time.Now().Add(-2 * time.Hour)
 	h.expireBatchPrompts(time.Now().Add(-time.Hour))
-	if !cancelled {
-		t.Fatal("expiry did not resolve the ask layer's waiter")
+	if !expired {
+		t.Fatal("expiry did not resolve the ask layer's waiter as expired")
 	}
 	drain(t, sibling)
 	drain(t, answerer)

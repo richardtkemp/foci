@@ -1292,9 +1292,9 @@ func TestInteractive_BatchProgressSyncAndStreamedResolve(t *testing.T) {
 }
 
 // TestInteractive_BatchExpirySweep (#1895): an unanswered batched ask is swept on
-// the same schedule as a sequential prompt. Past the cutoff it resolves exactly
-// like the form's own Cancel — the callback gets the qa:cancel payload (so the ask
-// layer tells the agent and releases the session's queue), the form is removed
+// the same schedule as a sequential prompt. Past the cutoff the callback gets the
+// question.ExpiredData payload (so the ask layer tells the agent it EXPIRED — not
+// that the user cancelled, #2091 — and releases the session's queue), the form is removed
 // from every attached client (#2080), and the registration is gone. A younger ask is
 // left untouched.
 func TestInteractive_BatchExpirySweep(t *testing.T) {
@@ -1313,8 +1313,8 @@ func TestInteractive_BatchExpirySweep(t *testing.T) {
 	bp.created = time.Now().Add(-2 * time.Hour)
 	h.expireBatchPrompts(time.Now().Add(-time.Hour))
 
-	if !oldFired || len(oldGot) != 1 || oldGot[0] != question.CancelData {
-		t.Errorf("expired ask callback: fired=%v answers=%v, want [%s]", oldFired, oldGot, question.CancelData)
+	if !oldFired || len(oldGot) != 1 || oldGot[0] != question.ExpiredData {
+		t.Errorf("expired ask callback: fired=%v answers=%v, want [%s]", oldFired, oldGot, question.ExpiredData)
 	}
 	if _, ok := h.batchPromptByID("req-old"); ok {
 		t.Error("expired registration should be removed")
