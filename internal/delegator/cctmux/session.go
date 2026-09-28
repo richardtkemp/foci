@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+	"regexp"
 )
 
 // ccSessionsDir is the directory where Claude Code stores active session PID files.
@@ -129,8 +129,12 @@ func discoverSessionFileFrom(pidFile, homeDir, workDir string) (string, string, 
 	return entry.SessionID, jsonlPath, nil
 }
 
+// nonAlnum matches the characters Claude Code replaces when slugging a path.
+var nonAlnum = regexp.MustCompile(`[^A-Za-z0-9]`)
+
 // projectSlug converts a workspace path to Claude Code's project directory name.
-// e.g. "/home/rich/git/foci" → "-home-rich-git-foci"
+// CC replaces every non-alphanumeric character with '-', not just '/':
+// e.g. "/home/rich/git/foci" → "-home-rich-git-foci", "/a/.b_c" → "-a--b-c".
 func projectSlug(path string) string {
-	return strings.ReplaceAll(path, "/", "-")
+	return nonAlnum.ReplaceAllString(path, "-")
 }

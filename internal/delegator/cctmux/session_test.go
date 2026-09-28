@@ -29,10 +29,14 @@ func writePIDFile(t *testing.T, home string, pid int, entry pidEntry) string {
 }
 
 // TestProjectSlug proves workspace paths are converted to CC's project
-// directory naming by replacing every slash with a dash.
+// directory naming by replacing every non-alphanumeric character with a dash,
+// as Claude Code does ('.' and '_' included, not just '/').
 func TestProjectSlug(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"/home/rich/git/foci", "-home-rich-git-foci"},
+		{"/home/foci/.claude-worktrees/x", "-home-foci--claude-worktrees-x"},
+		{"/home/foci/my_agent", "-home-foci-my-agent"},
+		{"/home/foci/foci-wt-12", "-home-foci-foci-wt-12"},
 		{"/", "-"},
 		{"", ""},
 		{"relative/path", "relative-path"},

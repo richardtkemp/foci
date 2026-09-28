@@ -90,6 +90,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -1063,7 +1064,7 @@ func crashAfterConsuming(in *bufio.Scanner, marker, sessionID string) {
 }
 
 // appendTranscript appends rec to the session transcript at the path real CC
-// uses — ~/.claude/projects/<workdir with "/" → "-">/<sessionID>.jsonl — which
+// uses — ~/.claude/projects/<workdir, every non-alphanumeric → "-">/<sessionID>.jsonl — which
 // foci reads to tell a folded message from a lost one (#2050).
 func appendTranscript(sessionID string, rec map[string]any) error {
 	home, err := os.UserHomeDir()
@@ -1074,7 +1075,7 @@ func appendTranscript(sessionID string, rec map[string]any) error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Join(home, ".claude", "projects", strings.ReplaceAll(wd, "/", "-"))
+	dir := filepath.Join(home, ".claude", "projects", regexp.MustCompile(`[^A-Za-z0-9]`).ReplaceAllString(wd, "-"))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}

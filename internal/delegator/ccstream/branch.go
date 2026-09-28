@@ -24,12 +24,16 @@ import (
 // relative to the user's home: ~/.claude/projects/<cwd-slug>/<uuid>.jsonl.
 const ccProjectsDir = ".claude/projects"
 
+// nonAlnum matches the characters Claude Code replaces when slugging a path.
+var nonAlnum = regexp.MustCompile(`[^A-Za-z0-9]`)
+
 // projectSlug converts a workspace path to Claude Code's project directory
-// name, e.g. "/home/foci/clutch" → "-home-foci-clutch". (Mirrors the same
-// mapping in the cctmux backend; kept local to avoid a cross-package
-// dependency for a one-line transform.)
+// name. CC replaces every non-alphanumeric character with '-', not just '/':
+// e.g. "/home/foci/clutch" → "-home-foci-clutch", "/a/.b_c" → "-a--b-c".
+// (Mirrors the same mapping in the cctmux backend; kept local to avoid a
+// cross-package dependency for a one-line transform.)
 func projectSlug(path string) string {
-	return strings.ReplaceAll(path, "/", "-")
+	return nonAlnum.ReplaceAllString(path, "-")
 }
 
 // ForkSession implements delegator.BackendBrancher for the CC stream backend.

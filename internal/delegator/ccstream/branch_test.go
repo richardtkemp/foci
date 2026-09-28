@@ -790,3 +790,20 @@ func TestForkTranscriptToolClosurePrecedesTaskBoundary(t *testing.T) {
 		t.Errorf("boundary parentUuid = %v, want the tool closure's uuid %v", boundary["parentUuid"], closure["uuid"])
 	}
 }
+
+// TestProjectSlug proves the transcript directory name matches Claude Code's
+// rule: every non-alphanumeric character becomes '-', so a workdir containing
+// '.' or '_' resolves to the directory CC actually writes.
+func TestProjectSlug(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"/home/foci/clutch", "-home-foci-clutch"},
+		{"/home/foci/.claude-worktrees/x", "-home-foci--claude-worktrees-x"},
+		{"/home/foci/my_agent", "-home-foci-my-agent"},
+		{"/home/foci/Agent9", "-home-foci-Agent9"},
+	}
+	for _, tc := range cases {
+		if got := projectSlug(tc.in); got != tc.want {
+			t.Errorf("projectSlug(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
