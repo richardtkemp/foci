@@ -646,7 +646,10 @@ endif
 # sync-main (#1448 piece 4): deploy exactly origin/main, never a dirty or stale
 # local working tree. `make update` builds the working tree, so without this a
 # dirty/behind main checkout ships the wrong code. Fetch; REFUSE if the main
-# tree has uncommitted changes (deploying over them would ship unreviewed work);
+# tree has uncommitted changes (deploying over them would ship unreviewed work),
+# NAMING the dirty files — with many sessions sharing one checkout the dirty
+# file is usually a peer's in-flight edit, and "whose is it?" is the question
+# the abort has to answer (#1701);
 # else fast-forward local main to origin/main so the build == what is committed
 # and pushed. Composes with `make land` (which pushes remote-only): after a land,
 # this ff's local main up to the just-landed commit, so land+deploy needs no
@@ -661,7 +664,7 @@ sync-main:
 	@sudo -u $(FOCI_USER) bash -c 'cd "$(CURDIR)" && \
 	  b=$$(git rev-parse --abbrev-ref HEAD); \
 	  if [ "$$b" != "main" ]; then echo "ABORT: deploy must run on main (currently on $$b)" >&2; exit 2; fi; \
-	  if ! git diff --quiet || ! git diff --cached --quiet; then echo "ABORT: local main has uncommitted changes — commit or stash; refusing to deploy over a dirty tree" >&2; exit 3; fi; \
+	  if ! git diff --quiet || ! git diff --cached --quiet; then echo "ABORT: local main has uncommitted changes — commit or stash; refusing to deploy over a dirty tree. Modified:" >&2; git status --porcelain --untracked-files=no | sed "s/^/    /" >&2; exit 3; fi; \
 	  echo ">>> sync-main: fetching origin ..." >&2; \
 	  git fetch -q origin || { echo "ABORT: git fetch failed" >&2; exit 1; }; \
 	  echo ">>> sync-main: fast-forwarding local main to origin/main ..." >&2; \
