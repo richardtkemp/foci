@@ -1,6 +1,6 @@
 <!-- GOLDEN: ships with foci (shared/skills/foci-usage/). Overwritten on restart — edit in the foci repo, not the deployed ~/shared/skills copy. -->
 
-# Backend tools — talking to users, sessions and models
+# Backend tools — talking to users and sessions
 
 Per-tool reference for the Claude Code (shell) backend. How `foci_*` shell functions work, and which ones you have, is in **tools-backend.md**. Every tool accepts `-h`/`--help`; read it before first use this session.
 
@@ -25,7 +25,3 @@ Per-tool reference for the Claude Code (shell) backend. How `foci_*` shell funct
 - **Chat sessions only** — errors on a branch/independent session key.
 - **Won't clobber a manual rename:** if the chat already has an alias that wasn't set by this tool, it replies "Skipped" instead of overwriting it.
 - **Only registered when your backend doesn't auto-name sessions.** Codex generates thread names itself (`TurnResult.ThreadName`) and never gets this tool; streaming CC (ccstream), cctmux, opencode, and API-loop agents all lack auto-naming and get it.
-
-### `foci_spawn` — sub-calls to a model (backend must support forking; see tools-backend.md)
-- Four context modes: `raw` (no system context, cheapest isolated call), `character` (full system + character files — a copy of you), `clone` (async branch of the current session via `Agent.ForkSession`; result arrives later as a message — the default), `explore` (sync, read-only, cheap model, restricted toolset for investigation).
-- Selects a model group with `--powerful|--fast|--cheap`. Same semantics as the API-loop `spawn` tool (see tools-api.md) — the shell-function form just wraps the same JSON schema.

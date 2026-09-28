@@ -8,7 +8,7 @@ This file is the entry point: how the two families work and which tools you have
 
 | file | read it when you are about to… |
 |---|---|
-| **tools-backend-messaging.md** | talk to someone: ask the user (`foci_ask`), post to your chat (`foci_send_to_chat`), message another session (`foci_send_to_session`), name the chat (`foci_set_session_alias`), or sub-call a model (`foci_spawn`). |
+| **tools-backend-messaging.md** | talk to someone: ask the user (`foci_ask`), post to your chat (`foci_send_to_chat`), message another session (`foci_send_to_session`), or name the chat (`foci_set_session_alias`). |
 | **tools-backend-state.md** | track work or recall: todos (`foci_todo`), reminders (`foci_remind`), searching memory and chat history (`foci_memory_search`). |
 | **tools-backend-external.md** | reach outside: HTTP (`foci_http_request`), web pages and search (`foci_web_fetch`, `foci_web_search`), cheap-model extraction (`foci_summary`), a headless browser (`foci_browser`), the user's Android device (`foci_app_android`). |
 
@@ -31,9 +31,7 @@ A startup parity check guarantees every flag in a tool's `--help` actually has a
 **The foci tools always available to you as shell functions:**
 `foci_ask`, `foci_send_to_chat`, `foci_send_to_session`, `foci_todo`, `foci_remind`, `foci_memory_search`, `foci_http_request`, `foci_web_fetch`, `foci_web_search`, `foci_summary`.
 
-**`foci_spawn` is also available, conditionally:** the tool table exposes `spawn` to delegated agents whose backend can fork a session (`Agent.DelegatedManager.BackendCanBranch()` — true for `claude-code`/ccstream, `codex`, and `opencode`; **false for `claude-code-tmux`/cctmux**, which has no fork/branch support).
-
-If your backend is streaming CC (the common case), you have it — same four modes (`raw`/`character`/`clone`/`explore`) as the API-loop path; `clone` routes through `Agent.ForkSession`. On cctmux, `spawn` isn't registered at all, so prefer CC's native `Agent` tool for sub-calls there.
+There is **no `foci_spawn`** on this backend — `spawn` is API-loop-only (its one-shot modes run over the direct API, never your backend). For sub-calls use CC's native `Agent` tool.
 
 There is **no `foci_tmux`** on this backend — that stays API-loop-only. For persistent terminals use `Bash` with `tmux` (see the `coding-agent` skill). foci's file/shell tools are likewise absent — use CC's `Read`/`Write`/`Edit`/`Bash` instead.
 

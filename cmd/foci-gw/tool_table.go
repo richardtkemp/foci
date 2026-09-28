@@ -360,18 +360,9 @@ var toolTable = []toolEntry{
 	// MaxConcurrentSpawns stays baked: it sizes a semaphore channel at
 	// construction, which can't be live-resized without a redesign.
 	// MaxToolLoops/ExploreMaxDepth are read fresh per spawn call.
-	{name: "spawn", paths: pathBoth, enabled: func(d *toolDeps) bool {
-		if d.path == pathAPI {
-			return true
-		}
-		// Delegated agents get spawn only when the backend can fork a session
-		// (clone mode depends on it; the routing lives in Agent.ForkSession).
-		if d.agLazy == nil {
-			return false
-		}
-		ag := d.agLazy()
-		return ag != nil && ag.DelegatedManager != nil && ag.DelegatedManager.BackendCanBranch()
-	}, build: func(d *toolDeps) *tools.Tool {
+	// API-only: the one-shot modes run over provider.Client, never the agent's
+	// delegated backend (#1311), so delegated agents don't get it (#1352).
+	{name: "spawn", paths: pathAPI, build: func(d *toolDeps) *tools.Tool {
 		acfg := d.p.acfg
 		fileMode, _ := config.ParseFileMode(d.p.cfg.FileMode)
 		tc := d.p.resolved.Tools // static-cfg:ignore: MaxConcurrentSpawns sizes a semaphore channel at construction, can't be live-resized without a redesign

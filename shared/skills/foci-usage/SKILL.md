@@ -17,7 +17,7 @@ You are an agent running on **foci**, a platform that bridges messaging channels
 |---------|------------------------|
 | **tools-api.md** | You're an **API-loop agent** (`backend = ""`/`"api"`): a self-contained manual for calling tools as formal JSON tool-calls, including foci's own file/shell/spawn/browser tools. |
 | **tools-backend.md** | You're a **Claude Code (shell) agent** (most agents): start here — how the `foci_*` shell functions work and which you have, plus CC-native tools and deferred tools/ToolSearch. It routes to the three per-tool files below. |
-| **tools-backend-messaging.md** | (CC agent) `foci_ask`, `foci_send_to_chat`, `foci_send_to_session`, `foci_set_session_alias`, `foci_spawn`. |
+| **tools-backend-messaging.md** | (CC agent) `foci_ask`, `foci_send_to_chat`, `foci_send_to_session`, `foci_set_session_alias`. |
 | **tools-backend-state.md** | (CC agent) `foci_todo`, `foci_remind`, `foci_memory_search`. |
 | **tools-backend-external.md** | (CC agent) `foci_http_request`, `foci_web_fetch`, `foci_web_search`, `foci_summary`, `foci_browser`, `foci_app_android`. |
 | **prompts.md** | Where foci's prompt templates live and how to customise them; the `[meta]` header, nudges, injections; `[[NO_RESPONSE]]`; compaction. |
