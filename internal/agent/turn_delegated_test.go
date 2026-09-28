@@ -17,6 +17,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/modelinfo"
 	"foci/internal/nudge"
+	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/turnevent"
@@ -97,6 +98,60 @@ func TestDelegatedTransport_ComposePrompt(t *testing.T) {
 	// ComposePrompt), not by the transport — covered at the orchestrator level.
 }
 
+// TestDelegatedTransport_ConvertibleDocAttachment is the #2095 regression: a
+// convertible document (text/csv here) sent to a delegated agent must reach the
+// model as converted TEXT in the prompt — the same conversion the API path
+// uses — and never as a binary attachment, which ccstream would send as a
+// base64 document block the API rejects (400: media_type must be
+// application/pdf). Images still go through as binary attachments.
+func TestDelegatedTransport_ConvertibleDocAttachment(t *testing.T) {
+	be := &mockBackendDT{
+		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
+			if handler != nil && handler.OnTurnComplete != nil {
+				handler.OnTurnComplete(&delegator.TurnResult{Text: "ok"})
+			}
+			return nil, nil
+		},
+	}
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{Model: "test-model", DelegatedManager: mgr, MaxResultChars: 100000}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	atts := []platform.Attachment{
+		{MimeType: "text/csv", Data: []byte("name,value\nfoo,42"), SavedPath: "/tmp/data.csv"},
+		{MimeType: "image/png", Data: []byte("fake-png")},
+	}
+	ts := NewTurnState(context.Background(), "test/s", []string{"Analyze this data"}, atts)
+	ts.Meta = &TurnMetadata{}
+	ts.SessionMeta = a.getSessionMeta(ts.SessionKey)
+	ts.TurnModel = a.Model
+	ts.StartedAt = time.Now()
+
+	if err := tr.ComposePrompt(ts); err != nil {
+		t.Fatalf("ComposePrompt: %v", err)
+	}
+	if !strings.Contains(ts.Prompt, "[CSV document from: /tmp/data.csv]") || !strings.Contains(ts.Prompt, "name,value") {
+		t.Errorf("prompt lacks the converted CSV text: %q", ts.Prompt)
+	}
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+
+	be.mu.Lock()
+	injects := append([]delegator.Inject(nil), be.injects...)
+	be.mu.Unlock()
+	if len(injects) != 1 {
+		t.Fatalf("got %d injects, want 1", len(injects))
+	}
+	got := injects[0].Attachments
+	if len(got) != 1 || got[0].MimeType != "image/png" {
+		mimes := make([]string, len(got))
+		for i, g := range got {
+			mimes[i] = g.MimeType
+		}
+		t.Errorf("binary attachments = %v, want only [image/png] (the CSV must go as text)", mimes)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // mockBackendDT is a lightweight backend mock for DelegatedTransport tests.
 // Each method delegates to a function field when set, otherwise returns sane
@@ -138,6 +193,8 @@ type mockBackendDT struct {
 	// delegator.ThreadNameConsumer.
 	cachedThreadName       string
 	consumeThreadNameCalls int
+
+	injects []delegator.Inject // every ImmediateInject, in order (guarded by mu)
 }
 
 // ConsumeThreadName satisfies delegator.ThreadNameConsumer.
@@ -220,6 +277,7 @@ func (m *mockBackendDT) SendCommand(ctx context.Context, command string) error {
 func (m *mockBackendDT) ImmediateInject(ctx context.Context, inj delegator.Inject) error {
 	m.mu.Lock()
 	se := m.sessionEvents
+	m.injects = append(m.injects, inj)
 	m.mu.Unlock()
 	handler := &mockHandler{}
 	if inj.Turn != nil {

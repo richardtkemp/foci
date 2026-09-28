@@ -151,6 +151,11 @@ type TurnState struct {
 	UserMsg     provider.Message   // composed user message (API only)
 	Prompt      string             // composed flat prompt (delegated only)
 
+	// delegatedAttachments are the binary attachments (images, PDFs) that
+	// ComposePrompt prepared from Attachments for the delegated backend;
+	// convertible documents were folded into Prompt as text instead (#2095).
+	delegatedAttachments []delegator.Attachment
+
 	TurnModel    string          // resolved model for this turn
 	TurnClient   provider.Client // resolved client for this turn
 	TurnEffort   string          // resolved effort level

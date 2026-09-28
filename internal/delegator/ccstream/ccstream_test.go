@@ -924,6 +924,48 @@ func TestSendToPaneWithAttachments(t *testing.T) {
 	}
 }
 
+// TestSendToPaneWithAttachments_SkipsUnsupportedMIME is the #2095 backstop:
+// the API accepts base64 blocks only for images (jpeg/png/gif/webp) and PDFs,
+// and a document block of any other media type is a 400 that loses the input.
+// Such an attachment must be skipped, not sent.
+func TestSendToPaneWithAttachments_SkipsUnsupportedMIME(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{
+		writer:  NewWriter(nopWriteCloser{&buf}),
+		readyCh: make(chan struct{}),
+	}
+	atts := []delegator.Attachment{
+		{MimeType: "text/csv", Data: []byte("a,b")},
+		{MimeType: "image/png", Data: []byte("fake-png")},
+		{MimeType: "image/svg+xml", Data: []byte("<svg/>")},
+		{MimeType: "application/zip", Data: []byte("PK")},
+	}
+	inj := delegator.Inject{Text: "see these", Attachments: atts, Turn: &delegator.TurnEvents{}}
+	if err := b.sendToPaneWithAttachments(context.Background(), inj, false); err != nil {
+		t.Fatalf("sendToPaneWithAttachments: %v", err)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(buf.String())), &got); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	blocks := got["message"].(map[string]any)["content"].([]any)
+	var types []string
+	for _, bl := range blocks {
+		m := bl.(map[string]any)
+		ty := m["type"].(string)
+		if src, ok := m["source"].(map[string]any); ok {
+			ty += ":" + src["media_type"].(string)
+		}
+		types = append(types, ty)
+	}
+	if want := []string{"text", "image:image/png"}; strings.Join(types, ",") != strings.Join(want, ",") {
+		t.Errorf("blocks = %v, want %v", types, want)
+	}
+}
+
 func TestSendToPane_WriterError(t *testing.T) {
 	// Verifies sendToPane cancels the turn if the writer fails — the
 	// turn must NOT remain in flight on a failed begin-turn, otherwise

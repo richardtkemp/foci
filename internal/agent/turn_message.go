@@ -50,31 +50,16 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey string, texts
 	// Nudges are NOT included — handled separately by InjectNudges / lines 484-501.
 	tp := a.composeTurnText(ctx, sessionKey, turnModel, texts, attachments)
 
-	// Build content blocks: binary attachments first
-	const maxPDFSize = 32 * 1024 * 1024 // 32MB Anthropic API limit for documents
+	// Build content blocks: attachments first
 	var contentBlocks []provider.ContentBlock
-	for _, att := range attachments {
-		data, mediaType := att.Data, att.MimeType
-
-		// Convertible documents: convert to text and include as a text block
-		if platform.IsConvertibleDocMIME(mediaType) {
-			textBlock := a.convertAttachmentToText(sessionKey, att)
-			if textBlock != "" {
-				contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: textBlock})
-			}
-			continue
-		}
-
-		if mediaType == "application/pdf" {
-			if len(data) > maxPDFSize {
-				continue // over-size PDFs already have save-to-disk annotation
-			}
-			encoded := base64.StdEncoding.EncodeToString(data)
-			contentBlocks = append(contentBlocks, provider.DocumentBlock(mediaType, encoded))
-		} else {
-			data, mediaType = maybeDownscaleImage(a.taggedLog("image"), sessionKey, data, mediaType, a.maxImagePixels())
-			encoded := base64.StdEncoding.EncodeToString(data)
-			contentBlocks = append(contentBlocks, provider.ImageBlock(mediaType, encoded))
+	for _, pa := range a.prepareAttachments(sessionKey, attachments) {
+		switch {
+		case pa.Text != "":
+			contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: pa.Text})
+		case pa.MimeType == "application/pdf":
+			contentBlocks = append(contentBlocks, provider.DocumentBlock(pa.MimeType, base64.StdEncoding.EncodeToString(pa.Data)))
+		default:
+			contentBlocks = append(contentBlocks, provider.ImageBlock(pa.MimeType, base64.StdEncoding.EncodeToString(pa.Data)))
 		}
 	}
 
@@ -116,6 +101,51 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey string, texts
 		Role:    "user",
 		Content: contentBlocks,
 	}
+}
+
+// preparedAttachment is one attachment normalised for the model. Exactly one
+// of Text (a convertible document, already converted) or Data (a binary image
+// or PDF, sent as a base64 block of MimeType) is set.
+type preparedAttachment struct {
+	Text     string
+	MimeType string
+	Data     []byte
+}
+
+// maxPDFSize is the Anthropic API limit for a document block.
+const maxPDFSize = 32 * 1024 * 1024
+
+// prepareAttachments normalises a turn's attachments for the model, in order.
+// Both turn paths use it — the API path (prepareUserMessage) and the delegated
+// path (DelegatedTransport.ComposePrompt) — so a document reaches the model
+// the same way whichever backend runs the agent. Before it was shared, the
+// delegated path passed every attachment through raw, and ccstream sent a
+// .csv/.docx/.txt as a base64 document block the API rejects (#2095).
+//
+//   - convertible documents (docx/xlsx/pptx/html/csv/txt) become text; a
+//     conversion that yields no text is dropped
+//   - a PDF over maxPDFSize is dropped: composeTurnText's saved-to-disk
+//     annotation already points the model at the file
+//   - anything else is treated as an image and downscaled to maxImagePixels
+func (a *Agent) prepareAttachments(sessionKey string, attachments []platform.Attachment) []preparedAttachment {
+	var out []preparedAttachment
+	for _, att := range attachments {
+		data, mediaType := att.Data, att.MimeType
+		switch {
+		case platform.IsConvertibleDocMIME(mediaType):
+			if text := a.convertAttachmentToText(sessionKey, att); text != "" {
+				out = append(out, preparedAttachment{Text: text})
+			}
+		case mediaType == "application/pdf":
+			if len(data) <= maxPDFSize {
+				out = append(out, preparedAttachment{MimeType: mediaType, Data: data})
+			}
+		default:
+			data, mediaType = maybeDownscaleImage(a.taggedLog("image"), sessionKey, data, mediaType, a.maxImagePixels())
+			out = append(out, preparedAttachment{MimeType: mediaType, Data: data})
+		}
+	}
+	return out
 }
 
 // convertAttachmentToText converts a document attachment to text for the LLM.

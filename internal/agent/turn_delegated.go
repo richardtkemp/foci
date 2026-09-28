@@ -92,6 +92,21 @@ func (t *DelegatedTransport) ComposePrompt(ts *TurnState) error {
 	parts := a.composeTurnText(ts.Ctx, ts.SessionKey, ts.TurnModel, ts.Texts, ts.Attachments)
 	ts.Prompt = parts.JoinPrompt()
 
+	// Attachments get the API path's normalisation (#2095): converted
+	// documents lead the prompt as text, as they lead the API path's content
+	// blocks; only images and PDFs travel as binary attachments.
+	var docTexts []string
+	for _, pa := range a.prepareAttachments(ts.SessionKey, ts.Attachments) {
+		if pa.Text != "" {
+			docTexts = append(docTexts, pa.Text)
+			continue
+		}
+		ts.delegatedAttachments = append(ts.delegatedAttachments, delegator.Attachment{MimeType: pa.MimeType, Data: pa.Data})
+	}
+	if len(docTexts) > 0 {
+		ts.Prompt = strings.Join(docTexts, "\n\n") + "\n\n" + ts.Prompt
+	}
+
 	// First-run onboarding: prepend as a delimited block, then clear. The API
 	// path does the equivalent in prepareUserMessage; without this the
 	// claude-code backend never delivered onboarding at all (#853).
@@ -359,21 +374,13 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 		}
 	}
 
-	// Build the attachment list (empty when none); Inject's begin-turn path
-	// honors attachments only at idle+SourceUser, and backends that don't
-	// support structured content blocks (cctmux) silently drop them with a
-	// debug log. The agent layer no longer type-asserts AttachmentSender —
-	// the capability decision lives in the backend.
-	var atts []delegator.Attachment
-	if len(ts.Attachments) > 0 {
-		atts = make([]delegator.Attachment, len(ts.Attachments))
-		for i, a := range ts.Attachments {
-			atts[i] = delegator.Attachment{
-				MimeType: a.MimeType,
-				Data:     a.Data,
-			}
-		}
-	}
+	// The binary attachments ComposePrompt prepared (empty when none);
+	// Inject's begin-turn path honors attachments only at idle+SourceUser,
+	// and backends that don't support structured content blocks (cctmux)
+	// silently drop them with a debug log. The agent layer no longer
+	// type-asserts AttachmentSender — the capability decision lives in the
+	// backend.
+	atts := ts.delegatedAttachments
 
 	// Foldable turns begin as SourceUser (idle here — the in-flight case
 	// folded above). System turns and explicitly-queued messages begin as

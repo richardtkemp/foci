@@ -447,11 +447,11 @@ func TestL2_Files_VideoNoteAttachment_SavedAndPathInjected(t *testing.T) {
 
 // TestL2_Files_ConvertibleDoc_NormalizedMIMEReachesAgent proves that a
 // document whose MIME type is in platform.IsConvertibleDocMIME (docx,
-// xlsx, html, csv, text/plain etc.) takes the attachment path with a
-// normalized MIME — the agent layer sees the canonical type, not the
-// raw Telegram-reported MIME. Wire under test: Document update with
-// convertible MIME → NormalizeMIME → downloadAttachment → attachment
-// reaching the agent with canonical mime_type.
+// xlsx, html, csv, text/plain etc.) takes the attachment path and reaches
+// CC as converted TEXT, never as a base64 document block — the API rejects
+// a document block of any type but PDF, losing the input (#2095). Wire
+// under test: Document update with convertible MIME → NormalizeMIME →
+// downloadAttachment → prepareAttachments (conversion) → prompt text.
 func TestL2_Files_ConvertibleDoc_NormalizedMIMEReachesAgent(t *testing.T) {
 	testharness.ParallelWait(t)
 	const userID = 8026
@@ -490,13 +490,14 @@ func TestL2_Files_ConvertibleDoc_NormalizedMIMEReachesAgent(t *testing.T) {
 		t.Fatalf("convertible doc caption never reached agent\n--- recorder ---\n%s\n--- stderr ---\n%s",
 			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
 	}
-	// Convertible doc takes the attachment branch. cc-stub records
-	// only block type strings — asserting MIME value would need a
-	// recorder-schema extension, so we assert structure: at least one
-	// non-text content block (the convertible doc itself).
-	if !hasNonTextBlock(entry.ContentBlockTypes) {
-		t.Errorf("convertible doc arrived without any non-text content block — types=%v text=%q",
-			entry.ContentBlockTypes, entry.TextPrefix)
+	// The conversion's "[CSV document from: <path>]" header proves the
+	// converter ran (a raw pass-through would carry no header), and the
+	// body proves the file content reached the model.
+	if !strings.Contains(entry.TextPrefix, "[CSV document from: ") || !strings.Contains(entry.TextPrefix, "Alice,42") {
+		t.Errorf("convertible doc content did not reach the agent as converted text — text=%q", entry.TextPrefix)
+	}
+	if hasNonTextBlock(entry.ContentBlockTypes) {
+		t.Errorf("convertible doc arrived as a binary content block — types=%v", entry.ContentBlockTypes)
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"strings"
 	"time"
 
 	"foci/internal/delegator"
@@ -247,7 +246,11 @@ func (b *Backend) sendToPaneWithAttachments(_ context.Context, inj delegator.Inj
 		blocks = append(blocks, ContentBlock{Type: "text", Text: inj.Text})
 	}
 	for _, att := range inj.Attachments {
-		blockType := attachmentBlockType(att.MimeType)
+		blockType, ok := attachmentBlockType(att.MimeType)
+		if !ok {
+			b.logger().Warnf("sendToPaneWithAttachments: skipping %s attachment (%d bytes): the API accepts no base64 block of that type", att.MimeType, len(att.Data))
+			continue
+		}
 		blocks = append(blocks, ContentBlock{
 			Type: blockType,
 			Source: &ContentBlockSource{
@@ -265,12 +268,20 @@ func (b *Backend) sendToPaneWithAttachments(_ context.Context, inj delegator.Inj
 	})
 }
 
-// attachmentBlockType returns the CC content block type for a MIME type.
-func attachmentBlockType(mimeType string) string {
-	if strings.HasPrefix(mimeType, "image/") {
-		return "image"
+// attachmentBlockType returns the CC content block type for a MIME type, and
+// false for a type the API rejects as a base64 block. It is an allowlist, not
+// "image/* else document": a document block of any type but PDF is a 400, and
+// on CC < 2.1.284 a malformed block fails every later turn of the session
+// (#2095). The agent layer converts documents to text before they get here;
+// this is the backstop for anything that still slips through.
+func attachmentBlockType(mimeType string) (string, bool) {
+	switch mimeType {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return "image", true
+	case "application/pdf":
+		return "document", true
 	}
-	return "document"
+	return "", false
 }
 
 // WaitForTurn blocks until the current turn completes (session idle observed,
