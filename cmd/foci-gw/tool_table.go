@@ -332,6 +332,7 @@ var toolTable = []toolEntry{
 			d.p.sessionIndex, d.p.acfg.ID,
 			tools.WithBatchPresent(newAskPresentBatchFn(d.p.acfg.ID, d.connMgr)),
 			tools.WithBatchRestore(newAskRestoreBatchFn(d.p.acfg.ID, d.connMgr)),
+			tools.WithRemove(newAskRemoveFn(d.p.acfg.ID, d.connMgr)),
 			// Per-ask (#1711 ruling 5): release only what THIS ask was holding,
 			// so a sibling ask's backlog stays deferred (#1712).
 			tools.WithOnResolve(func(sk, reqID string) {

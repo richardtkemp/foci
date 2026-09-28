@@ -413,6 +413,16 @@ type BatchButtonRestorer interface {
 	RegisterInteractiveBatch(promptID string, questionCount int, onResponse func(answers []string)) bool
 }
 
+// InteractiveRemover is implemented by connections that can delete a prompt
+// outright rather than edit it to a closed state (the native app). foci uses it
+// wherever a prompt dies UNANSWERED — the expiry sweep, and an ask dropped as
+// stale on restart — so the question simply disappears instead of rendering an
+// "expired" text (#2080/#1868). Connections without it (Telegram/Discord) keep
+// the edit-to-expired behaviour. Idempotent: an unknown id is a no-op.
+type InteractiveRemover interface {
+	RemoveInteractive(msgID string) error
+}
+
 // ConnectionManager manages platform connection instances and facet pools.
 type ConnectionManager interface {
 	Primary(agentID string) Connection

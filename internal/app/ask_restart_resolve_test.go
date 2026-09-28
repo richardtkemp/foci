@@ -28,9 +28,10 @@ func TestInteractiveResponse_BatchedAskAfterRestartLostRegistration(t *testing.T
 	var deliveredPrompt string
 	var deliveredAnswers []string
 	primary := &appConn{hub: h, agentID: "ag"}
-	primary.routeBatchAnswer = func(promptID string, answers []string) {
+	primary.routeBatchAnswer = func(promptID string, answers []string) bool {
 		deliveredPrompt = promptID
 		deliveredAnswers = answers
+		return true // the ask layer still holds the ask (restored)
 	}
 	h.mu.Lock()
 	h.agents["ag"] = primary

@@ -61,12 +61,16 @@ type appConn struct {
 	// ask layer when the hub has no live batchPrompt registration for it — the
 	// restart-lost fallback (#1473, fix B). Set once at setupAgent; reads the
 	// agent's AskRouter lazily so it is safe before the router is wired. nil = no
-	// ask tool on this agent.
-	routeBatchAnswer func(promptID string, answers []string)
-	commands         *command.Registry
-	cmdCtx           command.CommandContext
-	stt              voice.STT // inbound voice transcription; nil = unsupported
-	tts              voice.TTS // outbound voice-mode synthesis (#1439); nil = unconfigured, text-only
+	// ask tool on this agent. Reports whether a pending ask matched.
+	routeBatchAnswer func(promptID string, answers []string) bool
+	// routeLateAnswer delivers an answer to an ask the ask layer no longer holds
+	// as a marked late answer (#2080). Same lazy-router contract as above; reports
+	// whether anything was delivered.
+	routeLateAnswer func(la tools.LateAnswer) bool
+	commands        *command.Registry
+	cmdCtx          command.CommandContext
+	stt             voice.STT // inbound voice transcription; nil = unsupported
+	tts             voice.TTS // outbound voice-mode synthesis (#1439); nil = unconfigured, text-only
 
 	// Pending interactive headers, set by SetInteractiveHeader and consumed
 	// by SendTextWithButtons. Keyed by prompt ID. Pointer-based so the
@@ -98,6 +102,7 @@ var (
 	_ platform.ButtonSender         = (*appConn)(nil)
 	_ platform.BatchButtonSender    = (*appConn)(nil)
 	_ platform.BatchButtonRestorer  = (*appConn)(nil)
+	_ platform.InteractiveRemover   = (*appConn)(nil)
 	_ agent.Driver                  = (*appConn)(nil)
 	_ turn.SessionSubagentDeliverer = (*appConn)(nil)
 )
@@ -546,6 +551,22 @@ func (c *appConn) EditMessageText(msgID, text string) error {
 		}
 		return nil
 	}
+	return nil
+}
+
+// RemoveInteractive implements platform.InteractiveRemover: it deletes a prompt
+// from every attached client (fap.InteractiveRemove) instead of editing it to an
+// "expired" state — a question that died unanswered disappears (#2080/#1868).
+// Covers both single prompts and batched forms: bindingForPrompt falls back to
+// the durable app_prompts row, which both registration paths write. Idempotent —
+// an unknown id is a no-op.
+func (c *appConn) RemoveInteractive(msgID string) error {
+	b := c.hub.bindingForPrompt(msgID)
+	if b == nil {
+		return nil
+	}
+	c.hub.deletePrompt(msgID)
+	b.send(fap.InteractiveRemove{ConversationID: b.convID, PromptID: msgID})
 	return nil
 }
 

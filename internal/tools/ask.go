@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -126,6 +127,13 @@ type AskRestoreFn func(sessionKey, msgID, platformMsgID string, choices []questi
 // question, positionally (same shape as AskPresentBatchFn's onResponse).
 type AskRestoreBatchFn func(sessionKey, promptID string, questionCount int, onResponse func(answers []string))
 
+// AskRemoveFn deletes an ask's on-screen prompt outright — no "expired" edit, no
+// resolved marker — on transports that support it (the native app); a no-op
+// elsewhere. Used when an ask dies unanswered with nothing else to clear its
+// prompt: dropped as stale on restart (#2080/#1868 ruling 2: an expired question
+// disappears). msgID is the prompt's routing id (questionMsgID).
+type AskRemoveFn func(sessionKey, msgID string)
+
 // pendingAsk is one in-flight ask: a sequential accumulator plus the context
 // needed to present follow-up questions and deliver the final answers.
 type pendingAsk struct {
@@ -182,6 +190,7 @@ type askState struct {
 	presentBatch AskPresentBatchFn // app-only batched presentation; nil = always sequential
 	restore      AskRestoreFn
 	restoreBatch AskRestoreBatchFn // app-only batched re-registration on restart; nil = sequential restore only
+	remove       AskRemoveFn       // deletes a dead ask's prompt from the app; nil = leave it
 	deliver      AskDeliverFn
 	closeMsg     AskCloseFn
 	store        *session.SessionIndex // nil = no persistence
@@ -204,9 +213,12 @@ type askState struct {
 }
 
 // heldNotice is a restore-time message to the agent, parked until the gateway can
-// deliver it (see askState.restoring).
+// deliver it (see askState.restoring). removeMsgID, when set, is the on-screen
+// prompt of the ask the notice is about, deleted from the app at the same point:
+// at restore time the app transport is not up yet either.
 type heldNotice struct {
 	sessionKey, requestID, msg string
+	removeMsgID                string
 }
 
 // WithOnResolve sets a callback fired (async) when ONE ask resolves — per-ask,
@@ -261,6 +273,13 @@ func WithBatchPresent(fn AskPresentBatchFn) AskOption {
 // resolves instead of being silently dropped (#1473). Nil-safe.
 func WithBatchRestore(fn AskRestoreBatchFn) AskOption {
 	return func(s *askState) { s.restoreBatch = fn }
+}
+
+// WithRemove wires prompt deletion for asks that die unanswered with nothing else
+// to clear them (dropped as stale across a restart), so the question disappears
+// from the app instead of lingering answerable-looking (#2080). Nil-safe.
+func WithRemove(fn AskRemoveFn) AskOption {
+	return func(s *askState) { s.remove = fn }
 }
 
 // askMetaKey is the agent_metadata key under which pending asks are persisted.
@@ -810,8 +829,12 @@ func (a *askState) restorePending() {
 			// Stale — its buttons have expired on the platform too. The agent is
 			// still waiting on it, so say so (#1894).
 			askLog.Warnf("session=%s req=%s ask expired (%s old, queued=%v) across restart — dropped", s.SessionKey, s.RequestID, age.Round(time.Minute), s.Queued)
-			a.held = append(a.held, heldNotice{s.SessionKey, s.RequestID,
-				expiredAskNotice(s.RequestID, s.Queued, age, s.Idx, len(s.Questions))})
+			n := heldNotice{sessionKey: s.SessionKey, requestID: s.RequestID,
+				msg: expiredAskNotice(s.RequestID, s.Queued, age, s.Idx, len(s.Questions))}
+			if !s.Queued { // a queued ask was never shown: nothing on screen to remove
+				n.removeMsgID = questionMsgID(s.RequestID, s.Idx)
+			}
+			a.held = append(a.held, n)
 			continue
 		}
 		p := &pendingAsk{
@@ -897,7 +920,11 @@ func (a *askState) reattach(p *pendingAsk) {
 // that catches a batched reply whose server-side registration a restart dropped
 // (#1473, fix B). The batched promptID is question 0's msg id, so it maps back to
 // the ask whose requestID yields it.
-func (a *askState) handleBatchByPrompt(promptID string, answers []string) {
+//
+// It reports whether a pending ask matched. false means the ask is gone (expired,
+// cancelled, or answered): the caller owns what happens next — the app hub
+// delivers it as a late answer (deliverLateAnswer) rather than dropping it (#1868).
+func (a *askState) handleBatchByPrompt(promptID string, answers []string) bool {
 	a.mu.Lock()
 	var reqID string
 	for id := range a.byReqID {
@@ -908,10 +935,112 @@ func (a *askState) handleBatchByPrompt(promptID string, answers []string) {
 	}
 	a.mu.Unlock()
 	if reqID == "" {
-		askLog.Warnf("batched answer for unregistered prompt %q: no matching pending ask (dropped)", promptID)
-		return
+		return false
 	}
 	a.handleBatchResponse(reqID, answers)
+	return true
+}
+
+// LateAnswer is an answer to an ask foci no longer holds — it expired, was
+// cancelled, or was dropped across a restart — reconstructed by the transport
+// from what it still has on record (the app: its durable frame store). The ask
+// layer delivers it to the agent as a marked late answer rather than dropping it
+// (#2080/#1868, Dick's 2026-09-28 ruling).
+type LateAnswer struct {
+	// PromptID is the on-screen prompt id, "<requestID>-q<idx>".
+	PromptID   string
+	SessionKey string
+	// AskedAt is when the question was put to the user; zero if unknown.
+	AskedAt time.Time
+	// Questions is what was asked, in on-screen order. Empty when the record has
+	// aged out; the answer is still delivered, flagged as having lost its text.
+	Questions []question.Question
+	// Answers are the RAW positional answers the client sent: "qa:<index>", the
+	// "qa:cancel" sentinel, or typed text — the same shape as a live answer.
+	Answers []string
+}
+
+// parseAskPromptID splits an ask's on-screen prompt id "<requestID>-q<idx>" back
+// into its parts. ok is false for any prompt that is not one of this agent's asks
+// (a permission prompt, another agent's ask), so a late click on those is never
+// mistaken for an answer.
+func (a *askState) parseAskPromptID(promptID string) (requestID string, idx int, ok bool) {
+	cut := strings.LastIndex(promptID, "-q")
+	if cut < 0 || !strings.HasPrefix(promptID, "ask-"+a.agentID+"-") {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(promptID[cut+2:])
+	if err != nil || n < 0 {
+		return "", 0, false
+	}
+	return promptID[:cut], n, true
+}
+
+// deliverLateAnswer delivers an answer to an ask that is no longer pending as a
+// normal inbound message to the asking session, clearly marked late: which
+// question it answers, when that was asked, and what was chosen. It reports
+// whether anything was delivered. Not delivered: a prompt that is not one of this
+// agent's asks, and a late CANCEL — dismissing a dead question answers nothing,
+// and the agent was already told when it died.
+func (a *askState) deliverLateAnswer(la LateAnswer) bool {
+	reqID, _, ok := a.parseAskPromptID(la.PromptID)
+	if !ok {
+		return false
+	}
+	for _, raw := range la.Answers {
+		if raw == question.CancelData {
+			askLog.Infof("session=%s req=%s late CANCEL on a closed ask — nothing to deliver", la.SessionKey, reqID)
+			return false
+		}
+	}
+	askLog.Infof("session=%s req=%s late answer to a closed ask (%d answers, %d questions on record) — delivering to the agent",
+		la.SessionKey, reqID, len(la.Answers), len(la.Questions))
+	a.deliverMsg(la.SessionKey, reqID, formatLateAnswer(reqID, la, time.Now()))
+	return true
+}
+
+// formatLateAnswer renders a late answer for the agent. Each line names the
+// question by its TEXT (a header alone does not say what was asked) and the
+// choice by its label; a raw answer that no longer resolves (the question text
+// aged out) is passed through verbatim so nothing the user chose is lost.
+func formatLateAnswer(reqID string, la LateAnswer, now time.Time) string {
+	var b strings.Builder
+	asked := "at an unknown time"
+	if !la.AskedAt.IsZero() {
+		asked = fmt.Sprintf("at %s (%s ago)", la.AskedAt.UTC().Format("2006-01-02 15:04 MST"),
+			now.Sub(la.AskedAt).Round(time.Minute))
+	}
+	fmt.Fprintf(&b, "[SYSTEM: LATE ANSWER. The user has just answered a question from your `ask` request (req %s), asked %s. That ask had already closed (expired or dropped), so this answer was NOT delivered at the time. Treat it as the user's answer, but check it still applies before acting on it.]\n", reqID, asked)
+	answers := make(map[string]string, len(la.Answers))
+	for i, raw := range la.Answers {
+		if i >= len(la.Questions) {
+			fmt.Fprintf(&b, "\n• (question text no longer on record) → %s", raw)
+			continue
+		}
+		q := &la.Questions[i]
+		ans, _, err := question.ResolveAnswer(q, raw)
+		if err != nil {
+			ans = raw
+		}
+		answers[q.Question] = ans
+		label := q.Question
+		if q.Header != "" && q.Header != q.Question {
+			label = q.Header + ": " + q.Question
+		}
+		fmt.Fprintf(&b, "\n• %s → %s", label, ans)
+	}
+	payload := map[string]any{"late": true, "request_id": reqID, "answers": answers}
+	if !la.AskedAt.IsZero() {
+		payload["asked_at"] = la.AskedAt.UTC().Format(time.RFC3339)
+	}
+	if byID := answersByID(la.Questions, answers); len(byID) > 0 {
+		payload["answers_by_id"] = byID
+	}
+	if js, err := json.Marshal(payload); err == nil {
+		b.WriteString("\n\n")
+		b.Write(js)
+	}
+	return b.String()
 }
 
 // deliverMsg delivers a message produced BY an ask back into its session.
@@ -921,7 +1050,7 @@ func (a *askState) handleBatchByPrompt(promptID string, answers []string) {
 func (a *askState) deliverMsg(sessionKey, requestID, msg string) {
 	a.mu.Lock()
 	if a.restoring {
-		a.held = append(a.held, heldNotice{sessionKey, requestID, msg})
+		a.held = append(a.held, heldNotice{sessionKey: sessionKey, requestID: requestID, msg: msg})
 		a.mu.Unlock()
 		return
 	}
@@ -931,13 +1060,17 @@ func (a *askState) deliverMsg(sessionKey, requestID, msg string) {
 	}
 }
 
-// deliverRestoreNotices sends, once, the notices restorePending held back.
+// deliverRestoreNotices sends, once, the notices restorePending held back, and
+// deletes the on-screen prompt of each ask it dropped as stale.
 func (a *askState) deliverRestoreNotices() {
 	a.mu.Lock()
 	held := a.held
 	a.held = nil
 	a.mu.Unlock()
 	for _, n := range held {
+		if n.removeMsgID != "" && a.remove != nil {
+			a.remove(n.sessionKey, n.removeMsgID)
+		}
 		a.deliverMsg(n.sessionKey, n.requestID, n.msg)
 	}
 }
@@ -1220,7 +1353,13 @@ type AskRouter struct {
 	// HandleBatchByPrompt feeds a batched (native-app) answer set — identified by
 	// its on-screen promptID — into the waiting ask. Used by the app hub as a
 	// fallback when a restart dropped the in-memory batched registration (#1473).
-	HandleBatchByPrompt func(promptID string, answers []string)
+	// Reports whether a pending ask matched; false = the ask is gone, and the
+	// caller hands the answer to DeliverLateAnswer instead (#1868).
+	HandleBatchByPrompt func(promptID string, answers []string) bool
+	// DeliverLateAnswer delivers an answer to an ask foci no longer holds as a
+	// marked late message to the agent (#2080). Returns whether it delivered —
+	// false for a prompt that is not one of this agent's asks, or a late cancel.
+	DeliverLateAnswer func(la LateAnswer) bool
 	// PauseSession / ResumeSession toggle answer-capture for a session's PRIMARY
 	// ask (#1711 ruling 2 — the platforms carrying these commands only ever have
 	// one live ask). While paused, the inbound routing guard skips answer-capture so the
@@ -1371,6 +1510,7 @@ func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn
 		PendingForSession:     state.pendingForSession,
 		HandleResponse:        state.handleResponse,
 		HandleBatchByPrompt:   state.handleBatchByPrompt,
+		DeliverLateAnswer:     state.deliverLateAnswer,
 		PauseSession:          func(sk string) bool { return state.setPaused(sk, true) },
 		ResumeSession:         func(sk string) bool { return state.setPaused(sk, false) },
 		IsPaused:              state.isPaused,

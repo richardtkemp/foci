@@ -344,6 +344,49 @@ func TestCleanupExpiredInteractiveResolves(t *testing.T) {
 	}
 }
 
+// removingButtonSender is a ButtonSender that can also delete a prompt outright
+// (the app's platform.InteractiveRemover).
+type removingButtonSender struct {
+	mockButtonSender
+	removed []string
+}
+
+func (r *removingButtonSender) RemoveInteractive(msgID string) error {
+	r.removed = append(r.removed, msgID)
+	return nil
+}
+
+// TestCleanupExpiredInteractiveRemovesWhereSupported (#2080 ruling 2): on a
+// connection that can delete a prompt, an expired one is REMOVED — never edited
+// to the "expired" text — while onExpire still resolves the waiter.
+func TestCleanupExpiredInteractiveRemovesWhereSupported(t *testing.T) {
+	clearIMStore(t)
+
+	bs := &removingButtonSender{mockButtonSender: mockButtonSender{msgID: "m1"}}
+	resolved := false
+	imMu.Lock()
+	imStore["old"] = &interactiveMsg{
+		resolve:  staticResolver(bs),
+		msgID:    "m1",
+		buttons:  []ButtonChoice{{Label: "A", Data: "qa:0"}},
+		onExpire: func() { resolved = true },
+		created:  time.Now().Add(-25 * time.Hour),
+	}
+	imMu.Unlock()
+
+	CleanupExpiredInteractive(24 * time.Hour)
+
+	if !resolved {
+		t.Error("onExpire should still resolve the waiter")
+	}
+	if len(bs.removed) != 1 || bs.removed[0] != "m1" {
+		t.Errorf("removed = %v, want [m1]", bs.removed)
+	}
+	if bs.editedMsgID != "" {
+		t.Errorf("expired prompt was edited (%q → %q); a remover must remove, not show an expired state", bs.editedMsgID, bs.editedText)
+	}
+}
+
 // TestCleanupExpiredInteractiveEmpty verifies that cleanup on an empty store
 // does not panic.
 func TestCleanupExpiredInteractiveEmpty(t *testing.T) {

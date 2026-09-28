@@ -112,6 +112,22 @@ func newAskRestoreBatchFn(agentID string, connMgr platform.ConnectionManager) to
 	}
 }
 
+// newAskRemoveFn builds the ask layer's prompt-deletion hook: on a connection that
+// can delete a prompt outright (platform.InteractiveRemover — the app) it removes
+// the on-screen question of an ask that died unanswered, so it disappears rather
+// than lingering (#2080). Any other transport keeps its prompt as it was.
+func newAskRemoveFn(agentID string, connMgr platform.ConnectionManager) tools.AskRemoveFn {
+	return func(sessionKey, msgID string) {
+		r, ok := connMgr.ForSessionOrPrimary(sessionKey, agentID).(platform.InteractiveRemover)
+		if !ok {
+			return
+		}
+		if err := r.RemoveInteractive(msgID); err != nil {
+			askLog.Warnf("remove dead ask prompt %s (session=%s): %v", msgID, sessionKey, err)
+		}
+	}
+}
+
 // newAskRestoreFn builds the restore hook for the foci-native `ask` tool. After a
 // restart the question's buttons still live on the platform (the message survived
 // in the chat), but foci's in-memory routing entry was lost. This re-registers

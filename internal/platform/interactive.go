@@ -340,7 +340,8 @@ func HandleInteractiveCallback(callbackData string) (editText, choiceData string
 // CleanupExpiredInteractive removes interactive message callbacks older than
 // maxAge. For each expired prompt it resolves the upstream waiter via onExpire
 // (e.g. a denial to CC, so a turn blocked in WaitForPermission doesn't orphan)
-// and edits the message to show it expired. Called periodically from a
+// and edits the message to show it expired — or, on a connection that implements
+// InteractiveRemover (the app), deletes it outright. Called periodically from a
 // background goroutine.
 func CleanupExpiredInteractive(maxAge time.Duration) {
 	cutoff := time.Now().Add(-maxAge)
@@ -361,10 +362,20 @@ func CleanupExpiredInteractive(maxAge time.Duration) {
 		if msg.onExpire != nil {
 			msg.onExpire()
 		}
-		if bs := msg.buttonSender(); bs != nil && msg.msgID != "" {
-			if err := bs.EditMessageText(msg.msgID, expiredInteractiveText); err != nil {
-				interactiveLog.Warnf("edit expired message %s: %v", msg.msgID, err)
+		bs := msg.buttonSender()
+		if bs == nil || msg.msgID == "" {
+			continue
+		}
+		// A connection that can delete the prompt does so: an expired question
+		// disappears rather than lingering as "expired" (#2080/#1868).
+		if r, ok := bs.(InteractiveRemover); ok {
+			if err := r.RemoveInteractive(msg.msgID); err != nil {
+				interactiveLog.Warnf("remove expired message %s: %v", msg.msgID, err)
 			}
+			continue
+		}
+		if err := bs.EditMessageText(msg.msgID, expiredInteractiveText); err != nil {
+			interactiveLog.Warnf("edit expired message %s: %v", msg.msgID, err)
 		}
 	}
 }

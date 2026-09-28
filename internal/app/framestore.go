@@ -51,6 +51,9 @@ type frameWrite struct {
 	sentMs  int64
 	visible bool
 	preview string
+	// onStored, if set, runs once the insert has been attempted — the moment the
+	// frame is part of the durable history (see Hub.closedBatch). nil = none.
+	onStored func()
 }
 
 // storedFrame is one frame read back for replay/backfill.
@@ -116,10 +119,21 @@ func newFrameStore(path string, ttl time.Duration) (*frameStore, error) {
 // writer is saturated it writes synchronously rather than drop (durability beats
 // latency here). nil receiver is a no-op so a store-less hub (no data_dir) is safe.
 func (s *frameStore) Append(convID, agentID string, seq int64, wire string, sentMs int64, visible bool, preview string) {
+	s.AppendThen(convID, agentID, seq, wire, sentMs, visible, preview, nil)
+}
+
+// AppendThen is Append plus onStored, run once the frame has been written (or the
+// write has failed and been logged), so a caller can act on "this frame is now in
+// the durable history". A nil store runs onStored at once: there is no history to
+// wait for.
+func (s *frameStore) AppendThen(convID, agentID string, seq int64, wire string, sentMs int64, visible bool, preview string, onStored func()) {
 	if s == nil {
+		if onStored != nil {
+			onStored()
+		}
 		return
 	}
-	w := frameWrite{convID: convID, agentID: agentID, seq: seq, wire: wire, sentMs: sentMs, visible: visible, preview: preview}
+	w := frameWrite{convID: convID, agentID: agentID, seq: seq, wire: wire, sentMs: sentMs, visible: visible, preview: preview, onStored: onStored}
 	select {
 	case s.writeCh <- w:
 	default:
@@ -167,6 +181,9 @@ func (s *frameStore) insert(w frameWrite) {
 		w.convID, w.seq, w.wire, w.sentMs, v, w.agentID, w.preview,
 	); err != nil {
 		appLog.Errorf("frame store insert (conv=%s seq=%d): %v", w.convID, w.seq, err)
+	}
+	if w.onStored != nil {
+		w.onStored()
 	}
 }
 
@@ -267,6 +284,40 @@ func (s *frameStore) Range(convID string, fromSeq int64, limit int) []storedFram
 			return out
 		}
 		out = append(out, f)
+	}
+	return out
+}
+
+// promptFrame is one stored frame that mentions a prompt.
+type promptFrame struct {
+	seq    int64
+	wire   string
+	sentMs int64
+}
+
+// PromptFrames returns every stored frame in convID whose wire contains needle
+// (the caller passes `"promptId":"<id>"`), in seq order. It is the durable record
+// of a prompt the ask layer has forgotten — what was asked and how it ended — read
+// only when an answer arrives for a dead prompt (#2080), so the substring scan is
+// off every hot path. instr, not LIKE: an id's `_` would be a LIKE wildcard.
+func (s *frameStore) PromptFrames(convID, needle string) []promptFrame {
+	if s == nil {
+		return nil
+	}
+	rows, err := s.db.Query(
+		`SELECT seq, wire, sent_ms FROM app_frames WHERE conv_id = ? AND instr(wire, ?) > 0 ORDER BY seq ASC`,
+		convID, needle)
+	if err != nil {
+		appLog.Errorf("frame store PromptFrames (conv=%s): %v", convID, err)
+		return nil
+	}
+	defer func() { _ = rows.Close() }()
+	var out []promptFrame
+	for rows.Next() {
+		var f promptFrame
+		if rows.Scan(&f.seq, &f.wire, &f.sentMs) == nil {
+			out = append(out, f)
+		}
 	}
 	return out
 }
@@ -374,7 +425,8 @@ func (s *frameStore) OrphanedResolvedAsks(convID string) map[string]struct{} {
 			continue
 		}
 		switch env.T {
-		case fap.TypeInteractiveEdit:
+		case fap.TypeInteractiveEdit, fap.TypeInteractiveRemove:
+			// A stored remove replays after the ask and deletes it — same as an edit.
 			resolvedByEdit[p.PromptID] = struct{}{}
 		case fap.TypeInteractive:
 			open[p.PromptID] = struct{}{}
@@ -444,7 +496,7 @@ func (s *frameStore) LegacyOpenAsks() []legacyAsk {
 			continue
 		}
 		switch env.T {
-		case fap.TypeInteractiveEdit:
+		case fap.TypeInteractiveEdit, fap.TypeInteractiveRemove:
 			resolved[p.PromptID] = true
 		case fap.TypeInteractive:
 			asks = append(asks, legacyAsk{p.PromptID, convID, agentID, p.Text})

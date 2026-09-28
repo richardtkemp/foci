@@ -44,19 +44,23 @@ const (
 	// InteractiveProgressEdit syncs a batched ask's accumulated answers to the
 	// other attached clients (Done=true when resolved, so they close the form).
 	TypeInteractiveProgressEdit = "interactive.progressEdit"
-	TypeWizardStep              = "wizard.step"
-	TypeWizardEnd               = "wizard.end"
-	TypeSubagentStart           = "subagent.start"
-	TypeSubagentText            = "subagent.text"
-	TypeSubagentEnd             = "subagent.end"
-	TypeSubagentPrompt          = "subagent.prompt"
-	TypeExternalPrompt          = "external.prompt"
-	TypeMeta                    = "meta"
-	TypeCommands                = "commands"
-	TypeError                   = "error"
-	TypePong                    = "pong"
-	TypeTranscript              = "transcript"
-	TypeToolInvoke              = "tool.invoke"
+	// InteractiveRemove deletes a prompt from the app outright — an ask that
+	// expired or is no longer registered disappears rather than rendering an
+	// "expired" state (#2080/#1868).
+	TypeInteractiveRemove = "interactive.remove"
+	TypeWizardStep        = "wizard.step"
+	TypeWizardEnd         = "wizard.end"
+	TypeSubagentStart     = "subagent.start"
+	TypeSubagentText      = "subagent.text"
+	TypeSubagentEnd       = "subagent.end"
+	TypeSubagentPrompt    = "subagent.prompt"
+	TypeExternalPrompt    = "external.prompt"
+	TypeMeta              = "meta"
+	TypeCommands          = "commands"
+	TypeError             = "error"
+	TypePong              = "pong"
+	TypeTranscript        = "transcript"
+	TypeToolInvoke        = "tool.invoke"
 	// TypeConversationForeground (server->app) asks ONE device — the one that
 	// requested it (e.g. via /facet) — to foreground a conversation. Existence
 	// and open-set sync to all devices; focus stays device-local, so this is
@@ -528,6 +532,18 @@ type InteractiveProgressEdit struct {
 }
 
 func (InteractiveProgressEdit) Type() string { return TypeInteractiveProgressEdit }
+
+// InteractiveRemove tells every client to delete a prompt — no resolved marker,
+// no "expired" text, no toast. Sent when foci expires a prompt nobody answered,
+// and when an answer arrives for a prompt foci no longer has registered (that
+// answer is delivered to the agent as a late answer; the prompt itself goes).
+// Dick's 2026-09-28 ruling on #2080/#1868: a dead question disappears.
+type InteractiveRemove struct {
+	ConversationID string `json:"conversationId"`
+	PromptID       string `json:"promptId"`
+}
+
+func (InteractiveRemove) Type() string { return TypeInteractiveRemove }
 
 // SubagentStart marks a subagent (Task/Agent tool) run beginning, so the app can
 // create a collapsed "Agent started" entry that its text blocks attach to. GroupKey

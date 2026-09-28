@@ -1294,8 +1294,8 @@ func TestInteractive_BatchProgressSyncAndStreamedResolve(t *testing.T) {
 // TestInteractive_BatchExpirySweep (#1895): an unanswered batched ask is swept on
 // the same schedule as a sequential prompt. Past the cutoff it resolves exactly
 // like the form's own Cancel — the callback gets the qa:cancel payload (so the ask
-// layer tells the agent and releases the session's queue), a Done edit closes the
-// form on every attached client, and the registration is gone. A younger ask is
+// layer tells the agent and releases the session's queue), the form is removed
+// from every attached client (#2080), and the registration is gone. A younger ask is
 // left untouched.
 func TestInteractive_BatchExpirySweep(t *testing.T) {
 	h, c, b, conn := boundConn(t)
@@ -1319,9 +1319,10 @@ func TestInteractive_BatchExpirySweep(t *testing.T) {
 	if _, ok := h.batchPromptByID("req-old"); ok {
 		t.Error("expired registration should be removed")
 	}
+	// #2080: an expired form DISAPPEARS — a remove, not a Done/cancelled edit.
 	ds := drain(t, c)
-	if len(ds) != 1 || ds[0].t != fap.TypeInteractiveProgressEdit || ds[0].d["done"] != true || ds[0].d["promptId"] != "req-old" {
-		t.Fatalf("expiry frames = %v, want one Done progressEdit for req-old", types(ds))
+	if len(ds) != 1 || ds[0].t != fap.TypeInteractiveRemove || ds[0].d["promptId"] != "req-old" {
+		t.Fatalf("expiry frames = %v, want one interactive.remove for req-old", types(ds))
 	}
 
 	if newFired {

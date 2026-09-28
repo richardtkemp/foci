@@ -92,8 +92,17 @@ type Hub struct {
 	deliverMu    sync.Mutex              // serialises deliverBinding's find-or-create + default pin
 	prompts      map[string]*convBinding // promptID → binding (live interactive prompts)
 	batchPrompts map[string]*batchPrompt // promptID → batched-ask callback (app-only multi-question form)
-	notifs       map[string]*convBinding // notification messageID → binding (for in-place edit, e.g. compaction ⏳→✅)
-	toolCalls    *toolCallRegistry       // InvocationID → waiting InvokeTool caller
+	// closedBatch: promptID → how a batched ask's registration was claimed — by a
+	// user's submit (answered unless it was a cancel) or by the expiry sweep
+	// (removed from the app). A racing second submit finds the registration gone;
+	// this is how it tells a DUPLICATE of an answer from a late answer to a dead
+	// ask (#2080) in the window before the closing frame (Done / remove) is in the
+	// frame history. Bounded by that EVENT, not a timer: written under h.mu in the
+	// claim's own critical section, deleted by the closing frame's onRecorded
+	// (convBinding.sendThen). After that, promptHistory classifies from the frames.
+	closedBatch map[string]batchClosure
+	notifs      map[string]*convBinding // notification messageID → binding (for in-place edit, e.g. compaction ⏳→✅)
+	toolCalls   *toolCallRegistry       // InvocationID → waiting InvokeTool caller
 
 	// pinsMu serialises the read-modify-write on a chat's pinned-message set
 	// (handlePin). Deliberately not h.mu: it is held across a SessionIndex
@@ -662,10 +671,17 @@ func (h *Hub) setupAgent(params platform.AgentConnectionParams) *appConn {
 	// Route a batched ask answer into this agent's ask layer when a restart dropped
 	// the hub's in-memory registration (#1473, fix B). Reads ag.AskRouter lazily —
 	// it may be wired after setupAgent — so this is safe to capture now.
-	conn.routeBatchAnswer = func(promptID string, answers []string) {
+	conn.routeBatchAnswer = func(promptID string, answers []string) bool {
 		if ag.AskRouter != nil && ag.AskRouter.HandleBatchByPrompt != nil {
-			ag.AskRouter.HandleBatchByPrompt(promptID, answers)
+			return ag.AskRouter.HandleBatchByPrompt(promptID, answers)
 		}
+		return false
+	}
+	conn.routeLateAnswer = func(la tools.LateAnswer) bool {
+		if ag.AskRouter != nil && ag.AskRouter.DeliverLateAnswer != nil {
+			return ag.AskRouter.DeliverLateAnswer(la)
+		}
+		return false
 	}
 	if reg, ok := params.Commands.(*command.Registry); ok {
 		conn.commands = reg
@@ -1885,10 +1901,11 @@ func (h *Hub) batchPromptByID(promptID string) (*batchPrompt, bool) {
 
 // expireBatchPrompts resolves every batched ask registered before cutoff as if
 // the user had pressed the form's Cancel: the ask layer gets the qa:cancel
-// payload (so the agent is told and the session's queued asks advance) and a
-// Done edit closes the form on every attached client. This is the batched
-// counterpart of CleanupExpiredInteractive's onExpire, which cancels a
-// sequential ask the same way.
+// payload (so the agent is told and the session's queued asks advance), and the
+// form is REMOVED from every attached client (fap.InteractiveRemove) — an expired
+// question disappears, with no "cancelled"/"expired" marker left behind
+// (#2080/#1868). This is the batched counterpart of CleanupExpiredInteractive,
+// which cancels a sequential ask the same way and removes its prompt.
 func (h *Hub) expireBatchPrompts(cutoff time.Time) {
 	type expired struct {
 		id string
@@ -1900,6 +1917,7 @@ func (h *Hub) expireBatchPrompts(cutoff time.Time) {
 		if bp.created.Before(cutoff) {
 			due = append(due, expired{id, bp})
 			delete(h.batchPrompts, id)
+			h.noteBatchClosedLocked(id, batchClosure{removed: true})
 		}
 	}
 	h.mu.Unlock()
@@ -1908,35 +1926,97 @@ func (h *Hub) expireBatchPrompts(cutoff time.Time) {
 	// present the session's next queued ask back through this hub.
 	for _, e := range due {
 		h.frames.DeletePrompt(e.id)
-		appLog.Infof("batched ask %s expired unanswered — resolved as cancelled", e.id)
-		h.resolveBatchedAsk(e.bp.b, e.id, []string{question.CancelData}, e.bp.onResp)
+		appLog.Infof("batched ask %s expired unanswered — resolved as cancelled, removed from the app", e.id)
+		id := e.id
+		release := func() { h.forgetBatchClosure(id) }
+		if e.bp.b != nil {
+			e.bp.b.sendThen(fap.InteractiveRemove{ConversationID: e.bp.b.convID, PromptID: e.id}, release)
+		} else {
+			release()
+		}
+		if e.bp.onResp != nil {
+			e.bp.onResp([]string{question.CancelData})
+		}
 	}
+}
+
+// batchClosure records how a batched ask's registration ended.
+type batchClosure struct {
+	answered bool // a user's submit with a real answer
+	removed  bool // the expiry sweep: the form was removed from the app
+}
+
+// noteBatchClosedLocked records a claimed batched ask until its closing frame is
+// recorded (forgetBatchClosure). Caller holds h.mu.
+func (h *Hub) noteBatchClosedLocked(promptID string, c batchClosure) {
+	if h.closedBatch == nil {
+		h.closedBatch = make(map[string]batchClosure)
+	}
+	h.closedBatch[promptID] = c
+}
+
+// forgetBatchClosure drops promptID's claim record: its closing frame is now in
+// the frame history, which is authoritative from here on.
+func (h *Hub) forgetBatchClosure(promptID string) {
+	h.mu.Lock()
+	delete(h.closedBatch, promptID)
+	h.mu.Unlock()
+}
+
+// batchClosed reports how promptID's batched registration ended, while its
+// closing frame is not yet in the frame history.
+func (h *Hub) batchClosed(promptID string) (batchClosure, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	c, ok := h.closedBatch[promptID]
+	return c, ok
 }
 
 // claimBatchPrompt looks up AND removes a batched ask's registration under one
 // hold of h.mu, so exactly one caller owns its resolution (#2070). A submit from
 // a second device, or the expiry sweep, racing this one finds nothing and must
-// not resolve the ask again.
-func (h *Hub) claimBatchPrompt(promptID string) (*batchPrompt, bool) {
+// not resolve the ask again. incoming (the submit's carried answers) reconciles
+// the accumulated set and the merged result is returned; the claim is recorded in
+// closedBatch before h.mu is released, so the losing submit can tell it lost to
+// an answer (#2080).
+func (h *Hub) claimBatchPrompt(promptID string, incoming []string) (*batchPrompt, []string, bool) {
 	h.mu.Lock()
 	bp, ok := h.batchPrompts[promptID]
 	delete(h.batchPrompts, promptID)
+	var final []string
+	if ok {
+		bp.mu.Lock()
+		for i, a := range incoming {
+			if i < len(bp.answers) && a != "" {
+				bp.answers[i] = a
+			}
+		}
+		final = append([]string(nil), bp.answers...)
+		bp.mu.Unlock()
+		h.noteBatchClosedLocked(promptID, batchClosure{answered: !containsCancel(final)})
+	}
 	h.mu.Unlock()
 	if ok {
 		h.frames.DeletePrompt(promptID)
 	}
-	return bp, ok
+	return bp, final, ok
 }
 
 // resolveBatchedAsk completes a batched (native-app) ask: it fans out the terminal
 // Done progressEdit — which closes the form / clears the banner / renders the
 // complete chit on EVERY attached client (not just the answering one) — and
-// delivers the assembled answers into the ask layer. The single shared resolution
-// core for BOTH the registered path (a live batchPrompt) and the restart-lost
-// fallback (#1473, fix B), so the two cannot drift.
+// delivers the assembled answers into the ask layer. Used by the registered path
+// (a live batchPrompt). The restart-lost fallback (#1473, fix B) sends the same
+// Done edit itself, but only once the ask layer confirms the ask is still live —
+// a dead one is removed instead (#2080, resolveDeadPrompt).
+//
+// The Done frame's recording releases the claim record claimBatchPrompt made.
 func (h *Hub) resolveBatchedAsk(b *convBinding, promptID string, answers []string, deliver func(answers []string)) {
+	release := func() { h.forgetBatchClosure(promptID) }
 	if b != nil {
-		b.send(fap.InteractiveProgressEdit{ConversationID: b.convID, PromptID: promptID, Answers: answers, Done: true})
+		b.sendThen(fap.InteractiveProgressEdit{ConversationID: b.convID, PromptID: promptID, Answers: answers, Done: true}, release)
+	} else {
+		release()
 	}
 	if deliver != nil {
 		deliver(answers)
@@ -2347,7 +2427,13 @@ func stampAck(wire string, ack int64) string {
 	return out
 }
 
-func (b *convBinding) send(frame fap.ServerFrame) {
+func (b *convBinding) send(frame fap.ServerFrame) { b.sendThen(frame, nil) }
+
+// sendThen is send plus onRecorded, run once the frame is part of the history a
+// later reader consults (promptHistory): after the durable store has written it,
+// or — with no store — once it is in the in-memory buffer. It also runs if the
+// frame cannot be encoded (there is nothing to wait for). nil = none.
+func (b *convBinding) sendThen(frame fap.ServerFrame, onRecorded func()) {
 	b.mu.Lock()
 	b.seq++
 	seq := b.seq
@@ -2360,6 +2446,9 @@ func (b *convBinding) send(frame fap.ServerFrame) {
 	if err != nil {
 		b.mu.Unlock()
 		appLog.Errorf("encode %s (conv=%s): %v", frame.Type(), b.convID, err)
+		if onRecorded != nil {
+			onRecorded()
+		}
 		return
 	}
 	now := time.Now()
@@ -2393,9 +2482,9 @@ func (b *convBinding) send(frame fap.ServerFrame) {
 	// Persist the canonical (ack=0) wire to the durable backstop (async; survives
 	// restart + the in-memory depth/TTL bound, so a long-offline phone can backfill
 	// it). The visible flag marks user-facing content vs transient frames (typing).
-	if store != nil {
-		store.Append(b.convID, b.agentID, seq, wire, now.UnixMilli(), visible, preview)
-	}
+	// With no store the buffer append above already recorded it; AppendThen on a
+	// nil store runs onRecorded at once.
+	store.AppendThen(b.convID, b.agentID, seq, wire, now.UnixMilli(), visible, preview, onRecorded)
 
 	// Fan out: every attached device receives the frame, ack-stamped for ITS own
 	// stream. Per-client app dedups by envelope id and tracks its own resume point.

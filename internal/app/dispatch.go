@@ -224,43 +224,41 @@ func (h *Hub) handleInteractiveResponse(client *wsClient, f fap.InteractiveRespo
 	// arrived as InteractiveProgress, leaving Answers empty — still resolves here.
 	// Carried Answers reconcile the accumulated set (covering a dropped progress
 	// frame). A Done edit fans out so a second client viewing the form closes it.
-	if bp, ok := h.claimBatchPrompt(f.PromptID); ok {
-		bp.mu.Lock()
-		for i, a := range f.Answers {
-			if i < len(bp.answers) && a != "" {
-				bp.answers[i] = a
-			}
-		}
-		final := append([]string(nil), bp.answers...)
-		bp.mu.Unlock()
+	if bp, final, ok := h.claimBatchPrompt(f.PromptID, f.Answers); ok {
 		h.resolveBatchedAsk(bp.b, f.PromptID, final, bp.onResp)
 		return
 	}
-
-	// A batched reply (non-empty Answers) with NO live registration: a restart
-	// dropped the in-memory batchPrompts map, so a pre-restart batched ask arrives
-	// here unrecognised. Route it to the SAME ask-layer entry a registered batched
-	// answer uses and fan out the Done edit, instead of the single-prompt dead-end
-	// below (which reads the empty Data, fails the callback lookup, and silently
-	// deletes the prompt — dropping both the sibling sync AND the answer). #1473 (B).
-	if len(f.Answers) > 0 {
-		client.mu.Lock()
-		b := client.convByID[f.ConversationID]
-		client.mu.Unlock()
-		if b != nil {
-			if conn := h.PrimaryBot(b.agentID); conn != nil && conn.routeBatchAnswer != nil {
-				h.deletePrompt(f.PromptID) // drop any stale single-prompt registration
-				h.resolveBatchedAsk(b, f.PromptID, f.Answers, func(ans []string) {
-					conn.routeBatchAnswer(f.PromptID, ans)
-				})
-				return
-			}
-		}
+	// A submit that lost the claim race to another device's real answer.
+	closure, closed := h.batchClosed(f.PromptID)
+	if closed && closure.answered {
+		appLog.Infof("batched answer for prompt %s already answered on another device — duplicate, ignored", f.PromptID)
+		return
 	}
 
 	client.mu.Lock()
 	b := client.convByID[f.ConversationID]
 	client.mu.Unlock()
+
+	// A batched reply (non-empty Answers) with NO live registration: a restart
+	// dropped the in-memory batchPrompts map, so a pre-restart batched ask arrives
+	// here unrecognised. Route it to the SAME ask-layer entry a registered batched
+	// answer uses and fan out the Done edit, instead of the single-prompt dead-end
+	// below (which reads the empty Data and fails the callback lookup). #1473 (B).
+	// When the ask layer has no pending ask either, the ask is dead: the answer is
+	// delivered as a late answer and the form is removed (#1868/#2080).
+	if len(f.Answers) > 0 && b != nil {
+		if conn := h.PrimaryBot(b.agentID); conn != nil && conn.routeBatchAnswer != nil {
+			h.deletePrompt(f.PromptID) // drop any stale single-prompt registration
+			if conn.routeBatchAnswer(f.PromptID, f.Answers) {
+				b.send(fap.InteractiveProgressEdit{ConversationID: b.convID, PromptID: f.PromptID, Answers: f.Answers, Done: true})
+				return
+			}
+			ph := h.promptHistory(b, f.PromptID)
+			ph.removed = ph.removed || closure.removed // the sweep's remove may not be sent yet
+			h.resolveDeadPrompt(b, f.PromptID, ph, f.Answers)
+			return
+		}
+	}
 
 	var seqBefore int64
 	if b != nil {
@@ -272,6 +270,27 @@ func (h *Hub) handleInteractiveResponse(client *wsClient, f fap.InteractiveRespo
 		// Unknown / expired / already-resolved prompt: no callback fired, so no
 		// re-registration could have happened — safe to drop any stale entry.
 		h.deletePrompt(f.PromptID)
+		// Unless it is a repeat of a recorded answer, the prompt is dead: remove it
+		// from the app and deliver the click as a late answer (#1868/#2080).
+		switch {
+		case b == nil:
+		case f.Data == "":
+			// A batched answer with no ask router to take it: nothing can be
+			// delivered, so only the prompt's last resolution matters (a claim still
+			// in flight, else the newest resolution frame) — not its whole history.
+			ph := promptHistory{removed: closure.removed}
+			if !closed {
+				ph = h.lastResolution(b, f.PromptID)
+			}
+			h.resolveDeadPrompt(b, f.PromptID, ph, nil)
+		default:
+			ph := h.promptHistory(b, f.PromptID)
+			var raw []string
+			if a, ok := singleRawAnswer(ph.asked, f.Data); ok {
+				raw = []string{a}
+			}
+			h.resolveDeadPrompt(b, f.PromptID, ph, raw)
+		}
 		return
 	}
 	if b != nil && b.currentSeq() != seqBefore {
