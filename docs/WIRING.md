@@ -2114,7 +2114,7 @@ exec subprocess                       foci process
 2. Bridge creates a unix socket (`/tmp/foci-exec-<pid>-<n>.sock`, 0600 perms) and a shell functions file
 3. `FOCI_SOCK` env var and `source <funcs.sh>` are injected into the command
 4. Shell functions use `jq` for JSON construction and `foci-call` binary for socket communication
-5. Bridge accepts connections and routes requests to tools with `ExecExport: true`
+5. Bridge accepts connections and routes requests to tools with `ExecExport: true`. The accept loop (`acceptLoop`, which gets its listener as an argument) returns only on `net.ErrClosed` (Close), or when the bridge ctx ends during a retry wait. Any other Accept error (EMFILE, ENFILE, ENOBUFS, ENOMEM) logs one WARN per error run and retries on the same listener after a backoff of 5ms doubling to a 1s cap, reset by a good Accept — the `acceptBackoffMin`/`acceptBackoffMax` values from `net/http.Server.Serve`. Before #1122 the loop returned on any error, which left the socket bound with nobody accepting: every `foci-call` then hung with no log line.
 6. Bridge is closed after the subprocess exits (cleanup: socket + funcs files removed)
 
 **Skipped for:** explicit `background: true` mode (daemons don't need piping).

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"foci/internal/peercred"
 	"foci/internal/tempdir"
@@ -18,6 +20,24 @@ import (
 
 // bridgeCounter provides unique socket paths across concurrent exec calls.
 var bridgeCounter atomic.Int64
+
+// Accept-error backoff for the bridge accept loop. The values mirror
+// net/http.Server.Serve's accept backoff, which handles the same EMFILE-class
+// errors (EMFILE, ENFILE, ENOBUFS, ENOMEM) for the same reason: without a wait
+// the loop spins at 100% CPU and floods the log while fds are exhausted, and a
+// longer cap delays every queued call after the fds come back (#1122).
+const (
+	acceptBackoffMin = 5 * time.Millisecond
+	acceptBackoffMax = 1 * time.Second
+)
+
+// acceptBackoff is the wait range between retries after an Accept error. The
+// wait starts at min, doubles on each consecutive error, and is capped at max.
+type acceptBackoff struct {
+	min, max time.Duration
+}
+
+var defaultAcceptBackoff = acceptBackoff{min: acceptBackoffMin, max: acceptBackoffMax}
 
 // ExecBridge creates a per-exec unix socket that exposes ExecExport tools
 // as shell functions inside subprocess commands.
@@ -69,11 +89,18 @@ func NewSessionExecBridge(registry *Registry, ctx context.Context, sessionKey st
 }
 
 func newExecBridge(registry *Registry, ctx context.Context, sockPath, funcsPath string) (*ExecBridge, error) {
-
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
 		return nil, fmt.Errorf("exec bridge listen: %w", err)
 	}
+	return startExecBridge(registry, ctx, listener, sockPath, funcsPath, defaultAcceptBackoff)
+}
+
+// startExecBridge finishes bridge setup on a listener already bound to
+// sockPath and starts its accept loop. It takes ownership of listener: on error
+// it closes the listener and removes sockPath. Tests use it directly to serve a
+// listener that injects Accept errors.
+func startExecBridge(registry *Registry, ctx context.Context, listener net.Listener, sockPath, funcsPath string, backoff acceptBackoff) (*ExecBridge, error) {
 	// Restrict socket access
 	if err := os.Chmod(sockPath, 0600); err != nil {
 		_ = listener.Close()
@@ -101,7 +128,7 @@ func newExecBridge(registry *Registry, ctx context.Context, sockPath, funcsPath 
 
 	// Start accept loop
 	b.wg.Add(1)
-	go b.acceptLoop()
+	go b.acceptLoop(listener, backoff)
 
 	execbridgeLog.Debugf("session=%s started sock=%s tools=%d", SessionKeyFromContext(ctx), sockPath, b.exportedToolCount())
 	return b, nil
@@ -123,14 +150,39 @@ func (b *ExecBridge) Close() {
 	execbridgeLog.Debugf("closed sock=%s", b.sockPath)
 }
 
-func (b *ExecBridge) acceptLoop() {
+// acceptLoop serves ln until Close. It returns only when ln is closed or the
+// bridge ctx ends during a retry wait. Any other Accept error (EMFILE and
+// similar) is retried on the same listener after a backoff: returning would
+// leave the socket bound with nobody accepting, so every foci-call would hang
+// with no log line (#1122, mode M1).
+func (b *ExecBridge) acceptLoop(ln net.Listener, backoff acceptBackoff) {
 	defer b.wg.Done()
+	var wait time.Duration
 	for {
-		conn, err := b.listener.Accept()
+		conn, err := ln.Accept()
 		if err != nil {
-			// Expected when listener is closed
-			return
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			if wait == 0 {
+				// Log once per error run; the run ends at the next good Accept.
+				execbridgeLog.Warnf("exec bridge accept error on %s: %v; retrying", b.sockPath, err)
+				wait = backoff.min
+			} else {
+				wait = min(wait*2, backoff.max)
+			}
+			timer := time.NewTimer(wait)
+			select {
+			case <-timer.C:
+			case <-b.ctx.Done():
+				// Close cancels ctx first, so a loop in its wait does not hold
+				// Close for up to the cap.
+				timer.Stop()
+				return
+			}
+			continue
 		}
+		wait = 0
 		b.wg.Add(1)
 		go b.handleConn(conn)
 	}
