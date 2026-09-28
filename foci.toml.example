@@ -180,7 +180,7 @@ id = "myagent"
 # model = "sonnet"                        #   CC model name (omit for default)
 # skip_permissions = true                 #   skip all permission prompts
 # allowed_tools = ["Bash(git:*)", "Read"] #   pre-approve specific tools (TOML array)
-# claude_binary = ""                      #   override path to claude executable
+# binary = ""                             #   override path to backend executable (default: $PATH)
 # idle_timeout = "3h"                     #   session idle shutdown (default 3h)
 # socket_path = ""                        #   tmux socket override (cctmux only)
 # [agents.backend_config.env]             #   environment variables for the backend subprocess
@@ -333,6 +333,25 @@ system_files = [
 # Model params (thinking, effort, speed) are now per-model in [models.*].
 [anthropic]
 # cc_expiry_threshold = "5m"            # how far before expiry to trigger proactive token refresh
+
+# ─── Claude Code backend ──────────────────────────────────────────────
+# Defaults for every agent with backend = "claude-code" or "claude-code-tmux".
+# Per-agent [agents.backend_config] values win. See docs/CONFIG.md.
+# [cc_backend]
+# default_allowed_tools = ["Read(/tmp/**)", "Edit(/tmp/**)", "MultiEdit(/tmp/**)"]  # factory default; merged with per-agent allowed_tools
+# binary = ""                              # claude executable (empty = "claude" via $PATH); per-agent backend_config.binary wins
+# background_task_max_age = "2h"           # prune a background task with no completion signal after this long
+#
+# PreToolUse deny rules (claude-code only), merged by name over the preinstalled
+# rules and under per-agent [[agents.backend_config.pretool_rules]]:
+# [[cc_backend.pretool_rules]]
+# name = "no_force_push"
+# tool = "Bash"
+# command = 'git (\S+ )*push (\S+ )*--force'
+# reason = "Force-pushing is not allowed. Push normally, or ask the user."
+#
+# Stop rules have no [cc_backend] layer: set them per agent in
+# [[agents.backend_config.stop_rules]].
 
 # ─── Gemini ────────────────────────────────────────────────────────────
 # API keys go in secrets.toml as gemini.api_key.

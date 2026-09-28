@@ -1405,6 +1405,11 @@ Applies to every agent whose `backend` is `claude-code` or `claude-code-tmux`:
 # Set to an empty list to disable, or override with your own rules:
 # default_allowed_tools = ["Edit(/tmp/**)", "Bash(git:*)"]
 
+# binary — path or name of the `claude` executable spawned for CC agents.
+# Empty (the default) → "claude", resolved via $PATH. A per-agent
+# backend_config.binary overrides this.
+# binary = "/usr/local/bin/claude"
+
 # background_task_max_age — how long a spawned background task (an Agent-tool
 # subagent or a run_in_background Bash) stays tracked without a completion
 # signal before it is pruned. The tracker holds system injections (reflection,
@@ -1419,6 +1424,8 @@ Applies to every agent whose `backend` is `claude-code` or `claude-code-tmux`:
 The factory default grants CC agents free read/write access to `/tmp` so they can use the system scratch directory without a permission round-trip. Override if your deployment uses a different scratch path or wants a tighter default.
 
 `background_task_max_age` only needs raising if you routinely background jobs (subagents or `run_in_background` Bash) that run longer than 2 hours; the default is well beyond any typical run.
+
+`[cc_backend]` also takes `[[cc_backend.pretool_rules]]` (below). Stop rules have no `[cc_backend]` layer: they are per-agent only (`[[agents.backend_config.stop_rules]]`, see below).
 
 #### PreToolUse rules — `[[cc_backend.pretool_rules]]`
 
