@@ -120,6 +120,7 @@ func (a *Agent) RunTurn(
 	// RunInference dispatches a SteerNever turn like a system turn (never
 	// folds, waits for backend idle) and skips the typed-answer intercepts.
 	ctx = WithSteerPreference(ctx, first.Steer)
+	ctx = WithInputRefs(ctx, batchInputRefs(batch))
 
 	// Collect texts and attachments across the batch. Group-chat messages
 	// gain sender attribution so downstream logs and prompts know who said

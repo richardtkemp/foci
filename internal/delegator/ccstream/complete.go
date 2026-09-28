@@ -22,6 +22,8 @@ import (
 // closure tracks "fired" locally), so the second idle falls through to
 // completion.
 func (b *Backend) onSessionIdle() {
+	b.sweepPendingAtIdle()
+
 	b.turnMu.Lock()
 	turn := b.turnEvents
 	active := b.turnActive
@@ -90,7 +92,7 @@ func (b *Backend) tryPreAnswerRedispatch(turn *delegator.TurnEvents, result *del
 	if followUp == "" {
 		return false
 	}
-	if err := b.writer.SendUser(followUp); err != nil {
+	if err := b.sendFold(trackedInput{text: followUp, source: "preanswer-nudge"}, ""); err != nil {
 		b.logger().Errorf("pre-answer re-dispatch: send user: %v — completing with first-round result", err)
 		return false
 	}

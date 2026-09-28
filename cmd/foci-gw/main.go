@@ -568,6 +568,15 @@ Subcommands:
 	})
 	plat.StartAll(ctx)
 
+	// Re-send inputs a backend never confirmed consuming before the last
+	// shutdown or crash (#2050). After StartAll, so the redelivered turns'
+	// replies have chats to land in.
+	for _, id := range agentOrder {
+		if dm := agents[id].ag.DelegatedManager; dm != nil {
+			dm.RestoreUndelivered()
+		}
+	}
+
 	// Tell each agent about asks that expired across the restart (#1894). The ask
 	// tool's restore runs inside setupAgent, before the agent is in `agents` (so
 	// agentResolverFn can't route to it) and before its inbox or chats are up, so

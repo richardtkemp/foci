@@ -502,6 +502,18 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		// Resume-missed wording: only claude-code's retention is known to foci.
 		LastUseFunc:     ag.PrevRequestTime,
 		ResumeRetention: resumeRetentionFor(backendName),
+		// Delivery tracking (#2050): an input the backend never consumed is
+		// re-sent as a fresh turn in its session's chat; a consumed input the
+		// app sent becomes ✓✓ on the user's bubble.
+		Redeliver: func(sessionKey string, r agent.Redelivery) {
+			deliverToSessionChat(ag, agent.WithRedelivery(p.ctx, r), agent.TriggerRedelivery, connMgr, agentID, sessionKey, r.Input.Text, "")
+		},
+		InputConsumed: func(_ string, refs []delegator.InputRef) {
+			for _, ref := range refs {
+				app.MarkMessageConsumed(ref.ConversationID, ref.MessageID)
+			}
+		},
+		TranscriptChecker: transcriptCheckerFor(backendName),
 	}
 
 	return finalizeParams{
@@ -771,6 +783,16 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, wakeC
 
 	log.NewComponentLogger("agent:"+acfg.ID).Infof("exec bridge registry: %d tools (%v)", len(registry.All()), registry.ExportedNames())
 	return registry
+}
+
+// transcriptCheckerFor returns how to tell, after a restart, whether a
+// persisted input reached the backend's transcript before the old process
+// died (#2050). Only claude-code tracks delivery; nil for every other backend.
+func transcriptCheckerFor(backendName string) delegator.TranscriptChecker {
+	if backendName == "claude-code" {
+		return ccstream.InputInTranscript
+	}
+	return nil
 }
 
 // resumeRetentionFor is the backend's own transcript retention, for wording the

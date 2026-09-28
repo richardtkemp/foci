@@ -703,3 +703,46 @@ func TestSetLifecycleCallback_UnknownAgentNoOp(t *testing.T) {
 	pNil := &appProvider{} // nil hub (Init panicked)
 	pNil.SetLifecycleCallback("ag", platform.OnUserMessage, func() {})
 }
+
+// The app message's identity rides on the envelope so a backend's consumption
+// ack can tick the user's bubble (#2050): conversation + the client-minted
+// envelope id the bubble is keyed by.
+func TestRouteUserTurn_EnvelopeCarriesMessageRef(t *testing.T) {
+	h := newTestHub()
+	fa := registerFakeAgent(h, "ag")
+	c := fakeClientFor(h)
+
+	h.routeUserTurn(c, "conv-1", "ag", "hello", nil, "env-42", 1, agent.SteerDefault, false)
+
+	if fa.env == nil {
+		t.Fatal("no envelope enqueued")
+	}
+	if fa.env.Ref.ConversationID != "conv-1" || fa.env.Ref.MessageID != "env-42" {
+		t.Fatalf("env.Ref = %+v, want {conv-1 env-42}", fa.env.Ref)
+	}
+}
+
+// MarkMessageConsumed sends message.consumed to the conversation's clients,
+// and is a no-op for a conversation the hub does not know.
+func TestMarkMessageConsumed_SendsFrame(t *testing.T) {
+	h := newTestHub()
+	registerFakeAgent(h, "ag")
+	setActiveHub(h)
+	t.Cleanup(func() { setActiveHub(nil) })
+	c := fakeClientFor(h)
+	h.routeUserTurn(c, "conv-1", "ag", "hello", nil, "env-42", 1, agent.SteerDefault, false)
+	drain(t, c)
+
+	MarkMessageConsumed("conv-1", "env-42")
+	MarkMessageConsumed("conv-unknown", "env-43")
+
+	var got []decoded
+	for _, d := range drain(t, c) {
+		if d.t == fap.TypeMessageConsumed {
+			got = append(got, d)
+		}
+	}
+	if len(got) != 1 || got[0].d["conversationId"] != "conv-1" || got[0].d["messageId"] != "env-42" {
+		t.Fatalf("message.consumed frames = %+v, want one for conv-1/env-42", got)
+	}
+}

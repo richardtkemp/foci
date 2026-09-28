@@ -92,6 +92,30 @@ func MintActivePairKey(ttl time.Duration) (string, time.Time, error) {
 	return key, exp, nil
 }
 
+// MarkMessageConsumed tells the app clients of conversation convID that the
+// agent's backend consumed the user's message messageID — the ✓✓ tick (#2050).
+// Sent as a durable conversation frame, so a device offline now still learns it
+// on replay. No-op when the app provider isn't running, the ref is empty, or
+// the conversation is unknown (a message from another platform).
+func MarkMessageConsumed(convID, messageID string) {
+	if convID == "" || messageID == "" {
+		return
+	}
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return
+	}
+	h.mu.RLock()
+	b := h.convs[convID]
+	h.mu.RUnlock()
+	if b == nil {
+		return
+	}
+	b.send(fap.MessageConsumed{ConversationID: convID, MessageID: messageID})
+}
+
 // SetSubagentDetail routes a running-subagent status detail (or "" when none
 // are running) to the conversation bound to sessionKey, updating its unified
 // Activity indicator. No-op when the app provider is not running or the session

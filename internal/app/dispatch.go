@@ -9,6 +9,7 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/command"
+	"foci/internal/delegator"
 	"foci/internal/dispatch"
 	"foci/internal/fap"
 	"foci/internal/platform"
@@ -936,6 +937,9 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 		Driver:      conn,
 		Steer:       steer,
 		Voice:       voiceTranscribed,
+		// The client reconciles its bubble by this id (the echo above carries
+		// it too), so the backend's consumption ack can tick it ✓✓ (#2050).
+		Ref: delegator.InputRef{ConversationID: convID, MessageID: inID},
 	})
 }
 

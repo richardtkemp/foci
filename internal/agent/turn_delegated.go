@@ -81,6 +81,14 @@ func (t *DelegatedTransport) ComposePrompt(ts *TurnState) error {
 		return nil
 	}
 
+	// A redelivery re-sends an input exactly as it was first composed — its
+	// [meta] header, nudges and any onboarding/orientation are already in the
+	// text — under a one-line redelivered tag (#2050).
+	if r := redeliveryFromContext(ts.Ctx); r != nil {
+		ts.Prompt = redeliveryPrompt(r)
+		return nil
+	}
+
 	parts := a.composeTurnText(ts.Ctx, ts.SessionKey, ts.TurnModel, ts.Texts, ts.Attachments)
 	ts.Prompt = parts.JoinPrompt()
 
@@ -210,6 +218,14 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// folds, never consumed as an answer, waits for backend idle.
 	foldable := isInteractiveTrigger(ts.Trigger) && SteerPreferenceFromContext(ts.Ctx) != SteerNever
 
+	// A redelivery whose input was dropped while it queued (a /reset of the
+	// session) must not reach the fresh session (#2050).
+	if r := redeliveryFromContext(ts.Ctx); r != nil && !a.DelegatedManager.stillUndelivered(ts.SessionKey, r.Input.ID) {
+		t.logger().Infof("session=%s redelivery of input %s skipped: no longer pending (session reset since)", ts.SessionKey, r.Input.ID)
+		close(ts.CompletionChan)
+		return nil
+	}
+
 	t.logger().Debugf("RunInference: Get backend start sk=%s", ts.SessionKey)
 	be, err := a.DelegatedManager.Get(ts.Ctx, ts.SessionKey)
 	if err != nil {
@@ -260,10 +276,24 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	if foldable && be.IsTurnInFlight() {
 		t.logger().Infof("session=%s follow-up message queued behind in-flight turn", ts.SessionKey)
 		t.logger().Debugf("RunInference: Inject(SourceUser, follow-up) start sk=%s", ts.SessionKey)
-		if err := be.ImmediateInject(ts.Ctx, delegator.Inject{
+		err := be.ImmediateInject(ts.Ctx, delegator.Inject{
 			Source: delegator.SourceUser,
 			Text:   ts.Prompt,
-		}); err != nil {
+			Refs:   InputRefsFromContext(ts.Ctx),
+		})
+		if err != nil && errors.Is(err, delegator.ErrBackendClosed) && !be.IsRunning() {
+			// The process died between the in-flight check and the write, and
+			// refused it (#2050). Its turn is over: start a fresh one on the
+			// respawned backend instead of losing the message.
+			t.logger().Infof("session=%s follow-up refused by an exited backend — starting a fresh turn instead", ts.SessionKey)
+			if be, err = a.DelegatedManager.Get(ts.Ctx, ts.SessionKey); err != nil {
+				close(ts.CompletionChan)
+				return err
+			}
+			ts.Backend = be
+			return t.beginTurn(ts, be, foldable)
+		}
+		if err != nil {
 			close(ts.CompletionChan)
 			return err
 		}
@@ -276,6 +306,16 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		close(ts.CompletionChan)
 		return nil
 	}
+
+	return t.beginTurn(ts, be, foldable)
+}
+
+// beginTurn is RunInference's begin-turn half: dispatch ts.Prompt as a fresh,
+// fully-tracked turn on be (in-flight folding and answer capture have already
+// been ruled out).
+func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, foldable bool) error {
+	a := t.agent
+	var err error
 
 	// Cache session file path BEFORE SendToPane — the OnTurnComplete callback
 	// may fire inside ensureWatcher (which holds b.mu), and SessionFilePath()
@@ -359,12 +399,20 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 			t.logger().Infof("session=%s system turn (trigger=%q) not dispatched: shutting down", ts.SessionKey, ts.Trigger)
 			break
 		}
-		err = be.ImmediateInject(ts.Ctx, delegator.Inject{
+		inj := delegator.Inject{
 			Source:      src,
 			Text:        ts.Prompt,
 			Attachments: atts,
 			Turn:        turnEvents,
-		})
+			Refs:        InputRefsFromContext(ts.Ctx),
+		}
+		if r := redeliveryFromContext(ts.Ctx); r != nil {
+			inj.ID = r.Input.ID
+			inj.Refs = r.Input.Refs
+			inj.Attachments = r.Input.Attachments
+			inj.Redeliveries = r.Input.Redeliveries
+		}
+		err = be.ImmediateInject(ts.Ctx, inj)
 		if !errors.Is(err, delegator.ErrTurnInFlight) {
 			break
 		}

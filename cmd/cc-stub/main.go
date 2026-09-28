@@ -223,6 +223,29 @@ type stubScript struct {
 	// cleared). The id should match one of the PermissionRequests above
 	// — if it doesn't, foci logs a "no listener" debug and drops it.
 	ControlCancelRequests []string `json:"control_cancel_requests,omitempty"`
+
+	// CrashOnUnconsumed models CC dying with a mid-turn message still
+	// unconsumed (foci_todo #2050). When set, the turn this script loads
+	// holds open after its assistant envelope — no result — and keeps
+	// reading stdin; the first user message containing this substring is
+	// recorded as kind "unconsumed_user_message" (NOT "user_message": it
+	// was never folded into the conversation) and the stub exits 1 without
+	// acting on it. The crash is keyed on the message's arrival, not on a
+	// timer, so the write is guaranteed to have reached the process that
+	// dies. A resumed process (--resume) never sees the message again unless
+	// foci re-sends it.
+	CrashOnUnconsumed string `json:"crash_on_unconsumed,omitempty"`
+
+	// CrashAfterConsuming models CC dying after folding a message into its
+	// conversation but before acknowledging it (foci_todo #2050). Like
+	// CrashOnUnconsumed the turn holds open after its assistant envelope; the
+	// first user message containing this substring is recorded as a consumed
+	// "user_message", appended to the session transcript as
+	// {"type":"user","uuid":<its uuid>} — the record real CC writes before the
+	// API request — and the stub exits 1 WITHOUT emitting any
+	// user_message_uuids ack. foci must find it in the transcript and not
+	// redeliver it.
+	CrashAfterConsuming string `json:"crash_after_consuming,omitempty"`
 }
 
 // recorderEntry is one line written to the recorder file. Two event
@@ -549,6 +572,10 @@ func main() {
 		}
 		switch env["type"] {
 		case "user":
+			// Real CC acknowledges consuming a stdin message by naming its
+			// uuid in user_message_uuids on the API response's records;
+			// emit stamps it on this message's assistant/result envelopes.
+			ackUUID, _ = env["uuid"].(string)
 			userText, blockTypes := extractUserContent(env)
 			recordUserMessage(sessionID, userText, blockTypes)
 			// CCSTUB_PANIC_ON_USER_MESSAGE: simulate a crashing CC.
@@ -778,6 +805,12 @@ func main() {
 				"session_id": sessionID,
 			})
 			_ = out.Flush()
+			if script != nil && script.CrashOnUnconsumed != "" {
+				crashOnUnconsumed(in, script.CrashOnUnconsumed)
+			}
+			if script != nil && script.CrashAfterConsuming != "" {
+				crashAfterConsuming(in, script.CrashAfterConsuming, sessionID)
+			}
 			// CCSTUB_EXIT_AFTER_ASSISTANT: exit 0 between assistant and
 			// result envelopes on the first turn. Foci sees stdout EOF
 			// mid-turn and reaps the subprocess; its watchdog fires the
@@ -969,9 +1002,103 @@ func main() {
 	}
 }
 
+// crashOnUnconsumed implements stubScript.CrashOnUnconsumed: with the turn
+// held open, read stdin until a user message containing marker arrives,
+// record it as unconsumed, and exit 1. Other user lines are recorded as
+// "held_user_message" and otherwise ignored — the turn is deliberately stuck,
+// as a real CC is mid-tool when a steer lands. If stdin
+// closes first the stub exits 0, as it would at the end of the main loop.
+func crashOnUnconsumed(in *bufio.Scanner, marker string) {
+	for in.Scan() {
+		var env map[string]any
+		if err := json.Unmarshal(in.Bytes(), &env); err != nil || env["type"] != "user" {
+			continue
+		}
+		text, _ := extractUserContent(env)
+		wd, _ := os.Getwd()
+		if !strings.Contains(text, marker) {
+			// Read but held: the turn is stuck, so CC never folds it.
+			writeRecorder(recorderEntry{
+				Kind:       "held_user_message",
+				Timestamp:  time.Now().UTC().Format(time.RFC3339Nano),
+				Workdir:    wd,
+				TextPrefix: text,
+			})
+			continue
+		}
+		writeRecorder(recorderEntry{
+			Kind:       "unconsumed_user_message",
+			Timestamp:  time.Now().UTC().Format(time.RFC3339Nano),
+			Workdir:    wd,
+			TextPrefix: text,
+		})
+		fmt.Fprintf(os.Stderr, "cc-stub: dying with unconsumed user message matching %q\n", marker)
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+// crashAfterConsuming implements stubScript.CrashAfterConsuming: with the turn
+// held open, read stdin until a user message containing marker arrives, record
+// it as consumed, write its transcript record, and exit 1 before any ack.
+func crashAfterConsuming(in *bufio.Scanner, marker, sessionID string) {
+	for in.Scan() {
+		var env map[string]any
+		if err := json.Unmarshal(in.Bytes(), &env); err != nil || env["type"] != "user" {
+			continue
+		}
+		text, blockTypes := extractUserContent(env)
+		if !strings.Contains(text, marker) {
+			continue
+		}
+		recordUserMessage(sessionID, text, blockTypes)
+		id, _ := env["uuid"].(string)
+		if err := appendTranscript(sessionID, map[string]any{"type": "user", "uuid": id, "sessionId": sessionID}); err != nil {
+			fmt.Fprintf(os.Stderr, "cc-stub: transcript write failed: %v\n", err)
+		}
+		fmt.Fprintf(os.Stderr, "cc-stub: dying after consuming user message matching %q (no ack)\n", marker)
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+// appendTranscript appends rec to the session transcript at the path real CC
+// uses — ~/.claude/projects/<workdir with "/" → "-">/<sessionID>.jsonl — which
+// foci reads to tell a folded message from a lost one (#2050).
+func appendTranscript(sessionID string, rec map[string]any) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(home, ".claude", "projects", strings.ReplaceAll(wd, "/", "-"))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(filepath.Join(dir, sessionID+".jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close() //nolint:errcheck
+	b, _ := json.Marshal(rec)
+	_, err = f.Write(append(b, '\n'))
+	return err
+}
+
+// ackUUID is the uuid of the user message the stub is answering; emit stamps
+// it as user_message_uuids on assistant and result envelopes, as real CC does
+// on the records of the API response that consumed it (#2050).
+var ackUUID string
+
 // emit writes one NDJSON line. Errors are silent because the stub is
 // best-effort — if foci has already closed stdout, there's nowhere to log.
 func emit(w *bufio.Writer, v any) {
+	if m, ok := v.(map[string]any); ok && ackUUID != "" && (m["type"] == "assistant" || m["type"] == "result") {
+		m["user_message_uuids"] = []string{ackUUID}
+	}
 	b, _ := json.Marshal(v)
 	_, _ = w.Write(b)
 	_, _ = w.WriteString("\n")

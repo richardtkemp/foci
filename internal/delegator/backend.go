@@ -928,6 +928,19 @@ type Inject struct {
 	// route through Turn — it routes through the SessionEvents installed via
 	// AttachSessionEvents, which lives for the session's lifetime.
 	Turn *TurnEvents
+
+	// ID is the delivery id of this write, for backends that track delivery
+	// (DeliveryTracker). Empty means "mint a fresh one"; a redelivery passes
+	// the original input's id so the message keeps one identity (#2050).
+	ID string
+
+	// Refs names the platform message(s) this write carries, reported back
+	// through DeliveryHooks.OnConsumed. Nil for system input.
+	Refs []InputRef
+
+	// Redeliveries is how many times this input has already been re-sent
+	// (PendingInput.Redeliveries); zero for a first write.
+	Redeliveries int
 }
 
 // TurnUsage holds token counts from a completed backend turn,

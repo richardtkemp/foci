@@ -461,7 +461,7 @@ func TestSendUserMessage_WireShape(t *testing.T) {
 }
 
 // TestSendUserMessagePriority_WireShape verifies the priority-bearing
-// primitive emits the priority field in the envelope so CC's queue can
+// fold primitive emits the priority field in the envelope so CC's queue can
 // dequeue it ahead of default-priority items at the next mid-turn drain.
 func TestSendUserMessagePriority_WireShape(t *testing.T) {
 	t.Parallel()
@@ -469,8 +469,8 @@ func TestSendUserMessagePriority_WireShape(t *testing.T) {
 	var buf bytes.Buffer
 	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
 
-	if err := b.sendUserMessagePriority("urgent text", "now"); err != nil {
-		t.Fatalf("sendUserMessagePriority: %v", err)
+	if err := b.sendFold(trackedInput{text: "urgent text", source: "steer"}, "now"); err != nil {
+		t.Fatalf("sendFold: %v", err)
 	}
 
 	line := strings.TrimSpace(buf.String())
@@ -826,7 +826,7 @@ func TestSendToPane_Success(t *testing.T) {
 	b.SetTypingFunc(func(v bool) { typingCalls = append(typingCalls, v) })
 
 	turn := &delegator.TurnEvents{}
-	if err := b.sendToPane(context.Background(), "hello world", turn, false); err != nil {
+	if err := b.sendToPane(context.Background(), delegator.Inject{Text: "hello world", Turn: turn}, false); err != nil {
 		t.Fatalf("sendToPane: %v", err)
 	}
 	if !b.IsTurnInFlight() {
@@ -868,7 +868,7 @@ func TestSendToPaneWithAttachments(t *testing.T) {
 		{MimeType: "image/jpeg", Data: []byte("fake-jpeg")},
 		{MimeType: "application/pdf", Data: []byte("fake-pdf")},
 	}
-	if err := b.sendToPaneWithAttachments(context.Background(), "describe these", atts, turn, false); err != nil {
+	if err := b.sendToPaneWithAttachments(context.Background(), delegator.Inject{Text: "describe these", Attachments: atts, Turn: turn}, false); err != nil {
 		t.Fatalf("sendToPaneWithAttachments: %v", err)
 	}
 	if !b.IsTurnInFlight() {
@@ -939,7 +939,7 @@ func TestSendToPane_WriterError(t *testing.T) {
 	b.writer.Close()
 
 	turn := &delegator.TurnEvents{}
-	if err := b.sendToPane(context.Background(), "hello", turn, false); err == nil {
+	if err := b.sendToPane(context.Background(), delegator.Inject{Text: "hello", Turn: turn}, false); err == nil {
 		t.Fatal("expected error from closed writer")
 	}
 	if b.IsTurnInFlight() {

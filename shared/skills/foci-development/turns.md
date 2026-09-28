@@ -29,3 +29,9 @@ The app answers asks via **interactive-form frames**, not typed text — so type
 - `internal/agent/inbox.go:482` (inbound capture)
 
 Telegram/Discord capture typed answers; the app does not. A nil/unknown platform never matches `platformApp`, so the default (capture) is preserved when the source can't be resolved.
+
+## Delivery tracking and redelivery (#2050)
+
+On a backend implementing `delegator.DeliveryTracker` (claude-code only), every user-role stdin write — turn-starting message, follow-up, steer, post-tool nudge, pre-answer re-dispatch; not slash commands — carries a uuid and stays pending until CC acks it (`user_message_uuids` on the API response's records). If the process dies or is closed first, inputs its transcript does not hold are re-sent as fresh `redelivery` turns under the same uuid; `/reset` drops them, a shutdown persists them (`session_metadata` `cc_undelivered`) for the next start. Consumed app messages become `message.consumed` frames (the app's ✓✓); other backends never report consumption, so their app messages stay at ✓. Full wiring: `docs/WIRING.md` "Input Delivery Tracking & Redelivery".
+
+**Adding a new place that writes user input to CC?** Route it through `sendFold` / `beginTrackedTurn` (ccstream `inject.go`), never `writer.SendUser` directly — an untracked write is exactly the message #2050 lost.

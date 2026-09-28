@@ -473,6 +473,12 @@ func (b *Backend) finalizeExit(reason error) {
 		b.running = false
 		b.finalized = true
 		b.mu.Unlock()
+		// Refuse new tracked writes from here on: every write either made it
+		// into pendingInputs before this line (and is handed back below) or is
+		// refused and re-routed by its caller (#2050).
+		b.turnMu.Lock()
+		b.inputsClosed = true
+		b.turnMu.Unlock()
 		b.logger().Debugf("finalizeExit: post-mu elapsed=%s", time.Since(start))
 
 		// If the waiter goroutine has set exitErr, prefer its detail for the
@@ -485,15 +491,32 @@ func (b *Backend) finalizeExit(reason error) {
 		// b.exitErr. exitCh is nil when finalizeExit is called from a unit test
 		// that bypasses Start; skip the wait in that case.
 		var exitErr error
+		reaped := true
 		if b.exitCh != nil {
 			select {
 			case <-b.exitCh:
 				exitErr = b.exitErr
 			case <-time.After(2 * time.Second):
+				reaped = false
 				b.logger().Debugf("finalizeExit: exitCh wait timed out (waiter goroutine has not set exitErr) elapsed=%s", time.Since(start))
 			}
 		}
 		b.logger().Debugf("finalizeExit: post-exitCh-wait elapsed=%s", time.Since(start))
+
+		// Hand back what the process never consumed. Only once it has been
+		// reaped — until then it could still write its transcript, which is
+		// what decides consumed vs undelivered. Done before OnTurnComplete, so
+		// the redeliveries queue ahead of anything that arrives after the
+		// turn ends (#2050).
+		if reaped {
+			b.handBackPending()
+		} else {
+			exitCh := b.exitCh
+			go func() {
+				<-exitCh
+				b.handBackPending()
+			}()
+		}
 
 		if !expected && exitErr != nil {
 			b.logger().Warnf("process exit detail: %s", describeExitError(exitErr))

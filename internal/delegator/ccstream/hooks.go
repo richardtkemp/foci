@@ -493,7 +493,7 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 			if len(preview) > 80 {
 				preview = preview[:80] + "..."
 			}
-			if err := b.writer.SendUser("[user] " + text); err != nil {
+			if err := b.sendFold(trackedInput{text: "[user] " + text, source: "posttool-nudge"}, ""); err != nil {
 				b.logger().Warnf("post-tool nudge SendUser failed: tool=%q err=%v preview=%q",
 					parsed.ToolName, err, preview)
 			} else {

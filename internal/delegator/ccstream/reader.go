@@ -130,6 +130,8 @@ func (rd *Reader) dispatch(line []byte) {
 		return
 	}
 
+	rd.dispatchInputAck(line)
+
 	switch env.Type {
 	case "assistant":
 		var msg AssistantMessage
@@ -228,6 +230,43 @@ func (rd *Reader) dispatch(line []byte) {
 
 	default:
 		rd.lg.Debugf("unknown message type %q", env.Type)
+	}
+}
+
+// inputAckHandler is implemented by handlers that track delivery (#2050).
+type inputAckHandler interface {
+	OnInputAck(ids []string)
+}
+
+// inputAckFields are CC's consumption-ack fields. CC stamps them on the
+// stream_event / assistant / result (and system/thinking_tokens) records of an
+// API response, naming the stdin messages whose content that request carried.
+type inputAckFields struct {
+	UserMessageUUIDs []string `json:"user_message_uuids"`
+	UserMessageUUID  string   `json:"user_message_uuid"`
+}
+
+var inputAckMarker = []byte(`"user_message_uuid`)
+
+// dispatchInputAck forwards any consumption ack on line to the handler. Only the
+// top-level fields are decoded, so a message that merely mentions the field name
+// in its text is not mistaken for an ack; the byte check keeps the common line
+// from paying for a second decode.
+func (rd *Reader) dispatchInputAck(line []byte) {
+	ah, ok := rd.handler.(inputAckHandler)
+	if !ok || !bytes.Contains(line, inputAckMarker) {
+		return
+	}
+	var f inputAckFields
+	if json.Unmarshal(line, &f) != nil {
+		return
+	}
+	ids := f.UserMessageUUIDs
+	if f.UserMessageUUID != "" && !containsString(ids, f.UserMessageUUID) {
+		ids = append(ids, f.UserMessageUUID)
+	}
+	if len(ids) > 0 {
+		ah.OnInputAck(ids)
 	}
 }
 

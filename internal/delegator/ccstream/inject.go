@@ -169,32 +169,70 @@ func (b *Backend) cancelTurn() {
 // not part of the public Delegator surface. exclusive selects tryBeginTurn
 // (SourceSystem: fail with ErrTurnInFlight rather than clobber a turn that
 // began in a race window) over the unconditional beginTurn.
-func (b *Backend) sendToPane(_ context.Context, prompt string, turn *delegator.TurnEvents, exclusive bool) error {
+func (b *Backend) sendToPane(_ context.Context, inj delegator.Inject, exclusive bool) error {
+	return b.beginTrackedTurn(inj, exclusive, func(id string) error {
+		m := NewUserMessage(inj.Text)
+		m.UUID = id
+		b.logger().Debugf("sendToPane: calling writer.Send (%d bytes)", len(inj.Text))
+		return b.timedSend("sendToPane", m)
+	})
+}
+
+// beginTrackedTurn registers the turn-starting input, begins the turn, and
+// writes it. Registration comes first so a backend whose process has already
+// exited refuses before any turn state is touched. A begin that loses the race
+// to another turn (exclusive) or a failed write abandons the registration and
+// unwinds the turn.
+func (b *Backend) beginTrackedTurn(inj delegator.Inject, exclusive bool, write func(id string) error) error {
+	p, err := b.registerInput(trackedInputFor(inj))
+	if err != nil {
+		return err
+	}
 	if exclusive {
-		if err := b.tryBeginTurn(turn); err != nil {
+		if err := b.tryBeginTurn(inj.Turn); err != nil {
+			b.abandonInput(p)
 			return err
 		}
 	} else {
-		b.beginTurn(turn)
+		b.beginTurn(inj.Turn)
 	}
 
 	if b.typingFunc != nil {
 		b.typingFunc(true)
 	}
 
-	b.logger().Debugf("sendToPane: calling writer.SendUser (%d bytes)", len(prompt))
-	sendStart := time.Now()
-	if err := b.writer.SendUser(prompt); err != nil {
+	if err := b.writeInput(p, write); err != nil {
 		b.cancelTurn()
 		return fmt.Errorf("ccstream: send user message: %w", err)
 	}
-	if elapsed := time.Since(sendStart); elapsed > 5*time.Second {
-		b.logger().Warnf("sendToPane: writer.SendUser took %s (slow — possible mutex contention or blocked stdin)", elapsed.Round(time.Millisecond))
-	} else {
-		b.logger().Debugf("sendToPane: writer.SendUser returned in %s", elapsed.Round(time.Millisecond))
-	}
-
 	return nil
+}
+
+// timedSend writes msg, warning when the write is slow enough to suggest a
+// blocked stdin or writer-mutex contention.
+func (b *Backend) timedSend(what string, msg interface{}) error {
+	sendStart := time.Now()
+	if err := b.writer.Send(msg); err != nil {
+		return err
+	}
+	if elapsed := time.Since(sendStart); elapsed > 5*time.Second {
+		b.logger().Warnf("%s: writer.Send took %s (slow — possible mutex contention or blocked stdin)", what, elapsed.Round(time.Millisecond))
+	} else {
+		b.logger().Debugf("%s: writer.Send returned in %s", what, elapsed.Round(time.Millisecond))
+	}
+	return nil
+}
+
+// trackedInputFor describes an Inject for delivery tracking.
+func trackedInputFor(inj delegator.Inject) trackedInput {
+	return trackedInput{
+		id:           inj.ID,
+		text:         inj.Text,
+		attachments:  inj.Attachments,
+		refs:         inj.Refs,
+		source:       inj.Source.String(),
+		redeliveries: inj.Redeliveries,
+	}
 }
 
 // sendToPaneWithAttachments is the internal begin-turn primitive for
@@ -202,25 +240,13 @@ func (b *Backend) sendToPane(_ context.Context, prompt string, turn *delegator.T
 // (text first, then each attachment as image/document) and sends a single
 // user message containing all of them. Called from Inject's begin-turn
 // path when len(inj.Attachments) > 0. exclusive as in sendToPane.
-func (b *Backend) sendToPaneWithAttachments(_ context.Context, prompt string, attachments []delegator.Attachment, turn *delegator.TurnEvents, exclusive bool) error {
-	if exclusive {
-		if err := b.tryBeginTurn(turn); err != nil {
-			return err
-		}
-	} else {
-		b.beginTurn(turn)
-	}
-
-	if b.typingFunc != nil {
-		b.typingFunc(true)
-	}
-
+func (b *Backend) sendToPaneWithAttachments(_ context.Context, inj delegator.Inject, exclusive bool) error {
 	// Build content blocks: text first, then attachments.
 	var blocks []ContentBlock
-	if prompt != "" {
-		blocks = append(blocks, ContentBlock{Type: "text", Text: prompt})
+	if inj.Text != "" {
+		blocks = append(blocks, ContentBlock{Type: "text", Text: inj.Text})
 	}
-	for _, att := range attachments {
+	for _, att := range inj.Attachments {
 		blockType := attachmentBlockType(att.MimeType)
 		blocks = append(blocks, ContentBlock{
 			Type: blockType,
@@ -231,20 +257,12 @@ func (b *Backend) sendToPaneWithAttachments(_ context.Context, prompt string, at
 			},
 		})
 	}
-
-	b.logger().Debugf("sendToPaneWithAttachments: calling writer.Send (%d blocks)", len(blocks))
-	sendStart := time.Now()
-	if err := b.writer.Send(NewUserMessageBlocks(blocks)); err != nil {
-		b.cancelTurn()
-		return fmt.Errorf("ccstream: send user message with attachments: %w", err)
-	}
-	if elapsed := time.Since(sendStart); elapsed > 5*time.Second {
-		b.logger().Warnf("sendToPaneWithAttachments: writer.Send took %s (slow)", elapsed.Round(time.Millisecond))
-	} else {
-		b.logger().Debugf("sendToPaneWithAttachments: writer.Send returned in %s", elapsed.Round(time.Millisecond))
-	}
-
-	return nil
+	return b.beginTrackedTurn(inj, exclusive, func(id string) error {
+		m := NewUserMessageBlocks(blocks)
+		m.UUID = id
+		b.logger().Debugf("sendToPaneWithAttachments: calling writer.Send (%d blocks)", len(blocks))
+		return b.timedSend("sendToPaneWithAttachments", m)
+	})
 }
 
 // attachmentBlockType returns the CC content block type for a MIME type.
@@ -283,21 +301,19 @@ func (b *Backend) IsTurnInFlight() bool {
 	return b.turnActive
 }
 
-// sendUserMessage is the internal primitive that writes a user-role
-// message to CC at the default priority ("next"). For mid-turn injections
-// (follow-up SourceUser, post-tool nudges, slash commands), CC's mid-turn
-// drain at the next tool boundary folds the message into the current
-// ask() — there is no separate ask/result cycle to wait for.
+// sendUserMessage writes a slash command to CC at the default priority. Slash
+// commands are commands to CC rather than conversation input, so they are not
+// delivery-tracked (#2050).
 func (b *Backend) sendUserMessage(text string) error {
 	return b.writer.SendUser(text)
 }
 
-// sendUserMessagePriority writes a user-role message at the given queue
-// priority. CC's classes ("now" > "next" > "later", messageQueueManager.ts):
-// "now" additionally aborts the in-flight ask (abort('interrupt')) so it is
-// answered immediately in a fresh ask cycle; "next" folds at the next
-// mid-turn drain (tool boundary); "later" sits out the run entirely (CC uses
-// it for its own background task notifications).
+// sendFold writes an in-flight input at the given queue priority ("" = CC's
+// default, "next"), delivery-tracked. CC's classes ("now" > "next" > "later",
+// messageQueueManager.ts): "now" additionally aborts the in-flight ask
+// (abort('interrupt')) so it is answered immediately in a fresh ask cycle;
+// "next" folds at the next mid-turn drain (tool boundary); "later" sits out
+// the run entirely (CC uses it for its own background task notifications).
 //
 // SourceSteer currently sends "next" — same fold point as a follow-up, but
 // dequeued through the explicit-priority path so the intent (and this seam)
@@ -305,8 +321,12 @@ func (b *Backend) sendUserMessage(text string) error {
 // be gated on per-message steer tagging or an aggressive-steer config mode
 // (both NYI) — interrupting mid-generation is too disruptive to be every
 // steer's default, and "stop right now" already has /reset hard.
-func (b *Backend) sendUserMessagePriority(text, priority string) error {
-	return b.writer.SendUserPriority(text, priority)
+func (b *Backend) sendFold(in trackedInput, priority string) error {
+	return b.trackWrite(in, func(id string) error {
+		m := NewUserMessagePriority(in.text, priority)
+		m.UUID = id
+		return b.writer.Send(m)
+	})
 }
 
 // Inject is the canonical entry point for delivering a user-role event to
@@ -349,7 +369,7 @@ func (b *Backend) ImmediateInject(ctx context.Context, inj delegator.Inject) err
 	switch inj.Source {
 	case delegator.SourceUser:
 		if !inFlight {
-			return b.beginTurnWithText(ctx, inj.Text, inj.Attachments, inj.Turn, false)
+			return b.beginTurnWithText(ctx, inj, false)
 		}
 		// In-flight follow-up: SendUser at default priority ("next"). CC
 		// drains it into the running turn (at the next tool boundary, or as
@@ -357,7 +377,7 @@ func (b *Backend) ImmediateInject(ctx context.Context, inj delegator.Inject) err
 		// the current run, so the reply belongs to the current foci turn and
 		// the turn completes at that run's idle. inj.Turn is intentionally
 		// ignored.
-		return b.sendUserMessage(inj.Text)
+		return b.sendFold(trackedInputFor(inj), "")
 
 	case delegator.SourceSteer:
 		if !inFlight {
@@ -373,17 +393,17 @@ func (b *Backend) ImmediateInject(ctx context.Context, inj delegator.Inject) err
 				return delegator.ErrTurnNotInFlight
 			}
 			b.logger().Debugf("Inject(Steer): no turn in flight, beginning tracked turn from inj.Turn")
-			return b.beginTurnWithText(ctx, inj.Text, inj.Attachments, inj.Turn, false)
+			return b.beginTurnWithText(ctx, inj, false)
 		}
 		// In-flight steer: SendUser at priority "next" — CC folds it into
 		// the running ask at the next mid-turn drain (tool boundary),
 		// matching CC's own class for user input. It stays inside the
 		// current run, so no bookkeeping is needed here: the turn completes
 		// at the run's idle. Priority "now" (abort the in-flight ask, answer
-		// immediately) is deliberately not used — see sendUserMessagePriority
+		// immediately) is deliberately not used — see sendFold
 		// for the NYI gating it should live behind. "Stop right now"
 		// semantics live in /reset hard, not Steer.
-		return b.sendUserMessagePriority(inj.Text, "next")
+		return b.sendFold(trackedInputFor(inj), "next")
 
 	case delegator.SourceSystem:
 		// System-initiated text (foci send, cron, notifications, error and
@@ -391,7 +411,7 @@ func (b *Backend) ImmediateInject(ctx context.Context, inj delegator.Inject) err
 		// user input may steer. tryBeginTurn makes the idle check and turn
 		// begin atomic; when a turn is in flight the caller receives
 		// ErrTurnInFlight, waits for completion, and retries.
-		return b.beginTurnWithText(ctx, inj.Text, inj.Attachments, inj.Turn, true)
+		return b.beginTurnWithText(ctx, inj, true)
 
 	case delegator.SourceCompact:
 		// The /compact slash command. Fire-and-forget in the sense that no
@@ -437,9 +457,9 @@ func (b *Backend) ImmediateInject(ctx context.Context, inj delegator.Inject) err
 // when the inject carries them and to plain text otherwise. Internal to
 // Inject — callers reach turn-start through Inject(SourceUser/System) at
 // idle. exclusive selects the atomic begin-if-idle path (SourceSystem).
-func (b *Backend) beginTurnWithText(ctx context.Context, text string, atts []delegator.Attachment, turn *delegator.TurnEvents, exclusive bool) error {
-	if len(atts) > 0 {
-		return b.sendToPaneWithAttachments(ctx, text, atts, turn, exclusive)
+func (b *Backend) beginTurnWithText(ctx context.Context, inj delegator.Inject, exclusive bool) error {
+	if len(inj.Attachments) > 0 {
+		return b.sendToPaneWithAttachments(ctx, inj, exclusive)
 	}
-	return b.sendToPane(ctx, text, turn, exclusive)
+	return b.sendToPane(ctx, inj, exclusive)
 }

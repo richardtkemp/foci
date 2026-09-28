@@ -81,6 +81,12 @@ const (
 	// runs; a recognized dup at once), so the client always learns its frame
 	// landed.
 	TypeConversationAck = "conversation.ack"
+	// TypeMessageConsumed (server->app) says the agent's backend confirmed it
+	// consumed one of the user's messages — the user's ✓✓ (#2050). Only
+	// backends that can confirm consumption send it (claude-code today), so a
+	// client must never wait for it: without it a message stays at ✓ ("the
+	// server has it").
+	TypeMessageConsumed = "message.consumed"
 
 	// app -> server
 	TypeCommand                = "command"
@@ -738,6 +744,17 @@ type ConversationAck struct {
 }
 
 func (ConversationAck) Type() string { return TypeConversationAck }
+
+// MessageConsumed marks the user message MessageID (the client-minted envelope
+// id of its ClientMessage, which the user-role echo also carries) as consumed
+// by the agent's backend. Durable and seq'd like any conversation frame, so a
+// device that was offline still learns it on replay.
+type MessageConsumed struct {
+	ConversationID string `json:"conversationId"`
+	MessageID      string `json:"messageId"`
+}
+
+func (MessageConsumed) Type() string { return TypeMessageConsumed }
 
 // --- App -> Server frame payloads (mirror Kotlin ClientFrame) ---
 

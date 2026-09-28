@@ -385,6 +385,15 @@ type Backend struct {
 	// order == true state-transition order); drainEdgeCallbacks fires them under
 	// fireMu in that order, off turnMu.
 	edgeCallbacks []func()
+
+	// pendingInputs are the user-role writes CC has not yet confirmed
+	// consuming, in write order; inputsClosed refuses new ones once
+	// finalizeExit has begun. Both guarded by turnMu. See delivery.go (#2050).
+	pendingInputs []delegator.PendingInput
+	inputsClosed  bool
+	// deliveryHooks receive pending/consumed/undelivered reports
+	// (delegator.DeliveryTracker). Nil until SetDeliveryHooks.
+	deliveryHooks atomic.Pointer[delegator.DeliveryHooks]
 	// fireMu serialises drainEdgeCallbacks so exactly one goroutine fires the
 	// queued edges, in order. Distinct from turnMu — never held across turnMu,
 	// and the fired callbacks (markInFlight) are agent-side, so no lock cycle.

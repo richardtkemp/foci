@@ -134,6 +134,26 @@ type DelegatedManager struct {
 	// InheritParentPrompt, consumed once by getOrCreate. Guarded by mu.
 	forkPrompts map[string]string
 
+	// Redeliver re-sends, as a fresh turn on sessionKey, an input a backend
+	// never consumed (#2050). The gateway wires it to its deliver-to-chat path
+	// with WithRedelivery on the context. Nil = inputs stay persisted and are
+	// retried by the next RestoreUndelivered.
+	Redeliver func(sessionKey string, r Redelivery)
+
+	// InputConsumed reports that a backend consumed an input carrying refs
+	// (delegator.DeliveryTracker) — the app turns it into ✓✓ on the user's
+	// bubble. Nil = not reported.
+	InputConsumed func(sessionKey string, refs []delegator.InputRef)
+
+	// TranscriptChecker decides, after a restart, whether a persisted input
+	// was folded in before the old process died. Nil = every persisted input
+	// is redelivered (at-least-once).
+	TranscriptChecker delegator.TranscriptChecker
+
+	// deliveryMu serialises read-modify-write of the persisted undelivered
+	// sets (delivery_store.go).
+	deliveryMu sync.Mutex
+
 	// IdleTimeout is how long a backend can be idle before being closed.
 	// Zero uses DefaultIdleTimeout.
 	IdleTimeout time.Duration
@@ -194,6 +214,11 @@ type managedBackend struct {
 	permMu      sync.Mutex
 	permPending bool
 	permCond    *sync.Cond // lazy-init on first WaitForPermission
+
+	// dropUndelivered is set by ResetSession before it closes the backend:
+	// the inputs the process never consumed are dropped, not redelivered
+	// (#2050 — "/reset" means stop).
+	dropUndelivered atomic.Bool
 }
 
 // getManaged looks up the managed backend for a session key under the lock.
@@ -781,9 +806,16 @@ func (m *DelegatedManager) WaitForTurn(ctx context.Context, sessionKey string) e
 // Close itself has bounded timeouts (see ccstream Close), so even in the
 // pathological case this method returns within ~10s.
 func (m *DelegatedManager) ResetSession(sessionKey string) {
+	if mb, ok := m.getManaged(sessionKey); ok {
+		mb.dropUndelivered.Store(true)
+	}
 	if m.closeManaged(sessionKey, true) {
 		m.logger().Infof("reset session %s (closed, resume ID cleared)", sessionKey)
 	}
+	// Inputs the old session never consumed die with it — including ones
+	// already handed back and queued for redelivery, which check the
+	// persisted set before writing (#2050).
+	m.clearUndelivered(sessionKey)
 }
 
 // BounceSession closes the backend for sessionKey but KEEPS its saved resume
@@ -1010,6 +1042,13 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 		m.saveResumeID(sk(), sessionID)
 	})
 
+	// Delivery tracking (#2050): persist unconsumed inputs, report consumed
+	// ones, redeliver what a dead process never read. A batch session's input
+	// is its own one-shot prompt with no chat to redeliver into.
+	if !isBatch {
+		m.installDeliveryHooks(mb, sk)
+	}
+
 	// Bind session-scoped delivery once, here at acquisition — the SessionEvents
 	// live for the backend's lifetime and are never rebuilt per turn (#1068).
 	if m.AttachDelivery != nil {
@@ -1102,6 +1141,7 @@ func (m *DelegatedManager) RemapSession(oldKey, newKey string) {
 		m.saveResumeID(newKey, id)
 		m.clearResumeID(oldKey)
 	}
+	m.moveUndelivered(oldKey, newKey)
 }
 
 // BackendCanBranch reports whether this agent's backend can fork its

@@ -102,6 +102,12 @@ type Envelope struct {
 	// each Envelope carries a reference to the Driver from its origin).
 	Driver Driver
 
+	// Ref names this message on its platform (the app's conversation and
+	// client message id), so a backend that confirms consumption can report
+	// it back — the app's ✓✓ (#2050). Zero for platforms without delivery
+	// ticks.
+	Ref delegator.InputRef
+
 	// Inject, when non-nil, marks this as a system injection (keepalive,
 	// reflection, compaction-resume, inter-session notify, tmux-watch, …)
 	// rather than a platform message. The worker runs Inject.Run instead of
@@ -133,6 +139,7 @@ type InjectMeta struct {
 var controlInjectTriggers = map[string]bool{
 	"compaction-resume": true,
 	"plan-command":      true,
+	TriggerRedelivery:   true,
 }
 
 // IsControlInjectTrigger reports whether an injection trigger is a control
@@ -544,9 +551,14 @@ func (a *Agent) Enqueue(env Envelope) bool {
 			return true
 		}
 		if be != nil {
+			var refs []delegator.InputRef
+			if env.Ref.MessageID != "" {
+				refs = []delegator.InputRef{env.Ref}
+			}
 			err := be.ImmediateInject(a.inboxCtx, delegator.Inject{
 				Source: delegator.SourceSteer,
 				Text:   env.Text,
+				Refs:   refs,
 			})
 			switch {
 			case err == nil:
