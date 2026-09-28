@@ -116,7 +116,7 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 				},
 				"max_response_bytes": {
 					"type": "integer",
-					"description": "Max response body size in bytes. Default 1MB for text, 10MB when save_to is set. Overrides both."
+					"description": "Hard cap on the response body in bytes; anything past it is dropped. Without it, save_to/binary bodies are capped at 10MB, and text returns 1MB inline with the full body spilled to a file."
 				},
 				"background": {
 					"type": "boolean",
@@ -428,6 +428,13 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 	if ceiling <= 0 {
 		ceiling = 50 << 20 // 50MB fallback
 	}
+	// An explicit max_response_bytes is a hard cap on the body, not just the
+	// preview size: the caller asked for at most N bytes, so nothing past it is
+	// kept or spilled (#2098). The DoS ceiling still wins when it is lower.
+	userCapped := maxResponseBytes > 0 && maxResponseBytes < ceiling
+	if userCapped {
+		ceiling = maxResponseBytes
+	}
 	if preview > ceiling {
 		preview = ceiling
 	}
@@ -448,7 +455,9 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 	if parsed, err := url.Parse(reqURL); err == nil {
 		http_requestLog.Debugf("session=%s response %s %s status=%d body=%d", sessionKey, method, parsed.Hostname(), resp.StatusCode, sw.Total())
 	}
-	if sw.Truncated() {
+	if sw.Truncated() && userCapped {
+		http_requestLog.Debugf("session=%s response truncated to max_response_bytes %d (got %d)", sessionKey, ceiling, sw.Total())
+	} else if sw.Truncated() {
 		http_requestLog.Warnf("session=%s response exceeded spill ceiling %d bytes (got %d) — body truncated on disk", sessionKey, ceiling, sw.Total())
 	}
 
