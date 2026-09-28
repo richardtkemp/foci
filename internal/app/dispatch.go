@@ -578,7 +578,9 @@ func (h *Hub) handleDraft(client *wsClient, f fap.DraftPut) {
 		return
 	}
 	if idx := h.deps.SessionIndex; idx != nil {
-		_ = idx.SetChatMetadata(b.agentID, "app", b.chatID, "draft", f.Text)
+		if err := idx.SetChatMetadata(b.agentID, "app", b.chatID, "draft", f.Text); err != nil {
+			appLog.Warnf("draft %s: persist: %v", f.ConversationID, err)
+		}
 	}
 	h.broadcastExcept(client, fap.DraftSync{ConversationID: f.ConversationID, Text: f.Text})
 }
