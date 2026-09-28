@@ -1,5 +1,7 @@
 package ccstream
 
+import "foci/internal/linkwalk"
+
 // Nested subagents (#1554).
 //
 // A subagent can itself call the Agent tool, spawning a grandchild
@@ -56,27 +58,31 @@ func (b *Backend) registerNestedAgentLocked(nestedID, parentGroupKey string) {
 
 // topLevelAncestor resolves groupKey to the depth-1 group it belongs to, walking
 // the chain so depth 3+ collapses too. nested=false means groupKey is already
-// top-level. nested=true with ancestor=="" means nested but unattributable. The
-// iteration cap guards against a cycle built from malformed stream data.
+// top-level. nested=true with ancestor=="" means nested but unattributable.
+//
+// The walk stops at the first repeated key, so a cycle built from malformed
+// stream or sidecar data ends it (reported as unattributable). It used to stop
+// after a fixed 16 steps instead, which also cut a real chain deeper than 16
+// and misreported it as unattributable; the repeat check needs no such number.
 func (b *Backend) topLevelAncestor(groupKey string) (ancestor string, nested bool) {
 	if groupKey == "" {
 		return "", false
 	}
 	b.subagentRunsMu.Lock()
 	defer b.subagentRunsMu.Unlock()
-	cur := groupKey
-	for range 16 {
-		parent, ok := b.nestedAgents[cur]
-		if !ok {
-			return cur, cur != groupKey
-		}
-		if parent == "" {
-			return "", true
-		}
-		cur = parent
+	top, cycle := linkwalk.Up(groupKey, func(k string) (string, bool) {
+		parent, ok := b.nestedAgents[k]
+		return parent, ok && parent != ""
+	})
+	if cycle {
+		b.logger().Warnf("topLevelAncestor: nested chain from %s loops back to %s; treating as unattributable", groupKey, top)
+		return "", true
 	}
-	b.logger().Warnf("topLevelAncestor: nested chain from %s exceeded depth cap; treating as unattributable", groupKey)
-	return "", true
+	if parent, ok := b.nestedAgents[top]; ok && parent == "" {
+		// Registered as nested, but its spawner was never resolved.
+		return "", true
+	}
+	return top, top != groupKey
 }
 
 // groupKeyForTask maps a subagent's task_id (which is what a hook's agent_id

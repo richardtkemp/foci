@@ -277,8 +277,9 @@ main
  ├── modelcaps     → modelinfo, log (leaf — per-backend live capability cache; Fetcher + Persister seams injected at startup so it imports no anthropic/session/DB)
  ├── compaction    → config, log, memory, messages, modelcaps, modelinfo, prompts, provider, session, tools
  ├── tempdir       (no deps — stdlib-only leaf package for canonical temp dir)
+ ├── linkwalk      (no deps — stdlib-only leaf: Up/Down walks over parent/child links that stop at the first repeated key, so a cycle in session_index rows or subagent ancestry ends the walk; used by command `sessionFamily` (/cost) and ccstream `topLevelAncestor`, #1581)
  ├── provision     → modelinfo, procx (agent creation; modelinfo so a bare model alias — "opus", "fable" — resolves to the newest member of that family instead of a literal that goes stale)
- ├── command       → agent, config, delegator, delegator/ccstream, display, log, memory, modelcaps, modelinfo, platform, procx, prompts, provider, provision, question, session, tempdir, timeutil, tools, workspace
+ ├── command       → agent, config, delegator, delegator/ccstream, display, linkwalk, log, memory, modelcaps, modelinfo, platform, procx, prompts, provider, provision, question, session, tempdir, timeutil, tools, workspace
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
  ├── messages      → provider (shared message-inspection utilities: HasToolUse, ToolUseIDs)
  ├── timeutil      (no deps — centralised timestamp formatting with configurable timezone)
@@ -286,7 +287,7 @@ main
  ├── delegator     → clock, log, modelinfo (Delegator interface, registry, StartOptions, SessionEvents/TurnEvents)
   │   ├── delegator/autoapprove → execguard, secrets (shared by ccstream/codex/opencode — auto-approve rule compilation/matching)
   │   ├── delegator/cctmux     → delegator, log, modelinfo, procx, fsnotify (tmux-based Claude Code; registers "claude-code-tmux" via init())
-  │   ├── delegator/ccstream   → delegator, delegator/autoapprove, delegator/hookbin, delegator/pretool, log, modelinfo, procx, question, ratelimit, tempdir, timeutil (stream-json Claude Code; registers "claude-code" via init())
+  │   ├── delegator/ccstream   → delegator, delegator/autoapprove, delegator/hookbin, delegator/pretool, linkwalk, log, modelinfo, procx, question, ratelimit, tempdir, timeutil (stream-json Claude Code; registers "claude-code" via init())
   │   ├── delegator/pretool    (no foci deps; stdlib + mvdan.cc/sh parser — PreToolUse deny-rule engine, #2028/#2033/#2034; spawns `when` checks with raw os/exec, not procx, as it runs only in foci-cc-hook and the foci CLI; shared by config, ccstream, cmd/foci-cc-hook and cmd/foci `pretool`)
   │   ├── delegator/sessionenv → tempdir (shared by codex/opencode + cmd/foci-codex-hook — per-session exec-bridge env file format, lifecycle, and the codex command wrap/unwrap)
   │   ├── delegator/codex      → delegator, delegator/autoapprove, delegator/hookbin, delegator/keyedmutex, delegator/sessionenv, log, modelcaps, modelinfo, procx (Codex app-server JSON-RPC; registers "codex" via init())
@@ -306,7 +307,7 @@ main
  └── evals         → log, fsnotify, yaml.v3 — rubric registry (scoring axes as files, watched); consumed by cmd/foci-gw (/score validation, score-config mirroring). See "Tracing" → "Scores and rubrics".
 ```
 
-No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `resources`, `tempdir`, `warnings`, `modelinfo`, `modelcaps`, `messages`, `ratelimit`, `timeutil`, `turn`, `dispatch`, `procx`, `peercred`, `question`, `netretry` are leaf packages (no internal foci deps beyond what's shown). `platform` depends on leaf packages only (clock, config, log, secrets, session, voice, warnings). `provision` depends only on the leaves `modelinfo` and `procx`. The tree above is checked against `go list` by `make lint` (`scripts/find-wiring-drift`), so a change that moves imports must update its line.
+No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `resources`, `tempdir`, `warnings`, `modelinfo`, `modelcaps`, `messages`, `ratelimit`, `timeutil`, `turn`, `dispatch`, `procx`, `peercred`, `question`, `netretry`, `linkwalk` are leaf packages (no internal foci deps beyond what's shown). `platform` depends on leaf packages only (clock, config, log, secrets, session, voice, warnings). `provision` depends only on the leaves `modelinfo` and `procx`. The tree above is checked against `go list` by `make lint` (`scripts/find-wiring-drift`), so a change that moves imports must update its line.
 
 **`internal/state` no longer exists.** The former `state` package (`system_state` crash-detection row, `state.json`/state.db key-value store, `agent/ID/default_chat`, `facet:<bot>` bot→session mapping, ask/wizard persistence) was folded into `internal/session`'s `SessionIndex` (SQLite-backed) before this doc's tracked baseline — every dependency line that used to read "state" above has been corrected to "session" (or dropped where session wasn't otherwise a dependency). If you see "state" cited anywhere else in this doc or in `shared/skills/`, it's stale.
 

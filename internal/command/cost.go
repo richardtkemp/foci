@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"foci/internal/display"
+	"foci/internal/linkwalk"
 	"foci/internal/log"
 	"foci/internal/session"
 	"foci/internal/timeutil"
@@ -514,41 +515,17 @@ func sessionFamily(idx *session.SessionIndex, key string) (map[string]struct{}, 
 		}
 	}
 
-	// Walk up to the root ancestor (guard against cycles).
-	root := key
-	seen := map[string]bool{}
-	for {
-		e, ok := byKey[root]
-		if !ok || e.ParentSessionKey == "" || seen[root] {
-			break
-		}
-		seen[root] = true
-		root = e.ParentSessionKey
-	}
-
-	// Collect the whole subtree rooted at the root ancestor.
-	//
-	// visited is deliberately SEPARATE from family. family is the result set
-	// and is pre-seeded with the requested key (see above), so using it as the
-	// visited set makes the very first pop look like a duplicate whenever the
-	// requested key IS the root — the ordinary case for a root chat — which
-	// would skip the subtree entirely. The previous code papered over that with
-	// a `k != root` exemption, and that exemption is what turned a
-	// self-parented row (parent_session_key == session_key, so children[root]
-	// contains root) into an infinite loop with unbounded queue growth: the
-	// duplicate check could never fire for root. Tracking the two concerns
-	// separately needs no exemption, so neither hazard exists.
-	visited := make(map[string]bool, len(children)+1)
-	queue := []string{root}
-	for len(queue) > 0 {
-		k := queue[0]
-		queue = queue[1:]
-		if visited[k] {
-			continue
-		}
-		visited[k] = true
+	// Both walks go through linkwalk, which stops at the first repeated key. A
+	// session_index row can name itself as its parent, or two rows can name each
+	// other; the downward walk once looped forever on the first shape (#1581).
+	// On a cycle, root is a key on the cycle, and the downward walk from it
+	// still reaches every key that hangs off the cycle.
+	root, _ := linkwalk.Up(key, func(k string) (string, bool) {
+		e, ok := byKey[k]
+		return e.ParentSessionKey, ok && e.ParentSessionKey != ""
+	})
+	for k := range linkwalk.Down(root, func(k string) []string { return children[k] }) {
 		family[k] = struct{}{}
-		queue = append(queue, children[k]...)
 	}
 
 	for k := range family {

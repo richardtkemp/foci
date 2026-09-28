@@ -545,6 +545,38 @@ func TestSessionFamily_SelfParentedRowTerminates(t *testing.T) {
 	}
 }
 
+// Two rows that name each other as parent: no row is a root, so the UPWARD
+// walk has nowhere to stop but a repeat. The family must still come back whole,
+// including a branch that hangs off the cycle.
+func TestSessionFamily_ParentCycleTerminates(t *testing.T) {
+	idx := costTestIndex(t)
+	base := time.Now().Add(-4 * time.Hour)
+	for _, e := range []session.SessionIndexEntry{
+		{SessionKey: "bot/c888", ParentSessionKey: "bot/c888/b1", CreatedAt: base},
+		{SessionKey: "bot/c888/b1", ParentSessionKey: "bot/c888", CreatedAt: base.Add(time.Hour)},
+		{SessionKey: "bot/c888/b2", ParentSessionKey: "bot/c888/b1", CreatedAt: base.Add(2 * time.Hour)},
+	} {
+		e.SessionType, e.Status = session.SessionTypeChat, session.SessionStatusActive
+		idx.Upsert(e)
+	}
+
+	done := make(chan map[string]struct{}, 1)
+	go func() {
+		fam, _, _ := sessionFamily(idx, "bot/c888/b2")
+		done <- fam
+	}()
+	select {
+	case fam := <-done:
+		for _, k := range []string{"bot/c888", "bot/c888/b1", "bot/c888/b2"} {
+			if _, ok := fam[k]; !ok {
+				t.Errorf("family = %v, missing %q", keysOf(fam), k)
+			}
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("sessionFamily did not return on a parent cycle — the upward walk never finds a root")
+	}
+}
+
 func keysOf(m map[string]struct{}) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

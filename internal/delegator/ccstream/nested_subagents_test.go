@@ -2,9 +2,11 @@ package ccstream
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"foci/internal/delegator"
 )
@@ -247,5 +249,59 @@ func TestNestedAgent_PostRestartMetaSpawnDepth(t *testing.T) {
 	}
 	if len(r.texts) != 1 || r.texts[0][0] != "toolu_parent" {
 		t.Errorf("texts = %v, want the resumed grandchild's text under toolu_parent", r.texts)
+	}
+}
+
+// A nested chain that loops back on itself (malformed stream or sidecar data)
+// must end as "nested, unattributable", not spin. The sidecar self-parent is the
+// shape a real file can produce: nestedTask registers a sidecar's parent with no
+// self-parent check. The walk runs under subagentRunsMu, so a loop here would
+// also wedge every other subagent event on this backend.
+func TestTopLevelAncestor_CycleIsUnattributable(t *testing.T) {
+	for name, chain := range map[string]map[string]string{
+		"self":      {"toolu_a": "toolu_a"},
+		"two-cycle": {"toolu_a": "toolu_b", "toolu_b": "toolu_a"},
+		"tail":      {"toolu_x": "toolu_a", "toolu_a": "toolu_b", "toolu_b": "toolu_a"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			b := &Backend{nestedAgents: chain}
+			start := "toolu_a"
+			if _, ok := chain["toolu_x"]; ok {
+				start = "toolu_x"
+			}
+			type result struct {
+				anc    string
+				nested bool
+			}
+			done := make(chan result, 1)
+			go func() {
+				anc, nested := b.topLevelAncestor(start)
+				done <- result{anc, nested}
+			}()
+			select {
+			case r := <-done:
+				if r.anc != "" || !r.nested {
+					t.Errorf("topLevelAncestor(%s) = (%q, %v), want (\"\", true)", start, r.anc, r.nested)
+				}
+			case <-time.After(5 * time.Second): // hang guard only; the walk takes microseconds
+				t.Fatalf("topLevelAncestor(%s) did not return on a cyclic chain", start)
+			}
+		})
+	}
+}
+
+// A real chain deeper than the fixed 16-step cap this walk used to have must
+// still resolve to its depth-1 ancestor. The cap reported it as unattributable,
+// so the grandchild's text was dropped.
+func TestTopLevelAncestor_DeepChainResolves(t *testing.T) {
+	const depth = 40 // any depth past the old cap of 16
+	chain := make(map[string]string, depth)
+	for i := 1; i <= depth; i++ {
+		chain[fmt.Sprintf("toolu_%d", i)] = fmt.Sprintf("toolu_%d", i-1)
+	}
+	b := &Backend{nestedAgents: chain}
+	leaf := fmt.Sprintf("toolu_%d", depth)
+	if anc, nested := b.topLevelAncestor(leaf); anc != "toolu_0" || !nested {
+		t.Errorf("topLevelAncestor(%s) = (%q, %v), want (toolu_0, true)", leaf, anc, nested)
 	}
 }
