@@ -95,7 +95,13 @@ type Manager struct {
 	configDir string           // directory containing mcp.toml
 	agentID   string           // agent ID for server filtering
 	current   []ServerConfig   // last-applied server configs (for change detection)
+	failed    []ServerConfig   // subset of current that failed to connect; retried on demand (#2042)
 	tf        transportFactory // nil in production, set for testing
+
+	// refreshMu serialises refreshServers/retryFailed so two concurrent tool
+	// calls can't both dial the same server and append duplicate connections.
+	// failed is only written with it held.
+	refreshMu sync.Mutex
 }
 
 // NewManagerForAgent creates an MCP manager that dynamically re-reads
@@ -112,9 +118,10 @@ type transportFactory func(cfg ServerConfig) (mcp.Transport, error)
 
 // connectWith is the internal connect implementation that accepts an optional
 // transport factory for testing. Per-server failures are logged as warnings
-// and the loop continues to the next server — this is a best-effort fan-out,
-// so there is no aggregate error to return.
-func (m *Manager) connectWith(ctx context.Context, servers []ServerConfig, tf transportFactory) {
+// and the loop continues to the next server — this is a best-effort fan-out.
+// It returns the configs that failed, so the caller can retry them later.
+func (m *Manager) connectWith(ctx context.Context, servers []ServerConfig, tf transportFactory) []ServerConfig {
+	var failed []ServerConfig
 	for _, cfg := range servers {
 		var transport mcp.Transport
 		var err error
@@ -126,6 +133,7 @@ func (m *Manager) connectWith(ctx context.Context, servers []ServerConfig, tf tr
 		}
 		if err != nil {
 			mcpLog.Warnf("failed to create transport for %q: %v", cfg.Name, err)
+			failed = append(failed, cfg)
 			continue
 		}
 
@@ -133,6 +141,7 @@ func (m *Manager) connectWith(ctx context.Context, servers []ServerConfig, tf tr
 		session, err := client.Connect(ctx, transport, nil)
 		if err != nil {
 			mcpLog.Warnf("failed to connect to %q: %v", cfg.Name, err)
+			failed = append(failed, cfg)
 			continue
 		}
 
@@ -140,6 +149,7 @@ func (m *Manager) connectWith(ctx context.Context, servers []ServerConfig, tf tr
 		if err != nil {
 			mcpLog.Warnf("failed to list tools from %q: %v", cfg.Name, err)
 			_ = session.Close() // best effort cleanup
+			failed = append(failed, cfg)
 			continue
 		}
 
@@ -153,6 +163,7 @@ func (m *Manager) connectWith(ctx context.Context, servers []ServerConfig, tf tr
 
 		mcpLog.Infof("connected to %q: %d tools", cfg.Name, len(result.Tools))
 	}
+	return failed
 }
 
 // makeTransport creates the appropriate transport for a server config.
@@ -261,16 +272,19 @@ func (m *Manager) Tool() *tools.Tool {
 }
 
 // refreshServers re-reads mcp.toml and reconnects if the server list changed.
+// It reports whether it (re)connected, i.e. whether every server was just dialled.
 // Caller must NOT hold m.mu.
-func (m *Manager) refreshServers(ctx context.Context) {
+func (m *Manager) refreshServers(ctx context.Context) bool {
 	if m.configDir == "" {
-		return
+		return false
 	}
+	m.refreshMu.Lock()
+	defer m.refreshMu.Unlock()
 
 	cfg, err := LoadConfig(m.configDir)
 	if err != nil {
 		mcpLog.Warnf("reload mcp.toml: %v", err)
-		return
+		return false
 	}
 
 	servers := cfg.ServersForAgent(m.agentID)
@@ -280,7 +294,7 @@ func (m *Manager) refreshServers(ctx context.Context) {
 	m.mu.RUnlock()
 
 	if !changed {
-		return
+		return false
 	}
 
 	mcpLog.Infof("agent %s: mcp.toml changed, reconnecting", m.agentID)
@@ -291,16 +305,56 @@ func (m *Manager) refreshServers(ctx context.Context) {
 	if len(servers) == 0 {
 		m.mu.Lock()
 		m.current = nil
+		m.failed = nil
 		m.mu.Unlock()
-		return
+		return true
 	}
 
 	// Connect with new config. Per-server errors are logged as warnings
-	// inside connectWith; this is a best-effort fan-out.
-	m.connectWith(ctx, servers, m.tf)
+	// inside connectWith; this is a best-effort fan-out. The failures are
+	// kept so an unchanged config doesn't leave them missing for good.
+	failed := m.connectWith(ctx, servers, m.tf)
 
 	m.mu.Lock()
 	m.current = servers
+	m.failed = failed
+	m.mu.Unlock()
+	return true
+}
+
+// retryFailed reconnects the named server if its last connect attempt failed
+// (#2042). Servers connect lazily on the first tool call, so without this a
+// transient failure then (DNS, server briefly down) would leave the server
+// missing until mcp.toml changed or foci restarted. Only the server a call
+// names is retried, so a server that stays down doesn't slow calls to others.
+// Caller must NOT hold m.mu.
+func (m *Manager) retryFailed(ctx context.Context, name string) {
+	m.refreshMu.Lock()
+	defer m.refreshMu.Unlock()
+
+	m.mu.RLock()
+	idx := -1
+	for i, cfg := range m.failed {
+		if cfg.Name == name {
+			idx = i
+			break
+		}
+	}
+	var cfg ServerConfig
+	if idx >= 0 {
+		cfg = m.failed[idx]
+	}
+	m.mu.RUnlock()
+	if idx < 0 {
+		return
+	}
+
+	mcpLog.Infof("agent %s: retrying MCP server %q", m.agentID, name)
+	if len(m.connectWith(ctx, []ServerConfig{cfg}, m.tf)) > 0 {
+		return
+	}
+	m.mu.Lock()
+	m.failed = append(m.failed[:idx:idx], m.failed[idx+1:]...)
 	m.mu.Unlock()
 }
 
@@ -402,11 +456,16 @@ type mcpParams struct {
 // execute dispatches a tool call to the appropriate MCP server.
 // Re-reads mcp.toml before each call if configDir is set.
 func (m *Manager) execute(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
-	m.refreshServers(ctx)
+	reconnected := m.refreshServers(ctx)
 
 	var p mcpParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return tools.ToolResult{}, fmt.Errorf("invalid mcp tool params: %w", err)
+	}
+	// A server that failed in this call's own reconnect is left for the next
+	// call, so a server that is down costs one dial per call, not two.
+	if !reconnected {
+		m.retryFailed(ctx, p.Server)
 	}
 
 	// Hold the read lock for the whole tool call. A concurrent refreshServers

@@ -605,3 +605,78 @@ command = "echo"
 		t.Fatalf("after remove: ServerCount = %d, want 0", m.serverCount())
 	}
 }
+
+// TestFailedServerRetriedOnNextCall pins #2042: a server whose first connect
+// fails must be reached on the next call even though mcp.toml is unchanged.
+// A call naming a different server must not re-dial the failed one, and the
+// retry must not re-dial a server that is already connected.
+func TestFailedServerRetriedOnNextCall(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	dir := t.TempDir()
+	content := "[[servers]]\nname = \"flaky\"\nurl = \"http://flaky\"\n\n[[servers]]\nname = \"steady\"\nurl = \"http://steady\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "mcp.toml"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManagerForAgent(dir, "test")
+	defer m.Close()
+
+	dials := map[string]int{}
+	var dialMu sync.Mutex
+	m.tf = func(cfg ServerConfig) (mcp.Transport, error) {
+		dialMu.Lock()
+		dials[cfg.Name]++
+		n := dials[cfg.Name]
+		dialMu.Unlock()
+		if cfg.Name == "flaky" && n == 1 {
+			return nil, fmt.Errorf("transient: no such host")
+		}
+		_, ct := newTestServer(ctx, t)
+		return ct, nil
+	}
+	dialCount := func(name string) int {
+		dialMu.Lock()
+		defer dialMu.Unlock()
+		return dials[name]
+	}
+	call := func(server string) string {
+		t.Helper()
+		params, _ := json.Marshal(mcpParams{
+			Server: server, Tool: "echo", Arguments: json.RawMessage(`{"message":"hi"}`),
+		})
+		res, err := m.execute(ctx, params)
+		if err != nil {
+			t.Fatalf("execute %s: %v", server, err)
+		}
+		return res.Text
+	}
+
+	// First call connects lazily; flaky's dial fails.
+	if got := call("flaky"); !strings.Contains(got, "unknown MCP server") {
+		t.Fatalf("first call to flaky = %q, want unknown-server error", got)
+	}
+	// A call to the healthy server must not pay for a retry of flaky.
+	if got := call("steady"); got != "echo: hi" {
+		t.Fatalf("call to steady = %q, want echo", got)
+	}
+	if n := dialCount("flaky"); n != 1 {
+		t.Fatalf("flaky dialled %d times after a call to steady, want 1", n)
+	}
+	// Unchanged config: the next call to flaky must retry and reach it.
+	if got := call("flaky"); got != "echo: hi" {
+		t.Fatalf("second call to flaky = %q, want echo (failed server never retried)", got)
+	}
+	if n := dialCount("steady"); n != 1 {
+		t.Errorf("steady dialled %d times, want 1 (retry must not reconnect healthy servers)", n)
+	}
+	// Now connected: no further dials.
+	call("flaky")
+	if n := dialCount("flaky"); n != 2 {
+		t.Errorf("flaky dialled %d times after success, want 2", n)
+	}
+	if m.serverCount() != 2 {
+		t.Errorf("serverCount = %d, want 2", m.serverCount())
+	}
+}

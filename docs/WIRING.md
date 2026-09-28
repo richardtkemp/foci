@@ -104,7 +104,7 @@ config.Load(path)                                        ← validates values; l
      → ELSE (traditional API agent):
        → tools.NewAsyncNotifier()                           ← shared by exec + http_request + tmux, routes by session key
        → tools.NewRegistry() + registerTools(pathAPI)        ← unified tool table (tool_table.go), one source of truth shared with exec path
-       → mcp.NewManagerForAgent(configDir, agentID)         ← dynamic MCP; re-reads mcp.toml on each tool call
+       → mcp.NewManagerForAgent(configDir, agentID)         ← dynamic MCP; re-reads mcp.toml on each tool call; a server that failed to connect is re-dialled when a later call names it (#2042)
        → workspace.NewBootstrap(agent.Workspace, agent.SystemFiles)
        → buildEnvironmentBlock(acfg, configPath, cfg)       ← if [environment] enabled
        → skills.ResolveDirs(home, workspace, cfg.Skills.Dir, acfg.SkillsDir)
