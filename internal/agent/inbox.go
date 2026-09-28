@@ -1132,6 +1132,9 @@ func (a *Agent) AttachDelivery(be delegator.Delegator, sk string) {
 			OnSubagentEnd: func(groupKey string, runIndex int) {
 				router.Emit(context.Background(), turnevent.SubagentEnd{GroupKey: groupKey, RunIndex: runIndex})
 			},
+			OnSubagentPrompt: func(groupKey, prompt string, runIndex int) {
+				router.Emit(context.Background(), turnevent.SubagentPrompt{GroupKey: groupKey, Prompt: prompt, RunIndex: runIndex})
+			},
 			OnTextDelta: func(delta string) {
 				router.Emit(context.Background(), turnevent.TextDelta{Delta: delta})
 			},

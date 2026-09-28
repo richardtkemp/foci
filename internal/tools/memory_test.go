@@ -671,3 +671,70 @@ func TestMemorySearchDirectLookupNoReader(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+// TestMemorySearchLabelsSubagentHits pins #2060's search surfacing: a
+// conversation hit on a subagent row, or on a non-delivered turn's row, is
+// labelled with its kind, and a plain chat hit is not.
+func TestMemorySearchLabelsSubagentHits(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "conversation.db")
+	db, err := sqlite.OpenInit(dbPath, `CREATE TABLE messages (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, direction TEXT NOT NULL,
+		user_id TEXT NOT NULL, username TEXT NOT NULL, chat_id INTEGER NOT NULL, text TEXT NOT NULL,
+		parse_mode TEXT, session TEXT, error TEXT, content_type TEXT NOT NULL DEFAULT 'text',
+		subagent_group TEXT, subagent_run INTEGER, turn_kind TEXT)`)
+	if err != nil {
+		t.Fatalf("create db: %v", err)
+	}
+	session := "agent/c100"
+	for _, r := range []struct{ ct, group, kind, text string }{
+		{"text", "", "", "we discussed the wombat burrow"},
+		{"subagent", "toolu_1", "", "the wombat burrow is 3m deep"},
+		{"text", "", "reflection", "lesson: wombat burrows need measuring"},
+	} {
+		var group, kind any
+		if r.group != "" {
+			group = r.group
+		}
+		if r.kind != "" {
+			kind = r.kind
+		}
+		if _, err := db.Exec(`INSERT INTO messages (ts, direction, user_id, username, chat_id, text, session,
+			content_type, subagent_group, turn_kind) VALUES ('2026-09-28T10:00:00Z', 'sent', '', '', 0, ?, ?, ?, ?, ?)`,
+			r.text, session, r.ct, group, kind); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+	_ = db.Close()
+
+	bleveIdx, err := memory.NewBleveIndex(filepath.Join(dir, "search.bleve"), nil, 0, 0.1)
+	if err != nil {
+		t.Fatalf("NewBleveIndex: %v", err)
+	}
+	defer bleveIdx.Close()
+	bleveIdx.IndexConversation("we discussed the wombat burrow", session, 1)
+	bleveIdx.IndexConversation("the wombat burrow is 3m deep", session, 2)
+	bleveIdx.IndexConversation("lesson: wombat burrows need measuring", session, 3)
+
+	convReader := memory.NewConversationReader(map[string]string{"agent": dbPath})
+	tool := NewMemorySearchTool(map[string]memory.Searcher{"bleve": bleveIdx}, func() string { return "bleve" }, convReader)
+	params, _ := json.Marshal(map[string]string{"query": "wombat"})
+	result := pollMemorySearch(t, tool, params, "agent/c100#3")
+
+	for _, want := range []string{
+		"[conversation/subagent ",
+		"] agent/c100#2:",
+		"[conversation/reflection ",
+		"] agent/c100#3:",
+	} {
+		if !strings.Contains(result.Text, want) {
+			t.Errorf("result missing %q:\n%s", want, result.Text)
+		}
+	}
+	for _, line := range strings.Split(result.Text, "\n") {
+		if strings.Contains(line, "agent/c100#1:") && !strings.HasPrefix(line, "[conversation ") {
+			t.Errorf("plain chat hit was labelled: %q", line)
+		}
+	}
+}

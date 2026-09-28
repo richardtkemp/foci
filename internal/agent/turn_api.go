@@ -264,7 +264,7 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 				batchedText.WriteString(text)
 			} else {
 				emitIntermediateText(ts.Ctx, text)
-				a.logConversationSent(ts.ConvChatID, ts.Meta, ts.SessionKey, text)
+				a.logConversationSent(ts, text)
 			}
 		}
 	}
@@ -390,7 +390,7 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 
 		// Log thinking blocks to conversation DB.
 		if thinking := provider.ThinkingOf(resp.Content); thinking != "" {
-			a.logConversationThinking(ts.ConvChatID, ts.Meta, ts.SessionKey, thinking)
+			a.logConversationThinking(ts, thinking)
 		}
 
 		if resp.StopReason == "pause_turn" {
@@ -619,34 +619,37 @@ func (a *Agent) unregisterTurn(id uint64) {
 	a.turnDetailsMu.Unlock()
 }
 
-// logConversationSent logs an outbound conversation entry.
-func (a *Agent) logConversationSent(chatID int64, meta *TurnMetadata, sessionKey, text string) {
+// logConversationSent logs an outbound conversation entry for ts, tagged with
+// the turn's kind when it is a recorded non-delivered turn (#2060).
+func (a *Agent) logConversationSent(ts *TurnState, text string) {
 	if text == "" {
 		return
 	}
 	convo.Record(convo.Entry{
 		Direction: "sent",
-		UserID:    meta.UserID,
-		Username:  meta.Username,
-		ChatID:    chatID,
+		UserID:    ts.Meta.UserID,
+		Username:  ts.Meta.Username,
+		ChatID:    ts.ConvChatID,
 		Text:      text,
-		Session:   sessionKey,
+		Session:   ts.SessionKey,
+		TurnKind:  recordedTurnKind(ts.Trigger),
 	})
 }
 
 // logConversationThinking logs thinking/reasoning content to the conversation log.
-func (a *Agent) logConversationThinking(chatID int64, meta *TurnMetadata, sessionKey, thinking string) {
+func (a *Agent) logConversationThinking(ts *TurnState, thinking string) {
 	if thinking == "" {
 		return
 	}
 	convo.Record(convo.Entry{
 		Direction:   "sent",
-		UserID:      meta.UserID,
-		Username:    meta.Username,
-		ChatID:      chatID,
+		UserID:      ts.Meta.UserID,
+		Username:    ts.Meta.Username,
+		ChatID:      ts.ConvChatID,
 		Text:        thinking,
-		Session:     sessionKey,
+		Session:     ts.SessionKey,
 		ContentType: "thinking",
+		TurnKind:    recordedTurnKind(ts.Trigger),
 	})
 }
 

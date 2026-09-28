@@ -567,7 +567,7 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 			}
 			// Log accumulated thinking to conversation DB.
 			if thinking := a.DrainThinking(ts.SessionKey); thinking != "" {
-				a.logConversationThinking(ts.ConvChatID, ts.Meta, ts.SessionKey, thinking)
+				a.logConversationThinking(ts, thinking)
 			}
 			bt.LogUsage(ts)
 			// Set conversation alias from backend-generated thread name

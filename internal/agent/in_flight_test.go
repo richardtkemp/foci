@@ -645,3 +645,31 @@ func TestAutonomousTurnSink_NoConnection_FallsBackToDurableSink(t *testing.T) {
 			"through the durable fallback, not just resolve it and then discard anyway", durable.events, want)
 	}
 }
+
+// TestLoggingSink_RecordingWrapperNoHeartbeat pins that the #2060 recording
+// wrapper for a non-delivered turn only records: it must not start the
+// activity heartbeat, which those turns never had. Events reach it from
+// SessionEvents with a bare context (no trigger), so a heartbeat there would
+// count a reflection's rounds as activity and defeat the reflect-twice guard
+// (isMemoryTrigger).
+func TestLoggingSink_RecordingWrapperNoHeartbeat(t *testing.T) {
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	t.Cleanup(func() { _ = idx.Close() })
+	a := &Agent{AgentID: "test-agent", SessionIndex: idx}
+	a.SetTurnInFlightForTest(testBaseA, true)
+	ts := &TurnState{SessionKey: testBaseA, Trigger: "reflection", Meta: &TurnMetadata{}}
+	s, ok := a.recordingSystemSink(turnevent.NopSink{}, ts).(*loggingSink)
+	if !ok {
+		t.Fatal("reflection turn's sink was not wrapped for recording")
+	}
+	s.lastTouch = time.Now().Add(-time.Minute) // past the debounce window
+
+	s.Emit(context.Background(), turnevent.ToolResult{Name: "Bash"})
+
+	if _, ok := idx.LastCacheTouch(testBaseA); ok {
+		t.Error("the recording wrapper persisted an activity touch for a reflection round")
+	}
+}

@@ -40,7 +40,7 @@ func NewMemorySearchTool(backends map[string]memory.Searcher, defaultBackend fun
 		Name:        "memory_search",
 		ExecExport:  true,
 		Positional:  []string{"query"},
-		Description: "Search memory files and conversation history using full-text search. Supports natural language queries with stemming (e.g., 'programming' matches 'program', 'programmer'). Memory files are ranked higher than conversation history. Sort by relevance (default), newest, or oldest. To retrieve conversation context around a specific result, use the session#rowID shown in results as the query (e.g., 'agent/c123#42').",
+		Description: "Search memory files and conversation history using full-text search. Supports natural language queries with stemming (e.g., 'programming' matches 'program', 'programmer'). Memory files are ranked higher than conversation history. Sort by relevance (default), newest, or oldest. To retrieve conversation context around a specific result, use the session#rowID shown in results as the query (e.g., 'agent/c123#42'). Conversation hits written by a subagent, or by a turn that was never delivered to chat (reflection, background, consolidation, /branch), are labelled with that kind, e.g. [conversation/subagent ...] or [conversation/reflection ...].",
 		Parameters:  schema,
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			def := defaultBackend()
@@ -212,10 +212,19 @@ func memorySearch(ctx context.Context, params json.RawMessage, backends map[stri
 		return TextResult("No matches found."), nil
 	}
 
+	// Label subagent and non-delivered-turn hits (#2060) so they don't read as chat.
+	var refs []memory.ConversationRef
+	for _, r := range results {
+		if r.Source == "conversation" && r.RowID > 0 {
+			refs = append(refs, memory.ConversationRef{Session: r.Path, RowID: r.RowID})
+		}
+	}
+	kinds := convReader.Kinds(refs)
+
 	var sb strings.Builder
 	hasConvContext := false
 	for _, r := range results {
-		formatSearchResult(&sb, r)
+		formatSearchResult(&sb, r, kinds[memory.ConversationRef{Session: r.Path, RowID: r.RowID}])
 		if r.Source == "conversation" && r.RowID > 0 {
 			hasConvContext = true
 		}
@@ -229,7 +238,7 @@ func memorySearch(ctx context.Context, params json.RawMessage, backends map[stri
 					if m.RowID == r.RowID {
 						marker = "  » "
 					}
-					fmt.Fprintf(&sb, "%s#%d [%s]: %s\n", marker, m.RowID, m.Time.Format("15:04"), truncate(m.Text, 200))
+					fmt.Fprintf(&sb, "%s#%d [%s]%s: %s\n", marker, m.RowID, m.Time.Format("15:04"), kindTag(m.Kind), truncate(m.Text, 200))
 				}
 			}
 		}
@@ -262,13 +271,15 @@ func conversationLookup(convReader *memory.ConversationReader, session string, r
 		if m.RowID == rowID {
 			marker = "» "
 		}
-		fmt.Fprintf(&sb, "%s%s#%d [%s]: %s\n", marker, session, m.RowID, m.Time.Format("2006-01-02 15:04"), m.Text)
+		fmt.Fprintf(&sb, "%s%s#%d [%s]%s: %s\n", marker, session, m.RowID, m.Time.Format("2006-01-02 15:04"), kindTag(m.Kind), m.Text)
 	}
 	return TextResult(sb.String()), nil
 }
 
-// formatResult writes a single search result line.
-func formatSearchResult(sb *strings.Builder, r memory.Result) {
+// formatSearchResult writes a single search result line. kind is the
+// conversation row's kind (memory.ConversationMessage.Kind), shown after the
+// source as "[conversation/subagent ...]"; "" for everything else.
+func formatSearchResult(sb *strings.Builder, r memory.Result, kind string) {
 	ts := ""
 	if !r.Time.IsZero() {
 		ts = " " + r.Time.Format("2006-01-02 15:04")
@@ -277,7 +288,20 @@ func formatSearchResult(sb *strings.Builder, r memory.Result) {
 	if r.Source == "conversation" && r.RowID > 0 {
 		path = fmt.Sprintf("%s#%d", r.Path, r.RowID)
 	}
-	fmt.Fprintf(sb, "[%s%s] %s: %s\n", r.Source, ts, path, r.Snippet)
+	source := r.Source
+	if kind != "" {
+		source += "/" + kind
+	}
+	fmt.Fprintf(sb, "[%s%s] %s: %s\n", source, ts, path, r.Snippet)
+}
+
+// kindTag renders a context line's row kind as " (kind)", or "" for ordinary
+// conversation.
+func kindTag(kind string) string {
+	if kind == "" {
+		return ""
+	}
+	return " (" + kind + ")"
 }
 
 // truncate shortens s to at most max bytes, appending "…" if truncated.

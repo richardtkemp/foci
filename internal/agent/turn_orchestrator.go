@@ -135,8 +135,13 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	// sink for tracing, so on a platform turn the ctx sink is a turnSink whose
 	// inner is the router. A plain identity compare registered that wrapper
 	// INTO the router and the first event recursed to a stack overflow (#1944).
+	//
+	// A recorded non-delivered turn (reflection, session-end memory, background,
+	// consolidation, /branch) registers its sink wrapped for conversation-DB
+	// logging, so its text and its subagents are recorded without being
+	// delivered (#2060; recordingSystemSink).
 	if router := a.sessionRouter(ts.SessionKey); !router.routesTo(turnevent.SinkFromContext(ctx)) {
-		router.Register(turnevent.SinkFromContext(ctx))
+		router.Register(a.recordingSystemSink(turnevent.SinkFromContext(ctx), ts))
 		defer router.Clear()
 	}
 

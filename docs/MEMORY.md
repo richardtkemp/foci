@@ -175,6 +175,12 @@ Conversation messages are indexed as they arrive, in both backends:
 - **FTS5**: real-time indexing, plus a one-time wipe+rebuild backfill from the conversation SQLite log(s), guarded by a marker table so it runs only once
 - **Bleve**: real-time indexing plus startup backfill from the SQLite conversation database (per-message doc IDs make it idempotent — safe to re-run every startup)
 
+**What the conversation log holds (#2060).** Besides the chat itself, `conversation.db` records:
+- **Subagent output**: each subagent's start prompt (first line `[subagent: <label>]`), follow-up prompts, and text blocks, as rows with `content_type` `subagent_prompt` / `subagent` and `subagent_group` (the Agent tool_use id, which also names the backend transcript `agent-<id>.jsonl`) plus `subagent_run`. Tool calls and results are not recorded. The backend's own transcripts are cleaned up after about 30 days; these rows are kept.
+- **Output of non-delivered turns**: reflection, session-end memory, background, consolidation and `/branch` turns, and the subagents they start, tagged with `turn_kind`. Keepalive and compaction-memory turns stay unrecorded.
+
+`memory_search` labels such hits by kind (`[conversation/subagent ...]`, `[conversation/reflection ...]`, `[conversation/background/subagent ...]`); the kind is looked up from `conversation.db` at display time, so the search indexes need no rebuild. Context expansion (`lines`, or a `session#rowID` query) stays within the hit's thread: a subagent hit shows the rest of that subagent (same `subagent_group`), and a chat hit leaves subagent rows out. Rows recorded before #2060 carry no tags.
+
 ---
 
 ## Memory Formation

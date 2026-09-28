@@ -2,6 +2,7 @@ package convo
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -336,5 +337,115 @@ func TestConversationLogInsertError(t *testing.T) {
 
 	if !strings.Contains(buf.String(), "insert error") {
 		t.Errorf("expected insert error log, got: %s", buf.String())
+	}
+}
+
+// TestConversationSubagentColumns verifies the #2060 row tagging: subagent group,
+// run and turn kind round-trip to their columns, and a main-thread row leaves all three NULL (reading back
+// exactly as a pre-#2060 row did).
+func TestConversationSubagentColumns(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test_conv.db")
+	if err := initConversation(dbPath); err != nil {
+		t.Fatalf("initConversation: %v", err)
+	}
+	defer Close()
+
+	Record(Entry{Direction: "sent", Text: "main reply", Session: "main/c1"})
+	Record(Entry{Direction: "sent", Text: "[subagent: probe]\nlook at X", Session: "main/c1",
+		ContentType: ContentTypeSubagentPrompt, SubagentGroup: "toolu_9", SubagentRun: 1})
+	Record(Entry{Direction: "sent", Text: "found X", Session: "main/c1",
+		ContentType: ContentTypeSubagent, SubagentGroup: "toolu_9", SubagentRun: 1, TurnKind: "reflection"})
+	Record(Entry{Direction: "sent", Text: "reflected", Session: "main/c1", TurnKind: "reflection"})
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT content_type, subagent_group, subagent_run, turn_kind FROM messages ORDER BY id`)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var ct string
+		var group, kind sql.NullString
+		var run sql.NullInt64
+		if err := rows.Scan(&ct, &group, &run, &kind); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, fmt.Sprintf("%s|%v:%s|%v:%d|%v:%s", ct, group.Valid, group.String, run.Valid, run.Int64, kind.Valid, kind.String))
+	}
+	want := []string{
+		"text|false:|false:0|false:",
+		"subagent_prompt|true:toolu_9|true:1|false:",
+		"subagent|true:toolu_9|true:1|true:reflection",
+		"text|false:|false:0|true:reflection",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("rows =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// TestConversationMigratesOldSchema opens a messages table that predates the
+// #2060 columns and checks openLog adds them, so a tagged Record succeeds
+// against a DB created by an older build.
+func TestConversationMigratesOldSchema(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "old_conv.db")
+	old, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := old.Exec(`CREATE TABLE messages (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, direction TEXT NOT NULL,
+		user_id TEXT NOT NULL, username TEXT NOT NULL, chat_id INTEGER NOT NULL, text TEXT NOT NULL,
+		parse_mode TEXT, session TEXT, error TEXT, content_type TEXT NOT NULL DEFAULT 'text')`); err != nil {
+		t.Fatalf("create old schema: %v", err)
+	}
+	if _, err := old.Exec(`INSERT INTO messages (ts, direction, user_id, username, chat_id, text, session)
+		VALUES ('2026-01-01T00:00:00Z', 'recv', '', '', 0, 'legacy', 'main/c1')`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	_ = old.Close()
+
+	if err := initConversation(dbPath); err != nil {
+		t.Fatalf("initConversation: %v", err)
+	}
+	defer Close()
+	logBuf := captureLog(t)
+	Record(Entry{Direction: "sent", Text: "tagged", Session: "main/c1",
+		ContentType: ContentTypeSubagent, SubagentGroup: "toolu_1", SubagentRun: 2, TurnKind: "background"})
+	if strings.Contains(logBuf.String(), "insert error") {
+		t.Fatalf("insert into migrated DB failed: %s", logBuf.String())
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+	var group, kind string
+	var run int
+	if err := db.QueryRow(`SELECT subagent_group, subagent_run, turn_kind FROM messages WHERE text = 'tagged'`).Scan(&group, &run, &kind); err != nil {
+		t.Fatalf("read tagged row: %v", err)
+	}
+	if group != "toolu_1" || run != 2 || kind != "background" {
+		t.Errorf("tagged row = (%q, %d, %q), want (toolu_1, 2, background)", group, run, kind)
+	}
+}
+
+func TestRowKind(t *testing.T) {
+	for _, c := range []struct{ ct, turnKind, want string }{
+		{"text", "", ""},
+		{"thinking", "", ""},
+		{ContentTypeSubagent, "", "subagent"},
+		{ContentTypeSubagentPrompt, "", "subagent"},
+		{"text", "reflection", "reflection"},
+		{ContentTypeSubagent, "background", "background/subagent"},
+	} {
+		if got := RowKind(c.ct, c.turnKind); got != c.want {
+			t.Errorf("RowKind(%q, %q) = %q, want %q", c.ct, c.turnKind, got, c.want)
+		}
 	}
 }

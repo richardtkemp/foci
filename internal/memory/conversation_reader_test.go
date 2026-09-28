@@ -3,6 +3,7 @@ package memory
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -200,5 +201,104 @@ func TestConversationReaderUnknownAgent(t *testing.T) {
 	_, err := cr.ReadContext("unknown/c100", 1, 10)
 	if err == nil {
 		t.Error("expected error for unknown agent")
+	}
+}
+
+// seedThreadedDB creates a conversation DB with the #2060 columns and inserts
+// rows given as (content_type, subagent_group, turn_kind, text), all in one
+// session. Returns the DB path.
+func seedThreadedDB(t *testing.T, session string, rows [][4]string) string {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "conversation.db")
+	db, err := sqlite.OpenInit(dbPath, `CREATE TABLE messages (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, direction TEXT NOT NULL,
+		user_id TEXT NOT NULL, username TEXT NOT NULL, chat_id INTEGER NOT NULL, text TEXT NOT NULL,
+		parse_mode TEXT, session TEXT, error TEXT, content_type TEXT NOT NULL DEFAULT 'text',
+		subagent_group TEXT, subagent_run INTEGER, turn_kind TEXT)`)
+	if err != nil {
+		t.Fatalf("create db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	base := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	for i, r := range rows {
+		var group, kind any
+		if r[1] != "" {
+			group = r[1]
+		}
+		if r[2] != "" {
+			kind = r[2]
+		}
+		if _, err := db.Exec(`INSERT INTO messages (ts, direction, user_id, username, chat_id, text, session,
+			content_type, subagent_group, turn_kind) VALUES (?, 'sent', '', '', 0, ?, ?, ?, ?, ?)`,
+			base.Add(time.Duration(i)*time.Minute).Format(time.RFC3339Nano), r[3], session, r[0], group, kind); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+	return dbPath
+}
+
+func contextTexts(msgs []ConversationMessage) string {
+	var parts []string
+	for _, m := range msgs {
+		s := m.Text
+		if m.Kind != "" {
+			s += "(" + m.Kind + ")"
+		}
+		parts = append(parts, s)
+	}
+	return strings.Join(parts, ",")
+}
+
+// TestConversationReaderScopesContextByThread pins #2060's context scoping:
+// subagent rows interleave with main chat by id, but a main-row hit's context
+// shows only main-thread rows, and a subagent-row hit's context shows only its
+// own subagent's rows. Kinds are carried on each message.
+func TestConversationReaderScopesContextByThread(t *testing.T) {
+	t.Parallel()
+	session := "agent1/c100"
+	dbPath := seedThreadedDB(t, session, [][4]string{
+		{"text", "", "", "m1"},                 // 1
+		{"subagent_prompt", "gA", "", "a-ask"}, // 2
+		{"text", "", "", "m2"},                 // 3
+		{"subagent", "gA", "", "a-found"},      // 4
+		{"subagent", "gB", "reflection", "b1"}, // 5
+		{"text", "", "reflection", "m3"},       // 6
+		{"subagent", "gA", "", "a-more"},       // 7
+		{"text", "", "", "m4"},                 // 8
+	})
+	cr := NewConversationReader(map[string]string{"agent1": dbPath})
+
+	main, err := cr.ReadContext(session, 3, 10)
+	if err != nil {
+		t.Fatalf("ReadContext main: %v", err)
+	}
+	if got, want := contextTexts(main), "m1,m2,m3(reflection),m4"; got != want {
+		t.Errorf("main-row context = %s, want %s", got, want)
+	}
+
+	sub, err := cr.ReadContext(session, 4, 10)
+	if err != nil {
+		t.Fatalf("ReadContext subagent: %v", err)
+	}
+	if got, want := contextTexts(sub), "a-ask(subagent),a-found(subagent),a-more(subagent)"; got != want {
+		t.Errorf("subagent-row context = %s, want %s", got, want)
+	}
+
+	kinds := cr.Kinds([]ConversationRef{
+		{Session: session, RowID: 1}, {Session: session, RowID: 4}, {Session: session, RowID: 5},
+		{Session: session, RowID: 6}, {Session: "agent1/other", RowID: 4}, {Session: "nobody/c1", RowID: 1},
+	})
+	want := map[ConversationRef]string{
+		{Session: session, RowID: 4}: "subagent",
+		{Session: session, RowID: 5}: "reflection/subagent",
+		{Session: session, RowID: 6}: "reflection",
+	}
+	if len(kinds) != len(want) {
+		t.Errorf("Kinds = %v, want %v", kinds, want)
+	}
+	for ref, k := range want {
+		if kinds[ref] != k {
+			t.Errorf("Kinds[%v] = %q, want %q", ref, kinds[ref], k)
+		}
 	}
 }

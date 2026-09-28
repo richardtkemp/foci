@@ -7,6 +7,7 @@ package convo
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 
 	"foci/internal/log"
@@ -29,7 +30,47 @@ type Entry struct {
 	ParseMode   string // for sent messages: "Markdown", "", etc.
 	Session     string
 	Error       string // non-empty if send failed
-	ContentType string // "text" (default) or "thinking"
+	ContentType string // "text" (default), "thinking", or a subagent content type (ContentTypeSubagent*)
+
+	// SubagentGroup and SubagentRun identify the subagent a ContentTypeSubagent*
+	// row belongs to: the group is the Agent tool_use id (stable across
+	// SendMessage reactivations; it also names the backend transcript), the run
+	// is which run of that group. Empty/0 on main-thread rows.
+	SubagentGroup string
+	SubagentRun   int
+
+	// TurnKind names the kind of NON-DELIVERED turn that produced the row — the
+	// turn trigger (reflection, session_end_memory, background, consolidation,
+	// branch). Empty for ordinary delivered conversation.
+	TurnKind string
+}
+
+// Content types for subagent rows. Both are agent-authored, so they are
+// recorded with Direction "sent".
+const (
+	ContentTypeSubagent       = "subagent"        // a subagent text block
+	ContentTypeSubagentPrompt = "subagent_prompt" // the instruction a subagent run was given (start prompt or SendMessage follow-up)
+)
+
+// IsSubagentContentType reports whether ct is one of the subagent content types.
+func IsSubagentContentType(ct string) bool {
+	return ct == ContentTypeSubagent || ct == ContentTypeSubagentPrompt
+}
+
+// RowKind is the search-facing label for a messages row: "" for ordinary
+// conversation, otherwise the turn kind and/or "subagent", joined by "/" (e.g.
+// "reflection", "subagent", "reflection/subagent"). memory_search shows it so a
+// hit can say it came from a subagent or a non-delivered turn rather than the
+// chat.
+func RowKind(contentType, turnKind string) string {
+	var parts []string
+	if turnKind != "" {
+		parts = append(parts, turnKind)
+	}
+	if IsSubagentContentType(contentType) {
+		parts = append(parts, "subagent")
+	}
+	return strings.Join(parts, "/")
 }
 
 // agentLog writes platform messages to a SQLite database.
@@ -61,15 +102,22 @@ func openLog(path string) (*agentLog, error) {
 		parse_mode   TEXT,
 		session      TEXT,
 		error        TEXT,
-		content_type TEXT    NOT NULL DEFAULT 'text'
+		content_type TEXT    NOT NULL DEFAULT 'text',
+		subagent_group TEXT,
+		subagent_run   INTEGER,
+		turn_kind      TEXT
 	)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_ts_unix ON messages(unixepoch(ts))`,
 	)
 	if err != nil {
 		return nil, err
 	}
-	// Migration for existing DBs.
+	// Migrations for existing DBs. Each ALTER fails harmlessly ("duplicate
+	// column") once the column exists.
 	_, _ = db.Exec(`ALTER TABLE messages ADD COLUMN content_type TEXT NOT NULL DEFAULT 'text'`)
+	_, _ = db.Exec(`ALTER TABLE messages ADD COLUMN subagent_group TEXT`)
+	_, _ = db.Exec(`ALTER TABLE messages ADD COLUMN subagent_run INTEGER`)
+	_, _ = db.Exec(`ALTER TABLE messages ADD COLUMN turn_kind TEXT`)
 	return &agentLog{db: db}, nil
 }
 
@@ -145,10 +193,12 @@ func (c *agentLog) insert(entry Entry) int64 {
 	defer c.mu.Unlock()
 
 	res, err := c.db.Exec(
-		`INSERT INTO messages (ts, direction, user_id, username, chat_id, text, parse_mode, session, error, content_type)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO messages (ts, direction, user_id, username, chat_id, text, parse_mode, session, error, content_type,
+		                       subagent_group, subagent_run, turn_kind)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ts, entry.Direction, entry.UserID, entry.Username, entry.ChatID,
 		entry.Text, entry.ParseMode, entry.Session, entry.Error, contentType,
+		nullIfEmpty(entry.SubagentGroup), nullIfZero(entry.SubagentRun), nullIfEmpty(entry.TurnKind),
 	)
 	if err != nil {
 		conversationLog.Errorf("insert error: %v", err)
@@ -156,4 +206,21 @@ func (c *agentLog) insert(entry Entry) int64 {
 	}
 	rowID, _ := res.LastInsertId()
 	return rowID
+}
+
+// nullIfEmpty stores an unset optional TEXT column as NULL, so main-thread rows
+// read back exactly as they did before the column existed.
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// nullIfZero is nullIfEmpty for an optional INTEGER column.
+func nullIfZero(n int) any {
+	if n == 0 {
+		return nil
+	}
+	return n
 }

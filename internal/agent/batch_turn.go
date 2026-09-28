@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 
+	"foci/internal/session"
 	"foci/internal/turnevent"
 )
 
@@ -30,8 +31,16 @@ func (a *Agent) RunBatchTurn(ctx context.Context, sessionKey, prompt, purpose st
 	ctx = WithTrigger(withBatchPurpose(ctx, purpose), purpose)
 	ctx = turnevent.WithSink(ctx, buf)
 
+	// A recorded batch kind (consolidation) is logged from its first event: the
+	// sink registered here is wrapped for conversation logging, because the
+	// orchestrator's own recording registration (recordingSystemSink) only
+	// replaces it after dispatch (#2060).
+	var early turnevent.Sink = buf
+	if kind := recordedTurnKind(purpose); kind != "" {
+		early = newTurnKindLoggingSink(buf, a, session.ChatIDFromKey(sessionKey), &TurnMetadata{}, sessionKey, kind)
+	}
 	router := a.sessionRouter(sessionKey)
-	router.Register(buf)
+	router.Register(early)
 	defer router.Register(turnevent.NopSink{})
 
 	if err := a.HandleMessage(ctx, sessionKey, []string{prompt}, nil); err != nil {

@@ -26,13 +26,20 @@ const activityHeartbeatInterval = 20 * time.Second
 // The wrapper logs intermediate TextBlock events; final text on
 // TurnComplete is logged elsewhere (LogConversationSent for API turns; the
 // delegated path doesn't double-log because intermediate delivery handles
-// the whole turn's text). Other event types pass through unchanged.
+// the whole turn's text). It also logs subagent output (#2060): each
+// SubagentStart prompt, SubagentPrompt follow-up and SubagentText block, as
+// ContentTypeSubagent* rows under the parent session key, tagged with the
+// subagent's group and run. Subagent tool calls/results are not logged, the
+// same as the main thread's. Other event types pass through unchanged.
 type loggingSink struct {
-	inner     turnevent.Sink
-	a         *Agent
-	chatID    int64
-	meta      *TurnMetadata
-	sk        string
+	inner  turnevent.Sink
+	a      *Agent
+	chatID int64
+	meta   *TurnMetadata
+	sk     string
+	// turnKind tags every row this sink writes with the kind of non-delivered
+	// turn it is recording (see recordedTurnKind); "" for delivered turns.
+	turnKind  string
 	lastTouch time.Time // debounce for the mid-turn activity heartbeat; single-producer (Emit is sequential per turn), so no lock
 }
 
@@ -52,14 +59,104 @@ func newLoggingSink(inner turnevent.Sink, a *Agent, chatID int64, meta *TurnMeta
 	return &loggingSink{inner: inner, a: a, chatID: chatID, meta: meta, sk: sk, lastTouch: time.Now()}
 }
 
+// recordingSystemSink returns the sink a system turn registers on its session
+// router (turn_orchestrator Phase 3.5). A non-delivered turn of a recorded kind
+// (recordedTurnKind: reflection, session-end memory, background, consolidation,
+// /branch) has its output — main text and the subagents it starts — logged to
+// the conversation DB tagged with that kind, while delivery stays exactly what
+// the ctx sink does (a NopSink/BufferSink delivers nothing). Recording used to
+// ride only on delivery, so suppressing a reflection's delivery also dropped it
+// from the record (#2060).
+//
+// A sink that already logs (WrapConversationLogging on the injected-delivery
+// paths) is returned unchanged, so its text is not recorded twice. Every other
+// trigger — keepalive and compaction memory by ruling, and the batch utility
+// purposes — is returned unchanged too.
+func (a *Agent) recordingSystemSink(sink turnevent.Sink, ts *TurnState) turnevent.Sink {
+	kind := recordedTurnKind(ts.Trigger)
+	if kind == "" || sinkLogsConversation(sink) {
+		return sink
+	}
+	return newTurnKindLoggingSink(sink, a, ts.ConvChatID, ts.Meta, ts.SessionKey, kind)
+}
+
+// newTurnKindLoggingSink is newLoggingSink for a recorded non-delivered turn:
+// every row it writes is tagged with kind.
+func newTurnKindLoggingSink(inner turnevent.Sink, a *Agent, chatID int64, meta *TurnMetadata, sk, kind string) turnevent.Sink {
+	s := newLoggingSink(inner, a, chatID, meta, sk)
+	if ls, ok := s.(*loggingSink); ok {
+		ls.turnKind = kind
+	}
+	return s
+}
+
+// sinkLogsConversation reports whether sink's decorator chain already contains
+// a loggingSink. Depth-capped like turnevent.Unwrap.
+func sinkLogsConversation(sink turnevent.Sink) bool {
+	for i := 0; i < 32 && sink != nil; i++ {
+		if _, ok := sink.(*loggingSink); ok {
+			return true
+		}
+		u, ok := sink.(turnevent.Unwrapper)
+		if !ok {
+			return false
+		}
+		sink = u.Unwrap()
+	}
+	return false
+}
+
 // Emit forwards every event to inner, additionally logging intermediate
-// TextBlock events to the conversation DB.
+// TextBlock events and subagent prompts/text to the conversation DB.
 func (s *loggingSink) Emit(ctx context.Context, ev turnevent.Event) {
-	if e, ok := ev.(turnevent.TextBlock); ok && e.Phase == turnevent.PhaseIntermediate && e.Text != "" {
-		s.a.logConversationSent(s.chatID, s.meta, s.sk, e.Text)
+	switch e := ev.(type) {
+	case turnevent.TextBlock:
+		if e.Phase == turnevent.PhaseIntermediate && e.Text != "" {
+			s.record(e.Text, "", "", 0)
+		}
+	case turnevent.SubagentStart:
+		s.record(subagentPromptText(e.Label, e.Prompt), convo.ContentTypeSubagentPrompt, e.GroupKey, e.RunIndex)
+	case turnevent.SubagentPrompt:
+		s.record(e.Prompt, convo.ContentTypeSubagentPrompt, e.GroupKey, e.RunIndex)
+	case turnevent.SubagentText:
+		s.record(e.Text, convo.ContentTypeSubagent, e.GroupKey, e.RunIndex)
 	}
 	s.heartbeat(ctx, ev)
 	s.inner.Emit(ctx, ev)
+}
+
+// record writes one outbound row. contentType "" is main-thread text; a
+// subagent content type carries the subagent's group and run.
+func (s *loggingSink) record(text, contentType, group string, run int) {
+	if text == "" {
+		return
+	}
+	convo.Record(convo.Entry{
+		Direction:     "sent",
+		UserID:        s.meta.UserID,
+		Username:      s.meta.Username,
+		ChatID:        s.chatID,
+		Text:          text,
+		Session:       s.sk,
+		ContentType:   contentType,
+		SubagentGroup: group,
+		SubagentRun:   run,
+		TurnKind:      s.turnKind,
+	})
+}
+
+// subagentPromptText is the recorded text of a subagent run's start: the label
+// as a searchable first line, then the instruction. Either may be empty (codex
+// sends no prompt); both empty records nothing.
+func subagentPromptText(label, prompt string) string {
+	if label == "" {
+		return prompt
+	}
+	head := "[subagent: " + label + "]"
+	if prompt == "" {
+		return head
+	}
+	return head + "\n" + prompt
 }
 
 // heartbeat persists a mid-turn activity touch on per-round events so the
@@ -87,6 +184,13 @@ func (s *loggingSink) heartbeat(ctx context.Context, ev turnevent.Event) {
 		return
 	}
 	if s.a == nil || s.sk == "" || !s.a.IsTurnInFlight(s.sk) {
+		return
+	}
+	// The #2060 recording wrapper of a non-delivered turn only records. Those
+	// turns never had a heartbeat, and their events arrive from SessionEvents
+	// with a bare ctx (no trigger), so a heartbeat here would count a
+	// reflection's rounds as activity and defeat the reflect-twice guard.
+	if s.turnKind != "" {
 		return
 	}
 	now := time.Now()

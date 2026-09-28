@@ -284,6 +284,7 @@ func (s *sharedTurnOps) LogConversationRecv(ts *TurnState) {
 		ChatID:    chatID,
 		Text:      strings.Join(ts.Texts, "\n"),
 		Session:   ts.SessionKey,
+		TurnKind:  recordedTurnKind(ts.Trigger),
 	})
 }
 
@@ -322,6 +323,7 @@ func (s *sharedTurnOps) LogConversationSent(ts *TurnState) {
 		ChatID:    ts.ConvChatID,
 		Text:      ts.FinalText,
 		Session:   ts.SessionKey,
+		TurnKind:  recordedTurnKind(ts.Trigger),
 	})
 }
 

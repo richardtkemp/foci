@@ -163,6 +163,33 @@ func isMemoryTrigger(trigger string) bool {
 	}
 }
 
+// recordedTurnKinds are the kinds of NON-DELIVERED turn whose output is
+// recorded to the conversation DB, tagged with the kind so search can tell it
+// from chat (#2060, Dick 2026-09-28). Keepalive and compaction-memory turns are
+// deliberately absent: they stay unrecorded. So are the batch utility purposes
+// (nudge_extraction, summary, prompt_diff), which are one-shot helper calls
+// rather than the agent's own work. The values are turn triggers: the branch
+// types the periodic runner passes as the trigger, "session_end_memory"
+// (RunSessionEndMemory), "consolidation" (also the batch purpose it runs under
+// on delegated agents) and "branch" (the /branch endpoint).
+var recordedTurnKinds = map[string]bool{
+	"reflection":         true,
+	"session_end_memory": true,
+	"background":         true,
+	"consolidation":      true,
+	"branch":             true,
+}
+
+// recordedTurnKind returns trigger when it names a recorded non-delivered turn
+// kind (recordedTurnKinds), else "". The result is the conversation row's
+// turn_kind tag.
+func recordedTurnKind(trigger string) string {
+	if recordedTurnKinds[trigger] {
+		return trigger
+	}
+	return ""
+}
+
 // nudgesAllowed reports whether automatic nudges should fire on this turn.
 // Nudges (turn-interval, regex, after-tools, pre-answer) exist to shape the
 // agent's user-facing reply. System-internal turns — reflection, keepalive,
