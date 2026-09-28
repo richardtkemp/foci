@@ -448,41 +448,130 @@ func TestForkTranscriptResolutionForms(t *testing.T) {
 	}
 }
 
-// TestForkTranscriptSynthesizesMultipleEndsChained covers >1 dangling task: each
-// synthetic close must chain sequentially (one thread), not fan out as siblings
-// of the same parent.
-func TestForkTranscriptSynthesizesMultipleEndsChained(t *testing.T) {
-	const oldID, newID = "OLD", "NEW"
+// forkLines writes lines as src, forks it, and returns the fork's bytes and the
+// decoded records.
+func forkLines(t *testing.T, lines []string) ([]byte, []map[string]any) {
+	t.Helper()
 	dir := t.TempDir()
-	src := filepath.Join(dir, "src.jsonl")
-	dst := filepath.Join(dir, "dst.jsonl")
-
-	lines := []string{
-		`{"type":"user","sessionId":"OLD","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"hi"}}`,
-		`{"type":"user","sessionId":"OLD","uuid":"u2","parentUuid":"u1","toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"agentA","description":"A"}}`,
-		`{"type":"user","sessionId":"OLD","uuid":"u3","parentUuid":"u2","toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"agentB","description":"B"}}`,
-	}
+	src, dst := filepath.Join(dir, "src.jsonl"), filepath.Join(dir, "dst.jsonl")
 	if err := os.WriteFile(src, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := forkTranscript(src, dst, oldID, newID, log.NewComponentLogger("test")); err != nil {
+	if err := forkTranscript(src, dst, "OLD", "NEW", log.NewComponentLogger("test")); err != nil {
 		t.Fatalf("forkTranscript: %v", err)
 	}
 	data, err := os.ReadFile(dst)
 	if err != nil {
 		t.Fatalf("read dst: %v", err)
 	}
-	n := assertAllValidJSONLines(t, "synth-multi", data)
-	if n != len(lines)+2 {
-		t.Fatalf("want %d lines (%d copied + 2 synthetic closes), got %d:\n%s", len(lines)+2, len(lines), n, data)
+	assertAllValidJSONLines(t, t.Name(), data)
+	return data, splitJSONLines(t, data)
+}
+
+// Shapes of a background shell as CC 2.1.280 writes it (#2086, probed live):
+// the Bash tool_use, then its result line whose toolUseResult carries
+// backgroundTaskId; its completion arrives later as a task-notification.
+func bgBashUse(uuid, toolUseID, desc string) string {
+	return `{"type":"assistant","sessionId":"OLD","uuid":"` + uuid + `","message":{"role":"assistant","content":[{"type":"tool_use","id":"` + toolUseID + `","name":"Bash","input":{"command":"make land","description":"` + desc + `","run_in_background":true}}]}}`
+}
+
+func bgBashResult(uuid, toolUseID, taskID string) string {
+	return `{"type":"user","sessionId":"OLD","uuid":"` + uuid + `","message":{"role":"user","content":[{"tool_use_id":"` + toolUseID + `","type":"tool_result","content":"Command running in background with ID: ` + taskID + `.","is_error":false}]},` +
+		`"toolUseResult":{"stdout":"","stderr":"","interrupted":false,"backgroundTaskId":"` + taskID + `"}}`
+}
+
+// TestForkTranscriptClosesRunningBackgroundShell locks #2086: a background
+// shell still running in the parent gets a completed-status closure, or the
+// fork's CC reports it "stopped … didn't finish before the previous session
+// ended" and the fork believes the parent's work was killed.
+func TestForkTranscriptClosesRunningBackgroundShell(t *testing.T) {
+	data, recs := forkLines(t, []string{
+		`{"type":"user","sessionId":"OLD","uuid":"u1","message":{"role":"user","content":"hi"}}`,
+		bgBashUse("a1", "toolu_sh", "Land #1982 onto main"),
+		bgBashResult("u2", "toolu_sh", "bshell01"),
+	})
+	if len(recs) != 4 {
+		t.Fatalf("want 3 copied + 1 closure line, got %d:\n%s", len(recs), data)
 	}
-	recs := splitJSONLines(t, data)
-	first, second := recs[len(recs)-2], recs[len(recs)-1]
-	if first["parentUuid"] != "u3" {
-		t.Errorf("first synthetic close parentUuid = %v, want u3 (last real line)", first["parentUuid"])
+	last := recs[3]
+	content, _ := last["message"].(map[string]any)["content"].(string)
+	for _, want := range []string{"<task-id>bshell01</task-id>", "<status>completed</status>", `"Land #1982 onto main"`, "was NOT stopped or killed"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("closure lacks %q:\n%s", want, content)
+		}
 	}
-	if second["parentUuid"] != first["uuid"] {
-		t.Errorf("second synthetic close parentUuid = %v, want it chained off the first synthetic close's uuid %v", second["parentUuid"], first["uuid"])
+	if last["parentUuid"] != "u2" || last["sessionId"] != "NEW" {
+		t.Errorf("closure parentUuid=%v sessionId=%v, want u2 / NEW", last["parentUuid"], last["sessionId"])
+	}
+}
+
+// TestForkTranscriptSkipsFinishedBackgroundShell: a shell whose completion is
+// already in the copied prefix — in either form CC stores it — gets no closure.
+func TestForkTranscriptSkipsFinishedBackgroundShell(t *testing.T) {
+	note := `<task-notification>\n<task-id>bshell02</task-id>\n<status>completed</status>\n<summary>Background command \"x\" completed (exit code 0)</summary>\n</task-notification>`
+	for name, done := range map[string]string{
+		"queued_command attachment": `{"type":"attachment","sessionId":"OLD","uuid":"u3","attachment":{"type":"queued_command","prompt":"` + note + `","commandMode":"task-notification"}}`,
+		"user message":              `{"type":"user","sessionId":"OLD","uuid":"u3","origin":{"kind":"task-notification"},"message":{"role":"user","content":"` + note + `"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			data, recs := forkLines(t, []string{
+				bgBashUse("a1", "toolu_sh", "quick"),
+				bgBashResult("u2", "toolu_sh", "bshell02"),
+				done,
+			})
+			if len(recs) != 3 || strings.Contains(string(data), "[fork boundary]") {
+				t.Errorf("finished shell got a closure (%d lines, want 3):\n%s", len(recs), data)
+			}
+		})
+	}
+}
+
+// TestForkTranscriptBatchesClosuresIntoOneMessage locks #2051/#2086: however
+// many tasks are open — agents and shells together — the fork gets ONE
+// synthetic message. One per task put 21+ messages between the parent's
+// history and the fork's own, past the API's cache look-back, so every
+// keepalive fork missed the parent's cache.
+func TestForkTranscriptBatchesClosuresIntoOneMessage(t *testing.T) {
+	lines := []string{`{"type":"user","sessionId":"OLD","uuid":"u0","message":{"role":"user","content":"hi"}}`}
+	var ids []string
+	for i := 0; i < 25; i++ {
+		id := fmt.Sprintf("bsh%02d", i)
+		tu := fmt.Sprintf("toolu_%02d", i)
+		lines = append(lines, bgBashUse("a"+id, tu, "cmd "+id), bgBashResult("r"+id, tu, id))
+		ids = append(ids, id)
+	}
+	for _, a := range []string{"agentA", "agentB"} {
+		lines = append(lines, `{"type":"user","sessionId":"OLD","uuid":"l`+a+`","toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"`+a+`","description":"`+a+`"}}`)
+		ids = append(ids, a)
+	}
+	data, recs := forkLines(t, lines)
+	if len(recs) != len(lines)+1 {
+		t.Fatalf("want %d copied + exactly 1 closure message, got %d lines", len(lines), len(recs))
+	}
+	content, _ := recs[len(recs)-1]["message"].(map[string]any)["content"].(string)
+	for _, id := range ids {
+		if !strings.Contains(content, "<task-id>"+id+"</task-id>") {
+			t.Errorf("the one closure message is missing task %s", id)
+		}
+	}
+	if got := strings.Count(content, "<task-notification>"); got != len(ids) {
+		t.Errorf("want %d notification blocks in the message, got %d:\n%s", len(ids), got, data)
+	}
+	if recs[len(recs)-1]["parentUuid"] != "lagentB" {
+		t.Errorf("closure parentUuid = %v, want the last real line lagentB", recs[len(recs)-1]["parentUuid"])
+	}
+}
+
+// TestForkTranscriptChainsOffStringToolUseResult: CC writes toolUseResult as a
+// plain string for an errored tool call. That line's uuid must still count as
+// the last real line, or the closure chains off an earlier message.
+func TestForkTranscriptChainsOffStringToolUseResult(t *testing.T) {
+	_, recs := forkLines(t, []string{
+		`{"type":"user","sessionId":"OLD","uuid":"u2","toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"agentS","description":"S"}}`,
+		`{"type":"user","sessionId":"OLD","uuid":"u3","message":{"role":"user","content":[{"tool_use_id":"toolu_x","type":"tool_result","content":"Error: boom","is_error":true}]},"toolUseResult":"Error: boom"}`,
+	})
+	if got := recs[len(recs)-1]["parentUuid"]; got != "u3" {
+		t.Errorf("closure parentUuid = %v, want u3", got)
 	}
 }
 
