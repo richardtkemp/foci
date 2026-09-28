@@ -43,6 +43,17 @@ func (b *Backend) handleToolRequest(msg *PermissionRequest) {
 		return
 	}
 
+	// A skip-permissions session has no one to ask. CC still asks for some
+	// commands even so (from 2.1.281, a recursive rm of a command-substitution
+	// target, decision_reason_type "safetyCheck"), and over stdio it waits
+	// for the answer with no timeout (probed on 2.1.281: no response and no
+	// control_cancel_request after 160s). Prompting would hang the turn and,
+	// for a batch session, post into the owner's chat (#1962, #2096).
+	if b.skipPermissions {
+		b.denyUnattended(msg)
+		return
+	}
+
 	// Check auto-approve rules before prompting the user.
 	approved, vetoReason := b.autoApprovePermission(msg)
 	if approved {
@@ -96,6 +107,23 @@ func (b *Backend) handleToolRequest(msg *PermissionRequest) {
 		b.permPromptFn(msg.RequestID, text, summary, attachmentPath, choices)
 	} else {
 		b.logger().Warnf("permPromptFn nil for req_id=%s, prompt stored but not displayed", msg.RequestID)
+	}
+}
+
+// denyUnattended refuses a permission request at once. The message is what
+// the model sees as the tool result, so it says how to proceed.
+func (b *Backend) denyUnattended(msg *PermissionRequest) {
+	b.logger().Warnf("permission denied (unattended session): tool=%s summary=%q reason=%q req_id=%s",
+		msg.Request.ToolName, msg.Request.Summary(), msg.Request.DecisionReason, msg.RequestID)
+	resp := &PermissionDeny{
+		Behavior:               "deny",
+		Message:                "unattended session: no permission prompts. Rewrite the command so it needs no approval (for rm, name the target path literally).",
+		Interrupt:              false,
+		ToolUseID:              msg.Request.ToolUseID,
+		DecisionClassification: "user_reject",
+	}
+	if err := b.writer.SendControlResponse(msg.RequestID, resp); err != nil {
+		b.logger().Warnf("unattended deny send failed: req_id=%s: %v", msg.RequestID, err)
 	}
 }
 

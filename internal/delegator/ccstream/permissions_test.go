@@ -346,6 +346,62 @@ func TestHandlePermissionRequest_NoMatch_ForwardsToPrompt(t *testing.T) {
 	}
 }
 
+func TestHandlePermissionRequest_SkipPermissions_DeniesWithoutPrompt(t *testing.T) {
+	// Proves that a backend launched with SkipPermissions answers a can_use_tool
+	// with an immediate deny and never calls permPromptFn (#2096). From CC
+	// 2.1.281 a skip-permissions session still asks about rm -rf "$(pwd)"
+	// (decision_reason_type "safetyCheck"), and over stdio CC waits for the
+	// answer indefinitely: nobody is there to give it, and a batch session's
+	// prompt would land in the owner's chat (#1962).
+	t.Parallel()
+
+	var buf bytes.Buffer
+	prompted := false
+	b := &Backend{
+		writer:          NewWriter(nopWriteCloser{&buf}),
+		pendingPerms:    make(map[string]*pendingPermission),
+		outstanding:     delegator.NewOutstandingRegistry(),
+		skipPermissions: true,
+		permPromptFn: func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+			prompted = true
+		},
+	}
+
+	b.handleToolRequest(&PermissionRequest{
+		RequestID: "req-skip",
+		Request: PermissionRequestPayload{
+			ToolName:       "Bash",
+			ToolUseID:      "toolu_SKIP",
+			Input:          json.RawMessage(`{"command":"rm -rf \"$(pwd)\""}`),
+			DecisionReason: "Dangerous rm operation on statically-unresolvable target: command substitution output",
+		},
+	})
+
+	if prompted {
+		t.Error("permPromptFn called for a SkipPermissions backend")
+	}
+	if b.PendingPermissions() != 0 {
+		t.Errorf("pending = %d, want 0", b.PendingPermissions())
+	}
+	if b.outstanding.Has("req-skip") {
+		t.Error("request registered as outstanding; nothing will ever resolve it")
+	}
+	resp := parseControlResponse(t, buf.String())
+	if resp["request_id"] != "req-skip" {
+		t.Errorf("request_id = %v, want %q", resp["request_id"], "req-skip")
+	}
+	inner := resp["response"].(map[string]any)
+	if inner["behavior"] != "deny" {
+		t.Errorf("behavior = %v, want %q", inner["behavior"], "deny")
+	}
+	if inner["toolUseID"] != "toolu_SKIP" {
+		t.Errorf("toolUseID = %v, want %q", inner["toolUseID"], "toolu_SKIP")
+	}
+	if msg, _ := inner["message"].(string); !strings.Contains(msg, "unattended session: no permission prompts") {
+		t.Errorf("message = %q, want it to name the unattended session", msg)
+	}
+}
+
 func TestHandlePermissionRequest_NilPermPromptFn(t *testing.T) {
 	// Proves that handlePermissionRequest doesn't panic when permPromptFn
 	// is nil. The permission is still stored as pending.

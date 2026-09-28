@@ -983,8 +983,9 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 	})
 	// A batch session's activity belongs to no chat: no typing indicator,
 	// subagent status or autonomous-run adoption (whose streaming sink would
-	// deliver to the owner's chat). Permission prompts cannot arise — batch
-	// sessions launch with SkipPermissions.
+	// deliver to the owner's chat). Batch sessions launch with SkipPermissions,
+	// but CC can still ask (from 2.1.281, rm -rf "$(pwd)"); ccstream denies
+	// those itself and never reaches the prompt func above (#2096).
 	_, isBatch := m.batchSpecFor(mb.sessionKey)
 	if m.TypingFunc != nil && !isBatch {
 		mb.be.SetTypingFunc(func(typing bool) {

@@ -302,6 +302,10 @@ type Backend struct {
 	autoApproveRules []autoApproveRule
 	autoApproveEnv   map[string]string // exact environment inherited by Claude
 
+	// skipPermissions: launched with --dangerously-skip-permissions, so no
+	// one is there to answer a prompt (set in Start, immutable after).
+	skipPermissions bool
+
 	// Hook install state. Set by prepareHooks at Start so
 	// handleHookResponse can filter events belonging to this backend from
 	// events belonging to user-configured hooks. hookCmd is the full
