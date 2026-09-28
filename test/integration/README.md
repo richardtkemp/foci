@@ -69,6 +69,7 @@ If your test needs a custom event log path (e.g. to seed fixture lines), use `sc
 | `TestL2_CrossAgent_*` | `send_to_session` from fotini to clutch lands in clutch's workdir (regression net for `87c571f6`) |
 | `TestL2_Tools_HTTPRequest_*` | `foci_http_request` via exec bridge reaches a side HTTP server |
 | `TestL2_Lifecycle_RestartAfterStubExit` | Two sequential messages both process |
+| `TestL2_Webhook_*` | `POST /webhook/{agent}/{hookid}`: async 202 + queued turn, `?sync=true` reply, unknown hookid 404, hook added live via `/config set system.webhooks.<id>=…` |
 
 ## Limitations
 
