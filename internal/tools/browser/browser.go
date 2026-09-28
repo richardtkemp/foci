@@ -113,20 +113,60 @@ func (m *BrowserManager) Start() error {
 
 	url, err := l.Launch()
 	if err != nil {
-		m.profile.drop(m)
+		// Launch has already killed a chromium that started but gave no
+		// debug URL. Wait for that exit (it is unwatchable if chromium is
+		// already gone) so nothing writes into the dir after it is removed.
+		_ = m.trackExit(l)
+		m.abortStart(true)
 		return fmt.Errorf("launch browser: %w", err)
 	}
-	m.launcher = l
-	// Watch the exit now, while the pid is certainly chromium's. Opened at
-	// Stop time (up to an idle TTL later) the pid could belong to another
-	// process if chromium had crashed in between.
-	if m.exited, err = watchExit(l.PID()); err != nil {
+	if err := m.trackExit(l); err != nil {
 		m.logger.Warnf("Cannot watch browser pid %d for exit; Stop will not wait for it: %v", l.PID(), err)
 	}
 
-	m.browser = rod.New().ControlURL(url).MustConnect()
+	browser := rod.New().ControlURL(url)
+	if err := browser.Connect(); err != nil {
+		m.abortStart(false)
+		return fmt.Errorf("connect to browser: %w", err)
+	}
+	m.browser = browser
 	m.logger.Infof("Browser started (headless=%v, incognito=%v)", m.config.Headless, m.incognito)
 	return nil
+}
+
+// trackExit records the launcher and opens a watch on its chromium process.
+// The watch is opened right after Launch, while the pid is certainly
+// chromium's; opened at Stop time (up to an idle TTL later) the pid could
+// belong to another process if chromium had crashed in between.
+func (m *BrowserManager) trackExit(l *launcher.Launcher) error {
+	m.launcher = l
+	if l.PID() == 0 {
+		return nil // no process was started
+	}
+	exited, err := watchExit(l.PID())
+	m.exited = exited
+	return err
+}
+
+// abortStart undoes a Start that failed after the launch attempt: it waits
+// for chromium to exit (killing it unless shutdown was already requested),
+// then removes the owned profile dir and releases the persistent profile.
+// Stop cannot do this, because it returns early when m.browser is nil (#2090).
+func (m *BrowserManager) abortStart(shutdownRequested bool) {
+	m.awaitExit(shutdownRequested)
+	m.releaseProfile()
+}
+
+// releaseProfile removes the owned temp profile dir, if any, and releases the
+// persistent profile lock. Chromium must have exited first (see awaitExit).
+func (m *BrowserManager) releaseProfile() {
+	if m.profileDir != "" {
+		if err := os.RemoveAll(m.profileDir); err != nil {
+			m.logger.Warnf("Error removing browser profile dir %s: %v", m.profileDir, err)
+		}
+		m.profileDir = ""
+	}
+	m.profile.drop(m)
 }
 
 // Stop shuts down the browser.
@@ -146,13 +186,7 @@ func (m *BrowserManager) Stop() error {
 	m.browser = nil
 	m.page = nil
 	m.snapshot = nil
-	if m.profileDir != "" {
-		if err := os.RemoveAll(m.profileDir); err != nil {
-			m.logger.Warnf("Error removing browser profile dir %s: %v", m.profileDir, err)
-		}
-		m.profileDir = ""
-	}
-	m.profile.drop(m)
+	m.releaseProfile()
 	m.logger.Infof("Browser stopped")
 	return nil
 }
@@ -164,7 +198,8 @@ func (m *BrowserManager) Stop() error {
 // launch into a dir that is still locked (#1518). If the close was not
 // acknowledged, or chromium outlives the configured browser operation timeout
 // (the bound this manager already puts on one CDP operation), it is killed;
-// SIGKILL makes the second wait finite.
+// SIGKILL makes the second wait finite. closed means chromium was already
+// asked to shut down (a CDP close, or Launch's own kill on failure).
 func (m *BrowserManager) awaitExit(closed bool) {
 	exited := m.exited
 	l := m.launcher

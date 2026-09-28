@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	"foci/internal/config"
@@ -783,6 +784,146 @@ func TestBrowserAwaitExitKillsUnclosedBrowser(t *testing.T) {
 	mgr.mu.Unlock()
 	if state := procState(pid); state != "" && state != "Z" {
 		t.Errorf("chromium (pid %d) is still running (state %s) after awaitExit(false)", pid, state)
+	}
+}
+
+// fakeBrowser writes an executable stand-in for chromium that records its pid
+// and --user-data-dir into the returned record file, prints the given stderr
+// line, then runs tail. It returns the script path and the record path.
+func fakeBrowser(t *testing.T, stderrLine, tail string) (bin, record string) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("fake browser is a shell script checked through /proc")
+	}
+	dir, err := testtemp.Mkdir("foci-fakebrowser-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	record = filepath.Join(dir, "record")
+	bin = filepath.Join(dir, "chromium")
+	script := `#!/bin/sh
+for a in "$@"; do
+  case "$a" in --user-data-dir=*) udd="${a#--user-data-dir=}" ;; esac
+done
+printf '%s\n%s\n' "$$" "$udd" > '` + record + `.tmp' && mv '` + record + `.tmp' '` + record + `'
+echo '` + stderrLine + `' >&2
+` + tail + "\n"
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil { // #nosec G306 - the fake browser must be executable
+		t.Fatal(err)
+	}
+	return bin, record
+}
+
+// readFakeBrowserRecord returns the pid and user-data-dir a fakeBrowser run
+// recorded.
+func readFakeBrowserRecord(t *testing.T, record string) (pid int, userDataDir string) {
+	t.Helper()
+	raw, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatalf("premise: fake browser never ran: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if len(lines) != 2 || lines[1] == "" {
+		t.Fatalf("premise: malformed fake browser record %q", raw)
+	}
+	pid, err = strconv.Atoi(lines[0])
+	if err != nil {
+		t.Fatalf("premise: bad pid in fake browser record %q", raw)
+	}
+	return pid, lines[1]
+}
+
+// TestBrowserStartLaunchFailureCleansUp verifies that a Start whose Launch
+// fails removes the owned temp profile dir it created (foci_todo #2090). Stop
+// cannot clean it up, since it returns early when no browser connected.
+func TestBrowserStartLaunchFailureCleansUp(t *testing.T) {
+	bin, record := fakeBrowser(t, "fake chromium: no debug url", "exit 1")
+	mgr := NewBrowserManager(&config.ResolvedBrowser{
+		Headless:       true,
+		TimeoutSec:     10,
+		ExecutablePath: bin,
+	}, 0640)
+	t.Cleanup(func() { mgr.Stop() })
+
+	if err := mgr.Start(); err == nil {
+		t.Fatal("Start succeeded with a browser that exits without a debug URL")
+	}
+	_, dir := readFakeBrowserRecord(t, record)
+	if _, err := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("profile dir %s still exists after a failed Launch (stat err: %v)", dir, err)
+	}
+	if mgr.profileDir != "" || mgr.launcher != nil || mgr.exited != nil {
+		t.Errorf("failed Start left state behind: profileDir=%q launcher set=%v exited set=%v", mgr.profileDir, mgr.launcher != nil, mgr.exited != nil)
+	}
+}
+
+// TestBrowserStartConnectFailureCleansUp verifies that a Start whose CDP
+// connect fails returns an error instead of panicking (MustConnect did), and
+// kills the launched process, removes the owned profile dir and releases the
+// persistent profile lock (foci_todo #2090).
+func TestBrowserStartConnectFailureCleansUp(t *testing.T) {
+	// Serves the /json/version lookup that go-rod resolves the debug URL
+	// through, but refuses the websocket upgrade, so only Connect fails.
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/json/version" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"webSocketDebuggerUrl":"ws://%s/devtools/browser/fake"}`, srv.Listener.Addr())
+	}))
+	t.Cleanup(srv.Close)
+	listening := fmt.Sprintf("DevTools listening on ws://%s/devtools/browser/fake", srv.Listener.Addr())
+
+	for _, incognito := range []bool{true, false} {
+		t.Run(fmt.Sprintf("incognito=%v", incognito), func(t *testing.T) {
+			// exec keeps the recorded pid; the sleep outlives the test, so
+			// the process is gone only if Start killed it.
+			bin, record := fakeBrowser(t, listening, "exec sleep 600")
+			cfg := &config.ResolvedBrowser{Headless: true, TimeoutSec: 10, ExecutablePath: bin}
+			if !incognito {
+				base, err := testtemp.Mkdir("foci-persist-test-*")
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { removeAfterStop(t, base) })
+				cfg.UserDataDir = filepath.Join(base, "browser-profile")
+			}
+			mgr := NewBrowserManager(cfg, 0640)
+			mgr.incognito = incognito
+			t.Cleanup(func() { mgr.Stop() })
+
+			var err error
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Fatalf("Start panicked on a connect failure: %v", r)
+					}
+				}()
+				err = mgr.Start()
+			}()
+			if err == nil {
+				t.Fatal("Start succeeded although the connect failed")
+			}
+			pid, dir := readFakeBrowserRecord(t, record)
+			if state := procState(pid); state != "" && state != "Z" {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+				t.Errorf("launched browser (pid %d) still running (state %s) after a failed Start", pid, state)
+			}
+			if incognito {
+				if _, err := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) {
+					t.Errorf("profile dir %s still exists after a failed connect (stat err: %v)", dir, err)
+				}
+			} else if err := mgr.profile.take(NewBrowserManager(cfg, 0640)); err != nil {
+				t.Errorf("persistent profile still locked after a failed connect: %v", err)
+			}
+			if mgr.IsConnected() || mgr.profileDir != "" || mgr.launcher != nil || mgr.exited != nil {
+				t.Errorf("failed Start left state behind: connected=%v profileDir=%q launcher set=%v exited set=%v",
+					mgr.IsConnected(), mgr.profileDir, mgr.launcher != nil, mgr.exited != nil)
+			}
+		})
 	}
 }
 
