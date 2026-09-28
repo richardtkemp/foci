@@ -3,6 +3,7 @@ package ccstream
 import (
 	"foci/internal/delegator"
 	"foci/internal/delegator/pretool"
+	"foci/internal/delegator/stoprule"
 	"foci/internal/ratelimit"
 )
 
@@ -65,6 +66,11 @@ func (b *Backend) SetRateLimitThrottle(t *RateLimitThrottle) { b.rlThrottle = t 
 // live config makes an edit reach the next session start (#2033). Must be set
 // before Start.
 func (b *Backend) SetPreToolRules(rules func() []pretool.Rule) { b.preToolRules = rules }
+
+// SetStopRules installs the source of the stop rules (#2089). Like
+// SetPreToolRules it is read at every Start; with no rules no Stop hook is
+// installed. Must be set before Start.
+func (b *Backend) SetStopRules(rules func() []stoprule.Rule) { b.stopRules = rules }
 
 // SetOnSessionLimit registers a hook fired when CC reports a session limit was
 // hit — a synthetic "You've hit your session limit · resets <time>" message,

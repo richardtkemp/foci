@@ -1554,6 +1554,34 @@ A `cd` earlier in the same command is not reflected in `$TOOL_CWD` (see `cwd` ab
 
 Check rules offline with `foci pretool list --agent <id>` and `foci pretool test --agent <id> --bash '<command>' [--cwd <dir>] [-v]` (see CLI.md). Rules are read from the config file each time foci launches a CC process (a new session, or a session resumed after an idle shutdown or a foci restart), so an edit applies from the next launch without a restart. A CC process already running keeps the rules it was launched with. If the file does not load at that moment, the session keeps the last rules that did. Each deny is logged as `pretool_rule_deny`.
 
+#### Stop rules — `[[agents.backend_config.stop_rules]]`
+
+`claude-code` agents (not `claude-code-tmux`) can check the end of each turn. If the turn's final reply matches a rule's `text`, and the turn launched no background job (a `run_in_background` Bash call or a background subagent), foci blocks the stop. The agent gets the rule's `reason` and carries on with the same turn. This catches a reply like "starting the build now" that ends the turn with nothing started (#2089).
+
+A turn is blocked at most once. After a block, the next stop in that turn is always allowed.
+
+No rules ship preinstalled, and there is no `[cc_backend]` layer: an agent has stop rules only if its own config lists them. Without rules, no Stop hook is installed.
+
+```toml
+[[agents.backend_config.stop_rules]]
+name = "announce_start"
+# Regexes matched against the final reply; any one may match. Use (?i) for case-insensitive.
+# ''' strings keep backslashes literal and may contain a single quote.
+text = [
+  '''(?i)\b(I'm|I am|I will|I'll) (now )?(start|kick|launch|send|run)(ing)?\b''',
+  '(?i)\bstarting .{1,40} now\b',
+]
+# Optional. {match} is replaced by the text that matched. Without a reason, foci uses:
+# 'Your reply says you are starting something ("{match}"), but nothing is running.
+#  Start it now, or say plainly that it is deferred.'
+reason = 'Your reply says "{match}", but nothing is running. Start it now, or say plainly that it is deferred.'
+# enabled = false switches the rule off without deleting it.
+```
+
+Each rule needs a unique `name` and at least one `text` pattern. Every pattern must compile and must not be empty. An unknown key is a config load error, as it is for `pretool_rules`.
+
+The patterns are a heuristic, so expect false positives. Every evaluation is logged as `stop_rule_eval`, with the outcome, the rule, the number of launches and a short excerpt. The outcomes are `fire` (blocked), `pass` (no rule matched), `pass_launched` (matched, but the turn launched background work), `pass_active` (already blocked once this turn) and `pass_error` (matched, but the transcript could not be read; this one logs at WARN). Grep for them to measure a rule before tightening it. Rules are re-read from the config file at each CC launch, the same way as `pretool_rules`.
+
 ### Available backends
 
 | Backend | Description |

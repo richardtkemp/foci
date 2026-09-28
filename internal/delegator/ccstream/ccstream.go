@@ -18,6 +18,7 @@ import (
 
 	"foci/internal/delegator"
 	"foci/internal/delegator/pretool"
+	"foci/internal/delegator/stoprule"
 	"foci/internal/modelinfo"
 	"foci/internal/ratelimit"
 )
@@ -315,6 +316,9 @@ type Backend struct {
 	// preToolRules yields the resolved pretool rules (#2028) baked into the
 	// PreToolUse hook command at each Start. Set via SetPreToolRules.
 	preToolRules func() []pretool.Rule
+	// stopRules yields the agent's stop rules (#2089) baked into the Stop
+	// hook command at each Start. Set via SetStopRules.
+	stopRules func() []stoprule.Rule
 
 	// Agent tracking (shared with tmux backend via AgentTracker).
 	agents delegator.SubagentTracker

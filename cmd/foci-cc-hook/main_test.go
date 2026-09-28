@@ -448,3 +448,13 @@ func TestPreToolUse_WhenCheck(t *testing.T) {
 		}
 	}
 }
+
+// process runs handle on a tool-event envelope and returns its hookOutput.
+func process(args []string, body []byte) (hookOutput, bool) {
+	out, ok := handle(args, body)
+	if !ok {
+		return hookOutput{}, false
+	}
+	h, isTool := out.(hookOutput)
+	return h, isTool
+}

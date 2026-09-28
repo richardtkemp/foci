@@ -15,6 +15,7 @@ import (
 	"foci/internal/delegator/codex"
 	"foci/internal/delegator/opencode"
 	"foci/internal/delegator/pretool"
+	"foci/internal/delegator/stoprule"
 	"foci/internal/log"
 	"foci/internal/modelcaps"
 	"foci/internal/platform"
@@ -245,9 +246,12 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// agent's backend_config, merged by name. Re-resolved from the config file
 	// at every CC launch (#2033), so an edit reaches the next session.
 	var preToolRules func() []pretool.Rule
+	// Stop rules (#2089): this agent's backend_config only, re-read the same way.
+	var stopRules func() []stoprule.Rule
 	if backendName == "claude-code" {
 		preToolRules = livePreToolRules(agentID, p.configPath,
 			resolvePreToolRules(agentID, p.cfg.CCBackend.PreToolRules, backendConfig.PreToolRules))
+		stopRules = liveStopRules(agentID, p.configPath, resolveStopRules(agentID, backendConfig.StopRules))
 	}
 
 	ag.DelegatedManager = &agent.DelegatedManager{
@@ -264,6 +268,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			if sb, ok := be.(*ccstream.Backend); ok {
 				sb.SetRateLimitThrottle(rlThrottle)
 				sb.SetPreToolRules(preToolRules)
+				sb.SetStopRules(stopRules)
 				// On a 401, run the automated re-login (#843) via the shared
 				// trigger built above (same path as the manual /login command).
 				sb.SetOnAuthFailure(func(detail string) {
@@ -784,13 +789,20 @@ func resumeRetentionFor(backendName string) time.Duration {
 // warning rather than failing the agent: the rest must still apply.
 func resolvePreToolRules(agentID string, global, perAgent []pretool.Rule) []pretool.Rule {
 	rules, skipped := pretool.Resolve(pretool.Defaults, global, perAgent)
-	warnSkippedPreToolRules(agentID, skipped)
+	warnSkippedRules(agentID, "pretool", skipped)
 	return rules
 }
 
-func warnSkippedPreToolRules(agentID string, skipped []string) {
+// resolveStopRules is resolvePreToolRules for the agent's stop rules (#2089).
+func resolveStopRules(agentID string, perAgent []stoprule.Rule) []stoprule.Rule {
+	rules, skipped := stoprule.Resolve(perAgent)
+	warnSkippedRules(agentID, "stop", skipped)
+	return rules
+}
+
+func warnSkippedRules(agentID, kind string, skipped []string) {
 	for _, msg := range skipped {
-		log.NewComponentLogger("agent:"+agentID).Warnf("pretool rule skipped: %s", msg)
+		log.NewComponentLogger("agent:"+agentID).Warnf("%s rule skipped: %s", kind, msg)
 	}
 }
 
@@ -802,9 +814,23 @@ func warnSkippedPreToolRules(agentID string, skipped []string) {
 // load or validate (e.g. saved mid-edit), or no longer has the agent, keeps
 // the last good rules, starting from the startup ones.
 func livePreToolRules(agentID, configPath string, startup []pretool.Rule) func() []pretool.Rule {
+	return liveRules(agentID, configPath, "pretool", startup, (*config.Config).PreToolRules)
+}
+
+// liveStopRules is livePreToolRules for the agent's stop rules (#2089).
+func liveStopRules(agentID, configPath string, startup []stoprule.Rule) func() []stoprule.Rule {
+	return liveRules(agentID, configPath, "stop", startup, (*config.Config).StopRules)
+}
+
+// liveRules is the shared body of the live rule sources: re-read the file on
+// every call, resolve this agent's rules with resolve, and keep the last good
+// set when the file doesn't load or has lost the agent.
+func liveRules[R any](agentID, configPath, kind string, startup []R,
+	resolve func(*config.Config, string) ([]R, []string, bool)) func() []R {
 	var mu sync.Mutex
 	last := startup
-	return func() []pretool.Rule {
+	lg := log.NewComponentLogger("agent:" + agentID)
+	return func() []R {
 		mu.Lock()
 		defer mu.Unlock()
 		if configPath == "" {
@@ -812,15 +838,15 @@ func livePreToolRules(agentID, configPath string, startup []pretool.Rule) func()
 		}
 		fresh, err := config.Load(configPath, delegator.RegisteredNames())
 		if err != nil {
-			log.NewComponentLogger("agent:"+agentID).Warnf("pretool rules: config reload failed, keeping the previous rules: %v", err)
+			lg.Warnf("%s rules: config reload failed, keeping the previous rules: %v", kind, err)
 			return last
 		}
-		rules, skipped, ok := fresh.PreToolRules(agentID)
+		rules, skipped, ok := resolve(fresh, agentID)
 		if !ok {
-			log.NewComponentLogger("agent:" + agentID).Warnf("pretool rules: agent missing from reloaded config, keeping the previous rules")
+			lg.Warnf("%s rules: agent missing from reloaded config, keeping the previous rules", kind)
 			return last
 		}
-		warnSkippedPreToolRules(agentID, skipped)
+		warnSkippedRules(agentID, kind, skipped)
 		last = rules
 		return last
 	}

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"foci/internal/delegator/pretool"
+	"foci/internal/delegator/stoprule"
 	"foci/internal/provider"
 )
 
@@ -297,6 +298,7 @@ type BackendConfig struct {
 	Model             *string           `toml:"model"              desc:"Model ID for the delegated backend (e.g. opus, sonnet)"`
 	AllowedTools      []string          `toml:"allowed_tools"      desc:"Claude Code permission rules (e.g. Edit(/tmp/**)). Merged with global [cc_backend] defaults"`
 	PreToolRules      []pretool.Rule    `toml:"pretool_rules"` // per-agent PreToolUse deny rules, merged by name over [cc_backend] pretool_rules (#2028)
+	StopRules         []stoprule.Rule   `toml:"stop_rules"`    // per-agent Stop-hook rules: block a final reply that announces work nothing was launched for (#2089)
 	Binary            *string           `toml:"binary"             desc:"Path to the backend executable (default: resolved via $PATH)"`
 	IdleTimeout       *string           `toml:"idle_timeout"       desc:"How long a delegated session can sit idle before shutdown. Empty = 3h" type:"duration"`
 	SkipPermissions   *bool             `toml:"skip_permissions"   desc:"Skip all permission prompts (CC --dangerously-skip-permissions). For unattended agents only"`

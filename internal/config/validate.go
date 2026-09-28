@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"foci/internal/delegator/pretool"
+	"foci/internal/delegator/stoprule"
 )
 
 // validate checks semantic validity of config values after parsing and defaults.
@@ -234,6 +235,10 @@ func (cfg *Config) Validate(knownBackends []string) error {
 	}
 
 	if err := cfg.validatePreToolRules(); err != nil {
+		return err
+	}
+
+	if err := cfg.validateStopRules(); err != nil {
 		return err
 	}
 
@@ -691,13 +696,7 @@ func validateRateLimitNotifyTo(where string, v *string) error {
 // tool. The allowed keys are whatever pretool.Rule decodes, read from the TOML
 // metadata's undecoded keys, so there is no second list to keep in step.
 func (cfg *Config) validatePreToolRules() error {
-	var unknown []string
-	for _, k := range cfg.UndefinedKeys {
-		if strings.HasPrefix(k, "cc_backend.pretool_rules.") || strings.HasPrefix(k, "agents.backend_config.pretool_rules.") {
-			unknown = append(unknown, k)
-		}
-	}
-	if len(unknown) > 0 {
+	if unknown := cfg.undefinedKeysUnder("cc_backend.pretool_rules.", "agents.backend_config.pretool_rules."); len(unknown) > 0 {
 		return fmt.Errorf("pretool_rules: unknown key(s) %s (a rule ignoring a key it was meant to have can deny every call of its tool)", strings.Join(unknown, ", "))
 	}
 	if err := pretool.ValidateLayer(cfg.CCBackend.PreToolRules); err != nil {
@@ -709,6 +708,52 @@ func (cfg *Config) validatePreToolRules() error {
 		}
 	}
 	return nil
+}
+
+// undefinedKeysUnder returns the undecoded config keys under any of prefixes.
+func (cfg *Config) undefinedKeysUnder(prefixes ...string) []string {
+	var out []string
+	for _, k := range cfg.UndefinedKeys {
+		for _, p := range prefixes {
+			if strings.HasPrefix(k, p) {
+				out = append(out, k)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// validateStopRules checks each agent's backend_config.stop_rules (#2089)
+// with the same unknown-key rule as pretool_rules: a misspelt key is an
+// error, never a warning. Stop rules are per-agent only; a [cc_backend]
+// stop_rules is rejected rather than silently ignored.
+func (cfg *Config) validateStopRules() error {
+	if unknown := cfg.undefinedKeysUnder("cc_backend.stop_rules"); len(unknown) > 0 {
+		return fmt.Errorf("stop_rules: per-agent only (agents.backend_config.stop_rules), not [cc_backend]: %s", strings.Join(unknown, ", "))
+	}
+	if unknown := cfg.undefinedKeysUnder("agents.backend_config.stop_rules."); len(unknown) > 0 {
+		return fmt.Errorf("stop_rules: unknown key(s) %s", strings.Join(unknown, ", "))
+	}
+	for _, a := range cfg.Agents {
+		if err := stoprule.ValidateLayer(a.BackendConfig.StopRules); err != nil {
+			return fmt.Errorf("agent %q backend_config.%w", a.ID, err)
+		}
+	}
+	return nil
+}
+
+// StopRules resolves the stop rules an agent's CC sessions enforce (#2089).
+// There are no preinstalled rules and no global layer. ok is false when no
+// agent has that id.
+func (cfg *Config) StopRules(agentID string) (rules []stoprule.Rule, skipped []string, ok bool) {
+	for _, a := range cfg.Agents {
+		if a.ID == agentID {
+			rules, skipped = stoprule.Resolve(a.BackendConfig.StopRules)
+			return rules, skipped, true
+		}
+	}
+	return nil, nil, false
 }
 
 // PreToolRules resolves the pretool rules an agent's CC sessions enforce

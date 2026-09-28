@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"foci/internal/delegator/pretool"
+	"foci/internal/delegator/stoprule"
 	"foci/internal/log"
 )
 
@@ -22,7 +23,7 @@ import (
 // loads this via --settings <json> as a flagSettings source.
 func TestBuildHookSettingsJSON(t *testing.T) {
 	cmd := buildHookCommand("/bin/foci-cc-hook", "abc123")
-	body, err := buildHookSettingsJSON(cmd, nil)
+	body, err := buildHookSettingsJSON(cmd, nil, nil)
 	if err != nil {
 		t.Fatalf("buildHookSettingsJSON: %v", err)
 	}
@@ -87,7 +88,7 @@ func TestBuildHookSettingsJSON_PreToolRules(t *testing.T) {
 		{Name: "a", Tool: "AskUserQuestion", Action: "deny", Reason: "r2"},
 		{Name: "g", Tool: "Agent", Action: "deny", Reason: "r3", Input: map[string]pretool.Patterns{"prompt": {"x"}}},
 	}
-	body, err := buildHookSettingsJSON(cmd, rules)
+	body, err := buildHookSettingsJSON(cmd, rules, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,6 +118,41 @@ func TestBuildHookSettingsJSON_PreToolRules(t *testing.T) {
 		if c := parsed.Hooks[ev][0].Hooks[0].Command; c != cmd {
 			t.Errorf("%s command = %q, want %q (no rules)", ev, c, cmd)
 		}
+	}
+}
+
+// TestBuildHookSettingsJSON_StopRules proves stop rules add a matcher-less
+// Stop entry whose command carries them, and that no rules means no Stop hook.
+func TestBuildHookSettingsJSON_StopRules(t *testing.T) {
+	cmd := buildHookCommand("/bin/foci-cc-hook", "abc123")
+	parse := func(stop []stoprule.Rule) map[string][]hookMatcher {
+		body, err := buildHookSettingsJSON(cmd, nil, stop)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var parsed struct {
+			Hooks map[string][]hookMatcher `json:"hooks"`
+		}
+		if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+			t.Fatal(err)
+		}
+		return parsed.Hooks
+	}
+	if _, ok := parse(nil)[eventStop]; ok {
+		t.Error("Stop hook installed with no stop rules")
+	}
+	stop := parse([]stoprule.Rule{{Name: "s", Text: []string{"starting"}, Reason: "r"}})[eventStop]
+	if len(stop) != 1 || stop[0].Matcher != "" || len(stop[0].Hooks) != 1 {
+		t.Fatalf("Stop entries = %+v, want one matcher-less entry", stop)
+	}
+	prefix := cmd + " " + stopRulesFlag + " "
+	c := stop[0].Hooks[0].Command
+	if !strings.HasPrefix(c, prefix) {
+		t.Fatalf("Stop command = %q, want prefix %q", c, prefix)
+	}
+	got, err := stoprule.Decode(strings.TrimPrefix(c, prefix))
+	if err != nil || len(got) != 1 || got[0].Name != "s" {
+		t.Errorf("decoded stop rules = %+v err=%v", got, err)
 	}
 }
 
@@ -701,5 +737,35 @@ func TestHandleHookResponse_PostToolNudgeSkipsEmpty(t *testing.T) {
 	}
 	if lines != 1 {
 		t.Errorf("expected exactly 1 writer line (empty nudges skipped), got %d: %q", lines, buf.String())
+	}
+}
+
+// TestHandleHookResponse_StopVerdictLogged proves every Stop verdict from our
+// own hook is logged as stop_rule_eval (fire and pass alike, #2089), and a
+// Stop hook_response from another install is not.
+//
+// Not parallel: captureDebugLog is process-global.
+func TestHandleHookResponse_StopVerdictLogged(t *testing.T) {
+	buf := captureDebugLog(t)
+	b := &Backend{hookInstallID: "install-s"}
+	for _, stdout := range []string{
+		`{"decision":"block","reason":"r","hook_event":"Stop","install_id":"install-s","stop_result":"fire","stop_rule":"announce","stop_excerpt":"I'm starting"}`,
+		`{"hook_event":"Stop","install_id":"install-s","stop_result":"pass","stop_excerpt":"all done"}`,
+		`{"hook_event":"Stop","install_id":"someone-else","stop_result":"fire","stop_rule":"theirs"}`,
+	} {
+		env, _ := json.Marshal(hookResponseEnvelope{HookEvent: "Stop", Stdout: stdout})
+		b.handleHookResponse(env)
+	}
+	got := buf.String()
+	for _, want := range []string{
+		`stop_rule_eval result=fire rule=announce blocked=true launches=0 excerpt="I'm starting"`,
+		`stop_rule_eval result=pass rule= blocked=false launches=0 excerpt="all done"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("log missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "theirs") {
+		t.Errorf("logged another install's Stop verdict:\n%s", got)
 	}
 }

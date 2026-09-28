@@ -56,3 +56,29 @@ reason = "stage paths"
 		t.Errorf("broken file dropped the last good rules: %v", names(got))
 	}
 }
+
+// TestLiveStopRules proves a stop rule edit reaches the next CC launch the
+// same way (#2089), and that an agent with none gets none.
+func TestLiveStopRules(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "foci.toml")
+	write := func(body string) {
+		t.Helper()
+		cfg := "[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n[[agents]]\nid = \"a\"\nbackend = \"claude-code\"\n" + body
+		if err := os.WriteFile(path, []byte(cfg), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("")
+	source := liveStopRules("a", path, resolveStopRules("a", nil))
+	if got := source(); len(got) != 0 {
+		t.Fatalf("initial stop rules = %+v, want none", got)
+	}
+	write("[[agents.backend_config.stop_rules]]\nname = \"announce\"\ntext = 'starting'\n")
+	if got := source(); len(got) != 1 || got[0].Name != "announce" {
+		t.Fatalf("edit not picked up: %+v", got)
+	}
+	write("this is = = not toml")
+	if got := source(); len(got) != 1 {
+		t.Errorf("broken file dropped the last good rules: %+v", got)
+	}
+}

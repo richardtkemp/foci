@@ -21,6 +21,13 @@
 // when-check runs here as a bash child; one that fails (timeout, error)
 // never denies, and is reported in when_errors for foci to log.
 //
+// When an agent has stop rules (internal/delegator/stoprule, #2089) foci also
+// installs it as a Stop hook, with the rules in --stop-rules. On Stop it
+// evaluates the turn's final text and transcript and writes a stopOutput:
+// decision="block" plus a reason when a rule fires (CC then continues the
+// turn with the reason as a "Stop hook feedback" user message, verified live
+// on CC 2.1.280), and in every case the verdict fields foci logs.
+//
 // The helper always exits 0 regardless of parse errors — CC uses
 // exit codes to gate tool execution (exit 2 blocks), so we must not
 // accidentally interfere with the user's turn. Any parse failure on
@@ -35,6 +42,7 @@ import (
 	"os"
 
 	"foci/internal/delegator/pretool"
+	"foci/internal/delegator/stoprule"
 )
 
 // installIDFlag is the argv flag foci sets when installing the hook so the
@@ -48,6 +56,13 @@ const installIDFlag = "--install"
 // rulesFlag carries the encoded pretool rules (pretool.Encode). Only the
 // PreToolUse command line has it; must match internal/delegator/ccstream.
 const rulesFlag = "--rules"
+
+// stopRulesFlag carries the encoded stop rules (stoprule.Encode). Only the
+// Stop command line has it; must match internal/delegator/ccstream.
+const stopRulesFlag = "--stop-rules"
+
+// eventStop is CC's hook_event_name for the end-of-turn hook.
+const eventStop = "Stop"
 
 // maxFieldBytes bounds the size of tool_response / tool_input / error fields
 // in the emitted JSON. Two independent constraints, the tighter of which sets
@@ -86,6 +101,12 @@ type hookInput struct {
 	IsTimeout     bool            `json:"is_timeout,omitempty"`
 	// Cwd is the session's working directory; pretool rules can match it.
 	Cwd string `json:"cwd,omitempty"`
+
+	// Stop payload fields (shape verified live, CC 2.1.280).
+	TranscriptPath       string `json:"transcript_path,omitempty"`
+	PromptID             string `json:"prompt_id,omitempty"`
+	StopHookActive       bool   `json:"stop_hook_active,omitempty"`
+	LastAssistantMessage string `json:"last_assistant_message,omitempty"`
 }
 
 // hookOutput is the compact JSON foci's ccstream handleHookResponse parser
@@ -122,6 +143,22 @@ type preToolDecision struct {
 	PermissionDecisionReason string `json:"permissionDecisionReason"`
 }
 
+// stopOutput is what the helper writes on Stop. Decision and Reason are the
+// part CC acts on (a block continues the turn with Reason shown to the
+// agent); the rest is the verdict foci's handleHookResponse logs. Keep the
+// field names aligned with internal/delegator/ccstream.
+type stopOutput struct {
+	Decision  string `json:"decision,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	HookEvent string `json:"hook_event"`
+	InstallID string `json:"install_id,omitempty"`
+	Result    string `json:"stop_result"`
+	Rule      string `json:"stop_rule,omitempty"`
+	Excerpt   string `json:"stop_excerpt,omitempty"`
+	Launches  int    `json:"stop_launches,omitempty"`
+	Error     string `json:"stop_error,omitempty"`
+}
+
 // parseInstallID extracts the value of the --install flag from argv.
 // Returns empty string when absent. Accepts both `--install X` (two args)
 // and `--install=X` (one arg) forms. Silent on malformed input — foci's
@@ -151,7 +188,7 @@ func main() {
 	if err != nil {
 		return // exit 0 — silent drop, don't interfere with the turn
 	}
-	out, ok := process(os.Args, body)
+	out, ok := handle(os.Args, body)
 	if !ok {
 		return
 	}
@@ -160,14 +197,50 @@ func main() {
 	_ = enc.Encode(out)
 }
 
-// process reduces one CC hook envelope to the hookOutput main writes. ok is
-// false when the envelope doesn't parse (silent drop).
-func process(args []string, body []byte) (hookOutput, bool) {
+// handle reduces one CC hook envelope to the object main writes: a
+// stopOutput for Stop, a hookOutput for the tool events. ok is false when
+// the envelope doesn't parse (silent drop).
+func handle(args []string, body []byte) (any, bool) {
 	var in hookInput
 	if err := json.Unmarshal(body, &in); err != nil {
-		return hookOutput{}, false
+		return nil, false
 	}
+	if in.HookEventName == eventStop {
+		return stopFor(args, in), true
+	}
+	return toolOutputFor(args, in), true
+}
 
+// stopFor evaluates the stop rules foci passed via --stop-rules. With no
+// rules, or rules that don't decode, it passes: a broken rule set must never
+// hold a turn open.
+func stopFor(args []string, in hookInput) stopOutput {
+	out := stopOutput{HookEvent: eventStop, InstallID: parseInstallID(args), Result: stoprule.ResultPass}
+	enc := parseFlag(args, stopRulesFlag)
+	if enc == "" {
+		return out
+	}
+	rules, err := stoprule.Decode(enc)
+	if err != nil {
+		out.Error = "decode stop rules: " + err.Error()
+		return out
+	}
+	v := stoprule.Evaluate(rules, stoprule.Input{
+		Text:           in.LastAssistantMessage,
+		StopHookActive: in.StopHookActive,
+		TranscriptPath: in.TranscriptPath,
+		PromptID:       in.PromptID,
+	})
+	out.Result, out.Rule, out.Excerpt, out.Launches, out.Error = v.Result, v.Rule, v.Excerpt, v.Launches, v.Err
+	if v.Block() {
+		out.Decision, out.Reason = "block", v.Reason
+	}
+	return out
+}
+
+// toolOutputFor reduces a tool-event envelope (PreToolUse, PostToolUse,
+// PostToolUseFailure) to the hookOutput main writes.
+func toolOutputFor(args []string, in hookInput) hookOutput {
 	out := hookOutput{
 		HookEvent: in.HookEventName,
 		InstallID: parseInstallID(args),
@@ -193,7 +266,7 @@ func process(args []string, body []byte) (hookOutput, bool) {
 	if in.Error != "" {
 		out.Error = truncate(in.Error, maxFieldBytes)
 	}
-	return out, true
+	return out
 }
 
 // applyRules marks out as a deny when an encoded pretool rule matches the

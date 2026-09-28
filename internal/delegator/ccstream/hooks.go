@@ -10,6 +10,7 @@ import (
 	"foci/internal/delegator"
 	"foci/internal/delegator/hookbin"
 	"foci/internal/delegator/pretool"
+	"foci/internal/delegator/stoprule"
 	"foci/internal/log"
 )
 
@@ -62,6 +63,12 @@ import (
 // hands the reason to the model as the tool's error result. The helper never
 // emits "allow". The deny still reaches foci as a hook_response (with
 // denied_rule set), which handleHookResponse logs.
+//
+// Stop rules (#2089): when the agent has stop rules, the same helper is also
+// installed as a Stop hook with the rules in --stop-rules. It blocks the end
+// of a turn whose final text announces work while nothing was launched (see
+// internal/delegator/stoprule), and reports every verdict in its stdout, which
+// handleHookResponse logs as stop_rule_eval. No rules, no Stop hook.
 // ---------------------------------------------------------------------------
 
 // hookCommandName is the binary filename foci looks for alongside foci-gw or
@@ -77,6 +84,9 @@ const installIDFlag = "--install"
 // rulesFlag must match cmd/foci-cc-hook/main.go rulesFlag.
 const rulesFlag = "--rules"
 
+// stopRulesFlag must match cmd/foci-cc-hook/main.go stopRulesFlag.
+const stopRulesFlag = "--stop-rules"
+
 // hookTimeoutSeconds is the CC hook-script timeout foci configures. 10
 // seconds is comfortable for the helper binary's ~10ms startup cost while
 // still protecting against a pathological hang.
@@ -87,6 +97,7 @@ const (
 	eventPreToolUse         = "PreToolUse"
 	eventPostToolUse        = "PostToolUse"
 	eventPostToolUseFailure = "PostToolUseFailure"
+	eventStop               = "Stop"
 )
 
 // agentToolMatcher scopes the PreToolUse hook to the Agent (subagent-spawn) tool
@@ -170,11 +181,12 @@ func fociHookSpec(hookCmd string) hookSpec {
 // buildHookSettingsJSON returns a JSON string encoding a settings object
 // containing PreToolUse, PostToolUse and PostToolUseFailure hook entries
 // pointing at the given hook command. rules (may be empty) are appended to the
-// PreToolUse command only, and widen its matcher. CC accepts this string via
+// PreToolUse command only, and widen its matcher. stopRules, when present, add
+// a Stop entry whose command carries them. CC accepts this string via
 // `--settings <json>` and loads it as an additional merged-in settings source.
 // No filesystem I/O happens here — the caller passes the returned JSON as an
 // argv to the claude subprocess.
-func buildHookSettingsJSON(hookCmd string, rules []pretool.Rule) (string, error) {
+func buildHookSettingsJSON(hookCmd string, rules []pretool.Rule, stopRules []stoprule.Rule) (string, error) {
 	spec := fociHookSpec(hookCmd)
 	allTools := []hookMatcher{{
 		Matcher: "*",
@@ -188,15 +200,22 @@ func buildHookSettingsJSON(hookCmd string, rules []pretool.Rule) (string, error)
 		}
 		preCmd = hookCmd + " " + rulesFlag + " " + enc
 	}
-	top := map[string]any{
-		"hooks": hooksConfig{
-			// PreToolUse for the Agent tool (a precise subagent start) and the
-			// tools pretool rules police.
-			eventPreToolUse:         {{Matcher: preToolMatcher(rules), Hooks: []hookSpec{fociHookSpec(preCmd)}}},
-			eventPostToolUse:        allTools,
-			eventPostToolUseFailure: allTools,
-		},
+	hooks := hooksConfig{
+		// PreToolUse for the Agent tool (a precise subagent start) and the
+		// tools pretool rules police.
+		eventPreToolUse:         {{Matcher: preToolMatcher(rules), Hooks: []hookSpec{fociHookSpec(preCmd)}}},
+		eventPostToolUse:        allTools,
+		eventPostToolUseFailure: allTools,
 	}
+	if len(stopRules) > 0 {
+		enc, err := stoprule.Encode(stopRules)
+		if err != nil {
+			return "", fmt.Errorf("encode stop rules: %w", err)
+		}
+		// Stop takes no matcher.
+		hooks[eventStop] = []hookMatcher{{Hooks: []hookSpec{fociHookSpec(hookCmd + " " + stopRulesFlag + " " + enc)}}}
+	}
+	top := map[string]any{"hooks": hooks}
 	body, err := json.Marshal(top)
 	if err != nil {
 		return "", fmt.Errorf("marshal hook settings: %w", err)
@@ -227,7 +246,11 @@ func (b *Backend) prepareHooks() (string, bool) {
 	if b.preToolRules != nil {
 		rules = b.preToolRules()
 	}
-	settingsJSON, err := buildHookSettingsJSON(hookCmd, rules)
+	var stopRules []stoprule.Rule
+	if b.stopRules != nil {
+		stopRules = b.stopRules()
+	}
+	settingsJSON, err := buildHookSettingsJSON(hookCmd, rules, stopRules)
 	if err != nil {
 		b.logger().Warnf("CC hook install skipped: %v", err)
 		return "", false
@@ -237,7 +260,7 @@ func (b *Backend) prepareHooks() (string, bool) {
 	b.hookCmd = hookCmd
 	b.hookInstallID = installID
 	b.mu.Unlock()
-	b.logger().Infof("CC hooks installed via --settings (install_id=%s pretool_rules=%d)", installID, len(rules))
+	b.logger().Infof("CC hooks installed via --settings (install_id=%s pretool_rules=%d stop_rules=%d)", installID, len(rules), len(stopRules))
 	return settingsJSON, true
 }
 
@@ -304,6 +327,10 @@ type hookScriptOutput struct {
 func (b *Backend) handleHookResponse(raw json.RawMessage) {
 	var env hookResponseEnvelope
 	if err := json.Unmarshal(raw, &env); err != nil {
+		return
+	}
+	if env.HookEvent == eventStop {
+		b.logStopVerdict(env.Stdout)
 		return
 	}
 	if env.HookEvent != eventPreToolUse && env.HookEvent != eventPostToolUse && env.HookEvent != eventPostToolUseFailure {
@@ -475,6 +502,40 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 			}
 		}
 	}
+}
+
+// stopVerdict is the part of foci-cc-hook's Stop stdout (stopOutput in
+// cmd/foci-cc-hook/main.go) that foci logs.
+type stopVerdict struct {
+	InstallID string `json:"install_id"`
+	Decision  string `json:"decision"`
+	Result    string `json:"stop_result"`
+	Rule      string `json:"stop_rule"`
+	Excerpt   string `json:"stop_excerpt"`
+	Launches  int    `json:"stop_launches"`
+	Error     string `json:"stop_error"`
+}
+
+// logStopVerdict logs one Stop-rule evaluation (#2089): every fire and every
+// pass, so the rules' hit rate can be measured before they are tightened. A
+// Stop hook_response from anyone else's hook is dropped by the install ID.
+func (b *Backend) logStopVerdict(stdout string) {
+	var v stopVerdict
+	if stdout == "" || json.Unmarshal([]byte(stdout), &v) != nil {
+		return
+	}
+	b.mu.Lock()
+	ours := b.hookInstallID != "" && v.InstallID == b.hookInstallID
+	b.mu.Unlock()
+	if !ours {
+		return
+	}
+	if v.Error != "" {
+		b.logger().Warnf("stop_rule_eval result=%s rule=%s error=%q excerpt=%q", v.Result, v.Rule, v.Error, v.Excerpt)
+		return
+	}
+	b.logger().Infof("stop_rule_eval result=%s rule=%s blocked=%t launches=%d excerpt=%q",
+		v.Result, v.Rule, v.Decision == "block", v.Launches, v.Excerpt)
 }
 
 // endDeniedCall closes out a main-thread tool call a pretool rule refused.
