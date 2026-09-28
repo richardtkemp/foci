@@ -116,3 +116,43 @@ func TestOneHourRateIsTwiceBaseInput(t *testing.T) {
 			"as expected and would pass vacuously", checked)
 	}
 }
+
+// TestTTLSurcharge_NeverNegative is what lets a #1929 correction debit the
+// parent CostUSD + TTLSurchargeUSD with no guard against a debit below the
+// credit: the premium is non-negative by construction, even for a rate row
+// whose 1h figure is (wrongly) below its 5m one. Before cacheWriteRate required
+// 1h > 5m, such a row priced Unknown writes BELOW 5m and the premium went
+// negative.
+func TestTTLSurcharge_NeverNegative(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		m    Model
+		want float64
+	}{
+		{"1h above 5m", Model{CacheWritePer1M: 6.25, CacheWrite1hPer1M: 10}, 3.75},
+		{"no 1h figure", Model{CacheWritePer1M: 6.25}, 0},
+		{"1h equal to 5m", Model{CacheWritePer1M: 6.25, CacheWrite1hPer1M: 6.25}, 0},
+		{"1h below 5m (data error)", Model{CacheWritePer1M: 6.25, CacheWrite1hPer1M: 3}, 0},
+	} {
+		if got := tc.m.ttlPremium(); got != tc.want {
+			t.Errorf("%s: ttlPremium = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestTTLSurchargeAsOf_OnlyFiveMinuteWritesCarryIt: 1h and Unknown writes price
+// at the same rate the parent charged, so only the 5m ones were over-charged.
+func TestTTLSurchargeAsOf_OnlyFiveMinuteWritesCarryIt(t *testing.T) {
+	at := time.Now()
+	const mtok = 1_000_000
+	closeTo(t, TTLSurchargeAsOf("claude-opus-5", at, CacheWrites{Ephemeral5m: mtok}), 3.75, "1M 5m writes")
+	if got := TTLSurchargeAsOf("claude-opus-5", at, CacheWrites{Ephemeral1h: mtok, Unknown: mtok}); got != 0 {
+		t.Errorf("1h+Unknown writes surcharge = %v, want exactly 0", got)
+	}
+	// Agrees with pricing the same writes both ways, which is what the parent
+	// and subagent rows actually hold.
+	w := CacheWrites{Ephemeral5m: 300, Ephemeral1h: 700}
+	both := CostAsOfSplit("claude-opus-5", at, 0, 0, 0, CacheWrites{Unknown: 1000}) -
+		CostAsOfSplit("claude-opus-5", at, 0, 0, 0, w)
+	closeTo(t, TTLSurchargeAsOf("claude-opus-5", at, w), both, "surcharge vs priced both ways")
+}

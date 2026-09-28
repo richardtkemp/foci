@@ -34,6 +34,14 @@ import (
 // count prices as a credit and would quietly reduce the bill; it also means the
 // model behind the correction is wrong, which is worth a warning rather than a
 // silent clamp.
+//
+// TOKENS ARE CONSERVED, DOLLARS MAY FALL (#1929). Both rows move by the same
+// Counts, but the parent gives up CostUSD + TTLSurchargeUSD (the basis it was
+// charged) and the subagent gains CostUSD (its own observed basis). The
+// surcharge is the cache-write over-charge the parent took when it absorbed the
+// writes as an Unknown/1h residue, so the turn total drops by exactly that. It
+// is non-negative by construction (modelinfo.TTLSurchargeAsOf), so a
+// correction can remove an over-charge but never add money.
 func ApplyCostCorrections(cs []modelinfo.CostCorrection) {
 	if apiLog == nil || apiLog.db == nil || len(cs) == 0 {
 		return
@@ -51,15 +59,14 @@ func ApplyCostCorrections(cs []modelinfo.CostCorrection) {
 				timeutil.Format(c.BilledAt), c.AgentID, c.SubagentTurnID, c.CostUSD, err)
 			continue
 		}
-		// stranded= is the surcharge left on the parent because it absorbed these
-		// cache writes at the Unknown/1h rate while the correction removes them at
-		// the subagent's observed 5m rate. Logged, not repaired: fixing it means
-		// trading dollar-conservation for token-conservation, and the size is not
-		// yet known (#1929, measured by #1920).
-		std.event(INFO, "api_db", "cost correction applied: $%.6f (%d cache-read, %d cache-write) "+
-			"moved from parent turn %s to subagent %s on turn %s; stranded=$%.6f (#1918)",
-			c.CostUSD, c.Counts.CacheRead, c.Counts.CacheWrite,
-			parentTurn, c.AgentID, c.SubagentTurnID, c.StrandedUSD)
+		// The two sides differ by the cache-write TTL surcharge the parent was
+		// over-charged at absorb time (Unknown/1h vs the subagent's observed 5m).
+		// It is removed from the record, not stranded on the parent (#1929).
+		std.event(INFO, "api_db", "cost correction applied: $%.6f debited from parent turn %s, "+
+			"$%.6f credited to subagent %s on turn %s (%d cache-read, %d cache-write); "+
+			"ttl_surcharge_removed=$%.6f (#1918, #1929)",
+			c.CostUSD+c.TTLSurchargeUSD, parentTurn, c.CostUSD, c.AgentID, c.SubagentTurnID,
+			c.Counts.CacheRead, c.Counts.CacheWrite, c.TTLSurchargeUSD)
 		if CorrectionHook != nil {
 			CorrectionHook(c, parentTurn)
 		}
@@ -127,10 +134,14 @@ func applyOneCorrection(db *sql.DB, c modelinfo.CostCorrection) (parentTurn stri
 		return "", fmt.Errorf("resolve parent turn: %w", err)
 	}
 
+	parentDebit := c.CostUSD + c.TTLSurchargeUSD
+
 	// The parent row must be able to give up the amount. Read it first rather
 	// than subtracting and inspecting the result: a row that cannot cover the
 	// correction means the correction is wrong, and finding that out BEFORE
-	// writing keeps the failure a warning instead of a repair.
+	// writing keeps the failure a warning instead of a repair. Tokens first —
+	// they are what the two rows exchange one-for-one — then the parent's own
+	// debit, which is the only dollar figure it has to cover.
 	var in, out, cr, cw sql.NullInt64
 	var cost sql.NullFloat64
 	row := tx.QueryRow(`SELECT turn_input_tokens, turn_output_tokens, turn_cache_read_tokens,
@@ -149,11 +160,11 @@ func applyOneCorrection(db *sql.DB, c modelinfo.CostCorrection) (parentTurn stri
 	}
 	if in.Int64 < int64(c.Counts.Input) || out.Int64 < int64(c.Counts.Output) ||
 		cr.Int64 < int64(c.Counts.CacheRead) || cw.Int64 < int64(c.Counts.CacheWrite) ||
-		cost.Float64 < c.CostUSD {
+		cost.Float64 < parentDebit {
 		return "", fmt.Errorf("parent row for turn %s cannot cover the correction "+
 			"(has in=%d out=%d cr=%d cw=%d $%.6f, needs in=%d out=%d cr=%d cw=%d $%.6f)",
 			parentTurn, in.Int64, out.Int64, cr.Int64, cw.Int64, cost.Float64,
-			c.Counts.Input, c.Counts.Output, c.Counts.CacheRead, c.Counts.CacheWrite, c.CostUSD)
+			c.Counts.Input, c.Counts.Output, c.Counts.CacheRead, c.Counts.CacheWrite, parentDebit)
 	}
 
 	res, err := tx.Exec(`UPDATE api_calls SET
@@ -164,7 +175,7 @@ func applyOneCorrection(db *sql.DB, c modelinfo.CostCorrection) (parentTurn stri
 			calculated_cost_usd     = calculated_cost_usd - ?
 		WHERE turn_id = ? AND call_type = 'delegated_turn'`,
 		c.Counts.Input, c.Counts.Output, c.Counts.CacheRead, c.Counts.CacheWrite,
-		c.CostUSD, parentTurn)
+		parentDebit, parentTurn)
 	if err != nil {
 		return "", fmt.Errorf("update parent row: %w", err)
 	}

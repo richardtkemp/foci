@@ -1632,7 +1632,8 @@ Four outputs:
    turn whose ModelUsage window the spend was BILLED in (its parent row loses the amount)
    and the turn that SPAWNED the agent (its subagent row gains it, because phase C files
    every subagent row under the spawning turn). Those differ whenever a background subagent
-   outlives its parent, so per-turn totals shift while the SESSION total is conserved —
+   outlives its parent, so per-turn totals shift while the SESSION total is conserved (less
+   the cache-write TTL over-charge the correction removes — #1929, below) —
    already true of straggler rows, and the phase C attribution model rather than a new
    inconsistency.
 
@@ -1683,20 +1684,19 @@ Four outputs:
    on the money by different means. Writing only the first instalment would make the fallback
    under-report.
 
-   **A correction leaves a TTL surcharge behind, and reports it rather than repairing it
-   (#1929).** The parent absorbed the late writes as an unobserved residue — `splitFor` puts
-   the excess over the parent's own observed writes into `Unknown`, and `Unknown` prices with
-   `Ephemeral1h` — while the correction removes them at the subagent's observed 5m split. On
-   opus-5 that strands $3.75 per million cache-write tokens on a row that no longer holds
-   them, so the #1854 re-price identity breaks for that row.
-
-   Repairing it means debiting at one basis and crediting at another, which makes the turn
-   total legitimately FALL (they really were 5m tokens billed at 1h) and trades
-   dollar-conservation for token-conservation. That invariant is what catches the bugs in
-   this file, so it is not weakened before the size is known. `CostCorrection.StrandedUSD`
-   carries the figure and the apply logs it as `stranded=$…`; #1920 reads it after deploy.
-   It is priced BOTH ways rather than by subtracting rate constants, so a subagent that
-   genuinely wrote at 1h reports zero.
+   **Each side of a correction moves at its own basis, so the turn total can FALL (#1929).**
+   The parent absorbed the late writes as an unobserved residue — `splitFor` puts the excess
+   over the parent's own observed writes into `Unknown`, and `Unknown` prices with
+   `Ephemeral1h` — while the subagent observed them as 5m. The subagent is credited
+   `CostUSD` (Counts at its observed split); the parent is debited `CostUSD +
+   TTLSurchargeUSD`, the surcharge being `modelinfo.TTLSurchargeAsOf` = 5m writes x
+   `ttlPremium` (1h rate minus 5m rate). Debiting both at 5m used to strand $3.75 per million
+   cache-write tokens on opus-5 on a row that no longer held them, breaking the #1854
+   re-price identity there. The turn total now drops by the surcharge — they really were 5m
+   tokens billed at 1h. Tokens are conserved; dollars fall. The debit can never be below the
+   credit BY CONSTRUCTION, not by a guard: `cacheWriteRate` only returns the 1h rate when it
+   is strictly above 5m, so `ttlPremium` is a positive float or exactly zero, and an unset
+   surcharge (zero) is the old, safe, at-5m debit. The apply logs `ttl_surcharge_removed=$…`.
 
    `ApplyCostCorrections` UPDATEs the two existing rows; it never appends a signed third row
    (Dick, 2026-09-14: *"I don't want a correcting pair, I just want a single correct

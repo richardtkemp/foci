@@ -40,7 +40,7 @@ Match to a few microdollars and the cause is settled. Cross-check against the su
 
 Its completed-message cache-write total equals Unknown exactly. Two matching numbers from unrelated artifacts is a diagnosis; one is a coincidence.
 
-Zero `call_type='subagent_turn'` rows means the correction path was never REACHED — missing `stranded=`/`cost correction` lines then say nothing about whether that code works.
+Zero `call_type='subagent_turn'` rows means the correction path was never REACHED — missing `cost correction applied` lines then say nothing about whether that code works.
 
 ## An unexpected model in the cost table
 

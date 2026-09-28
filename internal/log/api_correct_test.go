@@ -76,7 +76,9 @@ func withAPIDB(t *testing.T) {
 //
 // A subagent's spend reached foci after the turn that paid for it had closed,
 // so that turn's parent row absorbed it. The correction moves it onto the
-// subagent row. What must NOT change is the sum.
+// subagent row. With the debit and credit priced at the same basis (no TTL
+// surcharge — see the #1929 tests below for when they differ), the sum must
+// not change.
 func TestApplyCostCorrections_MovesSpendAndConservesTheTotal(t *testing.T) {
 	withAPIDB(t)
 
@@ -107,6 +109,38 @@ func TestApplyCostCorrections_MovesSpendAndConservesTheTotal(t *testing.T) {
 	}
 	if d := parentCost - 0.70; d > 1e-9 || d < -1e-9 {
 		t.Errorf("parent cost = $%.6f, want $0.700000", parentCost)
+	}
+}
+
+// TestApplyCostCorrections_DebitsParentAtItsOwnBasis is #1929 D1 at the
+// writer: the parent gives up what it was CHARGED (CostUSD + TTLSurchargeUSD,
+// cache writes at Unknown/1h), the subagent gains what it OBSERVED (CostUSD, 5m). Tokens move
+// one-for-one; the turn total falls by the over-charge. The pricing side of this
+// is TestOnResult_CorrectedParentRowRePricesToItsOwnCost in ccstream.
+func TestApplyCostCorrections_DebitsParentAtItsOwnBasis(t *testing.T) {
+	withAPIDB(t)
+
+	parent := modelinfo.TokenCounts{Input: 100, Output: 50, CacheRead: 1000, CacheWrite: 200}
+	sub := modelinfo.TokenCounts{Input: 10, Output: 5, CacheRead: 100, CacheWrite: 20}
+	seedTurn(t, sessTurn("T1"), sessTurn("T1"), "agent-1", "claude-opus-5", parent, 1.00, sub, 0.10, closeT1)
+
+	move := modelinfo.TokenCounts{CacheWrite: 80}
+	ApplyCostCorrections([]modelinfo.CostCorrection{{
+		BilledAt: billed, SubagentTurnID: sessTurn("T1"), AgentID: "agent-1",
+		Model: "claude-opus-5", Counts: move, CostUSD: 0.25, TTLSurchargeUSD: 0.15,
+	}})
+
+	gotParent, parentCost := readRow(t, "turn_id = ? AND call_type = 'delegated_turn'", sessTurn("T1"))
+	gotSub, subCost := readRow(t, "turn_id = ? AND call_type = 'subagent_turn'", sessTurn("T1"))
+	if gotParent.CacheWrite != 120 || gotSub.CacheWrite != 100 {
+		t.Errorf("cache-write parent=%d sub=%d, want 120 and 100 — tokens move one-for-one",
+			gotParent.CacheWrite, gotSub.CacheWrite)
+	}
+	if d := parentCost - 0.60; d > 1e-9 || d < -1e-9 {
+		t.Errorf("parent cost = $%.6f, want $0.600000 — debited at the basis it was charged", parentCost)
+	}
+	if d := subCost - 0.35; d > 1e-9 || d < -1e-9 {
+		t.Errorf("subagent cost = $%.6f, want $0.350000 — credited at its own basis", subCost)
 	}
 }
 

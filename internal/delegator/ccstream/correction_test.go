@@ -2,7 +2,10 @@ package ccstream
 
 import (
 	"foci/internal/delegator"
+	"foci/internal/log"
+	"foci/internal/modelinfo"
 	"math"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -135,19 +138,19 @@ func TestPendingCorrection_CoalescesWithinOneSecond(t *testing.T) {
 	}
 }
 
-// TestOnResult_CorrectionCarriesItsStrandedSurcharge (#1929).
+// TestOnResult_CorrectionPricesEachSideAtItsOwnBasis (#1929).
 //
 // Driven through OnResult so it exercises the code that actually POPULATES the
-// figure. A first version of this test asserted only modelinfo's rate
+// figures. A first version of this test asserted only modelinfo's rate
 // arithmetic; the disconnected-test lint rejected it, correctly — it would have
-// passed with handlers.go computing the surcharge wrongly, or not at all.
+// passed with handlers.go computing the figures wrongly, or not at all.
 //
 // A late subagent cache write is absorbed by the parent as an UNOBSERVED
 // residue, which splitFor classes Unknown and Unknown prices at the 1h rate. The
-// correction removes it at the subagent's own observed 5m rate, so the
-// difference stays on a row that no longer holds the tokens. Reported, not
-// repaired — see CostCorrection.StrandedUSD.
-func TestOnResult_CorrectionCarriesItsStrandedSurcharge(t *testing.T) {
+// subagent observed it as 5m. So the parent must give up the 1h figure and the
+// subagent gain the 5m one; debiting the parent at 5m (the pre-#1929 behaviour)
+// stranded the difference on a row that no longer held the tokens.
+func TestOnResult_CorrectionPricesEachSideAtItsOwnBasis(t *testing.T) {
 	t.Parallel()
 
 	const lateWrite = 1_000_000 // observed 5m
@@ -179,10 +182,10 @@ func TestOnResult_CorrectionCarriesItsStrandedSurcharge(t *testing.T) {
 		t.Fatalf("correction cache-write = %d, want %d", c.Counts.CacheWrite, lateWrite)
 	}
 	// opus-5: 5m $6.25/MTok, Unknown prices with 1h at $10/MTok.
-	if math.Abs(c.StrandedUSD-3.75) > 1e-9 {
-		t.Errorf("stranded = $%.6f, want $3.75 per MTok — the parent absorbed these "+
-			"writes in the Unknown class at the 1h rate while the correction removes "+
-			"them at the subagent's observed 5m rate (#1929)", c.StrandedUSD)
+	if math.Abs(c.TTLSurchargeUSD-3.75) > 1e-9 {
+		t.Errorf("surcharge = $%.6f, want $3.75 — the parent absorbed these writes in "+
+			"the Unknown class at the 1h rate ($10), so it gives up $3.75 more than "+
+			"the subagent's 5m credit (#1929)", c.TTLSurchargeUSD)
 	}
 	if math.Abs(c.CostUSD-6.25) > 1e-9 {
 		t.Errorf("correction cost = $%.6f, want $6.25 — it moves the tokens at the "+
@@ -190,11 +193,10 @@ func TestOnResult_CorrectionCarriesItsStrandedSurcharge(t *testing.T) {
 	}
 }
 
-// TestOnResult_NoSurchargeWhenTheSubagentWroteAt1h: the figure is priced BOTH
-// ways rather than derived by subtracting rate constants, so a subagent that
-// genuinely wrote at 1h strands nothing — the parent absorbed it at that same
-// rate. Without this, a hard-coded (1h − 5m) difference would invent a surcharge
-// on every 1h subagent.
+// TestOnResult_NoSurchargeWhenTheSubagentWroteAt1h: the surcharge counts only
+// 5m writes, so a subagent that genuinely wrote at 1h is debited and credited
+// the same — the parent absorbed it at that same rate. Without this, a hard-coded (1h − 5m) difference would
+// invent a surcharge on every 1h subagent and drop real money from the turn.
 func TestOnResult_NoSurchargeWhenTheSubagentWroteAt1h(t *testing.T) {
 	t.Parallel()
 
@@ -217,8 +219,131 @@ func TestOnResult_NoSurchargeWhenTheSubagentWroteAt1h(t *testing.T) {
 	if got == nil || got.Usage == nil || len(got.Usage.Corrections) != 1 {
 		t.Fatalf("want exactly one correction, got %v", got.Usage.Corrections)
 	}
-	if s := got.Usage.Corrections[0].StrandedUSD; math.Abs(s) > 1e-9 {
-		t.Errorf("stranded = $%.6f, want $0 — Unknown and 1h price identically, so a "+
-			"subagent that wrote at 1h leaves nothing behind", s)
+	if s := got.Usage.Corrections[0].TTLSurchargeUSD; s != 0 {
+		t.Errorf("surcharge = $%.6f, want exactly $0 — Unknown and 1h price identically, "+
+			"so a subagent that wrote at 1h was not over-charged", s)
+	}
+}
+
+// TestOnResult_CorrectedParentRowRePricesToItsOwnCost is #1929 D1, driven end
+// to end: OnResult prices the turn that absorbed a late subagent cache write,
+// the rows are written the way turn_delegated.go writes them, the next result
+// raises the correction, and ApplyCostCorrections moves it.
+//
+// The parent absorbed the late writes as an UNOBSERVED residue — Unknown class,
+// 1h rate. The subagent observed them as 5m. The #1854 identity says every row's
+// stored counts must re-price to its stored cost; after the correction the
+// parent holds none of those writes, so its cost must hold none of their price
+// either. Debiting the parent at the subagent's 5m basis left
+// W*(rate_1h - rate_5m) behind on a row with no tokens to justify it: $0.375 at
+// W=100,000 on opus-5 ($10 vs $6.25 per MTok). The rates differ, so there is no
+// W for which the old and new parent figures coincide.
+//
+// Not parallel: api.db is process-global in package log.
+func TestOnResult_CorrectedParentRowRePricesToItsOwnCost(t *testing.T) {
+	if err := log.InitAPIDB(filepath.Join(t.TempDir(), "api.db")); err != nil {
+		t.Fatalf("InitAPIDB: %v", err)
+	}
+	t.Cleanup(log.CloseAPIDB)
+
+	const (
+		model     = "claude-opus-5"
+		lateWrite = 100_000 // observed 5m by the subagent
+		spawn     = "sess@1"
+	)
+	b := &Backend{}
+	// Close a window so there is a lastResultAt for "late" to be measured against.
+	b.beginTurn(&delegator.TurnEvents{TurnID: "sess@0"})
+	cum := ModelUsage{InputTokens: 1, OutputTokens: 1, CostUSD: 0.01}
+	onResultWith(b, map[string]ModelUsage{model: cum})
+
+	b.beginTurn(&delegator.TurnEvents{TurnID: spawn})
+	t1Start := time.Now()
+	// On time, so the agent has the subagent row the correction credits (a
+	// late FIRST message is D2, not this).
+	b.noteSubagentTranscriptUsage("agent-x", model, "msg_on_time", time.Now(), true,
+		usage(0, 50, 0, 1000, 1000, 0))
+	// Billed inside T1, so T1's ModelUsage (cumulative) includes it; delivered
+	// only after T1's result.
+	billed := time.Now()
+	cum.InputTokens += 10
+	cum.OutputTokens += 100 + 50
+	cum.CacheCreationInputTokens += 1000 + lateWrite
+	r1 := onResultWith(b, map[string]ModelUsage{model: cum})
+	if r1 == nil || r1.Usage == nil || r1.Usage.CalculatedCostUSD == nil || r1.Usage.Turn == nil ||
+		len(r1.Usage.Subagents) != 1 {
+		t.Fatalf("T1 result lacks a priced parent and one subagent share: %+v", r1)
+	}
+	priceModel := r1.Usage.Subagents[0].Model
+
+	// The rows turn_delegated.go writes for T1.
+	log.API(log.APIEntry{
+		Timestamp: t1Start, Session: "sess", Model: priceModel, CallType: "delegated_turn",
+		TurnID: spawn, DurationMS: 60_000, Output: r1.Usage.Turn.Output,
+		Turn: r1.Usage.Turn, CalculatedCostUSD: r1.Usage.CalculatedCostUSD,
+	})
+	for _, sc := range r1.Usage.Subagents {
+		counts, cost := sc.Counts, sc.CostUSD
+		log.AccumulateSubagentRow(log.APIEntry{
+			Timestamp: t1Start, Session: "sess", Model: sc.Model, CallType: "subagent_turn",
+			TurnID: sc.TurnID, SubagentID: sc.AgentID, Output: counts.Output,
+			Turn: &counts, CalculatedCostUSD: &cost, DurationMS: 60_000,
+		})
+	}
+	before := *r1.Usage.CalculatedCostUSD + r1.Usage.Subagents[0].CostUSD
+
+	b.beginTurn(&delegator.TurnEvents{TurnID: "sess@2"})
+	b.noteSubagentTranscriptUsage("agent-x", model, "msg_late", billed, true,
+		usage(0, 0, 0, lateWrite, lateWrite, 0))
+	r2 := onResultWith(b, map[string]ModelUsage{model: cum})
+	if r2 == nil || r2.Usage == nil || len(r2.Usage.Corrections) != 1 {
+		t.Fatalf("want exactly one correction from the late write, got %+v", r2)
+	}
+	log.ApplyCostCorrections(r2.Usage.Corrections)
+
+	var parent, sub *log.APIEntry
+	for _, e := range log.ReadAPIDBLog() {
+		switch {
+		case e.CallType == "delegated_turn" && e.TurnID == spawn:
+			parent = &e
+		case e.CallType == "subagent_turn" && e.TurnID == spawn:
+			sub = &e
+		}
+	}
+	if parent == nil || sub == nil || parent.Turn == nil || sub.Turn == nil ||
+		parent.CalculatedCostUSD == nil || sub.CalculatedCostUSD == nil {
+		t.Fatalf("rows missing after correction: parent=%+v sub=%+v", parent, sub)
+	}
+	if parent.Turn.CacheWrite != 0 {
+		t.Fatalf("parent cache-write = %d, want 0 — the correction must move every late write",
+			parent.Turn.CacheWrite)
+	}
+	now := time.Now()
+	p := parent.Turn
+	wantParent := modelinfo.CostAsOfSplit(priceModel, now, p.Input, p.Output, p.CacheRead,
+		modelinfo.CacheWrites{})
+	if d := *parent.CalculatedCostUSD - wantParent; math.Abs(d) > 1e-9 {
+		t.Errorf("parent row = $%.6f, but its stored counts re-price to $%.6f: $%.6f of "+
+			"cache-write surcharge stranded on a row that no longer holds the writes (#1929 D1, #1854)",
+			*parent.CalculatedCostUSD, wantParent, d)
+	}
+	s := sub.Turn
+	wantSub := modelinfo.CostAsOfSplit(priceModel, now, s.Input, s.Output, s.CacheRead,
+		modelinfo.CacheWrites{Ephemeral5m: s.CacheWrite})
+	if d := *sub.CalculatedCostUSD - wantSub; math.Abs(d) > 1e-9 {
+		t.Errorf("subagent row = $%.6f, want $%.6f — every write it holds was observed 5m",
+			*sub.CalculatedCostUSD, wantSub)
+	}
+	// The turn total FALLS by exactly the over-charge, priced both ways rather
+	// than from rate constants: those were 5m writes billed at 1h.
+	surcharge := modelinfo.CostAsOfSplit(priceModel, now, 0, 0, 0, modelinfo.CacheWrites{Unknown: lateWrite}) -
+		modelinfo.CostAsOfSplit(priceModel, now, 0, 0, 0, modelinfo.CacheWrites{Ephemeral5m: lateWrite})
+	if surcharge <= 0 {
+		t.Fatalf("surcharge = $%.6f — the fixture needs a model whose 1h and 5m rates differ", surcharge)
+	}
+	after := *parent.CalculatedCostUSD + *sub.CalculatedCostUSD
+	if d := (before - after) - surcharge; math.Abs(d) > 1e-9 {
+		t.Errorf("turn total fell by $%.6f, want $%.6f (the 1h-vs-5m surcharge on %d late writes)",
+			before-after, surcharge, lateWrite)
 	}
 }

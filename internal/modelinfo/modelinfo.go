@@ -149,11 +149,25 @@ type Model struct {
 // Falls back to the 5m rate when the registry carries no 1h figure (only 26 of
 // 477 rows do) rather than inventing one from the 2x-input rule, which holds
 // for Anthropic but is not a general truth.
+//
+// Also falls back when the 1h figure is not ABOVE the 5m one. A longer-lived
+// cache write never costs less, so such a row is a data error; every row in
+// models.jsonl has 1h >= 5m today, so this changes no price. What it buys is
+// that ttlPremium can never be negative (#1929).
 func (m Model) cacheWriteRate() float64 {
-	if m.CacheWrite1hPer1M > 0 {
+	if m.CacheWrite1hPer1M > m.CacheWritePer1M {
 		return m.CacheWrite1hPer1M
 	}
 	return m.CacheWritePer1M
+}
+
+// ttlPremium is what one 5m cache-write token costs extra when it is priced at
+// cacheWriteRate instead — as Unknown-class writes are. Non-negative by
+// construction, not by comparison: cacheWriteRate returns either a rate
+// strictly above CacheWritePer1M (so the IEEE difference is positive) or
+// CacheWritePer1M itself (so it is exactly zero).
+func (m Model) ttlPremium() float64 {
+	return m.cacheWriteRate() - m.CacheWritePer1M
 }
 
 // registry maps bare model IDs to provider→Model maps. The "" provider key is
@@ -1277,6 +1291,20 @@ func CostAsOfSplit(model string, at time.Time, input, output, cacheRead int, w C
 		float64(cacheRead)/mtok*m.CacheReadPer1M +
 		float64(w.Ephemeral5m)/mtok*m.CacheWritePer1M +
 		float64(w.Ephemeral1h+w.Unknown)/mtok*m.cacheWriteRate()
+}
+
+// TTLSurchargeAsOf is what w cost MORE when priced as Unknown than at its own
+// observed split: only its 5m writes differ, each by ttlPremium. It is the
+// over-charge on subagent cache writes that a parent absorbed as an unobserved
+// residue (#1929). Built from a token count and a non-negative premium, so it
+// is never negative; zero when w holds no 5m writes or the model has no 1h
+// premium.
+func TTLSurchargeAsOf(model string, at time.Time, w CacheWrites) float64 {
+	m, ok := rateRowAsOf(model, at)
+	if !ok {
+		return 0
+	}
+	return float64(w.Ephemeral5m) / 1_000_000.0 * m.ttlPremium()
 }
 
 // WebSearchCostAsOf prices n server-side web searches for model at time at,

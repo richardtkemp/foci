@@ -137,25 +137,29 @@ type CostCorrection struct {
 	AgentID string `json:"agent_id"`
 	Model   string `json:"model"`
 
-	Counts  TokenCounts `json:"counts"`
-	CostUSD float64     `json:"cost_usd"`
+	Counts TokenCounts `json:"counts"`
 
-	// StrandedUSD is the cache-write SURCHARGE this correction leaves behind on
-	// the parent row, and it is reported rather than repaired (#1929).
+	// CostUSD is what the SUBAGENT row gains: Counts priced at the subagent's
+	// own observed TTL split.
+	CostUSD float64 `json:"cost_usd"`
+
+	// TTLSurchargeUSD is what the PARENT was charged for these Counts ON TOP OF
+	// CostUSD, so the parent gives up CostUSD + TTLSurchargeUSD (#1929).
 	//
 	// The parent absorbed these tokens as an unobserved residue, which splitFor
 	// puts in the Unknown class and Unknown prices at the 1h rate ($10/MTok on
-	// opus-5). The correction removes them at the subagent's OWN observed split,
-	// which is 5m ($6.25). So $3.75 per million stays on a row that no longer has
-	// the tokens, the #1854 re-price identity breaks for that row, and an
-	// over-charge the divergence check flagged at pricing time is never repaired.
+	// opus-5); the subagent observed them as 5m ($6.25). Debiting the parent at
+	// the subagent's basis alone left $3.75 per million on a row that no longer
+	// held the tokens, breaking the #1854 re-price identity there. With the
+	// surcharge debited too, the turn total legitimately FALLS by it: those
+	// really were 5m tokens billed at 1h, the over-charge the divergence check
+	// flagged at pricing time. Tokens are conserved; dollars fall.
 	//
-	// It is NOT a rounding artefact: those really were 5m tokens billed at the 1h
-	// rate. Repairing it properly means debiting the parent at the basis it was
-	// charged and crediting the subagent at its own — two figures, and a turn
-	// total that legitimately FALLS. That trades dollar-conservation for
-	// token-conservation, which is the invariant this whole arc leans on, so it
-	// is not a change to make before the size is known. This field is what makes
-	// it knowable: #1920 reads it out of the log after deploy.
-	StrandedUSD float64 `json:"stranded_usd,omitempty"`
+	// Built by modelinfo.TTLSurchargeAsOf from the 5m write count and a rate
+	// premium that cannot be negative, so the debit can never be smaller than
+	// the credit — no guard is needed for that. Zero (the unset value) is
+	// always safe: it debits the parent at the subagent's basis, the pre-#1929
+	// behaviour, and zero is also the right answer for a subagent that wrote at
+	// 1h.
+	TTLSurchargeUSD float64 `json:"ttl_surcharge_usd,omitempty"`
 }

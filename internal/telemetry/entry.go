@@ -178,7 +178,7 @@ func recordCorrection(c modelinfo.CostCorrection, parentTurn string) {
 		attribute.String(attrObsMetaPrefix+"subagent_tool_use_id", c.AgentID),
 		attribute.String(attrObsMetaPrefix+"model_raw", c.Model),
 		attribute.Float64(attrObsMetaPrefix+"moved_usd", c.CostUSD),
-		attribute.Float64(attrObsMetaPrefix+"stranded_usd", c.StrandedUSD),
+		attribute.Float64(attrObsMetaPrefix+"ttl_surcharge_usd", c.TTLSurchargeUSD),
 		attribute.Int(attrObsMetaPrefix+"moved_input", c.Counts.Input),
 		attribute.Int(attrObsMetaPrefix+"moved_output", c.Counts.Output),
 		attribute.Int(attrObsMetaPrefix+"moved_cache_read", c.Counts.CacheRead),

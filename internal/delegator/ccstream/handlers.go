@@ -627,9 +627,11 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 			subPriced += cost
 		}
 
-		// Corrections are priced at the SAME rates as the share they are moving,
-		// because they ARE that share — spend that reached foci after the row
-		// which should have carried it was written (#1918).
+		// The subagent's side is priced at the SAME rates as the share it is
+		// moving, because it IS that share — spend that reached foci after the
+		// row which should have carried it was written (#1918). The parent's side
+		// is priced at the basis the parent was charged, which differs for
+		// cache writes (#1929).
 		cycleCorr := make([]modelinfo.CostCorrection, 0, len(corrections))
 		for ck, u := range corrections {
 			c := modelinfo.TokenCounts{
@@ -648,20 +650,14 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 					prefixedModel(ck.Model), now,
 					c.Input, c.Output, c.CacheRead, splitFor(u.Write, c.CacheWrite),
 				),
-				// What the parent was charged for these same cache writes, minus
-				// what the correction takes back. The parent absorbed them as an
-				// unobserved residue, which splitFor classes Unknown and prices at
-				// the 1h rate; the correction removes them at the subagent's own
-				// observed split. Priced both ways here rather than by subtracting
-				// rate constants, so it stays right if a model's rates change or a
-				// subagent genuinely writes at 1h (then it is zero). Reported, not
-				// repaired — see CostCorrection.StrandedUSD (#1929).
-				StrandedUSD: modelinfo.CostAsOfSplit(
-					prefixedModel(ck.Model), now, 0, 0, 0,
-					modelinfo.CacheWrites{Unknown: c.CacheWrite},
-				) - modelinfo.CostAsOfSplit(
-					prefixedModel(ck.Model), now, 0, 0, 0,
-					splitFor(u.Write, c.CacheWrite),
+				// What the parent was charged for these same tokens ABOVE
+				// CostUSD. It absorbed the cache writes as an unobserved residue,
+				// which splitFor classes Unknown (1h rate) — not the 5m the
+				// subagent observed. Debiting at the subagent's basis alone left
+				// the difference stranded on a row that no longer held the tokens
+				// (#1929). Zero when the subagent genuinely wrote at 1h.
+				TTLSurchargeUSD: modelinfo.TTLSurchargeAsOf(
+					prefixedModel(ck.Model), now, splitFor(u.Write, c.CacheWrite),
 				),
 			})
 		}
