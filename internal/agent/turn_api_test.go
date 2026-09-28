@@ -13,6 +13,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/modelinfo"
 	"foci/internal/nudge"
+	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
@@ -177,6 +178,39 @@ func TestComposePrompt_Basic(t *testing.T) {
 	text := provider.TextOf(ts.UserMsg.Content)
 	if !strings.Contains(text, "hello world") {
 		t.Errorf("UserMsg text missing user input; got %q", text)
+	}
+}
+
+// TestComposePrompt_UnknownMIMEAttachmentSkipped is the #2099 regression: an
+// attachment that is not a convertible document, a PDF, or an image type the
+// API accepts (jpeg/png/gif/webp) must not become an image block — the API
+// rejects the whole request. It is skipped; supported images still go through.
+func TestComposePrompt_UnknownMIMEAttachmentSkipped(t *testing.T) {
+	a, _ := testAgentForCompose(t)
+	tr := &APITransport{sharedTurnOps{agent: a}}
+
+	atts := []platform.Attachment{
+		{MimeType: "application/zip", Data: []byte("PK-fake-zip")},
+		{MimeType: "image/png", Data: []byte("fake-png")},
+		{MimeType: "video/mp4", Data: []byte("fake-mp4")},
+		{MimeType: "image/bmp", Data: []byte("fake-bmp")},
+	}
+	ts := NewTurnState(context.Background(), "bot/c100", []string{"look"}, atts)
+	ts.Meta = &TurnMetadata{}
+	ts.TurnModel = a.Model
+
+	if err := tr.ComposePrompt(ts); err != nil {
+		t.Fatalf("ComposePrompt: %v", err)
+	}
+
+	var media []string
+	for _, b := range ts.UserMsg.Content {
+		if b.Type == "image" || b.Type == "document" {
+			media = append(media, b.Type+":"+b.Source.MimeType)
+		}
+	}
+	if len(media) != 1 || media[0] != "image:image/png" {
+		t.Errorf("media blocks = %v, want [image:image/png]", media)
 	}
 }
 

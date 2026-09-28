@@ -12,6 +12,17 @@ import (
 	"golang.org/x/image/draw"
 )
 
+// isImageBlockMIME reports whether the API accepts mimeType as a base64 image
+// block. Any other type in an image block fails the whole request. Same
+// allowlist as ccstream's attachmentBlockType (#2095, #2099).
+func isImageBlockMIME(mimeType string) bool {
+	switch mimeType {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return true
+	}
+	return false
+}
+
 // maybeDownscaleImage checks whether the image exceeds maxPixels (width*height)
 // and, if so, resizes proportionally and re-encodes as JPEG. Non-image data or
 // images under the threshold are returned unchanged. A maxPixels of 0 disables
@@ -21,11 +32,7 @@ func maybeDownscaleImage(lg *log.ComponentLogger, sessionKey string, data []byte
 		return data, mediaType
 	}
 
-	// Only process known image types
-	switch mediaType {
-	case "image/jpeg", "image/png", "image/gif", "image/webp":
-		// OK
-	default:
+	if !isImageBlockMIME(mediaType) {
 		return data, mediaType
 	}
 

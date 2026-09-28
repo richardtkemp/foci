@@ -126,7 +126,10 @@ const maxPDFSize = 32 * 1024 * 1024
 //     conversion that yields no text is dropped
 //   - a PDF over maxPDFSize is dropped: composeTurnText's saved-to-disk
 //     annotation already points the model at the file
-//   - anything else is treated as an image and downscaled to maxImagePixels
+//   - a supported image (isImageBlockMIME) is downscaled to maxImagePixels
+//   - anything else is logged and dropped: the API rejects an image block of
+//     any other type (#2099), and the saved-to-disk annotation still points
+//     the model at the file
 func (a *Agent) prepareAttachments(sessionKey string, attachments []platform.Attachment) []preparedAttachment {
 	var out []preparedAttachment
 	for _, att := range attachments {
@@ -140,6 +143,8 @@ func (a *Agent) prepareAttachments(sessionKey string, attachments []platform.Att
 			if len(data) <= maxPDFSize {
 				out = append(out, preparedAttachment{MimeType: mediaType, Data: data})
 			}
+		case !isImageBlockMIME(mediaType):
+			a.logger().Infof("session=%s not inlining %s attachment (%d bytes): no API block type for it; the saved-file note still points the model at it", sessionKey, mediaType, len(data))
 		default:
 			data, mediaType = maybeDownscaleImage(a.taggedLog("image"), sessionKey, data, mediaType, a.maxImagePixels())
 			out = append(out, preparedAttachment{MimeType: mediaType, Data: data})
