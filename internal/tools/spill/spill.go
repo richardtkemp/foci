@@ -159,7 +159,9 @@ func (w *Writer) Total() int64 {
 }
 
 // String returns the head portion: the in-memory buffer if not spilled, or the
-// first threshold bytes read back from the temp file if spilled.
+// first threshold bytes read back from the temp file if spilled. It reopens the
+// file by name so it works after Close too (#2102: reading through the closed
+// fd returned "", silently emptying http_request's inline preview).
 func (w *Writer) String() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -168,8 +170,16 @@ func (w *Writer) String() string {
 		return w.head.String()
 	}
 
+	if w.file == nil { // removed by Cleanup
+		return ""
+	}
+	f, err := os.Open(w.file.Name())
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
 	buf := make([]byte, w.threshold)
-	n, err := w.file.ReadAt(buf, 0)
+	n, err := f.ReadAt(buf, 0)
 	if err != nil && err != io.EOF {
 		return ""
 	}

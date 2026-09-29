@@ -197,3 +197,26 @@ func TestMaxTotalNotHit(t *testing.T) {
 		t.Errorf("Total = %d, want 5", sw.Total())
 	}
 }
+
+func TestStringAfterClose(t *testing.T) {
+	// Close then String is the natural order for a caller that finishes
+	// writing before building its result (http_request does exactly this).
+	// String must still return the head read back from the spilled file, not
+	// "" from a ReadAt on the closed fd (#2102).
+	t.Parallel()
+	sw := New(10, 0, t.TempDir())
+	defer sw.Cleanup()
+
+	if _, err := sw.Write([]byte("0123456789abcdefghij")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if !sw.Spilled() {
+		t.Fatal("expected spill")
+	}
+	if err := sw.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if got := sw.String(); got != "0123456789" {
+		t.Errorf("String after Close = %q, want %q", got, "0123456789")
+	}
+}

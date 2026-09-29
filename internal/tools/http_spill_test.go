@@ -53,6 +53,10 @@ func TestHTTPRequestSpillsLargeBody(t *testing.T) {
 	if len(result.Text) > preview+512 {
 		t.Errorf("inline text = %d bytes, want roughly <= preview (%d)", len(result.Text), preview)
 	}
+	// ...and actually carries the head of the body, not an empty string (#2102).
+	if !strings.HasSuffix(result.Text, strings.Repeat("a", preview)) {
+		t.Errorf("inline text = %d bytes, want it to end with the %d-byte body preview", len(result.Text), preview)
+	}
 	// Full body is recoverable from disk, intact.
 	data, err := os.ReadFile(result.ResultFile)
 	if err != nil {
