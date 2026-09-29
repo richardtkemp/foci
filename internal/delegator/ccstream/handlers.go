@@ -1354,6 +1354,10 @@ func (b *Backend) OnRateLimit(ev *RateLimitEvent) {
 		return
 	}
 	info := ev.RateLimitInfo
+	// Log every event in full, before any filtering, so an early/late warning
+	// can be explained from the log: the server picks the warning threshold
+	// (surpassedThreshold), not foci (#2120).
+	b.logger().Debugf("rate_limit_event received: %s", describeRateLimitInfo(info))
 	if info.Status == "" || info.Status == "allowed" {
 		return
 	}

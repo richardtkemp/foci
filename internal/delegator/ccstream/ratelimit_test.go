@@ -1,6 +1,7 @@
 package ccstream
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -81,6 +82,35 @@ func TestOnRateLimit(t *testing.T) {
 }
 
 func ptrTo(f float64) *float64 { return &f }
+
+// TestOnRateLimit_LogsEveryEventInFull pins #2120: every rate_limit_event —
+// including "allowed" ones and ones the throttle skips — leaves one DEBUG line
+// carrying every rate_limit_info field, so an early/late warning (the server
+// decides the threshold, surpassedThreshold) can be explained from foci.log.
+func TestOnRateLimit_LogsEveryEventInFull(t *testing.T) {
+	buf := captureDebugLog(t)
+	b := &Backend{rlThrottle: NewRateLimitThrottle()}
+	resets := 1789791000.0
+	overageResets := 1789800000.0
+	using := false
+
+	b.OnRateLimit(&RateLimitEvent{RateLimitInfo: RateLimitInfo{Status: "allowed", RateLimitType: "five_hour", ResetsAt: &resets}})
+	b.OnRateLimit(&RateLimitEvent{RateLimitInfo: RateLimitInfo{
+		Status: "allowed_warning", RateLimitType: "five_hour", ResetsAt: &resets,
+		Utilization: ptrTo(0.87), SurpassedThreshold: ptrTo(0.75),
+		OverageStatus: "rejected", OverageResetsAt: &overageResets, IsUsingOverage: &using,
+	}})
+
+	out := buf.String()
+	for _, want := range []string{
+		"rate_limit_event received: status=allowed type=five_hour util=nil surpassedThreshold=nil resetsAt=1789791000 overageStatus= overageResetsAt=nil isUsingOverage=nil",
+		"rate_limit_event received: status=allowed_warning type=five_hour util=0.8700 surpassedThreshold=0.7500 resetsAt=1789791000 overageStatus=rejected overageResetsAt=1789800000 isUsingOverage=false",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log missing %q\n--- log ---\n%s", want, out)
+		}
+	}
+}
 
 func TestFireRateLimited(t *testing.T) {
 	b := &Backend{}

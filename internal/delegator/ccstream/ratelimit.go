@@ -183,6 +183,30 @@ func humanUntil(now, reset time.Time) string {
 	}
 }
 
+// describeRateLimitInfo renders every rate_limit_info field for the DEBUG log,
+// "nil" for absent optional fields so absence is distinguishable from zero.
+func describeRateLimitInfo(info RateLimitInfo) string {
+	frac := func(f *float64) string {
+		if f == nil {
+			return "nil"
+		}
+		return fmt.Sprintf("%.4f", *f)
+	}
+	epoch := func(f *float64) string {
+		if f == nil {
+			return "nil"
+		}
+		return strconv.FormatInt(int64(*f), 10)
+	}
+	using := "nil"
+	if info.IsUsingOverage != nil {
+		using = strconv.FormatBool(*info.IsUsingOverage)
+	}
+	return fmt.Sprintf("status=%s type=%s util=%s surpassedThreshold=%s resetsAt=%s overageStatus=%s overageResetsAt=%s isUsingOverage=%s",
+		info.Status, info.RateLimitType, frac(info.Utilization), frac(info.SurpassedThreshold),
+		epoch(info.ResetsAt), info.OverageStatus, epoch(info.OverageResetsAt), using)
+}
+
 // FormatRateLimitNotice renders a CC structured rate_limit_event as a
 // human-facing notice for delivery to the agent's chat (not a log line). It
 // names the affected window, current utilization, and when the limit resets.
