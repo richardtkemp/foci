@@ -7,10 +7,11 @@
 //
 // Flags:
 //
-//	--add-popular N      Add the N newest models not already in the registry (default: 20).
-//	--add-anthropic N    Also add the N newest Anthropic models not already present (default: 10).
-//	--add-openai N       Also add the N newest OpenAI models not already present (default: 10).
+//	--only IDS           Comma-separated bare model ids (e.g. glm-5.3,glm-5.2): sync ONLY
+//	                     these — add them if missing, append a row if their price changed —
+//	                     and report any not listed by the API. Default: every model.
 //	--repo PATH          Path to the foci repo root (default: auto-detect via git).
+//	--base REF           Branch/commit to fork the review worktree from (default: main).
 //	--dry-run            Report discrepancies without creating a worktree.
 //	--verbose            Print per-model details during the sync.
 //
@@ -132,7 +133,9 @@ func main() {
 	baseFlag := flag.String("base", "main", "branch/commit to fork the review worktree from (use the feature branch while models.jsonl is unmerged)")
 	dryRun := flag.Bool("dry-run", false, "report without creating a worktree")
 	verbose := flag.Bool("verbose", false, "print per-model details")
+	onlyFlag := flag.String("only", "", "comma-separated bare model ids to sync; everything else is left untouched (default: all)")
 	flag.Parse()
+	inScope := scopeFilter(*onlyFlag)
 
 	repo := *repoFlag
 	if repo == "" {
@@ -191,7 +194,7 @@ func main() {
 	// manual fix.
 	backfilledDevs := 0
 	for i := range entries {
-		if entries[i].Dev != "" {
+		if entries[i].Dev != "" || !inScope(entries[i].ID) {
 			continue
 		}
 		lookupID := strings.TrimSuffix(entries[i].ID, ":nitro")
@@ -247,7 +250,7 @@ func main() {
 	// is deterministic.
 	for i := range entries {
 		cur := entries[i]
-		if latest[cur.ID+"\x00"+cur.Provider] != i {
+		if latest[cur.ID+"\x00"+cur.Provider] != i || !inScope(cur.ID) {
 			continue
 		}
 
@@ -304,7 +307,7 @@ func main() {
 	var newEntries []jsonlEntry
 	for _, m := range apiModels {
 		bare := stripProvider(m.ID)
-		if bare == "" || existing[bare] {
+		if bare == "" || existing[bare] || !inScope(bare) {
 			continue
 		}
 		af, ok := apiFields(m)
@@ -337,6 +340,9 @@ func main() {
 
 	if len(unavailable) > 0 {
 		summary += "\n  unavailable: " + strings.Join(unavailable, ", ")
+	}
+	if missing := onlyNotInAPI(*onlyFlag, apiByBare, existing); len(missing) > 0 {
+		summary += "\n  --only ids absent from the API and the registry (not added): " + strings.Join(missing, ", ")
 	}
 	for _, pc := range priceChanges {
 		summary += fmt.Sprintf("\n  %s %s: $%.4f → $%.4f", pc.id, pc.field, pc.old, pc.new)
@@ -392,6 +398,46 @@ type priceChange struct {
 
 // --- Helpers ---
 
+// parseOnly splits the --only value into its bare ids; nil when unset.
+func parseOnly(s string) []string {
+	var ids []string
+	for _, id := range strings.Split(s, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// scopeFilter returns the predicate deciding whether a registry/API bare id is
+// touched by this run: everything when --only is unset, else only the listed
+// ids. A :nitro variant follows its base id, since it is verified against it.
+func scopeFilter(only string) func(id string) bool {
+	ids := parseOnly(only)
+	if len(ids) == 0 {
+		return func(string) bool { return true }
+	}
+	set := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		set[id] = true
+	}
+	return func(id string) bool { return set[id] || set[strings.TrimSuffix(id, ":nitro")] }
+}
+
+// onlyNotInAPI lists the --only ids the run could not act on: absent from the
+// API and not already in the registry (an existing-but-unavailable entry is
+// reported separately as unavailable). These need a price from elsewhere —
+// the sync never invents one.
+func onlyNotInAPI(only string, apiByBare map[string]orModel, existing map[string]bool) []string {
+	var out []string
+	for _, id := range parseOnly(only) {
+		if _, ok := apiByBare[strings.TrimSuffix(id, ":nitro")]; !ok && !existing[id] {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 func readJSONL(path string) ([]jsonlEntry, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -416,7 +462,10 @@ func writeJSONL(path string, entries []jsonlEntry) error {
 	// Group each model's history together and order it chronologically:
 	// by ID, then by `fetched` (empty baseline rows first, then oldest→newest).
 	// Stable diffs, and the latest row for a model is always its last line.
-	sort.Slice(entries, func(i, j int) bool {
+	// MUST be a stable sort: modelinfo breaks a same-`fetched` tie by file
+	// order (the later line wins), so reordering two same-date rows silently
+	// changes which one prices live traffic.
+	sort.SliceStable(entries, func(i, j int) bool {
 		if entries[i].ID != entries[j].ID {
 			return entries[i].ID < entries[j].ID
 		}
