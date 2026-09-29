@@ -65,7 +65,7 @@ func tmuxAvailable(t *testing.T) {
 func tmuxIsolatedSocket(t *testing.T) string {
 	t.Helper()
 	tmuxAvailable(t)
-	sock := filepath.Join(t.TempDir(), "tmux.sock")
+	sock := tmuxShortSocketPath(t)
 
 	// "start-server" on its own does NOT leave a server running: tmux's
 	// exit-empty option (default on) makes a server with no sessions exit
@@ -112,7 +112,22 @@ func tmuxIsolatedSocket(t *testing.T) string {
 func tmuxNoServerSocket(t *testing.T) string {
 	t.Helper()
 	tmuxAvailable(t)
-	return filepath.Join(t.TempDir(), "tmux.sock")
+	return tmuxShortSocketPath(t)
+}
+
+// tmuxShortSocketPath returns a per-test socket path whose length does not
+// depend on the test's name. A unix socket path must fit sockaddr_un's
+// 108-byte sun_path (NUL included), and t.TempDir() embeds the full test name
+// plus a random suffix: under `make test-one`'s TMPDIR a 56-char test name
+// reached exactly 108 and tmux failed with "File name too long" (#2101).
+func tmuxShortSocketPath(t *testing.T) string {
+	t.Helper()
+	dir, err := testtemp.Mkdir("tmx")
+	if err != nil {
+		t.Fatalf("socket dir: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return filepath.Join(dir, "tmux.sock")
 }
 
 // pollForReadMatch repeatedly issues a "read" operation against name via tool
@@ -202,3 +217,21 @@ func pollUntil(t *testing.T, timeout time.Duration, cond func() bool) bool {
 // own capture-pane calls are best-effort (silently skipped on error, not
 // required for the assertions these tests make). So these sites needed
 // neither a sleep nor a poll; see the removed sleeps' git history.
+
+// The name is deliberately long: t.TempDir() embeds it, so under the old
+// helpers this test's own socket path overflowed sun_path in any TMPDIR.
+func TestTmuxSocketPathFitsSunPathRegardlessOfTestNameLengthEvenWhenTheNameIsFarLongerThanAnyRealTest(t *testing.T) {
+	// Verifies that a tmux server can bind the socket the helpers hand out whatever the test's name, and that the no-server path fits the 108-byte sockaddr_un limit too.
+	t.Parallel()
+	const sunPathMax = 108 // Linux sizeof(sun_path), including the trailing NUL
+
+	// tmuxIsolatedSocket fails the test itself if tmux cannot bind the path.
+	sock := tmuxIsolatedSocket(t)
+	if _, err := runTmuxWithSocket(context.Background(), sock, "list-sessions"); err != nil {
+		t.Fatalf("list-sessions on %s: %v", sock, err)
+	}
+
+	if ns := tmuxNoServerSocket(t); len(ns)+1 > sunPathMax {
+		t.Errorf("tmuxNoServerSocket returned a %d-byte path (+NUL > %d): %s", len(ns), sunPathMax, ns)
+	}
+}
