@@ -219,18 +219,23 @@ func (e ModelInfoEntry) toModel() (modelinfo.Model, error) {
 	if e.CanCaching != nil {
 		m.Caching = *e.CanCaching
 	}
+	// Merge the figures the entry sets over the existing ones, then rebuild
+	// the class rates through modelinfo's one normalisation, so a derived
+	// class (the unknown-TTL write rate, reasoning) follows its source figure.
+	p := m.Prices()
 	if e.InputPer1M != nil {
-		m.InputPer1M = *e.InputPer1M
+		p.Input = *e.InputPer1M
 	}
 	if e.OutputPer1M != nil {
-		m.OutputPer1M = *e.OutputPer1M
+		p.Output = *e.OutputPer1M
 	}
 	if e.CacheReadPer1M != nil {
-		m.CacheReadPer1M = *e.CacheReadPer1M
+		p.CacheRead = *e.CacheReadPer1M
 	}
 	if e.CacheWritePer1M != nil {
-		m.CacheWritePer1M = *e.CacheWritePer1M
+		p.CacheWrite5m = *e.CacheWritePer1M
 	}
+	m.Rates = p.Rates()
 
 	return m, nil
 }

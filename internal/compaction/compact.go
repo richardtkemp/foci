@@ -410,9 +410,7 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 	}
 
 	duration := time.Since(start)
-	cost := modelinfo.Cost(model,
-		resp.Usage.InputTokens, resp.Usage.OutputTokens,
-		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
+	cost, _ := modelinfo.CostAsOf(model, time.Now(), resp.Usage.Tokens())
 	log.API(log.APIEntry{
 		Timestamp:  start,
 		Provider:   format,

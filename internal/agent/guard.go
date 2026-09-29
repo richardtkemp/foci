@@ -168,9 +168,7 @@ func (a *Agent) summariseToolResult(ctx context.Context, _ provider.Client, sess
 	}
 
 	duration := time.Since(start)
-	cost := modelinfo.Cost(model,
-		resp.Usage.InputTokens, resp.Usage.OutputTokens,
-		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
+	cost, _ := modelinfo.CostAsOf(model, time.Now(), resp.Usage.Tokens())
 
 	a.logger().Infof("session=%s auto-summary model=%s input=%d output=%d cost=$%.4f duration=%s",
 		sessionKey, model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, duration.Round(time.Millisecond))

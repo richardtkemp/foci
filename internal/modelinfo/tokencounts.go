@@ -36,12 +36,24 @@ func (t TokenCounts) Add(o TokenCounts) TokenCounts {
 	}
 }
 
-// CostAsOf prices t for model at time at — the same function every other
-// caller prices with, so a stored turn total re-priced through it lands on
+// Tokens maps t onto the class vocabulary. Its cache writes carry no TTL, so
+// they go to writeClass — the caller says what it knows about them.
+func (t TokenCounts) Tokens(writeClass Class) Tokens {
+	return Tokens{
+		ClassInput:     t.Input,
+		ClassOutput:    t.Output,
+		ClassCacheRead: t.CacheRead,
+		writeClass:     t.CacheWrite,
+		ClassWebSearch: t.WebSearches,
+	}
+}
+
+// CostAsOf prices t for model at time at, its cache writes as TTL-unknown
+// (ClassCacheWrite) — so a stored turn total re-priced through it lands on
 // the CalculatedCostUSD it was recorded beside.
 func (t TokenCounts) CostAsOf(model string, at time.Time) float64 {
-	search, _ := WebSearchCostAsOf(model, at, t.WebSearches)
-	return CostAsOf(model, at, t.Input, t.Output, t.CacheRead, t.CacheWrite) + search
+	usd, _ := CostAsOf(model, at, t.Tokens(ClassCacheWrite))
+	return usd
 }
 
 // SubClamped returns t minus o class by class, with any class that would go
@@ -155,9 +167,10 @@ type CostCorrection struct {
 	// really were 5m tokens billed at 1h, the over-charge the divergence check
 	// flagged at pricing time. Tokens are conserved; dollars fall.
 	//
-	// Built by modelinfo.TTLSurchargeAsOf from the 5m write count and a rate
-	// premium that cannot be negative, so the debit can never be smaller than
-	// the credit — no guard is needed for that. Zero (the unset value) is
+	// Built (ccstream's ttlSurcharge) as the 5m writes priced as TTL-unknown
+	// minus the same writes priced at 5m. The unknown-TTL rate is the higher
+	// write rate by construction (Prices.Rates), so the debit can never be
+	// smaller than the credit — no guard is needed for that. Zero (the unset value) is
 	// always safe: it debits the parent at the subagent's basis, the pre-#1929
 	// behaviour, and zero is also the right answer for a subagent that wrote at
 	// 1h.

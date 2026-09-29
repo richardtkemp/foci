@@ -47,6 +47,31 @@ type cacheWriteSplit struct {
 	Unknown     int
 }
 
+// price prices a call's (or share's) input, output and cache reads plus these
+// cache writes, each TTL class at its own rate — Unknown as TTL-unreported,
+// which prices at the higher write rate.
+func (s cacheWriteSplit) price(model string, at time.Time, input, output, cacheRead int) float64 {
+	usd, _ := modelinfo.CostAsOf(model, at, modelinfo.Tokens{
+		modelinfo.ClassInput:        input,
+		modelinfo.ClassOutput:       output,
+		modelinfo.ClassCacheRead:    cacheRead,
+		modelinfo.ClassCacheWrite5m: s.Ephemeral5m,
+		modelinfo.ClassCacheWrite1h: s.Ephemeral1h,
+		modelinfo.ClassCacheWrite:   s.Unknown,
+	})
+	return usd
+}
+
+// ttlSurcharge is what s cost MORE when priced as TTL-unknown than at its own
+// observed split: only its 5m writes differ. It is the over-charge on subagent
+// cache writes that a parent absorbed as an unobserved residue (#1929). Never
+// negative: the unknown-TTL rate is the higher write rate by construction.
+func (s cacheWriteSplit) ttlSurcharge(model string, at time.Time) float64 {
+	asUnknown, _ := modelinfo.CostAsOf(model, at, modelinfo.Tokens{modelinfo.ClassCacheWrite: s.Ephemeral5m})
+	as5m, _ := modelinfo.CostAsOf(model, at, modelinfo.Tokens{modelinfo.ClassCacheWrite5m: s.Ephemeral5m})
+	return asUnknown - as5m
+}
+
 // total is every cache-write token seen, whatever its TTL.
 func (s cacheWriteSplit) total() int {
 	return s.Ephemeral5m + s.Ephemeral1h + s.Unknown
@@ -543,15 +568,11 @@ func (a *usageAccumulator) writeSplit(sub bool) cacheWriteSplit {
 //
 // `total` always wins: the returned classes sum to it exactly, so pricing still
 // reconciles against ModelUsage whatever the coverage.
-func splitFor(observed cacheWriteSplit, total int) modelinfo.CacheWrites {
+func splitFor(observed cacheWriteSplit, total int) cacheWriteSplit {
 	if total <= 0 {
-		return modelinfo.CacheWrites{}
+		return cacheWriteSplit{}
 	}
-	w := modelinfo.CacheWrites{
-		Ephemeral5m: observed.Ephemeral5m,
-		Ephemeral1h: observed.Ephemeral1h,
-		Unknown:     observed.Unknown,
-	}
+	w := observed
 	// Never allocate more than the authoritative total. An accumulator reading
 	// HIGH means a message was counted that ModelUsage does not include; drop
 	// from the cheaper class first so the residue cannot under-charge.

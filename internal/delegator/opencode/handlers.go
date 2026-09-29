@@ -417,9 +417,12 @@ func (b *Backend) onMessageUpdated(msg Message) {
 	// backends is what makes the divergence warning mean one thing.
 	if msg.Tokens != nil {
 		provided := msg.Cost
-		calculated := modelinfo.CostAsOf(msg.ModelID, timeutil.Now(),
-			msg.Tokens.Input, msg.Tokens.Output,
-			msg.Tokens.Cache.Read, msg.Tokens.Cache.Write)
+		calculated, _ := modelinfo.CostAsOf(msg.ModelID, timeutil.Now(), modelinfo.Tokens{
+			modelinfo.ClassInput:      msg.Tokens.Input,
+			modelinfo.ClassOutput:     msg.Tokens.Output,
+			modelinfo.ClassCacheRead:  msg.Tokens.Cache.Read,
+			modelinfo.ClassCacheWrite: msg.Tokens.Cache.Write,
+		})
 		b.mu.Lock()
 		b.lastUsage = &TokenUsage{
 			InputTokens:              msg.Tokens.Input,

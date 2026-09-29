@@ -71,17 +71,18 @@ type costBreakdown struct {
 // exactly the moment it is being trusted.
 func (b costBreakdown) String() string {
 	now := time.Now()
-	price := func(in, out, cr, cw int) float64 {
-		return modelinfo.CostAsOf(b.model, now, in, out, cr, cw)
+	price := func(class modelinfo.Class, n int) float64 {
+		usd, _ := modelinfo.CostAsOf(b.model, now, modelinfo.Tokens{class: n})
+		return usd
 	}
 	c := b.counts
 	return fmt.Sprintf(
 		"ask_cycles=%d msgs=%d in=%d ($%.6f) out=%d ($%.6f) cache_read=%d ($%.6f) cache_write=%d ($%.6f)",
 		b.cycles, b.msgs,
-		c.Input, price(c.Input, 0, 0, 0),
-		c.Output, price(0, c.Output, 0, 0),
-		c.CacheRead, price(0, 0, c.CacheRead, 0),
-		c.CacheWrite, price(0, 0, 0, c.CacheWrite),
+		c.Input, price(modelinfo.ClassInput, c.Input),
+		c.Output, price(modelinfo.ClassOutput, c.Output),
+		c.CacheRead, price(modelinfo.ClassCacheRead, c.CacheRead),
+		c.CacheWrite, price(modelinfo.ClassCacheWrite, c.CacheWrite),
 	) + b.webSearchSuffix(now) + b.spanSuffix() + b.writeSplitSuffix() + b.subagentSuffix()
 }
 
@@ -95,7 +96,7 @@ func (b costBreakdown) webSearchSuffix(now time.Time) string {
 	if n == 0 {
 		return ""
 	}
-	cost, _ := modelinfo.WebSearchCostAsOf(b.model, now, n)
+	cost, _ := modelinfo.CostAsOf(b.model, now, modelinfo.Tokens{modelinfo.ClassWebSearch: n})
 	return fmt.Sprintf(" web_search=%d ($%.6f)", n, cost)
 }
 

@@ -2,6 +2,7 @@ package config
 
 import (
 	"testing"
+	"time"
 
 	"foci/internal/modelinfo"
 )
@@ -29,8 +30,8 @@ func TestModelInfoEntryToModel_NewModel(t *testing.T) {
 	if m.ContextWindow != ctx {
 		t.Errorf("ContextWindow = %d, want %d", m.ContextWindow, ctx)
 	}
-	if m.InputPer1M != in {
-		t.Errorf("InputPer1M = %v, want %v", m.InputPer1M, in)
+	if m.Rates[modelinfo.ClassInput] != in {
+		t.Errorf("InputPer1M = %v, want %v", m.Rates[modelinfo.ClassInput], in)
 	}
 	if !m.Effort {
 		t.Error("Effort should be true")
@@ -42,7 +43,7 @@ func TestModelInfoEntryToModel_NewModel(t *testing.T) {
 	if m.Speed || m.Caching {
 		t.Error("Speed/Caching should default to false")
 	}
-	if m.CacheReadPer1M != 0 || m.CacheWritePer1M != 0 {
+	if m.Rates[modelinfo.ClassCacheRead] != 0 || m.Prices().CacheWrite5m != 0 {
 		t.Error("Cache pricing should default to 0.0")
 	}
 }
@@ -113,11 +114,11 @@ func TestModelInfoEntryToModel_PartialOverride(t *testing.T) {
 	}
 
 	// Overridden fields.
-	if m.InputPer1M != newIn {
-		t.Errorf("InputPer1M = %v, want %v", m.InputPer1M, newIn)
+	if m.Rates[modelinfo.ClassInput] != newIn {
+		t.Errorf("InputPer1M = %v, want %v", m.Rates[modelinfo.ClassInput], newIn)
 	}
-	if m.OutputPer1M != newOut {
-		t.Errorf("OutputPer1M = %v, want %v", m.OutputPer1M, newOut)
+	if m.Rates[modelinfo.ClassOutput] != newOut {
+		t.Errorf("OutputPer1M = %v, want %v", m.Rates[modelinfo.ClassOutput], newOut)
 	}
 
 	// Preserved fields from the built-in entry.
@@ -127,8 +128,8 @@ func TestModelInfoEntryToModel_PartialOverride(t *testing.T) {
 	if m.Caching != original.Caching {
 		t.Errorf("Caching = %v, want %v (should be preserved from built-in)", m.Caching, original.Caching)
 	}
-	if m.CacheReadPer1M != original.CacheReadPer1M {
-		t.Errorf("CacheReadPer1M = %v, want %v (should be preserved from built-in)", m.CacheReadPer1M, original.CacheReadPer1M)
+	if m.Rates[modelinfo.ClassCacheRead] != original.Rates[modelinfo.ClassCacheRead] {
+		t.Errorf("CacheReadPer1M = %v, want %v (should be preserved from built-in)", m.Rates[modelinfo.ClassCacheRead], original.Rates[modelinfo.ClassCacheRead])
 	}
 }
 
@@ -219,7 +220,7 @@ func TestApplyModelInfo_ProviderPrefixedID(t *testing.T) {
 	}
 
 	// Cost via the provider-prefixed model string should hit.
-	cost := modelinfo.Cost("zai-coding-plan/syn-solo-model", 1_000_000, 500_000, 0, 0)
+	cost := modelinfo.TokenCounts{Input: 1_000_000, Output: 500_000, CacheRead: 0, CacheWrite: 0}.CostAsOf("zai-coding-plan/syn-solo-model", time.Now())
 	if cost != 0 {
 		t.Errorf("Cost = %v, want 0 (all prices zero)", cost)
 	}
@@ -245,8 +246,8 @@ func TestModelInfoEntryToModel_ProviderPrefixedNewModel(t *testing.T) {
 	if m.ContextWindow != ctx {
 		t.Errorf("ContextWindow = %d, want %d", m.ContextWindow, ctx)
 	}
-	if m.InputPer1M != in {
-		t.Errorf("InputPer1M = %v, want %v", m.InputPer1M, in)
+	if m.Rates[modelinfo.ClassInput] != in {
+		t.Errorf("InputPer1M = %v, want %v", m.Rates[modelinfo.ClassInput], in)
 	}
 }
 
@@ -265,7 +266,8 @@ func TestApplyModelInfo_SoleProviderOverridePropagates(t *testing.T) {
 
 	// Canned stand-in for a JSONL built-in: a single openrouter-tagged entry.
 	modelinfo.Register("openrouter", "canned-sole", modelinfo.Model{
-		ContextWindow: 100_000, InputPer1M: 1.00, OutputPer1M: 2.00,
+		ContextWindow: 100_000,
+		Rates:         modelinfo.Prices{Input: 1.00, Output: 2.00}.Rates(),
 	})
 
 	// Config override for the SAME provider.
@@ -275,19 +277,19 @@ func TestApplyModelInfo_SoleProviderOverridePropagates(t *testing.T) {
 	})
 
 	// Matching provider (rung 1) sees the override.
-	if m, ok := modelinfo.Lookup("openrouter", "canned-sole"); !ok || m.InputPer1M != override {
-		t.Errorf("openrouter InputPer1M = %v ok=%v, want %v", m.InputPer1M, ok, override)
+	if m, ok := modelinfo.Lookup("openrouter", "canned-sole"); !ok || m.Rates[modelinfo.ClassInput] != override {
+		t.Errorf("openrouter InputPer1M = %v ok=%v, want %v", m.Rates[modelinfo.ClassInput], ok, override)
 	}
 	// Bare (rung 3, non-matching) surfaces the sole entry — now overridden.
-	if m, ok := modelinfo.Lookup("", "canned-sole"); !ok || m.InputPer1M != override {
-		t.Errorf("bare InputPer1M = %v ok=%v, want %v (sole-provider override propagates)", m.InputPer1M, ok, override)
+	if m, ok := modelinfo.Lookup("", "canned-sole"); !ok || m.Rates[modelinfo.ClassInput] != override {
+		t.Errorf("bare InputPer1M = %v ok=%v, want %v (sole-provider override propagates)", m.Rates[modelinfo.ClassInput], ok, override)
 	}
 	// Other provider (rung 3, non-matching) likewise.
-	if m, ok := modelinfo.Lookup("google", "canned-sole"); !ok || m.InputPer1M != override {
-		t.Errorf("google InputPer1M = %v ok=%v, want %v (sole-provider override propagates)", m.InputPer1M, ok, override)
+	if m, ok := modelinfo.Lookup("google", "canned-sole"); !ok || m.Rates[modelinfo.ClassInput] != override {
+		t.Errorf("google InputPer1M = %v ok=%v, want %v (sole-provider override propagates)", m.Rates[modelinfo.ClassInput], ok, override)
 	}
 	// Cost via the bare model string reflects the override too.
-	if cost := modelinfo.Cost("canned-sole", 1_000_000, 0, 0, 0); cost != override {
+	if cost := (modelinfo.TokenCounts{Input: 1_000_000, Output: 0, CacheRead: 0, CacheWrite: 0}).CostAsOf("canned-sole", time.Now()); cost != override {
 		t.Errorf("bare Cost = %v, want %v", cost, override)
 	}
 }
@@ -309,18 +311,18 @@ func TestApplyModelInfo_BareOverrideAffectsAllLookups(t *testing.T) {
 	if !ok {
 		t.Fatal("providerless entry not found after override")
 	}
-	if m.InputPer1M != newIn {
-		t.Errorf("InputPer1M = %v, want %v", m.InputPer1M, newIn)
+	if m.Rates[modelinfo.ClassInput] != newIn {
+		t.Errorf("InputPer1M = %v, want %v", m.Rates[modelinfo.ClassInput], newIn)
 	}
 
 	// Cost with bare model string uses overridden pricing.
-	cost := modelinfo.Cost("claude-haiku-4-5", 1_000_000, 0, 0, 0)
+	cost := modelinfo.TokenCounts{Input: 1_000_000, Output: 0, CacheRead: 0, CacheWrite: 0}.CostAsOf("claude-haiku-4-5", time.Now())
 	if cost != newIn {
 		t.Errorf("Cost = %v, want %v", cost, newIn)
 	}
 
 	// Cost with any provider prefix also sees the override (via fallback to "").
-	costPrefixed := modelinfo.Cost("anthropic/claude-haiku-4-5", 1_000_000, 0, 0, 0)
+	costPrefixed := modelinfo.TokenCounts{Input: 1_000_000, Output: 0, CacheRead: 0, CacheWrite: 0}.CostAsOf("anthropic/claude-haiku-4-5", time.Now())
 	if costPrefixed != newIn {
 		t.Errorf("Cost with prefix = %v, want %v (fallback to overridden providerless)", costPrefixed, newIn)
 	}

@@ -14,16 +14,16 @@ import "testing"
 // through newestInFamilyLocked, an unregistered sonnet variant prices off
 // claude-sonnet-5, matching this test.
 func TestFamilyPricingUsesNewestInFamily(t *testing.T) {
-	want := Cost("claude-sonnet-5", 1_000_000, 1_000_000, 0, 0)
-	stale := Cost("claude-sonnet-4-5", 1_000_000, 1_000_000, 0, 0)
+	want := flatCost("claude-sonnet-5", 1_000_000, 1_000_000, 0, 0)
+	stale := flatCost("claude-sonnet-4-5", 1_000_000, 1_000_000, 0, 0)
 	if want == stale {
 		t.Fatalf("test fixture is not discriminating: claude-sonnet-5 and "+
 			"claude-sonnet-4-5 price the same (%v) — pick different models.jsonl rows", want)
 	}
 
-	got := Cost("claude-sonnet-9-9", 1_000_000, 1_000_000, 0, 0) // no exact row → family fallback
+	got := flatCost("claude-sonnet-9-9", 1_000_000, 1_000_000, 0, 0) // no exact row → family fallback
 	if got != want {
-		t.Errorf("Cost(unregistered sonnet variant) = %v, want %v (newest-in-family, "+
+		t.Errorf("flatCost(unregistered sonnet variant) = %v, want %v (newest-in-family, "+
 			"claude-sonnet-5's rate) — got the stale claude-sonnet-4-5 rate %v instead", got, want, stale)
 	}
 }

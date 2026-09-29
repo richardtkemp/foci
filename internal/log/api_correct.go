@@ -40,7 +40,7 @@ import (
 // charged) and the subagent gains CostUSD (its own observed basis). The
 // surcharge is the cache-write over-charge the parent took when it absorbed the
 // writes as an Unknown/1h residue, so the turn total drops by exactly that. It
-// is non-negative by construction (modelinfo.TTLSurchargeAsOf), so a
+// is non-negative by construction (ccstream ttlSurcharge), so a
 // correction can remove an over-charge but never add money.
 func ApplyCostCorrections(cs []modelinfo.CostCorrection) {
 	if apiLog == nil || apiLog.db == nil || len(cs) == 0 {

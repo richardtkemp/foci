@@ -7,6 +7,8 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -23,8 +25,9 @@ const syntheticModel = "<synthetic>"
 func IsSynthetic(model string) bool { return model == syntheticModel }
 
 // UnpricedModelHook, if set, is invoked once per distinct model that resolves
-// to a fallback rate (no exact registry hit and no family match). Wired at
-// startup to a log warning. A hook rather than a direct log call because
+// to no rate group (no history row and no family match), so its calls are
+// unpriced. There is no guessed fallback rate any more (#2111 R9): an unknown
+// model's cost is unknown, and says so. Wired at startup to a log warning. A hook rather than a direct log call because
 // modelinfo is a leaf package and internal/log imports it.
 var UnpricedModelHook func(model string)
 
@@ -47,7 +50,7 @@ func noteUnpriced(bare string) {
 }
 
 // FamilyPricedModelHook, if set, is invoked once per distinct bare id that
-// resolves to pricing via familyPricing/familyPricingAsOf — i.e. no exact
+// resolves to pricing via familyCanonicalLeaf — i.e. no exact
 // registry row for this version, but it inherited its family canonical's
 // rates. This is silent-by-design the rest of the time (a new version
 // usually DOES match its family), but a version whose true rates diverge from
@@ -102,72 +105,30 @@ func noteAmbiguous(bare string) {
 
 // Model holds the static attributes of a model.
 type Model struct {
-	Provider        string  // provider qualifier / API host (e.g. "openrouter", "zai-coding-plan")
-	Dev             string  // model author/vendor slug (e.g. "moonshotai", "anthropic"); the segment OpenRouter puts before the model id. Distinct from Provider (the API host).
-	ContextWindow   int     // tokens
-	Effort          bool    // supports output_config.effort
-	Thinking        bool    // supports thinking (adaptive/enabled)
-	Speed           bool    // supports fast mode (speed: "fast")
-	Caching         bool    // supports explicit, TTL-bounded prompt caching that keepalive pings warm
-	InputPer1M      float64 // cost per 1M input tokens
-	OutputPer1M     float64 // cost per 1M output tokens
-	CacheReadPer1M  float64 // cost per 1M cache-read tokens
-	CacheWritePer1M float64 // cost per 1M cache-write tokens (5-minute TTL)
-
-	// CacheWrite1hPer1M is the 1-HOUR cache-write rate (Anthropic bills it at
-	// 2x base input). PREFERRED over CacheWritePer1M wherever it is set — see
-	// cacheWriteRate. Zero means the registry has no 1h figure for this model,
-	// not that 1h caching is free.
-	CacheWrite1hPer1M float64
-
-	// WebSearchPerCall is the price of ONE server-side web search, in USD.
-	// Anthropic bills search per CALL ($10 per 1,000), not per token, so no
-	// token count can reveal it (#1913). Zero means the registry carries no
-	// figure for this model — not that search is free.
-	WebSearchPerCall float64
+	Provider      string // provider qualifier / API host (e.g. "openrouter", "zai-coding-plan")
+	Dev           string // model author/vendor slug (e.g. "moonshotai", "anthropic"); the segment OpenRouter puts before the model id. Distinct from Provider (the API host).
+	ContextWindow int    // tokens
+	Effort        bool   // supports output_config.effort
+	Thinking      bool   // supports thinking (adaptive/enabled)
+	Speed         bool   // supports fast mode (speed: "fast")
+	Caching       bool   // supports explicit, TTL-bounded prompt caching that keepalive pings warm
+	// Rates is the model's price per token class (#2111 R1): USD per million
+	// for an mtok class, per request for an each class (see ClassUnit). A class
+	// absent here has no published rate, so a call billed in it is unpriced —
+	// never priced at a silent $0. Built by Prices.Rates, the one place the
+	// sources' named figures are normalised into classes.
+	Rates map[Class]float64
 }
 
-// cacheWriteRate returns the rate to price cache-WRITE tokens at.
-//
-// It prefers the 1-hour rate, reversing the earlier standing ruling that the
-// TTL split was immaterial and a single rate would do. Measured 2026-08-06 on
-// helen's live session: 273,094 cache-write tokens, of which ephemeral_1h was
-// 273,094 and ephemeral_5m was ZERO. Claude Code caches at 1h exclusively, so
-// "assume the 5m rate" was wrong for 100% of writes and understated the bill
-// by $3.75/M on opus-5 — $1.02 on that session alone, 11.4% of it, and 16.6%
-// on the single turn that triggered the divergence warning.
-//
-// We do not model both rates: nothing in the delegated stream's ModelUsage
-// carries the split (it reports a single cacheCreationInputTokens), so there is
-// no per-token TTL to branch on even if we wanted one. The 1h rate is simply
-// the truthful single rate for the traffic foci actually has.
-//
-// Safe for the API path too, which requests the 5m default (cache_ttl unset):
-// it logged ZERO cache-write tokens in the month to 2026-08-06, so there is
-// nothing there to misprice. If that changes, this is the function to split.
-//
-// Falls back to the 5m rate when the registry carries no 1h figure (only 26 of
-// 477 rows do) rather than inventing one from the 2x-input rule, which holds
-// for Anthropic but is not a general truth.
-//
-// Also falls back when the 1h figure is not ABOVE the 5m one. A longer-lived
-// cache write never costs less, so such a row is a data error; every row in
-// models.jsonl has 1h >= 5m today, so this changes no price. What it buys is
-// that ttlPremium can never be negative (#1929).
-func (m Model) cacheWriteRate() float64 {
-	if m.CacheWrite1hPer1M > m.CacheWritePer1M {
-		return m.CacheWrite1hPer1M
-	}
-	return m.CacheWritePer1M
-}
-
-// ttlPremium is what one 5m cache-write token costs extra when it is priced at
-// cacheWriteRate instead — as Unknown-class writes are. Non-negative by
-// construction, not by comparison: cacheWriteRate returns either a rate
-// strictly above CacheWritePer1M (so the IEEE difference is positive) or
-// CacheWritePer1M itself (so it is exactly zero).
-func (m Model) ttlPremium() float64 {
-	return m.cacheWriteRate() - m.CacheWritePer1M
+// equal reports whether two Models carry the same attributes and rates. Model
+// holds a map, so == no longer compiles; the punctuation-fold duplicate check
+// needs value equality.
+func (m Model) equal(o Model) bool {
+	return m.Provider == o.Provider && m.Dev == o.Dev &&
+		m.ContextWindow == o.ContextWindow &&
+		m.Effort == o.Effort && m.Thinking == o.Thinking &&
+		m.Speed == o.Speed && m.Caching == o.Caching &&
+		maps.Equal(m.Rates, o.Rates)
 }
 
 // registry maps bare model IDs to provider→Model maps. The "" provider key is
@@ -242,9 +203,10 @@ type jsonlEntry struct {
 	OutputPer1M     float64 `json:"output_per_1m,omitempty"`
 	CacheReadPer1M  float64 `json:"cache_read_per_1m,omitempty"`
 	CacheWritePer1M float64 `json:"cache_write_per_1m,omitempty"`
-	// Extended pricing + quality captured by sync-modelinfo. Of these, only
-	// cache_write_1h_per_1m and web_search_per_call (#1913) are priced at
-	// runtime; the rest are parsed so the parser documents the full schema.
+	// Extended pricing + quality captured by sync-modelinfo. Of these,
+	// cache_write_1h_per_1m, internal_reasoning_per_1m and web_search_per_call
+	// (#1913) are priced (see Prices.Rates); the rest are parsed so the parser
+	// documents the full schema.
 	CacheWrite1hPer1M      float64          `json:"cache_write_1h_per_1m,omitempty"`
 	InternalReasoningPer1M float64          `json:"internal_reasoning_per_1m,omitempty"`
 	WebSearchPerCall       float64          `json:"web_search_per_call,omitempty"`
@@ -293,7 +255,7 @@ type historyRow struct {
 // history maps bare model ID → provider → that (id,provider)'s rows in
 // ASCENDING fetched order (ties broken by original file/append order — see
 // parseModelsJSONL). Kept alongside `registry` (which only retains the LATEST
-// row) so LookupAsOf/CostAsOf can reconstruct the price that was actually in
+// row) so RatesAsOf/CostAsOf can reconstruct the price that was actually in
 // effect at an arbitrary past timestamp — e.g. re-deriving the live-estimated
 // cost of a session logged days ago after models.jsonl has since recorded a
 // newer price for that model (foci_todo #1407, point 4: price the call using
@@ -347,7 +309,7 @@ func init() {
 
 // parseModelsJSONL parses the append-only models.jsonl into BOTH the
 // latest-only `registry` (used by Lookup/Cost) and the full `history` per
-// (id, provider) (used by LookupAsOf/CostAsOf) — one pass, one source of
+// (id, provider) (used by ResolveRateModel/RatesAsOf/CostAsOf) — one pass, one source of
 // truth, rather than parsing the file twice. models.jsonl is a HISTORY: a
 // model may have several rows over time, each stamped with the `fetched` date
 // it was observed. Only the LATEST row per (id, provider) populates
@@ -379,19 +341,22 @@ func parseModelsJSONL(data []byte) (registry map[string]map[string]Model, histor
 		dev := strings.ToLower(e.Dev)
 		key := provKey(provider, dev)
 		m := Model{
-			Provider:          provider,
-			Dev:               dev,
-			ContextWindow:     e.ContextWindow,
-			Effort:            e.Effort != nil && *e.Effort,
-			Thinking:          e.Thinking != nil && *e.Thinking,
-			Speed:             e.Speed != nil && *e.Speed,
-			Caching:           e.Caching != nil && *e.Caching,
-			InputPer1M:        e.InputPer1M,
-			OutputPer1M:       e.OutputPer1M,
-			CacheReadPer1M:    e.CacheReadPer1M,
-			CacheWritePer1M:   e.CacheWritePer1M,
-			CacheWrite1hPer1M: e.CacheWrite1hPer1M,
-			WebSearchPerCall:  e.WebSearchPerCall,
+			Provider:      provider,
+			Dev:           dev,
+			ContextWindow: e.ContextWindow,
+			Effort:        e.Effort != nil && *e.Effort,
+			Thinking:      e.Thinking != nil && *e.Thinking,
+			Speed:         e.Speed != nil && *e.Speed,
+			Caching:       e.Caching != nil && *e.Caching,
+			Rates: Prices{
+				Input:             e.InputPer1M,
+				Output:            e.OutputPer1M,
+				CacheRead:         e.CacheReadPer1M,
+				CacheWrite5m:      e.CacheWritePer1M,
+				CacheWrite1h:      e.CacheWrite1hPer1M,
+				InternalReasoning: e.InternalReasoningPer1M,
+				WebSearch:         e.WebSearchPerCall,
+			}.Rates(),
 		}
 		fieldsKnown := modelFieldsKnown{
 			ContextWindow: e.ContextWindow != 0,
@@ -427,7 +392,7 @@ func parseModelsJSONL(data []byte) (registry map[string]map[string]Model, histor
 	// history is appended in FILE order above, which is normally also
 	// ascending-by-fetched (sync-modelinfo's writeJSONL sorts the file that
 	// way) — but nothing enforces that invariant on a hand-edited or
-	// hand-constructed models.jsonl, and historyLookupAsOf's scan assumes
+	// hand-constructed models.jsonl, and rowAsOf's scan assumes
 	// ascending order. Sort explicitly (stable, so same-date rows keep their
 	// file-order tie-break) rather than trust the input's order.
 	for _, byProvider := range history {
@@ -632,7 +597,7 @@ func punctFold(s string) string {
 // (return false) rather than guess, so a punctuation-folded lookup can never
 // produce a silently wrong price. A refusal here is not a dead end: the
 // caller (registryLookupSegs) returns ok=false and its own caller (Cost, …)
-// falls through to familyPricing exactly as it would for any other miss.
+// falls through to the family exactly as it would for any other miss.
 //
 // FIELD-LEVEL MERGE (#1969): before returning, the matched row's
 // capability/context fields are passed through fillUnknownFields, which
@@ -676,7 +641,7 @@ func punctuationPick(segs map[string]bool, bare string) (Model, bool) {
 		return Model{}, false
 	}
 	for _, m := range all[1:] {
-		if m != all[0] {
+		if !m.equal(all[0]) {
 			return Model{}, false // genuine collision, not a duplicate — refuse
 		}
 	}
@@ -850,7 +815,7 @@ func Normalize(model string) string {
 // ContextWindow returns the context window for a model.
 //
 // An unregistered anthropic family member (opus/sonnet/fable/haiku) is priced
-// off the newest plain member of that family, same as familyPricing — unlike
+// off the newest plain member of that family, same as familyCanonicalLeaf — unlike
 // Capabilities below, models.jsonl's OpenRouter-synced rows DO carry
 // context_window on every row inspected (foci_todo #1967), so following
 // "newest" doesn't land on a field-sparse row here. Falls back to a literal
@@ -911,7 +876,7 @@ func contextWindowFallback(bare string) int {
 // claude-opus → effort+thinking+speed, everything else → none.
 //
 // DELIBERATELY NOT routed through familyCanonicalPrice/newest-in-family, unlike
-// familyPricing and ContextWindow (foci_todo #1967) — this is the opposite
+// familyCanonicalLeaf and ContextWindow (foci_todo #1967) — this is the opposite
 // choice, on purpose. The newest rows in models.jsonl are OpenRouter-synced
 // and leave effort/thinking/speed UNSET (nil), so "follow newest" would land
 // on a field-sparse row and answer false/false/false for a model that plainly
@@ -919,7 +884,7 @@ func contextWindowFallback(bare string) int {
 // just fixed. Nothing else in the catalogue carries capability data at all, so
 // this hand-written family table is the ONLY authority for it and must stay a
 // literal. A later reader may be tempted to "tidy" this into consistency with
-// familyPricing/ContextWindow below — don't; that reintroduces the bug.
+// familyCanonicalLeaf/ContextWindow below — don't; that reintroduces the bug.
 func Capabilities(model string) (effort, thinking, speed bool) {
 	segs, bare := splitSegs(model)
 	registryMu.RLock()
@@ -953,7 +918,7 @@ func capabilitiesFallback(bare string) (effort, thinking, speed bool) {
 // automatic too. Falls back to the claude family so unregistered/dated claude
 // variants still resolve true.
 //
-// Unlike ContextWindow/familyPricing, this fallback carries no per-version
+// Unlike ContextWindow/familyCanonicalLeaf, this fallback carries no per-version
 // literal to go stale (foci_todo #1967) — it is already family-agnostic
 // ("any claude id" → true), so there was nothing here for newest-in-family to
 // fix. Checked, not assumed: models.jsonl's `caching` field IS populated on
@@ -981,81 +946,10 @@ func cachingFallback(bare string) bool {
 	return strings.Contains(bare, "claude")
 }
 
-// Cost returns the estimated cost in USD for an API request.
-// An exact registry hit wins; otherwise pricing is by model FAMILY (opus,
-// fable, sonnet, haiku, gemini) so a new version — opus-4-8, sonnet-4-6, … —
-// inherits its family's rates without needing a per-version registry entry.
-// Final fallbacks: OpenAI → $5/$15 approximation, everything else → haiku.
-func Cost(model string, input, output, cacheRead, cacheWrite int) float64 {
-	segs, bare := splitSegs(model)
-	// CC's synthetic sentinel is a zero-cost no-op / session-limit turn: there is
-	// nothing to price, and pricing it would spuriously trip the unpriced warning.
-	// Check the BARE key (not just the exact string) so a provider-prefixed
-	// sentinel — e.g. "openrouter/<synthetic>" from a non-ccstream caller — is
-	// caught by the same guard rather than slipping through to noteUnpriced.
-	if IsSynthetic(model) || IsSynthetic(bare) {
-		return 0
-	}
-	registryMu.RLock()
-	defer registryMu.RUnlock()
-	m, ok := registryLookupSegs(segs, bare)
-	if !ok {
-		if m, ok = familyPricing(bare); ok { // caller-holds-lock: Cost holds RLock
-			// noteFamilyPriced uses its own mutex (familyPricedMu), not registryMu.
-			noteFamilyPriced(bare)
-		}
-	}
-	if !ok {
-		// noteUnpriced uses its own mutex (unpricedMu), not registryMu.
-		noteUnpriced(bare)
-		switch {
-		case IsOpenAI(bare):
-			m = Model{InputPer1M: 5.00, OutputPer1M: 15.00}
-		default:
-			m, _ = registryLookup("claude-haiku-4-5")
-		}
-	}
-
-	mtok := 1_000_000.0
-	return float64(input)/mtok*m.InputPer1M +
-		float64(output)/mtok*m.OutputPer1M +
-		float64(cacheRead)/mtok*m.CacheReadPer1M +
-		float64(cacheWrite)/mtok*m.cacheWriteRate()
-}
-
-// familyPricing maps a bare model name to a canonical per-family price entry by
-// family keyword, so pricing tracks the family ("opus costs this much") rather
-// than an exact version string. The canonical entry is the NEWEST plain
-// (non-variant) member of the family currently in the registry — resolved via
-// newestInFamilyLocked, not a hand-picked literal, so it stops going stale
-// every time a new version ships (foci_todo #1967: a claude-opus-4-6 literal
-// fetched 2026-02-04 was still being used to price claude-opus-4-8 seven
-// months later, by luck rather than design). Caller must hold registryMu.
-//
-// gemini is the one exception, kept as a literal: its ids carry a VARIANT name
-// ("flash"/"pro"), not a trailing version number, so familyVersion's
-// all-numeric-after-the-family-token rule (see NewestInFamily) never matches
-// any gemini id and newestInFamilyLocked would always report ok=false.
-func familyPricing(bare string) (Model, bool) {
-	switch {
-	case strings.Contains(bare, "fable"), strings.Contains(bare, "mythos"):
-		return familyCanonicalPrice("fable")
-	case strings.Contains(bare, "opus"):
-		return familyCanonicalPrice("opus")
-	case strings.Contains(bare, "sonnet"):
-		return familyCanonicalPrice("sonnet")
-	case strings.Contains(bare, "haiku"):
-		return familyCanonicalPrice("haiku")
-	case strings.Contains(bare, "gemini"):
-		return registryLookup("gemini-2.5-flash")
-	}
-	return Model{}, false
-}
-
 // familyCanonicalPrice resolves the newest plain member of the given
 // anthropic model family in the registry and returns its price row. Every
 // caller passes "anthropic" — the only dev in the registry whose ids carry a
-// trailing numeric version (see familyPricing's gemini comment) — so that
+// trailing numeric version (see familyCanonicalLeaf's gemini comment) — so that
 // argument to newestInFamilyLocked is fixed here rather than threaded through
 // as a parameter unparam would flag as always-constant. Caller must hold
 // registryMu.
@@ -1067,50 +961,88 @@ func familyCanonicalPrice(family string) (Model, bool) {
 	return registryLookup(id)
 }
 
-// LookupAsOf returns the model attributes effective AT THE GIVEN TIME `at` —
-// the latest models.jsonl row for (provider, modelID) whose `fetched` date is
-// on or before at's UTC date — rather than Lookup's always-latest-known
-// price. Falls back to the earliest available row if `at` predates every
-// dated row (baseline/no-fetched rows always qualify, per the `history` var
-// doc). ok is false if there is no history at all under this (provider,
-// bare) key. See the `history` var doc for the day-granularity/
-// observation-date caveats: this is a best-effort reconstruction from the
-// data models.jsonl actually records, not an exact historical price.
-func LookupAsOf(provider, modelID string, at time.Time) (Model, bool) {
-	segs, bare := splitSegs(modelID)
-	if p := strings.ToLower(provider); p != "" {
-		segs[p] = true
+// familyCanonicalLeaf maps a bare model name to the leaf id its FAMILY is
+// priced from, so pricing tracks the family ("opus costs this much") rather
+// than an exact version string. The canonical member is the NEWEST plain
+// (non-variant) member of the family currently in the registry — resolved via
+// NewestInFamily, not a hand-picked literal, so it stops going stale every
+// time a new version ships (foci_todo #1967: a claude-opus-4-6 literal fetched
+// 2026-02-04 was still pricing claude-opus-4-8 seven months later). The as-of
+// path used to keep those literals; it is now the only pricing path, so it
+// resolves the family the same way.
+//
+// gemini is the one exception, kept as a literal: its ids carry a VARIANT name
+// ("flash"/"pro"), not a trailing version number, so familyVersion's
+// all-numeric-after-the-family-token rule never matches any gemini id.
+//
+// Takes registryMu itself (via NewestInFamily), so callers must NOT hold it.
+func familyCanonicalLeaf(bare string) (string, bool) {
+	switch {
+	case strings.Contains(bare, "fable"), strings.Contains(bare, "mythos"):
+		return NewestInFamily("anthropic", "fable")
+	case strings.Contains(bare, "opus"):
+		return NewestInFamily("anthropic", "opus")
+	case strings.Contains(bare, "sonnet"):
+		return NewestInFamily("anthropic", "sonnet")
+	case strings.Contains(bare, "haiku"):
+		return NewestInFamily("anthropic", "haiku")
+	case strings.Contains(bare, "gemini"):
+		return "gemini-2.5-flash", true
 	}
-	historyMu.RLock()
-	defer historyMu.RUnlock()
-	return historyLookupAsOfSegs(segs, bare, at)
+	return "", false
 }
 
-// historyLookupAsOf is LookupAsOf's body, factored out so CostAsOf can reuse
-// it while already holding historyMu (mirrors registryLookup/Lookup's split).
-// Provider resolution mirrors registryLookup: provider-specific row set first,
-// then providerless, then a sole remaining provider.
+// rateGroup names one row set in `history`: a leaf id plus its (provider, dev)
+// key. It is what a booked call's rate_model points at (#2111): resolving a
+// reported model string to a group is done ONCE, at booking, and the rate as
+// of any date is then a lookup within the group — in Go (RatesAsOf) and in SQL
+// (the token_rates table RateTable renders) alike.
+type rateGroup struct{ leaf, key string }
+
+// String is the rate_model spelling: "<leaf>|<provider>|<dev>".
+func (g rateGroup) String() string {
+	provider, dev, _ := strings.Cut(g.key, "\x00")
+	return g.leaf + "|" + provider + "|" + dev
+}
+
+// parseRateGroup inverts rateGroup.String.
+func parseRateGroup(s string) (rateGroup, bool) {
+	parts := strings.Split(s, "|")
+	if len(parts) != 3 || parts[0] == "" {
+		return rateGroup{}, false
+	}
+	return rateGroup{leaf: parts[0], key: provKey(parts[1], parts[2])}, true
+}
+
+// resolvedRow is one history row together with the group it came from.
+type resolvedRow struct {
+	row   historyRow
+	group rateGroup
+}
+
 // historyLookupAsOfSegs tries the exact variant leaf first, then falls back to
 // the base leaf, then the punctuation-folded retry on each (mirrors
 // registryLookupSegs — see punctuationPick/punctuationPickAsOf for the
-// dot/hyphen equivalence and its ambiguity rule). Caller must hold historyMu.
-func historyLookupAsOfSegs(segs map[string]bool, bare string, at time.Time) (Model, bool) {
-	if m, ok := historyPickAsOf(segs, bare, at); ok {
-		return m, true
+// dot/hyphen equivalence and its ambiguity rule). Provider resolution mirrors
+// registryLookup: provider-specific row set first, then providerless, then a
+// sole remaining provider. Caller must hold historyMu.
+func historyLookupAsOfSegs(segs map[string]bool, bare string, at time.Time) (resolvedRow, bool) {
+	if r, ok := historyRowAsOf(segs, bare, at); ok {
+		return r, true
 	}
 	base := stripVariantSuffix(bare)
 	if base != bare {
-		if m, ok := historyPickAsOf(segs, base, at); ok {
-			return m, true
+		if r, ok := historyRowAsOf(segs, base, at); ok {
+			return r, true
 		}
 	}
-	if m, ok := punctuationPickAsOf(segs, bare, at); ok {
-		return m, true
+	if r, ok := punctuationPickAsOf(segs, bare, at); ok {
+		return r, true
 	}
 	if base != bare {
 		return punctuationPickAsOf(segs, base, at)
 	}
-	return Model{}, false
+	return resolvedRow{}, false
 }
 
 // punctuationPickAsOf mirrors punctuationPick for the as-of/history path: it
@@ -1118,13 +1050,14 @@ func historyLookupAsOfSegs(segs map[string]bool, bare string, at time.Time) (Mod
 // price AS OF `at` (via historyRowAsOf, which applies the usual provider/dev
 // disambiguation). Same ambiguity rule as punctuationPick — a single other
 // folded-matching key resolves directly; several that resolve (as of `at`) to
-// identical Models resolve to that shared value; several that diverge refuse,
-// so the caller falls through to familyPricingAsOf. Also mirrors
-// punctuationPick's FIELD-LEVEL MERGE: the resolved row's capability/context
-// fields are back-filled via fillUnknownFields using THAT ROW's own known
-// bits (not the latest row's — an as-of match can land on an older row with a
-// different known-set). Caller must hold historyMu.
-func punctuationPickAsOf(segs map[string]bool, bare string, at time.Time) (Model, bool) {
+// identical Models resolve to that shared value (the lexically first key names
+// the group, which prices identically); several that diverge refuse, so the
+// caller falls through to the family. Also mirrors punctuationPick's
+// FIELD-LEVEL MERGE: the resolved row's capability/context fields are
+// back-filled via fillUnknownFields using THAT ROW's own known bits (not the
+// latest row's — an as-of match can land on an older row with a different
+// known-set). Caller must hold historyMu.
+func punctuationPickAsOf(segs map[string]bool, bare string, at time.Time) (resolvedRow, bool) {
 	folded := punctFold(bare)
 	var matchKeys []string
 	for key := range history {
@@ -1132,227 +1065,264 @@ func punctuationPickAsOf(segs map[string]bool, bare string, at time.Time) (Model
 			matchKeys = append(matchKeys, key)
 		}
 	}
-	switch len(matchKeys) {
-	case 0:
-		return Model{}, false
-	case 1:
-		row, ok := historyRowAsOf(segs, matchKeys[0], at)
-		if !ok {
-			return Model{}, false
-		}
-		return fillUnknownFields(row.model, row.known, bare), true
-	}
-	var all []historyRow
+	sort.Strings(matchKeys)
+	var all []resolvedRow
 	for _, key := range matchKeys {
-		if row, ok := historyRowAsOf(segs, key, at); ok {
-			all = append(all, row)
+		if r, ok := historyRowAsOf(segs, key, at); ok {
+			all = append(all, r)
 		}
 	}
 	if len(all) == 0 {
-		return Model{}, false
+		return resolvedRow{}, false
 	}
-	for _, row := range all[1:] {
-		if row.model != all[0].model {
-			return Model{}, false // genuine collision, not a duplicate — refuse
+	for _, r := range all[1:] {
+		if !r.row.model.equal(all[0].row.model) {
+			return resolvedRow{}, false // genuine collision, not a duplicate — refuse
 		}
 	}
-	return fillUnknownFields(all[0].model, all[0].known, bare), true
+	r := all[0]
+	r.row.model = fillUnknownFields(r.row.model, r.row.known, bare)
+	return r, true
 }
 
-// historyPickAsOf resolves exactly the given leaf as-of `at` (no variant
-// fallback). Caller must hold historyMu.
-func historyPickAsOf(segs map[string]bool, bare string, at time.Time) (Model, bool) {
-	row, ok := historyRowAsOf(segs, bare, at)
-	if !ok {
-		return Model{}, false
-	}
-	return row.model, true
-}
-
-// historyRowAsOf is historyPickAsOf's body, additionally returning the full
-// historyRow (not just its Model) so punctuationPickAsOf can read the row's
-// own modelFieldsKnown for the field-level merge (#1969) — the ordinary exact
-// / variant-stripped callers only need the Model. Caller must hold historyMu.
-func historyRowAsOf(segs map[string]bool, bare string, at time.Time) (historyRow, bool) {
+// historyRowAsOf resolves exactly the given leaf as-of `at` (no variant
+// fallback), returning the full historyRow (punctuationPickAsOf reads the
+// row's own modelFieldsKnown for the field-level merge, #1969) and the group
+// it came from. Caller must hold historyMu.
+func historyRowAsOf(segs map[string]bool, bare string, at time.Time) (resolvedRow, bool) {
 	byKey := history[bare]
 	if len(byKey) == 0 {
-		return historyRow{}, false
-	}
-	atDate := at.UTC().Format("2006-01-02")
-	pick := func(rows []historyRow) (historyRow, bool) {
-		if len(rows) == 0 {
-			return historyRow{}, false
-		}
-		// rows is ascending by fetched (parseModelsJSONL/Register append
-		// order); pick the latest row whose fetched <= atDate, falling back to
-		// the earliest row if `at` predates all of them.
-		best := rows[0]
-		for _, r := range rows {
-			if r.fetched > atDate {
-				break
-			}
-			best = r
-		}
-		return best, true
+		return resolvedRow{}, false
 	}
 	// Parallel candidate slices: a representative (latest) model per
-	// (provider, dev) group carries the fields pickIndex matches on; groups[i]
-	// holds that group's full ascending row history for the as-of pick.
+	// (provider, dev) group carries the fields pickIndex matches on; keys[i]
+	// names that group.
 	var reps []Model
-	var groups [][]historyRow
-	for _, rows := range byKey {
+	var keys []string
+	for key, rows := range byKey {
 		if len(rows) == 0 {
 			continue
 		}
 		reps = append(reps, rows[len(rows)-1].model)
-		groups = append(groups, rows)
+		keys = append(keys, key)
 	}
 	i, ok := pickIndex(reps, segs, bare)
 	if !ok {
-		return historyRow{}, false
+		return resolvedRow{}, false
 	}
-	return pick(groups[i])
+	g := rateGroup{leaf: bare, key: keys[i]}
+	return resolvedRow{row: rowAsOf(byKey[keys[i]], at), group: g}, true
 }
 
-// historyLookupAsOf resolves a leaf id as-of `at` with no provider/dev hint
-// (familyPricingAsOf targets single-candidate leaves). Caller must hold historyMu.
-func historyLookupAsOf(bare string, at time.Time) (Model, bool) {
-	return historyLookupAsOfSegs(map[string]bool{}, bare, at)
-}
-
-// familyPricingAsOf mirrors familyPricing but resolves the canonical family
-// entry's price as of `at` rather than the latest known. Caller must hold
-// historyMu.
-func familyPricingAsOf(bare string, at time.Time) (Model, bool) {
-	switch {
-	case strings.Contains(bare, "fable"), strings.Contains(bare, "mythos"):
-		return historyLookupAsOf("claude-fable-5", at)
-	case strings.Contains(bare, "opus"):
-		return historyLookupAsOf("claude-opus-4-6", at)
-	case strings.Contains(bare, "sonnet"):
-		return historyLookupAsOf("claude-sonnet-4-5", at)
-	case strings.Contains(bare, "haiku"):
-		return historyLookupAsOf("claude-haiku-4-5", at)
-	case strings.Contains(bare, "gemini"):
-		return historyLookupAsOf("gemini-2.5-flash", at)
+// rowAsOf picks, from one group's rows (ascending by fetched), the latest row
+// whose fetched date is on or before at's UTC date, falling back to the
+// earliest row if `at` predates all of them. RateTable renders exactly this
+// rule into token_rates, so the SQL views and Go price a call alike (T11).
+// rows must be non-empty.
+func rowAsOf(rows []historyRow, at time.Time) historyRow {
+	atDate := at.UTC().Format("2006-01-02")
+	best := rows[0]
+	for _, r := range rows {
+		if r.fetched > atDate {
+			break
+		}
+		best = r
 	}
-	return Model{}, false
+	return best
 }
 
-// CostAsOf is Cost, but priced using the model's flat per-1M rates AS OF THE
-// GIVEN TIME `at` (see LookupAsOf's caveats) instead of the latest known
-// price. Used to compute a live estimate for a stored call that has no
-// provider-reported ("golden") cost — e.g. by /cost when rendering an old
-// api.db row — since the rate recorded in models.jsonl can have moved on
-// since that call was actually made. Never persisted: callers recompute
-// fresh on every read (foci_todo #1407).
-func CostAsOf(model string, at time.Time, input, output, cacheRead, cacheWrite int) float64 {
-	// A flat cache-write figure carries no TTL, so it maps to Unknown — which
-	// prices at cacheWriteRate(), exactly what this function did before the
-	// split existed. Behaviour-preserving by construction, and the existing
-	// cost tests are the proof.
-	return CostAsOfSplit(model, at, input, output, cacheRead, CacheWrites{Unknown: cacheWrite})
+// syntheticGroup is the rate group CC's synthetic sentinel resolves to: every
+// class at $0, because a synthetic turn made no API call. A real group rather
+// than a special case in each pricer, so Go and the SQL views agree on it.
+var syntheticGroup = rateGroup{leaf: syntheticModel, key: provKey("", "")}
+
+// syntheticRates prices every class in the vocabulary at zero.
+func syntheticRates() map[Class]float64 {
+	r := make(map[Class]float64, len(vocabulary))
+	for c := range vocabulary {
+		r[c] = 0
+	}
+	return r
 }
 
-// CacheWrites is cache-write tokens separated by the TTL they were written at.
-//
-// Unknown is its own class rather than being folded into either rate. CC
-// reporting cache-write tokens with no breakdown means the TTL was NOT
-// OBSERVED, which is a different fact from "they were 5m" — and assuming
-// either one is the mistake that caused #1866. It prices at the 1h rate: the
-// higher of the two, so an unobserved TTL errs toward over-charging, and the
-// pre-split behaviour is preserved exactly.
-type CacheWrites struct {
-	Ephemeral5m int
-	Ephemeral1h int
-	Unknown     int
-}
-
-// CostAsOfSplit is CostAsOf with cache writes separated by TTL.
-//
-// Ephemeral5m prices at Model.CacheWritePer1M (the 5-minute rate);
-// Ephemeral1h and Unknown price at Model.cacheWriteRate(), which prefers the
-// registry's 1h figure and falls back to the 5m one where no 1h rate exists.
-//
-// This exists because Claude Code's MAIN THREAD caches at 1h while its
-// SUBAGENTS cache at 5m, and foci priced every write at the 1h rate — a 60%
-// overcharge on subagent writes, reconciled to six decimals on four separate
-// production turns (#1866). The split is observable only on per-message usage;
-// the result's ModelUsage merges it into one figure, so a turn summarised from
-// the result alone can no longer be priced correctly.
-func CostAsOfSplit(model string, at time.Time, input, output, cacheRead int, w CacheWrites) float64 {
-	m, ok := rateRowAsOf(model, at)
+// ResolveRateModel names the rate group a call on model is priced from as of
+// `at` — the call's rate_model (#2111). Resolution order: the model's own
+// history (exact leaf, variant-stripped leaf, punctuation-folded spelling),
+// then its family's canonical member. ok is false when none matches: the
+// model is not in the table, and a call on it is unpriced — never priced at a
+// guessed fallback rate. CC's synthetic sentinel resolves to a zero-rate
+// group.
+func ResolveRateModel(model string, at time.Time) (string, bool) {
+	g, ok := resolveGroup(model, at)
 	if !ok {
-		return 0
+		return "", false
 	}
-	mtok := 1_000_000.0
-	return float64(input)/mtok*m.InputPer1M +
-		float64(output)/mtok*m.OutputPer1M +
-		float64(cacheRead)/mtok*m.CacheReadPer1M +
-		float64(w.Ephemeral5m)/mtok*m.CacheWritePer1M +
-		float64(w.Ephemeral1h+w.Unknown)/mtok*m.cacheWriteRate()
+	return g.String(), true
 }
 
-// TTLSurchargeAsOf is what w cost MORE when priced as Unknown than at its own
-// observed split: only its 5m writes differ, each by ttlPremium. It is the
-// over-charge on subagent cache writes that a parent absorbed as an unobserved
-// residue (#1929). Built from a token count and a non-negative premium, so it
-// is never negative; zero when w holds no 5m writes or the model has no 1h
-// premium.
-func TTLSurchargeAsOf(model string, at time.Time, w CacheWrites) float64 {
-	m, ok := rateRowAsOf(model, at)
-	if !ok {
-		return 0
-	}
-	return float64(w.Ephemeral5m) / 1_000_000.0 * m.ttlPremium()
-}
-
-// WebSearchCostAsOf prices n server-side web searches for model at time at,
-// resolving the rate row exactly as CostAsOfSplit does (#1913).
-//
-// priced is false when searches were made but the resolved row carries no
-// per-call rate: the searches were billed, foci just cannot say for how much,
-// and the caller should say so rather than treat the zero as "free".
-func WebSearchCostAsOf(model string, at time.Time, n int) (cost float64, priced bool) {
-	if n <= 0 {
-		return 0, true
-	}
-	m, ok := rateRowAsOf(model, at)
-	if !ok {
-		return 0, true
-	}
-	return float64(n) * m.WebSearchPerCall, m.WebSearchPerCall > 0
-}
-
-// rateRowAsOf resolves the price row a call on model at time at is billed
-// from: history as of at, then the family canonical, then the unpriced
-// fallback. ok is false only for CC's synthetic sentinel, which has nothing to
-// price.
-func rateRowAsOf(model string, at time.Time) (Model, bool) {
+// resolveGroup is ResolveRateModel's body. It notifies FamilyPricedModelHook
+// and UnpricedModelHook exactly as pricing always has.
+func resolveGroup(model string, at time.Time) (rateGroup, bool) {
 	segs, bare := splitSegs(model)
 	if IsSynthetic(model) || IsSynthetic(bare) {
-		return Model{}, false
+		return syntheticGroup, true
 	}
+	// Resolved before historyMu is taken: NewestInFamily takes registryMu, and
+	// the two locks are never held together.
+	canon, hasFamily := familyCanonicalLeaf(bare)
+
 	historyMu.RLock()
-	m, ok := historyLookupAsOfSegs(segs, bare, at)
-	if !ok {
-		if m, ok = familyPricingAsOf(bare, at); ok { // caller-holds-lock: mirrors Cost/familyPricing
-			// noteFamilyPriced uses its own mutex (familyPricedMu), not historyMu.
-			noteFamilyPriced(bare)
-		}
+	r, ok := historyLookupAsOfSegs(segs, bare, at)
+	family := false
+	if !ok && hasFamily {
+		r, ok = historyLookupAsOfSegs(map[string]bool{}, canon, at)
+		family = ok
 	}
 	historyMu.RUnlock()
-	if !ok {
-		// noteUnpriced uses its own mutex (unpricedMu), not historyMu.
+
+	// Both hooks take their own mutexes, not historyMu.
+	switch {
+	case family:
+		noteFamilyPriced(bare)
+	case !ok:
 		noteUnpriced(bare)
-		switch {
-		case IsOpenAI(bare):
-			m = Model{InputPer1M: 5.00, OutputPer1M: 15.00}
-		default:
-			m, _ = LookupAsOf("", "claude-haiku-4-5", at)
+	}
+	return r.group, ok
+}
+
+// RatesAsOf returns the class rates in effect for rateModel (a
+// ResolveRateModel result) at `at`. ok is false for a rate_model that names no
+// group — one resolved under a different models.jsonl.
+func RatesAsOf(rateModel string, at time.Time) (map[Class]float64, bool) {
+	g, ok := parseRateGroup(rateModel)
+	if !ok {
+		return nil, false
+	}
+	if g == syntheticGroup {
+		return syntheticRates(), true
+	}
+	historyMu.RLock()
+	defer historyMu.RUnlock()
+	rows := history[g.leaf][g.key]
+	if len(rows) == 0 {
+		return nil, false
+	}
+	return rowAsOf(rows, at).model.Rates, true
+}
+
+// CostAsOf prices one call's tokens for model at the rates in effect at `at`
+// (the call's billing time) — the ONLY pricing function (#2111 §2.1). Every
+// class is priced at its own rate; a 5m cache write and a 1h one are different
+// classes, so no TTL split, surcharge or residue exists here.
+//
+// priced is false when a class with a non-zero count has no rate, or the model
+// resolves to no rate group at all; usd then covers only the classes that
+// could be priced, and the caller must say so rather than present the figure
+// as the whole cost. The ledger's call_costs view shows the same call's cost
+// as NULL, and TestRepriceIdentity holds the two to each other. CC's synthetic
+// sentinel prices at $0 (syntheticGroup).
+func CostAsOf(model string, at time.Time, t Tokens) (usd float64, priced bool) {
+	if !t.billed() {
+		return 0, true
+	}
+	g, ok := resolveGroup(model, at)
+	if !ok {
+		return 0, false
+	}
+	rates, _ := RatesAsOf(g.String(), at)
+	return priceTokens(rates, t)
+}
+
+// priceTokens prices t at rates. Each class's term is count / units-per-rate *
+// rate, in that order, which is the order the call_class_costs view uses.
+func priceTokens(rates map[Class]float64, t Tokens) (usd float64, priced bool) {
+	priced = true
+	for _, c := range slices.Sorted(maps.Keys(t)) {
+		n := t[c]
+		if n == 0 {
+			continue
+		}
+		unit, known := ClassUnit(c)
+		rate, has := rates[c]
+		if !known || !has {
+			priced = false
+			continue
+		}
+		usd += float64(n) / unit.PerUnits() * rate
+	}
+	return usd, priced
+}
+
+// billed reports whether any class has a non-zero count.
+func (t Tokens) billed() bool {
+	for _, n := range t {
+		if n != 0 {
+			return true
 		}
 	}
-	return m, true
+	return false
+}
+
+// RateRow is one row of the dated rate table the ledger's SQL views price
+// from. USDPerUnit is nil where the group's row in effect from EffectiveFrom
+// publishes no rate for the class, so a later row that DROPS a class hides
+// the earlier rate rather than letting it show through.
+type RateRow struct {
+	RateModel     string
+	Class         Class
+	EffectiveFrom string // YYYY-MM-DD; "" for a group's first row (in effect since forever)
+	USDPerUnit    *float64
+}
+
+// RateTable renders every history group into dated per-class rate rows — the
+// token_rates table (#2111 §2.2). modelinfo stays the single source of truth;
+// the table is a copy SQL can join, rebuilt whole whenever it is rendered.
+//
+// It encodes rowAsOf's rule exactly: a row is in effect from its fetched date,
+// same-date rows resolve to the LAST in file order, and a group's first row
+// is rendered as in effect from "" because rowAsOf falls back to it for any
+// date before the history starts.
+func RateTable() []RateRow {
+	historyMu.RLock()
+	defer historyMu.RUnlock()
+	classes := Classes()
+	type slot struct {
+		rm   string
+		c    Class
+		from string
+	}
+	idx := map[slot]int{}
+	var out []RateRow
+	for _, leaf := range slices.Sorted(maps.Keys(history)) {
+		byKey := history[leaf]
+		for _, key := range slices.Sorted(maps.Keys(byKey)) {
+			rm := rateGroup{leaf: leaf, key: key}.String()
+			for i, row := range byKey[key] {
+				from := row.fetched
+				if i == 0 {
+					from = ""
+				}
+				for _, c := range classes {
+					var rate *float64
+					if v, ok := row.model.Rates[c]; ok {
+						rate = &v
+					}
+					s := slot{rm, c, from}
+					if j, seen := idx[s]; seen {
+						out[j].USDPerUnit = rate
+						continue
+					}
+					idx[s] = len(out)
+					out = append(out, RateRow{RateModel: rm, Class: c, EffectiveFrom: from, USDPerUnit: rate})
+				}
+			}
+		}
+	}
+	zero := 0.0
+	for _, c := range classes {
+		out = append(out, RateRow{RateModel: syntheticGroup.String(), Class: c, USDPerUnit: &zero})
+	}
+	return out
 }
 
 // ModelMeta holds structural metadata about a model from [models.*] config.
@@ -1410,7 +1380,7 @@ func NewestInFamily(dev, family string) (string, bool) {
 	return newestInFamilyLocked(dev, family)
 }
 
-// newestInFamilyLocked is NewestInFamily's body, factored out so familyPricing
+// newestInFamilyLocked is NewestInFamily's body, factored out so familyCanonicalPrice
 // (and other registryMu-holding callers, mirroring registryLookup) can reuse
 // the exact same ranking without a recursive RLock — sync.RWMutex's RLock is
 // NOT safe to call twice on the same goroutine, because a Lock() request

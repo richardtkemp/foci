@@ -1754,7 +1754,7 @@ func TestDelegatedTransport_GatedTurn_OneRowNoSpuriousCompaction(t *testing.T) {
 	// What ccstream reports after the re-dispatch: final-cycle fill, output
 	// and Turn summed across both rounds, cost priced from Turn.
 	turn := modelinfo.TokenCounts{Input: 248, Output: 350, CacheRead: 110971}
-	cost := modelinfo.Cost(model, turn.Input, turn.Output, turn.CacheRead, turn.CacheWrite)
+	cost := modelinfo.TokenCounts{Input: turn.Input, Output: turn.Output, CacheRead: turn.CacheRead, CacheWrite: turn.CacheWrite}.CostAsOf(model, time.Now())
 	ts.FinalUsage = &provider.Usage{InputTokens: 2, OutputTokens: 350, CacheReadInputTokens: 55566,
 		Turn: &turn, CalculatedCostUSD: &cost}
 

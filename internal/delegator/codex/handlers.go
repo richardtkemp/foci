@@ -570,8 +570,7 @@ func (b *Backend) turnUsageLocked(model string) *delegator.TurnUsage {
 	u.OutputTokens = turn.Output
 	u.Turn = &turn
 	if model != "" {
-		cost := modelinfo.CostAsOf(model, time.Now(),
-			turn.Input, turn.Output, turn.CacheRead, turn.CacheWrite)
+		cost := turn.CostAsOf(model, time.Now())
 		u.CalculatedCostUSD = &cost
 	}
 	return &u

@@ -609,10 +609,8 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 				CacheRead:  u.CacheRead,
 				CacheWrite: u.Write.total(),
 			}
-			cost := modelinfo.CostAsOfSplit(
-				prefixedModel(k.Model), now,
-				c.Input, c.Output, c.CacheRead, splitFor(u.Write, c.CacheWrite),
-			)
+			cost := splitFor(u.Write, c.CacheWrite).price(
+				prefixedModel(k.Model), now, c.Input, c.Output, c.CacheRead)
 			subByModel[k.Model] = subByModel[k.Model].Add(c)
 			cycleSubs[k] = modelinfo.SubagentCost{
 				AgentID: k.Agent,
@@ -646,19 +644,16 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 				AgentID:        ck.Agent,
 				Model:          prefixedModel(ck.Model),
 				Counts:         c,
-				CostUSD: modelinfo.CostAsOfSplit(
-					prefixedModel(ck.Model), now,
-					c.Input, c.Output, c.CacheRead, splitFor(u.Write, c.CacheWrite),
-				),
+				CostUSD: splitFor(u.Write, c.CacheWrite).price(
+					prefixedModel(ck.Model), now, c.Input, c.Output, c.CacheRead),
 				// What the parent was charged for these same tokens ABOVE
 				// CostUSD. It absorbed the cache writes as an unobserved residue,
 				// which splitFor classes Unknown (1h rate) — not the 5m the
 				// subagent observed. Debiting at the subagent's basis alone left
 				// the difference stranded on a row that no longer held the tokens
 				// (#1929). Zero when the subagent genuinely wrote at 1h.
-				TTLSurchargeUSD: modelinfo.TTLSurchargeAsOf(
-					prefixedModel(ck.Model), now, splitFor(u.Write, c.CacheWrite),
-				),
+				TTLSurchargeUSD: splitFor(u.Write, c.CacheWrite).ttlSurcharge(
+					prefixedModel(ck.Model), now),
 			})
 		}
 
@@ -699,16 +694,14 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 			// handing their (5m) split to the parent would charge those tokens
 			// at the 5m rate twice and leave the parent's real writes unsplit.
 			w := splitFor(topObserved[m], parent.CacheWrite)
-			cyclePriced += modelinfo.CostAsOfSplit(
-				prefixedModel(m), now,
-				parent.Input, parent.Output, parent.CacheRead, w,
-			)
+			cyclePriced += w.price(prefixedModel(m), now, parent.Input, parent.Output, parent.CacheRead)
 			// Web search is billed per CALL, so no token class carries it
 			// (#1913). Every search stays on the parent: the subagent shares
 			// come from the stream, which never reports one, so there is
 			// nothing to attribute them by — the same position as CC's own
 			// utility calls above.
-			search, priced := modelinfo.WebSearchCostAsOf(prefixedModel(m), now, parent.WebSearches)
+			search, priced := modelinfo.CostAsOf(prefixedModel(m), now,
+				modelinfo.Tokens{modelinfo.ClassWebSearch: parent.WebSearches})
 			if !priced {
 				b.logger().Warnf("%d web search(es) on %s have no per-call rate in modelinfo — priced at $0, so this turn reads low (#1913)",
 					parent.WebSearches, m)

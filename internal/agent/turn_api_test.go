@@ -1356,7 +1356,7 @@ func TestRunInference_PersistsCalculatedCost(t *testing.T) {
 	if r.CallType != "conversation" {
 		t.Fatalf("row.CallType = %q, want conversation", r.CallType)
 	}
-	wantCost := modelinfo.Cost(ts.TurnModel, 500, 20, 0, 0)
+	wantCost := modelinfo.TokenCounts{Input: 500, Output: 20, CacheRead: 0, CacheWrite: 0}.CostAsOf(ts.TurnModel, time.Now())
 	if r.CalculatedCostUSD == nil {
 		t.Fatalf("row.CalculatedCostUSD = nil, want %.6f — the direct-API path priced "+
 			"this call but never persisted it, so it silently contributes $0 to any "+

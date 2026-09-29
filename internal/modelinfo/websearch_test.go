@@ -10,24 +10,24 @@ import (
 // ran on. That id must resolve to a row that carries a per-call rate — the
 // hand-added CC-id rows originally had none, so wiring the consumer alone would
 // have priced every real search at $0.
-func TestWebSearchCostAsOf_PricesTheModelCCReportsSearchesUnder(t *testing.T) {
+func TestWebSearchCost_PricesTheModelCCReportsSearchesUnder(t *testing.T) {
 	t.Parallel()
 	for _, model := range []string{"claude-haiku-4-5-20251001", "claude-opus-5", "claude-opus-5-5", "claude-sonnet-5"} {
-		got, priced := WebSearchCostAsOf(model, time.Now(), 3)
+		got, priced := CostAsOf(model, time.Now(), Tokens{ClassWebSearch: 3})
 		if !priced || math.Abs(got-0.03) > 1e-12 {
-			t.Errorf("%s: WebSearchCostAsOf(3) = $%.6f priced=%v, want $0.030000 priced", model, got, priced)
+			t.Errorf("%s: 3 web searches = $%.6f priced=%v, want $0.030000 priced", model, got, priced)
 		}
 	}
 }
 
 // A row with no per-call rate must say so rather than pass $0 off as "free".
-func TestWebSearchCostAsOf_ReportsMissingRate(t *testing.T) {
+func TestWebSearchCost_ReportsMissingRate(t *testing.T) {
 	t.Parallel()
-	if got, priced := WebSearchCostAsOf("claude-code", time.Now(), 1); priced || got != 0 {
+	if got, priced := CostAsOf("claude-code", time.Now(), Tokens{ClassWebSearch: 1}); priced || got != 0 {
 		t.Errorf("claude-code (no rate): got $%.6f priced=%v, want $0 unpriced", got, priced)
 	}
 	// No searches is nothing to price, not a missing rate.
-	if _, priced := WebSearchCostAsOf("claude-code", time.Now(), 0); !priced {
+	if _, priced := CostAsOf("claude-code", time.Now(), Tokens{ClassWebSearch: 0}); !priced {
 		t.Error("zero searches reported as unpriced")
 	}
 }

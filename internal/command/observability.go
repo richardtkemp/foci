@@ -34,12 +34,15 @@ func categoryCosts(entries []log.APIEntry) (cacheRead, cacheWrite, input, output
 		// tokens in the fields against 55,728,618 in Turn, a 14.5x shortfall
 		// (#1854, #1863).
 		c := e.PricedCounts()
-		cacheRead += modelinfo.CostAsOf(e.Model, e.Timestamp, 0, 0, c.CacheRead, 0)
-		cacheWrite += modelinfo.CostAsOf(e.Model, e.Timestamp, 0, 0, 0, c.CacheWrite)
-		input += modelinfo.CostAsOf(e.Model, e.Timestamp, c.Input, 0, 0, 0)
-		output += modelinfo.CostAsOf(e.Model, e.Timestamp, 0, c.Output, 0, 0)
-		s, _ := modelinfo.WebSearchCostAsOf(e.Model, e.Timestamp, c.WebSearches)
-		search += s
+		price := func(class modelinfo.Class, n int) float64 {
+			usd, _ := modelinfo.CostAsOf(e.Model, e.Timestamp, modelinfo.Tokens{class: n})
+			return usd
+		}
+		cacheRead += price(modelinfo.ClassCacheRead, c.CacheRead)
+		cacheWrite += price(modelinfo.ClassCacheWrite, c.CacheWrite)
+		input += price(modelinfo.ClassInput, c.Input)
+		output += price(modelinfo.ClassOutput, c.Output)
+		search += price(modelinfo.ClassWebSearch, c.WebSearches)
 	}
 	return
 }

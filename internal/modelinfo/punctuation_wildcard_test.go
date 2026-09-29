@@ -1,6 +1,7 @@
 package modelinfo
 
 import (
+	"maps"
 	"testing"
 	"time"
 )
@@ -55,9 +56,7 @@ func TestPunctuationWildcardMatchesRealCatalogue(t *testing.T) {
 		t.Fatal("Lookup(\"claude-opus-4-8\") missed — punctuation wildcard did not fire")
 	}
 	// Pricing: authoritative from the matched row, unmerged.
-	if got.InputPer1M != dotRow.InputPer1M || got.OutputPer1M != dotRow.OutputPer1M ||
-		got.CacheReadPer1M != dotRow.CacheReadPer1M || got.CacheWritePer1M != dotRow.CacheWritePer1M ||
-		got.CacheWrite1hPer1M != dotRow.CacheWrite1hPer1M {
+	if !maps.Equal(got.Rates, dotRow.Rates) {
 		t.Errorf("Lookup(\"claude-opus-4-8\") pricing = %+v, want claude-opus-4.8's pricing %+v", got, dotRow)
 	}
 	// Capabilities: back-filled from the opus family default, NOT the dot
@@ -78,9 +77,9 @@ func TestPunctuationWildcardMatchesRealCatalogue(t *testing.T) {
 	}
 
 	// Cost must use the real rate too, not the family canonical.
-	wantCost := dotRow.InputPer1M // 1M input tokens => InputPer1M dollars
-	if cost := Cost("claude-opus-4-8", 1_000_000, 0, 0, 0); cost != wantCost {
-		t.Errorf("Cost(\"claude-opus-4-8\") = %v, want %v", cost, wantCost)
+	wantCost := dotRow.Rates[ClassInput] // 1M input tokens => the input rate in dollars
+	if cost := flatCost("claude-opus-4-8", 1_000_000, 0, 0, 0); cost != wantCost {
+		t.Errorf("flatCost(\"claude-opus-4-8\") = %v, want %v", cost, wantCost)
 	}
 }
 
@@ -138,7 +137,7 @@ func TestPunctuationWildcardNoMatchStillFallsThrough(t *testing.T) {
 	if _, ok := Lookup("", "claude-sonnet-9.9"); ok {
 		t.Fatal("setup: claude-sonnet-9.9 unexpectedly exists in the real registry")
 	}
-	_ = Cost(model, 100, 0, 0, 0)
+	_ = flatCost(model, 100, 0, 0, 0)
 
 	if len(familyWarned) != 1 || familyWarned[0] != "claude-sonnet-9-9" {
 		t.Errorf("FamilyPricedModelHook = %v, want a single fire for %q", familyWarned, model)
@@ -165,8 +164,8 @@ func TestPunctuationWildcardDuplicateSpellingsResolve(t *testing.T) {
 	if !ok {
 		t.Fatal("Lookup missed a punctuation-folded duplicate — want it to resolve")
 	}
-	if got.InputPer1M != 7.0 {
-		t.Errorf("InputPer1M = %v, want 7.0", got.InputPer1M)
+	if got.Rates[ClassInput] != 7.0 {
+		t.Errorf("InputPer1M = %v, want 7.0", got.Rates[ClassInput])
 	}
 }
 
@@ -187,7 +186,7 @@ func TestPunctuationWildcardCollisionRefuses(t *testing.T) {
 	if _, ok := Lookup("", "coll-4-9.2"); ok {
 		t.Error("Lookup resolved a genuine punctuation collision instead of refusing")
 	}
-	if _, ok := LookupAsOf("", "coll-4-9.2", time.Now()); ok {
+	if _, ok := lookupAsOf("", "coll-4-9.2", time.Now()); ok {
 		t.Error("LookupAsOf resolved a genuine punctuation collision instead of refusing")
 	}
 }
@@ -211,7 +210,7 @@ func TestPunctuationWildcardVariantSuffixInteraction(t *testing.T) {
 	if !ok {
 		t.Fatal("Lookup(\"claude-opus-4.6[1m]\") missed — dotted spelling of a suffixed id should still fold")
 	}
-	if got != want {
+	if !got.equal(want) {
 		t.Errorf("Lookup(\"claude-opus-4.6[1m]\") = %+v, want %+v", got, want)
 	}
 
@@ -226,7 +225,7 @@ func TestPunctuationWildcardVariantSuffixInteraction(t *testing.T) {
 	// No "claude-opus-4-8[1m]" or "claude-opus-4.8[1m]" row exists — must NOT
 	// silently borrow claude-opus-4.8's base rate; must fall through to family
 	// pricing instead.
-	_ = Cost("claude-opus-4-8[1m]", 100, 0, 0, 0)
+	_ = flatCost("claude-opus-4-8[1m]", 100, 0, 0, 0)
 	if len(familyWarned) != 1 || familyWarned[0] != "claude-opus-4-8[1m]" {
 		t.Errorf("FamilyPricedModelHook = %v, want a single fire for claude-opus-4-8[1m]", familyWarned)
 	}

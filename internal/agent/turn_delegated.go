@@ -8,7 +8,6 @@ import (
 
 	"foci/internal/delegator"
 	"foci/internal/log"
-	"foci/internal/modelinfo"
 	"foci/internal/provider"
 	"foci/internal/session"
 )
@@ -754,11 +753,9 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 			// Skip when the model is unknown (e.g. a codex tokenUsage/updated
 			// notification firing before any message-completion event has set
 			// the model for this thread — plausible right after a resume/
-			// respawn). modelinfo.Cost("") would otherwise trip the unpriced-
-			// fallback warning and add a meaningless haiku-priced estimate.
-			turnCost += modelinfo.Cost(model,
-				u.InputTokens, u.OutputTokens,
-				u.CacheReadInputTokens, u.CacheCreationInputTokens)
+			// respawn). Pricing "" would otherwise trip the unpriced-model
+			// warning for a model that is merely not known yet.
+			turnCost += u.AsTurn().CostAsOf(model, time.Now())
 		}
 		log.API(log.APIEntry{
 			Timestamp:         ts0,

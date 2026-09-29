@@ -1,6 +1,7 @@
 package modelinfo
 
 import (
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,8 +14,7 @@ func TestRegisterAndLookup(t *testing.T) {
 	m := Model{
 		ContextWindow: ctx,
 		Caching:       true,
-		InputPer1M:    2.00, OutputPer1M: 10.00,
-		CacheReadPer1M: 0.20, CacheWritePer1M: 2.50,
+		Rates:         Prices{Input: 2.00, Output: 10.00, CacheRead: 0.20, CacheWrite5m: 2.50}.Rates(),
 	}
 	Register("", "test-register-model", m)
 
@@ -35,7 +35,7 @@ func TestRegisterWithProvider(t *testing.T) {
 
 	Register("zai-coding-plan", "syn-solo-model", Model{
 		ContextWindow: 1_000_000,
-		InputPer1M:    0.0, OutputPer1M: 0.0,
+		Rates:         Prices{Input: 0.0, Output: 0.0}.Rates(),
 	})
 
 	// Provider-specific lookup hits.
@@ -56,14 +56,14 @@ func TestRegisterWithProvider(t *testing.T) {
 	}
 
 	// Cost with provider prefix hits the provider-specific entry.
-	cost := Cost("zai-coding-plan/syn-solo-model", 1_000_000, 500_000, 0, 0)
+	cost := flatCost("zai-coding-plan/syn-solo-model", 1_000_000, 500_000, 0, 0)
 	if cost != 0 {
 		t.Errorf("Cost = %v, want 0 (all prices zero)", cost)
 	}
 
 	// Cost without provider prefix also hits now (sole-provider fallback),
 	// so it uses the registered zero pricing rather than family/default fallback.
-	if cost := Cost("syn-solo-model", 100, 50, 0, 0); cost != 0 {
+	if cost := flatCost("syn-solo-model", 100, 50, 0, 0); cost != 0 {
 		t.Errorf("Cost = %v, want 0 (sole-provider entry has zero pricing)", cost)
 	}
 }
@@ -74,7 +74,7 @@ func TestProviderFallbackToProviderless(t *testing.T) {
 	// Register a providerless entry.
 	Register("", "test-fb", Model{
 		ContextWindow: 200_000,
-		InputPer1M:    1.00,
+		Rates:         Prices{Input: 1.00}.Rates(),
 	})
 
 	// Provider-specific lookup falls back to providerless.
@@ -82,21 +82,21 @@ func TestProviderFallbackToProviderless(t *testing.T) {
 	if !ok {
 		t.Fatal("Lookup with unknown provider should fall back to providerless")
 	}
-	if m.InputPer1M != 1.00 {
-		t.Errorf("InputPer1M = %v, want 1.0 (providerless fallback)", m.InputPer1M)
+	if m.Rates[ClassInput] != 1.00 {
+		t.Errorf("InputPer1M = %v, want 1.0 (providerless fallback)", m.Rates[ClassInput])
 	}
 
 	// Provider-specific entry takes priority when it exists.
 	Register("specific", "test-fb", Model{
 		ContextWindow: 400_000,
-		InputPer1M:    2.00,
+		Rates:         Prices{Input: 2.00}.Rates(),
 	})
 	m, ok = Lookup("specific", "test-fb")
 	if !ok {
 		t.Fatal("Lookup with specific provider failed")
 	}
-	if m.InputPer1M != 2.00 {
-		t.Errorf("InputPer1M = %v, want 2.0 (provider-specific)", m.InputPer1M)
+	if m.Rates[ClassInput] != 2.00 {
+		t.Errorf("InputPer1M = %v, want 2.0 (provider-specific)", m.Rates[ClassInput])
 	}
 }
 
@@ -108,20 +108,18 @@ func TestRegisterOverridesExisting(t *testing.T) {
 	Register("", "claude-haiku-4-5", Model{
 		ContextWindow: original.ContextWindow,
 		Caching:       original.Caching,
-		InputPer1M:    newPrice, OutputPer1M: original.OutputPer1M,
-		CacheReadPer1M:  original.CacheReadPer1M,
-		CacheWritePer1M: original.CacheWritePer1M,
+		Rates:         Prices{Input: newPrice, Output: original.Rates[ClassOutput], CacheRead: original.Rates[ClassCacheRead], CacheWrite5m: original.Prices().CacheWrite5m}.Rates(),
 	})
 
 	got, ok := Lookup("", "claude-haiku-4-5")
 	if !ok {
 		t.Fatal("Lookup failed")
 	}
-	if got.InputPer1M != newPrice {
-		t.Errorf("InputPer1M = %v, want %v (override did not take effect)", got.InputPer1M, newPrice)
+	if got.Rates[ClassInput] != newPrice {
+		t.Errorf("InputPer1M = %v, want %v (override did not take effect)", got.Rates[ClassInput], newPrice)
 	}
 
-	cost := Cost("claude-haiku-4-5", 1_000_000, 0, 0, 0)
+	cost := flatCost("claude-haiku-4-5", 1_000_000, 0, 0, 0)
 	if cost != newPrice {
 		t.Errorf("Cost with 1M input = %v, want %v", cost, newPrice)
 	}
@@ -175,7 +173,7 @@ func TestConcurrentAccessNoRace(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < 100; i++ {
 			_ = ContextWindow("claude-haiku-4-5")
-			_ = Cost("claude-haiku-4-5", 100, 50, 0, 0)
+			_ = flatCost("claude-haiku-4-5", 100, 50, 0, 0)
 			_, _, _ = Capabilities("claude-haiku-4-5")
 			_ = Caching("claude-haiku-4-5")
 		}
@@ -192,8 +190,7 @@ func TestAccessorsWithProviderPrefix(t *testing.T) {
 		Effort:        true,
 		Thinking:      true,
 		Caching:       true,
-		InputPer1M:    3.00,
-		OutputPer1M:   9.00,
+		Rates:         Prices{Input: 3.00, Output: 9.00}.Rates(),
 	})
 
 	// ContextWindow with provider prefix.
@@ -224,7 +221,7 @@ func TestDateSuffixWithProvider(t *testing.T) {
 
 	Register("prov", "dated-model", Model{
 		ContextWindow: 128_000,
-		InputPer1M:    1.00,
+		Rates:         Prices{Input: 1.00}.Rates(),
 	})
 
 	// Lookup with date suffix on the bare part should still match.
@@ -237,7 +234,7 @@ func TestDateSuffixWithProvider(t *testing.T) {
 	}
 
 	// Cost with date suffix in the full model string.
-	cost := Cost("prov/dated-model-20260715", 1_000_000, 0, 0, 0)
+	cost := flatCost("prov/dated-model-20260715", 1_000_000, 0, 0, 0)
 	if cost != 1.00 {
 		t.Errorf("Cost = %v, want 1.0", cost)
 	}
@@ -253,29 +250,27 @@ func TestTwoProvidersSameModel(t *testing.T) {
 
 	Register("provider-a", "shared-model", Model{
 		ContextWindow: 200_000,
-		InputPer1M:    1.00,
-		OutputPer1M:   5.00,
+		Rates:         Prices{Input: 1.00, Output: 5.00}.Rates(),
 	})
 	Register("provider-b", "shared-model", Model{
 		ContextWindow: 400_000,
-		InputPer1M:    2.00,
-		OutputPer1M:   10.00,
+		Rates:         Prices{Input: 2.00, Output: 10.00}.Rates(),
 	})
 
 	// Each provider gets its own entry.
 	mA, ok := Lookup("provider-a", "shared-model")
-	if !ok || mA.InputPer1M != 1.00 || mA.ContextWindow != 200_000 {
+	if !ok || mA.Rates[ClassInput] != 1.00 || mA.ContextWindow != 200_000 {
 		t.Errorf("provider-a entry = %+v, want InputPer1M=1.0 ContextWindow=200000", mA)
 	}
 
 	mB, ok := Lookup("provider-b", "shared-model")
-	if !ok || mB.InputPer1M != 2.00 || mB.ContextWindow != 400_000 {
+	if !ok || mB.Rates[ClassInput] != 2.00 || mB.ContextWindow != 400_000 {
 		t.Errorf("provider-b entry = %+v, want InputPer1M=2.0 ContextWindow=400000", mB)
 	}
 
 	// Cost routes to the right provider.
-	costA := Cost("provider-a/shared-model", 1_000_000, 0, 0, 0)
-	costB := Cost("provider-b/shared-model", 1_000_000, 0, 0, 0)
+	costA := flatCost("provider-a/shared-model", 1_000_000, 0, 0, 0)
+	costB := flatCost("provider-b/shared-model", 1_000_000, 0, 0, 0)
 	if costA != 1.00 {
 		t.Errorf("Cost provider-a = %v, want 1.0", costA)
 	}
@@ -321,8 +316,7 @@ func TestSoleProviderFallback(t *testing.T) {
 
 	Register("zai-coding-plan", "syn-solo-model", Model{
 		ContextWindow: 1_000_000,
-		InputPer1M:    0.0,
-		OutputPer1M:   0.0,
+		Rates:         Prices{Input: 0.0, Output: 0.0}.Rates(),
 	})
 
 	// No provider → sole entry matches.
@@ -338,9 +332,9 @@ func TestSoleProviderFallback(t *testing.T) {
 	}
 
 	// Cost also resolves via the bare model name.
-	c := Cost("syn-solo-model", 1_000_000, 0, 0, 0)
+	c := flatCost("syn-solo-model", 1_000_000, 0, 0, 0)
 	if c != 0.0 {
-		t.Errorf("Cost(\"syn-solo-model\") = %v, want 0.0", c)
+		t.Errorf("flatCost(\"syn-solo-model\") = %v, want 0.0", c)
 	}
 }
 
@@ -357,7 +351,7 @@ func TestBuildRegistryLatestFetchedWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseModelsJSONL: %v", err)
 	}
-	if got := reg["hist-model"][provKey("openrouter", "")].InputPer1M; got != 3.0 {
+	if got := reg["hist-model"][provKey("openrouter", "")].Rates[ClassInput]; got != 3.0 {
 		t.Errorf("latest InputPer1M = %v, want 3.0 (max fetched wins regardless of file order)", got)
 	}
 }
@@ -370,7 +364,7 @@ func TestBuildRegistryTieBreaksByFileOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseModelsJSONL: %v", err)
 	}
-	if got := reg["tie"][provKey("", "")].InputPer1M; got != 9.0 {
+	if got := reg["tie"][provKey("", "")].Rates[ClassInput]; got != 9.0 {
 		t.Errorf("tie InputPer1M = %v, want 9.0 (later line wins on equal fetched)", got)
 	}
 }
@@ -388,7 +382,7 @@ func TestLookupAsOfPicksHistoricalPrice(t *testing.T) {
 		t.Fatalf("parseModelsJSONL: %v", err)
 	}
 	// Sanity: registry (latest-only) picks the newest row.
-	if got := reg["asof-model"][provKey("openrouter", "")].InputPer1M; got != 4.0 {
+	if got := reg["asof-model"][provKey("openrouter", "")].Rates[ClassInput]; got != 4.0 {
 		t.Fatalf("registry InputPer1M = %v, want 4.0 (latest)", got)
 	}
 
@@ -406,12 +400,12 @@ func TestLookupAsOfPicksHistoricalPrice(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m, ok := LookupAsOf("openrouter", "asof-model", tt.at)
+			m, ok := lookupAsOf("openrouter", "asof-model", tt.at)
 			if !ok {
 				t.Fatal("LookupAsOf: not found")
 			}
-			if m.InputPer1M != tt.want {
-				t.Errorf("LookupAsOf(%v).InputPer1M = %v, want %v", tt.at, m.InputPer1M, tt.want)
+			if m.Rates[ClassInput] != tt.want {
+				t.Errorf("lookupAsOf(%v).Rates[ClassInput] = %v, want %v", tt.at, m.Rates[ClassInput], tt.want)
 			}
 		})
 	}
@@ -431,19 +425,46 @@ func TestCostAsOfUsesHistoricalPrice(t *testing.T) {
 
 	// At a timestamp before the price change: 1M input @ $1.0 + 1M output @ $2.0 = $3.0.
 	early := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
-	if got := CostAsOf("asof-cost-model", early, 1_000_000, 1_000_000, 0, 0); got != 3.0 {
+	if got := flatCostAt("asof-cost-model", early, 1_000_000, 1_000_000); got != 3.0 {
 		t.Errorf("CostAsOf(early) = %v, want 3.0 (pre-change price)", got)
 	}
 
 	// At a timestamp after the price change: 1M input @ $3.0 + 1M output @ $6.0 = $9.0.
 	late := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	if got := CostAsOf("asof-cost-model", late, 1_000_000, 1_000_000, 0, 0); got != 9.0 {
+	if got := flatCostAt("asof-cost-model", late, 1_000_000, 1_000_000); got != 9.0 {
 		t.Errorf("CostAsOf(late) = %v, want 9.0 (post-change price)", got)
 	}
 
-	// Cost (latest-price) must differ from the early as-of figure, proving
-	// the as-of path is actually consulting history rather than the registry.
-	if got := Cost("asof-cost-model", 1_000_000, 1_000_000, 0, 0); got != 9.0 {
-		t.Errorf("Cost (latest) = %v, want 9.0", got)
+	// Priced now, the latest row applies.
+	if got := flatCost("asof-cost-model", 1_000_000, 1_000_000, 0, 0); got != 9.0 {
+		t.Errorf("CostAsOf(now) = %v, want 9.0", got)
 	}
+}
+
+// flatCostAt prices input and output tokens on model at `at`.
+func flatCostAt(model string, at time.Time, in, out int) float64 {
+	usd, _ := CostAsOf(model, at, Tokens{ClassInput: in, ClassOutput: out})
+	return usd
+}
+
+// lookupAsOf is the test's view of the as-of history lookup that
+// ResolveRateModel/RatesAsOf price from: the model attributes effective AT THE
+// GIVEN TIME `at` —
+// the latest models.jsonl row for (provider, modelID) whose `fetched` date is
+// on or before at's UTC date — rather than Lookup's always-latest-known
+// price. Falls back to the earliest available row if `at` predates every
+// dated row (baseline/no-fetched rows always qualify, per the `history` var
+// doc). ok is false if there is no history at all under this (provider,
+// bare) key. See the `history` var doc for the day-granularity/
+// observation-date caveats: this is a best-effort reconstruction from the
+// data models.jsonl actually records, not an exact historical price.
+func lookupAsOf(provider, modelID string, at time.Time) (Model, bool) {
+	segs, bare := splitSegs(modelID)
+	if p := strings.ToLower(provider); p != "" {
+		segs[p] = true
+	}
+	historyMu.RLock()
+	defer historyMu.RUnlock()
+	r, ok := historyLookupAsOfSegs(segs, bare, at)
+	return r.row.model, ok
 }

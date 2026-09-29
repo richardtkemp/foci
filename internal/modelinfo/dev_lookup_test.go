@@ -55,7 +55,7 @@ func withCannedDevRegistry(t *testing.T) {
 // costMarker returns Cost for 1M input tokens only, which equals the picked
 // entry's input_per_1m — i.e. it reveals which candidate the lookup chose.
 func costMarker(model string) float64 {
-	return Cost(model, 1_000_000, 0, 0, 0)
+	return flatCost(model, 1_000_000, 0, 0, 0)
 }
 
 func TestDevAwareLookup(t *testing.T) {
@@ -98,11 +98,11 @@ func TestDevAwareLookup(t *testing.T) {
 			resetAmbiguousSeen()
 			got := costMarker(tc.model)
 			if got != tc.want {
-				t.Errorf("Cost(%q) marker = %v, want %v", tc.model, got, tc.want)
+				t.Errorf("flatCost(%q) marker = %v, want %v", tc.model, got, tc.want)
 			}
 			sawAmbig := len(ambiguous) > 0
 			if sawAmbig != tc.wantAmbig {
-				t.Errorf("Cost(%q) ambiguity-logged = %v, want %v (logged=%v)", tc.model, sawAmbig, tc.wantAmbig, ambiguous)
+				t.Errorf("flatCost(%q) ambiguity-logged = %v, want %v (logged=%v)", tc.model, sawAmbig, tc.wantAmbig, ambiguous)
 			}
 		})
 	}
@@ -125,9 +125,9 @@ func TestRealRegistry_MultiSegmentResolves(t *testing.T) {
 		t.Errorf("ContextWindow(%q) = %d, want 1048576 (real registry hit)", model, got)
 	}
 	// A registry hit must not trip the unpriced warning.
-	_ = Cost(model, 1_000_000, 0, 0, 0)
+	_ = flatCost(model, 1_000_000, 0, 0, 0)
 	if len(unpriced) != 0 {
-		t.Errorf("Cost(%q) tripped unpriced warning %v — the multi-segment id didn't resolve", model, unpriced)
+		t.Errorf("flatCost(%q) tripped unpriced warning %v — the multi-segment id didn't resolve", model, unpriced)
 	}
 }
 
@@ -148,13 +148,13 @@ func TestRealRegistry_VariantSuffixFallsBackToBase(t *testing.T) {
 	} {
 		resetUnpricedSeen()
 		unpriced = nil
-		got := Cost(m, 1_000_000, 0, 0, 0)
+		got := flatCost(m, 1_000_000, 0, 0, 0)
 		if len(unpriced) != 0 {
-			t.Errorf("Cost(%q) tripped unpriced warning %v — variant didn't fall back to base", m, unpriced)
+			t.Errorf("flatCost(%q) tripped unpriced warning %v — variant didn't fall back to base", m, unpriced)
 		}
 		// deepseek-v4-pro base is 0.435/1M; assert the variant inherits it.
 		if m == "openrouter/deepseek/deepseek-v4-pro:floor" && got != 0.435 {
-			t.Errorf("Cost(%q) = %v, want 0.435 (base deepseek-v4-pro price)", m, got)
+			t.Errorf("flatCost(%q) = %v, want 0.435 (base deepseek-v4-pro price)", m, got)
 		}
 	}
 }

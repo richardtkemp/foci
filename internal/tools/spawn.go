@@ -462,9 +462,7 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 		}
 
 		duration := time.Since(start)
-		cost := modelinfo.Cost(model,
-			resp.Usage.InputTokens, resp.Usage.OutputTokens,
-			resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
+		cost, _ := modelinfo.CostAsOf(model, time.Now(), resp.Usage.Tokens())
 
 		spawnLog.Infof("session=%s model=%s input=%d output=%d cost=$%.4f stop=%s",
 			sessionKey, model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, resp.StopReason)

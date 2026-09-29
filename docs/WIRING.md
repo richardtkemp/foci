@@ -288,6 +288,7 @@ main
  ├── timeutil      (no deps — centralised timestamp formatting with configurable timezone)
  ├── relogin       → log, procx (automated CC re-login on 401 — see Backend Session Lifecycle)
  ├── delegator     → clock, log, modelinfo (Delegator interface, registry, StartOptions, SessionEvents/TurnEvents)
+  │   ├── delegator/accounting → modelinfo, sqlite (the per-call cost ledger, #2111 — schema, SQL cost views, rate render, Book/Report/RecordTurn, the pre-ledger migration; see "Cost ledger")
   │   ├── delegator/autoapprove → execguard, secrets (shared by ccstream/codex/opencode — auto-approve rule compilation/matching)
   │   ├── delegator/cctmux     → delegator, log, modelinfo, procx, fsnotify (tmux-based Claude Code; registers "claude-code-tmux" via init())
   │   ├── delegator/ccstream   → delegator, delegator/autoapprove, delegator/hookbin, delegator/pretool, delegator/stoprule, linkwalk, log, modelinfo, procx, question, ratelimit, tempdir, timeutil (stream-json Claude Code; registers "claude-code" via init())
@@ -1717,13 +1718,15 @@ Four outputs:
    over the parent's own observed writes into `Unknown`, and `Unknown` prices with
    `Ephemeral1h` — while the subagent observed them as 5m. The subagent is credited
    `CostUSD` (Counts at its observed split); the parent is debited `CostUSD +
-   TTLSurchargeUSD`, the surcharge being `modelinfo.TTLSurchargeAsOf` = 5m writes x
-   `ttlPremium` (1h rate minus 5m rate). Debiting both at 5m used to strand $3.75 per million
+   TTLSurchargeUSD`, the surcharge being ccstream's `cacheWriteSplit.ttlSurcharge` = the 5m
+   writes priced as TTL-unknown (`cache_write`) minus the same writes priced at 5m. Debiting
+   both at 5m used to strand $3.75 per million
    cache-write tokens on opus-5 on a row that no longer held them, breaking the #1854
    re-price identity there. The turn total now drops by the surcharge — they really were 5m
    tokens billed at 1h. Tokens are conserved; dollars fall. The debit can never be below the
-   credit BY CONSTRUCTION, not by a guard: `cacheWriteRate` only returns the 1h rate when it
-   is strictly above 5m, so `ttlPremium` is a positive float or exactly zero, and an unset
+   credit BY CONSTRUCTION, not by a guard: `modelinfo.Prices.Rates` gives the TTL-unknown
+   class the HIGHER of the two write figures (a 1h figure below 5m is ignored as a data
+   error), so the surcharge is a positive float or exactly zero, and an unset
    surcharge (zero) is the old, safe, at-5m debit. The apply logs `ttl_surcharge_removed=$…`.
 
    `ApplyCostCorrections` UPDATEs the two existing rows; it never appends a signed third row
@@ -1962,6 +1965,101 @@ Four outputs:
    - Use: `log.Conversation(log.ConversationEntry{...})`
    - Queryable with `sqlite3 conversation-clutch.db "SELECT * FROM messages"`
    - Useful for debugging formatting (see exact markdown sent vs plain text fallback)
+
+## Cost ledger (`internal/delegator/accounting`, #2111)
+
+The per-call ledger that replaces the per-turn `api_calls` rows and the window-subtraction
+pricing above. Design: clutch `notes/2111.md` (revision 3), rulings R1-R10 on todo #2111.
+**Built in phases.** P1 (#2113, this section) is the schema, the accounting core, the class
+rates in modelinfo and the migration. **Nothing books through it yet**: the backends still
+write `log.APIEntry` rows into the pre-ledger `api_calls` table described in "Logging", and
+`accounting.Open` is reached only from `foci-gw ledger-migrate` (a dry run on a COPY of an
+api.db). P2 switches each backend to `Tx.Book` and deletes its old path; the startup cutover
+(`accounting.Open` on the live api.db, which migrates it) lands with that switch.
+
+**Token classes are data (R1)** — `modelinfo/classes.go`. A `Class` is a string from one
+vocabulary (`input`, `output`, `cache_read`, `cache_write_5m`, `cache_write_1h`,
+`cache_write` = TTL not reported, `reasoning`, `web_search`, `web_fetch`), each with a unit
+(`mtok` or `each`) and a flag for whether it fills context. Classes are disjoint: an adapter
+normalises overlapping provider fields before booking. `Model.Rates map[Class]float64`
+replaced the named rate fields; `Prices.Rates` is the ONE place the sources' named figures
+(models.jsonl, `[[modelinfo]]`) become class rates — a zero figure means "not published"
+and leaves the class out (input and output excepted), the TTL-unknown and 1h classes take
+the higher write figure, `reasoning` defaults to the output rate, `web_fetch` is always $0.
+`config.toModel` merges an override through `Model.Prices()` and back.
+`modelinfo.CostAsOf(model, at, Tokens) (usd, priced)` is the ONLY pricing function (`Cost`,
+`CostAsOfSplit`, `CacheWrites`, `TTLSurchargeAsOf`, `WebSearchCostAsOf`, `cacheWriteRate`
+and `ttlPremium` are gone). `priced` is false when a billed class has no rate or the model
+resolves to no rate group — there is no guessed fallback rate any more (the old haiku /
+OpenAI-$5/$15 guesses), and `UnpricedModelHook` says so. Family pricing on the as-of path
+now uses the newest family member (#1967), as the latest-price path always did.
+
+**Rate groups.** `ResolveRateModel(model, at)` names the history group a call is priced
+from — `"<leaf>|<provider>|<dev>"`, the call's `rate_model`, resolved once at booking
+(exact leaf → variant-stripped → punctuation-folded → family canonical; CC's `<synthetic>`
+resolves to a zero-rate group). `RatesAsOf(rateModel, at)` is that group's row in effect on
+`at`'s UTC date. `RateTable()` renders every group into dated per-class rows with exactly
+that rule (a group's first row is in effect from `""`, same-date rows resolve to the last,
+a class a later row drops is rendered NULL), which is what lets SQL price like Go.
+
+**Schema** (`accounting/schema.go`; FKs on via the DSN):
+- `api_calls` — one row per API call on every backend (R3). `call_key` (provider message id
+  or an adapter-built stable id) with a unique index on `(backend, call_key)` IS the dedup;
+  NULL only on `kind='legacy'`. `billed_at` is UTC, fixed-width nanoseconds (sorts as text;
+  its first ten characters are the rate date). `rate_model` NULL = unresolved. `turn_id` NULL
+  only on `kind='overhead'` (R6), and must name a `turns` row. `kind` (call, compaction,
+  overhead, summary, spawn, legacy), `finality` (completed, stopless, interrupted, derived,
+  legacy), `class_method` (observed, backend_rule, solved, kind, unknown) are CHECKed.
+  `legacy_calculated_cost_usd` is the pre-ledger recorded figure on legacy calls only.
+  `cost_basis` says per call where the views take its cost from (Dick, 2026-09-29 12:08):
+  `counts` (price `call_tokens` at the dated rates — every live call) or `recorded` (take
+  `legacy_calculated_cost_usd` verbatim — a legacy row whose stored counts are not what was
+  billed). The view switches on it with a CASE, never a COALESCE. No cost column.
+- `call_tokens(call_id, class, count>0)` — the counts.
+- `turns` — per-turn facts, never cost; `activity_closed_at` NULL = still spending (R8);
+  `legacy_*` = context fill COPIED from a pre-ledger row (R4).
+- `backend_reports` — each backend's own totals at its native grain (R5): CC cumulative,
+  opencode per call, codex tokens only.
+- `token_classes`, `token_rates` — rendered from modelinfo in full on every `Open`.
+- Views: `call_class_costs` (per call per class, `count / per_units * rate` — CostAsOf's
+  term order), `call_costs` (by `cost_basis`; on counts, NULL when any class is unpriced,
+  never a silent 0, and 0 for a call with no counts; every finality priced, `interrupted`
+  included — #2111 §13.8 ruling), `turn_costs` (priced sum + `unpriced_calls`, parent/subagent split,
+  `still_running`, `context_fill` from the last parent call or the legacy copy),
+  `turn_class_costs` (counts-basis calls only: a recorded figure has no class split),
+  `daily_costs` and `session_costs` (UTC days, by billing time).
+
+**Writing** (`accounting/ledger.go`): `Ledger.Update(func(*Tx) error)` is one transaction;
+`Tx.Book(Call)` validates the Call contract, resolves `rate_model`, `INSERT OR IGNORE`s the
+call and its non-zero counts, and on a duplicate key compares counts
+(`invSameIDDifferentUsage`; the first booking stands). `invModelNotInTable` /
+`invClassNoRate` fire for a call the views will show as NULL. Alarms go to
+`Ledger.OnAlarm` only after the transaction commits. `Tx.Report` stores a backend report
+(the checks it feeds are P3); `Tx.RecordTurn` upserts a turn, a zero field leaving the
+stored value alone. Book does not yet fire `log.APIHook` or append api.jsonl — P2 moves
+those observers onto it with the first backend.
+
+**Migration** (`accounting/migrate.go`, #2111 §6): `Open` detects a pre-ledger api.db
+(`api_calls.calculated_cost_usd` exists), takes a `VACUUM INTO` backup, and in ONE
+transaction renames the table to `api_calls_v1`, creates the schema, books each v1 row as
+a legacy call keeping its id (tokens = the `turn_*` group, else the un-suffixed four),
+makes one turn per v1 `turn_id` (else `legacy:<id>`) with its context fill copied and its
+source inferred (`/b<n>` session → keepalive, purpose → batch, compaction), stores CC's
+cumulative and opencode's per-call reported costs as reports, verifies by id SET and
+per-class token totals, and drops v1 — or rolls back whole. The backend is inferred from
+call type and model (v1 never recorded it). Cache-write TTL: solved from CC's reported
+cost delta between consecutive same-model rows of a session when that yields an in-range
+integer (`solved`), else by record kind — CC main thread 1h, CC subagent 5m, direct API
+always 1h (`kind`) — else `cache_write` (`unknown`, codex/opencode). Cost basis (after the
+solve): direct-API rows (one call each), `solved` rows (their counts reproduce CC's own
+cost delta) and rows with no recorded figure are re-priced from their counts (`counts`);
+every other delegated row keeps its recorded figure (`recorded`) — its counts are not
+provably the bill (context-fill snapshot before #1854; output from `output_tokens` where
+`turn_output_tokens` was wiped before 2026-09-26; cross-model turn totals with an
+unobserved TTL split). The
+`MigrationReport` gives counts per method, the solve's outcomes, invariants found in
+history (counted, not alarmed), and old (`calculated_cost_usd`, and the old
+`EffectiveCost`) against new (`call_costs`) totals, overall and per UTC day.
 
 ## Tracing (`telemetry/`)
 

@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"foci/internal/delegator"
-	"foci/internal/modelinfo"
 )
 
 // #1866 P3: a turn is priced PER MODEL, with cache writes charged at the TTL
@@ -133,22 +132,22 @@ func TestSplitFor_AllocatesTheAuthoritativeTotalExactly(t *testing.T) {
 		name     string
 		observed cacheWriteSplit
 		total    int
-		want     modelinfo.CacheWrites
+		want     cacheWriteSplit
 	}{
 		{"exact coverage — the split is used verbatim",
 			cacheWriteSplit{Ephemeral5m: 300, Ephemeral1h: 700}, 1000,
-			modelinfo.CacheWrites{Ephemeral5m: 300, Ephemeral1h: 700}},
+			cacheWriteSplit{Ephemeral5m: 300, Ephemeral1h: 700}},
 		{"nothing observed — all unknown, priced at 1h",
 			cacheWriteSplit{}, 1000,
-			modelinfo.CacheWrites{Unknown: 1000}},
+			cacheWriteSplit{Unknown: 1000}},
 		{"partial coverage — the shortfall is unknown, NOT scaled up",
 			cacheWriteSplit{Ephemeral5m: 200}, 1000,
-			modelinfo.CacheWrites{Ephemeral5m: 200, Unknown: 800}},
+			cacheWriteSplit{Ephemeral5m: 200, Unknown: 800}},
 		{"accumulator read high — trimmed from the cheaper class first",
 			cacheWriteSplit{Ephemeral5m: 900, Ephemeral1h: 400}, 1000,
-			modelinfo.CacheWrites{Ephemeral5m: 600, Ephemeral1h: 400}},
+			cacheWriteSplit{Ephemeral5m: 600, Ephemeral1h: 400}},
 		{"no writes at all",
-			cacheWriteSplit{Ephemeral5m: 50}, 0, modelinfo.CacheWrites{}},
+			cacheWriteSplit{Ephemeral5m: 50}, 0, cacheWriteSplit{}},
 	}
 	for _, c := range cases {
 		got := splitFor(c.observed, c.total)

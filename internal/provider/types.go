@@ -387,6 +387,18 @@ func (u Usage) AsTurn() *modelinfo.TokenCounts {
 	}
 }
 
+// Tokens normalises this usage into billed token classes the way the direct
+// Messages API bills it (#2111 §3.1): its cache writes are 1-hour writes (Dick,
+// 2026-09-29: direct-API writes were always 1h, never 5m).
+func (u Usage) Tokens() modelinfo.Tokens {
+	return modelinfo.Tokens{
+		modelinfo.ClassInput:        u.InputTokens,
+		modelinfo.ClassOutput:       u.OutputTokens,
+		modelinfo.ClassCacheRead:    u.CacheReadInputTokens,
+		modelinfo.ClassCacheWrite1h: u.CacheCreationInputTokens,
+	}
+}
+
 // MessageResponse is the response from an LLM API call.
 type MessageResponse struct {
 	ID         string         `json:"id"`

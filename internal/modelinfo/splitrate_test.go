@@ -20,52 +20,38 @@ func closeTo(t *testing.T, got, want float64, what string) {
 	}
 }
 
-func TestCostAsOfSplit_PricesEachTTLAtItsOwnRate(t *testing.T) {
-	at := time.Now()
-	const mtok = 1_000_000
-	closeTo(t, CostAsOfSplit("claude-opus-5", at, 0, 0, 0, CacheWrites{Ephemeral5m: mtok}), 6.25, "1M 5m writes")
-	closeTo(t, CostAsOfSplit("claude-opus-5", at, 0, 0, 0, CacheWrites{Ephemeral1h: mtok}), 10.00, "1M 1h writes")
+// writeCost prices n cache-write tokens of one class on model now.
+func writeCost(model string, c Class, n int) float64 {
+	usd, _ := CostAsOf(model, time.Now(), Tokens{c: n})
+	return usd
 }
 
-func TestCostAsOfSplit_UnknownPricesAtTheHigherRate(t *testing.T) {
+func TestCostAsOf_PricesEachTTLAtItsOwnRate(t *testing.T) {
+	const mtok = 1_000_000
+	closeTo(t, writeCost("claude-opus-5", ClassCacheWrite5m, mtok), 6.25, "1M 5m writes")
+	closeTo(t, writeCost("claude-opus-5", ClassCacheWrite1h, mtok), 10.00, "1M 1h writes")
+}
+
+func TestCostAsOf_UnknownTTLPricesAtTheHigherRate(t *testing.T) {
 	// An unobserved TTL is not "5m". Pricing it at the 1h rate errs toward
 	// over-charging and preserves the pre-split behaviour exactly — assuming
 	// the cheaper rate is the mistake that caused the bug in the first place.
-	at := time.Now()
 	const mtok = 1_000_000
-	unknown := CostAsOfSplit("claude-opus-5", at, 0, 0, 0, CacheWrites{Unknown: mtok})
-	oneHour := CostAsOfSplit("claude-opus-5", at, 0, 0, 0, CacheWrites{Ephemeral1h: mtok})
-	closeTo(t, unknown, oneHour, "unknown-TTL writes")
-	if unknown == CostAsOfSplit("claude-opus-5", at, 0, 0, 0, CacheWrites{Ephemeral5m: mtok}) {
+	unknown := writeCost("claude-opus-5", ClassCacheWrite, mtok)
+	closeTo(t, unknown, writeCost("claude-opus-5", ClassCacheWrite1h, mtok), "unknown-TTL writes")
+	if unknown == writeCost("claude-opus-5", ClassCacheWrite5m, mtok) {
 		t.Error("unknown must not price at the 5m rate — that is the bug, not the fix")
 	}
 }
 
-func TestCostAsOf_IsCostAsOfSplitWithUnknown(t *testing.T) {
-	// The flat entry point must remain byte-identical in behaviour, or every
-	// caller that cannot observe a TTL silently changes price.
-	at := time.Now()
-	for _, model := range []string{"claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5", "claude-sonnet-4-5"} {
-		flat := CostAsOf(model, at, 100, 200, 300, 400)
-		split := CostAsOfSplit(model, at, 100, 200, 300, CacheWrites{Unknown: 400})
-		closeTo(t, flat, split, model+" flat vs unknown-split")
-	}
-}
-
-func TestCostAsOfSplit_SubagentModelsHaveRealOneHourRates(t *testing.T) {
-	// claude-haiku-4-5 and claude-sonnet-4-5 carried NO 1h rate, so
-	// cacheWriteRate fell back to the 5m figure and a MAIN-THREAD 1h write on
-	// either was under-priced by 1.6x — the mirror image of #1866, and
-	// invisible because it errs cheap. These are exactly the models the
-	// delegate skill sends subagents to (#1704).
-	//
-	// This test previously asserted the OPPOSITE: that the split was a no-op
-	// for them, with a note that adding a rate later should surface HERE as a
-	// deliberate change rather than a silent price movement. It did exactly
-	// that. Rates read off Anthropic's published table 2026-09-11
-	// (platform.claude.com/docs/en/build-with-claude/prompt-caching.md), not
-	// derived from the 2x rule.
-	at := time.Now()
+func TestCostAsOf_SubagentModelsHaveRealOneHourRates(t *testing.T) {
+	// claude-haiku-4-5 and claude-sonnet-4-5 carried NO 1h rate, so a
+	// MAIN-THREAD 1h write on either fell back to the 5m figure and was
+	// under-priced by 1.6x — the mirror image of #1866, and invisible because
+	// it errs cheap. These are exactly the models the delegate skill sends
+	// subagents to (#1704). Rates read off Anthropic's published table
+	// 2026-09-11 (platform.claude.com/docs/en/build-with-claude/prompt-caching.md),
+	// not derived from the 2x rule.
 	const mtok = 1_000_000
 	for _, c := range []struct {
 		model          string
@@ -74,8 +60,8 @@ func TestCostAsOfSplit_SubagentModelsHaveRealOneHourRates(t *testing.T) {
 		{"claude-haiku-4-5", 1.25, 2.00},
 		{"claude-sonnet-4-5", 3.75, 6.00},
 	} {
-		closeTo(t, CostAsOfSplit(c.model, at, 0, 0, 0, CacheWrites{Ephemeral5m: mtok}), c.want5m, c.model+" 5m")
-		closeTo(t, CostAsOfSplit(c.model, at, 0, 0, 0, CacheWrites{Ephemeral1h: mtok}), c.want1h, c.model+" 1h")
+		closeTo(t, writeCost(c.model, ClassCacheWrite5m, mtok), c.want5m, c.model+" 5m")
+		closeTo(t, writeCost(c.model, ClassCacheWrite1h, mtok), c.want1h, c.model+" 1h")
 	}
 }
 
@@ -90,7 +76,7 @@ func TestCostAsOfSplit_SubagentModelsHaveRealOneHourRates(t *testing.T) {
 // mispricing to be found by a divergence warning months later.
 //
 // A row with NO 1h rate is not a violation here: absence means "not recorded",
-// and cacheWriteRate falls back to the 5m figure. That gap is #1704's subject.
+// and the 1h class falls back to the 5m figure. That gap is #1704's subject.
 func TestOneHourRateIsTwiceBaseInput(t *testing.T) {
 	var checked int
 	for _, line := range strings.Split(string(builtInData), "\n") {
@@ -115,44 +101,4 @@ func TestOneHourRateIsTwiceBaseInput(t *testing.T) {
 		t.Fatalf("only %d rows carried a 1h rate — the test is not reading models.jsonl "+
 			"as expected and would pass vacuously", checked)
 	}
-}
-
-// TestTTLSurcharge_NeverNegative is what lets a #1929 correction debit the
-// parent CostUSD + TTLSurchargeUSD with no guard against a debit below the
-// credit: the premium is non-negative by construction, even for a rate row
-// whose 1h figure is (wrongly) below its 5m one. Before cacheWriteRate required
-// 1h > 5m, such a row priced Unknown writes BELOW 5m and the premium went
-// negative.
-func TestTTLSurcharge_NeverNegative(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		m    Model
-		want float64
-	}{
-		{"1h above 5m", Model{CacheWritePer1M: 6.25, CacheWrite1hPer1M: 10}, 3.75},
-		{"no 1h figure", Model{CacheWritePer1M: 6.25}, 0},
-		{"1h equal to 5m", Model{CacheWritePer1M: 6.25, CacheWrite1hPer1M: 6.25}, 0},
-		{"1h below 5m (data error)", Model{CacheWritePer1M: 6.25, CacheWrite1hPer1M: 3}, 0},
-	} {
-		if got := tc.m.ttlPremium(); got != tc.want {
-			t.Errorf("%s: ttlPremium = %v, want %v", tc.name, got, tc.want)
-		}
-	}
-}
-
-// TestTTLSurchargeAsOf_OnlyFiveMinuteWritesCarryIt: 1h and Unknown writes price
-// at the same rate the parent charged, so only the 5m ones were over-charged.
-func TestTTLSurchargeAsOf_OnlyFiveMinuteWritesCarryIt(t *testing.T) {
-	at := time.Now()
-	const mtok = 1_000_000
-	closeTo(t, TTLSurchargeAsOf("claude-opus-5", at, CacheWrites{Ephemeral5m: mtok}), 3.75, "1M 5m writes")
-	if got := TTLSurchargeAsOf("claude-opus-5", at, CacheWrites{Ephemeral1h: mtok, Unknown: mtok}); got != 0 {
-		t.Errorf("1h+Unknown writes surcharge = %v, want exactly 0", got)
-	}
-	// Agrees with pricing the same writes both ways, which is what the parent
-	// and subagent rows actually hold.
-	w := CacheWrites{Ephemeral5m: 300, Ephemeral1h: 700}
-	both := CostAsOfSplit("claude-opus-5", at, 0, 0, 0, CacheWrites{Unknown: 1000}) -
-		CostAsOfSplit("claude-opus-5", at, 0, 0, 0, w)
-	closeTo(t, TTLSurchargeAsOf("claude-opus-5", at, w), both, "surcharge vs priced both ways")
 }

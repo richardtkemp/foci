@@ -2,7 +2,7 @@ package modelinfo
 
 import "testing"
 
-// The cacheWriteRate() unit tests above prove the LOGIC prefers a 1h rate and
+// The Prices.Rates unit tests prove the LOGIC prefers a 1h rate and
 // falls back to the 5m one. These two guard the DATA, which is where it actually
 // went wrong: on 2026-08-09 fabulo's claude-fable-5 turns diverged 33.9% from the
 // backend's own figure while every other model was quiet. Nothing was wrong with
@@ -27,11 +27,11 @@ func TestOneHourRate_PresentForModelsWeRun(t *testing.T) {
 			t.Errorf("%s: not in the registry at all", id)
 			continue
 		}
-		if m.CacheWritePer1M > 0 && m.CacheWrite1hPer1M == 0 {
-			t.Errorf("%s: has a 5m cache-write rate (%v) but no 1h rate, so cacheWriteRate() "+
+		if p := m.Prices(); p.CacheWrite5m > 0 && p.CacheWrite1h == 0 {
+			t.Errorf("%s: has a 5m cache-write rate (%v) but no 1h rate, so the 1h class "+
 				"falls back to 5m and understates every cached turn — this is exactly the "+
 				"claude-fable-5 defect (33.9%% divergence, 2026-08-09)",
-				id, m.CacheWritePer1M)
+				id, m.Prices().CacheWrite5m)
 		}
 	}
 }
@@ -47,7 +47,7 @@ func TestOneHourRate_RefreshDoesNotDropIt(t *testing.T) {
 	for id, byProvider := range history {
 		for _, rows := range byProvider {
 			for _, r := range rows {
-				if r.model.CacheWrite1hPer1M > 0 {
+				if r.model.Prices().CacheWrite1h > 0 {
 					everHad[id] = true
 				}
 			}
@@ -59,7 +59,7 @@ func TestOneHourRate_RefreshDoesNotDropIt(t *testing.T) {
 	}
 	for id := range everHad {
 		for _, m := range registry[id] {
-			if m.CacheWrite1hPer1M == 0 && m.CacheWritePer1M > 0 {
+			if p := m.Prices(); p.CacheWrite1h == 0 && p.CacheWrite5m > 0 {
 				t.Errorf("%s: some row supplies a 1h cache-write rate but the winning row does "+
 					"not — a dated refresh dropped the field, silently reverting this model to "+
 					"5m pricing", id)
@@ -82,12 +82,12 @@ func TestFable51CacheReadIsQuarterRate(t *testing.T) {
 	if !ok {
 		t.Fatal("claude-fable-5-1: not in the registry at all")
 	}
-	if m.InputPer1M != 10 {
-		t.Errorf("input rate = %v, want 10 — the 0.025x check below assumes it", m.InputPer1M)
+	if m.Rates[ClassInput] != 10 {
+		t.Errorf("input rate = %v, want 10 — the 0.025x check below assumes it", m.Rates[ClassInput])
 	}
-	if m.CacheReadPer1M != 0.25 {
+	if m.Rates[ClassCacheRead] != 0.25 {
 		t.Errorf("cache-read rate = %v, want 0.25 (0.025x input). A value of %v would mean a "+
 			"refresh applied the standard 0.1x multiplier that Fable/Mythos 5.1 are exempt from",
-			m.CacheReadPer1M, m.InputPer1M*0.1)
+			m.Rates[ClassCacheRead], m.Rates[ClassInput]*0.1)
 	}
 }

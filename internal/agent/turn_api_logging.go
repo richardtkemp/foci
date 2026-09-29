@@ -17,9 +17,7 @@ import (
 // logAPIResponse logs usage, cost, and optionally the full request/response payload.
 func (a *Agent) logAPIResponse(ts *TurnState, model string, start time.Time, duration time.Duration, req *provider.MessageRequest, resp *provider.MessageResponse, msgCount int) float64 {
 	sessionKey := ts.SessionKey
-	cost := modelinfo.Cost(model,
-		resp.Usage.InputTokens, resp.Usage.OutputTokens,
-		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
+	cost, _ := modelinfo.CostAsOf(model, time.Now(), resp.Usage.Tokens())
 
 	a.logger().Infof("session=%s stop_reason=%s input=%d output=%d cache_read=%d cache_write=%d cost=$%.4f",
 		sessionKey, resp.StopReason, resp.Usage.InputTokens, resp.Usage.OutputTokens,

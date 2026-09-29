@@ -59,7 +59,7 @@ func TestBreakdownClassesSumToTheTurnTotal(t *testing.T) {
 	b := &Backend{}
 
 	accumulate := func(in, out, cr, cw int) {
-		b.turnCalcCostUSD += modelinfo.CostAsOf(model, priceAt, in, out, cr, cw)
+		b.turnCalcCostUSD += modelinfo.TokenCounts{Input: in, Output: out, CacheRead: cr, CacheWrite: cw}.CostAsOf(model, priceAt)
 		b.turnCalc = b.turnCalc.Add(modelinfo.TokenCounts{Input: in, Output: out, CacheRead: cr, CacheWrite: cw})
 	}
 

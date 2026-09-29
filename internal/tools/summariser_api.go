@@ -84,9 +84,7 @@ func (s *APISummariser) Summarise(ctx context.Context, content []byte, prompt, f
 	}
 	duration := time.Since(start)
 
-	cost := modelinfo.Cost(model,
-		resp.Usage.InputTokens, resp.Usage.OutputTokens,
-		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
+	cost, _ := modelinfo.CostAsOf(model, time.Now(), resp.Usage.Tokens())
 
 	sessionKey := SessionKeyFromContext(ctx)
 	summaryLog.Infof("session=%s model=%s input=%d output=%d cost=$%.4f duration=%s",

@@ -69,7 +69,7 @@ func TestCategoryCosts_PricesTurnCountsNotContextFill(t *testing.T) {
 	entries := []log.APIEntry{e}
 
 	_, cacheWrite, _, _, _ := categoryCosts(entries)
-	want := modelinfo.CostAsOf(e.Model, e.Timestamp, 0, 0, 0, 100000)
+	want := modelinfo.TokenCounts{Input: 0, Output: 0, CacheRead: 0, CacheWrite: 100000}.CostAsOf(e.Model, e.Timestamp)
 	if cacheWrite != want {
 		t.Errorf("cacheWrite = %.6f, want %.6f — priced from Turn (100000), not the 300-token context fill",
 			cacheWrite, want)

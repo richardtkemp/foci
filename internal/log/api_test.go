@@ -304,7 +304,7 @@ func TestEffectiveCostIgnoresProvided(t *testing.T) {
 		Output:          500_000,
 		ProvidedCostUSD: &provided,
 	}
-	want := modelinfo.CostAsOf(e.Model, e.Timestamp, e.Input, e.Output, e.CacheRead, e.CacheWrite)
+	want := modelinfo.TokenCounts{Input: e.Input, Output: e.Output, CacheRead: e.CacheRead, CacheWrite: e.CacheWrite}.CostAsOf(e.Model, e.Timestamp)
 	if want <= 0 {
 		t.Fatal("test precondition: expected a positive live-calculated cost for claude-haiku-4-5")
 	}
@@ -343,7 +343,7 @@ func TestEffectiveCostLiveWhenCalculatedAbsent(t *testing.T) {
 		Input:     1_000_000,
 		Output:    500_000,
 	}
-	want := modelinfo.CostAsOf(e.Model, e.Timestamp, e.Input, e.Output, e.CacheRead, e.CacheWrite)
+	want := modelinfo.TokenCounts{Input: e.Input, Output: e.Output, CacheRead: e.CacheRead, CacheWrite: e.CacheWrite}.CostAsOf(e.Model, e.Timestamp)
 	if want <= 0 {
 		t.Fatal("test precondition: expected a positive live-calculated cost for claude-haiku-4-5")
 	}

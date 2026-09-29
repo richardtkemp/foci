@@ -71,6 +71,8 @@ func main() {
 		case "--version", "-v", "version":
 			printVersion()
 			os.Exit(0)
+		case "ledger-migrate":
+			os.Exit(runLedgerMigrateDryRun(os.Args[2:], os.Stdout, os.Stderr))
 		}
 	}
 
@@ -80,13 +82,15 @@ func main() {
 
 Usage: foci-gw [flags]
        foci-gw version
+       foci-gw ledger-migrate -from <api.db> [-out <path>]
 
 Flags:
 `)
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, `
 Subcommands:
-  version   Print version information
+  version          Print version information
+  ledger-migrate   Dry-run the cost ledger migration (#2111) on a copy of an api.db
 `)
 	}
 
@@ -125,7 +129,7 @@ Subcommands:
 	}
 
 	modelinfo.UnpricedModelHook = func(model string) {
-		modelinfoLog.Warnf("no pricing for model %q — using fallback rate; add it to the registry or a family match in internal/modelinfo", model)
+		modelinfoLog.Warnf("no pricing for model %q — its calls are unpriced (cost unknown, not zero); add it to the registry or a family match in internal/modelinfo", model)
 	}
 	modelinfo.AmbiguousModelHook = func(bare string) {
 		modelinfoLog.Warnf("ambiguous model %q — multiple registry entries share this leaf id and the lookup couldn't disambiguate by dev/provider; picked deterministically. Qualify the model id with its dev (e.g. openrouter/<dev>/%s)", bare, bare)

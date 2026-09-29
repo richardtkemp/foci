@@ -3,7 +3,6 @@ package ccstream
 import (
 	"foci/internal/delegator"
 	"foci/internal/log"
-	"foci/internal/modelinfo"
 	"math"
 	"path/filepath"
 	"testing"
@@ -320,24 +319,22 @@ func TestOnResult_CorrectedParentRowRePricesToItsOwnCost(t *testing.T) {
 	}
 	now := time.Now()
 	p := parent.Turn
-	wantParent := modelinfo.CostAsOfSplit(priceModel, now, p.Input, p.Output, p.CacheRead,
-		modelinfo.CacheWrites{})
+	wantParent := cacheWriteSplit{}.price(priceModel, now, p.Input, p.Output, p.CacheRead)
 	if d := *parent.CalculatedCostUSD - wantParent; math.Abs(d) > 1e-9 {
 		t.Errorf("parent row = $%.6f, but its stored counts re-price to $%.6f: $%.6f of "+
 			"cache-write surcharge stranded on a row that no longer holds the writes (#1929 D1, #1854)",
 			*parent.CalculatedCostUSD, wantParent, d)
 	}
 	s := sub.Turn
-	wantSub := modelinfo.CostAsOfSplit(priceModel, now, s.Input, s.Output, s.CacheRead,
-		modelinfo.CacheWrites{Ephemeral5m: s.CacheWrite})
+	wantSub := cacheWriteSplit{Ephemeral5m: s.CacheWrite}.price(priceModel, now, s.Input, s.Output, s.CacheRead)
 	if d := *sub.CalculatedCostUSD - wantSub; math.Abs(d) > 1e-9 {
 		t.Errorf("subagent row = $%.6f, want $%.6f — every write it holds was observed 5m",
 			*sub.CalculatedCostUSD, wantSub)
 	}
 	// The turn total FALLS by exactly the over-charge, priced both ways rather
 	// than from rate constants: those were 5m writes billed at 1h.
-	surcharge := modelinfo.CostAsOfSplit(priceModel, now, 0, 0, 0, modelinfo.CacheWrites{Unknown: lateWrite}) -
-		modelinfo.CostAsOfSplit(priceModel, now, 0, 0, 0, modelinfo.CacheWrites{Ephemeral5m: lateWrite})
+	surcharge := cacheWriteSplit{Unknown: lateWrite}.price(priceModel, now, 0, 0, 0) -
+		cacheWriteSplit{Ephemeral5m: lateWrite}.price(priceModel, now, 0, 0, 0)
 	if surcharge <= 0 {
 		t.Fatalf("surcharge = $%.6f — the fixture needs a model whose 1h and 5m rates differ", surcharge)
 	}
