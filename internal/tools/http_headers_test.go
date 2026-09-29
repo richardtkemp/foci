@@ -28,7 +28,7 @@ func TestHTTPResponseHeaders_AllShown(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]any{"url": srv.URL, "include_headers": true})
 	result, err := tool.Execute(context.Background(), params)
 	if err != nil {
@@ -60,7 +60,7 @@ func TestHTTPResponseHeaders_RepeatedHeaderKeepsEveryValue(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]any{"url": srv.URL, "include_headers": true})
 	result, err := tool.Execute(context.Background(), params)
 	if err != nil {
@@ -93,7 +93,7 @@ api_key = "sk-header-redaction-canary"
 allowed_hosts = ["%s"]
 `, srv.Listener.Addr().(*net.TCPAddr).IP.String()))
 
-	tool := NewHTTPRequestTool(store, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
+	tool := NewHTTPRequestTool(store, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]any{
 		"url":             srv.URL,
 		"include_headers": true,
@@ -127,7 +127,7 @@ func TestHTTPRequestIncludeHeadersDefaultsToBodyOnly(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 0 }, nil, 0640)
 
 	params, _ := json.Marshal(map[string]any{"url": srv.URL})
 	result, err := tool.Execute(context.Background(), params)
@@ -175,7 +175,7 @@ func TestHTTPRequestSaveToIncludeHeaders(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 0 }, nil, 0640)
 	savePath := filepath.Join(t.TempDir(), "out.txt")
 	want := "Saved 5 bytes to " + savePath
 

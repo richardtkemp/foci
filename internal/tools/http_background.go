@@ -48,7 +48,13 @@ func runHTTPBackground(
 		if hr.err != nil {
 			return fmt.Sprintf("[HTTP RESULT] Request failed:\n%s\n\nError: %s", displayURL, hr.err)
 		}
-		return fmt.Sprintf("[HTTP RESULT] Request completed:\n%s\n\n%s", displayURL, hr.output.Text)
+		msg := fmt.Sprintf("[HTTP RESULT] Request completed:\n%s\n\n%s", displayURL, hr.output.Text)
+		// A notification bypasses the tool-result guard, so a spilled body
+		// must say where the rest went or the head reads as the whole (#2107).
+		if hr.output.ResultFile != "" {
+			msg += fmt.Sprintf("\n\n[Showing the head only: full body (%d bytes) saved to %s]", hr.output.ResultSize, hr.output.ResultFile)
+		}
+		return msg
 	}
 
 	pendingMsg := fmt.Sprintf("Request still running (exceeded %ds threshold). Results will be delivered when complete.\n%s", autoBackgroundSecs, displayURL)

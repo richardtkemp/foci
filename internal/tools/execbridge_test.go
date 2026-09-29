@@ -502,7 +502,7 @@ func TestHTTPRequestShellHelpDerivesFromSchema(t *testing.T) {
 	// discoverable (#1817: --include-headers worked but --help never listed
 	// it; the save_to text promised status+headers it did not print).
 	t.Parallel()
-	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 0 }, func() int64 { return 0 }, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 0 }, func() int64 { return 0 }, func() int64 { return 0 }, nil, 0640)
 	if err := validateShellFuncSchemaParity(tool); err != nil {
 		t.Fatalf("schema/body parity: %v", err)
 	}
@@ -2507,7 +2507,7 @@ func TestPositionalAlsoTakesFlag_AndRejectsBoth(t *testing.T) {
 	}{
 		{"generic generator", generic, "foci_probe", "--query", ""},
 		{"http_request (hand-written)", NewHTTPRequestTool(nil, nil, t.TempDir(),
-			func() int { return 0 }, func() int64 { return 1 }, func() int64 { return 1 }, nil, 0o644),
+			func() int { return 0 }, func() int64 { return 1 }, func() int64 { return 1 }, func() int64 { return 0 }, nil, 0o644),
 			"foci_http_request", "--url", ""},
 		// --file is not incidental: with neither --file nor stdin, foci_summary
 		// mktemps under the LIVE shared temp root, which the sandboxed `make test`

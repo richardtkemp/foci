@@ -39,7 +39,9 @@ type fileAttachment struct {
 // maxUploadFileSize is the max file size in bytes for multipart uploads (0 = 50MB default).
 // maxSpillBytes is the ceiling on retained response bytes: the inline text path keeps a
 // preview in the result and spills the full body (up to this cap) to disk (0 = 50MB default).
-func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs func() int, maxUploadFileSize, maxSpillBytes func() int64, notifier *AsyncNotifier, fileMode os.FileMode) *Tool {
+// maxResultChars is the agent's max_result_chars tool-result guard; it bounds that inline
+// preview so a large text body can't flood the context (0 = no guard, 1MB preview).
+func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs func() int, maxUploadFileSize, maxSpillBytes, maxResultChars func() int64, notifier *AsyncNotifier, fileMode os.FileMode) *Tool {
 	return &Tool{
 		Name:        "http_request",
 		ExecExport:  true,
@@ -116,7 +118,7 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 				},
 				"max_response_bytes": {
 					"type": "integer",
-					"description": "Hard cap on the response body in bytes; anything past it is dropped. Without it, save_to/binary bodies are capped at 10MB, and text returns 1MB inline with the full body spilled to a file."
+					"description": "Hard cap on the response body in bytes; anything past it is dropped. Without it, save_to/binary bodies are capped at 10MB, and a text body longer than the max_result_chars limit returns only its head inline, with the full body spilled to a file."
 				},
 				"background": {
 					"type": "boolean",
@@ -130,12 +132,12 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 			"required": ["url"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return executeHTTPRequest(ctx, params, store, bwStore, tempDir, autoBackgroundSecs(), maxUploadFileSize(), maxSpillBytes(), notifier, fileMode)
+			return executeHTTPRequest(ctx, params, store, bwStore, tempDir, autoBackgroundSecs(), maxUploadFileSize(), maxSpillBytes(), maxResultChars(), notifier, fileMode)
 		},
 	}
 }
 
-func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, maxUploadFileSize, maxSpillBytes int64, notifier *AsyncNotifier, fileMode os.FileMode) (ToolResult, error) {
+func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, maxUploadFileSize, maxSpillBytes, maxResultChars int64, notifier *AsyncNotifier, fileMode os.FileMode) (ToolResult, error) {
 	p, err := UnmarshalParams[struct {
 		URL              string            `json:"url"`
 		Method           string            `json:"method"`
@@ -268,7 +270,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 			return ToolResult{}, fmt.Errorf("request failed: %w", err)
 		}
 		defer func() { _ = resp.Body.Close() }()
-		return processHTTPResponse(SessionKeyFromContext(ctx), resp, p.URL, p.Method, p.SaveTo, p.SaveFromJSONPath, p.IncludeHeaders, p.MaxResponseBytes, maxSpillBytes, tempDir, store, bwStore, fileMode)
+		return processHTTPResponse(SessionKeyFromContext(ctx), resp, p.URL, p.Method, p.SaveTo, p.SaveFromJSONPath, p.IncludeHeaders, p.MaxResponseBytes, maxSpillBytes, maxResultChars, tempDir, store, bwStore, fileMode)
 	}
 
 	displayURL := formatDisplayURL(p.URL, p.Method)
@@ -289,7 +291,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 // tool call, background notifier — sees the same default; it used to be an
 // exec-bridge-only strip, which left the flag out of the schema and the shell
 // --help (#1817).
-func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method, saveTo, saveFromJSONPath string, includeHeaders bool, maxResponseBytes, maxSpillBytes int64, tempDir string, store *secrets.Store, bwStore *bitwarden.Store, fileMode os.FileMode) (ToolResult, error) {
+func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method, saveTo, saveFromJSONPath string, includeHeaders bool, maxResponseBytes, maxSpillBytes, maxResultChars int64, tempDir string, store *secrets.Store, bwStore *bitwarden.Store, fileMode os.FileMode) (ToolResult, error) {
 	if fileMode == 0 {
 		fileMode = 0640
 	}
@@ -423,7 +425,7 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 	// We do NOT truncate-with-marker or signal here: that's done by the layer
 	// above (the API guard via ResultFile/ResultSize, or CC for exec-bridge
 	// calls), where it won't corrupt a shell pipe.
-	preview := getResponseBodyLimit(contentType, "", maxResponseBytes) // text limit (1MB default, or override)
+	preview := getResponseBodyLimit(contentType, "", maxResponseBytes) // text limit (1MB default, or override); capped below
 	ceiling := maxSpillBytes
 	if ceiling <= 0 {
 		ceiling = 50 << 20 // 50MB fallback
@@ -434,6 +436,12 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 	userCapped := maxResponseBytes > 0 && maxResponseBytes < ceiling
 	if userCapped {
 		ceiling = maxResponseBytes
+	}
+	// The inline head is bounded by the agent's tool-result guard, same as the
+	// shell tool's spill threshold: 1MB inline is ~250k tokens (#2107). The
+	// rest of the body still spills, up to the ceiling.
+	if maxResultChars > 0 && preview > maxResultChars {
+		preview = maxResultChars
 	}
 	if preview > ceiling {
 		preview = ceiling

@@ -35,7 +35,7 @@ func TestHTTPRequestSpillsLargeBody(t *testing.T) {
 	srv := bigBodyServer(t, bodySize)
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, t.TempDir(), func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return ceiling }, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, t.TempDir(), func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return ceiling }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]any{"url": srv.URL})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -74,7 +74,7 @@ func TestHTTPRequestSmallBodyInline(t *testing.T) {
 	srv := bigBodyServer(t, 200)
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, t.TempDir(), func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 1 << 20 }, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, t.TempDir(), func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 1 << 20 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]any{"url": srv.URL})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -100,7 +100,7 @@ func TestHTTPRequestCeilingTruncates(t *testing.T) {
 	srv := bigBodyServer(t, bodySize)
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, t.TempDir(), func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return ceiling }, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, t.TempDir(), func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return ceiling }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]any{"url": srv.URL})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -129,7 +129,7 @@ func TestHTTPRequestMaxResponseBytesBelowBodyTruncates(t *testing.T) {
 	srv := bigBodyServer(t, bodySize)
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, t.TempDir(), func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 1 << 20 }, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, t.TempDir(), func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 1 << 20 }, func() int64 { return 0 }, nil, 0640)
 	params, _ := json.Marshal(map[string]any{
 		"url":                srv.URL,
 		"max_response_bytes": maxBytes,
@@ -144,5 +144,73 @@ func TestHTTPRequestMaxResponseBytesBelowBodyTruncates(t *testing.T) {
 	}
 	if got := strings.Count(result.Text, "a"); got != maxBytes {
 		t.Errorf("body bytes in result = %d, want %d", got, maxBytes)
+	}
+}
+
+func TestHTTPRequestInlinePreviewCappedByMaxResultChars(t *testing.T) {
+	// Proves the inline preview of a spilled text body is bounded by the
+	// agent's max_result_chars guard, not the 1MB text default (#2107): ~1MB
+	// inline is ~250k tokens. The full body still spills to disk.
+	t.Parallel()
+	const maxResultChars = 15000
+	const bodySize = 200 * 1024 // well over the guard, under the 1MB default
+	srv := bigBodyServer(t, bodySize)
+	defer srv.Close()
+
+	tool := NewHTTPRequestTool(nil, nil, t.TempDir(), func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 4 << 20 }, func() int64 { return maxResultChars }, nil, 0640)
+	params, _ := json.Marshal(map[string]any{"url": srv.URL})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(result.Text) != maxResultChars {
+		t.Errorf("inline text = %d bytes, want the %d-byte max_result_chars head", len(result.Text), maxResultChars)
+	}
+	if result.ResultFile == "" {
+		t.Fatal("expected the full body to spill to ResultFile")
+	}
+	if result.ResultSize != bodySize {
+		t.Errorf("ResultSize = %d, want %d", result.ResultSize, bodySize)
+	}
+	data, err := os.ReadFile(result.ResultFile)
+	if err != nil {
+		t.Fatalf("read spill file: %v", err)
+	}
+	if len(data) != bodySize {
+		t.Errorf("spill file = %d bytes, want the full %d-byte body", len(data), bodySize)
+	}
+}
+
+func TestHTTPRequestInlinePreviewCapAppliesUnderMaxResponseBytes(t *testing.T) {
+	// An explicit max_response_bytes above max_result_chars is still a hard cap
+	// on retained bytes (#2098), but it no longer raises the inline preview past
+	// the guard: the head stays at max_result_chars and the rest, up to the cap,
+	// spills (#2107).
+	t.Parallel()
+	const maxResultChars = 1000
+	const maxBytes = 5000
+	srv := bigBodyServer(t, 64*1024)
+	defer srv.Close()
+
+	tool := NewHTTPRequestTool(nil, nil, t.TempDir(), func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 4 << 20 }, func() int64 { return maxResultChars }, nil, 0640)
+	params, _ := json.Marshal(map[string]any{"url": srv.URL, "max_response_bytes": maxBytes})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(result.Text) != maxResultChars {
+		t.Errorf("inline text = %d bytes, want %d", len(result.Text), maxResultChars)
+	}
+	if result.ResultFile == "" {
+		t.Fatal("expected the body past the preview to spill to ResultFile")
+	}
+	data, err := os.ReadFile(result.ResultFile)
+	if err != nil {
+		t.Fatalf("read spill file: %v", err)
+	}
+	if len(data) != maxBytes {
+		t.Errorf("spill file = %d bytes, want the %d-byte max_response_bytes cap", len(data), maxBytes)
 	}
 }

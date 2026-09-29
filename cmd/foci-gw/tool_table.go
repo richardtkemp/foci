@@ -207,6 +207,7 @@ var toolTable = []toolEntry{
 			func() int { return live.Load().Tools.ExecAutoBackground },
 			func() int64 { return live.Load().Tools.MaxUploadFileSize },
 			func() int64 { return live.Load().Tools.HTTPMaxSpillBytes },
+			func() int64 { return int64(live.Load().Summary.MaxResultChars) },
 			d.notifier, fileMode)
 	}},
 

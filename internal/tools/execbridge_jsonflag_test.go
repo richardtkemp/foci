@@ -46,7 +46,7 @@ func runShellFunc(t *testing.T, body, invocation string) (string, int) {
 }
 
 func httpToolForShellTest() *Tool {
-	return NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 0 }, func() int64 { return 0 }, nil, 0640)
+	return NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 0 }, func() int64 { return 0 }, func() int64 { return 0 }, nil, 0640)
 }
 
 // TestJSONFlag_NonJSONValueNamesTheFlag is the #1811 repro. Before the fix the

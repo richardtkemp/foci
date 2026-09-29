@@ -20,7 +20,7 @@ func TestHTTPRequestAutoBackgroundFast(t *testing.T) {
 	defer srv.Close()
 
 	var called bool
-	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 5 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 5 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 0 }, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		called = true
 	}), 0640)
 
@@ -50,7 +50,7 @@ func TestHTTPRequestAutoBackgroundSlow(t *testing.T) {
 	defer srv.Close()
 
 	completeCh := make(chan string, 1)
-	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 1 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 1 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 0 }, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		completeCh <- msg
 	}), 0640)
 
@@ -101,7 +101,7 @@ func TestHTTPRequestAutoBackgroundSessionKey(t *testing.T) {
 		sk, msg string
 	}
 	ch := make(chan result, 1)
-	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 1 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 1 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 0 }, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		ch <- result{sk, msg}
 	}), 0640)
 
@@ -143,7 +143,7 @@ func TestHTTPRequestExplicitBackground(t *testing.T) {
 	defer srv.Close()
 
 	completeCh := make(chan string, 1)
-	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 0 }, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		completeCh <- msg
 	}), 0640)
 
@@ -181,7 +181,7 @@ func TestHTTPRequestBackgroundNoNotifier(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, nil, 0640)
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 0 }, nil, 0640)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":        srv.URL,
@@ -194,5 +194,35 @@ func TestHTTPRequestBackgroundNoNotifier(t *testing.T) {
 	}
 	if !strings.Contains(result.Text, "sync response") {
 		t.Errorf("expected sync response, got %q", result.Text)
+	}
+}
+
+func TestHTTPRequestBackgroundSpilledBodyNamesFile(t *testing.T) {
+	// Proves a background notification for a spilled body points at the full
+	// body on disk: the notification bypasses the tool-result guard, so with
+	// the inline head capped at max_result_chars (#2107) it would otherwise
+	// pass off the head as the whole response.
+	t.Parallel()
+	const bodySize = 8 * 1024
+	srv := bigBodyServer(t, bodySize)
+	defer srv.Close()
+
+	completeCh := make(chan string, 1)
+	tool := NewHTTPRequestTool(nil, nil, t.TempDir(), func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 100 }, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+		completeCh <- msg
+	}), 0640)
+
+	params, _ := json.Marshal(map[string]interface{}{"url": srv.URL, "background": true})
+	if _, err := tool.Execute(context.Background(), params); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	select {
+	case completed := <-completeCh:
+		if !strings.Contains(completed, fmt.Sprintf("full body (%d bytes) saved to ", bodySize)) {
+			t.Errorf("notification should name the spill file and full size, got %q", completed)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for background request")
 	}
 }
