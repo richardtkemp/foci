@@ -109,6 +109,12 @@ type Hub struct {
 	// read+write, and h.mu is held across conversation fan-out.
 	pinsMu sync.Mutex
 
+	// readMu makes handleRead's forward-only last_read compare-and-set atomic,
+	// so two devices' concurrent reads can't both pass the compare against the
+	// same stored value and let the older one land last. Not h.mu, for the same
+	// reason as pinsMu.
+	readMu sync.Mutex
+
 	// settingsMu serialises every read or write of the global app-settings bag
 	// (one system_state row) TOGETHER WITH the snapshot fan-out that follows it.
 	// Two devices putting different keys at once would otherwise both merge

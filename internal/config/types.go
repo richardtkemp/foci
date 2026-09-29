@@ -794,7 +794,7 @@ type AppSpecific struct {
 	ReplayStorePath string `toml:"replay_store_path" desc:"File path, relative to the server's data directory, of the database that durably stores replay messages (default app-frames.db)"`
 	MaxBlobMB       *int   `toml:"max_blob_mb"      desc:"Maximum size, in megabytes, of a file the app can upload via the /app/blob endpoint (default 50)"`
 	BlobTTL         string `toml:"blob_ttl"         desc:"How long an uploaded blob is kept on the server before it's deleted (default 24h)" type:"duration"`
-	PushCoalesce    string `toml:"push_coalesce"    desc:"Minimum time between wake-up push notifications for the same conversation, to avoid a flurry of pushes when several messages arrive close together (default 15s)" type:"duration"`
+	PushCoalesce    string `toml:"push_coalesce"    desc:"Minimum time between wake-up push notifications to one device for the same conversation, to avoid a flurry of pushes when several messages arrive close together (default 15s)" type:"duration"`
 	FCMCredentials  string `toml:"fcm_credentials"  desc:"Path to a Firebase Cloud Messaging service-account JSON key file, used instead of the app.fcm_credentials secret for sending wake pushes"`
 	DevicesPath     string `toml:"devices_path"     desc:"File path, relative to the server's data directory, where paired app devices are stored (default app-devices.json)"`
 	// AllowedDevices: if non-empty, only these device IDs may pair (empty allows

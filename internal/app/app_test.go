@@ -2038,7 +2038,7 @@ func TestPushTokens_SetAndAll(t *testing.T) {
 	p.set("dev2", "tokB")
 	p.set("", "ignored")
 	p.set("dev3", "")
-	if all := p.tokensExcluding(nil); len(all) != 2 {
+	if all := p.targetsExcluding(nil); len(all) != 2 {
 		t.Fatalf("tokens = %v, want 2 (empty deviceId/token ignored)", all)
 	}
 }
@@ -2049,7 +2049,7 @@ func TestPushTokens_RemoveByToken(t *testing.T) {
 	p.set("dev2", "dead") // two devices, same (stale) token
 	p.set("dev3", "live")
 	p.removeByToken("dead")
-	if all := p.tokensExcluding(nil); len(all) != 1 || all[0] != "live" {
+	if all := p.targetsExcluding(nil); len(all) != 1 || all["dev3"] != "live" {
 		t.Fatalf("after removeByToken(dead) = %v, want [live]", all)
 	}
 }
@@ -2157,19 +2157,20 @@ func TestPusher_Coalesces(t *testing.T) {
 	p := &fcmPusher{
 		tokens:    tk,
 		window:    defaultPushCoalesce,
-		lastPush:  make(map[string]time.Time),
+		lastPush:  make(map[pushKey]time.Time),
 		baseURL:   srv.URL,
 		projectID: "proj",
 		ts:        oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "x"}),
 		http:      srv.Client(),
 	}
+	k := pushKey{convID: "conv-1", deviceID: "dev-1"}
 	p.notify(pushPayload{ConvID: "conv-1", Preview: "a"}, nil)
-	first := p.lastPush["conv-1"]
+	first := p.lastPush[k]
 	if first.IsZero() {
 		t.Fatal("first notify with an eligible token must set lastPush")
 	}
 	p.notify(pushPayload{ConvID: "conv-1", Preview: "b"}, nil) // within window → coalesced
-	if !p.lastPush["conv-1"].Equal(first) {
+	if !p.lastPush[k].Equal(first) {
 		t.Errorf("second notify within window must be coalesced")
 	}
 }
@@ -2178,10 +2179,10 @@ func TestPusher_ExcludesConnectedDevices(t *testing.T) {
 	tk := newPushTokens()
 	tk.set("phone", "tok-phone")
 	tk.set("tablet", "tok-tablet")
-	if got := tk.tokensExcluding(map[string]bool{"tablet": true}); len(got) != 1 || got[0] != "tok-phone" {
-		t.Errorf("tokensExcluding(tablet) = %v, want [tok-phone]", got)
+	if got := tk.targetsExcluding(map[string]bool{"tablet": true}); len(got) != 1 || got["phone"] != "tok-phone" {
+		t.Errorf("targetsExcluding(tablet) = %v, want [tok-phone]", got)
 	}
-	if got := tk.tokensExcluding(map[string]bool{"phone": true, "tablet": true}); len(got) != 0 {
+	if got := tk.targetsExcluding(map[string]bool{"phone": true, "tablet": true}); len(got) != 0 {
 		t.Errorf("all connected must yield no wake tokens, got %v", got)
 	}
 }
@@ -2192,9 +2193,9 @@ func TestPusher_ExcludesConnectedDevices(t *testing.T) {
 func TestPusher_NoBumpWhenAllConnected(t *testing.T) {
 	tk := newPushTokens()
 	tk.set("phone", "tok-phone")
-	p := &fcmPusher{tokens: tk, window: defaultPushCoalesce, lastPush: make(map[string]time.Time)}
+	p := &fcmPusher{tokens: tk, window: defaultPushCoalesce, lastPush: make(map[pushKey]time.Time)}
 	p.notify(pushPayload{ConvID: "c"}, map[string]bool{"phone": true})
-	if _, ok := p.lastPush["c"]; ok {
+	if len(p.lastPush) != 0 {
 		t.Error("no eligible target must not bump the coalesce window")
 	}
 }
@@ -2329,7 +2330,7 @@ func TestServePushRegister_UpdatesToken(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("push register code = %d, want 204", w.Code)
 	}
-	if got := h.tokens.tokensExcluding(nil); len(got) != 1 || got[0] != "fresh-tok" {
+	if got := h.tokens.targetsExcluding(nil); len(got) != 1 || got["dev1"] != "fresh-tok" {
 		t.Errorf("token not registered: %v", got)
 	}
 }
@@ -2626,7 +2627,7 @@ func TestPairHTTP_PairKeyMintsDeviceToken(t *testing.T) {
 	if _, ok := h.authToken(res.DeviceToken); !ok {
 		t.Error("minted token does not authenticate")
 	}
-	if len(h.tokens.tokensExcluding(nil)) != 1 {
+	if len(h.tokens.targetsExcluding(nil)) != 1 {
 		t.Error("push token not registered during pairing")
 	}
 }

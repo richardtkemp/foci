@@ -102,6 +102,9 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.evictOtherDeviceSockets(client, f.Client.DeviceID)
 		// Register the device's FCM token for offline wake pushes.
 		h.tokens.set(f.Client.DeviceID, f.PushToken)
+		// The replay below catches this device up, consuming any wake it was
+		// sent: reopen its coalescing windows so the next offline message wakes it.
+		h.pusher.deviceConnected(f.Client.DeviceID)
 		h.pushRoster(client)
 		h.pushSettings(client)
 		h.pushReads(client)
@@ -526,9 +529,40 @@ func (h *Hub) handleRead(client *wsClient, f fap.Read) {
 		return
 	}
 	if idx := h.deps.SessionIndex; idx != nil {
-		_ = idx.SetChatMetadata(b.agentID, "app", b.chatID, "last_read", f.MessageID)
+		// The watermark only moves forward: a stale device's Read (it read an older
+		// message, or its frame arrived late) must not drag the stored value back,
+		// since that value is what pushReads replays to every reconnecting device.
+		// Compare-and-set under readMu so two devices' reads can't interleave.
+		h.readMu.Lock()
+		cur, _ := idx.GetChatMetadata(b.agentID, "app", b.chatID, "last_read")
+		advance := readWatermarkAdvances(cur, f.MessageID)
+		if advance {
+			_ = idx.SetChatMetadata(b.agentID, "app", b.chatID, "last_read", f.MessageID)
+		}
+		h.readMu.Unlock()
+		if !advance {
+			return
+		}
 	}
 	h.broadcastExcept(client, fap.ReadSync{ConversationID: f.ConversationID, MessageID: f.MessageID})
+}
+
+// readWatermarkAdvances reports whether next should replace the stored read
+// watermark cur. Message ids are ULIDs (server- and client-minted alike), whose
+// fixed-width Crockford form sorts by mint time, so a plain string compare
+// orders them. An id that isn't a ULID (legacy/foreign) can't be ordered and is
+// accepted, which is the pre-#1204 behaviour.
+func readWatermarkAdvances(cur, next string) bool {
+	if cur == "" {
+		return true
+	}
+	if _, ok := fap.ULIDTime(cur); !ok {
+		return true
+	}
+	if _, ok := fap.ULIDTime(next); !ok {
+		return true
+	}
+	return next > cur
 }
 
 // handleDraft persists a conversation's unsent composer text and mirrors it to

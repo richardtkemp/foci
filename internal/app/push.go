@@ -20,7 +20,7 @@ import (
 
 const (
 	fcmScope            = "https://www.googleapis.com/auth/firebase.messaging"
-	defaultPushCoalesce = 15 * time.Second // at most one wake push per conversation per window
+	defaultPushCoalesce = 15 * time.Second // at most one wake push per conversation per device per window
 	pushPreviewMax      = 80               // hard cap on the preview hint length
 	fcmSendTimeout      = 10 * time.Second
 	fcmMaxAttempts      = 3                      // total send attempts before giving up
@@ -47,18 +47,19 @@ func (p *pushTokens) set(deviceID, token string) {
 	p.mu.Unlock()
 }
 
-// tokensExcluding returns the registration tokens for every device NOT in
+// targetsExcluding returns deviceId→registration token for every device NOT in
 // exclude — the currently-connected devices, which receive frames over their
-// live socket and so need no wake push.
-func (p *pushTokens) tokensExcluding(exclude map[string]bool) []string {
+// live socket and so need no wake push. Keyed by device because the pusher
+// coalesces per device, not per token.
+func (p *pushTokens) targetsExcluding(exclude map[string]bool) map[string]string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	out := make([]string, 0, len(p.tokens))
+	out := make(map[string]string, len(p.tokens))
 	for id, t := range p.tokens {
 		if exclude[id] {
 			continue
 		}
-		out = append(out, t)
+		out[id] = t
 	}
 	return out
 }
@@ -101,12 +102,20 @@ type fcmPusher struct {
 	http      *http.Client
 	ctx       context.Context
 	tokens    *pushTokens
-	window    time.Duration // coalescing window (one wake push per conv per window)
+	window    time.Duration // coalescing window (one wake push per conv per device per window)
 	baseURL   string        // FCM v1 endpoint base; overridable in tests
 	retryBase time.Duration // backoff base; overridable in tests (0 → fcmRetryBase)
 
 	mu       sync.Mutex
-	lastPush map[string]time.Time // convID → last push time (coalescing)
+	lastPush map[pushKey]time.Time // (conv, device) → last push time (coalescing)
+}
+
+// pushKey is the coalescing key: one wake per conversation PER DEVICE. Keying by
+// conversation alone let a push to one device (or an earlier wake the device
+// already acted on) swallow the next wake another device needed (#1204).
+type pushKey struct {
+	convID   string
+	deviceID string
 }
 
 // fcmBaseURL is the production FCM v1 send endpoint base.
@@ -258,13 +267,15 @@ func newFCMPusherFromJSON(ctx context.Context, data []byte, tokens *pushTokens, 
 		tokens:    tokens,
 		window:    window,
 		retryBase: fcmRetryBase,
-		lastPush:  make(map[string]time.Time),
+		lastPush:  make(map[pushKey]time.Time),
 	}
 }
 
 // notify fires a coalesced wake push for a conversation that received offline
-// content. Coalescing drops repeat pushes for the same conversation inside the
-// quiet window — the app reconnects + replays, so a single wake suffices.
+// content. Coalescing drops repeat pushes to the same device for the same
+// conversation inside the quiet window — the app reconnects + replays, so a
+// single wake suffices. It is per device: each offline device gets its own
+// window, and deviceConnected clears a device's windows once it has caught up.
 func (p *fcmPusher) notify(payload pushPayload, exclude map[string]bool) {
 	if p == nil {
 		return
@@ -274,20 +285,42 @@ func (p *fcmPusher) notify(payload pushPayload, exclude map[string]bool) {
 	// suppress an offline phone's wake. Coalesce only when there's a real target:
 	// all-connected traffic must not bump the window and drop a later push for a
 	// device that goes offline within it.
-	tokens := p.tokens.tokensExcluding(exclude)
-	if len(tokens) == 0 {
+	targets := p.tokens.targetsExcluding(exclude)
+	if len(targets) == 0 {
+		return
+	}
+	now := time.Now()
+	send := make([]string, 0, len(targets))
+	p.mu.Lock()
+	for deviceID, tok := range targets {
+		k := pushKey{convID: payload.ConvID, deviceID: deviceID}
+		if now.Sub(p.lastPush[k]) < p.window {
+			continue
+		}
+		p.lastPush[k] = now
+		send = append(send, tok)
+	}
+	p.mu.Unlock()
+
+	for _, tok := range send {
+		safeGo("fcm-push", func() { p.send(tok, payload) })
+	}
+}
+
+// deviceConnected clears every coalescing window held for deviceID. A device
+// that has just connected replays everything it missed, so the wakes it was sent
+// are consumed; without this, a phone woken at T0 that fetched and dropped its
+// socket would get no push for a new message at T0+10s (still inside the window).
+func (p *fcmPusher) deviceConnected(deviceID string) {
+	if p == nil || deviceID == "" {
 		return
 	}
 	p.mu.Lock()
-	if time.Since(p.lastPush[payload.ConvID]) < p.window {
-		p.mu.Unlock()
-		return
-	}
-	p.lastPush[payload.ConvID] = time.Now()
-	p.mu.Unlock()
-
-	for _, tok := range tokens {
-		safeGo("fcm-push", func() { p.send(tok, payload) })
+	defer p.mu.Unlock()
+	for k := range p.lastPush {
+		if k.deviceID == deviceID {
+			delete(p.lastPush, k)
+		}
 	}
 }
 
