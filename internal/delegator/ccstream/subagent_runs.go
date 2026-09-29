@@ -268,6 +268,21 @@ func (b *Backend) activeRunForTask(taskID string) (run *subagentRun, active bool
 	return run, run.active
 }
 
+// taskBoundForGroup reports whether a task_started has bound a run to groupKey,
+// i.e. whether CC actually launched the Agent call's subagent. A launched one
+// ends on its own task_notification; one that never launched has no such end
+// coming (#2104).
+func (b *Backend) taskBoundForGroup(groupKey string) bool {
+	b.subagentRunsMu.Lock()
+	defer b.subagentRunsMu.Unlock()
+	for _, run := range b.subagentRuns {
+		if run.groupKey == groupKey {
+			return true
+		}
+	}
+	return false
+}
+
 // runIndexForGroup returns the current run index for a subagent identified by its
 // stable groupKey (the original Agent tool_use id) — the run a text block emitted
 // now belongs to. Subagent text keeps the ORIGINAL parent tool_use id across

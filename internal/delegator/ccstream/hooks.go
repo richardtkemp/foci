@@ -471,7 +471,11 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 		// looked correct and was inert: the Agent tool backgrounds by default, so
 		// every ordinary subagent was labelled foreground and killed anyway.
 		b.subagentTails().clearPendingForeground(parsed.ToolUseID)
-		b.logger().Infof("subagent_tool_resolved tuid=%s (NOT an end signal)", parsed.ToolUseID)
+		if parsed.IsError && !b.taskBoundForGroup(parsed.ToolUseID) {
+			b.endUnlaunchedAgent(parsed.ToolUseID)
+		} else {
+			b.logger().Infof("subagent_tool_resolved tuid=%s (NOT an end signal)", parsed.ToolUseID)
+		}
 	}
 
 	// Fire any post-tool nudges the caller wants to inject for this tool.
@@ -551,6 +555,23 @@ func (b *Backend) endDeniedCall(parsed hookScriptOutput) {
 	}
 	if se := b.sessionEvents.Load(); se != nil && se.OnToolEnd != nil {
 		se.OnToolEnd(parsed.ToolUseID, parsed.ToolName, parsed.HookSpecificOutput.PermissionDecisionReason, true)
+	}
+}
+
+// endUnlaunchedAgent closes out a main-thread Agent call that errored before
+// any task started (#2104), e.g. CC's "Concurrent subagent limit reached"
+// refusal. Its PreToolUse already opened the group and OnAssistant tracked it,
+// but with no task there is no task_notification to end either, so this
+// errored result is the only end the group will get.
+func (b *Backend) endUnlaunchedAgent(groupKey string) {
+	b.agents.Remove(groupKey)
+	if !b.subagentStartEmitted(groupKey) {
+		b.logger().Infof("subagent_end suppressed=never_started signal=agent_error_no_task group=%s", groupKey)
+		return
+	}
+	b.logger().Infof("subagent_end signal=agent_error_no_task group=%s run=1", groupKey)
+	if se := b.sessionEvents.Load(); se != nil && se.OnSubagentEnd != nil {
+		se.OnSubagentEnd(groupKey, 1)
 	}
 }
 

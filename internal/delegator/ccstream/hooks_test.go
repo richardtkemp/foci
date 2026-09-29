@@ -266,6 +266,74 @@ func TestHandleHookResponse_AgentToolNoLongerFiresSubagentEnd(t *testing.T) {
 	}
 }
 
+// TestHandleHookResponse_RefusedAgentEndsItsGroup is #2104: CC can refuse an
+// Agent call after its PreToolUse has already opened the group (observed:
+// "Concurrent subagent limit reached"). The refusal arrives as an errored Agent
+// tool result, and no task_started or task_notification ever follows, so that
+// result is the group's only end. Without it the chit and the tracker entry
+// stay "running" for good.
+//
+// An errored result for an Agent whose task DID start is not an end: that task
+// ends on its own task_notification, and ending it here too would double the end.
+func TestHandleHookResponse_RefusedAgentEndsItsGroup(t *testing.T) {
+	type end struct {
+		group string
+		run   int
+	}
+	setup := func() (*Backend, *[]end) {
+		b := &Backend{hookInstallID: "install-a"}
+		var ends []end
+		applyHandler(b, &testHandler{
+			OnToolEnd:       func(string, string, string, bool) {},
+			OnSubagentStart: func(string, string, string, int) {},
+			OnSubagentEnd:   func(g string, run int) { ends = append(ends, end{g, run}) },
+		})
+		return b, &ends
+	}
+	agentFailure := func(b *Backend, toolUseID string) {
+		stdout, _ := json.Marshal(hookScriptOutput{
+			HookEvent: "PostToolUseFailure", InstallID: "install-a",
+			ToolUseID: toolUseID, ToolName: "Agent", IsError: true,
+			Error: "Concurrent subagent limit reached. You can run 20 subagents at once.",
+		})
+		env, _ := json.Marshal(hookResponseEnvelope{HookEvent: "PostToolUseFailure", Stdout: string(stdout)})
+		b.handleHookResponse(env)
+	}
+
+	t.Run("refused before any task started", func(t *testing.T) {
+		b, ends := setup()
+		b.agents.Add("toolu_refused", "todo #1875")
+		fireAgentPreToolUse(b, "toolu_refused", "install-a", `{"description":"todo #1875","prompt":"p"}`)
+		agentFailure(b, "toolu_refused")
+
+		if want := []end{{"toolu_refused", 1}}; !reflect.DeepEqual(*ends, want) {
+			t.Errorf("OnSubagentEnd = %v, want %v", *ends, want)
+		}
+		if b.agents.Remove("toolu_refused") {
+			t.Error("refused Agent still tracked as a running subagent")
+		}
+	})
+
+	t.Run("errored after its task started", func(t *testing.T) {
+		b, ends := setup()
+		b.setAgentLabel("toolu_ran", "d")
+		b.agents.Add("toolu_ran", "d")
+		fireAgentPreToolUse(b, "toolu_ran", "install-a", `{"description":"d","prompt":"p"}`)
+		started, _ := json.Marshal(TaskEvent{Subtype: "task_started", ToolUseID: "toolu_ran", TaskID: "task-ran"})
+		b.OnSystem("task_started", started)
+		agentFailure(b, "toolu_ran")
+
+		if len(*ends) != 0 {
+			t.Fatalf("errored result of a started task fired OnSubagentEnd %v, want none before its task_notification", *ends)
+		}
+		done, _ := json.Marshal(TaskEvent{Subtype: "task_notification", Status: "failed", ToolUseID: "toolu_ran", TaskID: "task-ran"})
+		b.OnSystem("task_notification", done)
+		if want := []end{{"toolu_ran", 1}}; !reflect.DeepEqual(*ends, want) {
+			t.Errorf("OnSubagentEnd = %v, want %v", *ends, want)
+		}
+	})
+}
+
 // TestOnSystem_TaskNotificationCompleted_FiresSubagentEnd proves the subagent's
 // true end — task_notification:completed — fires OnSubagentEnd keyed by the
 // carried tool_use id (the group key), for both foreground and background runs.
