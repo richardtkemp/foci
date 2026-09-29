@@ -1097,18 +1097,6 @@ type CommandConfig struct {
 	Timeout     int    `toml:"timeout"` // seconds, default 10
 }
 
-// DefaultsConfig provides global defaults for agent-specific fields.
-// All config groups use Merge[T] for resolution at use time.
-type DefaultsConfig struct {
-	Notify   NotifyConfig    `toml:"notify"`
-	Display  DisplayConfig   `toml:"display"`
-	Nudge    NudgeConfig     `toml:"nudge"`
-	Voice    VoiceConfig     `toml:"voice"`
-	Loop     AgentLoopConfig `toml:"loop"`
-	Behavior BehaviorConfig  `toml:"behavior"`
-	System   SystemConfig    `toml:"system"`
-}
-
 // EndpointConfig describes a model API endpoint.
 type EndpointConfig struct {
 	// Single-format endpoints:
