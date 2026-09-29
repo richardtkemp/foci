@@ -404,3 +404,48 @@ func TestSubagentTail_ForegroundStillFinalizesAtPostToolUse(t *testing.T) {
 			"never close")
 	}
 }
+
+// TestSubagentTail_StopAllWaitsForTails: stopAll is the backend-teardown stop
+// (#1202). It used to close each tail's stop channel and return, leaving every
+// tail to run its post-stop settle drain on its own, so OnSubagentText and the
+// usage sink could fire after Close had returned. It must return only once every
+// tail has exited, having read what the transcript already held, and without
+// waiting out the settle window for a terminal record that will never come.
+func TestSubagentTail_StopAllWaitsForTails(t *testing.T) {
+	withFastTail(t)
+	subagentTailSettle = time.Minute // a stopAll that waits it out hangs the test
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent-teardown.jsonl")
+	// No stop_reason: never at rest, so only the settle window would end it.
+	if err := os.WriteFile(path, []byte(assistantLine("FIRST")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := &tailRecorder{}
+	mgr := newSubagentTailManager(rec.deliver, nil, nil)
+	mgr.expectForeground("toolu_td")
+	mgr.maybeStart("toolu_td", path, time.Time{})
+	waitFor(t, func() bool { return len(rec.texts()) == 1 })
+
+	mgr.mu.Lock()
+	tail := mgr.tails["toolu_td"]
+	mgr.mu.Unlock()
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString(assistantLine("LAST"))
+	f.Close()
+
+	mgr.stopAll()
+
+	select {
+	case <-tail.done:
+	default:
+		t.Fatal("stopAll returned while a tail was still running: its drain can " +
+			"deliver into a backend that has already been torn down")
+	}
+	if got := rec.texts(); len(got) != 2 || got[1] != "LAST" {
+		t.Fatalf("teardown dropped text already on disk: got %v, want [FIRST LAST]", got)
+	}
+}

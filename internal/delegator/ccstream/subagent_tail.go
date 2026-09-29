@@ -172,6 +172,10 @@ type subagentTail struct {
 	wantText bool
 	stop     chan struct{}
 	done     chan struct{}
+	// teardown is set by stopAll before it closes stop: the backend is going
+	// away, so the tail reads what is on disk once and exits instead of waiting
+	// out subagentTailSettle for a terminal record (#1202).
+	teardown atomic.Bool
 	// lines counts transcript lines this tail delivered. Reported at close so
 	// a tail that opened its file but read nothing is distinguishable from one
 	// that never opened it at all (#1934).
@@ -447,8 +451,13 @@ func (m *subagentTailManager) clearPendingForeground(toolUseID string) {
 	m.mu.Unlock()
 }
 
-// stopAll cancels every running tail without waiting. Called on backend
-// teardown so no tailer goroutine outlives the process.
+// stopAll stops every running tail and waits for each to exit. Called on backend
+// teardown so no tailer goroutine outlives the process, and so no tail delivers
+// text or usage after teardown has moved on (#1202). It used to return as soon as
+// it had closed the stop channels, and each tail then ran its settle drain, up to
+// subagentTailSettle, against a backend already being closed. A teardown tail does
+// not wait for a terminal record: it reads what the transcript already holds and
+// exits, so this wait costs one file read per tail.
 func (m *subagentTailManager) stopAll() {
 	if m == nil {
 		return
@@ -459,7 +468,11 @@ func (m *subagentTailManager) stopAll() {
 	m.expectFg = make(map[string]bool)
 	m.mu.Unlock()
 	for _, t := range tails {
+		t.teardown.Store(true)
 		close(t.stop)
+	}
+	for _, t := range tails {
+		<-t.done
 	}
 }
 
@@ -545,6 +558,10 @@ func (m *subagentTailManager) run(groupKey, path string, t *subagentTail) {
 		select {
 		case <-stop:
 			stop = nil
+			if t.teardown.Load() {
+				drain()
+				return
+			}
 			settle = time.After(subagentTailSettle)
 		case <-settle:
 			m.lg.Debugf("subagent tail: no terminal record within %s, closing anyway (group=%s lines=%d)",
