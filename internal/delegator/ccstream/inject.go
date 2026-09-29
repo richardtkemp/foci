@@ -235,20 +235,32 @@ func trackedInputFor(inj delegator.Inject) trackedInput {
 }
 
 // sendToPaneWithAttachments is the internal begin-turn primitive for
-// prompts that carry images/documents. Builds structured content blocks
-// (text first, then each attachment as image/document) and sends a single
-// user message containing all of them. Called from Inject's begin-turn
-// path when len(inj.Attachments) > 0. exclusive as in sendToPane.
+// prompts that carry images/documents: a single user message whose content
+// blocks are the text followed by each attachment. Called from Inject's
+// begin-turn path when len(inj.Attachments) > 0. exclusive as in sendToPane.
 func (b *Backend) sendToPaneWithAttachments(_ context.Context, inj delegator.Inject, exclusive bool) error {
-	// Build content blocks: text first, then attachments.
+	blocks := b.contentBlocks("sendToPaneWithAttachments", inj.Text, inj.Attachments)
+	return b.beginTrackedTurn(inj, exclusive, func(id string) error {
+		m := NewUserMessageBlocks(blocks)
+		m.UUID = id
+		b.logger().Debugf("sendToPaneWithAttachments: calling writer.Send (%d blocks)", len(blocks))
+		return b.timedSend("sendToPaneWithAttachments", m)
+	})
+}
+
+// contentBlocks builds a user message's content: text first (when non-empty),
+// then each attachment as a base64 image/document block. An attachment with no
+// block type (attachmentBlockType) is logged and skipped; what names the
+// caller in that log line.
+func (b *Backend) contentBlocks(what, text string, atts []delegator.Attachment) []ContentBlock {
 	var blocks []ContentBlock
-	if inj.Text != "" {
-		blocks = append(blocks, ContentBlock{Type: "text", Text: inj.Text})
+	if text != "" {
+		blocks = append(blocks, ContentBlock{Type: "text", Text: text})
 	}
-	for _, att := range inj.Attachments {
+	for _, att := range atts {
 		blockType, ok := attachmentBlockType(att.MimeType)
 		if !ok {
-			b.logger().Warnf("sendToPaneWithAttachments: skipping %s attachment (%d bytes): the API accepts no base64 block of that type", att.MimeType, len(att.Data))
+			b.logger().Warnf("%s: skipping %s attachment (%d bytes): the API accepts no base64 block of that type", what, att.MimeType, len(att.Data))
 			continue
 		}
 		blocks = append(blocks, ContentBlock{
@@ -260,13 +272,21 @@ func (b *Backend) sendToPaneWithAttachments(_ context.Context, inj delegator.Inj
 			},
 		})
 	}
-	return b.beginTrackedTurn(inj, exclusive, func(id string) error {
-		m := NewUserMessageBlocks(blocks)
-		m.UUID = id
-		b.logger().Debugf("sendToPaneWithAttachments: calling writer.Send (%d blocks)", len(blocks))
-		return b.timedSend("sendToPaneWithAttachments", m)
-	})
+	return blocks
 }
+
+// FoldsAttachment implements delegator.FoldAttachmentCarrier: only images
+// survive a mid-turn fold. Probed live on CC 2.1.280 (#2099): a user message
+// written mid-turn carrying an image block and a PDF document block is stored
+// intact as a queued_command, but only the image reaches the model — the PDF
+// is silently lost, while the same PDF block in a turn-starting message is
+// read fine. A PDF therefore waits for a fresh turn.
+func (b *Backend) FoldsAttachment(mimeType string) bool {
+	blockType, ok := attachmentBlockType(mimeType)
+	return ok && blockType == "image"
+}
+
+var _ delegator.FoldAttachmentCarrier = (*Backend)(nil)
 
 // attachmentBlockType returns the CC content block type for a MIME type, and
 // false for a type the API rejects as a base64 block. It is an allowlist, not
@@ -332,9 +352,17 @@ func (b *Backend) sendUserMessage(text string) error {
 // be gated on per-message steer tagging or an aggressive-steer config mode
 // (both NYI) — interrupting mid-generation is too disruptive to be every
 // steer's default, and "stop right now" already has /reset hard.
+//
+// Attachments ride along as content blocks after the text, but only images
+// reach the model from a fold (see FoldsAttachment); the agent layer queues
+// anything else for a fresh turn instead of steering it.
 func (b *Backend) sendFold(in trackedInput, priority string) error {
 	return b.trackWrite(in, func(id string) error {
 		m := NewUserMessagePriority(in.text, priority)
+		if len(in.attachments) > 0 {
+			m = NewUserMessageBlocks(b.contentBlocks("sendFold", in.text, in.attachments))
+			m.Priority = priority
+		}
 		m.UUID = id
 		return b.writer.Send(m)
 	})
@@ -370,8 +398,9 @@ func (b *Backend) sendFold(in trackedInput, priority string) error {
 // flows through the SessionEvents installed via AttachSessionEvents — not
 // inj.Turn.
 //
-// inj.Attachments are honored only when beginning a new turn; ignored
-// otherwise. They become structured content blocks alongside the text.
+// inj.Attachments become structured content blocks alongside the text, both
+// when beginning a new turn and on an in-flight fold — though a fold delivers
+// only the types FoldsAttachment accepts.
 func (b *Backend) ImmediateInject(ctx context.Context, inj delegator.Inject) error {
 	inFlight := b.IsTurnInFlight()
 	b.logger().Debugf("Inject: source=%s text_bytes=%d attachments=%d in_flight=%v",

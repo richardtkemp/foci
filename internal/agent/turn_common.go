@@ -56,20 +56,23 @@ func (a *Agent) composeTurnText(ctx context.Context, sessionKey string, turnMode
 	})
 	p.Reminders = a.collectReminders(sessionKey)
 
-	// Attachment path annotations.
-	var attachParts []string
-	for _, att := range attachments {
-		if att.SavedPath != "" {
-			label := labelForMIME(att.MimeType)
-			attachParts = append(attachParts, "["+label+" saved to: "+att.SavedPath+"]")
-		}
-	}
-	if len(attachParts) > 0 {
-		p.AttachmentPaths = strings.Join(attachParts, "\n")
-	}
+	p.AttachmentPaths = attachmentPathNotes(attachments)
 
 	p.UserTexts = texts
 	return p
+}
+
+// attachmentPathNotes renders one "[<label> saved to: <path>]" line per
+// attachment saved to disk, or "" when none was. Shared by composeTurnText
+// and the mid-turn attachment steer (steerInject).
+func attachmentPathNotes(attachments []platform.Attachment) string {
+	var parts []string
+	for _, att := range attachments {
+		if att.SavedPath != "" {
+			parts = append(parts, "["+labelForMIME(att.MimeType)+" saved to: "+att.SavedPath+"]")
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 // JoinPrompt joins all non-empty parts into a single prompt string.

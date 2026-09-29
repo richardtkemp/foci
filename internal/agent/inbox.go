@@ -531,9 +531,8 @@ func (a *Agent) Enqueue(env Envelope) bool {
 
 	// Per-message preference beats the agent's steer_mode config: SteerAlways
 	// steers even with the config off, SteerNever queues even with it on. The
-	// compaction hold and text-only/attachment constraints still apply — a
-	// SteerAlways message can't be folded into a compaction transcript or
-	// carry attachments mid-turn.
+	// compaction hold still applies — a SteerAlways message can't be folded
+	// into a compaction transcript.
 	steerMode := a.steerMode()
 	switch env.Steer {
 	case SteerAlways:
@@ -541,47 +540,30 @@ func (a *Agent) Enqueue(env Envelope) bool {
 	case SteerNever:
 		steerMode = false
 	}
-	steerEligible := steerMode && isActive && !compacting && env.Text != "" && len(env.Attachments) == 0
+	hasAttachments := len(env.Attachments) > 0
+	steerEligible := steerMode && isActive && !compacting && (env.Text != "" || hasAttachments)
 
 	if steerEligible {
 		be, err := a.resolveSessionBackend(a.inboxCtx, env.SessionKey)
-		if err != nil {
+		switch {
+		case err != nil && hasAttachments:
+			a.logger().Warnf("inbox: backend lookup failed sk=%s: %v (queueing message with attachments for a fresh turn)", env.SessionKey, err)
+		case err != nil:
 			a.logger().Warnf("inbox: backend lookup failed sk=%s: %v (falling back to buffer)", env.SessionKey, err)
 			inb.appendSteer(env.Text, env.ReceivedAt)
 			return true
-		}
-		if be != nil {
-			var refs []delegator.InputRef
-			if env.Ref.MessageID != "" {
-				refs = []delegator.InputRef{env.Ref}
-			}
-			err := be.ImmediateInject(a.inboxCtx, delegator.Inject{
-				Source: delegator.SourceSteer,
-				Text:   env.Text,
-				Refs:   refs,
-			})
-			switch {
-			case err == nil:
-				a.logger().Debugf("inbox: urgent dispatch sk=%s sent %dB", env.SessionKey, len(env.Text))
-				return true
-			case errors.Is(err, delegator.ErrTurnNotInFlight):
-				// The turn finished between the turnActive check above and the
-				// inject landing. Fall through to the normal idle path so the
-				// message starts a properly-tracked turn instead of an untracked
-				// one inside the backend.
-				a.logger().Debugf("inbox: steer raced turn completion sk=%s, re-routing to idle path", env.SessionKey)
-			default:
-				// Steering is an optimisation, never a place to lose input: a
-				// failed dispatch (dead stdin, protocol error) falls through
-				// to the channel push below, so the message runs as a fresh
-				// turn once the worker gets to it instead of being dropped.
-				a.logger().Warnf("inbox: urgent dispatch sk=%s failed: %v — queueing for a fresh turn instead", env.SessionKey, err)
-			}
-		} else {
+		case be == nil && hasAttachments:
+			// API mode: the steer buffer is text-only, so a message with
+			// attachments waits for a fresh turn.
+		case be == nil:
 			// API-mode fallback: buffer for next tool-boundary drain.
 			inb.appendSteer(env.Text, env.ReceivedAt)
 			a.logger().Debugf("inbox: buffered steer sk=%s %dB", env.SessionKey, len(env.Text))
 			return true
+		default:
+			if a.steerToBackend(be, env) {
+				return true
+			}
 		}
 	}
 
@@ -593,6 +575,79 @@ func (a *Agent) Enqueue(env Envelope) bool {
 		a.logger().Warnf("inbox: queue full for sk=%s, dropping message (%dB)", env.SessionKey, len(env.Text))
 		return false
 	}
+}
+
+// steerToBackend folds env into the backend's in-flight turn
+// (ImmediateInject(SourceSteer)). It returns false when the message must go to
+// the channel instead: its attachments can't ride a fold on this backend, the
+// turn ended underneath it, or the dispatch failed.
+func (a *Agent) steerToBackend(be delegator.Delegator, env Envelope) bool {
+	inj, ok := a.steerInject(be, env)
+	if !ok {
+		a.logger().Infof("inbox: mid-turn message with %d attachment(s) can't fold into the running turn on this backend sk=%s — queueing for a fresh turn", len(env.Attachments), env.SessionKey)
+		return false
+	}
+	err := be.ImmediateInject(a.inboxCtx, inj)
+	switch {
+	case err == nil:
+		a.logger().Debugf("inbox: urgent dispatch sk=%s sent %dB attachments=%d", env.SessionKey, len(inj.Text), len(inj.Attachments))
+		return true
+	case errors.Is(err, delegator.ErrTurnNotInFlight):
+		// The turn finished between the turnActive check and the inject
+		// landing. Re-route to the normal idle path so the message starts a
+		// properly-tracked turn instead of an untracked one inside the
+		// backend.
+		a.logger().Debugf("inbox: steer raced turn completion sk=%s, re-routing to idle path", env.SessionKey)
+	default:
+		// Steering is an optimisation, never a place to lose input: a failed
+		// dispatch (dead stdin, protocol error) falls through to the channel
+		// push, so the message runs as a fresh turn once the worker gets to it
+		// instead of being dropped.
+		a.logger().Warnf("inbox: urgent dispatch sk=%s failed: %v — queueing for a fresh turn instead", env.SessionKey, err)
+	}
+	return false
+}
+
+// steerInject builds the SourceSteer inject for env. A text-only message is
+// its text. A message with attachments folds only on a
+// delegator.FoldAttachmentCarrier that accepts every binary attachment
+// (#2099); ok is false otherwise. Its attachments get the same normalisation as
+// a fresh turn's (prepareAttachments): converted documents lead the text, then
+// the saved-to-disk notes, then the sender's text.
+func (a *Agent) steerInject(be delegator.Delegator, env Envelope) (inj delegator.Inject, ok bool) {
+	inj = delegator.Inject{Source: delegator.SourceSteer, Text: env.Text}
+	if env.Ref.MessageID != "" {
+		inj.Refs = []delegator.InputRef{env.Ref}
+	}
+	if len(env.Attachments) == 0 {
+		return inj, true
+	}
+	carrier, isCarrier := be.(delegator.FoldAttachmentCarrier)
+	if !isCarrier {
+		return inj, false
+	}
+	var texts []string
+	for _, pa := range a.prepareAttachments(env.SessionKey, env.Attachments) {
+		if pa.Text != "" {
+			texts = append(texts, pa.Text)
+			continue
+		}
+		if !carrier.FoldsAttachment(pa.MimeType) {
+			return delegator.Inject{}, false
+		}
+		inj.Attachments = append(inj.Attachments, delegator.Attachment{MimeType: pa.MimeType, Data: pa.Data})
+	}
+	for _, t := range []string{attachmentPathNotes(env.Attachments), env.Text} {
+		if t != "" {
+			texts = append(texts, t)
+		}
+	}
+	inj.Text = strings.Join(texts, "\n\n")
+	if inj.Text == "" && len(inj.Attachments) == 0 {
+		// Nothing survived normalisation; let a fresh turn say so.
+		return delegator.Inject{}, false
+	}
+	return inj, true
 }
 
 // EnqueueInjectWait enqueues a system injection on sessionKey's inbox and

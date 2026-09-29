@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -664,10 +665,10 @@ func TestInbox_Enqueue_InFlight_APIBackend_AppendsSteer(t *testing.T) {
 	}
 }
 
-// TestInbox_Enqueue_InFlight_WithAttachments_PushesToChannel verifies
-// that mid-turn messages with attachments are NOT steer-eligible and
-// fall through to the channel for the next turn (existing behaviour —
-// the SDK's mid-turn paste primitive doesn't carry attachments).
+// TestInbox_Enqueue_InFlight_WithAttachments_PushesToChannel verifies that
+// on an API-mode agent a mid-turn message with attachments is not buffered as
+// a steer (the API steer buffer is text-only) and falls through to the channel
+// for the next turn.
 func TestInbox_Enqueue_InFlight_WithAttachments_PushesToChannel(t *testing.T) {
 	a := newTestAgent(t)
 	a.SetInboxSteerMode(true)
@@ -688,6 +689,163 @@ func TestInbox_Enqueue_InFlight_WithAttachments_PushesToChannel(t *testing.T) {
 	got := inb.drainAvailable()
 	if len(got) != 1 || got[0].Text != "with file" {
 		t.Errorf("expected 1 channel envelope %q, got %+v", "with file", got)
+	}
+}
+
+// foldCarrierBackend is a recordingBackend that carries folded attachments of
+// the image types only — the shape ccstream reports (#2099: CC drops a PDF
+// block written mid-turn).
+type foldCarrierBackend struct{ recordingBackend }
+
+func (*foldCarrierBackend) FoldsAttachment(mimeType string) bool {
+	return strings.HasPrefix(mimeType, "image/")
+}
+
+// enqueueMidTurn enqueues env on an in-flight session of a steer-mode agent
+// whose backend is be, returning the session inbox for channel assertions.
+func enqueueMidTurn(t *testing.T, be delegator.Delegator, env Envelope) *sessionInbox {
+	t.Helper()
+	a := newTestAgent(t)
+	a.SetInboxSteerMode(true)
+	a.SetInboxBackend(func(_ context.Context, _ string) (delegator.Delegator, error) {
+		return be, nil
+	})
+	inb := a.getOrCreateInbox("test/s")
+	inb.turnActive.Store(true)
+	env.SessionKey = "test/s"
+	a.Enqueue(env)
+	return inb
+}
+
+// TestInbox_Enqueue_InFlight_ImageAttachment_Steers verifies #2099: on a
+// backend that carries folded images, a mid-turn photo steers into the running
+// turn with the image attached and the saved-file note ahead of the caption,
+// instead of waiting on the channel for the turn to end.
+func TestInbox_Enqueue_InFlight_ImageAttachment_Steers(t *testing.T) {
+	be := &foldCarrierBackend{}
+	inb := enqueueMidTurn(t, be, Envelope{
+		Text:        "look at this",
+		Attachments: []platform.Attachment{{MimeType: "image/png", Data: []byte("png-bytes"), SavedPath: "/tmp/p.png"}},
+		Ref:         delegator.InputRef{MessageID: "m1"},
+	})
+
+	injects := be.Injects()
+	if len(injects) != 1 {
+		t.Fatalf("expected 1 steer inject, got %d (channel=%d)", len(injects), len(inb.drainAvailable()))
+	}
+	inj := injects[0]
+	if inj.Source != delegator.SourceSteer {
+		t.Errorf("Source = %v, want SourceSteer", inj.Source)
+	}
+	if len(inj.Attachments) != 1 || inj.Attachments[0].MimeType != "image/png" || string(inj.Attachments[0].Data) != "png-bytes" {
+		t.Errorf("Attachments = %+v, want the png", inj.Attachments)
+	}
+	if want := "[Image saved to: /tmp/p.png]\n\nlook at this"; inj.Text != want {
+		t.Errorf("Text = %q, want %q", inj.Text, want)
+	}
+	if len(inj.Refs) != 1 || inj.Refs[0].MessageID != "m1" {
+		t.Errorf("Refs = %+v, want m1", inj.Refs)
+	}
+	if got := inb.drainAvailable(); len(got) != 0 {
+		t.Errorf("steered message must not also queue, channel has %d", len(got))
+	}
+}
+
+// TestInbox_Enqueue_InFlight_CaptionlessImage_Steers: a photo with no caption
+// has empty text, which alone never steers; its attachment makes it eligible.
+func TestInbox_Enqueue_InFlight_CaptionlessImage_Steers(t *testing.T) {
+	be := &foldCarrierBackend{}
+	enqueueMidTurn(t, be, Envelope{
+		Attachments: []platform.Attachment{{MimeType: "image/jpeg", Data: []byte("jpg"), SavedPath: "/tmp/p.jpg"}},
+	})
+	injects := be.Injects()
+	if len(injects) != 1 {
+		t.Fatalf("expected 1 steer inject, got %d", len(injects))
+	}
+	if injects[0].Text != "[Image saved to: /tmp/p.jpg]" || len(injects[0].Attachments) != 1 {
+		t.Errorf("inject = %q with %d attachments, want the saved note and the image", injects[0].Text, len(injects[0].Attachments))
+	}
+}
+
+// TestInbox_Enqueue_InFlight_UnfoldableAttachment_Queues: an attachment the
+// backend can't deliver from a fold (a PDF on ccstream) must queue — whole, with
+// its image sibling — rather than steer and lose the PDF.
+func TestInbox_Enqueue_InFlight_UnfoldableAttachment_Queues(t *testing.T) {
+	be := &foldCarrierBackend{}
+	inb := enqueueMidTurn(t, be, Envelope{
+		Text: "both",
+		Attachments: []platform.Attachment{
+			{MimeType: "image/png", Data: []byte("png")},
+			{MimeType: "application/pdf", Data: []byte("%PDF")},
+		},
+	})
+	if injects := be.Injects(); len(injects) != 0 {
+		t.Errorf("expected no steer, got %d injects", len(injects))
+	}
+	if got := inb.drainAvailable(); len(got) != 1 || len(got[0].Attachments) != 2 {
+		t.Errorf("expected the message queued with both attachments, got %+v", got)
+	}
+}
+
+// TestInbox_Enqueue_InFlight_AttachmentNonCarrier_Queues: a backend that can't
+// carry attachments on a fold (not a FoldAttachmentCarrier) keeps the queue
+// fallback — steering would deliver the caption and drop the image.
+func TestInbox_Enqueue_InFlight_AttachmentNonCarrier_Queues(t *testing.T) {
+	be := &recordingBackend{}
+	inb := enqueueMidTurn(t, be, Envelope{
+		Text:        "pic",
+		Attachments: []platform.Attachment{{MimeType: "image/png", Data: []byte("png")}},
+	})
+	if injects := be.Injects(); len(injects) != 0 {
+		t.Errorf("expected no steer, got %d injects", len(injects))
+	}
+	if got := inb.drainAvailable(); len(got) != 1 {
+		t.Errorf("expected the message queued, got %d", len(got))
+	}
+}
+
+// TestInbox_Enqueue_InFlight_ConvertedDocument_Steers: a convertible document
+// becomes text (as on a fresh turn), which any fold carries, so it steers with
+// the converted text leading and no binary attachment.
+func TestInbox_Enqueue_InFlight_ConvertedDocument_Steers(t *testing.T) {
+	be := &foldCarrierBackend{}
+	enqueueMidTurn(t, be, Envelope{
+		Text:        "numbers",
+		Attachments: []platform.Attachment{{MimeType: "text/csv", Data: []byte("a,b\n1,2\n")}},
+	})
+	injects := be.Injects()
+	if len(injects) != 1 {
+		t.Fatalf("expected 1 steer inject, got %d", len(injects))
+	}
+	inj := injects[0]
+	if len(inj.Attachments) != 0 {
+		t.Errorf("converted document must not travel as a binary attachment, got %+v", inj.Attachments)
+	}
+	if !strings.Contains(inj.Text, "1,2") || !strings.HasSuffix(inj.Text, "\n\nnumbers") {
+		t.Errorf("Text = %q, want the converted CSV ahead of the caption", inj.Text)
+	}
+}
+
+// TestInbox_Enqueue_InFlight_AttachmentCompacting_Queues: the compaction hold
+// applies to attachment steers as to text ones (#856).
+func TestInbox_Enqueue_InFlight_AttachmentCompacting_Queues(t *testing.T) {
+	a := newTestAgent(t)
+	a.SetInboxSteerMode(true)
+	be := &foldCarrierBackend{}
+	a.SetInboxBackend(func(_ context.Context, _ string) (delegator.Delegator, error) {
+		return be, nil
+	})
+	inb := a.getOrCreateInbox("test/s")
+	inb.turnActive.Store(true)
+	a.markCompacting("test/s")
+
+	a.Enqueue(Envelope{SessionKey: "test/s", Attachments: []platform.Attachment{{MimeType: "image/png", Data: []byte("png")}}})
+
+	if injects := be.Injects(); len(injects) != 0 {
+		t.Errorf("expected no steer during compaction, got %d", len(injects))
+	}
+	if got := inb.drainAvailable(); len(got) != 1 {
+		t.Errorf("expected the message queued, got %d", len(got))
 	}
 }
 

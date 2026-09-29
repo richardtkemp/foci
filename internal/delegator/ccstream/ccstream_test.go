@@ -3,6 +3,7 @@ package ccstream
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -687,6 +688,78 @@ func TestInject_Steer_InFlight_NoInterrupt_PriorityNext(t *testing.T) {
 	}
 	if !strings.Contains(out, `"priority":"next"`) {
 		t.Errorf("priority=\"next\" missing from Steer envelope; got: %q", out)
+	}
+}
+
+// TestInject_Steer_InFlight_WithAttachments_FoldsBlocks verifies #2099: an
+// in-flight steer carrying an image writes ONE user message at priority "next"
+// whose content is the text block then the image block — the shape CC was
+// probed to deliver to the model mid-turn. Before, the fold wrote text only
+// and the image was silently dropped.
+func TestInject_Steer_InFlight_WithAttachments_FoldsBlocks(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{
+		writer:     NewWriter(nopWriteCloser{&buf}),
+		turnActive: true,
+	}
+	if err := b.ImmediateInject(context.Background(), delegator.Inject{
+		Source:      delegator.SourceSteer,
+		Text:        "look",
+		Attachments: []delegator.Attachment{{MimeType: "image/png", Data: []byte("fake-png")}},
+	}); err != nil {
+		t.Fatalf("Inject: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("want one stdin message, got %d: %q", len(lines), buf.String())
+	}
+	var got struct {
+		Priority string `json:"priority"`
+		UUID     string `json:"uuid"`
+		Message  struct {
+			Content []struct {
+				Type   string `json:"type"`
+				Text   string `json:"text"`
+				Source *struct {
+					MediaType string `json:"media_type"`
+					Data      string `json:"data"`
+				} `json:"source"`
+			} `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(lines[0]), &got); err != nil {
+		t.Fatalf("invalid JSON %q: %v", lines[0], err)
+	}
+	if got.Priority != "next" {
+		t.Errorf("priority = %q, want next", got.Priority)
+	}
+	if got.UUID == "" {
+		t.Error("fold with attachments must stay delivery-tracked (uuid missing)")
+	}
+	c := got.Message.Content
+	if len(c) != 2 || c[0].Type != "text" || c[0].Text != "look" || c[1].Type != "image" ||
+		c[1].Source == nil || c[1].Source.MediaType != "image/png" ||
+		c[1].Source.Data != base64.StdEncoding.EncodeToString([]byte("fake-png")) {
+		t.Errorf("content = %+v, want [text look, image/png]", c)
+	}
+}
+
+// TestFoldsAttachment pins the probe result behind the inbox's steer decision
+// (#2099): images fold, a PDF does not (CC drops it mid-turn), and nothing the
+// API has no block type for does either.
+func TestFoldsAttachment(t *testing.T) {
+	t.Parallel()
+	b := &Backend{}
+	for mime, want := range map[string]bool{
+		"image/jpeg": true, "image/png": true, "image/gif": true, "image/webp": true,
+		"application/pdf": false, "text/csv": false, "image/svg+xml": false,
+	} {
+		if got := b.FoldsAttachment(mime); got != want {
+			t.Errorf("FoldsAttachment(%q) = %v, want %v", mime, got, want)
+		}
 	}
 }
 

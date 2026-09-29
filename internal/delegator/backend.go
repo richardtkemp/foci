@@ -396,6 +396,18 @@ type PlanResponder interface {
 	CancelPlanWithFeedback(requestID, feedback string) error
 }
 
+// FoldAttachmentCarrier is optionally implemented by backends whose in-flight
+// Inject (SourceSteer / SourceUser folded into a running turn) delivers
+// Inject.Attachments to the model. The inbox steers a mid-turn message that
+// carries attachments only when every binary one passes FoldsAttachment;
+// otherwise it queues the message as a fresh turn, where attachments always
+// arrive (#2099). ccstream implements this; other backends don't.
+type FoldAttachmentCarrier interface {
+	// FoldsAttachment reports whether an attachment of mimeType reaches the
+	// model when folded into a running turn.
+	FoldsAttachment(mimeType string) bool
+}
+
 // ContextWindow holds the model's context window size and, when the backend
 // reports one, its own self-computed usage breakdown. Returned by backends
 // that can look up the real limit (e.g. opencode's /config/providers, CC's
@@ -918,9 +930,10 @@ type Inject struct {
 	Text string
 
 	// Attachments are optional structured content blocks (images, PDFs).
-	// Only honored when the inject begins a new turn (idle state with
-	// SourceUser); ignored otherwise. Backends that don't support
-	// attachments silently drop them.
+	// Honored when the inject begins a new turn, and on an in-flight fold by
+	// a FoldAttachmentCarrier (only the types its FoldsAttachment accepts
+	// reach the model). Backends that don't support attachments silently
+	// drop them.
 	Attachments []Attachment
 
 	// Turn is the per-turn TurnEvents installed for the turn this inject
