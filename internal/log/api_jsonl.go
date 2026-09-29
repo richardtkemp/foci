@@ -1,151 +1,12 @@
 package log
 
 import (
-	"bufio"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 	"time"
-
-	"foci/internal/modelinfo"
 )
-
-// APIEntry is a structured record for one API request.
-type APIEntry struct {
-	Timestamp  time.Time `json:"ts"`
-	Provider   string    `json:"provider,omitempty"` // "anthropic" or "gemini" (empty = anthropic for backwards compat)
-	Session    string    `json:"session"`
-	Model      string    `json:"model"`
-	Input      int       `json:"input"`
-	Output     int       `json:"output"`
-	CacheRead  int       `json:"cache_read"`
-	CacheWrite int       `json:"cache_write"`
-	// ProvidedCostUSD is the cost the backend reported for this call, when one
-	// exists — CC's ModelUsage.CostUSD / opencode's Message.Cost, captured
-	// verbatim and never a foci-side calculation. nil when the backend gave no
-	// cost (e.g. foci's own direct Anthropic API calls, which report none).
-	//
-	// NOT AUTHORITATIVE, and not what any total should be built from (#1674).
-	// CC's figure is cumulative over the CC process, so historical rows here
-	// carry running totals rather than per-turn costs. It is retained for
-	// forensics and as the reference for the cost-divergence warning.
-	ProvidedCostUSD *float64 `json:"provided_cost_usd,omitempty"`
-
-	// CalculatedCostUSD is foci's own priced figure for this call — the
-	// authoritative cost (#1674). nil for rows written before the change, and
-	// for backends that supply no per-call tokens to price; EffectiveCost falls
-	// back to a live calculation in that case.
-	CalculatedCostUSD *float64 `json:"calculated_cost_usd,omitempty"`
-
-	// Turn is the turn-summed token counts CalculatedCostUSD was priced from.
-	// Input/Output/CacheRead/CacheWrite above are the LAST cycle's context fill
-	// for a delegated turn (what /context and compaction read), so pricing a
-	// row from them recovers a fifth of its cost (#1854). Price Turn instead.
-	// nil (NULL in api.db) for rows written before the change and for backends
-	// that do not accumulate per-cycle usage.
-	Turn *modelinfo.TokenCounts `json:"turn,omitempty"`
-
-	// TurnID names the turn this row belongs to, and is the ONLY durable turn
-	// identity in api.db: before it, "a turn is a row" was the whole story, so
-	// turn boundaries had to be inferred (#1695) and a turn that writes more
-	// than one row could not be reassembled at all. Format is
-	// "<session>@<StartedAt UnixNano>" — unique because turns are serialised
-	// per session, and stable across a foci restart, which the in-memory
-	// TurnState.TurnID counter is not. Empty for writers that have no turn.
-	TurnID string `json:"turn_id,omitempty"`
-
-	// AgentID names the AGENT this row belongs to — populated on EVERY row,
-	// including a subagent_turn row, where it is the parent session's owner
-	// (the same value the row's own delegated_turn parent carries), NOT the
-	// subagent. Callers should set it from the row's Session via
-	// session.AgentIDFromKey (internal/log cannot import internal/session
-	// itself: session already imports log, so the reverse would cycle — see
-	// writers in internal/agent, internal/compaction, internal/tools).
-	//
-	// Before #1946 this field held the SUBAGENT's tool_use id on a
-	// subagent_turn row and was empty everywhere else — the column's name
-	// promised the agent but the value was something else, and NULL on
-	// 48,630 of 48,650 rows read as "no data" to anyone joining on it. That
-	// value now lives in SubagentID below; AgentID has one honest meaning.
-	AgentID string `json:"agent_id,omitempty"`
-
-	// SubagentID names the SUBAGENT whose work this row records, for
-	// call_type="subagent_turn" (#1880 phase C / #1863; split from AgentID by
-	// #1946). It is the Agent tool's tool_use id, which is also what names the
-	// transcript (.../subagents/agent-<id>.jsonl), so a row can be traced back
-	// to the work that incurred it. Empty on every other row.
-	SubagentID string `json:"subagent_id,omitempty"`
-
-	// Purpose labels a BATCH run's turn — what it was for (consolidation,
-	// nudge_extraction, summary; delegator.BatchPurpose*). Empty on every
-	// other turn (#1962).
-	Purpose string `json:"purpose,omitempty"`
-
-	DurationMS  int64  `json:"duration_ms"`
-	StopReason  string `json:"stop_reason"`
-	CallType    string `json:"call_type"`              // "conversation", "compaction", "summary", "spawn", "subagent_turn"
-	SessionFile string `json:"session_file,omitempty"` // path to session JSONL file
-	SessionLine int    `json:"session_line,omitempty"` // line number in session file (conversation calls)
-	PreMessages int    `json:"pre_messages,omitempty"` // message count before compaction
-}
-
-// EffectiveCost returns this entry's cost for display: foci's own calculated
-// figure when we have one, otherwise a LIVE estimate computed from the stored
-// tokens using the price effective AT THE REQUEST'S TIMESTAMP
-// (modelinfo.CostAsOf) — not today's latest price. Never cache or persist the
-// result; call this at read time (foci_todo #1407).
-//
-// ProvidedCostUSD is deliberately NOT consulted (#1674). It used to win here,
-// which is how CC's cumulative-per-process figure became every row's "cost"
-// and inflated totals ~13x. Our own number is preferred precisely because
-// token counts have unambiguous semantics where a provider's cost total does
-// not; the provider's figure now only backs the divergence warning.
-func (e APIEntry) EffectiveCost() float64 {
-	if e.CalculatedCostUSD != nil {
-		return *e.CalculatedCostUSD
-	}
-	return e.PricedCounts().CostAsOf(e.Model, e.Timestamp)
-}
-
-// PricedCounts is the token counts this row's cost was priced from: Turn when
-// the writer measured it, and only otherwise the four un-suffixed fields.
-//
-// ALWAYS USE THIS to price a row, never the fields directly. For a delegated
-// turn the un-suffixed four are the FINAL ask cycle's context fill — what
-// /context and compaction read — not the turn's totals, so pricing them
-// recovers a fraction of the real cost with no error to show for it. Measured
-// 2026-09-11 over 810 rows since 2026-09-04: the un-suffixed columns hold
-// 3,845,629 cache-write tokens where Turn holds 55,728,618, a 14.5x shortfall,
-// and 6,054 input against 79,728. A per-category table built from the fields
-// therefore sits next to a correct total it cannot add up to (#1854, #1863).
-//
-// A direct API call is the one writer for which the two coincide, and
-// provider.Usage.AsTurn() exists so that writer can say so explicitly.
-func (e APIEntry) PricedCounts() modelinfo.TokenCounts {
-	if e.Turn != nil {
-		return *e.Turn
-	}
-	return modelinfo.TokenCounts{
-		Input:      e.Input,
-		Output:     e.Output,
-		CacheRead:  e.CacheRead,
-		CacheWrite: e.CacheWrite,
-	}
-}
-
-// IsSubagent reports whether this row records a SUBAGENT's work rather than a
-// turn's own (#1880 phase C). Such a row shares its parent's turn_id and names
-// the subagent in SubagentID (AgentID is the OWNING agent on this row too, same
-// as its parent — #1946).
-//
-// Cost consumers must NOT filter these out — the parent row's cost had this
-// subtracted from it, so a sum over every row is still the right total. What
-// must filter them out is anything COUNTING calls or turns, or reading the
-// context-fill columns: a subagent row has no final-cycle context fill of its
-// own and leaves those at zero.
-func (e APIEntry) IsSubagent() bool { return e.CallType == "subagent_turn" }
 
 // PayloadEntry is a full API request/response record.
 type PayloadEntry struct {
@@ -163,42 +24,22 @@ type PayloadEntry struct {
 	DurationMS   int64           `json:"duration_ms"`
 }
 
-// api writes a structured API log entry to JSONL and SQLite.
-func (l *Logger) api(entry APIEntry) {
-	l.apiJSONL(entry)
-	// SQLite
-	if apiLog != nil {
-		apiLog.insert(entry)
+// AppendAPILine appends v, as one JSON line, to api.jsonl. The cost ledger
+// (internal/delegator/accounting) writes one line per booked call; this
+// package owns only the file (rotation, stale-inode reopen).
+func AppendAPILine(v any) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return
 	}
-}
-
-// APIJSONLOnly appends to the JSONL without touching SQLite.
-//
-// For the one writer that collapses rows in the database but must stay
-// append-only on disk: AccumulateSubagentRow folds a delegation's later spend
-// into its existing db row, so the db holds ONE row per delegation and a lookup
-// is correct. The JSONL cannot be updated, so it receives every instalment as
-// its own line — and since every JSONL reader SUMS rows, that file stays correct
-// too. Writing only the first instalment there would make the fallback
-// under-report a delegation's spend (#1922).
-func APIJSONLOnly(entry APIEntry) { std.apiJSONL(entry) }
-
-// apiJSONL appends one entry to the JSONL log.
-func (l *Logger) apiJSONL(entry APIEntry) {
-	if entry.CallType == "" {
-		entry.CallType = "conversation"
+	std.mu.Lock()
+	staleWarn := std.reopenAPIIfStaleLocked()
+	if std.apiFile != nil {
+		_, _ = std.apiFile.Write(append(data, '\n'))
 	}
+	std.mu.Unlock()
 
-	l.mu.Lock()
-	staleWarn := l.reopenAPIIfStaleLocked()
-	if l.apiFile != nil {
-		if data, err := json.Marshal(entry); err == nil {
-			_, _ = l.apiFile.Write(append(data, '\n'))
-		}
-	}
-	l.mu.Unlock()
-
-	// Logged after releasing l.mu above — Warnf ultimately locks l.mu itself.
+	// Logged after releasing std.mu above — Warnf ultimately locks it itself.
 	if staleWarn != "" {
 		Warnf("log", "%s", staleWarn)
 	}
@@ -228,38 +69,6 @@ func PayloadEnabled() bool {
 	return std.payloadFile != nil
 }
 
-// APIHook, when set, observes every api.db row as it is written — the one
-// point all four backends' usage converges on, which is why the trace
-// exporter (internal/telemetry) hangs its cost observations here rather than
-// in any transport. instalment is true when AccumulateSubagentRow folded the
-// entry into an EXISTING row (the db collapsed it; an append-only consumer
-// must still see each instalment). Nil when tracing is off. Called
-// synchronously on the writer's goroutine, so implementations must be quick
-// and never call back into log.API.
-var APIHook func(entry APIEntry, instalment bool)
-
-// CorrectionHook, when set, observes each #1918 cost correction that
-// ApplyCostCorrections successfully applied, with the parent turn it debited.
-var CorrectionHook func(c modelinfo.CostCorrection, parentTurn string)
-
-// API logs a structured API call entry (package-level).
-func API(entry APIEntry) {
-	// Auto-infer provider from model name when not explicitly set.
-	if entry.Provider == "" {
-		if strings.HasPrefix(entry.Model, "gemini-") {
-			entry.Provider = "gemini"
-		} else if modelinfo.IsOpenAI(entry.Model) {
-			entry.Provider = "openai"
-		} else if strings.HasPrefix(entry.Model, "claude-") {
-			entry.Provider = "anthropic"
-		}
-	}
-	std.api(entry)
-	if APIHook != nil {
-		APIHook(entry, false)
-	}
-}
-
 // Payload logs a full API request/response record (package-level).
 func Payload(entry PayloadEntry) {
 	std.payload(entry)
@@ -276,25 +85,6 @@ func SystemHash(texts []string) string {
 		h.Write([]byte(t))
 	}
 	return fmt.Sprintf("%x", h.Sum(nil)[:8])
-}
-
-// ReadAPILog reads a JSONL API log file and returns all entries.
-func ReadAPILog(path string) []APIEntry {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil
-	}
-	defer func() { _ = f.Close() }()
-
-	var entries []APIEntry
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		var e APIEntry
-		if json.Unmarshal(scanner.Bytes(), &e) == nil {
-			entries = append(entries, e)
-		}
-	}
-	return entries
 }
 
 // SetAPIWriter replaces the API log file (for testing).

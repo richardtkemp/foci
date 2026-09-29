@@ -6,8 +6,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"foci/internal/log"
 )
 
 func costCC(apiLogPath string) CommandContext {
@@ -17,7 +15,7 @@ func costCC(apiLogPath string) CommandContext {
 // TestCostCommandUsage verifies that unknown args produce the usage text.
 func TestCostCommandUsage(t *testing.T) {
 	now := time.Now().UTC()
-	path := writeAPILog(t, []log.APIEntry{
+	path := writeAPILog(t, []apiRow{
 		{Timestamp: now, Session: "s", CalculatedCostUSD: f64p(0.01)},
 	})
 	cmd := CostCommand()
@@ -36,7 +34,7 @@ func TestCostCommandUsage(t *testing.T) {
 func TestCostCommandToday(t *testing.T) {
 	now := time.Now().UTC()
 	yesterday := now.AddDate(0, 0, -1)
-	path := writeAPILog(t, []log.APIEntry{
+	path := writeAPILog(t, []apiRow{
 		{Timestamp: yesterday, Session: "old-session", CalculatedCostUSD: f64p(0.100)},
 		{Timestamp: now, Session: "session-a", CalculatedCostUSD: f64p(0.050)},
 		{Timestamp: now, Session: "session-b", CalculatedCostUSD: f64p(0.025)},
@@ -71,7 +69,7 @@ func TestCostCommandToday(t *testing.T) {
 // TestCostCommandTodaySorting verifies sessions are sorted by cost in descending order.
 func TestCostCommandTodaySorting(t *testing.T) {
 	now := time.Now().UTC()
-	path := writeAPILog(t, []log.APIEntry{
+	path := writeAPILog(t, []apiRow{
 		{Timestamp: now, Session: "session-a", CalculatedCostUSD: f64p(0.010)},
 		{Timestamp: now, Session: "session-b", CalculatedCostUSD: f64p(0.020)},
 		{Timestamp: now, Session: "session-a", CalculatedCostUSD: f64p(0.030)},
@@ -96,7 +94,7 @@ func TestCostCommandTodaySorting(t *testing.T) {
 // TestCostCommandSessionNoData verifies graceful handling when no calls exist for the session.
 func TestCostCommandSessionNoData(t *testing.T) {
 	now := time.Now().UTC()
-	path := writeAPILog(t, []log.APIEntry{
+	path := writeAPILog(t, []apiRow{
 		{Timestamp: now, Session: "other/session", CalculatedCostUSD: f64p(0.500)},
 	})
 
@@ -114,9 +112,9 @@ func TestCostCommandSessionNoData(t *testing.T) {
 // TestCostCommandTop10Limit verifies output is capped at top 10 sessions with overflow indicator.
 func TestCostCommandTop10Limit(t *testing.T) {
 	now := time.Now().UTC()
-	var entries []log.APIEntry
+	var entries []apiRow
 	for i := 0; i < 12; i++ {
-		entries = append(entries, log.APIEntry{
+		entries = append(entries, apiRow{
 			Timestamp:         now,
 			Session:           fmt.Sprintf("session-%02d", i),
 			CalculatedCostUSD: f64p(float64(12-i) * 0.01),
@@ -144,7 +142,7 @@ func TestCostCommandTop10Limit(t *testing.T) {
 // TestCostCommandDays verifies costs over specified number of days are summed correctly.
 func TestCostCommandDays(t *testing.T) {
 	now := time.Now().UTC()
-	path := writeAPILog(t, []log.APIEntry{
+	path := writeAPILog(t, []apiRow{
 		{Timestamp: now.AddDate(0, 0, -10), CalculatedCostUSD: f64p(0.100)},
 		{Timestamp: now.AddDate(0, 0, -2), CalculatedCostUSD: f64p(0.050)},
 		{Timestamp: now, CalculatedCostUSD: f64p(0.025)},
@@ -163,7 +161,7 @@ func TestCostCommandDays(t *testing.T) {
 // TestCostCommand24h verifies costs from last 24 hours are correctly filtered and categorized.
 func TestCostCommand24h(t *testing.T) {
 	now := time.Now().UTC()
-	entries := []log.APIEntry{
+	entries := []apiRow{
 		{Timestamp: now.Add(-25 * time.Hour), Session: "old", Model: "claude-haiku-4-5",
 			Input: 1000, Output: 500, CacheRead: 2000, CacheWrite: 1000, CalculatedCostUSD: f64p(0.050)},
 		{Timestamp: now.Add(-12 * time.Hour), Session: "recent-a", Model: "claude-haiku-4-5",
@@ -199,7 +197,7 @@ func TestCostCommand24h(t *testing.T) {
 func TestCostCommandWeek(t *testing.T) {
 	now := time.Now().UTC()
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
-	entries := []log.APIEntry{
+	entries := []apiRow{
 		{Timestamp: startOfToday.AddDate(0, 0, -10), Session: "old", CalculatedCostUSD: f64p(1.00)},
 		{Timestamp: startOfToday.AddDate(0, 0, -5), Session: "s1", CalculatedCostUSD: f64p(0.50)},
 		{Timestamp: startOfToday.AddDate(0, 0, -2), Session: "s2", CalculatedCostUSD: f64p(0.30)},
@@ -242,7 +240,7 @@ func TestCostCommandWeek(t *testing.T) {
 // TestCostCommandGoDuration verifies a Go duration string like "4h" works.
 func TestCostCommandGoDuration(t *testing.T) {
 	now := time.Now().UTC()
-	path := writeAPILog(t, []log.APIEntry{
+	path := writeAPILog(t, []apiRow{
 		{Timestamp: now.Add(-5 * time.Hour), Session: "old", CalculatedCostUSD: f64p(0.100)},
 		{Timestamp: now.Add(-1 * time.Hour), Session: "recent", CalculatedCostUSD: f64p(0.050)},
 	})
@@ -263,7 +261,7 @@ func TestCostCommandGoDuration(t *testing.T) {
 // TestCostCommandAllTime verifies /cost with no args shows all entries.
 func TestCostCommandAllTime(t *testing.T) {
 	now := time.Now().UTC()
-	path := writeAPILog(t, []log.APIEntry{
+	path := writeAPILog(t, []apiRow{
 		{Timestamp: now.AddDate(0, 0, -30), Session: "old", CalculatedCostUSD: f64p(0.100)},
 		{Timestamp: now, Session: "recent", CalculatedCostUSD: f64p(0.050)},
 	})
@@ -281,7 +279,7 @@ func TestCostCommandAllTime(t *testing.T) {
 // TestCostCommandTodayWithScope verifies combining duration + scope.
 func TestCostCommandTodayWithScope(t *testing.T) {
 	now := time.Now().UTC()
-	path := writeAPILog(t, []log.APIEntry{
+	path := writeAPILog(t, []apiRow{
 		{Timestamp: now, Session: "main/i0/0/abc", CalculatedCostUSD: f64p(0.050)},
 		{Timestamp: now, Session: "other/session", CalculatedCostUSD: f64p(0.025)},
 	})

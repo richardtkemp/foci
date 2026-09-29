@@ -233,6 +233,10 @@ func (t *APITransport) InjectNudges(ts *TurnState) {
 func (t *APITransport) RunInference(ts *TurnState) error {
 	a := t.agent
 
+	// Whatever way the turn ends, its facts close in the ledger.
+	var lastStop string
+	defer func() { a.recordAPITurnEnd(ts, lastStop) }()
+
 	maxLoops := a.maxToolLoops()
 	if maxLoops <= 0 {
 		maxLoops = 100
@@ -378,6 +382,7 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 		}
 
 		cost := a.logAPIResponse(ts, ts.TurnModel, start, duration, req, resp, len(ts.Messages))
+		lastStop = resp.StopReason
 		a.processAPIResponse(ts.SessionKey, ts.SessionMeta, resp, cost, ts.StartedAt, maxOutput)
 
 		assistantMsg := provider.Message{
@@ -572,7 +577,11 @@ func (t *APITransport) RunCompaction(ts *TurnState) {
 	if ts.FinalUsage == nil {
 		return
 	}
-	a.maybeCompact(ts.Ctx, ts.SessionKey, ts.Messages, ts.System, ts.FinalUsage, ts.SessionMeta)
+	// The compaction is booked on this turn (ts.Ctx carries it), after the
+	// turn ended: the turn's spending activity closes when it does (R8).
+	if a.maybeCompact(ts.Ctx, ts.SessionKey, ts.Messages, ts.System, ts.FinalUsage, ts.SessionMeta) {
+		a.recordAPITurnActivity(ts)
+	}
 }
 
 // ---------------------------------------------------------------------------

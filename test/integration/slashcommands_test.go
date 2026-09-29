@@ -560,9 +560,9 @@ func TestL2_SlashCommands_CostTodayReadsAPILog(t *testing.T) {
 	testharness.ParallelWait(t)
 	// writeTestConfig DOES emit [logging].api_file pointing at the
 	// harness LogsDir (gateway_config.go:84); Harness.LogsDir() exposes
-	// the directory. /cost today reads via log.ReadAPILog fresh on every
-	// call (observability.go:194), so seeding entries AFTER startup is
-	// sufficient — no pre-start hook needed.
+	// the directory. With no calls in the ledger, /cost today reads the
+	// JSONL fresh on every call (readCalls), so seeding entries AFTER startup
+	// is sufficient — no pre-start hook needed.
 	const userID = 7065
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
@@ -583,17 +583,19 @@ func TestL2_SlashCommands_CostTodayReadsAPILog(t *testing.T) {
 	//   B: 500k in ($0.50) + 200k out ($1.00) = $1.50
 	//                                   total   $2.50
 	//
-	// provided_cost_usd is deliberately ABSURD and deliberately not $2.50's
-	// share. It is this fixture's fail-arm: if the provided figure ever creeps
-	// back into a total, the reply reads $198.00 rather than $2.50 and the
-	// negative assertion below names it. The old fixture used `golden_cost_usd`,
-	// a field #1674 renamed out of existence, so it silently parsed to nothing
-	// and every row priced at $0.00 — which is how this test went red.
+	// cost_usd is deliberately ABSURD and deliberately not $2.50's share. It
+	// is this fixture's fail-arm: a counts-basis line is priced from its
+	// tokens at read time, exactly as the ledger's views price a call, so if
+	// the line's cached figure ever creeps back into a total the reply reads
+	// $198.00 rather than $2.50 and the negative assertion below names it. (An
+	// older fixture used `golden_cost_usd`, a field #1674 renamed out of
+	// existence, so it silently parsed to nothing and every row priced at
+	// $0.00 — which is how this test once went red.)
 	apiLogPath := filepath.Join(h.LogsDir(), "api.jsonl")
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	entries := []string{
-		`{"ts":"` + now + `","session":"L2_COST_TEST_SESSION_A","model":"claude-haiku-4-5","input":500000,"output":100000,"provided_cost_usd":99.00,"call_type":"conversation"}`,
-		`{"ts":"` + now + `","session":"L2_COST_TEST_SESSION_B","model":"claude-haiku-4-5","input":500000,"output":200000,"provided_cost_usd":99.00,"call_type":"conversation"}`,
+		`{"ts":"` + now + `","backend":"api","kind":"call","finality":"completed","class_method":"backend_rule","cost_basis":"counts","session":"L2_COST_TEST_SESSION_A","model":"claude-haiku-4-5","tokens":{"input":500000,"output":100000},"cost_usd":99.00}`,
+		`{"ts":"` + now + `","backend":"api","kind":"call","finality":"completed","class_method":"backend_rule","cost_basis":"counts","session":"L2_COST_TEST_SESSION_B","model":"claude-haiku-4-5","tokens":{"input":500000,"output":200000},"cost_usd":99.00}`,
 	}
 	apiContent := strings.Join(entries, "\n") + "\n"
 	if err := os.WriteFile(apiLogPath, []byte(apiContent), 0o600); err != nil {
@@ -621,12 +623,12 @@ func TestL2_SlashCommands_CostTodayReadsAPILog(t *testing.T) {
 	if !strings.Contains(text, "$2.50") {
 		t.Errorf("expected total $2.50 (priced from tokens) in /cost today reply; got:\n%s", text)
 	}
-	// The other half of #1674, and the reason this fixture sets an absurd
-	// provided_cost_usd: asserting the right total alone would also pass if the
-	// provided figure happened to agree. $198.00 can only appear if the backend's
-	// number is being summed again.
+	// The reason this fixture sets an absurd cost_usd: asserting the right
+	// total alone would also pass if the cached figure happened to agree.
+	// $198.00 can only appear if the line's figure is being summed instead of
+	// its tokens priced.
 	if strings.Contains(text, "$198.00") || strings.Contains(text, "$99.00") {
-		t.Errorf("provided_cost_usd leaked into the total — it is a validator, not a source (#1674); got:\n%s", text)
+		t.Errorf("the line's cached cost_usd leaked into the total — counts are priced at read time; got:\n%s", text)
 	}
 	if !strings.Contains(text, "L2_COST_TEST_SESSION_A") || !strings.Contains(text, "L2_COST_TEST_SESSION_B") {
 		t.Errorf("expected both seeded session names in /cost today reply; got:\n%s", text)
@@ -660,8 +662,8 @@ func TestL2_SlashCommands_CostTodayDefaultsToCallingAgent(t *testing.T) {
 		// The amounts are irrelevant here (this asserts on session names, not
 		// money); what matters is that it is not a fixture the other test's
 		// pricing path would reject.
-		`{"ts":"` + now + `","session":"L2_COST_OTHER_SESSION_A","model":"claude-haiku-4-5","input":500000,"output":100000,"provided_cost_usd":99.00,"call_type":"conversation"}`,
-		`{"ts":"` + now + `","session":"L2_COST_OTHER_SESSION_B","model":"claude-haiku-4-5","input":500000,"output":200000,"provided_cost_usd":99.00,"call_type":"conversation"}`,
+		`{"ts":"` + now + `","backend":"api","kind":"call","finality":"completed","class_method":"backend_rule","cost_basis":"counts","session":"L2_COST_OTHER_SESSION_A","model":"claude-haiku-4-5","tokens":{"input":500000,"output":100000},"cost_usd":99.00}`,
+		`{"ts":"` + now + `","backend":"api","kind":"call","finality":"completed","class_method":"backend_rule","cost_basis":"counts","session":"L2_COST_OTHER_SESSION_B","model":"claude-haiku-4-5","tokens":{"input":500000,"output":200000},"cost_usd":99.00}`,
 	}
 	if err := os.WriteFile(apiLogPath, []byte(strings.Join(entries, "\n")+"\n"), 0o600); err != nil {
 		t.Fatalf("seed api.jsonl: %v", err)

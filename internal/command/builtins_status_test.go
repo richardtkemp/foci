@@ -8,7 +8,6 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/config"
-	"foci/internal/log"
 	"foci/internal/session"
 	"foci/internal/tools"
 )
@@ -19,7 +18,7 @@ import (
 func TestStatusCommand(t *testing.T) {
 	now := time.Now().UTC()
 	sk := "main/c1"
-	path := initAPIDB(t, []log.APIEntry{
+	path := initAPIDB(t, []apiRow{
 		{Timestamp: now, Session: sk, Model: "claude-haiku-4-5", Input: 100, Output: 50, CacheRead: 80, CacheWrite: 100, CalculatedCostUSD: f64p(0.001), CallType: "conversation"},
 		{Timestamp: now.Add(time.Minute), Session: sk, Model: "claude-haiku-4-5", Input: 200, Output: 100, CacheRead: 150, CacheWrite: 0, CalculatedCostUSD: f64p(0.002), CallType: "conversation"},
 		{Timestamp: now, Session: "other/c2", Model: "claude-haiku-4-5", Input: 500, Output: 200, CalculatedCostUSD: f64p(0.005), CallType: "conversation"},
@@ -95,9 +94,9 @@ func TestStatusCommandBusy(t *testing.T) {
 // TestCacheCommand verifies cache hit rates and token usage are calculated and displayed correctly.
 func TestCacheCommand(t *testing.T) {
 	now := time.Now().UTC()
-	entries := make([]log.APIEntry, 7)
+	entries := make([]apiRow, 7)
 	for i := range entries {
-		entries[i] = log.APIEntry{
+		entries[i] = apiRow{
 			Timestamp:         now.Add(time.Duration(i) * time.Minute),
 			Input:             100,
 			CacheRead:         50,
@@ -172,19 +171,13 @@ func TestCacheCommandEmpty(t *testing.T) {
 // TestLastCommandFallsBackToDB: /cache had the same JSONL-only read as /last
 // (foci_todo #1457), so after a restart empties api.jsonl it printed "No API
 // calls logged yet." while the durable db held entries. Now it reads via the
-// shared readDurableAPIEntries helper.
+// shared readCalls helper.
 func TestCacheCommandFallsBackToDB(t *testing.T) {
 	now := time.Now().UTC()
-	dbPath := t.TempDir() + "/api.db"
-	if err := log.InitAPIDB(dbPath); err != nil {
-		t.Fatalf("InitAPIDB: %v", err)
-	}
-	t.Cleanup(log.CloseAPIDB)
-
-	log.API(log.APIEntry{
+	bookRows(t, openTestLedger(t), []apiRow{{
 		Timestamp: now, Session: "clutch/c123", Model: "claude-opus-4-8",
 		Input: 100, Output: 50, CacheRead: 40, CallType: "delegated_turn",
-	})
+	}})
 
 	// api.jsonl empty (as right after a restart); the db above has the entry.
 	cc := CommandContext{APILogPath: t.TempDir() + "/api.jsonl"}
@@ -202,7 +195,7 @@ func TestCacheCommandFallsBackToDB(t *testing.T) {
 // as a table, and supports filtering by agent name.
 func TestLastCommand(t *testing.T) {
 	now := time.Now().UTC()
-	path := writeAPILog(t, []log.APIEntry{
+	path := writeAPILog(t, []apiRow{
 		{Timestamp: now, Session: "main/c1", Model: "claude-haiku-4-5", Input: 100, Output: 50, CalculatedCostUSD: f64p(0.001)},
 		{Timestamp: now.Add(time.Minute), Session: "main/c1", Model: "claude-haiku-4-5", Input: 200, Output: 100, CalculatedCostUSD: f64p(0.002)},
 		{Timestamp: now.Add(2 * time.Minute), Session: "helper/c2", Model: "claude-sonnet-4-5", Input: 300, Output: 150, CalculatedCostUSD: f64p(0.005)},
@@ -222,13 +215,13 @@ func TestLastCommand(t *testing.T) {
 	if !strings.Contains(result.Text, "main") || !strings.Contains(result.Text, "helper") {
 		t.Errorf("should show both agents in:\n%s", result.Text)
 	}
-	// main's latest should be the second entry (in=200)
-	if !strings.Contains(result.Text, "in=200") {
-		t.Errorf("should show main's latest call (in=200) in:\n%s", result.Text)
+	// main's latest should be the second entry (ctx=200, out=100)
+	if !strings.Contains(result.Text, "ctx=200 out=100") {
+		t.Errorf("should show main's latest call (ctx=200) in:\n%s", result.Text)
 	}
 	// helper's entry
-	if !strings.Contains(result.Text, "in=300") {
-		t.Errorf("should show helper's call (in=300) in:\n%s", result.Text)
+	if !strings.Contains(result.Text, "ctx=300") {
+		t.Errorf("should show helper's call (ctx=300) in:\n%s", result.Text)
 	}
 
 	// Filter to specific agent.
@@ -239,7 +232,7 @@ func TestLastCommand(t *testing.T) {
 	if !strings.Contains(result.Text, "helper") {
 		t.Errorf("filtered result should contain helper in:\n%s", result.Text)
 	}
-	if strings.Contains(result.Text, "in=200") {
+	if strings.Contains(result.Text, "ctx=200") {
 		t.Errorf("filtered result should not contain main's call in:\n%s", result.Text)
 	}
 
@@ -257,22 +250,16 @@ func TestLastCommand(t *testing.T) {
 // seem to work"): api.jsonl is archived to empty on every service restart
 // (initLogging's startup RotateOnce), so a JSONL-only read reports "No API
 // calls logged yet." even though the durable api.db has current entries —
-// including for delegated (CC/codex) backends, which log usage via the same
-// log.API() call (turn_delegated.go's LogUsage) as the direct-API path.
-// Mirrors /cost's existing db-first, JSONL-fallback read (readEntries).
+// including for delegated (CC/codex) backends, which book through the same
+// ledger (turn_delegated.go's LogUsage) as the direct-API path.
+// Mirrors /cost's db-first, JSONL-fallback read (readCalls).
 func TestLastCommandFallsBackToDB(t *testing.T) {
 	now := time.Now().UTC()
-	dbPath := t.TempDir() + "/api.db"
-	if err := log.InitAPIDB(dbPath); err != nil {
-		t.Fatalf("InitAPIDB: %v", err)
-	}
-	t.Cleanup(log.CloseAPIDB)
-
-	// Delegated-backend call (as logged by turn_delegated.go's LogUsage).
-	log.API(log.APIEntry{
+	// Delegated-backend call (as booked by turn_delegated.go's LogUsage).
+	bookRows(t, openTestLedger(t), []apiRow{{
 		Timestamp: now, Session: "clutch/c123", Model: "claude-opus-4-8",
 		Input: 100, Output: 50, CallType: "delegated_turn",
-	})
+	}})
 
 	// api.jsonl is empty — as it is right after a restart, or if the JSONL
 	// write path stalls — but the db above has the entry.

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -13,36 +14,15 @@ import (
 	"foci/internal/sqlite"
 )
 
-// v1Schema is the pre-ledger api_calls table as internal/log's InitAPIDB left
-// it after its last ALTER (#1962): the shape every live api.db has at cutover.
-const v1Schema = `CREATE TABLE api_calls (
-	id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-	ts                 DATETIME NOT NULL,
-	session            TEXT NOT NULL,
-	model              TEXT NOT NULL,
-	input_tokens       INTEGER,
-	output_tokens      INTEGER,
-	cache_read_tokens  INTEGER,
-	cache_write_tokens INTEGER,
-	cost_usd           REAL,
-	duration_ms        INTEGER,
-	stop_reason        TEXT,
-	call_type          TEXT NOT NULL,
-	session_file       TEXT,
-	session_line       INTEGER,
-	provider TEXT DEFAULT '',
-	pre_messages INTEGER,
-	calculated_cost_usd REAL,
-	turn_input_tokens INTEGER,
-	turn_cache_read_tokens INTEGER,
-	turn_cache_write_tokens INTEGER,
-	turn_output_tokens INTEGER,
-	turn_id TEXT,
-	agent_id TEXT,
-	subagent_id TEXT,
-	turn_web_searches INTEGER,
-	purpose TEXT
-)`
+// v1Schema is the pre-ledger api_calls table (testdata/v1_api_calls.sql).
+func v1Schema(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile("testdata/v1_api_calls.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
 
 // v1 is one pre-ledger row to write. turn, when set, is the turn_* group.
 type v1 struct {
@@ -63,7 +43,7 @@ func f(v float64) *float64 { return &v }
 
 func writeV1(t *testing.T, path string, rows []v1) {
 	t.Helper()
-	db, err := sqlite.OpenInit(path, v1Schema)
+	db, err := sqlite.OpenInit(path, v1Schema(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,5 +437,51 @@ func TestMigrateV1FailureChangesNothing(t *testing.T) {
 	}
 	if backups, _ := filepath.Glob(path + ".pre-ledger-*"); len(backups) != 0 {
 		t.Errorf("NoBackup wrote a backup: %v", backups)
+	}
+}
+
+// TestMigrateV1HelperTurnsAndUnnamedShares: a pre-ledger summary or spawn
+// row was a direct-API helper call, not a turn of the conversation, so its
+// turn is a system turn (as a live one is); a subagent share whose usage
+// arrived before anything named its subagent is still a subagent's call, not
+// the session's own thread; and every legacy call records which counts it
+// carries.
+func TestMigrateV1HelperTurnsAndUnnamedShares(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "api.db")
+	at := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+	writeV1(t, path, []v1{
+		{id: 1, ts: at, session: "a/c1", model: "claude-opus-5", callType: "summary", fill: [4]int{10, 5, 0, 0}},
+		{id: 2, ts: at, session: "a/c1", model: "claude-opus-5", callType: "spawn", fill: [4]int{10, 5, 0, 0}},
+		{id: 3, ts: at, session: "a/c1", model: "claude-opus-5", callType: "delegated_turn", turnID: "a/c1@1",
+			fill: [4]int{1, 2, 3, 4}, turn: &[4]int{5, 6, 7, 8}, calc: f(0.1)},
+		{id: 4, ts: at, session: "a/c1", model: "claude-opus-5", callType: "subagent_turn", turnID: "a/c1@1",
+			turn: &[4]int{1, 1, 1, 1}, calc: f(0.01)},
+	})
+	l, rep, err := Open(path, Options{NoBackup: true})
+	if err != nil || rep == nil {
+		t.Fatalf("Open: %v %v", rep, err)
+	}
+	defer func() { _ = l.Close() }()
+	for _, tc := range []struct {
+		id     int64
+		source string
+		actor  string
+		totals bool
+	}{
+		{1, SourceSystem, "", false},
+		{2, SourceSystem, "", false},
+		{3, SourceUser, "", true},
+		{4, SourceUser, UnnamedSubagent, true},
+	} {
+		var source, actor string
+		var totals bool
+		if err := l.db.QueryRow(`SELECT t.source, c.actor, json_extract(c.detail, '$.turn_totals')
+			FROM api_calls c JOIN turns t ON t.turn_id = c.turn_id WHERE c.id = ?`, tc.id).Scan(&source, &actor, &totals); err != nil {
+			t.Fatalf("row %d: %v", tc.id, err)
+		}
+		if source != tc.source || actor != tc.actor || totals != tc.totals {
+			t.Errorf("row %d: source %q actor %q turn_totals %v, want %q %q %v",
+				tc.id, source, actor, totals, tc.source, tc.actor, tc.totals)
+		}
 	}
 }

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"foci/internal/display"
-	"foci/internal/log"
 	"foci/internal/tools"
 )
 
@@ -85,9 +84,8 @@ func StatusCommand() *Command {
 				status = "compacting"
 			}
 
-			// Query all session stats from api.db — works for both API
-			// and delegated (CC backend) sessions.
-			stats, _ := log.QuerySessionStats(sk)
+			// Session stats from the cost ledger — every backend books there.
+			stats := sessionStats(sk)
 
 			var mc int
 			var sessionCost float64

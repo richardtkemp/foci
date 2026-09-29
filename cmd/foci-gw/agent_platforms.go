@@ -30,6 +30,7 @@ var (
 		// platform connections. Uses the Messaging facade for fan-out — zero platform-specific types.
 		NewComponentLogger("http")
 	keepaliveLog = log.NewComponentLogger("keepalive")
+	ledgerLog    = log.NewComponentLogger("ledger")
 	mainLog      = log.NewComponentLogger("main")
 	modelcapsLog = log.NewComponentLogger("modelcaps")
 	modelinfoLog = log.NewComponentLogger("modelinfo")

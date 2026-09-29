@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/delegator/accounting"
 	"foci/internal/display"
-	"foci/internal/log"
 	"foci/internal/modelinfo"
 	"foci/internal/platform"
 	"foci/internal/procx"
@@ -441,6 +441,9 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 	messages := []provider.Message{
 		{Role: "user", Content: provider.TextContent(prompt)},
 	}
+	spawnStart := time.Now()
+	agentID := session.AgentIDFromKey(sessionKey)
+	turnID := accounting.MintTurnID(sessionKey, accounting.KindSpawn, spawnStart)
 
 	for i := 0; i < maxLoops; i++ {
 		req := &provider.MessageRequest{
@@ -472,27 +475,20 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 				sessionFile = p
 			}
 		}
-		log.API(log.APIEntry{
-			Timestamp:  start,
-			Provider:   format,
-			Session:    sessionKey,
-			Model:      model,
-			Input:      resp.Usage.InputTokens,
-			Output:     resp.Usage.OutputTokens,
-			CacheRead:  resp.Usage.CacheReadInputTokens,
-			CacheWrite: resp.Usage.CacheCreationInputTokens,
-			Turn:       resp.Usage.AsTurn(), // single call: its own counts are the turn total (#1854)
-			// See turn_api_logging.go's logAPIResponse for why this is
-			// load-bearing (#1964): without it, a spawn call's cost is computed
-			// for the log line but never persisted, so it reads as $0 to any
-			// SUM(calculated_cost_usd) total.
-			CalculatedCostUSD: &cost,
-			DurationMS:        duration.Milliseconds(),
-			StopReason:        resp.StopReason,
-			CallType:          "spawn",
-			AgentID:           session.AgentIDFromKey(sessionKey),
-			SessionFile:       sessionFile,
-		})
+		// Each loop is one direct-API call, booked on the turn whose tool call
+		// spawned it — or, spawned by no turn, all on one system turn of the
+		// spawn's own.
+		turn := accounting.TurnFor(ctx, accounting.OwnTurn(
+			turnID, sessionKey, agentID, accounting.SourceSystem, spawnStart, time.Now()))
+		if err := accounting.Record(turn,
+			accounting.APIResponse{
+				ID: resp.ID, Kind: accounting.KindSpawn, Provider: format, Model: model,
+				Session: sessionKey, AgentID: agentID, TurnID: turn.TurnID,
+				Start: start, Duration: duration, Tokens: resp.Usage.Tokens(), StopReason: resp.StopReason,
+				SessionFile: sessionFile,
+			}.Call()); err != nil {
+			spawnLog.Errorf("session=%s book spawn call: %v", sessionKey, err)
+		}
 
 		// If no tool use, return text.
 		if resp.StopReason != "tool_use" {

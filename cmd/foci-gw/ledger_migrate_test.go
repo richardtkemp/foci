@@ -8,29 +8,39 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/log"
-	"foci/internal/modelinfo"
+	"foci/internal/sqlite"
 )
 
-// TestLedgerMigrateDryRun drives `foci-gw ledger-migrate` against an api.db
-// written by the REAL pre-ledger writer (log.InitAPIDB + log.API), so the
-// migration is proven against the schema production actually has rather than
-// a hand-copied one. The source must come out byte-identical; the kept copy
-// must hold the ledger.
+// TestLedgerMigrateDryRun drives `foci-gw ledger-migrate` against a
+// pre-ledger api.db built from the v1 schema fixture (the v1 writer itself is
+// gone since the cutover, #2111 P2). The source must come out byte-identical;
+// the kept copy must hold the ledger.
 func TestLedgerMigrateDryRun(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "api.db")
-	if err := log.InitAPIDB(src); err != nil {
+	ddl, err := os.ReadFile("../../internal/delegator/accounting/testdata/v1_api_calls.sql")
+	if err != nil {
 		t.Fatal(err)
 	}
-	at := time.Date(2026, 9, 20, 11, 0, 0, 0, time.UTC)
-	calc := 0.25
-	log.API(log.APIEntry{Timestamp: at, Session: "helen/c1", Model: "claude-opus-5", Input: 10, Output: 20,
-		CacheRead: 300, CacheWrite: 40, CalculatedCostUSD: &calc, CallType: "delegated_turn",
-		TurnID: "helen/c1@1", AgentID: "helen",
-		Turn: &modelinfo.TokenCounts{Input: 11, Output: 21, CacheRead: 301, CacheWrite: 41}})
-	log.API(log.APIEntry{Timestamp: at, Session: "helen/api", Model: "claude-opus-5", Input: 5, Output: 6, CallType: "conversation"})
-	log.CloseAPIDB()
+	db, err := sqlite.OpenInit(src, string(ddl))
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 9, 20, 11, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	for _, stmt := range []string{
+		`INSERT INTO api_calls (ts, session, model, input_tokens, output_tokens, cache_read_tokens,
+			cache_write_tokens, calculated_cost_usd, call_type, turn_id, agent_id,
+			turn_input_tokens, turn_output_tokens, turn_cache_read_tokens, turn_cache_write_tokens)
+			VALUES (?, 'helen/c1', 'claude-opus-5', 10, 20, 300, 40, 0.25, 'delegated_turn', 'helen/c1@1', 'helen',
+			11, 21, 301, 41)`,
+		`INSERT INTO api_calls (ts, session, model, input_tokens, output_tokens, call_type)
+			VALUES (?, 'helen/api', 'claude-opus-5', 5, 6, 'conversation')`,
+	} {
+		if _, err := db.Exec(stmt, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = db.Close()
 	before, err := os.ReadFile(src)
 	if err != nil {
 		t.Fatal(err)

@@ -3,8 +3,13 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
+	"foci/internal/delegator/accounting"
+	"foci/internal/modelinfo"
 	"foci/internal/provider"
 )
 
@@ -259,5 +264,86 @@ func TestSpawnToolSetExcludesSpawn(t *testing.T) {
 	}
 	if _, ok := tools["spawn"]; ok {
 		t.Error("spawn should be excluded from tool set")
+	}
+}
+
+// spawnWithLedger runs a two-loop one-shot spawn from session gil/c1 under ctx
+// with a live ledger, and returns the ledger's calls.
+func spawnWithLedger(t *testing.T, ctx context.Context) (*accounting.Ledger, []accounting.CallRow) {
+	t.Helper()
+	l, _, err := accounting.Open(filepath.Join(t.TempDir(), "api.db"), accounting.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accounting.SetLive(l)
+	t.Cleanup(func() { accounting.SetLive(nil); _ = l.Close() })
+
+	calls := 0
+	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+		calls++
+		if calls == 1 {
+			return &provider.MessageResponse{
+				ID: "msg_1", Type: "message", Role: "assistant",
+				Content:    []provider.ContentBlock{{Type: "tool_use", ID: "tu_1", Name: "echo_tool", Input: json.RawMessage(`{}`)}},
+				StopReason: "tool_use", Usage: provider.Usage{InputTokens: 10, OutputTokens: 5},
+			}
+		}
+		return &provider.MessageResponse{
+			ID: "msg_2", Type: "message", Role: "assistant", Content: provider.TextContent("done"),
+			StopReason: "end_turn", Usage: provider.Usage{InputTokens: 20, OutputTokens: 10, CacheCreationInputTokens: 7},
+		}
+	})
+	t.Cleanup(server.Close)
+	reg := NewRegistry()
+	reg.Register(&Tool{
+		Name: "echo_tool", Parameters: json.RawMessage(`{"type":"object"}`),
+		Execute: func(context.Context, json.RawMessage) (ToolResult, error) { return TextResult("ok"), nil },
+	})
+	deps := SpawnDeps{Client: newTestAnthropicClient(server.URL, "test-token"), Registry: reg,
+		FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: func() int { return 10 }}
+	params, _ := json.Marshal(map[string]string{"prompt": "test", "context": "character"})
+	if _, err := NewSpawnTool(deps, nil).Execute(WithSessionKey(ctx, "gil/c1"), params); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := l.Calls(time.Time{})
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("ledger calls = %d (%v), want one per loop", len(rows), err)
+	}
+	return l, rows
+}
+
+// TestSpawnBooksOntoTheInvokingTurn: a spawn a conversation turn's tool made
+// is that turn's spend — each loop is its own spawn call, booked on the
+// invoking turn (#2111; Dick: "subagent turns should be tied to their
+// parent"). Not parallel: it makes a ledger the live one.
+func TestSpawnBooksOntoTheInvokingTurn(t *testing.T) {
+	parent := accounting.Turn{TurnID: "gil/c1@42", Session: "gil/c1", AgentID: "gil",
+		Backend: accounting.BackendAPI, Source: accounting.SourceUser, StartedAt: time.Now()}
+	l, rows := spawnWithLedger(t, accounting.WithTurn(context.Background(), parent))
+	for _, r := range rows {
+		if r.Kind != accounting.KindSpawn || r.TurnID != parent.TurnID {
+			t.Errorf("call = %s on %q, want a spawn call on the invoking turn %q", r.Kind, r.TurnID, parent.TurnID)
+		}
+	}
+	if st, err := l.SessionStats("gil/c1"); err != nil || st.TurnCount != 1 || st.TotalCalls != 2 {
+		t.Errorf("session stats = %+v (%v): one turn, the parent, holding both calls", st, err)
+	}
+}
+
+// TestSpawnBooksEachCallOnOneSystemTurn: a spawn no turn made (no turn on
+// its context) books every loop as a spawn call on one system turn of its own.
+// Not parallel: it makes a ledger the live one.
+func TestSpawnBooksEachCallOnOneSystemTurn(t *testing.T) {
+	l, rows := spawnWithLedger(t, context.Background())
+	for _, r := range rows {
+		if r.Kind != accounting.KindSpawn || r.TurnID != rows[0].TurnID || !strings.HasSuffix(r.TurnID, ":spawn") {
+			t.Errorf("call = %+v, want spawn calls on one spawn turn", r)
+		}
+	}
+	if w := rows[1].Count(modelinfo.ClassCacheWrite1h); w != 7 {
+		t.Errorf("second call's 1h writes = %d, want 7 (direct-API writes are 1h)", w)
+	}
+	if st, err := l.SessionStats("gil/c1"); err != nil || st.TurnCount != 0 || st.TotalCalls != 2 {
+		t.Errorf("session stats = %+v (%v): a spawn's own turn is a system turn", st, err)
 	}
 }

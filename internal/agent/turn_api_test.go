@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"path/filepath"
+	"math"
 	"strings"
 	"testing"
 	"time"
 
 	"foci/internal/config"
-	"foci/internal/log"
+	"foci/internal/delegator/accounting"
 	"foci/internal/modelinfo"
 	"foci/internal/nudge"
 	"foci/internal/platform"
@@ -1310,7 +1310,8 @@ func TestRunInference_SimpleEndToEnd(t *testing.T) {
 	}
 }
 
-// TestRunInference_PersistsCalculatedCost is a regression test for #1964: the
+// TestRunInference_PersistsCalculatedCost is a regression test for #1964 (now
+// booked through the per-call ledger, #2111 P2): the
 // direct-API path (call_type="conversation" — used by e.g. gilette, which
 // talks to OpenRouter directly rather than through a delegated CC/opencode
 // backend) computed a cost figure for its log LINE but never attached it to
@@ -1321,15 +1322,12 @@ func TestRunInference_SimpleEndToEnd(t *testing.T) {
 // deepseek-v4-pro and contributed $0 to every total despite real, priced
 // traffic (tokens present, model registered with real rates).
 func TestRunInference_PersistsCalculatedCost(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "api.db")
-	if err := log.InitAPIDB(dbPath); err != nil {
-		t.Fatalf("InitAPIDB: %v", err)
-	}
-	t.Cleanup(log.CloseAPIDB)
+	ledger := openTestLedger(t)
 
 	client := &mockClient{
 		sendFn: func(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
 			return &provider.MessageResponse{
+				ID:         "msg_1964",
 				Role:       "assistant",
 				Content:    provider.TextContent("hi"),
 				StopReason: "end_turn",
@@ -1343,27 +1341,38 @@ func TestRunInference_PersistsCalculatedCost(t *testing.T) {
 	a := newInferenceAgent(t, client)
 	tr := &APITransport{sharedTurnOps{agent: a}}
 	ts := newInferenceTS(t, a, client)
+	// A model with rates: the fixture's test-model has none, and an unpriced
+	// call's zero proved nothing about whether its cost was kept.
+	ts.TurnModel = "claude-opus-5"
 
 	if err := tr.RunInference(ts); err != nil {
 		t.Fatalf("RunInference: %v", err)
 	}
 
-	rows := log.ReadAPIDBLog()
+	rows := ledgerCalls(t, ledger)
 	if len(rows) != 1 {
-		t.Fatalf("api.db rows = %d, want 1", len(rows))
+		t.Fatalf("ledger calls = %d, want 1", len(rows))
 	}
 	r := rows[0]
-	if r.CallType != "conversation" {
-		t.Fatalf("row.CallType = %q, want conversation", r.CallType)
+	if r.Kind != accounting.KindCall || r.Backend != accounting.BackendAPI || r.TurnID != ts.RowID() {
+		t.Fatalf("call = %s/%s on turn %q, want an api call on %q", r.Backend, r.Kind, r.TurnID, ts.RowID())
 	}
-	wantCost := modelinfo.TokenCounts{Input: 500, Output: 20, CacheRead: 0, CacheWrite: 0}.CostAsOf(ts.TurnModel, time.Now())
-	if r.CalculatedCostUSD == nil {
-		t.Fatalf("row.CalculatedCostUSD = nil, want %.6f — the direct-API path priced "+
-			"this call but never persisted it, so it silently contributes $0 to any "+
-			"SUM(calculated_cost_usd) total", wantCost)
+	wantCost, _ := modelinfo.CostAsOf(ts.TurnModel, r.BilledAt, modelinfo.Tokens{modelinfo.ClassInput: 500, modelinfo.ClassOutput: 20})
+	if wantCost <= 0 {
+		t.Fatalf("fixture model %q prices the call at $%v — pick one with rates", ts.TurnModel, wantCost)
 	}
-	if *r.CalculatedCostUSD != wantCost {
-		t.Errorf("row.CalculatedCostUSD = %.6f, want %.6f", *r.CalculatedCostUSD, wantCost)
+	if r.CostUSD == nil {
+		t.Fatalf("call cost = nil, want %.6f — the direct-API path priced this call "+
+			"but it contributes $0 to every total", wantCost)
+	}
+	if math.Abs(*r.CostUSD-wantCost) > 1e-12 {
+		t.Errorf("call cost = %.6f, want %.6f", *r.CostUSD, wantCost)
+	}
+	// The turn closes when RunInference returns: the direct API's spend is
+	// final with its last response (R8).
+	st, err := ledger.SessionStats(ts.SessionKey)
+	if err != nil || st.TurnCount != 1 || st.TotalCalls != 1 {
+		t.Fatalf("session stats = %+v, %v; want one turn with one call", st, err)
 	}
 }
 

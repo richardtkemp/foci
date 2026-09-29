@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/delegator/accounting"
 	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/messages"
@@ -410,28 +411,21 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 	}
 
 	duration := time.Since(start)
-	cost, _ := modelinfo.CostAsOf(model, time.Now(), resp.Usage.Tokens())
-	log.API(log.APIEntry{
-		Timestamp:  start,
-		Provider:   format,
-		Session:    sessionKey,
-		Model:      model,
-		Input:      resp.Usage.InputTokens,
-		Output:     resp.Usage.OutputTokens,
-		CacheRead:  resp.Usage.CacheReadInputTokens,
-		CacheWrite: resp.Usage.CacheCreationInputTokens,
-		Turn:       resp.Usage.AsTurn(), // single call: its own counts are the turn total (#1854)
-		// See internal/agent/turn_api_logging.go's logAPIResponse for why this
-		// is load-bearing (#1964): without it, a compaction call's cost was
-		// never computed OR persisted, so it read as $0 to any
-		// SUM(calculated_cost_usd) total.
-		CalculatedCostUSD: &cost,
-		DurationMS:        duration.Milliseconds(),
-		StopReason:        resp.StopReason,
-		CallType:          "compaction",
-		PreMessages:       len(messages),
-		AgentID:           c.AgentID,
-	})
+	// A compaction is one direct-API call. It is booked on the turn that ran
+	// it (the post-turn compaction of a conversation turn), or — run by no
+	// turn, as an operator's /compact is — on a compaction turn of its own.
+	turn := accounting.TurnFor(ctx, accounting.OwnTurn(
+		accounting.MintTurnID(sessionKey, accounting.KindCompaction, start),
+		sessionKey, c.AgentID, accounting.SourceCompaction, start, start.Add(duration)))
+	if err := accounting.Record(turn,
+		accounting.APIResponse{
+			ID: resp.ID, Kind: accounting.KindCompaction, Provider: format, Model: model,
+			Session: sessionKey, AgentID: c.AgentID, TurnID: turn.TurnID,
+			Start: start, Duration: duration, Tokens: resp.Usage.Tokens(), StopReason: resp.StopReason,
+			PreMessages: len(messages),
+		}.Call()); err != nil {
+		c.log.Errorf("book compaction call for %s: %v", sessionKey, err)
+	}
 
 	summary := provider.TextOf(resp.Content)
 

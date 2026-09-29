@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"sync"
 	"time"
 
 	"foci/internal/modelinfo"
@@ -200,6 +201,11 @@ type Alarm struct {
 // Ledger is the cost ledger in api.db. It is the database's only writer.
 type Ledger struct {
 	db *sql.DB
+	// mu serialises writes. Every writer in the process books through Update,
+	// and some transactions read before they write (a subagent share looks for
+	// its call before extending it); under WAL a second writer committing in
+	// between would fail that upgrade with SQLITE_BUSY at once, not wait.
+	mu sync.Mutex
 
 	// OnAlarm receives every invariant violation. nil drops them, which only
 	// a caller that counts them itself (the migration) should allow.
@@ -213,30 +219,53 @@ func (l *Ledger) Close() error { return l.db.Close() }
 type Tx struct {
 	tx     *sql.Tx
 	alarms []Alarm
+	// booked is every call this transaction booked or extended, handed to the
+	// observers once it commits.
+	booked []Booking
+	// quiet books without observing: the migration carries history over, and
+	// history is neither re-logged to api.jsonl nor re-sent as generations.
+	quiet bool
 }
 
 // Update runs fn in one transaction and commits if it returns nil. Alarms
-// raised inside are delivered only once the transaction has committed, so a
-// rolled-back booking never alarms.
+// raised inside, and the bookings the observers see (api.jsonl, BookedHook),
+// are delivered only once the transaction has committed, so a rolled-back
+// booking never alarms and is never observed.
 func (l *Ledger) Update(fn func(*Tx) error) error {
-	sqlTx, err := l.db.Begin()
+	tx, err := l.commit(fn)
 	if err != nil {
-		return fmt.Errorf("ledger: begin: %w", err)
-	}
-	tx := &Tx{tx: sqlTx}
-	if err := fn(tx); err != nil {
-		_ = sqlTx.Rollback()
 		return err
 	}
-	if err := sqlTx.Commit(); err != nil {
-		return fmt.Errorf("ledger: commit: %w", err)
-	}
+	// Delivered outside the write lock: an observer or alarm sink is never
+	// on the booking path.
 	if l.OnAlarm != nil {
 		for _, a := range tx.alarms {
 			l.OnAlarm(a)
 		}
 	}
+	for _, b := range tx.booked {
+		observe(b)
+	}
 	return nil
+}
+
+// commit runs fn in one transaction under the write lock and commits it.
+func (l *Ledger) commit(fn func(*Tx) error) (*Tx, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	sqlTx, err := l.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("ledger: begin: %w", err)
+	}
+	tx := &Tx{tx: sqlTx}
+	if err := fn(tx); err != nil {
+		_ = sqlTx.Rollback()
+		return nil, err
+	}
+	if err := sqlTx.Commit(); err != nil {
+		return nil, fmt.Errorf("ledger: commit: %w", err)
+	}
+	return tx, nil
 }
 
 func (tx *Tx) alarm(inv, backend, format string, args ...any) {
@@ -261,9 +290,14 @@ func (tx *Tx) Book(c Call) (Booked, error) {
 	if err := c.validate(); err != nil {
 		return Booked{}, err
 	}
+	// A call whose model is not known yet (a codex usage notification before
+	// any message named it, #1290) is unresolved without asking modelinfo,
+	// whose unpriced-model warning is for a model it does not know.
 	var rateModel sql.NullString
-	if rm, ok := modelinfo.ResolveRateModel(c.Model, c.BilledAt); ok {
-		rateModel = sql.NullString{String: rm, Valid: true}
+	if c.Model != "" {
+		if rm, ok := modelinfo.ResolveRateModel(c.Model, c.BilledAt); ok {
+			rateModel = sql.NullString{String: rm, Valid: true}
+		}
 	}
 
 	var detail sql.NullString
@@ -310,7 +344,42 @@ func (tx *Tx) Book(c Call) (Booked, error) {
 	if c.basis() == CostBasisCounts {
 		tx.checkPriced(c, rateModel)
 	}
+	if !tx.quiet {
+		b, err := tx.booking(c, id)
+		if err != nil {
+			return Booked{}, err
+		}
+		tx.booked = append(tx.booked, b)
+	}
 	return Booked{ID: id}, nil
+}
+
+// booking is what the observers see of call c, booked as id: its cost priced
+// the way the call_costs view prices it, and the facts they need from its
+// turn.
+func (tx *Tx) booking(c Call, id int64) (Booking, error) {
+	b := Booking{Call: c, ID: id, CostUSD: c.cost(), Fill: c.fill()}
+	if c.TurnID == "" {
+		return b, nil
+	}
+	var purpose sql.NullString
+	var li, lr, lw sql.NullInt64
+	err := tx.tx.QueryRow(`SELECT purpose, source, legacy_input, legacy_cache_read, legacy_cache_write
+		FROM turns WHERE turn_id = ?`, c.TurnID).Scan(&purpose, &b.TurnSource, &li, &lr, &lw)
+	if err != nil {
+		return Booking{}, fmt.Errorf("ledger: read turn %q: %w", c.TurnID, err)
+	}
+	b.Purpose = purpose.String
+	// A legacy call's counts are its turn's totals, not a context size: the
+	// fill a pre-ledger parent row left is the copy on its turn (R4). A legacy
+	// subagent share has none of its own.
+	if c.Kind == KindLegacy {
+		b.Fill = 0
+		if c.Actor == "" {
+			b.Fill = int(li.Int64 + lr.Int64 + lw.Int64)
+		}
+	}
+	return b, nil
 }
 
 // duplicate handles a call whose (Backend, Key) is already booked.
@@ -419,7 +488,11 @@ func (tx *Tx) RecordTurn(t Turn) error {
 			ask_cycles = COALESCE(excluded.ask_cycles, ask_cycles),
 			stop_reason = COALESCE(excluded.stop_reason, stop_reason),
 			final_model = COALESCE(excluded.final_model, final_model),
-			activity_closed_at = COALESCE(excluded.activity_closed_at, activity_closed_at)`,
+			activity_closed_at = COALESCE(excluded.activity_closed_at, activity_closed_at),
+			legacy_input = COALESCE(excluded.legacy_input, legacy_input),
+			legacy_output = COALESCE(excluded.legacy_output, legacy_output),
+			legacy_cache_read = COALESCE(excluded.legacy_cache_read, legacy_cache_read),
+			legacy_cache_write = COALESCE(excluded.legacy_cache_write, legacy_cache_write)`,
 		t.TurnID, t.Session, nullIfEmpty(t.AgentID), t.Backend, t.Source, nullIfEmpty(t.Purpose),
 		formatTime(t.StartedAt), nullTime(t.EndedAt), nullIfZero(t.AskCycles),
 		nullIfEmpty(t.StopReason), nullIfEmpty(t.FinalModel), nullTime(t.ActivityClosedAt),
@@ -467,6 +540,38 @@ func (c Call) validate() error {
 		return fmt.Errorf("ledger: bad %s call %q: %w", c.Backend, c.Key, errors.Join(errs...))
 	}
 	return nil
+}
+
+// cost is c's cost as the call_costs view prices it: its recorded figure on
+// the recorded basis, else its counts at the rates in effect when it was
+// billed — 0 for a call with no counts, nil when any billed class is unpriced
+// (never a silent 0, R9).
+func (c Call) cost() *float64 {
+	if c.basis() == CostBasisRecorded {
+		return c.LegacyCalculatedCostUSD
+	}
+	if c.Model == "" {
+		if len(nonZero(c.Tokens)) == 0 {
+			return new(float64)
+		}
+		return nil // see Book: an unnamed model is unpriced, not unknown
+	}
+	usd, priced := modelinfo.CostAsOf(c.Model, c.BilledAt, c.Tokens)
+	if !priced {
+		return nil
+	}
+	return &usd
+}
+
+// fill is the context the call leaves: the sum of its in-context classes.
+func (c Call) fill() int {
+	n := 0
+	for class, count := range c.Tokens {
+		if modelinfo.InContext(class) {
+			n += count
+		}
+	}
+	return n
 }
 
 // basis is c's cost basis, counts by default.

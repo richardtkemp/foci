@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"foci/internal/delegator/accounting"
 	"foci/internal/display"
 	"foci/internal/linkwalk"
-	"foci/internal/log"
 	"foci/internal/session"
 	"foci/internal/timeutil"
 )
@@ -44,10 +44,10 @@ func costUsage() string {
 //  3. duration = today → per-session table
 //  4. duration = week → daily table
 //  5. default → summary with category breakdown
-func costRender(entries []log.APIEntry, args costArgs, scopeLabel, sessionKey string, idx *session.SessionIndex) string {
+func costRender(entries []accounting.CallRow, args costArgs, scopeLabel, sessionKey string, idx *session.SessionIndex) string {
 	// Appended to whichever view runs below, rather than added to each, so one
 	// place owns it and no view can silently miss it.
-	suffix := subagentBreakdown(entries)
+	suffix := unpricedNote(entries) + subagentBreakdown(entries)
 	header := costHeader(args, scopeLabel)
 
 	// 1. Breakdown — group by session type
@@ -108,7 +108,7 @@ func costHeader(args costArgs, scopeLabel string) string {
 
 // costCategoryView shows total + category breakdown (cache reads/writes/
 // input/output/total). Used when scope narrows to the session family.
-func costCategoryView(entries []log.APIEntry, header, sessionKey string, idx *session.SessionIndex, scopes []string) string {
+func costCategoryView(entries []accounting.CallRow, header, sessionKey string, idx *session.SessionIndex, scopes []string) string {
 	total, count := sumCosts(entries)
 
 	var b strings.Builder
@@ -149,20 +149,27 @@ func costCategoryView(entries []log.APIEntry, header, sessionKey string, idx *se
 
 // categoryRows is the per-category table's labels and values, ending in Total.
 // Web search gets a row only when the entries made any: it is absent from
-// nearly every window, and a permanent $0.0000 line would be noise.
-func categoryRows(entries []log.APIEntry, total float64) ([]string, []float64) {
-	cr, cw, inp, out, search := categoryCosts(entries)
+// nearly every window, and a permanent $0.0000 line would be noise. The rows
+// add up to Total exactly.
+func categoryRows(entries []accounting.CallRow, total float64) ([]string, []float64) {
+	c := categoryCosts(entries)
 	labels := []string{"Cache reads", "Cache writes", "Input", "Output"}
-	vals := []float64{cr, cw, inp, out}
-	if search > 0 {
+	vals := []float64{c.cacheRead, c.cacheWrite, c.input, c.output}
+	if c.search > 0 {
 		labels = append(labels, "Web search")
-		vals = append(vals, search)
+		vals = append(vals, c.search)
+	}
+	// Legacy calls priced from their recorded figure have no class split
+	// (#2111 §6): shown as one line, so the categories still add up to Total.
+	if c.recorded > 0 {
+		labels = append(labels, "Pre-ledger (no split)")
+		vals = append(vals, c.recorded)
 	}
 	return append(labels, "Total"), append(vals, total)
 }
 
 // costPerSessionView shows a per-session breakdown table sorted by cost.
-func costPerSessionView(entries []log.APIEntry, header string) string {
+func costPerSessionView(entries []accounting.CallRow, header string) string {
 	total, count := sumCosts(entries)
 
 	var b strings.Builder
@@ -171,8 +178,8 @@ func costPerSessionView(entries []log.APIEntry, header string) string {
 	costs := make(map[string]float64)
 	counts := make(map[string]int)
 	for _, e := range entries {
-		costs[e.Session] += e.EffectiveCost()
-		if !e.IsSubagent() {
+		costs[e.Session] += e.Cost()
+		if e.Counted() {
 			counts[e.Session]++
 		}
 	}
@@ -230,16 +237,16 @@ func costPerSessionView(entries []log.APIEntry, header string) string {
 }
 
 // costDailyView shows a daily cost breakdown for the last 7 days.
-func costDailyView(entries []log.APIEntry, header string) string {
+func costDailyView(entries []accounting.CallRow, header string) string {
 	now := timeutil.Now()
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 
 	dayCosts := make(map[string]float64)
 	var total float64
 	for _, e := range entries {
-		day := e.Timestamp.Local().Format("2006-01-02")
-		dayCosts[day] += e.EffectiveCost()
-		total += e.EffectiveCost()
+		day := e.BilledAt.Local().Format("2006-01-02")
+		dayCosts[day] += e.Cost()
+		total += e.Cost()
 	}
 	mean := total / 7.0
 
@@ -271,7 +278,7 @@ func costDailyView(entries []log.APIEntry, header string) string {
 
 // costSummaryView shows a total + category breakdown table for the
 // filtered entries. Used when no special view applies.
-func costSummaryView(entries []log.APIEntry, header string) string {
+func costSummaryView(entries []accounting.CallRow, header string) string {
 	total, count := sumCosts(entries)
 
 	var b strings.Builder
@@ -307,38 +314,30 @@ func costSummaryView(entries []log.APIEntry, header string) string {
 // Grouped by agent rather than by (agent, model) because the agent is the unit
 // a reader is asking about; a subagent that used more than one model shows them
 // joined, which is rare and worth seeing when it happens.
-func subagentBreakdown(entries []log.APIEntry) string {
+func subagentBreakdown(entries []accounting.CallRow) string {
 	type sub struct {
 		cost   float64
 		models map[string]struct{}
-		rows   int
+		turns  map[string]struct{}
 	}
 	subs := make(map[string]*sub)
 	var total float64
 	for _, e := range entries {
-		if !e.IsSubagent() {
+		if !e.Subagent() {
 			continue
 		}
-		// SubagentID (NOT AgentID, which #1946 made the OWNING agent — the
-		// same value for every row of a delegation) is what distinguishes
-		// one subagent from another here.
-		id := e.SubagentID
-		if id == "" {
-			// Usage that arrived before its task_started named the agent. Kept
-			// rather than dropped: the money is real and belongs to SOME
-			// subagent, and hiding it would leave this table short against the
-			// total above it.
-			id = "(unnamed)"
-		}
-		x := subs[id]
+		// The actor (the Agent tool_use id, or accounting.UnnamedSubagent),
+		// NOT the agent, which is the OWNING agent on every call of a
+		// delegation (#1946), is what distinguishes one subagent from another.
+		x := subs[e.Actor]
 		if x == nil {
-			x = &sub{models: make(map[string]struct{})}
-			subs[id] = x
+			x = &sub{models: make(map[string]struct{}), turns: make(map[string]struct{})}
+			subs[e.Actor] = x
 		}
-		x.cost += e.EffectiveCost()
+		x.cost += e.Cost()
 		x.models[e.Model] = struct{}{}
-		x.rows++
-		total += e.EffectiveCost()
+		x.turns[e.TurnID] = struct{}{}
+		total += e.Cost()
 	}
 	if len(subs) == 0 {
 		return ""
@@ -369,7 +368,7 @@ func subagentBreakdown(entries []log.APIEntry) string {
 			ms = append(ms, strings.TrimPrefix(m, "claude/"))
 		}
 		sort.Strings(ms)
-		rows = append(rows, []string{id, strings.Join(ms, ", "), strconv.Itoa(x.rows), cells[i]})
+		rows = append(rows, []string{id, strings.Join(ms, ", "), strconv.Itoa(len(x.turns)), cells[i]})
 	}
 
 	var b strings.Builder
@@ -388,7 +387,7 @@ func subagentBreakdown(entries []log.APIEntry) string {
 
 // renderTypeBreakdown groups the given entries by session type and renders a
 // period total split by type. Keys absent from the index show as "(untyped)".
-func renderTypeBreakdown(filtered []log.APIEntry, typeMap map[string]string, header string) string {
+func renderTypeBreakdown(filtered []accounting.CallRow, typeMap map[string]string, header string) string {
 	type agg struct {
 		cost     float64
 		calls    int
@@ -407,11 +406,11 @@ func renderTypeBreakdown(filtered []log.APIEntry, typeMap map[string]string, hea
 			a = &agg{sessions: make(map[string]struct{})}
 			aggs[t] = a
 		}
-		a.cost += e.EffectiveCost()
+		a.cost += e.Cost()
 		a.sessions[e.Session] = struct{}{}
-		total += e.EffectiveCost()
+		total += e.Cost()
 		// Cost counts every row, calls do not — see sumCosts.
-		if !e.IsSubagent() {
+		if e.Counted() {
 			a.calls++
 			totalCalls++
 		}
@@ -565,8 +564,8 @@ func moneyCol(vals []float64, decimals int) []string {
 }
 
 // filterEntries returns entries matching the predicate.
-func filterEntries(entries []log.APIEntry, pred func(log.APIEntry) bool) []log.APIEntry {
-	var result []log.APIEntry
+func filterEntries(entries []accounting.CallRow, pred func(accounting.CallRow) bool) []accounting.CallRow {
+	var result []accounting.CallRow
 	for _, e := range entries {
 		if pred(e) {
 			result = append(result, e)
@@ -577,18 +576,32 @@ func filterEntries(entries []log.APIEntry, pred func(log.APIEntry) bool) []log.A
 
 // sumCosts returns total cost and call count.
 //
-// The two halves treat subagent rows differently on purpose. Cost sums EVERY
-// row: a subagent row's cost was SUBTRACTED from the parent row beside it, so
-// skipping it would under-report the session. The count skips them, because
-// they are not calls the user made — one turn that spawned three subagents is
-// one call and four rows, and counting four would inflate every "N calls"
-// figure the moment #1880 phase C shipped.
-func sumCosts(entries []log.APIEntry) (total float64, count int) {
+// Cost sums every call, a legacy subagent share included (its cost was
+// SUBTRACTED from the parent row beside it). The count skips those shares,
+// which are not calls of their own (accounting.CallRow.Counted). An unpriced
+// call counts as a call and adds nothing: unpricedNote says so.
+func sumCosts(entries []accounting.CallRow) (total float64, count int) {
 	for _, e := range entries {
-		total += e.EffectiveCost()
-		if !e.IsSubagent() {
+		total += e.Cost()
+		if e.Counted() {
 			count++
 		}
 	}
 	return
+}
+
+// unpricedNote is a line naming the calls the totals above could not price
+// (no rate for their model or a class), or "": an aggregate is never silently
+// short (#2111 R9).
+func unpricedNote(entries []accounting.CallRow) string {
+	n := 0
+	for _, e := range entries {
+		if !e.Priced() {
+			n++
+		}
+	}
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf("\n⚠️ %s unpriced call(s) (no rate for the model or a token class) are not in these totals.", display.FormatCommas(n))
 }

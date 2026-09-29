@@ -123,11 +123,11 @@ func TestAPILogReopensOnExternalReplace(t *testing.T) {
 	}
 	defer Close()
 
-	API(APIEntry{Session: "before", Model: "test"})
+	AppendAPILine(map[string]string{"session": "before"})
 
 	replaceFileExternally(t, apiPath)
 
-	API(APIEntry{Session: "after", Model: "test"})
+	AppendAPILine(map[string]string{"session": "after"})
 
 	data, err := os.ReadFile(apiPath)
 	if err != nil {
@@ -145,7 +145,9 @@ func TestAPILogReopensOnExternalReplace(t *testing.T) {
 	if len(lines) != 1 {
 		t.Fatalf("expected exactly 1 line in api.jsonl after reopen, got %d: %v", len(lines), lines)
 	}
-	var entry APIEntry
+	var entry struct {
+		Session string `json:"session"`
+	}
 	if err := json.Unmarshal([]byte(lines[0]), &entry); err != nil {
 		t.Fatalf("unmarshal api entry: %v", err)
 	}

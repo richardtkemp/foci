@@ -11,14 +11,15 @@
 //     alike. Wrapping the sink (NewTurnSink) yields the trace's SHAPE: one
 //     root "turn" span, a "tool" child per tool call, an "agent" child per CC
 //     subagent run.
-//   - log.API / log.AccumulateSubagentRow — every api.db row passes through
-//     log.APIHook, and each becomes exactly one "generation" observation
-//     carrying that row's model, usage and calculated cost. Cost therefore
-//     lives in exactly one place, and SUM(observation cost) over a day equals
-//     SUM(calculated_cost_usd) over the same day by construction — which is
-//     what scripts/langfuse-etl/etl.py reconcile checks.
+//   - the cost ledger's Book (internal/delegator/accounting) — every booked
+//     call passes through accounting.BookedHook once its transaction commits,
+//     and each becomes exactly one "generation" observation carrying that
+//     call's model, usage and priced cost. Cost therefore lives in exactly one
+//     place, and SUM(observation cost) over a day equals the ledger's
+//     daily_costs by construction — which is what
+//     scripts/langfuse-etl/etl.py reconcile checks.
 //
-// Identity is deterministic: every id is a SHA-256 of the api.db turn_id
+// Identity is deterministic: every id is a SHA-256 of the ledger's turn_id
 // ("<session>@<StartedAt UnixNano>") plus a role. A subagent that reports its
 // spend half an hour after its parent turn closed still lands in the SPAWNING
 // turn's trace, and a cross-agent link can be computed by whoever holds the
@@ -46,6 +47,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 
+	"foci/internal/delegator/accounting"
 	"foci/internal/log"
 )
 
@@ -177,8 +179,8 @@ func initWith(exp sdktrace.SpanExporter, o Options) error {
 	redactor = NewRedactor(o.SecretValues)
 	mu.Unlock()
 
-	log.APIHook = recordEntry
-	log.CorrectionHook = recordCorrection
+	accounting.BookedHook = recordBooking
+	accounting.CorrectionHook = recordCorrection
 	enabled.Store(true)
 	tlog.Infof("tracing enabled → %s (environment=%s content=%v system_prompt=%v)",
 		o.Endpoint, o.Environment, o.Content, o.SystemPrompt)
@@ -195,8 +197,8 @@ func Shutdown(ctx context.Context) {
 	if !enabled.CompareAndSwap(true, false) {
 		return
 	}
-	log.APIHook = nil
-	log.CorrectionHook = nil
+	accounting.BookedHook = nil
+	accounting.CorrectionHook = nil
 	mu.Lock()
 	tp := tracerProvider
 	timeout := opts.FlushTimeout

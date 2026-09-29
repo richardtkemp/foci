@@ -35,7 +35,8 @@ config.Load(path)                                        ← validates values; l
                                                             No-op if the shim isn't installed.
 
 → initLogging(cfg)                                       ← logging_init.go
-  → log.Init, log.InitAPIDB, log.InitConversation, log rotation
+  → log.Init, accounting.Open (the cost ledger in api.db: migrates a pre-ledger
+    api.db once, then accounting.SetLive), log.InitConversation, log rotation
   → returns cleanup func
 
 → tempdir.CleanStale()                                   ← internal/tempdir/cleanup.go; best-effort wipe of orphaned
@@ -241,7 +242,7 @@ DiagnoseRestart(sessionIndex, startTime, logsDir)
 main
  ├── config        → delegator/pretool, delegator/stoprule, display, execguard, log, modelinfo, provider
  ├── sqlite        → modernc.org/sqlite (shared Open, AgentPath, MigrateFile utilities)
- ├── log           → sqlite, modelinfo, timeutil (the first two only for API-call usage logging; conversation storage was extracted to convo)
+ ├── log           → timeutil (the event, API-call JSONL and payload files; api.db belongs to delegator/accounting, conversation storage to convo)
  ├── convo         → log, session, sqlite, timeutil (per-agent conversation SQLite store + memory-index Hook; extracted from log so log stays lean)
  ├── display       (no deps — table rendering with Unicode display-width handling)
  ├── secrets       → BurntSushi/toml
@@ -266,7 +267,7 @@ main
  ├── defersend     → sqlite, timeutil (leaf — SQLite-backed queue for `foci send --wait-*` deferred sends; a pending send that isn't yet warm/cold/user-active/-inactive, OR whose target endpoint is currently rate-limited (#1417), is persisted and delivered by a background sweep, surviving a restart. Wired in `cmd/foci-gw/wait_defer.go`.)
  ├── mcp           → log, procx, provider, tools, BurntSushi/toml, go-sdk/mcp
  ├── fap           (no internal deps — Foci App Protocol (FAP v1) wire types/codec: Envelope, ServerFrame/ClientFrame, ToolResult, ToolStatus* constants, NewULID; pure protocol leaf shared by app and tools so neither sits above the other)
- ├── tools         → turnevent, config, convo, delegator, display, fap, log, memory, modelinfo, peercred, platform, procx, prompts, provider, question, ratelimit, secrets, secrets/bitwarden, session, telemetry, tempdir, tools/spill, voice (Registry, Tool, shared helpers, the exec-bridge generator, web, http, and most tool impls)
+ ├── tools         → turnevent, config, convo, delegator, delegator/accounting, display, fap, log, memory, modelinfo, peercred, platform, procx, prompts, provider, question, ratelimit, secrets, secrets/bitwarden, session, telemetry, tempdir, tools/spill, voice (Registry, Tool, shared helpers, the exec-bridge generator, web, http, and most tool impls)
  │     ├── tools/spill    → (stdlib only) shared spill-to-disk writer: bounded in-RAM head + overflow to temp file, optional total cap; used by tools/shell and the http tool
  │     ├── tools/shell    → tools, tools/spill, log, procx, secrets, secrets/bitwarden (the exec/shell tool; execbridge generator stays at root)
  │     ├── tools/tmux     → tools, log, display, session, procx, prompts, tempdir (tmux session tool — 8 files)
@@ -278,17 +279,17 @@ main
  ├── modelinfo     (no deps — stdlib-only leaf package for model attributes: context window, capabilities, pricing)
  ├── ratelimit     (no deps — neutral limit signals + shared reset/fallback policy)
  ├── modelcaps     → modelinfo, log (leaf — per-backend live capability cache; Fetcher + Persister seams injected at startup so it imports no anthropic/session/DB)
- ├── compaction    → config, log, memory, messages, modelcaps, modelinfo, prompts, provider, session, tools
+ ├── compaction    → config, delegator/accounting, log, memory, messages, modelcaps, modelinfo, prompts, provider, session, tools
  ├── tempdir       (no deps — stdlib-only leaf package for canonical temp dir)
  ├── linkwalk      (no deps — stdlib-only leaf: Up/Down walks over parent/child links that stop at the first repeated key, so a cycle in session_index rows or subagent ancestry ends the walk; used by command `sessionFamily` (/cost) and ccstream `topLevelAncestor`, #1581)
  ├── provision     → modelinfo, procx (agent creation; modelinfo so a bare model alias — "opus", "fable" — resolves to the newest member of that family instead of a literal that goes stale)
- ├── command       → agent, config, delegator, delegator/ccstream, display, linkwalk, log, memory, modelcaps, modelinfo, platform, procx, prompts, provider, provision, question, session, tempdir, timeutil, tools, workspace
+ ├── command       → agent, config, delegator, delegator/accounting, delegator/ccstream, display, linkwalk, log, memory, modelcaps, modelinfo, platform, procx, prompts, provider, provision, question, session, tempdir, timeutil, tools, workspace
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
  ├── messages      → provider (shared message-inspection utilities: HasToolUse, ToolUseIDs)
  ├── timeutil      (no deps — centralised timestamp formatting with configurable timezone)
  ├── relogin       → log, procx (automated CC re-login on 401 — see Backend Session Lifecycle)
  ├── delegator     → clock, log, modelinfo (Delegator interface, registry, StartOptions, SessionEvents/TurnEvents)
-  │   ├── delegator/accounting → modelinfo, sqlite (the per-call cost ledger, #2111 — schema, SQL cost views, rate render, Book/Report/RecordTurn, the pre-ledger migration; see "Cost ledger")
+  │   ├── delegator/accounting → log, modelinfo, sqlite (the per-call cost ledger in api.db, #2111 — schema, SQL cost views, rate render, Book/Report/RecordTurn and their observers (api.jsonl, BookedHook), the direct-API adapter, the legacy path for not-yet-switched backends, the readers, the startup migration; see "Cost ledger")
   │   ├── delegator/autoapprove → execguard, secrets (shared by ccstream/codex/opencode — auto-approve rule compilation/matching)
   │   ├── delegator/cctmux     → delegator, log, modelinfo, procx, fsnotify (tmux-based Claude Code; registers "claude-code-tmux" via init())
   │   ├── delegator/ccstream   → delegator, delegator/autoapprove, delegator/hookbin, delegator/pretool, delegator/stoprule, linkwalk, log, modelinfo, procx, question, ratelimit, tempdir, timeutil (stream-json Claude Code; registers "claude-code" via init())
@@ -297,7 +298,7 @@ main
   │   ├── delegator/sessionenv → tempdir (shared by codex/opencode + cmd/foci-codex-hook — per-session exec-bridge env file format, lifecycle, and the codex command wrap/unwrap)
   │   ├── delegator/codex      → delegator, delegator/autoapprove, delegator/hookbin, delegator/keyedmutex, delegator/sessionenv, log, modelcaps, modelinfo, procx (Codex app-server JSON-RPC; registers "codex" via init())
   │   └── delegator/opencode   → delegator, delegator/autoapprove, delegator/keyedmutex, delegator/sessionenv, log, modelinfo, procx, ratelimit, tempdir, timeutil (HTTP/SSE OpenCode; registers "opencode" via init())
- ├── agent         → turnevent, compaction, config, convo, delegator, display, log, memory, messages, modelcaps, modelinfo, nudge, platform, procx, prompts, provider, ratelimit, relogin, session, skills, telemetry, timeutil, tools, turn, warnings, workspace
+ ├── agent         → turnevent, compaction, config, convo, delegator, delegator/accounting, display, log, memory, messages, modelcaps, modelinfo, nudge, platform, procx, prompts, provider, ratelimit, relogin, session, skills, telemetry, timeutil, tools, turn, warnings, workspace
  ├── periodic      → config, delegator, log, memory, prompts, provider, session, skills, timeutil, warnings (NO agent)
  ├── dispatch      → command, platform, session, tools (shared command dispatch logic; platform wrappers delegate here)
  ├── turn          → turnevent, display, log, platform, tooldetail (shared turn rendering, tool call tracking, and tool-result display store for all platforms)
@@ -308,7 +309,7 @@ main
  ├── app           → agent, turnevent, command, config, delegator, dispatch, fap, log, platform, question, ratelimit, secrets, session, sqlite, tempdir, tools, turn, voice (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
  ├── netretry      → log (startup-connect retry shared by telegram + discord: Backoff schedule, Do loop, PermanentMarkers auth/transient split)
  ├── askgw         → clock, log, peercred, question (opt-in ask-gateway for external Apps — see Ask Gateway section)
- ├── telemetry     → turnevent, log, modelinfo, provider, session, go.opentelemetry.io/otel (+ sdk, otlptracehttp) — OpenTelemetry export of every turn to an OTLP/HTTP collector (Langfuse) plus scores/score configs over its REST API; wired from cmd/foci-gw (init), agent (turn spans), tools + cmd/foci-gw (cross-agent links). See "Tracing".
+ ├── telemetry     → turnevent, delegator/accounting, log, modelinfo, provider, session, go.opentelemetry.io/otel (+ sdk, otlptracehttp) — OpenTelemetry export of every turn to an OTLP/HTTP collector (Langfuse) plus scores/score configs over its REST API; wired from cmd/foci-gw (init), agent (turn spans), tools + cmd/foci-gw (cross-agent links). See "Tracing".
  └── evals         → log, fsnotify, yaml.v3 — rubric registry (scoring axes as files, watched); consumed by cmd/foci-gw (/score validation, score-config mirroring). See "Tracing" → "Scores and rubrics".
 ```
 
@@ -1409,14 +1410,32 @@ Four outputs:
    - Levels: DEBUG < INFO < WARN < ERROR
    - Newlines in messages are replaced with literal `\n` to guarantee one log line per event
 
-2. **API log — JSONL** (`api.jsonl`): One JSON object per Anthropic API call with ts, session, model, token counts, both cost fields, duration_ms.
-   - Use: `log.API(log.APIEntry{...})`
-   - Queryable with `jq`
+2. **API log — JSONL** (`api.jsonl`): one line per call the cost ledger books — the
+   call's ledger fields (`ts` = billed_at, backend, kind, tokens by class, `cost_usd` as
+   Book priced it, context_fill, turn_id, actor, detail), plus `instalment` on a folded
+   legacy subagent share. Written by `accounting` after each booking commits, through
+   `log.AppendAPILine` (this package owns only the file: rotation, stale-inode reopen).
+   It is the readers' fallback when there is no ledger (`accounting.ReadJSONL`, which
+   re-prices counts at read time as the views do). Archived to empty on every start.
 
-3. **API log — SQLite** (`api.db`): Same data as JSONL but in a `api_calls` table with indexes on `ts` and `session`. Includes `call_type` column (conversation, compaction, summary, spawn, subagent_turn) and `turn_id`/`agent_id` (see "Turn identity" below).
-   - Written automatically by `log.API()` when `api_db` is configured
-   - **`log.APIHook` / `log.CorrectionHook`** (nil unless `[tracing]` is on): `API()` and `AccumulateSubagentRow` (the folded-instalment path, `instalment=true`) hand every row to the hook synchronously; `ApplyCostCorrections` reports each applied #1918 move. This is where the trace exporter gets its cost observations — see "Tracing". Implementations must not call back into `log.API`.
-   - Queryable: `sqlite3 api.db "SELECT call_type, count(*) FROM api_calls GROUP BY call_type"`
+3. **API log — SQLite** (`api.db`): the per-call cost ledger. Owned by
+   `internal/delegator/accounting` — see "Cost ledger" for its schema, writers, readers and
+   the startup cutover. `log` no longer touches it.
+
+   **Everything below in this item, down to "Conversation log", describes the PRE-LEDGER
+   `api_calls` table (v1) and the turn-level pricing the not-yet-switched delegated backends
+   (ccstream, opencode, codex) still run.** The v1 table was renamed and dropped by the #2111
+   cutover; those backends' rows are now booked as LEGACY calls through the same converter the
+   migration uses (`accounting/legacylive.go`). Reading the text against the ledger: a v1 row
+   is one `kind='legacy'` call; `calculated_cost_usd` is `legacy_calculated_cost_usd` (the
+   views price a delegated legacy call from it, `cost_basis='recorded'`); the `turn_*` group is
+   the call's `call_tokens`; the un-suffixed context-fill four are the turn's `legacy_*`;
+   `cost_usd` (the backend's own figure) is a `backend_reports` row; `subagent_id` is `actor`;
+   `call_type` is `detail.v1_call_type`. The Go names the text used for the pre-ledger rows
+   (`log.API`, `APIEntry` and its `EffectiveCost`/`PricedCounts`/`IsSubagent`,
+   `QuerySessionStats`, `ApplyCostCorrections`, `AccumulateSubagentRow`, `BackfillAgentIDs`)
+   are gone; their successors are named where they differ. This whole block is rewritten when
+   the last delegated backend switches (#2111 P4).
 
    **Two cost columns, and only one of them is a cost you may total (#1674):**
 
@@ -1456,7 +1475,7 @@ Four outputs:
    2026-09-05 over 14 days: $402 reconstructed against $2,040 recorded) with no error,
    because those columns mix a last-cycle snapshot with a summed output. The `turn_*`
    group is carried as `modelinfo.TokenCounts` on `delegator.TurnUsage.Turn` →
-   `provider.Usage.Turn` → `log.APIEntry.Turn`. Its `Output` **is** stored, in `turn_output_tokens` (#1891).
+   `provider.Usage.Turn` → `accounting.LegacyRow.Turn`. Its `Output` **is** stored, in `turn_output_tokens` (#1891).
    It was not until #1866 P3 made pricing CROSS-MODEL: the three `turn_` columns became
    all-model sums while `output_tokens` stayed PARENT-ONLY, so the two stopped being the
    same number on any turn whose subagent ran another model. Measured live
@@ -1521,9 +1540,8 @@ Four outputs:
    reimplementations were consolidated onto it (`internal/telemetry`,
    `internal/command`, `internal/platform`); `scripts/langfuse-etl/etl.py`'s
    `agent_of` mirrors it by hand since Python can't import Go. `BackfillAgentIDs`
-   (`internal/log/api_db.go`, called from `cmd/foci-gw` to dodge the import cycle —
-   `internal/session` already imports `internal/log`) fixes up rows written before
-   the split, on every startup, cheaply once done.
+   (formerly in `internal/log`) fixed up rows written before the split; it ran on every
+   live api.db before the ledger cutover and was deleted with the v1 writer.
 
    **`purpose` (#1962).** Set only on the rows of a BATCH turn — consolidation,
    nudge extraction, the delegated `foci_summary` tool, the delegated `/prompts diff`
@@ -1542,12 +1560,13 @@ Four outputs:
    Cost consumers must sum EVERY row including `subagent_turn` — a subagent row's
    cost was *subtracted* from the parent row beside it, so skipping it under-reports.
    Anything COUNTING calls or turns must skip them: one turn that spawned three
-   subagents is one call and four rows. `APIEntry.IsSubagent()` is the predicate;
-   `sumCosts` does both halves in one function precisely so the pair cannot drift.
-   `QuerySessionStats`'s `turn_count` and its context-tokens query already exclude
-   them by `call_type`.
+   subagents is one call and four rows. On the ledger `accounting.CallRow.Counted()` is
+   the predicate (a legacy call with an actor is a share, not a call); `sumCosts` does
+   both halves in one function precisely so the pair cannot drift. `Ledger.SessionStats`
+   counts turns from `turns` and calls with the same predicate.
 
-   **Price a row with `APIEntry.PricedCounts()`, never the un-suffixed fields.** It
+   **Price a row from its turn totals, never the un-suffixed fields** (the old
+   `APIEntry.PricedCounts()`; the migration and the legacy path do the same). It
    returns `Turn` when the writer measured it and the four fields only otherwise.
    The fields are the final ask cycle's context fill, so pricing them recovers a
    fraction of the real cost with no error to show for it — measured 2026-09-11 over
@@ -1559,14 +1578,16 @@ Four outputs:
    columns at zero deliberately (a subagent has no final cycle of its own), so they
    read as a call that cost money and cached nothing.
 
-   The exception, kept on purpose: `/last` prints `in=/out=/cR=` from the un-suffixed
-   fields, because that view answers "how big is the session now" — which is exactly
-   what those columns mean. It skips subagent rows instead.
+   The exception, kept on purpose: `/last` prints the context fill (`ctx=`), because that
+   view answers "how big is the session now" — which is exactly what those columns mean
+   (on the ledger: the turn's copied `legacy_*` for a legacy parent call). It skips
+   subagent rows instead.
 
-   **Always read cost via `APIEntry.EffectiveCost()`**, which prefers the calculated
-   figure and falls back to a live `modelinfo.CostAsOf` from stored tokens. Never read
-   either column directly, and never `SUM` in SQL — `QuerySessionStats` deliberately
-   totals in Go for this reason.
+   **Read cost from the ledger's views** (`call_costs`, `turn_costs`, `daily_costs`,
+   `session_costs`), which switch on `cost_basis`: the recorded figure for a delegated
+   legacy call, the counts at the dated rates for everything else. Never `SUM` a stored
+   figure yourself — the old `EffectiveCost` rule ("the calculated figure, else a live
+   estimate") is what the views encode.
 
    The provided figure has exactly one live consumer: `delegator.CostDivergenceChecker`
    (`internal/delegator/costcheck.go`), which compares it against ours per turn and
@@ -1695,11 +1716,11 @@ Four outputs:
    worst holds 155. Removed rather than enlarged; a bigger guess is still a guess.*
 
    Corrections ride `delegator.TurnUsage.Corrections` -> `provider.Usage.Corrections` to
-   `turn_delegated.go`, which calls `log.ApplyCostCorrections` **after** `logCall` — a
+   `turn_delegated.go`, which calls `Ledger.ApplyLegacyCorrections` **after** the rows — a
    correction may target the row this very turn just wrote (late spend from an earlier
    CYCLE of the same turn), and an UPDATE before the INSERT would match nothing.
 
-   **One row per delegation, so the credit has a unique target.** `AccumulateSubagentRow`
+   **One row per delegation, so the credit has a unique target.** `Ledger.AccumulateLegacySubagent`
    folds a subagent's later spend into its existing row instead of inserting a new one. Phase C
    used to INSERT unconditionally, so a subagent outliving its parent got one row per turn it
    straddled — all under the spawning turn id — and live data holds keys with 2 and 3 rows.
@@ -1709,7 +1730,7 @@ Four outputs:
    correction against one of those refuses, safely and loudly.
 
    The DB collapses; the JSONL does not and must not. It is append-only, every reader SUMS
-   its rows, so each instalment is appended there via `APIJSONLOnly` — both stores then agree
+   its rows, so each instalment is observed on its own (`Booking.Instalment`) — both stores then agree
    on the money by different means. Writing only the first instalment would make the fallback
    under-report.
 
@@ -1729,7 +1750,7 @@ Four outputs:
    error), so the surcharge is a positive float or exactly zero, and an unset
    surcharge (zero) is the old, safe, at-5m debit. The apply logs `ttl_surcharge_removed=$…`.
 
-   `ApplyCostCorrections` UPDATEs the two existing rows; it never appends a signed third row
+   `ApplyLegacyCorrections` UPDATEs the two existing calls; it never appends a signed third row
    (Dick, 2026-09-14: *"I don't want a correcting pair, I just want a single correct
    entry"*). Each correction is ONE TRANSACTION and both halves must match EXACTLY ONE row —
    neither target has a unique constraint, so the row count is all that stands between a
@@ -1737,10 +1758,10 @@ Four outputs:
    the amount rather than clamping: a negative count prices as a CREDIT, and an uncoverable
    correction means the model behind it is wrong, which is worth a warning.
 
-   This is safe to mutate because **api.db is authoritative**: `readDurableAPIEntries`
-   prefers `ReadAPIDBLog()` and falls back to the JSONL only when the db is empty, the JSONL
-   being RESET ON EVERY SERVICE RESTART. Every reader (/cost, /last, `QuerySessionStats`,
-   the morning briefing) runs a live query and none caches. The JSONL copy of a corrected
+   This is safe to mutate because **api.db is authoritative**: `command.readCalls`
+   prefers `Ledger.Calls` and falls back to the JSONL only when there is no ledger or it is
+   empty, the JSONL being RESET ON EVERY SERVICE RESTART. Every reader (/cost, /last,
+   `Ledger.SessionStats`, the morning briefing) runs a live query and none caches. The JSONL copy of a corrected
    row keeps the old values until the next restart wipes it — bounded, fallback-only.
 
    NOT covered: a subagent whose spend was ENTIRELY late has no row to credit, so the
@@ -1970,12 +1991,25 @@ Four outputs:
 
 The per-call ledger that replaces the per-turn `api_calls` rows and the window-subtraction
 pricing above. Design: clutch `notes/2111.md` (revision 3), rulings R1-R10 on todo #2111.
-**Built in phases.** P1 (#2113, this section) is the schema, the accounting core, the class
-rates in modelinfo and the migration. **Nothing books through it yet**: the backends still
-write `log.APIEntry` rows into the pre-ledger `api_calls` table described in "Logging", and
-`accounting.Open` is reached only from `foci-gw ledger-migrate` (a dry run on a COPY of an
-api.db). P2 switches each backend to `Tx.Book` and deletes its old path; the startup cutover
-(`accounting.Open` on the live api.db, which migrates it) lands with that switch.
+**Built in phases.** P1 (#2113) was the schema, the accounting core, the class rates in
+modelinfo and the migration. P2 (#2115) switches one backend per change, deleting its old
+path in the same change, so no backend ever has two booking paths:
+- **Direct API: switched** (the first, with the cutover). One response is one call.
+- **opencode, codex, Claude Code: not yet.** Their turn-level cost path is unchanged, and its
+  rows are booked as LEGACY calls (see "Legacy path" below) — their only booking path until
+  each switches.
+
+**The cutover** runs at startup: `initLogging` calls `accounting.Open(cfg.Logging.APIDB)`.
+On a pre-ledger api.db (`api_calls.calculated_cost_usd` exists) that takes a `VACUUM INTO`
+backup (`<api.db>.pre-ledger-<stamp>`) and migrates in one transaction (see "Migration");
+the report is logged under `ledger`. Every later open finds the ledger and only re-renders
+the rates. The ledger then becomes the process's live one (`accounting.SetLive`), which is
+how every writer and reader reaches it; `accounting.Live()` is nil with no `api_db`
+configured (and in unit tests), and writers then only observe (api.jsonl, BookedHook).
+Alarms go to `OnAlarm`, a `ledger` WARN until the P3 checks route them to operator chat.
+A live-applied `[[modelinfo]]` change re-renders `token_rates` (`Ledger.RenderRates`, from
+`liveapply.go`), so SQL keeps pricing like Go. `foci-gw ledger-migrate` still dry-runs the
+migration on a COPY of an api.db.
 
 **Token classes are data (R1)** — `modelinfo/classes.go`. A `Class` is a string from one
 vocabulary (`input`, `output`, `cache_read`, `cache_write_5m`, `cache_write_1h`,
@@ -2036,15 +2070,84 @@ call and its non-zero counts, and on a duplicate key compares counts
 `invClassNoRate` fire for a call the views will show as NULL. Alarms go to
 `Ledger.OnAlarm` only after the transaction commits. `Tx.Report` stores a backend report
 (the checks it feeds are P3); `Tx.RecordTurn` upserts a turn, a zero field leaving the
-stored value alone. Book does not yet fire `log.APIHook` or append api.jsonl — P2 moves
-those observers onto it with the first backend.
+stored value alone. A call whose model is not known yet (`""`, #1290) is unresolved
+without asking modelinfo, so it alarms invModelNotInTable but never trips the
+unpriced-model warning.
+
+**Observers** (`live.go`, `jsonl.go`). Every call Book inserts becomes a `Booking` — the
+call, its id, its cost priced exactly as `call_costs` prices it, its turn's purpose, and
+the context fill it leaves — handed, once the transaction COMMITS, to the api.jsonl
+writer and to `accounting.BookedHook` (the trace exporter's generations, see "Tracing").
+A rolled-back booking is never observed; a duplicate key is not re-observed; the
+migration books quietly (history is neither re-logged nor re-sent).
+`accounting.CorrectionHook` sees each applied #1918 correction.
+
+**Direct API adapter** (`apicall.go`, the backend switched in P2). `APIResponse.Call()`
+makes one response one call: `backend='api'`, key = the provider's response id (else
+`<kind>:<session>@<start nanos>`), `finality='completed'`, cache writes `cache_write_1h`
+by the backend rule (`provider.Usage.Tokens`, `class_method='backend_rule'`), billed at
+the request's start, `duration_ms` (and a compaction's `pre_messages`) in detail, provider
+inferred from the model when the caller named none. `accounting.Record(turn, call)`
+upserts the turn and books the call in one transaction. Writers:
+- `agent.logAPIResponse` — each call of a conversation turn, on `TurnState.RowID()`, with
+  the turn's source (user / keepalive / batch / autonomous) and purpose;
+  `APITransport.RunInference` closes the turn at its end (`ended_at`,
+  `activity_closed_at`, stop reason, model), since the API's spend is final with its last
+  response (R8).
+- `compaction.Compactor` — `kind='compaction'`;
+- `tools` summary (`APISummariser`) and one-shot spawn — `kind='summary'` / `'spawn'`.
+
+**A helper call is booked on the turn that invoked it** (Dick, 2026-09-29: "subagent turns
+should be tied to their parent"): its own call row, the invoking turn's `turn_id`.
+`OrchestrateFullTurn` attaches the direct-API turn to `ts.Ctx` (`accounting.WithTurn`),
+which is the context the turn's tools run under (`executeToolCalls`) and its post-turn
+compaction runs under (`APITransport.RunCompaction` → `maybeCompact`); each helper books on
+`accounting.TurnFor(ctx, own)`. A post-turn compaction spends after the turn ended, so it
+moves the turn's `activity_closed_at` on (`recordAPITurnActivity`). Only a helper call no
+turn invoked keeps a turn of its own, minted `<session>@<start nanos>:<kind>`
+(`MintTurnID`, `OwnTurn`: source `compaction` or `system`, never counted as the session's
+turns): an operator's `/compact` (`Agent.CompactSession` from the command layer), and a
+summary or spawn reached with no turn on its context. Delegated turns attach none: their
+helper calls never take these paths (a delegated agent summarises through a batch turn,
+compacts inside its backend, and has no spawn tool).
+
+**Legacy path** (`legacylive.go`) — the only booking path of the delegated backends that
+have not switched yet, deleted backend by backend. `DelegatedTransport.LogUsage` builds a
+`LegacyRow` per parent row and subagent share (the shapes of the pre-ledger rows) and
+books it through the migration's own converter (`v1Row` → class-by-kind → cost basis →
+`legacyCall`/`legacyTurn`/`legacyReport`), so a live legacy call and a migrated one are the
+same: `kind='legacy'`, priced from its recorded figure (`cost_basis='recorded'`), CC's
+provided cost as a `backend_reports` row. The backend is the manager's `BackendType`
+(`DelegatorBackend`), inferred from the model when unset. `AccumulateLegacySubagent`
+folds a subagent's later spend into THE call for (turn, actor, model) (#1922), and a
+share never rewrites its spawning turn's facts; an unnamed share gets actor
+`(unnamed)` (`UnnamedSubagent`), never `''`. `ApplyLegacyCorrections` is #1918 on
+legacy calls: resolve the absorbing turn as the session's first to CLOSE at or after the
+billing (`turns.ended_at`, UTC text), then move counts parent `cache_write_1h` → share
+`cache_write_5m` and money (parent debited cost + TTL surcharge) in one transaction,
+refusing anything but exactly one call on each side or a parent that cannot cover it. On
+a nil ledger `BookLegacy` only observes.
+
+**Readers** (`read.go`). `Ledger.Calls(since)` gives `CallRow`s from `call_costs` plus
+each call's per-class counts and costs (`call_class_costs`; a recorded-basis call has no
+class costs) and its fill (a legacy parent's is its turn's copy) — what `/cost`, `/cache`
+and `/last` render (`command.readCalls`, falling back to `ReadJSONL` with no ledger).
+`/cost`'s category table is the views' own split, so it adds up to Total; recorded-basis
+cost is its own "Pre-ledger (no split)" line and unpriced calls are named, never summed as
+$0. `Ledger.SessionStats` (turns from `turns` without compaction/system ones, calls,
+cost, unpriced count, span, context = the latest turn's `turn_costs.context_fill`) serves
+`/status`, `/context` and the admin session list; `Ledger.LastTurnID` serves
+`POST /score`. Scripts read the views: `scripts/langfuse-etl/etl.py`, and outside the repo
+the morning routine and clutch's keepalive-roi / rule-effects tools.
 
 **Migration** (`accounting/migrate.go`, #2111 §6): `Open` detects a pre-ledger api.db
 (`api_calls.calculated_cost_usd` exists), takes a `VACUUM INTO` backup, and in ONE
 transaction renames the table to `api_calls_v1`, creates the schema, books each v1 row as
 a legacy call keeping its id (tokens = the `turn_*` group, else the un-suffixed four),
 makes one turn per v1 `turn_id` (else `legacy:<id>`) with its context fill copied and its
-source inferred (`/b<n>` session → keepalive, purpose → batch, compaction), stores CC's
+source inferred (`/b<n>` session → keepalive, purpose → batch, compaction, summary or
+spawn → system), gives an unnamed subagent share actor `(unnamed)`, records in each call's
+detail its v1 `call_type` and whether its counts were turn totals, stores CC's
 cumulative and opencode's per-call reported costs as reports, verifies by id SET and
 per-class token totals, and drops v1 — or rolls back whole. The backend is inferred from
 call type and model (v1 never recorded it). Cache-write TTL: solved from CC's reported
@@ -2074,7 +2177,7 @@ every entry point is one atomic load and no span is ever allocated.
 | Producer | Hooked at | Yields |
 |---|---|---|
 | `turnevent.Sink` stream | `Agent.HandleMessage` and `Agent.OpenAutonomousTurn` wrap the ctx sink with `telemetry.NewTurnSink` (a `turnSink` that forwards every event and mirrors the ones it cares about) | the trace's **shape**: root `turn` span (type `agent`), a `tool` child per `ToolCall`/`ToolResult`, an `agent` child per `SubagentStart`/`Text`/`End` run, intermediate texts, thinking, retries, error status |
-| `log.APIHook` (every api.db row) | `log.API`, `log.AccumulateSubagentRow` | exactly one `generation` observation per row — model, `usage_details`, `cost_details.total = calculated_cost_usd` — parented onto the row's turn (or its subagent span for a `subagent_turn` row). **Cost lives only here**; root/tool/subagent spans carry cost as read-only metadata. So `SUM(observation cost)` per day equals `SUM(calculated_cost_usd)` per day by construction — `scripts/langfuse-etl/etl.py reconcile` is the check. |
+| `accounting.BookedHook` (every booked call) | the ledger's `Update`, after each commit (`Tx.Book`, and an instalment of `AccumulateLegacySubagent`) | exactly one `generation` observation per call — model, `usage_details`, `cost_details.total` = the call's cost as the views price it — parented onto the call's turn (or its subagent span when it has an actor). A compaction, summary or spawn a turn made is booked on that turn and hangs under its root; one no turn made is on a turn of its own (source `compaction`/`system`, `Booking.TurnSource`) that the tracer never opened, so it becomes its own one-observation trace named after its call type. **Cost lives only here**; root/tool/subagent spans carry cost as read-only metadata. So `SUM(observation cost)` per day equals the ledger's `daily_costs` by construction — `scripts/langfuse-etl/etl.py reconcile` is the check. |
 
 **Invariant — the wrapper must never be registered into the router it wraps.** On a
 platform turn the ctx sink at `HandleMessage` *is* the session router (RunTurn
@@ -2117,7 +2220,7 @@ Agent is a later turn's. Open runs therefore live in a package registry keyed by
 (session, group key, run), and whichever turn sees the end closes it; runs with no
 end signal are closed as `end_unobserved` after 2 h.
 
-**Instalments and corrections vs. an append-only sink.** `AccumulateSubagentRow`
+**Instalments and corrections vs. an append-only sink.** `AccumulateLegacySubagent`
 folds a delegation's later spend into its existing db row; Langfuse cannot update,
 and re-sending an observation with new numbers double-counts (learned on the ETL),
 so each instalment is its own generation (`metadata.instalment=true`) and the
@@ -2175,7 +2278,7 @@ logged warning). Three kinds: `human` (graded by a person), `derive` (from trace
 metadata), `judge` (an LLM against the body prompt); only `human` is *acted on* in
 phase 1–2 — the other two are validated at load so a runner never meets a bad file.
 Entry points: `POST /score` (`cmd/foci-gw/http_score.go scoreTurn` — resolves the
-turn: explicit → `telemetry.LastTurnID` for this process → `log.LastTurnIDForSession`
+turn: explicit → `telemetry.LastTurnID` for this process → `Ledger.LastTurnID`
 from api.db; validates against the rubric when one exists; posts with source
 `human`), `GET /evals/rubrics`, and the `foci score` / `foci evals list` CLI. The
 path is deliberately agent-free: the value is written as validated, nothing

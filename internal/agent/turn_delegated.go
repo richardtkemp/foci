@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/delegator/accounting"
 	"foci/internal/log"
 	"foci/internal/provider"
 	"foci/internal/session"
@@ -705,17 +706,16 @@ func (t *DelegatedTransport) UpdateSessionMeta(ts *TurnState) {
 	ts.SessionMeta.modelUserSet = false
 }
 
-// LogUsage records delegated turn usage to the API database. One api.db row is
-// written per terminal API call: the pre-answer nudge gate runs two terminal
-// calls (round 1, then round 2 after the nudge), so a gated turn emits two
-// rows — each with its OWN cost and its OWN un-summed cache_read. Rows are not
-// linked (no turn_id); separate records are intentional. cache_read is
-// cumulative per call, so summing rounds into one row would double-count the
-// same context as a size signal (the bug this replaces).
+// LogUsage books a delegated turn's usage in the cost ledger. The delegated
+// backends have not switched to per-call booking yet (#2111 P2), so a turn is
+// booked as it always was — one parent row plus one row per subagent share —
+// as LEGACY calls (accounting/legacylive.go), priced by the backend's own
+// turn-level path. A pre-answer re-dispatch folds into the parent row exactly
+// like a steer: the backend keeps accumulating output/cost/Turn across the
+// rounds, and input/cache stay the final cycle's fill (#1856).
 //
-// FinalUsage stays = the last terminal call (= current context size).
-// FinalCost is set to the SUM of per-call costs so the TurnComplete sink event
-// reports true turn spend.
+// FinalCost is set to the whole turn's figure (parent plus subagent shares)
+// for the TurnComplete sink event.
 //
 // Self-invoked from the post-turn path after FinalUsage is populated.
 func (t *DelegatedTransport) LogUsage(ts *TurnState) {
@@ -727,141 +727,100 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 	if model == "" {
 		model = ts.TurnModel
 	}
+	u := ts.FinalUsage
 
 	// Use cached path — SessionFilePath() takes b.mu which may be held
 	// by ensureWatcher when this is called from the OnTurnComplete callback.
 	sessionFile := ts.sessionFilePath
 
-	// The AGENT this turn belongs to, populated on every api_calls row
-	// (#1946) — including a subagent_turn row below, where it names the
-	// OWNING agent (same as its parent), not the subagent.
+	// The AGENT this turn belongs to, on every row (#1946) — including a
+	// subagent share, where it names the OWNING agent, not the subagent.
 	agentID := session.AgentIDFromKey(ts.SessionKey)
+	var backend string
+	if a.DelegatedManager != nil {
+		backend = accounting.DelegatorBackend(a.DelegatedManager.BackendType)
+	}
+	ledger := accounting.Live()
 
-	// Emit one row per terminal call, prior rounds first then the final call,
-	// in chronological order. Sum per-call cost into FinalCost (turn total).
+	// turnCost (ts.FinalCost) is the in-memory display figure for the
+	// sink/header. Prefer the backend-supplied CALCULATED cost — foci's own
+	// priced figure — and fall back to a live estimate at today's price when
+	// the backend gave none. The backend's PROVIDED cost is never used here
+	// (#1674): it is cumulative for ccstream.
 	var turnCost float64
-	logCall := func(u *provider.Usage, ts0 time.Time) {
-		// turnCost (ts.FinalCost) is the in-memory display figure for the
-		// sink/header. Prefer the backend-supplied CALCULATED cost — foci's own
-		// priced figure for that call — and fall back to a live estimate at
-		// today's price when the backend gave none. The backend's PROVIDED cost
-		// is deliberately not used here (#1674): it is cumulative for ccstream,
-		// so adding it up per call is exactly what inflated the totals.
-		if u.CalculatedCostUSD != nil {
-			turnCost += *u.CalculatedCostUSD
-		} else if model != "" {
-			// Skip when the model is unknown (e.g. a codex tokenUsage/updated
-			// notification firing before any message-completion event has set
-			// the model for this thread — plausible right after a resume/
-			// respawn). Pricing "" would otherwise trip the unpriced-model
-			// warning for a model that is merely not known yet.
-			turnCost += u.AsTurn().CostAsOf(model, time.Now())
-		}
-		log.API(log.APIEntry{
-			Timestamp:         ts0,
-			Provider:          "anthropic",
-			Session:           ts.SessionKey,
-			Model:             model,
-			Input:             u.InputTokens,
-			Output:            u.OutputTokens,
-			CacheRead:         u.CacheReadInputTokens,
-			CacheWrite:        u.CacheCreationInputTokens,
-			ProvidedCostUSD:   u.ProvidedCostUSD,
-			CalculatedCostUSD: u.CalculatedCostUSD,
-			Turn:              u.Turn,
-			DurationMS:        time.Since(ts.StartedAt).Milliseconds(),
-			StopReason:        "end_turn",
-			CallType:          "delegated_turn",
-			TurnID:            ts.RowID(),
-			AgentID:           agentID,
-			SessionFile:       sessionFile,
-			Purpose:           ts.Purpose,
-		})
-
-		// One row per subagent, sharing the parent's turn_id (#1880 phase C,
-		// #1863). Their cost has already been SUBTRACTED from the parent row's
-		// CalculatedCostUSD, so it has to be added back here: turnCost is the
-		// whole turn's figure for the sink header, while the rows are the split
-		// version of the same money.
-		//
-		// Before this, a subagent's spend landed on whichever parent turn
-		// happened to close while it was running — one measured 3.5-minute turn
-		// carried 34 minutes of work and $11.71. There was no way to ask what a
-		// delegation cost.
-		for _, sc := range u.Subagents {
-			turnCost += sc.CostUSD
-			counts, cost := sc.Counts, sc.CostUSD
-			// The turn that SPAWNED this subagent, which is not always the one
-			// being written: a background subagent can outlive its parent by
-			// half an hour, and its spend belongs to the work that started it.
-			// That is the whole of #1880 — a 3.5-minute turn was recorded
-			// carrying 34 minutes and $11.71 of someone else's work. The
-			// fallback is this turn, which is the pre-#1880 answer.
-			//
-			// The row's TIMESTAMP stays this turn's: it records when the spend
-			// was booked, which is true and is what a time-window query wants.
-			// turn_id is what carries the attribution.
-			turnID := sc.TurnID
-			if turnID == "" {
-				turnID = ts.RowID()
-			}
-			// ACCUMULATE, do not insert. A subagent that outlives its parent
-			// is written once per turn it straddles, all under the SPAWNING
-			// turn id — which used to mean several rows sharing one key, so
-			// "what did that delegation cost" needed a SUM and the #1918
-			// correction (which requires exactly one match) could never apply
-			// to the background subagents it exists for (#1922).
-			merged := log.AccumulateSubagentRow(log.APIEntry{
-				Timestamp: ts0,
-				Provider:  "anthropic",
-				Session:   ts.SessionKey,
-				Model:     sc.Model,
-				// Only Output of the un-prefixed four is set. Those columns mean
-				// "the turn's FINAL cycle context fill" (#1854) and a subagent
-				// row has no such thing — writing its sums there would rebuild
-				// exactly the two-meanings-one-column confusion #1891 removed.
-				// Output is the exception because output_tokens has always been
-				// a turn SUM by meaning, which is why it needed a turn_ twin.
-				Output:            counts.Output,
-				CalculatedCostUSD: &cost,
-				Turn:              &counts,
-				DurationMS:        time.Since(ts.StartedAt).Milliseconds(),
-				StopReason:        "end_turn",
-				CallType:          "subagent_turn",
-				TurnID:            turnID,
-				// AgentID is the OWNING agent (same as the parent row above),
-				// not the subagent — sc.AgentID is the Agent tool_use id,
-				// which now belongs in SubagentID (#1946).
-				AgentID:     agentID,
-				SubagentID:  sc.AgentID,
-				SessionFile: sessionFile,
-				Purpose:     ts.Purpose,
-			})
-			// The last decision point on a subagent's spend (#1936): pairs with
-			// ccstream's "subagent rows: share" line by group.
-			a.logger().Debugf("subagent rows: wrote group=%s model=%s turn_id=%s merged=%v cost=$%.6f",
-				sc.AgentID, sc.Model, turnID, merged, cost)
-		}
+	if u.CalculatedCostUSD != nil {
+		turnCost += *u.CalculatedCostUSD
+	} else if model != "" {
+		// Skip when the model is unknown (e.g. a codex tokenUsage/updated
+		// notification firing before any message-completion event has set
+		// the model for this thread — plausible right after a resume/
+		// respawn). Pricing "" would otherwise trip the unpriced-model
+		// warning for a model that is merely not known yet.
+		turnCost += u.AsTurn().CostAsOf(model, time.Now())
+	}
+	// The turn's parent row. Its input/cache are the final cycle's fill (what
+	// compaction sizes from), its Turn the per-cycle sums pricing came from.
+	if err := ledger.BookLegacy(accounting.LegacyRow{
+		At: ts.StartedAt, Backend: backend, Provider: "anthropic",
+		Session: ts.SessionKey, Model: model,
+		Fill: accounting.LegacyFill{Input: u.InputTokens, Output: u.OutputTokens,
+			CacheRead: u.CacheReadInputTokens, CacheWrite: u.CacheCreationInputTokens},
+		Turn: u.Turn, ProvidedCostUSD: u.ProvidedCostUSD, CalculatedCostUSD: u.CalculatedCostUSD,
+		DurationMS: time.Since(ts.StartedAt).Milliseconds(), StopReason: "end_turn",
+		SessionFile: sessionFile, TurnID: ts.RowID(), AgentID: agentID, Purpose: ts.Purpose,
+	}); err != nil {
+		a.logger().Errorf("session=%s book delegated turn: %v", ts.SessionKey, err)
 	}
 
-	// One row per turn. A pre-answer re-dispatch folds into this row exactly
-	// like a steer: the backend keeps accumulating output/cost/Turn across
-	// the rounds, and input/cache stay the final cycle's fill (#1856).
-	logCall(ts.FinalUsage, ts.StartedAt)
+	// One row per subagent share, sharing the parent's turn id (#1880 phase
+	// C, #1863). Their cost was SUBTRACTED from the parent row's
+	// CalculatedCostUSD, so it is added back to turnCost: the header shows the
+	// whole turn, the rows are the split version of the same money.
+	for _, sc := range u.Subagents {
+		turnCost += sc.CostUSD
+		counts, cost := sc.Counts, sc.CostUSD
+		// The turn that SPAWNED this subagent, which is not always the one
+		// being written: a background subagent can outlive its parent by
+		// half an hour, and its spend belongs to the work that started it
+		// (#1880). The fallback is this turn.
+		turnID := sc.TurnID
+		if turnID == "" {
+			turnID = ts.RowID()
+		}
+		// ACCUMULATE, do not insert: a subagent that outlives its parent is
+		// written once per turn it straddles, all under the spawning turn id,
+		// and the #1918 correction needs exactly one call to find (#1922).
+		merged, err := ledger.AccumulateLegacySubagent(accounting.LegacyRow{
+			At: ts.StartedAt, Backend: backend, Provider: "anthropic",
+			Session: ts.SessionKey, Model: sc.Model,
+			Turn: &counts, CalculatedCostUSD: &cost,
+			DurationMS: time.Since(ts.StartedAt).Milliseconds(), StopReason: "end_turn",
+			SessionFile: sessionFile, TurnID: turnID, AgentID: agentID, Purpose: ts.Purpose,
+			// sc.AgentID is the Agent tool_use id: the subagent (#1946).
+			Subagent: true, SubagentID: sc.AgentID,
+		})
+		if err != nil {
+			a.logger().Errorf("session=%s book subagent share %s: %v", ts.SessionKey, sc.AgentID, err)
+		}
+		// The last decision point on a subagent's spend (#1936): pairs with
+		// ccstream's "subagent rows: share" line by group.
+		a.logger().Debugf("subagent rows: wrote group=%s model=%s turn_id=%s merged=%v cost=$%.6f",
+			sc.AgentID, sc.Model, turnID, merged, cost)
+	}
 
-	// AFTER logCall, and that ordering is load-bearing. A correction may target
-	// the row this very turn just wrote — late spend billed in an earlier CYCLE
-	// of this same turn — and an UPDATE issued before the INSERT would match no
-	// row and be skipped as unresolvable (#1918).
-	log.ApplyCostCorrections(ts.FinalUsage.Corrections)
+	// AFTER the rows above, and that ordering is load-bearing. A correction
+	// may target the row this very turn just wrote — late spend billed in an
+	// earlier CYCLE of this same turn — and applying it first would find no
+	// call and be skipped as unresolvable (#1918).
+	ledger.ApplyLegacyCorrections(u.Corrections)
 
 	ts.FinalCost = turnCost
 
 	// Log the last call's context size (FinalUsage = real current size) plus
 	// the turn-total cost.
 	a.logger().Infof("session=%s model=%s input=%d output=%d cache_read=%d cache_write=%d cost=$%.4f (delegated, last-call size; cost is turn-total)",
-		ts.SessionKey, model, ts.FinalUsage.InputTokens, ts.FinalUsage.OutputTokens,
-		ts.FinalUsage.CacheReadInputTokens, ts.FinalUsage.CacheCreationInputTokens,
+		ts.SessionKey, model, u.InputTokens, u.OutputTokens,
+		u.CacheReadInputTokens, u.CacheCreationInputTokens,
 		turnCost)
 }
 

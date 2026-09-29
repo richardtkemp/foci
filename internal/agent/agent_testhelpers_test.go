@@ -2,8 +2,11 @@ package agent
 
 import (
 	"context"
+	"path/filepath"
+	"testing"
 	"time"
 
+	"foci/internal/delegator/accounting"
 	"foci/internal/provider"
 )
 
@@ -62,4 +65,32 @@ func newTestClient(handler func(req *provider.MessageRequest) *provider.MessageR
 // newTestClientWithError creates a test client that can return errors.
 func newTestClientWithError(handler func(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error)) *testClient {
 	return &testClient{handler: handler}
+}
+
+// openTestLedger opens a cost ledger in a temp dir and makes it the live one
+// (accounting.Live) for the test.
+func openTestLedger(t *testing.T) *accounting.Ledger {
+	t.Helper()
+	l, _, err := accounting.Open(filepath.Join(t.TempDir(), "api.db"), accounting.Options{
+		OnAlarm: func(a accounting.Alarm) { t.Errorf("ledger alarm: %+v", a) },
+	})
+	if err != nil {
+		t.Fatalf("open ledger: %v", err)
+	}
+	accounting.SetLive(l)
+	t.Cleanup(func() {
+		accounting.SetLive(nil)
+		_ = l.Close()
+	})
+	return l
+}
+
+// ledgerCalls reads every call booked in l.
+func ledgerCalls(t *testing.T, l *accounting.Ledger) []accounting.CallRow {
+	t.Helper()
+	rows, err := l.Calls(time.Time{})
+	if err != nil {
+		t.Fatalf("read ledger: %v", err)
+	}
+	return rows
 }

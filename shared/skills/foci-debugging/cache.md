@@ -21,7 +21,7 @@ Common causes:
 
 ```bash
 # Find the bust boundary
-sqlite3 -readonly ~/data/api.db "SELECT ts, cost_usd, cache_read_tokens, cache_write_tokens FROM api_calls ORDER BY ts DESC LIMIT 20"
+sqlite3 -readonly ~/data/api.db "SELECT c.billed_at, c.cost_usd, t.class, t.count FROM call_costs c JOIN call_tokens t ON t.call_id = c.id WHERE t.class LIKE 'cache%' ORDER BY c.billed_at DESC LIMIT 40"
 
 # Then pull the two calls' system blocks from the payload log and diff (see api-cost.md
 # for the jq to extract .request.system[] block sizes; extract each to a file, then diff).

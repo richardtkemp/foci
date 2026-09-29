@@ -236,23 +236,23 @@ func (a *Agent) maybeInjectCompactionResume(sessionKey string) {
 }
 
 // maybeCompact checks whether context compaction is needed and performs it.
-// Triggers: (1) main threshold, (2) user /compact.
-func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []provider.Message, system []provider.SystemBlock, usage *provider.Usage, sm *sessionMeta) {
+// Triggers: (1) main threshold, (2) user /compact. It reports whether it ran one.
+func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []provider.Message, system []provider.SystemBlock, usage *provider.Usage, sm *sessionMeta) bool {
 	if a.Compactor == nil {
-		return
+		return false
 	}
 
 	totalTokens := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
 	ctxLimit := a.SessionContextLimit(sessionKey)
 
 	if !a.Compactor.ShouldCompactWithLimit(sessionKey, messages, usage, ctxLimit) {
-		return
+		return false
 	}
 
 	if a.SessionNoCompact(sessionKey) {
 		percent := int(float64(totalTokens) / float64(ctxLimit) * 100)
 		a.logger().Infof("session=%s context at %d%% capacity for no_compact session", sessionKey, percent)
-		return
+		return false
 	}
 
 	for _, fn := range a.CompactionMemoryFunc {
@@ -274,6 +274,7 @@ func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []
 	sm.systemBlocks = nil
 	// Reset cache baseline — next request will have a different prefix
 	sm.prevCacheRead = 0
+	return true
 }
 
 // summarizeServerToolResult extracts a brief text summary from a server tool result block.

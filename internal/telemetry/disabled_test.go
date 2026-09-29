@@ -3,7 +3,7 @@ package telemetry
 import (
 	"testing"
 
-	"foci/internal/log"
+	"foci/internal/delegator/accounting"
 	"foci/internal/turnevent"
 )
 
@@ -41,10 +41,10 @@ func TestDisabled(t *testing.T) {
 		t.Errorf("nil Turn.TurnID() = %q, want \"\"", got)
 	}
 
-	if log.APIHook != nil {
-		t.Error("log.APIHook must be nil when telemetry is disabled")
+	if accounting.BookedHook != nil {
+		t.Error("accounting.BookedHook must be nil when telemetry is disabled")
 	}
-	if log.CorrectionHook != nil {
-		t.Error("log.CorrectionHook must be nil when telemetry is disabled")
+	if accounting.CorrectionHook != nil {
+		t.Error("accounting.CorrectionHook must be nil when telemetry is disabled")
 	}
 }

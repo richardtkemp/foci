@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"foci/internal/config"
-	"foci/internal/log"
+	"foci/internal/delegator/accounting"
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
 	"foci/internal/session"
@@ -52,8 +52,8 @@ func (s *APISummariser) resolveForCall() (provider.Client, string, string) {
 }
 
 // Summarise sends the content + prompt to the configured cheap model via
-// provider.Send and returns the model's text response. Cost is logged to
-// log.API() with call_type="summary".
+// provider.Send and returns the model's text response. The call is booked in
+// the cost ledger as a summary call.
 func (s *APISummariser) Summarise(ctx context.Context, content []byte, prompt, filePath string) (string, error) {
 	content = CapInputChars(content, s.maxInputChars())
 
@@ -94,26 +94,20 @@ func (s *APISummariser) Summarise(ctx context.Context, content []byte, prompt, f
 	if providerFormat == "" {
 		providerFormat = "anthropic"
 	}
-	log.API(log.APIEntry{
-		Timestamp:  start,
-		Provider:   providerFormat,
-		Session:    sessionKey,
-		Model:      model,
-		Input:      resp.Usage.InputTokens,
-		Output:     resp.Usage.OutputTokens,
-		CacheRead:  resp.Usage.CacheReadInputTokens,
-		CacheWrite: resp.Usage.CacheCreationInputTokens,
-		Turn:       resp.Usage.AsTurn(), // single call: its own counts are the turn total (#1854)
-		// See turn_api_logging.go's logAPIResponse for why this is
-		// load-bearing (#1964): without it, a summary call's cost is computed
-		// for the log line but never persisted, so it reads as $0 to any
-		// SUM(calculated_cost_usd) total.
-		CalculatedCostUSD: &cost,
-		DurationMS:        duration.Milliseconds(),
-		StopReason:        resp.StopReason,
-		CallType:          "summary",
-		AgentID:           session.AgentIDFromKey(sessionKey),
-	})
+	// A summary is one direct-API call, booked on the turn whose tool call
+	// asked for it — or, asked for by no turn, on a system turn of its own.
+	agentID := session.AgentIDFromKey(sessionKey)
+	turn := accounting.TurnFor(ctx, accounting.OwnTurn(
+		accounting.MintTurnID(sessionKey, accounting.KindSummary, start),
+		sessionKey, agentID, accounting.SourceSystem, start, start.Add(duration)))
+	if err := accounting.Record(turn,
+		accounting.APIResponse{
+			ID: resp.ID, Kind: accounting.KindSummary, Provider: providerFormat, Model: model,
+			Session: sessionKey, AgentID: agentID, TurnID: turn.TurnID,
+			Start: start, Duration: duration, Tokens: resp.Usage.Tokens(), StopReason: resp.StopReason,
+		}.Call()); err != nil {
+		summaryLog.Errorf("session=%s book summary call: %v", sessionKey, err)
+	}
 
 	text := provider.TextOf(resp.Content)
 	if text == "" {

@@ -9,9 +9,11 @@
 # ///
 """api.db -> Langfuse ETL.
 
-One api_calls row = one Langfuse trace holding a single root GENERATION observation. Nothing from the
-payload logs is read: the only fields that leave this host are the ones in api_calls (tokens, cost, model,
-session key, agent id, timings). No prompt or completion content, by construction.
+One cost-ledger call (api.db `api_calls`, #2111) = one Langfuse trace holding a single root GENERATION
+observation, its cost read from the `call_costs` view and its tokens from `call_tokens`. A pre-ledger row
+is one `kind='legacy'` call that kept its old id, so an id watermark set before the cutover still holds.
+Nothing from the payload logs is read: the only fields that leave this host are the ledger's (tokens, cost,
+model, session key, agent id, timings). No prompt or completion content, by construction.
 
 Modes
   --backfill            every row (or --from-id N onwards), paced with --rate rows/s
@@ -20,7 +22,7 @@ Modes
                         (measured 2026-09-18: 40 rows re-sent after #1918 corrections -> 67 observations, +65% cost).
                         Byte-identical re-sends are absorbed. So rows are sent exactly once and later corrections
                         are NOT mirrored; `reconcile` shows that drift.
-  --reconcile [--days N] per-UTC-day SUM(calculated_cost_usd) from api.db vs Langfuse Metrics API v2 sum(totalCost)
+  --reconcile [--days N] per-UTC-day SUM(call_costs.cost_usd) from api.db vs Langfuse Metrics API v2 sum(totalCost)
 
 Transport is plain OpenTelemetry over OTLP/HTTP (protobuf) to Langfuse's /api/public/otel endpoint, using the
 same span attributes the official Python SDK emits (langfuse.observation.*, session.id, user.id, ...). The SDK
@@ -155,7 +157,6 @@ def agent_of(session: str | None) -> str | None:
 
 
 TRACE_NAME = {"conversation": "turn", "delegated_turn": "turn"}  # same thing, direct-API era vs delegated era (7844f9a8)
-BACKEND_OF = {"conversation": "backend:api", "delegated_turn": "backend:delegated", "subagent_turn": "backend:delegated"}
 
 
 # ---------------------------------------------------------------- redaction
@@ -256,7 +257,7 @@ def turn_times(db: sqlite3.Connection) -> dict[str, list[datetime]]:
     global _turns
     if _turns is None:
         _turns = {}
-        for sess, ts in db.execute("SELECT session, ts FROM api_calls WHERE session IS NOT NULL"):
+        for sess, ts in db.execute("SELECT session, started_at FROM turns"):
             _turns.setdefault(sess, []).append(parse_ts(ts))
         for v in _turns.values():
             v.sort()
@@ -284,10 +285,20 @@ def open_db() -> sqlite3.Connection:
     return db
 
 
-COLS = """id, ts, session, model, provider, call_type, agent_id, subagent_id, turn_id, stop_reason, duration_ms,
-          input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-          turn_input_tokens, turn_output_tokens, turn_cache_read_tokens, turn_cache_write_tokens,
-          cost_usd, calculated_cost_usd"""
+# One ledger call, in the shape emit() reads. call_type keeps the names the traces have always had: a legacy
+# call's pre-ledger call_type, "conversation" for a direct-API turn's call, else the ledger kind.
+CALLS = """SELECT c.id, c.billed_at AS ts, c.session, c.model, c.provider, c.backend, c.kind, c.agent_id,
+          c.actor, c.turn_id, c.stop_reason, cc.cost_usd,
+          json_extract(c.detail, '$.duration_ms') AS duration_ms,
+          json_extract(c.detail, '$.turn_totals') AS turn_totals,
+          CASE WHEN c.kind = 'legacy' THEN json_extract(c.detail, '$.v1_call_type')
+               WHEN c.kind = 'call' AND c.backend = 'api' THEN 'conversation'
+               ELSE c.kind END AS call_type,
+          (SELECT TOTAL(count) FROM call_tokens WHERE call_id = c.id AND class = 'input') AS input_tokens,
+          (SELECT TOTAL(count) FROM call_tokens WHERE call_id = c.id AND class IN ('output', 'reasoning')) AS output_tokens,
+          (SELECT TOTAL(count) FROM call_tokens WHERE call_id = c.id AND class = 'cache_read') AS cache_read_tokens,
+          (SELECT TOTAL(count) FROM call_tokens WHERE call_id = c.id AND class LIKE 'cache_write%') AS cache_write_tokens
+   FROM api_calls c JOIN call_costs cc ON cc.id = c.id"""
 
 
 def healthy(host: str) -> bool:
@@ -318,32 +329,28 @@ def emit(tracer: trace.Tracer, gen: SeededIdGenerator, r: sqlite3.Row, db: sqlit
     start_ns, end_ns = int(start.timestamp() * 1e9), int(end.timestamp() * 1e9)
     gen.trace_id, gen.span_id = ids_for(r["id"])
 
-    if r["turn_input_tokens"] is not None:
-        scope = "turn"
-        usage = {"input": r["turn_input_tokens"] or 0, "output": r["turn_output_tokens"] if r["turn_output_tokens"] is not None else (r["output_tokens"] or 0),
-                 "cache_read_input_tokens": r["turn_cache_read_tokens"] or 0, "cache_creation_input_tokens": r["turn_cache_write_tokens"] or 0}
-    else:
-        scope = "snapshot"  # pre-#1854 rows: final-cycle context fill, output summed — see WIRING.md "Two scopes of token columns"
-        usage = {"input": r["input_tokens"] or 0, "output": r["output_tokens"] or 0,
-                 "cache_read_input_tokens": r["cache_read_tokens"] or 0, "cache_creation_input_tokens": r["cache_write_tokens"] or 0}
+    # A call's own counts; a legacy call carries its turn's totals, or before #1854 (and on every codex/opencode
+    # row) the final cycle's context fill — see WIRING.md "Cost ledger".
+    scope = "call" if r["kind"] != "legacy" else ("turn" if r["turn_totals"] else "snapshot")
+    usage = {"input": int(r["input_tokens"]), "output": int(r["output_tokens"]),
+             "cache_read_input_tokens": int(r["cache_read_tokens"]), "cache_creation_input_tokens": int(r["cache_write_tokens"])}
     usage["total"] = sum(usage.values())
 
     call_type = r["call_type"] or "turn"
     model, route_tags = normalize_model(r["model"])
-    # #1946: agent_id now holds the AGENT on every row (subagent rows included —
-    # the parent session's owner); subagent_id holds the Agent tool_use id, set
-    # only on subagent rows. Prefer the column; agent_of(session) is only a
-    # fallback for a row written before the #1946 backfill reached it.
-    is_subagent = call_type == "subagent_turn" or bool(r["subagent_id"])
+    # agent_id is the owning AGENT on every call (#1946); actor is the subagent (the Agent tool_use id), '' on
+    # the session's own thread. agent_of(session) is only a fallback for a call with no agent recorded.
+    is_subagent = bool(r["actor"])
     agent = r["agent_id"] or agent_of(r["session"])
-    tags = [t for t in (BACKEND_OF.get(call_type), f"call_type:{call_type}", f"tokens:{scope}", *route_tags) if t]
+    backend_tag = "backend:api" if r["backend"] == "api" else "backend:delegated"
+    tags = [t for t in (backend_tag, f"call_type:{call_type}", f"tokens:{scope}", *route_tags) if t]
     if is_subagent:
         tags.append("subagent")
     attrs = {
         "langfuse.observation.type": "generation",
         "langfuse.observation.model.name": model,
         "langfuse.observation.usage_details": json.dumps(usage),
-        "langfuse.observation.cost_details": json.dumps({"total": r["calculated_cost_usd"] if r["calculated_cost_usd"] is not None else 0.0}),
+        "langfuse.observation.cost_details": json.dumps({"total": r["cost_usd"] if r["cost_usd"] is not None else 0.0}),
         "langfuse.observation.level": "DEFAULT",
         "langfuse.trace.name": TRACE_NAME.get(call_type, call_type),
         "langfuse.environment": ENVIRONMENT,
@@ -357,8 +364,8 @@ def emit(tracer: trace.Tracer, gen: SeededIdGenerator, r: sqlite3.Row, db: sqlit
         attrs["user.id"] = agent
     if r["session"]:
         attrs["session.id"] = r["session"]
-    if is_subagent and r["subagent_id"]:
-        attrs["langfuse.observation.metadata.subagent_tool_use_id"] = r["subagent_id"]
+    if is_subagent:
+        attrs["langfuse.observation.metadata.subagent_tool_use_id"] = r["actor"]
     if CONTENT and not is_subagent:  # a subagent's prompt is the Agent tool call, not the human's message
         lo, hi = content_bounds(db, r["session"], start, end)
         inp, out = CONVO.lookup(agent, r["session"], start, lo, hi)
@@ -376,11 +383,11 @@ def emit(tracer: trace.Tracer, gen: SeededIdGenerator, r: sqlite3.Row, db: sqlit
             attrs["langfuse.observation.metadata.redactions"] = redactions
         STATS["with_input"] += inp is not None; STATS["with_output"] += out is not None; STATS["redactions"] += redactions
     STATS["rows"] += 1
-    for k in ("turn_id", "stop_reason", "provider", "call_type"):
+    for k in ("turn_id", "stop_reason", "provider", "call_type", "backend", "kind"):
         if r[k]:
             attrs[f"langfuse.observation.metadata.{k}"] = r[k]
-    if r["cost_usd"] is not None:
-        attrs["langfuse.observation.metadata.backend_cost_usd"] = float(r["cost_usd"])
+    if r["cost_usd"] is None:
+        attrs["langfuse.observation.metadata.unpriced"] = True
     if r["duration_ms"] is not None:
         attrs["langfuse.observation.metadata.duration_ms"] = int(r["duration_ms"])
 
@@ -421,7 +428,7 @@ def cmd_backfill(a) -> None:
 def _backfill(a) -> None:
     db = open_db()
     to_id = a.to_id if a.to_id is not None else 2**62
-    rows = db.execute(f"SELECT {COLS} FROM api_calls WHERE id BETWEEN ? AND ? ORDER BY id", (a.from_id, to_id))
+    rows = db.execute(f"{CALLS} WHERE c.id BETWEEN ? AND ? ORDER BY c.id", (a.from_id, to_id))
     total = db.execute("SELECT COUNT(*) FROM api_calls WHERE id BETWEEN ? AND ?", (a.from_id, to_id)).fetchone()[0]
     print(f"backfill: {total} rows, ids {a.from_id}..{to_id if a.to_id is not None else 'end'} at {a.rate} rows/s", flush=True)
     last = run_rows(rows, a.rate, True, db)
@@ -442,7 +449,7 @@ def cmd_tail(a) -> None:
         sys.exit(2)  # nothing sent, watermark untouched; cron retries in 5 min
     db = open_db()
     cutoff = (datetime.now(timezone.utc) - timedelta(seconds=a.min_age)).isoformat()
-    rows = [r for r in db.execute(f"SELECT {COLS} FROM api_calls WHERE id > ? ORDER BY id", (max(0, wm - a.overlap),)).fetchall()
+    rows = [r for r in db.execute(f"{CALLS} WHERE c.id > ? ORDER BY c.id", (max(0, wm - a.overlap),)).fetchall()
             if parse_ts(r["ts"]).isoformat() <= cutoff]
     if not rows:
         return
@@ -461,7 +468,7 @@ def cmd_reconcile(a) -> None:
     frm = to - timedelta(days=a.days)
     db = open_db()
     local = defaultdict(float)
-    for ts, c in db.execute("SELECT ts, calculated_cost_usd FROM api_calls WHERE calculated_cost_usd IS NOT NULL"):
+    for ts, c in db.execute("SELECT billed_at, cost_usd FROM call_costs WHERE cost_usd IS NOT NULL"):
         d = parse_ts(ts)
         if frm <= d < to:
             local[d.strftime("%Y-%m-%d")] += c
@@ -492,9 +499,9 @@ def cmd_reconcile(a) -> None:
 
 def cmd_show(a) -> None:
     db = open_db()
-    for r in db.execute(f"SELECT {COLS} FROM api_calls WHERE id IN ({','.join('?'*len(a.ids))}) ORDER BY id", a.ids):
+    for r in db.execute(f"{CALLS} WHERE c.id IN ({','.join('?'*len(a.ids))}) ORDER BY c.id", a.ids):
         model, routes = normalize_model(r["model"]); ct = r["call_type"] or "turn"
-        sub = ct == "subagent_turn" or bool(r["subagent_id"])
+        sub = bool(r["actor"])
         agent = r["agent_id"] or agent_of(r['session'])
         print(f"{r['id']} {r['ts'][:19]} name={TRACE_NAME.get(ct, ct)!r} user={agent!r} model={model!r} routes={routes} session={r['session']!r} sub={sub}")
         if CONTENT:

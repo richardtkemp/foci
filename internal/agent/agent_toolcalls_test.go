@@ -8,7 +8,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"foci/internal/delegator/accounting"
+	"foci/internal/modelinfo"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
@@ -405,5 +408,69 @@ func TestToolErrorRedaction(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestAPITurnCarriesItsTurnToTools is the plumbing for helper-call attribution
+// (#2111, Dick 2026-09-29: "subagent turns should be tied to their parent"): a
+// direct-API turn's tools run under a context that carries the turn, so a
+// summary or spawn a tool makes books onto it — one turn in the ledger, not a
+// turn per helper call.
+func TestAPITurnCarriesItsTurnToTools(t *testing.T) {
+	ledger := openTestLedger(t)
+	var n atomic.Int32
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
+		if n.Add(1) == 1 {
+			return &provider.MessageResponse{
+				ID: "msg_1", Type: "message", Role: "assistant",
+				Content:    []provider.ContentBlock{{Type: "tool_use", ID: "tu_1", Name: "helper", Input: json.RawMessage(`{}`)}},
+				StopReason: "tool_use", Usage: provider.Usage{InputTokens: 20, OutputTokens: 10},
+			}
+		}
+		return &provider.MessageResponse{ID: "msg_2", Type: "message", Role: "assistant",
+			Content: provider.TextContent("Done."), StopReason: "end_turn", Usage: provider.Usage{InputTokens: 30, OutputTokens: 5}}
+	})
+	registry := tools.NewRegistry()
+	var invoking accounting.Turn
+	registry.Register(&tools.Tool{
+		Name: "helper", Parameters: json.RawMessage(`{"type":"object"}`),
+		Execute: func(ctx context.Context, _ json.RawMessage) (tools.ToolResult, error) {
+			// What the summariser and spawn do with their own call.
+			sk := tools.SessionKeyFromContext(ctx)
+			start := time.Now()
+			own := accounting.OwnTurn(accounting.MintTurnID(sk, accounting.KindSummary, start), sk, "test",
+				accounting.SourceSystem, start, start)
+			turn := accounting.TurnFor(ctx, own)
+			invoking = turn
+			err := accounting.Record(turn, accounting.APIResponse{
+				ID: "msg_helper", Kind: accounting.KindSummary, Model: "claude-haiku-4-5",
+				Session: sk, TurnID: turn.TurnID, Start: start,
+				Tokens: modelinfo.Tokens{modelinfo.ClassInput: 7},
+			}.Call())
+			return tools.TextResult("ok"), err
+		},
+	})
+	ag := &Agent{Client: client, Sessions: session.NewStore(t.TempDir()), Tools: registry,
+		Bootstrap: workspace.NewBootstrap(t.TempDir(), []string{}), Model: "claude-haiku-4-5"}
+
+	if _, err := ag.hmTest(context.Background(), "test/c1", "go"); err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+
+	rows := ledgerCalls(t, ledger)
+	if len(rows) != 3 {
+		t.Fatalf("ledger calls = %d, want the turn's two calls and the tool's helper call", len(rows))
+	}
+	if invoking.Source != accounting.SourceUser || !strings.HasPrefix(invoking.TurnID, "test/c1@") ||
+		strings.HasSuffix(invoking.TurnID, ":summary") {
+		t.Fatalf("the tool saw turn %+v, want the conversation turn it ran in", invoking)
+	}
+	for _, r := range rows {
+		if r.TurnID != invoking.TurnID {
+			t.Errorf("call %s (%s) is on turn %q, want the invoking turn %q", r.Kind, r.Model, r.TurnID, invoking.TurnID)
+		}
+	}
+	if st, err := ledger.SessionStats("test/c1"); err != nil || st.TurnCount != 1 {
+		t.Errorf("session stats = %+v (%v), want one turn", st, err)
 	}
 }

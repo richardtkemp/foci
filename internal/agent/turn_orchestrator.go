@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/delegator/accounting"
 	"foci/internal/provider"
 	"foci/internal/telemetry"
 	"foci/internal/turnevent"
@@ -36,6 +37,13 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	// (RowID needs StartedAt), before any gate can fail — so a rate-limited
 	// or stale turn is still a (short, errored) trace.
 	a.traceBegin(ctx, ts)
+	// The turn's work carries the turn: a direct-API helper call it makes (a
+	// summary or spawn from a tool, the compaction after it) is booked on it
+	// (#2111). Only the API transport makes such calls — a delegated agent
+	// summarises through a batch turn and compacts inside its backend.
+	if a.DelegatedManager == nil {
+		ts.Ctx = accounting.WithTurn(ts.Ctx, a.ledgerTurn(ts))
+	}
 
 	// Phase 1: Pre-lock
 	if err := tc.RateLimitGate(ts); err != nil {

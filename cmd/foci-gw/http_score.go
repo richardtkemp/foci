@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
+	"foci/internal/delegator/accounting"
 	"foci/internal/evals"
-	"foci/internal/log"
 	"foci/internal/session"
 	"foci/internal/telemetry"
 )
@@ -92,8 +92,11 @@ func scoreTurn(d httpHandlerDeps, resolveAgent agentResolver, req scoreRequest) 
 	if turn == "" {
 		turn = telemetry.LastTurnID(sk)
 	}
-	if turn == "" {
-		turn = log.LastTurnIDForSession(sk)
+	if l := accounting.Live(); turn == "" && l != nil {
+		var err error
+		if turn, err = l.LastTurnID(sk); err != nil {
+			return nil, fmt.Errorf("find the last turn of %s: %w", sk, err)
+		}
 	}
 	if turn == "" {
 		return nil, fmt.Errorf("session %s has no completed turn to score", sk)

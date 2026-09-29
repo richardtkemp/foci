@@ -1,6 +1,7 @@
 # langfuse-etl
 
-Mirrors `api.db` (`api_calls`, one row per turn, all backends) into a self-hosted Langfuse as traces, so the
+Mirrors the `api.db` cost ledger (`api_calls`, one row per call, all backends; a pre-ledger row is one
+`kind='legacy'` call that kept its id — see `docs/WIRING.md` "Cost ledger") into a self-hosted Langfuse as traces, so the
 household's LLM spend, volume and latency are browsable per agent / model / session. Content (each turn's
 prompt and reply) is joined from the per-agent `conversation.db` when `LANGFUSE_ETL_CONTENT=1` and a
 redaction hash file is present (see `build-redactions.sh`); the payload logs are never read.
@@ -9,7 +10,7 @@ redaction hash file is present (see `build-redactions.sh`); the payload logs are
 `internal/telemetry` (`[tracing]` in foci.toml — see `docs/WIRING.md` "Tracing"), which sends the full
 trace shape (tool calls, subagents, prompt/reply/thinking, system prompt, cross-agent links) that a
 row-level mirror cannot. The two agree on the contract that matters: one `generation` observation per
-api.db row with `cost = calculated_cost_usd`, so `reconcile` checks both eras with one query. **Do not run
+ledger call with `cost = call_costs.cost_usd`, so `reconcile` checks both eras with one query. **Do not run
 `tail` while the Go exporter is enabled** — the ids differ (ETL: sha256 of the row id; Go: sha256 of the
 turn id), so the same row would be counted twice. Cutover: stop the `tail` cron *before* deploying the
 tracing build, then `backfill --from-id <watermark+1> --to-id <last row written by the old binary>` to
@@ -24,9 +25,10 @@ scripts/langfuse-etl/etl.py tail                        # cron: rows above the w
 scripts/langfuse-etl/etl.py reconcile [--days 14]       # per-UTC-day api.db vs Langfuse Metrics API v2; exit 1 if any day differs > $0.05
 ```
 
-Mapping: row → trace (name = `call_type`, user = `agent_id`, session = session key, tags = provider/call_type/token
-scope) with one root GENERATION (model, usage from `turn_*` when present else the snapshot columns, cost =
-`calculated_cost_usd`, start = `ts`, end = `ts + duration_ms`). Ids are sha256 of the row id; Langfuse v4 is append-only, so unchanged re-sends are absorbed but changed rows would be double-counted — rows are therefore sent exactly once and later #1918 corrections are not mirrored (visible in `reconcile`).
+Mapping: call → trace (name = `call_type` — a legacy call's pre-ledger `call_type`, `conversation` for a
+direct-API turn's call, else the ledger `kind`; user = `agent_id`, session = session key, tags = backend/call_type/
+token scope) with one root GENERATION (model, usage from `call_tokens`, cost = `call_costs.cost_usd`, start =
+`billed_at`, end = `billed_at + detail.duration_ms`). Ids are sha256 of the row id; Langfuse v4 is append-only, so unchanged re-sends are absorbed but changed rows would be double-counted — rows are therefore sent exactly once and later #1918 corrections are not mirrored (visible in `reconcile`).
 
 Transport is plain OTel/OTLP-HTTP with the official SDK's span attribute names (`langfuse.observation.*`,
 `session.id`, `user.id`); the SDK itself can't set a historical start time, which the backfill needs.

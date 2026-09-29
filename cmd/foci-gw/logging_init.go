@@ -6,8 +6,8 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/convo"
+	"foci/internal/delegator/accounting"
 	"foci/internal/log"
-	"foci/internal/session"
 	"foci/internal/tempdir"
 )
 
@@ -100,17 +100,28 @@ func initLogging(cfg *config.Config, processStart time.Time) func() {
 		cleanups = append(cleanups, stopRotation)
 	}
 
-	// API call log (SQLite)
+	// The cost ledger (#2111) in api.db. Opening a pre-ledger api.db migrates
+	// it — once, under a VACUUM INTO backup, in one transaction — so the
+	// cutover happens at the first start of a binary that books through it.
 	if cfg.Logging.APIDB != "" {
-		if err := log.InitAPIDB(cfg.Logging.APIDB); err != nil {
-			log.Fatalf("main", "init API db: %v", err)
+		ledger, report, err := accounting.Open(cfg.Logging.APIDB, accounting.Options{
+			// Invariants alarm and are never absorbed (#2111 R9). They are
+			// WARNs until the P3 checks route them to operator chat.
+			OnAlarm: func(a accounting.Alarm) {
+				ledgerLog.Warnf("%s [%s]: %s", a.Invariant, a.Backend, a.Detail)
+			},
+		})
+		if err != nil {
+			log.Fatalf("main", "open cost ledger %s: %v", cfg.Logging.APIDB, err)
 		}
-		cleanups = append(cleanups, log.CloseAPIDB)
-		// #1946: give agent_id one honest meaning across every row. Non-fatal —
-		// a failed backfill leaves historical rows as they were, not broken.
-		if err := log.BackfillAgentIDs(session.AgentIDFromAnyKey); err != nil {
-			mainLog.Warnf("backfill api_calls agent_id (#1946): %v", err)
+		if report != nil {
+			ledgerLog.Infof("migrated the pre-ledger api.db (backup %s):\n%s", report.BackupPath, report.String())
 		}
+		accounting.SetLive(ledger)
+		cleanups = append(cleanups, func() {
+			accounting.SetLive(nil)
+			_ = ledger.Close()
+		})
 	}
 
 	// Conversation log (per-agent SQLite databases in workspace .data)

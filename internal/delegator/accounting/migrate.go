@@ -368,6 +368,10 @@ func legacyTurn(key string, rows []*v1Row) Turn {
 		source = SourceBatch
 	case head.callType == "compaction":
 		source = SourceCompaction
+	case head.callType == "summary", head.callType == "spawn":
+		// A direct-API helper call, not a turn of the conversation: the
+		// ledger books these on turns of their own, marked system.
+		source = SourceSystem
 	}
 	ended := head.ts.Add(time.Duration(head.durationMS) * time.Millisecond)
 	t := Turn{
@@ -415,9 +419,16 @@ func legacyCostBasis(r *v1Row) string {
 	return CostBasisRecorded
 }
 
+// UnnamedSubagent is the actor of a subagent's call whose subagent was never
+// named (usage that arrived before its task_started).
+const UnnamedSubagent = "(unnamed)"
+
 // legacyCall builds the ledger call for one pre-ledger row.
 func legacyCall(r *v1Row) Call {
-	detail := map[string]any{"v1_call_type": r.callType}
+	// turn_totals records which counts the row carries: the turn_* group the
+	// writer measured, or the un-suffixed four (a delegated turn's final-cycle
+	// context fill before #1854).
+	detail := map[string]any{"v1_call_type": r.callType, "turn_totals": r.turnTotals}
 	if r.durationMS > 0 {
 		detail["duration_ms"] = r.durationMS
 	}
@@ -429,9 +440,15 @@ func legacyCall(r *v1Row) Call {
 		v := r.calcUSD.Float64
 		calc = &v
 	}
+	// A subagent share whose usage arrived before anything named its
+	// subagent still is one: actor "" would make it the session's own thread.
+	actor := r.subagentID
+	if r.isSubagent() && actor == "" {
+		actor = UnnamedSubagent
+	}
 	return Call{
 		Backend: r.backend, Provider: r.provider, Model: r.model,
-		Session: r.session, AgentID: r.agentID, TurnID: r.turnKey(), Actor: r.subagentID,
+		Session: r.session, AgentID: r.agentID, TurnID: r.turnKey(), Actor: actor,
 		Kind: KindLegacy, Finality: FinalityLegacy, ClassMethod: r.classMethod,
 		BilledAt: r.ts, Tokens: r.tokens(), StopReason: r.stopReason,
 		SessionFile: r.sessionFile, SessionLine: r.sessionLine,
@@ -479,6 +496,7 @@ func (l *Ledger) migrateV1(path string, opts Options) (*MigrationReport, error) 
 
 	var v1 []*v1Row
 	err := l.Update(func(tx *Tx) error {
+		tx.quiet = true
 		if _, err := tx.tx.Exec(`ALTER TABLE api_calls RENAME TO api_calls_v1`); err != nil {
 			return fmt.Errorf("ledger migration: rename v1: %w", err)
 		}

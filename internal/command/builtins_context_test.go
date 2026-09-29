@@ -10,7 +10,6 @@ import (
 	"foci/internal/agent"
 	"foci/internal/compaction"
 	"foci/internal/display"
-	"foci/internal/log"
 )
 
 // contextCC builds a minimal CommandContext for testing ContextCommand.
@@ -27,7 +26,7 @@ func contextCC(apiLogPath string, info ContextInfo) CommandContext {
 // TestContextCommand verifies context display shows token usage, threshold status, and system prompt breakdown.
 func TestContextCommand(t *testing.T) {
 	now := time.Now().UTC()
-	path := writeAPILog(t, []log.APIEntry{
+	path := writeAPILog(t, []apiRow{
 		{Timestamp: now, Session: "main/i0", Input: 50000, CacheRead: 30000, CacheWrite: 10000},
 		{Timestamp: now.Add(time.Minute), Session: "main/i0", Input: 60000, CacheRead: 40000, CacheWrite: 5000, Output: 1500},
 		{Timestamp: now, Session: "other:session", Input: 100000, CacheRead: 0, CacheWrite: 0},
@@ -81,7 +80,7 @@ func TestContextCommand(t *testing.T) {
 // TestContextCommandAtThreshold verifies "at/above threshold" message when usage reaches compaction threshold.
 func TestContextCommandAtThreshold(t *testing.T) {
 	now := time.Now().UTC()
-	path := writeAPILog(t, []log.APIEntry{
+	path := writeAPILog(t, []apiRow{
 		{Timestamp: now, Session: "main/i0", Input: 150000, CacheRead: 20000, CacheWrite: 0},
 	})
 
@@ -123,7 +122,7 @@ func TestContextCommandNoApiCalls(t *testing.T) {
 // the conversation block degrades to "data unavailable", never a table of zeroes.
 func TestContextCommandConversationUnavailable(t *testing.T) {
 	now := time.Now().UTC()
-	path := writeAPILog(t, []log.APIEntry{
+	path := writeAPILog(t, []apiRow{
 		{Timestamp: now, Session: "main/i0", Input: 60000, CacheRead: 40000, CacheWrite: 5000},
 	})
 
@@ -147,7 +146,7 @@ func TestContextCommandConversationUnavailable(t *testing.T) {
 // TestContextCommandOtherSession verifies correct message when API calls exist but not for current session.
 func TestContextCommandOtherSession(t *testing.T) {
 	now := time.Now().UTC()
-	path := writeAPILog(t, []log.APIEntry{
+	path := writeAPILog(t, []apiRow{
 		{Timestamp: now, Session: "other:session", Input: 50000, CacheRead: 0, CacheWrite: 0},
 	})
 
@@ -168,7 +167,7 @@ func TestContextCommandOtherSession(t *testing.T) {
 // TestContextCommandCustomThreshold verifies threshold comparison works with custom values.
 func TestContextCommandCustomThreshold(t *testing.T) {
 	now := time.Now().UTC()
-	path := writeAPILog(t, []log.APIEntry{
+	path := writeAPILog(t, []apiRow{
 		{Timestamp: now, Session: "main/i0", Input: 100000, CacheRead: 0, CacheWrite: 0},
 	})
 
@@ -200,7 +199,7 @@ func TestContextCommandMatchesNonlinearEffectiveThreshold(t *testing.T) {
 	now := time.Now().UTC()
 	// ~45% of the window used, matching the real-world numbers this bug was
 	// diagnosed from (a live session's api.db row).
-	path := writeAPILog(t, []log.APIEntry{
+	path := writeAPILog(t, []apiRow{
 		{Timestamp: now, Session: sk, Input: 2, CacheRead: 448454, CacheWrite: 1534},
 	})
 
@@ -240,7 +239,7 @@ func TestContextCommandMatchesNonlinearEffectiveThreshold(t *testing.T) {
 // TestContextCommandNoSkillsOrEnv verifies sections with zero tokens are omitted.
 func TestContextCommandNoSkillsOrEnv(t *testing.T) {
 	now := time.Now().UTC()
-	path := writeAPILog(t, []log.APIEntry{
+	path := writeAPILog(t, []apiRow{
 		{Timestamp: now, Session: "main/i0", Input: 10000, CacheRead: 5000, CacheWrite: 1000},
 	})
 
@@ -325,7 +324,7 @@ func TestContextCommandExactTokens(t *testing.T) {
 // TestContextCommandCountingAPIError verifies fallback to estimates when token counting fails.
 func TestContextCommandCountingAPIError(t *testing.T) {
 	now := time.Now().UTC()
-	path := writeAPILog(t, []log.APIEntry{
+	path := writeAPILog(t, []apiRow{
 		{Timestamp: now, Session: "main/i0", Input: 50000, CacheRead: 30000, CacheWrite: 10000, Output: 500},
 	})
 

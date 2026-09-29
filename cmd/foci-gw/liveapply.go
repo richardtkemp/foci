@@ -6,6 +6,7 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/delegator"
+	"foci/internal/delegator/accounting"
 	"foci/internal/log"
 	"foci/internal/modelinfo"
 )
@@ -339,6 +340,11 @@ func registerLiveAppliers(la *liveApply, agents map[string]*agentInstance) {
 	la.register(liveApplyModelInfoAddrs, func(fresh *config.Config) error {
 		modelinfo.ResetToBuiltIn()
 		config.ApplyModelInfo(fresh.ModelInfo)
+		// The ledger's views price from a copy of these rates; re-render it so
+		// SQL and Go keep pricing alike (#2111 §11.11).
+		if l := accounting.Live(); l != nil {
+			return l.RenderRates()
+		}
 		return nil
 	})
 }

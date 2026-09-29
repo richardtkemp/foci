@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"foci/internal/log"
+	"foci/internal/delegator/accounting"
 )
 
 // flushForTest forces the current provider to export every buffered span
@@ -28,8 +28,8 @@ func flushForTest(ctx context.Context) error {
 // (-count=2) regardless of order. Safe to call when never initialised.
 func resetForTest() {
 	enabled.Store(false)
-	log.APIHook = nil
-	log.CorrectionHook = nil
+	accounting.BookedHook = nil
+	accounting.CorrectionHook = nil
 
 	mu.Lock()
 	tp := tracerProvider

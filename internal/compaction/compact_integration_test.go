@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"foci/internal/delegator/accounting"
 	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/provider"
@@ -23,6 +25,7 @@ func TestCompactBasic(t *testing.T) {
 	// on disk next to the live session file.
 	server := mockCompactionServer("Summary of conversation: user said hello, we discussed Go testing.")
 	defer server.Close()
+	ledger := openTestLedger(t)
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
@@ -93,6 +96,35 @@ func TestCompactBasic(t *testing.T) {
 	if !strings.Contains(string(archived), "user message") {
 		t.Errorf("archive %s should contain the pre-compaction messages", archives[0])
 	}
+
+	// The summary call is booked in the cost ledger as a compaction, on a
+	// compaction turn of its own (#2111 §5.3, R3).
+	calls, err := ledger.Calls(time.Time{})
+	if err != nil || len(calls) != 1 {
+		t.Fatalf("ledger calls = %d (%v), want the one compaction call", len(calls), err)
+	}
+	if c := calls[0]; c.Kind != accounting.KindCompaction || c.Backend != accounting.BackendAPI ||
+		c.Session != sessionKey || !strings.HasSuffix(c.TurnID, ":compaction") {
+		t.Errorf("call = %+v, want an api compaction call on its own turn", c)
+	}
+	if st, err := ledger.SessionStats(sessionKey); err != nil || st.TurnCount != 0 || st.TotalCalls != 1 {
+		t.Errorf("session stats = %+v (%v): a compaction is a call, not one of the session's turns", st, err)
+	}
+}
+
+// openTestLedger opens a cost ledger in a temp dir as the live one for the test.
+func openTestLedger(t *testing.T) *accounting.Ledger {
+	t.Helper()
+	l, _, err := accounting.Open(filepath.Join(t.TempDir(), "api.db"), accounting.Options{})
+	if err != nil {
+		t.Fatalf("open ledger: %v", err)
+	}
+	accounting.SetLive(l)
+	t.Cleanup(func() {
+		accounting.SetLive(nil)
+		_ = l.Close()
+	})
+	return l
 }
 
 func TestCompactDryRun(t *testing.T) {
@@ -528,5 +560,40 @@ func TestCompactReplaceError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "replace session after compaction") {
 		t.Errorf("error = %q, want 'replace session after compaction'", err)
+	}
+}
+
+// TestCompactBooksOntoTheInvokingTurn: the compaction a conversation turn runs
+// after itself (its context carries the turn) is that turn's spend — a
+// compaction call on the turn, not a compaction turn of its own. The session
+// still has just that one turn.
+func TestCompactBooksOntoTheInvokingTurn(t *testing.T) {
+	server := mockCompactionServer("Summary.")
+	defer server.Close()
+	ledger := openTestLedger(t)
+	store := session.NewStore(t.TempDir())
+	sessionKey := "test/imain"
+	for i := 0; i < 3; i++ {
+		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("user message")})
+		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("assistant reply")})
+	}
+	parent := accounting.Turn{TurnID: sessionKey + "@42", Session: sessionKey, Backend: accounting.BackendAPI,
+		Source: accounting.SourceUser, StartedAt: time.Now()}
+	ctx := accounting.WithTurn(context.Background(), parent)
+
+	c := NewCompactor(store, 0.8)
+	if _, err := c.Compact(ctx, noStream(newTestAnthropicClient(server.URL, "test-key")), sessionKey,
+		"claude-haiku-4-5", "anthropic", nil, "", "", false); err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	calls, err := ledger.Calls(time.Time{})
+	if err != nil || len(calls) != 1 {
+		t.Fatalf("ledger calls = %d (%v), want the one compaction call", len(calls), err)
+	}
+	if c := calls[0]; c.Kind != accounting.KindCompaction || c.TurnID != parent.TurnID {
+		t.Errorf("call = %s on %q, want a compaction call on the invoking turn %q", c.Kind, c.TurnID, parent.TurnID)
+	}
+	if st, err := ledger.SessionStats(sessionKey); err != nil || st.TurnCount != 1 {
+		t.Errorf("session stats = %+v (%v), want the one conversation turn", st, err)
 	}
 }

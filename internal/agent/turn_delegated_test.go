@@ -11,9 +11,12 @@ import (
 	"testing"
 	"time"
 
+	_ "modernc.org/sqlite"
+
 	"foci/internal/compaction"
 	"foci/internal/convo"
 	"foci/internal/delegator"
+	"foci/internal/delegator/accounting"
 	"foci/internal/log"
 	"foci/internal/modelinfo"
 	"foci/internal/nudge"
@@ -21,8 +24,6 @@ import (
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/turnevent"
-
-	_ "modernc.org/sqlite"
 )
 
 // TestDelegatedTransport_NoOps verifies that no-op methods don't panic and
@@ -1716,17 +1717,13 @@ func TestDelegatedTransport_RunInference_PreAnswerFoldsIntoFinal(t *testing.T) {
 
 // TestDelegatedTransport_GatedTurn_OneRowNoSpuriousCompaction: a gate-fired
 // delegated turn (two rounds, each reading the full ~55k context) folds into
-// ONE api.db row like a steer (#1856). The row's input/cache are the final
-// cycle's fill; its turn_* are the per-cycle sums pricing came from. The
+// ONE legacy call like a steer (#1856). Its turn keeps the final cycle's fill;
+// its counts are the per-cycle sums pricing came from. The
 // compaction trigger sizes from the fill, so the doubled cross-round
 // cache_read (≈111k > 60k threshold) must NOT trigger compaction.
 func TestDelegatedTransport_GatedTurn_OneRowNoSpuriousCompaction(t *testing.T) {
-	// Real api.db so we can count the rows written by LogUsage.
-	dbPath := filepath.Join(t.TempDir(), "api.db")
-	if err := log.InitAPIDB(dbPath); err != nil {
-		t.Fatalf("InitAPIDB: %v", err)
-	}
-	t.Cleanup(func() { log.CloseAPIDB() })
+	// A real ledger so we can count the calls LogUsage books.
+	ledger := openTestLedger(t)
 
 	const model = "claude-sonnet-4-5"
 	store := session.NewStore(t.TempDir())
@@ -1760,28 +1757,28 @@ func TestDelegatedTransport_GatedTurn_OneRowNoSpuriousCompaction(t *testing.T) {
 
 	tr.LogUsage(ts)
 
-	// (1) ONE ledger row: fill from the final cycle, turn_* summed.
-	rows := log.ReadAPIDBLog()
+	// (1) ONE legacy call: fill from the final cycle, counts summed.
+	rows := ledgerCalls(t, ledger)
 	if len(rows) != 1 {
-		t.Fatalf("api.db rows = %d, want 1 (a gated turn is one turn)", len(rows))
+		t.Fatalf("ledger calls = %d, want 1 (a gated turn is one turn)", len(rows))
 	}
 	r := rows[0]
-	if r.CacheRead != 55566 || r.Input != 2 || r.Output != 350 {
-		t.Errorf("row = {in:%d out:%d cr:%d}, want {2 350 55566} (final-cycle fill, summed output)", r.Input, r.Output, r.CacheRead)
+	if r.Fill != 2+55566 {
+		t.Errorf("call fill = %d, want %d (the final cycle's)", r.Fill, 2+55566)
 	}
-	if r.Turn == nil || r.Turn.CacheRead != 110971 || r.Turn.Input != 248 {
-		t.Errorf("row.Turn = %+v, want cross-round sums {248 _ 110971 0}", r.Turn)
+	if in, cr := r.Count(modelinfo.ClassInput), r.Count(modelinfo.ClassCacheRead); in != 248 || cr != 110971 {
+		t.Errorf("call counts = {in:%d cr:%d}, want cross-round sums {248 110971}", in, cr)
 	}
-	if r.CallType != "delegated_turn" {
-		t.Errorf("row.CallType = %q, want delegated_turn", r.CallType)
+	if r.Kind != accounting.KindLegacy || r.Subagent() {
+		t.Errorf("call = %s actor %q, want the turn's legacy parent call", r.Kind, r.Actor)
 	}
 
 	// (2) Turn-total cost = the backend's calculated cost, on the row and in FinalCost.
 	if diff := ts.FinalCost - cost; diff > 1e-9 || diff < -1e-9 {
 		t.Errorf("FinalCost = %.8f, want %.8f", ts.FinalCost, cost)
 	}
-	if diff := r.EffectiveCost() - cost; diff > 1e-9 || diff < -1e-9 {
-		t.Errorf("row cost %.8f != %.8f", r.EffectiveCost(), cost)
+	if diff := r.Cost() - cost; diff > 1e-9 || diff < -1e-9 {
+		t.Errorf("call cost %.8f != %.8f", r.Cost(), cost)
 	}
 
 	// (3) Compaction sizes from the fill (2+55566 < 60k), not from Turn

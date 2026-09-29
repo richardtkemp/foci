@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"foci/internal/config"
+	"foci/internal/delegator/accounting"
 	"foci/internal/provider"
 )
 
@@ -242,5 +244,62 @@ func TestSummaryTool_ModelAlias(t *testing.T) {
 
 	if gotModel != "claude-haiku-4-5-custom" {
 		t.Errorf("model = %q, want %q", gotModel, "claude-haiku-4-5-custom")
+	}
+}
+
+// TestAPISummariserBooksOntoTheInvokingTurn: a summary a conversation turn's
+// tool asked for is booked as a summary call on that turn; asked for by no
+// turn, it gets a system turn of its own (#2111). Not parallel: it makes a
+// ledger the live one.
+func TestAPISummariserBooksOntoTheInvokingTurn(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(provider.MessageResponse{
+			ID: "msg_" + r.Header.Get("X-Test"), Type: "message", Role: "assistant",
+			Content: provider.TextContent("summary"), Model: "claude-haiku-4-5",
+			Usage: provider.Usage{InputTokens: 100, OutputTokens: 20}, StopReason: "end_turn",
+		})
+	}))
+	defer server.Close()
+	gr := config.NewGroupResolver(config.GroupsConfig{Groups: map[string]string{
+		"powerful": "anthropic/claude-haiku-4-5", "fast": "anthropic/claude-haiku-4-5", "cheap": "anthropic/claude-haiku-4-5",
+	}}, nil, true)
+	s := NewAPISummariser(newTestAnthropicClient(server.URL, "test-key"), nil, gr, nil, func() int { return 0 })
+
+	for _, tc := range []struct {
+		name   string
+		parent *accounting.Turn
+	}{
+		{"invoked by a turn", &accounting.Turn{TurnID: "gil/c1@42", Session: "gil/c1", AgentID: "gil",
+			Backend: accounting.BackendAPI, Source: accounting.SourceUser, StartedAt: time.Now()}},
+		{"invoked by no turn", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l, _, err := accounting.Open(filepath.Join(t.TempDir(), "api.db"), accounting.Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			accounting.SetLive(l)
+			t.Cleanup(func() { accounting.SetLive(nil); _ = l.Close() })
+
+			ctx := WithSessionKey(context.Background(), "gil/c1")
+			if tc.parent != nil {
+				ctx = accounting.WithTurn(ctx, *tc.parent)
+			}
+			if _, err := s.Summarise(ctx, []byte("content"), "sum it", "f.go"); err != nil {
+				t.Fatal(err)
+			}
+			rows, err := l.Calls(time.Time{})
+			if err != nil || len(rows) != 1 || rows[0].Kind != accounting.KindSummary {
+				t.Fatalf("calls = %+v (%v), want one summary call", rows, err)
+			}
+			got := rows[0].TurnID
+			if tc.parent != nil && got != tc.parent.TurnID {
+				t.Errorf("summary booked on %q, want the invoking turn %q", got, tc.parent.TurnID)
+			}
+			if tc.parent == nil && !strings.HasSuffix(got, ":summary") {
+				t.Errorf("summary booked on %q, want a summary turn of its own", got)
+			}
+		})
 	}
 }

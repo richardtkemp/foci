@@ -7,44 +7,59 @@ import (
 	"strings"
 
 	"foci/internal/delegator"
+	"foci/internal/delegator/accounting"
 	"foci/internal/display"
-	"foci/internal/log"
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
 )
 
-// categoryCosts computes per-category cost breakdown from API log entries.
-// This splits a LIVE estimate into its input/output/cache components (a
-// golden entry only gives one total, not a per-category split), priced as of
-// each entry's own request timestamp rather than today's latest rate
-// (modelinfo.CostAsOf — foci_todo #1407) so the category split stays
-// consistent with EffectiveCost's total for entries with no golden cost.
-//
-// search is the turn's server-side web searches, billed per CALL rather than
-// per token (#1913). Without it the categories would sum short of Total by
-// $0.01 per search.
-func categoryCosts(entries []log.APIEntry) (cacheRead, cacheWrite, input, output, search float64) {
+// categorySplit is a set of calls' cost split by token category.
+type categorySplit struct {
+	cacheRead, cacheWrite, input, output, search float64
+	// recorded is the cost of legacy calls priced from their recorded figure,
+	// which was never split by class (accounting.CostBasisRecorded).
+	recorded float64
+}
+
+// categoryCosts splits calls' cost by token category, from the ledger's own
+// per-class prices (call_class_costs), so the categories add up to the total
+// exactly: every cache-write TTL class is a cache write, reasoning is output,
+// a web search is billed per call (#1913). A call priced from a recorded
+// figure contributes that figure to recorded.
+func categoryCosts(entries []accounting.CallRow) categorySplit {
+	var s categorySplit
 	for _, e := range entries {
-		// PricedCounts, never the fields: for a delegated turn the un-suffixed
-		// four are the final cycle's CONTEXT FILL, not what the row was priced
-		// from, so this table used to sit beside a correct Total it could not
-		// add up to. Measured 2026-09-11 over 810 rows: 3,845,629 cache-write
-		// tokens in the fields against 55,728,618 in Turn, a 14.5x shortfall
-		// (#1854, #1863).
-		c := e.PricedCounts()
-		price := func(class modelinfo.Class, n int) float64 {
-			usd, _ := modelinfo.CostAsOf(e.Model, e.Timestamp, modelinfo.Tokens{class: n})
-			return usd
+		// An unpriced call is outside the total (unpricedNote), so its priced
+		// classes stay outside the split too.
+		if !e.Priced() {
+			continue
 		}
-		cacheRead += price(modelinfo.ClassCacheRead, c.CacheRead)
-		cacheWrite += price(modelinfo.ClassCacheWrite, c.CacheWrite)
-		input += price(modelinfo.ClassInput, c.Input)
-		output += price(modelinfo.ClassOutput, c.Output)
-		search += price(modelinfo.ClassWebSearch, c.WebSearches)
+		if e.CostBasis == accounting.CostBasisRecorded {
+			s.recorded += e.Cost()
+			continue
+		}
+		for class, cc := range e.Classes {
+			if cc.CostUSD == nil {
+				continue
+			}
+			v := *cc.CostUSD
+			switch class {
+			case modelinfo.ClassCacheRead:
+				s.cacheRead += v
+			case modelinfo.ClassCacheWrite5m, modelinfo.ClassCacheWrite1h, modelinfo.ClassCacheWrite:
+				s.cacheWrite += v
+			case modelinfo.ClassInput:
+				s.input += v
+			case modelinfo.ClassOutput, modelinfo.ClassReasoning:
+				s.output += v
+			case modelinfo.ClassWebSearch, modelinfo.ClassWebFetch:
+				s.search += v
+			}
+		}
 	}
-	return
+	return s
 }
 
 // CacheCommand returns a /cache command showing API calls with cache breakdown.
@@ -60,7 +75,7 @@ func CacheCommand() *Command {
 					n = parsed
 				}
 			}
-			entries := readDurableAPIEntries(cc)
+			entries := readCalls(cc)
 			if len(entries) == 0 {
 				return Response{Text: "No API calls logged yet."}, nil
 			}
@@ -73,8 +88,9 @@ func CacheCommand() *Command {
 
 			var totalCacheRead, totalInput int
 			for _, e := range recent {
-				totalCacheRead += e.CacheRead
-				totalInput += e.Input + e.CacheRead + e.CacheWrite
+				read, in := cacheCounts(e)
+				totalCacheRead += read
+				totalInput += in
 			}
 			avgHit := 0.0
 			if totalInput > 0 {
@@ -91,29 +107,27 @@ func CacheCommand() *Command {
 			}
 			rows := make([]cacheRow, len(recent))
 			for i, e := range recent {
-				// PricedCounts, not the raw fields: a subagent row leaves the
-				// context-fill columns at zero (it has no final cycle of its
-				// own), which read as a call that cost money and cached
-				// nothing. The turn counts are what it actually used.
-				c := e.PricedCounts()
+				read, in := cacheCounts(e)
 				hitRate := 0.0
-				inp := c.Input + c.CacheRead + c.CacheWrite
-				if inp > 0 {
-					hitRate = float64(c.CacheRead) / float64(inp) * 100
+				if in > 0 {
+					hitRate = float64(read) / float64(in) * 100
 				}
-				when := e.Timestamp.Format("15:04:05")
-				if e.IsSubagent() {
-					// Marked, not hidden: its cost is real and was taken OUT of
-					// the parent row beside it, so dropping it would leave the
-					// column short against the session total.
+				when := e.BilledAt.Local().Format("15:04:05")
+				if e.Subagent() {
+					// Marked, not hidden: a subagent's spend is real, and on a
+					// legacy row it was taken OUT of the parent row beside it.
 					when += " ↳"
+				}
+				cost := "n/a"
+				if e.Priced() {
+					cost = fmt.Sprintf("$%.3f", e.Cost())
 				}
 				rows[i] = cacheRow{
 					time:   when,
-					input:  display.FormatCommas(c.Input),
-					cRead:  display.FormatCommas(c.CacheRead),
-					cWrite: display.FormatCommas(c.CacheWrite),
-					cost:   fmt.Sprintf("$%.3f", e.EffectiveCost()),
+					input:  display.FormatCommas(e.Count(modelinfo.ClassInput)),
+					cRead:  display.FormatCommas(read),
+					cWrite: display.FormatCommas(e.Count(cacheWriteClasses...)),
+					cost:   cost,
 					hitPct: fmt.Sprintf("%.0f%%", hitRate),
 				}
 			}
@@ -145,24 +159,15 @@ func truncateSession(session string) string {
 	return session
 }
 
-// readDurableAPIEntries returns API log entries, preferring the durable
-// SQLite db (survives service restarts, and is a superset of the JSONL —
-// written per call at insert time by log.API) over api.jsonl, which is
-// archived to empty on every process start (initLogging's startup
-// RotateOnce archives everything stamped before process start, and nothing
-// writes api.jsonl earlier) and so under-reports — or, if the JSONL write
-// path is stalled for any reason, fully misses — everything logged since the
-// last restart. Falls back to the JSONL only when the db is empty/not
-// initialised (e.g. unit tests, very early startup). The db captures both
-// direct-API and delegated-backend (CC/codex) calls: turn_delegated.go's
-// LogUsage calls the same log.API() as the direct path, so this covers both.
-func readDurableAPIEntries(cc CommandContext) []log.APIEntry {
-	entries := log.ReadAPIDBLog()
-	if len(entries) == 0 {
-		entries = log.ReadAPILog(cc.APILogPath)
-	}
-	return entries
+// cacheCounts is a call's cache reads and its whole input side (input, cache
+// reads and every cache-write class) — the two a hit rate divides.
+func cacheCounts(e accounting.CallRow) (read, in int) {
+	read = e.Count(modelinfo.ClassCacheRead)
+	return read, read + e.Count(modelinfo.ClassInput) + e.Count(cacheWriteClasses...)
 }
+
+// cacheWriteClasses are the cache-write classes, one per TTL.
+var cacheWriteClasses = []modelinfo.Class{modelinfo.ClassCacheWrite5m, modelinfo.ClassCacheWrite1h, modelinfo.ClassCacheWrite}
 
 // LastCommand returns a /last command showing the most recent API call per agent.
 func LastCommand() *Command {
@@ -171,22 +176,21 @@ func LastCommand() *Command {
 		Description: "Last API call per agent (or /last <agent>)",
 		Category:    "observability",
 		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
-			entries := readDurableAPIEntries(cc)
+			entries := readCalls(cc)
 			if len(entries) == 0 {
 				return Response{Text: "No API calls logged yet."}, nil
 			}
 
 			filter := strings.TrimSpace(req.Args)
 
-			latest := make(map[string]log.APIEntry)
+			latest := make(map[string]accounting.CallRow)
 			var order []string
 			for i := len(entries) - 1; i >= 0; i-- {
-				// A subagent row is not the agent's last API CALL — it is a
-				// share of a turn, written at the same moment as the parent row
-				// beside it, and carries the subagent's model and no context
-				// fill. Showing it here answers a different question than the
-				// one asked (#1880 phase C).
-				if entries[i].IsSubagent() {
+				// A subagent's call is not the agent's own last call: it
+				// carries the subagent's model and leaves no fill in the
+				// session's context. Showing it answers a different question
+				// than the one asked (#1880 phase C).
+				if entries[i].Subagent() {
 					continue
 				}
 				agent := session.AgentIDFromAnyKey(entries[i].Session)
@@ -221,15 +225,18 @@ func LastCommand() *Command {
 			tableRows := make([][]string, 0, len(order))
 			for _, agent := range order {
 				e := latest[agent]
+				cost := "n/a"
+				if e.Priced() {
+					cost = fmt.Sprintf("%.4f", e.Cost())
+				}
 				tableRows = append(tableRows, []string{
 					agent,
-					display.CompactRelativeTime(e.Timestamp),
+					display.CompactRelativeTime(e.BilledAt),
 					e.Model,
-					// Context fill, deliberately, not PricedCounts: this view
-					// answers "how big is the session now", which is what the
-					// un-suffixed columns mean.
-					fmt.Sprintf("in=%d out=%d cR=%d", e.Input, e.Output, e.CacheRead),
-					fmt.Sprintf("%.4f", e.EffectiveCost()),
+					// The context the call left — "how big is the session
+					// now" — and what it wrote.
+					fmt.Sprintf("ctx=%d out=%d", e.Fill, e.Count(modelinfo.ClassOutput, modelinfo.ClassReasoning)),
+					cost,
 					truncateSession(e.Session),
 				})
 			}
@@ -247,8 +254,8 @@ func LastCommand() *Command {
 // are a flexible mix of duration, scope, and breakdown — parsed by
 // parseCostArgs into orthogonal filters.
 func CostCommand() *Command {
-	readEntries := func(cc CommandContext) ([]log.APIEntry, error) {
-		entries := readDurableAPIEntries(cc)
+	readEntries := func(cc CommandContext) ([]accounting.CallRow, error) {
+		entries := readCalls(cc)
 		if len(entries) == 0 {
 			return nil, fmt.Errorf("No API calls logged yet.")
 		}
@@ -271,13 +278,13 @@ func CostCommand() *Command {
 
 			// Apply time filter.
 			timePred := args.timePredicate()
-			entries = filterEntries(entries, func(e log.APIEntry) bool {
-				return timePred(e.Timestamp)
+			entries = filterEntries(entries, func(e accounting.CallRow) bool {
+				return timePred(e.BilledAt)
 			})
 
 			// Apply scope filter (intersection of all scopes).
 			scopePred, scopeLabel := scopePredicate(args.scopes, req.SessionKey, cc.SessionIndex)
-			entries = filterEntries(entries, func(e log.APIEntry) bool {
+			entries = filterEntries(entries, func(e accounting.CallRow) bool {
 				return scopePred(e.Session)
 			})
 
@@ -358,14 +365,13 @@ func ContextCommand() *Command {
 			// very early startup). Also check CountTokensFn for exact counts
 			// (API backend path where foci counts tokens itself).
 			var contextTokens int
-			stats, _ := log.QuerySessionStats(sk)
-			if stats != nil {
+			if stats := sessionStats(sk); stats != nil {
 				contextTokens = stats.ContextTokens
 			}
 			if contextTokens == 0 {
-				for _, e := range log.ReadAPILog(cc.APILogPath) {
-					if e.Session == sk {
-						contextTokens = e.Input + e.CacheRead + e.CacheWrite
+				for _, e := range accounting.ReadJSONL(cc.APILogPath) {
+					if e.Session == sk && !e.Subagent() && e.Fill > 0 {
+						contextTokens = e.Fill
 					}
 				}
 			}

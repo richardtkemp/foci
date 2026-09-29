@@ -6,14 +6,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"foci/internal/delegator"
-	"foci/internal/log"
+	"foci/internal/delegator/accounting"
+	"foci/internal/modelinfo"
 	"foci/internal/telemetry"
 )
 
@@ -117,15 +117,11 @@ func newBatchTestAgent(t *testing.T, be delegator.Delegator) *Agent {
 
 // TestRunBatch_RecordsAPIRowAndTrace is the #1962 regression: a batch run
 // (consolidation, nudge extraction, the summary tool) must go through the
-// ordinary delegated turn, so the existing turn code writes the api.db row and
-// the Langfuse trace. Before, RunBatch shelled a separate one-shot and left no
+// ordinary delegated turn, so the existing turn code books its spend in the
+// cost ledger and writes the Langfuse trace. Before, RunBatch shelled a separate one-shot and left no
 // record of its spend at all.
 func TestRunBatch_RecordsAPIRowAndTrace(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "api.db")
-	if err := log.InitAPIDB(dbPath); err != nil {
-		t.Fatalf("InitAPIDB: %v", err)
-	}
-	t.Cleanup(log.CloseAPIDB)
+	ledger := openTestLedger(t)
 	otlp := startFakeOTLP(t)
 
 	cost := 0.0123
@@ -167,13 +163,13 @@ func TestRunBatch_RecordsAPIRowAndTrace(t *testing.T) {
 		t.Error("RunBatch used the separate one-shot path instead of a delegated turn")
 	}
 
-	rows := log.ReadAPIDBLog()
+	rows := ledgerCalls(t, ledger)
 	if len(rows) != 1 {
-		t.Fatalf("api.db rows after a batch run = %d, want 1 (a batch run must be accounted like any turn)", len(rows))
+		t.Fatalf("ledger calls after a batch run = %d, want 1 (a batch run must be accounted like any turn)", len(rows))
 	}
 	r := rows[0]
-	if r.CallType != "delegated_turn" {
-		t.Errorf("call_type = %q, want delegated_turn", r.CallType)
+	if r.Kind != accounting.KindLegacy || r.Subagent() {
+		t.Errorf("call = %s actor %q, want a delegated turn's legacy parent call", r.Kind, r.Actor)
 	}
 	if !strings.HasPrefix(r.Session, "helen/c42/b") {
 		t.Errorf("row session = %q, want a b-child of the owner helen/c42", r.Session)
@@ -181,11 +177,11 @@ func TestRunBatch_RecordsAPIRowAndTrace(t *testing.T) {
 	if r.AgentID != "helen" {
 		t.Errorf("row agent_id = %q, want helen", r.AgentID)
 	}
-	if r.Output != 340 || r.CacheRead != 5000 {
-		t.Errorf("row tokens = {out:%d cr:%d}, want {340 5000}", r.Output, r.CacheRead)
+	if out, cr := r.Count(modelinfo.ClassOutput), r.Count(modelinfo.ClassCacheRead); out != 340 || cr != 5000 {
+		t.Errorf("call tokens = {out:%d cr:%d}, want {340 5000}", out, cr)
 	}
-	if r.CalculatedCostUSD == nil || *r.CalculatedCostUSD != cost {
-		t.Errorf("row calculated cost = %v, want %v", r.CalculatedCostUSD, cost)
+	if r.CostUSD == nil || *r.CostUSD != cost {
+		t.Errorf("call cost = %v, want the backend's calculated %v", r.CostUSD, cost)
 	}
 	if r.Purpose != delegator.BatchPurposeConsolidation {
 		t.Errorf("row purpose = %q, want %q", r.Purpose, delegator.BatchPurposeConsolidation)

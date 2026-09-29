@@ -10,142 +10,194 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"foci/internal/log"
+	"foci/internal/delegator/accounting"
 	"foci/internal/modelinfo"
 	"foci/internal/session"
 )
 
-// recordEntry is log.APIHook: one api.db row → one "generation" observation.
+// recordBooking is accounting.BookedHook: one booked call → one "generation"
+// observation.
 //
 // Exactly one, and the only place cost is billed, is the invariant that makes
-// Langfuse's daily totals equal api.db's. The root/tool/subagent spans carry
-// cost only as read-only metadata. Parentage is derived from the row alone:
-// a subagent_turn row hangs under its subagent's span (both are keyed by the
-// Agent tool_use id), any other row with a turn id under that turn's root,
-// and a row with no turn id (compaction, summariser, spawn) becomes its own
-// one-observation trace named after its call type.
+// Langfuse's daily totals equal the ledger's. The root/tool/subagent spans
+// carry cost only as read-only metadata. Parentage is derived from the call
+// alone: a subagent's call hangs under its subagent's span (both are keyed by
+// the Agent tool_use id), a conversation turn's call under that turn's root,
+// and a helper call booked on a turn of its own (compaction, summary, spawn)
+// becomes its own one-observation trace named after its call type.
 //
-// instalment is true when AccumulateSubagentRow FOLDED this spend into an
-// existing db row rather than inserting: the db holds one row per delegation,
-// but an append-only sink cannot update, so each instalment is its own
-// observation and the delegation's cost is their sum — same arithmetic as
-// the JSONL mirror, which also receives every instalment.
-func recordEntry(e log.APIEntry, instalment bool) {
+// b.Instalment is true when a legacy subagent share was FOLDED into an
+// already-booked call rather than inserted (#1922): the ledger holds one call
+// per delegation, but an append-only sink cannot update, so each instalment
+// is its own observation and the delegation's cost is their sum — same
+// arithmetic as api.jsonl, which also receives every instalment.
+func recordBooking(b accounting.Booking) {
 	tr, o, _, ok := current()
 	if !ok {
 		return
 	}
-	start := e.Timestamp
+	start := b.BilledAt
 	if start.IsZero() {
 		start = time.Now()
 	}
-	end := start.Add(time.Duration(e.DurationMS) * time.Millisecond)
+	durationMS := detailInt(b.Detail, "duration_ms")
+	end := start.Add(time.Duration(durationMS) * time.Millisecond)
 	if end.Before(start) {
 		end = start
 	}
-	// e.AgentID is populated on every row by the writer now (#1946) — no need
-	// to re-derive it from the session key here.
-	agent := e.AgentID
+	agent := b.AgentID
 
-	// Token scope: the turn_* group is what calculated_cost_usd priced; the
-	// un-suffixed four are the final cycle's context fill (#1854) and only
-	// coincide with the turn on a single-call row.
-	counts := e.PricedCounts()
-	scope := "snapshot"
-	if e.Turn != nil {
-		scope = "turn"
+	// Token scope: a call's own counts, or — on a legacy row — the turn totals
+	// its figure was priced from, or before #1854 the final cycle's fill.
+	scope := "call"
+	if b.Kind == accounting.KindLegacy {
+		scope = "snapshot"
+		if t, _ := b.Detail["turn_totals"].(bool); t {
+			scope = "turn"
+		}
 	}
+	in, out := b.Tokens[modelinfo.ClassInput], b.Tokens[modelinfo.ClassOutput]+b.Tokens[modelinfo.ClassReasoning]
+	cr := b.Tokens[modelinfo.ClassCacheRead]
+	cw := b.Tokens[modelinfo.ClassCacheWrite5m] + b.Tokens[modelinfo.ClassCacheWrite1h] + b.Tokens[modelinfo.ClassCacheWrite]
 	usage := map[string]int{
-		"input":                       counts.Input,
-		"output":                      counts.Output,
-		"cache_read_input_tokens":     counts.CacheRead,
-		"cache_creation_input_tokens": counts.CacheWrite,
-		"total":                       counts.Input + counts.Output + counts.CacheRead + counts.CacheWrite,
+		"input":                       in,
+		"output":                      out,
+		"cache_read_input_tokens":     cr,
+		"cache_creation_input_tokens": cw,
+		"total":                       in + out + cr + cw,
 	}
 	usageB, _ := json.Marshal(usage)
 	cost := 0.0
-	if e.CalculatedCostUSD != nil {
-		cost = *e.CalculatedCostUSD
+	if b.CostUSD != nil {
+		cost = *b.CostUSD
 	}
 	costB, _ := json.Marshal(map[string]float64{"total": cost})
 
-	callType := e.CallType
-	if callType == "" {
-		callType = "conversation"
-	}
+	callType := callTypeOf(b)
 	attrs := []attribute.KeyValue{
 		attribute.String(attrObsType, "generation"),
 		attribute.String(attrObsUsage, string(usageB)),
 		attribute.String(attrObsCost, string(costB)),
 		attribute.String(attrObsLevel, "DEFAULT"),
 		attribute.String(attrUserID, agent),
-		attribute.String(attrSessionID, e.Session),
+		attribute.String(attrSessionID, b.Session),
 		attribute.String(attrEnvironment, o.Environment),
 		attribute.String(attrObsMetaPrefix+"source", "foci"),
 		attribute.String(attrObsMetaPrefix+"call_type", callType),
 		attribute.String(attrObsMetaPrefix+"token_scope", scope),
-		attribute.String(attrObsMetaPrefix+"model_raw", e.Model),
-		attribute.String(attrObsMetaPrefix+"provider", e.Provider),
-		attribute.String(attrObsMetaPrefix+"stop_reason", e.StopReason),
-		attribute.Int64(attrObsMetaPrefix+"duration_ms", e.DurationMS),
-		attribute.Int(attrObsMetaPrefix+"context_tokens", e.Input+e.CacheRead+e.CacheWrite),
+		attribute.String(attrObsMetaPrefix+"model_raw", b.Model),
+		attribute.String(attrObsMetaPrefix+"provider", b.Provider),
+		attribute.String(attrObsMetaPrefix+"backend", b.Backend),
+		attribute.String(attrObsMetaPrefix+"stop_reason", b.StopReason),
+		attribute.Int64(attrObsMetaPrefix+"duration_ms", durationMS),
+		attribute.Int(attrObsMetaPrefix+"context_tokens", b.Fill),
 	}
-	if m := modelinfo.Normalize(e.Model); m != "" && e.Model != "<synthetic>" {
+	if m := modelinfo.Normalize(b.Model); m != "" && b.Model != "<synthetic>" {
 		attrs = append(attrs, attribute.String(attrObsModel, m))
 	}
-	if e.ProvidedCostUSD != nil {
-		attrs = append(attrs, attribute.Float64(attrObsMetaPrefix+"backend_cost_usd", *e.ProvidedCostUSD))
+	if b.CostUSD == nil {
+		attrs = append(attrs, attribute.Bool(attrObsMetaPrefix+"unpriced", true))
 	}
-	if e.TurnID != "" {
-		attrs = append(attrs, attribute.String(attrObsMetaPrefix+"turn_id", e.TurnID))
+	if b.Key != "" {
+		attrs = append(attrs, attribute.String(attrObsMetaPrefix+"call_key", b.Key))
 	}
-	if e.SubagentID != "" {
-		attrs = append(attrs, attribute.String(attrObsMetaPrefix+"subagent_tool_use_id", e.SubagentID))
+	if b.TurnID != "" {
+		attrs = append(attrs, attribute.String(attrObsMetaPrefix+"turn_id", b.TurnID))
 	}
-	if e.Purpose != "" {
-		attrs = append(attrs, attribute.String(attrObsMetaPrefix+"purpose", e.Purpose))
+	if b.Actor != "" {
+		attrs = append(attrs, attribute.String(attrObsMetaPrefix+"subagent_tool_use_id", b.Actor))
 	}
-	if instalment {
+	if b.Purpose != "" {
+		attrs = append(attrs, attribute.String(attrObsMetaPrefix+"purpose", b.Purpose))
+	}
+	if b.Instalment {
 		attrs = append(attrs, attribute.Bool(attrObsMetaPrefix+"instalment", true))
 	}
-	if e.SessionFile != "" {
-		attrs = append(attrs, attribute.String(attrObsMetaPrefix+"session_file", e.SessionFile))
+	if b.SessionFile != "" {
+		attrs = append(attrs, attribute.String(attrObsMetaPrefix+"session_file", b.SessionFile))
 	}
-	if e.SessionLine > 0 {
-		attrs = append(attrs, attribute.Int(attrObsMetaPrefix+"session_line", e.SessionLine))
+	if b.SessionLine > 0 {
+		attrs = append(attrs, attribute.Int(attrObsMetaPrefix+"session_line", b.SessionLine))
 	}
-	if e.PreMessages > 0 {
-		attrs = append(attrs, attribute.Int(attrObsMetaPrefix+"pre_messages", e.PreMessages))
+	if n := detailInt(b.Detail, "pre_messages"); n > 0 {
+		attrs = append(attrs, attribute.Int64(attrObsMetaPrefix+"pre_messages", n))
 	}
 
+	// A helper call's turn is the ledger's own bookkeeping, never a traced
+	// turn with a root span, so it gets a trace of its own.
+	turnID := b.TurnID
+	if !tracedTurn(b) {
+		turnID = ""
+	}
 	ctx := context.Background()
 	var traceID trace.TraceID
-	if e.TurnID != "" {
-		traceID = TraceIDForTurn(e.TurnID)
-		parent := RootSpanID(e.TurnID)
-		if e.IsSubagent() && e.SubagentID != "" {
-			parent = SubagentSpanID(e.TurnID, e.SubagentID, 1)
+	if turnID != "" {
+		traceID = TraceIDForTurn(turnID)
+		parent := RootSpanID(turnID)
+		if b.Actor != "" {
+			parent = SubagentSpanID(turnID, b.Actor, 1)
 		}
 		ctx = parentContext(ctx, traceID, parent)
 	} else {
-		traceID = RowTraceID(e.Session, callType, start)
+		traceID = RowTraceID(b.Session, callType, start)
+		backend := "delegated"
+		if b.Backend == accounting.BackendAPI {
+			backend = "api"
+		}
 		attrs = append(attrs,
 			attribute.String(attrTraceName, callType),
-			attribute.StringSlice(attrTraceTags, []string{"agent:" + agent, "call_type:" + callType, "backend:" + backendFromEntry(e)}),
+			attribute.StringSlice(attrTraceTags, []string{"agent:" + agent, "call_type:" + callType, "backend:" + backend}),
 		)
 	}
-	// The generation span itself is also keyed by SubagentID (NOT AgentID,
-	// which #1946 made the same for every row of a turn — using it here would
+	// The generation span itself is also keyed by the actor (NOT the agent,
+	// which is the same for every call of a turn — using it here would
 	// collapse every subagent's span into one).
-	spanID := GenerationSpanID(e.TurnID, e.Session, callType, e.SubagentID, e.Model,
-		strconv.FormatInt(start.UnixNano(), 10), strconv.Itoa(counts.Output), strconv.FormatBool(instalment))
+	spanID := GenerationSpanID(turnID, b.Session, callType, b.Actor, b.Model,
+		strconv.FormatInt(start.UnixNano(), 10), strconv.Itoa(out), strconv.FormatBool(b.Instalment))
 	ctx = withIDs(ctx, traceID, spanID)
 	_, span := tr.Start(ctx, callType, trace.WithTimestamp(start), trace.WithAttributes(attrs...))
 	span.End(trace.WithTimestamp(end))
 }
 
-// recordCorrection is log.CorrectionHook: a #1918 correction moved spend from
-// a parent row to a subagent row in api.db. An append-only sink cannot move
+// tracedTurn reports whether b's turn is a conversation turn the tracer opened
+// a root span for — every call booked on one, a summary, spawn or compaction
+// that turn made included. A helper call no turn made is booked on a turn of
+// its own (source compaction or system), which has no root span.
+func tracedTurn(b accounting.Booking) bool {
+	return b.TurnID != "" && b.TurnSource != accounting.SourceCompaction && b.TurnSource != accounting.SourceSystem
+}
+
+// callTypeOf names b the way its trace and metadata always have: a legacy
+// row's pre-ledger call type, "conversation" for a direct-API turn's call,
+// else the call's kind.
+func callTypeOf(b accounting.Booking) string {
+	if b.Kind == accounting.KindLegacy {
+		if ct, _ := b.Detail["v1_call_type"].(string); ct != "" {
+			return ct
+		}
+	}
+	if b.Kind == accounting.KindCall && b.Backend == accounting.BackendAPI {
+		return "conversation"
+	}
+	return b.Kind
+}
+
+// detailInt reads an integer from a call's detail, which holds Go values when
+// booked and JSON numbers when read back.
+func detailInt(d map[string]any, key string) int64 {
+	switch v := d[key].(type) {
+	case int:
+		return int64(v)
+	case int64:
+		return v
+	case float64:
+		return int64(v)
+	}
+	return 0
+}
+
+// recordCorrection is accounting.CorrectionHook: a #1918 correction moved
+// spend from a parent call to a subagent call in api.db. An append-only sink cannot move
 // money — re-sending either observation with new numbers would double-count
 // (the ETL found this the hard way) — so the correction is recorded as a
 // zero-cost "event" under the subagent span. Daily totals are unaffected
@@ -185,14 +237,4 @@ func recordCorrection(c modelinfo.CostCorrection, parentTurn string) {
 		attribute.Int(attrObsMetaPrefix+"moved_cache_write", c.Counts.CacheWrite),
 	))
 	span.End(trace.WithTimestamp(at))
-}
-
-// backendFromEntry guesses the transport for a turn-less row from what the
-// row says about itself; turn rows get the real backend from the root span.
-func backendFromEntry(e log.APIEntry) string {
-	switch e.CallType {
-	case "delegated_turn", "subagent_turn":
-		return "delegated"
-	}
-	return "api"
 }

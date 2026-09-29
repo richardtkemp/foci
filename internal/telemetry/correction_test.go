@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/log"
+	"foci/internal/delegator/accounting"
 	"foci/internal/modelinfo"
 )
 
@@ -23,7 +23,7 @@ func TestCorrectionHook(t *testing.T) {
 		Model:          "claude-opus-5",
 		CostUSD:        0.05,
 	}
-	log.CorrectionHook(c, "agent/parent@1700000000000000000")
+	accounting.CorrectionHook(c, "agent/parent@1700000000000000000")
 	flush(t)
 
 	sp := findSpan(exp.GetSpans(), "cost_correction")

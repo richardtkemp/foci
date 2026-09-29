@@ -1,12 +1,14 @@
 package ccstream
 
 import (
-	"foci/internal/delegator"
-	"foci/internal/log"
 	"math"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"foci/internal/delegator"
+	"foci/internal/delegator/accounting"
+	"foci/internal/modelinfo"
 )
 
 func at(mins, secs int) time.Time {
@@ -227,7 +229,7 @@ func TestOnResult_NoSurchargeWhenTheSubagentWroteAt1h(t *testing.T) {
 // TestOnResult_CorrectedParentRowRePricesToItsOwnCost is #1929 D1, driven end
 // to end: OnResult prices the turn that absorbed a late subagent cache write,
 // the rows are written the way turn_delegated.go writes them, the next result
-// raises the correction, and ApplyCostCorrections moves it.
+// raises the correction, and the ledger's ApplyLegacyCorrections moves it.
 //
 // The parent absorbed the late writes as an UNOBSERVED residue — Unknown class,
 // 1h rate. The subagent observed them as 5m. The #1854 identity says every row's
@@ -237,13 +239,12 @@ func TestOnResult_NoSurchargeWhenTheSubagentWroteAt1h(t *testing.T) {
 // W*(rate_1h - rate_5m) behind on a row with no tokens to justify it: $0.375 at
 // W=100,000 on opus-5 ($10 vs $6.25 per MTok). The rates differ, so there is no
 // W for which the old and new parent figures coincide.
-//
-// Not parallel: api.db is process-global in package log.
 func TestOnResult_CorrectedParentRowRePricesToItsOwnCost(t *testing.T) {
-	if err := log.InitAPIDB(filepath.Join(t.TempDir(), "api.db")); err != nil {
-		t.Fatalf("InitAPIDB: %v", err)
+	ledger, _, err := accounting.Open(filepath.Join(t.TempDir(), "api.db"), accounting.Options{})
+	if err != nil {
+		t.Fatalf("open ledger: %v", err)
 	}
-	t.Cleanup(log.CloseAPIDB)
+	t.Cleanup(func() { _ = ledger.Close() })
 
 	const (
 		model     = "claude-opus-5"
@@ -275,19 +276,22 @@ func TestOnResult_CorrectedParentRowRePricesToItsOwnCost(t *testing.T) {
 	}
 	priceModel := r1.Usage.Subagents[0].Model
 
-	// The rows turn_delegated.go writes for T1.
-	log.API(log.APIEntry{
-		Timestamp: t1Start, Session: "sess", Model: priceModel, CallType: "delegated_turn",
-		TurnID: spawn, DurationMS: 60_000, Output: r1.Usage.Turn.Output,
+	// The rows turn_delegated.go books for T1.
+	if err := ledger.BookLegacy(accounting.LegacyRow{
+		At: t1Start, Session: "sess", Model: priceModel, TurnID: spawn, DurationMS: 60_000,
+		Fill: accounting.LegacyFill{Output: r1.Usage.Turn.Output},
 		Turn: r1.Usage.Turn, CalculatedCostUSD: r1.Usage.CalculatedCostUSD,
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	for _, sc := range r1.Usage.Subagents {
 		counts, cost := sc.Counts, sc.CostUSD
-		log.AccumulateSubagentRow(log.APIEntry{
-			Timestamp: t1Start, Session: "sess", Model: sc.Model, CallType: "subagent_turn",
-			TurnID: sc.TurnID, SubagentID: sc.AgentID, Output: counts.Output,
+		if _, err := ledger.AccumulateLegacySubagent(accounting.LegacyRow{
+			At: t1Start, Session: "sess", Model: sc.Model, TurnID: sc.TurnID, Subagent: true, SubagentID: sc.AgentID,
 			Turn: &counts, CalculatedCostUSD: &cost, DurationMS: 60_000,
-		})
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	before := *r1.Usage.CalculatedCostUSD + r1.Usage.Subagents[0].CostUSD
 
@@ -298,38 +302,45 @@ func TestOnResult_CorrectedParentRowRePricesToItsOwnCost(t *testing.T) {
 	if r2 == nil || r2.Usage == nil || len(r2.Usage.Corrections) != 1 {
 		t.Fatalf("want exactly one correction from the late write, got %+v", r2)
 	}
-	log.ApplyCostCorrections(r2.Usage.Corrections)
+	ledger.ApplyLegacyCorrections(r2.Usage.Corrections)
 
-	var parent, sub *log.APIEntry
-	for _, e := range log.ReadAPIDBLog() {
+	calls, err := ledger.Calls(time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parent, sub *accounting.CallRow
+	for i, e := range calls {
 		switch {
-		case e.CallType == "delegated_turn" && e.TurnID == spawn:
-			parent = &e
-		case e.CallType == "subagent_turn" && e.TurnID == spawn:
-			sub = &e
+		case e.TurnID == spawn && e.Actor == "":
+			parent = &calls[i]
+		case e.TurnID == spawn:
+			sub = &calls[i]
 		}
 	}
-	if parent == nil || sub == nil || parent.Turn == nil || sub.Turn == nil ||
-		parent.CalculatedCostUSD == nil || sub.CalculatedCostUSD == nil {
-		t.Fatalf("rows missing after correction: parent=%+v sub=%+v", parent, sub)
+	if parent == nil || sub == nil || parent.CostUSD == nil || sub.CostUSD == nil {
+		t.Fatalf("calls missing after correction: parent=%+v sub=%+v", parent, sub)
 	}
-	if parent.Turn.CacheWrite != 0 {
-		t.Fatalf("parent cache-write = %d, want 0 — the correction must move every late write",
-			parent.Turn.CacheWrite)
+	writes := func(r *accounting.CallRow) int {
+		return r.Count(modelinfo.ClassCacheWrite5m, modelinfo.ClassCacheWrite1h, modelinfo.ClassCacheWrite)
+	}
+	if w := writes(parent); w != 0 {
+		t.Fatalf("parent cache-write = %d, want 0 — the correction must move every late write", w)
 	}
 	now := time.Now()
-	p := parent.Turn
-	wantParent := cacheWriteSplit{}.price(priceModel, now, p.Input, p.Output, p.CacheRead)
-	if d := *parent.CalculatedCostUSD - wantParent; math.Abs(d) > 1e-9 {
-		t.Errorf("parent row = $%.6f, but its stored counts re-price to $%.6f: $%.6f of "+
-			"cache-write surcharge stranded on a row that no longer holds the writes (#1929 D1, #1854)",
-			*parent.CalculatedCostUSD, wantParent, d)
+	in, out, read := modelinfo.ClassInput, modelinfo.ClassOutput, modelinfo.ClassCacheRead
+	wantParent := cacheWriteSplit{}.price(priceModel, now, parent.Count(in), parent.Count(out), parent.Count(read))
+	if d := parent.Cost() - wantParent; math.Abs(d) > 1e-9 {
+		t.Errorf("parent call = $%.6f, but its stored counts re-price to $%.6f: $%.6f of "+
+			"cache-write surcharge stranded on a call that no longer holds the writes (#1929 D1, #1854)",
+			parent.Cost(), wantParent, d)
 	}
-	s := sub.Turn
-	wantSub := cacheWriteSplit{Ephemeral5m: s.CacheWrite}.price(priceModel, now, s.Input, s.Output, s.CacheRead)
-	if d := *sub.CalculatedCostUSD - wantSub; math.Abs(d) > 1e-9 {
-		t.Errorf("subagent row = $%.6f, want $%.6f — every write it holds was observed 5m",
-			*sub.CalculatedCostUSD, wantSub)
+	wantSub := cacheWriteSplit{Ephemeral5m: writes(sub)}.price(priceModel, now, sub.Count(in), sub.Count(out), sub.Count(read))
+	if d := sub.Cost() - wantSub; math.Abs(d) > 1e-9 {
+		t.Errorf("subagent call = $%.6f, want $%.6f — every write it holds was observed 5m",
+			sub.Cost(), wantSub)
+	}
+	if sub.Count(modelinfo.ClassCacheWrite5m) != writes(sub) {
+		t.Errorf("subagent call's writes are not all classed 5m: %+v", sub.Classes)
 	}
 	// The turn total FALLS by exactly the over-charge, priced both ways rather
 	// than from rate constants: those were 5m writes billed at 1h.
@@ -338,7 +349,7 @@ func TestOnResult_CorrectedParentRowRePricesToItsOwnCost(t *testing.T) {
 	if surcharge <= 0 {
 		t.Fatalf("surcharge = $%.6f — the fixture needs a model whose 1h and 5m rates differ", surcharge)
 	}
-	after := *parent.CalculatedCostUSD + *sub.CalculatedCostUSD
+	after := parent.Cost() + sub.Cost()
 	if d := (before - after) - surcharge; math.Abs(d) > 1e-9 {
 		t.Errorf("turn total fell by $%.6f, want $%.6f (the 1h-vs-5m surcharge on %d late writes)",
 			before-after, surcharge, lateWrite)

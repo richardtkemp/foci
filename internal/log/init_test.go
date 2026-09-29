@@ -29,7 +29,7 @@ func TestInitWithFiles(t *testing.T) {
 	defer Close()
 
 	Infof("test", "hello from init test")
-	API(APIEntry{Session: "init-test", Model: "test", DurationMS: 100})
+	AppendAPILine(map[string]string{"session": "init-test"})
 
 	// Event log should exist on disk
 	data, err := os.ReadFile(eventPath)
@@ -187,7 +187,7 @@ func TestReopenAllFiles(t *testing.T) {
 
 	// Write before reopen
 	Infof("test", "before reopen")
-	API(APIEntry{Session: "test", Model: "test"})
+	AppendAPILine(map[string]string{"session": "test"})
 	Payload(PayloadEntry{Session: "test", Model: "test"})
 
 	if err := Reopen(); err != nil {
@@ -196,7 +196,7 @@ func TestReopenAllFiles(t *testing.T) {
 
 	// Write after reopen — should succeed to new file handles
 	Infof("test", "after reopen")
-	API(APIEntry{Session: "test2", Model: "test"})
+	AppendAPILine(map[string]string{"session": "test2"})
 	Payload(PayloadEntry{Session: "test2", Model: "test"})
 
 	// Force close to flush

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"foci/internal/delegator/accounting"
 	"foci/internal/log"
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
@@ -29,37 +30,21 @@ func (a *Agent) logAPIResponse(ts *TurnState, model string, start time.Time, dur
 			sessionFile = p
 		}
 	}
-	log.API(log.APIEntry{
-		Timestamp:  start,
-		Provider:   a.SessionFormat(sessionKey),
-		Session:    sessionKey,
-		Model:      model,
-		Input:      resp.Usage.InputTokens,
-		Output:     resp.Usage.OutputTokens,
-		CacheRead:  resp.Usage.CacheReadInputTokens,
-		CacheWrite: resp.Usage.CacheCreationInputTokens,
-		Turn:       resp.Usage.AsTurn(), // single call: its own counts are the turn total (#1854)
-		// CalculatedCostUSD: this path priced the call above (for the log line
-		// and the sink header) but, until #1964, never attached it here — so
-		// EVERY direct-API row silently carried a NULL calculated_cost_usd, the
-		// column foci-debugging/api-cost-accounting.md documents as the
-		// authoritative one to SUM. Historically masked because most traffic
-		// runs the delegated (CC/opencode) backends, which do set it; it
-		// surfaced when gilette (a direct-OpenRouter agent) contributed $0 to
-		// every cost total despite real, priced calls.
-		CalculatedCostUSD: &cost,
-		DurationMS:        duration.Milliseconds(),
-		StopReason:        resp.StopReason,
-		CallType:          "conversation",
-		// The API path writes one row PER CALL, so a tool-loop turn is several
-		// rows — exactly the inference #1695 wanted removed. They share a
-		// turn_id; the delegated path writes one parent row per turn plus its
-		// subagent rows, which also share one.
-		TurnID:      ts.RowID(),
-		AgentID:     session.AgentIDFromKey(sessionKey),
+	// One response is one call, booked on its turn (#2111 P2: the direct API
+	// was the first backend on the per-call ledger).
+	turn := a.ledgerTurn(ts)
+	if turn.TurnID == "" {
+		turn.TurnID, turn.StartedAt = accounting.MintTurnID(sessionKey, accounting.KindCall, start), start
+	}
+	if err := accounting.Record(turn, accounting.APIResponse{
+		ID: resp.ID, Kind: accounting.KindCall, Provider: a.SessionFormat(sessionKey), Model: model,
+		Session: sessionKey, AgentID: turn.AgentID, TurnID: turn.TurnID,
+		Start: start, Duration: duration, Tokens: resp.Usage.Tokens(), StopReason: resp.StopReason,
 		SessionFile: sessionFile,
 		SessionLine: msgCount + 2, // +2 for the user message and assistant response being appended
-	})
+	}.Call()); err != nil {
+		a.logger().Errorf("session=%s book API call: %v", sessionKey, err)
+	}
 
 	if log.PayloadEnabled() {
 		reqJSON := resp.WireRequest
@@ -140,6 +125,57 @@ func (a *Agent) logErrorPayload(sessionKey, model string, start time.Time, durat
 	}
 
 	log.Payload(entry)
+}
+
+// recordAPITurnEnd closes a direct-API turn in the ledger. Its spend is final
+// with its last response, so its activity closes when it ends (#2111 R8).
+func (a *Agent) recordAPITurnEnd(ts *TurnState, stopReason string) {
+	t := a.ledgerTurn(ts)
+	if t.TurnID == "" {
+		return
+	}
+	now := time.Now()
+	t.EndedAt, t.ActivityClosedAt, t.StopReason, t.FinalModel = now, now, stopReason, ts.TurnModel
+	if err := accounting.RecordTurn(t); err != nil {
+		a.logger().Errorf("session=%s record turn end: %v", ts.SessionKey, err)
+	}
+}
+
+// recordAPITurnActivity moves a direct-API turn's activity close to now: its
+// post-turn compaction, booked on the turn, spends after the turn has ended.
+func (a *Agent) recordAPITurnActivity(ts *TurnState) {
+	t := a.ledgerTurn(ts)
+	if t.TurnID == "" {
+		return
+	}
+	t.ActivityClosedAt = time.Now()
+	if err := accounting.RecordTurn(t); err != nil {
+		a.logger().Errorf("session=%s record turn activity: %v", ts.SessionKey, err)
+	}
+}
+
+// ledgerTurn is the ledger's record of a direct-API turn as it starts; the
+// id is "" for a TurnState with no identity yet.
+func (a *Agent) ledgerTurn(ts *TurnState) accounting.Turn {
+	return accounting.Turn{
+		TurnID: ts.RowID(), Session: ts.SessionKey, AgentID: session.AgentIDFromKey(ts.SessionKey),
+		Backend: accounting.BackendAPI, Source: ledgerTurnSource(ts), Purpose: ts.Purpose,
+		StartedAt: ts.StartedAt,
+	}
+}
+
+// ledgerTurnSource says what started a turn, as the ledger's turns table
+// records it.
+func ledgerTurnSource(ts *TurnState) string {
+	switch {
+	case ts.Purpose != "":
+		return accounting.SourceBatch
+	case ts.Trigger == "keepalive":
+		return accounting.SourceKeepalive
+	case isUserTrigger(ts.Trigger):
+		return accounting.SourceUser
+	}
+	return accounting.SourceAutonomous
 }
 
 // classifyAPIError maps API errors to user-friendly messages, notifying

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/log"
+	"foci/internal/delegator/accounting"
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
 	"foci/internal/turnevent"
@@ -19,8 +19,8 @@ func ptr[T any](v T) *T { return &v }
 
 // TestFullTurn drives one turn through the sink exactly the way the agent
 // does (Begin, SetInput, then the ordered event stream, ending in
-// TurnComplete), plus the two api.db rows a delegated turn and its subagent
-// write through the log hooks, and checks the whole resulting trace shape:
+// TurnComplete), plus the two legacy calls a delegated turn and its subagent
+// book through the ledger hook, and checks the whole resulting trace shape:
 // one root, one tool span, one subagent span, two generations, all sharing
 // one trace id, and nothing extra.
 func TestFullTurn(t *testing.T) {
@@ -65,28 +65,25 @@ func TestFullTurn(t *testing.T) {
 		Usage:     &provider.Usage{InputTokens: 10, OutputTokens: 5},
 	})
 
-	log.APIHook(log.APIEntry{
-		Timestamp:         started,
-		Session:           "agent/c1",
-		Model:             "claude-opus-5",
-		CallType:          "delegated_turn",
-		TurnID:            turnID,
-		AgentID:           "agent",
-		DurationMS:        1200,
-		CalculatedCostUSD: ptr(0.4),
-		Turn:              &modelinfo.TokenCounts{Input: 10, Output: 5},
-	}, false)
-	log.APIHook(log.APIEntry{
-		Timestamp:         started,
-		Session:           "agent/c1",
-		Model:             "claude-opus-5",
-		CallType:          "subagent_turn",
-		TurnID:            turnID,
-		AgentID:           "agent",
-		SubagentID:        "toolu_2",
-		DurationMS:        300,
-		CalculatedCostUSD: ptr(0.1),
-	}, false)
+	accounting.BookedHook(accounting.Booking{
+		Call: accounting.Call{
+			Backend: accounting.BackendCCStream, Kind: accounting.KindLegacy,
+			BilledAt: started, Session: "agent/c1", Model: "claude-opus-5",
+			TurnID: turnID, AgentID: "agent",
+			Tokens: modelinfo.Tokens{modelinfo.ClassInput: 10, modelinfo.ClassOutput: 5},
+			Detail: map[string]any{"v1_call_type": "delegated_turn", "duration_ms": int64(1200), "turn_totals": true},
+		},
+		CostUSD: ptr(0.4),
+	})
+	accounting.BookedHook(accounting.Booking{
+		Call: accounting.Call{
+			Backend: accounting.BackendCCStream, Kind: accounting.KindLegacy,
+			BilledAt: started, Session: "agent/c1", Model: "claude-opus-5",
+			TurnID: turnID, AgentID: "agent", Actor: "toolu_2",
+			Detail: map[string]any{"v1_call_type": "subagent_turn", "duration_ms": int64(300), "turn_totals": true},
+		},
+		CostUSD: ptr(0.1),
+	})
 
 	flush(t)
 	spans := exp.GetSpans()

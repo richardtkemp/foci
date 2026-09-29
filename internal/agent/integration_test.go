@@ -1,9 +1,7 @@
 package agent
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,7 +10,9 @@ import (
 	"time"
 
 	"foci/internal/anthropic"
+	"foci/internal/delegator/accounting"
 	"foci/internal/log"
+	"foci/internal/modelinfo"
 	"foci/internal/session"
 	"foci/internal/tools"
 	"foci/internal/workspace"
@@ -149,42 +149,26 @@ func TestBranchCacheSharing(t *testing.T) {
 	t.Log("=== ALL STEPS PASSED — Full-stack branch cache sharing works. ===")
 }
 
-// apiEntry matches the JSON structure in api.jsonl.
+// apiEntry is one call's counts, as the api.jsonl line the ledger wrote.
 type apiEntry struct {
-	Input      int    `json:"input"`
-	Output     int    `json:"output"`
-	CacheRead  int    `json:"cache_read"`
-	CacheWrite int    `json:"cache_write"`
-	StopReason string `json:"stop_reason"`
+	Input, Output, CacheRead, CacheWrite int
 }
 
-// lastAPIEntry reads the last entry from the api.jsonl file.
+// lastAPIEntry reads the last call from the api.jsonl file.
 func lastAPIEntry(t *testing.T, path string) apiEntry {
 	t.Helper()
-
-	f, err := os.Open(path)
-	if err != nil {
-		t.Fatalf("open api log: %v", err)
-	}
-	defer f.Close()
-
-	var last string
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line != "" {
-			last = line
-		}
-	}
-	if last == "" {
+	rows := accounting.ReadJSONL(path)
+	if len(rows) == 0 {
 		t.Fatal("api log is empty")
 	}
-
-	var entry apiEntry
-	if err := json.Unmarshal([]byte(last), &entry); err != nil {
-		t.Fatalf("parse api entry: %v (line: %s)", err, last)
+	r := rows[len(rows)-1]
+	return apiEntry{
+		Input:     r.Count(modelinfo.ClassInput),
+		Output:    r.Count(modelinfo.ClassOutput),
+		CacheRead: r.Count(modelinfo.ClassCacheRead),
+		CacheWrite: r.Count(modelinfo.ClassCacheWrite5m, modelinfo.ClassCacheWrite1h,
+			modelinfo.ClassCacheWrite),
 	}
-	return entry
 }
 
 // captureAPIWriter redirects API logging to the given file.
