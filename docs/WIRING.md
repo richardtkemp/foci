@@ -297,7 +297,7 @@ main
   │   ├── delegator/stoprule   → delegator/pretool (only its Patterns type; stdlib otherwise — Stop-hook rule engine, #2089: matches the turn's final text, scans the CC transcript for the turn's background launches; shared by config, ccstream and cmd/foci-cc-hook)
   │   ├── delegator/sessionenv → tempdir (shared by codex/opencode + cmd/foci-codex-hook — per-session exec-bridge env file format, lifecycle, and the codex command wrap/unwrap)
   │   ├── delegator/codex      → delegator, delegator/autoapprove, delegator/hookbin, delegator/keyedmutex, delegator/sessionenv, log, modelcaps, modelinfo, procx (Codex app-server JSON-RPC; registers "codex" via init())
-  │   └── delegator/opencode   → delegator, delegator/autoapprove, delegator/keyedmutex, delegator/sessionenv, log, modelinfo, procx, ratelimit, tempdir, timeutil (HTTP/SSE OpenCode; registers "opencode" via init())
+  │   └── delegator/opencode   → delegator, delegator/accounting, delegator/autoapprove, delegator/keyedmutex, delegator/sessionenv, log, modelinfo, procx, ratelimit, tempdir (HTTP/SSE OpenCode; books its own calls in the cost ledger; registers "opencode" via init())
  ├── agent         → turnevent, compaction, config, convo, delegator, delegator/accounting, display, log, memory, messages, modelcaps, modelinfo, nudge, platform, procx, prompts, provider, ratelimit, relogin, session, skills, telemetry, timeutil, tools, turn, warnings, workspace
  ├── periodic      → config, delegator, log, memory, prompts, provider, session, skills, timeutil, warnings (NO agent)
  ├── dispatch      → command, platform, session, tools (shared command dispatch logic; platform wrappers delegate here)
@@ -892,7 +892,7 @@ The opencode backend drives OpenCode as a coding agent via its HTTP server API. 
 | `message.part.updated` (tool, completed/error) | `onMessagePartUpdated` | `OnToolEnd` |
 | `message.part.updated` (tool, task, metadata.sessionId) | `trackTaskTool` (subscriber) | records `childToCallID[childSID] = callID` |
 | child session `message.part.updated` (text, complete) | `route` → `handleChildEvent` | `OnSubagentText` (grouped by callID) |
-| `message.updated` (assistant) | `onMessageUpdated` | Store `lastModel`/`lastUsage` (no callback) |
+| `message.updated` (assistant) | `onMessageUpdated` | Store `lastModel`/`lastUsage` (context fill); book the message in the cost ledger once completed (`bookMessage`, see "Cost ledger") |
 | `session.idle` | `onSessionIdle` | `OnTurnComplete` + flush `steerBuf`; during an abort drain, counts burst idles and flushes the buffered steer once settled (see Steer divergence) |
 | `session.status` (busy) | `onSessionStatus` | `typingFunc(true)` |
 | `session.status` (retry: usage/rate limit) | `handleRateLimitRetry` | Parse reset → `Agent.EngageRateLimit` callback → POST `/abort` → complete waiting turn |
@@ -1424,7 +1424,7 @@ Four outputs:
 
    **Everything below in this item, down to "Conversation log", describes the PRE-LEDGER
    `api_calls` table (v1) and the turn-level pricing the not-yet-switched delegated backends
-   (ccstream, opencode, codex) still run.** The v1 table was renamed and dropped by the #2111
+   (ccstream and codex; opencode switched too) still run.** The v1 table was renamed and dropped by the #2111
    cutover; those backends' rows are now booked as LEGACY calls through the same converter the
    migration uses (`accounting/legacylive.go`). Reading the text against the ledger: a v1 row
    is one `kind='legacy'` call; `calculated_cost_usd` is `legacy_calculated_cost_usd` (the
@@ -1995,9 +1995,11 @@ pricing above. Design: clutch `notes/2111.md` (revision 3), rulings R1-R10 on to
 modelinfo and the migration. P2 (#2115) switches one backend per change, deleting its old
 path in the same change, so no backend ever has two booking paths:
 - **Direct API: switched** (the first, with the cutover). One response is one call.
-- **opencode, codex, Claude Code: not yet.** Their turn-level cost path is unchanged, and its
-  rows are booked as LEGACY calls (see "Legacy path" below) — their only booking path until
-  each switches.
+- **opencode: switched** (second). One assistant message is one call (see "opencode
+  adapter" below).
+- **codex, Claude Code: not yet.** Their turn-level cost path is unchanged, and its rows are
+  booked as LEGACY calls (see "Legacy path" below) — their only booking path until each
+  switches.
 
 **The cutover** runs at startup: `initLogging` calls `accounting.Open(cfg.Logging.APIDB)`.
 On a pre-ledger api.db (`api_calls.calculated_cost_usd` exists) that takes a `VACUUM INTO`
@@ -2111,8 +2113,32 @@ summary or spawn reached with no turn on its context. Delegated turns attach non
 helper calls never take these paths (a delegated agent summarises through a batch turn,
 compacts inside its backend, and has no spawn tool).
 
+**opencode adapter** (`opencode/ledger.go`, P2 second switch). Every assistant
+`message.updated` with `time.completed` set is one call: key = the message id, on the foci
+turn open on the backend (subagent messages and an in-turn automatic compaction included),
+`finality='completed'`. Classes: `input`, `output`, `reasoning` (billed ON TOP of output at
+the output rate, #2112 P0-d — foci dropped it before, so reasoning models were
+under-priced), `cache_read`, and `cache_write` (TTL not reported, `class_method='unknown'`);
+they are disjoint — `tokens.total` is their sum. opencode's own `cost` is a per-call
+`backend_reports` row, booked with the call in one transaction (`Ledger.RecordCall`), and
+still feeds the shared `CostDivergenceChecker` against the ledger's price. A compaction's
+summary message (`mode:"compaction"`, `summary:true`) is `kind='compaction'`: on the open
+turn when opencode compacts inside one, else (an operator's `/compact`, between turns) on a
+`source='compaction'` turn of its own, closed at once. A subagent's messages: the subscriber
+now reroutes a child session's `message.updated` to its parent Backend (with the task tool's
+callID, or `(unnamed)` when no tool part named the child), booked with that actor — before
+the switch they were dropped, so subagent spend was missing. Before the switch opencode's turn
+row also priced only the turn's LAST message (`lastUsage` was overwritten per message);
+multi-message turns were under-counted. `lastUsage` is now context fill only.
+The agent layer, for a backend that implements `delegator.LedgerBooker`, records the turn at
+its start (`buildTurnEvents`, before any message can name it) and at its end
+(`closeLedgerTurn`: `ended_at`, `activity_closed_at` — opencode subagents finish inside the
+turn — stop reason, model), books no turn row, and takes `FinalCost` from `Ledger.TurnCost`.
+The adapter names the open turn with a stub (id, session, backend) whose upsert never
+overwrites what the agent recorded.
+
 **Legacy path** (`legacylive.go`) — the only booking path of the delegated backends that
-have not switched yet, deleted backend by backend. `DelegatedTransport.LogUsage` builds a
+have not switched yet (ccstream, codex), deleted backend by backend. `DelegatedTransport.LogUsage` builds a
 `LegacyRow` per parent row and subagent share (the shapes of the pre-ledger rows) and
 books it through the migration's own converter (`v1Row` → class-by-kind → cost basis →
 `legacyCall`/`legacyTurn`/`legacyReport`), so a live legacy call and a migrated one are the

@@ -39,17 +39,21 @@ type Session struct {
 // message.updated SSE events. User and Assistant share id/sessionID/role;
 // assistant-only fields are populated when role == "assistant".
 type Message struct {
-	ID         string         `json:"id"`
-	SessionID  string         `json:"sessionID"`
-	Role       string         `json:"role"` // "user" | "assistant"
-	ParentID   string         `json:"parentID,omitempty"`
-	ModelID    string         `json:"modelID,omitempty"`
-	ProviderID string         `json:"providerID,omitempty"`
-	Finish     string         `json:"finish,omitempty"`
-	Cost       float64        `json:"cost,omitempty"`
-	Tokens     *MessageTokens `json:"tokens,omitempty"`
-	Error      *MessageError  `json:"error,omitempty"`
-	Time       MessageTime    `json:"time"`
+	ID         string `json:"id"`
+	SessionID  string `json:"sessionID"`
+	Role       string `json:"role"` // "user" | "assistant"
+	ParentID   string `json:"parentID,omitempty"`
+	ModelID    string `json:"modelID,omitempty"`
+	ProviderID string `json:"providerID,omitempty"`
+	Finish     string `json:"finish,omitempty"`
+	// Mode is the agent mode that produced the message; a compaction's
+	// summary message is mode "compaction" with Summary set.
+	Mode    string         `json:"mode,omitempty"`
+	Summary bool           `json:"summary,omitempty"`
+	Cost    float64        `json:"cost,omitempty"`
+	Tokens  *MessageTokens `json:"tokens,omitempty"`
+	Error   *MessageError  `json:"error,omitempty"`
+	Time    MessageTime    `json:"time"`
 }
 
 // MessageTime carries the timestamps for a Message. Created is always set;

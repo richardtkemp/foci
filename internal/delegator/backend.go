@@ -421,6 +421,16 @@ type ContextCategory struct {
 	Tokens int
 }
 
+// LedgerBooker is implemented by a backend that books its own API calls in the
+// cost ledger as each one's usage is final (#2111 P2), with its own reports.
+// For such a backend the agent layer records only its turns' facts (start and
+// end) and books no turn-level row; LedgerBackend names the ledger backend
+// ("opencode", …) its turns are recorded under. A backend that does not
+// implement it still has its turns booked as legacy calls.
+type LedgerBooker interface {
+	LedgerBackend() string
+}
+
 // ContextWindowQuerier is optionally implemented by backends that can look up
 // the current model's real context window size. Cheap and fast — no API call.
 type ContextWindowQuerier interface {

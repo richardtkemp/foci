@@ -1,6 +1,7 @@
 package accounting
 
 import (
+	"fmt"
 	"sync/atomic"
 
 	"foci/internal/modelinfo"
@@ -64,24 +65,54 @@ func Live() *Ledger { return live.Load() }
 // configured, or a unit test) the call is still validated, written to
 // api.jsonl and handed to BookedHook, as the pre-ledger writer did.
 func Record(t Turn, c Call) error {
+	_, err := Live().RecordCall(t, c, nil)
+	return err
+}
+
+// RecordCall books one call on turn t, with the backend's own report of it
+// when it has one (opencode's per-message cost), in one transaction. The turn
+// is upserted first, and an upsert never overwrites a stored field with an
+// empty one, so an adapter that knows only a turn's id, session and backend
+// can name it without clobbering what the agent layer recorded at turn start.
+// On a nil ledger the call is only observed (see Record).
+func (l *Ledger) RecordCall(t Turn, c Call, r *Report) (Booked, error) {
 	if t.Session == "" {
 		t.Session = NoSession
 	}
-	l := Live()
 	if l == nil {
 		if err := c.validate(); err != nil {
-			return err
+			return Booked{}, err
 		}
 		observe(Booking{Call: c, CostUSD: c.cost(), Purpose: t.Purpose, TurnSource: t.Source, Fill: c.fill()})
-		return nil
+		return Booked{}, nil
 	}
-	return l.Update(func(tx *Tx) error {
+	var booked Booked
+	err := l.Update(func(tx *Tx) error {
 		if err := tx.RecordTurn(t); err != nil {
 			return err
 		}
-		_, err := tx.Book(c)
-		return err
+		var err error
+		if booked, err = tx.Book(c); err != nil {
+			return err
+		}
+		// A replayed message is not a second report of it.
+		if r != nil && !booked.Duplicate {
+			return tx.Report(*r)
+		}
+		return nil
 	})
+	return booked, err
+}
+
+// TurnCost is a turn's cost as turn_costs prices it — the whole turn, every
+// call booked on it so far — and how many of its calls are unpriced.
+func (l *Ledger) TurnCost(turnID string) (usd float64, unpriced int, err error) {
+	err = l.db.QueryRow(`SELECT COALESCE(SUM(cost_usd), 0), SUM(cost_usd IS NULL)
+		FROM call_costs WHERE turn_id = ?`, turnID).Scan(&usd, nullInt{&unpriced})
+	if err != nil {
+		return 0, 0, fmt.Errorf("ledger: turn %q cost: %w", turnID, err)
+	}
+	return usd, unpriced, nil
 }
 
 // RecordTurn upserts one turn's facts in the live ledger, if there is one.

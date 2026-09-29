@@ -11,22 +11,14 @@ type ResultMessage struct {
 	Result  string `json:"result,omitempty"`
 }
 
-// TokenUsage mirrors opencode's per-message token breakdown.
+// TokenUsage is the latest assistant message's token counts: the session's
+// context fill, which compaction sizes from. Cost is not carried here — every
+// message is booked in the cost ledger as it completes (ledger.go).
 type TokenUsage struct {
 	InputTokens              int `json:"input_tokens"`
 	OutputTokens             int `json:"output_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-
-	// ProvidedCostUSD is opencode's own reported cost for this message
-	// (Message.Cost), captured alongside the tokens it was computed from. nil
-	// only if no Tokens update has been seen yet. Not authoritative (#1674) —
-	// kept for forensics and as the reference for the divergence warning.
-	ProvidedCostUSD *float64
-
-	// CalculatedCostUSD is foci's own priced figure for this message, from the
-	// modelinfo table applied to the same token counts. Authoritative (#1674).
-	CalculatedCostUSD *float64
 }
 
 // pendingPermission stores a pending opencode permission request.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
+	"foci/internal/sqlite"
 	"foci/internal/turnevent"
 )
 
@@ -2706,5 +2708,74 @@ func TestSessionModelFiltersSyntheticPollution(t *testing.T) {
 	}
 	if got := a.SessionModel("bot/c100/b1"); got != "claude-fable-5" {
 		t.Errorf("SessionModel(child of polluted root) = %q, want agent default", got)
+	}
+}
+
+// ledgerBookingBackend is a delegated backend that books its own calls in the
+// cost ledger (delegator.LedgerBooker), as opencode does since #2111 P2.
+type ledgerBookingBackend struct{ *mockBackendDT }
+
+func (ledgerBookingBackend) LedgerBackend() string { return accounting.BackendOpencode }
+
+// TestDelegatedTransport_SelfBookingBackendRecordsOnlyItsTurn: for a backend
+// that books its own calls, the agent layer records the turn's facts — at its
+// start, before any call can name it, and at its end — and books NO turn-level
+// row; the turn's cost (FinalCost, the sink header's figure) is the ledger's
+// price of every call booked on it. A second, legacy booking of the same spend
+// would double it: no backend ever has two booking paths.
+func TestDelegatedTransport_SelfBookingBackendRecordsOnlyItsTurn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "api.db")
+	ledger, _, err := accounting.Open(path, accounting.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accounting.SetLive(ledger)
+	t.Cleanup(func() { accounting.SetLive(nil); _ = ledger.Close() })
+	be := ledgerBookingBackend{&mockBackendDT{}}
+	a := &Agent{Model: "claude-opus-5", DelegatedManager: newMockDelegatedManager(t, be)}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+
+	ts := NewTurnState(context.Background(), "arnix/c1", []string{"hi"}, nil)
+	ts.SessionMeta = a.getSessionMeta(ts.SessionKey)
+	ts.Backend = be
+	ts.StartedAt = time.Now()
+	ts.Trigger = "user" // a user turn; the backend's stub below names it "autonomous"
+	ts.FinalModel = "claude-opus-5"
+	events := tr.buildTurnEvents(ts, be)
+
+	// The backend books its message on the turn the agent recorded.
+	c := accounting.APIResponse{ID: "msg_1", Kind: accounting.KindCall, Model: "claude-opus-5",
+		Session: ts.SessionKey, TurnID: events.TurnID, Start: time.Now(),
+		Tokens: modelinfo.Tokens{modelinfo.ClassInput: 1000, modelinfo.ClassOutput: 100}}.Call()
+	c.Backend = accounting.BackendOpencode
+	if _, err := ledger.RecordCall(accounting.Turn{TurnID: events.TurnID, Session: ts.SessionKey,
+		Backend: accounting.BackendOpencode, Source: accounting.SourceAutonomous, StartedAt: time.Now()}, c, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	ts.FinalUsage = &provider.Usage{InputTokens: 1000, OutputTokens: 100}
+	tr.LogUsage(ts)
+
+	rows := ledgerCalls(t, ledger)
+	if len(rows) != 1 || rows[0].Kind != accounting.KindCall {
+		t.Fatalf("ledger calls = %+v, want only the backend's own call — no legacy turn row", rows)
+	}
+	if math.Abs(ts.FinalCost-rows[0].Cost()) > 1e-12 || ts.FinalCost <= 0 {
+		t.Errorf("FinalCost = %.6f, want the ledger's turn total %.6f", ts.FinalCost, rows[0].Cost())
+	}
+	st, err := ledger.SessionStats(ts.SessionKey)
+	if err != nil || st.TurnCount != 1 {
+		t.Fatalf("stats = %+v (%v)", st, err)
+	}
+	db, err := sqlite.OpenReadOnly(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var source string
+	var ended sql.NullString
+	if err := db.QueryRow(`SELECT source, ended_at FROM turns WHERE turn_id = ?`, events.TurnID).Scan(&source, &ended); err != nil ||
+		source != accounting.SourceUser || !ended.Valid {
+		t.Errorf("turn: source %q ended %v (%v), want the agent's user turn, ended", source, ended, err)
 	}
 }

@@ -31,6 +31,7 @@ import (
 	"strings"
 	"time"
 
+	"foci/internal/delegator/accounting"
 	"foci/internal/log"
 )
 
@@ -440,6 +441,19 @@ func (s *Server) route(ev rawEvent) {
 					ev.childCallID = callID
 					be = pbe
 				}
+			}
+		}
+		// A subagent's messages are its calls, and the parent books them
+		// (#2111 P2). Routed even when no task callID names the child (a
+		// grandchild, or a missed tool part): the spend is real and belongs
+		// to SOME subagent of the parent's turn.
+		if be == nil && ev.Type == EventMessageUpdated {
+			if pbe := s.resolveParentBackend(sid); pbe != nil {
+				ev.childCallID = s.callIDForChild(sid)
+				if ev.childCallID == "" {
+					ev.childCallID = accounting.UnnamedSubagent
+				}
+				be = pbe
 			}
 		}
 		if be == nil {

@@ -14,12 +14,9 @@ package opencode
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"foci/internal/delegator"
 	"foci/internal/log"
-	"foci/internal/modelinfo"
-	"foci/internal/timeutil"
 )
 
 // handleEvent is the dispatcher callback. It switches on ev.Type,
@@ -130,14 +127,21 @@ func (b *Backend) handleEvent(ev rawEvent) {
 }
 
 // handleChildEvent processes events rerouted from child (subagent) sessions.
-// Only completed text parts are surfaced — via OnSubagentText, keyed by the
+// Completed text parts are surfaced — via OnSubagentText, keyed by the
 // parent tool callID — so the app can display the subagent's output grouped
-// with its OnSubagentStart/End. Everything else is dropped. Critically, this
-// path never touches the parent's turn state (turnText, turnTools, etc.),
-// mirroring ccstream's guard where ParentToolUseID != nil returns before any
-// accumulation.
+// with its OnSubagentStart/End; a child's completed assistant message is
+// booked as the subagent's call (actor = the task tool's callID). Everything
+// else is dropped. Critically, this path never touches the parent's turn state
+// (turnText, turnTools, lastUsage, etc.), mirroring ccstream's guard where
+// ParentToolUseID != nil returns before any accumulation.
 func (b *Backend) handleChildEvent(ev rawEvent) {
 	switch ev.Type {
+	case EventMessageUpdated:
+		var p eventMessageUpdated
+		if err := json.Unmarshal(ev.Properties, &p); err != nil || p.Info.Role != "assistant" {
+			return
+		}
+		b.bookMessage(p.Info, ev.childCallID)
 	case EventMessagePartUpdated:
 		var p eventMessagePartUpdated
 		if err := json.Unmarshal(ev.Properties, &p); err != nil {
@@ -406,41 +410,21 @@ func (b *Backend) onMessageUpdated(msg Message) {
 		b.mu.Unlock()
 	}
 
-	// Store usage (input/output/cache). opencode provides per-message
-	// token counts directly — no ccstream ModelUsage correction needed, and
-	// unlike CC's ModelUsage these are genuinely per-message, not cumulative.
-	//
-	// Cost still follows the same rule as ccstream (#1674): OURS is
-	// authoritative, priced from the tokens, and opencode's own figure is kept
-	// only to check our pricing table against. Deliberately no special case for
-	// opencode reporting a trustworthy per-message cost — a single rule across
-	// backends is what makes the divergence warning mean one thing.
+	// The latest message's counts are the session's context fill (what
+	// compaction sizes from). opencode's counts are genuinely per message, not
+	// cumulative like CC's ModelUsage.
 	if msg.Tokens != nil {
-		provided := msg.Cost
-		calculated, _ := modelinfo.CostAsOf(msg.ModelID, timeutil.Now(), modelinfo.Tokens{
-			modelinfo.ClassInput:      msg.Tokens.Input,
-			modelinfo.ClassOutput:     msg.Tokens.Output,
-			modelinfo.ClassCacheRead:  msg.Tokens.Cache.Read,
-			modelinfo.ClassCacheWrite: msg.Tokens.Cache.Write,
-		})
 		b.mu.Lock()
 		b.lastUsage = &TokenUsage{
 			InputTokens:              msg.Tokens.Input,
 			OutputTokens:             msg.Tokens.Output,
 			CacheReadInputTokens:     msg.Tokens.Cache.Read,
 			CacheCreationInputTokens: msg.Tokens.Cache.Write,
-			ProvidedCostUSD:          &provided,
-			CalculatedCostUSD:        &calculated,
 		}
 		b.mu.Unlock()
-		in, out := msg.Tokens.Input, msg.Tokens.Output
-		cr, cw := msg.Tokens.Cache.Read, msg.Tokens.Cache.Write
-		b.costCheck.Check(msg.ModelID, calculated, provided,
-			func() string {
-				return fmt.Sprintf("in=%d out=%d cache_read=%d cache_write=%d", in, out, cr, cw)
-			},
-			log.NewComponentLogger(b.logComponent()).Warnf)
 	}
+	// Each message is one call, booked once its usage is final (#2111 P2).
+	b.bookMessage(msg, "")
 
 	// Error handling. ProviderAuthError fires onAuthFailure (authfail.go
 	// wires the callback); MessageAbortedError is expected on /reset
@@ -519,14 +503,14 @@ func (b *Backend) onSessionIdle(sessionID string) {
 		ToolCalls: tools,
 		Model:     model,
 	}
+	// Context fill only: the turn's spend is already in the ledger, one call
+	// per message, and the agent reads the turn's cost from there.
 	if usage != nil {
 		result.Usage = &delegator.TurnUsage{
 			InputTokens:              usage.InputTokens,
 			OutputTokens:             usage.OutputTokens,
 			CacheReadInputTokens:     usage.CacheReadInputTokens,
 			CacheCreationInputTokens: usage.CacheCreationInputTokens,
-			ProvidedCostUSD:          usage.ProvidedCostUSD,
-			CalculatedCostUSD:        usage.CalculatedCostUSD,
 		}
 	}
 

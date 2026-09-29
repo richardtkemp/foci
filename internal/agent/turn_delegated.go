@@ -587,6 +587,11 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 		PostToolNudgeFunc:  postToolNudgeFunc,
 		PreAnswerNudgeFunc: preAnswerNudgeFunc,
 	}
+	// A backend that books its own calls names this turn on each of them, so
+	// the turn's facts must be in the ledger before the first can complete.
+	if lb, ok := be.(delegator.LedgerBooker); ok {
+		a.recordDelegatedTurn(ts, lb, false)
+	}
 	turnEvents.OnTurnComplete = func(result *delegator.TurnResult) {
 		// Guard the whole completion with sync.Once: the delegated backend's
 		// normal-result path and its process-exit finalize path can both fire
@@ -723,6 +728,10 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 		return
 	}
 	a := t.agent
+	if lb, ok := ts.Backend.(delegator.LedgerBooker); ok {
+		a.closeLedgerTurn(ts, lb)
+		return
+	}
 	model := ts.FinalModel
 	if model == "" {
 		model = ts.TurnModel
@@ -822,6 +831,48 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 		ts.SessionKey, model, u.InputTokens, u.OutputTokens,
 		u.CacheReadInputTokens, u.CacheCreationInputTokens,
 		turnCost)
+}
+
+// closeLedgerTurn ends a turn of a backend that books its own calls: every
+// call it made is already in the ledger, so the turn records only its end, and
+// FinalCost (the sink header's figure) is the ledger's price of the whole turn.
+func (a *Agent) closeLedgerTurn(ts *TurnState, lb delegator.LedgerBooker) {
+	a.recordDelegatedTurn(ts, lb, true)
+	u := ts.FinalUsage
+	var unpriced int
+	if l := accounting.Live(); l != nil && ts.RowID() != "" {
+		cost, n, err := l.TurnCost(ts.RowID())
+		if err != nil {
+			a.logger().Errorf("session=%s turn cost: %v", ts.SessionKey, err)
+		}
+		ts.FinalCost, unpriced = cost, n
+	}
+	a.logger().Infof("session=%s model=%s input=%d output=%d cache_read=%d cache_write=%d cost=$%.4f unpriced_calls=%d (delegated, last-call size; cost is the ledger's turn total)",
+		ts.SessionKey, ts.FinalModel, u.InputTokens, u.OutputTokens,
+		u.CacheReadInputTokens, u.CacheCreationInputTokens, ts.FinalCost, unpriced)
+}
+
+// recordDelegatedTurn records a delegated turn's facts in the ledger for a
+// backend that books its own calls: at its start (before any call can name
+// it), and at its end, when its spend has closed too — such a backend's
+// subagents finish inside the turn that spawned them.
+func (a *Agent) recordDelegatedTurn(ts *TurnState, lb delegator.LedgerBooker, end bool) {
+	t := a.ledgerTurn(ts)
+	if t.TurnID == "" {
+		return
+	}
+	t.Backend = lb.LedgerBackend()
+	if end {
+		now := time.Now()
+		model := ts.FinalModel
+		if model == "" {
+			model = ts.TurnModel
+		}
+		t.EndedAt, t.ActivityClosedAt, t.StopReason, t.FinalModel = now, now, "end_turn", model
+	}
+	if err := accounting.RecordTurn(t); err != nil {
+		a.logger().Errorf("session=%s record turn: %v", ts.SessionKey, err)
+	}
 }
 
 // RunCompaction checks whether context compaction is needed and dispatches
