@@ -79,6 +79,23 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	b.mu.Lock()
 	b.lastModelUsage = baseline
 	b.mu.Unlock()
+	// The ledger adapter, in shadow while it is verified (#2111 §12). A
+	// resumed transcript is tailed from its size now: everything before is
+	// an earlier process's (and, after a compaction, re-appended copies).
+	if sh := newCCShadow(b, opts.SessionKey, opts.AgentID, baseline); sh != nil {
+		if old := b.shadow.Swap(sh); old != nil {
+			old.close()
+		}
+		if opts.ResumeSessionID != "" {
+			if path, err := ccTranscriptPath(opts.WorkDir, opts.ResumeSessionID); err == nil {
+				var offset int64
+				if fi, err := os.Stat(path); err == nil {
+					offset = fi.Size()
+				}
+				sh.startMainTail(path, offset)
+			}
+		}
+	}
 	// skip_permissions bypasses CC permission prompts (unattended). CC can
 	// still ask for a few commands even so; handleToolRequest denies those at
 	// once rather than prompting (#2096). A batch session (opts.SkipPermissions)
@@ -459,6 +476,12 @@ func (b *Backend) OnReaderStopped(err error) {
 // Reset in Restart() before the subprocess is relaunched.
 func (b *Backend) finalizeExit(reason error) {
 	b.finalizeOnce.Do(func() {
+		// The process is gone: its transcript is complete, so the shadow
+		// adapter drains it and flushes. Off this goroutine — it is bounded,
+		// but teardown must not wait on it.
+		if sh := b.shadow.Load(); sh != nil {
+			go sh.close()
+		}
 
 		// Instrumentation: bracket the cleanup so we can see whether it
 		// completed and where time goes when the waiter-goroutine

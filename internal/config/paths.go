@@ -135,6 +135,9 @@ func (c *Config) ResolveAllPaths() {
 	} else if c.Logging.APIDB != "" {
 		c.Logging.APIDB = c.DataPath(c.Logging.APIDB)
 	}
+	if c.Logging.APIShadowDB != "" && !filepath.IsAbs(c.Logging.APIShadowDB) {
+		c.Logging.APIShadowDB = c.DataPath(c.Logging.APIShadowDB)
+	}
 	if c.Sessions.Dir == "" {
 		c.Sessions.Dir = c.DataPath("sessions")
 	} else {

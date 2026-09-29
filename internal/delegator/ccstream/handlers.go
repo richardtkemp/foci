@@ -114,6 +114,11 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 	// guard below this point drops messages for reasons that have nothing to
 	// do with what was billed.
 	b.noteAssistantUsage(msg)
+	// The stream names which main-thread calls this process made; their
+	// usage is booked from the main transcript (ccbook.go).
+	if isTopLevel {
+		b.shadow.Load().enqueue(ccEvent{kind: ccNamed, id: msg.Message.ID, turn: b.openTurnRowID()})
+	}
 
 	// CC's synthetic "No response requested." placeholder is a no-API-call turn,
 	// not a real reply: drop it here so it never records the (unpriced, warning-
@@ -384,6 +389,7 @@ func (b *Backend) logSubagentShares(priced bool, shares []modelinfo.SubagentCost
 // did. See docs/WIRING.md → "Idle-keyed turn completion".
 func (b *Backend) OnResult(msg *ResultMessage) {
 	b.touchActivity()
+	b.shadow.Load().enqueue(ccEvent{kind: ccResultEv, mu: msg.ModelUsage, running: b.agents.Pending()})
 
 	b.turnMu.Lock()
 	turnActive := b.turnActive
@@ -894,6 +900,12 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 			b.logger().Warnf("drop init message (unmarshal failed): %v — WaitReady will stall", err)
 			return
 		}
+		// A fresh session's transcript starts with this process.
+		if sh := b.shadow.Load(); sh != nil {
+			if path, err := ccTranscriptPath(b.workDir, init.SessionID); err == nil {
+				sh.startMainTail(path, 0)
+			}
+		}
 		b.mu.Lock()
 		b.sessionID = init.SessionID
 		b.initMsg = &init
@@ -939,6 +951,7 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		if b.onCompactionDone != nil {
 			b.onCompactionDone(cb.CompactMetadata.PreTokens)
 		}
+		b.shadow.Load().enqueue(ccEvent{kind: ccBoundaryEv, turn: b.openTurnRowID()})
 		// Resolve any armed compaction waiter with success. This also makes
 		// the following idle's abort check (signalCompactionAbort) a no-op —
 		// see resolveCompactionWait.

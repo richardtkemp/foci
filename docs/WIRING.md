@@ -292,7 +292,7 @@ main
   │   ├── delegator/accounting → log, modelinfo, sqlite (the per-call cost ledger in api.db, #2111 — schema, SQL cost views, rate render, Book/Report/RecordTurn and their observers (api.jsonl, BookedHook), the direct-API adapter, the legacy path for not-yet-switched backends, the readers, the startup migration; see "Cost ledger")
   │   ├── delegator/autoapprove → execguard, secrets (shared by ccstream/codex/opencode — auto-approve rule compilation/matching)
   │   ├── delegator/cctmux     → delegator, log, modelinfo, procx, fsnotify (tmux-based Claude Code; registers "claude-code-tmux" via init())
-  │   ├── delegator/ccstream   → delegator, delegator/autoapprove, delegator/hookbin, delegator/pretool, delegator/stoprule, linkwalk, log, modelinfo, procx, question, ratelimit, tempdir, timeutil (stream-json Claude Code; registers "claude-code" via init())
+  │   ├── delegator/ccstream   → delegator, delegator/accounting, delegator/autoapprove, delegator/hookbin, delegator/pretool, delegator/stoprule, linkwalk, log, modelinfo, procx, question, ratelimit, tempdir, timeutil (stream-json Claude Code; registers "claude-code" via init())
   │   ├── delegator/pretool    (no foci deps; stdlib + mvdan.cc/sh parser — PreToolUse deny-rule engine, #2028/#2033/#2034; spawns `when` checks with raw os/exec, not procx, as it runs only in foci-cc-hook and the foci CLI; shared by config, ccstream, cmd/foci-cc-hook and cmd/foci `pretool`)
   │   ├── delegator/stoprule   → delegator/pretool (only its Patterns type; stdlib otherwise — Stop-hook rule engine, #2089: matches the turn's final text, scans the CC transcript for the turn's background launches; shared by config, ccstream and cmd/foci-cc-hook)
   │   ├── delegator/sessionenv → tempdir (shared by codex/opencode + cmd/foci-codex-hook — per-session exec-bridge env file format, lifecycle, and the codex command wrap/unwrap)
@@ -1999,8 +1999,10 @@ path in the same change, so no backend ever has two booking paths:
   adapter" below).
 - **codex: switched** (third). One `thread/tokenUsage/updated` is one call (see "codex
   adapter" below).
-- **Claude Code: not yet.** Its turn-level cost path is unchanged, and its rows are booked as
-  LEGACY calls (see "Legacy path" below) — its only booking path until it switches.
+- **Claude Code: in SHADOW.** Its turn-level cost path is still the live one, and its rows are
+  booked as LEGACY calls (see "Legacy path" below). Its per-call adapter runs beside it into a
+  scratch ledger (see "Claude Code adapter (shadow)" below) until a 1-2 day comparison
+  (`foci-gw ledger-shadow`) clears the switch.
 
 **The cutover** runs at startup: `initLogging` calls `accounting.Open(cfg.Logging.APIDB)`.
 On a pre-ledger api.db (`api_calls.calculated_cost_usd` exists) that takes a `VACUUM INTO`
@@ -2157,6 +2159,41 @@ before the switch they were consumed unread, so codex subagent spend was missing
 only. Tested against `codex/testdata/tokenusage_synthetic.json`: the #1855 live cycles plus
 SYNTHETIC child-thread and re-delivery notifications — codex is disabled, so replace it with
 a real capture on re-enable.
+
+**Claude Code adapter (shadow)** (`ccstream/ccbook.go` state machine, `ccstream/ccshadow.go`
+wiring; #2111 §3.1, §4, §5). With `logging.api_shadow_db` set, startup opens a SHADOW ledger
+(`accounting.Options.Shadow`: its bookings reach no observer — no api.jsonl line, no
+generation — and its alarms log at INFO as `shadow <inv>`), and every CC process runs the
+adapter into it (`accounting.Shadow()`). The live path is untouched: the hooks only enqueue
+(non-blocking; a full queue drops and counts), and one goroutine per process runs the book.
+Inputs: the stream's top-level assistant ids with the foci turn open when each was named
+(`OnAssistant`); results' cumulative `modelUsage` with the running-subagent count
+(`OnResult`); `compact_boundary`; every subagent transcript line, ungated, and each tail's
+open/close (`subagentTailManager.shadowLine/shadowTail`); and a new MAIN-transcript tail from
+the file's size at launch (a resumed or forked session's history is an earlier process's),
+started at Start for a resume or at `init` for a fresh session, which also sees the
+`cost-state` record a graceful close appends. Rules (ccbook.go header, one test each):
+a main call books from its transcript line on the turn that named it, only if the stream named
+it — a line never named is a history copy (F1b: re-appended after every 2nd compaction, batch
+writes) and is dropped, as is a re-append of a call already booked; a named call seen only at a
+stopless line is `interrupted` — booked and priced from it at the result's settle, excluded from
+the remainder; a subagent call books on its spawning turn, `completed` on its stop_reason line or
+`stopless` at the next id in its file or its tail's close, and a subagent line billed before the
+process launched is skipped; each result settles once its named calls are in (bound 250ms) and,
+if no subagent was running, once every tail is at rest (bound `subagentTailSettle`) — then the
+remainder `modelUsage − baseline − Σ counted calls` per model and class is booked as overhead
+(no turn) or, if the window held a `compact_boundary`, as a compaction (on the turn open at the
+boundary, else a compaction turn of its own); a negative class alarms `invNegativeRemainder`
+and books nothing; a named call whose line never came alarms `invStreamIdBooked`. At exit the
+last remainder comes from the `cost-state` record, else the last result. Every process writes
+its baseline (the totals CC restored on --resume) and each result as cumulative
+`backend_reports` for the scope `<session>@<launch nanos>`, so CC's own cost per process is a
+difference of two reports. Replayed against the #2112 P0 captures
+(`ccstream/testdata/ledger/*.json.gz`: two idle compactions with the history re-append, an
+interrupted resume, graceful/killed exits, a subagent run) — conservation holds exactly with
+no negative remainder on every one. `foci-gw ledger-shadow -live api.db -shadow
+api-shadow.db [-since 36h]` compares the two ledgers per turn, per CC process (CC's own cost
+against the adapter's, interrupted excluded) and per day.
 
 **Legacy path** (`legacylive.go`) — the only booking path of Claude Code, until it
 switches; the file goes with that switch. `DelegatedTransport.LogUsage` builds a

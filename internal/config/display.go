@@ -206,6 +206,7 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	add("logging", "event_file", cfg.Logging.EventFile)
 	add("logging", "api_file", cfg.Logging.APIFile)
 	add("logging", "api_db", cfg.Logging.APIDB)
+	add("logging", "api_shadow_db", cfg.Logging.APIShadowDB)
 	add("logging", "conversation_log", DerefBool(cfg.Logging.ConversationLog))
 	add("logging", "full_payload", cfg.Logging.FullPayload)
 	if cfg.Logging.PayloadFile != "" {

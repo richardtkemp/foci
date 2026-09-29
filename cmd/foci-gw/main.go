@@ -73,6 +73,8 @@ func main() {
 			os.Exit(0)
 		case "ledger-migrate":
 			os.Exit(runLedgerMigrateDryRun(os.Args[2:], os.Stdout, os.Stderr))
+		case "ledger-shadow":
+			os.Exit(runLedgerShadow(os.Args[2:], os.Stdout, os.Stderr))
 		}
 	}
 
@@ -83,6 +85,7 @@ func main() {
 Usage: foci-gw [flags]
        foci-gw version
        foci-gw ledger-migrate -from <api.db> [-out <path>]
+       foci-gw ledger-shadow -live <api.db> -shadow <api-shadow.db> [-since <time|duration>]
 
 Flags:
 `)
@@ -91,6 +94,7 @@ Flags:
 Subcommands:
   version          Print version information
   ledger-migrate   Dry-run the cost ledger migration (#2111) on a copy of an api.db
+  ledger-shadow    Compare the shadow cost ledger with the live one (#2111)
 `)
 	}
 

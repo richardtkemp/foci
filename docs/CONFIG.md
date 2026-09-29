@@ -241,7 +241,8 @@ Logging and diagnostics. The `messages_in_log` field can be overridden per-agent
 | `level` | string | `"INFO"` | Log level: `DEBUG`, `INFO`, `WARN`, `ERROR`. |
 | `event_file` | string | `"logs/foci.log"` | Path to event log file. Relative paths resolve against `$HOME`. |
 | `api_file` | string | `"logs/api.jsonl"` | Path to API call log (JSONL). One entry per API call with tokens, cost, duration. Relative paths resolve against `$HOME`. |
-| `api_db` | string | `$data_dir/api.db` | SQLite API call log. All API calls logged with `call_type` (conversation, compaction, summary, spawn). `""` disables. |
+| `api_db` | string | `$data_dir/api.db` | The cost ledger: one row per API call on every backend (see WIRING "Cost ledger"). `""` disables. |
+| `api_shadow_db` | string | `""` | A scratch cost ledger a backend's new cost adapter books into BESIDE the live one while it is verified (#2111 §12; today the Claude Code adapter). Never read by `/cost` or the tracing export; compare it with `foci-gw ledger-shadow`. Relative paths resolve against `$data_dir`. `""` disables. |
 | `conversation_log` | bool | `true` | Enable per-agent conversation logging. Each agent's database is stored at `workspace/.data/conversation.db`. |
 | `full_payload` | bool | `false` | Write full API request/response bodies to `payload_file`. |
 | `payload_file` | string | `"logs/api-payload.jsonl"` | Path for full payload log. Only used when `full_payload = true`. Relative paths resolve against `$HOME`. |

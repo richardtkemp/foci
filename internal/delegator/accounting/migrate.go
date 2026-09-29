@@ -22,6 +22,10 @@ type Options struct {
 	// NoBackup skips the backup. Only for migrating a copy that is itself the
 	// backup (the dry-run tool).
 	NoBackup bool
+	// Shadow opens a SHADOW ledger: a scratch api.db an adapter books into
+	// beside the live path while it is verified, never observed (no api.jsonl
+	// line, no generation) and never read by the product (#2111 §12).
+	Shadow bool
 	// OnAlarm receives invariant violations from live bookings.
 	OnAlarm func(Alarm)
 }
@@ -35,7 +39,7 @@ func Open(path string, opts Options) (*Ledger, *MigrationReport, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	l := &Ledger{db: db, OnAlarm: opts.OnAlarm}
+	l := &Ledger{db: db, OnAlarm: opts.OnAlarm, shadow: opts.Shadow}
 	v1, err := isV1(db)
 	if err != nil {
 		_ = db.Close()

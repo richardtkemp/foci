@@ -106,7 +106,21 @@ const (
 	InvSameIDDifferentUsage = "invSameIDDifferentUsage"
 	InvClassNoRate          = "invClassNoRate"
 	InvModelNotInTable      = "invModelNotInTable"
+	// InvNegativeRemainder: a backend's cumulative report minus everything
+	// booked in its scope went negative in some class, so the booked set is
+	// wrong. Nothing is booked for the remainder and nothing is clamped.
+	InvNegativeRemainder = "invNegativeRemainder"
+	// InvStreamIdBooked: a call the backend's stream named never appeared in
+	// the source its usage is booked from within the bound.
+	InvStreamIdBooked = "invStreamIdBooked"
 )
+
+// Alarm raises an invariant violation an adapter found outside a booking.
+func (l *Ledger) Alarm(a Alarm) {
+	if l != nil && l.OnAlarm != nil {
+		l.OnAlarm(a)
+	}
+}
 
 // Call is one API call, normalised by its backend's adapter.
 type Call struct {
@@ -210,6 +224,10 @@ type Ledger struct {
 	// OnAlarm receives every invariant violation. nil drops them, which only
 	// a caller that counts them itself (the migration) should allow.
 	OnAlarm func(Alarm)
+
+	// shadow marks a shadow ledger (Options.Shadow): its bookings reach no
+	// observer.
+	shadow bool
 }
 
 // Close closes the ledger's database.
@@ -243,8 +261,10 @@ func (l *Ledger) Update(fn func(*Tx) error) error {
 			l.OnAlarm(a)
 		}
 	}
-	for _, b := range tx.booked {
-		observe(b)
+	if !l.shadow {
+		for _, b := range tx.booked {
+			observe(b)
+		}
 	}
 	return nil
 }

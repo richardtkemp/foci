@@ -155,7 +155,12 @@ type subagentTailManager struct {
 	// block loses display, dropping usage loses money. May be nil in tests
 	// that only exercise text forwarding.
 	noteUsage func(agent, model, id string, at time.Time, complete bool, u TokenUsage)
-	lg        *log.ComponentLogger
+	// shadowLine and shadowTail feed the ledger adapter running in shadow
+	// (ccshadow.go): every raw line, ungated — the ledger's own key makes a
+	// re-read harmless — and each tail's start and end. May be nil.
+	shadowLine func(groupKey string, line []byte)
+	shadowTail func(groupKey string, open bool)
+	lg         *log.ComponentLogger
 }
 
 // wantText is whether this tail forwards the subagent's TEXT to the session,
@@ -383,6 +388,9 @@ func (m *subagentTailManager) maybeStart(toolUseID, path string, reactivatedAt t
 	m.tails[toolUseID] = t
 	m.mu.Unlock()
 
+	if m.shadowTail != nil {
+		m.shadowTail(toolUseID, true)
+	}
 	go m.run(toolUseID, path, t)
 }
 
@@ -460,6 +468,9 @@ func (m *subagentTailManager) stopAll() {
 // t.done on exit.
 func (m *subagentTailManager) run(groupKey, path string, t *subagentTail) {
 	defer close(t.done)
+	if m.shadowTail != nil {
+		defer m.shadowTail(groupKey, false)
+	}
 
 	f := m.waitForFile(path, t.stop)
 	if f == nil {
@@ -657,6 +668,9 @@ func (m *subagentTailManager) deliverLine(groupKey string, line []byte, wantText
 	line = bytes.TrimSpace(line)
 	if len(line) == 0 {
 		return
+	}
+	if m.shadowLine != nil {
+		m.shadowLine(groupKey, line)
 	}
 	var rec transcriptLine
 	if err := json.Unmarshal(line, &rec); err != nil {

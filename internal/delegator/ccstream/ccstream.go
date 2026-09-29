@@ -224,7 +224,10 @@ type Backend struct {
 	// layer's durable turn identity, handed to the accumulator so a subagent's
 	// spend can name the turn that SPAWNED it rather than the one that closed
 	// while its tokens were in flight (#1880 phase C).
-	turnRowID        string
+	turnRowID string
+	// shadow is this process's ledger adapter running in shadow (#2111
+	// §12), or nil when no shadow ledger is configured (ccshadow.go).
+	shadow           atomic.Pointer[ccShadow]
 	turnProvidedSeen bool // CC reported a cost for ≥1 cycle this turn; distinguishes "$0" from "absent"
 	// This turn's usage accumulated PER ASSISTANT MESSAGE, bucketed by model
 	// and by subagent-or-not (#1866). Per-message because only there does CC
@@ -466,8 +469,27 @@ func (b *Backend) subagentTails() *subagentTailManager {
 				se.OnSubagentText(groupKey, text, b.runIndexForGroup(groupKey))
 			}
 		}, b.noteSubagentTranscriptUsage, b.logger())
+		b.subagentTailMgr.shadowLine = func(groupKey string, line []byte) {
+			if l, _ := parseCCRecord(line); l != nil {
+				b.shadow.Load().enqueue(ccEvent{kind: ccSubLine, agent: groupKey, turn: b.openTurnRowID(), line: l})
+			}
+		}
+		b.subagentTailMgr.shadowTail = func(groupKey string, open bool) {
+			kind := ccTailClosed
+			if open {
+				kind = ccTailOpened
+			}
+			b.shadow.Load().enqueue(ccEvent{kind: kind, agent: groupKey, turn: b.openTurnRowID()})
+		}
 	}
 	return b.subagentTailMgr
+}
+
+// openTurnRowID is TurnEvents.TurnID of the turn open now, or "".
+func (b *Backend) openTurnRowID() string {
+	b.turnMu.Lock()
+	defer b.turnMu.Unlock()
+	return b.turnRowID
 }
 
 // touchActivity records the current time as the most recent stream event.

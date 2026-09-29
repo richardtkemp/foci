@@ -933,6 +933,7 @@ type LoggingConfig struct {
 	EventFile       string `toml:"event_file" default:"logs/foci.log" desc:"Path to the main foci event log file"`
 	APIFile         string `toml:"api_file"   default:"logs/api.jsonl" desc:"Path to the API call log (JSONL format)"`
 	APIDB           string `toml:"api_db" default:"api.db" desc:"SQLite database for durable API call history across restarts (relative to data_dir)"`
+	APIShadowDB     string `toml:"api_shadow_db" desc:"Scratch SQLite cost ledger a backend's new cost adapter books into beside the live one while it is verified (relative to data_dir); empty disables. Operator verification only"`
 	ConversationLog *bool  `toml:"conversation_log" default:"true" desc:"Log each agent's conversation turns to disk; turn this off to avoid persisting conversation content"`
 
 	FullPayload bool   `toml:"full_payload"                         desc:"Write the complete raw request and response sent to the model API to logs/api-payload.jsonl, useful for debugging"` // write full API payloads to api-payload.jsonl

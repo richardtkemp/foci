@@ -53,6 +53,16 @@ func observe(b Booking) {
 // live is the process's ledger: the api.db the gateway opened at startup.
 var live atomic.Pointer[Ledger]
 
+// shadow is the scratch ledger an adapter under verification books into
+// (logging.api_shadow_db), or nil.
+var shadow atomic.Pointer[Ledger]
+
+// SetShadow makes l the shadow ledger; nil detaches it.
+func SetShadow(l *Ledger) { shadow.Store(l) }
+
+// Shadow is the shadow ledger, or nil when none is configured.
+func Shadow() *Ledger { return shadow.Load() }
+
 // SetLive makes l the ledger Record books into; nil detaches it.
 func SetLive(l *Ledger) { live.Store(l) }
 
@@ -88,8 +98,11 @@ func (l *Ledger) RecordCall(t Turn, c Call, r *Report) (Booked, error) {
 	}
 	var booked Booked
 	err := l.Update(func(tx *Tx) error {
-		if err := tx.RecordTurn(t); err != nil {
-			return err
+		// Overhead has no turn (R6).
+		if t.TurnID != "" {
+			if err := tx.RecordTurn(t); err != nil {
+				return err
+			}
 		}
 		var err error
 		if booked, err = tx.Book(c); err != nil {

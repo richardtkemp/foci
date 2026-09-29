@@ -124,6 +124,29 @@ func initLogging(cfg *config.Config, processStart time.Time) func() {
 		})
 	}
 
+	// The shadow ledger (#2111 §12): a scratch api.db a backend's new cost
+	// adapter books into beside the live path, for `foci-gw ledger-shadow` to
+	// compare. Its alarms are INFO — they are the verification's findings,
+	// not operator alarms — and a failure to open it never stops the gateway.
+	if cfg.Logging.APIShadowDB != "" {
+		shadow, _, err := accounting.Open(cfg.Logging.APIShadowDB, accounting.Options{
+			Shadow: true, NoBackup: true,
+			OnAlarm: func(a accounting.Alarm) {
+				ledgerLog.Infof("shadow %s [%s]: %s", a.Invariant, a.Backend, a.Detail)
+			},
+		})
+		if err != nil {
+			ledgerLog.Warnf("open shadow ledger %s: %v — running without it", cfg.Logging.APIShadowDB, err)
+		} else {
+			ledgerLog.Infof("shadow ledger %s: the Claude Code ledger adapter books here beside the live path", cfg.Logging.APIShadowDB)
+			accounting.SetShadow(shadow)
+			cleanups = append(cleanups, func() {
+				accounting.SetShadow(nil)
+				_ = shadow.Close()
+			})
+		}
+	}
+
 	// Conversation log (per-agent SQLite databases in workspace .data)
 	if config.DerefBool(cfg.Logging.ConversationLog) {
 		var agentIDs []string

@@ -504,6 +504,7 @@ bind = "127.0.0.1"
 # event_file = "logs/foci.log"
 # api_file = "logs/api.jsonl"
 # api_db = ""                             # SQLite API call log (default: {data_dir}/api.db, empty = disabled)
+# api_shadow_db = "api-shadow.db"         # scratch ledger for verifying a new cost adapter in shadow (default: disabled)
 # conversation_log = true                    # per-agent conversation logging
 # full_payload = false
 # payload_file = "logs/api-payload.jsonl"
