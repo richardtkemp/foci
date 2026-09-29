@@ -187,7 +187,11 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		devicePath = filepath.Join(deps.Config.DataDir, devicesFile)
 	}
 
-	blobs := newBlobStore()
+	blobDataDir := ""
+	if deps.Config != nil {
+		blobDataDir = deps.Config.DataDir
+	}
+	blobs := newBlobStore(blobDir(blobDataDir))
 	if appCfg != nil {
 		if appCfg.MaxBlobMB != nil && *appCfg.MaxBlobMB > 0 {
 			blobs.maxBytes = int64(*appCfg.MaxBlobMB) << 20

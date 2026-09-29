@@ -700,7 +700,7 @@ func TestAppSink_VoiceTriggerMultiBlockTurnSynthesizesPerBlock(t *testing.T) {
 func newTestHub() *Hub {
 	return &Hub{
 		deps:          platform.ProviderDeps{},
-		blobs:         newBlobStore(),
+		blobs:         newBlobStore(blobDir("")),
 		tokens:        newPushTokens(),
 		devices:       newDeviceStore(""),
 		pairKeys:      newPairKeyStore(),
@@ -1812,7 +1812,7 @@ func TestReliability_BufferTrimsByDepth(t *testing.T) {
 // --- slice 4: media / blobs ---
 
 func TestBlobStore_PutGetRoundTrip(t *testing.T) {
-	s := newBlobStore()
+	s := newBlobStore(blobDir(""))
 	meta, err := s.putBytes([]byte("hello"), "document", "f.txt", "text/plain")
 	if err != nil {
 		t.Fatal(err)
@@ -1831,7 +1831,7 @@ func TestBlobStore_PutGetRoundTrip(t *testing.T) {
 }
 
 func TestBlobStore_SizeCap(t *testing.T) {
-	s := newBlobStore()
+	s := newBlobStore(blobDir(""))
 	s.maxBytes = 4
 	if _, err := s.put(bytes.NewReader([]byte("12345")), "document", "x", "text/plain"); !errors.Is(err, errBlobTooLarge) {
 		t.Fatalf("over-cap put error = %v, want errBlobTooLarge", err)

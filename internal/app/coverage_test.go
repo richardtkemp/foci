@@ -550,7 +550,7 @@ func TestFCMSend_DeadTokenPrunedNotRetried(t *testing.T) {
 }
 
 func TestBlobReaper_EvictsExpired(t *testing.T) {
-	s := newBlobStore()
+	s := newBlobStore(blobDir(""))
 	s.ttl = time.Hour
 	meta, err := s.putBytes([]byte("data"), "document", "f.txt", "text/plain")
 	if err != nil {

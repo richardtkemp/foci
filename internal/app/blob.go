@@ -43,7 +43,8 @@ type blobMeta struct {
 }
 
 // blobStore is the out-of-band media store backing /app/blob (§9). Blobs live on
-// disk under a dedicated dir; metadata is held in memory. They are short-TTL and
+// disk under a dedicated dir (see blobDir); metadata is held in memory and
+// rebuilt from the dir at startup (rehydrate). They are short-TTL and
 // size-capped, and never travel over the WebSocket — the control stream carries
 // only `media {blobId,…}` / `message.attachments` references.
 type blobStore struct {
@@ -55,8 +56,109 @@ type blobStore struct {
 	blobs map[string]*blobMeta
 }
 
-func newBlobStore() *blobStore {
-	dir := filepath.Join(tempdir.Dir(), "app-blobs")
+// blobDirName names the blob store's directory, under the data dir (or, with
+// no data dir, the temp root).
+const blobDirName = "app-blobs"
+
+// blobDir resolves the blob store's directory. Blobs belong under the durable
+// data dir: their on-disk path is handed to agents as an attachment's
+// SavedPath and quoted in conversation history, and the temp root (/tmp/foci)
+// is wiped on host reboot (#1556). The temp-root fallback exists only for a
+// config with no data dir (tests); production config always sets one.
+func blobDir(dataDir string) string {
+	if dataDir == "" {
+		return filepath.Join(tempdir.Dir(), blobDirName)
+	}
+	return filepath.Join(dataDir, blobDirName)
+}
+
+// MigrateLegacyBlobDir moves blobs from their pre-#1556 home under the temp
+// root into the durable blob dir under dataDir, so an upgrade keeps blobs that
+// are still inside their TTL. It must run at gateway startup BEFORE
+// tempdir.CleanStale, which no longer spares <temp root>/app-blobs and would
+// otherwise delete them first; whatever the move leaves behind (a non-blob
+// file, a failed move) is then reclaimed by that wipe like any other orphan.
+// A no-op once the legacy dir is gone, and when dataDir is empty (the store
+// then still lives in the temp root, so there is nothing to move).
+func MigrateLegacyBlobDir(dataDir string) {
+	if dataDir == "" {
+		return
+	}
+	moved, failed := migrateBlobDir(filepath.Join(tempdir.Dir(), blobDirName), blobDir(dataDir))
+	if moved+failed > 0 {
+		appLog.Infof("blob store migration: %d moved, %d failed -> %s", moved, failed, blobDir(dataDir))
+	}
+}
+
+// migrateBlobDir moves every blob file (a regular file with a ULID name — the
+// same test rehydrate applies) from `from` into `to`. It never overwrites a
+// file already in `to`, and never follows a symlink. Anything else in `from`
+// is left where it is.
+func migrateBlobDir(from, to string) (moved, failed int) {
+	entries, err := os.ReadDir(from)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			appLog.Warnf("blob store migration: reading %s: %v", from, err)
+		}
+		return 0, 0
+	}
+	if err := os.MkdirAll(to, 0o700); err != nil {
+		appLog.Warnf("blob store migration: creating %s: %v", to, err)
+		return 0, 0
+	}
+	for _, e := range entries {
+		if !e.Type().IsRegular() {
+			continue
+		}
+		if _, ok := fap.ULIDTime(e.Name()); !ok {
+			continue
+		}
+		src, dst := filepath.Join(from, e.Name()), filepath.Join(to, e.Name())
+		if err := moveFile(src, dst); err != nil {
+			appLog.Warnf("blob store migration: %s: %v", e.Name(), err)
+			failed++
+			continue
+		}
+		moved++
+	}
+	_ = os.Remove(from) // succeeds only once emptied
+	return moved, failed
+}
+
+// blobLink is os.Link, swappable so a test can force moveFile's
+// cross-filesystem copy path.
+var blobLink = os.Link
+
+// moveFile moves src to dst without replacing an existing dst. The link+unlink
+// is atomic and refuses an existing dst on the same filesystem; across
+// filesystems (a tmpfs /tmp) it falls back to an exclusive-create copy.
+func moveFile(src, dst string) error {
+	err := blobLink(src, dst)
+	if err == nil {
+		return os.Remove(src)
+	}
+	if errors.Is(err, os.ErrExist) {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, in)
+	closeErr := out.Close()
+	if err := errors.Join(copyErr, closeErr); err != nil {
+		_ = os.Remove(dst)
+		return err
+	}
+	return os.Remove(src)
+}
+
+func newBlobStore(dir string) *blobStore {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		appLog.Warnf("blob store dir %s: %v", dir, err)
 	}

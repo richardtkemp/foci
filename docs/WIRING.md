@@ -39,6 +39,11 @@ config.Load(path)                                        ← validates values; l
     api.db once, then accounting.SetLive), log.InitConversation, log rotation
   → returns cleanup func
 
+→ app.MigrateLegacyBlobDir(cfg.DataDir)                  ← internal/app/blob.go; one-time move of blobs from the
+                                                            pre-#1556 <temp root>/app-blobs into <data_dir>/app-blobs.
+                                                            MUST precede CleanStale, which no longer spares app-blobs/.
+                                                            Leftovers (non-blob files, failed moves) are wiped by it.
+
 → tempdir.CleanStale()                                   ← internal/tempdir/cleanup.go; best-effort wipe of orphaned
                                                             top-level temp state (exec bridge sockets, spill/pair/
                                                             browser scratch, escaped test dirs, spawn/ sandbox
@@ -47,12 +52,11 @@ config.Load(path)                                        ← validates values; l
                                                             under `go test` if it lands on the shared /tmp/foci
                                                             (#1510) — tests must set FOCI_TMPDIR; the Makefile test
                                                             targets do. Runs once, right after logging
-                                                            init, before anything below (bridges, the app blob
-                                                            store, spawn sandboxes) creates its own state for this
-                                                            process lifetime — the one moment everything already on
-                                                            disk there is provably orphaned, not just old.
-                                                            app-blobs/ is excluded entirely (owned by the app blob
-                                                            store, see internal/app/blob.go — restart-durable, #1500).
+                                                            init, before anything below (bridges, spawn sandboxes)
+                                                            creates its own state for this process lifetime — the
+                                                            one moment everything already on disk there is provably
+                                                            orphaned, not just old. tool-results/ is excluded (paths
+                                                            quoted in history; aged out by CleanOldFiles instead).
                                                             Never fatal; failures (e.g. a spawn/ sandbox dir owned by
                                                             a different rich-readers-group uid) are counted and logged,
                                                             never block startup.
@@ -2925,16 +2929,19 @@ Each half has exactly one implementation, and a new mirror must use them rather 
 **Binding restore across restart + archive (`framestore.go`, `StartAll`, `handleConversationArchive`):** bindings (`h.convs`/`h.bySession`) are in-memory, created on client frames (or server-side by `deliverBinding`) — so a foci restart empties them. To keep unsolicited sends landing in the SAME conversations rather than freshly minted ones, `Hub.StartAll` rebuilds bindings at startup from the union of two durable sources: `frameStore.RestorableConvs()` — every conv with a **visible** frame and a known `agent_id` (a column added to `app_frames`; written by `convBinding.send`) — plus `SessionIndex.ConvRefs("app")`, the persisted `conv_id` rows covering registered-but-frameless conversations. `ensureBinding(nil, agentID, convID)` recreates each socketless binding (`attach(nil)` is a no-op; seq seeded from `MaxSeq`). **Archive is a reversible flag, not a deletion:** the `conversation.archive` frame carries an `Archived` bool; `handleConversationArchive` persists only an `is_archived` row in `chat_metadata` (keyed by agent+platform+chatID, a sibling of `is_default`) — it does NOT purge frames, drop the binding, flip session status, or fire a reflection. The binding stays live (inbound frames still flow; history retained), and the roster surfaces `ConversationInfo.Archived` (read from `SessionIndex.ArchivedChatsForAgent` by `agentRoster`). Archived convs are therefore still restored on restart. Unarchive is a real server action (`Archived=false` clears the flag); the updated roster is broadcast to every live socket on each archive/unarchive so all devices reconcile at once (#1558). **Archiving the agent's default chat is refused** with an `archive_default` `ErrorFrame` plus a per-socket roster re-push (reverting only the requesting client's optimistic flag): an archivable default would silently degrade session-blind delivery.
 
 **Media / blobs (`blob.go`, slice 4):** binary payloads never cross the
-WebSocket. `blobStore` keeps blobs on disk under `tempdir.Dir()/app-blobs`
-(metadata in memory; size-capped + TTL-reaped). `newBlobStore` rehydrates that
+WebSocket. `blobStore` keeps blobs on disk under `<data_dir>/app-blobs`
+(`blobDir`; metadata in memory; size-capped + TTL-reaped). It lived under the
+temp root until #1556 — a host reboot wiped /tmp and with it every blob, while
+the blob's path (an inbound attachment's `SavedPath`) stays quoted in agent
+history; `MigrateLegacyBlobDir` moves the old dir's blobs across once at
+gateway startup, before `tempdir.CleanStale`. With no data dir (tests only)
+`blobDir` falls back to the temp root. `newBlobStore` rehydrates that
 in-memory metadata from the directory itself at construction (`rehydrate`,
 #1500): each filename is decoded as a ULID for its `created` time (`fap.ULIDTime`,
 mirroring `fap.NewULID`'s encoding), mime is sniffed from a 512-byte content
 prefix (never persisted, so unrecoverable any other way), and anything already
 past TTL is reaped immediately instead of resurrected — this is what makes
-app-blobs/ self-managing across a restart, and is why the sibling startup
-temp-wipe (`tempdir.CleanStale`, #1499) excludes that directory entirely rather
-than reaping it itself. Outbound: a `Send*` media call
+app-blobs/ self-managing across a restart. Outbound: a `Send*` media call
 → `putFile`/`putBytes` → `media {blobId,mime,…}` (no `kind` — app clients derive
 presentation from `mime`; kind is an internal blob/Telegram-method label only); the app fetches bytes via
 `GET /app/blob/<id>` (`ServeBlobGet`, range-capable `http.ServeContent`).

@@ -87,26 +87,27 @@ func TestCleanOldFilesEmptyDir(t *testing.T) {
 	}
 }
 
-// TestCleanStaleRoot_WipesOrphansPreservesAppBlobs verifies the core wipe:
+// TestCleanStaleRoot_WipesOrphansPreservesToolResults verifies the core wipe:
 // every category of orphaned top-level state gets removed (regardless of
 // name pattern — CleanStale doesn't glob-match, it wipes anything not
-// explicitly excluded), while app-blobs/ and its contents survive untouched,
-// and spawn/'s children are wiped but spawn/ itself is kept.
-func TestCleanStaleRoot_WipesOrphansPreservesAppBlobs(t *testing.T) {
+// explicitly excluded), while tool-results/ and its contents survive
+// untouched, and spawn/'s children are wiped but spawn/ itself is kept.
+func TestCleanStaleRoot_WipesOrphansPreservesToolResults(t *testing.T) {
 	root := t.TempDir()
 
 	// A grab-bag of orphan categories named after the real ones observed —
 	// none of these names are special-cased in the implementation, they're
-	// wiped simply for not being "app-blobs" or "spawn".
+	// wiped simply for not being "tool-results" or "spawn".
 	mustWriteFile(t, filepath.Join(root, "exec-123-funcs.sh"), "stale bridge funcs")
 	mustWriteFile(t, filepath.Join(root, "exec-123.sock"), "x") // not a real socket, just a stand-in file
 	mustMkdirWithFile(t, filepath.Join(root, "foci-spill-abc"), "big.json", "spilled tool result")
 	mustMkdirWithFile(t, filepath.Join(root, "fgwcheck-1"), "cc-stub", "escaped integration test binary")
 	mustMkdirWithFile(t, filepath.Join(root, "waldiag-1"), "cc-stub", "another escaped test dir")
 
-	// app-blobs/ must survive completely untouched.
-	blobFile := filepath.Join(root, "app-blobs", "01ARZ3NDEKTSV4RRFFQ69G5FAV")
-	mustWriteFile(t, blobFile, "blob bytes")
+	// app-blobs/ is the app blob store's PRE-#1556 home. The store now lives
+	// under the data dir and foci-gw migrates this dir out before the wipe, so
+	// anything still here is an orphan like the rest — no longer excluded.
+	mustMkdirWithFile(t, filepath.Join(root, "app-blobs"), "01ARZ3NDEKTSV4RRFFQ69G5FAV", "blob bytes")
 
 	// tool-results/ must survive too: guard.go puts these paths into the
 	// conversation, and a session outlives a gateway restart, so the model can
@@ -132,15 +133,10 @@ func TestCleanStaleRoot_WipesOrphansPreservesAppBlobs(t *testing.T) {
 	}
 
 	// Orphans gone.
-	for _, name := range []string{"exec-123-funcs.sh", "exec-123.sock", "foci-spill-abc", "fgwcheck-1", "waldiag-1"} {
+	for _, name := range []string{"exec-123-funcs.sh", "exec-123.sock", "foci-spill-abc", "fgwcheck-1", "waldiag-1", "app-blobs"} {
 		if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
 			t.Errorf("%s should have been removed, stat err = %v", name, err)
 		}
-	}
-
-	// app-blobs/ and its contents untouched.
-	if _, err := os.Stat(blobFile); err != nil {
-		t.Errorf("app-blobs content should survive: %v", err)
 	}
 
 	// tool-results/ and its contents untouched.
@@ -236,8 +232,8 @@ func TestCleanStale_HonorsResolvedRootNotHardcodedPath(t *testing.T) {
 	}
 
 	mustWriteFile(t, filepath.Join(scratch, "exec-999-funcs.sh"), "stale")
-	blobFile := filepath.Join(scratch, "app-blobs", "some-blob-id")
-	mustWriteFile(t, blobFile, "keep me")
+	keepFile := filepath.Join(scratch, "tool-results", "tool-result-x.txt")
+	mustWriteFile(t, keepFile, "keep me")
 
 	result := CleanStale()
 
@@ -247,8 +243,8 @@ func TestCleanStale_HonorsResolvedRootNotHardcodedPath(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(scratch, "exec-999-funcs.sh")); !os.IsNotExist(err) {
 		t.Error("orphan under the override root should have been removed")
 	}
-	if _, err := os.Stat(blobFile); err != nil {
-		t.Errorf("app-blobs under the override root should survive: %v", err)
+	if _, err := os.Stat(keepFile); err != nil {
+		t.Errorf("tool-results under the override root should survive: %v", err)
 	}
 	// Never touched: had CleanStale used a hardcoded "/tmp/foci" instead of
 	// the resolved override, this scratch dir would be untouched and the

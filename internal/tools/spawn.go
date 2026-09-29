@@ -202,8 +202,8 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				filesCreated := listCreatedFiles(tempDir)
 				if filesCreated != "" {
 					// tempDir is now durably quoted in conversation history (same
-					// class of reference as an app-blobs/ or tool-results/ path),
-					// but — unlike those two — it is NOT excluded from
+					// class of reference as a tool-results/ path or an app blob's
+					// path), but — unlike those — it is NOT excluded from
 					// cleanStaleRoot's unconditional wipe of spawn/'s children
 					// (internal/tempdir/cleanup.go). That's a deliberate choice,
 					// not an oversight (#1506): a later turn re-reading this path

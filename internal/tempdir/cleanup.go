@@ -29,12 +29,6 @@ func CleanOldFiles(dir, pattern string, maxAge time.Duration) (int, error) {
 	return removed, nil
 }
 
-// appBlobsDir names the app blob store's private subdirectory (see
-// internal/app/blob.go's newBlobStore) under the temp root. It is the blob
-// store's own restart-durable state and must never be touched by CleanStale,
-// under any circumstance.
-const appBlobsDir = "app-blobs"
-
 // spawnDirName names the spawn-sandbox subdirectory (see SpawnDir). Its
 // individual children are wiped like any other orphaned state, but the
 // directory itself is left in place — on the live host it's set up
@@ -43,7 +37,7 @@ const appBlobsDir = "app-blobs"
 // recreate it (which would mint it with whatever default mode MkdirAll asks
 // for, not the one actually in place).
 //
-// Unlike appBlobsDir/toolResultsDir, NO child of spawn/ is excluded from this
+// Unlike toolResultsDir, NO child of spawn/ is excluded from this
 // wipe — including a "foci-spawn-*" raw-mode sandbox (internal/tools/spawn.go)
 // whose path can be quoted in conversation history via "Files created in
 // <tempDir>/: ..." the same way a spilled tool-result path is. That's a
@@ -79,7 +73,7 @@ type CleanStaleResult struct {
 // CleanStale performs a best-effort wipe of orphaned top-level temp state
 // under the resolved root. It is meant to run exactly once, at foci-gw
 // startup, AFTER the root is resolved (see resolve/resolveRoot) and BEFORE
-// any per-process bridge, blob, or spawn-sandbox dir is created.
+// any per-process bridge or spawn-sandbox dir is created.
 //
 // Startup is the one moment "everything already on disk is orphaned" is
 // provable rather than inferred: no session exists yet, so no exec bridge,
@@ -88,10 +82,6 @@ type CleanStaleResult struct {
 // session idle >24h holds a stale-but-LIVE BASH_ENV funcs.sh that an
 // age-based reaper would delete, breaking every foci_* tool in that session
 // on next wake.
-//
-// app-blobs/ is EXCLUDED entirely: it is the app blob store's own
-// restart-durable directory (observed mode 2700, owned by the daemon's own
-// uid) and is owned by that store, not this wipe — see appBlobsDir.
 //
 // CleanStale never panics out to the caller and never treats a removal
 // failure as fatal. The root is NOT sticky and NOT world-writable — it's
@@ -122,9 +112,6 @@ func cleanStaleRoot(root string) (result CleanStaleResult) {
 	}
 
 	for _, e := range entries {
-		if e.Name() == appBlobsDir {
-			continue // owned by the blob store; never wiped here
-		}
 		if e.Name() == toolResultsDir {
 			continue // path is referenced from conversation history — see toolResultsDir
 		}

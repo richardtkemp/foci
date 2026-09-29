@@ -21,7 +21,7 @@ const (
 	// the temp root entirely. The Makefile test targets set it to the
 	// per-run TESTDIR (alongside TMPDIR) so test runs are hermetic: on a
 	// host where a live foci install owns /tmp/foci, the daemon's private
-	// subdirs (app-blobs 0700, session-env, …) reject other users' writes —
+	// subdirs (session-env, …) reject other users' writes —
 	// and tests must never write into a live install's state regardless.
 	// Also the supported way to run two foci instances on one host without
 	// sharing a temp root.
