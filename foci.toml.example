@@ -7,6 +7,11 @@
 # data_dir = "/home/foci/data"            # directory for databases, sessions, state (default: $HOME/data)
 # welcome_file = "data/WELCOME.md"        # changelog/welcome file injected on startup
 # skip_security_checks = false            # skip startup security checks for secrets.toml
+# file_mode = "0640"                      # octal permissions for workspace and content files
+# timezone = ""                           # IANA timezone for timestamps (e.g. "Europe/London"); empty = machine local
+# master_agent = ""                       # agent that receives system injections not addressed to one agent
+# default_platform = ""                   # preferred platform for default sessions/delivery (empty = most-recently-active)
+# shell_env_file = ""                     # rc file sourced so tool shells inherit your env; unset = auto-detect, "" = none
 
 # ─── Groups ──────────────────────────────────────────────────────────
 # Model groups control which model is used for each type of LLM call.
@@ -32,27 +37,27 @@ model = "anthropic/claude-haiku-4-5-20251001"
 # speed = ""                             # fast or empty (Opus only, 6x pricing)
 # context = "200k"                       # context window size (int or "Nk"/"Nm")
 # endpoint = ""                          # explicit endpoint override (empty = auto-detect)
-# enable_keepalive = nil                 # nil=auto-detect, true/false=explicit
+# enable_keepalive = true                # unset=auto-detect from developer; true/false=explicit
 # cache_ttl = ""                         # cache TTL (Anthropic: "5m"/"1h"; Gemini: Go duration; empty=auto)
 # cache_strategy = ""                    # Anthropic only: "auto" or "explicit" (empty=auto)
 
 # ─── Defaults ─────────────────────────────────────────────────────────
-# Global defaults inherited by all agents. Per-agent overrides in [agents.defaults.*].
-# Each sub-section groups related settings.
+# Global defaults inherited by all agents. Each section below is overridden per-agent
+# by the matching [agents.<section>] (e.g. [agent_loop] → [agents.loop]).
 
-# [defaults.loop]
+# [agent_loop]
 # max_tool_loops = 100
 # max_output_tokens = 16384
 # duplicate_messages = false               # send user text twice per API call
 # batch_partial_assistant_messages = false  # accumulate mid-turn text; send on turn end
 # batch_partial_joiner = ""                # separator between batched partial messages
-
-# [defaults.display]
 # streaming = false                        # use streaming API
+
+# [display]
 # injected_message_header = "[[ System message ]]"  # header for system messages (empty disables)
 # statusline = "[meta] time={time} gap={gap} model={model} via={via} {cost} {tokens}\n[state] {state}"  # per-message [meta]/[state] header template; see docs/CONFIG.md for the field list and ${cmd} embedding
 
-# [defaults.notify]
+# [notify]
 # inject_agent_warnings = "off"            # inject warnings into agent session: "all", "errors", "off"
 # inject_chat_warnings = "off"             # send warnings as chat notifications: "all", "errors", "off"
 # startup_notify = true                    # send startup notification
@@ -60,8 +65,9 @@ model = "anthropic/claude-haiku-4-5-20251001"
 # compaction_debug = false                 # send compaction summary as file attachment
 # task_list_notify = true                  # send notification on task list changes
 # warning_max_per_window = 3               # max identical warnings per window before suppression
+# rate_limit_notify_to = "session"         # usage-limit warnings: "session", "default", or "both"
 
-# [defaults.nudge]
+# [nudge]
 # nudge_enable = true                      # enable mid-turn behavioral reminders
 # nudge_auto_extract = true                # auto-extract rules from character files via LLM
 # nudge_cooldown = 5                       # min tool calls between repeating same reminder
@@ -73,22 +79,29 @@ model = "anthropic/claude-haiku-4-5-20251001"
 # nudge_default_scratchpad_frequency = 20  # user turns between scratchpad review reminders
 # nudge_default_braindead_threshold = 10   # consecutive tool loops before warning (0 = disabled)
 # nudge_default_braindead_prompt = ""      # warning text injected at threshold
+# nudge_max_per_turn = 0                   # max reminders per whole turn (0 = unlimited)
+# nudge_extraction_model = ""              # model for rule extraction (unset = backend's cheap default)
 
-# [defaults.behavior]
+# [behavior]
 # steer_mode = true                        # inject user messages between tool calls
 # turn_lock_warn_threshold = "3m"          # warn if turn lock wait exceeds this duration
 # group_throttle = ""                      # group chat throttle window (e.g. "30s", "" = disabled)
 # stop_aliases = ["stop", "wait"]          # aliases for /stop command
 # enable_stop_aliases = true               # enable stop command aliases
 
-# [defaults.voice]
+# [voice]
 # tts = ""                                 # TTS provider id (empty = default entry)
 # stt = ""                                 # STT provider id (empty = default entry)
 # tts_rate = 0.0                           # TTS speech rate multiplier
 # tts_replacements = {}                    # TTS word replacements (e.g. { foci = "foki" })
 # stt_replacements = {}                    # STT word replacements
+# max_frame_bytes = 1048576                # max voice websocket message size (global only)
+# max_audio_bytes = 52428800               # max audio buffered per voice turn (global only)
+# max_concurrent_turns = 4                 # max in-flight voice turns per connection (global only)
+# http_timeout = "60s"                     # STT/TTS provider request timeout (global only)
+# http_max_response_bytes = 67108864       # max STT/TTS provider response size (global only)
 
-# [defaults.system]
+# [system]
 # system_files = ["character/SOUL.md"]     # default system file list
 # webhooks = { deploy = "deploy.md", alert = "alert.md" }  # webhook hook ID → prompt path
 
@@ -131,43 +144,17 @@ model = "anthropic/claude-haiku-4-5-20251001"
 # can_thinking = true
 # input_per_1m = 0.0
 # output_per_1m = 0.0
+# cache_read_per_1m = 0.0
+# cache_write_per_1m = 0.0
+# can_effort = false                # supports output_config.effort
+# can_speed = false                 # supports fast mode
+# can_caching = false               # supports explicit TTL-bounded prompt caching
 
 # ─── Agent ────────────────────────────────────────────────────────────
 # Define one or more agents. Each gets its own sessions, memory, and bot.
 #
-# Platform configuration:
-#   [[agents.platforms]]
-#   id = "telegram"
-#   bot = "myagent"               # bot name; token via "telegram.<bot>" secret
-#   bot_secret = "custom.key"     # override secret key (default: "telegram.<bot>")
-#   facet_bots = ["bot2", "bot3"]  # additional bots for facet
-#   [agents.platforms.access]
-#   allowed_users = ["12345"]     # per-agent Telegram user filter
-#   [agents.platforms.display]
-#   show_tool_calls = "preview"   # off, preview, full
-#   show_thinking = "off"         # off, compact, true
-#   display_width = 44
-#   stream_output = false
-#   stream_interval = "250ms"
-#   received_files_dir = "received"
-#
-#   [[agents.platforms]]
-#   id = "discord"
-#   bot = "myagent"               # bot name; token via "discord.<bot>" secret
-#   bot_secret = "custom.key"     # override secret key (default: "discord.<bot>")
-#   [agents.platforms.access]
-#   allowed_users = ["12345"]     # per-agent Discord user filter
-#   require_mention = true        # require @mention in guild channels
-#   [agents.platforms.display]
-#   show_tool_calls = "off"       # off, preview, full
-#   show_thinking = "off"         # off, compact, true
-#   display_width = 60
-#   stream_output = false
-#   stream_interval = "1200ms"
-#   received_files_dir = "received"
-#   [agents.platforms.discord]    # discord-specific fields
-#   guild_id = ""                 # restrict to this guild (empty = all)
-#   auto_thread = true            # create threads for facet sessions
+# Per-agent platform configuration ([[agents.platforms]]) is shown below,
+# under "Per-agent platform overrides".
 
 [[agents]]
 id = "myagent"
@@ -175,6 +162,8 @@ id = "myagent"
 # emoji = "🤖"
 # workspace = "/home/foci/myagent"        # working directory (default: $HOME/id)
 # skills_dir = "skills"                   # per-agent skills directory (default: $workspace/skills/)
+# avatar = ""                             # image served to the app (empty = auto-detect $workspace/avatar.*)
+# default_platform = ""                   # per-agent override of top-level default_platform
 # backend = "api"                         # "api" (default) or a coding agent: "claude-code", "codex", "opencode"
 # [agents.backend_config]                 # backend-specific settings (typed struct — see docs/CONFIG.md)
 # model = "sonnet"                        #   CC model name (omit for default)
@@ -186,7 +175,7 @@ id = "myagent"
 # [agents.backend_config.env]             #   environment variables for the backend subprocess
 # CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS = "1"
 
-# Per-agent overrides (from [defaults.*]):
+# Per-agent overrides (from [system]):
 [agents.system]
 system_files = [
   "character/SOUL.md",
@@ -198,8 +187,6 @@ system_files = [
 # max_tool_loops = 100
 # max_output_tokens = 16384
 # duplicate_messages = false
-
-# [agents.display]
 # streaming = false
 
 # [agents.notify]
@@ -222,7 +209,6 @@ system_files = [
 # Per-agent session overrides (from [sessions]):
 # [agents.sessions]
 # compaction_threshold = 0.8              # flat fraction; omit for the non-linear default curve
-# compaction_summary_prompt = "prompts/compaction-summary.md"
 # compaction_handoff_msg = ""
 # compaction_preserve_messages = 25
 # branch_orientation_facet_prompt = "prompts/orient-facet.md"
@@ -276,9 +262,26 @@ system_files = [
 # stream_output = false
 # stream_interval = "250ms"
 # received_files_dir = ""
-# [agents.platforms.telegram]
-# table_wrap_lines = 5
-# table_style = "pretty"
+# table_wrap_lines = 5                    # max wrapped lines per table cell (text platforms)
+# table_style = "pretty"                  # "pretty" or "markdown"
+#
+# [[agents.platforms]]
+# id = "discord"
+# bot = "myagent"                         # bot name (token from "discord.myagent" secret)
+# bot_secret = ""                         # override secret key (default: "discord.<bot>")
+# [agents.platforms.access]
+# allowed_users = []                      # per-agent Discord user filter
+# require_mention = true                  # require @mention in guild channels
+# [agents.platforms.display]
+# show_tool_calls = "off"                 # off, preview, full
+# show_thinking = "off"                   # off, compact, true
+# display_width = 60
+# stream_output = false
+# stream_interval = "1200ms"
+# received_files_dir = ""
+# [agents.platforms.discord]              # discord-specific fields
+# guild_id = ""                           # restrict to this guild (empty = all)
+# auto_thread = true                      # create threads for facet sessions
 
 # Per-agent blocked paths (replaces global):
 # [[agents.blocked_paths]]
@@ -319,20 +322,20 @@ system_files = [
 # interval_enabled = true
 # interval = "1h"
 # interval_prompt = ""
-# consolidation_enabled = true
-# consolidation_interval = "20h"
-# consolidation_prompt = ""
 # session_end_enabled = true
 # session_end_prompt = ""
 # compaction_enabled = true
 # compaction_prompt = ""
 # notify_on_skill_creation = true
 
+# Per-agent scheduled housekeeping (from [maintenance]):
+# [agents.maintenance]
+# consolidation_time = "20h"
+# reset_time = ""
+
 # ─── Anthropic ────────────────────────────────────────────────────────
-# API keys go in secrets.toml. These are non-secret settings only.
-# Model params (thinking, effort, speed) are now per-model in [models.*].
-[anthropic]
-# cc_expiry_threshold = "5m"            # how far before expiry to trigger proactive token refresh
+# API keys go in secrets.toml. [anthropic] currently has no settings; model
+# params (thinking, effort, speed) are per-model in [models.*].
 
 # ─── Claude Code backend ──────────────────────────────────────────────
 # Defaults for every agent with backend = "claude-code" or "claude-code-tmux".
@@ -349,9 +352,22 @@ system_files = [
 # tool = "Bash"
 # command = 'git (\S+ )*push (\S+ )*--force'
 # reason = "Force-pushing is not allowed. Push normally, or ask the user."
+# Other match fields: input = { <field> = "regex" }, cwd = "regex" (session
+# working dir), background / subshell / output = true|false (restrict to
+# commands with that property), when = "<bash; exit 0 denies>", enabled = false.
 #
 # Stop rules have no [cc_backend] layer: set them per agent in
 # [[agents.backend_config.stop_rules]].
+
+# ─── opencode backend ────────────────────────────────────────────────
+# Defaults for agents with backend = "opencode". Per-agent backend_config wins.
+# [opencode_backend]
+# binary = ""                              # opencode executable (empty = via $PATH)
+# hostname = "127.0.0.1"                   # bind address for `opencode serve`
+# port = 0                                 # 0 = auto-pick
+# server_auth = ""                         # HTTP basic auth password (empty = none)
+# default_permission = "ask"               # ask, allow, or deny
+# log_level = ""                           # opencode --log-level (empty = INFO)
 
 # ─── Gemini ────────────────────────────────────────────────────────────
 # API keys go in secrets.toml as gemini.api_key.
@@ -375,6 +391,7 @@ id = "telegram"
 [platforms.access]
 allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # require_mention = true              # require @mention in group chats
+# allowed_users_only = true           # true: empty allowed_users blocks everyone; false: empty allows anyone
 # [platforms.notify]
 # startup_notify = true
 # [platforms.display]
@@ -384,10 +401,11 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # stream_interval = "250ms"
 # display_width = 44
 # received_files_dir = ""             # save received files (per-agent overrides)
+# table_wrap_lines = 5                # max wrapped lines per table cell (text platforms)
+# table_style = "pretty"              # "pretty" or "markdown"
 # [platforms.telegram]                # telegram-specific settings
 # long_poll_timeout = "30s"
-# table_wrap_lines = 5
-# table_style = "pretty"             # "pretty" or "markdown"
+# api_base = ""                       # Bot API base URL override (default https://api.telegram.org)
 
 # [[platforms]]
 # id = "discord"
@@ -408,13 +426,28 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # auto_thread = true                   # create threads for facet sessions
 # guild_id = ""                        # restrict to a single guild (empty = all)
 
+# [[platforms]]
+# id = "app"                           # native FOCI app (WebSocket)
+# [platforms.app]
+# host = ""                            # public hostname the app reconnects to
+# push = true                          # send FCM wake pushes
+# fcm_credentials = ""                 # FCM service-account JSON (instead of the app.fcm_credentials secret)
+# push_coalesce = "15s"                # min gap between wake pushes per conversation
+# replay_buffer = 1000                 # in-memory replay messages per conversation
+# replay_ttl = "24h"                   # max age in the in-memory replay buffer
+# replay_store_path = "app-frames.db"  # on-disk replay DB (relative to data dir)
+# replay_store_ttl = "720h"            # max age in the on-disk replay DB
+# max_blob_mb = 50                     # max upload size via /app/blob
+# blob_ttl = "24h"                     # how long uploaded blobs are kept
+# devices_path = "app-devices.json"    # paired devices file (relative to data dir)
+# allowed_devices = []                 # device IDs allowed to pair (empty = any)
+
 # ─── Sessions ─────────────────────────────────────────────────────────
 [sessions]
 # dir = "/home/foci/data/sessions"
 # compaction_threshold = 0.8              # unset = non-linear curve (smaller fraction of larger windows: ~80% of 200k, ~48% of 1M, ~38% of 2M); set a value to pin a flat fraction
 # compaction_max_tokens = 4096
 # compaction_min_messages = 4
-# compaction_summary_prompt = "prompts/compaction-summary.md"
 # compaction_handoff_msg = ""
 # compaction_preserve_messages = 25
 # facet_no_compact = true                  # set no_compact on facet sessions
@@ -423,6 +456,7 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # branch_orientation_facet_prompt = ""     # prompt for user-attached facet branches
 # branch_orientation_headless_prompt = ""  # prompt for headless branches (cron, spawn, keepalive)
 # archive_after = "24h"                   # gzip idle sessions after 24 hours
+# ephemeral_retention_days = 30           # delete ephemeral branch/fork transcripts after N days (0 = never)
 
 # ─── Skills ───────────────────────────────────────────────────────────
 # [skills]
@@ -435,6 +469,10 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # conversation_weight = 0.1
 # search_limit = 20
 # sweep_interval = "1h"                   # periodic full reindex ("0" disables)
+# temporal_decay = true                   # rank recently modified memory files higher
+# decay_half_life = 10.0                  # days until the recency boost halves
+# decay_boost = 1.0                       # max recency multiplier is 1 + this
+# evergreen_patterns = []                 # globs for memory files that never age out
 
 # [[memory.sources]]
 # name = "shared"
@@ -447,6 +485,10 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # log_api_key_suffix = false               # log last 4 chars of API keys on provider calls
 # messages_in_log = false                  # log user message content (privacy)
 # cache_bust_detect = false                # alert on cache_read drop >50% vs previous request
+# enable_pprof = false                     # expose /debug/pprof/* (profiling data can be sensitive)
+# extra_ccstream_logging = false           # verbose Claude Code stream transport logging (xtra:ccstream)
+# extra_inbox_logging = false              # verbose inbound message routing logging (xtra:inbox)
+# extra_telegram_logging = false           # verbose Telegram poll/transport logging (xtra:telegram)
 
 # ─── HTTP ─────────────────────────────────────────────────────────────
 [http]
@@ -487,6 +529,7 @@ bind = "127.0.0.1"
 # voice = "Arista-PlayAI"
 # rate = 1.3                              # speed multiplier (0 = omit)
 # secret = "groq.api_key"                 # secret name in secrets.toml
+# response_format = "wav"                 # audio format: "mp3", "wav", etc.
 #
 # [[tts]]
 # id = "edge"
@@ -563,7 +606,6 @@ bind = "127.0.0.1"
 # timeout_sec = 30                       # page operation timeout in seconds
 # user_data_dir = ""                     # Chrome user data dir (empty = temp profile)
 # executable_path = ""                   # Chrome binary (empty = auto-detect)
-# incognito = true                       # use incognito mode
 # dom_stable_sec = 1.0                   # DOM stability check interval
 # dom_stable_diff = 0.2                  # DOM stability diff threshold
 
@@ -590,6 +632,7 @@ bind = "127.0.0.1"
 # interval = "55m"
 # prompt = ""
 # warm_open_app_chats = false             # warm every chat the app has open (per its pager tabs), not just the default session
+# max_user_idle = "96h"                   # only warm sessions a human used within this window ("0" disables the gate)
 
 # ─── Global Reflection ───────────────────────────────────────────────
 # Periodic reflection pass: captures memories into daily files AND autogenerates
@@ -598,14 +641,63 @@ bind = "127.0.0.1"
 # interval_enabled = true
 # interval = "1h"
 # interval_prompt = ""
-# consolidation_enabled = true
-# consolidation_interval = "20h"
-# consolidation_prompt = ""
 # session_end_enabled = true
 # session_end_prompt = ""
 # compaction_enabled = true
 # compaction_prompt = ""
 # notify_on_skill_creation = true          # notify the user when reflection creates or updates a skill
+# backend_quiet_period = "5m"              # delegated backends: user idle time before reflection is injected
+
+# ─── Global Maintenance ──────────────────────────────────────────────
+# Scheduled housekeeping: MEMORY.md consolidation and daily session reset.
+# Times accept a daily clock time ("20:00", process timezone) or a Go
+# duration ("20h" = fixed interval since the last run).
+# [maintenance]
+# consolidation_enabled = true             # periodically curate daily memory files into MEMORY.md
+# consolidation_time = "20h"               # "HH:MM" or duration
+# consolidation_prompt = ""                # custom prompt file (empty = built-in, "none" = disabled)
+# consolidation_max_idle = "1h"            # skip if the user hasn't interacted within this window
+# consolidation_force_in_session = false   # run in the existing session instead of a backend fork
+# reset_time = ""                          # daily session reset: "HH:MM" or duration (empty = off)
+# reset_idle_guard = "55m"                 # skip a reset if the user interacted within this window
+
+# ─── Scheduler ───────────────────────────────────────────────────────
+# [scheduler]
+# tick_interval = "30s"                    # how often keepalive/background/reflection/consolidation are checked
+
+# ─── Permissions ─────────────────────────────────────────────────────
+# [permissions]
+# auto_approve = ["Bash:git *"]            # tool-call patterns approved without prompting
+# auto_approve_common_readonly = true      # built-in read-only allowlist (ls, cat, git status, ...)
+# auto_approve_common_safe_write = false   # built-in side-effecting allowlist (curl, mkdir, ...); not path-scoped
+# prompt_ttl = "24h"                       # auto-deny an unanswered permission prompt after this (global only)
+
+# ─── Ask gateway ─────────────────────────────────────────────────────
+# Local socket for external apps to ask humans questions.
+# [askgw]
+# enabled = false
+# socket_path = ""                         # default: data/askgw.sock
+# group = "foci-askgw"                     # unix group permitted to connect
+# allowed_uids = []                        # unix UIDs permitted (empty = group check only)
+# default_agent = ""                       # agent receiving questions not addressed to one
+# default_timeout_seconds = 0              # auto-deny unanswered questions after N seconds (0 = never)
+# max_frame_bytes = 1048576                # max NDJSON frame size
+# http_enabled = false                     # also serve over foci's HTTP server (auth: http.api_key)
+
+# ─── Tracing ─────────────────────────────────────────────────────────
+# OpenTelemetry export of agent turns over OTLP/HTTP (e.g. Langfuse).
+# [tracing]
+# enabled = false
+# endpoint = ""                            # spans POSTed to <endpoint>/v1/traces
+# environment = "production"               # langfuse.environment attribute
+# content = true                           # attach prompt/reply/tool text (secrets redacted)
+# system_prompt = true                     # export the system prompt on first launch per prompt hash
+# max_field_bytes = 2097152                # truncate longer text fields
+# flush_timeout = "5s"                     # shutdown wait for buffered spans
+
+# ─── Evals ───────────────────────────────────────────────────────────
+# [evals]
+# rubrics_dir = ""                         # rubric files dir (default: <home>/shared/evals)
 
 # ─── Blocked Paths ───────────────────────────────────────────────────
 # Soft guardrails for write/edit tools. Returns rebuke as tool result (not error).

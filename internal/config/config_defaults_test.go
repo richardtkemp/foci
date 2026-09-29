@@ -234,16 +234,18 @@ func TestExampleConfigKeysValid(t *testing.T) {
 	//   - Add it to foci.toml.example (if users should know about it)
 	//   - Add it to exampleSkipPrefixes below (if it's internal or a duplicate section)
 
-	examplePath := filepath.Join("..", "foci.toml.example")
+	// Repo root, relative to internal/config. A missing file is a failure, not a
+	// skip: a wrong path here once silently disabled this test for months (#2100).
+	examplePath := filepath.Join("..", "..", "foci.toml.example")
 	raw, err := os.ReadFile(examplePath)
 	if err != nil {
-		t.Skipf("foci.toml.example not found: %v", err)
+		t.Fatalf("reading foci.toml.example: %v", err)
 	}
 
 	// Uncomment config lines to get the full key set.
 	// Only uncomment lines that look like TOML key=value or section headers.
-	tomlKeyValue := regexp.MustCompile(`^[a-z][a-z0-9_]*\s*=`)
-	tomlSection := regexp.MustCompile(`^\[+[a-z][a-z0-9_.]*\]+$`)
+	tomlKeyValue := regexp.MustCompile(`^[a-z][a-z0-9_-]*\s*=`)
+	tomlSection := regexp.MustCompile(`^\[+[a-z][a-z0-9_.-]*\]+\s*(#.*)?$`)
 	var uncommented strings.Builder
 	for _, line := range strings.Split(string(raw), "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -272,13 +274,11 @@ func TestExampleConfigKeysValid(t *testing.T) {
 		t.Fatalf("foci.toml.example has invalid TOML after uncommenting: %v", err)
 	}
 
-	// Check 1: no unknown keys in the example.
-	undecoded := meta.Undecoded()
-	if len(undecoded) > 0 {
-		var keys []string
-		for _, k := range undecoded {
-			keys = append(keys, k.String())
-		}
+	// Check 1: no unknown keys in the example. Same filter Load uses, so
+	// [groups] string keys (group definitions) aren't reported as unknown.
+	uncommentedBytes := []byte(uncommented.String())
+	keys := UnknownKeys(meta, extractGroupNames(uncommentedBytes), extractAgentGroupNames(uncommentedBytes))
+	if len(keys) > 0 {
 		t.Errorf("foci.toml.example contains keys that don't match any Config field:\n  %s\n"+
 			"Fix the key names in the example or add the fields to config structs.",
 			strings.Join(keys, "\n  "))
