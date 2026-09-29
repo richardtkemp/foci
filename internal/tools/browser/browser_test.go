@@ -756,7 +756,7 @@ func TestBrowserStopWaitsForExit(t *testing.T) {
 	if err := mgr.Stop(); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
-	if state := procState(pid); state != "" && state != "Z" {
+	if state := procState(pid); stillRunning(state) {
 		t.Errorf("chromium (pid %d) is still running (state %s) after Stop returned", pid, state)
 	}
 	if _, err := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) {
@@ -782,7 +782,7 @@ func TestBrowserAwaitExitKillsUnclosedBrowser(t *testing.T) {
 	mgr.mu.Lock()
 	mgr.awaitExit(false)
 	mgr.mu.Unlock()
-	if state := procState(pid); state != "" && state != "Z" {
+	if state := procState(pid); stillRunning(state) {
 		t.Errorf("chromium (pid %d) is still running (state %s) after awaitExit(false)", pid, state)
 	}
 }
@@ -908,7 +908,7 @@ func TestBrowserStartConnectFailureCleansUp(t *testing.T) {
 				t.Fatal("Start succeeded although the connect failed")
 			}
 			pid, dir := readFakeBrowserRecord(t, record)
-			if state := procState(pid); state != "" && state != "Z" {
+			if state := procState(pid); stillRunning(state) {
 				_ = syscall.Kill(pid, syscall.SIGKILL)
 				t.Errorf("launched browser (pid %d) still running (state %s) after a failed Start", pid, state)
 			}
@@ -966,7 +966,7 @@ func chromiumMainPID(t *testing.T, dir string) int {
 }
 
 // procState returns the state letter from /proc/<pid>/stat, or "" when the
-// process no longer exists. "Z" means it has exited and awaits reaping.
+// process no longer exists. See stillRunning for which letters mean exited.
 func procState(pid int) string {
 	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
@@ -978,4 +978,11 @@ func procState(pid int) string {
 		return ""
 	}
 	return fields[0]
+}
+
+// stillRunning reports whether a procState letter means the process has not
+// exited. "Z" (zombie, awaiting reaping) and "X" (dead, the brief state between
+// reaping and removal from /proc) have both exited; "" means it is gone.
+func stillRunning(state string) bool {
+	return state != "" && state != "Z" && state != "X"
 }
