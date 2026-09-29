@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -158,5 +159,39 @@ func TestFindRepoRoot(t *testing.T) {
 	}
 	if !strings.HasPrefix(wd, root) {
 		t.Errorf("working dir %s not under reported repo root %s", wd, root)
+	}
+}
+
+// TestStartCaptured_LastWordsSurviveExit proves a process's final stderr line
+// is in the buffer by the time the stopped channel closes (#2118). A gateway
+// that log.Fatalf's at startup writes its reason and exits at once; the
+// harness reports "exited before signalling ready" with the buffer, and an
+// L2 test asserts on that reason. Waiting on the process alone let the exit
+// win the race against the pipe drain and dropped the line. The 60KB
+// preamble keeps the drain busy as the process exits; many rounds make a
+// lost line near-certain to show if the ordering is wrong.
+func TestStartCaptured_LastWordsSurviveExit(t *testing.T) {
+	const rounds = 200
+	want := strings.Repeat("x", 60000) + "LAST-WORDS\n"
+	lost := 0
+	for i := 0; i < rounds; i++ {
+		cmd := exec.Command("sh", "-c", `head -c 60000 /dev/zero | tr '\0' x >&2; echo LAST-WORDS >&2; exit 1`) //nolint:forbidigo // test child with a known output shape
+		buf := newSyncBuffer()
+		stopped, err := startCaptured(cmd, buf)
+		if err != nil {
+			t.Fatalf("startCaptured: %v", err)
+		}
+		<-stopped
+		// Premise: the child ran to its scripted exit, so any shortfall below
+		// is output the harness dropped, not output the child never wrote.
+		if code := cmd.ProcessState.ExitCode(); code != 1 {
+			t.Fatalf("round %d: child exit code %d, want 1 — it did not run as written", i, code)
+		}
+		if buf.String() != want {
+			lost++
+		}
+	}
+	if lost > 0 {
+		t.Errorf("output incomplete after stop in %d/%d rounds (final line or preamble dropped)", lost, rounds)
 	}
 }

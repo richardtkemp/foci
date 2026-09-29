@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -644,36 +643,12 @@ func (h *Harness) spawnGateway() error {
 	// changes nothing for the non-Omit case, since those agents' workspace
 	// paths are always written as explicit absolute values in the config.
 	cmd.Env = append(cmd.Env, "HOME="+filepath.Join(h.tempDir, "workspaces"))
-	stderr, err := cmd.StderrPipe()
+	stderrBuf := newSyncBuffer()
+	stoppedCh, err := startCaptured(cmd, stderrBuf)
 	if err != nil {
-		cancel()
-		return fmt.Errorf("stderr pipe: %w", err)
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		cancel()
-		return fmt.Errorf("stdout pipe: %w", err)
-	}
-	if err := cmd.Start(); err != nil {
 		cancel()
 		return fmt.Errorf("start foci-gw: %w", err)
 	}
-
-	stderrBuf := newSyncBuffer()
-	stoppedCh := make(chan struct{})
-
-	// Stream stderr/stdout into the buffer so we can both wait-for-ready
-	// and dump-on-failure.
-	go func() {
-		_, _ = io.Copy(stderrBuf, stderr)
-	}()
-	go func() {
-		_, _ = io.Copy(stderrBuf, stdout)
-	}()
-	go func() {
-		_ = cmd.Wait()
-		close(stoppedCh)
-	}()
 
 	h.cmd = cmd
 	h.stderrBuf = stderrBuf
@@ -1004,6 +979,36 @@ func (h *Harness) controlRoundTrip(cmd string) (string, error) {
 		return "", fmt.Errorf("read reply: %w", err)
 	}
 	return strings.TrimSpace(reply), nil
+}
+
+// captureOrphanWait bounds how long startCaptured's stop waits, after the
+// process exits, for its output pipes to reach EOF. A grandchild that
+// inherited them (and outlived foci-gw) would otherwise hold stop open.
+const captureOrphanWait = 2 * time.Second
+
+// startCaptured starts cmd with its stdout and stderr streamed into buf, and
+// returns a channel closed once the process has exited AND every byte it wrote
+// is in buf — so a reader woken by the channel sees the process's last words.
+//
+// The buffer is handed to exec as the writer rather than read from
+// StderrPipe/StdoutPipe: with the pipes, Wait closes the read end as soon as
+// the process exits, racing the copier goroutines, and a gateway that
+// log.Fatalf's at startup lost its reason line — the one line the L2
+// startup-failure tests assert on (#2118). exec's own copiers are joined by
+// Wait, so the channel cannot close ahead of the drain.
+func startCaptured(cmd *exec.Cmd, buf *syncBuffer) (chan struct{}, error) {
+	cmd.Stderr = buf
+	cmd.Stdout = buf
+	cmd.WaitDelay = captureOrphanWait
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	stoppedCh := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(stoppedCh)
+	}()
+	return stoppedCh, nil
 }
 
 // ----- Internal: ready-signal polling --------------------------------
