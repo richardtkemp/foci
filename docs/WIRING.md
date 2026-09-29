@@ -2188,12 +2188,17 @@ and books nothing; a named call whose line never came alarms `invStreamIdBooked`
 last remainder comes from the `cost-state` record, else the last result. Every process writes
 its baseline (the totals CC restored on --resume) and each result as cumulative
 `backend_reports` for the scope `<session>@<launch nanos>`, so CC's own cost per process is a
-difference of two reports. Replayed against the #2112 P0 captures
+difference of two reports — the baseline (stamped at the launch the scope names; none for a
+fresh process, whose baseline is zero) and a later one. Replayed against the #2112 P0 captures
 (`ccstream/testdata/ledger/*.json.gz`: two idle compactions with the history re-append, an
 interrupted resume, graceful/killed exits, a subagent run) — conservation holds exactly with
 no negative remainder on every one. `foci-gw ledger-shadow -live api.db -shadow
 api-shadow.db [-since 36h]` compares the two ledgers per turn, per CC process (CC's own cost
-against the adapter's, interrupted excluded) and per day.
+against the adapter's, interrupted excluded) and per day. The per-process check (#2122) ends at
+the latest report whose tokens less the baseline equal the booked calls of a window prefix
+(`detail.window`, or a remainder's `through_window`) — never a `billed_at` cut, which is racy;
+a process no report matches (a subagent still running, a remainder not settled, a booking
+error) is listed as unmatched.
 
 **Legacy path** (`legacylive.go`) — the only booking path of Claude Code, until it
 switches; the file goes with that switch. `DelegatedTransport.LogUsage` builds a

@@ -44,6 +44,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -157,9 +158,10 @@ func modelUsageTokens(m ModelUsage) modelinfo.Tokens {
 	}
 }
 
-// remainderClasses folds a counted call's classes onto modelUsage's: every
-// cache-write TTL is one cache write, and web fetches are not in modelUsage.
-func remainderClasses(t modelinfo.Tokens) modelinfo.Tokens {
+// ReportClasses folds a counted call's classes onto modelUsage's — the
+// classes of this adapter's backend reports: every cache-write TTL is one
+// cache write, and web fetches are not in modelUsage.
+func ReportClasses(t modelinfo.Tokens) modelinfo.Tokens {
 	return modelinfo.Tokens{
 		modelinfo.ClassInput:      t[modelinfo.ClassInput],
 		modelinfo.ClassOutput:     t[modelinfo.ClassOutput],
@@ -237,7 +239,7 @@ func newCCBook(l *accounting.Ledger, lg *log.ComponentLogger, session, agentID s
 	c := &ccBook{
 		l: l, lg: lg, now: time.Now,
 		session: session, agentID: agentID, launch: launch.UTC(),
-		scope: fmt.Sprintf("%s@%d", session, launch.UnixNano()),
+		scope: fmt.Sprintf("%s@%d", session, launch.UnixNano()), // ScopeLaunch parses it
 		named: map[string]*namedCall{}, held: map[string]*ccLine{}, done: map[string]bool{},
 		agents: map[string]*ccAgent{}, runTurn: map[int]string{},
 		counted: map[int]map[string]modelinfo.Tokens{}, boundaries: map[int][]ccBoundary{},
@@ -252,6 +254,20 @@ func newCCBook(l *accounting.Ledger, lg *log.ComponentLogger, session, agentID s
 		c.report(m, c.baseline[m], c.launch)
 	}
 	return c
+}
+
+// ScopeLaunch is the launch time a process scope ("<session>@<launch nanos>")
+// names: the time of its baseline reports, when CC restored any.
+func ScopeLaunch(scope string) (time.Time, bool) {
+	i := strings.LastIndexByte(scope, '@')
+	if i < 0 {
+		return time.Time{}, false
+	}
+	n, err := strconv.ParseInt(scope[i+1:], 10, 64)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return time.Unix(0, n).UTC(), true
 }
 
 // streamNamed records a main-thread call the stream delivered, on the turn
@@ -496,7 +512,7 @@ func (c *ccBook) bookCall(l *ccLine, turn, actor string, window int, finality st
 		sum = modelinfo.Tokens{}
 		c.counted[window][l.model] = sum
 	}
-	for class, n := range remainderClasses(l.tokens) {
+	for class, n := range ReportClasses(l.tokens) {
 		sum[class] += n
 	}
 }

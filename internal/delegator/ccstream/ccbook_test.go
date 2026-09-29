@@ -242,7 +242,7 @@ func TestReplayConservation(t *testing.T) {
 				if got[c.model] == nil {
 					got[c.model] = modelinfo.Tokens{}
 				}
-				for class, n := range remainderClasses(c.tokens) {
+				for class, n := range ReportClasses(c.tokens) {
 					got[c.model][class] += n
 				}
 			}
