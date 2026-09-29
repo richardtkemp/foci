@@ -37,7 +37,7 @@ type toolEvent struct {
 // Settings holds the live-tunable nudge config (a config-free mirror of the
 // relevant ResolvedNudge fields, so this package keeps no config import). All
 // rules are built once; firing is gated on these values, read live under s.mu,
-// so a [defaults.nudge] edit applies without rebuilding the scheduler or losing
+// so a [nudge] edit applies without rebuilding the scheduler or losing
 // its per-session counters. Configure swaps the whole struct atomically.
 type Settings struct {
 	Cooldown           int    // min tool calls between repeating the same rule
@@ -206,7 +206,7 @@ func NewSchedulerOpts(rs *RuleSet, opts SchedulerOpts) *Scheduler {
 }
 
 // Configure atomically swaps the live-tunable settings. Called at setup and by
-// the gateway's live-apply on a [defaults.nudge] edit — no rebuild, so the
+// the gateway's live-apply on a [nudge] edit — no rebuild, so the
 // per-session counters (turnCount, lastFired) survive the change.
 func (s *Scheduler) Configure(cfg Settings) {
 	if s == nil {

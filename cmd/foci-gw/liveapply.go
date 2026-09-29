@@ -298,7 +298,7 @@ func registerLiveAppliers(la *liveApply, agents map[string]*agentInstance) {
 	})
 
 	// Nudge scheduler is a derived handle: all rules are built once and firing
-	// is gated on these settings, so a [defaults.nudge] edit reconfigures it in
+	// is gated on these settings, so a [nudge] edit reconfigures it in
 	// place (no rebuild, counters preserved) — #1228.
 	la.register(liveApplyNudgeAddrs, func(fresh *config.Config) error {
 		for _, freshAcfg := range fresh.Agents {

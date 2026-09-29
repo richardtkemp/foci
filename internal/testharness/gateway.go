@@ -142,7 +142,7 @@ type HarnessOptions struct {
 	// ExtraConfigTOML, if non-empty, is appended verbatim to the
 	// generated foci.toml. Use to inject sections the default config
 	// writer doesn't emit ([keepalive], [reflection], [background],
-	// [platforms.display], [defaults.behavior], [logging], etc.).
+	// [platforms.display], [behavior], [logging], etc.).
 	ExtraConfigTOML string
 	// ExtraSecretsTOML, if non-empty, is appended verbatim to the
 	// generated secrets.toml. Use to inject custom secret sections

@@ -383,14 +383,14 @@ type AgentConfig struct {
 	Platforms []PlatformConfig `toml:"platforms"` // per-agent platform configurations
 
 	// Per-agent overrides — resolved via Merge at use time
-	// (e.g. config.Merge(acfg.Nudge, cfg.Defaults.Nudge)).
-	Notify   NotifyConfig    `toml:"notify"`   // overrides from [defaults.notify]
-	Display  DisplayConfig   `toml:"display"`  // overrides from [defaults.display]
-	Nudge    NudgeConfig     `toml:"nudge"`    // overrides from [defaults.nudge]
-	Voice    VoiceConfig     `toml:"voice"`    // overrides from [defaults.voice]
-	Loop     AgentLoopConfig `toml:"loop"`     // overrides from [defaults.loop]
-	Behavior BehaviorConfig  `toml:"behavior"` // overrides from [defaults.behavior]
-	System   SystemConfig    `toml:"system"`   // overrides from [defaults.system]
+	// (e.g. config.Merge(acfg.Nudge, cfg.Nudge)).
+	Notify   NotifyConfig    `toml:"notify"`   // overrides from [notify]
+	Display  DisplayConfig   `toml:"display"`  // overrides from [display]
+	Nudge    NudgeConfig     `toml:"nudge"`    // overrides from [nudge]
+	Voice    VoiceConfig     `toml:"voice"`    // overrides from [voice]
+	Loop     AgentLoopConfig `toml:"loop"`     // overrides from [agent_loop]
+	Behavior BehaviorConfig  `toml:"behavior"` // overrides from [behavior]
+	System   SystemConfig    `toml:"system"`   // overrides from [system]
 
 	Sessions    AgentSessionsOverride `toml:"sessions"`    // overrides from [sessions]
 	Tools       AgentToolsOverride    `toml:"tools"`       // overrides from [tools]
@@ -546,7 +546,7 @@ type VoiceConfig struct {
 }
 
 // AgentLoopConfig holds settings consumed by agent.HandleTurn().
-// Global: [agent_loop], per-agent: [[agents]].agent_loop.*
+// Global: [agent_loop], per-agent: [[agents]].loop.*
 type AgentLoopConfig struct {
 	MaxOutputTokens               *int    `toml:"max_output_tokens"                hot:"turn" desc:"Maximum number of tokens the model may generate in a single reply. Higher allows longer replies but costs more and takes longer. Default 16384"`
 	MaxToolLoops                  *int    `toml:"max_tool_loops"                   hot:"turn" desc:"Maximum tool calls allowed in a single turn; once reached, further tool calls are refused and the turn is forced to end. Default 100"`

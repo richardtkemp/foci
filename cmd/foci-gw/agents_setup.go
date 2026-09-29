@@ -152,7 +152,7 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 	rulesPath := nudge.RulesPath(acfg.Workspace)
 
 	// Built-in rules are built unconditionally; the Scheduler gates each on live
-	// [defaults.nudge] settings (build-all + live-gate, so an enable/interval edit
+	// [nudge] settings (build-all + live-gate, so an enable/interval edit
 	// applies with no rebuild). Braindead first — highest effective priority.
 	braindeadRules := nudge.BraindeadRule()
 

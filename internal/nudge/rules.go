@@ -35,7 +35,7 @@ type Rule struct {
 }
 
 // Rule categories drive live config-gating in the Scheduler (build all rules
-// once, fire per live [defaults.nudge] settings). Char rules come from character
+// once, fire per live [nudge] settings). Char rules come from character
 // files on disk; the rest are built-in.
 const (
 	CategoryChar       = "char"
