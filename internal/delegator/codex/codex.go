@@ -23,7 +23,6 @@ import (
 	"foci/internal/delegator/keyedmutex"
 	"foci/internal/log"
 	"foci/internal/modelcaps"
-	"foci/internal/modelinfo"
 )
 
 func init() {
@@ -93,17 +92,13 @@ type Backend struct {
 	turnTools    int
 	// stashedUsage is the LATEST API cycle's own usage — the final cycle's
 	// context fill, which is what compaction and /context read. It is not a
-	// turn total and must never be summed (#1855).
+	// turn total and must never be summed (#1855); every cycle is booked in
+	// the cost ledger on its own (ledger.go).
 	stashedUsage *delegator.TurnUsage
-	// turnCalc sums every API cycle's own tokens within the current turn —
-	// what TurnResult.Usage.Turn carries and CalculatedCostUSD is priced
-	// from. turnCalcSeen distinguishes "no cycle reported yet" (leave both
-	// nil, so the row stores NULL) from a genuine zero.
-	turnCalc     modelinfo.TokenCounts
-	turnCalcSeen bool
-	// usageTurnID is the turnId turnCalc belongs to. codex tags every
-	// tokenUsage notification with its turn, so a change is a turn boundary
-	// even if no local reset ran (e.g. an autonomous turn foci never opened).
+	// usageTurnID is the codex turnId stashedUsage belongs to. codex tags
+	// every tokenUsage notification with its turn, so a change is a turn
+	// boundary even if no local reset ran (e.g. an autonomous turn foci
+	// never opened).
 	usageTurnID string
 	// threadTotal is the last tokenUsage.total seen per thread, for the
 	// running-sum check (#2013). Guarded by turnMu.

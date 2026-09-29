@@ -32,6 +32,10 @@ type subagentIdentity struct {
 	groupKey string
 	label    string
 	runIndex int
+	// turnID is the foci turn open when the child was first seen: the turn
+	// that spawned it, which its spend is booked on however long it outlives
+	// it (#1880, #1924).
+	turnID string
 }
 
 // subagentRun is the run currently open for a child thread: the UI group it
@@ -54,7 +58,7 @@ func newSubagentTracker() *subagentTracker {
 // when the child is already active, preventing follow-up items from opening a
 // second UI subagent. An inactive identity is a reactivation and gets a new
 // run index while retaining the original group key.
-func (st *subagentTracker) start(agentThreadID, groupKey, label string) (*subagentRun, bool) {
+func (st *subagentTracker) start(agentThreadID, groupKey, label, turnID string) (*subagentRun, bool) {
 	if agentThreadID == "" {
 		return nil, false
 	}
@@ -71,7 +75,7 @@ func (st *subagentTracker) start(agentThreadID, groupKey, label string) (*subage
 		if groupKey == "" {
 			return nil, false
 		}
-		identity = &subagentIdentity{groupKey: groupKey, label: label, runIndex: 0}
+		identity = &subagentIdentity{groupKey: groupKey, label: label, runIndex: 0, turnID: turnID}
 		st.identities[agentThreadID] = identity
 	} else if identity.groupKey == "" {
 		identity.groupKey = groupKey
@@ -89,6 +93,22 @@ func (st *subagentTracker) start(agentThreadID, groupKey, label string) (*subage
 // seen. The identity outlives any single run, so a notification arriving
 // between runs is still recognised as the child's and kept away from the
 // process owner.
+// spend names what a child thread's spend is booked under: its subagent's
+// group key (the actor; the thread id when the child was never named) and the
+// turn that spawned it ("" when none was open).
+func (st *subagentTracker) spend(agentThreadID string) (actor, turnID string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	actor = agentThreadID
+	if id := st.identities[agentThreadID]; id != nil {
+		if id.groupKey != "" {
+			actor = id.groupKey
+		}
+		turnID = id.turnID
+	}
+	return actor, turnID
+}
+
 func (st *subagentTracker) isChild(agentThreadID string) bool {
 	if agentThreadID == "" {
 		return false

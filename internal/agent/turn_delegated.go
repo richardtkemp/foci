@@ -854,8 +854,11 @@ func (a *Agent) closeLedgerTurn(ts *TurnState, lb delegator.LedgerBooker) {
 
 // recordDelegatedTurn records a delegated turn's facts in the ledger for a
 // backend that books its own calls: at its start (before any call can name
-// it), and at its end, when its spend has closed too — such a backend's
-// subagents finish inside the turn that spawned them.
+// it), and at its end, when its spend is taken to have closed too. That holds
+// for opencode, whose subagents finish inside the turn that spawned them. A
+// codex child can outlive its turn: its later cycles still book on the
+// spawning turn, but after activity_closed_at — so turn_costs.still_running
+// reads false early for such a turn (closing it on the child's own end is P3).
 func (a *Agent) recordDelegatedTurn(ts *TurnState, lb delegator.LedgerBooker, end bool) {
 	t := a.ledgerTurn(ts)
 	if t.TurnID == "" {

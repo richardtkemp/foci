@@ -5,12 +5,10 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"foci/internal/delegator"
 	"foci/internal/delegator/sessionenv"
-	"foci/internal/modelinfo"
 )
 
 // onThreadStarted records the transcript path Codex associates with a thread.
@@ -91,7 +89,7 @@ func (b *Backend) onTurnCompleted(params *turnCompletedParams) {
 	}
 
 	b.turnMu.Lock()
-	usage := b.turnUsageLocked(model)
+	usage := b.turnUsageLocked()
 	text := b.turnText.String()
 	tools := b.turnTools
 	b.turnMu.Unlock()
@@ -187,6 +185,18 @@ func (b *Backend) onItemStarted(params *itemStartedParams) {
 func (b *Backend) handleSubagentNotification(threadID, method string, params []byte) {
 	se := b.sessionEvents.Load()
 	switch method {
+	case "thread/tokenUsage/updated":
+		// A child's API cycles are its subagent's calls, booked on the turn
+		// that spawned it (#2111 P2). Before the switch they were consumed
+		// here unread, so subagent spend was missing. The child's running
+		// total is checked like the parent's.
+		var p tokenUsageParams
+		if json.Unmarshal(params, &p) != nil {
+			return
+		}
+		b.checkTokenUsage(&p)
+		actor, turnID := b.subagents.spend(threadID)
+		b.bookCycle(&p, actor, turnID)
 	case "item/completed":
 		// Whole messages only. Deltas are consumed silently below: the
 		// completed item carries the same text in one piece, and the subagent
@@ -262,7 +272,7 @@ func (b *Backend) openSubagentRun(item *itemEnvelope, se *delegator.SessionEvent
 	if item.Kind != "started" || b.subagents == nil || item.AgentThreadID == "" {
 		return
 	}
-	run, created := b.subagents.start(item.AgentThreadID, item.ID, item.AgentPath)
+	run, created := b.subagents.start(item.AgentThreadID, item.ID, item.AgentPath, b.openTurnID())
 	if !created || se == nil || se.OnSubagentStart == nil {
 		return
 	}
@@ -487,14 +497,11 @@ func (b *Backend) onAgentMessageDelta(params *agentMessageDeltaParams) {
 	}
 }
 
-// onTokenUsage records one API cycle's usage. codex sends this notification
-// once per cycle (see tokenUsageParams), so the handler keeps two different
-// quantities: the raw latest cycle (stashedUsage — the context fill that
-// GetContextWindow and compaction read) and a running per-turn sum of every
-// cycle (turnCalc — what TurnResult.Usage.Turn carries and cost is priced
-// from). Before #1855 only the former existed and each notification
-// OVERWROTE it, so a multi-cycle turn was reported as its last cycle alone:
-// a probe-captured 4-cycle turn logged 5 output tokens against a real 151.
+// onTokenUsage handles one API cycle's usage. codex sends this notification
+// once per cycle (see tokenUsageParams). The cycle is booked in the cost
+// ledger as one call (bookCycle), and its counts are kept as the latest
+// cycle's context fill (stashedUsage), which GetContextWindow and compaction
+// read — never summed (#1855).
 func (b *Backend) onTokenUsage(params *tokenUsageParams) {
 	// codex/OpenAI token semantics differ from Anthropic's: cachedInputTokens
 	// is a SUBSET of inputTokens (live-verified against codex 0.144.5 rollout
@@ -507,6 +514,8 @@ func (b *Backend) onTokenUsage(params *tokenUsageParams) {
 	// otherwise double-counts the cache: context occupancy inflates (premature
 	// auto-compaction) and cost double-charges the cached tokens.
 	b.checkTokenUsage(params)
+	// Each notification is one API cycle: one call (#2111 P2).
+	b.bookCycle(params, "", "")
 	last := params.TokenUsage.Last
 	inputTokens := last.InputTokens - last.CachedInputTokens
 	if inputTokens < 0 {
@@ -524,13 +533,6 @@ func (b *Backend) onTokenUsage(params *tokenUsageParams) {
 		b.usageTurnID = params.TurnID
 	}
 	b.stashedUsage = u
-	b.turnCalc = b.turnCalc.Add(modelinfo.TokenCounts{
-		Input:      inputTokens,
-		Output:     last.OutputTokens,
-		CacheRead:  last.CachedInputTokens,
-		CacheWrite: last.CacheWriteInputTokens,
-	})
-	b.turnCalcSeen = true
 	b.turnMu.Unlock()
 
 	if params.TokenUsage.ModelContextWindow > 0 {
@@ -540,39 +542,20 @@ func (b *Backend) onTokenUsage(params *tokenUsageParams) {
 	}
 }
 
-// resetTurnUsageLocked clears both per-turn usage quantities. Caller holds
-// turnMu. Every turn boundary goes through this one function so a field added
-// to the group is reset everywhere for free.
+// resetTurnUsageLocked clears the per-turn usage state. Caller holds turnMu.
 func (b *Backend) resetTurnUsageLocked() {
 	b.stashedUsage = nil
-	b.turnCalc = modelinfo.TokenCounts{}
-	b.turnCalcSeen = false
 	b.usageTurnID = ""
 }
 
-// turnUsageLocked builds the completed turn's usage. Caller holds turnMu.
-//
-// The two scopes are deliberately different quantities (see delegator.TurnUsage
-// and docs/WIRING.md's "Two scopes of token columns"): input/cache stay the
-// FINAL cycle's context fill — summing them would report a compaction figure
-// several times the real occupancy — while output and Turn are the per-turn
-// sums, and CalculatedCostUSD is priced from exactly the counts Turn carries,
-// so a persisted row can be re-priced back to its cost.
-func (b *Backend) turnUsageLocked(model string) *delegator.TurnUsage {
+// turnUsageLocked is the completed turn's usage: the final cycle's context
+// fill. The turn's spend is already in the ledger, one call per cycle, and
+// the agent reads the turn's cost from there. Caller holds turnMu.
+func (b *Backend) turnUsageLocked() *delegator.TurnUsage {
 	if b.stashedUsage == nil {
 		return nil
 	}
 	u := *b.stashedUsage
-	if !b.turnCalcSeen {
-		return &u
-	}
-	turn := b.turnCalc
-	u.OutputTokens = turn.Output
-	u.Turn = &turn
-	if model != "" {
-		cost := turn.CostAsOf(model, time.Now())
-		u.CalculatedCostUSD = &cost
-	}
 	return &u
 }
 

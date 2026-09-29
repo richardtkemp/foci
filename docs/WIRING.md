@@ -296,7 +296,7 @@ main
   │   ├── delegator/pretool    (no foci deps; stdlib + mvdan.cc/sh parser — PreToolUse deny-rule engine, #2028/#2033/#2034; spawns `when` checks with raw os/exec, not procx, as it runs only in foci-cc-hook and the foci CLI; shared by config, ccstream, cmd/foci-cc-hook and cmd/foci `pretool`)
   │   ├── delegator/stoprule   → delegator/pretool (only its Patterns type; stdlib otherwise — Stop-hook rule engine, #2089: matches the turn's final text, scans the CC transcript for the turn's background launches; shared by config, ccstream and cmd/foci-cc-hook)
   │   ├── delegator/sessionenv → tempdir (shared by codex/opencode + cmd/foci-codex-hook — per-session exec-bridge env file format, lifecycle, and the codex command wrap/unwrap)
-  │   ├── delegator/codex      → delegator, delegator/autoapprove, delegator/hookbin, delegator/keyedmutex, delegator/sessionenv, log, modelcaps, modelinfo, procx (Codex app-server JSON-RPC; registers "codex" via init())
+  │   ├── delegator/codex      → delegator, delegator/accounting, delegator/autoapprove, delegator/hookbin, delegator/keyedmutex, delegator/sessionenv, log, modelcaps, modelinfo, procx (Codex app-server JSON-RPC; books its own calls in the cost ledger; registers "codex" via init())
   │   └── delegator/opencode   → delegator, delegator/accounting, delegator/autoapprove, delegator/keyedmutex, delegator/sessionenv, log, modelinfo, procx, ratelimit, tempdir (HTTP/SSE OpenCode; books its own calls in the cost ledger; registers "opencode" via init())
  ├── agent         → turnevent, compaction, config, convo, delegator, delegator/accounting, display, log, memory, messages, modelcaps, modelinfo, nudge, platform, procx, prompts, provider, ratelimit, relogin, session, skills, telemetry, timeutil, tools, turn, warnings, workspace
  ├── periodic      → config, delegator, log, memory, prompts, provider, session, skills, timeutil, warnings (NO agent)
@@ -1424,7 +1424,7 @@ Four outputs:
 
    **Everything below in this item, down to "Conversation log", describes the PRE-LEDGER
    `api_calls` table (v1) and the turn-level pricing the not-yet-switched delegated backends
-   (ccstream and codex; opencode switched too) still run.** The v1 table was renamed and dropped by the #2111
+   (ccstream; opencode and codex have switched) still runs.** The v1 table was renamed and dropped by the #2111
    cutover; those backends' rows are now booked as LEGACY calls through the same converter the
    migration uses (`accounting/legacylive.go`). Reading the text against the ledger: a v1 row
    is one `kind='legacy'` call; `calculated_cost_usd` is `legacy_calculated_cost_usd` (the
@@ -1997,9 +1997,10 @@ path in the same change, so no backend ever has two booking paths:
 - **Direct API: switched** (the first, with the cutover). One response is one call.
 - **opencode: switched** (second). One assistant message is one call (see "opencode
   adapter" below).
-- **codex, Claude Code: not yet.** Their turn-level cost path is unchanged, and its rows are
-  booked as LEGACY calls (see "Legacy path" below) — their only booking path until each
-  switches.
+- **codex: switched** (third). One `thread/tokenUsage/updated` is one call (see "codex
+  adapter" below).
+- **Claude Code: not yet.** Its turn-level cost path is unchanged, and its rows are booked as
+  LEGACY calls (see "Legacy path" below) — its only booking path until it switches.
 
 **The cutover** runs at startup: `initLogging` calls `accounting.Open(cfg.Logging.APIDB)`.
 On a pre-ledger api.db (`api_calls.calculated_cost_usd` exists) that takes a `VACUUM INTO`
@@ -2137,8 +2138,28 @@ turn — stop reason, model), books no turn row, and takes `FinalCost` from `Led
 The adapter names the open turn with a stub (id, session, backend) whose upsert never
 overwrites what the agent recorded.
 
-**Legacy path** (`legacylive.go`) — the only booking path of the delegated backends that
-have not switched yet (ccstream, codex), deleted backend by backend. `DelegatedTransport.LogUsage` builds a
+**codex adapter** (`codex/ledger.go`, P2 third switch). codex is token-only: no message id
+and no cost anywhere (#2112 P0-c). Each `thread/tokenUsage/updated` is one API cycle and one
+call, keyed `<threadId>:<total.totalTokens>` — unique and monotonic per thread, and the same
+key when codex re-delivers a notification (the ledger books it once). Classes from `last`:
+`input` = inputTokens − cachedInputTokens (cached is a SUBSET of input,
+`invCachedIsSubsetOfInput`), `cache_read` = cachedInputTokens, `cache_write` =
+cacheWriteInputTokens (TTL not reported), `output`; `reasoningOutputTokens` is inside output
+and goes to detail only. Model `codex/<model>`, provider `openai`. The thread's running
+`total` is a `grain='cumulative'` backend report with no cost. Conservation — total grows by
+exactly last (`invTotalIsSumOfLast`, `checkTokenUsage`) — runs on every notification, a
+child thread's included. The call is booked on the open foci turn; a cycle with no foci turn
+open gets an autonomous turn of its own. A child thread's cycles (subAgentActivity, routed to
+`handleSubagentNotification`) are its subagent's calls: actor = the subagent's group key,
+booked on the turn that SPAWNED it (`subagentTracker` records it at first sight, #1880) —
+before the switch they were consumed unread, so codex subagent spend was missing. The
+`turnCalc` accumulator and its per-turn `CostAsOf` are gone; `stashedUsage` is context fill
+only. Tested against `codex/testdata/tokenusage_synthetic.json`: the #1855 live cycles plus
+SYNTHETIC child-thread and re-delivery notifications — codex is disabled, so replace it with
+a real capture on re-enable.
+
+**Legacy path** (`legacylive.go`) — the only booking path of Claude Code, until it
+switches; the file goes with that switch. `DelegatedTransport.LogUsage` builds a
 `LegacyRow` per parent row and subagent share (the shapes of the pre-ledger rows) and
 books it through the migration's own converter (`v1Row` → class-by-kind → cost basis →
 `legacyCall`/`legacyTurn`/`legacyReport`), so a live legacy call and a migrated one are the

@@ -1,0 +1,224 @@
+{
+ "about": "codex thread/tokenUsage/updated notifications for the #2111 P2 ledger tests. Codex is disabled: the REAL entries are the #1855 live capture, the SYNTHETIC ones are built from the app-server schema (v2/ThreadTokenUsageUpdatedNotification.json). Replace with a full real capture on re-enable.",
+ "events": [
+  {
+   "note": "REAL: codex 0.145.0 capture (#1855 probe), turn tu_1 cycle",
+   "line": {
+    "method": "thread/tokenUsage/updated",
+    "params": {
+     "threadId": "th_1",
+     "tokenUsage": {
+      "last": {
+       "inputTokens": 15509,
+       "cachedInputTokens": 11264,
+       "cacheWriteInputTokens": 0,
+       "outputTokens": 64,
+       "reasoningOutputTokens": 0,
+       "totalTokens": 15573
+      },
+      "total": {
+       "inputTokens": 15509,
+       "cachedInputTokens": 11264,
+       "cacheWriteInputTokens": 0,
+       "outputTokens": 64,
+       "reasoningOutputTokens": 0,
+       "totalTokens": 15573
+      },
+      "modelContextWindow": 258400
+     },
+     "turnId": "tu_1"
+    }
+   }
+  },
+  {
+   "note": "REAL: codex 0.145.0 capture (#1855 probe), turn tu_1 cycle",
+   "line": {
+    "method": "thread/tokenUsage/updated",
+    "params": {
+     "threadId": "th_1",
+     "tokenUsage": {
+      "last": {
+       "inputTokens": 15611,
+       "cachedInputTokens": 15360,
+       "cacheWriteInputTokens": 0,
+       "outputTokens": 40,
+       "reasoningOutputTokens": 0,
+       "totalTokens": 15651
+      },
+      "total": {
+       "inputTokens": 31120,
+       "cachedInputTokens": 26624,
+       "cacheWriteInputTokens": 0,
+       "outputTokens": 104,
+       "reasoningOutputTokens": 0,
+       "totalTokens": 31224
+      },
+      "modelContextWindow": 258400
+     },
+     "turnId": "tu_1"
+    }
+   }
+  },
+  {
+   "note": "REAL: codex 0.145.0 capture (#1855 probe), turn tu_1 cycle",
+   "line": {
+    "method": "thread/tokenUsage/updated",
+    "params": {
+     "threadId": "th_1",
+     "tokenUsage": {
+      "last": {
+       "inputTokens": 15690,
+       "cachedInputTokens": 15488,
+       "cacheWriteInputTokens": 0,
+       "outputTokens": 42,
+       "reasoningOutputTokens": 0,
+       "totalTokens": 15732
+      },
+      "total": {
+       "inputTokens": 46810,
+       "cachedInputTokens": 42112,
+       "cacheWriteInputTokens": 0,
+       "outputTokens": 146,
+       "reasoningOutputTokens": 0,
+       "totalTokens": 46956
+      },
+      "modelContextWindow": 258400
+     },
+     "turnId": "tu_1"
+    }
+   }
+  },
+  {
+   "note": "REAL: codex 0.145.0 capture (#1855 probe), turn tu_1 cycle",
+   "line": {
+    "method": "thread/tokenUsage/updated",
+    "params": {
+     "threadId": "th_1",
+     "tokenUsage": {
+      "last": {
+       "inputTokens": 15807,
+       "cachedInputTokens": 11264,
+       "cacheWriteInputTokens": 0,
+       "outputTokens": 5,
+       "reasoningOutputTokens": 0,
+       "totalTokens": 15812
+      },
+      "total": {
+       "inputTokens": 62617,
+       "cachedInputTokens": 53376,
+       "cacheWriteInputTokens": 0,
+       "outputTokens": 151,
+       "reasoningOutputTokens": 0,
+       "totalTokens": 62768
+      },
+      "modelContextWindow": 258400
+     },
+     "turnId": "tu_1"
+    }
+   }
+  },
+  {
+   "note": "SYNTHETIC: codex re-delivers the last notification verbatim (seen ~1 in 930 in rollouts)",
+   "line": {
+    "method": "thread/tokenUsage/updated",
+    "params": {
+     "threadId": "th_1",
+     "tokenUsage": {
+      "last": {
+       "inputTokens": 15807,
+       "cachedInputTokens": 11264,
+       "cacheWriteInputTokens": 0,
+       "outputTokens": 5,
+       "reasoningOutputTokens": 0,
+       "totalTokens": 15812
+      },
+      "total": {
+       "inputTokens": 62617,
+       "cachedInputTokens": 53376,
+       "cacheWriteInputTokens": 0,
+       "outputTokens": 151,
+       "reasoningOutputTokens": 0,
+       "totalTokens": 62768
+      },
+      "modelContextWindow": 258400
+     },
+     "turnId": "tu_1"
+    }
+   }
+  },
+  {
+   "note": "SYNTHETIC: the parent's subAgentActivity opens a child thread (observed shape, #1588)",
+   "line": {
+    "method": "item/completed",
+    "params": {
+     "threadId": "th_1",
+     "item": {
+      "type": "subAgentActivity",
+      "id": "call_1",
+      "kind": "started",
+      "agentPath": "worker",
+      "agentThreadId": "th_child"
+     }
+    }
+   }
+  },
+  {
+   "note": "SYNTHETIC: child thread cycle (documented schema; cacheWriteInputTokens and reasoningOutputTokens set)",
+   "line": {
+    "method": "thread/tokenUsage/updated",
+    "params": {
+     "threadId": "th_child",
+     "tokenUsage": {
+      "last": {
+       "inputTokens": 9000,
+       "cachedInputTokens": 0,
+       "cacheWriteInputTokens": 4096,
+       "outputTokens": 300,
+       "reasoningOutputTokens": 120,
+       "totalTokens": 9300
+      },
+      "total": {
+       "inputTokens": 9000,
+       "cachedInputTokens": 0,
+       "cacheWriteInputTokens": 4096,
+       "outputTokens": 300,
+       "reasoningOutputTokens": 120,
+       "totalTokens": 9300
+      },
+      "modelContextWindow": 258400
+     },
+     "turnId": "tc_1"
+    }
+   }
+  },
+  {
+   "note": "SYNTHETIC: child thread cycle (documented schema; cacheWriteInputTokens and reasoningOutputTokens set)",
+   "line": {
+    "method": "thread/tokenUsage/updated",
+    "params": {
+     "threadId": "th_child",
+     "tokenUsage": {
+      "last": {
+       "inputTokens": 9500,
+       "cachedInputTokens": 8192,
+       "cacheWriteInputTokens": 0,
+       "outputTokens": 80,
+       "reasoningOutputTokens": 0,
+       "totalTokens": 9580
+      },
+      "total": {
+       "inputTokens": 18500,
+       "cachedInputTokens": 8192,
+       "cacheWriteInputTokens": 4096,
+       "outputTokens": 380,
+       "reasoningOutputTokens": 120,
+       "totalTokens": 18880
+      },
+      "modelContextWindow": 258400
+     },
+     "turnId": "tc_1"
+    }
+   }
+  }
+ ]
+}
