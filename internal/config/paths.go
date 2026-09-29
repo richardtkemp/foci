@@ -168,14 +168,40 @@ func (c *Config) ResolveAllPaths() {
 	}
 }
 
+// DefaultConfigPath is the config every foci binary uses when none is named
+// explicitly: $FOCI_CONFIG, else ~/config/foci.toml (the live install's path).
+func DefaultConfigPath() (string, error) {
+	if p := os.Getenv("FOCI_CONFIG"); p != "" {
+		return p, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home dir: %w", err)
+	}
+	return filepath.Join(home, "config", "foci.toml"), nil
+}
+
 // ParseFlags returns the config file path and the -check-config flag from the
 // command line. When checkConfig is true the caller should validate the config
 // and exit without starting the server (see cmd/foci-gw/checkconfig.go).
-func ParseFlags() (path string, checkConfig bool) {
-	p := flag.String("config", "foci.toml", "path to config file")
-	check := flag.Bool("check-config", false, "validate the config file and exit (0 = will start cleanly, 1 = parse/validate error or unknown keys); does not start the server")
-	flag.Parse()
-	return *p, *check
+func ParseFlags() (path string, checkConfig bool, err error) {
+	return parseFlagsInto(flag.CommandLine, os.Args[1:])
+}
+
+func parseFlagsInto(fs *flag.FlagSet, args []string) (path string, checkConfig bool, err error) {
+	p := fs.String("config", "", "path to config file (default: $FOCI_CONFIG, else ~/config/foci.toml)")
+	check := fs.Bool("check-config", false, "validate the config file named by -config (or its default) and exit (0 = will start cleanly, 1 = parse/validate error, unknown keys, or no such file); does not start the server. E.g. foci-gw -check-config -config /home/foci/config/foci.toml")
+	if err := fs.Parse(args); err != nil {
+		return "", false, err
+	}
+	if *p != "" {
+		return *p, *check, nil
+	}
+	def, err := DefaultConfigPath()
+	if err != nil {
+		return "", false, fmt.Errorf("no -config given and default config path unavailable: %w", err)
+	}
+	return def, *check, nil
 }
 
 // UnknownKeys returns the list of unrecognised key names from the TOML metadata.

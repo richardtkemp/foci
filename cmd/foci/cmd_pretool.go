@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -62,14 +61,9 @@ func cmdPretool(args []string, stdout io.Writer) error {
 
 func loadPretoolRules(configPath, agentID string) (rules []pretool.Rule, skipped []string, backend string, err error) {
 	if configPath == "" {
-		configPath = os.Getenv("FOCI_CONFIG")
-	}
-	if configPath == "" {
-		home, herr := os.UserHomeDir()
-		if herr != nil {
-			return nil, nil, "", fmt.Errorf("resolve home dir: %w", herr)
+		if configPath, err = config.DefaultConfigPath(); err != nil {
+			return nil, nil, "", err
 		}
-		configPath = filepath.Join(home, "config", "foci.toml")
 	}
 	cfg, err := config.Load(configPath, delegator.RegisteredNames())
 	if err != nil {

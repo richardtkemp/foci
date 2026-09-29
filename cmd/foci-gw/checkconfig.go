@@ -15,7 +15,8 @@ package main
 // Exit codes:
 //
 //	0  config loads cleanly and has no unknown keys — the new binary will start
-//	1  parse/validate error, OR one or more unknown/deprecated keys (strict)
+//	1  parse/validate error, OR one or more unknown/deprecated keys (strict),
+//	   OR no file at the path (-config, else $FOCI_CONFIG, else ~/config/foci.toml)
 //	2  usage error (e.g. config path unreadable for reasons other than load)
 //
 // Policy: STRICT. A silently-renamed key (old name still present in the file)
@@ -26,7 +27,10 @@ package main
 // logger; this is intentional and harmless — the production log is never opened.
 
 import (
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 
 	"foci/internal/config"
@@ -35,22 +39,30 @@ import (
 
 // runConfigCheck loads the config at path and returns the process exit code.
 // It performs no side effects beyond reading the file and printing a verdict.
-func runConfigCheck(path string) int {
+func runConfigCheck(path string, stdout, stderr io.Writer) int {
+	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+		// Say it's the path, not the config, that's wrong: a bare "no such
+		// file" from a stray default read like the live config was broken (#2117).
+		_, _ = fmt.Fprintf(stderr, "config check FAILED: no config file at %s\n", path)
+		_, _ = fmt.Fprintf(stderr, "Point at one explicitly with -config PATH, e.g. foci-gw -check-config -config /home/foci/config/foci.toml\n")
+		return 1
+	}
+
 	cfg, err := config.Load(path, delegator.RegisteredNames())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "config check FAILED: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "config check FAILED: %v\n", err)
 		return 1
 	}
 
 	if len(cfg.UndefinedKeys) > 0 {
-		fmt.Fprintf(os.Stderr, "config check FAILED: %d unknown/deprecated key(s) in %s:\n", len(cfg.UndefinedKeys), path)
+		_, _ = fmt.Fprintf(stderr, "config check FAILED: %d unknown/deprecated key(s) in %s:\n", len(cfg.UndefinedKeys), path)
 		for _, k := range cfg.UndefinedKeys {
-			fmt.Fprintf(os.Stderr, "  - %s\n", k)
+			_, _ = fmt.Fprintf(stderr, "  - %s\n", k)
 		}
-		fmt.Fprintf(os.Stderr, "These keys are silently ignored at startup (a rename loses the old setting). Fix or remove them before upgrading.\n")
+		_, _ = fmt.Fprintf(stderr, "These keys are silently ignored at startup (a rename loses the old setting). Fix or remove them before upgrading.\n")
 		return 1
 	}
 
-	fmt.Println("config check OK: " + path + " loads cleanly with no unknown keys")
+	_, _ = fmt.Fprintln(stdout, "config check OK: "+path+" loads cleanly with no unknown keys")
 	return 0
 }

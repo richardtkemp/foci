@@ -1,6 +1,6 @@
 # Foci Configuration Reference
 
-Foci uses two TOML files: `foci.toml` (main config) and `secrets.toml` (credentials). By default, foci looks for `foci.toml` in the current working directory. Override with `--config`:
+Foci uses two TOML files: `foci.toml` (main config) and `secrets.toml` (credentials). By default, foci uses `$FOCI_CONFIG`, else `~/config/foci.toml` — the same resolution for `foci-gw`, `foci-gw -check-config`, and the `foci` CLI. Override with `--config`:
 
 ```
 foci-gw --config /home/foci/config/foci.toml

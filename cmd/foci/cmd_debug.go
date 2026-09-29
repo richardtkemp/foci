@@ -64,14 +64,10 @@ func cmdDebugSession(args []string, configPath string) error {
 		args = rest
 	}
 	if configPath == "" {
-		configPath = envDefault("", "FOCI_CONFIG")
-	}
-	if configPath == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("resolve home dir: %w", err)
+		var err error
+		if configPath, err = config.DefaultConfigPath(); err != nil {
+			return err
 		}
-		configPath = filepath.Join(home, "config", "foci.toml")
 	}
 
 	// Parse optional flags
@@ -434,14 +430,10 @@ func cmdDebugAt(args []string, configPath string) error {
 		args = rest
 	}
 	if configPath == "" {
-		configPath = envDefault("", "FOCI_CONFIG")
-	}
-	if configPath == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("resolve home dir: %w", err)
+		var err error
+		if configPath, err = config.DefaultConfigPath(); err != nil {
+			return err
 		}
-		configPath = filepath.Join(home, "config", "foci.toml")
 	}
 	if len(args) < 2 {
 		return fmt.Errorf("usage: foci debug at <key> <time>  (time: RFC3339 or duration ago like \"1h\")")
@@ -669,11 +661,10 @@ func printNewContent(path string, offset int64, format outputFormat) (int64, err
 
 func cmdDebugRebuildIndex(configPath string) error {
 	if configPath == "" {
-		configPath = envDefault("", "FOCI_CONFIG")
-	}
-	if configPath == "" {
-		home, _ := os.UserHomeDir()
-		configPath = filepath.Join(home, "config", "foci.toml")
+		var err error
+		if configPath, err = config.DefaultConfigPath(); err != nil {
+			return err
+		}
 	}
 	cfg, err := config.Load(configPath, delegator.RegisteredNames())
 	if err != nil {

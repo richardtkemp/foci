@@ -104,14 +104,18 @@ Subcommands:
 		os.Exit(1)
 	}
 
-	configPath, checkConfig := config.ParseFlags()
+	configPath, checkConfig, err := config.ParseFlags()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "foci-gw: %v (pass -config PATH)\n", err)
+		os.Exit(2)
+	}
 
 	// -check-config: validate the config and exit without starting the server.
 	// Runs BEFORE any log init so it never opens or rotates the production log
 	// (see checkconfig.go). Used by update.sh as a pre-flight before swapping
 	// the running daemon.
 	if checkConfig {
-		os.Exit(runConfigCheck(configPath))
+		os.Exit(runConfigCheck(configPath, os.Stdout, os.Stderr))
 	}
 
 	// Early log init: open the default event log file so that config parse

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -28,7 +30,7 @@ func writeTempConfig(t *testing.T, body string) string {
 func TestRunConfigCheck_Clean(t *testing.T) {
 	// A config that loads and validates with no unknown keys exits 0.
 	path := writeTempConfig(t, validConfigTOML)
-	if got := runConfigCheck(path); got != 0 {
+	if got := runConfigCheck(path, io.Discard, io.Discard); got != 0 {
 		t.Errorf("runConfigCheck(clean) = %d, want 0", got)
 	}
 }
@@ -40,7 +42,7 @@ func TestRunConfigCheck_UnknownKey(t *testing.T) {
 	// only becomes "unknown" relative to the binary that dropped it, so this
 	// fixture uses a section that is unknown at any commit.
 	path := writeTempConfig(t, validConfigTOML+"\n[bogus_section]\nfoo = \"bar\"\n")
-	if got := runConfigCheck(path); got != 1 {
+	if got := runConfigCheck(path, io.Discard, io.Discard); got != 1 {
 		t.Errorf("runConfigCheck(unknown key) = %d, want 1", got)
 	}
 }
@@ -48,7 +50,7 @@ func TestRunConfigCheck_UnknownKey(t *testing.T) {
 func TestRunConfigCheck_ParseError(t *testing.T) {
 	// A malformed TOML file fails to load and exits 1.
 	path := writeTempConfig(t, "[[agents]\nid = \"main\"\n")
-	if got := runConfigCheck(path); got != 1 {
+	if got := runConfigCheck(path, io.Discard, io.Discard); got != 1 {
 		t.Errorf("runConfigCheck(parse error) = %d, want 1", got)
 	}
 }
@@ -57,13 +59,29 @@ func TestRunConfigCheck_ValidateError(t *testing.T) {
 	// A syntactically valid TOML that fails Validate (missing required
 	// [groups] powerful) exits 1.
 	path := writeTempConfig(t, "[[agents]]\nid = \"main\"\n")
-	if got := runConfigCheck(path); got != 1 {
+	if got := runConfigCheck(path, io.Discard, io.Discard); got != 1 {
 		t.Errorf("runConfigCheck(validate error) = %d, want 1", got)
 	}
 }
 
 func TestRunConfigCheck_MissingFile(t *testing.T) {
-	if got := runConfigCheck("/nonexistent/path/foci.toml"); got != 1 {
+	if got := runConfigCheck("/nonexistent/path/foci.toml", io.Discard, io.Discard); got != 1 {
 		t.Errorf("runConfigCheck(missing) = %d, want 1", got)
+	}
+}
+
+// A missing config must say how to point at one explicitly — a bare
+// "no such file" read like the live config was broken (#2117).
+func TestRunConfigCheck_MissingFileNamesConfigFlag(t *testing.T) {
+	var stdout, stderr strings.Builder
+	missing := "/nonexistent/path/foci.toml"
+	if got := runConfigCheck(missing, &stdout, &stderr); got != 1 {
+		t.Fatalf("runConfigCheck(missing) = %d, want 1", got)
+	}
+	msg := stderr.String()
+	for _, want := range []string{missing, "-config PATH", "foci-gw -check-config -config "} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("missing-file message lacks %q:\n%s", want, msg)
+		}
 	}
 }
