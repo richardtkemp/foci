@@ -3,10 +3,13 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"foci/internal/agent"
 	"foci/internal/config"
+	flog "foci/internal/log"
+	"foci/internal/modelinfo"
 	"foci/internal/nudge"
 )
 
@@ -349,5 +352,92 @@ func TestLiveApplyNudgeReconfigures(t *testing.T) {
 	}
 	if !sched.PreAnswerGate() {
 		t.Error("after nudge apply, PreAnswerGate should be true — scheduler not reconfigured")
+	}
+}
+
+// TestLiveApply_ObjectListSection proves the [[modelinfo]] applier is reachable
+// the way an object-list edit addresses it — the whole section, empty key
+// (#2116: it was registered but no call site could ever hit it) — and that the
+// apply logs one INFO line naming the section.
+func TestLiveApply_ObjectListSection(t *testing.T) {
+	var buf syncBuf
+	flog.SetOutput(&buf)
+	t.Cleanup(func() { flog.SetOutput(os.Stderr); modelinfo.ResetToBuiltIn() })
+
+	configPath := filepath.Join(t.TempDir(), "foci.toml")
+	freshTOML := `
+[groups]
+powerful = "anthropic/claude-haiku-4-5"
+
+[[modelinfo]]
+id = "test-2116-model"
+context_window = 12345
+input_per_1m = 0.0
+output_per_1m = 0.0
+
+[[agents]]
+id = "a"
+`
+	if err := os.WriteFile(configPath, []byte(freshTOML), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	la := newLiveApply(configPath)
+	registerLiveAppliers(la, map[string]*agentInstance{})
+
+	applied, err := la.Apply("modelinfo", "")
+	if err != nil {
+		t.Fatalf("Apply(modelinfo): %v", err)
+	}
+	if !applied {
+		t.Fatal(`Apply("modelinfo", "") = applied=false — the modelinfo applier is unreachable`)
+	}
+	if m, ok := modelinfo.Lookup("", "test-2116-model"); !ok || m.ContextWindow != 12345 {
+		t.Errorf("after Apply, Lookup(test-2116-model) = %+v, %v — entry not applied", m, ok)
+	}
+	if !strings.Contains(buf.String(), "applied modelinfo live") {
+		t.Errorf("no INFO line naming the applied section; log:\n%s", buf.String())
+	}
+}
+
+// TestLiveApply_RestartRequiredWarns proves an edit to a field with no live
+// applier leaves a WARN saying it takes effect on restart (#2116), so the log
+// answers "did my edit apply?" either way.
+func TestLiveApply_RestartRequiredWarns(t *testing.T) {
+	var buf syncBuf
+	flog.SetOutput(&buf)
+	t.Cleanup(func() { flog.SetOutput(os.Stderr) })
+
+	la := newLiveApply("")
+	registerLiveAppliers(la, map[string]*agentInstance{})
+
+	if applied, err := la.Apply("message_transforms", ""); applied || err != nil {
+		t.Fatalf(`Apply("message_transforms", "") = %v, %v; want false, nil`, applied, err)
+	}
+	if applied, err := la.Apply("notify", "startup_notify"); applied || err != nil {
+		t.Fatalf(`Apply("notify", "startup_notify") = %v, %v; want false, nil`, applied, err)
+	}
+	out := buf.String()
+	for _, want := range []string{"message_transforms written", "notify.startup_notify written"} {
+		if !strings.Contains(out, want) || !strings.Contains(out, "restart") {
+			t.Errorf("no restart-required WARN containing %q; log:\n%s", want, out)
+		}
+	}
+}
+
+// TestLiveApplyCoversLiveObjectSections is TestLiveApplyCoversHotFields for
+// object-list sections: an ObjectFieldSpec marked Live tells the app editor
+// "no restart needed", so it must have an applier at its bare section address,
+// and a restart-required one must not.
+func TestLiveApplyCoversLiveObjectSections(t *testing.T) {
+	la := newLiveApply("")
+	registerLiveAppliers(la, map[string]*agentInstance{})
+	for _, spec := range config.ObjectFields() {
+		has := la.appliers[spec.Section] != nil
+		if spec.Live && !has {
+			t.Errorf("object section %s is marked Live but has no applier", spec.Section)
+		}
+		if !spec.Live && has {
+			t.Errorf("object section %s has an applier but is not marked Live", spec.Section)
+		}
 	}
 }

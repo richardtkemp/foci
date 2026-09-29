@@ -400,3 +400,34 @@ func TestConfigPut_ObjectListWholeReplace(t *testing.T) {
 		t.Errorf("unset should remove all blocks:\n%s", data)
 	}
 }
+
+// TestConfigPut_ObjectListRoutesToApplyLive proves an object-list edit is
+// handed to ApplyLive with the section and an empty key, like a scalar edit
+// (#2116). [[modelinfo]] advertises needsRestart=false, so without this the app
+// said "live" while the edit only took effect on restart; for a restart-only
+// section the call is what logs the takes-effect-on-restart WARN.
+func TestConfigPut_ObjectListRoutesToApplyLive(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "foci.toml")
+	os.WriteFile(path, []byte("data_dir = \"/tmp\"\n"), 0o600)
+	h := newTestHub()
+	type call struct{ section, key string }
+	var calls []call
+	h.deps = platform.ProviderDeps{
+		Config: &config.Config{SourcePath: path, FileMode: "0600"},
+		ApplyLive: func(section, key string) (bool, error) {
+			calls = append(calls, call{section, key})
+			return true, nil
+		},
+	}
+	c := fakeClient()
+	c.features = map[string]struct{}{featureConfigEdit: {}}
+	h.clients[c] = struct{}{}
+
+	h.handleConfigPut(c, fap.ConfigPut{Section: "modelinfo", Key: "", Value: `[{"id":"m","context_window":1000,"input_per_1m":0,"output_per_1m":0}]`})
+	h.handleConfigUnset(c, fap.ConfigUnset{Section: "modelinfo", Key: ""})
+
+	want := []call{{"modelinfo", ""}, {"modelinfo", ""}}
+	if len(calls) != len(want) || calls[0] != want[0] || calls[1] != want[1] {
+		t.Errorf("ApplyLive calls = %+v, want %+v (put then unset)", calls, want)
+	}
+}

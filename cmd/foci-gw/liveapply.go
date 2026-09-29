@@ -70,25 +70,36 @@ func (la *liveApply) registerMapSection(sections []string, fn func(*config.Confi
 
 // Apply pushes one just-edited field into the running process. Returns false
 // when the field has no applier (restart-required fields). The section is the
-// REGISTRY section ("agent" for per-agent overrides, not "agents").
+// REGISTRY section ("agent" for per-agent overrides, not "agents"). An empty
+// key addresses a whole object-list section ([[modelinfo]]), which is how the
+// app's config editor sends those edits.
+//
+// Every call leaves one log line — INFO when applied, WARN when the edit only
+// takes effect on restart — so the log answers "did my edit apply?" (#2116).
+// An apply error is returned for the caller to log.
 func (la *liveApply) Apply(section, key string) (bool, error) {
+	addr := section
+	if key != "" {
+		addr += "." + key
+	}
 	la.mu.RLock()
-	fn := la.appliers[section+"."+key]
+	fn := la.appliers[addr]
 	if fn == nil {
 		fn = la.mapSectionAppliers[section]
 	}
 	la.mu.RUnlock()
 	if fn == nil {
+		configLog.Warnf("%s written but not live-appliable: takes effect on restart", addr)
 		return false, nil
 	}
 	fresh, err := config.Load(la.configPath, delegator.RegisteredNames())
 	if err != nil {
-		return true, fmt.Errorf("live apply %s.%s: reload config: %w", section, key, err)
+		return true, fmt.Errorf("live apply %s: reload config: %w", addr, err)
 	}
 	if err := fn(fresh); err != nil {
-		return true, fmt.Errorf("live apply %s.%s: %w", section, key, err)
+		return true, fmt.Errorf("live apply %s: %w", addr, err)
 	}
-	configLog.Infof("applied %s.%s live", section, key)
+	configLog.Infof("applied %s live", addr)
 	return true, nil
 }
 
@@ -99,8 +110,8 @@ var (
 	liveApplyLoggingAddrs = []string{"logging.level"}
 
 	// modelinfo is an object[] section (not scalar hot-tagged fields), so it
-	// has no per-field registry rows. The section-level address dispatches
-	// through the standard Apply path.
+	// has no per-field registry rows. The bare section address is what
+	// Apply(section, "") looks up — the app editor's object-list edit path.
 	liveApplyModelInfoAddrs = []string{"modelinfo"}
 
 	// Global rows only: the agent./platforms. debug override rows are dead

@@ -133,8 +133,10 @@ func (h *Hub) applyConfigEdit(scope, section, key string, value *string) error {
 // applyObjectListEdit writes a whole array-of-tables section (value non-nil, a
 // JSON array-of-objects) or clears it (value nil). Object-lists are global-only
 // for now — per-agent [[agents.*]] overrides aren't surfaced by the editor yet.
-// They are restart-required (no live applier), so no applyLive call: the file
-// write succeeds and the change takes effect on the next restart.
+// Most are restart-required; a section with a live applier ([[modelinfo]],
+// ObjectFieldSpec.Live) is pushed into the process via applyLive, addressed by
+// section with an empty key. Restart-required ones go through applyLive too,
+// which logs that they take effect on restart.
 func (h *Hub) applyObjectListEdit(cfg *config.Config, scope string, spec config.ObjectFieldSpec, value *string) error {
 	if scope != "" {
 		return fmt.Errorf("object-list section %q has no per-agent scope yet", spec.Section)
@@ -151,6 +153,7 @@ func (h *Hub) applyObjectListEdit(cfg *config.Config, scope string, spec config.
 	if _, err := config.SetTableArray(cfg.SourcePath, spec.Section, entries, mode); err != nil {
 		return err
 	}
+	h.applyLive(spec.Section, "")
 	return nil
 }
 

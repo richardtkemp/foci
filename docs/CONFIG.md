@@ -556,7 +556,7 @@ output_per_1m = 0.0
 | `cache_read_per_1m` | float | `0.0` | Cost per 1M cache-read tokens in USD |
 | `cache_write_per_1m` | float | `0.0` | Cost per 1M cache-write tokens in USD |
 
-Live-updatable: changes take effect immediately without restart.
+Live-updatable when edited through the app's config editor: the change takes effect immediately and logs `applied modelinfo live`. There is no file watcher, so a hand edit of `foci.toml` takes effect on the next restart.
 
 ### `[groups]`
 
