@@ -5,30 +5,30 @@ import (
 	"fmt"
 	"strings"
 
-	"foci/internal/delegator/ccstream"
+	"foci/internal/delegator"
 )
 
 // ManaCommand creates a /mana command that reports the account's Claude Code
 // plan/rate-limit usage — session (5h) and weekly (7d) percentages, cost, and
-// what's contributing to the usage — via ccstream.QueryUsage. Unlike /context
-// (which queries a session's already-running backend), this spawns its own
-// independent, throwaway CC process (see QueryUsage's doc comment) — it never
-// touches or waits behind a live session, and works regardless of which
-// transport (API or delegated) the requesting agent itself uses.
+// what's contributing to the usage — via the backend's registered query
+// (delegator.RegisterUsage). Only Claude Code backends register one, so only
+// their agents get the command (#1543); for Claude Code the query is
+// ccstream.QueryUsage, which spawns its own throwaway CC process and never
+// touches or waits behind a live session.
 //
 // /usage is a Command.Aliases entry, not a separate Command — Registry.All()
 // (feeding /help and the app command palette) dedupes by *Command pointer
 // identity precisely so an alias never gets its own listing: both "mana" and
 // "usage" map to this same struct, so it surfaces exactly once, under its
 // canonical Name ("mana").
-func ManaCommand() *Command {
+func ManaCommand(query delegator.UsageQuery) *Command {
 	return &Command{
 		Name:        "mana",
 		Aliases:     []string{"usage"},
 		Description: "Show Claude Code plan usage (session/weekly %, cost, contributing behaviors)",
 		Category:    "observability",
 		Execute: func(ctx context.Context, _ Request, _ CommandContext) (Response, error) {
-			info, err := ccstream.QueryUsage(ctx)
+			info, err := query(ctx)
 			if err != nil {
 				return Response{}, fmt.Errorf("query usage: %w", err)
 			}
@@ -38,7 +38,7 @@ func ManaCommand() *Command {
 }
 
 // formatUsage renders a UsageInfo as the /mana reply text.
-func formatUsage(info *ccstream.UsageInfo) string {
+func formatUsage(info *delegator.UsageInfo) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "📊 *Claude Code usage* (%s)\n\n", info.SubscriptionType)
 	fmt.Fprintf(&b, "Session (5h): %d%% · resets %s\n", info.FiveHour.Percent, formatResetTime(info.FiveHour))
@@ -61,7 +61,7 @@ func formatUsage(info *ccstream.UsageInfo) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func formatResetTime(w ccstream.UsageWindow) string {
+func formatResetTime(w delegator.UsageWindow) string {
 	if w.ResetsAt.IsZero() {
 		return "unknown"
 	}

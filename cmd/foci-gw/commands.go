@@ -200,7 +200,6 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	cmds.Register(command.LastCommand())
 	cmds.Register(command.CostCommand())
 	cmds.Register(command.ContextCommand())
-	cmds.Register(command.ManaCommand())
 	cmds.Register(command.ResetCommand())
 	cmds.Register(command.ModelCommand())
 	cmds.Register(command.EffortCommand())
@@ -235,6 +234,14 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	// backend, not as a string switch here (#857).
 	if delivery, ok := delegator.PlanDeliveryFor(p.acfg.Backend); ok {
 		cmds.Register(command.PlanCommand(delivery))
+	}
+
+	// /mana (alias /usage) — Claude Code plan usage. Registered iff the backend
+	// contributed a usage query via delegator.RegisterUsage (only the Claude
+	// Code backends do): other agents would otherwise be shown the operator's
+	// Claude plan numbers, which have nothing to do with them (#1543).
+	if query, ok := delegator.UsageQueryFor(p.acfg.Backend); ok {
+		cmds.Register(command.ManaCommand(query))
 	}
 
 	// Tmux command (only if tool is available)

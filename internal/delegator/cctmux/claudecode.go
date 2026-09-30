@@ -10,11 +10,15 @@ import (
 	"sync/atomic"
 
 	"foci/internal/delegator"
+	"foci/internal/delegator/ccstream"
 )
 
 func init() {
 	delegator.Register("claude-code-tmux", newFromConfig, false)
 	delegator.RegisterPlan("claude-code-tmux", planDelivery)
+	// Same claude binary and login as the stream-json backend, so the same
+	// throwaway get_usage query reports this agent's plan usage (#1543).
+	delegator.RegisterUsage("claude-code-tmux", ccstream.QueryUsage)
 }
 
 func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {

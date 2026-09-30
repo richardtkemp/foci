@@ -41,7 +41,7 @@ Every inbound message carries a header built from a configurable **statusline te
 - `[state]` — a dashboard line (todos open/high, tasks, scratchpad entries), self-omits when every store is empty.
 - `[ask]` — appears only while a `foci_ask` is paused (`/pause`): names the paused request id as a reminder that plain-text replies are routing to you as normal turns rather than answering it (`/resume` to restore).
 
-**`prev_cost` / `prev_tokens` are deliberately NOT in the default** — a running cost/token figure on every turn was found to nudge the agent toward rationing its own budget. They still exist as `{cost}`/`{tokens}` fields (plus bare `{cost_raw}`/`{tokens_in}`/`{tokens_out}`/`{cache_read}`/`{cache_write}`) for anyone who opts in via a custom `statusline` config (`docs/CONFIG.md`). There is no `mana`/quota field in the statusline — check remaining quota via the `/mana` command (see the `mana` skill) instead.
+**`prev_cost` / `prev_tokens` are deliberately NOT in the default** — a running cost/token figure on every turn was found to nudge the agent toward rationing its own budget. They still exist as `{cost}`/`{tokens}` fields (plus bare `{cost_raw}`/`{tokens_in}`/`{tokens_out}`/`{cache_read}`/`{cache_write}`) for anyone who opts in via a custom `statusline` config (`docs/CONFIG.md`). There is no `mana`/quota field in the statusline — check remaining quota via the `/mana` command (see the `mana` skill) instead; it exists only for agents on a Claude Code backend.
 
 ## `[reminders]`
 

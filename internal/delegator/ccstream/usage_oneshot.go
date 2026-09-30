@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"foci/internal/delegator"
 	"foci/internal/procx"
 	"foci/internal/tempdir"
 )
@@ -17,42 +18,6 @@ import (
 // spawn. CC's get_usage is a real network round trip to its own
 // account-usage backend and has been observed taking 15-20s.
 const usageOneshotTimeout = 45 * time.Second
-
-// UsageInfo is the parsed result of QueryUsage — the data behind CC's /usage
-// command (session/weekly plan limits, cost, and the "what's contributing"
-// behavior breakdown), in structured form.
-type UsageInfo struct {
-	SubscriptionType string
-	FiveHour         UsageWindow // CC's "session" limit
-	SevenDay         UsageWindow // CC's "week (all models)" limit
-	SessionCostUSD   float64
-	Day              UsageBehaviorWindow
-	Week             UsageBehaviorWindow
-	Raw              json.RawMessage // full get_usage response payload, for anything not modeled above
-}
-
-// UsageWindow is one rate-limit window's utilization. Percent is 0-100
-// (CC's own scale for get_usage). ResetsAt is the zero Time if CC omitted
-// or sent an unparseable resets_at.
-type UsageWindow struct {
-	Percent  int
-	ResetsAt time.Time
-}
-
-// UsageBehaviorWindow is one window ("last 24h"/"last 7d") of what's
-// contributing to plan-limit usage.
-type UsageBehaviorWindow struct {
-	RequestCount int
-	SessionCount int
-	Top          []UsageBehaviorItem // CC's own ordering
-}
-
-// UsageBehaviorItem is one contributing factor, e.g. {Key: "long_context", Pct: 88}.
-type UsageBehaviorItem struct {
-	Key   string
-	Pct   int
-	Count int
-}
 
 // QueryUsage runs an independent, throwaway `claude` subprocess and asks it
 // for the account's plan/rate-limit usage via the get_usage control request
@@ -69,7 +34,7 @@ type UsageBehaviorItem struct {
 // backend, not the model — verified live (a bare initialize + get_usage
 // round trip reports total_cost_usd: 0, model_usage: {}, no assistant turn
 // ever runs).
-func QueryUsage(ctx context.Context) (*UsageInfo, error) {
+func QueryUsage(ctx context.Context) (*delegator.UsageInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, usageOneshotTimeout)
 	defer cancel()
 
@@ -233,13 +198,13 @@ func waitForControlResponseRaw(ctx context.Context, resCh <-chan json.RawMessage
 	}
 }
 
-// parseUsagePayload maps the wire usagePayload into the public UsageInfo.
-func parseUsagePayload(raw json.RawMessage) (*UsageInfo, error) {
+// parseUsagePayload maps the wire usagePayload into the public delegator.UsageInfo.
+func parseUsagePayload(raw json.RawMessage) (*delegator.UsageInfo, error) {
 	var p usagePayload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, fmt.Errorf("ccstream: usage oneshot: unmarshal get_usage payload: %w", err)
 	}
-	return &UsageInfo{
+	return &delegator.UsageInfo{
 		SubscriptionType: p.SubscriptionType,
 		FiveHour:         parseUsageWindow(p.RateLimits.FiveHour),
 		SevenDay:         parseUsageWindow(p.RateLimits.SevenDay),
@@ -250,8 +215,8 @@ func parseUsagePayload(raw json.RawMessage) (*UsageInfo, error) {
 	}, nil
 }
 
-func parseUsageWindow(w usageWindowRaw) UsageWindow {
-	out := UsageWindow{Percent: w.Utilization}
+func parseUsageWindow(w usageWindowRaw) delegator.UsageWindow {
+	out := delegator.UsageWindow{Percent: w.Utilization}
 	if w.ResetsAt != "" {
 		if t, err := time.Parse(time.RFC3339, w.ResetsAt); err == nil {
 			out.ResetsAt = t
@@ -260,12 +225,12 @@ func parseUsageWindow(w usageWindowRaw) UsageWindow {
 	return out
 }
 
-func parseUsageBehaviorWindow(w usageBehaviorWindow) UsageBehaviorWindow {
-	items := make([]UsageBehaviorItem, len(w.Behaviors))
+func parseUsageBehaviorWindow(w usageBehaviorWindow) delegator.UsageBehaviorWindow {
+	items := make([]delegator.UsageBehaviorItem, len(w.Behaviors))
 	for i, b := range w.Behaviors {
-		items[i] = UsageBehaviorItem{Key: b.Key, Pct: b.Pct, Count: b.Count}
+		items[i] = delegator.UsageBehaviorItem{Key: b.Key, Pct: b.Pct, Count: b.Count}
 	}
-	return UsageBehaviorWindow{
+	return delegator.UsageBehaviorWindow{
 		RequestCount: w.RequestCount,
 		SessionCount: w.SessionCount,
 		Top:          items,

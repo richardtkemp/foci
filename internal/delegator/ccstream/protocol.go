@@ -227,8 +227,8 @@ type contextUsageCategoryRaw struct {
 // data behind /usage. CC returns substantially more than this (internal
 // limit-kind codenames for unreleased features, credit/spend details) — we
 // parse only the fields /mana surfaces; unknown fields are silently dropped
-// by encoding/json. See usage_oneshot.go's QueryUsage / UsageInfo (the public,
-// package-level result type this maps into).
+// by encoding/json. See usage_oneshot.go's QueryUsage and delegator.UsageInfo
+// (the public result type this maps into).
 type usagePayload struct {
 	SubscriptionType    string          `json:"subscription_type"`
 	RateLimitsAvailable bool            `json:"rate_limits_available"`

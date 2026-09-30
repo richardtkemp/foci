@@ -26,6 +26,7 @@ import (
 func init() {
 	delegator.Register("claude-code", newFromConfig, true)
 	delegator.RegisterPlan("claude-code", planDelivery)
+	delegator.RegisterUsage("claude-code", QueryUsage)
 }
 
 // autonomousInjectGrace is how long after an autonomous run goes idle that
