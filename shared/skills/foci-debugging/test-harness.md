@@ -90,9 +90,9 @@ binaries at equal priority.
 
 ## Reading the result
 
-`seal-test.sh` re-runs any failing package **unsealed** and prints
-`DIAGNOSTIC: <pkg> passes UNSEALED — it is writing outside the sandbox`. That is real evidence (same
-commit, minutes apart) — but it identifies *a* blocked write, not necessarily the cause. Confirm the
+`seal-test.sh` re-runs a failing package unsealed, then (if that passed) sealed. Passing both prints
+`DIAGNOSTIC: ... FLAKE`; failing sealed again prints `DIAGNOSTIC: ... writing outside the sandbox`.
+That is real evidence, but it identifies *a* blocked write, not necessarily the cause. Confirm the
 seal alone is sufficient before concluding it, or you will chase an irrelevant whitelist gap.
 
 Only a `--- FAIL:` line is a failure verdict. A `foo_test.go:NNN:` line can be a benign `t.Logf`

@@ -150,13 +150,14 @@ func TestWhen_TimeoutFailsOpen(t *testing.T) {
 	if res.Rule != nil {
 		t.Fatalf("denied by %s", res.Rule.Name)
 	}
-	if len(res.WhenErrors) != 1 || !strings.Contains(res.WhenErrors[0].Error(), "rule a: when: timed out") {
-		t.Fatalf("errors = %v, want one: rule a timed out", res.WhenErrors)
+	if len(res.WhenErrors) != 1 || !strings.Contains(res.WhenErrors[0].Error(), "rule a: when: timed out (200ms per-check limit)") {
+		t.Fatalf("errors = %v, want one: rule a timed out on its per-check limit", res.WhenErrors)
 	}
 }
 
 // TestWhen_BudgetFailsOpen: the call's budget cuts short the check running
-// when it runs out, and later checks are reported without running.
+// when it runs out, and later checks are reported without running. The
+// cut-off check names the budget, not its per-check limit (#2132).
 //
 // The per-check timeout is far beyond the budget, so the one check that runs
 // is always the one the budget ends, whatever the scheduling (#2129).
@@ -176,7 +177,7 @@ func TestWhen_BudgetFailsOpen(t *testing.T) {
 	if len(res.WhenErrors) != 3 {
 		t.Fatalf("errors = %v", res.WhenErrors)
 	}
-	for i, want := range []string{"rule a: when: timed out", "rule b: when: not run", "rule c: when: not run"} {
+	for i, want := range []string{"rule a: when: timed out: the call's 300ms budget", "rule b: when: not run", "rule c: when: not run"} {
 		if !strings.Contains(res.WhenErrors[i].Error(), want) {
 			t.Errorf("error %d = %v, want %q", i, res.WhenErrors[i], want)
 		}

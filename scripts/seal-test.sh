@@ -74,8 +74,9 @@
 # Landlock REFER bit is missing; llbox sets it, but a future regression or a
 # genuinely-new whitelist gap could reproduce the same shape of confusion).
 # So: whenever a package fails under seal, re-run THAT package unsealed. If
-# it then passes, print a loud, unmissable message — the failure was the
-# sandbox, not the code — converting the worst failure mode (a misleading
+# it then passes, re-run it sealed once more: a flake passes that too, and is
+# reported as a flake (#2132); if it fails sealed again, print a loud,
+# unmissable message — the failure was the sandbox, not the code — converting the worst failure mode (a misleading
 # error that reads like a real bug) into the most informative one. This is
 # purely diagnostic: it never changes the run's exit status, because "passes
 # unsealed" means the sealed run's failure was real and needs a whitelist fix
@@ -118,8 +119,9 @@ fi
 
 # diagnostic_rerun <extra go-test flags...>
 # Scans $LOGFILE (built up so far) for go test's own `FAIL <pkg>` summary
-# lines and re-runs each one unsealed to tell a real failure from a sealing
-# artifact. Never touches the caller's exit status — purely explanatory.
+# lines and re-runs each one unsealed (then, if that passes, sealed again) to
+# tell a real failure from a sealing artifact or a flake. Never touches the
+# caller's exit status — purely explanatory.
 diagnostic_rerun() {
   local extra_flags=("$@")
   local failed
@@ -135,7 +137,14 @@ diagnostic_rerun() {
     [ -z "$pkg" ] && continue
     echo "--- unsealed re-run: $pkg ---" >> "$LOGFILE"
     if "${TESTENV[@]}" nice -n 19 go test -count=1 "${extra_flags[@]}" "$pkg" >> "$LOGFILE" 2>&1; then
-      echo ">>> DIAGNOSTIC: $pkg passes UNSEALED — it is writing outside the sandbox. Add the path to the whitelist in scripts/seal-test.sh, or stop writing there." | tee -a "$LOGFILE" >&2
+      # A pass unsealed is also what a flake looks like. Only a second sealed
+      # failure pins it on the sandbox (#2132).
+      echo "--- sealed re-run: $pkg ---" >> "$LOGFILE"
+      if "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -count=1 "${extra_flags[@]}" "$pkg" >> "$LOGFILE" 2>&1; then
+        echo ">>> DIAGNOSTIC: $pkg passes on re-run both UNSEALED and SEALED — the failure is a FLAKE, not a sandbox write." | tee -a "$LOGFILE" >&2
+      else
+        echo ">>> DIAGNOSTIC: $pkg fails SEALED again but passes UNSEALED — it is writing outside the sandbox. Add the path to the whitelist in scripts/seal-test.sh, or stop writing there." | tee -a "$LOGFILE" >&2
+      fi
     else
       echo ">>> $pkg fails both sealed and unsealed — a real test failure, not a sealing artifact." | tee -a "$LOGFILE" >&2
     fi

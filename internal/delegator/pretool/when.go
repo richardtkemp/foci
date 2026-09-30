@@ -68,6 +68,9 @@ const (
 	whenWaitDelay = 500 * time.Millisecond
 )
 
+// errWhenTimeout is the cause of a when-check's own timeout.
+var errWhenTimeout = errors.New("when-check timeout")
+
 // WhenError is a when-check that failed open: the call was not denied by it.
 type WhenError struct {
 	Rule string
@@ -148,7 +151,10 @@ func runWhen(ctx context.Context, rule, script string, args []string, c Call, en
 			return false, fmt.Errorf("cwd %q is not a directory", c.Cwd)
 		}
 	}
-	ctx, cancel := context.WithTimeout(ctx, whenTimeout)
+	// The cause tells the two limits apart: it is errWhenTimeout only if this
+	// check's own timeout fired first, and the budget's error if the call's
+	// budget (the parent) ran out first (#2132).
+	ctx, cancel := context.WithTimeoutCause(ctx, whenTimeout, errWhenTimeout)
 	defer cancel()
 	// Raw exec, not procx.Spawn: this runs in foci-cc-hook (a child of CC,
 	// which foci-gw already spawned without the secret groups) and in the
@@ -168,7 +174,10 @@ func runWhen(ctx context.Context, rule, script string, args []string, c Call, en
 
 	runErr := cmd.Run()
 	if ctx.Err() != nil {
-		return false, fmt.Errorf("timed out (%s)%s", whenTimeout, stderr.suffix())
+		if errors.Is(context.Cause(ctx), errWhenTimeout) {
+			return false, fmt.Errorf("timed out (%s per-check limit)%s", whenTimeout, stderr.suffix())
+		}
+		return false, fmt.Errorf("timed out: the call's %s budget for when-checks ran out%s", whenBudget, stderr.suffix())
 	}
 	if runErr == nil {
 		return true, nil
