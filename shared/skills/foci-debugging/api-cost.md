@@ -26,7 +26,7 @@ sqlite3 -readonly ~/data/api.db "SELECT TOTAL(cost_usd) FROM call_costs WHERE bi
 
 ## Payload logs (JSONL)
 
-Full request/response per call. Written whenever `payload_file` is non-empty, and it **defaults to `logs/api-payload.jsonl`** — so payload logging is on by default; set `payload_file = ""` in `[logging]` to disable. (`full_payload` exists in `[logging]` but does NOT gate writing.) Archives: `logs/archive/api-payload-*.jsonl.gz`. Large — filter with jq, never cat.
+Full request/response per call, on by default (`payload_file` defaults to `logs/api-payload.jsonl`; set it to `""` in `[logging]` to disable; `full_payload` does not gate writing). Archives: `logs/archive/api-payload-*.jsonl.gz`. Filter with jq, never cat.
 
 ```bash
 # Calls in a window with cache stats
@@ -55,9 +55,9 @@ For *why* a cache bust happened (diffing the system prompt), see **cache.md**.
 
 ## Per-agent cost, and joining to `state.db:session_index`
 
-**`agent_id` holds the owning AGENT on every call** (#1946), so per-agent cost needs no join at all: `SELECT agent_id, TOTAL(cost_usd) FROM call_costs GROUP BY agent_id`. The Agent-tool `tool_use` id that this column once held is the call's `actor` (pre-ledger: `subagent_id`). Before #1946 the column was NULL on all but 20 of 48,650 rows while carrying the same *name* as `session_index.agent_id` — so the obvious filter returned an empty result that read as "no data", and that trap cost two wrong answers to Dick.
+**`agent_id` is the owning AGENT on every call** (#1946), so per-agent cost needs no join: `SELECT agent_id, TOTAL(cost_usd) FROM call_costs GROUP BY agent_id`. A subagent is the call's `actor`.
 
-Joining is still needed to break cost down by `session_type` (chat / reflection / keepalive / unknown). The join key is **verbatim equal** — no suffix, no transform:
+A join is needed only to split cost by `session_type` (chat / reflection / keepalive / unknown). The key is **verbatim equal**:
 
 ```bash
 # /usr/bin/sqlite3 (real binary): the readonly `sqlite3` wrapper BLOCKS ATTACH.
@@ -74,6 +74,6 @@ GROUP BY si.session_type ORDER BY total_usd DESC;"
 ```
 
 **Gotchas that will mislead you:**
-- **The `|` in `SELECT session_key, session_type` output is sqlite's default column separator, NOT part of the key.** Don't build a `substr(...,instr(...,'|'))` strip — it matches nothing and silently yields zero join hits. Use `-column` mode to see the real values.
-- **Key-form encodes the cost model.** `chat` sessions are **root-form** (`agent/c<chatID>`) and accumulate the whole conversation's cost on one key (expensive). `reflection`/`keepalive`/most `unknown` are **branch-form** (`agent/c<chatID>/b<epoch>`) — typically one cheap spawned call each. A chatID hosts *mixed* types across its branches, so you cannot partition a root key's cost by type.
-- **Join coverage is partial.** The pre-ledger `session` column migrated from a legacy `agent:<id>:<kind>:<name>` grammar (e.g. `agent:clutch:cron:background-<epoch>`) to the current `agent/c/b` grammar. Legacy rows predate `session_index` and won't join — expect a large *untyped* remainder (`WHERE ac.session LIKE 'agent:%'`). Report the unmatched total as a coverage caveat; don't present the join as complete. (`agent_id` itself is fine on those rows — #1946's backfill parses both grammars.)
+- **The `|` in default sqlite output is the column separator, not part of the key.** Stripping it yields zero join hits; use `-column` mode.
+- **Key form encodes the cost model.** `chat` is root-form (`agent/c<chatID>`, the whole conversation on one key); reflection/keepalive are branch-form (`agent/c<chatID>/b<epoch>`). One chatID mixes types across branches, so a root key's cost can't be split by type.
+- **Join coverage is partial.** Old rows use the legacy `agent:<id>:<kind>:<name>` session grammar and predate `session_index`, so they don't join (`WHERE ac.session LIKE 'agent:%'`). Report the unmatched total as a caveat.
