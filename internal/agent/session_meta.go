@@ -68,10 +68,6 @@ type sessionStringSetting struct {
 	// launches on the SAME model the root is live on — the prompt cache is
 	// per-model and a branch exists precisely to reuse root's warm cache.
 	rootFallback bool
-	// clearedOnReset: drop the override on /reset instead of keeping it (see
-	// ClearSessionState). For runtime-only state the fresh backend a reset
-	// launches does not re-apply.
-	clearedOnReset bool
 }
 
 var (
@@ -140,9 +136,6 @@ var (
 		setter: func(sm *sessionMeta, v string) { sm.permissionMode = v },
 		// No agentDefault — CC's intrinsic default is "default"; we
 		// surface "" as that in the UI rather than persisting it.
-		// The mode is not passed at launch, so the fresh CC a reset starts
-		// runs at "default"; keeping the override would misreport it.
-		clearedOnReset: true,
 	}
 )
 
@@ -850,27 +843,12 @@ func (a *Agent) persistSessionString(sessionKey, prefix, value string) {
 	}
 }
 
-// resetKeptMetadataKeys lists the session_metadata rows a reset keeps: the
-// user's own per-session overrides (/model tuple, /effort, /thinking, /speed,
-// /display, no_compact), minus those marked clearedOnReset.
-func resetKeptMetadataKeys() []string {
-	keys := make([]string, 0, len(allSessionStringSettings)+1)
-	for _, s := range allSessionStringSettings {
-		if !s.clearedOnReset {
-			keys = append(keys, s.prefix)
-		}
-	}
-	return append(keys, "no_compact")
-}
-
-// ClearSessionState drops the per-session runtime and persisted state for a
-// session after its history is reset: the meta map entry (cache baselines,
-// the backend-reported model), the turn lock, and the session_metadata rows
-// (cc_resume_id, orientation_consumed, last_activity, …). The user's own
-// overrides (resetKeptMetadataKeys) survive and are re-read from the store, so
-// a session switched to another model stays on it across the scheduled daily
-// reset (#1545); /overrides clear is how a user drops them. The session key is
-// a stable identity — a reset session keeps its key.
+// ClearSessionState drops all per-session runtime and persisted state for a
+// session after its history is reset: the meta map entry (model/effort
+// overrides, cache baselines), the turn lock, and all session_metadata rows
+// (cc_resume_id, no_compact, orientation_consumed, last_activity, …). The
+// session key is a stable identity — a reset session keeps its key but starts
+// from a clean slate.
 func (a *Agent) ClearSessionState(sessionKey string) {
 	a.metaMu.Lock()
 	delete(a.meta, sessionKey)
@@ -881,17 +859,14 @@ func (a *Agent) ClearSessionState(sessionKey string) {
 	a.turnLocksMu.Unlock()
 
 	if a.SessionIndex != nil {
-		if err := a.SessionIndex.DeleteSessionMetadataExcept(sessionKey, resetKeptMetadataKeys()); err != nil {
+		if err := a.SessionIndex.DeleteAllSessionMetadata(sessionKey); err != nil {
 			a.logger().Errorf("clear session metadata %s: %v", sessionKey, err)
 		}
 		// last_cache_touch is a session_index COLUMN, not session_metadata, so
-		// deleting session_metadata leaves it stale. Null it so keepalive treats
+		// DeleteAllSessionMetadata leaves it stale. Null it so keepalive treats
 		// the reset session as having no live cache to warm.
 		a.SessionIndex.ClearCacheTouch(sessionKey)
 		a.emitCacheExpiry(sessionKey) // emits 0 (no cache) → client shows WARM, nothing to re-warm
-		// Re-read the kept overrides (and a model override's client) into the
-		// fresh meta entry.
-		a.RestoreSessionOverrides(sessionKey)
 	}
 
 	a.logger().Infof("session state cleared %s", sessionKey)

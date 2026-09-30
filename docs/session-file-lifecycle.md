@@ -82,9 +82,9 @@ told about a "new key" — there isn't one.
 2. NO file created yet — next Append() recreates it lazily
 ```
 
-The key is unchanged. Per-session runtime state (`cc_resume_id`, …) is
-cleared explicitly by `Agent.ClearSessionState`; the user's overrides
-(model/effort/display, `no_compact`) survive. Reflection runs on a branch created from the
+The key is unchanged. Per-session state (model/effort overrides,
+`cc_resume_id`, `no_compact`, …) is cleared explicitly by
+`Agent.ClearSessionState`. Reflection runs on a branch created from the
 pre-reset history (`PrepareSessionEndMemory` before the archive; the branch
 loader recovers the parent prefix from the archive, P2-5).
 

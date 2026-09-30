@@ -173,8 +173,8 @@ Answer-capture control for a pending `foci ask`. When an ask is waiting for an a
 
 ### `/reset [hard]`
 Clear session history.
-- `/reset` — fires session-end memory formation (async for API agents, blocking for delegated) before clearing, archives the history in place (the session key is unchanged), reloads bootstrap. Refuses if the agent is currently processing. Per-session overrides (`/model`, `/effort`, `/thinking`, `/speed`, `/display`) are kept; `/overrides clear` drops them.
-- `/reset hard` — cancels any in-flight turn, skips memory formation, destroys the backend, archives the history in place. Overrides are kept as for `/reset`. Use when the agent is stuck or you want a clean reset without saving memories. Dispatched immediately so it can interrupt a live turn.
+- `/reset` — fires session-end memory formation (async for API agents, blocking for delegated) before clearing, rotates the session key, reloads bootstrap. Refuses if the agent is currently processing.
+- `/reset hard` — cancels any in-flight turn, skips memory formation, destroys the backend, rotates the session key. Use when the agent is stuck or you want a clean reset without saving memories. Dispatched immediately so it can interrupt a live turn.
 
 ### `/compact [dry-run]`
 Trigger manual context compaction.

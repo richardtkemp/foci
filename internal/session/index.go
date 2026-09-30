@@ -1721,27 +1721,6 @@ func (idx *SessionIndex) DeleteAllSessionMetadata(sessionKey string) error {
 	return err
 }
 
-// DeleteSessionMetadataExcept removes every metadata row for a session key
-// except those whose key is in keep, in one statement. The reset path uses it
-// to drop runtime state while keeping the user's per-session overrides.
-func (idx *SessionIndex) DeleteSessionMetadataExcept(sessionKey string, keep []string) error {
-	if len(keep) == 0 {
-		return idx.DeleteAllSessionMetadata(sessionKey)
-	}
-	args := make([]any, 0, len(keep)+1)
-	args = append(args, sessionKey)
-	for _, k := range keep {
-		args = append(args, k)
-	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(keep)), ",")
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-	_, err := idx.db.Exec(
-		`DELETE FROM session_metadata WHERE session_key = ? AND key NOT IN (`+placeholders+`)`, args..., //nolint:gosec // only "?" placeholders are concatenated; values are bound
-	)
-	return err
-}
-
 // SessionKeysWithMetadata returns all session keys that have a given metadata key set.
 // Used for cleanup of stale session metadata (e.g. no_compact entries for defunct sessions).
 func (idx *SessionIndex) SessionKeysWithMetadata(key string) ([]string, error) {
