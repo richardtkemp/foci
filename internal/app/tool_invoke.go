@@ -4,15 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
+	"time"
 
 	"foci/internal/fap"
 )
 
-// ErrNoLiveDevice is returned by InvokeTool when the agent has no connected
-// app device (no live WebSocket). The tool surfaces this verbatim so the agent
+// ErrNoLiveDevice is returned by InvokeTool when no connected app device can
+// run the requested tool (none connected, or only ones without that handler). The tool surfaces this verbatim so the agent
 // can decide whether to retry, ask the user to open the app, or fall back.
-var ErrNoLiveDevice = errors.New("app: no live device for agent")
+var ErrNoLiveDevice = errors.New("app: no connected device can run this tool")
 
 // pendingToolCall is a waiting InvokeTool caller, keyed by InvocationID.
 // The result channel is buffered (1) so a late completion arriving after the
@@ -74,16 +76,12 @@ func (r *toolCallRegistry) deliver(res fap.ToolResult) bool {
 	}
 }
 
-// InvokeTool sends a tool.invoke frame to any live device for agentID and
+// InvokeTool sends a tool.invoke frame to a live device that can run tool and
 // awaits the matching tool.result. The ctx bounds the wait; on expiry the
-// pending entry is deregistered and a ctx.Err() is returned.
-//
-// "Any live device": if the agent's default chat binding has a connected
-// client, use that; otherwise scan the agent's bindings for any connected
-// client. v1 assumes one device per agent — multiple connected devices race
-// on whichever client the scan finds first.
+// pending entry is deregistered and a ctx.Err() is returned. agentID is only
+// logged: a device tool belongs to the device, not to any agent's conversations.
 func (h *Hub) InvokeTool(ctx context.Context, agentID, tool, action string, args json.RawMessage) (fap.ToolResult, error) {
-	client := h.liveClientForAgent(agentID)
+	client := h.clientForTool(tool)
 	if client == nil {
 		return fap.ToolResult{}, ErrNoLiveDevice
 	}
@@ -130,39 +128,46 @@ func (h *Hub) InvokeTool(ctx context.Context, agentID, tool, action string, args
 	}
 }
 
-// liveClientForAgent returns any connected wsClient for agentID, preferring the
-// default chat binding's client (most likely to be the user's active device).
-// Returns nil if the agent has no live socket.
-func (h *Hub) liveClientForAgent(agentID string) *wsClient {
-	if b := h.defaultChatBinding(agentID); b != nil {
-		if c := b.snapshotClient(); c != nil {
-			return c
-		}
+// featureToolPrefix + a tool name is the ClientHello capability a client
+// advertises for each device-side tool handler it registers ("tool:android" for
+// the Tasker bridge). The desktop client registers none.
+const featureToolPrefix = "tool:"
+
+// canRunTool reports whether this socket's device can execute tool. Clients
+// built before the "tool:" capability advertise no tools at all; for those the
+// Android build is the only one with the "android" (Tasker) handler, and its
+// ClientInfo.OS ("Android <release>") is the only thing that tells it apart
+// from the desktop build sharing the same app name and feature list.
+func (c *wsClient) canRunTool(tool string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.features[featureToolPrefix+tool]; ok {
+		return true
 	}
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	for _, b := range h.convs {
-		if b.agentID != agentID {
-			continue
-		}
-		if c := b.snapshotClient(); c != nil {
-			return c
-		}
-	}
-	return nil
+	return tool == "android" && strings.HasPrefix(c.os, "Android")
 }
 
-// snapshotClient returns any one of the binding's currently-attached live
-// sockets (multi-device: a conversation may have several). Returns nil when no
-// socket is attached. The tool.invoke routing uses this when picking any one
-// device to invoke on — it doesn't yet care which device answers.
-func (b *convBinding) snapshotClient() *wsClient {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for c := range b.clients {
-		return c
+// clientForTool picks the live socket to run tool on, or nil if none can (#1079).
+// Choosing from every live socket rather than whichever the socket map yields
+// first is the fix: the desktop client shares the same bindings and answered
+// half the Tasker calls with "not supported on desktop". Among capable devices
+// the most recent hello wins — the device the user last opened the app on — so
+// the choice is deterministic rather than map-order.
+func (h *Hub) clientForTool(tool string) *wsClient {
+	var best *wsClient
+	var bestAt time.Time
+	for _, c := range h.snapshotClients() {
+		if !c.canRunTool(tool) {
+			continue
+		}
+		c.mu.Lock()
+		at := c.helloAt
+		c.mu.Unlock()
+		if best == nil || at.After(bestAt) {
+			best, bestAt = c, at
+		}
 	}
-	return nil
+	return best
 }
 
 // deliverToolResult is called from the inbound dispatcher when a ToolResult

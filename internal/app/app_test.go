@@ -783,6 +783,7 @@ func newTestHub() *Hub {
 		notifs:        make(map[string]*convBinding),
 		wizards:       make(map[string]*wizardSession),
 		wizardByScope: make(map[string]string),
+		toolCalls:     newToolCallRegistry(),
 	}
 }
 

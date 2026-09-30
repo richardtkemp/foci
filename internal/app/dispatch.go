@@ -79,6 +79,8 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		authDevice := client.deviceID
 		client.deviceID = f.Client.DeviceID
 		client.features = featureSet(f.Features)
+		client.os = f.Client.OS
+		client.helloAt = time.Now()
 		client.helloSeen = true
 		client.mu.Unlock()
 		// The ONLY record that a socket completed the app-level handshake.

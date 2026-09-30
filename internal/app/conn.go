@@ -126,11 +126,11 @@ func (c *appConn) DefaultSessionKey() string        { return c.bound }
 func (c *appConn) DefaultSessionKeyOrEmpty() string { return c.bound }
 
 // InvokeTool routes an agent tool call to a connected device via FAP
-// `tool.invoke`. Delegates to the Hub, which finds a live wsClient for this
-// agent, registers a pending caller, and awaits the matching `tool.result`.
-// Returns ErrNoLiveDevice if the agent has no connected app device.
+// `tool.invoke`. Delegates to the Hub, which picks a live wsClient whose device
+// can run the tool, registers a pending caller, and awaits the matching
+// `tool.result`. Returns ErrNoLiveDevice if no connected device can run it.
 //
-// The Hub is the routing authority (it owns the agent→client map); the appConn
+// The Hub is the routing authority (it owns the live-socket set); the appConn
 // is just the per-agent handle the tool layer reaches via connMgr.
 func (c *appConn) InvokeTool(ctx context.Context, tool, action string, args json.RawMessage) (fap.ToolResult, error) {
 	return c.hub.InvokeTool(ctx, c.agentID, tool, action, args)

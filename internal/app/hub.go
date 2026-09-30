@@ -2854,6 +2854,8 @@ type wsClient struct {
 	helloSeen bool                    // a ClientHello was received on this socket (#1713)
 	closeErr  string                  // why the read loop ended, for the hello-less diagnostic (#1713)
 	features  map[string]struct{}     // advertised client capabilities (from the hello)
+	os        string                  // ClientInfo.OS from the hello; the device-tool fallback for pre-"tool:" clients (#1079)
+	helloAt   time.Time               // when the hello arrived; device-tool routing prefers the newest (#1079)
 	convByID  map[string]*convBinding // conversationId → binding
 	// unknownTypes: inbound frame types this socket sent that the server does
 	// not recognise, so each is logged once per socket, not per frame (#1884).

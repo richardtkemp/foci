@@ -7,6 +7,17 @@ import (
 	"foci/internal/platform"
 )
 
+// snapshotClient returns any one of the binding's currently-attached live
+// sockets, or nil when none is attached.
+func (b *convBinding) snapshotClient() *wsClient {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for c := range b.clients {
+		return c
+	}
+	return nil
+}
+
 // snapshotClients returns all currently-attached live sockets on the binding.
 // Test-only helper that complements snapshotClient (singular) for cases that
 // need to assert on the full multi-device set.

@@ -82,6 +82,15 @@ func TestInvokeTool_NoLiveDevice(t *testing.T) {
 	}
 }
 
+// toolClient is a live socket (registered on the hub, as serveWS does) whose
+// device advertises the Android Tasker handler.
+func toolClient(h *Hub) *wsClient {
+	c := fakeClient()
+	c.features = featureSet([]string{featureToolPrefix + "android"})
+	h.addClient(c)
+	return c
+}
+
 // TestInvokeTool_HappyPath wires a fake wsClient as the agent's binding client,
 // invokes a tool, and asserts:
 //   - the invoke frame reaches the client's send queue
@@ -97,7 +106,7 @@ func TestInvokeTool_HappyPath(t *testing.T) {
 	if b == nil {
 		t.Fatal("ensureBinding returned nil")
 	}
-	client := fakeClient()
+	client := toolClient(h)
 	b.attach(client)
 
 	type outcome struct {
@@ -165,7 +174,7 @@ func TestInvokeTool_PendingKeepaliveThenCompleted(t *testing.T) {
 	const agentID = "arnix"
 	h.setupAgent(platform.AgentConnectionParams{AgentID: agentID})
 	b := h.ensureBinding(nil, agentID, "conv-1")
-	client := fakeClient()
+	client := toolClient(h)
 	b.attach(client)
 
 	type outcome struct {
@@ -226,7 +235,7 @@ func TestInvokeTool_PendingThenTimeout(t *testing.T) {
 	const agentID = "arnix"
 	h.setupAgent(platform.AgentConnectionParams{AgentID: agentID})
 	b := h.ensureBinding(nil, agentID, "conv-1")
-	client := fakeClient()
+	client := toolClient(h)
 	b.attach(client)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
@@ -268,7 +277,7 @@ func TestInvokeTool_CtxCancel(t *testing.T) {
 	const agentID = "arnix"
 	h.setupAgent(platform.AgentConnectionParams{AgentID: agentID})
 	b := h.ensureBinding(nil, agentID, "conv-1")
-	client := fakeClient()
+	client := toolClient(h)
 	b.attach(client)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -288,5 +297,143 @@ func TestInvokeTool_CtxCancel(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("InvokeTool didn't return after ctx cancel")
+	}
+}
+
+// helloClient registers a live socket on h and runs a real ClientHello through
+// dispatchInbound, so the capability/OS the selection reads comes from the same
+// path production takes. Drains the hello's own replies.
+func helloClient(t *testing.T, h *Hub, deviceID, os string, features ...string) *wsClient {
+	t.Helper()
+	c := fakeClientFor(h)
+	h.addClient(c)
+	d, err := json.Marshal(fap.ClientHello{
+		Client:   fap.ClientInfo{App: "foci-android", OS: os, Version: "1", DeviceID: deviceID},
+		Features: features,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.dispatchInbound(c, []byte(`{"t":"hello","id":"`+deviceID+`","d":`+string(d)+`}`))
+	drainEnv(t, c)
+	return c
+}
+
+// invokedClient starts an InvokeTool for "android" and reports which of the
+// candidate sockets received the tool.invoke frame (nil = none), then cancels.
+func invokedClient(t *testing.T, h *Hub, agentID string, candidates ...*wsClient) (*wsClient, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	errc := make(chan error, 1)
+	go func() {
+		_, err := h.InvokeTool(ctx, agentID, "android", "list", nil)
+		errc <- err
+	}()
+	deadline := time.After(time.Second)
+	for {
+		for _, c := range candidates {
+			select {
+			case wire := <-c.send:
+				var env struct {
+					T string `json:"t"`
+				}
+				_ = json.Unmarshal(wire, &env)
+				if env.T == fap.TypeToolInvoke {
+					cancel()
+					<-errc
+					return c, nil
+				}
+			default:
+			}
+		}
+		select {
+		case err := <-errc:
+			return nil, err
+		case <-deadline:
+			t.Fatal("InvokeTool neither sent a frame nor returned")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
+// TestInvokeTool_RoutesOnlyToCapableDevice is #1079: with a desktop and an
+// Android client both connected, the Tasker bridge picked whichever socket map
+// iteration yielded first, so roughly half the calls reached the desktop and
+// failed "not supported on desktop". Only a client that can run the tool may be
+// picked; repeat enough times that a coin-flip choice cannot pass.
+func TestInvokeTool_RoutesOnlyToCapableDevice(t *testing.T) {
+	h := newTestHub()
+	registerBareAgent(h, "ag")
+	b := h.ensureBinding(nil, "ag", "conv-1")
+	desktop := helloClient(t, h, "mac", "Mac OS X 15.5", "interactiveBatch")
+	phone := helloClient(t, h, "phone", "Android 15", "interactiveBatch", "tool:android")
+	b.attach(desktop)
+	b.attach(phone)
+	for i := 0; i < 20; i++ {
+		got, err := invokedClient(t, h, "ag", desktop, phone)
+		if err != nil {
+			t.Fatalf("run %d: InvokeTool err %v", i, err)
+		}
+		if got != phone {
+			t.Fatalf("run %d: tool.invoke went to the desktop, want the Android client", i)
+		}
+	}
+}
+
+// TestInvokeTool_LegacyAndroidClientByOS: an Android build from before the
+// "tool:<name>" capability advertises no tool features, so its OS is the only
+// discriminator. It must still be reachable, and still preferred to a desktop.
+func TestInvokeTool_LegacyAndroidClientByOS(t *testing.T) {
+	h := newTestHub()
+	registerBareAgent(h, "ag")
+	desktop := helloClient(t, h, "mac", "Mac OS X 15.5", "interactiveBatch")
+	phone := helloClient(t, h, "phone", "Android 14", "interactiveBatch")
+	for i := 0; i < 20; i++ {
+		got, err := invokedClient(t, h, "ag", desktop, phone)
+		if err != nil {
+			t.Fatalf("run %d: InvokeTool err %v", i, err)
+		}
+		if got != phone {
+			t.Fatalf("run %d: tool.invoke went to the desktop, want the legacy Android client", i)
+		}
+	}
+}
+
+// TestInvokeTool_NoCapableDevice: a connected desktop is not a device that can
+// run the Tasker bridge, so the call fails fast with ErrNoLiveDevice instead of
+// round-tripping to a client that can only answer "not supported".
+func TestInvokeTool_NoCapableDevice(t *testing.T) {
+	h := newTestHub()
+	registerBareAgent(h, "ag")
+	b := h.ensureBinding(nil, "ag", "conv-1")
+	desktop := helloClient(t, h, "mac", "Mac OS X 15.5", "interactiveBatch")
+	b.attach(desktop)
+	got, err := invokedClient(t, h, "ag", desktop)
+	if got != nil {
+		t.Fatal("tool.invoke was sent to the desktop")
+	}
+	if !errors.Is(err, ErrNoLiveDevice) {
+		t.Fatalf("err = %v, want ErrNoLiveDevice", err)
+	}
+}
+
+// TestInvokeTool_PrefersMostRecentlyConnectedDevice: with two capable devices
+// the choice is deterministic — the one that said hello last, i.e. the one the
+// user most recently opened the app on.
+func TestInvokeTool_PrefersMostRecentlyConnectedDevice(t *testing.T) {
+	h := newTestHub()
+	registerBareAgent(h, "ag")
+	older := helloClient(t, h, "tablet", "Android 14", "tool:android")
+	time.Sleep(2 * time.Millisecond)
+	newer := helloClient(t, h, "phone", "Android 15", "tool:android")
+	for i := 0; i < 20; i++ {
+		got, err := invokedClient(t, h, "ag", older, newer)
+		if err != nil {
+			t.Fatalf("run %d: InvokeTool err %v", i, err)
+		}
+		if got != newer {
+			t.Fatalf("run %d: tool.invoke went to the older device", i)
+		}
 	}
 }
