@@ -516,8 +516,12 @@ func TestAsk_CompleteRunsGraderOnPartial(t *testing.T) {
 // execs. Previously a goroutine slept 4ms hoping to beat the 10ms retry budget
 // (procx.ETXTBSYRetries*ETXTBSYBackoff); under heavy host load that 6ms margin
 // could vanish (#2002; same fix as procx's #1703).
+//
+// NOT t.Parallel, for the reason on procx's TestRunWithETXTBSYRetry_Recovers:
+// a fork by any concurrently running test in this package copies the write fd
+// into its child, and that copy outlives our Close until the child execs. Run
+// serially, the attempt-2 release is the last write holder by construction.
 func TestAsk_GraderRetriesOnETXTBSY(t *testing.T) {
-	t.Parallel()
 	grader := writeGrader(t, "#!/bin/sh\necho graded-ok\n")
 
 	// Hold a write fd open BEFORE triggering the grader so attempt 1 sees the

@@ -154,8 +154,16 @@ func writeExecutable(t *testing.T) string {
 // executes. Previously a goroutine slept 4ms hoping to beat the retry loop's
 // 10ms budget (ETXTBSYRetries*ETXTBSYBackoff); under heavy host load that
 // 6ms margin could vanish (#1703).
+//
+// NOT t.Parallel (#2002): closing wf only releases OUR copy of the write fd.
+// Any fork made by another goroutine while wf is open gives that child a copy
+// too, held until the child execs (golang/go#22315 itself); if the child is
+// descheduled past the remaining retry budget, every retry still sees ETXTBSY.
+// That is how this failed in a full `make test` even with the causal release.
+// Running serially means no sibling test in this binary is forking while wf
+// is open, so the release on attempt 2 is the last write holder by
+// construction, not by timing.
 func TestRunWithETXTBSYRetry_Recovers(t *testing.T) {
-	t.Parallel()
 	prog := writeExecutable(t)
 
 	wf, err := os.OpenFile(prog, os.O_WRONLY, 0)
