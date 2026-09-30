@@ -1094,6 +1094,13 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 				// and a skipped real subagent silently loses its usage.
 				b.logger().Debugf("subagent tail: NOT started, task_type=%s is a background Bash task, no transcript (tool_use_id=%s task_id=%s)",
 					task.TaskType, task.ToolUseID, task.TaskID)
+			case task.TaskType == taskTypeWorkflow:
+				// A Workflow run has no transcript at agent-<task_id>.jsonl
+				// either: its agents write under subagents/workflows/<run id>/,
+				// which the Workflow's PostToolUse names (workflow_tail.go).
+				b.logger().Debugf("subagent tail: NOT started, task_type=%s: its agents are read from the run's transcript dir (tool_use_id=%s task_id=%s)",
+					task.TaskType, task.ToolUseID, task.TaskID)
+				b.subagentTails().expectWorkflow(task.ToolUseID)
 			default:
 				path := b.subagentTranscriptPath(task.TaskID)
 				if path == "" {
@@ -1186,6 +1193,7 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 					// CC had written a byte of the transcript (#1924). Drains any
 					// lines appended right before completion.
 					b.subagentTails().finalize(groupKey)
+					b.subagentTails().finalizeWorkflow(groupKey)
 					// End only a group this backend opened (#2010). CC notifies for
 					// every task kind, but only an Agent run sends a SubagentStart: a
 					// background Bash — the main thread's own, or one CC auto-

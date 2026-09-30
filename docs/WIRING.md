@@ -2175,7 +2175,12 @@ adapter into it (`accounting.Shadow()`). The live path is untouched: the hooks o
 Inputs: the stream's top-level assistant ids with the foci turn open when each was named
 (`OnAssistant`); results' cumulative `modelUsage` with the running-subagent count
 (`OnResult`); `compact_boundary`; every subagent transcript line, ungated, and each tail's
-open/close (`subagentTailManager.shadowLine/shadowTail`); and a new MAIN-transcript tail from
+open/close (`subagentTailManager.shadowLine/shadowTail`); every Workflow run's agent
+transcripts (`workflow_tail.go`, #2130: a run's agents write under
+`subagents/workflows/<run id>/agent-*.jsonl`, never on the stream, and the stream's one
+`local_workflow` `task_started` names only the run; the Workflow tool's PostToolUse
+`tool_response` carries `transcriptDir`, and one goroutine per run polls it until every agent is
+at rest after the run's `task_notification`; ledger-only, the live path does not see them); and a new MAIN-transcript tail from
 the file's size at launch (a resumed or forked session's history is an earlier process's),
 started at Start for a resume or at `init` for a fresh session, which also sees the
 `cost-state` record a graceful close appends. Rules (ccbook.go header, one test each):
@@ -2185,11 +2190,18 @@ writes) and is dropped, as is a re-append of a call already booked; a named call
 stopless line is `interrupted` — booked and priced from it at the result's settle, excluded from
 the remainder; a subagent call books on its spawning turn, `completed` on its stop_reason line or
 `stopless` at the next id in its file or its tail's close, and a subagent line billed before the
-process launched is skipped; each result settles once its named calls are in (bound 250ms) and,
+process launched is skipped; a Workflow run is an open agent from its PostToolUse, on the turn
+open then (or, invoked by a subagent, that subagent's spawning turn), and each of its agents books
+on the run's turn and window however late its transcript appears, so no remainder is booked
+mid-run; each result settles once its named calls are in (bound 250ms) and,
 if no subagent was running, once every tail is at rest (bound `subagentTailSettle`) — then the
 remainder `modelUsage − baseline − Σ counted calls` per model and class is booked as overhead
 (no turn) or, if the window held a `compact_boundary`, as a compaction (on the turn open at the
-boundary, else a compaction turn of its own); a negative class alarms `invNegativeRemainder`
+boundary, else a compaction turn of its own); modelUsage has no cache-write TTL, so the
+remainder's writes are split 5m/1h by solving CC's own cost of the interval less the counted
+calls' (`solveRemainderTTL`, `class_method=solved`; exact, to `accounting.SolveTolerance`, like
+the migration's solve), and one that will not solve stays TTL-unknown at the 1h rate and alarms
+`invRemainderTTLUnsolved`; a negative class alarms `invNegativeRemainder`
 and books nothing; a named call whose line never came alarms `invStreamIdBooked`. At exit the
 last remainder comes from the `cost-state` record, else the last result. Every process writes
 its baseline (the totals CC restored on --resume) and each result as cumulative

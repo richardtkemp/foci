@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -538,5 +539,167 @@ func TestSubagentLineBeforeLaunchIsSkipped(t *testing.T) {
 	tb.subLine("agent-a", "T1", line("old", opus, tb.clock.Add(-time.Minute), "end_turn", 1, 1, 0, 0, 0))
 	if calls := tb.calls(t); len(calls) != 0 {
 		t.Errorf("calls = %+v, want none", calls)
+	}
+}
+
+// TestRemainderTTLSolvedFromReportedCost is #2130 defect 2. modelUsage carries
+// no cache-write TTL, so a remainder's writes are TTL-unknown, and an unknown
+// write prices at the 1h rate. CC's own cost for the interval is known,
+// though: less the cost of every counted call, it is the remainder's cost,
+// and with every other class priced, that fixes how many of its writes were
+// 5m. So the remainder is booked at the solved split, not a silent 1h: all 5m
+// (the 21:11 Workflow turn, +$2.68 vs CC), and a mixed split alike.
+func TestRemainderTTLSolvedFromReportedCost(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		w5m, w1h int
+	}{
+		{"all 5m", 305815, 0},
+		{"mixed", 100000, 200000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tb := newTestBook(t, nil)
+			// A counted main-thread call, priced by the ledger, shares the interval.
+			tb.streamNamed("m1", "T1", tb.clock)
+			main := line("m1", opus, tb.clock, "end_turn", 10, 20, 500, 0, 4000)
+			tb.mainLine(main)
+			rem := modelinfo.Tokens{modelinfo.ClassInput: 7, modelinfo.ClassCacheWrite5m: tc.w5m, modelinfo.ClassCacheWrite1h: tc.w1h}
+			ccCost := 0.0
+			for _, tk := range []modelinfo.Tokens{main.tokens, rem} {
+				usd, ok := modelinfo.CostAsOf(opus, tb.clock, tk)
+				if !ok {
+					t.Fatal("opus unpriced")
+				}
+				ccCost += usd
+			}
+			tb.result(map[string]ModelUsage{opus: {InputTokens: 17, OutputTokens: 20, CacheReadInputTokens: 500,
+				CacheCreationInputTokens: 4000 + tc.w5m + tc.w1h, CostUSD: ccCost}}, 0, tb.clock)
+			tb.advance(time.Second)
+
+			var over *bookedCall
+			calls := tb.calls(t)
+			for i := range calls {
+				if calls[i].kind == accounting.KindOverhead {
+					over = &calls[i]
+				}
+			}
+			if over == nil {
+				t.Fatalf("no remainder booked: %+v (alarms %+v)", calls, tb.alarms)
+			}
+			if over.tokens[modelinfo.ClassCacheWrite5m] != tc.w5m || over.tokens[modelinfo.ClassCacheWrite1h] != tc.w1h ||
+				over.tokens[modelinfo.ClassCacheWrite] != 0 {
+				t.Errorf("remainder writes = 5m %d, 1h %d, unknown %d; want the solved split 5m %d, 1h %d",
+					over.tokens[modelinfo.ClassCacheWrite5m], over.tokens[modelinfo.ClassCacheWrite1h],
+					over.tokens[modelinfo.ClassCacheWrite], tc.w5m, tc.w1h)
+			}
+			if got := over.cost.Float64 + mustCost(t, main.tokens); math.Abs(got-ccCost) > 1e-9 {
+				t.Errorf("booked cost %.6f, want CC's %.6f", got, ccCost)
+			}
+		})
+	}
+}
+
+func mustCost(t *testing.T, tk modelinfo.Tokens) float64 {
+	t.Helper()
+	usd, ok := modelinfo.CostAsOf(opus, time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC), tk)
+	if !ok {
+		t.Fatal("opus unpriced")
+	}
+	return usd
+}
+
+// TestRemainderTTLUnsolvedAlarms is the other half of #2130 defect 2: when
+// CC's reported cost cannot be a 5m/1h split of the remainder's writes (here
+// it is more than every write at 1h), the writes stay TTL-unknown, priced at
+// the 1h rate as before — and the choice is alarmed, not silent.
+func TestRemainderTTLUnsolvedAlarms(t *testing.T) {
+	tb := newTestBook(t, nil)
+	tb.result(map[string]ModelUsage{opus: {InputTokens: 7, CacheCreationInputTokens: 300000, CostUSD: 50}}, 0, tb.clock)
+	tb.advance(time.Second)
+	if tb.alarmsOf(accounting.InvRemainderTTLUnsolved) != 1 {
+		t.Errorf("alarms = %+v, want one invRemainderTTLUnsolved", tb.alarms)
+	}
+	calls := tb.calls(t)
+	if len(calls) != 1 || calls[0].tokens[modelinfo.ClassCacheWrite] != 300000 {
+		t.Errorf("calls = %+v, want one remainder with its 300000 writes TTL-unknown", calls)
+	}
+}
+
+// TestWorkflowUnderSubagentBooksOnItsTurn is #2130: a Workflow a subagent
+// invoked books on the turn that spawned that subagent, not the turn open
+// when the run or its agents were found, and an agent found after a result
+// is still subtracted from that result's remainder once the run closes — so
+// a run's spend is never booked twice (once as a call, once as remainder).
+func TestWorkflowUnderSubagentBooksOnItsTurn(t *testing.T) {
+	tb := newTestBook(t, nil)
+	tb.tailOpened("sub", "T1")
+	tb.tailOpenedUnder("wf", "sub", "T2")
+	tb.result(map[string]ModelUsage{opus: {InputTokens: 10, OutputTokens: 5}}, 0, tb.clock)
+	tb.tailOpenedUnder("wf/a1", "wf", "T3")
+	tb.subLine("wf/a1", "T3", line("w1", opus, tb.clock, "end_turn", 10, 5, 0, 0, 0))
+	tb.tailClosed("wf/a1")
+	tb.tailClosed("wf")
+	tb.tailClosed("sub")
+	tb.advance(time.Second)
+	tb.exit()
+
+	calls := tb.calls(t)
+	if len(calls) != 1 || calls[0].key != "w1" || calls[0].turn != "T1" || calls[0].actor != "wf/a1" {
+		t.Errorf("calls = %+v, want only w1, on the subagent's spawning turn T1, actor wf/a1", calls)
+	}
+	if n := tb.alarmsOf(accounting.InvNegativeRemainder); n != 0 {
+		t.Errorf("negative-remainder alarms = %d, want 0", n)
+	}
+}
+
+// TestRemainderTTLSolveIsExact is #2130's exactness rule: the solve accepts
+// only a split that reproduces CC's cost to float rounding, like the
+// migration's. CC's cost off by one token's worth — one input or output token
+// the booked set does not hold — lands between integer splits and is refused:
+// the writes stay TTL-unknown and the refusal alarms. An offset of exactly one
+// token of the 5m/1h rate gap is itself a valid split (one more 5m write), so
+// no exact solve can refuse it; it resolves to that neighbouring split.
+func TestRemainderTTLSolveIsExact(t *testing.T) {
+	at := time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC)
+	rm, ok := modelinfo.ResolveRateModel(opus, at)
+	if !ok {
+		t.Fatal("opus unpriced")
+	}
+	rates, _ := modelinfo.RatesAsOf(rm, at)
+	perM := func(c modelinfo.Class) float64 { return rates[c] / 1_000_000 }
+	gap := perM(modelinfo.ClassCacheWrite1h) - perM(modelinfo.ClassCacheWrite5m)
+	for _, tc := range []struct {
+		name   string
+		offset float64
+		want5m int // 0: refused
+	}{
+		{"exact", 0, 100000},
+		{"one input token over", perM(modelinfo.ClassInput), 0},
+		{"one output token under", -perM(modelinfo.ClassOutput), 0},
+		{"half a gap token over", gap / 2, 0},
+		{"one gap token under is the next split", -gap, 100001},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tb := newTestBook(t, nil)
+			rem := modelinfo.Tokens{modelinfo.ClassInput: 7, modelinfo.ClassCacheWrite5m: 100000, modelinfo.ClassCacheWrite1h: 200000}
+			ccCost := mustCost(t, rem) + tc.offset
+			tb.result(map[string]ModelUsage{opus: {InputTokens: 7, CacheCreationInputTokens: 300000, CostUSD: ccCost}}, 0, tb.clock)
+			tb.advance(time.Second)
+			calls := tb.calls(t)
+			if len(calls) != 1 {
+				t.Fatalf("calls = %+v, want one remainder", calls)
+			}
+			got := calls[0].tokens
+			alarmed := tb.alarmsOf(accounting.InvRemainderTTLUnsolved) == 1
+			if tc.want5m == 0 {
+				if !alarmed || got[modelinfo.ClassCacheWrite] != 300000 {
+					t.Errorf("tokens %v alarmed=%v, want refused: 300000 TTL-unknown writes and an alarm", got, alarmed)
+				}
+				return
+			}
+			if alarmed || got[modelinfo.ClassCacheWrite5m] != tc.want5m || got[modelinfo.ClassCacheWrite1h] != 300000-tc.want5m {
+				t.Errorf("tokens %v alarmed=%v, want the split 5m %d / 1h %d", got, alarmed, tc.want5m, 300000-tc.want5m)
+			}
+		})
 	}
 }

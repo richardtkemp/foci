@@ -231,9 +231,10 @@ func classifyByKind(r *v1Row) {
 	}
 }
 
-// solveTolerance is how far from an integer a solved 5m write count may be
-// (#2111 §6 step 5.1).
-const solveTolerance = 1e-6
+// SolveTolerance is how far from an integer a solved 5m write count may be
+// (#2111 §6 step 5.1): float rounding only, so a solve is exact or refused.
+// The migration and the CC adapter's remainder solve (#2130) share it.
+const SolveTolerance = 1e-6
 
 // solveStats counts the TTL solve's outcomes.
 type solveStats struct {
@@ -325,7 +326,7 @@ func (st *solveStats) solveWindow(window []*v1Row, delta float64) {
 	}
 	x := (all1h - delta) / ((r1h - r5m) / 1_000_000)
 	n := math.Round(x)
-	if math.Abs(x-n) > solveTolerance || n < 0 || int(n) > sum.CacheWrite {
+	if math.Abs(x-n) > SolveTolerance || n < 0 || int(n) > sum.CacheWrite {
 		st.Rejected++
 		return
 	}

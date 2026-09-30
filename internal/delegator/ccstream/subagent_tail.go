@@ -3,6 +3,7 @@ package ccstream
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"sync"
@@ -160,7 +161,16 @@ type subagentTailManager struct {
 	// re-read harmless — and each tail's start and end. May be nil.
 	shadowLine func(groupKey string, line []byte)
 	shadowTail func(groupKey string, open bool)
-	lg         *log.ComponentLogger
+	// shadowEvent feeds the adapter directly, for the Workflow runs'
+	// transcripts (workflow_tail.go), whose events carry their own turn.
+	// May be nil.
+	shadowEvent func(ccEvent)
+	// workflows are the Workflow runs being read, by Workflow tool_use id;
+	// workflowTasks the local_workflow tasks started whose run has not
+	// (true: the task has already ended).
+	workflows     map[string]*workflowRun
+	workflowTasks map[string]bool
+	lg            *log.ComponentLogger
 }
 
 // wantText is whether this tail forwards the subagent's TEXT to the session,
@@ -332,11 +342,13 @@ func newSubagentTailManager(deliver func(groupKey, text string), noteUsage func(
 		lg = log.NewComponentLogger("ccstream")
 	}
 	return &subagentTailManager{
-		noteUsage: noteUsage,
-		expectFg:  make(map[string]bool),
-		tails:     make(map[string]*subagentTail),
-		deliver:   deliver,
-		lg:        lg,
+		noteUsage:     noteUsage,
+		expectFg:      make(map[string]bool),
+		tails:         make(map[string]*subagentTail),
+		workflows:     make(map[string]*workflowRun),
+		workflowTasks: make(map[string]bool),
+		deliver:       deliver,
+		lg:            lg,
 	}
 }
 
@@ -466,6 +478,8 @@ func (m *subagentTailManager) stopAll() {
 	tails := m.tails
 	m.tails = make(map[string]*subagentTail)
 	m.expectFg = make(map[string]bool)
+	runs := maps.Clone(m.workflows)
+	m.workflowTasks = make(map[string]bool)
 	m.mu.Unlock()
 	for _, t := range tails {
 		t.teardown.Store(true)
@@ -474,6 +488,7 @@ func (m *subagentTailManager) stopAll() {
 	for _, t := range tails {
 		<-t.done
 	}
+	m.stopWorkflows(runs)
 }
 
 // run tails path, forwarding appended assistant text blocks until stop is

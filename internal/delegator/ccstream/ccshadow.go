@@ -42,6 +42,7 @@ type ccEvent struct {
 	turn    string // the foci turn open when it happened
 	id      string
 	agent   string
+	parent  string // ccTailOpened: the agent whose turn this one books on
 	line    *ccLine
 	mu      map[string]ModelUsage
 	running int
@@ -114,7 +115,7 @@ func (s *ccShadow) run() {
 			case ccSubLine:
 				c.subLine(e.agent, e.turn, e.line)
 			case ccTailOpened:
-				c.tailOpened(e.agent, e.turn)
+				c.tailOpenedUnder(e.agent, e.parent, e.turn)
 			case ccTailClosed:
 				c.tailClosed(e.agent)
 			case ccBoundaryEv:

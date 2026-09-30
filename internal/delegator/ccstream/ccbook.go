@@ -19,7 +19,9 @@
 //     spawned the subagent, completed on its stop_reason line, or — never
 //     completed — as `stopless` at its last-seen counts when a later id appears
 //     in the same file or the tail closes. Stopless calls ARE counted by CC, so
-//     they are in the remainder subtraction.
+//     they are in the remainder subtraction. A Workflow run's agents are
+//     subagents of the turn that invoked the Workflow (#2130): the run is
+//     opened as an agent on that turn, and each of its agents under it.
 //   - The REMAINDER — what CC's cumulative modelUsage counts and no call record
 //     holds (utility calls, stopless true output, compactions) — is booked only
 //     at a QUIET point: a result at which no subagent is running and every call
@@ -28,7 +30,10 @@
 //     exact and never negative; a negative class alarms and books nothing. A
 //     window holding a compact_boundary books it as a compaction (on the turn
 //     open at the boundary, else a compaction turn of its own); any other
-//     window's as overhead with no turn.
+//     window's as overhead with no turn. modelUsage reports no cache-write
+//     TTL, so the remainder's writes are split 5m/1h by solving CC's own cost
+//     for the interval (solveRemainderTTL, #2130); one that will not solve
+//     stays TTL-unknown, priced at 1h, and alarms.
 //   - At process exit the last remainder is flushed from the cost-state record
 //     CC appends on a graceful close, else from the last result.
 //
@@ -43,6 +48,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -217,13 +223,30 @@ type ccBook struct {
 	agents  map[string]*ccAgent
 	runTurn map[int]string
 
-	counted    map[int]map[string]modelinfo.Tokens // counted bookings per window and model
+	counted    map[int]map[string]*countedSum // counted bookings per window and model
 	boundaries map[int][]ccBoundary
 	results    []ccResult
 	baseline   map[string]ModelUsage
 	lastMU     map[string]ModelUsage
 	costState  map[string]ModelUsage
 	copies     int // transcript lines dropped as copies
+}
+
+// countedSum is what the counted calls of one window on one model add up to:
+// their tokens in report classes, and their cost as the ledger priced them
+// (unpriced when any of them has no price).
+type countedSum struct {
+	tokens   modelinfo.Tokens
+	cost     float64
+	unpriced bool
+}
+
+func (s *countedSum) add(o *countedSum) {
+	for class, n := range o.tokens {
+		s.tokens[class] += n
+	}
+	s.cost += o.cost
+	s.unpriced = s.unpriced || o.unpriced
 }
 
 // settle bounds: how long a result waits for the main-transcript lines of the
@@ -242,7 +265,7 @@ func newCCBook(l *accounting.Ledger, lg *log.ComponentLogger, session, agentID s
 		scope: fmt.Sprintf("%s@%d", session, launch.UnixNano()), // ScopeLaunch parses it
 		named: map[string]*namedCall{}, held: map[string]*ccLine{}, done: map[string]bool{},
 		agents: map[string]*ccAgent{}, runTurn: map[int]string{},
-		counted: map[int]map[string]modelinfo.Tokens{}, boundaries: map[int][]ccBoundary{},
+		counted: map[int]map[string]*countedSum{}, boundaries: map[int][]ccBoundary{},
 		baseline: maps.Clone(baseline),
 	}
 	if c.baseline == nil {
@@ -356,6 +379,26 @@ func (c *ccBook) agent(agent, turn string, at time.Time) *ccAgent {
 // tail's last uncompleted call is final at its last-seen counts.
 func (c *ccBook) tailOpened(agent, turn string) {
 	c.agent(agent, turn, c.now()).open = true
+}
+
+// tailOpenedUnder opens agent's tail as a child of parent, an agent already
+// seen: a Workflow run's agents book on the run's turn, and a run a subagent
+// invoked on that subagent's (#2130). A child found after a result is still
+// counted in its parent's window: the parent was open from that window on,
+// so no quiet point since has booked a remainder its calls are in. With no
+// known parent it is tailOpened.
+func (c *ccBook) tailOpenedUnder(agent, parent, turn string) {
+	p := c.agents[parent]
+	if parent == "" || p == nil {
+		c.tailOpened(agent, turn)
+		return
+	}
+	a := c.agents[agent]
+	if a == nil {
+		a = &ccAgent{turn: p.turn, window: p.window}
+		c.agents[agent] = a
+	}
+	a.open = true
 }
 
 func (c *ccBook) tailClosed(agent string) {
@@ -505,16 +548,16 @@ func (c *ccBook) bookCall(l *ccLine, turn, actor string, window int, finality st
 		return
 	}
 	if c.counted[window] == nil {
-		c.counted[window] = map[string]modelinfo.Tokens{}
+		c.counted[window] = map[string]*countedSum{}
 	}
 	sum := c.counted[window][l.model]
 	if sum == nil {
-		sum = modelinfo.Tokens{}
+		sum = &countedSum{tokens: modelinfo.Tokens{}}
 		c.counted[window][l.model] = sum
 	}
-	for class, n := range ReportClasses(l.tokens) {
-		sum[class] += n
-	}
+	// Priced as the call_costs view prices it: its counts at its billing time.
+	usd, priced := modelinfo.CostAsOf(l.model, c.billedAt(l.at), l.tokens)
+	sum.add(&countedSum{tokens: ReportClasses(l.tokens), cost: usd, unpriced: !priced})
 }
 
 func (c *ccBook) billedAt(at time.Time) time.Time {
@@ -529,18 +572,16 @@ func (c *ccBook) billedAt(at time.Time) time.Time {
 // the booked set is wrong: it alarms, books nothing, and leaves the windows to
 // the next quiet point.
 func (c *ccBook) remainder(w int, mu map[string]ModelUsage, label string, at time.Time) {
-	counted := map[string]modelinfo.Tokens{}
+	counted := map[string]*countedSum{}
 	for win, byModel := range c.counted {
 		if win > w {
 			continue
 		}
 		for m, t := range byModel {
 			if counted[m] == nil {
-				counted[m] = modelinfo.Tokens{}
+				counted[m] = &countedSum{tokens: modelinfo.Tokens{}}
 			}
-			for class, n := range t {
-				counted[m][class] += n
-			}
+			counted[m].add(t)
 		}
 	}
 	models := map[string]bool{}
@@ -554,12 +595,16 @@ func (c *ccBook) remainder(w int, mu map[string]ModelUsage, label string, at tim
 	var negative []string
 	for _, m := range slices.Sorted(maps.Keys(models)) {
 		cur, base := modelUsageTokens(mu[m]), modelUsageTokens(c.baseline[m])
+		booked := modelinfo.Tokens{}
+		if counted[m] != nil {
+			booked = counted[m].tokens
+		}
 		r := modelinfo.Tokens{}
 		for _, class := range slices.Sorted(maps.Keys(cur)) {
-			v := cur[class] - base[class] - counted[m][class]
+			v := cur[class] - base[class] - booked[class]
 			if v < 0 {
 				negative = append(negative, fmt.Sprintf("%s %s %d (modelUsage %d, baseline %d, booked %d)",
-					m, class, v, cur[class], base[class], counted[m][class]))
+					m, class, v, cur[class], base[class], booked[class]))
 			}
 			r[class] = v
 		}
@@ -586,6 +631,9 @@ func (c *ccBook) remainder(w int, mu map[string]ModelUsage, label string, at tim
 			Backend: accounting.BackendCCStream, Provider: "anthropic", Model: m, Session: c.session,
 			AgentID: c.agentID, Finality: accounting.FinalityDerived, ClassMethod: accounting.ClassMethodUnknown,
 			BilledAt: at, Tokens: r, Detail: map[string]any{"scope": c.scope, "through_window": w},
+		}
+		if r[modelinfo.ClassCacheWrite] > 0 {
+			c.splitRemainderTTL(&call, mu[m].CostUSD-c.baseline[m].CostUSD, counted[m], label)
 		}
 		var turn accounting.Turn
 		if len(bounds) > 0 {
@@ -623,6 +671,72 @@ func (c *ccBook) remainder(w int, mu map[string]ModelUsage, label string, at tim
 			delete(c.boundaries, win)
 		}
 	}
+}
+
+// splitRemainderTTL gives a remainder's TTL-unknown cache writes their 5m/1h
+// split, solved from CC's own cost of the interval on the call's model
+// (ccCost: modelUsage costUSD less the baseline's) less the counted calls'
+// cost. It books the solved split, or on failure leaves the writes unknown —
+// priced at the 1h rate — and alarms, never silently.
+func (c *ccBook) splitRemainderTTL(call *accounting.Call, ccCost float64, counted *countedSum, label string) {
+	w := call.Tokens[modelinfo.ClassCacheWrite]
+	x5m, err := solveRemainderTTL(call.Model, call.BilledAt, call.Tokens, ccCost, counted)
+	if err != nil {
+		call.Detail["ttl"] = "unsolved"
+		c.l.Alarm(accounting.Alarm{Invariant: accounting.InvRemainderTTLUnsolved, Backend: accounting.BackendCCStream,
+			Detail: fmt.Sprintf("session %s %s %s: %d remainder cache writes priced at the 1h rate: %v",
+				c.session, label, call.Model, w, err)})
+		return
+	}
+	delete(call.Tokens, modelinfo.ClassCacheWrite)
+	call.Tokens[modelinfo.ClassCacheWrite5m] += x5m
+	call.Tokens[modelinfo.ClassCacheWrite1h] += w - x5m
+	call.ClassMethod = accounting.ClassMethodSolved
+	call.Detail["ttl"] = "solved"
+}
+
+// solveRemainderTTL returns how many of r's TTL-unknown cache writes were 5m.
+// Every other class of r is priced from its counts, so with the remainder's
+// cost known the 5m count x is the one unknown:
+//
+//	x = (r priced with every unknown write at 1h − its cost) / (rate_1h − rate_5m)
+//
+// where its cost is ccCost less the counted calls' (the migration's solve,
+// migrate.go solveWindow, on a live interval). As there, x is accepted only
+// as an integer, to accounting.SolveTolerance, in [0, writes]: modelinfo's
+// rates and CC's agree exactly (#2131), so a split that does not reproduce
+// CC's cost exactly means the interval's inputs are wrong, not the rates.
+func solveRemainderTTL(model string, at time.Time, r modelinfo.Tokens, ccCost float64, counted *countedSum) (int, error) {
+	w := r[modelinfo.ClassCacheWrite]
+	countedCost := 0.0
+	if counted != nil {
+		if counted.unpriced {
+			return 0, fmt.Errorf("a counted call on %s is unpriced, so the remainder's cost is unknown", model)
+		}
+		countedCost = counted.cost
+	}
+	rm, ok := modelinfo.ResolveRateModel(model, at)
+	if !ok {
+		return 0, fmt.Errorf("%s is not in the price table", model)
+	}
+	rates, _ := modelinfo.RatesAsOf(rm, at)
+	r5m, has5m := rates[modelinfo.ClassCacheWrite5m]
+	r1h, has1h := rates[modelinfo.ClassCacheWrite1h]
+	if !has5m || !has1h || r1h <= r5m {
+		return 0, fmt.Errorf("%s has no distinct 5m and 1h write rates", model)
+	}
+	all1h, priced := modelinfo.CostAsOf(model, at, r)
+	if !priced {
+		return 0, fmt.Errorf("the remainder on %s is unpriced", model)
+	}
+	perToken := (r1h - r5m) / 1_000_000
+	x := (all1h - (ccCost - countedCost)) / perToken
+	n := math.Round(x)
+	if math.Abs(x-n) > accounting.SolveTolerance || n < 0 || n > float64(w) {
+		return 0, fmt.Errorf("CC's cost $%.9f (counted calls $%.9f) implies %.6f 5m writes of %d, not an exact split",
+			ccCost, countedCost, x, w)
+	}
+	return int(n), nil
 }
 
 // billed reports whether any class of t is non-zero.

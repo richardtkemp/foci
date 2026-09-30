@@ -382,6 +382,13 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 		return
 	}
 
+	// A Workflow run's agents are read for the ledger from the directory its
+	// PostToolUse names (#2130), whoever invoked it: before the sidechain
+	// filter, so a subagent's run books on that subagent's turn.
+	if env.HookEvent == eventPostToolUse && parsed.ToolName == "Workflow" && !parsed.IsError {
+		b.startWorkflowTail(parsed)
+	}
+
 	// Sidechain filter: sub-agent tool calls have a non-empty agent_id per
 	// claude-code src/utils/hooks.ts:createBaseHookInput. Skip so they
 	// don't fire OnToolEnd on the parent turn's tracker.

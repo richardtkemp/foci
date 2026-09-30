@@ -80,7 +80,7 @@ const (
 const (
 	ClassMethodObserved    = "observed"     // the provider reported the split
 	ClassMethodBackendRule = "backend_rule" // fixed by the backend (direct API: always 1h)
-	ClassMethodSolved      = "solved"       // legacy: solved from CC's reported cost
+	ClassMethodSolved      = "solved"       // solved from CC's reported cost (legacy rows; a CC remainder, #2130)
 	ClassMethodKind        = "kind"         // legacy: inferred from the record kind
 	ClassMethodUnknown     = "unknown"      // TTL not reported
 )
@@ -113,6 +113,10 @@ const (
 	// InvStreamIdBooked: a call the backend's stream named never appeared in
 	// the source its usage is booked from within the bound.
 	InvStreamIdBooked = "invStreamIdBooked"
+	// InvRemainderTTLUnsolved: a remainder's cache writes carry no TTL and
+	// the backend's reported cost did not solve their 5m/1h split, so they
+	// are booked TTL-unknown, at the 1h rate (#2130).
+	InvRemainderTTLUnsolved = "invRemainderTTLUnsolved"
 )
 
 // Alarm raises an invariant violation an adapter found outside a booking.

@@ -474,6 +474,7 @@ func (b *Backend) subagentTails() *subagentTailManager {
 				b.shadow.Load().enqueue(ccEvent{kind: ccSubLine, agent: groupKey, turn: b.openTurnRowID(), line: l})
 			}
 		}
+		b.subagentTailMgr.shadowEvent = func(e ccEvent) { b.shadow.Load().enqueue(e) }
 		b.subagentTailMgr.shadowTail = func(groupKey string, open bool) {
 			kind := ccTailClosed
 			if open {
