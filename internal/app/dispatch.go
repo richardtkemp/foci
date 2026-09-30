@@ -112,6 +112,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.pushReads(client)
 		h.pushDrafts(client)
 		h.pushPins(client)
+		h.pushScrolls(client)
 		h.pushOpenSet(client)
 		// Reconnect resume: re-attach (which recomputes the capability union across
 		// attached clients) + replay each conversation the client still has
@@ -156,6 +157,8 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.handleDraft(client, f)
 	case fap.PinPut:
 		h.handlePin(client, f)
+	case fap.ScrollPut:
+		h.handleScroll(client, f)
 	case fap.ConfigGet:
 		h.handleConfigGet(client)
 

@@ -1722,11 +1722,12 @@ func (h *Hub) snapshotClients() []*wsClient {
 // change locally and must not be echoed back into its own optimistic state.
 //
 // This is the shared shape behind the cross-device mirrors (read.sync,
-// draft.sync, conversation.openSync, pin.sync). Every one of those frames is
-// idempotent and last-write-wins by design, so it is deliberately sent to
-// clients that do not currently hold the conversation too: a read advance is
+// draft.sync, conversation.openSync, pin.sync, scroll.sync). Every one of those
+// frames is idempotent and last-write-wins by design, so it is deliberately sent
+// to clients that do not currently hold the conversation too: a read advance is
 // monotonic, a draft is stored for the chat's next open, an open-set is a full
-// replace, and a pin set is absolute. There is no per-frame recipient filter and
+// replace, a pin set is absolute, and a scroll position is stored for the chat's
+// next open. There is no per-frame recipient filter and
 // adding one would be a behaviour change, not an optimisation.
 //
 // The frame is built by the CALLER, before this returns — one value shared by
@@ -1754,6 +1755,8 @@ func (h *Hub) pushOpenSet(client *wsClient) {
 // stored value. When replayEmpty is false an empty stored value is skipped (right
 // for read watermarks — an empty watermark carries nothing); drafts set it true so
 // a cleared draft still reaches devices that were offline during the clear.
+// frame may return nil to skip a stored value it cannot turn into a frame (an
+// unreadable scroll position, #2144).
 func (h *Hub) pushChatScalar(client *wsClient, metaKey string, replayEmpty bool, frame func(convID, value string) fap.ServerFrame) {
 	idx := h.deps.SessionIndex
 	if idx == nil {
@@ -1767,7 +1770,9 @@ func (h *Hub) pushChatScalar(client *wsClient, metaKey string, replayEmpty bool,
 	h.mu.RUnlock()
 	for _, b := range bindings {
 		if v, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, metaKey); err == nil && (replayEmpty || v != "") {
-			client.sendRaw(frame(b.convID, v))
+			if f := frame(b.convID, v); f != nil {
+				client.sendRaw(f)
+			}
 		}
 	}
 }

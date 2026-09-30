@@ -414,6 +414,7 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		ToolInvoke{InvocationID: "inv", Tool: "android", Action: "list", Args: json.RawMessage(`{}`)},
 		ConversationForeground{ConversationID: "c"},
 		PinSync{ConversationID: "c", MessageIDs: []string{"m1", "m2"}},
+		ScrollSync{ConversationID: "c", MessageID: "m", Following: false},
 		ConversationAck{ConversationID: "c"},
 		MessageConsumed{ConversationID: "c", MessageID: "m"},
 	}
@@ -507,5 +508,32 @@ func TestDecode_PinPut_DefaultsUnpinned(t *testing.T) {
 	}
 	if f := in.Frame.(PinPut); f.Pinned {
 		t.Errorf("absent pinned decoded as %v, want false", f.Pinned)
+	}
+}
+
+// TestDecode_ScrollPut pins the app->server half of scroll-position sync's
+// field names on this side too (#2144).
+func TestDecode_ScrollPut(t *testing.T) {
+	in, err := Decode(`{"t":"scroll.put","id":"i1","d":{"conversationId":"c1","messageId":"m7","following":false}}`)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	f, ok := in.Frame.(ScrollPut)
+	if !ok {
+		t.Fatalf("frame = %T, want ScrollPut", in.Frame)
+	}
+	if f.ConversationID != "c1" || f.MessageID != "m7" || f.Following {
+		t.Errorf("decoded = %+v, want c1/m7/false", f)
+	}
+}
+
+// A following put may omit messageId entirely.
+func TestDecode_ScrollPut_FollowingWithoutMessage(t *testing.T) {
+	in, err := Decode(`{"t":"scroll.put","id":"i1","d":{"conversationId":"c1","following":true}}`)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if f := in.Frame.(ScrollPut); !f.Following || f.MessageID != "" {
+		t.Errorf("decoded = %+v, want following with no message", f)
 	}
 }

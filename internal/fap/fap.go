@@ -123,6 +123,11 @@ const (
 	// deliberate per-device preference and has no wire representation (#1882).
 	TypePinPut  = "pin.put"
 	TypePinSync = "pin.sync"
+	// TypeScrollPut (app->server) mirrors where the user left a conversation
+	// (#2144); TypeScrollSync (server->app) fans it to the user's other devices
+	// and is replayed after a hello, exactly like the draft pair.
+	TypeScrollPut  = "scroll.put"
+	TypeScrollSync = "scroll.sync"
 	// TypeTyping is the app->server "user is typing" signal (ClientTyping). It is
 	// distinct from the server->app agent activity indicator, which is now the
 	// unified Activity frame (TypeActivity) with an "typing" ActivityKind.
@@ -980,6 +985,37 @@ type PinSync struct {
 }
 
 func (PinSync) Type() string { return TypePinSync }
+
+// ScrollPut mirrors where the user left a conversation's scroll view to the
+// server (app->server, #2144). Sent on the same "leave" event as DraftPut, and
+// only when the position changed since the value the device last agreed with
+// the server. The position is device-portable on purpose: MessageID names the
+// message at the top of the viewport (a list index or pixel offset means
+// nothing on a device with a different width, density or collapse state), and
+// Following says the user left tailing the newest message, in which case
+// MessageID is ignored. The server is a dumb store: it persists the position
+// under the chat's "scroll" metadata key and rebroadcasts a ScrollSync.
+// Fire-and-forget like DraftPut — not conversation-reliability-scoped.
+type ScrollPut struct {
+	ConversationID string `json:"conversationId"`
+	MessageID      string `json:"messageId,omitempty"`
+	Following      bool   `json:"following"`
+}
+
+// ScrollSync mirrors a conversation's last-left scroll position to a user's
+// other devices (server->client). Sent when one device puts a position (a
+// ScrollPut), and replayed per-conversation after a hello so a device offline
+// during the move catches up. Last-write-wins on the server, like DraftSync;
+// the client never moves a chat the user is looking at — it applies the value
+// to chats that are off screen, and on leaving an on-screen chat only if the
+// user did not scroll it themselves in the meantime.
+type ScrollSync struct {
+	ConversationID string `json:"conversationId"`
+	MessageID      string `json:"messageId,omitempty"`
+	Following      bool   `json:"following"`
+}
+
+func (ScrollSync) Type() string { return TypeScrollSync }
 
 // ConversationRename sets (or clears, when Title is empty) a user-friendly alias
 // for a conversation. Persisted server-side; echoed back in ConversationInfo.Title.
