@@ -87,3 +87,26 @@ func isIdentByte(c byte) bool {
 func isCommandBoundary(c byte) bool {
 	return strings.IndexByte(" \t\n;|&(){`\"'", c) >= 0
 }
+
+// fullCommandMax caps FullCommand. The command rides every Activity frame
+// while its tool runs, so a heredoc-sized script must not balloon them.
+const fullCommandMax = 8000
+
+// FullCommand returns the full text of a tool call for the app's stop dialog
+// (#2138): a shell call's command line, else the call's JSON input as sent.
+// Capped at fullCommandMax bytes; "" when the call carries nothing.
+func FullCommand(name string, args []byte) string {
+	text := strings.TrimSpace(string(args))
+	if isShellTool(name) {
+		if command, _ := shellArgs(args); command != "" {
+			text = command
+		}
+	}
+	if text == "{}" || text == "null" {
+		return ""
+	}
+	if len(text) > fullCommandMax {
+		text = strings.ToValidUTF8(text[:fullCommandMax], "") + "\n…"
+	}
+	return text
+}

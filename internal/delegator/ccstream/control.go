@@ -3,6 +3,7 @@ package ccstream
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -52,6 +53,58 @@ func (b *Backend) SendSpecialKey(ctx context.Context, key string) error {
 // message over the stdio protocol.
 func (b *Backend) Interrupt(ctx context.Context) error {
 	return b.writer.SendInterrupt()
+}
+
+// StopSubagents stops every tracked subagent and background command with a
+// stop_task control request per task, leaving the main turn alone (#2138).
+// Returns how many requests were sent. An entry whose task_started has not
+// arrived yet has no task_id to name and is skipped (logged); the stopped
+// tasks retire from the tracker through their "stopped" task_notification.
+func (b *Backend) StopSubagents(ctx context.Context) (int, error) {
+	sent := 0
+	var errs []error
+	for _, key := range b.agents.IDs() {
+		taskID := b.taskIDFor(key)
+		if taskID == "" {
+			b.logger().Warnf("stop subagents: no task_id for %s (task_started not seen), not stopped", key)
+			continue
+		}
+		if err := b.writer.SendControl(newRequestID(), &StopTaskRequest{Subtype: "stop_task", TaskID: taskID}); err != nil {
+			errs = append(errs, fmt.Errorf("stop_task %s: %w", taskID, err))
+			continue
+		}
+		b.logger().Infof("stop subagents: stop_task sent task_id=%s key=%s", taskID, key)
+		sent++
+	}
+	return sent, errors.Join(errs...)
+}
+
+// recordTaskID remembers the task_id behind a tracker key (#2138).
+func (b *Backend) recordTaskID(key, taskID string) {
+	if key == "" || taskID == "" {
+		return
+	}
+	b.subagentRunsMu.Lock()
+	defer b.subagentRunsMu.Unlock()
+	if b.trackedTaskIDs == nil {
+		b.trackedTaskIDs = map[string]string{}
+	}
+	b.trackedTaskIDs[key] = taskID
+}
+
+// forgetTaskID drops a finished task's entry. A reactivation records it again
+// at its own task_started.
+func (b *Backend) forgetTaskID(key string) {
+	b.subagentRunsMu.Lock()
+	defer b.subagentRunsMu.Unlock()
+	delete(b.trackedTaskIDs, key)
+}
+
+// taskIDFor returns the task_id recorded for a tracker key, or "".
+func (b *Backend) taskIDFor(key string) string {
+	b.subagentRunsMu.Lock()
+	defer b.subagentRunsMu.Unlock()
+	return b.trackedTaskIDs[key]
 }
 
 // SetModel sends a set_model control request to CC via the generic

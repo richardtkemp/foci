@@ -330,3 +330,43 @@ func TestExtractAgentDescription(t *testing.T) {
 		})
 	}
 }
+
+// TestSubagentTracker_OnRunning pins the structured running list (#2138): it
+// fires before OnStatus with each entry's kind, model and start time, SetModel
+// replaces the model and re-notifies only on a change, and the list empties
+// with the tracker.
+func TestSubagentTracker_OnRunning(t *testing.T) {
+	t.Parallel()
+	var running []RunningSubagent
+	var order []string
+	tr := &SubagentTracker{
+		OnRunning: func(r []RunningSubagent) { running = r; order = append(order, "running") },
+		OnStatus:  func(string) { order = append(order, "status") },
+	}
+	tr.AddEntry(TrackedSubagent{ID: "a", Description: "research", Model: "haiku", SubagentType: "Explore"})
+	tr.AddEntry(TrackedSubagent{ID: "b", Description: "background command", Kind: SubagentKindCommand})
+	if len(running) != 2 || running[0].Kind != SubagentKindAgent || running[0].Model != "haiku" ||
+		running[0].SubagentType != "Explore" || running[0].Started.IsZero() || running[1].Kind != SubagentKindCommand {
+		t.Fatalf("running = %+v", running)
+	}
+	if order[0] != "running" || order[1] != "status" {
+		t.Fatalf("callback order = %v, want running before status", order)
+	}
+	n := len(order)
+	tr.SetModel("a", "haiku")
+	tr.SetModel("zzz", "opus")
+	if len(order) != n {
+		t.Fatalf("an unchanged model or unknown id re-notified: %v", order[n:])
+	}
+	tr.SetModel("a", "claude-haiku-4-5")
+	if running[0].Model != "claude-haiku-4-5" {
+		t.Fatalf("model = %q", running[0].Model)
+	}
+	if ids := tr.IDs(); len(ids) != 2 || ids[0] != "a" || ids[1] != "b" {
+		t.Fatalf("IDs = %v", ids)
+	}
+	tr.ClearAll()
+	if running != nil {
+		t.Fatalf("running after ClearAll = %+v, want nil", running)
+	}
+}

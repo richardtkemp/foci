@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/delegator"
 	"foci/internal/fap"
 	"foci/internal/platform"
 )
@@ -131,6 +132,36 @@ func SetSubagentDetail(sessionKey, detail string) {
 	if b := h.bindingForSession(sessionKey); b != nil {
 		b.setSubagentDetail(detail)
 	}
+}
+
+// SetSubagents routes the structured running-subagent list for sessionKey to
+// its conversation (#2138), with the one-line detail derived from it. Same
+// no-op rules as SetSubagentDetail.
+func SetSubagents(sessionKey string, running []delegator.RunningSubagent) {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return
+	}
+	b := h.bindingForSession(sessionKey)
+	if b == nil {
+		return
+	}
+	descs := make([]string, len(running))
+	var list []fap.RunningSubagent
+	for i, r := range running {
+		descs[i] = r.Description
+		var started int64
+		if !r.Started.IsZero() {
+			started = r.Started.UnixMilli()
+		}
+		list = append(list, fap.RunningSubagent{
+			ID: r.ID, Description: r.Description, Kind: r.Kind,
+			Model: r.Model, SubagentType: r.SubagentType, Command: r.Command, StartedMs: started,
+		})
+	}
+	b.setSubagents(delegator.FormatSubagentDetail(descs), list)
 }
 
 // SetCacheExpiry routes a prompt-cache expiry (unix ms; 0 = cold) to the

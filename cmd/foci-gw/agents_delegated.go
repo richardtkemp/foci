@@ -480,6 +480,11 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			// straight to the app hub's binding; a no-op for non-app sessions.
 			app.SetSubagentDetail(sessionKey, detail)
 		},
+		SubagentRunningFunc: func(sessionKey string, running []delegator.RunningSubagent) {
+			// The structured list behind the detail (#2138): each subagent's
+			// id, model and start time, for the app's stop dialog.
+			app.SetSubagents(sessionKey, running)
+		},
 		SystemNoticeFunc: func(sessionKey, text string) {
 			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
 			if conn == nil {

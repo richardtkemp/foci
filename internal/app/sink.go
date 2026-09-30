@@ -93,7 +93,7 @@ func newAppSink(b *convBinding) *appSink {
 	// here is the backstop. Session-scoped states (subagents/waiting) are NOT
 	// cleared here — they outlive the turn by design.
 	s.cleanup = func() {
-		b.setTurnActivity(fap.ActivityKindIdle, "")
+		b.setTurnActivity(fap.ActivityKindIdle)
 		renderer.Cleanup()
 	}
 	return s
@@ -110,7 +110,7 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 		// A fresh turn means this conversation's caller is active again — clear any
 		// session-scoped "waiting on another agent" state before the turn opens.
 		s.b.setWaitingDetail("")
-		s.b.setTurnActivity(fap.ActivityKindWarming, "")
+		s.b.setTurnActivity(fap.ActivityKindWarming)
 		s.inner.Emit(ctx, ev)
 
 	case turnevent.SubagentText:
@@ -121,21 +121,21 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 		s.inner.Emit(ctx, ev)
 
 	case turnevent.ThinkingDelta, turnevent.ThinkingBlock:
-		s.b.setTurnActivity(fap.ActivityKindThinking, "")
+		s.b.setTurnActivity(fap.ActivityKindThinking)
 		s.inner.Emit(ctx, ev)
 
 	case turnevent.ToolCall:
-		s.b.setTurnActivity(fap.ActivityKindTool, toolformat.ActivityLabel(e.Name, e.Args))
+		s.b.setTurnTool(fap.ActivityKindTool, toolformat.ActivityLabel(e.Name, e.Args), toolformat.FullCommand(e.Name, e.Args))
 		s.inner.Emit(ctx, ev)
 
 	case turnevent.ToolResult:
 		// Tool finished; the model is processing its result with no output token
 		// yet — back to the "warming" (working) state until the next event.
-		s.b.setTurnActivity(fap.ActivityKindWarming, "")
+		s.b.setTurnActivity(fap.ActivityKindWarming)
 		s.inner.Emit(ctx, ev)
 
 	case turnevent.TextDelta, turnevent.TextBlock:
-		s.b.setTurnActivity(fap.ActivityKindTyping, "")
+		s.b.setTurnActivity(fap.ActivityKindTyping)
 		if tb, ok := ev.(turnevent.TextBlock); ok && tb.Phase == turnevent.PhaseIntermediate {
 			// Voice-mode per-block synthesis (#1444): speak THIS block before
 			// forwarding it — same "synthesize before delivery" ordering as
@@ -159,7 +159,7 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 				appLog.Warnf("voice-mode: attach synthesized audio (conv=%s): %v", s.b.convID, err)
 			}
 		}
-		s.b.setTurnActivity(fap.ActivityKindIdle, "")
+		s.b.setTurnActivity(fap.ActivityKindIdle)
 		s.emitMeta(e)
 		if s.cacheExpiryFn != nil {
 			s.b.setCacheExpiry(s.cacheExpiryFn())

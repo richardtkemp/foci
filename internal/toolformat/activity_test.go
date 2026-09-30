@@ -1,6 +1,9 @@
 package toolformat
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestActivityLabel pins the running-tool caption for a shell call (#1110): a
 // delegated agent runs every foci tool through its shell, so the bare tool name
@@ -42,3 +45,24 @@ func TestActivityLabel(t *testing.T) {
 }
 
 const longDesc = "Run the entire integration suite against the staging database with verbose output"
+
+// TestFullCommand pins the stop dialog's full-command text (#2138): a shell
+// call's command line, any other tool's JSON input, nothing for an empty one,
+// and a cap on a huge script.
+func TestFullCommand(t *testing.T) {
+	cases := []struct{ name, tool, args, want string }{
+		{"shell command", "Bash", `{"command":"make test","description":"Run tests"}`, "make test"},
+		{"codex raw line", "bash", `ls -la`, "ls -la"},
+		{"other tool input", "Read", `{"file_path":"/x"}`, `{"file_path":"/x"}`},
+		{"empty input", "Read", `{}`, ""},
+	}
+	for _, c := range cases {
+		if got := FullCommand(c.tool, []byte(c.args)); got != c.want {
+			t.Errorf("%s: FullCommand = %q, want %q", c.name, got, c.want)
+		}
+	}
+	long := FullCommand("Bash", []byte(`{"command":"`+strings.Repeat("x", fullCommandMax+50)+`"}`))
+	if len(long) > fullCommandMax+len("\n…") || !strings.HasSuffix(long, "…") {
+		t.Errorf("long command not capped: len=%d", len(long))
+	}
+}

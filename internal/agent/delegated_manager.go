@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -96,6 +97,11 @@ type DelegatedManager struct {
 	// unified Activity indicator (subagents kind). Nil = subagent status is not
 	// surfaced (e.g. non-app platforms, tests).
 	SubagentStatusFunc func(sessionKey, detail string)
+
+	// SubagentRunningFunc reports the structured running-subagent list for a
+	// session (id, kind, model, start time) on every change, just before
+	// SubagentStatusFunc (#2138). Nil = not surfaced.
+	SubagentRunningFunc func(sessionKey string, running []delegator.RunningSubagent)
 
 	// SystemNoticeFunc sends an out-of-band system notice directly to a
 	// session's platform chat (NOT through an agent turn). Used to tell the
@@ -675,6 +681,28 @@ func (m *DelegatedManager) StopSession(ctx context.Context, sessionKey string) e
 	return mb.be.Interrupt(ctx)
 }
 
+// ErrStopSubagentsUnsupported is returned by StopSubagents when the session's
+// backend cannot stop a subagent on its own.
+var ErrStopSubagentsUnsupported = errors.New("this backend cannot stop subagents on their own")
+
+// StopSubagents stops every running subagent and background command of the
+// session without touching the agent's own turn (#2138), returning how many
+// stop requests were sent. Backends without the capability return
+// ErrStopSubagentsUnsupported.
+func (m *DelegatedManager) StopSubagents(ctx context.Context, sessionKey string) (int, error) {
+	mb, ok := m.getManaged(sessionKey)
+	if !ok {
+		return 0, fmt.Errorf("no delegated backend for session %s", sessionKey)
+	}
+	stopper, ok := mb.be.(interface {
+		StopSubagents(ctx context.Context) (int, error)
+	})
+	if !ok {
+		return 0, ErrStopSubagentsUnsupported
+	}
+	return stopper.StopSubagents(ctx)
+}
+
 // RegisterPromptCancelListener appends a listener fired when the prompt with
 // requestID is cancelled by a non-user path (e.g. CC's control_cancel_request
 // after a follow-up message aborted the in-flight tool). The listener does
@@ -1035,6 +1063,15 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 		}); ok {
 			setter.SetOnSubagentStatus(func(detail string) {
 				m.SubagentStatusFunc(sk(), detail)
+			})
+		}
+	}
+	if m.SubagentRunningFunc != nil && !isBatch {
+		if setter, ok := mb.be.(interface {
+			SetOnSubagentRunning(fn func([]delegator.RunningSubagent))
+		}); ok {
+			setter.SetOnSubagentRunning(func(running []delegator.RunningSubagent) {
+				m.SubagentRunningFunc(sk(), running)
 			})
 		}
 	}

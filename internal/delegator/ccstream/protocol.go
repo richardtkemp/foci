@@ -316,6 +316,14 @@ type InterruptRequest struct {
 	Subtype string `json:"subtype"` // always "interrupt"
 }
 
+// StopTaskRequest asks CC to stop one background task (a subagent or a
+// run_in_background command) by its task_id, leaving the main turn running.
+// CC answers with a task_notification of status "stopped" (#2138).
+type StopTaskRequest struct {
+	Subtype string `json:"subtype"` // always "stop_task"
+	TaskID  string `json:"task_id"`
+}
+
 // SetModelRequest asks CC to switch the active model.
 type SetModelRequest struct {
 	Subtype string `json:"subtype"` // always "set_model"

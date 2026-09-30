@@ -39,6 +39,10 @@ func (b *Backend) SetTypingFunc(fn func(bool)) { b.typingFunc = fn }
 // none are running) — see delegator.SubagentTracker.OnStatus.
 func (b *Backend) SetOnSubagentStatus(fn func(detail string)) { b.agents.OnStatus = fn }
 
+// SetOnSubagentRunning sets the callback for the structured running list (id,
+// kind, model, start time) — see delegator.SubagentTracker.OnRunning (#2138).
+func (b *Backend) SetOnSubagentRunning(fn func([]delegator.RunningSubagent)) { b.agents.OnRunning = fn }
+
 // SetOnAuthFailure registers a hook fired when CC reports an authentication
 // failure (a 401). Used to trigger automated re-login (#843). Must be set
 // before Start.

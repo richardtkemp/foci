@@ -39,13 +39,45 @@ type SubagentTracker struct {
 	// any are running, or "" when none are. It maps cleanly onto the app's
 	// setSubagentDetail. Set by the backend before any tracking begins.
 	OnStatus func(detail string)
+
+	// OnRunning is called on every status change, just before OnStatus, with
+	// the structured list of what is running (nil when nothing is). It carries
+	// what the detail string flattens away: each entry's id (the subagent's
+	// group key, so the app can open its view), kind, model and start time
+	// (#2138). Optional; nil = not reported.
+	OnRunning func(running []RunningSubagent)
 }
+
+// Kinds of tracked background work (RunningSubagent.Kind).
+const (
+	// SubagentKindAgent is an Agent-tool subagent spawn.
+	SubagentKindAgent = "agent"
+	// SubagentKindCommand is a run_in_background shell command. It has no
+	// subagent view, but it holds the pending-work gate like a subagent does.
+	SubagentKindCommand = "command"
+)
 
 // TrackedSubagent is a pending Agent tool_use call.
 type TrackedSubagent struct {
-	ID          string // tool_use ID
-	Description string // short description from Agent tool input
-	added       time.Time
+	ID           string // tool_use ID
+	Description  string // short description from Agent tool input
+	Kind         string // SubagentKindAgent or SubagentKindCommand ("" reads as agent)
+	Model        string // requested model alias, replaced by the model actually seen; "" = unknown
+	SubagentType string // the Agent tool's subagent_type, "" if none
+	Command      string // a background command's full command line, "" for an agent
+	added        time.Time
+}
+
+// RunningSubagent is one entry of the structured running list passed to
+// OnRunning: a snapshot of a TrackedSubagent with its start time exported.
+type RunningSubagent struct {
+	ID           string
+	Description  string
+	Kind         string
+	Model        string
+	SubagentType string
+	Command      string
+	Started      time.Time
 }
 
 // defaultAgentMaxAge bounds how long a spawn stays tracked without a completion
@@ -71,15 +103,25 @@ func (t *SubagentTracker) maxAge() time.Duration {
 // Add registers a new subagent spawn. Duplicate IDs are silently ignored
 // (handles --include-partial-messages replays in ccstream).
 func (t *SubagentTracker) Add(id, description string) {
+	t.AddEntry(TrackedSubagent{ID: id, Description: description})
+}
+
+// AddEntry registers a new spawn carrying its kind, model and subagent type.
+// Add is the description-only shorthand. Duplicate IDs are ignored, as in Add.
+func (t *SubagentTracker) AddEntry(e TrackedSubagent) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.pruneLocked()
 	for _, ag := range t.pending {
-		if ag.ID == id {
+		if ag.ID == e.ID {
 			return
 		}
 	}
-	t.pending = append(t.pending, TrackedSubagent{ID: id, Description: description, added: time.Now()})
+	if e.Kind == "" {
+		e.Kind = SubagentKindAgent
+	}
+	e.added = time.Now()
+	t.pending = append(t.pending, e)
 	if t.start.IsZero() {
 		t.start = time.Now()
 	}
@@ -109,6 +151,48 @@ func (t *SubagentTracker) pruneLocked() {
 		kept = append(kept, ag)
 	}
 	t.pending = kept
+}
+
+// SetModel records the model a tracked entry actually runs on, replacing any
+// requested alias, and re-notifies on a change. An unknown id or a blank model
+// is a no-op: a nested subagent's usage names an id that was never tracked.
+func (t *SubagentTracker) SetModel(id, model string) {
+	if model == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for i := range t.pending {
+		if t.pending[i].ID == id {
+			if t.pending[i].Model != model {
+				t.pending[i].Model = model
+				t.notify()
+			}
+			return
+		}
+	}
+}
+
+// IDs returns the ids of every tracked entry, oldest first.
+func (t *SubagentTracker) IDs() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	ids := make([]string, 0, len(t.pending))
+	for _, ag := range t.pending {
+		ids = append(ids, ag.ID)
+	}
+	return ids
+}
+
+// NotifyIdle re-sends the "nothing running" status to both callbacks, to clear
+// a stale indicator when the tracker is already empty.
+func (t *SubagentTracker) NotifyIdle() {
+	if t.OnRunning != nil {
+		t.OnRunning(nil)
+	}
+	if t.OnStatus != nil {
+		t.OnStatus("")
+	}
 }
 
 // Remove marks an agent as completed by its tool_use ID.
@@ -172,25 +256,47 @@ func (t *SubagentTracker) Pending() int {
 // maps directly onto the app's setSubagentDetail. Human-facing wording
 // ("🔄 …running" / "✅ …complete") is the caller's concern.
 func (t *SubagentTracker) notify() {
+	if len(t.pending) == 0 {
+		t.start = time.Time{}
+	}
+	if t.OnRunning != nil {
+		var running []RunningSubagent
+		for _, ag := range t.pending {
+			running = append(running, RunningSubagent{
+				ID: ag.ID, Description: ag.Description, Kind: ag.Kind,
+				Model: ag.Model, SubagentType: ag.SubagentType, Command: ag.Command, Started: ag.added,
+			})
+		}
+		t.OnRunning(running)
+	}
 	if t.OnStatus == nil {
 		return
 	}
-	if len(t.pending) == 0 {
-		t.start = time.Time{}
-		t.OnStatus("")
-		return
+	descs := make([]string, len(t.pending))
+	for i, ag := range t.pending {
+		descs[i] = ag.Description
+	}
+	t.OnStatus(FormatSubagentDetail(descs))
+}
+
+// FormatSubagentDetail flattens running descriptions into the one-line detail
+// string: comma-joined, or a count when none carries a description, or "" when
+// nothing runs. Shared by notify and the app, which derives the same detail
+// from the structured list so the two callbacks agree.
+func FormatSubagentDetail(descriptions []string) string {
+	if len(descriptions) == 0 {
+		return ""
 	}
 	var descs []string
-	for _, ag := range t.pending {
-		if ag.Description != "" {
-			descs = append(descs, ag.Description)
+	for _, d := range descriptions {
+		if d != "" {
+			descs = append(descs, d)
 		}
 	}
 	if len(descs) > 0 {
-		t.OnStatus(strings.Join(descs, ", "))
-	} else {
-		t.OnStatus(fmt.Sprintf("%d subagent(s) running", len(t.pending)))
+		return strings.Join(descs, ", ")
 	}
+	return fmt.Sprintf("%d subagent(s) running", len(descriptions))
 }
 
 // ExtractAgentDescription parses the "description" field from an Agent
@@ -203,6 +309,20 @@ func ExtractAgentDescription(raw json.RawMessage) string {
 		return input.Description
 	}
 	return ""
+}
+
+// ExtractAgentModel parses the optional "model" and "subagent_type" fields from
+// an Agent tool_use input: the model alias the spawn asked for ("" when it
+// inherits) and the agent type it runs as.
+func ExtractAgentModel(raw json.RawMessage) (model, subagentType string) {
+	var input struct {
+		Model        string `json:"model"`
+		SubagentType string `json:"subagent_type"`
+	}
+	if json.Unmarshal(raw, &input) == nil {
+		return input.Model, input.SubagentType
+	}
+	return "", ""
 }
 
 // ExtractAgentPrompt parses the "prompt" field from an Agent tool_use input

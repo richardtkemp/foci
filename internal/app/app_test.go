@@ -313,7 +313,7 @@ func TestConvBinding_ActivityResolver(t *testing.T) {
 	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
 
 	// Turn-scoped thinking is in flight.
-	b.setTurnActivity(fap.ActivityKindThinking, "")
+	b.setTurnActivity(fap.ActivityKindThinking)
 	if k, d := b.info().Activity, b.info().ActivityDetail; k != "thinking" || d != "" {
 		t.Fatalf("after thinking: %q/%q, want thinking/", k, d)
 	}
@@ -324,7 +324,8 @@ func TestConvBinding_ActivityResolver(t *testing.T) {
 		t.Fatalf("subagents must outrank thinking: %q/%q", k, d)
 	}
 
-	// Waiting is below subagents — no change while subagents are present (deduped).
+	// Waiting is below subagents: the flattened kind stays "subagents", but the
+	// agent's own line changes to waiting, so one frame goes out (#2138).
 	b.setWaitingDetail("scout")
 	if b.info().Activity != "subagents" {
 		t.Fatalf("subagents must outrank waiting, got %q", b.info().Activity)
@@ -343,15 +344,15 @@ func TestConvBinding_ActivityResolver(t *testing.T) {
 	}
 
 	// Ending the turn resolves to idle.
-	b.setTurnActivity(fap.ActivityKindIdle, "")
+	b.setTurnActivity(fap.ActivityKindIdle)
 	if b.info().Activity != "idle" {
 		t.Fatalf("after idle turn: %q, want idle", b.info().Activity)
 	}
 
-	// Exactly one Activity frame per resolved change; the no-op waiting set while
-	// subagents were present emitted nothing.
+	// Exactly one Activity frame per resolved change. The waiting set while
+	// subagents were present re-sends kind "subagents": its agentKind changed.
 	kinds := activityKinds(drain(t, c))
-	want := []string{"thinking", "subagents", "waiting", "thinking", "idle"}
+	want := []string{"thinking", "subagents", "subagents", "waiting", "thinking", "idle"}
 	if len(kinds) != len(want) {
 		t.Fatalf("emitted kinds = %v, want %v", kinds, want)
 	}
@@ -359,6 +360,51 @@ func TestConvBinding_ActivityResolver(t *testing.T) {
 		if kinds[i] != want[i] {
 			t.Fatalf("emitted kinds = %v, want %v", kinds, want)
 		}
+	}
+}
+
+// TestConvBinding_AgentActivityBesideSubagents pins #2138: while subagents run,
+// the frame still carries the agent's OWN activity (and the running tool's full
+// command) beside the structured subagent list, a tool change under running
+// subagents emits a frame, and the backend's detail-only update that follows a
+// structured one is deduped rather than sent twice.
+func TestConvBinding_AgentActivityBesideSubagents(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
+	s := newAppSink(b)
+	ctx := context.Background()
+
+	s.Emit(ctx, turnevent.TurnStart{})
+	b.setSubagents("researcher", []fap.RunningSubagent{{ID: "toolu_a", Description: "researcher", Kind: "agent", Model: "haiku", StartedMs: 1000}})
+	b.setSubagentDetail("researcher") // the detail-only callback that follows: no-op
+	s.Emit(ctx, turnevent.ToolCall{Name: "Bash", Args: []byte(`{"command":"make -C /x test","description":"Run tests"}`)})
+
+	info := b.info()
+	if info.Activity != "subagents" || info.ActivityAgentKind != "tool" || info.ActivityAgentDetail != "Bash: Run tests" ||
+		info.ActivityAgentCommand != "make -C /x test" || len(info.Subagents) != 1 || info.Subagents[0].Model != "haiku" {
+		t.Fatalf("snapshot = %+v", info)
+	}
+
+	var frames []map[string]any
+	for _, d := range drain(t, c) {
+		if d.t == fap.TypeActivity {
+			frames = append(frames, d.d)
+		}
+	}
+	// warming, subagents (list arrives), subagents (agent's tool changed).
+	if len(frames) != 3 {
+		t.Fatalf("activity frames = %v, want 3", frames)
+	}
+	last := frames[2]
+	if last["kind"] != "subagents" || last["agentKind"] != "tool" || last["agentCommand"] != "make -C /x test" {
+		t.Fatalf("last frame = %v", last)
+	}
+	subs, _ := last["subagents"].([]any)
+	if len(subs) != 1 {
+		t.Fatalf("subagents = %v, want one entry", last["subagents"])
+	}
+	if sub, _ := subs[0].(map[string]any); sub["id"] != "toolu_a" || sub["startedMs"] != float64(1000) {
+		t.Fatalf("subagent entry = %v", subs[0])
 	}
 }
 

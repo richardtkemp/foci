@@ -386,6 +386,12 @@ func (b *Backend) SetOnSubagentStatus(fn func(detail string)) {
 	b.agents.OnStatus = fn
 }
 
+// SetOnSubagentRunning stores the structured running-list callback on the
+// shared SubagentTracker (#2138).
+func (b *Backend) SetOnSubagentRunning(fn func([]delegator.RunningSubagent)) {
+	b.agents.OnRunning = fn
+}
+
 // SetOnAuthFailure stores the auth-failure callback. Fired by handlers.go
 // when a ProviderAuthError surfaces via message.updated or session.error
 // SSE events. authfail.go provides the Server-level fanout + relogin gate.

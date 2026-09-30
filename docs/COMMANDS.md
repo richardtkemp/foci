@@ -314,5 +314,5 @@ Skills with `command` and `script` in their frontmatter are registered as slash 
 
 These are handled directly by the Telegram bot layer, not the command registry:
 
-- **`/stop`** — cancel the current agent turn (works on both primary and secondary bots)
+- **`/stop`** — cancel the current agent turn (works on both primary and secondary bots); `/stop subagents` stops only the running subagents and background commands (claude-code stream backend), leaving the turn alone; `/stop all` stops both (#2138)
 - **`/done`** — detach a facet secondary bot and return it to the pool

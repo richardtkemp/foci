@@ -132,3 +132,24 @@ func TestDoneCommand_IsHidden(t *testing.T) {
 		t.Error("done command should be hidden")
 	}
 }
+
+// TestStopCommand_Args pins the #2138 arguments: "subagents" with no delegated
+// backend has nothing to stop and must not cancel the turn, "all" stops the
+// turn, and an unknown argument is an error rather than a silent plain stop.
+func TestStopCommand_Args(t *testing.T) {
+	cmd := StopCommand()
+	called := false
+	cc := CommandContext{StopFunc: func() { called = true }}
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: "subagents"}, cc)
+	if err != nil || resp.Text != "No subagents to stop." || called {
+		t.Fatalf("subagents: resp=%q err=%v turnStopped=%v", resp.Text, err, called)
+	}
+	resp, err = cmd.Execute(context.Background(), Request{Args: "all"}, cc)
+	if err != nil || !called || resp.Text != "Stopped. No subagents to stop." {
+		t.Fatalf("all: resp=%q err=%v turnStopped=%v", resp.Text, err, called)
+	}
+	if _, err := cmd.Execute(context.Background(), Request{Args: "everything"}, cc); err == nil {
+		t.Fatal("unknown argument: want an error")
+	}
+}

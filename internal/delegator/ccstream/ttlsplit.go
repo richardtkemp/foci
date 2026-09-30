@@ -2,6 +2,7 @@ package ccstream
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	"foci/internal/modelinfo"
@@ -661,6 +662,12 @@ func (b *Backend) noteAssistantUsage(msg *AssistantMessage) {
 // at is the message's own transcript timestamp — when CC billed it, not when
 // the tail read it. That distinction is the whole of #1909.
 func (b *Backend) noteSubagentTranscriptUsage(agent, model, id string, at time.Time, complete bool, u TokenUsage) {
+	// The transcript names the model the subagent really runs on; show that
+	// in place of the requested alias (#2138). No-op for an untracked key.
+	// "<synthetic>" marks a CC-generated message, not a model.
+	if !strings.HasPrefix(model, "<") {
+		b.agents.SetModel(agent, model)
+	}
 	b.turnMu.Lock()
 	defer b.turnMu.Unlock()
 	b.turnUsageAcc.note(model, agent, true, id, at, complete, u)

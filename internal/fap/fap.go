@@ -250,6 +250,13 @@ type ConversationInfo struct {
 	// (kind=tool), the running-subagent descriptions (kind=subagents), the target
 	// agent id (kind=waiting), else empty.
 	ActivityDetail string `json:"activityDetail,omitempty"`
+	// ActivityAgentKind, ActivityAgentDetail, ActivityAgentCommand and
+	// Subagents are the snapshot halves of the Activity frame's AgentKind,
+	// AgentDetail, AgentCommand and Subagents (#2138).
+	ActivityAgentKind    string            `json:"activityAgentKind,omitempty"`
+	ActivityAgentDetail  string            `json:"activityAgentDetail,omitempty"`
+	ActivityAgentCommand string            `json:"activityAgentCommand,omitempty"`
+	Subagents            []RunningSubagent `json:"subagents,omitempty"`
 	// LastActivityTs and LastPreview seed the roster row (last-active time + last
 	// message preview) so a freshly-paired device renders them without opening each
 	// chat to backfill. LastActivityTs is unix ms of the last visible frame.
@@ -440,10 +447,41 @@ func (Notification) Type() string { return TypeNotification }
 // the running-subagent descriptions (kind=subagents), the target agent id
 // (kind=waiting), else empty. This REPLACES the former Typing/Thinking/Warming/
 // Tool frames. App-only.
+//
+// Kind/Detail flatten everything to one line, so while subagents run the
+// agent's own activity is hidden. The optional fields keep the two apart
+// (#2138): AgentKind/AgentDetail are the agent's OWN resolved activity
+// (waiting > tool > thinking > warming > typing, never "subagents"; empty =
+// idle), AgentCommand is the running tool call's full command, and Subagents
+// lists every running subagent and background command. A client that ignores
+// them still gets the flattened Kind/Detail.
 type Activity struct {
-	ConversationID string `json:"conversationId"`
-	Kind           string `json:"kind"`
-	Detail         string `json:"detail,omitempty"`
+	ConversationID string            `json:"conversationId"`
+	Kind           string            `json:"kind"`
+	Detail         string            `json:"detail,omitempty"`
+	AgentKind      string            `json:"agentKind,omitempty"`
+	AgentDetail    string            `json:"agentDetail,omitempty"`
+	AgentCommand   string            `json:"agentCommand,omitempty"`
+	Subagents      []RunningSubagent `json:"subagents,omitempty"`
+}
+
+// RunningSubagent is one running subagent (or background command) in an
+// Activity frame or roster snapshot (#2138).
+type RunningSubagent struct {
+	// ID is the subagent's group key (its Agent tool_use id): the app's
+	// subagent chit is "subagent:<ID>", which is how a tap opens its view.
+	ID          string `json:"id"`
+	Description string `json:"description,omitempty"`
+	// Kind is "agent" (an Agent-tool subagent) or "command" (a background
+	// shell command, which has no subagent view).
+	Kind string `json:"kind,omitempty"`
+	// Model is the model the subagent runs on: the requested alias until its
+	// transcript names the real model id. Empty = unknown (inherits).
+	Model        string `json:"model,omitempty"`
+	SubagentType string `json:"subagentType,omitempty"`
+	// Command is a background command's full command line (kind=command).
+	Command   string `json:"command,omitempty"`
+	StartedMs int64  `json:"startedMs,omitempty"`
 }
 
 func (Activity) Type() string { return TypeActivity }

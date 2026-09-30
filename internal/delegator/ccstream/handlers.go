@@ -11,6 +11,7 @@ import (
 	"foci/internal/modelinfo"
 	"foci/internal/ratelimit"
 	"foci/internal/timeutil"
+	"foci/internal/toolformat"
 )
 
 const (
@@ -285,7 +286,9 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 			// completes inside the turn and is not tracked.
 			if block.Name == "Agent" {
 				desc := delegator.ExtractAgentDescription(block.Input)
-				b.agents.Add(block.ID, desc)
+				model, subagentType := delegator.ExtractAgentModel(block.Input)
+				b.agents.AddEntry(delegator.TrackedSubagent{ID: block.ID, Description: desc,
+					Kind: delegator.SubagentKindAgent, Model: model, SubagentType: subagentType})
 				// Stash the label + prompt by the Agent tool_use_id (= the stable
 				// groupKey) so the first task_started can bind the reactivation run
 				// state (#1355) and, when the PreToolUse hook never fires, supply
@@ -306,7 +309,8 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 					b.subagentTails().expectForeground(block.ID)
 				}
 			} else if block.Name == "Bash" && delegator.ExtractBashBackground(block.Input) {
-				b.agents.Add(block.ID, "background command")
+				b.agents.AddEntry(delegator.TrackedSubagent{ID: block.ID, Description: "background command",
+					Kind: delegator.SubagentKindCommand, Command: toolformat.FullCommand(block.Name, block.Input)})
 			} else if block.Name == "SendMessage" {
 				// A SendMessage can target a subagent (keyed by task_id == the
 				// SendMessage `to`) in either of two states (#1419):
@@ -1045,7 +1049,8 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 			// and for a nested task, whose runs are not tracked.
 			tailKey := task.ToolUseID
 			var reactivatedAt time.Time
-			if nestedKey, nested := b.nestedTask(task.TaskID, task.ToolUseID); nested {
+			nestedKey, nested := b.nestedTask(task.TaskID, task.ToolUseID)
+			if nested {
 				tailKey = nestedKey
 				b.logger().Infof("subagent_start suppressed=nested group=%s task_id=%s", nestedKey, task.TaskID)
 			} else if run, reactivated, prompt := b.onTaskStarted(task.TaskID, task.ToolUseID); reactivated {
@@ -1068,6 +1073,11 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 						se.OnSubagentStart(run.groupKey, run.label, prompt, run.runIndex)
 					}
 				}
+			}
+			// The tracker keys by tailKey (groupKey, or a background Bash's
+			// tool_use_id); stop_task needs the task_id (#2138).
+			if !nested {
+				b.recordTaskID(tailKey, task.TaskID)
 			}
 			// Start tailing EVERY subagent's transcript, foreground or
 			// background: the tail is the only source of its completed USAGE
@@ -1179,13 +1189,14 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 				removed := false
 				if groupKey != "" {
 					removed = b.agents.Remove(groupKey)
+					b.forgetTaskID(groupKey)
 				} else {
 					removed = b.agents.RemoveOne()
 				}
-				if !removed && b.agents.Pending() == 0 && b.agents.OnStatus != nil {
+				if !removed && b.agents.Pending() == 0 {
 					// Nothing tracked at all: the resolved state is already "no
 					// subagents running", so clear any stale indicator.
-					b.agents.OnStatus("")
+					b.agents.NotifyIdle()
 				}
 				if groupKey != "" {
 					// The real end for BOTH kinds, and the only safe place to stop a

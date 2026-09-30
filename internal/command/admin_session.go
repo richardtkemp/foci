@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"foci/internal/agent"
 	"foci/internal/delegator"
@@ -11,46 +12,102 @@ import (
 )
 
 // StopCommand returns a /stop command that cancels the current agent turn.
+// An argument widens or narrows it (#2138): "subagents" stops only the running
+// subagents and background commands, leaving the turn alone; "all" stops the
+// turn and them.
 func StopCommand() *Command {
 	return &Command{
 		Name:        "stop",
-		Description: "Cancel the current agent turn",
+		Description: "Cancel the current agent turn (subagents: only subagents; all: both)",
 		Category:    "operations",
 		Immediate:   true, // must run in polling goroutine to cancel a live turn
-		Execute: func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
-			// Delegated mode: send Escape×2 + Ctrl-C to CC's TUI.
-			if cc.Agent != nil && cc.Agent.DelegatedManager != nil {
-				sk := tools.SessionKeyFromContext(ctx)
-				if sk == "" {
-					return Response{}, fmt.Errorf("no active session")
+		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+			switch mode := strings.ToLower(strings.TrimSpace(req.Args)); mode {
+			case "":
+				return stopTurn(ctx, cc, true)
+			case "subagents":
+				return stopSubagents(ctx, cc)
+			case "all":
+				turn, err := stopTurn(ctx, cc, false)
+				if err != nil {
+					return Response{}, err
 				}
-
-				// If there's a pending AskUserQuestion, cancel it
-				// instead of stopping the entire CC session.
-				if cancelled := cc.Agent.CancelPendingQuestion(ctx, sk); cancelled {
-					return Response{Text: "Question cancelled."}, nil
+				subs, err := stopSubagents(ctx, cc)
+				if err != nil {
+					return Response{}, err
 				}
-
-				if err := cc.Agent.DelegatedManager.StopSession(ctx, sk); err != nil {
-					return Response{}, fmt.Errorf("stop delegated: %w", err)
-				}
-				// Cancel foci's per-session turn ctx (TODO #743 — was a
-				// single bot.cancelTurn field; now precise per session via
-				// Agent.CancelSession).
-				cc.Agent.CancelSession(sk)
-				return Response{Text: "Stopped."}, nil
+				return Response{Text: turn.Text + " " + subs.Text}, nil
+			default:
+				return Response{}, fmt.Errorf("unknown /stop argument %q: use subagents or all", mode)
 			}
-
-			// Traditional mode (API backend): per-session cancel via the
-			// inbox.
-			if sk := tools.SessionKeyFromContext(ctx); sk != "" && cc.Agent != nil {
-				cc.Agent.CancelSession(sk)
-			} else if cc.StopFunc != nil {
-				// Fallback for callers without a session key in context.
-				cc.StopFunc()
-			}
-			return Response{Text: "Stopped."}, nil
 		},
+	}
+}
+
+// stopTurn cancels the agent's current turn. With cancelQuestion, a pending
+// AskUserQuestion is cancelled INSTEAD of the turn (plain /stop); /stop all
+// passes false, since it asked to stop everything.
+func stopTurn(ctx context.Context, cc CommandContext, cancelQuestion bool) (Response, error) {
+	// Delegated mode: send Escape×2 + Ctrl-C to CC's TUI.
+	if cc.Agent != nil && cc.Agent.DelegatedManager != nil {
+		sk := tools.SessionKeyFromContext(ctx)
+		if sk == "" {
+			return Response{}, fmt.Errorf("no active session")
+		}
+
+		// If there's a pending AskUserQuestion, cancel it
+		// instead of stopping the entire CC session.
+		if cancelQuestion {
+			if cancelled := cc.Agent.CancelPendingQuestion(ctx, sk); cancelled {
+				return Response{Text: "Question cancelled."}, nil
+			}
+		}
+
+		if err := cc.Agent.DelegatedManager.StopSession(ctx, sk); err != nil {
+			return Response{}, fmt.Errorf("stop delegated: %w", err)
+		}
+		// Cancel foci's per-session turn ctx (TODO #743 — was a
+		// single bot.cancelTurn field; now precise per session via
+		// Agent.CancelSession).
+		cc.Agent.CancelSession(sk)
+		return Response{Text: "Stopped."}, nil
+	}
+
+	// Traditional mode (API backend): per-session cancel via the
+	// inbox.
+	if sk := tools.SessionKeyFromContext(ctx); sk != "" && cc.Agent != nil {
+		cc.Agent.CancelSession(sk)
+	} else if cc.StopFunc != nil {
+		// Fallback for callers without a session key in context.
+		cc.StopFunc()
+	}
+	return Response{Text: "Stopped."}, nil
+}
+
+// stopSubagents stops the session's running subagents and background commands
+// without touching its turn. Only a delegated backend has subagents.
+func stopSubagents(ctx context.Context, cc CommandContext) (Response, error) {
+	if cc.Agent == nil || cc.Agent.DelegatedManager == nil {
+		return Response{Text: "No subagents to stop."}, nil
+	}
+	sk := tools.SessionKeyFromContext(ctx)
+	if sk == "" {
+		return Response{}, fmt.Errorf("no active session")
+	}
+	n, err := cc.Agent.DelegatedManager.StopSubagents(ctx, sk)
+	if errors.Is(err, agent.ErrStopSubagentsUnsupported) {
+		return Response{}, err
+	}
+	if err != nil && n == 0 {
+		return Response{}, fmt.Errorf("stop subagents: %w", err)
+	}
+	switch {
+	case n == 0:
+		return Response{Text: "No subagents to stop."}, nil
+	case n == 1:
+		return Response{Text: "Stopping 1 subagent."}, nil
+	default:
+		return Response{Text: fmt.Sprintf("Stopping %d subagents.", n)}, nil
 	}
 }
 

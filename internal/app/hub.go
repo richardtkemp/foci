@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -2171,12 +2172,13 @@ type convBinding struct {
 	// turn. activityKind / activityDetail cache the last-emitted resolved value
 	// so a setter only sends an Activity frame (and updates the roster snapshot)
 	// on an actual change.
-	turnKind       fap.ActivityKind // turn-scoped kind (idle when no turn in flight)
-	turnDetail     string           // turn-scoped detail (e.g. tool name)
-	subagentDetail string           // running-subagent descriptions, empty if none
-	waitingDetail  string           // target agent id we're awaiting, empty if none
-	activityKind   fap.ActivityKind // last-emitted resolved kind ("" == idle)
-	activityDetail string           // last-emitted resolved detail
+	turnKind       fap.ActivityKind      // turn-scoped kind (idle when no turn in flight)
+	turnDetail     string                // turn-scoped detail (e.g. tool name)
+	turnCommand    string                // turn-scoped full tool command (kind=tool), for the stop dialog (#2138)
+	subagentDetail string                // running-subagent descriptions, empty if none
+	subagents      []fap.RunningSubagent // the structured running list behind subagentDetail (#2138)
+	waitingDetail  string                // target agent id we're awaiting, empty if none
+	activitySent   fap.Activity          // last-emitted Activity frame (zero == idle, nothing sent)
 
 	// lastCmdHash fingerprints the command palette last sent on this
 	// conversation, so pushCommands is a no-op when nothing changed — the same
@@ -2321,8 +2323,10 @@ func (b *convBinding) currentSeq() int64 {
 func (b *convBinding) info() fap.ConversationInfo {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	kind, detail := b.resolveActivity()
-	return fap.ConversationInfo{ID: b.convID, SessionKey: b.sessionKey, LastSeq: b.seq, Activity: string(kind), ActivityDetail: detail, LastActivityTs: b.lastActMs, LastPreview: b.lastPreview, CacheExpiryMs: b.cacheExpiryMs}
+	a := b.activityFrameLocked()
+	return fap.ConversationInfo{ID: b.convID, SessionKey: b.sessionKey, LastSeq: b.seq, Activity: a.Kind, ActivityDetail: a.Detail,
+		ActivityAgentKind: a.AgentKind, ActivityAgentDetail: a.AgentDetail, ActivityAgentCommand: a.AgentCommand, Subagents: a.Subagents,
+		LastActivityTs: b.lastActMs, LastPreview: b.lastPreview, CacheExpiryMs: b.cacheExpiryMs}
 }
 
 // resolveActivity collapses the turn-scoped and session-scoped inputs to a
@@ -2337,21 +2341,52 @@ func (b *convBinding) resolveActivity() (fap.ActivityKind, string) {
 	if b.subagentDetail != "" {
 		return fap.ActivityKindSubagents, b.subagentDetail
 	}
-	if b.waitingDetail != "" {
-		return fap.ActivityKindWaiting, b.waitingDetail
-	}
-	if b.turnKind != "" && b.turnKind != fap.ActivityKindIdle {
-		return b.turnKind, b.turnDetail
-	}
-	return fap.ActivityKindIdle, ""
+	kind, detail, _ := b.agentActivityLocked()
+	return kind, detail
 }
 
-// setTurnActivity records the turn-scoped activity (kind + detail) and re-emits
+// agentActivityLocked resolves the AGENT's own activity, ignoring subagents:
+// waiting > turn-scoped > idle, plus the running tool's full command. This is
+// what the app shows first, above the subagent lines (#2138). Caller holds mu.
+func (b *convBinding) agentActivityLocked() (fap.ActivityKind, string, string) {
+	if b.waitingDetail != "" {
+		return fap.ActivityKindWaiting, b.waitingDetail, ""
+	}
+	if b.turnKind != "" && b.turnKind != fap.ActivityKindIdle {
+		return b.turnKind, b.turnDetail, b.turnCommand
+	}
+	return fap.ActivityKindIdle, "", ""
+}
+
+// activityFrameLocked builds the full Activity frame from the current inputs:
+// the flattened Kind/Detail plus the agent's own activity and the running
+// subagent list. Caller holds mu.
+func (b *convBinding) activityFrameLocked() fap.Activity {
+	kind, detail := b.resolveActivity()
+	a := fap.Activity{ConversationID: b.convID, Kind: string(kind), Detail: detail}
+	if ak, ad, cmd := b.agentActivityLocked(); ak != fap.ActivityKindIdle {
+		a.AgentKind, a.AgentDetail, a.AgentCommand = string(ak), ad, cmd
+	}
+	if len(b.subagents) > 0 {
+		a.Subagents = append([]fap.RunningSubagent(nil), b.subagents...)
+	}
+	return a
+}
+
+// setTurnActivity records a detail-less turn-scoped activity kind and re-emits
 // if the resolved value changed. Called by appSink off the turn-event stream.
-func (b *convBinding) setTurnActivity(kind fap.ActivityKind, detail string) {
+func (b *convBinding) setTurnActivity(kind fap.ActivityKind) {
+	b.setTurnTool(kind, "", "")
+}
+
+// setTurnTool records the turn-scoped kind with its detail and, for a tool, the
+// full command shown behind the stop dialog's "show full command" expander
+// (#2138).
+func (b *convBinding) setTurnTool(kind fap.ActivityKind, detail, command string) {
 	b.applyActivity(func() {
 		b.turnKind = kind
 		b.turnDetail = detail
+		b.turnCommand = command
 	})
 }
 
@@ -2377,6 +2412,16 @@ func (b *convBinding) setSubagentDetail(detail string) {
 	b.applyActivity(func() { b.subagentDetail = detail })
 }
 
+// setSubagents records the structured running list and the detail derived from
+// it together, so the backend's following detail-only update is a no-op rather
+// than a second frame (#2138).
+func (b *convBinding) setSubagents(detail string, running []fap.RunningSubagent) {
+	b.applyActivity(func() {
+		b.subagentDetail = detail
+		b.subagents = running
+	})
+}
+
 // setWaitingDetail records the session-scoped target agent this conversation is
 // awaiting a reply from (empty = not waiting) and re-emits on a resolved change.
 func (b *convBinding) setWaitingDetail(detail string) {
@@ -2390,21 +2435,27 @@ func (b *convBinding) setWaitingDetail(detail string) {
 func (b *convBinding) applyActivity(mutate func()) {
 	b.mu.Lock()
 	mutate()
-	kind, detail := b.resolveActivity()
-	prevKind := b.activityKind
-	if prevKind == "" {
-		prevKind = fap.ActivityKindIdle
+	a := b.activityFrameLocked()
+	prev := b.activitySent
+	if prev.Kind == "" {
+		prev = fap.Activity{ConversationID: b.convID, Kind: string(fap.ActivityKindIdle)}
 	}
-	changed := kind != prevKind || detail != b.activityDetail
+	changed := !activityEqual(a, prev)
 	if changed {
-		b.activityKind = kind
-		b.activityDetail = detail
+		b.activitySent = a
 	}
-	convID := b.convID
 	b.mu.Unlock()
 	if changed {
-		b.send(fap.Activity{ConversationID: convID, Kind: string(kind), Detail: detail})
+		b.send(a)
 	}
+}
+
+// activityEqual compares two Activity frames field by field (the slice makes
+// the struct non-comparable with ==).
+func activityEqual(x, y fap.Activity) bool {
+	return x.ConversationID == y.ConversationID && x.Kind == y.Kind && x.Detail == y.Detail &&
+		x.AgentKind == y.AgentKind && x.AgentDetail == y.AgentDetail && x.AgentCommand == y.AgentCommand &&
+		slices.Equal(x.Subagents, y.Subagents)
 }
 
 // send encodes a server frame with the next per-conversation seq and the

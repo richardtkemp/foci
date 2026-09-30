@@ -352,6 +352,10 @@ type Backend struct {
 	agentLabels     map[string]string       // Agent tool_use_id (groupKey) -> label
 	agentPrompts    map[string]string       // Agent tool_use_id (groupKey) -> prompt
 	subagentStarted map[string]bool         // Agent tool_use_id (groupKey) -> SubagentStart already emitted
+	// trackedTaskIDs maps a tracker key (a subagent's groupKey, or a background
+	// Bash's tool_use_id) to its CC task_id, recorded at task_started: the
+	// stop_task control request names a task, the tracker names a key (#2138).
+	trackedTaskIDs map[string]string
 	// Nested subagents (#1554): a subagent that itself calls the Agent tool.
 	// CC's task_* events carry no parentage, so a grandchild's lifecycle is only
 	// recognisable from what was recorded at SPAWN. See nested_subagents.go.
