@@ -1150,3 +1150,36 @@ func TestTodoToolPriorityAliasesCoercedOrRejected(t *testing.T) {
 		}
 	}
 }
+
+func TestTodoToolEditTagNamesRemovedTags(t *testing.T) {
+	// --tag REPLACES the tag set, so a tag the caller did not repeat is dropped
+	// silently unless the result says so (Dick, 2026-09-30).
+	t.Parallel()
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id, _ := store.Add("agent1", "Task", "medium", "codex,foci")
+	result, err := executeTodoTool(tool, map[string]interface{}{
+		"action": "edit", "id": id, "tag": "triaged,foci",
+	})
+	if err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	if !strings.Contains(result, "removed: codex") {
+		t.Errorf("result %q does not name the removed tag codex", result)
+	}
+	if strings.Contains(result, "removed: foci") || strings.Contains(result, "removed: codex,foci") {
+		t.Errorf("result %q names a kept tag as removed", result)
+	}
+
+	// Adding only (nothing dropped) must not claim a removal.
+	result, err = executeTodoTool(tool, map[string]interface{}{
+		"action": "edit", "id": id, "tag": "triaged,foci,more",
+	})
+	if err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	if strings.Contains(result, "removed") {
+		t.Errorf("result %q claims a removal when none happened", result)
+	}
+}

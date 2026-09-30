@@ -757,7 +757,13 @@ func todoEdit(store *memory.TodoStore, agentID string, id int64, ids []int64, te
 			if newTags == "" {
 				newTags = "(none)"
 			}
-			changes = append(changes, fmt.Sprintf("tags: %s → %s", oldTags, newTags))
+			change := fmt.Sprintf("tags: %s → %s", oldTags, newTags)
+			// tag REPLACES the set, so name what the caller dropped: a tag
+			// not repeated is otherwise lost without a word (Dick, 2026-09-30).
+			if removed := removedTags(oldItem.Tags, item.Tags); len(removed) > 0 {
+				change += " (removed: " + strings.Join(removed, ",") + ")"
+			}
+			changes = append(changes, change)
 		}
 		if len(changes) == 0 {
 			results = append(results, fmt.Sprintf("#%d: no changes", rid))
@@ -864,4 +870,22 @@ func resolveIDs(id int64, ids []int64) ([]int64, error) {
 		return nil, fmt.Errorf("id is required")
 	}
 	return ids, nil
+}
+
+// removedTags returns the tags in before (comma-separated) that are not in
+// after, in before's order.
+func removedTags(before, after string) []string {
+	kept := map[string]bool{}
+	for _, t := range strings.Split(after, ",") {
+		if t = strings.TrimSpace(t); t != "" {
+			kept[t] = true
+		}
+	}
+	var removed []string
+	for _, t := range strings.Split(before, ",") {
+		if t = strings.TrimSpace(t); t != "" && !kept[t] {
+			removed = append(removed, t)
+		}
+	}
+	return removed
 }
