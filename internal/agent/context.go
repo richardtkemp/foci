@@ -5,6 +5,8 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/convo"
+	"foci/internal/delegator"
 	"foci/internal/provider"
 	"foci/internal/turnevent"
 )
@@ -163,31 +165,64 @@ func isMemoryTrigger(trigger string) bool {
 	}
 }
 
-// recordedTurnKinds are the kinds of NON-DELIVERED turn whose output is
-// recorded to the conversation DB, tagged with the kind so search can tell it
-// from chat (#2060, Dick 2026-09-28). Keepalive and compaction-memory turns are
-// deliberately absent: they stay unrecorded. So are the batch utility purposes
-// (nudge_extraction, summary, prompt_diff), which are one-shot helper calls
-// rather than the agent's own work. The values are turn triggers: the branch
-// types the periodic runner passes as the trigger, "session_end_memory"
-// (RunSessionEndMemory), "consolidation" (also the batch purpose it runs under
-// on delegated agents) and "branch" (the /branch endpoint).
-var recordedTurnKinds = map[string]bool{
-	"reflection":         true,
-	"session_end_memory": true,
-	"background":         true,
-	"consolidation":      true,
-	"branch":             true,
+// nonDeliveredTurnKinds is THE rule for which turns the conversation DB
+// records (#2060, Dick 2026-09-28; applied at every record site by #2094). It
+// lists the triggers of turns whose output is not delivered to a chat:
+//   - true: recorded, each row tagged turn_kind=<trigger> so search can tell it
+//     from chat;
+//   - false: not recorded at all, neither the prompt (recv), the text nor the
+//     thinking. Keepalive and compaction memory by ruling; the batch utility
+//     purposes because they are one-shot helper calls, not the agent's work.
+//
+// A trigger absent from the map is an ordinary turn (platform message, /send,
+// cron, webhook, agent inject, ...) and is recorded untagged. The keys are the
+// trigger values that actually reach the turn: the branch types the periodic
+// runner passes (buildBranchFunc → WithTrigger(branchType)), "session_end_memory"
+// (RunSessionEndMemory), "compaction_memory" (FireCompactionMemory), the batch
+// purpose (RunBatchTurn triggers a batch as its purpose; consolidation is also
+// a periodic branch type) and "branch" (the /branch endpoint).
+var nonDeliveredTurnKinds = map[string]bool{
+	"reflection":                          true,
+	"session_end_memory":                  true,
+	"background":                          true,
+	delegator.BatchPurposeConsolidation:   true,
+	"branch":                              true,
+	"keepalive":                           false,
+	"compaction_memory":                   false,
+	delegator.BatchPurposeNudgeExtraction: false,
+	delegator.BatchPurposeSummary:         false,
+	delegator.BatchPurposePromptDiff:      false,
+}
+
+// turnRecorded reports whether a turn with this trigger is recorded in the
+// conversation DB at all (see nonDeliveredTurnKinds).
+func turnRecorded(trigger string) bool {
+	recorded, listed := nonDeliveredTurnKinds[trigger]
+	return !listed || recorded
 }
 
 // recordedTurnKind returns trigger when it names a recorded non-delivered turn
-// kind (recordedTurnKinds), else "". The result is the conversation row's
+// kind (nonDeliveredTurnKinds), else "". The result is the conversation row's
 // turn_kind tag.
 func recordedTurnKind(trigger string) string {
-	if recordedTurnKinds[trigger] {
+	if nonDeliveredTurnKinds[trigger] {
 		return trigger
 	}
 	return ""
+}
+
+// recordTurnEntry writes e to the conversation DB for a turn with this
+// trigger, applying nonDeliveredTurnKinds: nothing for an unrecorded kind,
+// otherwise e tagged with the turn's kind. Every row a turn writes from its
+// TurnState goes through here, so the rule has one enforcement point.
+// loggingSink rows need no check: that sink is only attached to delivered
+// turns and, via recordedTurnKind, to recorded non-delivered kinds.
+func recordTurnEntry(trigger string, e convo.Entry) {
+	if !turnRecorded(trigger) {
+		return
+	}
+	e.TurnKind = recordedTurnKind(trigger)
+	convo.Record(e)
 }
 
 // nudgesAllowed reports whether automatic nudges should fire on this turn.

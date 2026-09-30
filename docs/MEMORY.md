@@ -177,7 +177,7 @@ Conversation messages are indexed as they arrive, in both backends:
 
 **What the conversation log holds (#2060).** Besides the chat itself, `conversation.db` records:
 - **Subagent output**: each subagent's start prompt (first line `[subagent: <label>]`), follow-up prompts, and text blocks, as rows with `content_type` `subagent_prompt` / `subagent` and `subagent_group` (the Agent tool_use id, which also names the backend transcript `agent-<id>.jsonl`) plus `subagent_run`. Tool calls and results are not recorded. The backend's own transcripts are cleaned up after about 30 days; these rows are kept.
-- **Output of non-delivered turns**: reflection, session-end memory, background, consolidation and `/branch` turns, and the subagents they start, tagged with `turn_kind`. Keepalive and compaction-memory turns stay unrecorded.
+- **Output of non-delivered turns**: reflection, session-end memory, background, consolidation and `/branch` turns, and the subagents they start, tagged with `turn_kind`. Keepalive, compaction-memory and batch helper turns (nudge extraction, summary, prompt diff) are not recorded at all: no prompt, text or thinking rows (#2094; the rule is `nonDeliveredTurnKinds` in `internal/agent/context.go`).
 
 `memory_search` labels such hits by kind (`[conversation/subagent ...]`, `[conversation/reflection ...]`, `[conversation/background/subagent ...]`); the kind is looked up from `conversation.db` at display time, so the search indexes need no rebuild. Context expansion (`lines`, or a `session#rowID` query) stays within the hit's thread: a subagent hit shows the rest of that subagent (same `subagent_group`), and a chat hit leaves subagent rows out. Rows recorded before #2060 carry no tags.
 

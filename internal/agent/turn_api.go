@@ -630,19 +630,19 @@ func (a *Agent) unregisterTurn(id uint64) {
 }
 
 // logConversationSent logs an outbound conversation entry for ts, tagged with
-// the turn's kind when it is a recorded non-delivered turn (#2060).
+// the turn's kind when it is a recorded non-delivered turn (#2060), and
+// skipped for an unrecorded one (recordTurnEntry).
 func (a *Agent) logConversationSent(ts *TurnState, text string) {
 	if text == "" {
 		return
 	}
-	convo.Record(convo.Entry{
+	recordTurnEntry(ts.Trigger, convo.Entry{
 		Direction: "sent",
 		UserID:    ts.Meta.UserID,
 		Username:  ts.Meta.Username,
 		ChatID:    ts.ConvChatID,
 		Text:      text,
 		Session:   ts.SessionKey,
-		TurnKind:  recordedTurnKind(ts.Trigger),
 	})
 }
 
@@ -651,7 +651,7 @@ func (a *Agent) logConversationThinking(ts *TurnState, thinking string) {
 	if thinking == "" {
 		return
 	}
-	convo.Record(convo.Entry{
+	recordTurnEntry(ts.Trigger, convo.Entry{
 		Direction:   "sent",
 		UserID:      ts.Meta.UserID,
 		Username:    ts.Meta.Username,
@@ -659,7 +659,6 @@ func (a *Agent) logConversationThinking(ts *TurnState, thinking string) {
 		Text:        thinking,
 		Session:     ts.SessionKey,
 		ContentType: "thinking",
-		TurnKind:    recordedTurnKind(ts.Trigger),
 	})
 }
 

@@ -282,14 +282,13 @@ func (s *sharedTurnOps) LogConversationRecv(ts *TurnState) {
 		chatID = session.ChatIDFromKey(ts.SessionKey)
 	}
 	ts.ConvChatID = chatID
-	convo.Record(convo.Entry{
+	recordTurnEntry(ts.Trigger, convo.Entry{
 		Direction: "recv",
 		UserID:    ts.Meta.UserID,
 		Username:  ts.Meta.Username,
 		ChatID:    chatID,
 		Text:      strings.Join(ts.Texts, "\n"),
 		Session:   ts.SessionKey,
-		TurnKind:  recordedTurnKind(ts.Trigger),
 	})
 }
 
@@ -316,19 +315,19 @@ func (s *sharedTurnOps) LoadSessionMeta(ts *TurnState) {
 }
 
 // LogConversationSent logs the outbound response text. Extracted from
-// agent.go:825-838. Skips empty text (no-response turns).
+// agent.go:825-838. Skips empty text (no-response turns); recordTurnEntry
+// applies the which-turns-are-recorded rule.
 func (s *sharedTurnOps) LogConversationSent(ts *TurnState) {
 	if ts.FinalText == "" {
 		return
 	}
-	convo.Record(convo.Entry{
+	recordTurnEntry(ts.Trigger, convo.Entry{
 		Direction: "sent",
 		UserID:    ts.Meta.UserID,
 		Username:  ts.Meta.Username,
 		ChatID:    ts.ConvChatID,
 		Text:      ts.FinalText,
 		Session:   ts.SessionKey,
-		TurnKind:  recordedTurnKind(ts.Trigger),
 	})
 }
 
