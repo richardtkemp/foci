@@ -97,6 +97,88 @@ func TestHelpCommand(t *testing.T) {
 	}
 }
 
+// TestHelpCommand_WithArg verifies /help <command> (#1551): the named
+// description, aliases and subcommands come from the registry; a registered
+// command the table hides is still described (with why it is unavailable);
+// only a name the registry lacks is "Unknown", followed by the full table.
+func TestHelpCommand_WithArg(t *testing.T) {
+	noop := func(_ context.Context, _ Request, _ CommandContext) (Response, error) { return Response{}, nil }
+	reg := NewRegistry()
+	reg.Register(&Command{Name: "widget", Aliases: []string{"wd"}, Description: "Manage widgets",
+		Subcommands: []Subcommand{
+			{Name: "list", Description: "List every widget", Execute: noop},
+			{Name: "add", Description: "Add a widget by name", Hidden: true, Execute: noop},
+			{Name: "secret", Description: "Never shown", Execute: noop,
+				Visible: func(context.Context, CommandContext) bool { return false }},
+		}})
+	reg.Register(&Command{Name: "plain", Description: "A plain command", Execute: noop})
+	reg.Register(&Command{Name: "hidden", Description: "Hidden cmd", Hidden: true, Execute: noop})
+	reg.Register(&Command{Name: "cconly", Description: "Backend-only cmd", Requires: RequiresBackend, Execute: noop})
+	reg.Register(&Command{Name: "offmodel", Description: "Model-gated cmd", Execute: noop,
+		Visible: func(context.Context, Request, CommandContext) bool { return false }})
+	reg.Register(HelpCommand(reg))
+	help := reg.Get("help")
+
+	run := func(args string) string {
+		t.Helper()
+		resp, err := help.Execute(context.Background(), Request{Name: "help", Args: args}, CommandContext{})
+		if err != nil {
+			t.Fatalf("Execute(%q): %v", args, err)
+		}
+		return resp.Text
+	}
+
+	full := run("")
+
+	for _, args := range []string{"widget", "/widget", "WIDGET", "wd"} {
+		got := run(args)
+		for _, want := range []string{"/widget", "Manage widgets", "/wd",
+			"| list | List every widget |", "| add | Add a widget by name |"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("/help %s: missing %q in:\n%s", args, want, got)
+			}
+		}
+		if strings.Contains(got, "secret") {
+			t.Errorf("/help %s: invisible subcommand shown:\n%s", args, got)
+		}
+		if strings.Contains(got, "/plain") {
+			t.Errorf("/help %s: should show only the named command, got:\n%s", args, got)
+		}
+	}
+
+	if got := run("plain"); !strings.Contains(got, "/plain") || !strings.Contains(got, "A plain command") ||
+		strings.Contains(got, "Subcommand") {
+		t.Errorf("/help plain: want description and no subcommand table, got:\n%s", got)
+	}
+
+	got := run("nosuch")
+	if !strings.Contains(got, "Unknown command /nosuch") || !strings.Contains(got, full) {
+		t.Errorf("/help nosuch: want unknown-command notice plus full table, got:\n%s", got)
+	}
+
+	// Registered but hidden from the table: described, never "Unknown".
+	// CommandContext{} has no Agent, so RequiresBackend fails with its reason.
+	for _, tc := range []struct{ args, desc, avail string }{
+		{"hidden", "Hidden cmd", ""},
+		{"cconly", "Backend-only cmd", "Not available on this agent: /cconly requires a Claude Code backend."},
+		{"offmodel", "Model-gated cmd", "Not available on this agent in its current configuration"},
+	} {
+		got := run(tc.args)
+		if strings.Contains(got, "Unknown command") || strings.Contains(got, full) {
+			t.Errorf("/help %s: registered command reported as unknown:\n%s", tc.args, got)
+		}
+		if !strings.Contains(got, "/"+tc.args) || !strings.Contains(got, tc.desc) {
+			t.Errorf("/help %s: missing name/description in:\n%s", tc.args, got)
+		}
+		if tc.avail == "" && strings.Contains(got, "Not available") {
+			t.Errorf("/help %s: available command marked unavailable:\n%s", tc.args, got)
+		}
+		if tc.avail != "" && !strings.Contains(got, tc.avail) {
+			t.Errorf("/help %s: missing %q in:\n%s", tc.args, tc.avail, got)
+		}
+	}
+}
+
 // TestToolsCommand verifies tools list renders with all registered tools.
 func TestToolsCommand(t *testing.T) {
 	cmd := ToolsCommand()

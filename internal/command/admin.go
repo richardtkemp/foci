@@ -178,62 +178,124 @@ func configSet(deps *ConfigSetDeps, scope, args string) (string, error) {
 	return fmt.Sprintf("Which section?\n%s", strings.Join(sections, ", ")), nil
 }
 
-// HelpCommand returns a /help command that lists all registered commands.
+// HelpCommand returns a /help command. With no argument it lists every
+// command visible to the caller; "/help <command>" shows that command's
+// description, aliases and subcommands (#1551). Both read the registry, so
+// each command's own registered text is the single source.
 // registry is needed to enumerate commands; pass it after registration.
 func HelpCommand(registry *Registry) *Command {
 	return &Command{
 		Name:        "help",
-		Description: "List available commands",
+		Description: "List available commands; /help <command> for details",
 		Category:    "session",
 		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
-			type group struct {
-				emoji string
-				label string
+			fields := strings.Fields(req.Args)
+			if len(fields) == 0 {
+				return Response{Text: helpTable(ctx, registry, req, cc)}, nil
 			}
-			categoryOrder := []string{"observability", "operations", "diagnostics", "session"}
-			categoryMeta := map[string]group{
-				"observability": {emoji: "📊", label: "Observability"},
-				"operations":    {emoji: "⚙️", label: "Operations"},
-				"diagnostics":   {emoji: "🔍", label: "Diagnostics"},
-				"session":       {emoji: "💬", label: "Session"},
+			name := strings.ToLower(strings.TrimPrefix(fields[0], "/"))
+			cmd := registry.Get(name)
+			if cmd == nil {
+				return Response{Text: fmt.Sprintf("Unknown command /%s.\n\n%s", name, helpTable(ctx, registry, req, cc))}, nil
 			}
-			groups := make(map[string][]*Command)
-			var other []*Command
-
-			for _, cmd := range registry.All() {
-				if cmd.Hidden || (cmd.Visible != nil && !cmd.Visible(ctx, req, cc)) || checkRequires(cmd, cc) != "" {
-					continue
-				}
-				if cmd.Category != "" {
-					groups[cmd.Category] = append(groups[cmd.Category], cmd)
-				} else {
-					other = append(other, cmd)
-				}
-			}
-
-			cols := []display.Column{
-				{Header: "Command"},
-				{Header: "Description"},
-			}
-			var rows [][]string
-			for _, cat := range categoryOrder {
-				cmds := groups[cat]
-				if len(cmds) == 0 {
-					continue
-				}
-				meta := categoryMeta[cat]
-				rows = append(rows, []string{fmt.Sprintf("**%s %s**", meta.emoji, meta.label), ""})
-				for _, cmd := range cmds {
-					rows = append(rows, []string{"/" + cmd.Name, cmd.Description})
-				}
-			}
-			if len(other) > 0 {
-				rows = append(rows, []string{"**📦 Other**", ""})
-				for _, cmd := range other {
-					rows = append(rows, []string{"/" + cmd.Name, cmd.Description})
-				}
-			}
-			return Response{Text: display.MarkdownTable(cols, rows)}, nil
+			return Response{Text: helpDetail(ctx, cmd, req, cc)}, nil
 		},
 	}
+}
+
+// helpListed reports whether the no-argument /help table shows cmd to this
+// caller.
+func helpListed(ctx context.Context, cmd *Command, req Request, cc CommandContext) bool {
+	return !cmd.Hidden && (cmd.Visible == nil || cmd.Visible(ctx, req, cc)) && checkRequires(cmd, cc) == ""
+}
+
+// helpTable renders the no-argument /help listing, grouped by category.
+func helpTable(ctx context.Context, registry *Registry, req Request, cc CommandContext) string {
+	type group struct {
+		emoji string
+		label string
+	}
+	categoryOrder := []string{"observability", "operations", "diagnostics", "session"}
+	categoryMeta := map[string]group{
+		"observability": {emoji: "📊", label: "Observability"},
+		"operations":    {emoji: "⚙️", label: "Operations"},
+		"diagnostics":   {emoji: "🔍", label: "Diagnostics"},
+		"session":       {emoji: "💬", label: "Session"},
+	}
+	groups := make(map[string][]*Command)
+	var other []*Command
+
+	for _, cmd := range registry.All() {
+		if !helpListed(ctx, cmd, req, cc) {
+			continue
+		}
+		if cmd.Category != "" {
+			groups[cmd.Category] = append(groups[cmd.Category], cmd)
+		} else {
+			other = append(other, cmd)
+		}
+	}
+
+	cols := []display.Column{
+		{Header: "Command"},
+		{Header: "Description"},
+	}
+	var rows [][]string
+	for _, cat := range categoryOrder {
+		cmds := groups[cat]
+		if len(cmds) == 0 {
+			continue
+		}
+		meta := categoryMeta[cat]
+		rows = append(rows, []string{fmt.Sprintf("**%s %s**", meta.emoji, meta.label), ""})
+		for _, cmd := range cmds {
+			rows = append(rows, []string{"/" + cmd.Name, cmd.Description})
+		}
+	}
+	if len(other) > 0 {
+		rows = append(rows, []string{"**📦 Other**", ""})
+		for _, cmd := range other {
+			rows = append(rows, []string{"/" + cmd.Name, cmd.Description})
+		}
+	}
+	return display.MarkdownTable(cols, rows)
+}
+
+// helpDetail renders "/help <command>": the command's description, its
+// aliases, a line saying so when it is unavailable to this caller (with the
+// reason when the registry knows it), and a table of its subcommands. It
+// describes any registered command, including ones the table hides: calling
+// an existing command "Unknown" would be false. Subcommands marked Hidden are
+// still listed (Hidden only keeps them off the keyboard; they dispatch when
+// typed); ones whose Visible func says no are left out.
+func helpDetail(ctx context.Context, cmd *Command, req Request, cc CommandContext) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "**/%s**", cmd.Name)
+	if cmd.Description != "" {
+		fmt.Fprintf(&b, " — %s", cmd.Description)
+	}
+	if len(cmd.Aliases) > 0 {
+		aliases := make([]string, len(cmd.Aliases))
+		for i, a := range cmd.Aliases {
+			aliases[i] = "/" + a
+		}
+		fmt.Fprintf(&b, "\nAliases: %s", strings.Join(aliases, ", "))
+	}
+	if msg := checkRequires(cmd, cc); msg != "" {
+		fmt.Fprintf(&b, "\nNot available on this agent: %s.", msg)
+	} else if cmd.Visible != nil && !cmd.Visible(ctx, req, cc) {
+		b.WriteString("\nNot available on this agent in its current configuration (e.g. its model or backend).")
+	}
+	var rows [][]string
+	for _, sub := range cmd.Subcommands {
+		if sub.Visible != nil && !sub.Visible(ctx, cc) {
+			continue
+		}
+		rows = append(rows, []string{sub.Name, sub.Description})
+	}
+	if len(rows) > 0 {
+		b.WriteString("\n\n")
+		b.WriteString(display.MarkdownTable([]display.Column{{Header: "Subcommand"}, {Header: "Description"}}, rows))
+	}
+	return b.String()
 }

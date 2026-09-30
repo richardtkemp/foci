@@ -271,6 +271,8 @@ List all registered tools (name and description).
 ### `/help`
 List available commands grouped by category. Commands whose features aren't supported by the current model (e.g. `/effort`, `/thinking`, `/speed`) are hidden automatically.
 
+`/help <command>` shows that command's description, its aliases and its subcommands, each taken from the command's own registration (the same text the table and `/<command>` usage show). The leading `/` is optional. A registered command that the table hides from you is still described, with a line saying it isn't available on this agent (and why, when it needs a different transport). Only a name that isn't registered at all gets "Unknown command" followed by the full table.
+
 ---
 
 ## Hidden Commands
