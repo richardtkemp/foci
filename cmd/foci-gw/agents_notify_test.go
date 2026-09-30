@@ -14,6 +14,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/platform"
+	"foci/internal/turnevent"
 )
 
 // TestLogInjectionErrorSeverity is the regression test for #1442: an inject
@@ -490,5 +491,29 @@ func TestBuildWakeSchedulerRestoresPending(t *testing.T) {
 	}
 	if len(pending) != 1 {
 		t.Errorf("PendingWakes returned %d rows, want 1 (restoration should not consume DB rows)", len(pending))
+	}
+}
+
+// TestTurnSinkForConn_AppGetsDriverSink is the regression test for #1115: a
+// turn injected into an app session (proactive error/warning dispatch, wakes,
+// send_to_session) showed no status on Android. The app's SetTyping is a
+// deliberate no-op because activity is owned by its per-turn appSink, so an
+// injected turn rendered through a SessionSink delivered text but never sent an
+// Activity frame. turnSinkForConn must hand an agent.Driver connection's own
+// turn sink the turn's events, not a SessionSink around the connection.
+func TestTurnSinkForConn_AppGetsDriverSink(t *testing.T) {
+	initTestConvo(t)
+	inner := turnevent.NewBufferSink()
+	conn := &driverConn{stubConn: &stubConn{sessionKey: testSessionKey}, inner: inner}
+
+	sink, cleanup := turnSinkForConn(&agent.Agent{}, conn, testSessionKey, "proactive_warning")
+	if cleanup != nil {
+		defer cleanup()
+	}
+	sink.Emit(context.Background(), turnevent.TurnStart{})
+	sink.Emit(context.Background(), turnevent.TurnComplete{FinalText: "done"})
+
+	if !inner.Done() || inner.FinalText() != "done" {
+		t.Fatalf("driver sink saw no TurnComplete (done=%v text=%q): the injected turn bypassed the app's own sink, so no Activity frames reach the app (#1115)", inner.Done(), inner.FinalText())
 	}
 }
