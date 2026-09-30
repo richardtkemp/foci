@@ -40,6 +40,7 @@ func NewMemorySearchTool(backends map[string]memory.Searcher, defaultBackend fun
 		Name:        "memory_search",
 		ExecExport:  true,
 		Positional:  []string{"query"},
+		JSONOutput:  memorySearchJSONOutput,
 		Description: "Search memory files and conversation history using full-text search. Supports natural language queries with stemming (e.g., 'programming' matches 'program', 'programmer'). Memory files are ranked higher than conversation history. Sort by relevance (default), newest, or oldest. To retrieve conversation context around a specific result, use the session#rowID shown in results as the query (e.g., 'agent/c123#42'). Conversation hits written by a subagent, or by a turn that was never delivered to chat (reflection, background, consolidation, /branch), are labelled with that kind, e.g. [conversation/subagent ...] or [conversation/reflection ...].",
 		Parameters:  schema,
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
@@ -156,7 +157,7 @@ func memorySearch(ctx context.Context, params json.RawMessage, backends map[stri
 
 	// Direct conversation lookup: "session#rowID"
 	if session, rowID, ok := parseConversationRef(p.Query); ok {
-		return conversationLookup(convReader, session, rowID, p.Lines)
+		return conversationLookup(convReader, session, rowID, p.Lines, WantsJSON(ctx))
 	}
 
 	backendName := p.Backend
@@ -208,7 +209,7 @@ func memorySearch(ctx context.Context, params json.RawMessage, backends map[stri
 		return ToolResult{}, fmt.Errorf("search: %w", err)
 	}
 
-	if len(results) == 0 {
+	if len(results) == 0 && !WantsJSON(ctx) {
 		return TextResult("No matches found."), nil
 	}
 
@@ -220,6 +221,10 @@ func memorySearch(ctx context.Context, params json.RawMessage, backends map[stri
 		}
 	}
 	kinds := convReader.Kinds(refs)
+
+	if WantsJSON(ctx) {
+		return memorySearchJSON(results, kinds, convReader, p.Lines)
+	}
 
 	var sb strings.Builder
 	hasConvContext := false
@@ -251,7 +256,7 @@ func memorySearch(ctx context.Context, params json.RawMessage, backends map[stri
 
 // conversationLookup handles direct "session#rowID" queries by fetching
 // surrounding conversation messages.
-func conversationLookup(convReader *memory.ConversationReader, session string, rowID int64, lines int) (ToolResult, error) {
+func conversationLookup(convReader *memory.ConversationReader, session string, rowID int64, lines int, asJSON bool) (ToolResult, error) {
 	if convReader == nil {
 		return ToolResult{}, fmt.Errorf("conversation context not available")
 	}
@@ -261,6 +266,9 @@ func conversationLookup(convReader *memory.ConversationReader, session string, r
 	msgs, err := convReader.ReadContext(session, rowID, lines)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("read context: %w", err)
+	}
+	if asJSON {
+		return JSONResult(memoryMessagesJSON(msgs, session, rowID))
 	}
 	if len(msgs) == 0 {
 		return TextResult("No messages found."), nil
@@ -274,6 +282,66 @@ func conversationLookup(convReader *memory.ConversationReader, session string, r
 		fmt.Fprintf(&sb, "%s%s#%d [%s]%s: %s\n", marker, session, m.RowID, m.Time.Format("2006-01-02 15:04"), kindTag(m.Kind), m.Text)
 	}
 	return TextResult(sb.String()), nil
+}
+
+// memorySearchHitJSON is one --json memory_search result (#1215).
+type memorySearchHitJSON struct {
+	Source  string `json:"source"`         // "memory", "code", "docs", "conversation", ...
+	Kind    string `json:"kind,omitempty"` // conversation row kind, e.g. "subagent"; omitted for ordinary rows
+	Time    string `json:"time,omitempty"` // RFC 3339; message time, or file mtime
+	Path    string `json:"path"`           // file path, or the session key for a conversation hit
+	RowID   int64  `json:"row_id,omitempty"`
+	Ref     string `json:"ref,omitempty"` // "session#rowID": pass as the query to read the surrounding conversation
+	Snippet string `json:"snippet"`
+	// Context is the surrounding conversation, present when lines was given.
+	Context []memoryMessageJSON `json:"context,omitempty"`
+}
+
+// memoryMessageJSON is one conversation message in --json output.
+type memoryMessageJSON struct {
+	Session string `json:"session"`
+	RowID   int64  `json:"row_id"`
+	Time    string `json:"time"`
+	Kind    string `json:"kind,omitempty"`
+	Text    string `json:"text"`
+	Match   bool   `json:"match,omitempty"` // the row the search hit or the lookup named
+}
+
+const memorySearchJSONOutput = `a JSON array of hits: [{"source", "kind"?, "time"?, "path", "row_id"?, "ref"?, "snippet", "context"?}], [] when nothing matched. "ref" (session#rowID) is set on conversation hits; "context" (with lines) is the surrounding messages [{"session", "row_id", "time", "kind"?, "text", "match"?}]. A session#rowID query prints that message array directly. Message text is full-length, not cut as in the text output.`
+
+func memorySearchJSON(results []memory.Result, kinds map[memory.ConversationRef]string, convReader *memory.ConversationReader, lines int) (ToolResult, error) {
+	hits := make([]memorySearchHitJSON, 0, len(results))
+	for _, r := range results {
+		h := memorySearchHitJSON{Source: r.Source, Path: r.Path, Snippet: r.Snippet}
+		if !r.Time.IsZero() {
+			h.Time = r.Time.Format(time.RFC3339)
+		}
+		if r.Source == "conversation" && r.RowID > 0 {
+			h.RowID = r.RowID
+			h.Ref = fmt.Sprintf("%s#%d", r.Path, r.RowID)
+			h.Kind = kinds[memory.ConversationRef{Session: r.Path, RowID: r.RowID}]
+			if lines > 0 && convReader != nil {
+				if msgs, err := convReader.ReadContext(r.Path, r.RowID, lines); err == nil {
+					h.Context = memoryMessagesJSON(msgs, r.Path, r.RowID)
+				}
+			}
+		}
+		hits = append(hits, h)
+	}
+	return JSONResult(hits)
+}
+
+// memoryMessagesJSON converts conversation messages for --json output, marking
+// the row the caller asked about. Never nil, so an empty lookup prints [].
+func memoryMessagesJSON(msgs []memory.ConversationMessage, session string, rowID int64) []memoryMessageJSON {
+	out := make([]memoryMessageJSON, 0, len(msgs))
+	for _, m := range msgs {
+		out = append(out, memoryMessageJSON{
+			Session: session, RowID: m.RowID, Time: m.Time.Format(time.RFC3339),
+			Kind: m.Kind, Text: m.Text, Match: m.RowID == rowID,
+		})
+	}
+	return out
 }
 
 // formatSearchResult writes a single search result line. kind is the

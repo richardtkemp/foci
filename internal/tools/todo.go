@@ -19,6 +19,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 		Name:        "todo",
 		ExecExport:  true,
 		Positional:  []string{"action"},
+		JSONOutput:  `list, list-all, search and get: JSONL, exactly as --format jsonl (see below). Other actions: {"result": "<the text output>"}.`,
 		Description: "Manage a persistent todo list. Supports adding, listing, searching, getting, completing, dropping, reopening, starting, editing, and removing items. Items have priority (high/medium/low) and optional tags. Items survive restarts.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
@@ -124,19 +125,19 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 					return ToolResult{}, err
 				}
 				status := normalizeStatusFilter(p.Status)
-				return todoList(store, agentID, status, p.Tag, p.Priority, p.Sort, p.Reverse, p.Limit, jsonl)
+				return todoMarkJSONL(jsonl)(todoList(store, agentID, status, p.Tag, p.Priority, p.Sort, p.Reverse, p.Limit, jsonl))
 			case "search":
 				jsonl, err := todoWantsJSONL(ctx)
 				if err != nil {
 					return ToolResult{}, err
 				}
-				return todoSearch(store, agentID, p.Query, p.Status, p.Sort, p.Reverse, p.Limit, jsonl)
+				return todoMarkJSONL(jsonl)(todoSearch(store, agentID, p.Query, p.Status, p.Sort, p.Reverse, p.Limit, jsonl))
 			case "get":
 				jsonl, err := todoWantsJSONL(ctx)
 				if err != nil {
 					return ToolResult{}, err
 				}
-				return todoGet(store, agentID, p.ID, jsonl)
+				return todoMarkJSONL(jsonl)(todoGet(store, agentID, p.ID, jsonl))
 			case "complete":
 				return todoTransition(store, agentID, p.ID, p.IDs, "done", p.Reason)
 			case "drop":
@@ -505,7 +506,7 @@ const (
 func todoWantsJSONL(ctx context.Context) (bool, error) {
 	h := OutputHintsFromContext(ctx)
 	switch h.Format {
-	case "jsonl":
+	case "jsonl", OutputFormatJSON: // --json is todo's JSONL (#1215)
 		return true, nil
 	case "md":
 		return false, nil
@@ -513,6 +514,15 @@ func todoWantsJSONL(ctx context.Context) (bool, error) {
 		return h.StdoutPiped, nil
 	default:
 		return false, fmt.Errorf("unknown output format %q (use jsonl or md)", h.Format)
+	}
+}
+
+// todoMarkJSONL flags a JSONL result as already machine-readable, so the exec
+// bridge passes it through to a --json caller instead of wrapping it.
+func todoMarkJSONL(jsonl bool) func(ToolResult, error) (ToolResult, error) {
+	return func(r ToolResult, err error) (ToolResult, error) {
+		r.JSON = jsonl && err == nil
+		return r, err
 	}
 }
 

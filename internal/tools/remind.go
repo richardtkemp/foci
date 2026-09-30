@@ -26,6 +26,7 @@ func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWake
 		Name:        "remind",
 		Description: "Defer a thought for later. By default the reminder surfaces as injected context at the specified time. Set wake=true to actively wake the session (fires a message to yourself at the specified time). Set list=true to show pending wakes, or cancel=<id> to cancel one.",
 		ExecExport:  true,
+		JSONOutput:  `list: [{"id", "due_at" (RFC 3339), "text" (full)}], [] when none pending. Otherwise one object: {"set": "reminder", "when", "text"} for a passive reminder, {"set": "wake", "id", "due_at", "text"} for wake=true, {"cancelled": id, "due_at", "text"} for cancel.`,
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -64,10 +65,10 @@ func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWake
 			}
 
 			if p.List {
-				return remindListWakes(rs, agentID)
+				return remindListWakes(rs, agentID, WantsJSON(ctx))
 			}
 			if p.Cancel != 0 {
-				return remindCancelWake(rs, agentID, p.Cancel, cancelFn)
+				return remindCancelWake(rs, agentID, p.Cancel, cancelFn, WantsJSON(ctx))
 			}
 
 			if p.Text == "" {
@@ -78,7 +79,7 @@ func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWake
 			}
 
 			if p.Wake {
-				return remindWake(SessionKeyFromContext(ctx), rs, agentID, p.Text, p.When, wakeFn)
+				return remindWake(SessionKeyFromContext(ctx), rs, agentID, p.Text, p.When, wakeFn, WantsJSON(ctx))
 			}
 
 			// Passive reminder — store in ReminderStore
@@ -86,13 +87,16 @@ func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWake
 				return ToolResult{}, fmt.Errorf("add reminder: %w", err)
 			}
 
+			if WantsJSON(ctx) {
+				return JSONResult(map[string]string{"set": "reminder", "when": p.When, "text": p.Text})
+			}
 			return TextResult(fmt.Sprintf("Reminder set for %s: %s", p.When, p.Text)), nil
 		},
 	}
 }
 
 // remindWake stores a wake reminder in the DB, then schedules it in-memory.
-func remindWake(sessionKey string, rs *memory.ReminderStore, agentID, text, when string, wakeFn ScheduleWakeFn) (ToolResult, error) {
+func remindWake(sessionKey string, rs *memory.ReminderStore, agentID, text, when string, wakeFn ScheduleWakeFn, asJSON bool) (ToolResult, error) {
 	if wakeFn == nil {
 		return ToolResult{}, fmt.Errorf("wake not configured")
 	}
@@ -113,14 +117,34 @@ func remindWake(sessionKey string, rs *memory.ReminderStore, agentID, text, when
 	}
 
 	remindLog.Debugf("session=%s scheduled wake id=%d in %v: %q", sessionKey, id, dur, text)
+	if asJSON {
+		return JSONResult(struct {
+			Set   string `json:"set"`
+			ID    int64  `json:"id"`
+			DueAt string `json:"due_at"`
+			Text  string `json:"text"`
+		}{"wake", id, time.Now().Add(dur).Format(time.RFC3339), text})
+	}
 	return TextResult(fmt.Sprintf("Wake scheduled in %v (id=%d): %q", dur, id, text)), nil
 }
 
 // remindListWakes renders this agent's pending scheduled wakes, newest due first.
-func remindListWakes(rs *memory.ReminderStore, agentID string) (ToolResult, error) {
+func remindListWakes(rs *memory.ReminderStore, agentID string, asJSON bool) (ToolResult, error) {
 	pending, err := rs.PendingWakes(agentID)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("list wakes: %w", err)
+	}
+	if asJSON {
+		type wake struct {
+			ID    int64  `json:"id"`
+			DueAt string `json:"due_at"`
+			Text  string `json:"text"`
+		}
+		out := make([]wake, 0, len(pending))
+		for _, r := range pending {
+			out = append(out, wake{r.ID, r.DueAt.Format(time.RFC3339), r.Text})
+		}
+		return JSONResult(out)
 	}
 	if len(pending) == 0 {
 		return TextResult("No pending wakes."), nil
@@ -144,7 +168,7 @@ func remindListWakes(rs *memory.ReminderStore, agentID string) (ToolResult, erro
 // remindCancelWake stops a pending wake's timer and removes its stored row.
 // The id must belong to this agent — PendingWakes is agent-scoped, so an id
 // from another agent reads as not found rather than cancelling across agents.
-func remindCancelWake(rs *memory.ReminderStore, agentID string, id int64, cancelFn CancelWakeFn) (ToolResult, error) {
+func remindCancelWake(rs *memory.ReminderStore, agentID string, id int64, cancelFn CancelWakeFn, asJSON bool) (ToolResult, error) {
 	if cancelFn == nil {
 		return ToolResult{}, fmt.Errorf("wake not configured")
 	}
@@ -171,6 +195,13 @@ func remindCancelWake(rs *memory.ReminderStore, agentID string, id int64, cancel
 	}
 
 	remindLog.Debugf("cancelled wake id=%d for agent %s", id, agentID)
+	if asJSON {
+		return JSONResult(struct {
+			Cancelled int64  `json:"cancelled"`
+			DueAt     string `json:"due_at"`
+			Text      string `json:"text"`
+		}{id, target.DueAt.Format(time.RFC3339), target.Text})
+	}
 	return TextResult(fmt.Sprintf("Cancelled wake id=%d (was due %s): %q",
 		id, target.DueAt.Format(time.RFC3339), truncateWakeText(target.Text))), nil
 }

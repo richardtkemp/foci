@@ -1,6 +1,10 @@
 package tools
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+	"strings"
+)
 
 // sessionKeyCtxKey is the context key for the originating session key.
 type sessionKeyCtxKey struct{}
@@ -38,6 +42,27 @@ func WithOutputHints(ctx context.Context, h OutputHints) context.Context {
 func OutputHintsFromContext(ctx context.Context) OutputHints {
 	h, _ := ctx.Value(outputHintsKey{}).(OutputHints)
 	return h
+}
+
+// OutputFormatJSON is the OutputHints.Format a shell call's --json sets (#1215).
+const OutputFormatJSON = "json"
+
+// WantsJSON reports whether the caller asked for --json output. Only exec-bridge
+// calls can: the API tool path never sets hints.
+func WantsJSON(ctx context.Context) bool {
+	return OutputHintsFromContext(ctx).Format == OutputFormatJSON
+}
+
+// JSONResult renders v as a --json tool result. A tool that returns one
+// documents its shape in Tool.JSONOutput.
+func JSONResult(v any) (ToolResult, error) {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false) // fetched pages and bodies are full of <, > and &
+	if err := enc.Encode(v); err != nil {
+		return ToolResult{}, err
+	}
+	return ToolResult{Text: b.String(), JSON: true}, nil
 }
 
 // spawnInheritKey is the context key for marking a spawn-inherit session.

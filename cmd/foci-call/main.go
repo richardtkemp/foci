@@ -144,7 +144,8 @@ Environment:
   FOCI_SOCK           Unix socket path for exec bridge (required)
   FOCI_STDOUT_PIPED   "1" = the calling foci_* function's stdout is piped;
                       forwarded to the tool as a hint (set by the wrapper)
-  FOCI_OUTPUT_FORMAT  explicit output form (e.g. jsonl|md), forwarded likewise
+  FOCI_OUTPUT_FORMAT  explicit output form (json from --json; todo's jsonl|md),
+                      forwarded likewise
 
 Flags:
   -h, --help       Show this help

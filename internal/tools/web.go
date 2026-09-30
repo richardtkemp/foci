@@ -23,6 +23,7 @@ func NewWebFetchTool() *Tool {
 		ExecExport:  true,
 		Positional:  []string{"url"},
 		Description: "Fetch a URL and return its content as clean Markdown (article extracted via readability).",
+		JSONOutput:  `{"url", "final_url" (after redirects), "status" (HTTP code), "content_type", "content"} — content is exactly the text output (Markdown, or the raw body for raw=true and non-HTML types), foci's notes included.`,
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -49,6 +50,7 @@ func NewWebSearchTool(braveAPIKey string) *Tool {
 		ExecExport:  true,
 		Positional:  []string{"query"},
 		Description: "Search the web using Brave Search API. Returns titles, URLs, and descriptions.",
+		JSONOutput:  `[{"title", "url", "description"}, ...] in rank order; [] when nothing matched.`,
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -502,6 +504,21 @@ func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// done renders the content in the caller's form: the text itself, or for
+	// --json the object documented in the tool's JSONOutput.
+	done := func(content string) (ToolResult, error) {
+		if !WantsJSON(ctx) {
+			return TextResult(content), nil
+		}
+		return JSONResult(struct {
+			URL         string `json:"url"`
+			FinalURL    string `json:"final_url"`
+			Status      int    `json:"status"`
+			ContentType string `json:"content_type"`
+			Content     string `json:"content"`
+		}{p.URL, resp.Request.URL.String(), resp.StatusCode, resp.Header.Get("Content-Type"), content})
+	}
+
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("read response: %w", err)
@@ -520,14 +537,14 @@ func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 
 	// Raw mode: return unprocessed HTML
 	if p.Raw {
-		return TextResult(string(body)), nil
+		return done(string(body))
 	}
 
 	// Structured/non-HTML payloads (JSON, XML, CSV, plain text, YAML) must NOT go
 	// through readability + HTML→markdown — that mangles them (#966). Return the
 	// body verbatim when the Content-Type says it isn't HTML.
 	if isStructuredContentType(resp.Header.Get("Content-Type")) {
-		return TextResult(string(body)), nil
+		return done(string(body))
 	}
 
 	// Try readability extraction, then convert to markdown. The parse is
@@ -585,7 +602,7 @@ func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 		md = httpStatusNote(resp.StatusCode) + md
 	}
 
-	return TextResult(md), nil
+	return done(md)
 }
 
 func webSearch(ctx context.Context, params json.RawMessage, apiKey string) (ToolResult, error) {
@@ -641,6 +658,19 @@ func webSearch(ctx context.Context, params json.RawMessage, apiKey string) (Tool
 	}
 
 	web_searchLog.Debugf("session=%s search query=%q results=%d", SessionKeyFromContext(ctx), p.Query, len(result.Web.Results))
+
+	if WantsJSON(ctx) {
+		type hit struct {
+			Title       string `json:"title"`
+			URL         string `json:"url"`
+			Description string `json:"description"`
+		}
+		hits := make([]hit, 0, len(result.Web.Results))
+		for _, r := range result.Web.Results {
+			hits = append(hits, hit(r))
+		}
+		return JSONResult(hits)
+	}
 
 	var out strings.Builder
 	for i, r := range result.Web.Results {

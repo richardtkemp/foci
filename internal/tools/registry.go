@@ -15,6 +15,10 @@ type ToolResult struct {
 	ExtraBlocks []provider.ContentBlock // additional content blocks (e.g. document) placed alongside tool_result
 	ResultFile  string                  // if set, full result is already at this path (skip redundant write in guard)
 	ResultSize  int64                   // total bytes of the full result (0 if not spilled)
+	// JSON marks Text as already machine-readable (a JSON document, or todo's
+	// JSONL) for a --json caller (#1215). When a --json call returns a result
+	// without it, the exec bridge wraps Text as {"result": ...} instead.
+	JSON bool
 }
 
 // TextResult creates a ToolResult with only text (no extra blocks).
@@ -49,6 +53,12 @@ type Tool struct {
 	// the actual flag (e.g. "send_as" → --send-as). Values that don't
 	// reference a real schema property are silently ignored.
 	Aliases map[string][]string
+
+	// JSONOutput documents the shape a --json shell call prints (#1215),
+	// shown under "Output (--json):" in --help. Set it on a tool whose
+	// Execute renders its own JSON (via JSONResult) when WantsJSON(ctx);
+	// empty means the exec bridge's generic {"result": "<text>"} wrapper.
+	JSONOutput string
 }
 
 // Registry holds all registered tools.

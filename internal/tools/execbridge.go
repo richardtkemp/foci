@@ -259,6 +259,13 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 		return
 	}
 
+	if req.Hints.Format == OutputFormatJSON && !result.JSON {
+		if result, err = wrapResultAsJSON(result); err != nil {
+			writeError(conn, err.Error())
+			return
+		}
+	}
+
 	// When the tool spilled the full result to disk (large http body, etc.),
 	// pass the file pointer through instead of inlining megabytes onto the
 	// socket. foci-call streams the file straight to stdout, so a pipe
@@ -270,6 +277,26 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 		ResultFile: result.ResultFile,
 		ResultSize: result.ResultSize,
 	})
+}
+
+// genericJSONOutput is the --json shape of every exported tool that does not
+// render its own (Tool.JSONOutput empty); wrapResultAsJSON produces it.
+const genericJSONOutput = `{"result": "<the text output>"} — plus "result_file" (path) and "result_size" (bytes) when the text was too large to inline and the full output is on disk.`
+
+// wrapResultAsJSON gives a --json call a JSON document from a tool that only
+// renders text (#1215), so every foci_* function honours --json. A spilled
+// result keeps its file as a named field rather than being streamed raw, since
+// streaming would put non-JSON on stdout.
+func wrapResultAsJSON(r ToolResult) (ToolResult, error) {
+	out, err := JSONResult(struct {
+		Result     string `json:"result"`
+		ResultFile string `json:"result_file,omitempty"`
+		ResultSize int64  `json:"result_size,omitempty"`
+	}{r.Text, r.ResultFile, r.ResultSize})
+	if err != nil {
+		return ToolResult{}, fmt.Errorf("render --json output: %w", err)
+	}
+	return out, nil
 }
 
 // bridgeResponse is the JSON envelope written back to foci-call.
@@ -392,11 +419,35 @@ export -f foci__json_arg
 // to the gateway as the request's "hints" (OutputHints).
 const shellStdoutPipedDetect = `  local -x FOCI_STDOUT_PIPED=0 FOCI_OUTPUT_FORMAT=; [ -e /proc/$$/fd/1 ] && ! [ /proc/${BASHPID:-x}/fd/1 -ef /proc/$$/fd/1 ] && FOCI_STDOUT_PIPED=1`
 
+// shellJSONFlagStrip gives every generated function the shell-only --json
+// OUTPUT flag (#1215): it removes each exact "--json" argument, wherever it
+// appears, and sets FOCI_OUTPUT_FORMAT=json, which foci-call forwards as the
+// request's hints.format. Stripping it here, once, rather than adding an arm to
+// each of the hand-written flag parsers means no parser can miss it, and the
+// JSON passthrough guard (next line) still sees a lone '{...}' argument. The
+// cost is that a literal "--json" can never be passed as a flag VALUE.
+const shellJSONFlagStrip = `  local __foci_a __foci_j=; local -a __foci_rest=(); for __foci_a in "$@"; do if [ "$__foci_a" = --json ]; then __foci_j=1; else __foci_rest+=("$__foci_a"); fi; done; if [ -n "$__foci_j" ]; then FOCI_OUTPUT_FORMAT=json; set -- "${__foci_rest[@]}"; fi`
+
+// shellJSONInputTools already use --json as an INPUT flag, so they do not get
+// the --json output flag: foci_ask --json '<questions>' predates #1215, and its
+// output is a one-line "question posted" acknowledgement anyway.
+var shellJSONInputTools = map[string]bool{"ask": true}
+
+// hasJSONOutputFlag reports whether a tool's shell function accepts --json as
+// the output flag (see shellJSONFlagStrip).
+func hasJSONOutputFlag(t *Tool) bool { return !shellJSONInputTools[t.Name] }
+
 // shellFuncPrologue returns the lines every generated function runs after its
-// --help check: the stdout-piped detection, then the JSON passthrough guard
-// (which calls foci-call itself, so it must come after the detection).
-func shellFuncPrologue(toolName, validKeys string) string {
-	return shellStdoutPipedDetect + "\n" + fmt.Sprintf("  foci__json %q %q \"$@\" && return $?", toolName, validKeys)
+// --help check: the stdout-piped detection, the --json output flag, then the
+// JSON passthrough guard (which calls foci-call itself, so it must come after
+// both).
+func shellFuncPrologue(t *Tool, validKeys string) string {
+	lines := []string{shellStdoutPipedDetect}
+	if hasJSONOutputFlag(t) {
+		lines = append(lines, shellJSONFlagStrip)
+	}
+	lines = append(lines, fmt.Sprintf("  foci__json %q %q \"$@\" && return $?", t.Name, validKeys))
+	return strings.Join(lines, "\n")
 }
 
 // writeShellFuncs generates a bash file defining foci_<toolname>() for each
@@ -630,7 +681,22 @@ func generateHelpText(t *Tool) string {
 			}
 		}
 	}
+	b.WriteString(jsonOutputHelp(t))
 	return b.String()
+}
+
+// jsonOutputHelp is the --help section documenting the --json output flag and
+// the shape it prints (#1215); "" for a tool without the flag.
+func jsonOutputHelp(t *Tool) string {
+	if !hasJSONOutputFlag(t) {
+		return ""
+	}
+	shape := t.JSONOutput
+	if shape == "" {
+		shape = genericJSONOutput
+	}
+	return "\n\nOutput: text by default. --json (flag, any position) prints JSON instead:\n  " + shape +
+		"\n  Errors are unchanged: a message on stderr and a non-zero exit."
 }
 
 // todoActionAliases maps user-friendly aliases to canonical action names.
@@ -763,7 +829,7 @@ func todoSubcommandsHelpBlock() string {
 		"\n(foci_todo list | head, | grep, | jq, or captured by $(...)) they print JSONL instead: one JSON" +
 		"\nobject per item per line (id, status, priority, tags, title, created_at, updated_at, body excerpt;" +
 		"\nget gives the full body). A capped list ends with a {\"truncated\":true,...} line." +
-		"\n--format jsonl|md forces either form regardless of piping.")
+		"\n--format jsonl|md forces either form regardless of piping; --json is the same as --format jsonl.")
 	b.WriteString("\n\nRun 'foci_todo <subcommand> --help' for subcommand-specific usage.")
 	return b.String()
 }
@@ -780,7 +846,7 @@ func generateShellFunc(t *Tool) string {
 	// Escape single quotes for embedding in bash single-quoted heredoc.
 	escapedHelp := strings.ReplaceAll(helpText, "'", "'\\''")
 	helpCheck := fmt.Sprintf("  if [ \"${1:-}\" = \"-h\" ] || [ \"${1:-}\" = \"--help\" ]; then\n    echo '%s'\n    return 0\n  fi", escapedHelp)
-	guard := shellFuncPrologue(t.Name, validKeys)
+	guard := shellFuncPrologue(t, validKeys)
 
 	switch t.Name {
 	case "http_request":
@@ -1327,7 +1393,7 @@ func generateGenericShellFunc(t *Tool) string {
 	escapedHelp := strings.ReplaceAll(helpText, "'", "'\\''")
 	helpCheck := fmt.Sprintf("  if [ \"${1:-}\" = \"-h\" ] || [ \"${1:-}\" = \"--help\" ]; then\n    echo '%s'\n    return 0\n  fi", escapedHelp)
 	validKeys := toolParamKeys(t)
-	guard := shellFuncPrologue(t.Name, validKeys)
+	guard := shellFuncPrologue(t, validKeys)
 
 	var schema struct {
 		Properties map[string]struct {

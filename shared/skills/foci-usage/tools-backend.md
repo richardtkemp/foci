@@ -39,6 +39,8 @@ There is **no `foci_tmux`** on this backend — that stays API-loop-only. For pe
 
 Every tool accepts `-h`/`--help`. **Read the `--help` before first use of any tool this session.**
 
+**`--json` for machine-readable output.** Every `foci_*` function except `foci_ask` (where `--json` is the questions *input*) takes `--json`, in any position, and prints one JSON document instead of its text — pipe it to `jq` rather than parsing prose. Text stays the default. `foci_web_search`, `foci_web_fetch`, `foci_memory_search`, `foci_http_request` and `foci_remind` print a tool-specific shape (their `--help` "Output:" section documents it); every other tool prints `{"result": "<the text>"}`; `foci_todo list/search/get` print JSONL, as `--format jsonl`. Errors are unchanged: stderr and a non-zero exit.
+
 ## 3. Deferred tools & ToolSearch
 
 Some CC backend tools aren't loaded into the prompt up-front — they appear by *name only* in a `<system-reminder>` as "deferred" (MCP tools, calendar, etc.).

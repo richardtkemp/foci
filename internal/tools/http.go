@@ -46,6 +46,7 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 		Name:        "http_request",
 		ExecExport:  true,
 		Positional:  []string{"url"},
+		JSONOutput:  `{"status" (int), "status_text", "headers" ({name: [values]}, always included, secrets redacted), then either "body" (the inline text; when the response was larger, "body_file" is the full body on disk and "body_size" its bytes) or, for save_to and auto-saved binary responses, "saved_to" and "saved_bytes"}. "truncated": true when the body hit max_response_bytes or the spill ceiling. A backgrounded request prints {"result": "<the ack text>"}.`,
 		Description: "Make an HTTP request. Secrets referenced via {{secret:NAME}} in headers are resolved server-side and validated against allowed_hosts. Secrets in request body/body_file/form_fields require the key to be listed in allowed_in_body in secrets.toml. Binary responses are auto-saved to files. Responses can be saved directly to a file path.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
@@ -270,7 +271,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 			return ToolResult{}, fmt.Errorf("request failed: %w", err)
 		}
 		defer func() { _ = resp.Body.Close() }()
-		return processHTTPResponse(SessionKeyFromContext(ctx), resp, p.URL, p.Method, p.SaveTo, p.SaveFromJSONPath, p.IncludeHeaders, p.MaxResponseBytes, maxSpillBytes, maxResultChars, tempDir, store, bwStore, fileMode)
+		return processHTTPResponse(SessionKeyFromContext(ctx), resp, p.URL, p.Method, p.SaveTo, p.SaveFromJSONPath, p.IncludeHeaders, WantsJSON(ctx), p.MaxResponseBytes, maxSpillBytes, maxResultChars, tempDir, store, bwStore, fileMode)
 	}
 
 	displayURL := formatDisplayURL(p.URL, p.Method)
@@ -291,7 +292,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 // tool call, background notifier — sees the same default; it used to be an
 // exec-bridge-only strip, which left the flag out of the schema and the shell
 // --help (#1817).
-func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method, saveTo, saveFromJSONPath string, includeHeaders bool, maxResponseBytes, maxSpillBytes, maxResultChars int64, tempDir string, store *secrets.Store, bwStore *bitwarden.Store, fileMode os.FileMode) (ToolResult, error) {
+func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method, saveTo, saveFromJSONPath string, includeHeaders, asJSON bool, maxResponseBytes, maxSpillBytes, maxResultChars int64, tempDir string, store *secrets.Store, bwStore *bitwarden.Store, fileMode os.FileMode) (ToolResult, error) {
 	if fileMode == 0 {
 		fileMode = 0640
 	}
@@ -367,6 +368,24 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 		return redactSecrets(hdr.String()) + "\n"
 	}
 
+	// jsonResult is the --json form (#1215): status and every header always,
+	// plus the save or body fields the text form would have printed.
+	jsonResult := func(extra map[string]any) (ToolResult, error) {
+		headers := make(map[string][]string, len(resp.Header))
+		for name, vals := range resp.Header {
+			red := make([]string, len(vals))
+			for i, v := range vals {
+				red[i] = redactSecrets(v)
+			}
+			headers[name] = red
+		}
+		out := map[string]any{"status": resp.StatusCode, "status_text": resp.Status, "headers": headers}
+		for k, v := range extra {
+			out[k] = v
+		}
+		return JSONResult(out)
+	}
+
 	if savePath != "" || autoSave {
 		bodyLimit := getResponseBodyLimit(contentType, saveTo, maxResponseBytes)
 		body, err := io.ReadAll(io.LimitReader(resp.Body, bodyLimit))
@@ -416,6 +435,9 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 			}
 		}
 		http_requestLog.Debugf("session=%s saved %d bytes to %s", sessionKey, len(saveData), savePath)
+		if asJSON {
+			return jsonResult(map[string]any{"saved_to": savePath, "saved_bytes": len(saveData)})
+		}
 		return TextResult(fmt.Sprintf("%sSaved %d bytes to %s", headerPrefix(), len(saveData), savePath)), nil
 	}
 
@@ -472,6 +494,20 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 	// Redact the inline preview (best-effort; the on-disk full body is raw, same
 	// as the shell tool — Redact is defence-in-depth, not a boundary).
 	bodyStr := redactSecrets(sw.String())
+
+	if asJSON {
+		// The spill file is named rather than streamed: streaming it would put
+		// the raw body, not JSON, on stdout.
+		extra := map[string]any{"body": bodyStr}
+		if sw.Spilled() {
+			extra["body_file"] = sw.FilePath()
+			extra["body_size"] = sw.Total()
+		}
+		if sw.Truncated() {
+			extra["truncated"] = true
+		}
+		return jsonResult(extra)
+	}
 
 	result := TextResult(headerPrefix() + bodyStr)
 	if sw.Spilled() {
