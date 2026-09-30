@@ -1,9 +1,11 @@
 package telegram
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
+	"foci/internal/agent"
 	"foci/internal/command"
 )
 
@@ -109,5 +111,29 @@ func TestSendNotification_EmptyTextSkipped(t *testing.T) {
 	b.SendNotification("test alert")
 	if mock.sentCount() != 1 {
 		t.Errorf("sends = %d, want 1", mock.sentCount())
+	}
+}
+
+// TestRegisterCommands_OnlyAvailable pins #898 for the Telegram menu: once the
+// bot is wired to an agent, the menu lists only the commands that agent can run.
+// A RequiresBackend command on an agent without a delegated backend, and one
+// whose Visible gate says no, used to be advertised anyway.
+func TestRegisterCommands_OnlyAvailable(t *testing.T) {
+	cmds := command.NewRegistry()
+	cmds.Register(&command.Command{Name: "help", Description: "List commands"})
+	cmds.Register(&command.Command{Name: "login", Description: "CC only", Requires: command.RequiresBackend})
+	cmds.Register(&command.Command{Name: "gated", Description: "never", Visible: func(context.Context, command.Request, command.CommandContext) bool { return false }})
+	cmds.Register(&command.Command{Name: "pause", Description: "app has buttons", ExcludeApp: true})
+
+	b, mock := testBot([]string{"111"}, cmds)
+	b.SetCommandContext(command.CommandContext{Agent: &agent.Agent{}})
+	b.RegisterCommands()
+
+	var got []string
+	for _, c := range mock.setCmds {
+		got = append(got, c.Command)
+	}
+	if len(got) != 2 || got[0] != "help" || got[1] != "pause" {
+		t.Errorf("menu = %v, want [help pause]", got)
 	}
 }

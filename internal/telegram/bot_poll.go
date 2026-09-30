@@ -6,6 +6,8 @@ import (
 	"runtime/debug"
 	"time"
 
+	"foci/internal/command"
+
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
@@ -48,14 +50,26 @@ func stuckWarnDue(outage time.Duration, warned bool) bool {
 // RegisterCommands registers the bot's slash commands with Telegram via setMyCommands.
 // This makes commands appear as autocomplete suggestions when the user types "/" in chat.
 // Logs a warning on failure but does not return an error.
+//
+// The menu is bot-wide, so it lists what the agent can run as a whole (its
+// backend and default model; command.AvailableList with no session), not any one
+// chat's state (#898). A pooled facet bot is only wired to an agent when
+// acquired, so at Run it has none to evaluate against: it keeps the full
+// non-hidden menu, as before.
 func (b *Bot) RegisterCommands() {
-	var cmds []gotgbot.BotCommand
-
-	// Add all registered commands from the registry (skip hidden)
-	for _, cmd := range b.commands.All() {
-		if cmd.Hidden {
-			continue
+	var infos []command.CommandInfo
+	if b.cmdCtx.Agent != nil {
+		infos = b.commands.AvailableList(context.Background(), command.Request{}, b.cmdCtx)
+	} else {
+		for _, cmd := range b.commands.All() {
+			if !cmd.Hidden {
+				infos = append(infos, command.CommandInfo{Name: cmd.Name, Description: cmd.Description})
+			}
 		}
+	}
+
+	var cmds []gotgbot.BotCommand
+	for _, cmd := range infos {
 		desc := cmd.Description
 		if desc == "" {
 			desc = cmd.Name

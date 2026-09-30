@@ -941,34 +941,34 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 	return out
 }
 
-// commandInfos builds the app-facing command palette for an agent connection:
-// every non-hidden command's name, description and category, mirroring the
-// Telegram setMyCommands menu (bot_poll.go RegisterCommands). It is lock-free —
-// the caller (agentRoster) already holds h.mu, and a Registry's command set is
-// populated once at startup and never mutated, so All() is safe to read here.
-// Returns nil for a connection with no registry (e.g. bare test agents), which
-// JSON-omits the field.
+// commandInfos builds the agent-level command palette carried in the roster:
+// the commands available to the agent as a whole (command.Available — its
+// backend/transport and its default model), with no session in context. The app
+// shows it only until a conversation's own Commands frame arrives (#898: it used
+// to list every non-hidden command, so a cold-started client offered commands
+// the agent could not run). Lock-free — the caller (agentRoster) already holds
+// h.mu, and a Registry's command set is populated once at startup and never
+// mutated. Returns nil for a connection with no registry (e.g. bare test agents),
+// which JSON-omits the field.
 func commandInfos(conn *appConn) []fap.CommandInfo {
 	if conn == nil || conn.commands == nil {
 		return nil
 	}
+	return toFAPCommands(conn.commands.VisibleList(context.Background(), command.Request{Source: "app"}, conn.cmdCtx))
+}
+
+// toFAPCommands converts registry listings to their wire form.
+func toFAPCommands(infos []command.CommandInfo) []fap.CommandInfo {
 	var out []fap.CommandInfo
-	for _, c := range conn.commands.All() {
-		if c.Hidden || c.ExcludeApp {
-			continue
-		}
-		out = append(out, fap.CommandInfo{
-			Name:        c.Name,
-			Description: c.Description,
-			Category:    c.Category,
-		})
+	for _, c := range infos {
+		out = append(out, fap.CommandInfo{Name: c.Name, Description: c.Description, Category: c.Category})
 	}
 	return out
 }
 
 // pushCommands sends a per-conversation command palette that reflects the
-// session's current state (model capabilities, backend type). Commands whose
-// Visible func evaluates false are excluded.
+// session's current state (model capabilities, backend type): only the
+// commands command.Available admits for this session.
 func (h *Hub) pushCommands(b *convBinding) {
 	// An archived conversation is hidden from the roster, so a palette for it
 	// can never be displayed — but the frame is still built, sent and DURABLY
@@ -993,11 +993,7 @@ func (h *Hub) sendCommands(b *convBinding) {
 	}
 	ctx = tools.WithSessionKey(ctx, b.sessionKey)
 	req := command.Request{SessionKey: b.sessionKey, Source: "app"}
-	visibleCmds := conn.commands.VisibleList(ctx, req, conn.cmdCtx)
-	var cmds []fap.CommandInfo
-	for _, c := range visibleCmds {
-		cmds = append(cmds, fap.CommandInfo{Name: c.Name, Description: c.Description, Category: c.Category})
-	}
+	cmds := toFAPCommands(conn.commands.VisibleList(ctx, req, conn.cmdCtx))
 
 	// Send only on an actual change. The palette is derived from the command
 	// registry and the session's capability gating, neither of which moves on a

@@ -209,6 +209,9 @@ func newSessionSettingCommand(def sessionSettingDef) *Command {
 			if def.Capability == nil {
 				return true
 			}
+			if cc.Agent == nil {
+				return false
+			}
 			model := cc.Agent.SessionModel(tools.SessionKeyFromContext(ctx))
 			if def.Capability(cc.Agent.ModelCapabilities(model)) {
 				return true

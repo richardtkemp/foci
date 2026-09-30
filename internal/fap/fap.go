@@ -202,12 +202,10 @@ type Caps struct {
 // "/" autocomplete entry and invoke it: Name (echoed back verbatim in a
 // Command frame), the one-line Description, and an optional grouping Category.
 //
-// Hidden commands are excluded server-side. Dynamic visibility (a command only
-// meaningful in some states, e.g. /pause mid-ask) is NOT encoded — exactly like
-// Telegram's static setMyCommands menu, the full non-hidden set is advertised
-// and each command reports a no-op ("No active question.") when invoked out of
-// context. The server is authoritative for these strings; the app must render
-// what it receives rather than hardcoding its own copies.
+// Only commands available to the recipient are sent (#898): in AgentInfo, those
+// the agent as a whole can run; in a Commands frame, those this session can run
+// in its current state. The server is authoritative for these strings; the app
+// must render what it receives rather than hardcoding its own copies.
 type CommandInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
@@ -222,7 +220,7 @@ type AgentInfo struct {
 	AvatarURL     string             `json:"avatarUrl,omitempty"` // path to fetch the avatar image (e.g. "/app/avatar/clutch"); empty if none
 	AvatarVer     string             `json:"avatarVer,omitempty"` // image fingerprint (mtime+size); changes when the file changes, drives client cache invalidation
 	Conversations []ConversationInfo `json:"conversations,omitempty"`
-	Commands      []CommandInfo      `json:"commands,omitempty"` // the agent's slash-command palette (non-hidden); app renders these rather than hardcoding
+	Commands      []CommandInfo      `json:"commands,omitempty"` // the agent's slash-command palette (agent-level available); app renders these rather than hardcoding
 }
 
 // ConversationInfo is a conversation (<-> a foci session key) within an agent.

@@ -2243,6 +2243,27 @@ func TestRoster_AdvertisesNonHiddenCommands(t *testing.T) {
 	}
 }
 
+// TestRoster_AdvertisesOnlyAvailableCommands pins #898: the roster palette is
+// what a cold-started app shows until a conversation's own Commands frame
+// arrives, so it must hold only commands the agent can run. A RequiresBackend
+// command on an agent with no delegated backend, and one whose Visible gate is
+// false, used to be advertised.
+func TestRoster_AdvertisesOnlyAvailableCommands(t *testing.T) {
+	h := newTestHub()
+	reg := command.NewRegistry()
+	reg.Register(&command.Command{Name: "status"})
+	reg.Register(&command.Command{Name: "login", Requires: command.RequiresBackend})
+	reg.Register(&command.Command{Name: "gated", Visible: func(context.Context, command.Request, command.CommandContext) bool { return false }})
+	reg.Register(&command.Command{Name: "pause", ExcludeApp: true})
+	h.agents["ag"] = &appConn{hub: h, agentID: "ag", commands: reg}
+	h.agentOrder = append(h.agentOrder, "ag")
+
+	cmds := h.agentRoster()[0].Commands
+	if len(cmds) != 1 || cmds[0].Name != "status" {
+		t.Errorf("advertised commands = %+v, want only status", cmds)
+	}
+}
+
 func TestConversationOpen_MintsAndAdvertises(t *testing.T) {
 	h := newTestHub()
 	registerBareAgent(h, "ag")

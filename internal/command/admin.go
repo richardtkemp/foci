@@ -203,12 +203,6 @@ func HelpCommand(registry *Registry) *Command {
 	}
 }
 
-// helpListed reports whether the no-argument /help table shows cmd to this
-// caller.
-func helpListed(ctx context.Context, cmd *Command, req Request, cc CommandContext) bool {
-	return !cmd.Hidden && (cmd.Visible == nil || cmd.Visible(ctx, req, cc)) && checkRequires(cmd, cc) == ""
-}
-
 // helpTable renders the no-argument /help listing, grouped by category.
 func helpTable(ctx context.Context, registry *Registry, req Request, cc CommandContext) string {
 	type group struct {
@@ -226,7 +220,7 @@ func helpTable(ctx context.Context, registry *Registry, req Request, cc CommandC
 	var other []*Command
 
 	for _, cmd := range registry.All() {
-		if !helpListed(ctx, cmd, req, cc) {
+		if !Available(ctx, cmd, req, cc) {
 			continue
 		}
 		if cmd.Category != "" {

@@ -77,6 +77,7 @@ type Bot struct {
 	handler            platform.MessageHandler
 	commands           *command.Registry
 	dispatcher         *dispatch.Dispatcher      // platform-agnostic command dispatch
+	cmdCtx             command.CommandContext    // as given to the dispatcher; RegisterCommands filters the menu by it
 	lastMsgStore       *command.LastMessageStore // for // repeat command
 	allowedUsers       map[string]bool
 	allowedUsersOnly   bool                              // access.allowed_users_only: when true, ONLY listed users pass (empty list blocks everyone)
@@ -506,6 +507,7 @@ func (b *Bot) SetCommandContext(cc command.CommandContext) {
 			b.logger().Infof("secondary bot released")
 		}
 	}
+	b.cmdCtx = cc
 	b.dispatcher = dispatch.NewDispatcher(b.commands, cc, b.agentID)
 	b.dispatcher.SetSessionKeyFunc(b.dispatchSessionKey)
 }

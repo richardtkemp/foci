@@ -302,17 +302,36 @@ func (r *Registry) All() []*Command {
 	return cmds
 }
 
-// VisibleList returns the app-facing command palette filtered for a specific
-// session: non-hidden, non-ExcludeApp commands whose Visible func (if set)
-// evaluates true against the session's context. Each result carries name,
-// description and category — the same fields as CommandInfo.
+// Available reports whether cmd may be listed to this caller: not Hidden, its
+// transport requirement met, and its Visible gate (if any) passing. Every
+// surface that lists commands (/help, the app palette and roster, the Telegram
+// menu) filters through this, so no listing offers a command that would only
+// answer "not available" when picked (#898). Dispatch does not consult it: a
+// typed command still runs, or explains why it can't.
+func Available(ctx context.Context, cmd *Command, req Request, cc CommandContext) bool {
+	return !cmd.Hidden && checkRequires(cmd, cc) == "" && (cmd.Visible == nil || cmd.Visible(ctx, req, cc))
+}
+
+// VisibleList returns the app-facing command palette for a specific session:
+// the Available commands minus ExcludeApp ones. Each result carries name,
+// description and category.
 func (r *Registry) VisibleList(ctx context.Context, req Request, cc CommandContext) []CommandInfo {
+	return r.list(ctx, req, cc, true)
+}
+
+// AvailableList is VisibleList for chat platforms: ExcludeApp commands stay,
+// since they are those platforms' substitutes for app-native controls.
+func (r *Registry) AvailableList(ctx context.Context, req Request, cc CommandContext) []CommandInfo {
+	return r.list(ctx, req, cc, false)
+}
+
+func (r *Registry) list(ctx context.Context, req Request, cc CommandContext, forApp bool) []CommandInfo {
 	var out []CommandInfo
 	for _, c := range r.All() {
-		if c.Hidden || c.ExcludeApp {
+		if forApp && c.ExcludeApp {
 			continue
 		}
-		if c.Visible != nil && !c.Visible(ctx, req, cc) {
+		if !Available(ctx, c, req, cc) {
 			continue
 		}
 		out = append(out, CommandInfo{

@@ -2987,8 +2987,12 @@ The `hello` roster (`agentRoster` → `fap.AgentInfo`) advertises `avatarUrl`
 invalidation) when the file exists; `avatar` still carries the emoji fallback.
 Each `AgentInfo` also carries `commands` (`[]fap.CommandInfo`: `name`,
 `description`, `category`) — the agent's slash-command palette, built by
-`commandInfos(conn)` from the connection's `command.Registry.All()`, skipping
-`Hidden` commands. Per-conversation palettes (`pushCommands`) are **sent only on
+`commandInfos(conn)` via `command.Registry.VisibleList` with no session in
+context: the commands the agent as a whole can run (backend, default model).
+Every command listing (/help, this roster, the per-conversation `Commands` frame,
+the Telegram menu) filters through one predicate, `command.Available` (not
+`Hidden`, `Requires` met, `Visible` gate true), so none offers a command that
+would only answer "not available" (#898). Per-conversation palettes (`pushCommands`) are **sent only on
 change** — `convBinding.lastCmdHash` fingerprints the last one sent, the same
 send-on-change discipline `activityKind`/`activityDetail` apply to Activity
 frames — and are **skipped entirely for archived conversations**, which are
@@ -2998,13 +3002,14 @@ frames totalling 847MB, **87% of every byte foci had ever sent to the app**,
 ~91% of them byte-identical, driven by ~361 device reconnects a day across ~152
 conversations. `lastCmdHash` is deliberately NOT rehydrated on restart (see
 `TestConvBindingFieldCensus`): a client reconnecting to a fresh process should
-be told the palette, not have it suppressed by a surviving hash. This mirrors the Telegram `setMyCommands` menu
-(`bot_poll.go:RegisterCommands`): the server is authoritative for the
-descriptions, so the app renders what it receives rather than hardcoding its
-own copies. Dynamic `Visible` gating is intentionally not evaluated (no
-per-session request context at roster-build time) — the full non-hidden set is
-advertised and each command no-ops when invoked out of context, exactly as on
-Telegram. The list rides the existing `hello`/`conversation.open` roster
+be told the palette, not have it suppressed by a surviving hash. The Telegram `setMyCommands` menu
+(`bot_poll.go:RegisterCommands`) is the same agent-level list
+(`AvailableList`, which keeps `ExcludeApp` commands), except on a pooled facet
+bot not yet wired to an agent, which keeps the full non-hidden menu. The server
+is authoritative for the descriptions, so the app renders what it receives
+rather than hardcoding its own copies. Session-dependent gating (the session's
+model, a pending ask) is evaluated only in the per-conversation `Commands`
+frame; the roster list is the app's fallback until that frame arrives. The list rides the existing `hello`/`conversation.open` roster
 frames, so it refreshes whenever the roster does; no dedicated frame type.
 
 **Auth hardening (`devices.go`, slice 7):** there is **no shared master key** —
