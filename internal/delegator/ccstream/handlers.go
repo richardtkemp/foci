@@ -311,6 +311,8 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 			} else if block.Name == "Bash" && delegator.ExtractBashBackground(block.Input) {
 				b.agents.AddEntry(delegator.TrackedSubagent{ID: block.ID, Description: "background command",
 					Kind: delegator.SubagentKindCommand, Command: toolformat.FullCommand(block.Name, block.Input)})
+			} else if block.Name == "Bash" {
+				b.noteMainShellCall(block.ID)
 			} else if block.Name == "SendMessage" {
 				// A SendMessage can target a subagent (keyed by task_id == the
 				// SendMessage `to`) in either of two states (#1419):
@@ -393,6 +395,7 @@ func (b *Backend) logSubagentShares(priced bool, shares []modelinfo.SubagentCost
 // did. See docs/WIRING.md → "Idle-keyed turn completion".
 func (b *Backend) OnResult(msg *ResultMessage) {
 	b.touchActivity()
+	b.dropUnregisteredShellCalls()
 	b.shadow.Load().enqueue(ccEvent{kind: ccResultEv, mu: msg.ModelUsage, running: b.agents.Pending()})
 
 	b.turnMu.Lock()

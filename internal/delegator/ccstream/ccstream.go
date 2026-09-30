@@ -356,6 +356,12 @@ type Backend struct {
 	// Bash's tool_use_id) to its CC task_id, recorded at task_started: the
 	// stop_task control request names a task, the tracker names a key (#2138).
 	trackedTaskIDs map[string]string
+	// mainShellCalls holds the tool_use ids of the main thread's FOREGROUND
+	// shell calls still running, so /stop commands can stop them without
+	// ending the turn (#2140). A call CC registered as a task (task_started;
+	// any call that runs past a couple of seconds) leaves at its
+	// task_notification; one it never registered is dropped at turn end.
+	mainShellCalls map[string]struct{}
 	// Nested subagents (#1554): a subagent that itself calls the Agent tool.
 	// CC's task_* events carry no parentage, so a grandchild's lifecycle is only
 	// recognisable from what was recorded at SPAWN. See nested_subagents.go.

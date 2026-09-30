@@ -685,10 +685,14 @@ func (m *DelegatedManager) StopSession(ctx context.Context, sessionKey string) e
 // backend cannot stop a subagent on its own.
 var ErrStopSubagentsUnsupported = errors.New("this backend cannot stop subagents on their own")
 
-// StopSubagents stops every running subagent and background command of the
-// session without touching the agent's own turn (#2138), returning how many
-// stop requests were sent. Backends without the capability return
-// ErrStopSubagentsUnsupported.
+// ErrStopCommandsUnsupported is returned by StopCommands when the session's
+// backend cannot stop a shell command on its own.
+var ErrStopCommandsUnsupported = errors.New("this backend cannot stop shell commands on their own")
+
+// StopSubagents stops every running Agent-tool subagent of the session without
+// touching the agent's own turn or its shell commands (#2138, #2140),
+// returning how many stop requests were sent. Backends without the capability
+// return ErrStopSubagentsUnsupported.
 func (m *DelegatedManager) StopSubagents(ctx context.Context, sessionKey string) (int, error) {
 	mb, ok := m.getManaged(sessionKey)
 	if !ok {
@@ -701,6 +705,24 @@ func (m *DelegatedManager) StopSubagents(ctx context.Context, sessionKey string)
 		return 0, ErrStopSubagentsUnsupported
 	}
 	return stopper.StopSubagents(ctx)
+}
+
+// StopCommands stops the agent's own running shell commands, foreground and
+// background, without ending its turn or touching its subagents (#2140),
+// returning how many stop requests were sent. Backends without the capability
+// return ErrStopCommandsUnsupported.
+func (m *DelegatedManager) StopCommands(ctx context.Context, sessionKey string) (int, error) {
+	mb, ok := m.getManaged(sessionKey)
+	if !ok {
+		return 0, fmt.Errorf("no delegated backend for session %s", sessionKey)
+	}
+	stopper, ok := mb.be.(interface {
+		StopCommands(ctx context.Context) (int, error)
+	})
+	if !ok {
+		return 0, ErrStopCommandsUnsupported
+	}
+	return stopper.StopCommands(ctx)
 }
 
 // RegisterPromptCancelListener appends a listener fired when the prompt with

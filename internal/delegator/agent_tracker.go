@@ -173,13 +173,16 @@ func (t *SubagentTracker) SetModel(id, model string) {
 	}
 }
 
-// IDs returns the ids of every tracked entry, oldest first.
-func (t *SubagentTracker) IDs() []string {
+// IDsOfKind returns the ids of the tracked entries of one kind (a
+// SubagentKind* value), oldest first.
+func (t *SubagentTracker) IDsOfKind(kind string) []string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	ids := make([]string, 0, len(t.pending))
+	var ids []string
 	for _, ag := range t.pending {
-		ids = append(ids, ag.ID)
+		if ag.Kind == kind {
+			ids = append(ids, ag.ID)
+		}
 	}
 	return ids
 }

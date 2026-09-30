@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"foci/internal/delegator"
@@ -55,28 +56,85 @@ func (b *Backend) Interrupt(ctx context.Context) error {
 	return b.writer.SendInterrupt()
 }
 
-// StopSubagents stops every tracked subagent and background command with a
-// stop_task control request per task, leaving the main turn alone (#2138).
-// Returns how many requests were sent. An entry whose task_started has not
-// arrived yet has no task_id to name and is skipped (logged); the stopped
-// tasks retire from the tracker through their "stopped" task_notification.
+// StopSubagents stops every tracked Agent-tool subagent with a stop_task
+// control request per task, leaving the main turn and shell commands alone
+// (#2138, #2140). Returns how many requests were sent. The stopped tasks
+// retire from the tracker through their "stopped" task_notification.
+//
+// Verified live on CC 2.1.285 (#2140): stop_task stops a background AND a
+// foreground subagent, with the commands it was running; a foreground one's
+// Agent call returns "[Request interrupted by user for tool use]" and the
+// turn carries on.
 func (b *Backend) StopSubagents(ctx context.Context) (int, error) {
+	return b.stopTasks("subagents", b.agents.IDsOfKind(delegator.SubagentKindAgent))
+}
+
+// StopCommands stops the main agent's own shell commands, foreground and
+// background, with a stop_task per command, leaving the turn and the
+// subagents alone (#2140). Verified live on CC 2.1.285: a stopped foreground
+// command returns "Exit code 137 [killed]" and the turn carries on. A
+// foreground command CC has not registered as a task yet (it does within a
+// couple of seconds) has no task_id and is skipped.
+func (b *Backend) StopCommands(ctx context.Context) (int, error) {
+	keys := b.agents.IDsOfKind(delegator.SubagentKindCommand)
+	return b.stopTasks("commands", append(keys, b.mainShellCallIDs()...))
+}
+
+// stopTasks sends one stop_task per key that has a recorded task_id, and
+// returns how many it sent.
+func (b *Backend) stopTasks(what string, keys []string) (int, error) {
 	sent := 0
 	var errs []error
-	for _, key := range b.agents.IDs() {
+	for _, key := range keys {
 		taskID := b.taskIDFor(key)
 		if taskID == "" {
-			b.logger().Warnf("stop subagents: no task_id for %s (task_started not seen), not stopped", key)
+			b.logger().Warnf("stop %s: no task_id for %s (task_started not seen), not stopped", what, key)
 			continue
 		}
 		if err := b.writer.SendControl(newRequestID(), &StopTaskRequest{Subtype: "stop_task", TaskID: taskID}); err != nil {
 			errs = append(errs, fmt.Errorf("stop_task %s: %w", taskID, err))
 			continue
 		}
-		b.logger().Infof("stop subagents: stop_task sent task_id=%s key=%s", taskID, key)
+		b.logger().Infof("stop %s: stop_task sent task_id=%s key=%s", what, taskID, key)
 		sent++
 	}
 	return sent, errors.Join(errs...)
+}
+
+// noteMainShellCall records a main-thread foreground shell call (#2140).
+func (b *Backend) noteMainShellCall(toolUseID string) {
+	b.subagentRunsMu.Lock()
+	defer b.subagentRunsMu.Unlock()
+	if b.mainShellCalls == nil {
+		b.mainShellCalls = map[string]struct{}{}
+	}
+	b.mainShellCalls[toolUseID] = struct{}{}
+}
+
+// mainShellCallIDs returns the running main-thread foreground shell calls.
+func (b *Backend) mainShellCallIDs() []string {
+	b.subagentRunsMu.Lock()
+	defer b.subagentRunsMu.Unlock()
+	ids := make([]string, 0, len(b.mainShellCalls))
+	for id := range b.mainShellCalls {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// dropUnregisteredShellCalls forgets, at turn end, the foreground shell calls
+// CC never registered as tasks: they finished too quickly to, and no
+// task_notification will come to retire them. A registered call stays until
+// its own notification, which also covers one CC moved to the background.
+func (b *Backend) dropUnregisteredShellCalls() {
+	b.subagentRunsMu.Lock()
+	defer b.subagentRunsMu.Unlock()
+	for id := range b.mainShellCalls {
+		if b.trackedTaskIDs[id] == "" {
+			delete(b.mainShellCalls, id)
+		}
+	}
 }
 
 // recordTaskID remembers the task_id behind a tracker key (#2138).
@@ -92,12 +150,13 @@ func (b *Backend) recordTaskID(key, taskID string) {
 	b.trackedTaskIDs[key] = taskID
 }
 
-// forgetTaskID drops a finished task's entry. A reactivation records it again
-// at its own task_started.
+// forgetTaskID drops a finished task's entry, and its main-thread shell call
+// if it was one. A reactivation records it again at its own task_started.
 func (b *Backend) forgetTaskID(key string) {
 	b.subagentRunsMu.Lock()
 	defer b.subagentRunsMu.Unlock()
 	delete(b.trackedTaskIDs, key)
+	delete(b.mainShellCalls, key)
 }
 
 // taskIDFor returns the task_id recorded for a tracker key, or "".

@@ -396,8 +396,11 @@ func TestConvBinding_AgentActivityBesideSubagents(t *testing.T) {
 		t.Fatalf("activity frames = %v, want 3", frames)
 	}
 	last := frames[2]
-	if last["kind"] != "subagents" || last["agentKind"] != "tool" || last["agentCommand"] != "make -C /x test" {
+	if last["kind"] != "subagents" || last["agentKind"] != "tool" || last["agentCommand"] != "make -C /x test" || last["agentShell"] != true {
 		t.Fatalf("last frame = %v", last)
+	}
+	if !info.ActivityAgentShell {
+		t.Fatalf("snapshot ActivityAgentShell = false for a Bash call")
 	}
 	subs, _ := last["subagents"].([]any)
 	if len(subs) != 1 {
@@ -405,6 +408,12 @@ func TestConvBinding_AgentActivityBesideSubagents(t *testing.T) {
 	}
 	if sub, _ := subs[0].(map[string]any); sub["id"] != "toolu_a" || sub["startedMs"] != float64(1000) {
 		t.Fatalf("subagent entry = %v", subs[0])
+	}
+
+	// A non-shell tool is not a command /stop commands can stop (#2140).
+	s.Emit(ctx, turnevent.ToolCall{Name: "Read", Args: []byte(`{"file_path":"/x"}`)})
+	if b.info().ActivityAgentShell {
+		t.Fatalf("ActivityAgentShell still set for a Read call")
 	}
 }
 

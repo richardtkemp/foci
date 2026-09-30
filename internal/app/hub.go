@@ -2175,6 +2175,7 @@ type convBinding struct {
 	turnKind       fap.ActivityKind      // turn-scoped kind (idle when no turn in flight)
 	turnDetail     string                // turn-scoped detail (e.g. tool name)
 	turnCommand    string                // turn-scoped full tool command (kind=tool), for the stop dialog (#2138)
+	turnShell      bool                  // the turn-scoped tool is a shell command, stoppable on its own (#2140)
 	subagentDetail string                // running-subagent descriptions, empty if none
 	subagents      []fap.RunningSubagent // the structured running list behind subagentDetail (#2138)
 	waitingDetail  string                // target agent id we're awaiting, empty if none
@@ -2325,7 +2326,7 @@ func (b *convBinding) info() fap.ConversationInfo {
 	defer b.mu.Unlock()
 	a := b.activityFrameLocked()
 	return fap.ConversationInfo{ID: b.convID, SessionKey: b.sessionKey, LastSeq: b.seq, Activity: a.Kind, ActivityDetail: a.Detail,
-		ActivityAgentKind: a.AgentKind, ActivityAgentDetail: a.AgentDetail, ActivityAgentCommand: a.AgentCommand, Subagents: a.Subagents,
+		ActivityAgentKind: a.AgentKind, ActivityAgentDetail: a.AgentDetail, ActivityAgentCommand: a.AgentCommand, ActivityAgentShell: a.AgentShell, Subagents: a.Subagents,
 		LastActivityTs: b.lastActMs, LastPreview: b.lastPreview, CacheExpiryMs: b.cacheExpiryMs}
 }
 
@@ -2341,21 +2342,22 @@ func (b *convBinding) resolveActivity() (fap.ActivityKind, string) {
 	if b.subagentDetail != "" {
 		return fap.ActivityKindSubagents, b.subagentDetail
 	}
-	kind, detail, _ := b.agentActivityLocked()
+	kind, detail, _, _ := b.agentActivityLocked()
 	return kind, detail
 }
 
 // agentActivityLocked resolves the AGENT's own activity, ignoring subagents:
-// waiting > turn-scoped > idle, plus the running tool's full command. This is
-// what the app shows first, above the subagent lines (#2138). Caller holds mu.
-func (b *convBinding) agentActivityLocked() (fap.ActivityKind, string, string) {
+// waiting > turn-scoped > idle, plus the running tool's full command and
+// whether it is a shell command (#2140). This is what the app shows first,
+// above the subagent lines (#2138). Caller holds mu.
+func (b *convBinding) agentActivityLocked() (kind fap.ActivityKind, detail, command string, shell bool) {
 	if b.waitingDetail != "" {
-		return fap.ActivityKindWaiting, b.waitingDetail, ""
+		return fap.ActivityKindWaiting, b.waitingDetail, "", false
 	}
 	if b.turnKind != "" && b.turnKind != fap.ActivityKindIdle {
-		return b.turnKind, b.turnDetail, b.turnCommand
+		return b.turnKind, b.turnDetail, b.turnCommand, b.turnShell
 	}
-	return fap.ActivityKindIdle, "", ""
+	return fap.ActivityKindIdle, "", "", false
 }
 
 // activityFrameLocked builds the full Activity frame from the current inputs:
@@ -2364,8 +2366,8 @@ func (b *convBinding) agentActivityLocked() (fap.ActivityKind, string, string) {
 func (b *convBinding) activityFrameLocked() fap.Activity {
 	kind, detail := b.resolveActivity()
 	a := fap.Activity{ConversationID: b.convID, Kind: string(kind), Detail: detail}
-	if ak, ad, cmd := b.agentActivityLocked(); ak != fap.ActivityKindIdle {
-		a.AgentKind, a.AgentDetail, a.AgentCommand = string(ak), ad, cmd
+	if ak, ad, cmd, shell := b.agentActivityLocked(); ak != fap.ActivityKindIdle {
+		a.AgentKind, a.AgentDetail, a.AgentCommand, a.AgentShell = string(ak), ad, cmd, shell
 	}
 	if len(b.subagents) > 0 {
 		a.Subagents = append([]fap.RunningSubagent(nil), b.subagents...)
@@ -2376,17 +2378,19 @@ func (b *convBinding) activityFrameLocked() fap.Activity {
 // setTurnActivity records a detail-less turn-scoped activity kind and re-emits
 // if the resolved value changed. Called by appSink off the turn-event stream.
 func (b *convBinding) setTurnActivity(kind fap.ActivityKind) {
-	b.setTurnTool(kind, "", "")
+	b.setTurnTool(kind, "", "", false)
 }
 
 // setTurnTool records the turn-scoped kind with its detail and, for a tool, the
 // full command shown behind the stop dialog's "show full command" expander
-// (#2138).
-func (b *convBinding) setTurnTool(kind fap.ActivityKind, detail, command string) {
+// (#2138) and whether it is a shell command the dialog can stop on its own
+// (#2140).
+func (b *convBinding) setTurnTool(kind fap.ActivityKind, detail, command string, shell bool) {
 	b.applyActivity(func() {
 		b.turnKind = kind
 		b.turnDetail = detail
 		b.turnCommand = command
+		b.turnShell = shell
 	})
 }
 
@@ -2454,7 +2458,7 @@ func (b *convBinding) applyActivity(mutate func()) {
 // the struct non-comparable with ==).
 func activityEqual(x, y fap.Activity) bool {
 	return x.ConversationID == y.ConversationID && x.Kind == y.Kind && x.Detail == y.Detail &&
-		x.AgentKind == y.AgentKind && x.AgentDetail == y.AgentDetail && x.AgentCommand == y.AgentCommand &&
+		x.AgentKind == y.AgentKind && x.AgentDetail == y.AgentDetail && x.AgentCommand == y.AgentCommand && x.AgentShell == y.AgentShell &&
 		slices.Equal(x.Subagents, y.Subagents)
 }
 

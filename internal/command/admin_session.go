@@ -12,33 +12,57 @@ import (
 )
 
 // StopCommand returns a /stop command that cancels the current agent turn.
-// An argument widens or narrows it (#2138): "subagents" stops only the running
-// subagents and background commands, leaving the turn alone; "all" stops the
-// turn and them.
+// An argument picks what to stop instead (#2138, #2140):
+//   - "subagents" stops only the running Agent-tool subagents;
+//   - "commands" stops only the agent's own shell commands, foreground and
+//     background;
+//   - "all" stops the subagents, the commands and the turn.
+//
+// Neither "subagents" nor "commands" ends the turn. Plain /stop ends the turn,
+// and on Claude Code that also stops the subagents and the foreground command
+// but NOT a background command (verified live, CC 2.1.285, #2140).
 func StopCommand() *Command {
 	return &Command{
 		Name:        "stop",
-		Description: "Cancel the current agent turn (subagents: only subagents; all: both)",
+		Description: "Cancel the current agent turn (or: subagents, commands, all)",
 		Category:    "operations",
 		Immediate:   true, // must run in polling goroutine to cancel a live turn
 		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
 			switch mode := strings.ToLower(strings.TrimSpace(req.Args)); mode {
 			case "":
 				return stopTurn(ctx, cc, true)
-			case "subagents":
-				return stopSubagents(ctx, cc)
+			case "subagents", "commands":
+				k := subagentTasks
+				if mode == "commands" {
+					k = commandTasks
+				}
+				n, err := stopTasks(ctx, cc, k)
+				if err != nil {
+					return Response{}, err
+				}
+				return Response{Text: k.stoppingText(n)}, nil
 			case "all":
+				// The tasks first, each by its own stop, then the turn: an interrupt
+				// sent first would already have stopped the subagents, and their
+				// stop count would name tasks that were no longer running. A backend
+				// that cannot stop tasks on their own still gets its turn stopped.
+				var parts []string
+				for _, k := range []taskKind{subagentTasks, commandTasks} {
+					n, err := stopTasks(ctx, cc, k)
+					if err != nil && !errors.Is(err, k.unsupported) {
+						return Response{}, err
+					}
+					if n > 0 {
+						parts = append(parts, k.stoppingText(n))
+					}
+				}
 				turn, err := stopTurn(ctx, cc, false)
 				if err != nil {
 					return Response{}, err
 				}
-				subs, err := stopSubagents(ctx, cc)
-				if err != nil {
-					return Response{}, err
-				}
-				return Response{Text: turn.Text + " " + subs.Text}, nil
+				return Response{Text: strings.Join(append(parts, turn.Text), " ")}, nil
 			default:
-				return Response{}, fmt.Errorf("unknown /stop argument %q: use subagents or all", mode)
+				return Response{}, fmt.Errorf("unknown /stop argument %q: use subagents, commands or all", mode)
 			}
 		},
 	}
@@ -84,30 +108,48 @@ func stopTurn(ctx context.Context, cc CommandContext, cancelQuestion bool) (Resp
 	return Response{Text: "Stopped."}, nil
 }
 
-// stopSubagents stops the session's running subagents and background commands
-// without touching its turn. Only a delegated backend has subagents.
-func stopSubagents(ctx context.Context, cc CommandContext) (Response, error) {
+// taskKind is one kind of task /stop can stop on its own, leaving the turn.
+type taskKind struct {
+	singular, plural string
+	unsupported      error
+	stop             func(m *agent.DelegatedManager, ctx context.Context, sessionKey string) (int, error)
+}
+
+var (
+	subagentTasks = taskKind{"subagent", "subagents", agent.ErrStopSubagentsUnsupported, (*agent.DelegatedManager).StopSubagents}
+	commandTasks  = taskKind{"command", "commands", agent.ErrStopCommandsUnsupported, (*agent.DelegatedManager).StopCommands}
+)
+
+// stopTasks stops the session's running tasks of one kind without touching
+// its turn, returning how many stop requests were sent. Only a delegated
+// backend runs them.
+func stopTasks(ctx context.Context, cc CommandContext, k taskKind) (int, error) {
 	if cc.Agent == nil || cc.Agent.DelegatedManager == nil {
-		return Response{Text: "No subagents to stop."}, nil
+		return 0, nil
 	}
 	sk := tools.SessionKeyFromContext(ctx)
 	if sk == "" {
-		return Response{}, fmt.Errorf("no active session")
+		return 0, fmt.Errorf("no active session")
 	}
-	n, err := cc.Agent.DelegatedManager.StopSubagents(ctx, sk)
-	if errors.Is(err, agent.ErrStopSubagentsUnsupported) {
-		return Response{}, err
+	n, err := k.stop(cc.Agent.DelegatedManager, ctx, sk)
+	if errors.Is(err, k.unsupported) {
+		return 0, err
 	}
 	if err != nil && n == 0 {
-		return Response{}, fmt.Errorf("stop subagents: %w", err)
+		return 0, fmt.Errorf("stop %s: %w", k.plural, err)
 	}
-	switch {
-	case n == 0:
-		return Response{Text: "No subagents to stop."}, nil
-	case n == 1:
-		return Response{Text: "Stopping 1 subagent."}, nil
+	return n, nil
+}
+
+// stoppingText is the reply for n stop requests sent.
+func (k taskKind) stoppingText(n int) string {
+	switch n {
+	case 0:
+		return "No " + k.plural + " to stop."
+	case 1:
+		return "Stopping 1 " + k.singular + "."
 	default:
-		return Response{Text: fmt.Sprintf("Stopping %d subagents.", n)}, nil
+		return fmt.Sprintf("Stopping %d %s.", n, k.plural)
 	}
 }
 

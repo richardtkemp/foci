@@ -19,7 +19,7 @@ const activityDetailMax = 60
 // args is the call's JSON input, or the raw command line for codex, whose
 // shell calls carry no JSON.
 func ActivityLabel(name string, args []byte) string {
-	if !isShellTool(name) {
+	if !IsShellTool(name) {
 		return name
 	}
 	command, description := shellArgs(args)
@@ -32,9 +32,9 @@ func ActivityLabel(name string, args []byte) string {
 	return name
 }
 
-// isShellTool reports whether name is a shell tool: CC's "Bash", codex's and
+// IsShellTool reports whether name is a shell tool: CC's "Bash", codex's and
 // opencode's "bash", or the API transport's "shell".
-func isShellTool(name string) bool {
+func IsShellTool(name string) bool {
 	switch name {
 	case "Bash", "bash", "shell":
 		return true
@@ -97,7 +97,7 @@ const fullCommandMax = 8000
 // Capped at fullCommandMax bytes; "" when the call carries nothing.
 func FullCommand(name string, args []byte) string {
 	text := strings.TrimSpace(string(args))
-	if isShellTool(name) {
+	if IsShellTool(name) {
 		if command, _ := shellArgs(args); command != "" {
 			text = command
 		}

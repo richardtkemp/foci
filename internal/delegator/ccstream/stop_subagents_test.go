@@ -10,47 +10,70 @@ import (
 	"foci/internal/delegator"
 )
 
-// TestStopSubagents_SendsStopTaskPerTrackedTask pins #2138: stopping subagents
-// sends one stop_task control request per tracked task, naming its task_id
-// (not the tracker's tool_use key), and skips an entry whose task_started has
-// not arrived yet. No interrupt is sent: the main turn is left alone.
-func TestStopSubagents_SendsStopTaskPerTrackedTask(t *testing.T) {
+// TestStopSubagentsAndCommands_StopEachKindSeparately pins #2138 and #2140:
+// each stop sends one stop_task per task of ITS kind, naming the task_id (not
+// the tracker's tool_use key), and never an interrupt, so the turn and the
+// other kind carry on. Subagents are the Agent-tool spawns. Commands are the
+// main agent's own shell calls, background and foreground, but not a command a
+// subagent runs (stopping the subagent stops that). A task whose task_started
+// has not arrived has no task_id and is skipped.
+func TestStopSubagentsAndCommands_StopEachKindSeparately(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
 	b := newTestBackend(&buf)
-	tool := func(id, name, input string) *AssistantMessage {
-		return &AssistantMessage{Message: BetaMessage{
+	tool := func(parent *string, id, name, input string) *AssistantMessage {
+		return &AssistantMessage{ParentToolUseID: parent, Message: BetaMessage{
 			Content: []ContentBlock{{Type: "tool_use", ID: id, Name: name, Input: json.RawMessage(input)}},
 		}}
 	}
-	started := func(taskID, toolUseID, taskType string) []byte {
+	task := func(subtype, taskID, toolUseID, taskType, status string) []byte {
 		raw, _ := json.Marshal(map[string]any{
-			"type": "system", "subtype": "task_started", "task_id": taskID, "tool_use_id": toolUseID, "task_type": taskType,
+			"type": "system", "subtype": subtype, "task_id": taskID, "tool_use_id": toolUseID, "task_type": taskType, "status": status,
 		})
 		return raw
 	}
-	b.OnAssistant(tool("toolu_agent", "Agent", `{"description":"researcher","prompt":"go","model":"haiku"}`))
-	b.OnAssistant(tool("toolu_bash", "Bash", `{"command":"sleep 60","run_in_background":true}`))
-	b.OnAssistant(tool("toolu_late", "Agent", `{"description":"not started yet","prompt":"go"}`))
-	b.OnSystem("task_started", started("task_a", "toolu_agent", "local_agent"))
-	b.OnSystem("task_started", started("task_b", "toolu_bash", taskTypeBash))
-	buf.Reset()
+	parent := "toolu_agent"
+	b.OnAssistant(tool(nil, "toolu_agent", "Agent", `{"description":"researcher","prompt":"go","model":"haiku"}`))
+	b.OnAssistant(tool(nil, "toolu_bash", "Bash", `{"command":"sleep 60","run_in_background":true}`))
+	b.OnAssistant(tool(nil, "toolu_late", "Agent", `{"description":"not started yet","prompt":"go"}`))
+	b.OnAssistant(tool(nil, "toolu_fg", "Bash", `{"command":"make test"}`))
+	b.OnAssistant(tool(nil, "toolu_quick", "Bash", `{"command":"echo hi"}`))
+	b.OnAssistant(tool(&parent, "toolu_sub_bash", "Bash", `{"command":"make build"}`))
+	b.OnSystem("task_started", task("task_started", "task_a", "toolu_agent", "local_agent", ""))
+	b.OnSystem("task_started", task("task_started", "task_b", "toolu_bash", taskTypeBash, ""))
+	b.OnSystem("task_started", task("task_started", "task_c", "toolu_fg", taskTypeBash, ""))
+	b.OnSystem("task_started", task("task_started", "task_d", "toolu_sub_bash", taskTypeBash, ""))
 
-	n, err := b.StopSubagents(t.Context())
-	if err != nil {
-		t.Fatalf("StopSubagents: %v", err)
-	}
-	if n != 2 {
-		t.Fatalf("sent %d stop requests, want 2", n)
-	}
-	out := buf.String()
-	for _, want := range []string{`"subtype":"stop_task","task_id":"task_a"`, `"subtype":"stop_task","task_id":"task_b"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("stop_task %s not sent; wire:\n%s", want, out)
+	stop := func(name string, fn func() (int, error), want []string, wantN int) {
+		t.Helper()
+		buf.Reset()
+		n, err := fn()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		out := buf.String()
+		if n != wantN || strings.Count(out, `"subtype":"stop_task"`) != wantN {
+			t.Fatalf("%s sent %d stop requests, want %d; wire:\n%s", name, n, wantN, out)
+		}
+		for _, id := range want {
+			if !strings.Contains(out, `"subtype":"stop_task","task_id":"`+id+`"`) {
+				t.Errorf("%s: stop_task %s not sent; wire:\n%s", name, id, out)
+			}
+		}
+		if strings.Contains(out, "interrupt") {
+			t.Errorf("%s sent an interrupt; it must leave the turn alone:\n%s", name, out)
 		}
 	}
-	if strings.Contains(out, "interrupt") {
-		t.Errorf("an interrupt was sent; stopping subagents must leave the turn alone:\n%s", out)
+	stop("StopSubagents", func() (int, error) { return b.StopSubagents(t.Context()) }, []string{"task_a"}, 1)
+	stop("StopCommands", func() (int, error) { return b.StopCommands(t.Context()) }, []string{"task_b", "task_c"}, 2)
+
+	// A finished foreground command leaves at its notification; one CC never
+	// registered (too quick) leaves at turn end.
+	b.OnSystem("task_notification", task("task_notification", "task_c", "toolu_fg", "", "completed"))
+	stop("StopCommands after the foreground command ended", func() (int, error) { return b.StopCommands(t.Context()) }, []string{"task_b"}, 1)
+	b.OnResult(&ResultMessage{Subtype: "success"})
+	if ids := b.mainShellCallIDs(); len(ids) != 0 {
+		t.Errorf("main shell calls after turn end = %v, want none", ids)
 	}
 }
 

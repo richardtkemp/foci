@@ -338,7 +338,7 @@ func TestConvBindingFieldCensus(t *testing.T) {
 	// suppressed by a hash that survived the restart.
 	restartSafe := map[string]bool{
 		"mu": true, "clients": true, "clientStates": true, "buffer": true,
-		"seenOrder": true, "turnKind": true, "turnDetail": true, "turnCommand": true,
+		"seenOrder": true, "turnKind": true, "turnDetail": true, "turnCommand": true, "turnShell": true,
 		"subagentDetail": true, "subagents": true, "waitingDetail": true,
 		"activitySent": true, "cacheExpiryMs": true, "lastCmdHash": true,
 	}

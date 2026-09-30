@@ -362,8 +362,11 @@ func TestSubagentTracker_OnRunning(t *testing.T) {
 	if running[0].Model != "claude-haiku-4-5" {
 		t.Fatalf("model = %q", running[0].Model)
 	}
-	if ids := tr.IDs(); len(ids) != 2 || ids[0] != "a" || ids[1] != "b" {
-		t.Fatalf("IDs = %v", ids)
+	if ids := tr.IDsOfKind(SubagentKindAgent); len(ids) != 1 || ids[0] != "a" {
+		t.Fatalf("agent IDs = %v", ids)
+	}
+	if ids := tr.IDsOfKind(SubagentKindCommand); len(ids) != 1 || ids[0] != "b" {
+		t.Fatalf("command IDs = %v", ids)
 	}
 	tr.ClearAll()
 	if running != nil {
