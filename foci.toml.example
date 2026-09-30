@@ -352,12 +352,23 @@ system_files = [
 # tool = "Bash"
 # command = 'git (\S+ )*push (\S+ )*--force'
 # reason = "Force-pushing is not allowed. Push normally, or ask the user."
-# Other match fields: input = { <field> = "regex" }, cwd = "regex" (session
-# working dir), background / subshell / output = true|false (restrict to
-# commands with that property), when = "<bash; exit 0 denies>", enabled = false.
+# Optional; every constraint given must hold. Each takes a regex or a list of them.
+# input = { file_path = '^/etc/' }        # tool-input field -> regex on its raw value
+# cwd = '^/home/foci/'                     # regex on the session's working dir
+# background = true                        # Bash: only commands run in the background (&)
+# subshell = true                          # Bash: only commands in a child shell
+# output = true                            # Bash: only commands whose stdout reaches the result
+# when = 'test -e /tmp/lock'               # bash run after the patterns match; exit 0 denies
+# action = "deny"                          # only "deny" is supported (the default)
+# enabled = false                          # switch off this rule, or a preinstalled one by name
 #
-# Stop rules have no [cc_backend] layer: set them per agent in
-# [[agents.backend_config.stop_rules]].
+# Stop rules have no [cc_backend] layer: set them per agent. A final reply
+# matching text, from a turn that launched no background job, blocks the stop:
+# [[agents.backend_config.stop_rules]]
+# name = "announce_start"
+# text = ['(?i)\bstarting .{1,40} now\b']  # regexes on the final reply; any may match
+# reason = 'Your reply says "{match}", but nothing is running. Start it now, or say plainly that it is deferred.'
+# enabled = false                          # switch the rule off without deleting it
 
 # ─── opencode backend ────────────────────────────────────────────────
 # Defaults for agents with backend = "opencode". Per-agent backend_config wins.
@@ -378,6 +389,18 @@ system_files = [
 # Also works with OpenAI-compatible endpoints (OpenRouter, Together, Groq, etc.)
 # Model params (reasoning/thinking) are now per-model in [models.*].
 # base_url is configured per-endpoint via [endpoints.openai].url (or custom endpoints).
+
+# ─── Endpoints ─────────────────────────────────────────────────────────
+# Named API endpoints. Built-ins (anthropic, gemini, openai, openrouter) exist
+# without config; a section overrides one or adds a custom endpoint.
+# [endpoints.myproxy]
+# format = "openai"                        # wire format: anthropic, openai, gemini
+# url = "https://llm.example.com/v1"       # base URL (empty = SDK default)
+# anthropic_url = ""                       # multi-format endpoints: per-format URLs
+# openai_url = ""
+# gemini_url = ""
+# api_key = "myproxy.api_key"              # secret name in secrets.toml
+# http_timeout = "120s"
 
 # ─── Platforms ────────────────────────────────────────────────────────
 # Platforms are configured as [[platforms]] array entries. Each entry has
@@ -456,6 +479,7 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # branch_orientation_facet_prompt = ""     # prompt for user-attached facet branches
 # branch_orientation_headless_prompt = ""  # prompt for headless branches (cron, spawn, keepalive)
 # archive_after = "24h"                   # gzip idle sessions after 24 hours
+# file_mode = "0600"                      # octal permissions for session files
 # ephemeral_retention_days = 30           # delete ephemeral branch/fork transcripts after N days (0 = never)
 
 # ─── Skills ───────────────────────────────────────────────────────────
@@ -531,12 +555,15 @@ bind = "127.0.0.1"
 # rate = 1.3                              # speed multiplier (0 = omit)
 # secret = "groq.api_key"                 # secret name in secrets.toml
 # response_format = "wav"                 # audio format: "mp3", "wav", etc.
+# replacements = { foci = "foki" }        # word replacements applied before synthesis
+# fallback = "edge"                       # entry to try on failure (unset = built-in edge-tts, "" = none)
 #
 # [[tts]]
 # id = "edge"
 # format = "edge-tts"
 # voice = "en-US-AndrewNeural"
 # rate = 1.3
+# command = "edge-tts"                    # edge-tts binary
 
 # ─── STT (speech-to-text) ────────────────────────────────────────────
 # First entry is the default. Agents override by id via stt = "id".
@@ -547,6 +574,7 @@ bind = "127.0.0.1"
 # endpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
 # model = "whisper-large-v3"
 # secret = "groq.api_key"                 # secret name in secrets.toml
+# replacements = { foki = "foci" }        # word replacements applied after transcription
 
 # ─── Bitwarden ────────────────────────────────────────────────────────
 # [bitwarden]
@@ -626,6 +654,7 @@ bind = "127.0.0.1"
 # interval = "15m"
 # prompt = ""
 # can_run_background = "background_ok.sh"  # executable run before each background op; exit 0 = allowed, non-zero = skip (empty = always allowed)
+# force_in_session = false                 # run in an independent session instead of a backend fork
 
 # ─── Global Keepalive ────────────────────────────────────────────────
 # [keepalive]
@@ -634,6 +663,7 @@ bind = "127.0.0.1"
 # prompt = ""
 # warm_open_app_chats = false             # warm every chat the app has open (per its pager tabs), not just the default session
 # max_user_idle = "96h"                   # only warm sessions a human used within this window ("0" disables the gate)
+# force_in_session = false                # run in the existing session instead of a backend fork
 
 # ─── Global Reflection ───────────────────────────────────────────────
 # Periodic reflection pass: captures memories into daily files AND autogenerates
@@ -648,6 +678,7 @@ bind = "127.0.0.1"
 # compaction_prompt = ""
 # notify_on_skill_creation = true          # notify the user when reflection creates or updates a skill
 # backend_quiet_period = "5m"              # delegated backends: user idle time before reflection is injected
+# force_in_session = false                 # interval pass runs in the existing session instead of a backend fork
 
 # ─── Global Maintenance ──────────────────────────────────────────────
 # Scheduled housekeeping: MEMORY.md consolidation and daily session reset.

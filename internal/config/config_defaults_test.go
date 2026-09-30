@@ -284,18 +284,92 @@ func TestExampleConfigKeysValid(t *testing.T) {
 			strings.Join(keys, "\n  "))
 	}
 
-	// Check 2: every Config struct field appears in the example.
+	// Check 2: every Config struct field is defined, at its full dotted path,
+	// in the decoded (uncommented) example. Matching the leaf name against the
+	// raw text let any common word (enabled, model, timeout) in any section or
+	// comment count as documentation (#2128). Array-of-tables paths carry no
+	// index in the decoded keys, so [[agents]] id reads as agents.id.
 	structKeys := collectTOMLKeys(reflect.TypeOf(Config{}), "")
 
-	// The legacy [[agents]] (singular) section has the same fields as [[agents]].
-	// The example only shows [[agents]]; skip all agent.* paths.
-	exampleSkipPrefixes := []string{"agent."}
+	// Prefixes exempt from the check, each with its reason.
+	exampleSkipPrefixes := map[string]string{
+		// Legacy [[agent]] (singular) has the same fields as [[agents]];
+		// the example documents only [[agents]].
+		"agent.": "legacy alias of [[agents]]",
+	}
 
-	exampleText := string(raw)
+	defined := map[string]bool{}
+	for _, k := range meta.Keys() {
+		defined[k.String()] = true
+	}
+	// A map or custom-unmarshaler key is a leaf in structKeys but may be
+	// written as a table with sub-keys, so a defined descendant counts too.
+	isDefined := func(key string) bool {
+		if defined[key] {
+			return true
+		}
+		for k := range defined {
+			if strings.HasPrefix(k, key+".") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Some sections are mounted at several paths with the same fields: a
+	// global section and its per-agent / per-platform overrides. A field
+	// documented at any mount point of its section counts for all of them;
+	// the full path under the mount must still match. Each group lists
+	// prefixes that are interchangeable; rewrites chain
+	// (agents.platforms.debug.x -> platforms.debug.x -> debug.x).
+	mounts := [][]string{
+		{"agent_loop.", "agents.loop."},
+		{"platforms.", "agents.platforms."},
+		{"notify.", "platforms.notify."},
+		{"debug.", "platforms.debug."},
+		{"display.", "platforms.display."},
+		// Per-agent backend_config overrides the [cc_backend] and
+		// [opencode_backend] defaults key by key.
+		{"cc_backend.", "agents.backend_config."},
+		{"opencode_backend.", "agents.backend_config."},
+	}
+	for _, sec := range []string{"notify", "display", "nudge", "voice", "behavior",
+		"system", "sessions", "tools", "debug", "environment", "browser", "keepalive",
+		"background", "reflection", "scheduler", "maintenance", "groups",
+		"permissions", "memory"} {
+		mounts = append(mounts, []string{sec + ".", "agents." + sec + "."})
+	}
+	documented := func(key string) bool {
+		seen := map[string]bool{key: true}
+		queue := []string{key}
+		for len(queue) > 0 {
+			k := queue[0]
+			queue = queue[1:]
+			if isDefined(k) {
+				return true
+			}
+			for _, group := range mounts {
+				for _, from := range group {
+					if !strings.HasPrefix(k, from) {
+						continue
+					}
+					for _, to := range group {
+						alt := to + strings.TrimPrefix(k, from)
+						if !seen[alt] {
+							seen[alt] = true
+							queue = append(queue, alt)
+						}
+					}
+				}
+			}
+		}
+		return false
+	}
+
 	var missing []string
 	for _, key := range structKeys {
 		skip := false
-		for _, prefix := range exampleSkipPrefixes {
+		for prefix := range exampleSkipPrefixes {
 			if strings.HasPrefix(key, prefix) {
 				skip = true
 				break
@@ -304,11 +378,7 @@ func TestExampleConfigKeysValid(t *testing.T) {
 		if skip {
 			continue
 		}
-
-		// Check the leaf key name appears in the raw file (commented or not).
-		parts := strings.Split(key, ".")
-		leaf := parts[len(parts)-1]
-		if !strings.Contains(exampleText, leaf) {
+		if !documented(key) {
 			missing = append(missing, key)
 		}
 	}
@@ -316,7 +386,7 @@ func TestExampleConfigKeysValid(t *testing.T) {
 	if len(missing) > 0 {
 		sort.Strings(missing)
 		t.Errorf("Config fields missing from foci.toml.example:\n  %s\n"+
-			"Add them to the example file, or add to exampleSkipKeys with a reason.",
+			"Add them to the example file (commented out is fine), or add to exampleSkipPrefixes with a reason.",
 			strings.Join(missing, "\n  "))
 	}
 }
