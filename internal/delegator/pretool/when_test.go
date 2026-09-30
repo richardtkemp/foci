@@ -131,18 +131,42 @@ func TestWhen_NonStringFieldsAndNames(t *testing.T) {
 	}
 }
 
-// TestWhen_TimeoutFailsOpen: a check that hangs, even with a backgrounded
-// child holding its stderr, is killed and reported, and does not deny. Once
-// the call's budget is spent, later checks are reported without running.
-func TestWhen_TimeoutFailsOpen(t *testing.T) {
+// setWhenLimits shrinks the when-check time limits for one test.
+func setWhenLimits(t *testing.T, timeout, budget time.Duration) {
 	oldT, oldB := whenTimeout, whenBudget
-	whenTimeout, whenBudget = 200*time.Millisecond, 300*time.Millisecond
+	whenTimeout, whenBudget = timeout, budget
 	t.Cleanup(func() { whenTimeout, whenBudget = oldT, oldB })
+}
 
-	mark := filepath.Join(t.TempDir(), "third")
+// TestWhen_TimeoutFailsOpen: a check that hangs, even with a backgrounded
+// child holding its stderr, is killed and reported, and does not deny.
+//
+// The budget is far beyond anything the test could spend, so the outcome is
+// fixed by the check alone, not by how long the kill takes (#2129).
+func TestWhen_TimeoutFailsOpen(t *testing.T) {
+	setWhenLimits(t, 200*time.Millisecond, time.Minute)
+
+	res := Match([]Rule{whenRule("a", "sleep 30 & sleep 30")}, Call{Tool: "Read", Input: json.RawMessage(`{}`)})
+	if res.Rule != nil {
+		t.Fatalf("denied by %s", res.Rule.Name)
+	}
+	if len(res.WhenErrors) != 1 || !strings.Contains(res.WhenErrors[0].Error(), "rule a: when: timed out") {
+		t.Fatalf("errors = %v, want one: rule a timed out", res.WhenErrors)
+	}
+}
+
+// TestWhen_BudgetFailsOpen: the call's budget cuts short the check running
+// when it runs out, and later checks are reported without running.
+//
+// The per-check timeout is far beyond the budget, so the one check that runs
+// is always the one the budget ends, whatever the scheduling (#2129).
+func TestWhen_BudgetFailsOpen(t *testing.T) {
+	setWhenLimits(t, time.Minute, 300*time.Millisecond)
+
+	mark := filepath.Join(t.TempDir(), "later")
 	rules := []Rule{
-		whenRule("a", "sleep 30 & sleep 30"),
-		whenRule("b", "sleep 30"),
+		whenRule("a", "sleep 30"),
+		whenRule("b", "touch "+mark+"; exit 0"),
 		whenRule("c", "touch "+mark+"; exit 0"),
 	}
 	res := Match(rules, Call{Tool: "Read", Input: json.RawMessage(`{}`)})
@@ -152,7 +176,7 @@ func TestWhen_TimeoutFailsOpen(t *testing.T) {
 	if len(res.WhenErrors) != 3 {
 		t.Fatalf("errors = %v", res.WhenErrors)
 	}
-	for i, want := range []string{"rule a: when: timed out", "rule b: when: timed out", "rule c: when: not run"} {
+	for i, want := range []string{"rule a: when: timed out", "rule b: when: not run", "rule c: when: not run"} {
 		if !strings.Contains(res.WhenErrors[i].Error(), want) {
 			t.Errorf("error %d = %v, want %q", i, res.WhenErrors[i], want)
 		}
