@@ -396,6 +396,13 @@ type TextEnd struct {
 	TurnID         string  `json:"turnId"`
 	MessageID      string  `json:"messageId"`
 	FinalText      *string `json:"finalText,omitempty"`
+	// VoiceUnavailable is set when this bubble should have carried a
+	// voice-mode clip (a trigger=="voice" turn with TTS configured, #1439) but
+	// synthesis failed, so the reply went out text-only (#1809). It is a short,
+	// user-facing reason ("rate limited for another 4h45m36s", "TTS provider
+	// error") — never a raw provider body. The client renders it as a muted
+	// "audio unavailable" marker on the bubble. Omitted on every other frame.
+	VoiceUnavailable string `json:"voiceUnavailable,omitempty"`
 }
 
 func (TextEnd) Type() string { return TypeTextEnd }
@@ -406,6 +413,9 @@ type ServerMessage struct {
 	MessageID      string `json:"messageId"`
 	Role           string `json:"role"`
 	Text           string `json:"text"`
+	// VoiceUnavailable: see TextEnd.VoiceUnavailable (#1809) — the same marker
+	// for an agent reply that did not stream.
+	VoiceUnavailable string `json:"voiceUnavailable,omitempty"`
 }
 
 func (ServerMessage) Type() string { return TypeMessage }

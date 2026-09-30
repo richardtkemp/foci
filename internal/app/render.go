@@ -27,6 +27,13 @@ const appStreamInterval = 50 * time.Millisecond
 type appBackend struct {
 	b      *convBinding
 	logger *log.ComponentLogger
+
+	// voiceUnavailable is the reason a voice-mode clip for the segment about
+	// to be delivered failed to synthesize (#1809). appSink sets it just
+	// before forwarding the text event whose Deliver call renders that
+	// segment; Deliver consumes it onto the frame. Same goroutine as Emit, so
+	// no lock.
+	voiceUnavailable string
 }
 
 func newAppBackend(b *convBinding) *appBackend {
@@ -51,21 +58,25 @@ func (p *appBackend) OpenStream() turn.StreamSink {
 // the authoritative final text; otherwise it sends a fresh fap.ServerMessage.
 func (p *appBackend) Deliver(pl turn.Payload, stream turn.StreamSink) (turn.DeliveryResult, error) {
 	msgID := fap.NewULID()
+	voiceUnavailable := p.voiceUnavailable
+	p.voiceUnavailable = ""
 	if ss, ok := stream.(*appStreamSink); ok && ss.surfaced() {
 		final := pl.Text
 		ss.b.send(fap.TextEnd{
-			ConversationID: ss.b.convID,
-			TurnID:         ss.turnID,
-			MessageID:      msgID,
-			FinalText:      &final,
+			ConversationID:   ss.b.convID,
+			TurnID:           ss.turnID,
+			MessageID:        msgID,
+			FinalText:        &final,
+			VoiceUnavailable: voiceUnavailable,
 		})
 		return turn.DeliveryResult{MsgIDs: []string{msgID}}, nil
 	}
 	p.b.send(fap.ServerMessage{
-		ConversationID: p.b.convID,
-		MessageID:      msgID,
-		Role:           "agent",
-		Text:           pl.Text,
+		ConversationID:   p.b.convID,
+		MessageID:        msgID,
+		Role:             "agent",
+		Text:             pl.Text,
+		VoiceUnavailable: voiceUnavailable,
 	})
 	return turn.DeliveryResult{MsgIDs: []string{msgID}}, nil
 }

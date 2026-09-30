@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"time"
 
 	"foci/internal/agent"
 	"foci/internal/fap"
@@ -28,8 +29,9 @@ import (
 //
 // One appSink per turn on one conversation.
 type appSink struct {
-	b     *convBinding
-	inner *turn.StreamingSink
+	b       *convBinding
+	inner   *turn.StreamingSink
+	backend *appBackend
 
 	// cleanup finishes the renderer's stream buffer (stops the pump goroutine).
 	// Returned from NewTurnSink for the agent to defer, so an abandoned turn
@@ -87,7 +89,7 @@ func newAppSink(b *convBinding) *appSink {
 	}
 	renderer := turn.NewTurnRenderer(backend, tracker, d, newSB)
 	inner := turn.NewStreamingSink(renderer, tracker, nil)
-	s := &appSink{b: b, inner: inner}
+	s := &appSink{b: b, inner: inner, backend: backend}
 	// A turn abandoned without TurnComplete would strand the indicator; cleanup is
 	// deferred by the agent on every turn, so clearing the turn-scoped activity
 	// here is the backstop. Session-scoped states (subagents/waiting) are NOT
@@ -145,6 +147,9 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 			s.synthesizeVoiceModeBlock(ctx, tb.Text)
 		}
 		s.inner.Emit(ctx, ev)
+		// A note the renderer did not deliver (silent block) must not leak
+		// onto a later, unrelated bubble.
+		s.backend.voiceUnavailable = ""
 
 	case turnevent.TurnComplete:
 		// Voice-mode bundling (#1439): synthesize BEFORE forwarding so the reply
@@ -154,6 +159,7 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 		// Forward first so the final text is delivered (TextEnd / ServerMessage),
 		// then close out the turn-scoped activity (→ idle) and emit the meta frame.
 		s.inner.Emit(ctx, ev)
+		s.backend.voiceUnavailable = ""
 		if len(audio) > 0 && s.attachVoice != nil {
 			if err := s.attachVoice(audio); err != nil {
 				appLog.Warnf("voice-mode: attach synthesized audio (conv=%s): %v", s.b.convID, err)
@@ -170,18 +176,28 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 	}
 }
 
-// logTTSError logs a voice-mode TTS synthesis failure. A rate limit (e.g. Groq's
-// per-day token cap) is an expected transient: the turn already delivered its text
-// and only the spoken clip is missing, so log it at info — keeping it OFF the
-// WARN-triggered warning-injection queue (no noisy client-facing notice, no raw
-// body / billing URL). Every other failure stays a WARN.
-func (s *appSink) logTTSError(err error) {
+// ttsFailed handles a voice-mode TTS synthesis failure: it logs it and stages
+// a short, user-facing reason for the bubble about to be delivered text-only
+// (#1809), which appBackend.Deliver carries as the frame's VoiceUnavailable.
+//
+// A rate limit (e.g. Groq's per-day token cap) is an expected transient: the
+// turn already delivered its text and only the spoken clip is missing, so log
+// it at info — keeping it OFF the WARN-triggered warning-injection queue (no
+// noisy client-facing notice, no raw body / billing URL). Every other failure
+// stays a WARN. The client-facing reason likewise never carries the raw error:
+// only the rate-limit wait, or a generic "TTS provider error".
+func (s *appSink) ttsFailed(err error) {
 	var rl *ratelimit.Error
 	if errors.As(err, &rl) {
 		appLog.Infof("voice-mode: TTS %v — delivered text-only (conv=%s)", rl, s.b.convID)
+		s.backend.voiceUnavailable = "rate limited"
+		if rl.RetryAfter > 0 {
+			s.backend.voiceUnavailable += " for another " + rl.RetryAfter.Round(time.Second).String()
+		}
 		return
 	}
 	appLog.Warnf("voice-mode: TTS synthesis (conv=%s): %v", s.b.convID, err)
+	s.backend.voiceUnavailable = "TTS provider error"
 }
 
 // synthesizeVoiceMode returns synthesized reply audio for a voice-triggered
@@ -216,7 +232,7 @@ func (s *appSink) synthesizeVoiceMode(ctx context.Context, e turnevent.TurnCompl
 	}
 	audio, err := s.tts.Synthesize(ctx, voice.NormalizeForSpeech(text))
 	if err != nil {
-		s.logTTSError(err)
+		s.ttsFailed(err)
 		return nil
 	}
 	return audio
@@ -243,7 +259,7 @@ func (s *appSink) synthesizeVoiceModeBlock(ctx context.Context, rawText string) 
 	s.voiceBlockDelivered = true
 	audio, err := s.tts.Synthesize(ctx, voice.NormalizeForSpeech(text))
 	if err != nil {
-		s.logTTSError(err)
+		s.ttsFailed(err)
 		return
 	}
 	if len(audio) > 0 && s.attachVoice != nil {
