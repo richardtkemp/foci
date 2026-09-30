@@ -31,6 +31,17 @@ import (
 //     because CC counts them nowhere (shadowProcesses);
 //   - totals and per UTC day, with the adapter's remainder (overhead and
 //     compaction) and interrupted spend broken out.
+//
+// Matching tokens is not enough (#2131: the 21:11 turn of #2130 conserved
+// tokens with CC and was priced $2.68 over it), so the report also checks
+// dollars and ends with FLAGS:
+//
+//   - a process whose CC cost and the adapter's price differ beyond the known
+//     residual, split into what the unknown-TTL cache writes explain (with the
+//     5m share CC's cost implies) and what they cannot;
+//   - the remainder's share per process and per day, with its models and
+//     classes, flagging a turn-less remainder no by-design overhead explains;
+//   - the calls priced on a TTL guess, priced both ways, and unpriced calls.
 func runLedgerShadow(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("ledger-shadow", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -150,7 +161,11 @@ func writeShadowReport(db *sql.DB, from string, top int, w io.Writer) error {
 	writePairSummary(w, turns, "turns", top)
 
 	// Per CC process: CC's own cost against the adapter's.
-	procs, unmatched, err := shadowProcesses(db, from)
+	ttl, err := shadowTTLWrites(db)
+	if err != nil {
+		return fmt.Errorf("unknown-TTL writes: %w", err)
+	}
+	procs, unmatched, err := shadowProcesses(db, from, ttl)
 	if err != nil {
 		return fmt.Errorf("per process: %w", err)
 	}
@@ -158,7 +173,12 @@ func writeShadowReport(db *sql.DB, from string, top int, w io.Writer) error {
 		"(else 0) to its latest report that counts exactly the calls the adapter booked (equal tokens), against the\n"+
 		"adapter's price of those calls (shadow); interrupted excluded; [i/n] = compared through report i of n\n",
 		len(procs), len(unmatched))
-	writePairSummary(w, procs, "processes", top)
+	pairs := make([]shadowPair, len(procs))
+	for i, p := range procs {
+		pairs[i] = p.shadowPair
+	}
+	writePairSummary(w, pairs, "processes", top)
+	flags := writeProcessDollars(w, procs)
 	if len(unmatched) > 0 {
 		_, _ = fmt.Fprintf(w, "  unmatched — no report counts the booked calls (a subagent still running, a remainder not yet\n"+
 			"  settled, or a booking error); CC's latest report against the adapter's every call:\n")
@@ -180,6 +200,22 @@ func writeShadowReport(db *sql.DB, from string, top int, w io.Writer) error {
 	_, _ = fmt.Fprintf(w, "\nday (UTC)          live      shadow        diff\n")
 	for _, d := range days {
 		_, _ = fmt.Fprintf(w, "%s  %10.4f  %10.4f  %+10.4f\n", d.key, d.live, d.shadow, d.diff())
+	}
+
+	remainderFlags, err := writeShadowRemainder(db, from, w)
+	if err != nil {
+		return fmt.Errorf("remainder: %w", err)
+	}
+	flags = append(flags, remainderFlags...)
+	unpricedFlags, err := writeShadowClassMethods(db, from, ttl, w)
+	if err != nil {
+		return fmt.Errorf("class methods: %w", err)
+	}
+	flags = append(flags, unpricedFlags...)
+
+	_, _ = fmt.Fprintf(w, "\nFLAGS: %d\n", len(flags))
+	for _, f := range flags {
+		_, _ = fmt.Fprintf(w, "  %s\n", f)
 	}
 	return nil
 }
@@ -218,7 +254,7 @@ func writePairSummary(w io.Writer, pairs []shadowPair, what string, top int) {
 	_, _ = fmt.Fprintf(w, "  live $%.4f  shadow $%.4f  diff $%+.4f; %d of %d %s within 3%%\n", l, s, s-l, within, len(pairs), what)
 	sort.Slice(pairs, func(i, j int) bool { return math.Abs(pairs[i].diff()) > math.Abs(pairs[j].diff()) })
 	for i, p := range pairs {
-		if i >= top || math.Abs(p.diff()) < 1e-9 {
+		if i >= top || math.Abs(p.diff()) < shadowFloatNoise {
 			break
 		}
 		_, _ = fmt.Fprintf(w, "  %-60s live %9.4f shadow %9.4f diff %+9.4f\n", strings.TrimSpace(p.key), p.live, p.shadow, p.diff())
@@ -239,6 +275,15 @@ type shadowCall struct {
 	window int64 // the result window it was booked in; a remainder's through_window
 	cost   float64
 	tokens modelinfo.Tokens // in the reports' classes
+	ttl    shadowTTLWrite   // its cache writes of unknown TTL, if any
+}
+
+// shadowProcess is one compared process: CC's cost (live) against the
+// adapter's price (shadow), and what of that price rests on unknown-TTL
+// cache writes.
+type shadowProcess struct {
+	shadowPair
+	ttl shadowTTLWrite
 }
 
 // shadowProcesses compares, per CC process with a report in the window, CC's
@@ -258,12 +303,12 @@ type shadowCall struct {
 //
 // A process no report matches is returned in unmatched, as its latest report
 // against every call the adapter booked for it.
-func shadowProcesses(db *sql.DB, from string) (compared, unmatched []shadowPair, err error) {
+func shadowProcesses(db *sql.DB, from string, ttl map[int64]shadowTTLCall) (compared []shadowProcess, unmatched []shadowPair, err error) {
 	reports, order, err := shadowProcessReports(db, from)
 	if err != nil {
 		return nil, nil, err
 	}
-	calls, err := shadowProcessCalls(db, reports)
+	calls, err := shadowProcessCalls(db, reports, ttl)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -286,7 +331,8 @@ func shadowProcesses(db *sql.DB, from string) (compared, unmatched []shadowPair,
 					if i < len(rs)-1 {
 						key = fmt.Sprintf("%s [%d/%d]", scope, i+1, len(rs))
 					}
-					compared = append(compared, shadowPair{key: key, live: want.cost, shadow: prefixes[j].cost})
+					compared = append(compared, shadowProcess{shadowPair: shadowPair{key: key, live: want.cost, shadow: prefixes[j].cost},
+						ttl: prefixes[j].ttl})
 					matched = true
 					break
 				}
@@ -352,7 +398,7 @@ func shadowProcessReports(db *sql.DB, from string) (map[string][]shadowReportAt,
 
 // shadowProcessCalls reads the booked, non-interrupted calls of the given
 // processes, with their counts folded onto the reports' classes.
-func shadowProcessCalls(db *sql.DB, scopes map[string][]shadowReportAt) (map[string][]shadowCall, error) {
+func shadowProcessCalls(db *sql.DB, scopes map[string][]shadowReportAt, ttl map[int64]shadowTTLCall) (map[string][]shadowCall, error) {
 	rows, err := db.Query(`SELECT a.id, json_extract(a.detail, '$.scope'), a.model,
 			COALESCE(json_extract(a.detail, '$.window'), json_extract(a.detail, '$.through_window')),
 			c.cost_usd, t.class, t.count
@@ -382,7 +428,7 @@ func shadowProcessCalls(db *sql.DB, scopes map[string][]shadowReportAt) (map[str
 		}
 		c := byID[id]
 		if c == nil {
-			c = &shadowCall{model: model, window: math.MaxInt64, cost: cost.Float64, tokens: modelinfo.Tokens{}}
+			c = &shadowCall{model: model, window: math.MaxInt64, cost: cost.Float64, tokens: modelinfo.Tokens{}, ttl: ttl[id].shadowTTLWrite}
 			if window.Valid {
 				c.window = window.Int64
 			}
@@ -409,6 +455,7 @@ func shadowProcessCalls(db *sql.DB, scopes map[string][]shadowReportAt) (map[str
 type shadowTotal struct {
 	tokens map[string]modelinfo.Tokens
 	cost   float64
+	ttl    shadowTTLWrite
 }
 
 // callPrefixes is the running total of calls by window: entry 0 is no calls,
@@ -424,7 +471,7 @@ func callPrefixes(calls []shadowCall) []shadowTotal {
 	out := []shadowTotal{{tokens: map[string]modelinfo.Tokens{}}}
 	for _, w := range slices.Sorted(maps.Keys(byWindow)) {
 		prev := out[len(out)-1]
-		next := shadowTotal{tokens: map[string]modelinfo.Tokens{}, cost: prev.cost}
+		next := shadowTotal{tokens: map[string]modelinfo.Tokens{}, cost: prev.cost, ttl: prev.ttl}
 		for m, t := range prev.tokens {
 			next.tokens[m] = maps.Clone(t)
 		}
@@ -436,6 +483,7 @@ func callPrefixes(calls []shadowCall) []shadowTotal {
 				next.tokens[c.model][class] += n
 			}
 			next.cost += c.cost
+			next.ttl.add(c.ttl)
 		}
 		out = append(out, next)
 	}

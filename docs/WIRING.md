@@ -2204,7 +2204,15 @@ against the adapter's, interrupted excluded) and per day. The per-process check 
 the latest report whose tokens less the baseline equal the booked calls of a window prefix
 (`detail.window`, or a remainder's `through_window`) — never a `billed_at` cut, which is racy;
 a process no report matches (a subagent still running, a remainder not settled, a booking
-error) is listed as unmatched.
+error) is listed as unmatched. Tokens alone cannot catch a mispriced call, so the report also
+checks dollars (`ledger_shadow_checks.go`, #2131) and ends with FLAGS: a compared process whose
+CC cost lies beyond the known residual (the median over processes with no unknown-TTL write)
+from the adapter's price, or from the range its unknown-TTL `cache_write` tokens span (all 5m
+.. all 1h as booked), with the 5m share CC's cost implies; a turn-less remainder row costing
+more than its process's largest booked call (not overhead by design: a call source never
+read, #2130); and unpriced calls. It also prints the remainder's share per day and process with
+its models and classes, and the calls per `class_method` with the unknown-TTL writes priced both
+ways.
 
 **Legacy path** (`legacylive.go`) — the only booking path of Claude Code, until it
 switches; the file goes with that switch. `DelegatedTransport.LogUsage` builds a

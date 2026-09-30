@@ -3,12 +3,14 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"foci/internal/delegator/accounting"
+	"foci/internal/delegator/ccstream"
 	"foci/internal/modelinfo"
 )
 
@@ -180,5 +182,161 @@ func TestLedgerShadowProcessInterval(t *testing.T) {
 	wantCC := price(a0) + price(a1) + price(b0) + price(c0)
 	if want := fmt.Sprintf("live $%.4f  shadow $%.4f  diff $+0.0000; 3 of 3 processes", wantCC, wantCC); !strings.Contains(got, want) {
 		t.Errorf("report lacks %q:\n%s", want, got)
+	}
+}
+
+// TestLedgerShadowFlagsTurnlessTTLRemainder reproduces the 21:11 shape of
+// #2130: a process whose tokens CC and the adapter agree on exactly, but whose
+// Workflow agents' spend is a turn-less remainder with unknown-TTL cache
+// writes, priced at 1h where CC priced 5m. A token-only comparison passes it;
+// the report must flag the dollar gap as the TTL guess, the remainder as not
+// overhead by design, and the unknown-TTL writes priced both ways (#2131) —
+// while a clean process and a small by-design overhead row stay unflagged.
+func TestLedgerShadowFlagsTurnlessTTLRemainder(t *testing.T) {
+	dir := t.TempDir()
+	at := time.Date(2026, 9, 29, 20, 0, 0, 0, time.UTC)
+	const opus, sonnet = "claude-opus-5-5", "claude-sonnet-5"
+	livePath, shadowPath := filepath.Join(dir, "api.db"), filepath.Join(dir, "api-shadow.db")
+	live, _, err := accounting.Open(livePath, accounting.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = live.Close()
+	shadow, _, err := accounting.Open(shadowPath, accounting.Options{Shadow: true, NoBackup: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	price := func(model string, tk modelinfo.Tokens) float64 {
+		p, ok := modelinfo.CostAsOf(model, at, tk)
+		if !ok {
+			t.Fatalf("%s unpriced: %v", model, tk)
+		}
+		return p
+	}
+	// asCC is CC's own view of tokens: unknown-TTL writes were 5m.
+	asCC := func(tk modelinfo.Tokens) modelinfo.Tokens {
+		out := maps.Clone(tk)
+		out[modelinfo.ClassCacheWrite5m] += out[modelinfo.ClassCacheWrite]
+		delete(out, modelinfo.ClassCacheWrite)
+		return out
+	}
+	n := 0
+	book := func(scope, model string, window int, derived bool, tk modelinfo.Tokens) {
+		t.Helper()
+		n++
+		session := scope[:strings.LastIndexByte(scope, '@')]
+		c := accounting.Call{Key: fmt.Sprintf("msg_%d", n), Backend: accounting.BackendCCStream, Model: model,
+			Session: session, TurnID: fmt.Sprintf("%s@t%d", session, window), Kind: accounting.KindCall,
+			Finality: accounting.FinalityCompleted, ClassMethod: accounting.ClassMethodObserved,
+			BilledAt: at.Add(time.Duration(n) * time.Second), Tokens: tk, Detail: map[string]any{"scope": scope, "window": window}}
+		turn := accounting.Turn{TurnID: c.TurnID, Session: session, Backend: accounting.BackendCCStream,
+			Source: accounting.SourceUser, StartedAt: c.BilledAt}
+		if derived {
+			c.Key = fmt.Sprintf("%s:q%d:%s", scope, window, model)
+			c.TurnID, turn.TurnID = "", ""
+			c.Kind, c.Finality, c.ClassMethod = accounting.KindOverhead, accounting.FinalityDerived, accounting.ClassMethodUnknown
+			c.Detail = map[string]any{"scope": scope, "through_window": window}
+		}
+		if _, err := shadow.RecordCall(turn, c, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// report writes CC's cumulative figure per model, all at one instant.
+	report := func(scope string, when time.Time, byModel map[string][]modelinfo.Tokens) {
+		t.Helper()
+		session := scope[:strings.LastIndexByte(scope, '@')]
+		for model, tks := range byModel {
+			sum, cost := modelinfo.Tokens{}, 0.0
+			for _, tk := range tks {
+				cost += price(model, asCC(tk))
+				for c, k := range tk {
+					sum[c] += k
+				}
+			}
+			if err := shadow.Update(func(tx *accounting.Tx) error {
+				return tx.Report(accounting.Report{Backend: accounting.BackendCCStream, Session: session, ScopeKey: scope,
+					Model: model, Grain: accounting.GrainCumulative, At: when, CostUSD: &cost, Tokens: ccstream.ReportClasses(sum)})
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	scope := func(session string, off time.Duration) string {
+		return fmt.Sprintf("%s@%d", session, at.Add(off).UnixNano())
+	}
+	obs := func(read, w5m, w1h, out int) modelinfo.Tokens {
+		return modelinfo.Tokens{modelinfo.ClassInput: 3, modelinfo.ClassCacheRead: read,
+			modelinfo.ClassCacheWrite5m: w5m, modelinfo.ClassCacheWrite1h: w1h, modelinfo.ClassOutput: out}
+	}
+
+	// X, the 21:11 process: three windows of main-thread calls, then a Workflow
+	// whose agents' spend is booked only as the window-2 remainder, per model,
+	// with unknown-TTL writes (api_calls 533/534).
+	x := scope("clutch/cX", 0)
+	x0, x1, x2 := obs(100_000, 2_000, 1_000, 3_000), obs(150_000, 0, 3_000, 2_000), obs(200_000, 5_000, 0, 4_000)
+	book(x, opus, 0, false, x0)
+	book(x, opus, 1, false, x1)
+	book(x, opus, 2, false, x2)
+	rOpus := modelinfo.Tokens{modelinfo.ClassInput: 216, modelinfo.ClassCacheRead: 1_848_955,
+		modelinfo.ClassCacheWrite: 305_815, modelinfo.ClassOutput: 40_827}
+	rSonnet := modelinfo.Tokens{modelinfo.ClassInput: 440, modelinfo.ClassCacheRead: 2_924_957,
+		modelinfo.ClassCacheWrite: 1_173_395, modelinfo.ClassOutput: 57_902}
+	book(x, opus, 2, true, rOpus)
+	book(x, sonnet, 2, true, rSonnet)
+	report(x, at.Add(time.Hour), map[string][]modelinfo.Tokens{opus: {x0, x1, x2, rOpus}, sonnet: {rSonnet}})
+
+	// Y: a clean process, every class observed — CC and the adapter agree.
+	y := scope("coach/cY", time.Second)
+	y0 := obs(80_000, 4_000, 0, 1_000)
+	book(y, opus, 0, false, y0)
+	report(y, at.Add(time.Hour), map[string][]modelinfo.Tokens{opus: {y0}})
+
+	// Z: a small overhead remainder of the kind CC's utility calls leave.
+	z := scope("coach/cZ", 2*time.Second)
+	z0, zr := obs(90_000, 1_000, 0, 5_000), modelinfo.Tokens{modelinfo.ClassOutput: 197}
+	book(z, opus, 0, false, z0)
+	book(z, opus, 0, true, zr)
+	report(z, at.Add(time.Hour), map[string][]modelinfo.Tokens{opus: {z0, zr}})
+	_ = shadow.Close()
+
+	var out, errb bytes.Buffer
+	if code := runLedgerShadow([]string{"-live", livePath, "-shadow", shadowPath}, &out, &errb); code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+	got := out.String()
+	// The token check agrees on all three: the 21:11 fault is invisible to it.
+	if !strings.Contains(got, "CC processes: 3 compared, 0 unmatched") {
+		t.Fatalf("report lacks the three compared processes:\n%s", got)
+	}
+	_, flags, ok := strings.Cut(got, "\nFLAGS")
+	if !ok {
+		t.Fatalf("report has no FLAGS section:\n%s", got)
+	}
+	gap := price(opus, rOpus) + price(sonnet, rSonnet) - price(opus, asCC(rOpus)) - price(sonnet, asCC(rSonnet))
+	for _, want := range []string{
+		// (a) the dollar gap, attributed to the TTL guess, with CC's implied split
+		fmt.Sprintf("%s: diff %+.4f", x, gap), "100% at 5m",
+		// (d) the Workflow spend is a turn-less remainder no by-design overhead explains
+		"not overhead by design",
+	} {
+		if !strings.Contains(flags, want) {
+			t.Errorf("FLAGS lacks %q:\n%s", want, got)
+		}
+	}
+	for _, clean := range []string{y, z} {
+		if strings.Contains(flags, clean) {
+			t.Errorf("FLAGS names the clean process %s:\n%s", clean, got)
+		}
+	}
+	// (c) the unknown-TTL writes counted and priced both ways; (b) the remainder share.
+	for _, want := range []string{
+		fmt.Sprintf("unknown TTL: %d cache-write tokens", 305_815+1_173_395),
+		fmt.Sprintf("$%.4f rests on the TTL", gap),
+		"remainder (finality=derived)",
+		sonnet,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("report lacks %q:\n%s", want, got)
+		}
 	}
 }
