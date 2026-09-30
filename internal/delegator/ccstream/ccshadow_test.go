@@ -52,6 +52,14 @@ func TestShadowWiring(t *testing.T) {
 	}
 	_, _ = f.WriteString(`{"type":"assistant","timestamp":"2026-09-29T10:00:00Z","message":{"id":"msg_1","model":"claude-opus-5","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":20}}}` + "\n")
 	_ = f.Close()
+	// Wait for the line to land in the adapter (its call booked) before the
+	// result: a result settles on its own clock (ccLineBound), and the tail
+	// only reads every subagentTailPoll, so under load a result sent at once
+	// can settle before the line is read and drop it as a copy (#2133).
+	waitFor(t, func() bool {
+		rows, err := shadow.Calls(time.Time{})
+		return err == nil && len(rows) > 0
+	})
 	b.OnResult(&ResultMessage{Type: "result", ModelUsage: map[string]ModelUsage{"claude-opus-5": {InputTokens: 10, OutputTokens: 20, CostUSD: 0.01}}})
 	sh.close()
 
