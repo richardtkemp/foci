@@ -31,10 +31,11 @@ func (r *Runner) maybeEphemeralCleanup(ctx context.Context) {
 	// against a second run overlapping the first.
 	go func() {
 		defer func() {
+			// Save before clearing the flag: idle must mean persisted (#2143).
+			r.saveTimer(timerEphemeralCleanup, now)
 			r.mu.Lock()
 			r.ephemeralCleanupRunning = false
 			r.mu.Unlock()
-			r.saveTimer(timerEphemeralCleanup, now)
 		}()
 		if n := r.agent.CleanupEphemeralSessions(ctx, r.ephemeralRetentionDays); n > 0 {
 			r.log.Infof("ephemeral cleanup: deleted %d stale transcript(s) older than %dd", n, r.ephemeralRetentionDays)
@@ -115,11 +116,12 @@ func (r *Runner) maybeReset(ctx context.Context) {
 
 	go func() {
 		defer func() {
+			// Same fire time as the in-memory schedule, saved before the flag
+			// clears (see consolidation).
+			r.saveTimer(timerReset, now)
 			r.mu.Lock()
 			r.resetRunning = false
 			r.mu.Unlock()
-			// Same fire time as the in-memory schedule (see consolidation).
-			r.saveTimer(timerReset, now)
 		}()
 		if err := r.agent.ResetSession(ctx, parentKey); err != nil {
 			r.log.Warnf("scheduled reset failed for %s: %v", parentKey, err)

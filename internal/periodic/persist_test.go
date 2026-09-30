@@ -9,6 +9,7 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/session"
+	"foci/internal/sqlite"
 )
 
 // #2026: every restart-sensitive runner timer is persisted through one helper
@@ -20,7 +21,16 @@ import (
 // whose human spoke 30m ago and which has never been reflected.
 func persistFixture(t *testing.T) *session.SessionIndex {
 	t.Helper()
-	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	idx, _ := persistFixtureWithPath(t)
+	return idx
+}
+
+// persistFixtureWithPath is persistFixture plus the state.db path, for tests
+// that open a second connection to the same file.
+func persistFixtureWithPath(t *testing.T) (*session.SessionIndex, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "state.db")
+	idx, err := session.NewSessionIndex(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +42,7 @@ func persistFixture(t *testing.T) *session.SessionIndex {
 	})
 	idx.UpdateActivity("ag/c1", now.Add(-30*time.Minute))
 	idx.TouchUserActivity("ag/c1", now.Add(-30*time.Minute))
-	return idx
+	return idx, path
 }
 
 // persistCounts records how often each scheduler actually dispatched.
@@ -128,6 +138,79 @@ func TestPersistedTimers_RoundTripAcrossRestart(t *testing.T) {
 		if !tc.got.Equal(tc.run) {
 			t.Errorf("%s after restart = %v, want the pre-restart value %v", tc.name, tc.got, tc.run)
 		}
+	}
+}
+
+// #2143: a scheduler is not idle until its timer is persisted. Each run's
+// goroutine used to clear its *Running flag BEFORE saving, so waitIdle (and a
+// restart's New()) could observe "done" while the save was still in flight:
+// the round-trip test above then booted process 2 without the value, and the
+// late save hit a closed DB. Holding the SQLite write lock from a second
+// connection stalls the save deterministically: the runner must stay busy
+// until the lock is released, and the value must be on disk the moment it
+// reports idle.
+func TestPersistedTimers_SavedBeforeIdle(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  string
+		fire func(*Runner)
+		mem  func(*Runner) time.Time
+	}{
+		{"reflection", timerReflection, func(r *Runner) { r.maybeReflection() },
+			func(r *Runner) time.Time { return r.lastReflection }},
+		{"consolidation", timerConsolidation, func(r *Runner) { r.maybeConsolidation() },
+			func(r *Runner) time.Time { return r.lastConsolidation }},
+		{"reset", timerReset, func(r *Runner) { r.maybeReset(context.Background()) },
+			func(r *Runner) time.Time { return r.lastReset }},
+		{"background", timerBackgroundEnded, func(r *Runner) { r.maybeBackgroundWork(context.Background()) },
+			func(r *Runner) time.Time { return r.lastBackgroundEnded }},
+		{"ephemeralCleanup", timerEphemeralCleanup, func(r *Runner) { r.maybeEphemeralCleanup(context.Background()) },
+			func(r *Runner) time.Time { return r.lastEphemeralCleanup }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			idx, path := persistFixtureWithPath(t)
+			for _, k := range []string{timerReflection, timerConsolidation, timerReset} {
+				seedTimer(t, idx, k, time.Now().Add(-48*time.Hour))
+			}
+			var c persistCounts
+			r := bootRunner(idx, &c)
+
+			locker, err := sqlite.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer locker.Close()
+			tx, err := locker.Begin()
+			if err != nil {
+				t.Fatal(err)
+			}
+			// A write takes the database's single writer lock until the tx ends.
+			if _, err := tx.Exec(`INSERT INTO agent_metadata (agent_id, key, value) VALUES ('lock', 'lock', 'x')`); err != nil {
+				t.Fatal(err)
+			}
+			tc.fire(r)
+			// The fake agent returns at once, so only the stalled save can keep
+			// the run busy. Idle within this window means it went idle unsaved.
+			deadline := time.Now().Add(300 * time.Millisecond)
+			for time.Now().Before(deadline) {
+				if isIdle(r) {
+					_ = tx.Rollback()
+					t.Fatalf("%s reported idle while its timer save was still blocked", tc.name)
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			if err := tx.Rollback(); err != nil {
+				t.Fatal(err)
+			}
+			waitIdle(t, r)
+			got, ok := idx.PersistedTime("ag", tc.key).Load()
+			r.mu.Lock()
+			want := tc.mem(r)
+			r.mu.Unlock()
+			if !ok || !got.Equal(want) {
+				t.Errorf("%s persisted = %v (ok=%v) once idle, want the in-memory value %v", tc.key, got, ok, want)
+			}
+		})
 	}
 }
 

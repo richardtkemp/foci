@@ -138,11 +138,12 @@ func (r *Runner) maybeReflection() {
 	go func() {
 		defer func() {
 			ended := time.Now()
+			// Save before clearing the flag: idle must mean persisted (#2143).
+			r.saveTimer(timerReflection, ended)
 			r.mu.Lock()
 			r.reflectionRunning = false
 			r.lastReflection = ended
 			r.mu.Unlock()
-			r.saveTimer(timerReflection, ended)
 		}()
 		// Snapshot before each reflection branch and diff after it, so a skill
 		// create/update is attributed to the session that was reflected (the

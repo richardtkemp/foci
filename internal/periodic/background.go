@@ -91,11 +91,12 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 	go func() {
 		defer func() {
 			ended := time.Now()
+			// Save before clearing the flag: idle must mean persisted (#2143).
+			r.saveTimer(timerBackgroundEnded, ended)
 			r.mu.Lock()
 			r.backgroundRunning = false
 			r.lastBackgroundEnded = ended
 			r.mu.Unlock()
-			r.saveTimer(timerBackgroundEnded, ended)
 		}()
 		r.agent.Branch("background", parentKey, promptText, true)
 	}()

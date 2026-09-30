@@ -35,10 +35,7 @@ func waitIdle(t *testing.T, r *Runner) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		r.mu.Lock()
-		busy := r.keepaliveRunning || r.backgroundRunning || r.reflectionRunning || r.consolidationRunning || r.resetRunning || r.ephemeralCleanupRunning
-		r.mu.Unlock()
-		if !busy {
+		if isIdle(r) {
 			return
 		}
 		if time.Now().After(deadline) {
@@ -46,6 +43,13 @@ func waitIdle(t *testing.T, r *Runner) {
 		}
 		time.Sleep(time.Millisecond)
 	}
+}
+
+// isIdle reports whether no periodic scheduler goroutine is running.
+func isIdle(r *Runner) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return !(r.keepaliveRunning || r.backgroundRunning || r.reflectionRunning || r.consolidationRunning || r.resetRunning || r.ephemeralCleanupRunning)
 }
 
 // inFlightFn returns a stub IsTurnInFlightFunc that reports the given base

@@ -81,12 +81,13 @@ func (r *Runner) maybeConsolidation() {
 
 	go func() {
 		defer func() {
+			// Persist the same fire time the in-memory schedule uses, so a
+			// restart computes exactly the next fire this process would have.
+			// Save before clearing the flag: idle must mean persisted (#2143).
+			r.saveTimer(timerConsolidation, now)
 			r.mu.Lock()
 			r.consolidationRunning = false
 			r.mu.Unlock()
-			// Persist the same fire time the in-memory schedule uses, so a
-			// restart computes exactly the next fire this process would have.
-			r.saveTimer(timerConsolidation, now)
 		}()
 		if r.isDelegatedAgent {
 			// Backend: a batch run on the agent's own backend — an ordinary
