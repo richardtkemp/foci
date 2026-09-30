@@ -703,3 +703,62 @@ func TestRemainderTTLSolveIsExact(t *testing.T) {
 		})
 	}
 }
+
+// TestResultWaitsForMainTailRead is #2134. A result's bound says how long
+// after it a named call's line may land on disk; it does not say the tail has
+// read it. With a main tail running, a result is abandoned ("line never came")
+// only once a read that BEGAN after its bound has finished, however late that
+// read is: a slow tail delays the settle, it never drops the call as a copy.
+func TestResultWaitsForMainTailRead(t *testing.T) {
+	mu := map[string]ModelUsage{opus: {InputTokens: 5, OutputTokens: 5}}
+
+	t.Run("late read books the call", func(t *testing.T) {
+		tb := newTestBook(t, nil)
+		tb.mainTailRunning(true)
+		tb.mainRead(tb.clock)
+		tb.streamNamed("msg_1", "T1", tb.clock)
+		resultAt := tb.clock
+		tb.result(mu, 0, resultAt)
+		tb.advance(ccLineBound + time.Second) // the tail is stalled: no read yet
+		// A read that began inside the bound proves nothing about the line.
+		tb.mainRead(resultAt.Add(ccLineBound / 2))
+		tb.settle(false)
+		if len(tb.results) != 1 || tb.alarmsOf(accounting.InvStreamIdBooked) != 0 {
+			t.Fatalf("result settled before a read began past its bound: pending=%d alarms=%d",
+				len(tb.results), tb.alarmsOf(accounting.InvStreamIdBooked))
+		}
+		tb.mainLine(line("msg_1", opus, resultAt, "end_turn", 5, 5, 0, 0, 0))
+		tb.mainRead(tb.clock)
+		tb.settle(false)
+		calls := tb.calls(t)
+		if find(calls, "msg_1") == nil || tb.copies != 0 || tb.alarmsOf(accounting.InvStreamIdBooked) != 0 {
+			t.Fatalf("calls=%+v copies=%d alarms=%d, want msg_1 booked with no copy and no alarm",
+				calls, tb.copies, tb.alarmsOf(accounting.InvStreamIdBooked))
+		}
+	})
+
+	t.Run("read past the bound without the line alarms", func(t *testing.T) {
+		tb := newTestBook(t, nil)
+		tb.mainTailRunning(true)
+		tb.streamNamed("msg_1", "T1", tb.clock)
+		tb.result(mu, 0, tb.clock)
+		tb.advance(ccLineBound + time.Second)
+		tb.mainRead(tb.clock)
+		tb.settle(false)
+		if len(tb.results) != 0 || tb.alarmsOf(accounting.InvStreamIdBooked) != 1 {
+			t.Fatalf("pending=%d alarms=%d, want the result settled with one line-never-came alarm",
+				len(tb.results), tb.alarmsOf(accounting.InvStreamIdBooked))
+		}
+	})
+
+	t.Run("no tail settles on the bound", func(t *testing.T) {
+		tb := newTestBook(t, nil)
+		tb.streamNamed("msg_1", "T1", tb.clock)
+		tb.result(mu, 0, tb.clock)
+		tb.advance(ccLineBound + time.Second)
+		if len(tb.results) != 0 || tb.alarmsOf(accounting.InvStreamIdBooked) != 1 {
+			t.Fatalf("pending=%d alarms=%d, want the bound alone to settle when no tail runs",
+				len(tb.results), tb.alarmsOf(accounting.InvStreamIdBooked))
+		}
+	})
+}

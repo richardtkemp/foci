@@ -32,6 +32,8 @@ const (
 	ccResultEv
 	ccCostState
 	ccSessionFile
+	ccMainRead
+	ccMainTailEnded
 	ccExit
 )
 
@@ -126,6 +128,11 @@ func (s *ccShadow) run() {
 				c.costStateSeen(e.mu, e.at)
 			case ccSessionFile:
 				c.sessionFile = e.id
+				c.mainTailRunning(true)
+			case ccMainRead:
+				c.mainRead(e.at)
+			case ccMainTailEnded:
+				c.mainTailRunning(false)
 			case ccExit:
 				c.exit()
 				if n := s.dropped.Load(); n > 0 {
@@ -154,14 +161,20 @@ func (s *ccShadow) startMainTail(path string, offset int64) {
 	})
 }
 
+// Each finished read is reported with the time it began, after the lines it
+// found (the queue keeps order), so the adapter can tell a line that never
+// came from one not read yet (#2134).
 func (s *ccShadow) tailMain(path string, offset int64) {
 	defer close(s.tailDone)
+	defer s.enqueue(ccEvent{kind: ccMainTailEnded})
 	var f *os.File
 	for f == nil {
 		var err error
+		start := time.Now()
 		if f, err = os.Open(path); err == nil {
 			break
 		}
+		s.enqueue(ccEvent{kind: ccMainRead, at: start}) // no file yet: no line either
 		select {
 		case <-s.tailStop:
 			return
@@ -176,10 +189,12 @@ func (s *ccShadow) tailMain(path string, offset int64) {
 	r := bufio.NewReaderSize(f, 1<<20)
 	var partial []byte
 	drain := func() {
+		start := time.Now()
 		for {
 			chunk, err := r.ReadBytes('\n')
 			partial = append(partial, chunk...)
 			if err != nil {
+				s.enqueue(ccEvent{kind: ccMainRead, at: start})
 				return // EOF: keep the torn line for the next read
 			}
 			line := bytes.TrimRight(partial, "\r\n")

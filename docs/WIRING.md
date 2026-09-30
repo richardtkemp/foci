@@ -2194,7 +2194,9 @@ process launched is skipped; a Workflow run is an open agent from its PostToolUs
 open then (or, invoked by a subagent, that subagent's spawning turn), and each of its agents books
 on the run's turn and window however late its transcript appears, so no remainder is booked
 mid-run; each result settles once its named calls are in (bound 250ms) and,
-if no subagent was running, once every tail is at rest (bound `subagentTailSettle`) — then the
+if no subagent was running, once every tail is at rest (bound `subagentTailSettle`); a bound
+passing is final only after a main-tail read that began past it (each drain reports its start
+after its lines, #2134), so a stalled tail delays the settle instead of dropping a call — then the
 remainder `modelUsage − baseline − Σ counted calls` per model and class is booked as overhead
 (no turn) or, if the window held a `compact_boundary`, as a compaction (on the turn open at the
 boundary, else a compaction turn of its own); modelUsage has no cache-write TTL, so the

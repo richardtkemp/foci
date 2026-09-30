@@ -230,6 +230,12 @@ type ccBook struct {
 	lastMU     map[string]ModelUsage
 	costState  map[string]ModelUsage
 	copies     int // transcript lines dropped as copies
+
+	// The main-transcript tail, when one runs: a call's line is only known
+	// missing once a read that began after its result's bound has finished,
+	// so a result is never abandoned on the clock alone (#2134).
+	tailing  bool
+	readFrom time.Time // when the latest finished read began
 }
 
 // countedSum is what the counted calls of one window on one model add up to:
@@ -252,7 +258,9 @@ func (s *countedSum) add(o *countedSum) {
 // settle bounds: how long a result waits for the main-transcript lines of the
 // calls the stream named (P0-b measured them landing at most ~2ms after the
 // result; 250ms is over 100x that), and for the subagent tails of a quiet
-// point to come to rest (subagentTailSettle).
+// point to come to rest (subagentTailSettle). Both bound when a line can land
+// on disk; with a main tail running, settle also waits for it to read past
+// the bound (#2134).
 const ccLineBound = 250 * time.Millisecond
 
 func newCCBook(l *accounting.Ledger, lg *log.ComponentLogger, session, agentID string, launch time.Time, baseline map[string]ModelUsage) *ccBook {
@@ -413,6 +421,18 @@ func (c *ccBook) tailClosed(agent string) {
 	}
 }
 
+// mainTailRunning records whether a main-transcript tail is feeding the
+// book: while one is, settle waits for its reads.
+func (c *ccBook) mainTailRunning(on bool) { c.tailing = on }
+
+// mainRead records a finished main-transcript read that began at start; every
+// line it found was handed to the book before it.
+func (c *ccBook) mainRead(start time.Time) {
+	if start.After(c.readFrom) {
+		c.readFrom = start
+	}
+}
+
 // compactBoundary records a compaction in the current window.
 func (c *ccBook) compactBoundary(turn string, at time.Time) {
 	c.boundaries[c.window] = append(c.boundaries[c.window], ccBoundary{at: at.UTC(), turn: turn})
@@ -469,7 +489,11 @@ func (c *ccBook) settle(force bool) {
 			bound = subagentTailSettle
 		}
 		ready := named == 0 && (!r.quiet || tails == 0)
-		if !ready && !force && now.Before(r.at.Add(bound)) {
+		// Unready past its bound is only final once the main tail has read
+		// the transcript as it stood after the bound: the tail polls on its
+		// own clock, so the bound alone can pass before a landed line is read.
+		due := r.at.Add(bound)
+		if !ready && !force && (now.Before(due) || c.tailing && c.readFrom.Before(due)) {
 			return
 		}
 		c.results = c.results[1:]
