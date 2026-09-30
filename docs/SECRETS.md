@@ -108,6 +108,13 @@ Use `{{secret:section.key}}` in `http_request` headers/body:
 http_request with headers: {"Authorization": "Bearer {{secret:custom.github_token}}"}
 ```
 
+For HTTP Basic auth the credentials must be base64-encoded, which the agent cannot do to a secret it never sees. Use `basic_auth` instead of an `Authorization` header: templates resolve first, then `user:password` is encoded (checked like a header secret):
+
+```
+http_request with basic_auth: "{{secret:companies_house.api_key}}:"
+foci_http_request https://api.example.com/x --basic-auth '{{secret:custom.user}}:{{secret:custom.pass}}'
+```
+
 Templates are resolved before the request is sent. The secret value never appears in the agent's context — only the template string. Secret templates are **blocked in exec** — use `http_request` or the `foci_http_request` shell function (available inside exec) for any API call that needs credentials. The shell function passes `{{secret:NAME}}` as a literal string to the server for resolution, so the secret never touches the shell.
 
 ## Domain-Locked Secrets (`http_request`)

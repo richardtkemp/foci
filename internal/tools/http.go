@@ -65,6 +65,10 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 					"description": "Request headers as key-value pairs. Use {{secret:NAME}} for credentials.",
 					"additionalProperties": { "type": "string" }
 				},
+				"basic_auth": {
+					"type": "string",
+					"description": "HTTP Basic credentials as 'user:password', sent as Authorization: Basic <base64>. {{secret:NAME}} templates are resolved before encoding, e.g. '{{secret:NAME}}:' for an API key as username with an empty password. Mutually exclusive with an Authorization header."
+				},
 				"body": {
 					"type": "string",
 					"description": "Request body. Use {{secret:NAME}} for credentials. Mutually exclusive with body_file and files."
@@ -143,6 +147,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		URL              string            `json:"url"`
 		Method           string            `json:"method"`
 		Headers          map[string]string `json:"headers"`
+		BasicAuth        string            `json:"basic_auth"`
 		Body             string            `json:"body"`
 		BodyFile         string            `json:"body_file"`
 		Files            []fileAttachment  `json:"files"`
@@ -188,10 +193,41 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		}
 	}
 
+	// basic_auth rides the header path as the Authorization value, so a secret
+	// in it gets the header checks (allowed_hosts, https) and is resolved, and
+	// only then encoded: the agent cannot base64 a secret it never sees (#2141).
+	headers := p.Headers
+	if p.BasicAuth != "" {
+		headers = make(map[string]string, len(p.Headers)+1)
+		for k, v := range p.Headers {
+			if strings.EqualFold(k, "Authorization") {
+				return ToolResult{}, fmt.Errorf("basic_auth and an Authorization header are mutually exclusive")
+			}
+			headers[k] = v
+		}
+		headers["Authorization"] = p.BasicAuth
+	}
+
 	// Validate params and resolve secrets
-	resolved, err := validateAndResolveSecrets(SessionKeyFromContext(ctx), p.URL, p.Method, p.Body, p.BodyFile, p.Headers, p.FormFields, p.Files, maxUploadFileSize, store, bwStore)
+	resolved, err := validateAndResolveSecrets(SessionKeyFromContext(ctx), p.URL, p.Method, p.Body, p.BodyFile, headers, p.FormFields, p.Files, maxUploadFileSize, store, bwStore)
 	if err != nil {
 		return ToolResult{}, err
+	}
+	var extraRedact []string
+	if p.BasicAuth != "" {
+		creds := resolved.headers["Authorization"]
+		// The error must not quote the value: it may be a resolved secret.
+		if !strings.Contains(creds, ":") {
+			return ToolResult{}, fmt.Errorf("basic_auth must be user:password (the password may be empty, as in 'KEY:')")
+		}
+		token := base64.StdEncoding.EncodeToString([]byte(creds))
+		resolved.headers["Authorization"] = "Basic " + token
+		// The stores redact the raw secret only, and encoding hides it from that
+		// scan, so a server echoing Authorization would hand the agent the
+		// credential. Redacting the token covers the "Basic <token>" form too.
+		if len(secrets.FindSecretRefs(p.BasicAuth)) > 0 {
+			extraRedact = append(extraRedact, token)
+		}
 	}
 
 	// Build URL with query params
@@ -271,7 +307,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 			return ToolResult{}, fmt.Errorf("request failed: %w", err)
 		}
 		defer func() { _ = resp.Body.Close() }()
-		return processHTTPResponse(SessionKeyFromContext(ctx), resp, p.URL, p.Method, p.SaveTo, p.SaveFromJSONPath, p.IncludeHeaders, WantsJSON(ctx), p.MaxResponseBytes, maxSpillBytes, maxResultChars, tempDir, store, bwStore, fileMode)
+		return processHTTPResponse(SessionKeyFromContext(ctx), resp, p.URL, p.Method, p.SaveTo, p.SaveFromJSONPath, p.IncludeHeaders, WantsJSON(ctx), p.MaxResponseBytes, maxSpillBytes, maxResultChars, tempDir, store, bwStore, extraRedact, fileMode)
 	}
 
 	displayURL := formatDisplayURL(p.URL, p.Method)
@@ -292,7 +328,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 // tool call, background notifier — sees the same default; it used to be an
 // exec-bridge-only strip, which left the flag out of the schema and the shell
 // --help (#1817).
-func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method, saveTo, saveFromJSONPath string, includeHeaders, asJSON bool, maxResponseBytes, maxSpillBytes, maxResultChars int64, tempDir string, store *secrets.Store, bwStore *bitwarden.Store, fileMode os.FileMode) (ToolResult, error) {
+func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method, saveTo, saveFromJSONPath string, includeHeaders, asJSON bool, maxResponseBytes, maxSpillBytes, maxResultChars int64, tempDir string, store *secrets.Store, bwStore *bitwarden.Store, extraRedact []string, fileMode os.FileMode) (ToolResult, error) {
 	if fileMode == 0 {
 		fileMode = 0640
 	}
@@ -328,13 +364,17 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 	// redactSecrets applies both secret stores' redaction. It covers the header
 	// block AND the inline body preview — before 2026-09-01 only the body was
 	// covered, so a resolved {{secret:}} echoed back in a response header
-	// printed raw.
+	// printed raw. extraRedact carries request-derived secret forms the stores
+	// cannot know, such as an encoded basic_auth credential (#2141).
 	redactSecrets := func(s string) string {
 		if store != nil {
 			s = store.Redact(s)
 		}
 		if bwStore != nil {
 			s = bwStore.Redact(s)
+		}
+		for _, v := range extraRedact {
+			s = strings.ReplaceAll(s, v, "[REDACTED]")
 		}
 		return s
 	}

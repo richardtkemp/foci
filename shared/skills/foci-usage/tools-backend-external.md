@@ -7,6 +7,7 @@ Per-tool reference for the Claude Code (shell) backend. How `foci_*` shell funct
 ### `foci_http_request` — HTTP with server-side secret resolution
 - Positional `url`. `--method`, `--header 'K: V'` (repeatable) or `--headers <json>`, `--body`/`--body-file`, `--query <json>`.
 - Secrets: `{{secret:NAME}}` in headers is resolved server-side against `allowed_hosts`; in body/form fields it requires `allowed_in_body` in secrets.toml.
+- HTTP Basic auth: `--basic-auth 'user:password'` resolves templates, then base64-encodes, e.g. `--basic-auth '{{secret:NAME}}:'` for an API key as username. Don't hand-build `Authorization: Basic {{secret:…}}`: the secret would go unencoded.
 - `--save-to <path>` writes the body to disk (prints `Saved N bytes to <path>`); `--save-from-json-path data.0.url` extracts a field first (and decodes `data:` URIs). `--background` runs async.
 - Output is the body only by default. `--include-headers` prepends the `HTTP <status>` line and every response header (e.g. to read Content-Length, Retry-After or Location) — listed in `--help` like every other flag.
 - Filter responses with jq so only what you need hits context: `foci_http_request URL | jq '.[].name'`.

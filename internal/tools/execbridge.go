@@ -857,7 +857,7 @@ func generateShellFunc(t *Tool) string {
 		return fmt.Sprintf(`%s() {
 %s
 %s
-  local url="" method="GET" body="" body_file="" save_to="" save_json_path="" headers="{}" query="{}" include_headers=false background=false timeout="" max_bytes="" files="[]" form_fields="{}"
+  local url="" method="GET" body="" body_file="" save_to="" save_json_path="" headers="{}" query="{}" include_headers=false background=false timeout="" max_bytes="" files="[]" form_fields="{}" basic_auth=""
   local __foci_url_via=""
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -865,6 +865,7 @@ func generateShellFunc(t *Tool) string {
       --method) method="$2"; shift 2 ;;
       --body) body="$2"; shift 2 ;;
       --body-file) body_file="$2"; shift 2 ;;
+      --basic-auth) basic_auth="$2"; shift 2 ;;
       --header) headers="$(echo "$headers" | jq --arg k "${2%%%%:*}" --arg v "${2#*: }" '. + {($k): $v}')"; shift 2 ;;
       --headers) foci__json_arg --headers object "$2" || return 1; headers="$2"; shift 2 ;;
       --query) foci__json_arg --query object "$2" || return 1; query="$2"; shift 2 ;;
@@ -894,6 +895,7 @@ func generateShellFunc(t *Tool) string {
   params="$(jq -nc --arg u "$url" --arg m "$method" --argjson h "$headers" '{"url":$u,"method":$m,"headers":$h}')"
   [ -n "$body" ] && params="$(echo "$params" | jq --arg b "$body" '. + {body: $b}')"
   [ -n "$body_file" ] && params="$(echo "$params" | jq --arg b "$body_file" '. + {body_file: $b}')"
+  [ -n "$basic_auth" ] && params="$(echo "$params" | jq --arg a "$basic_auth" '. + {basic_auth: $a}')"
   [ -n "$save_to" ] && params="$(echo "$params" | jq --arg s "$save_to" '. + {save_to: $s}')"
   [ -n "$save_json_path" ] && params="$(echo "$params" | jq --arg s "$save_json_path" '. + {save_from_json_path: $s}')"
   [ -n "$timeout" ] && params="$(echo "$params" | jq --argjson t "$timeout" '. + {timeout: $t}')"
