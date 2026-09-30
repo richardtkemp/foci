@@ -8,6 +8,7 @@ import (
 	"foci/internal/fap"
 	"foci/internal/platform"
 	"foci/internal/ratelimit"
+	"foci/internal/toolformat"
 	"foci/internal/turn"
 	"foci/internal/turnevent"
 	"foci/internal/voice"
@@ -124,7 +125,7 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 		s.inner.Emit(ctx, ev)
 
 	case turnevent.ToolCall:
-		s.b.setTurnActivity(fap.ActivityKindTool, e.Name)
+		s.b.setTurnActivity(fap.ActivityKindTool, toolformat.ActivityLabel(e.Name, e.Args))
 		s.inner.Emit(ctx, ev)
 
 	case turnevent.ToolResult:

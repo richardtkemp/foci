@@ -310,7 +310,7 @@ main
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
  ├── discord       → agent, turnevent, chatmeta, command, config, dispatch, display, log, netretry, platform, secrets, session, timeutil, tooldetail, toolformat, turn, voice
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
- ├── app           → agent, turnevent, command, config, delegator, dispatch, fap, log, platform, question, ratelimit, secrets, session, sqlite, tempdir, tools, turn, voice (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
+ ├── app           → agent, turnevent, command, config, delegator, dispatch, fap, log, platform, question, ratelimit, secrets, session, sqlite, tempdir, toolformat, tools, turn, voice (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
  ├── netretry      → log (startup-connect retry shared by telegram + discord: Backoff schedule, Do loop, PermanentMarkers auth/transient split)
  ├── askgw         → clock, log, peercred, question (opt-in ask-gateway for external Apps — see Ask Gateway section)
  ├── telemetry     → turnevent, delegator/accounting, log, modelinfo, provider, session, go.opentelemetry.io/otel (+ sdk, otlptracehttp) — OpenTelemetry export of every turn to an OTLP/HTTP collector (Langfuse) plus scores/score configs over its REST API; wired from cmd/foci-gw (init), agent (turn spans), tools + cmd/foci-gw (cross-agent links). See "Tracing".
