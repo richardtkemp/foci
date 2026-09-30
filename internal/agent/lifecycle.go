@@ -35,8 +35,8 @@ func (a *Agent) reloadAfterMutation() {
 //     delegated agents this also remaps the live backend (and its resume ID)
 //     to the branch, so the main key is clean for a fresh backend.
 //  2. Archive the session file in place (Store.Reset).
-//  3. Clear per-session state (model/effort overrides, cc_resume_id,
-//     no_compact, …) so the reset session starts from a clean slate.
+//  3. Clear per-session runtime state (cc_resume_id, …), keeping the user's
+//     overrides (model/effort/display, no_compact — see ClearSessionState).
 //  4. Run reflection on the branch in the background — the caller is not
 //     blocked on it.
 //

@@ -34,8 +34,8 @@ func seedSession(t *testing.T, store *session.Store, key string, pairs int) {
 func TestResetSession_APIPath(t *testing.T) {
 	// Proves that ResetSession for a traditional (non-delegated) agent leaves
 	// the session key stable, archives the history in place (the session
-	// reloads empty), clears all per-session state (overrides + metadata
-	// rows), and reloads the bootstrap.
+	// reloads empty), clears per-session runtime metadata while keeping the
+	// user's overrides (#1545), and reloads the bootstrap.
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
@@ -55,9 +55,12 @@ func TestResetSession_APIPath(t *testing.T) {
 		// branch is never prepared — reset proceeds without memory formation.
 	}
 
-	// Per-session state that must be wiped by the reset.
+	// User overrides that must survive the reset, and runtime state that must not.
 	ag.SetSessionEffort(sessionKey, "high")
 	ag.SetSessionNoCompact(sessionKey, true)
+	if err := idx.SetSessionMetadata(sessionKey, "orientation_consumed", "true"); err != nil {
+		t.Fatal(err)
+	}
 
 	var nudgeReloaded bool
 	ag.NudgeReloadFunc = func() { nudgeReloaded = true }
@@ -82,18 +85,15 @@ func TestResetSession_APIPath(t *testing.T) {
 	if len(msgs) != 0 {
 		t.Errorf("after reset: %d messages under %s, want 0 (archived in place)", len(msgs), sessionKey)
 	}
-	// Per-session overrides and metadata rows are gone.
-	if got := ag.SessionEffort(sessionKey); got != "" {
-		t.Errorf("effort override survived reset: %q", got)
+	// User overrides survive; runtime metadata rows are gone.
+	if got := ag.SessionEffort(sessionKey); got != "high" {
+		t.Errorf("effort override after reset = %q, want high", got)
 	}
-	if ag.SessionNoCompact(sessionKey) {
-		t.Error("no_compact override survived reset")
+	if !ag.SessionNoCompact(sessionKey) {
+		t.Error("no_compact override lost on reset")
 	}
-	if v, _ := idx.GetSessionMetadata(sessionKey, "effort"); v != "" {
-		t.Errorf("effort metadata row survived reset: %q", v)
-	}
-	if v, _ := idx.GetSessionMetadata(sessionKey, "no_compact"); v != "" {
-		t.Errorf("no_compact metadata row survived reset: %q", v)
+	if v, _ := idx.GetSessionMetadata(sessionKey, "orientation_consumed"); v != "" {
+		t.Errorf("orientation_consumed metadata row survived reset: %q", v)
 	}
 	if !nudgeReloaded {
 		t.Error("NudgeReloadFunc was not called after reset")

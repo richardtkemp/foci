@@ -143,10 +143,10 @@ func TestToolDisplayNote(t *testing.T) {
 	}
 }
 
-func TestSessionDisplayOverrides_ClearedByClearSessionState(t *testing.T) {
+func TestSessionDisplayOverrides_SurviveClearSessionState(t *testing.T) {
 	// Proves that per-session display overrides (in-memory and their persisted
-	// session_metadata rows) are wiped by ClearSessionState — the reset path —
-	// so a reset session starts with agent-default display settings.
+	// session_metadata rows) survive ClearSessionState — the reset path — as
+	// they did when a reset rotated them onto a new key (#1545).
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -161,17 +161,17 @@ func TestSessionDisplayOverrides_ClearedByClearSessionState(t *testing.T) {
 
 	ag.ClearSessionState(key)
 
-	if v := ag.SessionShowToolCalls(key); v != "" {
-		t.Errorf("show_tool_calls after clear = %q, want empty", v)
+	if v := ag.SessionShowToolCalls(key); v != "full" {
+		t.Errorf("show_tool_calls after clear = %q, want full", v)
 	}
-	if v := ag.SessionDisplayWidth(key); v != "" {
-		t.Errorf("display_width after clear = %q, want empty", v)
+	if v := ag.SessionDisplayWidth(key); v != "80" {
+		t.Errorf("display_width after clear = %q, want 80", v)
 	}
 
-	// Persisted rows are gone too.
-	for _, k := range []string{"show_tool_calls", "display_width"} {
-		if v, _ := idx.GetSessionMetadata(key, k); v != "" {
-			t.Errorf("metadata row %q survived clear: %q", k, v)
+	want := map[string]string{"show_tool_calls": "full", "display_width": "80"}
+	for k, w := range want {
+		if v, _ := idx.GetSessionMetadata(key, k); v != w {
+			t.Errorf("metadata row %q after clear = %q, want %q", k, v, w)
 		}
 	}
 }

@@ -97,9 +97,9 @@ and keep the key:
   path.
 - **Reset** (`Store.Reset`): `root.jsonl` → `root.<timestamp>.jsonl`; the next
   `Append` recreates the file lazily. Fires `SessionStatusReset`. Per-session
-  state (model/effort overrides, `cc_resume_id`, `no_compact`, …) is cleared
-  explicitly by `Agent.ClearSessionState` — a reset session keeps its identity
-  but starts from a clean slate.
+  runtime state (`cc_resume_id`, …) is cleared explicitly by
+  `Agent.ClearSessionState`; the user's overrides (model/effort/display,
+  `no_compact`) survive — a reset session keeps its identity and its settings.
 
 **Example directory after a compaction and a reset:**
 
