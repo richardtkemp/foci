@@ -290,16 +290,17 @@ func TestAppSink_ToolLifecycle(t *testing.T) {
 	}
 }
 
-// TestAppSink_ShellActivityNamesFociCommand: a delegated agent's foci tools all
-// run through Bash, so the caption names the foci command, not just "Bash" (#1110).
-func TestAppSink_ShellActivityNamesFociCommand(t *testing.T) {
+// TestAppSink_ShellActivityDescribesCall: a delegated agent's foci tools all
+// run through Bash, so the caption says what the call does (its description,
+// else its foci command), not just "Bash" (#1110).
+func TestAppSink_ShellActivityDescribesCall(t *testing.T) {
 	c := fakeClient()
 	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
 	s := newAppSink(b)
 
 	s.Emit(context.Background(), turnevent.ToolCall{Name: "Bash", Args: []byte(`{"command":"foci_todo list","description":"List todos"}`)})
-	if got := b.info().ActivityDetail; got != "Bash: foci_todo" {
-		t.Fatalf("activity detail = %q, want %q", got, "Bash: foci_todo")
+	if got := b.info().ActivityDetail; got != "Bash: List todos" {
+		t.Fatalf("activity detail = %q, want %q", got, "Bash: List todos")
 	}
 }
 

@@ -12,8 +12,10 @@ func TestActivityLabel(t *testing.T) {
 		args string
 		want string
 	}{
-		{"foci command wins over description", "Bash",
-			`{"command":"foci_todo get 1110","description":"Fetch the ticket"}`, "Bash: foci_todo"},
+		{"description wins over foci command", "Bash",
+			`{"command":"make deploy; foci_todo complete 1","description":"Deploy clients and close #1"}`, "Bash: Deploy clients and close #1"},
+		{"foci command when no description", "Bash",
+			`{"command":"foci_todo get 1110"}`, "Bash: foci_todo"},
 		{"several foci commands, deduped, in order", "Bash",
 			`{"command":"foci_todo get 1 && foci_ask '{}' ; foci_todo list"}`, "Bash: foci_todo, foci_ask"},
 		{"foci command after a pipe and in a subshell", "Bash",

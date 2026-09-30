@@ -10,9 +10,11 @@ const activityDetailMax = 60
 // ActivityLabel returns the running-tool caption for a tool call. It is the
 // tool name, except for a shell call, which names what the shell is running
 // (#1110). A delegated agent runs every foci tool through its shell, so a
-// bare "Bash" says nothing: the caption names the foci_* commands in the
-// command line, else the call's own description (CC's Bash and opencode's bash
-// both carry one), else falls back to the tool name.
+// bare "Bash" says nothing: the caption is the call's own description (CC's
+// Bash and opencode's bash both carry one), else the foci_* commands in the
+// command line, else the tool name. The description comes first because it
+// describes the whole call: a compound command like "make deploy; foci_todo
+// complete 1" is the make, not the foci_todo (Dick, 2026-09-30).
 //
 // args is the call's JSON input, or the raw command line for codex, whose
 // shell calls carry no JSON.
@@ -21,11 +23,11 @@ func ActivityLabel(name string, args []byte) string {
 		return name
 	}
 	command, description := shellArgs(args)
-	if cmds := FociCommands(command); len(cmds) > 0 {
-		return name + ": " + strings.Join(cmds, ", ")
-	}
 	if description = strings.TrimSpace(description); description != "" {
 		return name + ": " + Truncate(description, activityDetailMax)
+	}
+	if cmds := FociCommands(command); len(cmds) > 0 {
+		return name + ": " + strings.Join(cmds, ", ")
 	}
 	return name
 }
