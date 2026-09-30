@@ -216,6 +216,9 @@ type Backend struct {
 	outstanding    *delegator.OutstandingRegistry
 	compactDoneCh  chan struct{} // buffered(1); closed by OnSessionCompacted
 	compactStartCh chan struct{} // buffered(1); closed by handleCompactionPart (compaction-part = start signal)
+	// compactArmedAt is when ArmCompactionWait ran; CompactionSummary ignores
+	// summary messages created before it (an earlier compaction's) (#1390).
+	compactArmedAt time.Time
 	sessionID      string
 
 	// Per-session event channel — Server.route pushes decoded rawEvents

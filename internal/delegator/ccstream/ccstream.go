@@ -181,10 +181,15 @@ type Backend struct {
 	// idle-without-boundary (CC refused /compact). A single value-carrying,
 	// buffered(1) channel rather than two separate signal channels — see
 	// resolveCompactionWait for why that matters (#1526).
-	compactCh      chan error
-	compactStartCh chan struct{}   // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"
-	turnText       strings.Builder // accumulates text across assistant messages
-	turnTools      int             // tool_use count this turn
+	compactCh chan error
+	// compactTranscript/compactTranscriptOff record the transcript and its
+	// size when ArmCompactionWait ran, so CompactionSummary reads only the
+	// summary written by THIS compaction, never an earlier one (#1390).
+	compactTranscript    string
+	compactTranscriptOff int64
+	compactStartCh       chan struct{}   // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"
+	turnText             strings.Builder // accumulates text across assistant messages
+	turnTools            int             // tool_use count this turn
 	// Idle-keyed turn completion (#813 successor). The turn boundary is CC's
 	// own `session_state_changed` running/idle SDK stream (enabled via
 	// CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1 at launch): running/idle bracket

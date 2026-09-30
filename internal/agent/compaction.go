@@ -176,12 +176,19 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 		return fmt.Errorf("wait for compaction: %w", waitErr)
 	}
 
-	// Delegated compaction never computes a summary today (the backend does
-	// its own /compact internally and doesn't hand one back). Known gap — a
-	// follow-up would need to fetch/generate a summary from the delegated
-	// backend; not addressed here.
+	// The backend compacted internally; recover its summary where it can so
+	// the notice gets a tappable summary chit (#1390). A missing summary only
+	// costs the chit, never the notice.
+	var summary string
+	if cs, ok := be.(delegator.CompactionSummarizer); ok {
+		s, err := cs.CompactionSummary(cctx)
+		if err != nil {
+			a.logger().Warnf("session=%s delegated compaction summary unavailable: %v", sessionKey, err)
+		}
+		summary = s
+	}
 	for _, fn := range a.CompactionNotifyFunc {
-		fn(sessionKey, "✅ Context compacted (delegated).", "")
+		fn(sessionKey, "✅ Context compacted (delegated).", summary)
 	}
 
 	if a.NudgeReloadFunc != nil {

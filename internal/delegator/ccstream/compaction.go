@@ -1,7 +1,16 @@
 package ccstream
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"time"
 
 	"foci/internal/delegator"
 )
@@ -19,9 +28,142 @@ func (b *Backend) SetOnCompactionDone(fn func(preTokens int)) { b.onCompactionDo
 // run goes idle without a boundary (backend declined — #1267). Must be called
 // before the /compact command is sent so neither outcome is missed.
 func (b *Backend) ArmCompactionWait() {
+	path := b.SessionFilePath()
+	var off int64
+	if path != "" {
+		if fi, err := os.Stat(path); err == nil {
+			off = fi.Size()
+		}
+	}
 	b.turnMu.Lock()
 	b.compactCh = make(chan error, 1)
+	b.compactTranscript = path
+	b.compactTranscriptOff = off
 	b.turnMu.Unlock()
+}
+
+// Compaction summary recovery (#1390). CC does not put the summary on the
+// stream: it writes it to the transcript as a user record flagged
+// isCompactSummary (right after the compact_boundary record), wrapped in a
+// continuation preamble and trailer addressed to the model.
+const (
+	compactSummaryMarker   = `"isCompactSummary":true`
+	compactSummaryPoll     = 100 * time.Millisecond
+	compactSummaryMaxWait  = 3 * time.Second
+	compactSummaryPreamble = "This session is being continued from a previous conversation"
+	compactSummaryHeader   = "Summary:\n"
+)
+
+// compactSummaryTrailers open the model-facing text CC appends after the
+// summary; the earliest one found ends the summary.
+var compactSummaryTrailers = []string{
+	"\n\nIf you need specific details from before compaction",
+	"\nContinue the conversation from where it left off",
+}
+
+// CompactionSummary implements delegator.CompactionSummarizer: the summary CC
+// wrote to the transcript since ArmCompactionWait. The compact_boundary stream
+// event can race the transcript write, so an absent record is polled for
+// briefly before giving up with "".
+func (b *Backend) CompactionSummary(ctx context.Context) (string, error) {
+	b.turnMu.Lock()
+	path, off := b.compactTranscript, b.compactTranscriptOff
+	b.turnMu.Unlock()
+	if path == "" {
+		return "", errors.New("ccstream: no transcript path recorded for this compaction")
+	}
+	deadline := time.Now().Add(compactSummaryMaxWait)
+	for {
+		s, err := readCompactSummary(path, off)
+		if s != "" || err != nil || time.Now().After(deadline) {
+			return s, err
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(compactSummaryPoll):
+		}
+	}
+}
+
+// readCompactSummary returns the last isCompactSummary record's text at or
+// after byte offset off of the transcript at path, "" if there is none.
+func readCompactSummary(path string, off int64) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	if _, err := f.Seek(off, io.SeekStart); err != nil {
+		return "", err
+	}
+	marker := []byte(compactSummaryMarker)
+	var last string
+	r := bufio.NewReaderSize(f, 64*1024)
+	for {
+		line, rerr := r.ReadBytes('\n')
+		// Cheap filter first; the decode rejects text that merely quotes the
+		// marker and a torn trailing record.
+		if bytes.Contains(line, marker) {
+			var rec struct {
+				IsCompactSummary bool `json:"isCompactSummary"`
+				Message          struct {
+					Content json.RawMessage `json:"content"`
+				} `json:"message"`
+			}
+			if json.Unmarshal(line, &rec) == nil && rec.IsCompactSummary {
+				if s := trimCompactSummary(contentText(rec.Message.Content)); s != "" {
+					last = s
+				}
+			}
+		}
+		if rerr != nil {
+			if errors.Is(rerr, io.EOF) {
+				return last, nil
+			}
+			return last, fmt.Errorf("read %s: %w", path, rerr)
+		}
+	}
+}
+
+// contentText flattens a message content field: a plain string, or an array
+// of blocks whose text blocks are joined.
+func contentText(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &blocks) != nil {
+		return ""
+	}
+	var parts []string
+	for _, bl := range blocks {
+		if bl.Type == "text" && bl.Text != "" {
+			parts = append(parts, bl.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+// trimCompactSummary strips CC's model-facing preamble and trailer, leaving
+// the summary itself. Text in an unrecognised shape is returned whole.
+func trimCompactSummary(s string) string {
+	if strings.HasPrefix(s, compactSummaryPreamble) {
+		if i := strings.Index(s, compactSummaryHeader); i >= 0 {
+			s = s[i+len(compactSummaryHeader):]
+		}
+	}
+	end := len(s)
+	for _, t := range compactSummaryTrailers {
+		if i := strings.Index(s, t); i >= 0 && i < end {
+			end = i
+		}
+	}
+	return strings.TrimSpace(s[:end])
 }
 
 // resolveCompactionWait records the resolved outcome for the current

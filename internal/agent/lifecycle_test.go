@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -585,13 +586,72 @@ func TestCompactSession_Delegated(t *testing.T) {
 	if len(notifyMsgs) != 1 {
 		t.Errorf("expected 1 notify message, got %d", len(notifyMsgs))
 	}
-	// Delegated compaction never computes a summary today — the notify
-	// hook's 3rd arg should be empty (see runDelegatedCompact).
+	// mockBackendDM is not a CompactionSummarizer, so there is no summary to
+	// attach — the notify hook's 3rd arg stays empty (see runDelegatedCompact).
 	if len(notifySummaries) != 1 || notifySummaries[0] != "" {
 		t.Errorf("expected empty summary for delegated compaction, got %q", notifySummaries)
 	}
 	if !nudgeReloaded {
 		t.Error("NudgeReloadFunc should fire after delegated compaction")
+	}
+}
+
+// summarizingBackendDM is a mockBackendDM that can recover its compaction
+// summary (delegator.CompactionSummarizer).
+type summarizingBackendDM struct {
+	*mockBackendDM
+	summary string
+	err     error
+}
+
+func (b *summarizingBackendDM) CompactionSummary(context.Context) (string, error) {
+	return b.summary, b.err
+}
+
+// TestCompactSession_Delegated_PassesBackendSummary proves a delegated
+// compaction hands the backend's own summary to the notify hook, so the
+// notice gets a tappable summary chit (#1390) — and that a failed summary
+// fetch still delivers the notice, just without the chit.
+func TestCompactSession_Delegated_PassesBackendSummary(t *testing.T) {
+	cases := []struct {
+		name    string
+		summary string
+		err     error
+		want    string
+	}{
+		{name: "summary", summary: "## Session Summary\nwork done", want: "## Session Summary\nwork done"},
+		{name: "fetch error", err: errors.New("transcript gone"), want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sessionKey := "test/idelsummary"
+			dm := &DelegatedManager{
+				NewBackend: func() (delegator.Delegator, error) {
+					return &summarizingBackendDM{mockBackendDM: &mockBackendDM{running: true}, summary: tc.summary, err: tc.err}, nil
+				},
+				StartOpts:   delegator.StartOptions{WorkDir: t.TempDir()},
+				AgentID:     "test",
+				IdleTimeout: time.Hour,
+			}
+			t.Cleanup(func() { dm.Close() })
+			if _, err := dm.Get(context.Background(), sessionKey); err != nil {
+				t.Fatalf("pre-create backend: %v", err)
+			}
+			ag := &Agent{
+				Sessions:         session.NewStore(t.TempDir()),
+				Bootstrap:        workspace.NewBootstrap(t.TempDir(), []string{}),
+				DelegatedManager: dm,
+			}
+			var summaries []string
+			ag.CompactionNotifyFunc.Add(func(_, _, summary string) { summaries = append(summaries, summary) })
+
+			if _, err := ag.CompactSession(context.Background(), sessionKey, false); err != nil {
+				t.Fatalf("CompactSession (delegated): %v", err)
+			}
+			if len(summaries) != 1 || summaries[0] != tc.want {
+				t.Errorf("notify summaries = %q, want [%q]", summaries, tc.want)
+			}
+		})
 	}
 }
 

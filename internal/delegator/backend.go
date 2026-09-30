@@ -263,6 +263,17 @@ type CompactionWaiter interface {
 	WaitForCompaction(ctx context.Context) error
 }
 
+// CompactionSummarizer is optionally implemented by backends that can recover
+// the summary text their own compaction produced, so the "compacted" notice
+// can carry it as a tappable detail (#1390). Called after WaitForCompaction
+// returned success; returns "" (with or without an error) when no summary is
+// recoverable, which callers treat as "no detail", never as a failed
+// compaction. Codex does not implement it: its compaction output is
+// server-side encrypted, with no plaintext summary to show.
+type CompactionSummarizer interface {
+	CompactionSummary(ctx context.Context) (string, error)
+}
+
 // CompactionStartWaiter is optionally implemented by backends that can
 // signal when CC has confirmed compaction is underway (status="compacting").
 // Used to defer the ⏳ notification until compaction actually starts,
