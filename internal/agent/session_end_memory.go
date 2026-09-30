@@ -166,7 +166,16 @@ func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemp
 //     commit in the window) produces nothing.
 //
 // Shared by all reflection paths (interval, session-end, compaction).
+//
+// sessionKey is the session the reflection turn ran on — for session-end and
+// branch-strategy compaction that is a memory BRANCH (agent/c123/b<ts>). No
+// chat is bound to a branch key (the app drops a notice with no binding for
+// its key), so the notice goes to the branch's root: the chat whose session
+// was reflected (#1652).
 func (a *Agent) detectAndNotifySkillChanges(ctx context.Context, sessionKey string, before skills.SkillSnapshot, winStart, winEnd time.Time) {
+	if root, ok := rootKeyIfChild(sessionKey); ok {
+		sessionKey = root
+	}
 	after := skills.Snapshot(a.SkillDirs)
 	changes := skills.Diff(before, after)
 	gitDirChanges, nonGitDirChanges := skills.SplitByGitRepo(ctx, changes)
