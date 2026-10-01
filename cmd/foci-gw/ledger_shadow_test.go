@@ -15,7 +15,7 @@ import (
 )
 
 // TestLedgerShadowCompare drives `foci-gw ledger-shadow` over a live ledger
-// holding one legacy Claude Code turn and a shadow holding the adapter's view
+// holding one Claude Code turn and a shadow holding the adapter's view
 // of the same turn plus CC's own reports for its process: the turn pairs up,
 // the process's CC cost is compared with the adapter's, and the day totals
 // are printed.
@@ -28,9 +28,11 @@ func TestLedgerShadowCompare(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	calc := 0.50
-	if err := live.BookLegacy(accounting.LegacyRow{At: at, Backend: accounting.BackendCCStream, Session: "cap/c1",
-		Model: "claude-opus-5", TurnID: "cap/c1@1", Turn: &modelinfo.TokenCounts{Input: 100}, CalculatedCostUSD: &calc}); err != nil {
+	if _, err := live.RecordCall(accounting.Turn{TurnID: "cap/c1@1", Session: "cap/c1", Backend: accounting.BackendCCStream,
+		Source: accounting.SourceUser, StartedAt: at}, accounting.Call{Key: "msg_live", Backend: accounting.BackendCCStream,
+		Model: "claude-opus-5", Session: "cap/c1", TurnID: "cap/c1@1", Kind: accounting.KindCall,
+		Finality: accounting.FinalityCompleted, ClassMethod: accounting.ClassMethodObserved, BilledAt: at,
+		Tokens: modelinfo.Tokens{modelinfo.ClassOutput: 20000}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	_ = live.Close()

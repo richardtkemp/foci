@@ -3,8 +3,11 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,46 +17,71 @@ import (
 	"foci/internal/tools"
 )
 
-// apiRow is a cost fixture in the pre-ledger row shape the /cost tests were
-// written in: a turn's parent row (CallType "" or "delegated_turn") or one
-// subagent's share ("subagent_turn"). Each is booked exactly as the cutover
-// migrated a pre-ledger row — a legacy call (accounting.LegacyRow), the
-// history every live ledger holds — so CalculatedCostUSD, when set, is the
-// cost every reader sees, and without it the counts are priced.
+// apiRow is a cost fixture: one call, booked the way a backend books one
+// (accounting.RecordCall, a completed Claude Code call), on a turn of its own
+// unless TurnID names a shared one.
 type apiRow struct {
-	Timestamp                            time.Time
-	Session, Model                       string
+	Timestamp      time.Time
+	Session, Model string
+	// The call's counts; CacheWrite is booked as a 1h write.
 	Input, Output, CacheRead, CacheWrite int
-	CalculatedCostUSD                    *float64
-	CallType                             string
-	AgentID, SubagentID, TurnID          string
-	// Turn is the turn-summed counts; nil prices the four above.
-	Turn *modelinfo.TokenCounts
+	// CostUSD, for a test about money rather than counts, books output tokens
+	// worth exactly this at Model's rates; the counts above must then be zero.
+	CostUSD         *float64
+	AgentID, TurnID string
+	// Actor is the subagent that made the call; "" is the session's own thread.
+	Actor string
 }
 
-func (e apiRow) legacy() accounting.LegacyRow {
-	at, session := e.Timestamp, e.Session
+// fixtureModel prices a fixture that names no model.
+const fixtureModel = "claude-opus-5"
+
+// fixtureKeys makes every fixture call's key unique, across tests too.
+var fixtureKeys atomic.Int64
+
+func (e apiRow) call(t *testing.T) (accounting.Turn, accounting.Call) {
+	t.Helper()
+	at, session, model := e.Timestamp, e.Session, e.Model
 	if at.IsZero() {
 		at = time.Now()
 	}
 	if session == "" {
 		session = "test/c1"
 	}
-	return accounting.LegacyRow{
-		At: at, Backend: accounting.BackendCCStream, Provider: "anthropic",
-		Session: session, Model: e.Model,
-		Fill: accounting.LegacyFill{Input: e.Input, Output: e.Output, CacheRead: e.CacheRead, CacheWrite: e.CacheWrite},
-		Turn: e.Turn, CalculatedCostUSD: e.CalculatedCostUSD,
-		TurnID: e.TurnID, AgentID: e.AgentID,
-		Subagent: e.CallType == "subagent_turn", SubagentID: e.SubagentID,
+	if model == "" {
+		model = fixtureModel
 	}
+	tokens := modelinfo.Tokens{modelinfo.ClassInput: e.Input, modelinfo.ClassOutput: e.Output,
+		modelinfo.ClassCacheRead: e.CacheRead, modelinfo.ClassCacheWrite1h: e.CacheWrite}
+	if e.CostUSD != nil {
+		if e.Input+e.Output+e.CacheRead+e.CacheWrite != 0 {
+			t.Fatalf("fixture %+v: CostUSD sets the counts, so they must be zero", e)
+		}
+		perMTok, _ := modelinfo.CostAsOf(model, at, modelinfo.Tokens{modelinfo.ClassOutput: 1_000_000})
+		tokens = modelinfo.Tokens{modelinfo.ClassOutput: int(math.Round(*e.CostUSD / perMTok * 1e6))}
+		if usd, ok := modelinfo.CostAsOf(model, at, tokens); !ok || math.Abs(usd-*e.CostUSD) > 1e-9 {
+			t.Fatalf("fixture %+v: no whole number of %s output tokens costs $%v", e, model, *e.CostUSD)
+		}
+	}
+	key := fmt.Sprintf("msg_fixture_%d", fixtureKeys.Add(1))
+	turnID := e.TurnID
+	if turnID == "" {
+		turnID = session + "@" + key
+	}
+	turn := accounting.Turn{TurnID: turnID, Session: session, AgentID: e.AgentID,
+		Backend: accounting.BackendCCStream, Source: accounting.SourceUser, StartedAt: at}
+	return turn, accounting.Call{Key: key, Backend: accounting.BackendCCStream, Provider: "anthropic",
+		Model: model, Session: session, AgentID: e.AgentID, TurnID: turnID, Actor: e.Actor,
+		Kind: accounting.KindCall, Finality: accounting.FinalityCompleted,
+		ClassMethod: accounting.ClassMethodObserved, BilledAt: at, Tokens: tokens}
 }
 
 // bookRows books fixtures into l (nil: api.jsonl only).
 func bookRows(t *testing.T, l *accounting.Ledger, entries []apiRow) {
 	t.Helper()
 	for _, e := range entries {
-		if err := l.BookLegacy(e.legacy()); err != nil {
+		turn, call := e.call(t)
+		if _, err := l.RecordCall(turn, call, nil); err != nil {
 			t.Fatalf("book %+v: %v", e, err)
 		}
 	}

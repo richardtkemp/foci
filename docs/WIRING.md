@@ -1745,12 +1745,12 @@ reads once the line carries its stop_reason, keyed by the message id, on the ope
 (else an autonomous turn of its own). It reads only the main transcript, so its subagents'
 and CC's utility calls are not booked, nor is a call interrupted before its stop_reason.
 
-**Legacy rows** (`legacyrow.go`). `BookLegacy` writes one row in the pre-ledger shape
-(`LegacyRow`, a turn's parent share or a subagent's) through the migration's own converter
-(`v1Row` → class-by-kind → cost basis → `legacyCall`/`legacyTurn`/`legacyReport`), so it is
-exactly a migrated call. No backend books this way; it is how the readers' tests put the
-migrated history every live ledger holds into a test ledger, and the Makefile's deadcode gate
-exempts the file.
+**Legacy rows.** Nothing books a legacy call any more; the only ones are the migrated
+history every live ledger holds. accounting's own tests put such rows into a test ledger
+with `BookLegacy` (`legacyrow_test.go`, test code since #2145), which writes a row in the
+pre-ledger shape (`LegacyRow`) through the migration's own converter (`v1Row` →
+class-by-kind → cost basis → `legacyCall`/`legacyTurn`/`legacyReport`). Tests outside the
+package seed ordinary new-format calls.
 
 **Readers** (`read.go`). `Ledger.Calls(since)` gives `CallRow`s from `call_costs` plus
 each call's per-class counts and costs (`call_class_costs`; a recorded-basis call has no

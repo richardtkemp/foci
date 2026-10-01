@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"foci/internal/modelinfo"
 )
 
 func costCC(apiLogPath string) CommandContext {
@@ -16,7 +18,7 @@ func costCC(apiLogPath string) CommandContext {
 func TestCostCommandUsage(t *testing.T) {
 	now := time.Now().UTC()
 	path := writeAPILog(t, []apiRow{
-		{Timestamp: now, Session: "s", CalculatedCostUSD: f64p(0.01)},
+		{Timestamp: now, Session: "s", CostUSD: f64p(0.01)},
 	})
 	cmd := CostCommand()
 	result, err := cmd.Execute(context.Background(), Request{Args: "banana"}, costCC(path))
@@ -35,9 +37,9 @@ func TestCostCommandToday(t *testing.T) {
 	now := time.Now().UTC()
 	yesterday := now.AddDate(0, 0, -1)
 	path := writeAPILog(t, []apiRow{
-		{Timestamp: yesterday, Session: "old-session", CalculatedCostUSD: f64p(0.100)},
-		{Timestamp: now, Session: "session-a", CalculatedCostUSD: f64p(0.050)},
-		{Timestamp: now, Session: "session-b", CalculatedCostUSD: f64p(0.025)},
+		{Timestamp: yesterday, Session: "old-session", CostUSD: f64p(0.100)},
+		{Timestamp: now, Session: "session-a", CostUSD: f64p(0.050)},
+		{Timestamp: now, Session: "session-b", CostUSD: f64p(0.025)},
 	})
 
 	cmd := CostCommand()
@@ -70,9 +72,9 @@ func TestCostCommandToday(t *testing.T) {
 func TestCostCommandTodaySorting(t *testing.T) {
 	now := time.Now().UTC()
 	path := writeAPILog(t, []apiRow{
-		{Timestamp: now, Session: "session-a", CalculatedCostUSD: f64p(0.010)},
-		{Timestamp: now, Session: "session-b", CalculatedCostUSD: f64p(0.020)},
-		{Timestamp: now, Session: "session-a", CalculatedCostUSD: f64p(0.030)},
+		{Timestamp: now, Session: "session-a", CostUSD: f64p(0.010)},
+		{Timestamp: now, Session: "session-b", CostUSD: f64p(0.020)},
+		{Timestamp: now, Session: "session-a", CostUSD: f64p(0.030)},
 	})
 
 	cmd := CostCommand()
@@ -95,7 +97,7 @@ func TestCostCommandTodaySorting(t *testing.T) {
 func TestCostCommandSessionNoData(t *testing.T) {
 	now := time.Now().UTC()
 	path := writeAPILog(t, []apiRow{
-		{Timestamp: now, Session: "other/session", CalculatedCostUSD: f64p(0.500)},
+		{Timestamp: now, Session: "other/session", CostUSD: f64p(0.500)},
 	})
 
 	cmd := CostCommand()
@@ -115,9 +117,9 @@ func TestCostCommandTop10Limit(t *testing.T) {
 	var entries []apiRow
 	for i := 0; i < 12; i++ {
 		entries = append(entries, apiRow{
-			Timestamp:         now,
-			Session:           fmt.Sprintf("session-%02d", i),
-			CalculatedCostUSD: f64p(float64(12-i) * 0.01),
+			Timestamp: now,
+			Session:   fmt.Sprintf("session-%02d", i),
+			CostUSD:   f64p(float64(12-i) * 0.01),
 		})
 	}
 	path := writeAPILog(t, entries)
@@ -143,9 +145,9 @@ func TestCostCommandTop10Limit(t *testing.T) {
 func TestCostCommandDays(t *testing.T) {
 	now := time.Now().UTC()
 	path := writeAPILog(t, []apiRow{
-		{Timestamp: now.AddDate(0, 0, -10), CalculatedCostUSD: f64p(0.100)},
-		{Timestamp: now.AddDate(0, 0, -2), CalculatedCostUSD: f64p(0.050)},
-		{Timestamp: now, CalculatedCostUSD: f64p(0.025)},
+		{Timestamp: now.AddDate(0, 0, -10), CostUSD: f64p(0.100)},
+		{Timestamp: now.AddDate(0, 0, -2), CostUSD: f64p(0.050)},
+		{Timestamp: now, CostUSD: f64p(0.025)},
 	})
 
 	cmd := CostCommand()
@@ -163,11 +165,17 @@ func TestCostCommand24h(t *testing.T) {
 	now := time.Now().UTC()
 	entries := []apiRow{
 		{Timestamp: now.Add(-25 * time.Hour), Session: "old", Model: "claude-haiku-4-5",
-			Input: 1000, Output: 500, CacheRead: 2000, CacheWrite: 1000, CalculatedCostUSD: f64p(0.050)},
+			Input: 100000, Output: 50000, CacheRead: 200000, CacheWrite: 100000},
 		{Timestamp: now.Add(-12 * time.Hour), Session: "recent-a", Model: "claude-haiku-4-5",
-			Input: 1000, Output: 500, CacheRead: 2000, CacheWrite: 1000, CalculatedCostUSD: f64p(0.040)},
+			Input: 100000, Output: 50000, CacheRead: 200000, CacheWrite: 100000},
 		{Timestamp: now.Add(-1 * time.Hour), Session: "recent-b", Model: "claude-opus-4-6",
-			Input: 500, Output: 200, CacheRead: 3000, CacheWrite: 500, CalculatedCostUSD: f64p(0.100)},
+			Input: 50000, Output: 20000, CacheRead: 300000, CacheWrite: 50000},
+	}
+	var want float64
+	for _, e := range entries[1:] {
+		usd, _ := modelinfo.CostAsOf(e.Model, e.Timestamp, modelinfo.Tokens{modelinfo.ClassInput: e.Input,
+			modelinfo.ClassOutput: e.Output, modelinfo.ClassCacheRead: e.CacheRead, modelinfo.ClassCacheWrite1h: e.CacheWrite})
+		want += usd
 	}
 	path := writeAPILog(t, entries)
 
@@ -180,8 +188,8 @@ func TestCostCommand24h(t *testing.T) {
 	if !strings.Contains(result.Text, "24h") {
 		t.Errorf("missing '24h' header in:\n%s", result.Text)
 	}
-	if !strings.Contains(result.Text, "$0.14") {
-		t.Errorf("expected total $0.14 in:\n%s", result.Text)
+	if total := fmt.Sprintf("$%.2f", want); !strings.Contains(result.Text, total) {
+		t.Errorf("expected total %s (the two calls in the window) in:\n%s", total, result.Text)
 	}
 	for _, label := range []string{"Category", "Cache reads", "Cache writes", "Input", "Output", "Total"} {
 		if !strings.Contains(result.Text, label) {
@@ -198,10 +206,10 @@ func TestCostCommandWeek(t *testing.T) {
 	now := time.Now().UTC()
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
 	entries := []apiRow{
-		{Timestamp: startOfToday.AddDate(0, 0, -10), Session: "old", CalculatedCostUSD: f64p(1.00)},
-		{Timestamp: startOfToday.AddDate(0, 0, -5), Session: "s1", CalculatedCostUSD: f64p(0.50)},
-		{Timestamp: startOfToday.AddDate(0, 0, -2), Session: "s2", CalculatedCostUSD: f64p(0.30)},
-		{Timestamp: startOfToday, Session: "s3", CalculatedCostUSD: f64p(0.20)},
+		{Timestamp: startOfToday.AddDate(0, 0, -10), Session: "old", CostUSD: f64p(1.00)},
+		{Timestamp: startOfToday.AddDate(0, 0, -5), Session: "s1", CostUSD: f64p(0.50)},
+		{Timestamp: startOfToday.AddDate(0, 0, -2), Session: "s2", CostUSD: f64p(0.30)},
+		{Timestamp: startOfToday, Session: "s3", CostUSD: f64p(0.20)},
 	}
 	path := writeAPILog(t, entries)
 
@@ -241,8 +249,8 @@ func TestCostCommandWeek(t *testing.T) {
 func TestCostCommandGoDuration(t *testing.T) {
 	now := time.Now().UTC()
 	path := writeAPILog(t, []apiRow{
-		{Timestamp: now.Add(-5 * time.Hour), Session: "old", CalculatedCostUSD: f64p(0.100)},
-		{Timestamp: now.Add(-1 * time.Hour), Session: "recent", CalculatedCostUSD: f64p(0.050)},
+		{Timestamp: now.Add(-5 * time.Hour), Session: "old", CostUSD: f64p(0.100)},
+		{Timestamp: now.Add(-1 * time.Hour), Session: "recent", CostUSD: f64p(0.050)},
 	})
 
 	cmd := CostCommand()
@@ -262,8 +270,8 @@ func TestCostCommandGoDuration(t *testing.T) {
 func TestCostCommandAllTime(t *testing.T) {
 	now := time.Now().UTC()
 	path := writeAPILog(t, []apiRow{
-		{Timestamp: now.AddDate(0, 0, -30), Session: "old", CalculatedCostUSD: f64p(0.100)},
-		{Timestamp: now, Session: "recent", CalculatedCostUSD: f64p(0.050)},
+		{Timestamp: now.AddDate(0, 0, -30), Session: "old", CostUSD: f64p(0.100)},
+		{Timestamp: now, Session: "recent", CostUSD: f64p(0.050)},
 	})
 
 	cmd := CostCommand()
@@ -280,8 +288,8 @@ func TestCostCommandAllTime(t *testing.T) {
 func TestCostCommandTodayWithScope(t *testing.T) {
 	now := time.Now().UTC()
 	path := writeAPILog(t, []apiRow{
-		{Timestamp: now, Session: "main/i0/0/abc", CalculatedCostUSD: f64p(0.050)},
-		{Timestamp: now, Session: "other/session", CalculatedCostUSD: f64p(0.025)},
+		{Timestamp: now, Session: "main/i0/0/abc", CostUSD: f64p(0.050)},
+		{Timestamp: now, Session: "other/session", CostUSD: f64p(0.025)},
 	})
 
 	cmd := CostCommand()
