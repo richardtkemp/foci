@@ -3,6 +3,7 @@ package accounting
 import (
 	"fmt"
 	"sync/atomic"
+	"time"
 )
 
 // Booking is one call as the ledger's observers see it, once the transaction
@@ -124,6 +125,46 @@ func RecordTurn(t Turn) error {
 		return nil
 	}
 	return l.Update(func(tx *Tx) error { return tx.RecordTurn(t) })
+}
+
+// SetTurnActivity sets when the last spend attributable to a stored turn
+// stopped; zero reopens it (still running, R8). It is for a backend whose
+// spend can outlive the turn (a Claude Code background subagent), which
+// closes the turn's activity itself instead of at the turn's end. A turn not
+// stored is left alone. Unlike RecordTurn it overwrites: a turn reopened by
+// a reactivated subagent must read as running again.
+func (l *Ledger) SetTurnActivity(turnID string, closedAt time.Time) error {
+	if l == nil || turnID == "" {
+		return nil
+	}
+	return l.Update(func(tx *Tx) error {
+		if _, err := tx.tx.Exec(`UPDATE turns SET activity_closed_at = ? WHERE turn_id = ?`,
+			nullTime(closedAt), turnID); err != nil {
+			return fmt.Errorf("ledger: turn %q activity: %w", turnID, err)
+		}
+		return nil
+	})
+}
+
+// CloseOrphanedTurns closes the activity of every turn still marked running
+// that began before start: called once as the gateway starts, when no backend
+// process of an earlier gateway survives to close them (a foci crash or a
+// shutdown mid-turn). Each closes at its last booked call, else its end, else
+// its start. Returns how many it closed.
+func (l *Ledger) CloseOrphanedTurns(start time.Time) (int64, error) {
+	var n int64
+	err := l.Update(func(tx *Tx) error {
+		res, err := tx.tx.Exec(`UPDATE turns SET activity_closed_at = COALESCE(
+				(SELECT MAX(c.billed_at) FROM api_calls c WHERE c.turn_id = turns.turn_id),
+				ended_at, started_at)
+			WHERE activity_closed_at IS NULL AND started_at < ?`, formatTime(start))
+		if err != nil {
+			return fmt.Errorf("ledger: close orphaned turns: %w", err)
+		}
+		n, err = res.RowsAffected()
+		return err
+	})
+	return n, err
 }
 
 // RenderRates re-renders token_rates and token_classes from modelinfo, for a

@@ -6,6 +6,7 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/convo"
+	"foci/internal/delegator"
 	"foci/internal/delegator/accounting"
 	"foci/internal/log"
 	"foci/internal/tempdir"
@@ -105,10 +106,11 @@ func initLogging(cfg *config.Config, processStart time.Time) func() {
 	// cutover happens at the first start of a binary that books through it.
 	if cfg.Logging.APIDB != "" {
 		ledger, report, err := accounting.Open(cfg.Logging.APIDB, accounting.Options{
-			// Invariants alarm and are never absorbed (#2111 R9). They are
-			// WARNs until the P3 checks route them to operator chat.
+			// Invariants alarm and are never absorbed (#2111 R9): each goes
+			// to operator chat through the shared expectation guard (#2013),
+			// at ERROR, rate-limited per backend and invariant.
 			OnAlarm: func(a accounting.Alarm) {
-				ledgerLog.Warnf("%s [%s]: %s", a.Invariant, a.Backend, a.Detail)
+				delegator.Expectations.Violated(ledgerLog, a.Backend, "", "ledger "+a.Invariant, a.Detail)
 			},
 		})
 		if err != nil {
@@ -116,6 +118,14 @@ func initLogging(cfg *config.Config, processStart time.Time) func() {
 		}
 		if report != nil {
 			ledgerLog.Infof("migrated the pre-ledger api.db (backup %s):\n%s", report.BackupPath, report.String())
+		}
+		// No backend process of an earlier gateway survives into this one, so
+		// a turn it left marked running (a crash, or a shutdown mid-turn) has
+		// stopped spending (#2111 R8).
+		if n, err := ledger.CloseOrphanedTurns(time.Now()); err != nil {
+			ledgerLog.Warnf("close orphaned turns: %v", err)
+		} else if n > 0 {
+			ledgerLog.Infof("closed the activity of %d turn(s) an earlier gateway left running", n)
 		}
 		accounting.SetLive(ledger)
 		cleanups = append(cleanups, func() {

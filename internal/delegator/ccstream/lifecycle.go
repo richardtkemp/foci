@@ -563,6 +563,10 @@ func (b *Backend) finalizeExit(reason error) {
 		b.agents.ClearAll() // subprocess gone: pending agents can never complete
 		b.logger().Debugf("finalizeExit: post-turnMu turn_nil=%v turn_otc_nil=%v elapsed=%s", turn == nil, turn == nil || turn.OnTurnComplete == nil, time.Since(start))
 
+		if turn != nil {
+			// Its process is gone, so nothing more spends on it (R8).
+			b.ledger.Load().turnEnded(turn.TurnID)
+		}
 		if turn != nil && turn.OnTurnComplete != nil {
 			var msg string
 			if expected {

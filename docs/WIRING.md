@@ -1500,9 +1500,12 @@ delegated turn at its start (`buildTurnEvents`, before any call can name it) and
 row, and takes `FinalCost` (the sink header's figure) from `Ledger.TurnCost`; a backend
 that is not a `LedgerBooker` books nothing and `LogUsage` logs the gap. An adapter names
 the open turn with a stub (id, session, backend) whose upsert never overwrites what the
-agent recorded. `activity_closed_at` is set at the turn's end, so for a codex child or a CC
-background subagent that outlives its turn `turn_costs.still_running` reads false early
-(closing it on the subagent's own end is P3).
+agent recorded. `activity_closed_at` is set at the turn's end, except for a backend that is
+a `delegator.TurnActivityCloser` (Claude Code): its spend can outlive the turn, so it closes
+the activity itself (see "Claude Code adapter"). A codex child that outlives its turn still
+reads `still_running` false early (codex is disabled; left for its re-enable). At startup
+`Ledger.CloseOrphanedTurns` closes any turn an earlier gateway left running (at its last
+call, else its end, else its start): no backend process survives a restart.
 
 **The cutover** runs at startup: `initLogging` calls `accounting.Open(cfg.Logging.APIDB)`.
 On a pre-ledger api.db (`api_calls.calculated_cost_usd` exists) that takes a `VACUUM INTO`
@@ -1511,7 +1514,9 @@ the report is logged under `ledger`. Every later open finds the ledger and only 
 the rates. The ledger then becomes the process's live one (`accounting.SetLive`), which is
 how every writer and reader reaches it; `accounting.Live()` is nil with no `api_db`
 configured (and in unit tests), and writers then only observe (api.jsonl, BookedHook).
-Alarms go to `OnAlarm`, a `ledger` WARN until the P3 checks route them to operator chat.
+Alarms go to `OnAlarm`, which reports each through `delegator.Expectations.Violated`
+(invariant `ledger <inv>`): an ERROR, so operator chat, rate-limited per backend and
+invariant (#2013).
 A live-applied `[[modelinfo]]` change re-renders `token_rates` (`Ledger.RenderRates`, from
 `liveapply.go`), so SQL keeps pricing like Go. `foci-gw ledger-migrate` still dry-runs the
 migration on a COPY of an api.db.
@@ -1574,7 +1579,8 @@ call and its non-zero counts, and on a duplicate key compares counts
 (`invSameIDDifferentUsage`; the first booking stands). `invModelNotInTable` /
 `invClassNoRate` fire for a call the views will show as NULL. Alarms go to
 `Ledger.OnAlarm` only after the transaction commits. `Tx.Report` stores a backend report
-(the checks it feeds are P3); `Tx.RecordTurn` upserts a turn, a zero field leaving the
+(the record each backend's checks compare against: they run in the adapters, on the same
+figures, and `ledger-shadow` re-runs CC's offline); `Tx.RecordTurn` upserts a turn, a zero field leaving the
 stored value alone. A call whose model is not known yet (`""`, #1290) is unresolved
 without asking modelinfo, so it alarms invModelNotInTable but never trips the
 unpriced-model warning.
@@ -1700,6 +1706,23 @@ last result. A call on a run no foci turn opened books on a minted `run` turn, r
 `autonomous`. Every process writes its baseline (the totals CC restored on --resume,
 `resumeBaselineFor`, #2012) and each result as cumulative `backend_reports` for the scope
 `<session>@<launch nanos>`, so CC's own cost per process is a difference of two reports.
+**Live checks (#2111 P3, §8).** At each quiet point's remainder (and at exit) the windows
+just settled join the process total, and `checkDivergence` compares, per model, CC's cost
+since launch (`modelUsage.costUSD` less the launch baseline's) with the ledger's price of
+everything booked in the process that CC counts: beyond `delegator.CostDivergenceTolerance`
+(3%, both sides under $0.01 skipped, a model with an unpriced call skipped) it alarms
+`invCostDivergence`, the interrupted calls' price shown beside (CC counts them nowhere). A
+remainder's TTL solve makes its own window match CC's cost exactly, so the check bites on
+the counted calls' rates and on an unsolved remainder. `checkOverhead` alarms
+`invOverheadBounded` when one remainder's overhead (not a compaction) exceeds both $0.50 and
+2% of CC's cost for its window. **Turn activity (R8):** `completeTurn` and `finalizeExit`
+send `ccLedger.turnEnded`; the book closes a turn's `activity_closed_at` once it has ended,
+no subagent tail of it is open and no call the stream named on it is unbooked, else when
+the last of those clears (`closeIfIdle`, from `tailClosed`, `mainLine`, `closeWindows`); a
+tail reopening on a closed turn (a SendMessage resume) sets it running again
+(`Ledger.SetTurnActivity` with zero), and a compaction booked on a closed turn moves its
+close forward. A run turn ends at its result, or at exit. A turn end arriving after the
+adapter's exit flush is applied directly (`markExited`).
 **A turn's completion waits for its calls** (`ccLedger.flush`, from `completeTurn` before
 `OnTurnComplete`): until every main-thread call the stream named has its line read (the
 main tail is poked to read at once), bounded by `ccBarrierBound`, and at once with no main
@@ -1716,8 +1739,8 @@ corrections (`CostCorrection`, `ApplyLegacyCorrections`, `CorrectionHook`), the 
 surcharge, the clamp, the per-turn cost breakdown and divergence warning, the #721 output
 floor, the reactivation tail's `runStartGate`, the legacy subagent accumulation, and the
 #2013 fresh-process guard (`checkFreshProcessUsage`, which misfired on background
-subagents). The live per-process divergence alarm is P3; until then `foci-gw ledger-shadow`
-runs the same check offline.
+subagents). The live per-process divergence alarm replaces the per-turn warning;
+`foci-gw ledger-shadow` runs the same check offline.
 
 **Shadow verification** (#2111 §12), kept for the next adapter. With
 `logging.api_shadow_db` set, startup opens a SHADOW ledger (`accounting.Options.Shadow`:

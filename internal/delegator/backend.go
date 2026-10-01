@@ -451,6 +451,15 @@ type LedgerBooker interface {
 	LedgerBackend() string
 }
 
+// TurnActivityCloser is implemented by a LedgerBooker whose spend can outlive
+// the turn that caused it (a Claude Code background subagent) and which
+// therefore closes each turn's activity in the ledger itself, when the last
+// of that spend has stopped (#2111 R8). The agent layer then records a turn's
+// end without closing its activity.
+type TurnActivityCloser interface {
+	ClosesTurnActivity() bool
+}
+
 // ContextWindowQuerier is optionally implemented by backends that can look up
 // the current model's real context window size. Cheap and fast — no API call.
 type ContextWindowQuerier interface {

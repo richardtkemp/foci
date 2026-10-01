@@ -117,6 +117,16 @@ const (
 	// the backend's reported cost did not solve their 5m/1h split, so they
 	// are booked TTL-unknown, at the 1h rate (#2130).
 	InvRemainderTTLUnsolved = "invRemainderTTLUnsolved"
+	// InvCostDivergence: the ledger's price of everything a backend counted
+	// in a scope (a CC process) differs from the backend's own cost for it
+	// beyond the tolerance (#2111 §8.1): a stale or wrong rate, a model
+	// resolving to the wrong family, or a class priced at the wrong rate.
+	InvCostDivergence = "invCostDivergence"
+	// InvOverheadBounded: one remainder booked as overhead is larger than the
+	// bound (#2111 §8.2): turn-less spend that big means a source is missing,
+	// such as a subagent tail that never opened or an unreadable resume
+	// baseline.
+	InvOverheadBounded = "invOverheadBounded"
 )
 
 // Alarm raises an invariant violation an adapter found outside a booking.
@@ -469,8 +479,9 @@ func (tx *Tx) checkPriced(c Call, rateModel sql.NullString) {
 	}
 }
 
-// Report stores one backend report. The checks it feeds (cumulative
-// divergence, token conservation) run in #2111 P3.
+// Report stores one backend report: the record a backend's checks (cumulative
+// divergence, token conservation) compare against. The checks run in each
+// adapter, on the same figures as it books them.
 func (tx *Tx) Report(r Report) error {
 	if r.Backend == "" || r.ScopeKey == "" || r.At.IsZero() {
 		return fmt.Errorf("ledger: report needs a backend, scope and time: %+v", r)

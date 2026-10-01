@@ -2702,3 +2702,60 @@ func TestDelegatedTransport_SelfBookingBackendRecordsOnlyItsTurn(t *testing.T) {
 		t.Errorf("turn: source %q ended %v (%v), want the agent's user turn, ended", source, ended, err)
 	}
 }
+
+// activityClosingBackend books its own calls and closes its turns' activity
+// itself, as Claude Code does for background subagents.
+type activityClosingBackend struct{ *mockBackendDT }
+
+func (activityClosingBackend) LedgerBackend() string    { return accounting.BackendCCStream }
+func (activityClosingBackend) ClosesTurnActivity() bool { return true }
+
+// TestDelegatedTransport_TurnEndClosesActivityUnlessTheBackendDoes: at a
+// turn's end the agent layer closes its activity — unless the backend closes
+// it itself (delegator.TurnActivityCloser), because its spend can outlive the
+// turn: then the turn ends but stays still_running until the backend says.
+func TestDelegatedTransport_TurnEndClosesActivityUnlessTheBackendDoes(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		be      delegator.Delegator
+		running bool
+	}{
+		{"closes at end", ledgerBookingBackend{&mockBackendDT{}}, false},
+		{"backend closes", activityClosingBackend{&mockBackendDT{}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "api.db")
+			ledger, _, err := accounting.Open(path, accounting.Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			accounting.SetLive(ledger)
+			t.Cleanup(func() { accounting.SetLive(nil); _ = ledger.Close() })
+			a := &Agent{Model: "claude-opus-5", DelegatedManager: newMockDelegatedManager(t, tc.be)}
+			tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+			ts := NewTurnState(context.Background(), "arnix/c1", []string{"hi"}, nil)
+			ts.SessionMeta = a.getSessionMeta(ts.SessionKey)
+			ts.Backend = tc.be
+			ts.StartedAt = time.Now()
+			ts.Trigger = "user"
+			ts.FinalModel = "claude-opus-5"
+			events := tr.buildTurnEvents(ts, tc.be)
+			ts.FinalUsage = &provider.Usage{InputTokens: 1}
+			tr.LogUsage(ts)
+
+			db, err := sqlite.OpenReadOnly(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = db.Close() }()
+			var ended sql.NullString
+			var running bool
+			if err := db.QueryRow(`SELECT ended_at, still_running FROM turn_costs WHERE turn_id = ?`, events.TurnID).Scan(&ended, &running); err != nil {
+				t.Fatal(err)
+			}
+			if !ended.Valid || running != tc.running {
+				t.Errorf("ended %v, still_running %v; want ended, still_running %v", ended, running, tc.running)
+			}
+		})
+	}
+}

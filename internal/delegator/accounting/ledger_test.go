@@ -429,3 +429,76 @@ func TestInterruptedCallsArePriced(t *testing.T) {
 		t.Errorf("turn cost $%v, want $%v including the interrupted call", turnCost, 5+want)
 	}
 }
+
+// TestSetTurnActivityReopensAndCloses: a backend whose spend outlives its turn
+// closes the turn's activity itself, and can reopen it (still_running again)
+// when spend resumes on it — which RecordTurn's never-overwrite-with-empty
+// upsert cannot do. A turn not stored is left alone.
+func TestSetTurnActivityReopensAndCloses(t *testing.T) {
+	l, _ := openLedger(t)
+	closed := turn("T")
+	closed.EndedAt, closed.ActivityClosedAt = t0, t0
+	mustUpdate(t, l, func(tx *Tx) error { return tx.RecordTurn(closed) })
+	running := func() bool {
+		t.Helper()
+		var r bool
+		if err := l.db.QueryRow(`SELECT still_running FROM turn_costs WHERE turn_id = 'T'`).Scan(&r); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	if err := l.SetTurnActivity("T", time.Time{}); err != nil || !running() {
+		t.Fatalf("reopen: err %v, running %v; want running", err, running())
+	}
+	if err := l.SetTurnActivity("T", t0.Add(time.Minute)); err != nil || running() {
+		t.Fatalf("close: err %v, running %v; want closed", err, running())
+	}
+	if err := l.SetTurnActivity("absent", t0); err != nil {
+		t.Errorf("a turn not stored: %v", err)
+	}
+	var n int
+	_ = l.db.QueryRow(`SELECT COUNT(*) FROM turns`).Scan(&n)
+	if n != 1 {
+		t.Errorf("turns = %d, want 1: SetTurnActivity never inserts", n)
+	}
+}
+
+// TestCloseOrphanedTurns: at gateway start no earlier backend process
+// survives, so a turn an earlier gateway left running is closed at its last
+// call, else its end, else its start; a turn begun since start, and a closed
+// one, are left alone.
+func TestCloseOrphanedTurns(t *testing.T) {
+	l, _ := openLedger(t)
+	withCall, ended, bare, fresh, done := turn("T"), turn("E"), turn("B"), turn("F"), turn("D")
+	ended.EndedAt = t0.Add(time.Minute)
+	start := t0.Add(time.Hour)
+	fresh.StartedAt = start.Add(time.Second)
+	done.EndedAt, done.ActivityClosedAt = t0.Add(time.Minute), t0.Add(2*time.Minute)
+	mustUpdate(t, l, func(tx *Tx) error {
+		for _, x := range []Turn{withCall, ended, bare, fresh, done} {
+			if err := tx.RecordTurn(x); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	c := call("c1", modelinfo.Tokens{modelinfo.ClassInput: 1})
+	c.BilledAt = t0.Add(30 * time.Minute)
+	book(t, l, c)
+	n, err := l.CloseOrphanedTurns(start)
+	if err != nil || n != 3 {
+		t.Fatalf("closed %d (err %v), want 3", n, err)
+	}
+	for id, want := range map[string]string{
+		"T": formatTime(c.BilledAt), "E": formatTime(ended.EndedAt), "B": formatTime(t0),
+		"F": "", "D": formatTime(done.ActivityClosedAt),
+	} {
+		var got sql.NullString
+		if err := l.db.QueryRow(`SELECT activity_closed_at FROM turns WHERE turn_id = ?`, id).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got.String != want {
+			t.Errorf("turn %s activity = %q, want %q", id, got.String, want)
+		}
+	}
+}

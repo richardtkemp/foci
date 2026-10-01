@@ -36,6 +36,15 @@
 //     stays TTL-unknown, priced at 1h, and alarms.
 //   - At process exit the last remainder is flushed from the cost-state record
 //     CC appends on a graceful close, else from the last result.
+//   - CHECKS (#2111 §8), once the booked set is what CC counted — at each
+//     quiet point's remainder and at exit: per model, CC's own cost since
+//     launch against the ledger's price of the process's counted calls and
+//     remainders (invCostDivergence, interrupted calls on neither side); and
+//     an overhead remainder larger than both $0.50 and 2% of its window's
+//     cost (invOverheadBounded).
+//   - A turn's ACTIVITY (R8) closes once it has ended and nothing of it is
+//     still spending — no subagent tail of it open, no named call of it
+//     unbooked; a subagent resumed on it reopens it.
 //   - A call books on its turn by the turn's id alone: the agent layer recorded
 //     a foci turn's facts when it began. A run no foci turn opened (an
 //     autonomous CC run) books on a turn of its own, recorded here as
@@ -58,6 +67,7 @@ import (
 	"strings"
 	"time"
 
+	"foci/internal/delegator"
 	"foci/internal/delegator/accounting"
 	"foci/internal/log"
 	"foci/internal/modelinfo"
@@ -263,6 +273,22 @@ type ccBook struct {
 	// so a result is never abandoned on the clock alone (#2134).
 	tailing  bool
 	readFrom time.Time // when the latest finished read began
+
+	// The divergence check's two sides for this process (#2111 §8.1): the
+	// totals CC started from, and the ledger's price of everything CC counts
+	// that this process booked — counted calls and remainders — per model,
+	// over the windows settled at quiet points so far. interrupted is the
+	// price of the calls CC counts nowhere, shown beside.
+	launchBase  map[string]ModelUsage
+	procBooked  map[string]*countedSum
+	interrupted map[string]float64
+
+	// Turn activity (R8): the turns that have ended (a foci turn's idle, a
+	// run turn's result), and those whose activity this book has closed —
+	// ended, with no subagent tail of theirs open and no named call of theirs
+	// unbooked.
+	ended  map[string]bool
+	closed map[string]bool
 }
 
 // countedSum is what the counted calls of one window on one model add up to:
@@ -301,11 +327,14 @@ func newCCBook(l *accounting.Ledger, lg *log.ComponentLogger, session, agentID s
 		named: map[string]*namedCall{}, held: map[string]*ccLine{}, done: map[string]bool{},
 		agents: map[string]*ccAgent{}, runTurn: map[int]string{},
 		counted: map[int]map[string]*countedSum{}, boundaries: map[int][]ccBoundary{},
-		baseline: maps.Clone(baseline),
+		baseline:   maps.Clone(baseline),
+		procBooked: map[string]*countedSum{}, interrupted: map[string]float64{},
+		ended: map[string]bool{}, closed: map[string]bool{},
 	}
 	if c.baseline == nil {
 		c.baseline = map[string]ModelUsage{}
 	}
+	c.launchBase = maps.Clone(c.baseline)
 	// The scope's first report is the totals CC starts this process from, so
 	// the process's own cost is always a difference of two reports.
 	for _, m := range slices.Sorted(maps.Keys(c.baseline)) {
@@ -385,6 +414,7 @@ func (c *ccBook) mainLine(l *ccLine) {
 	}
 	c.bookCall(l, n.turn, "", n.window, accounting.FinalityCompleted)
 	delete(c.named, l.id)
+	c.closeIfIdle(n.turn, c.now())
 }
 
 // subLine handles one assistant line of a subagent's transcript.
@@ -426,7 +456,9 @@ func (c *ccBook) agent(agent, turn string, at time.Time) *ccAgent {
 // tailOpened and tailClosed bracket a subagent's transcript tail. A closed
 // tail's last uncompleted call is final at its last-seen counts.
 func (c *ccBook) tailOpened(agent, turn string) {
-	c.agent(agent, turn, c.now()).open = true
+	a := c.agent(agent, turn, c.now())
+	a.open = true
+	c.reopenTurn(a.turn)
 }
 
 // tailOpenedUnder opens agent's tail as a child of parent, an agent already
@@ -447,6 +479,7 @@ func (c *ccBook) tailOpenedUnder(agent, parent, turn string) {
 		c.agents[agent] = a
 	}
 	a.open = true
+	c.reopenTurn(a.turn)
 }
 
 func (c *ccBook) tailClosed(agent string) {
@@ -459,6 +492,62 @@ func (c *ccBook) tailClosed(agent string) {
 		c.bookCall(p, a.turn, agent, a.window, accounting.FinalityStopless)
 		a.pending = nil
 	}
+	c.closeIfIdle(a.turn, c.now())
+}
+
+// turnEnded records that turn has ended: a foci turn at its idle, a run turn
+// at the result that ends its run. Its activity closes now, or once the last
+// of its subagents' tails closes and its named calls are booked.
+func (c *ccBook) turnEnded(turn string, at time.Time) {
+	if turn == "" {
+		return
+	}
+	c.ended[turn] = true
+	c.closeIfIdle(turn, at)
+}
+
+// closeIfIdle closes turn's activity at at if it has ended and nothing of it
+// is still spending: no subagent tail of it open, no call the stream named on
+// it unbooked. A background subagent that outlives its turn keeps the turn
+// running until its tail closes (R8).
+func (c *ccBook) closeIfIdle(turn string, at time.Time) {
+	if turn == "" || !c.ended[turn] || c.closed[turn] {
+		return
+	}
+	for _, a := range c.agents {
+		if a.open && a.turn == turn {
+			return
+		}
+	}
+	for _, n := range c.named {
+		if n.turn == turn {
+			return
+		}
+	}
+	c.setActivity(turn, at)
+}
+
+// reopenTurn marks turn running again when spend resumes on it after its
+// activity closed: a subagent resumed (SendMessage) books on the turn that
+// spawned it.
+func (c *ccBook) reopenTurn(turn string) {
+	if !c.closed[turn] {
+		return
+	}
+	if err := c.l.SetTurnActivity(turn, time.Time{}); err != nil {
+		c.lg.Warnf("ledger: reopen turn %s: %v", turn, err)
+		return
+	}
+	c.closed[turn] = false
+}
+
+// setActivity stores turn's activity close at at, and remembers it is closed.
+func (c *ccBook) setActivity(turn string, at time.Time) {
+	if err := c.l.SetTurnActivity(turn, at.UTC()); err != nil {
+		c.lg.Warnf("ledger: close turn %s activity: %v", turn, err)
+		return
+	}
+	c.closed[turn] = true
 }
 
 // mainTailRunning records whether a main-transcript tail is feeding the
@@ -487,6 +576,10 @@ func (c *ccBook) result(mu map[string]ModelUsage, running int, at time.Time) {
 	}
 	c.lastMU = maps.Clone(mu)
 	c.results = append(c.results, ccResult{window: c.window, at: at, mu: maps.Clone(mu), quiet: running == 0})
+	// A run no foci turn opened ends with its result.
+	if t, ok := c.runTurn[c.window]; ok {
+		c.turnEnded(t, at)
+	}
 	c.window++
 }
 
@@ -581,12 +674,14 @@ func (c *ccBook) unseenNamed() int {
 // only at a stopless line was interrupted, and is booked — priced — from it; a
 // call whose line never came alarms. Held lines no stream named are copies.
 func (c *ccBook) closeWindows(w int) {
+	var turns []string
 	for _, id := range slices.Sorted(maps.Keys(c.named)) {
 		n := c.named[id]
 		if n.window > w {
 			continue
 		}
 		delete(c.named, id)
+		turns = append(turns, n.turn)
 		if n.pending != nil {
 			c.bookCall(n.pending, n.turn, "", n.window, accounting.FinalityInterrupted)
 			continue
@@ -594,6 +689,9 @@ func (c *ccBook) closeWindows(w int) {
 		c.done[id] = true
 		c.l.Alarm(accounting.Alarm{Invariant: accounting.InvStreamIdBooked, Backend: accounting.BackendCCStream,
 			Detail: fmt.Sprintf("session %s: the stream named call %s but its main-transcript line never came", c.session, id)})
+	}
+	for _, t := range turns {
+		c.closeIfIdle(t, c.now())
 	}
 	for id := range c.held {
 		c.done[id] = true
@@ -620,7 +718,13 @@ func (c *ccBook) bookCall(l *ccLine, turn, actor string, window int, finality st
 		c.lg.Warnf("ledger: book %s: %v", l.id, err)
 		return
 	}
-	if b.Duplicate || finality == accounting.FinalityInterrupted {
+	if b.Duplicate {
+		return
+	}
+	// Priced as the call_costs view prices it: its counts at its billing time.
+	usd, priced := modelinfo.CostAsOf(l.model, c.billedAt(l.at), l.tokens)
+	if finality == accounting.FinalityInterrupted {
+		c.interrupted[l.model] += usd
 		return
 	}
 	if c.counted[window] == nil {
@@ -631,9 +735,17 @@ func (c *ccBook) bookCall(l *ccLine, turn, actor string, window int, finality st
 		sum = &countedSum{tokens: modelinfo.Tokens{}}
 		c.counted[window][l.model] = sum
 	}
-	// Priced as the call_costs view prices it: its counts at its billing time.
-	usd, priced := modelinfo.CostAsOf(l.model, c.billedAt(l.at), l.tokens)
 	sum.add(&countedSum{tokens: ReportClasses(l.tokens), cost: usd, unpriced: !priced})
+}
+
+// addProcBooked adds one booking CC counts to the process's running total.
+func (c *ccBook) addProcBooked(model string, s *countedSum) {
+	p := c.procBooked[model]
+	if p == nil {
+		p = &countedSum{tokens: modelinfo.Tokens{}}
+		c.procBooked[model] = p
+	}
+	p.add(s)
 }
 
 func (c *ccBook) billedAt(at time.Time) time.Time {
@@ -691,6 +803,12 @@ func (c *ccBook) remainder(w int, mu map[string]ModelUsage, label string, at tim
 			Detail: fmt.Sprintf("session %s %s: %s — nothing booked", c.session, label, strings.Join(negative, "; "))})
 		return
 	}
+	// The windows' calls are now settled against CC's count: they join the
+	// process total the divergence check compares (a later window's calls,
+	// already booked, wait for their own quiet point).
+	for m, s := range counted {
+		c.addProcBooked(m, s)
+	}
 	var bounds []ccBoundary
 	for win := range c.boundaries {
 		if win <= w {
@@ -698,6 +816,8 @@ func (c *ccBook) remainder(w int, mu map[string]ModelUsage, label string, at tim
 		}
 	}
 	slices.SortFunc(bounds, func(a, b ccBoundary) int { return a.at.Compare(b.at) })
+	var overhead float64
+	var overheadModels []string
 	for _, m := range slices.Sorted(maps.Keys(rem)) {
 		r := rem[m]
 		if !billed(r) {
@@ -730,9 +850,27 @@ func (c *ccBook) remainder(w int, mu map[string]ModelUsage, label string, at tim
 			call.Kind = accounting.KindOverhead
 			call.Key = fmt.Sprintf("%s:%s:%s", c.scope, label, m)
 		}
-		if _, err := c.l.RecordCall(turn, call, nil); err != nil {
+		b, err := c.l.RecordCall(turn, call, nil)
+		if err != nil {
 			c.lg.Warnf("ledger: book remainder %s: %v", call.Key, err)
+			continue
 		}
+		if b.Duplicate {
+			continue
+		}
+		usd, priced := modelinfo.CostAsOf(m, at, call.Tokens)
+		c.addProcBooked(m, &countedSum{tokens: ReportClasses(call.Tokens), cost: usd, unpriced: !priced})
+		if call.Kind == accounting.KindOverhead {
+			overhead += usd
+			overheadModels = append(overheadModels, fmt.Sprintf("%s $%.4f (%s)", m, usd, formatTokens(call.Tokens)))
+		} else if c.closed[turn.TurnID] {
+			// Spend booked on a turn whose activity had closed moves its
+			// close to this booking.
+			c.setActivity(turn.TurnID, at)
+		}
+	}
+	if len(overheadModels) > 0 {
+		c.checkOverhead(overhead, windowCost(mu, c.baseline), overheadModels, label)
 	}
 	for m, u := range mu {
 		c.baseline[m] = u
@@ -747,6 +885,97 @@ func (c *ccBook) remainder(w int, mu map[string]ModelUsage, label string, at tim
 			delete(c.boundaries, win)
 		}
 	}
+	c.checkDivergence(mu, label)
+}
+
+// The overhead bound (#2111 §8.2, invOverheadBounded): a remainder booked as
+// overhead may be up to ccOverheadBoundUSD, or ccOverheadBoundShare of CC's
+// cost for its window, whichever is larger. Overhead is CC's utility calls and
+// stopless calls' true output — measured at ~0.5% of spend (#2110) — so more
+// than both means spend the ledger has no source for.
+const (
+	ccOverheadBoundUSD   = 0.50
+	ccOverheadBoundShare = 0.02
+)
+
+// ccDivergenceFloorUSD: below this on both sides a process is too cheap for
+// its divergence to carry signal (as delegator's per-turn check).
+const ccDivergenceFloorUSD = 0.01
+
+// windowCost is CC's own cost from base to mu, over every model.
+func windowCost(mu, base map[string]ModelUsage) float64 {
+	cost := 0.0
+	for m, u := range mu {
+		cost += u.CostUSD - base[m].CostUSD
+	}
+	return cost
+}
+
+// checkOverhead alarms when one remainder's overhead is beyond the bound.
+func (c *ccBook) checkOverhead(overhead, window float64, models []string, label string) {
+	bound := max(ccOverheadBoundUSD, ccOverheadBoundShare*window)
+	if overhead <= bound {
+		return
+	}
+	c.l.Alarm(accounting.Alarm{Invariant: accounting.InvOverheadBounded, Backend: accounting.BackendCCStream,
+		Detail: fmt.Sprintf("session %s %s: overhead $%.4f is over the bound $%.2f (CC's cost for the window $%.4f): %s — "+
+			"spend no transcript holds (a subagent tail that never opened, a lost resume baseline?)",
+			c.session, label, overhead, bound, window, strings.Join(models, "; "))})
+}
+
+// checkDivergence compares, per model, CC's own cost since this process
+// launched with the ledger's price of everything booked in the process that CC
+// counts (#2111 §8.1). Run once the booked set is exactly what CC counted: at
+// a quiet point's remainder and at exit. Interrupted calls are in neither
+// side (CC counts them nowhere) and are shown beside. A model with an
+// unpriced booking is skipped: invClassNoRate / invModelNotInTable already
+// alarmed on it.
+func (c *ccBook) checkDivergence(mu map[string]ModelUsage, label string) {
+	var off []string
+	models := map[string]bool{}
+	for m := range mu {
+		models[m] = true
+	}
+	for m := range c.procBooked {
+		models[m] = true
+	}
+	for _, m := range slices.Sorted(maps.Keys(models)) {
+		cc := mu[m].CostUSD - c.launchBase[m].CostUSD
+		booked := c.procBooked[m]
+		if booked == nil {
+			booked = &countedSum{tokens: modelinfo.Tokens{}}
+		}
+		if booked.unpriced || (cc < ccDivergenceFloorUSD && booked.cost < ccDivergenceFloorUSD) {
+			continue
+		}
+		diff := math.Abs(booked.cost - cc)
+		if cc > 0 && diff/cc <= delegator.CostDivergenceTolerance {
+			continue
+		}
+		pct := "n/a"
+		if cc > 0 {
+			pct = fmt.Sprintf("%.1f%%", 100*diff/cc)
+		}
+		off = append(off, fmt.Sprintf("%s: ledger $%.4f vs CC $%.4f (%s off; interrupted $%.4f excluded; booked %s)",
+			m, booked.cost, cc, pct, c.interrupted[m], formatTokens(booked.tokens)))
+	}
+	if len(off) == 0 {
+		return
+	}
+	c.l.Alarm(accounting.Alarm{Invariant: accounting.InvCostDivergence, Backend: accounting.BackendCCStream,
+		Detail: fmt.Sprintf("session %s %s: the ledger's price of this process differs from CC's own cost beyond %.0f%%: %s",
+			c.session, label, 100*delegator.CostDivergenceTolerance, strings.Join(off, "; "))})
+}
+
+// formatTokens renders counts as "class=n, ..." in class order, zeros left out.
+func formatTokens(t modelinfo.Tokens) string {
+	var parts []string
+	for _, class := range slices.Sorted(maps.Keys(t)) {
+		if t[class] != 0 {
+			parts = append(parts, fmt.Sprintf("%s=%d", class, t[class]))
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 // splitRemainderTTL gives a remainder's TTL-unknown cache writes their 5m/1h
@@ -834,6 +1063,11 @@ func (c *ccBook) exit() {
 	}
 	c.settle(true)
 	c.closeWindows(c.window)
+	// A run whose result never came ends with its process. A foci turn still
+	// open ends when the agent layer completes it (ccLedger.turnEnded).
+	for _, t := range c.runTurn {
+		c.turnEnded(t, c.now())
+	}
 	final, label := c.costState, "exit"
 	if final == nil {
 		final, label = c.lastMU, "exit-last-result"

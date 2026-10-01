@@ -34,7 +34,9 @@ a restarted process can open ABOVE the old one's last figure, and the difference
 boundary. Do not compare the latest report with all calls booked so far either: a running subagent or
 an unsettled remainder makes that look like a gap. `foci-gw ledger-shadow -live ~/data/api.db -shadow
 ~/data/api.db -since <time>` does it properly — read its "CC processes" section and FLAGS (pointed at one
-ledger, its per-turn and total sections only compare the ledger with itself). The live alarm is #2111 P3.
+ledger, its per-turn and total sections only compare the ledger with itself). The same check runs live at
+every quiet point and alarms `ledger invCostDivergence` to operator chat; an oversized turn-less remainder
+alarms `ledger invOverheadBounded`.
 
 **A remainder row is CC's spend no call record holds** (`kind` overhead or compaction,
 `finality='derived'`): utility calls, a subagent's real output when its transcript has no final line,

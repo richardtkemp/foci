@@ -744,12 +744,15 @@ func (a *Agent) closeLedgerTurn(ts *TurnState, lb delegator.LedgerBooker) {
 }
 
 // recordDelegatedTurn records a delegated turn's facts in the ledger: at its
-// start (before any call can name it), and at its end, when its spend is taken
-// to have closed too. That holds for opencode, whose subagents finish inside
-// the turn that spawned them. A codex child or a Claude Code background
-// subagent can outlive its turn: its later calls still book on the spawning
-// turn, but after activity_closed_at — so turn_costs.still_running reads false
-// early for such a turn (closing it on the subagent's own end is P3).
+// start (before any call can name it), and at its end. A backend whose spend
+// can outlive the turn (Claude Code's background subagents,
+// delegator.TurnActivityCloser) closes the turn's activity itself when that
+// spend stops; for any other the activity closes with the turn. That holds
+// for opencode, whose subagents finish inside the turn that spawned them. A
+// codex child can outlive its turn: its later calls still book on the
+// spawning turn, but after activity_closed_at, so turn_costs.still_running
+// reads false early for such a turn (codex is disabled; closing on the child's
+// end is left for its re-enable).
 func (a *Agent) recordDelegatedTurn(ts *TurnState, lb delegator.LedgerBooker, end bool) {
 	t := a.ledgerTurn(ts)
 	if t.TurnID == "" {
@@ -762,7 +765,10 @@ func (a *Agent) recordDelegatedTurn(ts *TurnState, lb delegator.LedgerBooker, en
 		if model == "" {
 			model = ts.TurnModel
 		}
-		t.EndedAt, t.ActivityClosedAt, t.StopReason, t.FinalModel = now, now, "end_turn", model
+		t.EndedAt, t.StopReason, t.FinalModel = now, "end_turn", model
+		if c, ok := lb.(delegator.TurnActivityCloser); !ok || !c.ClosesTurnActivity() {
+			t.ActivityClosedAt = now
+		}
 	}
 	if err := accounting.RecordTurn(t); err != nil {
 		a.logger().Errorf("session=%s record turn: %v", ts.SessionKey, err)

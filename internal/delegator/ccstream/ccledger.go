@@ -37,6 +37,7 @@ const (
 	ccMainRead
 	ccMainTailEnded
 	ccBarrier
+	ccTurnEnded
 	ccExit
 )
 
@@ -66,6 +67,12 @@ type ccLedger struct {
 	tailDone  chan struct{}
 	tailPoke  chan struct{}
 	closeOnce sync.Once
+
+	// exitMu guards exited: once the adapter has flushed at exit, a turn
+	// ending later (the agent layer completes a turn after its process died)
+	// is applied to the book directly, as no worker reads the queue.
+	exitMu sync.Mutex
+	exited bool
 }
 
 // ccLedgerTick is how often the adapter settles results whose bound passed.
@@ -172,8 +179,11 @@ func (s *ccLedger) run() {
 			case ccBarrier:
 				waiting = append(waiting, barrier{reply: e.reply, deadline: e.at.Add(ccBarrierBound)})
 				s.poke()
+			case ccTurnEnded:
+				c.turnEnded(e.turn, e.at)
 			case ccExit:
 				c.exit()
+				s.markExited()
 				for _, w := range waiting {
 					close(w.reply)
 				}
@@ -190,6 +200,39 @@ func (s *ccLedger) run() {
 			}
 		}
 		waiting = s.release(waiting)
+	}
+}
+
+// turnEnded tells the adapter a foci turn has ended (its idle): the turn's
+// activity closes once its subagents' tails have closed (R8).
+func (s *ccLedger) turnEnded(turn string) {
+	if s == nil || turn == "" {
+		return
+	}
+	s.exitMu.Lock()
+	defer s.exitMu.Unlock()
+	if s.exited {
+		s.book.turnEnded(turn, time.Now())
+		return
+	}
+	s.enqueue(ccEvent{kind: ccTurnEnded, turn: turn})
+}
+
+// markExited hands the book to turnEnded's direct path, first applying any
+// turn end queued behind the exit.
+func (s *ccLedger) markExited() {
+	s.exitMu.Lock()
+	defer s.exitMu.Unlock()
+	s.exited = true
+	for {
+		select {
+		case e := <-s.events:
+			if e.kind == ccTurnEnded {
+				s.book.turnEnded(e.turn, e.at)
+			}
+		default:
+			return
+		}
 	}
 }
 
@@ -322,3 +365,7 @@ func (s *ccLedger) close() {
 // LedgerBackend implements delegator.LedgerBooker: this backend books its own
 // calls (ccbook.go), so the agent layer records only its turns.
 func (b *Backend) LedgerBackend() string { return accounting.BackendCCStream }
+
+// ClosesTurnActivity implements delegator.TurnActivityCloser: the adapter
+// closes a turn's activity once its background subagents' tails have closed.
+func (b *Backend) ClosesTurnActivity() bool { return true }
