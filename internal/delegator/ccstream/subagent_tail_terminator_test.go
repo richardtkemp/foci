@@ -253,3 +253,79 @@ func appendLine(t *testing.T, path, line string) {
 		t.Fatal(err)
 	}
 }
+
+// handbackEnding is how a run that hands its report back ends on CC 2.1.285+
+// (#2124), copied in shape from live transcripts: the SubagentHandback
+// tool_use, written with a NULL stop_reason because the run ends before the
+// message completes, then its tool_result carrying CC's toolEndsTurn marker,
+// then a PostToolUse hook attachment. No assistant record follows. A Workflow
+// agent ends the same way on its StructuredOutput call.
+func handbackEnding(tool string) string {
+	return `{"type":"assistant","isSidechain":true,"message":{"id":"m-hb","model":"claude-opus-5",` +
+		`"stop_reason":null,"content":[{"type":"tool_use","id":"toolu_hb","name":"` + tool + `","input":{}}],` +
+		`"usage":{"output_tokens":24,"cache_creation_input_tokens":5}}}` + "\n" +
+		`{"type":"user","isSidechain":true,"toolEndsTurn":true,"message":{"role":"user",` +
+		`"content":[{"tool_use_id":"toolu_hb","type":"tool_result","content":"Report delivered to your caller."}]}}` + "\n" +
+		`{"type":"attachment","isSidechain":true}` + "\n"
+}
+
+// TestSubagentTail_AHandbackEndsTheRunWithoutWaitingOutTheSettle is #2124. A
+// run that ends on its hand-back writes no terminal assistant record, so before
+// the fix every such tail waited out the whole settle window and logged "no
+// terminal record within". The tool_result CC marks toolEndsTurn is the run's
+// last record: the window is 30s here, so a tail that waited for it fails the
+// 10s bound.
+func TestSubagentTail_AHandbackEndsTheRunWithoutWaitingOutTheSettle(t *testing.T) {
+	withFastTail(t)
+	subagentTailSettle = 30 * time.Second
+	path := filepath.Join(t.TempDir(), "agent-handback.jsonl")
+	content := msgWithStop("m-1", "tool_use", 5, 5) + userRecord + handbackEnding("SubagentHandback")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mgr := newSubagentTailManager(nil, nil)
+	mgr.maybeStart("tool-handback", path)
+	waitForLines(t, mgr, "tool-handback", 5)
+
+	done := make(chan struct{})
+	go func() { mgr.finalize("tool-handback"); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("finalize waited out the settle window on a run that ended at its hand-back")
+	}
+}
+
+// TestWorkflowFile_AHandbackLeavesTheAgentAtRest is #2124 for a Workflow run's
+// agents, which end on StructuredOutput's toolEndsTurn result: the run's tail
+// closes once every agent is at rest, so without this every Workflow run waited
+// out the settle window too. A plain tool_result must still leave the agent
+// running: the Stop-hook shape on CC < 2.1.285 answers a hand-back and then
+// writes a final end_turn that must not be lost (#1938).
+func TestWorkflowFile_AHandbackLeavesTheAgentAtRest(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"toolEndsTurn result", msgWithStop("m-1", "tool_use", 5, 5) + userRecord + handbackEnding("StructuredOutput"), true},
+		{"plain tool_result", msgWithStop("m-1", "tool_use", 5, 5) + userRecord, false},
+		{"end_turn", msgWithStop("m-1", "end_turn", 5, 5), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "agent-w1.jsonl")
+			if err := os.WriteFile(path, []byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			m := newSubagentTailManager(nil, nil)
+			m.ledgerEvent = func(ccEvent) {}
+			w := &workflowRun{files: map[string]*workflowFile{}}
+			f := &workflowFile{key: "wf/w1"}
+			m.readWorkflowFile(w, path, f)
+			if f.atRest != tc.want {
+				t.Errorf("atRest = %v, want %v", f.atRest, tc.want)
+			}
+		})
+	}
+}

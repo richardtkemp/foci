@@ -292,20 +292,12 @@ func (m *subagentTailManager) readWorkflowFile(w *workflowRun, path string, f *w
 		if l, _ := parseCCRecord(line); l != nil {
 			m.ledgerEvent(ccEvent{kind: ccSubLine, agent: f.key, turn: w.turn, line: l})
 		}
-		var rec struct {
-			Type    string `json:"type"`
-			Message struct {
-				StopReason *string `json:"stop_reason"`
-			} `json:"message"`
-		}
+		var rec transcriptLine
 		if json.Unmarshal(line, &rec) != nil {
 			continue
 		}
-		switch rec.Type {
-		case "user":
-			f.atRest = false
-		case "assistant":
-			f.atRest = rec.Message.StopReason != nil && *rec.Message.StopReason != "tool_use"
+		if rec.Type == "user" || rec.Type == "assistant" {
+			f.atRest = rec.endsRun()
 		}
 	}
 }

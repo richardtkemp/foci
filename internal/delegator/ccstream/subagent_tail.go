@@ -355,8 +355,8 @@ func (m *subagentTailManager) run(groupKey, path string, t *subagentTail) {
 	m.lg.Debugf("subagent tail: opened %s (group=%s wantText=%v)", path, groupKey, t.wantText)
 
 	// atRest: the transcript read so far ENDS at a terminal record, i.e. its last
-	// conversational record is an assistant message whose stop_reason ends the
-	// run. This is the run's own end-of-stream marker, on the SAME channel as the
+	// conversational record ends the run (endsRun: a terminal stop_reason, or
+	// the hand-back's toolEndsTurn result). This is the run's own end-of-stream marker, on the SAME channel as the
 	// data, so it cannot race the data the way the stream event does (#1938).
 	//
 	// It must track the LAST such record, not remember any: a run can write an
@@ -466,7 +466,11 @@ type transcriptLine struct {
 	// and not by arrival, or a burst of catch-up lines books a previous turn's
 	// spend onto whichever turn happened to be open when they landed (#1909).
 	Timestamp string `json:"timestamp"`
-	Message   struct {
+	// ToolEndsTurn is CC's mark on the tool_result that ends the run: a
+	// SubagentHandback (CC 2.1.285+) or a Workflow agent's StructuredOutput.
+	// The run stops there, so no terminal assistant record follows (#2124).
+	ToolEndsTurn bool `json:"toolEndsTurn"`
+	Message      struct {
 		// Content stays raw until text delivery needs it: a user record's
 		// content is a plain STRING when it is a prompt (a SendMessage, a Stop
 		// hook's feedback), and decoding it as blocks would fail the whole line,
@@ -484,13 +488,27 @@ type transcriptLine struct {
 // bookkeeping records do not (live transcripts can end with attachments after
 // the final end_turn).
 //
-// terminal: the record ENDS the run — a non-nil stop_reason that is not
-// "tool_use". "tool_use" means the assistant will be called again, so it is
-// explicitly NOT terminal; the live probe that exposed #1938 had exactly that
-// shape (tool_use, then the end_turn that was lost). A user record is never
-// terminal: whatever the assistant said before it, the run went on.
+// terminal: the record ENDS the run (see endsRun).
 type lineResult struct {
 	conversational, terminal bool
+}
+
+// endsRun reports whether this record ends the agent's run. An assistant
+// record does when its stop_reason is non-nil and not "tool_use": "tool_use"
+// means the assistant will be called again; the live probe that exposed #1938
+// had exactly that shape (tool_use, then the end_turn that was lost). A user
+// record does only when CC marks it toolEndsTurn, the hand-back's result
+// (#2124); any other user record means the run went on, whatever the assistant
+// said before it. Before CC 2.1.285 a hand-back's result was unmarked and an
+// end_turn followed it, so the marker cannot close a tail before that record.
+func (rec *transcriptLine) endsRun() bool {
+	switch rec.Type {
+	case "assistant":
+		return rec.Message.StopReason != nil && *rec.Message.StopReason != "tool_use"
+	case "user":
+		return rec.ToolEndsTurn
+	}
+	return false
 }
 
 // deliverLine hands one transcript line to the ledger adapter and forwards
@@ -511,15 +529,14 @@ func (m *subagentTailManager) deliverLine(groupKey string, line []byte, wantText
 	if err := json.Unmarshal(line, &rec); err != nil {
 		return
 	}
-	if rec.Type == "user" {
-		r.conversational = true
-		return
-	}
-	if rec.Type != "assistant" {
+	if rec.Type != "user" && rec.Type != "assistant" {
 		return
 	}
 	r.conversational = true
-	r.terminal = rec.Message.StopReason != nil && *rec.Message.StopReason != "tool_use"
+	r.terminal = rec.endsRun()
+	if rec.Type == "user" {
+		return
+	}
 	// Text only when this tail was started for a FOREGROUND subagent. A
 	// background subagent's text already reaches the parent stream, so
 	// forwarding it here would render it twice.
