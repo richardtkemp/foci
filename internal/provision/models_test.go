@@ -12,9 +12,9 @@ func TestResolveModelAlias_TracksNewestInFamily(t *testing.T) {
 	for _, tc := range []struct{ alias, want string }{
 		{"fable", "anthropic/claude-fable-5-1"},
 		{"opus", "anthropic/claude-opus-5-5"},
-		{"sonnet", "anthropic/claude-sonnet-5"},
+		{"sonnet", "anthropic/claude-sonnet-5-5"},
 		{"haiku", "anthropic/claude-haiku-4-5"},
-		{"", "anthropic/claude-sonnet-5"},       // empty defaults to sonnet
+		{"", "anthropic/claude-sonnet-5-5"},     // empty defaults to sonnet
 		{"FABLE", "anthropic/claude-fable-5-1"}, // case-insensitive
 		{" opus ", "anthropic/claude-opus-5-5"}, // trimmed
 	} {
