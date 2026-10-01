@@ -19,7 +19,6 @@ import (
 	"foci/internal/delegator"
 	"foci/internal/delegator/pretool"
 	"foci/internal/delegator/stoprule"
-	"foci/internal/modelinfo"
 	"foci/internal/ratelimit"
 )
 
@@ -150,14 +149,6 @@ type Backend struct {
 	// Turn state
 	turnMu     sync.Mutex
 	turnActive bool
-	// turnStartedAt is when beginTurnLocked opened the current turn. Recorded
-	// so the divergence warning can print the turn's OWN duration beside the
-	// span the priced ModelUsage delta actually covers (#1880). Those two are
-	// routinely different — a background subagent outliving its parent made a
-	// 3.5-minute turn carry 34 minutes of spend on 2026-09-10 — and a reader
-	// with only one of them cannot tell an expensive turn from a cheap turn
-	// that happened to close last.
-	turnStartedAt time.Time
 	// turnAutonomous marks a turn foci did NOT open with a send: CC started the
 	// run itself (a background-agent completion, task-notification, or back-to-
 	// back continuation) and foci adopted it as a first-class turn (#1261). Set
@@ -207,40 +198,14 @@ type Backend struct {
 	stashedResultMsg *ResultMessage        // raw message of the stash, for WaitForTurn signalling
 	turnOutputTokens int                   // output tokens summed across this turn's ask cycles
 	turnCalls        int                   // ask cycles (result events) observed this turn
-	turnCalcCostUSD  float64               // foci's own priced cost, summed across this turn's ask cycles (#1674)
-	turnProvidedUSD  float64               // CC's reported cost for this turn, recovered by delta (#1674)
-	// The token deltas actually PRICED into turnCalcCostUSD, accumulated the
-	// same way. TurnUsage's un-suffixed fields carry the final cycle's context
-	// fill (what compaction needs), so this is the only record of which class
-	// foci charged for (#1695); it is emitted as TurnUsage.Turn so api.db can
-	// re-price a row to its own cost (#1854).
-	turnCalc modelinfo.TokenCounts
-	// The PARENT's share of the two above — the whole turn minus what its
-	// subagents spent (#1880 phase C). These are what the parent api_calls row
-	// carries; turnSubagents becomes one extra row each, so the turn's rows sum
-	// back to turnCalcCostUSD/turnCalc with nothing counted twice.
-	turnParentCostUSD float64
-	turnParentCalc    modelinfo.TokenCounts
-	turnSubagents     map[subKey]modelinfo.SubagentCost
-	// turnCorrections is #1918's payload: spend found to belong to a row that
-	// was written before it arrived. Accumulated across result cycles exactly
-	// like turnSubagents, so the final result carries every one.
-	turnCorrections []modelinfo.CostCorrection
 	// turnRowID is TurnEvents.TurnID for the turn currently open — the agent
-	// layer's durable turn identity, handed to the accumulator so a subagent's
-	// spend can name the turn that SPAWNED it rather than the one that closed
-	// while its tokens were in flight (#1880 phase C).
+	// layer's durable turn identity, which the ledger adapter books this
+	// turn's calls on, and a subagent's on the turn that SPAWNED it (#1924).
 	turnRowID string
-	// shadow is this process's ledger adapter running in shadow (#2111
-	// §12), or nil when no shadow ledger is configured (ccshadow.go).
-	shadow           atomic.Pointer[ccShadow]
-	turnProvidedSeen bool // CC reported a cost for ≥1 cycle this turn; distinguishes "$0" from "absent"
-	// This turn's usage accumulated PER ASSISTANT MESSAGE, bucketed by model
-	// and by subagent-or-not (#1866). Per-message because only there does CC
-	// report the cache-write TTL split and the message's own model; the result's
-	// ModelUsage merges the TTLs away and is keyed by a single model. See
-	// ttlsplit.go for why the dedupe inside is load-bearing.
-	turnUsageAcc       usageAccumulator
+	// ledger is this process's ledger adapter (ccledger.go), or nil before
+	// the first Start.
+	ledger atomic.Pointer[ccLedger]
+
 	redispatchInFlight bool // pre-answer follow-up sent at idle; hold the turn open until its result arrives
 	stateEventsSeen    bool // CC emitted ≥1 session_state_changed this session; gates the legacy complete-on-result fallback
 	fallbackWarned     bool // one-shot Warnf when falling back to complete-on-result
@@ -265,47 +230,15 @@ type Backend struct {
 	lastUsage     *TokenUsage        // per-call usage from last assistant message
 	rlThrottle    *RateLimitThrottle // OnRateLimit throttle; shared per-agent via SetRateLimitThrottle
 
-	// Previous ModelUsage snapshot per model, for recovering per-turn figures
-	// by subtraction (#1674). CC's ModelUsage counters are CUMULATIVE over the
-	// life of the CC PROCESS — every field, not just cost. Probe-verified
-	// 2026-08-05: four turns in one process reported outputTokens 56/105/141/174
-	// and cacheRead 21624/46722/72545/98434 for four identical trivial prompts.
-	//
-	// Deliberately keyed on nothing but the model, and deliberately NOT reset
-	// between turns: its lifetime is the CC process's, and Start sets it to
-	// whatever the new process's counters start from. That is empty for a fresh
-	// session. For a --resume it is the totals CC restores from the
-	// transcript's last cost-state record, because since CC 2.1.280 a resumed
-	// process starts its counters at the conversation's history, not at zero
-	// (#2012; before that a resume did restart at zero, 0.0243 -> 0.0035). An
-	// empty seed there booked the whole history to the first turn.
-	lastModelUsage map[string]ModelUsage
-
-	// lastModelUsageAt is when each model's snapshot in lastModelUsage was
-	// taken — i.e. the START of the window the next delta for that model will
-	// cover. Kept per model, not as one scalar, because the snapshots are per
-	// model and a turn routinely touches several; a single timestamp would
-	// report one model's window for another's delta.
-	lastModelUsageAt map[string]time.Time
-
-	// Compares foci's priced cost against CC's reported one (#1674). Shared
-	// implementation so this means the same thing across backends.
-	costCheck delegator.CostDivergenceChecker
+	// prevModelUsage is this process's previous result's modelUsage, for the
+	// monotonic check (checkModelUsageMonotonic); nil until its first result.
+	// Guarded by mu.
+	prevModelUsage map[string]ModelUsage
 
 	// expect receives backend-expectation violations (#2013). nil means the
 	// process-wide delegator.Expectations; tests inject their own so the
 	// shared rate limit cannot couple parallel tests.
 	expect *delegator.ExpectationGuard
-
-	// resultSeen is set by the first result that carries ModelUsage. Until
-	// then lastModelUsage holds only the baseline Start seeded. Guarded by mu.
-	resultSeen bool
-
-	// compactSeen is set when CC compacts in this process. Guarded by turnMu.
-	// A compaction's own API call is billed into ModelUsage but was never
-	// verified to appear on the stream, so the fresh-process usage check
-	// stands down once one has happened rather than guess.
-	compactSeen bool
 
 	// Auto-approve rules (compiled from config, immutable after Start)
 	autoApproveRules []autoApproveRule
@@ -484,19 +417,26 @@ func (b *Backend) subagentTails() *subagentTailManager {
 			if se := b.sessionEvents.Load(); se != nil && se.OnSubagentText != nil {
 				se.OnSubagentText(groupKey, text, b.runIndexForGroup(groupKey))
 			}
-		}, b.noteSubagentTranscriptUsage, b.logger())
-		b.subagentTailMgr.shadowLine = func(groupKey string, line []byte) {
+		}, b.logger())
+		b.subagentTailMgr.ledgerLine = func(groupKey string, line []byte) {
 			if l, _ := parseCCRecord(line); l != nil {
-				b.shadow.Load().enqueue(ccEvent{kind: ccSubLine, agent: groupKey, turn: b.openTurnRowID(), line: l})
+				// The transcript names the model the subagent really runs on;
+				// show that in place of the requested alias (#2138). No-op for
+				// an untracked key. "<synthetic>" marks a CC-generated
+				// message, not a model.
+				if !strings.HasPrefix(l.model, "<") {
+					b.agents.SetModel(groupKey, l.model)
+				}
+				b.ledger.Load().enqueue(ccEvent{kind: ccSubLine, agent: groupKey, turn: b.openTurnRowID(), line: l})
 			}
 		}
-		b.subagentTailMgr.shadowEvent = func(e ccEvent) { b.shadow.Load().enqueue(e) }
-		b.subagentTailMgr.shadowTail = func(groupKey string, open bool) {
+		b.subagentTailMgr.ledgerEvent = func(e ccEvent) { b.ledger.Load().enqueue(e) }
+		b.subagentTailMgr.ledgerTail = func(groupKey string, open bool) {
 			kind := ccTailClosed
 			if open {
 				kind = ccTailOpened
 			}
-			b.shadow.Load().enqueue(ccEvent{kind: kind, agent: groupKey, turn: b.openTurnRowID()})
+			b.ledger.Load().enqueue(ccEvent{kind: kind, agent: groupKey, turn: b.openTurnRowID()})
 		}
 	}
 	return b.subagentTailMgr

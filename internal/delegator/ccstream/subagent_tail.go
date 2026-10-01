@@ -151,20 +151,16 @@ type subagentTailManager struct {
 	// the backend so it always reads the current SessionEvents. May be nil in
 	// tests that only exercise lifecycle bookkeeping.
 	deliver func(groupKey, text string)
-	// noteUsage records one transcript message's token usage. Separate from
-	// deliver because the two have different failure modes: dropping a text
-	// block loses display, dropping usage loses money. May be nil in tests
-	// that only exercise text forwarding.
-	noteUsage func(agent, model, id string, at time.Time, complete bool, u TokenUsage)
-	// shadowLine and shadowTail feed the ledger adapter running in shadow
-	// (ccshadow.go): every raw line, ungated — the ledger's own key makes a
-	// re-read harmless — and each tail's start and end. May be nil.
-	shadowLine func(groupKey string, line []byte)
-	shadowTail func(groupKey string, open bool)
-	// shadowEvent feeds the adapter directly, for the Workflow runs'
+	// ledgerLine and ledgerTail feed the ledger adapter (ccledger.go): every
+	// raw line, ungated — a reactivation tail re-reads the transcript from
+	// byte 0, and the adapter books each call once — and each tail's start
+	// and end. May be nil in tests.
+	ledgerLine func(groupKey string, line []byte)
+	ledgerTail func(groupKey string, open bool)
+	// ledgerEvent feeds the adapter directly, for the Workflow runs'
 	// transcripts (workflow_tail.go), whose events carry their own turn.
 	// May be nil.
-	shadowEvent func(ccEvent)
+	ledgerEvent func(ccEvent)
 	// workflows are the Workflow runs being read, by Workflow tool_use id;
 	// workflowTasks the local_workflow tasks started whose run has not
 	// (true: the task has already ended).
@@ -174,10 +170,10 @@ type subagentTailManager struct {
 }
 
 // wantText is whether this tail forwards the subagent's TEXT to the session,
-// as opposed to only recording its usage. Foreground subagents need both: CC
-// filters their assistant text out of the parent stream. Background subagents
-// need only the accounting — their text already streams to the parent, so
-// delivering it again would double it in the chat.
+// as opposed to only feeding its calls to the ledger. Foreground subagents
+// need both: CC filters their assistant text out of the parent stream.
+// Background subagents need only the accounting — their text already streams
+// to the parent, so delivering it again would double it in the chat.
 type subagentTail struct {
 	wantText bool
 	stop     chan struct{}
@@ -190,159 +186,13 @@ type subagentTail struct {
 	// a tail that opened its file but read nothing is distinguishable from one
 	// that never opened it at all (#1934).
 	lines atomic.Int64
-	// usage counts the assistant lines whose usage was handed to the
-	// accumulator, and completed the subset carrying a stop_reason — the only
-	// lines that can reach a subagent_turn row (#1923). Reported at close
-	// beside lines, so "read lines but none were billable" and "billable but
-	// never completed" each have their own number rather than a guess (#1936).
-	usage     atomic.Int64
-	completed atomic.Int64
-
-	// run is the accounting gate for a REACTIVATION tail (#2057); nil for run 1,
-	// which books everything it reads.
-	run *runStartGate
 }
 
-// usageNote is one transcript line's usage, as the accumulator takes it.
-type usageNote struct {
-	model, id string
-	at        time.Time
-	complete  bool
-	u         TokenUsage
-}
-
-// runStartGate keeps a reactivation tail from booking the earlier runs again
-// (#2057). A tail for run 2+ reads the transcript from byte 0, so without a
-// gate every earlier run's messages reach the accumulator a second time.
-// Within one Backend that is harmless, because the accumulator still holds
-// their ids. A NEW Backend holds nothing, and there are two ways to get one
-// while the transcript lives on: a foci restart, and a CC process relaunch
-// inside a running foci (the post-compaction close + --resume, an idle close,
-// a crash respawn: DelegatedManager closes the Backend and builds another).
-// Either way run 1 was re-counted in the window when the resume came before
-// the new process's first result, and filed as late spend (#1918 corrections
-// against a parent turn it was never part of) when it came after. The relaunch
-// case is not hypothetical: on 2026-09-27 a compaction relaunch re-booked six
-// reactivated subagents' earlier runs, 15.2M cache tokens (#2087).
-//
-// The boundary is read from the transcript's own ORDER, with no timing window.
-// Run 1 always ends at rest before a resume can start, and a Stop-hook bounce
-// inside run 1 comes before run 1's final terminal record. So the run's prompt
-// is the first prompt record (a user record with string content) AFTER, in file
-// order, the last terminal assistant record stamped before task_started was
-// received; every assistant record before that prompt is an earlier run's and
-// is kept out of the accounting, and everything after it counts. The receive
-// time matters only if run 2 reached its own terminal record before foci saw
-// task_started.
-//
-// Streaming makes "the last terminal record" unknowable at the moment a prompt
-// is read, so records after a candidate prompt are HELD until a record settles
-// it: a later terminal stamped before the receive time means the candidate was
-// a bounce inside run 1 (drop what was held), and any record stamped at or
-// after the receive time means the run has begun (release it). If no terminal
-// record precedes the receive time, the gate cannot place the boundary and
-// falls back to booking everything, as before the gate existed, and says so.
-// Nothing is persisted: the file carries its own boundary.
-type runStartGate struct {
-	// startedAt is when task_started for this run was received.
-	startedAt time.Time
-	group     string
-	lg        *log.ComponentLogger
-
-	armed      bool      // a terminal record stamped before startedAt has been read
-	promptAt   time.Time // the candidate run prompt after the last such record
-	havePrompt bool
-	open       bool // boundary settled (or fallback): book directly
-	pending    []usageNote
-	dropped    int // assistant records kept out as an earlier run's
-}
-
-// prompt notes a prompt record (user, string content).
-func (g *runStartGate) prompt(at time.Time) {
-	if g.open || !g.armed || g.havePrompt {
-		return
-	}
-	g.havePrompt, g.promptAt = true, at
-}
-
-// assistant takes one assistant record and returns the notes now due to the
-// accumulator: none while the boundary is unsettled, or the held ones once it
-// settles.
-func (g *runStartGate) assistant(n usageNote, terminal bool) []usageNote {
-	if g.open {
-		return []usageNote{n}
-	}
-	stamped := !n.at.IsZero()
-	switch {
-	case stamped && !n.at.Before(g.startedAt):
-		// This run is under way (it was announced before this was written).
-		if !g.armed {
-			g.lg.Debugf("subagent tail: run start NOT found group=%s: no at-rest record before task_started (received %s), booking the whole transcript as before #2057",
-				g.group, g.startedAt.Format(time.RFC3339Nano))
-		} else {
-			g.logStart()
-		}
-		return g.release(n)
-	case stamped && terminal:
-		// An earlier run ended here: whatever was held since the last one,
-		// and this record, are that run's.
-		g.dropped += len(g.pending) + 1
-		g.pending = nil
-		g.armed, g.havePrompt = true, false
-		return nil
-	case g.armed && !g.havePrompt:
-		// Between an at-rest record and the next prompt: not this run's.
-		g.dropped++
-		return nil
-	default:
-		// After a candidate prompt, or before any at-rest record (kept for the
-		// fallback): undecided.
-		g.pending = append(g.pending, n)
-		return nil
-	}
-}
-
-// close settles a gate the transcript never settled, when the tail ends.
-func (g *runStartGate) close() []usageNote {
-	if g.open {
-		return nil
-	}
-	switch {
-	case !g.armed:
-		g.lg.Debugf("subagent tail: run start NOT found group=%s: no at-rest record before task_started (received %s), booking the whole transcript as before #2057",
-			g.group, g.startedAt.Format(time.RFC3339Nano))
-		return g.release()
-	case g.havePrompt:
-		// A prompt after run 1's end and nothing to contradict it: run 2
-		// wrote records with no usable timestamp.
-		g.logStart()
-		return g.release()
-	default:
-		g.lg.Debugf("subagent tail: run start NOT found group=%s: no prompt after the last at-rest record, nothing booked for this run",
-			g.group)
-		g.dropped += len(g.pending)
-		g.pending = nil
-		return nil
-	}
-}
-
-func (g *runStartGate) release(more ...usageNote) []usageNote {
-	out := append(g.pending, more...)
-	g.pending, g.open = nil, true
-	return out
-}
-
-func (g *runStartGate) logStart() {
-	g.lg.Debugf("subagent tail: run start group=%s prompt_at=%s (first prompt after the last at-rest record; task_started received %s), earlier records skipped=%d",
-		g.group, g.promptAt.Format(time.RFC3339Nano), g.startedAt.Format(time.RFC3339Nano), g.dropped)
-}
-
-func newSubagentTailManager(deliver func(groupKey, text string), noteUsage func(agent, model, id string, at time.Time, complete bool, u TokenUsage), lg *log.ComponentLogger) *subagentTailManager {
+func newSubagentTailManager(deliver func(groupKey, text string), lg *log.ComponentLogger) *subagentTailManager {
 	if lg == nil {
 		lg = log.NewComponentLogger("ccstream")
 	}
 	return &subagentTailManager{
-		noteUsage:     noteUsage,
 		expectFg:      make(map[string]bool),
 		tails:         make(map[string]*subagentTail),
 		workflows:     make(map[string]*workflowRun),
@@ -382,10 +232,10 @@ func (m *subagentTailManager) expectForeground(toolUseID string) {
 // costs one goroutine and one file handle per live subagent, bounded by how
 // many can run at once.
 //
-// reactivatedAt is the task_started receive time of a REACTIVATION (run 2+),
-// which limits the tail's accounting to that run (runStartGate, #2057); zero
-// for run 1.
-func (m *subagentTailManager) maybeStart(toolUseID, path string, reactivatedAt time.Time) {
+// A REACTIVATION (run 2+) re-reads the transcript from byte 0. The adapter
+// books each call once per process and skips lines billed before the process
+// launched, so the earlier runs are not booked again (#2057).
+func (m *subagentTailManager) maybeStart(toolUseID, path string) {
 	if m == nil || toolUseID == "" || path == "" {
 		return
 	}
@@ -398,14 +248,11 @@ func (m *subagentTailManager) maybeStart(toolUseID, path string, reactivatedAt t
 		return
 	}
 	t := &subagentTail{wantText: wantText, stop: make(chan struct{}), done: make(chan struct{})}
-	if !reactivatedAt.IsZero() {
-		t.run = &runStartGate{startedAt: reactivatedAt, group: toolUseID, lg: m.lg}
-	}
 	m.tails[toolUseID] = t
 	m.mu.Unlock()
 
-	if m.shadowTail != nil {
-		m.shadowTail(toolUseID, true)
+	if m.ledgerTail != nil {
+		m.ledgerTail(toolUseID, true)
 	}
 	go m.run(toolUseID, path, t)
 }
@@ -496,8 +343,8 @@ func (m *subagentTailManager) stopAll() {
 // t.done on exit.
 func (m *subagentTailManager) run(groupKey, path string, t *subagentTail) {
 	defer close(t.done)
-	if m.shadowTail != nil {
-		defer m.shadowTail(groupKey, false)
+	if m.ledgerTail != nil {
+		defer m.ledgerTail(groupKey, false)
 	}
 
 	f := m.waitForFile(path, t.stop)
@@ -519,15 +366,7 @@ func (m *subagentTailManager) run(groupKey, path string, t *subagentTail) {
 	// those runs, so the tail returned before their final record was written.
 	atRest := false
 	defer func() {
-		beforeRun := 0
-		if t.run != nil {
-			u, c := m.emitUsage(groupKey, t.run.close())
-			t.usage.Add(int64(u))
-			t.completed.Add(int64(c))
-			beforeRun = t.run.dropped
-		}
-		m.lg.Debugf("subagent tail: closed group=%s lines=%d usage=%d completed=%d terminal=%v before_run=%d",
-			groupKey, t.lines.Load(), t.usage.Load(), t.completed.Load(), atRest, beforeRun)
+		m.lg.Debugf("subagent tail: closed group=%s lines=%d terminal=%v", groupKey, t.lines.Load(), atRest)
 	}()
 
 	var acc []byte
@@ -542,12 +381,10 @@ func (m *subagentTailManager) run(groupKey, path string, t *subagentTail) {
 					if i < 0 {
 						break
 					}
-					r := m.deliverLine(groupKey, acc[:i], t.wantText, t.run)
+					r := m.deliverLine(groupKey, acc[:i], t.wantText)
 					if r.conversational {
 						atRest = r.terminal
 					}
-					t.usage.Add(int64(r.usage))
-					t.completed.Add(int64(r.complete))
 					t.lines.Add(1)
 					acc = acc[i+1:]
 				}
@@ -635,17 +472,7 @@ type transcriptLine struct {
 		// hook's feedback), and decoding it as blocks would fail the whole line,
 		// hiding the one fact the tail needs from it, that the run continued.
 		Content json.RawMessage `json:"content"`
-		// ID/Model/Usage carry the accounting half of the line. A FOREGROUND
-		// subagent's pure-text messages never reach the parent stream, and
-		// their usage goes with them, so the transcript is the only complete
-		// source for what that subagent actually spent (#1866 P2).
-		ID    string     `json:"id"`
-		Model string     `json:"model"`
-		Usage TokenUsage `json:"usage"`
 		// StopReason is non-nil only on the line where the message COMPLETED.
-		// CC's result.modelUsage counts a message at completion, so this is the
-		// line whose usage may be folded into the accounting — see note()
-		// (#1923).
 		StopReason *string `json:"stop_reason"`
 	} `json:"message"`
 }
@@ -662,82 +489,37 @@ type transcriptLine struct {
 // explicitly NOT terminal; the live probe that exposed #1938 had exactly that
 // shape (tool_use, then the end_turn that was lost). A user record is never
 // terminal: whatever the assistant said before it, the run went on.
-//
-// usage: how many lines' usage this line handed to the accumulator; complete:
-// how many of those carried a stop_reason, so the accumulator counts them
-// (#1923). Both feed the tail's close line (#1936). Without a run gate that is
-// this line alone (0 or 1); a gate can hold lines and release several at once
-// (#2057).
 type lineResult struct {
 	conversational, terminal bool
-	usage, complete          int
 }
 
-// emitUsage hands notes to the accumulator and returns how many, and how many
-// of them were complete.
-func (m *subagentTailManager) emitUsage(groupKey string, notes []usageNote) (usage, complete int) {
-	if m.noteUsage == nil {
-		return 0, 0
-	}
-	for _, n := range notes {
-		// groupKey IS the Agent tool_use id, so the usage carries the identity of
-		// the subagent that spent it, not merely the fact that a subagent spent it
-		// (#1880 phase C).
-		m.noteUsage(groupKey, n.model, n.id, n.at, n.complete, n.u)
-		usage++
-		if n.complete {
-			complete++
-		}
-	}
-	return usage, complete
-}
-
-// deliverLine parses one transcript line and forwards each assistant text block
-// as subagent progress. Non-assistant records (the input prompt, tool_use,
-// tool_result, attachments) and non-text blocks are skipped. run, when non-nil,
-// limits the ACCOUNTING to the current run (#2057); text is not gated.
-func (m *subagentTailManager) deliverLine(groupKey string, line []byte, wantText bool, run *runStartGate) (r lineResult) {
+// deliverLine hands one transcript line to the ledger adapter and forwards
+// each assistant text block as subagent progress. Non-assistant records (the
+// input prompt, tool_use, tool_result, attachments) and non-text blocks are
+// not forwarded.
+func (m *subagentTailManager) deliverLine(groupKey string, line []byte, wantText bool) (r lineResult) {
 	line = bytes.TrimSpace(line)
 	if len(line) == 0 {
 		return
 	}
-	if m.shadowLine != nil {
-		m.shadowLine(groupKey, line)
+	// Accounting first, and NOT gated on m.deliver or wantText: a consumer
+	// with no text sink still spends real money.
+	if m.ledgerLine != nil {
+		m.ledgerLine(groupKey, line)
 	}
 	var rec transcriptLine
 	if err := json.Unmarshal(line, &rec); err != nil {
 		return
 	}
-	// A line whose timestamp is absent or unparseable yields the zero time,
-	// which the accumulator reads as "unknown, treat as now" — the pre-#1909
-	// behaviour, so a format change degrades to the old bucketing rather than
-	// dropping the usage.
-	at, _ := time.Parse(time.RFC3339Nano, rec.Timestamp)
 	if rec.Type == "user" {
 		r.conversational = true
-		// A prompt's content is a plain string; a tool_result's is an array of
-		// blocks, and never starts a run.
-		if c := bytes.TrimSpace(rec.Message.Content); run != nil && len(c) > 0 && c[0] == '"' {
-			run.prompt(at)
-		}
 		return
 	}
 	if rec.Type != "assistant" {
 		return
 	}
 	r.conversational = true
-	// Accounting first, and NOT gated on m.deliver. The two sinks fail
-	// independently: a consumer with no text sink still spends real money, and
-	// the previous early return on a nil deliver would have discarded every
-	// token it spent.
 	r.terminal = rec.Message.StopReason != nil && *rec.Message.StopReason != "tool_use"
-	n := usageNote{model: rec.Message.Model, id: rec.Message.ID, at: at,
-		complete: rec.Message.StopReason != nil, u: rec.Message.Usage}
-	notes := []usageNote{n}
-	if run != nil {
-		notes = run.assistant(n, r.terminal)
-	}
-	r.usage, r.complete = m.emitUsage(groupKey, notes)
 	// Text only when this tail was started for a FOREGROUND subagent. A
 	// background subagent's text already reaches the parent stream, so
 	// forwarding it here would render it twice.

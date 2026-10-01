@@ -420,11 +420,8 @@ func (t *Turn) Complete(finalText, model string, usage *provider.Usage, cost flo
 	}
 	if usage != nil {
 		attrs = append(attrs, attribute.String(attrObsMetaPrefix+"usage", usageJSON(usage)))
-		if len(usage.Subagents) > 0 {
-			attrs = append(attrs, attribute.Int(attrObsMetaPrefix+"subagent_rows", len(usage.Subagents)))
-		}
 	}
-	// The turn total INCLUDING subagent shares — what the sink header shows.
+	// The turn's total as the ledger prices it — what the sink header shows.
 	attrs = append(attrs, attribute.Float64(attrObsMetaPrefix+"cost_usd", cost))
 
 	output := finalText
@@ -506,14 +503,6 @@ func usageJSON(u *provider.Usage) string {
 		"output":                      u.OutputTokens,
 		"cache_read_input_tokens":     u.CacheReadInputTokens,
 		"cache_creation_input_tokens": u.CacheCreationInputTokens,
-	}
-	if u.Turn != nil {
-		m["turn"] = map[string]int{
-			"input":                       u.Turn.Input,
-			"output":                      u.Turn.Output,
-			"cache_read_input_tokens":     u.Turn.CacheRead,
-			"cache_creation_input_tokens": u.Turn.CacheWrite,
-		}
 	}
 	b, _ := json.Marshal(m)
 	return string(b)

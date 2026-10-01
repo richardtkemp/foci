@@ -164,8 +164,10 @@ func (b *Backend) completeTurn(reason string) {
 	// task_notification (or the tracker's max-age prune). ClearAll now runs
 	// only on session exit (lifecycle finalizeExit).
 
-	// Fire OnTurnComplete OUTSIDE any lock.
+	// Fire OnTurnComplete OUTSIDE any lock, once the turn's main-thread calls
+	// are in the ledger: the agent layer reads the turn's total from it.
 	if turn != nil && turn.OnTurnComplete != nil {
+		b.ledger.Load().flush()
 		turn.OnTurnComplete(result)
 	}
 

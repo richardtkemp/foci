@@ -180,7 +180,6 @@ func initWith(exp sdktrace.SpanExporter, o Options) error {
 	mu.Unlock()
 
 	accounting.BookedHook = recordBooking
-	accounting.CorrectionHook = recordCorrection
 	enabled.Store(true)
 	tlog.Infof("tracing enabled → %s (environment=%s content=%v system_prompt=%v)",
 		o.Endpoint, o.Environment, o.Content, o.SystemPrompt)
@@ -198,7 +197,6 @@ func Shutdown(ctx context.Context) {
 		return
 	}
 	accounting.BookedHook = nil
-	accounting.CorrectionHook = nil
 	mu.Lock()
 	tp := tracerProvider
 	timeout := opts.FlushTimeout

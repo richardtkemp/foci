@@ -243,9 +243,9 @@ func TestCutoverThenBook(t *testing.T) {
 	}
 }
 
-// TestConcurrentBookings: every agent books through one ledger at once, and a
-// subagent share's transaction reads before it writes. Writes are serialised,
-// so none fails with SQLITE_BUSY and nothing is lost.
+// TestConcurrentBookings: every agent books through one ledger at once, and
+// adapters upsert one shared turn while booking calls on it. Writes are
+// serialised, so none fails with SQLITE_BUSY and nothing is lost.
 func TestConcurrentBookings(t *testing.T) {
 	l, _ := openLedger(t)
 	const n = 40
@@ -268,12 +268,13 @@ func TestConcurrentBookings(t *testing.T) {
 		}(i)
 		go func(i int) {
 			defer wg.Done()
-			cost := 0.01
-			_, err := l.AccumulateLegacySubagent(LegacyRow{
-				At: t0, Session: "sess", Model: "claude-opus-5", TurnID: sessTurn("T"),
-				Subagent: true, SubagentID: "agent-" + itoa(int64(i%4)),
-				Turn: &modelinfo.TokenCounts{Output: 1}, CalculatedCostUSD: &cost,
-			})
+			turn := Turn{TurnID: sessTurn("T"), Session: "sess", Backend: BackendCCStream, Source: SourceUser, StartedAt: t0}
+			_, err := l.RecordCall(turn, Call{
+				Key: "sub_" + itoa(int64(i)), Backend: BackendCCStream, Provider: "anthropic", Model: "claude-opus-5",
+				Session: "sess", TurnID: turn.TurnID, Actor: "agent-" + itoa(int64(i%4)),
+				Kind: KindCall, Finality: FinalityCompleted, ClassMethod: ClassMethodObserved,
+				BilledAt: t0, Tokens: modelinfo.Tokens{modelinfo.ClassOutput: 1},
+			}, nil)
 			errs <- err
 		}(i)
 	}
@@ -284,12 +285,11 @@ func TestConcurrentBookings(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var calls int
-	var shares float64
-	if err := l.db.QueryRow(`SELECT COUNT(*), TOTAL(legacy_calculated_cost_usd) FROM api_calls`).Scan(&calls, &shares); err != nil {
+	var calls, subs int
+	if err := l.db.QueryRow(`SELECT COUNT(*), SUM(actor <> '') FROM api_calls`).Scan(&calls, &subs); err != nil {
 		t.Fatal(err)
 	}
-	if calls != n+4 || !near(shares, n*0.01) {
-		t.Errorf("calls = %d, share total $%.4f; want %d calls and $%.2f", calls, shares, n+4, n*0.01)
+	if calls != 2*n || subs != n {
+		t.Errorf("calls = %d (%d subagents'), want %d (%d)", calls, subs, 2*n, n)
 	}
 }

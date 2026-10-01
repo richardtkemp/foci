@@ -1,9 +1,11 @@
-// ccshadow.go — runs the Claude Code ledger adapter (ccbook.go) in SHADOW
-// (#2111 §12): beside the live, turn-level cost path, booking into the scratch
-// ledger (logging.api_shadow_db, accounting.Shadow) so a 1-2 day run can be
-// compared with the live rows before the switch. Nothing here touches the live
-// path or its accounting: every hook only enqueues, the adapter runs on its own
-// goroutine, and a full queue drops (and counts) rather than blocks the stream.
+// ccledger.go — runs the Claude Code ledger adapter (ccbook.go) for one CC
+// process (#2111 P2): it is this backend's only cost path. The hooks only
+// enqueue, the adapter runs on its own goroutine, and a full queue drops (and
+// says so loudly) rather than blocks the stream.
+//
+// The adapter books into accounting.Live(); with no live ledger (a unit test,
+// or no api.db) a call is still observed — written to api.jsonl and handed to
+// BookedHook — as every backend's is.
 
 package ccstream
 
@@ -19,7 +21,7 @@ import (
 	"foci/internal/delegator/accounting"
 )
 
-// ccEventKind names what a shadow event carries.
+// ccEventKind names what an adapter event carries.
 type ccEventKind int
 
 const (
@@ -34,6 +36,7 @@ const (
 	ccSessionFile
 	ccMainRead
 	ccMainTailEnded
+	ccBarrier
 	ccExit
 )
 
@@ -48,10 +51,11 @@ type ccEvent struct {
 	line    *ccLine
 	mu      map[string]ModelUsage
 	running int
+	reply   chan struct{} // ccBarrier: closed once the barrier is passed
 }
 
-// ccShadow owns one CC process's shadow adapter.
-type ccShadow struct {
+// ccLedger owns one CC process's ledger adapter.
+type ccLedger struct {
 	book    *ccBook
 	events  chan ccEvent
 	dropped atomic.Int64
@@ -60,32 +64,35 @@ type ccShadow struct {
 	tailOnce  sync.Once
 	tailStop  chan struct{}
 	tailDone  chan struct{}
+	tailPoke  chan struct{}
 	closeOnce sync.Once
 }
 
-// shadowTick is how often the adapter settles results whose bound passed.
-var shadowTick = 50 * time.Millisecond
+// ccLedgerTick is how often the adapter settles results whose bound passed.
+var ccLedgerTick = 50 * time.Millisecond
 
-// newCCShadow starts the adapter for a process launched now, or returns nil
-// when no shadow ledger is configured.
-func newCCShadow(b *Backend, session, agentID string, baseline map[string]ModelUsage) *ccShadow {
-	l := accounting.Shadow()
-	if l == nil {
-		return nil
-	}
-	s := &ccShadow{
-		book:     newCCBook(l, b.logger(), session, agentID, time.Now(), baseline),
+// ccBarrierBound caps how long a turn's completion waits for the main-thread
+// calls the stream named to be booked (flush). The lines land within ~2ms of
+// the result (P0-b) and the tail is poked to read at once, so the bound is
+// only reached when a line never comes.
+var ccBarrierBound = time.Second
+
+// newCCLedger starts the adapter for a process launched now.
+func newCCLedger(b *Backend, session, agentID string, baseline map[string]ModelUsage) *ccLedger {
+	s := &ccLedger{
+		book:     newCCBook(accounting.Live(), b.logger(), session, agentID, time.Now(), baseline),
 		events:   make(chan ccEvent, 8192),
 		done:     make(chan struct{}),
 		tailStop: make(chan struct{}),
 		tailDone: make(chan struct{}),
+		tailPoke: make(chan struct{}, 1),
 	}
 	go s.run()
 	return s
 }
 
 // enqueue hands an event to the adapter without ever blocking the caller.
-func (s *ccShadow) enqueue(e ccEvent) {
+func (s *ccLedger) enqueue(e ccEvent) {
 	if s == nil {
 		return
 	}
@@ -96,16 +103,45 @@ func (s *ccShadow) enqueue(e ccEvent) {
 	case s.events <- e:
 	default:
 		if s.dropped.Add(1) == 1 {
-			s.book.lg.Warnf("ledger shadow: event queue full; dropping (counted at close)")
+			s.book.lg.Errorf("ledger: adapter event queue full; dropping events, so this process's spend will be under-booked (counted at close)")
+		}
+		if e.reply != nil {
+			close(e.reply)
 		}
 	}
 }
 
-func (s *ccShadow) run() {
+// flush waits until every main-thread call the stream has named so far is
+// booked, or ccBarrierBound passes: called as a turn completes, so the agent
+// layer's turn total (closeLedgerTurn) holds the turn's own calls. What books
+// at a later quiet point — a remainder, a background subagent's later calls —
+// is not waited for.
+func (s *ccLedger) flush() {
+	if s == nil {
+		return
+	}
+	reply := make(chan struct{})
+	s.enqueue(ccEvent{kind: ccBarrier, reply: reply})
+	select {
+	case <-reply:
+	case <-s.done:
+	case <-time.After(ccBarrierBound + time.Second):
+		s.book.lg.Warnf("ledger: adapter did not pass a turn's barrier in time")
+	}
+}
+
+// barrier is one flush waiting on the adapter.
+type barrier struct {
+	reply    chan struct{}
+	deadline time.Time
+}
+
+func (s *ccLedger) run() {
 	defer close(s.done)
-	tick := time.NewTicker(shadowTick)
+	tick := time.NewTicker(ccLedgerTick)
 	defer tick.Stop()
 	c := s.book
+	var waiting []barrier
 	for {
 		select {
 		case e := <-s.events:
@@ -133,17 +169,53 @@ func (s *ccShadow) run() {
 				c.mainRead(e.at)
 			case ccMainTailEnded:
 				c.mainTailRunning(false)
+			case ccBarrier:
+				waiting = append(waiting, barrier{reply: e.reply, deadline: e.at.Add(ccBarrierBound)})
+				s.poke()
 			case ccExit:
 				c.exit()
+				for _, w := range waiting {
+					close(w.reply)
+				}
 				if n := s.dropped.Load(); n > 0 {
-					c.lg.Warnf("ledger shadow: %d event(s) dropped on a full queue; this process's shadow rows are incomplete", n)
+					c.lg.Errorf("ledger: %d adapter event(s) dropped on a full queue; this process's ledger rows are incomplete", n)
 				}
 				return
 			}
 			c.settle(false)
 		case <-tick.C:
 			c.settle(false)
+			if len(waiting) > 0 {
+				s.poke()
+			}
 		}
+		waiting = s.release(waiting)
+	}
+}
+
+// release passes every barrier whose named calls are all booked (or that has
+// no main tail to wait on, or whose bound has passed), and returns the rest.
+func (s *ccLedger) release(waiting []barrier) []barrier {
+	if len(waiting) == 0 {
+		return waiting
+	}
+	now := s.book.now()
+	keep := waiting[:0]
+	for _, w := range waiting {
+		if !s.book.tailing || s.book.unseenNamed() == 0 || !now.Before(w.deadline) {
+			close(w.reply)
+			continue
+		}
+		keep = append(keep, w)
+	}
+	return keep
+}
+
+// poke asks the main tail to read now rather than at its next poll.
+func (s *ccLedger) poke() {
+	select {
+	case s.tailPoke <- struct{}{}:
+	default:
 	}
 }
 
@@ -151,7 +223,7 @@ func (s *ccShadow) run() {
 // size at launch: everything before it is an earlier process's) and feeds
 // every assistant line and this process's cost-state record to the adapter.
 // Idempotent.
-func (s *ccShadow) startMainTail(path string, offset int64) {
+func (s *ccLedger) startMainTail(path string, offset int64) {
 	if s == nil || path == "" {
 		return
 	}
@@ -164,7 +236,7 @@ func (s *ccShadow) startMainTail(path string, offset int64) {
 // Each finished read is reported with the time it began, after the lines it
 // found (the queue keeps order), so the adapter can tell a line that never
 // came from one not read yet (#2134).
-func (s *ccShadow) tailMain(path string, offset int64) {
+func (s *ccLedger) tailMain(path string, offset int64) {
 	defer close(s.tailDone)
 	defer s.enqueue(ccEvent{kind: ccMainTailEnded})
 	var f *os.File
@@ -178,12 +250,13 @@ func (s *ccShadow) tailMain(path string, offset int64) {
 		select {
 		case <-s.tailStop:
 			return
+		case <-s.tailPoke:
 		case <-time.After(subagentTailPoll):
 		}
 	}
 	defer f.Close()
 	if _, err := f.Seek(offset, io.SeekStart); err != nil {
-		s.book.lg.Warnf("ledger shadow: seek %s to %d: %v", path, offset, err)
+		s.book.lg.Errorf("ledger: seek %s to %d: %v — this process's main-thread calls will not be booked", path, offset, err)
 		return
 	}
 	r := bufio.NewReaderSize(f, 1<<20)
@@ -214,15 +287,16 @@ func (s *ccShadow) tailMain(path string, offset int64) {
 		case <-s.tailStop:
 			drain() // the process has exited: whatever it wrote is there now
 			return
+		case <-s.tailPoke:
 		case <-time.After(subagentTailPoll):
 		}
 	}
 }
 
-// close drains the main tail and flushes the process into the shadow ledger:
-// called once the CC process has exited or is being closed. Bounded, so a
-// stuck adapter never holds up teardown.
-func (s *ccShadow) close() {
+// close drains the main tail and flushes the process into the ledger: called
+// once the CC process has exited or is being closed. Bounded, so a stuck
+// adapter never holds up teardown.
+func (s *ccLedger) close() {
 	if s == nil {
 		return
 	}
@@ -234,13 +308,17 @@ func (s *ccShadow) close() {
 		select {
 		case <-s.tailDone:
 		case <-time.After(5 * time.Second):
-			s.book.lg.Warnf("ledger shadow: main-transcript tail did not stop within 5s")
+			s.book.lg.Warnf("ledger: main-transcript tail did not stop within 5s")
 		}
 		s.enqueue(ccEvent{kind: ccExit})
 		select {
 		case <-s.done:
 		case <-time.After(10 * time.Second):
-			s.book.lg.Warnf("ledger shadow: adapter did not finish its exit flush within 10s")
+			s.book.lg.Warnf("ledger: adapter did not finish its exit flush within 10s")
 		}
 	})
 }
+
+// LedgerBackend implements delegator.LedgerBooker: this backend books its own
+// calls (ccbook.go), so the agent layer records only its turns.
+func (b *Backend) LedgerBackend() string { return accounting.BackendCCStream }

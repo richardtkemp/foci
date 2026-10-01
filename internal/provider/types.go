@@ -340,51 +340,6 @@ type Usage struct {
 	OutputTokens             int `json:"output_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-
-	// ProvidedCostUSD is the cost a delegated backend reported for this call
-	// (delegator.TurnUsage.ProvidedCostUSD), passed through verbatim. Not
-	// authoritative (#1674) — CC's figure is cumulative over the CC process and
-	// what a provider folds into it is opaque. Anthropic's own Messages API
-	// (the direct, non-delegated path) reports no cost, so this stays nil
-	// there. nil means "the backend gave no cost" — never a stand-in for zero.
-	ProvidedCostUSD *float64 `json:"provided_cost_usd,omitempty"`
-
-	// CalculatedCostUSD is foci's own priced figure for this call, from the
-	// modelinfo table applied to real per-call token counts. Authoritative when
-	// present (#1674).
-	CalculatedCostUSD *float64 `json:"calculated_cost_usd,omitempty"`
-
-	// Turn is the turn-summed token counts CalculatedCostUSD was priced from
-	// (delegator.TurnUsage.Turn), passed through. nil when the backend did not
-	// measure them; a direct API call is a single cycle, so AsTurn() is its
-	// turn total (#1854).
-	Turn *modelinfo.TokenCounts `json:"turn,omitempty"`
-
-	// Subagents is the per-subagent share already subtracted from
-	// CalculatedCostUSD and Turn (delegator.TurnUsage.Subagents), passed
-	// through. Each becomes its own api_calls row. Empty on the direct API
-	// path, which has no subagents.
-	Subagents []modelinfo.SubagentCost `json:"subagents,omitempty"`
-
-	// Corrections move spend off an ALREADY-WRITTEN row and onto another
-	// (#1918) — passed through from delegator.TurnUsage.Corrections so the
-	// writer can apply them after it has written this turn's own rows. Unlike
-	// Subagents these describe no new row; nil in the normal case.
-	Corrections []modelinfo.CostCorrection `json:"corrections,omitempty"`
-}
-
-// AsTurn returns this usage's four classes as the turn total, for a writer
-// that knows the usage covers ONE API call — a direct (non-delegated) request
-// and its response — so the call's own counts and its turn total coincide.
-// Never call it on a delegated usage: there the fields are the final cycle's
-// context fill, and this would persist the very confusion #1854 removes.
-func (u Usage) AsTurn() *modelinfo.TokenCounts {
-	return &modelinfo.TokenCounts{
-		Input:      u.InputTokens,
-		Output:     u.OutputTokens,
-		CacheRead:  u.CacheReadInputTokens,
-		CacheWrite: u.CacheCreationInputTokens,
-	}
 }
 
 // Tokens normalises this usage into billed token classes the way the direct

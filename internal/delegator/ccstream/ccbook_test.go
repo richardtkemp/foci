@@ -22,7 +22,7 @@ import (
 
 // ---- harness --------------------------------------------------------------
 
-// testBook is a ccBook on a scratch shadow ledger with a settable clock.
+// testBook is a ccBook on a scratch ledger (no observers) with a settable clock.
 type testBook struct {
 	*ccBook
 	path   string
@@ -61,7 +61,7 @@ func (tb *testBook) alarmsOf(inv string) int {
 	return n
 }
 
-// bookedCall is one row of the shadow ledger.
+// bookedCall is one row of the scratch ledger.
 type bookedCall struct {
 	key, turn, actor, kind, finality, model string
 	tokens                                  modelinfo.Tokens
@@ -375,6 +375,70 @@ func TestSubagentStoplessAndCompleted(t *testing.T) {
 	}
 	if s2 == nil || s2.finality != accounting.FinalityCompleted || s2.tokens[modelinfo.ClassOutput] != 400 || len(calls) != 2 {
 		t.Errorf("s2 = %+v (%d calls), want one completed call with the final 400 output", s2, len(calls))
+	}
+}
+
+// TestSubagentAcrossMidnightBooksEachCallToItsDay is #1928's case at the
+// switch: a subagent spawned on one UTC day whose calls run past midnight books
+// each call at its own billed time, so daily_costs puts each on its own day,
+// all on the spawning turn. The legacy path wrote one accumulated row stamped
+// with the first turn's start, so the whole subagent landed on the first day.
+func TestSubagentAcrossMidnightBooksEachCallToItsDay(t *testing.T) {
+	tb := newTestBook(t, nil)
+	tb.clock = time.Date(2026, 9, 30, 23, 59, 0, 0, time.UTC)
+	tb.tailOpened("agent-a", "T1")
+	tb.subLine("agent-a", "T2", line("before", opus, time.Date(2026, 9, 30, 23, 59, 50, 0, time.UTC), "tool_use", 10, 100, 0, 0, 0))
+	tb.subLine("agent-a", "T2", line("after", opus, time.Date(2026, 10, 1, 0, 0, 20, 0, time.UTC), "end_turn", 10, 300, 0, 0, 0))
+	tb.tailClosed("agent-a")
+
+	for _, c := range tb.calls(t) {
+		if c.turn != "T1" || c.actor != "agent-a" {
+			t.Errorf("%s on turn %q actor %q, want the spawning turn T1, actor agent-a", c.key, c.turn, c.actor)
+		}
+	}
+	db, err := sqlite.OpenReadOnly(tb.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	rows, err := db.Query(`SELECT day, calls, cost_usd FROM daily_costs ORDER BY day`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	type day struct {
+		day   string
+		calls int
+		cost  float64
+	}
+	var got []day
+	for rows.Next() {
+		var d day
+		if err := rows.Scan(&d.day, &d.calls, &d.cost); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, d)
+	}
+	wantBefore := mustCost(t, modelinfo.Tokens{modelinfo.ClassInput: 10, modelinfo.ClassOutput: 100})
+	wantAfter := mustCost(t, modelinfo.Tokens{modelinfo.ClassInput: 10, modelinfo.ClassOutput: 300})
+	if len(got) != 2 || got[0].day != "2026-09-30" || got[1].day != "2026-10-01" ||
+		got[0].calls != 1 || got[1].calls != 1 ||
+		math.Abs(got[0].cost-wantBefore) > 1e-12 || math.Abs(got[1].cost-wantAfter) > 1e-12 {
+		t.Errorf("daily_costs = %+v, want 2026-09-30 one call $%.6f and 2026-10-01 one call $%.6f",
+			got, wantBefore, wantAfter)
+	}
+}
+
+// TestCCTokensCountsServerTools: a call's web searches and fetches are classes
+// of its own (#1913), priced per request, from its server_tool_use.
+func TestCCTokensCountsServerTools(t *testing.T) {
+	l, _ := parseCCRecord([]byte(`{"type":"assistant","timestamp":"2026-09-29T10:00:00Z","message":{"id":"m","model":"claude-opus-5",` +
+		`"stop_reason":"end_turn","usage":{"input_tokens":5,"output_tokens":7,"server_tool_use":{"web_search_requests":2,"web_fetch_requests":1}}}}`))
+	if l == nil || l.tokens[modelinfo.ClassWebSearch] != 2 || l.tokens[modelinfo.ClassWebFetch] != 1 || l.tokens[modelinfo.ClassOutput] != 7 {
+		t.Fatalf("line = %+v, want 2 web searches, 1 web fetch, 7 output", l)
+	}
+	if r := ReportClasses(l.tokens); r[modelinfo.ClassWebSearch] != 2 || r[modelinfo.ClassWebFetch] != 0 {
+		t.Errorf("report classes = %v: searches are in modelUsage, fetches are not", r)
 	}
 }
 

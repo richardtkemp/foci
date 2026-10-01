@@ -20,7 +20,7 @@ sqlite3 -readonly ~/data/api.db "SELECT * FROM daily_costs ORDER BY day DESC LIM
 sqlite3 -readonly ~/data/api.db "SELECT TOTAL(cost_usd) FROM call_costs WHERE billed_at >= '2026-09-29T00:00'"
 ```
 
-**`kind='legacy'` calls are pre-ledger rows** (everything before the cutover, and — until each switches — the delegated backends' turn-level rows): one call per turn or per subagent share, priced from their recorded figure when `cost_basis='recorded'`, with the pre-ledger `call_type` in `json_extract(detail,'$.v1_call_type')`. **Before you state a cost figure, read `api-cost-accounting.md`.**
+**`kind='legacy'` calls are pre-ledger rows** (everything before the cutover, and each delegated backend's turn-level rows until it switched to per-call booking — Claude Code last, 2026-10-01, #2115): one call per turn or per subagent share, priced from their recorded figure when `cost_basis='recorded'`, with the pre-ledger `call_type` in `json_extract(detail,'$.v1_call_type')`. **Before you state a cost figure, read `api-cost-accounting.md`.**
 
 **Do NOT conclude a column is absent from a *grepped* `.schema`** — a keyword filter hides every non-matching line. Read the full `.schema api_calls`.
 

@@ -6,76 +6,119 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
+	"foci/internal/delegator"
 	"foci/internal/delegator/accounting"
 	"foci/internal/modelinfo"
 )
 
-// TestShadowWiring drives the Backend's own hooks: the stream names a
-// main-thread call, CC appends its line to the main transcript, a result
-// arrives, and the process exits. The call lands in the SHADOW ledger — and
-// nowhere else: no observer (api.jsonl, trace generation) sees a shadow
-// booking, and the live ledger is untouched. Not parallel: it sets the
-// process's shadow ledger.
-func TestShadowWiring(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "api-shadow.db")
-	shadow, _, err := accounting.Open(path, accounting.Options{Shadow: true, NoBackup: true})
+// withLiveLedger opens a scratch ledger as the process's live one. Not for
+// parallel tests: the live ledger is process-wide.
+func withLiveLedger(t *testing.T) *accounting.Ledger {
+	t.Helper()
+	l, _, err := accounting.Open(filepath.Join(t.TempDir(), "api.db"), accounting.Options{NoBackup: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	accounting.SetShadow(shadow)
-	t.Cleanup(func() { accounting.SetShadow(nil); _ = shadow.Close() })
-	accounting.BookedHook = func(b accounting.Booking) { t.Errorf("a shadow booking reached the observers: %+v", b.Call) }
+	accounting.SetLive(l)
+	t.Cleanup(func() { accounting.SetLive(nil); _ = l.Close() })
+	return l
+}
+
+// onLedgerLine sets m's ledger hook to hand fn each assistant line, parsed as
+// the adapter parses it.
+func onLedgerLine(m *subagentTailManager, fn func(group string, l *ccLine)) *subagentTailManager {
+	m.ledgerLine = func(group string, raw []byte) {
+		if l, _ := parseCCRecord(raw); l != nil {
+			fn(group, l)
+		}
+	}
+	return m
+}
+
+// TestLedgerWiring drives the Backend's own hooks: the stream names a
+// main-thread call, CC appends its line to the main transcript, a result
+// arrives, the turn completes, and the process exits. The call lands in the
+// LIVE ledger on its turn and reaches the observers (api.jsonl, the trace
+// generation) — and by the time OnTurnComplete fires it is already booked, so
+// the agent layer's turn total holds it. Not parallel: it sets the process's
+// live ledger.
+func TestLedgerWiring(t *testing.T) {
+	live := withLiveLedger(t)
+	var observed []string
+	accounting.BookedHook = func(b accounting.Booking) { observed = append(observed, b.Call.Key) }
 	t.Cleanup(func() { accounting.BookedHook = nil })
 
 	b := newTestBackend(&bytes.Buffer{})
-	sh := newCCShadow(b, "cap/c1", "cap", nil)
-	b.shadow.Store(sh)
+	lg := newCCLedger(b, "cap/c1", "cap", nil)
+	b.ledger.Store(lg)
 	transcript := filepath.Join(t.TempDir(), "sess.jsonl")
 	if err := os.WriteFile(transcript, []byte(`{"type":"assistant","message":{"id":"old","model":"claude-opus-5","stop_reason":"end_turn","usage":{"input_tokens":9}}}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	fi, _ := os.Stat(transcript)
-	sh.startMainTail(transcript, fi.Size()) // a resumed process: the old line is an earlier process's
+	lg.startMainTail(transcript, fi.Size()) // a resumed process: the old line is an earlier process's
 
+	var atComplete []accounting.CallRow
 	b.turnMu.Lock()
-	b.turnRowID = "cap/c1@1"
+	b.beginTurnLocked(&delegator.TurnEvents{TurnID: "cap/c1@1", OnTurnComplete: func(*delegator.TurnResult) {
+		atComplete, _ = live.Calls(time.Time{})
+	}})
+	b.stateEventsSeen = true
 	b.turnMu.Unlock()
 	stop := "end_turn"
 	b.OnAssistant(&AssistantMessage{Type: "assistant", Message: BetaMessage{ID: "msg_1", Model: "claude-opus-5",
 		StopReason: &stop, Usage: TokenUsage{InputTokens: 10, OutputTokens: 20}}})
+	b.OnResult(&ResultMessage{Type: "result", ModelUsage: map[string]ModelUsage{"claude-opus-5": {InputTokens: 10, OutputTokens: 20, CostUSD: 0.01}}})
+	// CC writes the line just after the result (P0-b: within ~2ms).
 	f, err := os.OpenFile(transcript, os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, _ = f.WriteString(`{"type":"assistant","timestamp":"2026-09-29T10:00:00Z","message":{"id":"msg_1","model":"claude-opus-5","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":20}}}` + "\n")
 	_ = f.Close()
-	// Wait for the line to land in the adapter (its call booked) before the
-	// result: a result settles on its own clock (ccLineBound), and the tail
-	// only reads every subagentTailPoll, so under load a result sent at once
-	// can settle before the line is read and drop it as a copy (#2133).
-	waitFor(t, func() bool {
-		rows, err := shadow.Calls(time.Time{})
-		return err == nil && len(rows) > 0
-	})
-	b.OnResult(&ResultMessage{Type: "result", ModelUsage: map[string]ModelUsage{"claude-opus-5": {InputTokens: 10, OutputTokens: 20, CostUSD: 0.01}}})
-	sh.close()
+	b.completeTurn("idle")
+	if len(atComplete) != 1 || atComplete[0].TurnID != "cap/c1@1" {
+		t.Fatalf("calls when OnTurnComplete fired = %+v, want msg_1 already booked (the turn's flush)", atComplete)
+	}
+	lg.close()
 
-	rows, err := shadow.Calls(time.Time{})
+	rows, err := live.Calls(time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(rows) != 1 || rows[0].TurnID != "cap/c1@1" || rows[0].Count(modelinfo.ClassOutput) != 20 {
-		t.Fatalf("shadow calls = %+v, want msg_1 on cap/c1@1", rows)
+		t.Fatalf("live calls = %+v, want msg_1 on cap/c1@1", rows)
 	}
-	if accounting.Live() != nil {
-		t.Error("the test must not have a live ledger")
+	if !slices.Contains(observed, "msg_1") {
+		t.Errorf("observers saw %v, want msg_1: a live booking reaches api.jsonl and the trace", observed)
 	}
 }
 
-// TestShadowWorkflowAgentsBookOnInvokingTurn is #2130 defect 1. A Workflow
+// TestLedgerFlushPassesWithoutAMainTail: with no main transcript being tailed
+// (its path unknown), a named call's line can never come, so a turn's flush
+// must not wait out its bound. Not parallel: it sets the bound.
+func TestLedgerFlushPassesWithoutAMainTail(t *testing.T) {
+	orig := ccBarrierBound
+	ccBarrierBound = time.Minute // far past the deadline below: waiting it out fails
+	t.Cleanup(func() { ccBarrierBound = orig })
+	b := newTestBackend(&bytes.Buffer{})
+	lg := newCCLedger(b, "cap/c1", "cap", nil)
+	t.Cleanup(lg.close)
+	lg.enqueue(ccEvent{kind: ccNamed, id: "msg_x", turn: "T1"})
+	done := make(chan struct{})
+	go func() { lg.flush(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("flush waited for a line no tail can read")
+	}
+}
+
+// TestWorkflowAgentsBookOnInvokingTurn is #2130 defect 1. A Workflow
 // run's agents write their transcripts under subagents/workflows/<run id>/,
 // not subagents/, and the stream announces the whole run with one
 // task_started. Their calls must be booked from those transcripts, each on
@@ -84,19 +127,13 @@ func TestShadowWiring(t *testing.T) {
 // an agent's transcript appears after that turn has ended. A result that
 // arrives mid-run must not book the run's spend as a turn-less remainder, and
 // the run's journal.jsonl is not an agent transcript.
-func TestShadowWorkflowAgentsBookOnInvokingTurn(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "api-shadow.db")
-	shadow, _, err := accounting.Open(path, accounting.Options{Shadow: true, NoBackup: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	accounting.SetShadow(shadow)
-	t.Cleanup(func() { accounting.SetShadow(nil); _ = shadow.Close() })
+func TestWorkflowAgentsBookOnInvokingTurn(t *testing.T) {
+	live := withLiveLedger(t)
 
 	b := newTestBackend(&bytes.Buffer{})
 	b.hookInstallID = "install-a"
-	sh := newCCShadow(b, "cap/c1", "cap", nil)
-	b.shadow.Store(sh)
+	lg := newCCLedger(b, "cap/c1", "cap", nil)
+	b.ledger.Store(lg)
 	b.turnMu.Lock()
 	b.turnRowID = "cap/c1@1"
 	b.turnMu.Unlock()
@@ -142,9 +179,9 @@ func TestShadowWorkflowAgentsBookOnInvokingTurn(t *testing.T) {
 	b.OnResult(&ResultMessage{Type: "result", ModelUsage: map[string]ModelUsage{"claude-sonnet-5": sonnet,
 		"claude-opus-5": {InputTokens: 3, OutputTokens: 70, CacheCreationInputTokens: 2000}}})
 	b.subagentTails().stopAll()
-	sh.close()
+	lg.close()
 
-	rows, err := shadow.Calls(time.Time{})
+	rows, err := live.Calls(time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}

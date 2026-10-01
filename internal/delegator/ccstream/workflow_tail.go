@@ -30,8 +30,7 @@ package ccstream
 // open agent in the adapter from launch until every agent's transcript has
 // come to rest after the run's task_notification, which holds off the
 // remainder while the run is spending (a result mid-run is otherwise a quiet
-// point: the tracker does not count a workflow). This is ledger-only: the
-// live turn-level path does not see workflow agents.
+// point: the tracker does not count a workflow).
 
 import (
 	"bytes"
@@ -64,7 +63,7 @@ type workflowLaunch struct {
 // "" for the main thread, else the task id of the subagent that invoked the
 // Workflow, whose turn the run then books on.
 func (b *Backend) startWorkflowTail(p hookScriptOutput) {
-	if b.shadow.Load() == nil {
+	if b.ledger.Load() == nil {
 		return // the tail feeds only the ledger adapter
 	}
 	var w workflowLaunch
@@ -129,7 +128,7 @@ func (m *subagentTailManager) expectWorkflow(group string) {
 
 // startWorkflow starts reading the run's agent transcripts in dir. Idempotent.
 func (m *subagentTailManager) startWorkflow(group, dir, turn, parent string) {
-	if m == nil || m.shadowEvent == nil || group == "" || dir == "" {
+	if m == nil || m.ledgerEvent == nil || group == "" || dir == "" {
 		return
 	}
 	m.mu.Lock()
@@ -150,7 +149,7 @@ func (m *subagentTailManager) startWorkflow(group, dir, turn, parent string) {
 	m.mu.Unlock()
 	// Opened before the goroutine starts, so a result after this point
 	// already sees the run as running.
-	m.shadowEvent(ccEvent{kind: ccTailOpened, agent: group, parent: parent, turn: turn})
+	m.ledgerEvent(ccEvent{kind: ccTailOpened, agent: group, parent: parent, turn: turn})
 	go m.runWorkflow(w)
 }
 
@@ -219,9 +218,9 @@ loop:
 		}
 	}
 	for _, id := range slices.Sorted(maps.Keys(w.files)) {
-		m.shadowEvent(ccEvent{kind: ccTailClosed, agent: w.files[id].key})
+		m.ledgerEvent(ccEvent{kind: ccTailClosed, agent: w.files[id].key})
 	}
-	m.shadowEvent(ccEvent{kind: ccTailClosed, agent: w.group})
+	m.ledgerEvent(ccEvent{kind: ccTailClosed, agent: w.group})
 	m.lg.Debugf("workflow tail: closed group=%s agents=%d lines=%d at_rest=%v", w.group, len(w.files), w.lines, settled)
 }
 
@@ -253,7 +252,7 @@ func (m *subagentTailManager) scanWorkflow(w *workflowRun) {
 		if f == nil {
 			f = &workflowFile{key: w.group + "/" + id}
 			w.files[id] = f
-			m.shadowEvent(ccEvent{kind: ccTailOpened, agent: f.key, parent: w.group, turn: w.turn})
+			m.ledgerEvent(ccEvent{kind: ccTailOpened, agent: f.key, parent: w.group, turn: w.turn})
 		}
 		if info, err := e.Info(); err != nil || info.Size() <= f.off {
 			continue
@@ -291,7 +290,7 @@ func (m *subagentTailManager) readWorkflowFile(w *workflowRun, path string, f *w
 		}
 		w.lines++
 		if l, _ := parseCCRecord(line); l != nil {
-			m.shadowEvent(ccEvent{kind: ccSubLine, agent: f.key, turn: w.turn, line: l})
+			m.ledgerEvent(ccEvent{kind: ccSubLine, agent: f.key, turn: w.turn, line: l})
 		}
 		var rec struct {
 			Type    string `json:"type"`

@@ -77,23 +77,22 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// starts, because it appends its own record when it exits (#2012).
 	baseline := b.resumeBaselineFor(opts.WorkDir, opts.ResumeSessionID)
 	b.mu.Lock()
-	b.lastModelUsage = baseline
+	b.prevModelUsage = nil // a new process: its first result has nothing to compare with
 	b.mu.Unlock()
-	// The ledger adapter, in shadow while it is verified (#2111 §12). A
+	// The ledger adapter (#2111 P2), this process's only cost path. A
 	// resumed transcript is tailed from its size now: everything before is
 	// an earlier process's (and, after a compaction, re-appended copies).
-	if sh := newCCShadow(b, opts.SessionKey, opts.AgentID, baseline); sh != nil {
-		if old := b.shadow.Swap(sh); old != nil {
-			old.close()
-		}
-		if opts.ResumeSessionID != "" {
-			if path, err := ccTranscriptPath(opts.WorkDir, opts.ResumeSessionID); err == nil {
-				var offset int64
-				if fi, err := os.Stat(path); err == nil {
-					offset = fi.Size()
-				}
-				sh.startMainTail(path, offset)
+	lg := newCCLedger(b, opts.SessionKey, opts.AgentID, baseline)
+	if old := b.ledger.Swap(lg); old != nil {
+		old.close()
+	}
+	if opts.ResumeSessionID != "" {
+		if path, err := ccTranscriptPath(opts.WorkDir, opts.ResumeSessionID); err == nil {
+			var offset int64
+			if fi, err := os.Stat(path); err == nil {
+				offset = fi.Size()
 			}
+			lg.startMainTail(path, offset)
 		}
 	}
 	// skip_permissions bypasses CC permission prompts (unattended). CC can
@@ -476,11 +475,11 @@ func (b *Backend) OnReaderStopped(err error) {
 // Reset in Restart() before the subprocess is relaunched.
 func (b *Backend) finalizeExit(reason error) {
 	b.finalizeOnce.Do(func() {
-		// The process is gone: its transcript is complete, so the shadow
+		// The process is gone: its transcript is complete, so the ledger
 		// adapter drains it and flushes. Off this goroutine — it is bounded,
 		// but teardown must not wait on it.
-		if sh := b.shadow.Load(); sh != nil {
-			go sh.close()
+		if lg := b.ledger.Load(); lg != nil {
+			go lg.close()
 		}
 
 		// Instrumentation: bracket the cleanup so we can see whether it
@@ -558,11 +557,6 @@ func (b *Backend) finalizeExit(reason error) {
 		b.stashedResult = nil
 		b.stashedResultMsg = nil
 		b.redispatchInFlight = false
-		// The usage accumulator is CUMULATIVE for the Backend's life (#1880
-		// phase B) and its dedupe set holds one entry per API call ever seen,
-		// so the subprocess going away is the point it must be cleared. A turn
-		// boundary only moves the baseline; this is the only full wipe.
-		b.turnUsageAcc.reset()
 		resultCh := b.turnResultCh
 		b.turnMu.Unlock()
 		b.drainEdgeCallbacks()

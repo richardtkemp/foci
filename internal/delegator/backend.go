@@ -9,8 +9,6 @@ import (
 	"context"
 	"errors"
 	"time"
-
-	"foci/internal/modelinfo"
 )
 
 // ErrTurnNotInFlight is returned by Inject(SourceSteer) when the steer arrives
@@ -444,12 +442,11 @@ type ContextCategory struct {
 	Tokens int
 }
 
-// LedgerBooker is implemented by a backend that books its own API calls in the
-// cost ledger as each one's usage is final (#2111 P2), with its own reports.
-// For such a backend the agent layer records only its turns' facts (start and
-// end) and books no turn-level row; LedgerBackend names the ledger backend
-// ("opencode", …) its turns are recorded under. A backend that does not
-// implement it still has its turns booked as legacy calls.
+// LedgerBooker is implemented by every delegated backend: it books its own API
+// calls in the cost ledger as each one's usage is final (#2111 P2), with its
+// own reports. The agent layer records only its turns' facts (start and end)
+// and books no turn-level row; LedgerBackend names the ledger backend
+// ("opencode", …) its turns are recorded under.
 type LedgerBooker interface {
 	LedgerBackend() string
 }
@@ -977,58 +974,13 @@ type Inject struct {
 	Redeliveries int
 }
 
-// TurnUsage holds token counts from a completed backend turn,
-// extracted from the session JSONL's usage payload.
+// TurnUsage holds token counts from a completed backend turn: the FINAL
+// call's context fill (what compaction sizes from) and the turn's output.
+// They are display and sizing figures only. A turn's cost is the cost
+// ledger's: every backend books its own calls there (LedgerBooker).
 type TurnUsage struct {
 	InputTokens              int
 	OutputTokens             int
 	CacheCreationInputTokens int
 	CacheReadInputTokens     int
-
-	// ProvidedCostUSD is the backend's own reported cost for this call — CC's
-	// ModelUsage.CostUSD / opencode's Message.Cost — captured verbatim when the
-	// backend reported one, nil when it did not. It is NO LONGER AUTHORITATIVE
-	// (#1674): CC's figure is cumulative over the CC process, and what any
-	// given provider folds into it is opaque. It is persisted for forensics and
-	// as the reference for the cost-divergence check.
-	ProvidedCostUSD *float64
-
-	// CalculatedCostUSD is foci's own priced figure for this call, from the
-	// modelinfo table applied to this call's real (per-turn) token counts. This
-	// is the authoritative cost: token counts have unambiguous semantics where
-	// a provider's cost total does not. nil when the backend could not supply
-	// per-call tokens to price.
-	CalculatedCostUSD *float64
-
-	// Turn is the SUM of every API cycle's own token counts within this turn —
-	// exactly what CalculatedCostUSD was priced from, so a row carrying both
-	// can be re-priced back to its cost (#1854). The four un-suffixed fields
-	// above are a different quantity: the FINAL cycle's context fill, which
-	// compaction reads and which cannot be summed. A backend that does not
-	// accumulate per-cycle usage leaves this nil (persisted as NULL); it must
-	// never copy the context-fill fields in as a stand-in.
-	Turn *modelinfo.TokenCounts
-
-	// Subagents is the per-subagent share ALREADY SUBTRACTED from
-	// CalculatedCostUSD and Turn above (#1880 phase C, #1863). Each entry
-	// becomes its own api_calls row, so the turn's cost is this row plus these
-	// and every token is emitted exactly once.
-	//
-	// It exists because a subagent's spend used to land on whichever parent
-	// turn happened to close while it was running: a 3.5-minute turn was
-	// measured carrying 34 minutes of someone else's work and $11.71 of cost,
-	// which defeats the obvious diagnostic — an expensive turn looks like an
-	// expensive turn. nil when the turn ran no subagents.
-	Subagents []modelinfo.SubagentCost
-
-	// Corrections move spend off a PREVIOUSLY WRITTEN row and onto another
-	// (#1918). Unlike Subagents, which describes rows about to be created,
-	// each entry here names two rows that already exist and the amount to
-	// shift between them — a subagent's spend that reached foci too late to be
-	// attributed when the turn that paid for it closed.
-	//
-	// Applied as an UPDATE of both rows, never as a third signed row, and only
-	// if BOTH are found: half a correction inflates one turn and deflates
-	// another. nil when nothing arrived late, which is the normal case.
-	Corrections []modelinfo.CostCorrection
 }

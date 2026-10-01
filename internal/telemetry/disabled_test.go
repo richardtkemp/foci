@@ -44,7 +44,4 @@ func TestDisabled(t *testing.T) {
 	if accounting.BookedHook != nil {
 		t.Error("accounting.BookedHook must be nil when telemetry is disabled")
 	}
-	if accounting.CorrectionHook != nil {
-		t.Error("accounting.CorrectionHook must be nil when telemetry is disabled")
-	}
 }

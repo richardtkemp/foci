@@ -24,6 +24,9 @@ type watchEvents interface {
 	onToolStart(id, name, input string)
 	onToolEnd(id, name, output string, isError bool)
 	onTurnComplete(result *delegator.TurnResult)
+	// onAssistantLine hands the cost ledger one main-thread assistant line
+	// of the transcript at path, raw.
+	onAssistantLine(raw []byte, path string)
 }
 
 // sessionWatcher tails a Claude Code session JSONL file and emits events
@@ -196,6 +199,7 @@ func (w *sessionWatcher) processLine(line []byte, events watchEvents) {
 
 	switch entry.Type {
 	case "assistant":
+		events.onAssistantLine(line, w.path)
 		w.handleAssistant(&entry, events)
 	case "user":
 		w.handleUser(&entry, events)

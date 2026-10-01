@@ -18,10 +18,10 @@ import (
 	"foci/internal/sqlite"
 )
 
-// runLedgerShadow is `foci-gw ledger-shadow`: it compares a shadow ledger (the
-// Claude Code adapter booking beside the live path, logging.api_shadow_db,
-// #2111 §12) with the live one over the same window, read-only, so the switch
-// is decided on evidence. Three comparisons:
+// runLedgerShadow is `foci-gw ledger-shadow`: it compares a shadow ledger (an
+// adapter booking beside the live path, logging.api_shadow_db, #2111 §12 — the
+// Claude Code adapter until its switch, #2115) with the live one over the same
+// window, read-only, so a switch is decided on evidence. Three comparisons:
 //
 //   - per turn: the live turn-level rows against the adapter's per-call rows,
 //     on every turn both hold;

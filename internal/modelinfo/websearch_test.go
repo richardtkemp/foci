@@ -46,7 +46,4 @@ func TestTokenCountsCostAsOf_IncludesWebSearches(t *testing.T) {
 	if sum := base.Add(with); sum.WebSearches != 2 {
 		t.Errorf("Add dropped WebSearches: %+v", sum)
 	}
-	if parent, ok := with.SubClamped(base); !ok || parent.WebSearches != 2 {
-		t.Errorf("SubClamped = %+v ok=%v, want WebSearches kept on the parent", parent, ok)
-	}
 }

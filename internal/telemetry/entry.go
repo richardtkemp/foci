@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
-	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -12,7 +11,6 @@ import (
 
 	"foci/internal/delegator/accounting"
 	"foci/internal/modelinfo"
-	"foci/internal/session"
 )
 
 // recordBooking is accounting.BookedHook: one booked call → one "generation"
@@ -25,12 +23,6 @@ import (
 // the Agent tool_use id), a conversation turn's call under that turn's root,
 // and a helper call booked on a turn of its own (compaction, summary, spawn)
 // becomes its own one-observation trace named after its call type.
-//
-// b.Instalment is true when a legacy subagent share was FOLDED into an
-// already-booked call rather than inserted (#1922): the ledger holds one call
-// per delegation, but an append-only sink cannot update, so each instalment
-// is its own observation and the delegation's cost is their sum — same
-// arithmetic as api.jsonl, which also receives every instalment.
 func recordBooking(b accounting.Booking) {
 	tr, o, _, ok := current()
 	if !ok {
@@ -110,9 +102,6 @@ func recordBooking(b accounting.Booking) {
 	if b.Purpose != "" {
 		attrs = append(attrs, attribute.String(attrObsMetaPrefix+"purpose", b.Purpose))
 	}
-	if b.Instalment {
-		attrs = append(attrs, attribute.Bool(attrObsMetaPrefix+"instalment", true))
-	}
 	if b.SessionFile != "" {
 		attrs = append(attrs, attribute.String(attrObsMetaPrefix+"session_file", b.SessionFile))
 	}
@@ -151,9 +140,10 @@ func recordBooking(b accounting.Booking) {
 	}
 	// The generation span itself is also keyed by the actor (NOT the agent,
 	// which is the same for every call of a turn — using it here would
-	// collapse every subagent's span into one).
+	// collapse every subagent's span into one) and by the call's key, which
+	// tells two calls apart that share everything else.
 	spanID := GenerationSpanID(turnID, b.Session, callType, b.Actor, b.Model,
-		strconv.FormatInt(start.UnixNano(), 10), strconv.Itoa(out), strconv.FormatBool(b.Instalment))
+		strconv.FormatInt(start.UnixNano(), 10), strconv.Itoa(out), b.Key)
 	ctx = withIDs(ctx, traceID, spanID)
 	_, span := tr.Start(ctx, callType, trace.WithTimestamp(start), trace.WithAttributes(attrs...))
 	span.End(trace.WithTimestamp(end))
@@ -194,47 +184,4 @@ func detailInt(d map[string]any, key string) int64 {
 		return int64(v)
 	}
 	return 0
-}
-
-// recordCorrection is accounting.CorrectionHook: a #1918 correction moved
-// spend from a parent call to a subagent call in api.db. An append-only sink cannot move
-// money — re-sending either observation with new numbers would double-count
-// (the ETL found this the hard way) — so the correction is recorded as a
-// zero-cost "event" under the subagent span. Daily totals are unaffected
-// (the move sums to zero); per-observation attribution differs from api.db
-// by exactly the amount shown here.
-func recordCorrection(c modelinfo.CostCorrection, parentTurn string) {
-	tr, o, _, ok := current()
-	if !ok || c.SubagentTurnID == "" || c.AgentID == "" {
-		return
-	}
-	at := c.BilledAt
-	if at.IsZero() {
-		at = time.Now()
-	}
-	sessionKey, _, _ := strings.Cut(c.SubagentTurnID, "@")
-	traceID := TraceIDForTurn(c.SubagentTurnID)
-	ctx := parentContext(context.Background(), traceID, SubagentSpanID(c.SubagentTurnID, c.AgentID, 1))
-	ctx = withIDs(ctx, traceID, EventSpanID("correction", c.SubagentTurnID, c.AgentID, c.Model,
-		strconv.FormatInt(at.UnixNano(), 10)))
-	_, span := tr.Start(ctx, "cost_correction", trace.WithTimestamp(at), trace.WithAttributes(
-		attribute.String(attrObsType, "event"),
-		attribute.String(attrObsLevel, "WARNING"),
-		attribute.String(attrObsStatus, "spend re-attributed from parent turn "+parentTurn+" (api.db updated in place; this sink is append-only, so totals here keep the original split)"),
-		attribute.String(attrUserID, session.AgentIDFromAnyKey(sessionKey)),
-		attribute.String(attrSessionID, sessionKey),
-		attribute.String(attrEnvironment, o.Environment),
-		attribute.String(attrObsMetaPrefix+"source", "foci"),
-		attribute.String(attrObsMetaPrefix+"parent_turn_id", parentTurn),
-		attribute.String(attrObsMetaPrefix+"subagent_turn_id", c.SubagentTurnID),
-		attribute.String(attrObsMetaPrefix+"subagent_tool_use_id", c.AgentID),
-		attribute.String(attrObsMetaPrefix+"model_raw", c.Model),
-		attribute.Float64(attrObsMetaPrefix+"moved_usd", c.CostUSD),
-		attribute.Float64(attrObsMetaPrefix+"ttl_surcharge_usd", c.TTLSurchargeUSD),
-		attribute.Int(attrObsMetaPrefix+"moved_input", c.Counts.Input),
-		attribute.Int(attrObsMetaPrefix+"moved_output", c.Counts.Output),
-		attribute.Int(attrObsMetaPrefix+"moved_cache_read", c.Counts.CacheRead),
-		attribute.Int(attrObsMetaPrefix+"moved_cache_write", c.Counts.CacheWrite),
-	))
-	span.End(trace.WithTimestamp(at))
 }

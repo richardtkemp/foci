@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -56,6 +57,31 @@ func (b *batchTurnBackend) Close() error {
 	b.closed++
 	b.optsMu.Unlock()
 	return nil
+}
+
+// LedgerBackend makes this a backend that books its own calls in the cost
+// ledger (delegator.LedgerBooker), as every delegated backend does.
+func (b *batchTurnBackend) LedgerBackend() string { return accounting.BackendCCStream }
+
+// bookCall books one call the way a real backend does: on the turn the agent
+// layer recorded at the turn's start, in the session the backend was started
+// for.
+func (b *batchTurnBackend) bookCall(t *testing.T, turnID, key, model string, tokens modelinfo.Tokens) {
+	t.Helper()
+	b.optsMu.Lock()
+	opts := b.started[len(b.started)-1]
+	b.optsMu.Unlock()
+	now := time.Now()
+	turn := accounting.Turn{TurnID: turnID, Session: opts.SessionKey, AgentID: opts.AgentID,
+		Backend: accounting.BackendCCStream, Source: accounting.SourceUser, StartedAt: now}
+	if _, err := accounting.Live().RecordCall(turn, accounting.Call{
+		Key: key, Backend: accounting.BackendCCStream, Provider: "anthropic", Model: model,
+		Session: turn.Session, AgentID: turn.AgentID, TurnID: turnID,
+		Kind: accounting.KindCall, Finality: accounting.FinalityCompleted, ClassMethod: accounting.ClassMethodObserved,
+		BilledAt: now, Tokens: tokens,
+	}, nil); err != nil {
+		t.Errorf("book %s: %v", key, err)
+	}
 }
 
 // RunBatch is the legacy one-shot shape. The turn path must never call it.
@@ -124,20 +150,23 @@ func TestRunBatch_RecordsAPIRowAndTrace(t *testing.T) {
 	ledger := openTestLedger(t)
 	otlp := startFakeOTLP(t)
 
-	cost := 0.0123
 	be := &batchTurnBackend{}
 	be.sessionFile = "/tmp/batch.jsonl"
 	var sentPrompt string
+	tokens := modelinfo.Tokens{modelinfo.ClassInput: 12, modelinfo.ClassOutput: 340, modelinfo.ClassCacheRead: 5000}
 	be.sendToPaneFn = func(_ context.Context, prompt string, h *mockHandler) (*delegator.TurnResult, error) {
 		sentPrompt = prompt
 		if h != nil && h.OnText != nil {
 			h.OnText("consolidated")
 		}
+		if h != nil {
+			be.bookCall(t, h.TurnID, "msg_batch", "claude-sonnet-4-5", tokens)
+		}
 		if h != nil && h.OnTurnComplete != nil {
 			h.OnTurnComplete(&delegator.TurnResult{
 				Text:  "consolidated",
 				Model: "claude-sonnet-4-5",
-				Usage: &delegator.TurnUsage{InputTokens: 12, OutputTokens: 340, CacheReadInputTokens: 5000, CalculatedCostUSD: &cost},
+				Usage: &delegator.TurnUsage{InputTokens: 12, OutputTokens: 340, CacheReadInputTokens: 5000},
 			})
 		}
 		return nil, nil
@@ -168,8 +197,8 @@ func TestRunBatch_RecordsAPIRowAndTrace(t *testing.T) {
 		t.Fatalf("ledger calls after a batch run = %d, want 1 (a batch run must be accounted like any turn)", len(rows))
 	}
 	r := rows[0]
-	if r.Kind != accounting.KindLegacy || r.Subagent() {
-		t.Errorf("call = %s actor %q, want a delegated turn's legacy parent call", r.Kind, r.Actor)
+	if r.Kind != accounting.KindCall || r.Subagent() {
+		t.Errorf("call = %s actor %q, want the batch turn's own call", r.Kind, r.Actor)
 	}
 	if !strings.HasPrefix(r.Session, "helen/c42/b") {
 		t.Errorf("row session = %q, want a b-child of the owner helen/c42", r.Session)
@@ -180,8 +209,8 @@ func TestRunBatch_RecordsAPIRowAndTrace(t *testing.T) {
 	if out, cr := r.Count(modelinfo.ClassOutput), r.Count(modelinfo.ClassCacheRead); out != 340 || cr != 5000 {
 		t.Errorf("call tokens = {out:%d cr:%d}, want {340 5000}", out, cr)
 	}
-	if r.CostUSD == nil || *r.CostUSD != cost {
-		t.Errorf("call cost = %v, want the backend's calculated %v", r.CostUSD, cost)
+	if want, _ := modelinfo.CostAsOf("claude-sonnet-4-5", r.BilledAt, tokens); r.CostUSD == nil || math.Abs(*r.CostUSD-want) > 1e-12 {
+		t.Errorf("call cost = %v, want its counts priced, %v", r.CostUSD, want)
 	}
 	if r.Purpose != delegator.BatchPurposeConsolidation {
 		t.Errorf("row purpose = %q, want %q", r.Purpose, delegator.BatchPurposeConsolidation)

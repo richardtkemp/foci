@@ -292,10 +292,10 @@ main
  ├── messages      → provider (shared message-inspection utilities: HasToolUse, ToolUseIDs)
  ├── timeutil      (no deps — centralised timestamp formatting with configurable timezone)
  ├── relogin       → log, procx (automated CC re-login on 401 — see Backend Session Lifecycle)
- ├── delegator     → clock, log, modelinfo (Delegator interface, registry, StartOptions, SessionEvents/TurnEvents)
-  │   ├── delegator/accounting → log, modelinfo, sqlite (the per-call cost ledger in api.db, #2111 — schema, SQL cost views, rate render, Book/Report/RecordTurn and their observers (api.jsonl, BookedHook), the direct-API adapter, the legacy path for not-yet-switched backends, the readers, the startup migration; see "Cost ledger")
+ ├── delegator     → clock, log (Delegator interface, registry, StartOptions, SessionEvents/TurnEvents)
+  │   ├── delegator/accounting → log, modelinfo, sqlite (the per-call cost ledger in api.db, #2111 — schema, SQL cost views, rate render, Book/Report/RecordTurn and their observers (api.jsonl, BookedHook), the direct-API adapter, the legacy-row writer the readers' tests seed history with, the readers, the startup migration; see "Cost ledger")
   │   ├── delegator/autoapprove → execguard, secrets (shared by ccstream/codex/opencode — auto-approve rule compilation/matching)
-  │   ├── delegator/cctmux     → delegator, delegator/ccstream, log, modelinfo, procx, fsnotify (tmux-based Claude Code; registers "claude-code-tmux" via init())
+  │   ├── delegator/cctmux     → delegator, delegator/accounting, delegator/ccstream, log, modelinfo, procx, fsnotify (tmux-based Claude Code; registers "claude-code-tmux" via init(); books each completed main-thread call in the ledger)
   │   ├── delegator/ccstream   → delegator, delegator/accounting, delegator/autoapprove, delegator/hookbin, delegator/pretool, delegator/stoprule, linkwalk, log, modelinfo, procx, question, ratelimit, tempdir, timeutil, toolformat (stream-json Claude Code; registers "claude-code" via init())
   │   ├── delegator/pretool    (no foci deps; stdlib + mvdan.cc/sh parser — PreToolUse deny-rule engine, #2028/#2033/#2034; spawns `when` checks with raw os/exec, not procx, as it runs only in foci-cc-hook and the foci CLI; shared by config, ccstream, cmd/foci-cc-hook and cmd/foci `pretool`)
   │   ├── delegator/stoprule   → delegator/pretool (only its Patterns type; stdlib otherwise — Stop-hook rule engine, #2089: matches the turn's final text, scans the CC transcript for the turn's background launches; shared by config, ccstream and cmd/foci-cc-hook)
@@ -539,15 +539,15 @@ The tmux backend's session watcher tails Claude Code's JSONL session file via fs
 
 **Agent spawn tracking:** The tmux watcher tracks pending `tool_use` calls for the Agent tool. The ccstream backend receives task lifecycle events (`task_started`, `task_notification`) as system messages. Both report status via the `onAgentStatus` callback, allowing the platform to show agent activity state.
 
-**A subagent tail ends on a marker in the FILE, not on the stream event (#1938).** `task_notification:completed` tells the tail to *finish*, not to *stop*: it arrives on CC's stdout stream while the transcript is appended to a FILE, with no ordering between the two channels, so the last record can still be in flight. The old single post-stop `drain()` therefore lost exactly one record — the run's final completed message, which carries the accumulated `cache_read`. Measured live twice, both off by one (12 records read as 11; 15 read as 14; file mtime postdating the record's own timestamp by ~110ms). On stop the tail now drains until the transcript **ends at rest** — its last conversational record (assistant or user; attachments don't count) is an assistant message whose `stop_reason` is **terminal**, non-nil and not `tool_use`, because `tool_use` means the assistant will be called again — or until `subagentTailSettle` (3s) expires, whichever is first. "Ends at", not "has seen": a run can write an end_turn and carry on (a Stop hook sends it back for SubagentHandback; a SendMessage reactivates it, and a reactivation tail re-reads run 1 from byte 0), and the first version's sticky "saw a terminal record" flag let those tails return on the first post-stop drain, losing the final record again (agent-aed9b9fd…: 49 records, `closed … lines=48`, file mtime 220ms after the task_notification). A user record's `content` can be a plain string, so it is kept raw and decoded only for text delivery. The happy path ends early and costs nothing; a subagent that never writes a terminal record (killed, errored, rate-limited) still terminates. **The terminator and the data now arrive on the same channel, so they cannot race.** Note `TestSubagentTail_FinalizeDrainsRemainder` looks like it covers this and cannot — its append is a synchronous in-process write completing before `finalize()` is called, so it passes whether or not the race exists; the real regression test writes the terminal record from a separate PROCESS after `finalize` has been entered. **Backend teardown is the exception (#1202).** `stopAll` (from `closeInner`) marks each tail `teardown` before stopping it, so the tail reads what the transcript already holds and exits without waiting for a terminal record, and `stopAll` then waits for every tail to exit. It used to return at once, leaving each tail to run its settle drain, up to 3s, calling `OnSubagentText` and the usage sink after `Close` had moved on.
+**A subagent tail ends on a marker in the FILE, not on the stream event (#1938).** `task_notification:completed` tells the tail to *finish*, not to *stop*: it arrives on CC's stdout stream while the transcript is appended to a FILE, with no ordering between the two channels, so the last record can still be in flight. The old single post-stop `drain()` therefore lost exactly one record — the run's final completed message, which carries the accumulated `cache_read`. Measured live twice, both off by one (12 records read as 11; 15 read as 14; file mtime postdating the record's own timestamp by ~110ms). On stop the tail now drains until the transcript **ends at rest** — its last conversational record (assistant or user; attachments don't count) is an assistant message whose `stop_reason` is **terminal**, non-nil and not `tool_use`, because `tool_use` means the assistant will be called again — or until `subagentTailSettle` (3s) expires, whichever is first. "Ends at", not "has seen": a run can write an end_turn and carry on (a Stop hook sends it back for SubagentHandback; a SendMessage reactivates it, and a reactivation tail re-reads run 1 from byte 0), and the first version's sticky "saw a terminal record" flag let those tails return on the first post-stop drain, losing the final record again (agent-aed9b9fd…: 49 records, `closed … lines=48`, file mtime 220ms after the task_notification). A user record's `content` can be a plain string, so it is kept raw and decoded only for text delivery. The happy path ends early and costs nothing; a subagent that never writes a terminal record (killed, errored, rate-limited) still terminates. **The terminator and the data now arrive on the same channel, so they cannot race.** Note `TestSubagentTail_FinalizeDrainsRemainder` looks like it covers this and cannot — its append is a synchronous in-process write completing before `finalize()` is called, so it passes whether or not the race exists; the real regression test writes the terminal record from a separate PROCESS after `finalize` has been entered. **Backend teardown is the exception (#1202).** `stopAll` (from `closeInner`) marks each tail `teardown` before stopping it, so the tail reads what the transcript already holds and exits without waiting for a terminal record, and `stopAll` then waits for every tail to exit. It used to return at once, leaving each tail to run its settle drain, up to 3s, calling `OnSubagentText` and the ledger feed after `Close` had moved on.
 
 **One stop site for a subagent tail: `task_notification:completed` (#1934).** The Agent `PostToolUse` hook does NOT stop a tail — it only clears the pending foreground expectation (`clearPendingForeground`). Measured on CC 2.1.261 (`timing.sh`, 4 scenarios): a BACKGROUND Agent `PostToolUse` fires at **+0.03s**, the instant the task is launched, with the entire run still ahead of it; a FOREGROUND one fires **~30ms AFTER** the subagent has genuinely ended, by which time `task_notification:completed` is already arriving. So stopping there is fatal for one kind and redundant for the other. **The foreground/background label is no longer consulted when stopping**, only when deciding whether to forward text — which is what it was ever able to answer. Two earlier attempts stopped the tail at `PostToolUse`: the first called `finalize()` unconditionally (harmless until `85f5ffb8` began tailing every subagent for usage); the second (#1924) made it foreground-only, which looked right and was inert, because `ExtractAgentBackground` read an ABSENT `run_in_background` as foreground and the Agent tool **backgrounds by default** — so every ordinary subagent was labelled foreground and killed anyway. `ExtractAgentBackground` is now tri-state (absent ⇒ background) and can no longer be aliased to `ExtractBashBackground`, whose default is genuinely foreground. **One case where the Agent Post hook IS the end (#2104):** an Agent call that errors before any `task_started` bound a run to its group (`taskBoundForGroup`), e.g. CC's "Concurrent subagent limit reached" refusal. Its `PreToolUse` already sent `SubagentStart` and `OnAssistant` already `Add`ed it to the tracker, but no task exists, so no `task_notification` will ever come; `endUnlaunchedAgent` removes the tracker entry and sends `SubagentEnd(groupKey, 1)`. An errored result for a task that DID start still ends only on its notification. There is no tail to stop: tails start at `task_started`.
 
-**Why a subagent produced no usage: the tail decision now narrates (#1934).** Every path by which `onTaskStarted` declines to tail was previously silent, so "this subagent contributed no tokens" was indistinguishable from "no subagent ran" — and `waitForFile` reported ONLY on its 60s deadline, so any tail stopped earlier (i.e. every subagent finishing inside a minute) vanished without trace. `handlers.go` now logs which of the three outcomes occurred (missing ids / no transcript path / starting, with the path), and `subagent_tail.go` logs the open, the stop-before-open, an already-running no-op, a `finalize` that found no tail, and at close `lines=` (read) `usage=` (handed to the accumulator) `completed=` (carrying a stop_reason, the only ones that can reach a row) `terminal=`. The row decision narrates too (#1936), all under the prefix `subagent rows:` — ccstream's `OnResult` logs each per-subagent share it hands on (`share group=…`) or why none (`NONE, result carried no modelUsage`; `NONE for group=…` when usage was seen but no priced share), and the agent layer's `LogUsage` logs each row it `wrote` (`merged=` true when accumulated into an existing row). So a missing `subagent_turn` row is one `grep <group>` away. `subagent_harness_test.go` drives the real handlers with the CC event sequence (Agent + background-Bash `task_started`, a transcript on disk, `task_notification`, `result`) and asserts which tails start, which shares are handed on, and these log lines — the millisecond stand-in for a 100-second live probe. Read those before theorising: a day of production probing in 2026-09 went to questions any one of these lines would have answered. **CC emits `system/task_started` for `run_in_background` BASH tasks as well as for Agent subagents** (and for other non-Agent task kinds). The event's `task_type` says which: `local_agent` for an Agent spawn, `local_bash` for a background Bash (captured live, CC 2.1.280). A Bash task has no agent transcript, so `handlers.go` skips the tail for `local_bash` only and logs the skip at DEBUG (#1935). Every other kind, including an unknown one or an EMPTY `task_type` (a CC predating the field), still tails: a wasted 60s tail is cheap, and a skipped real subagent silently loses its usage. **`task_notification` sends `SubagentEnd` only for a group that got a `SubagentStart` (#2010).** CC notifies for every task kind, including a subagent's own Bash that CC auto-backgrounded, and the notification carries no `task_type`; a Bash never gets a start, so its end closed a group the app never had (837 of 844 orphan `subagent.end` frames in the week to 2026-09-25). `subagentStartEmitted(groupKey)` reads the `markSubagentStarted` set, which the hook start, the `task_started` fallback and a reactivation start all mark. The tracker `Remove` still runs for every terminal notification, so the inject gate is released as before.
+**Why a subagent produced no usage: the tail decision now narrates (#1934).** Every path by which `onTaskStarted` declines to tail was previously silent, so "this subagent contributed no tokens" was indistinguishable from "no subagent ran" — and `waitForFile` reported ONLY on its 60s deadline, so any tail stopped earlier (i.e. every subagent finishing inside a minute) vanished without trace. `handlers.go` now logs which of the three outcomes occurred (missing ids / no transcript path / starting, with the path), and `subagent_tail.go` logs the open, the stop-before-open, an already-running no-op, a `finalize` that found no tail, and at close `lines=` (read, each handed to the ledger adapter) `terminal=`. So a subagent with no calls in the ledger is one `grep <group>` away. `subagent_harness_test.go` drives the real handlers with the CC event sequence (Agent + background-Bash `task_started`, a transcript on disk, `task_notification`, `result`) and asserts which tails start, which subagent calls reach the ledger, and these log lines — the millisecond stand-in for a 100-second live probe. Read those before theorising: a day of production probing in 2026-09 went to questions any one of these lines would have answered. **CC emits `system/task_started` for `run_in_background` BASH tasks as well as for Agent subagents** (and for other non-Agent task kinds). The event's `task_type` says which: `local_agent` for an Agent spawn, `local_bash` for a background Bash (captured live, CC 2.1.280). A Bash task has no agent transcript, so `handlers.go` skips the tail for `local_bash` only and logs the skip at DEBUG (#1935). Every other kind, including an unknown one or an EMPTY `task_type` (a CC predating the field), still tails: a wasted 60s tail is cheap, and a skipped real subagent silently loses its usage. **`task_notification` sends `SubagentEnd` only for a group that got a `SubagentStart` (#2010).** CC notifies for every task kind, including a subagent's own Bash that CC auto-backgrounded, and the notification carries no `task_type`; a Bash never gets a start, so its end closed a group the app never had (837 of 844 orphan `subagent.end` frames in the week to 2026-09-25). `subagentStartEmitted(groupKey)` reads the `markSubagentStarted` set, which the hook start, the `task_started` fallback and a reactivation start all mark. The tracker `Remove` still runs for every terminal notification, so the inject gate is released as before.
 
-**A subagent tail is keyed by the subagent, not by the run (#2056).** A `SendMessage` resume's `task_started` carries the SendMessage `tool_use_id`, and the tail used to be started under it. That key is the `agent` the tail hands `noteSubagentTranscriptUsage`, so every run after the first booked its own `subagent_turn` row with `subagent_id` = a SendMessage id (live: 8 of 113 delegations split over 2-3 rows), breaking #1946's "subagent_id names THIS subagent"; and the resume's `task_notification` finalizes the RESOLVED group key, so it never stopped that tail at all. `task_started` now resolves the run first (`nestedTask` / `onTaskStarted`) and starts the tail under the subagent's own group key (the original Agent `tool_use_id`, or a nested subagent's own Agent id), the same key its `task_notification` finalizes; only a task neither identifies keeps the raw id. Consequence: a resumed run's rows also inherit the SPAWNING turn as `turn_id` (`agentTurn` is first-sight per agent), like any background run that outlives its turn.
+**A subagent tail is keyed by the subagent, not by the run (#2056).** A `SendMessage` resume's `task_started` carries the SendMessage `tool_use_id`, and the tail used to be started under it. That key is the actor the tail hands the ledger, so every run after the first was booked under a SendMessage id (live, pre-ledger: 8 of 113 delegations split over 2-3 rows), breaking #1946's "the actor names THIS subagent"; and the resume's `task_notification` finalizes the RESOLVED group key, so it never stopped that tail at all. `task_started` now resolves the run first (`nestedTask` / `onTaskStarted`) and starts the tail under the subagent's own group key (the original Agent `tool_use_id`, or a nested subagent's own Agent id), the same key its `task_notification` finalizes; only a task neither identifies keeps the raw id. Consequence: within one CC process a resumed run's calls also book on the SPAWNING turn (the adapter's agent state is first-sight per agent), like any background run that outlives its turn.
 
-**A reactivation tail books only its own run (#2057).** A run-2+ tail still reads the transcript from byte 0, but the ACCOUNTING skips every assistant record before the run's own prompt (`runStartGate`, `subagent_tail.go`); text delivery is not gated. The boundary is placed by FILE ORDER, with no timing window: the run's prompt is the first prompt record (a `user` record whose content is a string, not a tool_result array) after the LAST terminal (at-rest) assistant record stamped before the `task_started` receive time. Run 1 always ends at rest before a resume can start, and a Stop-hook bounce inside run 1 precedes run 1's final end_turn, so this lands on the resume's prompt. While streaming, records after a candidate prompt are held until settled: a later terminal record stamped before the receive time drops them (it was a bounce inside run 1); any record stamped at/after the receive time releases them and opens the gate. If no at-rest record precedes the receive time, the tail falls back to booking everything and logs `run start NOT found`. The receive time matters only if run 2 reached its own end_turn before foci saw `task_started`. `task_started` passes the receive time to `maybeStart` only on the `onTaskStarted` reactivation path; run 1 and nested tasks pass zero (no gate; nested resumes are out of scope). No state is persisted. Why it is needed: within one Backend the accumulator's per-id `applied` map already deduplicates a re-read run 1, but a new Backend starts it empty. There are two triggers: a foci restart, and a CC process relaunch inside a running foci (the post-compaction `BounceSession` close + `--resume`, an idle close, a crash respawn), because `DelegatedManager` closes the old Backend and builds a new one. The relaunch case happened on 2026-09-27 on a binary without the gate: six reactivated subagents re-booked 15.2M cache tokens of earlier runs (#2087). Either way run 1 was booked again — into the window when the resume came before the new process's first result (`lastResultAt` zero), or as #1918 late-spend corrections against an unrelated parent turn when it came after. The tail's close line reports `before_run=N`, and the chosen boundary is logged as `subagent tail: run start`.
+**A reactivation tail books only its own run (#2057).** A run-2+ tail reads the transcript from byte 0 and hands every line to the ledger adapter, which books each call once per process (by message id) and skips any line billed before the process launched. So within one CC process run 1 is not booked again, and after a foci restart or a CC relaunch inside a running foci (the post-compaction `BounceSession` close + `--resume`, an idle close, a crash respawn: a new Backend and a new process) run 1's lines predate the launch. The pre-ledger path needed a file-order gate (`runStartGate`) for the relaunch case, after six reactivated subagents re-booked 15.2M cache tokens of earlier runs on 2026-09-27 (#2087); the adapter's launch boundary replaced it (`TestSubagentRereadIsHarmless`, `TestSubagentLineBeforeLaunchIsSkipped`).
 
 **Subagent reactivation (#1355).** A background subagent can run more than once: the initial `Agent` spawn, then any number of `SendMessage` resumes. The STABLE identity across a resume is the `task_id` — the `tool_use_id` CHANGES per run (a resume's `task_started`/`task_notification` carry the *SendMessage* block's id), while the subagent's text keeps the ORIGINAL Agent `tool_use_id` as its `parent_tool_use_id` group key. Keying lifecycle on `tool_use_id` therefore left a resumed subagent invisible (tracker never re-`Add`ed; the app's group showed "completed" though work continued). ccstream now maps `task_id → {groupKey, runIndex}` (`subagentRuns`, bound at the first `task_started`; `handlers.go`): a subsequent `task_started` for a known `task_id` bumps `runIndex`, re-`Add`s the tracker (chip re-opens), and emits a fresh `SubagentStart(groupKey, runIndex, prompt)`; a `task_notification:completed` maps `task_id → groupKey` so `SubagentEnd` closes the right run (not the resume's fresh id). The reactivation prompt is captured from the `SendMessage` block's `input.message` (keyed by `to == task_id`); run 1's prompt from the `Agent` block's `input.prompt`. **Run 1's `SubagentStart` fallback (#1425).** Run 1's start is normally emitted by the `Agent` `PreToolUse` hook (fires at the tool_use itself), but that hook drops for ~7% of background subagents under bursty/concurrent dispatch (#1423), which uniquely orphaned the run (text+end are native-stream, so they still arrive, but no start → the app had no chit to attach them to). So the first `task_started` ALSO emits a fallback run-1 `SubagentStart` (label/prompt from the `agentLabels`/`agentPrompts` stashes primed at the `Agent` block), deduped against the hook by `markSubagentStarted(groupKey)` — a check-and-set both emit sites call, so exactly one start fires whichever wins the race. Both emit sites log (`signal=agent_pre_tool_use` / `signal=task_started_fallback`). The hook path ALSO sources its prompt from the `agentPrompts` stash (`getAgentPrompt`, falling back to its own hook-payload `input.prompt` only when the stash is unset): the `PreToolUse` payload's prompt can arrive BLANK for a large prompt that outraces the tool_use stream, and because the blank hook still WINS the race it suppresses the stash-backed fallback and would orphan the prompt (the client drops an empty `SubagentStart.prompt` and no later frame recovers it). Sourcing both emit sites from the same authoritative stash (primed from the COMPLETE `Agent` block in `OnAssistant`) closes that gap. **Post-restart identity rehydration (#1433).** The run maps (`subagentRuns`/`agentLabels`/`agentPrompts`) are in-memory only, and `claude --resume` keeps the same session uuid but does NOT re-stream the historical `Agent` tool_use block — so after a foci restart a `SendMessage` follow-up to a pre-restart subagent reaches `onTaskStarted` as an untracked `task_started` whose id has no live stash, which would bind `groupKey =` the SendMessage id and emit a BLANK fallback start (the visible symptom of a pre-existing gap #1425 merely surfaced). `onTaskStarted` now treats an untracked `task_started` as a genuine fresh spawn ONLY when its `tool_use_id` has a live `agentLabels` stash; otherwise it rehydrates the original identity from CC's on-disk `agent-<task_id>.meta.json` sidecar (`{toolUseId (=groupKey), description (=label)}`, reachable post-restart via the stable session uuid; `loadSubagentMeta`/`rehydrateRunLocked`) and treats the follow-up as a REACTIVATION under the ORIGINAL group key; if no sidecar identifies it, NO start is emitted (a blank start is worse than none). `stashResumePrompt` rehydrates likewise so the follow-up prompt survives. The client also self-heals a provisional chit off the first orphaned `SubagentText`/`SubagentPrompt` and adopts a late/fallback start (#1422/#1424), so the two fixes are defence-in-depth. `SubagentStart`/`SubagentEnd` carry `RunIndex`+`Prompt`, and `SubagentText` carries `RunIndex`, through `turnevent` → `SubagentDeliverer` → the `subagent.start`/`subagent.text`/`subagent.end` FAP frames (additive-optional fields), so the app can draw per-run chits over one continuous, divider-split view. A text block's run is resolved by `runIndexForGroup(groupKey)` — the subagent's text keeps the ORIGINAL Agent `tool_use_id` as its group key across resumes, so it maps to the run entry whose `groupKey` matches (untracked → 1, the client's default). OpenCode has no reactivation and always emits run 1. **The subagent lifecycle arrives on `item/completed`, not `item/started` (#1589).** Codex 0.145.0 delivers every `subAgentActivity` kind — `started`, `interacted`, `interrupted` — on `item/completed`; `item/started` carries only `agentMessage`, `reasoning` and `userMessage` (verified against a live app-server across spawn → follow-up message → close). foci watched `item/started` for `kind=started`, so `subagentTracker.start()` never ran: no run opened, no 500 ms poll, no `OnSubagentStart`, and the later `stop()` had nothing to end — the whole codex subagent display was inert, along with the #1571 cursor and #1576 queue layered on it. Both notifications now feed one `openSubagentRun` helper (`handlers.go`) rather than the handler moving between them: `start()` is idempotent for an already-active child, so a release emitting on either or both behaves identically. **Those kinds track what the PARENT does to the child** (spawn / message / close), not what the child does — a child the parent never touches again emits nothing further, which is why `finishAll` is still the only terminator. **`collabAgentToolCall` is logged, never interpreted (#1590).** foci used to drive the whole subagent UI from these (`spawnAgent` opened a run, `sendInput`/`resumeAgent` emitted prompts, `closeAgent` ended it, plus an older-protocol branch synthesising text+end from `agentsStates`). That was written from codex's type definitions, not observed traffic — and codex does not send them: across **0.144.5 and 0.145.0**, with collab mode genuinely on (**`collab = true`**, NOT `collaboration_mode`, which codex silently ignores along with any unknown key) and the model demonstrably calling `collaboration.spawn_agent`/`send_message`/`interrupt_agent`, a spawn → follow-up → close sequence produced **zero** `collabAgentToolCall` items in the notification stream and zero in either thread's history. openai/codex#31300 canonicalised these for the **v1** collaboration tools; current codex uses MultiAgentV2, which reports through `subAgentActivity`. `logUnhandledCollabItem` now dumps the raw item at **WARN** — deliberately the level that reaches an operator via `log.SetWarnHook`/`notify.inject_chat_warnings` — so the first real specimen surfaces with its payload instead of being consumed by handling built on assumptions; it still counts toward `TurnResult.ToolCalls`. Removing the interpretation orphaned the #1576 prompt queue (`prompt`/`pendingPrompts`/`startPrompts`) and `identityFor`, whose only caller it was; all are gone. **`OnSubagentStart` therefore carries an empty prompt** — `subAgentActivity` has no prompt field (`{type, id, kind, agentThreadId, agentPath}` is the whole payload), so `agentPath` is the only label available.
 
@@ -1422,8 +1422,7 @@ Four outputs:
 
 2. **API log — JSONL** (`api.jsonl`): one line per call the cost ledger books — the
    call's ledger fields (`ts` = billed_at, backend, kind, tokens by class, `cost_usd` as
-   Book priced it, context_fill, turn_id, actor, detail), plus `instalment` on a folded
-   legacy subagent share. Written by `accounting` after each booking commits, through
+   Book priced it, context_fill, turn_id, actor, detail). Written by `accounting` after each booking commits, through
    `log.AppendAPILine` (this package owns only the file: rotation, stale-inode reopen).
    It is the readers' fallback when there is no ledger (`accounting.ReadJSONL`, which
    re-prices counts at read time as the views do). Archived to empty on every start.
@@ -1432,565 +1431,48 @@ Four outputs:
    `internal/delegator/accounting` — see "Cost ledger" for its schema, writers, readers and
    the startup cutover. `log` no longer touches it.
 
-   **Everything below in this item, down to "Conversation log", describes the PRE-LEDGER
-   `api_calls` table (v1) and the turn-level pricing the not-yet-switched delegated backends
-   (ccstream; opencode and codex have switched) still runs.** The v1 table was renamed and dropped by the #2111
-   cutover; those backends' rows are now booked as LEGACY calls through the same converter the
-   migration uses (`accounting/legacylive.go`). Reading the text against the ledger: a v1 row
-   is one `kind='legacy'` call; `calculated_cost_usd` is `legacy_calculated_cost_usd` (the
-   views price a delegated legacy call from it, `cost_basis='recorded'`); the `turn_*` group is
-   the call's `call_tokens`; the un-suffixed context-fill four are the turn's `legacy_*`;
-   `cost_usd` (the backend's own figure) is a `backend_reports` row; `subagent_id` is `actor`;
-   `call_type` is `detail.v1_call_type`. The Go names the text used for the pre-ledger rows
-   (`log.API`, `APIEntry` and its `EffectiveCost`/`PricedCounts`/`IsSubagent`,
-   `QuerySessionStats`, `ApplyCostCorrections`, `AccumulateSubagentRow`, `BackfillAgentIDs`)
-   are gone; their successors are named where they differ. This whole block is rewritten when
-   the last delegated backend switches (#2111 P4).
+   **The pre-ledger rows (history).** Before the #2111 cutover api.db held one `api_calls`
+   row per turn (v1). The cutover migrated every v1 row into the ledger as one
+   `kind='legacy'` call (see "Cost ledger" → "Migration"), and since the Claude Code switch
+   (#2115) no backend books that way: every call since is booked per call by its backend's
+   adapter. Reading migrated history against the v1 names: `calculated_cost_usd` (foci's
+   own figure, the authoritative one) is `legacy_calculated_cost_usd`, which the views take
+   verbatim (`cost_basis='recorded'`); the `turn_*` group (the turn's summed counts) is the
+   call's `call_tokens`; the un-suffixed four (the final cycle's context fill) are the turn's
+   `legacy_*`; `cost_usd` (the backend's own figure — CUMULATIVE per CC process, never to be
+   summed, #1674) is a `backend_reports` row; `subagent_id` is `actor`; `call_type` is
+   `detail.v1_call_type`. Rows before #1674 have no calculated figure and are priced from
+   their counts.
 
-   **Two cost columns, and only one of them is a cost you may total (#1674):**
+   **Turn identity.** `turn_id` is `"<session>@<StartedAt UnixNano>"`, from
+   `TurnState.RowID()` — not `TurnState.TurnID`, an in-process counter that restarts at 1
+   on every foci restart. Session key plus start nanosecond is unique because turns are
+   serialised per session. Every call of a turn carries it, its subagents' included (on the
+   turn that SPAWNED the subagent, however late its calls land, #1880).
 
-   | field / column | meaning | safe to sum? |
-   |---|---|---|
-   | `CalculatedCostUSD` / `calculated_cost_usd` | foci's own figure, `modelinfo` pricing applied to real per-turn tokens. **Authoritative.** | yes |
-   | `ProvidedCostUSD` / `cost_usd` | what the backend reported, verbatim | **NO** |
+   **`agent_id` and `actor` (#1946).** `agent_id` is the AGENT that owns the call,
+   populated on every call — including a subagent's, where it is the owning agent, not the
+   subagent. `actor` is the subagent (the Agent tool's `tool_use` id, which also names its
+   transcript, `.../subagents/agent-<id>.jsonl`), `''` for the session's own thread.
+   `session.AgentIDFromKey`/`AgentIDFromAnyKey` (`internal/session/key.go`) is the ONE
+   parser for deriving an agent from a session key; `scripts/langfuse-etl/etl.py`'s
+   `agent_of` mirrors it by hand.
 
-   `cost_usd` keeps its historical name and its historical contents. For ccstream
-   rows it holds a figure that is CUMULATIVE over the CC process, so `SUM(cost_usd)`
-   inflates roughly quadratically in turns-per-session — 13x measured over
-   28 Jul - 4 Aug 2026 ($32,566 against ~$2,500 real). Rows written before #1674
-   have `calculated_cost_usd` NULL and are not repaired.
-   `calculated_cost_usd` is priced from DELTAS of those cumulative counters,
-   against a per-model baseline held on the ccstream `Backend` (`lastModelUsage`).
-   `Start` sets that baseline to what the new process's counters start from. For a
-   fresh session that is empty. For a `--resume` it is the `modelUsage` of the last
-   `type:"cost-state"` record for that session in its transcript, because since CC
-   2.1.280 a resumed process (including a foci fork, whose copied transcript carries
-   the parent's records) restores those totals instead of starting at zero (#2012).
-   Seeding it empty booked the conversation's whole history to the first turn, which
-   produced $111 rows for forks that did $0.87 of work.
-   Direct-API rows (conversation, spawn, summary and compaction calls made without a
-   delegated backend) also stayed NULL AFTER #1674 until #1964: #1674 wired the field
-   into the delegated backends only. An agent on a direct provider (e.g. gilette on
-   OpenRouter) therefore read as $0 in every total. Those rows are not backfilled either.
+   **`purpose` (#1962)** is on the TURN, set only for a batch turn — consolidation, nudge
+   extraction, the delegated `foci_summary` tool, the delegated `/prompts diff` summary
+   (`delegator.BatchPurpose*`). A batch is an ordinary delegated turn in every other
+   respect (see "Batch runs"), so its cost is in the agent's totals like any turn's.
+   Absent is **NULL, not `''`**.
 
-   **Two scopes of token columns, and only one of them prices (#1854):**
-
-   | columns | scope | use for |
-   |---|---|---|
-   | `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens` | a delegated turn's FINAL ask cycle's context fill (output is the exception: summed) | `/context`, `/status`, compaction sizing |
-   | `turn_input_tokens`, `turn_cache_read_tokens`, `turn_cache_write_tokens`, `turn_output_tokens` | SUM of every cycle's own tokens **across every model** — what `calculated_cost_usd` was priced from | pricing, per-class cost splits |
-   | `turn_web_searches` | COUNT of server-side web searches in the turn (#1913) — billed per CALL ($0.01 each), so no token column can carry them; priced into `calculated_cost_usd` at `modelinfo.Model.WebSearchPerCall` | pricing, the "Web search" `/cost` row |
-
-   Pricing a row from the first group recovers ~20% of its recorded cost (measured
-   2026-09-05 over 14 days: $402 reconstructed against $2,040 recorded) with no error,
-   because those columns mix a last-cycle snapshot with a summed output. The `turn_*`
-   group is carried as `modelinfo.TokenCounts` on `delegator.TurnUsage.Turn` →
-   `provider.Usage.Turn` → `accounting.LegacyRow.Turn`. Its `Output` **is** stored, in `turn_output_tokens` (#1891).
-   It was not until #1866 P3 made pricing CROSS-MODEL: the three `turn_` columns became
-   all-model sums while `output_tokens` stayed PARENT-ONLY, so the two stopped being the
-   same number on any turn whose subagent ran another model. Measured live
-   (2026-09-11T03:10, opus-5 parent + `claude-sonnet-5` subagent): **27,305 output tokens
-   priced, 10,212 stored** — 63% of the turn's output absent from the row, and the
-   re-price identity failing by the difference. No live cost figure was wrong
-   (`EffectiveCost` prefers `calculated_cost_usd`), but anything re-deriving cost from
-   the columns under-reported.
-   The migration is `DROP` then `ADD`, in that order: the DROP clears the stale duplicate
-   #1854 left behind so the ADD yields NULL — *not measured* — for historical rows rather
-   than something silently wrong on the cross-model ones. **Do not re-drop it as a
-   duplicate; it is only a duplicate on single-model turns.** A scanned `Turn.Output`
-   falls back to `output_tokens` when the twin is NULL, so pre-#1891 rows stay
-   re-priceable instead of reading as zero. The three stored columns are NULL as a group when the writer
-   measured no turn total (rows before the change; opencode, which does not
-   yet accumulate per-cycle usage). Never fill it from the context-fill fields as a
-   stand-in — a direct API call is the one case where the two coincide, and
-   `provider.Usage.AsTurn()` exists for exactly that writer. The control that would
-   have caught the defect, and now holds: price the `turn_*` columns over a window and
-   compare to `SUM(calculated_cost_usd)` — the ccstream unit test asserts equality per
-   turn (`turn_totals_test.go`).
-
-   **Web search is priced from a COUNT, not tokens (#1913).** The count's only source
-   is CC's `result.modelUsage[model].webSearchRequests` — cumulative per process like
-   every other counter there, so `modelUsageDelta` subtracts it, and it lands on the
-   model that ran CC's search sub-call (haiku), not the turn's model. The result's
-   `usage.server_tool_use` and every per-message usage report ZERO on the same turns,
-   so do not count from those. All searches stay on the PARENT row: subagent shares are
-   built from the stream, which never sees one. A searched model whose row has no
-   `web_search_per_call` logs a warning and prices the searches at $0. Only ccstream
-   populates the count; the direct-API, opencode and codex writers leave it zero.
-
-   **Turn identity: `turn_id` and `agent_id` (#1695, #1880 phase C).**
-   Until 2026-09-11 there was no turn id at all — "a turn is a row" was the whole
-   story, so turn boundaries had to be *inferred*, and an earlier investigation
-   invented a population by grouping rows on an `output_tokens` decrease (#1695
-   records the correction). `turn_id` is `"<session>@<StartedAt UnixNano>"`, from
-   `TurnState.RowID()`. It is **not** `TurnState.TurnID`, which is an in-process
-   `atomic.AddUint64` counter: fine for the in-flight turn registry it was built
-   for, useless in a database that outlives the process, because it restarts at 1
-   on every foci restart and is not unique across agents. Session key plus start
-   nanosecond is unique because turns are serialised per session.
-
-   Both row writers set it, and both can write MORE than one row per turn:
-   the API path writes one row per call, so a tool-loop turn is several rows; the
-   delegated path writes one parent row plus a `call_type='subagent_turn'` row per
-   subagent. They share the id — `WHERE turn_id = ?` reassembles the turn, and
-   `SUM(calculated_cost_usd) GROUP BY turn_id` is the turn's cost.
-
-   **`agent_id` and `subagent_id` (#1946).** `agent_id` is the AGENT that owns the
-   row, populated on EVERY row — including a `subagent_turn` row, where it is the
-   parent session's owner, not the subagent. `subagent_id` is the Agent tool's
-   `tool_use` id, which also names the transcript
-   (`.../subagents/agent-<id>.jsonl`), so a subagent row traces to the work that
-   incurred it; empty on every other row. Before #1946 there was only one column:
-   it held the tool_use id on a `subagent_turn` row and was NULL everywhere else
-   (48,630 of 48,650 rows), so a join against `state.db`'s `session_index.agent_id`
-   (the agent NAME, indexed) silently returned nothing on all but 20 rows — read as
-   "no data" rather than an error. The split makes the two tables' `agent_id`
-   columns agree. `session.AgentIDFromKey`/`AgentIDFromAnyKey` (`internal/session/key.go`)
-   is the ONE parser for deriving an agent from a session key — five independent
-   reimplementations were consolidated onto it (`internal/telemetry`,
-   `internal/command`, `internal/platform`); `scripts/langfuse-etl/etl.py`'s
-   `agent_of` mirrors it by hand since Python can't import Go. `BackfillAgentIDs`
-   (formerly in `internal/log`) fixed up rows written before the split; it ran on every
-   live api.db before the ledger cutover and was deleted with the v1 writer.
-
-   **`purpose` (#1962).** Set only on the rows of a BATCH turn — consolidation,
-   nudge extraction, the delegated `foci_summary` tool, the delegated `/prompts diff`
-   summary (`delegator.BatchPurpose*`) —
-   and NULL on every other turn. A batch is an ordinary `delegated_turn` in every
-   other respect (see "Batch runs"), so its cost is in the agent's totals like any
-   turn's; `purpose` only says which kind it was. Rows before #1962: batches wrote
-   no row at all.
-
-   Absent is **NULL, not `''`** (`nullIfEmpty` at the insert). Historical rows have
-   no recorded turn identity and it cannot be reconstructed, so `''` would assert a
-   turn that is not knowable — and would split un-attributed rows into two
-   populations, making `WHERE turn_id IS NULL` silently under-report.
-
-   **Reading a split turn: two rules, and they point opposite ways (#1863).**
-   Cost consumers must sum EVERY row including `subagent_turn` — a subagent row's
-   cost was *subtracted* from the parent row beside it, so skipping it under-reports.
-   Anything COUNTING calls or turns must skip them: one turn that spawned three
-   subagents is one call and four rows. On the ledger `accounting.CallRow.Counted()` is
-   the predicate (a legacy call with an actor is a share, not a call); `sumCosts` does
-   both halves in one function precisely so the pair cannot drift. `Ledger.SessionStats`
-   counts turns from `turns` and calls with the same predicate.
-
-   **Price a row from its turn totals, never the un-suffixed fields** (the old
-   `APIEntry.PricedCounts()`; the migration and the legacy path do the same). It
-   returns `Turn` when the writer measured it and the four fields only otherwise.
-   The fields are the final ask cycle's context fill, so pricing them recovers a
-   fraction of the real cost with no error to show for it — measured 2026-09-11 over
-   810 rows since 2026-09-04: **3,845,629 cache-write tokens in the fields against
-   55,728,618 in `Turn`**, 14.5x short, and 6,054 input against 79,728. `/cost`'s
-   category table was built from the fields and therefore sat beside a correct total
-   it could not add up to, which is #1854 resurfacing on the read side. A subagent
-   row makes it visible rather than causing it: those rows leave the context-fill
-   columns at zero deliberately (a subagent has no final cycle of its own), so they
-   read as a call that cost money and cached nothing.
-
-   The exception, kept on purpose: `/last` prints the context fill (`ctx=`), because that
-   view answers "how big is the session now" — which is exactly what those columns mean
-   (on the ledger: the turn's copied `legacy_*` for a legacy parent call). It skips
-   subagent rows instead.
+   **Reading migrated subagent shares (#1863).** A v1 turn with subagents was SPLIT across
+   rows: the parent row's cost had each subagent's share subtracted, so cost consumers sum
+   every call; anything COUNTING calls skips the shares — `accounting.CallRow.Counted()` is
+   the predicate (a legacy call with an actor is a share, not a call), and `sumCosts` does
+   both halves in one function. `/last` prints the context fill (`ctx=`) from the turn's
+   `legacy_*` for a legacy parent call.
 
    **Read cost from the ledger's views** (`call_costs`, `turn_costs`, `daily_costs`,
-   `session_costs`), which switch on `cost_basis`: the recorded figure for a delegated
-   legacy call, the counts at the dated rates for everything else. Never `SUM` a stored
-   figure yourself — the old `EffectiveCost` rule ("the calculated figure, else a live
-   estimate") is what the views encode.
-
-   The provided figure has exactly one live consumer: `delegator.CostDivergenceChecker`
-   (`internal/delegator/costcheck.go`), which compares it against ours per turn and
-   WARNs past 3% (was 1% until 2026-08-06; raised once the opus mispricing it caught was fixed. The other residual it was sized for — the unmodelled 5m/1h cache-write split, 11.4% of a measured session — was closed the same day: `modelinfo` now prices cache writes at the 1h rate, because Claude Code caches at 1h exclusively (273,094 ephemeral_1h tokens vs 0 ephemeral_5m on a live session)). Since our number is the stored one, nothing else would notice the
-   `modelinfo` table going stale — that warning is the alarm. Both delegated backends
-   call it (`ccstream/handlers.go` OnResult, `opencode/handlers.go` on Tokens update);
-   deliberately one shared implementation so the warning means one thing everywhere.
-   The warning carries a per-class BREAKDOWN (cycles, and each token class with its own
-   price) supplied by the caller as a `func() string`, evaluated only when it fires. That
-   is not decoration: the stored token columns are the FINAL cycle's context fill, not the
-   deltas that were priced, so a turn's row can legitimately price at $0.74 against a
-   recorded $4.39 — and without the breakdown, identifying which class disagrees means
-   reconstructing the turn from CC's transcript with inferred boundaries. Note the warning
-   no longer claims a stale table: measured 2026-08-31 over 1,827 opus-5 turns, ~95% price
-   correctly, which a stale rate cannot do (#1695). The breakdown's token counters are turn-scoped and MUST be cleared by the same
-   boundary that clears `turnCalcCostUSD`; both live in `resetTurnCostAccumulatorsLocked`
-   (`ccstream/costbreakdown.go`), called from `beginTurnLocked` and `tryPreAnswerRedispatch`.
-   That group also holds `turnUsageAcc` (`usageAccumulator`, `ccstream/ttlsplit.go`, #1866) —
-   this turn's usage accumulated PER ASSISTANT MESSAGE and bucketed by model and by
-   subagent-or-not. Per-message is the only place CC reports two things pricing needs: the
-   5m-vs-1h cache-write TTL split, and the message's own model. The result's `ModelUsage`
-   merges the TTLs away AND is keyed by a single model, so it can answer neither.
-
-   It has **two** feeds, and both are required for the source to be complete:
-   - `noteAssistantUsage` from `OnAssistant`, called BEFORE that handler's top-level guard,
-     because subagent messages are precisely the ones whose TTL and model differ;
-   - `noteSubagentTranscriptUsage` from `subagentTailManager.deliverLine`
-     (`ccstream/subagent_tail.go`), because a FOREGROUND subagent's pure-text messages are
-     suppressed from the parent stream and their usage goes with them. `deliverLine` records
-     usage before, and independently of, the text sink — a consumer with no text sink still
-     spends real money.
-
-   The tail runs for EVERY subagent; `expectFg` now decides only whether it also forwards
-   TEXT (#1880 phase C prerequisite). It used to start for foreground subagents alone,
-   which was right about text and wrong about money: a foreground subagent's text is
-   filtered out of the parent stream, and a background subagent's is not — but the stream
-   NEVER completes `output_tokens` for either. Every assistant line carries
-   `stop_reason: null` and a running count of 1-3 that is never revised, so background
-   subagents' output had no second source to correct it. Their transcripts carry the
-   completed figure exactly like foreground ones (verified by starting one and reading the
-   file it wrote: a message reading 2, then 319). Cost is one goroutine and one file handle
-   per live subagent.
-
-   **The totals are CUMULATIVE for the Backend's life; a turn's figure is a DIFFERENCE
-   (#1880 phase B).** `beginTurn` moves the per-turn baseline to `atLastResult` — the
-   totals as of the last RESULT before the turn opened, the same boundary
-   `modelUsageDelta` snapshots at — and `writeSplit`/`models()` measure from there.
-   `markResult` moves that baseline, called from `OnResult` under `turnMu`. The only
-   full wipe is `reset()`, from `finalizeExit`: the dedupe set holds one entry per API
-   call ever seen, so the subprocess going away is the point it must be cleared.
-
-   **There are TWO windows, and which one you want depends on what you are computing
-   (#1909).** `atTurnStart` is the WHOLE TURN — it moves only at `beginTurn` and backs
-   `writeSplit`, `models()` and `subagentUsage()`, i.e. the breakdown line, which
-   describes the turn a reader asked about. `atLastResult` is ONE RESULT CYCLE — it moves
-   at every `markResult` and backs `subagentDelta()` and `topWriteSplitByModel()`, i.e.
-   everything that is PRICED, because the figure they are subtracted from
-   (`modelUsageDelta`) is per cycle too. `subagentDeltaFrom(base)` is the shared
-   implementation so the two cannot drift apart.
-
-   Mixing them is what actually fired. `subagentDelta` reported cumulative-since-TURN-start
-   while the handler added it once PER CYCLE and subtracted it from a per-cycle
-   `ModelUsage`, so on an `ask_cycles=2` turn the subagent was charged twice and cycle 2's
-   parent was subtracted from a total it could not cover. Reconstructed exactly from the
-   live turn of 2026-09-13 15:41:50:
-
-   ```
-   cycle 1:  sub 1,222,524 < total 1,843,451 -> parent  620,927   (matches the api.db row)
-   cycle 2:  sub 1,222,524 > total   311,691 -> parent        0   (CLAMPED)
-   charged   620,927 + 0 + 1,222,524*2 = 3,065,975  vs a bill of 2,155,142  ($2.7853 vs $1.8745)
-   ```
-
-   Both clamp warnings foci has ever emitted were on `ask_cycles=2` turns.
-
-   **The baselines also have an EVENT-TIME twin.** `markResult` records `lastResultAt`, and
-   every subagent transcript line carries its own top-level `timestamp` — when CC BILLED
-   it, as against when the tail READ it. Usage billed before `lastResultAt` was already
-   inside an earlier window's `ModelUsage` and paid for by that window's parent share, so
-   `note` RAISES both baselines by it (`usageTotals.raiseSub`) rather than excluding it
-   from one: raising makes it invisible to every delta measured from them, which is what
-   "already accounted for" means. Excluding it from the priced window alone would leave it
-   showing in the breakdown. A zero timestamp means "unknown, treat as now" — parent-stream
-   messages carry none — and never "billed at the epoch".
-
-   Because `note` raises baselines, `beginTurn` must `clone()` rather than assign:
-   `usageTotals` copies its struct but SHARES its maps, which was harmless while baselines
-   were only ever replaced wholesale and a silent cross-write once they could be raised.
-
-   **Repairing the EARLIER turn is #1918.** A turn whose parent row absorbed subagent spend
-   while it was still undelivered has a right total and wrong shares. `note()` therefore
-   records, beside the baseline raise, a `modelinfo.CostCorrection` naming BOTH ends: the
-   turn whose ModelUsage window the spend was BILLED in (its parent row loses the amount)
-   and the turn that SPAWNED the agent (its subagent row gains it, because phase C files
-   every subagent row under the spawning turn). Those differ whenever a background subagent
-   outlives its parent, so per-turn totals shift while the SESSION total is conserved (less
-   the cache-write TTL over-charge the correction removes — #1929, below) —
-   already true of straggler rows, and the phase C attribution model rather than a new
-   inconsistency.
-
-   The correction carries the BILLING TIME, not a resolved parent turn. The turn that
-   absorbed the spend is resolved at apply time by asking `api_calls` for the first
-   `delegated_turn` of that session to CLOSE at or after it — the session being the part of
-   the turn id before `@`. That works because **a turn is priced from the PREVIOUS result**,
-   so its window runs from the previous turn's close to its own and the timeline TILES with
-   no gaps: idle time belongs to the turn that FOLLOWS it.
-
-   ⚠️ **The close is `ts + duration_ms`. `api_calls.ts` is the turn's START** —
-   `turn_delegated.go` passes `ts.StartedAt`, and the turn_id nanos match `ts` exactly.
-   Verified against the log's own `turn_lifecycle event=complete` lines: start 15:41:35 +
-   15,648ms = 15:41:50, logged 15:41:50. The first version compared against `ts` alone, i.e.
-   "first turn to START at or after t", so spend billed while a turn was RUNNING skipped that
-   turn and debited the NEXT one — and since every subagent bills while its spawning turn
-   runs, that was the entire target population (#1922). Its "live verification" passed only
-   because the example sat in a 25-minute IDLE GAP, the one case where start-based and
-   close-based resolution agree.
-
-   The comparison is `unixepoch(ts, 'utc')` on BOTH sides, never a bare `ts >= ?`. `ts` is
-   local ISO WITH OFFSET, so across a DST boundary string order and time order disagree —
-   `01:15:00+00:00` sorts before `01:30:00+01:00` and happens 45 minutes later. That is the
-   trap that made the morning cost report read $172.06 against a true $161.17 (#1896).
-
-   *An earlier version resolved this against a 16-entry in-memory ring of turn windows. The
-   ring was a bounded cache of a mapping `api_calls` already holds durably, unbounded and
-   indexed, on the same connection the correction writes through — and its bound was wrong:
-   measured over 26,836 turns, 2.4% of 30-minute windows hold more than 16 turns and the
-   worst holds 155. Removed rather than enlarged; a bigger guess is still a guess.*
-
-   Corrections ride `delegator.TurnUsage.Corrections` -> `provider.Usage.Corrections` to
-   `turn_delegated.go`, which calls `Ledger.ApplyLegacyCorrections` **after** the rows — a
-   correction may target the row this very turn just wrote (late spend from an earlier
-   CYCLE of the same turn), and an UPDATE before the INSERT would match nothing.
-
-   **One row per delegation, so the credit has a unique target.** `Ledger.AccumulateLegacySubagent`
-   folds a subagent's later spend into its existing row instead of inserting a new one. Phase C
-   used to INSERT unconditionally, so a subagent outliving its parent got one row per turn it
-   straddled — all under the spawning turn id — and live data holds keys with 2 and 3 rows.
-   That made "what did that delegation cost" a SUM rather than a lookup, and it made the
-   correction below, which requires exactly one match, unapplicable to background subagents:
-   the population it exists for (#1922). Rows written before this keep their duplicates, and a
-   correction against one of those refuses, safely and loudly.
-
-   The DB collapses; the JSONL does not and must not. It is append-only, every reader SUMS
-   its rows, so each instalment is observed on its own (`Booking.Instalment`) — both stores then agree
-   on the money by different means. Writing only the first instalment would make the fallback
-   under-report.
-
-   **Each side of a correction moves at its own basis, so the turn total can FALL (#1929).**
-   The parent absorbed the late writes as an unobserved residue — `splitFor` puts the excess
-   over the parent's own observed writes into `Unknown`, and `Unknown` prices with
-   `Ephemeral1h` — while the subagent observed them as 5m. The subagent is credited
-   `CostUSD` (Counts at its observed split); the parent is debited `CostUSD +
-   TTLSurchargeUSD`, the surcharge being ccstream's `cacheWriteSplit.ttlSurcharge` = the 5m
-   writes priced as TTL-unknown (`cache_write`) minus the same writes priced at 5m. Debiting
-   both at 5m used to strand $3.75 per million
-   cache-write tokens on opus-5 on a row that no longer held them, breaking the #1854
-   re-price identity there. The turn total now drops by the surcharge — they really were 5m
-   tokens billed at 1h. Tokens are conserved; dollars fall. The debit can never be below the
-   credit BY CONSTRUCTION, not by a guard: `modelinfo.Prices.Rates` gives the TTL-unknown
-   class the HIGHER of the two write figures (a 1h figure below 5m is ignored as a data
-   error), so the surcharge is a positive float or exactly zero, and an unset
-   surcharge (zero) is the old, safe, at-5m debit. The apply logs `ttl_surcharge_removed=$…`.
-
-   `ApplyLegacyCorrections` UPDATEs the two existing calls; it never appends a signed third row
-   (Dick, 2026-09-14: *"I don't want a correcting pair, I just want a single correct
-   entry"*). Each correction is ONE TRANSACTION and both halves must match EXACTLY ONE row —
-   neither target has a unique constraint, so the row count is all that stands between a
-   correction and rewriting an unrelated row. It also refuses a parent row that cannot cover
-   the amount rather than clamping: a negative count prices as a CREDIT, and an uncoverable
-   correction means the model behind it is wrong, which is worth a warning.
-
-   This is safe to mutate because **api.db is authoritative**: `command.readCalls`
-   prefers `Ledger.Calls` and falls back to the JSONL only when there is no ledger or it is
-   empty, the JSONL being RESET ON EVERY SERVICE RESTART. Every reader (/cost, /last,
-   `Ledger.SessionStats`, the morning briefing) runs a live query and none caches. The JSONL copy of a corrected
-   row keeps the old values until the next restart wipes it — bounded, fallback-only.
-
-   NOT covered: a subagent whose spend was ENTIRELY late has no row to credit, so the
-   correction is skipped and logged. Sizing that needs live data.
-
-   It used to WIPE at `beginTurnLocked` — turn START — while pricing measures from the
-   previous RESULT, so every message inside the priced window that arrived before the
-   turn opened was charged for and never accumulated. Measured coverage against the
-   cache-write total each turn was priced on: 4.3% and 1.1% on 2026-09-10 02:48/03:36,
-   15.0% and 4.7% at 14:47/15:32. The 15:32 turn ran one subagent, `agent-affb669c`, on
-   the SAME model as its parent (197,503 cache-write tokens, 100% ephemeral_5m) and the
-   subagent bucket recorded ZERO of them. Both warnings reconcile to under one token —
-   the gap over opus-5's $3.75/MTok 1h-vs-5m spread equals `cache_write` minus what the
-   accumulator saw — so the unseen tokens were exactly the mispriced ones.
-
-   Diffing rather than wiping also bounds the failure mode: a message can now only be
-   attributed to the WRONG turn, never dropped from every turn. Losing tokens is a
-   pricing error; misfiling them is an attribution error (phase C), and only one of
-   those costs money. Dedupe is session-scoped for the same reason — message ids are
-   unique per API call, so a message must be counted once EVER, and clearing the set
-   each turn let a message spanning a boundary be counted twice.
-
-      The subagent bucket is keyed by `{Agent, Model}` (#1880 phase C), not by model alone.
-   Two subagents on one model were otherwise indistinguishable, and a background subagent
-   outliving its parent could only be described as "some subagent". Both feeds already
-   carried the identity and discarded it — the parent stream's `ParentToolUseID` and the
-   tail's `groupKey` are both the Agent tool_use id, which also names the transcript file.
-   Both dimensions are load-bearing and answer different questions: the subagent is the
-   unit spend is ATTRIBUTED to, the model is the unit it is PRICED at, and one subagent can
-   touch several models if it spawns its own. `subagentUsage()` returns this turn's per-agent
-   totals; the divergence warning renders them as `by_subagent <id>=<n> …` when more than one
-   contributed. `subagentDelta()` keeps both dimensions and is what phase C writes rows from —
-   entries whose delta is entirely zero are dropped, because the maps are cumulative for the
-   Backend's life and every subagent the session ever ran is still a key.
-
-**P3 landed: pricing now uses it — for the TTL SPLIT ONLY.** Turn TOTALS come from
-   `ModelUsage`, iterating EVERY key (before P3 it read `resultModel` alone and dropped
-   every other model's spend: a measured turn charged $0.54 against a true $1.68, silently,
-   because both sides of the divergence check omitted the same model — #1870). Totals do
-   NOT come from the accumulator: probe-verified 2026-09-10 that the stream matches
-   `ModelUsage` EXACTLY for input, cache-read and cache-write, understates OUTPUT by ~89%
-   (a placeholder never revised), and never carries CC's own internal utility calls at all
-   (916 haiku input tokens in one probe turn, on no stream line anywhere).
-
-   `splitFor` (`ccstream/ttlsplit.go`) allocates the authoritative cache-write total across
-   the TTL classes using what the accumulator observed. **It is not a ratio.** At exact
-   coverage the observed split is used verbatim — 100.00% on a production turn
-   (369,913 = 369,913) and on a probe (30,921 = 30,921), so that is the normal path. Any
-   shortfall lands in `Unknown`, which prices at the 1h rate: an unobserved TTL is not
-   evidence of a cheap one. Scaling a partial observation onto an authoritative total would
-   manufacture a number nobody measured, and `TestSplitFor_NeverScalesProportionally` pins
-   that refusal. The classes always sum to the authoritative total, so pricing still
-   reconciles against the figure the divergence check compares to.
-
-   **Phase C landed: the turn is SPLIT ACROSS ROWS.** A turn with subagents writes one
-   `delegated_turn` row for the parent plus one `subagent_turn` row per (agent, model),
-   all sharing a `turn_id`. `Usage.CalculatedCostUSD` and `Usage.Turn` are the PARENT'S
-   share alone; `Usage.Subagents` carries the rest, and `turn_delegated.go`'s `logCall`
-   emits a row for each. Every token is emitted exactly once, so
-   `SUM(calculated_cost_usd) GROUP BY turn_id` is the turn and a plain `SUM` over the
-   table is still the session.
-
-   Why: a subagent's spend used to land on whichever parent turn happened to close while
-   it was running — a measured 3.5-minute turn carried 34 minutes of someone else's work
-   and **$11.71** (api_calls 47495), and the same shape recurred at $11.97 and $13.60.
-   That defeats the obvious diagnostic, because an expensive turn looks like an expensive
-   turn. It also meant there was no way to ask what a delegation cost: one subagent
-   measured $4.2578 across 29 calls, more than the parent turn it was charged to.
-
-   **The split is exact subtraction, never a ratio.** Each subagent is priced from the
-   accumulator's own per-`{Agent, Model}` delta — whose TTL coverage is therefore exact by
-   construction, so `splitFor` returns the observed split verbatim — and that share is then
-   taken out of the authoritative `ModelUsage` total with `TokenCounts.SubClamped`. The
-   parent gets the remainder. What `ModelUsage` holds that no stream line does (CC's
-   internal utility calls) stays on the parent, which is correct: it is not a subagent's.
-   A class that would go negative pins at **zero**, never below — a negative token count
-   prices as a CREDIT and would quietly reduce the bill — and logs a WARN, because the turn
-   is then priced above the authoritative total and the divergence check is about to fire.
-
-   The clamp is an EXACT detector rather than a repair: if no class clamps then
-   `parent + subagents == total` identically, so an overcharge is possible if and only if the
-   clamp fires. Do NOT read that as "it can no longer fire" — an earlier version of this
-   paragraph did, and the clamp fired the same afternoon (#1923).
-
-   **A subagent message counts only at COMPLETION, because that is when `result.modelUsage`
-   counts it.** Directly observed on the turn of 2026-09-14 14:29:09 (`ask_cycles=1`, so
-   neither #1909 cause applied); the result landed at 13:29:09Z:
-
-   ```
-   msg1  first line 13:29:03.792  COMPLETED 13:29:06.049  in=2  out=200 cr=0     cw=13778
-   msg2  first line 13:29:08.395  COMPLETED 13:29:10.669  in=32 out=319 cr=13778 cw=3810
-   modelUsage = {In:2 Out:200 CR:0 CW:13778}   -- exactly msg1, with its FINAL output
-   ```
-
-   msg2 was wholly absent. The accumulator folded its input/cache from the FIRST line, so the
-   subagent bucket held 13,778 cache-read tokens against an authoritative 0 — the parent
-   clamped and the turn priced above its own bill. It also DOUBLE-CHARGED: those tokens were
-   billed in that window via the subagent row, then `markResult` baselined them, so the next
-   window's `modelUsage` held them while the subagent delta did not and the next parent
-   absorbed them again.
-
-   `note()` therefore ignores a subagent line with a nil `stop_reason`. That makes the
-   subagent bucket a SUBSET of `modelUsage` by construction — it can fall short through
-   delivery lag (#1909's territory) but can no longer exceed. It also fixes the EVENT TIME:
-   the completion line's timestamp is the instant `modelUsage` counts the message, so the
-   late-arrival gate now measures against the same event the authority uses.
-
-   SUBAGENTS ONLY. The main-thread bucket contributes no amount to pricing — it supplies the
-   TTL PROPORTIONS `splitFor` allocates the parent's writes by — and most main-thread lines
-   carry no `stop_reason`, so gating them would discard the observed split and dump the
-   residue into `Unknown`, which prices at the dearer rate.
-
-   **The gate makes the tail load-bearing, and the tail was being killed at launch (#1924).**
-   A subagent's completed line appears only in its TRANSCRIPT, never on the parent stream, so
-   once usage counts at completion the tail is the ONLY source. `hooks.go` finalized the tail
-   on every Agent PostToolUse under a comment claiming it was a "No-op for background /
-   untailed subagents" — true until `85f5ffb8` tailed every subagent, and never updated. A
-   BACKGROUND Agent tool_use resolves the INSTANT the task is launched (the same comment says
-   so), so the tail died before CC had written a byte. Measured on a live background subagent:
-   47,438 output tokens across 13 completed transcript messages against 86 in its rows.
-
-   So PostToolUse now calls `finalizeForeground`, which acts only on a tail started with
-   `wantText`; background tails end at `task_notification:completed`, which the same comment
-   already named as the real end for both kinds.
-
-   **Spawn attribution sits BEFORE the gate.** Which turn spawned an agent is a fact about the
-   AGENT, not the message that revealed it, and the stream's first line arrives synchronously
-   with the spawn. Behind the gate it would wait for the first COMPLETED line off the tail,
-   which for a background subagent can land after a later turn has opened — filing every one
-   of its rows under the wrong turn, the exact failure phase C exists to prevent.
-
-   `turnCalcCostUSD`/`turnCalc` deliberately stay the WHOLE turn. They back the divergence
-   check, whose other side is CC's cost for everything the process did, and the breakdown
-   line, which describes the turn a reader asked about. Splitting them would make the check
-   fire on every turn that ran a subagent.
-
-   The parent is priced from `topWriteSplitByModel` — the main-thread bucket only — not the
-   combined per-model split. With the subagents' share already subtracted, the combined
-   split would allocate the parent's remaining tokens out of a split that still includes
-   theirs: **$0.525 against a true $0.375** on the regression turn, a 40% overcharge on
-   exactly the tokens #1866 was about. This is NOT #1866's inference returning: the TTL is
-   still read from what each bucket OBSERVED, and nothing derives "subagent, therefore 5m".
-   `TestOnResult_ParentKeepsItsOwnTTLWhenTheSubagentSharesItsModel` runs it the other way
-   round — parent 5m, subagent 1h, one model — on purpose, and it is the arm that caught
-   the first version of the fix: with parent and subagent on DIFFERENT models the two splits
-   are identical, so swapping them reddened nothing.
-
-   **Phase C second half: a straggler books to the turn that SPAWNED it.** The agent layer's
-   `TurnState.RowID()` now travels into the backend on `TurnEvents.TurnID`, which
-   `beginTurnLocked` stores as `b.turnRowID` and hands to `usageAccumulator.beginTurn`.
-   `note()` records, once per agent, the turn open when that agent was FIRST seen
-   (`agentTurn`), and that is what `SubagentCost.TurnID` and therefore the row carries.
-   Written once and never moved, because the spawning turn is a property of the agent, not
-   of the window its tokens land in; session-scoped, so `reset()` clears it and `beginTurn`
-   does not.
-
-   Ordering is load-bearing: `b.turnRowID` is assigned in `beginTurnLocked` BEFORE
-   `resetTurnCostAccumulatorsLocked`, which is what passes it on. Assigning it after opens
-   every turn with the previous turn's id in the accumulator, and the fail-arm for that
-   reddens both straggler tests.
-
-   Between turns `curTurn` still names the turn that just closed, which is the right answer
-   for a straggler. The one case this misses is an agent whose very first message arrives
-   after a LATER turn has opened; the transcript tail was measured landing within ~60ms of
-   the result, so the window is narrow — and misfiling one agent is what this used to do to
-   all of them.
-
-   The row's TIMESTAMP stays the writing turn's: it records when the spend was booked,
-   which is true and is what a time-window query wants. `turn_id` carries the attribution.
-
-   **A pruned subagent does not lose its spend.** `SubagentTracker.pruneLocked` drops an
-   agent after `background_task_max_age` (default 2h) without a completion signal (one was
-   observed pruned at 30m20s under the old 30m default),
-   but that tracker exists only for the pending-work gate and the status line. It touches
-   neither the tail — only `stopAll` at backend shutdown stops those — nor the accumulator,
-   whose maps are cumulative for the Backend's life. So a pruned agent's tokens keep
-   arriving, keep accumulating, and still emit a row against their spawning turn.
-
-   **Fixtures in this package must set `Message.ID`.** The accumulator drops empty-id
-   messages, and no pre-P3 fixture set one — so every earlier end-to-end cost test ran
-   against an EMPTY accumulator and passed whether pricing was per-model or not, 5m or 1h.
-   The whole suite stayed green through P3 for that reason. A cost test without a message
-   id proves nothing.
-
-   Since #1880 phase A the warning also carries `turn=<dur> priced_span=<dur>`, and flags
-   `SPAN Nx TURN` when the priced window exceeds twice the turn — the two measurements that
-   made the above legible. `pricedSpanStart` (`ccstream/cost.go`) records the delta window's
-   start PER MODEL beside `lastModelUsage`'s snapshot; one scalar would report one model's
-   window for another's delta. A zero duration means NOT MEASURED (first snapshot for a
-   model) and prints nothing rather than `0s`.
-
-   Both
-   feeds reconcile by `message.id`, which is load-bearing twice: CC emits one `assistant`
-   line PER CONTENT BLOCK, and a FOREGROUND subagent's messages can arrive by BOTH routes
-   (the probe saw 2 of its 3 in the stream and all 3 in the transcript).
-
-   **Reconciliation is a HIGH-WATER MARK per class, not first-wins.** Each repeated line
-   repeats the message's usage, but only THREE of the four classes are final on the first
-   line. `output_tokens` is a running count starting at 1-3, completed only on the line
-   carrying a non-nil `stop_reason`. Measured 2026-09-10 across 29 message ids in one
-   subagent transcript: input / cache_read / cache_write varied on ZERO, output on 26.
-   First-wins therefore locked in the placeholder — 88.6% of subagent output tokens on
-   this host, and output is the most expensive class. `note()` keeps the max per class in
-   `applied` and adds only the INCREASE, so a repeat still cannot inflate a total. Max
-   rather than last-wins so the fix does not depend on the completed line arriving last.
-
-   **Residual, measured:** the PARENT STREAM never completes output at all — every
-   assistant line in both saved probe captures carries `stop_reason: null` and output 2-3.
-   So the repair covers the transcript feed (foreground subagents) only. Top-level output
-   is unaffected because pricing takes it from `ModelUsage`. BACKGROUND subagents get no
-   tail and arrive by the stream alone, so their output stays a placeholder and cannot be
-   priced from this source yet. Anything added to this group must be added
-   inside `usageAccumulator` so the single `reset()` still clears all of it.
-   They were reset at neither site until #1848, so the warning printed a per-SESSION
-   breakdown beside a per-TURN total — a diagnosis that silently answered a different
-   question. Add a field to that group and it is reset at every boundary for free;
-   reset one inline instead and this recurs. Since #1854 the four counters are one
-   `modelinfo.TokenCounts` (`turnCalc`), and the same value is what `TurnUsage.Turn`
-   persists — the breakdown and the row are one figure, not two that can drift.
+   `session_costs`), which switch on `cost_basis`. Never `SUM` a stored figure yourself.
 
 4. **Conversation log** (`conversation-{agentID}.db`): Per-agent SQLite databases logging exact Telegram messages sent and received. Entries are routed to the correct agent's database by parsing the session key. Table `messages` with columns: `id`, `ts`, `direction` (recv/sent), `user_id`, `username`, `chat_id`, `text`, `parse_mode`, `session`, `error`.
    - Use: `log.Conversation(log.ConversationEntry{...})`
@@ -1999,8 +1481,8 @@ Four outputs:
 
 ## Cost ledger (`internal/delegator/accounting`, #2111)
 
-The per-call ledger that replaces the per-turn `api_calls` rows and the window-subtraction
-pricing above. Design: clutch `notes/2111.md` (revision 3), rulings R1-R10 on todo #2111.
+The per-call ledger that replaced the per-turn `api_calls` rows and the window-subtraction
+pricing of each backend's turn (see "Logging" → the pre-ledger rows). Design: clutch `notes/2111.md` (revision 3), rulings R1-R10 on todo #2111.
 **Built in phases.** P1 (#2113) was the schema, the accounting core, the class rates in
 modelinfo and the migration. P2 (#2115) switches one backend per change, deleting its old
 path in the same change, so no backend ever has two booking paths:
@@ -2009,10 +1491,18 @@ path in the same change, so no backend ever has two booking paths:
   adapter" below).
 - **codex: switched** (third). One `thread/tokenUsage/updated` is one call (see "codex
   adapter" below).
-- **Claude Code: in SHADOW.** Its turn-level cost path is still the live one, and its rows are
-  booked as LEGACY calls (see "Legacy path" below). Its per-call adapter runs beside it into a
-  scratch ledger (see "Claude Code adapter (shadow)" below) until a 1-2 day comparison
-  (`foci-gw ledger-shadow`) clears the switch.
+- **Claude Code: switched** (fourth and last, after a 1-2 day shadow run compared by
+  `foci-gw ledger-shadow`). Each API call is one call (see "Claude Code adapter" below).
+
+Every delegated backend implements `delegator.LedgerBooker`. The agent layer records a
+delegated turn at its start (`buildTurnEvents`, before any call can name it) and at its end
+(`closeLedgerTurn`: `ended_at`, `activity_closed_at`, stop reason, model), books no turn-level
+row, and takes `FinalCost` (the sink header's figure) from `Ledger.TurnCost`; a backend
+that is not a `LedgerBooker` books nothing and `LogUsage` logs the gap. An adapter names
+the open turn with a stub (id, session, backend) whose upsert never overwrites what the
+agent recorded. `activity_closed_at` is set at the turn's end, so for a codex child or a CC
+background subagent that outlives its turn `turn_costs.still_running` reads false early
+(closing it on the subagent's own end is P3).
 
 **The cutover** runs at startup: `initLogging` calls `accounting.Open(cfg.Logging.APIDB)`.
 On a pre-ledger api.db (`api_calls.calculated_cost_usd` exists) that takes a `VACUUM INTO`
@@ -2095,7 +1585,6 @@ the context fill it leaves — handed, once the transaction COMMITS, to the api.
 writer and to `accounting.BookedHook` (the trace exporter's generations, see "Tracing").
 A rolled-back booking is never observed; a duplicate key is not re-observed; the
 migration books quietly (history is neither re-logged nor re-sent).
-`accounting.CorrectionHook` sees each applied #1918 correction.
 
 **Direct API adapter** (`apicall.go`, the backend switched in P2). `APIResponse.Call()`
 makes one response one call: `backend='api'`, key = the provider's response id (else
@@ -2143,12 +1632,6 @@ callID, or `(unnamed)` when no tool part named the child), booked with that acto
 the switch they were dropped, so subagent spend was missing. Before the switch opencode's turn
 row also priced only the turn's LAST message (`lastUsage` was overwritten per message);
 multi-message turns were under-counted. `lastUsage` is now context fill only.
-The agent layer, for a backend that implements `delegator.LedgerBooker`, records the turn at
-its start (`buildTurnEvents`, before any message can name it) and at its end
-(`closeLedgerTurn`: `ended_at`, `activity_closed_at` — opencode subagents finish inside the
-turn — stop reason, model), books no turn row, and takes `FinalCost` from `Ledger.TurnCost`.
-The adapter names the open turn with a stub (id, session, backend) whose upsert never
-overwrites what the agent recorded.
 
 **codex adapter** (`codex/ledger.go`, P2 third switch). codex is token-only: no message id
 and no cost anywhere (#2112 P0-c). Each `thread/tokenUsage/updated` is one API cycle and one
@@ -2170,84 +1653,104 @@ only. Tested against `codex/testdata/tokenusage_synthetic.json`: the #1855 live 
 SYNTHETIC child-thread and re-delivery notifications — codex is disabled, so replace it with
 a real capture on re-enable.
 
-**Claude Code adapter (shadow)** (`ccstream/ccbook.go` state machine, `ccstream/ccshadow.go`
-wiring; #2111 §3.1, §4, §5). With `logging.api_shadow_db` set, startup opens a SHADOW ledger
-(`accounting.Options.Shadow`: its bookings reach no observer — no api.jsonl line, no
-generation — and its alarms log at INFO as `shadow <inv>`), and every CC process runs the
-adapter into it (`accounting.Shadow()`). The live path is untouched: the hooks only enqueue
-(non-blocking; a full queue drops and counts), and one goroutine per process runs the book.
-Inputs: the stream's top-level assistant ids with the foci turn open when each was named
-(`OnAssistant`); results' cumulative `modelUsage` with the running-subagent count
-(`OnResult`); `compact_boundary`; every subagent transcript line, ungated, and each tail's
-open/close (`subagentTailManager.shadowLine/shadowTail`); every Workflow run's agent
-transcripts (`workflow_tail.go`, #2130: a run's agents write under
+**Claude Code adapter** (`ccstream/ccbook.go` state machine, `ccstream/ccledger.go`
+wiring; #2111 §3.1, §4, §5; P2 fourth switch, #2115). Each CC process runs one adapter
+(`newCCLedger` at `Start`, closed — drained and flushed — when the process exits, at
+`finalizeExit`) booking into `accounting.Live()`; with no live ledger a call is still
+observed (api.jsonl, BookedHook), as every backend's is. The hooks only enqueue (non-blocking;
+a full queue drops, logs at ERROR and counts — that process is then under-booked), and one
+goroutine per process runs the book. Inputs: the stream's top-level assistant ids with the
+foci turn open when each was named (`OnAssistant`); results' cumulative `modelUsage` with the
+running-subagent count (`OnResult`); `compact_boundary`; every subagent transcript line,
+ungated, and each tail's open/close (`subagentTailManager.ledgerLine/ledgerTail`); every
+Workflow run's agent transcripts (`workflow_tail.go`, #2130: a run's agents write under
 `subagents/workflows/<run id>/agent-*.jsonl`, never on the stream, and the stream's one
 `local_workflow` `task_started` names only the run; the Workflow tool's PostToolUse
-`tool_response` carries `transcriptDir`, and one goroutine per run polls it until every agent is
-at rest after the run's `task_notification`; ledger-only, the live path does not see them); and a new MAIN-transcript tail from
-the file's size at launch (a resumed or forked session's history is an earlier process's),
-started at Start for a resume or at `init` for a fresh session, which also sees the
-`cost-state` record a graceful close appends. Rules (ccbook.go header, one test each):
-a main call books from its transcript line on the turn that named it, only if the stream named
-it — a line never named is a history copy (F1b: re-appended after every 2nd compaction, batch
-writes) and is dropped, as is a re-append of a call already booked; a named call seen only at a
-stopless line is `interrupted` — booked and priced from it at the result's settle, excluded from
-the remainder; a subagent call books on its spawning turn, `completed` on its stop_reason line or
-`stopless` at the next id in its file or its tail's close, and a subagent line billed before the
-process launched is skipped; a Workflow run is an open agent from its PostToolUse, on the turn
-open then (or, invoked by a subagent, that subagent's spawning turn), and each of its agents books
-on the run's turn and window however late its transcript appears, so no remainder is booked
-mid-run; each result settles once its named calls are in (bound 250ms) and,
-if no subagent was running, once every tail is at rest (bound `subagentTailSettle`); a bound
-passing is final only after a main-tail read that began past it (each drain reports its start
-after its lines, #2134), so a stalled tail delays the settle instead of dropping a call — then the
-remainder `modelUsage − baseline − Σ counted calls` per model and class is booked as overhead
-(no turn) or, if the window held a `compact_boundary`, as a compaction (on the turn open at the
-boundary, else a compaction turn of its own); modelUsage has no cache-write TTL, so the
-remainder's writes are split 5m/1h by solving CC's own cost of the interval less the counted
-calls' (`solveRemainderTTL`, `class_method=solved`; exact, to `accounting.SolveTolerance`, like
-the migration's solve), and one that will not solve stays TTL-unknown at the 1h rate and alarms
-`invRemainderTTLUnsolved`; a negative class alarms `invNegativeRemainder`
-and books nothing; a named call whose line never came alarms `invStreamIdBooked`. At exit the
-last remainder comes from the `cost-state` record, else the last result. Every process writes
-its baseline (the totals CC restored on --resume) and each result as cumulative
-`backend_reports` for the scope `<session>@<launch nanos>`, so CC's own cost per process is a
-difference of two reports — the baseline (stamped at the launch the scope names; none for a
-fresh process, whose baseline is zero) and a later one. Replayed against the #2112 P0 captures
-(`ccstream/testdata/ledger/*.json.gz`: two idle compactions with the history re-append, an
-interrupted resume, graceful/killed exits, a subagent run) — conservation holds exactly with
-no negative remainder on every one. `foci-gw ledger-shadow -live api.db -shadow
-api-shadow.db [-since 36h]` compares the two ledgers per turn, per CC process (CC's own cost
-against the adapter's, interrupted excluded) and per day. The per-process check (#2122) ends at
-the latest report whose tokens less the baseline equal the booked calls of a window prefix
-(`detail.window`, or a remainder's `through_window`) — never a `billed_at` cut, which is racy;
-a process no report matches (a subagent still running, a remainder not settled, a booking
-error) is listed as unmatched. Tokens alone cannot catch a mispriced call, so the report also
-checks dollars (`ledger_shadow_checks.go`, #2131) and ends with FLAGS: a compared process whose
-CC cost lies beyond the known residual (the median over processes with no unknown-TTL write)
-from the adapter's price, or from the range its unknown-TTL `cache_write` tokens span (all 5m
-.. all 1h as booked), with the 5m share CC's cost implies; a turn-less remainder row costing
-more than its process's largest booked call (not overhead by design: a call source never
-read, #2130); and unpriced calls. It also prints the remainder's share per day and process with
-its models and classes, and the calls per `class_method` with the unknown-TTL writes priced both
-ways.
+`tool_response` carries `transcriptDir`, and one goroutine per run polls it until every agent
+is at rest after the run's `task_notification`); and a MAIN-transcript tail from the file's
+size at launch (a resumed or forked session's history is an earlier process's), started at
+Start for a resume or at `init` for a fresh session, which also sees the `cost-state` record
+a graceful close appends. Rules (ccbook.go header, one test each): a main call books from its
+transcript line on the turn that named it, only if the stream named it — a line never named
+is a history copy (F1b: re-appended after every 2nd compaction, batch writes) and is dropped,
+as is a re-append of a call already booked; a named call seen only at a stopless line is
+`interrupted` — booked and priced from it at the result's settle, excluded from the
+remainder; a subagent call books on its spawning turn, `completed` on its stop_reason line or
+`stopless` at the next id in its file or its tail's close, billed at its own line's time (so a
+subagent running past midnight books each call to its own day), and a subagent line billed
+before the process launched is skipped — which is also why a reactivation tail, re-reading
+the transcript from byte 0, books no earlier run again (#2057, #2087); a Workflow run is an
+open agent from its PostToolUse, on the turn open then (or, invoked by a subagent, that
+subagent's spawning turn), and each of its agents books on the run's turn and window however
+late its transcript appears, so no remainder is booked mid-run; each result settles once its
+named calls are in (bound 250ms) and, if no subagent was running, once every tail is at rest
+(bound `subagentTailSettle`); a bound passing is final only after a main-tail read that began
+past it (each drain reports its start after its lines, #2134), so a stalled tail delays the
+settle instead of dropping a call — then the remainder `modelUsage − baseline − Σ counted
+calls` per model and class (CC's utility calls, stopless subagent output, compactions) is
+booked as overhead (no turn) or, if the window held a `compact_boundary`, as a compaction (on
+the turn open at the boundary, else a compaction turn of its own); modelUsage has no
+cache-write TTL, so the remainder's writes are split 5m/1h by solving CC's own cost of the
+interval less the counted calls' (`solveRemainderTTL`, `class_method=solved`; exact, to
+`accounting.SolveTolerance`, like the migration's solve), and one that will not solve stays
+TTL-unknown at the 1h rate and alarms `invRemainderTTLUnsolved`; a negative class alarms
+`invNegativeRemainder` and books nothing; a named call whose line never came alarms
+`invStreamIdBooked`. At exit the last remainder comes from the `cost-state` record, else the
+last result. A call on a run no foci turn opened books on a minted `run` turn, recorded as
+`autonomous`. Every process writes its baseline (the totals CC restored on --resume,
+`resumeBaselineFor`, #2012) and each result as cumulative `backend_reports` for the scope
+`<session>@<launch nanos>`, so CC's own cost per process is a difference of two reports.
+**A turn's completion waits for its calls** (`ccLedger.flush`, from `completeTurn` before
+`OnTurnComplete`): until every main-thread call the stream named has its line read (the
+main tail is poked to read at once), bounded by `ccBarrierBound`, and at once with no main
+tail — so `closeLedgerTurn`'s `FinalCost` holds the turn's own calls. A remainder or a
+background subagent's later calls book after it, on the same turns. Replayed against the
+#2112 P0 captures (`ccstream/testdata/ledger/*.json.gz`: two idle compactions with the
+history re-append, an interrupted resume, graceful/killed exits, a subagent run) —
+conservation holds exactly with no negative remainder on every one.
 
-**Legacy path** (`legacylive.go`) — the only booking path of Claude Code, until it
-switches; the file goes with that switch. `DelegatedTransport.LogUsage` builds a
-`LegacyRow` per parent row and subagent share (the shapes of the pre-ledger rows) and
-books it through the migration's own converter (`v1Row` → class-by-kind → cost basis →
-`legacyCall`/`legacyTurn`/`legacyReport`), so a live legacy call and a migrated one are the
-same: `kind='legacy'`, priced from its recorded figure (`cost_basis='recorded'`), CC's
-provided cost as a `backend_reports` row. The backend is the manager's `BackendType`
-(`DelegatorBackend`), inferred from the model when unset. `AccumulateLegacySubagent`
-folds a subagent's later spend into THE call for (turn, actor, model) (#1922), and a
-share never rewrites its spawning turn's facts; an unnamed share gets actor
-`(unnamed)` (`UnnamedSubagent`), never `''`. `ApplyLegacyCorrections` is #1918 on
-legacy calls: resolve the absorbing turn as the session's first to CLOSE at or after the
-billing (`turns.ended_at`, UTC text), then move counts parent `cache_write_1h` → share
-`cache_write_5m` and money (parent debited cost + TTL surcharge) in one transaction,
-refusing anything but exactly one call on each side or a parent that cannot cover it. On
-a nil ledger `BookLegacy` only observes.
+The adapter replaced CC's turn-level path, and everything that path needed is gone: the
+`ModelUsage` window subtraction and its per-turn accumulators, the per-message usage
+accumulator and its baselines (`ttlsplit.go`), the subagent shares and their #1918 late-spend
+corrections (`CostCorrection`, `ApplyLegacyCorrections`, `CorrectionHook`), the TTL
+surcharge, the clamp, the per-turn cost breakdown and divergence warning, the #721 output
+floor, the reactivation tail's `runStartGate`, the legacy subagent accumulation, and the
+#2013 fresh-process guard (`checkFreshProcessUsage`, which misfired on background
+subagents). The live per-process divergence alarm is P3; until then `foci-gw ledger-shadow`
+runs the same check offline.
+
+**Shadow verification** (#2111 §12), kept for the next adapter. With
+`logging.api_shadow_db` set, startup opens a SHADOW ledger (`accounting.Options.Shadow`:
+its bookings reach no observer — no api.jsonl line, no generation — and its alarms log at
+INFO as `shadow <inv>`) and hands it to `accounting.SetShadow`; no backend books there at
+present (the next adapter verified this way adds the `Shadow()` getter it books through).
+`foci-gw ledger-shadow -live api.db -shadow api-shadow.db [-since 36h]` compares the two
+ledgers per turn, per CC process (CC's own cost against the adapter's, interrupted excluded)
+and per day. The per-process check (#2122) ends at the latest report whose tokens less the
+baseline equal the booked calls of a window prefix (`detail.window`, or a remainder's
+`through_window`) — never a `billed_at` cut, which is racy; a process no report matches (a
+subagent still running, a remainder not settled, a booking error) is listed as unmatched.
+Tokens alone cannot catch a mispriced call, so the report also checks dollars
+(`ledger_shadow_checks.go`, #2131) and ends with FLAGS: a compared process whose CC cost
+lies beyond the known residual (the median over processes with no unknown-TTL write) from
+the adapter's price, or from the range its unknown-TTL `cache_write` tokens span (all 5m ..
+all 1h as booked), with the 5m share CC's cost implies; a turn-less remainder row costing
+more than its process's largest booked call (not overhead by design: a call source never
+read, #2130); and unpriced calls. It also prints the remainder's share per day and process
+with its models and classes, and the calls per `class_method` with the unknown-TTL writes
+priced both ways.
+
+**tmux Claude Code** (`cctmux/ledger.go`) books each main-thread call its session watcher
+reads once the line carries its stop_reason, keyed by the message id, on the open foci turn
+(else an autonomous turn of its own). It reads only the main transcript, so its subagents'
+and CC's utility calls are not booked, nor is a call interrupted before its stop_reason.
+
+**Legacy rows** (`legacyrow.go`). `BookLegacy` writes one row in the pre-ledger shape
+(`LegacyRow`, a turn's parent share or a subagent's) through the migration's own converter
+(`v1Row` → class-by-kind → cost basis → `legacyCall`/`legacyTurn`/`legacyReport`), so it is
+exactly a migrated call. No backend books this way; it is how the readers' tests put the
+migrated history every live ledger holds into a test ledger, and the Makefile's deadcode gate
+exempts the file.
 
 **Readers** (`read.go`). `Ledger.Calls(since)` gives `CallRow`s from `call_costs` plus
 each call's per-class counts and costs (`call_class_costs`; a recorded-basis call has no
@@ -2298,7 +1801,7 @@ every entry point is one atomic load and no span is ever allocated.
 | Producer | Hooked at | Yields |
 |---|---|---|
 | `turnevent.Sink` stream | `Agent.HandleMessage` and `Agent.OpenAutonomousTurn` wrap the ctx sink with `telemetry.NewTurnSink` (a `turnSink` that forwards every event and mirrors the ones it cares about) | the trace's **shape**: root `turn` span (type `agent`), a `tool` child per `ToolCall`/`ToolResult`, an `agent` child per `SubagentStart`/`Text`/`End` run, intermediate texts, thinking, retries, error status |
-| `accounting.BookedHook` (every booked call) | the ledger's `Update`, after each commit (`Tx.Book`, and an instalment of `AccumulateLegacySubagent`) | exactly one `generation` observation per call — model, `usage_details`, `cost_details.total` = the call's cost as the views price it — parented onto the call's turn (or its subagent span when it has an actor). A compaction, summary or spawn a turn made is booked on that turn and hangs under its root; one no turn made is on a turn of its own (source `compaction`/`system`, `Booking.TurnSource`) that the tracer never opened, so it becomes its own one-observation trace named after its call type. **Cost lives only here**; root/tool/subagent spans carry cost as read-only metadata. So `SUM(observation cost)` per day equals the ledger's `daily_costs` by construction — `scripts/langfuse-etl/etl.py reconcile` is the check. |
+| `accounting.BookedHook` (every booked call) | the ledger's `Update`, after each commit (`Tx.Book`) | exactly one `generation` observation per call — model, `usage_details`, `cost_details.total` = the call's cost as the views price it — parented onto the call's turn (or its subagent span when it has an actor). A compaction, summary or spawn a turn made is booked on that turn and hangs under its root; one no turn made is on a turn of its own (source `compaction`/`system`, `Booking.TurnSource`) that the tracer never opened, so it becomes its own one-observation trace named after its call type. **Cost lives only here**; root/tool/subagent spans carry cost as read-only metadata. So `SUM(observation cost)` per day equals the ledger's `daily_costs` by construction — `scripts/langfuse-etl/etl.py reconcile` is the check. |
 
 **Invariant — the wrapper must never be registered into the router it wraps.** On a
 platform turn the ctx sink at `HandleMessage` *is* the session router (RunTurn
@@ -2340,16 +1843,6 @@ whichever sink the session router holds *at that moment*, which for a background
 Agent is a later turn's. Open runs therefore live in a package registry keyed by
 (session, group key, run), and whichever turn sees the end closes it; runs with no
 end signal are closed as `end_unobserved` after 2 h.
-
-**Instalments and corrections vs. an append-only sink.** `AccumulateLegacySubagent`
-folds a delegation's later spend into its existing db row; Langfuse cannot update,
-and re-sending an observation with new numbers double-counts (learned on the ETL),
-so each instalment is its own generation (`metadata.instalment=true`) and the
-delegation's cost is their sum — the same arithmetic as the JSONL mirror. A #1918
-cost correction (an UPDATE that moves spend parent→subagent) is exported as a
-zero-cost `cost_correction` **event** under the subagent span: daily totals are
-unaffected (the move sums to zero); per-observation attribution differs from api.db
-by exactly the amount the event shows.
 
 **Cross-agent links** (`links.go`): Langfuse has no cross-trace edge, so the two
 turns of a `send_to_session` exchange are joined by metadata. The tool
@@ -2496,9 +1989,8 @@ Live checks that the backend behaviours foci's accounting assumes still hold, so
 Versions: `NoteVersion` logs INFO for the first version of a backend a foci process sees and WARN for any version not seen before (`backend version CHANGED: claude-code 2.1.261 -> 2.1.280`). Every violation names the version. CC's comes from `system/init`'s `claude_code_version` (`OnSystem`); codex's from the `initialize` response's `userAgent` (`<client>/<version> (...)`, `noteInitializeVersion`). In memory only, so a change across a foci restart shows up as a first-seen INFO line.
 
 The checks:
-- **ccstream, first result vs the seeded resume baseline** (`checkFreshProcessUsage`, called from `OnResult` on the process's first priced result, `resultSeen`). The #2012 fix assumes a new process's counters start at exactly what `Start` seeded into `lastModelUsage` (`resumeBaselineFor`: empty for a fresh session, the transcript's last `cost-state` record for a `--resume`). So the summed cache read+write DELTA (ModelUsage minus that baseline, all models) must match what the process was seen doing: `max(accumulator main-thread, result.usage) + accumulator subagents`, from `turnUsageAcc.snapshot()` taken before `markResult`. It fires in both directions, with slack of 5,000 tokens and 25%: delta above the seen work (CC restored more than foci read; the unseeded #2012 probe is 45,769 against 23,003), and delta below it or negative. The below case has two causes and the report names both: CC restored less or stopped restoring (which `modelUsageDelta`'s per-field clamp would otherwise hide), or foci over-counted what it saw, as on 2026-09-27 when reactivation tails without the #2057 gate re-booked earlier runs after a CC relaunch (#2087). The report lists each subagent's cache traffic, largest first (`subagentShares`, at most 10), so a re-booked subagent stands out. Skipped once a `compact_boundary` has arrived. Fixtures in `ccstream/testdata/`: the probe's t1/t2 streams and both `cost-state` records.
-- **ccstream, ModelUsage monotonic within a process** (`modelUsageRegression`, in `OnResult`'s delta loop). A counter going down between two of one process's results is reported. The first result is compared against the seeded baseline by the check above instead. `modelUsageDelta` still treats that as a restart, as before.
-- **ccstream, per-message cache-write TTL split present** (`checkCacheWriteSplit`, in `noteAssistantUsage`). `cache_creation_input_tokens > 0` with no `cache_creation` means `splitFor` prices at 1h.
+- **ccstream, ModelUsage monotonic within a process** (`checkModelUsageMonotonic`, from `OnResult`). A counter going down between two of one process's results is reported: the ledger adapter's remainder is `modelUsage` less the process's baseline and its booked calls, so it is then unreliable. The first result of a process has nothing to compare with (`prevModelUsage` is cleared at `Start`). The #2013 fresh-process check (first result vs the seeded resume baseline) went with the CC ledger switch (#2115): it misfired on background subagents, and a wrong baseline now shows as a negative remainder (`invNegativeRemainder`) or an oversized one (P3's `invOverheadBounded`).
+- **ccstream, per-message cache-write TTL split present** (`checkCacheWriteSplit`, from `OnAssistant` for every message, a subagent's included). `cache_creation_input_tokens > 0` with no `cache_creation` means the call's writes are TTL-unknown, priced at 1h.
 - **codex, total grows by exactly last** (`totalGrowthMismatch`, via `checkTokenUsage` at the top of `onTokenUsage`). Per-thread history in `threadTotal`. The first notification on a thread, a total that goes down, and an exact repeat are not judged.
 - **codex, cached is a subset of input**: `last.totalTokens == input + output` and `cached <= input`. Skipped when `last` is all zero (codex emits zero-`last` context-estimate updates).
 

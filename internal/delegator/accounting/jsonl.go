@@ -39,9 +39,6 @@ type jsonlLine struct {
 	SessionFile string         `json:"session_file,omitempty"`
 	SessionLine int            `json:"session_line,omitempty"`
 	Detail      map[string]any `json:"detail,omitempty"`
-	// Instalment marks a line whose spend was folded into an earlier line's
-	// call in api.db (#1922). A line reader sums lines, so it stays right.
-	Instalment bool `json:"instalment,omitempty"`
 }
 
 // appendJSONL writes one booking to api.jsonl.
@@ -53,7 +50,7 @@ func appendJSONL(b Booking) {
 		Kind: b.Kind, Finality: b.Finality, ClassMethod: b.ClassMethod, CostBasis: b.basis(),
 		Tokens: nonZero(b.Tokens), CostUSD: b.CostUSD, ContextFill: b.Fill, Purpose: b.Purpose,
 		StopReason: b.StopReason, SessionFile: b.SessionFile, SessionLine: b.SessionLine,
-		Detail: b.Detail, Instalment: b.Instalment,
+		Detail: b.Detail,
 	})
 }
 

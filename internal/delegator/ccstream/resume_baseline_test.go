@@ -6,14 +6,16 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/modelinfo"
 )
 
 // #2012: since CC 2.1.280 a --resume restores the session's last persisted
 // usage totals into the NEW process, so its first result's modelUsage carries
-// the whole conversation's history. These pin the baseline foci seeds from the
-// same record CC restores.
+// the whole conversation's history. These pin the baseline the ledger adapter
+// measures its remainder from: the same record CC restores.
 
 // The real records from the 2026-09-24 probe (CC 2.1.280, haiku): t1 ran in
 // its own process and wrote costStateT1 on exit. t2 resumed it in a new
@@ -80,7 +82,8 @@ func TestResumeBaseline_NoRecordMeansZero(t *testing.T) {
 
 // startWithFakeClaude runs Backend.Start, the production path, against a
 // binary that exits at once. Only the launch-time seeding is under test.
-// seed is what the Backend held before, as if it had run an earlier process.
+// seed is the previous result the Backend held, as if it had run an earlier
+// process.
 func startWithFakeClaude(t *testing.T, workDir, resumeID string, seed map[string]ModelUsage) *Backend {
 	t.Helper()
 	be, err := newFromConfig(map[string]any{"binary": "/bin/true"})
@@ -88,7 +91,7 @@ func startWithFakeClaude(t *testing.T, workDir, resumeID string, seed map[string
 		t.Fatalf("newFromConfig: %v", err)
 	}
 	b := be.(*Backend)
-	b.lastModelUsage = seed
+	b.prevModelUsage = seed
 	if err := os.MkdirAll(workDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -101,9 +104,9 @@ func startWithFakeClaude(t *testing.T, workDir, resumeID string, seed map[string
 	return b
 }
 
-// TestStart_ResumeSeedsTheRestoredTotals is the #2012 regression. Without the
-// seed, t2's delta is the cumulative 36,457 cacheRead, which includes t1's
-// history. With it, the delta is t2's own 22,766.
+// TestStart_ResumeSeedsTheRestoredTotals is the #2012 regression: Start hands
+// the ledger adapter the totals CC restores (t1's cost-state record), so the
+// process's remainder is measured from them and t2 is not booked t1's history.
 func TestStart_ResumeSeedsTheRestoredTotals(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -116,56 +119,62 @@ func TestStart_ResumeSeedsTheRestoredTotals(t *testing.T) {
 
 	b := startWithFakeClaude(t, workDir, probeSID, nil)
 
-	b.mu.Lock()
-	d := b.modelUsageDelta("claude-haiku-4-5", resultT2)
-	b.mu.Unlock()
-	if d.CacheReadInputTokens != 22766 || d.CacheCreationInputTokens != 237 ||
-		d.OutputTokens != 33 || d.InputTokens != 10 {
-		t.Errorf("t2 delta = in %d cr %d cw %d out %d; want in 10 cr 22766 cw 237 out 33 (t2's own usage)",
-			d.InputTokens, d.CacheReadInputTokens, d.CacheCreationInputTokens, d.OutputTokens)
+	lg := b.ledger.Load()
+	if lg == nil {
+		t.Fatal("Start ran no ledger adapter")
 	}
-	if want := 0.0234297 - 0.0205041; math.Abs(d.CostUSD-want) > 1e-12 {
-		t.Errorf("t2 delta cost = %v, want %v", d.CostUSD, want)
+	got := lg.book.baseline["claude-haiku-4-5"]
+	if got.CacheReadInputTokens != 13691 || got.CacheCreationInputTokens != 9075 || got.OutputTokens != 195 ||
+		math.Abs(got.CostUSD-0.0205041) > 1e-12 {
+		t.Errorf("adapter baseline = %+v, want t1's cost-state (cr 13691 cw 9075 out 195 $0.0205041)", got)
 	}
 }
 
 // TestStart_FreshSessionStartsAtZero: a fresh session's counters start at zero
-// even on a Backend that previously held a resumed process's baseline.
+// even on a Backend that previously ran a process: the adapter's baseline is
+// empty, and the monotonic check has no previous result to compare with.
 func TestStart_FreshSessionStartsAtZero(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	b := startWithFakeClaude(t, filepath.Join(home, "work"), "",
 		map[string]ModelUsage{"claude-haiku-4-5": resultT2})
+	if lg := b.ledger.Load(); lg == nil || len(lg.book.baseline) != 0 {
+		t.Errorf("fresh Start: adapter %v, want one with an empty baseline", lg)
+	}
 	b.mu.Lock()
-	n := len(b.lastModelUsage)
+	n := len(b.prevModelUsage)
 	b.mu.Unlock()
 	if n != 0 {
-		t.Errorf("fresh Start left %d baseline model(s), want 0", n)
+		t.Errorf("fresh Start kept %d previous model(s), want 0", n)
 	}
 }
 
-// TestOnResult_ResumedForkPricesOnlyItsOwnWork uses the live incident's
-// figures: keepalive fork b346d0d4 of clutch's main session, whose transcript
-// ends with the cost-state it inherited from its parent and then the one its
-// own process wrote. Its first result is the second record. foci booked
-// 280,064,651 cacheRead (all three models' history) to the row. Real work was
+// TestResumedForkRemainderIsOnlyItsOwnWork uses the live incident's figures:
+// keepalive fork b346d0d4 of clutch's main session, whose transcript ends with
+// the cost-state it inherited from its parent and then the one its own process
+// wrote. Its first result is the second record. Before #2012 foci booked
+// 280,064,651 cacheRead (all three models' history) to the turn. Real work was
 // 186,683 cacheRead, 104,017 cacheWrite and 237 output, all on the opus model.
-func TestOnResult_ResumedForkPricesOnlyItsOwnWork(t *testing.T) {
-	t.Parallel()
-	b := &Backend{lastModelUsage: map[string]ModelUsage{
+func TestResumedForkRemainderIsOnlyItsOwnWork(t *testing.T) {
+	tb := newTestBook(t, map[string]ModelUsage{
 		"claude-opus-5":    {OutputTokens: 423621, CacheReadInputTokens: 142605367, CacheCreationInputTokens: 3312978, CostUSD: 57.0665704},
 		"claude-sonnet-5":  {OutputTokens: 579266, CacheReadInputTokens: 135985860, CacheCreationInputTokens: 2303142, CostUSD: 38.751947},
 		"claude-haiku-4-5": {OutputTokens: 44782, CacheReadInputTokens: 1286741, CacheCreationInputTokens: 114227, CostUSD: 3.99408275},
-	}}
-	got := onResultWith(b, map[string]ModelUsage{
+	})
+	tb.result(map[string]ModelUsage{
 		"claude-opus-5":    {OutputTokens: 423858, CacheReadInputTokens: 142792050, CacheCreationInputTokens: 3416995, CostUSD: 57.940799},
 		"claude-sonnet-5":  {OutputTokens: 579266, CacheReadInputTokens: 135985860, CacheCreationInputTokens: 2303142, CostUSD: 38.751947},
 		"claude-haiku-4-5": {OutputTokens: 44782, CacheReadInputTokens: 1286741, CacheCreationInputTokens: 114227, CostUSD: 3.99408275},
-	})
-	if got == nil || got.Usage == nil || got.Usage.Turn == nil {
-		t.Fatal("no turn counts")
+	}, 0, tb.clock)
+	tb.advance(ccLineBound + time.Millisecond)
+
+	calls := tb.calls(t)
+	if len(calls) != 1 || calls[0].model != "claude-opus-5" {
+		t.Fatalf("calls = %+v, want one remainder on claude-opus-5 and nothing for the untouched models", calls)
 	}
-	if tc := got.Usage.Turn; tc.CacheRead != 186683 || tc.CacheWrite != 104017 || tc.Output != 237 {
-		t.Errorf("turn = cr %d cw %d out %d; want cr 186683 cw 104017 out 237", tc.CacheRead, tc.CacheWrite, tc.Output)
+	tk := calls[0].tokens
+	cw := tk[modelinfo.ClassCacheWrite] + tk[modelinfo.ClassCacheWrite5m] + tk[modelinfo.ClassCacheWrite1h]
+	if tk[modelinfo.ClassCacheRead] != 186683 || cw != 104017 || tk[modelinfo.ClassOutput] != 237 {
+		t.Errorf("remainder = %v, want cr 186683 cw 104017 out 237", tk)
 	}
 }

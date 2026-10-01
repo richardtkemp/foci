@@ -51,6 +51,10 @@ type Backend struct {
 	agentID         string // foci agent ID
 	workDir         string // workspace directory
 
+	// ledgerID is the session and agent this backend's calls are booked
+	// under (ledger.go). Atomic: the watcher reads it holding its own lock.
+	ledgerID atomic.Pointer[ledgerID]
+
 	// sessionEvents holds the session-scoped delivery callbacks installed via
 	// AttachSessionEvents. Stored in atomic.Pointer so the watcher goroutine
 	// reads them lock-free; set once per session (idempotent re-attach), never

@@ -3,12 +3,9 @@ package ccstream
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
-	"time"
 
 	"foci/internal/delegator"
-	"foci/internal/modelinfo"
 	"foci/internal/ratelimit"
 	"foci/internal/timeutil"
 	"foci/internal/toolformat"
@@ -110,15 +107,13 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 	b.touchActivity()
 	isTopLevel := msg.ParentToolUseID == nil
 
-	// Before any filtering. Cache-write TTL accounting must see subagent
-	// messages too — they are the ones priced wrongly (#1866) — and every
-	// guard below this point drops messages for reasons that have nothing to
-	// do with what was billed.
-	b.noteAssistantUsage(msg)
+	// Before any filtering: every guard below this point drops messages for
+	// reasons that have nothing to do with what was billed.
+	b.checkCacheWriteSplit(msg)
 	// The stream names which main-thread calls this process made; their
 	// usage is booked from the main transcript (ccbook.go).
 	if isTopLevel {
-		b.shadow.Load().enqueue(ccEvent{kind: ccNamed, id: msg.Message.ID, turn: b.openTurnRowID()})
+		b.ledger.Load().enqueue(ccEvent{kind: ccNamed, id: msg.Message.ID, turn: b.openTurnRowID()})
 	}
 
 	// CC's synthetic "No response requested." placeholder is a no-API-call turn,
@@ -348,40 +343,6 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 	}
 }
 
-// logSubagentShares narrates, at DEBUG, what this result cycle decided about
-// subagent rows: each share handed on for a subagent_turn row, or why none was
-// (#1936). Without it, a subagent whose usage reached no row was visible only as
-// a pricing divergence, and one under the 3% tolerance was not visible at all.
-//
-// shares is the turn-so-far (sortedSubagentCosts of turnSubagents), which the
-// agent layer writes at turn end; seen is every agent with usage this turn.
-// An agent in seen but not in shares had usage that no row will carry.
-func (b *Backend) logSubagentShares(priced bool, shares []modelinfo.SubagentCost, seen map[string]turnUsage) {
-	if len(shares) == 0 && len(seen) == 0 {
-		return
-	}
-	if !priced {
-		b.logger().Debugf("subagent rows: NONE, result carried no modelUsage to price against (agents with usage=%d)", len(seen))
-		return
-	}
-	shared := make(map[string]bool, len(shares))
-	for _, sc := range shares {
-		shared[sc.AgentID] = true
-		b.logger().Debugf("subagent rows: share group=%s model=%s spawned_turn=%q out=%d cost=$%.6f",
-			sc.AgentID, sc.Model, sc.TurnID, sc.Counts.Output, sc.CostUSD)
-	}
-	ids := make([]string, 0, len(seen))
-	for id := range seen {
-		if !shared[id] {
-			ids = append(ids, id)
-		}
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		b.logger().Debugf("subagent rows: NONE for group=%s, usage seen this turn but no priced share", id)
-	}
-}
-
 // OnResult handles a result message. Under the idle-keyed lifecycle a result
 // is NOT the turn boundary — it is one internal ask cycle's accounting. CC
 // mints 0, 1 or N results per logical turn (a "now" steer aborts the current
@@ -390,13 +351,18 @@ func (b *Backend) logSubagentShares(priced bool, shares []modelinfo.SubagentCost
 // wins; output tokens accumulate across cycles) and the turn completes when
 // CC's session_state_changed:idle arrives — see onSessionIdle.
 //
+// Its cost is not computed here: every call is booked by the ledger adapter
+// (ccbook.go), to which the result hands CC's cumulative modelUsage as the
+// figure its remainder is measured against.
+//
 // Legacy fallback: when CC has emitted no session-state events this session
 // (env unset, older binary), complete on the result as the pre-idle design
 // did. See docs/WIRING.md → "Idle-keyed turn completion".
 func (b *Backend) OnResult(msg *ResultMessage) {
 	b.touchActivity()
 	b.dropUnregisteredShellCalls()
-	b.shadow.Load().enqueue(ccEvent{kind: ccResultEv, mu: msg.ModelUsage, running: b.agents.Pending()})
+	b.ledger.Load().enqueue(ccEvent{kind: ccResultEv, mu: msg.ModelUsage, running: b.agents.Pending()})
+	b.checkModelUsageMonotonic(msg.ModelUsage)
 
 	b.turnMu.Lock()
 	turnActive := b.turnActive
@@ -454,318 +420,22 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 
 	// Input/cache come from the last assistant message — the FINAL call's
 	// context fill, which compaction needs (not a sum of all calls). Fall back
-	// to the result's accumulated usage if no assistant messages were seen.
-	var turnUsage *delegator.TurnUsage
+	// to the result's own usage if no assistant messages were seen. These are
+	// display and sizing figures only: the turn's cost is the ledger's.
+	turnUsage := &delegator.TurnUsage{
+		InputTokens:              msg.Usage.InputTokens,
+		OutputTokens:             msg.Usage.OutputTokens,
+		CacheCreationInputTokens: msg.Usage.CacheCreationInputTokens,
+		CacheReadInputTokens:     msg.Usage.CacheReadInputTokens,
+	}
 	if lastUsage != nil {
-		turnUsage = &delegator.TurnUsage{
-			InputTokens:              lastUsage.InputTokens,
-			OutputTokens:             lastUsage.OutputTokens,
-			CacheCreationInputTokens: lastUsage.CacheCreationInputTokens,
-			CacheReadInputTokens:     lastUsage.CacheReadInputTokens,
-		}
-	} else {
-		turnUsage = &delegator.TurnUsage{
-			InputTokens:              msg.Usage.InputTokens,
-			OutputTokens:             msg.Usage.OutputTokens,
-			CacheCreationInputTokens: msg.Usage.CacheCreationInputTokens,
-			CacheReadInputTokens:     msg.Usage.CacheReadInputTokens,
-		}
-	}
-
-	// OUTPUT tokens must NOT be trusted from lastUsage: the last assistant
-	// message's usage in the live stream is an early/partial snapshot (often
-	// output_tokens≈1) that is never refreshed to the final count before this
-	// result arrives, so lastUsage.OutputTokens massively undercounts a
-	// substantive reply — a ~2000-token answer logged as output=4 (#721),
-	// undercounting api.db delegated-turn cost. The result's per-model
-	// accounting (msg.ModelUsage[resultModel]) is CC's authoritative end-of-turn
-	// total for the primary model — subagent models are separate keys, so they
-	// stay excluded from the primary's cost. On a key miss, fall back to the
-	// result's accumulated total (msg.Usage, all models). Apply as a floor so
-	// it can only correct an undercount, never regress a good value.
-	// EVERY ModelUsage counter is CUMULATIVE over the CC process, so this
-	// cycle's own figures come out by SUBTRACTION (#1674). Reading them raw was
-	// the over-count bug: each api.db row carried a running total, so summing
-	// rows inflated ~quadratically in turns-per-session (13x measured over
-	// 28 Jul - 4 Aug: $32,566 reported against ~$2,500 real).
-	mu, haveModelUsage := msg.ModelUsage[resultModel]
-	var usageDelta ModelUsage
-	var pricedSpanFrom time.Time
-
-	// EVERY model this result reports, deltas taken together under one lock and
-	// one `now` so they share a window edge (#1866 P3).
-	//
-	// The predecessor read ONE key — resultModel — and dropped every other
-	// model's spend entirely. Not an edge case: 73% of subagents run a
-	// different model from their parent and the delegate skill prescribes it. A
-	// measured turn charged $0.54 against a true $1.68, understating by 209%,
-	// and NOTHING reported it: the divergence check's two sides were BOTH
-	// accumulated from resultModel alone, so they agreed with each other while
-	// both omitted the same model (#1870).
-	//
-	// Sorted so the log and the arithmetic are deterministic across runs.
-	pricedModels := make([]string, 0, len(msg.ModelUsage))
-	for m := range msg.ModelUsage {
-		pricedModels = append(pricedModels, m)
-	}
-	sort.Strings(pricedModels)
-
-	deltas := make(map[string]ModelUsage, len(pricedModels))
-	// freshProcess: this is the process's first priced result, so its delta
-	// is measured from the baseline Start seeded (empty, or the cost-state
-	// record CC restores on --resume, #2012) rather than from a snapshot this
-	// process reported. baseCache is that baseline's cache traffic, captured
-	// before the loop below overwrites it. regressions collects counters that
-	// went down between two of THIS process's results, which modelUsageDelta
-	// silently reads as a restart; a first result falling below the seeded
-	// baseline is the fresh-process check's business, not this one's. Both are
-	// reported after the lock (#2013).
-	var freshProcess bool
-	var baseCache int
-	var regressions []string
-	if len(pricedModels) > 0 {
-		now := time.Now()
-		b.mu.Lock()
-		freshProcess = !b.resultSeen
-		b.resultSeen = true
-		if freshProcess {
-			baseCache = modelUsageCache(b.lastModelUsage)
-		}
-		for _, m := range pricedModels {
-			if prev, seen := b.lastModelUsage[m]; seen && !freshProcess {
-				if r := modelUsageRegression(prev, msg.ModelUsage[m]); r != "" {
-					regressions = append(regressions, m+": "+r)
-				}
-			}
-			at := b.pricedSpanStart(m, now)
-			deltas[m] = b.modelUsageDelta(m, msg.ModelUsage[m])
-			if m == resultModel {
-				pricedSpanFrom = at
-			}
-		}
-		b.mu.Unlock()
-	}
-	if len(regressions) > 0 {
-		b.violated(invModelUsageMonotonic, fmt.Sprintf(
-			"counters went DOWN within one CC process (%s); foci treats that as a restart and books the "+
-				"current value as this turn's whole usage, so per-turn figures are now unreliable",
-			strings.Join(regressions, "; ")))
-	}
-	if haveModelUsage {
-		usageDelta = deltas[resultModel]
-	}
-
-	authoritativeOutput := msg.Usage.OutputTokens
-	if haveModelUsage {
-		authoritativeOutput = usageDelta.OutputTokens
-	}
-	if authoritativeOutput > turnUsage.OutputTokens {
-		turnUsage.OutputTokens = authoritativeOutput
-	}
-
-	// Cost is OURS now (#1674). We price the per-turn token deltas from the
-	// modelinfo table rather than storing CC's figure, because CC's is
-	// cumulative and its scope is opaque, while token counts have unambiguous
-	// semantics. CC's raw (still cumulative) number is kept verbatim as
-	// ProvidedCostUSD — never authoritative, but it is what the divergence
-	// check below is priced against, and it is the forensic record if that
-	// check ever fires.
-	//
-	// Deliberately NOT priced from turnUsage's token fields: those are the
-	// FINAL call's context fill (what compaction needs), not turn totals, so
-	// pricing them would undercount a multi-call turn by roughly the call
-	// count.
-	if len(pricedModels) > 0 {
-		// The cache-write TTL split and the per-subagent shares, from the
-		// accumulator. Read under turnMu (which guards it) and BEFORE pricing,
-		// which takes no lock.
-		b.turnMu.Lock()
-		// Taken BEFORE markResult moves the baseline: on a fresh process the
-		// running totals are exactly what this process has been seen to do.
-		var seenSinceStart usageTotals
-		checkFresh := freshProcess && !b.compactSeen
-		if checkFresh {
-			seenSinceStart = b.turnUsageAcc.snapshot()
-		}
-		topObserved := b.turnUsageAcc.topWriteSplitByModel()
-		subDelta := b.turnUsageAcc.subagentDelta()
-		spawnedBy := b.turnUsageAcc.agentTurns()
-		// Drained, not read: a correction must be handed to the writer exactly
-		// once, and it describes rows that already exist rather than this
-		// turn's figures, so it takes no part in the pricing below.
-		corrections := b.turnUsageAcc.drainCorrections()
-		b.turnMu.Unlock()
-
-		now := time.Now()
-
-		// Subagent shares first. Each is priced from the accumulator's OWN
-		// figures — so its TTL coverage is exact by construction and splitFor
-		// returns the observed split verbatim — and is then TAKEN OUT of the
-		// authoritative per-model total, leaving the parent charged for its own
-		// work only (#1880 phase C, #1863).
-		//
-		// EXACT SUBTRACTION, NEVER A RATIO. The accumulator agrees with
-		// ModelUsage to the token on input, cache-read and cache-write
-		// (probe-verified 2026-09-10: 4=4, 30,673=30,673, 30,921=30,921), and
-		// since the background-tail fix every subagent's output comes from its
-		// transcript rather than the stream's never-revised placeholder. What
-		// ModelUsage holds that no stream line does — CC's own internal utility
-		// calls, 916 haiku input tokens on one probe turn — is not a subagent's,
-		// so leaving it on the parent is the right answer, not a residue.
-		subByModel := make(map[string]modelinfo.TokenCounts, len(subDelta))
-		cycleSubs := make(map[subKey]modelinfo.SubagentCost, len(subDelta))
-		var subPriced float64
-		for k, u := range subDelta {
-			c := modelinfo.TokenCounts{
-				Input:      u.Input,
-				Output:     u.Output,
-				CacheRead:  u.CacheRead,
-				CacheWrite: u.Write.total(),
-			}
-			cost := splitFor(u.Write, c.CacheWrite).price(
-				prefixedModel(k.Model), now, c.Input, c.Output, c.CacheRead)
-			subByModel[k.Model] = subByModel[k.Model].Add(c)
-			cycleSubs[k] = modelinfo.SubagentCost{
-				AgentID: k.Agent,
-				Model:   prefixedModel(k.Model),
-				// The turn that SPAWNED this agent, not the one closing now.
-				// They differ exactly when a background subagent outlives its
-				// parent — the case #1880 exists for.
-				TurnID:  spawnedBy[k.Agent],
-				Counts:  c,
-				CostUSD: cost,
-			}
-			subPriced += cost
-		}
-
-		// The subagent's side is priced at the SAME rates as the share it is
-		// moving, because it IS that share — spend that reached foci after the
-		// row which should have carried it was written (#1918). The parent's side
-		// is priced at the basis the parent was charged, which differs for
-		// cache writes (#1929).
-		cycleCorr := make([]modelinfo.CostCorrection, 0, len(corrections))
-		for ck, u := range corrections {
-			c := modelinfo.TokenCounts{
-				Input:      u.Input,
-				Output:     u.Output,
-				CacheRead:  u.CacheRead,
-				CacheWrite: u.Write.total(),
-			}
-			cycleCorr = append(cycleCorr, modelinfo.CostCorrection{
-				BilledAt:       ck.BilledAt,
-				SubagentTurnID: ck.Spawn,
-				AgentID:        ck.Agent,
-				Model:          prefixedModel(ck.Model),
-				Counts:         c,
-				CostUSD: splitFor(u.Write, c.CacheWrite).price(
-					prefixedModel(ck.Model), now, c.Input, c.Output, c.CacheRead),
-				// What the parent was charged for these same tokens ABOVE
-				// CostUSD. It absorbed the cache writes as an unobserved residue,
-				// which splitFor classes Unknown (1h rate) — not the 5m the
-				// subagent observed. Debiting at the subagent's basis alone left
-				// the difference stranded on a row that no longer held the tokens
-				// (#1929). Zero when the subagent genuinely wrote at 1h.
-				TTLSurchargeUSD: splitFor(u.Write, c.CacheWrite).ttlSurcharge(
-					prefixedModel(ck.Model), now),
-			})
-		}
-
-		var cyclePriced, cycleProvided float64
-		var cycleCounts, cycleParent modelinfo.TokenCounts
-		for _, m := range pricedModels {
-			d := deltas[m]
-			// Totals come from ModelUsage, which is authoritative and complete:
-			// probe-verified 2026-09-10 that the stream matches it EXACTLY for
-			// input, cache-read and cache-write, understates OUTPUT by ~89%
-			// (a placeholder that is never revised), and never carries CC's own
-			// internal utility calls at all — 916 input tokens on haiku in one
-			// probe turn, on no stream line anywhere. Sourcing totals from the
-			// accumulator would silently drop those.
-			//
-			// The accumulator supplies the one thing ModelUsage cannot: the TTL
-			// split, which the result merges into a single figure.
-			total := modelinfo.TokenCounts{
-				Input:      d.InputTokens,
-				Output:     d.OutputTokens,
-				CacheRead:  d.CacheReadInputTokens,
-				CacheWrite: d.CacheCreationInputTokens,
-
-				WebSearches: d.WebSearchRequests,
-			}
-			// The parent is the authoritative total minus what its subagents
-			// took. A class pinned at zero means the subagent bucket counted
-			// something ModelUsage does not, which is worth saying out loud:
-			// the turn is then priced ABOVE the authoritative total and the
-			// divergence check is about to fire for a reason this line explains.
-			parent, ok := total.SubClamped(subByModel[m])
-			if !ok {
-				b.logger().Warnf("subagent share exceeds ModelUsage for %s: total=%+v sub=%+v — parent clamped at zero (#1880)",
-					m, total, subByModel[m])
-			}
-			// The parent's OWN observed TTL split, not the combined one: the
-			// subagents' writes have already been priced and subtracted, so
-			// handing their (5m) split to the parent would charge those tokens
-			// at the 5m rate twice and leave the parent's real writes unsplit.
-			w := splitFor(topObserved[m], parent.CacheWrite)
-			cyclePriced += w.price(prefixedModel(m), now, parent.Input, parent.Output, parent.CacheRead)
-			// Web search is billed per CALL, so no token class carries it
-			// (#1913). Every search stays on the parent: the subagent shares
-			// come from the stream, which never reports one, so there is
-			// nothing to attribute them by — the same position as CC's own
-			// utility calls above.
-			search, priced := modelinfo.CostAsOf(prefixedModel(m), now,
-				modelinfo.Tokens{modelinfo.ClassWebSearch: parent.WebSearches})
-			if !priced {
-				b.logger().Warnf("%d web search(es) on %s have no per-call rate in modelinfo — priced at $0, so this turn reads low (#1913)",
-					parent.WebSearches, m)
-			}
-			cyclePriced += search
-			cycleProvided += d.CostUSD
-			cycleCounts = cycleCounts.Add(total)
-			cycleParent = cycleParent.Add(parent)
-		}
-
-		if haveModelUsage {
-			provided := mu.CostUSD
-			turnUsage.ProvidedCostUSD = &provided
-		}
-
-		b.turnMu.Lock()
-		// turnCalcCostUSD and turnCalc stay the WHOLE turn — parent plus every
-		// subagent. They back the divergence check, whose other side is CC's
-		// cost for everything the process did, and the breakdown line, which
-		// describes the turn a reader asked about. Splitting them here would
-		// make the check fire on every turn that ran a subagent.
-		//
-		// Cross-model on BOTH sides, or the check fires on every multi-model
-		// turn for a discrepancy that is really just the two sides measuring
-		// different sets of models (#1870).
-		b.turnCalcCostUSD += cyclePriced + subPriced
-		b.turnProvidedUSD += cycleProvided
-		b.turnCalc = b.turnCalc.Add(cycleCounts)
-		// The parent figures are what the parent ROW carries, so that
-		// row + its subagent rows reconstruct the turn exactly once each.
-		b.turnParentCostUSD += cyclePriced
-		b.turnParentCalc = b.turnParentCalc.Add(cycleParent)
-		if b.turnSubagents == nil {
-			b.turnSubagents = make(map[subKey]modelinfo.SubagentCost, len(cycleSubs))
-		}
-		for k, sc := range cycleSubs {
-			e, seen := b.turnSubagents[k]
-			if !seen {
-				e = modelinfo.SubagentCost{AgentID: sc.AgentID, Model: sc.Model, TurnID: sc.TurnID}
-			}
-			e.Counts = e.Counts.Add(sc.Counts)
-			e.CostUSD += sc.CostUSD
-			b.turnSubagents[k] = e
-		}
-		b.turnCorrections = append(b.turnCorrections, cycleCorr...)
-		b.turnProvidedSeen = true
-		b.turnMu.Unlock()
-
-		if checkFresh {
-			b.checkFreshProcessUsage(msg, baseCache, seenSinceStart)
-		}
+		turnUsage.InputTokens = lastUsage.InputTokens
+		turnUsage.CacheCreationInputTokens = lastUsage.CacheCreationInputTokens
+		turnUsage.CacheReadInputTokens = lastUsage.CacheReadInputTokens
+		// Output is the run's own total (result.usage, this ask cycle's main
+		// loop) unless the last message reports more: the stream's last
+		// message carries an early placeholder, never revised (#721).
+		turnUsage.OutputTokens = max(lastUsage.OutputTokens, msg.Usage.OutputTokens)
 	}
 
 	result := &delegator.TurnResult{
@@ -775,78 +445,21 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		Usage:     turnUsage,
 	}
 
-	// Stash this cycle's result; the turn total for output tokens is the sum
-	// across cycles (each cycle's figure is now a DELTA — see #1674 above; the
-	// note that once stood here calling the raw result usage "per-ask-cycle,
-	// probe-verified" was wrong, and summing the cumulative values it described
-	// is what produced the over-count), while text (turnText spans the whole
-	// turn), tool count, model and input/cache (the FINAL cycle's context fill
-	// — what compaction needs) are latest-wins. A fresh result also satisfies
-	// any pre-answer re-dispatch that was holding the turn open at idle.
+	// Stash this cycle's result; the turn's output is the sum across cycles,
+	// while text (turnText spans the whole turn), tool count, model and
+	// input/cache (the FINAL cycle's context fill — what compaction needs) are
+	// latest-wins. A fresh result also satisfies any pre-answer re-dispatch
+	// that was holding the turn open at idle.
 	b.turnMu.Lock()
 	b.turnCalls++
 	cycle := b.turnCalls
 	b.turnOutputTokens += result.Usage.OutputTokens
 	result.Usage.OutputTokens = b.turnOutputTokens
-	checkCost := b.turnProvidedSeen
-	calcSoFar, providedSoFar := b.turnCalcCostUSD, b.turnProvidedUSD
-	parentSoFar, parentCounts := b.turnParentCostUSD, b.turnParentCalc
-	turnSubs := sortedSubagentCosts(b.turnSubagents)
-	turnCorr := append([]modelinfo.CostCorrection(nil), b.turnCorrections...)
-	cycles := b.turnCalls
-	bd := costBreakdown{
-		model:     prefixedModel(resultModel),
-		cycles:    cycles,
-		msgs:      b.turnUsageAcc.messages(),
-		counts:    b.turnCalc,
-		turnDur:   turnElapsed(b.turnStartedAt),
-		pricedDur: turnElapsed(pricedSpanFrom),
-		writeTop:  b.turnUsageAcc.writeSplit(false),
-		writeSub:  b.turnUsageAcc.writeSplit(true),
-		models:    b.turnUsageAcc.models(),
-		subagents: b.turnUsageAcc.subagentUsage(),
-	}
-	// Move the accumulator's result baseline in step with modelUsageDelta's
-	// snapshot above, so the next turn measures from the same point pricing
-	// does. AFTER the breakdown, which reads the CURRENT turn's delta.
-	//
-	// Under turnMu because the accumulator is turnMu-guarded, not b.mu-guarded
-	// like lastModelUsage — the two baselines describe one window but are
-	// protected by different locks, so they cannot be marked together.
-	b.turnUsageAcc.markResult(time.Now())
-	if checkCost {
-		// The PARENT's cost and counts, not the turn's: since #1880 phase C a
-		// turn with subagents writes one row per subagent beside this one, and
-		// each figure must be emitted exactly once or the session total
-		// double-counts. calc + every Subagents[i].CostUSD == the turn total
-		// (b.turnCalcCostUSD), which is what the divergence check sees.
-		//
-		// The counts are carried so the row that persists them can be re-priced
-		// back to its cost (#1854) — an identity that now holds per ROW, which
-		// is why the parent's counts have to be parent-only too. Gated with the
-		// cost: without a ModelUsage delta there is nothing summed, and NULL
-		// beats a zero.
-		calc := parentSoFar
-		result.Usage.CalculatedCostUSD = &calc
-		turn := parentCounts
-		result.Usage.Turn = &turn
-		result.Usage.Subagents = turnSubs
-		result.Usage.Corrections = turnCorr
-	}
 	b.stashedResult = result
 	b.stashedResultMsg = msg
 	b.redispatchInFlight = false
 	stateSeen := b.stateEventsSeen
 	b.turnMu.Unlock()
-
-	// Emitted OUTSIDE turnMu: this is the live indicator that our pricing table
-	// still matches the provider's, so it must not be able to stall the turn
-	// path it is reporting on.
-	if checkCost {
-		b.costCheck.Check(result.Model, calcSoFar, providedSoFar, bd.String, b.logger().Warnf)
-	}
-
-	b.logSubagentShares(checkCost, turnSubs, bd.subagents)
 
 	b.logger().Debugf("OnResult: stashed ask-cycle result (turn_active=%v cycle=%d textlen=%d out_total=%d)",
 		turnActive, cycle, len(text), result.Usage.OutputTokens)
@@ -908,9 +521,9 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 			return
 		}
 		// A fresh session's transcript starts with this process.
-		if sh := b.shadow.Load(); sh != nil {
+		if lg := b.ledger.Load(); lg != nil {
 			if path, err := ccTranscriptPath(b.workDir, init.SessionID); err == nil {
-				sh.startMainTail(path, 0)
+				lg.startMainTail(path, 0)
 			}
 		}
 		b.mu.Lock()
@@ -958,12 +571,11 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		if b.onCompactionDone != nil {
 			b.onCompactionDone(cb.CompactMetadata.PreTokens)
 		}
-		b.shadow.Load().enqueue(ccEvent{kind: ccBoundaryEv, turn: b.openTurnRowID()})
+		b.ledger.Load().enqueue(ccEvent{kind: ccBoundaryEv, turn: b.openTurnRowID()})
 		// Resolve any armed compaction waiter with success. This also makes
 		// the following idle's abort check (signalCompactionAbort) a no-op —
 		// see resolveCompactionWait.
 		b.turnMu.Lock()
-		b.compactSeen = true
 		b.resolveCompactionWait(nil)
 		b.turnMu.Unlock()
 
@@ -1031,7 +643,7 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 			// runs collapse into one continuous view.
 			//
 			// A nested (depth >= 2) subagent gets neither (#1554). Its tail below
-			// still runs, for its usage. Without this, onTaskStarted would find no
+			// still runs, for its calls. Without this, onTaskStarted would find no
 			// label stash and rehydrate it from the meta sidecar as a spurious
 			// "reactivation" chit whenever the sidecar was already on disk.
 			//
@@ -1043,22 +655,16 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 			// instead, the same one its task_notification finalizes. Only a task
 			// neither branch identifies keeps the raw id, as it did before.
 			//
-			// A reactivation also gates the tail's ACCOUNTING to its own run
-			// (#2057): the tail reads from byte 0, and in a new Backend the
-			// accumulator no longer knows run 1 was booked. That is after a foci
-			// restart, and equally after a CC process relaunch inside a running
-			// foci (compaction close + --resume, idle close, crash respawn), which
-			// also builds a new Backend (#2087). reactivatedAt stays zero for run 1
-			// and for a nested task, whose runs are not tracked.
+			// A reactivation's tail reads from byte 0; the ledger adapter books
+			// each call once, and none billed before this process launched, so
+			// the earlier runs are not booked again (#2057, #2087).
 			tailKey := task.ToolUseID
-			var reactivatedAt time.Time
 			nestedKey, nested := b.nestedTask(task.TaskID, task.ToolUseID)
 			if nested {
 				tailKey = nestedKey
 				b.logger().Infof("subagent_start suppressed=nested group=%s task_id=%s", nestedKey, task.TaskID)
 			} else if run, reactivated, prompt := b.onTaskStarted(task.TaskID, task.ToolUseID); reactivated {
 				tailKey = run.groupKey
-				reactivatedAt = time.Now()
 				b.agents.Add(run.groupKey, run.label)
 				// Unconditional start, but still recorded: a run rehydrated after a
 				// restart has no run-1 mark, and without one its end would be
@@ -1123,7 +729,7 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 				}
 				b.logger().Debugf("subagent tail: starting for group=%s task_id=%s tool_use_id=%s path=%s",
 					tailKey, task.TaskID, task.ToolUseID, path)
-				b.subagentTails().maybeStart(tailKey, path, reactivatedAt)
+				b.subagentTails().maybeStart(tailKey, path)
 			}
 		case "task_notification":
 			if !isTerminalTaskStatus(task.Status) {

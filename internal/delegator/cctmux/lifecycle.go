@@ -23,6 +23,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	defer b.mu.Unlock()
 
 	b.agentID = opts.AgentID
+	b.ledgerID.Store(&ledgerID{session: opts.SessionKey, agentID: opts.AgentID})
 	b.workDir = opts.WorkDir
 
 	label := opts.Label

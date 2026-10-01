@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"foci/internal/modelinfo"
 )
 
 // msgWithStop is one transcript record carrying usage and a stop_reason.
@@ -47,22 +49,22 @@ func TestSubagentTail_WaitsForTheTerminalRecordWrittenByAnotherProcess(t *testin
 	var mu sync.Mutex
 	var terminalSeen bool
 	var totalWrites int
-	mgr := newSubagentTailManager(nil, func(_, _, id string, _ time.Time, complete bool, u TokenUsage) {
+	mgr := onLedgerLine(newSubagentTailManager(nil, nil), func(_ string, l *ccLine) {
 		mu.Lock()
 		defer mu.Unlock()
-		if complete {
-			totalWrites += u.CacheCreationInputTokens
-			if id == "m-final" {
+		if l.complete {
+			totalWrites += ReportClasses(l.tokens)[modelinfo.ClassCacheWrite]
+			if l.id == "m-final" {
 				terminalSeen = true
 			}
 		}
-	}, nil)
+	})
 
 	// Message 1: stop_reason "tool_use" — the run continues after this.
 	if err := os.WriteFile(path, []byte(msgWithStop("m-1", "tool_use", 95, 10630)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mgr.maybeStart("tool-term", path, time.Time{})
+	mgr.maybeStart("tool-term", path)
 	waitFor(t, func() bool { return fileOpened(mgr, "tool-term") })
 
 	// A REAL separate process appends the terminal record shortly AFTER we ask
@@ -151,13 +153,13 @@ func TestSubagentTail_AnEarlierEndTurnDoesNotEndTheTail(t *testing.T) {
 
 			var mu sync.Mutex
 			finalSeen := false
-			mgr := newSubagentTailManager(nil, func(_, _, id string, _ time.Time, complete bool, _ TokenUsage) {
+			mgr := onLedgerLine(newSubagentTailManager(nil, nil), func(_ string, l *ccLine) {
 				mu.Lock()
 				defer mu.Unlock()
-				if complete && id == "m-final" {
+				if l.complete && l.id == "m-final" {
 					finalSeen = true
 				}
-			}, nil)
+			})
 
 			var hist []byte
 			for _, l := range tc.history {
@@ -166,7 +168,7 @@ func TestSubagentTail_AnEarlierEndTurnDoesNotEndTheTail(t *testing.T) {
 			if err := os.WriteFile(path, hist, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			mgr.maybeStart("tool-sticky", path, time.Time{})
+			mgr.maybeStart("tool-sticky", path)
 			waitForLines(t, mgr, "tool-sticky", int64(len(tc.history)))
 
 			done := make(chan struct{})
@@ -208,8 +210,8 @@ func TestSubagentTail_EndsPromptlyWhenTheFileIsAlreadyAtRest(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mgr := newSubagentTailManager(nil, nil, nil)
-	mgr.maybeStart("tool-rest", path, time.Time{})
+	mgr := newSubagentTailManager(nil, nil)
+	mgr.maybeStart("tool-rest", path)
 	waitForLines(t, mgr, "tool-rest", 6)
 
 	done := make(chan struct{})

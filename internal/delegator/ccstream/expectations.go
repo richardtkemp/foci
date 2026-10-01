@@ -2,7 +2,8 @@ package ccstream
 
 import (
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 
 	"foci/internal/delegator"
@@ -10,40 +11,23 @@ import (
 
 // Live checks on the Claude Code behaviours foci's cost accounting rests on
 // (#2013). See delegator/expectations.go for delivery and rate limiting; this
-// file holds only the CC-specific predicates and the measurements they need.
+// file holds only the CC-specific predicates. The ledger adapter (ccbook.go)
+// raises its own alarms on what it books; these watch CC's inputs to it.
 
 // expectBackend names this backend in violation reports and version lines.
 const expectBackend = "claude-code"
 
 // Invariant names. They are the rate-limit keys, so keep them stable.
 const (
-	// A CC process's first ModelUsage, minus the baseline Start seeded for it,
-	// covers exactly that process's work. modelUsageDelta prices the first
-	// result from that baseline, which #2012's fix reads from the last
-	// cost-state record in the transcript on the assumption that CC restores
-	// exactly that record on --resume (and nothing on a fresh session). CC
-	// 2.1.280 began restoring; an empty baseline then booked the whole
-	// conversation to one turn. If CC stops restoring, or restores something
-	// other than the record foci read, the first turn is again mispriced.
-	invFreshProcessUsage = "first ModelUsage minus the seeded resume baseline covers only this process"
-	// ModelUsage counters never go DOWN within one CC process (#1674). A drop
-	// means CC is no longer reporting a per-process running sum, and every
-	// delta modelUsageDelta takes is then wrong.
+	// ModelUsage counters never go DOWN within one CC process (#1674). The
+	// adapter's remainder is modelUsage less the process's baseline and its
+	// booked calls; a drop means CC is no longer reporting a per-process
+	// running sum, and the remainder is then wrong.
 	invModelUsageMonotonic = "ModelUsage is cumulative within a process"
-	// A per-message usage with cache writes carries the per-TTL split. Without
-	// it splitFor prices every write at the 1h rate (#1866).
+	// A per-message usage with cache writes carries the per-TTL split.
+	// Without it the call's writes are TTL-unknown, priced at the 1h rate
+	// (#1866).
 	invCacheWriteSplit = "per-message usage carries the cache-write TTL split"
-)
-
-// The fresh-process check allows for what legitimately differs between
-// ModelUsage and the stream: CC's internal utility calls (916 input tokens on
-// one probe turn) and a subagent line whose delivery lagged the result. Both
-// are small against a restore gone wrong, which is off by the conversation's
-// history: even one restored turn re-reads the system prompt, ~13k tokens on
-// the probe, and the production cases ran to 280M.
-const (
-	freshUsageSlackTokens   = 5000
-	freshUsageSlackFraction = 0.25
 )
 
 // expectations returns the guard this Backend reports to.
@@ -68,122 +52,31 @@ func (b *Backend) violated(invariant, detail string) {
 	b.expectations().Violated(b.logger(), expectBackend, b.backendVersion(), invariant, detail)
 }
 
-// cacheTokens is the input-side cache traffic a usage record carries. Cache
-// reads and writes are what a restored conversation shifts; plain input is left
-// out because CC's utility calls land there and on no stream line.
-func cacheTokens(read, write int) int { return read + write }
-
-// modelUsageCache sums cacheTokens over every model in a ModelUsage map.
-func modelUsageCache(mu map[string]ModelUsage) int {
-	n := 0
-	for _, u := range mu {
-		n += cacheTokens(u.CacheReadInputTokens, u.CacheCreationInputTokens)
-	}
-	return n
-}
-
-// checkFreshProcessUsage runs on the FIRST result of a CC process that carries
-// ModelUsage, the one result modelUsageDelta measures from the baseline Start
-// seeded rather than from a snapshot this process reported. baseCache is that
-// baseline's cache traffic (0 for a fresh session).
-//
-// The delta (ModelUsage minus the baseline, summed over every model) must match
-// what this process was seen doing: the stream accumulator's totals since it
-// started (main thread plus every completed subagent message), or result.usage
-// for the main thread if that is larger. Probe-verified 2026-09-10 that the
-// stream matches ModelUsage exactly for cache reads and writes.
-//
-// It fires in both directions:
-//   - the delta EXCEEDS the seen work: CC restored more than the record foci
-//     read (or restores where foci expected a fresh start). This is #2012
-//     itself if the baseline is missing: the probe's resumed turn reported
-//     45,769 against 23,003 seen.
-//   - the delta FALLS SHORT of the seen work, down to negative: CC restored
-//     less than the record foci read, or stopped restoring at all (the
-//     per-field clamp in modelUsageDelta would then hide a negative delta),
-//     OR foci counted more than the process did. The second cause is real:
-//     on 2026-09-27 (#2087) a binary without #2057's gate re-booked six
-//     reactivated subagents' earlier runs after a CC relaunch, 15.2M cache
-//     tokens against a correct baseline. The detail therefore names both
-//     causes and lists each subagent's share, which is where re-booked runs
-//     show up.
-//
-// Summed across models rather than per model, because the question is whether
-// the baseline matches what CC restored, not how CC splits a turn by model.
-func (b *Backend) checkFreshProcessUsage(msg *ResultMessage, baseCache int, observed usageTotals) {
-	reported := modelUsageCache(msg.ModelUsage)
-	top, sub := 0, 0
-	for _, u := range observed.top {
-		top += cacheTokens(u.CacheRead, u.Write.total())
-	}
-	for _, u := range observed.sub {
-		sub += cacheTokens(u.CacheRead, u.Write.total())
-	}
-	main := max(top, cacheTokens(msg.Usage.CacheReadInputTokens, msg.Usage.CacheCreationInputTokens))
-	seen := main + sub
-	delta := reported - baseCache
-	gap := delta - seen
-	mag := gap
-	if mag < 0 {
-		mag = -mag
-	}
-	if mag <= freshUsageSlackTokens || float64(mag) <= freshUsageSlackFraction*float64(seen) {
+// checkModelUsageMonotonic compares a result's modelUsage with this process's
+// previous one, and reports every counter that went down. The first result of
+// a process has nothing to compare with: what CC restored on --resume is the
+// adapter's baseline, not a result of this process.
+func (b *Backend) checkModelUsageMonotonic(mu map[string]ModelUsage) {
+	if len(mu) == 0 {
 		return
 	}
-	var what string
-	if gap > 0 {
-		what = fmt.Sprintf("%d MORE than was seen: CC restored more than the baseline foci read, so this turn is overcharged by roughly that much", gap)
-	} else {
-		what = fmt.Sprintf("%d LESS than was seen. Either foci over-counted this process's work "+
-			"(for example a subagent tail that booked a reactivated subagent's earlier runs again, #2057/#2087), "+
-			"so the subagent rows are overcharged and the parent may be clamped at zero, "+
-			"or CC restored less than the baseline foci read (or stopped restoring), so this turn's delta is wrong. "+
-			"A subagent share far above its run's real work points at the first", -gap)
-	}
-	b.violated(invFreshProcessUsage, fmt.Sprintf(
-		"first result of this process reports %d cache tokens in ModelUsage against a seeded baseline of %d, "+
-			"a delta of %d; the process was seen doing %d (main thread %d, subagents %d%s). That is %s (session %s)",
-		reported, baseCache, delta, seen, main, sub, subagentShares(observed.sub), what, msg.SessionID))
-}
-
-// maxListedShares bounds the per-subagent list in a fresh-process report.
-const maxListedShares = 10
-
-// subagentShares lists each subagent's cache traffic, largest first, as
-// ": group=tokens, ..." for the fresh-process report, or "" when there is none.
-// Models are summed per subagent: the question it answers is which subagent
-// carried the excess.
-func subagentShares(sub map[subKey]turnUsage) string {
-	per := make(map[string]int, len(sub))
-	for k, u := range sub {
-		per[k.Agent] += cacheTokens(u.CacheRead, u.Write.total())
-	}
-	if len(per) == 0 {
-		return ""
-	}
-	agents := make([]string, 0, len(per))
-	for a := range per {
-		agents = append(agents, a)
-	}
-	sort.Slice(agents, func(i, j int) bool {
-		if per[agents[i]] != per[agents[j]] {
-			return per[agents[i]] > per[agents[j]]
+	b.mu.Lock()
+	prev := b.prevModelUsage
+	b.prevModelUsage = maps.Clone(mu)
+	b.mu.Unlock()
+	var regressions []string
+	for _, m := range slices.Sorted(maps.Keys(mu)) {
+		if p, seen := prev[m]; seen {
+			if r := modelUsageRegression(p, mu[m]); r != "" {
+				regressions = append(regressions, m+": "+r)
+			}
 		}
-		return agents[i] < agents[j]
-	})
-	parts := make([]string, 0, min(len(agents), maxListedShares)+1)
-	for i, a := range agents {
-		if i == maxListedShares {
-			parts = append(parts, fmt.Sprintf("%d more", len(agents)-maxListedShares))
-			break
-		}
-		name := a
-		if name == "" {
-			name = "(unnamed)"
-		}
-		parts = append(parts, fmt.Sprintf("%s=%d", name, per[a]))
 	}
-	return ": " + strings.Join(parts, ", ")
+	if len(regressions) > 0 {
+		b.violated(invModelUsageMonotonic, fmt.Sprintf(
+			"counters went DOWN within one CC process (%s); the ledger's remainder for this process is now unreliable",
+			strings.Join(regressions, "; ")))
+	}
 }
 
 // modelUsageRegression names every ModelUsage counter that went DOWN from prev

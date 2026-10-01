@@ -25,32 +25,21 @@ codex/opencode row, the final cycle's context fill; `detail.turn_totals` says wh
 `legacy_*` columns are its final-cycle context fill. One legacy call = one turn (or one subagent share);
 a direct-API call is one API call.
 
-**Counting mispriced turns: query the table, not the log.** The `cost divergence` WARN is a sampler —
-four gates, including **one warning per model per 10 min** (plus a 3% tolerance and a $0.01 floor), so
-log lines undercount by an unknown factor. Get the backend's per-turn figure by differencing the
-cumulative report per session (`LAG(cost_usd) OVER (PARTITION BY session ORDER BY at)` over
-`backend_reports WHERE backend='ccstream'`). **A reset is
-NOT always a drop:** a restarted CC process can open ABOVE the old one's last figure, so nothing falls
-and the difference silently spans the boundary — one such row inverted a 27-turn mean. Treat any row
-adjacent to a foci restart as unmeasured. **Control every run:** single-turn branch sessions
-(`session LIKE '%/b%'`, no predecessor) must equal the call's recorded cost exactly.
+**Checking Claude Code's price against CC's own figure: per PROCESS, with the CLI.** CC's figure
+is cumulative per CC process, and every process is its own `backend_reports` scope
+(`scope_key = <session>@<launch nanos>`): the totals it restored at launch, then each result. Its own
+cost is a DIFFERENCE of two of its reports, and the calls it covers carry `detail.scope`. Do not
+difference by session (`LAG(cost_usd) OVER (PARTITION BY session …)`, the pre-ledger recipe, #1940):
+a restarted process can open ABOVE the old one's last figure, and the difference silently spans the
+boundary. Do not compare the latest report with all calls booked so far either: a running subagent or
+an unsettled remainder makes that look like a gap. `foci-gw ledger-shadow -live ~/data/api.db -shadow
+~/data/api.db -since <time>` does it properly — read its "CC processes" section and FLAGS (pointed at one
+ledger, its per-turn and total sections only compare the ledger with itself). The live alarm is #2111 P3.
 
-## A `cost divergence` WARN: decompose it, don't theorise
-
-The WARN carries every field needed to attribute the gap. Unpriced-TTL residue is the usual culprit — Unknown prices at the 1h rate:
-
-    Unknown = cache_write - ttl_1h - ttl_5m         # all three are in the WARN
-    gap =~ Unknown x (rate_1h - rate_5m)            # opus-5: 10.00 - 6.25 $/M
-
-Match to a few microdollars and the cause is settled. Cross-check against the subagent's own transcript, which is the authority:
-
-    ~/.claude/projects/<slug>/<parent-session-uuid>/subagents/agent-<id>.jsonl
-    jq -r 'select(.message.stop_reason != null)
-           | .message.usage.cache_creation_input_tokens' FILE
-
-Its completed-message cache-write total equals Unknown exactly. Two matching numbers from unrelated artifacts is a diagnosis; one is a coincidence.
-
-Zero subagent shares (`json_extract(detail,'$.v1_call_type')='subagent_turn'`) means the correction path was never REACHED — missing `cost correction applied` lines then say nothing about whether that code works.
+**A remainder row is CC's spend no call record holds** (`kind` overhead or compaction,
+`finality='derived'`): utility calls, a subagent's real output when its transcript has no final line,
+compactions. A turn-less remainder costing more than its process's largest call is flagged by the CLI:
+look for a transcript the adapter never read before calling it overhead.
 
 ## An unexpected model in the cost table
 

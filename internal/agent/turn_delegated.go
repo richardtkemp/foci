@@ -10,7 +10,6 @@ import (
 	"foci/internal/delegator/accounting"
 	"foci/internal/log"
 	"foci/internal/provider"
-	"foci/internal/session"
 )
 
 // systemInjectRetryInterval bounds each WaitForTurn cycle in RunInference's
@@ -587,7 +586,7 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 		PostToolNudgeFunc:  postToolNudgeFunc,
 		PreAnswerNudgeFunc: preAnswerNudgeFunc,
 	}
-	// A backend that books its own calls names this turn on each of them, so
+	// The backend books its own calls and names this turn on each of them, so
 	// the turn's facts must be in the ledger before the first can complete.
 	if lb, ok := be.(delegator.LedgerBooker); ok {
 		a.recordDelegatedTurn(ts, lb, false)
@@ -610,11 +609,6 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 						OutputTokens:             result.Usage.OutputTokens,
 						CacheCreationInputTokens: result.Usage.CacheCreationInputTokens,
 						CacheReadInputTokens:     result.Usage.CacheReadInputTokens,
-						ProvidedCostUSD:          result.Usage.ProvidedCostUSD,
-						CalculatedCostUSD:        result.Usage.CalculatedCostUSD,
-						Turn:                     result.Usage.Turn,
-						Subagents:                result.Usage.Subagents,
-						Corrections:              result.Usage.Corrections,
 					}
 				}
 			}
@@ -711,126 +705,23 @@ func (t *DelegatedTransport) UpdateSessionMeta(ts *TurnState) {
 	ts.SessionMeta.modelUserSet = false
 }
 
-// LogUsage books a delegated turn's usage in the cost ledger. The delegated
-// backends have not switched to per-call booking yet (#2111 P2), so a turn is
-// booked as it always was — one parent row plus one row per subagent share —
-// as LEGACY calls (accounting/legacylive.go), priced by the backend's own
-// turn-level path. A pre-answer re-dispatch folds into the parent row exactly
-// like a steer: the backend keeps accumulating output/cost/Turn across the
-// rounds, and input/cache stay the final cycle's fill (#1856).
-//
-// FinalCost is set to the whole turn's figure (parent plus subagent shares)
-// for the TurnComplete sink event.
+// LogUsage closes a delegated turn in the cost ledger. Every delegated backend
+// books its own calls there as each one's usage is final (#2111 P2,
+// delegator.LedgerBooker), so the turn records only its end, and FinalCost (the
+// sink header's figure) is the ledger's price of the turn.
 //
 // Self-invoked from the post-turn path after FinalUsage is populated.
 func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 	if ts.FinalUsage == nil {
 		return
 	}
-	a := t.agent
-	if lb, ok := ts.Backend.(delegator.LedgerBooker); ok {
-		a.closeLedgerTurn(ts, lb)
+	lb, ok := ts.Backend.(delegator.LedgerBooker)
+	if !ok {
+		t.agent.logger().Errorf("session=%s backend %T does not book its calls in the cost ledger: this turn's spend is not recorded",
+			ts.SessionKey, ts.Backend)
 		return
 	}
-	model := ts.FinalModel
-	if model == "" {
-		model = ts.TurnModel
-	}
-	u := ts.FinalUsage
-
-	// Use cached path — SessionFilePath() takes b.mu which may be held
-	// by ensureWatcher when this is called from the OnTurnComplete callback.
-	sessionFile := ts.sessionFilePath
-
-	// The AGENT this turn belongs to, on every row (#1946) — including a
-	// subagent share, where it names the OWNING agent, not the subagent.
-	agentID := session.AgentIDFromKey(ts.SessionKey)
-	var backend string
-	if a.DelegatedManager != nil {
-		backend = accounting.DelegatorBackend(a.DelegatedManager.BackendType)
-	}
-	ledger := accounting.Live()
-
-	// turnCost (ts.FinalCost) is the in-memory display figure for the
-	// sink/header. Prefer the backend-supplied CALCULATED cost — foci's own
-	// priced figure — and fall back to a live estimate at today's price when
-	// the backend gave none. The backend's PROVIDED cost is never used here
-	// (#1674): it is cumulative for ccstream.
-	var turnCost float64
-	if u.CalculatedCostUSD != nil {
-		turnCost += *u.CalculatedCostUSD
-	} else if model != "" {
-		// Skip when the model is unknown (e.g. a codex tokenUsage/updated
-		// notification firing before any message-completion event has set
-		// the model for this thread — plausible right after a resume/
-		// respawn). Pricing "" would otherwise trip the unpriced-model
-		// warning for a model that is merely not known yet.
-		turnCost += u.AsTurn().CostAsOf(model, time.Now())
-	}
-	// The turn's parent row. Its input/cache are the final cycle's fill (what
-	// compaction sizes from), its Turn the per-cycle sums pricing came from.
-	if err := ledger.BookLegacy(accounting.LegacyRow{
-		At: ts.StartedAt, Backend: backend, Provider: "anthropic",
-		Session: ts.SessionKey, Model: model,
-		Fill: accounting.LegacyFill{Input: u.InputTokens, Output: u.OutputTokens,
-			CacheRead: u.CacheReadInputTokens, CacheWrite: u.CacheCreationInputTokens},
-		Turn: u.Turn, ProvidedCostUSD: u.ProvidedCostUSD, CalculatedCostUSD: u.CalculatedCostUSD,
-		DurationMS: time.Since(ts.StartedAt).Milliseconds(), StopReason: "end_turn",
-		SessionFile: sessionFile, TurnID: ts.RowID(), AgentID: agentID, Purpose: ts.Purpose,
-	}); err != nil {
-		a.logger().Errorf("session=%s book delegated turn: %v", ts.SessionKey, err)
-	}
-
-	// One row per subagent share, sharing the parent's turn id (#1880 phase
-	// C, #1863). Their cost was SUBTRACTED from the parent row's
-	// CalculatedCostUSD, so it is added back to turnCost: the header shows the
-	// whole turn, the rows are the split version of the same money.
-	for _, sc := range u.Subagents {
-		turnCost += sc.CostUSD
-		counts, cost := sc.Counts, sc.CostUSD
-		// The turn that SPAWNED this subagent, which is not always the one
-		// being written: a background subagent can outlive its parent by
-		// half an hour, and its spend belongs to the work that started it
-		// (#1880). The fallback is this turn.
-		turnID := sc.TurnID
-		if turnID == "" {
-			turnID = ts.RowID()
-		}
-		// ACCUMULATE, do not insert: a subagent that outlives its parent is
-		// written once per turn it straddles, all under the spawning turn id,
-		// and the #1918 correction needs exactly one call to find (#1922).
-		merged, err := ledger.AccumulateLegacySubagent(accounting.LegacyRow{
-			At: ts.StartedAt, Backend: backend, Provider: "anthropic",
-			Session: ts.SessionKey, Model: sc.Model,
-			Turn: &counts, CalculatedCostUSD: &cost,
-			DurationMS: time.Since(ts.StartedAt).Milliseconds(), StopReason: "end_turn",
-			SessionFile: sessionFile, TurnID: turnID, AgentID: agentID, Purpose: ts.Purpose,
-			// sc.AgentID is the Agent tool_use id: the subagent (#1946).
-			Subagent: true, SubagentID: sc.AgentID,
-		})
-		if err != nil {
-			a.logger().Errorf("session=%s book subagent share %s: %v", ts.SessionKey, sc.AgentID, err)
-		}
-		// The last decision point on a subagent's spend (#1936): pairs with
-		// ccstream's "subagent rows: share" line by group.
-		a.logger().Debugf("subagent rows: wrote group=%s model=%s turn_id=%s merged=%v cost=$%.6f",
-			sc.AgentID, sc.Model, turnID, merged, cost)
-	}
-
-	// AFTER the rows above, and that ordering is load-bearing. A correction
-	// may target the row this very turn just wrote — late spend billed in an
-	// earlier CYCLE of this same turn — and applying it first would find no
-	// call and be skipped as unresolvable (#1918).
-	ledger.ApplyLegacyCorrections(u.Corrections)
-
-	ts.FinalCost = turnCost
-
-	// Log the last call's context size (FinalUsage = real current size) plus
-	// the turn-total cost.
-	a.logger().Infof("session=%s model=%s input=%d output=%d cache_read=%d cache_write=%d cost=$%.4f (delegated, last-call size; cost is turn-total)",
-		ts.SessionKey, model, u.InputTokens, u.OutputTokens,
-		u.CacheReadInputTokens, u.CacheCreationInputTokens,
-		turnCost)
+	t.agent.closeLedgerTurn(ts, lb)
 }
 
 // closeLedgerTurn ends a turn of a backend that books its own calls: every
@@ -852,13 +743,13 @@ func (a *Agent) closeLedgerTurn(ts *TurnState, lb delegator.LedgerBooker) {
 		u.CacheReadInputTokens, u.CacheCreationInputTokens, ts.FinalCost, unpriced)
 }
 
-// recordDelegatedTurn records a delegated turn's facts in the ledger for a
-// backend that books its own calls: at its start (before any call can name
-// it), and at its end, when its spend is taken to have closed too. That holds
-// for opencode, whose subagents finish inside the turn that spawned them. A
-// codex child can outlive its turn: its later cycles still book on the
-// spawning turn, but after activity_closed_at — so turn_costs.still_running
-// reads false early for such a turn (closing it on the child's own end is P3).
+// recordDelegatedTurn records a delegated turn's facts in the ledger: at its
+// start (before any call can name it), and at its end, when its spend is taken
+// to have closed too. That holds for opencode, whose subagents finish inside
+// the turn that spawned them. A codex child or a Claude Code background
+// subagent can outlive its turn: its later calls still book on the spawning
+// turn, but after activity_closed_at — so turn_costs.still_running reads false
+// early for such a turn (closing it on the subagent's own end is P3).
 func (a *Agent) recordDelegatedTurn(ts *TurnState, lb delegator.LedgerBooker, end bool) {
 	t := a.ledgerTurn(ts)
 	if t.TurnID == "" {

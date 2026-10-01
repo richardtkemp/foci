@@ -1758,12 +1758,12 @@ func TestOnResult_BasicTurnCompletion(t *testing.T) {
 	}
 }
 
-func TestOnResult_OutputTokensFromModelUsage(t *testing.T) {
+func TestOnResult_OutputTokensFromResultUsage(t *testing.T) {
 	// Regression for #721: lastUsage carries an early/partial output_tokens
 	// snapshot from the live stream (e.g. ≈1) that never refreshes to the
-	// final count. OnResult must correct OUTPUT from the authoritative
-	// per-model result accounting (ModelUsage[resultModel]), while keeping
-	// input/cache from lastUsage (the final call's context fill).
+	// final count. OnResult takes OUTPUT from the run's own result.usage,
+	// while keeping input/cache from lastUsage (the final call's context
+	// fill). ModelUsage is cumulative over the process and never used here.
 	t.Parallel()
 
 	var completedResult *delegator.TurnResult
@@ -1785,10 +1785,10 @@ func TestOnResult_OutputTokensFromModelUsage(t *testing.T) {
 	result := &ResultMessage{
 		Subtype: "success",
 		Result:  "a long substantive reply",
-		Usage:   TokenUsage{OutputTokens: 99}, // all-model fallback (unused: key matches)
+		Usage:   TokenUsage{OutputTokens: 2187},
 		ModelUsage: map[string]ModelUsage{
-			"claude-opus-4-20250514":  {OutputTokens: 2187, ContextWindow: 200000},
-			"claude-haiku-4-20250514": {OutputTokens: 50}, // subagent — must be excluded
+			"claude-opus-4-20250514":  {OutputTokens: 98765, ContextWindow: 200000}, // the process's running sum
+			"claude-haiku-4-20250514": {OutputTokens: 50},
 		},
 	}
 	b.OnResult(result)
@@ -1796,9 +1796,8 @@ func TestOnResult_OutputTokensFromModelUsage(t *testing.T) {
 	if completedResult == nil || completedResult.Usage == nil {
 		t.Fatal("no result usage")
 	}
-	// Output corrected to the primary model's authoritative total.
 	if completedResult.Usage.OutputTokens != 2187 {
-		t.Errorf("OutputTokens = %d, want 2187 (from ModelUsage[primary])", completedResult.Usage.OutputTokens)
+		t.Errorf("OutputTokens = %d, want 2187 (the run's own result.usage)", completedResult.Usage.OutputTokens)
 	}
 	// Input/cache untouched — still the final call's context fill.
 	if completedResult.Usage.InputTokens != 131 {
@@ -1809,95 +1808,9 @@ func TestOnResult_OutputTokensFromModelUsage(t *testing.T) {
 	}
 }
 
-// TestOnResult_ProvidedCostFromModelUsage: CC's own per-model cost accounting
-// (ModelUsage[resultModel].CostUSD) must be captured into
-// TurnUsage.ProvidedCostUSD verbatim — not discarded, and not replaced by a
-// foci-side calculation. It is no longer authoritative (#1674), but it is what
-// the divergence check is priced against, so it must still arrive intact.
-func TestOnResult_ProvidedCostFromModelUsage(t *testing.T) {
-	t.Parallel()
-
-	var completedResult *delegator.TurnResult
-	b := &Backend{}
-	handler := &testHandler{
-		OnTurnComplete: func(r *delegator.TurnResult) { completedResult = r },
-	}
-	applyHandler(b, handler)
-
-	b.mu.Lock()
-	b.lastModel = "claude-opus-4-20250514"
-	b.lastUsage = &TokenUsage{InputTokens: 100, OutputTokens: 50}
-	b.mu.Unlock()
-
-	result := &ResultMessage{
-		Subtype: "success",
-		Result:  "ok",
-		ModelUsage: map[string]ModelUsage{
-			"claude-opus-4-20250514": {OutputTokens: 50, CostUSD: 0.04242},
-		},
-	}
-	b.OnResult(result)
-
-	if completedResult == nil || completedResult.Usage == nil {
-		t.Fatal("no result usage")
-	}
-	if completedResult.Usage.ProvidedCostUSD == nil {
-		t.Fatal("ProvidedCostUSD is nil, want CC's reported cost captured")
-	}
-	if *completedResult.Usage.ProvidedCostUSD != 0.04242 {
-		t.Errorf("ProvidedCostUSD = %v, want 0.04242 (verbatim from ModelUsage[primary])", *completedResult.Usage.ProvidedCostUSD)
-	}
-	// And the authoritative figure is OURS, computed from tokens — never the
-	// provider's number copied across (#1674).
-	if completedResult.Usage.CalculatedCostUSD == nil {
-		t.Fatal("CalculatedCostUSD is nil, want foci's own priced figure")
-	}
-	if *completedResult.Usage.CalculatedCostUSD == 0.04242 {
-		t.Error("CalculatedCostUSD equals the PROVIDED figure — it must be priced from tokens, not copied (#1674)")
-	}
-}
-
-// TestOnResult_NoCostWhenModelMissingFromUsage verifies both cost fields stay
-// nil (never fabricated) when resultModel has no entry in ModelUsage at all.
-// Without that entry there are no per-turn token deltas to price either, so
-// neither a provided nor a calculated figure exists — full stop.
-func TestOnResult_NoCostWhenModelMissingFromUsage(t *testing.T) {
-	t.Parallel()
-
-	var completedResult *delegator.TurnResult
-	b := &Backend{}
-	handler := &testHandler{
-		OnTurnComplete: func(r *delegator.TurnResult) { completedResult = r },
-	}
-	applyHandler(b, handler)
-
-	b.mu.Lock()
-	b.lastModel = "claude-opus-4-20250514"
-	b.lastUsage = &TokenUsage{InputTokens: 100, OutputTokens: 50}
-	b.mu.Unlock()
-
-	result := &ResultMessage{
-		Subtype:    "success",
-		Result:     "ok",
-		ModelUsage: map[string]ModelUsage{}, // no entry for resultModel
-	}
-	b.OnResult(result)
-
-	if completedResult == nil || completedResult.Usage == nil {
-		t.Fatal("no result usage")
-	}
-	if completedResult.Usage.ProvidedCostUSD != nil {
-		t.Errorf("ProvidedCostUSD = %v, want nil (no reported cost available)", *completedResult.Usage.ProvidedCostUSD)
-	}
-	if completedResult.Usage.CalculatedCostUSD != nil {
-		t.Errorf("CalculatedCostUSD = %v, want nil (no token deltas to price)", *completedResult.Usage.CalculatedCostUSD)
-	}
-}
-
 func TestOnResult_OutputFloorFromResultUsageOnKeyMiss(t *testing.T) {
-	// When resultModel has no ModelUsage entry, fall back to the result's
-	// accumulated all-model total (msg.Usage) as a floor — still far better
-	// than the partial lastUsage snapshot.
+	// The result's own usage (msg.Usage) floors the partial lastUsage
+	// snapshot whatever ModelUsage holds.
 	t.Parallel()
 
 	var completedResult *delegator.TurnResult
@@ -1924,7 +1837,7 @@ func TestOnResult_OutputFloorFromResultUsageOnKeyMiss(t *testing.T) {
 		t.Fatal("no result usage")
 	}
 	if completedResult.Usage.OutputTokens != 1500 {
-		t.Errorf("OutputTokens = %d, want 1500 (msg.Usage floor on key miss)", completedResult.Usage.OutputTokens)
+		t.Errorf("OutputTokens = %d, want 1500 (msg.Usage floor)", completedResult.Usage.OutputTokens)
 	}
 }
 

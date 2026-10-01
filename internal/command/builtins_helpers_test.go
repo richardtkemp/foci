@@ -16,9 +16,9 @@ import (
 
 // apiRow is a cost fixture in the pre-ledger row shape the /cost tests were
 // written in: a turn's parent row (CallType "" or "delegated_turn") or one
-// subagent's share ("subagent_turn"). Each is booked the way a delegated
-// backend's turn is booked until it switches to per-call booking — as a
-// legacy call (accounting.LegacyRow) — so CalculatedCostUSD, when set, is the
+// subagent's share ("subagent_turn"). Each is booked exactly as the cutover
+// migrated a pre-ledger row — a legacy call (accounting.LegacyRow), the
+// history every live ledger holds — so CalculatedCostUSD, when set, is the
 // cost every reader sees, and without it the counts are priced.
 type apiRow struct {
 	Timestamp                            time.Time

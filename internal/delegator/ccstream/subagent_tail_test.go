@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"foci/internal/modelinfo"
 )
 
 // recorder collects delivered subagent text blocks under a mutex.
@@ -68,7 +70,7 @@ func TestSubagentTail_ForegroundStreamsAppendedText(t *testing.T) {
 	path := filepath.Join(dir, "agent-x.jsonl")
 
 	rec := &tailRecorder{}
-	mgr := newSubagentTailManager(rec.deliver, nil, nil)
+	mgr := newSubagentTailManager(rec.deliver, nil)
 
 	// Foreground start recorded, then task_started fires maybeStart.
 	mgr.expectForeground("tool-1")
@@ -76,7 +78,7 @@ func TestSubagentTail_ForegroundStreamsAppendedText(t *testing.T) {
 	if err := os.WriteFile(path, []byte(assistantLine("MSG-ONE")), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mgr.maybeStart("tool-1", path, time.Time{})
+	mgr.maybeStart("tool-1", path)
 
 	waitFor(t, func() bool { return len(rec.texts()) == 1 })
 
@@ -117,12 +119,12 @@ func TestSubagentTail_FinalizeDrainsRemainder(t *testing.T) {
 	path := filepath.Join(dir, "agent-y.jsonl")
 
 	rec := &tailRecorder{}
-	mgr := newSubagentTailManager(rec.deliver, nil, nil)
+	mgr := newSubagentTailManager(rec.deliver, nil)
 	mgr.expectForeground("tool-2")
 	if err := os.WriteFile(path, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mgr.maybeStart("tool-2", path, time.Time{})
+	mgr.maybeStart("tool-2", path)
 	// Give the tailer time to open the file, then append + immediately finalize.
 	waitFor(t, func() bool { return fileOpened(mgr, "tool-2") })
 	f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
@@ -166,10 +168,9 @@ func TestSubagentTail_BackgroundIsTailedForUsageButNotText(t *testing.T) {
 	}
 
 	rec := &tailRecorder{}
-	noted := 0
-	mgr := newSubagentTailManager(rec.deliver, func(string, string, string, time.Time, bool, TokenUsage) { noted++ }, nil)
+	mgr := newSubagentTailManager(rec.deliver, nil)
 	// No expectForeground → background path.
-	mgr.maybeStart("tool-bg", path, time.Time{})
+	mgr.maybeStart("tool-bg", path)
 
 	waitFor(t, func() bool { return fileOpened(mgr, "tool-bg") })
 	time.Sleep(30 * time.Millisecond)
@@ -195,7 +196,7 @@ func TestSubagentTail_BackgroundIsTailedForUsageButNotText(t *testing.T) {
 // forwarded — input prompt (user), tool_use, tool_result and empty text skipped.
 func TestSubagentTail_DeliverLineFilters(t *testing.T) {
 	rec := &tailRecorder{}
-	mgr := newSubagentTailManager(rec.deliver, nil, nil)
+	mgr := newSubagentTailManager(rec.deliver, nil)
 	lines := []string{
 		`{"type":"user","isSidechain":true,"message":{"content":[{"type":"text","text":"PROMPT"}]}}`,
 		`{"type":"assistant","isSidechain":true,"message":{"content":[{"type":"tool_use"}]}}`,
@@ -205,7 +206,7 @@ func TestSubagentTail_DeliverLineFilters(t *testing.T) {
 		``,
 	}
 	for _, l := range lines {
-		mgr.deliverLine("g", []byte(l), true, nil)
+		mgr.deliverLine("g", []byte(l), true)
 	}
 	got := rec.texts()
 	if len(got) != 1 || got[0] != "REAL" {
@@ -222,28 +223,25 @@ func TestSubagentTail_DeliverLineFilters(t *testing.T) {
 // The tail therefore runs for background subagents with text delivery OFF.
 func TestSubagentTail_BackgroundRecordsUsageWithoutText(t *testing.T) {
 	rec := &tailRecorder{}
-	var gotModel, gotID string
-	var gotUsage TokenUsage
-	mgr := newSubagentTailManager(rec.deliver, func(_, model, id string, _ time.Time, _ bool, u TokenUsage) {
-		gotModel, gotID, gotUsage = model, id, u
-	}, nil)
+	var got *ccLine
+	mgr := onLedgerLine(newSubagentTailManager(rec.deliver, nil), func(_ string, l *ccLine) { got = l })
 
 	line := `{"type":"assistant","isSidechain":true,"message":{"id":"msg_A","model":"claude-sonnet-5",` +
 		`"content":[{"type":"text","text":"SHOULD NOT BE DELIVERED"}],` +
 		`"usage":{"output_tokens":319,"cache_creation_input_tokens":39122}}}`
 
-	mgr.deliverLine("g", []byte(line), false, nil) // background: usage only
+	mgr.deliverLine("g", []byte(line), false) // background: the ledger only
 
 	if texts := rec.texts(); len(texts) != 0 {
 		t.Errorf("background subagent text was forwarded (%v) — it already streams to the "+
 			"parent, so this would double it in the chat", texts)
 	}
-	if gotID != "msg_A" || gotModel != "claude-sonnet-5" {
-		t.Errorf("usage not recorded: model=%q id=%q", gotModel, gotID)
+	if got == nil || got.id != "msg_A" || got.model != "claude-sonnet-5" {
+		t.Fatalf("line not handed to the ledger: %+v", got)
 	}
-	if gotUsage.OutputTokens != 319 || gotUsage.CacheCreationInputTokens != 39122 {
+	if out, cw := got.tokens[modelinfo.ClassOutput], ReportClasses(got.tokens)[modelinfo.ClassCacheWrite]; out != 319 || cw != 39122 {
 		t.Errorf("usage = out:%d cw:%d, want 319/39122 — the completed figures the "+
-			"parent stream never supplies", gotUsage.OutputTokens, gotUsage.CacheCreationInputTokens)
+			"parent stream never supplies", out, cw)
 	}
 }
 
@@ -257,9 +255,9 @@ func TestSubagentTail_MaybeStartRunsForBackgroundToo(t *testing.T) {
 	if err := os.WriteFile(path, []byte(""), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	mgr := newSubagentTailManager(nil, func(string, string, string, time.Time, bool, TokenUsage) {}, nil)
+	mgr := newSubagentTailManager(nil, nil)
 
-	mgr.maybeStart("toolu_bg", path, time.Time{}) // no expectForeground call: background
+	mgr.maybeStart("toolu_bg", path) // no expectForeground call: background
 
 	mgr.mu.Lock()
 	tail, running := mgr.tails["toolu_bg"]
@@ -282,10 +280,10 @@ func TestSubagentTail_MaybeStartKeepsTextForForeground(t *testing.T) {
 	if err := os.WriteFile(path, []byte(""), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	mgr := newSubagentTailManager(func(string, string) {}, nil, nil)
+	mgr := newSubagentTailManager(func(string, string) {}, nil)
 
 	mgr.expectForeground("toolu_fg")
-	mgr.maybeStart("toolu_fg", path, time.Time{})
+	mgr.maybeStart("toolu_fg", path)
 
 	mgr.mu.Lock()
 	tail := mgr.tails["toolu_fg"]
@@ -319,18 +317,18 @@ func TestSubagentTail_BackgroundSurvivesPostToolUseAtLaunch(t *testing.T) {
 
 	var mu sync.Mutex
 	var outputs []int
-	mgr := newSubagentTailManager(nil, func(_, _, _ string, _ time.Time, complete bool, u TokenUsage) {
-		if !complete {
+	mgr := onLedgerLine(newSubagentTailManager(nil, nil), func(_ string, l *ccLine) {
+		if !l.complete {
 			return
 		}
 		mu.Lock()
-		outputs = append(outputs, u.OutputTokens)
+		outputs = append(outputs, l.tokens[modelinfo.ClassOutput])
 		mu.Unlock()
-	}, nil)
+	})
 
 	// No expectForeground → background. The transcript does NOT exist yet, which
 	// is the whole point: the task has only just been launched.
-	mgr.maybeStart("tool-bg", path, time.Time{})
+	mgr.maybeStart("tool-bg", path)
 
 	// The background Agent tool_use resolves at once, so PostToolUse fires HERE.
 	mgr.clearPendingForeground("tool-bg")
@@ -371,12 +369,12 @@ func TestSubagentTail_ForegroundStillFinalizesAtPostToolUse(t *testing.T) {
 	path := filepath.Join(dir, "agent-fg.jsonl")
 
 	rec := &tailRecorder{}
-	mgr := newSubagentTailManager(rec.deliver, nil, nil)
+	mgr := newSubagentTailManager(rec.deliver, nil)
 	mgr.expectForeground("tool-fg")
 	if err := os.WriteFile(path, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mgr.maybeStart("tool-fg", path, time.Time{})
+	mgr.maybeStart("tool-fg", path)
 	waitFor(t, func() bool { return fileOpened(mgr, "tool-fg") })
 
 	f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
@@ -421,9 +419,9 @@ func TestSubagentTail_StopAllWaitsForTails(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := &tailRecorder{}
-	mgr := newSubagentTailManager(rec.deliver, nil, nil)
+	mgr := newSubagentTailManager(rec.deliver, nil)
 	mgr.expectForeground("toolu_td")
-	mgr.maybeStart("toolu_td", path, time.Time{})
+	mgr.maybeStart("toolu_td", path)
 	waitFor(t, func() bool { return len(rec.texts()) == 1 })
 
 	mgr.mu.Lock()

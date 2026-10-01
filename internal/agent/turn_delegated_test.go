@@ -166,6 +166,9 @@ func TestDelegatedTransport_ConvertibleDocAttachment(t *testing.T) {
 // so test closures that fire handler.OnText/OnTurnComplete exercise the same
 // routing production uses (SendToPane is a mock-only test seam).
 type mockHandler struct {
+	// TurnID is the turn's ledger id (Inject.Turn.TurnID), for a backend
+	// that books its own calls on it.
+	TurnID          string
 	OnText          func(text string)
 	OnTextDelta     func(delta string)
 	OnThinkingDelta func(delta string)
@@ -284,6 +287,7 @@ func (m *mockBackendDT) ImmediateInject(ctx context.Context, inj delegator.Injec
 	m.mu.Unlock()
 	handler := &mockHandler{}
 	if inj.Turn != nil {
+		handler.TurnID = inj.Turn.TurnID
 		if handler.OnTurnComplete == nil {
 			handler.OnTurnComplete = inj.Turn.OnTurnComplete
 		}
@@ -571,38 +575,6 @@ func TestDelegatedTransport_RunInference_Success(t *testing.T) {
 	}
 	if ts.sessionFilePath != "/tmp/test-session.jsonl" {
 		t.Errorf("sessionFilePath = %q, want %q", ts.sessionFilePath, "/tmp/test-session.jsonl")
-	}
-}
-
-// TestDelegatedTransport_LogUsage_EmptyModelNoUnpricedWarning is the
-// red/green regression for #1290: a codex tokenUsage/updated notification can
-// fire before any message-completion event has set the model for the thread
-// (plausible right after a resume/respawn), leaving the model empty. LogUsage
-// must NOT call modelinfo.Cost("") in that case — doing so trips the
-// unpriced-fallback warning (UnpricedModelHook fired with "") and adds a
-// meaningless fallback-priced estimate to the turn total.
-func TestDelegatedTransport_LogUsage_EmptyModelNoUnpricedWarning(t *testing.T) {
-	prev := modelinfo.UnpricedModelHook
-	t.Cleanup(func() { modelinfo.UnpricedModelHook = prev })
-	var fired []string
-	modelinfo.UnpricedModelHook = func(m string) { fired = append(fired, m) }
-
-	a := &Agent{AgentID: "test-agent"}
-	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
-	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
-	ts.StartedAt = time.Now()
-	// No FinalModel and no TurnModel → model resolves to "".
-	ts.FinalModel = ""
-	ts.TurnModel = ""
-	ts.FinalUsage = &provider.Usage{InputTokens: 1000, OutputTokens: 200}
-
-	tr.LogUsage(ts)
-
-	if len(fired) != 0 {
-		t.Errorf("UnpricedModelHook fired for empty model: %v (want no fire)", fired)
-	}
-	if ts.FinalCost != 0 {
-		t.Errorf("FinalCost = %v, want 0 for unknown model", ts.FinalCost)
 	}
 }
 
@@ -1696,9 +1668,8 @@ func TestDelegatedTransport_RunInference_PreAnswerFoldsIntoFinal(t *testing.T) {
 		t.Fatal("gate should have fired on round 1")
 	}
 	capturedHandler.OnTurnComplete(&delegator.TurnResult{
-		Text: "revised",
-		Usage: &delegator.TurnUsage{InputTokens: 20, OutputTokens: 55, CacheReadInputTokens: 110,
-			Turn: &modelinfo.TokenCounts{Input: 120, Output: 55, CacheRead: 120}},
+		Text:  "revised",
+		Usage: &delegator.TurnUsage{InputTokens: 20, OutputTokens: 55, CacheReadInputTokens: 110},
 	})
 
 	if ts.FinalText != "revised" {
@@ -1712,19 +1683,14 @@ func TestDelegatedTransport_RunInference_PreAnswerFoldsIntoFinal(t *testing.T) {
 		t.Errorf("FinalUsage = {in:%d out:%d cr:%d}, want {20 55 110} (the completion result as reported)",
 			ts.FinalUsage.InputTokens, ts.FinalUsage.OutputTokens, ts.FinalUsage.CacheReadInputTokens)
 	}
-	if ts.FinalUsage.Turn == nil || ts.FinalUsage.Turn.CacheRead != 120 {
-		t.Errorf("FinalUsage.Turn = %+v, want the backend's per-cycle sums passed through", ts.FinalUsage.Turn)
-	}
 }
 
-// TestDelegatedTransport_GatedTurn_OneRowNoSpuriousCompaction: a gate-fired
-// delegated turn (two rounds, each reading the full ~55k context) folds into
-// ONE legacy call like a steer (#1856). Its turn keeps the final cycle's fill;
-// its counts are the per-cycle sums pricing came from. The
-// compaction trigger sizes from the fill, so the doubled cross-round
-// cache_read (≈111k > 60k threshold) must NOT trigger compaction.
-func TestDelegatedTransport_GatedTurn_OneRowNoSpuriousCompaction(t *testing.T) {
-	// A real ledger so we can count the calls LogUsage books.
+// TestDelegatedTransport_GatedTurn_NoSpuriousCompaction: a gate-fired
+// delegated turn (two rounds, each reading the full ~55k context) books no
+// turn-level row of its own — its calls are the backend's — and keeps the final
+// cycle's fill. The compaction trigger sizes from the fill, so the doubled
+// cross-round cache_read (≈111k > 60k threshold) must NOT trigger compaction.
+func TestDelegatedTransport_GatedTurn_NoSpuriousCompaction(t *testing.T) {
 	ledger := openTestLedger(t)
 
 	const model = "claude-sonnet-4-5"
@@ -1733,9 +1699,9 @@ func TestDelegatedTransport_GatedTurn_OneRowNoSpuriousCompaction(t *testing.T) {
 	// 60k) but the real context (final fill) is < 60k.
 	comp := compaction.NewCompactor(store, 0.3)
 	cmdSent := false
-	be := &mockBackendDT{
+	be := ledgerBookingBackend{&mockBackendDT{
 		sendCommandFn: func(_ context.Context, _ string) error { cmdSent = true; return nil },
-	}
+	}}
 	a := &Agent{
 		Model:            model,
 		Compactor:        comp,
@@ -1750,41 +1716,18 @@ func TestDelegatedTransport_GatedTurn_OneRowNoSpuriousCompaction(t *testing.T) {
 	ts.FinalModel = model
 	ts.sessionFilePath = "/tmp/session.jsonl"
 
-	// What ccstream reports after the re-dispatch: final-cycle fill, output
-	// and Turn summed across both rounds, cost priced from Turn.
-	turn := modelinfo.TokenCounts{Input: 248, Output: 350, CacheRead: 110971}
-	cost := modelinfo.TokenCounts{Input: turn.Input, Output: turn.Output, CacheRead: turn.CacheRead, CacheWrite: turn.CacheWrite}.CostAsOf(model, time.Now())
-	ts.FinalUsage = &provider.Usage{InputTokens: 2, OutputTokens: 350, CacheReadInputTokens: 55566,
-		Turn: &turn, CalculatedCostUSD: &cost}
+	// What ccstream reports after the re-dispatch: the final cycle's fill and
+	// the output of both rounds.
+	ts.FinalUsage = &provider.Usage{InputTokens: 2, OutputTokens: 350, CacheReadInputTokens: 55566}
 
 	tr.LogUsage(ts)
 
-	// (1) ONE legacy call: fill from the final cycle, counts summed.
-	rows := ledgerCalls(t, ledger)
-	if len(rows) != 1 {
-		t.Fatalf("ledger calls = %d, want 1 (a gated turn is one turn)", len(rows))
-	}
-	r := rows[0]
-	if r.Fill != 2+55566 {
-		t.Errorf("call fill = %d, want %d (the final cycle's)", r.Fill, 2+55566)
-	}
-	if in, cr := r.Count(modelinfo.ClassInput), r.Count(modelinfo.ClassCacheRead); in != 248 || cr != 110971 {
-		t.Errorf("call counts = {in:%d cr:%d}, want cross-round sums {248 110971}", in, cr)
-	}
-	if r.Kind != accounting.KindLegacy || r.Subagent() {
-		t.Errorf("call = %s actor %q, want the turn's legacy parent call", r.Kind, r.Actor)
+	if rows := ledgerCalls(t, ledger); len(rows) != 0 {
+		t.Fatalf("ledger calls = %+v, want none from the agent layer (the backend books its own)", rows)
 	}
 
-	// (2) Turn-total cost = the backend's calculated cost, on the row and in FinalCost.
-	if diff := ts.FinalCost - cost; diff > 1e-9 || diff < -1e-9 {
-		t.Errorf("FinalCost = %.8f, want %.8f", ts.FinalCost, cost)
-	}
-	if diff := r.Cost() - cost; diff > 1e-9 || diff < -1e-9 {
-		t.Errorf("call cost %.8f != %.8f", r.Cost(), cost)
-	}
-
-	// (3) Compaction sizes from the fill (2+55566 < 60k), not from Turn
-	// (111k) → no compaction.
+	// Compaction sizes from the fill (2+55566 < 60k), not from a cross-round
+	// sum (111k) → no compaction.
 	tr.RunCompaction(ts)
 	if cmdSent {
 		t.Error("compaction fired on a gated turn whose real (final-cycle) size is below threshold — sizing from the turn sum")
@@ -2271,48 +2214,28 @@ func TestDelegatedTransport_UpdateSessionMeta_EmptyModel(t *testing.T) {
 // LogUsage tests
 // ---------------------------------------------------------------------------
 
-// TestDelegatedTransport_LogUsage_CostCalculation verifies that LogUsage sets
-// FinalCost using the model and usage data, and uses FinalModel when available.
-func TestDelegatedTransport_LogUsage_CostCalculation(t *testing.T) {
-	a := &Agent{Model: "test-model"}
+// TestDelegatedTransport_LogUsage_BackendThatBooksNothing: a delegated
+// backend that does not book its own calls (no delegator.LedgerBooker) gets
+// no turn-level row in its place — there is no second cost path — and no
+// cost; the gap is logged.
+func TestDelegatedTransport_LogUsage_BackendThatBooksNothing(t *testing.T) {
+	ledger := openTestLedger(t)
+	be := &mockBackendDT{}
+	a := &Agent{Model: "claude-opus-5", DelegatedManager: newMockDelegatedManager(t, be)}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
+	ts.Backend = be
 	ts.StartedAt = time.Now()
-	ts.TurnModel = "claude-sonnet-4-20250514"
-	ts.FinalModel = "claude-opus-4-20250514"
-	ts.FinalUsage = &provider.Usage{
-		InputTokens:  1000,
-		OutputTokens: 500,
-	}
-	ts.sessionFilePath = "/tmp/session.jsonl"
+	ts.FinalModel = "claude-opus-5"
+	ts.FinalUsage = &provider.Usage{InputTokens: 1000, OutputTokens: 500}
 
 	tr.LogUsage(ts)
 
-	if ts.FinalCost <= 0 {
-		t.Errorf("FinalCost should be positive, got: %f", ts.FinalCost)
+	if rows := ledgerCalls(t, ledger); len(rows) != 0 {
+		t.Errorf("ledger calls = %+v, want none", rows)
 	}
-}
-
-// TestDelegatedTransport_LogUsage_FallbackToTurnModel verifies that when
-// FinalModel is empty, LogUsage falls back to TurnModel.
-func TestDelegatedTransport_LogUsage_FallbackToTurnModel(t *testing.T) {
-	a := &Agent{Model: "test-model"}
-	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
-	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
-	ts.StartedAt = time.Now()
-	ts.TurnModel = "claude-sonnet-4-20250514"
-	ts.FinalModel = "" // watcher didn't provide a model
-	ts.FinalUsage = &provider.Usage{
-		InputTokens:  100,
-		OutputTokens: 50,
-	}
-	ts.sessionFilePath = "/tmp/session.jsonl"
-
-	tr.LogUsage(ts)
-
-	// Cost should still be calculated using TurnModel.
-	if ts.FinalCost <= 0 {
-		t.Errorf("FinalCost should be positive using TurnModel fallback, got: %f", ts.FinalCost)
+	if ts.FinalCost != 0 {
+		t.Errorf("FinalCost = %v, want 0", ts.FinalCost)
 	}
 }
 

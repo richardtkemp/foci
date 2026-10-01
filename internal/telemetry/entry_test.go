@@ -25,7 +25,6 @@ func TestEntryWithoutTurnID(t *testing.T) {
 			Model: "claude-opus-5", BilledAt: ts,
 		},
 		TurnSource: accounting.SourceCompaction,
-		Instalment: true,
 	})
 	flush(t)
 
@@ -44,9 +43,6 @@ func TestEntryWithoutTurnID(t *testing.T) {
 	tags := attrStrSlice(t, sp.Attributes, attrTraceTags)
 	if !containsStr(tags, "call_type:compaction") {
 		t.Errorf("tags %v missing %q", tags, "call_type:compaction")
-	}
-	if !attrBool(t, sp.Attributes, attrObsMetaPrefix+"instalment") {
-		t.Error("expected instalment=true metadata")
 	}
 }
 

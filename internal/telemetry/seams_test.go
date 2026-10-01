@@ -29,7 +29,6 @@ func flushForTest(ctx context.Context) error {
 func resetForTest() {
 	enabled.Store(false)
 	accounting.BookedHook = nil
-	accounting.CorrectionHook = nil
 
 	mu.Lock()
 	tp := tracerProvider

@@ -31,6 +31,8 @@ func (e *testEvents) onToolEnd(id, name, output string, isError bool) {
 	}
 }
 
+func (e *testEvents) onAssistantLine([]byte, string) {}
+
 func (e *testEvents) onTurnComplete(result *delegator.TurnResult) {
 	if e.OnTurnComplete != nil {
 		e.OnTurnComplete(result)

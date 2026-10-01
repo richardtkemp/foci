@@ -100,11 +100,16 @@ func TestSubagentRunning_CarriesKindModelAndRealModel(t *testing.T) {
 	if c := last[1]; c.Kind != delegator.SubagentKindCommand || c.Command != "sleep 60" {
 		t.Errorf("bash entry = %+v, want kind command with its command line", c)
 	}
-	b.noteSubagentTranscriptUsage("toolu_agent", "<synthetic>", "m0", time.Now(), true, TokenUsage{})
+	transcript := func(id, model string) []byte {
+		return []byte(`{"type":"assistant","timestamp":"` + time.Now().UTC().Format(time.RFC3339Nano) +
+			`","message":{"id":"` + id + `","model":"` + model + `","stop_reason":"end_turn","usage":{}}}`)
+	}
+	m := b.subagentTails()
+	m.ledgerLine("toolu_agent", transcript("m0", "<synthetic>"))
 	if last[0].Model != "haiku" {
 		t.Errorf("a <synthetic> record replaced the model: %q", last[0].Model)
 	}
-	b.noteSubagentTranscriptUsage("toolu_agent", "claude-haiku-4-5", "m1", time.Now(), true, TokenUsage{})
+	m.ledgerLine("toolu_agent", transcript("m1", "claude-haiku-4-5"))
 	if last[0].Model != "claude-haiku-4-5" {
 		t.Errorf("model = %q after the transcript named it, want claude-haiku-4-5", last[0].Model)
 	}

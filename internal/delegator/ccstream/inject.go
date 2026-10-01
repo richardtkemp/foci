@@ -99,11 +99,7 @@ func (b *Backend) AwaitingAutonomousRun() bool {
 // beginTurnLocked initialises per-turn state. Caller must hold turnMu.
 func (b *Backend) beginTurnLocked(turn *delegator.TurnEvents) {
 	b.turnActive = true
-	b.turnStartedAt = time.Now()
 	b.turnEvents = turn
-	// BEFORE resetTurnCostAccumulatorsLocked below, which hands this to the
-	// accumulator's beginTurn. Setting it after would open every turn with the
-	// PREVIOUS turn's id in the accumulator.
 	b.turnRowID = ""
 	if turn != nil {
 		b.turnRowID = turn.TurnID
@@ -115,7 +111,6 @@ func (b *Backend) beginTurnLocked(turn *delegator.TurnEvents) {
 	b.stashedResultMsg = nil
 	b.turnOutputTokens = 0
 	b.turnCalls = 0
-	b.resetTurnCostAccumulatorsLocked()
 	b.redispatchInFlight = false
 }
 

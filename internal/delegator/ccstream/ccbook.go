@@ -1,7 +1,7 @@
 // ccbook.go — the Claude Code adapter of the cost ledger (#2111 §3.1, §4, §5),
-// as a single-threaded state machine. ccshadow.go feeds it events from the
-// stream, the main-transcript tail and the subagent tails, in the order they
-// happened, and runs its settle clock.
+// as a single-threaded state machine: this backend's only cost path. ccledger.go
+// feeds it events from the stream, the main-transcript tail and the subagent
+// tails, in the order they happened, and runs its settle clock.
 //
 // The rules, each pinned by a test in ccbook_test.go:
 //
@@ -36,6 +36,10 @@
 //     stays TTL-unknown, priced at 1h, and alarms.
 //   - At process exit the last remainder is flushed from the cost-state record
 //     CC appends on a graceful close, else from the last result.
+//   - A call books on its turn by the turn's id alone: the agent layer recorded
+//     a foci turn's facts when it began. A run no foci turn opened (an
+//     autonomous CC run) books on a turn of its own, recorded here as
+//     autonomous.
 //
 // Scope is this CC process: lines billed before it launched are a previous
 // process's and are skipped, and the remainder baseline starts at what CC
@@ -122,6 +126,29 @@ func parseCCRecord(raw []byte) (line *ccLine, costState *ccRecord) {
 	}
 	l.tokens, l.method = ccTokens(r.Message.Usage)
 	return l, nil
+}
+
+// TranscriptCall is one assistant line of a CC transcript as the ledger books
+// it: for a reader of the transcript outside this package (cctmux).
+type TranscriptCall struct {
+	ID, Model, StopReason string
+	At                    time.Time
+	// Complete is set on the line that carries the call's stop_reason: its
+	// usage is final.
+	Complete    bool
+	Tokens      modelinfo.Tokens
+	ClassMethod string
+}
+
+// ParseTranscriptCall decodes one transcript line into the call it records,
+// or reports false for any other record.
+func ParseTranscriptCall(raw []byte) (TranscriptCall, bool) {
+	l, _ := parseCCRecord(raw)
+	if l == nil {
+		return TranscriptCall{}, false
+	}
+	return TranscriptCall{ID: l.id, Model: l.model, StopReason: l.stopReason, At: l.at,
+		Complete: l.complete, Tokens: l.tokens, ClassMethod: l.method}, true
 }
 
 // ccTokens normalises a per-message usage into disjoint ledger classes: the
@@ -328,6 +355,19 @@ func (c *ccBook) runTurnFor(window int, at time.Time) string {
 	return t
 }
 
+// turnSource is the source a call's turn is recorded with if the ledger does
+// not hold it yet: a run turn of this adapter's is autonomous; any other was
+// opened by foci, whose agent layer recorded it (with its real source) first,
+// so this value only stands when that record is missing.
+func (c *ccBook) turnSource(turn string) string {
+	for _, t := range c.runTurn {
+		if t == turn {
+			return accounting.SourceAutonomous
+		}
+	}
+	return accounting.SourceUser
+}
+
 // mainLine handles one assistant line of the main transcript.
 func (c *ccBook) mainLine(l *ccLine) {
 	if c.done[l.id] {
@@ -525,6 +565,18 @@ func (c *ccBook) outstanding(w int) (named, tails int) {
 	return named, tails
 }
 
+// unseenNamed counts the main-thread calls the stream named whose transcript
+// line has not been read yet — what a turn's flush waits for.
+func (c *ccBook) unseenNamed() int {
+	n := 0
+	for _, nc := range c.named {
+		if nc.pending == nil {
+			n++
+		}
+	}
+	return n
+}
+
 // closeWindows finalises the main-thread calls of windows up to w: a call seen
 // only at a stopless line was interrupted, and is booked — priced — from it; a
 // call whose line never came alarms. Held lines no stream named are copies.
@@ -556,7 +608,7 @@ func (c *ccBook) bookCall(l *ccLine, turn, actor string, window int, finality st
 	c.done[l.id] = true
 	b, err := c.l.RecordCall(accounting.Turn{
 		TurnID: turn, Session: c.session, AgentID: c.agentID, Backend: accounting.BackendCCStream,
-		Source: accounting.SourceUser, StartedAt: l.at,
+		Source: c.turnSource(turn), StartedAt: c.billedAt(l.at),
 	}, accounting.Call{
 		Key: l.id, Backend: accounting.BackendCCStream, Provider: "anthropic", Model: l.model,
 		Session: c.session, AgentID: c.agentID, TurnID: turn, Actor: actor,
@@ -666,7 +718,7 @@ func (c *ccBook) remainder(w int, mu map[string]ModelUsage, label string, at tim
 			call.Key = fmt.Sprintf("compact:%s:%d:%s", c.session, first.at.UnixNano(), m)
 			call.Detail["compactions"] = len(bounds)
 			turn = accounting.Turn{TurnID: first.turn, Session: c.session, AgentID: c.agentID,
-				Backend: accounting.BackendCCStream, Source: accounting.SourceUser, StartedAt: first.at}
+				Backend: accounting.BackendCCStream, Source: c.turnSource(first.turn), StartedAt: first.at}
 			if turn.TurnID == "" {
 				// An idle /compact, between turns: a compaction turn of its own.
 				turn.TurnID = accounting.MintTurnID(c.session, accounting.KindCompaction, first.at)

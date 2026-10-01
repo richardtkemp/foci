@@ -8,9 +8,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/delegator/accounting"
 	flog "foci/internal/log"
+	"foci/internal/modelinfo"
 )
 
 // syncBuffer is a bytes.Buffer safe to read while tail goroutines log into it.
@@ -48,11 +51,11 @@ func captureDebugLog(t *testing.T) *syncBuffer {
 // TestSubagentHarness_TailsAndRowsFromACCEventSequence is the #1936 harness: the
 // REAL handlers, fed the event sequence CC emits for one turn that launches an
 // Agent subagent and a run_in_background Bash command, with the subagent's
-// transcript on disk. It asserts which tails start, which subagent rows the
-// result hands on, and the decision lines the log narrates for each.
+// transcript on disk. It asserts which tails start, which subagent calls reach
+// the ledger, and the decision lines the log narrates for each.
 //
 // Before this, every question about the tail's behaviour cost a live probe of
-// 100+ seconds, and a missing subagent row (#1934) could not be told apart from
+// 100+ seconds, and a missing subagent call (#1934) could not be told apart from
 // a tail that never started, one on a bad path, or one stopped early. Each of
 // those now leaves a named line, and this test pins that they do.
 //
@@ -70,6 +73,7 @@ func TestSubagentHarness_TailsAndRowsFromACCEventSequence(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			withFastTail(t)
 			logs := captureDebugLog(t)
+			live := withLiveLedger(t)
 			home := t.TempDir()
 			t.Setenv("HOME", home)
 
@@ -83,6 +87,8 @@ func TestSubagentHarness_TailsAndRowsFromACCEventSequence(t *testing.T) {
 
 			b := &Backend{workDir: "/home/foci/clutch"}
 			b.sessionID = "19360000-0000-0000-0000-000000000000"
+			lg := newCCLedger(b, "harness/s", "harness", nil)
+			b.ledger.Store(lg)
 
 			var (
 				mu       sync.Mutex
@@ -106,13 +112,15 @@ func TestSubagentHarness_TailsAndRowsFromACCEventSequence(t *testing.T) {
 			})
 
 			// The subagent's transcript: an in-flight line, then the same
-			// message COMPLETED (stop_reason set). Only the completed one may
-			// reach a row (#1923).
+			// message COMPLETED (stop_reason set). It is booked once, at its
+			// completed figures (#1923).
 			path := b.subagentFilePath(agentTaskID, ".jsonl")
 			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			msg := `{"type":"assistant","isSidechain":true,"timestamp":"2026-09-26T10:00:00Z",` +
+			// Billed after the adapter launched: an earlier line is a previous
+			// process's, and not booked.
+			msg := `{"type":"assistant","isSidechain":true,"timestamp":"` + time.Now().UTC().Format(time.RFC3339Nano) + `",` +
 				`"message":{"id":"msg_h1","model":"` + subModel + `",` +
 				`"usage":{"input_tokens":4,"output_tokens":%OUT%,"cache_read_input_tokens":7000,` +
 				`"cache_creation_input_tokens":100,"cache_creation":{"ephemeral_5m_input_tokens":100,"ephemeral_1h_input_tokens":0}},` +
@@ -167,20 +175,31 @@ func TestSubagentHarness_TailsAndRowsFromACCEventSequence(t *testing.T) {
 				subModel:        {InputTokens: 4, OutputTokens: 500, CacheReadInputTokens: 7000, CacheCreationInputTokens: 100, CostUSD: 0.01},
 			}})
 
-			// --- rows: exactly one subagent share, the Agent's, at its COMPLETED figures ---
+			// --- the ledger: exactly one subagent call, the Agent's, at its COMPLETED figures ---
 			if result == nil || result.Usage == nil {
 				t.Fatal("no turn result")
 			}
-			if n := len(result.Usage.Subagents); n != 1 {
-				t.Fatalf("Subagents = %+v, want exactly one (the Agent's; the Bash task has no row)", result.Usage.Subagents)
+			lg.close()
+			rows, err := live.Calls(time.Time{})
+			if err != nil {
+				t.Fatal(err)
 			}
-			sc := result.Usage.Subagents[0]
-			if sc.AgentID != agentToolUse || sc.Model != "claude/"+subModel || sc.TurnID != "turn-1936" {
-				t.Errorf("subagent share = {agent=%s model=%s turn=%s}, want {%s claude/%s turn-1936}",
-					sc.AgentID, sc.Model, sc.TurnID, agentToolUse, subModel)
+			var subs []accounting.CallRow
+			for _, r := range rows {
+				if r.Actor != "" {
+					subs = append(subs, r)
+				}
 			}
-			if sc.Counts.Output != 500 || sc.Counts.CacheRead != 7000 || sc.Counts.CacheWrite != 100 {
-				t.Errorf("subagent counts = %+v, want the completed line's (out=500 cr=7000 cw=100)", sc.Counts)
+			if len(subs) != 1 {
+				t.Fatalf("subagent calls = %+v, want exactly one (the Agent's; the Bash task has none)", subs)
+			}
+			sc := subs[0]
+			if sc.Actor != agentToolUse || sc.Model != subModel || sc.TurnID != "turn-1936" {
+				t.Errorf("subagent call = {actor=%s model=%s turn=%s}, want {%s %s turn-1936}",
+					sc.Actor, sc.Model, sc.TurnID, agentToolUse, subModel)
+			}
+			if sc.Count(modelinfo.ClassOutput) != 500 || sc.Count(modelinfo.ClassCacheRead) != 7000 || sc.Count(modelinfo.ClassCacheWrite5m) != 100 {
+				t.Errorf("subagent call = %+v, want the completed line's (out=500 cr=7000 5m=100)", sc)
 			}
 
 			// --- text: forwarded only for a foreground subagent ---
@@ -208,8 +227,7 @@ func TestSubagentHarness_TailsAndRowsFromACCEventSequence(t *testing.T) {
 				"subagent tail: starting for group=" + agentToolUse,
 				"subagent tail: NOT started, task_type=" + taskTypeBash + " is a background Bash task",
 				"subagent tail: opened " + path,
-				"subagent tail: closed group=" + agentToolUse + " lines=2 usage=2 completed=1 terminal=true",
-				"subagent rows: share group=" + agentToolUse + " model=claude/" + subModel,
+				"subagent tail: closed group=" + agentToolUse + " lines=2 terminal=true",
 			} {
 				if !strings.Contains(out, want) {
 					t.Errorf("log lacks %q\n--- log ---\n%s", want, out)
@@ -219,31 +237,12 @@ func TestSubagentHarness_TailsAndRowsFromACCEventSequence(t *testing.T) {
 	}
 }
 
-// TestSubagentHarness_UsageWithNoPricedResultIsNamed pins the skip reason: a
-// subagent whose usage was seen but whose result carried no modelUsage writes
-// no row, and the log must say so rather than stay silent (#1936).
-func TestSubagentHarness_UsageWithNoPricedResultIsNamed(t *testing.T) {
-	logs := captureDebugLog(t)
-	b := &Backend{}
-	b.beginTurn(&delegator.TurnEvents{OnTurnComplete: func(*delegator.TurnResult) {}})
-	b.noteAssistantUsage(fullMsg("claude-sonnet-5", "msg_s", "toolu_unpriced", 1, 10, 0, 0, 0))
-
-	b.mu.Lock()
-	b.lastModel = "claude-opus-5"
-	b.mu.Unlock()
-	b.OnResult(&ResultMessage{Subtype: "success", Result: "ok"}) // no ModelUsage
-
-	if want := "subagent rows: NONE, result carried no modelUsage to price against (agents with usage=1)"; !strings.Contains(logs.String(), want) {
-		t.Errorf("log lacks %q\n--- log ---\n%s", want, logs.String())
-	}
-}
-
 // TestSubagentTail_FinalizeWithoutATailIsNamed: a task_notification for a group
 // whose tail never started (or already ended) must not read like one that
 // stopped a tail (#1936).
 func TestSubagentTail_FinalizeWithoutATailIsNamed(t *testing.T) {
 	logs := captureDebugLog(t)
-	m := newSubagentTailManager(nil, nil, nil)
+	m := newSubagentTailManager(nil, nil)
 	m.finalize("toolu_never")
 	if want := "subagent tail: finalize found no running tail for group=toolu_never"; !strings.Contains(logs.String(), want) {
 		t.Errorf("log lacks %q\n--- log ---\n%s", want, logs.String())

@@ -138,7 +138,7 @@ func initLogging(cfg *config.Config, processStart time.Time) func() {
 		if err != nil {
 			ledgerLog.Warnf("open shadow ledger %s: %v — running without it", cfg.Logging.APIShadowDB, err)
 		} else {
-			ledgerLog.Infof("shadow ledger %s: the Claude Code ledger adapter books here beside the live path", cfg.Logging.APIShadowDB)
+			ledgerLog.Infof("shadow ledger %s: open for an adapter under verification (no backend books here at present)", cfg.Logging.APIShadowDB)
 			accounting.SetShadow(shadow)
 			cleanups = append(cleanups, func() {
 				accounting.SetShadow(nil)

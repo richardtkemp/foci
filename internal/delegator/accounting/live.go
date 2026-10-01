@@ -3,8 +3,6 @@ package accounting
 import (
 	"fmt"
 	"sync/atomic"
-
-	"foci/internal/modelinfo"
 )
 
 // Booking is one call as the ledger's observers see it, once the transaction
@@ -27,20 +25,12 @@ type Booking struct {
 	// Fill is the context the call leaves: its own in-context classes, or for
 	// a legacy parent row the fill copied onto its turn.
 	Fill int
-	// Instalment marks spend folded into an already-booked legacy subagent
-	// call (#1922): the ledger row was extended, not inserted, so an
-	// append-only observer must count this instalment on its own.
-	Instalment bool
 }
 
 // BookedHook, when set, observes every committed booking. The trace exporter
 // (internal/telemetry) hangs its cost generations here. Called synchronously
 // after the commit, so it must be quick and must never book.
 var BookedHook func(Booking)
-
-// CorrectionHook, when set, observes each #1918 correction ApplyLegacyCorrections
-// applied, with the parent turn it debited.
-var CorrectionHook func(c modelinfo.CostCorrection, parentTurn string)
 
 // observe hands one committed booking to the observers.
 func observe(b Booking) {
@@ -54,14 +44,13 @@ func observe(b Booking) {
 var live atomic.Pointer[Ledger]
 
 // shadow is the scratch ledger an adapter under verification books into
-// (logging.api_shadow_db), or nil.
+// (logging.api_shadow_db), or nil. No adapter books there since the Claude
+// Code switch (#2115); the next one to be verified in shadow reads it with a
+// Shadow() getter, which went with its last caller.
 var shadow atomic.Pointer[Ledger]
 
 // SetShadow makes l the shadow ledger; nil detaches it.
 func SetShadow(l *Ledger) { shadow.Store(l) }
-
-// Shadow is the shadow ledger, or nil when none is configured.
-func Shadow() *Ledger { return shadow.Load() }
 
 // SetLive makes l the ledger Record books into; nil detaches it.
 func SetLive(l *Ledger) { live.Store(l) }

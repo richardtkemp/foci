@@ -2,7 +2,6 @@ package ccstream
 
 import (
 	"bufio"
-	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -19,7 +18,7 @@ import (
 // the next turn in a NEW process started with --resume. Only the init,
 // assistant and result lines are kept. The *_coststate files are the two
 // cost-state records CC wrote to that session's transcript: after t1 (what
-// the t2 process restored) and after t2.
+// the t2 process restored, resume_baseline_test.go) and after t2.
 
 // guardedBackend is a production-constructed Backend reporting to its own
 // guard, so the shared rate limit cannot couple parallel tests.
@@ -33,20 +32,6 @@ func guardedBackend(t *testing.T) (*Backend, *delegator.ExpectationGuard) {
 	g := &delegator.ExpectationGuard{}
 	b.expect = g
 	return b, g
-}
-
-// seedBaseline does what Start does for a --resume (#2012): seeds
-// lastModelUsage from a transcript's last cost-state record, via the fix's own
-// reader.
-func seedBaseline(t *testing.T, b *Backend, name string) {
-	t.Helper()
-	base, err := resumeBaseline("testdata/"+name, probeSession)
-	if err != nil || len(base) == 0 {
-		t.Fatalf("resumeBaseline(%s) = %v, %v — the seed would prove nothing", name, base, err)
-	}
-	b.mu.Lock()
-	b.lastModelUsage = base
-	b.mu.Unlock()
 }
 
 const probeSession = "d73108ac-6abc-4ab5-addf-1d98c7d6c1de"
@@ -91,124 +76,9 @@ func replayProbe(t *testing.T, b *Backend, name string, edits ...string) {
 	}
 }
 
-// TestFreshProcessUsage_ResumeWithBaselineIsQuiet is fixed main: CC 2.1.280
-// restores the t1 cost-state record into the t2 process, Start seeds that same
-// record, and the delta is exactly t2's own work (45,769 - 22,766 = 23,003).
-func TestFreshProcessUsage_ResumeWithBaselineIsQuiet(t *testing.T) {
-	t.Parallel()
-	b, g := guardedBackend(t)
-	seedBaseline(t, b, "resume_usage_2.1.280_t1_coststate.jsonl")
-	replayProbe(t, b, "resume_usage_2.1.280_t2.jsonl")
-	for _, inv := range []string{invFreshProcessUsage, invModelUsageMonotonic, invCacheWriteSplit} {
-		if got := g.Count(expectBackend, inv); got != 0 {
-			t.Errorf("%q fired %d time(s) on a correctly baselined resume", inv, got)
-		}
-	}
-}
-
-// TestFreshProcessUsage_ResumeWithoutBaselineFires is #2012 unfixed: CC
-// restored t1's totals but foci seeded nothing, so the first turn carries the
-// whole conversation. Also what a missing or unreadable baseline looks like.
-func TestFreshProcessUsage_ResumeWithoutBaselineFires(t *testing.T) {
-	t.Parallel()
-	b, g := guardedBackend(t)
-	replayProbe(t, b, "resume_usage_2.1.280_t2.jsonl")
-
-	if got := g.Count(expectBackend, invFreshProcessUsage); got != 1 {
-		t.Fatalf("fresh-process violations = %d, want 1: t2's ModelUsage holds 45,769 cache tokens against "+
-			"23,003 on its own stream, and that gap is t1 restored by --resume (#2012)", got)
-	}
-	for _, inv := range []string{invModelUsageMonotonic, invCacheWriteSplit} {
-		if got := g.Count(expectBackend, inv); got != 0 {
-			t.Errorf("%q fired %d time(s) on the same traffic — only the fresh-process check should", inv, got)
-		}
-	}
-}
-
-// TestFreshProcessUsage_BaselineAheadOfRestoreFires: foci seeded a LATER record
-// (t2's) than the one CC restored (t1's). The delta is then 0 while 23,003 was
-// seen, and modelUsageDelta's per-field clamp would hide that.
-func TestFreshProcessUsage_BaselineAheadOfRestoreFires(t *testing.T) {
-	t.Parallel()
-	b, g := guardedBackend(t)
-	seedBaseline(t, b, "resume_usage_2.1.280_t2_coststate.jsonl")
-	replayProbe(t, b, "resume_usage_2.1.280_t2.jsonl")
-	if got := g.Count(expectBackend, invFreshProcessUsage); got != 1 {
-		t.Errorf("fresh-process violations = %d, want 1 for a baseline ahead of what CC restored", got)
-	}
-}
-
-// TestFreshProcessUsage_CCStopsRestoringFires: foci seeded t1's record as the
-// fix expects, but CC (as before 2.1.280) started the process at zero, so its
-// first ModelUsage is t2's own work alone and the delta goes NEGATIVE.
-func TestFreshProcessUsage_CCStopsRestoringFires(t *testing.T) {
-	t.Parallel()
-	b, g := guardedBackend(t)
-	seedBaseline(t, b, "resume_usage_2.1.280_t1_coststate.jsonl")
-	replayProbe(t, b, "resume_usage_2.1.280_t2.jsonl",
-		`"cacheReadInputTokens":36457`, `"cacheReadInputTokens":22766`,
-		`"cacheCreationInputTokens":9312`, `"cacheCreationInputTokens":237`)
-	if got := g.Count(expectBackend, invFreshProcessUsage); got != 1 {
-		t.Errorf("fresh-process violations = %d, want 1 when CC stops restoring", got)
-	}
-	// The drop below the seeded baseline is not a within-process regression.
-	if got := g.Count(expectBackend, invModelUsageMonotonic); got != 0 {
-		t.Errorf("monotonic check fired %d time(s) against a seeded baseline", got)
-	}
-}
-
-// TestFreshProcessUsage_FreshConversationIsQuiet is the normal case: a process
-// that is NOT resuming reports exactly what its stream showed.
-func TestFreshProcessUsage_FreshConversationIsQuiet(t *testing.T) {
-	t.Parallel()
-	b, g := guardedBackend(t)
-	replayProbe(t, b, "resume_usage_2.1.280_t1.jsonl")
-
-	for _, inv := range []string{invFreshProcessUsage, invModelUsageMonotonic, invCacheWriteSplit} {
-		if got := g.Count(expectBackend, inv); got != 0 {
-			t.Errorf("%q fired %d time(s) on a fresh conversation's first turn", inv, got)
-		}
-	}
-	// Premise: the replay really produced a priced result, or "quiet" is vacuous.
-	b.mu.Lock()
-	n := len(b.lastModelUsage)
-	b.mu.Unlock()
-	if n == 0 {
-		t.Fatal("no ModelUsage snapshot taken — the result line never reached OnResult")
-	}
-}
-
-// TestFreshProcessUsage_OnlyTheFirstResultIsJudged: a later result in the same
-// process is cumulative BY DESIGN (#1674) and must not be read as history.
-func TestFreshProcessUsage_OnlyTheFirstResultIsJudged(t *testing.T) {
-	t.Parallel()
-	b, g := guardedBackend(t)
-	replayProbe(t, b, "resume_usage_2.1.280_t1.jsonl")
-	// A second turn in the SAME process: ModelUsage now carries t1 + this
-	// turn, while the stream shows only this turn's message.
-	b.noteAssistantUsage(msgModel("claude-haiku-4-5", "msg_second", "", 237, 0, 237))
-	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{
-		"claude-haiku-4-5": {InputTokens: 20, OutputTokens: 228, CacheReadInputTokens: 36457, CacheCreationInputTokens: 9312},
-	}})
-	if got := g.Count(expectBackend, invFreshProcessUsage); got != 0 {
-		t.Errorf("fresh-process check fired on a second result in the same process (%d)", got)
-	}
-}
-
-// TestFreshProcessUsage_StandsDownAfterCompaction: a compaction's own API call
-// is billed into ModelUsage but was never verified to reach the stream.
-func TestFreshProcessUsage_StandsDownAfterCompaction(t *testing.T) {
-	t.Parallel()
-	b, g := guardedBackend(t)
-	b.OnSystem("compact_boundary", []byte(`{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"auto","pre_tokens":1}}`))
-	replayProbe(t, b, "resume_usage_2.1.280_t2.jsonl")
-	if got := g.Count(expectBackend, invFreshProcessUsage); got != 0 {
-		t.Errorf("fired after a compaction (%d); it cannot tell compaction spend from restored history", got)
-	}
-}
-
 // TestModelUsageMonotonic: within one process every counter only grows. The
-// four snapshots are cost.go's 2026-08-05 probe; the fifth goes DOWN.
+// four snapshots are cost.go's 2026-08-05 probe; the fifth goes DOWN. A new
+// process (Start) has nothing to compare its first result with.
 func TestModelUsageMonotonic(t *testing.T) {
 	t.Parallel()
 	b, g := guardedBackend(t)
@@ -229,18 +99,26 @@ func TestModelUsageMonotonic(t *testing.T) {
 	if got := g.Count(expectBackend, invModelUsageMonotonic); got != 1 {
 		t.Errorf("violations = %d, want 1 after output, cache_read and cost all went down in one process", got)
 	}
+	// A relaunch: the new process's counters start lower, which is not a drop.
+	b.mu.Lock()
+	b.prevModelUsage = nil
+	b.mu.Unlock()
+	send(10, 1000, 0.001)
+	if got := g.Count(expectBackend, invModelUsageMonotonic); got != 1 {
+		t.Errorf("violations = %d, want still 1: a new process's first result has nothing to compare with", got)
+	}
 }
 
 // TestCacheWriteSplit: a message with cache writes must say at which TTL.
 func TestCacheWriteSplit(t *testing.T) {
 	t.Parallel()
 	b, g := guardedBackend(t)
-	b.noteAssistantUsage(msgModel("claude-opus-5", "msg_ok", "", 1000, 0, 1000))
-	b.noteAssistantUsage(msgModel("claude-opus-5", "msg_nowrites", "", 0, 0, 0))
+	b.OnAssistant(msgModel("claude-opus-5", "msg_ok", 1000, 0, 1000))
+	b.OnAssistant(msgModel("claude-opus-5", "msg_nowrites", 0, 0, 0))
 	if got := g.Count(expectBackend, invCacheWriteSplit); got != 0 {
 		t.Fatalf("fired %d time(s) on messages that carry the split or write nothing", got)
 	}
-	b.noteAssistantUsage(msgModel("claude-opus-5", "msg_bad", "", 1000, 0, 0))
+	b.OnAssistant(msgModel("claude-opus-5", "msg_bad", 1000, 0, 0))
 	if got := g.Count(expectBackend, invCacheWriteSplit); got != 1 {
 		t.Errorf("violations = %d, want 1 for 1000 cache writes with no cache_creation breakdown", got)
 	}
@@ -262,7 +140,8 @@ func TestExpectationViolation_ReachesTheOperatorWithVersion(t *testing.T) {
 	t.Cleanup(func() { log.SetWarnHook(nil) })
 
 	b, _ := guardedBackend(t)
-	replayProbe(t, b, "resume_usage_2.1.280_t2.jsonl") // unseeded: #2012's shape
+	// A message reporting cache writes with no TTL breakdown.
+	replayProbe(t, b, "resume_usage_2.1.280_t2.jsonl", `"cache_creation":{`, `"cache_creation_dropped":{`)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -278,70 +157,24 @@ func TestExpectationViolation_ReachesTheOperatorWithVersion(t *testing.T) {
 	if !strings.HasPrefix(report, "ERROR ") {
 		t.Errorf("reported at %q, want ERROR", strings.SplitN(report, " ", 2)[0])
 	}
-	for _, want := range []string{"claude-code 2.1.280", invFreshProcessUsage, "d73108ac-6abc-4ab5-addf-1d98c7d6c1de"} {
+	for _, want := range []string{"claude-code 2.1.280", invCacheWriteSplit, "no cache_creation breakdown"} {
 		if !strings.Contains(report, want) {
 			t.Errorf("report missing %q: %s", want, report)
 		}
 	}
 }
 
-// TestFreshProcessUsage_ShortfallNamesBothCauses: a delta below the seen work
-// has two causes, and on 2026-09-27 the real one was foci over-counting
-// (reactivation tails re-booking earlier runs after a CC relaunch, #2087), not
-// CC restoring less. The report must name both, and list each subagent's share
-// largest first so a re-booked subagent stands out.
-//
-// Not parallel: captureDebugLog swaps the process-global log output.
-func TestFreshProcessUsage_ShortfallNamesBothCauses(t *testing.T) {
-	logs := captureDebugLog(t)
-	b, g := guardedBackend(t)
-	const base = 1_000_000
-	seen := usageTotals{sub: map[subKey]turnUsage{
-		{Agent: "toolu_small", Model: "claude-haiku-4-5"}: {CacheRead: 10_000},
-		{Agent: "toolu_big", Model: "claude-haiku-4-5"}:   {CacheRead: 900_000},
-		{Agent: "toolu_big", Model: "claude-sonnet-5"}:    {CacheRead: 100_000},
-	}}
-	b.checkFreshProcessUsage(&ResultMessage{SessionID: "s1", ModelUsage: map[string]ModelUsage{
-		"claude-haiku-4-5": {CacheReadInputTokens: base + 50_000},
-	}}, base, seen)
-
-	if n := g.Count(expectBackend, invFreshProcessUsage); n != 1 {
-		t.Fatalf("fresh-process violations = %d, want 1 for 1,010,000 seen against a 50,000 delta", n)
+// msgModel builds one completed assistant stream line with cache writes,
+// split 5m/1h when either is non-zero.
+func msgModel(model, id string, cacheWrite, e5m, e1h int) *AssistantMessage {
+	m := &AssistantMessage{}
+	m.Message.ID = id
+	m.Message.Model = model
+	m.Message.Usage = TokenUsage{CacheCreationInputTokens: cacheWrite}
+	if e5m > 0 || e1h > 0 {
+		m.Message.Usage.CacheCreation = &CacheCreationSplit{Ephemeral5m: e5m, Ephemeral1h: e1h}
 	}
-	out := logs.String()
-	for _, want := range []string{
-		"960000 LESS than was seen",
-		"foci over-counted",
-		"CC restored less than the baseline foci read",
-		"subagents 1010000: toolu_big=1000000, toolu_small=10000)",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("report lacks %q:\n%s", want, out)
-		}
-	}
-}
-
-func TestSubagentShares_BoundedAndNamed(t *testing.T) {
-	t.Parallel()
-	if got := subagentShares(nil); got != "" {
-		t.Errorf("no subagents: %q, want empty", got)
-	}
-	// A message that arrived before task_started named its subagent.
-	sub := map[subKey]turnUsage{{Agent: "", Model: "m"}: {CacheRead: 5}}
-	if got := subagentShares(sub); got != ": (unnamed)=5" {
-		t.Errorf("unnamed share: %q, want %q", got, ": (unnamed)=5")
-	}
-	for i := range maxListedShares + 1 {
-		sub[subKey{Agent: fmt.Sprintf("toolu_%02d", i), Model: "m"}] = turnUsage{CacheRead: 100 + i}
-	}
-	got := subagentShares(sub)
-	if !strings.HasPrefix(got, ": toolu_10=110, toolu_09=109,") {
-		t.Errorf("shares not largest first: %q", got)
-	}
-	if !strings.HasSuffix(got, ", 2 more") {
-		t.Errorf("12 subagents should list %d and count 2 more: %q", maxListedShares, got)
-	}
-	if strings.Contains(got, "(unnamed)") {
-		t.Errorf("the smallest share should be cut, not listed: %q", got)
-	}
+	stop := "end_turn"
+	m.Message.StopReason = &stop
+	return m
 }

@@ -433,8 +433,11 @@ lint-unlocked: find-disconnected-tests find-static-config-reads find-unscoped-lo
 	# production and stay covered). internal/testmarker is the same shape
 	# again (#1562): Err/ID are called only from other packages' _test.go
 	# files to mark injected fake values that reach WARN/ERROR log lines.
+	# internal/delegator/accounting/legacyrow.go (#2115) writes a row in the
+	# migrated pre-ledger shape; since the Claude Code switch no backend books
+	# that way, and it is called only from the readers' tests.
 	@raw=$$($(GOBIN)/deadcode ./...) || { echo "deadcode failed or was killed (exit $$?) — reachability gate did NOT run"; exit 1; }; \
-	output=$$(printf '%s' "$$raw" | grep -v -e '/testharness/' -e '/testtemp/' -e '/clock/fake.go:' -e '/testmarker/' || true); \
+	output=$$(printf '%s' "$$raw" | grep -v -e '/testharness/' -e '/testtemp/' -e '/clock/fake.go:' -e '/testmarker/' -e '/accounting/legacyrow.go:' || true); \
 	if [ -n "$$output" ]; then echo "$$output"; exit 1; fi
 	@echo "=== find-disconnected-tests (Test* functions that don't touch prod) ==="
 	@./bin/find-disconnected-tests ./...

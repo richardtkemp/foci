@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+
+	"foci/internal/modelinfo"
 )
 
 // resumeCompletedLine is a transcript assistant record carrying billable usage: an
-// id to dedup on and a terminal stop_reason, so the accumulator counts it.
+// id to dedup on and a terminal stop_reason, so the ledger books it completed.
 func resumeCompletedLine(id string, out int) string {
 	b, _ := json.Marshal(map[string]any{
 		"type": "assistant",
@@ -73,10 +76,10 @@ func resumeAppendLine(t *testing.T, path, line string) {
 
 // TestSendMessageResume_TailAndRowKeyedByAgentID is #2056. A SendMessage
 // resume's task_started and task_notification carry the SendMessage tool_use
-// id, not the Agent's. The tail was started under that id, so run 2's usage was
-// booked to a subagent_turn row whose subagent_id was the SendMessage id (#1946
-// says subagent_id names the subagent), and the resume's notification, which
-// finalizes the RESOLVED group key, never stopped that tail.
+// id, not the Agent's. The tail was started under that id, so run 2's calls
+// were booked with the SendMessage id as their actor (#1946 says the actor
+// names the subagent), and the resume's notification, which finalizes the
+// RESOLVED group key, never stopped that tail.
 func TestSendMessageResume_TailAndRowKeyedByAgentID(t *testing.T) {
 	const (
 		agentTU = "toolu_agent_orig"
@@ -86,6 +89,22 @@ func TestSendMessageResume_TailAndRowKeyedByAgentID(t *testing.T) {
 	b, path := resumeFixture(t, taskID)
 	b.setAgentLabel(agentTU, "worker")
 	m := b.subagentTails()
+	// What reaches the ledger, per group and call: a reactivation tail re-reads
+	// run 1's lines, which the adapter books once per id.
+	var seenMu sync.Mutex
+	seen := map[string]map[string]int{}
+	feed := m.ledgerLine
+	m.ledgerLine = func(group string, raw []byte) {
+		if l, _ := parseCCRecord(raw); l != nil && l.complete {
+			seenMu.Lock()
+			if seen[group] == nil {
+				seen[group] = map[string]int{}
+			}
+			seen[group][l.id] = l.tokens[modelinfo.ClassOutput]
+			seenMu.Unlock()
+		}
+		feed(group, raw)
+	}
 
 	// Run 1: the Agent spawn.
 	resumeTaskEvent(t, b, "task_started", taskID, agentTU)
@@ -108,14 +127,17 @@ func TestSendMessageResume_TailAndRowKeyedByAgentID(t *testing.T) {
 		t.Error("run 2's task_notification left its tail running")
 	}
 
-	b.turnMu.Lock()
-	got := b.turnUsageAcc.subagentUsage()
-	b.turnMu.Unlock()
-	if _, ok := got[sendTU]; ok {
-		t.Errorf("usage booked under the SendMessage id: %+v", got)
+	seenMu.Lock()
+	defer seenMu.Unlock()
+	if _, ok := seen[sendTU]; ok {
+		t.Errorf("calls handed to the ledger under the SendMessage id: %+v", seen)
 	}
-	if u := got[agentTU]; u.Output != 300 {
-		t.Errorf("usage under the Agent id = %+v (all keys %+v), want both runs' output 300", u, got)
+	out := 0
+	for _, n := range seen[agentTU] {
+		out += n
+	}
+	if out != 300 {
+		t.Errorf("calls under the Agent id = %+v (all keys %+v), want both runs' output 300", seen[agentTU], seen)
 	}
 }
 
