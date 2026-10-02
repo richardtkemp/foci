@@ -28,60 +28,17 @@ Because there's no Claude Code process underneath, an API-loop agent is given fo
 
 ## Shared tools (also on the backend, as shell functions)
 
-These behave the same as for backend agents — the only difference is you call them as JSON tool-calls rather than `foci_*` shell functions. Argument names below are the conceptual fields; the schema is authoritative.
+Same behaviour as for backend agents, called as JSON tool-calls instead of `foci_*` shell functions. Each tool's schema lists its parameters and is authoritative; below are only the behaviours the schema doesn't tell you.
 
-### `ask` — ask the user selectable questions
-- **Async.** Posts the question(s) and returns immediately; answers arrive later as a new inbound message. **End your turn after calling it.**
-- Questions object as input. No 4-question cap.
-- Request IDs must be **colon-free** (button payloads are encoded as `<id>:<index>`).
-- Optional grader: an executable run over `{request_id, questions, answers}` (JSON on stdin) whose output is delivered to you instead of the raw answers; with optional extra argv, a timeout (default 15s), and a fallback/report on-error mode.
-
-### `send_to_chat` — send a rich message to your own chat
-- `text` (markdown supported); optional `file` attachment with display `filename` and `send-as` (document|voice|video|photo|audio|animation).
-- Always sends to **your own** chat (no chat-targeting field — destination derives from your session). To reach a different chat, use `send_to_session`.
-- Don't use it to duplicate a plain reply on a bot-attached session — your reply text is already delivered. Use it for attachments.
-
-### `send_to_session` — message another session
-- `session_key`: full session key (`scout/c5970082313`, `scout/iresearch`), agent-qualified session name or chat alias (`scout/research`), or bare agent name (`scout` → its default session).
-- `message`; `reply-to` = `caller` (default — reply returns to you) or `session` (reply goes to the target's own chat).
-
-### `todo` — persistent todo list
-- Actions: `add|list|list-all|search|get|complete|drop|edit|remove`.
-- `add`: text, optional `priority` (high|medium|low), optional `tag` set — **`tag` REPLACES tags parsed from the text body**, it doesn't append.
-- `list`: filter by `status` (open|started|done|dropped|active|all), `tag`, `priority`; `sort`, `reverse`, `limit`.
-- `complete|drop` take a close `reason`; ID forms single or list.
-
-### `remind` — defer a thought
-- `text` + `when`: duration (`2h`, `30m`), `tomorrow`, `next_keepalive`, `next_session`, a date, or an ISO timestamp.
-- `wake` (default false): passive reminders inject as context at the time; `wake` actively wakes the session.
-
-### `memory_search` — full-text search of memory + conversation history
-- `query`, stemmed FTS; memory files rank above chat. `sort` (relevance|newest|oldest), `date-from`/`date-to`, `lines` (context window).
-- Direct lookup form `session#rowID` pulls surrounding messages. Reaches conversation history that a file grep can't.
-
-### `http_request` — HTTP with server-side secret resolution
-- `url`, `method`, `header`(s) or `headers`, `body`/`body-file`, `query`.
-- `{{secret:NAME}}` in headers resolves server-side against `allowed_hosts`; in body/form fields it requires `allowed_in_body`.
-- HTTP Basic auth: `basic_auth` (`--basic-auth`) takes `user:password`, resolves templates, then base64-encodes it — e.g. `'{{secret:NAME}}:'` for an API key as username.
-- Can save the body to a path, extract a JSON field first, or run in the background. The result is the body only unless `include_headers: true`, which prepends the `HTTP <status>` line and the response headers.
-
-### `web_fetch` — URL → clean Markdown
-- `url`; Readability extraction → Markdown (or raw HTML). SSRF-safe; large pages truncated. Not for downloading files (use `http_request`).
-
-### `web_search` — Brave web search
-- `query` → titles/URLs/descriptions. Requires a Brave API key.
-
-### `summary` — extract from a file via a cheap model
-- A question plus a `file` (or piped input). For targeted extraction, not whole-file dumping.
-
-### `set_session_alias` — name this conversation
-- `alias` (required, short text). Sets a descriptive name for the current chat session, shown in the chat list. Call once after the first exchange to name what the conversation is about; keep it under 5 words.
-- **Chat sessions only** — errors on a branch/independent session key.
-- **Won't clobber a manual rename:** if the chat already has an alias not set by this tool, it replies "Skipped" instead of overwriting it.
-- Registered whenever your backend doesn't auto-generate session names — which includes the API loop, so you always have it (only Codex auto-names and loses this tool).
-
-### `app_android` — run a task on the user's connected Android device (via Tasker)
-- Only offered when the `app` platform is configured for this agent; offered ≠ connected — a call with no device attached returns a plain error string, not a tool failure.
-- `action: "list"` returns the device's allowlisted tasks as JSON. `action: "perform"` with `task` (name) and optional `par1`/`par2` (stringly-typed — JSON-stringify structured args into `par1`) runs a named task.
-- **The on-device allowlist is empty by default** — the user opts tasks in via the app's Advanced settings before `perform` can reach them.
-- A task can come back `"pending"` if it's still running past the sync window; the server keeps waiting up to ~60s for the real result, so most slow tasks still resolve synchronously — only one that also blows that budget returns pending-with-no-result, and that result is dropped (no later async delivery).
+- **`ask`** — async: it posts and returns at once, and answers arrive later as a new message, so **end your turn after calling it**. No 4-question cap. Request IDs must be **colon-free** (button payloads are `<id>:<index>`). An optional grader executable gets `{request_id, questions, answers}` on stdin and its output is delivered instead of the raw answers.
+- **`send_to_chat`** — always your **own** chat (destination comes from your session); use `send_to_session` for another. Your reply text is already delivered, so use it for attachments, not to repeat a reply.
+- **`send_to_session`** — `session_key` takes a full key (`scout/c5970082313`), `agent/name` or alias, or a bare agent name (its default session). `reply-to`: `caller` (default, reply comes back to you) or `session` (reply goes to the target's chat).
+- **`todo`** — `tag` **replaces** the whole tag set (and tags parsed from the text); it never appends.
+- **`remind`** — passive by default (injected as context when due); `wake` actively wakes the session.
+- **`memory_search`** — stemmed full-text; memory files rank above chat. `session#rowID` pulls the surrounding messages.
+- **`http_request`** — `{{secret:NAME}}` resolves server-side: in headers against the secret's `allowed_hosts`, in body/form fields only with `allowed_in_body`. `basic_auth` takes `user:password` (templates resolved, then base64-encoded; the token is redacted from output), e.g. `'{{secret:NAME}}:'` for a key-as-username. Returns the body only unless `include_headers: true`.
+- **`web_fetch`** — Readability → Markdown; large pages truncated. Not for downloading files (use `http_request`).
+- **`web_search`** — Brave Search; titles, URLs and descriptions only.
+- **`summary`** — targeted extraction from a file by a cheap model; never a whole-file dump.
+- **`set_session_alias`** — chat sessions only (errors on a branch). Call once after the first exchange, under 5 words. It won't overwrite a manual rename (replies "Skipped").
+- **`app_android`** — offered when the app platform is configured, but offered ≠ connected: with no device it returns a plain error string. The on-device allowlist is **empty by default** (the user opts tasks in under the app's Advanced settings). Structured args go JSON-stringified in `par1`. A task still running after ~60s returns pending, and its later result is dropped.
