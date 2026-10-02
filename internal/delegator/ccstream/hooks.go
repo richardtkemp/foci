@@ -301,6 +301,10 @@ type hookScriptOutput struct {
 	DeniedRule   string `json:"denied_rule,omitempty"`
 	// WhenErrors are pretool when-checks that failed open (#2034).
 	WhenErrors []string `json:"when_errors,omitempty"`
+	// DurationMS is CC's tool runtime; RuntimeShown means foci-cc-hook handed
+	// it to the model as additionalContext (#2125).
+	DurationMS   int64 `json:"duration_ms,omitempty"`
+	RuntimeShown bool  `json:"runtime_shown,omitempty"`
 	// HookSpecificOutput is read only for a deny's reason.
 	HookSpecificOutput struct {
 		PermissionDecisionReason string `json:"permissionDecisionReason"`
@@ -380,6 +384,14 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 			b.endDeniedCall(parsed)
 		}
 		return
+	}
+
+	// The model was told this call's runtime (#2125). Logged before the
+	// sidechain filter so a subagent's slow calls are counted too; the log is
+	// what measures the note's effect.
+	if parsed.RuntimeShown {
+		b.logger().Infof("tool_runtime_shown tool=%s tuid=%s agent_id=%s duration_ms=%d",
+			parsed.ToolName, parsed.ToolUseID, parsed.AgentID, parsed.DurationMS)
 	}
 
 	// A Workflow run's agents are read for the ledger from the directory its

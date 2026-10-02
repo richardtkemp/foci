@@ -38,8 +38,10 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"foci/internal/delegator/pretool"
 	"foci/internal/delegator/stoprule"
@@ -63,6 +65,12 @@ const stopRulesFlag = "--stop-rules"
 
 // eventStop is CC's hook_event_name for the end-of-turn hook.
 const eventStop = "Stop"
+
+// slowToolThreshold is the runtime from which a tool call's duration is shown
+// to the model (#2125, Factory's Droid idea): knowing a call was slow lets it
+// avoid repeating it, pick a faster route, or set a timeout. Faster calls are
+// left unannotated to keep the noise out. 10s is Dick's ruling of 2026-10-02.
+const slowToolThreshold = 10 * time.Second
 
 // maxFieldBytes bounds the size of tool_response / tool_input / error fields
 // in the emitted JSON. Two independent constraints, the tighter of which sets
@@ -99,6 +107,9 @@ type hookInput struct {
 	AgentID       string          `json:"agent_id,omitempty"`
 	IsInterrupt   bool            `json:"is_interrupt,omitempty"`
 	IsTimeout     bool            `json:"is_timeout,omitempty"`
+	// DurationMS is the tool call's runtime, sent on PostToolUse and
+	// PostToolUseFailure (verified in the CC 2.1.286 bundle); 0 when absent.
+	DurationMS int64 `json:"duration_ms,omitempty"`
 	// Cwd is the session's working directory; pretool rules can match it.
 	Cwd string `json:"cwd,omitempty"`
 
@@ -132,15 +143,24 @@ type hookOutput struct {
 	// WhenErrors reports pretool when-checks that failed open (#2034), so
 	// foci can log them.
 	WhenErrors []string `json:"when_errors,omitempty"`
-	// HookSpecificOutput is the part CC acts on. Set only for a deny.
-	HookSpecificOutput *preToolDecision `json:"hookSpecificOutput,omitempty"`
+	// DurationMS echoes CC's duration_ms, and RuntimeShown reports that the
+	// model was told it (#2125), so foci can log each runtime note.
+	DurationMS   int64 `json:"duration_ms,omitempty"`
+	RuntimeShown bool  `json:"runtime_shown,omitempty"`
+	// HookSpecificOutput is the part CC acts on: a PreToolUse deny, or a
+	// PostToolUse(Failure) runtime note.
+	HookSpecificOutput *hookSpecific `json:"hookSpecificOutput,omitempty"`
 }
 
-// preToolDecision is CC's PreToolUse hookSpecificOutput shape.
-type preToolDecision struct {
+// hookSpecific is CC's hookSpecificOutput shape. PreToolUse reads the
+// permission fields; PostToolUse and PostToolUseFailure read
+// additionalContext, which CC adds to the model's context after the tool
+// result.
+type hookSpecific struct {
 	HookEventName            string `json:"hookEventName"`
-	PermissionDecision       string `json:"permissionDecision"`
-	PermissionDecisionReason string `json:"permissionDecisionReason"`
+	PermissionDecision       string `json:"permissionDecision,omitempty"`
+	PermissionDecisionReason string `json:"permissionDecisionReason,omitempty"`
+	AdditionalContext        string `json:"additionalContext,omitempty"`
 }
 
 // stopOutput is what the helper writes on Stop. Decision and Reason are the
@@ -266,7 +286,26 @@ func toolOutputFor(args []string, in hookInput) hookOutput {
 	if in.Error != "" {
 		out.Error = truncate(in.Error, maxFieldBytes)
 	}
+	applyRuntime(&out, in)
 	return out
+}
+
+// applyRuntime tells the model how long a slow tool call took, as
+// PostToolUse(Failure) additionalContext: CC attaches it right after the
+// tool's result in the same turn, so there is no foci-side injection to race
+// the next API call. PreToolUse carries no duration_ms, so it never matches.
+func applyRuntime(out *hookOutput, in hookInput) {
+	out.DurationMS = in.DurationMS
+	d := time.Duration(in.DurationMS) * time.Millisecond
+	if d < slowToolThreshold {
+		return
+	}
+	out.RuntimeShown = true
+	out.HookSpecificOutput = &hookSpecific{
+		HookEventName: in.HookEventName,
+		AdditionalContext: fmt.Sprintf("Tool runtime: this %s call took %s. (Runtimes are reported only for calls taking %s or more.)",
+			in.ToolName, d.Round(time.Second), slowToolThreshold),
+	}
 }
 
 // applyRules marks out as a deny when an encoded pretool rule matches the
@@ -290,7 +329,7 @@ func applyRules(out *hookOutput, encoded string, call pretool.Call) {
 		return
 	}
 	out.DeniedRule = r.Name
-	out.HookSpecificOutput = &preToolDecision{
+	out.HookSpecificOutput = &hookSpecific{
 		HookEventName:            "PreToolUse",
 		PermissionDecision:       pretool.ActionDeny,
 		PermissionDecisionReason: r.Reason,

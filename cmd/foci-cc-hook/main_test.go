@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -457,4 +458,55 @@ func process(args []string, body []byte) (hookOutput, bool) {
 	}
 	h, isTool := out.(hookOutput)
 	return h, isTool
+}
+
+// postBody builds a PostToolUse / PostToolUseFailure envelope carrying CC's
+// duration_ms (present on both events since at least CC 2.1.286).
+func postBody(event string, durationMS int64) []byte {
+	return []byte(`{"hook_event_name":"` + event + `","tool_name":"Bash","tool_use_id":"t",` +
+		`"tool_input":{"command":"make test"},"duration_ms":` + strconv.FormatInt(durationMS, 10) + `}`)
+}
+
+// TestRuntime_SlowCallShown proves a tool call at or over the threshold gets
+// its runtime handed to the model as PostToolUse additionalContext (#2125),
+// on both the success and the failure event, and is flagged for foci's log.
+func TestRuntime_SlowCallShown(t *testing.T) {
+	for _, event := range []string{"PostToolUse", "PostToolUseFailure"} {
+		for ms, want := range map[int64]string{10_000: "10s", 252_400: "4m12s"} {
+			out, ok := process([]string{"foci-cc-hook"}, postBody(event, ms))
+			if !ok {
+				t.Fatalf("%s %dms: process rejected fixture", event, ms)
+			}
+			d := out.HookSpecificOutput
+			if d == nil || d.HookEventName != event || !strings.Contains(d.AdditionalContext, "took "+want) {
+				t.Errorf("%s %dms: hookSpecificOutput = %+v, want additionalContext naming %q", event, ms, d, want)
+				continue
+			}
+			if d.PermissionDecision != "" {
+				t.Errorf("%s %dms: runtime note carries a permission decision: %+v", event, ms, d)
+			}
+			if !out.RuntimeShown || out.DurationMS != ms {
+				t.Errorf("%s %dms: runtime_shown=%v duration_ms=%d", event, ms, out.RuntimeShown, out.DurationMS)
+			}
+		}
+	}
+}
+
+// TestRuntime_FastCallSilent proves calls under the threshold, and envelopes
+// with no duration (PreToolUse, older CC), add nothing the model sees.
+func TestRuntime_FastCallSilent(t *testing.T) {
+	cases := map[string][]byte{
+		"9999ms":      postBody("PostToolUse", 9_999),
+		"no duration": []byte(`{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_use_id":"t"}`),
+		"pretool":     preToolBody("Bash", `{"command":"make test"}`),
+	}
+	for name, body := range cases {
+		out, ok := process([]string{"foci-cc-hook"}, body)
+		if !ok {
+			t.Fatalf("%s: process rejected fixture", name)
+		}
+		if out.HookSpecificOutput != nil || out.RuntimeShown {
+			t.Errorf("%s: unexpected runtime note: %+v", name, out)
+		}
+	}
 }

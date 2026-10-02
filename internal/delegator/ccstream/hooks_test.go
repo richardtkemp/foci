@@ -837,3 +837,36 @@ func TestHandleHookResponse_StopVerdictLogged(t *testing.T) {
 		t.Errorf("logged another install's Stop verdict:\n%s", got)
 	}
 }
+
+// TestHandleHookResponse_RuntimeShownLogged proves each runtime note
+// foci-cc-hook gave the model (#2125) is logged as tool_runtime_shown, a
+// subagent's included, so the note's effect can be measured; a fast call
+// with no note logs nothing.
+//
+// Not parallel: captureDebugLog is process-global.
+func TestHandleHookResponse_RuntimeShownLogged(t *testing.T) {
+	buf := captureDebugLog(t)
+	b := &Backend{hookInstallID: "install-r"}
+	for _, out := range []hookScriptOutput{
+		{HookEvent: "PostToolUse", ToolUseID: "toolu_slow", ToolName: "Bash", DurationMS: 42_000, RuntimeShown: true},
+		{HookEvent: "PostToolUse", ToolUseID: "toolu_sub", ToolName: "Bash", AgentID: "sub-1", DurationMS: 15_000, RuntimeShown: true},
+		{HookEvent: "PostToolUse", ToolUseID: "toolu_fast", ToolName: "Read", DurationMS: 30},
+	} {
+		out.InstallID = "install-r"
+		stdout, _ := json.Marshal(out)
+		env, _ := json.Marshal(hookResponseEnvelope{HookEvent: "PostToolUse", Stdout: string(stdout)})
+		b.handleHookResponse(env)
+	}
+	got := buf.String()
+	for _, want := range []string{
+		"tool_runtime_shown tool=Bash tuid=toolu_slow agent_id= duration_ms=42000",
+		"tool_runtime_shown tool=Bash tuid=toolu_sub agent_id=sub-1 duration_ms=15000",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("log missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "toolu_fast") {
+		t.Errorf("logged a runtime note for a fast call:\n%s", got)
+	}
+}
