@@ -420,6 +420,17 @@ func isOwnMessage(frame fap.ServerFrame) bool {
 func pushPreview(frame fap.ServerFrame) (string, bool) {
 	switch f := frame.(type) {
 	case fap.ServerMessage:
+		if len(f.Attachments) > 0 {
+			// A user echo carrying files (#2161) previews like a Media frame, from
+			// its first attachment, noting the rest ("report.pdf +2 — caption") as
+			// the app's MediaPreview.mediaListLabel does for a multi-file send.
+			a := f.Attachments[0]
+			more := ""
+			if n := len(f.Attachments); n > 1 {
+				more = fmt.Sprintf(" +%d", n-1)
+			}
+			return mediaPreview(a.MIME, a.Name, f.Text, more), true
+		}
 		return truncatePreview(f.Text), true
 	case fap.TextEnd:
 		if f.FinalText != nil {
@@ -432,18 +443,7 @@ func pushPreview(frame fap.ServerFrame) (string, bool) {
 		// (MediaPreview.mediaListLabel) so the reconnect/hello seed matches what the app
 		// shows for live messages. With no filename, a caption is shown alone, else a
 		// "Sent a <noun>" fallback.
-		name := strings.TrimSpace(f.Name)
-		caption := strings.TrimSpace(f.Caption)
-		if name == "" {
-			if caption != "" {
-				return truncatePreview(caption), true
-			}
-			return "Sent " + mediaNoun(f.MIME), true
-		}
-		if caption != "" {
-			return truncatePreview(name + " — " + caption), true
-		}
-		return truncatePreview(name), true
+		return mediaPreview(f.MIME, f.Name, f.Caption, ""), true
 	case fap.Notification:
 		return truncatePreview(f.Text), true
 	case fap.Interactive:
@@ -461,6 +461,24 @@ func pushPreview(frame fap.ServerFrame) (string, bool) {
 		// typing, thinking, warming, tool, meta, turn.start, text.delta, error, pong
 		return "", false
 	}
+}
+
+// mediaPreview labels a media message: its filename, else the caption alone,
+// else "Sent <noun>"; a caption follows a filename after " — ". more (e.g.
+// " +2") is appended to the filename or the noun, for a multi-file message.
+func mediaPreview(mime, name, caption, more string) string {
+	name = strings.TrimSpace(name)
+	caption = strings.TrimSpace(caption)
+	if name == "" {
+		if caption != "" {
+			return truncatePreview(caption)
+		}
+		return "Sent " + mediaNoun(mime) + more
+	}
+	if caption != "" {
+		return truncatePreview(name + more + " — " + caption)
+	}
+	return truncatePreview(name + more)
 }
 
 // mediaNoun returns a short human noun for a media MIME, for push previews.

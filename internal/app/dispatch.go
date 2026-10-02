@@ -172,7 +172,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.handleServerRestart(client)
 
 	case fap.ClientMessage:
-		h.routeUserTurn(client, f.ConversationID, f.AgentID, f.Text, h.resolveAttachments(f.Attachments), in.ID, in.Seq, steerPreference(f.Steer), f.TranscribeOnly)
+		h.routeUserTurn(client, f.ConversationID, f.AgentID, f.Text, h.resolveAttachments(f.Attachments), h.echoAttachmentRefs(f.Attachments), in.ID, in.Seq, steerPreference(f.Steer), f.TranscribeOnly)
 
 	case fap.InteractiveResponse:
 		h.handleInteractiveResponse(client, f)
@@ -825,7 +825,11 @@ func inboundConvID(frame any) string {
 // replayed from the client outbox after a reconnect is dropped (the image
 // double-send bug). A warm binding was already recorded by the gate, so we
 // only seed when we just created it.
-func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts []platform.Attachment, inID string, inSeq int64, steer agent.SteerPreference, transcribeOnly bool) {
+//
+// echoRefs are the message's attachment refs as the client sent them (see
+// echoAttachmentRefs); they ride on the user-role echo so the user's other
+// devices can show the files (#2161). atts is the resolved form the agent gets.
+func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts []platform.Attachment, echoRefs []fap.AttachmentRef, inID string, inSeq int64, steer agent.SteerPreference, transcribeOnly bool) {
 	if convID == "" || (text == "" && len(atts) == 0) {
 		return
 	}
@@ -957,8 +961,11 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 	// doesn't double-render. Without this the message lives only on the sender; a
 	// freshly-paired device (which rebuilds from replayed server frames) never sees
 	// it — only agent/system messages, which already flow as server frames.
-	if text != "" {
-		b.send(fap.ServerMessage{ConversationID: convID, MessageID: inID, Role: "user", Text: text})
+	// The echo carries the attachment refs too, and is sent for a file with no
+	// caption, so other devices show the files as placeholders they fetch on
+	// tap (#2161).
+	if text != "" || len(echoRefs) > 0 {
+		b.send(fap.ServerMessage{ConversationID: convID, MessageID: inID, Role: "user", Text: text, Attachments: echoRefs})
 	}
 	// User message confirmed bound for the agent — record interaction. The turn
 	// it starts also writes last_user_activity_at, but only once it runs; this
@@ -1091,6 +1098,27 @@ func (h *Hub) resolveAttachments(refs []fap.AttachmentRef) []platform.Attachment
 			MimeType:  firstNonEmpty(r.MIME, meta.mime),
 			SavedPath: meta.path,
 		})
+	}
+	return out
+}
+
+// echoAttachmentRefs is the attachment list a user-role echo carries (#2161):
+// every ref the client sent, in its order — an unknown blob is NOT dropped, so
+// ref n on the echo is always ref n of the send, which is what the sending
+// device's optimistic rows (<id>:att<n>) reconcile by. A ref's blank MIME or
+// name is filled from the stored blob when there is one.
+func (h *Hub) echoAttachmentRefs(refs []fap.AttachmentRef) []fap.AttachmentRef {
+	if len(refs) == 0 {
+		return nil
+	}
+	out := make([]fap.AttachmentRef, len(refs))
+	for i, r := range refs {
+		if meta, ok := h.blobs.get(r.BlobID); ok {
+			r.Kind = firstNonEmpty(r.Kind, meta.kind)
+			r.MIME = firstNonEmpty(r.MIME, meta.mime)
+			r.Name = firstNonEmpty(r.Name, meta.name)
+		}
+		out[i] = r
 	}
 	return out
 }

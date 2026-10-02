@@ -2140,6 +2140,12 @@ func TestPushPreview_Classification(t *testing.T) {
 		// #1061: a named file previews with its filename, plus caption when present.
 		{fap.Media{MIME: "application/pdf", Name: "report.pdf"}, true, "report.pdf"},
 		{fap.Media{MIME: "application/pdf", Name: "report.pdf", Caption: "here you go"}, true, "report.pdf — here you go"},
+		// #2161: a user echo carrying files previews from its first attachment.
+		{fap.ServerMessage{Role: "user", Attachments: []fap.AttachmentRef{{MIME: "application/pdf", Name: "report.pdf"}}}, true, "report.pdf"},
+		{fap.ServerMessage{Role: "user", Text: "see these", Attachments: []fap.AttachmentRef{
+			{MIME: "application/pdf", Name: "report.pdf"}, {MIME: "image/png"}, {MIME: "image/png"},
+		}}, true, "report.pdf +2 — see these"},
+		{fap.ServerMessage{Role: "user", Attachments: []fap.AttachmentRef{{MIME: "image/png"}, {MIME: "image/png"}}}, true, "Sent a photo +1"},
 		{fap.Notification{Text: "note"}, true, "note"},
 		{fap.Interactive{Text: "approve?"}, true, "approve?"},
 		{fap.Interactive{Questions: []fap.Question{{Text: "batched ask?"}}}, true, "batched ask?"},

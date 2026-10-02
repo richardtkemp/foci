@@ -421,6 +421,12 @@ type ServerMessage struct {
 	// VoiceUnavailable: see TextEnd.VoiceUnavailable (#1809) — the same marker
 	// for an agent reply that did not stream.
 	VoiceUnavailable string `json:"voiceUnavailable,omitempty"`
+	// Attachments are the blob refs a user-role echo's message carried, in the
+	// order the sender attached them (#2161), so the user's OTHER devices can
+	// show each file as a placeholder and fetch it on demand from
+	// GET /app/blob/<id>. Only set on Role "user"; omitted when empty, so an
+	// older client never sees it.
+	Attachments []AttachmentRef `json:"attachments,omitempty"`
 }
 
 func (ServerMessage) Type() string { return TypeMessage }

@@ -2497,7 +2497,12 @@ presentation from `mime`; kind is an internal blob/Telegram-method label only); 
 Inbound: the app uploads via `POST /app/blob` (`ServeBlobPost`, returns
 `{blobId,size,mime}`), then references the blobId in `message.attachments`;
 `resolveAttachments` reads each blob back into a `platform.Attachment`
-(small ones into `Data`, `SavedPath` always set). Both endpoints share the
+(small ones into `Data`, `SavedPath` always set). The user-role echo
+(`routeUserTurn`) carries the same refs back as `message.attachments`
+(`echoAttachmentRefs`: every ref in send order, blank mime/name filled from the
+blob) and is sent for a file with no caption, so the user's other devices show
+each file as a placeholder and fetch it on tap (#2161). Blobs are not
+device-scoped: any paired device can GET one until its TTL. Both endpoints share the
 `bearerToken` + `app.api_key` gate; registered in `http.go` alongside `/app/ws`.
 
 **Agent avatars (`avatar.go`):** each agent may have an avatar image, served to
