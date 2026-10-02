@@ -9,7 +9,7 @@ Every `[[agents]]` entry has a `backend` field. It selects the API transport or 
 - **`backend = "api"` (default) — API transport.** Foci calls the LLM API directly, executes tools in-process, and manages the session history.
 - **`backend = "claude-code"` (ccstream) — Delegated transport.** Foci spawns Claude Code as a subprocess via structured NDJSON over stdin/stdout. CC handles inference, tool execution, and its own context management; Foci feeds it prompts and reads back the assistant output.
 - **`backend = "claude-code-tmux"` (cctmux) — Delegated transport, legacy.** Same role as ccstream but talks to the `claude` binary by screen-scraping a tmux pane.
-- **`backend = "codex"` — Delegated transport.** OpenAI Codex CLI driven via `codex app-server` JSON-RPC 2.0 over stdio. Persistent subprocess like ccstream; the server holds the session and Foci drives it with RPC calls. **Not currently in use** (WIRING.md: "codex is disabled; left for its re-enable"): it is still registered and selectable, but it is not exercised in production.
+- **`backend = "codex"` — Delegated transport.** OpenAI Codex CLI driven via `codex app-server` JSON-RPC 2.0 over stdio. Persistent subprocess like ccstream; the server holds the session and Foci drives it with RPC calls.
 - **`backend = "opencode"` — Delegated transport.** OpenCode driven via its HTTP/SSE server. Foci spawns one `opencode serve` subprocess per agent (shared across that agent's sessions and refcounted) and talks to it over HTTP.
 
 The orchestrator (`OrchestrateFullTurn`) calls both transports through the same interface, which is why most Foci features — reminders, scratchpad, todos, tasks, nudges, multi-platform delivery, steering — work across all of them. Where the delegated backends differ from each other, the [parity reference](#delegated-backend-feature-parity) says how.
@@ -145,7 +145,7 @@ This means long tool calls on the delegated path don't time out as long as CC is
 
 ## Delegated backend feature parity
 
-Feature-by-feature comparison of the three structured delegated backends, from the #2151 survey (origin/main `5d1dbf759`, 2026-10-02). ccstream (`backend = "claude-code"`) is the reference. cctmux is left out. **codex is not currently in use**, so its column describes code that is not running in production.
+Feature-by-feature comparison of the three structured delegated backends, from the #2151 survey (origin/main `5d1dbf759`, 2026-10-02). ccstream (`backend = "claude-code"`) is the reference. cctmux is left out.
 
 Path shorthand: `cc/` = `internal/delegator/ccstream/`, `oc/` = `internal/delegator/opencode/`,
 `cx/` = `internal/delegator/codex/`, `dg/` = `internal/delegator/`, `ag/` = `internal/agent/`,
@@ -422,8 +422,8 @@ grepped for each ✗.
     hooks: delete them or wire them (e.g. to notice backend-initiated auto-compaction).
 31. Agent-layer generic: closes the backend keeping the resume id; codex re-sends
     `baseInstructions` on `thread/resume` (`cx/lifecycle.go:resumeThread`).
-32. WIRING.md: "A codex child that outlives its turn still reads `still_running` false early
-    (codex is disabled; left for its re-enable)."
+32. A codex child that outlives its turn still reads `still_running` false early (not yet
+    handled for codex).
 33. opencode and codex book each message/usage event as it arrives, so there is no cumulative
     counter to rebase.
 34. `grep -i 'limit|ratelimit'` in `cx/`: no handler; unknown notifications fall to

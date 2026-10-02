@@ -1503,7 +1503,7 @@ the open turn with a stub (id, session, backend) whose upsert never overwrites w
 agent recorded. `activity_closed_at` is set at the turn's end, except for a backend that is
 a `delegator.TurnActivityCloser` (Claude Code): its spend can outlive the turn, so it closes
 the activity itself (see "Claude Code adapter"). A codex child that outlives its turn still
-reads `still_running` false early (codex is disabled; left for its re-enable). At startup
+reads `still_running` false early (not yet handled for codex). At startup
 `Ledger.CloseOrphanedTurns` closes any turn an earlier gateway left running (at its last
 call, else its end, else its start): no backend process survives a restart.
 
@@ -1658,8 +1658,8 @@ booked on the turn that SPAWNED it (`subagentTracker` records it at first sight,
 before the switch they were consumed unread, so codex subagent spend was missing. The
 `turnCalc` accumulator and its per-turn `CostAsOf` are gone; `stashedUsage` is context fill
 only. Tested against `codex/testdata/tokenusage_synthetic.json`: the #1855 live cycles plus
-SYNTHETIC child-thread and re-delivery notifications — codex is disabled, so replace it with
-a real capture on re-enable.
+SYNTHETIC child-thread and re-delivery notifications; replace them with a real capture when
+one is available.
 
 **Claude Code adapter** (`ccstream/ccbook.go` state machine, `ccstream/ccledger.go`
 wiring; #2111 §3.1, §4, §5; P2 fourth switch, #2115). Each CC process runs one adapter
