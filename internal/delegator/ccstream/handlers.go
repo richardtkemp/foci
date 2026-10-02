@@ -522,6 +522,7 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		}
 		// A fresh session's transcript starts with this process.
 		if lg := b.ledger.Load(); lg != nil {
+			lg.book.setVersion(init.ClaudeCodeVersion)
 			if path, err := ccTranscriptPath(b.workDir, init.SessionID); err == nil {
 				lg.startMainTail(path, 0)
 			}

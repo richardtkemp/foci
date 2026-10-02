@@ -110,7 +110,7 @@ func initLogging(cfg *config.Config, processStart time.Time) func() {
 			// to operator chat through the shared expectation guard (#2013),
 			// at ERROR, rate-limited per backend and invariant.
 			OnAlarm: func(a accounting.Alarm) {
-				delegator.Expectations.Violated(ledgerLog, a.Backend, "", "ledger "+a.Invariant, a.Detail)
+				delegator.Expectations.Violated(ledgerLog, a.Backend, a.Version, "ledger "+a.Invariant, a.Detail)
 			},
 		})
 		if err != nil {

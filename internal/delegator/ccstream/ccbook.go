@@ -65,6 +65,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"foci/internal/delegator"
@@ -289,6 +290,28 @@ type ccBook struct {
 	// unbooked.
 	ended  map[string]bool
 	closed map[string]bool
+
+	// version is the CC version this process reported at init, carried on
+	// every alarm the book raises (#2149). Atomic rather than read from the
+	// Backend: turnEnded can run the book outside the adapter goroutine.
+	version atomic.Pointer[string]
+}
+
+// setVersion records the CC version this process reported at init.
+func (c *ccBook) setVersion(v string) {
+	if v != "" {
+		c.version.Store(&v)
+	}
+}
+
+// alarm raises an invariant violation on this process, tagged with its CC
+// version.
+func (c *ccBook) alarm(inv, detail string) {
+	a := accounting.Alarm{Invariant: inv, Backend: accounting.BackendCCStream, Detail: detail}
+	if v := c.version.Load(); v != nil {
+		a.Version = *v
+	}
+	c.l.Alarm(a)
 }
 
 // countedSum is what the counted calls of one window on one model add up to:
@@ -687,8 +710,7 @@ func (c *ccBook) closeWindows(w int) {
 			continue
 		}
 		c.done[id] = true
-		c.l.Alarm(accounting.Alarm{Invariant: accounting.InvStreamIdBooked, Backend: accounting.BackendCCStream,
-			Detail: fmt.Sprintf("session %s: the stream named call %s but its main-transcript line never came", c.session, id)})
+		c.alarm(accounting.InvStreamIdBooked, fmt.Sprintf("session %s: the stream named call %s but its main-transcript line never came", c.session, id))
 	}
 	for _, t := range turns {
 		c.closeIfIdle(t, c.now())
@@ -799,8 +821,7 @@ func (c *ccBook) remainder(w int, mu map[string]ModelUsage, label string, at tim
 		rem[m] = r
 	}
 	if len(negative) > 0 {
-		c.l.Alarm(accounting.Alarm{Invariant: accounting.InvNegativeRemainder, Backend: accounting.BackendCCStream,
-			Detail: fmt.Sprintf("session %s %s: %s — nothing booked", c.session, label, strings.Join(negative, "; "))})
+		c.alarm(accounting.InvNegativeRemainder, fmt.Sprintf("session %s %s: %s — nothing booked", c.session, label, strings.Join(negative, "; ")))
 		return
 	}
 	// The windows' calls are now settled against CC's count: they join the
@@ -917,10 +938,9 @@ func (c *ccBook) checkOverhead(overhead, window float64, models []string, label 
 	if overhead <= bound {
 		return
 	}
-	c.l.Alarm(accounting.Alarm{Invariant: accounting.InvOverheadBounded, Backend: accounting.BackendCCStream,
-		Detail: fmt.Sprintf("session %s %s: overhead $%.4f is over the bound $%.2f (CC's cost for the window $%.4f): %s — "+
-			"spend no transcript holds (a subagent tail that never opened, a lost resume baseline?)",
-			c.session, label, overhead, bound, window, strings.Join(models, "; "))})
+	c.alarm(accounting.InvOverheadBounded, fmt.Sprintf("session %s %s: overhead $%.4f is over the bound $%.2f (CC's cost for the window $%.4f): %s — "+
+		"spend no transcript holds (a subagent tail that never opened, a lost resume baseline?)",
+		c.session, label, overhead, bound, window, strings.Join(models, "; ")))
 }
 
 // checkDivergence compares, per model, CC's own cost since this process
@@ -962,9 +982,8 @@ func (c *ccBook) checkDivergence(mu map[string]ModelUsage, label string) {
 	if len(off) == 0 {
 		return
 	}
-	c.l.Alarm(accounting.Alarm{Invariant: accounting.InvCostDivergence, Backend: accounting.BackendCCStream,
-		Detail: fmt.Sprintf("session %s %s: the ledger's price of this process differs from CC's own cost beyond %.0f%%: %s",
-			c.session, label, 100*delegator.CostDivergenceTolerance, strings.Join(off, "; "))})
+	c.alarm(accounting.InvCostDivergence, fmt.Sprintf("session %s %s: the ledger's price of this process differs from CC's own cost beyond %.0f%%: %s",
+		c.session, label, 100*delegator.CostDivergenceTolerance, strings.Join(off, "; ")))
 }
 
 // formatTokens renders counts as "class=n, ..." in class order, zeros left out.
@@ -988,9 +1007,8 @@ func (c *ccBook) splitRemainderTTL(call *accounting.Call, ccCost float64, counte
 	x5m, err := solveRemainderTTL(call.Model, call.BilledAt, call.Tokens, ccCost, counted)
 	if err != nil {
 		call.Detail["ttl"] = "unsolved"
-		c.l.Alarm(accounting.Alarm{Invariant: accounting.InvRemainderTTLUnsolved, Backend: accounting.BackendCCStream,
-			Detail: fmt.Sprintf("session %s %s %s: %d remainder cache writes priced at the 1h rate: %v",
-				c.session, label, call.Model, w, err)})
+		c.alarm(accounting.InvRemainderTTLUnsolved, fmt.Sprintf("session %s %s %s: %d remainder cache writes priced at the 1h rate: %v",
+			c.session, label, call.Model, w, err))
 		return
 	}
 	delete(call.Tokens, modelinfo.ClassCacheWrite)

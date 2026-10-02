@@ -223,7 +223,11 @@ type LegacyFill struct {
 type Alarm struct {
 	Invariant string
 	Backend   string
-	Detail    string
+	// Version is the backend's own version string (CC's claude_code_version),
+	// so an alarm can be matched to the release behind it (#2149). "" when
+	// the raiser does not know it: an alarm found inside a booking carries none.
+	Version string
+	Detail  string
 }
 
 // Ledger is the cost ledger in api.db. It is the database's only writer.

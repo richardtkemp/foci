@@ -1516,7 +1516,9 @@ how every writer and reader reaches it; `accounting.Live()` is nil with no `api_
 configured (and in unit tests), and writers then only observe (api.jsonl, BookedHook).
 Alarms go to `OnAlarm`, which reports each through `delegator.Expectations.Violated`
 (invariant `ledger <inv>`): an ERROR, so operator chat, rate-limited per backend and
-invariant (#2013).
+invariant (#2013). An adapter alarm carries the backend's version (`Alarm.Version`; CC's
+ccBook takes it from `system/init` via `setVersion`), so it names the release (#2149); an
+alarm found inside a booking (`Tx.alarm`) carries none and reads "version unknown".
 A live-applied `[[modelinfo]]` change re-renders `token_rates` (`Ledger.RenderRates`, from
 `liveapply.go`), so SQL keeps pricing like Go. `foci-gw ledger-migrate` still dry-runs the
 migration on a COPY of an api.db.

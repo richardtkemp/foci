@@ -826,3 +826,22 @@ func TestResultWaitsForMainTailRead(t *testing.T) {
 		}
 	})
 }
+
+// TestAlarmCarriesCCVersion: an alarm the book raises names the CC version the
+// process reported at init, so it can be matched to a CC release (#2149).
+func TestAlarmCarriesCCVersion(t *testing.T) {
+	tb := newTestBook(t, map[string]ModelUsage{opus: {InputTokens: 1000}})
+	tb.setVersion("2.1.286")
+	tb.streamNamed("m1", "T1", tb.clock)
+	tb.mainLine(line("m1", opus, tb.clock, "end_turn", 999, 0, 0, 0, 0))
+	tb.result(map[string]ModelUsage{opus: {InputTokens: 1001}}, 0, tb.clock)
+	tb.advance(time.Second)
+	if tb.alarmsOf(accounting.InvNegativeRemainder) != 1 {
+		t.Fatalf("alarms = %+v, want one invNegativeRemainder", tb.alarms)
+	}
+	for _, a := range tb.alarms {
+		if a.Version != "2.1.286" {
+			t.Errorf("alarm %s: Version = %q, want 2.1.286", a.Invariant, a.Version)
+		}
+	}
+}
