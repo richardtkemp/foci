@@ -232,6 +232,12 @@ type Agent struct {
 	// complete through a live app sink. Wired by the gateway to app.SetCacheExpiry.
 	onCacheExpiry func(sessionKey string, expiryMs int64)
 
+	// onAliasChanged, when set, is fired after a backend-generated thread name
+	// (e.g. Codex) is persisted as a chat's alias, so the app can show the new
+	// name without reconnecting (#2157). Wired by the gateway to
+	// app.NotifyAliasChanged.
+	onAliasChanged func(agentID, platform string, chatID int64)
+
 	// Per-session delivery routers (#1068 Phase 1). Built ONCE per session key,
 	// shared by every turn on that session (platform turns register their
 	// streaming sink; system turns register NopSink/BufferSink post-accept; an

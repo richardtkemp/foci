@@ -638,6 +638,9 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 								a.logger().Debugf("auto-alias: set alias_auto flag: %v", e)
 							}
 							a.logger().Infof("auto-alias: set %s chat %d → %q", platform, ts.ConvChatID, result.ThreadName)
+							if a.onAliasChanged != nil {
+								a.onAliasChanged(a.AgentID, platform, ts.ConvChatID)
+							}
 							// The backend (e.g. Codex) never resets its cached
 							// auto-generated name on its own — without this, the
 							// two reads + write above re-run every subsequent

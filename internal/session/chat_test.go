@@ -191,8 +191,12 @@ func TestSetChatAliasUnique(t *testing.T) {
 	if err := idx.SetChatAliasUnique("clutch", "app", 2, "work"); err != nil {
 		t.Fatalf("after clear: %v", err)
 	}
-	// Reserved characters rejected.
-	if err := idx.SetChatAliasUnique("clutch", "app", 3, "a/b"); err == nil {
-		t.Fatal("expected rejection of alias with '/'")
+	// '/' and ':' are allowed (#2157): resolution tries key forms before
+	// aliases, so an alias cannot shadow a key (route.TestResolve_AliasWithKeyCharacters).
+	if err := idx.SetChatAliasUnique("clutch", "app", 3, "OCN: a/b"); err != nil {
+		t.Fatalf("alias with '/' and ':': %v", err)
+	}
+	if got, err := idx.ResolveChatAlias("clutch", "ocn: A/B"); err != nil || got != "clutch/c3" {
+		t.Fatalf("resolve alias with '/' and ':' = %q, %v; want clutch/c3", got, err)
 	}
 }

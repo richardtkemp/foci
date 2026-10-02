@@ -417,6 +417,6 @@ var toolTable = []toolEntry{
 	{name: "set_session_alias", paths: pathBoth,
 		enabled: func(d *toolDeps) bool { return !d.p.resolvedLive.Load().AutoSessionNaming },
 		build: func(d *toolDeps) *tools.Tool {
-			return tools.NewSetSessionAliasTool(d.p.sessionIndex)
+			return tools.NewSetSessionAliasTool(d.p.sessionIndex, app.NotifyAliasChanged)
 		}},
 }

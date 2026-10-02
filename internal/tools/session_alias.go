@@ -22,7 +22,11 @@ type AliasSetter interface {
 // name for the current conversation. Provided to agents on backends that
 // don't auto-generate session names (CC, opencode). Gated out for backends
 // that do (Codex) via the tool table's enabled func.
-func NewSetSessionAliasTool(idx AliasSetter) *Tool {
+//
+// onChanged, when non-nil, is called after the alias is persisted, so a client
+// that shows the name can refresh it: the app only learns a title from a roster
+// push, and without one it kept the old name until it reconnected (#2157).
+func NewSetSessionAliasTool(idx AliasSetter, onChanged func(agentID, platform string, chatID int64)) *Tool {
 	return &Tool{
 		Name:        "set_session_alias",
 		Description: "Set a short descriptive name for this conversation (shown in the chat list). Call once after the first exchange to name what the conversation is about. Keep it under 5 words.",
@@ -80,6 +84,9 @@ func NewSetSessionAliasTool(idx AliasSetter) *Tool {
 
 			if err := idx.SetChatAliasUnique(key.AgentID, platform, chatID, alias); err != nil {
 				return TextResult(fmt.Sprintf("Error setting alias: %v", err)), nil
+			}
+			if onChanged != nil {
+				onChanged(key.AgentID, platform, chatID)
 			}
 			if e := idx.SetChatMetadata(key.AgentID, platform, chatID, "alias_auto", "1"); e != nil {
 				return TextResult(fmt.Sprintf("Alias set, but flag failed: %v", e)), nil

@@ -1328,15 +1328,15 @@ func (idx *SessionIndex) ResolveChatAlias(agentID, alias string) (string, error)
 // alias already held by a different chat under the same agent. An empty alias
 // clears it. The index mutex serialises this check-then-set with all other
 // metadata writes, so it is race-free within the process.
+//
+// '/' and ':' are allowed ("OCN: topic", #2157). An alias cannot shadow a
+// session key: every resolver (route.Resolver, send_to_session) tries the
+// exact key and the named session before the alias, so a key always beats an
+// alias that spells it. ':' is not part of the key grammar at all.
 func (idx *SessionIndex) SetChatAliasUnique(agentID, platform string, chatID int64, alias string) error {
 	trimmed := strings.TrimSpace(alias)
 	if trimmed == "" {
 		return idx.SetChatMetadata(agentID, platform, chatID, "alias", "")
-	}
-	// '/' and ':' are session-key structure; an alias containing them could shadow
-	// a real key form at resolution time.
-	if strings.ContainsAny(trimmed, "/:") {
-		return fmt.Errorf("alias may not contain '/' or ':'")
 	}
 	idx.mu.Lock()
 	defer idx.mu.Unlock()

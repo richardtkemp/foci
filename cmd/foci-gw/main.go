@@ -499,6 +499,9 @@ Subcommands:
 		// change (turn entry, branch-warms-root, reset) — not only turns that
 		// complete through a live app sink (#1217).
 		inst.ag.SetOnCacheExpiry(app.SetCacheExpiry)
+		// Push a backend-generated alias (Codex thread name) to the app at once,
+		// not on its next reconnect (#2157).
+		inst.ag.SetOnAliasChanged(app.NotifyAliasChanged)
 
 		mainLog.Infof("agent %q ready (model=%s, workspace=%s)", acfg.ID, inst.ag.Model, acfg.Workspace)
 	}

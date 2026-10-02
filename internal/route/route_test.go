@@ -205,3 +205,37 @@ func TestResolve_NilIndex(t *testing.T) {
 		t.Fatalf("nil-index default err = %v, want ErrNoSession", err)
 	}
 }
+
+// TestResolve_AliasWithKeyCharacters is the #2157 safety argument for allowing
+// '/' and ':' in chat aliases. Such an alias must resolve through every target
+// form, and must never shadow a real session key: the ladder tries the exact key
+// and the named session BEFORE the alias rung, so a key always beats an alias
+// that happens to spell it.
+func TestResolve_AliasWithKeyCharacters(t *testing.T) {
+	idx := newTestIndex(t)
+	r := &Resolver{Index: idx}
+
+	for chat, alias := range map[int64]string{7: "OCN: committee software", 8: "infra/dns", 9: "a/b:c/d"} {
+		if err := idx.SetChatAliasUnique("clutch", "app", chat, alias); err != nil {
+			t.Fatalf("SetChatAliasUnique(%q): %v", alias, err)
+		}
+		want := session.NewChatSessionKey("clutch", chat)
+		// The canonical string form, as send_to_session and the CLI parse it.
+		tgt, err := ParseTarget("clutch/" + alias)
+		if err != nil {
+			t.Fatalf("ParseTarget(%q): %v", alias, err)
+		}
+		if got, err := r.Resolve(tgt); err != nil || got.SessionKey != want || got.Rung != RungAlias {
+			t.Errorf("alias %q: got %+v, %v; want %s via alias", alias, got, err, want)
+		}
+	}
+
+	// An alias spelling a real key does not capture it: the key wins.
+	active(t, idx, "clutch/c99/b123")
+	if err := idx.SetChatAliasUnique("clutch", "app", 10, "c99/b123"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.Resolve(Target{Agent: "clutch", Rest: "c99/b123"}); err != nil || got.SessionKey != "clutch/c99/b123" || got.Rung != RungExact {
+		t.Fatalf("key-shaped alias: got %+v, %v; want the real key via exact", got, err)
+	}
+}

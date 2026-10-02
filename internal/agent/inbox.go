@@ -1114,6 +1114,12 @@ func (a *Agent) SetOnCacheExpiry(fn func(sessionKey string, expiryMs int64)) {
 	a.onCacheExpiry = fn
 }
 
+// SetOnAliasChanged wires the callback fired when a backend-generated thread
+// name becomes a chat's alias (see the onAliasChanged field).
+func (a *Agent) SetOnAliasChanged(fn func(agentID, platform string, chatID int64)) {
+	a.onAliasChanged = fn
+}
+
 // CancelSession cancels the in-flight turn for sk, if any. Used by /stop
 // (and any other consumer that needs per-session cancellation precision).
 // No-op if the session has no inbox or no turn is currently in flight.

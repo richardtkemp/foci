@@ -273,3 +273,38 @@ func TestConversationArchive_RefusedDefaultDoesNotBroadcast(t *testing.T) {
 		t.Error("a REFUSED archive must not broadcast — server state is unchanged and no other device applied the optimistic flag")
 	}
 }
+
+// TestNotifyAliasChanged_RosterCarriesNewTitle is the #2157 regression: an alias
+// set server-side (the agent's set_session_alias tool, a backend-generated
+// thread name) persisted to chat_metadata but never reached connected devices
+// until they reconnected, because the roster is the only frame carrying a
+// conversation's title and nothing re-pushed it. NotifyAliasChanged must
+// broadcast the roster, carrying the new title, to every live socket.
+func TestNotifyAliasChanged_RosterCarriesNewTitle(t *testing.T) {
+	const agentID = "arnix"
+	h, sender, other := rosterTestHub(t, agentID)
+	h.convs["conv-1"] = &convBinding{convID: "conv-1", agentID: agentID, chatID: 42}
+	setActiveHub(h)
+	t.Cleanup(func() { setActiveHub(nil) })
+
+	if err := h.deps.SessionIndex.SetChatAliasUnique(agentID, "app", 42, "OCN: committee/market"); err != nil {
+		t.Fatal(err)
+	}
+	NotifyAliasChanged(agentID, "app", 42)
+
+	for name, c := range map[string]*wsClient{"sender": sender, "other": other} {
+		got, seen := rosterConvs(t, c)
+		if !seen {
+			t.Fatalf("%s received no hello frame after an agent-set alias (#2157)", name)
+		}
+		if title, _ := got["conv-1"]["title"].(string); title != "OCN: committee/market" {
+			t.Errorf("%s roster title = %q, want the new alias", name, title)
+		}
+	}
+
+	// An alias on another platform's chat is not shown in the app: no push.
+	NotifyAliasChanged(agentID, "telegram", 42)
+	if _, seen := rosterConvs(t, other); seen {
+		t.Error("a non-app alias change broadcast the roster")
+	}
+}

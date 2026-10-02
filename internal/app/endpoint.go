@@ -261,6 +261,26 @@ func ResolvedActivity(sessionKey string) (kind, detail string, ok bool) {
 	return string(k), d, true
 }
 
+// NotifyAliasChanged re-advertises the roster to every live socket after a
+// conversation alias was set server-side (the agent's set_session_alias tool, a
+// backend-generated thread name). The roster is the only frame that carries a
+// conversation's title, so without this the app showed the old name until it
+// reconnected (#2157). The user's own rename (handleConversationRename) pushes
+// for itself. No-op when the app provider isn't running or the chat belongs to
+// another platform: aliasForChat reads only the app platform's alias.
+func NotifyAliasChanged(agentID, platform string, chatID int64) {
+	if platform != "app" {
+		return
+	}
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return
+	}
+	h.pushRosterAll()
+}
+
 // MintFacetConversation surfaces a facet branch to app clients via the active
 // hub (see Hub.mintFacetConversation). Injected into the command layer by the
 // gateway as CommandContext.MintFacetConversation. Errors if the app provider
