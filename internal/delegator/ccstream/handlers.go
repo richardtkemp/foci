@@ -947,6 +947,20 @@ func (b *Backend) OnControlResponse(raw json.RawMessage) {
 	}
 }
 
+// OnUnknownControlRequest refuses a control_request subtype foci does not
+// handle. Before #2168 these were logged at debug and never answered; if CC was
+// blocked on the reply, the turn hung until CC's own timeout (if any).
+func (b *Backend) OnUnknownControlRequest(reqID, subtype string) {
+	b.logger().Warnf("unknown control_request subtype %q req_id=%s — refusing with an error response", subtype, reqID)
+	if reqID == "" {
+		return // nothing to answer
+	}
+	msg := fmt.Sprintf("foci does not support control_request subtype %q", subtype)
+	if err := b.writer.SendControlError(reqID, msg); err != nil {
+		b.logger().Warnf("unknown control_request %q req_id=%s: error response not sent: %v", subtype, reqID, err)
+	}
+}
+
 // OnControlCancelRequest handles CC cancelling a pending control request.
 func (b *Backend) OnControlCancelRequest(reqID string) {
 	b.touchActivity()

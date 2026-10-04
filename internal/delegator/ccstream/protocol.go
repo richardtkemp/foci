@@ -186,6 +186,22 @@ type ControlResponsePayload struct {
 	Response  any    `json:"response"`
 }
 
+// ControlErrorResponse refuses a control request that originated from CC. CC
+// rejects the pending request with `error` as the message (shape verified in the
+// 2.1.289 binary: on response.subtype=="error" it calls reject(Error(response.error))),
+// so the caller fails fast instead of waiting on an answer that never comes.
+type ControlErrorResponse struct {
+	Type     string                    `json:"type"` // always "control_response"
+	Response ControlErrorResponseInner `json:"response"`
+}
+
+// ControlErrorResponseInner is the inner object of a ControlErrorResponse.
+type ControlErrorResponseInner struct {
+	Subtype   string `json:"subtype"` // always "error"
+	RequestID string `json:"request_id"`
+	Error     string `json:"error"`
+}
+
 // controlResponseInbound is the envelope for control_response messages
 // received FROM CC (responses to our get_context_usage, initialize, etc.).
 //
@@ -691,6 +707,18 @@ func NewUserMessageBlocks(blocks []ContentBlock) *UserMessage {
 		Message: UserPayload{
 			Role:          "user",
 			ContentBlocks: blocks,
+		},
+	}
+}
+
+// NewControlErrorResponse builds an error ControlErrorResponse for reqID.
+func NewControlErrorResponse(reqID, msg string) *ControlErrorResponse {
+	return &ControlErrorResponse{
+		Type: "control_response",
+		Response: ControlErrorResponseInner{
+			Subtype:   "error",
+			RequestID: reqID,
+			Error:     msg,
 		},
 	}
 }

@@ -118,6 +118,12 @@ func (wr *Writer) SendControlResponse(reqID string, response interface{}) error 
 	return wr.Send(NewControlResponse(reqID, response))
 }
 
+// SendControlError refuses a control request from Claude Code with an error
+// response, so CC's pending request fails instead of waiting forever.
+func (wr *Writer) SendControlError(reqID, msg string) error {
+	return wr.Send(NewControlErrorResponse(reqID, msg))
+}
+
 // SendKeepAlive sends a keep-alive heartbeat to Claude Code.
 func (wr *Writer) SendKeepAlive() error {
 	return wr.Send(KeepAlive{

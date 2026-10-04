@@ -19,6 +19,7 @@ type mockHandler struct {
 	errors       []error
 	controlResps []json.RawMessage
 	cancelReqs   []string
+	unknownCtl   []string // "reqID/subtype"
 	toolProgress []*ToolProgressMessage
 	streamEvents []json.RawMessage
 }
@@ -36,6 +37,9 @@ func (h *mockHandler) OnControlResponse(raw json.RawMessage) {
 }
 func (h *mockHandler) OnControlCancelRequest(reqID string) {
 	h.cancelReqs = append(h.cancelReqs, reqID)
+}
+func (h *mockHandler) OnUnknownControlRequest(reqID, subtype string) {
+	h.unknownCtl = append(h.unknownCtl, reqID+"/"+subtype)
 }
 func (h *mockHandler) OnToolProgress(msg *ToolProgressMessage) {
 	h.toolProgress = append(h.toolProgress, msg)

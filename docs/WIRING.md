@@ -682,7 +682,7 @@ The CC-only defaults are:
 | `assistant` | Model response with content blocks (text, thinking, tool_use) |
 | `result` | Turn completion with accumulated metrics (success, error, max_turns) |
 | `system` | Lifecycle events — subtypes: `init`, `status`, `compact_boundary`, `session_state_changed`, `task_*`, `api_retry`, `hook_started` / `hook_progress` / `hook_response` (from `--include-hook-events`), `elicitation_complete` (URL-mode MCP elicitation finished externally), `model_refusal_fallback` (a safeguard refused the primary model's turn and CC silently retried on a fallback model — logged at WARN, see below) |
-| `control_request` | CC requesting user interaction — subtypes: `can_use_tool` (tool permission), `elicitation` (MCP structured-input request) |
+| `control_request` | CC requesting user interaction — subtypes: `can_use_tool` (tool permission), `elicitation` (MCP structured-input request). Any other subtype is logged at WARN and refused with an error `control_response` (`OnUnknownControlRequest`, #2168), so CC's pending request fails fast instead of blocking the turn |
 | `control_cancel_request` | CC cancelling a pending permission request |
 | `tool_progress` | Heartbeat during long-running tool execution |
 | `stream_event` | Token-level streaming (with `--include-partial-messages`) — `text_delta` and `thinking_delta` subtypes are extracted |

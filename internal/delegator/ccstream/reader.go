@@ -21,6 +21,10 @@ type Handler interface {
 	OnElicitationRequest(msg *ElicitationRequest)
 	OnControlResponse(raw json.RawMessage)
 	OnControlCancelRequest(reqID string)
+	// OnUnknownControlRequest is called for a control_request whose subtype
+	// foci does not handle. CC may be blocked waiting on the answer, so the
+	// handler must reply (with an error) rather than drop it (#2168).
+	OnUnknownControlRequest(reqID, subtype string)
 	OnToolProgress(msg *ToolProgressMessage)
 	OnStreamEvent(raw json.RawMessage)
 	OnRateLimit(msg *RateLimitEvent)
@@ -102,7 +106,8 @@ func (rd *Reader) Run(ctx context.Context) {
 // controlRequestEnvelope extracts the subtype from a control_request's inner
 // request object for discrimination before full unmarshal.
 type controlRequestEnvelope struct {
-	Request struct {
+	RequestID string `json:"request_id"`
+	Request   struct {
 		Subtype string `json:"subtype"`
 	} `json:"request"`
 }
@@ -174,7 +179,7 @@ func (rd *Reader) dispatch(line []byte) {
 				msg.RequestID, msg.Request.McpServerName, msg.Request.Mode)
 			rd.handler.OnElicitationRequest(&msg)
 		default:
-			rd.lg.Debugf("unknown control_request subtype %q", crEnv.Request.Subtype)
+			rd.handler.OnUnknownControlRequest(crEnv.RequestID, crEnv.Request.Subtype)
 		}
 
 	case "control_response":
