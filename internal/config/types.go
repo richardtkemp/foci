@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -350,6 +351,35 @@ func (bc BackendConfig) ToMap() map[string]any {
 		m["default_permission"] = *bc.DefaultPermission
 	}
 	return m
+}
+
+// SetKeys returns the TOML keys this backend_config sets: a non-nil pointer or
+// a non-empty slice or map. The gateway warns about the ones the agent's
+// backend does not read (delegator.IgnoredConfigKeys, #2178).
+func (bc BackendConfig) SetKeys() []string {
+	v := reflect.ValueOf(bc)
+	var out []string
+	for i := range v.NumField() {
+		f := v.Field(i)
+		var set bool
+		switch f.Kind() {
+		case reflect.Pointer, reflect.Interface:
+			set = !f.IsNil()
+		case reflect.Slice, reflect.Map:
+			set = f.Len() > 0
+		default:
+			set = !f.IsZero()
+		}
+		if set {
+			out = append(out, backendConfigKey(v.Type().Field(i)))
+		}
+	}
+	return out
+}
+
+func backendConfigKey(f reflect.StructField) string {
+	key, _, _ := strings.Cut(f.Tag.Get("toml"), ",")
+	return key
 }
 
 // GroupsConfig assigns named models to groups and call sites.

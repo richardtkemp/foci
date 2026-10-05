@@ -657,7 +657,12 @@ func SkipPermissions(cfg map[string]any) bool {
 	return ok && v
 }
 
-// StartOptions configures the backend at launch time.
+// StartOptions configures the backend at launch time. Not every backend reads
+// every field: each backend declares the ones it reads in Spec.StartFields
+// (`make lint` checks the declaration against its source), and the
+// ManagerStartFields are resolved by the DelegatedManager and read by no
+// backend (#2178). A new field is ignored by every backend until one declares
+// it, and docs/BACKENDS.md shows which do.
 type StartOptions struct {
 	WorkDir         string // agent workspace directory (becomes cwd)
 	SystemPrompt    string // concatenated character/system files (static fallback; see SystemPromptFunc)

@@ -85,3 +85,45 @@ func TestRunConfigCheck_MissingFileNamesConfigFlag(t *testing.T) {
 		}
 	}
 }
+
+func TestRunConfigCheck_IgnoredBackendConfigWarnsButPasses(t *testing.T) {
+	// A backend_config key the agent's backend does not read (#2178) is
+	// listed as a warning, naming the agent, key and backend. It does not
+	// fail the check: it was never honoured, so the upgrade loses nothing.
+	path := writeTempConfig(t, validConfigTOML+`
+[[agents]]
+id = "cc"
+backend = "claude-code"
+
+[agents.backend_config]
+model = "opus"
+hostname = "0.0.0.0"
+stop_rules = [{ name = "x", text = ["starting"], reason = "r" }]
+
+[[agents]]
+id = "oc"
+backend = "opencode"
+
+[agents.backend_config]
+port = 4096
+allowed_tools = ["Read"]
+`)
+	var stderr strings.Builder
+	if got := runConfigCheck(path, io.Discard, &stderr); got != 0 {
+		t.Fatalf("runConfigCheck(ignored keys) = %d, want 0; stderr:\n%s", got, stderr.String())
+	}
+	out := stderr.String()
+	for _, want := range []string{
+		"agents[cc].backend_config.hostname (backend claude-code does not read it)",
+		"agents[oc].backend_config.allowed_tools (backend opencode does not read it)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stderr missing %q:\n%s", want, out)
+		}
+	}
+	for _, honoured := range []string{".model", ".stop_rules", ".port"} {
+		if strings.Contains(out, honoured+" (") {
+			t.Errorf("stderr lists honoured key %s as ignored:\n%s", honoured, out)
+		}
+	}
+}

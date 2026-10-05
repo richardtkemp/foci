@@ -203,17 +203,14 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		}
 	}
 
-	// Resolve and store the system prompt (rebuilt from disk here so a resume/
-	// compaction-bounce picks up character-file edits). It reaches the model
-	// two ways: written to the per-session file that the blank-system plugin
-	// reads to REPLACE opencode's default (blank_system.go), and — as a
-	// fallback if that file is ever missing — sent in the "system" field of
-	// every POST /prompt_async body.
-	if opts.SystemPromptFunc != nil {
-		b.systemPrompt = opts.SystemPromptFunc(b.sessionID)
-	} else {
-		b.systemPrompt = opts.SystemPrompt
-	}
+	// Store the system prompt the DelegatedManager resolved for this foci
+	// session (rebuilt from disk at every Start, so a resume/compaction-bounce
+	// picks up character-file edits). It reaches the model two ways: written to
+	// the per-session file that the blank-system plugin reads to REPLACE
+	// opencode's default (blank_system.go), and — as a fallback if that file is
+	// ever missing — sent in the "system" field of every POST /prompt_async
+	// body.
+	b.systemPrompt = opts.SystemPrompt
 	WriteSessionSystemFile(b.sessionID, b.systemPrompt)
 
 	// Resolve the compaction summary prompt (foci's compaction-summary.md) and
@@ -224,7 +221,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		WriteSessionCompactFile(b.sessionID, opts.CompactionPromptFunc(b.sessionID))
 	}
 
-	_ = resumed // resume handled above via SystemPromptFunc rebuild + per-session file rewrite
+	_ = resumed // resume handled above: the manager rebuilds SystemPrompt each Start, rewritten to the per-session file
 
 	b.mu.Lock()
 	b.running = true

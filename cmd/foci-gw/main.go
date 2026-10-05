@@ -223,6 +223,9 @@ Subcommands:
 	if len(cfg.UndefinedKeys) > 0 {
 		configLog.Warnf("unknown config keys in %s: %v", configPath, cfg.UndefinedKeys)
 	}
+	if ignored := ignoredBackendConfig(cfg); len(ignored) > 0 {
+		configLog.Warnf("backend_config keys in %s that the agent's backend ignores: %s", configPath, strings.Join(ignored, "; "))
+	}
 
 	// ========== Reclaim orphaned temp state ==========
 	// Wipe the temp root's orphaned per-session state (exec bridge sockets,

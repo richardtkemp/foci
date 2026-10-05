@@ -93,6 +93,11 @@ func TestSpecValidate_FailArms(t *testing.T) {
 		{"no prototype", func(s *Spec) { s.Prototype = nil }, "nil Prototype"},
 		{"no ledger key", func(s *Spec) { s.LedgerKey = "" }, "empty LedgerKey"},
 		{"no modelcaps key", func(s *Spec) { s.ModelcapsKey = "" }, "empty ModelcapsKey"},
+		{"unknown start field", func(s *Spec) { s.StartFields = []string{"NoSuchField"} }, `StartFields names "NoSuchField", which is not a StartOptions field`},
+		{"manager start field", func(s *Spec) { s.StartFields = []string{"SystemPromptFunc"} }, `StartFields names "SystemPromptFunc", which the DelegatedManager resolves`},
+		{"duplicate start field", func(s *Spec) { s.StartFields = []string{"WorkDir", "WorkDir"} }, `StartFields names "WorkDir" twice`},
+		{"empty config key", func(s *Spec) { s.ConfigKeys = []string{""} }, "ConfigKeys has an empty key"},
+		{"duplicate config key", func(s *Spec) { s.ConfigKeys = []string{"binary", "binary"} }, `ConfigKeys names "binary" twice`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

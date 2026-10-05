@@ -327,3 +327,32 @@ func diffKeys(got map[string]any, want map[string]bool) []string {
 	}
 	return extra
 }
+
+// TestBackendConfig_SetKeys pins which keys count as set: a non-nil pointer
+// (even to a zero value) or a non-empty slice/map, named by its TOML key.
+func TestBackendConfig_SetKeys(t *testing.T) {
+	var cfg struct {
+		Agents []AgentConfig `toml:"agents"`
+	}
+	if _, err := toml.Decode(`
+[[agents]]
+id = "a"
+[agents.backend_config]
+model = "opus"
+skip_permissions = false
+port = 0
+allowed_tools = []
+[agents.backend_config.env]
+FOO = "bar"
+`, &cfg); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	got := cfg.Agents[0].BackendConfig.SetKeys()
+	want := []string{"model", "skip_permissions", "env", "port"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("SetKeys() = %v, want %v", got, want)
+	}
+	if got := (BackendConfig{}).SetKeys(); len(got) != 0 {
+		t.Errorf("zero BackendConfig SetKeys() = %v, want none", got)
+	}
+}

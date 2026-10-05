@@ -351,20 +351,61 @@ grepped for each ✗. Row IDs are not renumbered, so the gaps are the removed ro
 
 ### 12. Config keys that apply to only some backends
 
-| Key | ccstream | opencode | codex | Notes |
-|---|---|---|---|---|
-| `backend_config.model` | ✓ (via ladder) | ✓ | ✓ (also reads `cfg["model"]`) | |
-| `backend_config.binary` / `[cc_backend].binary` / `[opencode_backend].binary` | ✓ | ✓ | ✓ | no `[codex_backend]` section |
-| `backend_config.env` | ✓ | ✓ | ✓ | |
-| `backend_config.idle_timeout` | ✓ | ✓ | ✓ | generic (DelegatedManager) |
-| `allowed_tools`, `[cc_backend].default_allowed_tools` | ✓ | ✗ | ✗ | folded only for CC names (`gw/agents_delegated.go:configureDelegated`) |
-| `pretool_rules`, `[cc_backend].pretool_rules` | ✓ | ✗ | ✗ | wired only for a backend declaring `pretool_rules` (`gw/agents_delegated.go`) |
-| `stop_rules` | ✓ | ✗ | ✗ | same, for `stop_rules` |
-| `skip_permissions` | ✓ | ✓ | ✗ | opencode: per-ask answers, `oc/permissions.go:answerUnattended` |
-| `[cc_backend].background_task_max_age` | ✓ | ✗ | ✗ | `StartOptions.SubagentMaxAge`, read only by ccstream |
-| `hostname`, `port`, `server_auth`, `log_level`, `default_permission` | ✗ | ✓ | ✗ | `[opencode_backend]` folded in |
-| `sandbox`, `api_key` | ✗ | ✗ | [48] | read by codex but unreachable from config |
-| `reload_on_compact` (agent) | ✓ | ✓ | ✓ | agent layer |
+Generated from each backend's `Spec.ConfigKeys` / `Spec.StartFields` (`internal/delegator/config_schema.go`, #2178). `make lint` checks those declarations against each backend package's source, and the gateway warns at startup (and `foci-gw -check-config` lists) every `backend_config` key an agent sets that its backend ignores.
+
+<!-- BEGIN GENERATED CONFIG SCHEMA: internal/delegator/all TestBackendsDoc_ConfigSchemaTable. Edit the Specs, not this block. -->
+| `backend_config` key | claude-code | codex | opencode |
+|---|---|---|---|
+| `model` (gateway) | ✓ | ✓ | ✓ |
+| `allowed_tools` | ✓ | ✗ | ✗ |
+| `pretool_rules` (gateway) | ✓ | ✗ | ✗ |
+| `stop_rules` (gateway) | ✓ | ✗ | ✗ |
+| `binary` | ✓ | ✓ | ✓ |
+| `idle_timeout` (gateway) | ✓ | ✓ | ✓ |
+| `skip_permissions` | ✓ | ✗ | ✓ |
+| `env` (gateway) | ✓ | ✓ | ✓ |
+| `hostname` | ✗ | ✗ | ✓ |
+| `server_auth` | ✗ | ✗ | ✓ |
+| `log_level` | ✗ | ✗ | ✓ |
+| `port` | ✗ | ✗ | ✓ |
+| `default_permission` | ✗ | ✗ | ✓ |
+
+(gateway) = read by the gateway for the backend, not by the backend package; `env` reaches a backend that reads `StartOptions.Env`, `pretool_rules` / `stop_rules` one declaring `pretool_rules` / `stop_rules`.
+
+- claude-code folds the global `[cc_backend]` section into its backend_config (Spec.ConfigFamily).
+- opencode folds the global `[opencode_backend]` section into its backend_config (Spec.ConfigFamily).
+- codex also reads `api_key`, `sandbox`, which no config key supplies.
+
+| `StartOptions` field | claude-code | codex | opencode |
+|---|---|---|---|
+| `WorkDir` | ✓ | ✓ | ✓ |
+| `SystemPrompt` | ✓ | ✓ | ✓ |
+| `Model` | ✓ | ✓ | ✓ |
+| `AgentID` | ✓ | ✓ | ✓ |
+| `Label` | ✓ | ✓ | ✗ |
+| `ResumeSessionID` | ✓ | ✓ | ✓ |
+| `SessionKey` | ✓ | ✓ | ✓ |
+| `BatchOnly` | ✗ | ✓ | ✗ |
+| `SkipPermissions` | ✓ | ✗ | ✓ |
+| `ExecRegistry` | manager | manager | manager |
+| `Env` | ✓ | ✓ | ✓ |
+| `AutoApproveRules` | ✓ | ✓ | ✓ |
+| `SubagentMaxAge` | ✓ | ✗ | ✗ |
+| `SystemPromptFunc` | manager | manager | manager |
+| `Effort` | ✓ | ✓ | ✗ |
+| `EffortFunc` | manager | manager | manager |
+| `ModelFunc` | manager | manager | manager |
+| `CompactionPromptFunc` | ✗ | ✓ | ✓ |
+
+manager = resolved by the DelegatedManager before Start; no backend reads it.
+
+<!-- END GENERATED CONFIG SCHEMA -->
+
+Notes:
+- `skip_permissions` on opencode: per-ask answers, `oc/permissions.go:answerUnattended`.
+- `[cc_backend].background_task_max_age` reaches the backend as `StartOptions.SubagentMaxAge`.
+- `reload_on_compact` (agent level, not `backend_config`) applies to every backend.
+- codex's `api_key` / `sandbox`: footnote 48.
 
 ### Parity footnotes
 

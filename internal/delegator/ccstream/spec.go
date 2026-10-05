@@ -84,6 +84,11 @@ var spec = delegator.Spec{
 	BatchDefaultModel:  batchDefaultModel,
 	BatchCheapModel:    batchCheapModel,
 	ConfigFamily:       delegator.ConfigFamilyClaudeCode,
+	ConfigKeys:         []string{"allowed_tools", "binary", "skip_permissions"},
+	StartFields: []string{
+		"WorkDir", "SystemPrompt", "Model", "AgentID", "Label", "ResumeSessionID", "SessionKey",
+		"SkipPermissions", "Env", "AutoApproveRules", "SubagentMaxAge", "Effort",
+	},
 
 	TranscriptChecker: InputInTranscript,
 	ResumeRetention:   CleanupPeriod,

@@ -154,9 +154,14 @@ func TestBackend_Start_StoresSystemPrompt(t *testing.T) {
 	_ = b.Close()
 }
 
-func TestBackend_Start_StoresSystemPromptFromFunc(t *testing.T) {
-	// Verifies SystemPromptFunc is resolved and stored on the Backend.
-	const wantPrompt = "resolved-system-prompt"
+func TestBackend_Start_UsesManagerResolvedSystemPrompt(t *testing.T) {
+	// The DelegatedManager resolves SystemPromptFunc with the FOCI session key
+	// (which picks the session's ## Platform block) into SystemPrompt before
+	// Start, and clears it when the prompt must not be rebuilt (a fork keeps
+	// its parent's prompt, a batch has its own). The backend must launch with
+	// that result, never re-resolve the func itself — opencode used to, with
+	// its OWN session id, so the platform block was always lost (#2178).
+	const resolved = "manager-resolved-prompt"
 	_, b := newTestBackendServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/session" && r.Method == http.MethodPost {
 			w.WriteHeader(http.StatusOK)
@@ -167,16 +172,18 @@ func TestBackend_Start_StoresSystemPromptFromFunc(t *testing.T) {
 	})
 
 	err := b.Start(context.Background(), delegator.StartOptions{
-		AgentID: "test-agent",
-		SystemPromptFunc: func(sessionID string) string {
-			return wantPrompt
+		AgentID:      "test-agent",
+		SessionKey:   "test-agent/main",
+		SystemPrompt: resolved,
+		SystemPromptFunc: func(string) string {
+			return "re-resolved-by-backend"
 		},
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if b.systemPrompt != wantPrompt {
-		t.Errorf("b.systemPrompt = %q, want %q", b.systemPrompt, wantPrompt)
+	if b.systemPrompt != resolved {
+		t.Errorf("b.systemPrompt = %q, want the manager-resolved %q", b.systemPrompt, resolved)
 	}
 	_ = b.Close()
 }

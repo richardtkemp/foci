@@ -15,6 +15,8 @@ package delegator
 // ║ every capability. The delegator/all tests fail until the declarations    ║
 // ║ are complete and true; at runtime an invalid Spec is logged as an error.  ║
 // ║ The capability table in docs/BACKENDS.md is generated from the Specs.     ║
+// ║ Config keys and StartOptions fields a backend reads are declared too      ║
+// ║ (Spec.ConfigKeys / StartFields, config_schema.go, #2178).                 ║
 // ╚═══════════════════════════════════════════════════════════════════════════╝
 
 import (
@@ -256,6 +258,13 @@ type Spec struct {
 	// backend_config: ConfigFamilyClaudeCode, ConfigFamilyOpencode or ""
 	// (none).
 	ConfigFamily string
+	// ConfigKeys are the backend_config map keys the backend package reads
+	// (config_schema.go). Keys the gateway reads for it (model, idle_timeout,
+	// ...) are not listed here. `make lint` checks the list against the source.
+	ConfigKeys []string
+	// StartFields are the StartOptions fields the backend package reads
+	// (config_schema.go). `make lint` checks the list against the source.
+	StartFields []string
 
 	TranscriptChecker TranscriptChecker    // required iff CapDeliveryTracking
 	ResumeRetention   func() time.Duration // the backend's own transcript retention; nil = unknown
@@ -359,6 +368,7 @@ func (s Spec) Validate() error {
 	if s.ForkNeedsRunning && !s.Supports(CapBranch) {
 		bad("ForkNeedsRunning without %s", CapBranch)
 	}
+	s.validateSchema(bad)
 	return errors.Join(errs...)
 }
 

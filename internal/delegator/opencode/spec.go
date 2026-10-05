@@ -70,6 +70,11 @@ var spec = delegator.Spec{
 	ModelcapsKey: backendName,
 	LedgerKey:    accounting.BackendOpencode,
 	ConfigFamily: delegator.ConfigFamilyOpencode,
+	ConfigKeys:   []string{"binary", "hostname", "server_auth", "log_level", "port", "default_permission", "skip_permissions"},
+	StartFields: []string{
+		"WorkDir", "SystemPrompt", "Model", "AgentID", "ResumeSessionID", "SessionKey",
+		"SkipPermissions", "Env", "AutoApproveRules", "CompactionPromptFunc",
+	},
 
 	PlanDelivery: planDelivery,
 

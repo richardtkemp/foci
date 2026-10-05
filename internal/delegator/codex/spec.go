@@ -77,6 +77,13 @@ var spec = delegator.Spec{
 	LedgerKey:        accounting.BackendCodex,
 	CacheTTL:         cacheTTL,
 	ForkNeedsRunning: true,
+	// sandbox and api_key are read but no config path supplies them
+	// (docs/BACKENDS.md footnote 48). foci_version is added by the gateway.
+	ConfigKeys: []string{"binary", "model", "sandbox", "api_key", delegator.FociVersionConfigKey},
+	StartFields: []string{
+		"WorkDir", "SystemPrompt", "Model", "AgentID", "Label", "ResumeSessionID", "SessionKey",
+		"BatchOnly", "Env", "AutoApproveRules", "Effort", "CompactionPromptFunc",
+	},
 }
 
 func init() { delegator.Register(spec) }

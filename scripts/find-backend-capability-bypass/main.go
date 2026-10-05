@@ -15,6 +15,15 @@
 //  3. an import of a concrete backend package (one that registers a Spec) —
 //     only internal/delegator/all may import them all.
 //
+// Inside each backend package (the one declaring a Spec, and its
+// subpackages) it also checks the per-backend config schema (#2178):
+//
+//  4. every StartOptions field the package reads, and every constant key it
+//     reads from its backend_config map (an index of a map[string]any named
+//     cfg, or a delegator config accessor such as SkipPermissions), must be
+//     declared in its Spec's StartFields / ConfigKeys; and every declared one
+//     must be read. Both lists must be literals of constant strings.
+//
 // Backend names are not hard-coded: the tool reads them from every
 // delegator.Spec composite literal it loads (Name must be a constant), and
 // exits 2 if it finds none, since it would then be blind to rule 2 and 3.
@@ -101,6 +110,7 @@ func main() {
 		}
 		findings = append(findings, scanPackage(pkg, names, backendPkgs, lineCache)...)
 	}
+	findings = append(findings, checkSchemas(pkgs, lineCache)...)
 
 	sort.Slice(findings, func(i, j int) bool {
 		if findings[i].file != findings[j].file {
