@@ -193,7 +193,7 @@ func (a *Agent) runPostTurn(tc TurnContract, ts *TurnState) {
 	// Check if the backend supports activity tracking.
 	var ac delegator.ActivityChecker
 	if ts.Backend != nil {
-		ac, _ = ts.Backend.(delegator.ActivityChecker)
+		ac, _ = delegator.As[delegator.ActivityChecker](ts.Backend)
 	}
 
 	if ac != nil {

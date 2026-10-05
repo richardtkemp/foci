@@ -21,7 +21,7 @@ func (a *Agent) SendBackendControl(ctx context.Context, sessionKey string, req d
 		return false, fmt.Errorf("get backend for control: %w", err)
 	}
 
-	cs, ok := be.(delegator.ControlSender)
+	cs, ok := delegator.As[delegator.ControlSender](be)
 	if !ok {
 		a.logger().Debugf("backend %T does not implement ControlSender", be)
 		return false, nil
@@ -44,7 +44,7 @@ func (a *Agent) ResolveBackendModel(ctx context.Context, sessionKey, model strin
 	if err != nil {
 		return delegator.ModelResolution{}, false, fmt.Errorf("get backend for model resolution: %w", err)
 	}
-	resolver, ok := be.(delegator.ModelResolver)
+	resolver, ok := delegator.As[delegator.ModelResolver](be)
 	if !ok {
 		return delegator.ModelResolution{}, false, nil
 	}

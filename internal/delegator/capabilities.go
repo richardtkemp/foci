@@ -240,15 +240,15 @@ type Spec struct {
 
 	DefaultModel       string        // launch model when neither the session nor config picks one
 	ModelcapsKey       string        // modelcaps record key ("family") for this backend
-	LedgerKey          string        // cost-ledger backend its turns book under (LedgerBooker)
-	ClosesTurnActivity bool          // closes each turn's ledger activity itself (TurnActivityCloser)
-	CacheTTL           time.Duration // prompt-cache TTL; 0 = unknown, config fallback (CacheTTLProvider)
-	BatchDefaultModel  string        // batch model when the request names none (BatchModelDefaulter)
-	BatchCheapModel    string        // batch model for Cheap requests (BatchCheapModeler)
-	ForkNeedsRunning   bool          // fork is an RPC to a live server (RunningBackendForker)
+	LedgerKey          string        // cost-ledger backend its turns book under (required)
+	ClosesTurnActivity bool          // closes each turn's ledger activity itself (CC: background subagents outlive the turn)
+	CacheTTL           time.Duration // prompt-cache TTL; 0 = unknown, config fallback
+	BatchDefaultModel  string        // batch model when the request names none; "" = the agent's
+	BatchCheapModel    string        // batch model for Cheap requests; "" = BatchDefaultModel
+	ForkNeedsRunning   bool          // fork is an RPC to a live server: start the parent first
 	// ConfigFamily names the global config section folded into the agent's
-	// backend_config: "claude-code" ([cc_backend]), "opencode"
-	// ([opencode_backend]) or "" (none).
+	// backend_config: ConfigFamilyClaudeCode, ConfigFamilyOpencode or ""
+	// (none).
 	ConfigFamily string
 
 	TranscriptChecker TranscriptChecker    // required iff CapDeliveryTracking
@@ -260,6 +260,13 @@ type Spec struct {
 	OnGatewayStart    func()
 	OnGatewayShutdown func() int
 }
+
+// Config families (Spec.ConfigFamily): the global config section the gateway
+// folds into an agent's backend_config.
+const (
+	ConfigFamilyClaudeCode = "claude-code" // [cc_backend]
+	ConfigFamilyOpencode   = "opencode"    // [opencode_backend]
+)
 
 // Support returns the declaration for c (undeclared if missing).
 func (s Spec) Support(c Capability) Support { return s.Caps[c] }

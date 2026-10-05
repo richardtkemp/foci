@@ -2,7 +2,6 @@ package codex
 
 import (
 	"context"
-	"time"
 
 	"foci/internal/delegator"
 )
@@ -38,11 +37,4 @@ func (b *Backend) GetContextWindow(ctx context.Context) (*delegator.ContextWindo
 	}
 
 	return cw, nil
-}
-
-// CacheTTL returns the prompt-cache time-to-live for OpenAI's API.
-// OpenAI's prompt caching is shorter and less documented than Anthropic's;
-// 5 minutes is a conservative estimate.
-func (b *Backend) CacheTTL() time.Duration {
-	return cacheTTL
 }

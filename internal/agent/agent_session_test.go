@@ -1,6 +1,7 @@
 package agent
 
 import (
+	_ "foci/internal/delegator/all" // BackendType reads the registered Specs
 	"path/filepath"
 	"testing"
 	"time"

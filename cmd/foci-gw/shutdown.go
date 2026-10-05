@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"foci/internal/agent"
-	"foci/internal/delegator/opencode"
+	"foci/internal/delegator"
 	"foci/internal/gemini"
 	"foci/internal/platform"
 	"foci/internal/session"
@@ -74,13 +74,18 @@ func runShutdown(
 		}
 	}
 
-	// Backstop: synchronously reap any pooled opencode `serve` subprocesses.
-	// DelegatedManager.Close above releases each session's Server reference, but
-	// the actual Server shutdown is async (releaseServer's `go func`), so the
-	// process would exit before those goroutines finish and orphan the subprocess
-	// (#948). This drains the pool and WAITS for the bounded shutdown, so no
-	// `opencode serve` survives a restart. No-op when no opencode agents ran.
-	mainLog.Infof("opencode: closed %d pooled server(s) on shutdown", opencode.CloseAllServers())
+	// Backstop: each backend's process-global shutdown hook
+	// (Spec.OnGatewayShutdown). opencode's synchronously reaps its pooled
+	// `serve` subprocesses: DelegatedManager.Close above releases each
+	// session's Server reference, but the actual Server shutdown is async
+	// (releaseServer's `go func`), so the process would exit before those
+	// goroutines finish and orphan the subprocess (#948). The hook drains the
+	// pool and WAITS for the bounded shutdown. No-op when nothing ran.
+	for _, s := range delegator.Specs() {
+		if s.OnGatewayShutdown != nil {
+			mainLog.Infof("%s: closed %d pooled process(es) on shutdown", s.Name, s.OnGatewayShutdown())
+		}
+	}
 
 	// Close MCP managers
 	for _, inst := range agents {

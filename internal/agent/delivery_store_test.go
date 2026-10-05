@@ -158,7 +158,7 @@ func TestRestoreUndelivered(t *testing.T) {
 	mgr.upsertUndelivered(deliverySK, delegator.PendingInput{ID: "spent", WorkDir: "/w", SessionID: "s1", Redeliveries: delegator.MaxRedeliveries})
 	mgr.upsertUndelivered("other-agent/c1", delegator.PendingInput{ID: "not-mine"})
 	var checked []string
-	mgr.TranscriptChecker = func(workDir, sessionID, id string) (bool, error) {
+	mgr.Spec.TranscriptChecker = func(workDir, sessionID, id string) (bool, error) {
 		checked = append(checked, workDir+"|"+sessionID+"|"+id)
 		return id == "folded", nil
 	}

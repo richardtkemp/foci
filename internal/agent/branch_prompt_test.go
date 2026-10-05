@@ -29,6 +29,7 @@ func TestForkInheritsParentLaunchPrompt(t *testing.T) {
 				bes = append(bes, be)
 				return be, nil
 			},
+			Spec: branchSpec,
 			StartOpts: delegator.StartOptions{
 				WorkDir:          t.TempDir(),
 				SystemPromptFunc: func(string) string { return onDisk },

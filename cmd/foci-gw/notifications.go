@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/startup"
@@ -37,15 +38,11 @@ func checkDelegatedReadiness(ctx context.Context, agents map[string]*agentInstan
 		if dm == nil || dm.NewBackend == nil {
 			continue // API agent, or no backend factory wired
 		}
-		// opencode's CheckReady guards on b.server (populated only by
-		// Start) and the probe deliberately never calls Start — so the
-		// probe would always log "backend has no server" WARN for every
-		// opencode-backed agent at every restart. The probe's value for
-		// opencode is near-zero anyway: /global/health doesn't surface
-		// per-provider auth state, so it can't catch a missing key the
-		// way `claude auth status` does for ccstream. Skip it; real
-		// auth failures surface on the first turn.
-		if inst.agentCfg.Backend == "opencode" {
+		// The probe deliberately never calls Start, so it runs only for a
+		// backend whose CheckReady works unstarted (opencode's needs the
+		// server Start creates). Real auth failures on the others surface on
+		// the first turn.
+		if !dm.Supports(delegator.CapUnstartedReadinessProbe) {
 			continue
 		}
 		wg.Add(1)

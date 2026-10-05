@@ -57,11 +57,9 @@ func (b *summaryModelBackend) models() []string {
 	return out
 }
 
-// cheapSummaryModelBackend is a backend with a cheap model of its own, as
-// ccstream has (haiku).
+// cheapSummaryModelBackend is a backend with a cheap model of its own
+// (Spec.BatchCheapModel), as ccstream has (haiku).
 type cheapSummaryModelBackend struct{ summaryModelBackend }
-
-func (*cheapSummaryModelBackend) BatchCheapModel() string { return "haiku" }
 
 type startRecorder interface {
 	delegator.Delegator
@@ -87,6 +85,9 @@ func runDelegatedSummary(t *testing.T, be startRecorder, agentModel, summaryMode
 		AgentID:    "olly",
 		StartOpts:  delegator.StartOptions{AgentID: "olly", WorkDir: ws, Model: agentModel},
 		NewBackend: func() (delegator.Delegator, error) { return be, nil },
+	}
+	if _, cheap := be.(*cheapSummaryModelBackend); cheap {
+		mgr.Spec.BatchCheapModel = "haiku"
 	}
 	mgr.RunBatchTurn = func(ctx context.Context, sessionKey, _, _ string) (string, error) {
 		if _, err := mgr.Get(ctx, sessionKey); err != nil {

@@ -373,11 +373,6 @@ func (b *Backend) Interrupt(ctx context.Context) error {
 	}{ThreadID: threadID})
 }
 
-// Capabilities advertises what the Codex backend supports.
-func (b *Backend) Capabilities() delegator.Capabilities {
-	return delegator.CapabilitiesForBackend(backendName)
-}
-
 // --- Protocol handshake ---
 
 // nextID returns the next JSON-RPC request ID.

@@ -361,11 +361,3 @@ func (s *ccLedger) close() {
 		}
 	})
 }
-
-// LedgerBackend implements delegator.LedgerBooker: this backend books its own
-// calls (ccbook.go), so the agent layer records only its turns.
-func (b *Backend) LedgerBackend() string { return accounting.BackendCCStream }
-
-// ClosesTurnActivity implements delegator.TurnActivityCloser: the adapter
-// closes a turn's activity once its background subagents' tails have closed.
-func (b *Backend) ClosesTurnActivity() bool { return true }

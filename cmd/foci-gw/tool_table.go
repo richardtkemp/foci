@@ -8,6 +8,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/app"
 	"foci/internal/config"
+	"foci/internal/delegator"
 	mcpkg "foci/internal/mcp"
 	"foci/internal/platform"
 	"foci/internal/procx"
@@ -423,10 +424,14 @@ var toolTable = []toolEntry{
 		}},
 
 	// set_session_alias: lets the agent name its own conversation. Only
-	// registered for backends that DON'T auto-name (CC, opencode, API).
-	// Codex generates names server-side via TurnResult.ThreadName.
+	// registered for backends that DON'T name their own sessions (their Spec
+	// lacks thread_naming: CC, opencode, API). Codex generates names
+	// server-side via TurnResult.ThreadName.
 	{name: "set_session_alias", paths: pathBoth,
-		enabled: func(d *toolDeps) bool { return !d.p.resolvedLive.Load().AutoSessionNaming },
+		enabled: func(d *toolDeps) bool {
+			s, _ := delegator.SpecFor(d.p.acfg.Backend)
+			return !s.Supports(delegator.CapThreadNaming)
+		},
 		build: func(d *toolDeps) *tools.Tool {
 			return tools.NewSetSessionAliasTool(d.p.sessionIndex, app.NotifyAliasChanged)
 		}},

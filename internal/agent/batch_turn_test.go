@@ -59,10 +59,6 @@ func (b *batchTurnBackend) Close() error {
 	return nil
 }
 
-// LedgerBackend makes this a backend that books its own calls in the cost
-// ledger (delegator.LedgerBooker), as every delegated backend does.
-func (b *batchTurnBackend) LedgerBackend() string { return accounting.BackendCCStream }
-
 // bookCall books one call the way a real backend does: on the turn the agent
 // layer recorded at the turn's start, in the session the backend was started
 // for.
@@ -134,6 +130,7 @@ func newBatchTestAgent(t *testing.T, be delegator.Delegator) *Agent {
 		AgentID:    "helen",
 		StartOpts:  delegator.StartOptions{AgentID: "helen", WorkDir: t.TempDir(), Model: "opus"},
 		NewBackend: func() (delegator.Delegator, error) { return be, nil },
+		Spec:       batchSpecFor(be),
 	}
 	a := &Agent{AgentID: "helen", Model: "opus", DelegatedManager: mgr}
 	mgr.AttachDelivery = a.AttachDelivery
@@ -259,15 +256,26 @@ func TestRunBatch_RecordsAPIRowAndTrace(t *testing.T) {
 	}
 }
 
-// defaultingBackend is a batch-capable backend with a cheap batch model.
+// defaultingBackend is a batch-capable backend with a cheap batch model
+// (Spec.BatchDefaultModel, see batchSpecFor).
 type defaultingBackend struct{ batchTurnBackend }
 
-func (*defaultingBackend) BatchDefaultModel() string { return "sonnet" }
-
-// cheapBackend also has a cheap tier, as ccstream does.
+// cheapBackend also has a cheap tier (Spec.BatchCheapModel), as ccstream does.
 type cheapBackend struct{ defaultingBackend }
 
-func (*cheapBackend) BatchCheapModel() string { return "haiku" }
+// batchSpecFor is the Spec of the batch test backends: every one books its own
+// calls in the cost ledger, as every delegated backend does, and the
+// defaulting/cheap ones carry batch models.
+func batchSpecFor(be delegator.Delegator) delegator.Spec {
+	s := delegator.Spec{LedgerKey: accounting.BackendCCStream}
+	switch be.(type) {
+	case *cheapBackend:
+		s.BatchDefaultModel, s.BatchCheapModel = "sonnet", "haiku"
+	case *defaultingBackend:
+		s.BatchDefaultModel = "sonnet"
+	}
+	return s
+}
 
 // TestRunBatch_ModelSelection: an explicit model wins; otherwise, for a Cheap
 // request, the backend's cheap model (CC: haiku); otherwise the backend's

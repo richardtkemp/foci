@@ -21,11 +21,12 @@ func checkStreamOutputWithoutStreaming(cfg *config.Config) []string {
 	var warnings []string
 	for _, acfg := range cfg.Agents {
 		// For delegated backends, streaming capability is a property of the
-		// backend type (queried via CapabilitiesForBackend), not the
+		// backend type (its Spec's streaming capability), not the
 		// [agent_loop].streaming config flag which only gates the API path.
 		var streaming bool
 		if acfg.IsDelegated() {
-			streaming = delegator.CapabilitiesForBackend(acfg.Backend).Streaming
+			s, _ := delegator.SpecFor(acfg.Backend)
+			streaming = s.Supports(delegator.CapStreaming)
 		} else {
 			streaming = config.Resolve(cfg, acfg).Loop.Streaming
 		}

@@ -35,13 +35,6 @@ type providerInfo struct {
 	} `json:"models"`
 }
 
-// Capabilities advertises opencode's limitations: no mid-turn message
-// injection (HTTP/SSE-based, no stdin pipe). Post-tool and pre-answer
-// nudges are silently unsupported.
-func (b *Backend) Capabilities() delegator.Capabilities {
-	return delegator.CapabilitiesForBackend(backendName)
-}
-
 // StatusDetail returns empty — opencode has no permission-mode concept.
 func (b *Backend) StatusDetail() string { return "" }
 

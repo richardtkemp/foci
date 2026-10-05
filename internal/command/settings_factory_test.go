@@ -2,10 +2,12 @@ package command
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"foci/internal/agent"
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/modelcaps"
 	"foci/internal/tools"
 )
@@ -481,8 +483,8 @@ func TestBackendGate(t *testing.T) {
 		Description: "test",
 		OptionsHint: "Options: a",
 		InvalidName: "test value",
-		// Permit only the API backend; ccstream is gated off.
-		BackendGate: func(bt string) bool { return bt == modelcaps.BackendAPI },
+		// Permit only the API transport; any delegated backend is gated off.
+		BackendGate: func(a *agent.Agent) bool { return !a.IsDelegated() },
 		Get:         func(_ CommandContext, _ string) string { return stored },
 		Set:         func(_ CommandContext, _, v string) { stored = v },
 		Choices:     []settingChoice{{Label: "a", SetValue: "a", Response: "Set: a"}},
@@ -504,13 +506,56 @@ func TestBackendGate(t *testing.T) {
 		t.Errorf("api Execute: got %q, want %q", resp.Text, "Set: a")
 	}
 
-	// ccstream backend (configured Claude Code transport) → hidden and rejected.
-	ccCC := modelCC(&agent.Agent{Backend: "claude-code"})
+	// A delegated backend → hidden and rejected.
+	ccCC := modelCC(&agent.Agent{Backend: "claude-code", DelegatedManager: &agent.DelegatedManager{}})
 	if cmd.Visible(skCtx, Request{}, ccCC) {
 		t.Error("should be hidden on ccstream backend")
 	}
 	resp, _ := cmd.Execute(skCtx, Request{Args: "a", SessionKey: sk}, ccCC)
 	if resp.Text != "/test is not supported on this backend" {
 		t.Errorf("ccstream Execute: got %q, want rejection", resp.Text)
+	}
+}
+
+// TestControlCommandsFollowSpec: /effort, /thinking and /mode ask the agent's
+// backend Spec (#2154 Q7). The API loop keeps /effort and /thinking; a
+// delegated backend gets each only if it declares the matching capability.
+func TestControlCommandsFollowSpec(t *testing.T) {
+	ctx := tools.WithSessionKey(context.Background(), "s")
+	delegated := func(caps ...delegator.Capability) CommandContext {
+		spec := delegator.Spec{Caps: map[delegator.Capability]delegator.Support{}}
+		for _, c := range caps {
+			spec.Caps[c] = delegator.Yes()
+		}
+		return modelCC(&agent.Agent{Backend: "x", DelegatedManager: &agent.DelegatedManager{Spec: spec}})
+	}
+	api := modelCC(&agent.Agent{})
+	for _, tc := range []struct {
+		cmd     *Command
+		cc      CommandContext
+		visible bool
+		what    string
+	}{
+		{EffortCommand(), delegated(delegator.CapControl, delegator.CapControlEffort), true, "effort, backend declares control_effort"},
+		{EffortCommand(), delegated(delegator.CapControl), false, "effort, backend lacks control_effort"},
+		{ThinkingCommand(), delegated(), false, "thinking, backend lacks thinking_control"},
+		{ModeCommand(), delegated(delegator.CapControl, delegator.CapControlPermissionMode), true, "mode, backend declares control_permission_mode"},
+		{ModeCommand(), delegated(delegator.CapControl), false, "mode, backend lacks control_permission_mode"},
+		{ModeCommand(), api, false, "mode on the API loop"},
+	} {
+		// Effort's and thinking's model-capability gate is not under test:
+		// only the backend gate decides visibility when it says no.
+		got := tc.cmd.Visible(ctx, Request{}, tc.cc)
+		if !tc.visible && got {
+			t.Errorf("%s: visible, want hidden", tc.what)
+		}
+		if !tc.visible {
+			if resp, _ := tc.cmd.Execute(ctx, Request{Args: "1", SessionKey: "s"}, tc.cc); !strings.Contains(resp.Text, "not supported on this backend") {
+				t.Errorf("%s: Execute = %q, want a rejection", tc.what, resp.Text)
+			}
+		}
+		if tc.visible && tc.cmd.Name == "mode" && !got {
+			t.Errorf("%s: hidden, want visible", tc.what)
+		}
 	}
 }

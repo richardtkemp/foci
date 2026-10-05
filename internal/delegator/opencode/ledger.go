@@ -18,10 +18,6 @@ import (
 	"foci/internal/modelinfo"
 )
 
-// LedgerBackend implements delegator.LedgerBooker: this backend books its own
-// calls, so the agent layer books no turn-level row for it.
-func (b *Backend) LedgerBackend() string { return accounting.BackendOpencode }
-
 // messageTokens normalises opencode's per-message counts into ledger classes.
 // They are already disjoint: tokens.total is input + output + reasoning +
 // cache read + cache write, so reasoning is billed ON TOP of output, at the

@@ -484,7 +484,7 @@ func (a *Agent) Enqueue(env Envelope) bool {
 	// waits for the plan flow (and turn) to resolve.
 	if isActive && env.Steer != SteerNever && env.Text != "" && len(env.Attachments) == 0 {
 		if be, err := a.resolveSessionBackend(a.inboxCtx, env.SessionKey); err == nil && be != nil {
-			if pr, ok := be.(delegator.PlanResponder); ok {
+			if pr, ok := delegator.As[delegator.PlanResponder](be); ok {
 				if reqID := pr.HasPendingPlanPermission(); reqID != "" {
 					if err := pr.CancelPlanWithFeedback(reqID, env.Text); err != nil {
 						a.logger().Warnf("inbox: plan-cancel-by-message failed sk=%s reqID=%s: %v (falling through)", env.SessionKey, reqID, err)
@@ -622,7 +622,7 @@ func (a *Agent) steerInject(be delegator.Delegator, env Envelope) (inj delegator
 	if len(env.Attachments) == 0 {
 		return inj, true
 	}
-	carrier, isCarrier := be.(delegator.FoldAttachmentCarrier)
+	carrier, isCarrier := delegator.As[delegator.FoldAttachmentCarrier](be)
 	if !isCarrier {
 		return inj, false
 	}

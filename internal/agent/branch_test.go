@@ -15,6 +15,10 @@ import (
 // BackendCanBranch() == true.
 type brancherBackend struct{ mockBackendDM }
 
+// branchSpec is the Spec of a manager whose backend is a brancherBackend: it
+// declares delegator.CapBranch, which is what BackendCanBranch asks.
+var branchSpec = delegator.Spec{Caps: map[delegator.Capability]delegator.Support{delegator.CapBranch: delegator.Yes()}}
+
 func (b *brancherBackend) ForkSession(_ context.Context, _ delegator.ForkRequest) (delegator.ForkResult, error) {
 	return delegator.ForkResult{SessionID: "forked"}, nil
 }
@@ -24,13 +28,13 @@ func (b *brancherBackend) CleanupSession(_ context.Context, _ delegator.CleanupR
 }
 
 // TestBranchStrategyFor locks the branching-decision matrix for a delegated
-// agent whose backend CANNOT fork its conversation (NewBackend nil): inject in
+// agent whose backend CANNOT fork its conversation (no CapBranch): inject in
 // place for non-terminal passes, fork (+remap, handled by the caller) for
 // session-end, independent session for background work; API agents always fork
 // a history-reading branch.
 func TestBranchStrategyFor(t *testing.T) {
-	// A non-nil DelegatedManager marks the agent as delegated. This manager has
-	// no NewBackend, so BackendCanBranch() is false → legacy matrix.
+	// A non-nil DelegatedManager marks the agent as delegated. Its zero Spec
+	// declares no CapBranch, so BackendCanBranch() is false → legacy matrix.
 	delegated := &Agent{DelegatedManager: &DelegatedManager{}}
 	api := &Agent{} // no DelegatedManager
 
@@ -65,6 +69,7 @@ func TestBranchStrategyFor(t *testing.T) {
 func TestBranchStrategyForBranchCapable(t *testing.T) {
 	mgr := &DelegatedManager{
 		NewBackend: func() (delegator.Delegator, error) { return &brancherBackend{}, nil },
+		Spec:       branchSpec,
 	}
 	if !mgr.BackendCanBranch() {
 		t.Fatal("BackendCanBranch() = false, want true for brancherBackend")
@@ -100,6 +105,7 @@ func TestBranchStrategyForBranchCapable(t *testing.T) {
 func TestBranchStrategyForForceInSessionOverride(t *testing.T) {
 	mgr := &DelegatedManager{
 		NewBackend: func() (delegator.Delegator, error) { return &brancherBackend{}, nil },
+		Spec:       branchSpec,
 	}
 
 	cases := []struct {
@@ -189,7 +195,7 @@ func TestForkSession_Routing(t *testing.T) {
 	})
 
 	t.Run("delegated can-branch, no backend session yet", func(t *testing.T) {
-		mgr := &DelegatedManager{NewBackend: func() (delegator.Delegator, error) { return &brancherBackend{}, nil }}
+		mgr := &DelegatedManager{NewBackend: func() (delegator.Delegator, error) { return &brancherBackend{}, nil }, Spec: branchSpec}
 		a := &Agent{DelegatedManager: mgr}
 		bk, ok, err := a.ForkSession(context.Background(), "agent/c123", session.BranchOptions{BranchType: "spawn"})
 		if err != nil || ok || bk != "" {
@@ -223,7 +229,7 @@ func TestForkOrFreshBranch(t *testing.T) {
 	t.Run("can branch but parent has no backend session — fresh branch, nothing inherited", func(t *testing.T) {
 		a := &Agent{
 			Sessions:         session.NewStore(t.TempDir()),
-			DelegatedManager: &DelegatedManager{NewBackend: newBrancher},
+			DelegatedManager: &DelegatedManager{NewBackend: newBrancher, Spec: branchSpec},
 		}
 		bk, inherited, err := a.ForkOrFreshBranch(context.Background(), "agent/c123", session.BranchOptions{BranchType: "branch"})
 		if err != nil {
@@ -243,7 +249,7 @@ func TestForkOrFreshBranch(t *testing.T) {
 	})
 
 	t.Run("backend cannot branch — no branch at all", func(t *testing.T) {
-		// No NewBackend → BackendCanBranch() == false. This is the ONLY case
+		// No CapBranch → BackendCanBranch() == false. This is the ONLY case
 		// that should reach a caller's non-branch fallback.
 		a := &Agent{
 			Sessions:         session.NewStore(t.TempDir()),
@@ -261,7 +267,7 @@ func TestForkOrFreshBranch(t *testing.T) {
 			t.Fatalf("NewSessionIndex: %v", err)
 		}
 		t.Cleanup(func() { _ = idx.Close() })
-		mgr := &DelegatedManager{NewBackend: newBrancher, SessionIndex: idx}
+		mgr := &DelegatedManager{NewBackend: newBrancher, SessionIndex: idx, Spec: branchSpec}
 		a := &Agent{Sessions: session.NewStore(t.TempDir()), DelegatedManager: mgr}
 		// A persisted resume id is what makes the parent forkable.
 		mgr.saveResumeID("agent/c123", "parent-cc-session")

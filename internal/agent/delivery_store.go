@@ -19,7 +19,7 @@ const undeliveredKey = "cc_undelivered"
 // ✓✓) and redelivery. Backends that cannot confirm consumption are left alone:
 // their inputs are never persisted, redelivered or reported consumed.
 func (m *DelegatedManager) installDeliveryHooks(mb *managedBackend, sk func() string) {
-	dt, ok := mb.be.(delegator.DeliveryTracker)
+	dt, ok := delegator.As[delegator.DeliveryTracker](mb.be)
 	if !ok {
 		return
 	}
@@ -117,8 +117,10 @@ func (m *DelegatedManager) restoreOne(sk string, p delegator.PendingInput) {
 	if sid == "" {
 		sid = m.loadResumeID(sk)
 	}
-	if m.TranscriptChecker != nil && sid != "" && p.WorkDir != "" {
-		found, err := m.TranscriptChecker(p.WorkDir, sid, p.ID)
+	// A Spec without a TranscriptChecker redelivers every persisted input
+	// (at-least-once).
+	if check := m.Spec.TranscriptChecker; check != nil && sid != "" && p.WorkDir != "" {
+		found, err := check(p.WorkDir, sid, p.ID)
 		switch {
 		case err != nil:
 			m.logger().Warnf("session %s: input %s transcript unreadable (%v) — redelivering (at-least-once)", sk, p.ID, err)

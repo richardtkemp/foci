@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/delegator/ccstream"
 	"foci/internal/log"
 	"foci/internal/procx"
@@ -176,15 +177,15 @@ func writeVisibility(b *strings.Builder, rc *config.ResolvedAgentConfig) {
 // baked into the CC backend's session config, not a live re-read — the
 // backend's rule set has no live-reload path, so this description would
 // otherwise drift from what's actually enforced.
-func writeCommandApproval(b *strings.Builder, perms config.ResolvedPermissions, ccAllowedTools string) {
+func writeCommandApproval(b *strings.Builder, perms config.ResolvedPermissions, preApproved string) {
 	b.WriteString("\n## Command Approval\n")
-	b.WriteString("Tool and Bash calls matching your auto-approve allowlist run WITHOUT prompting the user; everything else prompts. Your effective allowlist:\n")
-	if ccAllowedTools != "" {
-		// CC's --allowedTools layer: these are PRE-APPROVED (auto-run, no
-		// prompt) — NOT an exclusive whitelist; tools outside it still work,
-		// they just prompt. Distinct from the foci rules below, which
-		// auto-answer prompts CC does generate.
-		fmt.Fprintf(b, "- **CC pre-approved** (auto-run, no prompt — not a restriction): %s\n", ccAllowedTools)
+	b.WriteString("Commands and tool calls matching your auto-approve allowlist run WITHOUT prompting the user; everything else asks the user for approval first. Your effective allowlist:\n")
+	if preApproved != "" {
+		// The backend's own pre-approval layer (Claude Code --allowedTools):
+		// PRE-APPROVED (auto-run, no prompt) — NOT an exclusive whitelist;
+		// tools outside it still work, they just prompt. Distinct from the
+		// foci rules below, which auto-answer prompts the backend does raise.
+		fmt.Fprintf(b, "- **pre-approved by your backend** (auto-run, no prompt — not a restriction): %s\n", preApproved)
 	}
 	b.WriteString("- **foci tools**: every `foci_*` shell function is always auto-approved.\n")
 	if perms.AutoApproveCommonReadonly {
@@ -198,7 +199,7 @@ func writeCommandApproval(b *strings.Builder, perms config.ResolvedPermissions, 
 	if len(perms.AutoApproveRules) > 0 {
 		fmt.Fprintf(b, "- **configured for this agent**: %s\n", strings.Join(stripBashPrefix(perms.AutoApproveRules), ", "))
 	}
-	b.WriteString("Everything else — e.g. bare `git`, writable `sqlite3`, `gh create`/`merge`, paths outside the above — prompts for your approval.\n")
+	b.WriteString("Everything else — e.g. bare `git`, writable `sqlite3`, `gh create`/`merge`, paths outside the above — asks the user for approval.\n")
 }
 
 // stripBashPrefix drops the "Bash:" prefix from auto-approve rules for readable
@@ -374,12 +375,20 @@ func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *
 	writeMemorySearch(&b, acfg, rc)
 	writeShellTools(&b, shellTools)
 
-	// Auto-approve visibility is CC-specific (the ccstream Bash allowlist);
-	// opencode has its own permission model.
-	// skip_permissions bypasses all prompts, so a Command Approval section would
-	// just be confusing noise — omit it entirely (everything is permitted).
-	if acfg.Backend == "claude-code" && !config.DerefBool(acfg.BackendConfig.SkipPermissions) {
-		writeCommandApproval(&b, bakedPerms, cfg.CCBackend.MergedAllowedTools(acfg.BackendConfig.AllowedTools))
+	// Shown for every backend that enforces foci's auto-approve allowlist
+	// (its Spec declares command_approval_allowlist), so the prompt describes
+	// the regime the backend actually applies. skip_permissions bypasses all
+	// prompts, so a Command Approval section would just be confusing noise —
+	// omit it entirely (everything is permitted).
+	spec, _ := delegator.SpecFor(acfg.Backend)
+	if spec.Supports(delegator.CapCommandApprovalAllowlist) && !config.DerefBool(acfg.BackendConfig.SkipPermissions) {
+		// The --allowedTools pre-approval layer exists only for the Claude
+		// Code config family ([cc_backend].default_allowed_tools).
+		var preApproved string
+		if spec.ConfigFamily == delegator.ConfigFamilyClaudeCode {
+			preApproved = cfg.CCBackend.MergedAllowedTools(acfg.BackendConfig.AllowedTools)
+		}
+		writeCommandApproval(&b, bakedPerms, preApproved)
 	}
 
 	writeVisibility(&b, rc)

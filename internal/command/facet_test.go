@@ -61,6 +61,7 @@ func TestForkFacetBranch(t *testing.T) {
 	t.Run("backend can branch, parent has nothing to clone — real branch", func(t *testing.T) {
 		mgr := &agent.DelegatedManager{
 			NewBackend: func() (delegator.Delegator, error) { return facetBrancherBackend{}, nil },
+			Spec:       delegator.Spec{Caps: map[delegator.Capability]delegator.Support{delegator.CapBranch: delegator.Yes()}},
 		}
 		cc := newCC(t, mgr)
 		key, err := forkFacetBranch(context.Background(), cc, "agent/c123", opts)

@@ -24,10 +24,6 @@ import (
 	"foci/internal/modelinfo"
 )
 
-// LedgerBackend implements delegator.LedgerBooker: this backend books its own
-// calls, so the agent layer books no turn-level row for it.
-func (b *Backend) LedgerBackend() string { return accounting.BackendCodex }
-
 // cycleTokens normalises one tokenUsage breakdown into disjoint ledger
 // classes. cachedInputTokens is a SUBSET of inputTokens (checked live,
 // invCachedIsSubsetOfInput), so it is taken out of input; cacheWriteInputTokens

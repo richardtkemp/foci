@@ -7,8 +7,9 @@ import (
 	"strconv"
 	"strings"
 
+	"foci/internal/agent"
 	"foci/internal/config"
-	"foci/internal/modelcaps"
+	"foci/internal/delegator"
 	"foci/internal/provider"
 	"foci/internal/tools"
 )
@@ -95,13 +96,11 @@ type sessionSettingDef struct {
 	ModelDefault func(config.ModelDefaults) string // extract this setting from ModelDefaults (nil = no model default fallback)
 	GateExecute  bool                              // also reject in Execute when capability is false
 	GateMsg      string                            // rejection message format (%s = model name)
-	// BackendGate, when set, restricts the command to backend types where it
-	// returns true: hidden in Visible and rejected in Execute on other
-	// backends. Distinct from Capability (model-keyed) — this is keyed on the
-	// agent's backend type. Used by /thinking, which disappears on ccstream
-	// (thinking is subsumed by effort there and CC exposes no thinking control),
-	// while api agents keep it.
-	BackendGate func(backendType string) bool
+	// BackendGate, when set, restricts the command to agents for which it
+	// returns true: hidden in Visible and rejected in Execute elsewhere.
+	// Distinct from Capability (model-keyed) — this asks the agent's
+	// transport, normally through apiOrBackend (#2154).
+	BackendGate func(a *agent.Agent) bool
 	EmptyShow   string // display when effective value is "" (e.g. "not set")
 	DefaultShow string // display when getter returns "" or matches this value (e.g. "off", "standard")
 	InvalidName string // noun for error messages (e.g. "effort level", "thinking mode")
@@ -203,7 +202,7 @@ func newSessionSettingCommand(def sessionSettingDef) *Command {
 		cmd.Visible = func(ctx context.Context, req Request, cc CommandContext) bool {
 			// Backend gate first: hide entirely on backends that don't support
 			// this setting, regardless of model capability.
-			if def.BackendGate != nil && cc.Agent != nil && !def.BackendGate(cc.Agent.BackendType()) {
+			if def.BackendGate != nil && cc.Agent != nil && !def.BackendGate(cc.Agent) {
 				return false
 			}
 			if def.Capability == nil {
@@ -227,7 +226,7 @@ func newSessionSettingCommand(def sessionSettingDef) *Command {
 	cmd.Execute = func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
 		sk := tools.SessionKeyFromContext(ctx)
 		// Backend gate: reject if this agent's backend doesn't support the setting.
-		if def.BackendGate != nil && cc.Agent != nil && !def.BackendGate(cc.Agent.BackendType()) {
+		if def.BackendGate != nil && cc.Agent != nil && !def.BackendGate(cc.Agent) {
 			return Response{Text: fmt.Sprintf("/%s is not supported on this backend", def.Name)}, nil
 		}
 		// Gate: reject if current model doesn't support this setting.
@@ -278,6 +277,13 @@ func newSessionSettingCommand(def sessionSettingDef) *Command {
 	return cmd
 }
 
+// apiOrBackend gates a session setting on the agent's transport: the API loop
+// applies every setting itself; a delegated backend only what its Spec
+// declares.
+func apiOrBackend(c delegator.Capability) func(*agent.Agent) bool {
+	return func(a *agent.Agent) bool { return !a.IsDelegated() || a.BackendSupports(c) }
+}
+
 // EffortCommand returns a /effort command to show or set the effort level.
 // The available levels are sourced live from the model catalogue (modelcaps),
 // so a model that supports xhigh/max (e.g. opus-4-8) offers them, while the
@@ -288,6 +294,7 @@ func EffortCommand() *Command {
 		Description:    "Show or set effort level",
 		OptionsHint:    "Options: 1) low  2) medium  3) high",
 		Capability:     func(c config.ModelCaps) bool { return c.Effort },
+		BackendGate:    apiOrBackend(delegator.CapControlEffort),
 		ModelDefault:   func(md config.ModelDefaults) string { return md.Effort },
 		EmptyShow:      "not set",
 		InvalidName:    "effort level",
@@ -344,9 +351,11 @@ func ThinkingCommand() *Command {
 		OptionsHint:  "Options: 0) off  1) adaptive",
 		Capability:   func(c config.ModelCaps) bool { return c.Thinking },
 		ModelDefault: func(md config.ModelDefaults) string { return md.Thinking },
-		// Hidden on ccstream: CC exposes no thinking control (unsupported since
-		// ~4.5/4.6) and effort subsumes it. api agents keep /thinking.
-		BackendGate: func(bt string) bool { return bt != modelcaps.BackendCCStream },
+		// The session thinking setting is read only by the API loop; a
+		// delegated backend gets /thinking only if its Spec declares
+		// thinking_control (none does today: CC exposes no thinking control,
+		// effort subsumes it).
+		BackendGate: apiOrBackend(delegator.CapThinkingControl),
 		DefaultShow: "off",
 		InvalidName: "thinking mode",
 		Get:         func(cc CommandContext, sk string) string { return cc.Agent.SessionThinking(sk) },
@@ -381,8 +390,8 @@ func SpeedCommand() *Command {
 }
 
 // ModeCommand returns a /mode command to show or switch the delegated
-// backend's permission mode. ccstream backend only — other backends are
-// rejected with a typed error from the agent layer.
+// backend's permission mode. Visible only on a backend whose Spec declares
+// control_permission_mode; others (and API agents) are rejected.
 //
 // User-facing aliases ("normal", "accept") translate to CC's native mode
 // names ("default", "acceptEdits") before being sent. We bypass
@@ -428,9 +437,15 @@ func ModeCommand() *Command {
 
 	return &Command{
 		Name:        "mode",
-		Description: "Show or set permission mode (ccstream backend only)",
+		Description: "Show or set the backend's permission mode",
 		Category:    "operations",
+		Visible: func(_ context.Context, _ Request, cc CommandContext) bool {
+			return cc.Agent != nil && cc.Agent.BackendSupports(delegator.CapControlPermissionMode)
+		},
 		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+			if cc.Agent == nil || !cc.Agent.BackendSupports(delegator.CapControlPermissionMode) {
+				return Response{Text: "/mode is not supported on this backend"}, nil
+			}
 			sk := tools.SessionKeyFromContext(ctx)
 			if req.Args == "" {
 				cur := cc.Agent.SessionPermissionMode(sk)

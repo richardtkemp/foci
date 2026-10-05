@@ -300,15 +300,15 @@ func TestPublishStoresPushedCatalogue(t *testing.T) {
 	}
 }
 
-// TestBackendKeySeparatesConfiguredBackends proves Codex and OpenCode do not
-// accidentally consume the API or Claude Code capability catalogue.
+// TestBackendKeySeparatesConfiguredBackends covers the keys BackendKey owns
+// itself. A registered backend's key is its Spec.ModelcapsKey, checked for
+// every backend in internal/delegator/all (this package can't import them).
 func TestBackendKeySeparatesConfiguredBackends(t *testing.T) {
 	tests := map[string]string{
-		"":            BackendAPI,
-		"api":         BackendAPI,
-		"claude-code": BackendCCStream,
-		"codex":       BackendCodex,
-		"opencode":    "opencode",
+		"":                    BackendAPI,
+		"api":                 BackendAPI,
+		"ccstream":            BackendCCStream,
+		"some-future-backend": "some-future-backend",
 	}
 	for configured, want := range tests {
 		if got := BackendKey(configured); got != want {

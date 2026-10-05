@@ -131,72 +131,32 @@ func testFuncs(t *testing.T, dir string) map[string]bool {
 	return out
 }
 
-// TestSpecs_AgreeWithLegacySources holds the Spec and the mechanisms it will
-// replace (#2154 Phase 2) to the same answers until those are deleted: the
-// static-data getter interfaces on a live instance, the nudge/streaming
-// Capabilities, and modelcaps.BackendKey.
-func TestSpecs_AgreeWithLegacySources(t *testing.T) {
-	for _, s := range delegator.Specs() {
-		be, err := s.New(map[string]any{})
-		if err != nil || be == nil {
-			t.Fatalf("%s: New = %v, %v", s.Name, be, err)
-		}
-		if lb, ok := be.(delegator.LedgerBooker); !ok || lb.LedgerBackend() != s.LedgerKey {
-			t.Errorf("%s: LedgerBooker disagrees with Spec.LedgerKey %q", s.Name, s.LedgerKey)
-		}
-		tac, ok := be.(delegator.TurnActivityCloser)
-		if got := ok && tac.ClosesTurnActivity(); got != s.ClosesTurnActivity {
-			t.Errorf("%s: TurnActivityCloser = %v, Spec.ClosesTurnActivity = %v", s.Name, got, s.ClosesTurnActivity)
-		}
-		var ttl any
-		if p, ok := be.(delegator.CacheTTLProvider); ok {
-			ttl = p.CacheTTL()
-		}
-		if (ttl == nil && s.CacheTTL != 0) || (ttl != nil && ttl != s.CacheTTL) {
-			t.Errorf("%s: CacheTTLProvider = %v, Spec.CacheTTL = %v", s.Name, ttl, s.CacheTTL)
-		}
-		def := ""
-		if d, ok := be.(delegator.BatchModelDefaulter); ok {
-			def = d.BatchDefaultModel()
-		}
-		cheap := ""
-		if c, ok := be.(delegator.BatchCheapModeler); ok {
-			cheap = c.BatchCheapModel()
-		}
-		if def != s.BatchDefaultModel || cheap != s.BatchCheapModel {
-			t.Errorf("%s: batch models (%q, %q), Spec (%q, %q)", s.Name, def, cheap, s.BatchDefaultModel, s.BatchCheapModel)
-		}
-		rf, ok := be.(delegator.RunningBackendForker)
-		if got := ok && rf.ForkRequiresRunningBackend(); got != s.ForkNeedsRunning {
-			t.Errorf("%s: RunningBackendForker = %v, Spec.ForkNeedsRunning = %v", s.Name, got, s.ForkNeedsRunning)
-		}
-		bc, ok := be.(delegator.BackendCapabilities)
+// TestSpecs_NudgesAndStreaming pins each backend's declared nudge and
+// streaming capabilities to what it implements (#2154).
+func TestSpecs_NudgesAndStreaming(t *testing.T) {
+	type caps struct{ postTool, preAnswer, streaming bool }
+	want := map[string]caps{
+		"claude-code": {true, true, true},
+		"opencode":    {false, false, true},
+		"codex":       {false, false, true},
+	}
+	for name, w := range want {
+		s, ok := delegator.SpecFor(name)
 		if !ok {
-			t.Errorf("%s: no Capabilities() method", s.Name)
-		} else if got, want := bc.Capabilities(), delegator.CapabilitiesForBackend(s.Name); got != want {
-			t.Errorf("%s: Capabilities() = %+v, CapabilitiesForBackend = %+v", s.Name, got, want)
+			t.Fatalf("%s not registered", name)
 		}
-		if got := modelcaps.BackendKey(s.Name); got != s.ModelcapsKey {
-			t.Errorf("%s: modelcaps.BackendKey = %q, Spec.ModelcapsKey = %q", s.Name, got, s.ModelcapsKey)
+		got := caps{s.Supports(delegator.CapPostToolNudge), s.Supports(delegator.CapPreAnswerNudge), s.Supports(delegator.CapStreaming)}
+		if got != w {
+			t.Errorf("%s: (post_tool, pre_answer, streaming) = %+v, want %+v", name, got, w)
 		}
 	}
 }
 
-// TestCapabilitiesForBackend pins each backend's declared nudge and streaming
-// capabilities to what it implements (#2154).
-func TestCapabilitiesForBackend(t *testing.T) {
-	tests := []struct {
-		backend string
-		want    delegator.Capabilities
-	}{
-		{"claude-code", delegator.Capabilities{PostToolNudge: true, PreAnswerNudge: true, Streaming: true}},
-		{"opencode", delegator.Capabilities{Streaming: true}},
-		{"codex", delegator.Capabilities{Streaming: true}},
-		{"some-future-backend", delegator.Capabilities{}},
-	}
-	for _, tt := range tests {
-		if got := delegator.CapabilitiesForBackend(tt.backend); got != tt.want {
-			t.Errorf("CapabilitiesForBackend(%q) = %+v, want %+v", tt.backend, got, tt.want)
+// TestSpecs_ModelcapsKey holds modelcaps.BackendKey to each Spec.
+func TestSpecs_ModelcapsKey(t *testing.T) {
+	for _, s := range delegator.Specs() {
+		if got := modelcaps.BackendKey(s.Name); got != s.ModelcapsKey {
+			t.Errorf("%s: modelcaps.BackendKey = %q, Spec.ModelcapsKey = %q", s.Name, got, s.ModelcapsKey)
 		}
 	}
 }

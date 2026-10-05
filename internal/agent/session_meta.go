@@ -589,7 +589,7 @@ func (a *Agent) refreshContextFromBackend(ctx context.Context, sessionKey string
 	if err != nil {
 		return
 	}
-	cwq, ok := be.(delegator.ContextWindowQuerier)
+	cwq, ok := delegator.As[delegator.ContextWindowQuerier](be)
 	if !ok {
 		return
 	}

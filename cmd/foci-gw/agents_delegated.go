@@ -31,25 +31,15 @@ import (
 	"foci/shared/prompts"
 )
 
-// backendDefaultModel returns the launch model a delegated backend uses when
-// neither a session override nor a config value picks one. It is the bottom rung
-// of the launch-model ladder (override → config → backend default).
-func backendDefaultModel(backendName string) string {
-	switch backendName {
-	case "claude-code":
-		return "opus"
-	default:
-		// TODO(#1163): define opencode's default launch model.
-		return ""
-	}
-}
-
 // configureDelegated sets up delegated transport agent state: DelegatedManager
 // with all callbacks, model override, permissions, and exec registry. The
 // agent's shared fields (compaction, warnings, etc.) are already set by
 // setupAgent before this is called.
 func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, backendName string, backendConfig config.BackendConfig) (finalizeParams, bool) {
 	ag.Backend = backendName
+	// The backend's declaration: everything below that differs per backend
+	// asks it, never the backend's name (#2154).
+	spec, _ := delegator.SpecFor(backendName)
 	// Make prompt search dirs available for orientation template resolution
 	// (webhooks, keepalive, memory formation). Delegated agents don't need
 	// groupResolver since their model comes from backendConfig.
@@ -69,26 +59,26 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	bs := br.bootstrap
 
 	// Model for the backend — from backend_config, not from the group resolver.
-	// Ladder: config value, then the backend's own default model.
+	// Ladder: config value, then the backend's own default model
+	// (Spec.DefaultModel; "" for opencode, TODO #1163).
 	model := config.DerefStr(backendConfig.Model)
 	if model == "" {
-		model = backendDefaultModel(backendName)
+		model = spec.DefaultModel
 	}
 
 	// Work on a copy so global-default folding below doesn't mutate the
 	// shared AgentConfig.BackendConfig (struct is a value type — assignment copies).
 	bc := backendConfig
 
-	// For the Claude Code backend, fold global [cc_backend] settings
-	// into the per-agent backend_config so ccstream picks them up from
-	// the same keys. Non-CC backends (codex,
-	// opencode, ...) are skipped so the keys don't leak into their
-	// config surface.
+	// Fold the global section of the backend's config family
+	// (Spec.ConfigFamily) into the per-agent backend_config. Other families'
+	// keys are skipped so they don't leak into this backend's config surface.
 	//
-	// Folded keys (per-agent values always win):
+	// [cc_backend] folded keys (per-agent values always win):
 	//   allowed_tools — merged (per-agent rules appended to global)
 	//   binary — global default; per-agent override wins
-	if backendName == "claude-code" {
+	switch spec.ConfigFamily {
+	case delegator.ConfigFamilyClaudeCode:
 		merged := p.cfg.CCBackend.MergedAllowedTools(bc.AllowedTools)
 		if merged != "" {
 			bc.AllowedTools = strings.Split(merged, ",")
@@ -96,12 +86,8 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		if bc.Binary == nil && p.cfg.CCBackend.Binary != "" {
 			bc.Binary = &p.cfg.CCBackend.Binary
 		}
-	}
-
-	// For opencode-backed agents, fold global [opencode_backend] settings
-	// into the per-agent backend_config so the Backend reads them via
-	// the same keys as ccstream does. Per-agent values always win.
-	if backendName == "opencode" {
+	case delegator.ConfigFamilyOpencode:
+		// [opencode_backend]: per-agent values always win.
 		if bc.Binary == nil {
 			bc.Binary = &p.cfg.OpencodeBackend.Binary
 		}
@@ -200,8 +186,8 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// path. The gate single-flights across all agents (shared OAuth
 	// credential), so only the first caller launches the driver; a second
 	// caller (concurrent 401, or /login while one is running) gets false.
-	// ccstream-only: the driver drives a `claude /login` TUI in tmux, which
-	// has no meaning for the API transport. The /login command is gated by
+	// Only for a backend declaring CapRelogin (Claude Code): the driver drives
+	// a `claude /login` TUI in tmux. The /login command is gated by
 	// RequiresBackend; this field stays nil for other backends so that
 	// command reports "unavailable" rather than mis-driving the wrong backend.
 	claudeBin := config.DerefStr(bc.Binary)
@@ -233,7 +219,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		})
 		return true
 	}
-	if backendName == "claude-code" {
+	if spec.Supports(delegator.CapRelogin) {
 		ag.ReloginTrigger = triggerRelogin
 	}
 
@@ -248,9 +234,11 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	var preToolRules func() []pretool.Rule
 	// Stop rules (#2089): this agent's backend_config only, re-read the same way.
 	var stopRules func() []stoprule.Rule
-	if backendName == "claude-code" {
+	if spec.Supports(delegator.CapPreToolRules) {
 		preToolRules = livePreToolRules(agentID, p.configPath,
 			resolvePreToolRules(agentID, p.cfg.CCBackend.PreToolRules, backendConfig.PreToolRules))
+	}
+	if spec.Supports(delegator.CapStopRules) {
 		stopRules = liveStopRules(agentID, p.configPath, resolveStopRules(agentID, backendConfig.StopRules))
 	}
 
@@ -258,6 +246,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		SessionIndex: p.sessionIndex,
 		AgentID:      agentID,
 		BackendType:  backendName,
+		Spec:         spec,
 		NewBackend: func() (delegator.Delegator, error) {
 			cfgMap := bc.ToMap()
 			cfgMap["foci_version"] = version
@@ -502,9 +491,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		// ordinary turns on an ephemeral child session (#1962).
 		RunBatchTurn: ag.RunBatchTurn,
 		IdleTimeout:  idleTimeout,
-		// Resume-missed wording: only claude-code's retention is known to foci.
-		LastUseFunc:     ag.PrevRequestTime,
-		ResumeRetention: resumeRetentionFor(backendName),
+		// Resume-missed wording reads Spec.ResumeRetention (only claude-code
+		// publishes one).
+		LastUseFunc: ag.PrevRequestTime,
 		// Delivery tracking (#2050): an input the backend never consumed is
 		// re-sent as a fresh turn in its session's chat; a consumed input the
 		// app sent becomes ✓✓ on the user's bubble.
@@ -516,7 +505,6 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 				app.MarkMessageConsumed(ref.ConversationID, ref.MessageID)
 			}
 		},
-		TranscriptChecker: transcriptCheckerFor(backendName),
 	}
 
 	return finalizeParams{
@@ -786,26 +774,6 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, wakeC
 
 	log.NewComponentLogger("agent:"+acfg.ID).Infof("exec bridge registry: %d tools (%v)", len(registry.All()), registry.ExportedNames())
 	return registry
-}
-
-// transcriptCheckerFor returns how to tell, after a restart, whether a
-// persisted input reached the backend's transcript before the old process
-// died (#2050). Only claude-code tracks delivery; nil for every other backend.
-func transcriptCheckerFor(backendName string) delegator.TranscriptChecker {
-	if backendName == "claude-code" {
-		return ccstream.InputInTranscript
-	}
-	return nil
-}
-
-// resumeRetentionFor is the backend's own transcript retention, for wording the
-// resume-missed notice. Only claude-code publishes one (cleanupPeriodDays);
-// zero for the others means the notice never guesses.
-func resumeRetentionFor(backendName string) time.Duration {
-	if backendName == "claude-code" {
-		return ccstream.CleanupPeriod()
-	}
-	return 0
 }
 
 // resolvePreToolRules layers the global and per-agent pretool rules over the

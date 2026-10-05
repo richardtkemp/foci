@@ -29,6 +29,37 @@ func TestBuildEnvironmentDelegated_SkipPermissionsOmitsApproval(t *testing.T) {
 	}
 }
 
+// TestBuildEnvironmentDelegated_ApprovalFollowsSpec: every backend that
+// enforces foci's auto-approve allowlist gets the Command Approval section
+// (#2154), and only the Claude Code family lists the --allowedTools layer.
+func TestBuildEnvironmentDelegated_ApprovalFollowsSpec(t *testing.T) {
+	cfg := &config.Config{Logging: config.LoggingConfig{EventFile: "/tmp/foci.log"}}
+	cfg.CCBackend.DefaultAllowedTools = []string{"Edit(/tmp/**)"}
+	for _, tc := range []struct {
+		backend         string
+		wantPreApproved bool
+	}{
+		{"claude-code", true},
+		{"opencode", false},
+		{"codex", false},
+	} {
+		acfg := config.AgentConfig{ID: "x", Workspace: "/tmp/x", Backend: tc.backend}
+		rc := config.Resolve(cfg, acfg)
+		out := buildEnvironmentDelegated(acfg, "/tmp/foci.toml", cfg, rc, rc.Permissions, 0, nil, nil, nil, "")
+		if !strings.Contains(out, "## Command Approval") {
+			t.Errorf("%s: no Command Approval section", tc.backend)
+		}
+		if got := strings.Contains(out, "pre-approved by your backend"); got != tc.wantPreApproved {
+			t.Errorf("%s: --allowedTools layer listed = %v, want %v", tc.backend, got, tc.wantPreApproved)
+		}
+	}
+	acfg := config.AgentConfig{ID: "x", Workspace: "/tmp/x", Backend: "some-future-backend"}
+	rc := config.Resolve(cfg, acfg)
+	if out := buildEnvironmentDelegated(acfg, "/tmp/foci.toml", cfg, rc, rc.Permissions, 0, nil, nil, nil, ""); strings.Contains(out, "## Command Approval") {
+		t.Error("an unregistered backend claims an approval regime it may not enforce")
+	}
+}
+
 // TestWriteEnvironmentCore_ViaVoiceExplainsTTSReply guards #1438: the via=voice
 // entry must tell the agent the message was spoken (STT) and its reply will be
 // read aloud (TTS), so it replies concisely in spoken sentences. This lives in
@@ -161,7 +192,7 @@ func TestWriteCommandApproval(t *testing.T) {
 
 	for _, want := range []string{
 		"## Command Approval",
-		"**CC pre-approved** (auto-run, no prompt — not a restriction): Read(/tmp/**), Write(/tmp/**)", // the CC --allowedTools layer
+		"**pre-approved by your backend** (auto-run, no prompt — not a restriction): Read(/tmp/**), Write(/tmp/**)", // the CC --allowedTools layer
 		"every `foci_*` shell function is always auto-approved",
 		"**read-only** (on):",
 		"sqlite3 -readonly",   // a rendered read-only rule (Bash: stripped)

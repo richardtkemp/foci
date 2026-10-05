@@ -457,81 +457,10 @@ type ContextCategory struct {
 	Tokens int
 }
 
-// LedgerBooker is implemented by every delegated backend: it books its own API
-// calls in the cost ledger as each one's usage is final (#2111 P2), with its
-// own reports. The agent layer records only its turns' facts (start and end)
-// and books no turn-level row; LedgerBackend names the ledger backend
-// ("opencode", …) its turns are recorded under.
-type LedgerBooker interface {
-	LedgerBackend() string
-}
-
-// TurnActivityCloser is implemented by a LedgerBooker whose spend can outlive
-// the turn that caused it (a Claude Code background subagent) and which
-// therefore closes each turn's activity in the ledger itself, when the last
-// of that spend has stopped (#2111 R8). The agent layer then records a turn's
-// end without closing its activity.
-type TurnActivityCloser interface {
-	ClosesTurnActivity() bool
-}
-
 // ContextWindowQuerier is optionally implemented by backends that can look up
 // the current model's real context window size. Cheap and fast — no API call.
 type ContextWindowQuerier interface {
 	GetContextWindow(ctx context.Context) (*ContextWindow, error)
-}
-
-// BackendCapabilities is optionally implemented by backends to advertise
-// which nudge delivery mechanisms they support. A backend that doesn't
-// implement it is treated as supporting none of them: a capability must be
-// declared, never assumed (#2154).
-type BackendCapabilities interface {
-	Capabilities() Capabilities
-}
-
-// CacheTTLProvider is optionally implemented by backends that know their
-// prompt-cache time-to-live — how long the session's cache stays warm after
-// the last touch. Read by the agent layer to compute the per-session
-// cache-warmth expiry the app renders (greyed avatar once cold). Backends that
-// don't implement it fall back to the config cache_ttl / a 5-minute default.
-type CacheTTLProvider interface {
-	// CacheTTL returns the backend's prompt-cache TTL. A non-positive value
-	// means "unknown" — the caller then falls back to config / default.
-	CacheTTL() time.Duration
-}
-
-// Capabilities describes which mid-turn injection mechanisms the backend
-// supports. Turn-start nudges (every_n_turns, regex) work on all backends
-// because they're prepended to the prompt before the turn begins; the
-// fields here gate only the mid-turn mechanisms.
-type Capabilities struct {
-	// PostToolNudge indicates the backend can inject messages at tool
-	// boundaries mid-turn. Required for every_n_tools, after_error, and
-	// tool_pattern trigger types.
-	PostToolNudge bool
-
-	// PreAnswerNudge indicates the backend can inject a message before
-	// the model returns its final answer. Required for pre_answer trigger.
-	PreAnswerNudge bool
-
-	// Streaming indicates the backend delivers incremental token deltas
-	// (text/thinking) during a turn, enabling live stream_output on
-	// platforms that support it.
-	Streaming bool
-}
-
-// CapabilitiesForBackend returns the nudge and streaming capabilities of a
-// delegated backend type, keyed by the config [agents].backend name, as
-// declared in its Spec (capabilities.go). Each backend's Capabilities() method
-// delegates here, so startup checks can query them before any backend
-// instance exists. An unregistered name supports nothing.
-func CapabilitiesForBackend(backendType string) Capabilities {
-	s, _ := SpecFor(backendType)
-	return Capabilities{
-		PostToolNudge:  s.Supports(CapPostToolNudge),
-		PreAnswerNudge: s.Supports(CapPreAnswerNudge),
-		Streaming:      s.Supports(CapStreaming),
-	}
 }
 
 // HumanReadableBackendName returns the display name for a delegated backend
@@ -575,16 +504,8 @@ type BackendBrancher interface {
 	CleanupSession(ctx context.Context, req CleanupRequest) error
 }
 
-// RunningBackendForker is an optional capability for backends whose fork
-// operation is an RPC to a live server rather than a local transcript
-// operation. The delegated manager starts or resumes the parent session before
-// invoking BackendBrancher.ForkSession when this capability is present.
-type RunningBackendForker interface {
-	ForkRequiresRunningBackend() bool
-}
-
 // RunningBackendCleaner is the CleanupSession analogue of
-// RunningBackendForker: an optional capability for backends whose cleanup is
+// Spec.ForkNeedsRunning: an optional capability for backends whose cleanup is
 // an RPC to a live server rather than a local file delete (opencode: DELETE
 // /session/{id} on the agent's pooled server). Such a backend cannot delete
 // anything while that server is down — which is precisely the state of an
@@ -668,10 +589,10 @@ type BatchRequest struct {
 	// means the backend CLI's own default prompt, not the agent's.
 	SystemPrompt string
 	// Model, when non-empty, overrides the model. Empty = the backend's cheap
-	// batch default (BatchModelDefaulter; CC: sonnet), else the agent's model.
+	// batch default (Spec.BatchDefaultModel; CC: sonnet), else the agent's model.
 	Model string
 	// Cheap asks, when Model is empty, for the backend's cheap model
-	// (BatchCheapModeler; CC: haiku) — for trivial one-shots like a summary.
+	// (Spec.BatchCheapModel; CC: haiku) — for trivial one-shots like a summary.
 	// A backend without one runs the batch as if Cheap were unset. A model
 	// name is backend-specific, so a caller that wants "something cheap" sets
 	// this rather than naming a model the backend may not resolve (#2032).
@@ -698,21 +619,6 @@ const (
 	BatchPurposeSummary         = "summary"
 	BatchPurposePromptDiff      = "prompt_diff"
 )
-
-// BatchModelDefaulter is optionally implemented by backends that have a
-// cheaper model to use for a batch run whose request names none. A backend
-// without it runs batches on the agent's own model.
-type BatchModelDefaulter interface {
-	BatchDefaultModel() string
-}
-
-// BatchCheapModeler is optionally implemented by backends that have a model
-// cheaper still than their batch default, for a BatchRequest with Cheap set.
-// The name must be one the backend itself resolves. A backend without it
-// falls back to its BatchModelDefaulter, else the agent's own model.
-type BatchCheapModeler interface {
-	BatchCheapModel() string
-}
 
 // SkipPermissions reports whether the backend config disables the permission
 // prompt flow entirely (CC's --dangerously-skip-permissions). A batch session
@@ -986,7 +892,7 @@ type Inject struct {
 // TurnUsage holds token counts from a completed backend turn: the FINAL
 // call's context fill (what compaction sizes from) and the turn's output.
 // They are display and sizing figures only. A turn's cost is the cost
-// ledger's: every backend books its own calls there (LedgerBooker).
+// ledger's: every backend books its own calls there (Spec.LedgerKey).
 type TurnUsage struct {
 	InputTokens              int
 	OutputTokens             int

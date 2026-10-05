@@ -41,8 +41,8 @@ func cmdPretool(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if backend != "claude-code" {
-		fmt.Fprintf(os.Stderr, "note: agent %q uses backend %q; pretool rules are only enforced for claude-code\n", agentID, backend)
+	if s, _ := delegator.SpecFor(backend); !s.Supports(delegator.CapPreToolRules) {
+		fmt.Fprintf(os.Stderr, "note: agent %q uses backend %q, which does not enforce pretool rules\n", agentID, backend)
 	}
 	for _, msg := range skipped {
 		fmt.Fprintf(os.Stderr, "warning: %s (skipped)\n", msg)

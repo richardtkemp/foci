@@ -64,6 +64,11 @@ type DelegatedManager struct {
 	// NewBackend creates a fresh Backend instance (does not start it).
 	NewBackend func() (delegator.Delegator, error)
 
+	// Spec is the backend's declaration (delegator.SpecFor of the agent's
+	// [agents].backend): what it can do and its static data. Ask Supports
+	// rather than probing an instance (#2154). The zero Spec supports nothing.
+	Spec delegator.Spec
+
 	// AttachDelivery binds session-scoped delivery (SessionEvents) to a backend
 	// at creation/respawn (setBackendCallbacks), so it is attached ONCE per
 	// backend rather than rebuilt per turn (#1068 Phase 1). Nil in tests that
@@ -111,13 +116,9 @@ type DelegatedManager struct {
 
 	// LastUseFunc reports when the session last ran a turn before the current
 	// one (Agent.PrevRequestTime). Read only to word the resume-missed notice:
-	// idle longer than ResumeRetention means the backend's own retention may
-	// have deleted the transcript. nil = unknown.
+	// idle longer than Spec.ResumeRetention means the backend's own retention
+	// may have deleted the transcript. nil = unknown.
 	LastUseFunc func(sessionKey string) (time.Time, bool)
-	// ResumeRetention is how long the backend keeps an idle transcript before
-	// deleting it itself (claude-code: ccstream.CleanupPeriod). Zero = unknown,
-	// and the notice never guesses at retention.
-	ResumeRetention time.Duration
 
 	// OpenAutonomousTurn is called when a backend detects CC has begun a run foci
 	// did not open (a background-agent completion, task-notification, or
@@ -150,11 +151,6 @@ type DelegatedManager struct {
 	// (delegator.DeliveryTracker) — the app turns it into ✓✓ on the user's
 	// bubble. Nil = not reported.
 	InputConsumed func(sessionKey string, refs []delegator.InputRef)
-
-	// TranscriptChecker decides, after a restart, whether a persisted input
-	// was folded in before the old process died. Nil = every persisted input
-	// is redelivered (at-least-once).
-	TranscriptChecker delegator.TranscriptChecker
 
 	// deliveryMu serialises read-modify-write of the persisted undelivered
 	// sets (delivery_store.go).
@@ -235,38 +231,56 @@ func (m *DelegatedManager) getManaged(sessionKey string) (*managedBackend, bool)
 	return mb, ok
 }
 
-// CacheTTL returns the prompt-cache TTL reported by the session's live backend,
-// or 0 if there is no running backend or it doesn't implement CacheTTLProvider.
-// Non-creating.
+// BackendSupports reports whether the agent's delegated backend declares
+// capability c. Always false for an API agent, which has no backend Spec:
+// callers decide what the API loop supports themselves.
+func (a *Agent) BackendSupports(c delegator.Capability) bool {
+	return a.delegatedSpec().Supports(c)
+}
+
+// IsDelegated reports whether the agent runs on a delegated backend.
+func (a *Agent) IsDelegated() bool { return a.DelegatedManager != nil }
+
+// delegatedSpec is the agent's backend Spec; the zero Spec (supports nothing)
+// for an API agent.
+func (a *Agent) delegatedSpec() delegator.Spec {
+	if a.DelegatedManager == nil {
+		return delegator.Spec{}
+	}
+	return a.DelegatedManager.Spec
+}
+
+// resumeRetention is how long the backend keeps an idle transcript before
+// deleting it itself (Spec.ResumeRetention). Zero = unknown, and the
+// resume-missed notice never guesses at retention.
+func (m *DelegatedManager) resumeRetention() time.Duration {
+	if m.Spec.ResumeRetention == nil {
+		return 0
+	}
+	return m.Spec.ResumeRetention()
+}
+
+// Supports reports whether the agent's backend declares capability c.
+func (m *DelegatedManager) Supports(c delegator.Capability) bool {
+	return m.Spec.Supports(c)
+}
+
+// CacheTTL returns the backend's prompt-cache TTL (Spec.CacheTTL) while the
+// session has a running backend, else 0. Non-creating.
 func (m *DelegatedManager) CacheTTL(sessionKey string) time.Duration {
 	mb, ok := m.getManaged(sessionKey)
 	if !ok || !mb.be.IsRunning() {
 		return 0
 	}
-	p, ok := mb.be.(delegator.CacheTTLProvider)
-	if !ok {
-		return 0
-	}
-	return p.CacheTTL()
+	return m.Spec.CacheTTL
 }
 
-// StaticCacheTTL returns the backend type's prompt-cache TTL without needing a
-// running session — it constructs a throwaway backend and reads its constant
-// CacheTTL(). 0 if the backend can't be built or doesn't report a TTL. Used at
-// startup (before any session is live) to validate the keepalive interval.
+// StaticCacheTTL returns the backend type's prompt-cache TTL (Spec.CacheTTL)
+// without needing a running session; 0 if the backend doesn't know its TTL.
+// Used at startup (before any session is live) to validate the keepalive
+// interval.
 func (m *DelegatedManager) StaticCacheTTL() time.Duration {
-	if m.NewBackend == nil {
-		return 0
-	}
-	be, err := m.NewBackend()
-	if err != nil {
-		return 0
-	}
-	p, ok := be.(delegator.CacheTTLProvider)
-	if !ok {
-		return 0
-	}
-	return p.CacheTTL()
+	return m.Spec.CacheTTL
 }
 
 // BackendAwaitingAutonomousRun reports whether the (already-running) backend for
@@ -279,7 +293,7 @@ func (m *DelegatedManager) BackendAwaitingAutonomousRun(sessionKey string) bool 
 	if !ok || !mb.be.IsRunning() {
 		return false
 	}
-	aw, ok := mb.be.(delegator.AutonomousRunAwaiter)
+	aw, ok := delegator.As[delegator.AutonomousRunAwaiter](mb.be)
 	return ok && aw.AwaitingAutonomousRun()
 }
 
@@ -417,13 +431,12 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 	if spec, ok := m.batchSpecFor(sessionKey); ok {
 		opts.SystemPrompt = spec.systemPrompt
 		opts.SystemPromptFunc = nil
-		cheap, hasCheap := be.(delegator.BatchCheapModeler)
 		if spec.model != "" {
 			opts.Model = spec.model
-		} else if spec.cheap && hasCheap {
-			opts.Model = cheap.BatchCheapModel()
-		} else if d, ok := be.(delegator.BatchModelDefaulter); ok {
-			opts.Model = d.BatchDefaultModel()
+		} else if spec.cheap && m.Spec.BatchCheapModel != "" {
+			opts.Model = m.Spec.BatchCheapModel
+		} else if m.Spec.BatchDefaultModel != "" {
+			opts.Model = m.Spec.BatchDefaultModel
 		} else if opts.ModelFunc != nil {
 			if mdl := opts.ModelFunc(sessionKey); mdl != "" {
 				opts.Model = mdl
@@ -668,7 +681,7 @@ func (m *DelegatedManager) notifyResumeMissed(sessionKey, resumeID string) {
 	if m.LastUseFunc != nil {
 		lastUse, known = m.LastUseFunc(sessionKey)
 	}
-	m.SystemNoticeFunc(sessionKey, resumeMissedNotice(resumeID, lastUse, known, m.ResumeRetention, time.Now()))
+	m.SystemNoticeFunc(sessionKey, resumeMissedNotice(resumeID, lastUse, known, m.resumeRetention(), time.Now()))
 }
 
 // resumeMissedNotice words the fallback: "maybe retention" only when the
@@ -1221,28 +1234,10 @@ func (m *DelegatedManager) RemapSession(oldKey, newKey string) {
 }
 
 // BackendCanBranch reports whether this agent's backend can fork its
-// conversation (implements delegator.BackendBrancher). It constructs an
-// unstarted backend instance and probes the interface — no process is spawned.
-// Used by BranchStrategyFor to choose BranchForkBackend.
+// conversation: its Spec declares delegator.CapBranch. Used by
+// BranchStrategyFor to choose BranchForkBackend.
 func (m *DelegatedManager) BackendCanBranch() bool {
-	if m.NewBackend == nil {
-		return false
-	}
-	be, err := m.NewBackend()
-	if err != nil {
-		return false
-	}
-	// delegator.New returns (nil, nil) for a name that was never registered, so
-	// a typo'd `backend =` in config arrives here as a nil interface with no
-	// error. Asserting on it yields false and the agent silently presents as
-	// "cannot branch" with no other signal anywhere. Say so instead: the config
-	// is wrong, not the backend's capabilities.
-	if be == nil {
-		m.logger().Warnf("configured backend is not a registered delegated backend — treating as non-branchable (check the agent's `backend =` value)")
-		return false
-	}
-	_, ok := delegator.As[delegator.BackendBrancher](be)
-	return ok
+	return m.Supports(delegator.CapBranch)
 }
 
 // OpenBackendCleanupScope acquires whatever the backend needs to service a run
@@ -1264,7 +1259,7 @@ func (m *DelegatedManager) OpenBackendCleanupScope(ctx context.Context) (func(),
 	if err != nil {
 		return noop, err
 	}
-	sc, ok := be.(delegator.RunningBackendCleaner)
+	sc, ok := delegator.As[delegator.RunningBackendCleaner](be)
 	if !ok {
 		return noop, nil
 	}
@@ -1295,7 +1290,7 @@ func (m *DelegatedManager) CleanupBackendSession(ctx context.Context, sessionID 
 	if err != nil {
 		return err
 	}
-	br, ok := be.(delegator.BackendBrancher)
+	br, ok := delegator.As[delegator.BackendBrancher](be)
 	if !ok {
 		return nil
 	}
@@ -1321,11 +1316,11 @@ func (m *DelegatedManager) ForkParentSession(ctx context.Context, parentKey stri
 	if err != nil {
 		return "", fmt.Errorf("fork parent: new backend: %w", err)
 	}
-	br, ok := be.(delegator.BackendBrancher)
+	br, ok := delegator.As[delegator.BackendBrancher](be)
 	if !ok {
 		return "", nil // backend can't branch
 	}
-	if requiresRunning, ok := be.(delegator.RunningBackendForker); ok && requiresRunning.ForkRequiresRunningBackend() {
+	if m.Spec.ForkNeedsRunning {
 		// Some backends (Codex) implement fork as an app-server RPC. Resolve the
 		// parent through the normal manager path so it is started/resumed with
 		// all configured callbacks and environment, and remains managed after
@@ -1334,7 +1329,7 @@ func (m *DelegatedManager) ForkParentSession(ctx context.Context, parentKey stri
 		if err != nil {
 			return "", fmt.Errorf("fork parent %s (%s): start backend: %w", parentKey, parentID, err)
 		}
-		br, ok = be.(delegator.BackendBrancher)
+		br, ok = delegator.As[delegator.BackendBrancher](be)
 		if !ok {
 			return "", fmt.Errorf("fork parent %s (%s): started backend cannot fork", parentKey, parentID)
 		}
@@ -1586,7 +1581,7 @@ func (m *DelegatedManager) BackendInfo(sessionKey string, compacting bool) strin
 	}
 
 	info := status
-	if ac, ok := mb.be.(delegator.ActivityChecker); ok {
+	if ac, ok := delegator.As[delegator.ActivityChecker](mb.be); ok {
 		if t := ac.LastActivity(); !t.IsZero() {
 			info += fmt.Sprintf(" | last event: %s ago", time.Since(t).Round(time.Second))
 		}
@@ -1624,7 +1619,7 @@ func (m *DelegatedManager) closeIdle(timeout time.Duration) {
 		// Use backend stream activity if available (tracks actual CC events),
 		// falling back to lastActive (when foci last sent a message).
 		lastSeen := mb.lastActive
-		if ac, ok := mb.be.(delegator.ActivityChecker); ok {
+		if ac, ok := delegator.As[delegator.ActivityChecker](mb.be); ok {
 			if t := ac.LastActivity(); !t.IsZero() && t.After(lastSeen) {
 				lastSeen = t
 			}

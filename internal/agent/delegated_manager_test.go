@@ -46,10 +46,7 @@ type mockBackendDM struct {
 	sessionEvents    *delegator.SessionEvents
 	sendCommandFn    func(context.Context, string) error
 	closeFn          func() error
-	cacheTTL         time.Duration
 }
-
-func (m *mockBackendDM) CacheTTL() time.Duration { return m.cacheTTL }
 
 func (m *mockBackendDM) Start(_ context.Context, opts delegator.StartOptions) error {
 	m.mu.Lock()
@@ -2114,11 +2111,13 @@ func TestRegisterPromptCancelListener_UnknownSession(t *testing.T) {
 }
 
 func TestCacheTTL(t *testing.T) {
-	mgr, mocks := newTestManager(t, nil)
+	mgr, _ := newTestManager(t, nil)
 
+	mgr.Spec.CacheTTL = time.Hour
 	if got := mgr.CacheTTL("test-agent/c1"); got != 0 {
 		t.Errorf("no live backend: got %v, want 0", got)
 	}
+	mgr.Spec.CacheTTL = 0
 
 	if _, err := mgr.Get(context.Background(), "test-agent/c1"); err != nil {
 		t.Fatalf("Get: %v", err)
@@ -2127,7 +2126,7 @@ func TestCacheTTL(t *testing.T) {
 		t.Errorf("backend reporting 0: got %v, want 0", got)
 	}
 
-	(*mocks)[0].cacheTTL = time.Hour
+	mgr.Spec.CacheTTL = time.Hour
 	if got := mgr.CacheTTL("test-agent/c1"); got != time.Hour {
 		t.Errorf("backend reporting 1h: got %v, want 1h", got)
 	}
@@ -2202,7 +2201,7 @@ func TestGet_ResumeFallback_NoticeUsesLastUse(t *testing.T) {
 		IdleTimeout:      time.Hour,
 		SystemNoticeFunc: func(_, text string) { noticeText = text },
 		LastUseFunc:      func(string) (time.Time, bool) { return time.Now().Add(-45 * 24 * time.Hour), true },
-		ResumeRetention:  30 * 24 * time.Hour,
+		Spec:             delegator.Spec{ResumeRetention: func() time.Duration { return 30 * 24 * time.Hour }},
 	}
 	t.Cleanup(func() { mgr.Close() })
 	base := "test-agent/c222"

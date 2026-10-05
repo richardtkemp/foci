@@ -190,14 +190,14 @@ func answerPendingBackendPrompt(lg *log.ComponentLogger, be delegator.Delegator,
 	if text == "" {
 		return false
 	}
-	if qr, ok := be.(delegator.QuestionResponder); ok {
+	if qr, ok := delegator.As[delegator.QuestionResponder](be); ok {
 		if reqID := qr.HasPendingQuestion(); reqID != "" {
 			lg.Debugf("session=%s intercepting text as question answer: %q", sessionKey, text)
 			_ = qr.RespondToQuestion(reqID, text)
 			return true
 		}
 	}
-	if er, ok := be.(delegator.ElicitationResponder); ok {
+	if er, ok := delegator.As[delegator.ElicitationResponder](be); ok {
 		if reqID := er.HasPendingElicitation(); reqID != "" {
 			lg.Debugf("session=%s intercepting text as elicitation answer: %q", sessionKey, text)
 			_ = er.RespondToElicitation(reqID, text)
@@ -346,7 +346,7 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 	// (opencode has no effort knob at all), or EnterVoiceMode itself failed.
 	var voiceMode delegator.VoiceModer
 	if ts.Trigger == "voice" {
-		if vm, ok := be.(delegator.VoiceModer); ok {
+		if vm, ok := delegator.As[delegator.VoiceModer](be); ok {
 			if err := vm.EnterVoiceMode(ts.Ctx); err != nil {
 				t.logger().Warnf("session=%s voice mode enter failed: %v", ts.SessionKey, err)
 			} else {
@@ -522,17 +522,14 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 	// between turns; the backend tolerates that.
 	//
 	// Gate the mid-turn callbacks on the backend's declared capabilities
-	// (delegator.CapabilitiesForBackend). A backend that declares none gets
-	// neither: a capability is declared, never assumed (#2154). Turn-start
-	// nudges (every_n_turns, regex) are unaffected — they're prepended to the
-	// prompt in InjectNudges.
-	var caps delegator.Capabilities
-	if bc, ok := be.(delegator.BackendCapabilities); ok {
-		caps = bc.Capabilities()
-	}
+	// (its delegator.Spec). A backend that declares neither gets neither: a
+	// capability is declared, never assumed (#2154). Turn-start nudges
+	// (every_n_turns, regex) are unaffected — they're prepended to the prompt
+	// in InjectNudges.
+	spec := a.delegatedSpec()
 
 	var postToolNudgeFunc func(toolName, toolInput string, isError bool) []string
-	if caps.PostToolNudge {
+	if spec.Supports(delegator.CapPostToolNudge) {
 		postToolNudgeFunc = func(toolName, toolInput string, isError bool) []string {
 			if a.Nudger == nil || !nudgesAllowed(ts) {
 				return nil
@@ -556,7 +553,7 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 	}
 
 	var preAnswerNudgeFunc func(result *delegator.TurnResult) string
-	if caps.PreAnswerNudge {
+	if spec.Supports(delegator.CapPreAnswerNudge) {
 		preAnswerNudgeFunc = func(result *delegator.TurnResult) string {
 			if preAnswerFired || a.Nudger == nil || !a.Nudger.PreAnswerGate() || !nudgesAllowed(ts) {
 				return ""
@@ -588,8 +585,8 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 	}
 	// The backend books its own calls and names this turn on each of them, so
 	// the turn's facts must be in the ledger before the first can complete.
-	if lb, ok := be.(delegator.LedgerBooker); ok {
-		a.recordDelegatedTurn(ts, lb, false)
+	if spec.LedgerKey != "" {
+		a.recordDelegatedTurn(ts, spec, false)
 	}
 	turnEvents.OnTurnComplete = func(result *delegator.TurnResult) {
 		// Guard the whole completion with sync.Once: the delegated backend's
@@ -646,7 +643,7 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 							// two reads + write above re-run every subsequent
 							// turn even though the alias is already set. Tell it
 							// the name has been durably applied.
-							if tnc, ok := be.(delegator.ThreadNameConsumer); ok {
+							if tnc, ok := delegator.As[delegator.ThreadNameConsumer](be); ok {
 								tnc.ConsumeThreadName()
 							}
 						} else {
@@ -710,7 +707,7 @@ func (t *DelegatedTransport) UpdateSessionMeta(ts *TurnState) {
 
 // LogUsage closes a delegated turn in the cost ledger. Every delegated backend
 // books its own calls there as each one's usage is final (#2111 P2,
-// delegator.LedgerBooker), so the turn records only its end, and FinalCost (the
+// Spec.LedgerKey), so the turn records only its end, and FinalCost (the
 // sink header's figure) is the ledger's price of the turn.
 //
 // Self-invoked from the post-turn path after FinalUsage is populated.
@@ -718,20 +715,20 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 	if ts.FinalUsage == nil {
 		return
 	}
-	lb, ok := ts.Backend.(delegator.LedgerBooker)
-	if !ok {
-		t.agent.logger().Errorf("session=%s backend %T does not book its calls in the cost ledger: this turn's spend is not recorded",
+	spec := t.agent.delegatedSpec()
+	if spec.LedgerKey == "" {
+		t.agent.logger().Errorf("session=%s backend %T declares no Spec.LedgerKey: this turn's spend is not recorded",
 			ts.SessionKey, ts.Backend)
 		return
 	}
-	t.agent.closeLedgerTurn(ts, lb)
+	t.agent.closeLedgerTurn(ts, spec)
 }
 
 // closeLedgerTurn ends a turn of a backend that books its own calls: every
 // call it made is already in the ledger, so the turn records only its end, and
 // FinalCost (the sink header's figure) is the ledger's price of the whole turn.
-func (a *Agent) closeLedgerTurn(ts *TurnState, lb delegator.LedgerBooker) {
-	a.recordDelegatedTurn(ts, lb, true)
+func (a *Agent) closeLedgerTurn(ts *TurnState, spec delegator.Spec) {
+	a.recordDelegatedTurn(ts, spec, true)
 	u := ts.FinalUsage
 	var unpriced int
 	if l := accounting.Live(); l != nil && ts.RowID() != "" {
@@ -749,19 +746,19 @@ func (a *Agent) closeLedgerTurn(ts *TurnState, lb delegator.LedgerBooker) {
 // recordDelegatedTurn records a delegated turn's facts in the ledger: at its
 // start (before any call can name it), and at its end. A backend whose spend
 // can outlive the turn (Claude Code's background subagents,
-// delegator.TurnActivityCloser) closes the turn's activity itself when that
+// Spec.ClosesTurnActivity) closes the turn's activity itself when that
 // spend stops; for any other the activity closes with the turn. That holds
 // for opencode, whose subagents finish inside the turn that spawned them. A
 // codex child can outlive its turn: its later calls still book on the
 // spawning turn, but after activity_closed_at, so turn_costs.still_running
 // reads false early for such a turn (codex is disabled; closing on the child's
 // end is left for its re-enable).
-func (a *Agent) recordDelegatedTurn(ts *TurnState, lb delegator.LedgerBooker, end bool) {
+func (a *Agent) recordDelegatedTurn(ts *TurnState, spec delegator.Spec, end bool) {
 	t := a.ledgerTurn(ts)
 	if t.TurnID == "" {
 		return
 	}
-	t.Backend = lb.LedgerBackend()
+	t.Backend = spec.LedgerKey
 	if end {
 		now := time.Now()
 		model := ts.FinalModel
@@ -769,7 +766,7 @@ func (a *Agent) recordDelegatedTurn(ts *TurnState, lb delegator.LedgerBooker, en
 			model = ts.TurnModel
 		}
 		t.EndedAt, t.StopReason, t.FinalModel = now, "end_turn", model
-		if c, ok := lb.(delegator.TurnActivityCloser); !ok || !c.ClosesTurnActivity() {
+		if !spec.ClosesTurnActivity {
 			t.ActivityClosedAt = now
 		}
 	}

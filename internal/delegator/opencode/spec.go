@@ -68,7 +68,7 @@ var spec = delegator.Spec{
 	// (TODO #1163).
 	ModelcapsKey: backendName,
 	LedgerKey:    accounting.BackendOpencode,
-	ConfigFamily: "opencode",
+	ConfigFamily: delegator.ConfigFamilyOpencode,
 
 	PlanDelivery: planDelivery,
 

@@ -15,9 +15,8 @@ import (
 	"time"
 
 	_ "foci/internal/delegator/all" // register every delegated backend
-	"foci/internal/delegator/opencode"
-	_ "foci/internal/discord"  // register discord messaging provider
-	_ "foci/internal/telegram" // register telegram messaging provider
+	_ "foci/internal/discord"       // register discord messaging provider
+	_ "foci/internal/telegram"      // register telegram messaging provider
 
 	"foci/internal/agent"
 	"foci/internal/app" // registers the app (FAP WebSocket) messaging provider via init; also SetCacheExpiry
@@ -326,12 +325,16 @@ Subcommands:
 	// Resolve the Unix socket path early so agents can inject it into child env.
 	gwSocketPath := resolveSocketPath(cfg)
 
-	// ========== Reap orphaned opencode servers ==========
-	// Previous foci-gw instances that crashed or were killed (SIGKILL, OOM)
-	// before reaching clean shutdown leave `opencode serve` subprocesses
-	// orphaned to PID 1. They hold ports and RSS until manually killed.
-	// Scan before any new servers spawn — anything found IS an orphan.
-	opencode.ReapOrphanedServers()
+	// ========== Backend start hooks (Spec.OnGatewayStart) ==========
+	// opencode's reaps orphaned `opencode serve` subprocesses: previous foci-gw
+	// instances that crashed or were killed (SIGKILL, OOM) before reaching
+	// clean shutdown leave them orphaned to PID 1, holding ports and RSS.
+	// Runs before any new servers spawn — anything found IS an orphan.
+	for _, s := range delegator.Specs() {
+		if s.OnGatewayStart != nil {
+			s.OnGatewayStart()
+		}
+	}
 
 	// ========== Per-agent setup ==========
 	agents := make(map[string]*agentInstance, len(cfg.Agents))

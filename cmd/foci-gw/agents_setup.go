@@ -146,8 +146,8 @@ func nudgeCapabilities(acfg config.AgentConfig) (canPostTool, canPreAnswer bool)
 	if !acfg.IsDelegated() {
 		return true, true
 	}
-	caps := delegator.CapabilitiesForBackend(acfg.Backend)
-	return caps.PostToolNudge, caps.PreAnswerNudge
+	s, _ := delegator.SpecFor(acfg.Backend)
+	return s.Supports(delegator.CapPostToolNudge), s.Supports(delegator.CapPreAnswerNudge)
 }
 
 // setupNudgeSystem configures the nudge scheduler and reload logic on the agent.

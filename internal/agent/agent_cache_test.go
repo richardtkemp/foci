@@ -21,11 +21,11 @@ func TestCacheExpiryResolution(t *testing.T) {
 	at := time.Unix(1_000_000, 0)
 
 	t.Run("config override wins", func(t *testing.T) {
-		mgr, mocks := newTestManager(t, nil)
+		mgr, _ := newTestManager(t, nil)
 		if _, err := mgr.Get(context.Background(), "test-agent/c1"); err != nil {
 			t.Fatalf("Get: %v", err)
 		}
-		(*mocks)[0].cacheTTL = time.Hour
+		mgr.Spec.CacheTTL = time.Hour
 		ag := &Agent{
 			DelegatedManager: mgr,
 			ModelDefaultsFn:  func(string) config.ModelDefaults { return config.ModelDefaults{CacheTTL: "30m"} },
@@ -36,11 +36,11 @@ func TestCacheExpiryResolution(t *testing.T) {
 	})
 
 	t.Run("backend TTL when no config", func(t *testing.T) {
-		mgr, mocks := newTestManager(t, nil)
+		mgr, _ := newTestManager(t, nil)
 		if _, err := mgr.Get(context.Background(), "test-agent/c1"); err != nil {
 			t.Fatalf("Get: %v", err)
 		}
-		(*mocks)[0].cacheTTL = time.Hour
+		mgr.Spec.CacheTTL = time.Hour
 		ag := &Agent{DelegatedManager: mgr}
 		if got := ag.CacheExpiry("test-agent/c1", at); !got.Equal(at.Add(time.Hour)) {
 			t.Errorf("got %v, want +1h", got.Sub(at))
@@ -67,8 +67,9 @@ func TestCacheExpiryResolution(t *testing.T) {
 		// reporting a still-warm session as cold right after restart (#1446).
 		mgr := &DelegatedManager{
 			NewBackend: func() (delegator.Delegator, error) {
-				return &mockBackendDM{running: true, cacheTTL: time.Hour}, nil
+				return &mockBackendDM{running: true}, nil
 			},
+			Spec: delegator.Spec{CacheTTL: time.Hour},
 		}
 		ag := &Agent{DelegatedManager: mgr}
 		if got := ag.CacheExpiry("test-agent/c1", at); !got.Equal(at.Add(time.Hour)) {

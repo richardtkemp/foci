@@ -132,10 +132,10 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 	defer cancel()
 
 	// Arm waiters before sending so stream events are never missed.
-	if cw, ok := be.(delegator.CompactionWaiter); ok {
+	if cw, ok := delegator.As[delegator.CompactionWaiter](be); ok {
 		cw.ArmCompactionWait()
 	}
-	if csw, ok := be.(delegator.CompactionStartWaiter); ok {
+	if csw, ok := delegator.As[delegator.CompactionStartWaiter](be); ok {
 		csw.ArmCompactionStartWait()
 	}
 
@@ -150,7 +150,7 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 	// This prevents the ⏳ from racing ahead of buffered content messages.
 	// Timeout/error here is non-fatal: send the notification anyway and
 	// continue waiting for completion below.
-	if csw, ok := be.(delegator.CompactionStartWaiter); ok {
+	if csw, ok := delegator.As[delegator.CompactionStartWaiter](be); ok {
 		_ = csw.WaitForCompactionStart(cctx)
 	}
 	for _, fn := range a.CompactionStartFunc {
@@ -158,7 +158,7 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 	}
 
 	var waitErr error
-	if cw, ok := be.(delegator.CompactionWaiter); ok {
+	if cw, ok := delegator.As[delegator.CompactionWaiter](be); ok {
 		waitErr = cw.WaitForCompaction(cctx)
 	} else {
 		waitErr = be.WaitForTurn(cctx)
@@ -180,7 +180,7 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 	// the notice gets a tappable summary chit (#1390). A missing summary only
 	// costs the chit, never the notice.
 	var summary string
-	if cs, ok := be.(delegator.CompactionSummarizer); ok {
+	if cs, ok := delegator.As[delegator.CompactionSummarizer](be); ok {
 		s, err := cs.CompactionSummary(cctx)
 		if err != nil {
 			a.logger().Warnf("session=%s delegated compaction summary unavailable: %v", sessionKey, err)

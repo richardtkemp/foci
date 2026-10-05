@@ -58,10 +58,6 @@ func (b *Backend) ForkSession(ctx context.Context, req delegator.ForkRequest) (d
 	return delegator.ForkResult{SessionID: tr.Thread.ID}, nil
 }
 
-// ForkRequiresRunningBackend tells DelegatedManager to start/resume this
-// backend before issuing a fork request.
-func (b *Backend) ForkRequiresRunningBackend() bool { return true }
-
 // noRolloutFoundMarker is the substring of codex's thread/delete error when
 // the thread id has no on-disk rollout — verified live against codex
 // app-server 0.144.5: identical wording ("no rollout found for thread id

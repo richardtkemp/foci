@@ -33,6 +33,7 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/modelinfo"
 )
@@ -48,19 +49,20 @@ const (
 )
 
 // BackendKey maps an agent's configured backend name to its modelcaps key.
-// Empty or "api" is the traditional API loop; Claude Code is ccstream; Codex
-// owns a separate app-server catalogue.
+// Empty or "api" is the traditional API loop; a delegated backend's key is its
+// Spec.ModelcapsKey (#2154), and an unregistered name keys under itself.
+// "ccstream" is accepted as its own key for records written under it.
 func BackendKey(configBackend string) string {
 	switch configBackend {
-	case "claude-code", "ccstream":
-		return BackendCCStream
-	case "codex":
-		return BackendCodex
 	case "", "api":
 		return BackendAPI
-	default:
-		return configBackend
+	case BackendCCStream:
+		return BackendCCStream
 	}
+	if s, ok := delegator.SpecFor(configBackend); ok {
+		return s.ModelcapsKey
+	}
+	return configBackend
 }
 
 // defaultTTL is how long a successful catalogue fetch is considered fresh.

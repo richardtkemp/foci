@@ -80,7 +80,7 @@ All of this works unchanged when you delegate to CC (other delegated backends: s
 
 ## Startup readiness check
 
-Delegated backends implement `CheckReady(ctx)` on the `delegator.Delegator` interface (`delegator/backend.go`) — a startup-only probe, separate from the per-turn `TurnContract`. At boot, `checkDelegatedReadiness` calls it for every delegated agent before any startup turn is injected. ccstream shells `claude auth status` and triggers the automated re-login flow if the shared OAuth credential is dead; codex only checks its binary is on PATH; opencode is skipped by name (its probe needs a server that only `Start` creates); API agents are skipped. This means a boot with an already-expired CC token recovers proactively instead of failing the first user turn (which would otherwise take the first-run onboarding down with it). See WIRING.md → startup readiness probe.
+Delegated backends implement `CheckReady(ctx)` on the `delegator.Delegator` interface (`delegator/backend.go`) — a startup-only probe, separate from the per-turn `TurnContract`. At boot, `checkDelegatedReadiness` calls it for every delegated agent before any startup turn is injected. ccstream shells `claude auth status` and triggers the automated re-login flow if the shared OAuth credential is dead; codex only checks its binary is on PATH; opencode is skipped because its Spec lacks `unstarted_readiness_probe` (its probe needs a server that only `Start` creates); API agents are skipped. This means a boot with an already-expired CC token recovers proactively instead of failing the first user turn (which would otherwise take the first-run onboarding down with it). See WIRING.md → startup readiness probe.
 
 ## What's skipped on the delegated path
 
@@ -306,14 +306,14 @@ grepped for each ✗.
 | C6 | Summary capture | `CompactionSummarizer` (tappable summary chit) | ✓ | ✓ | ✗ |
 | C8 | Reload bounce | `reload_on_compact` bounce + resume nudge (agent layer) | ✓ | ✓ | ✓ [31] |
 | C9 | Context window | `ContextWindowQuerier` | ✓ | ✓ | ✓ |
-| C10 | Cache TTL | `CacheTTLProvider` (keepalive interval validation) | ✓ | ✗ | ✓ |
+| C10 | Cache TTL | `Spec.CacheTTL` (keepalive interval validation) | ✓ | ✗ | ✓ |
 
 ### 7. Cost, usage and limits
 
 | ID | Feature | What | ccstream | opencode | codex |
 |---|---|---|---|---|---|
-| U1 | Ledger booking | `LedgerBooker` per-call cost ledger | ✓ | ✓ | ✓ |
-| U2 | Self-closing activity | `TurnActivityCloser`: spend may outlive the turn | ✓ | ✗ | ✗ [32] |
+| U1 | Ledger booking | `Spec.LedgerKey` per-call cost ledger | ✓ | ✓ | ✓ |
+| U2 | Self-closing activity | `Spec.ClosesTurnActivity`: spend may outlive the turn | ✓ | ✗ | ✗ [32] |
 | U3 | Cost divergence check | Backend-reported vs calculated cost | ✓ | ✓ | ✗ |
 | U4 | Expectation guards | `ExpectationGuard` invariants + version tracking | ✓ | ✗ | ✓ |
 | U5 | Resume cost baseline | Cumulative counters on `--resume` | ✓ | n/a [33] | n/a [33] |
@@ -332,7 +332,7 @@ grepped for each ✗.
 | M4 | Live catalogue | `modelcaps` live model list | ✓ [37] | ✗ | ✓ |
 | M5 | Effort | Launch `EffortFunc` + runtime `ApplyFlagSettingsRequest` | ✓ | n/a [38] | [35] |
 | M6 | Voice mode | `VoiceModer` low effort for voice turns | ✓ | n/a [38] | ✓ |
-| M7 | Batch models | `BatchModelDefaulter` / `BatchCheapModeler` | ✓ | ✗ | ✗ |
+| M7 | Batch models | `Spec.BatchDefaultModel` / `BatchCheapModel` | ✓ | ✗ | ✗ |
 | M8 | Silent model swap | Backend-side model fallback is surfaced | ✓ | ✗ | [39] |
 | M9 | Thinking | Reasoning stream (`OnThinkingDelta`) | ✓ | ✓ | ✓ |
 
@@ -403,8 +403,8 @@ grepped for each ✗.
    and subagent activity, so long tool calls keep the indicator alive.
 4. Nothing in opencode or codex adopts a run it did not start. Whether either backend can start
    a root-session run on its own (as CC does after a background task finishes) is unverified.
-5. Capability gating: `dg/backend.go:CapabilitiesForBackend` (read from each Spec) returns
-   `PostToolNudge=false, PreAnswerNudge=false` for opencode and codex. Both the turn
+5. Capability gating: the opencode and codex Specs declare `post_tool_nudge` and
+   `pre_answer_nudge` No. Both the turn
    (`ag/turn_delegated.go`, which arms the nudge funcs) and the nudge scheduler
    (`gw/agents_setup.go:nudgeCapabilities`, which skips unsupported rules with a warning) read
    that one declaration. opencode nonetheless has a working pre-answer branch (`oc/handlers.go:onSessionIdle`, calls
@@ -505,13 +505,13 @@ grepped for each ✗.
 40. `TruncateAfter > 0` is rejected by all three. ccstream copies the transcript and appends
     fork-boundary closures for open tool calls and background tasks (`cc/branch.go:forkTranscript`).
     opencode uses `POST /session/:id/fork` on the already-running server. codex uses `thread/fork`
-    and requires a running backend (`RunningBackendForker`).
+    and requires a running backend (`Spec.ForkNeedsRunning`).
 41. Generic in `DelegatedManager.RunBatch`, but see footnote 15 (permission prompts) and M7 (no
     batch default model: opencode/codex batch runs fall back to the agent's own model).
 42. Tool results come from `foci-cc-hook` PostToolUse/PostToolUseFailure hooks
     (`cc/hooks.go:handleHookResponse`); if the hook binary is missing ccstream runs without
     tool results. opencode and codex get results natively from their event streams.
-43. The probe skips opencode by name (`gw/notifications.go`): its `CheckReady` needs a server
+43. The probe skips backends whose Spec lacks `unstarted_readiness_probe` (`gw/notifications.go`): opencode's `CheckReady` needs a server
     that only `Start` creates, and `/global/health` cannot see provider auth. codex's
     `CheckReady` only checks the binary is on PATH (`cx/lifecycle.go:CheckReady`).
 44. opencode detects `ProviderAuthError` and HTTP 401 and fans out to every session on the
@@ -522,7 +522,7 @@ grepped for each ✗.
     rewrites each Bash command with a PreToolUse hook (`cx/hooks.go:bindThreadEnv`). All share
     `dg/sessionenv`.
 46. ccstream has no per-agent pool (WIRING.md "Per-agent acquire serialisation").
-47. `opencode.ReapOrphanedServers` runs at startup (`gw/main.go`) and `CloseAllServers` at shutdown.
+47. `opencode.ReapOrphanedServers` runs at startup and `CloseAllServers` at shutdown, as the opencode Spec's `OnGatewayStart` / `OnGatewayShutdown` (`gw/main.go`, `gw/shutdown.go` run every Spec's hooks).
     `grep -i reap|orphan` found no equivalent for `claude` or `codex app-server` processes.
     Whether those children survive a gateway crash was not checked.
 48. `cx/codex.go:sandboxMode` reads `cfg["sandbox"]` and `cx/lifecycle.go:buildEnv` reads
@@ -560,7 +560,7 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - I5: `cc/inject.go:sendToPaneWithAttachments`, `contentBlocks`, `attachmentBlockType` | `oc/inject.go:buildPromptBody` (file parts) | ✗ grep `Attachments|attachment|mime` (only `imageGeneration` tool items)
 - I6: `cc/inject.go:FoldsAttachment` | ✗ grep `FoldsAttachment` | ✗ same
 - I7: `cc/inject.go:ImmediateInject` (SourcePass) | `oc/inject.go:injectCommand` | ✗ `cx/inject.go:ImmediateInject` returns nil
-- I8: `cc/delivery.go:SetDeliveryHooks`, `OnInputAck`, `InputInTranscript`; `gw/agents_delegated.go:transcriptCheckerFor` | ✗ grep `SetDeliveryHooks|Redeliveries|Refs` | ✗ same
+- I8: `cc/delivery.go:SetDeliveryHooks`, `OnInputAck`, `InputInTranscript` (`Spec.TranscriptChecker`) | ✗ grep `SetDeliveryHooks|Redeliveries|Refs` | ✗ same
 - I9: `cc/lifecycle.go:transportGone` + `ErrBackendClosed` use | ✗ grep `ErrBackendClosed` | ✗ same
 
 **Permissions and safety**
@@ -633,9 +633,9 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 **Sessions**
 - R1: `cc/handlers.go:OnSystem` init → `onSessionReady` | `oc/opencode.go:SetOnSessionReady` | `cx/callbacks.go:SetOnSessionReady`
 - R2: `cc/lifecycle.go:Start` (`--resume`) | `oc/backend_lifecycle.go:resumeSession` | `cx/lifecycle.go:resumeThread`
-- R3: `cc/branch.go:ForkSession`, `forkTranscript` | `oc/branch.go:ForkSession` | `cx/branch.go:ForkSession`, `ForkRequiresRunningBackend`
+- R3: `cc/branch.go:ForkSession`, `forkTranscript` | `oc/branch.go:ForkSession` | `cx/branch.go:ForkSession`, `Spec.ForkNeedsRunning`
 - R4: `cc/branch.go:CleanupSession` | `oc/branch.go:CleanupSession`, `OpenCleanupScope` | `cx/branch.go:CleanupSession`, `OpenCleanupScope`
-- R5: `cc/retention.go:CleanupPeriod`, `gw/agents_delegated.go:resumeRetentionFor` | ✗ (name switch returns 0) | ✗ same
+- R5: `cc/retention.go:CleanupPeriod` (`Spec.ResumeRetention`) | ✗ (no `ResumeRetention`) | ✗ same
 - R6: `cc/ccstream.go:SessionFilePath` | ✗ `oc/opencode.go:SessionFilePath` returns `""` | `cx/codex.go:SessionFilePath`
 - R7: `ag/delegated_manager.go` `batchSpecFor` (generic)
 - R8: ✗ grep `ThreadName` | ✗ same | `cx/codex.go:ConsumeThreadName`, `cx/reader.go` `thread/name/updated`
@@ -701,9 +701,8 @@ this file. See [Declared capabilities](#declared-capabilities) and
 ### Optional capabilities, in suggested order
 
 - **Effectively required:**
-  - `LedgerBooker` (and `Spec.LedgerKey`): without it no cost is booked and `LogUsage` logs the gap.
-  - `BackendCapabilities`: implement `Capabilities()` by delegating to `CapabilitiesForBackend`,
-    which now reads the Spec's `post_tool_nudge`, `pre_answer_nudge` and `streaming`.
+  - Book your calls in the cost ledger and set `Spec.LedgerKey`: without it no cost is booked and
+    `LogUsage` logs the gap.
   - `ActivityChecker`: idle reaping and stream-silence timeouts.
   - `CompactionWaiter` + `CompactionStartWaiter`: without them compaction falls back to
     `WaitForTurn`.
@@ -712,9 +711,9 @@ this file. See [Declared capabilities](#declared-capabilities) and
     (`ag/delegated_permission.go`).
 - **High value:**
   - `ControlSender` (model and permission mode).
-  - `BackendBrancher` (+ `RunningBackendForker` / `RunningBackendCleaner` if the store lives
+  - `BackendBrancher` (+ `Spec.ForkNeedsRunning` / `RunningBackendCleaner` if the store lives
     behind a live server).
-  - `CompactionSummarizer`, `CacheTTLProvider`, `QuestionResponder`.
+  - `CompactionSummarizer`, `Spec.CacheTTL`, `QuestionResponder`.
   - `SetOnSubagentStatus` / `SetOnSubagentRunning`: reuse `dg.SubagentTracker` rather than a
     private tracker, so the status line and pending-work gate work.
   - Auth-failure and rate-limit callbacks wired in `gw/agents_delegated.go:configureDelegated`.
@@ -722,21 +721,18 @@ this file. See [Declared capabilities](#declared-capabilities) and
 - **Feature-specific:** `VoiceModer` and effort (only if the backend has an effort knob),
   `ModelResolver` + modelcaps catalogue, `PlanResponder`, `ElicitationResponder`,
   `DeliveryTracker`, `AutonomousRunAwaiter` / `AdoptRunningTurn`, `FoldAttachmentCarrier`,
-  `ThreadNameConsumer`, `BatchModelDefaulter` / `BatchCheapModeler`, `TurnActivityCloser`, a
+  `ThreadNameConsumer`, `Spec.BatchDefaultModel` / `BatchCheapModel`, `Spec.ClosesTurnActivity`, a
   per-tool hook (pretool rules, stop rules, post-tool nudges, runtime notes), expectation guards.
 
-### Name-based branches to update (not capability checks)
+### Per-backend wiring still outside the Spec
 
-- `gw/agents_delegated.go`: `backendDefaultModel`, config folding blocks, relogin, pretool/stop
-  rule wiring, per-backend callback type switches, `transcriptCheckerFor`, `resumeRetentionFor`.
-- `gw/environment.go` (command-approval block is `claude-code` only).
-- `gw/notifications.go` (readiness probe skip).
-- `internal/config/resolved.go:isAutoNamingBackend` (prefix `codex`).
-- `internal/modelcaps/modelcaps.go:BackendKey`.
-- `internal/command/settings.go` (`/thinking` BackendGate).
-- `cmd/foci/cmd_pretool.go` (claude-code only).
-- `gw/shutdown.go` / `gw/main.go` if the backend pools processes (cf. opencode `CloseAllServers`,
-  `ReapOrphanedServers`).
+Every backend-name switch the gateway had now reads the Spec (default model, config folding,
+relogin, pretool/stop rules, transcript checker, resume retention, readiness probe, Command
+Approval block, auto-naming, `/thinking`/`/effort`/`/mode`, modelcaps key, start/shutdown hooks,
+#2154 Phase 2). What remains is the per-backend callback wiring in
+`gw/agents_delegated.go:configureDelegated` (`*ccstream.Backend` / `*opencode.Backend` /
+`*codex.Backend` type switches: auth failure, rate limits, model caps), which #2154 Phase 3
+moves behind `HostHooks`.
 
 Per-session shared-process backends must also route the exec bridge per session through
 `dg/sessionenv` (see O5).

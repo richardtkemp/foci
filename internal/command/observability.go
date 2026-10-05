@@ -563,7 +563,7 @@ func contextBreakdownFromBackend(ctx context.Context, cc CommandContext) []deleg
 	if err != nil {
 		return nil
 	}
-	cwq, ok := be.(delegator.ContextWindowQuerier)
+	cwq, ok := delegator.As[delegator.ContextWindowQuerier](be)
 	if !ok {
 		return nil
 	}

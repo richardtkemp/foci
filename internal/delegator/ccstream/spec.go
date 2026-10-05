@@ -82,7 +82,7 @@ var spec = delegator.Spec{
 	CacheTTL:           ccStreamCacheTTL,
 	BatchDefaultModel:  batchDefaultModel,
 	BatchCheapModel:    batchCheapModel,
-	ConfigFamily:       "claude-code",
+	ConfigFamily:       delegator.ConfigFamilyClaudeCode,
 
 	TranscriptChecker: InputInTranscript,
 	ResumeRetention:   CleanupPeriod,

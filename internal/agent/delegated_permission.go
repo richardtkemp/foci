@@ -22,7 +22,7 @@ func (a *Agent) SendPermissionResponse(ctx context.Context, sessionKey string, r
 	}
 
 	// AskUserQuestion routing — button clicks ("qa:*") and cancellation.
-	if qr, ok := be.(delegator.QuestionResponder); ok && requestID != "" {
+	if qr, ok := delegator.As[delegator.QuestionResponder](be); ok && requestID != "" {
 		if choice == "qa:cancel" {
 			a.taggedLog("agent/perm").Debugf("cancelling question: reqID=%s", requestID)
 			return qr.CancelQuestion(requestID)
@@ -35,7 +35,7 @@ func (a *Agent) SendPermissionResponse(ctx context.Context, sessionKey string, r
 
 	// Elicitation routing — button clicks ("elic:*"). Free-text answers
 	// arrive via the turn_delegated.go intercept below, not this path.
-	if er, ok := be.(delegator.ElicitationResponder); ok && requestID != "" {
+	if er, ok := delegator.As[delegator.ElicitationResponder](be); ok && requestID != "" {
 		if strings.HasPrefix(choice, "elic:") {
 			a.taggedLog("agent/perm").Debugf("answering elicitation: reqID=%s choice=%q", requestID, choice)
 			return er.RespondToElicitation(requestID, choice)
@@ -112,7 +112,7 @@ func (a *Agent) CancelPendingQuestion(ctx context.Context, sessionKey string) bo
 	if err != nil {
 		return false
 	}
-	qr, ok := be.(delegator.QuestionResponder)
+	qr, ok := delegator.As[delegator.QuestionResponder](be)
 	if !ok {
 		return false
 	}

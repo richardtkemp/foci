@@ -203,12 +203,6 @@ type mockBackendDT struct {
 	injects []delegator.Inject // every ImmediateInject, in order (guarded by mu)
 }
 
-// Capabilities satisfies delegator.BackendCapabilities, declaring the
-// mid-turn nudges ccstream supports so the nudge tests see them armed.
-func (m *mockBackendDT) Capabilities() delegator.Capabilities {
-	return delegator.Capabilities{PostToolNudge: true, PreAnswerNudge: true, Streaming: true}
-}
-
 // ConsumeThreadName satisfies delegator.ThreadNameConsumer.
 func (m *mockBackendDT) ConsumeThreadName() {
 	m.mu.Lock()
@@ -347,12 +341,35 @@ func (m *mockBackendDT) WaitForTurn(ctx context.Context) error {
 	return nil
 }
 
+// mockSpecFor is the Spec a mock backend's manager declares: the mid-turn
+// nudges ccstream supports (so the nudge tests see them armed), with the
+// ledger data the ledger-booking mocks stand for, and nothing at all for
+// capabilitylessBackend.
+func mockSpecFor(be delegator.Delegator) delegator.Spec {
+	nudges := delegator.Spec{Caps: map[delegator.Capability]delegator.Support{
+		delegator.CapPostToolNudge:  delegator.Yes(),
+		delegator.CapPreAnswerNudge: delegator.Yes(),
+		delegator.CapStreaming:      delegator.Yes(),
+	}}
+	switch be.(type) {
+	case capabilitylessBackend:
+		return delegator.Spec{}
+	case ledgerBookingBackend:
+		nudges.LedgerKey = accounting.BackendOpencode
+	case activityClosingBackend:
+		nudges.LedgerKey = accounting.BackendCCStream
+		nudges.ClosesTurnActivity = true
+	}
+	return nudges
+}
+
 // newMockDelegatedManager creates a DelegatedManager pre-loaded with a mock
 // backend so tests can call RunInference without real CC infrastructure.
 func newMockDelegatedManager(t *testing.T, be delegator.Delegator) *DelegatedManager {
 	t.Helper()
 	mgr := &DelegatedManager{
 		NewBackend: func() (delegator.Delegator, error) { return be, nil },
+		Spec:       mockSpecFor(be),
 	}
 	// Pre-register the backend so Get() returns it immediately.
 	_, err := mgr.Get(context.Background(), "test/s")
@@ -2639,10 +2656,9 @@ func TestSessionModelFiltersSyntheticPollution(t *testing.T) {
 }
 
 // ledgerBookingBackend is a delegated backend that books its own calls in the
-// cost ledger (delegator.LedgerBooker), as opencode does since #2111 P2.
+// cost ledger (its Spec has a LedgerKey, see mockSpecFor), as opencode does
+// since #2111 P2.
 type ledgerBookingBackend struct{ *mockBackendDT }
-
-func (ledgerBookingBackend) LedgerBackend() string { return accounting.BackendOpencode }
 
 // TestDelegatedTransport_SelfBookingBackendRecordsOnlyItsTurn: for a backend
 // that books its own calls, the agent layer records the turn's facts — at its
@@ -2708,15 +2724,13 @@ func TestDelegatedTransport_SelfBookingBackendRecordsOnlyItsTurn(t *testing.T) {
 }
 
 // activityClosingBackend books its own calls and closes its turns' activity
-// itself, as Claude Code does for background subagents.
+// itself (Spec.ClosesTurnActivity, see mockSpecFor), as Claude Code does for
+// background subagents.
 type activityClosingBackend struct{ *mockBackendDT }
-
-func (activityClosingBackend) LedgerBackend() string    { return accounting.BackendCCStream }
-func (activityClosingBackend) ClosesTurnActivity() bool { return true }
 
 // TestDelegatedTransport_TurnEndClosesActivityUnlessTheBackendDoes: at a
 // turn's end the agent layer closes its activity — unless the backend closes
-// it itself (delegator.TurnActivityCloser), because its spend can outlive the
+// it itself (Spec.ClosesTurnActivity), because its spend can outlive the
 // turn: then the turn ends but stays still_running until the backend says.
 func TestDelegatedTransport_TurnEndClosesActivityUnlessTheBackendDoes(t *testing.T) {
 	for _, tc := range []struct {
@@ -2764,8 +2778,8 @@ func TestDelegatedTransport_TurnEndClosesActivityUnlessTheBackendDoes(t *testing
 	}
 }
 
-// capabilitylessBackend exposes only the Delegator method set of the wrapped
-// mock, so it does not implement delegator.BackendCapabilities.
+// capabilitylessBackend wraps the mock for a backend whose Spec declares
+// nothing (see mockSpecFor).
 type capabilitylessBackend struct{ delegator.Delegator }
 
 // TestDelegatedTransport_RunInference_UndeclaredCapabilitiesArmNoMidTurnNudges

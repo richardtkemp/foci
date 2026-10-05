@@ -160,12 +160,6 @@ func TestHumanReadableBackendName_Fallbacks(t *testing.T) {
 	}
 }
 
-func TestCapabilitiesForBackend_Unregistered(t *testing.T) {
-	if got := CapabilitiesForBackend("some-future-backend"); got != (Capabilities{}) {
-		t.Errorf("unregistered backend claims %+v, want nothing", got)
-	}
-}
-
 type notACapability interface{ NotACapability() }
 
 func TestAs(t *testing.T) {
