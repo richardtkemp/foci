@@ -2582,6 +2582,22 @@ the `hello` branch calls `pusher.deviceConnected` to clear that device's windows
 because its replay consumed the wake, #1204) and sends a hint
 (`conversationId` + short preview, never full text). The app wakes, reconnects,
 and replays for content. `hello.caps.push` advertises `["fcm"]` when enabled.
+Every push carries `data.type`: `"message"` for that wake, `"read"` for a **read
+wake** (#2182). `handleRead`, after a watermark advance and its `ReadSync`
+fan-out, calls `pusher.notifyRead`. A chat's first read starts a `readWait`
+timer (default 5s, not reset by later reads, which only replace the pending
+watermark). When it fires, `flushRead` sends one wake with
+`{type:"read", conversationId, messageId}` to every token-holding device
+with no live socket at that moment (`connectedDeviceIDs` is evaluated then)
+and whose latest hello advertised feature `readWake` (`pushTokens.setReadWake`,
+set on every hello; `readWakeTargetsExcluding`).
+It is sent at `android.priority = "normal"` (Android deprioritises apps whose
+high-priority pushes show no notification) with `collapse_key = "read:<conv>"`.
+It exists so a backgrounded phone, whose socket is released, drops the
+notification for a chat read on another device: the client posts nothing for
+it and reconnects, and the post-hello `pushReads` clears the notification.
+Clients older than foci-client #2182 post a "New message" notification for ANY
+push and do not advertise `readWake`, so they never get read wakes.
 
 **Streaming (`sink.go` + `render.go`):** `appConn.NewTurnSink` builds an
 `appSink` (`turnevent.Sink`) per turn, bound to the conversation. The app

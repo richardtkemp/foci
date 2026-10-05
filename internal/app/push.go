@@ -25,18 +25,66 @@ const (
 	fcmSendTimeout      = 10 * time.Second
 	fcmMaxAttempts      = 3                      // total send attempts before giving up
 	fcmRetryBase        = 500 * time.Millisecond // backoff doubles each retry (0.5s, 1s, …)
+	defaultReadWakeWait = 5 * time.Second        // read wakes: wait this long after a chat's first read, then send its latest watermark
 )
+
+// Values of the FCM data payload's "type" key. A client that predates the key
+// treats every push as a message wake, so a non-message type may be sent only to
+// clients that check it (foci-client #2182 adds the check).
+const (
+	pushTypeMessage = "message"
+	pushTypeRead    = "read"
+)
+
+// featureReadWake is the ClientHello feature a client advertises when it
+// handles a "read" push without posting a notification (foci-client #2182).
+// Older clients show every push as "New message", so read wakes go only to
+// devices whose latest hello carried it.
+const featureReadWake = "readWake"
 
 // pushTokens is the in-memory deviceId→FCM-token registry. The client re-sends
 // its token in every ClientHello, so the map repopulates on each connect — no
 // persistence needed for v1 (a device only needs a push while it is offline, and
 // it registered its token the last time it was online).
 type pushTokens struct {
-	mu     sync.RWMutex
-	tokens map[string]string // deviceId → FCM registration token
+	mu       sync.RWMutex
+	tokens   map[string]string // deviceId → FCM registration token
+	readWake map[string]bool   // deviceId → its latest hello advertised featureReadWake
 }
 
-func newPushTokens() *pushTokens { return &pushTokens{tokens: make(map[string]string)} }
+func newPushTokens() *pushTokens {
+	return &pushTokens{tokens: make(map[string]string), readWake: make(map[string]bool)}
+}
+
+// setReadWake records whether deviceID's latest hello advertised
+// featureReadWake. Set on every hello, so a device downgraded to an older build
+// stops receiving read wakes at its next connect.
+func (p *pushTokens) setReadWake(deviceID string, ok bool) {
+	if deviceID == "" {
+		return
+	}
+	p.mu.Lock()
+	if ok {
+		p.readWake[deviceID] = true
+	} else {
+		delete(p.readWake, deviceID)
+	}
+	p.mu.Unlock()
+}
+
+// readWakeTargetsExcluding is targetsExcluding limited to devices that handle a
+// read wake (featureReadWake).
+func (p *pushTokens) readWakeTargetsExcluding(exclude map[string]bool) map[string]string {
+	out := p.targetsExcluding(exclude)
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	for id := range out {
+		if !p.readWake[id] {
+			delete(out, id)
+		}
+	}
+	return out
+}
 
 func (p *pushTokens) set(deviceID, token string) {
 	if deviceID == "" || token == "" {
@@ -108,6 +156,10 @@ type fcmPusher struct {
 
 	mu       sync.Mutex
 	lastPush map[pushKey]time.Time // (conv, device) → last push time (coalescing)
+
+	readWait     time.Duration // read-wake batching delay; 0 → defaultReadWakeWait (overridable in tests)
+	readMu       sync.Mutex
+	pendingReads map[string]string // convID → newest read watermark waiting for its read wake
 }
 
 // pushKey is the coalescing key: one wake per conversation PER DEVICE. Keying by
@@ -324,7 +376,94 @@ func (p *fcmPusher) deviceConnected(deviceID string) {
 	}
 }
 
+// notifyRead queues a read wake for convID (#2182): another device moved the
+// chat's read watermark, and a device whose socket is released (a backgrounded
+// phone) would otherwise keep showing that chat's notification until its next
+// connect. Reads arrive in bursts as the user scrolls, so the first read of a
+// quiet chat starts a readWait timer and later reads only replace the pending
+// watermark; when it fires, ONE wake carrying the newest watermark goes to every
+// device without a live socket at that moment (connected is evaluated then, not
+// now: a device that connects in between hears the ReadSync over its socket)
+// and whose latest hello advertised featureReadWake. The wait is not reset by later reads, so a long scroll still clears within
+// readWait.
+func (p *fcmPusher) notifyRead(convID, messageID string, connected func() map[string]bool) {
+	if p == nil || convID == "" || messageID == "" {
+		return
+	}
+	p.readMu.Lock()
+	if p.pendingReads == nil {
+		p.pendingReads = make(map[string]string)
+	}
+	_, scheduled := p.pendingReads[convID]
+	p.pendingReads[convID] = messageID
+	p.readMu.Unlock()
+	if scheduled {
+		return
+	}
+	wait := p.readWait
+	if wait <= 0 {
+		wait = defaultReadWakeWait
+	}
+	time.AfterFunc(wait, func() {
+		defer recoverApp("fcm-read-wake")
+		p.flushRead(convID, connected)
+	})
+}
+
+// flushRead sends convID's pending read wake. See notifyRead.
+func (p *fcmPusher) flushRead(convID string, connected func() map[string]bool) {
+	p.readMu.Lock()
+	messageID, ok := p.pendingReads[convID]
+	delete(p.pendingReads, convID)
+	p.readMu.Unlock()
+	if !ok || p.ctx.Err() != nil {
+		return
+	}
+	var exclude map[string]bool
+	if connected != nil {
+		exclude = connected()
+	}
+	for _, tok := range p.tokens.readWakeTargetsExcluding(exclude) {
+		safeGo("fcm-read-wake", func() { p.sendData(tok, readWakeData(convID, messageID), readWakeAndroid(convID)) })
+	}
+}
+
+// readWakeData is a read wake's FCM data payload. The client posts no
+// notification for it: it reconnects, and the post-hello read replay clears the
+// chat's notification once the chat is fully read. messageId is the new
+// watermark (informational: the reconnect delivers the authoritative one).
+func readWakeData(convID, messageID string) map[string]string {
+	return map[string]string{
+		"type":           pushTypeRead,
+		"conversationId": convID,
+		"messageId":      messageID,
+	}
+}
+
+// readWakeAndroid is a read wake's android block. Normal priority, because
+// Android deprioritises an app whose high-priority pushes do not show a
+// notification, which would slow the message wakes that matter; clearing a
+// notification can wait for the device's next maintenance window. The
+// per-chat collapse key keeps only the newest read wake while the device is
+// unreachable.
+func readWakeAndroid(convID string) map[string]any {
+	return map[string]any{"priority": "normal", "collapse_key": "read:" + convID}
+}
+
 func (p *fcmPusher) send(token string, payload pushPayload) {
+	p.sendData(token, map[string]string{
+		"type":           pushTypeMessage,
+		"conversationId": payload.ConvID,
+		"preview":        payload.Preview,
+		"agentId":        payload.AgentID,
+		"agentName":      payload.AgentName,
+		"sessionKey":     payload.SessionKey,
+		"sessionTitle":   payload.SessionTitle,
+	}, map[string]any{"priority": "high"})
+}
+
+// sendData sends one data-only FCM message to token, retrying transient failures.
+func (p *fcmPusher) sendData(token string, data map[string]string, android map[string]any) {
 	tok, err := p.ts.Token()
 	if err != nil {
 		appLog.Warnf("fcm token: %v", err)
@@ -332,16 +471,9 @@ func (p *fcmPusher) send(token string, payload pushPayload) {
 	}
 	body, err := json.Marshal(map[string]any{
 		"message": map[string]any{
-			"token": token,
-			"data": map[string]string{
-				"conversationId": payload.ConvID,
-				"preview":        payload.Preview,
-				"agentId":        payload.AgentID,
-				"agentName":      payload.AgentName,
-				"sessionKey":     payload.SessionKey,
-				"sessionTitle":   payload.SessionTitle,
-			},
-			"android": map[string]any{"priority": "high"},
+			"token":   token,
+			"data":    data,
+			"android": android,
 		},
 	})
 	if err != nil {

@@ -12,10 +12,24 @@ import (
 )
 
 // pushRecorder is a fake FCM endpoint that records the registration token of
-// every send it receives.
+// every send it receives, and each send's data and android blocks.
 type pushRecorder struct {
 	mu   sync.Mutex
 	sent []string
+	msgs []recordedPush
+}
+
+type recordedPush struct {
+	Token   string            `json:"token"`
+	Data    map[string]string `json:"data"`
+	Android map[string]any    `json:"android"`
+}
+
+// pushes returns a copy of every send received so far.
+func (r *pushRecorder) pushes() []recordedPush {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]recordedPush(nil), r.msgs...)
 }
 
 func (r *pushRecorder) count(token string) int {
@@ -49,13 +63,12 @@ func newRecordingPusher(t *testing.T, tk *pushTokens) (*fcmPusher, *pushRecorder
 	rec := &pushRecorder{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		var body struct {
-			Message struct {
-				Token string `json:"token"`
-			} `json:"message"`
+			Message recordedPush `json:"message"`
 		}
 		_ = json.NewDecoder(req.Body).Decode(&body)
 		rec.mu.Lock()
 		rec.sent = append(rec.sent, body.Message.Token)
+		rec.msgs = append(rec.msgs, body.Message)
 		rec.mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	}))

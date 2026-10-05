@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -104,6 +105,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.evictOtherDeviceSockets(client, f.Client.DeviceID)
 		// Register the device's FCM token for offline wake pushes.
 		h.tokens.set(f.Client.DeviceID, f.PushToken)
+		h.tokens.setReadWake(f.Client.DeviceID, slices.Contains(f.Features, featureReadWake))
 		// The replay below catches this device up, consuming any wake it was
 		// sent: reopen its coalescing windows so the next offline message wakes it.
 		h.pusher.deviceConnected(f.Client.DeviceID)
@@ -550,6 +552,9 @@ func (h *Hub) handleRead(client *wsClient, f fap.Read) {
 		}
 	}
 	h.broadcastExcept(client, fap.ReadSync{ConversationID: f.ConversationID, MessageID: f.MessageID})
+	// A device whose socket is released never hears that ReadSync until it next
+	// connects, so its notification for this chat outlives the read (#2182).
+	h.pusher.notifyRead(f.ConversationID, f.MessageID, h.connectedDeviceIDs)
 }
 
 // readWatermarkAdvances reports whether next should replace the stored read
