@@ -2565,3 +2565,64 @@ func function(t *testing.T) func(body, cmd string) (int, string) {
 		return rc, string(out)
 	}
 }
+
+// TestSummaryShellEmptyStdinNamesMisuse covers #2150: `foci_summary /path "prompt"`
+// with empty stdin used to ship an empty temp file to the server, which failed with
+// "file is empty: /tmp/foci/summary-XXXXXX" (a file the caller never named). The
+// wrapper must instead say there was no input and point at --file.
+func TestSummaryShellEmptyStdinNamesMisuse(t *testing.T) {
+	t.Parallel()
+	body := generateShellFunc(NewSummaryTool(nil, nil, t.TempDir()))
+	dir := t.TempDir()
+	input := filepath.Join(dir, "notes.md")
+	if err := os.WriteFile(input, []byte("some notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(stdin, cmd string) (int, string) {
+		// The wrapper mktemps under the live /tmp/foci, which the sandboxed test
+		// run cannot write; redirect it into the test's temp dir.
+		script := "foci__json() { return 1; }\nfoci-call() { echo CALLED; }\n" +
+			"mkdir() { :; }\nmktemp() { command mktemp '" + dir + "/summary-XXXXXX'; }\n" +
+			body + "\n" + cmd + "\n"
+		c := osexec.Command("bash", "-c", script)
+		c.Stdin = strings.NewReader(stdin)
+		out, err := c.CombinedOutput()
+		rc := 0
+		if ee, ok := err.(*osexec.ExitError); ok {
+			rc = ee.ExitCode()
+		} else if err != nil {
+			t.Fatalf("bash: %v", err)
+		}
+		return rc, string(out)
+	}
+
+	t.Run("path given positionally, stdin empty", func(t *testing.T) {
+		rc, out := run("", "foci_summary "+input+" 'what is this'")
+		if rc == 0 || strings.Contains(out, "CALLED") {
+			t.Fatalf("rc=%d, want a local error before the tool call\nout=%s", rc, out)
+		}
+		if !strings.Contains(out, "no input: pass --file <path>") {
+			t.Errorf("error does not name the missing input: %s", out)
+		}
+		if !strings.Contains(out, "foci_summary --file '"+input+"'") {
+			t.Errorf("error does not suggest --file for the positional path: %s", out)
+		}
+	})
+
+	t.Run("no path, stdin empty", func(t *testing.T) {
+		rc, out := run("", "foci_summary 'what is this'")
+		if rc == 0 || !strings.Contains(out, "no input:") {
+			t.Fatalf("rc=%d, want the no-input error\nout=%s", rc, out)
+		}
+		if strings.Contains(out, "hint:") {
+			t.Errorf("hint given with no file argument: %s", out)
+		}
+	})
+
+	t.Run("piped stdin still reaches the tool", func(t *testing.T) {
+		if rc, out := run("hello\n", "foci_summary 'what is this'"); rc != 0 || !strings.Contains(out, "CALLED") {
+			t.Fatalf("rc=%d, want the tool call\nout=%s", rc, out)
+		}
+	})
+}

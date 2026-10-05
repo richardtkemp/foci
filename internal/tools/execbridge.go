@@ -1194,7 +1194,7 @@ func generateShellFunc(t *Tool) string {
 %s
 %s
   local prompt="" file=""
-  local __foci_prompt_via=""
+  local __foci_prompt_via="" __foci_pos_file=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --prompt) if [ "$__foci_prompt_via" = pos ]; then echo "error: prompt was already given positionally; use --prompt OR the positional form, not both" >&2; return 1; fi; __foci_prompt_via=flag; prompt="$2"; shift 2 ;;
@@ -1206,6 +1206,9 @@ func generateShellFunc(t *Tool) string {
         return 1 ;;
       *)
         if [ "$__foci_prompt_via" = flag ]; then echo "error: prompt was already given as --prompt; use --prompt OR the positional form, not both" >&2; return 1; fi
+        # Remembered only to explain a failure below: a path given positionally
+        # joins the prompt, it is never read (#2150).
+        if [ -z "$__foci_pos_file" ] && [ -f "$1" ]; then __foci_pos_file="$1"; fi
         __foci_prompt_via=pos; prompt="$prompt $1"; shift ;;
     esac
   done
@@ -1220,14 +1223,21 @@ func generateShellFunc(t *Tool) string {
     file="$(mktemp /tmp/foci/summary-XXXXXX)"
     cat > "$file"
     trap "rm -f '$file'" EXIT
+    # Empty stdin is no input. Sending it on fails server-side with "file is
+    # empty: /tmp/foci/summary-XXXXXX", naming a temp file the caller never
+    # chose and hiding the real mistake (#2150).
+    if [ ! -s "$file" ]; then rm -f "$file"; file=""; fi
   fi
   if [ -z "$file" ]; then
-    echo "error: no input — provide --file or pipe stdin" >&2
+    echo "error: no input: pass --file <path> or pipe content on stdin" >&2
+    if [ -n "$__foci_pos_file" ]; then
+      echo "hint: '$__foci_pos_file' is a file, but a bare argument is part of the prompt and is not read; use: %s --file '$__foci_pos_file' \"<prompt>\"" >&2
+    fi
     return 1
   fi
   foci-call "$(jq -nc --arg f "$file" --arg p "$prompt" '{"tool":"summary","params":{"file":$f,"prompt":$p}}')"
 }
-`, name, helpCheck, guard, name, name)
+`, name, helpCheck, guard, name, name, name)
 
 	case "tmux":
 		// Subcommand-style dispatch (same pattern as todo)
