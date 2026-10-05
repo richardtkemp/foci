@@ -138,7 +138,7 @@ Saving is non-fatal — errors are logged as warnings. Images are sent to the AP
 - **CSV, plain text** — passed through as-is (no external tools needed)
 - **HTML** — readability extraction → markdown (same pipeline as `web_fetch`)
 - **DOCX, PPTX** — converted via `pandoc` (must be installed; agent is told if missing)
-- **XLSX** — converted via `ssconvert` (gnumeric) or `pandoc` (agent is told if missing)
+- **XLSX** — every sheet converted to CSV via `ssconvert` (gnumeric), else LibreOffice `soffice --headless` (agent is told if neither is installed); pandoc has no xlsx reader
 
 Converted text is subject to the tool result size guard (`max_result_chars`): oversized output is truncated with a pointer to the saved file on disk. Videos and unconvertible documents are saved only (no API processing).
 

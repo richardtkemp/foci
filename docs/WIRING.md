@@ -302,7 +302,7 @@ main
   │   ├── delegator/sessionenv → tempdir (shared by codex/opencode + cmd/foci-codex-hook — per-session exec-bridge env file format, lifecycle, and the codex command wrap/unwrap)
   │   ├── delegator/codex      → delegator, delegator/accounting, delegator/autoapprove, delegator/hookbin, delegator/keyedmutex, delegator/sessionenv, log, modelcaps, modelinfo, procx (Codex app-server JSON-RPC; books its own calls in the cost ledger; registers "codex" via init())
   │   └── delegator/opencode   → delegator, delegator/accounting, delegator/autoapprove, delegator/keyedmutex, delegator/sessionenv, log, modelinfo, procx, ratelimit, tempdir (HTTP/SSE OpenCode; books its own calls in the cost ledger; registers "opencode" via init())
- ├── agent         → turnevent, compaction, config, convo, delegator, delegator/accounting, display, log, memory, messages, modelcaps, modelinfo, nudge, platform, procx, prompts, provider, ratelimit, relogin, session, skills, telemetry, timeutil, tools, turn, warnings, workspace
+ ├── agent         → turnevent, compaction, config, convo, delegator, delegator/accounting, display, log, memory, messages, modelcaps, modelinfo, nudge, platform, procx, prompts, provider, ratelimit, relogin, session, skills, telemetry, tempdir, timeutil, tools, turn, warnings, workspace
  ├── periodic      → config, delegator, log, memory, prompts, provider, session, skills, timeutil, warnings (NO agent)
  ├── dispatch      → command, platform, session, tools (shared command dispatch logic; platform wrappers delegate here)
  ├── turn          → turnevent, display, log, platform, tooldetail (shared turn rendering, tool call tracking, and tool-result display store for all platforms)
@@ -2486,11 +2486,15 @@ temp root until #1556 — a host reboot wiped /tmp and with it every blob, while
 the blob's path (an inbound attachment's `SavedPath`) stays quoted in agent
 history; `MigrateLegacyBlobDir` moves the old dir's blobs across once at
 gateway startup, before `tempdir.CleanStale`. With no data dir (tests only)
-`blobDir` falls back to the temp root. `newBlobStore` rehydrates that
+`blobDir` falls back to the temp root. A blob file is named `<ULID><ext>`,
+the ext being the upload name's own (`blobExt`: lowercased, short alphanumeric
+only, else none) so agents' suffix-dispatching tools can open the `SavedPath`
+(#2171); the blob id stays the bare ULID. `newBlobStore` rehydrates that
 in-memory metadata from the directory itself at construction (`rehydrate`,
-#1500): each filename is decoded as a ULID for its `created` time (`fap.ULIDTime`,
-mirroring `fap.NewULID`'s encoding), mime is sniffed from a 512-byte content
-prefix (never persisted, so unrecoverable any other way), and anything already
+#1500): each filename is parsed by `blobFileID` and its ULID decoded for its `created` time (`fap.ULIDTime`,
+mirroring `fap.NewULID`'s encoding), mime comes from the extension when Go
+knows it, else is sniffed from a 512-byte content prefix (never persisted),
+and anything already
 past TTL is reaped immediately instead of resurrected — this is what makes
 app-blobs/ self-managing across a restart. Outbound: a `Send*` media call
 → `putFile`/`putBytes` → `media {blobId,mime,…}` (no `kind` — app clients derive

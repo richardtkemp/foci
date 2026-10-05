@@ -1,7 +1,10 @@
 package agent
 
 import (
+	"archive/zip"
 	"context"
+	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -171,14 +174,190 @@ func TestConvertPptxNoPandoc(t *testing.T) {
 
 func TestConvertXlsxNoTools(t *testing.T) {
 	// Verifies that xlsx conversion returns a helpful
-	// error message when neither ssconvert nor pandoc is installed.
+	// error message when neither ssconvert nor soffice is installed.
 	t.Setenv("PATH", "")
 	result := convertDocument([]byte("fake"), mimeXlsx, "/tmp/test.xlsx")
 	if result.Err == "" {
 		t.Fatal("expected error when conversion tools not installed")
 	}
-	if !strings.Contains(result.Err, "ssconvert") && !strings.Contains(result.Err, "pandoc") {
+	if !strings.Contains(result.Err, "ssconvert") || !strings.Contains(result.Err, "soffice") {
 		t.Errorf("error should mention required tools: %q", result.Err)
+	}
+}
+
+// writeTestXlsx writes a minimal two-sheet workbook ("Alpha", "Beta") to path.
+func writeTestXlsx(t *testing.T, path string) {
+	t.Helper()
+	sheet := func(rows ...[2]string) string {
+		var b strings.Builder
+		b.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>`)
+		for i, r := range rows {
+			fmt.Fprintf(&b, `<row r="%d"><c r="A%d" t="inlineStr"><is><t>%s</t></is></c><c r="B%d" t="inlineStr"><is><t>%s</t></is></c></row>`, i+1, i+1, r[0], i+1, r[1])
+		}
+		b.WriteString(`</sheetData></worksheet>`)
+		return b.String()
+	}
+	const rels = `http://schemas.openxmlformats.org/officeDocument/2006/relationships`
+	files := []struct{ name, body string }{
+		{"[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`},
+		{"_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="` + rels + `/officeDocument" Target="xl/workbook.xml"/></Relationships>`},
+		{"xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="` + rels + `"><sheets><sheet name="Alpha" sheetId="1" r:id="rId1"/><sheet name="Beta" sheetId="2" r:id="rId2"/></sheets></workbook>`},
+		{"xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="` + rels + `/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="` + rels + `/worksheet" Target="worksheets/sheet2.xml"/></Relationships>`},
+		{"xl/worksheets/sheet1.xml", sheet([2]string{"name", "qty"}, [2]string{"apple", "three"})},
+		{"xl/worksheets/sheet2.xml", sheet([2]string{"month", "total"}, [2]string{"Jan", "forty-two"})},
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(f)
+	for _, file := range files {
+		w, err := zw.Create(file.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte(file.body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestConvertXlsxSofficeAllSheets is the #2171 repro: on a host with
+// LibreOffice but no ssconvert (and a pandoc that cannot read xlsx), an xlsx
+// must convert, with every sheet present. The blob has no extension, as app
+// blobs did before #2171.
+func TestConvertXlsxSofficeAllSheets(t *testing.T) {
+	if _, err := procx.LookPath(procx.Trusted, "soffice"); err != nil {
+		t.Skip("soffice not installed")
+	}
+	if _, err := procx.LookPath(procx.Trusted, "ssconvert"); err == nil {
+		t.Skip("ssconvert installed: it would be used instead of soffice")
+	}
+	// LibreOffice binds its IPC socket in /tmp whatever TMPDIR says; the
+	// sealed test run (scripts/seal-test.sh) cannot write there.
+	probe := fmt.Sprintf("/tmp/foci-soffice-probe-%d.sock", os.Getpid())
+	l, err := net.Listen("unix", probe)
+	if err != nil {
+		t.Skipf("cannot bind a socket in /tmp (sealed test run?): %v", err)
+	}
+	_ = l.Close()
+	_ = os.Remove(probe)
+	path := filepath.Join(t.TempDir(), "01JBLOBWITHNOEXTENSION0000")
+	writeTestXlsx(t, path)
+
+	result := convertDocument(nil, mimeXlsx, path)
+	if result.Err != "" {
+		t.Fatalf("conversion failed: %s", result.Err)
+	}
+	want := "--- Sheet: Alpha ---\nname,qty\napple,three\n\n--- Sheet: Beta ---\nmonth,total\nJan,forty-two\n"
+	if result.Text != want {
+		t.Errorf("text = %q\nwant   %q", result.Text, want)
+	}
+}
+
+// fakeTool writes an executable sh script named name into dir.
+func fakeTool(t *testing.T, dir, name, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestConvertXlsxSsconvertFailureFallsBackToSoffice pins the ruling's order
+// (#2171): ssconvert first, soffice when it fails; sheets come back in the
+// order soffice reports them, not filename order.
+func TestConvertXlsxSsconvertFailureFallsBackToSoffice(t *testing.T) {
+	bin := t.TempDir()
+	fakeTool(t, bin, "ssconvert", "echo 'ssconvert: cannot read' >&2; exit 1\n")
+	// Args: -env:... --headless --norestore --nolockcheck --convert-to <f> --outdir <dir> <path>
+	fakeTool(t, bin, "soffice", `out=$8
+printf 'b,2\n' > "$out/x-Second.csv"
+printf 'a,1\n' > "$out/x-First.csv"
+echo "Writing sheet Zed -> $out/x-Second.csv"
+echo "Writing sheet Ann -> $out/x-First.csv"
+`)
+	t.Setenv("PATH", bin)
+
+	result := convertDocument(nil, mimeXlsx, "/nonexistent/in.xlsx")
+	if result.Err != "" {
+		t.Fatalf("conversion failed: %s", result.Err)
+	}
+	want := "--- Sheet: Zed ---\nb,2\n\n--- Sheet: Ann ---\na,1\n"
+	if result.Text != want {
+		t.Errorf("text = %q, want %q", result.Text, want)
+	}
+}
+
+// TestConvertXlsxSsconvertPerSheetFiles: ssconvert -S names its files
+// <index>-<sheet>.csv; they are ordered by index (10 after 2) and labelled.
+func TestConvertXlsxSsconvertPerSheetFiles(t *testing.T) {
+	bin := t.TempDir()
+	// Args: -S --export-type=... <path> <outdir>/%n-%s.csv
+	fakeTool(t, bin, "ssconvert", `out=${4%/*}
+printf 'x\n' > "$out/10-Late-Sheet.csv"
+printf 'y\n' > "$out/2-Early.csv"
+`)
+	t.Setenv("PATH", bin)
+
+	result := convertDocument(nil, mimeXlsx, "/nonexistent/in.xlsx")
+	if result.Err != "" {
+		t.Fatalf("conversion failed: %s", result.Err)
+	}
+	want := "--- Sheet: Early ---\ny\n\n--- Sheet: Late-Sheet ---\nx\n"
+	if result.Text != want {
+		t.Errorf("text = %q, want %q", result.Text, want)
+	}
+}
+
+// TestConvertXlsxSingleSheetHasNoHeader: one sheet is returned as bare CSV.
+func TestConvertXlsxSingleSheetHasNoHeader(t *testing.T) {
+	bin := t.TempDir()
+	fakeTool(t, bin, "soffice", `printf 'only,1\n' > "$8/in.csv"
+`)
+	t.Setenv("PATH", bin)
+	result := convertDocument(nil, mimeXlsx, "/nonexistent/in.xlsx")
+	if result.Err != "" || result.Text != "only,1\n" {
+		t.Errorf("result = %+v, want bare CSV", result)
+	}
+}
+
+// TestConvertXlsxNoOutputIsAnError: soffice exits 0 even when it cannot load
+// the input; no CSV written must surface as an error, not empty content.
+func TestConvertXlsxNoOutputIsAnError(t *testing.T) {
+	bin := t.TempDir()
+	fakeTool(t, bin, "soffice", "echo 'Error: source file could not be loaded'\n")
+	t.Setenv("PATH", bin)
+	result := convertDocument(nil, mimeXlsx, "/nonexistent/in.xlsx")
+	if !strings.Contains(result.Err, "could not be loaded") {
+		t.Errorf("err = %q, want the soffice message", result.Err)
+	}
+}
+
+// TestConvertXlsxCapsFileOutput: the converters write files, not stdout, so a
+// zip bomb must be stopped by watching the output dir. The fake writes
+// forever; the conversion must refuse and return, not fill the disk.
+func TestConvertXlsxCapsFileOutput(t *testing.T) {
+	orig := maxConvertOutputBytes
+	maxConvertOutputBytes = 64 << 10
+	defer func() { maxConvertOutputBytes = orig }()
+	bin := t.TempDir()
+	fakeTool(t, bin, "soffice", `while :; do printf 'spamspamspamspamspamspamspamspam' >> "$8/in.csv"; done
+`)
+	t.Setenv("PATH", bin)
+
+	start := time.Now()
+	result := convertDocument(nil, mimeXlsx, "/nonexistent/in.xlsx")
+	if !strings.Contains(result.Err, "zip bomb") {
+		t.Errorf("err = %q, want the zip-bomb refusal", result.Err)
+	}
+	if d := time.Since(start); d > sofficeTimeout/2 {
+		t.Errorf("took %s: the runaway converter was not killed on overflow", d)
 	}
 }
 
@@ -292,7 +471,7 @@ func TestConvertLegacyXlsxMIME(t *testing.T) {
 	if result.Err == "" {
 		t.Fatal("expected error when conversion tools not installed")
 	}
-	if !strings.Contains(result.Err, "ssconvert") || !strings.Contains(result.Err, "pandoc") {
+	if !strings.Contains(result.Err, "ssconvert") || !strings.Contains(result.Err, "soffice") {
 		t.Errorf("error should mention required tools: %q", result.Err)
 	}
 }

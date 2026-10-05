@@ -90,8 +90,8 @@ func MigrateLegacyBlobDir(dataDir string) {
 	}
 }
 
-// migrateBlobDir moves every blob file (a regular file with a ULID name — the
-// same test rehydrate applies) from `from` into `to`. It never overwrites a
+// migrateBlobDir moves every blob file (a regular file named by blobFileID —
+// the same test rehydrate applies) from `from` into `to`. It never overwrites a
 // file already in `to`, and never follows a symlink. Anything else in `from`
 // is left where it is.
 func migrateBlobDir(from, to string) (moved, failed int) {
@@ -110,7 +110,7 @@ func migrateBlobDir(from, to string) (moved, failed int) {
 		if !e.Type().IsRegular() {
 			continue
 		}
-		if _, ok := fap.ULIDTime(e.Name()); !ok {
+		if _, ok := blobFileID(e.Name()); !ok {
 			continue
 		}
 		src, dst := filepath.Join(from, e.Name()), filepath.Join(to, e.Name())
@@ -158,6 +158,44 @@ func moveFile(src, dst string) error {
 	return os.Remove(src)
 }
 
+// maxBlobExtLen bounds a stored blob's file extension (without the dot).
+// Real extensions are short; the cap keeps a hostile upload name from
+// stretching the on-disk filename.
+const maxBlobExtLen = 10
+
+// blobExt returns the extension a blob uploaded as `name` is stored with
+// (#2171): the name's own extension, lowercased, so a tool that dispatches on
+// the suffix (openpyxl, LibreOffice) can open the saved file directly. The name
+// is client-supplied (X-Filename), so only a short ASCII-alphanumeric extension
+// is kept; anything else yields "" and the blob is stored under its bare id.
+func blobExt(name string) string {
+	ext := strings.ToLower(filepath.Ext(filepath.Base(name)))
+	if len(ext) < 2 || len(ext)-1 > maxBlobExtLen {
+		return ""
+	}
+	for _, c := range ext[1:] {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') {
+			return ""
+		}
+	}
+	return ext
+}
+
+// blobFileID parses a blob store filename — a ULID id, optionally followed by
+// the extension blobExt kept — and returns the id. ok is false for any file
+// put() could not have written.
+func blobFileID(filename string) (id string, ok bool) {
+	ext := filepath.Ext(filename)
+	if ext != "" && blobExt(filename) != ext {
+		return "", false
+	}
+	id = strings.TrimSuffix(filename, ext)
+	if _, ok := fap.ULIDTime(id); !ok {
+		return "", false
+	}
+	return id, true
+}
+
 func newBlobStore(dir string) *blobStore {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		appLog.Warnf("blob store dir %s: %v", dir, err)
@@ -180,16 +218,19 @@ func newBlobStore(dir string) *blobStore {
 //     alone (not registered, not deleted) rather than guessed at via stat,
 //     which would make an unrelated file dropped in the dir web-servable.
 //   - size: from stat — exact.
-//   - mime: NOT recoverable from the id or filename (there's no sidecar).
-//     Sniffed from the first 512 bytes via http.DetectContentType — a fixed,
+//   - mime: from the filename's extension when it has one (#2171) and Go
+//     knows it. Otherwise (a pre-#2171 bare-id blob, or an unknown
+//     extension) sniffed from the first 512 bytes via
+//     http.DetectContentType — a fixed,
 //     bounded read per file so this stays cheap even for a large blob (the
 //     size cap is 50MB; some real files here are ~18MB APKs) and for a large
 //     directory (3000+ files is normal in production).
 //   - kind: derived from the sniffed mime via the existing kindForMIME.
 //   - name: genuinely lost — the original upload filename was never
 //     persisted anywhere on disk, only held in the in-memory meta that a
-//     restart just erased. Using the id itself as name rather than inventing
-//     one; this only affects the http.ServeContent name/ext hint, since
+//     restart just erased. Using the on-disk filename (id plus any
+//     extension) rather than inventing one; this only affects the
+//     http.ServeContent name/ext hint, since
 //     ServeBlobGet already sets the Content-Type header explicitly from
 //     meta.mime before calling it.
 //
@@ -212,32 +253,36 @@ func (s *blobStore) rehydrate() {
 			skipped++
 			continue
 		}
-		id := e.Name()
-		created, ok := fap.ULIDTime(id)
+		filename := e.Name()
+		id, ok := blobFileID(filename)
 		if !ok {
-			// Not a ULID -> not something put() wrote. Leave it untouched.
+			// Not a ULID[.ext] -> not something put() wrote. Leave it untouched.
 			skipped++
 			continue
 		}
+		created, _ := fap.ULIDTime(id)
 		info, err := e.Info()
 		if err != nil {
 			// Raced with a concurrent delete, or unreadable -- skip, don't crash.
 			skipped++
 			continue
 		}
-		path := filepath.Join(s.dir, id)
+		path := filepath.Join(s.dir, filename)
 		if created.Before(cutoff) {
 			_ = os.Remove(path)
 			reaped++
 			continue
 		}
-		mimeType := sniffMime(path)
+		mimeType := mime.TypeByExtension(filepath.Ext(filename))
+		if mimeType == "" {
+			mimeType = sniffMime(path)
+		}
 		s.blobs[id] = &blobMeta{
 			id:      id,
 			path:    path,
 			mime:    mimeType,
 			kind:    kindForMIME(mimeType),
-			name:    id,
+			name:    filename,
 			size:    info.Size(),
 			created: created,
 		}
@@ -250,9 +295,11 @@ func (s *blobStore) rehydrate() {
 
 // put streams data from r into a new blob file, enforcing the size cap. kind /
 // name / mime are recorded for the outbound media frame or inbound attachment.
+// The file keeps name's extension (blobExt): its path is an attachment's
+// SavedPath, which agents open with suffix-dispatching tools (#2171).
 func (s *blobStore) put(r io.Reader, kind, name, mimeType string) (*blobMeta, error) {
 	id := fap.NewULID()
-	path := filepath.Join(s.dir, id)
+	path := filepath.Join(s.dir, id+blobExt(name))
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
 	if err != nil {
 		return nil, err

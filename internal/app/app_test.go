@@ -2002,6 +2002,69 @@ func TestBlobStore_Rehydrate_IgnoresJunk(t *testing.T) {
 	}
 }
 
+// #2171: a blob is stored under its upload name's extension, so an agent's
+// suffix-dispatching tool (openpyxl, LibreOffice) can open the SavedPath. The
+// name is client-supplied, so only a short alphanumeric extension survives.
+func TestBlobStore_PutKeepsSafeExtension(t *testing.T) {
+	s := newBlobStore(t.TempDir())
+	for _, tc := range []struct{ name, wantExt string }{
+		{"upload-123-NEST export.XLSX", ".xlsx"},
+		{"notes.txt", ".txt"},
+		{"noext", ""},
+		{"", ""},
+		{"trailingdot.", ""},
+		{"x.sh;rm -rf", ""},
+		{"x.tar.gz", ".gz"},
+		{"x.waytoolongextension", ""},
+		{"../../etc/passwd.d/x", ""},
+	} {
+		meta, err := s.putBytes([]byte("data"), "document", tc.name, "application/octet-stream")
+		if err != nil {
+			t.Fatalf("put %q: %v", tc.name, err)
+		}
+		if want := filepath.Join(s.dir, meta.id+tc.wantExt); meta.path != want {
+			t.Errorf("put %q: path = %q, want %q", tc.name, meta.path, want)
+		}
+		if got, err := os.ReadFile(meta.path); err != nil || string(got) != "data" {
+			t.Errorf("put %q: file = %q (%v)", tc.name, got, err)
+		}
+	}
+}
+
+// #2171: an extension-named blob comes back after a restart under its bare id,
+// at its real path, with the MIME its extension names (the sniff would say
+// text/plain for these bytes).
+func TestBlobStore_Rehydrate_ExtensionNamedBlob(t *testing.T) {
+	dir := t.TempDir()
+	s1 := &blobStore{dir: dir, maxBytes: maxBlobBytes, ttl: blobTTL, blobs: make(map[string]*blobMeta)}
+	meta, err := s1.putBytes([]byte("not really a pdf"), "document", "report.pdf", "application/pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An extension put() would never write marks the file as not ours.
+	foreign := filepath.Join(dir, fap.NewULID()+".BAD-ext")
+	if err := os.WriteFile(foreign, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s2 := &blobStore{dir: dir, maxBytes: maxBlobBytes, ttl: blobTTL, blobs: make(map[string]*blobMeta)}
+	s2.rehydrate()
+
+	got, ok := s2.get(meta.id)
+	if !ok {
+		t.Fatalf("blob %s not rehydrated; have %v", meta.id, s2.blobs)
+	}
+	if got.path != meta.path {
+		t.Errorf("rehydrated path = %q, want %q", got.path, meta.path)
+	}
+	if got.mime != "application/pdf" {
+		t.Errorf("rehydrated mime = %q, want application/pdf (from the extension)", got.mime)
+	}
+	if len(s2.blobs) != 1 {
+		t.Errorf("blobs = %d, want 1 (the bad-extension file is not ours)", len(s2.blobs))
+	}
+}
+
 func TestSendPhoto_StoresBlobAndEmitsMedia(t *testing.T) {
 	h, c, _, conn := boundConn(t)
 	tmp := filepath.Join(t.TempDir(), "pic.png")
