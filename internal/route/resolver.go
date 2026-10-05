@@ -3,6 +3,7 @@ package route
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"foci/internal/session"
 )
@@ -152,4 +153,22 @@ type Receipt struct {
 // how its addressing was interpreted.
 func (res Resolution) ReceiptFor(t Target) Receipt {
 	return Receipt{Target: t.String(), SessionKey: res.SessionKey, Via: res.Rung}
+}
+
+// ParseTarget parses a target string the way the package ParseTarget does,
+// except that a '?' is only an options separator when the whole Rest does not
+// literally name a chat alias (#2158 ruling). An alias may contain '?' ("what
+// next?"); with an index to check, the literal reading is tried first, so such
+// an alias stays reachable. An ambiguous literal match counts as a match, so
+// Resolve reports the ambiguity instead of the '?' being re-read as options.
+func (r *Resolver) ParseTarget(s string) (Target, error) {
+	if r.Index != nil && strings.Contains(s, "?") {
+		if agent, rest, _ := strings.Cut(s, "/"); agent != "" && rest != "" {
+			_, err := r.Index.ResolveChatAlias(agent, rest)
+			if err == nil || errors.Is(err, session.ErrAliasAmbiguous) {
+				return Target{Agent: agent, Rest: rest, Create: true, Policy: PolicyFallback}, nil
+			}
+		}
+	}
+	return ParseTarget(s)
 }

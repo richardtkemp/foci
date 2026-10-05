@@ -295,16 +295,19 @@ var toolTable = []toolEntry{
 		// deliver into a hidden one.
 		idx := d.p.sessionIndex
 		resolveKeyFn := func(target string) (string, string, error) {
-			t, err := route.ParseTarget(target)
+			resolver := &route.Resolver{
+				Index:             idx,
+				PreferredPlatform: d.p.cfg.DefaultPlatformFor,
+				CreateDefault:     app.CreateDefaultConversation,
+			}
+			// Literal-first: an alias containing '?' is matched whole before
+			// the '?' is read as options (#2158).
+			t, err := resolver.ParseTarget(target)
 			if err != nil {
 				return "", "", err
 			}
 			t.Create = false
-			res, err := (&route.Resolver{
-				Index:             idx,
-				PreferredPlatform: d.p.cfg.DefaultPlatformFor,
-				CreateDefault:     app.CreateDefaultConversation,
-			}).Resolve(t)
+			res, err := resolver.Resolve(t)
 			if err != nil {
 				return "", "", err
 			}

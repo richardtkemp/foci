@@ -239,3 +239,85 @@ func TestResolve_AliasWithKeyCharacters(t *testing.T) {
 		t.Fatalf("key-shaped alias: got %+v, %v; want the real key via exact", got, err)
 	}
 }
+
+// TestResolverParseTarget_LiteralAliasFirst is the #2158 ruling: a target whose
+// whole Rest literally names a chat alias resolves to that alias even when it
+// contains '?'; only when nothing matches is '?' read as the start of options.
+func TestResolverParseTarget_LiteralAliasFirst(t *testing.T) {
+	idx := newTestIndex(t)
+	r := &Resolver{Index: idx}
+
+	for chat, alias := range map[int64]string{7: "what next?", 8: "research?create=false", 9: "Q?"} {
+		if err := idx.SetChatAliasUnique("clutch", "app", chat, alias); err != nil {
+			t.Fatalf("SetChatAliasUnique(%q): %v", alias, err)
+		}
+		tgt, err := r.ParseTarget("clutch/" + alias)
+		if err != nil {
+			t.Fatalf("ParseTarget(%q): %v", alias, err)
+		}
+		want := Target{Agent: "clutch", Rest: alias, Create: true, Policy: PolicyFallback}
+		if tgt != want {
+			t.Errorf("ParseTarget(%q) = %+v, want %+v", alias, tgt, want)
+		}
+		if got, err := r.Resolve(tgt); err != nil || got.SessionKey != session.NewChatSessionKey("clutch", chat) || got.Rung != RungAlias {
+			t.Errorf("alias %q: got %+v, %v; want chat %d via alias", alias, got, err, chat)
+		}
+	}
+
+	// Case-insensitive, like the alias rung itself.
+	if tgt, err := r.ParseTarget("clutch/WHAT NEXT?"); err != nil || tgt.Rest != "WHAT NEXT?" {
+		t.Errorf("case-insensitive literal: got %+v, %v", tgt, err)
+	}
+
+	// No literal match: '?' starts options, exactly as the package ParseTarget.
+	for _, in := range []string{"clutch/notes?create=false", "clutch/q?policy=strict", "clutch?policy=strict", "clutch/c1/b1700?policy=broadcast"} {
+		got, err := r.ParseTarget(in)
+		if err != nil {
+			t.Fatalf("ParseTarget(%q): %v", in, err)
+		}
+		want, _ := ParseTarget(in)
+		if got != want {
+			t.Errorf("ParseTarget(%q) = %+v, want options parse %+v", in, got, want)
+		}
+	}
+	if _, err := r.ParseTarget("clutch?policy=bogus"); err == nil {
+		t.Error("bad options with no literal alias: want error")
+	}
+
+	// An ambiguous literal still counts as a match: the ambiguity surfaces from
+	// Resolve instead of the '?' being silently re-read as options.
+	for _, chat := range []int64{20, 21} {
+		if err := idx.SetChatMetadata("clutch", "app", chat, "alias", "dup?policy=strict"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tgt, err := r.ParseTarget("clutch/dup?policy=strict")
+	if err != nil || tgt.Rest != "dup?policy=strict" {
+		t.Fatalf("ambiguous literal: got %+v, %v", tgt, err)
+	}
+	if _, err := r.Resolve(tgt); !errors.Is(err, session.ErrAliasAmbiguous) {
+		t.Errorf("ambiguous literal resolve err = %v, want ErrAliasAmbiguous", err)
+	}
+
+	// Without an index there is nothing to match literally.
+	if got, err := (&Resolver{}).ParseTarget("clutch/what next?"); err != nil || got.Rest != "what next" {
+		t.Errorf("nil index: got %+v, %v; want options parse", got, err)
+	}
+}
+
+// TestResolve_KeyShapedAlias proves the #2158 item-1 case at the resolver: an
+// ordinary alias that happens to parse as a session key ("important" reads as
+// clutch/important, "c5" as clutch/c5) reaches the alias rung when no such
+// session exists. A real existing session still wins (the #2157 invariant).
+func TestResolve_KeyShapedAlias(t *testing.T) {
+	idx := newTestIndex(t)
+	r := &Resolver{Index: idx}
+	for chat, alias := range map[int64]string{7: "important", 8: "c5", 9: "c5/b123"} {
+		if err := idx.SetChatAliasUnique("clutch", "app", chat, alias); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := r.Resolve(Target{Agent: "clutch", Rest: alias}); err != nil || got.SessionKey != session.NewChatSessionKey("clutch", chat) || got.Rung != RungAlias {
+			t.Errorf("alias %q: got %+v, %v; want chat %d via alias", alias, got, err, chat)
+		}
+	}
+}

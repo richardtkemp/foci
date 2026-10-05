@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -24,9 +25,10 @@ type SessionAppender interface {
 // own chat, rather than the calling session.
 type SessionNotifyFn func(sessionKey, message string)
 
-// SessionKeyResolverFn resolves a loose session target — anything that does
-// not parse as a full session key: a bare agent name ("scout" → the agent's
-// default session), a named session ("scout/research"), or a chat alias.
+// SessionKeyResolverFn resolves a session target: a full session key, a bare
+// agent name ("scout" → the agent's default session), a named session
+// ("scout/research"), or a chat alias. It is called for full keys too, so a
+// key-shaped alias ("scout/important") can reach the alias rung (#2158).
 // Returns the resolved key and which resolution rung matched (for the tool's
 // receipt), or an error describing why nothing matched.
 type SessionKeyResolverFn func(target string) (key, via string, err error)
@@ -135,19 +137,31 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 					"leave it somewhere durable that gets read — whatever channel your task instructions name, or failing that a file on disk")
 			}
 
-			// Resolve loose targets — bare agent names, session names, chat
-			// aliases — through the shared route ladder. Full session keys
-			// parse cleanly and skip resolution.
+			// Resolve every target — bare agent names, session names, chat
+			// aliases, and full keys — through the shared route ladder. Even a
+			// target that parses as a session key goes through it (#2158): the
+			// 'i' type accepts any name, so an ordinary alias like "important"
+			// parses as key agent/important and would otherwise never reach the
+			// alias rung. The ladder still puts an existing session key first,
+			// so an alias cannot capture a real session. A well-formed key the
+			// ladder cannot place is used verbatim, as before — a key needs no
+			// index entry to be addressable — unless the miss was an ambiguous
+			// alias, which is a real answer to report.
 			targetKey := p.SessionKey
 			resolvedVia := "exact"
-			if _, err := session.ParseSessionKey(targetKey); err != nil && resolveKeyFn != nil {
+			if resolveKeyFn != nil {
+				_, keyErr := session.ParseSessionKey(targetKey)
 				key, via, rerr := resolveKeyFn(targetKey)
-				if rerr != nil {
+				switch {
+				case rerr == nil:
+					targetKey = key
+					resolvedVia = via
+					send_to_sessionLog.Infof("resolved %q → %s (via %s)", p.SessionKey, targetKey, via)
+				case keyErr == nil && !errors.Is(rerr, session.ErrAliasAmbiguous):
+					// Verbatim key, resolvedVia stays "exact".
+				default:
 					return ToolResult{}, fmt.Errorf("could not resolve %q to a session: %w", p.SessionKey, rerr)
 				}
-				targetKey = key
-				resolvedVia = via
-				send_to_sessionLog.Infof("resolved %q → %s (via %s)", p.SessionKey, targetKey, via)
 			}
 
 			// A reply_to=caller relay only makes sense when the CALLER can

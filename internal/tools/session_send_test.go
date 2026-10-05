@@ -368,10 +368,10 @@ func TestSendToSessionBareNameResolution(t *testing.T) {
 	}
 }
 
-func TestSendToSessionFullKeySkipsResolution(t *testing.T) {
-	// Verifies that a well-formed session key is used as-is and never goes
-	// through resolveKeyFn — keys are stable identities, so a parseable key
-	// needs no resolution.
+func TestSendToSessionFullKeyFallsBackVerbatim(t *testing.T) {
+	// Verifies that a well-formed session key the resolver cannot place (no
+	// index entry, no alias) is still used as-is — a key needs no index entry
+	// to be addressable.
 	t.Parallel()
 	store := &mockSessionAppender{}
 	delivered := make(chan struct{ sk, msg string }, 1)
@@ -380,8 +380,7 @@ func TestSendToSessionFullKeySkipsResolution(t *testing.T) {
 	})
 
 	resolveKeyFn := func(target string) (string, string, error) {
-		t.Errorf("resolveKeyFn should not be called for full key, got %q", target)
-		return "", "", nil
+		return "", "", fmt.Errorf("no such target %q", target)
 	}
 
 	tool := NewSendToSessionTool(store, notifier, nil, resolveKeyFn, nil, nil)
@@ -392,13 +391,70 @@ func TestSendToSessionFullKeySkipsResolution(t *testing.T) {
 		"message":     "full key passthrough",
 	})
 
-	if _, err := tool.Execute(ctx, params); err != nil {
+	result, err := tool.Execute(ctx, params)
+	if err != nil {
 		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result.Text, "resolved via exact") {
+		t.Errorf("result = %q, want resolved via exact", result.Text)
 	}
 
 	d := <-delivered
 	if d.sk != "scout/c5970082313" {
 		t.Errorf("notifier session = %q, want scout/c5970082313", d.sk)
+	}
+}
+
+func TestSendToSessionKeyShapedAlias(t *testing.T) {
+	// #2158: an ordinary chat alias such as "important" parses as the session
+	// key scout/important (named session "mportant"). It must still reach the
+	// resolver, whose alias rung places it, instead of being taken verbatim.
+	t.Parallel()
+	store := &mockSessionAppender{}
+	delivered := make(chan struct{ sk, msg string }, 1)
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+		delivered <- struct{ sk, msg string }{sk, msg}
+	})
+
+	resolveKeyFn := func(target string) (string, string, error) {
+		if target == "scout/important" {
+			return "scout/c42", "alias", nil
+		}
+		return "", "", fmt.Errorf("no such target %q", target)
+	}
+
+	tool := NewSendToSessionTool(store, notifier, nil, resolveKeyFn, nil, nil)
+
+	ctx := WithSessionKey(context.Background(), "test/i0")
+	params, _ := json.Marshal(map[string]string{
+		"session_key": "scout/important",
+		"message":     "to the aliased chat",
+	})
+
+	result, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result.Text, "scout/c42") || !strings.Contains(result.Text, "resolved via alias") {
+		t.Errorf("result = %q, want scout/c42 via alias", result.Text)
+	}
+	if d := <-delivered; d.sk != "scout/c42" {
+		t.Errorf("notifier session = %q, want scout/c42", d.sk)
+	}
+}
+
+func TestSendToSessionKeyShapedAmbiguousAlias(t *testing.T) {
+	// An ambiguous alias match is a real answer ("you named an alias, but which
+	// chat?"), so it is reported rather than masked by the verbatim-key fallback.
+	t.Parallel()
+	resolveKeyFn := func(target string) (string, string, error) {
+		return "", "", fmt.Errorf("resolve %q: %w", target, session.ErrAliasAmbiguous)
+	}
+	tool := NewSendToSessionTool(&mockSessionAppender{}, nil, nil, resolveKeyFn, nil, nil)
+	params, _ := json.Marshal(map[string]string{"session_key": "scout/important", "message": "hi"})
+	_, err := tool.Execute(WithSessionKey(context.Background(), "test/i0"), params)
+	if err == nil || !strings.Contains(err.Error(), "could not resolve") {
+		t.Fatalf("err = %v, want could-not-resolve ambiguity error", err)
 	}
 }
 

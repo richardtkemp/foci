@@ -46,6 +46,10 @@ const (
 //
 // Rest is resolved by Resolver.Resolve through one ladder: exact key →
 // existing named session → chat alias → create-named (when Create).
+//
+// A chat alias may itself contain '?'. ParseTarget cannot know that; use
+// Resolver.ParseTarget, which tries the whole rest as a literal alias before
+// reading '?' as the start of params (#2158).
 type Target struct {
 	Agent  string
 	Rest   string // "" = the agent's default session

@@ -153,11 +153,16 @@ func buildActivityCheckers(d httpHandlerDeps) (userActivityChecker, sessionActiv
 // session → chat alias → create-named; empty selector → the agent's default
 // session. Returns ok=false after an error response has been written.
 func resolveTargetSession(d httpHandlerDeps, w http.ResponseWriter, agentID, selector, policy, endpoint string) (route.Resolution, route.Receipt, bool) {
+	// CreateDefault is set here and nowhere else in the HTTP layer: /send,
+	// /branch and /webhook are delivery paths, so an agent whose every
+	// conversation is archived gets one minted rather than a 412 (#1859).
+	r := &route.Resolver{Index: d.sessionIndex, PreferredPlatform: d.cfg.DefaultPlatformFor, CreateDefault: d.createDefault}
 	t := route.Target{Agent: agentID, Rest: selector, Create: true, Policy: route.PolicyFallback}
 	if strings.Contains(selector, "?") {
-		// Selector carries embedded params (create=/policy=) — parse the
-		// full canonical target form.
-		parsed, err := route.ParseTarget(agentID + "/" + selector)
+		// Selector may carry embedded params (create=/policy=) — parse the
+		// full canonical target form. A selector that literally names a chat
+		// alias keeps its '?' (#2158).
+		parsed, err := r.ParseTarget(agentID + "/" + selector)
 		if err != nil {
 			httpLog.Warnf("POST %s: %v", endpoint, err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -175,10 +180,6 @@ func resolveTargetSession(d httpHandlerDeps, w http.ResponseWriter, agentID, sel
 		}
 		t.Policy = p
 	}
-	// CreateDefault is set here and nowhere else in the HTTP layer: /send,
-	// /branch and /webhook are delivery paths, so an agent whose every
-	// conversation is archived gets one minted rather than a 412 (#1859).
-	r := &route.Resolver{Index: d.sessionIndex, PreferredPlatform: d.cfg.DefaultPlatformFor, CreateDefault: d.createDefault}
 	res, err := r.Resolve(t)
 	if err == nil {
 		rcpt := res.ReceiptFor(t)
