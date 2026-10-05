@@ -125,7 +125,7 @@ type DelegatedManager struct {
 	// continuation). Wired by the Agent to openAutonomousTurn, which adopts the
 	// run as a first-class foci turn — streaming sink, in-flight tracking,
 	// accounting, meta (#1261). Nil = adoption disabled (tests, non-CC backends).
-	OpenAutonomousTurn func(sessionKey string, be delegator.Delegator)
+	OpenAutonomousTurn func(sessionKey string, be delegator.Delegator, triggers []string)
 
 	// RunBatchTurn runs ONE ordinary turn on sessionKey with prompt, marked as
 	// a batch for purpose, and returns its final text without delivering it
@@ -1139,8 +1139,8 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 	if m.OpenAutonomousTurn != nil && !isBatch {
 		if setter, ok := delegator.As[delegator.TurnAdopter](mb.be); ok {
 			be := mb.be
-			setter.SetOnAutonomousOpen(func() {
-				m.OpenAutonomousTurn(sk(), be)
+			setter.SetOnAutonomousOpen(func(triggers []string) {
+				m.OpenAutonomousTurn(sk(), be, triggers)
 			})
 		}
 	}

@@ -148,8 +148,14 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	// consolidation, /branch) registers its sink wrapped for conversation-DB
 	// logging, so its text and its subagents are recorded without being
 	// delivered (#2060; recordingSystemSink).
+	//
+	// A non-delivered turn's sink also stamps its tool calls with the turn's
+	// kind, so background work that outlives the turn (and CC's reaction to its
+	// result) stays out of the chat after the Clear below (#2093, bg_origin.go).
 	if router := a.sessionRouter(ts.SessionKey); !router.routesTo(turnevent.SinkFromContext(ctx)) {
-		router.Register(a.recordingSystemSink(turnevent.SinkFromContext(ctx), ts))
+		ctxSink := turnevent.SinkFromContext(ctx)
+		router.Register(a.withOriginStamp(a.recordingSystemSink(ctxSink, ts), ts.SessionKey,
+			nonDeliveredOriginKind(ts.Trigger, ctxSink)))
 		defer router.Clear()
 	}
 

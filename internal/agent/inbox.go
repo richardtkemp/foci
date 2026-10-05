@@ -1168,6 +1168,9 @@ func (a *Agent) sessionRouterLocked(sk string) *sessionRouter {
 	}
 	r := newSessionRouter(resolvingLateSink{a: a, sk: sk})
 	r.warnf = a.logger().Warnf
+	r.divert = func(ev turnevent.Event, current turnevent.Sink) turnevent.Sink {
+		return a.bgOriginSink(sk, ev, current)
+	}
 	a.routers[sk] = r
 	return r
 }

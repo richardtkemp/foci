@@ -39,6 +39,12 @@ type sessionRouter struct {
 	// warnf reports a refused self-registration (see Register). Optional;
 	// nil in unit tests that build the router directly.
 	warnf func(format string, args ...any)
+	// divert, when set, is asked first for every subagent event: a non-nil
+	// result receives the event instead of the current sink or the fallback.
+	// It routes the background subagents of a non-delivered turn that has
+	// ended to a record-only sink (#2093, Agent.bgOriginSink). current is the
+	// registered per-turn sink, nil if none. Set at construction.
+	divert func(ev turnevent.Event, current turnevent.Sink) turnevent.Sink
 }
 
 // sinkRef wraps a Sink so atomic.Pointer stores a single pointer per
@@ -97,10 +103,22 @@ func (r *sessionRouter) Clear() {
 	r.current.Store(nil)
 }
 
-// Emit implements turnevent.Sink. Dispatches to the current per-turn
-// sink if one is registered; otherwise forwards to the fallback.
+// Emit implements turnevent.Sink. A subagent event that divert claims goes
+// there; otherwise the event goes to the current per-turn sink if one is
+// registered, else to the fallback.
 func (r *sessionRouter) Emit(ctx context.Context, ev turnevent.Event) {
-	if ref := r.current.Load(); ref != nil {
+	ref := r.current.Load()
+	if r.divert != nil {
+		var current turnevent.Sink
+		if ref != nil {
+			current = ref.s
+		}
+		if s := r.divert(ev, current); s != nil {
+			s.Emit(ctx, ev)
+			return
+		}
+	}
+	if ref != nil {
 		ref.s.Emit(ctx, ev)
 		return
 	}

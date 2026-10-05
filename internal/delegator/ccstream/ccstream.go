@@ -319,7 +319,20 @@ type Backend struct {
 	// fired by drainEdgeCallbacks (off turnMu, still synchronous on the reader
 	// goroutine — so the sink is registered before the first delta is read).
 	// Set before Start, read-only after.
-	onAutonomousOpen func()
+	//
+	// It is passed the run's triggers: the keys of the background tasks whose
+	// terminal task_notification arrived while no turn was running
+	// (idleRetiredTasks), i.e. the results CC opened the run to react to. The
+	// agent uses them to keep a reaction to a non-delivered turn's background
+	// work out of the chat (#2093).
+	onAutonomousOpen func(triggers []string)
+
+	// idleRetiredTasks collects, between runs, the group key of every background
+	// task that ended (terminal task_notification) while no turn was active. The
+	// running edge hands it to onAutonomousOpen and resets it. A task ending
+	// inside a turn is not collected: that turn consumes the result. Guarded by
+	// turnMu.
+	idleRetiredTasks []string
 
 	// edgeCallbacks is the FIFO of pending reader-goroutine callbacks (the
 	// autonomous-open at the running edge). Appended under turnMu (so enqueue

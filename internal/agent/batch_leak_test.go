@@ -110,7 +110,7 @@ type chattyBatchBackend struct {
 	cbMu      sync.Mutex
 	typing    func(bool)
 	subStatus func(string)
-	autoOpen  func()
+	autoOpen  func([]string)
 }
 
 func (b *chattyBatchBackend) SetTypingFunc(fn func(bool)) {
@@ -123,7 +123,7 @@ func (b *chattyBatchBackend) SetOnSubagentStatus(fn func(string)) {
 	b.subStatus = fn
 	b.cbMu.Unlock()
 }
-func (b *chattyBatchBackend) SetOnAutonomousOpen(fn func()) {
+func (b *chattyBatchBackend) SetOnAutonomousOpen(fn func([]string)) {
 	b.cbMu.Lock()
 	b.autoOpen = fn
 	b.cbMu.Unlock()
@@ -147,7 +147,7 @@ func (b *chattyBatchBackend) fireUI() {
 		sub("batch subagent running")
 	}
 	if auto != nil {
-		auto()
+		auto(nil)
 	}
 }
 
@@ -211,7 +211,7 @@ func TestRunBatch_DeliversNothingToAnyChat(t *testing.T) {
 	mgr.PermissionPromptFunc = func(sk, _, text, _, _ string, _ []delegator.PromptChoice) {
 		note(fmt.Sprintf("permission-prompt %s %q", sk, text))
 	}
-	mgr.OpenAutonomousTurn = func(sk string, _ delegator.Delegator) { note("autonomous-turn " + sk) }
+	mgr.OpenAutonomousTurn = func(sk string, _ delegator.Delegator, _ []string) { note("autonomous-turn " + sk) }
 
 	got, err := mgr.RunBatch(context.Background(), delegator.BatchRequest{
 		Prompt: "consolidate", OwnerSessionKey: "helen/c42", Purpose: delegator.BatchPurposeConsolidation,

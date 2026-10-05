@@ -306,7 +306,7 @@ type TurnAdopter interface {
 	AdoptRunningTurn(turn *TurnEvents) bool
 	// SetOnAutonomousOpen installs the callback the backend fires at the
 	// running edge of a run it started itself, so foci can adopt it.
-	SetOnAutonomousOpen(fn func())
+	SetOnAutonomousOpen(fn func(triggers []string))
 }
 
 // SubagentStopper is optionally implemented by backends that can stop their

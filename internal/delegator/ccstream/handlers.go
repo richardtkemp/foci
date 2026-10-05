@@ -595,19 +595,28 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		b.stateEventsSeen = true
 		turnActive := b.turnActive
 		autonomousOpen := false
+		var triggers []string
+		if ss.State == "running" {
+			// Whatever ended while idle is what this run (if CC opened it) is
+			// reacting to; a foci-initiated run starts the next collection afresh.
+			triggers = b.idleRetiredTasks
+			b.idleRetiredTasks = nil
+		}
 		if ss.State == "running" && !turnActive && b.onAutonomousOpen != nil {
 			// CC opened a run foci didn't (autonomous: background-agent
 			// completion, task-notification, continuation). Adopt it as a
 			// first-class turn. Enqueue the open so it fires off turnMu but still
 			// synchronously on this reader goroutine (via drainEdgeCallbacks
 			// below, before the next stream event is read) — so the streaming
-			// sink is registered with no early deltas lost (#1261).
-			b.edgeCallbacks = append(b.edgeCallbacks, b.onAutonomousOpen)
+			// sink is registered with no early deltas lost (#1261). The tasks
+			// that ended since the last run are its triggers (#2093).
+			open := b.onAutonomousOpen
+			b.edgeCallbacks = append(b.edgeCallbacks, func() { open(triggers) })
 			autonomousOpen = true
 		}
 		b.turnMu.Unlock()
 		b.drainEdgeCallbacks()
-		b.logger().Debugf("turn_lifecycle event=session_state state=%s turn_active=%v autonomous_open=%v", ss.State, turnActive, autonomousOpen)
+		b.logger().Debugf("turn_lifecycle event=session_state state=%s turn_active=%v autonomous_open=%v triggers=%v", ss.State, turnActive, autonomousOpen, triggers)
 		if ss.State == "idle" {
 			// If a compaction wait is still armed at idle, no compact_boundary
 			// arrived — the backend declined to compact (e.g. "Not enough
@@ -772,6 +781,15 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 				groupKey, runIndex := task.ToolUseID, 0
 				if run := b.endRunForTask(task.TaskID); run != nil {
 					groupKey, runIndex = run.groupKey, run.runIndex
+				}
+				// A task ending while no turn runs is what CC's next autonomous run
+				// reacts to: collect it as that run's trigger (#2093).
+				if groupKey != "" {
+					b.turnMu.Lock()
+					if !b.turnActive {
+						b.idleRetiredTasks = append(b.idleRetiredTasks, groupKey)
+					}
+					b.turnMu.Unlock()
 				}
 				// Retire the entry this notification NAMES, not merely one of them
 				// (#1770). The count-based RemoveOne this replaces was justified by the

@@ -22,7 +22,7 @@ func TestAutonomousResultDelivered(t *testing.T) {
 
 	var completed []*delegator.TurnResult
 	// The agent wires onAutonomousOpen to adopt the run as a first-class turn.
-	b.SetOnAutonomousOpen(func() {
+	b.SetOnAutonomousOpen(func([]string) {
 		b.AdoptRunningTurn(&delegator.TurnEvents{
 			OnTurnComplete: func(r *delegator.TurnResult) { completed = append(completed, r) },
 		})

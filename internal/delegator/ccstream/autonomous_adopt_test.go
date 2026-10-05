@@ -56,7 +56,7 @@ func TestAutonomousOpenCallback(t *testing.T) {
 	b.typingFunc = func(bool) {}
 
 	var opens int
-	b.SetOnAutonomousOpen(func() { opens++ })
+	b.SetOnAutonomousOpen(func([]string) { opens++ })
 
 	// No foci turn open → running is a CC-initiated run → onAutonomousOpen fires.
 	stateEvent(b, "running")
@@ -82,7 +82,7 @@ func TestAutonomousOpen_NotFiredForFociTurn(t *testing.T) {
 	b.typingFunc = func(bool) {}
 
 	var opens int
-	b.SetOnAutonomousOpen(func() { opens++ })
+	b.SetOnAutonomousOpen(func([]string) { opens++ })
 
 	handler := &testHandler{OnTurnComplete: func(*delegator.TurnResult) {}}
 	applyHandler(b, handler) // opens a real foci turn (turnActive=true)
@@ -113,7 +113,7 @@ func TestAutonomousOpen_NotFiredForCompactInject(t *testing.T) {
 	b.typingFunc = func(bool) {}
 
 	var opens int
-	b.SetOnAutonomousOpen(func() { opens++ })
+	b.SetOnAutonomousOpen(func([]string) { opens++ })
 
 	if err := b.ImmediateInject(context.Background(), delegator.Inject{
 		Source: delegator.SourceCompact,
@@ -154,7 +154,7 @@ func TestCompactInject_DuringAutonomousTurn_WaitsForIdle(t *testing.T) {
 	b.typingFunc = func(bool) {}
 
 	var opens int
-	b.SetOnAutonomousOpen(func() {
+	b.SetOnAutonomousOpen(func([]string) {
 		opens++
 		b.AdoptRunningTurn(&delegator.TurnEvents{TurnID: "auto"})
 	})
@@ -214,5 +214,47 @@ func TestCompactInject_DuringAutonomousTurn_WaitsForIdle(t *testing.T) {
 
 	if err := b.WaitForCompaction(ctx); err != nil {
 		t.Fatalf("WaitForCompaction = %v, want nil (the compaction happened)", err)
+	}
+}
+
+// TestAutonomousOpen_PassesTriggers pins #2093: the autonomous open is handed
+// the keys of the background tasks that ended while no turn was running (the
+// results CC opened the run to react to), so the agent can tell a reaction to
+// a non-delivered turn's background work from one to the user's. A task ending
+// inside a run is that run's to consume, and is not a trigger of the next one.
+func TestAutonomousOpen_PassesTriggers(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
+	b.typingFunc = func(bool) {}
+	applyHandler(b, &testHandler{})
+	b.cancelTurn() // the setup handler is not a live turn: start idle
+
+	var got [][]string
+	b.SetOnAutonomousOpen(func(triggers []string) {
+		got = append(got, triggers)
+		b.AdoptRunningTurn(&delegator.TurnEvents{})
+	})
+	notify := func(id string) {
+		raw, _ := json.Marshal(TaskEvent{Subtype: "task_notification", Status: "completed", TaskID: id + "-task", ToolUseID: id})
+		b.OnSystem("task_notification", raw)
+	}
+
+	notify("toolu_A")
+	notify("bg1")
+	stateEvent(b, "running")
+	notify("toolu_B") // ends inside the adopted run
+	stateEvent(b, "idle")
+	stateEvent(b, "running") // a run with no task behind it (continuation)
+
+	if len(got) != 2 {
+		t.Fatalf("opens = %d, want 2", len(got))
+	}
+	if strings.Join(got[0], ",") != "toolu_A,bg1" {
+		t.Errorf("first run's triggers = %v, want [toolu_A bg1]", got[0])
+	}
+	if len(got[1]) != 0 {
+		t.Errorf("second run's triggers = %v, want none (toolu_B ended inside the first run)", got[1])
 	}
 }

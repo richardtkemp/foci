@@ -232,27 +232,42 @@ func (a *Agent) markInFlight(key string, delivering bool) func() {
 // user message (IsTurnInFlight → true), the system-inject hold, the pre-answer
 // nudge gate, api.db usage rows, and the meta frame all key on the normal turn
 // path rather than the old whole-message late-delivery fallback.
-func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator) {
+//
+// triggers are the group keys of the background tasks whose results CC opened
+// the run to react to. When every one was started by a non-delivered turn
+// (takeBgOriginKind), the run is that turn's follow-up: by ruling it is
+// recorded tagged with the turn's kind and not delivered, and is not counted
+// as a delivering turn (#2093). Otherwise it delivers, as before.
+func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator, triggers []string) {
 	adopter, ok := delegator.As[delegator.TurnAdopter](be)
 	if !ok {
 		return // backend cannot adopt a running turn (opencode, tests)
 	}
 
-	var conn platform.Connection
-	if a.ResolveLateConn != nil {
-		conn = a.ResolveLateConn(sessionKey)
-	}
-	sink, cleanup := a.autonomousTurnSink(conn, sessionKey)
-
-	// Wrap the sink so intermediate TextBlock events are logged to the
-	// conversation DB (parity with foci-initiated turns, which wrap their
-	// per-turn sink in newLoggingSink). Autonomous runs have no incoming
-	// message, so the chat ID is resolved from the session key rather than
-	// TurnMetadata. Without this the reply streams/delivers but is never
-	// persisted to conversation.db (#1261 follow-up).
 	autoMeta := &TurnMetadata{}
 	chatID := session.ChatIDFromKey(sessionKey)
-	sink = newLoggingSink(sink, a, chatID, autoMeta, sessionKey)
+	var sink turnevent.Sink
+	var cleanup func()
+	if kind := a.takeBgOriginKind(sessionKey, triggers); kind != "" {
+		a.logger().Infof("autonomous run sk=%s reacts to background work of a %s turn (triggers=%v): recorded, not delivered", sessionKey, kind, triggers)
+		// Record-only, and stamped like its originating turn, so background
+		// work this run starts in turn stays undelivered too.
+		sink = a.withOriginStamp(newTurnKindLoggingSink(turnevent.NopSink{}, a, chatID, autoMeta, sessionKey, kind), sessionKey, kind)
+	} else {
+		var conn platform.Connection
+		if a.ResolveLateConn != nil {
+			conn = a.ResolveLateConn(sessionKey)
+		}
+		sink, cleanup = a.autonomousTurnSink(conn, sessionKey)
+
+		// Wrap the sink so intermediate TextBlock events are logged to the
+		// conversation DB (parity with foci-initiated turns, which wrap their
+		// per-turn sink in newLoggingSink). Autonomous runs have no incoming
+		// message, so the chat ID is resolved from the session key rather than
+		// TurnMetadata. Without this the reply streams/delivers but is never
+		// persisted to conversation.db (#1261 follow-up).
+		sink = newLoggingSink(sink, a, chatID, autoMeta, sessionKey)
+	}
 	sink, tspan := telemetry.NewTurnSink(sink)
 
 	router := a.sessionRouter(sessionKey)

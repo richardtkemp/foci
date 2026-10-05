@@ -262,6 +262,12 @@ type Agent struct {
 	// turn, fed by the same SessionEvents (OnToolStart/OnToolEnd) and reset per
 	// turn by buildTurnEvents (#2193). Guarded by routersMu.
 	toolTallies map[string]*toolTally
+	// bgOrigins records, per session key, the tool calls made by non-delivered
+	// turns, keyed by tool_use id (= the group key of any background task the
+	// call became), so the task's later output and CC's reaction to its result
+	// stay out of the chat (#2093, bg_origin.go). Guarded by bgOriginsMu.
+	bgOrigins   map[string]map[string]*bgOrigin
+	bgOriginsMu sync.Mutex
 	// ResolveLateConn resolves the current delivering connection for a session
 	// key, for the router's late-delivery fallback. Called at Emit time so it
 	// tracks connect/disconnect (a session that reconnects starts delivering

@@ -47,7 +47,7 @@ func TestAwaitingAutonomousRun(t *testing.T) {
 		// A live autonomous run is now a first-class turn (turnActive) — held by
 		// the normal in-flight gate, not AwaitingAutonomousRun (which covers only
 		// pending/grace).
-		b.SetOnAutonomousOpen(func() { b.AdoptRunningTurn(&delegator.TurnEvents{}) })
+		b.SetOnAutonomousOpen(func([]string) { b.AdoptRunningTurn(&delegator.TurnEvents{}) })
 		stateEvent(b, "running") // no foci turn open → adopted as a first-class turn
 		if !b.IsTurnInFlight() {
 			t.Fatal("an adopted autonomous run must be in flight (turnActive)")
@@ -58,7 +58,7 @@ func TestAwaitingAutonomousRun(t *testing.T) {
 		var buf bytes.Buffer
 		b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
 		b.typingFunc = func(bool) {}
-		b.SetOnAutonomousOpen(func() { b.AdoptRunningTurn(&delegator.TurnEvents{}) })
+		b.SetOnAutonomousOpen(func([]string) { b.AdoptRunningTurn(&delegator.TurnEvents{}) })
 		stateEvent(b, "running")
 		stateEvent(b, "idle") // completeTurn stamps lastAutonomousEnd (turnAutonomous) → grace open
 		if !b.AwaitingAutonomousRun() {
