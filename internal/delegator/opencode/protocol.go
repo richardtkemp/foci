@@ -49,11 +49,24 @@ type Message struct {
 	// Mode is the agent mode that produced the message; a compaction's
 	// summary message is mode "compaction" with Summary set.
 	Mode    string         `json:"mode,omitempty"`
-	Summary bool           `json:"summary,omitempty"`
+	Summary SummaryFlag    `json:"summary,omitempty"`
 	Cost    float64        `json:"cost,omitempty"`
 	Tokens  *MessageTokens `json:"tokens,omitempty"`
 	Error   *MessageError  `json:"error,omitempty"`
 	Time    MessageTime    `json:"time"`
+}
+
+// SummaryFlag is a Message's `summary`, which differs by role (live 1.17.15
+// /doc): an AssistantMessage carries a boolean (true on a compaction's summary
+// message), a UserMessage a session-diff object ({title?, body?, diffs}). Only
+// the boolean means "compaction summary", so any non-boolean reads as false
+// rather than failing the whole message (#2173).
+type SummaryFlag bool
+
+// UnmarshalJSON accepts the boolean; any other shape is false.
+func (s *SummaryFlag) UnmarshalJSON(data []byte) error {
+	*s = SummaryFlag(string(data) == "true")
+	return nil
 }
 
 // MessageTime carries the timestamps for a Message. Created is always set;

@@ -90,15 +90,13 @@ const compactArmSlack = time.Second
 
 // messageWithParts is one element of GET /session/{id}/message: {info,
 // parts}, with `limit` selecting the NEWEST n in ascending order (verified
-// live on opencode 1.17.15). info is decoded loosely rather than as Message
-// because a USER message's `summary` is an object ({"diffs":[]}), which a
-// bool field would reject, failing the whole list.
+// live on opencode 1.17.15). Only the info fields read here are decoded.
 type messageWithParts struct {
 	Info struct {
-		Role    string          `json:"role"`
-		Mode    string          `json:"mode"`
-		Summary json.RawMessage `json:"summary"`
-		Time    MessageTime     `json:"time"`
+		Role    string      `json:"role"`
+		Mode    string      `json:"mode"`
+		Summary SummaryFlag `json:"summary"`
+		Time    MessageTime `json:"time"`
 	} `json:"info"`
 	Parts []Part `json:"parts"`
 }
@@ -106,7 +104,7 @@ type messageWithParts struct {
 // isCompactionSummary reports whether m is the assistant message a
 // /summarize compaction produced (summary:true, mode "compaction").
 func (m *messageWithParts) isCompactionSummary() bool {
-	return m.Info.Role == "assistant" && (string(m.Info.Summary) == "true" || m.Info.Mode == "compaction")
+	return m.Info.Role == "assistant" && (bool(m.Info.Summary) || m.Info.Mode == "compaction")
 }
 
 // CompactionSummary implements delegator.CompactionSummarizer: the text of

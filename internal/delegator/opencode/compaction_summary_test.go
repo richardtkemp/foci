@@ -12,8 +12,8 @@ import (
 // TestCompactionSummary_FromMessageList proves the summary is the text of the
 // newest /summarize message created since ArmCompactionWait, read from GET
 // /session/{id}/message (#1390). The fixture mirrors the live 1.17.15 shape,
-// including a USER message whose `summary` is an object — decoding info as
-// Message (Summary bool) would fail the whole list on it.
+// including a USER message whose `summary` is an object, which must not fail
+// the whole list.
 func TestCompactionSummary_FromMessageList(t *testing.T) {
 	var gotPath string
 	b := &Backend{sessionID: "ses_1"}
@@ -56,7 +56,7 @@ func TestCompactionSummary_FromMessageList(t *testing.T) {
 func TestPickCompactionSummary_NoneSinceArm(t *testing.T) {
 	armed := time.Now()
 	var m messageWithParts
-	m.Info.Role, m.Info.Mode, m.Info.Summary = "assistant", "compaction", []byte("true")
+	m.Info.Role, m.Info.Mode, m.Info.Summary = "assistant", "compaction", true
 	m.Info.Time.Created = armed.Add(-time.Hour).UnixMilli()
 	m.Parts = []Part{{Type: "text", Text: "stale"}}
 	if got := pickCompactionSummary([]messageWithParts{m}, armed); got != "" {

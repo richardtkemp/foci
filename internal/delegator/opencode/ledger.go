@@ -48,7 +48,7 @@ func (b *Backend) bookMessage(msg Message, actor string) {
 	billed := time.UnixMilli(msg.Time.Completed).UTC()
 	tokens := messageTokens(msg.Tokens)
 	kind := accounting.KindCall
-	if msg.Summary || msg.Mode == "compaction" {
+	if bool(msg.Summary) || msg.Mode == "compaction" {
 		kind = accounting.KindCompaction
 	}
 	created := billed

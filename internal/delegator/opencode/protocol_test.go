@@ -79,6 +79,37 @@ func TestMessage_UnmarshalUser(t *testing.T) {
 	}
 }
 
+// TestMessage_UnmarshalSummaryShapes pins `summary`'s two wire shapes (live
+// 1.17.15 /doc): a UserMessage carries a session-diff OBJECT, an
+// AssistantMessage a compaction BOOLEAN. Typing it bool alone failed every
+// user message.updated event (#2173).
+func TestMessage_UnmarshalSummaryShapes(t *testing.T) {
+	for _, tc := range []struct {
+		name, summary string
+		want          bool
+	}{
+		{"user diff object", `{"title":"t","diffs":[{"file":"a.go"}]}`, false},
+		{"user empty diffs", `{"diffs":[]}`, false},
+		{"assistant true", `true`, true},
+		{"assistant false", `false`, false},
+		{"null", `null`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := `{"info":{"id":"m","sessionID":"s","role":"user","summary":` + tc.summary + `,"time":{"created":1}}}`
+			var p eventMessageUpdated
+			if err := json.Unmarshal([]byte(raw), &p); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if p.Info.ID != "m" {
+				t.Errorf("ID = %q, want m", p.Info.ID)
+			}
+			if got := bool(p.Info.Summary); got != tc.want {
+				t.Errorf("Summary = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestMessage_UnmarshalAssistant(t *testing.T) {
 	// Verifies the assistant-message shape parses with tokens, cost, and
 	// finish_reason all extracted. This is the message.updated payload the
