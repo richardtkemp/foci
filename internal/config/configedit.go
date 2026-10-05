@@ -45,7 +45,7 @@ func (t FieldType) TypeName() string {
 // UnsetInFile removes an explicitly-set key from the TOML config file (the
 // value reverts to whatever the key inherits: the global value for an agent
 // override, else the built-in default). Same surgical, comment-preserving
-// line editing as SetInFile; the removed line's value is returned. A key that
+// line editing as SetInFile; the removed value (all its lines) is returned. A key that
 // isn't present is an error — there is nothing to unset.
 func UnsetInFile(path string, target SetTarget, mode os.FileMode) (string, error) {
 	data, err := os.ReadFile(path)
@@ -79,8 +79,11 @@ func UnsetInFile(path string, target SetTarget, mode os.FileMode) (string, error
 		return "", fmt.Errorf("%s is not set in the config file", target.Key)
 	}
 
-	old := extractValue(lines[line])
-	lines = append(lines[:line], lines[line+1:]...)
+	end, old, err := valueSpan(lines, line)
+	if err != nil {
+		return "", err
+	}
+	lines = replaceSpan(lines, line, end, "")
 
 	output := strings.Join(lines, "\n")
 	tmpPath := path + ".tmp"

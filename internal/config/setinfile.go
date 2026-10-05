@@ -113,9 +113,11 @@ func setInAgentBlock(lines []string, agentID, key, value string) (string, []stri
 		return "", nil, err
 	}
 	if loc.found >= 0 {
-		old := extractValue(lines[loc.found])
-		lines[loc.found] = fmt.Sprintf("%s = %s", loc.lineKey, value)
-		return old, lines, nil
+		end, old, err := valueSpan(lines, loc.found)
+		if err != nil {
+			return "", nil, err
+		}
+		return old, replaceSpan(lines, loc.found, end, fmt.Sprintf("%s = %s", loc.lineKey, value)), nil
 	}
 
 	tablePath, leaf, dotted := cutLastDot(key)
@@ -330,24 +332,13 @@ func replaceOrInsertKey(lines []string, from, to int, key, value string) (string
 	// First pass: look for an active (uncommented) key line.
 	for i := from; i < to; i++ {
 		if active.MatchString(lines[i]) {
-			// The value may span multiple lines (a multi-line array/inline
-			// table). Find where it ends by bracket balance, and replace the
-			// whole span with the single new line — otherwise the old body
-			// lines are orphaned and the file is corrupted.
-			end := i
-			for depth := bracketDelta(lines[i]); depth > 0 && end+1 < to; {
-				end++
-				depth += bracketDelta(lines[end])
+			// Replace the value's whole span (it may be multi-line) with the
+			// single new line, else the old body lines are orphaned.
+			end, old, err := valueSpan(lines, i)
+			if err != nil {
+				return "", nil, err
 			}
-			old := strings.TrimSpace(extractValue(lines[i]))
-			if end > i {
-				old = strings.TrimSpace(strings.Join(append([]string{extractValue(lines[i])}, lines[i+1:end+1]...), " "))
-			}
-			out := make([]string, 0, len(lines)-(end-i))
-			out = append(out, lines[:i]...)
-			out = append(out, fmt.Sprintf("%s = %s", key, value))
-			out = append(out, lines[end+1:]...)
-			return old, out, nil
+			return old, replaceSpan(lines, i, end, fmt.Sprintf("%s = %s", key, value)), nil
 		}
 	}
 
@@ -374,53 +365,112 @@ func replaceOrInsertKey(lines []string, from, to int, key, value string) (string
 	return "", result, nil
 }
 
-// bracketDelta returns the net count of unclosed [ and { on a line (opens minus
-// closes), ignoring brackets inside double-quoted strings and after an unquoted
-// '#' comment. A multi-line TOML value's start line has delta > 0; scanning
-// forward until the running total returns to 0 finds the value's last line.
-func bracketDelta(line string) int {
-	depth := 0
-	inStr := false
-	for i := 0; i < len(line); i++ {
-		c := line[i]
-		if inStr {
-			if c == '"' && (i == 0 || line[i-1] != '\\') {
-				inStr = false
-			}
-			continue
-		}
-		switch c {
-		case '"':
-			inStr = true
-		case '#':
-			return depth // rest of the line is a comment
-		case '[', '{':
-			depth++
-		case ']', '}':
-			depth--
-		}
+// replaceSpan replaces lines[from..to] (inclusive) with repl, or deletes them
+// when repl is "".
+func replaceSpan(lines []string, from, to int, repl string) []string {
+	out := make([]string, 0, len(lines)-(to-from))
+	out = append(out, lines[:from]...)
+	if repl != "" {
+		out = append(out, repl)
 	}
-	return depth
+	return append(out, lines[to+1:]...)
 }
 
-// extractValue extracts the value portion from a "key = value" line.
-func extractValue(line string) string {
-	_, after, ok := strings.Cut(line, "=")
-	if !ok {
-		return ""
-	}
-	v := strings.TrimSpace(after)
-	// Strip inline comment (not inside a quoted string).
-	if strings.HasPrefix(v, `"`) {
-		// Find closing quote, skip inline comment after it.
-		if end := strings.Index(v[1:], `"`); end >= 0 {
-			return v[:end+2]
+// valueSpan finds the last line of the value assigned on line i ("key = value")
+// and returns it with the value's text (comments stripped, lines joined by
+// "\n"). A TOML value spans lines as a multi-line array or inline table, or as
+// a triple-quoted string, basic or literal (#2188), so it tokenises the value
+// across lines: brackets nest, and inside any kind of string, brackets, '#'
+// and other quotes are content. It deliberately ignores section bounds: a
+// string line such as "[deploy]" looks like a header, and in valid TOML no
+// value runs past a real one. A value still open at EOF is an error: guessing
+// where it ends would corrupt the lines after it.
+func valueSpan(lines []string, i int) (int, string, error) {
+	const (
+		none = iota
+		basic
+		literal
+		mlBasic
+		mlLiteral
+	)
+	mode, depth := none, 0
+	var parts []string
+	col := strings.Index(lines[i], "=") + 1
+	for ln := i; ln < len(lines); ln, col = ln+1, 0 {
+		line := lines[ln]
+		cut := len(line)
+	scan:
+		for j := col; j < len(line); j++ {
+			c := line[j]
+			switch mode {
+			case basic, mlBasic:
+				switch {
+				case c == '\\':
+					j++ // escaped char; a trailing '\' is a line continuation
+				case c == '"' && mode == basic:
+					mode = none
+				case c == '"':
+					// A run of 3-5 quotes closes; quotes beyond 3 are content.
+					if n := quoteRun(line, j, '"'); n >= 3 {
+						mode = none
+						j += n - 1
+					}
+				}
+			case literal, mlLiteral:
+				switch {
+				case c == '\'' && mode == literal:
+					mode = none
+				case c == '\'':
+					if n := quoteRun(line, j, '\''); n >= 3 {
+						mode = none
+						j += n - 1
+					}
+				}
+			default:
+				switch c {
+				case '#':
+					cut = j
+					break scan
+				case '[', '{':
+					depth++
+				case ']', '}':
+					depth--
+				case '"', '\'':
+					single, multi := basic, mlBasic
+					if c == '\'' {
+						single, multi = literal, mlLiteral
+					}
+					if quoteRun(line, j, c) >= 3 {
+						mode = multi
+						j += 2
+					} else {
+						mode = single
+					}
+				}
+			}
+		}
+		part := line[col:cut]
+		if mode != mlBasic && mode != mlLiteral {
+			part = strings.TrimRight(part, " \t")
+		}
+		parts = append(parts, part)
+		if mode == basic || mode == literal {
+			mode = none // unterminated one-line string: TOML's error to report, not a span
+		}
+		if mode == none && depth <= 0 {
+			return ln, strings.TrimSpace(strings.Join(parts, "\n")), nil
 		}
 	}
-	if idx := strings.Index(v, " #"); idx >= 0 {
-		v = strings.TrimSpace(v[:idx])
+	return 0, "", fmt.Errorf("the value at line %d never closes; refusing to edit", i+1)
+}
+
+// quoteRun counts the consecutive q bytes in line from index j.
+func quoteRun(line string, j int, q byte) int {
+	n := 0
+	for j+n < len(line) && line[j+n] == q {
+		n++
 	}
-	return v
+	return n
 }
 
 // FormatTOMLValue formats a raw string value for TOML output based on field type.
