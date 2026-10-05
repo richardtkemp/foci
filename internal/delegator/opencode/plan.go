@@ -1,5 +1,5 @@
 // plan.go — opencode's /plan delivery. Registered via
-// delegator.RegisterPlan("opencode", planDelivery) in init().
+// the opencode Spec's PlanDelivery (spec.go).
 //
 // opencode has a built-in `plan` agent (see Config.agent.plan in the
 // opencode docs). The SDK's session.prompt endpoint accepts an `agent`

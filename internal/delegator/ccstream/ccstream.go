@@ -22,12 +22,6 @@ import (
 	"foci/internal/ratelimit"
 )
 
-func init() {
-	delegator.Register("claude-code", newFromConfig, true)
-	delegator.RegisterPlan("claude-code", planDelivery)
-	delegator.RegisterUsage("claude-code", QueryUsage)
-}
-
 // autonomousInjectGrace is how long after an autonomous run goes idle that
 // SourceSystem injects (reflection/keepalive) keep deferring. It bridges the
 // sub-second gap before CC starts the next back-to-back autonomous run, so
@@ -64,11 +58,11 @@ func (b *Backend) resolveBinary() string {
 // BatchDefaultModel implements delegator.BatchModelDefaulter: a batch run that
 // names no model (consolidation, nudge extraction) runs on sonnet rather than
 // the agent's own, usually larger, model.
-func (b *Backend) BatchDefaultModel() string { return "sonnet" }
+func (b *Backend) BatchDefaultModel() string { return batchDefaultModel }
 
 // BatchCheapModel implements delegator.BatchCheapModeler: a batch that asks
 // for the cheap tier (foci_summary, the /prompts diff summary) runs on haiku.
-func (b *Backend) BatchCheapModel() string { return "haiku" }
+func (b *Backend) BatchCheapModel() string { return batchCheapModel }
 
 var _ delegator.BatchCheapModeler = (*Backend)(nil)
 

@@ -127,6 +127,83 @@ This means long tool calls on the delegated path don't time out as long as CC is
 
 - You want a model provider Claude Code does not serve, and can live with the gaps marked ✗ in its column (no mid-turn fold for steers, no pretool/stop rules, no mid-turn nudges).
 
+## Declared capabilities
+
+Every delegated backend declares every capability in its `delegator.Spec` (`internal/delegator/capabilities.go`, registered from each backend's `spec.go`, #2154). The table below is generated from those declarations and checked by `internal/delegator/all`'s tests, so it cannot drift: edit the Spec, then paste the block the failing test prints. Behavioural capabilities (no method of their own) must name a proving test in `internal/delegator/all/spec_test.go`.
+
+<!-- BEGIN GENERATED CAPABILITIES: internal/delegator/all TestBackendsDoc_CapabilityTable. Edit the Specs, not this block. -->
+| Capability | Meaning | claude-code | codex | opencode |
+|---|---|---|---|---|
+| `post_tool_nudge` | calls TurnEvents.PostToolNudgeFunc after each tool and injects what it returns (every_n_tools, after_error, tool_pattern nudges) | ✓ | ✗ | ✗ |
+| `pre_answer_nudge` | calls TurnEvents.PreAnswerNudgeFunc at the final answer and re-dispatches the turn with what it returns (pre_answer nudges) | ✓ | ✗ | ✗ |
+| `streaming` | emits SessionEvents.OnTextDelta/OnThinkingDelta during a turn (live stream_output) | ✓ | ✓ | ✓ |
+| `control` | accepts runtime control requests (ControlSender) | ✓ | ✓ | ✓ |
+| `control_model` | applies a SetModelRequest mid-session | ✓ | ✓ | ✓ |
+| `control_effort` | applies an effort change (ApplyFlagSettingsRequest effortLevel) | ✓ | ✓ | ✗ |
+| `control_permission_mode` | applies a SetPermissionModeRequest mid-session | ✓ | ✓ | ✓ |
+| `thinking_control` | honours the session thinking setting (/thinking) | ✗ | ✗ | ✗ |
+| `model_resolve` | resolves model aliases against its own catalogue (ModelResolver) | ✗ | ✓ | ✗ |
+| `voice_mode` | runs voice-originated turns at low effort (VoiceModer) | ✓ | ✓ | ✗ |
+| `compaction_wait` | signals when a requested compaction finished (CompactionWaiter) | ✓ | ✓ | ✓ |
+| `compaction_start_wait` | signals when a requested compaction started (CompactionStartWaiter) | ✓ | ✗ | ✓ |
+| `compaction_summary` | recovers its compaction summary text (CompactionSummarizer) | ✓ | ✗ | ✓ |
+| `activity` | reports its last stream activity, for activity-based timeouts (ActivityChecker) | ✓ | ✓ | ✓ |
+| `autonomous_runs` | tracks background work and autonomous runs (AutonomousRunAwaiter) | ✓ | ✗ | ✗ |
+| `turn_adoption` | lets a fresh turn adopt a run already in flight (TurnAdopter) | ✓ | n/a | n/a |
+| `stop_subagents` | stops its running subagents (SubagentStopper) | ✓ | n/a | ✗ |
+| `stop_commands` | stops its background shell commands (CommandStopper) | ✓ | ✗ | ✗ |
+| `subagent_status` | reports subagent status and the running set (SubagentReporter) | ✓ | n/a | ✓ |
+| `permission_response` | answers a permission prompt by request id (RespondToPermission; the signature differs per backend until #2154 Phase 3) | ✓ | ✓ | ✓ |
+| `permission_rules` | answers "allow always" with a persistent rule (PermissionRuleResponder) | ✓ | ✗ | ✗ |
+| `questions` | routes answers to the agent's own questions (QuestionResponder) | ✓ | ✗ | ✓ |
+| `elicitation` | answers MCP elicitation requests (ElicitationResponder) | ✓ | ✗ | ✗ |
+| `plan_permission` | turns a typed reply into plan-revision feedback (PlanResponder) | ✓ | n/a | ✗ |
+| `fold_attachments` | delivers attachments folded into a running turn (FoldAttachmentCarrier) | ✓ | ✗ | ✗ |
+| `delivery_tracking` | proves each input reached the model and hands back the rest (DeliveryTracker + Spec.TranscriptChecker) | ✓ | ✗ | ✗ |
+| `thread_naming` | names its own sessions (ThreadNameConsumer) | ✗ | ✓ | ✗ |
+| `context_window` | reports the model's context window and usage (ContextWindowQuerier) | ✓ | ✓ | ✓ |
+| `branch` | forks and deletes its own sessions (BackendBrancher) | ✓ | ✓ | ✓ |
+| `scoped_cleanup` | needs a live server to delete sessions and opens it once per sweep (RunningBackendCleaner) | ✗ | ✓ | ✓ |
+| `unstarted_readiness_probe` | CheckReady works on a constructed but unstarted backend (the startup probe) | ✓ | ✓ | ✗ |
+| `pretool_rules` | enforces PreToolUse deny rules (pretool_rules) | ✓ | ✗ | ✗ |
+| `stop_rules` | enforces Stop-hook rules (stop_rules) | ✓ | ✗ | ✗ |
+| `relogin` | reports auth failures that foci's Claude Code re-login driver can fix (/login) | ✓ | ✗ | ✗ |
+| `command_approval_allowlist` | auto-approves prompts matching foci's [permissions] allowlist (StartOptions.AutoApproveRules) | ✓ | ✓ | ✓ |
+| `plan_mode` | has a /plan delivery (Spec.PlanDelivery) | ✓ | ✗ | ✓ |
+| `usage_query` | reports plan usage for /mana (Spec.UsageQuery) | ✓ | ✗ | ✗ |
+
+Why not:
+
+- `post_tool_nudge`: codex: no mid-turn injection point is wired for the app-server; opencode: opencode exposes no per-tool point to inject a nudge at.
+- `pre_answer_nudge`: codex: no mid-turn injection point is wired for the app-server; opencode: the onSessionIdle re-dispatch exists but is unverified live and drops sendPrompt's error (#2176).
+- `control_effort`: opencode: opencode has no effort setting; SendControl accepts and ignores the request.
+- `thinking_control`: claude-code: the session thinking setting is read only by the API transport; codex: the session thinking setting is read only by the API transport; opencode: the session thinking setting is read only by the API transport.
+- `model_resolve`: claude-code: CC resolves model aliases itself; opencode: model names pass through to opencode unresolved.
+- `voice_mode`: opencode: opencode has no effort setting to lower.
+- `compaction_start_wait`: codex: the app-server reports only compaction completion.
+- `compaction_summary`: codex: compaction output is server-side encrypted.
+- `autonomous_runs`: codex: does not track background work; opencode: does not track background work.
+- `turn_adoption`: codex (n/a): no autonomous runs to adopt; opencode (n/a): no autonomous runs to adopt.
+- `stop_subagents`: codex (n/a): codex has no subagents; opencode: no API to stop a running subagent.
+- `stop_commands`: codex: no API to stop a background command; opencode: no API to stop a background command.
+- `subagent_status`: codex (n/a): codex has no subagents.
+- `permission_rules`: codex: approvals are accept or decline only; opencode: "always" is sent as opencode's own remember flag, not a foci rule.
+- `questions`: codex: the app-server has no question tool.
+- `elicitation`: codex: the app-server does not surface MCP elicitation requests; opencode: opencode does not surface MCP elicitation requests.
+- `plan_permission`: codex (n/a): no plan mode; opencode: plan approval is not a permission request on opencode.
+- `fold_attachments`: codex: a message folded into a running turn carries text only; opencode: a message folded into a running turn carries text only.
+- `delivery_tracking`: codex: inputs are fire-and-forget: no proof of consumption; opencode: inputs are fire-and-forget: no proof of consumption.
+- `thread_naming`: claude-code: CC does not name its sessions; agents get the set_session_alias tool instead; opencode: foci does not take opencode's session titles.
+- `scoped_cleanup`: claude-code: fork and cleanup are local transcript file operations, no server needed.
+- `unstarted_readiness_probe`: opencode: CheckReady needs the server that only Start creates.
+- `pretool_rules`: codex: no PreToolUse rule engine is wired to the codex hook; opencode: opencode has no PreToolUse hook.
+- `stop_rules`: codex: no Stop hook; opencode: opencode has no Stop hook.
+- `relogin`: codex: the re-login driver logs Claude Code in; opencode: the re-login driver logs Claude Code in.
+- `plan_mode`: codex: no /plan delivery.
+- `usage_query`: codex: no plan usage to report; opencode: no plan usage to report.
+
+<!-- END GENERATED CAPABILITIES -->
+
 ## Delegated backend feature parity
 
 Feature-by-feature comparison of the three structured delegated backends, from the #2151 survey (origin/main `5d1dbf759`, 2026-10-02). ccstream (`backend = "claude-code"`) is the reference.
@@ -197,7 +274,7 @@ grepped for each ✗.
 | Q1 | Native question tool | `QuestionResponder`: backend's ask-the-user tool as buttons | ✓ [20] | ✓ | ✗ [21] |
 | Q2 | /stop cancels question | `CancelPendingQuestion` | ✓ | ✓ | ✗ |
 | Q3 | MCP elicitation | `ElicitationResponder` (form, URL, completion) | ✓ | n/a [22] | ✗ [21] |
-| Q4 | /plan | `RegisterPlan` delivery | ✓ | ✓ [23] | ✗ |
+| Q4 | /plan | `Spec.PlanDelivery` | ✓ | ✓ [23] | ✗ |
 | Q5 | Plan approval gate | `PlanResponder`: plan approval prompt; typed message = revision feedback | ✓ | ✗ | ✗ |
 
 ### 5. Subagents and background work
@@ -242,7 +319,7 @@ grepped for each ✗.
 | U5 | Resume cost baseline | Cumulative counters on `--resume` | ✓ | n/a [33] | n/a [33] |
 | U6 | Utilisation notice | Rate-limit utilisation notice to the human's chat | ✓ | ✗ | ✗ |
 | U7 | Limit gate | Usage/session limit engages `Agent.EngageRateLimit` | ✓ | ✓ | ✗ [34] |
-| U8 | /mana | `RegisterUsage` subscription-usage query | ✓ | ✗ | ✗ |
+| U8 | /mana | `Spec.UsageQuery` subscription-usage query | ✓ | ✗ | ✗ |
 | U9 | Turn usage | Token usage on `TurnResult` | ✓ | ✓ | ✓ |
 
 ### 8. Models and effort
@@ -326,7 +403,7 @@ grepped for each ✗.
    and subagent activity, so long tool calls keep the indicator alive.
 4. Nothing in opencode or codex adopts a run it did not start. Whether either backend can start
    a root-session run on its own (as CC does after a background task finishes) is unverified.
-5. Capability gating: `dg/backend.go:CapabilitiesForBackend` returns
+5. Capability gating: `dg/backend.go:CapabilitiesForBackend` (read from each Spec) returns
    `PostToolNudge=false, PreAnswerNudge=false` for opencode and codex. Both the turn
    (`ag/turn_delegated.go`, which arms the nudge funcs) and the nudge scheduler
    (`gw/agents_setup.go:nudgeCapabilities`, which skips unsupported rules with a warning) read
@@ -503,7 +580,7 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - Q1: `cc/userquestion.go:handleUserQuestion`, `RespondToQuestion` | `oc/permissions.go:handleQuestionPermission`, `RespondToQuestion` | ✗ grep `RespondToQuestion|userInput|request_user_input`
 - Q2: `cc/userquestion.go:CancelQuestion`, `HasPendingQuestion` | `oc/permissions.go:CancelQuestion`, `HasPendingQuestion` | ✗ (needs QuestionResponder)
 - Q3: `cc/elicitation.go:OnElicitationRequest`, `RespondToElicitation`, `OnElicitationComplete` | n/a | ✗ grep `elicit`
-- Q4: `cc/plan.go:planDelivery` | `oc/plan.go:planDelivery` | ✗ grep `RegisterPlan`
+- Q4: `cc/plan.go:planDelivery` | `oc/plan.go:planDelivery` | ✗ `codex/spec.go` declares `plan_mode` No
 - Q5: `cc/permissions.go:HasPendingPlanPermission`, `CancelPlanWithFeedback`; `ag/inbox.go` plan-cancel-by-message | ✗ grep `HasPendingPlanPermission` | ✗ same
 
 **Subagents**
@@ -539,7 +616,7 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - U5: `cc/cost.go:resumeBaseline` | n/a | n/a
 - U6: `cc/handlers.go:OnRateLimit`, `cc/ratelimit.go:FormatRateLimitNotice`, `gw/agents_delegated.go` `sb.SetOnRateLimited` | ✗ (its `SetOnRateLimited` is the gate, U7) | ✗ grep `rate.?limit`
 - U7: `cc/handlers.go:OnAssistant` (`syntheticSessionLimitText`) → `SetOnSessionLimit` | `oc/ratelimit.go:handleRateLimitRetry` → `SetOnRateLimited` | ✗ grep `limit`
-- U8: `cc/usage_oneshot.go:QueryUsage`, `cc/ccstream.go:init` RegisterUsage | ✗ grep `RegisterUsage` | ✗ same
+- U8: `cc/usage_oneshot.go:QueryUsage`, `cc/spec.go` `UsageQuery` | ✗ `oc/spec.go` declares `usage_query` No | ✗ same
 - U9: `cc/handlers.go:OnResult` | `oc/handlers.go:onMessageUpdated` | `cx/handlers.go:onTokenUsage`
 
 **Models**
@@ -610,13 +687,23 @@ Everything a backend must provide to run turns at all:
 5. **Identity:** `SessionID`, `SetOnSessionReady` (without it there is no resume),
    `SessionFilePath` (may be `""`), `StatusDetail` (may be `""`).
 
+### Declare a Spec first
+
+A backend exists only through `delegator.Register(Spec)`, called from its package's `spec.go`
+`init()`, and its package must be blank-imported by `internal/delegator/all`. The Spec declares
+every capability (`Yes()`, `No(reason)` or `NotApplicable(reason)`; there is no default) plus the
+static data that used to live in name switches. `go test ./internal/delegator/all/` (run it with
+`make test-one`) fails until the Spec is complete and true: a declaration that disagrees with the
+backend's method set, a behavioural Yes without a proving test, or a stale capability table in
+this file. See [Declared capabilities](#declared-capabilities) and
+`internal/delegator/capabilities.go`.
+
 ### Optional capabilities, in suggested order
 
 - **Effectively required:**
-  - `LedgerBooker`: without it no cost is booked and `LogUsage` logs the gap.
-  - `BackendCapabilities`: if absent, the agent treats the backend as supporting no mid-turn
-    nudges. Add the name to `CapabilitiesForBackend` (the nudge scheduler and startup checks
-    read it by name) and implement `Capabilities()` by delegating to it.
+  - `LedgerBooker` (and `Spec.LedgerKey`): without it no cost is booked and `LogUsage` logs the gap.
+  - `BackendCapabilities`: implement `Capabilities()` by delegating to `CapabilitiesForBackend`,
+    which now reads the Spec's `post_tool_nudge`, `pre_answer_nudge` and `streaming`.
   - `ActivityChecker`: idle reaping and stream-silence timeouts.
   - `CompactionWaiter` + `CompactionStartWaiter`: without them compaction falls back to
     `WaitForTurn`.
@@ -645,7 +732,6 @@ Everything a backend must provide to run turns at all:
 - `gw/environment.go` (command-approval block is `claude-code` only).
 - `gw/notifications.go` (readiness probe skip).
 - `internal/config/resolved.go:isAutoNamingBackend` (prefix `codex`).
-- `dg/backend.go:CapabilitiesForBackend`, `HumanReadableBackendName`.
 - `internal/modelcaps/modelcaps.go:BackendKey`.
 - `internal/command/settings.go` (`/thinking` BackendGate).
 - `cmd/foci/cmd_pretool.go` (claude-code only).

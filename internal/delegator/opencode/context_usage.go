@@ -39,7 +39,7 @@ type providerInfo struct {
 // injection (HTTP/SSE-based, no stdin pipe). Post-tool and pre-answer
 // nudges are silently unsupported.
 func (b *Backend) Capabilities() delegator.Capabilities {
-	return delegator.CapabilitiesForBackend("opencode")
+	return delegator.CapabilitiesForBackend(backendName)
 }
 
 // StatusDetail returns empty — opencode has no permission-mode concept.

@@ -44,5 +44,5 @@ func (b *Backend) GetContextWindow(ctx context.Context) (*delegator.ContextWindo
 // OpenAI's prompt caching is shorter and less documented than Anthropic's;
 // 5 minutes is a conservative estimate.
 func (b *Backend) CacheTTL() time.Duration {
-	return 5 * time.Minute
+	return cacheTTL
 }

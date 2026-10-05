@@ -375,11 +375,7 @@ func (b *Backend) Interrupt(ctx context.Context) error {
 
 // Capabilities advertises what the Codex backend supports.
 func (b *Backend) Capabilities() delegator.Capabilities {
-	return delegator.Capabilities{
-		Streaming:      true,
-		PostToolNudge:  false,
-		PreAnswerNudge: false,
-	}
+	return delegator.CapabilitiesForBackend(backendName)
 }
 
 // --- Protocol handshake ---

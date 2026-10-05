@@ -8,6 +8,7 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/delegator"
+	_ "foci/internal/delegator/all" // backend display names come from the registered Specs
 	"foci/internal/tools"
 )
 

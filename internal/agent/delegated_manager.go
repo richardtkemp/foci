@@ -1241,7 +1241,7 @@ func (m *DelegatedManager) BackendCanBranch() bool {
 		m.logger().Warnf("configured backend is not a registered delegated backend — treating as non-branchable (check the agent's `backend =` value)")
 		return false
 	}
-	_, ok := be.(delegator.BackendBrancher)
+	_, ok := delegator.As[delegator.BackendBrancher](be)
 	return ok
 }
 

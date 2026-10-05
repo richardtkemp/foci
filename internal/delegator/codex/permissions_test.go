@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"foci/internal/delegator"
+	"foci/internal/delegator/autoapprove"
 )
 
 func newPermTestBackend(buf *bytes.Buffer) *Backend {
@@ -61,6 +62,38 @@ func TestOnCommandApproval_FiresPermPromptFn(t *testing.T) {
 	}
 	if buf.Len() != 0 {
 		t.Errorf("no wire output expected while prompting, got %q", buf.String())
+	}
+}
+
+// TestOnCommandApproval_AutoApproveRuleAccepts proves codex honours foci's
+// auto-approve allowlist (StartOptions.AutoApproveRules): a matching command is
+// accepted on the wire with no user prompt, and a non-matching one still
+// prompts. It is the proof of codex's CapCommandApprovalAllowlist (#2154).
+func TestOnCommandApproval_AutoApproveRuleAccepts(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := newPermTestBackend(&buf)
+	b.autoApproveRules = autoapprove.Compile([]string{"Bash:ls"})
+	prompted := ""
+	b.permPromptFn = func(itemID, _, _, _ string, _ []delegator.PromptChoice) { prompted = itemID }
+
+	b.onCommandApproval([]byte(`{"itemId":"item_ls","command":"ls -la","cwd":"/tmp"}`), 7)
+
+	if prompted != "" {
+		t.Fatalf("user prompted (%q) for a command the allowlist matches", prompted)
+	}
+	if id, decision := parseApprovalResponse(t, buf.String()); id != 7 || decision != "accept" {
+		t.Errorf("response = (%d, %q), want (7, accept)", id, decision)
+	}
+
+	buf.Reset()
+	b.onCommandApproval([]byte(`{"itemId":"item_rm","command":"rm -rf /tmp/x","cwd":"/tmp"}`), 8)
+	if prompted != "item_rm" {
+		t.Errorf("non-matching command: prompted = %q, want item_rm", prompted)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("non-matching command answered on the wire: %q", buf.String())
 	}
 }
 

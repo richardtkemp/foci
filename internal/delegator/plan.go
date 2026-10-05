@@ -32,26 +32,13 @@ type PlanDeps struct {
 
 // PlanDelivery turns a "/plan <args>" request into a delivered action against a
 // specific backend and returns the user-facing confirmation string. Each
-// backend that supports plan mode registers one via RegisterPlan; the absence
-// of a registration is what makes the /plan command not appear for that backend.
+// backend that supports plan mode sets Spec.PlanDelivery (and declares
+// CapPlanMode); without one the /plan command does not appear for it.
 type PlanDelivery func(ctx context.Context, deps PlanDeps, args string) (string, error)
 
-var planDeliveries = make(map[string]PlanDelivery)
-
-// RegisterPlan associates a plan delivery with a backend name. Typically called
-// from a backend package's init(), alongside Register. Backends that never call
-// this simply don't get a /plan command.
-func RegisterPlan(name string, d PlanDelivery) {
-	registryMu.Lock()
-	defer registryMu.Unlock()
-	planDeliveries[name] = d
-}
-
-// PlanDeliveryFor returns the plan delivery registered for a backend name, and
-// whether one exists. The command layer registers /plan iff ok is true.
+// PlanDeliveryFor returns the plan delivery of a backend (Spec.PlanDelivery),
+// and whether it has one. The command layer registers /plan iff ok is true.
 func PlanDeliveryFor(name string) (PlanDelivery, bool) {
-	registryMu.Lock()
-	defer registryMu.Unlock()
-	d, ok := planDeliveries[name]
-	return d, ok
+	s, _ := SpecFor(name)
+	return s.PlanDelivery, s.PlanDelivery != nil
 }

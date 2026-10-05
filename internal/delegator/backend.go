@@ -39,10 +39,13 @@ var ErrTurnInFlight = errors.New("delegator: turn in flight")
 // can detect it via errors.Is without importing backend-specific packages.
 var ErrBackendClosed = errors.New("delegator: backend closed")
 
-// Backend is the interface that all coding agent backends implement.
+// Delegator is the interface that all coding agent backends implement.
 // A Backend owns the entire turn: inference, tool execution, and context
 // management. Foci sends composed prompts (with metadata, nudges, reminders)
 // via ImmediateInject and receives streaming events back.
+//
+// Optional abilities are NOT more methods here: each is a Capability declared
+// in the backend's Spec (internal/delegator/capabilities.go).
 type Delegator interface {
 	// Start launches the coding agent subprocess.
 	// Called once during agent setup. The backend should be ready to
@@ -294,6 +297,39 @@ type AutonomousRunAwaiter interface {
 	AwaitingAutonomousRun() bool
 }
 
+// TurnAdopter is optionally implemented by backends that can bind a fresh
+// turn's TurnEvents to a run already in flight (an autonomous run the agent
+// layer finds running when it dispatches). Reports whether it adopted one.
+type TurnAdopter interface {
+	AdoptRunningTurn(turn *TurnEvents) bool
+}
+
+// SubagentStopper is optionally implemented by backends that can stop their
+// running subagents. Returns how many it stopped.
+type SubagentStopper interface {
+	StopSubagents(ctx context.Context) (int, error)
+}
+
+// CommandStopper is optionally implemented by backends that can stop their
+// background shell commands. Returns how many it stopped.
+type CommandStopper interface {
+	StopCommands(ctx context.Context) (int, error)
+}
+
+// SubagentReporter is optionally implemented by backends that report their
+// subagents' status line and the set currently running.
+type SubagentReporter interface {
+	SetOnSubagentStatus(fn func(detail string))
+	SetOnSubagentRunning(fn func([]RunningSubagent))
+}
+
+// PermissionRuleResponder is optionally implemented by backends that can
+// answer a permission prompt with a persistent "allow always" rule for a
+// command prefix.
+type PermissionRuleResponder interface {
+	RespondToPermissionWithRule(requestID string, prefix string) error
+}
+
 // PromptChoice represents a choice in a permission prompt.
 type PromptChoice struct {
 	Label string // button text (e.g. "Yes", "No")
@@ -484,45 +520,35 @@ type Capabilities struct {
 	Streaming bool
 }
 
-// CapabilitiesForBackend returns the static capabilities for a delegated
-// backend type, keyed by the config [agents].backend name. This is the
-// single source of truth — each backend's Capabilities() method delegates
-// here — so startup checks can query capabilities before any backend
-// instance exists.
+// CapabilitiesForBackend returns the nudge and streaming capabilities of a
+// delegated backend type, keyed by the config [agents].backend name, as
+// declared in its Spec (capabilities.go). Each backend's Capabilities() method
+// delegates here, so startup checks can query them before any backend
+// instance exists. An unregistered name supports nothing.
 func CapabilitiesForBackend(backendType string) Capabilities {
-	switch backendType {
-	case "claude-code":
-		return Capabilities{PostToolNudge: true, PreAnswerNudge: true, Streaming: true}
-	case "opencode":
-		return Capabilities{PostToolNudge: false, PreAnswerNudge: false, Streaming: true}
-	case "codex":
-		return Capabilities{PostToolNudge: false, PreAnswerNudge: false, Streaming: true}
-	default:
-		return Capabilities{}
+	s, _ := SpecFor(backendType)
+	return Capabilities{
+		PostToolNudge:  s.Supports(CapPostToolNudge),
+		PreAnswerNudge: s.Supports(CapPreAnswerNudge),
+		Streaming:      s.Supports(CapStreaming),
 	}
 }
 
 // HumanReadableBackendName returns the display name for a delegated backend
 // type (the config `[agents].backend` value), e.g. "claude-code" ->
-// "Claude Code". Used anywhere a command's help text or user-facing message
-// needs to name the backend without hardcoding a specific one — the set of
-// delegated backends isn't fixed (see codex, opencode). Unrecognised/future
-// backend types fall back to the raw string so they still render something
-// sensible; an empty backendType (API-mode agents have no delegated backend)
-// falls back to a generic label.
+// "Claude Code", from its Spec.DisplayName. Used anywhere a command's help
+// text or user-facing message needs to name the backend without hardcoding a
+// specific one. Unregistered backend types fall back to the raw string so
+// they still render something sensible; an empty backendType (API-mode agents
+// have no delegated backend) falls back to a generic label.
 func HumanReadableBackendName(backendType string) string {
-	switch backendType {
-	case "claude-code":
-		return "Claude Code"
-	case "codex":
-		return "Codex CLI"
-	case "opencode":
-		return "OpenCode"
-	case "":
+	if backendType == "" {
 		return "the delegated backend"
-	default:
-		return backendType
 	}
+	if s, ok := SpecFor(backendType); ok {
+		return s.DisplayName
+	}
+	return backendType
 }
 
 // BackendBrancher is optionally implemented by backends that can fork their

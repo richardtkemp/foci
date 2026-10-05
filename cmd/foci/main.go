@@ -14,9 +14,7 @@ import (
 	"strings"
 	"time"
 
-	_ "foci/internal/delegator/ccstream" // register claude-code backend
-	_ "foci/internal/delegator/codex"    // register codex backend (codex exec --json)
-	_ "foci/internal/delegator/opencode" // register opencode backend (HTTP/SSE; WIP, see OPENCODE_DELEGATOR_PLAN.md)
+	_ "foci/internal/delegator/all" // register every delegated backend
 )
 
 // Build info — set via ldflags: go build -ldflags "-X main.version=... -X main.gitCommit=... -X main.buildTime=..."

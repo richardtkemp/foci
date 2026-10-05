@@ -54,22 +54,9 @@ type UsageBehaviorItem struct {
 // UsageQuery fetches the plan usage for the account a backend runs under.
 type UsageQuery func(ctx context.Context) (*UsageInfo, error)
 
-var usageQueries = make(map[string]UsageQuery)
-
-// RegisterUsage associates a usage query with a backend name. Typically called
-// from a backend package's init(), alongside Register. Backends that never call
-// this simply don't get a /mana command.
-func RegisterUsage(name string, q UsageQuery) {
-	registryMu.Lock()
-	defer registryMu.Unlock()
-	usageQueries[name] = q
-}
-
-// UsageQueryFor returns the usage query registered for a backend name, and
-// whether one exists. The command layer registers /mana iff ok is true.
+// UsageQueryFor returns the usage query of a backend (Spec.UsageQuery), and
+// whether it has one. The command layer registers /mana iff ok is true.
 func UsageQueryFor(name string) (UsageQuery, bool) {
-	registryMu.Lock()
-	defer registryMu.Unlock()
-	q, ok := usageQueries[name]
-	return q, ok
+	s, _ := SpecFor(name)
+	return s.UsageQuery, s.UsageQuery != nil
 }

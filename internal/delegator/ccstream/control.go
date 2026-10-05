@@ -214,7 +214,7 @@ func (b *Backend) sendSetModel(ctx context.Context, model string) error {
 
 // Capabilities advertises ccstream's full mid-turn nudge support.
 func (b *Backend) Capabilities() delegator.Capabilities {
-	return delegator.CapabilitiesForBackend("claude-code")
+	return delegator.CapabilitiesForBackend(backendName)
 }
 
 // ccStreamCacheTTL is Claude Code's prompt-cache time-to-live. CC marks its

@@ -179,12 +179,6 @@ func CloseAllServers() int {
 	return len(servers)
 }
 
-// init registers the constructor with the delegator registry.
-func init() {
-	delegator.Register("opencode", newFromConfig, true)
-	delegator.RegisterPlan("opencode", planDelivery)
-}
-
 // newFromConfig is the constructor delegator.New("opencode", cfg) calls.
 // Returns a Backend with initialised channels/maps.
 func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {

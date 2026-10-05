@@ -25,10 +25,6 @@ import (
 	"foci/internal/modelcaps"
 )
 
-func init() {
-	delegator.Register("codex", newFromConfig, true)
-}
-
 func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {
 	b := &Backend{}
 	b.cfg = cfg
