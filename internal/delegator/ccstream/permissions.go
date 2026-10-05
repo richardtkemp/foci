@@ -17,6 +17,7 @@ type pendingPermission struct {
 	requestID   string
 	toolName    string
 	toolUseID   string
+	agentID     string // CC's agent_id: set when a subagent made the call
 	description string
 	summary     string
 	createdAt   time.Time
@@ -94,6 +95,7 @@ func (b *Backend) handleToolRequest(msg *PermissionRequest) {
 		requestID:   msg.RequestID,
 		toolName:    msg.Request.ToolName,
 		toolUseID:   msg.Request.ToolUseID,
+		agentID:     msg.Request.agentID(),
 		description: msg.Request.Description,
 		summary:     summary,
 		createdAt:   time.Now(),
@@ -110,6 +112,10 @@ func (b *Backend) handleToolRequest(msg *PermissionRequest) {
 	}
 }
 
+// unattendedDenyMessage is what the model sees as an unattended deny's tool
+// result, so it says how to proceed.
+const unattendedDenyMessage = "unattended session: no permission prompts. Rewrite the command so it needs no approval (for rm, name the target path literally)."
+
 // denyUnattended refuses a permission request at once. The message is what
 // the model sees as the tool result, so it says how to proceed.
 func (b *Backend) denyUnattended(msg *PermissionRequest) {
@@ -117,14 +123,33 @@ func (b *Backend) denyUnattended(msg *PermissionRequest) {
 		msg.Request.ToolName, msg.Request.Summary(), msg.Request.DecisionReason, msg.RequestID)
 	resp := &PermissionDeny{
 		Behavior:               "deny",
-		Message:                "unattended session: no permission prompts. Rewrite the command so it needs no approval (for rm, name the target path literally).",
+		Message:                unattendedDenyMessage,
 		Interrupt:              false,
 		ToolUseID:              msg.Request.ToolUseID,
 		DecisionClassification: "user_reject",
 	}
 	if err := b.writer.SendControlResponse(msg.RequestID, resp); err != nil {
 		b.logger().Warnf("unattended deny send failed: req_id=%s: %v", msg.RequestID, err)
+		return
 	}
+	b.endFociDeniedCall(msg.Request.ToolUseID, msg.Request.ToolName, msg.Request.agentID(), unattendedDenyMessage)
+}
+
+// sandboxNetworkTool is the tool name of CC's sandbox network ask. It comes
+// as a can_use_tool with a freshly made tool_use_id: no tool call stands
+// behind it, so a deny has nothing to end.
+const sandboxNetworkTool = "SandboxNetworkAccess"
+
+// endFociDeniedCall ends a main-thread tool call that foci refused in answer
+// to can_use_tool (#2187). CC fires no hook for such a deny (2.1.289 bundle),
+// so this is the call's only end signal; see endDeniedCall. A subagent's call
+// was never opened on the parent turn's tracker, so it is left alone.
+func (b *Backend) endFociDeniedCall(toolUseID, toolName, agentID, reason string) {
+	if agentID != "" || toolUseID == "" || toolName == sandboxNetworkTool {
+		return
+	}
+	b.logger().Infof("foci_deny_end tool=%s tuid=%s", toolName, toolUseID)
+	b.endDeniedCall(toolUseID, toolName, reason)
 }
 
 // RespondToPermission implements delegator.PermissionResponder: the user's
@@ -169,6 +194,9 @@ func (b *Backend) respondAllowDeny(requestID string, allow bool, message string)
 	if err != nil {
 		return err
 	}
+	if !allow {
+		b.endFociDeniedCall(pp.toolUseID, pp.toolName, pp.agentID, message)
+	}
 
 	b.outstanding.Resolve(requestID)
 	return nil
@@ -212,6 +240,7 @@ func (b *Backend) CancelPlanWithFeedback(requestID, feedback string) error {
 	if err := b.writer.SendControlResponse(requestID, resp); err != nil {
 		return err
 	}
+	b.endFociDeniedCall(pp.toolUseID, pp.toolName, pp.agentID, feedback)
 	// Use Cancel, not Resolve: only Cancel notifies the prompt's cancel listener,
 	// which performs the button edit ("❌ Plan cancelled by follow-up message").
 	b.outstanding.Cancel(requestID, "plan revised by follow-up message")
@@ -494,6 +523,14 @@ func friendlyReason(reason string) string {
 		return "Command requires manual review"
 	}
 	return reason
+}
+
+// agentID is CC's agent_id, or "" for a main-thread call.
+func (req *PermissionRequestPayload) agentID() string {
+	if req.AgentID == nil {
+		return ""
+	}
+	return *req.AgentID
 }
 
 // Summary creates a short summary for post-approval display.

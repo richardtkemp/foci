@@ -389,7 +389,7 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 		b.logger().Infof("pretool_rule_deny rule=%s tool=%s tuid=%s agent_id=%s",
 			parsed.DeniedRule, parsed.ToolName, parsed.ToolUseID, parsed.AgentID)
 		if parsed.AgentID == "" {
-			b.endDeniedCall(parsed, parsed.HookSpecificOutput.PermissionDecisionReason)
+			b.endDeniedCall(parsed.ToolUseID, parsed.ToolName, parsed.HookSpecificOutput.PermissionDecisionReason)
 		}
 		return
 	}
@@ -400,7 +400,7 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 		b.logger().Infof("classifier_deny tool=%s tuid=%s agent_id=%s reason=%q",
 			parsed.ToolName, parsed.ToolUseID, parsed.AgentID, parsed.Error)
 		if parsed.AgentID == "" {
-			b.endDeniedCall(parsed, parsed.Error)
+			b.endDeniedCall(parsed.ToolUseID, parsed.ToolName, parsed.Error)
 		}
 		return
 	}
@@ -581,7 +581,8 @@ func (b *Backend) logStopVerdict(stdout string) {
 }
 
 // endDeniedCall closes out a main-thread tool call that was refused: by a
-// pretool rule, or by CC's auto-mode classifier (#2184). CC fires NO
+// pretool rule, by CC's auto-mode classifier (#2184), or by foci's own answer
+// to can_use_tool (#2187, endFociDeniedCall). CC fires NO
 // PostToolUse or PostToolUseFailure for a denied call (verified live for a
 // PreToolUse deny, CC 2.1.280; the classifier deny writes its tool_result
 // directly, CC 2.1.289 bundle), so this is the call's only end signal: without
@@ -589,21 +590,21 @@ func (b *Backend) logStopVerdict(stdout string) {
 // or background Bash stays counted as pending work until the tracker's prune.
 //
 // A pretool deny preempts the Agent's PreToolUse start, so it has no group to
-// end. A classifier deny comes after it, so its group was opened and is ended
-// here: no task ever starts, so no task_notification will.
-func (b *Backend) endDeniedCall(parsed hookScriptOutput, reason string) {
-	b.agents.Remove(parsed.ToolUseID)
-	if parsed.ToolName == "Agent" {
-		b.subagentTails().clearPendingForeground(parsed.ToolUseID)
+// end. A classifier or can_use_tool deny comes after it, so its group was
+// opened and is ended here: no task ever starts, so no task_notification will.
+func (b *Backend) endDeniedCall(toolUseID, toolName, reason string) {
+	b.agents.Remove(toolUseID)
+	if toolName == "Agent" {
+		b.subagentTails().clearPendingForeground(toolUseID)
 	}
 	se := b.sessionEvents.Load()
 	if se != nil && se.OnToolEnd != nil {
-		se.OnToolEnd(parsed.ToolUseID, parsed.ToolName, reason, true)
+		se.OnToolEnd(toolUseID, toolName, reason, true)
 	}
-	if parsed.ToolName == "Agent" && b.subagentStartEmitted(parsed.ToolUseID) {
-		b.logger().Infof("subagent_end signal=permission_denied group=%s run=1", parsed.ToolUseID)
+	if toolName == "Agent" && b.subagentStartEmitted(toolUseID) {
+		b.logger().Infof("subagent_end signal=permission_denied group=%s run=1", toolUseID)
 		if se != nil && se.OnSubagentEnd != nil {
-			se.OnSubagentEnd(parsed.ToolUseID, 1)
+			se.OnSubagentEnd(toolUseID, 1)
 		}
 	}
 }

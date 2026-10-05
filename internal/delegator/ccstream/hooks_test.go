@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"foci/internal/delegator"
 	"foci/internal/delegator/pretool"
 	"foci/internal/delegator/stoprule"
 	"foci/internal/log"
@@ -398,6 +399,95 @@ func TestHandleHookResponse_ClassifierDenyEndsCall(t *testing.T) {
 		t.Error("denied background Bash still tracked as pending work")
 	}
 	if !b.agents.Remove("toolu_sub") {
+		t.Error("a subagent's denied call released a parent-turn tracker entry")
+	}
+}
+
+// TestFociDenyEndsCall proves a can_use_tool that foci itself denies ends the
+// main-thread call (#2187): CC fires no hook for that deny, so without this a
+// denied Agent stays a running subagent and a denied background Bash stays
+// pending work until the tracker's prune. Covered: the user's Deny, the
+// unattended deny, and a plan cancelled by feedback. A subagent's request
+// (agent_id set) and CC's sandbox network ask (no real tool call) end nothing.
+func TestFociDenyEndsCall(t *testing.T) {
+	type toolEnd struct {
+		id, name, output string
+		isError          bool
+	}
+	type end struct {
+		group string
+		run   int
+	}
+	var buf bytes.Buffer
+	newBackend := func(skip bool) *Backend {
+		return &Backend{
+			hookInstallID:   "install-a",
+			writer:          NewWriter(nopWriteCloser{&buf}),
+			pendingPerms:    make(map[string]*pendingPermission),
+			outstanding:     delegator.NewOutstandingRegistry(),
+			skipPermissions: skip,
+			permPromptFn:    func(string, string, string, string, []delegator.PromptChoice) {},
+		}
+	}
+	var toolEnds []toolEnd
+	var ends []end
+	handler := func() *testHandler {
+		return &testHandler{
+			OnToolEnd: func(id, name, output string, isError bool) {
+				toolEnds = append(toolEnds, toolEnd{id, name, output, isError})
+			},
+			OnSubagentStart: func(string, string, string, int) {},
+			OnSubagentEnd:   func(g string, run int) { ends = append(ends, end{g, run}) },
+		}
+	}
+	ask := func(b *Backend, reqID, toolUseID, tool string, agentID *string) {
+		b.handleToolRequest(&PermissionRequest{RequestID: reqID, Request: PermissionRequestPayload{
+			ToolName: tool, ToolUseID: toolUseID, AgentID: agentID, Input: json.RawMessage(`{}`),
+		}})
+	}
+	sub := "task-1"
+
+	attended := newBackend(false)
+	applyHandler(attended, handler())
+	attended.agents.Add("toolu_agent", "probe")
+	fireAgentPreToolUse(attended, "toolu_agent", "install-a", `{"description":"probe","prompt":"p"}`)
+	attended.agents.Add("toolu_sub", "background command")
+	ask(attended, "req-agent", "toolu_agent", "Agent", nil)
+	ask(attended, "req-sub", "toolu_sub", "Bash", &sub)
+	ask(attended, "req-net", "net-uuid", "SandboxNetworkAccess", nil)
+	ask(attended, "req-plan", "toolu_plan", "ExitPlanMode", nil)
+	for _, id := range []string{"req-agent", "req-sub", "req-net"} {
+		if err := attended.RespondToPermission(id, delegator.PermissionDecision{Message: "no"}); err != nil {
+			t.Fatalf("RespondToPermission(%s): %v", id, err)
+		}
+	}
+	if err := attended.CancelPlanWithFeedback("req-plan", "revise it"); err != nil {
+		t.Fatalf("CancelPlanWithFeedback: %v", err)
+	}
+
+	unattended := newBackend(true)
+	applyHandler(unattended, handler())
+	unattended.agents.Add("toolu_bash", "background command")
+	ask(unattended, "req-bash", "toolu_bash", "Bash", nil)
+
+	wantTools := []toolEnd{
+		{"toolu_agent", "Agent", "no", true},
+		{"toolu_plan", "ExitPlanMode", "revise it", true},
+		{"toolu_bash", "Bash", unattendedDenyMessage, true},
+	}
+	if !reflect.DeepEqual(toolEnds, wantTools) {
+		t.Errorf("OnToolEnd = %+v, want %+v", toolEnds, wantTools)
+	}
+	if want := []end{{"toolu_agent", 1}}; !reflect.DeepEqual(ends, want) {
+		t.Errorf("OnSubagentEnd = %v, want %v", ends, want)
+	}
+	if attended.agents.Remove("toolu_agent") {
+		t.Error("denied Agent still tracked as a running subagent")
+	}
+	if unattended.agents.Remove("toolu_bash") {
+		t.Error("denied background Bash still tracked as pending work")
+	}
+	if !attended.agents.Remove("toolu_sub") {
 		t.Error("a subagent's denied call released a parent-turn tracker entry")
 	}
 }
