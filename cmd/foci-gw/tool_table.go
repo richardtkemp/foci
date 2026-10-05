@@ -391,6 +391,14 @@ var toolTable = []toolEntry{
 			SetNoCompact:        func(sk string, v bool) { d.agLazy().SetSessionNoCompact(sk, v) },
 			FileMode:            fileMode,
 			Store:               d.p.store,
+			Tracker:             tools.Spawns,
+			Observer:            app.SpawnObserver{},
+			ModelFor: func(sk string) string {
+				if ag := d.agLazy(); ag != nil {
+					return ag.SessionModel(sk)
+				}
+				return ""
+			},
 		}
 		return tools.NewSpawnTool(spawnDeps, func() tools.SpawnAgent { return d.agLazy() })
 	}},

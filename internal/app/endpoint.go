@@ -9,6 +9,7 @@ import (
 	"foci/internal/delegator"
 	"foci/internal/fap"
 	"foci/internal/platform"
+	"foci/internal/tools"
 )
 
 // activeHub is the hub of the configured app provider, set at Init. The HTTP
@@ -162,6 +163,55 @@ func SetSubagents(sessionKey string, running []delegator.RunningSubagent) {
 		})
 	}
 	b.setSubagents(delegator.FormatSubagentDetail(descs), list)
+}
+
+// SpawnObserver shows each background foci spawn in the app exactly as a Claude
+// Code subagent of the session that spawned it (#2139): the same subagent
+// start/text/end frames, and an "agent"-kind entry in the activity frame's
+// running list, so the client needs no spawn-specific code. A session no app conversation is
+// bound to is skipped; unlike a reply, a spawn's progress has nowhere better to
+// go.
+type SpawnObserver struct{}
+
+var _ tools.SpawnObserver = SpawnObserver{}
+
+func spawnBinding(sessionKey string) *convBinding {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return nil
+	}
+	return h.bindingForSession(sessionKey)
+}
+
+// SpawnStarted opens the spawn's chit with its prompt and lists it as running.
+func (SpawnObserver) SpawnStarted(parentSession string, s tools.RunningSpawn, prompt string) {
+	b := spawnBinding(parentSession)
+	if b == nil {
+		return
+	}
+	b.send(fap.SubagentStart{ConversationID: b.convID, GroupKey: s.ID, Label: s.Description, RunIndex: 1, Prompt: prompt})
+	var started int64
+	if !s.Started.IsZero() {
+		started = s.Started.UnixMilli()
+	}
+	b.addSpawn(fap.RunningSubagent{ID: s.ID, Description: s.Description, Kind: "agent", Model: s.Model, SubagentType: "spawn", StartedMs: started})
+}
+
+// SpawnText adds one block of the spawn's text to its chit.
+func (SpawnObserver) SpawnText(parentSession, id, text string) {
+	if b := spawnBinding(parentSession); b != nil {
+		b.send(fap.SubagentText{ConversationID: b.convID, GroupKey: id, Text: text, RunIndex: 1})
+	}
+}
+
+// SpawnEnded completes the spawn's chit and drops it from the running list.
+func (SpawnObserver) SpawnEnded(parentSession, id string) {
+	if b := spawnBinding(parentSession); b != nil {
+		b.send(fap.SubagentEnd{ConversationID: b.convID, GroupKey: id, RunIndex: 1})
+		b.removeSpawn(id)
+	}
 }
 
 // SetCacheExpiry routes a prompt-cache expiry (unix ms; 0 = cold) to the

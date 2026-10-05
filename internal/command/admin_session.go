@@ -87,6 +87,10 @@ func stopTurn(ctx context.Context, cc CommandContext, cancelQuestion bool) (Resp
 			}
 		}
 
+		// A turn stop takes the session's background spawns with it, as
+		// Claude Code's interrupt takes its subagents: the app shows spawns
+		// as subagents and labels this "Stop turn and subagents" (#2139).
+		tools.Spawns.Stop(sk)
 		if err := cc.Agent.DelegatedManager.StopSession(ctx, sk); err != nil {
 			return Response{}, fmt.Errorf("stop delegated: %w", err)
 		}
@@ -100,6 +104,7 @@ func stopTurn(ctx context.Context, cc CommandContext, cancelQuestion bool) (Resp
 	// Traditional mode (API backend): per-session cancel via the
 	// inbox.
 	if sk := tools.SessionKeyFromContext(ctx); sk != "" && cc.Agent != nil {
+		tools.Spawns.Stop(sk) // spawns end with the turn, as above (#2139)
 		cc.Agent.CancelSession(sk)
 	} else if cc.StopFunc != nil {
 		// Fallback for callers without a session key in context.
@@ -113,32 +118,42 @@ type taskKind struct {
 	singular, plural string
 	unsupported      error
 	stop             func(m *agent.DelegatedManager, ctx context.Context, sessionKey string) (int, error)
+	// spawns: this kind also stops the session's background foci spawns,
+	// which the app lists as subagents (#2139).
+	spawns bool
 }
 
 var (
-	subagentTasks = taskKind{"subagent", "subagents", agent.ErrStopSubagentsUnsupported, (*agent.DelegatedManager).StopSubagents}
-	commandTasks  = taskKind{"command", "commands", agent.ErrStopCommandsUnsupported, (*agent.DelegatedManager).StopCommands}
+	subagentTasks = taskKind{"subagent", "subagents", agent.ErrStopSubagentsUnsupported, (*agent.DelegatedManager).StopSubagents, true}
+	commandTasks  = taskKind{"command", "commands", agent.ErrStopCommandsUnsupported, (*agent.DelegatedManager).StopCommands, false}
 )
 
 // stopTasks stops the session's running tasks of one kind without touching
-// its turn, returning how many stop requests were sent. Only a delegated
-// backend runs them.
+// its turn, returning how many stop requests were sent. A delegated backend
+// runs subagents and commands; any agent with the spawn tool runs spawns.
 func stopTasks(ctx context.Context, cc CommandContext, k taskKind) (int, error) {
-	if cc.Agent == nil || cc.Agent.DelegatedManager == nil {
-		return 0, nil
-	}
 	sk := tools.SessionKeyFromContext(ctx)
+	spawns := 0
+	if k.spawns && sk != "" {
+		spawns = tools.Spawns.Stop(sk)
+	}
+	if cc.Agent == nil || cc.Agent.DelegatedManager == nil {
+		return spawns, nil
+	}
 	if sk == "" {
 		return 0, fmt.Errorf("no active session")
 	}
 	n, err := k.stop(cc.Agent.DelegatedManager, ctx, sk)
 	if errors.Is(err, k.unsupported) {
+		if spawns > 0 {
+			return spawns, nil
+		}
 		return 0, err
 	}
 	if err != nil && n == 0 {
-		return 0, fmt.Errorf("stop %s: %w", k.plural, err)
+		return spawns, fmt.Errorf("stop %s: %w", k.plural, err)
 	}
-	return n, nil
+	return n + spawns, nil
 }
 
 // stoppingText is the reply for n stop requests sent.

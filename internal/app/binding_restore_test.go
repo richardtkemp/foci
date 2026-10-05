@@ -336,10 +336,12 @@ func TestConvBindingFieldCensus(t *testing.T) {
 	// correct from then on. Rehydrating it would be actively WRONG — the client
 	// reconnecting to a fresh process should be told the palette, not have it
 	// suppressed by a hash that survived the restart.
+	// spawns lists background foci spawns, goroutines of this process that a
+	// restart ends, so an empty list is the truth after one (#2139).
 	restartSafe := map[string]bool{
 		"mu": true, "clients": true, "clientStates": true, "buffer": true,
 		"seenOrder": true, "turnKind": true, "turnDetail": true, "turnCommand": true, "turnShell": true,
-		"subagentDetail": true, "subagents": true, "waitingDetail": true,
+		"subagentDetail": true, "subagents": true, "spawns": true, "waitingDetail": true,
 		"activitySent": true, "cacheExpiryMs": true, "lastCmdHash": true,
 	}
 

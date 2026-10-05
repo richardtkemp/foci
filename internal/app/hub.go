@@ -2183,6 +2183,7 @@ type convBinding struct {
 	turnShell      bool                  // the turn-scoped tool is a shell command, stoppable on its own (#2140)
 	subagentDetail string                // running-subagent descriptions, empty if none
 	subagents      []fap.RunningSubagent // the structured running list behind subagentDetail (#2138)
+	spawns         []fap.RunningSubagent // the session's background spawns, listed after its subagents (#2139)
 	waitingDetail  string                // target agent id we're awaiting, empty if none
 	activitySent   fap.Activity          // last-emitted Activity frame (zero == idle, nothing sent)
 
@@ -2344,8 +2345,15 @@ func (b *convBinding) info() fap.ConversationInfo {
 // tool/thinking/warming/typing (appSink sets the latest per turn event), so the
 // resolver only layers the two session-scoped states above them. Caller holds mu.
 func (b *convBinding) resolveActivity() (fap.ActivityKind, string) {
-	if b.subagentDetail != "" {
-		return fap.ActivityKindSubagents, b.subagentDetail
+	if b.subagentDetail != "" || len(b.spawns) > 0 {
+		detail := b.subagentDetail
+		for _, s := range b.spawns {
+			if detail != "" {
+				detail += ", "
+			}
+			detail += s.Description
+		}
+		return fap.ActivityKindSubagents, detail
 	}
 	kind, detail, _, _ := b.agentActivityLocked()
 	return kind, detail
@@ -2374,8 +2382,8 @@ func (b *convBinding) activityFrameLocked() fap.Activity {
 	if ak, ad, cmd, shell := b.agentActivityLocked(); ak != fap.ActivityKindIdle {
 		a.AgentKind, a.AgentDetail, a.AgentCommand, a.AgentShell = string(ak), ad, cmd, shell
 	}
-	if len(b.subagents) > 0 {
-		a.Subagents = append([]fap.RunningSubagent(nil), b.subagents...)
+	if len(b.subagents)+len(b.spawns) > 0 {
+		a.Subagents = append(append([]fap.RunningSubagent(nil), b.subagents...), b.spawns...)
 	}
 	return a
 }
@@ -2428,6 +2436,18 @@ func (b *convBinding) setSubagents(detail string, running []fap.RunningSubagent)
 	b.applyActivity(func() {
 		b.subagentDetail = detail
 		b.subagents = running
+	})
+}
+
+// addSpawn lists a background spawn of this session beside its subagents
+// (#2139); removeSpawn drops it when it ends.
+func (b *convBinding) addSpawn(s fap.RunningSubagent) {
+	b.applyActivity(func() { b.spawns = append(b.spawns, s) })
+}
+
+func (b *convBinding) removeSpawn(id string) {
+	b.applyActivity(func() {
+		b.spawns = slices.DeleteFunc(b.spawns, func(s fap.RunningSubagent) bool { return s.ID == id })
 	})
 }
 

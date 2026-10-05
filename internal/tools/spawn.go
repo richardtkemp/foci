@@ -115,6 +115,14 @@ type SpawnDeps struct {
 	SetNoCompact        func(sessionKey string, value bool) // marks branch sessions as no_compact (prevents compaction)
 	FileMode            os.FileMode                         // permission bits for files created by spawned sessions
 	Store               *secrets.Store                      // secrets store for blocked-path enforcement in isolated tools
+	// Tracker registers each background clone spawn so /stop can stop it
+	// (#2139). Nil = untracked (a nil tracker's methods are no-ops).
+	Tracker *SpawnTracker
+	// Observer is told each background clone spawn's start, text and end, so
+	// the app lists it beside the agent's subagents (#2139). Nil = not shown.
+	Observer SpawnObserver
+	// ModelFor returns the model a branch session runs on, for the observer.
+	ModelFor func(sessionKey string) string
 }
 
 // maxToolLoops calls d.MaxToolLoops(), or returns 0 if unset (tests that
@@ -598,14 +606,38 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 
 		var spawnResult string
 		var spawnErr error
+		var stopped bool
 		signal := make(chan struct{})
+		// Registered before the goroutine starts, so a /stop that lands at
+		// once still finds it (#2139).
+		spawnCtx, cancel := buildSpawnContext(ctx, timeout, branchKey, true)
+		id := newSpawnID()
+		deps.Tracker.add(parentSession, id, cancel)
+		var model string
+		if deps.ModelFor != nil {
+			model = deps.ModelFor(branchKey)
+		}
+		obs := deps.Observer
+		if obs != nil {
+			obs.SpawnStarted(parentSession, RunningSpawn{
+				ID: id, BranchKey: branchKey, Description: spawnDescription(prompt),
+				Model: model, Started: time.Now(),
+			}, prompt)
+		}
 		go func() {
-			spawnCtx, cancel := buildSpawnContext(ctx, timeout, branchKey, true)
 			defer cancel()
 			buf := turnevent.NewBufferSink()
-			spawnCtx = turnevent.WithSink(spawnCtx, buf)
+			var sink turnevent.Sink = buf
+			if obs != nil {
+				sink = &spawnTextSink{BufferSink: buf, obs: obs, parent: parentSession, id: id}
+			}
+			spawnCtx := turnevent.WithSink(spawnCtx, sink)
 			spawnErr = agent.HandleMessage(spawnCtx, branchKey, []string{prompt}, nil)
 			spawnResult = buf.FinalText()
+			stopped = deps.Tracker.remove(parentSession, id)
+			if obs != nil {
+				obs.SpawnEnded(parentSession, id)
+			}
 			close(signal)
 		}()
 
@@ -616,6 +648,9 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 			ThresholdSecs: 0, // always async
 			Done:          signal,
 			NotifyMessage: func() string {
+				if stopped {
+					return fmt.Sprintf("[SPAWN RESULT] Branch %s was stopped by the user.", branchKey)
+				}
 				if spawnErr != nil {
 					return fmt.Sprintf("[SPAWN RESULT] Branch %s failed:\n\n%v", branchKey, spawnErr)
 				}

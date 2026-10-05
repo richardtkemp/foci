@@ -417,6 +417,30 @@ func TestConvBinding_AgentActivityBesideSubagents(t *testing.T) {
 	}
 }
 
+func TestConvBinding_SpawnsListedAfterSubagents(t *testing.T) {
+	// A background foci spawn is listed after the agent's subagents as one more
+	// "agent" entry and joins the flattened detail an older client reads; its
+	// end drops it (#2139).
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{fakeClient(): {}}}
+	b.setSubagents("researcher", []fap.RunningSubagent{{ID: "toolu_a", Description: "researcher", Kind: "agent"}})
+	b.addSpawn(fap.RunningSubagent{ID: "spawn-1", Description: "fix the parser", Kind: "agent", Model: "opus", SubagentType: "spawn", StartedMs: 5})
+
+	info := b.info()
+	if info.Activity != "subagents" || info.ActivityDetail != "researcher, fix the parser" ||
+		len(info.Subagents) != 2 || info.Subagents[1].ID != "spawn-1" {
+		t.Fatalf("snapshot = %+v", info)
+	}
+
+	b.setSubagents("", nil)
+	if info := b.info(); info.Activity != "subagents" || info.ActivityDetail != "fix the parser" || len(info.Subagents) != 1 {
+		t.Fatalf("spawn alone: snapshot = %+v", info)
+	}
+	b.removeSpawn("spawn-1")
+	if info := b.info(); info.Activity != "idle" || len(info.Subagents) != 0 {
+		t.Fatalf("after the spawn ended: snapshot = %+v", info)
+	}
+}
+
 func TestAppSink_ThinkingSnapshot(t *testing.T) {
 	c := fakeClient()
 	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
