@@ -840,23 +840,34 @@ func TestInject_Compact(t *testing.T) {
 	}
 }
 
-// TestInject_Compact_InFlight verifies the slash-command path is
-// callable mid-turn without disturbing turn state. /compact shouldn't
-// normally be invoked mid-turn, but if it is, the call must succeed.
+// TestInject_Compact_InFlight verifies a mid-turn /compact waits for the turn
+// to end rather than queueing behind it in CC (#2147), and that a ctx expiring
+// during that wait returns the ctx error, writes nothing, and leaves no
+// deferral behind to swallow a later idle's abort.
 func TestInject_Compact_InFlight(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
 	b := &Backend{
-		writer:     NewWriter(nopWriteCloser{&buf}),
-		turnActive: true,
+		writer:       NewWriter(nopWriteCloser{&buf}),
+		turnActive:   true,
+		turnResultCh: make(chan *ResultMessage, 1),
 	}
 
-	if err := b.ImmediateInject(context.Background(), delegator.Inject{
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := b.ImmediateInject(ctx, delegator.Inject{
 		Source: delegator.SourceCompact,
 		Text:   "/compact x",
-	}); err != nil {
-		t.Fatalf("Inject: %v", err)
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Inject err = %v, want context.Canceled", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("nothing should be written while the turn runs; got %q", buf.String())
+	}
+	if b.compactDeferred {
+		t.Error("compactDeferred left set after the wait was abandoned")
 	}
 }
 

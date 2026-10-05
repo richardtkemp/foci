@@ -173,6 +173,11 @@ type Backend struct {
 	// buffered(1) channel rather than two separate signal channels — see
 	// resolveCompactionWait for why that matters (#1526).
 	compactCh chan error
+	// compactDeferred is set while ImmediateInject(SourceCompact) waits for an
+	// in-flight turn to end before sending /compact (#2147). The idle that ends
+	// that turn is not the /compact run's idle, so signalCompactionAbort must
+	// not read it as "backend declined". Guarded by turnMu.
+	compactDeferred bool
 	// compactTranscript/compactTranscriptOff record the transcript and its
 	// size when ArmCompactionWait ran, so CompactionSummary reads only the
 	// summary written by THIS compaction, never an earlier one (#1390).

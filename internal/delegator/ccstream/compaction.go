@@ -201,8 +201,13 @@ func (b *Backend) resolveCompactionWait(err error) {
 // arrived). Called from the idle handler: since compact_boundary always
 // precedes idle on a real compaction (it resolves the wait first), a still-
 // armed waiter at idle means the backend declined to compact. No-op if no
-// wait is armed or a boundary already resolved it. Caller must hold turnMu.
+// wait is armed or a boundary already resolved it, and while the /compact is
+// still deferred behind another turn (that turn's idle says nothing about the
+// compaction, #2147). Caller must hold turnMu.
 func (b *Backend) signalCompactionAbort() {
+	if b.compactDeferred {
+		return
+	}
 	b.resolveCompactionWait(delegator.ErrCompactionNoBoundary)
 }
 

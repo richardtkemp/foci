@@ -379,7 +379,8 @@ func (b *Backend) sendFold(in trackedInput, priority string) error {
 //	Steer    | idle       | begin turn — degrades to User-idle
 //	System   | idle       | begin turn, atomically (tryBeginTurn)
 //	System   | in-flight  | ErrTurnInFlight — never folds; caller waits + retries
-//	Compact  | any        | send slash command (fire-and-forget)
+//	Compact  | idle       | begin turn (nil events) + send slash command
+//	Compact  | in-flight  | wait for the turn to end, then as idle (#2147)
 //	Pass     | any        | send slash command (fire-and-forget)
 //
 // All in-flight injections land inside CC's current run loop — folded
@@ -466,16 +467,8 @@ func (b *Backend) ImmediateInject(ctx context.Context, inj delegator.Inject) err
 		// beginTurn(nil) claims turnActive with no TurnEvents — no
 		// bookkeeping or delivery is needed for compaction's own output —
 		// and the existing nil-turn path in completeTurn/onSessionIdle
-		// clears it normally once CC's compaction idle fires. Skipped when
-		// already in flight: that path exists for CC's own queue to
-		// serialise the slash command behind the active turn, and
-		// beginTurn(nil) would wrongly reset ITS bookkeeping.
-		if inFlight {
-			b.logger().Warnf("Inject(%s): called with turn in flight — slash command will queue behind active turn", inj.Source)
-			return b.sendUserMessage(inj.Text)
-		}
-		b.beginTurn(nil)
-		return b.sendUserMessage(inj.Text)
+		// clears it normally once CC's compaction idle fires.
+		return b.sendCompact(ctx, inj.Text)
 
 	case delegator.SourcePass:
 		// Other slash commands (/context, /model, etc). Fire-and-forget:
@@ -486,6 +479,42 @@ func (b *Backend) ImmediateInject(ctx context.Context, inj delegator.Inject) err
 		return b.sendUserMessage(inj.Text)
 	}
 	return fmt.Errorf("ccstream: Inject: unknown source %d", inj.Source)
+}
+
+// sendCompact claims a turn for the /compact run and sends it. With a turn in
+// flight (only reachable when CC is running a turn foci did not start: /compact
+// is not an Immediate command, so a foci turn holds the session worker) it first
+// waits for that turn to end. Handing /compact to CC's queue instead is unsafe
+// (#2147): CC (>= 2.1.287) runs it after the running turn's idle, and that idle
+// would resolve the armed compaction wait as "no boundary" ("Nothing to
+// compact") while the later /compact run, unclaimed, got adopted as autonomous
+// (#1266). compactDeferred keeps that idle from aborting the wait; the turn
+// begin and the deferral clear share one turnMu hold, so no idle can slip
+// between them. Loops because another turn may begin before this one wakes.
+func (b *Backend) sendCompact(ctx context.Context, text string) error {
+	for {
+		b.turnMu.Lock()
+		if !b.turnActive {
+			b.compactDeferred = false
+			b.beginTurnLocked(nil)
+			b.turnMu.Unlock()
+			b.drainEdgeCallbacks()
+			b.resetTurnScratch()
+			return b.sendUserMessage(text)
+		}
+		b.compactDeferred = true
+		ch := b.turnResultCh
+		b.turnMu.Unlock()
+		b.logger().Infof("Inject(compact): turn in flight, waiting for it to end before sending /compact")
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			b.turnMu.Lock()
+			b.compactDeferred = false
+			b.turnMu.Unlock()
+			return ctx.Err()
+		}
+	}
 }
 
 // beginTurnWithText starts a new turn, dispatching to the attachments path

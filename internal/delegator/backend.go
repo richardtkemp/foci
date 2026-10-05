@@ -897,7 +897,8 @@ const (
 	// SourceCompact is a /compact slash command sent to CC. Fire-and-forget:
 	// CC processes the compaction internally. Caller is responsible for
 	// arming compaction-completion waiters (CompactionWaiter) before
-	// Inject if it wants to block on completion.
+	// Inject if it wants to block on completion. ccstream waits for an
+	// in-flight turn to end before sending (#2147).
 	SourceCompact
 
 	// SourcePass is a passthrough slash command (/context, /model, etc.).
