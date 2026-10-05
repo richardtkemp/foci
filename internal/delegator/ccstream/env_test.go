@@ -75,15 +75,24 @@ func TestBuildEnv_RaisesMaxRetries(t *testing.T) {
 	}
 }
 
-// TestBuildEnv_NoRetryWatchdog — CLAUDE_CODE_RETRY_WATCHDOG would make CC
-// retry 529 and 429 with no attempt cap (each wait up to 5 min, a quota 429
-// up to 6 h), so an exhausted plan would hang an agent for hours instead of
-// failing. Total retry time must stay bounded.
-func TestBuildEnv_NoRetryWatchdog(t *testing.T) {
+// TestBuildEnv_SetsRetryWatchdog — Dick 2026-10-05: agents wait out 529
+// Overloaded and 429 with no attempt cap rather than die and need a manual
+// resume. CLAUDE_CODE_RETRY_WATCHDOG=1 is CC's switch for that.
+func TestBuildEnv_SetsRetryWatchdog(t *testing.T) {
 	clearEnvVar(t, "CLAUDE_CODE_RETRY_WATCHDOG")
 
-	if _, n := envValue(buildEnv(nil), "CLAUDE_CODE_RETRY_WATCHDOG"); n != 0 {
-		t.Error("CLAUDE_CODE_RETRY_WATCHDOG set — it removes the cap on 529/429 retries")
+	if got, n := envValue(buildEnv(nil), "CLAUDE_CODE_RETRY_WATCHDOG"); n == 0 || got != "1" {
+		t.Errorf("CLAUDE_CODE_RETRY_WATCHDOG = %q (n=%d), want %q — 529s would kill subagents after the bounded budget", got, n, "1")
+	}
+}
+
+// TestBuildEnv_RetryWatchdogOverridable — a per-agent backend_config.env
+// value comes later in the env and wins.
+func TestBuildEnv_RetryWatchdogOverridable(t *testing.T) {
+	clearEnvVar(t, "CLAUDE_CODE_RETRY_WATCHDOG")
+
+	if got, _ := envValue(buildEnv(map[string]string{"CLAUDE_CODE_RETRY_WATCHDOG": ""}), "CLAUDE_CODE_RETRY_WATCHDOG"); got != "" {
+		t.Errorf("per-agent override lost: CLAUDE_CODE_RETRY_WATCHDOG = %q, want empty", got)
 	}
 }
 
@@ -144,6 +153,7 @@ func TestBuildEnv_KeepsSessionExtras(t *testing.T) {
 func TestStart_SpawnedProcessReceivesBashMaxTimeout(t *testing.T) {
 	clearEnvVar(t, "BASH_MAX_TIMEOUT_MS")
 	clearEnvVar(t, "CLAUDE_CODE_MAX_RETRIES")
+	clearEnvVar(t, "CLAUDE_CODE_RETRY_WATCHDOG")
 
 	dir := t.TempDir()
 	out := filepath.Join(dir, "env.txt")
@@ -188,6 +198,9 @@ func TestStart_SpawnedProcessReceivesBashMaxTimeout(t *testing.T) {
 	}
 	if got, n := envValue(lines, "CLAUDE_CODE_MAX_RETRIES"); n == 0 || got != "15" {
 		t.Errorf("spawned CC process saw CLAUDE_CODE_MAX_RETRIES=%q (n=%d), want %q", got, n, "15")
+	}
+	if got, n := envValue(lines, "CLAUDE_CODE_RETRY_WATCHDOG"); n == 0 || got != "1" {
+		t.Errorf("spawned CC process saw CLAUDE_CODE_RETRY_WATCHDOG=%q (n=%d), want %q", got, n, "1")
 	}
 	// Sanity: the recorder really is the process foci launched for this session.
 	if got, _ := envValue(lines, "FOCI_SESSION_KEY"); got != "envtest/main" {

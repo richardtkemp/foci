@@ -43,16 +43,24 @@ const bashMaxTimeoutMS = "1200000"
 //   - 15 is the ceiling CC honours: a higher value is clamped to 15 with a
 //     warning unless CLAUDE_CODE_RETRY_WATCHDOG is set.
 //
-// CLAUDE_CODE_RETRY_WATCHDOG is deliberately NOT set: it switches 529 and
-// 429 to persistent retry with no attempt cap (each wait up to 5 min, a quota
-// 429 up to 6 h), so total retry time would no longer be bounded and an
-// exhausted plan would hang an agent instead of failing.
+// With ccRetryWatchdog set (below), this cap no longer applies to 529 and
+// 429; it still bounds the other retryable errors.
 //
 // The budget covers every retryable error (5xx, 408/409, connection drops),
 // not only 529; all of those are transient, and a 529-rejected request costs no
 // tokens. Non-retryable errors still fail at once. Same constant-not-config
 // reasoning as bashMaxTimeoutMS: a per-agent backend_config.env overrides it.
 const ccMaxRetries = "15"
+
+// ccRetryWatchdog sets CLAUDE_CODE_RETRY_WATCHDOG, which makes CC retry 529
+// Overloaded and 429 with no attempt cap: each wait is up to 5 min, and a
+// quota 429 waits up to 6 h for the reset (constants read from the CC 2.1.289
+// binary; Anthropic's own remote runner sets it too). Dick 2026-10-05 chose
+// this over a bounded budget: an agent waits out an overload or a used-up
+// plan silently instead of dying and needing a manual resume. The trade-off
+// is accepted: total retry time is unbounded, so a long outage shows as a
+// slow turn, not an error. A per-agent backend_config.env can set it to "".
+const ccRetryWatchdog = "1"
 
 // buildEnv assembles the environment for the `claude` subprocess: the
 // OPERATOR population (procx.Env — the daemon's env overlaid with the
@@ -84,6 +92,8 @@ func buildEnv(extra map[string]string) []string {
 	// Longer bounded retry window for 529 Overloaded (and other transient
 	// API errors), main thread and subagents alike.
 	env = append(env, "CLAUDE_CODE_MAX_RETRIES="+ccMaxRetries)
+	// Uncapped retry of 529/429 (see ccRetryWatchdog).
+	env = append(env, "CLAUDE_CODE_RETRY_WATCHDOG="+ccRetryWatchdog)
 
 	for k, v := range extra {
 		env = append(env, k+"="+v)

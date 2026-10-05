@@ -13,7 +13,7 @@ import (
 // someone later moves the injection up into DelegatedManager's shared
 // per-session env (where FOCI_SOCK/BASH_ENV live), this test fails.
 func TestBuildCmdEnv_NoCCBashTimeoutVars(t *testing.T) {
-	keys := []string{"BASH_MAX_TIMEOUT_MS", "BASH_DEFAULT_TIMEOUT_MS", "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS", "CLAUDE_CODE_MAX_RETRIES"}
+	keys := []string{"BASH_MAX_TIMEOUT_MS", "BASH_DEFAULT_TIMEOUT_MS", "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS", "CLAUDE_CODE_MAX_RETRIES", "CLAUDE_CODE_RETRY_WATCHDOG"}
 	for _, k := range keys {
 		if old, ok := os.LookupEnv(k); ok {
 			t.Cleanup(func() { _ = os.Setenv(k, old) })
