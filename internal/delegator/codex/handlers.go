@@ -84,9 +84,7 @@ func (b *Backend) onTurnCompleted(params *turnCompletedParams) {
 	model := b.model
 	threadName := b.threadName
 	b.mu.Unlock()
-	if model != "" {
-		model = "codex/" + model
-	}
+	model = qualifiedModel(model)
 
 	b.turnMu.Lock()
 	usage := b.turnUsageLocked()

@@ -470,7 +470,7 @@ type FoldAttachmentCarrier interface {
 // it down (e.g. opencode) and /context degrades to "data unavailable".
 type ContextWindow struct {
 	MaxTokens   int               // total context window size for the current model
-	Model       string            // model name (e.g. "claude-sonnet-4-6")
+	Model       string            // model id, spelled exactly as the backend's TurnResult.Model (e.g. "claude/claude-sonnet-4-6"): both overwrite the session's model field (#1645)
 	TotalTokens int               // backend's in-memory used-token count (0 after restart)
 	Categories  []ContextCategory // per-section breakdown, when the backend reports one
 }

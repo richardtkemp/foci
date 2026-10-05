@@ -25,8 +25,22 @@ func (b *Backend) ResolveModel(_ context.Context, model string) (delegator.Model
 	}
 	return delegator.ModelResolution{
 		BackendModel: resolved,
-		Model:        "codex/" + resolved,
+		Model:        qualifiedModel(resolved),
 	}, nil
+}
+
+// qualifiedModel is the "codex/"-prefixed spelling foci tracks a codex model
+// under. Every model id this backend hands the agent goes through it —
+// TurnResult.Model, ContextWindow.Model and ModelResolution.Model all land in
+// the same session model field, so they must agree (#1645). Empty stays empty,
+// and an id that is already qualified (a launch request taken from that field)
+// is not prefixed twice.
+func qualifiedModel(model string) string {
+	const prefix = "codex/"
+	if model == "" || strings.HasPrefix(model, prefix) {
+		return model
+	}
+	return prefix + model
 }
 
 func resolveCatalogueModel(model string, catalogue []string) (string, error) {

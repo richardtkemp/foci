@@ -3580,8 +3580,11 @@ func TestGetContextWindow(t *testing.T) {
 	if r.wnd.MaxTokens != 200000 {
 		t.Errorf("MaxTokens = %d, want 200000", r.wnd.MaxTokens)
 	}
-	if r.wnd.Model != "claude-sonnet-4-6" {
-		t.Errorf("Model = %q, want %q", r.wnd.Model, "claude-sonnet-4-6")
+	// Same spelling as TurnResult.Model (prefixedModel): the agent writes both
+	// into the session's model field, so a bare id here made the field flip
+	// spelling depending on which pipe wrote last (#1645).
+	if r.wnd.Model != "claude/claude-sonnet-4-6" {
+		t.Errorf("Model = %q, want %q", r.wnd.Model, "claude/claude-sonnet-4-6")
 	}
 	if r.wnd.TotalTokens != 50000 {
 		t.Errorf("TotalTokens = %d, want 50000", r.wnd.TotalTokens)

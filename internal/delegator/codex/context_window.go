@@ -26,7 +26,7 @@ func (b *Backend) GetContextWindow(ctx context.Context) (*delegator.ContextWindo
 
 	cw := &delegator.ContextWindow{
 		MaxTokens: maxTokens,
-		Model:     model,
+		Model:     qualifiedModel(model), // same spelling as TurnResult.Model (#1645)
 	}
 
 	b.turnMu.Lock()

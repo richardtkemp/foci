@@ -270,7 +270,7 @@ func (b *Backend) GetContextWindow(ctx context.Context) (*delegator.ContextWindo
 		}
 		return &delegator.ContextWindow{
 			MaxTokens:   payload.MaxTokens,
-			Model:       payload.Model,
+			Model:       prefixedModel(payload.Model), // same spelling as TurnResult.Model (#1645)
 			TotalTokens: payload.TotalTokens,
 			Categories:  cats,
 		}, nil
