@@ -40,5 +40,5 @@ Same behaviour as for backend agents, called as JSON tool-calls instead of `foci
 - **`web_fetch`** — Readability → Markdown; large pages truncated. Not for downloading files (use `http_request`).
 - **`web_search`** — Brave Search; titles, URLs and descriptions only.
 - **`summary`** — targeted extraction from a file by a cheap model; never a whole-file dump.
-- **`set_session_alias`** — chat sessions only (errors on a branch). Call once after the first exchange, under 5 words. It won't overwrite a manual rename (replies "Skipped").
+- **`set_session_alias`** — chat sessions only (errors on a branch). Call once after the first exchange, under 5 words. It won't overwrite a manual rename (replies "Skipped") unless you pass `replace_manual`, which is only for when the user explicitly asks for the rename.
 - **`app_android`** — offered when the app platform is configured, but offered ≠ connected: with no device it returns a plain error string. The on-device allowlist is **empty by default** (the user opts tasks in under the app's Advanced settings). Structured args go JSON-stringified in `par1`. A task still running after ~60s returns pending, and its later result is dropped.
