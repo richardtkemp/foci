@@ -1002,6 +1002,19 @@ statusline = """{default}
 [deploy] ${~/bin/undeployed-commits}"""
 ```
 
+**Where to set it.** Set a global template in `[display]` and override it per agent with `display.statusline` inside the agent's `[[agents]]` block. There is no top-level `statusline` key on an agent. Most specific wins:
+
+1. `[[agents.platforms]]` `display.statusline`: this agent, turns arriving via that platform
+2. `[[agents]]` `display.statusline`: this agent
+3. `[[platforms]]` `display.statusline`: every agent, turns arriving via that platform
+4. `[display] statusline`: every agent
+5. any `[[platforms]]` `display.statusline`: a last fallback for turns not arriving via a platform (cron, keepalive, `foci send`)
+6. the built-in default
+
+The platform tiers apply only to a turn that arrived via that platform. `{default}` works at every tier.
+
+The field is hot-applied when changed with `/config set` or the app's config editor: the next turn uses the new template. There is no file watcher, so a hand edit of `foci.toml` takes effect on the next restart.
+
 Two interpolation forms:
 
 - `{field}` — a built-in field (below). Unknown names are left verbatim so typos are visible.

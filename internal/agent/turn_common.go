@@ -42,7 +42,7 @@ func (a *Agent) composeTurnText(ctx context.Context, sessionKey string, turnMode
 	// include it with {default}. The whole rendered block goes
 	// into MetaPrefix; StateDashboard stays empty (the [state] line, if any, is
 	// inside the rendered template).
-	p.MetaPrefix = a.renderStatusline(ctx, expandStatuslineTemplate(a.statusline()), statuslineInputs{
+	p.MetaPrefix = a.renderStatusline(ctx, expandStatuslineTemplate(a.statusline(platName)), statuslineInputs{
 		now:        now,
 		model:      turnModel,
 		platform:   platName,

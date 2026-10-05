@@ -95,10 +95,8 @@ func (s *sharedAgentSetup) newAgent() *agent.Agent {
 		SessionIndex:      s.p.sessionIndex,
 		MessageTransforms: agent.CompileTransforms(resolveMessageTransforms(acfg, s.p.cfg)),
 		PromptSearchDirs:  s.promptSearchDirs,
-		// ShowToolCalls/Statusline have no live getter yet (unlike e.g.
-		// Streaming) — genuinely restart-required, a candidate for a future
-		// pass. Reflection/Keepalive/Background/Maintenance DO have live
-		// getters (reflection()/keepalive()/backgroundConfig()/maintenance())
+		// These all have live getters (reflection()/keepalive()/
+		// backgroundConfig()/maintenance()/showToolCalls()/statusline())
 		// that prefer LiveConfigFn when set; these static fields are only the
 		// nil-LiveConfigFn fallback for direct-constructed agents (tests).
 		Reflection:      s.p.resolved.Reflection,  // static-cfg:ignore: fallback, LiveConfigFn takes over — see comment above

@@ -91,7 +91,7 @@ func TestBucketEGettersPreferLiveThenFallBack(t *testing.T) {
 	if got := a.maxImagePixels(); got != 888 {
 		t.Errorf("maxImagePixels() = %d, want 888 (live)", got)
 	}
-	if got := a.statusline(); got != "live-line" {
+	if got := a.statusline(""); got != "live-line" {
 		t.Errorf("statusline() = %q, want live-line", got)
 	}
 	if got := a.showToolCalls(); got != "full" {
@@ -121,7 +121,7 @@ func TestBucketEGettersPreferLiveThenFallBack(t *testing.T) {
 	if a.autoSummarise() {
 		t.Error("fallback autoSummarise() should be false")
 	}
-	if got := a.statusline(); got != "static-line" {
+	if got := a.statusline(""); got != "static-line" {
 		t.Errorf("fallback statusline() = %q, want static-line", got)
 	}
 	if got := a.turnLockWarnThreshold(); got != 3*time.Minute {

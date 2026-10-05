@@ -49,6 +49,18 @@ func (r *ResolvedAgentConfig) PlatformDisplay(name string) ResolvedDisplay {
 	return ResolvedDisplay{}
 }
 
+// StatuslineFor returns the statusline template for a turn arriving via
+// platform (#2185). A configured platform uses its 4-layer cascade
+// (agent-platform → agent → global-platform → global); anything else (cron,
+// keepalive, a platform that set nothing) falls back to Display, which ends
+// with every platform's value. "" means the built-in default.
+func (r *ResolvedAgentConfig) StatuslineFor(platform string) string {
+	if s := r.PlatformDisplay(platform).Statusline; s != "" {
+		return s
+	}
+	return r.Display.Statusline
+}
+
 // PlatformNotify returns the 4-layer resolved notify config for a platform.
 // Defaults (e.g. StartupNotify=true) are baked in.
 func (r *ResolvedAgentConfig) PlatformNotify(name string) ResolvedNotify {

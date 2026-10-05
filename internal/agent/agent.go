@@ -449,9 +449,11 @@ func (a *Agent) maxImagePixels() int {
 	return a.MaxImagePixels
 }
 
-func (a *Agent) statusline() string {
+// statusline is the header template for a turn arriving via platform; see
+// config.ResolvedAgentConfig.StatuslineFor for the precedence.
+func (a *Agent) statusline(platform string) string {
 	if a.LiveConfigFn != nil {
-		return a.LiveConfigFn().Display.Statusline
+		return a.LiveConfigFn().StatuslineFor(platform)
 	}
 	return a.Statusline
 }
