@@ -1,6 +1,7 @@
 // Command foci-cc-hook is a tiny helper that foci installs as a
-// PostToolUse and PostToolUseFailure hook on Claude Code sessions, and as a
-// PreToolUse hook for the Agent tool plus every tool a pretool rule names.
+// PostToolUse, PostToolUseFailure and PermissionDenied hook on Claude Code
+// sessions, and as a PreToolUse hook for the Agent tool plus every tool a
+// pretool rule names.
 // CC invokes the configured hook binary after each tool execution,
 // pipes a JSON envelope containing the tool call + its response (or
 // error) into the binary's stdin, and captures the binary's stdout
@@ -66,6 +67,11 @@ const stopRulesFlag = "--stop-rules"
 // eventStop is CC's hook_event_name for the end-of-turn hook.
 const eventStop = "Stop"
 
+// eventPermissionDenied is CC's hook_event_name for an auto-mode classifier
+// denial (#2184). It is the denied call's only hook: no PostToolUse(Failure)
+// follows it.
+const eventPermissionDenied = "PermissionDenied"
+
 // slowToolThreshold is the runtime from which a tool call's duration is shown
 // to the model (#2125, Factory's Droid idea): knowing a call was slow lets it
 // avoid repeating it, pick a faster route, or set a timeout. Faster calls are
@@ -112,6 +118,9 @@ type hookInput struct {
 	DurationMS int64 `json:"duration_ms,omitempty"`
 	// Cwd is the session's working directory; pretool rules can match it.
 	Cwd string `json:"cwd,omitempty"`
+	// Reason is PermissionDenied's only extra field: why CC's auto-mode
+	// classifier refused the call (#2184; CC 2.1.289 bundle).
+	Reason string `json:"reason,omitempty"`
 
 	// Stop payload fields (shape verified live, CC 2.1.280).
 	TranscriptPath       string `json:"transcript_path,omitempty"`
@@ -259,7 +268,10 @@ func stopFor(args []string, in hookInput) stopOutput {
 }
 
 // toolOutputFor reduces a tool-event envelope (PreToolUse, PostToolUse,
-// PostToolUseFailure) to the hookOutput main writes.
+// PostToolUseFailure, PermissionDenied) to the hookOutput main writes. A
+// PermissionDenied is reported as an errored call carrying the classifier's
+// reason; it never gets a hookSpecificOutput, whose only field for that event
+// is a retry request.
 func toolOutputFor(args []string, in hookInput) hookOutput {
 	out := hookOutput{
 		HookEvent: in.HookEventName,
@@ -267,7 +279,7 @@ func toolOutputFor(args []string, in hookInput) hookOutput {
 		ToolUseID: in.ToolUseID,
 		ToolName:  in.ToolName,
 		AgentID:   in.AgentID,
-		IsError:   in.HookEventName == "PostToolUseFailure" || in.IsInterrupt || in.IsTimeout,
+		IsError:   in.HookEventName == "PostToolUseFailure" || in.HookEventName == eventPermissionDenied || in.IsInterrupt || in.IsTimeout,
 	}
 	if in.HookEventName == "PreToolUse" {
 		applyRules(&out, parseFlag(args, rulesFlag), pretool.Call{Tool: in.ToolName, Input: in.ToolInput, Cwd: in.Cwd})
@@ -283,8 +295,12 @@ func toolOutputFor(args []string, in hookInput) hookOutput {
 	if len(in.ToolResponse) > 0 {
 		out.ToolResponse = truncate(decodeToolResponse(in.ToolResponse), maxFieldBytes)
 	}
-	if in.Error != "" {
-		out.Error = truncate(in.Error, maxFieldBytes)
+	errText := in.Error
+	if in.Reason != "" {
+		errText = in.Reason
+	}
+	if errText != "" {
+		out.Error = truncate(errText, maxFieldBytes)
 	}
 	applyRuntime(&out, in)
 	return out

@@ -97,6 +97,7 @@ const (
 	eventPreToolUse         = "PreToolUse"
 	eventPostToolUse        = "PostToolUse"
 	eventPostToolUseFailure = "PostToolUseFailure"
+	eventPermissionDenied   = "PermissionDenied"
 	eventStop               = "Stop"
 )
 
@@ -179,7 +180,8 @@ func fociHookSpec(hookCmd string) hookSpec {
 }
 
 // buildHookSettingsJSON returns a JSON string encoding a settings object
-// containing PreToolUse, PostToolUse and PostToolUseFailure hook entries
+// containing PreToolUse, PostToolUse, PostToolUseFailure and PermissionDenied
+// hook entries
 // pointing at the given hook command. rules (may be empty) are appended to the
 // PreToolUse command only, and widen its matcher. stopRules, when present, add
 // a Stop entry whose command carries them. CC accepts this string via
@@ -206,6 +208,9 @@ func buildHookSettingsJSON(hookCmd string, rules []pretool.Rule, stopRules []sto
 		eventPreToolUse:         {{Matcher: preToolMatcher(rules), Hooks: []hookSpec{fociHookSpec(preCmd)}}},
 		eventPostToolUse:        allTools,
 		eventPostToolUseFailure: allTools,
+		// An auto-mode classifier denial fires neither Post hook, only this
+		// one (#2184). It is rare, so "*" costs nothing on ordinary calls.
+		eventPermissionDenied: allTools,
 	}
 	if len(stopRules) > 0 {
 		enc, err := stoprule.Encode(stopRules)
@@ -316,8 +321,9 @@ type hookScriptOutput struct {
 // PostToolUseFailure events.
 //
 // Three filter layers before dispatch:
-//  1. Hook event must be PostToolUse or PostToolUseFailure — user-
-//     configured PreToolUse or lifecycle hooks are silently ignored.
+//  1. Hook event must be PreToolUse, PostToolUse, PostToolUseFailure or
+//     PermissionDenied (Stop is diverted first to logStopVerdict) —
+//     lifecycle hooks are silently ignored.
 //  2. Install ID must match this backend's install ID. When user hooks
 //     coexist with foci's via flagSettings + userSettings merging, each
 //     fires its own hook_response; we only act on our own.
@@ -337,7 +343,9 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 		b.logStopVerdict(env.Stdout)
 		return
 	}
-	if env.HookEvent != eventPreToolUse && env.HookEvent != eventPostToolUse && env.HookEvent != eventPostToolUseFailure {
+	switch env.HookEvent {
+	case eventPreToolUse, eventPostToolUse, eventPostToolUseFailure, eventPermissionDenied:
+	default:
 		return
 	}
 	if env.Stdout == "" {
@@ -381,7 +389,18 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 		b.logger().Infof("pretool_rule_deny rule=%s tool=%s tuid=%s agent_id=%s",
 			parsed.DeniedRule, parsed.ToolName, parsed.ToolUseID, parsed.AgentID)
 		if parsed.AgentID == "" {
-			b.endDeniedCall(parsed)
+			b.endDeniedCall(parsed, parsed.HookSpecificOutput.PermissionDecisionReason)
+		}
+		return
+	}
+
+	// CC's auto-mode classifier refused the call (#2184). Unlike a pretool
+	// deny, the PreToolUse has already run, so a denied Agent's group is open.
+	if env.HookEvent == eventPermissionDenied {
+		b.logger().Infof("classifier_deny tool=%s tuid=%s agent_id=%s reason=%q",
+			parsed.ToolName, parsed.ToolUseID, parsed.AgentID, parsed.Error)
+		if parsed.AgentID == "" {
+			b.endDeniedCall(parsed, parsed.Error)
 		}
 		return
 	}
@@ -561,19 +580,31 @@ func (b *Backend) logStopVerdict(stdout string) {
 		v.Result, v.Rule, v.Decision == "block", v.Launches, v.Excerpt)
 }
 
-// endDeniedCall closes out a main-thread tool call a pretool rule refused.
-// CC fires NO PostToolUse or PostToolUseFailure for a PreToolUse-denied call
-// (verified live, CC 2.1.280), so this is the call's only end signal: without
+// endDeniedCall closes out a main-thread tool call that was refused: by a
+// pretool rule, or by CC's auto-mode classifier (#2184). CC fires NO
+// PostToolUse or PostToolUseFailure for a denied call (verified live for a
+// PreToolUse deny, CC 2.1.280; the classifier deny writes its tool_result
+// directly, CC 2.1.289 bundle), so this is the call's only end signal: without
 // it the tool display opened by OnToolStart never resolves, and a denied Agent
 // or background Bash stays counted as pending work until the tracker's prune.
-// No subagent start fires — the subagent never existed.
-func (b *Backend) endDeniedCall(parsed hookScriptOutput) {
+//
+// A pretool deny preempts the Agent's PreToolUse start, so it has no group to
+// end. A classifier deny comes after it, so its group was opened and is ended
+// here: no task ever starts, so no task_notification will.
+func (b *Backend) endDeniedCall(parsed hookScriptOutput, reason string) {
 	b.agents.Remove(parsed.ToolUseID)
 	if parsed.ToolName == "Agent" {
 		b.subagentTails().clearPendingForeground(parsed.ToolUseID)
 	}
-	if se := b.sessionEvents.Load(); se != nil && se.OnToolEnd != nil {
-		se.OnToolEnd(parsed.ToolUseID, parsed.ToolName, parsed.HookSpecificOutput.PermissionDecisionReason, true)
+	se := b.sessionEvents.Load()
+	if se != nil && se.OnToolEnd != nil {
+		se.OnToolEnd(parsed.ToolUseID, parsed.ToolName, reason, true)
+	}
+	if parsed.ToolName == "Agent" && b.subagentStartEmitted(parsed.ToolUseID) {
+		b.logger().Infof("subagent_end signal=permission_denied group=%s run=1", parsed.ToolUseID)
+		if se != nil && se.OnSubagentEnd != nil {
+			se.OnSubagentEnd(parsed.ToolUseID, 1)
+		}
 	}
 }
 

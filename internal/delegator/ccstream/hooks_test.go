@@ -18,8 +18,9 @@ import (
 // ---------------------------------------------------------------------------
 
 // TestBuildHookSettingsJSON proves the generated JSON has the shape CC
-// expects (top-level hooks.PostToolUse and hooks.PostToolUseFailure each
-// with a single matcher:"*" entry carrying the foci hook command). CC
+// expects (top-level hooks.PostToolUse, hooks.PostToolUseFailure and
+// hooks.PermissionDenied each with a single matcher:"*" entry carrying the
+// foci hook command). CC
 // loads this via --settings <json> as a flagSettings source.
 func TestBuildHookSettingsJSON(t *testing.T) {
 	cmd := buildHookCommand("/bin/foci-cc-hook", "abc123")
@@ -35,7 +36,7 @@ func TestBuildHookSettingsJSON(t *testing.T) {
 		t.Fatalf("parse generated settings: %v (body: %s)", err, body)
 	}
 
-	for _, event := range []string{eventPostToolUse, eventPostToolUseFailure} {
+	for _, event := range []string{eventPostToolUse, eventPostToolUseFailure, eventPermissionDenied} {
 		matchers, ok := parsed.Hooks[event]
 		if !ok {
 			t.Errorf("generated settings missing event %q", event)
@@ -332,6 +333,73 @@ func TestHandleHookResponse_RefusedAgentEndsItsGroup(t *testing.T) {
 			t.Errorf("OnSubagentEnd = %v, want %v", *ends, want)
 		}
 	})
+}
+
+// TestHandleHookResponse_ClassifierDenyEndsCall is #2184: CC's auto-mode
+// classifier refuses a call AFTER its PreToolUse has fired, so a denied Agent
+// already has its group open. CC fires no PostToolUse or PostToolUseFailure for
+// a denied call (the deny is written straight into the tool_result), only a
+// PermissionDenied hook. That hook is the call's end: the tool display
+// resolves, the pending-work entry goes, and the Agent's group ends. A
+// background Bash has the same gap minus the group. A subagent's own denied
+// call touches nothing on the parent turn.
+func TestHandleHookResponse_ClassifierDenyEndsCall(t *testing.T) {
+	type toolEnd struct {
+		id, name, output string
+		isError          bool
+	}
+	type end struct {
+		group string
+		run   int
+	}
+	b := &Backend{hookInstallID: "install-a"}
+	var toolEnds []toolEnd
+	var ends []end
+	applyHandler(b, &testHandler{
+		OnToolEnd: func(id, name, output string, isError bool) {
+			toolEnds = append(toolEnds, toolEnd{id, name, output, isError})
+		},
+		OnSubagentStart: func(string, string, string, int) {},
+		OnSubagentEnd:   func(g string, run int) { ends = append(ends, end{g, run}) },
+	})
+	denied := func(toolUseID, tool, agentID string) {
+		stdout, _ := json.Marshal(hookScriptOutput{
+			HookEvent: "PermissionDenied", InstallID: "install-a",
+			ToolUseID: toolUseID, ToolName: tool, AgentID: agentID, IsError: true,
+			Error: "[Code from External]",
+		})
+		env, _ := json.Marshal(hookResponseEnvelope{HookEvent: "PermissionDenied", Stdout: string(stdout)})
+		b.handleHookResponse(env)
+	}
+
+	b.agents.Add("toolu_agent", "probe")
+	fireAgentPreToolUse(b, "toolu_agent", "install-a", `{"description":"probe","prompt":"p"}`)
+	b.agents.Add("toolu_bash", "background command")
+	b.agents.Add("toolu_sub", "background command")
+
+	denied("toolu_agent", "Agent", "")
+	denied("toolu_bash", "Bash", "")
+	denied("toolu_sub", "Bash", "task-1")
+
+	wantTools := []toolEnd{
+		{"toolu_agent", "Agent", "[Code from External]", true},
+		{"toolu_bash", "Bash", "[Code from External]", true},
+	}
+	if !reflect.DeepEqual(toolEnds, wantTools) {
+		t.Errorf("OnToolEnd = %+v, want %+v", toolEnds, wantTools)
+	}
+	if want := []end{{"toolu_agent", 1}}; !reflect.DeepEqual(ends, want) {
+		t.Errorf("OnSubagentEnd = %v, want %v", ends, want)
+	}
+	if b.agents.Remove("toolu_agent") {
+		t.Error("denied Agent still tracked as a running subagent")
+	}
+	if b.agents.Remove("toolu_bash") {
+		t.Error("denied background Bash still tracked as pending work")
+	}
+	if !b.agents.Remove("toolu_sub") {
+		t.Error("a subagent's denied call released a parent-turn tracker entry")
+	}
 }
 
 // TestOnSystem_TaskNotificationCompleted_FiresSubagentEnd proves the subagent's

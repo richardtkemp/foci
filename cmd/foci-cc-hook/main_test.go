@@ -118,6 +118,32 @@ func TestDecodeToolResponse_StructuredFallsBackToRaw(t *testing.T) {
 	}
 }
 
+// TestMain_PermissionDenied proves an auto-mode classifier denial (#2184)
+// reaches foci as an errored call carrying CC's reason, and that the helper
+// adds nothing CC would act on: a PermissionDenied hookSpecificOutput can only
+// ask for a retry, which foci never wants. The envelope shape (tool_name,
+// tool_input, tool_use_id, reason) is CC 2.1.289's executePermissionDenied.
+func TestMain_PermissionDenied(t *testing.T) {
+	body := []byte(`{
+		"hook_event_name": "PermissionDenied",
+		"tool_name": "Agent",
+		"tool_use_id": "toolu_denied",
+		"tool_input": {"description": "probe", "prompt": "p"},
+		"reason": "[Code from External]"
+	}`)
+	out := runHook(t, body, "test-id")
+
+	if !out.IsError {
+		t.Error("IsError = false, want true for PermissionDenied")
+	}
+	if out.Error != "[Code from External]" {
+		t.Errorf("Error = %q, want the classifier's reason", out.Error)
+	}
+	if out.HookSpecificOutput != nil {
+		t.Errorf("HookSpecificOutput = %+v, want none", out.HookSpecificOutput)
+	}
+}
+
 // TestMain_PostToolUseFailure proves failure envelopes produce is_error=true
 // and carry the error message rather than the (absent) tool_response field.
 func TestMain_PostToolUseFailure(t *testing.T) {
