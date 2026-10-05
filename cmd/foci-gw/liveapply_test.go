@@ -330,7 +330,7 @@ func TestLiveApply_WarningQueuesFlipOnLive(t *testing.T) {
 // TestLiveApplyNudgeReconfigures proves a [defaults.nudge] edit reconfigures the
 // live scheduler in place (no rebuild) — here observed via PreAnswerGate (#1228).
 func TestLiveApplyNudgeReconfigures(t *testing.T) {
-	sched := nudge.NewScheduler(&nudge.RuleSet{Rules: nudge.BraindeadRule()}, 5, 1)
+	sched := nudge.NewSchedulerOpts(&nudge.RuleSet{Rules: nudge.BraindeadRule()}, nudge.SchedulerOpts{Cooldown: 5, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true})
 	off, on := false, true
 	base := &config.Config{Agents: []config.AgentConfig{{ID: "a", Nudge: config.NudgeConfig{NudgePreAnswerGate: &off}}}}
 	sched.Configure(nudgeSettings(config.Resolve(base, base.Agents[0]).Nudge))

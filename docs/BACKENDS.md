@@ -243,7 +243,6 @@ grepped for each ✗.
 | C4 | Start wait | `CompactionStartWaiter` (orders the "Compacting..." notice) | ✓ | ✓ | ✗ |
 | C5 | Declined compaction | `ErrCompactionNoBoundary` returns at once instead of timing out | ✓ | ✗ | ✗ |
 | C6 | Summary capture | `CompactionSummarizer` (tappable summary chit) | ✓ | ✓ | ✗ |
-| C7 | Start/done callbacks | `SetOnCompactionStart` / `SetOnCompactionDone` | [30] | [30] | ✗ |
 | C8 | Reload bounce | `reload_on_compact` bounce + resume nudge (agent layer) | ✓ | ✓ | ✓ [31] |
 | C9 | Context window | `ContextWindowQuerier` | ✓ | ✓ | ✓ |
 | C10 | Cache TTL | `CacheTTLProvider` (keepalive interval validation) | ✓ | ✗ | ✓ |
@@ -344,10 +343,11 @@ grepped for each ✗.
    and subagent activity, so long tool calls keep the indicator alive.
 4. Nothing in opencode or codex adopts a run it did not start. Whether either backend can start
    a root-session run on its own (as CC does after a background task finishes) is unverified.
-5. Turn-time capability gating: `dg/backend.go:CapabilitiesForBackend` returns
-   `PostToolNudge=false, PreAnswerNudge=false` for opencode and codex, and
-   `gw/agents_setup.go:setupNudgeSystem` disables mid-turn rules by name (`isOpencode`).
-   opencode nonetheless has a working pre-answer branch (`oc/handlers.go:onSessionIdle`, calls
+5. Capability gating: `dg/backend.go:CapabilitiesForBackend` returns
+   `PostToolNudge=false, PreAnswerNudge=false` for opencode and codex. Both the turn
+   (`ag/turn_delegated.go`, which arms the nudge funcs) and the nudge scheduler
+   (`gw/agents_setup.go:nudgeCapabilities`, which skips unsupported rules with a warning) read
+   that one declaration. opencode nonetheless has a working pre-answer branch (`oc/handlers.go:onSessionIdle`, calls
    `turn.PreAnswerNudgeFunc` and re-sends) that the agent never arms. Post-tool nudges need a
    per-tool hook; ccstream gets it from `foci-cc-hook`.
 6. opencode's SSE stream carries server heartbeats inbound (`oc/subscriber.go:Subscriber.onHeartbeat`);
@@ -419,9 +419,8 @@ grepped for each ✗.
     Start (`oc/blank_system.go:WriteSessionCompactFile`). codex passes `-c compact_prompt=...` at
     app-server launch (`cx/lifecycle.go:appServerArgs`). Both use the prompt resolved at launch,
     not at the time of the compaction.
-30. Implemented on ccstream (`cc/compaction.go`) and opencode (`oc/opencode.go`) but **no caller
-    sets either** (`grep SetOnCompactionStart|SetOnCompactionDone` outside `dg/`: none). Dead
-    hooks: delete them or wire them (e.g. to notice backend-initiated auto-compaction).
+30. Unused. (Was the C7 row: the `SetOnCompactionStart` / `SetOnCompactionDone` callbacks on
+    ccstream and opencode, which had no caller and were deleted in #2154.)
 31. Agent-layer generic: closes the backend keeping the resume id; codex re-sends
     `baseInstructions` on `thread/resume` (`cx/lifecycle.go:resumeThread`).
 32. A codex child that outlives its turn still reads `still_running` false early (not yet
@@ -545,7 +544,6 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - C4: `cc/compaction.go:ArmCompactionStartWait` | `oc/compaction.go:ArmCompactionStartWait`, `oc/handlers.go:handleCompactionPart` | ✗ grep `ArmCompactionStartWait`
 - C5: `cc/compaction.go:signalCompactionAbort` | ✗ grep `ErrCompactionNoBoundary` | ✗ same
 - C6: `cc/compaction.go:CompactionSummary` | `oc/compaction.go:CompactionSummary` | ✗ grep `CompactionSummary`
-- C7: `cc/compaction.go:SetOnCompactionStart/Done` | `oc/opencode.go` same | ✗ (and no caller anywhere)
 - C8: `ag/compaction.go:runDelegatedCompact`, `ag/delegated_manager.go:BounceSessionIfPromptChanged` (generic)
 - C9: `cc/control.go:GetContextWindow` | `oc/context_usage.go:GetContextWindow` | `cx/context_window.go:GetContextWindow`
 - C10: `cc/control.go:CacheTTL` (1h) | ✗ grep `CacheTTL` | `cx/context_window.go:CacheTTL` (5m)
@@ -604,15 +602,9 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 
 Found by the parity survey, beyond the table:
 
-- **Dead hooks:** `SetOnCompactionStart` / `SetOnCompactionDone` on ccstream and opencode have
-  no caller (C7, footnote 30).
 - **Unreachable codex config:** `sandbox` and `api_key` (footnote 48).
 - **codex can hang on an unknown server request** (footnote 21).
 - **Batch runs on opencode/codex can prompt the owner's chat** (footnote 15).
-- **Nudge capability is decided by name in two places** that can disagree:
-  `dg/backend.go:CapabilitiesForBackend` (switch on name) and `gw/agents_setup.go` (`isOpencode`).
-  codex gets `CanPostTool: true` from the nudge scheduler but `PostToolNudge: false` from
-  Capabilities.
 
 ## Adding a new delegated backend
 
@@ -640,9 +632,9 @@ Everything a backend must provide to run turns at all:
 
 - **Effectively required:**
   - `LedgerBooker`: without it no cost is booked and `LogUsage` logs the gap.
-  - `BackendCapabilities`: **if absent the agent assumes `PostToolNudge` and `PreAnswerNudge`
-    are TRUE** (`ag/turn_delegated.go:buildTurnEvents`). Implement it, and add the name to
-    `CapabilitiesForBackend`.
+  - `BackendCapabilities`: if absent, the agent treats the backend as supporting no mid-turn
+    nudges. Add the name to `CapabilitiesForBackend` (the nudge scheduler and startup checks
+    read it by name) and implement `Capabilities()` by delegating to it.
   - `ActivityChecker`: idle reaping and stream-silence timeouts.
   - `CompactionWaiter` + `CompactionStartWaiter`: without them compaction falls back to
     `WaitForTurn`.
@@ -668,7 +660,6 @@ Everything a backend must provide to run turns at all:
 
 - `gw/agents_delegated.go`: `backendDefaultModel`, config folding blocks, relogin, pretool/stop
   rule wiring, per-backend callback type switches, `transcriptCheckerFor`, `resumeRetentionFor`.
-- `gw/agents_setup.go:setupNudgeSystem` (`isOpencode`).
 - `gw/environment.go` (command-approval block is `claude-code` only).
 - `gw/notifications.go` (readiness probe skip).
 - `internal/config/resolved.go:isAutoNamingBackend` (prefix `codex`).

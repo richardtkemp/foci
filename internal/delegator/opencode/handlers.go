@@ -623,15 +623,6 @@ func (b *Backend) onSessionCompacted(sessionID string) {
 	if sessionID != b.sessionID {
 		return
 	}
-	// Fire onCompactionDone with 0 — we don't know the pre-compaction
-	// token count from this event. A future iteration can fetch it via
-	// GET /session/:id/message?limit=1 if the platform layer needs it.
-	b.mu.Lock()
-	fn := b.onCompactionDone
-	b.mu.Unlock()
-	if fn != nil {
-		fn(0)
-	}
 	// Close compactDoneCh so WaitForCompaction unblocks.
 	b.turnMu.Lock()
 	if b.compactDoneCh != nil {

@@ -284,13 +284,11 @@ type Backend struct {
 	// Callbacks — set before Start, read-only after. Each is referenced
 	// by the matching Set* method below; that's enough production-code
 	// use for the unused linter (which excludes tests) to be satisfied.
-	permPromptFn      delegator.PermissionPromptFunc
-	onSessionReady    func(sessionID string)
-	typingFunc        func(typing bool)
-	onCompactionStart func()
-	onCompactionDone  func(preTokens int)
-	onAuthFailure     func(detail string)
-	onRateLimited     func(signal ratelimit.Signal)
+	permPromptFn   delegator.PermissionPromptFunc
+	onSessionReady func(sessionID string)
+	typingFunc     func(typing bool)
+	onAuthFailure  func(detail string)
+	onRateLimited  func(signal ratelimit.Signal)
 
 	// Auto-approve rules — compiled from StartOptions.AutoApproveRules.
 	// When non-empty, incoming permission.asked events are checked against
@@ -373,18 +371,6 @@ func (b *Backend) SetOnSessionReady(fn func(sessionID string)) {
 // SetTypingFunc stores the typing-indicator callback.
 func (b *Backend) SetTypingFunc(fn func(typing bool)) {
 	b.typingFunc = fn
-}
-
-// SetOnCompactionStart stores the callback fired when CC signals
-// compaction is underway. OpenCode has no "compacting started" event,
-// so compaction.go synthesises one (documented divergence, plan §8.2).
-func (b *Backend) SetOnCompactionStart(fn func()) {
-	b.onCompactionStart = fn
-}
-
-// SetOnCompactionDone stores the callback fired on session.compacted.
-func (b *Backend) SetOnCompactionDone(fn func(preTokens int)) {
-	b.onCompactionDone = fn
 }
 
 // SetOnSubagentStatus stores the callback on the shared SubagentTracker. The

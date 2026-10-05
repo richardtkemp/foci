@@ -203,6 +203,12 @@ type mockBackendDT struct {
 	injects []delegator.Inject // every ImmediateInject, in order (guarded by mu)
 }
 
+// Capabilities satisfies delegator.BackendCapabilities, declaring the
+// mid-turn nudges ccstream supports so the nudge tests see them armed.
+func (m *mockBackendDT) Capabilities() delegator.Capabilities {
+	return delegator.Capabilities{PostToolNudge: true, PreAnswerNudge: true, Streaming: true}
+}
+
 // ConsumeThreadName satisfies delegator.ThreadNameConsumer.
 func (m *mockBackendDT) ConsumeThreadName() {
 	m.mu.Lock()
@@ -371,7 +377,7 @@ func TestDelegatedTransport_InjectNudges_WithNudger(t *testing.T) {
 			{Text: "regex-reminder", Trigger: nudge.Trigger{Type: "regex", Pattern: "hello"}},
 		},
 	}
-	sched := nudge.NewScheduler(rs, 5, 2)
+	sched := nudge.NewSchedulerOpts(rs, nudge.SchedulerOpts{Cooldown: 5, MaxPerBatch: 2, CanPostTool: true, CanPreAnswer: true})
 
 	a := &Agent{Model: "test-model", Nudger: sched}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
@@ -434,7 +440,7 @@ func TestDelegatedTransport_InjectNudges_EmptyTexts(t *testing.T) {
 			{Text: "should-not-appear", Trigger: nudge.Trigger{Type: "every_n_turns", N: 1}},
 		},
 	}
-	sched := nudge.NewScheduler(rs, 5, 2)
+	sched := nudge.NewSchedulerOpts(rs, nudge.SchedulerOpts{Cooldown: 5, MaxPerBatch: 2, CanPostTool: true, CanPreAnswer: true})
 	a := &Agent{Model: "test-model", Nudger: sched}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", nil, nil)
@@ -458,7 +464,7 @@ func TestDelegatedTransport_InjectNudges_NoMatchingNudges(t *testing.T) {
 			{Text: "also-nope", Trigger: nudge.Trigger{Type: "every_n_turns", N: 999}},
 		},
 	}
-	sched := nudge.NewScheduler(rs, 5, 2)
+	sched := nudge.NewSchedulerOpts(rs, nudge.SchedulerOpts{Cooldown: 5, MaxPerBatch: 2, CanPostTool: true, CanPreAnswer: true})
 	a := &Agent{Model: "test-model", Nudger: sched}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hello"}, nil)
@@ -482,7 +488,7 @@ func TestDelegatedTransport_InjectNudges_ReflectionTriggerSuppressed(t *testing.
 			{Text: "regex-reminder", Trigger: nudge.Trigger{Type: "regex", Pattern: "hello"}},
 		},
 	}
-	sched := nudge.NewScheduler(rs, 5, 2)
+	sched := nudge.NewSchedulerOpts(rs, nudge.SchedulerOpts{Cooldown: 5, MaxPerBatch: 2, CanPostTool: true, CanPreAnswer: true})
 	a := &Agent{Model: "test-model", Nudger: sched}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hello world"}, nil)
@@ -1379,7 +1385,7 @@ func TestDelegatedTransport_RunInference_PostToolNudgeWired(t *testing.T) {
 			{Text: "error-reminder", Trigger: nudge.Trigger{Type: "after_error"}},
 		},
 	}
-	sched := nudge.NewScheduler(rs, 1, 2)
+	sched := nudge.NewSchedulerOpts(rs, nudge.SchedulerOpts{Cooldown: 1, MaxPerBatch: 2, CanPostTool: true, CanPreAnswer: true})
 	sched.StartTurn("hi")
 
 	mgr := newMockDelegatedManager(t, be)
@@ -1479,7 +1485,7 @@ func TestDelegatedTransport_RunInference_PreAnswerGateFiresOnce(t *testing.T) {
 			{Text: "verify-your-answer", Trigger: nudge.Trigger{Type: "pre_answer"}},
 		},
 	}
-	sched := nudge.NewScheduler(rs, 5, 2)
+	sched := nudge.NewSchedulerOpts(rs, nudge.SchedulerOpts{Cooldown: 5, MaxPerBatch: 2, CanPostTool: true, CanPreAnswer: true})
 	sched.Configure(nudge.Settings{Cooldown: 5, MaxPerBatch: 2, PreAnswerGate: true})
 	sched.StartTurn("hi")
 
@@ -1548,7 +1554,7 @@ func TestDelegatedTransport_RunInference_PreAnswerGateSuppressedOnReflection(t *
 			{Text: "verify-your-answer", Trigger: nudge.Trigger{Type: "pre_answer"}},
 		},
 	}
-	sched := nudge.NewScheduler(rs, 5, 2)
+	sched := nudge.NewSchedulerOpts(rs, nudge.SchedulerOpts{Cooldown: 5, MaxPerBatch: 2, CanPostTool: true, CanPreAnswer: true})
 	sched.StartTurn("reflection prompt")
 
 	mgr := newMockDelegatedManager(t, be)
@@ -1597,7 +1603,7 @@ func TestDelegatedTransport_RunInference_PreAnswerGateDisabled(t *testing.T) {
 			{Text: "verify", Trigger: nudge.Trigger{Type: "pre_answer"}},
 		},
 	}
-	sched := nudge.NewScheduler(rs, 5, 2)
+	sched := nudge.NewSchedulerOpts(rs, nudge.SchedulerOpts{Cooldown: 5, MaxPerBatch: 2, CanPostTool: true, CanPreAnswer: true})
 	sched.StartTurn("hi")
 
 	mgr := newMockDelegatedManager(t, be)
@@ -1639,7 +1645,7 @@ func TestDelegatedTransport_RunInference_PreAnswerFoldsIntoFinal(t *testing.T) {
 			{Text: "verify", Trigger: nudge.Trigger{Type: "pre_answer"}},
 		},
 	}
-	sched := nudge.NewScheduler(rs, 5, 2)
+	sched := nudge.NewSchedulerOpts(rs, nudge.SchedulerOpts{Cooldown: 5, MaxPerBatch: 2, CanPostTool: true, CanPreAnswer: true})
 	sched.Configure(nudge.Settings{Cooldown: 5, MaxPerBatch: 2, PreAnswerGate: true})
 	sched.StartTurn("hi")
 
@@ -1802,7 +1808,7 @@ func TestDelegatedTransport_RunInference_PreAnswerSentinelRestoresOriginal(t *te
 			{Text: "verify", Trigger: nudge.Trigger{Type: "pre_answer"}},
 		},
 	}
-	sched := nudge.NewScheduler(rs, 5, 2)
+	sched := nudge.NewSchedulerOpts(rs, nudge.SchedulerOpts{Cooldown: 5, MaxPerBatch: 2, CanPostTool: true, CanPreAnswer: true})
 	sched.Configure(nudge.Settings{Cooldown: 5, MaxPerBatch: 2, PreAnswerGate: true})
 	sched.StartTurn("hi")
 
@@ -2757,5 +2763,51 @@ func TestDelegatedTransport_TurnEndClosesActivityUnlessTheBackendDoes(t *testing
 				t.Errorf("ended %v, still_running %v; want ended, still_running %v", ended, running, tc.running)
 			}
 		})
+	}
+}
+
+// capabilitylessBackend exposes only the Delegator method set of the wrapped
+// mock, so it does not implement delegator.BackendCapabilities.
+type capabilitylessBackend struct{ delegator.Delegator }
+
+// TestDelegatedTransport_RunInference_UndeclaredCapabilitiesArmNoMidTurnNudges
+// verifies a backend that declares no capabilities gets no mid-turn nudge
+// funcs (#2154). The agent layer used to assume both were supported, so a new
+// backend silently claimed them.
+func TestDelegatedTransport_RunInference_UndeclaredCapabilitiesArmNoMidTurnNudges(t *testing.T) {
+	var postTool func(string, string, bool) []string
+	var preAnswer func(*delegator.TurnResult) string
+	captured := false
+	inner := &mockBackendDT{
+		sessionFile: "/tmp/session.jsonl",
+		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
+			captured = true
+			postTool = handler.PostToolNudgeFunc
+			preAnswer = handler.PreAnswerNudgeFunc
+			if handler.OnTurnComplete != nil {
+				handler.OnTurnComplete(&delegator.TurnResult{Text: "ok"})
+			}
+			return nil, nil
+		},
+	}
+
+	mgr := newMockDelegatedManager(t, capabilitylessBackend{inner})
+	a := &Agent{Model: "test-model", DelegatedManager: mgr}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
+	ts.Prompt = "hi"
+	ts.StartedAt = time.Now()
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+	if !captured {
+		t.Fatal("the turn never reached the backend")
+	}
+	if postTool != nil {
+		t.Error("PostToolNudgeFunc armed for a backend that declares no capabilities")
+	}
+	if preAnswer != nil {
+		t.Error("PreAnswerNudgeFunc armed for a backend that declares no capabilities")
 	}
 }

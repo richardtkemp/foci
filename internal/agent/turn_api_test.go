@@ -619,7 +619,7 @@ func TestInjectNudges_TurnIntervalFires(t *testing.T) {
 			},
 		},
 	}
-	scheduler := nudge.NewScheduler(rs, 5, 3)
+	scheduler := nudge.NewSchedulerOpts(rs, nudge.SchedulerOpts{Cooldown: 5, MaxPerBatch: 3, CanPostTool: true, CanPreAnswer: true})
 
 	a := &Agent{Nudger: scheduler}
 	tr := &APITransport{sharedTurnOps{agent: a}}
@@ -672,7 +672,7 @@ func TestInjectNudges_RegexFires(t *testing.T) {
 			},
 		},
 	}
-	scheduler := nudge.NewScheduler(rs, 5, 3)
+	scheduler := nudge.NewSchedulerOpts(rs, nudge.SchedulerOpts{Cooldown: 5, MaxPerBatch: 3, CanPostTool: true, CanPreAnswer: true})
 
 	a := &Agent{Nudger: scheduler}
 	tr := &APITransport{sharedTurnOps{agent: a}}
@@ -724,7 +724,7 @@ func TestInjectNudges_MultipleTriggersShareOneSystemReminderRegion(t *testing.T)
 			},
 		},
 	}
-	scheduler := nudge.NewScheduler(rs, 5, 3)
+	scheduler := nudge.NewSchedulerOpts(rs, nudge.SchedulerOpts{Cooldown: 5, MaxPerBatch: 3, CanPostTool: true, CanPreAnswer: true})
 
 	a := &Agent{Nudger: scheduler}
 	tr := &APITransport{sharedTurnOps{agent: a}}
@@ -808,7 +808,7 @@ func TestInjectNudges_NoMatch(t *testing.T) {
 			},
 		},
 	}
-	scheduler := nudge.NewScheduler(rs, 5, 3)
+	scheduler := nudge.NewSchedulerOpts(rs, nudge.SchedulerOpts{Cooldown: 5, MaxPerBatch: 3, CanPostTool: true, CanPreAnswer: true})
 
 	a := &Agent{Nudger: scheduler}
 	tr := &APITransport{sharedTurnOps{agent: a}}

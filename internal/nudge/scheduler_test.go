@@ -21,7 +21,7 @@ func TestEveryNToolsTrigger(t *testing.T) {
 	// counting individual tool calls (not loop iterations).
 	t.Parallel()
 
-	s := NewScheduler(makeTestRuleSet(), 1, 1) // cooldown=1 to avoid interference
+	s := NewSchedulerOpts(makeTestRuleSet(), SchedulerOpts{Cooldown: 1, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true}) // cooldown=1 to avoid interference
 	s.StartTurn("hello")
 
 	// 1, 2 tool calls: should not fire (N=3 fires at multiples of 3)
@@ -57,7 +57,7 @@ func TestAfterErrorTrigger(t *testing.T) {
 	// Verifies error trigger fires when lastToolError is true.
 	t.Parallel()
 
-	s := NewScheduler(makeTestRuleSet(), 1, 5) // allow multiple per batch
+	s := NewSchedulerOpts(makeTestRuleSet(), SchedulerOpts{Cooldown: 1, MaxPerBatch: 5, CanPostTool: true, CanPreAnswer: true}) // allow multiple per batch
 	s.StartTurn("hello")
 
 	// No error: should not fire after_error rule
@@ -80,7 +80,7 @@ func TestRegexTrigger(t *testing.T) {
 	// Verifies regex fires when user message matches.
 	t.Parallel()
 
-	s := NewScheduler(makeTestRuleSet(), 1, 5)
+	s := NewSchedulerOpts(makeTestRuleSet(), SchedulerOpts{Cooldown: 1, MaxPerBatch: 5, CanPostTool: true, CanPreAnswer: true})
 	s.StartTurn("Please debug this issue")
 
 	r := s.CheckAfterTools(1, false)
@@ -96,7 +96,7 @@ func TestRegexTriggerNoMatch(t *testing.T) {
 	// Verifies regex doesn't fire when message doesn't match.
 	t.Parallel()
 
-	s := NewScheduler(makeTestRuleSet(), 1, 5)
+	s := NewSchedulerOpts(makeTestRuleSet(), SchedulerOpts{Cooldown: 1, MaxPerBatch: 5, CanPostTool: true, CanPreAnswer: true})
 	s.StartTurn("Hello world")
 
 	r := s.CheckAfterTools(1, false)
@@ -110,7 +110,7 @@ func TestPreAnswerTrigger(t *testing.T) {
 	// and not by CheckAfterTools.
 	t.Parallel()
 
-	s := NewScheduler(makeTestRuleSet(), 1, 5)
+	s := NewSchedulerOpts(makeTestRuleSet(), SchedulerOpts{Cooldown: 1, MaxPerBatch: 5, CanPostTool: true, CanPreAnswer: true})
 	s.StartTurn("hello")
 
 	// pre_answer should not fire in CheckAfterTools
@@ -127,14 +127,14 @@ func TestHasPreAnswerRules(t *testing.T) {
 	// Checks the convenience method.
 	t.Parallel()
 
-	s := NewScheduler(makeTestRuleSet(), 5, 1)
+	s := NewSchedulerOpts(makeTestRuleSet(), SchedulerOpts{Cooldown: 5, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true})
 	if !s.HasPreAnswerRules() {
 		t.Error("expected HasPreAnswerRules=true")
 	}
 
-	s2 := NewScheduler(&RuleSet{
+	s2 := NewSchedulerOpts(&RuleSet{
 		Rules: []Rule{{Text: "test", Trigger: Trigger{Type: "every_n_tools", N: 3}}},
-	}, 5, 1)
+	}, SchedulerOpts{Cooldown: 5, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true})
 	if s2.HasPreAnswerRules() {
 		t.Error("expected HasPreAnswerRules=false with no pre_answer rules")
 	}
@@ -150,7 +150,7 @@ func TestCooldownPreventsSpam(t *testing.T) {
 			{Text: "check", Trigger: Trigger{Type: "after_error"}, Priority: "high"},
 		},
 	}
-	s := NewScheduler(rs, 3, 1) // cooldown=3
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 3, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true}) // cooldown=3
 	s.StartTurn("hello")
 
 	// First error: should fire
@@ -186,7 +186,7 @@ func TestMaxPerBatchLimits(t *testing.T) {
 			{Text: "rule2", Trigger: Trigger{Type: "after_error"}, Priority: "medium"},
 		},
 	}
-	s := NewScheduler(rs, 1, 1) // maxPerBatch=1
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 1, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true}) // maxPerBatch=1
 	s.StartTurn("hello")
 
 	// Both rules match (error), but only 1 should fire
@@ -201,7 +201,7 @@ func TestCheckRegexFiresWithoutTools(t *testing.T) {
 	// rules, ensuring regex triggers work even on turns with no tool calls.
 	t.Parallel()
 
-	s := NewScheduler(makeTestRuleSet(), 1, 5)
+	s := NewSchedulerOpts(makeTestRuleSet(), SchedulerOpts{Cooldown: 1, MaxPerBatch: 5, CanPostTool: true, CanPreAnswer: true})
 	s.StartTurn("Please debug this issue")
 
 	// No CheckAfterTools called — simulate a no-tools turn.
@@ -222,7 +222,7 @@ func TestCheckRegexNoopAfterToolsFired(t *testing.T) {
 	// the regex rule already fired via CheckAfterTools.
 	t.Parallel()
 
-	s := NewScheduler(makeTestRuleSet(), 1, 5)
+	s := NewSchedulerOpts(makeTestRuleSet(), SchedulerOpts{Cooldown: 1, MaxPerBatch: 5, CanPostTool: true, CanPreAnswer: true})
 	s.StartTurn("Please debug this issue")
 
 	// Fire via tools path first.
@@ -239,7 +239,7 @@ func TestCheckRegexNoMatch(t *testing.T) {
 	// Verifies CheckRegex returns nil when no patterns match.
 	t.Parallel()
 
-	s := NewScheduler(makeTestRuleSet(), 1, 5)
+	s := NewSchedulerOpts(makeTestRuleSet(), SchedulerOpts{Cooldown: 1, MaxPerBatch: 5, CanPostTool: true, CanPreAnswer: true})
 	s.StartTurn("Hello world")
 
 	r := s.CheckRegex()
@@ -258,7 +258,7 @@ func TestEveryNTurnsTrigger(t *testing.T) {
 			{Text: "tool-reminder", Trigger: Trigger{Type: "every_n_turns", N: 3}, Priority: "low"},
 		},
 	}
-	s := NewScheduler(rs, 1, 5)
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 1, MaxPerBatch: 5, CanPostTool: true, CanPreAnswer: true})
 
 	// Turns 1, 2: should not fire
 	s.StartTurn("msg1")
@@ -305,7 +305,7 @@ func TestEveryNTurnsNotInCheckAfterTools(t *testing.T) {
 			{Text: "tool-reminder", Trigger: Trigger{Type: "every_n_turns", N: 1}, Priority: "low"},
 		},
 	}
-	s := NewScheduler(rs, 1, 5)
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 1, MaxPerBatch: 5, CanPostTool: true, CanPreAnswer: true})
 	s.StartTurn("msg")
 
 	// CheckAfterTools should never return every_n_turns rules
@@ -357,7 +357,7 @@ func TestStartTurnClearsState(t *testing.T) {
 			{Text: "check", Trigger: Trigger{Type: "after_error"}, Priority: "high"},
 		},
 	}
-	s := NewScheduler(rs, 5, 1) // cooldown=5
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 5, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true}) // cooldown=5
 	s.StartTurn("hello")
 
 	// Fire once
@@ -387,7 +387,7 @@ func TestConditionGatesEveryNTurns(t *testing.T) {
 			},
 		},
 	}
-	s := NewScheduler(rs, 1, 5)
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 1, MaxPerBatch: 5, CanPostTool: true, CanPreAnswer: true})
 
 	// Turn 2: interval matches but condition is false — should not fire
 	s.StartTurn("msg1")
@@ -423,7 +423,7 @@ func TestConditionGatesAfterTools(t *testing.T) {
 			},
 		},
 	}
-	s := NewScheduler(rs, 1, 5)
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 1, MaxPerBatch: 5, CanPostTool: true, CanPreAnswer: true})
 	s.StartTurn("msg")
 
 	// Error present but condition is false — should not fire
@@ -444,7 +444,7 @@ func TestNewSchedulerNilRuleSet(t *testing.T) {
 	// Returns nil scheduler.
 	t.Parallel()
 
-	s := NewScheduler(nil, 5, 1)
+	s := NewSchedulerOpts(nil, SchedulerOpts{Cooldown: 5, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true})
 	if s != nil {
 		t.Error("expected nil scheduler for nil RuleSet")
 	}
@@ -469,7 +469,7 @@ func TestToolPatternToolNameMatch(t *testing.T) {
 			{Text: "saw-bash", Trigger: Trigger{Type: "tool_pattern", ToolPattern: "^Bash$"}, Priority: "high"},
 		},
 	}
-	s := NewScheduler(rs, 1, 1)
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 1, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true})
 	s.StartTurn("hello")
 
 	s.RecordToolCall("Read", `{"file_path":"/x"}`)
@@ -494,7 +494,7 @@ func TestToolPatternInputMatch(t *testing.T) {
 			{Text: "danger", Trigger: Trigger{Type: "tool_pattern", InputPattern: `rm -rf`}, Priority: "high"},
 		},
 	}
-	s := NewScheduler(rs, 1, 1)
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 1, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true})
 	s.StartTurn("hello")
 
 	s.RecordToolCall("Bash", `{"command":"ls"}`)
@@ -537,7 +537,7 @@ func TestToolPatternBashInputMatchesCommandText(t *testing.T) {
 			rs := &RuleSet{Rules: []Rule{
 				{Text: "hit", Trigger: Trigger{Type: "tool_pattern", InputPattern: tc.pattern}, Priority: "high"},
 			}}
-			s := NewScheduler(rs, 1, 1)
+			s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 1, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true})
 			s.StartTurn("hello")
 			s.RecordToolCall(tc.tool, tc.input)
 			got := len(s.CheckAfterTools(1, false)) == 1
@@ -558,7 +558,7 @@ func TestToolPatternConsecutive(t *testing.T) {
 			{Text: "stop-reading", Trigger: Trigger{Type: "tool_pattern", ToolPattern: "^(Read|Grep|Glob)$", Consecutive: 3}, Priority: "high"},
 		},
 	}
-	s := NewScheduler(rs, 1, 1)
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 1, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true})
 	s.StartTurn("hello")
 
 	// Two consecutive Reads — not enough.
@@ -604,7 +604,7 @@ func TestToolPatternBothFields(t *testing.T) {
 			}, Priority: "high"},
 		},
 	}
-	s := NewScheduler(rs, 1, 1)
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 1, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true})
 	s.StartTurn("hello")
 
 	// Edit but wrong path → no fire.
@@ -637,7 +637,7 @@ func TestToolPatternCompileFailureDoesNotFire(t *testing.T) {
 			{Text: "ok", Trigger: Trigger{Type: "tool_pattern", ToolPattern: `^Bash$`}, Priority: "high"},
 		},
 	}
-	s := NewScheduler(rs, 1, 1)
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 1, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true})
 	s.StartTurn("hello")
 
 	s.RecordToolCall("Bash", "")
@@ -658,7 +658,7 @@ func TestRingBufferDepthBound(t *testing.T) {
 			{Text: "bash-tail", Trigger: Trigger{Type: "tool_pattern", ToolPattern: "^Bash$", Consecutive: 2}, Priority: "high"},
 		},
 	}
-	s := NewScheduler(rs, 1, 1)
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 1, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true})
 	s.StartTurn("hello")
 
 	// Fill the buffer with non-matching Reads beyond capacity.
@@ -687,7 +687,7 @@ func TestStartTurnClearsRecentBuffer(t *testing.T) {
 			{Text: "two-reads", Trigger: Trigger{Type: "tool_pattern", ToolPattern: "^Read$", Consecutive: 2}, Priority: "high"},
 		},
 	}
-	s := NewScheduler(rs, 1, 1)
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 1, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true})
 	s.StartTurn("turn-1")
 
 	// One Read in turn 1.
@@ -721,7 +721,7 @@ func TestSchedulerLiveGating(t *testing.T) {
 		{Text: "builtin-braindead", Trigger: Trigger{Type: "every_n_tools"}, Category: CategoryBraindead},
 		{Text: "builtin-default", Trigger: Trigger{Type: "every_n_turns"}, Category: CategoryDefault},
 	}}
-	s := NewScheduler(rs, 1, 5)
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 1, MaxPerBatch: 5, CanPostTool: true, CanPreAnswer: true})
 
 	// Unconfigured: braindead threshold 0, default disabled → silent.
 	s.StartTurn("hi")
@@ -780,7 +780,7 @@ func TestToolPatternCrossRuleCooldown(t *testing.T) {
 		},
 	}
 	// cooldown=5 (the config default), maxPerBatch=1 (also default).
-	s := NewScheduler(rs, 5, 1)
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 5, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true})
 	s.StartTurn("hello")
 
 	var allFired []string
@@ -819,7 +819,7 @@ func TestToolPatternCrossRuleCooldownDoesNotAffectOtherTypes(t *testing.T) {
 			{Text: "periodic", Trigger: Trigger{Type: "every_n_tools", N: 2}, Priority: "high"},
 		},
 	}
-	s := NewScheduler(rs, 5, 5) // maxPerBatch=5 so both can fire in one batch
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 5, MaxPerBatch: 5, CanPostTool: true, CanPreAnswer: true}) // maxPerBatch=5 so both can fire in one batch
 	s.StartTurn("hello")
 
 	s.RecordToolCall("Edit", "")
@@ -848,7 +848,7 @@ func TestAfterErrorExemptsBenignGrepNoMatch(t *testing.T) {
 			{Text: "check-errors", Trigger: Trigger{Type: "after_error"}, Priority: "high"},
 		},
 	}
-	s := NewScheduler(rs, 1, 1)
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 1, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true})
 	s.StartTurn("hello")
 
 	for _, cmd := range []string{
@@ -874,7 +874,7 @@ func TestAfterErrorStillFiresForRealErrors(t *testing.T) {
 			{Text: "check-errors", Trigger: Trigger{Type: "after_error"}, Priority: "high"},
 		},
 	}
-	s := NewScheduler(rs, 1, 1)
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 1, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true})
 	s.StartTurn("hello")
 
 	s.RecordToolCall("Bash", `{"command":"go build ./..."}`)
@@ -895,7 +895,7 @@ func TestAfterErrorExemptionRequiresRecentContext(t *testing.T) {
 			{Text: "check-errors", Trigger: Trigger{Type: "after_error"}, Priority: "high"},
 		},
 	}
-	s := NewScheduler(rs, 1, 1)
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 1, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true})
 	s.StartTurn("hello")
 
 	r := s.CheckAfterTools(1, true)
@@ -917,7 +917,7 @@ func TestCheckRegexCapsAtMaxPerBatch(t *testing.T) {
 			{Text: "r3", Trigger: Trigger{Type: "regex", Pattern: "(?i)problem"}, Priority: "low"},
 		},
 	}
-	s := NewScheduler(rs, 1, 1) // maxPerBatch=1
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 1, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true}) // maxPerBatch=1
 	s.StartTurn("debug this issue, there's a problem")
 
 	r := s.CheckRegex()
@@ -936,7 +936,7 @@ func TestCheckRegexMaxPerBatchUnlimitedWhenHigh(t *testing.T) {
 			{Text: "r2", Trigger: Trigger{Type: "regex", Pattern: "(?i)issue"}, Priority: "medium"},
 		},
 	}
-	s := NewScheduler(rs, 1, 5) // maxPerBatch=5
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 1, MaxPerBatch: 5, CanPostTool: true, CanPreAnswer: true}) // maxPerBatch=5
 	s.StartTurn("debug this issue")
 
 	r := s.CheckRegex()
@@ -964,7 +964,7 @@ func TestMaxPerTurnBudget(t *testing.T) {
 	// regex rule a second time, which is a separate, pre-existing quirk
 	// unrelated to the per-turn budget under test here. A higher cooldown
 	// keeps this test isolated to MaxPerTurn.
-	s := NewScheduler(rs, 10, 5)
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 10, MaxPerBatch: 5, CanPostTool: true, CanPreAnswer: true})
 	s.Configure(Settings{Cooldown: 10, MaxPerBatch: 5, MaxPerTurn: 2})
 	s.StartTurn("debug this")
 
@@ -991,7 +991,7 @@ func TestMaxPerTurnZeroMeansUnlimited(t *testing.T) {
 			{Text: "after-err", Trigger: Trigger{Type: "after_error"}, Priority: "high"},
 		},
 	}
-	s := NewScheduler(rs, 10, 5) // see TestMaxPerTurnBudget for why cooldown isn't 1
+	s := NewSchedulerOpts(rs, SchedulerOpts{Cooldown: 10, MaxPerBatch: 5, CanPostTool: true, CanPreAnswer: true}) // see TestMaxPerTurnBudget for why cooldown isn't 1
 	s.StartTurn("debug this")
 
 	var total []string

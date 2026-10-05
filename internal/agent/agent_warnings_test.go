@@ -18,7 +18,7 @@ import (
 // braindeadScheduler builds the always-present braindead rule and configures the
 // live threshold that gates its firing (the config field is now live, not baked).
 func braindeadScheduler(threshold int) *nudge.Scheduler {
-	s := nudge.NewScheduler(&nudge.RuleSet{Rules: nudge.BraindeadRule()}, 5, 1)
+	s := nudge.NewSchedulerOpts(&nudge.RuleSet{Rules: nudge.BraindeadRule()}, nudge.SchedulerOpts{Cooldown: 5, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true})
 	s.Configure(nudge.Settings{Cooldown: 5, MaxPerBatch: 1, BraindeadThreshold: threshold})
 	return s
 }

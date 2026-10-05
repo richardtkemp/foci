@@ -34,7 +34,7 @@
 //	                        handled as a compaction turn: emit system/status
 //	                        "compacting" then system/compact_boundary then a
 //	                        result (no assistant text), mirroring real CC's
-//	                        /compact. Drives foci's onCompactionStart/Done and
+//	                        /compact. Drives foci's compaction start/done waits and
 //	                        the #828 Part B reload-on-compact bounce.
 //	CCSTUB_COMPACT_PRE_TOKENS — pre_tokens reported in compact_boundary
 //	                        (default 50000); only meaningful with the above.
@@ -553,8 +553,8 @@ func main() {
 	// CCSTUB_EMIT_COMPACT_BOUNDARY: when truthy, a user message whose text
 	// begins with "/compact" is handled as a compaction turn instead of a
 	// normal assistant turn — the stub emits a system/status "compacting"
-	// envelope (foci's onCompactionStart) followed by a system/compact_boundary
-	// envelope (foci's onCompactionDone), then a result to close the turn.
+	// envelope (foci's compaction-start wait) followed by a system/compact_boundary
+	// envelope (foci's compaction-done wait), then a result to close the turn.
 	// This mirrors real CC's /compact handling and lets an L2 test exercise
 	// the #828 Part B reload-on-compact bounce end-to-end. pre_tokens comes
 	// from CCSTUB_COMPACT_PRE_TOKENS (default 50000).

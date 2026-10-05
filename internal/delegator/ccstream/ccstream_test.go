@@ -139,28 +139,6 @@ func TestCallbackSetters(t *testing.T) {
 		t.Error("typingFunc(true) did not set value")
 	}
 
-	// SetOnCompactionStart
-	var compStartCalled bool
-	b.SetOnCompactionStart(func() { compStartCalled = true })
-	if b.onCompactionStart == nil {
-		t.Error("onCompactionStart is nil after SetOnCompactionStart")
-	}
-	b.onCompactionStart()
-	if !compStartCalled {
-		t.Error("onCompactionStart was not called")
-	}
-
-	// SetOnCompactionDone
-	var compDoneTokens int
-	b.SetOnCompactionDone(func(preTokens int) { compDoneTokens = preTokens })
-	if b.onCompactionDone == nil {
-		t.Error("onCompactionDone is nil after SetOnCompactionDone")
-	}
-	b.onCompactionDone(50000)
-	if compDoneTokens != 50000 {
-		t.Errorf("compDoneTokens = %d, want 50000", compDoneTokens)
-	}
-
 	// SetOnSubagentStatus
 	var agentStatusText string
 	b.SetOnSubagentStatus(func(detail string) { agentStatusText = detail })
@@ -2471,66 +2449,77 @@ func TestOnSystem_InitBadJSON(t *testing.T) {
 	}
 }
 
+// compactionStartSignalled reports whether the armed compaction-start waiter
+// was signalled. The channel is buffered, so OnSystem's send lands without a
+// receiver and the check is synchronous.
+func compactionStartSignalled(ch chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
 func TestOnSystem_StatusCompacting(t *testing.T) {
-	// Verifies OnSystem/status with status="compacting" fires
-	// onCompactionStart.
+	// Verifies OnSystem/status with status="compacting" signals the armed
+	// compaction-start waiter.
 	t.Parallel()
 
-	var compStartCalled bool
 	b := &Backend{}
-	b.SetOnCompactionStart(func() { compStartCalled = true })
+	b.ArmCompactionStartWait()
+	ch := b.compactStartCh
 
 	status := "compacting"
 	raw, _ := json.Marshal(StatusMessage{Status: &status})
 	b.OnSystem("status", raw)
 
-	if !compStartCalled {
-		t.Error("onCompactionStart was not called")
+	if !compactionStartSignalled(ch) {
+		t.Error("compaction-start waiter was not signalled")
 	}
 }
 
 func TestOnSystem_StatusNonCompacting(t *testing.T) {
-	// Verifies OnSystem/status with a non-compacting status does NOT fire
-	// onCompactionStart.
+	// Verifies OnSystem/status with a non-compacting status does NOT signal
+	// the compaction-start waiter.
 	t.Parallel()
 
-	var compStartCalled bool
 	b := &Backend{}
-	b.SetOnCompactionStart(func() { compStartCalled = true })
+	b.ArmCompactionStartWait()
+	ch := b.compactStartCh
 
 	other := "idle"
 	raw, _ := json.Marshal(StatusMessage{Status: &other})
 	b.OnSystem("status", raw)
 
-	if compStartCalled {
-		t.Error("onCompactionStart should not be called for non-compacting status")
+	if compactionStartSignalled(ch) {
+		t.Error("compaction-start waiter should not be signalled for non-compacting status")
 	}
 }
 
 func TestOnSystem_StatusNilStatus(t *testing.T) {
-	// Verifies OnSystem/status with nil status does NOT fire onCompactionStart.
+	// Verifies OnSystem/status with nil status does NOT signal the
+	// compaction-start waiter.
 	t.Parallel()
 
-	var compStartCalled bool
 	b := &Backend{}
-	b.SetOnCompactionStart(func() { compStartCalled = true })
+	b.ArmCompactionStartWait()
+	ch := b.compactStartCh
 
 	raw, _ := json.Marshal(StatusMessage{Status: nil})
 	b.OnSystem("status", raw)
 
-	if compStartCalled {
-		t.Error("onCompactionStart should not be called for nil status")
+	if compactionStartSignalled(ch) {
+		t.Error("compaction-start waiter should not be signalled for nil status")
 	}
 }
 
 func TestOnSystem_CompactBoundary(t *testing.T) {
-	// Verifies OnSystem/compact_boundary fires onCompactionDone with the
-	// correct preTokens value.
+	// Verifies OnSystem/compact_boundary resolves the armed compaction wait
+	// with success.
 	t.Parallel()
 
-	var gotTokens int
-	b := &Backend{}
-	b.SetOnCompactionDone(func(preTokens int) { gotTokens = preTokens })
+	b := &Backend{compactCh: make(chan error, 1)}
 
 	raw, _ := json.Marshal(CompactBoundaryMessage{
 		CompactMetadata: CompactMetadata{
@@ -2540,8 +2529,13 @@ func TestOnSystem_CompactBoundary(t *testing.T) {
 	})
 	b.OnSystem("compact_boundary", raw)
 
-	if gotTokens != 150000 {
-		t.Errorf("preTokens = %d, want 150000", gotTokens)
+	select {
+	case err := <-b.compactCh:
+		if err != nil {
+			t.Errorf("compaction wait resolved with %v, want nil", err)
+		}
+	default:
+		t.Error("compaction wait was not resolved by compact_boundary")
 	}
 }
 
@@ -2647,14 +2641,14 @@ func TestOnSystem_CompactBoundaryBadJSON(t *testing.T) {
 	// Verifies OnSystem/compact_boundary silently ignores bad JSON.
 	t.Parallel()
 
-	var called bool
-	b := &Backend{}
-	b.SetOnCompactionDone(func(int) { called = true })
+	b := &Backend{compactCh: make(chan error, 1)}
 
 	b.OnSystem("compact_boundary", json.RawMessage(`{bad json`))
 
-	if called {
-		t.Error("onCompactionDone should not be called on bad JSON")
+	select {
+	case err := <-b.compactCh:
+		t.Errorf("compaction wait should not resolve on bad JSON, got %v", err)
+	default:
 	}
 }
 
@@ -2951,7 +2945,7 @@ func TestOnSystem_NilCallbacks(t *testing.T) {
 	// Status without callback.
 	status := "compacting"
 	sRaw, _ := json.Marshal(StatusMessage{Status: &status})
-	b.OnSystem("status", sRaw) // onCompactionStart is nil — should not panic.
+	b.OnSystem("status", sRaw) // no compaction-start waiter armed — should not panic.
 }
 
 // ---------------------------------------------------------------------------

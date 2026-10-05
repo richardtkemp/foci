@@ -786,31 +786,16 @@ func TestOnSessionIdle_FlushesSteerBuf(t *testing.T) {
 // session.compacted
 // ---------------------------------------------------------------------------
 
-func TestOnSessionCompacted_FiresOnCompactionDone(t *testing.T) {
-	// Verifies OnSessionCompacted fires onCompactionDone(0) and closes
-	// compactDoneCh so WaitForCompaction unblocks.
-	var compactionTokens int
-	var compactionFired bool
+func TestOnSessionCompacted_ClosesCompactDoneCh(t *testing.T) {
+	// Verifies OnSessionCompacted closes compactDoneCh so WaitForCompaction
+	// unblocks.
 	b := &Backend{
 		sessionID:     "sess-test",
 		compactDoneCh: make(chan struct{}, 1),
 		outstanding:   delegator.NewOutstandingRegistry(),
 	}
-	b.mu.Lock()
-	b.onCompactionDone = func(preTokens int) {
-		compactionFired = true
-		compactionTokens = preTokens
-	}
-	b.mu.Unlock()
 
 	b.onSessionCompacted("sess-test")
-
-	if !compactionFired {
-		t.Error("onCompactionDone was not called")
-	}
-	if compactionTokens != 0 {
-		t.Errorf("preTokens = %d, want 0 (unknown from session.compacted event)", compactionTokens)
-	}
 
 	// compactDoneCh should be closed.
 	b.turnMu.Lock()

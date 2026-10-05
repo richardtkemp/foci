@@ -522,11 +522,12 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 	// state (preAnswerFired, toolCount, ts) and may legitimately be nil
 	// between turns; the backend tolerates that.
 	//
-	// Gate the mid-turn callbacks on backend capabilities: opencode can't
-	// inject messages mid-turn (HTTP/SSE, no stdin pipe), so wiring them
-	// up would be dead code. Turn-start nudges (every_n_turns, regex) are
-	// unaffected — they're prepended to the prompt in InjectNudges.
-	caps := delegator.Capabilities{PostToolNudge: true, PreAnswerNudge: true}
+	// Gate the mid-turn callbacks on the backend's declared capabilities
+	// (delegator.CapabilitiesForBackend). A backend that declares none gets
+	// neither: a capability is declared, never assumed (#2154). Turn-start
+	// nudges (every_n_turns, regex) are unaffected — they're prepended to the
+	// prompt in InjectNudges.
+	var caps delegator.Capabilities
 	if bc, ok := be.(delegator.BackendCapabilities); ok {
 		caps = bc.Capabilities()
 	}

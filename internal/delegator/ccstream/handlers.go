@@ -559,9 +559,6 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 			return
 		}
 		if status.Status != nil && *status.Status == "compacting" {
-			if b.onCompactionStart != nil {
-				b.onCompactionStart()
-			}
 			// Signal any armed compaction start waiter (one-shot).
 			b.turnMu.Lock()
 			sch := b.compactStartCh
@@ -580,9 +577,6 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		if err := json.Unmarshal(raw, &cb); err != nil {
 			b.logger().Warnf("drop compact_boundary message (unmarshal failed): %v — compaction-done waiter may stall", err)
 			return
-		}
-		if b.onCompactionDone != nil {
-			b.onCompactionDone(cb.CompactMetadata.PreTokens)
 		}
 		b.ledger.Load().enqueue(ccEvent{kind: ccBoundaryEv, turn: b.openTurnRowID()})
 		// Resolve any armed compaction waiter with success. This also makes

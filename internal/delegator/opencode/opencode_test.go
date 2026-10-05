@@ -129,28 +129,6 @@ func TestCallbackSetters(t *testing.T) {
 		t.Error("typingFunc(true) did not set value")
 	}
 
-	// SetOnCompactionStart
-	var compStartCalled bool
-	b.SetOnCompactionStart(func() { compStartCalled = true })
-	if b.onCompactionStart == nil {
-		t.Error("onCompactionStart is nil after SetOnCompactionStart")
-	}
-	b.onCompactionStart()
-	if !compStartCalled {
-		t.Error("onCompactionStart was not called")
-	}
-
-	// SetOnCompactionDone
-	var compDoneTokens int
-	b.SetOnCompactionDone(func(preTokens int) { compDoneTokens = preTokens })
-	if b.onCompactionDone == nil {
-		t.Error("onCompactionDone is nil after SetOnCompactionDone")
-	}
-	b.onCompactionDone(50000)
-	if compDoneTokens != 50000 {
-		t.Errorf("compDoneTokens = %d, want 50000", compDoneTokens)
-	}
-
 	// SetOnSubagentStatus
 	var agentStatusText string
 	b.SetOnSubagentStatus(func(detail string) { agentStatusText = detail })

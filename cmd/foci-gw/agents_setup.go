@@ -11,6 +11,7 @@ import (
 	"foci/internal/command"
 	"foci/internal/compaction"
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/modelcaps"
 	"foci/internal/nudge"
 	"foci/internal/platform"
@@ -135,18 +136,28 @@ func nudgeSettings(nc config.ResolvedNudge) nudge.Settings {
 	}
 }
 
+// nudgeCapabilities reports which mid-turn nudge triggers an agent's transport
+// can deliver. Turn-start triggers (every_n_turns, regex) work everywhere;
+// mid-turn triggers (every_n_tools, after_error, tool_pattern, pre_answer)
+// need the transport to call back mid-turn. The API loop does both; a
+// delegated backend does what it declares — the same declaration the turn
+// reads when it arms the nudge funcs, so a rule the scheduler keeps can fire.
+func nudgeCapabilities(acfg config.AgentConfig) (canPostTool, canPreAnswer bool) {
+	if !acfg.IsDelegated() {
+		return true, true
+	}
+	caps := delegator.CapabilitiesForBackend(acfg.Backend)
+	return caps.PostToolNudge, caps.PreAnswerNudge
+}
+
 // setupNudgeSystem configures the nudge scheduler and reload logic on the agent.
 func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.ResolvedNudge, sessions *session.Store, toolRegistry *tools.Registry, skillRegistry *skills.Registry, fileMode os.FileMode) {
-	// Backend capabilities for rule filtering. Turn-start triggers (every_n_turns,
-	// regex) work on all backends; mid-turn triggers (every_n_tools, after_error,
-	// tool_pattern, pre_answer) need stdin-pipe injection (ccstream), which the
-	// HTTP-based opencode backend lacks.
-	isOpencode := acfg.Backend == "opencode"
+	canPostTool, canPreAnswer := nudgeCapabilities(acfg)
 	schedOpts := nudge.SchedulerOpts{
 		Cooldown:     nc.NudgeCooldown,
 		MaxPerBatch:  nc.NudgeMaxPerBatch,
-		CanPostTool:  !isOpencode,
-		CanPreAnswer: !isOpencode,
+		CanPostTool:  canPostTool,
+		CanPreAnswer: canPreAnswer,
 		AgentID:      acfg.ID,
 	}
 	rulesPath := nudge.RulesPath(acfg.Workspace)
@@ -204,12 +215,7 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 			charRules[i].Category = nudge.CategoryChar
 		}
 		merged := append(braindeadRules, append(charRules, append(defaultRules, scratchpadRules...)...)...)
-		var sched *nudge.Scheduler
-		if isOpencode {
-			sched = nudge.NewSchedulerOpts(&nudge.RuleSet{Rules: merged}, schedOpts)
-		} else {
-			sched = nudge.NewScheduler(&nudge.RuleSet{Rules: merged}, schedOpts.Cooldown, schedOpts.MaxPerBatch)
-		}
+		sched := nudge.NewSchedulerOpts(&nudge.RuleSet{Rules: merged}, schedOpts)
 		sched.Configure(nudgeSettings(liveNudge()))
 		ag.Nudger = sched
 	}

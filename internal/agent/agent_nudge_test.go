@@ -47,7 +47,7 @@ func TestNudgeRegexPrependedToUserMessage(t *testing.T) {
 			},
 		},
 	}
-	sched := nudge.NewScheduler(rs, 5, 1)
+	sched := nudge.NewSchedulerOpts(rs, nudge.SchedulerOpts{Cooldown: 5, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true})
 
 	ag := &Agent{
 		Client:    client,
@@ -138,7 +138,7 @@ func TestNudgePreAnswerDoesNotDropReply(t *testing.T) {
 			},
 		},
 	}
-	sched := nudge.NewScheduler(rs, 5, 1)
+	sched := nudge.NewSchedulerOpts(rs, nudge.SchedulerOpts{Cooldown: 5, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true})
 	sched.Configure(nudge.Settings{Cooldown: 5, MaxPerBatch: 1, PreAnswerGate: true})
 
 	ag := &Agent{
@@ -207,7 +207,7 @@ func TestNudgeRegexBatchMode(t *testing.T) {
 			},
 		},
 	}
-	sched := nudge.NewScheduler(rs, 5, 1)
+	sched := nudge.NewSchedulerOpts(rs, nudge.SchedulerOpts{Cooldown: 5, MaxPerBatch: 1, CanPostTool: true, CanPreAnswer: true})
 
 	ag := &Agent{
 		Client:                        client,

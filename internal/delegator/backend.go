@@ -467,9 +467,9 @@ type ContextWindowQuerier interface {
 }
 
 // BackendCapabilities is optionally implemented by backends to advertise
-// which nudge delivery mechanisms they support. Backends that don't
-// implement this interface are assumed to support everything (backward
-// compat for cctmux or any hypothetical backend).
+// which nudge delivery mechanisms they support. A backend that doesn't
+// implement it is treated as supporting none of them: a capability must be
+// declared, never assumed (#2154).
 type BackendCapabilities interface {
 	Capabilities() Capabilities
 }
@@ -512,8 +512,12 @@ type Capabilities struct {
 // instance exists.
 func CapabilitiesForBackend(backendType string) Capabilities {
 	switch backendType {
-	case "claude-code", "claude-code-tmux":
+	case "claude-code":
 		return Capabilities{PostToolNudge: true, PreAnswerNudge: true, Streaming: true}
+	case "claude-code-tmux":
+		// The tmux backend never calls the nudge funcs and emits no text or
+		// thinking deltas (it reads the finished transcript).
+		return Capabilities{}
 	case "opencode":
 		return Capabilities{PostToolNudge: false, PreAnswerNudge: false, Streaming: true}
 	case "codex":

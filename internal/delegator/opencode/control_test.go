@@ -201,10 +201,6 @@ func TestCompactionWait_FiresOnSessionCompacted(t *testing.T) {
 		compactDoneCh: make(chan struct{}, 1),
 		outstanding:   delegator.NewOutstandingRegistry(),
 	}
-	b.mu.Lock()
-	b.onCompactionDone = func(int) {}
-	b.mu.Unlock()
-
 	// Arm + fire.
 	b.ArmCompactionWait()
 	b.onSessionCompacted("sess-test")

@@ -55,16 +55,6 @@ func TestNewSchedulerOpts_FiltersUnsupportedRules(t *testing.T) {
 			t.Fatalf("expected 6 active rules (all), got %d", len(s.rules))
 		}
 	})
-
-	t.Run("NewScheduler defaults to all-true caps", func(t *testing.T) {
-		s := NewScheduler(rs, 1, 5)
-		if s == nil {
-			t.Fatal("expected non-nil scheduler")
-		}
-		if len(s.rules) != 6 {
-			t.Fatalf("NewScheduler should keep all rules, got %d", len(s.rules))
-		}
-	})
 }
 
 func TestNewSchedulerOpts_SkipWarningNamesAgent(t *testing.T) {

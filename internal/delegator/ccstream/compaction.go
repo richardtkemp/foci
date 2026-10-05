@@ -15,13 +15,6 @@ import (
 	"foci/internal/delegator"
 )
 
-// SetOnCompactionStart sets a callback fired when CC begins compacting.
-func (b *Backend) SetOnCompactionStart(fn func()) { b.onCompactionStart = fn }
-
-// SetOnCompactionDone sets a callback fired when CC finishes compaction.
-// preTokens is the token count before compaction.
-func (b *Backend) SetOnCompactionDone(fn func(preTokens int)) { b.onCompactionDone = fn }
-
 // ArmCompactionWait sets up the one-shot outcome channel signalled when
 // compaction settles: resolveCompactionWait(nil) on compact_boundary
 // (success), resolveCompactionWait(ErrCompactionNoBoundary) when the /compact

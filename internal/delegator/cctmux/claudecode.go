@@ -35,6 +35,13 @@ func (b *Backend) BatchCheapModel() string { return "haiku" }
 
 var _ delegator.BatchCheapModeler = (*Backend)(nil)
 
+// Capabilities declares that cctmux supports no mid-turn nudges and no
+// streaming deltas. Declared rather than omitted so the agent layer never has
+// to guess (#2154).
+func (b *Backend) Capabilities() delegator.Capabilities {
+	return delegator.CapabilitiesForBackend("claude-code-tmux")
+}
+
 // Backend drives Claude Code as a subprocess in a tmux pane.
 type Backend struct {
 	cfg        map[string]any

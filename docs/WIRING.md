@@ -906,7 +906,7 @@ The opencode backend drives OpenCode as a coding agent via its HTTP server API. 
 | `session.idle` | `onSessionIdle` | `OnTurnComplete` + flush `steerBuf`; during an abort drain, counts burst idles and flushes the buffered steer once settled (see Steer divergence) |
 | `session.status` (busy) | `onSessionStatus` | `typingFunc(true)` |
 | `session.status` (retry: usage/rate limit) | `handleRateLimitRetry` | Parse reset → `Agent.EngageRateLimit` callback → POST `/abort` → complete waiting turn |
-| `session.compacted` | `onSessionCompacted` | `onCompactionDone(0)` + close `compactDoneCh` |
+| `session.compacted` | `onSessionCompacted` | close `compactDoneCh` |
 | `session.error` (ProviderAuthError) | `onSessionError` | `fanOutAuthFailure` |
 | `session.error` (MessageAbortedError) | `onSessionError` → `failInFlightTurn` | completes the aborted turn (steer abort-drain turn 1) |
 | `permission.updated` | `onPermissionUpdated` | `permPromptFn` (Allow/Deny/Always) |

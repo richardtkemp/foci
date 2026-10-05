@@ -105,8 +105,8 @@ type Scheduler struct {
 
 // SchedulerOpts configures optional Scheduler behaviour.
 type SchedulerOpts struct {
-	Cooldown    int
-	MaxPerBatch int
+	Cooldown    int // minimum tool calls between repeats of the same reminder
+	MaxPerBatch int // maximum reminders injected per tool batch
 	// CanPostTool gates every_n_tools, after_error, and tool_pattern
 	// triggers. Rules requiring this that are present in the RuleSet but
 	// unsupported get a warning and are silently skipped at evaluation.
@@ -118,13 +118,6 @@ type SchedulerOpts struct {
 	// so without the id the reader can't tell which agent's rule was skipped —
 	// especially confusing on a CC session receiving an opencode agent's warning.
 	AgentID string
-}
-
-// NewScheduler creates a Scheduler from a RuleSet.
-// cooldown is the minimum tool calls between repeating the same reminder.
-// maxPerBatch is the maximum reminders injected per tool batch.
-func NewScheduler(rs *RuleSet, cooldown, maxPerBatch int) *Scheduler {
-	return NewSchedulerOpts(rs, SchedulerOpts{Cooldown: cooldown, MaxPerBatch: maxPerBatch, CanPostTool: true, CanPreAnswer: true})
 }
 
 // NewSchedulerOpts creates a Scheduler with full options including
