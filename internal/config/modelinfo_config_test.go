@@ -327,3 +327,77 @@ func TestApplyModelInfo_BareOverrideAffectsAllLookups(t *testing.T) {
 		t.Errorf("Cost with prefix = %v, want %v (fallback to overridden providerless)", costPrefixed, newIn)
 	}
 }
+
+// TestApplyModelInfo_ExplicitZeroCacheRatesPriceAtZero is #2172: a flat-rate
+// plan overrides a built-in model with every figure at 0.0. An explicit zero
+// in config is a real $0 price, so a call billed in the cache classes must
+// price at $0 — not be left unpriced (NULL) as a zero from a scraped source is.
+func TestApplyModelInfo_ExplicitZeroCacheRatesPriceAtZero(t *testing.T) {
+	modelinfo.ResetToBuiltIn()
+	t.Cleanup(modelinfo.ResetToBuiltIn)
+
+	zero := 0.0
+	ApplyModelInfo([]ModelInfoEntry{{
+		ID:              "glm-5.3",
+		InputPer1M:      &zero,
+		OutputPer1M:     &zero,
+		CacheReadPer1M:  &zero,
+		CacheWritePer1M: &zero,
+	}})
+
+	tokens := modelinfo.Tokens{
+		modelinfo.ClassInput:        100,
+		modelinfo.ClassOutput:       50,
+		modelinfo.ClassCacheRead:    1000,
+		modelinfo.ClassCacheWrite:   200,
+		modelinfo.ClassCacheWrite5m: 10,
+		modelinfo.ClassCacheWrite1h: 10,
+	}
+	usd, priced := modelinfo.CostAsOf("glm-5.3", time.Now(), tokens)
+	if !priced || usd != 0 {
+		t.Errorf("CostAsOf(glm-5.3) = (%v, priced=%v), want (0, priced=true)", usd, priced)
+	}
+}
+
+// TestModelInfoEntryToModel_UnsetCacheRateStaysUnpriced pins the other side
+// of #2172: a new model whose config sets no cache figure has no cache rate,
+// so a cache read on it stays unpriced rather than silently $0.
+func TestModelInfoEntryToModel_UnsetCacheRateStaysUnpriced(t *testing.T) {
+	modelinfo.ResetToBuiltIn()
+
+	ctx := 100_000
+	in, out := 1.0, 2.0
+	m, err := ModelInfoEntry{ID: "test-no-cache", ContextWindow: &ctx, InputPer1M: &in, OutputPer1M: &out}.toModel()
+	if err != nil {
+		t.Fatalf("toModel: %v", err)
+	}
+	for _, c := range []modelinfo.Class{modelinfo.ClassCacheRead, modelinfo.ClassCacheWrite, modelinfo.ClassCacheWrite5m, modelinfo.ClassCacheWrite1h} {
+		if r, ok := m.Rates[c]; ok {
+			t.Errorf("Rates[%s] = %v, want absent", c, r)
+		}
+	}
+}
+
+// TestApplyModelInfo_ExplicitZeroSurvivesLaterMerge: a later entry that merges
+// over a zero-cache override keeps the zero cache rates, because Prices()
+// recovers an explicit zero rather than reading it as "not published" (#2172).
+func TestApplyModelInfo_ExplicitZeroSurvivesLaterMerge(t *testing.T) {
+	modelinfo.ResetToBuiltIn()
+	t.Cleanup(modelinfo.ResetToBuiltIn)
+
+	zero, ctx := 0.0, 500_000
+	ApplyModelInfo([]ModelInfoEntry{
+		{ID: "glm-5.3", InputPer1M: &zero, OutputPer1M: &zero, CacheReadPer1M: &zero, CacheWritePer1M: &zero},
+		{ID: "glm-5.3", ContextWindow: &ctx},
+	})
+
+	m, ok := modelinfo.Lookup("", "glm-5.3")
+	if !ok {
+		t.Fatal("glm-5.3 not found")
+	}
+	for _, c := range []modelinfo.Class{modelinfo.ClassCacheRead, modelinfo.ClassCacheWrite, modelinfo.ClassCacheWrite5m, modelinfo.ClassCacheWrite1h} {
+		if r, ok := m.Rates[c]; !ok || r != 0 {
+			t.Errorf("Rates[%s] = (%v, present=%v), want (0, present=true)", c, r, ok)
+		}
+	}
+}

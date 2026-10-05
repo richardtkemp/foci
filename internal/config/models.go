@@ -229,11 +229,14 @@ func (e ModelInfoEntry) toModel() (modelinfo.Model, error) {
 	if e.OutputPer1M != nil {
 		p.Output = *e.OutputPer1M
 	}
+	// A cache figure the entry writes is a real price even at 0.0 (#2172).
 	if e.CacheReadPer1M != nil {
 		p.CacheRead = *e.CacheReadPer1M
+		p.CacheReadSet = true
 	}
 	if e.CacheWritePer1M != nil {
 		p.CacheWrite5m = *e.CacheWritePer1M
+		p.CacheWriteSet = true
 	}
 	m.Rates = p.Rates()
 

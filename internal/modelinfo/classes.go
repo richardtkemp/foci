@@ -109,12 +109,18 @@ type Prices struct {
 	CacheWrite1h      float64 // per 1M cache-write tokens, 1-hour TTL
 	InternalReasoning float64 // per 1M reasoning tokens, when published separately
 	WebSearch         float64 // per search request
+	// CacheReadSet / CacheWriteSet mark CacheRead / CacheWrite5m as a real
+	// price even at zero: a [[modelinfo]] override that writes 0.0 (a
+	// flat-rate plan, #2172) means $0, unlike a source that left it out.
+	CacheReadSet  bool
+	CacheWriteSet bool
 }
 
 // Rates normalises p into class rates. A zero figure in the source means "not
 // published", so the class is left out and a call billed in it is UNPRICED
 // (never a silent $0) — except input and output, which every priced row
-// carries and where zero is a real free-tier price.
+// carries and where zero is a real free-tier price, and a cache figure marked
+// Set, which is a real price at zero.
 //
 //   - cache_write_1h and cache_write price at the higher write figure. When
 //     the source has no 1h figure (most non-Anthropic rows), the provider's
@@ -132,13 +138,13 @@ func (p Prices) Rates() map[Class]float64 {
 		ClassOutput:   p.Output,
 		ClassWebFetch: 0,
 	}
-	if p.CacheRead > 0 {
+	if p.CacheRead > 0 || p.CacheReadSet {
 		r[ClassCacheRead] = p.CacheRead
 	}
-	if p.CacheWrite5m > 0 {
+	if p.CacheWrite5m > 0 || p.CacheWriteSet {
 		r[ClassCacheWrite5m] = p.CacheWrite5m
 	}
-	if w := max(p.CacheWrite5m, p.CacheWrite1h); w > 0 {
+	if w := max(p.CacheWrite5m, p.CacheWrite1h); w > 0 || p.CacheWriteSet {
 		r[ClassCacheWrite1h] = w
 		r[ClassCacheWrite] = w
 	}
@@ -157,12 +163,16 @@ func (p Prices) Rates() map[Class]float64 {
 // (config overrides merge this way). Lossless for any rate map Prices.Rates
 // produced.
 func (m Model) Prices() Prices {
+	_, readSet := m.Rates[ClassCacheRead]
+	_, writeSet := m.Rates[ClassCacheWrite5m]
 	p := Prices{
-		Input:        m.Rates[ClassInput],
-		Output:       m.Rates[ClassOutput],
-		CacheRead:    m.Rates[ClassCacheRead],
-		CacheWrite5m: m.Rates[ClassCacheWrite5m],
-		WebSearch:    m.Rates[ClassWebSearch],
+		Input:         m.Rates[ClassInput],
+		Output:        m.Rates[ClassOutput],
+		CacheRead:     m.Rates[ClassCacheRead],
+		CacheWrite5m:  m.Rates[ClassCacheWrite5m],
+		WebSearch:     m.Rates[ClassWebSearch],
+		CacheReadSet:  readSet,
+		CacheWriteSet: writeSet,
 	}
 	if w := m.Rates[ClassCacheWrite1h]; w > p.CacheWrite5m {
 		p.CacheWrite1h = w
