@@ -27,7 +27,7 @@ The table below contrasts the API backend with the delegated backends in general
 | Turn serialization | Foci per-session lock | Backend serializes internally |
 | Model fallback chain | Foci `[groups.fallbacks]` | Backend picks its own fallback |
 | Prompt caching | Foci's append-only cache contract | Backend manages its own cache |
-| Branching / `/branch` | Full support | Backend fork via `BackendBrancher.ForkSession` on all three (whole session only; see [R3](#9-sessions-resume-and-branching)) |
+| Branching / `/branch` | Full support | Backend fork via `BackendBrancher.ForkSession` on all three (whole session only; see `branch` [footnote 40](#parity-footnotes)) |
 
 Anything not in this table — platform I/O, command dispatch, nudges, reminders, task list, memory search, attachment normalisation, message transforms — happens outside `RunInference` and is shared by both transports.
 
@@ -57,7 +57,7 @@ ccstream uses a **two-lifetime callback split** (TODO #747): `SessionEvents` (de
 `backend = "opencode"`. Foci drives OpenCode through its HTTP/SSE server. One `opencode serve` subprocess is spawned per agent (not per session); the subprocess is shared across that agent's sessions and **refcounted**, so it stays alive while any session needs it and exits when the last session releases it.
 
 - **System-prompt suppression** is done via a `blank-system.ts` plugin loaded into the OpenCode instance, so Foci owns the system prompt instead of OpenCode.
-- **No MCP elicitation.** OpenCode's MCP client does not advertise elicitation upstream, so there is nothing to wire into Foci's `ask` flow; use Foci's `ask` tool directly if a human decision is needed. (OpenCode's own question tool does reach the chat as buttons; see [Q1](#4-questions-plan-mode-elicitation).)
+- **No MCP elicitation.** OpenCode's MCP client does not advertise elicitation upstream, so there is nothing to wire into Foci's `ask` flow; use Foci's `ask` tool directly if a human decision is needed. (OpenCode's own question tool does reach the chat as buttons; see `questions` in [Declared capabilities](#declared-capabilities).)
 - **No auto-relogin.** Unlike ccstream's startup readiness probe, the OpenCode backend does not perform credential revival — a dead session surfaces the error to the user rather than recovering silently.
 
 ## What still applies on the delegated path
@@ -65,11 +65,11 @@ ccstream uses a **two-lifetime callback split** (TODO #747): `SessionEvents` (de
 All of this works unchanged when you delegate to CC (other delegated backends: see the parity reference for each row's coverage):
 
 - **Reminders, scratchpad, todos, task list** — Foci-side state, injected into each prompt as text blocks.
-- **Nudges** — regex and every-N-turn triggers prepend to the user message. Mid-turn (post-tool and pre-answer) nudges are ccstream-only ([T13, T14](#1-turn-lifecycle)).
+- **Nudges** — regex and every-N-turn triggers prepend to the user message. Mid-turn (post-tool and pre-answer) nudges are ccstream-only (`post_tool_nudge`, `pre_answer_nudge` in [Declared capabilities](#declared-capabilities)).
 - **Message metadata** — the `[meta]`/`[state]` statusline block (rendered from the `statusline` template; default reproduces the historical two lines) plus any `[reminders]` block is composed by `composeTurnText` and joined into flat text via `JoinPrompt()` (instead of rich content blocks), **blank-line separated** so the agent can tell foci's injected header from the human's own text (#1627).
 - **Platform connections** — Telegram, Discord, Android, HTTP, voice — the reply stream is the same.
 - **Command dispatch** — `/sessions`, `/config`, `/stop`, `/reset`, `/facet`, etc. Foci handles them normally. `/model` goes via the ControlSender pattern. `/compact` — both manual (`/compact` command) and auto (threshold) — dispatches through `Agent.runDelegatedCompact`, which sends `/compact <foci-summary-prompt>` to CC and waits for the `compact_boundary` stream event. `/pass` and a small set of other forward-only commands (e.g. unhandled CC slash commands) are sent to the backend via `Backend.Inject(SourcePass)` — a fire-and-forget send that bypasses the turn handler so a forwarded `/context` doesn't get treated as a user turn.
-- **Attachments** — both transports run attachments through the shared `prepareAttachments` step (#2095): convertible documents (docx/xlsx/pptx/html/csv/txt) become prompt text, images are downscaled, and every saved file also gets a `[<label> saved to: <path>]` note. ccstream then sends images and PDFs to the model as image/document content blocks, and an image in a mid-turn steer folds into the running turn. opencode sends them as file parts; codex sends only the text, so its model must open the file from the path note ([I5, I6](#2-input-and-steering)).
+- **Attachments** — both transports run attachments through the shared `prepareAttachments` step (#2095): convertible documents (docx/xlsx/pptx/html/csv/txt) become prompt text, images are downscaled, and every saved file also gets a `[<label> saved to: <path>]` note. ccstream then sends images and PDFs to the model as image/document content blocks, and an image in a mid-turn steer folds into the running turn. opencode sends them as file parts; codex sends only the text, so its model must open the file from the path note ([I5](#2-input-and-steering), `fold_attachments` in [Declared capabilities](#declared-capabilities)).
 - **Steering** — mid-turn user messages are dispatched directly via `Backend.Inject(SourceSteer)`. On ccstream this sends the text via `writer.SendUser` at queue priority `"next"`. CC's mid-turn drain folds the message into the current `ask()` as an attachment to the next tool-result batch — the model addresses it in the same turn, the in-flight tool finishes naturally, and the response reaches the original handler. Priority `"now"` would make CC abort the in-flight ask and is deliberately not used; for "stop right now" semantics use `/reset hard`. The agent's per-session `Inbox.Enqueue` handles the routing decision — it calls `Inject(SourceSteer)` directly for delegated backends; the steer buffer is only used by API-mode agents. codex folds via `turn/steer`; opencode has no mid-turn fold and aborts and re-sends instead ([I1](#2-input-and-steering)).
 - **Memory formation** — injected into the live CC session as a prompt (not branched).
 - **Memory consolidation / nudge extraction / foci_summary** — batch runs via `DelegatedManager.RunBatch`: an ordinary stream-json turn on an ephemeral child session (caller's system prompt, model default `sonnet`, no permission prompts), closed as soon as the turn ends. Recorded in api.db and traced like any turn, labelled with `purpose` (#1962). On opencode and codex a batch run uses the agent's own model and can still raise a permission prompt ([P5](#3-permissions-and-safety)).
@@ -210,6 +210,8 @@ Why not:
 
 Feature-by-feature comparison of the three structured delegated backends, from the #2151 survey (origin/main `5d1dbf759`, 2026-10-02). ccstream (`backend = "claude-code"`) is the reference.
 
+For any feature that is a declared capability, the [generated table](#declared-capabilities) is the source of truth for yes/no. The tables below hold only the features it does not cover. The rows that duplicated it were removed (#2183); their footnotes and evidence are kept, named by capability (e.g. `questions`), because they say how a backend does it, or where a ✓ is partial.
+
 Path shorthand: `cc/` = `internal/delegator/ccstream/`, `oc/` = `internal/delegator/opencode/`,
 `cx/` = `internal/delegator/codex/`, `dg/` = `internal/delegator/`, `ag/` = `internal/agent/`,
 `gw/` = `cmd/foci-gw/`.
@@ -217,7 +219,7 @@ Path shorthand: `cc/` = `internal/delegator/ccstream/`, `oc/` = `internal/delega
 Cell key: **✓** equivalent · **✗** absent · **n/a** cannot apply to that backend (footnote says
 why) · **[n]** partial or different, see [footnote](#parity-footnotes) n. Every row has an ID.
 The [evidence](#parity-evidence) list gives file:symbol for each ✓ and partial, and what was
-grepped for each ✗.
+grepped for each ✗. Row IDs are not renumbered, so the gaps are the removed rows.
 
 ### 1. Turn lifecycle
 
@@ -231,12 +233,8 @@ grepped for each ✗.
 | T6 | Wait/in-flight | `WaitForTurn`, `IsTurnInFlight` | ✓ | ✓ | ✓ |
 | T7 | Interrupt | `/stop` aborts the in-flight turn | ✓ | ✓ | ✓ |
 | T8 | Typing indicator | `SetTypingFunc` driven through the turn | ✓ | ✓ | [3] |
-| T9 | Activity clock | `ActivityChecker.LastActivity` for idle reaping and stream-silence timeout | ✓ | ✓ | ✓ |
 | T10 | Process death | In-flight turn completes on death; next `Get` respawns | ✓ | ✓ | ✓ |
 | T11 | Bounded shutdown | `Close` cannot hang (graceful, then kill) | ✓ | ✓ | ✓ |
-| T12 | Autonomous runs | Backend-initiated runs adopted as foci turns; `AwaitingAutonomousRun` holds system injects | ✓ | ✗ [4] | ✗ [4] |
-| T13 | Pre-answer nudge | Verify-before-answer re-dispatch inside the same turn | ✓ | [5] | ✗ |
-| T14 | Post-tool nudge | every_n_tools / after_error / tool_pattern nudges mid-turn | ✓ | ✗ [5] | ✗ |
 | T15 | Transport keep-alive | Liveness heartbeat on the transport | ✓ | ✓ [6] | ✗ |
 
 ### 2. Input and steering
@@ -248,36 +246,25 @@ grepped for each ✗.
 | I3 | System never steers | `SourceSystem` in flight returns `ErrTurnInFlight`; idle check + begin are atomic | ✓ | ✓ | ✓ |
 | I4 | Steer-at-idle guard | Steer at idle with no `Turn` returns `ErrTurnNotInFlight` | ✓ | ✓ | [9] |
 | I5 | Attachments, fresh turn | Images/PDF sent as content to the model | ✓ | ✓ | ✗ [10] |
-| I6 | Attachments, folded | `FoldAttachmentCarrier`: image in a steer folds mid-turn | ✓ | ✗ | ✗ |
 | I7 | Slash passthrough | `SourcePass` forwards an unhandled `/cmd` | ✓ | ✓ | ✗ [11] |
-| I8 | Delivery tracking | `DeliveryTracker`: persist unconsumed inputs, ack, redeliver after a crash; `TranscriptChecker` | ✓ | ✗ | ✗ |
 | I9 | Closed-transport error | `ErrBackendClosed` marks a write that raced teardown (lower log severity) | ✓ | ✗ | ✗ |
 
 ### 3. Permissions and safety
 
 | ID | Feature | What | ccstream | opencode | codex |
 |---|---|---|---|---|---|
-| P1 | Permission prompt | Tool approval as chat buttons, answer returned to backend | ✓ | ✓ | ✓ |
 | P2 | Always allow | Persist an approval beyond this call | ✓ | ✓ [12] | ✗ |
-| P3 | Foci auto-approve | `[permissions]` rules + foci shell rules + exec-guard veto, before the user sees a prompt | ✓ | ✓ | [13] |
 | P4 | Launch allowlist | `allowed_tools` / `[cc_backend] default_allowed_tools` pre-approval | ✓ | n/a [14] | n/a [14] |
 | P5 | Unattended mode | `skip_permissions` and `StartOptions.SkipPermissions` (batch runs): never prompt a chat | ✓ | ✓ [15] | ✗ [15] |
-| P6 | Permission-mode switch | `SetPermissionModeRequest` at runtime | ✓ | ✓ | [16] |
 | P7 | Prompt cancel listeners | Backend-cancelled prompt disables its stale buttons | ✓ | ✓ | ✗ [17] |
 | P8 | Prompts-cleared drain | `SetOnPromptsCleared` unblocks `WaitForPermission` | ✓ | ✓ | ✓ |
 | P9 | Rich prompt body | Edit diffs; ExitPlanMode plan sent as a document | ✓ | ✗ | [18] |
-| P10 | PreToolUse deny rules | `pretool_rules` (incl. defaults redirecting AskUserQuestion/CronCreate) | ✓ | ✗ | ✗ [19] |
-| P11 | Stop rules | `stop_rules`: block a final reply announcing un-launched work | ✓ | ✗ | ✗ [19] |
 
 ### 4. Questions, plan mode, elicitation
 
 | ID | Feature | What | ccstream | opencode | codex |
 |---|---|---|---|---|---|
-| Q1 | Native question tool | `QuestionResponder`: backend's ask-the-user tool as buttons | ✓ [20] | ✓ | ✗ [21] |
 | Q2 | /stop cancels question | `CancelPendingQuestion` | ✓ | ✓ | ✗ |
-| Q3 | MCP elicitation | `ElicitationResponder` (form, URL, completion) | ✓ | n/a [22] | ✗ [21] |
-| Q4 | /plan | `Spec.PlanDelivery` | ✓ | ✓ [23] | ✗ |
-| Q5 | Plan approval gate | `PlanResponder`: plan approval prompt; typed message = revision feedback | ✓ | ✗ | ✗ |
 
 ### 5. Subagents and background work
 
@@ -302,12 +289,8 @@ grepped for each ✗.
 |---|---|---|---|---|---|
 | C1 | Trigger compaction | `SourceCompact` (manual `/compact` and threshold) | ✓ | ✓ | ✓ |
 | C2 | Foci summary prompt | Compaction uses foci's `compaction-summary.md` | ✓ | [29] | [29] |
-| C3 | Done wait | `CompactionWaiter` | ✓ | ✓ | ✓ |
-| C4 | Start wait | `CompactionStartWaiter` (orders the "Compacting..." notice) | ✓ | ✓ | ✗ |
 | C5 | Declined compaction | `ErrCompactionNoBoundary` returns at once instead of timing out | ✓ | ✗ | ✗ |
-| C6 | Summary capture | `CompactionSummarizer` (tappable summary chit) | ✓ | ✓ | ✗ |
 | C8 | Reload bounce | `reload_on_compact` bounce + resume nudge (agent layer) | ✓ | ✓ | ✓ [31] |
-| C9 | Context window | `ContextWindowQuerier` | ✓ | ✓ | ✓ |
 | C10 | Cache TTL | `Spec.CacheTTL` (keepalive interval validation) | ✓ | ✗ | ✓ |
 
 ### 7. Cost, usage and limits
@@ -321,7 +304,6 @@ grepped for each ✗.
 | U5 | Resume cost baseline | Cumulative counters on `--resume` | ✓ | n/a [33] | n/a [33] |
 | U6 | Utilisation notice | Rate-limit utilisation notice to the human's chat | ✓ | ✗ | ✗ |
 | U7 | Limit gate | Usage/session limit engages `Agent.EngageRateLimit` | ✓ | ✓ | ✗ [34] |
-| U8 | /mana | `Spec.UsageQuery` subscription-usage query | ✓ | ✗ | ✗ |
 | U9 | Turn usage | Token usage on `TurnResult` | ✓ | ✓ | ✓ |
 
 ### 8. Models and effort
@@ -329,14 +311,10 @@ grepped for each ✗.
 | ID | Feature | What | ccstream | opencode | codex |
 |---|---|---|---|---|---|
 | M1 | Launch model | Model ladder (override, config, default) applied at Start | ✓ | ✓ | ✓ |
-| M2 | Runtime model switch | `SetModelRequest` | ✓ | [35] | [35] |
-| M3 | Model resolver | `ModelResolver`: alias to canonical id, persisted | n/a [36] | [36] | ✓ |
 | M4 | Live catalogue | `modelcaps` live model list | ✓ [37] | ✗ | ✓ |
 | M5 | Effort | Launch `EffortFunc` + runtime `ApplyFlagSettingsRequest` | ✓ | n/a [38] | [35] |
-| M6 | Voice mode | `VoiceModer` low effort for voice turns | ✓ | n/a [38] | ✓ |
 | M7 | Batch models | `Spec.BatchDefaultModel` / `BatchCheapModel` | ✓ | ✗ | ✗ |
 | M8 | Silent model swap | Backend-side model fallback is surfaced | ✓ | ✗ | [39] |
-| M9 | Thinking | Reasoning stream (`OnThinkingDelta`) | ✓ | ✓ | ✓ |
 
 ### 9. Sessions, resume and branching
 
@@ -344,19 +322,16 @@ grepped for each ✗.
 |---|---|---|---|---|---|
 | R1 | Session id | `SetOnSessionReady` persists the backend session id | ✓ | ✓ | ✓ |
 | R2 | Resume | `ResumeSessionID` after respawn/restart | ✓ | ✓ | ✓ |
-| R3 | Fork | `BackendBrancher.ForkSession` (branch, facet, spawn clone) | ✓ [40] | ✓ [40] | ✓ [40] |
 | R4 | Cleanup / sweep | `CleanupSession` (+ `RunningBackendCleaner` when it needs a live server) | ✓ | ✓ | ✓ |
 | R5 | Retention period | Backend transcript retention for the resume-missed notice | ✓ | ✗ | ✗ |
 | R6 | Session file path | `SessionFilePath` | ✓ | ✗ | ✓ |
 | R7 | Batch runs | `DelegatedManager.RunBatch` ephemeral session | ✓ | [41] | [41] |
-| R8 | Auto session naming | `ThreadNameConsumer` / `TurnResult.ThreadName` auto-alias | ✗ | ✗ | ✓ |
 
 ### 10. UI surfaces
 
 | ID | Feature | What | ccstream | opencode | codex |
 |---|---|---|---|---|---|
 | D1 | Text blocks | `OnText` | ✓ | ✓ | ✓ |
-| D2 | Text deltas | `OnTextDelta` streaming | ✓ | ✓ | ✓ |
 | D3 | Tool start | `OnToolStart` | ✓ | ✓ | ✓ |
 | D4 | Tool result | `OnToolEnd` with output (tool-call display, "Show results") | ✓ [42] | ✓ | ✓ |
 | D5 | Tool runtime note | Slow-call runtime note into the model's context (#2125) | ✓ | ✗ | ✗ |
@@ -366,9 +341,7 @@ grepped for each ✗.
 
 | ID | Feature | What | ccstream | opencode | codex |
 |---|---|---|---|---|---|
-| O1 | Startup readiness probe | `CheckReady` before startup turns | ✓ | n/a [43] | [43] |
 | O2 | Auth-failure detection | Recognise a dead credential | ✓ | ✓ [44] | ✗ |
-| O3 | Automated re-login | `/login` + 401-triggered relogin driver | ✓ | n/a [44] | ✗ |
 | O4 | Stderr capture | Subprocess stderr logged | ✓ | ✓ | ✗ |
 | O5 | Per-session exec bridge | `FOCI_SOCK`/`BASH_ENV`/`FOCI_SESSION_KEY` reach the right session's shell | ✓ | ✓ | ✓ [45] |
 | O6 | System prompt ownership | Foci's prompt replaces the backend's own | ✓ | ✓ | ✓ |
@@ -385,8 +358,8 @@ grepped for each ✗.
 | `backend_config.env` | ✓ | ✓ | ✓ | |
 | `backend_config.idle_timeout` | ✓ | ✓ | ✓ | generic (DelegatedManager) |
 | `allowed_tools`, `[cc_backend].default_allowed_tools` | ✓ | ✗ | ✗ | folded only for CC names (`gw/agents_delegated.go:configureDelegated`) |
-| `pretool_rules`, `[cc_backend].pretool_rules` | ✓ | ✗ | ✗ | wired only `if backendName == "claude-code"` |
-| `stop_rules` | ✓ | ✗ | ✗ | same |
+| `pretool_rules`, `[cc_backend].pretool_rules` | ✓ | ✗ | ✗ | wired only for a backend declaring `pretool_rules` (`gw/agents_delegated.go`) |
+| `stop_rules` | ✓ | ✗ | ✗ | same, for `stop_rules` |
 | `skip_permissions` | ✓ | ✓ | ✗ | opencode: per-ask answers, `oc/permissions.go:answerUnattended` |
 | `[cc_backend].background_task_max_age` | ✓ | ✗ | ✗ | `StartOptions.SubagentMaxAge`, read only by ccstream |
 | `hostname`, `port`, `server_auth`, `log_level`, `default_permission` | ✗ | ✓ | ✗ | `[opencode_backend]` folded in |
@@ -403,10 +376,9 @@ grepped for each ✗.
 3. codex sets typing on `turn/started` and clears it at completion only
    (`cx/handlers.go:onTurnStarted`, `completeTurn`). ccstream also re-asserts it on tool progress
    and subagent activity, so long tool calls keep the indicator alive.
-4. Nothing in opencode or codex adopts a run it did not start. Whether either backend can start
+4. `autonomous_runs` / `turn_adoption`: nothing in opencode or codex adopts a run it did not start. Whether either backend can start
    a root-session run on its own (as CC does after a background task finishes) is unverified.
-5. Capability gating: the opencode and codex Specs declare `post_tool_nudge` and
-   `pre_answer_nudge` No. Both the turn
+5. `pre_answer_nudge` / `post_tool_nudge`: the opencode and codex Specs declare both No. Both the turn
    (`ag/turn_delegated.go`, which arms the nudge funcs) and the nudge scheduler
    (`gw/agents_setup.go:nudgeCapabilities`, which skips unsupported rules with a warning) read
    that one declaration. opencode nonetheless has a working pre-answer branch (`oc/handlers.go:onSessionIdle`, calls
@@ -434,7 +406,7 @@ grepped for each ✗.
     "Always Allow" (`always`) is `Remember`, sent as opencode's own remember flag. ccstream's
     `allow_always:<prefix>` also carries `RulePrefix` and becomes a session prefix rule (it declares
     `permission_rules`). codex has neither and answers a plain accept.
-13. codex auto-approves command approvals only (`cx/permissions.go:tryAutoApprove`, called from
+13. `command_approval_allowlist`, partial on codex: it auto-approves command approvals only (`cx/permissions.go:tryAutoApprove`, called from
     `onCommandApproval`). File-change approvals always prompt, and `item/permissions/requestApproval`
     is always declined (`onPermissionApproval`).
 14. `--allowedTools` is a Claude Code launch flag. opencode's analogue is
@@ -449,25 +421,25 @@ grepped for each ✗.
     (`ag/delegated_manager.go`, `SetPermissionPromptFunc` is not gated on `isBatch`). So a
     batch run (consolidation, nudge extraction, summary) on codex can put a permission
     prompt in the owner's chat; codex has no reachable equivalent (footnote 48).
-16. codex queues the approval policy for the next `turn/start` (`cx/control.go:applyPendingControls`);
+16. `control_permission_mode`, not live on codex: it queues the approval policy for the next `turn/start` (`cx/control.go:applyPendingControls`);
     `plan` maps to `on-request`, so there is no plan mode.
 17. `cx/callbacks.go:RegisterPromptCancelListener` is a TODO no-op. `serverRequest/resolved` clears
     the pending entry and fires prompts-cleared (`cx/handlers.go:onServerRequestResolved`) but
     stale buttons stay live.
 18. codex shows the command text, or the list of changed files for a file change
     (`cx/permissions.go:onFileChangeApproval`, `lookupItemDetail`). No diff.
-19. codex already installs a `PreToolUse` hook (`cx/hooks.go`, `cmd/foci-codex-hook`), currently
+19. `pretool_rules` / `stop_rules`: codex already installs a `PreToolUse` hook (`cx/hooks.go`, `cmd/foci-codex-hook`), currently
     only to rewrite Bash commands for per-thread env. That is the natural carrier for pretool
     rules; codex's Stop-hook support was not checked.
-20. Works, but the default pretool rule `ask_user_question` denies CC's AskUserQuestion and
+20. `questions` on ccstream works, but the default pretool rule `ask_user_question` denies CC's AskUserQuestion and
     redirects the model to `foci_ask`, so this path is a fallback.
 21. `cx/reader.go:handleServerRequest` handles three approval methods; any other server request
     (e.g. a user-input or MCP elicitation request) hits `default: logDebugf("unhandled server
     request ...")` and is never answered. If codex sends one, that turn waits forever.
     Which request methods codex 0.145 can send was not verified.
-22. opencode's MCP client does not advertise elicitation upstream (WIRING.md, opencode issue
+22. `elicitation`: opencode's MCP client does not advertise elicitation upstream (WIRING.md, opencode issue
     #23066).
-23. opencode sends the prompt with per-request `agent: "plan"` (`oc/plan.go:planDelivery`).
+23. `plan_mode`: opencode sends the prompt with per-request `agent: "plan"` (`oc/plan.go:planDelivery`).
     ccstream injects a turn asking CC to call EnterPlanMode (`cc/plan.go:planDelivery`).
 24. opencode surfaces only completed child text parts, no deltas (`oc/handlers.go:handleChildEvent`).
     ccstream also tails foreground subagent transcripts (`cc/subagent_tail.go`).
@@ -493,11 +465,11 @@ grepped for each ✗.
     counter to rebase.
 34. `grep -i 'limit|ratelimit'` in `cx/`: no handler; unknown notifications fall to
     `logDebugf("unhandled notification")`.
-35. Not live: opencode stores the model for the next prompt body after validating it with
+35. `control_model` and runtime effort are not live: opencode stores the model for the next prompt body after validating it with
     `opencode models` (`oc/control.go:SendControl`); codex queues model and effort for the next
     `turn/start` (`cx/control.go`). ccstream applies `set_model` / `apply_flag_settings` to the
     running process.
-36. ccstream passes raw aliases (`opus`, `sonnet`) and CC resolves them. opencode resolves by unique
+36. `model_resolve`: ccstream passes raw aliases (`opus`, `sonnet`) and CC resolves them. opencode resolves by unique
     substring (`oc/model_validate.go:resolveModel`) but not through `ModelResolver`, so the
     persisted id stays the user's alias.
 37. Fetched at gateway level, not by the backend (`gw/main.go`, Anthropic `/v1/models` into
@@ -506,7 +478,7 @@ grepped for each ✗.
 38. opencode has no effort concept (`oc/control.go`: ApplyFlagSettings is a logged no-op).
 39. codex handles `model/rerouted` by updating its model and logging at INFO (`cx/reader.go`). ccstream
     logs `model_refusal_fallback` at WARN with CC's own text (#1968).
-40. `TruncateAfter > 0` is rejected by all three. ccstream copies the transcript and appends
+40. `branch`: `TruncateAfter > 0` is rejected by all three. ccstream copies the transcript and appends
     fork-boundary closures for open tool calls and background tasks (`cc/branch.go:forkTranscript`).
     opencode uses `POST /session/:id/fork` on the already-running server. codex uses `thread/fork`
     and requires a running backend (`Spec.ForkNeedsRunning`).
@@ -515,10 +487,10 @@ grepped for each ✗.
 42. Tool results come from `foci-cc-hook` PostToolUse/PostToolUseFailure hooks
     (`cc/hooks.go:handleHookResponse`); if the hook binary is missing ccstream runs without
     tool results. opencode and codex get results natively from their event streams.
-43. The probe skips backends whose Spec lacks `unstarted_readiness_probe` (`gw/notifications.go`): opencode's `CheckReady` needs a server
+43. `unstarted_readiness_probe`: the startup probe skips a backend without it (`gw/notifications.go`). opencode's `CheckReady` needs a server
     that only `Start` creates, and `/global/health` cannot see provider auth. codex's
     `CheckReady` only checks the binary is on PATH (`cx/lifecycle.go:CheckReady`).
-44. opencode detects `ProviderAuthError` and HTTP 401 and fans out to every session on the
+44. `relogin`: opencode detects `ProviderAuthError` and HTTP 401 and fans out to every session on the
     server (`oc/authfail.go`), but `gw/agents_delegated.go` only logs it: auth is per-provider
     (`opencode auth login <provider>`), so there is no single relogin flow to automate.
 45. Three mechanisms: ccstream has a process per session, so the env is baked in; opencode uses a
@@ -548,12 +520,12 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - T6: `cc/inject.go:WaitForTurn`, `IsTurnInFlight` | `oc/inject.go` same | `cx/codex.go:WaitForTurn`, `IsTurnInFlight`
 - T7: `cc/control.go:Interrupt` | `oc/control.go:Interrupt` | `cx/lifecycle.go:Interrupt` (`turn/interrupt`)
 - T8: `cc/callbacks.go:SetTypingFunc` + calls in `complete.go`, `handlers.go` | `oc/handlers.go` (`typingFunc` x4) | `cx/handlers.go:onTurnStarted`, `completeTurn`
-- T9: `cc/ccstream.go:LastActivity` | `oc/activity.go:LastActivity` | `cx/codex.go:LastActivity`
+- `activity`: `cc/ccstream.go:LastActivity` | `oc/activity.go:LastActivity` | `cx/codex.go:LastActivity`
 - T10: `cc/lifecycle.go:finalizeExit` | `oc/lifecycle.go:Server.finalizeExit`, `oc/opencode.go:IsRunning` | `cx/reader.go:onReaderStopped`
 - T11: `cc/lifecycle.go:Close` | `oc/lifecycle.go:Server.Close` | `cx/lifecycle.go:Close` (`closeGracefulWait` then Kill)
-- T12: `cc/inject.go:AdoptRunningTurn`, `AwaitingAutonomousRun`, `cc/callbacks.go:SetOnAutonomousOpen` | ✗ grep `AdoptRunningTurn|AwaitingAutonomousRun|SetOnAutonomousOpen` | ✗ same
-- T13: `cc/complete.go:tryPreAnswerRedispatch` | `oc/handlers.go:onSessionIdle` (gated off) | ✗ grep `PreAnswerNudgeFunc`
-- T14: `cc/hooks.go:handleHookResponse` (`PostToolNudgeFunc`) | ✗ grep `PostToolNudgeFunc` | ✗ same
+- `autonomous_runs`, `turn_adoption`: `cc/inject.go:AdoptRunningTurn`, `AwaitingAutonomousRun`, `cc/callbacks.go:SetOnAutonomousOpen` | ✗ grep `AdoptRunningTurn|AwaitingAutonomousRun|SetOnAutonomousOpen` | ✗ same
+- `pre_answer_nudge`: `cc/complete.go:tryPreAnswerRedispatch` | `oc/handlers.go:onSessionIdle` (gated off) | ✗ grep `PreAnswerNudgeFunc`
+- `post_tool_nudge`: `cc/hooks.go:handleHookResponse` (`PostToolNudgeFunc`) | ✗ grep `PostToolNudgeFunc` | ✗ same
 - T15: `cc/lifecycle.go:runKeepAlive` | `oc/subscriber.go:onHeartbeat` | ✗ grep `keep.?alive|heartbeat`
 
 **Input and steering**
@@ -562,30 +534,30 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - I3: `cc/inject.go:tryBeginTurn` | `oc/inject.go:injectSystem` → `tryBeginTurn` | `cx/inject.go:beginTurn` (`turnActive` under `turnMu`)
 - I4: `cc/inject.go:ImmediateInject` | `oc/inject.go:injectSteer` | `cx/inject.go:steerTurn` only
 - I5: `cc/inject.go:sendToPaneWithAttachments`, `contentBlocks`, `attachmentBlockType` | `oc/inject.go:buildPromptBody` (file parts) | ✗ grep `Attachments|attachment|mime` (only `imageGeneration` tool items)
-- I6: `cc/inject.go:FoldsAttachment` | ✗ grep `FoldsAttachment` | ✗ same
+- `fold_attachments`: `cc/inject.go:FoldsAttachment` | ✗ grep `FoldsAttachment` | ✗ same
 - I7: `cc/inject.go:ImmediateInject` (SourcePass) | `oc/inject.go:injectCommand` | ✗ `cx/inject.go:ImmediateInject` returns nil
-- I8: `cc/delivery.go:SetDeliveryHooks`, `OnInputAck`, `InputInTranscript` (`Spec.TranscriptChecker`) | ✗ grep `SetDeliveryHooks|Redeliveries|Refs` | ✗ same
+- `delivery_tracking`: `cc/delivery.go:SetDeliveryHooks`, `OnInputAck`, `InputInTranscript` (`Spec.TranscriptChecker`) | ✗ grep `SetDeliveryHooks|Redeliveries|Refs` | ✗ same
 - I9: `cc/lifecycle.go:transportGone` + `ErrBackendClosed` use | ✗ grep `ErrBackendClosed` | ✗ same
 
 **Permissions and safety**
-- P1: `cc/permissions.go:handleToolRequest`, `RespondToPermission` | `oc/permissions.go:onPermissionUpdated`, `surfacePermission`, `RespondToPermission` | `cx/permissions.go:onCommandApproval`, `onFileChangeApproval`, `RespondToPermission`
+- `permission_response`: `cc/permissions.go:handleToolRequest`, `RespondToPermission` | `oc/permissions.go:onPermissionUpdated`, `surfacePermission`, `RespondToPermission` | `cx/permissions.go:onCommandApproval`, `onFileChangeApproval`, `RespondToPermission`
 - P2: `cc/permissions.go:respondWithRule` (`RulePrefix`) | `oc/permissions.go:RespondToPermission` (`Remember`) | ✗ only Allow/Deny choices in `cx/permissions.go`
-- P3: `cc/autoapprove.go:autoApprovePermission` | `oc/permissions.go:checkAutoApprove` | `cx/permissions.go:tryAutoApprove`
+- `command_approval_allowlist`: `cc/autoapprove.go:autoApprovePermission` | `oc/permissions.go:checkAutoApprove` | `cx/permissions.go:tryAutoApprove`
 - P4: `cc/lifecycle.go:Start` (`--allowedTools` from `cfg["allowed_tools"]`) | n/a | n/a
 - P5: `cc/lifecycle.go:Start` (`--dangerously-skip-permissions`), `cc/permissions.go:denyUnattended` | `oc/backend_lifecycle.go:Start` (`skipPermissions`), `oc/permissions.go:answerUnattended` | ✗ grep `SkipPermissions|skip_permissions|dangerously`
-- P6: `cc/control.go:SendControl` (`set_permission_mode`) | `oc/control.go:SendControl` (`patchConfig`, `mapPermissionMode`) | `cx/control.go:SendControl`, `codexApprovalPolicy`
+- `control_permission_mode`: `cc/control.go:SendControl` (`set_permission_mode`) | `oc/control.go:SendControl` (`patchConfig`, `mapPermissionMode`) | `cx/control.go:SendControl`, `codexApprovalPolicy`
 - P7: `cc/callbacks.go:RegisterPromptCancelListener` + `dg/outstanding.go` | `oc/opencode.go:RegisterPromptCancelListener`, `oc/permissions.go:onPermissionReplied` | ✗ `cx/callbacks.go` TODO
 - P8: `cc/callbacks.go:SetOnPromptsCleared` | `oc/opencode.go:SetOnPromptsCleared` | `cx/permissions.go:respondApproval`, `cx/handlers.go:onServerRequestResolved`
 - P9: `cc/permissions.go:formatEditDiff`, `planAttachmentPath` | ✗ `oc/permissions.go:surfacePermission` sends title only (grep `diff`) | `cx/permissions.go:lookupItemDetail`
-- P10: `dg/pretool`, `cc/hooks.go:buildHookSettingsJSON`, `cc/callbacks.go:SetHostHooks` (`PreToolRules`) | ✗ grep `pretool\.` | ✗ same
-- P11: `dg/stoprule`, `cc/callbacks.go:SetHostHooks` (`StopRules`), `cc/hooks.go:logStopVerdict` | ✗ grep `stoprule\.` | ✗ same
+- `pretool_rules`: `dg/pretool`, `cc/hooks.go:buildHookSettingsJSON`, `cc/callbacks.go:SetHostHooks` (`PreToolRules`) | ✗ grep `pretool\.` | ✗ same
+- `stop_rules`: `dg/stoprule`, `cc/callbacks.go:SetHostHooks` (`StopRules`), `cc/hooks.go:logStopVerdict` | ✗ grep `stoprule\.` | ✗ same
 
 **Questions, plan, elicitation**
-- Q1: `cc/userquestion.go:handleUserQuestion`, `RespondToQuestion` | `oc/permissions.go:handleQuestionPermission`, `RespondToQuestion` | ✗ grep `RespondToQuestion|userInput|request_user_input`
+- `questions`: `cc/userquestion.go:handleUserQuestion`, `RespondToQuestion` | `oc/permissions.go:handleQuestionPermission`, `RespondToQuestion` | ✗ grep `RespondToQuestion|userInput|request_user_input`
 - Q2: `cc/userquestion.go:CancelQuestion`, `HasPendingQuestion` | `oc/permissions.go:CancelQuestion`, `HasPendingQuestion` | ✗ (needs QuestionResponder)
-- Q3: `cc/elicitation.go:OnElicitationRequest`, `RespondToElicitation`, `OnElicitationComplete` | n/a | ✗ grep `elicit`
-- Q4: `cc/plan.go:planDelivery` | `oc/plan.go:planDelivery` | ✗ `codex/spec.go` declares `plan_mode` No
-- Q5: `cc/permissions.go:HasPendingPlanPermission`, `CancelPlanWithFeedback`; `ag/inbox.go` plan-cancel-by-message | ✗ grep `HasPendingPlanPermission` | ✗ same
+- `elicitation`: `cc/elicitation.go:OnElicitationRequest`, `RespondToElicitation`, `OnElicitationComplete` | n/a | ✗ grep `elicit`
+- `plan_mode`: `cc/plan.go:planDelivery` | `oc/plan.go:planDelivery` | ✗ `codex/spec.go` declares `plan_mode` No
+- `plan_permission`: `cc/permissions.go:HasPendingPlanPermission`, `CancelPlanWithFeedback`; `ag/inbox.go` plan-cancel-by-message | ✗ grep `HasPendingPlanPermission` | ✗ same
 
 **Subagents**
 - S1: `cc/handlers.go:OnSystem` `task_started`/`task_notification`, `cc/hooks.go` Agent PreToolUse | `oc/handlers.go:handleToolPart` | `cx/handlers.go:openSubagentRun`, `handleSubagentNotification`
@@ -604,12 +576,12 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 **Compaction and context**
 - C1: `cc/inject.go` (SourceCompact → slash) | `oc/inject.go:sendSummarize` | `cx/lifecycle.go:triggerCompaction`
 - C2: per-call text | `oc/blank_system.go:WriteSessionCompactFile` | `cx/lifecycle.go:appServerArgs`
-- C3: `cc/compaction.go:ArmCompactionWait`, `WaitForCompaction` | `oc/compaction.go` same | `cx/lifecycle.go` same
-- C4: `cc/compaction.go:ArmCompactionStartWait` | `oc/compaction.go:ArmCompactionStartWait`, `oc/handlers.go:handleCompactionPart` | ✗ grep `ArmCompactionStartWait`
+- `compaction_wait`: `cc/compaction.go:ArmCompactionWait`, `WaitForCompaction` | `oc/compaction.go` same | `cx/lifecycle.go` same
+- `compaction_start_wait`: `cc/compaction.go:ArmCompactionStartWait` | `oc/compaction.go:ArmCompactionStartWait`, `oc/handlers.go:handleCompactionPart` | ✗ grep `ArmCompactionStartWait`
 - C5: `cc/compaction.go:signalCompactionAbort` | ✗ grep `ErrCompactionNoBoundary` | ✗ same
-- C6: `cc/compaction.go:CompactionSummary` | `oc/compaction.go:CompactionSummary` | ✗ grep `CompactionSummary`
+- `compaction_summary`: `cc/compaction.go:CompactionSummary` | `oc/compaction.go:CompactionSummary` | ✗ grep `CompactionSummary`
 - C8: `ag/compaction.go:runDelegatedCompact`, `ag/delegated_manager.go:BounceSessionIfPromptChanged` (generic)
-- C9: `cc/control.go:GetContextWindow` | `oc/context_usage.go:GetContextWindow` | `cx/context_window.go:GetContextWindow`
+- `context_window`: `cc/control.go:GetContextWindow` | `oc/context_usage.go:GetContextWindow` | `cx/context_window.go:GetContextWindow`
 - C10: `cc/control.go:CacheTTL` (1h) | ✗ grep `CacheTTL` | `cx/context_window.go:CacheTTL` (5m)
 
 **Cost, usage, limits**
@@ -620,40 +592,40 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - U5: `cc/cost.go:resumeBaseline` | n/a | n/a
 - U6: `cc/handlers.go:OnRateLimit`, `cc/ratelimit.go:FormatRateLimitNotice`, `HostHooks.OnRateLimitNotice` | ✗ | ✗ grep `rate.?limit`
 - U7: `cc/handlers.go:OnAssistant` (`syntheticSessionLimitText`) → `HostHooks.EngageRateLimit` | `oc/ratelimit.go:handleRateLimitRetry` → `HostHooks.EngageRateLimit` | ✗ grep `limit`
-- U8: `cc/usage_oneshot.go:QueryUsage`, `cc/spec.go` `UsageQuery` | ✗ `oc/spec.go` declares `usage_query` No | ✗ same
+- `usage_query`: `cc/usage_oneshot.go:QueryUsage`, `cc/spec.go` `UsageQuery` | ✗ `oc/spec.go` declares `usage_query` No | ✗ same
 - U9: `cc/handlers.go:OnResult` | `oc/handlers.go:onMessageUpdated` | `cx/handlers.go:onTokenUsage`
 
 **Models**
 - M1: `cc/lifecycle.go:Start` (`--model`) | `oc/backend_lifecycle.go:Start` (`resolveModelFn`) | `cx/lifecycle.go:prepareConfiguredModel`
-- M2: `cc/control.go:sendSetModel` | `oc/control.go:SendControl` | `cx/control.go:SendControl`
-- M3: n/a | `oc/model_validate.go:resolveModel` (not the interface) | `cx/model_resolver.go:ResolveModel`
+- `control_model`: `cc/control.go:sendSetModel` | `oc/control.go:SendControl` | `cx/control.go:SendControl`
+- `model_resolve`: n/a | `oc/model_validate.go:resolveModel` (not the interface) | `cx/model_resolver.go:ResolveModel`
 - M4: `gw/main.go` modelcaps fetcher for `BackendCCStream` | ✗ grep `modelcaps` | `cx/modelcaps.go:refreshModelCaps` → `publishModelCaps`
 - M5: `cc/lifecycle.go:Start` (`--effort`), `cc/control.go:SendControl` | n/a | `cx/control.go` `pendingEffort`
-- M6: `cc/voicemode.go` | n/a | `cx/voicemode.go`
+- `voice_mode`: `cc/voicemode.go` | n/a | `cx/voicemode.go`
 - M7: `cc/ccstream.go:BatchDefaultModel`, `BatchCheapModel` | ✗ grep `BatchDefaultModel|BatchCheapModel` | ✗ same
 - M8: `cc/handlers.go:OnSystem` `model_refusal_fallback` | ✗ grep `fallback|reroute` | `cx/reader.go` `model/rerouted`
-- M9: `cc/handlers.go:OnStreamEvent` | `oc/handlers.go:handleReasoningPart` | `cx/handlers.go:onReasoningDelta`
+- `streaming` (thinking): `cc/handlers.go:OnStreamEvent` | `oc/handlers.go:handleReasoningPart` | `cx/handlers.go:onReasoningDelta`
 
 **Sessions**
 - R1: `cc/handlers.go:OnSystem` init → `onSessionReady` | `oc/opencode.go:SetOnSessionReady` | `cx/callbacks.go:SetOnSessionReady`
 - R2: `cc/lifecycle.go:Start` (`--resume`) | `oc/backend_lifecycle.go:resumeSession` | `cx/lifecycle.go:resumeThread`
-- R3: `cc/branch.go:ForkSession`, `forkTranscript` | `oc/branch.go:ForkSession` | `cx/branch.go:ForkSession`, `Spec.ForkNeedsRunning`
+- `branch`: `cc/branch.go:ForkSession`, `forkTranscript` | `oc/branch.go:ForkSession` | `cx/branch.go:ForkSession`, `Spec.ForkNeedsRunning`
 - R4: `cc/branch.go:CleanupSession` | `oc/branch.go:CleanupSession`, `OpenCleanupScope` | `cx/branch.go:CleanupSession`, `OpenCleanupScope`
 - R5: `cc/retention.go:CleanupPeriod` (`Spec.ResumeRetention`) | ✗ (no `ResumeRetention`) | ✗ same
 - R6: `cc/ccstream.go:SessionFilePath` | ✗ `oc/opencode.go:SessionFilePath` returns `""` | `cx/codex.go:SessionFilePath`
 - R7: `ag/delegated_manager.go` `batchSpecFor` (generic)
-- R8: ✗ grep `ThreadName` | ✗ same | `cx/codex.go:ConsumeThreadName`, `cx/reader.go` `thread/name/updated`
+- `thread_naming`: ✗ grep `ThreadName` | ✗ same | `cx/codex.go:ConsumeThreadName`, `cx/reader.go` `thread/name/updated`
 
 **UI**
-- D1-D3: `cc/handlers.go:OnAssistant`, `OnStreamEvent` | `oc/handlers.go:handleTextPart`, `handleToolPart` | `cx/handlers.go:onItemStarted`, `onItemCompleted`, `onAgentMessageDelta`
+- D1, D3, `streaming` (text): `cc/handlers.go:OnAssistant`, `OnStreamEvent` | `oc/handlers.go:handleTextPart`, `handleToolPart` | `cx/handlers.go:onItemStarted`, `onItemCompleted`, `onAgentMessageDelta`
 - D4: `cc/hooks.go:handleHookResponse` | `oc/handlers.go:handleToolPart` | `cx/handlers.go:onItemCompleted`
 - D5: `cmd/foci-cc-hook` `slowToolThreshold`, `cc/hooks.go` `tool_runtime_shown` | ✗ grep `runtime|duration_ms` | ✗ same
 - D6: `cc/control.go:StatusDetail` | ✗ `oc/context_usage.go:StatusDetail` returns `""` | `cx/codex.go:StatusDetail`
 
 **Ops**
-- O1: `cc/readiness.go:CheckReady` | `oc/backend_lifecycle.go:CheckReady` (skipped in `gw/notifications.go`) | `cx/lifecycle.go:CheckReady`
+- `unstarted_readiness_probe`: `cc/readiness.go:CheckReady` | `oc/backend_lifecycle.go:CheckReady` (skipped in `gw/notifications.go`) | `cx/lifecycle.go:CheckReady`
 - O2: `cc/authfail.go:isAuthFailure` | `oc/authfail.go:authCheckingTransport`, `fanOutAuthFailure` | ✗ grep `auth|401`
-- O3: `gw/agents_delegated.go:triggerRelogin` (claude-code only), `internal/relogin` | n/a | ✗
+- `relogin`: `gw/agents_delegated.go:triggerRelogin` (claude-code only), `internal/relogin` | n/a | ✗
 - O4: `cc/lifecycle.go:captureStderr` | `oc/lifecycle.go:captureStderr` | ✗ grep `Stderr` in `cx/lifecycle.go`
 - O5: `cc/env.go:buildEnv` | `oc/session_env.go` | `cx/hooks.go:bindThreadEnv`
 - O6: `cc/lifecycle.go` initialize `systemPrompt` | `oc/blank_system.go:EnsureBlankSystemPlugin` | `cx/lifecycle.go` `BaseInstructions`
