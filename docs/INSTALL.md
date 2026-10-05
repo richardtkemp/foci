@@ -32,6 +32,7 @@ Install these before running setup:
 - **tmux** — terminal multiplexing (optional but recommended)
 - **jq** — JSON processing (optional but recommended)
 - **sqlite3** — database CLI (optional, for debugging)
+- **mermaid-cli (`mmdc`)** — optional: renders mermaid diagrams, both in the app (```` ```mermaid ```` blocks) and as an image `send_to_chat` sends alongside a `.mmd`/`.mermaid` file. Needs node/npm and a system chromium; without it the app shows the diagram source and `send_to_chat` sends the source alone. Install with `PUPPETEER_SKIP_DOWNLOAD=1 npm i -g @mermaid-js/mermaid-cli` (configure with `[platforms.app] mermaid_cmd` / `mermaid_browser`)
 
 On Debian/Ubuntu:
 
@@ -39,7 +40,7 @@ On Debian/Ubuntu:
 sudo apt install git build-essential make curl tmux jq sqlite3
 ```
 
-Or run the prerequisites script which handles all distros:
+Or run the prerequisites script which handles all distros (it reports, but does not install, the optional mermaid-cli):
 
 ```bash
 sudo ./prerequisites.sh --install

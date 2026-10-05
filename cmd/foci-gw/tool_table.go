@@ -10,6 +10,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/delegator"
 	mcpkg "foci/internal/mcp"
+	"foci/internal/mermaid"
 	"foci/internal/platform"
 	"foci/internal/procx"
 	"foci/internal/provider"
@@ -285,7 +286,7 @@ var toolTable = []toolEntry{
 				return session.SessionTypeUnknown
 			}
 			return entry.SessionType
-		})
+		}, sendToChatMermaid(d.p.cfg))
 	}},
 
 	{name: "send_to_session", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {
@@ -435,4 +436,19 @@ var toolTable = []toolEntry{
 		build: func(d *toolDeps) *tools.Tool {
 			return tools.NewSetSessionAliasTool(d.p.sessionIndex, app.NotifyAliasChanged)
 		}},
+}
+
+// sendToChatMermaid is the renderer send_to_chat uses for a mermaid file
+// (#2195): the same process-wide instance the app's /app/render/mermaid uses,
+// configured by [platforms.app] mermaid_cmd / mermaid_browser (mmdc on PATH
+// when there is no app platform).
+func sendToChatMermaid(cfg *config.Config) *mermaid.Renderer {
+	if cfg == nil {
+		return mermaid.Shared("", "", "")
+	}
+	var cmd, browser string
+	if p := cfg.Platform("app"); p != nil && p.App != nil {
+		cmd, browser = p.App.MermaidCmd, p.App.MermaidBrowser
+	}
+	return mermaid.Shared(cfg.DataDir, cmd, browser)
 }

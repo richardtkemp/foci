@@ -22,6 +22,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/fap"
 	flog "foci/internal/log"
+	"foci/internal/mermaid"
 	"foci/internal/platform"
 	"foci/internal/question"
 	"foci/internal/session"
@@ -66,7 +67,7 @@ type Hub struct {
 	deps     platform.ProviderDeps
 	pairKeys *pairKeyStore
 	blobs    *blobStore
-	mermaid  *mermaidRenderer // POST /app/render/mermaid (#1980)
+	mermaid  *mermaid.Renderer // POST /app/render/mermaid (#1980); shared with send_to_chat
 	tokens   *pushTokens
 	pusher   *fcmPusher
 	devices  *deviceStore
@@ -204,7 +205,7 @@ func newHub(deps platform.ProviderDeps) *Hub {
 	if appCfg != nil {
 		mermaidCmd, mermaidBrowser = appCfg.MermaidCmd, appCfg.MermaidBrowser
 	}
-	mermaid := newMermaidRenderer(blobDataDir, mermaidCmd, mermaidBrowser)
+	mermaidR := mermaid.Shared(blobDataDir, mermaidCmd, mermaidBrowser)
 
 	// Durable replay-frame store (server-side backfill DB). Needs a data_dir;
 	// absent → frames stays nil and every frameStore method no-ops, so the hub
@@ -232,7 +233,7 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		deps:          deps,
 		pairKeys:      newPairKeyStore(),
 		blobs:         blobs,
-		mermaid:       mermaid,
+		mermaid:       mermaidR,
 		tokens:        tokens,
 		devices:       newDeviceStore(devicePath),
 		authLim:       newAuthLimiter(authFailMax, authFailWindow),

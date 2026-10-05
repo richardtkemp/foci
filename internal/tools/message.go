@@ -3,19 +3,25 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"foci/internal/convo"
+	"foci/internal/mermaid"
 	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/tempdir"
 	"foci/internal/voice"
 )
 
-func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts func() voice.TTS, sessionTypeFn func(sessionKey string) session.SessionType) *Tool {
+// NewSendToChatTool builds send_to_chat. With a mermaid renderer, a mermaid
+// source file (.mmd/.mermaid) sent as a document is followed by a rendered PNG
+// of it (#2195); a nil renderer sends the source alone.
+func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts func() voice.TTS, sessionTypeFn func(sessionKey string) session.SessionType, mermaidR *mermaid.Renderer) *Tool {
 	return &Tool{
 		Name:       "send_to_chat",
 		ExecExport: true,
@@ -37,7 +43,7 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts fu
 				"file": {
 					"type": "string",
 					"format": "filepath",
-					"description": "Path to a file to send as a document attachment. Relative paths are resolved against the caller's working directory; absolute paths are passed through unchanged. Pass '-' to read the attachment body from stdin (e.g. pipe a file in: cat plan.md | foci_send_to_chat 'caption' --file - ); pair with --filename to set the display name."
+					"description": "Path to a file to send as a document attachment. A mermaid diagram (.mmd/.mermaid, by display name) sent as a document is followed by a rendered PNG of it when the server can render. Relative paths are resolved against the caller's working directory; absolute paths are passed through unchanged. Pass '-' to read the attachment body from stdin (e.g. pipe a file in: cat plan.md | foci_send_to_chat 'caption' --file - ); pair with --filename to set the display name."
 				},
 				"filename": {
 					"type": "string",
@@ -51,7 +57,7 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts fu
 			}
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return sendToChatExecute(ctx, params, getSender, tts, sessionTypeFn)
+			return sendToChatExecute(ctx, params, getSender, tts, sessionTypeFn, mermaidR)
 		},
 	}
 }
@@ -153,7 +159,7 @@ func prepareNamedFile(filePath, name string) (string, func(), error) {
 	return linkPath, cleanup, nil
 }
 
-func sendToChatExecute(ctx context.Context, params json.RawMessage, getSender func(sessionKey string) platform.Sender, ttsFn func() voice.TTS, sessionTypeFn func(sessionKey string) session.SessionType) (ToolResult, error) {
+func sendToChatExecute(ctx context.Context, params json.RawMessage, getSender func(sessionKey string) platform.Sender, ttsFn func() voice.TTS, sessionTypeFn func(sessionKey string) session.SessionType, mermaidR *mermaid.Renderer) (ToolResult, error) {
 	p, err := UnmarshalParams[struct {
 		Text     string `json:"text"`
 		FilePath string `json:"file"`
@@ -171,6 +177,12 @@ func sendToChatExecute(ctx context.Context, params json.RawMessage, getSender fu
 	}
 	if p.SendAs == "" {
 		p.SendAs = "document"
+	}
+
+	// The name the user sees; decides whether the file is a mermaid diagram.
+	displayName := p.Filename
+	if displayName == "" {
+		displayName = p.FilePath
 	}
 
 	// Custom display filename via a per-call symlink (no-op when unset).
@@ -265,9 +277,67 @@ func sendToChatExecute(ctx context.Context, params json.RawMessage, getSender fu
 			logToolSend(sessionKey, target.chatID, fmt.Sprintf("[%s %s]", label, p.FilePath))
 			sent = append(sent, summary)
 		}
+
+		// A mermaid diagram is unreadable as source in a chat: follow it with
+		// a picture. The source has already gone, so a failed render does not
+		// fail the call; the note tells the agent why no picture followed.
+		if mermaidR != nil && p.SendAs == "document" && mermaid.IsSourceFile(displayName) {
+			png, err := sendMermaidRender(ctx, target, mermaidR, p.FilePath, displayName)
+			if err != nil {
+				return TextResult(fmt.Sprintf("Sent: %s (image not sent: %v)", joinWords(sent), err)), nil
+			}
+			logToolSend(sessionKey, target.chatID, fmt.Sprintf("[photo %s, rendered from %s]", png, filepath.Base(displayName)))
+			sent = append(sent, png)
+		}
 	}
 
 	return TextResult(fmt.Sprintf("Sent: %s", joinWords(sent))), nil
+}
+
+// sendMermaidRender renders the mermaid source at srcPath and sends the PNG as
+// a photo named after displayName (flow.mmd → flow.png). Light theme on opaque
+// white: the image may land in a dark-mode Telegram or Discord, where the
+// app's transparent render would lose its lines. Returns the photo's name, or
+// an error worded for the agent.
+func sendMermaidRender(ctx context.Context, target messageTarget, r *mermaid.Renderer, srcPath, displayName string) (string, error) {
+	f, err := os.Open(srcPath)
+	if err != nil {
+		return "", fmt.Errorf("read diagram: %w", err)
+	}
+	b, err := io.ReadAll(io.LimitReader(f, mermaid.MaxSource+1))
+	_ = f.Close()
+	if err != nil {
+		return "", fmt.Errorf("read diagram: %w", err)
+	}
+	if len(b) > mermaid.MaxSource {
+		return "", fmt.Errorf("diagram too large to render (over %d KB)", mermaid.MaxSource>>10)
+	}
+	src := strings.TrimSpace(string(b))
+	if src == "" {
+		return "", fmt.Errorf("diagram is empty")
+	}
+	png, err := r.Render(ctx, src, "default", mermaid.White)
+	var syn *mermaid.SyntaxError
+	switch {
+	case err == nil:
+	case errors.Is(err, mermaid.ErrUnavailable):
+		return "", fmt.Errorf("mermaid rendering is not available on this server (install mmdc: see docs/INSTALL.md)")
+	case errors.As(err, &syn):
+		return "", fmt.Errorf("the diagram did not render: %s", syn.Msg)
+	default:
+		return "", err
+	}
+	name := strings.TrimSuffix(filepath.Base(displayName), filepath.Ext(displayName)) + ".png"
+	// The cache file is named by hash; the symlink gives it a readable name.
+	named, cleanup, err := prepareNamedFile(png, name)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+	if _, err := target.file("photo", named, ""); err != nil {
+		return "", fmt.Errorf("send rendered image: %w", err)
+	}
+	return name, nil
 }
 
 // logToolSend logs a conversation entry for a tool-initiated send.

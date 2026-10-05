@@ -8,6 +8,7 @@
 #
 # This script is distro-agnostic and idempotent (safe to re-run).
 # Detects package manager and installs: git, Go 1.23+, gcc, make, curl, jq, sqlite3, cron
+# Reports (never installs) optional extras: mermaid-cli (mmdc) for mermaid diagrams.
 #
 # Usage:
 #   ./prerequisites.sh                # Show what would be installed (dry-run)
@@ -61,6 +62,12 @@ DEPENDENCIES INSTALLED:
     - jq (JSON processor)
     - sqlite3 (database)
     - cron (provides the crontab group the foci service needs; cronie on RHEL/Arch/SUSE/Alpine)
+
+OPTIONAL (reported, not installed):
+    - mermaid-cli (mmdc): renders mermaid diagrams, both in the app and as an
+      image sent alongside a .mmd/.mermaid file by send_to_chat. Needs node/npm
+      and a system chromium. Install with:
+        PUPPETEER_SKIP_DOWNLOAD=1 npm i -g @mermaid-js/mermaid-cli
 
 SUPPORTED SYSTEMS:
     - Ubuntu/Debian (apt)
@@ -376,6 +383,21 @@ EOF
         info "  Add to system PATH: /etc/profile.d/go.sh"
     fi
 fi
+
+# Optional extras: report only. They need node/npm and a browser, which a
+# base install should not pull in.
+report_optional() {
+    info "Optional extras (not installed by this script):"
+    if command -v mmdc &>/dev/null; then
+        info "  mmdc (mermaid diagrams): installed"
+    else
+        warn "  mmdc (mermaid diagrams): not found. Without it, the app shows diagram source and"
+        warn "    send_to_chat sends a .mmd file without its rendered image. To enable (needs node/npm"
+        warn "    and a system chromium):"
+        warn "      PUPPETEER_SKIP_DOWNLOAD=1 npm i -g @mermaid-js/mermaid-cli"
+    fi
+}
+report_optional
 
 if [[ "$DRY_RUN" == "false" ]]; then
     # Verify all tools are present and show versions

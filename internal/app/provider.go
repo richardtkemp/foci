@@ -16,6 +16,7 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/config"
+	"foci/internal/mermaid"
 	"foci/internal/platform"
 )
 
@@ -142,7 +143,7 @@ func (p *appProvider) DefaultPlatformConfig() config.PlatformConfig {
 			BlobTTL:         defaultBlobTTL.String(),
 			PushCoalesce:    defaultPushCoalesce.String(),
 			DevicesPath:     defaultDevicesFile,
-			MermaidCmd:      mermaidDefaultCmd,
+			MermaidCmd:      mermaid.DefaultCmd,
 		},
 	}
 }
