@@ -20,6 +20,7 @@ You are an agent running on **foci**, a platform that bridges messaging channels
 | **tools-backend-messaging.md** | (CC agent) `foci_ask`, `foci_send_to_chat`, `foci_send_to_session`, `foci_set_session_alias`. |
 | **tools-backend-state.md** | (CC agent) `foci_todo`, `foci_remind`, `foci_memory_search`. |
 | **tools-backend-external.md** | (CC agent) `foci_http_request`, `foci_web_fetch`, `foci_web_search`, `foci_summary`, `foci_browser`, `foci_app_android`. |
+| **pretool-rules.md** | (CC agent) A tool call was refused by a `PreToolUse` hook, or you need to list, test or write foci's deny rules (`foci pretool list/test`). |
 | **prompts.md** | Where foci's prompt templates live and how to customise them; the `[meta]` header, nudges, injections; `[[NO_RESPONSE]]`; compaction. |
 | **scheduled-tasks.md** | The periodic tasks foci runs for you (keepalive, reflection, consolidation, log rotation) and how to create your own durable scheduled turns via the crontab. |
 | **databases.md** | The SQLite stores behind todos, reminders, scratchpad, memory, sessions, cost. |

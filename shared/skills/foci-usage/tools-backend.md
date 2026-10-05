@@ -41,7 +41,11 @@ Every tool accepts `-h`/`--help`. **Read the `--help` before first use of any to
 
 **`--json` for machine-readable output.** Every `foci_*` function except `foci_ask` (where `--json` is the questions *input*) takes `--json`, in any position, and prints one JSON document instead of its text — pipe it to `jq` rather than parsing prose. Text stays the default. `foci_web_search`, `foci_web_fetch`, `foci_memory_search`, `foci_http_request` and `foci_remind` print a tool-specific shape (their `--help` "Output:" section documents it); every other tool prints `{"result": "<the text>"}`; `foci_todo list/search/get` print JSONL, as `--format jsonl`. Errors are unchanged: stderr and a non-zero exit.
 
-## 3. Deferred tools & ToolSearch
+## 3. Refused calls: PreToolUse rules
+
+foci can refuse a tool call before it runs. You see `PreToolUse:<Tool> hook error:` and a reason that says what to do instead. Follow the reason; do not retry the call or rephrase it to dodge the rule. To see your rules or check a call against them, run `foci pretool list` / `foci pretool test`. See **pretool-rules.md**.
+
+## 4. Deferred tools & ToolSearch
 
 Some CC backend tools aren't loaded into the prompt up-front — they appear by *name only* in a `<system-reminder>` as "deferred" (MCP tools, calendar, etc.).
 

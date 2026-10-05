@@ -32,6 +32,8 @@ So a minimal `[[agents]]` entry is often just `id = "..."` plus a model and any 
 - `[nudge]`, `[behavior]`, `[voice]`, `[display]` — behavioural tuning.
 - `[debug]` — verbose per-package logging flags (`extra_ccstream_logging`, etc.).
 
+For the tool-call deny rules (`[[cc_backend.pretool_rules]]`, `[[agents.backend_config.pretool_rules]]`), see **pretool-rules.md**.
+
 For durable scheduled turns, see **scheduled-tasks.md** (they live in the generated crontab).
 
 Config **cascades** (per-platform-per-agent → per-agent → per-platform-global → global → code default); pointer fields take the first non-nil, slices combine, maps overlay. Per-agent fields must stay nil to inherit — that's how the merge works.
