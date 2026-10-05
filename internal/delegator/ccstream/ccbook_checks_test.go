@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -162,6 +163,49 @@ func TestOverheadBounded(t *testing.T) {
 			t.Errorf("alarms = %+v, want none", tb.alarms)
 		}
 	})
+}
+
+// TestOverheadBoundedSeverity is #2175: an over-bound overhead that is output
+// tokens only is CC bug #84223 (subagent transcripts missing their final
+// record), so it alarms at WARN and names the bug; any other class in the
+// overhead keeps it an ERROR.
+func TestOverheadBoundedSeverity(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		usage    ModelUsage
+		tokens   modelinfo.Tokens
+		wantWarn bool
+	}{
+		{"output only warns", ModelUsage{OutputTokens: 200000},
+			modelinfo.Tokens{modelinfo.ClassOutput: 200000}, true},
+		{"input too stays an error", ModelUsage{InputTokens: 50000, OutputTokens: 200000},
+			modelinfo.Tokens{modelinfo.ClassInput: 50000, modelinfo.ClassOutput: 200000}, false},
+		{"cache read too stays an error", ModelUsage{CacheReadInputTokens: 50000, OutputTokens: 200000},
+			modelinfo.Tokens{modelinfo.ClassCacheRead: 50000, modelinfo.ClassOutput: 200000}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tb := newTestBook(t, nil)
+			u := tc.usage
+			u.CostUSD = mustCost(t, tc.tokens)
+			tb.result(map[string]ModelUsage{opus: u}, 0, tb.clock)
+			tb.advance(time.Second)
+			var got []accounting.Alarm
+			for _, a := range tb.alarms {
+				if a.Invariant == accounting.InvOverheadBounded {
+					got = append(got, a)
+				}
+			}
+			if len(got) != 1 {
+				t.Fatalf("alarms = %+v, want one invOverheadBounded", tb.alarms)
+			}
+			if got[0].Warn != tc.wantWarn {
+				t.Errorf("Warn = %v, want %v: %+v", got[0].Warn, tc.wantWarn, got[0])
+			}
+			if named := strings.Contains(got[0].Detail, "anthropics/claude-code/issues/84223"); named != tc.wantWarn {
+				t.Errorf("detail names CC bug #84223 = %v, want %v: %s", named, tc.wantWarn, got[0].Detail)
+			}
+		})
+	}
 }
 
 // TestTurnActivityClosesWhenItsSubagentsStop is T14 for activity_closed_at: a

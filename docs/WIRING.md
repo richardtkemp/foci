@@ -1516,7 +1516,8 @@ how every writer and reader reaches it; `accounting.Live()` is nil with no `api_
 configured (and in unit tests), and writers then only observe (api.jsonl, BookedHook).
 Alarms go to `OnAlarm`, which reports each through `delegator.Expectations.Violated`
 (invariant `ledger <inv>`): an ERROR, so operator chat, rate-limited per backend and
-invariant (#2013). An adapter alarm carries the backend's version (`Alarm.Version`; CC's
+invariant (#2013) — or, for an alarm marked `Alarm.Warn` (a known benign cause),
+`Expectations.ViolatedWarn` at WARN, rate-limited apart (#2175). An adapter alarm carries the backend's version (`Alarm.Version`; CC's
 ccBook takes it from `system/init` via `setVersion`), so it names the release (#2149); an
 alarm found inside a booking (`Tx.alarm`) carries none and reads "version unknown".
 A live-applied `[[modelinfo]]` change re-renders `token_rates` (`Ledger.RenderRates`, from
@@ -1717,7 +1718,8 @@ everything booked in the process that CC counts: beyond `delegator.CostDivergenc
 remainder's TTL solve makes its own window match CC's cost exactly, so the check bites on
 the counted calls' rates and on an unsolved remainder. `checkOverhead` alarms
 `invOverheadBounded` when one remainder's overhead (not a compaction) exceeds both $0.50 and
-2% of CC's cost for its window. **Turn activity (R8):** `completeTurn` and `finalizeExit`
+2% of CC's cost for its window; output-only overhead is CC bug #84223 (a subagent transcript
+missing its final record), so that alarm is `Warn` and names the bug (#2175). **Turn activity (R8):** `completeTurn` and `finalizeExit`
 send `ccLedger.turnEnded`; the book closes a turn's `activity_closed_at` once it has ended,
 no subagent tail of it is open and no call the stream named on it is unbooked, else when
 the last of those clears (`closeIfIdle`, from `tailClosed`, `mainLine`, `closeWindows`); a

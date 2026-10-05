@@ -108,9 +108,14 @@ func initLogging(cfg *config.Config, processStart time.Time) func() {
 		ledger, report, err := accounting.Open(cfg.Logging.APIDB, accounting.Options{
 			// Invariants alarm and are never absorbed (#2111 R9): each goes
 			// to operator chat through the shared expectation guard (#2013),
-			// at ERROR, rate-limited per backend and invariant.
+			// at ERROR, rate-limited per backend and invariant — or at WARN
+			// for one with a known benign cause (#2175).
 			OnAlarm: func(a accounting.Alarm) {
-				delegator.Expectations.Violated(ledgerLog, a.Backend, a.Version, "ledger "+a.Invariant, a.Detail)
+				report := delegator.Expectations.Violated
+				if a.Warn {
+					report = delegator.Expectations.ViolatedWarn
+				}
+				report(ledgerLog, a.Backend, a.Version, "ledger "+a.Invariant, a.Detail)
 			},
 		})
 		if err != nil {

@@ -228,6 +228,10 @@ type Alarm struct {
 	// the raiser does not know it: an alarm found inside a booking carries none.
 	Version string
 	Detail  string
+	// Warn marks a violation whose cause is known and benign enough to report
+	// at WARN rather than ERROR (#2175: overhead that is output tokens only,
+	// CC bug #84223). Detail names the cause.
+	Warn bool
 }
 
 // Ledger is the cost ledger in api.db. It is the database's only writer.

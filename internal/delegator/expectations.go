@@ -92,7 +92,22 @@ func (g *ExpectationGuard) now() time.Time {
 //
 // lg must not be a logger whose sink could contend on a lock the caller holds.
 func (g *ExpectationGuard) Violated(lg ExpectationLogger, backend, version, invariant, detail string) bool {
+	return g.violated(lg, false, backend, version, invariant, detail)
+}
+
+// ViolatedWarn is Violated for a violation whose cause is known and benign
+// (#2175): it logs at WARN, so an "errors" warning queue drops it. It is
+// rate-limited apart from the invariant's ERROR reports, so a standing WARN
+// never holds back an ERROR. Count counts ERROR violations only.
+func (g *ExpectationGuard) ViolatedWarn(lg ExpectationLogger, backend, version, invariant, detail string) bool {
+	return g.violated(lg, true, backend, version, invariant, detail)
+}
+
+func (g *ExpectationGuard) violated(lg ExpectationLogger, warn bool, backend, version, invariant, detail string) bool {
 	key := backend + "\x00" + invariant
+	if warn {
+		key += "\x00warn"
+	}
 	now := g.now()
 
 	g.mu.Lock()
@@ -130,7 +145,11 @@ func (g *ExpectationGuard) Violated(lg ExpectationLogger, backend, version, inva
 	if suppressed > 0 {
 		repeat = fmt.Sprintf(" [%d more violation(s) since the last report of this]", suppressed)
 	}
-	lg.Errorf("BACKEND EXPECTATION VIOLATED: %s %s broke %q — %s. Data foci derives from this is likely wrong until fixed; "+
+	logf := lg.Errorf
+	if warn {
+		logf = lg.Warnf
+	}
+	logf("BACKEND EXPECTATION VIOLATED: %s %s broke %q — %s. Data foci derives from this is likely wrong until fixed; "+
 		"check whether a backend update changed the behaviour (#2013)%s",
 		backend, v, invariant, detail, repeat)
 	return true

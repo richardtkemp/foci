@@ -124,3 +124,25 @@ func TestExpectationGuard_NoteVersion(t *testing.T) {
 		t.Errorf("empty version logged %q", lines)
 	}
 }
+
+// TestExpectationGuard_ViolatedWarn (#2175): a violation with a known benign
+// cause logs at WARN, and is rate-limited apart from the same invariant's
+// ERROR reports, so a standing WARN never holds back an ERROR.
+func TestExpectationGuard_ViolatedWarn(t *testing.T) {
+	t.Parallel()
+	g := &ExpectationGuard{Clock: clock.NewFake()}
+	lg := &recLogger{}
+
+	if !g.ViolatedWarn(lg, "ccstream", "2.1.300", "inv", "known cause") {
+		t.Fatal("first WARN violation was rate-limited")
+	}
+	if lines := lg.take(); len(lines) != 1 || !strings.HasPrefix(lines[0], "WARN BACKEND EXPECTATION VIOLATED: ccstream 2.1.300") {
+		t.Fatalf("report = %q, want one WARN naming backend and version", lines)
+	}
+	if !g.Violated(lg, "ccstream", "2.1.300", "inv", "unknown cause") {
+		t.Fatal("an ERROR was rate-limited by a WARN of the same invariant")
+	}
+	if lines := lg.take(); len(lines) != 1 || !strings.HasPrefix(lines[0], "ERROR ") {
+		t.Fatalf("report = %q, want one ERROR", lines)
+	}
+}

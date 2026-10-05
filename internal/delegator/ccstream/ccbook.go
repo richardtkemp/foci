@@ -307,7 +307,12 @@ func (c *ccBook) setVersion(v string) {
 // alarm raises an invariant violation on this process, tagged with its CC
 // version.
 func (c *ccBook) alarm(inv, detail string) {
-	a := accounting.Alarm{Invariant: inv, Backend: accounting.BackendCCStream, Detail: detail}
+	c.raise(accounting.Alarm{Invariant: inv, Detail: detail})
+}
+
+// raise raises a, stamped with this process's backend and CC version.
+func (c *ccBook) raise(a accounting.Alarm) {
+	a.Backend = accounting.BackendCCStream
 	if v := c.version.Load(); v != nil {
 		a.Version = *v
 	}
@@ -839,6 +844,7 @@ func (c *ccBook) remainder(w int, mu map[string]ModelUsage, label string, at tim
 	slices.SortFunc(bounds, func(a, b ccBoundary) int { return a.at.Compare(b.at) })
 	var overhead float64
 	var overheadModels []string
+	outputOnly := true
 	for _, m := range slices.Sorted(maps.Keys(rem)) {
 		r := rem[m]
 		if !billed(r) {
@@ -884,6 +890,7 @@ func (c *ccBook) remainder(w int, mu map[string]ModelUsage, label string, at tim
 		if call.Kind == accounting.KindOverhead {
 			overhead += usd
 			overheadModels = append(overheadModels, fmt.Sprintf("%s $%.4f (%s)", m, usd, formatTokens(call.Tokens)))
+			outputOnly = outputOnly && onlyOutput(call.Tokens)
 		} else if c.closed[turn.TurnID] {
 			// Spend booked on a turn whose activity had closed moves its
 			// close to this booking.
@@ -891,7 +898,7 @@ func (c *ccBook) remainder(w int, mu map[string]ModelUsage, label string, at tim
 		}
 	}
 	if len(overheadModels) > 0 {
-		c.checkOverhead(overhead, windowCost(mu, c.baseline), overheadModels, label)
+		c.checkOverhead(overhead, windowCost(mu, c.baseline), overheadModels, outputOnly, label)
 	}
 	for m, u := range mu {
 		c.baseline[m] = u
@@ -932,15 +939,37 @@ func windowCost(mu, base map[string]ModelUsage) float64 {
 	return cost
 }
 
+// ccBugMissingFinalRecord is the CC bug behind output-only overhead: a
+// subagent transcript missing its final record, whose output CC still counts
+// (#2160, #2175).
+const ccBugMissingFinalRecord = "https://github.com/anthropics/claude-code/issues/84223"
+
 // checkOverhead alarms when one remainder's overhead is beyond the bound.
-func (c *ccBook) checkOverhead(overhead, window float64, models []string, label string) {
+// Overhead that is output tokens only has a known cause, CC bug #84223, so it
+// alarms at WARN and names it (Dick, 2026-10-05 on #2160); any other class in
+// it is spend with no known source, an ERROR.
+func (c *ccBook) checkOverhead(overhead, window float64, models []string, outputOnly bool, label string) {
 	bound := max(ccOverheadBoundUSD, ccOverheadBoundShare*window)
 	if overhead <= bound {
 		return
 	}
-	c.alarm(accounting.InvOverheadBounded, fmt.Sprintf("session %s %s: overhead $%.4f is over the bound $%.2f (CC's cost for the window $%.4f): %s — "+
-		"spend no transcript holds (a subagent tail that never opened, a lost resume baseline?)",
-		c.session, label, overhead, bound, window, strings.Join(models, "; ")))
+	cause := "spend no transcript holds (a subagent tail that never opened, a lost resume baseline?)"
+	if outputOnly {
+		cause = "output-only overhead: subagent transcripts missing their final record, CC bug " + ccBugMissingFinalRecord
+	}
+	c.raise(accounting.Alarm{Invariant: accounting.InvOverheadBounded, Warn: outputOnly,
+		Detail: fmt.Sprintf("session %s %s: overhead $%.4f is over the bound $%.2f (CC's cost for the window $%.4f): %s — %s",
+			c.session, label, overhead, bound, window, strings.Join(models, "; "), cause)})
+}
+
+// onlyOutput reports whether output is the only class t bills.
+func onlyOutput(t modelinfo.Tokens) bool {
+	for class, n := range t {
+		if n != 0 && class != modelinfo.ClassOutput {
+			return false
+		}
+	}
+	return true
 }
 
 // checkDivergence compares, per model, CC's own cost since this process
