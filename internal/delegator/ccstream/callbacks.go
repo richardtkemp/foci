@@ -43,6 +43,10 @@ func (b *Backend) SetOnSubagentStatus(fn func(detail string)) { b.agents.OnStatu
 // kind, model, start time) — see delegator.SubagentTracker.OnRunning (#2138).
 func (b *Backend) SetOnSubagentRunning(fn func([]delegator.RunningSubagent)) { b.agents.OnRunning = fn }
 
+// RunningSubagents returns the session's running subagents and background
+// commands, for the statusline's [running] line (#2127).
+func (b *Backend) RunningSubagents() []delegator.RunningSubagent { return b.agents.Running() }
+
 // SetOnAuthFailure registers a hook fired when CC reports an authentication
 // failure (a 401). Used to trigger automated re-login (#843). Must be set
 // before Start.

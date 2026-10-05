@@ -385,6 +385,10 @@ func (b *Backend) SetOnSubagentRunning(fn func([]delegator.RunningSubagent)) {
 	b.agents.OnRunning = fn
 }
 
+// RunningSubagents returns the session's running subagents, for the
+// statusline's [running] line (#2127).
+func (b *Backend) RunningSubagents() []delegator.RunningSubagent { return b.agents.Running() }
+
 // SetOnAuthFailure stores the auth-failure callback. Fired by handlers.go
 // when a ProviderAuthError surfaces via message.updated or session.error
 // SSE events. authfail.go provides the Server-level fanout + relogin gate.

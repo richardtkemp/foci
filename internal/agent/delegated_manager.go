@@ -298,6 +298,23 @@ func (m *DelegatedManager) BackendTurnInFlight(sessionKey string) bool {
 	return mb.be.IsTurnInFlight()
 }
 
+// RunningSubagents returns what the session's live backend has running in the
+// background: Agent-tool subagents and background shell commands (#2127).
+// Non-creating; nil when there is no backend or it does not track them.
+func (m *DelegatedManager) RunningSubagents(sessionKey string) []delegator.RunningSubagent {
+	mb, ok := m.getManaged(sessionKey)
+	if !ok {
+		return nil
+	}
+	r, ok := mb.be.(interface {
+		RunningSubagents() []delegator.RunningSubagent
+	})
+	if !ok {
+		return nil
+	}
+	return r.RunningSubagents()
+}
+
 // clearPermission unblocks any WaitForPermission waiters on this backend.
 func (mb *managedBackend) clearPermission() {
 	mb.permMu.Lock()

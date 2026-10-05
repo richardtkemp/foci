@@ -38,15 +38,11 @@ func (a *Agent) composeTurnText(ctx context.Context, sessionKey string, turnMode
 	var p turnTextParts
 
 	// The statusline template owns both the [meta] and [state] lines (#831).
-	// Empty config falls back to the default template, which reproduces the
-	// historical two-line header byte-for-byte. The whole rendered block goes
+	// Empty config falls back to the default template; a custom one may
+	// include it with {default}. The whole rendered block goes
 	// into MetaPrefix; StateDashboard stays empty (the [state] line, if any, is
 	// inside the rendered template).
-	tmpl := a.statusline()
-	if tmpl == "" {
-		tmpl = DefaultStatuslineTemplate
-	}
-	p.MetaPrefix = a.renderStatusline(ctx, tmpl, statuslineInputs{
+	p.MetaPrefix = a.renderStatusline(ctx, expandStatuslineTemplate(a.statusline()), statuslineInputs{
 		now:        now,
 		model:      turnModel,
 		platform:   platName,

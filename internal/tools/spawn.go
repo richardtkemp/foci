@@ -612,17 +612,18 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 		// once still finds it (#2139).
 		spawnCtx, cancel := buildSpawnContext(ctx, timeout, branchKey, true)
 		id := newSpawnID()
-		deps.Tracker.add(parentSession, id, cancel)
 		var model string
 		if deps.ModelFor != nil {
 			model = deps.ModelFor(branchKey)
 		}
+		running := RunningSpawn{
+			ID: id, BranchKey: branchKey, Description: spawnDescription(prompt),
+			Model: model, Started: time.Now(),
+		}
+		deps.Tracker.Add(parentSession, running, cancel)
 		obs := deps.Observer
 		if obs != nil {
-			obs.SpawnStarted(parentSession, RunningSpawn{
-				ID: id, BranchKey: branchKey, Description: spawnDescription(prompt),
-				Model: model, Started: time.Now(),
-			}, prompt)
+			obs.SpawnStarted(parentSession, running, prompt)
 		}
 		go func() {
 			defer cancel()

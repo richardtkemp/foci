@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -36,14 +37,16 @@ type SpawnObserver interface {
 	SpawnEnded(parentSession, id string)
 }
 
-// SpawnTracker holds the cancel func of every running background spawn, keyed
-// by parent session, so /stop can stop a session's spawns on their own (#2139).
+// SpawnTracker holds every running background spawn, keyed by parent session,
+// so /stop can stop a session's spawns on their own (#2139) and the statusline
+// can list them (#2127).
 type SpawnTracker struct {
 	mu      sync.Mutex
 	running map[string]map[string]*trackedSpawn // parent session → spawn id → spawn
 }
 
 type trackedSpawn struct {
+	info    RunningSpawn
 	cancel  context.CancelFunc
 	stopped bool
 }
@@ -58,7 +61,8 @@ func NewSpawnTracker() *SpawnTracker {
 	return &SpawnTracker{running: map[string]map[string]*trackedSpawn{}}
 }
 
-func (t *SpawnTracker) add(parent, id string, cancel context.CancelFunc) {
+// Add registers a running spawn of parent; its goroutine removes it when it ends.
+func (t *SpawnTracker) Add(parent string, s RunningSpawn, cancel context.CancelFunc) {
 	if t == nil {
 		return
 	}
@@ -67,7 +71,28 @@ func (t *SpawnTracker) add(parent, id string, cancel context.CancelFunc) {
 	if t.running[parent] == nil {
 		t.running[parent] = map[string]*trackedSpawn{}
 	}
-	t.running[parent][id] = &trackedSpawn{cancel: cancel}
+	t.running[parent][s.ID] = &trackedSpawn{info: s, cancel: cancel}
+}
+
+// Running returns the running spawns of parentSession, oldest first (nil when
+// there are none).
+func (t *SpawnTracker) Running(parentSession string) []RunningSpawn {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var out []RunningSpawn
+	for _, s := range t.running[parentSession] {
+		out = append(out, s.info)
+	}
+	slices.SortFunc(out, func(a, b RunningSpawn) int {
+		if c := a.Started.Compare(b.Started); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return out
 }
 
 // remove forgets a finished spawn and reports whether Stop ended it.

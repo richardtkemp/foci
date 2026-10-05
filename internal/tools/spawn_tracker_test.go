@@ -98,6 +98,14 @@ func TestSpawnInherit_ObserverListsAndStopStops(t *testing.T) {
 	}
 	obs.mu.Unlock()
 
+	// The statusline lists it under its parent session only (#2127).
+	if r := tracker.Running("test/imain"); len(r) != 1 || r[0] != s {
+		t.Errorf("Running = %+v, want [%+v]", r, s)
+	}
+	if r := tracker.Running("test/imain/other"); r != nil {
+		t.Errorf("Running(other session) = %+v, want none", r)
+	}
+
 	if n := tracker.Stop("test/imain/other"); n != 0 {
 		t.Errorf("Stop(other session) = %d, want 0", n)
 	}
@@ -122,6 +130,9 @@ func TestSpawnInherit_ObserverListsAndStopStops(t *testing.T) {
 	}
 	if n := tracker.Stop("test/imain"); n != 0 {
 		t.Errorf("Stop after end = %d, want 0", n)
+	}
+	if r := tracker.Running("test/imain"); r != nil {
+		t.Errorf("Running after end = %+v, want none", r)
 	}
 }
 

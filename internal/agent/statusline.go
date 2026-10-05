@@ -22,7 +22,9 @@ import (
 // A template is a string with two interpolation forms:
 //
 //	{field}      — a built-in field from statuslineFields (below). Unknown names
-//	               are left verbatim so typos are visible.
+//	               are left verbatim so typos are visible. {default} is not a
+//	               field: it expands to DefaultStatuslineTemplate before
+//	               rendering (expandStatuslineTemplate).
 //	${command}   — run `sh -c command` and embed its stdout. Runs on EVERY turn,
 //	               so it is bounded by a tight timeout + output cap and never
 //	               blocks the turn: any failure embeds nothing.
@@ -47,7 +49,24 @@ import (
 // running cost/token figure on every turn nudges the agent toward rationing its
 // own budget, which is not a goal we want it optimising for. The {cost}/{tokens}
 // fields still exist (statuslineFields) for anyone who wants them via config.
-const DefaultStatuslineTemplate = "[meta] time={time} gap={gap} model={model} via={via}\n[state] {state}\n[ask] {ask}"
+//
+// The [running] line lists the session's background work (#2127): a deploy or
+// restart kills it, and the agent otherwise has to go and look.
+const DefaultStatuslineTemplate = "[meta] time={time} gap={gap} model={model} via={via}\n[state] {state}\n[running] {running}\n[ask] {ask}"
+
+// statuslineDefaultToken in a custom template expands to the whole default
+// template, so a custom header can add lines to the default and keep every
+// default line, including ones added later (#2127).
+const statuslineDefaultToken = "{default}"
+
+// expandStatuslineTemplate returns the template to render for a configured one:
+// the default when empty, with any {default} replaced by the default template.
+func expandStatuslineTemplate(tmpl string) string {
+	if tmpl == "" {
+		return DefaultStatuslineTemplate
+	}
+	return strings.ReplaceAll(tmpl, statuslineDefaultToken, DefaultStatuslineTemplate)
+}
 
 // Statusline command execution bounds. The command runs synchronously before
 // every turn, so these are deliberately tight.
@@ -142,6 +161,12 @@ var statuslineFields = map[string]func(statuslineInputs) string{
 		}
 		return fmt.Sprintf("⏸ ask %s paused — user replies routing to you as normal turns, not answering it (/resume to restore)", reqID)
 	},
+
+	// Background work (#2127): {running} joins the three, each self-omits.
+	"running":     func(in statuslineInputs) string { return in.agent.statusRunning(in.sessionKey) },
+	"subagents":   func(in statuslineInputs) string { return in.agent.statusSubagents(in.sessionKey) },
+	"bg_commands": func(in statuslineInputs) string { return in.agent.statusBgCommands(in.sessionKey) },
+	"spawns":      func(in statuslineInputs) string { return in.agent.statusSpawns(in.sessionKey) },
 
 	// Granular per-store fields (label baked in; self-omit individually).
 	"todos":      func(in statuslineInputs) string { return in.agent.statusTodos(in.sessionKey) },

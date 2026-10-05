@@ -986,11 +986,20 @@ Supported keys: `show_tool_calls`, `show_thinking`, `stream_output`, `display_wi
 
 #### Statusline template
 
-The `statusline` controls the `[meta]`/`[state]` header prepended to every message an agent receives. When empty, the built-in default reproduces the historical two-line header:
+The `statusline` controls the `[meta]`/`[state]` header prepended to every message an agent receives. When empty, the built-in default is used:
 
 ```
-[meta] time={time} gap={gap} model={model} via={via} {cost} {tokens}
+[meta] time={time} gap={gap} model={model} via={via}
 [state] {state}
+[running] {running}
+[ask] {ask}
+```
+
+To **add to** the default rather than replace it, put `{default}` in your template: it expands to the whole default template above, so the custom header keeps every default line, including any added in later releases. For example:
+
+```toml
+statusline = """{default}
+[deploy] ${~/bin/undeployed-commits}"""
 ```
 
 Two interpolation forms:
@@ -1012,6 +1021,9 @@ Available fields:
 | `{tokens}` | `prev_tokens=in:…/out:…/cR:…/cW:…` | empty on first message |
 | `{state}` | `tasks: … \| todos: … \| scratchpad: …` | composite; empty when all stores empty |
 | `{todos}` / `{tasks}` / `{scratchpad}` | individual labelled state part | self-omit when empty |
+| `{running}` | `subagents: … \| bg_commands: … \| spawns: …` | composite; the session's background work, each item with how long it has run; empty when nothing runs |
+| `{subagents}` / `{bg_commands}` / `{spawns}` | individual labelled part, e.g. `spawns: 1 (Find the bug 2m5s)` | self-omit when empty; at most 5 items listed, the rest counted |
+| `{ask}` | paused-ask reminder | only while an ask is paused |
 | `{cost_raw}` | `$X` | bare value, always |
 | `{tokens_in}` / `{tokens_out}` / `{cache_read}` / `{cache_write}` | token count | bare value, always |
 

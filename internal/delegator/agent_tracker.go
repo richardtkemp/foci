@@ -253,6 +253,25 @@ func (t *SubagentTracker) Pending() int {
 	return len(t.pending)
 }
 
+// Running returns a snapshot of what is running (nil when nothing is), the same
+// list OnRunning reports. The [running] statusline field reads it (#2127).
+func (t *SubagentTracker) Running() []RunningSubagent {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.runningLocked()
+}
+
+func (t *SubagentTracker) runningLocked() []RunningSubagent {
+	var running []RunningSubagent
+	for _, ag := range t.pending {
+		running = append(running, RunningSubagent{
+			ID: ag.ID, Description: ag.Description, Kind: ag.Kind,
+			Model: ag.Model, SubagentType: ag.SubagentType, Command: ag.Command, Started: ag.added,
+		})
+	}
+	return running
+}
+
 // notify sends the current status DETAIL via OnStatus. Must be called with mu
 // held. The detail is the comma-joined running-subagent descriptions (or a
 // count when none carry a description), or "" when nothing is running — so it
@@ -263,14 +282,7 @@ func (t *SubagentTracker) notify() {
 		t.start = time.Time{}
 	}
 	if t.OnRunning != nil {
-		var running []RunningSubagent
-		for _, ag := range t.pending {
-			running = append(running, RunningSubagent{
-				ID: ag.ID, Description: ag.Description, Kind: ag.Kind,
-				Model: ag.Model, SubagentType: ag.SubagentType, Command: ag.Command, Started: ag.added,
-			})
-		}
-		t.OnRunning(running)
+		t.OnRunning(t.runningLocked())
 	}
 	if t.OnStatus == nil {
 		return
