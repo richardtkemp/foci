@@ -408,3 +408,6 @@ func ReplayHandler() http.HandlerFunc { return withHub((*Hub).ServeReplay) }
 
 // AvatarHandler returns the GET /app/avatar/<agentId> handler (agent avatar image).
 func AvatarHandler() http.HandlerFunc { return withHub((*Hub).ServeAvatar) }
+
+// MermaidHandler returns the POST /app/render/mermaid handler (diagram → PNG, #1980).
+func MermaidHandler() http.HandlerFunc { return withHub((*Hub).ServeMermaid) }

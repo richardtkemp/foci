@@ -462,6 +462,8 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # max_blob_mb = 50                     # max upload size via /app/blob
 # blob_ttl = "24h"                     # how long uploaded blobs are kept
 # devices_path = "app-devices.json"    # paired devices file (relative to data dir)
+# mermaid_cmd = "mmdc"                 # renders ```mermaid blocks for the app (mermaid-cli); "off" disables
+# mermaid_browser = ""                 # Chrome/Chromium for mmdc (default: chromium etc. on PATH)
 # allowed_devices = []                 # device IDs allowed to pair (empty = any)
 
 # ─── Sessions ─────────────────────────────────────────────────────────

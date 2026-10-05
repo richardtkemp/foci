@@ -66,6 +66,7 @@ type Hub struct {
 	deps     platform.ProviderDeps
 	pairKeys *pairKeyStore
 	blobs    *blobStore
+	mermaid  *mermaidRenderer // POST /app/render/mermaid (#1980)
 	tokens   *pushTokens
 	pusher   *fcmPusher
 	devices  *deviceStore
@@ -199,6 +200,11 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		}
 		blobs.ttl = durationOr(appCfg.BlobTTL, blobs.ttl)
 	}
+	var mermaidCmd, mermaidBrowser string
+	if appCfg != nil {
+		mermaidCmd, mermaidBrowser = appCfg.MermaidCmd, appCfg.MermaidBrowser
+	}
+	mermaid := newMermaidRenderer(blobDataDir, mermaidCmd, mermaidBrowser)
 
 	// Durable replay-frame store (server-side backfill DB). Needs a data_dir;
 	// absent → frames stays nil and every frameStore method no-ops, so the hub
@@ -226,6 +232,7 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		deps:          deps,
 		pairKeys:      newPairKeyStore(),
 		blobs:         blobs,
+		mermaid:       mermaid,
 		tokens:        tokens,
 		devices:       newDeviceStore(devicePath),
 		authLim:       newAuthLimiter(authFailMax, authFailWindow),

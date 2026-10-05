@@ -823,6 +823,8 @@ type AppSpecific struct {
 	PushCoalesce    string `toml:"push_coalesce"    desc:"Minimum time between wake-up push notifications to one device for the same conversation, to avoid a flurry of pushes when several messages arrive close together (default 15s)" type:"duration"`
 	FCMCredentials  string `toml:"fcm_credentials"  desc:"Path to a Firebase Cloud Messaging service-account JSON key file, used instead of the app.fcm_credentials secret for sending wake pushes"`
 	DevicesPath     string `toml:"devices_path"     desc:"File path, relative to the server's data directory, where paired app devices are stored (default app-devices.json)"`
+	MermaidCmd      string `toml:"mermaid_cmd"      desc:"Command that renders mermaid diagrams for the app: mermaid-cli's mmdc, by name or path (default mmdc; set to off to disable). Without it the app shows the diagram's source"`
+	MermaidBrowser  string `toml:"mermaid_browser"  desc:"Path to the Chrome or Chromium that renders mermaid diagrams (default: the first of chromium, chromium-browser, google-chrome-stable, google-chrome on PATH, else puppeteer's own download)"`
 	// AllowedDevices: if non-empty, only these device IDs may pair (empty allows
 	// any). A slice → set in the TOML file, not via /config set, so no desc tag
 	// (mirrors AccessConfig.AllowedUsers).
@@ -894,6 +896,12 @@ func (p *PlatformConfig) ApplyDefaults(defaults PlatformConfig) {
 		}
 		if p.App.DevicesPath == "" {
 			p.App.DevicesPath = defaults.App.DevicesPath
+		}
+		if p.App.MermaidCmd == "" {
+			p.App.MermaidCmd = defaults.App.MermaidCmd
+		}
+		if p.App.MermaidBrowser == "" {
+			p.App.MermaidBrowser = defaults.App.MermaidBrowser
 		}
 		if p.App.AllowedDevices == nil {
 			p.App.AllowedDevices = defaults.App.AllowedDevices

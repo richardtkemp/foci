@@ -200,8 +200,9 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 		mux.HandleFunc("/app/history", app.HistoryHandler())            // GET: restart reconciliation
 		mux.HandleFunc("/app/replay", app.ReplayHandler())              // GET: durable content backfill
 		mux.HandleFunc("/app/avatar/", app.AvatarHandler())             // GET /app/avatar/<agentId>: agent avatar image
-		endpointList += ", /app/ws (ws), /app/blob, /app/pair, /app/devices, /app/push/register, /app/history, /app/replay, /app/avatar"
-		httpLog.Infof("/app/ws + /app/blob + /app/pair + /app/devices + /app/push/register + /app/history + /app/replay + /app/avatar endpoints enabled")
+		mux.HandleFunc("/app/render/mermaid", app.MermaidHandler())     // POST: mermaid source -> PNG
+		endpointList += ", /app/ws (ws), /app/blob, /app/pair, /app/devices, /app/push/register, /app/history, /app/replay, /app/avatar, /app/render/mermaid"
+		httpLog.Infof("/app/ws + /app/blob + /app/pair + /app/devices + /app/push/register + /app/history + /app/replay + /app/avatar + /app/render/mermaid endpoints enabled")
 	}
 
 	if d.reloadCredentials != nil {

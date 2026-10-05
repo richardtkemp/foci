@@ -142,6 +142,7 @@ func (p *appProvider) DefaultPlatformConfig() config.PlatformConfig {
 			BlobTTL:         defaultBlobTTL.String(),
 			PushCoalesce:    defaultPushCoalesce.String(),
 			DevicesPath:     defaultDevicesFile,
+			MermaidCmd:      mermaidDefaultCmd,
 		},
 	}
 }

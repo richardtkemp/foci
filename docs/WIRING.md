@@ -310,7 +310,7 @@ main
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
  ├── discord       → agent, turnevent, chatmeta, command, config, dispatch, display, log, netretry, platform, secrets, session, timeutil, tooldetail, toolformat, turn, voice
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
- ├── app           → agent, turnevent, command, config, delegator, dispatch, fap, log, platform, question, ratelimit, secrets, session, sqlite, tempdir, toolformat, tools, turn, voice (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
+ ├── app           → agent, turnevent, command, config, delegator, dispatch, fap, log, platform, procx, question, ratelimit, secrets, session, sqlite, tempdir, toolformat, tools, turn, voice (FAP WebSocket native-app provider — see App Provider section; registers via init() like telegram/discord)
  ├── netretry      → log (startup-connect retry shared by telegram + discord: Backoff schedule, Do loop, PermanentMarkers auth/transient split)
  ├── askgw         → clock, log, peercred, question (opt-in ask-gateway for external Apps — see Ask Gateway section)
  ├── telemetry     → turnevent, delegator/accounting, log, modelinfo, provider, session, go.opentelemetry.io/otel (+ sdk, otlptracehttp) — OpenTelemetry export of every turn to an OTLP/HTTP collector (Langfuse) plus scores/score configs over its REST API; wired from cmd/foci-gw (init), agent (turn spans), tools + cmd/foci-gw (cross-agent links). See "Tracing".
@@ -2518,6 +2518,22 @@ blob) and is sent for a file with no caption, so the user's other devices show
 each file as a placeholder and fetch it on tap (#2161). Blobs are not
 device-scoped: any paired device can GET one until its TTL. Both endpoints share the
 `bearerToken` + `app.api_key` gate; registered in `http.go` alongside `/app/ws`.
+
+**Mermaid diagrams (`mermaid.go`, #1980):** the app renders markdown natively and
+neither Compose target can run mermaid.js, so a ```` ```mermaid ```` block is rendered
+here. The app POSTs the block's source to `POST /app/render/mermaid?theme=dark|default`
+(`ServeMermaid`, same Bearer gate as blobs) and gets `image/png` back. `mermaidRenderer`
+runs mermaid-cli (`[platforms.app] mermaid_cmd`, default `mmdc`, `off` disables; Trusted
+population) with a puppeteer config naming the browser (`mermaid_browser`, else the
+first chromium/chrome on PATH, else puppeteer's own). PNGs are cached under
+`<data_dir>/app-mermaid/<sha256(theme,src)>.png` (LRU-pruned to 256); identical
+concurrent requests share one render (`singleflight`), at most 2 run at once, each
+killed as a process group after 45s. Status codes are the contract the app keys off:
+422 = the diagram is at fault (body: mmdc's message, stack trimmed), 501 = no renderer
+(the app shows the source), 500 = the browser would not start, 504 = timeout, 413 = over
+64KB. Renders run headless Chromium WITH its sandbox; it starts under the daemon's
+NoNewPrivileges (user-namespace sandbox), but not under the test seal's Landlock, so a
+live probe needs `FOCI_TEST_UNSEALED=1`.
 
 **Agent avatars (`avatar.go`):** each agent may have an avatar image, served to
 the app at `GET /app/avatar/<agentId>` (`ServeAvatar`, same Bearer gate as blobs,
