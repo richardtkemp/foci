@@ -149,12 +149,12 @@ Every delegated backend declares every capability in its `delegator.Spec` (`inte
 | `compaction_summary` | recovers its compaction summary text (CompactionSummarizer) | ✓ | ✗ | ✓ |
 | `activity` | reports its last stream activity, for activity-based timeouts (ActivityChecker) | ✓ | ✓ | ✓ |
 | `autonomous_runs` | tracks background work and autonomous runs (AutonomousRunAwaiter) | ✓ | ✗ | ✗ |
-| `turn_adoption` | lets a fresh turn adopt a run already in flight (TurnAdopter) | ✓ | n/a | n/a |
+| `turn_adoption` | starts runs on its own and lets foci adopt them (TurnAdopter) | ✓ | n/a | n/a |
 | `stop_subagents` | stops its running subagents (SubagentStopper) | ✓ | n/a | ✗ |
 | `stop_commands` | stops its background shell commands (CommandStopper) | ✓ | ✗ | ✗ |
-| `subagent_status` | reports subagent status and the running set (SubagentReporter) | ✓ | n/a | ✓ |
-| `permission_response` | answers a permission prompt by request id (RespondToPermission; the signature differs per backend until #2154 Phase 3) | ✓ | ✓ | ✓ |
-| `permission_rules` | answers "allow always" with a persistent rule (PermissionRuleResponder) | ✓ | ✗ | ✗ |
+| `subagent_status` | reports subagent status and the running background work (SubagentReporter) | ✓ | n/a | ✓ |
+| `permission_response` | delivers the user's answer to a permission prompt (PermissionResponder) | ✓ | ✓ | ✓ |
+| `permission_rules` | turns PermissionDecision.RulePrefix into a persistent "allow always" rule | ✓ | ✗ | ✗ |
 | `questions` | routes answers to the agent's own questions (QuestionResponder) | ✓ | ✗ | ✓ |
 | `elicitation` | answers MCP elicitation requests (ElicitationResponder) | ✓ | ✗ | ✗ |
 | `plan_permission` | turns a typed reply into plan-revision feedback (PlanResponder) | ✓ | n/a | ✗ |
@@ -164,6 +164,7 @@ Every delegated backend declares every capability in its `delegator.Spec` (`inte
 | `context_window` | reports the model's context window and usage (ContextWindowQuerier) | ✓ | ✓ | ✓ |
 | `branch` | forks and deletes its own sessions (BackendBrancher) | ✓ | ✓ | ✓ |
 | `scoped_cleanup` | needs a live server to delete sessions and opens it once per sweep (RunningBackendCleaner) | ✗ | ✓ | ✓ |
+| `host_hooks` | takes the gateway's HostHooks: auth-failure and rate-limit reports, pretool and stop rules (HostHooksAcceptor) | ✓ | ✗ | ✓ |
 | `unstarted_readiness_probe` | CheckReady works on a constructed but unstarted backend (the startup probe) | ✓ | ✓ | ✗ |
 | `pretool_rules` | enforces PreToolUse deny rules (pretool_rules) | ✓ | ✗ | ✗ |
 | `stop_rules` | enforces Stop-hook rules (stop_rules) | ✓ | ✗ | ✗ |
@@ -195,6 +196,7 @@ Why not:
 - `delivery_tracking`: codex: inputs are fire-and-forget: no proof of consumption; opencode: inputs are fire-and-forget: no proof of consumption.
 - `thread_naming`: claude-code: CC does not name its sessions; agents get the set_session_alias tool instead; opencode: foci does not take opencode's session titles.
 - `scoped_cleanup`: claude-code: fork and cleanup are local transcript file operations, no server needed.
+- `host_hooks`: codex: reports no auth failures or rate limits foci acts on, and has no pretool or stop hooks.
 - `unstarted_readiness_probe`: opencode: CheckReady needs the server that only Start creates.
 - `pretool_rules`: codex: no PreToolUse rule engine is wired to the codex hook; opencode: opencode has no PreToolUse hook.
 - `stop_rules`: codex: no Stop hook; opencode: opencode has no Stop hook.
@@ -426,10 +428,12 @@ grepped for each ✗.
     agent layer's "saved to" path notes, so it must open images from disk.
 11. `cx/inject.go:ImmediateInject` returns nil for `SourcePass` after a debug log. A forwarded
     slash command silently does nothing.
-12. opencode's "Always Allow" sends `remember=true` (opencode's own rule store,
-    `oc/permissions.go:RespondToPermission(permID, allow, remember)`). ccstream instead adds a
-    prefix rule via `RespondToPermissionWithRule`. The agent supports both signatures
-    (`ag/delegated_permission.go:SendPermissionResponse`).
+12. Every backend answers through one `delegator.PermissionResponder` taking a
+    `PermissionDecision{Allow, Remember, Message, RulePrefix}` (#2154 Phase 3);
+    `ag/delegated_permission.go:permissionDecision` builds it from the button data. opencode's
+    "Always Allow" (`always`) is `Remember`, sent as opencode's own remember flag. ccstream's
+    `allow_always:<prefix>` also carries `RulePrefix` and becomes a session prefix rule (it declares
+    `permission_rules`). codex has neither and answers a plain accept.
 13. codex auto-approves command approvals only (`cx/permissions.go:tryAutoApprove`, called from
     `onCommandApproval`). File-change approvals always prompt, and `item/permissions/requestApproval`
     is always declined (`onPermissionApproval`).
@@ -565,7 +569,7 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 
 **Permissions and safety**
 - P1: `cc/permissions.go:handleToolRequest`, `RespondToPermission` | `oc/permissions.go:onPermissionUpdated`, `surfacePermission`, `RespondToPermission` | `cx/permissions.go:onCommandApproval`, `onFileChangeApproval`, `RespondToPermission`
-- P2: `cc/permissions.go:RespondToPermissionWithRule` | `oc/permissions.go:RespondToPermission(remember)` | ✗ only Allow/Deny choices in `cx/permissions.go`
+- P2: `cc/permissions.go:respondWithRule` (`RulePrefix`) | `oc/permissions.go:RespondToPermission` (`Remember`) | ✗ only Allow/Deny choices in `cx/permissions.go`
 - P3: `cc/autoapprove.go:autoApprovePermission` | `oc/permissions.go:checkAutoApprove` | `cx/permissions.go:tryAutoApprove`
 - P4: `cc/lifecycle.go:Start` (`--allowedTools` from `cfg["allowed_tools"]`) | n/a | n/a
 - P5: `cc/lifecycle.go:Start` (`--dangerously-skip-permissions`), `cc/permissions.go:denyUnattended` | `oc/backend_lifecycle.go:Start` (`skipPermissions`), `oc/permissions.go:answerUnattended` | ✗ grep `SkipPermissions|skip_permissions|dangerously`
@@ -573,8 +577,8 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - P7: `cc/callbacks.go:RegisterPromptCancelListener` + `dg/outstanding.go` | `oc/opencode.go:RegisterPromptCancelListener`, `oc/permissions.go:onPermissionReplied` | ✗ `cx/callbacks.go` TODO
 - P8: `cc/callbacks.go:SetOnPromptsCleared` | `oc/opencode.go:SetOnPromptsCleared` | `cx/permissions.go:respondApproval`, `cx/handlers.go:onServerRequestResolved`
 - P9: `cc/permissions.go:formatEditDiff`, `planAttachmentPath` | ✗ `oc/permissions.go:surfacePermission` sends title only (grep `diff`) | `cx/permissions.go:lookupItemDetail`
-- P10: `dg/pretool`, `cc/hooks.go:buildHookSettingsJSON`, `cc/callbacks.go:SetPreToolRules` | ✗ grep `pretool\.` | ✗ same
-- P11: `dg/stoprule`, `cc/callbacks.go:SetStopRules`, `cc/hooks.go:logStopVerdict` | ✗ grep `stoprule\.` | ✗ same
+- P10: `dg/pretool`, `cc/hooks.go:buildHookSettingsJSON`, `cc/callbacks.go:SetHostHooks` (`PreToolRules`) | ✗ grep `pretool\.` | ✗ same
+- P11: `dg/stoprule`, `cc/callbacks.go:SetHostHooks` (`StopRules`), `cc/hooks.go:logStopVerdict` | ✗ grep `stoprule\.` | ✗ same
 
 **Questions, plan, elicitation**
 - Q1: `cc/userquestion.go:handleUserQuestion`, `RespondToQuestion` | `oc/permissions.go:handleQuestionPermission`, `RespondToQuestion` | ✗ grep `RespondToQuestion|userInput|request_user_input`
@@ -614,8 +618,8 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - U3: `cc/ccbook.go:checkDivergence` | `oc/ledger.go` via `dg/costcheck.go:CostDivergenceChecker` | ✗ grep `Divergence`
 - U4: `cc/expectations.go` | ✗ grep `ExpectationGuard|violated` | `cx/expectations.go:checkTokenUsage`
 - U5: `cc/cost.go:resumeBaseline` | n/a | n/a
-- U6: `cc/handlers.go:OnRateLimit`, `cc/ratelimit.go:FormatRateLimitNotice`, `gw/agents_delegated.go` `sb.SetOnRateLimited` | ✗ (its `SetOnRateLimited` is the gate, U7) | ✗ grep `rate.?limit`
-- U7: `cc/handlers.go:OnAssistant` (`syntheticSessionLimitText`) → `SetOnSessionLimit` | `oc/ratelimit.go:handleRateLimitRetry` → `SetOnRateLimited` | ✗ grep `limit`
+- U6: `cc/handlers.go:OnRateLimit`, `cc/ratelimit.go:FormatRateLimitNotice`, `HostHooks.OnRateLimitNotice` | ✗ | ✗ grep `rate.?limit`
+- U7: `cc/handlers.go:OnAssistant` (`syntheticSessionLimitText`) → `HostHooks.EngageRateLimit` | `oc/ratelimit.go:handleRateLimitRetry` → `HostHooks.EngageRateLimit` | ✗ grep `limit`
 - U8: `cc/usage_oneshot.go:QueryUsage`, `cc/spec.go` `UsageQuery` | ✗ `oc/spec.go` declares `usage_query` No | ✗ same
 - U9: `cc/handlers.go:OnResult` | `oc/handlers.go:onMessageUpdated` | `cx/handlers.go:onTokenUsage`
 
@@ -623,7 +627,7 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - M1: `cc/lifecycle.go:Start` (`--model`) | `oc/backend_lifecycle.go:Start` (`resolveModelFn`) | `cx/lifecycle.go:prepareConfiguredModel`
 - M2: `cc/control.go:sendSetModel` | `oc/control.go:SendControl` | `cx/control.go:SendControl`
 - M3: n/a | `oc/model_validate.go:resolveModel` (not the interface) | `cx/model_resolver.go:ResolveModel`
-- M4: `gw/main.go` modelcaps fetcher for `BackendCCStream` | ✗ grep `modelcaps` | `cx/modelcaps.go:refreshModelCaps`, `SetOnModelCaps`
+- M4: `gw/main.go` modelcaps fetcher for `BackendCCStream` | ✗ grep `modelcaps` | `cx/modelcaps.go:refreshModelCaps` → `publishModelCaps`
 - M5: `cc/lifecycle.go:Start` (`--effort`), `cc/control.go:SendControl` | n/a | `cx/control.go` `pendingEffort`
 - M6: `cc/voicemode.go` | n/a | `cx/voicemode.go`
 - M7: `cc/ccstream.go:BatchDefaultModel`, `BatchCheapModel` | ✗ grep `BatchDefaultModel|BatchCheapModel` | ✗ same
@@ -724,15 +728,15 @@ this file. See [Declared capabilities](#declared-capabilities) and
   `ThreadNameConsumer`, `Spec.BatchDefaultModel` / `BatchCheapModel`, `Spec.ClosesTurnActivity`, a
   per-tool hook (pretool rules, stop rules, post-tool nudges, runtime notes), expectation guards.
 
-### Per-backend wiring still outside the Spec
+### Host callbacks: HostHooks
 
-Every backend-name switch the gateway had now reads the Spec (default model, config folding,
-relogin, pretool/stop rules, transcript checker, resume retention, readiness probe, Command
-Approval block, auto-naming, `/thinking`/`/effort`/`/mode`, modelcaps key, start/shutdown hooks,
-#2154 Phase 2). What remains is the per-backend callback wiring in
-`gw/agents_delegated.go:configureDelegated` (`*ccstream.Backend` / `*opencode.Backend` /
-`*codex.Backend` type switches: auth failure, rate limits, model caps), which #2154 Phase 3
-moves behind `HostHooks`.
+The gateway builds one `delegator.HostHooks` per agent (auth failure, rate-limit notice,
+rate-limit gate, pretool rules, stop rules) with no backend-specific branching, and hands it to
+every instance declaring `host_hooks` (`gw/agents_delegated.go:configureDelegated`, #2154 Phase 3).
+A backend uses the fields its capabilities say it honours. The Claude Code re-login is chosen by
+`relogin`; elsewhere an auth failure is logged. codex publishes its model catalogue to modelcaps
+itself. The only backend-package imports left in the gateway are the ccstream auto-approve rule
+lists and ledger-shadow helpers (#2154 Q8, Phase 4).
 
 Per-session shared-process backends must also route the exec bridge per session through
 `dg/sessionenv` (see O5).

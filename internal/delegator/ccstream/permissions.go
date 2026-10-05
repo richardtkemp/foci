@@ -127,9 +127,20 @@ func (b *Backend) denyUnattended(msg *PermissionRequest) {
 	}
 }
 
-// RespondToPermission is called by the platform layer when the user responds
-// to a permission prompt. It sends an allow or deny control response to CC.
-func (b *Backend) RespondToPermission(requestID string, allow bool, message string) error {
+// RespondToPermission implements delegator.PermissionResponder: the user's
+// answer to a permission prompt. An allow with a RulePrefix becomes a
+// persistent "allow always" rule (ccstream declares CapPermissionRules);
+// otherwise it is a one-off allow, or a deny carrying d.Message. Remember
+// without a RulePrefix has no CC equivalent and is a plain allow.
+func (b *Backend) RespondToPermission(requestID string, d delegator.PermissionDecision) error {
+	if d.Allow && d.RulePrefix != "" {
+		return b.respondWithRule(requestID, d.RulePrefix)
+	}
+	return b.respondAllowDeny(requestID, d.Allow, d.Message)
+}
+
+// respondAllowDeny sends a one-off allow, or a deny with message, to CC.
+func (b *Backend) respondAllowDeny(requestID string, allow bool, message string) error {
 	pp, ok := b.removePendingPerm(requestID)
 	if !ok {
 		return fmt.Errorf("ccstream: no pending permission with request ID %q", requestID)
@@ -207,9 +218,9 @@ func (b *Backend) CancelPlanWithFeedback(requestID, feedback string) error {
 	return nil
 }
 
-// RespondToPermissionWithRule responds with "always allow" for a given prefix,
+// respondWithRule responds with "always allow" for a given prefix,
 // including the permission suggestion in updatedPermissions.
-func (b *Backend) RespondToPermissionWithRule(requestID string, prefix string) error {
+func (b *Backend) respondWithRule(requestID string, prefix string) error {
 	pp, ok := b.removePendingPerm(requestID)
 	if !ok {
 		return fmt.Errorf("ccstream: no pending permission with request ID %q", requestID)

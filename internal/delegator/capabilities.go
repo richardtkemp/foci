@@ -74,6 +74,7 @@ const (
 	CapScopedCleanup
 
 	// Host integration.
+	CapHostHooks
 	CapUnstartedReadinessProbe
 	CapPreToolRules
 	CapStopRules
@@ -135,13 +136,13 @@ var capabilityTable = [numCapabilities]CapabilityInfo{
 
 	CapActivity:       {Name: "activity", Kind: KindInterface, Iface: ifaceOf[ActivityChecker](), Doc: "reports its last stream activity, for activity-based timeouts (ActivityChecker)"},
 	CapAutonomousRuns: {Name: "autonomous_runs", Kind: KindInterface, Iface: ifaceOf[AutonomousRunAwaiter](), Doc: "tracks background work and autonomous runs (AutonomousRunAwaiter)"},
-	CapTurnAdoption:   {Name: "turn_adoption", Kind: KindInterface, Iface: ifaceOf[TurnAdopter](), Doc: "lets a fresh turn adopt a run already in flight (TurnAdopter)"},
+	CapTurnAdoption:   {Name: "turn_adoption", Kind: KindInterface, Iface: ifaceOf[TurnAdopter](), Doc: "starts runs on its own and lets foci adopt them (TurnAdopter)"},
 	CapStopSubagents:  {Name: "stop_subagents", Kind: KindInterface, Iface: ifaceOf[SubagentStopper](), Doc: "stops its running subagents (SubagentStopper)"},
 	CapStopCommands:   {Name: "stop_commands", Kind: KindInterface, Iface: ifaceOf[CommandStopper](), Doc: "stops its background shell commands (CommandStopper)"},
-	CapSubagentStatus: {Name: "subagent_status", Kind: KindInterface, Iface: ifaceOf[SubagentReporter](), Doc: "reports subagent status and the running set (SubagentReporter)"},
+	CapSubagentStatus: {Name: "subagent_status", Kind: KindInterface, Iface: ifaceOf[SubagentReporter](), Doc: "reports subagent status and the running background work (SubagentReporter)"},
 
-	CapPermissionResponse: {Name: "permission_response", Kind: KindBehaviour, Doc: "answers a permission prompt by request id (RespondToPermission; the signature differs per backend until #2154 Phase 3)"},
-	CapPermissionRules:    {Name: "permission_rules", Kind: KindInterface, Iface: ifaceOf[PermissionRuleResponder](), Doc: "answers \"allow always\" with a persistent rule (PermissionRuleResponder)"},
+	CapPermissionResponse: {Name: "permission_response", Kind: KindInterface, Iface: ifaceOf[PermissionResponder](), Doc: "delivers the user's answer to a permission prompt (PermissionResponder)"},
+	CapPermissionRules:    {Name: "permission_rules", Kind: KindBehaviour, Requires: []Capability{CapPermissionResponse}, Doc: "turns PermissionDecision.RulePrefix into a persistent \"allow always\" rule"},
 	CapQuestions:          {Name: "questions", Kind: KindInterface, Iface: ifaceOf[QuestionResponder](), Doc: "routes answers to the agent's own questions (QuestionResponder)"},
 	CapElicitation:        {Name: "elicitation", Kind: KindInterface, Iface: ifaceOf[ElicitationResponder](), Doc: "answers MCP elicitation requests (ElicitationResponder)"},
 	CapPlanPermission:     {Name: "plan_permission", Kind: KindInterface, Iface: ifaceOf[PlanResponder](), Doc: "turns a typed reply into plan-revision feedback (PlanResponder)"},
@@ -154,10 +155,11 @@ var capabilityTable = [numCapabilities]CapabilityInfo{
 	CapBranch:        {Name: "branch", Kind: KindInterface, Iface: ifaceOf[BackendBrancher](), Doc: "forks and deletes its own sessions (BackendBrancher)"},
 	CapScopedCleanup: {Name: "scoped_cleanup", Kind: KindInterface, Iface: ifaceOf[RunningBackendCleaner](), Requires: []Capability{CapBranch}, Doc: "needs a live server to delete sessions and opens it once per sweep (RunningBackendCleaner)"},
 
+	CapHostHooks:                {Name: "host_hooks", Kind: KindInterface, Iface: ifaceOf[HostHooksAcceptor](), Doc: "takes the gateway's HostHooks: auth-failure and rate-limit reports, pretool and stop rules (HostHooksAcceptor)"},
 	CapUnstartedReadinessProbe:  {Name: "unstarted_readiness_probe", Kind: KindBehaviour, Doc: "CheckReady works on a constructed but unstarted backend (the startup probe)"},
-	CapPreToolRules:             {Name: "pretool_rules", Kind: KindBehaviour, Doc: "enforces PreToolUse deny rules (pretool_rules)"},
-	CapStopRules:                {Name: "stop_rules", Kind: KindBehaviour, Doc: "enforces Stop-hook rules (stop_rules)"},
-	CapRelogin:                  {Name: "relogin", Kind: KindBehaviour, Doc: "reports auth failures that foci's Claude Code re-login driver can fix (/login)"},
+	CapPreToolRules:             {Name: "pretool_rules", Kind: KindBehaviour, Requires: []Capability{CapHostHooks}, Doc: "enforces PreToolUse deny rules (pretool_rules)"},
+	CapStopRules:                {Name: "stop_rules", Kind: KindBehaviour, Requires: []Capability{CapHostHooks}, Doc: "enforces Stop-hook rules (stop_rules)"},
+	CapRelogin:                  {Name: "relogin", Kind: KindBehaviour, Requires: []Capability{CapHostHooks}, Doc: "reports auth failures that foci's Claude Code re-login driver can fix (/login)"},
 	CapCommandApprovalAllowlist: {Name: "command_approval_allowlist", Kind: KindBehaviour, Doc: "auto-approves prompts matching foci's [permissions] allowlist (StartOptions.AutoApproveRules)"},
 	CapPlanMode:                 {Name: "plan_mode", Kind: KindData, Doc: "has a /plan delivery (Spec.PlanDelivery)"},
 	CapUsageQuery:               {Name: "usage_query", Kind: KindData, Doc: "reports plan usage for /mana (Spec.UsageQuery)"},

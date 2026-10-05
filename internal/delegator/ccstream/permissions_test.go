@@ -33,7 +33,7 @@ func TestRespondToPermission_Allow(t *testing.T) {
 		toolName:  "Bash",
 	})
 
-	if err := b.RespondToPermission("req-1", true, ""); err != nil {
+	if err := b.RespondToPermission("req-1", delegator.PermissionDecision{Allow: true}); err != nil {
 		t.Fatalf("RespondToPermission: %v", err)
 	}
 
@@ -54,6 +54,48 @@ func TestRespondToPermission_Allow(t *testing.T) {
 	}
 }
 
+// TestRespondToPermission_DecisionMapping pins how ccstream maps the unified
+// PermissionDecision onto CC's wire (#2154 Phase 3): a rule only for an allow
+// that names a prefix; Remember alone (opencode's "always") is a one-off
+// allow; a deny ignores any prefix and carries the message.
+func TestRespondToPermission_DecisionMapping(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name         string
+		d            delegator.PermissionDecision
+		wantBehavior string
+		wantClass    string
+		wantRule     bool
+	}{
+		{"remember without prefix", delegator.PermissionDecision{Allow: true, Remember: true}, "allow", "user_temporary", false},
+		{"allow with prefix", delegator.PermissionDecision{Allow: true, RulePrefix: "Bash:ls"}, "allow", "user_permanent", true},
+		{"deny ignores prefix", delegator.PermissionDecision{RulePrefix: "Bash:ls", Message: "no"}, "deny", "user_reject", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			b := &Backend{
+				writer:       NewWriter(nopWriteCloser{&buf}),
+				pendingPerms: make(map[string]*pendingPermission),
+				outstanding:  delegator.NewOutstandingRegistry(),
+			}
+			b.storePendingPerm(&pendingPermission{requestID: "r", toolUseID: "t", toolName: "Bash"})
+			if err := b.RespondToPermission("r", tc.d); err != nil {
+				t.Fatalf("RespondToPermission: %v", err)
+			}
+			inner := parseControlResponse(t, buf.String())["response"].(map[string]any)
+			if inner["behavior"] != tc.wantBehavior || inner["decisionClassification"] != tc.wantClass {
+				t.Errorf("behavior/class = %v/%v, want %s/%s", inner["behavior"], inner["decisionClassification"], tc.wantBehavior, tc.wantClass)
+			}
+			if _, hasRule := inner["updatedPermissions"]; hasRule != tc.wantRule {
+				t.Errorf("updatedPermissions present = %v, want %v", hasRule, tc.wantRule)
+			}
+			if tc.wantBehavior == "deny" && inner["message"] != tc.d.Message {
+				t.Errorf("deny message = %v, want %q", inner["message"], tc.d.Message)
+			}
+		})
+	}
+}
+
 func TestRespondToPermission_Deny(t *testing.T) {
 	// Proves that responding with allow=false sends a PermissionDeny control
 	// response with the user's deny message and decisionClassification="user_reject".
@@ -71,7 +113,7 @@ func TestRespondToPermission_Deny(t *testing.T) {
 		toolName:  "Edit",
 	})
 
-	if err := b.RespondToPermission("req-2", false, "not allowed"); err != nil {
+	if err := b.RespondToPermission("req-2", delegator.PermissionDecision{Message: "not allowed"}); err != nil {
 		t.Fatalf("RespondToPermission: %v", err)
 	}
 
@@ -103,7 +145,7 @@ func TestRespondToPermission_UnknownRequestID(t *testing.T) {
 		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 
-	err := b.RespondToPermission("nonexistent", true, "")
+	err := b.RespondToPermission("nonexistent", delegator.PermissionDecision{Allow: true})
 	if err == nil {
 		t.Fatal("expected error for unknown request ID")
 	}
@@ -134,7 +176,7 @@ func TestRespondToPermission_FiresOnPromptsCleared(t *testing.T) {
 	b.outstanding.Register("req-B", delegator.OutstandingPermission)
 
 	// Resolve first — still one pending.
-	if err := b.RespondToPermission("req-A", true, ""); err != nil {
+	if err := b.RespondToPermission("req-A", delegator.PermissionDecision{Allow: true}); err != nil {
 		t.Fatalf("first respond: %v", err)
 	}
 	if cleared != 0 {
@@ -142,7 +184,7 @@ func TestRespondToPermission_FiresOnPromptsCleared(t *testing.T) {
 	}
 
 	// Resolve second — registry now empty → onPromptsCleared fires.
-	if err := b.RespondToPermission("req-B", true, ""); err != nil {
+	if err := b.RespondToPermission("req-B", delegator.PermissionDecision{Allow: true}); err != nil {
 		t.Fatalf("second respond: %v", err)
 	}
 	if cleared != 1 {
@@ -172,7 +214,7 @@ func TestRespondToPermissionWithRule(t *testing.T) {
 		toolName:  "Bash",
 	})
 
-	if err := b.RespondToPermissionWithRule("req-rule", "Bash:git *"); err != nil {
+	if err := b.RespondToPermission("req-rule", delegator.PermissionDecision{Allow: true, Remember: true, RulePrefix: "Bash:git *"}); err != nil {
 		t.Fatalf("RespondToPermissionWithRule: %v", err)
 	}
 
@@ -213,7 +255,7 @@ func TestRespondToPermissionWithRule_UnknownRequestID(t *testing.T) {
 		outstanding:  delegator.NewOutstandingRegistry(),
 	}
 
-	err := b.RespondToPermissionWithRule("nonexistent", "Bash:ls")
+	err := b.RespondToPermission("nonexistent", delegator.PermissionDecision{Allow: true, Remember: true, RulePrefix: "Bash:ls"})
 	if err == nil {
 		t.Fatal("expected error for unknown request ID")
 	}
@@ -238,7 +280,7 @@ func TestRespondToPermissionWithRule_FiresOnPromptsCleared(t *testing.T) {
 	b.storePendingPerm(&pendingPermission{requestID: "req-rc", toolUseID: "x"})
 	b.outstanding.Register("req-rc", delegator.OutstandingPermission)
 
-	if err := b.RespondToPermissionWithRule("req-rc", "Read"); err != nil {
+	if err := b.RespondToPermission("req-rc", delegator.PermissionDecision{Allow: true, Remember: true, RulePrefix: "Read"}); err != nil {
 		t.Fatalf("RespondToPermissionWithRule: %v", err)
 	}
 	if !cleared {

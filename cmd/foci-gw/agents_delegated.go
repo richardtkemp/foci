@@ -12,15 +12,11 @@ import (
 	"foci/internal/config"
 	"foci/internal/delegator"
 	"foci/internal/delegator/ccstream"
-	"foci/internal/delegator/codex"
-	"foci/internal/delegator/opencode"
 	"foci/internal/delegator/pretool"
 	"foci/internal/delegator/stoprule"
 	"foci/internal/log"
-	"foci/internal/modelcaps"
 	"foci/internal/platform"
 	"foci/internal/provider"
-	"foci/internal/ratelimit"
 	"foci/internal/relogin"
 	"foci/internal/route"
 	"foci/internal/secrets"
@@ -223,11 +219,6 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		ag.ReloginTrigger = triggerRelogin
 	}
 
-	// Shared across all Backends for this agent so main + facet sessions
-	// don't each fire their own first-seen warning for the same account-wide
-	// rate limit.
-	rlThrottle := ccstream.NewRateLimitThrottle()
-
 	// PreToolUse rules (#2028): built-in defaults, then [cc_backend], then this
 	// agent's backend_config, merged by name. Re-resolved from the config file
 	// at every CC launch (#2033), so an edit reaches the next session.
@@ -242,6 +233,49 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		stopRules = liveStopRules(agentID, p.configPath, resolveStopRules(agentID, backendConfig.StopRules))
 	}
 
+	// The gateway's callbacks into the backend, built once per agent with no
+	// backend-specific branching (#2154 Phase 3, HostHooks). A backend takes
+	// them iff it declares host_hooks and uses the fields its other
+	// capabilities say it honours. Codex config/runtime warnings deliberately
+	// have NO hook: they are operator diagnostics emitted before any thread
+	// exists, delivered by the generic log.SetWarnHook path
+	// (setupWarningHooks); a backend-specific hook alongside it only produced
+	// duplicates.
+	hostHooks := delegator.HostHooks{
+		// A backend with the Claude Code re-login runs it on a 401 (#843) via
+		// the shared trigger built above (same path as the manual /login
+		// command); auto-401 has no triggering chat, "" → the default chat.
+		// Elsewhere (opencode: per-provider auth) the failure is logged.
+		OnAuthFailure: func(detail string) {
+			log.NewComponentLogger("agent:"+agentID).Warnf("%s auth failure: %s", spec.DisplayName, detail)
+		},
+		// Surface a utilisation notice (CC's structured rate_limit_event)
+		// directly to the session's chat, i.e. to the human, formatted for a
+		// person — NOT as a log warning. Deliberately off the generic
+		// log.Warnf→WarningQueue→PROACTIVE-WARNINGS path so it reaches the user
+		// instead of being injected into the agent's own context. It reflects
+		// API utilization past a threshold, not a block, so it does NOT gate
+		// periodic work (#1211/#1238). Delivery target is [notify]
+		// rate_limit_notify_to, read LIVE per notice (hot:"event") so an edit
+		// takes effect without a restart — the backend outlives the config
+		// (#1857).
+		OnRateLimitNotice: func(sessionKey, notice string) {
+			deliverRateLimitNotice(connMgr, agentID, sessionKey, notice,
+				p.resolvedLive.Load().Notify.RateLimitNotifyTo)
+		},
+		// A hard limit (CC session limit, opencode rejected usage) engages the
+		// rate-limit gate so background/periodic work pauses until the window
+		// resets; the gate's own hooks notify the user.
+		EngageRateLimit: ag.EngageRateLimit,
+		PreToolRules:    preToolRules,
+		StopRules:       stopRules,
+	}
+	if spec.Supports(delegator.CapRelogin) {
+		hostHooks.OnAuthFailure = func(detail string) {
+			triggerRelogin("401 auth failure: "+firstLine(detail), "")
+		}
+	}
+
 	ag.DelegatedManager = &agent.DelegatedManager{
 		SessionIndex: p.sessionIndex,
 		AgentID:      agentID,
@@ -254,61 +288,8 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			if err != nil {
 				return nil, err
 			}
-			if sb, ok := be.(*ccstream.Backend); ok {
-				sb.SetRateLimitThrottle(rlThrottle)
-				sb.SetPreToolRules(preToolRules)
-				sb.SetStopRules(stopRules)
-				// On a 401, run the automated re-login (#843) via the shared
-				// trigger built above (same path as the manual /login command).
-				sb.SetOnAuthFailure(func(detail string) {
-					// Auto-401 has no triggering chat; "" → the agent's default chat.
-					triggerRelogin("401 auth failure: "+firstLine(detail), "")
-				})
-				// Surface CC's structured rate_limit_event directly to the
-				// agent's default chat (i.e. to the human), formatted for a
-				// person — NOT as a log warning. Deliberately off the generic
-				// log.Warnf→WarningQueue→PROACTIVE-WARNINGS path so it reaches
-				// the user instead of being injected into the agent's own
-				// context. It reflects API utilization past a threshold, not a
-				// block, so it does NOT gate periodic work (#1211/#1238).
-				//
-				// Delivery target is [notify] rate_limit_notify_to, read LIVE
-				// per notice (hot:"event") so an edit takes effect without a
-				// restart — the backend outlives the config (#1857).
-				sb.SetOnRateLimited(func(sessionKey, notice string) {
-					deliverRateLimitNotice(connMgr, agentID, sessionKey, notice,
-						p.resolvedLive.Load().Notify.RateLimitNotifyTo)
-				})
-				// A CC session-limit message engages the rate-limit gate so
-				// background/periodic work pauses until the window resets; the
-				// gate's own hooks notify the user.
-				sb.SetOnSessionLimit(func(signal ratelimit.Signal) {
-					ag.EngageRateLimit(signal)
-				})
-			}
-			// Inject account-state callbacks into opencode backends. Auth has
-			// no automated relogin for v1 (it is per-provider), while usage
-			// limits engage the same agent gate and notification hooks as the
-			// API and Claude Code paths.
-			if ob, ok := be.(*opencode.Backend); ok {
-				ob.SetOnAuthFailure(func(detail string) {
-					log.NewComponentLogger("agent:"+agentID).Warnf("opencode auth failure: %s", detail)
-				})
-				ob.SetOnRateLimited(func(signal ratelimit.Signal) {
-					ag.EngageRateLimit(signal)
-				})
-			}
-			// Codex config/runtime warnings deliberately have NO wiring here.
-			// They are operator diagnostics emitted before any thread exists,
-			// so the backend just logs them at WARN and the generic
-			// log.SetWarnHook path (setupWarningHooks) delivers them per
-			// notify.inject_chat_warnings / inject_agent_warnings. A
-			// backend-specific hook alongside that generic path only produced
-			// duplicates and a routing question with no correct answer.
-			if cb, ok := be.(*codex.Backend); ok {
-				cb.SetOnModelCaps(func(entries map[string]modelcaps.Caps) {
-					modelcaps.Publish(modelcaps.BackendCodex, entries)
-				})
+			if hh, ok := delegator.As[delegator.HostHooksAcceptor](be); ok {
+				hh.SetHostHooks(hostHooks)
 			}
 			return be, nil
 		},

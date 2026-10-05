@@ -250,14 +250,17 @@ func (b *Backend) onPermissionReplied(sessionID, permissionID, response string) 
 // clicks Allow/Deny/Always on the inline keyboard.
 // ---------------------------------------------------------------------------
 
-// RespondToPermission sends the user's permission response to opencode
-// and resolves the outstanding prompt. `allow` selects allow vs deny;
-// `remember` maps to opencode's "remember this decision" flag.
+// RespondToPermission implements delegator.PermissionResponder: it sends the
+// user's permission response to opencode and resolves the outstanding prompt.
+// d.Allow selects allow vs deny; d.Remember maps to opencode's "remember this
+// decision" flag ("always"). A RulePrefix has no opencode equivalent beyond
+// Remember, and d.Message has no wire field.
 //
 // The user only ever sees the primary prompt for a deduped group, so the
 // single decision is fanned out to the primary AND every alias pointing at it
 // — each is a distinct opencode permission object blocking its own tool call.
-func (b *Backend) RespondToPermission(permID string, allow bool, remember bool) error {
+func (b *Backend) RespondToPermission(permID string, d delegator.PermissionDecision) error {
+	allow, remember := d.Allow, d.Remember
 	b.permMu.Lock()
 	pp, ok := b.pendingPerms[permID]
 	if !ok {

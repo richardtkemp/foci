@@ -63,18 +63,20 @@ func TestListModelCapsRejectsRepeatedCursor(t *testing.T) {
 }
 
 // TestRefreshModelCapsDeliversSnapshot proves the post-initialize refresh calls
-// the configured publisher with the completed catalogue.
+// the publisher with the completed catalogue (a test double here; production
+// constructs every Backend with publishModelCaps, see
+// TestNewFromConfigPublishesModelCaps).
 func TestRefreshModelCapsDeliversSnapshot(t *testing.T) {
 	b := setupMockBackend(t, func(string, json.RawMessage, int64) (json.RawMessage, error) {
 		return json.RawMessage(`{"data":[{"id":"gpt-live","model":"gpt-live","supportedReasoningEfforts":[]}],"nextCursor":null}`), nil
 	})
 	called := false
-	b.SetOnModelCaps(func(entries map[string]modelcaps.Caps) {
+	b.onModelCaps = func(entries map[string]modelcaps.Caps) {
 		called = true
 		if _, ok := entries["gpt-live"]; !ok {
 			t.Errorf("callback entries = %+v", entries)
 		}
-	})
+	}
 	if err := b.refreshModelCaps(); err != nil {
 		t.Fatalf("refreshModelCaps: %v", err)
 	}
@@ -86,5 +88,22 @@ func TestRefreshModelCapsDeliversSnapshot(t *testing.T) {
 	b.mu.Unlock()
 	if !reflect.DeepEqual(models, []string{"gpt-live"}) {
 		t.Errorf("stored catalogue models = %v", models)
+	}
+}
+
+// TestNewFromConfigPublishesModelCaps: a constructed codex backend publishes
+// its catalogue into the codex modelcaps record itself, with no gateway hook.
+func TestNewFromConfigPublishesModelCaps(t *testing.T) {
+	be, err := newFromConfig(map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := be.(*Backend)
+	if b.onModelCaps == nil {
+		t.Fatal("newFromConfig left onModelCaps nil: the catalogue would never be published")
+	}
+	b.onModelCaps(map[string]modelcaps.Caps{"codex-publish-probe": {Effort: []string{"low"}}})
+	if _, ok := modelcaps.LookupFor(modelcaps.BackendCodex, "codex-publish-probe"); !ok {
+		t.Error("catalogue not published under the codex modelcaps key")
 	}
 }

@@ -322,7 +322,7 @@ func TestRespondToPermission_ResolvesByItemID(t *testing.T) {
 	b.pendingPerms[200] = &pendingApproval{rpcID: 200, itemID: "item_x", command: "git push"}
 	b.permMu.Unlock()
 
-	if err := b.RespondToPermission("item_x", false, "User denied permission"); err != nil {
+	if err := b.RespondToPermission("item_x", delegator.PermissionDecision{Message: "User denied permission"}); err != nil {
 		t.Fatalf("RespondToPermission: %v", err)
 	}
 
@@ -332,13 +332,32 @@ func TestRespondToPermission_ResolvesByItemID(t *testing.T) {
 	}
 }
 
+// TestRespondToPermission_AllowAlwaysAccepts: codex has no persistent rule,
+// so an "allow always" decision (Remember + RulePrefix) is a plain accept.
+func TestRespondToPermission_AllowAlwaysAccepts(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := newPermTestBackend(&buf)
+	b.permMu.Lock()
+	b.pendingPerms[201] = &pendingApproval{rpcID: 201, itemID: "item_y", command: "ls"}
+	b.permMu.Unlock()
+
+	if err := b.RespondToPermission("item_y", delegator.PermissionDecision{Allow: true, Remember: true, RulePrefix: "Bash:ls"}); err != nil {
+		t.Fatalf("RespondToPermission: %v", err)
+	}
+	if id, decision := parseApprovalResponse(t, buf.String()); id != 201 || decision != "accept" {
+		t.Errorf("response = %d/%q, want 201/accept", id, decision)
+	}
+}
+
 func TestRespondToPermission_UnknownItemID(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
 	b := newPermTestBackend(&buf)
 
-	err := b.RespondToPermission("ghost", false, "")
+	err := b.RespondToPermission("ghost", delegator.PermissionDecision{})
 	if err == nil || !strings.Contains(err.Error(), "no pending approval") {
 		t.Fatalf("expected no-pending error, got %v", err)
 	}

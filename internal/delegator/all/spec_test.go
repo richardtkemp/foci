@@ -47,11 +47,11 @@ var proofs = map[string]map[delegator.Capability]string{
 		delegator.CapControlModel:             "TestSendControl_SetModel",
 		delegator.CapControlEffort:            "TestSendControl_ApplyFlagSettings",
 		delegator.CapControlPermissionMode:    "TestSendControl_SetPermissionMode",
-		delegator.CapPermissionResponse:       "TestRespondToPermission_Allow",
 		delegator.CapUnstartedReadinessProbe:  "TestCheckReady_Authenticated",
 		delegator.CapPreToolRules:             "TestBuildHookSettingsJSON_PreToolRules",
 		delegator.CapStopRules:                "TestBuildHookSettingsJSON_StopRules",
 		delegator.CapRelogin:                  "TestCheckReady_NotAuthenticated_TriggersRelogin",
+		delegator.CapPermissionRules:          "TestRespondToPermissionWithRule",
 		delegator.CapCommandApprovalAllowlist: "TestHandlePermissionRequest_AutoApprove",
 	},
 	"codex": {
@@ -59,7 +59,6 @@ var proofs = map[string]map[delegator.Capability]string{
 		delegator.CapControlModel:             "TestSendControl_SetModel",
 		delegator.CapControlEffort:            "TestSendControl_Effort",
 		delegator.CapControlPermissionMode:    "TestSendControl_SetPermissionMode",
-		delegator.CapPermissionResponse:       "TestRespondToPermission_ResolvesByItemID",
 		delegator.CapUnstartedReadinessProbe:  "TestCheckReady_BinaryInPath",
 		delegator.CapCommandApprovalAllowlist: "TestOnCommandApproval_AutoApproveRuleAccepts",
 	},
@@ -67,7 +66,6 @@ var proofs = map[string]map[delegator.Capability]string{
 		delegator.CapStreaming:                "TestOnMessagePartDelta_TextFiresOnTextDelta",
 		delegator.CapControlModel:             "TestSendControl_SetModel",
 		delegator.CapControlPermissionMode:    "TestSendControl_SetPermissionMode",
-		delegator.CapPermissionResponse:       "TestRespondToPermission_AllowPostsAndResolves",
 		delegator.CapCommandApprovalAllowlist: "TestAutoApprove_BashMatchingRule_NoPrompt",
 	},
 }

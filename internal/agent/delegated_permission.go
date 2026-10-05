@@ -42,63 +42,39 @@ func (a *Agent) SendPermissionResponse(ctx context.Context, sessionKey string, r
 		}
 	}
 
-	// Protocol-based response (ccstream) — use RespondToPermission if available.
-	type permResponder interface {
-		RespondToPermission(requestID string, allow bool, message string) error
-	}
-	type ruleResponder interface {
-		RespondToPermissionWithRule(requestID string, prefix string) error
-	}
-
-	if pr, ok := be.(permResponder); ok && requestID != "" {
-		// "allow_always:prefix" → permanent rule for this prefix.
-		if strings.HasPrefix(choice, "allow_always:") {
-			prefix := strings.TrimPrefix(choice, "allow_always:")
-			if rr, ok := be.(ruleResponder); ok {
-				a.taggedLog("agent/perm").Debugf("responding with rule: reqID=%s prefix=%s", requestID, prefix)
-				err := rr.RespondToPermissionWithRule(requestID, prefix)
-				if err != nil {
-					a.taggedLog("agent/perm").Errorf("RespondToPermissionWithRule failed: reqID=%s sk=%s err=%v", requestID, sessionKey, err)
-				}
-				return err
-			}
-			// Fall through to simple allow if rule not supported.
-		}
-
-		allow := choice == "allow" || strings.HasPrefix(choice, "allow")
-		msg := ""
-		if !allow {
-			msg = "User denied permission"
-		}
-		a.taggedLog("agent/perm").Debugf("responding via protocol: reqID=%s choice=%q allow=%v", requestID, choice, allow)
-		err := pr.RespondToPermission(requestID, allow, msg)
+	pr, ok := delegator.As[delegator.PermissionResponder](be)
+	if ok && requestID != "" {
+		d := permissionDecision(choice)
+		a.taggedLog("agent/perm").Debugf("responding: reqID=%s choice=%q allow=%v remember=%v rule=%q", requestID, choice, d.Allow, d.Remember, d.RulePrefix)
+		err := pr.RespondToPermission(requestID, d)
 		if err != nil {
 			a.taggedLog("agent/perm").Errorf("RespondToPermission failed: reqID=%s sk=%s err=%v", requestID, sessionKey, err)
 		}
 		return err
 	}
 
-	// Remember-flag response (opencode). Distinct from permResponder above:
-	// the third arg is a `remember` bool (persist the decision), not a denial
-	// message — so opencode satisfies THIS interface, not permResponder. A
-	// backend can only satisfy one (Go matches the exact method signature), so
-	// these two blocks never both fire. opencode surfaces Allow/Deny/Always
-	// buttons with Data "allow"/"deny"/"always".
-	type rememberPermResponder interface {
-		RespondToPermission(requestID string, allow bool, remember bool) error
-	}
-	if pr, ok := be.(rememberPermResponder); ok && requestID != "" {
-		remember := choice == "always" || strings.HasPrefix(choice, "allow_always")
-		allow := remember || choice == "allow" || strings.HasPrefix(choice, "allow")
-		a.taggedLog("agent/perm").Debugf("responding via remember-protocol: reqID=%s choice=%q allow=%v remember=%v", requestID, choice, allow, remember)
-		err := pr.RespondToPermission(requestID, allow, remember)
-		if err != nil {
-			a.taggedLog("agent/perm").Errorf("RespondToPermission (remember) failed: reqID=%s sk=%s err=%v", requestID, sessionKey, err)
-		}
-		return err
-	}
-
 	return fmt.Errorf("agent: backend cannot answer permission prompt (reqID=%q choice=%q)", requestID, choice)
+}
+
+// permissionDecision turns a prompt button's data into the unified decision
+// every backend answers (#2154 Phase 3). The buttons differ per backend:
+//   - "allow" / "deny"                — every backend
+//   - "allow_always:<prefix>"         — ccstream (a persistent rule for prefix)
+//   - "always"                        — opencode (remember this decision)
+//
+// Anything starting "allow" allows; "always" implies allow; a RulePrefix is
+// carried only by "allow_always:"; a deny gets the standard message.
+func permissionDecision(choice string) delegator.PermissionDecision {
+	var d delegator.PermissionDecision
+	if prefix, ok := strings.CutPrefix(choice, "allow_always:"); ok {
+		d.RulePrefix = prefix
+	}
+	d.Remember = choice == "always" || strings.HasPrefix(choice, "allow_always")
+	d.Allow = d.Remember || strings.HasPrefix(choice, "allow")
+	if !d.Allow {
+		d.Message = "User denied permission"
+	}
+	return d
 }
 
 // CancelPendingQuestion cancels an outstanding AskUserQuestion if one exists

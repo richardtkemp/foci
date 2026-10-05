@@ -372,18 +372,22 @@ func (b *Backend) SetOnSubagentRunning(fn func([]delegator.RunningSubagent)) {
 // statusline's [running] line (#2127).
 func (b *Backend) RunningSubagents() []delegator.RunningSubagent { return b.agents.Running() }
 
-// SetOnAuthFailure stores the auth-failure callback. Fired by handlers.go
-// when a ProviderAuthError surfaces via message.updated or session.error
-// SSE events. authfail.go provides the Server-level fanout + relogin gate.
-func (b *Backend) SetOnAuthFailure(fn func(detail string)) {
-	b.onAuthFailure = fn
-}
-
-// SetOnRateLimited stores the callback fired when OpenCode reports a rejected
-// usage/rate limit through session.status. The callback receives a neutral
-// signal so the agent's shared policy can resolve and engage the gate.
-func (b *Backend) SetOnRateLimited(fn func(signal ratelimit.Signal)) {
-	b.onRateLimited = fn
+// SetHostHooks implements delegator.HostHooksAcceptor. opencode uses two of
+// the gateway's callbacks:
+//   - OnAuthFailure, fired by handlers.go when a ProviderAuthError surfaces
+//     via message.updated or session.error SSE events (authfail.go provides
+//     the Server-level fanout + gate);
+//   - EngageRateLimit, fired when OpenCode reports a rejected usage/rate limit
+//     through session.status, with a neutral signal so the agent's shared
+//     policy can resolve and engage the gate.
+//
+// It has no PreToolUse or Stop hook and no utilisation notice, so the rest
+// are ignored (its Spec declares pretool_rules and stop_rules No).
+func (b *Backend) SetHostHooks(h delegator.HostHooks) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.onAuthFailure = h.OnAuthFailure
+	b.onRateLimited = h.EngageRateLimit
 }
 
 // Turn-lifecycle methods (AttachSessionEvents, beginTurn, cancelTurn,

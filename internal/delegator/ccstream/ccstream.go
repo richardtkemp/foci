@@ -35,7 +35,7 @@ func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {
 		pendingPerms:   make(map[string]*pendingPermission),
 		pendingElicits: make(map[string]*pendingElicitation),
 		outstanding:    delegator.NewOutstandingRegistry(),
-		rlThrottle:     NewRateLimitThrottle(), // per-Backend default; replaced by shared via SetRateLimitThrottle
+		rlThrottle:     NewRateLimitThrottle(), // per-Backend default; Start binds the agent's shared one
 	}
 	b.cfg = cfg
 	return b, nil
@@ -216,7 +216,7 @@ type Backend struct {
 	contextWindow int                // from modelUsage.contextWindow
 	lastModel     string             // from assistant message
 	lastUsage     *TokenUsage        // per-call usage from last assistant message
-	rlThrottle    *RateLimitThrottle // OnRateLimit throttle; shared per-agent via SetRateLimitThrottle
+	rlThrottle    *RateLimitThrottle // OnRateLimit throttle; shared per agent (agentThrottle)
 
 	// prevModelUsage is this process's previous result's modelUsage, for the
 	// monotonic check (checkModelUsageMonotonic); nil until its first result.
@@ -248,10 +248,10 @@ type Backend struct {
 	hookInstallID string
 
 	// preToolRules yields the resolved pretool rules (#2028) baked into the
-	// PreToolUse hook command at each Start. Set via SetPreToolRules.
+	// PreToolUse hook command at each Start. Set via SetHostHooks.
 	preToolRules func() []pretool.Rule
 	// stopRules yields the agent's stop rules (#2089) baked into the Stop
-	// hook command at each Start. Set via SetStopRules.
+	// hook command at each Start. Set via SetHostHooks.
 	stopRules func() []stoprule.Rule
 
 	// Agent tracking (shared tracker implementation: AgentTracker).

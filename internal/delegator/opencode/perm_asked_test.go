@@ -69,7 +69,7 @@ func TestRespondToPermission_Asked_RepliesViaNewEndpoint(t *testing.T) {
 			b, rec := newPermTestBackend(t)
 			b.onPermissionAsked(PermissionRequest{ID: "per-x", SessionID: "sess-perm", Permission: PermEdit})
 
-			if err := b.RespondToPermission("per-x", tc.allow, tc.remember); err != nil {
+			if err := b.RespondToPermission("per-x", delegator.PermissionDecision{Allow: tc.allow, Remember: tc.remember}); err != nil {
 				t.Fatalf("RespondToPermission: %v", err)
 			}
 			req := rec.findReplyPost(t)
@@ -133,7 +133,7 @@ func TestPermissionAsked_DedupesSameTarget(t *testing.T) {
 
 	// The user answers the primary (per-A). Both opencode permissions must get a
 	// reply POST, and both must be cleared.
-	if err := b.RespondToPermission("per-A", true, true); err != nil {
+	if err := b.RespondToPermission("per-A", delegator.PermissionDecision{Allow: true, Remember: true}); err != nil {
 		t.Fatalf("RespondToPermission: %v", err)
 	}
 

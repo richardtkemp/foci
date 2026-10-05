@@ -320,9 +320,7 @@ func (m *DelegatedManager) RunningSubagents(sessionKey string) []delegator.Runni
 	if !ok {
 		return nil
 	}
-	r, ok := mb.be.(interface {
-		RunningSubagents() []delegator.RunningSubagent
-	})
+	r, ok := delegator.As[delegator.SubagentReporter](mb.be)
 	if !ok {
 		return nil
 	}
@@ -728,9 +726,7 @@ func (m *DelegatedManager) StopSubagents(ctx context.Context, sessionKey string)
 	if !ok {
 		return 0, fmt.Errorf("no delegated backend for session %s", sessionKey)
 	}
-	stopper, ok := mb.be.(interface {
-		StopSubagents(ctx context.Context) (int, error)
-	})
+	stopper, ok := delegator.As[delegator.SubagentStopper](mb.be)
 	if !ok {
 		return 0, ErrStopSubagentsUnsupported
 	}
@@ -746,9 +742,7 @@ func (m *DelegatedManager) StopCommands(ctx context.Context, sessionKey string) 
 	if !ok {
 		return 0, fmt.Errorf("no delegated backend for session %s", sessionKey)
 	}
-	stopper, ok := mb.be.(interface {
-		StopCommands(ctx context.Context) (int, error)
-	})
+	stopper, ok := delegator.As[delegator.CommandStopper](mb.be)
 	if !ok {
 		return 0, ErrStopCommandsUnsupported
 	}
@@ -1102,26 +1096,19 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 			}
 		})
 	}
-	// Wire the subagent (Agent-tool) status tracker → SubagentStatusFunc. The
-	// setter lives on the concrete CC backends (ccstream/opencode), not the
-	// Delegator interface, so we reach it via a narrow type assertion; backends
-	// without it are left untouched. Fixes the ccstream gap where the tracker's
-	// OnStatus was never wired at all. sk() resolves the current session key
-	// dynamically, mirroring the typing/session-ready wiring above.
-	if m.SubagentStatusFunc != nil && !isBatch {
-		if setter, ok := mb.be.(interface {
-			SetOnSubagentStatus(fn func(detail string))
-		}); ok {
-			setter.SetOnSubagentStatus(func(detail string) {
+	// Wire the subagent (Agent-tool) status tracker → SubagentStatusFunc and
+	// SubagentRunningFunc, on a backend declaring subagent_status
+	// (delegator.SubagentReporter); others are left untouched. sk() resolves
+	// the current session key dynamically, mirroring the typing/session-ready
+	// wiring above.
+	if rep, ok := delegator.As[delegator.SubagentReporter](mb.be); ok && !isBatch {
+		if m.SubagentStatusFunc != nil {
+			rep.SetOnSubagentStatus(func(detail string) {
 				m.SubagentStatusFunc(sk(), detail)
 			})
 		}
-	}
-	if m.SubagentRunningFunc != nil && !isBatch {
-		if setter, ok := mb.be.(interface {
-			SetOnSubagentRunning(fn func([]delegator.RunningSubagent))
-		}); ok {
-			setter.SetOnSubagentRunning(func(running []delegator.RunningSubagent) {
+		if m.SubagentRunningFunc != nil {
+			rep.SetOnSubagentRunning(func(running []delegator.RunningSubagent) {
 				m.SubagentRunningFunc(sk(), running)
 			})
 		}
@@ -1144,13 +1131,13 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 		m.AttachDelivery(mb.be, sk())
 	}
 
-	// Adopt CC-initiated runs as first-class foci turns (#1261). The setter lives
-	// on the concrete CC backend, not the Delegator interface, so reach it via a
-	// narrow type assertion (mirrors SetOnSubagentStatus). The backend fires
-	// onAutonomousOpen at the running edge; openAutonomousTurn adopts the run
-	// (streaming sink + TurnEvents + AdoptRunningTurn) and owns its completion.
+	// Adopt backend-initiated runs as first-class foci turns (#1261), on a
+	// backend declaring turn_adoption (delegator.TurnAdopter). The backend
+	// fires onAutonomousOpen at the running edge; openAutonomousTurn adopts the
+	// run (streaming sink + TurnEvents + AdoptRunningTurn) and owns its
+	// completion.
 	if m.OpenAutonomousTurn != nil && !isBatch {
-		if setter, ok := mb.be.(interface{ SetOnAutonomousOpen(fn func()) }); ok {
+		if setter, ok := delegator.As[delegator.TurnAdopter](mb.be); ok {
 			be := mb.be
 			setter.SetOnAutonomousOpen(func() {
 				m.OpenAutonomousTurn(sk(), be)

@@ -129,6 +129,12 @@ func (b *chattyBatchBackend) SetOnAutonomousOpen(fn func()) {
 	b.cbMu.Unlock()
 }
 
+// The rest of delegator.SubagentReporter and delegator.TurnAdopter, so the
+// manager would wire the hooks above on a non-batch session.
+func (b *chattyBatchBackend) SetOnSubagentRunning(func([]delegator.RunningSubagent)) {}
+func (b *chattyBatchBackend) RunningSubagents() []delegator.RunningSubagent          { return nil }
+func (b *chattyBatchBackend) AdoptRunningTurn(*delegator.TurnEvents) bool            { return false }
+
 func (b *chattyBatchBackend) fireUI() {
 	b.cbMu.Lock()
 	typing, sub, auto := b.typing, b.subStatus, b.autoOpen

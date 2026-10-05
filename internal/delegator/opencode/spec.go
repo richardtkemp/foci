@@ -55,6 +55,7 @@ var spec = delegator.Spec{
 		delegator.CapBranch:        delegator.Yes(),
 		delegator.CapScopedCleanup: delegator.Yes(),
 
+		delegator.CapHostHooks:                delegator.Yes(),
 		delegator.CapUnstartedReadinessProbe:  delegator.No("CheckReady needs the server that only Start creates"),
 		delegator.CapPreToolRules:             delegator.No("opencode has no PreToolUse hook"),
 		delegator.CapStopRules:                delegator.No("opencode has no Stop hook"),

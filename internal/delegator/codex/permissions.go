@@ -174,28 +174,16 @@ func (b *Backend) respondApproval(rpcID int64, decision string) {
 	}
 }
 
-// permResponder mirrors the (unexported, method-local) interface the platform
-// layer duck-types in internal/agent/delegated_permission.go. The match there
-// is structural with no compile-time check — which is exactly how a wrong
-// RespondToPermission signature shipped once before — so this assertion pins
-// the contract statically.
-type permResponder interface {
-	RespondToPermission(requestID string, allow bool, message string) error
-}
-
-var _ permResponder = (*Backend)(nil)
-
-// RespondToPermission resolves a pending approval by item ID.
-// Implements the permResponder interface (same signature as ccstream):
-// RespondToPermission(requestID string, allow bool, message string) error.
+// RespondToPermission implements delegator.PermissionResponder: it resolves a
+// pending approval by item ID with accept or decline.
 //
-// message is accepted for interface compatibility but is NOT forwarded to
-// codex: its approval-response schema is decision-only (verified against codex
-// 0.144.5 — CommandExecution/FileChangeRequestApprovalResponse carry just a
-// `decision` enum, no message/reason field), so a deny reason has nowhere to
-// go on the wire.
-func (b *Backend) RespondToPermission(requestID string, allow bool, message string) error {
-	_ = message // see doc comment: codex has no wire field for a deny reason
+// Only d.Allow reaches codex: its approval-response schema is decision-only
+// (verified against codex 0.144.5 — CommandExecution/
+// FileChangeRequestApprovalResponse carry just a `decision` enum, no
+// message/reason field), so a deny reason has nowhere to go on the wire, and
+// Remember/RulePrefix (an "allow always") answer as a plain accept.
+func (b *Backend) RespondToPermission(requestID string, d delegator.PermissionDecision) error {
+	allow := d.Allow
 	b.permMu.Lock()
 	var rpcID int64
 	found := false

@@ -29,6 +29,7 @@ func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {
 	b := &Backend{}
 	b.cfg = cfg
 	b.lg = log.NewComponentLogger("codex")
+	b.onModelCaps = publishModelCaps
 	return b, nil
 }
 

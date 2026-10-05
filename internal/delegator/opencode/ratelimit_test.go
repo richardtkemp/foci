@@ -45,10 +45,10 @@ func TestOnSessionStatus_RateLimitAbortsAndCompletes(t *testing.T) {
 	b, rec := newControlTestBackend(t)
 	var callbackCount atomic.Int32
 	var signal ratelimit.Signal
-	b.SetOnRateLimited(func(got ratelimit.Signal) {
+	b.SetHostHooks(delegator.HostHooks{EngageRateLimit: func(got ratelimit.Signal) {
 		callbackCount.Add(1)
 		signal = got
-	})
+	}})
 	var completed *delegator.TurnResult
 	b.beginTurn(&delegator.TurnEvents{OnTurnComplete: func(result *delegator.TurnResult) {
 		completed = result
@@ -92,7 +92,7 @@ func TestOnSessionStatus_RateLimitAbortsAndCompletes(t *testing.T) {
 func TestOnSessionStatus_TransientRetryKeepsWaiting(t *testing.T) {
 	b, rec := newControlTestBackend(t)
 	var callbackFired atomic.Bool
-	b.SetOnRateLimited(func(ratelimit.Signal) { callbackFired.Store(true) })
+	b.SetHostHooks(delegator.HostHooks{EngageRateLimit: func(ratelimit.Signal) { callbackFired.Store(true) }})
 	b.beginTurn(&delegator.TurnEvents{})
 
 	b.onSessionStatus(b.sessionID, SessionStatus{Type: StatusRetry, Attempt: 1, Message: "temporary upstream unavailable"})

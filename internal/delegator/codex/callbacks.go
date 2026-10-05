@@ -2,7 +2,6 @@ package codex
 
 import (
 	"foci/internal/delegator"
-	"foci/internal/modelcaps"
 )
 
 // SetPermissionPromptFunc sets the function used to send permission prompts.
@@ -30,11 +29,4 @@ func (b *Backend) SetOnSessionReady(fn func(sessionID string)) {
 // SetTypingFunc sets a callback to control the platform's typing indicator.
 func (b *Backend) SetTypingFunc(fn func(typing bool)) {
 	b.typingFunc = fn
-}
-
-// SetOnModelCaps registers a hook that receives the complete visible Codex
-// catalogue after the app-server initialize handshake. Must be set before
-// Start. The receiver publishes it into foci's backend-scoped live registry.
-func (b *Backend) SetOnModelCaps(fn func(entries map[string]modelcaps.Caps)) {
-	b.onModelCaps = fn
 }

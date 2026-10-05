@@ -3,89 +3,40 @@ package agent
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 
 	"foci/internal/delegator"
 )
 
-// mockPermBackend implements delegator.Delegator with configurable permission
-// response recording. It also implements the permResponder and ruleResponder
-// interfaces used by SendPermissionResponse.
+// mockPermBackend records every decision it is handed through the unified
+// delegator.PermissionResponder (#2154 Phase 3). Unused Delegator methods
+// panic via the nil embed.
 type mockPermBackend struct {
-	delegator.Delegator // embed to satisfy the interface; unused methods will panic
+	delegator.Delegator
 
-	respondCalls []respondCall
-	ruleCalls    []ruleCall
-	respondErr   error
-	ruleErr      error
-	supportsRule bool
+	calls      []permCall
+	respondErr error
 }
 
-type respondCall struct {
+type permCall struct {
 	requestID string
-	allow     bool
-	message   string
+	d         delegator.PermissionDecision
 }
 
-type ruleCall struct {
-	requestID string
-	prefix    string
-}
-
-func (m *mockPermBackend) RespondToPermission(requestID string, allow bool, message string) error {
-	m.respondCalls = append(m.respondCalls, respondCall{requestID, allow, message})
+func (m *mockPermBackend) RespondToPermission(requestID string, d delegator.PermissionDecision) error {
+	m.calls = append(m.calls, permCall{requestID, d})
 	return m.respondErr
-}
-
-func (m *mockPermBackend) RespondToPermissionWithRule(requestID string, prefix string) error {
-	m.ruleCalls = append(m.ruleCalls, ruleCall{requestID, prefix})
-	return m.ruleErr
 }
 
 func (m *mockPermBackend) IsRunning() bool { return true }
 
-// mockPermBackendNoRule only implements permResponder, not ruleResponder.
-// Used to test the fallback when RespondToPermissionWithRule is not available.
-type mockPermBackendNoRule struct {
-	delegator.Delegator
-	respondCalls []respondCall
-}
+// noResponderBackend raises no permission prompts: it has no responder.
+type noResponderBackend struct{ delegator.Delegator }
 
-func (m *mockPermBackendNoRule) RespondToPermission(requestID string, allow bool, message string) error {
-	m.respondCalls = append(m.respondCalls, respondCall{requestID, allow, message})
-	return nil
-}
+func (noResponderBackend) IsRunning() bool { return true }
 
-func (m *mockPermBackendNoRule) IsRunning() bool { return true }
-
-// mockRememberPermBackend implements the rememberPermResponder interface
-// (opencode's signature: third arg is a `remember` bool, not a message).
-// It does NOT satisfy permResponder, so SendPermissionResponse must route
-// through the remember-protocol block, not fall to the no-responder error.
-type mockRememberPermBackend struct {
-	delegator.Delegator
-
-	respondCalls []rememberCall
-	respondErr   error
-}
-
-type rememberCall struct {
-	requestID string
-	allow     bool
-	remember  bool
-}
-
-func (m *mockRememberPermBackend) RespondToPermission(requestID string, allow bool, remember bool) error {
-	m.respondCalls = append(m.respondCalls, rememberCall{requestID, allow, remember})
-	return m.respondErr
-}
-
-func (m *mockRememberPermBackend) IsRunning() bool { return true }
-
-// mockDelegatedManagerForPerm is a minimal DelegatedManager replacement
-// that returns a pre-configured backend. Since DelegatedManager.Get requires
-// real mutex/map wiring, we set up a real DelegatedManager with a pre-seeded backend.
+// setupAgentWithMockBackend wires a real DelegatedManager with be pre-seeded
+// under "test/s", so Get() returns it without Start().
 func setupAgentWithMockBackend(t *testing.T, be delegator.Delegator) *Agent {
 	t.Helper()
 	dm := &DelegatedManager{
@@ -95,126 +46,52 @@ func setupAgentWithMockBackend(t *testing.T, be delegator.Delegator) *Agent {
 		},
 		StartOpts: delegator.StartOptions{},
 	}
-	// Pre-seed the backend so Get() finds it without calling Start().
-	dm.backends["test/s"] = &managedBackend{
-		be: be,
-	}
-
+	dm.backends["test/s"] = &managedBackend{be: be}
 	return &Agent{DelegatedManager: dm}
 }
 
 // TestSendPermissionResponse_NilManager verifies that a nil DelegatedManager
 // returns nil immediately (no panic, no error).
 func TestSendPermissionResponse_NilManager(t *testing.T) {
-	a := &Agent{} // DelegatedManager is nil
-
-	err := a.SendPermissionResponse(context.Background(), "test/s", "req-1", "allow")
-	if err != nil {
+	a := &Agent{}
+	if err := a.SendPermissionResponse(context.Background(), "test/s", "req-1", "allow"); err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
 }
 
-// TestSendPermissionResponse_AllowRoutes verifies that choice="allow" sends
-// RespondToPermission with allow=true and no denial message.
-func TestSendPermissionResponse_AllowRoutes(t *testing.T) {
-	be := &mockPermBackend{supportsRule: true}
-	a := setupAgentWithMockBackend(t, be)
-
-	err := a.SendPermissionResponse(context.Background(), "test/s", "req-1", "allow")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(be.respondCalls) != 1 {
-		t.Fatalf("expected 1 respond call, got %d", len(be.respondCalls))
-	}
-	call := be.respondCalls[0]
-	if call.requestID != "req-1" {
-		t.Errorf("requestID = %q, want %q", call.requestID, "req-1")
-	}
-	if !call.allow {
-		t.Error("expected allow=true")
-	}
-	if call.message != "" {
-		t.Errorf("expected empty message, got %q", call.message)
-	}
-}
-
-// TestSendPermissionResponse_DenyRoutes verifies that choice="deny" sends
-// RespondToPermission with allow=false and a denial message.
-func TestSendPermissionResponse_DenyRoutes(t *testing.T) {
-	be := &mockPermBackend{supportsRule: true}
-	a := setupAgentWithMockBackend(t, be)
-
-	err := a.SendPermissionResponse(context.Background(), "test/s", "req-1", "deny")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(be.respondCalls) != 1 {
-		t.Fatalf("expected 1 respond call, got %d", len(be.respondCalls))
-	}
-	call := be.respondCalls[0]
-	if call.allow {
-		t.Error("expected allow=false for deny choice")
-	}
-	if call.message != "User denied permission" {
-		t.Errorf("message = %q, want %q", call.message, "User denied permission")
+// TestSendPermissionResponse_ChoiceToDecision pins how each backend's button
+// data becomes the one PermissionDecision every backend answers. The mapping
+// is the union of the three shapes it replaced: ccstream/codex (allow, deny,
+// "allow_always:<prefix>" rule) and opencode (allow, deny, "always" remember).
+func TestSendPermissionResponse_ChoiceToDecision(t *testing.T) {
+	deny := delegator.PermissionDecision{Message: "User denied permission"}
+	for _, tc := range []struct {
+		choice string
+		want   delegator.PermissionDecision
+	}{
+		{"allow", delegator.PermissionDecision{Allow: true}},
+		{"deny", deny},
+		{"reject", deny},
+		{"allow_always:Bash:git *", delegator.PermissionDecision{Allow: true, Remember: true, RulePrefix: "Bash:git *"}},
+		{"allow_always", delegator.PermissionDecision{Allow: true, Remember: true}},
+		{"always", delegator.PermissionDecision{Allow: true, Remember: true}},
+	} {
+		t.Run(tc.choice, func(t *testing.T) {
+			be := &mockPermBackend{}
+			a := setupAgentWithMockBackend(t, be)
+			if err := a.SendPermissionResponse(context.Background(), "test/s", "req-1", tc.choice); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(be.calls) != 1 {
+				t.Fatalf("expected 1 respond call, got %d", len(be.calls))
+			}
+			if c := be.calls[0]; c.requestID != "req-1" || c.d != tc.want {
+				t.Errorf("got %q %+v, want req-1 %+v", c.requestID, c.d, tc.want)
+			}
+		})
 	}
 }
 
-// TestSendPermissionResponse_AllowAlwaysWithRule verifies that an
-// "allow_always:<prefix>" choice routes to RespondToPermissionWithRule
-// when the backend supports it.
-func TestSendPermissionResponse_AllowAlwaysWithRule(t *testing.T) {
-	be := &mockPermBackend{supportsRule: true}
-	a := setupAgentWithMockBackend(t, be)
-
-	err := a.SendPermissionResponse(context.Background(), "test/s", "req-1", "allow_always:Bash:git *")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(be.ruleCalls) != 1 {
-		t.Fatalf("expected 1 rule call, got %d", len(be.ruleCalls))
-	}
-	rc := be.ruleCalls[0]
-	if rc.requestID != "req-1" {
-		t.Errorf("requestID = %q, want %q", rc.requestID, "req-1")
-	}
-	if rc.prefix != "Bash:git *" {
-		t.Errorf("prefix = %q, want %q", rc.prefix, "Bash:git *")
-	}
-
-	// Should NOT have fallen through to RespondToPermission.
-	if len(be.respondCalls) != 0 {
-		t.Errorf("expected 0 respond calls when rule is supported, got %d", len(be.respondCalls))
-	}
-}
-
-// TestSendPermissionResponse_AllowAlwaysFallback verifies that when the backend
-// does not implement ruleResponder, allow_always falls through to a simple
-// allow via RespondToPermission.
-func TestSendPermissionResponse_AllowAlwaysFallback(t *testing.T) {
-	be := &mockPermBackendNoRule{}
-	a := setupAgentWithMockBackend(t, be)
-
-	err := a.SendPermissionResponse(context.Background(), "test/s", "req-1", "allow_always:Read")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Should have fallen through to RespondToPermission with allow=true.
-	if len(be.respondCalls) != 1 {
-		t.Fatalf("expected 1 respond call (fallback), got %d", len(be.respondCalls))
-	}
-	if !be.respondCalls[0].allow {
-		t.Error("expected allow=true on fallback")
-	}
-}
-
-// TestSendPermissionResponse_GetError verifies that an error from
-// DelegatedManager.Get is propagated back to the caller.
 func TestSendPermissionResponse_GetError(t *testing.T) {
 	dm := &DelegatedManager{
 		backends: make(map[string]*managedBackend),
@@ -224,116 +101,40 @@ func TestSendPermissionResponse_GetError(t *testing.T) {
 		StartOpts: delegator.StartOptions{},
 	}
 	a := &Agent{DelegatedManager: dm}
-
-	err := a.SendPermissionResponse(context.Background(), "test/s", "req-1", "allow")
-	if err == nil {
+	if err := a.SendPermissionResponse(context.Background(), "test/s", "req-1", "allow"); err == nil {
 		t.Fatal("expected error from Get, got nil")
-	}
-	if !errors.Is(err, fmt.Errorf("backend unavailable")) && err.Error() != "backend unavailable" {
-		// Just check it's non-nil and related to the backend — the exact wrapping may vary.
-		t.Logf("got expected error: %v", err)
 	}
 }
 
 // TestSendPermissionResponse_EmptyRequestID verifies that a response with no
 // requestID reaches no responder and is reported as an error, not dropped.
 func TestSendPermissionResponse_EmptyRequestID(t *testing.T) {
-	be := &mockPermBackend{supportsRule: true}
+	be := &mockPermBackend{}
 	a := setupAgentWithMockBackend(t, be)
-
-	err := a.SendPermissionResponse(context.Background(), "test/s", "", "y")
-	if err == nil {
+	if err := a.SendPermissionResponse(context.Background(), "test/s", "", "y"); err == nil {
 		t.Fatal("expected an error for an unanswerable prompt, got nil")
 	}
-
-	// Should NOT have called RespondToPermission (requestID is empty).
-	if len(be.respondCalls) != 0 {
-		t.Errorf("expected 0 respond calls with empty requestID, got %d", len(be.respondCalls))
+	if len(be.calls) != 0 {
+		t.Errorf("expected 0 respond calls with empty requestID, got %d", len(be.calls))
 	}
 }
 
-// TestSendPermissionResponse_RespondError verifies that errors from
-// RespondToPermission are propagated.
+// TestSendPermissionResponse_NoResponder: a backend without a
+// PermissionResponder can't answer, which is an error rather than a drop.
+func TestSendPermissionResponse_NoResponder(t *testing.T) {
+	a := setupAgentWithMockBackend(t, noResponderBackend{})
+	if err := a.SendPermissionResponse(context.Background(), "test/s", "req-1", "allow"); err == nil {
+		t.Fatal("expected an error from a backend with no responder, got nil")
+	}
+}
+
+// TestSendPermissionResponse_RespondError verifies that the backend's error
+// is propagated.
 func TestSendPermissionResponse_RespondError(t *testing.T) {
 	be := &mockPermBackend{respondErr: errors.New("protocol error")}
 	a := setupAgentWithMockBackend(t, be)
-
-	err := a.SendPermissionResponse(context.Background(), "test/s", "req-1", "allow")
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if err.Error() != "protocol error" {
-		t.Errorf("error = %q, want %q", err.Error(), "protocol error")
-	}
-}
-
-// TestSendPermissionResponse_RuleError verifies that errors from
-// RespondToPermissionWithRule are propagated.
-func TestSendPermissionResponse_RuleError(t *testing.T) {
-	be := &mockPermBackend{supportsRule: true, ruleErr: errors.New("rule error")}
-	a := setupAgentWithMockBackend(t, be)
-
 	err := a.SendPermissionResponse(context.Background(), "test/s", "req-1", "allow_always:Bash:*")
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if err.Error() != "rule error" {
-		t.Errorf("error = %q, want %q", err.Error(), "rule error")
-	}
-}
-
-// TestSendPermissionResponse_RememberResponder_Allow verifies an opencode-style
-// backend (remember-bool signature) routes "allow" → allow=true, remember=false,
-// (the arnix wedge: a signature mismatch once dropped opencode past every
-// responder → "not supported").
-func TestSendPermissionResponse_RememberResponder_Allow(t *testing.T) {
-	be := &mockRememberPermBackend{}
-	a := setupAgentWithMockBackend(t, be)
-
-	if err := a.SendPermissionResponse(context.Background(), "test/s", "per_1", "allow"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(be.respondCalls) != 1 {
-		t.Fatalf("expected 1 respond call, got %d", len(be.respondCalls))
-	}
-	c := be.respondCalls[0]
-	if c.requestID != "per_1" || !c.allow || c.remember {
-		t.Errorf("got %+v, want {per_1 allow=true remember=false}", c)
-	}
-}
-
-// TestSendPermissionResponse_RememberResponder_Always verifies "always" maps to
-// allow=true, remember=true (opencode reply "always").
-func TestSendPermissionResponse_RememberResponder_Always(t *testing.T) {
-	be := &mockRememberPermBackend{}
-	a := setupAgentWithMockBackend(t, be)
-
-	if err := a.SendPermissionResponse(context.Background(), "test/s", "per_1", "always"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(be.respondCalls) != 1 {
-		t.Fatalf("expected 1 respond call, got %d", len(be.respondCalls))
-	}
-	c := be.respondCalls[0]
-	if !c.allow || !c.remember {
-		t.Errorf("got %+v, want allow=true remember=true", c)
-	}
-}
-
-// TestSendPermissionResponse_RememberResponder_Deny verifies "deny" maps to
-// allow=false, remember=false.
-func TestSendPermissionResponse_RememberResponder_Deny(t *testing.T) {
-	be := &mockRememberPermBackend{}
-	a := setupAgentWithMockBackend(t, be)
-
-	if err := a.SendPermissionResponse(context.Background(), "test/s", "per_1", "deny"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(be.respondCalls) != 1 {
-		t.Fatalf("expected 1 respond call, got %d", len(be.respondCalls))
-	}
-	c := be.respondCalls[0]
-	if c.allow || c.remember {
-		t.Errorf("got %+v, want allow=false remember=false", c)
+	if err == nil || err.Error() != "protocol error" {
+		t.Fatalf("error = %v, want protocol error", err)
 	}
 }

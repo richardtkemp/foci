@@ -197,13 +197,18 @@ func (m *mockBackendDM) SetTypingFunc(fn func(bool)) {
 	m.typingFunc = fn
 }
 
-// SetOnSubagentStatus is the optional (non-interface) hook the manager wires via
-// type assertion; providing it here lets the routing test observe the wiring.
+// SetOnSubagentStatus, SetOnSubagentRunning and RunningSubagents make the mock
+// a delegator.SubagentReporter, which the manager wires via As; providing them
+// lets the routing test observe the wiring.
 func (m *mockBackendDM) SetOnSubagentStatus(fn func(detail string)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onSubagentStatus = fn
 }
+
+func (m *mockBackendDM) SetOnSubagentRunning(func([]delegator.RunningSubagent)) {}
+
+func (m *mockBackendDM) RunningSubagents() []delegator.RunningSubagent { return nil }
 
 func (m *mockBackendDM) AttachSessionEvents(events *delegator.SessionEvents) {
 	m.mu.Lock()

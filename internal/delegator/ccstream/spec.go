@@ -66,6 +66,7 @@ var spec = delegator.Spec{
 		delegator.CapBranch:        delegator.Yes(),
 		delegator.CapScopedCleanup: delegator.No("fork and cleanup are local transcript file operations, no server needed"),
 
+		delegator.CapHostHooks:                delegator.Yes(),
 		delegator.CapUnstartedReadinessProbe:  delegator.Yes(),
 		delegator.CapPreToolRules:             delegator.Yes(),
 		delegator.CapStopRules:                delegator.Yes(),

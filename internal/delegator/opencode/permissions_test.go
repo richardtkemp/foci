@@ -258,7 +258,7 @@ func TestRespondToPermission_AllowPostsAndResolves(t *testing.T) {
 		SessionID: "sess-perm", MessageID: "m", Metadata: json.RawMessage(`{}`),
 	})
 
-	if err := b.RespondToPermission("perm-a", true, false); err != nil {
+	if err := b.RespondToPermission("perm-a", delegator.PermissionDecision{Allow: true, Remember: false}); err != nil {
 		t.Fatalf("RespondToPermission: %v", err)
 	}
 
@@ -287,7 +287,7 @@ func TestRespondToPermission_DenyPostsAndResolves(t *testing.T) {
 		SessionID: "sess-perm", MessageID: "m", Metadata: json.RawMessage(`{}`),
 	})
 
-	if err := b.RespondToPermission("perm-d", false, false); err != nil {
+	if err := b.RespondToPermission("perm-d", delegator.PermissionDecision{Allow: false, Remember: false}); err != nil {
 		t.Fatalf("RespondToPermission: %v", err)
 	}
 
@@ -308,7 +308,7 @@ func TestRespondToPermission_AlwaysAllowPassesRememberTrue(t *testing.T) {
 		SessionID: "sess-perm", MessageID: "m", Metadata: json.RawMessage(`{}`),
 	})
 
-	if err := b.RespondToPermission("perm-aa", true, true); err != nil {
+	if err := b.RespondToPermission("perm-aa", delegator.PermissionDecision{Allow: true, Remember: true}); err != nil {
 		t.Fatalf("RespondToPermission: %v", err)
 	}
 
@@ -324,7 +324,7 @@ func TestRespondToPermission_AlwaysAllowPassesRememberTrue(t *testing.T) {
 
 func TestRespondToPermission_UnknownIDReturnsError(t *testing.T) {
 	b, _ := newPermTestBackend(t)
-	err := b.RespondToPermission("nonexistent", true, false)
+	err := b.RespondToPermission("nonexistent", delegator.PermissionDecision{Allow: true, Remember: false})
 	if err == nil {
 		t.Error("expected error for unknown permission ID")
 	}

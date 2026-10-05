@@ -297,11 +297,16 @@ type AutonomousRunAwaiter interface {
 	AwaitingAutonomousRun() bool
 }
 
-// TurnAdopter is optionally implemented by backends that can bind a fresh
-// turn's TurnEvents to a run already in flight (an autonomous run the agent
-// layer finds running when it dispatches). Reports whether it adopted one.
+// TurnAdopter is optionally implemented by backends that start runs on their
+// own (Claude Code after a background task finishes) and let foci adopt them.
 type TurnAdopter interface {
+	// AdoptRunningTurn binds a fresh turn's TurnEvents to a run already in
+	// flight (an autonomous run the agent layer finds running when it
+	// dispatches). Reports whether it adopted one.
 	AdoptRunningTurn(turn *TurnEvents) bool
+	// SetOnAutonomousOpen installs the callback the backend fires at the
+	// running edge of a run it started itself, so foci can adopt it.
+	SetOnAutonomousOpen(fn func())
 }
 
 // SubagentStopper is optionally implemented by backends that can stop their
@@ -321,13 +326,33 @@ type CommandStopper interface {
 type SubagentReporter interface {
 	SetOnSubagentStatus(fn func(detail string))
 	SetOnSubagentRunning(fn func([]RunningSubagent))
+	// RunningSubagents returns the background work running now (Agent-tool
+	// subagents, background shell commands; #2127).
+	RunningSubagents() []RunningSubagent
 }
 
-// PermissionRuleResponder is optionally implemented by backends that can
-// answer a permission prompt with a persistent "allow always" rule for a
-// command prefix.
-type PermissionRuleResponder interface {
-	RespondToPermissionWithRule(requestID string, prefix string) error
+// PermissionDecision is the user's answer to a permission prompt, in one
+// shape for every backend (#2154 Phase 3). A backend uses the fields it can
+// express on its wire and ignores the rest.
+type PermissionDecision struct {
+	Allow bool
+	// Remember asks the backend to keep the decision for later requests
+	// ("always"): opencode's remember flag; on Claude Code it takes effect
+	// only through RulePrefix.
+	Remember bool
+	// Message is the deny reason shown to the model (Claude Code; codex's
+	// wire has no field for it).
+	Message string
+	// RulePrefix, with Allow, asks for a persistent "allow always" rule for
+	// this command prefix. Honoured only by a backend declaring
+	// CapPermissionRules; others treat it as a plain allow.
+	RulePrefix string
+}
+
+// PermissionResponder is implemented by backends that raise permission
+// prompts: it delivers the user's decision for the prompt requestID.
+type PermissionResponder interface {
+	RespondToPermission(requestID string, d PermissionDecision) error
 }
 
 // PromptChoice represents a choice in a permission prompt.

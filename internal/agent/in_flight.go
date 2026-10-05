@@ -233,9 +233,7 @@ func (a *Agent) markInFlight(key string, delivering bool) func() {
 // nudge gate, api.db usage rows, and the meta frame all key on the normal turn
 // path rather than the old whole-message late-delivery fallback.
 func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator) {
-	adopter, ok := be.(interface {
-		AdoptRunningTurn(*delegator.TurnEvents) bool
-	})
+	adopter, ok := delegator.As[delegator.TurnAdopter](be)
 	if !ok {
 		return // backend cannot adopt a running turn (opencode, tests)
 	}

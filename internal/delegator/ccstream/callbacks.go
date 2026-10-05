@@ -2,9 +2,6 @@ package ccstream
 
 import (
 	"foci/internal/delegator"
-	"foci/internal/delegator/pretool"
-	"foci/internal/delegator/stoprule"
-	"foci/internal/ratelimit"
 )
 
 // SetPermissionPromptFunc sets the function used to send permission prompts.
@@ -47,45 +44,27 @@ func (b *Backend) SetOnSubagentRunning(fn func([]delegator.RunningSubagent)) { b
 // commands, for the statusline's [running] line (#2127).
 func (b *Backend) RunningSubagents() []delegator.RunningSubagent { return b.agents.Running() }
 
-// SetOnAuthFailure registers a hook fired when CC reports an authentication
-// failure (a 401). Used to trigger automated re-login (#843). Must be set
-// before Start.
-func (b *Backend) SetOnAuthFailure(fn func(detail string)) { b.onAuthFailure = fn }
-
-// SetOnRateLimited registers a hook fired with a formatted rate_limit_event
-// notice when CC reports the API is past the "allowed" threshold. The agent
-// delivers it to the user's chat; it does NOT gate periodic work (a warning is
-// not a block). Must be set before Start (#1211/#1238).
-//
-// sessionKey is the foci session this Backend belongs to (StartOptions.SessionKey,
-// empty before Start). Without it the hook carried no session identity and every
-// notice could only reach the agent's default chat (#1857).
-func (b *Backend) SetOnRateLimited(fn func(sessionKey, detail string)) { b.onRateLimited = fn }
-
-// SetRateLimitThrottle sets a shared rate-limit warning throttle so multiple
-// Backends for the same agent (main + facet sessions) don't each fire their
-// own first-seen warning for the same account-wide limit. Must be set before
-// Start.
-func (b *Backend) SetRateLimitThrottle(t *RateLimitThrottle) { b.rlThrottle = t }
-
-// SetPreToolRules installs the source of the pretool rules (#2028) the
-// PreToolUse hook enforces. It is called at every Start and the result is
-// baked into that CC process's hook command line, so a source that reads the
-// live config makes an edit reach the next session start (#2033). Must be set
-// before Start.
-func (b *Backend) SetPreToolRules(rules func() []pretool.Rule) { b.preToolRules = rules }
-
-// SetStopRules installs the source of the stop rules (#2089). Like
-// SetPreToolRules it is read at every Start; with no rules no Stop hook is
-// installed. Must be set before Start.
-func (b *Backend) SetStopRules(rules func() []stoprule.Rule) { b.stopRules = rules }
-
-// SetOnSessionLimit registers a hook fired when CC reports a session limit was
-// hit — a synthetic "You've hit your session limit · resets <time>" message,
-// which (unlike a direct-API 429) never reaches classifyAPIError. The neutral
-// signal lets the agent's shared policy engage the rate-limit gate.
-// Must be set before Start.
-func (b *Backend) SetOnSessionLimit(fn func(signal ratelimit.Signal)) { b.onSessionLimit = fn }
+// SetHostHooks implements delegator.HostHooksAcceptor: the gateway's
+// callbacks, installed before Start.
+//   - OnAuthFailure fires when CC reports an authentication failure (a 401),
+//     to trigger the automated re-login (#843).
+//   - OnRateLimitNotice gets a formatted rate_limit_event notice when CC
+//     reports the API is past the "allowed" threshold, with this Backend's
+//     foci session key so it reaches the session that triggered it (#1857).
+//     It does NOT gate periodic work (#1211/#1238).
+//   - EngageRateLimit fires when CC reports a session limit (a synthetic
+//     "You've hit your session limit · resets <time>" message, which unlike a
+//     direct-API 429 never reaches classifyAPIError).
+//   - PreToolRules (#2028) and StopRules (#2089) are read at every Start and
+//     baked into that CC process's hook command line, so a source that reads
+//     the live config makes an edit reach the next session (#2033).
+func (b *Backend) SetHostHooks(h delegator.HostHooks) {
+	b.onAuthFailure = h.OnAuthFailure
+	b.onRateLimited = h.OnRateLimitNotice
+	b.onSessionLimit = h.EngageRateLimit
+	b.preToolRules = h.PreToolRules
+	b.stopRules = h.StopRules
+}
 
 // SetOnAutonomousOpen registers a hook fired when the backend detects CC has
 // begun a run foci did not open (session_state:running with no foci turn). The

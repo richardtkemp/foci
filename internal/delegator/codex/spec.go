@@ -63,6 +63,7 @@ var spec = delegator.Spec{
 		delegator.CapBranch:        delegator.Yes(),
 		delegator.CapScopedCleanup: delegator.Yes(),
 
+		delegator.CapHostHooks:                delegator.No("reports no auth failures or rate limits foci acts on, and has no pretool or stop hooks"),
 		delegator.CapUnstartedReadinessProbe:  delegator.Yes(),
 		delegator.CapPreToolRules:             delegator.No("no PreToolUse rule engine is wired to the codex hook"),
 		delegator.CapStopRules:                delegator.No("no Stop hook"),

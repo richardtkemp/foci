@@ -86,6 +86,14 @@ func (b *Backend) catalogue() []string {
 	return append([]string(nil), p.catalogueModels...)
 }
 
+// publishModelCaps puts the complete visible Codex catalogue, read after the
+// app-server initialize handshake, into foci's backend-scoped live registry
+// under codex's own key. It used to be a gateway callback (SetOnModelCaps),
+// the last per-backend type assertion in configureDelegated (#2154 Phase 3).
+func publishModelCaps(entries map[string]modelcaps.Caps) {
+	modelcaps.Publish(modelcaps.BackendCodex, entries)
+}
+
 func (b *Backend) refreshModelCaps() error {
 	catalogue, err := b.listModelCatalogue()
 	if err != nil {

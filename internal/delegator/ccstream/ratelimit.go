@@ -77,7 +77,7 @@ type rateLimitWarnState struct {
 }
 
 // RateLimitThrottle holds rate-limit warning throttle state. It is shared
-// across all Backends for an agent (via SetRateLimitThrottle) so that each
+// across all Backends for an agent (agentThrottle, bound at Start) so that each
 // warning fires only once per utilization bucket regardless of how many
 // concurrent sessions/backends are active — rate limits are account-wide.
 type RateLimitThrottle struct {
@@ -85,9 +85,28 @@ type RateLimitThrottle struct {
 	state map[string]rateLimitWarnState
 }
 
-// NewRateLimitThrottle creates a shared rate-limit warning throttle.
+// NewRateLimitThrottle creates a rate-limit warning throttle.
 func NewRateLimitThrottle() *RateLimitThrottle {
 	return &RateLimitThrottle{state: make(map[string]rateLimitWarnState)}
+}
+
+var (
+	agentThrottlesMu sync.Mutex
+	agentThrottles   = map[string]*RateLimitThrottle{}
+)
+
+// agentThrottle is the throttle every Backend of agentID shares (main, facet
+// and batch sessions), so an account-wide limit warns once per bucket however
+// many sessions see it. One per agent for the process lifetime.
+func agentThrottle(agentID string) *RateLimitThrottle {
+	agentThrottlesMu.Lock()
+	defer agentThrottlesMu.Unlock()
+	t, ok := agentThrottles[agentID]
+	if !ok {
+		t = NewRateLimitThrottle()
+		agentThrottles[agentID] = t
+	}
+	return t
 }
 
 // rateLimitCheckResult holds the outcome of a throttle evaluation, for logging.
