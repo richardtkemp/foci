@@ -92,6 +92,12 @@ func syntheticSessionLimitText(m BetaMessage) string {
 	return ""
 }
 
+// usageIsZero reports a message that billed nothing: no input, cache or output.
+func usageIsZero(u TokenUsage) bool {
+	return u.InputTokens == 0 && u.CacheReadInputTokens == 0 &&
+		u.CacheCreationInputTokens == 0 && u.OutputTokens == 0
+}
+
 // OnAssistant handles assistant messages from CC's stdout.
 //
 // Sub-agent messages (ParentToolUseID != nil) are filtered out of the
@@ -162,11 +168,17 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 			textBlocks, toolUseBlocks, thinkingBlocks, totalTextBytes, stopReason)
 	}
 
+	// A message that made no API call (the <synthetic> model, or usage all
+	// zero) says nothing about the context fill or the model, so it must not
+	// replace the last real call's: OnResult hands that fill to compaction, and
+	// a zero there skips auto-compaction for the turn (#2167). The early drops
+	// above catch the two known synthetic texts; this covers the rest.
+	synthetic := msg.Message.Model == syntheticModel
 	b.mu.Lock()
-	if isTopLevel && msg.Message.Model != "" {
+	if isTopLevel && msg.Message.Model != "" && !synthetic {
 		b.lastModel = msg.Message.Model
 	}
-	if isTopLevel {
+	if isTopLevel && !synthetic && !usageIsZero(msg.Message.Usage) {
 		u := msg.Message.Usage
 		b.lastUsage = &u
 	}

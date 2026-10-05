@@ -529,7 +529,7 @@ The tmux backend's session watcher tails Claude Code's JSONL session file via fs
 
 **Pre-send offset:** Before `ImmediateInject(SourceUser)` pastes the prompt into the tmux pane (via the internal `sendToPane` primitive), the watcher records the current JSONL file size. The watcher starts reading from this offset so it doesn't replay old content from earlier turns. Falls back to `-1` (tail from end of file) if the offset discovery fails.
 
-**Synthetic response filter:** Claude Code emits synthetic messages (model: `<synthetic>`) such as `"No response requested."` and `"[[NO_RESPONSE]]"`. The watcher filters these at the event level — they never reach the reply callback.
+**Synthetic response filter:** Claude Code emits synthetic messages (model: `<synthetic>`) such as `"No response requested."` and `"[[NO_RESPONSE]]"`. The watcher filters these at the event level — they never reach the reply callback. ccstream's `OnAssistant` also keeps any `<synthetic>` or all-zero-usage message from replacing `lastUsage`/`lastModel`, so the turn's context fill (which drives auto-compaction) stays the last real call's (#2167).
 
 **Typing indicator:** Both backends use `SetTypingFunc` to register a callback. Set to `true` when a turn begins (via `ImmediateInject(SourceUser)` at idle), set to `false` when `OnTurnComplete` fires. The platform `Connection.SetTyping(bool)` is stateful — `true` starts a periodic ticker (Telegram: 4s, Discord: 9s) that keeps the indicator alive until `false` is called. The ccstream backend also restarts the typing indicator on `OnAssistant` (mid-turn text) and `OnToolProgress` (heartbeats during long tools).
 

@@ -1357,6 +1357,53 @@ func TestOnAssistant_DropsSyntheticNoResponse(t *testing.T) {
 	}
 }
 
+// TestOnResult_ZeroUsageLastMessageKeepsContextFill pins #2167: a top-level
+// assistant message reporting no usage (a <synthetic> one the early drops above
+// do not catch, or any all-zero message) must not replace the turn's last real
+// context fill or model. If it did, FinalUsage would read 0, so foci would skip
+// auto-compaction that turn and /status would show fill 0.
+func TestOnResult_ZeroUsageLastMessageKeepsContextFill(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name, model string
+	}{
+		{"synthetic", syntheticModel},
+		{"real model, zero usage", "claude-opus-4-20250514"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var got *delegator.TurnResult
+			b := &Backend{}
+			applyHandler(b, &testHandler{OnTurnComplete: func(r *delegator.TurnResult) { got = r }})
+
+			b.OnAssistant(&AssistantMessage{Message: BetaMessage{
+				Model:   "claude-opus-4-20250514",
+				Content: []ContentBlock{{Type: "text", Text: "real reply"}},
+				Usage:   TokenUsage{InputTokens: 7, CacheReadInputTokens: 150000, CacheCreationInputTokens: 900, OutputTokens: 40},
+			}})
+			b.OnAssistant(&AssistantMessage{Message: BetaMessage{
+				Model:   tc.model,
+				Content: []ContentBlock{{Type: "text", Text: "API Error: Connection error."}},
+			}})
+			b.OnResult(&ResultMessage{Subtype: "success", Result: "real reply", Usage: TokenUsage{OutputTokens: 40}})
+
+			if got == nil || got.Usage == nil {
+				t.Fatal("no turn result usage")
+			}
+			u := got.Usage
+			if u.InputTokens != 7 || u.CacheReadInputTokens != 150000 || u.CacheCreationInputTokens != 900 {
+				t.Errorf("context fill = in %d / read %d / create %d, want 7 / 150000 / 900 (the last real call)",
+					u.InputTokens, u.CacheReadInputTokens, u.CacheCreationInputTokens)
+			}
+			if got.Model == "" || strings.Contains(got.Model, syntheticModel) {
+				t.Errorf("Model = %q, want the real model", got.Model)
+			}
+		})
+	}
+}
+
 func TestOnAssistant_KeepsRealNoResponseText(t *testing.T) {
 	// A REAL-model message that merely contains "No response requested." is a
 	// genuine reply and must NOT be dropped — only the <synthetic> sentinel is.
