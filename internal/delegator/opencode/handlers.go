@@ -26,7 +26,7 @@ import (
 func (b *Backend) handleEvent(ev rawEvent) {
 	// Child session events are tagged with childCallID by the subscriber.
 	// Route them to a dedicated handler that fires OnSubagentText without
-	// touching the parent's turn state (turnText, turnTools, etc.).
+	// touching the parent's turn state (turnText, seenToolCalls, etc.).
 	if ev.childCallID != "" {
 		b.handleChildEvent(ev)
 		return
@@ -132,7 +132,7 @@ func (b *Backend) handleEvent(ev rawEvent) {
 // with its OnSubagentStart/End; a child's completed assistant message is
 // booked as the subagent's call (actor = the task tool's callID). Everything
 // else is dropped. Critically, this path never touches the parent's turn state
-// (turnText, turnTools, lastUsage, etc.), mirroring ccstream's guard where
+// (turnText, seenToolCalls, lastUsage, etc.), mirroring ccstream's guard where
 // ParentToolUseID != nil returns before any accumulation.
 func (b *Backend) handleChildEvent(ev rawEvent) {
 	switch ev.Type {
@@ -328,7 +328,6 @@ func (b *Backend) handleToolPart(part Part) {
 				b.seenToolCalls = make(map[string]bool)
 			}
 			b.seenToolCalls[part.CallID] = true
-			b.turnTools++
 		}
 		b.turnMu.Unlock()
 		if seen {
@@ -487,7 +486,7 @@ func (b *Backend) onSessionIdle(sessionID string) {
 	// Snapshot accumulated turn state.
 	b.turnMu.Lock()
 	text := b.turnText.String()
-	tools := b.turnTools
+	sawTool := len(b.seenToolCalls) > 0
 	turn := b.turnEvents
 	ch := b.turnResultCh
 	b.turnMu.Unlock()
@@ -499,9 +498,8 @@ func (b *Backend) onSessionIdle(sessionID string) {
 
 	// Build TurnResult.
 	result := &delegator.TurnResult{
-		Text:      text,
-		ToolCalls: tools,
-		Model:     model,
+		Text:  text,
+		Model: model,
 	}
 	// Context fill only: the turn's spend is already in the ledger, one call
 	// per message, and the agent reads the turn's cost from there.
@@ -538,7 +536,7 @@ func (b *Backend) onSessionIdle(sessionID string) {
 	// drain guards against. turn==nil means the turn was already completed
 	// (e.g. the aborted turn 1 via failInFlightTurn), so this only fires for a
 	// real active turn that produced nothing. Skip during an abort drain.
-	if !wasAborting && turn != nil && result.Text == "" && result.ToolCalls == 0 {
+	if !wasAborting && turn != nil && result.Text == "" && !sawTool {
 		log.NewComponentLogger(b.logComponent()).Warnf("onSessionIdle: turn completed with no text/tools — possible stray abort idle mis-attributed to steered turn")
 	}
 
@@ -731,7 +729,7 @@ func (b *Backend) failInFlightTurn(reason string) {
 	turn := b.turnEvents
 	ch := b.turnResultCh
 	text := b.turnText.String()
-	tools := b.turnTools
+	sawTool := len(b.seenToolCalls) > 0
 	wasAborting := b.aborting
 	b.turnEvents = nil
 	b.turnActive = false
@@ -746,7 +744,7 @@ func (b *Backend) failInFlightTurn(reason string) {
 	// deliberate POST /abort paths, never unexpected session deaths, so their
 	// empty results are also suppressed.
 	expectedEmpty := reason == ErrMessageAborted || reason == rateLimitTurnEnd
-	if !wasAborting && !expectedEmpty && turn != nil && text == "" && tools == 0 {
+	if !wasAborting && !expectedEmpty && turn != nil && text == "" && !sawTool {
 		log.NewComponentLogger(b.logComponent()).Warnf("failInFlightTurn: active turn ended with no text/tools on %s — possible premature error on steered turn", reason)
 	}
 

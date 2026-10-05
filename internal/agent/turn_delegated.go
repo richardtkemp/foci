@@ -487,13 +487,6 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 	a := t.agent
 	bt := t
 
-	// Cumulative tool-call state for every_n_tools / after_error nudges.
-	// These fire via PostToolNudgeFunc, once per tool hook_response — the
-	// scheduler's internal cooldown prevents a rule from re-firing on
-	// back-to-back tools. Lives in a closure so that each turn starts
-	// at zero without polluting DelegatedTransport's long-lived state.
-	var toolCount int
-
 	// Pre-answer gate state: when PreAnswerNudgeFunc returns a follow-up,
 	// the backend re-dispatches the turn for a second round. preAnswerFired
 	// flips to true on first return so the second round's call yields "" and
@@ -517,8 +510,14 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 	// to this turn's conversation-DB entry.
 	a.DrainThinking(ts.SessionKey)
 
+	// This turn's tool calls, counted once from the per-call SessionEvents
+	// every backend emits (#2193). Reset here for the same reason as the
+	// thinking buffer above; NOT reset between pre-answer rounds, so a
+	// re-dispatch keeps accumulating.
+	tools := a.resetToolTally(ts.SessionKey)
+
 	// Per-turn bookkeeping callbacks via TurnEvents. These hold per-turn
-	// state (preAnswerFired, toolCount, ts) and may legitimately be nil
+	// state (preAnswerFired, tools, ts) and may legitimately be nil
 	// between turns; the backend tolerates that.
 	//
 	// Gate the mid-turn callbacks on the backend's declared capabilities
@@ -534,7 +533,9 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 			if a.Nudger == nil || !nudgesAllowed(ts) {
 				return nil
 			}
-			toolCount++
+			// The backend has already delivered this tool's OnToolEnd, so the
+			// count includes it.
+			toolCount := tools.completed()
 			// Record before evaluating so tool_pattern rules see this tool
 			// in the ring buffer when shouldFire walks the recent events.
 			a.Nudger.RecordToolCall(toolName, toolInput)
@@ -558,13 +559,8 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 			if preAnswerFired || a.Nudger == nil || !a.Nudger.PreAnswerGate() || !nudgesAllowed(ts) {
 				return ""
 			}
-			// A backend without post-tool callbacks (opencode) never
-			// advances toolCount; its result's tool count stands in.
-			tools := toolCount
-			if postToolNudgeFunc == nil && result != nil {
-				tools = result.ToolCalls
-			}
-			if tools < a.Nudger.PreAnswerMinTools() {
+			toolCount := tools.calls()
+			if toolCount < a.Nudger.PreAnswerMinTools() {
 				return ""
 			}
 			reminder := a.Nudger.CheckPreAnswer()
@@ -579,7 +575,7 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 				preAnswerFirstText = result.Text
 			}
 			a.logger().Infof("nudge: pre-answer gate fired for session %s (tool_count=%d)",
-				ts.SessionKey, tools)
+				ts.SessionKey, toolCount)
 			return a.wrapStandaloneNudge(reminder)
 		}
 	}

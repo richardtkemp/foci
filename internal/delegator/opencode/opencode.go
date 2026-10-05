@@ -243,7 +243,6 @@ type Backend struct {
 	turnEvents   *delegator.TurnEvents
 	turnResultCh chan *ResultMessage
 	turnText     strings.Builder
-	turnTools    int
 	lastModel    string
 	// Compares foci's priced cost against opencode's reported one (#1674).
 	costCheck     delegator.CostDivergenceChecker

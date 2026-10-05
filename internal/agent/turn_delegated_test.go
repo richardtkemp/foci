@@ -1380,13 +1380,17 @@ func TestDelegatedTransport_RunInference_WaitForPermission(t *testing.T) {
 // PostToolNudgeFunc drives CheckAfterTools: on the N-th tool call the
 // every_n_tools rule fires and the returned reminder is formatted with the
 // nudge header. This is the delegated equivalent of the API transport's
-// mid-loop CheckAfterTools call after each tool batch.
+// mid-loop CheckAfterTools call after each tool batch. The count comes from
+// the tool's OnToolEnd, which a backend delivers before the post-tool callback
+// (#2193); the second end for an already-ended call must not advance it.
 func TestDelegatedTransport_RunInference_PostToolNudgeWired(t *testing.T) {
 	var capturedNudgeFunc func(string, string, bool) []string
+	var capturedHandler *mockHandler
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
 		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
 			capturedNudgeFunc = handler.PostToolNudgeFunc
+			capturedHandler = handler
 			if handler.OnTurnComplete != nil {
 				handler.OnTurnComplete(&delegator.TurnResult{Text: "ok"})
 			}
@@ -1405,6 +1409,7 @@ func TestDelegatedTransport_RunInference_PostToolNudgeWired(t *testing.T) {
 
 	mgr := newMockDelegatedManager(t, be)
 	a := &Agent{Model: "test-model", DelegatedManager: mgr, Nudger: sched}
+	a.AttachDelivery(be, "test/s")
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
 	ts.Prompt = "hi"
@@ -1416,16 +1421,24 @@ func TestDelegatedTransport_RunInference_PostToolNudgeWired(t *testing.T) {
 	if capturedNudgeFunc == nil {
 		t.Fatal("PostToolNudgeFunc should be wired into the handler")
 	}
+	toolDone := func(id, name string) []string {
+		capturedHandler.OnToolEnd(id, name, "", false)
+		return capturedNudgeFunc(name, "", false)
+	}
 
 	// Two successful tools — no reminder yet (every_n_tools N=3, after_error needs isError).
-	if got := capturedNudgeFunc("Read", "", false); len(got) != 0 {
+	if got := toolDone("t1", "Read"); len(got) != 0 {
 		t.Errorf("PostToolNudgeFunc after tool 1 = %v, want empty", got)
 	}
-	if got := capturedNudgeFunc("Edit", "", false); len(got) != 0 {
+	if got := toolDone("t2", "Edit"); len(got) != 0 {
 		t.Errorf("PostToolNudgeFunc after tool 2 = %v, want empty", got)
 	}
+	// A repeated end for tool 2 is still two tools.
+	if got := toolDone("t2", "Edit"); len(got) != 0 {
+		t.Errorf("PostToolNudgeFunc after a repeated end = %v, want empty", got)
+	}
 	// Third tool — every_n_tools should fire.
-	got := capturedNudgeFunc("Bash", "", false)
+	got := toolDone("t3", "Bash")
 	if len(got) == 0 {
 		t.Fatal("PostToolNudgeFunc after tool 3 should return a reminder")
 	}
@@ -1640,17 +1653,20 @@ func TestDelegatedTransport_RunInference_PreAnswerGateDisabled(t *testing.T) {
 	}
 }
 
-// TestDelegatedTransport_RunInference_PreAnswerMinToolsFromResult: a backend
-// that declares pre-answer but not post-tool nudges (opencode, #2176) never
-// calls PostToolNudgeFunc, so the per-turn tool counter stays at zero. The
-// min-tools threshold must then read the result's own tool count, or the
-// gate could never pass its default threshold of 2.
-func TestDelegatedTransport_RunInference_PreAnswerMinToolsFromResult(t *testing.T) {
+// TestDelegatedTransport_RunInference_PreAnswerMinToolsFromToolEvents: the
+// min-tools threshold counts the turn's tool calls from the per-call
+// SessionEvents, so it works for a backend that declares pre-answer but not
+// post-tool nudges (opencode, #2176) without the backend counting anything
+// itself (#2193). A start and an end for one call count once, and the
+// backend's own compaction pseudo-tool does not count.
+func TestDelegatedTransport_RunInference_PreAnswerMinToolsFromToolEvents(t *testing.T) {
 	var capturedPreAnswerFunc func(*delegator.TurnResult) string
+	var capturedHandler *mockHandler
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
 		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
 			capturedPreAnswerFunc = handler.PreAnswerNudgeFunc
+			capturedHandler = handler
 			if handler.OnTurnComplete != nil {
 				handler.OnTurnComplete(&delegator.TurnResult{Text: "final"})
 			}
@@ -1676,6 +1692,7 @@ func TestDelegatedTransport_RunInference_PreAnswerMinToolsFromResult(t *testing.
 		DelegatedManager: mgr,
 		Nudger:           sched,
 	}
+	a.AttachDelivery(be, "test/s")
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
 	ts.Prompt = "hi"
@@ -1687,11 +1704,16 @@ func TestDelegatedTransport_RunInference_PreAnswerMinToolsFromResult(t *testing.
 	if capturedPreAnswerFunc == nil {
 		t.Fatal("PreAnswerNudgeFunc should be wired when the backend declares pre_answer_nudge")
 	}
-	if got := capturedPreAnswerFunc(&delegator.TurnResult{Text: "a", ToolCalls: 1}); got != "" {
+	capturedHandler.OnToolStart("c1", "bash", "{}")
+	capturedHandler.OnToolEnd("c1", "bash", "out", false)
+	capturedHandler.OnToolStart("k1", delegator.CompactionToolName, "")
+	capturedHandler.OnToolEnd("k1", delegator.CompactionToolName, "", false)
+	if got := capturedPreAnswerFunc(&delegator.TurnResult{Text: "a"}); got != "" {
 		t.Errorf("gate fired with 1 tool call under min_tools=2: %q", got)
 	}
-	if got := capturedPreAnswerFunc(&delegator.TurnResult{Text: "a", ToolCalls: 2}); !strings.Contains(got, "verify-your-answer") {
-		t.Errorf("gate with 2 tool calls in the result = %q, want the pre_answer reminder", got)
+	capturedHandler.OnToolStart("c2", "read", "{}")
+	if got := capturedPreAnswerFunc(&delegator.TurnResult{Text: "a"}); !strings.Contains(got, "verify-your-answer") {
+		t.Errorf("gate with 2 tool calls this turn = %q, want the pre_answer reminder", got)
 	}
 }
 

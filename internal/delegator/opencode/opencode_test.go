@@ -258,7 +258,7 @@ func TestBeginTurnResetsState(t *testing.T) {
 
 	// Simulate prior turn residue.
 	b.turnText.WriteString("old text")
-	b.turnTools = 5
+	b.seenToolCalls = map[string]bool{"call-old": true}
 	b.lastUsage = &TokenUsage{InputTokens: 100}
 
 	handler := &testHandler{}
@@ -268,8 +268,8 @@ func TestBeginTurnResetsState(t *testing.T) {
 	if b.turnText.String() != "" {
 		t.Errorf("turnText = %q after beginTurn, want empty", b.turnText.String())
 	}
-	if b.turnTools != 0 {
-		t.Errorf("turnTools = %d after beginTurn, want 0", b.turnTools)
+	if len(b.seenToolCalls) != 0 {
+		t.Errorf("seenToolCalls = %v after beginTurn, want empty", b.seenToolCalls)
 	}
 	b.turnMu.Unlock()
 
@@ -468,7 +468,7 @@ func TestWaitForTurn_ContextCancellation(t *testing.T) {
 // // assistant message (ParentToolUseID != nil) fires OnText with blockquoted
 // // text so the user can follow sub-agent progress, but does NOT fire
 // // OnToolStart (the parent tracker owns tool visibility) and does NOT mutate
-// // the parent's per-turn accumulator state (turnText, turnTools).
+// // the parent's per-turn accumulator state (turnText).
 // DISABLED(opencode): uses ccstream ParentToolUseID; opencode subtasks are subtask parts on parent message (Step 7).
 // // TestOnAssistant_SubagentMultilineBlockquote verifies that multiline
 // // sub-agent text gets every line prefixed with "> ".

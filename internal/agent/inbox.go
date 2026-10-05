@@ -1177,7 +1177,7 @@ func (a *Agent) sessionRouterLocked(sk string) *sessionRouter {
 // re-attaches the same closures — the attach happens at backend acquisition
 // (setBackendCallbacks), never per turn. Delivery flows through the router;
 // thinking deltas also accumulate into a session-scoped buffer that DrainThinking
-// empties per turn. Replaces the per-RunInference attach that bound to the ctx
+// empties per turn, and tool starts/ends into the session's toolTally. Replaces the per-RunInference attach that bound to the ctx
 // sink and poisoned concurrent autonomous runs (#1068 Phase 1).
 func (a *Agent) AttachDelivery(be delegator.Delegator, sk string) {
 	a.routersMu.Lock()
@@ -1192,6 +1192,7 @@ func (a *Agent) AttachDelivery(be delegator.Delegator, sk string) {
 		router := a.sessionRouterLocked(sk)
 		buf := &strings.Builder{}
 		a.thinkingBufs[sk] = buf
+		tally := a.toolTallyLocked(sk)
 		se = &delegator.SessionEvents{
 			OnText: func(text string) {
 				router.Emit(context.Background(), turnevent.TextBlock{Text: text, Phase: turnevent.PhaseIntermediate})
@@ -1216,9 +1217,11 @@ func (a *Agent) AttachDelivery(be delegator.Delegator, sk string) {
 				buf.WriteString(delta)
 			},
 			OnToolStart: func(id, name, input string) {
+				tally.start(id, name)
 				router.Emit(context.Background(), turnevent.ToolCall{ID: id, Name: name, Args: []byte(input)})
 			},
 			OnToolEnd: func(id, name, output string, isError bool) {
+				tally.end(id, name)
 				router.Emit(context.Background(), turnevent.ToolResult{ID: id, Name: name, Output: output, IsError: isError})
 			},
 		}

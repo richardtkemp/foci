@@ -277,10 +277,6 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 			}
 
 		case "tool_use":
-			b.turnMu.Lock()
-			b.turnTools++
-			b.turnMu.Unlock()
-
 			if se != nil && se.OnToolStart != nil {
 				inputStr := string(block.Input)
 				se.OnToolStart(block.ID, block.Name, inputStr)
@@ -379,7 +375,6 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	b.turnMu.Lock()
 	turnActive := b.turnActive
 	turnText := b.turnText.String()
-	turnTools := b.turnTools
 	b.turnMu.Unlock()
 
 	// Build TurnResult. Prefer turnText (accumulated from all assistant
@@ -451,10 +446,9 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	}
 
 	result := &delegator.TurnResult{
-		Text:      text,
-		Model:     prefixedModel(resultModel),
-		ToolCalls: turnTools,
-		Usage:     turnUsage,
+		Text:  text,
+		Model: prefixedModel(resultModel),
+		Usage: turnUsage,
 	}
 
 	// Stash this cycle's result; the turn's output is the sum across cycles,

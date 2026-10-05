@@ -105,7 +105,6 @@ func (b *Backend) beginTurnLocked(turn *delegator.TurnEvents) {
 		b.turnRowID = turn.TurnID
 	}
 	b.turnText.Reset()
-	b.turnTools = 0
 	b.turnResultCh = make(chan *ResultMessage, 1)
 	b.stashedResult = nil
 	b.stashedResultMsg = nil

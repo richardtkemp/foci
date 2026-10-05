@@ -75,7 +75,7 @@ func (b *Backend) onTurnCompleted(params *turnCompletedParams) {
 	// completing with its child still working, so ending runs here reported
 	// children as finished while they were going.
 	//
-	// Read turnText/turnTools under turnMu: onItemCompleted writes them under
+	// Read turnText under turnMu: onItemCompleted writes them under
 	// turnMu from the reader goroutine and completeTurn Resets turnText under
 	// turnMu from the agent goroutine (e.g. a turn/start >30s timeout firing
 	// while the turn is still running) — reading the strings.Builder without
@@ -91,11 +91,9 @@ func (b *Backend) onTurnCompleted(params *turnCompletedParams) {
 	b.turnMu.Lock()
 	usage := b.turnUsageLocked()
 	text := b.turnText.String()
-	tools := b.turnTools
 	b.turnMu.Unlock()
 	result := &delegator.TurnResult{
 		Text:       text,
-		ToolCalls:  tools,
 		Usage:      usage,
 		Model:      model,
 		ThreadName: threadName,
@@ -158,7 +156,7 @@ func (b *Backend) onItemStarted(params *itemStartedParams) {
 		}
 	case "contextCompaction":
 		if se != nil && se.OnToolStart != nil {
-			se.OnToolStart(item.ID, "compact", "")
+			se.OnToolStart(item.ID, delegator.CompactionToolName, "")
 		}
 	// subAgentActivity is the authoritative child-thread lifecycle. Its item ID
 	// is transient; the agentThreadId is stable across collab follow-ups.
@@ -316,35 +314,23 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 		}
 
 	case "commandExecution":
-		b.turnMu.Lock()
-		b.turnTools++
-		b.turnMu.Unlock()
 		if se != nil && se.OnToolEnd != nil {
 			isError := item.Status == "failed"
 			se.OnToolEnd(item.ID, "bash", "", isError)
 		}
 
 	case "fileChange":
-		b.turnMu.Lock()
-		b.turnTools++
-		b.turnMu.Unlock()
 		if se != nil && se.OnToolEnd != nil {
 			se.OnToolEnd(item.ID, "edit", "", item.Status == "failed")
 		}
 
 	case "mcpToolCall":
-		b.turnMu.Lock()
-		b.turnTools++
-		b.turnMu.Unlock()
 		if se != nil && se.OnToolEnd != nil {
 			name := "mcp:" + item.Server + "." + item.Tool
 			se.OnToolEnd(item.ID, name, "", item.Status == "failed")
 		}
 
 	case "dynamicToolCall":
-		b.turnMu.Lock()
-		b.turnTools++
-		b.turnMu.Unlock()
 		if se != nil && se.OnToolEnd != nil {
 			name := item.Tool
 			if item.Namespace != "" {
@@ -354,17 +340,11 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 		}
 
 	case "webSearch":
-		b.turnMu.Lock()
-		b.turnTools++
-		b.turnMu.Unlock()
 		if se != nil && se.OnToolEnd != nil {
 			se.OnToolEnd(item.ID, "web_search", "", false)
 		}
 
 	case "imageGeneration":
-		b.turnMu.Lock()
-		b.turnTools++
-		b.turnMu.Unlock()
 		if se != nil && se.OnToolEnd != nil {
 			se.OnToolEnd(item.ID, "image_gen", "", item.Status == "failed")
 		}
@@ -375,10 +355,9 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 		}
 
 	case "contextCompaction":
-		// Not counted in turnTools: compaction is internal bookkeeping, not
-		// a user-facing tool call — counting it here skewed
-		// TurnResult.ToolCalls high while collabAgentToolCall (a real
-		// subagent spawn, below) skewed it low by never counting at all.
+		// Shown as a tool under delegator.CompactionToolName, which the agent
+		// layer's tool count skips: compaction is internal bookkeeping, not a
+		// call the model made.
 		b.compactMu.Lock()
 		if b.compactDoneCh != nil {
 			close(b.compactDoneCh)
@@ -386,7 +365,7 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 		}
 		b.compactMu.Unlock()
 		if se != nil && se.OnToolEnd != nil {
-			se.OnToolEnd(item.ID, "compact", "", false)
+			se.OnToolEnd(item.ID, delegator.CompactionToolName, "", false)
 		}
 
 	case "subAgentActivity":
@@ -400,14 +379,10 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 		}
 
 	case "collabAgentToolCall":
+		// Not counted as a tool call: the agent layer counts from
+		// OnToolStart/OnToolEnd (#2193), and this item emits neither until a
+		// real specimen shows what it represents.
 		b.logUnhandledCollabItem("item/completed", params.Item)
-		// Still counted as a tool call, like every other item type above.
-		// That accounting is independent of what the item MEANS — if one ever
-		// arrives, undercounting TurnResult.ToolCalls would be wrong whatever
-		// we later decide the payload represents.
-		b.turnMu.Lock()
-		b.turnTools++
-		b.turnMu.Unlock()
 	}
 }
 
@@ -660,7 +635,6 @@ func (b *Backend) completeTurn(result *delegator.TurnResult) {
 	ch := b.turnResultCh
 	b.turnResultCh = nil
 	b.turnText.Reset()
-	b.turnTools = 0
 	b.resetTurnUsageLocked()
 	b.turnMu.Unlock()
 

@@ -258,6 +258,10 @@ type Agent struct {
 	// for the backend's lifetime; DrainThinking reads-and-resets it at each turn's
 	// completion to log that turn's thinking. Guarded by routersMu.
 	thinkingBufs map[string]*strings.Builder
+	// toolTallies counts each session's tool calls for the current delegated
+	// turn, fed by the same SessionEvents (OnToolStart/OnToolEnd) and reset per
+	// turn by buildTurnEvents (#2193). Guarded by routersMu.
+	toolTallies map[string]*toolTally
 	// ResolveLateConn resolves the current delivering connection for a session
 	// key, for the router's late-delivery fallback. Called at Emit time so it
 	// tracks connect/disconnect (a session that reconnects starts delivering

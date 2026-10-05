@@ -15,7 +15,6 @@ func applySessionAndTurn(b *Backend, session *delegator.SessionEvents, turn *del
 	b.turnEvents = turn
 	b.turnResultCh = make(chan *delegator.TurnResult, 1)
 	b.turnText.Reset()
-	b.turnTools = 0
 	b.turnMu.Unlock()
 }
 

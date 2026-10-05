@@ -168,7 +168,6 @@ type Backend struct {
 	compactTranscriptOff int64
 	compactStartCh       chan struct{}   // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"
 	turnText             strings.Builder // accumulates text across assistant messages
-	turnTools            int             // tool_use count this turn
 	// Idle-keyed turn completion (#813 successor). The turn boundary is CC's
 	// own `session_state_changed` running/idle SDK stream (enabled via
 	// CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1 at launch): running/idle bracket

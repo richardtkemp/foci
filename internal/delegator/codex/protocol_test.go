@@ -127,12 +127,8 @@ func TestDispatch_ItemCompleted(t *testing.T) {
 	}
 
 	b.turnMu.Lock()
-	tools := b.turnTools
 	text := b.turnText.String()
 	b.turnMu.Unlock()
-	if tools != 2 {
-		t.Errorf("turnTools = %d, want 2", tools)
-	}
 	if text != "hello" {
 		t.Errorf("turnText = %q, want %q", text, "hello")
 	}
@@ -257,13 +253,6 @@ func TestDispatch_CollabAgentToolCall_IsLoggedNotInterpreted(t *testing.T) {
 		if !strings.Contains(found, frag) {
 			t.Errorf("logged payload is missing %s — a truncated specimen cannot be acted on:\n%s", frag, found)
 		}
-	}
-
-	b.turnMu.Lock()
-	tools := b.turnTools
-	b.turnMu.Unlock()
-	if tools != 1 {
-		t.Errorf("turnTools = %d, want 1 — accounting is independent of what the payload means", tools)
 	}
 }
 

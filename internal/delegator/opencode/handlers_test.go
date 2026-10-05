@@ -342,8 +342,8 @@ func TestOnMessagePartDelta_EmptyDeltaOrPartIDIgnored(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestOnMessagePartUpdated_ToolRunningFiresOnToolStart(t *testing.T) {
-	// Verifies state.status=="running" fires OnToolStart and
-	// increments turnTools.
+	// Verifies state.status=="running" fires OnToolStart and records the
+	// call in seenToolCalls (the no-text/tools watchdogs read it).
 	b := newHandlerTestBackend(t)
 	c := b.captures()
 
@@ -366,10 +366,10 @@ func TestOnMessagePartUpdated_ToolRunningFiresOnToolStart(t *testing.T) {
 		t.Errorf("toolStart = %+v", tc)
 	}
 	b.turnMu.Lock()
-	tools := b.turnTools
+	tools := len(b.seenToolCalls)
 	b.turnMu.Unlock()
 	if tools != 1 {
-		t.Errorf("turnTools = %d, want 1", tools)
+		t.Errorf("seenToolCalls = %d, want 1", tools)
 	}
 }
 
@@ -440,10 +440,10 @@ func TestOnMessagePartUpdated_ToolRunningDedupedByCallID(t *testing.T) {
 		t.Errorf("OnToolStart fired %d times for same callID, want 1", len(*c.toolStarts))
 	}
 	b.turnMu.Lock()
-	tools := b.turnTools
+	tools := len(b.seenToolCalls)
 	b.turnMu.Unlock()
 	if tools != 1 {
-		t.Errorf("turnTools = %d, want 1 (deduped)", tools)
+		t.Errorf("seenToolCalls = %d, want 1 (deduped)", tools)
 	}
 }
 
@@ -649,7 +649,7 @@ func TestOnMessageUpdated_FinishSetDoesNotFireTurnCompleteEarly(t *testing.T) {
 
 func TestOnSessionIdle_BuildsTurnResultFromAccumulatedState(t *testing.T) {
 	// Verifies OnSessionIdle builds a TurnResult from accumulated
-	// turnText + turnTools + lastModel + lastUsage, fires
+	// turnText + lastModel + lastUsage, fires
 	// OnTurnComplete, clears turn state, and signals turnResultCh.
 	b := newHandlerTestBackend(t)
 	c := b.captures()
@@ -657,7 +657,6 @@ func TestOnSessionIdle_BuildsTurnResultFromAccumulatedState(t *testing.T) {
 	// Simulate accumulated state.
 	b.turnMu.Lock()
 	b.turnText.WriteString("the answer is 42")
-	b.turnTools = 3
 	b.turnMu.Unlock()
 	b.mu.Lock()
 	b.lastModel = "claude-sonnet-4"
@@ -672,9 +671,6 @@ func TestOnSessionIdle_BuildsTurnResultFromAccumulatedState(t *testing.T) {
 	r := *c.completed
 	if r.Text != "the answer is 42" {
 		t.Errorf("result.Text = %q", r.Text)
-	}
-	if r.ToolCalls != 3 {
-		t.Errorf("result.ToolCalls = %d, want 3", r.ToolCalls)
 	}
 	if r.Model != "claude-sonnet-4" {
 		t.Errorf("result.Model = %q", r.Model)

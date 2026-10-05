@@ -76,7 +76,6 @@ func (b *Backend) beginTurnLocked(turn *delegator.TurnEvents) {
 	b.turnActive = true
 	b.turnEvents = turn
 	b.turnText.Reset()
-	b.turnTools = 0
 	b.turnResultCh = make(chan *ResultMessage, 1)
 	b.seenToolCalls = make(map[string]bool)
 	b.seenTextParts = make(map[string]bool)

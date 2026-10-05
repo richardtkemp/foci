@@ -284,7 +284,6 @@ func TestBeginTurnResetsState(t *testing.T) {
 
 	// Simulate prior turn residue.
 	b.turnText.WriteString("old text")
-	b.turnTools = 5
 	b.lastUsage = &TokenUsage{InputTokens: 100}
 
 	handler := &testHandler{}
@@ -293,9 +292,6 @@ func TestBeginTurnResetsState(t *testing.T) {
 	b.turnMu.Lock()
 	if b.turnText.String() != "" {
 		t.Errorf("turnText = %q after beginTurn, want empty", b.turnText.String())
-	}
-	if b.turnTools != 0 {
-		t.Errorf("turnTools = %d after beginTurn, want 0", b.turnTools)
 	}
 	b.turnMu.Unlock()
 
@@ -1211,13 +1207,6 @@ func TestOnAssistant_ToolUseTracking(t *testing.T) {
 	}
 	b.OnAssistant(msg)
 
-	b.turnMu.Lock()
-	tools := b.turnTools
-	b.turnMu.Unlock()
-
-	if tools != 2 {
-		t.Errorf("turnTools = %d, want 2", tools)
-	}
 	if len(toolStarts) != 2 {
 		t.Fatalf("toolStarts count = %d, want 2", len(toolStarts))
 	}
@@ -1719,10 +1708,9 @@ func TestOnResult_BasicTurnCompletion(t *testing.T) {
 	}
 	b.mu.Unlock()
 
-	// Accumulate text and tool count.
+	// Accumulate text.
 	b.turnMu.Lock()
 	b.turnText.WriteString("The answer is 42.")
-	b.turnTools = 3
 	b.turnMu.Unlock()
 
 	result := &ResultMessage{
@@ -1737,9 +1725,6 @@ func TestOnResult_BasicTurnCompletion(t *testing.T) {
 	}
 	if completedResult.Text != "The answer is 42." {
 		t.Errorf("result.Text = %q, want %q", completedResult.Text, "The answer is 42.")
-	}
-	if completedResult.ToolCalls != 3 {
-		t.Errorf("result.ToolCalls = %d, want 3", completedResult.ToolCalls)
 	}
 	if completedResult.Model != "claude/claude-sonnet-4-20250514" {
 		t.Errorf("result.Model = %q, want %q", completedResult.Model, "claude/claude-sonnet-4-20250514")
@@ -1886,7 +1871,7 @@ func TestOnResult_UsesResultTextWhenPresent(t *testing.T) {
 // assistant message (ParentToolUseID != nil) fires OnText with blockquoted
 // text so the user can follow sub-agent progress, but does NOT fire
 // OnToolStart (the parent tracker owns tool visibility) and does NOT mutate
-// the parent's per-turn accumulator state (turnText, turnTools).
+// the parent's per-turn accumulator state (turnText).
 func TestOnAssistant_SubagentSurfacesBlockquotedText(t *testing.T) {
 	t.Parallel()
 
@@ -1925,13 +1910,9 @@ func TestOnAssistant_SubagentSurfacesBlockquotedText(t *testing.T) {
 	// Subagent content must not touch the parent's per-turn state.
 	b.turnMu.Lock()
 	turnText := b.turnText.String()
-	turnTools := b.turnTools
 	b.turnMu.Unlock()
 	if turnText != "" {
 		t.Errorf("turnText mutated by subagent: %q", turnText)
-	}
-	if turnTools != 0 {
-		t.Errorf("turnTools mutated by subagent: %d", turnTools)
 	}
 }
 

@@ -36,7 +36,6 @@ func openTurn(b *Backend, turn *delegator.TurnEvents) {
 	b.turnEvents = turn
 	b.turnResultCh = make(chan *delegator.TurnResult, 1)
 	b.turnText.Reset()
-	b.turnTools = 0
 	b.turnMu.Unlock()
 }
 

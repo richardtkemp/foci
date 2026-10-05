@@ -744,6 +744,12 @@ type SessionEvents struct {
 	OnToolEnd        func(id, name, output string, isError bool)        // tool execution finished
 }
 
+// CompactionToolName is the tool name a backend gives its own context
+// compaction when it shows it through OnToolStart/OnToolEnd (codex does, so
+// the activity indicator covers the wait). It is bookkeeping, not a call the
+// model made, so the agent layer's per-turn tool count skips it.
+const CompactionToolName = "compact"
+
 // TurnEvents are the per-turn bookkeeping callbacks. Set when a turn begins
 // via ImmediateInject, cleared on OnResult. May be nil between turns; backend must
 // tolerate that. These are bookkeeping only — delivery (text, tool events)
@@ -787,9 +793,12 @@ type TurnEvents struct {
 }
 
 // TurnResult is the outcome of a completed turn.
+//
+// It carries no tool count: the agent layer counts a turn's tool calls itself,
+// once, from the OnToolStart/OnToolEnd SessionEvents every backend already
+// emits per call (#2193).
 type TurnResult struct {
 	Text       string     // final response text
-	ToolCalls  int        // number of tool calls executed during the turn
 	Usage      *TurnUsage // token usage (nil if unavailable)
 	Model      string     // model used (e.g. "claude-opus-4-6")
 	ThreadName string     // backend-generated session title (Codex auto-names threads)

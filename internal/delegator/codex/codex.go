@@ -86,7 +86,6 @@ type Backend struct {
 	turnEvents   *delegator.TurnEvents
 	turnResultCh chan *delegator.TurnResult
 	turnText     strings.Builder
-	turnTools    int
 	// stashedUsage is the LATEST API cycle's own usage — the final cycle's
 	// context fill, which is what compaction and /context read. It is not a
 	// turn total and must never be summed (#1855); every cycle is booked in
