@@ -139,29 +139,6 @@ func parseCCRecord(raw []byte) (line *ccLine, costState *ccRecord) {
 	return l, nil
 }
 
-// TranscriptCall is one assistant line of a CC transcript as the ledger books
-// it: for a reader of the transcript outside this package (cctmux).
-type TranscriptCall struct {
-	ID, Model, StopReason string
-	At                    time.Time
-	// Complete is set on the line that carries the call's stop_reason: its
-	// usage is final.
-	Complete    bool
-	Tokens      modelinfo.Tokens
-	ClassMethod string
-}
-
-// ParseTranscriptCall decodes one transcript line into the call it records,
-// or reports false for any other record.
-func ParseTranscriptCall(raw []byte) (TranscriptCall, bool) {
-	l, _ := parseCCRecord(raw)
-	if l == nil {
-		return TranscriptCall{}, false
-	}
-	return TranscriptCall{ID: l.id, Model: l.model, StopReason: l.stopReason, At: l.at,
-		Complete: l.complete, Tokens: l.tokens, ClassMethod: l.method}, true
-}
-
 // ccTokens normalises a per-message usage into disjoint ledger classes: the
 // cache-write split CC reports is observed; writes the split does not cover
 // are TTL-unknown (and would be for a message that reports no split).

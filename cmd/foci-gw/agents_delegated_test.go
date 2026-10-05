@@ -278,9 +278,6 @@ func TestBackendDefaultModel(t *testing.T) {
 	if got := backendDefaultModel("claude-code"); got != "opus" {
 		t.Errorf("claude-code default = %q, want opus", got)
 	}
-	if got := backendDefaultModel("claude-code-tmux"); got != "opus" {
-		t.Errorf("claude-code-tmux default = %q, want opus", got)
-	}
 	if got := backendDefaultModel("opencode"); got != "" {
 		t.Errorf("opencode default = %q, want empty (TODO #1163)", got)
 	}

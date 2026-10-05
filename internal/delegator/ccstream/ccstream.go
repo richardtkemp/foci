@@ -271,7 +271,7 @@ type Backend struct {
 	// hook command at each Start. Set via SetStopRules.
 	stopRules func() []stoprule.Rule
 
-	// Agent tracking (shared with tmux backend via AgentTracker).
+	// Agent tracking (shared tracker implementation: AgentTracker).
 	agents delegator.SubagentTracker
 
 	// Subagent reactivation tracking (#1355). A subagent can run more than once:

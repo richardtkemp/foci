@@ -20,8 +20,8 @@ type AgentInjector interface {
 }
 
 // PlanDeps carries the runtime handles a PlanDelivery may use. A delivery pulls
-// only what its backend needs: cctmux fetches the live backend for a verbatim
-// "/plan" slash command; ccstream uses the notifier to drive an EnterPlanMode
+// only what its backend needs: opencode fetches the live backend to send a
+// plan-agent prompt; ccstream uses the notifier to drive an EnterPlanMode
 // turn. Backend is a lazy thunk so a delivery that doesn't touch the backend
 // (ccstream) never forces it into existence.
 type PlanDeps struct {

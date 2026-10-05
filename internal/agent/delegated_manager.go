@@ -273,7 +273,7 @@ func (m *DelegatedManager) StaticCacheTTL() time.Duration {
 // sessionKey is holding across background work — a pending subagent/Bash, a live
 // autonomous run, or the post-run grace (spec §4). Non-creating: an idle session
 // with no live backend, or a backend that doesn't implement AutonomousRunAwaiter
-// (cctmux/opencode), reports false. The inbox uses it to gate system injects.
+// (opencode, codex), reports false. The inbox uses it to gate system injects.
 func (m *DelegatedManager) BackendAwaitingAutonomousRun(sessionKey string) bool {
 	mb, ok := m.getManaged(sessionKey)
 	if !ok || !mb.be.IsRunning() {
@@ -656,8 +656,8 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 
 // notifyResumeMissed alerts the user, out of band via their platform chat, that
 // a requested session could not be resumed and a fresh session was started in
-// its place. All three delegated backends converge here: opencode fails Start
-// on a 404, ccstream/cctmux exit non-zero on a stale --resume — both routed
+// its place. The delegated backends converge here: opencode fails Start on a
+// 404, ccstream exits non-zero on a stale --resume — both routed
 // through the retry-without-resume path above. Safe with a nil SystemNoticeFunc.
 func (m *DelegatedManager) notifyResumeMissed(sessionKey, resumeID string) {
 	if m.SystemNoticeFunc == nil {
@@ -1092,8 +1092,7 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 	// Wire the subagent (Agent-tool) status tracker → SubagentStatusFunc. The
 	// setter lives on the concrete CC backends (ccstream/opencode), not the
 	// Delegator interface, so we reach it via a narrow type assertion; backends
-	// without it (e.g. the legacy tmux backend, which self-wires its own status
-	// sink) are left untouched. Fixes the ccstream gap where the tracker's
+	// without it are left untouched. Fixes the ccstream gap where the tracker's
 	// OnStatus was never wired at all. sk() resolves the current session key
 	// dynamically, mirroring the typing/session-ready wiring above.
 	if m.SubagentStatusFunc != nil && !isBatch {

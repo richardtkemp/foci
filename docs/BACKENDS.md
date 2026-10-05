@@ -4,11 +4,10 @@ Foci runs each agent's turns through one of several different code paths. This d
 
 ## The turn transports
 
-Every `[[agents]]` entry has a `backend` field. It selects the API transport or one of four registered delegated backends. Both transports implement the same 19-method `TurnContract` interface (`internal/agent/turn_contract.go`); the delegated transport drives its backend through the 20-method `delegator.Delegator` interface (`internal/delegator/backend.go`) plus optional capability interfaces.
+Every `[[agents]]` entry has a `backend` field. It selects the API transport or one of three registered delegated backends. Both transports implement the same 19-method `TurnContract` interface (`internal/agent/turn_contract.go`); the delegated transport drives its backend through the 18-method `delegator.Delegator` interface (`internal/delegator/backend.go`) plus optional capability interfaces.
 
 - **`backend = "api"` (default) — API transport.** Foci calls the LLM API directly, executes tools in-process, and manages the session history.
 - **`backend = "claude-code"` (ccstream) — Delegated transport.** Foci spawns Claude Code as a subprocess via structured NDJSON over stdin/stdout. CC handles inference, tool execution, and its own context management; Foci feeds it prompts and reads back the assistant output.
-- **`backend = "claude-code-tmux"` (cctmux) — Delegated transport, legacy.** Same role as ccstream but talks to the `claude` binary by screen-scraping a tmux pane.
 - **`backend = "codex"` — Delegated transport.** OpenAI Codex CLI driven via `codex app-server` JSON-RPC 2.0 over stdio. Persistent subprocess like ccstream; the server holds the session and Foci drives it with RPC calls.
 - **`backend = "opencode"` — Delegated transport.** OpenCode driven via its HTTP/SSE server. Foci spawns one `opencode serve` subprocess per agent (shared across that agent's sessions and refcounted) and talks to it over HTTP.
 
@@ -34,7 +33,7 @@ Anything not in this table — platform I/O, command dispatch, nudges, reminders
 
 ## Delegated backend flavours
 
-There are four registered delegated backends. The two CC flavours share the `TurnContract` surface, the `DelegatedManager` plumbing, and the permission system — they only differ in how they talk to the `claude` binary. Codex and OpenCode are independent backends behind the same `delegator.Delegator` interface.
+There are three registered delegated backends: Claude Code, Codex and OpenCode. All three sit behind the same `delegator.Delegator` interface and share the `TurnContract` surface and the `DelegatedManager` plumbing. (The tmux-pane Claude Code backend, `claude-code-tmux`, was removed in #2179.)
 
 ### `claude-code` — ccstream (preferred)
 
@@ -42,17 +41,7 @@ Structured NDJSON over stdin/stdout. CC runs with `--input-format stream-json --
 
 Pros: no tmux dependency, no screen-scraping, structured permission prompts, precise turn boundaries via `result` messages, token-level streaming via `stream_event`, clean `/stop` via `control_request` interrupt, per-tool completion hooks (`foci-cc-hook`) give real-time tool_result visibility.
 
-ccstream uses a **two-lifetime callback split** (TODO #747): `SessionEvents` (delivery — `OnText`, `OnTextDelta`, `OnThinkingDelta`, `OnToolStart`, `OnToolEnd`) is installed once per session via `Backend.AttachSessionEvents` and stored in an `atomic.Pointer` that's never nil after first attach, so text/tool emission paths never drop on a per-turn handler nilling. `TurnEvents` (bookkeeping — `OnTurnComplete`, `PostToolNudgeFunc`, `PreAnswerNudgeFunc`) is installed via `Inject.Turn` and cleared in `OnResult`. The pre-TODO #747 design bundled both into one combined per-turn handler that nilled per-turn — its replacement isn't optional, it's the structural fix that makes "the turn ended but CC kept emitting" handle correctly. cctmux implements the same split: its JSONL watcher dispatches delivery into `SessionEvents` and completion into `TurnEvents` on the `Backend`. See [WIRING.md — ccstream Backend](WIRING.md#ccstream-backend-internaldelegatorccstream).
-
-### `claude-code-tmux` — cctmux (legacy)
-
-CC runs interactively in a tmux pane. Foci pastes input via `load-buffer` / `paste-buffer` and tails CC's session JSONL file via fsnotify for output. Still supported; used when you want a human-visible CC pane or need CC's full TUI (for interactive slash commands, `/login` flows, etc.). It is not offered by the setup wizard and is left out of the parity reference.
-
-Pros: the pane is a real terminal — you can attach, observe, and interact directly. Useful for debugging or when the agent needs a human to take over momentarily.
-
-Cons: screen-scraped permissions, JSONL file-watching for turn boundaries, send-keys based `/stop`, tmux as a hard dependency.
-
-**Unless you specifically need the interactive pane, use `claude-code`.**
+ccstream uses a **two-lifetime callback split** (TODO #747): `SessionEvents` (delivery — `OnText`, `OnTextDelta`, `OnThinkingDelta`, `OnToolStart`, `OnToolEnd`) is installed once per session via `Backend.AttachSessionEvents` and stored in an `atomic.Pointer` that's never nil after first attach, so text/tool emission paths never drop on a per-turn handler nilling. `TurnEvents` (bookkeeping — `OnTurnComplete`, `PostToolNudgeFunc`, `PreAnswerNudgeFunc`) is installed via `Inject.Turn` and cleared in `OnResult`. The pre-TODO #747 design bundled both into one combined per-turn handler that nilled per-turn — its replacement isn't optional, it's the structural fix that makes "the turn ended but CC kept emitting" handle correctly. See [WIRING.md — ccstream Backend](WIRING.md#ccstream-backend-internaldelegatorccstream).
 
 ### `codex` — OpenAI Codex via app-server
 
@@ -91,7 +80,7 @@ All of this works unchanged when you delegate to CC (other delegated backends: s
 
 ## Startup readiness check
 
-Delegated backends implement `CheckReady(ctx)` on the `delegator.Delegator` interface (`delegator/backend.go`) — a startup-only probe, separate from the per-turn `TurnContract`. At boot, `checkDelegatedReadiness` calls it for every delegated agent before any startup turn is injected. ccstream shells `claude auth status` and triggers the automated re-login flow if the shared OAuth credential is dead; cctmux reports ready unconditionally; codex only checks its binary is on PATH; opencode is skipped by name (its probe needs a server that only `Start` creates); API agents are skipped. This means a boot with an already-expired CC token recovers proactively instead of failing the first user turn (which would otherwise take the first-run onboarding down with it). See WIRING.md → startup readiness probe.
+Delegated backends implement `CheckReady(ctx)` on the `delegator.Delegator` interface (`delegator/backend.go`) — a startup-only probe, separate from the per-turn `TurnContract`. At boot, `checkDelegatedReadiness` calls it for every delegated agent before any startup turn is injected. ccstream shells `claude auth status` and triggers the automated re-login flow if the shared OAuth credential is dead; codex only checks its binary is on PATH; opencode is skipped by name (its probe needs a server that only `Start` creates); API agents are skipped. This means a boot with an already-expired CC token recovers proactively instead of failing the first user turn (which would otherwise take the first-run onboarding down with it). See WIRING.md → startup readiness probe.
 
 ## What's skipped on the delegated path
 
@@ -112,7 +101,7 @@ These are no-ops or handled by CC:
 A subtle but important difference:
 
 - **API turns** close `TurnState.CompletionChan` synchronously before `RunInference` returns. Post-turn work (save, metadata, compaction, logging) runs inline.
-- **Delegated turns** close `CompletionChan` only when the backend fires `OnTurnComplete` (ccstream: on `result` message; cctmux: on `end_turn` in JSONL). The post-turn goroutine blocks inline waiting for it with an **activity-based timeout** — 2 minutes of stream silence ends the wait, not a fixed deadline. Activity is tracked via the backend's `LastActivity()`, seeded at turn start and refreshed on every stream event.
+- **Delegated turns** close `CompletionChan` only when the backend fires `OnTurnComplete` (ccstream: on its `result` message). The post-turn goroutine blocks inline waiting for it with an **activity-based timeout** — 2 minutes of stream silence ends the wait, not a fixed deadline. Activity is tracked via the backend's `LastActivity()`, seeded at turn start and refreshed on every stream event.
 
 This means long tool calls on the delegated path don't time out as long as CC is still emitting progress heartbeats.
 
@@ -138,14 +127,9 @@ This means long tool calls on the delegated path don't time out as long as CC is
 
 - You want a model provider Claude Code does not serve, and can live with the gaps marked ✗ in its column (no mid-turn fold for steers, no pretool/stop rules, no mid-turn nudges).
 
-### Pick `claude-code-tmux` (cctmux) only when
-
-- You specifically need a human-attachable TUI pane (debugging, manual takeover, interactive `/login`).
-- You are running a legacy config and haven't migrated yet.
-
 ## Delegated backend feature parity
 
-Feature-by-feature comparison of the three structured delegated backends, from the #2151 survey (origin/main `5d1dbf759`, 2026-10-02). ccstream (`backend = "claude-code"`) is the reference. cctmux is left out.
+Feature-by-feature comparison of the three structured delegated backends, from the #2151 survey (origin/main `5d1dbf759`, 2026-10-02). ccstream (`backend = "claude-code"`) is the reference.
 
 Path shorthand: `cc/` = `internal/delegator/ccstream/`, `oc/` = `internal/delegator/opencode/`,
 `cx/` = `internal/delegator/codex/`, `dg/` = `internal/delegator/`, `ag/` = `internal/agent/`,
@@ -328,7 +312,6 @@ grepped for each ✗.
 | `[cc_backend].background_task_max_age` | ✓ | ✗ | ✗ | `StartOptions.SubagentMaxAge`, read only by ccstream |
 | `hostname`, `port`, `server_auth`, `log_level`, `default_permission` | ✗ | ✓ | ✗ | `[opencode_backend]` folded in |
 | `sandbox`, `api_key` | ✗ | ✗ | [48] | read by codex but unreachable from config |
-| `socket_path` | ✗ | ✗ | ✗ | cctmux only |
 | `reload_on_compact` (agent) | ✓ | ✓ | ✓ | agent layer |
 
 ### Parity footnotes
@@ -608,7 +591,7 @@ Found by the parity survey, beyond the table:
 
 ## Adding a new delegated backend
 
-### Interface-level minimum (the `dg.Delegator` interface, 20 methods)
+### Interface-level minimum (the `dg.Delegator` interface, 18 methods)
 
 Everything a backend must provide to run turns at all:
 
@@ -626,7 +609,6 @@ Everything a backend must provide to run turns at all:
    `WaitForPermission` wedges the session), `RegisterPromptCancelListener`.
 5. **Identity:** `SessionID`, `SetOnSessionReady` (without it there is no resume),
    `SessionFilePath` (may be `""`), `StatusDetail` (may be `""`).
-6. **TUI leftovers:** `SendKeystroke` / `SendSpecialKey` return "not supported".
 
 ### Optional capabilities, in suggested order
 
@@ -710,7 +692,7 @@ default_allowed_tools = [
 ]
 ```
 
-Foci-level permission auto-approval (applies to both CC flavours, before the user is prompted):
+Foci-level permission auto-approval (applies to every delegated backend, before the user is prompted):
 
 ```toml
 [permissions]
@@ -723,6 +705,5 @@ allow = ["Bash(git status)", "Bash(git diff*)"]
 
 - [WIRING.md — The Agent Loop](WIRING.md#the-agent-loop-agentagentgo) — `TurnContract`, `OrchestrateFullTurn`, phase-by-phase breakdown.
 - [WIRING.md — ccstream Backend](WIRING.md#ccstream-backend-internaldelegatorccstream) — stream-json protocol, hook integration, permission handling.
-- [WIRING.md — Backend Watcher (tmux)](WIRING.md#backend-watcher--tmux-internaldelegatorcctmuxwatchergo) — cctmux watcher internals.
 - [CONFIG.md — Coding Agent Backends](CONFIG.md#coding-agent-backends) — all config keys.
 - [SPEC.md — Coding Agent Backends (TurnContract)](SPEC.md) — design intent.

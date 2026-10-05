@@ -40,16 +40,6 @@ func (b *Backend) SendControl(ctx context.Context, req delegator.ControlRequest)
 	}
 }
 
-// SendKeystroke is a no-op for the stream backend (no TUI).
-func (b *Backend) SendKeystroke(ctx context.Context, key string) error {
-	return fmt.Errorf("SendKeystroke not supported by stream backend")
-}
-
-// SendSpecialKey is a no-op for the stream backend (no TUI).
-func (b *Backend) SendSpecialKey(ctx context.Context, key string) error {
-	return fmt.Errorf("SendSpecialKey not supported by stream backend")
-}
-
 // Interrupt cancels the current agent turn by sending an interrupt control
 // message over the stdio protocol.
 func (b *Backend) Interrupt(ctx context.Context) error {

@@ -9,7 +9,7 @@ import (
 )
 
 func TestLoginCommand_NoTrigger(t *testing.T) {
-	// Agent with no ReloginTrigger (e.g. cctmux or API) → reports unavailable.
+	// Agent with no ReloginTrigger (e.g. opencode or API) → reports unavailable.
 	cmd := LoginCommand()
 	cc := CommandContext{Agent: &agent.Agent{}}
 	resp, err := cmd.Execute(context.Background(), Request{}, cc)

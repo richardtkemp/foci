@@ -358,12 +358,12 @@ func TestAgentWizardBackendAPI(t *testing.T) {
 // an unrecognised backend is rejected with a re-prompt.
 func TestAgentWizardBackendSelectionAndInvalid(t *testing.T) {
 	deps := testDeps(nil, nil)
-	deps.AvailableBackends = []string{"claude-code", "claude-code-tmux"}
+	deps.AvailableBackends = []string{"claude-code", "codex"}
 	w := newAgentWizard(deps)
 	var captured *agentWizard
 	w.createFn = func(wiz *agentWizard) (string, error) { captured = wiz; return "ok", nil }
 
-	w.Handle("tmux-agent")
+	w.Handle("codex-agent")
 
 	// Unrecognised backend → re-prompt, no advance.
 	resp, done := w.Handle("nonsense")
@@ -375,11 +375,11 @@ func TestAgentWizardBackendSelectionAndInvalid(t *testing.T) {
 	}
 
 	// Valid non-default backend from the injected list, then model.
-	w.Handle("claude-code-tmux")
+	w.Handle("codex")
 	w.Handle("opus")
 	w.Handle("defaults")
-	if captured.backend != "claude-code-tmux" {
-		t.Errorf("backend = %q, want claude-code-tmux", captured.backend)
+	if captured.backend != "codex" {
+		t.Errorf("backend = %q, want codex", captured.backend)
 	}
 }
 

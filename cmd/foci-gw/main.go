@@ -15,7 +15,6 @@ import (
 	"time"
 
 	_ "foci/internal/delegator/ccstream" // register claude-code backend (stream-json)
-	_ "foci/internal/delegator/cctmux"   // register claude-code-tmux backend
 	_ "foci/internal/delegator/codex"    // register codex backend (codex exec --json)
 	"foci/internal/delegator/opencode"   // register opencode backend (HTTP/SSE)
 	_ "foci/internal/discord"            // register discord messaging provider

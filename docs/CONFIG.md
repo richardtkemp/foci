@@ -1237,7 +1237,7 @@ Fields that only exist per-agent in `[[agents]]`. These have no global equivalen
 | `name` | string | capitalised `id` | Human-readable name (e.g. `"Clutch"`). Defaults to capitalised agent ID (e.g. `clutch` → `Clutch`). Used in `/voice` WebSocket agent list. |
 | `emoji` | string | `""` | Emoji for agent (e.g. `"🥔"`). Used in `/voice` WebSocket agent list. |
 | `workspace` | string | `$HOME/$id` | Path to workspace directory containing character files (IDENTITY.md, SOUL.md, etc.). Defaults to `$HOME/<agent-id>` if not set. |
-| `backend` | string | `""` | Backend selection. Empty or `"api"` = traditional agent loop (Foci calls API, executes tools). A coding agent name (`"claude-code-tmux"`, `"codex"`, `"opencode"`) delegates entire turns to an external agent subprocess. |
+| `backend` | string | `""` | Backend selection. Empty or `"api"` = traditional agent loop (Foci calls API, executes tools). A coding agent name (`"claude-code"`, `"codex"`, `"opencode"`) delegates entire turns to an external agent subprocess. |
 | `backend_config` | table | `{}` | Backend-specific settings (typed struct — see [Coding Agent Backends](#coding-agent-backends)). |
 
 ### Per-agent platform configuration (`[[agents.platforms]]`)
@@ -1365,7 +1365,7 @@ Set `backend` on an `[[agents]]` entry to enable:
 ```toml
 [[agents]]
 id = "coder"
-backend = "claude-code-tmux"
+backend = "claude-code"
 workspace = "/home/coder/projects/myapp"
 
 [agents.backend_config]
@@ -1374,7 +1374,6 @@ workspace = "/home/coder/projects/myapp"
 # allowed_tools = ["Bash(git:*)", "Read"]  # --allowedTools: per-agent CC permission rules
 # binary = ""                 # Override path to backend executable (default: $PATH)
 # idle_timeout = "3h"         # Session idle shutdown duration (default 3h)
-# socket_path = ""            # tmux socket override (empty = default, cctmux only)
 
 # Environment variables passed to the backend subprocess:
 # [agents.backend_config.env]
@@ -1403,7 +1402,7 @@ Per-agent `allowed_tools` accepts either a comma-separated string (`"Bash(git:*)
 
 ### Global CC backend defaults — `[cc_backend]`
 
-Applies to every agent whose `backend` is `claude-code` or `claude-code-tmux`:
+Applies to every agent whose `backend` is `claude-code`:
 
 ```toml
 [cc_backend]
@@ -1441,7 +1440,7 @@ The factory default grants CC agents free read/write access to `/tmp` so they ca
 
 #### PreToolUse rules — `[[cc_backend.pretool_rules]]`
 
-`claude-code` agents (not `claude-code-tmux`) run every call to a named tool past a set of deny rules before it executes. A matching rule stops the call, and the agent gets the rule's `reason` as the tool's error result, so the reason should say what to do instead. Rules can only deny. There is no allow action, because a hook allow would bypass foci's permission prompts.
+`claude-code` agents run every call to a named tool past a set of deny rules before it executes. A matching rule stops the call, and the agent gets the rule's `reason` as the tool's error result, so the reason should say what to do instead. Rules can only deny. There is no allow action, because a hook allow would bypass foci's permission prompts.
 
 Two rules ship preinstalled:
 
@@ -1575,7 +1574,7 @@ Check rules offline with `foci pretool list --agent <id>` and `foci pretool test
 
 #### Stop rules — `[[agents.backend_config.stop_rules]]`
 
-`claude-code` agents (not `claude-code-tmux`) can check the end of each turn. If the turn's final reply matches a rule's `text`, and the turn launched no background job (a `run_in_background` Bash call or a background subagent), foci blocks the stop. The agent gets the rule's `reason` and carries on with the same turn. This catches a reply like "starting the build now" that ends the turn with nothing started (#2089).
+`claude-code` agents can check the end of each turn. If the turn's final reply matches a rule's `text`, and the turn launched no background job (a `run_in_background` Bash call or a background subagent), foci blocks the stop. The agent gets the rule's `reason` and carries on with the same turn. This catches a reply like "starting the build now" that ends the turn with nothing started (#2089).
 
 A turn is blocked at most once. After a block, the next stop in that turn is always allowed.
 
@@ -1607,7 +1606,6 @@ The patterns are a heuristic, so expect false positives. Every evaluation is log
 |---|---|
 | `"api"` (default) | Traditional agent loop — Foci calls LLM API, executes tools, manages sessions. |
 | `"claude-code"` | Claude Code via stream-json protocol (ccstream). Structured NDJSON stdin/stdout; no tmux. |
-| `"claude-code-tmux"` | Claude Code running interactively in a tmux pane (cctmux). Input via paste-buffer, output via session JSONL file watcher. |
 | `"codex"` | OpenAI Codex via the app-server JSON-RPC protocol. Model catalogue, aliases, effort levels, and per-session model overrides are resolved through `model/list`. |
 | `"opencode"` | OpenCode via HTTP/SSE server protocol. One `opencode serve` subprocess per agent, shared across sessions. |
 

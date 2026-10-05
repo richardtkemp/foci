@@ -11,7 +11,6 @@ func TestHumanReadableBackendName(t *testing.T) {
 		want        string
 	}{
 		{"claude-code", "Claude Code"},
-		{"claude-code-tmux", "Claude Code"},
 		{"codex", "Codex CLI"},
 		{"opencode", "OpenCode"},
 		{"", "the delegated backend"},

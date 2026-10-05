@@ -133,7 +133,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 			// Requested session is gone (404). Rather than silently creating a
 			// new session inline, fail Start so DelegatedManager's
 			// retry-without-resume path runs — the single place (shared with
-			// ccstream/cctmux, whose CLI exits non-zero on a stale --resume)
+			// ccstream, whose CLI exits non-zero on a stale --resume)
 			// that both creates the fresh session AND alerts the user that
 			// their old session could not be resumed.
 			return fmt.Errorf("opencode: resume session %s not found", opts.ResumeSessionID)

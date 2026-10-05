@@ -30,8 +30,6 @@ var nonAlnum = regexp.MustCompile(`[^A-Za-z0-9]`)
 // projectSlug converts a workspace path to Claude Code's project directory
 // name. CC replaces every non-alphanumeric character with '-', not just '/':
 // e.g. "/home/foci/clutch" → "-home-foci-clutch", "/a/.b_c" → "-a--b-c".
-// (Mirrors the same mapping in the cctmux backend; kept local to avoid a
-// cross-package dependency for a one-line transform.)
 func projectSlug(path string) string {
 	return nonAlnum.ReplaceAllString(path, "-")
 }

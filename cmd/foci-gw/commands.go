@@ -229,8 +229,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 
 	// /plan — put the coding-agent backend into plan mode. Registered iff the
 	// configured backend contributed a plan delivery via delegator.RegisterPlan
-	// (only delegated CC backends do). The delivery mechanism — verbatim slash
-	// command (cctmux) vs EnterPlanMode turn (ccstream) — lives with each
+	// (ccstream and opencode do). The delivery mechanism lives with each
 	// backend, not as a string switch here (#857).
 	if delivery, ok := delegator.PlanDeliveryFor(p.acfg.Backend); ok {
 		cmds.Register(command.PlanCommand(delivery))

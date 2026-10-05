@@ -21,8 +21,8 @@ import (
 // carries the same claude_binary config and onAuthFailure (re-login) wiring the
 // real per-session backend will. For ccstream this runs `claude auth status`
 // and, if not authenticated, fires the interactive re-login flow (whose gate
-// then pauses delegated message processing on its own). cctmux backends report
-// ready unconditionally; API agents (no DelegatedManager) are skipped.
+// then pauses delegated message processing on its own). API agents (no
+// DelegatedManager) are skipped.
 //
 // Probes run concurrently but the pass waits for all to settle before
 // returning, so a not-authenticated agent's re-login gate is reliably active

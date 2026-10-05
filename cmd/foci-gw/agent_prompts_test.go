@@ -8,7 +8,7 @@ import (
 
 func TestSeedDefaultPrompts_BackendGating(t *testing.T) {
 	dir := t.TempDir()
-	seedDefaultPrompts(dir, 0o644, map[string]bool{"opencode": true, "claude-code-tmux": true})
+	seedDefaultPrompts(dir, 0o644, map[string]bool{"opencode": true, "no-default-backend": true})
 
 	if _, err := os.Stat(filepath.Join(dir, "backend-opencode.md")); err != nil {
 		t.Errorf("backend-opencode.md should be seeded for a live opencode backend: %v", err)
@@ -18,8 +18,8 @@ func TestSeedDefaultPrompts_BackendGating(t *testing.T) {
 		t.Error("backend-claude-code.md should NOT be seeded when claude-code isn't live")
 	}
 	// Live but has no embedded default → not seeded.
-	if _, err := os.Stat(filepath.Join(dir, "backend-claude-code-tmux.md")); err == nil {
-		t.Error("backend-claude-code-tmux.md should NOT be seeded (no embedded default)")
+	if _, err := os.Stat(filepath.Join(dir, "backend-no-default-backend.md")); err == nil {
+		t.Error("backend-no-default-backend.md should NOT be seeded (no embedded default)")
 	}
 }
 

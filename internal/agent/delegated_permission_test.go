@@ -15,13 +15,11 @@ import (
 type mockPermBackend struct {
 	delegator.Delegator // embed to satisfy the interface; unused methods will panic
 
-	respondCalls   []respondCall
-	ruleCalls      []ruleCall
-	keystrokeCalls []string
-	respondErr     error
-	ruleErr        error
-	keystrokeErr   error
-	supportsRule   bool
+	respondCalls []respondCall
+	ruleCalls    []ruleCall
+	respondErr   error
+	ruleErr      error
+	supportsRule bool
 }
 
 type respondCall struct {
@@ -45,11 +43,6 @@ func (m *mockPermBackend) RespondToPermissionWithRule(requestID string, prefix s
 	return m.ruleErr
 }
 
-func (m *mockPermBackend) SendKeystroke(_ context.Context, key string) error {
-	m.keystrokeCalls = append(m.keystrokeCalls, key)
-	return m.keystrokeErr
-}
-
 func (m *mockPermBackend) IsRunning() bool { return true }
 
 // mockPermBackendNoRule only implements permResponder, not ruleResponder.
@@ -64,22 +57,17 @@ func (m *mockPermBackendNoRule) RespondToPermission(requestID string, allow bool
 	return nil
 }
 
-func (m *mockPermBackendNoRule) SendKeystroke(_ context.Context, key string) error {
-	return nil
-}
-
 func (m *mockPermBackendNoRule) IsRunning() bool { return true }
 
 // mockRememberPermBackend implements the rememberPermResponder interface
 // (opencode's signature: third arg is a `remember` bool, not a message).
 // It does NOT satisfy permResponder, so SendPermissionResponse must route
-// through the remember-protocol block, not fall to SendKeystroke.
+// through the remember-protocol block, not fall to the no-responder error.
 type mockRememberPermBackend struct {
 	delegator.Delegator
 
-	respondCalls   []rememberCall
-	keystrokeCalls []string
-	respondErr     error
+	respondCalls []rememberCall
+	respondErr   error
 }
 
 type rememberCall struct {
@@ -91,11 +79,6 @@ type rememberCall struct {
 func (m *mockRememberPermBackend) RespondToPermission(requestID string, allow bool, remember bool) error {
 	m.respondCalls = append(m.respondCalls, rememberCall{requestID, allow, remember})
 	return m.respondErr
-}
-
-func (m *mockRememberPermBackend) SendKeystroke(_ context.Context, key string) error {
-	m.keystrokeCalls = append(m.keystrokeCalls, key)
-	return nil
 }
 
 func (m *mockRememberPermBackend) IsRunning() bool { return true }
@@ -252,28 +235,20 @@ func TestSendPermissionResponse_GetError(t *testing.T) {
 	}
 }
 
-// TestSendPermissionResponse_EmptyRequestID verifies that when requestID is
-// empty (tmux backend), the response falls back to SendKeystroke.
+// TestSendPermissionResponse_EmptyRequestID verifies that a response with no
+// requestID reaches no responder and is reported as an error, not dropped.
 func TestSendPermissionResponse_EmptyRequestID(t *testing.T) {
 	be := &mockPermBackend{supportsRule: true}
 	a := setupAgentWithMockBackend(t, be)
 
 	err := a.SendPermissionResponse(context.Background(), "test/s", "", "y")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected an error for an unanswerable prompt, got nil")
 	}
 
 	// Should NOT have called RespondToPermission (requestID is empty).
 	if len(be.respondCalls) != 0 {
 		t.Errorf("expected 0 respond calls with empty requestID, got %d", len(be.respondCalls))
-	}
-
-	// Should have fallen back to keystroke.
-	if len(be.keystrokeCalls) != 1 {
-		t.Fatalf("expected 1 keystroke call, got %d", len(be.keystrokeCalls))
-	}
-	if be.keystrokeCalls[0] != "y" {
-		t.Errorf("keystroke = %q, want %q", be.keystrokeCalls[0], "y")
 	}
 }
 
@@ -309,17 +284,14 @@ func TestSendPermissionResponse_RuleError(t *testing.T) {
 
 // TestSendPermissionResponse_RememberResponder_Allow verifies an opencode-style
 // backend (remember-bool signature) routes "allow" → allow=true, remember=false,
-// and does NOT fall through to SendKeystroke (the arnix wedge: signature mismatch
-// dropped opencode to keystroke → "not supported").
+// (the arnix wedge: a signature mismatch once dropped opencode past every
+// responder → "not supported").
 func TestSendPermissionResponse_RememberResponder_Allow(t *testing.T) {
 	be := &mockRememberPermBackend{}
 	a := setupAgentWithMockBackend(t, be)
 
 	if err := a.SendPermissionResponse(context.Background(), "test/s", "per_1", "allow"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(be.keystrokeCalls) != 0 {
-		t.Fatalf("must NOT fall to keystroke, got %v", be.keystrokeCalls)
 	}
 	if len(be.respondCalls) != 1 {
 		t.Fatalf("expected 1 respond call, got %d", len(be.respondCalls))

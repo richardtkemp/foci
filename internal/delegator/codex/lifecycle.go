@@ -373,16 +373,6 @@ func (b *Backend) Interrupt(ctx context.Context) error {
 	}{ThreadID: threadID})
 }
 
-// SendKeystroke/SendSpecialKey — no TUI in app-server mode.
-func (b *Backend) SendKeystroke(ctx context.Context, key string) error {
-	return errNoTUI
-}
-func (b *Backend) SendSpecialKey(ctx context.Context, key string) error {
-	return errNoTUI
-}
-
-var errNoTUI = errors.New("codex: app-server mode does not support keystroke input")
-
 // Capabilities advertises what the Codex backend supports.
 func (b *Backend) Capabilities() delegator.Capabilities {
 	return delegator.Capabilities{

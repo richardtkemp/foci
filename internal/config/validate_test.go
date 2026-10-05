@@ -157,7 +157,7 @@ func TestDetectBotTokenConflicts_NoPlatform(t *testing.T) {
 // non-"api" agent backend must be a registered name. Pure (known passed in), so
 // it exercises the logic without mutating the global delegator registry.
 func TestValidateAgentBackends(t *testing.T) {
-	known := []string{"claude-code", "claude-code-tmux", "opencode"}
+	known := []string{"claude-code", "wizard-hidden-backend", "opencode"}
 
 	cases := []struct {
 		name    string
@@ -166,7 +166,7 @@ func TestValidateAgentBackends(t *testing.T) {
 		wantErr bool
 	}{
 		{"registered backend", known, "claude-code", false},
-		{"unsupported-but-registered backend", known, "claude-code-tmux", false},
+		{"unsupported-but-registered backend", known, "wizard-hidden-backend", false},
 		{"empty backend (traditional loop)", known, "", false},
 		{"api backend (traditional loop)", known, "api", false},
 		{"typo'd backend", known, "claude-codex", true},

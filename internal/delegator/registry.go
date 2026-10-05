@@ -67,7 +67,7 @@ func SupportedNames() []string {
 
 // RegisteredNames returns the names of ALL registered backends (supported or
 // not), sorted. Unlike SupportedNames it includes backends an agent may legally
-// use but the setup wizard doesn't offer (e.g. claude-code-tmux). Empty until the
+// use but the setup wizard doesn't offer. Empty until the
 // backend packages' init() functions have run (i.e. in the assembled foci-gw
 // binary), so callers must treat an empty result as "registry not populated" and
 // skip name validation rather than reject every backend. Used by config

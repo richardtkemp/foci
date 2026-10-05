@@ -214,9 +214,6 @@ func (m *mockBackendDM) AttachSessionEvents(events *delegator.SessionEvents) {
 	m.mu.Unlock()
 }
 
-func (m *mockBackendDM) SendKeystroke(_ context.Context, _ string) error  { return nil }
-func (m *mockBackendDM) SendSpecialKey(_ context.Context, _ string) error { return nil }
-
 func (m *mockBackendDM) Interrupt(_ context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

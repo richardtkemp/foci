@@ -67,7 +67,7 @@ func TestNudgeSettingsMapsMaxPerTurn(t *testing.T) {
 
 // TestNudgeCapabilities pins the scheduler's mid-turn capability gates to the
 // backend's declared capabilities (#2154). The scheduler used to decide by name
-// (opencode only), so codex and cctmux agents kept mid-turn rules that their
+// (opencode only), so codex agents kept mid-turn rules that their
 // turns never armed: the rules silently never fired, with no skip warning.
 func TestNudgeCapabilities(t *testing.T) {
 	tests := []struct {
@@ -77,7 +77,6 @@ func TestNudgeCapabilities(t *testing.T) {
 		{"", true, true},    // API transport
 		{"api", true, true}, // API transport
 		{"claude-code", true, true},
-		{"claude-code-tmux", false, false},
 		{"opencode", false, false},
 		{"codex", false, false},
 		{"some-future-backend", false, false},

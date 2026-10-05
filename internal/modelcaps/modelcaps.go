@@ -48,11 +48,11 @@ const (
 )
 
 // BackendKey maps an agent's configured backend name to its modelcaps key.
-// Empty or "api" is the traditional API loop; both Claude Code transports
-// share ccstream; Codex owns a separate app-server catalogue.
+// Empty or "api" is the traditional API loop; Claude Code is ccstream; Codex
+// owns a separate app-server catalogue.
 func BackendKey(configBackend string) string {
 	switch configBackend {
-	case "claude-code", "claude-code-tmux", "ccstream", "cctmux":
+	case "claude-code", "ccstream":
 		return BackendCCStream
 	case "codex":
 		return BackendCodex

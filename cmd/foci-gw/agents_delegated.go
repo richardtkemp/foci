@@ -36,7 +36,7 @@ import (
 // of the launch-model ladder (override → config → backend default).
 func backendDefaultModel(backendName string) string {
 	switch backendName {
-	case "claude-code", "claude-code-tmux":
+	case "claude-code":
 		return "opus"
 	default:
 		// TODO(#1163): define opencode's default launch model.
@@ -79,16 +79,16 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// shared AgentConfig.BackendConfig (struct is a value type — assignment copies).
 	bc := backendConfig
 
-	// For Claude Code-family backends, fold global [cc_backend] settings
-	// into the per-agent backend_config so both cctmux and ccstream
-	// pick them up from the same keys. Non-CC backends (codex,
+	// For the Claude Code backend, fold global [cc_backend] settings
+	// into the per-agent backend_config so ccstream picks them up from
+	// the same keys. Non-CC backends (codex,
 	// opencode, ...) are skipped so the keys don't leak into their
 	// config surface.
 	//
 	// Folded keys (per-agent values always win):
 	//   allowed_tools — merged (per-agent rules appended to global)
 	//   binary — global default; per-agent override wins
-	if backendName == "claude-code" || backendName == "claude-code-tmux" {
+	if backendName == "claude-code" {
 		merged := p.cfg.CCBackend.MergedAllowedTools(bc.AllowedTools)
 		if merged != "" {
 			bc.AllowedTools = strings.Split(merged, ",")
@@ -202,8 +202,8 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// caller (concurrent 401, or /login while one is running) gets false.
 	// ccstream-only: the driver drives a `claude /login` TUI in tmux, which
 	// has no meaning for the API transport. The /login command is gated by
-	// RequiresBackend; this field stays nil for cctmux so that command
-	// reports "unavailable" rather than mis-driving the wrong backend.
+	// RequiresBackend; this field stays nil for other backends so that
+	// command reports "unavailable" rather than mis-driving the wrong backend.
 	claudeBin := config.DerefStr(bc.Binary)
 	workDir := p.acfg.Workspace
 	triggerRelogin := func(reason, sessionKey string) bool {
@@ -370,8 +370,6 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			},
 			AgentID:          agentID,
 			ExecRegistry:     registry,
-			TmuxCols:         p.cfg.Tools.TmuxCols,
-			TmuxRows:         p.cfg.Tools.TmuxRows,
 			AutoApproveRules: autoApproveRules,
 			// Prune threshold for tracked background tasks (subagents,
 			// run_in_background Bash). Empty/invalid → 0, and the tracker falls
@@ -804,8 +802,7 @@ func transcriptCheckerFor(backendName string) delegator.TranscriptChecker {
 // resume-missed notice. Only claude-code publishes one (cleanupPeriodDays);
 // zero for the others means the notice never guesses.
 func resumeRetentionFor(backendName string) time.Duration {
-	switch backendName {
-	case "claude-code", "claude-code-tmux":
+	if backendName == "claude-code" {
 		return ccstream.CleanupPeriod()
 	}
 	return 0

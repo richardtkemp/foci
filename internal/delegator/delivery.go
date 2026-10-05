@@ -72,7 +72,7 @@ type DeliveryHooks struct {
 //   - and, when its process dies or is closed, hands back the inputs it never
 //     consumed through OnUndelivered instead of silently losing them.
 //
-// Backends without it (opencode, codex, cctmux, the API loop) never report
+// Backends without it (opencode, codex, the API loop) never report
 // consumption: their inputs are fire-and-forget, and a client showing delivery
 // ticks must stay at "server received" for them.
 type DeliveryTracker interface {

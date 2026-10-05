@@ -20,7 +20,6 @@ func TestBackendConfig_Decode_Full(t *testing.T) {
 model = "opus"
 idle_timeout = "2h"
 skip_permissions = true
-socket_path = "/tmp/agent.sock"
 binary = "/opt/opencode/bin/opencode"
 hostname = "0.0.0.0"
 server_auth = "s3cret"
@@ -43,7 +42,6 @@ CCSTUB_EXIT_CODE = "1"
 	// Pointer fields: verify non-nil and correct value.
 	checkStr(t, bc.Model, "opus", "model")
 	checkStr(t, bc.IdleTimeout, "2h", "idle_timeout")
-	checkStr(t, bc.SocketPath, "/tmp/agent.sock", "socket_path")
 	checkStr(t, bc.Binary, "/opt/opencode/bin/opencode", "binary")
 	checkStr(t, bc.Hostname, "0.0.0.0", "hostname")
 	checkStr(t, bc.ServerAuth, "s3cret", "server_auth")
@@ -161,7 +159,6 @@ func TestBackendConfig_ToMap_Full(t *testing.T) {
 		AllowedTools:      []string{"Write(/tmp/**)", "Bash(git:*)"},
 		IdleTimeout:       str("2h"),
 		SkipPermissions:   b(true),
-		SocketPath:        str("/tmp/sock"),
 		Env:               map[string]string{"FOO": "bar"},
 		Binary:            str("/opt/oc"),
 		Hostname:          str("127.0.0.1"),
@@ -175,7 +172,7 @@ func TestBackendConfig_ToMap_Full(t *testing.T) {
 	// String fields.
 	for key, want := range map[string]string{
 		"model": "opus", "idle_timeout": "2h",
-		"socket_path": "/tmp/sock", "binary": "/opt/oc", "hostname": "127.0.0.1",
+		"binary": "/opt/oc", "hostname": "127.0.0.1",
 		"server_auth": "pw", "log_level": "DEBUG", "default_permission": "ask",
 	} {
 		got, ok := m[key]
@@ -219,7 +216,7 @@ func TestBackendConfig_ToMap_Full(t *testing.T) {
 	// Verify the map has exactly the expected key set.
 	wantKeys := map[string]bool{
 		"model": true, "allowed_tools": true,
-		"idle_timeout": true, "skip_permissions": true, "socket_path": true,
+		"idle_timeout": true, "skip_permissions": true,
 		"env": true, "binary": true, "hostname": true,
 		"server_auth": true, "log_level": true, "port": true, "default_permission": true,
 	}

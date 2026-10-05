@@ -38,7 +38,7 @@ Config **cascades** (per-platform-per-agent → per-agent → per-platform-globa
 
 ## Backends & models
 
-- `backend`: empty or `"api"` = foci's own API loop; `"claude-code"` (CC streaming) or `"claude-code-tmux"` (CC via tmux) = delegate to that Claude Code backend. See **tools-backend.md** (and its per-tool siblings `tools-backend-*.md`).
+- `backend`: empty or `"api"` = foci's own API loop; `"claude-code"` (Claude Code), `"codex"` or `"opencode"` = delegate turns to that coding agent. See **tools-backend.md** (and its per-tool siblings `tools-backend-*.md`).
 - `backend_config.model`: a model alias or `developer/model_id`. Per-agent overrides the global default. **Changing the model requires a restart to apply.**
 - **Model groups** (used by the `spawn` tool and internal tasks): `powerful` (chat, clone, background, compaction, memory), `fast` (spawn raw/character), `cheap` (explore, summarise). Named models live in `[models.<alias>]` with fields like `model`, `thinking`, `effort`, `context`, `cache_ttl`.
 

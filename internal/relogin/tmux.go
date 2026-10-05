@@ -12,11 +12,8 @@ import (
 // pane is the minimal tmux surface the login driver needs. The production
 // implementation (tmuxPane) shells out to tmux; tests inject a scripted fake.
 //
-// Deliberately a small standalone helper rather than a dependency on the
-// cctmux backend's richer pane type: the login flow must not perturb (or be
-// perturbed by) the working delegated backend. Some plumbing is duplicated;
-// unifying into a shared tmuxpane package is a follow-up if a third caller
-// appears.
+// Deliberately a small standalone helper: the login flow must not perturb (or
+// be perturbed by) the working delegated backend.
 type pane interface {
 	create(ctx context.Context) error
 	sendLine(ctx context.Context, text string) error
@@ -45,7 +42,7 @@ func (p *tmuxPane) run(ctx context.Context, args ...string) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	// Operator: hosts an interactive `claude` on the DEFAULT tmux socket, which
-	// internal/tools/tmux may also use — see the singleton note in cctmux.
+	// internal/tools/tmux may also use.
 	cmd := procx.SpawnSetsid(cctx, procx.Operator, "tmux", args...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err

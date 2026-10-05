@@ -554,7 +554,7 @@ func (a *Agent) SetSessionPermissionMode(sessionKey, value string) {
 // foci's session metadata. No persistence across CC restarts: if CC
 // restarts, the mode reverts to the --permission-mode flag (currently
 // "default"). Returns ErrModeUnsupported if the backend doesn't implement
-// ControlSender (e.g. cctmux).
+// ControlSender.
 func (a *Agent) SetPermissionMode(ctx context.Context, sessionKey, mode string) error {
 	// Tell the backend first so we can refuse early for unsupported backends.
 	handled, err := a.SendBackendControl(ctx, sessionKey, &delegator.SetPermissionModeRequest{Mode: mode})
@@ -574,8 +574,7 @@ func (a *Agent) SetPermissionMode(ctx context.Context, sessionKey, mode string) 
 }
 
 // ErrModeUnsupported is returned by SetPermissionMode when the session's
-// backend doesn't implement runtime control requests (e.g. the legacy
-// cctmux backend). The command layer surfaces this as a user-facing
+// backend doesn't implement runtime control requests. The command layer surfaces this as a user-facing
 // "mode switch requires ccstream backend" message.
 var ErrModeUnsupported = fmt.Errorf("permission mode switching requires the ccstream backend")
 

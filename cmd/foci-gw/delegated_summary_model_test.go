@@ -39,8 +39,6 @@ func (b *summaryModelBackend) RegisterPromptCancelListener(string, func(string))
 func (b *summaryModelBackend) SetOnSessionReady(func(string))                          {}
 func (b *summaryModelBackend) SetTypingFunc(func(bool))                                {}
 func (b *summaryModelBackend) AttachSessionEvents(*delegator.SessionEvents)            {}
-func (b *summaryModelBackend) SendKeystroke(context.Context, string) error             { return nil }
-func (b *summaryModelBackend) SendSpecialKey(context.Context, string) error            { return nil }
 func (b *summaryModelBackend) Interrupt(context.Context) error                         { return nil }
 func (b *summaryModelBackend) SessionID() string                                       { return "" }
 func (b *summaryModelBackend) SessionFilePath() string                                 { return "" }

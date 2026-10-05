@@ -194,8 +194,6 @@ func (fakeDelegator) RegisterPromptCancelListener(string, func(string))       {}
 func (fakeDelegator) SetOnSessionReady(func(string))                          {}
 func (fakeDelegator) SetTypingFunc(func(bool))                                {}
 func (fakeDelegator) AttachSessionEvents(*delegator.SessionEvents)            {}
-func (fakeDelegator) SendKeystroke(context.Context, string) error             { return nil }
-func (fakeDelegator) SendSpecialKey(context.Context, string) error            { return nil }
 func (fakeDelegator) Interrupt(context.Context) error                         { return nil }
 func (fakeDelegator) SessionID() string                                       { return "" }
 func (fakeDelegator) SessionFilePath() string                                 { return "" }

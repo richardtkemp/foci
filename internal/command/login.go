@@ -15,7 +15,7 @@ import (
 // once login succeeds — pausing normal message processing throughout.
 //
 // RequiresBackend gates it to CC-family agents. The actual trigger is only
-// wired for the ccstream backend (Agent.ReloginTrigger is nil for cctmux), so
+// wired for the ccstream backend (Agent.ReloginTrigger is nil for every other backend), so
 // the handler reports unavailability rather than mis-driving the wrong backend.
 func LoginCommand() *Command {
 	return &Command{

@@ -730,7 +730,7 @@ func ResetToBuiltIn() {
 }
 
 // StripPrefix removes a "developer/" prefix from a model string.
-// Exported so CC backends (ccstream, cctmux) can strip the provider
+// Exported so the CC backend (ccstream) can strip the provider
 // prefix before passing the model to Claude's --model flag, which
 // expects a bare model name (e.g. "claude-sonnet-5"), not a
 // provider-qualified one (e.g. "claude/claude-sonnet-5").

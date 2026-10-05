@@ -91,7 +91,7 @@ func TestRegistryWizardScopeIsolation(t *testing.T) {
 // structured steps carry options whose labels are valid Handle inputs.
 func TestAgentWizardPendingStep(t *testing.T) {
 	deps := testDeps([]AgentInfo{{ID: "existing"}}, nil)
-	deps.AvailableBackends = []string{"claude-code", "claude-code-tmux"}
+	deps.AvailableBackends = []string{"claude-code", "codex"}
 	w := newAgentWizard(deps)
 	w.createFn = func(wiz *agentWizard) (string, error) { return "Created!", nil }
 
@@ -115,7 +115,7 @@ func TestAgentWizardPendingStep(t *testing.T) {
 	for i, o := range q.Options {
 		labels[i] = o.Label
 	}
-	want := []string{"claude-code", "claude-code-tmux", "api"}
+	want := []string{"claude-code", "codex", "api"}
 	if strings.Join(labels, ",") != strings.Join(want, ",") {
 		t.Errorf("backend labels = %v, want %v", labels, want)
 	}

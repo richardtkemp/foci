@@ -211,34 +211,6 @@ func TestIsRunning(t *testing.T) {
 	}
 }
 
-func TestSendKeystroke(t *testing.T) {
-	// Verifies SendKeystroke returns an error (not supported in stream backend).
-	t.Parallel()
-
-	b := &Backend{}
-	err := b.SendKeystroke(context.Background(), "a")
-	if err == nil {
-		t.Error("SendKeystroke returned nil, want error")
-	}
-	if !strings.Contains(err.Error(), "not supported") {
-		t.Errorf("error = %q, want 'not supported'", err.Error())
-	}
-}
-
-func TestSendSpecialKey(t *testing.T) {
-	// Verifies SendSpecialKey returns an error (not supported in stream backend).
-	t.Parallel()
-
-	b := &Backend{}
-	err := b.SendSpecialKey(context.Background(), "Escape")
-	if err == nil {
-		t.Error("SendSpecialKey returned nil, want error")
-	}
-	if !strings.Contains(err.Error(), "not supported") {
-		t.Errorf("error = %q, want 'not supported'", err.Error())
-	}
-}
-
 func TestInterrupt(t *testing.T) {
 	// Verifies Interrupt sends an interrupt control request via the writer.
 	t.Parallel()
@@ -1565,8 +1537,7 @@ func TestOnAssistant_ThinkingBlock(t *testing.T) {
 }
 
 func TestOnAssistant_AgentToolUseTracking(t *testing.T) {
-	// Verifies Agent tool_use blocks are tracked via the shared SubagentTracker,
-	// mirroring the tmux backend's behavior.
+	// Verifies Agent tool_use blocks are tracked via the shared SubagentTracker.
 	t.Parallel()
 
 	var statusMessages []string

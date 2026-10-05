@@ -15,8 +15,8 @@ import (
 //
 // The command owns the generic concerns — delegated-only, non-empty args, a
 // resolved session, and deps wiring — and delegates the backend-specific
-// mechanism to the injected delivery: a verbatim "/plan" slash command (cctmux)
-// or an EnterPlanMode turn (ccstream). The behaviour lives with each backend.
+// mechanism to the injected delivery: an EnterPlanMode turn (ccstream) or a
+// plan-agent prompt (opencode). The behaviour lives with each backend.
 func PlanCommand(delivery delegator.PlanDelivery) *Command {
 	return &Command{
 		Name:        "plan",

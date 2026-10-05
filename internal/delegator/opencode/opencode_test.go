@@ -207,34 +207,6 @@ func TestIsRunning(t *testing.T) {
 	}
 }
 
-func TestSendKeystroke(t *testing.T) {
-	// Verifies SendKeystroke returns an error (not supported in stream backend).
-	t.Parallel()
-
-	b := &Backend{}
-	err := b.SendKeystroke(context.Background(), "a")
-	if err == nil {
-		t.Error("SendKeystroke returned nil, want error")
-	}
-	if !strings.Contains(err.Error(), "not supported") {
-		t.Errorf("error = %q, want 'not supported'", err.Error())
-	}
-}
-
-func TestSendSpecialKey(t *testing.T) {
-	// Verifies SendSpecialKey returns an error (not supported in stream backend).
-	t.Parallel()
-
-	b := &Backend{}
-	err := b.SendSpecialKey(context.Background(), "Escape")
-	if err == nil {
-		t.Error("SendSpecialKey returned nil, want error")
-	}
-	if !strings.Contains(err.Error(), "not supported") {
-		t.Errorf("error = %q, want 'not supported'", err.Error())
-	}
-}
-
 // DISABLED(opencode): asserts control_request NDJSON wire shape; opencode uses POST /session/:id/abort.
 // ---------------------------------------------------------------------------
 // Turn state: beginTurn, cancelTurn, IsTurnInFlight

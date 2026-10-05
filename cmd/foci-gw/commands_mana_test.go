@@ -18,7 +18,6 @@ func TestRegisterAgentCommands_ManaOnlyForClaudeCode(t *testing.T) {
 		want    bool
 	}{
 		{"claude-code", true},
-		{"claude-code-tmux", true},
 		{"opencode", false},
 		{"codex", false},
 		{"", false}, // API-mode agent

@@ -170,8 +170,8 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 const streamIdleTimeout = 24 * time.Hour
 
 // fixedPostTurnTimeout is the hard safety ceiling for backends that don't
-// implement ActivityChecker (e.g. cctmux, or API turns where CompletionChan
-// is already closed).
+// implement ActivityChecker (e.g. API turns where CompletionChan is already
+// closed).
 const fixedPostTurnTimeout = 24 * time.Hour
 
 // runPostTurn waits for the turn to complete, then runs post-turn concerns.

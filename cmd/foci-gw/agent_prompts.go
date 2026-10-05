@@ -26,7 +26,7 @@ func seedDefaultPrompts(dir string, fileMode os.FileMode, liveBackends map[strin
 	}
 
 	// Seed a backend-<name>.md only for backends actually in use, and only
-	// when there's an embedded default for it (skips e.g. claude-code-tmux).
+	// when there's an embedded default for it (skips backends without one).
 	for backend := range liveBackends {
 		if prompts.Backend(backend) == "" {
 			continue

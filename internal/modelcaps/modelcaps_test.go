@@ -304,12 +304,11 @@ func TestPublishStoresPushedCatalogue(t *testing.T) {
 // accidentally consume the API or Claude Code capability catalogue.
 func TestBackendKeySeparatesConfiguredBackends(t *testing.T) {
 	tests := map[string]string{
-		"":                 BackendAPI,
-		"api":              BackendAPI,
-		"claude-code":      BackendCCStream,
-		"claude-code-tmux": BackendCCStream,
-		"codex":            BackendCodex,
-		"opencode":         "opencode",
+		"":            BackendAPI,
+		"api":         BackendAPI,
+		"claude-code": BackendCCStream,
+		"codex":       BackendCodex,
+		"opencode":    "opencode",
 	}
 	for configured, want := range tests {
 		if got := BackendKey(configured); got != want {

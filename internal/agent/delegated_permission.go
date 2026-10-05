@@ -2,15 +2,16 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"foci/internal/delegator"
 )
 
 // SendPermissionResponse sends the user's permission decision back to the
-// delegated backend. For ccstream (protocol-based), it sends a JSON
-// control_response via stdin using the requestID. For tmux backends, it
-// falls back to sending a keystroke.
+// delegated backend over its protocol, keyed by requestID. A backend that can
+// answer none of the prompt kinds (or an empty requestID) is an error: the
+// decision would otherwise be dropped silently.
 func (a *Agent) SendPermissionResponse(ctx context.Context, sessionKey string, requestID string, choice string) error {
 	if a.DelegatedManager == nil {
 		return nil
@@ -97,8 +98,7 @@ func (a *Agent) SendPermissionResponse(ctx context.Context, sessionKey string, r
 		return err
 	}
 
-	// Keystroke-based response (tmux backend).
-	return be.SendKeystroke(ctx, choice)
+	return fmt.Errorf("agent: backend cannot answer permission prompt (reqID=%q choice=%q)", requestID, choice)
 }
 
 // CancelPendingQuestion cancels an outstanding AskUserQuestion if one exists

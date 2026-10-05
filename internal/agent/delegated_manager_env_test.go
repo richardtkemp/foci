@@ -8,7 +8,7 @@ import (
 // TestGet_SessionEnvIsBackendAgnostic pins WHERE the CC-only
 // BASH_MAX_TIMEOUT_MS injection lives. DelegatedManager builds one
 // per-session env (FOCI_SESSION_KEY, FOCI_SOCK, BASH_ENV) that EVERY
-// delegated backend receives — ccstream, cctmux, codex and opencode alike —
+// delegated backend receives — ccstream, codex and opencode alike —
 // so a Claude Code-specific var placed here would reach all of them. The var
 // is therefore injected inside ccstream's own buildEnv
 // (internal/delegator/ccstream/env.go) instead, and this test fails if it

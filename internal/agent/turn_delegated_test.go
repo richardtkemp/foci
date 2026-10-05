@@ -245,14 +245,12 @@ func (m *mockBackendDT) AttachSessionEvents(events *delegator.SessionEvents) {
 	m.sessionEvents = events
 	m.mu.Unlock()
 }
-func (m *mockBackendDT) SendKeystroke(_ context.Context, _ string) error  { return nil }
-func (m *mockBackendDT) SendSpecialKey(_ context.Context, _ string) error { return nil }
-func (m *mockBackendDT) Interrupt(_ context.Context) error                { return nil }
-func (m *mockBackendDT) SessionID() string                                { return "" }
-func (m *mockBackendDT) WaitReady(_ context.Context) error                { return nil }
-func (m *mockBackendDT) CheckReady(_ context.Context) (bool, error)       { return true, nil }
-func (m *mockBackendDT) StatusDetail() string                             { return "" }
-func (m *mockBackendDT) Close() error                                     { return nil }
+func (m *mockBackendDT) Interrupt(_ context.Context) error          { return nil }
+func (m *mockBackendDT) SessionID() string                          { return "" }
+func (m *mockBackendDT) WaitReady(_ context.Context) error          { return nil }
+func (m *mockBackendDT) CheckReady(_ context.Context) (bool, error) { return true, nil }
+func (m *mockBackendDT) StatusDetail() string                       { return "" }
+func (m *mockBackendDT) Close() error                               { return nil }
 
 func (m *mockBackendDT) SessionFilePath() string {
 	m.mu.Lock()

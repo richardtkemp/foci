@@ -28,7 +28,7 @@ API cost summary for a time period.
 Context window breakdown — total vs limit, compaction threshold, tokens until compaction, system prompt breakdown by section (environment, workspace files, skills), tool token count, conversation breakdown (user/assistant/tool results), last API call token breakdown.
 
 ### `/mana`
-Alias: `/usage`. Claude Code plan and rate-limit usage report. Shows remaining plan quota, rate-limit windows, and recent usage. Only exists for agents on a Claude Code backend (`claude-code`, `claude-code-tmux`); opencode, codex and API-mode agents have no plan usage to report, so they don't get the command.
+Alias: `/usage`. Claude Code plan and rate-limit usage report. Shows remaining plan quota, rate-limit windows, and recent usage. Only exists for agents on a Claude Code backend (`claude-code`); opencode, codex and API-mode agents have no plan usage to report, so they don't get the command.
 
 ### `/todo [subcommand] [args]`
 Manage todo items. Bare `/todo` shows usage (available verbs). Use `/todo list` or `/todo active` to list items.
@@ -183,10 +183,10 @@ Trigger manual context compaction.
 - Any other non-empty unmatched args (e.g. `/compact foo`) run compaction directly via the default handler
 
 ### `/pass <command>`
-Forward a raw command directly to the configured delegated backend (shown by name, e.g. "Claude Code" or "Codex CLI"), bypassing foci's command dispatch. Useful for running backend-native slash commands that foci would otherwise intercept (e.g. `/pass /context`, `/pass /model opus`, `/pass /help`). Only available for agents with a delegated backend — returns an error for API-mode agents. For tmux backends, waits for output stabilisation and returns the captured pane content. For stream backends, returns immediately (the backend's response arrives asynchronously via the stdout reader).
+Forward a raw command directly to the configured delegated backend (shown by name, e.g. "Claude Code" or "Codex CLI"), bypassing foci's command dispatch. Useful for running backend-native slash commands that foci would otherwise intercept (e.g. `/pass /context`, `/pass /model opus`, `/pass /help`). Only available for agents with a delegated backend — returns an error for API-mode agents. Returns immediately; any output arrives asynchronously through the backend's normal stream events.
 
 ### `/login`
-Manually trigger Claude Code re-authentication. Drives a `claude /login` TUI in tmux, relays the login URL back to the chat that ran `/login`, then treats your next message as the login code — message processing is paused throughout. Normally this flow fires automatically on a 401 auth failure; this command exposes the same trigger on demand. ccstream backend only (reports unavailable on cctmux/API); returns "already in progress" if a re-login is already running.
+Manually trigger Claude Code re-authentication. Drives a `claude /login` TUI in tmux, relays the login URL back to the chat that ran `/login`, then treats your next message as the login code — message processing is paused throughout. Normally this flow fires automatically on a 401 auth failure; this command exposes the same trigger on demand. ccstream backend only (reports unavailable on other backends and API); returns "already in progress" if a re-login is already running.
 
 ### `/restart`
 Restart the foci service. Tries `systemctl restart foci`; falls back to SIGTERM (relies on process supervisor or Docker restart policy).
@@ -263,7 +263,7 @@ List and manage per-chat sessions.
 ### `/agents [new]`
 List active agent sessions.
 - `/agents` — all agents with ID, session key, status, model, message count
-- `/agents new` — interactive wizard to create a new agent (name → backend → model → character mode). The backend step offers the live set of registered delegated backends (claude-code, claude-code-tmux, …) plus `api` for the in-process loop; empty input picks `claude-code`. The model step is **skipped for `api`** — API agents have no per-agent model (it resolves globally via `[groups]`/`[models]`), so the wizard goes straight from backend to character mode. The choice is written explicitly to `foci.toml` (delegated → `backend = "<name>"` + `backend_config.model = "<alias>"`; api → `backend = "api"`), and the workspace is set up
+- `/agents new` — interactive wizard to create a new agent (name → backend → model → character mode). The backend step offers the live set of registered delegated backends (claude-code, codex, opencode) plus `api` for the in-process loop; empty input picks `claude-code`. The model step is **skipped for `api`** — API agents have no per-agent model (it resolves globally via `[groups]`/`[models]`), so the wizard goes straight from backend to character mode. The choice is written explicitly to `foci.toml` (delegated → `backend = "<name>"` + `backend_config.model = "<alias>"`; api → `backend = "api"`), and the workspace is set up
 
 ### `/tools`
 List all registered tools (name and description).

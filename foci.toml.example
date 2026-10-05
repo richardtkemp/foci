@@ -171,7 +171,6 @@ id = "myagent"
 # allowed_tools = ["Bash(git:*)", "Read"] #   pre-approve specific tools (TOML array)
 # binary = ""                             #   override path to backend executable (default: $PATH)
 # idle_timeout = "3h"                     #   session idle shutdown (default 3h)
-# socket_path = ""                        #   tmux socket override (cctmux only)
 # [agents.backend_config.env]             #   environment variables for the backend subprocess
 # CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS = "1"
 
@@ -338,7 +337,7 @@ system_files = [
 # params (thinking, effort, speed) are per-model in [models.*].
 
 # ─── Claude Code backend ──────────────────────────────────────────────
-# Defaults for every agent with backend = "claude-code" or "claude-code-tmux".
+# Defaults for every agent with backend = "claude-code".
 # Per-agent [agents.backend_config] values win. See docs/CONFIG.md.
 # [cc_backend]
 # default_allowed_tools = ["Read(/tmp/**)", "Edit(/tmp/**)", "MultiEdit(/tmp/**)"]  # factory default; merged with per-agent allowed_tools

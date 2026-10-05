@@ -375,8 +375,8 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 
 	// The binary attachments ComposePrompt prepared (empty when none);
 	// Inject's begin-turn path honors attachments only at idle+SourceUser,
-	// and backends that don't support structured content blocks (cctmux)
-	// silently drop them with a debug log. The agent layer no longer
+	// and backends that don't support structured content blocks silently
+	// drop them with a debug log. The agent layer no longer
 	// type-asserts AttachmentSender — the capability decision lives in the
 	// backend.
 	atts := ts.delegatedAttachments
@@ -425,8 +425,7 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 		// Only SourceSystem returns ErrTurnInFlight: a turn is running and
 		// system input must not steer it. Wait for completion, then retry
 		// the exclusive begin. The timeout bounds a lost completion signal
-		// (WaitForTurn wakes a single waiter per completion, and cctmux
-		// registers its waiter only at call time) — on timeout the loop
+		// (WaitForTurn wakes a single waiter per completion) — on timeout the loop
 		// simply re-checks via another atomic Inject.
 		if !waited {
 			t.logger().Infof("session=%s system turn (trigger=%q) waiting for in-flight turn to complete before dispatch", ts.SessionKey, ts.Trigger)

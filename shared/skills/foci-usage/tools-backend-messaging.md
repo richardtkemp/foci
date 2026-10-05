@@ -25,4 +25,4 @@ Per-tool reference for the Claude Code (shell) backend. How `foci_*` shell funct
 - **Chat sessions only** — errors on a branch/independent session key.
 - **Won't clobber a manual rename:** if the chat already has an alias that wasn't set by this tool, it replies with that name and does not overwrite it.
 - `--force` overrides that guard. Use it **only when the user explicitly asks you to rename the chat**. The new name then counts as the user's own, so a later plain call skips it too.
-- **Only registered when your backend doesn't auto-name sessions.** Codex generates thread names itself (`TurnResult.ThreadName`) and never gets this tool; streaming CC (ccstream), cctmux, opencode, and API-loop agents all lack auto-naming and get it.
+- **Only registered when your backend doesn't auto-name sessions.** Codex generates thread names itself (`TurnResult.ThreadName`) and never gets this tool; Claude Code (ccstream), opencode, and API-loop agents all lack auto-naming and get it.

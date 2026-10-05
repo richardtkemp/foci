@@ -252,8 +252,8 @@ type ModelInfoEntry struct {
 	CacheWritePer1M *float64 `toml:"cache_write_per_1m" desc:"Cost per 1M cache-write tokens in USD. Defaults to 0.0"`
 }
 
-// CCBackendConfig holds defaults shared by all Claude Code-based delegator
-// backends (cctmux, ccstream). Per-agent [agents.backend_config] values
+// CCBackendConfig holds defaults for the Claude Code delegator backend
+// (ccstream). Per-agent [agents.backend_config] values
 // still apply; scalar values there override, and DefaultAllowedTools is
 // merged with any per-agent allowed_tools rather than replaced.
 type CCBackendConfig struct {
@@ -302,7 +302,6 @@ type BackendConfig struct {
 	Binary            *string           `toml:"binary"             desc:"Path to the backend executable (default: resolved via $PATH)"`
 	IdleTimeout       *string           `toml:"idle_timeout"       desc:"How long a delegated session can sit idle before shutdown. Empty = 3h" type:"duration"`
 	SkipPermissions   *bool             `toml:"skip_permissions"   desc:"Skip all permission prompts (CC --dangerously-skip-permissions). For unattended agents only"`
-	SocketPath        *string           `toml:"socket_path"        desc:"Unix socket path for cctmux backend communication"`
 	Env               map[string]string `toml:"env"                desc:"Environment variables passed to the backend subprocess"`
 	Hostname          *string           `toml:"hostname"           desc:"Bind address for the opencode serve subprocess (default 127.0.0.1)"`
 	ServerAuth        *string           `toml:"server_auth"        desc:"HTTP basic auth password for the opencode server (empty = no auth)"`
@@ -331,9 +330,6 @@ func (bc BackendConfig) ToMap() map[string]any {
 	}
 	if bc.SkipPermissions != nil {
 		m["skip_permissions"] = *bc.SkipPermissions
-	}
-	if bc.SocketPath != nil {
-		m["socket_path"] = *bc.SocketPath
 	}
 	if len(bc.Env) > 0 {
 		m["env"] = bc.Env
@@ -406,7 +402,7 @@ type AgentConfig struct {
 	Permissions PermissionsConfig     `toml:"permissions"` // overrides from [permissions]
 
 	// Backend selection: empty or "api" = traditional agent loop.
-	// A coding agent name (e.g. "claude-code-tmux", "codex", "opencode") delegates
+	// A coding agent name (e.g. "claude-code", "codex", "opencode") delegates
 	// entire turns to an external agent subprocess.
 	Backend       string        `toml:"backend"       desc:"Backend type: empty or api = traditional agent loop; claude-code, opencode, etc. delegates turns to an external agent"`
 	BackendConfig BackendConfig `toml:"backend_config"` // backend-specific settings

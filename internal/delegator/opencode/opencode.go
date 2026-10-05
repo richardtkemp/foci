@@ -339,17 +339,6 @@ func (b *Backend) SessionFilePath() string {
 	return ""
 }
 
-// SendKeystroke returns "not supported" — OpenCode has no TUI pane to
-// send literal keypresses to.
-func (b *Backend) SendKeystroke(_ context.Context, _ string) error {
-	return errors.New("opencode: SendKeystroke not supported")
-}
-
-// SendSpecialKey returns "not supported" — same reason as SendKeystroke.
-func (b *Backend) SendSpecialKey(_ context.Context, _ string) error {
-	return errors.New("opencode: SendSpecialKey not supported")
-}
-
 // SetPermissionPromptFunc stores the permission-prompt callback.
 // permissions.go surfaces pending permissions through it.
 func (b *Backend) SetPermissionPromptFunc(fn delegator.PermissionPromptFunc) {

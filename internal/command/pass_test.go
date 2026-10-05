@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"foci/internal/agent"
 	"foci/internal/delegator"
@@ -128,51 +127,12 @@ func TestPassExecuteGetBackendError(t *testing.T) {
 	}
 }
 
-// TestPassExecuteSuccessWithCapture verifies the happy path: /pass forwards a
-// command via SendCommand and captures output from a CommandOutputCapturer
-// backend, returning the extracted text.
-func TestPassExecuteSuccessWithCapture(t *testing.T) {
+// TestPassExecuteSuccess verifies the happy path: /pass forwards the command
+// to the backend and returns the "sent" confirmation.
+func TestPassExecuteSuccess(t *testing.T) {
 	cmd := PassCommand("claude-code")
 
-	mb := &mockPassBackend{
-		captureOutput: "❯ /model\n  ⎿  claude-opus-4-6\n─────────────────────────\n❯",
-	}
-	dm := &agent.DelegatedManager{
-		NewBackend: func() (delegator.Delegator, error) { return mb, nil },
-	}
-
-	cc := CommandContext{
-		Agent: &agent.Agent{
-			DelegatedManager: dm,
-		},
-	}
-
-	ctx := tools.WithSessionKey(context.Background(), "agent:test:main")
-
-	// Pre-seed the backend in the manager by calling Get first.
-	_, err := dm.Get(ctx, "agent:test:main")
-	if err != nil {
-		t.Fatalf("seeding backend: %v", err)
-	}
-
-	resp, err := cmd.Execute(ctx, Request{Args: "/model"}, cc)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if !strings.Contains(resp.Text, "claude-opus-4-6") {
-		t.Errorf("response = %q, want mention of 'claude-opus-4-6'", resp.Text)
-	}
-	if mb.sentCommand != "/model" {
-		t.Errorf("sentCommand = %q, want %q", mb.sentCommand, "/model")
-	}
-}
-
-// TestPassExecuteSuccessNoCapturer verifies that when the backend does not
-// implement CommandOutputCapturer, /pass returns the "sent" confirmation.
-func TestPassExecuteSuccessNoCapturer(t *testing.T) {
-	cmd := PassCommand("claude-code")
-
-	mb := &mockPassBackendNoCapturer{}
+	mb := &mockPassBackend{}
 	dm := &agent.DelegatedManager{
 		NewBackend: func() (delegator.Delegator, error) { return mb, nil },
 	}
@@ -198,6 +158,9 @@ func TestPassExecuteSuccessNoCapturer(t *testing.T) {
 	if !strings.Contains(resp.Text, "Sent to Claude Code") {
 		t.Errorf("response = %q, want 'Sent to Claude Code' confirmation", resp.Text)
 	}
+	if mb.sentCommand != "/compact" {
+		t.Errorf("sentCommand = %q, want %q", mb.sentCommand, "/compact")
+	}
 }
 
 // TestPassExecuteSessionKeyFromRequest verifies that the session key is read
@@ -205,7 +168,7 @@ func TestPassExecuteSuccessNoCapturer(t *testing.T) {
 func TestPassExecuteSessionKeyFromRequest(t *testing.T) {
 	cmd := PassCommand("claude-code")
 
-	mb := &mockPassBackendNoCapturer{}
+	mb := &mockPassBackend{}
 	dm := &agent.DelegatedManager{
 		NewBackend: func() (delegator.Delegator, error) { return mb, nil },
 	}
@@ -234,132 +197,11 @@ func TestPassExecuteSessionKeyFromRequest(t *testing.T) {
 	}
 }
 
-// TestExtractCommandOutput exercises the pane output parser with a
-// table-driven set of inputs covering normal output, empty output,
-// missing prompts, and various edge cases.
-func TestExtractCommandOutput(t *testing.T) {
-	tests := []struct {
-		name    string
-		pane    string
-		command string
-		want    string
-	}{
-		{
-			name:    "normal output with prompts and separator",
-			pane:    "❯ /model\n  ⎿  claude-opus-4-6\n─────────────────────────\n❯",
-			command: "/model",
-			want:    "⎿  claude-opus-4-6",
-		},
-		{
-			name:    "multi-line output",
-			pane:    "❯ /context\n  ⎿  System: 1200 tokens\n  ⎿  History: 800 tokens\n  ⎿  Total: 2000 tokens\n───────────────────\n❯",
-			command: "/context",
-			want:    "⎿  System: 1200 tokens\n  ⎿  History: 800 tokens\n  ⎿  Total: 2000 tokens",
-		},
-		{
-			name:    "no matching command line",
-			pane:    "❯ /something_else\n  output here\n❯",
-			command: "/model",
-			want:    "",
-		},
-		{
-			name:    "empty pane content",
-			pane:    "",
-			command: "/model",
-			want:    "",
-		},
-		{
-			name:    "no trailing prompt — output extends to end",
-			pane:    "❯ /help\n  ⎿  Available commands:\n  ⎿  /model /context /compact",
-			command: "/help",
-			want:    "⎿  Available commands:\n  ⎿  /model /context /compact",
-		},
-		{
-			name:    "only separator and empty lines between prompts",
-			pane:    "❯ /compact\n\n──────────────────────\n\n❯",
-			command: "/compact",
-			want:    "",
-		},
-		{
-			name:    "trailing prompt with space",
-			pane:    "❯ /model opus\n  ⎿  Switched to opus\n❯ ",
-			command: "/model opus",
-			want:    "⎿  Switched to opus",
-		},
-		{
-			name:    "multiple commands — picks last matching",
-			pane:    "❯ /model\n  ⎿  haiku\n❯ /model\n  ⎿  opus\n❯",
-			command: "/model",
-			want:    "⎿  opus",
-		},
-		{
-			name:    "command without leading slash in pane",
-			pane:    "❯ model\n  ⎿  opus\n❯",
-			command: "/model",
-			want:    "⎿  opus",
-		},
-		{
-			name:    "heavy separator characters",
-			pane:    "❯ /status\n  ⎿  all good\n━━━━━━━━━━━━━━━━━━━━\n❯",
-			command: "/status",
-			want:    "⎿  all good",
-		},
-		{
-			name:    "mixed separator with dashes",
-			pane:    "❯ /status\n  ⎿  ok\n-------------------\n❯",
-			command: "/status",
-			want:    "⎿  ok",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := extractCommandOutput(tt.pane, tt.command)
-			if got != tt.want {
-				t.Errorf("extractCommandOutput(%q, %q)\n  got:  %q\n  want: %q", tt.pane, tt.command, got, tt.want)
-			}
-		})
-	}
-}
-
-// TestIsSeparatorLine verifies that the separator detection accepts known
-// separator patterns and rejects non-separator strings.
-func TestIsSeparatorLine(t *testing.T) {
-	tests := []struct {
-		name string
-		line string
-		want bool
-	}{
-		{name: "box-drawing long", line: "──────────────────────", want: true},
-		{name: "heavy box-drawing", line: "━━━━━━━━━━━━━━━━━━━━━━", want: true},
-		{name: "ascii dashes long", line: "----------------------", want: true},
-		{name: "short dash", line: "-", want: false},
-		{name: "exactly 10 dashes", line: "----------", want: false},
-		{name: "11 dashes", line: "-----------", want: true},
-		{name: "mixed box-drawing and dashes", line: "──────────-──────", want: true},
-		{name: "empty string", line: "", want: false},
-		{name: "text content", line: "hello world", want: false},
-		{name: "separator with text", line: "───── output ─────", want: false},
-		{name: "single box-drawing", line: "─", want: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := isSeparatorLine(tt.line)
-			if got != tt.want {
-				t.Errorf("isSeparatorLine(%q) = %v, want %v", tt.line, got, tt.want)
-			}
-		})
-	}
-}
-
 // --- Mock backends for pass tests ---
 
-// mockPassBackend implements delegator.Delegator and delegator.CommandOutputCapturer
-// for testing /pass with pane capture.
+// mockPassBackend implements delegator.Delegator for testing /pass.
 type mockPassBackend struct {
-	sentCommand   string
-	captureOutput string
+	sentCommand string
 }
 
 func (m *mockPassBackend) Start(context.Context, delegator.StartOptions) error { return nil }
@@ -392,8 +234,6 @@ func (m *mockPassBackend) RegisterPromptCancelListener(string, func(string))    
 func (m *mockPassBackend) SetOnSessionReady(func(string))                         {}
 func (m *mockPassBackend) SetTypingFunc(func(bool))                               {}
 func (m *mockPassBackend) AttachSessionEvents(*delegator.SessionEvents)           {}
-func (m *mockPassBackend) SendKeystroke(context.Context, string) error            { return nil }
-func (m *mockPassBackend) SendSpecialKey(context.Context, string) error           { return nil }
 func (m *mockPassBackend) Interrupt(context.Context) error                        { return nil }
 func (m *mockPassBackend) SessionID() string                                      { return "" }
 func (m *mockPassBackend) SessionFilePath() string                                { return "" }
@@ -402,60 +242,5 @@ func (m *mockPassBackend) CheckReady(context.Context) (bool, error)             
 func (m *mockPassBackend) StatusDetail() string                                   { return "" }
 func (m *mockPassBackend) Close() error                                           { return nil }
 
-func (m *mockPassBackend) CaptureCommandOutput(_ context.Context, _, _ time.Duration) (string, error) {
-	return m.captureOutput, nil
-}
-
-// Compile-time verification that mockPassBackend satisfies both interfaces.
-var (
-	_ delegator.Delegator             = (*mockPassBackend)(nil)
-	_ delegator.CommandOutputCapturer = (*mockPassBackend)(nil)
-)
-
-// mockPassBackendNoCapturer implements only delegator.Delegator (no capture support).
-type mockPassBackendNoCapturer struct {
-	sentCommand string
-}
-
-func (m *mockPassBackendNoCapturer) Start(context.Context, delegator.StartOptions) error { return nil }
-func (m *mockPassBackendNoCapturer) SendToPane(context.Context, string) (*delegator.TurnResult, error) {
-	return &delegator.TurnResult{}, nil
-}
-func (m *mockPassBackendNoCapturer) WaitForTurn(context.Context) error { return nil }
-func (m *mockPassBackendNoCapturer) IsTurnInFlight() bool              { return false }
-func (m *mockPassBackendNoCapturer) SendCommand(_ context.Context, cmd string) error {
-	m.sentCommand = cmd
-	return nil
-}
-func (m *mockPassBackendNoCapturer) ImmediateInject(ctx context.Context, inj delegator.Inject) error {
-	switch inj.Source {
-	case delegator.SourceUser, delegator.SourceSteer:
-		if !m.IsTurnInFlight() {
-			_, err := m.SendToPane(ctx, inj.Text)
-			return err
-		}
-		return m.SendCommand(ctx, inj.Text)
-	case delegator.SourceCompact, delegator.SourcePass:
-		return m.SendCommand(ctx, inj.Text)
-	}
-	return nil
-}
-func (m *mockPassBackendNoCapturer) IsRunning() bool                                        { return true }
-func (m *mockPassBackendNoCapturer) SetPermissionPromptFunc(delegator.PermissionPromptFunc) {}
-func (m *mockPassBackendNoCapturer) SetOnPromptsCleared(func())                             {}
-func (m *mockPassBackendNoCapturer) RegisterPromptCancelListener(string, func(string))      {}
-func (m *mockPassBackendNoCapturer) SetOnSessionReady(func(string))                         {}
-func (m *mockPassBackendNoCapturer) SetTypingFunc(func(bool))                               {}
-func (m *mockPassBackendNoCapturer) AttachSessionEvents(*delegator.SessionEvents)           {}
-func (m *mockPassBackendNoCapturer) SendKeystroke(context.Context, string) error            { return nil }
-func (m *mockPassBackendNoCapturer) SendSpecialKey(context.Context, string) error           { return nil }
-func (m *mockPassBackendNoCapturer) Interrupt(context.Context) error                        { return nil }
-func (m *mockPassBackendNoCapturer) SessionID() string                                      { return "" }
-func (m *mockPassBackendNoCapturer) SessionFilePath() string                                { return "" }
-func (m *mockPassBackendNoCapturer) WaitReady(context.Context) error                        { return nil }
-func (m *mockPassBackendNoCapturer) CheckReady(context.Context) (bool, error)               { return true, nil }
-func (m *mockPassBackendNoCapturer) StatusDetail() string                                   { return "" }
-func (m *mockPassBackendNoCapturer) Close() error                                           { return nil }
-
 // Compile-time verification.
-var _ delegator.Delegator = (*mockPassBackendNoCapturer)(nil)
+var _ delegator.Delegator = (*mockPassBackend)(nil)

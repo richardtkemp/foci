@@ -119,8 +119,7 @@ type Delegator interface {
 	// clean up per-prompt UI state (e.g. disable the orphaned inline keyboard
 	// so the user can't click an already-resolved button). Multiple listeners
 	// may be registered for the same requestID; they fire in registration
-	// order. If no prompt with requestID is registered (or the backend
-	// doesn't track prompts — e.g. the legacy tmux backend), the call is a
+	// order. If no prompt with requestID is registered, the call is a
 	// silent no-op.
 	RegisterPromptCancelListener(requestID string, fn func(reason string))
 
@@ -143,17 +142,9 @@ type Delegator interface {
 	// "text dropped: handler nil" failure mode at backend layer.
 	AttachSessionEvents(events *SessionEvents)
 
-	// SendKeystroke sends a single literal keypress to the agent's TUI.
-	// Used for permission prompt responses where paste+Enter doesn't work.
-	SendKeystroke(ctx context.Context, key string) error
-
-	// SendSpecialKey sends a special key sequence (e.g. "Escape", "C-c", "C-u").
-	// Unlike SendKeystroke, the key name is interpreted by tmux, not sent literally.
-	SendSpecialKey(ctx context.Context, key string) error
-
 	// Interrupt cancels any in-progress agent turn. The mechanism is
-	// backend-specific: tmux sends Escape×2 + Ctrl-C; the stream backend
-	// sends an interrupt control message over stdio.
+	// backend-specific (ccstream sends an interrupt control message over
+	// stdio; opencode and codex call their server's abort RPC).
 	Interrupt(ctx context.Context) error
 
 	// SessionID returns the coding agent's session identifier (e.g. CC's UUID).
@@ -180,8 +171,7 @@ type Delegator interface {
 	// authenticated (`claude auth status` → loggedIn); if it is not, CheckReady
 	// triggers the interactive re-login flow (posting a login URL to the
 	// agent's default chat) and reports ready=false. Backends with no
-	// readiness gate (cctmux, whose TUI handles its own login out of band)
-	// return (true, nil).
+	// readiness gate return (true, nil).
 	//
 	// ready=false with err==nil means "not ready, recovery has been initiated"
 	// (e.g. re-login is now in flight). A non-nil err means the readiness check
@@ -295,24 +285,13 @@ type ActivityChecker interface {
 // runs. The inbox consults it to hold system injects across the whole
 // background-work lifetime — from the spawn until the resulting autonomous run
 // completes — not just while a run is visibly active (spec §4). Backends that
-// don't track this (cctmux, opencode) don't implement it and are treated as
+// don't track this (opencode, codex) don't implement it and are treated as
 // never awaiting.
 type AutonomousRunAwaiter interface {
 	// AwaitingAutonomousRun reports whether a delivering autonomous run is
 	// active, pending (a spawned background task not yet completed), or
 	// imminently expected (within the post-run chain grace).
 	AwaitingAutonomousRun() bool
-}
-
-// CommandOutputCapturer is optionally implemented by backends that can
-// capture local command output from the agent's TUI by polling for stable
-// pane content. The tmux backend implements this; the stream backend
-// doesn't need it (local commands produce system messages on stdout).
-type CommandOutputCapturer interface {
-	// CaptureCommandOutput polls the agent's display until it stabilises
-	// (content unchanged for stableFor), checking every pollInterval.
-	// Returns the raw display content, or error on timeout/context cancel.
-	CaptureCommandOutput(ctx context.Context, stableFor, pollInterval time.Duration) (string, error)
 }
 
 // PromptChoice represents a choice in a permission prompt.
@@ -339,7 +318,7 @@ type PromptToggle struct {
 
 // PermissionPromptFunc sends an interactive prompt to the user with keyboard
 // choices. Used for both permission requests and AskUserQuestion prompts.
-// requestID is the CC protocol request ID (empty for tmux backends).
+// requestID is the backend's protocol request ID.
 // summary is a short description for post-action display (e.g.
 // "Edit memory/2026-03-27.md"). If nil, the backend falls back to plain text.
 // attachmentPath, when non-empty, is a file the platform layer should send as
@@ -367,7 +346,7 @@ type QuestionResponder interface {
 // ElicitationResponder is optionally implemented by backends that support
 // MCP elicitation control requests — requests from MCP servers for
 // structured user input via form fields or a URL visit. ccstream implements
-// this; other backends (cctmux) don't.
+// this; other backends don't.
 type ElicitationResponder interface {
 	// RespondToElicitation handles one user action on a pending
 	// elicitation. For form-mode flows, the backend advances through schema
@@ -514,10 +493,6 @@ func CapabilitiesForBackend(backendType string) Capabilities {
 	switch backendType {
 	case "claude-code":
 		return Capabilities{PostToolNudge: true, PreAnswerNudge: true, Streaming: true}
-	case "claude-code-tmux":
-		// The tmux backend never calls the nudge funcs and emits no text or
-		// thinking deltas (it reads the finished transcript).
-		return Capabilities{}
 	case "opencode":
 		return Capabilities{PostToolNudge: false, PreAnswerNudge: false, Streaming: true}
 	case "codex":
@@ -528,7 +503,7 @@ func CapabilitiesForBackend(backendType string) Capabilities {
 }
 
 // HumanReadableBackendName returns the display name for a delegated backend
-// type (the config `[agents].backend` value), e.g. "claude-code-tmux" ->
+// type (the config `[agents].backend` value), e.g. "claude-code" ->
 // "Claude Code". Used anywhere a command's help text or user-facing message
 // needs to name the backend without hardcoding a specific one — the set of
 // delegated backends isn't fixed (see codex, opencode). Unrecognised/future
@@ -537,7 +512,7 @@ func CapabilitiesForBackend(backendType string) Capabilities {
 // falls back to a generic label.
 func HumanReadableBackendName(backendType string) string {
 	switch backendType {
-	case "claude-code", "claude-code-tmux":
+	case "claude-code":
 		return "Claude Code"
 	case "codex":
 		return "Codex CLI"
@@ -717,7 +692,7 @@ type BatchCheapModeler interface {
 // prompt flow entirely (CC's --dangerously-skip-permissions). A batch session
 // also skips prompts via StartOptions.SkipPermissions, but that is per-session
 // and never reaches the agent's environment block. The single config
-// accessor for every reader — backend launch args (ccstream/cctmux) and the
+// accessor for every reader — the ccstream launch args and the
 // environment block's Command Approval gate — so the system prompt can never
 // describe an approval regime the backend isn't actually enforcing.
 func SkipPermissions(cfg map[string]any) bool {
@@ -731,7 +706,7 @@ type StartOptions struct {
 	SystemPrompt    string // concatenated character/system files (static fallback; see SystemPromptFunc)
 	Model           string // initial model (e.g. "opus", "sonnet")
 	AgentID         string // foci agent ID
-	Label           string // unique label for this instance (used for tmux window naming); falls back to AgentID
+	Label           string // unique label for this instance (log/debug naming); falls back to AgentID
 	ResumeSessionID string // resume a previous CC session (e.g. --resume <uuid>); empty = new session
 	SessionKey      string // foci session key — used by exec bridge tools for routing (e.g. send_to_chat)
 	// BatchOnly starts the app-server without a durable initial thread.
@@ -742,8 +717,6 @@ type StartOptions struct {
 	SkipPermissions  bool
 	ExecRegistry     any               // *tools.Registry — if set, used by DelegatedManager to create exec bridges
 	Env              map[string]string // extra environment variables to inject (e.g. BASH_ENV, FOCI_SOCK from exec bridge)
-	TmuxCols         int               // tmux window width (0 = use tools.tmux_cols default)
-	TmuxRows         int               // tmux window height (0 = use tools.tmux_rows default)
 	AutoApproveRules []string          // foci-level auto-approve patterns (e.g. "Bash:git *", "Read")
 	SubagentMaxAge   time.Duration     // prune threshold for tracked background tasks (0 = tracker default 2h); from [cc_backend].background_task_max_age
 
@@ -968,10 +941,6 @@ type Inject struct {
 	// AttachSessionEvents, which lives for the session's lifetime. Turn
 	// is strictly bookkeeping: turn completion, post-tool nudges,
 	// pre-answer gate.
-	//
-	// Used by both ccstream and cctmux. Delivery (text, tool events) does NOT
-	// route through Turn — it routes through the SessionEvents installed via
-	// AttachSessionEvents, which lives for the session's lifetime.
 	Turn *TurnEvents
 
 	// ID is the delivery id of this write, for backends that track delivery

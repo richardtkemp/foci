@@ -22,7 +22,7 @@ type AgentNewDeps struct {
 	PreFlightFn  func(agentID string) []string // platform pre-flight warnings
 	ResolveModel func(string) string
 	// AvailableBackends is the live set of registered delegated backend names
-	// (e.g. "claude-code", "claude-code-tmux"), injected from the delegator
+	// (e.g. "claude-code", "codex"), injected from the delegator
 	// registry. Empty → the wizard falls back to offering just "claude-code".
 	AvailableBackends []string
 	Registry          *Registry // for setting wizard
