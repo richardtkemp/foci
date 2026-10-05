@@ -65,6 +65,33 @@ var arrayHeaderRe = regexp.MustCompile(`^\s*\[\[([^\[\]]+)\]\]\s*$`)
 // anySectionRe matches any section header (single or double bracket).
 var anySectionRe = regexp.MustCompile(`^\s*\[{1,2}[^\[\]]+\]{1,2}\s*$`)
 
+// topLevel reports, per line, whether the line starts outside any value: a
+// header, key line, comment or blank line rather than the body of a multi-line
+// string, array or inline table. The line regexes here (headers, key lines,
+// commented keys, id lines) must only be trusted on such lines (#2191): a
+// string line "[deploy]" or a nested array row `[ "a" ]` otherwise reads as a
+// table header. A value that never closes leaves the rest of the file
+// unmasked, the old line-based reading; valueSpan refuses an edit to it.
+func topLevel(lines []string) []bool {
+	top := make([]bool, len(lines))
+	for i := 0; i < len(lines); i++ {
+		top[i] = true
+		t := strings.TrimSpace(lines[i])
+		if t == "" || t[0] == '#' || t[0] == '[' || !strings.Contains(t, "=") {
+			continue
+		}
+		end, _, err := valueSpan(lines, i)
+		if err != nil {
+			for j := i + 1; j < len(lines); j++ {
+				top[j] = true
+			}
+			break
+		}
+		i = end
+	}
+	return top
+}
+
 // setInSection finds [section] and sets key = value within it.
 // If the section doesn't exist, it is appended before any [[agents]] blocks
 // (or at EOF if no agents blocks exist).
@@ -184,9 +211,10 @@ func locateAgentKey(lines []string, agentID, key string) (agentKeyLoc, error) {
 	}
 	loc := agentKeyLoc{found: -1, lineKey: key, inlineFrom: start + 1, insertAt: end, subTableFrom: -1, subRegionEnd: end}
 
+	top := topLevel(lines)
 	active := keyLineRe(key)
 	for i := start + 1; i < end; i++ {
-		if active.MatchString(lines[i]) {
+		if top[i] && active.MatchString(lines[i]) {
 			loc.found = i
 			return loc, nil
 		}
@@ -212,7 +240,7 @@ func locateAgentKey(lines []string, agentID, key string) (agentKeyLoc, error) {
 		}
 		bodyEnd := len(lines)
 		for j := i + 1; j < len(lines); j++ {
-			if anySectionRe.MatchString(lines[j]) {
+			if top[j] && anySectionRe.MatchString(lines[j]) {
 				bodyEnd = j
 				break
 			}
@@ -222,7 +250,7 @@ func locateAgentKey(lines []string, agentID, key string) (agentKeyLoc, error) {
 		if leaf, ok := strings.CutPrefix(strings.ToLower(key), sub+"."); ok {
 			leafRe := keyLineRe(leaf)
 			for j := i + 1; j < bodyEnd; j++ {
-				if leafRe.MatchString(lines[j]) {
+				if top[j] && leafRe.MatchString(lines[j]) {
 					loc.found = j
 					loc.lineKey = leaf
 					return loc, nil
@@ -250,13 +278,17 @@ func locateAgentKey(lines []string, agentID, key string) (agentKeyLoc, error) {
 // Returns (-1, -1) if not found.
 func findSectionBounds(lines []string, section string) (int, int) {
 	target := strings.ToLower(section)
+	top := topLevel(lines)
 	for i, line := range lines {
+		if !top[i] {
+			continue
+		}
 		m := sectionHeaderRe.FindStringSubmatch(line)
 		if m != nil && strings.ToLower(strings.TrimSpace(m[1])) == target {
 			// Found section header at line i. Find end.
 			end := len(lines)
 			for j := i + 1; j < len(lines); j++ {
-				if anySectionRe.MatchString(lines[j]) {
+				if top[j] && anySectionRe.MatchString(lines[j]) {
 					end = j
 					break
 				}
@@ -271,8 +303,12 @@ func findSectionBounds(lines []string, section string) (int, int) {
 // whose id matches agentID. Returns (-1, -1) if not found.
 func findAgentBlock(lines []string, agentID string) (int, int) {
 	idPattern := regexp.MustCompile(`^\s*id\s*=\s*"` + regexp.QuoteMeta(agentID) + `"\s*$`)
+	top := topLevel(lines)
 
 	for i := 0; i < len(lines); i++ {
+		if !top[i] {
+			continue
+		}
 		m := arrayHeaderRe.FindStringSubmatch(lines[i])
 		if m == nil || strings.ToLower(strings.TrimSpace(m[1])) != "agents" {
 			continue
@@ -282,7 +318,7 @@ func findAgentBlock(lines []string, agentID string) (int, int) {
 		blockStart := i
 		blockEnd := len(lines)
 		for j := i + 1; j < len(lines); j++ {
-			if anySectionRe.MatchString(lines[j]) {
+			if top[j] && anySectionRe.MatchString(lines[j]) {
 				blockEnd = j
 				break
 			}
@@ -290,7 +326,7 @@ func findAgentBlock(lines []string, agentID string) (int, int) {
 
 		// Check if this block has the target id.
 		for j := blockStart + 1; j < blockEnd; j++ {
-			if idPattern.MatchString(lines[j]) {
+			if top[j] && idPattern.MatchString(lines[j]) {
 				return blockStart, blockEnd
 			}
 		}
@@ -301,9 +337,10 @@ func findAgentBlock(lines []string, agentID string) (int, int) {
 // findAgentsStart returns the line number of the first [[agents]] header,
 // or -1 if none exists.
 func findAgentsStart(lines []string) int {
+	top := topLevel(lines)
 	for i, line := range lines {
 		m := arrayHeaderRe.FindStringSubmatch(line)
-		if m != nil && strings.ToLower(strings.TrimSpace(m[1])) == "agents" {
+		if top[i] && m != nil && strings.ToLower(strings.TrimSpace(m[1])) == "agents" {
 			return i
 		}
 	}
@@ -328,10 +365,11 @@ func commentedKeyRe(key string) *regexp.Regexp {
 func replaceOrInsertKey(lines []string, from, to int, key, value string) (string, []string, error) {
 	active := keyLineRe(key)
 	commented := commentedKeyRe(key)
+	top := topLevel(lines)
 
 	// First pass: look for an active (uncommented) key line.
 	for i := from; i < to; i++ {
-		if active.MatchString(lines[i]) {
+		if top[i] && active.MatchString(lines[i]) {
 			// Replace the value's whole span (it may be multi-line) with the
 			// single new line, else the old body lines are orphaned.
 			end, old, err := valueSpan(lines, i)
@@ -344,7 +382,7 @@ func replaceOrInsertKey(lines []string, from, to int, key, value string) (string
 
 	// Second pass: look for a commented-out key line — uncomment and set.
 	for i := from; i < to; i++ {
-		if commented.MatchString(lines[i]) {
+		if top[i] && commented.MatchString(lines[i]) {
 			old := ""
 			lines[i] = fmt.Sprintf("%s = %s", key, value)
 			return old, lines, nil

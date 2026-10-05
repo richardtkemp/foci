@@ -68,8 +68,9 @@ func UnsetInFile(path string, target SetTarget, mode os.FileMode) (string, error
 			return "", fmt.Errorf("section [%s] not found in config file", target.Section)
 		}
 		active := keyLineRe(target.Key)
+		top := topLevel(lines)
 		for i := from + 1; i < to; i++ {
-			if active.MatchString(lines[i]) {
+			if top[i] && active.MatchString(lines[i]) {
 				line = i
 				break
 			}

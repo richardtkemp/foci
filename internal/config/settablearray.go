@@ -33,6 +33,7 @@ func SetTableArray(path, section string, entries []map[string]any, mode os.FileM
 	}
 
 	headerRe := tableArrayHeaderRe(section)
+	top := topLevel(lines) // header look-alikes inside multi-line values are content (#2191)
 
 	// Find all existing blocks for this section, and remember where the
 	// first one started so the new blocks can be inserted in its place.
@@ -40,14 +41,14 @@ func SetTableArray(path, section string, entries []map[string]any, mode os.FileM
 	out := make([]string, 0, len(lines))
 	i := 0
 	for i < len(lines) {
-		if headerRe.MatchString(lines[i]) {
+		if top[i] && headerRe.MatchString(lines[i]) {
 			if insertAt < 0 {
 				insertAt = len(out)
 			}
 			// Skip this block: from the header up to (but not including)
 			// the next header line (any [section] or [[section]]), or EOF.
 			hardEnd := i + 1
-			for hardEnd < len(lines) && !anySectionRe.MatchString(lines[hardEnd]) {
+			for hardEnd < len(lines) && !(top[hardEnd] && anySectionRe.MatchString(lines[hardEnd])) {
 				hardEnd++
 			}
 			// The block proper is the header + its contiguous key lines. Trailing
