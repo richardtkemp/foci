@@ -164,7 +164,7 @@ func (w *agentWizard) backendPrompt() string {
 	backends := w.availableBackends()
 	opts := make([]string, 0, len(backends)+1)
 	for _, b := range backends {
-		if b == defaultBackend {
+		if b == defaultBackend { // backend-cap:ignore: marks the wizard's default choice, not a capability
 			opts = append(opts, "`"+b+"` (default)")
 		} else {
 			opts = append(opts, "`"+b+"`")
@@ -260,7 +260,7 @@ func (w *agentWizard) PendingStep() *question.Question {
 		opts := make([]question.Option, 0, len(backends)+1)
 		for _, b := range backends {
 			desc := "Delegated backend"
-			if b == defaultBackend {
+			if b == defaultBackend { // backend-cap:ignore: marks the wizard's default choice, not a capability
 				desc = "Delegated backend (default)"
 			}
 			opts = append(opts, question.Option{Label: b, Description: desc})

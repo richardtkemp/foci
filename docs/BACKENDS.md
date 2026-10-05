@@ -699,7 +699,9 @@ every capability (`Yes()`, `No(reason)` or `NotApplicable(reason)`; there is no 
 static data that used to live in name switches. `go test ./internal/delegator/all/` (run it with
 `make test-one`) fails until the Spec is complete and true: a declaration that disagrees with the
 backend's method set, a behavioural Yes without a proving test, or a stale capability table in
-this file. See [Declared capabilities](#declared-capabilities) and
+this file. Outside `internal/delegator`, `make lint` (`scripts/find-backend-capability-bypass`)
+rejects a backend-name comparison, a type assertion on a `Delegator` and a backend-package import.
+See [Declared capabilities](#declared-capabilities) and
 `internal/delegator/capabilities.go`.
 
 ### Optional capabilities, in suggested order

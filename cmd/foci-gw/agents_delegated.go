@@ -11,7 +11,7 @@ import (
 	"foci/internal/app"
 	"foci/internal/config"
 	"foci/internal/delegator"
-	"foci/internal/delegator/ccstream"
+	"foci/internal/delegator/autoapprove"
 	"foci/internal/delegator/pretool"
 	"foci/internal/delegator/stoprule"
 	"foci/internal/log"
@@ -631,14 +631,14 @@ func buildAutoApproveRules(p setupParams, fociExecNames []string) []string {
 	// Foci shell functions are always auto-approved — derived from the
 	// registry so adding/removing an ExecExport tool updates the rules
 	// automatically.
-	rules := ccstream.FociShellRulesFor(fociExecNames)
+	rules := autoapprove.FociShellRulesFor(fociExecNames)
 
 	// Common readonly rules if enabled.
 	if perms.AutoApproveCommonReadonly {
-		rules = append(rules, ccstream.CommonReadonlyRules...)
+		rules = append(rules, autoapprove.CommonReadonlyRules...)
 	}
 	if perms.AutoApproveCommonSafeWrite {
-		rules = append(rules, ccstream.CommonSafeWriteRules...)
+		rules = append(rules, autoapprove.CommonSafeWriteRules...)
 	}
 
 	// Add workspace Edit/Write rules — delegated backends always need

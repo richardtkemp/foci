@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/delegator/ccstream"
+	"foci/internal/delegator/ccstream" // backend-cap:ignore: ledger-shadow compares the CC adapter's own accounting (ScopeLaunch, ReportClasses) — accounting-internal, not a capability (#2154 Q8)
 	"foci/internal/modelinfo"
 	"foci/internal/sqlite"
 )

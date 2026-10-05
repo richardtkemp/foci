@@ -5,7 +5,11 @@ package delegator
 // ║ Spec it passes to Register, and asked through Spec.Supports / As. Do NOT: ║
 // ║   - type-assert a Delegator for an optional interface (use As[T]);        ║
 // ║   - compare a backend name string (add a Spec field or a Capability);     ║
+// ║   - import a backend package outside internal/delegator (use .../all);    ║
 // ║   - add an optional interface without a Capability row below.             ║
+// ║ `make lint` enforces the first three outside internal/delegator           ║
+// ║ (scripts/find-backend-capability-bypass; exception: a same-line           ║
+// ║ `backend-cap:ignore: <reason>`).                                          ║
 // ║ Adding a capability: add a const + a capabilityTable row, then declare it ║
 // ║ in every backend's Spec. Adding a backend: Register(Spec{...}) declaring  ║
 // ║ every capability. The delegator/all tests fail until the declarations    ║

@@ -9,7 +9,7 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/delegator"
-	"foci/internal/delegator/ccstream"
+	"foci/internal/delegator/autoapprove"
 	"foci/internal/log"
 	"foci/internal/procx"
 	"foci/internal/session"
@@ -169,9 +169,9 @@ func writeVisibility(b *strings.Builder, rc *config.ResolvedAgentConfig) {
 	}
 }
 
-// writeCommandApproval documents the CC agent's effective auto-approve allowlist
+// writeCommandApproval documents the delegated agent's effective auto-approve allowlist
 // so it knows which tool/Bash calls run without prompting the user, instead of
-// guessing (#950). Rendered from the ccstream rule sets (the source of truth) so
+// guessing (#950). Rendered from the shared autoapprove rule sets (the source of truth) so
 // it can't drift from what the backend actually approves.
 // perms must be the same frozen snapshot buildAutoApproveRules (agents_delegated.go)
 // baked into the CC backend's session config, not a live re-read — the
@@ -189,13 +189,13 @@ func writeCommandApproval(b *strings.Builder, perms config.ResolvedPermissions, 
 	}
 	b.WriteString("- **foci tools**: every `foci_*` shell function is always auto-approved.\n")
 	if perms.AutoApproveCommonReadonly {
-		fmt.Fprintf(b, "- **read-only** (on): %s\n", strings.Join(stripBashPrefix(ccstream.CommonReadonlyRules), ", "))
+		fmt.Fprintf(b, "- **read-only** (on): %s\n", strings.Join(stripBashPrefix(autoapprove.CommonReadonlyRules), ", "))
 	}
 	swState := "off — these would prompt"
 	if perms.AutoApproveCommonSafeWrite {
 		swState = "on"
 	}
-	fmt.Fprintf(b, "- **safe-write** (%s): %s\n", swState, strings.Join(stripBashPrefix(ccstream.CommonSafeWriteRules), ", "))
+	fmt.Fprintf(b, "- **safe-write** (%s): %s\n", swState, strings.Join(stripBashPrefix(autoapprove.CommonSafeWriteRules), ", "))
 	if len(perms.AutoApproveRules) > 0 {
 		fmt.Fprintf(b, "- **configured for this agent**: %s\n", strings.Join(stripBashPrefix(perms.AutoApproveRules), ", "))
 	}

@@ -66,9 +66,9 @@ SIMPLE_BINS := foci-gw foci foci-call foci-cc-hook foci-codex-hook
 # same lock (~6 GB resident). Absent script (another host) = no-op.
 REAP_GRADLE = { [ -f /home/foci/shared/scripts/heavy-lock-reap-gradle.sh ] && bash /home/foci/shared/scripts/heavy-lock-reap-gradle.sh 9<&- ; true; };
 
-.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-unscoped-logging find-wiring-drift llbox test test-one integration coverage coverage-report coverage-html coverage-check vet lint lint-unlocked lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check land clean setup-hooks
+.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift llbox test test-one integration coverage coverage-report coverage-html coverage-check vet lint lint-unlocked lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check land clean setup-hooks
 
-all: $(SIMPLE_BINS) nosgid find-disconnected-tests find-static-config-reads find-unscoped-logging find-wiring-drift llbox
+all: $(SIMPLE_BINS) nosgid find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift llbox
 
 BUILDVCS := $(shell git rev-parse --git-dir >/dev/null 2>&1 && echo true || echo false)
 
@@ -117,6 +117,15 @@ find-disconnected-tests:
 find-static-config-reads:
 	@mkdir -p bin
 	cd scripts/find-static-config-reads && go build -o ../../bin/find-static-config-reads .
+
+# find-backend-capability-bypass flags code that decides what a delegated
+# backend can do some way other than its declared Spec (#2154): a type
+# assertion on a delegator.Delegator, a comparison against a registered
+# backend name, or an import of a concrete backend package outside
+# internal/delegator. Own go.mod for the same reason as the other checkers.
+find-backend-capability-bypass:
+	@mkdir -p bin
+	cd scripts/find-backend-capability-bypass && go build -o ../../bin/find-backend-capability-bypass .
 
 # find-unscoped-logging flags package-level log.{Debugf,Infof,Warnf,Errorf}
 # ("component", ...) calls made from a method whose receiver type already owns
@@ -410,7 +419,7 @@ lint:
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
 	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; $(REAP_GRADLE) $(MAKE) --no-print-directory lint-unlocked 9<&- ) 9</tmp/heavy
 
-lint-unlocked: find-disconnected-tests find-static-config-reads find-unscoped-logging find-wiring-drift
+lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift
 	@echo "=== golangci-lint ==="
 	@# --allow-serial-runners: golangci-lint has its own lock and by default a second
 	@# instance FAILS ("parallel golangci-lint is running") instead of waiting. The heavy
@@ -419,6 +428,8 @@ lint-unlocked: find-disconnected-tests find-static-config-reads find-unscoped-lo
 	@$(GOBIN)/golangci-lint run --allow-serial-runners
 	@echo "=== find-static-config-reads (static reads of *config.ResolvedAgentConfig) ==="
 	@./bin/find-static-config-reads ./...
+	@echo "=== find-backend-capability-bypass (backend type checks / name compares outside internal/delegator, #2154) ==="
+	@./bin/find-backend-capability-bypass ./...
 	@echo "=== find-unscoped-logging (any package-level log.Xf component call) ==="
 	@./bin/find-unscoped-logging ./...
 	@echo "=== find-wiring-drift (docs/WIRING.md dependency tree vs go list) ==="

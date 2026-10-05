@@ -11,18 +11,6 @@ import (
 // shared autoapprove package.
 type autoApproveRule = autoapprove.Rule
 
-// CommonReadonlyRules re-exports the shared built-in readonly rules for
-// backward compatibility with agents_delegated.go.
-var CommonReadonlyRules = autoapprove.CommonReadonlyRules
-
-// CommonSafeWriteRules re-exports the shared built-in safe-write rules.
-var CommonSafeWriteRules = autoapprove.CommonSafeWriteRules
-
-// FociShellRulesFor re-exports the shared shell-rules generator.
-func FociShellRulesFor(execNames []string) []string {
-	return autoapprove.FociShellRulesFor(execNames)
-}
-
 // parseAutoApproveRules wraps the shared Compile for ccstream-internal use.
 func parseAutoApproveRules(rules []string) []autoApproveRule {
 	return autoapprove.Compile(rules)
