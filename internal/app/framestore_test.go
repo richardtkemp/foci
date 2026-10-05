@@ -228,6 +228,64 @@ func TestFrameStore_TrimOlderThan(t *testing.T) {
 	}
 }
 
+// #2197: the TTL trim can delete EVERY frame of a quiet conversation. MaxSeq is
+// what seeds b.seq after a restart, so it must still report the old high-water;
+// otherwise the conversation restarts at seq 1 and every device that already
+// knew it drops the new frames as duplicates (InboundTracker: seq <= mark).
+func TestFrameStore_TrimAllKeepsSeqHighWaterAcrossRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "frames.db")
+	s, err := newFrameStore(path, 30*24*time.Hour)
+	if err != nil {
+		t.Fatalf("newFrameStore: %v", err)
+	}
+	old := time.Now().Add(-48 * time.Hour).UnixMilli()
+	for i := int64(1); i <= 7; i++ {
+		seed(s, "quiet", i, old)
+	}
+	seed(s, "busy", 3, time.Now().UnixMilli())
+
+	if n := s.TrimOlderThan(time.Now().Add(-24 * time.Hour).UnixMilli()); n != 7 {
+		t.Fatalf("trimmed %d, want 7", n)
+	}
+	if got := s.Range("quiet", 0, 100); len(got) != 0 {
+		t.Fatalf("quiet frames survived the trim: %+v", got)
+	}
+	if got := s.MaxSeq("quiet"); got != 7 {
+		t.Errorf("MaxSeq(quiet) after trimming all frames = %d, want 7", got)
+	}
+	s.Close()
+
+	s2, err := newFrameStore(path, 30*24*time.Hour)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	t.Cleanup(s2.Close)
+	if got := s2.MaxSeq("quiet"); got != 7 {
+		t.Fatalf("after restart MaxSeq(quiet) = %d, want 7 (seq reset)", got)
+	}
+	if got := s2.MaxSeq("busy"); got != 3 {
+		t.Errorf("after restart MaxSeq(busy) = %d, want 3", got)
+	}
+	if got := s2.MaxSeq("ghost"); got != 0 {
+		t.Errorf("MaxSeq(ghost) = %d, want 0", got)
+	}
+
+	// The rebuilt binding continues above the old high-water.
+	b := &convBinding{convID: "quiet", store: s2, seq: s2.MaxSeq("quiet"), seen: map[string]struct{}{}}
+	c := fakeClient()
+	b.attach(c)
+	b.send(fap.Activity{ConversationID: "quiet", Kind: "typing"})
+	if ds := drainEnv(t, c); len(ds) != 1 || ds[0].seq != 8 {
+		t.Errorf("first send after restart = %v, want one frame at seq 8", ds)
+	}
+
+	// New frames above the recorded high-water win over it.
+	seed(s2, "quiet", 12, time.Now().UnixMilli())
+	if got := s2.MaxSeq("quiet"); got != 12 {
+		t.Errorf("MaxSeq(quiet) with a newer stored frame = %d, want 12", got)
+	}
+}
+
 // Append is async; Close must drain it so a graceful restart loses nothing.
 // Reopening the same path simulates the post-restart process reading durable state.
 func TestFrameStore_AppendDrainsOnClose(t *testing.T) {

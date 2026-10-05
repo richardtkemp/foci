@@ -94,6 +94,14 @@ func newFrameStore(path string, ttl time.Duration) (*frameStore, error) {
 			agent_id   TEXT    NOT NULL,
 			created_ms INTEGER NOT NULL
 		)`,
+		// Per-conversation seq high-water, recorded by TrimOlderThan just before
+		// it deletes rows, so MaxSeq never goes backwards when the TTL removes a
+		// quiet conversation's last frame (#2197). The send path does not write
+		// it: while a conversation has frames, app_frames itself is the high-water.
+		`CREATE TABLE IF NOT EXISTS app_conv_seq (
+			conv_id TEXT    NOT NULL PRIMARY KEY,
+			max_seq INTEGER NOT NULL
+		)`,
 	)
 	if err != nil {
 		return nil, err
@@ -225,8 +233,11 @@ func (s *frameStore) RestorableConvs() []restorableConv {
 	return out
 }
 
-// MaxSeq returns the highest persisted seq for a conversation (0 if none). Used
-// to rehydrate b.seq on binding creation so seqs survive a restart. Safe to call
+// MaxSeq returns the highest seq a conversation has ever persisted (0 if none):
+// the larger of its newest stored frame and the high-water TrimOlderThan recorded
+// before deleting its frames, so a conversation whose every frame aged out does
+// not restart at seq 1 (#2197). Used to rehydrate b.seq on binding creation so
+// seqs survive a restart. Safe to call
 // at binding creation: the prior process drained its writes on shutdown, and a
 // new process issues no sends for the conversation before the binding exists.
 func (s *frameStore) MaxSeq(convID string) int64 {
@@ -234,7 +245,12 @@ func (s *frameStore) MaxSeq(convID string) int64 {
 		return 0
 	}
 	var seq sql.NullInt64
-	if err := s.db.QueryRow(`SELECT MAX(seq) FROM app_frames WHERE conv_id = ?`, convID).Scan(&seq); err != nil {
+	if err := s.db.QueryRow(
+		`SELECT MAX(m) FROM (
+			SELECT MAX(seq) AS m FROM app_frames WHERE conv_id = ?1
+			UNION ALL
+			SELECT max_seq FROM app_conv_seq WHERE conv_id = ?1
+		)`, convID).Scan(&seq); err != nil {
 		appLog.Errorf("frame store MaxSeq (conv=%s): %v", convID, err)
 		return 0
 	}
@@ -533,13 +549,38 @@ func (s *frameStore) MarkLegacyAsksSwept() {
 }
 
 // TrimOlderThan deletes frames older than cutoffMs and returns the rows removed.
+// In the same transaction, and before deleting, it records each affected
+// conversation's seq high-water in app_conv_seq: the trim may remove a quiet
+// conversation's every frame, and MaxSeq must not then fall back to 0 (#2197).
+// Any future delete of app_frames rows must do the same.
 func (s *frameStore) TrimOlderThan(cutoffMs int64) int64 {
 	if s == nil {
 		return 0
 	}
-	res, err := s.db.Exec(`DELETE FROM app_frames WHERE sent_ms < ?`, cutoffMs)
+	tx, err := s.db.Begin()
+	if err != nil {
+		appLog.Errorf("frame store trim: begin: %v", err)
+		return 0
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(
+		`INSERT INTO app_conv_seq (conv_id, max_seq)
+			SELECT conv_id, MAX(seq) FROM app_frames
+			WHERE conv_id IN (SELECT DISTINCT conv_id FROM app_frames WHERE sent_ms < ?)
+			GROUP BY conv_id
+		ON CONFLICT (conv_id) DO UPDATE SET max_seq = MAX(max_seq, excluded.max_seq)`,
+		cutoffMs,
+	); err != nil {
+		appLog.Errorf("frame store trim: record seq high-water: %v", err)
+		return 0
+	}
+	res, err := tx.Exec(`DELETE FROM app_frames WHERE sent_ms < ?`, cutoffMs)
 	if err != nil {
 		appLog.Errorf("frame store trim: %v", err)
+		return 0
+	}
+	if err := tx.Commit(); err != nil {
+		appLog.Errorf("frame store trim: commit: %v", err)
 		return 0
 	}
 	_, _ = s.db.Exec(`DELETE FROM app_prompts WHERE created_ms < ?`, cutoffMs)
