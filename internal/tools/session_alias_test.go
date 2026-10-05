@@ -55,20 +55,20 @@ func TestSetSessionAlias_NotifiesOnChange(t *testing.T) {
 	if err := idx.SetChatMetadata("clutch", "app", 42, "alias_auto", ""); err != nil {
 		t.Fatal(err)
 	}
-	if out := runSetAlias(t, tool, "clutch/c42", "Other"); !strings.HasPrefix(out, "Skipped") {
-		t.Fatalf("manual-name result = %q, want Skipped", out)
+	if out := runSetAlias(t, tool, "clutch/c42", "Other"); !strings.Contains(out, "without --force") {
+		t.Fatalf("manual-name result = %q, want a skip", out)
 	}
 	if len(got) != 1 {
 		t.Fatalf("onChanged fired on a skipped set: %+v", got)
 	}
 }
 
-// TestSetSessionAlias_ReplaceManual is #2166: the user asked the agent to
+// TestSetSessionAlias_Force is #2166: the user asked the agent to
 // rename a chat they had named by hand, and the manual-name guard refused with
-// no way round it. replace_manual overrides the guard, and the result counts as
+// no way round it. force overrides the guard, and the result counts as
 // a manual name (the user asked for it), so a later unprompted call cannot
 // clobber it.
-func TestSetSessionAlias_ReplaceManual(t *testing.T) {
+func TestSetSessionAlias_Force(t *testing.T) {
 	idx, err := session.NewSessionIndex(t.TempDir() + "/index.db")
 	if err != nil {
 		t.Fatal(err)
@@ -81,17 +81,17 @@ func TestSetSessionAlias_ReplaceManual(t *testing.T) {
 	tool := NewSetSessionAliasTool(idx, nil)
 
 	out := runSetAlias(t, tool, "clutch/c42", "OCN - job offer")
-	if !strings.HasPrefix(out, "Skipped") || !strings.Contains(out, "--replace-manual") {
-		t.Fatalf("plain call on a manual name = %q, want Skipped naming --replace-manual", out)
+	if !strings.Contains(out, "without --force") || !strings.Contains(out, "--force") {
+		t.Fatalf("plain call on a manual name = %q, want the skip naming --force", out)
 	}
 
-	params, _ := json.Marshal(map[string]any{"alias": "OCN - job offer", "replace_manual": true})
+	params, _ := json.Marshal(map[string]any{"alias": "OCN - job offer", "force": true})
 	res, err := tool.Execute(WithSessionKey(context.Background(), "clutch/c42"), params)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if !strings.HasPrefix(res.Text, "Set conversation name") {
-		t.Fatalf("replace_manual result = %q", res.Text)
+		t.Fatalf("force result = %q", res.Text)
 	}
 	if got, _ := idx.GetChatMetadata("clutch", "app", 42, "alias"); got != "OCN - job offer" {
 		t.Fatalf("alias = %q, want the replacement", got)
@@ -99,7 +99,7 @@ func TestSetSessionAlias_ReplaceManual(t *testing.T) {
 	if got, _ := idx.GetChatMetadata("clutch", "app", 42, "alias_auto"); got == "1" {
 		t.Fatalf("alias_auto = %q after a user-requested rename, want manual", got)
 	}
-	if out := runSetAlias(t, tool, "clutch/c42", "Something else"); !strings.HasPrefix(out, "Skipped") {
-		t.Fatalf("unprompted call after a requested rename = %q, want Skipped", out)
+	if out := runSetAlias(t, tool, "clutch/c42", "Something else"); !strings.Contains(out, "without --force") {
+		t.Fatalf("unprompted call after a requested rename = %q, want a skip", out)
 	}
 }

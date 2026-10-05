@@ -29,7 +29,7 @@ type AliasSetter interface {
 func NewSetSessionAliasTool(idx AliasSetter, onChanged func(agentID, platform string, chatID int64)) *Tool {
 	return &Tool{
 		Name:        "set_session_alias",
-		Description: "Set a short descriptive name for this conversation (shown in the chat list). Call once after the first exchange to name what the conversation is about. Keep it under 5 words. A name the user set by hand is kept unless replace_manual is set; set it ONLY when the user explicitly asks you to rename this chat.",
+		Description: "Set a short descriptive name for this conversation (shown in the chat list). Call once after the first exchange to name what the conversation is about. Keep it under 5 words. A name the user set by hand is kept unless force is set; set it ONLY when the user explicitly asks you to rename this chat.",
 		ExecExport:  true,
 		Parameters: json.RawMessage(`{
 			"type": "object",
@@ -38,7 +38,7 @@ func NewSetSessionAliasTool(idx AliasSetter, onChanged func(agentID, platform st
 					"type": "string",
 					"description": "Short name for this conversation (e.g. 'Debugging scroll bug', 'Planning API migration')"
 				},
-				"replace_manual": {
+				"force": {
 					"type": "boolean",
 					"description": "Overwrite a name the user set by hand. Use ONLY when the user explicitly asks for this rename; the new name then counts as the user's own."
 				}
@@ -47,8 +47,8 @@ func NewSetSessionAliasTool(idx AliasSetter, onChanged func(agentID, platform st
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			var p struct {
-				Alias         string `json:"alias"`
-				ReplaceManual bool   `json:"replace_manual"`
+				Alias string `json:"alias"`
+				Force bool   `json:"force"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
 				return TextResult("Error: invalid parameters"), nil
@@ -83,9 +83,10 @@ func NewSetSessionAliasTool(idx AliasSetter, onChanged func(agentID, platform st
 			// Don't overwrite a user-set alias unless the user asked for it (#2166).
 			existing, _ := idx.GetChatMetadata(key.AgentID, platform, chatID, "alias")
 			isAuto, _ := idx.GetChatMetadata(key.AgentID, platform, chatID, "alias_auto")
-			if existing != "" && isAuto != "1" && !p.ReplaceManual {
-				return TextResult(fmt.Sprintf("Skipped — this chat already has a manual name: %q. "+
-					"Only if the user explicitly asked for this rename, retry with --replace-manual.", existing)), nil
+			if existing != "" && isAuto != "1" && !p.Force {
+				return TextResult(fmt.Sprintf("You ran set_session_alias without --force, but the user already set a name "+
+					"for this chat by hand: %q. Typically you should not override a manually set name, but you may "+
+					"if you need to by using the --force flag.", existing)), nil
 			}
 
 			if err := idx.SetChatAliasUnique(key.AgentID, platform, chatID, alias); err != nil {
@@ -97,7 +98,7 @@ func NewSetSessionAliasTool(idx AliasSetter, onChanged func(agentID, platform st
 			// A rename the user asked for counts as theirs, so later unprompted
 			// calls cannot clobber it (same as an app-side rename).
 			autoFlag := "1"
-			if p.ReplaceManual {
+			if p.Force {
 				autoFlag = ""
 			}
 			if e := idx.SetChatMetadata(key.AgentID, platform, chatID, "alias_auto", autoFlag); e != nil {
