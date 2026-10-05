@@ -65,7 +65,7 @@ ccstream uses a **two-lifetime callback split** (TODO #747): `SessionEvents` (de
 All of this works unchanged when you delegate to CC (other delegated backends: see the parity reference for each row's coverage):
 
 - **Reminders, scratchpad, todos, task list** — Foci-side state, injected into each prompt as text blocks.
-- **Nudges** — regex and every-N-turn triggers prepend to the user message. Mid-turn (post-tool and pre-answer) nudges are ccstream-only (`post_tool_nudge`, `pre_answer_nudge` in [Declared capabilities](#declared-capabilities)).
+- **Nudges** — regex and every-N-turn triggers prepend to the user message. Pre-answer nudges work on ccstream and opencode; post-tool nudges are ccstream-only (`pre_answer_nudge`, `post_tool_nudge` in [Declared capabilities](#declared-capabilities)).
 - **Message metadata** — the `[meta]`/`[state]` statusline block (rendered from the `statusline` template; default reproduces the historical two lines) plus any `[reminders]` block is composed by `composeTurnText` and joined into flat text via `JoinPrompt()` (instead of rich content blocks), **blank-line separated** so the agent can tell foci's injected header from the human's own text (#1627).
 - **Platform connections** — Telegram, Discord, Android, HTTP, voice — the reply stream is the same.
 - **Command dispatch** — `/sessions`, `/config`, `/stop`, `/reset`, `/facet`, etc. Foci handles them normally. `/model` goes via the ControlSender pattern. `/compact` — both manual (`/compact` command) and auto (threshold) — dispatches through `Agent.runDelegatedCompact`, which sends `/compact <foci-summary-prompt>` to CC and waits for the `compact_boundary` stream event. `/pass` and a small set of other forward-only commands (e.g. unhandled CC slash commands) are sent to the backend via `Backend.Inject(SourcePass)` — a fire-and-forget send that bypasses the turn handler so a forwarded `/context` doesn't get treated as a user turn.
@@ -125,7 +125,7 @@ This means long tool calls on the delegated path don't time out as long as CC is
 
 ### Pick `opencode` when
 
-- You want a model provider Claude Code does not serve, and can live with the gaps marked ✗ in its column (no mid-turn fold for steers, no pretool/stop rules, no mid-turn nudges).
+- You want a model provider Claude Code does not serve, and can live with the gaps marked ✗ in its column (no mid-turn fold for steers, no pretool/stop rules, no post-tool nudges).
 
 ## Declared capabilities
 
@@ -135,7 +135,7 @@ Every delegated backend declares every capability in its `delegator.Spec` (`inte
 | Capability | Meaning | claude-code | codex | opencode |
 |---|---|---|---|---|
 | `post_tool_nudge` | calls TurnEvents.PostToolNudgeFunc after each tool and injects what it returns (every_n_tools, after_error, tool_pattern nudges) | ✓ | ✗ | ✗ |
-| `pre_answer_nudge` | calls TurnEvents.PreAnswerNudgeFunc at the final answer and re-dispatches the turn with what it returns (pre_answer nudges) | ✓ | ✗ | ✗ |
+| `pre_answer_nudge` | calls TurnEvents.PreAnswerNudgeFunc at the final answer and re-dispatches the turn with what it returns (pre_answer nudges) | ✓ | ✗ | ✓ |
 | `streaming` | emits SessionEvents.OnTextDelta/OnThinkingDelta during a turn (live stream_output) | ✓ | ✓ | ✓ |
 | `control` | accepts runtime control requests (ControlSender) | ✓ | ✓ | ✓ |
 | `control_model` | applies a SetModelRequest mid-session | ✓ | ✓ | ✓ |
@@ -176,7 +176,7 @@ Every delegated backend declares every capability in its `delegator.Spec` (`inte
 Why not:
 
 - `post_tool_nudge`: codex: no mid-turn injection point is wired for the app-server; opencode: opencode exposes no per-tool point to inject a nudge at.
-- `pre_answer_nudge`: codex: no mid-turn injection point is wired for the app-server; opencode: the onSessionIdle re-dispatch exists but is unverified live and drops sendPrompt's error (#2176).
+- `pre_answer_nudge`: codex: no mid-turn injection point is wired for the app-server.
 - `control_effort`: opencode: opencode has no effort setting; SendControl accepts and ignores the request.
 - `thinking_control`: claude-code: the session thinking setting is read only by the API transport; codex: the session thinking setting is read only by the API transport; opencode: the session thinking setting is read only by the API transport.
 - `model_resolve`: claude-code: CC resolves model aliases itself; opencode: model names pass through to opencode unresolved.
@@ -378,12 +378,15 @@ grepped for each ✗. Row IDs are not renumbered, so the gaps are the removed ro
    and subagent activity, so long tool calls keep the indicator alive.
 4. `autonomous_runs` / `turn_adoption`: nothing in opencode or codex adopts a run it did not start. Whether either backend can start
    a root-session run on its own (as CC does after a background task finishes) is unverified.
-5. `pre_answer_nudge` / `post_tool_nudge`: the opencode and codex Specs declare both No. Both the turn
+5. `pre_answer_nudge` / `post_tool_nudge`: codex declares both No; opencode declares
+   `pre_answer_nudge` Yes and `post_tool_nudge` No. Both the turn
    (`ag/turn_delegated.go`, which arms the nudge funcs) and the nudge scheduler
    (`gw/agents_setup.go:nudgeCapabilities`, which skips unsupported rules with a warning) read
-   that one declaration. opencode nonetheless has a working pre-answer branch (`oc/handlers.go:onSessionIdle`, calls
-   `turn.PreAnswerNudgeFunc` and re-sends) that the agent never arms. Post-tool nudges need a
-   per-tool hook; ccstream gets it from `foci-cc-hook`.
+   that one declaration. opencode re-dispatches at `session.idle`
+   (`oc/handlers.go:tryPreAnswerRedispatch`): the follow-up is a fresh `prompt_async` inside the
+   same turn, and a failed send completes the turn with the first-round answer. With no post-tool
+   callback, the gate's `nudge_pre_answer_min_tools` reads the result's tool count (#2176).
+   Post-tool nudges need a per-tool hook; ccstream gets it from `foci-cc-hook`.
 6. opencode's SSE stream carries server heartbeats inbound (`oc/subscriber.go:Subscriber.onHeartbeat`);
    foci sends nothing outbound. ccstream sends `keep_alive` every 30s (`cc/lifecycle.go:runKeepAlive`).
 7. opencode has no mid-turn fold: a steer buffers in `steerBuf`, POSTs `/abort` and is
@@ -524,7 +527,7 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - T10: `cc/lifecycle.go:finalizeExit` | `oc/lifecycle.go:Server.finalizeExit`, `oc/opencode.go:IsRunning` | `cx/reader.go:onReaderStopped`
 - T11: `cc/lifecycle.go:Close` | `oc/lifecycle.go:Server.Close` | `cx/lifecycle.go:Close` (`closeGracefulWait` then Kill)
 - `autonomous_runs`, `turn_adoption`: `cc/inject.go:AdoptRunningTurn`, `AwaitingAutonomousRun`, `cc/callbacks.go:SetOnAutonomousOpen` | ✗ grep `AdoptRunningTurn|AwaitingAutonomousRun|SetOnAutonomousOpen` | ✗ same
-- `pre_answer_nudge`: `cc/complete.go:tryPreAnswerRedispatch` | `oc/handlers.go:onSessionIdle` (gated off) | ✗ grep `PreAnswerNudgeFunc`
+- `pre_answer_nudge`: `cc/complete.go:tryPreAnswerRedispatch` | `oc/handlers.go:tryPreAnswerRedispatch` | ✗ grep `PreAnswerNudgeFunc`
 - `post_tool_nudge`: `cc/hooks.go:handleHookResponse` (`PostToolNudgeFunc`) | ✗ grep `PostToolNudgeFunc` | ✗ same
 - T15: `cc/lifecycle.go:runKeepAlive` | `oc/subscriber.go:onHeartbeat` | ✗ grep `keep.?alive|heartbeat`
 

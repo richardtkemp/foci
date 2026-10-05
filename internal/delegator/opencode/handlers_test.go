@@ -2,7 +2,6 @@ package opencode
 
 import (
 	"encoding/json"
-	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -708,52 +707,6 @@ func TestOnSessionIdle_WrongSessionIgnored(t *testing.T) {
 
 	if *c.completed != nil {
 		t.Error("OnTurnComplete fired for wrong session")
-	}
-}
-
-func TestOnSessionIdle_PreAnswerNudgeGate(t *testing.T) {
-	// Verifies the PreAnswerNudgeFunc gate: if it returns non-empty
-	// text, the turn is NOT completed — instead a follow-up prompt is
-	// sent (re-begin turn). Mirrors ccstream's two-round logic.
-	b := newHandlerTestBackend(t)
-	c := b.captures()
-
-	var nudgeMu sync.Mutex
-	var nudgeFired bool
-	b.turnMu.Lock()
-	b.turnEvents = &delegator.TurnEvents{
-		OnTurnComplete: func(r *delegator.TurnResult) {},
-		PreAnswerNudgeFunc: func(r *delegator.TurnResult) string {
-			nudgeMu.Lock()
-			nudgeFired = true
-			nudgeMu.Unlock()
-			return "please verify your answer"
-		},
-	}
-	b.turnMu.Unlock()
-
-	// We can't call sendPrompt (no server), so just verify the gate
-	// fires and the turn is NOT completed. The test expects a panic
-	// from sendPrompt (nil server), which we catch via deferred recover.
-	func() {
-		defer func() {
-			_ = recover() // expected: sendPrompt panics on nil server
-		}()
-		b.onSessionIdle("sess-test")
-	}()
-
-	nudgeMu.Lock()
-	fired := nudgeFired
-	nudgeMu.Unlock()
-	if !fired {
-		t.Error("PreAnswerNudgeFunc was not called")
-	}
-	// Turn should still be in flight (NOT completed).
-	if !b.IsTurnInFlight() {
-		t.Error("turn was completed despite PreAnswerNudgeFunc returning non-empty")
-	}
-	if *c.completed != nil {
-		t.Error("OnTurnComplete fired despite nudge gate")
 	}
 }
 

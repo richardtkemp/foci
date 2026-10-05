@@ -63,6 +63,7 @@ var proofs = map[string]map[delegator.Capability]string{
 		delegator.CapCommandApprovalAllowlist: "TestOnCommandApproval_AutoApproveRuleAccepts",
 	},
 	"opencode": {
+		delegator.CapPreAnswerNudge:           "TestOnSessionIdle_PreAnswerReDispatches",
 		delegator.CapStreaming:                "TestOnMessagePartDelta_TextFiresOnTextDelta",
 		delegator.CapControlModel:             "TestSendControl_SetModel",
 		delegator.CapControlPermissionMode:    "TestSendControl_SetPermissionMode",
@@ -135,7 +136,7 @@ func TestSpecs_NudgesAndStreaming(t *testing.T) {
 	type caps struct{ postTool, preAnswer, streaming bool }
 	want := map[string]caps{
 		"claude-code": {true, true, true},
-		"opencode":    {false, false, true},
+		"opencode":    {false, true, true},
 		"codex":       {false, false, true},
 	}
 	for name, w := range want {

@@ -77,7 +77,7 @@ func TestNudgeCapabilities(t *testing.T) {
 		{"", true, true},    // API transport
 		{"api", true, true}, // API transport
 		{"claude-code", true, true},
-		{"opencode", false, false},
+		{"opencode", false, true},
 		{"codex", false, false},
 		{"some-future-backend", false, false},
 	}

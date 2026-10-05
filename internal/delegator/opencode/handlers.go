@@ -514,24 +514,19 @@ func (b *Backend) onSessionIdle(sessionID string) {
 		}
 	}
 
-	// Pre-answer nudge gate. If the caller provided a
-	// PreAnswerNudgeFunc and it returns non-empty text, re-begin the
-	// turn with the follow-up instead of completing. Mirrors
-	// ccstream's two-round logic.
-	if turn != nil && turn.PreAnswerNudgeFunc != nil {
-		if followUp := turn.PreAnswerNudgeFunc(result); followUp != "" {
-			log.NewComponentLogger(b.logComponent()).Debugf("onSessionIdle: pre-answer nudge fired, re-sending")
-			b.beginTurn(turn) // reuse same TurnEvents
-			_ = b.sendPrompt(context.Background(), followUp, nil, b.systemPrompt)
-			return // don't complete — wait for the next session.idle
-		}
+	// An idle from a steer's abort burst is not a final answer, so the
+	// pre-answer gate does not run on it.
+	b.turnMu.Lock()
+	wasAborting := b.aborting
+	b.turnMu.Unlock()
+	if !wasAborting && b.tryPreAnswerRedispatch(turn, result) {
+		return // don't complete — wait for the revision's session.idle
 	}
 
 	// Complete the turn.
 	b.turnMu.Lock()
 	b.turnEvents = nil
 	b.turnActive = false
-	wasAborting := b.aborting
 	b.turnMu.Unlock()
 
 	if turn != nil && turn.OnTurnComplete != nil {
@@ -590,6 +585,37 @@ func (b *Backend) onSessionIdle(sessionID string) {
 	}); err != nil {
 		log.NewComponentLogger(b.logComponent()).Warnf("onSessionIdle: flushSteerBuf: %v", err)
 	}
+}
+
+// tryPreAnswerRedispatch runs the pre-answer nudge gate against the turn's
+// final result. When the gate returns a follow-up it is sent as a fresh
+// prompt and the turn is held open for the revised answer; it returns true so
+// onSessionIdle skips completion. A send failure returns false, so the turn
+// completes with the first-round result rather than waiting for an idle that
+// will never come. Mirrors ccstream's tryPreAnswerRedispatch.
+//
+// The revision is the same turn: TurnEvents, turnResultCh and the tool count
+// carry over, and only the text accumulator is reset so the final result
+// carries the revised reply alone. Runs on the dispatcher goroutine, so no
+// round-2 event can be handled before the reset.
+func (b *Backend) tryPreAnswerRedispatch(turn *delegator.TurnEvents, result *delegator.TurnResult) bool {
+	if turn == nil || turn.PreAnswerNudgeFunc == nil {
+		return false
+	}
+	followUp := turn.PreAnswerNudgeFunc(result)
+	if followUp == "" {
+		return false
+	}
+	if err := b.sendPrompt(context.Background(), followUp, nil, b.systemPrompt); err != nil {
+		log.NewComponentLogger(b.logComponent()).Warnf("pre-answer re-dispatch: %v — completing with the first-round result", err)
+		return false
+	}
+	b.turnMu.Lock()
+	b.turnText.Reset()
+	b.turnMu.Unlock()
+	log.NewComponentLogger(b.logComponent()).Debugf("turn_lifecycle event=preanswer_redispatch followup_len=%d round1_textlen=%d",
+		len(followUp), len(result.Text))
+	return true
 }
 
 // ---------------------------------------------------------------------------

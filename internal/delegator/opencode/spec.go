@@ -19,7 +19,7 @@ var spec = delegator.Spec{
 
 	Caps: map[delegator.Capability]delegator.Support{
 		delegator.CapPostToolNudge:  delegator.No("opencode exposes no per-tool point to inject a nudge at"),
-		delegator.CapPreAnswerNudge: delegator.No("the onSessionIdle re-dispatch exists but is unverified live and drops sendPrompt's error (#2176)"),
+		delegator.CapPreAnswerNudge: delegator.Yes(),
 		delegator.CapStreaming:      delegator.Yes(),
 
 		delegator.CapControl:               delegator.Yes(),

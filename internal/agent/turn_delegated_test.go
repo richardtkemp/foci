@@ -1640,6 +1640,61 @@ func TestDelegatedTransport_RunInference_PreAnswerGateDisabled(t *testing.T) {
 	}
 }
 
+// TestDelegatedTransport_RunInference_PreAnswerMinToolsFromResult: a backend
+// that declares pre-answer but not post-tool nudges (opencode, #2176) never
+// calls PostToolNudgeFunc, so the per-turn tool counter stays at zero. The
+// min-tools threshold must then read the result's own tool count, or the
+// gate could never pass its default threshold of 2.
+func TestDelegatedTransport_RunInference_PreAnswerMinToolsFromResult(t *testing.T) {
+	var capturedPreAnswerFunc func(*delegator.TurnResult) string
+	be := &mockBackendDT{
+		sessionFile: "/tmp/session.jsonl",
+		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
+			capturedPreAnswerFunc = handler.PreAnswerNudgeFunc
+			if handler.OnTurnComplete != nil {
+				handler.OnTurnComplete(&delegator.TurnResult{Text: "final"})
+			}
+			return nil, nil
+		},
+	}
+
+	rs := &nudge.RuleSet{
+		Rules: []nudge.Rule{
+			{Text: "verify-your-answer", Trigger: nudge.Trigger{Type: "pre_answer"}},
+		},
+	}
+	sched := nudge.NewSchedulerOpts(rs, nudge.SchedulerOpts{Cooldown: 5, MaxPerBatch: 2, CanPreAnswer: true})
+	sched.Configure(nudge.Settings{Cooldown: 5, MaxPerBatch: 2, PreAnswerGate: true, PreAnswerMinTools: 2})
+	sched.StartTurn("hi")
+
+	mgr := newMockDelegatedManager(t, be)
+	mgr.Spec = delegator.Spec{Caps: map[delegator.Capability]delegator.Support{
+		delegator.CapPreAnswerNudge: delegator.Yes(),
+	}}
+	a := &Agent{
+		Model:            "test-model",
+		DelegatedManager: mgr,
+		Nudger:           sched,
+	}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
+	ts.Prompt = "hi"
+	ts.StartedAt = time.Now()
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+	if capturedPreAnswerFunc == nil {
+		t.Fatal("PreAnswerNudgeFunc should be wired when the backend declares pre_answer_nudge")
+	}
+	if got := capturedPreAnswerFunc(&delegator.TurnResult{Text: "a", ToolCalls: 1}); got != "" {
+		t.Errorf("gate fired with 1 tool call under min_tools=2: %q", got)
+	}
+	if got := capturedPreAnswerFunc(&delegator.TurnResult{Text: "a", ToolCalls: 2}); !strings.Contains(got, "verify-your-answer") {
+		t.Errorf("gate with 2 tool calls in the result = %q, want the pre_answer reminder", got)
+	}
+}
+
 // TestDelegatedTransport_RunInference_PreAnswerFoldsIntoFinal: when the gate
 // runs a second round, the agent layer stashes nothing from round 1 — the
 // backend keeps accumulating across the re-dispatch like a steer, so the

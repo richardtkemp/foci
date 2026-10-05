@@ -495,9 +495,9 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 	var toolCount int
 
 	// Pre-answer gate state: when PreAnswerNudgeFunc returns a follow-up,
-	// ccstream re-dispatches this handler for a second round. preAnswerFired
-	// flips to true on first return so subsequent calls from the second
-	// round's OnResult yield "" and break the loop. Usage is not stashed here:
+	// the backend re-dispatches the turn for a second round. preAnswerFired
+	// flips to true on first return so the second round's call yields "" and
+	// breaks the loop. Usage is not stashed here:
 	// the backend keeps accumulating across the re-dispatch, so the round-2
 	// result already carries the whole turn (#1856).
 	var (
@@ -558,7 +558,13 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 			if preAnswerFired || a.Nudger == nil || !a.Nudger.PreAnswerGate() || !nudgesAllowed(ts) {
 				return ""
 			}
-			if toolCount < a.Nudger.PreAnswerMinTools() {
+			// A backend without post-tool callbacks (opencode) never
+			// advances toolCount; its result's tool count stands in.
+			tools := toolCount
+			if postToolNudgeFunc == nil && result != nil {
+				tools = result.ToolCalls
+			}
+			if tools < a.Nudger.PreAnswerMinTools() {
 				return ""
 			}
 			reminder := a.Nudger.CheckPreAnswer()
@@ -573,7 +579,7 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 				preAnswerFirstText = result.Text
 			}
 			a.logger().Infof("nudge: pre-answer gate fired for session %s (tool_count=%d)",
-				ts.SessionKey, toolCount)
+				ts.SessionKey, tools)
 			return a.wrapStandaloneNudge(reminder)
 		}
 	}
