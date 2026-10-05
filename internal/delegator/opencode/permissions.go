@@ -63,6 +63,10 @@ func (b *Backend) onPermissionAsked(req PermissionRequest) {
 // permissions to handleQuestionPermission and everything else to the binary
 // Allow/Deny/Always keyboard. Shared by both opencode permission models.
 func (b *Backend) surfacePermission(pp pendingPermission) {
+	if b.skipPermissions {
+		b.answerUnattended(pp)
+		return
+	}
 	// Store under permMu so RespondToPermission (caller's goroutine) and the
 	// dispatcher goroutine don't race.
 	b.permMu.Lock()
@@ -132,6 +136,30 @@ func (b *Backend) surfacePermission(pp pendingPermission) {
 		{Label: "Always Allow", Data: "always"},
 	}
 	b.permPromptFn(pp.id, pp.title, pp.title, "", choices)
+}
+
+// answerUnattended answers a permission in a skip-permissions session (a
+// batch run, or backend_config.skip_permissions) without prompting anyone.
+// ccstream gets this from CC's --dangerously-skip-permissions, which allows
+// every tool; opencode has no such launch flag, and its server is shared with
+// the agent's attended sessions, so the answer is given per ask instead.
+// Permissions are allowed once; a question has nobody to answer it, so it is
+// declined. Never registered as outstanding: nothing waits on it. A failed
+// reply is logged and left: prompting would put a batch's ask in the owner's
+// chat (#2153), and the batch's own timeout closes a session that stalls.
+func (b *Backend) answerUnattended(pp pendingPermission) {
+	lg := log.NewComponentLogger(b.logComponent())
+	var err error
+	if pp.permType == PermQuestion {
+		lg.Warnf("question declined (unattended session): id=%s title=%q", pp.id, pp.title)
+		err = b.postPermissionResponse(pp.id, "deny", false)
+	} else {
+		lg.Infof("permission allowed (unattended session): type=%s title=%q id=%s", pp.permType, pp.title, pp.id)
+		err = b.sendPermissionReply(pp, true, false)
+	}
+	if err != nil {
+		lg.Warnf("unattended reply to %s failed: %v", pp.id, err)
+	}
 }
 
 // permTypeToToolName maps opencode permission types to the tool names used

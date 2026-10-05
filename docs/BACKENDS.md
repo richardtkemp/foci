@@ -198,7 +198,7 @@ grepped for each ✗.
 | P2 | Always allow | Persist an approval beyond this call | ✓ | ✓ [12] | ✗ |
 | P3 | Foci auto-approve | `[permissions]` rules + foci shell rules + exec-guard veto, before the user sees a prompt | ✓ | ✓ | [13] |
 | P4 | Launch allowlist | `allowed_tools` / `[cc_backend] default_allowed_tools` pre-approval | ✓ | n/a [14] | n/a [14] |
-| P5 | Unattended mode | `skip_permissions` and `StartOptions.SkipPermissions` (batch runs): never prompt a chat | ✓ | [15] | ✗ [15] |
+| P5 | Unattended mode | `skip_permissions` and `StartOptions.SkipPermissions` (batch runs): never prompt a chat | ✓ | ✓ [15] | ✗ [15] |
 | P6 | Permission-mode switch | `SetPermissionModeRequest` at runtime | ✓ | ✓ | [16] |
 | P7 | Prompt cancel listeners | Backend-cancelled prompt disables its stale buttons | ✓ | ✓ | ✗ [17] |
 | P8 | Prompts-cleared drain | `SetOnPromptsCleared` unblocks `WaitForPermission` | ✓ | ✓ | ✓ |
@@ -325,7 +325,7 @@ grepped for each ✗.
 | `allowed_tools`, `[cc_backend].default_allowed_tools` | ✓ | ✗ | ✗ | folded only for CC names (`gw/agents_delegated.go:configureDelegated`) |
 | `pretool_rules`, `[cc_backend].pretool_rules` | ✓ | ✗ | ✗ | wired only `if backendName == "claude-code"` |
 | `stop_rules` | ✓ | ✗ | ✗ | same |
-| `skip_permissions` | ✓ | ✗ | ✗ | |
+| `skip_permissions` | ✓ | ✓ | ✗ | opencode: per-ask answers, `oc/permissions.go:answerUnattended` |
 | `[cc_backend].background_task_max_age` | ✓ | ✗ | ✗ | `StartOptions.SubagentMaxAge`, read only by ccstream |
 | `hostname`, `port`, `server_auth`, `log_level`, `default_permission` | ✗ | ✓ | ✗ | `[opencode_backend]` folded in |
 | `sandbox`, `api_key` | ✗ | ✗ | [48] | read by codex but unreachable from config |
@@ -376,13 +376,15 @@ grepped for each ✗.
 14. `--allowedTools` is a Claude Code launch flag. opencode's analogue is
     `default_permission` + PATCH `/config`; codex's would be the sandbox/approval policy.
 15. ccstream passes `--dangerously-skip-permissions` and denies anything CC still asks
-    (`cc/permissions.go:denyUnattended`, #2096). Neither opencode nor codex reads
+    (`cc/permissions.go:denyUnattended`, #2096). opencode has no launch flag and shares one
+    server across the agent's sessions, so `surfacePermission` answers each ask of a
+    skip-permissions session itself (`oc/permissions.go:answerUnattended`, #2153): permissions
+    are allowed once and questions declined, with no prompt. codex does not read
     `StartOptions.SkipPermissions` (`grep SkipPermissions|skip_permissions`: no hits), and
     `DelegatedManager` wires the chat permission prompt for batch sessions too
     (`ag/delegated_manager.go`, `SetPermissionPromptFunc` is not gated on `isBatch`). So a
-    batch run (consolidation, nudge extraction, summary) on these backends can put a permission
-    prompt in the owner's chat. opencode can be configured `default_permission = "allow"`
-    agent-wide; codex has no reachable equivalent (footnote 48).
+    batch run (consolidation, nudge extraction, summary) on codex can put a permission
+    prompt in the owner's chat; codex has no reachable equivalent (footnote 48).
 16. codex queues the approval policy for the next `turn/start` (`cx/control.go:applyPendingControls`);
     `plan` maps to `on-request`, so there is no plan mode.
 17. `cx/callbacks.go:RegisterPromptCancelListener` is a TODO no-op. `serverRequest/resolved` clears
@@ -507,7 +509,7 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - P2: `cc/permissions.go:RespondToPermissionWithRule` | `oc/permissions.go:RespondToPermission(remember)` | ✗ only Allow/Deny choices in `cx/permissions.go`
 - P3: `cc/autoapprove.go:autoApprovePermission` | `oc/permissions.go:checkAutoApprove` | `cx/permissions.go:tryAutoApprove`
 - P4: `cc/lifecycle.go:Start` (`--allowedTools` from `cfg["allowed_tools"]`) | n/a | n/a
-- P5: `cc/lifecycle.go:Start` (`--dangerously-skip-permissions`), `cc/permissions.go:denyUnattended` | `oc/backend_lifecycle.go` `cfg["default_permission"]` | ✗ grep `SkipPermissions|skip_permissions|dangerously`
+- P5: `cc/lifecycle.go:Start` (`--dangerously-skip-permissions`), `cc/permissions.go:denyUnattended` | `oc/backend_lifecycle.go:Start` (`skipPermissions`), `oc/permissions.go:answerUnattended` | ✗ grep `SkipPermissions|skip_permissions|dangerously`
 - P6: `cc/control.go:SendControl` (`set_permission_mode`) | `oc/control.go:SendControl` (`patchConfig`, `mapPermissionMode`) | `cx/control.go:SendControl`, `codexApprovalPolicy`
 - P7: `cc/callbacks.go:RegisterPromptCancelListener` + `dg/outstanding.go` | `oc/opencode.go:RegisterPromptCancelListener`, `oc/permissions.go:onPermissionReplied` | ✗ `cx/callbacks.go` TODO
 - P8: `cc/callbacks.go:SetOnPromptsCleared` | `oc/opencode.go:SetOnPromptsCleared` | `cx/permissions.go:respondApproval`, `cx/handlers.go:onServerRequestResolved`

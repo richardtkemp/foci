@@ -300,6 +300,10 @@ type Backend struct {
 	autoApproveEnv   map[string]string // exact environment inherited by OpenCode
 	workDir          string            // workspace directory for path-canonicalization
 
+	// skipPermissions: an unattended session with nobody to answer a prompt
+	// (see answerUnattended). Set at Start, read-only after.
+	skipPermissions bool
+
 	// authFailureFired gates onAuthFailure so a flaky 401 loop doesn't
 	// spam repeated notifications. CAS'd to true on first fire; resets
 	// when the Backend is recreated (session restart).
