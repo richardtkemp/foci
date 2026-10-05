@@ -35,7 +35,7 @@ func TestGet_SessionEnvIsBackendAgnostic(t *testing.T) {
 	if env["FOCI_SESSION_KEY"] != "test-agent/c1" {
 		t.Fatalf("FOCI_SESSION_KEY = %q, want %q", env["FOCI_SESSION_KEY"], "test-agent/c1")
 	}
-	for _, k := range []string{"BASH_MAX_TIMEOUT_MS", "BASH_DEFAULT_TIMEOUT_MS", "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS"} {
+	for _, k := range []string{"BASH_MAX_TIMEOUT_MS", "BASH_DEFAULT_TIMEOUT_MS", "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS", "CLAUDE_CODE_MAX_RETRIES"} {
 		if v, ok := env[k]; ok {
 			t.Errorf("%s=%q in the shared per-session env — it would reach codex/opencode too; keep it in ccstream", k, v)
 		}

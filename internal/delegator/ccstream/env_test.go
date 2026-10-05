@@ -55,6 +55,38 @@ func TestBuildEnv_RaisesBashMaxTimeout(t *testing.T) {
 	}
 }
 
+// TestBuildEnv_RaisesMaxRetries pins CC's API retry budget at its ceiling
+// (#2186). CC 2.1.289 retries 529 Overloaded for a subagent (query source
+// "agent:*" counts as foreground) only CLAUDE_CODE_MAX_RETRIES times, default
+// 10 — about 3 minutes of 0.5s-doubling backoff capped at 32s. A longer
+// overload ends the subagent with "API Error: 529 Overloaded" and the
+// orchestrator has to resume it by hand. 15 is the highest value CC honours
+// without CLAUDE_CODE_RETRY_WATCHDOG (it clamps above that), roughly doubling
+// the window to ~6 minutes while keeping it bounded.
+func TestBuildEnv_RaisesMaxRetries(t *testing.T) {
+	clearEnvVar(t, "CLAUDE_CODE_MAX_RETRIES")
+
+	got, n := envValue(buildEnv(nil), "CLAUDE_CODE_MAX_RETRIES")
+	if n == 0 {
+		t.Fatal("CLAUDE_CODE_MAX_RETRIES missing from CC subprocess env — subagents die after CC's default 10 retries of a 529")
+	}
+	if got != "15" {
+		t.Errorf("CLAUDE_CODE_MAX_RETRIES = %q, want %q (CC's no-watchdog ceiling)", got, "15")
+	}
+}
+
+// TestBuildEnv_NoRetryWatchdog — CLAUDE_CODE_RETRY_WATCHDOG would make CC
+// retry 529 and 429 with no attempt cap (each wait up to 5 min, a quota 429
+// up to 6 h), so an exhausted plan would hang an agent for hours instead of
+// failing. Total retry time must stay bounded.
+func TestBuildEnv_NoRetryWatchdog(t *testing.T) {
+	clearEnvVar(t, "CLAUDE_CODE_RETRY_WATCHDOG")
+
+	if _, n := envValue(buildEnv(nil), "CLAUDE_CODE_RETRY_WATCHDOG"); n != 0 {
+		t.Error("CLAUDE_CODE_RETRY_WATCHDOG set — it removes the cap on 529/429 retries")
+	}
+}
+
 // TestBuildEnv_LeavesBashDefaultTimeoutAlone — we raise only the ceiling the
 // model MAY request. Setting BASH_DEFAULT_TIMEOUT_MS would slow every plain
 // Bash call's failure mode, which is not what we want.
@@ -111,6 +143,7 @@ func TestBuildEnv_KeepsSessionExtras(t *testing.T) {
 // environment that process actually observed via /proc-independent `env`.
 func TestStart_SpawnedProcessReceivesBashMaxTimeout(t *testing.T) {
 	clearEnvVar(t, "BASH_MAX_TIMEOUT_MS")
+	clearEnvVar(t, "CLAUDE_CODE_MAX_RETRIES")
 
 	dir := t.TempDir()
 	out := filepath.Join(dir, "env.txt")
@@ -152,6 +185,9 @@ func TestStart_SpawnedProcessReceivesBashMaxTimeout(t *testing.T) {
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
 	if got, n := envValue(lines, "BASH_MAX_TIMEOUT_MS"); n == 0 || got != "1200000" {
 		t.Errorf("spawned CC process saw BASH_MAX_TIMEOUT_MS=%q (n=%d), want %q", got, n, "1200000")
+	}
+	if got, n := envValue(lines, "CLAUDE_CODE_MAX_RETRIES"); n == 0 || got != "15" {
+		t.Errorf("spawned CC process saw CLAUDE_CODE_MAX_RETRIES=%q (n=%d), want %q", got, n, "15")
 	}
 	// Sanity: the recorder really is the process foci launched for this session.
 	if got, _ := envValue(lines, "FOCI_SESSION_KEY"); got != "envtest/main" {

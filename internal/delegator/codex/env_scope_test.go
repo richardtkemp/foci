@@ -15,7 +15,7 @@ import (
 // later moves the injection up into DelegatedManager's shared per-session env
 // (where FOCI_SOCK/BASH_ENV live), this test fails.
 func TestBuildEnv_NoCCBashTimeoutVars(t *testing.T) {
-	for _, k := range []string{"BASH_MAX_TIMEOUT_MS", "BASH_DEFAULT_TIMEOUT_MS", "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS"} {
+	for _, k := range []string{"BASH_MAX_TIMEOUT_MS", "BASH_DEFAULT_TIMEOUT_MS", "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS", "CLAUDE_CODE_MAX_RETRIES"} {
 		if old, ok := os.LookupEnv(k); ok {
 			t.Cleanup(func() { _ = os.Setenv(k, old) })
 			_ = os.Unsetenv(k)
@@ -31,7 +31,7 @@ func TestBuildEnv_NoCCBashTimeoutVars(t *testing.T) {
 	if !hasEnvKey(env, "FOCI_SESSION_KEY") {
 		t.Fatal("FOCI_SESSION_KEY missing — buildEnv did not apply StartOptions.Env")
 	}
-	for _, k := range []string{"BASH_MAX_TIMEOUT_MS", "BASH_DEFAULT_TIMEOUT_MS", "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS"} {
+	for _, k := range []string{"BASH_MAX_TIMEOUT_MS", "BASH_DEFAULT_TIMEOUT_MS", "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS", "CLAUDE_CODE_MAX_RETRIES"} {
 		if hasEnvKey(env, k) {
 			t.Errorf("%s leaked into the codex subprocess env — it is Claude Code-only", k)
 		}
