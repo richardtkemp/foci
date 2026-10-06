@@ -150,3 +150,24 @@ func TestReadWake_OnlyToDevicesAdvertisingTheFeature(t *testing.T) {
 		t.Errorf("after a hello without readWake, device got %d read wakes total, want 1", n)
 	}
 }
+
+// A re-asserted watermark (#1515) is mirrored over the socket but sends no read
+// wake: the wake went out when that watermark first advanced.
+func TestHandleRead_ReassertedWatermarkSendsNoWake(t *testing.T) {
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42, sessionKey: "clutch/c42"}
+	h.tokens.set("phone", "tok-phone")
+	h.tokens.setReadWake("phone", true)
+	p, rec := newRecordingPusher(t, h.tokens)
+	p.readWait = 20 * time.Millisecond
+	h.pusher = p
+	_ = idx.SetChatMetadata("clutch", "app", 42, "last_read", ulidNewer)
+
+	h.handleRead(fakeClient(), fap.Read{ConversationID: "c1", MessageID: ulidNewer})
+	time.Sleep(100 * time.Millisecond)
+	if n := rec.count("tok-phone"); n != 0 {
+		t.Fatalf("re-asserted read sent %d read wakes, want 0", n)
+	}
+}

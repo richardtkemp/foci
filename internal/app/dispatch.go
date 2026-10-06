@@ -535,6 +535,7 @@ func (h *Hub) handleRead(client *wsClient, f fap.Read) {
 	if b == nil {
 		return
 	}
+	advance := true
 	if idx := h.deps.SessionIndex; idx != nil {
 		// The watermark only moves forward: a stale device's Read (it read an older
 		// message, or its frame arrived late) must not drag the stored value back,
@@ -542,19 +543,29 @@ func (h *Hub) handleRead(client *wsClient, f fap.Read) {
 		// Compare-and-set under readMu so two devices' reads can't interleave.
 		h.readMu.Lock()
 		cur, _ := idx.GetChatMetadata(b.agentID, "app", b.chatID, "last_read")
-		advance := readWatermarkAdvances(cur, f.MessageID)
+		advance = readWatermarkAdvances(cur, f.MessageID)
 		if advance {
 			_ = idx.SetChatMetadata(b.agentID, "app", b.chatID, "last_read", f.MessageID)
 		}
 		h.readMu.Unlock()
-		if !advance {
+		// A Read naming the stored watermark itself is still mirrored (#1515): the
+		// client sends one whenever its read state changes, and that includes its
+		// unread count changing while the watermark stays put (an answered ask
+		// stops counting). Each device derives its unread count from the
+		// watermark it applies, so relaying the re-assertion is what lets the
+		// others follow. Only a regression is dropped.
+		if !advance && f.MessageID != cur {
 			return
 		}
 	}
 	h.broadcastExcept(client, fap.ReadSync{ConversationID: f.ConversationID, MessageID: f.MessageID})
 	// A device whose socket is released never hears that ReadSync until it next
-	// connects, so its notification for this chat outlives the read (#2182).
-	h.pusher.notifyRead(f.ConversationID, f.MessageID, h.connectedDeviceIDs)
+	// connects, so its notification for this chat outlives the read (#2182). A
+	// re-asserted watermark already sent its wake when it first advanced, so only
+	// a real advance sends one; the reconnect's pushReads re-applies it anyway.
+	if advance {
+		h.pusher.notifyRead(f.ConversationID, f.MessageID, h.connectedDeviceIDs)
+	}
 }
 
 // readWatermarkAdvances reports whether next should replace the stored read

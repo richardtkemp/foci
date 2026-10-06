@@ -136,3 +136,33 @@ func TestReadWatermarkAdvances(t *testing.T) {
 		}
 	}
 }
+
+// TestHandleRead_ReassertedWatermarkIsMirrored proves a Read naming the stored
+// watermark itself is relayed to the other devices (#1515). The client sends one
+// when its unread count changes but its watermark does not (answering an ask that
+// bumped the badge, then re-committing the same read position); dropping it left
+// the other devices' badges stale until a later read moved the watermark. The
+// store is not rewritten.
+func TestHandleRead_ReassertedWatermarkIsMirrored(t *testing.T) {
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+	h.convs["c1"] = &convBinding{convID: "c1", agentID: "clutch", chatID: 42, sessionKey: "clutch/c42"}
+	phone := fakeClient()
+	mac := fakeClient()
+	h.clients[phone] = struct{}{}
+	h.clients[mac] = struct{}{}
+	_ = idx.SetChatMetadata("clutch", "app", 42, "last_read", ulidNewer)
+
+	h.handleRead(phone, fap.Read{ConversationID: "c1", MessageID: ulidNewer})
+
+	if v, _ := idx.GetChatMetadata("clutch", "app", 42, "last_read"); v != ulidNewer {
+		t.Errorf("last_read = %q, want it kept at %q", v, ulidNewer)
+	}
+	if rs := lastReadSync(t, mac); rs["messageId"] != ulidNewer {
+		t.Errorf("mac ReadSync = %v, want the re-asserted %s", rs, ulidNewer)
+	}
+	if len(drain(t, phone)) != 0 {
+		t.Error("sender must not receive its own read echo")
+	}
+}
