@@ -116,6 +116,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.pushPins(client)
 		h.pushScrolls(client)
 		h.pushOpenSet(client)
+		h.pushViewing(client)
 		// Reconnect resume: re-attach (which recomputes the capability union across
 		// attached clients) + replay each conversation the client still has
 		// unrendered frames for.
@@ -139,6 +140,9 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 
 	case fap.ConversationOpenSet:
 		h.handleConversationOpenSet(client, f)
+
+	case fap.ViewingPut:
+		h.handleViewingPut(client, f)
 
 	case fap.ConversationList:
 		h.pushRoster(client)

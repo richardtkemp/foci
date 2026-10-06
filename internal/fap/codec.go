@@ -138,6 +138,8 @@ func decodeClient(t string, d json.RawMessage) (any, error) {
 		dst = &PinPut{}
 	case TypeScrollPut:
 		dst = &ScrollPut{}
+	case TypeViewingPut:
+		dst = &ViewingPut{}
 	case TypeConfigGet:
 		dst = &ConfigGet{}
 	case TypeConfigPut:
@@ -201,6 +203,8 @@ func derefClient(dst any) any {
 	case *PinPut:
 		return *v
 	case *ScrollPut:
+		return *v
+	case *ViewingPut:
 		return *v
 	case *ConfigGet:
 		return *v

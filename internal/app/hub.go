@@ -323,6 +323,14 @@ func (h *Hub) pushNotify(p pushPayload) {
 	if h.pusher == nil {
 		return
 	}
+	// The user is reading this conversation on a connected device: waking an
+	// offline device would only alert for a message the reader's read receipt
+	// clears a moment later (#2202). Skipped before notify, so no coalescing
+	// window is consumed either.
+	if h.isViewed(p.ConvID) {
+		appLog.Debugf("push: skip wake for conv=%s, viewed on a connected device", p.ConvID)
+		return
+	}
 	p.AgentName, _ = h.agentDisplay(p.AgentID)
 	p.SessionTitle = h.aliasForChat(p.AgentID, p.ChatID)
 	h.pusher.notify(p, h.connectedDeviceIDs())
@@ -2085,6 +2093,15 @@ func (h *Hub) removeClient(c *wsClient) {
 		}
 	}
 	h.mu.Unlock()
+
+	// A closed socket views nothing: tell the other devices to alert again for
+	// what it was showing (#2202).
+	c.mu.Lock()
+	wasViewing := c.viewing != ""
+	c.mu.Unlock()
+	if wasViewing {
+		h.broadcastViewing()
+	}
 }
 
 // OpenSessionsForAgent returns the deduped session keys of the agent's open
@@ -2890,6 +2907,7 @@ type wsClient struct {
 	os        string                  // ClientInfo.OS from the hello; the device-tool fallback for pre-"tool:" clients (#1079)
 	helloAt   time.Time               // when the hello arrived; device-tool routing prefers the newest (#1079)
 	convByID  map[string]*convBinding // conversationId → binding
+	viewing   string                  // conversation the device has on screen, "" = none (ViewingPut, #2202)
 	// unknownTypes: inbound frame types this socket sent that the server does
 	// not recognise, so each is logged once per socket, not per frame (#1884).
 	unknownTypes map[string]struct{}

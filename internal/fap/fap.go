@@ -128,6 +128,13 @@ const (
 	// and is replayed after a hello, exactly like the draft pair.
 	TypeScrollPut  = "scroll.put"
 	TypeScrollSync = "scroll.sync"
+	// TypeViewingPut (app->server) reports the one conversation the device has
+	// on screen right now, or none (#2202); TypeViewingSync (server->app) tells
+	// each device which conversations its user's OTHER devices are viewing, so
+	// it stays silent for them. The server also skips the offline wake push for
+	// a conversation any device is viewing.
+	TypeViewingPut  = "viewing.put"
+	TypeViewingSync = "viewing.sync"
 	// TypeTyping is the app->server "user is typing" signal (ClientTyping). It is
 	// distinct from the server->app agent activity indicator, which is now the
 	// unified Activity frame (TypeActivity) with an "typing" ActivityKind.
@@ -1022,6 +1029,27 @@ type ScrollSync struct {
 }
 
 func (ScrollSync) Type() string { return TypeScrollSync }
+
+// ViewingPut reports the conversation this device is showing the user right now
+// (app->server, #2202): the app is in the foreground (Android) or its window is
+// focused (desktop), and this is the focused chat. An empty ConversationID means
+// none (backgrounded, unfocused, or no chat open). Sent on every change and after
+// each hello; the server holds it per socket and forgets it when the socket
+// closes. Fire-and-forget, not conversation-reliability-scoped.
+type ViewingPut struct {
+	ConversationID string `json:"conversationId,omitempty"`
+}
+
+// ViewingSync lists the conversations the user's OTHER devices are viewing
+// (server->client, #2202). Full replace, sent to every socket whenever any
+// device's ViewingPut changes or a viewing socket closes, and after a hello. A
+// device does not alert for a conversation in the list: the user is reading it
+// elsewhere, and that device's read would cancel the alert a moment later.
+type ViewingSync struct {
+	ConversationIDs []string `json:"conversationIds"`
+}
+
+func (ViewingSync) Type() string { return TypeViewingSync }
 
 // ConversationRename sets (or clears, when Title is empty) a user-friendly alias
 // for a conversation. Persisted server-side; echoed back in ConversationInfo.Title.

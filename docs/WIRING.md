@@ -2439,7 +2439,7 @@ captured in `setupAgent`) and merged into the turn text before `Enqueue`;
 `interactive.response`→`handleInteractiveResponse`
 (`platform.HandleInteractiveCallback` on the echoed `<promptId>:<index>` data →
 `interactive.edit` resolution, suppressed when a follow-up question advanced the
-binding's seq; a miss → `resolveDeadPrompt`: late answer + `interactive.remove`, #2080); `conversation.openSet`→`handleConversationOpenSet` (records the
+binding's seq; a miss → `resolveDeadPrompt`: late answer + `interactive.remove`, #2080); `viewing.put`→`handleViewingPut` (viewing presence, #2202, see below); `conversation.openSet`→`handleConversationOpenSet` (records the
 socket's open-set for keepalive, persists + mirrors it, AND attaches the socket to
 each open conversation it has a binding for but isn't yet attached to — a 4th
 attach trigger alongside `resumeConversations`/`conversation.open`/an active send —
@@ -2495,6 +2495,8 @@ Each half has exactly one implementation, and a new mirror must use them rather 
 - **Replay — `pushChatScalar(client, metaKey, replayEmpty, frame)`**, called from the `hello` branch of `dispatchInbound` alongside `pushRoster`/`pushSettings`/`pushOpenSet`. It walks every live binding and re-sends that chat's stored `chat_metadata` value. `replayEmpty` decides whether an empty STORED STRING is replayed: `draft` sets it true (a cleared draft must reach a device that missed the clear), `last_read` false (an empty watermark carries nothing), `scroll` false (a never-written position has nothing to say; the frame builder may also return nil to skip an unreadable stored value), `pins` false — an empty pins string means "never written", and replaying that as "nothing is pinned" would wipe the local-only message pins (#893) every device already holds. A pin set that is genuinely empty stores as `"[]"`, which is a non-empty string and replays either way.
 
 **Message pin (`pin.put`/`pin.sync`, #1882).** Stored as a JSON array under the `pins` `chat_metadata` key (sorted + de-duplicated by `pins.go`, so an unchanged set round-trips to an identical string). `pin.put` is a per-message delta from the app; `pin.sync` carries the conversation's WHOLE resulting set, so the same frame serves both the fan-out and the replay and the receiver never needs a base it might have missed. `handlePin` and `handleRead` are the read-modify-writes among the four mirrors. `handlePin` is serialised on `h.pinsMu` — two devices pinning different messages in one chat at the same instant would otherwise both compute from the same stale set and lose one. This is MESSAGE pin only; the roster's CONVERSATION pin remains a deliberate per-device preference with no wire representation.
+
+**Viewing presence (`viewing.put`/`viewing.sync`, #2202, `viewing.go`).** Each socket reports the one conversation its device shows the user right now (app foregrounded / window focused, and that chat focused) or none; `handleViewingPut` stores it on `wsClient.viewing` and, on a change, `broadcastViewing` sends EVERY socket a full-replace `viewing.sync` listing the conversations viewed by sockets of OTHER devices (`viewedByOthers`; a second socket of the same device does not count). `removeClient` re-broadcasts when a viewing socket closes; the `hello` branch calls `pushViewing` so a reconnecting device catches up (the client re-sends its own report after its hello). Not durable: socket state only. Consumers: the client suppresses its local alert for a conversation in the list, and `pushNotify` skips the offline wake push for a viewed conversation. Why: reading a chat on the Mac used to buzz the phone for each message, which the Mac's read receipt then cancelled 0.3-1.6s later.
 
 **Scroll position (`scroll.put`/`scroll.sync`, #2144).** Where the user LEFT a conversation, sent by the app on the same leave event as `draft.put`. Device-portable by construction: `messageId` names the message at the top of the viewport and `following` says they left tailing the newest (then `messageId` is dropped) — no list index or pixel offset, which mean nothing on a device with a different width or collapse state. `handleScroll` (`scroll_sync.go`) is the draft handler's shape: normalise, store JSON under the `scroll` `chat_metadata` key, `broadcastExcept`; a not-following put without a message is refused so it cannot wipe a stored position. Server-side it is last-write-wins by arrival, like drafts; the conflict rule (never move a chat the user is looking at; on leaving it, adopt a remote position only if they did not scroll themselves) lives in the client's `ScrollSyncGate`.
 
@@ -2627,7 +2629,9 @@ registers its FCM token in `ClientHello` (or out-of-band via
 → `pushTokens` (in-memory deviceId→token, repopulated each connect). When
 `convBinding.send` runs with no attached socket, it buffers the frame and — for
 user-visible frames only (`pushPreview` classifies; control/streaming frames are
-skipped) — fires `notifyOffline` → `pusher.notify`, which coalesces (≤1 push per
+skipped) — fires `notifyOffline` (`Hub.pushNotify`, which first drops the wake
+when any live socket is VIEWING that conversation, `isViewed`, #2202) →
+`pusher.notify`, which coalesces (≤1 push per
 conversation PER DEVICE per `push_coalesce` window, default 15s; keyed
 `pushKey{convID, deviceID}` so one device's wake never swallows another's, and
 the `hello` branch calls `pusher.deviceConnected` to clear that device's windows

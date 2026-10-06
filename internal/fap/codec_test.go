@@ -415,6 +415,7 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		ConversationForeground{ConversationID: "c"},
 		PinSync{ConversationID: "c", MessageIDs: []string{"m1", "m2"}},
 		ScrollSync{ConversationID: "c", MessageID: "m", Following: false},
+		ViewingSync{ConversationIDs: []string{"c"}},
 		ConversationAck{ConversationID: "c"},
 		MessageConsumed{ConversationID: "c", MessageID: "m"},
 	}
@@ -535,5 +536,25 @@ func TestDecode_ScrollPut_FollowingWithoutMessage(t *testing.T) {
 	}
 	if f := in.Frame.(ScrollPut); !f.Following || f.MessageID != "" {
 		t.Errorf("decoded = %+v, want following with no message", f)
+	}
+}
+
+// TestDecode_ViewingPut pins the app->server viewing report's field name (#2202);
+// an absent conversationId is the "viewing nothing" report.
+func TestDecode_ViewingPut(t *testing.T) {
+	in, err := Decode(`{"t":"viewing.put","id":"i1","d":{"conversationId":"c1"}}`)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	f, ok := in.Frame.(ViewingPut)
+	if !ok || f.ConversationID != "c1" {
+		t.Fatalf("frame = %#v, want ViewingPut{c1}", in.Frame)
+	}
+	in, err = Decode(`{"t":"viewing.put","id":"i2","d":{}}`)
+	if err != nil {
+		t.Fatalf("decode empty: %v", err)
+	}
+	if f := in.Frame.(ViewingPut); f.ConversationID != "" {
+		t.Errorf("empty put decoded as %+v, want none", f)
 	}
 }
