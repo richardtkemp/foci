@@ -142,3 +142,157 @@ func TestPretoolTest_TrialRules(t *testing.T) {
 		})
 	}
 }
+
+// pretoolExamplesConfig is a mixed example set for `foci pretool test --all`
+// (#2039): one deny example passes, one is stolen by an earlier rule, one
+// matches nothing, and a non-Bash rule's JSON examples both pass.
+const pretoolExamplesConfig = `
+[[agents]]
+id = "clutch"
+backend = "claude-code"
+
+[[agents.backend_config.pretool_rules]]
+name = "no_sudo"
+tool = "Bash"
+command = 'sudo( |$)'
+reason = "r"
+
+[[agents.backend_config.pretool_rules]]
+name = "no_rm"
+tool = "Bash"
+command = '(sudo (\S+ )*)?rm( |$)'
+deny_examples  = ["rm -rf /tmp/x", "sudo rm /x", "ls"]
+allow_examples = ["trash /tmp/x"]
+reason = "r"
+
+[[agents.backend_config.pretool_rules]]
+name = "no_etc_read"
+tool = "Read"
+input.file_path = '^/etc/'
+deny_examples  = ['{"file_path":"/etc/passwd"}']
+allow_examples = ['{"file_path":"/home/x"}']
+reason = "r"
+`
+
+// TestPretoolTest_AllFailures proves --all prints exactly one line per
+// failed example — naming the rule, the example, the expected rule and the
+// rule that matched instead (or nothing) — plus a summary, and returns a
+// non-nil error so the process exits non-zero.
+func TestPretoolTest_AllFailures(t *testing.T) {
+	path := writePretoolConfig(t, pretoolExamplesConfig)
+	var out bytes.Buffer
+	err := cmdPretool([]string{"--config", path, "--agent", "clutch", "test", "--all"}, &out)
+	if err == nil || !strings.Contains(err.Error(), "2 of 6") {
+		t.Fatalf("err = %v, want 2 of 6 examples failed", err)
+	}
+	got := out.String()
+	wantLines := []string{
+		"FAIL no_rm deny sudo rm /x: expected no_rm, matched no_sudo",
+		"FAIL no_rm deny ls: expected no_rm, matched nothing",
+		"2 of 6 pretool example(s) failed",
+	}
+	for _, w := range wantLines {
+		if !strings.Contains(got, w) {
+			t.Errorf("output missing %q:\n%s", w, got)
+		}
+	}
+	if n := strings.Count(got, "FAIL "); n != 2 {
+		t.Errorf("%d FAIL lines, want 2:\n%s", n, got)
+	}
+}
+
+// TestPretoolTest_AllPasses proves passing examples are silent without -v
+// (summary only, no error) and that -v prints one ok line each, noting the
+// rule that legally matched an allow example.
+func TestPretoolTest_AllPasses(t *testing.T) {
+	path := writePretoolConfig(t, `
+[[agents]]
+id = "clutch"
+backend = "claude-code"
+
+[[agents.backend_config.pretool_rules]]
+name = "no_sudo"
+tool = "Bash"
+command = 'sudo( |$)'
+reason = "r"
+
+[[agents.backend_config.pretool_rules]]
+name = "no_rm"
+tool = "Bash"
+command = 'rm( |$)'
+deny_examples  = ["rm -rf /tmp/x"]
+allow_examples = ["sudo rm /x", "trash /tmp/x"]
+reason = "r"
+`)
+	var out bytes.Buffer
+	if err := cmdPretool([]string{"--config", path, "--agent", "clutch", "test", "--all"}, &out); err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if got := out.String(); got != "0 of 3 pretool example(s) failed\n" {
+		t.Errorf("quiet output = %q", got)
+	}
+	out.Reset()
+	if err := cmdPretool([]string{"--config", path, "--agent", "clutch", "test", "--all", "-v"}, &out); err != nil {
+		t.Fatalf("-v err = %v", err)
+	}
+	got := out.String()
+	for _, w := range []string{
+		"ok no_rm deny rm -rf /tmp/x",
+		"ok no_rm allow sudo rm /x (matched no_sudo)",
+		"ok no_rm allow trash /tmp/x",
+	} {
+		if !strings.Contains(got, w) {
+			t.Errorf("-v output missing %q:\n%s", w, got)
+		}
+	}
+}
+
+// TestPretoolTest_AllRunsWhenScripts proves --all evaluates when-checks for
+// real: a gated rule's deny example fails until the when script's marker
+// exists, then passes.
+func TestPretoolTest_AllRunsWhenScripts(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "marker")
+	path := writePretoolConfig(t, `
+[[agents]]
+id = "clutch"
+backend = "claude-code"
+
+[[agents.backend_config.pretool_rules]]
+name = "gated_rm"
+tool = "Bash"
+command = 'rm( |$)'
+when = 'test -f `+marker+`'
+deny_examples = ["rm x"]
+reason = "r"
+`)
+	var out bytes.Buffer
+	if err := cmdPretool([]string{"--config", path, "--agent", "clutch", "test", "--all"}, &out); err == nil {
+		t.Fatalf("before the marker: err = nil, output:\n%s", out.String())
+	}
+	if err := os.WriteFile(marker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := cmdPretool([]string{"--config", path, "--agent", "clutch", "test", "--all"}, &out); err != nil {
+		t.Fatalf("after the marker: %v, output:\n%s", err, out.String())
+	}
+}
+
+// TestPretoolTest_AllFlagExclusivity proves --all rejects the single-call
+// flags it cannot be combined with.
+func TestPretoolTest_AllFlagExclusivity(t *testing.T) {
+	path := writePretoolConfig(t, pretoolExamplesConfig)
+	for _, flags := range [][]string{
+		{"--bash", "rm x"},
+		{"--tool", "Bash"},
+		{"--input", "{}"},
+		{"--cwd", "/tmp"},
+	} {
+		args := append([]string{"--config", path, "--agent", "clutch", "test", "--all"}, flags...)
+		var out bytes.Buffer
+		err := cmdPretool(args, &out)
+		if err == nil || !strings.Contains(err.Error(), "--all") {
+			t.Errorf("%v: err = %v, want a --all exclusivity error", flags, err)
+		}
+	}
+}

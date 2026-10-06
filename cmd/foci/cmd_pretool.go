@@ -17,6 +17,8 @@ import (
 // rules against the real config file offline, without a gateway or a CC
 // session. It loads the config through foci's own parser and validation and
 // resolves an agent's rules exactly as the gateway does at each CC launch.
+// `test --all` (#2039) additionally runs every rule's own test examples
+// (deny_examples/allow_examples) against that resolved set.
 func cmdPretool(args []string, stdout io.Writer) error {
 	configPath, args := parseFlagValue(args, "config")
 	agentID, args := parseFlagValue(args, "agent")
@@ -49,14 +51,19 @@ func cmdPretool(args []string, stdout io.Writer) error {
 	}
 
 	// Output is built in full and written once, so a write error surfaces.
+	// The builder is flushed even when the test run reports failures, so
+	// the report is on stdout before the error reaches main's exit.
 	var out strings.Builder
+	testErr := error(nil)
 	if sub == "list" {
 		printPretoolRules(&out, rules)
-	} else if err := pretoolTest(&out, rules, args); err != nil {
+	} else {
+		testErr = pretoolTest(&out, rules, args)
+	}
+	if _, err := io.WriteString(stdout, out.String()); err != nil {
 		return err
 	}
-	_, err = io.WriteString(stdout, out.String())
-	return err
+	return testErr
 }
 
 func loadPretoolRules(configPath, agentID string) (rules []pretool.Rule, skipped []string, backend string, err error) {
@@ -86,14 +93,22 @@ func pretoolTest(out *strings.Builder, rules []pretool.Rule, args []string) erro
 	tool, args := parseFlagValue(args, "tool")
 	input, args := parseFlagValue(args, "input")
 	cwd, args := parseFlagValue(args, "cwd")
-	verbose := false
+	verbose, all := false, false
 	for _, a := range args {
 		switch a {
 		case "-v", "--verbose":
 			verbose = true
+		case "--all":
+			all = true
 		default:
 			return fmt.Errorf("unexpected argument %q (see foci pretool --help)", a)
 		}
+	}
+	if all {
+		if bashCmd != "" || tool != "" || input != "" || cwd != "" {
+			return fmt.Errorf("--all runs the rules' own examples; it cannot be combined with --bash/--tool/--input/--cwd")
+		}
+		return runPretoolExamples(out, rules, verbose)
 	}
 
 	var call pretool.Call
@@ -156,6 +171,46 @@ func pretoolTest(out *strings.Builder, rules []pretool.Rule, args []string) erro
 	return nil
 }
 
+// runPretoolExamples implements `foci pretool test --all` (#2039): every
+// deny/allow example of every rule in the agent's resolved set, with
+// when-checks running for real (as the invoking user, never root). One line
+// per FAILED example plus a summary; passing examples are silent unless
+// verbose. The returned error makes the process exit non-zero on failure.
+func runPretoolExamples(out *strings.Builder, rules []pretool.Rule, verbose bool) error {
+	outcomes := pretool.RunExamples(rules, pretool.WhenRun)
+	failed := 0
+	for _, o := range outcomes {
+		if !o.Pass {
+			failed++
+			expected, actual := o.Rule, "nothing"
+			switch {
+			case o.Matched != "":
+				expected, actual = o.Rule, o.Matched
+			case o.Kind == pretool.ExampleKindAllow:
+				expected = "no match by " + o.Rule
+			}
+			fmt.Fprintf(out, "FAIL %s %s %s: expected %s, matched %s\n", o.Rule, o.Kind, o.Example, expected, actual)
+			// Always shown: a failed when-check silently lets calls through.
+			for _, e := range o.WhenErrors {
+				fmt.Fprintf(out, "  when failed open: %v\n", e)
+			}
+			continue
+		}
+		if verbose {
+			line := "ok " + o.Rule + " " + o.Kind + " " + o.Example
+			if o.Kind == pretool.ExampleKindAllow && o.Matched != "" {
+				line += " (matched " + o.Matched + ")"
+			}
+			fmt.Fprintln(out, line)
+		}
+	}
+	fmt.Fprintf(out, "%d of %d pretool example(s) failed\n", failed, len(outcomes))
+	if failed > 0 {
+		return fmt.Errorf("%d of %d pretool example(s) failed", failed, len(outcomes))
+	}
+	return nil
+}
+
 // commandFacts renders the facts rules can select a command on (#2040), as
 // a bracketed suffix; see pretool.Command.
 func commandFacts(c pretool.Command) string {
@@ -213,6 +268,12 @@ func printPretoolRules(w *strings.Builder, rules []pretool.Rule) {
 		if r.When != "" {
 			fmt.Fprintf(w, "  when: %s\n", strings.ReplaceAll(strings.TrimSpace(r.When), "\n", "\n        "))
 		}
+		for _, ex := range r.DenyExamples {
+			fmt.Fprintf(w, "  deny_example: %s\n", ex)
+		}
+		for _, ex := range r.AllowExamples {
+			fmt.Fprintf(w, "  allow_example: %s\n", ex)
+		}
 		fmt.Fprintf(w, "  reason: %s\n", r.Reason)
 	}
 }
@@ -235,24 +296,32 @@ Subcommands:
   test                 Run one sample tool call past the rules. Prints the
                        name of the rule that denies it, or "no match".
                        Rules' when-checks run for real, from --cwd.
+  test --all           Run every rule's own examples (deny_examples /
+                       allow_examples, #2039) against the resolved set: one
+                       line per failed example plus a summary, nothing per
+                       passing example unless -v. When-checks run for real,
+                       as the invoking user. Exits non-zero on any failure.
 
 Flags:
   --agent <id>         Agent whose rules to use (default: from FOCI_SESSION_KEY)
   --config <path>      Config file (default: $FOCI_CONFIG, else ~/config/foci.toml)
 
 test flags:
+  --all                Run all rules' examples (not with --bash/--tool/--input/--cwd)
   --bash <command>     A Bash call with this command ("-" reads it from stdin)
   --tool <name>        Any other tool, with
   --input <json>       its tool_input object (default {})
   --cwd <dir>          The session working directory the call is made from
-                       (when-checks run there; default: the current directory)
+                        (when-checks run there; default: the current directory)
   -v, --verbose        Also print the reason, and for Bash the commands the
-                       command patterns are matched against, with their
-                       facts (background, subshell, output, dir, op, pipe)
+                        command patterns are matched against, with their
+                        facts (background, subshell, output, dir, op, pipe);
+                        with --all, one line per passing example too
 
 Examples:
   foci pretool list --agent clutch
   foci pretool test --agent clutch --bash 'git add -A'
-  foci pretool test --tool Read --input '{"file_path":"/etc/passwd"}'
+  foci pretool test --agent clutch --tool Read --input '{"file_path":"/etc/passwd"}'
+  foci pretool test --agent clutch --all
 `)
 }

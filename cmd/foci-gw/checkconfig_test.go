@@ -127,3 +127,115 @@ allowed_tools = ["Read"]
 		}
 	}
 }
+
+// TestRunConfigCheck_ExampleFailureFails proves a failing example of a rule
+// WITHOUT a when-script fails the check (exit 1), naming the agent, rule
+// and example, and the rule that matched instead.
+func TestRunConfigCheck_ExampleFailureFails(t *testing.T) {
+	path := writeTempConfig(t, validConfigTOML+`
+
+[[agents]]
+id = "cc"
+backend = "claude-code"
+
+[[agents.backend_config.pretool_rules]]
+name = "no_sudo"
+tool = "Bash"
+command = 'sudo( |$)'
+reason = "r"
+
+[[agents.backend_config.pretool_rules]]
+name = "no_rm"
+tool = "Bash"
+command = 'rm( |$)'
+deny_examples = ["sudo rm /x", "ls"]
+reason = "r"
+`)
+	var stderr strings.Builder
+	if got := runConfigCheck(path, io.Discard, &stderr); got != 1 {
+		t.Fatalf("runConfigCheck = %d, want 1; stderr:\n%s", got, stderr.String())
+	}
+	out := stderr.String()
+	for _, want := range []string{
+		`agents[cc].pretool_rules "no_rm": deny example sudo rm /x: expected no_rm, matched no_sudo`,
+		`agents[cc].pretool_rules "no_rm": deny example ls: expected no_rm, matched nothing`,
+		"config check FAILED: 2 pretool example failure(s)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stderr missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestRunConfigCheck_WhenRuleExamplesWarnOnly proves the root-safety rule
+// (#2039): a rule WITH a when-script never has it executed by check-config
+// (the script's marker must stay absent), gets exactly one WARN line, and
+// never changes the exit status — even when a deny example does not match
+// the rule's patterns.
+func TestRunConfigCheck_WhenRuleExamplesWarnOnly(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "marker")
+	path := writeTempConfig(t, validConfigTOML+`
+
+[[agents]]
+id = "cc"
+backend = "claude-code"
+
+[[agents.backend_config.pretool_rules]]
+name = "gated_rm"
+tool = "Bash"
+command = 'rm( |$)'
+when = 'touch `+marker+`; exit 0'
+deny_examples = ["rm x", "ls"]
+allow_examples = ["trash x"]
+reason = "r"
+`)
+	var stderr strings.Builder
+	if got := runConfigCheck(path, io.Discard, &stderr); got != 0 {
+		t.Fatalf("runConfigCheck = %d, want 0; stderr:\n%s", got, stderr.String())
+	}
+	out := stderr.String()
+	if want := "when not evaluated by check-config"; strings.Count(out, want) != 1 {
+		t.Errorf("%d %q WARN lines, want 1:\n%s", strings.Count(out, want), want, out)
+	}
+	for _, want := range []string{
+		`config check warning: agents[cc].pretool_rules "gated_rm"`,
+		"3 example(s) checked against patterns only",
+		"1 deny example(s) do not match the rule's patterns",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stderr missing %q:\n%s", want, out)
+		}
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("the when-script ran (marker exists): check-config must never execute one")
+	}
+}
+
+// TestRunConfigCheck_ExamplesPass proves a config whose examples all hold
+// exits 0 with the OK line and no example output.
+func TestRunConfigCheck_ExamplesPass(t *testing.T) {
+	path := writeTempConfig(t, validConfigTOML+`
+
+[[agents]]
+id = "cc"
+backend = "claude-code"
+
+[[agents.backend_config.pretool_rules]]
+name = "no_rm"
+tool = "Bash"
+command = 'rm( |$)'
+deny_examples  = ["rm -rf /tmp/x"]
+allow_examples = ["trash /tmp/x"]
+reason = "r"
+`)
+	var stdout, stderr strings.Builder
+	if got := runConfigCheck(path, &stdout, &stderr); got != 0 {
+		t.Fatalf("runConfigCheck = %d, want 0; stderr:\n%s", got, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "config check OK") {
+		t.Errorf("stdout missing OK:\n%s", stdout.String())
+	}
+	if out := stderr.String(); strings.Contains(out, "pretool") {
+		t.Errorf("stderr mentions pretool:\n%s", out)
+	}
+}

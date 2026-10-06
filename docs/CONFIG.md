@@ -1583,6 +1583,33 @@ reason = "Do not commit on main in the foci main checkout. Work in a worktree."
 
 A `cd` earlier in the same command is not reflected in `$TOOL_CWD` (see `cwd` above), nor in the directory the check runs in. A check that resolves a path or repo for the matched command should start from `$CMD_DIR` (and treat an empty one as unknown), then honour `git -C`/`make -C`.
 
+**Test examples (#2039).** A rule can carry its own test cases, so a rule that stops matching what it was written for is caught automatically. Two optional keys, each a list:
+
+```toml
+[[cc_backend.pretool_rules]]
+name = "no_rm"
+tool = "Bash"
+command = '(sudo (\S+ )*)?rm( |$)'
+deny_examples  = ["rm -rf /tmp/x", "sudo rm /x"]
+allow_examples = ["trash /tmp/x", { cmd = "git rm --cached f", cwd = "/tmp" }]
+reason = "..."
+```
+
+An entry is either:
+
+- a string: a bash command for a `Bash` rule, the tool's input object as JSON for any other tool (`'{"file_path":"/etc/passwd"}'`), or
+- a table `{ cmd = "...", cwd = "/abs/path" }` — `Bash` rules only — when the working directory the call is made from matters (`when` checks and `cwd` patterns).
+
+Examples merge like every other field (a later layer that sets them replaces the earlier layer's list) and are checked against the agent's **resolved** rule set with the same matching the gateway uses:
+
+- A **deny** example passes only if the resolved set's matching rule is this rule. If a different rule matches first, it fails and the report names the rule that matched instead — that rule may not deny for the reason this one was written for.
+- An **allow** example passes if this rule is not the matching rule. Another rule matching is fine, but the report notes which one.
+- A disabled rule's examples are not run.
+
+Malformed examples are config load errors naming the rule: a table without `cmd`, an unknown table key, a table on a non-`Bash` rule, or a non-`Bash` rule's string example that is not valid JSON. An error is also reported when an override layer misshapes an example only after the merge.
+
+Run them with `foci pretool test --all --agent <id>` (see CLI.md). `foci-gw -check-config` runs them for every agent too, but **never evaluates a `when` script** (it runs as root during deploys, and the scripts come from a config file the foci user can write): a failing example of a rule without a `when` fails the check, while a rule with a `when` gets its examples checked against its patterns only and one WARN line (`when not evaluated`).
+
 Check rules offline with `foci pretool list --agent <id>` and `foci pretool test --agent <id> --bash '<command>' [--cwd <dir>] [-v]` (see CLI.md). Rules are read from the config file each time foci launches a CC process (a new session, or a session resumed after an idle shutdown or a foci restart), so an edit applies from the next launch without a restart. A CC process already running keeps the rules it was launched with. If the file does not load at that moment, the session keeps the last rules that did. Each deny is logged as `pretool_rule_deny`.
 
 #### Stop rules — `[[agents.backend_config.stop_rules]]`

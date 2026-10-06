@@ -692,18 +692,55 @@ func validateRateLimitNotifyTo(where string, v *string) error {
 //
 // A rule key the decoder doesn't know is an error, not the usual unknown-key
 // warning (#2047): dropping it leaves the rule with fewer constraints than
-// written, and a rule whose only constraint is a typo denies every call of its
-// tool. The allowed keys are whatever pretool.Rule decodes, read from the TOML
+// written, and a rule whose only constraint is a typo denies every call of
+// its tool. The allowed keys are whatever pretool.Rule decodes, read from the TOML
 // metadata's undecoded keys, so there is no second list to keep in step.
+//
+// A rule's test examples (#2039) are validated per layer (tool-independent
+// checks only when the layer doesn't name the tool) and again on every
+// agent's RESOLVED set, where the tool is always known — an override that
+// misshapes only after the merge is caught there. This is deliberately not
+// part of pretool.ValidateLayer: Resolve would skip the merged rule instead
+// of failing the load.
 func (cfg *Config) validatePreToolRules() error {
 	if unknown := cfg.undefinedKeysUnder("cc_backend.pretool_rules.", "agents.backend_config.pretool_rules."); len(unknown) > 0 {
-		return fmt.Errorf("pretool_rules: unknown key(s) %s (a rule ignoring a key it was meant to have can deny every call of its tool)", strings.Join(unknown, ", "))
+		// The examples' {cmd, cwd} tables are consumed by Examples' own
+		// unmarshaler, but their inner keys still surface as undefined
+		// here — and this generic error cannot name the rule. Skip the
+		// example subtrees; ValidateRuleExamples knows the two valid
+		// keys and rejects any other one naming its rule (#2039).
+		var kept []string
+		for _, k := range unknown {
+			if strings.Contains(k, ".deny_examples.") || strings.Contains(k, ".allow_examples.") {
+				continue
+			}
+			kept = append(kept, k)
+		}
+		if len(kept) > 0 {
+			return fmt.Errorf("pretool_rules: unknown key(s) %s (a rule ignoring a key it was meant to have can deny every call of its tool)", strings.Join(kept, ", "))
+		}
 	}
 	if err := pretool.ValidateLayer(cfg.CCBackend.PreToolRules); err != nil {
 		return fmt.Errorf("[cc_backend] %w", err)
 	}
+	for _, r := range cfg.CCBackend.PreToolRules {
+		if err := pretool.ValidateRuleExamples(r.Tool, r.Name, r.DenyExamples, r.AllowExamples); err != nil {
+			return fmt.Errorf("[cc_backend] %w", err)
+		}
+	}
 	for _, a := range cfg.Agents {
 		if err := pretool.ValidateLayer(a.BackendConfig.PreToolRules); err != nil {
+			return fmt.Errorf("agent %q backend_config.%w", a.ID, err)
+		}
+		for _, r := range a.BackendConfig.PreToolRules {
+			if err := pretool.ValidateRuleExamples(r.Tool, r.Name, r.DenyExamples, r.AllowExamples); err != nil {
+				return fmt.Errorf("agent %q backend_config.%w", a.ID, err)
+			}
+		}
+	}
+	for _, a := range cfg.Agents {
+		rules, _ := pretool.Resolve(pretool.Defaults, cfg.CCBackend.PreToolRules, a.BackendConfig.PreToolRules)
+		if err := pretool.ValidateExamples(rules); err != nil {
 			return fmt.Errorf("agent %q backend_config.%w", a.ID, err)
 		}
 	}

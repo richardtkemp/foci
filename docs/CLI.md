@@ -385,9 +385,12 @@ Runs sample tool calls past an agent's PreToolUse deny rules (CONFIG.md → `[[c
 ```
 foci pretool list [--agent <id>] [--config <path>]
 foci pretool test [--agent <id>] [--config <path>] (--bash <command> | --tool <name> [--input <json>]) [--cwd <dir>] [-v]
+foci pretool test [--agent <id>] [--config <path>] --all [-v]
 ```
 
 `list` prints the resolved rules. `test` prints the name of the rule that denies the call, or `no match`. `-v` adds the rule's reason and, for Bash, each simple command the `command` patterns are matched against, with its shell facts in brackets (background, subshell, output, `dir=` relative to the cwd or `?` if unknown, `op=`, `pipe=`; CONFIG.md → Shell facts). `--bash -` reads the command from stdin. Rules' `when` checks run for real, in `--cwd` (default: the current directory); a check that fails open is always printed as `when failed open: ...`. `--agent` defaults to the agent in `FOCI_SESSION_KEY`; `--config` to `$FOCI_CONFIG`, else `~/config/foci.toml`.
+
+`test --all` (#2039) runs every rule's own examples (`deny_examples` / `allow_examples`, CONFIG.md → Test examples) against the agent's resolved set: one line per failed example — the rule, the example, the expected rule and the rule that matched instead (or `nothing`) — plus a summary count. Passing examples print nothing unless `-v`, which adds one `ok` line each (naming the rule that legally matched an allow example). It exits non-zero if any example failed. `when` checks run for real here, as the invoking user (never root), so each `when` rule's real decision is tested; `--all` cannot be combined with `--bash`, `--tool`, `--input` or `--cwd`. (`foci-gw -check-config` runs the same examples but never evaluates a `when` script.)
 
 **Examples:**
 ```bash
@@ -396,6 +399,7 @@ foci pretool test --agent clutch --bash 'cd /r && git add -A'
 foci pretool test --agent clutch --bash 'git commit -m x' --cwd /home/rich/git/foci -v
 foci pretool test --agent clutch --tool Read --input '{"file_path":"/etc/passwd"}'
 foci pretool test --agent clutch --tool Edit --input '{"file_path":"/home/foci/shared/skills/foci-usage/SKILL.md"}'
+foci pretool test --agent clutch --all
 ```
 
 ---

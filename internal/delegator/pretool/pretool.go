@@ -71,6 +71,13 @@ type Rule struct {
 	Action  string `toml:"action"  json:"action,omitempty"`
 	Reason  string `toml:"reason"  json:"reason"`
 	Enabled *bool  `toml:"enabled" json:"-"`
+	// DenyExamples and AllowExamples are the rule's own test cases (#2039):
+	// calls this rule must deny, and calls it must leave alone. Checked
+	// against the resolved rule set by `foci pretool test --all` and
+	// `foci-gw -check-config`; see examples.go. They take no part in
+	// matching and stay off the hook wire (json:"-").
+	DenyExamples  Examples `toml:"deny_examples"  json:"-"`
+	AllowExamples Examples `toml:"allow_examples" json:"-"`
 }
 
 // Defaults are the rules foci ships preinstalled. Config disables one with
@@ -231,6 +238,12 @@ func overlay(base, over Rule) Rule {
 	}
 	if over.Enabled != nil {
 		base.Enabled = over.Enabled
+	}
+	if over.DenyExamples != nil {
+		base.DenyExamples = over.DenyExamples
+	}
+	if over.AllowExamples != nil {
+		base.AllowExamples = over.AllowExamples
 	}
 	return base
 }

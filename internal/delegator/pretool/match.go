@@ -71,6 +71,10 @@ type matcher struct {
 	cancel   context.CancelFunc
 	env      []string
 	whenErrs []WhenError
+
+	// noWhen stops matches before the when stage (patternMatch), so a
+	// rule's constraints can be checked without ever running its script.
+	noWhen bool
 }
 
 func (m *matcher) close() {
@@ -125,7 +129,7 @@ func (m *matcher) matches(r *Rule) bool {
 			return false
 		}
 	}
-	if r.When == "" {
+	if r.When == "" || m.noWhen {
 		return true
 	}
 	for _, cmd := range matched {
@@ -134,6 +138,16 @@ func (m *matcher) matches(r *Rule) bool {
 		}
 	}
 	return false
+}
+
+// patternMatch reports whether r's constraints other than its when-check
+// hold for the call — everything the gateway checks before it would run the
+// script. The script itself is never executed (#2039: check-config tests a
+// when rule's examples against its patterns only, as it runs as root).
+func patternMatch(r *Rule, c Call) bool {
+	m := matcher{call: c, noWhen: true}
+	defer m.close()
+	return m.matches(r)
 }
 
 // factsMatch reports whether cmd has every fact value r sets.
