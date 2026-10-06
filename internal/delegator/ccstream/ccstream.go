@@ -304,12 +304,13 @@ type Backend struct {
 	lastActivity atomic.Int64 // unix nanos of most recent stream event
 
 	// Callbacks (set before Start, read-only after)
-	permPromptFn   delegator.PermissionPromptFunc
-	onSessionReady func(sessionID string)
-	typingFunc     func(typing bool)
-	onAuthFailure  func(detail string)             // fired when CC reports a 401 auth failure (#843)
-	onRateLimited  func(sessionKey, detail string) // fired with a rate_limit_event warning notice; sessionKey is this Backend's owning foci session (#1211/#1238/#1857)
-	onSessionLimit func(signal ratelimit.Signal)   // fired when CC reports a session limit synthetic message
+	permPromptFn    delegator.PermissionPromptFunc
+	onSessionReady  func(sessionID string)
+	typingFunc      func(typing bool)
+	onAuthFailure   func(detail string)             // fired when CC reports a 401 auth failure (#843)
+	onRateLimited   func(sessionKey, detail string) // fired with a rate_limit_event warning notice; sessionKey is this Backend's owning foci session (#1211/#1238/#1857)
+	onModelFallback func(sessionKey, notice string) // fired with a model refusal fallback notice for the session's chat (#2200)
+	onSessionLimit  func(signal ratelimit.Signal)   // fired when CC reports a session limit synthetic message
 	// onAutonomousOpen is fired when the backend detects CC has begun a run foci
 	// did not open (session_state=running while !turnActive). The agent wires it
 	// to openAutonomousTurn, which adopts the in-flight run as a first-class foci

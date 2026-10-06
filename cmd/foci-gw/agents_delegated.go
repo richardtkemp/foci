@@ -263,6 +263,12 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			deliverRateLimitNotice(connMgr, agentID, sessionKey, notice,
 				p.resolvedLive.Load().Notify.RateLimitNotifyTo)
 		},
+		// A model refusal fallback (CC's primary model refused and another
+		// answered) is shown in the chat of the session it happened in, so the
+		// user knows which model is now answering (Dick, 2026-10-06, #2200).
+		OnModelFallbackNotice: func(sessionKey, notice string) {
+			deliverModelFallbackNotice(connMgr, agentID, sessionKey, notice)
+		},
 		// A hard limit (CC session limit, opencode rejected usage) engages the
 		// rate-limit gate so background/periodic work pauses until the window
 		// resets; the gate's own hooks notify the user.
@@ -562,6 +568,17 @@ func deliverRateLimitNotice(connMgr platform.ConnectionManager, agentID, session
 			logger.Debugf("rate limit notice undelivered (target=%s, outcome=%s): %s", target, outcome, notice)
 		}
 	}
+}
+
+// deliverModelFallbackNotice shows a model refusal fallback notice in the chat
+// of the session it happened in, falling back to the agent's primary chat.
+func deliverModelFallbackNotice(connMgr platform.ConnectionManager, agentID, sessionKey, notice string) {
+	conn, outcome := route.ConnFor(connMgr, agentID, sessionKey, route.PolicyFallback)
+	if conn == nil {
+		log.NewComponentLogger("agent:"+agentID).Infof("model fallback notice undelivered (outcome=%s session=%s): %s", outcome, sessionKey, notice)
+		return
+	}
+	conn.SendNotification(notice)
 }
 
 func buildDelegatedSystemPrompt(workspaceBlocks, extraBlocks []provider.SystemBlock) string {

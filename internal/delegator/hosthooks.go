@@ -24,6 +24,11 @@ type HostHooks struct {
 	// chat. Informational: it does not gate work.
 	OnRateLimitNotice func(sessionKey, notice string)
 
+	// OnModelFallbackNotice delivers a human-facing notice to the session's
+	// chat when the backend's model refused and it fell back to another model
+	// (Claude Code's model_refusal_fallback, #2200). Informational.
+	OnModelFallbackNotice func(sessionKey, notice string)
+
 	// EngageRateLimit engages the agent's rate-limit gate on a hard limit
 	// (Claude Code's session limit, opencode's rejected usage limit).
 	EngageRateLimit func(signal ratelimit.Signal)

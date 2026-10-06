@@ -3,6 +3,8 @@ package ccstream
 import (
 	"bytes"
 	"database/sql"
+	"maps"
+	"math"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -306,5 +308,78 @@ func TestTurnEndedAfterExitClosesTheTurn(t *testing.T) {
 	b.completeTurn("idle")
 	if got := activity(t, path, "cap/c1@1"); got == "" {
 		t.Error("turn still running after its process exited and the turn completed")
+	}
+}
+
+// TestRefusedAttemptBookedByCategory is #2200: a model refusal fallback leaves
+// the refused attempt in no transcript, so its spend reached the remainder and
+// was booked as unexplained overhead (an invOverheadBounded ERROR). It is now
+// booked as the refused call on the turn it belongs to, priced by Anthropic's
+// refusal billing: a refusal before any output is billed only in the bio,
+// frontier_llm and reasoning_extraction categories, a mid-stream one always.
+// CC's own cost counts the attempt either way, so an unbilled one is excluded
+// from the divergence check rather than booked at CC's figure.
+func TestRefusedAttemptBookedByCategory(t *testing.T) {
+	const fallback = "claude-opus-4-8"
+	// The 2026-10-06 incident's refused attempt: no output, 1h cache writes.
+	refused := modelinfo.Tokens{modelinfo.ClassInput: 4, modelinfo.ClassCacheRead: 22380, modelinfo.ClassCacheWrite1h: 79451}
+	if mustCost(t, refused) <= ccOverheadBoundUSD {
+		t.Fatal("premise: the refused attempt must exceed the overhead bound")
+	}
+	for _, tc := range []struct {
+		name      string
+		category  string
+		retracted []string
+		output    int
+		billed    bool
+	}{
+		{"cyber before any output is not billed", "cyber", nil, 0, false},
+		{"no category is not billed", "", nil, 0, false},
+		{"bio before any output is billed", "bio", nil, 0, true},
+		{"frontier_llm before any output is billed", "frontier_llm", nil, 0, true},
+		{"reasoning_extraction before any output is billed", "reasoning_extraction", nil, 0, true},
+		{"cyber mid-stream (output streamed) is billed", "cyber", nil, 120, true},
+		{"cyber mid-stream (message retracted) is billed", "cyber", []string{"u1"}, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tb := newTestBook(t, nil)
+			tb.recordTurn(t, "T1")
+			tok := maps.Clone(refused)
+			if tc.output > 0 {
+				tok[modelinfo.ClassOutput] = tc.output
+			}
+			tb.refusalFallback(ccRefusal{turn: "T1", at: tb.clock, model: opus, fallback: fallback,
+				category: tc.category, requestID: "req_1", retracted: len(tc.retracted)})
+			tb.streamNamed("m1", "T1", tb.clock)
+			ans := line("m1", fallback, tb.clock, "end_turn", 4, 300, 0, 0, 100000)
+			tb.mainLine(ans)
+			ansCost, ok := modelinfo.CostAsOf(fallback, tb.clock, ans.tokens)
+			if !ok {
+				t.Fatal("premise: fallback model unpriced")
+			}
+			tb.result(map[string]ModelUsage{
+				opus: {InputTokens: 4, OutputTokens: tc.output, CacheReadInputTokens: 22380,
+					CacheCreationInputTokens: 79451, CostUSD: mustCost(t, tok)},
+				fallback: {InputTokens: 4, OutputTokens: 300, CacheCreationInputTokens: 100000, CostUSD: ansCost},
+			}, 0, tb.clock)
+			tb.advance(time.Second)
+			if len(tb.alarms) != 0 {
+				t.Errorf("alarms = %+v, want none: a refusal fallback is a known cause", tb.alarms)
+			}
+			c := find(tb.calls(t), "refusal:req_1")
+			if c == nil {
+				t.Fatalf("no refusal row booked: %+v", tb.calls(t))
+			}
+			if c.kind != accounting.KindCall || c.turn != "T1" || c.model != opus {
+				t.Errorf("refusal row = %+v, want a call on T1 on %s", c, opus)
+			}
+			want := 0.0
+			if tc.billed {
+				want = mustCost(t, tok)
+			}
+			if !c.cost.Valid || math.Abs(c.cost.Float64-want) > 1e-9 {
+				t.Errorf("refusal cost = %v, want $%.6f (billed=%v)", c.cost, want, tc.billed)
+			}
+		})
 	}
 }

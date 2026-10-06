@@ -34,6 +34,14 @@
 //     TTL, so the remainder's writes are split 5m/1h by solving CC's own cost
 //     for the interval (solveRemainderTTL, #2130); one that will not solve
 //     stays TTL-unknown, priced at 1h, and alarms.
+//   - A MODEL REFUSAL FALLBACK (#2200): the refused attempt is in no
+//     transcript, so its spend is in the remainder on the refused model. A
+//     window holding one books that model's remainder as the refused call, on
+//     the turn open at the refusal, priced by Anthropic's refusal billing
+//     (refusalBilled): billed at its counts when it refused mid-stream or in a
+//     billed category, else booked with no counts at $0 — and its CC figure is
+//     kept off CC's side of the divergence check, as CC's own cost over-counts
+//     it. Either way it is a known cause, logged at INFO and never an alarm.
 //   - At process exit the last remainder is flushed from the cost-state record
 //     CC appends on a graceful close, else from the last result.
 //   - CHECKS (#2111 §8), once the booked set is what CC counted — at each
@@ -213,6 +221,33 @@ type ccBoundary struct {
 	turn string // the foci turn open at the boundary, or ""
 }
 
+// ccRefusal is one model_refusal_fallback: CC's primary model refused and CC
+// retried on a fallback model (#2200). The refused attempt has no transcript
+// record, so this is all the book learns of it.
+type ccRefusal struct {
+	at        time.Time
+	turn      string // the foci turn open at the refusal, or ""
+	model     string // the model that refused
+	fallback  string // the model CC retried on
+	category  string // the API's refusal category, "" when it gave none
+	requestID string // the refused request's id, "" when CC gave none
+	retracted int    // messages CC retracted: output had already streamed
+}
+
+// refusalBilledCategories are the refusal categories Anthropic bills when the
+// refusal arrives before any output (platform.claude.com/docs/en/build-with-
+// claude/refusals-and-fallback, "How refusals are billed", as of 2026-09). A
+// pre-output refusal in any other category, or none, is not billed. The list
+// may change as Anthropic refines its safeguards.
+var refusalBilledCategories = map[string]bool{"bio": true, "frontier_llm": true, "reasoning_extraction": true}
+
+// refusalBilled reports whether a refused attempt is billed: it refused
+// mid-stream (output had streamed — CC retracted a message, or the attempt
+// counts output tokens) or its category is billed before any output.
+func refusalBilled(r ccRefusal, t modelinfo.Tokens) bool {
+	return r.retracted > 0 || t[modelinfo.ClassOutput] > 0 || refusalBilledCategories[r.category]
+}
+
 // ccResult is a result awaiting its settle.
 type ccResult struct {
 	window int
@@ -240,6 +275,7 @@ type ccBook struct {
 
 	counted    map[int]map[string]*countedSum // counted bookings per window and model
 	boundaries map[int][]ccBoundary
+	refusals   map[int][]ccRefusal // model refusal fallbacks per window
 	results    []ccResult
 	baseline   map[string]ModelUsage
 	lastMU     map[string]ModelUsage
@@ -260,6 +296,10 @@ type ccBook struct {
 	launchBase  map[string]ModelUsage
 	procBooked  map[string]*countedSum
 	interrupted map[string]float64
+	// unbilled is CC's figure for the refused attempts not billed (#2200),
+	// per model: CC's own cost counts them, the ledger books them at $0, so
+	// the divergence check takes them off CC's side.
+	unbilled map[string]float64
 
 	// Turn activity (R8): the turns that have ended (a foci turn's idle, a
 	// run turn's result), and those whose activity this book has closed —
@@ -331,9 +371,9 @@ func newCCBook(l *accounting.Ledger, lg *log.ComponentLogger, session, agentID s
 		scope: fmt.Sprintf("%s@%d", session, launch.UnixNano()), // ScopeLaunch parses it
 		named: map[string]*namedCall{}, held: map[string]*ccLine{}, done: map[string]bool{},
 		agents: map[string]*ccAgent{}, runTurn: map[int]string{},
-		counted: map[int]map[string]*countedSum{}, boundaries: map[int][]ccBoundary{},
+		counted: map[int]map[string]*countedSum{}, boundaries: map[int][]ccBoundary{}, refusals: map[int][]ccRefusal{},
 		baseline:   maps.Clone(baseline),
-		procBooked: map[string]*countedSum{}, interrupted: map[string]float64{},
+		procBooked: map[string]*countedSum{}, interrupted: map[string]float64{}, unbilled: map[string]float64{},
 		ended: map[string]bool{}, closed: map[string]bool{},
 	}
 	if c.baseline == nil {
@@ -570,6 +610,13 @@ func (c *ccBook) mainRead(start time.Time) {
 // compactBoundary records a compaction in the current window.
 func (c *ccBook) compactBoundary(turn string, at time.Time) {
 	c.boundaries[c.window] = append(c.boundaries[c.window], ccBoundary{at: at.UTC(), turn: turn})
+}
+
+// refusalFallback records a model refusal fallback in the current window: the
+// refused attempt's spend is in this window's remainder on r.model.
+func (c *ccBook) refusalFallback(r ccRefusal) {
+	r.at = r.at.UTC()
+	c.refusals[c.window] = append(c.refusals[c.window], r)
 }
 
 // result records one result: CC's cumulative modelUsage as reports, and the
@@ -819,6 +866,14 @@ func (c *ccBook) remainder(w int, mu map[string]ModelUsage, label string, at tim
 		}
 	}
 	slices.SortFunc(bounds, func(a, b ccBoundary) int { return a.at.Compare(b.at) })
+	refused := map[string][]ccRefusal{}
+	for win, rs := range c.refusals {
+		if win <= w {
+			for _, r := range rs {
+				refused[r.model] = append(refused[r.model], r)
+			}
+		}
+	}
 	var overhead float64
 	var overheadModels []string
 	outputOnly := true
@@ -831,6 +886,10 @@ func (c *ccBook) remainder(w int, mu map[string]ModelUsage, label string, at tim
 			Backend: accounting.BackendCCStream, Provider: "anthropic", Model: m, Session: c.session,
 			AgentID: c.agentID, Finality: accounting.FinalityDerived, ClassMethod: accounting.ClassMethodUnknown,
 			BilledAt: at, Tokens: r, Detail: map[string]any{"scope": c.scope, "through_window": w},
+		}
+		if rs := refused[m]; len(rs) > 0 {
+			c.bookRefusal(rs, call, mu[m].CostUSD-c.baseline[m].CostUSD, counted[m], w, label)
+			continue
 		}
 		if r[modelinfo.ClassCacheWrite] > 0 {
 			c.splitRemainderTTL(&call, mu[m].CostUSD-c.baseline[m].CostUSD, counted[m], label)
@@ -890,7 +949,81 @@ func (c *ccBook) remainder(w int, mu map[string]ModelUsage, label string, at tim
 			delete(c.boundaries, win)
 		}
 	}
+	for win := range c.refusals {
+		if win <= w {
+			delete(c.refusals, win)
+		}
+	}
 	c.checkDivergence(mu, label)
+}
+
+// bookRefusal books a remainder on a model that refused in its windows as the
+// refused call (#2200), on the turn open at the first refusal. call is the
+// remainder as remainder built it; ccCost is CC's cost of the interval on the
+// model and counted its counted calls there. Any other uncounted spend on the
+// refused model in the same windows rides with it: the session's model moved
+// to the fallback at the refusal, so there is rarely any.
+func (c *ccBook) bookRefusal(rs []ccRefusal, call accounting.Call, ccCost float64, counted *countedSum, w int, label string) {
+	r := rs[0]
+	refusedTokens := maps.Clone(call.Tokens)
+	billed := refusalBilled(r, refusedTokens)
+	for _, o := range rs[1:] {
+		billed = billed || refusalBilled(o, refusedTokens)
+	}
+	ccFigure := ccCost
+	if counted != nil {
+		ccFigure -= counted.cost
+	}
+	call.Kind = accounting.KindCall
+	call.StopReason = "refusal"
+	call.Key = "refusal:" + r.requestID
+	if r.requestID == "" {
+		call.Key = fmt.Sprintf("refusal:%s:%d:%s", c.scope, r.at.UnixNano(), call.Model)
+	}
+	turn := r.turn
+	if turn == "" {
+		turn = c.runTurnFor(w, r.at)
+	}
+	call.TurnID = turn
+	call.Detail["refusal_category"] = r.category
+	call.Detail["fallback_model"] = r.fallback
+	call.Detail["refusal_billed"] = billed
+	call.Detail["cc_cost_usd"] = ccFigure
+	if len(rs) > 1 {
+		call.Detail["refusals"] = len(rs)
+	}
+	if billed {
+		if call.Tokens[modelinfo.ClassCacheWrite] > 0 {
+			c.splitRemainderTTL(&call, ccCost, counted, label)
+		}
+	} else {
+		// Not billed: booked with no counts, so it prices at $0; the counts
+		// CC reported are kept for forensics.
+		call.Detail["refused_tokens"] = formatTokens(refusedTokens)
+		call.Tokens = modelinfo.Tokens{}
+	}
+	b, err := c.l.RecordCall(accounting.Turn{TurnID: turn, Session: c.session, AgentID: c.agentID,
+		Backend: accounting.BackendCCStream, Source: c.turnSource(turn), StartedAt: r.at}, call, nil)
+	if err != nil {
+		c.lg.Warnf("ledger: book refusal %s: %v", call.Key, err)
+		return
+	}
+	if b.Duplicate {
+		return
+	}
+	if billed {
+		usd, priced := modelinfo.CostAsOf(call.Model, call.BilledAt, call.Tokens)
+		c.addProcBooked(call.Model, &countedSum{tokens: ReportClasses(call.Tokens), cost: usd, unpriced: !priced})
+		c.lg.Infof("ledger: session %s %s: %s refused (category %q, mid-stream or a billed category) and CC fell back to %s; the refused attempt is booked on turn %s at $%.4f (%s)",
+			c.session, label, call.Model, r.category, r.fallback, turn, usd, formatTokens(call.Tokens))
+	} else {
+		c.unbilled[call.Model] += ccFigure
+		c.lg.Infof("ledger: session %s %s: %s refused before any output (category %q, not billed) and CC fell back to %s; the refused attempt is booked on turn %s at $0 — CC's figure $%.4f (%s) is not billed",
+			c.session, label, call.Model, r.category, r.fallback, turn, ccFigure, formatTokens(refusedTokens))
+	}
+	if c.closed[turn] {
+		c.setActivity(turn, call.BilledAt)
+	}
 }
 
 // The overhead bound (#2111 §8.2, invOverheadBounded): a remainder booked as
@@ -953,7 +1086,9 @@ func onlyOutput(t modelinfo.Tokens) bool {
 // launched with the ledger's price of everything booked in the process that CC
 // counts (#2111 §8.1). Run once the booked set is exactly what CC counted: at
 // a quiet point's remainder and at exit. Interrupted calls are in neither
-// side (CC counts them nowhere) and are shown beside. A model with an
+// side (CC counts them nowhere) and are shown beside; an unbilled refused
+// attempt (#2200) is taken off CC's side, which counts it though it was not
+// billed, and shown beside too. A model with an
 // unpriced booking is skipped: invClassNoRate / invModelNotInTable already
 // alarmed on it.
 func (c *ccBook) checkDivergence(mu map[string]ModelUsage, label string) {
@@ -966,7 +1101,7 @@ func (c *ccBook) checkDivergence(mu map[string]ModelUsage, label string) {
 		models[m] = true
 	}
 	for _, m := range slices.Sorted(maps.Keys(models)) {
-		cc := mu[m].CostUSD - c.launchBase[m].CostUSD
+		cc := mu[m].CostUSD - c.launchBase[m].CostUSD - c.unbilled[m]
 		booked := c.procBooked[m]
 		if booked == nil {
 			booked = &countedSum{tokens: modelinfo.Tokens{}}
@@ -982,8 +1117,8 @@ func (c *ccBook) checkDivergence(mu map[string]ModelUsage, label string) {
 		if cc > 0 {
 			pct = fmt.Sprintf("%.1f%%", 100*diff/cc)
 		}
-		off = append(off, fmt.Sprintf("%s: ledger $%.4f vs CC $%.4f (%s off; interrupted $%.4f excluded; booked %s)",
-			m, booked.cost, cc, pct, c.interrupted[m], formatTokens(booked.tokens)))
+		off = append(off, fmt.Sprintf("%s: ledger $%.4f vs CC $%.4f (%s off; interrupted $%.4f and unbilled refusals $%.4f excluded; booked %s)",
+			m, booked.cost, cc, pct, c.interrupted[m], c.unbilled[m], formatTokens(booked.tokens)))
 	}
 	if len(off) == 0 {
 		return

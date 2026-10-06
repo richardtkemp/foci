@@ -878,9 +878,12 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		// wire event carrying the fact, and its `content` is the ONLY place
 		// that states which model refused and which it switched to in
 		// prose (structured fields give the model IDs; the WHY — the
-		// refusal category — is comparatively terse). Log it at WARN
-		// unconditionally: a silent model change moves both cost and
-		// capability underneath the agent.
+		// refusal category — is comparatively terse). It is logged at INFO
+		// (Dick, 2026-10-06 on #2200: a known, expected event), shown in the
+		// session's chat so the user knows which model is now answering, and
+		// handed to the ledger, which books the refused attempt — in no
+		// transcript — by its refusal billing rather than as unexplained
+		// overhead.
 		var mrf ModelRefusalFallbackMessage
 		if err := json.Unmarshal(raw, &mrf); err != nil {
 			b.logger().Warnf("drop model_refusal_fallback message (unmarshal failed): %v — model switch will go unlogged", err)
@@ -896,8 +899,21 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 			sessionID = b.sessionID
 			b.mu.Unlock()
 		}
-		b.logger().Warnf("model_refusal_fallback session=%s scope=%s from_model=%s to_model=%s content=%q",
-			sessionID, scope, mrf.OriginalModel, mrf.FallbackModel, mrf.Content)
+		category := ""
+		if mrf.APIRefusalCategory != nil {
+			category = *mrf.APIRefusalCategory
+		}
+		b.logger().Infof("model_refusal_fallback session=%s scope=%s from_model=%s to_model=%s category=%s retracted=%d content=%q",
+			sessionID, scope, mrf.OriginalModel, mrf.FallbackModel, category, len(mrf.RetractedMessageUUIDs), mrf.Content)
+		r := &ccRefusal{model: mrf.OriginalModel, fallback: mrf.FallbackModel, category: category,
+			retracted: len(mrf.RetractedMessageUUIDs)}
+		if mrf.RequestID != nil {
+			r.requestID = *mrf.RequestID
+		}
+		b.ledger.Load().enqueue(ccEvent{kind: ccRefusalEv, turn: b.openTurnRowID(), refusal: r})
+		if b.onModelFallback != nil {
+			b.onModelFallback(b.startOpts.SessionKey, FormatModelFallbackNotice(scope, mrf.OriginalModel, mrf.FallbackModel, category))
+		}
 
 	case "elicitation_complete":
 		// CC re-broadcasts an MCP server's elicitation_complete notification
@@ -1123,4 +1139,21 @@ func (b *Backend) OnStreamEvent(raw json.RawMessage) {
 			se.OnThinkingDelta(env.Event.Delta.Thinking)
 		}
 	}
+}
+
+// FormatModelFallbackNotice renders a model_refusal_fallback as a notice for
+// the session's chat (#2200): which model refused, which is answering instead,
+// and whether the session as a whole now runs on the fallback ("session"
+// scope, sticky) or only a subagent or side request fell back ("local").
+func FormatModelFallbackNotice(scope, from, to, category string) string {
+	why := "its safeguards flagged the request"
+	if category != "" {
+		why = fmt.Sprintf("its safeguards flagged the request (category: %s)", category)
+	}
+	if scope == "local" {
+		return fmt.Sprintf("Model fallback: %s declined a subagent or background request because %s, so %s answered it instead. The session's model is unchanged.",
+			from, why, to)
+	}
+	return fmt.Sprintf("Model fallback: %s declined this message because %s, so %s is answering instead. This session now runs on %s.",
+		from, why, to, to)
 }

@@ -31,6 +31,7 @@ const (
 	ccTailOpened
 	ccTailClosed
 	ccBoundaryEv
+	ccRefusalEv
 	ccResultEv
 	ccCostState
 	ccSessionFile
@@ -52,6 +53,7 @@ type ccEvent struct {
 	line    *ccLine
 	mu      map[string]ModelUsage
 	running int
+	refusal *ccRefusal    // ccRefusalEv
 	reply   chan struct{} // ccBarrier: closed once the barrier is passed
 }
 
@@ -165,6 +167,10 @@ func (s *ccLedger) run() {
 				c.tailClosed(e.agent)
 			case ccBoundaryEv:
 				c.compactBoundary(e.turn, e.at)
+			case ccRefusalEv:
+				r := *e.refusal
+				r.turn, r.at = e.turn, e.at
+				c.refusalFallback(r)
 			case ccResultEv:
 				c.result(e.mu, e.running, e.at)
 			case ccCostState:

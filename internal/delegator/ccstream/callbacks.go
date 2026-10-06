@@ -52,6 +52,9 @@ func (b *Backend) RunningSubagents() []delegator.RunningSubagent { return b.agen
 //     reports the API is past the "allowed" threshold, with this Backend's
 //     foci session key so it reaches the session that triggered it (#1857).
 //     It does NOT gate periodic work (#1211/#1238).
+//   - OnModelFallbackNotice gets a formatted notice when CC's model refused
+//     and CC fell back to another model (model_refusal_fallback), for the
+//     session's chat (#2200).
 //   - EngageRateLimit fires when CC reports a session limit (a synthetic
 //     "You've hit your session limit · resets <time>" message, which unlike a
 //     direct-API 429 never reaches classifyAPIError).
@@ -61,6 +64,7 @@ func (b *Backend) RunningSubagents() []delegator.RunningSubagent { return b.agen
 func (b *Backend) SetHostHooks(h delegator.HostHooks) {
 	b.onAuthFailure = h.OnAuthFailure
 	b.onRateLimited = h.OnRateLimitNotice
+	b.onModelFallback = h.OnModelFallbackNotice
 	b.onSessionLimit = h.EngageRateLimit
 	b.preToolRules = h.PreToolRules
 	b.stopRules = h.StopRules

@@ -2491,82 +2491,96 @@ func TestOnSystem_CompactBoundary(t *testing.T) {
 	}
 }
 
-// TestOnSystem_ModelRefusalFallback_LogsWarnWithContentVerbatim covers #1968:
-// CC can swap a session's model mid-process (a safeguard refusal + silent
-// fallback retry) and foci.log records nothing about it — the only visible
-// trace is the model name changing in the per-turn cost INFO line, which
-// reads as normal output. Dick's ruling (2026-09-23): log a WARN naming the
-// event, with the record's `content` text included VERBATIM — content is the
-// only place that states in prose which model refused and which it switched
-// to.
+// TestOnSystem_ModelRefusalFallback_LogsInfoAndNotifiesChat covers #1968 and
+// #2200: CC can swap a session's model mid-process (a safeguard refusal + a
+// silent fallback retry). The event is logged with the record's `content`
+// verbatim (#1968: the only prose naming both models), at INFO rather than
+// WARN, and shown in the session's chat naming the model now answering (Dick,
+// 2026-10-06 on #2200).
 //
-// The fixture below uses the WIRE (stream-json) field names — snake_case
+// The fixture uses the WIRE (stream-json) field names — snake_case
 // (original_model, fallback_model, session_id, ...) — NOT the camelCase
-// shape CC writes to its own on-disk transcript for the same event
-// (originalModel, fallbackModel, sessionId, plus envelope fields like level/
-// isMeta/timestamp that the wire record does not carry at all). Confirmed by
-// decompiling the shipped CLI binary (see protocol.go's ModelRefusalFallbackMessage
-// doc comment) rather than assumed from the transcript, per the ticket's
-// explicit instruction not to guess the wire shape from the recorded shape.
+// shape CC writes to its own on-disk transcript for the same event. Confirmed
+// by decompiling the shipped CLI binary (see protocol.go's
+// ModelRefusalFallbackMessage doc comment).
 //
-// Not parallel: log.SetWarnHook is process-global (mirrors the codex package's
-// TestDispatch_WarningsAreLoggedAtWarnLevel).
-func TestOnSystem_ModelRefusalFallback_LogsWarnWithContentVerbatim(t *testing.T) {
+// Not parallel: log.SetOutput and log.SetWarnHook are process-global.
+func TestOnSystem_ModelRefusalFallback_LogsInfoAndNotifiesChat(t *testing.T) {
 	b := &Backend{}
+	b.startOpts.SessionKey = "clutch/c1"
+	var notices []string
+	var noticeKeys []string
+	b.onModelFallback = func(sessionKey, notice string) {
+		noticeKeys = append(noticeKeys, sessionKey)
+		notices = append(notices, notice)
+	}
 
+	var out bytes.Buffer
+	log.SetOutput(&out)
+	t.Cleanup(func() { log.SetOutput(nil) })
 	var mu sync.Mutex
-	var got []string
+	var warned []string
 	log.SetWarnHook(func(level log.Level, component, msg string) {
 		mu.Lock()
 		defer mu.Unlock()
-		got = append(got, level.String()+" "+msg)
+		warned = append(warned, level.String()+" "+msg)
 	})
 	t.Cleanup(func() { log.SetWarnHook(nil) })
 
-	const content = `Opus 5's safeguards flagged this message. Our intentionally broad safeguards allow us to deliver more capabilities faster, but can sometimes flag legitimate coding, cybersecurity, and biology tasks. Switched to Opus 4.8. Send feedback with /feedback or learn more: https://support.claude.com/en/articles/16049681
+	const content = `Opus 5.5's safeguards flagged this session. Opus 4.8 is answering instead, or you can edit and retry with Opus 5.5.
 
 Details: ` + "`[cyber]`"
 
-	// Real wire shape, snake_case, as CC's stream-json emitter actually sends
-	// it (see the decompiled-source citation in protocol.go).
-	raw := []byte(`{"type":"system","subtype":"model_refusal_fallback","trigger":"refusal","direction":"retry","scope":"session","original_model":"claude-opus-5","fallback_model":"claude-opus-4-8","request_id":"req_011CfHG8yMvffjGmB9aKA6cu","api_refusal_category":"cyber","api_refusal_explanation":"This request triggered restrictions on violative cyber content and was blocked under Anthropic's Usage Policy.","retracted_message_uuids":["1960c8d8-b249-4a8e-a156-694441d5f153"],"refused_user_message_uuid":"313c7acf-d752-4340-bf42-64714e4c6948","content":` + jsonQuote(content) + `,"uuid":"497c01af-eab6-4b12-9b69-bd65ae6e6366","session_id":"7f21195c-2279-43a9-a046-c4b8785deae9"}`)
+	// The 2026-10-06 incident, in the wire shape.
+	raw := []byte(`{"type":"system","subtype":"model_refusal_fallback","trigger":"refusal","direction":"retry","scope":"session","original_model":"claude-opus-5-5","fallback_model":"claude-opus-4-8","request_id":"req_011CfkfhGxWkiMkZ5HbyhzF9","api_refusal_category":"cyber","api_refusal_explanation":"This request triggered restrictions on violative cyber content and was blocked under Anthropic's Usage Policy.","retracted_message_uuids":[],"refused_user_message_uuid":"752aa4b8-4a31-43ca-8a0f-f67133ae391e","content":` + jsonQuote(content) + `,"uuid":"0897218a-1ee7-4410-b3e6-5aacc1a555c4","session_id":"5327d791-ca23-4fe4-895d-966db6e7905e"}`)
 
 	b.OnSystem("model_refusal_fallback", json.RawMessage(raw))
 
-	find := func(substr string) string {
-		mu.Lock()
-		defer mu.Unlock()
-		for _, e := range got {
-			if strings.Contains(e, substr) {
-				return e
-			}
+	var e string
+	for _, l := range strings.Split(out.String(), "\n") {
+		if strings.Contains(l, "model_refusal_fallback") {
+			e = l
 		}
-		return ""
+	}
+	if e == "" {
+		t.Fatalf("model_refusal_fallback was not logged; log:\n%s", out.String())
+	}
+	if !strings.Contains(e, " INFO ") {
+		t.Errorf("logged as %q, want INFO", e)
+	}
+	mu.Lock()
+	for _, w := range warned {
+		if strings.Contains(w, "model_refusal_fallback") {
+			t.Errorf("logged at WARN/ERROR, want INFO only: %s", w)
+		}
+	}
+	mu.Unlock()
+	for _, want := range []string{"claude-opus-5-5", "claude-opus-4-8", "5327d791-ca23-4fe4-895d-966db6e7905e", "category=cyber",
+		strings.ReplaceAll(content, "\n", "\\n")} {
+		if !strings.Contains(e, want) {
+			t.Errorf("log line missing %q: %s", want, e)
+		}
 	}
 
-	e := find("model_refusal_fallback")
-	if e == "" {
-		t.Fatal("model_refusal_fallback never reached log.SetWarnHook — the silent-model-switch WARN #1968 asked for was not logged at WARN, so it stays invisible in foci.log exactly like the bug report")
+	if len(notices) != 1 {
+		t.Fatalf("chat notices = %q, want one", notices)
 	}
-	if !strings.HasPrefix(e, "WARN ") {
-		t.Errorf("level = %q, want WARN", strings.SplitN(e, " ", 2)[0])
+	if noticeKeys[0] != "clutch/c1" {
+		t.Errorf("notice went to session %q, want this backend's clutch/c1", noticeKeys[0])
 	}
-	if !strings.Contains(e, "claude-opus-5") {
-		t.Errorf("log line missing the refusing (from) model claude-opus-5: %q", e)
+	for _, want := range []string{"claude-opus-5-5", "claude-opus-4-8", "cyber", "This session now runs on claude-opus-4-8"} {
+		if !strings.Contains(notices[0], want) {
+			t.Errorf("notice missing %q: %s", want, notices[0])
+		}
 	}
-	if !strings.Contains(e, "claude-opus-4-8") {
-		t.Errorf("log line missing the model it switched to (claude-opus-4-8): %q", e)
-	}
-	if !strings.Contains(e, "7f21195c-2279-43a9-a046-c4b8785deae9") {
-		t.Errorf("log line missing the session id: %q", e)
-	}
-	// The content text must survive VERBATIM -- it is the only place naming
-	// which model refused and what it switched to in prose, per the ruling.
-	// event() collapses internal newlines to "\\n", so compare against that
-	// same transform rather than the raw multi-line string.
-	wantContent := strings.ReplaceAll(content, "\n", "\\n")
-	if !strings.Contains(e, wantContent) {
-		t.Errorf("log line does not contain the content field verbatim.\ngot:  %s\nwant substring: %s", e, wantContent)
+}
+
+// TestFormatModelFallbackNotice_LocalScope: a subagent or side request that
+// fell back leaves the session's model alone, and the notice says so.
+func TestFormatModelFallbackNotice_LocalScope(t *testing.T) {
+	n := FormatModelFallbackNotice("local", "claude-opus-5-5", "claude-opus-4-8", "")
+	if strings.Contains(n, "now runs on") || !strings.Contains(n, "unchanged") || strings.Contains(n, "category") {
+		t.Errorf("local notice = %q", n)
 	}
 }
 
