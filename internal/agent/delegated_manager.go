@@ -1263,21 +1263,16 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 	}
 }
 
-// resumeIDKey is the session_metadata key under which CC backend resume UUIDs
-// are stored. The data is session-scoped (each post-compact JSONL is a
-// distinct UUID) and the session key already encodes the agent ID, so we
-// don't store agent_id separately.
-const resumeIDKey = "cc_resume_id"
-
 // saveResumeID persists the backend session ID to state.db and appends it to
 // the backend_resume_history provenance timeline, so "which backend session
 // was live for this key at time T" stays answerable after resets and respawns.
-// Every delegated backend goes through here, not just claude-code.
+// Every delegated backend goes through here, not just claude-code. The key is
+// session.MetaKeyCCResumeID in the session package's registry.
 func (m *DelegatedManager) saveResumeID(sessionKey, sessionID string) {
 	if sessionID == "" || m.SessionIndex == nil {
 		return
 	}
-	if err := m.SessionIndex.SetSessionMetadata(sessionKey, resumeIDKey, sessionID); err != nil {
+	if err := m.SessionIndex.SetSessionMetadata(sessionKey, session.MetaKeyCCResumeID, sessionID); err != nil {
 		m.logger().Warnf("save resume ID for %s: %v", sessionKey, err)
 	}
 	m.SessionIndex.RecordBackendResume(sessionKey, sessionID)
@@ -1288,7 +1283,7 @@ func (m *DelegatedManager) clearResumeID(sessionKey string) {
 	if m.SessionIndex == nil {
 		return
 	}
-	if err := m.SessionIndex.DeleteSessionMetadata(sessionKey, resumeIDKey); err != nil {
+	if err := m.SessionIndex.DeleteSessionMetadata(sessionKey, session.MetaKeyCCResumeID); err != nil {
 		m.logger().Warnf("clear resume ID for %s: %v", sessionKey, err)
 	}
 }
@@ -1473,7 +1468,7 @@ func (m *DelegatedManager) loadResumeID(sessionKey string) string {
 	if m.SessionIndex == nil {
 		return ""
 	}
-	id, err := m.SessionIndex.GetSessionMetadata(sessionKey, resumeIDKey)
+	id, err := m.SessionIndex.GetSessionMetadata(sessionKey, session.MetaKeyCCResumeID)
 	if err != nil {
 		return ""
 	}

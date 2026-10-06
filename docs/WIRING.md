@@ -2817,6 +2817,8 @@ Messages to the secondary bot route to the forked session. `/done` on the second
 
 **Per-session override persistence:** Slash command overrides (`/effort`, `/thinking`, `/model`) are stored per-session in `session_metadata`. On startup, `RestoreSessionOverrides(sessionKey)` restores them — for model overrides, it reads the endpoint and format and calls `GetClient(endpoint, format)` to restore the correct client. The `/voice` mode follows the same pattern. Session keys are stable identities, so `/reset` clears overrides explicitly via `Agent.ClearSessionState` (which drops all `session_metadata` rows for the key).
 
+**session_metadata key registry:** Every `session_metadata` key (`model`, `effort`, `cc_resume_id`, `cc_undelivered`, `orientation_consumed`, …) is a `MetaKey*` constant in `internal/session/metadata_keys.go`, listed once in the ordered `SessionMetadataKeys` registry together with the display data `/sessions info` needs (unset rendering, branch-only flag, whether it is shown). All writers and readers of session metadata — `agent/session_meta.go`, `agent/delegated_manager.go`, `agent/delivery_store.go`, `session/branch.go`, `cmd/foci-gw/sessions_init.go` — use these constants, and `/sessions info` (`command/sessions.go` `metadataRows`) builds its row list from the registry instead of a private list. `session/metadata_keys_test.go` guards completeness (every constant registered, no duplicates, values byte-for-byte stable) and rejects string-literal keys at call sites.
+
 **Special commands on secondary bots:**
 - `/done` — detach from forked session, return to pool
 - `/stop` — cancel current agent turn (same as primary)

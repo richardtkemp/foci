@@ -194,7 +194,7 @@ func (s *Store) GetBranchMeta(key string) (*BranchMeta, error) {
 func (s *Store) ConsumeOrientation(key string, idx *SessionIndex) string {
 	// Check consumed flag first (cheap DB lookup, no file I/O).
 	if idx != nil {
-		if v, _ := idx.GetSessionMetadata(key, "orientation_consumed"); v != "" {
+		if v, _ := idx.GetSessionMetadata(key, MetaKeyOrientationConsumed); v != "" {
 			return ""
 		}
 	}
@@ -208,7 +208,7 @@ func (s *Store) ConsumeOrientation(key string, idx *SessionIndex) string {
 
 	// Mark consumed in the index.
 	if idx != nil {
-		if err := idx.SetSessionMetadata(key, "orientation_consumed", "1"); err != nil {
+		if err := idx.SetSessionMetadata(key, MetaKeyOrientationConsumed, "1"); err != nil {
 			sessionLog(key).Warnf("failed to mark orientation consumed for %s: %v", key, err)
 		}
 	}

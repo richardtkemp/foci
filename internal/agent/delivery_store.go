@@ -7,17 +7,12 @@ import (
 	"foci/internal/session"
 )
 
-// undeliveredKey is the session_metadata key holding a session's inputs that
-// its backend has not confirmed consuming: a JSON array of
-// delegator.PendingInput in write order (#2050). The row is written ahead of
-// every tracked backend write and trimmed as the backend confirms each one, so
-// after a crash or restart it lists exactly what may never have been read.
-const undeliveredKey = "cc_undelivered"
-
 // installDeliveryHooks wires a DeliveryTracker backend's reports to the
 // session's persisted undelivered set, the consumed-input callback (the app's
 // ✓✓) and redelivery. Backends that cannot confirm consumption are left alone:
 // their inputs are never persisted, redelivered or reported consumed.
+// The undelivered set lives in session_metadata under
+// session.MetaKeyCCUndelivered (see the registry in session/metadata_keys.go).
 func (m *DelegatedManager) installDeliveryHooks(mb *managedBackend, sk func() string) {
 	dt, ok := delegator.As[delegator.DeliveryTracker](mb.be)
 	if !ok {
@@ -94,7 +89,7 @@ func (m *DelegatedManager) RestoreUndelivered() {
 	if m.SessionIndex == nil {
 		return
 	}
-	keys, err := m.SessionIndex.SessionKeysWithMetadata(undeliveredKey)
+	keys, err := m.SessionIndex.SessionKeysWithMetadata(session.MetaKeyCCUndelivered)
 	if err != nil {
 		m.logger().Warnf("restore undelivered inputs: %v", err)
 		return
@@ -153,7 +148,7 @@ func (m *DelegatedManager) clearUndelivered(sessionKey string) {
 	if len(m.loadUndeliveredLocked(sessionKey)) == 0 {
 		return
 	}
-	if err := m.SessionIndex.DeleteSessionMetadata(sessionKey, undeliveredKey); err != nil {
+	if err := m.SessionIndex.DeleteSessionMetadata(sessionKey, session.MetaKeyCCUndelivered); err != nil {
 		m.logger().Warnf("clear undelivered inputs for %s: %v", sessionKey, err)
 	}
 }
@@ -209,7 +204,7 @@ func (m *DelegatedManager) removeUndelivered(sessionKey, id string) {
 }
 
 func (m *DelegatedManager) loadUndeliveredLocked(sessionKey string) []delegator.PendingInput {
-	raw, err := m.SessionIndex.GetSessionMetadata(sessionKey, undeliveredKey)
+	raw, err := m.SessionIndex.GetSessionMetadata(sessionKey, session.MetaKeyCCUndelivered)
 	if err != nil {
 		m.logger().Warnf("load undelivered inputs for %s: %v", sessionKey, err)
 		return nil
@@ -227,7 +222,7 @@ func (m *DelegatedManager) loadUndeliveredLocked(sessionKey string) []delegator.
 
 func (m *DelegatedManager) saveUndeliveredLocked(sessionKey string, list []delegator.PendingInput) {
 	if len(list) == 0 {
-		if err := m.SessionIndex.DeleteSessionMetadata(sessionKey, undeliveredKey); err != nil {
+		if err := m.SessionIndex.DeleteSessionMetadata(sessionKey, session.MetaKeyCCUndelivered); err != nil {
 			m.logger().Warnf("clear undelivered inputs for %s: %v", sessionKey, err)
 		}
 		return
@@ -237,7 +232,7 @@ func (m *DelegatedManager) saveUndeliveredLocked(sessionKey string, list []deleg
 		m.logger().Warnf("encode undelivered inputs for %s: %v", sessionKey, err)
 		return
 	}
-	if err := m.SessionIndex.SetSessionMetadata(sessionKey, undeliveredKey, string(raw)); err != nil {
+	if err := m.SessionIndex.SetSessionMetadata(sessionKey, session.MetaKeyCCUndelivered, string(raw)); err != nil {
 		m.logger().Warnf("persist undelivered inputs for %s: %v", sessionKey, err)
 	}
 }

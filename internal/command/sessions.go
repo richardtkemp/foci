@@ -334,33 +334,6 @@ func sessionsDefaultCmd(cc CommandContext, chatID int64) (string, error) {
 	return fmt.Sprintf("Default session set to chat %d.", chatID), nil
 }
 
-// knownSessionMetadataKeys is the canonical set of session_metadata keys, with
-// how each renders when unset. There is no single source of truth for these in
-// the codebase (they are scattered string literals at the read/write sites), so
-// this list is the display contract for /sessions info.
-//
-// branchOnly marks a key that is only ever meaningful for a branch session —
-// e.g. orientation_consumed, which ConsumeOrientation (session/branch.go) only
-// sets for sessions with branch_meta. Rendering it as "false" on every root
-// (non-branch) session falsely implies a mechanism that never even applies
-// there (#1297); metadataRows skips it for roots when unset.
-var knownSessionMetadataKeys = []struct {
-	key        string
-	unset      string
-	branchOnly bool
-}{
-	{"model", "null", false},
-	{"model_endpoint", "null", false},
-	{"model_format", "null", false},
-	{"effort", "null", false},
-	{"permission_mode", "null", false},
-	{"cc_resume_id", "null", false},
-	{"last_activity", "null", false},
-	{"no_compact", "false", false},
-	{"display_show_thinking", "false", false},
-	{"orientation_consumed", "false", true},
-}
-
 // chatSessionExists reports whether a session exists for agent+chat in any
 // storage location: the session index, a platform registration, or the file
 // store.
@@ -430,24 +403,30 @@ func sessionsInfoCmd(cc CommandContext, sessionKey string, chatID int64) (string
 		sessionKey, display.MarkdownTable(tableCols, rows)), nil
 }
 
-// metadataRows renders every known session_metadata key (unset ones as their
-// null/false default) plus any present-but-unknown keys, as Field/Value rows.
-// A branchOnly key is skipped when unset and isBranch is false — it isn't
+// metadataRows renders every session_metadata key the registry marks Shown
+// (unset ones as their registry Unset default) plus any present-but-unlisted
+// keys, as Field/Value rows. The key list, order, unset renderings and the
+// branch-only skip all come from session.SessionMetadataKeys — the single
+// registry shared with every reader and writer of session_metadata. A
+// BranchOnly key is skipped when unset and isBranch is false — it isn't
 // applicable to a root session, so showing its default is misleading rather
 // than informative (#1297).
 func metadataRows(meta map[string]string, isBranch bool) [][]string {
-	seen := make(map[string]bool, len(knownSessionMetadataKeys))
+	seen := make(map[string]bool, len(session.SessionMetadataKeys))
 	var rows [][]string
-	for _, mk := range knownSessionMetadataKeys {
-		seen[mk.key] = true
-		v, ok := meta[mk.key]
+	for _, mk := range session.SessionMetadataKeys {
+		if !mk.Shown {
+			continue
+		}
+		seen[mk.Key] = true
+		v, ok := meta[mk.Key]
 		if !ok {
-			if mk.branchOnly && !isBranch {
+			if mk.BranchOnly && !isBranch {
 				continue
 			}
-			v = mk.unset
+			v = mk.Unset
 		}
-		rows = append(rows, []string{"meta:" + mk.key, v})
+		rows = append(rows, []string{"meta:" + mk.Key, v})
 	}
 	var extra []string
 	for k := range meta {

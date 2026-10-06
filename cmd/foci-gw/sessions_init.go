@@ -271,11 +271,16 @@ func migrateStateJSON(jsonPath string, idx *session.SessionIndex) {
 			_ = idx.SetAgentMetadata("_system", key, strVal)
 
 		default:
-			// Check for session metadata patterns: <prefix>/<sessionKey>
+			// Check for session metadata patterns: <prefix>/<sessionKey>.
+			// Prefix-match order is load-bearing (model before model_endpoint),
+			// so keep this order exactly as-is.
 			sessionMetaPrefixes := []string{
-				"effort", "thinking", "speed", "model", "model_endpoint",
-				"model_format", "show_tool_calls", "display_show_thinking",
-				"stream_output", "display_width", "no_compact",
+				session.MetaKeyEffort, session.MetaKeyThinking, session.MetaKeySpeed,
+				session.MetaKeyModel, session.MetaKeyModelEndpoint,
+				session.MetaKeyModelFormat, session.MetaKeyShowToolCalls,
+				session.MetaKeyDisplayShowThinking,
+				session.MetaKeyStreamOutput, session.MetaKeyDisplayWidth,
+				session.MetaKeyNoCompact,
 			}
 			handled := false
 			for _, prefix := range sessionMetaPrefixes {
@@ -325,7 +330,7 @@ func cleanupStaleSessionMetadata(idx *session.SessionIndex, sessions *session.St
 	if idx == nil {
 		return
 	}
-	keys, err := idx.SessionKeysWithMetadata("no_compact")
+	keys, err := idx.SessionKeysWithMetadata(session.MetaKeyNoCompact)
 	if err != nil {
 		mainLog.Warnf("query stale session metadata: %v", err)
 		return
@@ -334,12 +339,12 @@ func cleanupStaleSessionMetadata(idx *session.SessionIndex, sessions *session.St
 	for _, sk := range keys {
 		path, err := sessions.SessionPath(sk)
 		if err != nil {
-			_ = idx.DeleteSessionMetadata(sk, "no_compact")
+			_ = idx.DeleteSessionMetadata(sk, session.MetaKeyNoCompact)
 			deleted++
 			continue
 		}
 		if _, err := os.Stat(path); os.IsNotExist(err) {
-			_ = idx.DeleteSessionMetadata(sk, "no_compact")
+			_ = idx.DeleteSessionMetadata(sk, session.MetaKeyNoCompact)
 			deleted++
 		}
 	}

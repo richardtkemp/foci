@@ -131,7 +131,7 @@ func TestCacheExpiry_NoTouchButPriorBackendSessionIsCold(t *testing.T) {
 		t.Fatalf("no resume id: CacheExpiryMs = %d, want 0 (no cache)", got)
 	}
 
-	if err := idx.SetSessionMetadata(sk, resumeIDKey, "372f7d38-resume"); err != nil {
+	if err := idx.SetSessionMetadata(sk, session.MetaKeyCCResumeID, "372f7d38-resume"); err != nil {
 		t.Fatal(err)
 	}
 	got := ag.CacheExpiryMs(sk, now)

@@ -58,7 +58,7 @@ type sessionMeta struct {
 
 // sessionStringSetting describes a string field in sessionMeta for table-driven access.
 type sessionStringSetting struct {
-	prefix       string                     // state store key prefix
+	prefix       string                     // session_metadata key (session.MetaKey* constant)
 	getter       func(*sessionMeta) string  // read field value
 	setter       func(*sessionMeta, string) // write field value
 	agentDefault func(*Agent) string        // agent-level default (nil = returns "")
@@ -72,66 +72,66 @@ type sessionStringSetting struct {
 
 var (
 	settingEffort = sessionStringSetting{
-		prefix:       "effort",
+		prefix:       session.MetaKeyEffort,
 		getter:       func(sm *sessionMeta) string { return sm.effort },
 		setter:       func(sm *sessionMeta, v string) { sm.effort = v },
 		agentDefault: nil,
 	}
 	settingThinking = sessionStringSetting{
-		prefix:       "thinking",
+		prefix:       session.MetaKeyThinking,
 		getter:       func(sm *sessionMeta) string { return sm.thinking },
 		setter:       func(sm *sessionMeta, v string) { sm.thinking = v },
 		agentDefault: nil,
 	}
 	settingSpeed = sessionStringSetting{
-		prefix:       "speed",
+		prefix:       session.MetaKeySpeed,
 		getter:       func(sm *sessionMeta) string { return sm.speed },
 		setter:       func(sm *sessionMeta, v string) { sm.speed = v },
 		agentDefault: nil,
 	}
 	settingModel = sessionStringSetting{
-		prefix:       "model",
+		prefix:       session.MetaKeyModel,
 		getter:       func(sm *sessionMeta) string { return sm.model },
 		setter:       func(sm *sessionMeta, v string) { sm.model = v },
 		agentDefault: func(a *Agent) string { return a.Model },
 		rootFallback: true,
 	}
 	settingModelEndpoint = sessionStringSetting{
-		prefix:       "model_endpoint",
+		prefix:       session.MetaKeyModelEndpoint,
 		getter:       func(sm *sessionMeta) string { return sm.modelEndpoint },
 		setter:       func(sm *sessionMeta, v string) { sm.modelEndpoint = v },
 		rootFallback: true,
 	}
 	settingModelFormat = sessionStringSetting{
-		prefix:       "model_format",
+		prefix:       session.MetaKeyModelFormat,
 		getter:       func(sm *sessionMeta) string { return sm.modelFormat },
 		setter:       func(sm *sessionMeta, v string) { sm.modelFormat = v },
 		agentDefault: func(a *Agent) string { return a.Format },
 		rootFallback: true,
 	}
 	settingShowToolCalls = sessionStringSetting{
-		prefix:       "show_tool_calls",
+		prefix:       session.MetaKeyShowToolCalls,
 		getter:       func(sm *sessionMeta) string { return sm.showToolCalls },
 		setter:       func(sm *sessionMeta, v string) { sm.showToolCalls = v },
 		agentDefault: func(a *Agent) string { return a.showToolCalls() },
 	}
 	settingDisplayShowThinking = sessionStringSetting{
-		prefix: "display_show_thinking",
+		prefix: session.MetaKeyDisplayShowThinking,
 		getter: func(sm *sessionMeta) string { return sm.displayShowThink },
 		setter: func(sm *sessionMeta, v string) { sm.displayShowThink = v },
 	}
 	settingStreamOutput = sessionStringSetting{
-		prefix: "stream_output",
+		prefix: session.MetaKeyStreamOutput,
 		getter: func(sm *sessionMeta) string { return sm.streamOutput },
 		setter: func(sm *sessionMeta, v string) { sm.streamOutput = v },
 	}
 	settingDisplayWidth = sessionStringSetting{
-		prefix: "display_width",
+		prefix: session.MetaKeyDisplayWidth,
 		getter: func(sm *sessionMeta) string { return sm.displayWidth },
 		setter: func(sm *sessionMeta, v string) { sm.displayWidth = v },
 	}
 	settingPermissionMode = sessionStringSetting{
-		prefix: "permission_mode",
+		prefix: session.MetaKeyPermissionMode,
 		getter: func(sm *sessionMeta) string { return sm.permissionMode },
 		setter: func(sm *sessionMeta, v string) { sm.permissionMode = v },
 		// No agentDefault — CC's intrinsic default is "default"; we
@@ -287,7 +287,7 @@ func (a *Agent) CacheExpiry(sessionKey string, at time.Time) time.Time {
 			// (reset clears the id along with the touch), so the missing touch
 			// is lost warmth, not "never cached" — report it long expired
 			// rather than as no-cache, which the client renders WARM (#2061).
-			if id, err := a.SessionIndex.GetSessionMetadata(sessionKey, resumeIDKey); err == nil && id != "" {
+			if id, err := a.SessionIndex.GetSessionMetadata(sessionKey, session.MetaKeyCCResumeID); err == nil && id != "" {
 				return expiredLongAgo
 			}
 			return time.Time{}
@@ -455,20 +455,20 @@ func (a *Agent) SetSessionModel(sessionKey, value, endpoint, format string, clie
 
 	if a.SessionIndex != nil {
 		if value == "" {
-			_ = a.SessionIndex.DeleteSessionMetadata(sessionKey, "model")
-			_ = a.SessionIndex.DeleteSessionMetadata(sessionKey, "model_endpoint")
-			_ = a.SessionIndex.DeleteSessionMetadata(sessionKey, "model_format")
+			_ = a.SessionIndex.DeleteSessionMetadata(sessionKey, session.MetaKeyModel)
+			_ = a.SessionIndex.DeleteSessionMetadata(sessionKey, session.MetaKeyModelEndpoint)
+			_ = a.SessionIndex.DeleteSessionMetadata(sessionKey, session.MetaKeyModelFormat)
 		} else {
-			if err := a.SessionIndex.SetSessionMetadata(sessionKey, "model", value); err != nil {
+			if err := a.SessionIndex.SetSessionMetadata(sessionKey, session.MetaKeyModel, value); err != nil {
 				a.logger().Errorf("session=%s persist model: %v", sessionKey, err)
 			}
 			if endpoint != "" {
-				if err := a.SessionIndex.SetSessionMetadata(sessionKey, "model_endpoint", endpoint); err != nil {
+				if err := a.SessionIndex.SetSessionMetadata(sessionKey, session.MetaKeyModelEndpoint, endpoint); err != nil {
 					a.logger().Errorf("session=%s persist model_endpoint: %v", sessionKey, err)
 				}
 			}
 			if format != "" {
-				if err := a.SessionIndex.SetSessionMetadata(sessionKey, "model_format", format); err != nil {
+				if err := a.SessionIndex.SetSessionMetadata(sessionKey, session.MetaKeyModelFormat, format); err != nil {
 					a.logger().Errorf("session=%s persist model_format: %v", sessionKey, err)
 				}
 			}
@@ -664,7 +664,7 @@ func (a *Agent) SetSessionNoCompact(sessionKey string, value bool) {
 	if value {
 		val = "true"
 	}
-	a.persistSessionString(sessionKey, "no_compact", val)
+	a.persistSessionString(sessionKey, session.MetaKeyNoCompact, val)
 }
 
 // SessionShowToolCalls returns the per-session show_tool_calls override (empty = not overridden).
@@ -728,7 +728,7 @@ func (a *Agent) SessionOverrides(sessionKey string) map[string]string {
 		}
 	}
 	if sm.noCompact {
-		overrides["no_compact"] = "true"
+		overrides[session.MetaKeyNoCompact] = "true"
 	}
 	return overrides
 }
@@ -782,7 +782,7 @@ func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 	}
 
 	// Restore no_compact (bool, not string).
-	val, err := a.SessionIndex.GetSessionMetadata(sessionKey, "no_compact")
+	val, err := a.SessionIndex.GetSessionMetadata(sessionKey, session.MetaKeyNoCompact)
 	if err != nil {
 		a.logger().Warnf("session=%s restore no_compact: %v", sessionKey, err)
 	}
