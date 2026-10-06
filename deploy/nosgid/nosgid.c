@@ -20,9 +20,10 @@
  * clears 06000 (S_ISUID|S_ISGID); it never grants a permission a process was
  * not already allowed to set, and has no effect on the ordinary rwx bits.
  *
- * Built to bin/nosgid.so by the Makefile and installed to
- * $(FOCI_HOME)/.lib/nosgid.so; injected into LD_PRELOAD at startup by
- * internal/preload.
+ * Built to bin/nosgid.so by the Makefile and installed root-owned to
+ * /usr/local/lib/foci/nosgid.so (outside every agent-writable tree, #1487);
+ * injected into LD_PRELOAD at startup by internal/preload, which refuses a
+ * copy the agent could replace.
  */
 #define _GNU_SOURCE
 #include <sys/stat.h>

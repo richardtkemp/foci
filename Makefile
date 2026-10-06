@@ -502,6 +502,21 @@ lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-cap
 		echo "install-scripts must install the agent bin root-owned (-o root -g root), see #1898:"; \
 		echo "$$bad"; exit 1; \
 	fi
+	@echo "=== install-lib ships the LD_PRELOAD shim root-owned ==="
+	@# #1487. A writable LD_PRELOAD library is code execution in every child of
+	@# foci-gw. Dropping `-o root -g root` from either install line fails no unit
+	@# test: internal/preload would just WARN and stop preloading after the next
+	@# deploy. Guard the lines themselves, as for install-scripts above.
+	@lines=$$(sed -n '/^install-lib:/,/^$$/p' Makefile | grep -E '^[[:space:]]*install ' || true); \
+	n=$$(printf '%s\n' "$$lines" | grep -c . || true); \
+	if [ "$$n" -lt 2 ]; then \
+		echo "gate is broken, not the code: expected the 'install -d' (lib dir) and file 'install' lines in install-lib, found $$n"; exit 1; \
+	fi; \
+	bad=$$(printf '%s\n' "$$lines" | grep -v -- '-o root -g root' || true); \
+	if [ -n "$$bad" ]; then \
+		echo "install-lib must install the LD_PRELOAD shim root-owned (-o root -g root), see #1487:"; \
+		echo "$$bad"; exit 1; \
+	fi
 	@echo "=== spawn populations (every spawn and lookup declares one) ==="
 	@# #1914. procx.Spawn/SpawnSetsid take a REQUIRED procx.Population, so the
 	@# compiler already refuses a site that declares nothing — this gate exists
@@ -702,17 +717,27 @@ deploy-build:
 install-bin:
 	@for b in $(DEPLOY_BINS); do echo "  install $$b"; install -m 755 bin/$$b $(INSTALL_DIR)/$$b; done
 
-# Install the nosgid LD_PRELOAD shim into the service user's hidden .lib dir.
-# World-readable so foci-gw can preload it; owned by the service user for tidiness.
+# Install the nosgid LD_PRELOAD shim root-owned, OUTSIDE every agent-writable
+# tree (#1487). Whoever can write these bytes runs code in every process foci-gw
+# spawns, and the agent runs as $(FOCI_USER), so: file root:root, its directory
+# root:root, and no ancestor owned by or writable by $(FOCI_USER). Under $(FOCI_HOME) that is
+# unachievable — $(FOCI_HOME) is $(FOCI_USER)-writable, so even a root-owned
+# .lib dir could be renamed away and replaced. internal/preload refuses (WARN,
+# no LD_PRELOAD) any shim that fails that check, and its Path must equal
+# $(NOSGID_LIB_DIR)/nosgid.so (TestPathMatchesMakefileInstallDir). Explicit
+# -m on both lines: sudo/aisudo hand us umask 0117. The legacy
+# $(FOCI_HOME)/.lib copy is removed so nothing can preload it again.
 # No-op (with a note) when the shim wasn't built (no C compiler at build time).
+NOSGID_LIB_DIR = /usr/local/lib/foci
 install-lib:
 	@if [ -f bin/nosgid.so ]; then \
-	    install -d -o $(FOCI_USER) -g $(FOCI_USER) -m 755 $(FOCI_HOME)/.lib; \
-	    install -o $(FOCI_USER) -g $(FOCI_USER) -m 755 bin/nosgid.so $(FOCI_HOME)/.lib/nosgid.so; \
-	    echo "  install nosgid.so -> $(FOCI_HOME)/.lib/nosgid.so"; \
+	    install -d -o root -g root -m 755 $(NOSGID_LIB_DIR); \
+	    install -o root -g root -m 755 bin/nosgid.so $(NOSGID_LIB_DIR)/nosgid.so; \
+	    echo "  install nosgid.so -> $(NOSGID_LIB_DIR)/nosgid.so (root:root)"; \
 	else \
 	    echo "  skip nosgid.so (not built)"; \
 	fi
+	@rm -f $(FOCI_HOME)/.lib/nosgid.so; rmdir $(FOCI_HOME)/.lib 2>/dev/null || true
 
 install-unit:
 	getent group $(SECRETS_GROUP) >/dev/null 2>&1 || groupadd $(SECRETS_GROUP)

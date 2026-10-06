@@ -28,11 +28,14 @@ config.Load(path)                                        ← validates values; l
                                                             is writable by foci. The only alarm for a
                                                             misclassified spawn site — both ways of getting one
                                                             wrong are otherwise silent.
-→ preload.Apply()                                        ← internal/preload; sets LD_PRELOAD to ~/.lib/nosgid.so
-                                                            (same inherit-via-os.Environ() mechanism) so shell
-                                                            tools + backends silently drop setgid chmod bits
-                                                            instead of hitting EPERM under RestrictSUIDSGID=yes.
-                                                            No-op if the shim isn't installed.
+→ preload.Apply()                                        ← internal/preload; sets LD_PRELOAD to
+                                                            /usr/local/lib/foci/nosgid.so (same inherit-via-
+                                                            os.Environ() mechanism) so shell tools + backends
+                                                            silently drop setgid chmod bits instead of hitting
+                                                            EPERM under RestrictSUIDSGID=yes. No-op if the shim
+                                                            isn't installed; WARN + not applied if the file or
+                                                            any ancestor dir is foci-owned or writable by foci
+                                                            (#1487: a writable preload lib = code exec).
 
 → initLogging(cfg)                                       ← logging_init.go
   → log.Init, accounting.Open (the cost ledger in api.db: migrates a pre-ledger
