@@ -54,7 +54,7 @@ func ToolsCommand() *Command {
 func ConfigCommand() *Command {
 	cmd := &Command{
 		Name:        "config",
-		Description: "Show or edit config. Subcommands: toml, table, available, set",
+		Description: "Show or edit config. Subcommands: toml, table, available, get, set",
 		Category:    "diagnostics",
 		Subcommands: []Subcommand{
 			{
@@ -79,8 +79,19 @@ func ConfigCommand() *Command {
 				},
 			},
 			{
+				Name:        "get",
+				Description: "Read an agent's value: get <agent> <key> (get <agent> lists live-settable keys)",
+				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+					if cc.ConfigSetDeps == nil {
+						return Response{Text: "Config get is not available."}, nil
+					}
+					text, err := configGet(cc.ConfigSetDeps, req.Args)
+					return Response{Text: text}, err
+				},
+			},
+			{
 				Name:        "set",
-				Description: "Edit config file",
+				Description: "Edit config file: section.key=value, or <agent> <key>=<value> for a named agent's live settings",
 				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
 					if cc.ConfigSetDeps == nil {
 						return Response{Text: "Config set is not available."}, nil
@@ -140,6 +151,14 @@ func ConfigCommand() *Command {
 // calling the wizard directly, so completion clears the wizard and every
 // advance checkpoints persistence.
 func configSet(deps *ConfigSetDeps, scope, args string) (string, error) {
+	// "<agent> <key>=<value>" — a bare agent id names whose [[agents]]
+	// block to write (live fields only; see config_agent.go). Checked
+	// before the "=" branch so this shape never falls into
+	// ConfigSetDirect's unknown-field path for its space-containing path.
+	if agentID, rest, ok := splitAgentSetArgs(args); ok {
+		return configSetAgent(deps, agentID, rest)
+	}
+
 	if args != "" && strings.Contains(args, "=") {
 		return ConfigSetDirect(*deps, args)
 	}

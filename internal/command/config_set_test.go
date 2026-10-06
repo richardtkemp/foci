@@ -16,6 +16,7 @@ func testConfigSetDeps(setFn func(path string, target config.SetTarget, value st
 	return ConfigSetDeps{
 		ConfigPath:      "/tmp/test-foci.toml",
 		AgentID:         "test-agent",
+		AgentIDsFn:      func() []string { return []string{"test-agent"} },
 		SectionsFn:      config.FieldSections,
 		FieldsInSection: config.FieldsInSection,
 		LookupFn:        config.LookupField,

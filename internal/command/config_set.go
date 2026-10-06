@@ -8,11 +8,14 @@ import (
 	"foci/internal/config"
 )
 
-// ConfigSetDeps holds dependencies for the /config set wizard and direct mode.
+// ConfigSetDeps holds dependencies for the /config set wizard and direct
+// mode, and the per-agent forms that share them (/config get and
+// "set <agent> <key>=<value>"; see config_agent.go).
 type ConfigSetDeps struct {
 	Registry         *Registry // for activating wizard via SetWizard
 	ConfigPath       string
 	AgentID          string // current agent's ID, for targeting [[agents]] block
+	AgentIDsFn       func() []string
 	SectionsFn       func() []string
 	FieldsInSection  func(section string) []config.ConfigField
 	LookupFn         func(sectionKey string) (config.ConfigField, bool)
@@ -240,17 +243,23 @@ func ConfigSetDirect(deps ConfigSetDeps, args string) (string, error) {
 
 func formatSetResult(field config.ConfigField, section, key, formatted, oldValue string) string {
 	var sb strings.Builder
-	if oldValue != "" {
-		fmt.Fprintf(&sb, "Set %s.%s = %s (was %s)", section, key, formatted, oldValue)
-	} else {
-		fmt.Fprintf(&sb, "Set %s.%s = %s", section, key, formatted)
-	}
+	sb.WriteString(formatSetLine(section+"."+key, formatted, oldValue))
 	if field.NeedsRestart {
 		sb.WriteString("\nRestart to take effect.")
 	} else {
 		sb.WriteString("\nApplied live.")
 	}
 	return sb.String()
+}
+
+// formatSetLine renders the confirmation line both set forms share: the
+// field's name (as the user addresses it), the new value, and the old value
+// when there was one.
+func formatSetLine(name, formatted, oldValue string) string {
+	if oldValue != "" {
+		return fmt.Sprintf("Set %s = %s (was %s)", name, formatted, oldValue)
+	}
+	return fmt.Sprintf("Set %s = %s", name, formatted)
 }
 
 func fieldTypeHint(ft config.FieldType) string {

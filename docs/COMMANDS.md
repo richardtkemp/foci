@@ -224,7 +224,9 @@ Show or edit configuration.
 - `/config toml` — raw TOML of the running config (secrets redacted)
 - `/config table` — formatted grouped table of all current values
 - `/config available` — unset options with their defaults
+- `/config get <agent> <key>` — read a named agent's current value for a per-agent key (spelled as under `[[agents]]`, e.g. `keepalive.interval`; a leading `agent.` is accepted). The value is read from the config file at call time, and the reply says where it comes from — set for this agent in foci.toml, inherited from the global section, or the built-in default — plus whether the field can be set live. `<agent>` must exactly match a running agent id. `/config get <agent>` lists the per-agent keys that can be set live; `/config get` shows usage.
 - `/config set [section.key=value]` — edit the config file (direct mode with `=`, or interactive wizard)
+- `/config set <agent> <key>=<value>` — edit a NAMED agent's per-agent setting from any agent's chat (e.g. `/config set clutch keepalive.interval=1m`). `<agent>` must exactly match a running agent id; the value is everything after the first `=` (so it may contain spaces and further `=`); a leading `agent.` on the key is accepted. Only live-appliable (hot) fields can be written this way — a restart-only field is refused with a pointer at editing foci.toml, and a key with no per-agent registry row (e.g. `debug.enable_pprof` or `backend`) is reported as not a per-agent setting. Successful writes apply live immediately.
 
 The native app can also view and edit the config: its Settings → "Server config"
 page renders the same field registry over `config.get`/`config.put`/`config.unset`

@@ -88,6 +88,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		Registry:        cmds,
 		ConfigPath:      p.configPath,
 		AgentID:         p.acfg.ID,
+		AgentIDsFn:      func() []string { return agentIDs(p.agentListFn) },
 		SectionsFn:      config.FieldSections,
 		FieldsInSection: config.FieldsInSection,
 		LookupFn:        config.LookupField,
@@ -301,6 +302,20 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	cmds.RestoreWizards(cc)
 
 	return cmds, cc
+}
+
+// agentIDs projects the /agents listing to the running agent ids — the one
+// source of "which agents exist" the config per-agent forms validate their
+// <agent> argument against, so the two listings cannot drift.
+func agentIDs(listFn func() []command.AgentInfo) []string {
+	var ids []string
+	if listFn == nil {
+		return ids
+	}
+	for _, a := range listFn() {
+		ids = append(ids, a.ID)
+	}
+	return ids
 }
 
 // pprofControl implements command.CommandContext.PprofControl against the
