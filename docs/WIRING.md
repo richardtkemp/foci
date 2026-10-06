@@ -36,13 +36,6 @@ config.Load(path)                                        ← validates values; l
                                                             isn't installed; WARN + not applied if the file or
                                                             any ancestor dir is foci-owned or writable by foci
                                                             (#1487: a writable preload lib = code exec).
-→ credperm.Check()                                       ← internal/credperm; WARNs (with the verbatim fix
-                                                            command) for each backend credentials file —
-                                                            ~/.claude/.credentials.json, ~/.codex/auth.json,
-                                                            ~/.local/share/opencode/auth.json — that exists and
-                                                            is not owner-only (mode/ACL/owner, #1486). Never
-                                                            changes anything; the installer's
-                                                            protect-backend-creds target applies the fix.
 
 → initLogging(cfg)                                       ← logging_init.go
   → log.Init, accounting.Open (the cost ledger in api.db: migrates a pre-ledger

@@ -669,7 +669,7 @@ WIZARD_ARGS += --api-key $(FOCI_API_KEY)
 endif
 endif
 
-.PHONY: deploy-build sync-main install-bin install-lib install-unit install-polkit provision install-shared install-docs install-scripts protect-backend-creds wizard check-config stage-changelog reload restart enable setup update deploy-from-snapshot
+.PHONY: deploy-build sync-main install-bin install-lib install-unit install-polkit provision install-shared install-docs install-scripts wizard check-config stage-changelog reload restart enable setup update deploy-from-snapshot
 
 # sync-main (#1448 piece 4): deploy exactly origin/main, never a dirty or stale
 # local working tree. `make update` builds the working tree, so without this a
@@ -738,37 +738,6 @@ install-lib:
 	    echo "  skip nosgid.so (not built)"; \
 	fi
 	@rm -f $(FOCI_HOME)/.lib/nosgid.so; rmdir $(FOCI_HOME)/.lib 2>/dev/null || true
-
-# Tighten each backend's on-disk login credentials to the service user only
-# (#1486), for files that already exist at install/deploy time. These are
-# rewritten by the backend itself (as the service user) whenever it refreshes an
-# OAuth token, so they cannot be root-owned like secrets.toml or the preload
-# shim: the achievable protection is owner-only — mode 600, extended ACL entries
-# removed — which keeps every OTHER account out. An agent shares the uid and can
-# still read them; that is inherent (see internal/credperm). Parent dirs are left
-# alone: ~/.claude also holds transcripts operator tooling reads by group.
-#
-# Runs AS THE SERVICE USER (runuser), never as root: these paths live in an
-# agent-writable home, so a root chmod would follow an agent-planted symlink to
-# any file on the system. As the user, a redirected chmod/setfacl just fails.
-# Loops over installed units like install-scripts, so it must run after
-# install-unit on a first setup. internal/credperm WARNs at startup on drift
-# and must list the same files (TestFilesMatchMakefile).
-BACKEND_CRED_FILES = .claude/.credentials.json .codex/auth.json .local/share/opencode/auth.json
-protect-backend-creds:
-	@for svcfile in /etc/systemd/system/foci*.service; do \
-	  [ -f "$$svcfile" ] || continue; \
-	  home=$$(grep '^WorkingDirectory=' "$$svcfile" | cut -d= -f2); \
-	  user=$$(grep '^User=' "$$svcfile" | cut -d= -f2); \
-	  [ -n "$$home" ] && [ -n "$$user" ] || continue; \
-	  for rel in $(BACKEND_CRED_FILES); do \
-	    f="$$home/$$rel"; \
-	    [ -f "$$f" ] || continue; \
-	    echo "  protect $$f (owner-only)"; \
-	    if command -v setfacl >/dev/null 2>&1; then runuser -u "$$user" -- setfacl -b "$$f" || true; fi; \
-	    runuser -u "$$user" -- chmod 600 "$$f" || echo "  WARNING: could not chmod $$f as $$user (not owned by $$user?)"; \
-	  done; \
-	done
 
 install-unit:
 	getent group $(SECRETS_GROUP) >/dev/null 2>&1 || groupadd $(SECRETS_GROUP)
@@ -941,7 +910,6 @@ setup:
 	$(MAKE) install-bin
 	$(MAKE) install-lib
 	$(MAKE) install-unit
-	$(MAKE) protect-backend-creds
 	$(MAKE) install-polkit
 	$(MAKE) wizard
 	$(MAKE) enable
@@ -987,7 +955,6 @@ deploy-from-snapshot:
 	$(MAKE) install-docs
 	$(MAKE) install-scripts
 	$(MAKE) install-unit
-	$(MAKE) protect-backend-creds
 	$(MAKE) stage-changelog
 	$(MAKE) restart
 

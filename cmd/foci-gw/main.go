@@ -22,7 +22,6 @@ import (
 	"foci/internal/app" // registers the app (FAP WebSocket) messaging provider via init; also SetCacheExpiry
 	"foci/internal/command"
 	"foci/internal/config"
-	"foci/internal/credperm"
 	"foci/internal/defersend"
 	"foci/internal/delegator"
 	"foci/internal/display"
@@ -191,10 +190,6 @@ Subcommands:
 	// tools and delegated backends get POSIX "drop the setgid bit" chmod
 	// behaviour instead of the EPERM the RestrictSUIDSGID=yes hardening raises.
 	preload.Apply()
-
-	// Warn (with the verbatim fix) if a backend's on-disk login credentials
-	// are readable beyond the service user (#1486).
-	credperm.Check()
 
 	// ========== Workspace directories ==========
 	// Ensure each agent's workspace directories exist before any init
