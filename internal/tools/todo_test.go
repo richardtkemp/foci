@@ -1183,3 +1183,76 @@ func TestTodoToolEditTagNamesRemovedTags(t *testing.T) {
 		t.Errorf("result %q claims a removal when none happened", result)
 	}
 }
+
+// TestTodoToolEditAddRemoveTag is #2198: add_tag / remove_tag change ONE tag
+// against each item's own current set, where tag REPLACES the whole set. The
+// bulk case is the point: two items with different tag sets each keep theirs.
+func TestTodoToolEditAddRemoveTag(t *testing.T) {
+	t.Parallel()
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	a, _ := store.Add("agent1", "A", "medium", "foci,bug")
+	b, _ := store.Add("agent1", "B", "medium", "codex")
+	c, _ := store.Add("agent1", "C", "medium", "")
+
+	result, err := executeTodoTool(tool, map[string]interface{}{
+		"action": "edit", "ids": []int64{a, b, c}, "add_tag": "triaged",
+	})
+	if err != nil {
+		t.Fatalf("edit add_tag: %v", err)
+	}
+	for id, want := range map[int64]string{a: "foci,bug,triaged", b: "codex,triaged", c: "triaged"} {
+		if item, _ := store.Get("agent1", id); item.Tags != want {
+			t.Errorf("#%d tags after add_tag = %q, want %q", id, item.Tags, want)
+		}
+	}
+	if strings.Contains(result, "removed:") {
+		t.Errorf("add-only edit claims a removal: %q", result)
+	}
+
+	// Adding a tag already present is a no-op, not a duplicate.
+	if _, err := executeTodoTool(tool, map[string]interface{}{"action": "edit", "id": a, "add_tag": "foci"}); err != nil {
+		t.Fatalf("edit re-add: %v", err)
+	}
+	if item, _ := store.Get("agent1", a); item.Tags != "foci,bug,triaged" {
+		t.Errorf("re-adding an existing tag: tags = %q, want unchanged", item.Tags)
+	}
+
+	// remove_tag drops just that tag (comma form removes several); add+remove
+	// combine in one call.
+	result, err = executeTodoTool(tool, map[string]interface{}{
+		"action": "edit", "id": a, "remove_tag": "bug,triaged", "add_tag": "done-ish",
+	})
+	if err != nil {
+		t.Fatalf("edit remove_tag: %v", err)
+	}
+	if item, _ := store.Get("agent1", a); item.Tags != "foci,done-ish" {
+		t.Errorf("tags after remove+add = %q, want %q", item.Tags, "foci,done-ish")
+	}
+	if !strings.Contains(result, "removed: bug,triaged") {
+		t.Errorf("result %q does not name the removed tags", result)
+	}
+
+	// Removing the last tag leaves an empty set.
+	if _, err := executeTodoTool(tool, map[string]interface{}{"action": "edit", "id": c, "remove_tag": "triaged"}); err != nil {
+		t.Fatalf("edit remove last: %v", err)
+	}
+	if item, _ := store.Get("agent1", c); item.Tags != "" {
+		t.Errorf("removing the only tag: tags = %q, want empty", item.Tags)
+	}
+
+	// Ambiguous combinations are refused, and change nothing.
+	for name, params := range map[string]map[string]interface{}{
+		"tag+add_tag":     {"action": "edit", "id": b, "tag": "x", "add_tag": "y"},
+		"tag+remove_tag":  {"action": "edit", "id": b, "tag": "x", "remove_tag": "codex"},
+		"add+remove same": {"action": "edit", "id": b, "add_tag": "q", "remove_tag": "q"},
+	} {
+		if _, err := executeTodoTool(tool, params); err == nil {
+			t.Errorf("%s: want an error, got none", name)
+		}
+	}
+	if item, _ := store.Get("agent1", b); item.Tags != "codex,triaged" {
+		t.Errorf("a refused edit changed #%d tags to %q", b, item.Tags)
+	}
+}

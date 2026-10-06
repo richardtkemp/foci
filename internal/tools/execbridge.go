@@ -776,7 +776,7 @@ var todoActions = []struct {
 	{"drop", "drop <id> [--reason|--notes|--note|--text TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason --notes --note --text"},
 	{"reopen", "reopen <id>   (status→open, clears completed_at/close_reason; or --id N / --ids 1,2,3)", "--id --ids"},
 	{"start", "start <id>   (status→started; or --id N / --ids 1,2,3)", "--id --ids"},
-	{"edit", "edit <id> [--text TEXT] [--title TEXT] [--append-text|--note|--add TEXT] [--append] [--priority P] [--tag T]   (alias: update; or --id N / --ids 1,2,3)", "--id --ids --text --title --append --append-text --add --note --notes --priority --tag"},
+	{"edit", "edit <id> [--text TEXT] [--title TEXT] [--append-text|--note|--add TEXT] [--append] [--priority P] [--tag T | --add-tag T --remove-tag T]   (alias: update; or --id N / --ids 1,2,3; --tag replaces the whole tag set, --add-tag/--remove-tag change one tag and keep the rest)", "--id --ids --text --title --append --append-text --add --note --notes --priority --tag --add-tag --remove-tag"},
 	{"remove", "remove --id N   (or --ids 1,2,3)", "--id --ids"},
 }
 
@@ -951,7 +951,7 @@ func generateShellFunc(t *Tool) string {
     fi
     return 0
   fi
-  local text="" priority="" tag="" query="" status="" id="" ids="" reason="" sort="" reverse="" limit="" append="" append_text="" body="" title="" add_words=""
+  local text="" priority="" tag="" query="" status="" id="" ids="" reason="" sort="" reverse="" limit="" append="" append_text="" body="" title="" add_words="" add_tag="" remove_tag=""
   while [ $# -gt 0 ]; do
     # #1218: reject flags that are globally-known but not valid for THIS action
     # (e.g. edit --status done — --status is a list/search filter that edit's
@@ -982,6 +982,10 @@ func generateShellFunc(t *Tool) string {
       # every tag but the last and left the item unfindable under the others.
       # Joining with "," lands on the comma form the tool already accepts.
       --tag) if [ -n "$tag" ]; then tag="$tag,$2"; else tag="$2"; fi; shift 2 ;;
+      # #2198: change one tag against the item's current set (edit only),
+      # accumulating like --tag.
+      --add-tag) if [ -n "$add_tag" ]; then add_tag="$add_tag,$2"; else add_tag="$2"; fi; shift 2 ;;
+      --remove-tag) if [ -n "$remove_tag" ]; then remove_tag="$remove_tag,$2"; else remove_tag="$2"; fi; shift 2 ;;
       --query) query="$2"; shift 2 ;;
       --status) status="$2"; shift 2 ;;
       --id) foci__json_arg --id number "$2" || return 1; id="$2"; shift 2 ;;
@@ -1172,6 +1176,8 @@ func generateShellFunc(t *Tool) string {
       [ -n "$append" ] && params="$(echo "$params" | jq '. + {append: true}')"
       [ -n "$priority" ] && params="$(echo "$params" | jq --arg p "$priority" '. + {priority: $p}')"
       [ -n "$tag" ] && params="$(echo "$params" | jq --arg g "$tag" '. + {tag: $g}')"
+      [ -n "$add_tag" ] && params="$(echo "$params" | jq --arg g "$add_tag" '. + {add_tag: $g}')"
+      [ -n "$remove_tag" ] && params="$(echo "$params" | jq --arg g "$remove_tag" '. + {remove_tag: $g}')"
       foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
       ;;
     remove)

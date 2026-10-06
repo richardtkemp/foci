@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -48,7 +49,15 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				},
 				"tag": {
 					"type": "string",
-					"description": "Comma-separated tags, or repeat --tag per tag. Sets tags on add/edit, filters on list. E.g. 'background'"
+					"description": "Comma-separated tags, or repeat --tag per tag. Sets tags on add/edit, filters on list. E.g. 'background'. On edit it REPLACES the whole set; use add_tag/remove_tag to change one tag"
+				},
+				"add_tag": {
+					"type": "string",
+					"description": "edit only: add these tags (comma-separated, or repeat --add-tag) to each item's existing tags, keeping the rest. Already-present tags are left as is. Cannot be combined with tag"
+				},
+				"remove_tag": {
+					"type": "string",
+					"description": "edit only: remove these tags (comma-separated, or repeat --remove-tag) from each item's existing tags, keeping the rest. Absent tags are ignored. Cannot be combined with tag"
 				},
 				"id": {
 					"type": "integer",
@@ -95,6 +104,8 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				Append   bool    `json:"append"`
 				Priority string  `json:"priority"`
 				Tag      string  `json:"tag"`
+				AddTag   string  `json:"add_tag"`
+				RmTag    string  `json:"remove_tag"`
 				ID       int64   `json:"id"`
 				IDs      []int64 `json:"ids"`
 				Status   string  `json:"status"`
@@ -154,7 +165,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				// New callers should use 'complete' or 'drop'.
 				return todoTransition(store, agentID, p.ID, p.IDs, p.State, p.Reason)
 			case "edit":
-				return todoEdit(store, agentID, p.ID, p.IDs, p.Text, p.Title, p.Append, p.Priority, p.Tag, params)
+				return todoEdit(store, agentID, p.ID, p.IDs, p.Text, p.Title, p.Append, p.Priority, p.Tag, p.AddTag, p.RmTag, params)
 			case "remove":
 				return todoRemove(store, agentID, p.ID, p.IDs)
 			default:
@@ -674,7 +685,7 @@ func todoTransition(store *memory.TodoStore, agentID string, id int64, ids []int
 	return TextResult(strings.Join(results, "\n")), nil
 }
 
-func todoEdit(store *memory.TodoStore, agentID string, id int64, ids []int64, text, title string, appendText bool, priority, tag string, params json.RawMessage) (ToolResult, error) {
+func todoEdit(store *memory.TodoStore, agentID string, id int64, ids []int64, text, title string, appendText bool, priority, tag, addTag, removeTag string, params json.RawMessage) (ToolResult, error) {
 	resolved, err := resolveIDs(id, ids)
 	if err != nil {
 		return ToolResult{}, err
@@ -690,8 +701,21 @@ func todoEdit(store *memory.TodoStore, agentID string, id int64, ids []int64, te
 	// means "clear"). A title must never be settable to empty — neither by
 	// omission nor by an explicit "" — so there is deliberately no way to ask
 	// for the tag-style "clear" behaviour here.
-	if text == "" && title == "" && priority == "" && !setTags {
-		return ToolResult{}, fmt.Errorf("edit requires at least one of: text, title, priority, tag")
+	// #2198: add_tag/remove_tag change single tags against each item's OWN
+	// current set (so a bulk --ids edit keeps every item's other tags), where
+	// tag replaces the set. Mixing the two has no single sensible meaning.
+	addTags, rmTags := splitTags(addTag), splitTags(removeTag)
+	deltaTags := len(addTags) > 0 || len(rmTags) > 0
+	if deltaTags && setTags {
+		return ToolResult{}, fmt.Errorf("edit: tag replaces the whole tag set; use it OR add_tag/remove_tag, not both")
+	}
+	for _, a := range addTags {
+		if slices.Contains(rmTags, a) {
+			return ToolResult{}, fmt.Errorf("edit: tag %q is in both add_tag and remove_tag", a)
+		}
+	}
+	if text == "" && title == "" && priority == "" && !setTags && !deltaTags {
+		return ToolResult{}, fmt.Errorf("edit requires at least one of: text, title, priority, tag, add_tag, remove_tag")
 	}
 	// Validate once up front: a bad priority is the caller's error, not a
 	// per-item one, and must not half-apply a bulk edit's other fields.
@@ -724,7 +748,18 @@ func todoEdit(store *memory.TodoStore, agentID string, id int64, ids []int64, te
 			}
 			finalText = retitleItemText(base, title)
 		}
-		item, err := store.Edit(agentID, rid, finalText, priority, tag, setTags, appendText)
+		itemTag, itemSetTags := tag, setTags
+		if deltaTags {
+			// Computed from the just-fetched oldItem; without it there is no
+			// set to apply the delta to, and an empty base would wipe the
+			// item's other tags, the exact failure #2198 exists to prevent.
+			if getErr != nil {
+				results = append(results, fmt.Sprintf("#%d: error: %v", rid, getErr))
+				continue
+			}
+			itemTag, itemSetTags = applyTagDelta(oldItem.Tags, addTags, rmTags), true
+		}
+		item, err := store.Edit(agentID, rid, finalText, priority, itemTag, itemSetTags, appendText)
 		if err != nil {
 			results = append(results, fmt.Sprintf("#%d: error: %v", rid, err))
 			continue
@@ -748,7 +783,7 @@ func todoEdit(store *memory.TodoStore, agentID string, id int64, ids []int64, te
 		if priority != "" && oldItem.Priority != item.Priority {
 			changes = append(changes, fmt.Sprintf("priority: %s → %s", oldItem.Priority, item.Priority))
 		}
-		if setTags && oldItem.Tags != item.Tags {
+		if itemSetTags && oldItem.Tags != item.Tags {
 			oldTags := memory.FormatTags(oldItem.Tags)
 			newTags := memory.FormatTags(item.Tags)
 			if oldTags == "" {
@@ -870,6 +905,30 @@ func resolveIDs(id int64, ids []int64) ([]int64, error) {
 		return nil, fmt.Errorf("id is required")
 	}
 	return ids, nil
+}
+
+// splitTags splits a comma-separated tag list, trimming and dropping empties.
+func splitTags(s string) []string {
+	var out []string
+	for _, t := range strings.Split(s, ",") {
+		if t = strings.TrimSpace(t); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// applyTagDelta returns the comma-separated tag set current (comma-separated)
+// with remove taken out and add appended, preserving current's order and
+// never duplicating a tag (#2198).
+func applyTagDelta(current string, add, remove []string) string {
+	var out []string
+	for _, t := range append(splitTags(current), add...) {
+		if !slices.Contains(remove, t) && !slices.Contains(out, t) {
+			out = append(out, t)
+		}
+	}
+	return strings.Join(out, ",")
 }
 
 // removedTags returns the tags in before (comma-separated) that are not in

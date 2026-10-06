@@ -2400,6 +2400,93 @@ func TestTodoShellFunc_RepeatedTagAccumulates(t *testing.T) {
 	}
 }
 
+// TestTodoShellFunc_EditAddRemoveTag is #2198's shell half: edit --add-tag and
+// --remove-tag reach the tool as add_tag/remove_tag, accumulating when repeated
+// the way --tag does (#1794), and never as tag (which would replace the set).
+func TestTodoShellFunc_EditAddRemoveTag(t *testing.T) {
+	t.Parallel()
+
+	if _, err := osexec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	if _, err := osexec.LookPath("jq"); err != nil {
+		t.Skip("jq not available")
+	}
+
+	binDir := t.TempDir()
+	binPath := binDir + "/foci-call"
+	build := osexec.Command("go", "build", "-buildvcs=false", "-o", binPath, "foci/cmd/foci-call")
+	build.Dir = findModuleRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build foci-call: %v\n%s", err, out)
+	}
+
+	type got struct {
+		Tag       *string `json:"tag"`
+		AddTag    string  `json:"add_tag"`
+		RemoveTag string  `json:"remove_tag"`
+	}
+	var mu sync.Mutex
+	var captured got
+	var calls int
+
+	r := NewRegistry()
+	r.Register(&Tool{
+		Name:       "todo",
+		Positional: []string{"action"},
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"},"id":{"type":"integer"},"tag":{"type":"string"},"add_tag":{"type":"string"},"remove_tag":{"type":"string"}}}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			var p got
+			json.Unmarshal(params, &p)
+			mu.Lock()
+			captured = p
+			calls++
+			mu.Unlock()
+			return TextResult("ok"), nil
+		},
+	})
+
+	bridge, err := NewExecBridge(r, context.Background())
+	if err != nil {
+		t.Fatalf("NewExecBridge: %v", err)
+	}
+	defer bridge.Close()
+
+	run := func(args string) got {
+		t.Helper()
+		mu.Lock()
+		captured, calls = got{}, 0
+		mu.Unlock()
+		script := fmt.Sprintf(
+			"set -o pipefail -o nounset; shopt -s failglob; source %s; foci_todo %s",
+			bridge.FuncsPath(), args,
+		)
+		cmd := osexec.Command("bash", "-c", script)
+		cmd.Env = append(os.Environ(),
+			"FOCI_SOCK="+bridge.SockPath(),
+			"PATH="+binDir+":"+os.Getenv("PATH"),
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("bash failed for %q: %v\noutput: %s", args, err, out)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if calls != 1 {
+			t.Fatalf("tool invoked %d times for %q, want 1", calls, args)
+		}
+		return captured
+	}
+
+	g := run(`edit 7 --add-tag triaged --add-tag later --remove-tag bug`)
+	if g.AddTag != "triaged,later" || g.RemoveTag != "bug" {
+		t.Errorf("add_tag=%q remove_tag=%q, want triaged,later / bug", g.AddTag, g.RemoveTag)
+	}
+	if g.Tag != nil {
+		t.Errorf("--add-tag leaked into tag=%q, which would replace the whole set", *g.Tag)
+	}
+}
+
 // TestTodoHelpFlagActionsDerivedFromAllowlist is the #1786 guard. The flags
 // table used to carry hand-written "(used with 'list' and 'search')" prose in
 // each schema description, which drifted from the per-action allowlist that
