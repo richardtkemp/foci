@@ -9,6 +9,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // reloadAfterMutation reloads the bootstrap (system prompt files from disk),
@@ -110,7 +111,57 @@ func (a *Agent) ResetSession(ctx context.Context, sessionKey string) (ResetMemor
 // For delegated agents, CC owns the session file and the compaction mechanics —
 // this method sends "/compact $instructions" to CC and waits for the boundary
 // signal. Dry-run is not supported because CC has no dry-run mode.
+//
+// A delegated session with background work in flight (subagents, background
+// commands, or the autonomous run they trigger) is refused with a
+// *BackgroundWorkError (#1539): the post-compaction restart would kill that
+// work. CompactSessionForce overrides.
 func (a *Agent) CompactSession(ctx context.Context, sessionKey string, dryRun bool) (CompactResult, error) {
+	return a.compactSession(ctx, sessionKey, dryRun, false)
+}
+
+// CompactSessionForce is "/compact force": compaction that ignores background
+// work entirely. It compacts, and restarts CC at once if the prompt changed,
+// even though that kills running subagents (Dick, 2026-10-06, #1539).
+func (a *Agent) CompactSessionForce(ctx context.Context, sessionKey string) (CompactResult, error) {
+	return a.compactSession(ctx, sessionKey, false, true)
+}
+
+// BackgroundWorkError refuses a manual /compact while the session has
+// background work a CC restart would kill (#1539). Running names it.
+type BackgroundWorkError struct {
+	Running string
+}
+
+func (e *BackgroundWorkError) Error() string {
+	return "background work is running: " + e.Running
+}
+
+// backgroundWork describes the session's background work a CC restart would
+// kill, or "" when there is none (or the agent is not delegated).
+func (a *Agent) backgroundWork(sessionKey string) string {
+	if a.DelegatedManager == nil || !a.DelegatedManager.BackgroundWorkInFlight(sessionKey) {
+		return ""
+	}
+	var parts []string
+	for _, s := range []string{a.statusSubagents(sessionKey), a.statusBgCommands(sessionKey)} {
+		if s != "" {
+			parts = append(parts, s)
+		}
+	}
+	if len(parts) == 0 {
+		return "an autonomous run triggered by finished background work"
+	}
+	return strings.Join(parts, " | ")
+}
+
+// BackgroundWorkRunning reports whether the session has background work a CC
+// restart would kill, i.e. whether a plain /compact would be refused (#1539).
+func (a *Agent) BackgroundWorkRunning(sessionKey string) bool {
+	return a.backgroundWork(sessionKey) != ""
+}
+
+func (a *Agent) compactSession(ctx context.Context, sessionKey string, dryRun, force bool) (CompactResult, error) {
 	// Neither transport available — agent is misconfigured. Surface this
 	// first because it's more diagnostic than "no active session".
 	if a.Compactor == nil && a.DelegatedManager == nil {
@@ -118,6 +169,11 @@ func (a *Agent) CompactSession(ctx context.Context, sessionKey string, dryRun bo
 	}
 	if sessionKey == "" {
 		return CompactResult{}, fmt.Errorf("no active session to compact")
+	}
+	if !force && !dryRun {
+		if running := a.backgroundWork(sessionKey); running != "" {
+			return CompactResult{}, &BackgroundWorkError{Running: running}
+		}
 	}
 
 	// Fire memory formation before compaction so the memory agent sees the
@@ -132,7 +188,7 @@ func (a *Agent) CompactSession(ctx context.Context, sessionKey string, dryRun bo
 	}
 
 	if a.DelegatedManager != nil {
-		return a.compactDelegatedSession(ctx, sessionKey, dryRun)
+		return a.compactDelegatedSession(ctx, sessionKey, dryRun, force)
 	}
 
 	mc, _ := a.Sessions.MessageCount(sessionKey)
@@ -157,7 +213,7 @@ func (a *Agent) CompactSession(ctx context.Context, sessionKey string, dryRun bo
 // Looks up the backend and calls the shared runDelegatedCompact primitive.
 // Returns an empty CompactResult on success — CC owns the session file so
 // foci has no message count to report.
-func (a *Agent) compactDelegatedSession(ctx context.Context, sessionKey string, dryRun bool) (CompactResult, error) {
+func (a *Agent) compactDelegatedSession(ctx context.Context, sessionKey string, dryRun, force bool) (CompactResult, error) {
 	if dryRun {
 		return CompactResult{}, fmt.Errorf("dry-run compaction is not supported for delegated backends")
 	}
@@ -165,7 +221,7 @@ func (a *Agent) compactDelegatedSession(ctx context.Context, sessionKey string, 
 	if err != nil {
 		return CompactResult{}, fmt.Errorf("get backend: %w", err)
 	}
-	if err := a.runDelegatedCompact(ctx, be, sessionKey); err != nil {
+	if err := a.runDelegatedCompact(ctx, be, sessionKey, force); err != nil {
 		return CompactResult{}, err
 	}
 	return CompactResult{}, nil

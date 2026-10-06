@@ -188,3 +188,21 @@ func TestCompactCommand_UsesSessionKeyFromContext(t *testing.T) {
 		t.Errorf("error = %q, want 'not configured'", err.Error())
 	}
 }
+
+// TestCompactRefusal_NamesWorkAndForce: the /compact refusal names what is
+// running and points at /compact force (#1539).
+func TestCompactRefusal_NamesWorkAndForce(t *testing.T) {
+	got := compactRefusal("subagents: 1 (review the parser 3m0s)")
+	for _, want := range []string{"subagents: 1 (review the parser", "/compact force"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("refusal %q lacks %q", got, want)
+		}
+	}
+	var hasForce bool
+	for _, sub := range CompactCommand().Subcommands {
+		hasForce = hasForce || sub.Name == "force"
+	}
+	if !hasForce {
+		t.Error("/compact has no force subcommand")
+	}
+}

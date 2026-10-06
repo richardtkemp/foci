@@ -160,6 +160,11 @@ type DelegatedManager struct {
 	// Zero uses DefaultIdleTimeout.
 	IdleTimeout time.Duration
 
+	// DeferredBouncePoll is how often a deferred post-compaction reload bounce
+	// re-checks whether the session's background work has finished (#1539).
+	// Zero uses defaultDeferredBouncePoll.
+	DeferredBouncePoll time.Duration
+
 	// SessionIndex persists CC session UUIDs for resume-after-restart.
 	// Nil disables persistence (resume IDs lost on restart).
 	SessionIndex *session.SessionIndex
@@ -221,6 +226,11 @@ type managedBackend struct {
 	// the inputs the process never consumed are dropped, not redelivered
 	// (#2050 — "/reset" means stop).
 	dropUndelivered atomic.Bool
+
+	// bounceDeferred is set once a post-compaction reload bounce has been
+	// deferred behind background work, so a second compaction meanwhile does
+	// not start a second waiter (#1539).
+	bounceDeferred atomic.Bool
 }
 
 // getManaged looks up the managed backend for a session key under the lock.
@@ -926,17 +936,26 @@ func (m *DelegatedManager) BounceSession(sessionKey string) {
 // always reflects a real change. Falls back to an unconditional bounce when no
 // SystemPromptFunc is configured (the prompt can't be fingerprinted).
 func (m *DelegatedManager) BounceSessionIfPromptChanged(sessionKey string) bool {
-	// Every return path emits one "compaction reload gate:" DEBUG line with an
-	// explicit restart=yes/no token, so a single grep over the log confirms both
-	// outcomes (restart and no-restart) actually occur in practice.
 	mb, ok := m.getManaged(sessionKey)
 	if !ok {
 		m.logger().Debugf("compaction reload gate: session=%s restart=no reason=no-live-backend", sessionKey)
 		return false // no live backend → nothing to reload
 	}
+	if !m.promptChanged(sessionKey, mb) {
+		return false
+	}
+	m.BounceSession(sessionKey)
+	return true
+}
+
+// promptChanged reports whether the session's on-disk system prompt differs
+// from the one mb launched with (true when it cannot be fingerprinted). Every
+// call emits one "compaction reload gate:" DEBUG line with an explicit
+// restart=yes/no token, so a single grep over the log confirms both outcomes
+// (restart and no-restart) actually occur in practice.
+func (m *DelegatedManager) promptChanged(sessionKey string, mb *managedBackend) bool {
 	if m.StartOpts.SystemPromptFunc == nil {
 		m.logger().Debugf("compaction reload gate: session=%s restart=yes reason=no-prompt-fingerprint (no SystemPromptFunc)", sessionKey)
-		m.BounceSession(sessionKey)
 		return true
 	}
 	p := m.StartOpts.SystemPromptFunc(sessionKey)
@@ -949,8 +968,86 @@ func (m *DelegatedManager) BounceSessionIfPromptChanged(sessionKey string) bool 
 		return false
 	}
 	m.logger().Debugf("compaction reload gate: session=%s restart=yes reason=prompt-changed hash=%s->%s", sessionKey, mb.systemPromptHash, live)
-	m.BounceSession(sessionKey)
 	return true
+}
+
+// defaultDeferredBouncePoll is how often a deferred post-compaction bounce
+// re-checks for background work. Background-work transitions (a subagent or
+// Bash finishing, the autonomous-run grace ending) have no channel, so the
+// wait polls, like the inbox inject gate (injectGatePollInterval).
+const defaultDeferredBouncePoll = 2 * time.Second
+
+// BackgroundWorkInFlight reports whether the session's live backend has work
+// running in the background that a CC restart would kill: Agent-tool
+// subagents or background shell commands (RunningSubagents, #2127), or the
+// pending/live autonomous run their completion triggers
+// (BackendAwaitingAutonomousRun, spec §4). Non-creating.
+func (m *DelegatedManager) BackgroundWorkInFlight(sessionKey string) bool {
+	return len(m.RunningSubagents(sessionKey)) > 0 || m.BackendAwaitingAutonomousRun(sessionKey)
+}
+
+// BounceAfterCompaction is the post-compaction reload bounce (#828 Part B).
+// The bounce SIGTERMs the CC process, and background subagents run inside it,
+// so while background work is in flight the bounce is deferred (#1539): a
+// goroutine waits until the work and any turn have finished, then bounces if
+// the prompt changed. Returns true only for an immediate bounce. force (from
+// "/compact force") skips the deferral and restarts at once, killing any
+// running subagents — the user asked for exactly that.
+func (m *DelegatedManager) BounceAfterCompaction(sessionKey string, force bool) bool {
+	if force || !m.BackgroundWorkInFlight(sessionKey) {
+		return m.BounceSessionIfPromptChanged(sessionKey)
+	}
+	mb, ok := m.getManaged(sessionKey)
+	if !ok {
+		return false
+	}
+	if !mb.bounceDeferred.CompareAndSwap(false, true) {
+		m.logger().Debugf("compaction reload gate: session=%s restart=deferred (already waiting)", sessionKey)
+		return false
+	}
+	m.logger().Infof("compaction reload gate: session=%s restart=deferred reason=background-work-running (%d subagents/commands) — restarts once it finishes", sessionKey, len(m.RunningSubagents(sessionKey)))
+	go m.bounceWhenIdle(sessionKey, mb)
+	return false
+}
+
+// bounceWhenIdle waits until mb has no background work and no turn in flight,
+// then bounces it if the prompt changed. It gives up when mb is no longer the
+// session's backend (closed, reset, reaped or bounced: the next respawn
+// rebuilds the prompt anyway). No resume nudge follows: the session is idle,
+// so the restart interrupts nothing (the #845 nudge exists for a restart that
+// cuts a flow short).
+func (m *DelegatedManager) bounceWhenIdle(sessionKey string, mb *managedBackend) {
+	poll := m.DeferredBouncePoll
+	if poll <= 0 {
+		poll = defaultDeferredBouncePoll
+	}
+	// Re-arm on every exit: a wait that ends without closing mb (prompt
+	// unchanged) must not leave later compactions skipped as "already waiting".
+	defer mb.bounceDeferred.Store(false)
+	t := time.NewTicker(poll)
+	defer t.Stop()
+	busy := func() bool { return m.BackgroundWorkInFlight(sessionKey) || mb.be.IsTurnInFlight() }
+	for range t.C {
+		if cur, ok := m.getManaged(sessionKey); !ok || cur != mb || !mb.be.IsRunning() {
+			m.logger().Debugf("compaction reload gate: session=%s deferred restart dropped: backend already closed or replaced", sessionKey)
+			return
+		}
+		if busy() {
+			continue
+		}
+		if !m.promptChanged(sessionKey, mb) {
+			return
+		}
+		// promptChanged reads files; re-check right before closing so a turn
+		// that began meanwhile is not cut short.
+		if busy() {
+			continue
+		}
+		if m.closeManagedExact(sessionKey, mb, false) {
+			m.logger().Infof("bounced session %s after background work finished (deferred compaction reload, resume ID kept)", sessionKey)
+		}
+		return
+	}
 }
 
 // closeManaged closes and unmaps the backend for sessionKey, returning whether
@@ -960,9 +1057,17 @@ func (m *DelegatedManager) BounceSessionIfPromptChanged(sessionKey string) bool 
 // m.mu so a concurrent Get() observes consistent state; the slow Close() calls
 // run after unlock.
 func (m *DelegatedManager) closeManaged(sessionKey string, clearResume bool) bool {
+	return m.closeManagedExact(sessionKey, nil, clearResume)
+}
+
+// closeManagedExact is closeManaged restricted to one backend instance: when
+// want is non-nil it closes only if want is still the mapped backend, so a
+// caller that waited (the deferred post-compaction bounce, #1539) never closes
+// a backend that replaced the one it was waiting on. nil means any.
+func (m *DelegatedManager) closeManagedExact(sessionKey string, want *managedBackend, clearResume bool) bool {
 	m.mu.Lock()
 	mb, ok := m.backends[sessionKey]
-	if !ok {
+	if !ok || (want != nil && mb != want) {
 		m.mu.Unlock()
 		return false
 	}

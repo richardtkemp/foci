@@ -261,11 +261,29 @@ func ResetCommand() *Command {
 	return cmd
 }
 
+// compactRefusal is the /compact reply while background work runs (#1539).
+func compactRefusal(running string) string {
+	return "Not compacting: background work is running (" + running + "). " +
+		"Compaction can restart Claude Code, which would kill it. Wait for it to finish, " +
+		"or use /compact force to compact now (if the restart happens it kills that work)."
+}
+
 // CompactCommand creates a /compact command that triggers manual session compaction.
 func CompactCommand() *Command {
-	compactExec := func(ctx context.Context, _ Request, cc CommandContext, dryRun bool) (Response, error) {
+	compactExec := func(ctx context.Context, _ Request, cc CommandContext, dryRun, force bool) (Response, error) {
 		sk := tools.SessionKeyFromContext(ctx)
-		result, err := cc.Agent.CompactSession(ctx, sk, dryRun)
+		var result agent.CompactResult
+		var err error
+		if force {
+			result, err = cc.Agent.CompactSessionForce(ctx, sk)
+		} else {
+			result, err = cc.Agent.CompactSession(ctx, sk, dryRun)
+		}
+		var bw *agent.BackgroundWorkError
+		if errors.As(err, &bw) {
+			// The post-compaction restart would kill it (#1539).
+			return Response{Text: compactRefusal(bw.Running)}, nil
+		}
 		if errors.Is(err, delegator.ErrCompactionNoBoundary) {
 			// Backend declined to compact (e.g. too few messages). Not an
 			// error to surface — report the no-op plainly (#1267).
@@ -295,14 +313,27 @@ func CompactCommand() *Command {
 				Label:       "compact",
 				Description: "Run context compaction",
 				Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
-					return compactExec(ctx, req, cc, false)
+					return compactExec(ctx, req, cc, false, false)
+				},
+			},
+			{
+				// Ignores background work: compacts, and restarts CC at once
+				// if the prompt changed, killing running subagents (#1539).
+				// Shown on the keyboard only while there is work to override.
+				Name:        "force",
+				Description: "Compact even while subagents run (the restart kills them)",
+				Visible: func(ctx context.Context, cc CommandContext) bool {
+					return cc.Agent != nil && cc.Agent.BackgroundWorkRunning(tools.SessionKeyFromContext(ctx))
+				},
+				Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+					return compactExec(ctx, req, cc, false, true)
 				},
 			},
 			{
 				Name:        "dry-run",
 				Description: "Preview compaction without applying",
 				Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
-					return compactExec(ctx, req, cc, true)
+					return compactExec(ctx, req, cc, true, false)
 				},
 			},
 		},
@@ -311,7 +342,7 @@ func CompactCommand() *Command {
 		// reach here — it shows the run/dry-run confirmation keyboard instead (unlike
 		// /reset, which suppresses its keyboard to run directly).
 		DefaultExecute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
-			return compactExec(ctx, req, cc, false)
+			return compactExec(ctx, req, cc, false, false)
 		},
 	}
 	cmd.buildSubcommandDispatch()

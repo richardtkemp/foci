@@ -116,7 +116,11 @@ func (a *Agent) doCompact(ctx context.Context, sessionKey string, system []provi
 // The input ctx is wrapped with delegatedCompactTimeout. Auto-compaction
 // passes context.Background because the turn context is already cancelled;
 // manual compaction passes the user command context so /stop can interrupt.
-func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator, sessionKey string) error {
+//
+// force ("/compact force") makes the post-compaction reload bounce restart CC
+// at once even while background subagents run (killing them); otherwise the
+// bounce waits for that work to finish (#1539).
+func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator, sessionKey string, force bool) error {
 	summaryPrompt := a.compactionSummaryPrompt()
 	if summaryPrompt == "" {
 		return fmt.Errorf("compaction summary prompt is empty")
@@ -206,8 +210,11 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 	// session is already current, so the restart would interrupt the flow for
 	// nothing. The resume nudge is gated on an actual bounce: with no restart
 	// there is no interruption to recover from (pre-#828 compaction is seamless).
+	// The restart kills background subagents running inside CC, so unless
+	// forced it is deferred until they finish (#1539); a deferred bounce
+	// returns false here and sends no nudge (the session is idle by then).
 	if a.reloadOnCompact() && a.DelegatedManager != nil {
-		if a.DelegatedManager.BounceSessionIfPromptChanged(sessionKey) {
+		if a.DelegatedManager.BounceAfterCompaction(sessionKey, force) {
 			a.maybeInjectCompactionResume(sessionKey)
 		}
 	}
