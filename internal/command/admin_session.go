@@ -264,7 +264,7 @@ func ResetCommand() *Command {
 // compactRefusal is the /compact reply while background work runs (#1539).
 func compactRefusal(running string) string {
 	return "Not compacting: background work is running (" + running + "). " +
-		"Compaction can restart Claude Code, which would kill it. Wait for it to finish, " +
+		"The system prompt has changed, so compaction would restart Claude Code and kill it. Wait for it to finish, " +
 		"or use /compact force to compact now (if the restart happens it kills that work)."
 }
 

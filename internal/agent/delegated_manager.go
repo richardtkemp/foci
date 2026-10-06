@@ -971,6 +971,18 @@ func (m *DelegatedManager) promptChanged(sessionKey string, mb *managedBackend) 
 	return true
 }
 
+// PromptChangedSinceLaunch reports whether the session's live backend would
+// be restarted by the post-compaction reload gate: its on-disk system prompt
+// differs from the one it launched with (true when it cannot be fingerprinted).
+// False when there is no live backend (nothing to restart).
+func (m *DelegatedManager) PromptChangedSinceLaunch(sessionKey string) bool {
+	mb, ok := m.getManaged(sessionKey)
+	if !ok {
+		return false
+	}
+	return m.promptChanged(sessionKey, mb)
+}
+
 // defaultDeferredBouncePoll is how often a deferred post-compaction bounce
 // re-checks for background work. Background-work transitions (a subagent or
 // Bash finishing, the autonomous-run grace ending) have no channel, so the

@@ -280,3 +280,44 @@ func TestBounceAfterCompaction_UnchangedPromptRearmsDeferral(t *testing.T) {
 	be.set(nil, false)
 	waitClosed(t, be)
 }
+
+// TestCompactSession_UnchangedPromptCompactsDespiteSubagents: the refusal
+// exists only because the post-compaction restart kills background work. With
+// the prompt unchanged there is no restart, so a plain /compact proceeds while
+// subagents run and leaves CC (and them) alone (Dick, 2026-10-06).
+func TestCompactSession_UnchangedPromptCompactsDespiteSubagents(t *testing.T) {
+	const sk = "test-agent/c1"
+	ag, be, sent := bgCompactAgent(t, sk)
+	ag.DelegatedManager.StartOpts.SystemPromptFunc = func(string) string { return "v1" } // as launched
+
+	if ag.BackgroundWorkRunning(sk) {
+		t.Error("compaction reported as blocked although the prompt is unchanged")
+	}
+	if _, err := ag.CompactSession(context.Background(), sk, false); err != nil {
+		t.Fatalf("CompactSession: %v (want compaction to proceed: no restart, nothing to kill)", err)
+	}
+	if len(*sent) != 1 || !strings.HasPrefix((*sent)[0], "/compact ") {
+		t.Errorf("sent %q, want one /compact", *sent)
+	}
+	if be.wasClosed() {
+		t.Error("compaction with an unchanged prompt restarted CC")
+	}
+}
+
+// TestCompactSession_ReloadOffCompactsDespiteSubagents: with reload_on_compact
+// off there is never a post-compaction restart, so nothing blocks /compact.
+func TestCompactSession_ReloadOffCompactsDespiteSubagents(t *testing.T) {
+	const sk = "test-agent/c1"
+	ag, be, sent := bgCompactAgent(t, sk)
+	ag.ReloadOnCompact = false
+
+	if _, err := ag.CompactSession(context.Background(), sk, false); err != nil {
+		t.Fatalf("CompactSession: %v (want compaction to proceed: reload is off)", err)
+	}
+	if len(*sent) != 1 {
+		t.Errorf("sent %q, want one /compact", *sent)
+	}
+	if be.wasClosed() {
+		t.Error("compaction with reload off restarted CC")
+	}
+}

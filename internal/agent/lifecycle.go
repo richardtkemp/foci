@@ -155,10 +155,26 @@ func (a *Agent) backgroundWork(sessionKey string) string {
 	return strings.Join(parts, " | ")
 }
 
-// BackgroundWorkRunning reports whether the session has background work a CC
-// restart would kill, i.e. whether a plain /compact would be refused (#1539).
+// BackgroundWorkRunning reports whether a plain /compact would be refused
+// (#1539): the session has background work AND compaction would restart CC.
 func (a *Agent) BackgroundWorkRunning(sessionKey string) bool {
-	return a.backgroundWork(sessionKey) != ""
+	return a.compactBlockedBy(sessionKey) != ""
+}
+
+// compactBlockedBy describes the background work a manual /compact must not
+// kill, or "" when compaction may proceed. Only the post-compaction restart
+// kills background work, and it happens only with reload_on_compact on and a
+// system prompt changed since launch; otherwise compaction is seamless and
+// is allowed while work runs (Dick, 2026-10-06).
+func (a *Agent) compactBlockedBy(sessionKey string) string {
+	if a.DelegatedManager == nil || !a.reloadOnCompact() {
+		return ""
+	}
+	running := a.backgroundWork(sessionKey)
+	if running == "" || !a.DelegatedManager.PromptChangedSinceLaunch(sessionKey) {
+		return ""
+	}
+	return running
 }
 
 func (a *Agent) compactSession(ctx context.Context, sessionKey string, dryRun, force bool) (CompactResult, error) {
@@ -171,7 +187,7 @@ func (a *Agent) compactSession(ctx context.Context, sessionKey string, dryRun, f
 		return CompactResult{}, fmt.Errorf("no active session to compact")
 	}
 	if !force && !dryRun {
-		if running := a.backgroundWork(sessionKey); running != "" {
+		if running := a.compactBlockedBy(sessionKey); running != "" {
 			return CompactResult{}, &BackgroundWorkError{Running: running}
 		}
 	}
