@@ -782,6 +782,8 @@ Bash commands containing shell operators (`&&`, `||`, `;`, `|`) are split into s
 
 Commands containing subshell injection (`$(...)` or backticks) are always rejected and fall through to the user prompt.
 
+A segment carrying known-dangerous flags or arguments is also always prompted, even when a rule matches it: `sed -i`, `find -exec`, `sort -o`, `rg --pre`, `git grep -O` and sqlite3 dot-commands — and, because the shell expands an unquoted glob *before* the command runs, any unquoted glob argument that could expand into a flag on those same commands: `rg foo *` in a directory containing a file named `--pre=./x.sh` would run `rg foo --pre=./x.sh …`. Quote the glob (`rg foo '*.go'`), escape it (`rg foo \*`), or give it a literal prefix (`rg foo src/*.go`) to keep the command auto-approved. There is deliberately no `--` exemption — some commands (find) do not honour `--` for every later argument.
+
 ```toml
 [permissions]
 auto_approve = [

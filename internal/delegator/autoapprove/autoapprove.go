@@ -917,9 +917,11 @@ func commandIsSubstitutable(segment string) (bool, string, string) {
 }
 
 // matchBashSegment checks whether a single command string matches at least one
-// Bash rule. If the command contains flags or arguments that are known to be
-// unsafe (e.g. sed -i, sort -o), or if its executable could be substituted by
-// this process, the match is rejected regardless of which rule matched.
+// Bash rule. The match is rejected regardless of which rule matched when the
+// segment contains flags or arguments known to make an otherwise safe command
+// unsafe (e.g. sed -i, sort -o, a git grep pager flag), when any argument is
+// an unquoted glob whose expansion could begin with '-' (#2213), or when the
+// segment's executable could be substituted by this process.
 func matchBashSegment(rules []Rule, segment string, vc *varCtx) bool {
 	if containsUnsafeFlags(segment) {
 		return false
@@ -971,6 +973,9 @@ type unsafeCmdFlags struct {
 
 // unsafeFlags maps command base names to their unsafe flag/argument specs.
 // Only commands listed here are checked — all other commands pass through.
+// The set of keys (plus sqlite3, which has its own whole-vector check in
+// containsUnsafeFlags) also defines which commands the #2213 glob rule
+// applies to; see flagCheckedCommand.
 var unsafeFlags = map[string]unsafeCmdFlags{
 	"sed": {
 		shortFlags: "if",
@@ -1017,28 +1022,72 @@ func gitArgUnsafe(arg string) bool {
 	return arg == "config"
 }
 
+// flagCheckedCommand reports whether a command has unsafe-argument machinery
+// at all: an entry in unsafeFlags, or sqlite3's own whole-vector check. This
+// set is also the gate for the #2213 glob rule, so a command added to
+// unsafeFlags automatically joins it — and a command without machinery keeps
+// its previous, glob-ignoring behaviour.
+func flagCheckedCommand(cmdBase string) bool {
+	_, ok := unsafeFlags[cmdBase]
+	return ok || cmdBase == "sqlite3"
+}
+
+// globArgUnsafe reports whether any argument word of the segment can expand
+// into a flag (#2213) — see shellWord.canYieldFlag for the word shapes. The
+// command word itself is not an argument and is skipped.
+func globArgUnsafe(words []shellWord) bool {
+	for _, w := range words[1:] {
+		if w.canYieldFlag() {
+			return true
+		}
+	}
+	return false
+}
+
 // containsUnsafeFlags checks whether a command string contains flags or
-// arguments that make it unsafe for auto-approval. Returns true if any unsafe
-// flag or dangerous argument content is detected.
+// arguments that make it unsafe for auto-approval. Returns true if any of:
 //
-// The check tokenises the command, looks up the command base name in
-// unsafeFlags, and scans tokens for matching short flags (including bundled
-// forms like -ni), word flags (single-dash multi-letter flags like -exec),
-// long flags (including --flag=value forms), and dangerous argument content
-// (via the optional argCheck function).
+//   - a flag matching the command's unsafeFlags entry — short flags
+//     (including bundled forms like -ni), word flags (single-dash
+//     multi-letter flags like -exec), long flags (including --flag=value
+//     forms) — or dangerous argument content (via the optional argCheck);
+//   - an unquoted, unescaped glob argument whose expansion could begin with
+//     '-' (#2213): the shell expands globs before the command runs, so a
+//     file name planted in the working directory (--pre=./x.sh in a cloned
+//     repo) would arrive as a flag. Only flag-checked commands are covered
+//     (see flagCheckedCommand); quoting or escaping the glob keeps
+//     approval, and there is deliberately no `--` exemption — some commands
+//     (find) do not honour it for every later argument;
+//   - a command-specific whole-vector finding: sqlite3 dot-commands
+//     (sqliteCommandUnsafe) or a git grep pager flag (gitGrepPagerUnsafe).
+//
+// Quoting for the glob and git-grep controls is read from the word scan
+// (scanShellWords), not from the tokens: tokenizeCommand keeps quote
+// characters but drops backslashes, so `'*.go'` and `\*` are only
+// recognisable as shell-literal in the raw segment.
 func containsUnsafeFlags(segment string) bool {
-	tokens := tokenizeCommand(segment)
-	if len(tokens) == 0 {
+	words := scanShellWords(segment)
+	if len(words) == 0 {
 		return false
 	}
+	tokens := wordTexts(words)
 
 	cmdBase := filepath.Base(tokens[0])
 	if cmdBase == "sqlite3" && sqliteCommandUnsafe(tokens) {
 		return true
 	}
+	if cmdBase == "git" && gitGrepPagerUnsafe(words) {
+		return true
+	}
+	if !flagCheckedCommand(cmdBase) {
+		return false
+	}
+	if globArgUnsafe(words) {
+		return true
+	}
 	spec, ok := unsafeFlags[cmdBase]
 	if !ok {
-		return false
+		return false // sqlite3 — its whole argument vector is checked above
 	}
 
 	for _, tok := range tokens[1:] {
@@ -1120,6 +1169,36 @@ func stripOuterQuotes(s string) string {
 		return s[1 : len(s)-1]
 	}
 	return s
+}
+
+// gitGrepPagerUnsafe reports whether words run git's grep subcommand with a
+// pager flag (-O, -O<pager>, --open-files-in-pager[=<cmd>]): the pager is
+// executed over the matched files and may be an arbitrary command (#2213).
+//
+// Both facts are tested on the words' shell-VISIBLE text, because quoting
+// does not change what git receives: git grep '-Oevil.sh', "-O"evil and
+// \-Oevil.sh all deliver a pager flag. Detection is presence-based — a word
+// resolving to `grep` together with a pager-flag word, wherever they sit —
+// so global options before the subcommand (git -C dir grep -O,
+// git --attr-source X grep -O) or a quoted subcommand (git "grep" -O) cannot
+// move either past the check. git diff -O<order> and git log --grep=<pat>
+// carry no `grep` word and stay approved. Deliberate over-approximation:
+// `git diff -Oorder grep` (a path named grep) and a `--`-separated pattern
+// that merely looks like -O are prompted, not approved — same fail-safe
+// direction as the glob rule.
+func gitGrepPagerUnsafe(words []shellWord) bool {
+	isGrep, hasPager := false, false
+	for _, w := range words {
+		switch {
+		case w.visible == "grep":
+			isGrep = true
+		case strings.HasPrefix(w.visible, "-O"), // -O and -O<pager>
+			w.visible == "--open-files-in-pager",
+			strings.HasPrefix(w.visible, "--open-files-in-pager="):
+			hasPager = true
+		}
+	}
+	return isGrep && hasPager
 }
 
 // ---------- sed script argument analysis ----------
@@ -1263,53 +1342,122 @@ func skipSedAddress(s string) int {
 
 // ---------- Command tokenization ----------
 
-// tokenizeCommand splits a command string into whitespace-delimited tokens,
-// respecting single and double quotes and backslash escapes.
-func tokenizeCommand(cmd string) []string {
-	var tokens []string
-	var cur strings.Builder
+// shellWord is one shell word of a command string, recording the quoting
+// facts the #2213 argument controls need on top of the token text
+// tokenizeCommand has always produced.
+type shellWord struct {
+	text          string // token text (quotes kept, backslash escapes resolved) — tokenizeCommand's exact output
+	visible       string // shell-visible text (quote delimiters dropped too) — what the program receives
+	firstLiveGlob bool   // first visible character is an unquoted, unescaped * ? [
+	hasLiveGlob   bool   // the word contains an unquoted, unescaped * ? [
+}
+
+// canYieldFlag reports whether glob expansion of the word can produce a word
+// beginning with '-' (#2213): the word starts with a live glob character (a
+// matched file name becomes the whole argument), or it visibly starts with
+// '-' and contains a live glob (matched file names extend the flag-shaped
+// prefix). Quoted or backslash-escaped metacharacters are literal to the
+// shell and never live, whatever the visible text looks like.
+func (w shellWord) canYieldFlag() bool {
+	return w.firstLiveGlob || (len(w.visible) > 0 && w.visible[0] == '-' && w.hasLiveGlob)
+}
+
+// scanShellWords splits a command string into whitespace-delimited shell
+// words, respecting single and double quotes and backslash escapes, and
+// records each word's quoting facts. Word boundaries, the token text
+// (quotes kept, escapes resolved) and the escape/quote-end handling are
+// byte-for-byte tokenizeCommand's historical behaviour, pinned by
+// TestTokenizeCommand; visible and the glob-liveness flags are the additions.
+//
+// Variables ($X, $HOME/*) are not modelled: a variable whose VALUE carries a
+// glob can still reach the flag position through expansion. Known gap,
+// follow-up to #2213.
+func scanShellWords(cmd string) []shellWord {
+	var words []shellWord
+	var text, visible strings.Builder
+	firstLive, hasLive := false, false
+	flush := func() {
+		if text.Len() > 0 {
+			words = append(words, shellWord{
+				text:          text.String(),
+				visible:       visible.String(),
+				firstLiveGlob: firstLive,
+				hasLiveGlob:   hasLive,
+			})
+			text.Reset()
+			visible.Reset()
+			firstLive, hasLive = false, false
+		}
+	}
 	i := 0
 	for i < len(cmd) {
 		ch := cmd[i]
 
-		// Skip whitespace between tokens.
+		// Skip whitespace between words.
 		if ch == ' ' || ch == '\t' {
-			if cur.Len() > 0 {
-				tokens = append(tokens, cur.String())
-				cur.Reset()
-			}
+			flush()
 			i++
 			continue
 		}
 
-		// Quoted string — consume through matching quote.
+		// Quoted run — consume through the matching quote. Content goes
+		// into the token text with its delimiters (as always) and into
+		// the visible text without them; nothing inside quotes is a live
+		// glob or changed by being quoted.
 		if ch == '\'' || ch == '"' {
 			end := indexUnescapedQuote(cmd, i+1, ch)
 			if end < 0 {
 				// Unmatched quote — take rest of string.
-				cur.WriteString(cmd[i:])
+				text.WriteString(cmd[i:])
+				visible.WriteString(cmd[i+1:])
 				i = len(cmd)
 			} else {
-				cur.WriteString(cmd[i : end+1])
+				text.WriteString(cmd[i : end+1])
+				visible.WriteString(cmd[i+1 : end])
 				i = end + 1
 			}
 			continue
 		}
 
-		// Backslash escape.
+		// Backslash escape — the next character is literal, never live.
 		if ch == '\\' && i+1 < len(cmd) {
-			cur.WriteByte(cmd[i+1])
+			text.WriteByte(cmd[i+1])
+			visible.WriteByte(cmd[i+1])
 			i += 2
 			continue
 		}
 
-		cur.WriteByte(ch)
+		text.WriteByte(ch)
+		visible.WriteByte(ch)
+		if ch == '*' || ch == '?' || ch == '[' {
+			hasLive = true
+			if visible.Len() == 1 {
+				firstLive = true // this live glob is the word's first visible character
+			}
+		}
 		i++
 	}
-	if cur.Len() > 0 {
-		tokens = append(tokens, cur.String())
+	flush()
+	return words
+}
+
+// wordTexts returns just the token text of the words — the exact tokens
+// tokenizeCommand has always produced (nil for empty input).
+func wordTexts(words []shellWord) []string {
+	if len(words) == 0 {
+		return nil
+	}
+	tokens := make([]string, len(words))
+	for i, w := range words {
+		tokens[i] = w.text
 	}
 	return tokens
+}
+
+// tokenizeCommand splits a command string into whitespace-delimited tokens,
+// respecting single and double quotes and backslash escapes.
+func tokenizeCommand(cmd string) []string {
+	return wordTexts(scanShellWords(cmd))
 }
 
 // indexUnescapedQuote returns the index of the next unescaped quote character
