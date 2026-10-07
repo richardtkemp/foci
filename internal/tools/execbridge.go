@@ -522,9 +522,7 @@ func validateShellFuncSchemaParity(t *Tool) error {
 		Properties map[string]json.RawMessage `json:"properties"`
 	}
 	if err := json.Unmarshal(t.Parameters, &schema); err != nil || len(schema.Properties) == 0 {
-		// No parseable properties — nothing to validate. (A zero-property
-		// schema takes the generator's normal path these days, but it still
-		// has no params to check for flag-arm parity.)
+		// Tools with empty schemas use the JSON-blob fallback; nothing to validate.
 		return nil
 	}
 	posSet := make(map[string]bool)
@@ -1404,10 +1402,11 @@ func generateShellFunc(t *Tool) string {
 //     foci__json_arg before jq --argjson sees them, so a bad value names the
 //     flag instead of printing jq internals twice (#1811)
 //
-// If the schema is unparseable or missing the function falls back to the
-// legacy JSON-blob behavior so the foci__json passthrough still works for
-// callers that hand-construct the params object. A parseable schema with zero
-// properties takes the normal path (a bare call sends params:{}).
+// If the schema is unparseable or empty the function falls back to the legacy
+// JSON-blob behavior so the foci__json passthrough still works for callers
+// that hand-construct the params object. A bare call passes {} — without that
+// default, jq --argjson dies on the empty string, so a zero-property tool
+// (whoami, #1135) could not be called with no arguments at all.
 func generateGenericShellFunc(t *Tool) string {
 	name := "foci_" + t.Name
 	helpText := generateHelpText(t)
@@ -1423,16 +1422,14 @@ func generateGenericShellFunc(t *Tool) string {
 		} `json:"properties"`
 		Required []string `json:"required"`
 	}
-	if err := json.Unmarshal(t.Parameters, &schema); err != nil {
-		// Fallback to legacy JSON-blob behavior when the schema is
-		// unparseable or missing (nil Parameters fails to unmarshal too).
-		// A parsed zero-property object schema is NOT that case: it takes
-		// the normal path below, which handles it fine (a bare call sends
-		// params:{}), while the fallback would hand "$1" to jq --argjson
-		// and break on the empty string.
+	if err := json.Unmarshal(t.Parameters, &schema); err != nil || len(schema.Properties) == 0 {
+		// Fallback to legacy JSON-blob behavior when schema unavailable.
+		// The guard line defaults an absent blob to {} so a bare call works:
+		// a zero-property tool (whoami, #1135) is called with no arguments.
 		return fmt.Sprintf(`%s() {
 %s
 %s
+  if [ -z "${1:-}" ]; then set -- '{}'; fi
   foci-call "$(jq -nc --argjson p "$1" '{"tool":"%s","params":$p}')"
 }
 `, name, helpCheck, guard, t.Name)
@@ -1477,15 +1474,11 @@ func generateGenericShellFunc(t *Tool) string {
 	fmt.Fprintf(&b, "%s() {\n%s\n%s\n", name, helpCheck, guard)
 
 	// Local declarations: every param has a string slot defaulted to empty.
-	// Skipped for a zero-property schema — a bare `local` prints the
-	// prologue's locals to stdout, polluting the tool's output.
-	if len(paramNames) > 0 {
-		b.WriteString("  local")
-		for _, k := range paramNames {
-			fmt.Fprintf(&b, " %s=\"\"", k)
-		}
-		b.WriteString("\n")
+	b.WriteString("  local")
+	for _, k := range paramNames {
+		fmt.Fprintf(&b, " %s=\"\"", k)
 	}
+	b.WriteString("\n")
 	// Helper locals for the "-"-means-stdin file path (cleaned up after the
 	// call). Declared only when a filepath param exists.
 	if hasStdinFile {
