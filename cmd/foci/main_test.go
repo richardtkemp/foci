@@ -99,7 +99,9 @@ func mockGateway() *httptest.Server {
 			NoCompact  bool   `json:"no_compact"`
 			IfActive   string `json:"if_active"`
 			IfInactive string `json:"if_inactive"`
+			WaitCold   string `json:"wait_cold"`
 			Async      bool   `json:"async"`
+			Silent     bool   `json:"silent"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
 		if req.Agent == "nonexistent" {
@@ -125,6 +127,12 @@ func mockGateway() *httptest.Server {
 		if req.IfInactive != "" {
 			resp = "(if_inactive:" + req.IfInactive + ") " + resp
 		}
+		if req.WaitCold != "" {
+			resp = "(wait_cold:" + req.WaitCold + ") " + resp
+		}
+		if req.Silent {
+			resp = resp + " (silent)"
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"response": resp})
 	})
@@ -141,14 +149,20 @@ func mockGateway() *httptest.Server {
 
 	mux.HandleFunc("/command", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Agent   string `json:"agent"`
-			Command string `json:"command"`
+			Agent    string `json:"agent"`
+			Command  string `json:"command"`
+			WaitCold string `json:"wait_cold"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
+		// Only /ping is known: any other command string 404s, which also
+		// proves a wait flag never leaks into the command string.
 		if req.Command == "/ping" {
 			resp := "pong"
 			if req.Agent != "" {
 				resp = "[" + req.Agent + "] " + resp
+			}
+			if req.WaitCold != "" {
+				resp = "(wait_cold:" + req.WaitCold + ") " + resp
 			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]string{"response": resp})
@@ -247,6 +261,18 @@ func TestCLIEnvVars(t *testing.T) {
 			args: []string{"branch", "--sync"},
 			env:  []string{"FOCI_IF_INACTIVE=45m"},
 			want: "(if_inactive:45m) wake ok",
+		},
+		{
+			name: "FOCI_WAIT_COLD env var for branch",
+			args: []string{"branch", "--sync", "check"},
+			env:  []string{"FOCI_WAIT_COLD=55m"},
+			want: "(wait_cold:55m) wake ok",
+		},
+		{
+			name: "FOCI_WAIT_COLD env var for command",
+			args: []string{"command", "/ping"},
+			env:  []string{"FOCI_WAIT_COLD=55m"},
+			want: "(wait_cold:55m) pong",
 		},
 		{
 			name: "--addr flag",

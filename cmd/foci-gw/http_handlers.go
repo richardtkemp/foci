@@ -17,6 +17,7 @@ import (
 	"foci/internal/app"
 	"foci/internal/command"
 	"foci/internal/config"
+	"foci/internal/defersend"
 	"foci/internal/platform"
 	"foci/internal/route"
 	"foci/internal/session"
@@ -217,13 +218,8 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			IfUserInactive string `json:"if_user_inactive"`
 			IfActive       string `json:"if_active"`
 			IfInactive     string `json:"if_inactive"`
-			WaitWarm       string `json:"wait_warm"`
-			WaitCold       string `json:"wait_cold"`
-			WaitUserActive string `json:"wait_user_active"`
-			WaitUserInact  string `json:"wait_user_inactive"`
-			WaitTimeout    string `json:"wait_timeout"`
-			WaitNone       bool   `json:"wait_none"`
-			Async          bool   `json:"async"`
+			waitRequest
+			Async bool `json:"async"`
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, jsonMaxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Text == "" {
@@ -272,14 +268,16 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 		// to avoid interleaving with an active session — a wait condition that
 		// does not hold now enqueues the send for later delivery by the sweep
 		// (persisted, restart-surviving) instead of blocking or dropping.
-		wc := waitConds{
-			warm: req.WaitWarm, cold: req.WaitCold,
-			userActive: req.WaitUserActive, userInactive: req.WaitUserInact,
-			timeout: req.WaitTimeout, none: req.WaitNone,
-		}
+		// This default is /send-only: /branch and /command run now when no
+		// wait field is given (#1272).
+		wc := req.conds()
 		noIfGate := req.IfActive == "" && req.IfInactive == "" && req.IfUserActive == "" && req.IfUserInactive == ""
 		if !wc.none && !wc.any() && noIfGate {
 			wc.cold = "1m"
+		}
+		deferredRec := defersend.Record{
+			Kind: defersend.KindSend, AgentID: inst.id, SessionKey: sessionKey,
+			Text: req.Text, Policy: string(res.Policy), Model: req.Model,
 		}
 
 		// Rate-limit gate (#1417): a session whose endpoint is currently
@@ -290,14 +288,14 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 		// constraint rather than a scheduling preference, so it applies even
 		// under wait_none/--no-gate. It folds into the SAME persisted
 		// defer-then-sweep mechanism as the activity wait gates
-		// (enqueueDeferredSend / deferSweeper.sweep, which independently
+		// (enqueueDeferred / deferSweeper.sweep, which independently
 		// withholds delivery while the gate stays closed) — the existing 10s
 		// sweep tick becomes the "dispatch one at a time once the gate opens"
 		// replay for /send, mirroring the rate limit gate's own per-endpoint
 		// queue used for system-triggered work.
 		if limited, reason := inst.ag.SessionRateLimited(sessionKey); limited {
 			if d.deferStore != nil {
-				enqueueDeferredSend(w, d, inst.id, sessionKey, req.Text, string(res.Policy), req.Model, wc, rcpt)
+				enqueueDeferred(w, d, deferredRec, wc, rcpt)
 				return
 			}
 			// Store unavailable: degrade to immediate send (a user-trigger
@@ -305,27 +303,13 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			deferLog.Warnf("%s but defer store unavailable — sending now (agent=%s session=%s)", reason, inst.id, sessionKey)
 		}
 
-		if !wc.none && wc.any() {
-			isUserActive, isSessionActive := buildActivityCheckers(d)
-			satisfied, err := waitSatisfied(wc, activityGateInputs{
-				AgentID:     inst.id,
-				SessionBase: sessionBase,
-				InFlight:    inst.ag.IsTurnInFlight(sessionBase),
-				LastTurnEnd: inst.ag.LastTurnEnd(sessionBase),
-			}, isUserActive, isSessionActive)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			if !satisfied {
-				if d.deferStore != nil {
-					enqueueDeferredSend(w, d, inst.id, sessionKey, req.Text, string(res.Policy), req.Model, wc, rcpt)
-					return
-				}
-				// Store unavailable: degrade to immediate send rather than failing
-				// — a missing queue must not break every defaulted /send.
-				deferLog.Warnf("wait unmet but defer store unavailable — sending now (agent=%s session=%s)", inst.id, sessionKey)
-			}
+		if deferUnmetWait(w, d, activityGateInputs{
+			AgentID:     inst.id,
+			SessionBase: sessionBase,
+			InFlight:    inst.ag.IsTurnInFlight(sessionBase),
+			LastTurnEnd: inst.ag.LastTurnEnd(sessionBase),
+		}, wc, deferredRec, rcpt) {
+			return
 		}
 
 		if req.Model != "" {
@@ -409,6 +393,23 @@ func handleStatus(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFun
 	}
 }
 
+// dispatchAgentCommand runs one slash command through the agent's registry —
+// the single dispatch site shared by handleCommand (immediate) and the
+// deferred sweep (delivery time), DocPath platform send included. ok is false
+// only for a registered command with no Execute function; unknown names are
+// answered by the registry itself (found=true, "Unknown command" text).
+func dispatchAgentCommand(d httpHandlerDeps, inst *agentInstance, ctx context.Context, sessionKey, text string) (command.Response, bool) {
+	cmdReq := command.RequestFromText(text, sessionKey, "", 0)
+	result, ok, _ := inst.cmds.Dispatch(tools.WithSessionKey(ctx, sessionKey), cmdReq, inst.cc)
+	if !ok {
+		return result, false
+	}
+	if err := platform.SendDocAndRemove(d.connMgr.ForSessionOrPrimary(sessionKey, inst.id), 0, result.DocPath, ""); err != nil {
+		httpLog.Warnf("command dispatch: send document: %v", err)
+	}
+	return result, true
+}
+
 // handleCommand returns the handler for POST /command.
 func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -423,6 +424,7 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 			IfUserInactive string `json:"if_user_inactive"`
 			IfActive       string `json:"if_active"`
 			IfInactive     string `json:"if_inactive"`
+			waitRequest
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, jsonMaxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Command == "" {
@@ -462,14 +464,26 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 			return
 		}
 
-		cmdReq := command.RequestFromText(req.Command, sk, "", 0)
-		result, ok, _ := inst.cmds.Dispatch(tools.WithSessionKey(r.Context(), sk), cmdReq, inst.cc)
+		// Wait/defer gate (#1272): unlike /send there is NO default — a
+		// command with no wait field dispatches now, exactly as before. An
+		// unmet wait defers the command (persisted, restart-surviving) for
+		// the sweep to dispatch once the condition holds; the caller gets the
+		// 202 deferred receipt instead of a dispatch.
+		if deferUnmetWait(w, d, activityGateInputs{
+			AgentID:     inst.id,
+			SessionBase: sessionBase,
+			InFlight:    inst.ag.IsTurnInFlight(sessionBase),
+			LastTurnEnd: inst.ag.LastTurnEnd(sessionBase),
+		}, req.conds(), defersend.Record{
+			Kind: defersend.KindCommand, AgentID: inst.id, SessionKey: sk, Text: req.Command,
+		}, route.Receipt{SessionKey: sk}) {
+			return
+		}
+
+		result, ok := dispatchAgentCommand(d, inst, r.Context(), sk, req.Command)
 		if !ok {
 			http.Error(w, "unknown command", http.StatusNotFound)
 			return
-		}
-		if err := platform.SendDocAndRemove(d.connMgr.ForSessionOrPrimary(sk, inst.id), 0, result.DocPath, ""); err != nil {
-			httpLog.Warnf("POST /command: send document: %v", err)
 		}
 		writeJSONResponse(w, result.Text)
 	}
@@ -494,8 +508,9 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 			IfUserInactive string `json:"if_user_inactive"`
 			IfActive       string `json:"if_active"`
 			IfInactive     string `json:"if_inactive"`
-			Async          bool   `json:"async"`
-			Silent         bool   `json:"silent"`
+			waitRequest
+			Async  bool `json:"async"`
+			Silent bool `json:"silent"`
 		}
 		if r.ContentLength > 0 {
 			r.Body = http.MaxBytesReader(w, r.Body, jsonMaxBodyBytes)
@@ -531,7 +546,7 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 		parentKey := branchRes.SessionKey
 
 		parentBase := parentKey
-		if !gate(w, activityGateInputs{
+		gateIn := activityGateInputs{
 			AgentID:        inst.id,
 			SessionBase:    parentBase,
 			InFlight:       inst.ag.IsTurnInFlight(parentBase),
@@ -542,135 +557,46 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 			IfInactive:     req.IfInactive,
 			LogTag:         "branch",
 			Endpoint:       "/branch",
-		}) {
+		}
+		if !gate(w, gateIn) {
 			return
 		}
 
-		// Delegated agents: attempt a REAL backend-conversation fork when the
-		// backend supports it (implements delegator.BackendBrancher, cloning its
-		// own conversation). The forked branch
-		// starts with the parent's full context.
-		//
-		// A branch is wanted whenever branching is possible AT ALL, so this uses
-		// ForkOrFreshBranch rather than ForkSession: a parent with no backend
-		// session to clone (never started, or /reset) still yields a real branch,
-		// just one with nothing inherited. Only a backend that cannot branch at
-		// all falls through to /send below.
-		//
-		// Conflating those two sent a reset agent's branch INTO its main session,
-		// polluting the context the branch existed to keep clean, and silently
-		// dropped no_compact/no_reset_hook/silent (#1634: helen's 07:30
-		// morning-checks cron, every day the parent had been reset).
-		if inst.ag.DelegatedManager != nil {
-			orientPath := config.DerefStr(config.First(inst.agentCfg.Sessions.BranchOrientationHeadlessPrompt, d.cfg.Sessions.BranchOrientationHeadlessPrompt))
-			orientTemplate := prompts.ResolveOrientationTemplate(orientPath, false, inst.promptSearchDirs...)
-			branchOpts := session.BranchOptions{
-				NoResetHook:         req.NoResetHook,
-				BranchType:          "branch",
-				OrientationTemplate: orientTemplate,
-			}
-			branchKey, inherited, err := inst.ag.ForkOrFreshBranch(d.ctx, parentKey, branchOpts)
-			if err != nil {
-				branchLog.Errorf("agent %q fork error: %v", inst.id, err)
-				http.Error(w, "internal error", http.StatusInternalServerError)
-				return
-			}
-			if branchKey != "" {
-				if req.Model != "" {
-					if err := applyModelOverride(inst, branchKey, req.Model, d.cfg.Models); err != nil {
-						http.Error(w, fmt.Sprintf("bad model: %v", err), http.StatusBadRequest)
-						return
-					}
-				}
-				branchCtx := agent.WithTrigger(d.ctx, "branch")
-				if req.NoCompact {
-					inst.ag.SetSessionNoCompact(branchKey, true)
-				}
-				kind := "fresh branch (parent had no backend session)"
-				if inherited {
-					kind = "backend fork"
-				}
-				branchLog.Infof("delegated %s %s from %s, text=%s no_compact=%v async=%v silent=%v", kind, branchKey, parentKey, previewForLog(req.Text), req.NoCompact, req.Async, req.Silent)
-				if req.Async {
-					asyncDispatch(w, inst, d.connMgr, branchCtx, branchKey, req.Text, "branch", req.Silent, route.PolicyFallback, route.Receipt{SessionKey: branchKey, Via: "branch"})
-					return
-				}
-				resp, err := runAgentQueued(branchCtx, inst.ag, branchKey, req.Text)
-				if err != nil {
-					branchLog.Errorf("error: %v", err)
-					http.Error(w, "internal error", http.StatusInternalServerError)
-					return
-				}
-				writeJSONReceipt(w, resp, route.Receipt{SessionKey: branchKey, Via: "branch"})
-				return
-			}
-			// Reaching here now means ONE thing: this agent's backend does not
-			// implement delegator.BackendBrancher, so no branch of any kind is
-			// possible. "Parent has nothing to fork" was recovered above, so the
-			// warning below is finally as narrow as its wording — it used to
-			// fire on the recoverable case too and blame the backend for it.
-			// Fall through to /send semantics against the parent, as before.
-			branchLog.Warnf("agent %q backend %q cannot branch — falling through to send (branching options ignored: no_compact=%v no_reset_hook=%v silent=%v)", inst.id, inst.ag.Backend, req.NoCompact, req.NoResetHook, req.Silent)
-			if req.Model != "" {
-				if err := applyModelOverride(inst, parentKey, req.Model, d.cfg.Models); err != nil {
-					http.Error(w, fmt.Sprintf("bad model: %v", err), http.StatusBadRequest)
-					return
-				}
-			}
-			sendCtx := agent.WithTrigger(d.ctx, "branch")
+		// Wait/defer gate (#1272): unlike /send there is NO default — a
+		// branch with no wait field runs now, exactly as before. An unmet
+		// wait (evaluated against the resolved PARENT session) stores the
+		// request and the sweep creates the branch once the condition holds —
+		// forking from the parent's state at DELIVERY time. Deferred requests
+		// are inherently async: --sync callers get the 202 deferred receipt
+		// now too.
+		if deferUnmetWait(w, d, gateIn, req.conds(), defersend.Record{
+			Kind: defersend.KindBranch, AgentID: inst.id, SessionKey: parentKey, Text: req.Text,
+			Model: req.Model, NoCompact: req.NoCompact, NoResetHook: req.NoResetHook, Silent: req.Silent,
+		}, branchRcpt) {
+			return
+		}
+
+		result, err := runBranchTurn(d, inst, parentKey, branchRcpt, branchTurnOptions{
+			Text: req.Text, Model: req.Model,
+			NoCompact: req.NoCompact, NoResetHook: req.NoResetHook, Silent: req.Silent,
+		}, !req.Async)
+		if err == nil {
 			if req.Async {
-				asyncDispatch(w, inst, d.connMgr, sendCtx, parentKey, req.Text, "branch", req.Silent, route.PolicyFallback, branchRcpt)
+				writeAccepted(w, result.Receipt)
 				return
 			}
-			resp, err := runAgentQueued(sendCtx, inst.ag, parentKey, req.Text)
-			if err != nil {
-				branchLog.Errorf("send fallback error: %v", err)
-				http.Error(w, "internal error", http.StatusInternalServerError)
-				return
-			}
-			writeJSONReceipt(w, resp, branchRcpt)
+			writeJSONReceipt(w, result.Resp, result.Receipt)
 			return
 		}
-
-		orientPath := config.DerefStr(config.First(inst.agentCfg.Sessions.BranchOrientationHeadlessPrompt, d.cfg.Sessions.BranchOrientationHeadlessPrompt))
-		orientTemplate := prompts.ResolveOrientationTemplate(orientPath, false, inst.promptSearchDirs...)
-		branchKey, err := d.sessions.CreateBranchWithOptions(parentKey, session.BranchOptions{
-			NoResetHook:         req.NoResetHook,
-			BranchType:          "branch",
-			OrientationTemplate: orientTemplate,
-		})
-		if err != nil {
-			branchLog.Errorf("branch error: %v", err)
+		switch {
+		case errors.Is(err, errBranchBadModel):
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		case errors.Is(err, errBranchInboxFull):
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		default:
+			// createBranchSession / runBranchTurn already logged the cause.
 			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
 		}
-
-		if req.Model != "" {
-			if err := applyModelOverride(inst, branchKey, req.Model, d.cfg.Models); err != nil {
-				http.Error(w, fmt.Sprintf("bad model: %v", err), http.StatusBadRequest)
-				return
-			}
-		}
-
-		branchLog.Infof("branch %s from %s, text=%s no_compact=%v no_reset_hook=%v async=%v silent=%v", branchKey, parentKey, previewForLog(req.Text), req.NoCompact, req.NoResetHook, req.Async, req.Silent)
-
-		branchCtx := agent.WithTrigger(d.ctx, "branch")
-		if req.NoCompact {
-			inst.ag.SetSessionNoCompact(branchKey, true)
-		}
-
-		if req.Async {
-			asyncDispatch(w, inst, d.connMgr, branchCtx, branchKey, req.Text, "branch", req.Silent, route.PolicyFallback, route.Receipt{SessionKey: branchKey, Via: "branch"})
-			return
-		}
-
-		resp, err := runAgentQueued(branchCtx, inst.ag, branchKey, req.Text)
-		if err != nil {
-			branchLog.Errorf("error: %v", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		writeJSONReceipt(w, resp, route.Receipt{SessionKey: branchKey, Via: "branch"})
 	}
 }
 

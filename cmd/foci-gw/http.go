@@ -445,12 +445,10 @@ func deliverBufferedQueued(inst *agentInstance, connMgr platform.ConnectionManag
 	})
 }
 
-func asyncDispatch(w http.ResponseWriter, inst *agentInstance, connMgr platform.ConnectionManager,
-	ctx context.Context, sessionKey, text, logTag string, silent bool, policy route.Policy, rcpt route.Receipt) {
-	if !deliverBufferedQueued(inst, connMgr, ctx, sessionKey, text, logTag, silent, policy) {
-		http.Error(w, "session inbox full", http.StatusServiceUnavailable)
-		return
-	}
+// writeAccepted writes the async 202 receipt: status "queued" plus the
+// routing receipt, so a fire-and-forget caller can still verify where its
+// request landed. Shared by asyncDispatch and handleBranch's async path.
+func writeAccepted(w http.ResponseWriter, rcpt route.Receipt) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]string{
@@ -459,4 +457,13 @@ func asyncDispatch(w http.ResponseWriter, inst *agentInstance, connMgr platform.
 		"session":      rcpt.SessionKey,
 		"resolved_via": string(rcpt.Via),
 	})
+}
+
+func asyncDispatch(w http.ResponseWriter, inst *agentInstance, connMgr platform.ConnectionManager,
+	ctx context.Context, sessionKey, text, logTag string, silent bool, policy route.Policy, rcpt route.Receipt) {
+	if !deliverBufferedQueued(inst, connMgr, ctx, sessionKey, text, logTag, silent, policy) {
+		http.Error(w, "session inbox full", http.StatusServiceUnavailable)
+		return
+	}
+	writeAccepted(w, rcpt)
 }

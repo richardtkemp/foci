@@ -101,11 +101,36 @@ func waitSatisfied(wc waitConds, in activityGateInputs, isUserActive userActivit
 	return true, nil
 }
 
-// enqueueDeferredSend persists a not-yet-satisfiable send and writes the
-// "deferred" receipt. A deferred send is inherently async — the caller's
-// connection cannot be held until the condition holds — so --sync callers get
-// this receipt now and the reply (if any) is delivered to the session later.
-func enqueueDeferredSend(w http.ResponseWriter, d httpHandlerDeps, agentID, sessionKey, text, policy, model string, wc waitConds, rcpt route.Receipt) {
+// waitRequest is the wait-gate wire subset shared by the /send, /branch and
+// /command bodies — the server mirror of waitFlags (cmd/foci/wait_flags.go).
+// Declared once so the three handlers cannot drift on field names.
+type waitRequest struct {
+	WaitWarm       string `json:"wait_warm"`
+	WaitCold       string `json:"wait_cold"`
+	WaitUserActive string `json:"wait_user_active"`
+	WaitUserInact  string `json:"wait_user_inactive"`
+	WaitTimeout    string `json:"wait_timeout"`
+	WaitNone       bool   `json:"wait_none"`
+}
+
+// conds converts the wire fields into the waitConds the evaluator takes.
+func (w waitRequest) conds() waitConds {
+	return waitConds{
+		warm:         w.WaitWarm,
+		cold:         w.WaitCold,
+		userActive:   w.WaitUserActive,
+		userInactive: w.WaitUserInact,
+		timeout:      w.WaitTimeout,
+		none:         w.WaitNone,
+	}
+}
+
+// enqueueDeferred persists a not-yet-satisfiable request and writes the
+// "deferred" receipt (HTTP 202) — the same envelope regardless of kind. A
+// deferred request is inherently async — the caller's connection cannot be
+// held until the condition holds — so --sync callers get this receipt now and
+// the reply (if any) is delivered later, by the sweep.
+func enqueueDeferred(w http.ResponseWriter, d httpHandlerDeps, rec defersend.Record, wc waitConds, rcpt route.Receipt) {
 	if d.deferStore == nil {
 		http.Error(w, "deferred sends unavailable", http.StatusServiceUnavailable)
 		return
@@ -115,18 +140,20 @@ func enqueueDeferredSend(w http.ResponseWriter, d httpHandlerDeps, agentID, sess
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	now := timeutil.Now()
-	id, err := d.deferStore.Enqueue(defersend.Record{
-		AgentID: agentID, SessionKey: sessionKey, Text: text, Policy: policy, Model: model,
-		WaitWarm: wc.warm, WaitCold: wc.cold, WaitUserActive: wc.userActive, WaitUserInactive: wc.userInactive,
-		CreatedAt: now, DeadlineAt: now.Add(timeout),
-	})
+	rec.WaitWarm = wc.warm
+	rec.WaitCold = wc.cold
+	rec.WaitUserActive = wc.userActive
+	rec.WaitUserInactive = wc.userInactive
+	rec.CreatedAt = timeutil.Now()
+	rec.DeadlineAt = rec.CreatedAt.Add(timeout)
+	id, err := d.deferStore.Enqueue(rec)
 	if err != nil {
-		deferLog.Errorf("enqueue deferred send: %v", err)
+		deferLog.Errorf("enqueue deferred %s: %v", rec.EffectiveKind(), err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	deferLog.Infof("deferred send %d queued (agent=%s session=%s deadline=%s)", id, agentID, sessionKey, timeutil.Format(now.Add(timeout)))
+	deferLog.Infof("deferred %s %d queued (agent=%s session=%s deadline=%s)",
+		rec.EffectiveKind(), id, rec.AgentID, rec.SessionKey, timeutil.Format(rec.DeadlineAt))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -136,6 +163,34 @@ func enqueueDeferredSend(w http.ResponseWriter, d httpHandlerDeps, agentID, sess
 		"session":      rcpt.SessionKey,
 		"resolved_via": string(rcpt.Via),
 	})
+}
+
+// deferUnmetWait is the wait gate shared by /send, /branch and /command: with
+// no wait condition (or wait_none) it reports false and the caller proceeds;
+// with a condition that does not hold NOW it enqueues the request for the
+// sweep and writes the 202 deferred receipt (true = handled, stop). A
+// malformed duration answers 400. A nil defer store degrades to proceeding —
+// the graceful degradation /send has always had: a missing queue must not
+// break every request.
+func deferUnmetWait(w http.ResponseWriter, d httpHandlerDeps, in activityGateInputs, wc waitConds, rec defersend.Record, rcpt route.Receipt) bool {
+	if wc.none || !wc.any() {
+		return false
+	}
+	isUserActive, isSessionActive := buildActivityCheckers(d)
+	satisfied, err := waitSatisfied(wc, in, isUserActive, isSessionActive)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return true
+	}
+	if satisfied {
+		return false
+	}
+	if d.deferStore == nil {
+		deferLog.Warnf("wait unmet but defer store unavailable — running now (agent=%s session=%s)", in.AgentID, in.SessionBase)
+		return false
+	}
+	enqueueDeferred(w, d, rec, wc, rcpt)
+	return true
 }
 
 // resolveWaitTimeout parses the timeout string, defaulting to defaultWaitTimeout.
@@ -150,9 +205,10 @@ func resolveWaitTimeout(s string) (time.Duration, error) {
 	return d, nil
 }
 
-// deferSweeper periodically re-evaluates pending deferred sends and delivers
-// each one whose wait condition now holds, or whose deadline has passed
-// (send-anyway). It runs until ctx is cancelled.
+// deferSweeper periodically re-evaluates pending deferred requests — sends,
+// branches and commands — and delivers each one whose wait condition now
+// holds, or whose deadline has passed (deliver-anyway). It runs until ctx is
+// cancelled.
 type deferSweeper struct {
 	store           *defersend.Store
 	deps            httpHandlerDeps
@@ -173,8 +229,9 @@ func (s *deferSweeper) run(ctx context.Context) {
 	}
 }
 
-// sweep delivers every ready pending send once. A send is ready when its wait
-// condition holds now or its deadline has passed.
+// sweep delivers every ready pending request once, regardless of kind. A
+// record is ready when its wait condition holds now or its deadline has
+// passed.
 func (s *deferSweeper) sweep() {
 	records, err := s.store.All()
 	if err != nil {
@@ -185,7 +242,7 @@ func (s *deferSweeper) sweep() {
 	for _, r := range records {
 		inst, ok := s.deps.agents[r.AgentID]
 		if !ok {
-			deferLog.Warnf("dropping deferred send %d: agent %q gone", r.ID, r.AgentID)
+			deferLog.Warnf("dropping deferred %s %d: agent %q gone", r.EffectiveKind(), r.ID, r.AgentID)
 			_ = s.store.Delete(r.ID)
 			continue
 		}
@@ -198,19 +255,20 @@ func (s *deferSweeper) sweep() {
 		wc := waitConds{warm: r.WaitWarm, cold: r.WaitCold, userActive: r.WaitUserActive, userInactive: r.WaitUserInactive}
 		activityOK, err := waitSatisfied(wc, in, s.isUserActive, s.isSessionActive)
 		if err != nil {
-			deferLog.Errorf("dropping deferred send %d: %v", r.ID, err)
+			deferLog.Errorf("dropping deferred %s %d: %v", r.EffectiveKind(), r.ID, err)
 			_ = s.store.Delete(r.ID)
 			continue
 		}
 		// A rate-limited endpoint withholds delivery unconditionally (#1417) —
-		// unlike an activity condition, there is no "send anyway" escape hatch
-		// on deadline: firing into a live rate limit is a guaranteed-fail API
-		// call that only extends the backoff further. The record just stays
-		// queued (still persisted, still restart-surviving) until the endpoint
-		// gate reopens; this same 10s sweep tick is the drain, delivering one
-		// record at a time in FIFO order.
+		// whatever the kind — unlike an activity condition, there is no
+		// "send anyway" escape hatch on deadline: firing into a live rate
+		// limit is a guaranteed-fail API call that only extends the backoff
+		// further. The record just stays queued (still persisted, still
+		// restart-surviving) until the endpoint gate reopens; this same 10s
+		// sweep tick is the drain, delivering one record at a time in FIFO
+		// order.
 		if limited, reason := inst.ag.SessionRateLimited(r.SessionKey); limited {
-			deferLog.Debugf("deferred send %d withheld: %s", r.ID, reason)
+			deferLog.Debugf("deferred %s %d withheld: %s", r.EffectiveKind(), r.ID, reason)
 			continue
 		}
 		timedOut := !r.DeadlineAt.IsZero() && now.After(r.DeadlineAt)
@@ -221,16 +279,30 @@ func (s *deferSweeper) sweep() {
 		if !activityOK {
 			reason = "deadline reached — sending anyway"
 		}
-		deferLog.Infof("delivering deferred send %d (agent=%s session=%s): %s", r.ID, r.AgentID, r.SessionKey, reason)
+		deferLog.Infof("delivering deferred %s %d (agent=%s session=%s): %s", r.EffectiveKind(), r.ID, r.AgentID, r.SessionKey, reason)
 		s.deliver(inst, r)
 		_ = s.store.Delete(r.ID)
 	}
 }
 
-// deliver injects a deferred send onto the target session's inbox — the same
-// buffered, queued delivery asyncDispatch uses, minus the HTTP receipt (the
-// caller is long gone; a deferred send is fire-and-forget).
+// deliver hands one ready record to its kind's delivery path. Errors are
+// logged by the path itself; the sweep deletes the record after this single
+// attempt either way (a deferred request is never retried forever).
 func (s *deferSweeper) deliver(inst *agentInstance, r defersend.Record) {
+	switch r.EffectiveKind() {
+	case defersend.KindBranch:
+		s.deliverBranch(inst, r)
+	case defersend.KindCommand:
+		s.deliverCommand(inst, r)
+	default:
+		s.deliverSend(inst, r)
+	}
+}
+
+// deliverSend injects a deferred send onto the target session's inbox — the
+// same buffered, queued delivery asyncDispatch uses, minus the HTTP receipt
+// (the caller is long gone; a deferred send is fire-and-forget).
+func (s *deferSweeper) deliverSend(inst *agentInstance, r defersend.Record) {
 	if r.Model != "" {
 		if err := applyModelOverride(inst, r.SessionKey, r.Model, s.deps.cfg.Models); err != nil {
 			deferLog.Warnf("deferred model override %q: %v", r.Model, err)
@@ -239,4 +311,33 @@ func (s *deferSweeper) deliver(inst *agentInstance, r defersend.Record) {
 	app.DeliverExternalPrompt(r.SessionKey, r.Text)
 	sendCtx := agent.WithTrigger(s.deps.ctx, "user")
 	deliverBufferedQueued(inst, s.deps.connMgr, sendCtx, r.SessionKey, r.Text, "defersend", false, route.Policy(r.Policy))
+}
+
+// deliverBranch runs a deferred branch at delivery time: the fork happens NOW
+// from r.SessionKey (the parent's state at delivery, not at enqueue), the
+// turn is async with trigger "branch", and no receipt exists (the HTTP caller
+// is long gone). A delivery failure (bad model at delivery time, fork error,
+// full inbox) is logged and the record dropped after that one attempt — a
+// branch has not started yet, and silently forking on the wrong model is
+// worse than a loud drop.
+func (s *deferSweeper) deliverBranch(inst *agentInstance, r defersend.Record) {
+	_, err := runBranchTurn(s.deps, inst, r.SessionKey, route.Receipt{SessionKey: r.SessionKey}, branchTurnOptions{
+		Text: r.Text, Model: r.Model, NoCompact: r.NoCompact, NoResetHook: r.NoResetHook, Silent: r.Silent,
+	}, false)
+	if err != nil {
+		deferLog.Warnf("deferred branch %d delivery failed (agent=%s parent=%s): %v", r.ID, r.AgentID, r.SessionKey, err)
+	}
+}
+
+// deliverCommand dispatches a deferred command through the agent's command
+// registry — the same dispatch handleCommand uses, DocPath send included. A
+// command-not-found is logged; the result text is logged at INFO (there is no
+// HTTP caller to return it to).
+func (s *deferSweeper) deliverCommand(inst *agentInstance, r defersend.Record) {
+	result, ok := dispatchAgentCommand(s.deps, inst, s.deps.ctx, r.SessionKey, r.Text)
+	if !ok {
+		deferLog.Warnf("deferred command %d not found (agent=%s session=%s): %s", r.ID, r.AgentID, r.SessionKey, r.Text)
+		return
+	}
+	deferLog.Infof("deferred command %d delivered (agent=%s session=%s): %s", r.ID, r.AgentID, r.SessionKey, result.Text)
 }

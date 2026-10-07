@@ -106,6 +106,14 @@ func TestCLIIntegration(t *testing.T) {
 		{"branch with --if-inactive=", []string{"branch", "--sync", "--if-inactive=45m"}, "(if_inactive:45m) wake ok", false},
 		{"branch with --if-inactive and --oneshot", []string{"branch", "--sync", "--if-inactive", "30m", "--oneshot", "check emails"}, "(if_inactive:30m) wake ok (no_compact)", false},
 
+		// --wait-* gates for branch and command (#1272): forwarded as body
+		// keys, never left in the message text or command string (a leaked
+		// flag turns /ping into an unknown command → error).
+		{"branch with --wait-cold", []string{"branch", "--sync", "--wait-cold", "55m", "check"}, "(wait_cold:55m) wake ok", false},
+		{"branch with --wait-cold=", []string{"branch", "--sync", "--wait-cold=55m"}, "(wait_cold:55m) wake ok", false},
+		{"command with --wait-cold", []string{"command", "--wait-cold", "55m", "/ping"}, "(wait_cold:55m) pong", false},
+		{"command with --wait-cold=", []string{"command", "--wait-cold=55m", "ping"}, "(wait_cold:55m) pong", false},
+
 		// Error cases: unknown agent returns HTTP 400, exit non-zero
 		{"send unknown agent", []string{"send", "-a", "nonexistent", "hello"}, "unknown agent", true},
 		{"branch unknown agent", []string{"branch", "-a", "nonexistent"}, "unknown agent", true},
@@ -178,7 +186,6 @@ func TestCLIMessageFile(t *testing.T) {
 		// Error: branch -mt and -mf
 		{"branch -mt and -mf", []string{"branch", "-mt", "text", "-mf", msgFile}, "cannot specify both", true},
 	}
-
 	// Minimal env to avoid inheriting FOCI_TOKEN and other vars that
 	// could cause the binary to hit the live server instead of the mock.
 	// FOCI_GW_SOCK=/nonexistent prevents resolveGWSocket from finding
@@ -209,4 +216,51 @@ func TestCLIMessageFile(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestBranchOneshotSilentQuirk is a CHARACTERISATION test (red-gate-exempt):
+// it pins the deliberate --oneshot asymmetry that the parseBranchFlags
+// extraction must carry over verbatim — the --oneshot FLAG sets silent, while
+// the FOCI_ONESHOT env var sets only no-compact/no-reset-hook. The mock
+// gateway echoes a " (silent)" suffix when the body carries silent=true.
+//
+// disconnected-test-ok: black-box CLI integration test; execs compiled binary
+func TestBranchOneshotSilentQuirk(t *testing.T) {
+	server := mockGateway()
+	defer server.Close()
+	addr := strings.TrimPrefix(server.URL, "http://")
+	baseEnv := []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + os.Getenv("HOME"),
+		"FOCI_GW_SOCK=/nonexistent",
+		"FOCI_ADDR=" + addr,
+	}
+
+	t.Run("--oneshot flag sets silent", func(t *testing.T) {
+		cmd := exec.Command(testBinary, []string{"branch", "--sync", "--oneshot"}...)
+		cmd.Env = baseEnv
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("branch --oneshot failed: %v\n%s", err, out)
+		}
+		if got := strings.TrimSpace(string(out)); !strings.Contains(got, "(silent)") {
+			t.Errorf("output %q missing the silent marker — the --oneshot flag must set silent", got)
+		}
+	})
+
+	t.Run("FOCI_ONESHOT env does not set silent", func(t *testing.T) {
+		cmd := exec.Command(testBinary, []string{"branch", "--sync"}...)
+		cmd.Env = append(append([]string{}, baseEnv...), "FOCI_ONESHOT=1")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("branch with FOCI_ONESHOT failed: %v\n%s", err, out)
+		}
+		got := strings.TrimSpace(string(out))
+		if !strings.Contains(got, "no_compact") {
+			t.Errorf("output %q missing the no_compact marker — FOCI_ONESHOT must set no-compact/no-reset-hook", got)
+		}
+		if strings.Contains(got, "(silent)") {
+			t.Errorf("output %q has the silent marker — FOCI_ONESHOT must NOT set silent", got)
+		}
+	})
 }

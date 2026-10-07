@@ -28,17 +28,17 @@ These flags are accepted by all commands:
 | `--if-user-inactive <dur>` | | `FOCI_IF_USER_INACTIVE` | **User-attention**: skip if the user has touched this agent within duration. In-flight counts as user attention. |
 | `--message-text <text>` | `-mt` | `FOCI_MESSAGE_TEXT` | Explicit message text (alternative to trailing args). |
 | `--message-file <path>` | `-mf` | `FOCI_MESSAGE_FILE` | Read message from file path. |
-| `--sync` / `--wait` | | `FOCI_SYNC` | Wait for response (send/branch only, non-empty = true). |
+| `--sync` / `--wait` | | `FOCI_SYNC` | Wait for the agent's reply, blocking the CLI (send/branch only, non-empty = true). This is NOT one of the `--wait-*` deferral gates below. |
 | `--async` / `--no-wait` | | `FOCI_ASYNC` | Fire-and-forget (send/branch default, non-empty = true). |
 | `--no-compact` | | `FOCI_NO_COMPACT` | Skip compaction (branch only, non-empty = true). |
 | `--no-reset-hook` | | `FOCI_NO_RESET_HOOK` | Skip reset hook (branch only, non-empty = true). |
-| `--oneshot` | | `FOCI_ONESHOT` | No compaction + no reset hook (branch only, non-empty = true). |
-| `--wait-warm <dur>` | | `FOCI_WAIT_WARM` | **Send-only**: wait (block) until the target session has run a turn within duration before sending. Session-level. |
-| `--wait-cold <dur>` | | `FOCI_WAIT_COLD` | **Send-only**: wait (block) until the target session has not run a turn within duration before sending. Opposite of `--wait-warm`. |
-| `--wait-user-active <dur>` | | `FOCI_WAIT_USER_ACTIVE` | **Send-only**: wait (block) until the user has touched this agent within duration before sending. User-attention. |
-| `--wait-user-inactive <dur>` | | `FOCI_WAIT_USER_INACTIVE` | **Send-only**: wait (block) until the user has not touched this agent within duration before sending. Opposite of `--wait-user-active`. |
-| `--wait-timeout <dur>` | | `FOCI_WAIT_TIMEOUT` | **Send-only**: max time to wait for a `--wait-*` gate to be satisfied. Default `0` = no limit. |
-| `--no-gate` | | `FOCI_NO_GATE` | **Send-only**: disable all gate checks (ignore `--if-*` / `--wait-*` / `FOCI_IF_*` / `FOCI_WAIT_*`). |
+| `--oneshot` | | `FOCI_ONESHOT` | `--no-compact` + `--no-reset-hook` + `--silent` as a flag; the env var sets only the first two (branch only, non-empty = true). |
+| `--wait-warm <dur>` (`--wait-active`) | | `FOCI_WAIT_WARM` | **Send/branch/command**: defer the request (never block the CLI) until the target session has run a turn within duration, then run it. Session-level. |
+| `--wait-cold <dur>` (`--wait-inactive`) | | `FOCI_WAIT_COLD` | **Send/branch/command**: defer until the target session has NOT run a turn within duration, then run it. Opposite of `--wait-warm`. |
+| `--wait-user-active <dur>` | | `FOCI_WAIT_USER_ACTIVE` | **Send/branch/command**: defer until the user has touched this agent within duration, then run it. User-attention. |
+| `--wait-user-inactive <dur>` | | `FOCI_WAIT_USER_INACTIVE` | **Send/branch/command**: defer until the user has NOT touched this agent within duration, then run it. |
+| `--wait-timeout <dur>` | | `FOCI_WAIT_TIMEOUT` | **Send/branch/command**: max time a deferred request waits before running anyway. Default `2h`. Alias `--deadline`. |
+| `--no-gate` | | `FOCI_NO_GATE` | **Send/branch/command**: run now, ignoring any wait condition (and send's `--wait-cold 1m` default). Non-empty = true. |
 
 **Resolution order:** explicit flag > env var > default. Every flag has a corresponding `FOCI_` env var and vice versa.
 
@@ -65,6 +65,8 @@ Sends a text message to the agent's default session (or a named session / chat a
 
 Every response carries a **routing receipt** — which session the message resolved to and which resolution rung matched (`exact`, `named`, `alias`, `created`, `default`). The CLI prints it to stderr (`session: clutch/iresearch (named)`), so cron logs show where a send actually landed instead of trusting silent fallbacks.
 
+**Wait gates (deferral, not blocking):** an unmet `--wait-*` gate never blocks the CLI — the gateway stores the request (it survives a restart), answers with a "deferred" receipt immediately (even with `--sync`), and delivers it once the condition holds; `--wait-timeout`/`--deadline` (default **2h**) delivers anyway. A send with no if/wait flag defaults to `--wait-cold 1m` (waits for 1m of session idleness first); `--no-gate` opts out of the default and any wait condition.
+
 **Usage:**
 ```
 foci send [-a agent] [-s session] [-m model] [--if-warm <duration>] [--if-cold <duration>] [--if-user-active <duration>] [--if-user-inactive <duration>] [--sync] [-mt text | -mf file] [message text]
@@ -81,7 +83,13 @@ foci send [-a agent] [-s session] [-m model] [--if-warm <duration>] [--if-cold <
 | `--if-cold <dur>` (`--if-inactive`) | | **Session-level gate**: skip if the target session has run a turn within duration. Opposite of `--if-warm` — keepalive shape; in-flight always counts. |
 | `--if-user-active <dur>` | | **User-attention gate**: skip if the user has not touched this agent within duration. CLI/cron/agent-to-agent traffic does not count. |
 | `--if-user-inactive <dur>` | | **User-attention gate**: skip if the user has touched this agent within duration. |
-| `--sync` / `--wait` | | Wait for the agent's response instead of returning immediately. |
+| `--wait-warm <dur>` (`--wait-active`) | | **Deferral gate**: defer until the target session has run a turn within duration (in-flight counts), then send. |
+| `--wait-cold <dur>` (`--wait-inactive`) | | **Deferral gate**: defer until the target session has been idle the whole duration, then send. |
+| `--wait-user-active <dur>` | | **Deferral gate**: defer until the user has touched this agent within duration, then send. |
+| `--wait-user-inactive <dur>` | | **Deferral gate**: defer until the user has NOT touched this agent within duration, then send. |
+| `--wait-timeout <dur>` (`--deadline`) | | Max deferral before sending anyway. Default **2h**. |
+| `--no-gate` | | Send immediately: no wait default, no wait condition. |
+| `--sync` / `--wait` | | Wait for the agent's reply instead of returning immediately. Not a `--wait-*` gate. |
 | `--async` / `--no-wait` | | Fire-and-forget mode (default). Returns immediately, response goes to Telegram. |
 | `--message-text <text>` | `-mt` | Explicit message text (alternative to trailing args). |
 | `--message-file <path>` | `-mf` | Read message from file. Sends the file contents as the message. |
@@ -134,9 +142,11 @@ Creates a branch session from the agent's default chat session, optionally injec
 
 By default, branch is **asynchronous** (fire-and-forget): the CLI returns immediately with "queued" and the agent's response is delivered to Telegram. Use `--sync`/`--wait` to block until the response is available.
 
+**Wait gates (deferral, not blocking):** `foci branch` accepts the same `--wait-*` gates as `foci send`, evaluated against the PARENT session. Unlike send there is **no default gate**: a branch with no if/wait flag runs immediately. An unmet `--wait-*` gate never blocks the CLI — the gateway stores the branch request (it survives a restart), answers with a "deferred" receipt immediately (even with `--sync`), and creates the branch once the condition holds, forking from the parent's state at that moment; `--wait-timeout`/`--deadline` (default **2h**) branches anyway. `--no-gate` ignores any wait condition.
+
 **Usage:**
 ```
-foci branch [-a agent] [-m model] [--if-warm <duration>] [--if-cold <duration>] [--if-user-active <duration>] [--if-user-inactive <duration>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
+foci branch [-a agent] [-m model] [--if-warm <duration>] [--if-cold <duration>] [--if-user-active <duration>] [--if-user-inactive <duration>] [--wait-warm <duration>] [--wait-cold <duration>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
 ```
 
 **Flags:**
@@ -149,7 +159,13 @@ foci branch [-a agent] [-m model] [--if-warm <duration>] [--if-cold <duration>] 
 | `--if-cold <dur>` (`--if-inactive`) | **Session-level gate**: skip if the target session has run a turn within duration. In-flight counts. Keepalive shape. |
 | `--if-user-active <dur>` | **User-attention gate**: skip if the user has not touched this agent within duration. |
 | `--if-user-inactive <dur>` | **User-attention gate**: skip if the user has touched this agent within duration. |
-| `--sync` / `--wait` | Wait for the agent's response instead of returning immediately. |
+| `--wait-warm <dur>` (`--wait-active`) | **Deferral gate**: defer until the parent session has run a turn within duration (in-flight counts), then branch. |
+| `--wait-cold <dur>` (`--wait-inactive`) | **Deferral gate**: defer until the parent session has been idle the whole duration, then branch. |
+| `--wait-user-active <dur>` | **Deferral gate**: defer until the user has touched this agent within duration, then branch. |
+| `--wait-user-inactive <dur>` | **Deferral gate**: defer until the user has NOT touched this agent within duration, then branch. |
+| `--wait-timeout <dur>` (`--deadline`) | Max deferral before branching anyway. Default **2h**. |
+| `--no-gate` | Branch now: ignore any wait condition. |
+| `--sync` / `--wait` | Wait for the agent's reply instead of returning immediately. Not a `--wait-*` gate. |
 | `--async` / `--no-wait` | Fire-and-forget mode (default). Returns immediately, response goes to Telegram. |
 | `--no-compact` | Skip compaction if context limit is reached during the branch. |
 | `--no-reset-hook` | Skip the pre-reset memory hook when the branch session is reclaimed. |
@@ -179,6 +195,9 @@ foci branch --if-warm 12h -a clutch "daily memory review"
 
 # Only branch if the user has reached out recently
 foci branch --if-user-active 4h -a clutch "follow-up on this morning's chat"
+
+# Branch once the parent session has been cold for 55m (deferred, not skipped)
+foci branch --wait-cold 55m --oneshot -a helen "nightly maintenance"
 
 # Empty branch (agent wakes up with fork context only)
 foci branch -a research
@@ -259,10 +278,12 @@ Dispatches a slash command directly via the HTTP API and returns the result to t
 
 **Usage:**
 ```
-foci command [-a agent] [--if-warm <dur>] [--if-cold <dur>] [--if-user-active <dur>] [--if-user-inactive <dur>] </cmd> [args]
+foci command [-a agent] [--if-warm <dur>] [--if-cold <dur>] [--if-user-active <dur>] [--if-user-inactive <dur>] [--wait-warm <dur>] [--wait-cold <dur>] </cmd> [args]
 ```
 
-**Activity gates:** `command` accepts the same four activity-gate flags as `send` (and reads the same `FOCI_IF_*` env vars). The gate is evaluated server-side against the session the command targets; a turn in flight always counts as active, so a gated command never interrupts mid-turn work. This is what makes an unattended `/reset` safe — see the example below.
+**Activity gates:** `command` accepts the same four activity-gate flags as `send` (and reads the same `FOCI_IF_*` env vars). The gate is evaluated server-side against the session the command targets; a turn in flight always counts as active, so a gated command never interrupts mid-turn work.
+
+**Wait gates (deferral, not blocking):** `command` also accepts the `--wait-*` gates (`--wait-warm`, `--wait-cold`, `--wait-user-active`, `--wait-user-inactive`, `--wait-timeout`/`--deadline`, `--no-gate`; same `FOCI_WAIT_*` env vars), evaluated against the session the command targets. Unlike send there is **no default gate** — a command with no if/wait flag runs immediately. An unmet `--wait-*` gate does not skip and does not block: the gateway stores the command (it survives a restart), answers with a "deferred" receipt immediately, and dispatches it once the condition holds; `--wait-timeout`/`--deadline` (default **2h**) dispatches anyway. `--no-gate` ignores any wait condition.
 
 **Examples:**
 ```bash
@@ -272,8 +293,13 @@ foci command /config available
 foci command /cost today
 
 # Overnight reset that skips if the session ran a turn within 55m (or one is
-# in flight) — the shape used by an unattended reset cron:
+# in flight):
 foci command --if-cold 55m -a helen /reset
+
+# Overnight reset that RUNS once the session has been cold for 55m — the
+# deferred shape: instead of skipping and hoping the next cron tick lands,
+# the gateway holds the /reset and dispatches it at the moment of idleness:
+foci command --wait-cold 55m -a helen /reset
 ```
 
 ---

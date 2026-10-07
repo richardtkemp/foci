@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/command"
 	"foci/internal/defersend"
 	"foci/internal/ratelimit"
 	"foci/internal/timeutil"
@@ -294,6 +295,184 @@ func TestSweep_DeliversOnDeadline(t *testing.T) {
 	case <-mock.entered:
 	case <-time.After(5 * time.Second):
 		t.Fatal("deadline-expired send was not delivered")
+	}
+	if all, _ := store.All(); len(all) != 0 {
+		t.Errorf("store not drained: %d", len(all))
+	}
+}
+
+// sweepFor builds a sweeper around the harness deps, the way main.go does.
+func sweepFor(d httpHandlerDeps, store *defersend.Store) *deferSweeper {
+	isU, isS := buildActivityCheckers(d)
+	return &deferSweeper{store: store, deps: d, isUserActive: isU, isSessionActive: isS}
+}
+
+// eventually polls cond until it holds or the deadline passes, returning
+// whether it ever held. The sweep's branch delivery is async (the turn runs on
+// the session's inbox worker), so the observable (backend call, session file)
+// lags the sweep() call.
+func eventually(cond func() bool) bool {
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return cond()
+}
+
+// TestSweep_DeliversBranchRecord proves a deferred branch record is delivered
+// as a BRANCH: the fork happens at delivery time from the stored parent, the
+// turn runs async with trigger "branch" on the new branch session, the parent
+// session stays untouched, no receipt is expected (the caller is long gone),
+// and the record is deleted after delivery.
+func TestSweep_DeliversBranchRecord(t *testing.T) {
+	d, mock := httpTestSetup(t, httpTestOpts{})
+	mock.entered = make(chan string, 1)
+	store := withDeferStore(t, &d)
+	now := timeutil.Now()
+	// wait_cold holds (session never touched) → deliverable on the first sweep.
+	_, _ = store.Enqueue(defersend.Record{
+		Kind: defersend.KindBranch, AgentID: testAgentID, SessionKey: testSessionKey,
+		Text: "deferred branch work", Model: "", NoCompact: true, NoResetHook: true, Silent: true,
+		WaitCold: "1m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
+	})
+	sweepFor(d, store).sweep()
+
+	select {
+	case <-mock.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("deferred branch was not delivered by the sweep")
+	}
+	calls := mock.snapshot()
+	if len(calls) != 1 || calls[0].trigger != "branch" {
+		t.Fatalf("calls=%+v want exactly one turn with trigger %q", calls, "branch")
+	}
+	if !strings.Contains(calls[0].text, "deferred branch work") {
+		t.Errorf("backend saw %q, want the branch text", calls[0].text)
+	}
+
+	// The turn ran on a NEW branch of the parent, and the parent stays clean.
+	var branchKey string
+	if !eventually(func() bool {
+		entries, err := d.sessions.ScanAllSessions()
+		if err != nil {
+			return false
+		}
+		for _, e := range entries {
+			if strings.HasPrefix(e.SessionKey, testSessionKey+"/b") {
+				branchKey = e.SessionKey
+				return true
+			}
+		}
+		return false
+	}) {
+		t.Fatal("no branch session was created by the sweep delivery")
+	}
+	if !eventually(func() bool {
+		msgs, err := d.sessions.Load(branchKey)
+		return err == nil && len(msgs) > 0
+	}) {
+		t.Error("branch session has no messages — the turn did not run on the branch")
+	}
+	parentMsgs, err := d.sessions.Load(testSessionKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parentMsgs) != 0 {
+		t.Errorf("parent session gained %d message(s), want 0", len(parentMsgs))
+	}
+	if all, _ := store.All(); len(all) != 0 {
+		t.Errorf("store not drained: %d", len(all))
+	}
+}
+
+// TestSweep_DeliversCommandRecord proves a deferred command record is
+// dispatched through the agent's command registry against the stored session
+// and deleted after the one delivery.
+func TestSweep_DeliversCommandRecord(t *testing.T) {
+	spy, runs := resetSpy()
+	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{spy}})
+	store := withDeferStore(t, &d)
+	now := timeutil.Now()
+	_, _ = store.Enqueue(defersend.Record{
+		Kind: defersend.KindCommand, AgentID: testAgentID, SessionKey: testSessionKey,
+		Text: "/reset", WaitCold: "1m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
+	})
+
+	sweepFor(d, store).sweep()
+
+	if n := runs.Load(); n != 1 {
+		t.Errorf("command executed %d time(s), want 1", n)
+	}
+	if all, _ := store.All(); len(all) != 0 {
+		t.Errorf("store not drained: %d", len(all))
+	}
+}
+
+// TestSweep_DeliversBranchOnDeadline proves the send-anyway-on-deadline rule
+// covers branches: a wait that never held delivers the branch once the
+// deadline has passed.
+func TestSweep_DeliversBranchOnDeadline(t *testing.T) {
+	d, mock := httpTestSetup(t, httpTestOpts{})
+	mock.entered = make(chan string, 1)
+	store := withDeferStore(t, &d)
+	now := timeutil.Now()
+	// wait_warm on a never-touched session never holds; the deadline passed → branch anyway.
+	_, _ = store.Enqueue(defersend.Record{
+		Kind: defersend.KindBranch, AgentID: testAgentID, SessionKey: testSessionKey,
+		Text: "deadline branch", WaitWarm: "1h",
+		CreatedAt: now.Add(-3 * time.Hour), DeadlineAt: now.Add(-time.Hour),
+	})
+	sweepFor(d, store).sweep()
+
+	select {
+	case <-mock.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("deadline-expired branch was not delivered")
+	}
+	if calls := mock.snapshot(); len(calls) != 1 || calls[0].trigger != "branch" {
+		t.Errorf("calls=%+v want one branch turn", calls)
+	}
+	if all, _ := store.All(); len(all) != 0 {
+		t.Errorf("store not drained: %d", len(all))
+	}
+}
+
+// TestSweep_WithholdsBranchWhileRateLimited mirrors
+// TestSweep_WithholdsWhileRateLimited for branches (#1272 req 7): the sweep's
+// rate-limit hold applies to every kind, with no send-anyway escape hatch —
+// the branch waits while its parent's endpoint gate is closed and is
+// delivered once the gate reopens.
+func TestSweep_WithholdsBranchWhileRateLimited(t *testing.T) {
+	d, mock := httpTestSetup(t, httpTestOpts{})
+	mock.entered = make(chan string, 1)
+	store := withDeferStore(t, &d)
+	now := timeutil.Now()
+	_, _ = store.Enqueue(defersend.Record{
+		Kind: defersend.KindBranch, AgentID: testAgentID, SessionKey: testSessionKey,
+		Text: "held branch", WaitCold: "1m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
+	})
+	engageRateLimit(t, d, 150*time.Millisecond)
+	sw := sweepFor(d, store)
+
+	sw.sweep()
+	select {
+	case text := <-mock.entered:
+		t.Fatalf("delivered branch %q while the endpoint was rate limited", text)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if all, _ := store.All(); len(all) != 1 {
+		t.Errorf("queued=%d want 1 (still withheld)", len(all))
+	}
+
+	time.Sleep(200 * time.Millisecond) // past the 150ms gate deadline
+	sw.sweep()
+	select {
+	case <-mock.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("branch was not delivered once the rate limit cleared")
 	}
 	if all, _ := store.All(); len(all) != 0 {
 		t.Errorf("store not drained: %d", len(all))

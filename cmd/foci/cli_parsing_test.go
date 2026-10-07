@@ -1,6 +1,12 @@
 package main
 
 import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -268,6 +274,201 @@ func TestParseSendFlagsMessageFlags(t *testing.T) {
 			}
 			if len(rest) != len(tt.wantRest) {
 				t.Errorf("rest = %v, want %v", rest, tt.wantRest)
+			}
+		})
+	}
+}
+
+// TestParseBranchFlagsWait proves `foci branch` parses the wait gates with
+// the same names, aliases and env vars as `foci send`, and never leaves one
+// in the message text.
+func TestParseBranchFlagsWait(t *testing.T) {
+	flags, rest := parseBranchFlags([]string{
+		"--wait-cold", "55m", "--wait-active", "30s", "--deadline", "3h", "--no-gate", "morning", "check",
+	})
+	if flags.waitCold != "55m" {
+		t.Errorf("waitCold = %q, want 55m", flags.waitCold)
+	}
+	if flags.waitWarm != "30s" { // --wait-active is the alias for --wait-warm
+		t.Errorf("waitWarm = %q, want 30s", flags.waitWarm)
+	}
+	if flags.waitTimeout != "3h" { // --deadline is the alias for --wait-timeout
+		t.Errorf("waitTimeout = %q, want 3h", flags.waitTimeout)
+	}
+	if !flags.noGate {
+		t.Error("noGate = false, want true")
+	}
+	if len(rest) != 2 || rest[0] != "morning" || rest[1] != "check" {
+		t.Errorf("rest = %v, want the message words only", rest)
+	}
+}
+
+// TestParseBranchFlagsWaitEnv proves the FOCI_WAIT_* env defaults flow through
+// parseBranchFlags exactly as they do for send.
+func TestParseBranchFlagsWaitEnv(t *testing.T) {
+	t.Setenv("FOCI_WAIT_COLD", "55m")
+	t.Setenv("FOCI_WAIT_TIMEOUT", "4h")
+	t.Setenv("FOCI_NO_GATE", "1")
+	flags, _ := parseBranchFlags([]string{"hi"})
+	if flags.waitCold != "55m" || flags.waitTimeout != "4h" || !flags.noGate {
+		t.Errorf("env defaults not applied: %+v", flags.waitFlags)
+	}
+
+	// An explicit flag wins over the env var.
+	flags, _ = parseBranchFlags([]string{"--wait-cold", "10m", "hi"})
+	if flags.waitCold != "10m" {
+		t.Errorf("waitCold = %q, want the flag value 10m", flags.waitCold)
+	}
+}
+
+// TestParseCommandFlagsWait proves `foci command` parses the wait gates with
+// the same names, aliases and env vars as `foci send`, and never leaves one
+// in the command string.
+func TestParseCommandFlagsWait(t *testing.T) {
+	flags, rest := parseCommandFlags([]string{
+		"--wait-cold", "55m", "--wait-user-inactive", "2h", "--deadline", "3h", "reset",
+	})
+	if flags.waitCold != "55m" || flags.waitUserInactive != "2h" || flags.waitTimeout != "3h" {
+		t.Errorf("wait flags not parsed: %+v", flags.waitFlags)
+	}
+	if len(rest) != 1 || rest[0] != "reset" {
+		t.Errorf("rest = %v, want the command word only", rest)
+	}
+}
+
+// TestParseCommandFlagsWaitEnv proves the FOCI_WAIT_* env defaults flow
+// through parseCommandFlags.
+func TestParseCommandFlagsWaitEnv(t *testing.T) {
+	t.Setenv("FOCI_WAIT_COLD", "55m")
+	t.Setenv("FOCI_NO_GATE", "1")
+	flags, rest := parseCommandFlags([]string{"/reset"})
+	if flags.waitCold != "55m" || !flags.noGate {
+		t.Errorf("env defaults not applied: %+v", flags.waitFlags)
+	}
+	if len(rest) != 1 || rest[0] != "/reset" {
+		t.Errorf("rest = %v, want [/reset]", rest)
+	}
+}
+
+// captureBody runs fn against a throwaway capture server and returns the
+// decoded JSON body of the single request it posted.
+func captureBody(t *testing.T, fn func(base string) error) map[string]interface{} {
+	t.Helper()
+	ch := make(chan map[string]interface{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		ch <- body
+		_, _ = w.Write([]byte(`{"response":"ok"}`))
+	}))
+	t.Cleanup(srv.Close)
+	if err := fn(srv.URL); err != nil {
+		t.Fatalf("command failed: %v", err)
+	}
+	return <-ch
+}
+
+// TestBranchWaitFlagsForwarded proves `foci branch` puts the wait gates on
+// the request body as the same wire keys send uses, and that no wait flag
+// leaks into the message text.
+func TestBranchWaitFlagsForwarded(t *testing.T) {
+	body := captureBody(t, func(base string) error {
+		return cmdBranch(base, []string{"--wait-cold", "55m", "--deadline", "3h", "--no-gate", "morning check"})
+	})
+	if body["text"] != "morning check" {
+		t.Errorf("text = %v, want the message only (a wait flag leaked?)", body["text"])
+	}
+	if body["wait_cold"] != "55m" {
+		t.Errorf("wait_cold = %v, want 55m", body["wait_cold"])
+	}
+	if body["wait_timeout"] != "3h" {
+		t.Errorf("wait_timeout = %v, want 3h (from --deadline)", body["wait_timeout"])
+	}
+	if body["wait_none"] != true {
+		t.Errorf("wait_none = %v, want true (from --no-gate)", body["wait_none"])
+	}
+}
+
+// TestCommandWaitFlagsForwarded proves `foci command` puts the wait gates on
+// the request body and none leak into the command string
+// (`foci command --wait-cold 55m reset` sends command text for reset only).
+func TestCommandWaitFlagsForwarded(t *testing.T) {
+	body := captureBody(t, func(base string) error {
+		return cmdCommand(base, []string{"--wait-cold", "55m", "--wait-user-inactive", "2h", "reset"})
+	})
+	if body["command"] != "/reset" {
+		t.Errorf("command = %v, want /reset only (a wait flag leaked?)", body["command"])
+	}
+	if body["wait_cold"] != "55m" {
+		t.Errorf("wait_cold = %v, want 55m", body["wait_cold"])
+	}
+	if body["wait_user_inactive"] != "2h" {
+		t.Errorf("wait_user_inactive = %v, want 2h", body["wait_user_inactive"])
+	}
+}
+
+// captureStderr swaps os.Stderr for a pipe, runs fn, and returns what fn
+// wrote. The usage functions print to stderr.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+	fn()
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
+// TestBranchAndCommandHelpListWaitFlags pins req 8's help contract: branch
+// and command help list the wait flags with send's descriptions, including
+// the persistence/restart/always-async/2h facts.
+func TestBranchAndCommandHelpListWaitFlags(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fn   func()
+	}{
+		{"branch", branchUsage},
+		{"command", commandUsage},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			help := captureStderr(t, tc.fn)
+			for _, want := range []string{
+				"--wait-warm", "--wait-cold", "--wait-user-active", "--wait-user-inactive",
+				"--wait-timeout", "--no-gate", "2h", "survive a gateway restart", "always async",
+			} {
+				if !strings.Contains(help, want) {
+					t.Errorf("%s help missing %q", tc.name, want)
+				}
+			}
+		})
+	}
+
+	// The --sync/--wait clarification (send and branch only — command has no
+	// sync): it waits for the reply and is NOT a --wait-* gate.
+	for _, tc := range []struct {
+		name string
+		fn   func()
+	}{
+		{"send", sendUsage},
+		{"branch", branchUsage},
+	} {
+		t.Run(tc.name+"/sync", func(t *testing.T) {
+			help := captureStderr(t, tc.fn)
+			if !strings.Contains(help, "NOT") || !strings.Contains(help, "NOT one of the\n--wait-* gates") && !strings.Contains(help, "NOT a --wait-* gate") {
+				t.Errorf("%s help: --sync/--wait line must say it is not a --wait-* gate", tc.name)
+			}
+			if !strings.Contains(help, "even with --sync") {
+				t.Errorf("%s help: gate section must say an unmet --wait-* gate defers immediately even with --sync", tc.name)
 			}
 		})
 	}

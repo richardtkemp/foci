@@ -76,16 +76,59 @@ Dispatch a slash command via the gateway (bypasses agent conversation).
 Flags:
   -a, --agent <id>          Target agent (env: FOCI_AGENT)
 
-Activity gates (evaluated server-side; skip the command unless/if the target
-session has run a turn recently — a turn in flight always counts as warm):
+Activity gates come in two dispositions on the same conditions, evaluated
+against the session the command targets (a turn in flight always counts as
+warm):
   --if-warm <dur>           Skip unless this session ran a turn within duration (env: FOCI_IF_WARM; alias --if-active)
   --if-cold <dur>           Skip if this session ran a turn within duration (env: FOCI_IF_COLD; alias --if-inactive)
   --if-user-active <dur>    Skip unless the user touched this agent within duration (env: FOCI_IF_USER_ACTIVE)
   --if-user-inactive <dur>  Skip if the user touched this agent within duration (env: FOCI_IF_USER_INACTIVE)
+  --wait-warm <dur>         Defer until this session is warm (env: FOCI_WAIT_WARM; alias --wait-active)
+  --wait-cold <dur>         Defer until this session is cold (env: FOCI_WAIT_COLD; alias --wait-inactive)
+  --wait-user-active <dur>  Defer until the user has touched this agent within duration (env: FOCI_WAIT_USER_ACTIVE)
+  --wait-user-inactive <dur> Defer until the user has NOT touched this agent within duration (env: FOCI_WAIT_USER_INACTIVE)
+  --wait-timeout <dur>      Max wait before running anyway (default 2h; alias --deadline; env: FOCI_WAIT_TIMEOUT)
+  --no-gate                 Run now, ignoring any wait condition (env: FOCI_NO_GATE)
 
-Example (overnight reset that won't interrupt active or in-flight work):
-  foci command --if-cold 55m -a helen /reset
+--wait-* DEFER the command until the condition holds, then dispatch it.
+Deferred requests are persisted (they survive a gateway restart) and are
+always async — an unmet --wait-* gate returns a deferred receipt immediately.
+If the condition never holds, --wait-timeout / --deadline (default 2h) runs
+the command anyway. Unlike send (which defaults to --wait-cold 1m), a command
+with NO if/wait flag runs immediately.
+
+Example (overnight reset that runs once the session has been cold for 55m,
+instead of skipping and hoping the next cron tick lands):
+  foci command --wait-cold 55m -a helen /reset
 `)
+}
+
+// commandFlags is the parsed flag set of `foci command`: the shared if/wait
+// gate flag sets. Everything else is the command string itself. Parsed by
+// parseCommandFlags so the flag handling is testable in-process (the
+// parseSendFlags pattern).
+type commandFlags struct {
+	gateFlags
+	waitFlags
+}
+
+// parseCommandFlags consumes `foci command`'s flags (and their env defaults)
+// from args, returning the flags and the remaining command words.
+func parseCommandFlags(args []string) (flags commandFlags, rest []string) {
+	for i := 0; i < len(args); i++ {
+		if c, ni := flags.gateFlags.tryParseGateArg(args, i); c {
+			i = ni
+			continue
+		}
+		if c, ni := flags.waitFlags.tryParseWaitArg(args, i); c {
+			i = ni
+			continue
+		}
+		rest = append(rest, args[i])
+	}
+	flags.gateFlags.applyEnvDefaults()
+	flags.waitFlags.applyEnvDefaults()
+	return flags, rest
 }
 
 func cmdCommand(base string, args []string) error {
@@ -94,16 +137,7 @@ func cmdCommand(base string, args []string) error {
 		return nil
 	}
 	agent, args := parseAgentFlag(args)
-	var gf gateFlags
-	var rest []string
-	for i := 0; i < len(args); i++ {
-		if c, ni := gf.tryParseGateArg(args, i); c {
-			i = ni
-			continue
-		}
-		rest = append(rest, args[i])
-	}
-	gf.applyEnvDefaults()
+	flags, rest := parseCommandFlags(args)
 	if len(rest) == 0 {
 		return fmt.Errorf("usage: foci command [-a agent] [gate flags] </cmd> [args]")
 	}
@@ -115,7 +149,8 @@ func cmdCommand(base string, args []string) error {
 	if agent != "" {
 		body["agent"] = agent
 	}
-	gf.addToBody(body)
+	flags.gateFlags.addToBody(body)
+	flags.waitFlags.addToBody(body)
 	return postJSON(base+"/command", body)
 }
 
