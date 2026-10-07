@@ -364,6 +364,10 @@ func validateParsedStmt(rules []Rule, stmt *syntax.Stmt, depth int, vc *varCtx) 
 	var cmdSubsts []*syntax.CmdSubst
 	hasContent := false
 	safe := true
+	// One printer for every word this function prints: the -c script and
+	// declaration words checked during the walk, and the brace-literal and
+	// command segments checked after it.
+	pr := syntax.NewPrinter()
 
 	syntax.Walk(stmt, func(node syntax.Node) bool {
 		if !safe {
@@ -395,6 +399,15 @@ func validateParsedStmt(rules []Rule, stmt *syntax.Stmt, depth int, vc *varCtx) 
 			// recursively. The interceptor CallExpr itself is not added
 			// to commands — its inner commands are validated instead.
 			if scriptWord, ok := extractShellScript(n); ok {
+				if printedWordHasLiveBrace(pr, scriptWord) {
+					// bash brace-expands the -c script word itself, so
+					// one of the expanded scripts is a command the agent
+					// did not type (#2228). resolveStaticWord ignores
+					// braces and would validate the unexpanded text —
+					// refuse before it does.
+					safe = false
+					return false
+				}
 				script, resolved := resolveStaticWord(scriptWord, vc)
 				switch {
 				case !resolved:
@@ -424,7 +437,11 @@ func validateParsedStmt(rules []Rule, stmt *syntax.Stmt, depth int, vc *varCtx) 
 		case *syntax.TestClause:
 			hasContent = true // [[ ]] — safe, no side effects
 		case *syntax.DeclClause:
-			if declHasDangerousVar(n) {
+			// bash brace-expands a declaration's argument words (but not
+			// plain or command-prefix assignments), so a live brace there
+			// can hand a later command a variable value nobody checked
+			// (#2228).
+			if declHasDangerousVar(n) || declHasLiveBraceArg(pr, n) {
 				safe = false
 			}
 			hasContent = true
@@ -457,7 +474,6 @@ func validateParsedStmt(rules []Rule, stmt *syntax.Stmt, depth int, vc *varCtx) 
 	}
 
 	// Brace-expansion literals outside flag-checked commands' words.
-	pr := syntax.NewPrinter()
 	if stmtHasBraceLiteral(pr, stmt) {
 		return false
 	}
@@ -574,10 +590,13 @@ func stmtHasBraceLiteral(pr *syntax.Printer, stmt *syntax.Stmt) bool {
 	return found
 }
 
-// callExprFlagChecked reports whether the command's shell-visible name has
-// unsafe-argument machinery. It composes the same printer→scanner→gate
-// chain as containsUnsafeFlagWords, so the literal scan's exemption and the
-// scanner's #2216 rules always agree on which commands they cover.
+// callExprFlagChecked reports whether the command's shell-visible PRINTED
+// name has unsafe-argument machinery. It composes the same
+// printer→scanner→gate chain as containsUnsafeFlagWords, so the literal
+// scan's exemption and the scanner's #2216 rules always agree on which
+// commands they cover. The gate cannot see a command name assembled from a
+// variable — matchBashSegment's #2228 command-word resolution covers those,
+// judging the arguments under the resolved name.
 func callExprFlagChecked(pr *syntax.Printer, ce *syntax.CallExpr) bool {
 	cmdStr := callExprCmdString(pr, ce)
 	if cmdStr == "" {
@@ -637,6 +656,44 @@ func declHasDangerousVar(d *syntax.DeclClause) bool {
 	return false
 }
 
+// printedWordHasLiveBrace reports whether the word's printed text carries a
+// brace group the shell would expand — the scanner's hasLiveBrace, via the
+// same scanShellWords every other brace rule uses, so quoting is judged the
+// same way in every shape (#2228). It is the printed-word detector for the
+// two positions where expansion changes WHAT runs rather than an argument:
+// a shell interceptor's -c script word and a declaration word.
+func printedWordHasLiveBrace(pr *syntax.Printer, w *syntax.Word) bool {
+	var buf strings.Builder
+	// Print errors only on broken Writers; strings.Builder never fails.
+	_ = pr.Print(&buf, w)
+	for _, word := range scanShellWords(buf.String()) {
+		if word.hasLiveBrace {
+			return true
+		}
+	}
+	return false
+}
+
+// declHasLiveBraceArg reports whether any argument word of a declaration
+// clause carries a live brace group. bash brace-expands the arguments of
+// export, declare, local, readonly and typeset — every DeclClause — so
+// `export P={"",--pre=./x.sh}` sets P to `--pre=./x.sh`, handing a later
+// command a flag value no check saw (#2228). Plain and command-prefix
+// assignments are not declaration words and are not checked here: bash does
+// not brace-expand them. Array-literal values (arg.Value == nil) keep the
+// one-Lit AST scan's coverage.
+func declHasLiveBraceArg(pr *syntax.Printer, d *syntax.DeclClause) bool {
+	for _, arg := range d.Args {
+		if arg.Value == nil {
+			continue
+		}
+		if printedWordHasLiveBrace(pr, arg.Value) {
+			return true
+		}
+	}
+	return false
+}
+
 // callExprCmdString returns the command string from a CallExpr, excluding
 // any variable assignments. Returns "" for pure assignments with no command.
 func callExprCmdString(pr *syntax.Printer, ce *syntax.CallExpr) string {
@@ -654,10 +711,13 @@ func callExprCmdString(pr *syntax.Printer, ce *syntax.CallExpr) string {
 	return buf.String()
 }
 
-// commandBaseName extracts the base name of the command from a CallExpr.
-// For simple literal commands (like "env", "/usr/bin/env"), returns the base
-// name ("env"). Returns "" if the command name is not a simple literal (e.g.
-// quoted or expanded).
+// commandBaseName extracts the base name of the command from a CallExpr when
+// the command word's FIRST part is an unquoted literal (like "env",
+// "/usr/bin/env"), returning that literal's base name ("env"). Any other
+// command word — quoted, variable, substituted — yields "", so the walker's
+// name-based checks (interceptor unwrapping, var-setting and wrapper
+// refusal) do not see the command bash runs; matchBashSegment resolves such
+// words and judges the resolved name instead (#2228, commandWordUnsafe).
 func commandBaseName(ce *syntax.CallExpr) string {
 	if len(ce.Args) == 0 || len(ce.Args[0].Parts) == 0 {
 		return ""
@@ -997,13 +1057,14 @@ func wordHasParamExp(w *syntax.Word) bool {
 	return false
 }
 
-// resolveArgWord resolves one argument word of a flag-checked command into
-// the effective argument(s) the shell would pass: variable references are
-// resolved through the existing resolver (varCtx.resolveParamExp via
-// resolveWordPart — the same symbol table and environment snapshot, and the
-// same fail-closed rules for substitutions, special parameters and complex
-// expansions, that the shell-interceptor path uses), and the results are fed
-// to the shared quoting model (wordFacts) with their true liveness:
+// resolveArgWord resolves one word of a command — an argument of a
+// flag-checked command, and since #2228 a command word — into the effective
+// word(s) the shell would pass: variable references are resolved through the
+// existing resolver (varCtx.resolveParamExp via resolveWordPart — the same
+// symbol table and environment snapshot, and the same fail-closed rules for
+// substitutions, special parameters and complex expansions, that the
+// shell-interceptor path uses), and the results are fed to the shared
+// quoting model (wordFacts) with their true liveness:
 //
 //   - unquoted values are LIVE: their glob and brace characters are active
 //     (`X='*'; rg foo $X` globs) and their whitespace word-splits
@@ -1063,14 +1124,17 @@ func resolveArgWord(w *syntax.Word, vc *varCtx) ([]shellWord, bool) {
 }
 
 // expandedArgsUnsafe resolves variable references in the arguments of a
-// flag-checked command and re-checks the effective argument vector exactly
-// as if it had been typed (#2216) — through the same
-// containsUnsafeFlagWords, so the flag tables, the #2213 glob rule and the
-// brace rule all apply to resolved values. The command word itself is not
-// an argument and is never resolved. Commands without unsafe-flag machinery
-// keep their previous behaviour (variables pass through unresolved), and a
-// variable that cannot be resolved fails closed: the printed segment keeps
-// `$X` unexpanded, so approving it would mean approving an unknown value.
+// command whose PRINTED name has unsafe-argument machinery and re-checks the
+// effective argument vector exactly as if it had been typed (#2216) — through
+// resolvedArgsUnsafe, the shared resolve-and-check core, so the flag tables,
+// the #2213 glob rule and the brace rule all apply to resolved values. The
+// command word itself is not an argument and is not resolved here: a
+// non-literal command word is resolved (or refused) by commandWordUnsafe
+// (#2228), which judges the arguments under the resolved name. Commands
+// without unsafe-flag machinery keep their previous behaviour (variables pass
+// through unresolved), and a variable that cannot be resolved fails closed:
+// the printed segment keeps `$X` unexpanded, so approving it would mean
+// approving an unknown value.
 func expandedArgsUnsafe(ce *syntax.CallExpr, segment string, vc *varCtx) bool {
 	anyParam := false
 	for _, w := range ce.Args[1:] {
@@ -1092,7 +1156,109 @@ func expandedArgsUnsafe(ce *syntax.CallExpr, segment string, vc *varCtx) bool {
 	if len(ce.Args) != len(words) {
 		return true
 	}
-	effective := []shellWord{words[0]} // the command word is not an argument
+	return resolvedArgsUnsafe(words[0], ce, vc)
+}
+
+// ---------- Command-word resolution (#2228) ----------
+
+// wordIsLiteralText reports whether a word is made only of literal material:
+// unquoted literal text (backslash escapes live inside the Lit), '…' and
+// $'…', and "…"/$"…" holding only literal text. Anything else — a parameter
+// or command substitution, arithmetic, an array — is not, and bash's command
+// name comes from text this package must resolve instead of print.
+func wordIsLiteralText(w *syntax.Word) bool {
+	for _, part := range w.Parts {
+		switch p := part.(type) {
+		case *syntax.Lit:
+		case *syntax.SglQuoted:
+		case *syntax.DblQuoted:
+			for _, inner := range p.Parts {
+				if _, ok := inner.(*syntax.Lit); !ok {
+					return false
+				}
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// commandWordUnsafe refuses a command word that does not name, on its own,
+// the command bash will run (#2228). The word is resolved with the existing
+// resolver (resolveArgWord — the same symbol table, environment snapshot and
+// fail-closed rules as every other resolution), then:
+//
+//   - a word that fails to resolve, or resolves to nothing, refuses: an
+//     unset, array, complex or substituted name is an unknown command;
+//   - a resolved word with a live glob or live brace refuses: bash picks the
+//     command by expansion, and a literal word carrying either is in the
+//     same position (`{"sed",-i}` runs `sed -i`);
+//   - a NON-literal word must resolve to exactly one non-empty word — an
+//     empty unquoted reference vanishes (`E=; $E sed …` runs sed) and an
+//     unquoted value with whitespace word-splits (`C='sed -i'; $C …` runs
+//     two commands);
+//   - and that resolved name is then judged exactly as if it had been typed
+//     (resolvedNameUnsafe).
+//
+// A literal word with no live glob or brace returns false, and the segment
+// keeps today's behaviour byte for byte — the printed-text checks in
+// matchBashSegment judge it.
+func commandWordUnsafe(ce *syntax.CallExpr, segment string, vc *varCtx) bool {
+	if len(ce.Args) == 0 {
+		return false // pure assignment — the caller skips it anyway
+	}
+	words, ok := resolveArgWord(ce.Args[0], vc)
+	if !ok || len(words) == 0 {
+		return true
+	}
+	if wordIsLiteralText(ce.Args[0]) {
+		return words[0].hasLiveGlobExact || words[0].hasLiveBrace
+	}
+	name := words[0]
+	if len(words) != 1 || name.visible == "" || name.hasLiveGlobExact || name.hasLiveBrace {
+		return true
+	}
+	return resolvedNameUnsafe(name, ce, segment, vc)
+}
+
+// resolvedNameUnsafe judges a command segment under a RESOLVED command name,
+// exactly as if that name had been typed: var-setting commands and shell
+// interceptors refuse outright (fail-closed rather than re-unwrapping a -c
+// script that arrived through a variable), wrappers refuse when they carry
+// arguments, the flag/argument battery runs on the resolved name plus the
+// arguments, and the substitutability veto judges the resolved name and
+// records its reason on the printed segment — what the user is asked about.
+func resolvedNameUnsafe(name shellWord, ce *syntax.CallExpr, segment string, vc *varCtx) bool {
+	base := filepath.Base(name.visible)
+	if varSettingCommands[base] || shellInterceptors[base] {
+		return true
+	}
+	if wrapperCommands[base] && len(ce.Args) > 1 {
+		return true
+	}
+	if resolvedArgsUnsafe(name, ce, vc) {
+		return true
+	}
+	if sub, path, reason := substitutableToken(name.visible); sub {
+		vc.noteVeto(segment, path, reason)
+		return true
+	}
+	return false
+}
+
+// resolvedArgsUnsafe is the single resolve-and-check core for arguments:
+// gated on the command name having unsafe-argument machinery (the printed
+// name for a typed command, the resolved name for a #2228 command word — a
+// resolved name without machinery keeps pre-#2216 argument behaviour, exactly
+// like the typed form), it resolves each argument word with resolveArgWord —
+// any failure refuses — and runs containsUnsafeFlagWords on the effective
+// vector, so every argument rule applies to resolved values.
+func resolvedArgsUnsafe(cmdWord shellWord, ce *syntax.CallExpr, vc *varCtx) bool {
+	if !flagCheckedCommand(filepath.Base(cmdWord.visible)) {
+		return false
+	}
+	effective := []shellWord{cmdWord} // the command word is not an argument
 	for _, w := range ce.Args[1:] {
 		resolved, ok := resolveArgWord(w, vc)
 		if !ok {
@@ -1101,6 +1267,14 @@ func expandedArgsUnsafe(ce *syntax.CallExpr, segment string, vc *varCtx) bool {
 		effective = append(effective, resolved...)
 	}
 	return containsUnsafeFlagWords(effective)
+}
+
+// substitutableToken is the single call site of the substitutability check,
+// shared by the printed path (commandIsSubstitutable, on the segment's first
+// token) and the resolved path (resolvedNameUnsafe, on the resolved name —
+// exactly what bash execs).
+func substitutableToken(token string) (bool, string, string) {
+	return execguard.Substitutable(token, guardEnv())
 }
 
 // ---------- Command segment validation ----------
@@ -1140,7 +1314,7 @@ func commandIsSubstitutable(segment string) (bool, string, string) {
 	if len(tokens) == 0 {
 		return false, "", ""
 	}
-	return execguard.Substitutable(tokens[0], guardEnv())
+	return substitutableToken(tokens[0])
 }
 
 // matchBashSegment checks whether a single command string matches at least one
@@ -1151,9 +1325,15 @@ func commandIsSubstitutable(segment string) (bool, string, string) {
 // (#2213), when an argument of a flag-checked command carries a live brace
 // group or substitution or a variable that resolves to unsafe or unresolvable
 // text (#2216), or when the segment's executable could be substituted by this
-// process. ce is the CallExpr the segment was printed from, for the variable
-// resolution.
+// process. A command word that is not plain literal text is resolved with the
+// same resolver and the segment judged on the resolved name — or refused
+// outright (#2228); rule patterns still match the printed segment, so
+// resolution can only take an approval away, never add one. ce is the
+// CallExpr the segment was printed from, for the variable resolution.
 func matchBashSegment(rules []Rule, segment string, ce *syntax.CallExpr, vc *varCtx) bool {
+	if commandWordUnsafe(ce, segment, vc) {
+		return false
+	}
 	if containsUnsafeFlags(segment) {
 		return false
 	}
@@ -1260,9 +1440,10 @@ func gitArgUnsafe(arg string) bool {
 // flagCheckedCommand reports whether a command has unsafe-argument machinery
 // at all: an entry in unsafeFlags, or sqlite3's own whole-vector check. This
 // set is also the gate for the #2213 glob rule and the #2216 brace,
-// substitution and variable rules, so a command added to unsafeFlags
-// automatically joins them — and a command without machinery keeps its
-// previous behaviour.
+// substitution and variable rules — reading the PRINTED name in
+// expandedArgsUnsafe and the RESOLVED name in resolvedArgsUnsafe (#2228) —
+// so a command added to unsafeFlags automatically joins them, and a command
+// without machinery keeps its previous behaviour.
 func flagCheckedCommand(cmdBase string) bool {
 	_, ok := unsafeFlags[cmdBase]
 	return ok || cmdBase == "sqlite3"
@@ -1288,9 +1469,15 @@ func globArgUnsafe(words []shellWord) bool {
 // the expansion, so liveness is tracked across the quotes. The command word
 // itself is not an argument and is skipped.
 //
-// Known follow-up: commands WITHOUT unsafe-flag machinery are not covered
-// here (`cat {"a",b}` still approves) — their brace handling remains the
-// AST-level litContainsBraceExpansion, which only sees one literal at a time.
+// Commands WITHOUT unsafe-flag machinery are out of scope here on purpose
+// (#2228): an ordinary command's brace expansion (`cat {"a",b}` → `cat a b`)
+// is argument text the agent could have typed for that same command, and
+// bash keeps the brace group's preamble and postscript in every alternative,
+// so the expanded line still matches any rule pattern the printed line
+// matched — the braces cannot reach anything the unbraced command could
+// not. The positions where expansion reaches a command, a script or a
+// variable — command words, -c script words and declaration words — are
+// refused by name elsewhere.
 func braceArgUnsafe(words []shellWord) bool {
 	for _, w := range words[1:] {
 		if w.hasLiveBrace {
@@ -1656,12 +1843,13 @@ func skipSedAddress(s string) int {
 // facts the #2213/#2216 argument controls need on top of the token text
 // tokenizeCommand has always produced.
 type shellWord struct {
-	text          string // token text (quotes kept, backslash escapes resolved) — tokenizeCommand's exact output
-	visible       string // shell-visible text (quote delimiters dropped, $'…' decoded) — what the program receives
-	firstLiveGlob bool   // first visible character is an unquoted, unescaped * ? [
-	hasLiveGlob   bool   // the word contains an unquoted, unescaped * ? [
-	hasLiveBrace  bool   // the word contains a brace group the shell would expand (#2216)
-	hasLiveSubst  bool   // the word contains a live $(, $(( or ` substitution (#2216)
+	text             string // token text (quotes kept, backslash escapes resolved) — tokenizeCommand's exact output
+	visible          string // shell-visible text (quote delimiters dropped, $'…' decoded) — what the program receives
+	firstLiveGlob    bool   // first visible character is an unquoted, unescaped * ? [
+	hasLiveGlob      bool   // the word contains an unquoted, unescaped * ? [
+	hasLiveGlobExact bool   // the word contains an unquoted * or ?, or an unquoted [ closed by a later unquoted ] (#2228)
+	hasLiveBrace     bool   // the word contains a brace group the shell would expand (#2216)
+	hasLiveSubst     bool   // the word contains a live $(, $(( or ` substitution (#2216)
 }
 
 // canYieldFlag reports whether glob expansion of the word can produce a word
@@ -1691,12 +1879,19 @@ type wordFacts struct {
 
 	firstLiveGlob bool
 	hasLiveGlob   bool
-	hasLiveBrace  bool
-	hasLiveSubst  bool
+	// hasLiveGlobExact is the command-word form of the glob fact (#2228): a
+	// lone unquoted `[` is not a live glob there (`[ -f x ]` is the test
+	// command), only one closed by a later unquoted `]` in the same word is
+	// (`/usr/bin/s[e]d` names whatever the pattern matches). hasLiveGlob
+	// keeps its coarser, fail-closed #2213 semantics for arguments.
+	hasLiveGlobExact bool
+	hasLiveBrace     bool
+	hasLiveSubst     bool
 
-	braceDepth int  // open unquoted { count
-	braceSep   bool // unquoted , or .. seen inside the open braces
-	dotRun     int  // consecutive unquoted dots — a second one inside braces is a {x..y} separator
+	braceDepth  int  // open unquoted { count
+	braceSep    bool // unquoted , or .. seen inside the open braces
+	dotRun      int  // consecutive unquoted dots — a second one inside braces is a {x..y} separator
+	globBracket bool // an unquoted [ is open, awaiting its closer (#2228)
 }
 
 // addQuoted appends inert text: the bytes reach the program verbatim and no
@@ -1751,8 +1946,21 @@ func (f *wordFacts) addLiveByte(ch byte) {
 			f.finishWord()
 		}
 		return
-	case '*', '?', '[':
+	case '*', '?':
 		f.hasLiveGlob = true
+		f.hasLiveGlobExact = true
+	case '[':
+		f.hasLiveGlob = true
+		f.globBracket = true
+	case ']':
+		// Only the closer of an unquoted `[` in the same word is a live
+		// glob: addQuoted never opens or closes one, so quoted/escaped
+		// brackets do not participate, and the test command's lone `[`
+		// stays literal.
+		if f.globBracket {
+			f.globBracket = false
+			f.hasLiveGlobExact = true
+		}
 	case '{':
 		f.braceDepth++
 		if f.braceDepth == 1 {
@@ -1791,11 +1999,12 @@ func (f *wordFacts) noteSubst() { f.hasLiveSubst = true }
 // fill in — the accumulator only knows the shell-visible side).
 func (f *wordFacts) current() shellWord {
 	return shellWord{
-		visible:       f.visible.String(),
-		firstLiveGlob: f.firstLiveGlob,
-		hasLiveGlob:   f.hasLiveGlob,
-		hasLiveBrace:  f.hasLiveBrace,
-		hasLiveSubst:  f.hasLiveSubst,
+		visible:          f.visible.String(),
+		firstLiveGlob:    f.firstLiveGlob,
+		hasLiveGlob:      f.hasLiveGlob,
+		hasLiveGlobExact: f.hasLiveGlobExact,
+		hasLiveBrace:     f.hasLiveBrace,
+		hasLiveSubst:     f.hasLiveSubst,
 	}
 }
 
@@ -1809,8 +2018,8 @@ func (f *wordFacts) finishWord() {
 func (f *wordFacts) resetCurrent() {
 	f.visible.Reset()
 	f.firstLiveGlob, f.hasLiveGlob = false, false
-	f.hasLiveBrace, f.hasLiveSubst = false, false
-	f.braceDepth, f.braceSep, f.dotRun = 0, false, 0
+	f.hasLiveGlobExact, f.hasLiveBrace, f.hasLiveSubst = false, false, false
+	f.braceDepth, f.braceSep, f.dotRun, f.globBracket = 0, false, 0, false
 }
 
 // reset clears all state, including words split out of resolved values.
