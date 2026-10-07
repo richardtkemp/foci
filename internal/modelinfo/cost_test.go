@@ -133,7 +133,7 @@ func TestUnknownModelIsUnpricedNotGuessed(t *testing.T) {
 		if priced || usd != 0 {
 			t.Errorf("CostAsOf(%q) = $%v priced=%v, want $0 unpriced", model, usd, priced)
 		}
-		if _, ok := ResolveRateModel(model, time.Now()); ok {
+		if _, ok := ResolveRateModel(model, time.Now(), 0); ok {
 			t.Errorf("ResolveRateModel(%q) resolved; want not in table", model)
 		}
 	}

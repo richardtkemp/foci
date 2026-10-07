@@ -921,7 +921,7 @@ func (c *ccBook) remainder(w int, mu map[string]ModelUsage, label string, at tim
 		if b.Duplicate {
 			continue
 		}
-		usd, priced := modelinfo.CostAsOf(m, at, call.Tokens)
+		usd, priced := modelinfo.CostAsOfPrompt(m, at, call.Tokens, call.PricingPrompt())
 		c.addProcBooked(m, &countedSum{tokens: ReportClasses(call.Tokens), cost: usd, unpriced: !priced})
 		if call.Kind == accounting.KindOverhead {
 			overhead += usd
@@ -1012,7 +1012,7 @@ func (c *ccBook) bookRefusal(rs []ccRefusal, call accounting.Call, ccCost float6
 		return
 	}
 	if billed {
-		usd, priced := modelinfo.CostAsOf(call.Model, call.BilledAt, call.Tokens)
+		usd, priced := modelinfo.CostAsOfPrompt(call.Model, call.BilledAt, call.Tokens, call.PricingPrompt())
 		c.addProcBooked(call.Model, &countedSum{tokens: ReportClasses(call.Tokens), cost: usd, unpriced: !priced})
 		c.lg.Infof("ledger: session %s %s: %s refused (category %q, mid-stream or a billed category) and CC fell back to %s; the refused attempt is booked on turn %s at $%.4f (%s)",
 			c.session, label, call.Model, r.category, r.fallback, turn, usd, formatTokens(call.Tokens))
@@ -1179,7 +1179,8 @@ func solveRemainderTTL(model string, at time.Time, r modelinfo.Tokens, ccCost fl
 		}
 		countedCost = counted.cost
 	}
-	rm, ok := modelinfo.ResolveRateModel(model, at)
+	// The remainder is a sum of calls: base rates, never a prompt-size tier.
+	rm, ok := modelinfo.ResolveRateModel(model, at, 0)
 	if !ok {
 		return 0, fmt.Errorf("%s is not in the price table", model)
 	}
@@ -1189,7 +1190,7 @@ func solveRemainderTTL(model string, at time.Time, r modelinfo.Tokens, ccCost fl
 	if !has5m || !has1h || r1h <= r5m {
 		return 0, fmt.Errorf("%s has no distinct 5m and 1h write rates", model)
 	}
-	all1h, priced := modelinfo.CostAsOf(model, at, r)
+	all1h, priced := modelinfo.CostAsOfPrompt(model, at, r, 0)
 	if !priced {
 		return 0, fmt.Errorf("the remainder on %s is unpriced", model)
 	}

@@ -1556,20 +1556,32 @@ replaced the named rate fields; `Prices.Rates` is the ONE place the sources' nam
 and leaves the class out (input and output excepted), the TTL-unknown and 1h classes take
 the higher write figure, `reasoning` defaults to the output rate, `web_fetch` is always $0.
 `config.toModel` merges an override through `Model.Prices()` and back.
-`modelinfo.CostAsOf(model, at, Tokens) (usd, priced)` is the ONLY pricing function (`Cost`,
+`modelinfo.CostAsOf(model, at, Tokens) (usd, priced)` (with `CostAsOfPrompt`, below) is the ONLY pricing function (`Cost`,
 `CostAsOfSplit`, `CacheWrites`, `TTLSurchargeAsOf`, `WebSearchCostAsOf`, `cacheWriteRate`
 and `ttlPremium` are gone). `priced` is false when a billed class has no rate or the model
 resolves to no rate group — there is no guessed fallback rate any more (the old haiku /
 OpenAI-$5/$15 guesses), and `UnpricedModelHook` says so. Family pricing on the as-of path
 now uses the newest family member (#1967), as the latest-price path always did.
 
-**Rate groups.** `ResolveRateModel(model, at)` names the history group a call is priced
+**Rate groups.** `ResolveRateModel(model, at, prompt)` names the history group a call is priced
 from — `"<leaf>|<provider>|<dev>"`, the call's `rate_model`, resolved once at booking
 (exact leaf → variant-stripped → punctuation-folded → family canonical; CC's `<synthetic>`
 resolves to a zero-rate group). `RatesAsOf(rateModel, at)` is that group's row in effect on
 `at`'s UTC date. `RateTable()` renders every group into dated per-class rows with exactly
 that rule (a group's first row is in effect from `""`, same-date rows resolve to the last,
 a class a later row drops is rendered NULL), which is what lets SQL price like Go.
+
+**Prompt-size tiers (#2240).** A models.jsonl `price_tiers` entry becomes a `modelinfo.Tier`:
+a call whose prompt (`PromptTokens` = its in-context classes: input, cache reads, cache
+writes) is OVER `min_prompt_tokens` is priced wholly at the tier's rates (claude-haiku-5-5
+over 100K; OpenRouter's sonnet-4/4.5, gemini and gpt-5.x tiers). Each tier is its own rate
+group, `"<leaf>|<provider>|<dev>|><min>"`, rendered by `RateTable` like any other, so the
+SQL views need no tier logic: `Book` picks the tier into `rate_model` from
+`Call.PricingPrompt()`. `ResolveRateModel(model, at, prompt)` and
+`CostAsOfPrompt(model, at, Tokens, prompt)` take the prompt explicitly; `CostAsOf` takes it
+from the Tokens, so it must be given ONE call. A sum of calls has no prompt size and prices
+at base (prompt 0): remainders (`FinalityDerived`), legacy rows, and the TTL solvers
+(`solveRemainderTTL`, the migration's `solveWindow`).
 
 **Schema** (`accounting/schema.go`; FKs on via the DSN):
 - `api_calls` — one row per API call on every backend (R3). `call_key` (provider message id

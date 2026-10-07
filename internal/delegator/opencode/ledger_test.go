@@ -180,7 +180,7 @@ func TestReasoningIsBilledAtTheOutputRate(t *testing.T) {
 	_, msg := recordedMessage(t)
 	msg.ModelID, msg.ProviderID = "claude-opus-5", "anthropic"
 	at := time.UnixMilli(msg.Time.Completed)
-	rm, ok := modelinfo.ResolveRateModel(msg.ModelID, at)
+	rm, ok := modelinfo.ResolveRateModel(msg.ModelID, at, 0)
 	if !ok {
 		t.Fatal("claude-opus-5 has no rates")
 	}

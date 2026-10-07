@@ -93,6 +93,18 @@ func ClassUnit(c Class) (Unit, bool) {
 // InContext reports whether c counts toward a call's context fill.
 func InContext(c Class) bool { return vocabulary[c].context }
 
+// PromptTokens is t's prompt size: the sum of its in-context classes (input,
+// cache reads and cache writes). A prompt-size price Tier is chosen from it.
+func PromptTokens(t Tokens) int {
+	n := 0
+	for c, v := range t {
+		if InContext(c) {
+			n += v
+		}
+	}
+	return n
+}
+
 // Tokens is one call's billed counts, by class. A zero or absent class means
 // nothing was billed in it.
 type Tokens map[Class]int

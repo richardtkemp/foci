@@ -725,7 +725,7 @@ func TestWorkflowUnderSubagentBooksOnItsTurn(t *testing.T) {
 // no exact solve can refuse it; it resolves to that neighbouring split.
 func TestRemainderTTLSolveIsExact(t *testing.T) {
 	at := time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC)
-	rm, ok := modelinfo.ResolveRateModel(opus, at)
+	rm, ok := modelinfo.ResolveRateModel(opus, at, 0)
 	if !ok {
 		t.Fatal("opus unpriced")
 	}

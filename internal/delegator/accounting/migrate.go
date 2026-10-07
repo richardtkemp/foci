@@ -299,7 +299,8 @@ func solveTTL(rows []*v1Row) solveStats {
 func (st *solveStats) solveWindow(window []*v1Row, delta float64) {
 	st.Windows++
 	head := window[0]
-	rm, ok := modelinfo.ResolveRateModel(head.model, head.ts)
+	// A window is a sum of calls: base rates, never a prompt-size tier.
+	rm, ok := modelinfo.ResolveRateModel(head.model, head.ts, 0)
 	if !ok {
 		st.Unpriceable++
 		return
@@ -319,7 +320,7 @@ func (st *solveStats) solveWindow(window []*v1Row, delta float64) {
 			subWrites += r.priced.CacheWrite
 		}
 	}
-	all1h, priced := modelinfo.CostAsOf(head.model, head.ts, sum.Tokens(modelinfo.ClassCacheWrite1h))
+	all1h, priced := modelinfo.CostAsOfPrompt(head.model, head.ts, sum.Tokens(modelinfo.ClassCacheWrite1h), 0)
 	if !priced {
 		st.Unpriceable++
 		return

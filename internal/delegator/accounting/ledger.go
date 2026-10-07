@@ -337,7 +337,7 @@ func (tx *Tx) Book(c Call) (Booked, error) {
 	// whose unpriced-model warning is for a model it does not know.
 	var rateModel sql.NullString
 	if c.Model != "" {
-		if rm, ok := modelinfo.ResolveRateModel(c.Model, c.BilledAt); ok {
+		if rm, ok := modelinfo.ResolveRateModel(c.Model, c.BilledAt, c.PricingPrompt()); ok {
 			rateModel = sql.NullString{String: rm, Valid: true}
 		}
 	}
@@ -599,11 +599,24 @@ func (c Call) cost() *float64 {
 		}
 		return nil // see Book: an unnamed model is unpriced, not unknown
 	}
-	usd, priced := modelinfo.CostAsOf(c.Model, c.BilledAt, c.Tokens)
+	usd, priced := modelinfo.CostAsOfPrompt(c.Model, c.BilledAt, c.Tokens, c.PricingPrompt())
 	if !priced {
 		return nil
 	}
 	return &usd
+}
+
+// PricingPrompt is the prompt size that picks c's price tier (modelinfo.Tier):
+// its in-context counts for a real call, 0 (the base rates) for a remainder or
+// a legacy row. Those are sums of many calls, which have no single prompt
+// size, so a tier picked from their total would be wrong. Book stores the tier
+// in rate_model from this, and every Go pricer of a booked call must use it
+// too, so Go and the call_costs view agree.
+func (c Call) PricingPrompt() int {
+	if c.Finality == FinalityDerived || c.Kind == KindLegacy {
+		return 0
+	}
+	return modelinfo.PromptTokens(c.Tokens)
 }
 
 // fill is the context the call leaves: the sum of its in-context classes.

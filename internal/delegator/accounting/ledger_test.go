@@ -97,7 +97,7 @@ func multiRowGroup(t *testing.T) (model string, change string) {
 		for i := 1; i < len(rows); i++ {
 			if *rows[i].USDPerUnit != *rows[i-1].USDPerUnit && rows[i].EffectiveFrom != "" {
 				leaf := strings.SplitN(rm, "|", 2)[0]
-				if got, ok := modelinfo.ResolveRateModel(leaf, t0); ok && got == rm {
+				if got, ok := modelinfo.ResolveRateModel(leaf, t0, 0); ok && got == rm {
 					return leaf, rows[i].EffectiveFrom
 				}
 			}
@@ -125,6 +125,9 @@ func TestRepriceIdentity(t *testing.T) {
 		"anthropic/claude-sonnet-4-5", "claude-opus-4-8", "claude-opus-4-6[1m]",
 		"claude-sonnet-9-9", "claude-code", "glm-5.2", "openrouter/z-ai/glm-5-turbo",
 		"mystery-model-x", "<synthetic>",
+		// Prompt-size tiers (#2240): random counts put most calls over the
+		// 100K / 200K thresholds and some under.
+		"claude-haiku-5-5", "claude-sonnet-4",
 	}
 	classes := append(modelinfo.Classes(), "audio")
 	dates := []time.Time{

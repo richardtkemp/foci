@@ -89,7 +89,7 @@ func ReadJSONL(path string) []CallRow {
 		for class, n := range l.Tokens {
 			cc := ClassCost{Count: n}
 			if r.CostBasis != CostBasisRecorded && l.Model != "" {
-				if usd, ok := modelinfo.CostAsOf(l.Model, l.TS, modelinfo.Tokens{class: n}); ok {
+				if usd, ok := modelinfo.CostAsOfPrompt(l.Model, l.TS, modelinfo.Tokens{class: n}, c.PricingPrompt()); ok {
 					cc.CostUSD = &usd
 				}
 			}

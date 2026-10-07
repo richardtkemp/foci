@@ -10,6 +10,7 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -118,6 +119,46 @@ type Model struct {
 	// never priced at a silent $0. Built by Prices.Rates, the one place the
 	// sources' named figures are normalised into classes.
 	Rates map[Class]float64
+	// Tiers are prompt-size price schedules, ascending by MinPromptTokens (see
+	// Tier). Empty for a model priced the same at every prompt size.
+	Tiers []Tier
+}
+
+// Tier is a prompt-size price schedule (#2240): a call whose prompt — the sum
+// of its in-context classes, PromptTokens — is OVER MinPromptTokens is priced
+// wholly at Rates instead of the model's base Rates. "Over" is strict, as the
+// pricing pages word it ("prompts over 100,000 tokens"). A call takes the
+// highest tier it exceeds. The tier is chosen per CALL: a sum of calls (a
+// remainder, a solver window) has no single prompt size and prices at base.
+type Tier struct {
+	MinPromptTokens int
+	Rates           map[Class]float64
+}
+
+// tierFor returns the MinPromptTokens of the highest tier prompt is over, or 0
+// (the base rates) when it is over none.
+func (m Model) tierFor(prompt int) int {
+	tier := 0
+	for _, t := range m.Tiers {
+		if prompt > t.MinPromptTokens {
+			tier = t.MinPromptTokens
+		}
+	}
+	return tier
+}
+
+// ratesForTier returns the rates m prices tier at: its base Rates for 0, else
+// that tier's, or nil when m has no such tier (every class then unpriced).
+func (m Model) ratesForTier(tier int) map[Class]float64 {
+	if tier == 0 {
+		return m.Rates
+	}
+	for _, t := range m.Tiers {
+		if t.MinPromptTokens == tier {
+			return t.Rates
+		}
+	}
+	return nil
 }
 
 // equal reports whether two Models carry the same attributes and rates. Model
@@ -128,7 +169,10 @@ func (m Model) equal(o Model) bool {
 		m.ContextWindow == o.ContextWindow &&
 		m.Effort == o.Effort && m.Thinking == o.Thinking &&
 		m.Speed == o.Speed && m.Caching == o.Caching &&
-		maps.Equal(m.Rates, o.Rates)
+		maps.Equal(m.Rates, o.Rates) &&
+		slices.EqualFunc(m.Tiers, o.Tiers, func(a, b Tier) bool {
+			return a.MinPromptTokens == b.MinPromptTokens && maps.Equal(a.Rates, b.Rates)
+		})
 }
 
 // registry maps bare model IDs to provider→Model maps. The "" provider key is
@@ -220,8 +264,9 @@ type jsonlEntry struct {
 	Comment string `json:"comment,omitempty"`
 }
 
-// jsonlPriceTier mirrors a usage-dependent price schedule in models.jsonl
-// (OpenRouter overrides). Parsed for schema-completeness; not yet used.
+// jsonlPriceTier mirrors a prompt-size price schedule in models.jsonl
+// (OpenRouter's synced tiers, and hand-added rows such as claude-haiku-5-5).
+// parseModelsJSONL turns each into a Tier.
 type jsonlPriceTier struct {
 	MinPromptTokens   int     `json:"min_prompt_tokens"`
 	InputPer1M        float64 `json:"input_per_1m,omitempty"`
@@ -358,6 +403,26 @@ func parseModelsJSONL(data []byte) (registry map[string]map[string]Model, histor
 				WebSearch:         e.WebSearchPerCall,
 			}.Rates(),
 		}
+		for _, pt := range e.PriceTiers {
+			if pt.MinPromptTokens <= 0 {
+				return nil, nil, nil, fmt.Errorf("modelinfo: models.jsonl %s: price tier min_prompt_tokens must be > 0, got %d", e.ID, pt.MinPromptTokens)
+			}
+			m.Tiers = append(m.Tiers, Tier{
+				MinPromptTokens: pt.MinPromptTokens,
+				// A tier publishes token rates only; reasoning and web search
+				// follow the row's, through the same normalisation as base.
+				Rates: Prices{
+					Input:             pt.InputPer1M,
+					Output:            pt.OutputPer1M,
+					CacheRead:         pt.CacheReadPer1M,
+					CacheWrite5m:      pt.CacheWritePer1M,
+					CacheWrite1h:      pt.CacheWrite1hPer1M,
+					InternalReasoning: e.InternalReasoningPer1M,
+					WebSearch:         e.WebSearchPerCall,
+				}.Rates(),
+			})
+		}
+		slices.SortFunc(m.Tiers, func(a, b Tier) int { return a.MinPromptTokens - b.MinPromptTokens })
 		fieldsKnown := modelFieldsKnown{
 			ContextWindow: e.ContextWindow != 0,
 			Effort:        e.Effort != nil,
@@ -997,21 +1062,43 @@ func familyCanonicalLeaf(bare string) (string, bool) {
 // reported model string to a group is done ONCE, at booking, and the rate as
 // of any date is then a lookup within the group — in Go (RatesAsOf) and in SQL
 // (the token_rates table RateTable renders) alike.
-type rateGroup struct{ leaf, key string }
+// rateGroup names one row set's prices. tier is 0 for the base rates, else
+// the MinPromptTokens of a prompt-size Tier: each tier is its own group, so
+// the SQL views price a tiered call from token_rates like any other (#2240).
+type rateGroup struct {
+	leaf, key string
+	tier      int
+}
 
-// String is the rate_model spelling: "<leaf>|<provider>|<dev>".
+// String is the rate_model spelling: "<leaf>|<provider>|<dev>", plus
+// "|><min>" for a tier group.
 func (g rateGroup) String() string {
 	provider, dev, _ := strings.Cut(g.key, "\x00")
-	return g.leaf + "|" + provider + "|" + dev
+	s := g.leaf + "|" + provider + "|" + dev
+	if g.tier > 0 {
+		s += "|>" + strconv.Itoa(g.tier)
+	}
+	return s
 }
 
 // parseRateGroup inverts rateGroup.String.
 func parseRateGroup(s string) (rateGroup, bool) {
 	parts := strings.Split(s, "|")
-	if len(parts) != 3 || parts[0] == "" {
+	if len(parts) < 3 || len(parts) > 4 || parts[0] == "" {
 		return rateGroup{}, false
 	}
-	return rateGroup{leaf: parts[0], key: provKey(parts[1], parts[2])}, true
+	g := rateGroup{leaf: parts[0], key: provKey(parts[1], parts[2])}
+	if len(parts) == 4 {
+		if !strings.HasPrefix(parts[3], ">") {
+			return rateGroup{}, false
+		}
+		n, err := strconv.Atoi(parts[3][1:])
+		if err != nil || n <= 0 {
+			return rateGroup{}, false
+		}
+		g.tier = n
+	}
+	return g, true
 }
 
 // resolvedRow is one history row together with the group it came from.
@@ -1152,8 +1239,8 @@ func syntheticRates() map[Class]float64 {
 // model is not in the table, and a call on it is unpriced — never priced at a
 // guessed fallback rate. CC's synthetic sentinel resolves to a zero-rate
 // group.
-func ResolveRateModel(model string, at time.Time) (string, bool) {
-	g, ok := resolveGroup(model, at)
+func ResolveRateModel(model string, at time.Time, prompt int) (string, bool) {
+	g, ok := resolveGroup(model, at, prompt)
 	if !ok {
 		return "", false
 	}
@@ -1162,7 +1249,8 @@ func ResolveRateModel(model string, at time.Time) (string, bool) {
 
 // resolveGroup is ResolveRateModel's body. It notifies FamilyPricedModelHook
 // and UnpricedModelHook exactly as pricing always has.
-func resolveGroup(model string, at time.Time) (rateGroup, bool) {
+// prompt picks the price tier (Tier); 0 always gives the base rates.
+func resolveGroup(model string, at time.Time, prompt int) (rateGroup, bool) {
 	segs, bare := splitSegs(model)
 	if IsSynthetic(model) || IsSynthetic(bare) {
 		return syntheticGroup, true
@@ -1187,7 +1275,11 @@ func resolveGroup(model string, at time.Time) (rateGroup, bool) {
 	case !ok:
 		noteUnpriced(bare)
 	}
-	return r.group, ok
+	g := r.group
+	if ok {
+		g.tier = r.row.model.tierFor(prompt)
+	}
+	return g, ok
 }
 
 // RatesAsOf returns the class rates in effect for rateModel (a
@@ -1207,7 +1299,10 @@ func RatesAsOf(rateModel string, at time.Time) (map[Class]float64, bool) {
 	if len(rows) == 0 {
 		return nil, false
 	}
-	return rowAsOf(rows, at).model.Rates, true
+	// A tier the row in effect does not carry has no rates: every class reads
+	// unpriced, as RateTable renders it (NULL), never the base rates.
+	rates := rowAsOf(rows, at).model.ratesForTier(g.tier)
+	return rates, true
 }
 
 // CostAsOf prices one call's tokens for model at the rates in effect at `at`
@@ -1221,11 +1316,21 @@ func RatesAsOf(rateModel string, at time.Time) (map[Class]float64, bool) {
 // as the whole cost. The ledger's call_costs view shows the same call's cost
 // as NULL, and TestRepriceIdentity holds the two to each other. CC's synthetic
 // sentinel prices at $0 (syntheticGroup).
+//
+// The prompt-size tier (Tier) is chosen from t itself, so t must be ONE call's
+// counts. To price a sum of calls, or one class of a call, use CostAsOfPrompt.
 func CostAsOf(model string, at time.Time, t Tokens) (usd float64, priced bool) {
+	return CostAsOfPrompt(model, at, t, PromptTokens(t))
+}
+
+// CostAsOfPrompt is CostAsOf with the tier chosen from prompt rather than t:
+// the call's PromptTokens when t is one class of it, or 0 (base rates) when t
+// is a sum of calls, which has no single prompt size.
+func CostAsOfPrompt(model string, at time.Time, t Tokens, prompt int) (usd float64, priced bool) {
 	if !t.billed() {
 		return 0, true
 	}
-	g, ok := resolveGroup(model, at)
+	g, ok := resolveGroup(model, at, prompt)
 	if !ok {
 		return 0, false
 	}
@@ -1296,24 +1401,35 @@ func RateTable() []RateRow {
 	for _, leaf := range slices.Sorted(maps.Keys(history)) {
 		byKey := history[leaf]
 		for _, key := range slices.Sorted(maps.Keys(byKey)) {
-			rm := rateGroup{leaf: leaf, key: key}.String()
-			for i, row := range byKey[key] {
-				from := row.fetched
-				if i == 0 {
-					from = ""
+			// The base group, then one group per tier any of its rows carries.
+			// A row without that tier renders it NULL, as RatesAsOf reads it.
+			tiers := map[int]bool{0: true}
+			for _, row := range byKey[key] {
+				for _, t := range row.model.Tiers {
+					tiers[t.MinPromptTokens] = true
 				}
-				for _, c := range classes {
-					var rate *float64
-					if v, ok := row.model.Rates[c]; ok {
-						rate = &v
+			}
+			for _, tier := range slices.Sorted(maps.Keys(tiers)) {
+				rm := rateGroup{leaf: leaf, key: key, tier: tier}.String()
+				for i, row := range byKey[key] {
+					from := row.fetched
+					if i == 0 {
+						from = ""
 					}
-					s := slot{rm, c, from}
-					if j, seen := idx[s]; seen {
-						out[j].USDPerUnit = rate
-						continue
+					rowRates := row.model.ratesForTier(tier)
+					for _, c := range classes {
+						var rate *float64
+						if v, ok := rowRates[c]; ok {
+							rate = &v
+						}
+						s := slot{rm, c, from}
+						if j, seen := idx[s]; seen {
+							out[j].USDPerUnit = rate
+							continue
+						}
+						idx[s] = len(out)
+						out = append(out, RateRow{RateModel: rm, Class: c, EffectiveFrom: from, USDPerUnit: rate})
 					}
-					idx[s] = len(out)
-					out = append(out, RateRow{RateModel: rm, Class: c, EffectiveFrom: from, USDPerUnit: rate})
 				}
 			}
 		}
