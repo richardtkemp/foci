@@ -331,12 +331,24 @@ func (b *ExecBridge) exportedToolCount() int {
 // jsonPassthroughHelper is a bash helper emitted at the top of the shell
 // functions file. Each generated function calls it as its first line:
 //
-//	foci__json "tool" "key1 key2 key3" "$@" && return $?
+//	local __foci_json_rc=0
+//	foci__json "tool" "key1 key2 key3" "$@" && return $__foci_json_rc
 //
 // The guard fires only when ALL three conditions are met:
 //  1. Exactly one argument provided
 //  2. It parses as a JSON object (not array, string, number, etc.)
 //  3. Every key in the parsed object is a valid parameter name for the tool
+//
+// On a match the helper calls foci-call exactly once and stores that call's
+// exit status into the caller's __foci_json_rc local (bash dynamic scoping:
+// the generated function declares it local, so the value dies with the call
+// and cannot leak), then returns 0 — which is what fires the guard's
+// `&& return`, handing foci-call's status — whatever it is — back to the
+// caller. Before #2226 the helper returned foci-call's status directly, so a
+// failing passthrough did not fire the `&&`, fell through to the normal body
+// and ran foci-call a SECOND time. A return of 1 still means "not a
+// passthrough" (__foci_json_rc untouched): the guard does not fire and the
+// function's normal body runs.
 //
 // This prevents false positives when a single positional arg happens to
 // look like JSON (e.g. searching for a JSON string).
@@ -362,6 +374,8 @@ foci__json() {
     esac
   done
   foci-call "$(jq -nc --argjson p "$1" '{"tool":"'"$tool"'","params":$p}')"
+  __foci_json_rc=$?
+  return 0
 }
 export -f foci__json
 
@@ -437,16 +451,29 @@ var shellJSONInputTools = map[string]bool{"ask": true}
 // the output flag (see shellJSONFlagStrip).
 func hasJSONOutputFlag(t *Tool) bool { return !shellJSONInputTools[t.Name] }
 
+// shellJSONGuardRc declares, in every generated function, the local slot the
+// JSON passthrough guard returns foci-call's status through (#2226). It must
+// precede the guard line: the foci__json helper stores the one passthrough
+// foci-call's exit status into this caller-local (bash dynamic scoping) and
+// returns 0, so the guard's `&& return $__foci_json_rc` fires with the real
+// status instead of falling through to the normal body — which would call
+// foci-call a second time. `local` also keeps the helper's assignment from
+// leaking into the caller's shell.
+const shellJSONGuardRc = "  local __foci_json_rc=0"
+
 // shellFuncPrologue returns the lines every generated function runs after its
 // --help check: the stdout-piped detection, the --json output flag, then the
 // JSON passthrough guard (which calls foci-call itself, so it must come after
-// both).
+// both). The guard declares __foci_json_rc local first, so a passthrough
+// returns foci-call's own exit status after exactly one call, and a
+// non-passthrough (helper return 1) leaves the normal body to run.
 func shellFuncPrologue(t *Tool, validKeys string) string {
 	lines := []string{shellStdoutPipedDetect}
 	if hasJSONOutputFlag(t) {
 		lines = append(lines, shellJSONFlagStrip)
 	}
-	lines = append(lines, fmt.Sprintf("  foci__json %q %q \"$@\" && return $?", t.Name, validKeys))
+	lines = append(lines, shellJSONGuardRc)
+	lines = append(lines, fmt.Sprintf("  foci__json %q %q \"$@\" && return $__foci_json_rc", t.Name, validKeys))
 	return strings.Join(lines, "\n")
 }
 

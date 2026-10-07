@@ -130,9 +130,11 @@ func execExtraEnv(p setupParams) []string {
 	return env
 }
 
-// toolTable is ordered to match the historical API registration sequence, so the
-// model tool-list order (and thus prompt cache) is unchanged on the API path. The
-// exec path's order is cosmetic (shell-function definition order).
+// toolTable's row order decides registration order only; it is otherwise
+// cosmetic. The model's tool-list order — and so the prompt-cache prefix —
+// comes from Registry.ToolDefs(), which sorts by name, and the exec bridge's
+// shell-functions file likewise iterates Registry.All(), also name-sorted —
+// so this order reaches neither the API tools array nor the exec bridge.
 var toolTable = []toolEntry{
 	{name: "shell", paths: pathAPI, build: func(d *toolDeps) *tools.Tool {
 		live := d.p.resolvedLive
@@ -441,8 +443,9 @@ var toolTable = []toolEntry{
 	// whoami: read-only identity of the calling session (agent, session key,
 	// chat, platform, backend, transport, model) — the facts agents otherwise
 	// guess, like the chat id send_to_session addressing needs (#1135).
-	// Appended last so the API-path tool order — the prompt-cache prefix —
-	// is unchanged. The nil guards cover minimalSetupParams-based tests
+	// The row's position here is cosmetic: ToolDefs() sorts by name, so whoami
+	// reaches the API tools array between web_search and write wherever it
+	// sits in this table. The nil guards cover minimalSetupParams-based tests
 	// (nil sessionIndex, literal-nil agLazy); the lookups stay per-call so
 	// a /model switch is reflected.
 	{name: "whoami", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {

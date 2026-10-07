@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"testing"
 
+	"foci/internal/delegator/autoapprove"
 	"foci/internal/tools"
 )
 
@@ -47,5 +49,28 @@ func TestBuildExecRegistryExportsWhoami(t *testing.T) {
 		"model: unknown\n" // nil agLazy
 	if res.Text != want {
 		t.Errorf("whoami =\n%s\nwant\n%s", res.Text, want)
+	}
+}
+
+// TestBuildExecRegistryWhoamiAutoApproved proves the #2223 regression lock:
+// because the exec registry exports foci_whoami, FociShellRulesFor derives a
+// Bash:foci_whoami auto-approve rule for it, and the compiled rules approve
+// the bare `foci_whoami` Bash command through MatchWithEnv — the command a
+// delegated backend would ask about. Characterisation: this already holds on
+// the current code; the test pins it so removing the export (or the rule
+// derivation) cannot pass silently.
+func TestBuildExecRegistryWhoamiAutoApproved(t *testing.T) {
+	t.Parallel()
+
+	registry := buildExecRegistry(minimalSetupParams(t, "test"), stubWakeFn, nil, nil)
+	rules := autoapprove.FociShellRulesFor(registry.ExportedNames())
+	if !slices.Contains(rules, "Bash:foci_whoami") {
+		t.Errorf("FociShellRulesFor(ExportedNames()) = %v, want to contain Bash:foci_whoami", rules)
+	}
+
+	ok, veto := autoapprove.MatchWithEnv(autoapprove.Compile(rules), "Bash",
+		json.RawMessage(`{"command":"foci_whoami"}`), nil)
+	if !ok {
+		t.Errorf("compiled foci rules do not auto-approve the Bash command foci_whoami (veto: %s)", veto)
 	}
 }

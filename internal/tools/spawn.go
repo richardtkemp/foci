@@ -51,6 +51,9 @@ type SpawnAgent interface {
 // exec and tmux are excluded because they bypass file tool sandboxing —
 // the isolated file tools enforce path containment, but shell access
 // allows arbitrary filesystem access and symlink creation.
+// whoami is excluded because a one-shot spawn has no session of its own:
+// its tool calls run on the parent's context, so whoami would report the
+// parent's session key, chat and model as if they were the spawn's (#2226).
 var spawnRawBlacklist = map[string]bool{
 	"shell":           true,
 	"tmux":            true,
@@ -58,6 +61,7 @@ var spawnRawBlacklist = map[string]bool{
 	"send_to_session": true,
 	"scratchpad":      true,
 	"todo":            true,
+	"whoami":          true,
 }
 
 // spawnCharacterBlacklist lists tools excluded from "character" mode spawns.
@@ -66,8 +70,12 @@ var spawnRawBlacklist = map[string]bool{
 // no need to inject into other sessions, and giving a throwaway spawn that reach
 // is surface it doesn't need (the real agent can still use send_to_session).
 // raw/explore already exclude it; this brings character into line for that tool.
+// whoami is excluded for the same reason as raw (#2226): a one-shot's tool
+// calls run on the parent's context, so it would report the parent's
+// session key, chat and model.
 var spawnCharacterBlacklist = map[string]bool{
 	"send_to_session": true,
+	"whoami":          true,
 }
 
 // exploreSystemPrompt is the system prompt for explore spawn mode.

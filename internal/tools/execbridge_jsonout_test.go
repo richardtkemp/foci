@@ -32,6 +32,28 @@ func runStubbedShellFunc(t *testing.T, body, cmd string) (int, string) {
 	return rc, string(out)
 }
 
+// runStrictStubShellFunc is runStubbedShellFunc with a STRICT stub foci-call:
+// it echoes the output format and request it was given like the lenient one,
+// but exits non-zero unless its argument is a JSON request whose params is an
+// object. A test asserting rc 0 through this stub therefore really fails on a
+// malformed request (#2226) — the lenient stub always exits 0, so its rc
+// assertions cannot fail.
+func runStrictStubShellFunc(t *testing.T, body, cmd string) (int, string) {
+	t.Helper()
+	script := jsonPassthroughHelper +
+		"foci-call() { printf 'fmt=%s req=%s\\n' \"$FOCI_OUTPUT_FORMAT\" \"$1\"; jq -e '.params | type == \"object\"' <<<\"$1\" >/dev/null; }\n" +
+		body + "\n" + cmd + "\n"
+	c := osexec.Command("bash", "-c", script)
+	out, err := c.CombinedOutput()
+	rc := 0
+	if ee, ok := err.(*osexec.ExitError); ok {
+		rc = ee.ExitCode()
+	} else if err != nil {
+		t.Fatalf("bash: %v", err)
+	}
+	return rc, string(out)
+}
+
 // TestShellFuncJSONOutputFlag: --json (#1215) is accepted in any position by
 // the generic and the hand-written wrappers, sets the forwarded output format,
 // and is removed before parsing so every other argument arrives intact.

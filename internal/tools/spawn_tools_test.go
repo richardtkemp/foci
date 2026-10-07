@@ -86,6 +86,12 @@ func TestSpawnRawToolAllowlist(t *testing.T) {
 	//   - Can it escape the sandbox or communicate externally?
 	//     Add it to spawnRawBlacklist in spawn.go.
 
+	// whoami must be classified too: a one-shot spawn has no session of
+	// its own (its tool calls run on the parent's context), so whoami
+	// would report the parent's identity — it belongs in the blacklist.
+	// On code missing that entry this fails as "neither allowed nor
+	// blacklisted", which is exactly the drift this test exists to catch.
+
 	// Tools that should be available in raw-mode spawns.
 	// These are safe within the file-tool sandbox (no shell access,
 	// no external communication, no sandbox escape).
@@ -111,7 +117,7 @@ func TestSpawnRawToolAllowlist(t *testing.T) {
 		"memory_search", "scratchpad", "todo",
 		"bitwarden_search", "bitwarden_unlock",
 		"send_to_chat", "send_to_session",
-		"remind", "spawn",
+		"remind", "spawn", "whoami",
 	}
 	for _, name := range allTools {
 		reg.Register(&Tool{
@@ -186,6 +192,50 @@ func TestSpawnRawToolAllowlist(t *testing.T) {
 	for name := range tools {
 		if !defNames[name] {
 			t.Errorf("tool %q has a handler but no schema definition", name)
+		}
+	}
+}
+
+// TestSpawnOneShotToolSetsExcludeWhoami proves whoami is excluded from both
+// one-shot spawn tool sets: a one-shot spawn has no session of its own and
+// its tool calls run on the parent's context, so whoami would report the
+// parent's session key, chat and model as if they were the spawn's (#2226).
+// It must be absent from both the defs and the tools map of each set, while
+// an ordinary tool (read) still passes both filters.
+func TestSpawnOneShotToolSetsExcludeWhoami(t *testing.T) {
+	t.Parallel()
+
+	reg := NewRegistry()
+	reg.Register(NewWhoamiTool(WhoamiDeps{}))
+	reg.Register(&Tool{
+		Name:       "read",
+		Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
+		Execute:    func(ctx context.Context, params json.RawMessage) (ToolResult, error) { return TextResult("ok"), nil },
+	})
+
+	type toolSet struct {
+		mode  string
+		defs  []provider.ToolDef
+		tools map[string]*Tool
+	}
+	rawDefs, rawTools := spawnIsolatedToolSet(reg, spawnRawBlacklist, nil, t.TempDir(), 0o640)
+	charDefs, charTools := spawnToolSet(reg, spawnCharacterBlacklist)
+	for _, s := range []toolSet{{"raw", rawDefs, rawTools}, {"character", charDefs, charTools}} {
+		defNames := make(map[string]bool, len(s.defs))
+		for _, d := range s.defs {
+			defNames[d.Name()] = true
+		}
+		if _, ok := s.tools["whoami"]; ok {
+			t.Errorf("%s mode: whoami is in the tools map — a one-shot would report the parent's identity", s.mode)
+		}
+		if defNames["whoami"] {
+			t.Errorf("%s mode: whoami is in the defs — the spawned model could call it", s.mode)
+		}
+		if _, ok := s.tools["read"]; !ok {
+			t.Errorf("%s mode: read (control) missing from tools map — the exclusion is over-broad", s.mode)
+		}
+		if !defNames["read"] {
+			t.Errorf("%s mode: read (control) missing from defs — the exclusion is over-broad", s.mode)
 		}
 	}
 }

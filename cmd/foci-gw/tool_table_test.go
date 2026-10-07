@@ -17,9 +17,10 @@ import (
 // TestToolTable_PerPathSets locks the unified tool table (tool_table.go) as the
 // single source of truth for which tools exist on which path. It asserts the
 // exact, ordered list of entry names for the API path and the (subset) exec
-// path. The API order is load-bearing: it fixes the model's tool-list order and
-// therefore the prompt-cache prefix, so this test fails loudly if an entry is
-// added, removed, reordered, or has its path flags changed.
+// path, pinning the table's registration order. The model's tool-list order —
+// and so the prompt-cache prefix — comes from Registry.ToolDefs()'s name sort,
+// not from this list; this test locks which rows exist on which path (and
+// their path flags), not the cache.
 func TestToolTable_PerPathSets(t *testing.T) {
 	t.Parallel()
 

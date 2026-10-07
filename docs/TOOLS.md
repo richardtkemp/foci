@@ -85,12 +85,12 @@ Unified sub-call to a model with four context modes, all with tool access:
 
 | Mode | System prompt | Tools | Behaviour |
 |------|--------------|-------|-----------|
-| `raw` | None | Most (no `send_to_chat`, `send_to_session`) | One-shot. No character context means no communication awareness. |
-| `character` | Character files only | All | One-shot with identity. |
+| `raw` | None | Most (no `send_to_chat`, `send_to_session`, `whoami`) | One-shot. No character context means no communication awareness. |
+| `character` | Character files only | All except `send_to_session`, `whoami` | One-shot with identity. |
 | `clone` (default) | Full clone | All | Branch session — a headless self-fork. Runs async, delivers result on completion. |
 | `explore` | Code explorer | Read-only allowlist (see below) | One-shot. Safe exploration — no file mutation, no shell exec, no messaging. Uses the `cheap` model group (which defaults to the `powerful` model when `cheap` is unset). |
 
-`clone` creates a branch `{parentKey}/b{TIMESTAMP}`, runs via `AsyncNotifier`, and returns an immediate ack. Recursive `clone` is blocked. Concurrent spawns limited by `max_concurrent_spawns` (default 3). `spawn` itself is excluded from one-shot tool sets to prevent recursion.
+`clone` creates a branch `{parentKey}/b{TIMESTAMP}`, runs via `AsyncNotifier`, and returns an immediate ack. Recursive `clone` is blocked. Concurrent spawns limited by `max_concurrent_spawns` (default 3). `spawn` itself is excluded from one-shot tool sets to prevent recursion. The one-shot modes (`raw`, `character`) also exclude `whoami`: their tool calls run on the parent's context, so it would report the parent's session key, chat and model.
 
 **`explore` allowlist.** The read-only tool set for `explore` is broader than just the search/read primitives: `git` and `todo` are always available, and the following are enabled conditionally (based on config/availability): `file`, `stat`, `wc`, `head`, `tail`, `tree`, `du`, `jq`, `yq`, `mdq`, `docker`, `systemctl`, `sqlite3`, `crontab`, `id`. None of these can mutate the workspace — they are inspection-only commands wrapped as tools.
 
