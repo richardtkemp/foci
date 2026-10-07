@@ -180,6 +180,14 @@ fgw_testdir = $(shell mkdir -p /tmp/fgw && mktemp -d /tmp/fgw/$(1)-XXXXXXXX)
 # unmodified tracked file to its last commit time (Go keys a file a test read
 # on its mtime, and a fresh checkout writes every file "now").
 fgw_shared_testdir := /tmp/fgw/run-$(shell id -un)
+# go test also keys every file a test READS by its ABSOLUTE path (traced with
+# GODEBUG=gocachehash=1: "open /home/rich/git/<checkout>/foci.toml.example"), so
+# two checkouts never share a result for such a test. Inside the heavy lock the
+# test runs from this one symlink, repointed at the current checkout, so every
+# checkout presents the same path. Safe because the lock serialises all users of
+# the link (one per user). The link's own mtime is pinned too: go hashes an
+# Lstat of any path a test stats, and the link is recreated on every run.
+fgw_srclink := /tmp/fgw/src-$(shell id -un)
 fgw_logfile = $(shell mkdir -p /tmp/fgw && mktemp /tmp/fgw/$(1)-XXXXXXXX.log)
 
 # `make test` seals itself under Landlock BY DEFAULT (foci_todo #1523) via
@@ -219,7 +227,7 @@ test: llbox
 	@# #1498). The /tmp/fgw daily cron sweep (entries >24h) remains as a backstop
 	@# for anything this recipe doesn't reach (e.g. an aborted run).
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; rm -rf $(TESTDIR) && mkdir -p $(TESTDIR)/home; $(REAP_GRADLE) bash scripts/seal-test.sh unit $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) 9<&- ; STATUS=$$? ; \
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; rm -rf $(TESTDIR) && mkdir -p $(TESTDIR)/home && ln -sfn $(CURDIR) $(fgw_srclink) && touch -h -d @946684800 $(fgw_srclink) && cd $(fgw_srclink) && $(REAP_GRADLE) bash scripts/seal-test.sh unit $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; bash scripts/test-fail-summary.sh $(LOGFILE); fi ; \
 	  rm -rf $(TESTDIR) ; \
@@ -251,7 +259,7 @@ test-one: llbox
 	@# for the rationale (serialises against other heavy builds; read-only lock
 	@# fd so go test's children don't inherit it).
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; rm -rf $(TESTDIR) && mkdir -p $(TESTDIR)/home; $(REAP_GRADLE) bash scripts/seal-test.sh one $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) $(PKG) "$(RUN)" "$(V)" "$(COUNT)" 9<&- ; STATUS=$$? ; \
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; rm -rf $(TESTDIR) && mkdir -p $(TESTDIR)/home && ln -sfn $(CURDIR) $(fgw_srclink) && touch -h -d @946684800 $(fgw_srclink) && cd $(fgw_srclink) && $(REAP_GRADLE) bash scripts/seal-test.sh one $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) $(PKG) "$(RUN)" "$(V)" "$(COUNT)" 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; bash scripts/test-fail-summary.sh $(LOGFILE); fi ; \
 	  rm -rf $(TESTDIR) ; \

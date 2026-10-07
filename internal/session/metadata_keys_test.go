@@ -178,7 +178,9 @@ func TestSessionMetadataCallSitesUseRegistry(t *testing.T) {
 			if path == root {
 				return nil
 			}
-			if strings.HasPrefix(name, ".") || name == "vendor" || name == "testdata" {
+			// bin holds build output (no sources); reading it would key this
+			// test's cached result on binaries rebuilt every run.
+			if strings.HasPrefix(name, ".") || name == "vendor" || name == "testdata" || name == "bin" {
 				return filepath.SkipDir
 			}
 			return nil
