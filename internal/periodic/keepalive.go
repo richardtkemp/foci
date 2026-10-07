@@ -187,7 +187,7 @@ func (r *Runner) lastCacheTouchAge(sessionKey string, now time.Time) (time.Durat
 }
 
 // cacheProvablyWarm reports whether the session's prompt cache is provably
-// still warm at now: a recorded last_cache_touch older than the runner's
+// still warm at now: a recorded last_cache_touch younger than the runner's
 // cacheTTL. Quiet-hours compaction (#2218) requires this — compacting a cold
 // session pays a full-context read for nothing. Fail closed: no recorded
 // touch, or an unknown TTL (cacheTTL == 0, warmth unprovable), is NOT warm.
