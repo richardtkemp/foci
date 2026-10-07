@@ -87,7 +87,9 @@ func (w *secretsSetWizard) handleValue(text string) (string, bool) {
 		return "Value cannot be empty. Try again:", false
 	}
 
-	w.store.Set(w.section+"."+w.key, text)
+	if err := w.store.Set(w.section+"."+w.key, text); err != nil {
+		return fmt.Sprintf("Failed to set: %s", err), true
+	}
 	if err := w.store.Save(); err != nil {
 		return fmt.Sprintf("Failed to save: %s", err), true
 	}
@@ -121,7 +123,9 @@ func (w *secretsSetWizard) handleHosts(text string) (string, bool) {
 		return "No valid hosts provided. Enter hosts comma-separated, or /stop to skip:", false
 	}
 
-	w.store.SetAllowedHosts(w.section, hosts)
+	if err := w.store.SetAllowedHosts(w.section, hosts); err != nil {
+		return fmt.Sprintf("Failed to set hosts: %s", err), true
+	}
 	if err := w.store.Save(); err != nil {
 		return fmt.Sprintf("Failed to save hosts: %s", err), true
 	}
@@ -169,7 +173,9 @@ func (w *secretsHostsAddWizard) Handle(text string) (string, bool) {
 	}
 
 	host := strings.ToLower(text)
-	w.store.AddAllowedHost(w.section, host)
+	if err := w.store.AddAllowedHost(w.section, host); err != nil {
+		return fmt.Sprintf("Failed to add host: %s", err), true
+	}
 	if err := w.store.Save(); err != nil {
 		return fmt.Sprintf("Failed to save: %s", err), true
 	}

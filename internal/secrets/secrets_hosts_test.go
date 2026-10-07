@@ -139,13 +139,13 @@ allowed_hosts = ["api.example.com"]
 		t.Fatalf("Load: %v", err)
 	}
 
-	s.AddAllowedHost("myapi", "api.backup.com")
+	mustMutate(t, s.AddAllowedHost("myapi", "api.backup.com"))
 	hosts := s.SectionAllowedHosts("myapi")
 	if len(hosts) != 2 {
 		t.Fatalf("expected 2 hosts, got %d: %v", len(hosts), hosts)
 	}
 
-	s.AddAllowedHost("myapi", "API.EXAMPLE.COM")
+	mustMutate(t, s.AddAllowedHost("myapi", "API.EXAMPLE.COM"))
 	hosts = s.SectionAllowedHosts("myapi")
 	if len(hosts) != 2 {
 		t.Errorf("duplicate add should be no-op, got %d hosts: %v", len(hosts), hosts)
@@ -166,7 +166,9 @@ allowed_hosts = ["api.example.com", "api.backup.com"]
 		t.Fatalf("Load: %v", err)
 	}
 
-	if !s.RemoveAllowedHost("myapi", "API.EXAMPLE.COM") {
+	found, err := s.RemoveAllowedHost("myapi", "API.EXAMPLE.COM")
+	mustMutate(t, err)
+	if !found {
 		t.Error("RemoveAllowedHost should return true for existing host")
 	}
 	hosts := s.SectionAllowedHosts("myapi")
@@ -174,7 +176,9 @@ allowed_hosts = ["api.example.com", "api.backup.com"]
 		t.Errorf("after remove: %v", hosts)
 	}
 
-	if s.RemoveAllowedHost("myapi", "nonexistent.com") {
+	found, err = s.RemoveAllowedHost("myapi", "nonexistent.com")
+	mustMutate(t, err)
+	if found {
 		t.Error("RemoveAllowedHost should return false for missing host")
 	}
 }
@@ -192,13 +196,13 @@ allowed_hosts = ["old.com"]
 		t.Fatalf("Load: %v", err)
 	}
 
-	s.SetAllowedHosts("myapi", []string{"new1.com", "new2.com"})
+	mustMutate(t, s.SetAllowedHosts("myapi", []string{"new1.com", "new2.com"}))
 	hosts := s.SectionAllowedHosts("myapi")
 	if len(hosts) != 2 || hosts[0] != "new1.com" || hosts[1] != "new2.com" {
 		t.Errorf("SetAllowedHosts: %v", hosts)
 	}
 
-	s.SetAllowedHosts("myapi", nil)
+	mustMutate(t, s.SetAllowedHosts("myapi", nil))
 	if s.SectionAllowedHosts("myapi") != nil {
 		t.Error("SetAllowedHosts(nil) should clear")
 	}
@@ -219,7 +223,7 @@ allowed_hosts = ["api.example.com"]
 		t.Fatalf("Load: %v", err)
 	}
 
-	s.AddAllowedHost("myapi", "api.new.com")
+	mustMutate(t, s.AddAllowedHost("myapi", "api.new.com"))
 	if err := s.Save(); err != nil {
 		t.Fatalf("Save: %v", err)
 	}

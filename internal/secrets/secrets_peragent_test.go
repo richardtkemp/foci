@@ -5,6 +5,62 @@ import (
 	"testing"
 )
 
+func TestViewMutatorsAreRejected(t *testing.T) {
+	// Proves per-agent views are read-only: every mutator refuses instead
+	// of silently writing the shared root state that every other agent
+	// reads. Save already refused; the mutators must not leak around it.
+	path := writeSecrets(t, `
+[svc]
+key = "v1"
+allowed_hosts = ["api.example.com"]
+allowed_in_body = ["key"]
+`)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	view := s.ForAgent("alpha")
+
+	if err := view.Set("svc.evil", "x"); err == nil {
+		t.Error("view.Set should be rejected")
+	}
+	if found, err := view.Remove("svc.key"); err == nil || found {
+		t.Error("view.Remove should be rejected")
+	}
+	if err := view.AddAllowedHost("svc", "evil.com"); err == nil {
+		t.Error("view.AddAllowedHost should be rejected")
+	}
+	if found, err := view.RemoveAllowedHost("svc", "api.example.com"); err == nil || found {
+		t.Error("view.RemoveAllowedHost should be rejected")
+	}
+	if err := view.SetAllowedHosts("svc", nil); err == nil {
+		t.Error("view.SetAllowedHosts should be rejected")
+	}
+	if err := view.AddAllowedInBody("svc", "evil"); err == nil {
+		t.Error("view.AddAllowedInBody should be rejected")
+	}
+	if found, err := view.RemoveAllowedInBody("svc", "key"); err == nil || found {
+		t.Error("view.RemoveAllowedInBody should be rejected")
+	}
+	if err := view.SetAllowedInBody("svc", nil); err == nil {
+		t.Error("view.SetAllowedInBody should be rejected")
+	}
+
+	// None of the rejected calls touched the shared root state.
+	if _, ok := s.Get("svc.evil"); ok {
+		t.Error("a rejected view mutation leaked into the root store")
+	}
+	if v, ok := s.Get("svc.key"); !ok || v != "v1" {
+		t.Errorf("root Get(svc.key) = %q, %v — want v1 untouched", v, ok)
+	}
+	if hosts := s.SectionAllowedHosts("svc"); len(hosts) != 1 || hosts[0] != "api.example.com" {
+		t.Errorf("root SectionAllowedHosts(svc) = %v — want [api.example.com]", hosts)
+	}
+	if !s.IsAllowedInBody("svc.key") {
+		t.Error("root IsAllowedInBody(svc.key) = false — want untouched")
+	}
+}
+
 func TestLoadPerAgentSecrets(t *testing.T) {
 	// Proves that per-agent secret sections override global values
 	// for matching keys, add agent-exclusive keys, and leave global sections untouched,

@@ -28,8 +28,12 @@ func (fakeTTS) Synthesize(_ context.Context, _ string) ([]byte, error) { return 
 func setupAgentFixture(t *testing.T) AgentSetupParams {
 	t.Helper()
 	store := emptySecretStore(t)
-	store.Set("telegram.scoutbot", "tok")
-	store.Set("telegram.facetbot", "tok2")
+	if err := store.Set("telegram.scoutbot", "tok"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Set("telegram.facetbot", "tok2"); err != nil {
+		t.Fatal(err)
+	}
 
 	cfg := &config.Config{
 		Platforms: []config.PlatformConfig{{

@@ -14,3 +14,12 @@ func writeSecrets(t *testing.T, content string) string {
 	os.WriteFile(path, []byte(content), 0600)
 	return path
 }
+
+// mustMutate fails the test when a root-store mutator returns an error
+// (per-agent views are read-only; these tests mutate root stores).
+func mustMutate(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}

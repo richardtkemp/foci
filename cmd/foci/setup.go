@@ -295,7 +295,9 @@ func runSetupNonInteractive(f setupFlags) error {
 
 	// Store API key under the provider's secret key
 	if f.apiKey != "" && prov != nil {
-		store.Set(prov.SecretKey, f.apiKey)
+		if err := store.Set(prov.SecretKey, f.apiKey); err != nil {
+			return fmt.Errorf("set secret: %w", err)
+		}
 	}
 
 	// Run provider setup (non-interactive)
@@ -568,7 +570,9 @@ func runSetupInteractive(f setupFlags) error {
 			if state.provider == "api" && state.apiKey != "" && state.model != "" {
 				rm, err := config.ResolveModel(state.model, "", nil)
 				if err == nil && rm != nil {
-					store.Set(rm.Endpoint+".api_key", state.apiKey)
+					if err := store.Set(rm.Endpoint+".api_key", state.apiKey); err != nil {
+						return fmt.Errorf("set secret: %w", err)
+					}
 				}
 			}
 
@@ -665,7 +669,9 @@ func writeSetupFiles(f setupFlags, configOpts config.SetupOptions, store *secret
 	}
 	sort.Strings(provSecretKeys)
 	for _, k := range provSecretKeys {
-		store.Set(k, providerSecrets[k])
+		if err := store.Set(k, providerSecrets[k]); err != nil {
+			return fmt.Errorf("set secret %s: %w", k, err)
+		}
 	}
 	if err := store.Save(); err != nil {
 		return fmt.Errorf("write secrets.toml: %w", err)

@@ -286,7 +286,9 @@ func cmdAuth(args []string) error {
 		}
 	}
 
-	store.Set(prov.SecretKey, apiKey)
+	if err := store.Set(prov.SecretKey, apiKey); err != nil {
+		return fmt.Errorf("set secret: %w", err)
+	}
 	if err := store.Save(); err != nil {
 		return fmt.Errorf("save secrets: %w", err)
 	}
@@ -445,7 +447,9 @@ func cmdSecrets(args []string) error {
 		if err != nil {
 			return fmt.Errorf("load secrets (%s): %w", secretsPath, err)
 		}
-		store.Set(subArgs[0], subArgs[1])
+		if err := store.Set(subArgs[0], subArgs[1]); err != nil {
+			return fmt.Errorf("set secret: %w", err)
+		}
 		if err := store.Save(); err != nil {
 			return fmt.Errorf("save secrets: %w", err)
 		}
@@ -464,7 +468,11 @@ func cmdSecrets(args []string) error {
 		if err != nil {
 			return fmt.Errorf("load secrets (%s): %w", secretsPath, err)
 		}
-		if !store.Remove(subArgs[0]) {
+		found, err := store.Remove(subArgs[0])
+		if err != nil {
+			return fmt.Errorf("remove secret: %w", err)
+		}
+		if !found {
 			return fmt.Errorf("secret %q not found", subArgs[0])
 		}
 		if err := store.Save(); err != nil {

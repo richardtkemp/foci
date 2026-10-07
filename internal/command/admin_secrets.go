@@ -9,21 +9,22 @@ import (
 	"foci/internal/display"
 )
 
-// SecretsStore is the interface for managing secrets.
+// SecretsStore is the interface for managing secrets. The mutators return
+// errors: the implementing store may be a read-only per-agent view.
 type SecretsStore interface {
 	Names() []string
 	Get(name string) (string, bool)
-	Set(name, value string)
-	Remove(name string) bool
+	Set(name, value string) error
+	Remove(name string) (bool, error)
 	Save() error
 	SectionAllowedHosts(section string) []string
-	AddAllowedHost(section, host string)
-	RemoveAllowedHost(section, host string) bool
-	SetAllowedHosts(section string, hosts []string)
+	AddAllowedHost(section, host string) error
+	RemoveAllowedHost(section, host string) (bool, error)
+	SetAllowedHosts(section string, hosts []string) error
 	SectionAllowedInBody(section string) []string
-	AddAllowedInBody(section, key string)
-	RemoveAllowedInBody(section, key string) bool
-	SetAllowedInBody(section string, keys []string)
+	AddAllowedInBody(section, key string) error
+	RemoveAllowedInBody(section, key string) (bool, error)
+	SetAllowedInBody(section string, keys []string) error
 }
 
 // SecretsDeps holds dependencies for the /secrets wizard flows.
@@ -250,7 +251,9 @@ func secretsSetDispatch(cc CommandContext, store SecretsStore, scope string, arg
 		// "set <section> <key> <value...>" — assemble section.key and value.
 		name := args[0] + "." + args[1]
 		value := strings.Join(args[2:], " ")
-		store.Set(name, value)
+		if err := store.Set(name, value); err != nil {
+			return Response{}, fmt.Errorf("set secret: %w", err)
+		}
 		if err := store.Save(); err != nil {
 			return Response{}, fmt.Errorf("save secrets: %w", err)
 		}
@@ -308,7 +311,11 @@ func secretsRemoveDispatch(store SecretsStore, args []string) (Response, error) 
 
 // secretsRemoveDirect removes a secret by full name (section.key).
 func secretsRemoveDirect(store SecretsStore, name string) (Response, error) {
-	if !store.Remove(name) {
+	found, err := store.Remove(name)
+	if err != nil {
+		return Response{}, fmt.Errorf("remove secret: %w", err)
+	}
+	if !found {
 		return Response{Text: fmt.Sprintf("Secret %s not found.", name)}, nil
 	}
 	if err := store.Save(); err != nil {
@@ -342,7 +349,9 @@ func secretsHostsDispatch(cc CommandContext, store SecretsStore, scope string, a
 			return secretsActivateHostsAddWizard(cc, store, scope, section)
 		}
 		host := strings.ToLower(strings.TrimSpace(args[2]))
-		store.AddAllowedHost(section, host)
+		if err := store.AddAllowedHost(section, host); err != nil {
+			return Response{}, fmt.Errorf("add allowed host: %w", err)
+		}
 		if err := store.Save(); err != nil {
 			return Response{}, fmt.Errorf("save secrets: %w", err)
 		}
@@ -353,7 +362,11 @@ func secretsHostsDispatch(cc CommandContext, store SecretsStore, scope string, a
 			return Response{Text: "Usage: /secrets hosts <section> remove <host>"}, nil
 		}
 		host := args[2]
-		if !store.RemoveAllowedHost(section, host) {
+		found, err := store.RemoveAllowedHost(section, host)
+		if err != nil {
+			return Response{}, fmt.Errorf("remove allowed host: %w", err)
+		}
+		if !found {
 			return Response{Text: fmt.Sprintf("Host %s not found in [%s] allowed_hosts.", host, section)}, nil
 		}
 		if err := store.Save(); err != nil {
@@ -362,7 +375,9 @@ func secretsHostsDispatch(cc CommandContext, store SecretsStore, scope string, a
 		return Response{Text: fmt.Sprintf("Removed %s from [%s] allowed_hosts.", host, section)}, nil
 
 	case "clear":
-		store.SetAllowedHosts(section, nil)
+		if err := store.SetAllowedHosts(section, nil); err != nil {
+			return Response{}, fmt.Errorf("clear allowed hosts: %w", err)
+		}
 		if err := store.Save(); err != nil {
 			return Response{}, fmt.Errorf("save secrets: %w", err)
 		}
@@ -409,7 +424,9 @@ func secretsSetDirect(store SecretsStore, args []string) (Response, error) {
 		return Response{Text: "Key must be in section.key format (e.g. custom.api_key)"}, nil
 	}
 	value := strings.Join(args[1:], " ")
-	store.Set(name, value)
+	if err := store.Set(name, value); err != nil {
+		return Response{}, fmt.Errorf("set secret: %w", err)
+	}
 	if err := store.Save(); err != nil {
 		return Response{}, fmt.Errorf("save secrets: %w", err)
 	}
@@ -439,7 +456,9 @@ func secretsBodyDispatch(store SecretsStore, args []string) (Response, error) {
 			return Response{Text: "Usage: /secrets body <section> add <key>"}, nil
 		}
 		key := strings.TrimSpace(args[2])
-		store.AddAllowedInBody(section, key)
+		if err := store.AddAllowedInBody(section, key); err != nil {
+			return Response{}, fmt.Errorf("add allowed-in-body key: %w", err)
+		}
 		if err := store.Save(); err != nil {
 			return Response{}, fmt.Errorf("save secrets: %w", err)
 		}
@@ -450,7 +469,11 @@ func secretsBodyDispatch(store SecretsStore, args []string) (Response, error) {
 			return Response{Text: "Usage: /secrets body <section> remove <key>"}, nil
 		}
 		key := args[2]
-		if !store.RemoveAllowedInBody(section, key) {
+		found, err := store.RemoveAllowedInBody(section, key)
+		if err != nil {
+			return Response{}, fmt.Errorf("remove allowed-in-body key: %w", err)
+		}
+		if !found {
 			return Response{Text: fmt.Sprintf("Key %q not found in [%s] allowed_in_body.", key, section)}, nil
 		}
 		if err := store.Save(); err != nil {
@@ -459,7 +482,9 @@ func secretsBodyDispatch(store SecretsStore, args []string) (Response, error) {
 		return Response{Text: fmt.Sprintf("Removed %q from [%s] allowed_in_body.", key, section)}, nil
 
 	case "clear":
-		store.SetAllowedInBody(section, nil)
+		if err := store.SetAllowedInBody(section, nil); err != nil {
+			return Response{}, fmt.Errorf("clear allowed-in-body keys: %w", err)
+		}
 		if err := store.Save(); err != nil {
 			return Response{}, fmt.Errorf("save secrets: %w", err)
 		}

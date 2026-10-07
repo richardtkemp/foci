@@ -592,6 +592,7 @@ type mockSecretsStore struct {
 	allowedHosts  map[string][]string
 	allowedInBody map[string][]string
 	saved         bool
+	mutErr        error // returned by every mutator when set
 }
 
 func (m *mockSecretsStore) Names() []string {
@@ -602,13 +603,13 @@ func (m *mockSecretsStore) Names() []string {
 	return names
 }
 func (m *mockSecretsStore) Get(name string) (string, bool) { v, ok := m.data[name]; return v, ok }
-func (m *mockSecretsStore) Set(name, value string)         { m.data[name] = value }
-func (m *mockSecretsStore) Remove(name string) bool {
+func (m *mockSecretsStore) Set(name, value string) error { m.data[name] = value; return m.mutErr }
+func (m *mockSecretsStore) Remove(name string) (bool, error) {
 	if _, ok := m.data[name]; !ok {
-		return false
+		return false, m.mutErr
 	}
 	delete(m.data, name)
-	return true
+	return true, m.mutErr
 }
 func (m *mockSecretsStore) Save() error { m.saved = true; return nil }
 func (m *mockSecretsStore) SectionAllowedHosts(section string) []string {
@@ -617,24 +618,25 @@ func (m *mockSecretsStore) SectionAllowedHosts(section string) []string {
 	}
 	return m.allowedHosts[section]
 }
-func (m *mockSecretsStore) AddAllowedHost(section, host string) {
+func (m *mockSecretsStore) AddAllowedHost(section, host string) error {
 	if m.allowedHosts == nil {
 		m.allowedHosts = make(map[string][]string)
 	}
 	host = strings.ToLower(strings.TrimSpace(host))
 	m.allowedHosts[section] = append(m.allowedHosts[section], host)
+	return m.mutErr
 }
-func (m *mockSecretsStore) RemoveAllowedHost(section, host string) bool {
+func (m *mockSecretsStore) RemoveAllowedHost(section, host string) (bool, error) {
 	hosts := m.allowedHosts[section]
 	for i, h := range hosts {
 		if strings.EqualFold(h, host) {
 			m.allowedHosts[section] = append(hosts[:i], hosts[i+1:]...)
-			return true
+			return true, m.mutErr
 		}
 	}
-	return false
+	return false, m.mutErr
 }
-func (m *mockSecretsStore) SetAllowedHosts(section string, hosts []string) {
+func (m *mockSecretsStore) SetAllowedHosts(section string, hosts []string) error {
 	if m.allowedHosts == nil {
 		m.allowedHosts = make(map[string][]string)
 	}
@@ -643,6 +645,7 @@ func (m *mockSecretsStore) SetAllowedHosts(section string, hosts []string) {
 	} else {
 		m.allowedHosts[section] = hosts
 	}
+	return m.mutErr
 }
 
 func (m *mockSecretsStore) SectionAllowedInBody(section string) []string {
@@ -651,18 +654,19 @@ func (m *mockSecretsStore) SectionAllowedInBody(section string) []string {
 	}
 	return m.allowedInBody[section]
 }
-func (m *mockSecretsStore) AddAllowedInBody(section, key string) {
+func (m *mockSecretsStore) AddAllowedInBody(section, key string) error {
 	if m.allowedInBody == nil {
 		m.allowedInBody = make(map[string][]string)
 	}
 	for _, k := range m.allowedInBody[section] {
 		if k == key {
-			return
+			return m.mutErr
 		}
 	}
 	m.allowedInBody[section] = append(m.allowedInBody[section], key)
+	return m.mutErr
 }
-func (m *mockSecretsStore) RemoveAllowedInBody(section, key string) bool {
+func (m *mockSecretsStore) RemoveAllowedInBody(section, key string) (bool, error) {
 	keys := m.allowedInBody[section]
 	for i, k := range keys {
 		if k == key {
@@ -670,12 +674,12 @@ func (m *mockSecretsStore) RemoveAllowedInBody(section, key string) bool {
 			if len(m.allowedInBody[section]) == 0 {
 				delete(m.allowedInBody, section)
 			}
-			return true
+			return true, m.mutErr
 		}
 	}
-	return false
+	return false, m.mutErr
 }
-func (m *mockSecretsStore) SetAllowedInBody(section string, keys []string) {
+func (m *mockSecretsStore) SetAllowedInBody(section string, keys []string) error {
 	if m.allowedInBody == nil {
 		m.allowedInBody = make(map[string][]string)
 	}
@@ -684,6 +688,7 @@ func (m *mockSecretsStore) SetAllowedInBody(section string, keys []string) {
 	} else {
 		m.allowedInBody[section] = keys
 	}
+	return m.mutErr
 }
 
 // TestRestartCommand verifies the restart command exists with correct properties.

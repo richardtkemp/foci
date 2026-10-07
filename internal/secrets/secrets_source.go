@@ -271,10 +271,17 @@ func (src *source) current() *fileState {
 	// reloaded in the meantime, or the file may have changed again.
 	src.mu.Lock()
 	defer src.mu.Unlock()
+	src.refreshLocked()
+	return src.state
+}
+
+// refreshLocked re-reads the file when it changed since the last successful
+// load. A failed observation is not retried until the file changes again.
+// Callers must hold mu for writing.
+func (src *source) refreshLocked() {
 	if cur := statFile(src.path); !src.freshLocked(cur) {
 		src.reloadLocked(cur)
 	}
-	return src.state
 }
 
 // freshLocked reports whether cur matches the state already in hand: the
@@ -284,12 +291,11 @@ func (src *source) freshLocked(cur fileStamp) bool {
 	return cur.same(src.loaded) || (src.warnedSet && cur.same(src.warned))
 }
 
-// reloadLocked swaps in a fresh parse of the file. On failure the last good
-// contents stay and exactly one warning is logged per file state: warn once
-// for a new observation, stay quiet while it persists, try again as soon as
-// the observation changes. The on-disk file is the source of truth — a
-// successful reload replaces in-memory mutations, and every mutator caller
-// immediately Saves.
+// reloadLocked swaps in a fresh parse of the file. cur is the observation
+// that triggered the reload, taken BEFORE the file was read. On failure the
+// last good contents stay and exactly one warning is logged per file state:
+// warn once for a new observation, stay quiet while it persists, try again
+// as soon as the observation changes.
 func (src *source) reloadLocked(cur fileStamp) {
 	st, err := parseFile(src.path)
 	if err != nil {
@@ -299,35 +305,52 @@ func (src *source) reloadLocked(cur fileStamp) {
 		}
 		return
 	}
+	// Stamp the PRE-read observation, never a fresh post-read one. A
+	// non-atomic writer (Save in this process, the CLI, an editor) can be
+	// mid-write: a read of a truncated file that happens to parse must not
+	// be pinned as the file's final state, or the torn contents stick until
+	// the file changes again — and the next Save would write them back,
+	// deleting secrets. With the pre-read stamp the completed write differs
+	// and the next use re-parses. The cost of the converse (the file changed
+	// between the stat and the read) is one redundant re-parse, never a
+	// missed change.
 	src.state = st
-	src.loaded = statFile(src.path)
+	src.loaded = cur
 	src.warnedSet = false
 }
 
-// mutate applies fn to the current state under the write lock and publishes
-// whatever it returns; used by the root store's mutators.
+// mutate refreshes from the file, then applies fn to the result and
+// publishes it; used by the root store's mutators. Refreshing first means an
+// external edit the store has not observed yet is merged with the mutation
+// instead of being silently dropped by the next Save (the file is the source
+// of truth).
 func (src *source) mutate(fn func(st *fileState) *fileState) {
 	src.mu.Lock()
 	defer src.mu.Unlock()
+	src.refreshLocked()
 	src.state = fn(src.state)
 }
 
-// snapshot returns the current state for rendering outside the lock (Save);
-// safe because states are immutable.
-func (src *source) snapshot() *fileState {
-	src.mu.RLock()
-	defer src.mu.RUnlock()
-	return src.state
-}
-
-// markSaved records the file as it now stands as the loaded observation, so
-// the next read does not re-parse the file this process just wrote (which
-// could drop a mutation that landed between rendering and writing).
-func (src *source) markSaved() {
+// save renders the current state and writes it to the file, holding the
+// write lock across render, write and stamp. Readers block for the whole
+// write, so they can never stat or re-parse a half-written file from this
+// process; no mutation or reload can interleave between render and write, so
+// the stamped observation always matches the state that was written. The
+// write itself stays non-atomic (no write-and-rename): the file's
+// root:foci-secrets ownership must survive, and a rename would reset it
+// (see docs/SECRETS.md).
+func (src *source) save() error {
 	src.mu.Lock()
 	defer src.mu.Unlock()
+
+	var buf strings.Builder
+	renderState(&buf, src.state)
+	if err := os.WriteFile(src.path, []byte(buf.String()), 0600); err != nil {
+		return err
+	}
 	src.loaded = statFile(src.path)
 	src.warnedSet = false
+	return nil
 }
 
 // blockedSnapshot returns a copy of the blocked-path list, seeded at
@@ -343,6 +366,120 @@ func (src *source) addBlockedPaths(paths []string) {
 	src.mu.Lock()
 	defer src.mu.Unlock()
 	src.blocked = append(src.blocked, paths...)
+}
+
+// renderState writes st back out as TOML — the inverse of parseFile. Values
+// are written per section in sorted order, with the control arrays
+// (allowed_hosts, allowed_agents, denied_agents, allowed_in_body) after the
+// key/value pairs and [agents.ID.section] tables last.
+func renderState(buf *strings.Builder, st *fileState) {
+	// Write global sections
+	sections := flatKeysToSections(st.values)
+	secNames := sortedKeyUnion(keysOf(sections), keysOf(st.allowedHosts), keysOf(st.allowedAgents), keysOf(st.deniedAgents), keysOf(st.allowedInBody))
+	for i, sec := range secNames {
+		if i > 0 {
+			buf.WriteByte('\n')
+		}
+		fmt.Fprintf(buf, "[%s]\n", sec)
+		writeKeyValues(buf, sections[sec])
+		writeStringArrayField(buf, "allowed_hosts", st.allowedHosts[sec])
+		writeStringArrayField(buf, "allowed_agents", st.allowedAgents[sec])
+		writeStringArrayField(buf, "denied_agents", st.deniedAgents[sec])
+		writeStringArrayField(buf, "allowed_in_body", st.allowedInBody[sec])
+	}
+
+	// Write [agents.*] sections
+	agentIDs := sortedKeyUnion(keysOf(st.agentValues), keysOf(st.agentHosts), keysOf(st.agentAllowedInBody))
+	for _, agentID := range agentIDs {
+		agentSections := flatKeysToSections(st.agentValues[agentID])
+		subSecs := sortedKeyUnion(keysOf(agentSections), keysOf(st.agentHosts[agentID]), keysOf(st.agentAllowedInBody[agentID]))
+		for _, sec := range subSecs {
+			buf.WriteByte('\n')
+			fmt.Fprintf(buf, "[agents.%s.%s]\n", agentID, sec)
+			writeKeyValues(buf, agentSections[sec])
+			writeStringArrayField(buf, "allowed_hosts", st.agentHosts[agentID][sec])
+			writeStringArrayField(buf, "allowed_in_body", st.agentAllowedInBody[agentID][sec])
+		}
+	}
+}
+
+// flatKeysToSections groups "section.key" flat keys into a nested map.
+func flatKeysToSections(flat map[string]string) map[string]map[string]string {
+	sections := make(map[string]map[string]string)
+	for k, v := range flat {
+		parts := strings.SplitN(k, ".", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		sec, key := parts[0], parts[1]
+		if sections[sec] == nil {
+			sections[sec] = make(map[string]string)
+		}
+		sections[sec][key] = v
+	}
+	return sections
+}
+
+// keysOf returns the keys of any map[string]V as a slice.
+func keysOf[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// sortedKeyUnion returns the sorted union of keys from multiple slices.
+func sortedKeyUnion(slices ...[]string) []string {
+	seen := make(map[string]bool)
+	for _, s := range slices {
+		for _, k := range s {
+			seen[k] = true
+		}
+	}
+	keys := make([]string, 0, len(seen))
+	for k := range seen {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// writeKeyValues writes sorted key = value pairs in TOML format.
+// Integer values are written unquoted; all others are quoted.
+func writeKeyValues(buf *strings.Builder, pairs map[string]string) {
+	if len(pairs) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(pairs))
+	for k := range pairs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if _, err := strconv.ParseInt(pairs[k], 10, 64); err == nil {
+			fmt.Fprintf(buf, "%s = %s\n", k, pairs[k])
+		} else {
+			fmt.Fprintf(buf, "%s = %q\n", k, pairs[k])
+		}
+	}
+}
+
+// writeStringArrayField writes a TOML array field (e.g. allowed_hosts,
+// allowed_agents) if non-empty.
+func writeStringArrayField(buf *strings.Builder, key string, values []string) {
+	if len(values) == 0 {
+		return
+	}
+	buf.WriteString(key)
+	buf.WriteString(" = [")
+	for i, v := range values {
+		if i > 0 {
+			buf.WriteString(", ")
+		}
+		fmt.Fprintf(buf, "%q", v)
+	}
+	buf.WriteString("]\n")
 }
 
 // parseFile reads and parses the secrets file at path with Load's rules:

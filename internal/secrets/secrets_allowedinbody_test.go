@@ -99,24 +99,26 @@ other_key = "sk-other"
 		t.Fatalf("Load: %v", err)
 	}
 
-	s.AddAllowedInBody("custom", "api_key")
+	mustMutate(t, s.AddAllowedInBody("custom", "api_key"))
 	keys := s.SectionAllowedInBody("custom")
 	if len(keys) != 1 || keys[0] != "api_key" {
 		t.Errorf("after add: %v", keys)
 	}
 
 	// Duplicate add is no-op
-	s.AddAllowedInBody("custom", "api_key")
+	mustMutate(t, s.AddAllowedInBody("custom", "api_key"))
 	if len(s.SectionAllowedInBody("custom")) != 1 {
 		t.Error("duplicate add should be no-op")
 	}
 
-	s.AddAllowedInBody("custom", "other_key")
+	mustMutate(t, s.AddAllowedInBody("custom", "other_key"))
 	if len(s.SectionAllowedInBody("custom")) != 2 {
 		t.Error("expected 2 keys after second add")
 	}
 
-	if !s.RemoveAllowedInBody("custom", "api_key") {
+	found, err := s.RemoveAllowedInBody("custom", "api_key")
+	mustMutate(t, err)
+	if !found {
 		t.Error("RemoveAllowedInBody should return true for existing key")
 	}
 	keys = s.SectionAllowedInBody("custom")
@@ -124,12 +126,15 @@ other_key = "sk-other"
 		t.Errorf("after remove: %v", keys)
 	}
 
-	if s.RemoveAllowedInBody("custom", "nonexistent") {
+	found, err = s.RemoveAllowedInBody("custom", "nonexistent")
+	mustMutate(t, err)
+	if found {
 		t.Error("RemoveAllowedInBody should return false for missing key")
 	}
 
 	// Remove last key should clean up
-	s.RemoveAllowedInBody("custom", "other_key")
+	found, err = s.RemoveAllowedInBody("custom", "other_key")
+	mustMutate(t, err)
 	if s.SectionAllowedInBody("custom") != nil {
 		t.Error("section should be removed when empty")
 	}
@@ -148,13 +153,13 @@ allowed_in_body = ["old_key"]
 		t.Fatalf("Load: %v", err)
 	}
 
-	s.SetAllowedInBody("custom", []string{"new_key1", "new_key2"})
+	mustMutate(t, s.SetAllowedInBody("custom", []string{"new_key1", "new_key2"}))
 	keys := s.SectionAllowedInBody("custom")
 	if len(keys) != 2 || keys[0] != "new_key1" || keys[1] != "new_key2" {
 		t.Errorf("SetAllowedInBody: %v", keys)
 	}
 
-	s.SetAllowedInBody("custom", nil)
+	mustMutate(t, s.SetAllowedInBody("custom", nil))
 	if s.SectionAllowedInBody("custom") != nil {
 		t.Error("SetAllowedInBody(nil) should clear")
 	}

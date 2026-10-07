@@ -2,9 +2,13 @@ package command
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
+
+// errBoom is the canned mutator error for the error-surfacing tests.
+var errBoom = errors.New("boom")
 
 // secretsCC returns a CommandContext with the given mock secrets store.
 func secretsCC(store SecretsStore) CommandContext {
@@ -830,5 +834,68 @@ func TestSecretsHostsAddNoRegistry(t *testing.T) {
 	}
 	if !strings.Contains(result.Text, "Usage") {
 		t.Errorf("expected usage fallback: %s", result.Text)
+	}
+}
+
+// TestSecretsCommandMutatorErrorsSurface proves every /secrets mutation flow
+// (set, remove, hosts add/remove/clear, body add/remove/clear, in both the
+// direct and assembled argument forms) propagates a failing mutator to the
+// caller instead of reporting success.
+func TestSecretsCommandMutatorErrorsSurface(t *testing.T) {
+	cases := []struct {
+		name string
+		args string
+		want string
+	}{
+		{"set direct", "set custom.api_key v", "set secret"},
+		{"set assembled", "set custom api_key v", "set secret"},
+		{"remove", "remove custom.api_key", "remove secret"},
+		{"hosts add", "hosts custom add api.example.com", "add allowed host"},
+		{"hosts remove", "hosts custom remove api.example.com", "remove allowed host"},
+		{"hosts clear", "hosts custom clear", "clear allowed hosts"},
+		{"body add", "body custom add api_key", "add allowed-in-body key"},
+		{"body remove", "body custom remove api_key", "remove allowed-in-body key"},
+		{"body clear", "body custom clear", "clear allowed-in-body keys"},
+	}
+	for _, tc := range cases {
+		store := &mockSecretsStore{
+			data: map[string]string{"custom.api_key": "x"},
+			allowedHosts: map[string][]string{
+				"custom": {"api.example.com"},
+			},
+			allowedInBody: map[string][]string{
+				"custom": {"api_key"},
+			},
+			mutErr: errBoom,
+		}
+		cmd := SecretsCommand()
+		_, err := cmd.Execute(context.Background(), Request{Args: tc.args}, secretsCC(store))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want it to mention %q", tc.name, err, tc.want)
+		}
+	}
+}
+
+// TestSecretsWizardMutatorErrorsSurface proves the interactive secrets
+// wizards report a failing mutator and finish instead of silently
+// succeeding.
+func TestSecretsWizardMutatorErrorsSurface(t *testing.T) {
+	store := &mockSecretsStore{data: map[string]string{}, mutErr: errBoom}
+
+	w := newSecretsSetWizard(store)
+	w.section, w.key, w.step = "custom", "api_key", 1
+	if msg, done := w.Handle("v"); !done || !strings.Contains(msg, "Failed to set") {
+		t.Errorf("set wizard value step = %q, %v — want the Set failure reported and the wizard finished", msg, done)
+	}
+
+	hostsW := newSecretsSetWizard(store)
+	hostsW.section, hostsW.key, hostsW.step = "custom", "api_key", 2
+	if msg, done := hostsW.Handle("api.example.com"); !done || !strings.Contains(msg, "Failed to set hosts") {
+		t.Errorf("set wizard hosts step = %q, %v — want the SetAllowedHosts failure reported", msg, done)
+	}
+
+	addW := newSecretsHostsAddWizard(store, "custom")
+	if msg, done := addW.Handle("api.example.com"); !done || !strings.Contains(msg, "Failed to add host") {
+		t.Errorf("hosts-add wizard = %q, %v — want the AddAllowedHost failure reported", msg, done)
 	}
 }

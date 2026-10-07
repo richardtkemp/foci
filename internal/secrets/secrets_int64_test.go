@@ -43,8 +43,8 @@ func TestSaveInt64Values(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	s.Set("anthropic.oauth_expires_at", "1772334580401")
-	s.Set("anthropic.setup_token", "sk-ant-test")
+	mustMutate(t, s.Set("anthropic.oauth_expires_at", "1772334580401"))
+	mustMutate(t, s.Set("anthropic.setup_token", "sk-ant-test"))
 
 	if err := s.Save(); err != nil {
 		t.Fatalf("Save: %v", err)

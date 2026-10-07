@@ -81,7 +81,7 @@ func TestTokenHolder_ConcurrentAccess(t *testing.T) {
 type fakeSecretsStore map[string]string
 
 func (s fakeSecretsStore) Get(name string) (string, bool) { v, ok := s[name]; return v, ok }
-func (s fakeSecretsStore) Set(name, value string)         { s[name] = value }
+func (s fakeSecretsStore) Set(name, value string) error   { s[name] = value; return nil }
 func (s fakeSecretsStore) Save() error                    { return nil }
 
 // newTestResolver builds an AnthropicResolver via NewResolver with HOME pointed

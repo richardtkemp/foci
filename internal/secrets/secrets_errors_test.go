@@ -129,7 +129,7 @@ func TestFlatKeysToSectionsNoDot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	s.Set("no_dot_key", "value")
+	mustMutate(t, s.Set("no_dot_key", "value"))
 
 	// Should be retrievable in-memory.
 	v, ok := s.Get("no_dot_key")

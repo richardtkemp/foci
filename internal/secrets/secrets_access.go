@@ -53,7 +53,10 @@ func (s *Store) SectionAllowedHosts(section string) []string {
 
 // SetAllowedHosts replaces the allowed_hosts list for a section.
 // Pass nil or empty to remove all allowed_hosts for the section.
-func (s *Store) SetAllowedHosts(section string, hosts []string) {
+func (s *Store) SetAllowedHosts(section string, hosts []string) error {
+	if err := s.rootOnly(); err != nil {
+		return err
+	}
 	s.src.mutate(func(st *fileState) *fileState {
 		allowed := cloneMap(st.allowedHosts)
 		if len(hosts) == 0 {
@@ -63,14 +66,18 @@ func (s *Store) SetAllowedHosts(section string, hosts []string) {
 		}
 		return st.withAllowedHosts(allowed)
 	})
+	return nil
 }
 
 // AddAllowedHost adds a host to the section's allowed_hosts list.
 // Host is normalized to lowercase. No-op if already present.
-func (s *Store) AddAllowedHost(section, host string) {
+func (s *Store) AddAllowedHost(section, host string) error {
+	if err := s.rootOnly(); err != nil {
+		return err
+	}
 	host = strings.ToLower(strings.TrimSpace(host))
 	if host == "" {
-		return
+		return nil
 	}
 	s.src.mutate(func(st *fileState) *fileState {
 		hosts := st.allowedHosts[section]
@@ -85,11 +92,15 @@ func (s *Store) AddAllowedHost(section, host string) {
 		allowed[section] = append(next, host)
 		return st.withAllowedHosts(allowed)
 	})
+	return nil
 }
 
 // RemoveAllowedHost removes a host from the section's allowed_hosts list.
 // Case-insensitive comparison. Returns true if found and removed.
-func (s *Store) RemoveAllowedHost(section, host string) bool {
+func (s *Store) RemoveAllowedHost(section, host string) (bool, error) {
+	if err := s.rootOnly(); err != nil {
+		return false, err
+	}
 	removed := false
 	s.src.mutate(func(st *fileState) *fileState {
 		hosts := st.allowedHosts[section]
@@ -111,7 +122,7 @@ func (s *Store) RemoveAllowedHost(section, host string) bool {
 		}
 		return st
 	})
-	return removed
+	return removed, nil
 }
 
 // CheckHostAllowed verifies that the target URL's host is in the allowed_hosts
@@ -193,7 +204,10 @@ func (s *Store) SectionAllowedInBody(section string) []string {
 
 // SetAllowedInBody replaces the allowed_in_body list for a section.
 // Pass nil or empty to remove all allowed_in_body for the section.
-func (s *Store) SetAllowedInBody(section string, keys []string) {
+func (s *Store) SetAllowedInBody(section string, keys []string) error {
+	if err := s.rootOnly(); err != nil {
+		return err
+	}
 	s.src.mutate(func(st *fileState) *fileState {
 		body := cloneMap(st.allowedInBody)
 		if len(keys) == 0 {
@@ -203,11 +217,15 @@ func (s *Store) SetAllowedInBody(section string, keys []string) {
 		}
 		return st.withAllowedInBody(body)
 	})
+	return nil
 }
 
 // AddAllowedInBody adds a key to the section's allowed_in_body list.
 // No-op if already present.
-func (s *Store) AddAllowedInBody(section, key string) {
+func (s *Store) AddAllowedInBody(section, key string) error {
+	if err := s.rootOnly(); err != nil {
+		return err
+	}
 	s.src.mutate(func(st *fileState) *fileState {
 		keys := st.allowedInBody[section]
 		for _, k := range keys {
@@ -221,11 +239,15 @@ func (s *Store) AddAllowedInBody(section, key string) {
 		body[section] = append(next, key)
 		return st.withAllowedInBody(body)
 	})
+	return nil
 }
 
 // RemoveAllowedInBody removes a key from the section's allowed_in_body list.
 // Returns true if found and removed.
-func (s *Store) RemoveAllowedInBody(section, key string) bool {
+func (s *Store) RemoveAllowedInBody(section, key string) (bool, error) {
+	if err := s.rootOnly(); err != nil {
+		return false, err
+	}
 	removed := false
 	s.src.mutate(func(st *fileState) *fileState {
 		keys := st.allowedInBody[section]
@@ -247,7 +269,7 @@ func (s *Store) RemoveAllowedInBody(section, key string) bool {
 		}
 		return st
 	})
-	return removed
+	return removed, nil
 }
 
 // Redact replaces any occurrence of a secret value in text with [REDACTED].

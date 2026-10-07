@@ -111,8 +111,8 @@ func TestSetAndSave(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	s.Set("custom.api_key", "sk-test-123")
-	s.Set("anthropic.setup_token", "sk-ant-456")
+	mustMutate(t, s.Set("custom.api_key", "sk-test-123"))
+	mustMutate(t, s.Set("anthropic.setup_token", "sk-ant-456"))
 
 	if err := s.Save(); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -147,10 +147,14 @@ key2 = "val2"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if !s.Remove("custom.key1") {
+	found, err := s.Remove("custom.key1")
+	mustMutate(t, err)
+	if !found {
 		t.Error("Remove should return true for existing key")
 	}
-	if s.Remove("custom.nonexistent") {
+	found, err = s.Remove("custom.nonexistent")
+	mustMutate(t, err)
+	if found {
 		t.Error("Remove should return false for missing key")
 	}
 

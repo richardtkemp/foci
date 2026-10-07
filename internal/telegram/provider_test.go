@@ -130,7 +130,9 @@ func TestProviderAgentPreFlight(t *testing.T) {
 		t.Fatalf("warnings = %v, want one mentioning telegram.scout", warnings)
 	}
 
-	store.Set("telegram.scout", "tok")
+	if err := store.Set("telegram.scout", "tok"); err != nil {
+		t.Fatal(err)
+	}
 	if warnings := p.AgentPreFlight("scout"); warnings != nil {
 		t.Errorf("warnings = %v, want nil when secret present", warnings)
 	}

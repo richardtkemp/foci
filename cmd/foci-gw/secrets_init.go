@@ -60,7 +60,9 @@ func initSecrets(configPath string, cfg *config.Config) secretsResult {
 		if err != nil {
 			log.Fatalf("main", "generate HTTP API key: %v", err)
 		}
-		store.Set("http.api_key", generated)
+		if err := store.Set("http.api_key", generated); err != nil {
+			log.Fatalf("main", "set HTTP API key: %v", err)
+		}
 		if err := store.Save(); err != nil {
 			log.Fatalf("main", "save HTTP API key: %v", err)
 		}

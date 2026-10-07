@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -199,24 +200,26 @@ key = "v1"
 	}
 	view := s.ForAgent("alpha")
 
-	s.Set("custom.added", "inproc")
+	mustMutate(t, s.Set("custom.added", "inproc"))
 	if v, ok := view.Get("custom.added"); !ok || v != "inproc" {
 		t.Errorf("view Get(custom.added) = %q, %v — want the root Set to be visible", v, ok)
 	}
 
-	if !s.Remove("custom.key") {
+	found, err := s.Remove("custom.key")
+	mustMutate(t, err)
+	if !found {
 		t.Fatal("Remove(custom.key) = false")
 	}
 	if _, ok := view.Get("custom.key"); ok {
 		t.Error("view should see the removal of custom.key")
 	}
 
-	s.AddAllowedHost("custom", "api.example.com")
+	mustMutate(t, s.AddAllowedHost("custom", "api.example.com"))
 	if hosts := view.SectionAllowedHosts("custom"); len(hosts) != 1 || hosts[0] != "api.example.com" {
 		t.Errorf("view SectionAllowedHosts(custom) = %v — want the root-added host", hosts)
 	}
 
-	s.AddAllowedInBody("custom", "key2")
+	mustMutate(t, s.AddAllowedInBody("custom", "key2"))
 	if !view.IsAllowedInBody("custom.key2") {
 		t.Error("view IsAllowedInBody(custom.key2) = false — want the root-added body key")
 	}
@@ -559,7 +562,7 @@ payload = "redact-me-v1"
 	}
 
 	for n := 0; n < 25; n++ {
-		s.Set("custom.api_key", fmt.Sprintf("mut-%d", n))
+		mustMutate(t, s.Set("custom.api_key", fmt.Sprintf("mut-%d", n)))
 		s.Get("custom.api_key")
 	}
 	rewrite(t, path, `
@@ -579,5 +582,166 @@ payload = "redact-me-final"
 	}
 	if resolved, err := view.Resolve("Bearer {{secret:custom.api_key}}"); err != nil || resolved != "Bearer sk-file-final" {
 		t.Errorf("final view Resolve = %q, %v — want the file's value", resolved, err)
+	}
+}
+
+func TestSaveRacingReadsKeepsEverySecret(t *testing.T) {
+	// Proves the Save-vs-readers race is closed: while reader goroutines
+	// hammer the store, repeated root Set+Save and external non-atomic
+	// rewrites can neither expose a non-complete state to readers (Save
+	// holds the write lock across its write, so a Resolve error during the
+	// in-process saves is impossible) nor lose a secret from memory or from
+	// the file. The final external rewrite must also be picked up — on code
+	// without reload that assertion fails.
+	path := filepath.Join(t.TempDir(), "secrets.toml")
+	next := mtimeSeq()
+	rewrite(t, path, `
+[anthropic]
+api_key = "sk-precious"
+
+[svc]
+key = "v0"
+`, next())
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	view := s.ForAgent("alpha")
+
+	var resolveErrs atomic.Int64
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if _, err := view.Resolve("Bearer {{secret:svc.key}}"); err != nil {
+					resolveErrs.Add(1)
+				}
+				view.Redact("x sk-precious y")
+				s.Names()
+			}
+		}()
+	}
+
+	// Phase 1: in-process saves race the readers.
+	for n := 0; n < 100; n++ {
+		mustMutate(t, s.Set("svc.key", fmt.Sprintf("v%d", n)))
+		if err := s.Save(); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+	}
+	if n := resolveErrs.Load(); n != 0 {
+		t.Fatalf("%d Resolve errors while Save raced the readers — a reader observed a non-complete state", n)
+	}
+	if v, ok := s.Get("anthropic.api_key"); !ok || v != "sk-precious" {
+		t.Fatalf("after racing saves: Get(anthropic.api_key) = %q, %v — a secret was lost from memory", v, ok)
+	}
+	disk, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(disk), "sk-precious") {
+		t.Fatalf("racing saves lost anthropic.api_key from secrets.toml:\n%s", disk)
+	}
+
+	// Phase 2: external non-atomic rewrites (an editor, the CLI) race the
+	// readers. Torn reads from another writer are transient by design; the
+	// final state must still be picked up with nothing lost for good.
+	for n := 0; n < 50; n++ {
+		content := fmt.Sprintf("[anthropic]\napi_key = \"sk-precious\"\n\n[svc]\nkey = \"x%d\"\n", n)
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rewrite(t, path, "[anthropic]\napi_key = \"sk-precious\"\n\n[svc]\nkey = \"final\"\n", next())
+
+	close(stop)
+	wg.Wait()
+
+	if v, ok := s.Get("anthropic.api_key"); !ok || v != "sk-precious" {
+		t.Errorf("final Get(anthropic.api_key) = %q, %v — want sk-precious", v, ok)
+	}
+	if resolved, err := view.Resolve("Bearer {{secret:svc.key}}"); err != nil || resolved != "Bearer final" {
+		t.Errorf("final view Resolve = %q, %v — want the file's \"final\" value", resolved, err)
+	}
+}
+
+func TestReloadStampsThePreReadObservation(t *testing.T) {
+	// Pins the anti-torn-read invariant of reloadLocked: the observation
+	// stamped as loaded is the one taken BEFORE reading the file, never a
+	// fresh one taken after. A non-atomic writer can finish between the
+	// read and a post-read stat; stamping that later observation would pin
+	// a possibly-truncated parse as the file's final state — it is then
+	// never re-read, and the next Save writes the truncation back to disk,
+	// deleting secrets. Stamping the pre-read observation is conservative:
+	// the finished write differs from it and forces a re-parse. The
+	// interleave needs a real race to observe black-box, so the invariant
+	// is asserted directly.
+	path := filepath.Join(t.TempDir(), "secrets.toml")
+	next := mtimeSeq()
+	rewrite(t, path, "[svc]\nkey = \"v1\"\n", next())
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Reproduce the interleave deterministically: take the observation of
+	// the OLD file, let the writer finish, then reload holding the earlier
+	// observation — exactly what reloadLocked cannot control internally.
+	s.src.mu.Lock()
+	cur := statFile(path)
+	rewrite(t, path, "[svc]\nkey = \"v2\"\n", next())
+	s.src.reloadLocked(cur)
+	loaded := s.src.loaded
+	s.src.mu.Unlock()
+
+	if !loaded.same(cur) {
+		t.Fatal("reloadLocked stamped an observation other than the one it was decided from — a torn read could be pinned as the file's final state")
+	}
+
+	// The next ordinary read re-parses rather than trusting that reload.
+	if v, ok := s.Get("svc.key"); !ok || v != "v2" {
+		t.Errorf("Get(svc.key) = %q, %v — want v2 after re-parsing the newer file", v, ok)
+	}
+}
+
+func TestMutatorMergesUnseenFileEdit(t *testing.T) {
+	// Proves mutators re-read the file before applying (no lost update):
+	// a hand edit the store has not yet observed survives the next
+	// in-process Set+Save instead of being silently overwritten.
+	path := filepath.Join(t.TempDir(), "secrets.toml")
+	next := mtimeSeq()
+	rewrite(t, path, "[svc]\nhand = \"h1\"\n", next())
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// An edit nobody has observed — no store read since it landed.
+	rewrite(t, path, "[svc]\nhand = \"h1\"\nchat2 = \"c2\"\n", next())
+
+	mustMutate(t, s.Set("svc.chat", "v1"))
+	if err := s.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	disk, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"h1", "c2", "v1"} {
+		if !strings.Contains(string(disk), want) {
+			t.Errorf("secrets.toml after Set+Save lacks %q — the unseen file edit was dropped:\n%s", want, disk)
+		}
+	}
+	if v, ok := s.Get("svc.chat2"); !ok || v != "c2" {
+		t.Errorf("Get(svc.chat2) = %q, %v — want the merged hand edit", v, ok)
 	}
 }

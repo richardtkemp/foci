@@ -6,9 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"math/big"
-	"os"
-	"sort"
-	"strconv"
 	"strings"
 )
 
@@ -76,12 +73,25 @@ func Load(path string) (*Store, error) {
 // source as s. Agent-specific values overlay globals; keys not overridden
 // fall back to globals; global sections with allowed_agents/denied_agents
 // are filtered out. That filtering is re-applied on every use, so the view
-// always reflects the current file. The returned Store cannot Save.
+// always reflects the current file. The returned Store is read-only: it
+// cannot Save or mutate (rootOnly).
 func (s *Store) ForAgent(agentID string) *Store {
 	return &Store{src: s.src, agentID: agentID}
 }
 
-// HasAgentRestrictions reports whether any section has allowed_agents or denied_agents.
+// rootOnly rejects write operations on per-agent views. Views are read-only
+// windows over the shared source — letting one mutate would change every
+// other agent's secrets — so, like Save, they refuse.
+func (s *Store) rootOnly() error {
+	if s.agentID != "" {
+		return fmt.Errorf("secrets store for agent %q is read-only — use the root store", s.agentID)
+	}
+	return nil
+}
+
+// HasAgentRestrictions reports whether any section of the current file has
+// allowed_agents or denied_agents. That is a file-level question, so views
+// answer it like the root (the caller is startup wiring on the root store).
 func (s *Store) HasAgentRestrictions() bool {
 	st := s.src.current()
 	return len(st.allowedAgents) > 0 || len(st.deniedAgents) > 0
@@ -98,18 +108,26 @@ func (s *Store) Names() []string {
 }
 
 // Set adds or updates a secret value by its flat key (e.g. "section.key").
-// The change is visible to every store sharing the source; call Save on the
-// root store to persist it.
-func (s *Store) Set(name, value string) {
+// The mutator first re-reads the file, so an external edit not yet observed
+// is merged rather than overwritten. The change is visible to every store
+// sharing the source; call Save on the root store to persist it.
+func (s *Store) Set(name, value string) error {
+	if err := s.rootOnly(); err != nil {
+		return err
+	}
 	s.src.mutate(func(st *fileState) *fileState {
 		values := cloneMap(st.values)
 		values[name] = value
 		return st.withValues(values)
 	})
+	return nil
 }
 
 // Remove deletes a secret by its flat key. Returns true if found.
-func (s *Store) Remove(name string) bool {
+func (s *Store) Remove(name string) (bool, error) {
+	if err := s.rootOnly(); err != nil {
+		return false, err
+	}
 	removed := false
 	s.src.mutate(func(st *fileState) *fileState {
 		if _, ok := st.values[name]; !ok {
@@ -120,55 +138,19 @@ func (s *Store) Remove(name string) bool {
 		removed = true
 		return st.withValues(values)
 	})
-	return removed
+	return removed, nil
 }
 
 // Save writes the current secrets back to the TOML file. Only the root store
 // can save; per-agent views return an error. The write is deliberately not
 // atomic (no write-and-rename): the file's root:foci-secrets ownership must
-// survive, and a rename would reset it (see docs/SECRETS.md).
+// survive, and a rename would reset it (see docs/SECRETS.md). See
+// source.save for the locking that keeps concurrent readers safe.
 func (s *Store) Save() error {
-	if s.agentID != "" {
-		return fmt.Errorf("secrets store for agent %q cannot save — save via the root store", s.agentID)
-	}
-	st := s.src.snapshot()
-
-	var buf strings.Builder
-
-	// Write global sections
-	sections := flatKeysToSections(st.values)
-	secNames := sortedKeyUnion(keysOf(sections), keysOf(st.allowedHosts), keysOf(st.allowedAgents), keysOf(st.deniedAgents), keysOf(st.allowedInBody))
-	for i, sec := range secNames {
-		if i > 0 {
-			buf.WriteByte('\n')
-		}
-		fmt.Fprintf(&buf, "[%s]\n", sec)
-		writeKeyValues(&buf, sections[sec])
-		writeStringArrayField(&buf, "allowed_hosts", st.allowedHosts[sec])
-		writeStringArrayField(&buf, "allowed_agents", st.allowedAgents[sec])
-		writeStringArrayField(&buf, "denied_agents", st.deniedAgents[sec])
-		writeStringArrayField(&buf, "allowed_in_body", st.allowedInBody[sec])
-	}
-
-	// Write [agents.*] sections
-	agentIDs := sortedKeyUnion(keysOf(st.agentValues), keysOf(st.agentHosts), keysOf(st.agentAllowedInBody))
-	for _, agentID := range agentIDs {
-		agentSections := flatKeysToSections(st.agentValues[agentID])
-		subSecs := sortedKeyUnion(keysOf(agentSections), keysOf(st.agentHosts[agentID]), keysOf(st.agentAllowedInBody[agentID]))
-		for _, sec := range subSecs {
-			buf.WriteByte('\n')
-			fmt.Fprintf(&buf, "[agents.%s.%s]\n", agentID, sec)
-			writeKeyValues(&buf, agentSections[sec])
-			writeStringArrayField(&buf, "allowed_hosts", st.agentHosts[agentID][sec])
-			writeStringArrayField(&buf, "allowed_in_body", st.agentAllowedInBody[agentID][sec])
-		}
-	}
-
-	if err := os.WriteFile(s.src.path, []byte(buf.String()), 0600); err != nil {
+	if err := s.rootOnly(); err != nil {
 		return err
 	}
-	s.src.markSaved()
-	return nil
+	return s.src.save()
 }
 
 // cloneMap copies m (copy-on-write support for the mutators).
@@ -178,82 +160,4 @@ func cloneMap[V any](m map[string]V) map[string]V {
 		out[k] = v
 	}
 	return out
-}
-
-// flatKeysToSections groups "section.key" flat keys into a nested map.
-func flatKeysToSections(flat map[string]string) map[string]map[string]string {
-	sections := make(map[string]map[string]string)
-	for k, v := range flat {
-		parts := strings.SplitN(k, ".", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		sec, key := parts[0], parts[1]
-		if sections[sec] == nil {
-			sections[sec] = make(map[string]string)
-		}
-		sections[sec][key] = v
-	}
-	return sections
-}
-
-// keysOf returns the keys of any map[string]V as a slice.
-func keysOf[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
-// sortedKeyUnion returns the sorted union of keys from multiple slices.
-func sortedKeyUnion(slices ...[]string) []string {
-	seen := make(map[string]bool)
-	for _, s := range slices {
-		for _, k := range s {
-			seen[k] = true
-		}
-	}
-	keys := make([]string, 0, len(seen))
-	for k := range seen {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-// writeKeyValues writes sorted key = value pairs in TOML format.
-// Integer values are written unquoted; all others are quoted.
-func writeKeyValues(buf *strings.Builder, pairs map[string]string) {
-	if len(pairs) == 0 {
-		return
-	}
-	keys := make([]string, 0, len(pairs))
-	for k := range pairs {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		if _, err := strconv.ParseInt(pairs[k], 10, 64); err == nil {
-			fmt.Fprintf(buf, "%s = %s\n", k, pairs[k])
-		} else {
-			fmt.Fprintf(buf, "%s = %q\n", k, pairs[k])
-		}
-	}
-}
-
-// writeStringArrayField writes a TOML array field (e.g. allowed_hosts, allowed_agents) if non-empty.
-func writeStringArrayField(buf *strings.Builder, key string, values []string) {
-	if len(values) == 0 {
-		return
-	}
-	buf.WriteString(key)
-	buf.WriteString(" = [")
-	for i, v := range values {
-		if i > 0 {
-			buf.WriteString(", ")
-		}
-		fmt.Fprintf(buf, "%q", v)
-	}
-	buf.WriteString("]\n")
 }

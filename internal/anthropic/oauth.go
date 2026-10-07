@@ -9,7 +9,7 @@ import (
 // SecretsStore is the subset of secrets.Store used for credential management.
 type SecretsStore interface {
 	Get(name string) (string, bool)
-	Set(name, value string)
+	Set(name, value string) error
 	Save() error
 }
 
