@@ -182,7 +182,8 @@ fi
 
 # ---------------------------------------------------------------------------
 # REGRESSION GUARD: the no-flag path is byte-identical to the pre-change
-# script (fetched from `main`), across both of its branches (the "$1"
+# script (fetched from the pinned pre-#1705 ref in $PRE_1705 below, not
+# `main`), across both of its branches (the "$1"
 # starts-with-'#' heading-collapsing branch, and the passthrough branch).
 # This is the "must not break the live read path for every agent" gate.
 # ---------------------------------------------------------------------------
@@ -191,6 +192,22 @@ REPO=$(cd "$HERE/../.." && pwd)
 # `main` — see the header comment and #1976 for why `main` fails by
 # construction once #1705 is merged.
 PRE_1705=872a5bd6^
+# fail_baseline <script-path> <stderr-file> — the pre-#1705 `git show`
+# failed: name the exact ref:path tried (never `main` — the ref IS
+# $PRE_1705), surface git's own error indented like other continuations,
+# and hint at the usual cause — a shallow clone that lacks the pinned
+# commit — only when the repo really is shallow, so a full-clone failure
+# (bad ref, corrupt repo) isn't misread too.
+fail_baseline() {
+    local path=$1 errfile=$2 shallow
+    echo "FAIL could not git show $PRE_1705:$path (pre-#1705 baseline) to diff against"
+    sed 's/^/       /' "$errfile"
+    shallow=$(git -C "$REPO" rev-parse --is-shallow-repository 2>/dev/null) || shallow=
+    if [ "$shallow" = true ]; then
+        echo "       the clone is shallow and lacks $PRE_1705; run: git -C $REPO fetch --unshallow"
+    fi
+    RC=1
+}
 OLD="$TMP/mdq-old"
 if git -C "$REPO" show "$PRE_1705":shared/scripts/mdq > "$OLD" 2>/tmp/mdq-test-err-gitshow; then
     chmod +x "$OLD"
@@ -223,8 +240,7 @@ if git -C "$REPO" show "$PRE_1705":shared/scripts/mdq > "$OLD" 2>/tmp/mdq-test-e
     run_both "flags-only passthrough branch" -o json '' "$FIX"
     run_both "no args at all"
 else
-    echo "FAIL could not fetch pre-change shared/scripts/mdq from main to diff against"
-    RC=1
+    fail_baseline shared/scripts/mdq /tmp/mdq-test-err-gitshow
 fi
 
 # ---------------------------------------------------------------------------
@@ -253,8 +269,7 @@ if git -C "$REPO" show "$PRE_1705":shared/scripts/mds > "$OLDS" 2>/tmp/mds-test-
         RC=1
     fi
 else
-    echo "FAIL could not fetch pre-change shared/scripts/mds from main to diff against"
-    RC=1
+    fail_baseline shared/scripts/mds /tmp/mds-test-err-gitshow
 fi
 
 # #1921: a bare 'mds file.md' (no pattern) is the documented primary TOC
