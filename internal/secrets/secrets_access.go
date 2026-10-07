@@ -124,12 +124,10 @@ func (s *Store) RemoveAllowedHost(section, host string) bool {
 // userinfo injection attacks (e.g. https://api.example.com@evil.com/steal).
 // Host comparison is case-insensitive per RFC 4343.
 func (s *Store) CheckHostAllowed(secretName, targetURL string) error {
-	st := s.src.current()
-	section := strings.SplitN(secretName, ".", 2)[0]
-	hosts := st.hostsFor(s.agentID, section)
+	hosts := s.AllowedHosts(secretName)
 	if len(hosts) == 0 {
 		return fmt.Errorf("secret %q has no allowed_hosts configured — add allowed_hosts to the [%s] section in secrets.toml",
-			secretName, section)
+			secretName, strings.SplitN(secretName, ".", 2)[0])
 	}
 
 	parsed, err := url.Parse(targetURL)

@@ -285,6 +285,33 @@ func TestReloadRedactsNewValues(t *testing.T) {
 	}
 }
 
+func TestReloadRedactsLongestValueFirst(t *testing.T) {
+	// Proves the longest-first redaction order holds for reloaded values:
+	// when one secret value is a prefix of another, the longer one is
+	// replaced whole and no suffix survives a shorter-value-first pass.
+	path := filepath.Join(t.TempDir(), "secrets.toml")
+	next := mtimeSeq()
+	rewrite(t, path, "[custom]\nold = \"startup-only\"\n", next())
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	rewrite(t, path, "[custom]\nlong = \"shared-prefix-long\"\nshort = \"shared-prefix\"\n", next())
+
+	// Redact draws the values from map iteration, whose order is random
+	// per call, so repeat: a pass that replaces the shorter value first
+	// leaves "-long" behind and fails.
+	for i := 0; i < 50; i++ {
+		if got := s.Redact("x shared-prefix-long y"); got != "x [REDACTED] y" {
+			t.Fatalf("iteration %d: Redact = %q, want the longer value replaced whole", i, got)
+		}
+	}
+	if got := s.Redact("x shared-prefix y"); got != "x [REDACTED] y" {
+		t.Errorf("Redact = %q, want the shorter reloaded value replaced too", got)
+	}
+}
+
 func TestReloadUpdatesHostsAndBodyRules(t *testing.T) {
 	// Proves that allowed_hosts and allowed_in_body changes on disk are
 	// enforced by the next read: host permission moves to the new host and
