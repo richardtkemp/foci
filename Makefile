@@ -81,9 +81,12 @@ $(SIMPLE_BINS):
 # `build` and `vet` take the /tmp/heavy compute lock, like test/lint (Dick,
 # 2026-09-23). Nothing that already holds the lock may call them (flock is not
 # re-entrant across processes); deploy-build runs `make all`, not `build`.
+# Every lock subshell ends `cmd 9<&- || exit $$?`, never `cmd 9<&- )`: the
+# shell execs a subshell's last command, and closing fd 9 there drops the lock
+# (#2229; lint-unlocked checks this).
 build:
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; $(MAKE) --no-print-directory foci-gw 9<&- ) 9</tmp/heavy
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; $(MAKE) --no-print-directory foci-gw 9<&- || exit $$? ) 9</tmp/heavy
 cli: foci
 
 # nosgid.so — LD_PRELOAD shim that strips setuid/setgid bits from chmod-family
@@ -444,7 +447,7 @@ setup-hooks:
 
 vet:
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; go vet ./... 9<&- ) 9</tmp/heavy
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; go vet ./... 9<&- || exit $$? ) 9</tmp/heavy
 
 # lint takes the /tmp/heavy compute lock (Dick, 2026-09-23): deadcode alone peaks
 # at ~3.7 GB, and running it beside a test run or a gradle build got it killed by
@@ -453,7 +456,7 @@ vet:
 # re-entrant across processes, so nesting lint under heavy would deadlock).
 lint:
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; $(REAP_GRADLE) $(MAKE) --no-print-directory lint-unlocked 9<&- ) 9</tmp/heavy
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; $(REAP_GRADLE) $(MAKE) --no-print-directory lint-unlocked 9<&- || exit $$? ) 9</tmp/heavy
 
 lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift
 	@echo "=== golangci-lint ==="
@@ -497,6 +500,20 @@ lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-cap
 	@bad=$$(grep -rnE '^[[:space:]]*t\.Parallel\(\)' test/integration/ || true); \
 	if [ -n "$$bad" ]; then \
 		echo "bare t.Parallel() in L2 tests — use testharness.ParallelWait/ParallelHeavy/ParallelWeight:"; \
+		echo "$$bad"; exit 1; \
+	fi
+	@echo "=== heavy lock really held (no lock subshell ending in an exec'd 9<&- command) ==="
+	@# #2229: in `( flock 9; ...; cmd 9<&- ) 9</tmp/heavy`, the shell EXECs the
+	@# last command of the subshell instead of forking it, so `9<&-` closes the
+	@# subshell's own fd 9 — the only holder — and the lock is released the
+	@# moment the heavy work starts. build, vet, lint and deploy-build ran
+	@# effectively unlocked: two `make lint` ran deadcode (~3.7 GB each) at once
+	@# and memory_guard killed them. Shown with a two-make simulation: the
+	@# second acquired 1s after the first. `cmd 9<&- || exit $$?` keeps the
+	@# subshell (and the lock) alive until cmd ends and keeps its exit status.
+	@bad=$$(grep -nE '9<&- *\) *9<' Makefile | grep -vE '^[0-9]+:[[:space:]]*@?#' || true); \
+	if [ -n "$$bad" ]; then \
+		echo "a heavy-lock subshell ends in 'cmd 9<&- )': the lock is released when cmd starts — end it 'cmd 9<&- || exit \$$? )':"; \
 		echo "$$bad"; exit 1; \
 	fi
 	@echo "=== hermetic hook-binary resolution (no foci-own binary off \$$PATH) ==="
@@ -748,7 +765,7 @@ sync-main:
 # lock). Lock-order invariant (see below): a deploy takes ONLY /tmp/heavy and
 # never lands, so it cannot participate in a merge-lock→heavy cycle.
 deploy-build:
-	sudo -u $(FOCI_USER) bash -c "cd '$(CURDIR)' && { [ -e /tmp/heavy ] || : > /tmp/heavy; }; ( echo '>>> waiting for heavy lock (/tmp/heavy; another build may be running) ...' >&2; flock 9; echo '>>> acquired heavy lock' >&2; $(REAP_GRADLE) $(MAKE) -s all 9<&- ) 9</tmp/heavy"
+	sudo -u $(FOCI_USER) bash -c "cd '$(CURDIR)' && { [ -e /tmp/heavy ] || : > /tmp/heavy; }; ( echo '>>> waiting for heavy lock (/tmp/heavy; another build may be running) ...' >&2; flock 9; echo '>>> acquired heavy lock' >&2; $(REAP_GRADLE) $(MAKE) -s all 9<&- || exit \$$? ) 9</tmp/heavy"
 
 install-bin:
 	@for b in $(DEPLOY_BINS); do echo "  install $$b"; install -m 755 bin/$$b $(INSTALL_DIR)/$$b; done
