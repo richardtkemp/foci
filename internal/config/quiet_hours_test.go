@@ -62,17 +62,17 @@ func TestQuietWindowContains(t *testing.T) {
 		t    time.Time
 		want bool
 	}{
-		{wrap, at(2, 0), true},     // after midnight, inside the wrap
-		{wrap, at(23, 0), true},    // start is inclusive
-		{wrap, at(23, 1), true},    // late night, inside
-		{wrap, at(7, 0), false},    // end is exclusive
-		{wrap, at(6, 59), true},    // one minute before the end
-		{wrap, at(12, 0), false},   // midday, outside the wrap
-		{wrap, at(22, 59), false},  // one minute before the start
-		{plain, at(9, 0), true},    // start inclusive
-		{plain, at(16, 59), true},  // inside
-		{plain, at(17, 0), false},  // end exclusive
-		{plain, at(8, 59), false},  // before the start
+		{wrap, at(2, 0), true},           // after midnight, inside the wrap
+		{wrap, at(23, 0), true},          // start is inclusive
+		{wrap, at(23, 1), true},          // late night, inside
+		{wrap, at(7, 0), false},          // end is exclusive
+		{wrap, at(6, 59), true},          // one minute before the end
+		{wrap, at(12, 0), false},         // midday, outside the wrap
+		{wrap, at(22, 59), false},        // one minute before the start
+		{plain, at(9, 0), true},          // start inclusive
+		{plain, at(16, 59), true},        // inside
+		{plain, at(17, 0), false},        // end exclusive
+		{plain, at(8, 59), false},        // before the start
 		{QuietWindow{}, at(2, 0), false}, // off: the zero window contains nothing
 	}
 	for _, tc := range cases {
@@ -204,12 +204,17 @@ func TestValidateQuietCompactionConfig(t *testing.T) {
 }
 
 func TestResolveQuietCompactionDefaults(t *testing.T) {
-	// Proves the resolved defaults with nothing configured: the window is
-	// empty (feature off), the threshold 0.5, the min idle 30m.
+	// Proves the resolved defaults with nothing configured: the feature is ON
+	// by default (Dick 2026-10-07) with the 23:00-07:00 window, the threshold
+	// 0.5, the min idle 30m — and an explicit global "" turns it off.
 	got := Resolve(&Config{}, AgentConfig{ID: "a"}).Compaction.Quiet
-	want := ResolvedQuietCompaction{Window: "", Threshold: 0.5, MinIdle: "30m"}
+	want := ResolvedQuietCompaction{Window: "23:00-07:00", Threshold: 0.5, MinIdle: "30m"}
 	if got != want {
 		t.Errorf("resolved quiet compaction = %+v, want %+v", got, want)
+	}
+	off := &Config{Sessions: SessionsConfig{CompactionConfig: CompactionConfig{CompactionQuietHours: Ptr("")}}}
+	if w := Resolve(off, AgentConfig{ID: "a"}).Compaction.Quiet.Window; w != "" {
+		t.Errorf("global compaction_quiet_hours = \"\" resolved to window %q, want \"\" (off)", w)
 	}
 }
 

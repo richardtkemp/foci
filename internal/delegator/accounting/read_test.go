@@ -115,3 +115,53 @@ func TestCallsSplitsCostByClass(t *testing.T) {
 		t.Errorf("Calls(after) = %d (%v), want none", len(later), err)
 	}
 }
+
+// TestCurrentContextFill (#2235): the fill a caller may ACT on. It is the
+// latest real turn's fill, but a compaction booked after that fill makes it
+// stale (the compaction turn leaves no fill of its own), so it reads as 0 —
+// unknown — until the next real turn books a fresh one. SessionStats keeps
+// its display behaviour (the last fill seen).
+func TestCurrentContextFill(t *testing.T) {
+	l, _ := openLedger(t)
+	useLive(t, l)
+	s := "gil/c9"
+	book := func(turnID, source string, at time.Time, resp APIResponse) {
+		t.Helper()
+		resp.Session, resp.TurnID, resp.Start = s, turnID, at
+		tt := Turn{TurnID: turnID, Session: s, Backend: BackendAPI, Source: source, StartedAt: at}
+		if err := Record(tt, resp.Call()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tok := func(in, read int) modelinfo.Tokens {
+		return modelinfo.Tokens{modelinfo.ClassInput: in, modelinfo.ClassCacheRead: read, modelinfo.ClassOutput: 5}
+	}
+	fill := func() int {
+		t.Helper()
+		f, err := l.CurrentContextFill(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+
+	if f := fill(); f != 0 {
+		t.Fatalf("empty session fill = %d, want 0", f)
+	}
+	book("gil/c9@1", SourceUser, t0, APIResponse{ID: "n1", Kind: KindCall, Model: "claude-opus-5", Tokens: tok(100, 120000)})
+	if f := fill(); f != 100+120000 {
+		t.Fatalf("fill after a user turn = %d, want %d", f, 100+120000)
+	}
+	book("gil/c9@2:compaction", SourceCompaction, t0.Add(time.Minute),
+		APIResponse{ID: "n2", Kind: KindCompaction, Model: "claude-opus-5", Tokens: tok(120100, 0)})
+	if f := fill(); f != 0 {
+		t.Errorf("fill after a compaction = %d, want 0: the latest fill predates the compaction and is stale", f)
+	}
+	if st, err := l.SessionStats(s); err != nil || st.ContextTokens != 100+120000 {
+		t.Errorf("SessionStats context = %+v (%v), want the last fill seen (%d) — display is unchanged", st, err, 100+120000)
+	}
+	book("gil/c9@3", SourceKeepalive, t0.Add(2*time.Minute), APIResponse{ID: "n3", Kind: KindCall, Model: "claude-opus-5", Tokens: tok(10, 20000)})
+	if f := fill(); f != 10+20000 {
+		t.Errorf("fill after a post-compaction turn = %d, want %d", f, 10+20000)
+	}
+}

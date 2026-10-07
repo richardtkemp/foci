@@ -277,9 +277,10 @@ func newTripwireRunner(t *testing.T, qc config.ResolvedQuietCompaction, at time.
 	})
 }
 
-func TestMaybeQuietCompaction_OffByDefault_NoLookups(t *testing.T) {
-	// Proves requirement 4: with no window configured (the default), the
-	// trigger is an exact no-op — not one session, ledger or agent lookup.
+func TestMaybeQuietCompaction_OffWhenWindowEmpty_NoLookups(t *testing.T) {
+	// Proves requirement 4: with the window set to "" (the opt-out; the
+	// built-in default is ON since 2026-10-07), the trigger is an exact
+	// no-op — not one session, ledger or agent lookup.
 	useUTC(t)
 	r := newTripwireRunner(t,
 		config.ResolvedQuietCompaction{Window: "", Threshold: 0.5, MinIdle: "30m"},

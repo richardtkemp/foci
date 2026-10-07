@@ -218,3 +218,48 @@ func TestSetupPeriodicWiresQuietCompaction(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+// TestBackgroundAgentContextUsageIgnoresPreCompactionFill (#2235): the quiet
+// trigger's fill comes from backgroundAgent.ContextUsage. After a compaction
+// the ledger's last fill is the PRE-compaction size (a compaction turn books
+// no fill), so the adapter must report the fill as unknown (0) until a real
+// turn books a fresh one; otherwise a session compacted by another trigger
+// just before the quiet window would be compacted again.
+func TestBackgroundAgentContextUsageIgnoresPreCompactionFill(t *testing.T) {
+	const sk = "qa/c1"
+	ledger, _, err := accounting.Open(filepath.Join(t.TempDir(), "api.db"), accounting.Options{})
+	if err != nil {
+		t.Fatalf("open ledger: %v", err)
+	}
+	accounting.SetLive(ledger)
+	t.Cleanup(func() {
+		accounting.SetLive(nil)
+		_ = ledger.Close()
+	})
+	inst := newQuietSetupInstance(t, &config.Config{}, config.AgentConfig{ID: "qa"}, func(a *agent.Agent) {
+		a.ModelMetaFn = func(string) modelinfo.ModelMeta { return modelinfo.ModelMeta{ContextWindow: 200000} }
+	})
+	ba := &backgroundAgent{inst: inst, agentID: "qa"}
+
+	now := time.Now()
+	book := func(id, source string, at time.Time, kind string, in int) {
+		t.Helper()
+		turn := accounting.Turn{TurnID: sk + "@" + id, Session: sk, AgentID: "qa",
+			Backend: accounting.BackendAPI, Source: source, StartedAt: at, EndedAt: at.Add(time.Second)}
+		call := accounting.APIResponse{ID: "msg_" + id, Kind: kind, Provider: "anthropic", Model: "test-model",
+			Session: sk, AgentID: "qa", TurnID: turn.TurnID, Start: at, Duration: time.Second, StopReason: "end_turn",
+			Tokens: modelinfo.Tokens{modelinfo.ClassInput: in, modelinfo.ClassOutput: 50}}.Call()
+		if err := accounting.Record(turn, call); err != nil {
+			t.Fatalf("book %s: %v", id, err)
+		}
+	}
+
+	book("1", accounting.SourceUser, now.Add(-50*time.Minute), accounting.KindCall, 124000)
+	if fill, limit := ba.ContextUsage(sk); fill != 124000 || limit != 200000 {
+		t.Fatalf("before compaction: fill, limit = %d, %d; want 124000, 200000 (fixture sanity)", fill, limit)
+	}
+	book("2", accounting.SourceCompaction, now.Add(-45*time.Minute), accounting.KindCompaction, 124000)
+	if fill, _ := ba.ContextUsage(sk); fill != 0 {
+		t.Errorf("after a compaction: fill = %d, want 0 (unknown) — the last fill predates the compaction", fill)
+	}
+}

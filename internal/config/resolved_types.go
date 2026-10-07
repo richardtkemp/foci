@@ -183,10 +183,20 @@ type ResolvedQuietCompaction struct {
 	MinIdle   string
 }
 
+// DefaultQuietHours is the built-in compaction_quiet_hours window: quiet-hours
+// compaction is ON by default (Dick 2026-10-07). An explicit "" turns it off,
+// globally or per agent.
+const DefaultQuietHours = "23:00-07:00"
+
 // resolveQuietCompaction applies the quiet-trigger defaults itself (not via
 // ApplyTagDefaults) so Resolve is correct for configs built without Load,
-// e.g. struct literals in tests.
+// e.g. struct literals in tests. An unset window (nil) takes the default; an
+// explicit "" is the opt-out and stays empty.
 func resolveQuietCompaction(m CompactionConfig) ResolvedQuietCompaction {
+	window := DefaultQuietHours
+	if m.CompactionQuietHours != nil {
+		window = *m.CompactionQuietHours
+	}
 	threshold := 0.5
 	if m.CompactionQuietThreshold != nil {
 		threshold = *m.CompactionQuietThreshold
@@ -196,7 +206,7 @@ func resolveQuietCompaction(m CompactionConfig) ResolvedQuietCompaction {
 		minIdle = *m.CompactionQuietMinIdle
 	}
 	return ResolvedQuietCompaction{
-		Window:    DerefStr(m.CompactionQuietHours),
+		Window:    window,
 		Threshold: threshold,
 		MinIdle:   minIdle,
 	}

@@ -193,6 +193,25 @@ func (l *Ledger) SessionStats(session string) (*SessionStats, error) {
 	return &st, nil
 }
 
+// CurrentContextFill is the session's context fill as SessionStats reports
+// it, but only while it still describes the context: 0 (unknown) when a
+// compaction is booked after the latest fill. A compaction turn leaves no
+// fill of its own, so SessionStats keeps reporting the pre-compaction size
+// until the next real turn; a caller that ACTS on the size (quiet-hours
+// compaction, #2218/#2235) must not read that stale figure as current.
+func (l *Ledger) CurrentContextFill(session string) (int, error) {
+	var fill sql.NullInt64
+	err := l.db.QueryRow(`SELECT f.context_fill FROM turn_costs f
+		WHERE f.session = ? AND f.source NOT IN ('compaction', 'system') AND f.context_fill > 0
+		  AND NOT EXISTS (SELECT 1 FROM turn_costs c
+			WHERE c.session = f.session AND c.source = 'compaction' AND c.started_at > f.started_at)
+		ORDER BY f.started_at DESC LIMIT 1`, session).Scan(&fill)
+	if err != nil && err != sql.ErrNoRows {
+		return 0, fmt.Errorf("ledger: current context fill: %w", err)
+	}
+	return int(fill.Int64), nil
+}
+
 // LastTurnID is the session's newest conversation turn, or "": the durable
 // counterpart of telemetry.LastTurnID for a session whose last turn predates
 // this process. A turn the migration minted for a pre-#1695 row that named

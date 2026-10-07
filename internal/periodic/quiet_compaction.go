@@ -42,8 +42,9 @@ type quietTarget struct {
 
 // maybeQuietCompaction is the quiet-hours trigger: inside the configured
 // window, collect the eligible sessions and compact them one after another in
-// a goroutine. Off by default and an exact no-op when off — an empty window,
-// or a time outside it, returns before ANY session, ledger or index lookup.
+// a goroutine. An exact no-op when off — an empty window (the "" opt-out;
+// the built-in default is "23:00-07:00"), or a time outside it, returns
+// before ANY session, ledger or index lookup.
 func (r *Runner) maybeQuietCompaction(ctx context.Context) {
 	if r.agent == nil || r.quietCfg.Window == "" {
 		return

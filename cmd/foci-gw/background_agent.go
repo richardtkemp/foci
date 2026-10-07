@@ -95,15 +95,17 @@ func (b *backgroundAgent) LastTurnEnd(sessionKey string) time.Time {
 	return b.inst.ag.LastTurnEnd(sessionKey)
 }
 
-// ContextUsage returns the session's context fill and limit the way /status
-// computes them (#2218): fill from the cost ledger — every backend books
-// there, and 0 means no turn with a fill is recorded — limit from the
-// session's model context window.
+// ContextUsage returns the session's context fill and limit (#2218): fill
+// from the cost ledger — every backend books there — and 0 (unknown) when no
+// turn with a fill is recorded OR a compaction is booked after the latest
+// fill (#2235: that fill is the pre-compaction size, and acting on it would
+// compact a just-compacted session again); limit from the session's model
+// context window.
 func (b *backgroundAgent) ContextUsage(sessionKey string) (fill, limit int) {
 	limit = b.inst.ag.SessionContextLimit(sessionKey)
 	if l := accounting.Live(); l != nil {
-		if st, err := l.SessionStats(sessionKey); err == nil {
-			fill = st.ContextTokens
+		if f, err := l.CurrentContextFill(sessionKey); err == nil {
+			fill = f
 		}
 	}
 	return fill, limit
