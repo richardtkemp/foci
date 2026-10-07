@@ -69,6 +69,43 @@ func TestBranchOwnModelDoesNotInheritRootTupleLegs(t *testing.T) {
 	}
 }
 
+// TestBranchOwnModelOwnFormatNilClientKeepsOwnFormatGetsDefaultClient
+// proves the partial-own-tuple edge of the one-owner rule: a branch with
+// its own model AND its own format but a nil client (the /model path when
+// the agent has no ClientProvider to build one) keeps its OWN format and
+// gets the agent default client — the root's client never fills a leg of
+// a tuple the branch already owns.
+func TestBranchOwnModelOwnFormatNilClientKeepsOwnFormatGetsDefaultClient(t *testing.T) {
+	defaultClient := tupleClient{name: "default"}
+	ag := &Agent{
+		Model:   "claude-opus-4-8",
+		Format:  "anthropic",
+		Endpoint: "anthropic",
+		Client:  defaultClient,
+	}
+
+	root := session.SessionKey{AgentID: "bot", Type: 'c', ID: "100"}
+	branch := root.Branch()
+	rootKey := root.String()
+	branchKey := branch.String()
+
+	ag.SetSessionModel(rootKey, "google/gemini-2.5-pro", "gemini", "gemini", tupleClient{name: "root"})
+	ag.SetSessionModel(branchKey, "openai/gpt-5.6", "", "openai", nil)
+
+	if got := ag.SessionModel(branchKey); got != "openai/gpt-5.6" {
+		t.Errorf("branch model = %q, want own override %q", got, "openai/gpt-5.6")
+	}
+	if got := ag.SessionFormat(branchKey); got != "openai" {
+		t.Errorf("branch format = %q, want own format %q", got, "openai")
+	}
+	if got := ag.SessionClient(branchKey); got != defaultClient {
+		t.Errorf("branch client = %v, want agent default client, not the root's", got)
+	}
+	if got := ag.resolveEndpoint(branchKey); got != "anthropic" {
+		t.Errorf("branch endpoint = %q, want agent default %q", got, "anthropic")
+	}
+}
+
 // TestIndependentChildOwnModelDoesNotInheritRootTupleLegs proves the
 // one-owner rule covers independent (`i`) children too — rootKeyIfChild
 // treats branch `b` and independent `i` children identically.
