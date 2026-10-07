@@ -84,13 +84,13 @@ func resolveWhoami(ctx context.Context, d WhoamiDeps) whoamiReport {
 // values are explicit: none for an absent session key or chat id, unknown for
 // a platform or model that could not be resolved.
 func (r whoamiReport) text() string {
-	sessionKey := orMarker(r.sessionKey, whoamiNone)
+	sessionKey := whoamiMarker(r.sessionKey, whoamiNone)
 	chatID := whoamiNone
 	if r.chatID != 0 {
 		chatID = strconv.FormatInt(r.chatID, 10)
 	}
 	return fmt.Sprintf("agent_id: %s\nsession_key: %s\nchat_id: %s\nplatform: %s\nbackend: %s\ntransport: %s\nmodel: %s\n",
-		r.agentID, sessionKey, chatID, orMarker(r.platform, whoamiUnknown), r.backend, r.transport, orMarker(r.model, whoamiUnknown))
+		r.agentID, sessionKey, chatID, whoamiMarker(r.platform, whoamiUnknown), r.backend, r.transport, whoamiMarker(r.model, whoamiUnknown))
 }
 
 // whoamiJSON is the --json shape: exactly the seven text fields, with null for
@@ -113,25 +113,25 @@ func (r whoamiReport) jsonValue() whoamiJSON {
 	}
 	return whoamiJSON{
 		AgentID:    r.agentID,
-		SessionKey: orNil(r.sessionKey),
+		SessionKey: whoamiNilIfEmpty(r.sessionKey),
 		ChatID:     chatID,
-		Platform:   orNil(r.platform),
+		Platform:   whoamiNilIfEmpty(r.platform),
 		Backend:    r.backend,
 		Transport:  r.transport,
-		Model:      orNil(r.model),
+		Model:      whoamiNilIfEmpty(r.model),
 	}
 }
 
-// orMarker returns s, or marker when s is empty.
-func orMarker(s, marker string) string {
+// whoamiMarker returns s, or marker when s is empty.
+func whoamiMarker(s, marker string) string {
 	if s == "" {
 		return marker
 	}
 	return s
 }
 
-// orNil returns a pointer to s, or nil when s is empty.
-func orNil(s string) *string {
+// whoamiNilIfEmpty returns a pointer to s, or nil when s is empty.
+func whoamiNilIfEmpty(s string) *string {
 	if s == "" {
 		return nil
 	}
