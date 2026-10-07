@@ -385,6 +385,7 @@ var toolTable = []toolEntry{
 			FallbackFunc:        d.fallbackFn,
 			FallbackModel:       d.resolvedModel,
 			FallbackFormat:      d.defaultFormat,
+			ProviderRoutingFor:  config.RoutingFor(modelDefaultsFn(d.p.cfg.Models)),
 			MaxInherit:          tc.MaxConcurrentSpawns,
 			MaxToolLoops:        func() int { return live.Load().Loop.MaxToolLoops },
 			ExploreMaxDepth:     func() int { return live.Load().Tools.ExploreMaxDepth },

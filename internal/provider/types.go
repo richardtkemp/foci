@@ -326,6 +326,13 @@ type MessageRequest struct {
 	// own SDK params type from these fields).
 	ProviderRouting *ProviderRouting `json:"-"`
 
+	// RoutingFor returns the [models.*.provider] routing configured for a
+	// canonical developer/model_id, or nil when none is. The fallback
+	// walker uses it to put each hop on the fallback model's own provider
+	// routing instead of the primary's. json:"-" for the same reason as
+	// ProviderRouting: it never has a wire form of its own.
+	RoutingFor func(model string) *ProviderRouting `json:"-"`
+
 	// SessionKey is the foci session key this request belongs to. Only read
 	// by the openai translate layer, which sends it as OpenRouter's top-level
 	// "session_id" (OpenRouter endpoints only) so a session's generations

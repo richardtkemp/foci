@@ -250,6 +250,9 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 	if a.ModelDefaultsFn != nil {
 		md = a.ModelDefaultsFn(ts.TurnModel)
 	}
+	// Per-model routing lookup so a fallback hop lands on the fallback
+	// model's own [models.*.provider] routing.
+	routingFor := config.RoutingFor(a.ModelDefaultsFn)
 
 	displayNoted := false
 	verified := false
@@ -285,6 +288,7 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 			CacheStrategy:   a.CacheStrategy,
 			CacheTTL:        md.CacheTTL,
 			ProviderRouting: md.ProviderRouting,
+			RoutingFor:      routingFor,
 			SessionKey:      ts.SessionKey,
 		}
 		if ts.TurnEffort != "" && ts.TurnEffort != "off" {

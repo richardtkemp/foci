@@ -352,6 +352,71 @@ func TestCompactWithModelDefaults(t *testing.T) {
 	}
 }
 
+// routingCaptureClient captures the summarisation request Compact builds.
+// ProviderRouting and RoutingFor are json:"-" fields, invisible to the
+// httptest wire-capture route the neighbouring tests use, so this stub
+// observes them on the request object instead.
+type routingCaptureClient struct {
+	req  *provider.MessageRequest
+	resp *provider.MessageResponse
+}
+
+func (c *routingCaptureClient) SendMessage(_ context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
+	c.req = req
+	return c.resp, nil
+}
+
+func (c *routingCaptureClient) CountTokens(_ context.Context, _ *provider.MessageRequest) (int, error) {
+	return 0, nil
+}
+
+func (c *routingCaptureClient) IsCachingAvailable() bool { return false }
+
+// TestCompact_RequestCarriesRoutingLookup verifies that the summarisation
+// request carries the per-model routing lookup (RoutingFor) derived from
+// ModelDefaultsFn, so a fallback hop during compaction lands on the
+// fallback model's own [models.*.provider] routing. The lookup must answer
+// for ANY model, not just the compaction model.
+func TestCompact_RequestCarriesRoutingLookup(t *testing.T) {
+	routingR := &provider.ProviderRouting{Order: []string{"prov-r"}}
+	capture := &routingCaptureClient{resp: &provider.MessageResponse{
+		ID: "msg_compact", Type: "message", Role: "assistant",
+		Content:    provider.TextContent("Summary."),
+		StopReason: "end_turn",
+		Usage:      provider.Usage{InputTokens: 100, OutputTokens: 50},
+	}}
+	store := session.NewStore(t.TempDir())
+	sessionKey := "test/imain"
+	for i := 0; i < 3; i++ {
+		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
+	}
+	c := NewCompactor(store, 0.8)
+	c.ModelDefaultsFn = func(model string) config.ModelDefaults {
+		if model == "openrouter/other" {
+			return config.ModelDefaults{ProviderRouting: routingR}
+		}
+		return config.ModelDefaults{}
+	}
+	// No noStream wrapper: this stub is not a StreamingClient, so provider.Send
+	// takes the SendMessage path on its own.
+	if _, err := c.Compact(context.Background(), capture, sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false); err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	if capture.req == nil {
+		t.Fatal("no summarisation request captured")
+	}
+	if capture.req.RoutingFor == nil {
+		t.Fatal("RoutingFor not set on summarisation request")
+	}
+	if got := capture.req.RoutingFor("openrouter/other"); got != routingR {
+		t.Errorf("RoutingFor(openrouter/other) = %+v, want routing R (a different model's table)", got)
+	}
+	if got := capture.req.RoutingFor("claude-haiku-4-5"); got != nil {
+		t.Errorf("RoutingFor(claude-haiku-4-5) = %+v, want nil (no routing configured)", got)
+	}
+}
+
 func TestCompactWithoutEffortOverride(t *testing.T) {
 	// Verifies that when no effort level is configured,
 	// neither the "effort" field nor the "output_config" wrapper appear in the API request,

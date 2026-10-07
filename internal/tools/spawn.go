@@ -97,16 +97,21 @@ var spawnExploreAllowed = map[string]bool{
 
 // SpawnDeps holds the dependencies for the spawn tool, wired at registration time.
 type SpawnDeps struct {
-	Client              provider.Client
-	ClientProvider      provider.ClientProvider // provides access to clients for different endpoint:format pairs
-	Bootstrap           SystemBlocksProvider
-	Registry            *Registry // tool registry for one-shot tool access
-	Sessions            SessionBrancher
-	AgentID             string
-	GroupResolver       *config.GroupResolver               // resolves model groups for spawn modes
-	FallbackFunc        provider.FallbackFunc               // nil disables automatic model fallback on transient errors
-	FallbackModel       string                              // agent's default model (developer/model_id) for single-model mode fallback
-	FallbackFormat      string                              // agent's default format for single-model mode fallback
+	Client         provider.Client
+	ClientProvider provider.ClientProvider // provides access to clients for different endpoint:format pairs
+	Bootstrap      SystemBlocksProvider
+	Registry       *Registry // tool registry for one-shot tool access
+	Sessions       SessionBrancher
+	AgentID        string
+	GroupResolver  *config.GroupResolver // resolves model groups for spawn modes
+	FallbackFunc   provider.FallbackFunc // nil disables automatic model fallback on transient errors
+	FallbackModel  string                // agent's default model (developer/model_id) for single-model mode fallback
+	FallbackFormat string                // agent's default format for single-model mode fallback
+	// ProviderRoutingFor returns the [models.*.provider] routing
+	// configured for a canonical developer/model_id, or nil. It stamps
+	// every request of a one-shot's tool loop (and its fallback hops) with
+	// the model's own routing. Nil = no routing, today's behaviour.
+	ProviderRoutingFor  func(model string) *provider.ProviderRouting
 	MaxInherit          int                                 // semaphore size (from config) — fixed at construction, can't be live-resized
 	MaxToolLoops        func() int                          // max tool loops for raw/character spawns, read fresh per call
 	ExploreMaxDepth     func() int                          // max tool loops for explore spawns, read fresh per call
@@ -203,7 +208,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 					return ToolResult{}, fmt.Errorf("create temp dir: %w", err)
 				}
 				toolDefs, tools := spawnIsolatedToolSet(deps.Registry, spawnRawBlacklist, deps.Store, tempDir, deps.FileMode)
-				result, err := spawnOneShot(ctx, client, model, format, nil, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.maxToolLoops(), deps.FallbackFunc, deps.ClientProvider)
+				result, err := spawnOneShot(ctx, client, model, format, nil, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.maxToolLoops(), deps.FallbackFunc, deps.ClientProvider, deps.ProviderRoutingFor)
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -232,7 +237,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 					system = deps.Bootstrap.SystemBlocks()
 				}
 				toolDefs, tools := spawnToolSet(deps.Registry, spawnCharacterBlacklist)
-				result, err := spawnOneShot(ctx, client, model, format, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.maxToolLoops(), deps.FallbackFunc, deps.ClientProvider)
+				result, err := spawnOneShot(ctx, client, model, format, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.maxToolLoops(), deps.FallbackFunc, deps.ClientProvider, deps.ProviderRoutingFor)
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -244,7 +249,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 					{Type: "text", Text: exploreSystemPrompt},
 				}
 				toolDefs, tools := spawnExploreToolSet(deps.Registry)
-				result, err := spawnOneShot(ctx, client, model, format, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnExploreMaxResultChars, deps.exploreMaxDepth(), deps.FallbackFunc, deps.ClientProvider)
+				result, err := spawnOneShot(ctx, client, model, format, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnExploreMaxResultChars, deps.exploreMaxDepth(), deps.FallbackFunc, deps.ClientProvider, deps.ProviderRoutingFor)
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -439,7 +444,7 @@ func spawnGuardResult(toolName, result string, limit int) string {
 }
 
 // spawnOneShot makes API calls with optional tool access (raw/character/explore modes).
-func spawnOneShot(ctx context.Context, client provider.Client, model, format string, system []provider.SystemBlock, prompt string, timeout time.Duration, toolDefs []provider.ToolDef, tools map[string]*Tool, sessions SessionBrancher, maxResultChars int, maxLoops int, fallbackFn provider.FallbackFunc, clientProvider provider.ClientProvider) (string, error) {
+func spawnOneShot(ctx context.Context, client provider.Client, model, format string, system []provider.SystemBlock, prompt string, timeout time.Duration, toolDefs []provider.ToolDef, tools map[string]*Tool, sessions SessionBrancher, maxResultChars int, maxLoops int, fallbackFn provider.FallbackFunc, clientProvider provider.ClientProvider, routingFor func(model string) *provider.ProviderRouting) (string, error) {
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -453,14 +458,24 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 	agentID := session.AgentIDFromKey(sessionKey)
 	turnID := accounting.MintTurnID(sessionKey, accounting.KindSpawn, spawnStart)
 
+	// The spawn model is loop-invariant, so resolve its [models.*.provider]
+	// routing once; every loop request carries it, plus the lookup so any
+	// fallback hop lands on the hop model's own routing.
+	var routing *provider.ProviderRouting
+	if routingFor != nil {
+		routing = routingFor(model)
+	}
+
 	for i := 0; i < maxLoops; i++ {
 		req := &provider.MessageRequest{
-			Model:      model,
-			MaxTokens:  16384,
-			System:     system,
-			Messages:   messages,
-			Tools:      toolDefs,
-			SessionKey: sessionKey,
+			Model:           model,
+			MaxTokens:       16384,
+			System:          system,
+			Messages:        messages,
+			Tools:           toolDefs,
+			ProviderRouting: routing,
+			RoutingFor:      routingFor,
+			SessionKey:      sessionKey,
 		}
 
 		start := time.Now()

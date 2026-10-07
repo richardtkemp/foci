@@ -107,6 +107,13 @@ func walkFallback(
 		}
 
 		req.Model = fbCanonical
+		// Each hop runs under the fallback model's own [models.*.provider]
+		// routing — the primary's lock (order/allow_fallbacks) may name
+		// providers that don't serve this model at all.
+		req.ProviderRouting = nil
+		if req.RoutingFor != nil {
+			req.ProviderRouting = req.RoutingFor(fbCanonical)
+		}
 		resp, err := sendWithRetry(ctx, fbClient, req, handler)
 		if err == nil {
 			if logf != nil {

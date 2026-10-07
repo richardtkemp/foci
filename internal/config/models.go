@@ -19,6 +19,20 @@ type ModelDefaults struct {
 	ProviderRouting *provider.ProviderRouting // OpenRouter provider-routing preferences from [models.*.provider]; nil = none configured
 }
 
+// RoutingFor adapts a ModelDefaultsFn into the per-model provider-routing
+// lookup carried on provider.MessageRequest.RoutingFor: it returns the
+// [models.*.provider] routing configured for a canonical
+// developer/model_id, or nil. A nil fn adapts to a nil lookup — no models
+// configured, no routing, today's behaviour.
+func RoutingFor(fn func(string) ModelDefaults) func(string) *provider.ProviderRouting {
+	if fn == nil {
+		return nil
+	}
+	return func(model string) *provider.ProviderRouting {
+		return fn(model).ProviderRouting
+	}
+}
+
 // ResolvedModel holds the canonical resolution of a model string.
 type ResolvedModel struct {
 	Developer string // "anthropic", "google", "openai", "deepseek", etc.

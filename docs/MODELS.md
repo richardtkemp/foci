@@ -204,6 +204,19 @@ allow_fallbacks = true
 max_price = 5
 ```
 
+To keep a model's prompt cache warm, pin it to one upstream provider — OpenRouter's prompt cache lives per upstream provider, so hopping providers drops it. `order` names the provider(s) and `allow_fallbacks = false` stops OpenRouter routing around them:
+
+```toml
+[models."openrouter/google/gemini-2.5-pro"]
+model = "openrouter/google/gemini-2.5-pro"
+
+[models."openrouter/google/gemini-2.5-pro".provider]
+order = ["google-vertex/global"]
+allow_fallbacks = false
+```
+
+The lock follows the model, not the request: when this model is reached as a fallback of another model, its OWN `[models.<name>.provider]` table applies — never the primary model's.
+
 ---
 
 ## Registry overrides (`[[modelinfo]]`)

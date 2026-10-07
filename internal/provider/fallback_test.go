@@ -71,6 +71,7 @@ func TestIsFallbackEligible_NotEligible(t *testing.T) {
 type fallbackMockClient struct {
 	responses []fallbackMockResponse // consumed in order; panics if exhausted
 	callIdx   int
+	calls     []capturedRequest // what each call carried, snapshotted at call time
 }
 
 type fallbackMockResponse struct {
@@ -78,10 +79,20 @@ type fallbackMockResponse struct {
 	err  error
 }
 
+// capturedRequest snapshots what a request carried AT CALL TIME. Send and
+// walkFallback reuse and mutate the same *MessageRequest across the whole
+// chain (req.Model, req.ProviderRouting), so recording the pointer would
+// alias every entry to the last hop's state.
+type capturedRequest struct {
+	model   string
+	routing *ProviderRouting
+}
+
 func (m *fallbackMockClient) SendMessage(_ context.Context, req *MessageRequest) (*MessageResponse, error) {
 	if m.callIdx >= len(m.responses) {
 		panic("fallbackMockClient: no more responses")
 	}
+	m.calls = append(m.calls, capturedRequest{model: req.Model, routing: req.ProviderRouting})
 	r := m.responses[m.callIdx]
 	m.callIdx++
 	if r.resp != nil && r.resp.Model == "" {
@@ -347,5 +358,235 @@ func TestSend_StripThenFallback(t *testing.T) {
 	}
 	if req.Output != nil {
 		t.Error("expected Output to be stripped")
+	}
+}
+
+func TestSend_FallbackUsesFallbackModelRouting(t *testing.T) {
+	t.Parallel()
+	// Proves that a fallback hop runs under the FALLBACK model's own
+	// [models.*.provider] routing, not the primary's: the primary's
+	// order/allow_fallbacks may name providers that don't serve the
+	// fallback model at all.
+	primaryClient := &fallbackMockClient{responses: []fallbackMockResponse{
+		{err: &APIError{StatusCode: 529}},
+	}}
+	fbClient := &fallbackMockClient{responses: []fallbackMockResponse{
+		{resp: &MessageResponse{Content: TextContent("fb ok")}},
+	}}
+	cp := &fallbackMockClientProvider{clients: map[string]Client{
+		"fb-ep:fb-fmt": fbClient,
+	}}
+	fallbackFn := func(model string) (string, string, string, bool) {
+		if model == "primary-model" {
+			return "fb-model", "fb-ep", "fb-fmt", true
+		}
+		return "", "", "", false
+	}
+	routingA := &ProviderRouting{Order: []string{"prov-a"}}
+	routingB := &ProviderRouting{Order: []string{"prov-b"}}
+	req := &MessageRequest{
+		Model:           "primary-model",
+		ProviderRouting: routingA,
+		RoutingFor: func(model string) *ProviderRouting {
+			if model == "fb-model" {
+				return routingB
+			}
+			return nil
+		},
+	}
+	if _, err := Send(context.Background(), primaryClient, req, nil, fallbackFn, cp, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(primaryClient.calls) != 1 || primaryClient.calls[0].routing != routingA {
+		t.Errorf("primary snapshot = %+v, want routing A", primaryClient.calls)
+	}
+	if len(fbClient.calls) != 1 {
+		t.Fatalf("fallback client calls = %d, want 1", len(fbClient.calls))
+	}
+	got := fbClient.calls[0]
+	if got.model != "fb-model" {
+		t.Errorf("fallback snapshot model = %q, want fb-model", got.model)
+	}
+	if got.routing != routingB {
+		t.Errorf("fallback snapshot routing = %+v, want routing B", got.routing)
+	}
+}
+
+func TestSend_FallbackModelWithoutRoutingSendsNil(t *testing.T) {
+	t.Parallel()
+	// Proves that a fallback model with no [models.*.provider] table sends
+	// no routing at all — the primary's routing must not ride along.
+	primaryClient := &fallbackMockClient{responses: []fallbackMockResponse{
+		{err: &APIError{StatusCode: 529}},
+	}}
+	fbClient := &fallbackMockClient{responses: []fallbackMockResponse{
+		{resp: &MessageResponse{Content: TextContent("fb ok")}},
+	}}
+	cp := &fallbackMockClientProvider{clients: map[string]Client{
+		"fb-ep:fb-fmt": fbClient,
+	}}
+	fallbackFn := func(model string) (string, string, string, bool) {
+		if model == "primary-model" {
+			return "fb-model", "fb-ep", "fb-fmt", true
+		}
+		return "", "", "", false
+	}
+	req := &MessageRequest{
+		Model:           "primary-model",
+		ProviderRouting: &ProviderRouting{Order: []string{"prov-a"}},
+		RoutingFor: func(model string) *ProviderRouting {
+			return nil // fallback model has no routing configured
+		},
+	}
+	if _, err := Send(context.Background(), primaryClient, req, nil, fallbackFn, cp, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(fbClient.calls) != 1 {
+		t.Fatalf("fallback client calls = %d, want 1", len(fbClient.calls))
+	}
+	if fbClient.calls[0].routing != nil {
+		t.Errorf("fallback snapshot routing = %+v, want nil", fbClient.calls[0].routing)
+	}
+}
+
+func TestSend_FallbackNilRoutingForSendsNil(t *testing.T) {
+	t.Parallel()
+	// Proves that a request without a routing lookup (no [models.*]
+	// configured, or a caller that never set one) sends no routing on a
+	// fallback hop — today's behaviour for unconfigured models.
+	primaryClient := &fallbackMockClient{responses: []fallbackMockResponse{
+		{err: &APIError{StatusCode: 529}},
+	}}
+	fbClient := &fallbackMockClient{responses: []fallbackMockResponse{
+		{resp: &MessageResponse{Content: TextContent("fb ok")}},
+	}}
+	cp := &fallbackMockClientProvider{clients: map[string]Client{
+		"fb-ep:fb-fmt": fbClient,
+	}}
+	fallbackFn := func(model string) (string, string, string, bool) {
+		if model == "primary-model" {
+			return "fb-model", "fb-ep", "fb-fmt", true
+		}
+		return "", "", "", false
+	}
+	req := &MessageRequest{
+		Model:           "primary-model",
+		ProviderRouting: &ProviderRouting{Order: []string{"prov-a"}},
+	}
+	if _, err := Send(context.Background(), primaryClient, req, nil, fallbackFn, cp, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(fbClient.calls) != 1 {
+		t.Fatalf("fallback client calls = %d, want 1", len(fbClient.calls))
+	}
+	if fbClient.calls[0].routing != nil {
+		t.Errorf("fallback snapshot routing = %+v, want nil", fbClient.calls[0].routing)
+	}
+}
+
+func TestSend_ChainEachHopOwnRouting(t *testing.T) {
+	t.Parallel()
+	// Proves that every hop of a multi-hop chain resolves its OWN routing:
+	// primary→fb1→fb2 with routing A/B/C sends A, then B, then C — the
+	// primary's lock never rides onto a later model. Call-time snapshots
+	// make this assertable at all: the same *MessageRequest is mutated per
+	// hop, so a pointer record would show C three times.
+	mc := &fallbackMockClient{responses: []fallbackMockResponse{
+		{err: &APIError{StatusCode: 529}},                        // primary fails
+		{err: &APIError{StatusCode: 503}},                        // fb1 fails
+		{resp: &MessageResponse{Content: TextContent("fb2 ok")}}, // fb2 succeeds
+	}}
+	fallbackFn := func(model string) (string, string, string, bool) {
+		switch model {
+		case "primary":
+			return "fb1", "", "", true
+		case "fb1":
+			return "fb2", "", "", true
+		default:
+			return "", "", "", false
+		}
+	}
+	routingA := &ProviderRouting{Order: []string{"prov-a"}}
+	routingB := &ProviderRouting{Order: []string{"prov-b"}}
+	routingC := &ProviderRouting{Order: []string{"prov-c"}}
+	req := &MessageRequest{
+		Model:           "primary",
+		ProviderRouting: routingA,
+		RoutingFor: func(model string) *ProviderRouting {
+			switch model {
+			case "fb1":
+				return routingB
+			case "fb2":
+				return routingC
+			default:
+				return nil
+			}
+		},
+	}
+	if _, err := Send(context.Background(), mc, req, nil, fallbackFn, nil, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []capturedRequest{
+		{model: "primary", routing: routingA},
+		{model: "fb1", routing: routingB},
+		{model: "fb2", routing: routingC},
+	}
+	if len(mc.calls) != len(want) {
+		t.Fatalf("calls = %+v, want %+v", mc.calls, want)
+	}
+	for i, w := range want {
+		if mc.calls[i] != w {
+			t.Errorf("call %d = %+v, want %+v", i, mc.calls[i], w)
+		}
+	}
+}
+
+func TestSend_PrimarySuccessKeepsRouting(t *testing.T) {
+	t.Parallel()
+	// Proves the unchanged case: a successful primary request keeps its
+	// own routing — walkFallback is never entered.
+	mc := &fallbackMockClient{responses: []fallbackMockResponse{
+		{resp: &MessageResponse{Content: TextContent("primary ok")}},
+	}}
+	routingA := &ProviderRouting{Order: []string{"prov-a"}}
+	req := &MessageRequest{
+		Model:           "primary",
+		ProviderRouting: routingA,
+	}
+	if _, err := Send(context.Background(), mc, req, nil, nil, nil, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mc.calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(mc.calls))
+	}
+	if mc.calls[0].model != "primary" || mc.calls[0].routing != routingA {
+		t.Errorf("snapshot = %+v, want {primary routing A}", mc.calls[0])
+	}
+}
+
+func TestSend_StripRetryKeepsRouting(t *testing.T) {
+	t.Parallel()
+	// Proves the unchanged case: the 400 strip-and-retry in Send stays on
+	// the same model with its routing untouched — both attempts carry it.
+	mc := &fallbackMockClient{responses: []fallbackMockResponse{
+		{err: &APIError{StatusCode: 400, Body: `{"error":"thinking is not supported"}`}},
+		{resp: &MessageResponse{Content: TextContent("ok after strip")}},
+	}}
+	routingA := &ProviderRouting{Order: []string{"prov-a"}}
+	req := &MessageRequest{
+		Model:           "primary",
+		Thinking:        &ThinkingConfig{Type: "enabled", BudgetTokens: 1024},
+		ProviderRouting: routingA,
+	}
+	if _, err := Send(context.Background(), mc, req, nil, nil, nil, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mc.calls) != 2 {
+		t.Fatalf("calls = %d, want 2", len(mc.calls))
+	}
+	for i, c := range mc.calls {
+		if c.model != "primary" || c.routing != routingA {
+			t.Errorf("call %d = %+v, want {primary routing A}", i, c)
+		}
 	}
 }

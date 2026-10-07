@@ -1636,3 +1636,56 @@ func TestRunInference_APIError(t *testing.T) {
 		t.Error("expected error assistant message in NewMessages")
 	}
 }
+
+// TestRunInference_RequestCarriesRoutingLookup verifies that the turn loop
+// stamps its request with the per-model routing lookup (RoutingFor) derived
+// from ModelDefaultsFn, so a fallback hop can switch to the fallback
+// model's own [models.*.provider] routing. The lookup must answer for ANY
+// model, not just the turn model.
+func TestRunInference_RequestCarriesRoutingLookup(t *testing.T) {
+	routingA := &provider.ProviderRouting{Order: []string{"prov-a"}}
+	routingR := &provider.ProviderRouting{Order: []string{"prov-r"}}
+	var got *provider.MessageRequest
+	client := &mockClient{
+		sendFn: func(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
+			got = req // fresh request object per loop iteration — safe to keep
+			return &provider.MessageResponse{
+				Role:       "assistant",
+				Content:    provider.TextContent("done"),
+				StopReason: "end_turn",
+				Usage:      provider.Usage{InputTokens: 100, OutputTokens: 10},
+			}, nil
+		},
+	}
+
+	a := newInferenceAgent(t, client)
+	a.ModelDefaultsFn = func(model string) config.ModelDefaults {
+		switch model {
+		case "anthropic/test-model":
+			return config.ModelDefaults{ProviderRouting: routingA}
+		case "openrouter/other":
+			return config.ModelDefaults{ProviderRouting: routingR}
+		default:
+			return config.ModelDefaults{}
+		}
+	}
+	tr := &APITransport{sharedTurnOps{agent: a}}
+	ts := newInferenceTS(t, a, client)
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+
+	if got == nil {
+		t.Fatal("no request captured")
+	}
+	if got.ProviderRouting != routingA {
+		t.Errorf("ProviderRouting = %+v, want the turn model's routing A", got.ProviderRouting)
+	}
+	if got.RoutingFor == nil {
+		t.Fatal("RoutingFor not set on request")
+	}
+	if got.RoutingFor("openrouter/other") != routingR {
+		t.Errorf("RoutingFor(openrouter/other) = %+v, want routing R (a different model's table)", got.RoutingFor("openrouter/other"))
+	}
+}

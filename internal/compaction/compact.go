@@ -384,6 +384,9 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 		md = c.ModelDefaultsFn(model)
 	}
 	mdThinking, mdEffort := md.Thinking, md.Effort
+	// Per-model routing lookup so a fallback hop lands on the fallback
+	// model's own [models.*.provider] routing.
+	routingFor := config.RoutingFor(c.ModelDefaultsFn)
 
 	c.log.Debugf("summary request: model=%s max_tokens=%d messages=%d effort=%s thinking=%s", model, c.maxTokens, len(summaryMessages), mdEffort, mdThinking)
 	start := time.Now()
@@ -393,6 +396,7 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 		System:          system,
 		Messages:        summaryMessages,
 		ProviderRouting: md.ProviderRouting,
+		RoutingFor:      routingFor,
 		SessionKey:      sessionKey,
 	}
 	if mdEffort != "" && mdEffort != "off" {

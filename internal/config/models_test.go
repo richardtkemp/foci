@@ -3,6 +3,7 @@ package config
 import (
 	"testing"
 
+	"foci/internal/provider"
 	tomlParser "github.com/BurntSushi/toml"
 )
 
@@ -415,6 +416,30 @@ model = "openrouter/stepfun/step-3.5-flash:nitro"
 	}
 	if mc.Provider != nil {
 		t.Errorf("Provider = %+v, want nil", mc.Provider)
+	}
+}
+
+func TestRoutingFor(t *testing.T) {
+	// Proves the ModelDefaultsFn → per-model routing lookup adapter: a nil
+	// fn adapts to a nil lookup (no models configured, today's behaviour),
+	// and a non-nil fn's lookup returns exactly that model's
+	// ProviderRouting — nil for models with no [models.*.provider] table.
+	if RoutingFor(nil) != nil {
+		t.Error("RoutingFor(nil) should be nil")
+	}
+
+	routingR := &provider.ProviderRouting{Order: []string{"prov-r"}}
+	lookup := RoutingFor(func(model string) ModelDefaults {
+		if model == "openrouter/pinned" {
+			return ModelDefaults{ProviderRouting: routingR}
+		}
+		return ModelDefaults{}
+	})
+	if got := lookup("openrouter/pinned"); got != routingR {
+		t.Errorf("lookup(openrouter/pinned) = %+v, want routing R", got)
+	}
+	if got := lookup("openrouter/unconfigured"); got != nil {
+		t.Errorf("lookup(openrouter/unconfigured) = %+v, want nil", got)
 	}
 }
 
