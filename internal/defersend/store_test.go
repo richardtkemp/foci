@@ -160,6 +160,30 @@ func TestStore_OldSchemaMigration(t *testing.T) {
 	}
 }
 
+// TestStore_AlterFailureSurfaces proves NewStore fails loudly when a migration
+// ALTER fails for a real reason (not the expected "duplicate column"): here
+// the deferred_sends name is taken by a view, so every ADD COLUMN fails — the
+// error must surface at OPEN, not later as a "no such column" on the first
+// Enqueue/All.
+func TestStore_AlterFailureSurfaces(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "deferred.db")
+	db, err := sqlite.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE VIEW deferred_sends AS SELECT 1`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if s, err := NewStore(path); err == nil {
+		_ = s.Close()
+		t.Fatal("NewStore succeeded although the kind columns could not be added — the ALTER failure was swallowed")
+	}
+}
+
 // TestStore_ReopenSameFile proves opening the same database twice (a restart,
 // or a second handle) neither fails nor loses the queued rows.
 func TestStore_ReopenSameFile(t *testing.T) {

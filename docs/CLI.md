@@ -169,7 +169,7 @@ foci branch [-a agent] [-m model] [--if-warm <duration>] [--if-cold <duration>] 
 | `--async` / `--no-wait` | Fire-and-forget mode (default). Returns immediately, response goes to Telegram. |
 | `--no-compact` | Skip compaction if context limit is reached during the branch. |
 | `--no-reset-hook` | Skip the pre-reset memory hook when the branch session is reclaimed. |
-| `--oneshot` | Shorthand for `--no-compact --no-reset-hook`. For quick fire-and-forget tasks. |
+| `--oneshot` | Shorthand for `--no-compact --no-reset-hook --silent`. For quick fire-and-forget tasks. |
 | `--message-text <text>` / `-mt` | Explicit message text (alternative to trailing args). |
 | `--message-file <path>` / `-mf` | Read message from file. Sends the file contents as the message. |
 

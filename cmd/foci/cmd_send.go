@@ -271,7 +271,8 @@ Flags:
   --no-gate                 Run now, ignoring any wait condition (env: FOCI_NO_GATE)
   --no-compact              Skip compaction if context limit reached (env: FOCI_NO_COMPACT)
   --no-reset-hook           Skip pre-reset memory hook (env: FOCI_NO_RESET_HOOK)
-  --oneshot                 Shorthand for --no-compact --no-reset-hook --silent (env: FOCI_ONESHOT)
+  --oneshot                 Shorthand for --no-compact --no-reset-hook --silent
+                            (env: FOCI_ONESHOT sets only --no-compact --no-reset-hook)
   --silent                  No chat delivery of the branch response
   --sync, --wait            Wait for the agent's reply; NOT a --wait-* gate (env: FOCI_SYNC)
   --async, --no-wait        Fire-and-forget (default) (env: FOCI_ASYNC)

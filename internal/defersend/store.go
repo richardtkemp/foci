@@ -8,6 +8,8 @@ package defersend
 
 import (
 	"database/sql"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -100,14 +102,20 @@ func NewStore(path string) (*Store, error) {
 	}
 	// Pre-kind databases predate the kind/branch-option columns; add them so
 	// the new queries work and the old rows read back as sends. (Fresh
-	// databases get them from CREATE TABLE.)
-	for _, ddl := range []string{
-		`ALTER TABLE deferred_sends ADD COLUMN kind TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE deferred_sends ADD COLUMN no_compact INTEGER NOT NULL DEFAULT 0`,
-		`ALTER TABLE deferred_sends ADD COLUMN no_reset_hook INTEGER NOT NULL DEFAULT 0`,
-		`ALTER TABLE deferred_sends ADD COLUMN silent INTEGER NOT NULL DEFAULT 0`,
+	// databases get them from CREATE TABLE.) Only the expected "duplicate
+	// column" (already migrated) is ignored — any other failure (locked file,
+	// I/O error) must surface HERE, not later as a "no such column" on the
+	// first Enqueue/All.
+	for _, col := range []struct{ name, ddl string }{
+		{"kind", `ALTER TABLE deferred_sends ADD COLUMN kind TEXT NOT NULL DEFAULT ''`},
+		{"no_compact", `ALTER TABLE deferred_sends ADD COLUMN no_compact INTEGER NOT NULL DEFAULT 0`},
+		{"no_reset_hook", `ALTER TABLE deferred_sends ADD COLUMN no_reset_hook INTEGER NOT NULL DEFAULT 0`},
+		{"silent", `ALTER TABLE deferred_sends ADD COLUMN silent INTEGER NOT NULL DEFAULT 0`},
 	} {
-		_, _ = db.Exec(ddl) // "duplicate column" on current-schema DBs — ignored
+		if _, err := db.Exec(col.ddl); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			_ = db.Close()
+			return nil, fmt.Errorf("add %s column: %w", col.name, err)
+		}
 	}
 	return &Store{db: db}, nil
 }

@@ -440,6 +440,36 @@ func TestSweep_DeliversBranchOnDeadline(t *testing.T) {
 	}
 }
 
+// TestSweep_DropsBranchOnBadModel pins the delivery-failure path of a
+// deferred branch: the model override is resolved at DELIVERY time, and when
+// it does not resolve then (here "cheap" against a config with no models) the
+// turn never reaches the backend — the failure is logged and the record is
+// dropped after that single attempt, never retried forever.
+func TestSweep_DropsBranchOnBadModel(t *testing.T) {
+	d, mock := httpTestSetup(t, httpTestOpts{})
+	store := withDeferStore(t, &d)
+	now := timeutil.Now()
+	_, _ = store.Enqueue(defersend.Record{
+		Kind: defersend.KindBranch, AgentID: testAgentID, SessionKey: testSessionKey,
+		Text: "doomed branch", Model: "cheap",
+		WaitCold: "1m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
+	})
+
+	sweepFor(d, store).sweep()
+
+	if calls := mock.snapshot(); len(calls) != 0 {
+		t.Errorf("backend called %d time(s) for a branch whose model could not resolve at delivery, want 0", len(calls))
+	}
+	if all, _ := store.All(); len(all) != 0 {
+		t.Fatalf("store not drained after the failed delivery: %d — a failed delivery must not retry forever", len(all))
+	}
+	// And it stays drained: the drop is permanent, not deferred again.
+	sweepFor(d, store).sweep()
+	if calls := mock.snapshot(); len(calls) != 0 {
+		t.Errorf("backend called %d time(s) after a second sweep, want 0", len(calls))
+	}
+}
+
 // TestSweep_WithholdsBranchWhileRateLimited mirrors
 // TestSweep_WithholdsWhileRateLimited for branches (#1272 req 7): the sweep's
 // rate-limit hold applies to every kind, with no send-anyway escape hatch —

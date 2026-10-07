@@ -330,13 +330,16 @@ func (s *deferSweeper) deliverBranch(inst *agentInstance, r defersend.Record) {
 }
 
 // deliverCommand dispatches a deferred command through the agent's command
-// registry — the same dispatch handleCommand uses, DocPath send included. A
-// command-not-found is logged; the result text is logged at INFO (there is no
-// HTTP caller to return it to).
+// registry — the same dispatch handleCommand uses, DocPath send included.
+// ok=false means a REGISTERED command without an Execute function; unknown
+// names are answered by the registry itself (ok=true, "Unknown command" text,
+// logged below). The undeliverable case is warned, the result text is logged
+// at INFO (there is no HTTP caller to return it to).
 func (s *deferSweeper) deliverCommand(inst *agentInstance, r defersend.Record) {
 	result, ok := dispatchAgentCommand(s.deps, inst, s.deps.ctx, r.SessionKey, r.Text)
 	if !ok {
-		deferLog.Warnf("deferred command %d not found (agent=%s session=%s): %s", r.ID, r.AgentID, r.SessionKey, r.Text)
+		deferLog.Warnf("deferred command %d not executable — registered command has no Execute (agent=%s session=%s): %s",
+			r.ID, r.AgentID, r.SessionKey, r.Text)
 		return
 	}
 	deferLog.Infof("deferred command %d delivered (agent=%s session=%s): %s", r.ID, r.AgentID, r.SessionKey, result.Text)

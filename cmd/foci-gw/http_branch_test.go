@@ -175,6 +175,10 @@ func TestBranch_UnmetWaitDefers(t *testing.T) {
 			t.Fatalf("queued=%d want 1", len(all))
 		}
 		r := all[0]
+		// Model is stored VERBATIM, unvalidated: it is resolved at delivery
+		// time (a bad model fails then, loudly — see
+		// TestSweep_DropsBranchOnBadModel), so "cheap" — which the immediate
+		// path would reject — defers fine.
 		if r.Kind != defersend.KindBranch {
 			t.Errorf("Kind=%q want %q", r.Kind, defersend.KindBranch)
 		}
