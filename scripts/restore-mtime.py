@@ -116,6 +116,8 @@ def main():
             f.write(head + "\n")
     except OSError:
         pass
+    # Again: `git diff` above refreshes the index, which bumps .git's mtime.
+    fix_dirs(root)
     return 0
 
 
