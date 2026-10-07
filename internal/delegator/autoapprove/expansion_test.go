@@ -110,6 +110,7 @@ func TestBraceExpansionNotAutoApproved(t *testing.T) {
 		`rg foo --pr{"e",}=./x.sh`,
 		// Every segment of a compound command, and loop bodies.
 		`ls && sort {"-o",out} f`,
+		`cat a | sort {"-o",out} f`,
 		`for f in x; do sort {"-o",out} f; done`,
 	} {
 		assertApproval(t, rules, cmd, false)
@@ -261,11 +262,23 @@ func TestVariableArgsResolvedAndChecked(t *testing.T) {
 		{"inline glob value", nil, "X='*'; rg foo $X", nil, false},
 		// Whitespace in an unquoted value word-splits into new arguments.
 		{"inline split flag", nil, "X='-i x'; sed $X s/a/b/ f", nil, false},
+		// A backslash escape in the same word as the reference yields the
+		// escaped character, not a backslash: bash passes `--pre=./x.sh`
+		// whether the flag is escaped whole or only its first dash.
+		{"escape after empty var inline", nil, `X=''; rg foo $X\--pre=./x.sh`, nil, false},
+		{"escape after empty var quoted ref", nil, `X=''; rg foo "$X"\--pre=./x.sh`, nil, false},
+		{"escape after empty var word flag", nil, `X=''; find . $X\-exec true \;`, nil, false},
+		// The same rule on the assignment side: bash strips `\x` while
+		// building an unquoted assignment word, so the variable's VALUE is
+		// the unescaped text the checks must see.
+		{"assignment value escapes long flag", nil, `X=\-\-pre=./x.sh; rg foo $X`, nil, false},
+		{"assignment value escapes short flag", nil, `X=\-o; sort $X f`, nil, false},
 		// Environment snapshot: resolved, then checked the same way — also
 		// through the quoted ${…}/"$…" reference forms.
 		{"env dangerous flag", nil, "rg foo $PAGER", map[string]string{"PAGER": "--pre=./x.sh"}, false},
 		{"env dangerous flag quoted", nil, `rg foo "$P"`, map[string]string{"P": "--pre=./x.sh"}, false},
 		{"env dangerous flag braced", nil, `rg foo ${P} f`, map[string]string{"P": "--pre=./x.sh"}, false},
+		{"env escape after empty var", nil, `rg foo $P\--pre=./x.sh`, map[string]string{"P": ""}, false},
 		// A resolved harmless path keeps approval.
 		{"env harmless path", nil, "rg foo $HOME/notes", map[string]string{"HOME": "/home/u"}, true},
 	}
@@ -335,6 +348,13 @@ func TestVariableResolutionKeepsSafeCommandsApproved(t *testing.T) {
 	readonly := parseAutoApproveRules(CommonReadonlyRules)
 	assertApproval(t, readonly, "X='*'; rg foo \"$X\"", true)
 
+	// The escape rule strips only the backslash: an escaped separator after
+	// a reference becomes its literal character (bash passes `/srv/f`), and
+	// a value assigned through single quotes keeps its backslashes verbatim
+	// (expansion never re-processes them) — neither over-blocks.
+	assertApproval(t, readonly, `X=/srv; rg foo $X\/f`, true)
+	assertApproval(t, readonly, `X='a\;b'; rg foo $X`, true)
+
 	// Environment snapshot: $HOME resolves to a path; the unquoted glob that
 	// follows cannot yield a flag because every expansion starts with '/'.
 	got, _ := MatchWithEnv(readonly, "Bash", bashInput(t, "rg foo $HOME/*"), map[string]string{"HOME": "/srv/x"})
@@ -352,14 +372,15 @@ func TestAnsiCQuotedHarmlessArgsStayApproved(t *testing.T) {
 
 // TestLiteralDollarStaysApproved pins requirement 4's literal-$ rule: a `$`
 // that is not a variable or substitution reference — a sed last-line
-// address, an escaped `\$` inside double quotes, a regex anchor — carries no
-// expansion and keeps approval.
+// address, an escaped `\$` inside double quotes, a regex anchor, a `$`
+// inside single quotes — carries no expansion and keeps approval.
 func TestLiteralDollarStaysApproved(t *testing.T) {
 	rules := parseAutoApproveRules(CommonReadonlyRules)
 	for _, cmd := range []string{
 		`sed -n '$p' f`,
 		`sed -n "1,\$p" f`,
 		`rg ^foo$ f`,
+		`rg 'a$b' f`,
 	} {
 		assertApproval(t, rules, cmd, true)
 	}

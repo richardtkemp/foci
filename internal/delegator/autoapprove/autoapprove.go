@@ -695,11 +695,15 @@ func isLitEqual(w *syntax.Word, val string) bool {
 	return ok && lit.Value == val
 }
 
-// resolveStaticWord attempts to statically resolve a shell Word to its string
-// value. Literal parts (unquoted, single-quoted, double-quoted literals) are
-// always resolvable. Variable references ($VAR) are resolved via the varCtx
-// when vc is non-nil — from prior inline assignments in the current shell
-// scope. When vc is nil, only literals resolve.
+// resolveStaticWord attempts to statically resolve a shell Word to its
+// string value — the shell-visible text of the word with variables
+// substituted, which is both the script text an interceptor's child shell
+// would parse and the value an assignment stores. Literal parts (unquoted,
+// single-quoted, double-quoted literals) are always resolvable; unquoted
+// literals have their backslash escapes stripped (litUnescaped). Variable
+// references ($VAR) are resolved via the varCtx when vc is non-nil — from
+// prior inline assignments in the current shell scope. When vc is nil, only
+// literals resolve.
 //
 // Anything that cannot be statically resolved — command substitutions $(),
 // arithmetic $(()), process substitution <(), special parameters ($?, $@),
@@ -708,7 +712,7 @@ func isLitEqual(w *syntax.Word, val string) bool {
 func resolveStaticWord(w *syntax.Word, vc *varCtx) (string, bool) {
 	var sb strings.Builder
 	for _, part := range w.Parts {
-		s, ok := resolveWordPart(part, vc)
+		s, ok := resolveWordPart(part, vc, false)
 		if !ok {
 			return "", false
 		}
@@ -717,11 +721,19 @@ func resolveStaticWord(w *syntax.Word, vc *varCtx) (string, bool) {
 	return sb.String(), true
 }
 
-// resolveWordPart resolves a single word part to its string value.
-func resolveWordPart(part syntax.WordPart, vc *varCtx) (string, bool) {
+// resolveWordPart resolves a single word part to its shell-visible text.
+// inDblQuotes reports whether the part sits inside double quotes, where a
+// backslash is literal text except before $ ` " \ and newline — those few are
+// kept too, matching the scanner (addQuoted of the raw content): the
+// character an inner escape yields can never begin a flag, so the exactness
+// gap is conservative.
+func resolveWordPart(part syntax.WordPart, vc *varCtx, inDblQuotes bool) (string, bool) {
 	switch p := part.(type) {
 	case *syntax.Lit:
-		return p.Value, true
+		if inDblQuotes {
+			return p.Value, true
+		}
+		return litUnescaped(p.Value), true
 	case *syntax.SglQuoted:
 		if p.Dollar {
 			// ANSI-C quoting ($'…'): the value is the escape-decoded text.
@@ -736,7 +748,7 @@ func resolveWordPart(part syntax.WordPart, vc *varCtx) (string, bool) {
 		}
 		var sb strings.Builder
 		for _, inner := range p.Parts {
-			s, ok := resolveWordPart(inner, vc)
+			s, ok := resolveWordPart(inner, vc, true)
 			if !ok {
 				return "", false
 			}
@@ -752,6 +764,26 @@ func resolveWordPart(part syntax.WordPart, vc *varCtx) (string, bool) {
 		// CmdSubst, ProcSubst, ArithmExp, ExtGlob, etc.
 		return "", false
 	}
+}
+
+// litUnescaped returns the shell-visible text of an unquoted literal. The
+// parser keeps backslash escapes in Lit.Value (it strips them separately,
+// for heredocs), but the shell removes them while building the word: `\x`
+// contributes the literal x, and a trailing lone backslash contributes
+// itself, as bash does at end of input. This is the value-side twin of
+// wordFacts.addLit, which applies the same rule with liveness facts.
+func litUnescaped(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var sb strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			i++
+		}
+		sb.WriteByte(s[i])
+	}
+	return sb.String()
 }
 
 // ---------- Variable resolution context ----------
@@ -977,7 +1009,11 @@ func wordHasParamExp(w *syntax.Word) bool {
 //     (`X='*'; rg foo $X` globs) and their whitespace word-splits
 //     (`X='-i x'; sed $X …` becomes two arguments);
 //   - quoted values ("$X", '$X', $'…', $"…") are inert text, checked as
-//     quoted.
+//     quoted;
+//   - unquoted literal text in the same word keeps the shell's escape rule
+//     (wordFacts.addLit): the parser leaves backslash escapes in Lit.Value,
+//     but `\x` contributes the inert literal x — so `$X\--pre=./x.sh` with X
+//     empty is checked as `--pre=./x.sh`, the argument bash passes.
 //
 // It returns false when any part cannot be resolved exactly — an
 // unresolvable variable, a substitution (blocked earlier by substArgUnsafe,
@@ -989,7 +1025,7 @@ func resolveArgWord(w *syntax.Word, vc *varCtx) ([]shellWord, bool) {
 	for _, part := range w.Parts {
 		switch p := part.(type) {
 		case *syntax.Lit:
-			f.addLive(p.Value)
+			f.addLit(p.Value)
 		case *syntax.ParamExp:
 			val, ok := vc.resolveParamExp(p)
 			if !ok {
@@ -1009,7 +1045,7 @@ func resolveArgWord(w *syntax.Word, vc *varCtx) ([]shellWord, bool) {
 			}
 		case *syntax.DblQuoted:
 			anyQuoted = true
-			s, ok := resolveWordPart(p, vc)
+			s, ok := resolveWordPart(p, vc, false)
 			if !ok {
 				return nil, false
 			}
@@ -1642,8 +1678,8 @@ func (w shellWord) canYieldFlag() bool {
 // word while it is being built. It is the single quoting model behind both
 // producers (#2216): scanShellWords feeds it the characters of a printed
 // segment, and the flag-checked argument resolver feeds it resolved variable
-// values — so "what would the shell do to this text" is computed once, in one
-// place.
+// values and unquoted literal source (addLit) — so "what would the shell do
+// to this text" is computed once, in one place.
 //
 // Live means quote- and escape-transparent: a live character is one the shell
 // itself sees and acts on (glob metacharacters, brace expansion syntax,
@@ -1680,6 +1716,30 @@ func (f *wordFacts) addLive(s string) {
 	for i := 0; i < len(s); i++ {
 		f.addLiveByte(s[i])
 	}
+}
+
+// addLit appends the source text of an unquoted literal — the resolver's
+// counterpart of the scanner's backslash branch. The parser keeps escape
+// sequences in Lit.Value, but the shell strips them while building the word:
+// `\x` contributes the inert literal x (never a live glob, brace or
+// substitution character), the runs between escapes are live, and a
+// backslash at the very end contributes itself, as bash does at end of
+// input. litUnescaped is the value-side twin of this rule.
+func (f *wordFacts) addLit(s string) {
+	last := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' {
+			continue
+		}
+		if i+1 == len(s) {
+			break // trailing lone backslash — literal, like bash
+		}
+		f.addLive(s[last:i])
+		f.addQuoted(s[i+1 : i+2])
+		i++
+		last = i + 1
+	}
+	f.addLive(s[last:])
 }
 
 // addLiveByte records one shell-active character: its visible byte and its
