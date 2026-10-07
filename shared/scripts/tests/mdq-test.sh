@@ -204,7 +204,9 @@ fail_baseline() {
     sed 's/^/       /' "$errfile"
     shallow=$(git -C "$REPO" rev-parse --is-shallow-repository 2>/dev/null) || shallow=
     if [ "$shallow" = true ]; then
-        echo "       the clone is shallow and lacks $PRE_1705; run: git -C $REPO fetch --unshallow"
+        # %q: the reader pastes this command, so the repo path must survive
+        # spaces and other shell metacharacters in the checkout path.
+        printf '       the clone is shallow and lacks %s; run: git -C %q fetch --unshallow\n' "$PRE_1705" "$REPO"
     fi
     RC=1
 }
