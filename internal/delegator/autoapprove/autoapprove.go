@@ -1240,7 +1240,7 @@ func resolvedNameUnsafe(name shellWord, ce *syntax.CallExpr, segment string, vc 
 	if resolvedArgsUnsafe(name, ce, vc) {
 		return true
 	}
-	if sub, path, reason := substitutableToken(name.visible); sub {
+	if sub, path, reason := execguard.Substitutable(name.visible, guardEnv()); sub {
 		vc.noteVeto(segment, path, reason)
 		return true
 	}
@@ -1267,14 +1267,6 @@ func resolvedArgsUnsafe(cmdWord shellWord, ce *syntax.CallExpr, vc *varCtx) bool
 		effective = append(effective, resolved...)
 	}
 	return containsUnsafeFlagWords(effective)
-}
-
-// substitutableToken is the single call site of the substitutability check,
-// shared by the printed path (commandIsSubstitutable, on the segment's first
-// token) and the resolved path (resolvedNameUnsafe, on the resolved name —
-// exactly what bash execs).
-func substitutableToken(token string) (bool, string, string) {
-	return execguard.Substitutable(token, guardEnv())
 }
 
 // ---------- Command segment validation ----------
@@ -1314,7 +1306,7 @@ func commandIsSubstitutable(segment string) (bool, string, string) {
 	if len(tokens) == 0 {
 		return false, "", ""
 	}
-	return substitutableToken(tokens[0])
+	return execguard.Substitutable(tokens[0], guardEnv())
 }
 
 // matchBashSegment checks whether a single command string matches at least one
