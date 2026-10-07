@@ -424,11 +424,16 @@ func validateParsedStmt(rules []Rule, stmt *syntax.Stmt, depth int, vc *varCtx) 
 				}
 				return false // handled; don't descend into children
 			}
-			// Reject commands that set variables opaquely (eval, source,
-			// read, etc.) — their effects are invisible to the symbol
-			// table and could create uninspectable code paths.
-			name := commandBaseName(n)
-			if varSettingCommands[name] {
+			// The name-policy gate on the TYPED name: var-setting
+			// commands (eval, source, read…) whose effects are
+			// invisible to the symbol table, and wrappers carrying
+			// arguments that hide the real command
+			// (commandNameUnsafe). commandBaseName yields a name only
+			// for a wholly-literal command word; every other word
+			// (`bash$X -c …`, `$C`) falls through to
+			// matchBashSegment, whose #2228 resolution applies the
+			// same gate to the name it resolves to.
+			if commandNameUnsafe(commandBaseName(n), len(n.Args) > 1, true) {
 				safe = false
 				return false
 			}
@@ -478,18 +483,13 @@ func validateParsedStmt(rules []Rule, stmt *syntax.Stmt, depth int, vc *varCtx) 
 		return false
 	}
 
-	// Validate each simple command against rules.
+	// Validate each simple command against rules. The name-policy gate
+	// (var-setting, wrapper-with-arguments) already ran during the walk,
+	// before collection.
 	for _, cmd := range commands {
 		cmdStr := callExprCmdString(pr, cmd)
 		if cmdStr == "" {
 			continue // pure assignment, no command — safe
-		}
-
-		// Reject command wrappers with arguments (e.g. "env rm file").
-		// Bare wrapper invocations (e.g. "env" alone) are allowed.
-		name := commandBaseName(cmd)
-		if wrapperCommands[name] && len(cmd.Args) > 1 {
-			return false
 		}
 
 		if !matchBashSegment(rules, cmdStr, cmd, vc) {
@@ -711,15 +711,17 @@ func callExprCmdString(pr *syntax.Printer, ce *syntax.CallExpr) string {
 	return buf.String()
 }
 
-// commandBaseName extracts the base name of the command from a CallExpr when
-// the command word's FIRST part is an unquoted literal (like "env",
-// "/usr/bin/env"), returning that literal's base name ("env"). Any other
-// command word — quoted, variable, substituted — yields "", so the walker's
-// name-based checks (interceptor unwrapping, var-setting and wrapper
-// refusal) do not see the command bash runs; matchBashSegment resolves such
-// words and judges the resolved name instead (#2228, commandWordUnsafe).
+// commandBaseName extracts the base name of the command from a CallExpr, but
+// only when the whole command word is literal text (wordIsLiteralText) with
+// an unquoted literal first part — like "env" or "/usr/bin/env", returning
+// that literal's base name ("env"). Any other command word yields "": the
+// word does not name, on its own, the command bash will run (`bash$X` is not
+// bash — its value word-splits into words that can even become a -c script),
+// so the walker's name-based paths (interceptor unwrapping, the
+// commandNameUnsafe gate) must let it fall through to matchBashSegment,
+// whose #2228 commandWordUnsafe resolves it and judges the resolved name.
 func commandBaseName(ce *syntax.CallExpr) string {
-	if len(ce.Args) == 0 || len(ce.Args[0].Parts) == 0 {
+	if len(ce.Args) == 0 || len(ce.Args[0].Parts) == 0 || !wordIsLiteralText(ce.Args[0]) {
 		return ""
 	}
 	lit, ok := ce.Args[0].Parts[0].(*syntax.Lit)
@@ -1222,19 +1224,38 @@ func commandWordUnsafe(ce *syntax.CallExpr, segment string, vc *varCtx) bool {
 	return resolvedNameUnsafe(name, ce, segment, vc)
 }
 
-// resolvedNameUnsafe judges a command segment under a RESOLVED command name,
-// exactly as if that name had been typed: var-setting commands and shell
-// interceptors refuse outright (fail-closed rather than re-unwrapping a -c
-// script that arrived through a variable), wrappers refuse when they carry
-// arguments, the flag/argument battery runs on the resolved name plus the
-// arguments, and the substitutability veto judges the resolved name and
-// records its reason on the printed segment — what the user is asked about.
-func resolvedNameUnsafe(name shellWord, ce *syntax.CallExpr, segment string, vc *varCtx) bool {
-	base := filepath.Base(name.visible)
-	if varSettingCommands[base] || shellInterceptors[base] {
+// commandNameUnsafe is the one name-policy gate, shared by the two places a
+// command's name is known: the walker, reading the typed name of a
+// wholly-literal command word (commandBaseName), and #2228 command-word
+// resolution, reading the name a variable word resolved to
+// (resolvedNameUnsafe). A var-setting command never auto-approves — its
+// effects are invisible to the symbol table — and a wrapper refuses when it
+// carries arguments, because they hide the real command. Shell interceptors
+// are the caller's business, marked by interceptorsHandled: the walker has
+// already unwrapped the typed `bash -c script` forms (extractShellScript)
+// and keeps today's verdict on every other typed interceptor form, while a
+// RESOLVED interceptor name refuses outright — fail-closed rather than
+// re-unwrapping a -c script that arrived through a variable (#2228).
+func commandNameUnsafe(base string, hasArgs bool, interceptorsHandled bool) bool {
+	if varSettingCommands[base] {
 		return true
 	}
-	if wrapperCommands[base] && len(ce.Args) > 1 {
+	if shellInterceptors[base] && !interceptorsHandled {
+		return true
+	}
+	return wrapperCommands[base] && hasArgs
+}
+
+// resolvedNameUnsafe judges a command segment under a RESOLVED command name,
+// exactly as if that name had been typed: the shared name-policy gate
+// refuses var-setting commands, shell interceptors (fail-closed rather than
+// re-unwrapping a -c script that arrived through a variable) and wrappers
+// carrying arguments, the flag/argument battery runs on the resolved name
+// plus the arguments, and the substitutability veto judges the resolved name
+// and records its reason on the printed segment — what the user is asked
+// about.
+func resolvedNameUnsafe(name shellWord, ce *syntax.CallExpr, segment string, vc *varCtx) bool {
+	if commandNameUnsafe(filepath.Base(name.visible), len(ce.Args) > 1, false) {
 		return true
 	}
 	if resolvedArgsUnsafe(name, ce, vc) {

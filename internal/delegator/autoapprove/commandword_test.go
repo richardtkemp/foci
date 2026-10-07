@@ -72,6 +72,15 @@ func TestNonLiteralCommandWordResolvedOrRefused(t *testing.T) {
 	} {
 		assertApproval(t, blanket, cmd, false)
 	}
+	// The walker must not mistake a non-literal command word for the
+	// interceptor its first Lit names. `bash$X` with X=' -c $2' word-splits
+	// into `bash -c '$2'`, and the typed "sed -i …" argument — $2 of that
+	// inner shell — becomes the script it runs (verified in bash 5: the
+	// file's contents change). The first-Lit unwrap used to consume the
+	// CallExpr as a harmless `bash -c ls` before any #2228 check ran, and
+	// the built-in read-only rules approved it.
+	readonly := parseAutoApproveRules(CommonReadonlyRules)
+	assertApproval(t, readonly, `X=' -c $2'; bash$X -c ls "sed -i s/a/b/ f"`, false)
 	// An unset variable names no command bash could be asked about. Nil env,
 	// so the row cannot depend on the host process.
 	if ok, _ := MatchWithEnv(blanket, "Bash", bashInput(t, "$NOPE -la"), nil); ok {
@@ -85,13 +94,22 @@ func TestNonLiteralCommandWordResolvedOrRefused(t *testing.T) {
 // setup) and the blanket Bash rule — the printed segment `$C -readonly …`
 // matches no sqlite3 rule, so a rule-shaped test would be vacuous — the
 // command must be denied with a non-empty reason, proving the refusal is the
-// veto explaining itself rather than an accidental no-match.
+// veto explaining itself rather than an accidental no-match. The bashx rows
+// pin the same through the WALKER: `bash$X` used to be unwrapped as
+// `bash -c ls` (the first Lit names the interceptor), so the `bashx` bash
+// actually runs never reached any check or the veto.
 func TestNonLiteralCommandWordVetoed(t *testing.T) {
+	writable := map[string]bool{
+		"/home/foci/.local/bin/sqlite3": true,
+		"/home/foci/.local/bin/bashx":   true,
+	}
 	withGuardEnv(t, execguard.Env{
-		CanWrite:     func(p string) bool { return p == "/home/foci/.local/bin/sqlite3" },
-		PathDirs:     []string{"/home/foci/.local/bin", "/usr/bin"},
-		IsExecutable: func(p string) bool { return p == "/home/foci/.local/bin/sqlite3" },
-		HomeDir:      "/home/foci",
+		CanWrite: func(p string) bool { return writable[p] },
+		PathDirs: []string{"/home/foci/.local/bin", "/usr/bin"},
+		IsExecutable: func(p string) bool {
+			return writable[p]
+		},
+		HomeDir: "/home/foci",
 	})
 	rules := Compile([]string{"Bash"})
 	ok, reason := MatchWithEnv(rules, "Bash", bashInput(t, `C=sqlite3; $C -readonly /tmp/x.db 'SELECT 1'`), nil)
@@ -100,6 +118,9 @@ func TestNonLiteralCommandWordVetoed(t *testing.T) {
 	}
 	if reason == "" {
 		t.Error("the veto on a resolved name must record its reason like the printed-path veto does")
+	}
+	if ok, reason = MatchWithEnv(rules, "Bash", bashInput(t, `X=x; bash$X -c ls`), nil); ok || reason == "" {
+		t.Errorf("a non-literal word naming an interceptor must hit the resolved-name veto, got ok=%v reason=%q", ok, reason)
 	}
 }
 
@@ -148,11 +169,14 @@ func TestDeclarationLiveBraceNotAutoApproved(t *testing.T) {
 }
 
 // TestNonLiteralCommandWordKeepsApproval is a characterisation test: the
-// keep-approved half of requirement 1. A command word that resolves to
-// exactly one safe name keeps approval (`C=ls; $C -la`, `$HOME/bin/x -la`
-// against the environment snapshot), and a literal lone `[` — the test
-// command, with no closing `]` in its word — is not a live glob and stays
-// approved.
+// keep-approved half of requirement 1, and its never-adds-approval guarantee.
+// A command word that resolves to exactly one safe name keeps approval
+// (`C=ls; $C -la`, `$HOME/bin/x -la` against the environment snapshot), and a
+// literal lone `[` — the test command, with no closing `]` in its word — is
+// not a live glob and stays approved. In the other direction, a resolved rg
+// does not START matching rg's read-only rule: the pattern still sees the
+// printed `$C` text, which matches nothing, so resolution can only take an
+// approval away.
 func TestNonLiteralCommandWordKeepsApproval(t *testing.T) {
 	blanket := parseAutoApproveRules([]string{"Bash"})
 	assertApproval(t, blanket, `C=ls; $C -la`, true)
@@ -161,6 +185,8 @@ func TestNonLiteralCommandWordKeepsApproval(t *testing.T) {
 	if !got {
 		t.Error(`$HOME/bin/x -la with HOME=/home/u resolves to a rooted non-substitutable name and must stay approved`)
 	}
+	readonly := parseAutoApproveRules(CommonReadonlyRules)
+	assertApproval(t, readonly, `C=rg; $C foo x`, false)
 }
 
 // TestCommandWordBraceFormsAlreadyRefused is a characterisation test: two
@@ -186,6 +212,10 @@ func TestBraceScopeOutRowsStayApproved(t *testing.T) {
 		`cat {"a",b}`,
 		`cat {"a",b}.txt`,
 		`export P=/srv; rg foo "$P"`,
+		// The exact declaration-shaped value, as a PLAIN assignment: bash
+		// stores the brace text verbatim, and "$P" hands rg a quoted
+		// literal argument — not a flag, not an expansion.
+		`P={"",--pre=./x.sh}; rg foo "$P"`,
 		`P={"",x}; rg foo`,
 		`P={"",x} rg foo`,
 	} {
