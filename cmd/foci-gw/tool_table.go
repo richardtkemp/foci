@@ -436,6 +436,36 @@ var toolTable = []toolEntry{
 		build: func(d *toolDeps) *tools.Tool {
 			return tools.NewSetSessionAliasTool(d.p.sessionIndex, app.NotifyAliasChanged)
 		}},
+
+	// whoami: read-only identity of the calling session (agent, session key,
+	// chat, platform, backend, transport, model) — the facts agents otherwise
+	// guess, like the chat id send_to_session addressing needs (#1135).
+	// Appended last so the API-path tool order — the prompt-cache prefix —
+	// is unchanged. The nil guards cover minimalSetupParams-based tests
+	// (nil sessionIndex, literal-nil agLazy); the lookups stay per-call so
+	// a /model switch is reflected.
+	{name: "whoami", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {
+		return tools.NewWhoamiTool(tools.WhoamiDeps{
+			AgentID:   d.p.acfg.ID,
+			Backend:   d.p.acfg.Backend,
+			Delegated: d.p.acfg.IsDelegated(),
+			PlatformForChat: func(agentID string, chatID int64) string {
+				if d.p.sessionIndex == nil {
+					return ""
+				}
+				return d.p.sessionIndex.PlatformForChat(agentID, chatID)
+			},
+			SessionModel: func(sessionKey string) string {
+				if d.agLazy == nil {
+					return ""
+				}
+				if ag := d.agLazy(); ag != nil {
+					return ag.SessionModel(sessionKey)
+				}
+				return ""
+			},
+		})
+	}},
 }
 
 // sendToChatMermaid is the renderer send_to_chat uses for a mermaid file

@@ -29,7 +29,7 @@ How this works: foci generates a shell-functions file and points `BASH_ENV` at i
 A startup parity check guarantees every flag in a tool's `--help` actually has a working handler — so the help text is authoritative.
 
 **The foci tools always available to you as shell functions:**
-`foci_ask`, `foci_send_to_chat`, `foci_send_to_session`, `foci_todo`, `foci_remind`, `foci_memory_search`, `foci_http_request`, `foci_web_fetch`, `foci_web_search`, `foci_summary`.
+`foci_ask`, `foci_send_to_chat`, `foci_send_to_session`, `foci_todo`, `foci_remind`, `foci_memory_search`, `foci_http_request`, `foci_web_fetch`, `foci_web_search`, `foci_summary`, `foci_whoami`.
 
 There is **no `foci_spawn`** on this backend — `spawn` is API-loop-only (its one-shot modes run over the direct API, never your backend). For sub-calls use CC's native `Agent` tool.
 
@@ -39,7 +39,7 @@ There is **no `foci_tmux`** on this backend — that stays API-loop-only. For pe
 
 Every tool accepts `-h`/`--help`. **Read the `--help` before first use of any tool this session.**
 
-**`--json` for machine-readable output.** Every `foci_*` function except `foci_ask` (where `--json` is the questions *input*) takes `--json`, in any position, and prints one JSON document instead of its text — pipe it to `jq` rather than parsing prose. Text stays the default. `foci_web_search`, `foci_web_fetch`, `foci_memory_search`, `foci_http_request` and `foci_remind` print a tool-specific shape (their `--help` "Output:" section documents it); every other tool prints `{"result": "<the text>"}`; `foci_todo list/search/get` print JSONL, as `--format jsonl`. Errors are unchanged: stderr and a non-zero exit.
+**`--json` for machine-readable output.** Every `foci_*` function except `foci_ask` (where `--json` is the questions *input*) takes `--json`, in any position, and prints one JSON document instead of its text — pipe it to `jq` rather than parsing prose. Text stays the default. `foci_web_search`, `foci_web_fetch`, `foci_memory_search`, `foci_http_request`, `foci_remind` and `foci_whoami` print a tool-specific shape (their `--help` "Output:" section documents it); every other tool prints `{"result": "<the text>"}`; `foci_todo list/search/get` print JSONL, as `--format jsonl`. Errors are unchanged: stderr and a non-zero exit.
 
 ## 3. Refused calls: PreToolUse rules
 

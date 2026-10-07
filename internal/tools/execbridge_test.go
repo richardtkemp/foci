@@ -1977,21 +1977,98 @@ func TestGenerateGenericShellFuncFlatSchema(t *testing.T) {
 	}
 }
 
-func TestGenerateGenericShellFuncEmptyFallback(t *testing.T) {
-	// Empty/unparseable schema falls back to legacy JSON-blob behavior so
-	// the foci__json passthrough still works for raw-JSON callers.
+// TestGenerateGenericShellFuncFallbacks pins which schemas take the generator's
+// normal flag-parsing body and which keep the legacy JSON-blob fallback. A
+// parseable zero-property object schema (whoami's) takes the NORMAL body — the
+// fallback passes "$1" to `jq --argjson`, so a bare `foci_whoami` (empty $1)
+// would die on a jq error; the normal body sends params:{} instead. Only an
+// unparseable or missing schema falls back, for raw-JSON callers that
+// hand-construct the params object.
+func TestGenerateGenericShellFuncFallbacks(t *testing.T) {
 	t.Parallel()
+
+	blobHandler := func(body, tool string) bool {
+		return strings.Contains(body, fmt.Sprintf(`foci-call "$(jq -nc --argjson p "$1" '{"tool":%q,"params":$p}')"`, tool))
+	}
+
+	t.Run("zero-property object schema takes the normal body", func(t *testing.T) {
+		t.Parallel()
+		tool := &Tool{
+			Name:       "test_empty",
+			ExecExport: true,
+			Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
+		}
+		body := generateGenericShellFunc(tool)
+		if !strings.Contains(body, "while [ $# -gt 0 ]") {
+			t.Errorf("zero-property schema should get the flag-parsing loop")
+		}
+		if !strings.Contains(body, `local params="{}"`) {
+			t.Errorf("zero-property schema should send params:{}")
+		}
+		if blobHandler(body, "test_empty") {
+			t.Errorf("zero-property schema must not emit the $1 JSON-blob handler")
+		}
+		// A bare `local` line would print the prologue's locals to stdout,
+		// polluting the tool's output.
+		if strings.Contains(body, "\n  local\n") {
+			t.Errorf("zero-property schema must not emit a bare `local` (prints locals to stdout)")
+		}
+	})
+
+	t.Run("unparseable schema keeps the JSON-blob fallback", func(t *testing.T) {
+		t.Parallel()
+		tool := &Tool{
+			Name:       "test_bad",
+			ExecExport: true,
+			Parameters: json.RawMessage(`not json`),
+		}
+		body := generateGenericShellFunc(tool)
+		if !blobHandler(body, "test_bad") {
+			t.Errorf("unparseable schema should emit the JSON-blob handler")
+		}
+		if strings.Contains(body, "while [ $# -gt 0 ]") {
+			t.Errorf("unparseable schema should not emit the flag-parsing loop")
+		}
+	})
+
+	t.Run("nil parameters keep the JSON-blob fallback", func(t *testing.T) {
+		t.Parallel()
+		tool := &Tool{
+			Name:       "test_nil",
+			ExecExport: true,
+		}
+		body := generateGenericShellFunc(tool)
+		if !blobHandler(body, "test_nil") {
+			t.Errorf("nil parameters should emit the JSON-blob handler")
+		}
+		if strings.Contains(body, "while [ $# -gt 0 ]") {
+			t.Errorf("nil parameters should not emit the flag-parsing loop")
+		}
+	})
+}
+
+// TestShellFuncZeroPropertySchemaBareCall proves a generated zero-property
+// function is callable BARE (the expected usage of foci_whoami): the stubbed
+// foci-call must receive params:{} — not a jq error from an empty "$1", which
+// is what the legacy JSON-blob body produced.
+func TestShellFuncZeroPropertySchemaBareCall(t *testing.T) {
+	t.Parallel()
+	for _, bin := range []string{"bash", "jq"} {
+		if _, err := osexec.LookPath(bin); err != nil {
+			t.Skipf("%s not available", bin)
+		}
+	}
 	tool := &Tool{
-		Name:       "test_empty",
+		Name:       "probe0",
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
 	}
-	body := generateGenericShellFunc(tool)
-	if !strings.Contains(body, `foci-call "$(jq -nc --argjson p "$1" '{"tool":"test_empty","params":$p}')"`) {
-		t.Errorf("empty-schema fallback should emit JSON-blob handler")
+	rc, out := runStubbedShellFunc(t, generateShellFunc(tool), "foci_probe0")
+	if rc != 0 {
+		t.Errorf("bare foci_probe0 rc=%d out=%q, want 0", rc, out)
 	}
-	if strings.Contains(body, "while [ $# -gt 0 ]") {
-		t.Errorf("empty-schema fallback should not emit flag-parsing loop")
+	if !strings.Contains(out, `"params":{}`) {
+		t.Errorf("bare call should send params:{}, got %q", out)
 	}
 }
 

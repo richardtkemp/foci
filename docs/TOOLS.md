@@ -25,6 +25,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 | `task_list` | Manage task items. Distinct from `todo`: `task_list` is its own subsystem for tracking task work in progress (see also [HEARTBEAT.md](HEARTBEAT.md)). |
 | `set_session_alias` (foci_set_session_alias) | Set a short descriptive name for the current conversation. The alias is surfaced in session listings and UI surfaces. Disabled for the Codex backend, which manages session naming server-side. |
 | `browser` (foci_browser) | Full CDP browser automation via [go-rod](https://github.com/go-rod/rod). Only registered when `[browser] enabled = true`. Provides navigation, DOM interaction, screenshots, and script evaluation against a real Chromium instance. Available on the API loop and, as `foci_browser`, on every delegated backend. Each session gets its own browser (never shared across the main chat, forks, branches or other chats); one idle for 30 minutes is stopped. Only one session at a time can open the persistent `user_data_dir` profile. |
+| `whoami` (foci_whoami) | Read-only report of the calling session's identity: agent id, session key, chat id, platform, backend, transport (`api` or `delegated`), model. Available on the API loop and every delegated backend; `--json` for machine use. Missing values are reported as `none`/`unknown`, never guessed — e.g. the chat id `send_to_session` addressing needs. |
 
 ## `ask` — Human-in-the-loop questioning
 
