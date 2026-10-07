@@ -84,6 +84,39 @@ func TestSend_HumanAsyncSetsUserActivity(t *testing.T) {
 	}
 }
 
+// TestSend_HumanSendStampsInProcessReceipt pins req 6 on both /send dispatch
+// shapes: a human send that runs (sync) or is queued (async) stamps the
+// periodic runner's in-process receipt, and an automated one does not. The
+// durable timestamp is written by the turn either way, so only this test
+// notices if either notifyHumanInteraction call in handleSend is lost (#2230).
+func TestSend_HumanSendStampsInProcessReceipt(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		wantCode   int
+		wantStamp  bool
+	}{
+		{"sync human", `{"text":"hi","human":true,"wait_none":true}`, http.StatusOK, true},
+		{"async human", `{"text":"hi","human":true,"async":true,"wait_none":true}`, http.StatusAccepted, true},
+		{"sync automated", `{"text":"hi","wait_none":true}`, http.StatusOK, false},
+		{"async automated", `{"text":"hi","async":true,"wait_none":true}`, http.StatusAccepted, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &periodic.Runner{}
+			d, _ := httpTestSetup(t, httpTestOpts{kaRunner: runner})
+			mux := newTestMux(d)
+
+			w := postJSON(mux, "/send", tc.body)
+
+			if w.Code != tc.wantCode {
+				t.Fatalf("status = %d, want %d; body: %s", w.Code, tc.wantCode, w.Body.String())
+			}
+			if _, ok := runner.LastUserActivity(); ok != tc.wantStamp {
+				t.Errorf("in-process receipt stamped = %v, want %v", ok, tc.wantStamp)
+			}
+		})
+	}
+}
+
 // TestSend_HumanSlashCommandSetsUserActivity proves req 5's second half: a
 // human /send whose text is a slash command handled by the command dispatcher
 // starts no turn, so the handler itself stamps last_user_activity_at for the
