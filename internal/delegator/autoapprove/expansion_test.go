@@ -23,29 +23,37 @@ import (
 // TestQuotedFlagsNotAutoApproved proves requirement 1: every flag and
 // argument check compares shell-visible text, so quoting all or part of a
 // dangerous flag (or a sed command, or a sqlite3 dot-command) cannot move it
-// past the tables. Every row was approved before #2216, which compared the
-// quoted token text.
+// past the tables. Every false row was approved before #2216, which compared
+// the quoted token text; the true rows pin that quoting alone never makes a
+// safe command unsafe.
 func TestQuotedFlagsNotAutoApproved(t *testing.T) {
 	readonly := parseAutoApproveRules(CommonReadonlyRules)
 	tests := []struct {
 		name  string
 		rules []Rule // nil → the built-in readonly set
 		cmd   string
+		want  bool
 	}{
 		// Flag tables on shell-visible text.
-		{"rg quoted long flag", nil, "rg '--pre=./x.sh' foo"},
-		{"rg half-quoted long flag", nil, `rg "--pre"=./x.sh foo`},
-		{"sed quoted short flag", nil, "sed '-i' s/a/b/ f"},
-		{"sed flag split across quotes", nil, "sed -n'i' p f"},
-		{"sort quoted short flag", nil, `sort "-o" out f`},
-		{"printf quoted short flag", parseAutoApproveRules([]string{"Bash:printf"}), "printf '-v' x y"},
-		{"git quoted subcommand", parseAutoApproveRules([]string{"Bash:git *"}), "git 'config' core.pager x"},
+		{"rg quoted long flag", nil, "rg '--pre=./x.sh' foo", false},
+		{"rg half-quoted long flag", nil, `rg "--pre"=./x.sh foo`, false},
+		{"rg empty-quoted flag prefix", nil, `rg ''--pre=./x.sh foo`, false},
+		{"rg quoted dash then flag", nil, `rg "--"pre=./x.sh foo`, false},
+		{"sed quoted short flag", nil, "sed '-i' s/a/b/ f", false},
+		{"sed flag split across quotes", nil, "sed -n'i' p f", false},
+		{"sort quoted short flag", nil, `sort "-o" out f`, false},
+		{"sort flag split across quotes", nil, `sort -'o'x f`, false},
+		{"printf quoted short flag", parseAutoApproveRules([]string{"Bash:printf"}), "printf '-v' x y", false},
+		{"git quoted subcommand", parseAutoApproveRules([]string{"Bash:git *"}), "git 'config' core.pager x", false},
 		// Argument checkers on shell-visible text.
-		{"sed command split out of quotes", nil, "sed ''e f"},
-		{"sed command half-quoted", nil, "sed 's/a/b/w'out f"},
+		{"sed command split out of quotes", nil, "sed ''e f", false},
+		{"sed command half-quoted", nil, "sed 's/a/b/w'out f", false},
+		{"sed address half-quoted", nil, `sed "1"e f`, false},
 		// Compound commands: one offending segment blocks the whole command.
-		{"compound and", nil, "ls && rg '--pre=./x.sh' foo"},
-		{"compound semicolon", nil, `echo x; sort "-o" out f`},
+		{"compound and", nil, "ls && rg '--pre=./x.sh' foo", false},
+		{"compound semicolon", nil, `echo x; sort "-o" out f`, false},
+		// Quoting a harmless script keeps approval.
+		{"sed quoted safe script", nil, "sed 's/a/b/' f", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -53,7 +61,7 @@ func TestQuotedFlagsNotAutoApproved(t *testing.T) {
 			if rules == nil {
 				rules = readonly
 			}
-			assertApproval(t, rules, tt.cmd, false)
+			assertApproval(t, rules, tt.cmd, tt.want)
 		})
 	}
 }
@@ -161,20 +169,45 @@ func TestBracesBashDoesNotExpandStayApproved(t *testing.T) {
 // TestAllUnquotedBraceWordRefusedByAstWalk pins the pre-existing AST literal
 // walk (litContainsBraceExpansion): the all-unquoted brace word
 // `rg foo {--pre=./x.sh,}` is one Lit, so the walk already refuses it without
-// any #2216 rule — as does a DOUBLE-quoted brace group, whose content the
-// parser keeps as a Lit inside the DblQuoted node the walk descends into
-// (bash itself would not expand it; refusing it is the walk's deliberate
-// over-approximation). The #2216 scanner rule covers the remaining
-// quoted-part forms the walk cannot see; these rows pin that its cases stay
-// refused.
+// any #2216 rule. Since #2216 the walk lives in stmtHasBraceLiteral and
+// exempts flag-checked commands — whose brace rule the scanner owns in every
+// quoting shape — so this row now refuses through the scanner instead; the
+// walk itself still covers everything else (see
+// TestQuotedBracesFollowBashOnFlagCheckedCommands for the exemption's
+// edges).
 func TestAllUnquotedBraceWordRefusedByAstWalk(t *testing.T) {
 	rules := parseAutoApproveRules(CommonReadonlyRules)
+	assertApproval(t, rules, "rg foo {--pre=./x.sh,}", false)
+}
+
+// TestQuotedBracesFollowBashOnFlagCheckedCommands proves requirement 3's
+// double-quoted half and the boundary of the #2216 brace split: braces the
+// shell would never expand — inside double quotes (plain or $"…" locale) —
+// keep approval on a flag-checked command, because the brace rule there is
+// the scanner's, which sees the quoting (the historical one-Lit-at-a-time
+// scan could not tell `{a,b}` in double quotes from the live form and
+// refused both). The literal-level refusal itself keeps its scope: a
+// non-flag-checked command's braces are refused however quoted, and a brace
+// group in a NON-command word — a for-loop word list following a
+// flag-checked command — cannot ride the exemption.
+func TestQuotedBracesFollowBashOnFlagCheckedCommands(t *testing.T) {
+	rules := parseAutoApproveRules(CommonReadonlyRules)
 	for _, cmd := range []string{
-		"rg foo {--pre=./x.sh,}",
+		`rg "{a,b}" f`,
 		`rg foo "{a,b}" f`,
+		`rg $"a{1,2}" f`,
 	} {
-		assertApproval(t, rules, cmd, false)
+		assertApproval(t, rules, cmd, true)
 	}
+	// The literal-level refusal keeps applying outside flag-checked
+	// commands' words.
+	assertApproval(t, rules, `cat "{a,b}"`, false) // not flag-checked
+	assertApproval(t, rules, `rg foo; for x in {a,b}; do true; done`, false)
+	assertApproval(t, rules, `X={a,b}; rg foo`, false) // bare assignment: no flag-checked command word
+	// An assignment PREFIX of a flag-checked command rides its exemption:
+	// bash never brace-expands an assignment word, so the value stays
+	// literal whatever the braces look like.
+	assertApproval(t, rules, `X={a,b} rg foo`, true)
 }
 
 // TestCommandSubstitutionArgsNotAutoApproved proves requirement 4's first
@@ -199,6 +232,12 @@ func TestCommandSubstitutionArgsNotAutoApproved(t *testing.T) {
 	} {
 		assertApproval(t, rules, cmd, false)
 	}
+
+	// Control: the INNER commands alone are approved — echo and base64 are
+	// as read-only as anything in the tables, so it is the substitution's
+	// position as an argument of a flag-checked command that prompts, not
+	// the pipeline inside it.
+	assertApproval(t, rules, "echo LS1wcmU9Li94LnNo | base64 -d", true)
 }
 
 // TestVariableArgsResolvedAndChecked proves requirement 4's resolution rule:
@@ -222,8 +261,13 @@ func TestVariableArgsResolvedAndChecked(t *testing.T) {
 		{"inline glob value", nil, "X='*'; rg foo $X", nil, false},
 		// Whitespace in an unquoted value word-splits into new arguments.
 		{"inline split flag", nil, "X='-i x'; sed $X s/a/b/ f", nil, false},
-		// Environment snapshot: resolved, then checked the same way.
+		// Environment snapshot: resolved, then checked the same way — also
+		// through the quoted ${…}/"$…" reference forms.
 		{"env dangerous flag", nil, "rg foo $PAGER", map[string]string{"PAGER": "--pre=./x.sh"}, false},
+		{"env dangerous flag quoted", nil, `rg foo "$P"`, map[string]string{"P": "--pre=./x.sh"}, false},
+		{"env dangerous flag braced", nil, `rg foo ${P} f`, map[string]string{"P": "--pre=./x.sh"}, false},
+		// A resolved harmless path keeps approval.
+		{"env harmless path", nil, "rg foo $HOME/notes", map[string]string{"HOME": "/home/u"}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -332,6 +376,7 @@ func TestExpansionScopeForNonFlagCheckedCommands(t *testing.T) {
 		"ls $HOME",
 		`cat "$f"`,
 		"for f in *.go; do ls $f; done",
+		`for f in *.go; do cat "$f"; done`,
 		"echo $'x'",
 		"cat $(echo /etc/hosts)",
 		"grep pattern $(find . -name '*.go')",

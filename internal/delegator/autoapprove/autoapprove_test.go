@@ -15,15 +15,6 @@ func matchAutoApprove(rules []Rule, toolName string, input json.RawMessage) bool
 	return ok
 }
 
-// containsUnsafeFlags is the segment-level test entry for the unsafe-flag
-// check (#2216): it scans a command string and applies
-// containsUnsafeFlagWords, the function production code reaches with
-// already-scanned words (matchBashSegment scans once and shares the words
-// with the variable resolver).
-func containsUnsafeFlags(segment string) bool {
-	return containsUnsafeFlagWords(scanShellWords(segment))
-}
-
 // TestPathTypedToolsMatchToolMatchKeys proves pathTypedTools stays in sync with
 // toolMatchKeys: every path-typed tool must use the "file_path" match key, and
 // every "file_path" tool must be listed as path-typed. Guards against a future
@@ -1098,52 +1089,53 @@ func TestCommonReadonlyRejectsUnsafe(t *testing.T) {
 }
 
 // TestSedArgUnsafe verifies that dangerous sed script commands (w, e) are
-// detected while safe commands (s, d, p, etc.) pass through. Inputs are
-// shell-visible text (#2216): since the checker now receives words with
-// quoting already resolved, `sed ''e f` and `sed 's/a/b/w'out f` arrive here
-// as `e` and `s/a/b/wout`.
+// detected while safe commands (s, d, p, etc.) pass through.
 func TestSedArgUnsafe(t *testing.T) {
 	tests := []struct {
 		arg  string
 		want bool
 	}{
 		// Safe sed commands.
-		{"s/foo/bar/", false},
-		{"1,10p", false},
-		{"2,5d", false},
-		{"/pattern/d", false},
-		{"y/abc/xyz/", false},
-		{"q", false},
-		{`a\text`, false},
-		{"r file", false}, // r reads from file (not a write)
-		{"1p", false},
+		{"'s/foo/bar/'", false},
+		{"'1,10p'", false},
+		{"'2,5d'", false},
+		{"'/pattern/d'", false},
+		{"'y/abc/xyz/'", false},
+		{"'q'", false},
+		{"'a\\text'", false},
+		{"'r file'", false}, // r reads from file (not a write)
+		{"'1p'", false},
 		// Dangerous: w command writes to file.
-		{"w /tmp/stolen.txt", true},
-		{"w file", true},
-		{"/pattern/w file", true},
-		{"1w file", true},
-		{"1,5w file", true},
+		{"'w /tmp/stolen.txt'", true},
+		{"'w file'", true},
+		{"'/pattern/w file'", true},
+		{"'1w file'", true},
+		{"'1,5w file'", true},
 		// Dangerous: e command executes shell.
-		{"e", true},
-		{"1e rm file", true},
-		{"1e", true},
-		{"/pattern/e", true},
+		{"'e'", true},
+		{"'1e rm file'", true},
+		{"'1e'", true},
+		{"'/pattern/e'", true},
 		// Later commands in a semicolon/newline-delimited program must not
 		// hide an e command behind a harmless first command.
-		{"p;e rm file", true},
-		{"p\ne rm file", true},
+		{"'p;e rm file'", true},
+		{"'p\ne rm file'", true},
 		// Dangerous: uppercase variants.
-		{"W /tmp/file", true},
-		{"E", true},
+		{"'W /tmp/file'", true},
+		{"'E'", true},
 		// Dangerous: s///e flag — execute replacement as shell command.
-		{"s/foo/bar/e", true},
-		{"s|cmd|replacement|e", true},
-		{"s/foo/bar/ge", true}, // combined flags
-		{"s/foo/bar/Ie", true}, // case-insensitive + execute
+		{"'s/foo/bar/e'", true},
+		{"'s|cmd|replacement|e'", true},
+		{"'s/foo/bar/ge'", true}, // combined flags
+		{"'s/foo/bar/Ie'", true}, // case-insensitive + execute
 		// Dangerous: s///w flag — write matched lines to file.
-		{"s/foo/bar/w /tmp/file", true},
+		{"'s/foo/bar/w /tmp/file'", true},
+		// Without quotes.
+		{"w /tmp/file", true},
+		{"1e rm file", true},
 		// Empty and edge cases.
 		{"", false},
+		{"''", false},
 	}
 	for _, tt := range tests {
 		got := sedArgUnsafe(tt.arg)

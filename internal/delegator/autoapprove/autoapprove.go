@@ -265,8 +265,10 @@ var varSettingCommands = map[string]bool{
 //   - Process substitution <() is rejected
 //   - Command substitution $() and backticks are recursively validated (and
 //     an argument of a flag-checked command is rejected outright, #2216)
-//   - Brace expansion {a,b} is rejected at the literal level (and, on
-//     flag-checked commands, in every quoting shape, #2216)
+//   - Brace expansion {a,b} is rejected at the literal level outside
+//     flag-checked commands; on flag-checked commands the scanner's brace
+//     rule applies in every quoting shape, so braces bash would not expand
+//     (double-quoted, separator-free) keep approval (#2216)
 //   - Function declarations and coprocesses are rejected
 //   - Command wrappers (env, nice, timeout, etc.) with arguments are rejected
 //   - Shell interceptors (bash -c, sh -c, etc.) are unwrapped: the inner
@@ -353,11 +355,11 @@ func validateParsedCommand(rules []Rule, stmts []*syntax.Stmt, depth int, vc *va
 // a complete top-level statement has been validated.
 func validateParsedStmt(rules []Rule, stmt *syntax.Stmt, depth int, vc *varCtx) bool {
 	// Walk the AST checking structural safety and collecting simple commands.
-	//
-	// Note: the parser treats brace expansion ({a,b}, {1..10}) as literal
-	// text in Lit nodes. syntax.SplitBraces exists to convert them into
-	// BraceExp nodes, but Walk panics on BraceExp (unsupported node type).
-	// So we detect brace expansion by inspecting Lit values directly.
+	// Brace-expansion literals are NOT checked here: since #2216 a
+	// flag-checked command's words are judged by the scanner's brace rule,
+	// which is exact about quoting, so the historical one-Lit-at-a-time
+	// refusal moved to its own pass (stmtHasBraceLiteral) that exempts
+	// those commands.
 	var commands []*syntax.CallExpr
 	var cmdSubsts []*syntax.CmdSubst
 	hasContent := false
@@ -378,10 +380,6 @@ func validateParsedStmt(rules []Rule, stmt *syntax.Stmt, depth int, vc *varCtx) 
 			// Collect for recursive validation instead of rejecting.
 			cmdSubsts = append(cmdSubsts, n)
 			return false // don't descend — we'll validate separately
-		case *syntax.Lit:
-			if litContainsBraceExpansion(n.Value) {
-				safe = false
-			}
 		case *syntax.CallExpr:
 			// Inline command-prefix assignments (LD_PRELOAD=x cmd) and bare
 			// assignments (LD_PRELOAD=x) are CallExpr.Assigns — not a
@@ -458,8 +456,13 @@ func validateParsedStmt(rules []Rule, stmt *syntax.Stmt, depth int, vc *varCtx) 
 		}
 	}
 
-	// Validate each simple command against rules.
+	// Brace-expansion literals outside flag-checked commands' words.
 	pr := syntax.NewPrinter()
+	if stmtHasBraceLiteral(pr, stmt) {
+		return false
+	}
+
+	// Validate each simple command against rules.
 	for _, cmd := range commands {
 		cmdStr := callExprCmdString(pr, cmd)
 		if cmdStr == "" {
@@ -526,6 +529,61 @@ func litContainsBraceExpansion(s string) bool {
 	}
 	inner := s[start : start+end+1]
 	return strings.Contains(inner, ",") || strings.Contains(inner, "..")
+}
+
+// stmtHasBraceLiteral reports whether the statement contains a
+// brace-expansion literal the historical one-Lit-at-a-time scan above
+// refuses. Flag-checked commands are exempt (#2216): their words are
+// printed, scanned and judged by the scanner's brace rule
+// (containsUnsafeFlagWords → braceArgUnsafe), which tracks quoting across
+// the whole word, so what the literal scan refused only by accident now
+// follows bash — `rg foo {--pre=./x.sh,}` still refuses (the braces are
+// live) while `rg "{a,b}" f` approves (double quotes suppress the
+// expansion, yet the parser keeps the content as a Lit inside the
+// DblQuoted node, indistinguishable from the live form one Lit at a time).
+// The exemption covers the CallExpr's argument and assignment words — an
+// argument word's braces are the scanner's to judge, and bash never
+// brace-expands an assignment word. Everything else keeps the literal-level
+// refusal: commands without unsafe-flag machinery (`cat {a,b}`), redirect
+// words (they hang off the Stmt, not the CallExpr, and a brace group there
+// is at worst an "ambiguous redirect" error), and non-command words such as
+// a for-loop word list (`rg foo; for x in {a,b}; do true; done`).
+// Shell-interceptor and command-substitution bodies are skipped: they are
+// validated recursively, this pass included.
+func stmtHasBraceLiteral(pr *syntax.Printer, stmt *syntax.Stmt) bool {
+	found := false
+	syntax.Walk(stmt, func(node syntax.Node) bool {
+		if found {
+			return false
+		}
+		switch n := node.(type) {
+		case *syntax.CallExpr:
+			if _, ok := extractShellScript(n); ok {
+				return false // the -c script is validated recursively
+			}
+			return !callExprFlagChecked(pr, n) // the scanner owns a flag-checked command's words
+		case *syntax.CmdSubst:
+			return false // inner statements are validated recursively, this pass included
+		case *syntax.Lit:
+			if litContainsBraceExpansion(n.Value) {
+				found = true
+			}
+		}
+		return true
+	})
+	return found
+}
+
+// callExprFlagChecked reports whether the command's shell-visible name has
+// unsafe-argument machinery. It composes the same printer→scanner→gate
+// chain as containsUnsafeFlagWords, so the literal scan's exemption and the
+// scanner's #2216 rules always agree on which commands they cover.
+func callExprFlagChecked(pr *syntax.Printer, ce *syntax.CallExpr) bool {
+	cmdStr := callExprCmdString(pr, ce)
+	if cmdStr == "" {
+		return false
+	}
+	return flagCheckedCommand(visibleCmdBase(scanShellWords(cmdStr)))
 }
 
 // dangerousVars lists environment variables whose modification can lead to
@@ -972,21 +1030,12 @@ func resolveArgWord(w *syntax.Word, vc *varCtx) ([]shellWord, bool) {
 // flag-checked command and re-checks the effective argument vector exactly
 // as if it had been typed (#2216) — through the same
 // containsUnsafeFlagWords, so the flag tables, the #2213 glob rule and the
-// brace rule all apply to resolved values. The command word itself is not an
-// argument and is never resolved. Commands without unsafe-flag machinery
+// brace rule all apply to resolved values. The command word itself is not
+// an argument and is never resolved. Commands without unsafe-flag machinery
 // keep their previous behaviour (variables pass through unresolved), and a
 // variable that cannot be resolved fails closed: the printed segment keeps
 // `$X` unexpanded, so approving it would mean approving an unknown value.
-func expandedArgsUnsafe(ce *syntax.CallExpr, words []shellWord, vc *varCtx) bool {
-	if len(words) == 0 || len(ce.Args) == 0 || !flagCheckedCommand(filepath.Base(words[0].visible)) {
-		return false
-	}
-	// The scanner's words must correspond one-to-one with the AST's argument
-	// words for resolution to be meaningful; they do for anything the printer
-	// produces. Any divergence fails closed.
-	if len(ce.Args) != len(words) {
-		return true
-	}
+func expandedArgsUnsafe(ce *syntax.CallExpr, segment string, vc *varCtx) bool {
 	anyParam := false
 	for _, w := range ce.Args[1:] {
 		if wordHasParamExp(w) {
@@ -995,7 +1044,17 @@ func expandedArgsUnsafe(ce *syntax.CallExpr, words []shellWord, vc *varCtx) bool
 		}
 	}
 	if !anyParam {
-		return false // literal words — already checked by containsUnsafeFlagWords
+		return false // literal words — already checked by containsUnsafeFlags
+	}
+	words := scanShellWords(segment)
+	if len(words) == 0 || !flagCheckedCommand(visibleCmdBase(words)) {
+		return false
+	}
+	// The scanner's words must correspond one-to-one with the AST's argument
+	// words for resolution to be meaningful; they do for anything the printer
+	// produces. Any divergence fails closed.
+	if len(ce.Args) != len(words) {
+		return true
 	}
 	effective := []shellWord{words[0]} // the command word is not an argument
 	for _, w := range ce.Args[1:] {
@@ -1051,20 +1110,18 @@ func commandIsSubstitutable(segment string) (bool, string, string) {
 // matchBashSegment checks whether a single command string matches at least one
 // Bash rule. The match is rejected regardless of which rule matched when the
 // segment contains flags or arguments known to make an otherwise safe command
-// unsafe (e.g. sed -i, sort -o, a git grep pager flag) — compared on
-// shell-visible text, so quoting cannot hide them — when any argument is an
-// unquoted glob whose expansion could begin with '-' (#2213), when an
-// argument of a flag-checked command carries a live brace group or
-// substitution or a variable that resolves to unsafe or unresolvable text
-// (#2216), or when the segment's executable could be substituted by this
+// unsafe — compared on shell-visible text, so quoting cannot hide them —
+// when any argument is an unquoted glob whose expansion could begin with '-'
+// (#2213), when an argument of a flag-checked command carries a live brace
+// group or substitution or a variable that resolves to unsafe or unresolvable
+// text (#2216), or when the segment's executable could be substituted by this
 // process. ce is the CallExpr the segment was printed from, for the variable
 // resolution.
 func matchBashSegment(rules []Rule, segment string, ce *syntax.CallExpr, vc *varCtx) bool {
-	words := scanShellWords(segment)
-	if containsUnsafeFlagWords(words) {
+	if containsUnsafeFlags(segment) {
 		return false
 	}
-	if expandedArgsUnsafe(ce, words, vc) {
+	if expandedArgsUnsafe(ce, segment, vc) {
 		return false
 	}
 	if sub, path, reason := commandIsSubstitutable(segment); sub {
@@ -1224,11 +1281,31 @@ func substArgUnsafe(words []shellWord) bool {
 	return false
 }
 
+// visibleCmdBase returns the base name of a scanned command's first word in
+// shell-visible text — the name every piece of flag machinery gates on.
+func visibleCmdBase(words []shellWord) string {
+	if len(words) == 0 {
+		return ""
+	}
+	return filepath.Base(words[0].visible)
+}
+
+// containsUnsafeFlags checks whether a command string contains flags or
+// arguments that make it unsafe for auto-approval: it scans the segment into
+// shell words and applies containsUnsafeFlagWords — see that function for
+// the rules and the shell-visible-text principle. This segment-level entry
+// is the form matchBashSegment reaches (the variable resolver then re-scans
+// the same segment with the same scanner, so the two passes cannot disagree).
+func containsUnsafeFlags(segment string) bool {
+	return containsUnsafeFlagWords(scanShellWords(segment))
+}
+
 // containsUnsafeFlagWords checks whether a command's scanned words contain
 // flags or arguments that make it unsafe for auto-approval. It is the single
-// flag-checking function: matchBashSegment feeds it the literal segment's
-// words, and the #2216 variable resolver feeds it the resolved argument
-// vector, so literal and expanded arguments are judged by one code path.
+// flag-checking function: containsUnsafeFlags feeds it the literal segment's
+// scanned words, and the #2216 variable resolver feeds it the resolved
+// argument vector, so literal and expanded arguments are judged by one code
+// path.
 // Returns true if any of:
 //
 //   - a flag matching the command's unsafeFlags entry — short flags
@@ -1258,7 +1335,7 @@ func containsUnsafeFlagWords(words []shellWord) bool {
 		return false
 	}
 
-	cmdBase := filepath.Base(words[0].visible)
+	cmdBase := visibleCmdBase(words)
 	if cmdBase == "sqlite3" && sqliteCommandUnsafe(visibleTexts(words)) {
 		return true
 	}
@@ -1386,20 +1463,34 @@ func gitGrepPagerUnsafe(words []shellWord) bool {
 // ---------- sed script argument analysis ----------
 
 // sedArgUnsafe checks if a sed script argument contains potentially dangerous
-// sed commands or flags. The argument is shell-visible text (#2216): quoting
-// part of a script (`sed 's/a/b/w'out`) does not change what sed receives.
-// Returns true if the argument contains:
+// sed commands or flags. The argument is the word's shell-visible text
+// (#2216) — quoting part of a script (`sed 's/a/b/w'out`) does not change
+// what sed receives — and shell-visible text carries no quote delimiters, so
+// the whole-token strip below is a no-op there; it stays for text that still
+// carries them. Returns true if the argument contains:
 //   - A 'w'/'W' command (write matched lines to file)
 //   - An 'e'/'E' command (execute pattern space as shell command)
 //   - A substitute command with 'e' flag: s/pattern/replacement/e
 //   - A substitute command with 'w' flag: s/pattern/replacement/w file
 func sedArgUnsafe(arg string) bool {
+	arg = stripOuterQuotes(arg)
 	for _, command := range splitSedCommands(arg) {
 		if sedCommandUnsafe(command) {
 			return true
 		}
 	}
 	return false
+}
+
+// stripOuterQuotes removes a matching pair of surrounding single or double
+// quotes from a token, when they wrap the WHOLE token. Quoting that wraps
+// only part of a word is resolved by the scanner before arguments arrive
+// here, so this only normalises whole-token-quoted text.
+func stripOuterQuotes(s string) string {
+	if len(s) >= 2 && ((s[0] == '\'' && s[len(s)-1] == '\'') || (s[0] == '"' && s[len(s)-1] == '"')) {
+		return s[1 : len(s)-1]
+	}
+	return s
 }
 
 // splitSedCommands separates commands joined by an unescaped semicolon or
