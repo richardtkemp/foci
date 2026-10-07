@@ -57,9 +57,11 @@ func writeAgentConfigFile(t *testing.T) string {
 func TestConfigSetAgentTargetsNamedAgent(t *testing.T) {
 	var captured config.SetTarget
 	var capturedValue string
+	calls := 0
 	deps := agentFormDeps(func(path string, target config.SetTarget, value string) (string, error) {
 		captured = target
 		capturedValue = value
+		calls++
 		return `"55m"`, nil
 	})
 	cc := CommandContext{ConfigSetDeps: &deps}
@@ -68,6 +70,9 @@ func TestConfigSetAgentTargetsNamedAgent(t *testing.T) {
 
 	if captured.Section != "agents" || captured.AgentID != "clutch" || captured.Key != "keepalive.interval" {
 		t.Errorf("target = %+v", captured)
+	}
+	if calls != 1 {
+		t.Errorf("SetInFileFn calls = %d, want exactly 1", calls)
 	}
 	if capturedValue != `"1m"` {
 		t.Errorf("value = %q, want TOML-quoted \"1m\"", capturedValue)
@@ -313,16 +318,22 @@ func TestConfigGetAgentListsHotKeys(t *testing.T) {
 	}
 }
 
-// TestConfigGetUsageNoArgs proves bare "get" shows usage rather than
-// guessing an agent or key.
-func TestConfigGetUsageNoArgs(t *testing.T) {
+// TestConfigGetUsage proves get's arity refusals: bare "get" shows usage,
+// and words beyond "<agent> <key>" are flagged before the usage follows —
+// never silently ignored.
+func TestConfigGetUsage(t *testing.T) {
 	deps := agentFormDeps(nil)
 	deps.ConfigPath = writeAgentConfigFile(t)
 	cc := CommandContext{ConfigSetDeps: &deps}
 
 	text := execConfigCommand(t, cc, "get")
-	if !strings.Contains(text, "Usage") || !strings.Contains(text, "get <agent>") {
-		t.Errorf("reply = %q", text)
+	if !strings.Contains(text, "Usage") || !strings.Contains(text, "get <agent>") || strings.Contains(text, "Too many") {
+		t.Errorf("bare get reply = %q", text)
+	}
+
+	text = execConfigCommand(t, cc, "get main keepalive.interval extra")
+	if !strings.Contains(text, "Too many arguments.") || !strings.Contains(text, "Usage") {
+		t.Errorf("extra-args reply = %q", text)
 	}
 }
 

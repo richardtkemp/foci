@@ -114,14 +114,11 @@ func configSetAgent(deps *ConfigSetDeps, agentID, rest string) (string, error) {
 		return needsRestartAgentMsg(key), nil
 	}
 
-	// Format and validate exactly as ConfigSetDirect does (format first,
-	// then constraint) — and on the canonical registry key, so casing
+	// Format and validate exactly as ConfigSetDirect does — through the
+	// shared helper — and on the canonical registry key, so casing
 	// variants of a key write the registry's spelling.
-	formatted, err := config.FormatTOMLValue(rawValue, field.Type)
+	formatted, err := formatAndValidateValue(field, rawValue)
 	if err != nil {
-		return fmt.Sprintf("Invalid value: %s", err), nil
-	}
-	if err := field.ValidateValue(rawValue); err != nil {
 		return fmt.Sprintf("Invalid value: %s", err), nil
 	}
 
@@ -154,12 +151,14 @@ func configSetAgent(deps *ConfigSetDeps, agentID, rest string) (string, error) {
 func configGet(deps *ConfigSetDeps, args string) (string, error) {
 	parts := strings.Fields(args)
 	switch len(parts) {
+	case 0:
+		return configGetUsage(), nil
 	case 1:
 		return configGetKeyList(deps, parts[0]), nil
 	case 2:
 		return configGetAgentKey(deps, parts[0], parts[1])
-	default: // no args, or too many
-		return configGetUsage(), nil
+	default: // extra words beyond <agent> <key>
+		return "Too many arguments.\n" + configGetUsage(), nil
 	}
 }
 
@@ -220,9 +219,10 @@ func configGetAgentKey(deps *ConfigSetDeps, agentID, key string) (string, error)
 }
 
 // agentFileValue resolves one agent's effective value for field from the
-// config FILE at call time, using the same ladder as the app config editor:
-// an explicit [[agents]] override, else the inherited global section value,
-// else the built-in default. File-only on purpose — the startup config is
+// config FILE at call time: an explicit [[agents]] override, else the
+// inherited global section value, else the built-in default. That is the
+// app config editor's ladder minus its running-merged rung
+// (config.LookupValue) — file-only on purpose: the startup config is
 // frozen, so it would go stale the moment a set lands.
 func agentFileValue(global map[string]string, agents map[string]map[string]string, agentID string, field config.ConfigField) (value, source string) {
 	if v, ok := agents[agentID][field.Key]; ok {

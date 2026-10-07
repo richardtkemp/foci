@@ -167,12 +167,8 @@ func (w *configSetWizard) handleValue(text string) (string, bool) {
 		return "Value cannot be empty. Try again:", false
 	}
 
-	formatted, err := config.FormatTOMLValue(text, w.field.Type)
+	formatted, err := formatAndValidateValue(w.field, text)
 	if err != nil {
-		return fmt.Sprintf("Invalid value: %s. Try again:", err), false
-	}
-
-	if err := w.field.ValidateValue(text); err != nil {
 		return fmt.Sprintf("Invalid value: %s. Try again:", err), false
 	}
 
@@ -217,12 +213,8 @@ func ConfigSetDirect(deps ConfigSetDeps, args string) (string, error) {
 	}
 	section, key := field.Section, field.Key
 
-	formatted, err := config.FormatTOMLValue(rawValue, field.Type)
+	formatted, err := formatAndValidateValue(field, rawValue)
 	if err != nil {
-		return "", err
-	}
-
-	if err := field.ValidateValue(rawValue); err != nil {
 		return "", err
 	}
 
@@ -250,6 +242,22 @@ func formatSetResult(field config.ConfigField, section, key, formatted, oldValue
 		sb.WriteString("\nApplied live.")
 	}
 	return sb.String()
+}
+
+// formatAndValidateValue is the one source of truth for every set form's
+// value contract (wizard, direct, per-agent): format the raw text for the
+// field's TOML type first, then run the field's constraints on the raw
+// text. Callers render the error their own way; the checks and their
+// order never diverge.
+func formatAndValidateValue(field config.ConfigField, rawValue string) (string, error) {
+	formatted, err := config.FormatTOMLValue(rawValue, field.Type)
+	if err != nil {
+		return "", err
+	}
+	if err := field.ValidateValue(rawValue); err != nil {
+		return "", err
+	}
+	return formatted, nil
 }
 
 // formatSetLine renders the confirmation line both set forms share: the
