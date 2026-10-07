@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // SetTarget specifies where to write a key in the TOML config file.
@@ -516,9 +517,33 @@ func quoteRun(line string, j int, q byte) int {
 func FormatTOMLValue(value string, ft FieldType) (string, error) {
 	value = strings.TrimSpace(value)
 	switch ft {
-	case FieldString, FieldDuration:
+	case FieldString:
 		// Already quoted — pass through.
 		if strings.HasPrefix(value, `"`) && strings.HasSuffix(value, `"`) {
+			return value, nil
+		}
+		return fmt.Sprintf("%q", value), nil
+
+	case FieldDuration:
+		// The runtime parses durations with time.ParseDuration, so an
+		// unparseable value would land in foci.toml and only fail (or
+		// silently fall back) after the next reload — hold durations to
+		// the same type check as int/float/bool below. The already-quoted
+		// passthrough form is checked on its inner text, so quoting
+		// cannot smuggle an invalid value past the check. Empty stays
+		// valid: several duration fields document "empty = <default>" or
+		// "empty disables it".
+		inner := value
+		quoted := len(value) >= 2 && strings.HasPrefix(value, `"`) && strings.HasSuffix(value, `"`)
+		if quoted {
+			inner = value[1 : len(value)-1]
+		}
+		if inner != "" {
+			if _, err := time.ParseDuration(inner); err != nil {
+				return "", fmt.Errorf("invalid duration: %q (use e.g. 30s, 5m, 1h)", value)
+			}
+		}
+		if quoted {
 			return value, nil
 		}
 		return fmt.Sprintf("%q", value), nil

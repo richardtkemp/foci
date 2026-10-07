@@ -524,6 +524,18 @@ func TestFormatTOMLValue(t *testing.T) {
 		{"0", FieldBool, "false", false},
 		{"maybe", FieldBool, "", true},
 		{"5m", FieldDuration, `"5m"`, false},
+		// Durations are type-checked like every other non-string type:
+		// the runtime parses them with time.ParseDuration, so junk is
+		// refused here rather than after the next reload. The
+		// already-quoted passthrough is checked on its inner text;
+		// "0" (a documented disable value) and "" ("empty = default"
+		// fields) stay valid.
+		{`"5m"`, FieldDuration, `"5m"`, false},
+		{"1h30m", FieldDuration, `"1h30m"`, false},
+		{"0", FieldDuration, `"0"`, false},
+		{"", FieldDuration, `""`, false},
+		{"banana", FieldDuration, "", true},
+		{`"banana"`, FieldDuration, "", true},
 	}
 
 	for _, tt := range tests {

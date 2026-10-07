@@ -220,10 +220,10 @@ func configGetAgentKey(deps *ConfigSetDeps, agentID, key string) (string, error)
 
 // agentFileValue resolves one agent's effective value for field from the
 // config FILE at call time: an explicit [[agents]] override, else the
-// inherited global section value, else the built-in default. That is the
-// app config editor's ladder minus its running-merged rung
-// (config.LookupValue) — file-only on purpose: the startup config is
-// frozen, so it would go stale the moment a set lands.
+// inherited global section value, else the built-in default. It never
+// consults the frozen startup config — that would go stale the moment a
+// set lands; consulting the running config is the one extra rung the app
+// config editor's equivalent ladder adds on top of these three.
 func agentFileValue(global map[string]string, agents map[string]map[string]string, agentID string, field config.ConfigField) (value, source string) {
 	if v, ok := agents[agentID][field.Key]; ok {
 		return v, fmt.Sprintf("set for %s in foci.toml", agentID)

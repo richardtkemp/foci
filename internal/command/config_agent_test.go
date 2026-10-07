@@ -141,6 +141,49 @@ func TestConfigSetAgentInvalidValueWritesNothing(t *testing.T) {
 	}
 }
 
+// TestConfigSetAgentRefusesUnparseableDuration proves a value that is not a
+// parseable Go duration writes nothing and says why — for the per-agent form
+// AND the current-agent direct form, which share the same value contract.
+// Let through, a value like "banana" would sit in foci.toml until the
+// runtime tried to parse it after the next reload. A quoted valid duration
+// still writes: the already-quoted passthrough is checked on its inner
+// text, not banned.
+func TestConfigSetAgentRefusesUnparseableDuration(t *testing.T) {
+	var capturedValue string
+	called := false
+	deps := agentFormDeps(func(path string, target config.SetTarget, value string) (string, error) {
+		called = true
+		capturedValue = value
+		return "", nil
+	})
+	cc := CommandContext{ConfigSetDeps: &deps}
+
+	text := execConfigCommand(t, cc, "set clutch keepalive.interval=banana")
+	if called {
+		t.Error("per-agent form: SetInFileFn must not be called for an unparseable duration")
+	}
+	for _, want := range []string{"Invalid value", "banana", "duration"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("per-agent reply %q missing %q", text, want)
+		}
+	}
+
+	// The direct current-agent form refuses through the same shared check.
+	_, err := ConfigCommand().Execute(context.Background(), Request{Name: "config", Args: "set agent.keepalive.interval=banana"}, cc)
+	if called {
+		t.Error("direct form: SetInFileFn must not be called for an unparseable duration")
+	}
+	if err == nil || !strings.Contains(err.Error(), "banana") {
+		t.Errorf("direct form err = %v, want an invalid-duration error naming the value", err)
+	}
+
+	// A quoted valid duration keeps writing, via the passthrough.
+	execConfigCommand(t, cc, `set clutch keepalive.interval="1m"`)
+	if !called || capturedValue != `"1m"` {
+		t.Errorf("quoted duration: called=%v value=%q, want one write of %q", called, capturedValue, `"1m"`)
+	}
+}
+
 // TestConfigSetAgentRefusesRestartOnlyField proves the per-agent set is
 // hot-only: keepalive.warm_open_app_chats (no hot tag) is refused with a
 // message saying it needs a restart and cannot be set per agent from chat,
