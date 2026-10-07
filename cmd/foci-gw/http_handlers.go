@@ -527,19 +527,21 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 			return
 		}
 
-		// #1130: a command starts no turn, so a human declaration stamps both
-		// receipts itself — the in-process one, and the durable timestamp for
-		// the command's target session. Only now, after every gate passed; a
-		// skipped or deferred command records nothing.
-		if req.Human {
-			notifyHumanInteraction(inst)
-			touchHumanUserActivity(d, sk)
-		}
-
 		result, ok := dispatchAgentCommand(d, inst, r.Context(), sk, req.Command)
 		if !ok {
 			http.Error(w, "unknown command", http.StatusNotFound)
 			return
+		}
+
+		// #1130: a command starts no turn, so a human declaration stamps both
+		// receipts itself — the in-process one (mirroring the platforms'
+		// OnUserMessage hook) and the durable timestamp for the command's
+		// target session. Only now: after every gate passed AND a command
+		// actually handled the request, so a skipped, deferred or
+		// unexecutable command records nothing.
+		if req.Human {
+			notifyHumanInteraction(inst)
+			touchHumanUserActivity(d, sk)
 		}
 		writeJSONResponse(w, result.Text)
 	}

@@ -138,6 +138,41 @@ func TestCommand_HumanSetsUserActivity(t *testing.T) {
 	}
 }
 
+// TestCommand_HumanStampsOnlyWhenDispatched pins the dispatch boundary of the
+// human declaration on /command: the stamps belong to a command actually
+// being handled. A registered command with no Execute function fails to
+// dispatch (the endpoint's only 404) and records nothing, while the registry
+// ANSWERING an unknown name is a dispatch — a human typo is still human
+// attention and stamps.
+func TestCommand_HumanStampsOnlyWhenDispatched(t *testing.T) {
+	broken := &command.Command{Name: "broken"} // registered, no Execute → Dispatch reports not-dispatched
+	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{broken}})
+	mux := newTestMux(d)
+
+	w := postJSON(mux, "/command", `{"command":"/broken","human":true}`)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body: %s", w.Code, w.Body.String())
+	}
+	if userActivityRecorded(d, testSessionKey) {
+		t.Error("human command that failed to dispatch recorded user activity; the stamp belongs to a dispatched command")
+	}
+
+	w = postJSON(mux, "/command", `{"command":"/nosuch","human":true}`)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if !strings.Contains(resp["response"], "Unknown command") {
+		t.Fatalf("response = %q, want the registry's unknown-name answer", resp["response"])
+	}
+	if !userActivityRecorded(d, testSessionKey) {
+		t.Error("human command answered by the registry did not set last_user_activity_at")
+	}
+}
+
 // TestBranch_HumanSetsUserActivityOnBranchSession proves the #1130 branch
 // path: a human /branch runs its first turn with the human-source marker, so
 // the durable write lands on the NEW branch session key at turn entry, not
@@ -213,6 +248,130 @@ func TestSend_HumanWaitDeferredNoUserActivity(t *testing.T) {
 	}
 	if userActivityRecorded(d, testSessionKey) {
 		t.Error("wait-deferred human send recorded user activity; a deferred request must not")
+	}
+}
+
+// TestSend_HumanUserGateReadsBeforeOwnStamp pins the #1130 gate ordering on
+// the user-activity gates themselves: the declaration is applied only after
+// the request's own gates were read, so it can never satisfy its own
+// if_user_active — the first request still skips on a session with no user
+// activity. The stamp a DISPATCHED human request leaves behind is durable,
+// though: a later request's if_user_active gate sees it and runs.
+func TestSend_HumanUserGateReadsBeforeOwnStamp(t *testing.T) {
+	d, mock := httpTestSetup(t, httpTestOpts{})
+	mux := newTestMux(d)
+
+	// No user activity yet → if_user_active trips. The request's own
+	// declaration must not be the activity it conditions on.
+	w := postJSON(mux, "/send", `{"text":"hi","human":true,"if_user_active":"1h"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["response"] != "skipped: no recent user activity" {
+		t.Fatalf("response = %q, want the if_user_active skip message", resp["response"])
+	}
+	if userActivityRecorded(d, testSessionKey) {
+		t.Error("gate-skipped human send recorded user activity; its own declaration must not satisfy its own gate")
+	}
+	if calls := mock.snapshot(); len(calls) != 0 {
+		t.Errorf("backend called %d time(s) for a skipped send, want 0", len(calls))
+	}
+
+	// A human send that dispatches stamps the session…
+	w = postJSON(mux, "/send", `{"text":"again","human":true,"wait_none":true}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	if !userActivityRecorded(d, testSessionKey) {
+		t.Fatal("dispatched human send did not set last_user_activity_at")
+	}
+
+	// …so the SAME gate now holds for a later request, which runs.
+	w = postJSON(mux, "/send", `{"text":"once more","human":true,"if_user_active":"1h"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	resp = map[string]string{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["response"] == "skipped: no recent user activity" {
+		t.Error("later if_user_active send skipped despite the earlier human request's stamp")
+	}
+	if calls := mock.snapshot(); len(calls) != 2 {
+		t.Errorf("backend calls = %d, want 2 (the skipped request never ran)", len(calls))
+	}
+}
+
+// TestSend_HumanWaitUserGateReadsBeforeOwnStamp is the wait-gate half of the
+// #1130 ordering: a request's own human declaration must not satisfy its own
+// wait_user_active — it defers on a session with no user activity — while
+// the stamp from an earlier dispatched human request releases a later one
+// immediately.
+func TestSend_HumanWaitUserGateReadsBeforeOwnStamp(t *testing.T) {
+	d, mock := httpTestSetup(t, httpTestOpts{})
+	withDeferStore(t, &d)
+	mux := newTestMux(d)
+
+	// No user activity yet → wait_user_active unmet → deferred. The
+	// request's own declaration must not be the activity it waits for.
+	w := postJSON(mux, "/send", `{"text":"first","human":true,"wait_user_active":"1h"}`)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 deferred; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["status"] != "deferred" {
+		t.Fatalf("status = %v, want deferred", resp["status"])
+	}
+	if userActivityRecorded(d, testSessionKey) {
+		t.Error("wait-deferred human send recorded user activity; its own declaration must not satisfy its own wait")
+	}
+
+	// A human send that dispatches stamps the session…
+	w = postJSON(mux, "/send", `{"text":"second","human":true,"wait_none":true}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	if !userActivityRecorded(d, testSessionKey) {
+		t.Fatal("dispatched human send did not set last_user_activity_at")
+	}
+
+	// …so the SAME wait now holds and the next request runs immediately
+	// (the deferred one stays queued until a sweep).
+	w = postJSON(mux, "/send", `{"text":"third","human":true,"wait_user_active":"1h"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (wait held by the earlier stamp); body: %s", w.Code, w.Body.String())
+	}
+	if calls := mock.snapshot(); len(calls) != 2 {
+		t.Errorf("backend calls = %d, want 2 (the deferred request stays queued)", len(calls))
+	}
+}
+
+// TestSend_HumanIfUserInactiveRuns pins the mirror side of the #1130
+// ordering: the declaration is not written before the gates are read, so it
+// cannot flip its own if_user_inactive gate to "user recently active" — a
+// human send to a session with no user activity RUNS, and only its dispatch
+// stamps the session.
+func TestSend_HumanIfUserInactiveRuns(t *testing.T) {
+	d, mock := httpTestSetup(t, httpTestOpts{})
+	mux := newTestMux(d)
+
+	w := postJSON(mux, "/send", `{"text":"hi","human":true,"if_user_inactive":"1h"}`)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["response"] == "skipped: user recently active" {
+		t.Fatalf("response = %q; the request's own declaration must not block its own if_user_inactive gate", resp["response"])
+	}
+	if calls := mock.snapshot(); len(calls) != 1 {
+		t.Fatalf("backend calls = %d, want 1 (the gated send must run)", len(calls))
+	}
+	if !userActivityRecorded(d, testSessionKey) {
+		t.Error("human send that ran under if_user_inactive did not set last_user_activity_at")
 	}
 }
 

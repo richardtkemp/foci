@@ -294,7 +294,7 @@ foci command [-a agent] [--if-warm <dur>] [--if-cold <dur>] [--if-user-active <d
 
 **Wait gates (deferral, not blocking):** `command` also accepts the `--wait-*` gates (`--wait-warm`, `--wait-cold`, `--wait-user-active`, `--wait-user-inactive`, `--wait-timeout`/`--deadline`, `--no-gate`; same `FOCI_WAIT_*` env vars), evaluated against the session the command targets. Unlike send there is **no default gate** — a command with no if/wait flag runs immediately. An unmet `--wait-*` gate does not skip and does not block: the gateway stores the command (it survives a restart), answers with a "deferred" receipt immediately, and dispatches it once the condition holds; `--wait-timeout`/`--deadline` (default **2h**) dispatches anyway. `--no-gate` ignores any wait condition.
 
-**`--human`:** declare a human (not a cron) dispatched this command. A command starts no turn, so the declaration itself stamps the user-attention timestamp on the command's target session once the command dispatches. A skipped or deferred command records nothing.
+**`--human`:** declare a human (not a cron) dispatched this command. A command starts no turn, so the declaration itself stamps the user-attention timestamp on the command's target session once the command dispatches. A command that is skipped, deferred or fails to dispatch records nothing.
 
 **Examples:**
 ```bash
