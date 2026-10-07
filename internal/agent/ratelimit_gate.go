@@ -203,12 +203,12 @@ func (a *Agent) persistRateLimitDeadline(endpoint string, until time.Time) {
 }
 
 // resolveEndpoint returns the endpoint a session's turns run against: the
-// endpoint leg of the session's effective model tuple (see sessionModelTuple)
+// endpoint leg of the session's effective model tuple (see SessionModelTuple)
 // — the owning session's override, else the agent default. An inheriting
 // child gates on the endpoint its traffic actually uses (the root's), not the
 // agent default.
 func (a *Agent) resolveEndpoint(sessionKey string) string {
-	return a.sessionModelTuple(sessionKey).endpoint
+	return a.SessionModelTuple(sessionKey).Endpoint
 }
 
 // SessionRateLimited reports whether the given session may NOT fire because its

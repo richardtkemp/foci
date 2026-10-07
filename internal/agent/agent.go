@@ -552,23 +552,25 @@ func (a *Agent) taggedLog(tag string) *log.ComponentLogger {
 }
 
 // ResolveCallSite resolves a call site to a (client, model, format) triple.
-// For ungrouped calls or nil GroupResolver, returns the session's client/model/format.
-// Otherwise resolves via GroupResolver and gets the appropriate client.
+// Ungrouped call sites (and a nil GroupResolver) get the session's whole
+// effective tuple — ONE SessionModelTuple snapshot, so the session's own
+// format always accompanies its own client, never the agent default format.
+// Grouped call sites resolve via GroupResolver and fetch the client from
+// ClientProvider for the group's endpoint/format.
 func (a *Agent) ResolveCallSite(callSite, sessionKey string) (provider.Client, string, string) {
-	if a.GroupResolver == nil {
-		return a.SessionClient(sessionKey), a.SessionModel(sessionKey), a.Format
-	}
-	resolved := a.GroupResolver.ResolveCall(callSite)
-	if resolved == nil {
-		return a.SessionClient(sessionKey), a.SessionModel(sessionKey), a.Format
-	}
-	client := a.SessionClient(sessionKey)
-	if a.ClientProvider != nil {
-		if c := a.ClientProvider.GetClient(resolved.Endpoint, resolved.Format); c != nil {
-			client = c
+	if a.GroupResolver != nil {
+		if resolved := a.GroupResolver.ResolveCall(callSite); resolved != nil {
+			client := a.SessionClient(sessionKey)
+			if a.ClientProvider != nil {
+				if c := a.ClientProvider.GetClient(resolved.Endpoint, resolved.Format); c != nil {
+					client = c
+				}
+			}
+			return client, resolved.Developer + "/" + resolved.ModelID, resolved.Format
 		}
 	}
-	return client, resolved.Developer + "/" + resolved.ModelID, resolved.Format
+	tuple := a.SessionModelTuple(sessionKey)
+	return tuple.Client, tuple.Model, tuple.Format
 }
 
 // TurnDetail describes one in-flight turn for shutdown diagnostics.

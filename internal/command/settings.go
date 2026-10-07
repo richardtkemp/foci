@@ -11,6 +11,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/delegator"
 	"foci/internal/provider"
+	"foci/internal/session"
 	"foci/internal/tools"
 )
 
@@ -702,7 +703,15 @@ func OverridesCommand() *Command {
 	}
 }
 
-// overrideKeyMap maps user-facing key names to their sessionStringSetting.
+// overrideKeyMap maps user-facing key names to their clear function. The
+// model_endpoint/model_format clears keep the session's OWN model row (the
+// `model` entry of SessionOverrides — empty when the session has none, e.g.
+// an orphan endpoint/format row left by the state.json migration), never the
+// EFFECTIVE model: writing the effective one onto a model-less session would
+// pin the root's (or the agent default's) model with empty legs — the mixed
+// tuple #1170 removed. SetSessionModel's delete-on-empty persistence then
+// drops the endpoint/format rows (or, with no own model, all three), leaving
+// the session inheriting.
 var overrideKeyMap = map[string]struct {
 	clearFn func(CommandContext, string)
 }{
@@ -711,10 +720,10 @@ var overrideKeyMap = map[string]struct {
 	"speed":    {func(cc CommandContext, sk string) { cc.Agent.SetSessionSpeed(sk, "") }},
 	"model":    {func(cc CommandContext, sk string) { cc.Agent.SetSessionModel(sk, "", "", "", nil) }},
 	"model_endpoint": {func(cc CommandContext, sk string) {
-		cc.Agent.SetSessionModel(sk, cc.Agent.SessionModel(sk), "", "", nil)
+		cc.Agent.SetSessionModel(sk, cc.Agent.SessionOverrides(sk)[session.MetaKeyModel], "", "", nil)
 	}},
 	"model_format": {func(cc CommandContext, sk string) {
-		cc.Agent.SetSessionModel(sk, cc.Agent.SessionModel(sk), "", "", nil)
+		cc.Agent.SetSessionModel(sk, cc.Agent.SessionOverrides(sk)[session.MetaKeyModel], "", "", nil)
 	}},
 	"show_tool_calls":       {func(cc CommandContext, sk string) { cc.Agent.SetSessionShowToolCalls(sk, "") }},
 	"display_show_thinking": {func(cc CommandContext, sk string) { cc.Agent.SetSessionDisplayShowThinking(sk, "") }},
@@ -755,7 +764,12 @@ func formatOverridesStatus(sessionKey string, cc CommandContext) Response {
 	return Response{Text: b.String()}
 }
 
-// deleteOverride clears a single session override by key name.
+// deleteOverride clears a single session override by key name. Deleting a
+// key that is not set changes nothing: the guard consults the same
+// SessionOverrides map /overrides lists (for no_compact, presence means it is
+// true — it is only listed then), so an inheriting branch or an unoverridden
+// root is never handed to a clear function that could pin state it never
+// owned (see overrideKeyMap).
 func deleteOverride(sessionKey string, cc CommandContext, key string) (Response, error) {
 	entry, ok := overrideKeyMap[key]
 	if !ok {
@@ -765,6 +779,9 @@ func deleteOverride(sessionKey string, cc CommandContext, key string) (Response,
 		}
 		sort.Strings(valid)
 		return Response{Text: fmt.Sprintf("Unknown override key %q.\nValid keys: %s", key, strings.Join(valid, ", "))}, nil
+	}
+	if _, set := cc.Agent.SessionOverrides(sessionKey)[key]; !set {
+		return Response{Text: fmt.Sprintf("Override %q is not set.", key)}, nil
 	}
 	entry.clearFn(cc, sessionKey)
 	return Response{Text: fmt.Sprintf("Override %q cleared.", key)}, nil

@@ -78,10 +78,10 @@ func TestBranchOwnModelDoesNotInheritRootTupleLegs(t *testing.T) {
 func TestBranchOwnModelOwnFormatNilClientKeepsOwnFormatGetsDefaultClient(t *testing.T) {
 	defaultClient := tupleClient{name: "default"}
 	ag := &Agent{
-		Model:   "claude-opus-4-8",
-		Format:  "anthropic",
+		Model:    "claude-opus-4-8",
+		Format:   "anthropic",
 		Endpoint: "anthropic",
-		Client:  defaultClient,
+		Client:   defaultClient,
 	}
 
 	root := session.SessionKey{AgentID: "bot", Type: 'c', ID: "100"}
@@ -231,6 +231,86 @@ func TestSyntheticOwnerModelYieldsAgentDefaultTuple(t *testing.T) {
 		if got := ag.SessionClient(sk); got != defaultClient {
 			t.Errorf("SessionClient(%s) = %v, want agent default client", sk, got)
 		}
+	}
+}
+
+// TestSessionModelTupleReturnsWholeTupleFromOneOwner proves the snapshot
+// accessor hands out all four legs of ONE owner's tuple in a single call —
+// the one-call shape turns and call sites rely on so no owner switch can
+// land between two leg reads.
+func TestSessionModelTupleReturnsWholeTupleFromOneOwner(t *testing.T) {
+	defaultClient := tupleClient{name: "default"}
+	ag := &Agent{
+		Model:    "claude-opus-4-8",
+		Endpoint: "anthropic",
+		Format:   "anthropic",
+		Client:   defaultClient,
+	}
+
+	root := session.SessionKey{AgentID: "bot", Type: 'c', ID: "100"}
+	branch := root.Branch()
+	own := session.SessionKey{AgentID: "bot", Type: 'c', ID: "200"}
+
+	ag.SetSessionModel(root.String(), "google/gemini-2.5-pro", "gemini", "gemini", tupleClient{name: "root"})
+	ag.SetSessionModel(own.String(), "openai/gpt-5.6", "openai", "openai", tupleClient{name: "own"})
+
+	cases := []struct {
+		name string
+		sk   string
+		want ModelTuple
+	}{
+		{"own owner", own.String(), ModelTuple{Model: "openai/gpt-5.6", Endpoint: "openai", Format: "openai", Client: tupleClient{name: "own"}}},
+		{"inheriting branch", branch.String(), ModelTuple{Model: "google/gemini-2.5-pro", Endpoint: "gemini", Format: "gemini", Client: tupleClient{name: "root"}}},
+		{"agent default", "bot/c300", ModelTuple{Model: "claude-opus-4-8", Endpoint: "anthropic", Format: "anthropic", Client: defaultClient}},
+	}
+	for _, tc := range cases {
+		got := ag.SessionModelTuple(tc.sk)
+		if got != tc.want {
+			t.Errorf("%s: SessionModelTuple = %+v, want %+v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestSetSessionModelLegClearDropsIndexRowsAndRestoreUsesDefaults pins the
+// row-level contract of a leg clear: keeping the model with empty legs (what
+// /overrides delete model_endpoint/model_format writes) must DELETE the
+// endpoint/format rows from the session index while KEEPING the model row,
+// so a restart restores the model on the agent-default legs. This kills the
+// 5dace0047 persistence block, which skipped empty legs and left stale rows
+// for RestoreSessionOverrides to resurrect.
+func TestSetSessionModelLegClearDropsIndexRowsAndRestoreUsesDefaults(t *testing.T) {
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
+
+	defaultClient := tupleClient{name: "default"}
+	ag := &Agent{Model: "claude-opus-4-8", Format: "anthropic", Client: defaultClient, SessionIndex: idx}
+	ag.SetSessionModel("bot/c100", "google/gemini-2.5-pro", "gemini", "gemini", nil)
+	// The leg-clear shape: keep the model, empty the legs.
+	ag.SetSessionModel("bot/c100", "google/gemini-2.5-pro", "", "", nil)
+
+	if v, err := idx.GetSessionMetadata("bot/c100", session.MetaKeyModelEndpoint); err != nil || v != "" {
+		t.Errorf("index still has model_endpoint row = %q (err %v), want deleted", v, err)
+	}
+	if v, err := idx.GetSessionMetadata("bot/c100", session.MetaKeyModelFormat); err != nil || v != "" {
+		t.Errorf("index still has model_format row = %q (err %v), want deleted", v, err)
+	}
+	if v, err := idx.GetSessionMetadata("bot/c100", session.MetaKeyModel); err != nil || v != "google/gemini-2.5-pro" {
+		t.Errorf("index model row = %q (err %v), want kept %q", v, err, "google/gemini-2.5-pro")
+	}
+
+	fresh := &Agent{Model: "claude-opus-4-8", Format: "anthropic", Client: defaultClient, SessionIndex: idx}
+	fresh.RestoreSessionOverrides("bot/c100")
+	if got := fresh.SessionModel("bot/c100"); got != "google/gemini-2.5-pro" {
+		t.Errorf("model after restore = %q, want %q", got, "google/gemini-2.5-pro")
+	}
+	if got := fresh.SessionFormat("bot/c100"); got != "anthropic" {
+		t.Errorf("format after restore = %q, want agent default %q", got, "anthropic")
+	}
+	if got := fresh.SessionClient("bot/c100"); got != defaultClient {
+		t.Errorf("client after restore = %v, want agent default client", got)
 	}
 }
 

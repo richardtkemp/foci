@@ -38,7 +38,7 @@ type sessionMeta struct {
 	effort          string                 // per-session effort override (empty = use agent default)
 	thinking        string                 // per-session thinking override (empty = use agent default)
 	speed           string                 // per-session speed override (empty = use agent default)
-	model           string                 // per-session model override; non-empty makes this session the OWNER of its model tuple (see sessionModelTuple)
+	model           string                 // per-session model override; non-empty makes this session the OWNER of its model tuple (see SessionModelTuple)
 	modelEndpoint   string                 // per-session endpoint override, read only when this session owns the tuple (empty = agent default)
 	modelFormat     string                 // per-session format override, read only when this session owns the tuple (empty = agent default)
 	permissionMode  string                 // per-session CC permission mode (empty = ccstream default "default")
@@ -85,7 +85,7 @@ var (
 	}
 	// The model tuple (model/endpoint/format) stays in this table so restore,
 	// /overrides and clear iterate over it, but its RESOLUTION is not
-	// per-field: sessionModelTuple resolves all four legs (client included)
+	// per-field: SessionModelTuple resolves all four legs (client included)
 	// from one owning session. No agentDefault for these entries.
 	settingModel = sessionStringSetting{
 		prefix: session.MetaKeyModel,
@@ -152,7 +152,7 @@ func (a *Agent) setSessionString(sessionKey, prefix, value string, setter func(*
 // Resolution order: own override → the agent default. The model tuple
 // (model/endpoint/format/client) is NOT read this way — its one-owner rule,
 // which inherits the root's whole tuple for a model-less child, lives in
-// sessionModelTuple.
+// SessionModelTuple.
 func (a *Agent) getStringSetting(sessionKey string, s sessionStringSetting) string {
 	if val := a.readSessionString(sessionKey, s.getter); val != "" {
 		return val
@@ -245,18 +245,21 @@ func (a *Agent) SetSessionSpeed(sessionKey, value string) {
 // value persisted before that guard existed.
 const SyntheticModel = "<synthetic>"
 
-// modelTuple is a session's effective provider setup: which model to run, on
+// ModelTuple is a session's effective provider setup: which model to run, on
 // which endpoint and wire format, through which client. The four legs are one
 // fact — which session owns the provider setup — and are resolved together by
-// sessionModelTuple, never field by field.
-type modelTuple struct {
-	model    string
-	endpoint string
-	format   string
-	client   provider.Client
+// SessionModelTuple, never field by field. Consumers that need more than one
+// leg must take ONE snapshot of the whole tuple, never call a leg accessor
+// twice: a SetSessionModel on the session or its root between two reads would
+// mix legs from two owners.
+type ModelTuple struct {
+	Model    string
+	Endpoint string
+	Format   string
+	Client   provider.Client
 }
 
-// sessionModelTuple returns the effective model tuple for a session, resolved
+// SessionModelTuple returns the effective model tuple for a session, resolved
 // from ONE owning session — never a mix of two:
 //   - the session itself, when it has its own model override;
 //   - otherwise, for a branch/independent child (rootKeyIfChild), the root,
@@ -269,41 +272,46 @@ type modelTuple struct {
 // whose model is the unlaunchable SyntheticModel sentinel (pre-guard
 // pollution) resolves to the agent default tuple — no leg of a synthetic
 // tuple is used.
-func (a *Agent) sessionModelTuple(sessionKey string) modelTuple {
+//
+// This is the one accessor for the whole tuple: a turn resolves it once into
+// TurnState (TurnModel/TurnClient/TurnEndpoint/TurnFormat), a call site once
+// in ResolveCallSite; the leg methods (SessionModel, SessionFormat,
+// SessionClient, resolveEndpoint) are thin wrappers for one-leg callers.
+func (a *Agent) SessionModelTuple(sessionKey string) ModelTuple {
 	t := a.readModelTuple(sessionKey)
-	if t.model == "" {
+	if t.Model == "" {
 		if rootKey, ok := rootKeyIfChild(sessionKey); ok {
 			t = a.readModelTuple(rootKey)
 		}
 	}
-	if t.model == "" || t.model == SyntheticModel {
-		return modelTuple{model: a.Model, endpoint: a.Endpoint, format: a.Format, client: a.Client}
+	if t.Model == "" || t.Model == SyntheticModel {
+		return ModelTuple{Model: a.Model, Endpoint: a.Endpoint, Format: a.Format, Client: a.Client}
 	}
-	if t.endpoint == "" {
-		t.endpoint = a.Endpoint
+	if t.Endpoint == "" {
+		t.Endpoint = a.Endpoint
 	}
-	if t.format == "" {
-		t.format = a.Format
+	if t.Format == "" {
+		t.Format = a.Format
 	}
-	if t.client == nil {
-		t.client = a.Client
+	if t.Client == nil {
+		t.Client = a.Client
 	}
 	return t
 }
 
 // readModelTuple snapshots one session's own model-tuple fields under the
 // meta lock.
-func (a *Agent) readModelTuple(sessionKey string) modelTuple {
+func (a *Agent) readModelTuple(sessionKey string) ModelTuple {
 	sm := a.getSessionMeta(sessionKey)
 	a.metaMu.Lock()
 	defer a.metaMu.Unlock()
-	return modelTuple{model: sm.model, endpoint: sm.modelEndpoint, format: sm.modelFormat, client: sm.client}
+	return ModelTuple{Model: sm.model, Endpoint: sm.modelEndpoint, Format: sm.modelFormat, Client: sm.client}
 }
 
-// SessionModel returns the effective model for the session, per the one-owner
-// tuple rule — see sessionModelTuple.
+// SessionModel returns the effective model for the session: the model leg of
+// the one-owner tuple — see SessionModelTuple.
 func (a *Agent) SessionModel(sessionKey string) string {
-	return a.sessionModelTuple(sessionKey).model
+	return a.SessionModelTuple(sessionKey).Model
 }
 
 // CacheExpiry returns the wall-clock time at which the session's prompt cache
@@ -653,17 +661,17 @@ func (a *Agent) refreshContextFromBackend(ctx context.Context, sessionKey string
 }
 
 // SessionFormat returns the effective wire format for the session: the format
-// leg of the one-owner model tuple (see sessionModelTuple) — the owning
+// leg of the one-owner model tuple (see SessionModelTuple) — the owning
 // session's override, else the agent default.
 func (a *Agent) SessionFormat(sessionKey string) string {
-	return a.sessionModelTuple(sessionKey).format
+	return a.SessionModelTuple(sessionKey).Format
 }
 
 // SessionClient returns the effective client for the session: the client leg
-// of the one-owner model tuple (see sessionModelTuple) — the owning session's
+// of the one-owner model tuple (see SessionModelTuple) — the owning session's
 // override, else the agent default.
 func (a *Agent) SessionClient(sessionKey string) provider.Client {
-	return a.sessionModelTuple(sessionKey).client
+	return a.SessionModelTuple(sessionKey).Client
 }
 
 // SessionNoCompact returns the effective no_compact setting for the session.

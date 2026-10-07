@@ -344,3 +344,133 @@ func TestGetOrCreateRateLimitGate_Concurrent(t *testing.T) {
 		}
 	}
 }
+
+// TestTurnErrorClosesEndpointGateOfTupleUsedByRequest proves a turn's 429
+// closes the gate of the endpoint the request WENT to — the tuple snapshotted
+// at turn start — not the endpoint a mid-request root model switch re-resolves
+// to: the branch inherits a gemini tuple, the client switches the root to
+// openai inside SendMessage, and the error must close gemini (and only gemini).
+func TestTurnErrorClosesEndpointGateOfTupleUsedByRequest(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	ag := &Agent{
+		Client:    tupleClient{name: "default"},
+		Sessions:  store,
+		Tools:     tools.NewRegistry(),
+		Bootstrap: workspace.NewBootstrap(t.TempDir(), []string{}),
+		Model:     "claude-haiku-4-5",
+		Endpoint:  "anthropic",
+	}
+	root := session.SessionKey{AgentID: "test", Type: 'c', ID: "700"}
+	branch := root.Branch()
+	rootKey := root.String()
+	switcher := newTestClientWithError(func(_ context.Context, _ *provider.MessageRequest) (*provider.MessageResponse, error) {
+		ag.SetSessionModel(rootKey, "openai/gpt-5.6", "openai", "openai", tupleClient{name: "post-switch"})
+		return nil, &provider.APIError{StatusCode: 429, RetryAfter: "120", Body: "rate limited"}
+	})
+	ag.SetSessionModel(rootKey, "google/gemini-2.5-pro", "gemini", "gemini", switcher)
+
+	ctx := WithTrigger(context.Background(), "keepalive")
+	if _, err := ag.hmTest(ctx, branch.String(), "Hello"); err == nil {
+		t.Fatal("expected rate-limit error from 429")
+	}
+
+	if limited, _ := ag.getOrCreateRateLimitGate("gemini").IsLimited(); !limited {
+		t.Error(`"gemini" gate open after 429 on the inherited tuple, want closed`)
+	}
+	if limited, _ := ag.getOrCreateRateLimitGate("openai").IsLimited(); limited {
+		t.Error(`"openai" gate closed by a request that never went there, want open`)
+	}
+}
+
+// TestTurnSuccessReleasesAndBooksTupleUsedByRequest proves the success side of
+// the same one-snapshot pairing: with the inherited gemini gate closed
+// beforehand, a successful user probe releases the GEMINI gate (not the
+// post-switch endpoint), and the ledger books the call under the format of the
+// tuple the request used.
+func TestTurnSuccessReleasesAndBooksTupleUsedByRequest(t *testing.T) {
+	ledger := openTestLedger(t)
+	switcher := newTestClient(nil)
+	store := session.NewStore(t.TempDir())
+	ag := &Agent{
+		Client:    tupleClient{name: "default"},
+		Sessions:  store,
+		Tools:     tools.NewRegistry(),
+		Bootstrap: workspace.NewBootstrap(t.TempDir(), []string{}),
+		Model:     "claude-haiku-4-5",
+		Endpoint:  "anthropic",
+	}
+	root := session.SessionKey{AgentID: "test", Type: 'c', ID: "701"}
+	branch := root.Branch()
+	rootKey := root.String()
+	switcher.handler = func(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
+		ag.SetSessionModel(rootKey, "openai/gpt-5.6", "openai", "openai", tupleClient{name: "post-switch"})
+		return &provider.MessageResponse{
+			Role:       "assistant",
+			Content:    provider.TextContent("done"),
+			StopReason: "end_turn",
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
+		}, nil
+	}
+	ag.SetSessionModel(rootKey, "google/gemini-2.5-pro", "gemini", "gemini", switcher)
+
+	// Closed inherited-tuple gate; a USER trigger may probe through it.
+	ag.getOrCreateRateLimitGate("gemini").Close(time.Now().Add(1 * time.Hour))
+
+	ctx := WithTrigger(context.Background(), "user")
+	if _, err := ag.hmTest(ctx, branch.String(), "Hello"); err != nil {
+		t.Fatalf("user probe: %v", err)
+	}
+
+	if limited, _ := ag.getOrCreateRateLimitGate("gemini").IsLimited(); limited {
+		t.Error(`"gemini" gate still closed after successful request on it, want released`)
+	}
+	if limited, _ := ag.getOrCreateRateLimitGate("openai").IsLimited(); limited {
+		t.Error(`"openai" gate closed, want open`)
+	}
+	calls := ledgerCalls(t, ledger)
+	if len(calls) == 0 {
+		t.Fatal("no calls booked in the ledger")
+	}
+	var providers []string
+	for _, c := range calls {
+		providers = append(providers, c.Provider)
+	}
+	if calls[len(calls)-1].Provider != "gemini" {
+		t.Errorf("booked Provider = %q (all: %v), want the pre-switch tuple's format %q", calls[len(calls)-1].Provider, providers, "gemini")
+	}
+}
+
+// TestTurnErrorClosesInheritedRootEndpointGate pins the landed #1170 error
+// classification a model-less branch relies on: its 429 closes the gate of the
+// ROOT's endpoint (where the inherited client sends), not the agent default —
+// the exact behaviour the 5dace0047 ts.SessionMeta.modelEndpoint fallback
+// broke.
+func TestTurnErrorClosesInheritedRootEndpointGate(t *testing.T) {
+	client429 := newTestClientWithError(func(_ context.Context, _ *provider.MessageRequest) (*provider.MessageResponse, error) {
+		return nil, &provider.APIError{StatusCode: 429, RetryAfter: "120", Body: "rate limited"}
+	})
+	store := session.NewStore(t.TempDir())
+	ag := &Agent{
+		Client:    tupleClient{name: "default"},
+		Sessions:  store,
+		Tools:     tools.NewRegistry(),
+		Bootstrap: workspace.NewBootstrap(t.TempDir(), []string{}),
+		Model:     "claude-haiku-4-5",
+		Endpoint:  "anthropic",
+	}
+	root := session.SessionKey{AgentID: "test", Type: 'c', ID: "702"}
+	branch := root.Branch()
+	ag.SetSessionModel(root.String(), "google/gemini-2.5-pro", "gemini", "gemini", client429)
+
+	ctx := WithTrigger(context.Background(), "keepalive")
+	if _, err := ag.hmTest(ctx, branch.String(), "Hello"); err == nil {
+		t.Fatal("expected rate-limit error from 429")
+	}
+
+	if limited, _ := ag.getOrCreateRateLimitGate("gemini").IsLimited(); !limited {
+		t.Error(`"gemini" gate open after 429 through the root's client, want closed`)
+	}
+	if limited, _ := ag.getOrCreateRateLimitGate("anthropic").IsLimited(); limited {
+		t.Error(`"anthropic" gate closed, want open — the request never went there`)
+	}
+}

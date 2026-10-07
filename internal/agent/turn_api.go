@@ -144,14 +144,22 @@ func (t *APITransport) LoadAndRepairSession(ts *TurnState) error {
 	return nil
 }
 
-// ResolveModelEffort resolves model, client, effort, thinking, and speed
-// for this turn from session overrides and agent/model defaults.
+// ResolveModelEffort resolves model, client, endpoint, format, effort,
+// thinking, and speed for this turn from session overrides and agent/model
+// defaults. The model tuple is read as ONE SessionModelTuple snapshot: a
+// SetSessionModel on the session or its root while the request is in flight
+// must not re-pair this turn's model with another owner's client, gate or
+// format — so the post-request paths (classifyAPIError, releaseRateLimit,
+// logAPIResponse) reuse the snapshotted legs, never a fresh resolution.
 // Extracted from agent.go:409-429.
 func (t *APITransport) ResolveModelEffort(ts *TurnState) {
 	a := t.agent
 
-	ts.TurnModel = a.SessionModel(ts.SessionKey)
-	ts.TurnClient = a.SessionClient(ts.SessionKey)
+	tuple := a.SessionModelTuple(ts.SessionKey)
+	ts.TurnModel = tuple.Model
+	ts.TurnClient = tuple.Client
+	ts.TurnEndpoint = tuple.Endpoint
+	ts.TurnFormat = tuple.Format
 	ts.TurnEffort = a.SessionEffort(ts.SessionKey)
 	ts.TurnThinking = a.SessionThinking(ts.SessionKey)
 	ts.TurnSpeed = a.SessionSpeed(ts.SessionKey)
@@ -352,13 +360,17 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 			}
 			ts.NewMessages = append(ts.NewMessages, errMsg)
 
-			return a.classifyAPIError(ts.Ctx, err, ts.SessionKey, a.resolveEndpoint(ts.SessionKey), duration)
+			// Pair the error with the endpoint the request actually went to
+			// (the turn-start snapshot), not a fresh resolution — a model
+			// switch mid-request must not close a gate the request never hit.
+			return a.classifyAPIError(ts.Ctx, err, ts.SessionKey, ts.TurnEndpoint, duration)
 		}
 
 		// Any successful response proves this endpoint is accepting requests
 		// again. Release a prior gate immediately; queued system work remains
-		// queued for the normal drain tick.
-		a.releaseRateLimit(a.resolveEndpoint(ts.SessionKey))
+		// queued for the normal drain tick. The endpoint is the turn-start
+		// snapshot, for the same one-owner pairing as the error path.
+		a.releaseRateLimit(ts.TurnEndpoint)
 
 		// Primary HTTP roundtrip succeeded — analog of the delegated
 		// transport's stdin write completing. Signal the inbox so

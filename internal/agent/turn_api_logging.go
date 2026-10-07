@@ -37,7 +37,7 @@ func (a *Agent) logAPIResponse(ts *TurnState, model string, start time.Time, dur
 		turn.TurnID, turn.StartedAt = accounting.MintTurnID(sessionKey, accounting.KindCall, start), start
 	}
 	if err := accounting.Record(turn, accounting.APIResponse{
-		ID: resp.ID, Kind: accounting.KindCall, Provider: a.SessionFormat(sessionKey), Model: model,
+		ID: resp.ID, Kind: accounting.KindCall, Provider: ts.TurnFormat, Model: model,
 		Session: sessionKey, AgentID: turn.AgentID, TurnID: turn.TurnID,
 		Start: start, Duration: duration, Tokens: resp.Usage.Tokens(), StopReason: resp.StopReason,
 		SessionFile: sessionFile,

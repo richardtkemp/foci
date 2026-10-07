@@ -158,6 +158,8 @@ type TurnState struct {
 
 	TurnModel    string          // resolved model for this turn
 	TurnClient   provider.Client // resolved client for this turn
+	TurnEndpoint string          // resolved endpoint for this turn — which rate-limit gate the turn's request pairs with, snapshotted before the request (see ResolveModelEffort)
+	TurnFormat   string          // resolved wire format for this turn — the provider the request is booked under, snapshotted before the request (see ResolveModelEffort)
 	TurnEffort   string          // resolved effort level
 	TurnThinking string          // resolved thinking mode
 	TurnSpeed    string          // resolved speed setting
