@@ -13,7 +13,6 @@ import (
 	"foci/internal/clock"
 	"foci/internal/config"
 	"foci/internal/delegator"
-	"foci/internal/log"
 	"foci/internal/session"
 	"foci/internal/timeutil"
 )
@@ -184,24 +183,26 @@ func newQuietFixture(t *testing.T, o quietOpts) *quietFixture {
 		},
 	}
 
-	f.r = &Runner{
-		log:          log.NewComponentLogger("keepalive:test"),
-		agentID:      "test",
-		sessionIndex: idx,
-		agent:        f.fake,
-		quietCfg: config.ResolvedQuietCompaction{
+	// Built through New, the production constructor (not a struct literal):
+	// every test here then also proves New installs the quiet knobs from
+	// RunnerConfig — window, clock, open-chat list and note callback — which
+	// is what makes the boot wiring in cmd/foci-gw/periodic_setup.go real.
+	f.r = New(RunnerConfig{
+		AgentID:      "test",
+		SessionIndex: idx,
+		Agent:        f.fake,
+		CacheTTL:     cacheTTL,
+		QuietCompaction: config.ResolvedQuietCompaction{
 			Window:    o.windowOrDefault(),
 			Threshold: threshold,
 			MinIdle:   minIdle,
 		},
-		cacheTTL:           cacheTTL,
-		clock:              f.fc,
-		openChatSessionsFn: func() []string { return o.openChats },
-		notifyQuietCompact: func(sk, text string) {
+		Clock:              f.fc,
+		OpenChatSessionsFn: func() []string { return o.openChats },
+		NotifyQuietCompact: func(sk, text string) {
 			f.notes = append(f.notes, quietNote{sessionKey: sk, text: text})
 		},
-		done: make(chan struct{}),
-	}
+	})
 	return f
 }
 
@@ -236,24 +237,37 @@ func tripwireAgent(t *testing.T) *fakeBackgroundAgent {
 	}
 }
 
+// newTripwireRunner builds a runner through New whose every dependency is a
+// tripwire — the no-op paths must return without touching any of them. why
+// names the expected no-op reason in the open-chat tripwire's failure.
+func newTripwireRunner(t *testing.T, qc config.ResolvedQuietCompaction, at time.Time, why string) *Runner {
+	t.Helper()
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { idx.Close() })
+	return New(RunnerConfig{
+		AgentID:           "test",
+		SessionIndex:      idx,
+		Agent:             tripwireAgent(t),
+		QuietCompaction:   qc,
+		Clock:             fakeClockAt(at),
+		OpenChatSessionsFn: func() []string {
+			t.Errorf("quiet compaction reached openChatSessions %s", why)
+			return nil
+		},
+	})
+}
+
 func TestMaybeQuietCompaction_OffByDefault_NoLookups(t *testing.T) {
 	// Proves requirement 4: with no window configured (the default), the
 	// trigger is an exact no-op — not one session, ledger or agent lookup.
 	useUTC(t)
-	r := &Runner{
-		log:     log.NewComponentLogger("keepalive:test"),
-		agentID: "test",
-		agent:   tripwireAgent(t),
-		quietCfg: config.ResolvedQuietCompaction{
-			Window: "", Threshold: 0.5, MinIdle: "30m",
-		},
-		clock: fakeClockAt(time.Date(2026, 10, 7, 2, 0, 0, 0, time.UTC)),
-		openChatSessionsFn: func() []string {
-			t.Error("quiet compaction reached openChatSessions although off")
-			return nil
-		},
-		done: make(chan struct{}),
-	}
+	r := newTripwireRunner(t,
+		config.ResolvedQuietCompaction{Window: "", Threshold: 0.5, MinIdle: "30m"},
+		time.Date(2026, 10, 7, 2, 0, 0, 0, time.UTC),
+		"although the feature is off")
 	r.maybeQuietCompaction(context.Background())
 }
 
@@ -262,20 +276,10 @@ func TestMaybeQuietCompaction_OutsideWindow_NoLookups(t *testing.T) {
 	// returns before any lookup — with the feature ON but the clock at
 	// midday against a 01:00-05:00 window.
 	useUTC(t)
-	r := &Runner{
-		log:     log.NewComponentLogger("keepalive:test"),
-		agentID: "test",
-		agent:   tripwireAgent(t),
-		quietCfg: config.ResolvedQuietCompaction{
-			Window: "01:00-05:00", Threshold: 0.5, MinIdle: "30m",
-		},
-		clock: fakeClockAt(time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)),
-		openChatSessionsFn: func() []string {
-			t.Error("quiet compaction reached openChatSessions although outside the window")
-			return nil
-		},
-		done: make(chan struct{}),
-	}
+	r := newTripwireRunner(t,
+		config.ResolvedQuietCompaction{Window: "01:00-05:00", Threshold: 0.5, MinIdle: "30m"},
+		time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC),
+		"although the time is outside the window")
 	r.maybeQuietCompaction(context.Background())
 }
 

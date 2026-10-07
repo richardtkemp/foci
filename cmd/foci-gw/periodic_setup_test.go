@@ -2,11 +2,16 @@ package main
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"foci/internal/agent"
 	"foci/internal/config"
+	"foci/internal/delegator"
+	"foci/internal/delegator/accounting"
+	"foci/internal/modelinfo"
 	"foci/internal/session"
 	"foci/internal/tools"
 	"foci/internal/workspace"
@@ -14,9 +19,11 @@ import (
 
 // newQuietSetupInstance builds the minimal agentInstance setupPeriodic needs:
 // an API-mode agent over a real session store and index, with its resolved
-// snapshot installed. The periodic runner it starts is stopped by the caller
+// snapshot installed. Each decorate hook (if any) mutates the agent before the
+// instance is assembled — the quiet wiring test turns it into a delegated
+// agent this way. The periodic runner it starts is stopped by the caller
 // via inst.kaRunner.Stop().
-func newQuietSetupInstance(t *testing.T, cfg *config.Config, acfg config.AgentConfig) *agentInstance {
+func newQuietSetupInstance(t *testing.T, cfg *config.Config, acfg config.AgentConfig, decorate ...func(*agent.Agent)) *agentInstance {
 	t.Helper()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -30,6 +37,9 @@ func newQuietSetupInstance(t *testing.T, cfg *config.Config, acfg config.AgentCo
 		Bootstrap:    workspace.NewBootstrap(t.TempDir(), nil),
 		SessionIndex: idx,
 		Model:        "test-model",
+	}
+	for _, d := range decorate {
+		d(ag)
 	}
 	return &agentInstance{
 		id:       acfg.ID,
@@ -96,5 +106,115 @@ func TestPeriodicRederiveCarriesQuietCompaction(t *testing.T) {
 	// The runner must exist for UpdateSettings to deliver any of this.
 	if inst.kaRunner == nil {
 		t.Fatal("setupPeriodic did not install the runner")
+	}
+}
+
+// TestSetupPeriodicWiresQuietCompaction proves the BOOT wiring (#2218) end to
+// end: the runner setupPeriodic builds carries the live resolved quiet config
+// — the global window plus the resolved threshold and idle defaults — and
+// fires the trigger on its own tick loop, before any config event rederives
+// Settings (that live half is pinned by TestPeriodicRederiveCarriesQuietCompaction).
+//
+// The agent is a hand-built delegated instance: Spec.CacheTTL makes the
+// cache-warm guard provable (an API agent has no TTL and always fails closed,
+// requirement 6g), and NewBackend always fails, so the one attempt this test
+// observes FAILS — which still records the attempt as quiet_compacted_at in
+// the session index (requirement 9), the durable outcome every later guard
+// reads. The window is computed around the real now (production reads the
+// real clock) with an hour of slack either side; the tick is 10ms so the pass
+// lands well inside the poll deadline.
+func TestSetupPeriodicWiresQuietCompaction(t *testing.T) {
+	now := time.Now()
+	quietHours := now.Add(-time.Hour).Format("15:04") + "-" + now.Add(time.Hour).Format("15:04")
+	const sk = "qa/c1"
+
+	cfg := &config.Config{
+		Scheduler: config.SchedulerConfig{TickInterval: config.Ptr("10ms")},
+		Sessions: config.SessionsConfig{CompactionConfig: config.CompactionConfig{
+			CompactionQuietHours: config.Ptr(quietHours),
+		}},
+	}
+	acfg := config.AgentConfig{ID: "qa"}
+
+	ledger, _, err := accounting.Open(filepath.Join(t.TempDir(), "api.db"), accounting.Options{})
+	if err != nil {
+		t.Fatalf("open ledger: %v", err)
+	}
+	accounting.SetLive(ledger)
+	t.Cleanup(func() {
+		accounting.SetLive(nil)
+		_ = ledger.Close()
+	})
+
+	inst := newQuietSetupInstance(t, cfg, acfg, func(a *agent.Agent) {
+		a.ModelMetaFn = func(string) modelinfo.ModelMeta { return modelinfo.ModelMeta{ContextWindow: 200000} }
+		a.DelegatedManager = &agent.DelegatedManager{
+			Spec:       delegator.Spec{CacheTTL: time.Hour},
+			NewBackend: func() (delegator.Delegator, error) { return nil, errors.New("no backend in this test") },
+		}
+	})
+
+	// Seed the one candidate on the instance's own index: a root chat
+	// (so it IS the agent's default session), idle 41m against the 30m
+	// minimum, cache touched 10m ago against the 1h TTL.
+	idx := inst.ag.SessionIndex
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey:     sk,
+		FilePath:       "/tmp/test.jsonl",
+		CreatedAt:      now.Add(-24 * time.Hour),
+		LastActivityAt: now,
+		SessionType:    session.SessionTypeChat,
+		Status:         session.SessionStatusActive,
+	})
+	idx.TouchUserActivity(sk, now.Add(-41*time.Minute))
+	idx.TouchCacheTouch(sk, now.Add(-10*time.Minute))
+
+	// The fill: one booked user turn at 62% of the 200k window.
+	turn := accounting.Turn{
+		TurnID: sk + "@1", Session: sk, AgentID: "qa",
+		Backend: accounting.BackendAPI, Source: accounting.SourceUser,
+		StartedAt: now.Add(-41 * time.Minute), EndedAt: now.Add(-40 * time.Minute),
+	}
+	call := accounting.APIResponse{
+		ID: "msg_quiet", Kind: accounting.KindCall, Provider: "anthropic", Model: "test-model",
+		Session: sk, AgentID: "qa", TurnID: turn.TurnID,
+		Start: turn.StartedAt, Duration: time.Second, StopReason: "end_turn",
+		Tokens: modelinfo.Tokens{modelinfo.ClassInput: 124000, modelinfo.ClassOutput: 50},
+	}.Call()
+	if err := accounting.Record(turn, call); err != nil {
+		t.Fatalf("book the fill call: %v", err)
+	}
+
+	// Fixture sanity, so a failure here names the seed and not the wiring.
+	if got := defaultSessionKeyFor(inst.ag, "qa"); got != sk {
+		t.Fatalf("default session = %q, want %q (fixture sanity)", got, sk)
+	}
+	if st, err := ledger.SessionStats(sk); err != nil || st.ContextTokens <= 0 {
+		t.Fatalf("ledger fill for %s = %+v, %v (fixture sanity)", sk, st, err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	setupPeriodic(inst, acfg, periodicParams{
+		cfg:          cfg,
+		sessions:     inst.ag.Sessions,
+		connMgr:      stubConnMgr{},
+		sessionIndex: idx,
+		ctx:          ctx,
+	})
+	t.Cleanup(func() { inst.kaRunner.Stop() })
+
+	// The observable: the boot-wired runner fires the quiet trigger through
+	// its own loop and records the (failed) attempt. Missing wiring means a
+	// zero window, so the stamp never appears and the deadline fails the test.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if v, err := idx.GetSessionMetadata(sk, session.MetaKeyQuietCompactedAt); err == nil && v != "" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the runner built by setupPeriodic never quiet-compacted the seeded idle session — the boot wiring of the quiet-hours trigger is missing")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
