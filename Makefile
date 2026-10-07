@@ -154,6 +154,14 @@ llbox:
 	@mkdir -p bin
 	cd scripts/llbox && go build -o ../../bin/llbox .
 
+# fgw_testdir makes a fresh, UNIQUE per-run test dir under /tmp/fgw (#2236).
+# The name used to be <prefix>-$(date +%s): two runs started in the same
+# second shared one dir AND one .log, the dir was made before the /tmp/heavy
+# lock, and the first run to finish rm -rf'd it — so the second failed with
+# "llbox: ... sealing setup failed: open /tmp/fgw/...: no such file". mktemp
+# gives each run its own dir (and so its own $(TESTDIR).log).
+fgw_testdir = $(shell mkdir -p /tmp/fgw && mktemp -d /tmp/fgw/$(1)-XXXXXXXX)
+
 # `make test` seals itself under Landlock BY DEFAULT (foci_todo #1523) via
 # scripts/seal-test.sh — read that script for the full design (whitelist,
 # the diagnostic re-run). Degrades gracefully to unsealed (single warning
@@ -161,7 +169,7 @@ llbox:
 # explicitly, for debugging a test that genuinely needs to write somewhere
 # odd.
 test: llbox
-	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
+	$(eval TESTDIR := $(call fgw_testdir,test))
 	$(eval LOGFILE := $(TESTDIR).log)
 	@mkdir -p $(TESTDIR)/home
 	@# /tmp/heavy serialises the test runner against any other heavy build
@@ -216,7 +224,7 @@ test: llbox
 # var, no passthrough existed).
 test-one: llbox
 	@if [ -z "$(PKG)" ]; then echo "usage: make test-one PKG=./internal/<pkg>/ [RUN=<TestName>] [V=1] [COUNT=N]" >&2; exit 2; fi
-	$(eval TESTDIR := /tmp/fgw/test-one-$(shell date +%s))
+	$(eval TESTDIR := $(call fgw_testdir,test-one))
 	$(eval LOGFILE := $(TESTDIR).log)
 	@mkdir -p $(TESTDIR)/home
 	@# Same /tmp/heavy compute lock as `test`/`integration` — see those targets
@@ -241,7 +249,7 @@ test-one: llbox
 # RUN is passed unexpanded ($(value RUN)) so RUN='A$|B' reaches go test intact.
 integration: llbox
 	@echo "=== Integration tests (L2: real foci-gw against stubbed edges) ==="
-	$(eval TESTDIR := /tmp/fgw/integration-$(shell date +%s))
+	$(eval TESTDIR := $(call fgw_testdir,integration))
 	$(eval LOGFILE := $(TESTDIR).log)
 	@mkdir -p $(TESTDIR)/home
 	@# Full -v output (every RUN/PASS line + on-failure gateway stderr dumps) is
@@ -285,7 +293,7 @@ integration: llbox
 # not a gate — read the two passes side by side.
 bucket-audit:
 	@echo "=== bucket-audit: low vs high parallelism ==="
-	$(eval TESTDIR := /tmp/fgw/bktaudit-$(shell date +%s))
+	$(eval TESTDIR := $(call fgw_testdir,bktaudit))
 	@mkdir -p $(TESTDIR)/home
 	@echo "--- low (-parallel=2) ---"
 	-@HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -tags=integration -count=1 -timeout 900s -parallel=2 -v ./test/integration/... 2>&1 | grep -E '^--- FAIL' || echo "  (clean)"
@@ -332,13 +340,13 @@ land:
 	@LAND_LOCK=/tmp/foci-merge.lock LAND_TEST_TARGET=test bash /home/foci/shared/scripts/land.sh
 
 coverage:
-	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
+	$(eval TESTDIR := $(call fgw_testdir,test))
 	@mkdir -p $(TESTDIR)/home
 	@echo "=== Test Coverage ==="
 	@HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -cover ./... 2>&1 | grep -E '(coverage:|FAIL|PASS)' ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS
 
 coverage-report:
-	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
+	$(eval TESTDIR := $(call fgw_testdir,test))
 	@mkdir -p $(TESTDIR)/home
 	@echo "=== Generating Coverage Report ==="
 	@HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -coverprofile=coverage.out ./...
@@ -349,7 +357,7 @@ coverage-report:
 	@go tool cover -func=coverage.out | grep total | awk '{print $$3}'
 
 coverage-html:
-	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
+	$(eval TESTDIR := $(call fgw_testdir,test))
 	@mkdir -p $(TESTDIR)/home
 	@echo "=== Generating HTML Coverage Report ==="
 	@HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -coverprofile=coverage.out ./...
@@ -362,7 +370,7 @@ COVERAGE_TOTAL_MIN ?= 75.0
 COVERAGE_PKG_MIN ?= 45.0
 
 coverage-check:
-	$(eval TESTDIR := /tmp/fgw/test-$(shell date +%s))
+	$(eval TESTDIR := $(call fgw_testdir,test))
 	@mkdir -p $(TESTDIR)/home
 	@echo "=== Testing with Coverage (total>=$(COVERAGE_TOTAL_MIN)%, per-package>=$(COVERAGE_PKG_MIN)%) ==="
 	@HOME=$(TESTDIR)/home GOCACHE=$(GOCACHE_PIN) GOMODCACHE=$(GOMODCACHE_PIN) GOPATH=$(GOPATH_PIN) TMPDIR=$(TESTDIR) FOCI_TMPDIR=$(TESTDIR) FOCI_TEST_TMPDIR=$(TESTDIR) nice -n 19 go test -p=$(NPROC) -parallel=16 -cover -coverprofile=coverage.out ./internal/... ./shared/... 2>&1 | tee .test-output.tmp
