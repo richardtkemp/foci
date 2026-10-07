@@ -493,6 +493,9 @@ type CompactionConfig struct {
 	CompactionPreserveMessages *int     `toml:"compaction_preserve_messages"          hot:"immediate" desc:"Number of most recent messages kept word-for-word instead of being summarized when compaction runs. 0 = summarize everything. Default 25" min:"0"`
 	FacetNoCompact             *bool    `toml:"facet_no_compact"                      desc:"Facets are short-lived side sessions branched off the main chat. When true, they are never compacted since they do not last long (default true)"`
 	ReloadOnCompact            *bool    `toml:"reload_on_compact"                     hot:"immediate" desc:"For Claude Code-backed agents, restarts the session after compaction so edits to character or skill files since it started take effect (default true)"`
+	CompactionQuietHours       *string  `toml:"compaction_quiet_hours"     hot:"event"               desc:"Daily quiet-hours window \"HH:MM-HH:MM\" in the process timezone (may wrap midnight, e.g. \"23:00-07:00\") during which an idle open session whose context usage is at or above compaction_quiet_threshold is compacted once per window, so keepalive stops re-warming a full context nobody is using. Empty (default) = feature off"`
+	CompactionQuietThreshold   *float64 `toml:"compaction_quiet_threshold" hot:"event" default:"0.5" desc:"Fraction of the session's context window (0 to 1) at or above which an idle session is compacted during compaction_quiet_hours" min:"0" max:"1"`
+	CompactionQuietMinIdle     *string  `toml:"compaction_quiet_min_idle"  hot:"event" default:"30m" desc:"How long a session must have had no user activity and no turn of any kind before quiet-hours compaction may compact it; shorter than the default keepalive interval and the cache lifetime so the compaction reads a still-warm cache" type:"duration"`
 }
 
 // NudgeConfig holds nudge system settings.

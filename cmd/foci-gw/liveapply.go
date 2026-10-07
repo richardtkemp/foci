@@ -131,6 +131,7 @@ var (
 		"reflection.backend_quiet_period", "reflection.interval", "reflection.interval_enabled",
 		"reflection.interval_prompt", "reflection.notify_on_skill_creation",
 		"sessions.ephemeral_retention_days",
+		"sessions.compaction_quiet_hours", "sessions.compaction_quiet_threshold", "sessions.compaction_quiet_min_idle",
 		"maintenance.consolidation_enabled", "maintenance.consolidation_max_idle",
 		"maintenance.consolidation_prompt", "maintenance.consolidation_time",
 		"maintenance.reset_idle_guard", "maintenance.reset_time",
@@ -144,6 +145,7 @@ var (
 		"agent.maintenance.reset_idle_guard", "agent.maintenance.reset_time",
 		"agent.scheduler.tick_interval",
 		"agent.sessions.ephemeral_retention_days",
+		"agent.sessions.compaction_quiet_hours", "agent.sessions.compaction_quiet_threshold", "agent.sessions.compaction_quiet_min_idle",
 	}
 
 	// Fields consumed off agentInstance.resolved (the LiveValue), either

@@ -169,6 +169,37 @@ type ResolvedCompaction struct {
 	CompactionPreserveMessages int
 	FacetNoCompact             bool
 	ReloadOnCompact            bool
+	Quiet                      ResolvedQuietCompaction
+}
+
+// ResolvedQuietCompaction is the resolved quiet-hours idle-compaction trigger
+// (#2218). Window is the raw "HH:MM-HH:MM" string (parsed by the consumer via
+// ParseQuietWindow); "" means the feature is off. MinIdle stays a duration
+// string so the runner parses it per tick, like every other scheduler
+// interval.
+type ResolvedQuietCompaction struct {
+	Window    string
+	Threshold float64
+	MinIdle   string
+}
+
+// resolveQuietCompaction applies the quiet-trigger defaults itself (not via
+// ApplyTagDefaults) so Resolve is correct for configs built without Load,
+// e.g. struct literals in tests.
+func resolveQuietCompaction(m CompactionConfig) ResolvedQuietCompaction {
+	threshold := 0.5
+	if m.CompactionQuietThreshold != nil {
+		threshold = *m.CompactionQuietThreshold
+	}
+	minIdle := "30m"
+	if m.CompactionQuietMinIdle != nil && *m.CompactionQuietMinIdle != "" {
+		minIdle = *m.CompactionQuietMinIdle
+	}
+	return ResolvedQuietCompaction{
+		Window:    DerefStr(m.CompactionQuietHours),
+		Threshold: threshold,
+		MinIdle:   minIdle,
+	}
 }
 
 func resolveCompaction(m CompactionConfig) ResolvedCompaction {
@@ -183,6 +214,7 @@ func resolveCompaction(m CompactionConfig) ResolvedCompaction {
 		CompactionPreserveMessages: DerefInt(m.CompactionPreserveMessages),
 		FacetNoCompact:             DerefBool(m.FacetNoCompact),
 		ReloadOnCompact:            m.ReloadOnCompact == nil || *m.ReloadOnCompact, // default ON
+		Quiet:                      resolveQuietCompaction(m),
 	}
 }
 

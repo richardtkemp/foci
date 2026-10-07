@@ -46,6 +46,11 @@ const (
 	// every tracked backend write and trimmed as the backend confirms each
 	// one (#2050, agent/delivery_store.go).
 	MetaKeyCCUndelivered = "cc_undelivered"
+	// MetaKeyQuietCompactedAt holds the RFC3339Nano time of the session's
+	// last quiet-hours compaction ATTEMPT that passed the guards, written by
+	// the periodic runner (#2218) — the anchor for the once-per-window and
+	// human-interacted-since rules.
+	MetaKeyQuietCompactedAt = "quiet_compacted_at"
 	// MetaKeyOrientationConsumed marks a branch session's orientation text as
 	// consumed (branch.go ConsumeOrientation; branch sessions only).
 	MetaKeyOrientationConsumed = "orientation_consumed"
@@ -96,4 +101,5 @@ var SessionMetadataKeys = []SessionMetadataKey{
 	{Key: MetaKeyStreamOutput},
 	{Key: MetaKeyDisplayWidth},
 	{Key: MetaKeyCCUndelivered},
+	{Key: MetaKeyQuietCompactedAt},
 }

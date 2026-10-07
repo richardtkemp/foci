@@ -129,6 +129,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 			Background:             rc.Background,
 			Reflection:             rc.Reflection,
 			Maintenance:            rc.Maintenance,
+			QuietCompaction:        rc.Compaction.Quiet,
 			TickInterval:           rc.Scheduler.TickInterval,
 			EphemeralRetentionDays: freshAcfg.Sessions.EffectiveEphemeralRetentionDays(freshCfg.Sessions.EphemeralRetentionDays),
 		}
@@ -259,6 +260,23 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		Agent: &backgroundAgent{inst: inst, connMgr: p.connMgr, agentID: agentID, branch: branchFn},
 
 		OpenSessionsFn: openSessionsFn(ka.WarmOpenAppChats, agentID),
+
+		// Quiet-hours compaction candidates (#2218) are ALL open sessions —
+		// wired unconditionally, NOT through openSessionsFn above (whose
+		// nil-ness encodes warm_open_app_chats).
+		OpenChatSessionsFn: func() []string { return app.OpenSessionsForAgent(agentID) },
+
+		QuietCompaction: inst.LiveConfig().Compaction.Quiet,
+
+		// Clock stays nil (the real wall clock) in production; tests inject
+		// a fake through RunnerConfig.
+
+		// The quiet-compaction note is the only sign of an unprompted action,
+		// posted to the compacted session's chat exactly like the skill-change
+		// text below (#2218).
+		NotifyQuietCompact: func(sessionKey, text string) {
+			route.NotifySessionChat(p.connMgr, agentID, sessionKey, text)
+		},
 
 		WarningDispatcher:     warningDispatcher,
 		ChatWarningDispatcher: chatWarningDispatcher,

@@ -210,6 +210,7 @@ system_files = [
 # compaction_threshold = 0.8              # flat fraction; omit for the non-linear default curve
 # compaction_handoff_msg = ""
 # compaction_preserve_messages = 25
+# compaction_quiet_hours = ""              # per-agent "" opts this agent out of a global quiet-hours window
 # branch_orientation_facet_prompt = "prompts/orient-facet.md"
 # branch_orientation_headless_prompt = "prompts/orient-headless.md"
 
@@ -474,6 +475,9 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # compaction_min_messages = 4
 # compaction_handoff_msg = ""
 # compaction_preserve_messages = 25
+# compaction_quiet_hours = "23:00-07:00"     # nightly idle-compaction window (process tz, may wrap midnight); empty = off
+# compaction_quiet_threshold = 0.5           # fraction of the context window at or above which an idle session compacts in the quiet window
+# compaction_quiet_min_idle = "30m"          # how idle a session must be before the quiet window may compact it
 # facet_no_compact = true                  # set no_compact on facet sessions
 # max_system_prompt_chars_file = 20000
 # max_system_prompt_chars_total = 80000

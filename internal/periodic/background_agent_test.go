@@ -2,6 +2,7 @@ package periodic
 
 import (
 	"context"
+	"time"
 
 	"foci/internal/delegator"
 )
@@ -12,15 +13,19 @@ import (
 // Runner literal. Unset fields use benign defaults that reproduce the old
 // nil-closure degradation (Branch=false, CanFire=allowed, SessionKey="", etc.).
 type fakeBackgroundAgent struct {
-	branchFn         func(branchType, parentKey, promptText string, noCompact bool) bool
-	hasActiveWorkFn  func() int
-	isTurnInFlightFn func(parentBase string) bool
-	sessionKeyFn     func() string
-	canFireFn        func(ctx context.Context, sessionKey string) (bool, string)
-	rateLimitedFn    func(sessionKey string) (bool, string)
-	runBatchFn       func(ctx context.Context, req delegator.BatchRequest) (string, error)
-	resetFn          func(ctx context.Context, sessionKey string) error
-	cleanupFn        func(ctx context.Context, retentionDays int) int
+	branchFn            func(branchType, parentKey, promptText string, noCompact bool) bool
+	hasActiveWorkFn     func() int
+	isTurnInFlightFn    func(parentBase string) bool
+	sessionKeyFn        func() string
+	canFireFn           func(ctx context.Context, sessionKey string) (bool, string)
+	rateLimitedFn       func(sessionKey string) (bool, string)
+	runBatchFn          func(ctx context.Context, req delegator.BatchRequest) (string, error)
+	resetFn             func(ctx context.Context, sessionKey string) error
+	cleanupFn           func(ctx context.Context, retentionDays int) int
+	lastTurnEndFn       func(sessionKey string) time.Time
+	contextUsageFn      func(sessionKey string) (fill, limit int)
+	quietBlockedFn      func(sessionKey string) string
+	quietCompactFn      func(ctx context.Context, sessionKey string) error
 }
 
 func (f *fakeBackgroundAgent) Branch(branchType, parentKey, promptText string, noCompact bool) bool {
@@ -92,4 +97,32 @@ func (f *fakeBackgroundAgent) CleanupEphemeralSessions(ctx context.Context, rete
 		return f.cleanupFn(ctx, retentionDays)
 	}
 	return 0
+}
+
+func (f *fakeBackgroundAgent) LastTurnEnd(sessionKey string) time.Time {
+	if f.lastTurnEndFn != nil {
+		return f.lastTurnEndFn(sessionKey)
+	}
+	return time.Time{}
+}
+
+func (f *fakeBackgroundAgent) ContextUsage(sessionKey string) (fill, limit int) {
+	if f.contextUsageFn != nil {
+		return f.contextUsageFn(sessionKey)
+	}
+	return 0, 0
+}
+
+func (f *fakeBackgroundAgent) QuietCompactBlocked(sessionKey string) string {
+	if f.quietBlockedFn != nil {
+		return f.quietBlockedFn(sessionKey)
+	}
+	return ""
+}
+
+func (f *fakeBackgroundAgent) QuietCompact(ctx context.Context, sessionKey string) error {
+	if f.quietCompactFn != nil {
+		return f.quietCompactFn(ctx, sessionKey)
+	}
+	return nil
 }

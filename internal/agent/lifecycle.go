@@ -8,6 +8,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -159,6 +160,59 @@ func (a *Agent) backgroundWork(sessionKey string) string {
 // (#1539): the session has background work AND compaction would restart CC.
 func (a *Agent) BackgroundWorkRunning(sessionKey string) bool {
 	return a.compactBlockedBy(sessionKey) != ""
+}
+
+// QuietCompactRefusedError reports that Agent.QuietCompact (#2218) refused
+// to compact: one of the guards in QuietCompactBlocked held at dispatch
+// time. Reason names it.
+type QuietCompactRefusedError struct {
+	Reason string
+}
+
+func (e *QuietCompactRefusedError) Error() string {
+	return "quiet compaction refused: " + e.Reason
+}
+
+// QuietCompactBlocked reports why an unprompted quiet-hours compaction (#2218)
+// must not run on this session right now, or "" when it may. It is the ONE
+// guard set the scheduler consults (via BackgroundAgent) and Agent.QuietCompact
+// re-executes immediately before compacting — requirement: never mid-turn and
+// never with background work.
+//
+// It is deliberately STRICTER than compactBlockedBy: ANY background work
+// refuses, even when the system prompt is unchanged and no post-compaction
+// restart would happen. A user can judge "/compact now, kill nothing" (that is
+// /compact's own gate, #1539); a scheduled 03:00 trigger has no user watching
+// and must not touch a session whose work is merely probably safe.
+func (a *Agent) QuietCompactBlocked(sessionKey string) string {
+	if a.IsTurnInFlight(sessionKey) {
+		return "turn in flight"
+	}
+	if a.IsCompacting(sessionKey) {
+		return "compaction in flight"
+	}
+	if a.InboxHasPendingInput(sessionKey) {
+		return "inbox input queued"
+	}
+	return a.backgroundWork(sessionKey)
+}
+
+// QuietCompact runs one scheduled quiet-hours compaction (#2218): recheck the
+// guards (the scheduler checked them at pick time; this is the immediate
+// pre-compaction recheck) and then the exact /compact pipeline via
+// compactSession — memory hook, API and delegated paths, compaction hold,
+// reload bounce and notify hooks all behave exactly as for a manual /compact.
+// A guards-changed race surfaces as *QuietCompactRefusedError, not an attempt.
+func (a *Agent) QuietCompact(ctx context.Context, sessionKey string) error {
+	if reason := a.QuietCompactBlocked(sessionKey); reason != "" {
+		return &QuietCompactRefusedError{Reason: reason}
+	}
+	_, err := a.compactSession(ctx, sessionKey, false, false)
+	var bw *BackgroundWorkError
+	if errors.As(err, &bw) {
+		return &QuietCompactRefusedError{Reason: bw.Running}
+	}
+	return err
 }
 
 // compactBlockedBy describes the background work a manual /compact must not

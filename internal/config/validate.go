@@ -323,6 +323,19 @@ func (cfg *Config) Validate(knownBackends []string) error {
 		}
 	}
 
+	// Quiet-hours compaction knobs (#2218): the global value and each agent's
+	// OWN value must be well-formed — an agent's nil inherits from [sessions]
+	// and needs no check. A malformed window or min-idle would otherwise be
+	// discovered by the scheduler at 03:00 as a WARN and a silent no-op.
+	if err := validateQuietCompaction("[sessions]", cfg.Sessions.CompactionConfig); err != nil {
+		return err
+	}
+	for _, a := range cfg.Agents {
+		if err := validateQuietCompaction(fmt.Sprintf("agent %q [sessions]", a.ID), a.Sessions.CompactionConfig); err != nil {
+			return err
+		}
+	}
+
 	// HTTP
 	if err := validateIntRange(cfg.HTTP.Port, 1, 65535, "[http] port"); err != nil {
 		return err
@@ -477,6 +490,31 @@ func (cfg *Config) Validate(knownBackends []string) error {
 		}
 	}
 
+	return nil
+}
+
+// validateQuietCompaction checks one scope's compaction_quiet_* values
+// (#2218): a set window must parse (ParseQuietWindow rejects malformed values
+// and start == end), a set threshold must be in (0, 1], and a set min-idle
+// must parse as a positive duration. where names the scope in the error.
+func validateQuietCompaction(where string, c CompactionConfig) error {
+	if w := c.CompactionQuietHours; w != nil && *w != "" {
+		if _, err := ParseQuietWindow(*w); err != nil {
+			return fmt.Errorf("%s compaction_quiet_hours = %q: %w", where, *w, err)
+		}
+	}
+	if t := c.CompactionQuietThreshold; t != nil && (*t <= 0 || *t > 1) {
+		return fmt.Errorf("%s compaction_quiet_threshold = %g: must be greater than 0 and at most 1", where, *t)
+	}
+	if d := c.CompactionQuietMinIdle; d != nil && *d != "" {
+		v, err := time.ParseDuration(*d)
+		if err != nil {
+			return fmt.Errorf("%s compaction_quiet_min_idle = %q: %w", where, *d, err)
+		}
+		if v <= 0 {
+			return fmt.Errorf("%s compaction_quiet_min_idle = %q: must be a positive duration", where, *d)
+		}
+	}
 	return nil
 }
 

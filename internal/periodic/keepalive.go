@@ -43,6 +43,7 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 	reflectionRunning := r.reflectionRunning
 	consolidationRunning := r.consolidationRunning
 	resetRunning := r.resetRunning
+	quietCompactionRunning := r.quietCompactionRunning
 	r.mu.Unlock()
 
 	if running {
@@ -68,6 +69,14 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 	// maintenance that is equally happy 30 seconds later.
 	if reflectionRunning || consolidationRunning || resetRunning {
 		skip = "memory task running"
+		return
+	}
+	// Defer to a quiet-hours compaction (#2218) the same way: it is about to
+	// shrink the very context keepalive would re-warm, so warming first pays
+	// the full-context cache write the compaction exists to make cheap. The
+	// next tick after the compaction warms the small post-compaction prefix.
+	if quietCompactionRunning {
+		skip = "quiet compaction running"
 		return
 	}
 
@@ -142,15 +151,14 @@ func (r *Runner) keepaliveTargets(interval time.Duration) (ready []string, why s
 				continue // no human touched this session within max_user_idle — let it expire
 			}
 		}
-		touch, ok := r.sessionIndex.LastCacheTouch(sk)
+		touchAge, ok := r.lastCacheTouchAge(sk, now)
 		if !ok {
 			continue // never warmed / reset — no live cache to keep alive
 		}
-		elapsed := now.Sub(touch)
-		if elapsed < interval {
+		if touchAge < interval {
 			continue // warmed recently — not due yet
 		}
-		if r.cacheTTL > 0 && elapsed >= r.cacheTTL {
+		if r.cacheTTL > 0 && touchAge >= r.cacheTTL {
 			continue // cache already expired — don't warm a corpse
 		}
 		if r.parentTurnInFlight(sk) {
@@ -160,4 +168,30 @@ func (r *Runner) keepaliveTargets(interval time.Duration) (ready []string, why s
 		ready = append(ready, sk)
 	}
 	return ready, why
+}
+
+// lastCacheTouchAge returns how long ago the session's prompt cache was last
+// touched, and whether a touch is recorded at all. The ONE read of
+// last_cache_touch for cache-warmth decisions: keepalive's warm window and
+// quiet compaction's provably-warm gate (#2218) share it, so the two can
+// never disagree about what "warm" means.
+func (r *Runner) lastCacheTouchAge(sessionKey string, now time.Time) (time.Duration, bool) {
+	if r.sessionIndex == nil {
+		return 0, false
+	}
+	touch, ok := r.sessionIndex.LastCacheTouch(sessionKey)
+	if !ok {
+		return 0, false
+	}
+	return now.Sub(touch), true
+}
+
+// cacheProvablyWarm reports whether the session's prompt cache is provably
+// still warm at now: a recorded last_cache_touch older than the runner's
+// cacheTTL. Quiet-hours compaction (#2218) requires this — compacting a cold
+// session pays a full-context read for nothing. Fail closed: no recorded
+// touch, or an unknown TTL (cacheTTL == 0, warmth unprovable), is NOT warm.
+func (r *Runner) cacheProvablyWarm(sessionKey string, now time.Time) bool {
+	age, ok := r.lastCacheTouchAge(sessionKey, now)
+	return ok && r.cacheTTL > 0 && age < r.cacheTTL
 }

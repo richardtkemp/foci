@@ -29,6 +29,13 @@ func location() *time.Location {
 	return time.Local
 }
 
+// Location returns the configured timezone, or the machine's local timezone
+// when SetLocation was never called. Use it to convert an arbitrary
+// time.Time into the process timezone (t.In(Location())) — the one timezone
+// foci has; "HH:MM" config values (reset_time, consolidation_time,
+// compaction_quiet_hours) are read in it.
+func Location() *time.Location { return location() }
+
 // Now returns the current time in the configured timezone.
 func Now() time.Time {
 	return time.Now().In(location())

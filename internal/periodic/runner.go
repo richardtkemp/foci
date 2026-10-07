@@ -1,6 +1,6 @@
 // Package periodic provides cache keepalive, background work, and memory formation timers.
 //
-// Four mechanisms run as a single goroutine on a shared tick (30s by default,
+// Five mechanisms run as a single goroutine on a shared tick (30s by default,
 // configurable via [scheduler] tick_interval):
 //
 //   - Keepalive: fires when the cache hasn't been warmed within the configured interval.
@@ -13,6 +13,11 @@
 //   - Memory formation: fires periodically to capture conversation memories to daily files.
 //
 //   - Memory consolidation: fires on a longer interval to curate MEMORY.md from daily files.
+//
+//   - Quiet-hours compaction: during the configured compaction_quiet_hours window,
+//     compacts each idle open session whose context usage is at or above
+//     compaction_quiet_threshold, once per window occurrence (#2218) — so
+//     keepalive stops re-warming a full context nobody is using.
 package periodic
 
 import (
@@ -20,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/clock"
 	"foci/internal/config"
 	"foci/internal/delegator"
 	"foci/internal/log"
@@ -82,6 +88,24 @@ type BackgroundAgent interface {
 	// rate-limited. The shared gate for every model-calling scheduler
 	// (keepalive/reflection/consolidation/reset); does NOT run can_run_background.
 	RateLimited(sessionKey string) (limited bool, reason string)
+	// LastTurnEnd returns the wall-clock moment the most recent turn under
+	// the session key finished (zero if none is recorded). Read by
+	// quiet-hours compaction's idle guard (#2218).
+	LastTurnEnd(sessionKey string) time.Time
+	// ContextUsage returns the session's context fill and limit the way
+	// /status computes them (#2218): fill from the cost ledger (every
+	// backend books there; 0 = no turn with a fill recorded), limit from the
+	// session's model context window (0 = unknown).
+	ContextUsage(sessionKey string) (fill, limit int)
+	// QuietCompactBlocked reports why a quiet-hours compaction (#2218) must
+	// not run on the session right now, or "" when it may. See
+	// Agent.QuietCompactBlocked for the (deliberately strict) rule.
+	QuietCompactBlocked(sessionKey string) string
+	// QuietCompact runs one scheduled quiet-hours compaction (#2218) through
+	// the /compact pipeline. A guards-changed race returns an error wrapping
+	// ErrQuietCompactionRefused; a backend decline wraps
+	// delegator.ErrCompactionNoBoundary.
+	QuietCompact(ctx context.Context, sessionKey string) error
 	// RunBatch runs a batch — a headless one-shot turn on an ephemeral child
 	// session whose answer comes back here (delegated agents only); used by
 	// consolidation. Only called when the agent is delegated.
@@ -115,6 +139,28 @@ type Runner struct {
 	// used by keepalive when warm_open_app_chats is set. nil = feature unavailable
 	// (non-app agents) → keepalive warms only the default session.
 	openSessionsFn func() []string
+
+	// openChatSessionsFn returns the session keys of every app chat the agent
+	// has open, unconditionally — unlike openSessionsFn, whose nil-ness
+	// encodes warm_open_app_chats. Quiet-hours compaction candidates are ALL
+	// open sessions regardless of keepalive's warming scope (#2218). nil =
+	// no app chats (default session only).
+	openChatSessionsFn func() []string
+
+	// quietCfg is the resolved quiet-hours compaction trigger (#2218).
+	// Window "" = off. Installed at construction and by applySettings.
+	quietCfg config.ResolvedQuietCompaction
+
+	// clock is the injectable time source for clock-time schedulers
+	// (quiet-hours compaction); nil = the real wall clock. The runner
+	// converts reads into the process timezone via Runner.now.
+	clock clock.Clock
+
+	// notifyQuietCompact posts the one-line quiet-compaction note to the
+	// compacted session's chat (#2218) — sent even when compaction_notify is
+	// off, because it is the only sign of an unprompted action. nil = no
+	// notification.
+	notifyQuietCompact func(sessionKey, text string)
 
 	// agent is the single dependency the schedulers drive — Branch, CanFire,
 	// IsTurnInFlight, etc. (replaces the former eight injected closures). The
@@ -165,6 +211,13 @@ type Runner struct {
 	consolidationRunning bool
 	resetRunning         bool
 
+	// quietCompactionRunning latches a quiet-hours compaction pass in flight
+	// (#2218): set synchronously by maybeQuietCompaction, cleared by its
+	// dispatch goroutine. maybeKeepalive yields to it — re-warming a full
+	// context that is being compacted is the exact waste the trigger exists
+	// to remove.
+	quietCompactionRunning bool
+
 	// Ephemeral-session cleanup
 	ephemeralRetentionDays  int       // 0 = disabled
 	lastEphemeralCleanup    time.Time // last daily GC run (persisted, #2026)
@@ -186,6 +239,7 @@ type Settings struct {
 	Background             config.ResolvedBackground
 	Reflection             config.ResolvedReflection
 	Maintenance            config.ResolvedMaintenance
+	QuietCompaction        config.ResolvedQuietCompaction
 	TickInterval           string // Go duration string; "" = default
 	EphemeralRetentionDays int
 }
@@ -219,6 +273,7 @@ func (r *Runner) applySettings(s Settings, ticker *time.Ticker) {
 	r.bgCfg = s.Background
 	r.reflectCfg = s.Reflection
 	r.maintCfg = s.Maintenance
+	r.quietCfg = s.QuietCompaction
 	r.ephemeralRetentionDays = s.EphemeralRetentionDays
 
 	newTick := defaultTickInterval
@@ -268,6 +323,27 @@ type RunnerConfig struct {
 	// OpenSessionsFn returns session keys of the app's currently-open chats.
 	// nil for non-app agents (keepalive then warms only the default session).
 	OpenSessionsFn func() []string
+
+	// OpenChatSessionsFn returns session keys of the app's currently-open
+	// chats for quiet-hours compaction candidates (#2218) — wired
+	// unconditionally, independent of keepalive's warm_open_app_chats (whose
+	// on/off state OpenSessionsFn encodes in its nil-ness). nil = no app
+	// chats (candidates are then the default session only).
+	OpenChatSessionsFn func() []string
+
+	// QuietCompaction is the resolved quiet-hours compaction trigger (#2218).
+	// Window "" = off (the default). Hot-reloadable via Settings.
+	QuietCompaction config.ResolvedQuietCompaction
+
+	// Clock is the time source for clock-time schedulers (quiet-hours
+	// compaction, #2218). nil = the real wall clock; tests inject a
+	// *clock.Fake so window membership never depends on the wall clock.
+	Clock clock.Clock
+
+	// NotifyQuietCompact is called with (sessionKey, text) after each
+	// successful quiet-hours compaction (#2218) to post the one-line note to
+	// the session's chat. nil = no notification.
+	NotifyQuietCompact func(sessionKey, text string)
 
 	WarningDispatcher     *warnings.Dispatcher
 	ChatWarningDispatcher *warnings.Dispatcher
@@ -326,6 +402,11 @@ func New(cfg RunnerConfig) *Runner {
 		todoStore:        cfg.TodoStore,
 		sessionIndex:     cfg.SessionIndex,
 		openSessionsFn:   cfg.OpenSessionsFn,
+
+		openChatSessionsFn: cfg.OpenChatSessionsFn,
+		quietCfg:           cfg.QuietCompaction,
+		clock:              cfg.Clock,
+		notifyQuietCompact: cfg.NotifyQuietCompact,
 
 		ephemeralRetentionDays: cfg.EphemeralRetentionDays,
 
@@ -504,15 +585,21 @@ func (r *Runner) run(ctx context.Context) {
 			// that all the latest memory content is available when
 			// consolidation curates MEMORY.md (consolidation also skips if
 			// reflection is still running), and reset runs after both because
-			// it defers to them too. All three run before keepalive so that
-			// keepalive's "memory task running" check sees their flags on the
-			// SAME tick: each maybeX sets its running flag synchronously and
-			// then dispatches in a goroutine, so ordering here decides who
-			// wins, and without it keepalive would race a reflection branch
-			// off the same parent and collide on the one-second branch key.
+			// it defers to them too. All three run before quiet compaction
+			// and keepalive so that both consumers' "another task running"
+			// checks see their flags on the SAME tick: each maybeX sets its
+			// running flag synchronously and then dispatches in a goroutine,
+			// so ordering here decides who wins. Quiet compaction runs after
+			// the three memory passes (it yields to them — compacting a
+			// session whose memory is being formed would race the pass) and
+			// BEFORE keepalive so keepalive's yield check sees
+			// quietCompactionRunning on the same tick: without it keepalive
+			// would race the compaction and re-warm the full context the
+			// compaction is about to shrink — the exact waste #2218 removes.
 			r.maybeReflection()
 			r.maybeConsolidation()
 			r.maybeReset(ctx)
+			r.maybeQuietCompaction(ctx)
 			r.maybeKeepalive(ctx)
 			r.maybeBackgroundWork(ctx)
 			r.maybeEphemeralCleanup(ctx)

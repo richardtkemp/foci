@@ -2,8 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"time"
 
+	"foci/internal/agent"
 	"foci/internal/delegator"
+	"foci/internal/delegator/accounting"
 	"foci/internal/periodic"
 	"foci/internal/platform"
 )
@@ -84,4 +89,35 @@ func (b *backgroundAgent) ResetSession(ctx context.Context, sessionKey string) e
 
 func (b *backgroundAgent) CleanupEphemeralSessions(ctx context.Context, retentionDays int) int {
 	return b.inst.ag.CleanupEphemeralSessions(ctx, retentionDays)
+}
+
+func (b *backgroundAgent) LastTurnEnd(sessionKey string) time.Time {
+	return b.inst.ag.LastTurnEnd(sessionKey)
+}
+
+// ContextUsage returns the session's context fill and limit the way /status
+// computes them (#2218): fill from the cost ledger — every backend books
+// there, and 0 means no turn with a fill is recorded — limit from the
+// session's model context window.
+func (b *backgroundAgent) ContextUsage(sessionKey string) (fill, limit int) {
+	limit = b.inst.ag.SessionContextLimit(sessionKey)
+	if l := accounting.Live(); l != nil {
+		if st, err := l.SessionStats(sessionKey); err == nil {
+			fill = st.ContextTokens
+		}
+	}
+	return fill, limit
+}
+
+func (b *backgroundAgent) QuietCompactBlocked(sessionKey string) string {
+	return b.inst.ag.QuietCompactBlocked(sessionKey)
+}
+
+func (b *backgroundAgent) QuietCompact(ctx context.Context, sessionKey string) error {
+	err := b.inst.ag.QuietCompact(ctx, sessionKey)
+	var refused *agent.QuietCompactRefusedError
+	if errors.As(err, &refused) {
+		return fmt.Errorf("%w: %s", periodic.ErrQuietCompactionRefused, refused.Reason)
+	}
+	return err
 }

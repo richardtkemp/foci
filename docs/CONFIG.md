@@ -1064,13 +1064,17 @@ Global defaults set in `[sessions]`, overridable per-agent. Per-agent `unset` in
 | `branch_orientation_facet_prompt` | string | `""` | Path to prompt file for user-attached facet branches. Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. `""` uses embedded default from `shared/prompts/branch-orientation-facet.md`. |
 | `branch_orientation_headless_prompt` | string | `""` | Path to prompt file for headless branches (cron, spawn, keepalive). Same template variables, plus `{report_rule}`: the report-back instruction, rendered per branch type — "report via `send_to_session` to the parent" for types that may send, or "you cannot message the main session" for reflection/keepalive branches, which `send_to_session` refuses. `""` uses embedded default from `shared/prompts/branch-orientation-headless.md`. |
 | `reload_on_compact` | bool | `true` | For delegated (Claude Code) backends, reload the system prompt from disk at compaction so character-file and skill edits take effect. The reload is a CC session bounce (restart + resume), so it only fires when the prompt rebuilt from disk **differs** from the one the running session launched with — fingerprinted by a hash of the character files plus the skill list. An unchanged prompt means no bounce and no interruption to the flow. It catches character-file edits and skill add/remove (the skill list is in the prompt), but **not** skill body-content edits (skill bodies load on demand and never appear in the prompt). |
+| `compaction_quiet_hours` | string | `""` (off) | Daily quiet-hours window `"HH:MM-HH:MM"` in the process timezone; may wrap midnight (e.g. `"23:00-07:00"`, start inclusive, end exclusive). During the window, a scheduler check compacts each **idle** open session — the default session plus every open app chat — whose context usage is at or above `compaction_quiet_threshold`, at most once per window occurrence, through the same pipeline as `/compact`. Off by default. Live-appliable. |
+| `compaction_quiet_threshold` | float | `0.5` | Fraction of the session's context window (greater than 0, at most 1) at or above which an idle session is compacted during `compaction_quiet_hours`. Live-appliable. |
+| `compaction_quiet_min_idle` | duration | `"30m"` | How long a session must have been idle — no user activity and no turn of any kind — before quiet-hours compaction may compact it. The 30m default is shorter than the default keepalive interval (55m) and the cache lifetime (1h), so the compaction lands after the user has clearly stopped, while the cache from their last turn is still warm (the compaction reads cheaply), and before the first keepalive would re-warm the full context. Live-appliable. |
 
 #### Compaction Triggers
 
-Compaction triggers in two modes:
+Compaction triggers in three modes:
 
 1. **Main threshold** — compact when context exceeds the usable-context fraction. By default this is a non-linear curve (smaller fraction of larger windows: ~80% of 200k, ~48% of 1M, ~38% of 2M); an explicit `compaction_threshold` pins a flat fraction instead.
 2. **Manual** — the user can run `/compact` at any time.
+3. **Quiet hours** — during the configured `compaction_quiet_hours` window (default off), the periodic scheduler compacts each idle open session whose context usage is at or above `compaction_quiet_threshold`: at most once per window occurrence, only after a human has interacted since any earlier quiet compaction, only while the session's cache is still warm, and never mid-turn, with queued input, or with background work in flight (stricter than `/compact`, which proceeds while background work runs when the prompt is unchanged). A successful quiet compaction posts one note to the session's chat even when `compaction_notify` is off — it is the only sign of an unprompted action.
 
 ### Tool Behavior
 
@@ -1133,7 +1137,7 @@ All platform fields from `[[platforms]]` can be overridden per-agent via `[[agen
 
 ### Keepalive (`[keepalive]` / `[[agents.keepalive]]`)
 
-Cache keepalive timer. Fires a lightweight branch session to keep the prompt cache warm. For Anthropic, the interval defaults to 55 minutes (just under the 1-hour cache TTL). For OpenAI and DeepSeek models, keepalive is auto-detected by developer name — these developers have a 5-minute prompt cache TTL, so keepalive fires every ~4m45s.
+Cache keepalive timer. Fires a lightweight branch session to keep the prompt cache warm. For Anthropic, the interval defaults to 55 minutes (just under the 1-hour cache TTL). For OpenAI and DeepSeek models, keepalive is auto-detected by developer name — these developers have a 5-minute prompt cache TTL, so keepalive fires every ~4m45s. Keepalive yields to a running quiet-hours compaction (see [Compaction & Sessions](#compaction--sessions)): re-warming a full context that is about to be compacted is the exact waste that trigger exists to remove.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
