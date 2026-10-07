@@ -64,7 +64,7 @@ func TestTmuxKillCleansUpChildProcesses(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 300",
+		"command":   testSessionCmd,
 	})
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
@@ -215,7 +215,7 @@ func TestMaybeKillTmuxServer_WithSessions(t *testing.T) {
 	name := "foci-test-maybekill"
 
 	// Start a session so the server has at least one.
-	_, err := runTmuxWithSocket(context.Background(), sock, "new-session", "-d", "-s", name, "sleep 300")
+	_, err := runTmuxWithSocket(context.Background(), sock, "new-session", "-d", "-s", name, testSessionCmd)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -236,38 +236,46 @@ func TestMaybeKillTmuxServer_WithSessions(t *testing.T) {
 }
 
 func TestMaybeKillTmuxServer_NoSessions(t *testing.T) {
-	// Verifies that maybeKillTmuxServer kills the server when no sessions remain, and handles both "server already exited" and "server still running" cases gracefully.
+	// Verifies both outcomes maybeKillTmuxServer documents for an empty
+	// server: with the server still running and zero sessions it kills it
+	// (returns true); with the server already gone it returns false
+	// gracefully.
 	// Isolated tmux server so killing it doesn't affect other parallel tests.
 	sock := tmuxIsolatedSocket(t)
-	inst := &tmuxInstance{socketPath: sock}
+	inst := testTmuxInstance(sock)
 
 	t.Parallel()
 
-	// Start a session and immediately kill it so the server has no sessions.
+	// Create the only session, then kill it to leave a running server with
+	// no sessions. The session runs a command that cannot exit by itself:
+	// with the old `sleep 1` fixture, under load the session (and with it
+	// the setup's premise) could be gone before kill-session ran, failing
+	// the setup with "kill session: exit status 1" (#2222) — a fixture
+	// race, not the subject. tmuxIsolatedSocket's server has exit-empty
+	// off, so after kill-session the server deliberately lingers with zero
+	// sessions: the exact state under test.
 	name := "foci-test-maybekill-empty"
-	_, err := runTmuxWithSocket(context.Background(), sock, "new-session", "-d", "-s", name, "sleep 1")
-	if err != nil {
+	if _, err := runTmuxWithSocket(context.Background(), sock, "new-session", "-d", "-s", name, testSessionCmd); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	_, err = runTmuxWithSocket(context.Background(), sock, "kill-session", "-t", name)
-	if err != nil {
+	if _, err := runTmuxWithSocket(context.Background(), sock, "kill-session", "-t", name); err != nil {
 		t.Fatalf("kill session: %v", err)
 	}
 
-	// Server may have exited already (exit-empty on), or it may linger.
-	// maybeKillTmuxServer should handle both cases gracefully.
-	inst.maybeKillTmuxServer(context.Background())
-
-	// After this, the server should not be running. Verify by listing.
-	out, err := runTmuxWithSocket(context.Background(), sock, "list-sessions", "-F", "#{session_name}")
-	if err == nil {
-		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-			if strings.TrimSpace(line) != "" {
-				t.Errorf("unexpected session %q after server cleanup", line)
-			}
-		}
+	// Outcome 1: server still running with no sessions → killed.
+	if !inst.maybeKillTmuxServer(context.Background()) {
+		t.Fatal("maybeKillTmuxServer should kill a running server with no sessions")
 	}
-	// err != nil is expected ("no server running") — that's the success case.
+	// "no server running" (the error) is the success case here.
+	if _, err := runTmuxWithSocket(context.Background(), sock, "list-sessions", "-F", "#{session_name}"); err == nil {
+		t.Error("server still running after maybeKillTmuxServer killed it")
+	}
+
+	// Outcome 2: server already gone (the state outcome 1 just produced) →
+	// graceful false, no panic, no error.
+	if inst.maybeKillTmuxServer(context.Background()) {
+		t.Error("maybeKillTmuxServer should return false when the server is already gone")
+	}
 }
 
 func TestTmuxKillCleansUpServer(t *testing.T) {
@@ -292,7 +300,7 @@ func TestTmuxKillCleansUpServer(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 	})
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
@@ -334,7 +342,7 @@ func TestTmuxSessionPIDs(t *testing.T) {
 	name := "foci-test-pids"
 
 	// Create a session
-	_, err := runTmuxWithSocket(context.Background(), sock, "new-session", "-d", "-s", name, "sleep 300")
+	_, err := runTmuxWithSocket(context.Background(), sock, "new-session", "-d", "-s", name, testSessionCmd)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}

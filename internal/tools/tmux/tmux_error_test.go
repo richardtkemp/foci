@@ -32,7 +32,7 @@ func TestTmuxStartNoName(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 	})
 	result, err := tool.Execute(context.Background(), params)
 	if err != nil {

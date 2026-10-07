@@ -53,6 +53,17 @@ func tmuxAvailable(t *testing.T) {
 	}
 }
 
+// testSessionCmd is the command fixture sessions run: it never exits by
+// itself, so a session created with it still exists whenever the test gets
+// around to acting on it, however slow the host. A self-limiting command
+// (the old `sleep 1`/`sleep 60` fixtures) turns the setup itself into a
+// race under load: the session can close before the test's kill/read/watch
+// runs (#2222). Fixture lifetime is safe — every fixture lives on an
+// isolated socket whose kill-server cleanup tears it down regardless of the
+// command's length. Use `cat` instead when the test needs the pane to echo
+// input; use a one-shot command only when the test's subject is the exit.
+const testSessionCmd = "sleep 3600"
+
 // tmuxIsolatedSocket creates a per-test tmux server on its own socket and
 // registers cleanup to kill it. Returns the socket path to pass to NewTmuxTool
 // (and to any direct tmux commands the test issues).

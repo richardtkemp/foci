@@ -71,11 +71,13 @@ type tmuxInstance struct {
 	sessionIndex      *session.SessionIndex // nil = no persistence
 	agentID           string                // agent ID for metadata keys
 	sendMu            sync.Mutex
-	lastSend          map[string]time.Time // session name → last send timestamp
+	lastSend          map[string]time.Time // session name → last send admission time (see paceSend)
 	lastAccess        map[string]time.Time // tmux session name → last interaction time
 	sessionTTL        time.Duration        // auto-kill idle tmux sessions (0 = disabled)
 	reaperCancel      context.CancelFunc   // cancels the TTL reaper goroutine
 	socketPath        string               // tmux socket path (empty = default)
+	now               func() time.Time     // send-limiter clock; nil = time.Now (see paceSend)
+	sleep             func(time.Duration)  // send-limiter sleep; nil = time.Sleep (see paceSend)
 }
 
 // NewTmuxTool creates a tmux tool. cols and rows set the default window size

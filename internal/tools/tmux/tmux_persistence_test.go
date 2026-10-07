@@ -32,7 +32,7 @@ func TestTmuxPersistOwnedSessions(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 	})
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
@@ -73,7 +73,7 @@ func TestTmuxRestoreOwnedSessions(t *testing.T) {
 	}
 
 	// Create the tmux session (simulating it still exists from before restart)
-	if err := exec.Command("tmux", "-S", sock, "new-session", "-d", "-s", "foci-test-restore", "sleep", "60").Run(); err != nil {
+	if err := exec.Command("tmux", "-S", sock, "new-session", "-d", "-s", "foci-test-restore", testSessionCmd).Run(); err != nil {
 		t.Fatalf("create tmux session: %v", err)
 	}
 
@@ -110,7 +110,7 @@ func TestTmuxPersistOnKill(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 	})
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
@@ -210,7 +210,7 @@ func TestTmuxPersistClearedWhenServerHoldsOnlyUnownedSessions(t *testing.T) {
 
 	// A session this agent does not own, keeping the server up.
 	if _, err := runTmuxWithSocket(context.Background(), sock,
-		"new-session", "-d", "-s", "foci-test-unowned", "sleep", "60"); err != nil {
+		"new-session", "-d", "-s", "foci-test-unowned", testSessionCmd); err != nil {
 		t.Fatalf("create unowned session: %v", err)
 	}
 
@@ -268,7 +268,7 @@ func TestTmuxNoSessionIndex(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 	})
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
@@ -307,7 +307,7 @@ func TestTmuxStateFileRoundTrip(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 	})
 	if _, err := tool1.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
@@ -361,7 +361,7 @@ func TestTmuxPersistWatches(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 		"watch":     false,
 	})
 	if _, err := tool.Execute(context.Background(), params); err != nil {
@@ -419,7 +419,7 @@ func TestTmuxRestoreWatches(t *testing.T) {
 	name := "foci-test-restore-watch"
 
 	// Create the tmux session (simulating it still exists from before restart)
-	if err := exec.Command("tmux", "-S", sock, "new-session", "-d", "-s", name, "sleep", "60").Run(); err != nil {
+	if err := exec.Command("tmux", "-S", sock, "new-session", "-d", "-s", name, testSessionCmd).Run(); err != nil {
 		t.Fatalf("create tmux session: %v", err)
 	}
 
@@ -515,7 +515,7 @@ func TestTmuxUnwatchPersists(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 		"watch":     false,
 	})
 	if _, err := tool.Execute(context.Background(), params); err != nil {
@@ -586,7 +586,7 @@ func TestTmuxClearAllPersistsWatches(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 		"watch":     false,
 	})
 	if _, err := tool.Execute(context.Background(), params); err != nil {
@@ -649,7 +649,7 @@ func TestTmuxOwnsExactKey(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 	})
 	if _, err := tool.Execute(ctx, params); err != nil {
 		t.Fatalf("start: %v", err)
@@ -703,7 +703,7 @@ func TestTmuxListExcludesOtherKeys(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 	})
 	if _, err := tool.Execute(ctxOwner, params); err != nil {
 		t.Fatalf("start: %v", err)
@@ -753,7 +753,7 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 		"watch":     false,
 	})
 	if _, err := tool1.Execute(context.Background(), params); err != nil {

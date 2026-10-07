@@ -97,6 +97,51 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir, key
 	return tools.TextResult(result), nil
 }
 
+// paceSend is the send rate limiter: it blocks until at least sendMinGap has
+// passed since the previous admitted send to the same session, then stamps
+// this send's admission time. Sends to different sessions are independent.
+//
+// The gap is measured admission-to-admission — START of the previous send to
+// START of this one — and that is intended, for two reasons:
+//
+//   - The limiter is a pacer, not a queue delay: at most one send per
+//     sendMinGap per session, ticker-style. A send whose own tmux calls
+//     already outlasted the gap has paced itself; re-arming from the END of
+//     that send would stack sendMinGap on top of whatever a loaded host
+//     already added to it, punishing exactly the slow host (#2222).
+//   - The stamp is taken before the send's tmux commands run, so a FAILED
+//     send still paces the next one. An agent retry-looping sends is rate
+//     limited; an end-stamp placed after the send-keys calls would not pace
+//     failed sends at all.
+//
+// The sleep happens with sendMu held, serialising concurrent sends to the
+// same session so each wait is computed against the previous send, not
+// against other waiters.
+//
+// inst.now/inst.sleep (nil = time.Now/time.Sleep) let tests drive the limiter
+// on a controllable clock and assert its arithmetic independently of how long
+// the real tmux subprocess calls take on a loaded host (#2222).
+func (inst *tmuxInstance) paceSend(sessionKey, name string) {
+	now, sleep := inst.now, inst.sleep
+	if now == nil {
+		now = time.Now
+	}
+	if sleep == nil {
+		sleep = time.Sleep
+	}
+	inst.sendMu.Lock()
+	defer inst.sendMu.Unlock()
+	if last, ok := inst.lastSend[name]; ok {
+		if gap := now().Sub(last); gap < sendMinGap {
+			wait := sendMinGap - gap
+			tmuxLog.Debugf("send: session=%s rate-limiting %s, sleeping %v", sessionKey, name, wait)
+			LogSendRateLimiting(gap, wait)
+			sleep(wait)
+		}
+	}
+	inst.lastSend[name] = now()
+}
+
 func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter bool) (tools.ToolResult, error) {
 	if name == "" {
 		return tools.ToolResult{}, fmt.Errorf("name is required for send")
@@ -116,18 +161,7 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 	tmuxLog.Debugf("send: session=%s name=%s keys=%q enter=%v", sessionKey, name, keys, enter)
 	LogSendEntry(name, len(keys), enter)
 
-	// Rate-limit: enforce minimum gap between consecutive sends to the same session.
-	inst.sendMu.Lock()
-	if last, ok := inst.lastSend[name]; ok {
-		if gap := time.Since(last); gap < sendMinGap {
-			wait := sendMinGap - gap
-			tmuxLog.Debugf("send: session=%s rate-limiting %s, sleeping %v", sessionKey, name, wait)
-			LogSendRateLimiting(gap, wait)
-			time.Sleep(wait)
-		}
-	}
-	inst.lastSend[name] = time.Now()
-	inst.sendMu.Unlock()
+	inst.paceSend(sessionKey, name)
 
 	// Send keys first, then Enter as a separate send-keys call.
 	// Combining them in one call is unreliable with certain key strings.

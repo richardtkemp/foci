@@ -33,7 +33,7 @@ func TestTmuxStartAutoWatch(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 	})
 	result, err := tool.Execute(context.Background(), params)
 	if err != nil {
@@ -93,7 +93,7 @@ func TestTmuxStartWatchFalse(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 		"watch":     false,
 	})
 	result, err := tool.Execute(context.Background(), params)
@@ -129,7 +129,7 @@ func TestTmuxStartAutoWatchNoNotifier(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 	})
 	result, err := tool.Execute(context.Background(), params)
 	if err != nil {
@@ -172,7 +172,7 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 	})
 	result, err := tool.Execute(context.Background(), params)
 	if err != nil {

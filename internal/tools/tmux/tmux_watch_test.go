@@ -24,7 +24,7 @@ func TestTmuxWatchUnwatch(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 	})
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
@@ -69,7 +69,7 @@ func TestTmuxWatchAlreadyWatched(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 	})
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
@@ -138,7 +138,7 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 		"watch":     false,
 	})
 	if _, err := tool.Execute(context.Background(), params); err != nil {
@@ -205,7 +205,7 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 		"watch":     false,
 	})
 	if _, err := tool.Execute(context.Background(), params); err != nil {

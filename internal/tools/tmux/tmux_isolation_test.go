@@ -25,7 +25,7 @@ func TestTmuxInstanceIsolation(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      nameA,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 	})
 	if _, err := toolA.Execute(context.Background(), params); err != nil {
 		t.Fatalf("agent A start: %v", err)
@@ -35,7 +35,7 @@ func TestTmuxInstanceIsolation(t *testing.T) {
 	params, _ = json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      nameB,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 	})
 	if _, err := toolB.Execute(context.Background(), params); err != nil {
 		t.Fatalf("agent B start: %v", err)
@@ -145,7 +145,7 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      nameA,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 		"watch":     false,
 	})
 	if _, err := toolA.Execute(context.Background(), params); err != nil {
@@ -156,7 +156,7 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 	params, _ = json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      nameB,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 		"watch":     false,
 	})
 	if _, err := toolB.Execute(context.Background(), params); err != nil {
@@ -230,7 +230,7 @@ func TestTmuxWatchIsolation(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 	})
 	if _, err := toolA.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)

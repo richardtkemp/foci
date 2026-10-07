@@ -42,7 +42,7 @@ func TestTmuxConditionalWatchNoActivityNoFire(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 		"watch":     false,
 	})
 	if _, err := tool.Execute(context.Background(), params); err != nil {
@@ -182,7 +182,7 @@ func TestTmuxReadNoConditionalWatchWithoutAutopilot(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 		"watch":     false,
 	})
 	if _, err := tool.Execute(context.Background(), params); err != nil {
@@ -225,7 +225,7 @@ func TestTmuxReadNoConditionalWatchIfAlreadyWatched(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 	})
 	result, err := tool.Execute(context.Background(), params)
 	if err != nil {
@@ -278,7 +278,7 @@ func TestTmuxConditionalWatchPersistence(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
-		"command":   "sleep 60",
+		"command":   testSessionCmd,
 		"watch":     false,
 	})
 	if _, err := tool.Execute(context.Background(), params); err != nil {
