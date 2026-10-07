@@ -40,6 +40,12 @@ DIR_MTIME = 946684800  # 2000-01-01T00:00:00Z: any fixed value works
 
 
 def fix_dirs(root):
+    # .git itself (a dir in a clone, a file in a worktree) is an entry of the
+    # root listing, so its mtime is pinned too; nothing below it is touched.
+    try:
+        os.utime(os.path.join(root, ".git"), (DIR_MTIME, DIR_MTIME), follow_symlinks=False)
+    except OSError:
+        pass
     for dirpath, dirnames, _ in os.walk(root):
         if ".git" in dirnames:
             dirnames.remove(".git")
