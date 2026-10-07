@@ -247,6 +247,31 @@ func TestWhoamiMissingValues(t *testing.T) {
 	})
 }
 
+// TestWhoamiIgnoresExtraParams pins that the no-property schema is the whole
+// contract: a call carrying unexpected parameters is not an error and cannot
+// change the report — identity comes from the context and the injected
+// lookups, never from arguments (a forged session_key param is ignored too).
+func TestWhoamiIgnoresExtraParams(t *testing.T) {
+	t.Parallel()
+
+	ctx := WithSessionKey(context.Background(), "clutch/c123")
+	tool := NewWhoamiTool(whoamiTestDeps())
+	bare, err := tool.Execute(ctx, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("bare call: unexpected error: %v", err)
+	}
+	extra, err := tool.Execute(ctx, json.RawMessage(`{"bogus": 1, "session_key": "clutch/c999"}`))
+	if err != nil {
+		t.Fatalf("call with unexpected parameters: unexpected error: %v", err)
+	}
+	if extra.Text != bare.Text {
+		t.Errorf("unexpected parameters must not change the report:\nbare:\n%s\nextra:\n%s", bare.Text, extra.Text)
+	}
+	if !strings.Contains(bare.Text, "session_key: clutch/c123\n") {
+		t.Errorf("report should come from the context, got:\n%s", bare.Text)
+	}
+}
+
 // TestWhoamiBackendTransport pins the backend/transport pair: an empty
 // configured backend is reported as api, and transport is delegated exactly
 // when the injected IsDelegated flag is true.
