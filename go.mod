@@ -16,6 +16,7 @@ require (
 require (
 	github.com/anthropics/anthropic-sdk-go v1.26.0
 	github.com/blevesearch/bleve/v2 v2.5.7
+	github.com/blevesearch/bleve_index_api v1.2.11
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/go-rod/rod v0.116.2
 	github.com/google/uuid v1.6.0
@@ -43,7 +44,6 @@ require (
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/araddon/dateparse v0.0.0-20210429162001-6b43995a97de // indirect
 	github.com/bits-and-blooms/bitset v1.22.0 // indirect
-	github.com/blevesearch/bleve_index_api v1.2.11 // indirect
 	github.com/blevesearch/geo v0.2.4 // indirect
 	github.com/blevesearch/go-faiss v1.0.26 // indirect
 	github.com/blevesearch/go-porterstemmer v1.0.3 // indirect

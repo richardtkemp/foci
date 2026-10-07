@@ -20,6 +20,7 @@ import (
 	"github.com/blevesearch/bleve/v2/search"
 	blevehtml "github.com/blevesearch/bleve/v2/search/highlight/format/html"
 	"github.com/blevesearch/bleve/v2/search/query"
+	index "github.com/blevesearch/bleve_index_api"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -94,22 +95,60 @@ func buildBleveMapping() mapping.IndexMapping {
 	indexMapping := bleve.NewIndexMapping()
 	indexMapping.DefaultMapping = docMapping
 	indexMapping.DefaultAnalyzer = "en" // English analyzer with Porter stemming
+	// BM25, not bleve's default TF-IDF (Dick, 2026-10-07): term frequency
+	// saturates and length is judged against the average document, so a long
+	// memory file is not buried under short chat messages that match one word
+	// (#2234). The model is stored in the index; see openOrRebuildBleve.
+	indexMapping.ScoringModel = index.BM25Scoring
 	return indexMapping
+}
+
+// BM25 with NO length normalisation (b = 0; bleve's default is 0.75).
+//
+// One index holds tens of thousands of chat messages a few words long and
+// daily memory files thousands of words long. Normalising by length against
+// that mixed average makes a memory file hundreds of times "too long", and a
+// one-word chat match outranks a file containing every query word — measured
+// on clutch's live data 2026-10-07: with b=0.75 (and with b=0.3) "todo chart"
+// returned no memory file in the top 20; with b=0 the three files that name
+// the todo-chart tool ranked 1-3 (#2234). k1 saturation still stops a file
+// that repeats one word from dominating.
+//
+// bleve exposes b only as this package-level variable, so it applies to every
+// bleve index in the process; all of them are built by this file.
+func init() { search.BM25_b = 0 }
+
+// openOrRebuildBleve opens the index at indexPath, or creates it fresh when it
+// is missing, corrupt, or was built with a different scoring model than
+// buildBleveMapping now sets. bleve keeps the mapping from creation time, so a
+// mapping change only reaches an existing index by rebuilding it. Dropping the
+// docs is safe: startup re-fills memory files (Reindex), conversations
+// (BackfillConversations) and todos (IndexAllTodos).
+func openOrRebuildBleve(indexPath string) (bleve.Index, error) {
+	want := buildBleveMapping()
+	idx, err := bleve.Open(indexPath)
+	if err == nil {
+		im, ok := idx.Mapping().(*mapping.IndexMappingImpl)
+		if ok && im.ScoringModel == want.(*mapping.IndexMappingImpl).ScoringModel {
+			return idx, nil
+		}
+		got := "?"
+		if ok {
+			got = im.ScoringModel
+		}
+		memoryLog.Infof("bleve index %s uses scoring model %q; rebuilding for %q", indexPath, got, index.BM25Scoring)
+		_ = idx.Close()
+	}
+	// Missing, corrupt or outdated — create fresh.
+	_ = os.RemoveAll(indexPath) // clean up any partial or outdated index
+	return bleve.New(indexPath, want)
 }
 
 // NewBleveIndex creates or opens a bleve index at indexPath, indexing .md files
 // from the given sources. debounce is the delay before auto-reindexing on file change.
 // conversationWeight is the multiplier for conversation search results.
 func NewBleveIndex(indexPath string, sources map[string]SourceConfig, debounce time.Duration, conversationWeight float64) (*BleveIndex, error) {
-	var idx bleve.Index
-	var err error
-
-	idx, err = bleve.Open(indexPath)
-	if err != nil {
-		// Index doesn't exist or is corrupt — create fresh
-		_ = os.RemoveAll(indexPath) // clean up any partial index
-		idx, err = bleve.New(indexPath, buildBleveMapping())
-	}
+	idx, err := openOrRebuildBleve(indexPath)
 	if err != nil {
 		return nil, fmt.Errorf("open bleve index: %w", err)
 	}
