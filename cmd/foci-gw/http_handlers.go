@@ -357,8 +357,11 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 		// earlier return (skip, defer, rate limit, bad model) records
 		// nothing, so a request's own declaration can never satisfy or block
 		// its own if_user_*/wait_user_* gate, which was read earlier in this
-		// same invocation; a request that still fails to dispatch below (full
-		// inbox, failed turn) records no receipt either.
+		// same invocation. A request refused before its turn starts (full
+		// inbox) records nothing. A turn that starts and then fails has
+		// already stamped the durable last_user_activity_at at turn entry
+		// (recordTurnActivity, before inference); only the in-process receipt
+		// below is skipped (#2237).
 
 		httpLog.Infof("send (agent=%s, session=%s): %s", inst.id, sessionKey, previewForLog(req.Text))
 
