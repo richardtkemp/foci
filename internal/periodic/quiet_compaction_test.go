@@ -20,19 +20,29 @@ import (
 // Fixture notes. The quiet trigger reads time through an injectable clock,
 // so no test here depends on the wall clock for its window, idle or
 // cache-warmth verdicts: the fake clock reads an exact instant and the
-// process timezone is pinned to UTC so a host in another timezone cannot
-// shift "02:00" out of a window. Idle and cache-touch rows are seeded
-// relative to the fake "now". The one deliberate exception is
-// TestTick_KeepaliveYieldsToQuietCompaction, whose keepalive side reads the
-// REAL clock (that is keepalive's behaviour); its cache touch is seeded
-// relative to the real now for that reason.
+// process timezone is pinned — to UTC by default, or to the scenario's loc —
+// so a host in another timezone cannot shift "02:00" out of a window. Idle
+// and cache-touch rows are seeded relative to the fake "now". The one
+// deliberate exception is TestTick_KeepaliveYieldsToQuietCompaction, whose
+// keepalive side reads the REAL clock (that is keepalive's behaviour); its
+// cache touch is seeded relative to the real now for that reason.
 
-// useUTC pins the process timezone to UTC for one test and restores it after.
+// useLocation pins the process timezone for one test and restores it after.
+// A nil loc means UTC.
+func useLocation(t *testing.T, loc *time.Location) {
+	t.Helper()
+	if loc == nil {
+		loc = time.UTC
+	}
+	prev := timeutil.Location()
+	timeutil.SetLocation(loc)
+	t.Cleanup(func() { timeutil.SetLocation(prev) })
+}
+
+// useUTC pins the process timezone to UTC for one test.
 func useUTC(t *testing.T) {
 	t.Helper()
-	prev := timeutil.Location()
-	timeutil.SetLocation(time.UTC)
-	t.Cleanup(func() { timeutil.SetLocation(prev) })
+	useLocation(t, time.UTC)
 }
 
 // fakeClockAt returns a Fake clock reading exactly `at`.
@@ -43,10 +53,11 @@ func fakeClockAt(at time.Time) *clock.Fake {
 }
 
 // quietSession seeds one candidate. Negative idle/cacheAge means "not
-// recorded".
+// recorded"; a zero turnEnd means no recorded turn end.
 type quietSession struct {
 	key       string
 	idle      time.Duration
+	turnEnd   time.Duration
 	cacheAge  time.Duration
 	fill      int
 	limit     int
@@ -58,12 +69,13 @@ type quietSession struct {
 // and one session 41m idle with a 10m-old cache touch at 62% of a 200k
 // window — the state in which a quiet compaction must fire.
 type quietOpts struct {
-	at         time.Time // fake "now"; zero = 02:00 UTC on 2026-10-07
+	at         time.Time      // fake "now"; zero = 02:00 UTC on 2026-10-07
+	loc        *time.Location // process timezone for the scenario; nil = UTC
 	window     string
-	threshold  float64 // 0 = 0.5
-	minIdle    string  // "" = "30m"
+	threshold  float64       // 0 = 0.5
+	minIdle    string        // "" = "30m"
 	cacheTTL   time.Duration // 0 = 1h
-	defaultKey string       // "" = "test/c1"
+	defaultKey string        // "" = "test/c1"
 	sessions   []quietSession
 	openChats  []string
 	// outcomes overrides the QuietCompact result per session (nil = success).
@@ -101,7 +113,7 @@ type quietNote struct {
 
 func newQuietFixture(t *testing.T, o quietOpts) *quietFixture {
 	t.Helper()
-	useUTC(t)
+	useLocation(t, o.loc)
 
 	at := o.at
 	if at.IsZero() {
@@ -137,6 +149,7 @@ func newQuietFixture(t *testing.T, o quietOpts) *quietFixture {
 	t.Cleanup(func() { idx.Close() })
 
 	usage := make(map[string][2]int, len(o.sessions))
+	turnEnds := make(map[string]time.Time, len(o.sessions))
 	for _, s := range o.sessions {
 		idx.Upsert(session.SessionIndexEntry{
 			SessionKey:  s.key,
@@ -147,6 +160,9 @@ func newQuietFixture(t *testing.T, o quietOpts) *quietFixture {
 		})
 		if s.idle >= 0 {
 			idx.TouchUserActivity(s.key, at.Add(-s.idle))
+		}
+		if s.turnEnd > 0 {
+			turnEnds[s.key] = at.Add(-s.turnEnd)
 		}
 		if s.cacheAge >= 0 {
 			idx.TouchCacheTouch(s.key, at.Add(-s.cacheAge))
@@ -165,7 +181,8 @@ func newQuietFixture(t *testing.T, o quietOpts) *quietFixture {
 		compacted: make(map[string]int),
 	}
 	f.fake = &fakeBackgroundAgent{
-		sessionKeyFn: func() string { return defaultKey },
+		sessionKeyFn:  func() string { return defaultKey },
+		lastTurnEndFn: func(sk string) time.Time { return turnEnds[sk] },
 		contextUsageFn: func(sk string) (int, int) {
 			u := usage[sk]
 			return u[0], u[1]
@@ -248,11 +265,11 @@ func newTripwireRunner(t *testing.T, qc config.ResolvedQuietCompaction, at time.
 	}
 	t.Cleanup(func() { idx.Close() })
 	return New(RunnerConfig{
-		AgentID:           "test",
-		SessionIndex:      idx,
-		Agent:             tripwireAgent(t),
-		QuietCompaction:   qc,
-		Clock:             fakeClockAt(at),
+		AgentID:         "test",
+		SessionIndex:    idx,
+		Agent:           tripwireAgent(t),
+		QuietCompaction: qc,
+		Clock:           fakeClockAt(at),
 		OpenChatSessionsFn: func() []string {
 			t.Errorf("quiet compaction reached openChatSessions %s", why)
 			return nil
@@ -289,7 +306,7 @@ func TestMaybeQuietCompaction_FiresInsideWindowWhenIdle(t *testing.T) {
 	// exactly one compaction, one stamp, and one chat note naming the
 	// trigger, the fill percentage, the threshold and the idle time.
 	f := newQuietFixture(t, quietOpts{
-		at:    time.Date(2026, 10, 7, 2, 0, 0, 0, time.UTC),
+		at:     time.Date(2026, 10, 7, 2, 0, 0, 0, time.UTC),
 		window: "01:00-05:00",
 	})
 
@@ -345,6 +362,33 @@ func TestMaybeQuietCompaction_WrappingWindowBoundaries(t *testing.T) {
 	}
 }
 
+func TestMaybeQuietCompaction_WindowResolvesInProcessTimezone(t *testing.T) {
+	// Proves the window is read in the PROCESS timezone, not in whatever
+	// offset the clock's instant carries: 2026-10-07T23:30Z falls outside
+	// 01:00-05:00 in UTC, but in a UTC+2 process it is 01:30 the next
+	// morning — inside. One instant, two locations, opposite verdicts.
+	at := time.Date(2026, 10, 7, 23, 30, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		loc  *time.Location
+		fire bool
+	}{
+		{"23:30 in UTC is outside the window", time.UTC, false},
+		{"01:30 next day in UTC+2 is inside the window", time.FixedZone("UTC+2", 2*60*60), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newQuietFixture(t, quietOpts{at: at, window: "01:00-05:00", loc: tc.loc})
+			f.r.maybeQuietCompaction(context.Background())
+			waitIdle(t, f.r)
+			got := f.compacted["test/c1"]
+			if (got == 1) != tc.fire || got > 1 {
+				t.Errorf("at %s in %s: compactions = %d, want fire = %v", at.Format(time.RFC3339), tc.loc, got, tc.fire)
+			}
+		})
+	}
+}
+
 func TestMaybeQuietCompaction_BelowThreshold(t *testing.T) {
 	// Requirement 6c: a session at 40% of the window against a 50%
 	// threshold is left alone.
@@ -361,6 +405,38 @@ func TestMaybeQuietCompaction_BelowThreshold(t *testing.T) {
 	}
 }
 
+func TestMaybeQuietCompaction_ThresholdBoundary(t *testing.T) {
+	// Pins requirement 6c's exact edge: the comparison is on the FRACTION
+	// of the window and is "at or above". A fill of exactly 50% fires
+	// against the 0.5 threshold, one token under does not, and the same
+	// fraction fires at a five-times-larger window (so the comparison is
+	// not on raw tokens).
+	cases := []struct {
+		name  string
+		fill  int
+		limit int
+		fire  bool
+	}{
+		{"99999 of 200000 skips", 99999, 200000, false},
+		{"100000 of 200000 (exactly 0.5) fires", 100000, 200000, true},
+		{"500000 of 1000000 (exactly 0.5) fires", 500000, 1000000, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newQuietFixture(t, quietOpts{sessions: []quietSession{{
+				key: "test/c1", idle: 41 * time.Minute, cacheAge: 10 * time.Minute,
+				fill: tc.fill, limit: tc.limit,
+			}}})
+			f.r.maybeQuietCompaction(context.Background())
+			waitIdle(t, f.r)
+			got := f.compacted["test/c1"]
+			if (got == 1) != tc.fire || got > 1 {
+				t.Errorf("fill %d of %d: compactions = %d, want fire = %v", tc.fill, tc.limit, got, tc.fire)
+			}
+		})
+	}
+}
+
 func TestMaybeQuietCompaction_MinIdleNotReached(t *testing.T) {
 	// Requirement 6b: idle 10m against a 30m minimum — no compaction.
 	f := newQuietFixture(t, quietOpts{
@@ -373,6 +449,66 @@ func TestMaybeQuietCompaction_MinIdleNotReached(t *testing.T) {
 	waitIdle(t, f.r)
 	if got := f.compacted["test/c1"]; got != 0 {
 		t.Errorf("compactions before the idle minimum = %d, want 0", got)
+	}
+}
+
+func TestMaybeQuietCompaction_MinIdleBoundary(t *testing.T) {
+	// Pins requirement 6b's exact edge: "at least compaction_quiet_min_idle"
+	// means a session idle for EXACTLY the minimum fires, one minute less
+	// does not.
+	cases := []struct {
+		idle time.Duration
+		fire bool
+	}{
+		{29 * time.Minute, false},
+		{30 * time.Minute, true}, // exactly at the minimum
+		{31 * time.Minute, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.idle.String(), func(t *testing.T) {
+			f := newQuietFixture(t, quietOpts{sessions: []quietSession{{
+				key: "test/c1", idle: tc.idle, cacheAge: 10 * time.Minute,
+				fill: 124000, limit: 200000,
+			}}})
+			f.r.maybeQuietCompaction(context.Background())
+			waitIdle(t, f.r)
+			got := f.compacted["test/c1"]
+			if (got == 1) != tc.fire || got > 1 {
+				t.Errorf("idle %s: compactions = %d, want fire = %v", tc.idle, got, tc.fire)
+			}
+		})
+	}
+}
+
+func TestMaybeQuietCompaction_IdleWaitsForLastTurnEnd(t *testing.T) {
+	// Pins requirement 6b's LastTurnEnd leg: idle runs from the LATER of
+	// the last human activity and the last turn end of any kind. A session
+	// whose human left 3h ago but whose last turn ended 10m ago is only
+	// 10m idle and must NOT be compacted (dropping the LastTurnEnd leg of
+	// the max would see 3h and fire). A recorded turn end 41m in the past
+	// does not by itself block the session.
+	cases := []struct {
+		name    string
+		idle    time.Duration // since the last HUMAN activity
+		turnEnd time.Duration // since the last turn end of any kind
+		fire    bool
+	}{
+		{"recent turn end overrides old human activity", 3 * time.Hour, 10 * time.Minute, false},
+		{"turn end as old as the human activity", 41 * time.Minute, 41 * time.Minute, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newQuietFixture(t, quietOpts{sessions: []quietSession{{
+				key: "test/c1", idle: tc.idle, turnEnd: tc.turnEnd, cacheAge: 10 * time.Minute,
+				fill: 124000, limit: 200000,
+			}}})
+			f.r.maybeQuietCompaction(context.Background())
+			waitIdle(t, f.r)
+			got := f.compacted["test/c1"]
+			if (got == 1) != tc.fire || got > 1 {
+				t.Errorf("human idle %s, turn end %s ago: compactions = %d, want fire = %v", tc.idle, tc.turnEnd, got, tc.fire)
+			}
+		})
 	}
 }
 
@@ -440,6 +576,44 @@ func TestMaybeQuietCompaction_NextNight_NeedsHumanInteraction(t *testing.T) {
 	}
 }
 
+func TestMaybeQuietCompaction_StampSurvivesRestart(t *testing.T) {
+	// Pins requirement 9's durability the literal way: the stamp lives in
+	// the session index, so a REBUILT runner — a restarted foci, fresh
+	// memory, same index — still sees it. The next night, with the cache
+	// re-warmed and the stale ledger fill still reading high, an untouched
+	// session is not compacted again.
+	at := time.Date(2026, 10, 7, 2, 0, 0, 0, time.UTC)
+	f := newQuietFixture(t, quietOpts{at: at, window: "01:00-05:00"})
+
+	f.r.maybeQuietCompaction(context.Background())
+	waitIdle(t, f.r)
+	if got := f.compacted["test/c1"]; got != 1 {
+		t.Fatalf("first night: compactions = %d, want 1", got)
+	}
+
+	// The restart: a new runner, agent and clock over the SAME index.
+	nextNight := at.Add(24 * time.Hour)
+	f.idx.TouchCacheTouch("test/c1", nextNight.Add(-10*time.Minute))
+	compacted := 0
+	r2 := New(RunnerConfig{
+		AgentID:      "test",
+		SessionIndex: f.idx,
+		Agent: &fakeBackgroundAgent{
+			sessionKeyFn:   func() string { return "test/c1" },
+			contextUsageFn: func(string) (int, int) { return 124000, 200000 },
+			quietCompactFn: func(context.Context, string) error { compacted++; return nil },
+		},
+		CacheTTL:        time.Hour,
+		QuietCompaction: config.ResolvedQuietCompaction{Window: "01:00-05:00", Threshold: 0.5, MinIdle: "30m"},
+		Clock:           fakeClockAt(nextNight),
+	})
+	r2.maybeQuietCompaction(context.Background())
+	waitIdle(t, r2)
+	if compacted != 0 {
+		t.Errorf("restarted runner compacted %d time(s) with no human interaction since the stamp; the stamp must survive in the index", compacted)
+	}
+}
+
 func TestMaybeQuietCompaction_Guards(t *testing.T) {
 	// Requirements 6a, 6b (no recorded activity), 6c (unknown fill/limit),
 	// 6e, 6f and 6g: every guard skips the session and none is stamped. The
@@ -479,14 +653,18 @@ func TestMaybeQuietCompaction_Guards(t *testing.T) {
 			}}},
 		},
 		{
-			name:    "endpoint rate-limited (6e)",
-			opts:    quietOpts{},
-			prepare: func(t *testing.T, f *quietFixture) { f.fake.rateLimitedFn = func(string) (bool, string) { return true, "endpoint capped" } },
+			name: "endpoint rate-limited (6e)",
+			opts: quietOpts{},
+			prepare: func(t *testing.T, f *quietFixture) {
+				f.fake.rateLimitedFn = func(string) (bool, string) { return true, "endpoint capped" }
+			},
 		},
 		{
-			name:    "turn in flight (6f)",
-			opts:    quietOpts{},
-			prepare: func(t *testing.T, f *quietFixture) { f.fake.quietBlockedFn = func(string) string { return "turn in flight" } },
+			name: "turn in flight (6f)",
+			opts: quietOpts{},
+			prepare: func(t *testing.T, f *quietFixture) {
+				f.fake.quietBlockedFn = func(string) string { return "turn in flight" }
+			},
 		},
 		{
 			name: "no recorded cache touch (6g)",
