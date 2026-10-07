@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -145,13 +144,22 @@ func TestSessionMetadataCallSitesUseRegistry(t *testing.T) {
 	if len(SessionMetadataKeys) == 0 {
 		t.Fatal("SessionMetadataKeys registry is empty — no keys to enforce")
 	}
-	// Root at the module root via this file's location, not the test binary's
-	// working directory, so the walk is correct wherever go test runs from.
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed — cannot locate module root")
+	// Root at the module root: walk up from the test's working directory (go
+	// test runs in the package dir) to go.mod. Not runtime.Caller: tests are
+	// built with -trimpath (scripts/seal-test.sh, shared test cache), which
+	// turns this file's path into "foci/internal/session/..." — a walk of a
+	// directory that does not exist. A RELATIVE root also keeps the files this
+	// walk reads portable in go test's cache key across checkouts.
+	root := "."
+	for i := 0; ; i++ {
+		if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
+			break
+		}
+		if i == 8 {
+			t.Fatal("no go.mod above the package directory — cannot locate module root")
+		}
+		root = filepath.Join(root, "..")
 	}
-	root := filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
 	keyArgIndex := map[string]int{
 		"SetSessionMetadata":      1, // (sessionKey, key, value)
 		"GetSessionMetadata":      1, // (sessionKey, key)

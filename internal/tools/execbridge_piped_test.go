@@ -49,6 +49,7 @@ func buildFociCall(t *testing.T) string {
 	t.Helper()
 	binDir := t.TempDir()
 	// -buildvcs=false: see TestExecBridgePipeFunctions (#1561).
+	statFociCallSources(t)
 	build := osexec.Command("go", "build", "-buildvcs=false", "-o", filepath.Join(binDir, "foci-call"), "foci/cmd/foci-call")
 	build.Dir = findModuleRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {

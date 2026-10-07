@@ -882,6 +882,7 @@ func TestTodoShellFunc_UnknownActionRejectedBeforeFlagParsing(t *testing.T) {
 
 	binDir := t.TempDir()
 	binPath := binDir + "/foci-call"
+	statFociCallSources(t)
 	build := osexec.Command("go", "build", "-buildvcs=false", "-o", binPath, "foci/cmd/foci-call")
 	build.Dir = findModuleRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
@@ -1400,6 +1401,7 @@ func TestExecBridgePipeFunctions(t *testing.T) {
 	// redirects HOME away from ~/.gitconfig and its safe.directory exception, which
 	// git needs when the checkout is owned by a different user than the test runner
 	// (#1561). The stamp is worthless to a throwaway test binary anyway.
+	statFociCallSources(t)
 	build := osexec.Command("go", "build", "-buildvcs=false", "-o", binPath, "foci/cmd/foci-call")
 	build.Dir = findModuleRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
@@ -1510,6 +1512,7 @@ func TestExecBridgeStdinTextGuard(t *testing.T) {
 	// redirects HOME away from ~/.gitconfig and its safe.directory exception, which
 	// git needs when the checkout is owned by a different user than the test runner
 	// (#1561). The stamp is worthless to a throwaway test binary anyway.
+	statFociCallSources(t)
 	build := osexec.Command("go", "build", "-buildvcs=false", "-o", binPath, "foci/cmd/foci-call")
 	build.Dir = findModuleRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
@@ -1813,6 +1816,7 @@ func TestTodoShellFunc_AppendAliasesResolve(t *testing.T) {
 	// redirects HOME away from ~/.gitconfig and its safe.directory exception, which
 	// git needs when the checkout is owned by a different user than the test runner
 	// (#1561). The stamp is worthless to a throwaway test binary anyway.
+	statFociCallSources(t)
 	build := osexec.Command("go", "build", "-buildvcs=false", "-o", binPath, "foci/cmd/foci-call")
 	build.Dir = findModuleRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
@@ -2090,6 +2094,7 @@ func TestGeneratedRemindShellFuncEndToEnd(t *testing.T) {
 	// redirects HOME away from ~/.gitconfig and its safe.directory exception, which
 	// git needs when the checkout is owned by a different user than the test runner
 	// (#1561). The stamp is worthless to a throwaway test binary anyway.
+	statFociCallSources(t)
 	build := osexec.Command("go", "build", "-buildvcs=false", "-o", binPath, "foci/cmd/foci-call")
 	build.Dir = findModuleRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
@@ -2164,6 +2169,55 @@ func TestGeneratedRemindShellFuncEndToEnd(t *testing.T) {
 }
 
 // findModuleRoot walks up from the test's directory to find the go.mod file.
+// statFociCallSources makes go test's result cache depend on cmd/foci-call.
+// Tests that `go build foci/cmd/foci-call` and run it exercise code this
+// package's test binary does not link, so a foci-call change would otherwise
+// leave this package's cached PASS standing (Makefile: shared test cache).
+// go test keys a cached result on the files the test stat'ed; stat'ing every
+// .go file of foci-call and its in-module dependencies puts them in the key.
+// Paths are RELATIVE to the package dir so the key is the same in every
+// checkout (scripts/restore-mtime.py makes the mtimes match too). Every test
+// that builds foci-call calls it, so a -run filter cannot skip it.
+func statFociCallSources(t *testing.T) {
+	t.Helper()
+	root := findModuleRoot(t)
+	list := osexec.Command("go", "list", "-deps", "-f", "{{if not .Standard}}{{.Dir}}{{end}}", "foci/cmd/foci-call")
+	list.Dir = root
+	out, err := list.Output()
+	if err != nil {
+		t.Fatalf("go list foci-call deps: %v", err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	n := 0
+	for _, dir := range strings.Fields(string(out)) {
+		if dir != root && !strings.HasPrefix(dir, root+string(filepath.Separator)) {
+			continue // module cache (third-party): versioned, cannot change under us
+		}
+		rel, err := filepath.Rel(cwd, dir)
+		if err != nil {
+			t.Fatalf("rel %s: %v", dir, err)
+		}
+		entries, err := os.ReadDir(rel)
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		for _, e := range entries {
+			if strings.HasSuffix(e.Name(), ".go") && !strings.HasSuffix(e.Name(), "_test.go") {
+				if _, err := os.Stat(filepath.Join(rel, e.Name())); err != nil {
+					t.Fatalf("stat %s: %v", e.Name(), err)
+				}
+				n++
+			}
+		}
+	}
+	if n == 0 {
+		t.Fatal("statFociCallSources found no foci-call source files")
+	}
+}
+
 func findModuleRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()
@@ -2319,6 +2373,7 @@ func TestTodoShellFunc_RepeatedTagAccumulates(t *testing.T) {
 
 	binDir := t.TempDir()
 	binPath := binDir + "/foci-call"
+	statFociCallSources(t)
 	build := osexec.Command("go", "build", "-buildvcs=false", "-o", binPath, "foci/cmd/foci-call")
 	build.Dir = findModuleRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
@@ -2415,6 +2470,7 @@ func TestTodoShellFunc_EditAddRemoveTag(t *testing.T) {
 
 	binDir := t.TempDir()
 	binPath := binDir + "/foci-call"
+	statFociCallSources(t)
 	build := osexec.Command("go", "build", "-buildvcs=false", "-o", binPath, "foci/cmd/foci-call")
 	build.Dir = findModuleRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {

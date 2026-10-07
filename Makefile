@@ -162,6 +162,26 @@ llbox:
 # gives each run its own dir (and so its own $(TESTDIR).log).
 fgw_testdir = $(shell mkdir -p /tmp/fgw && mktemp -d /tmp/fgw/$(1)-XXXXXXXX)
 
+# `test` and `test-one` share ONE fixed test dir per user, so Go's test-result
+# cache works (Dick 2026-10-07: speed up the Fabro pipeline). go test caches a
+# package's PASS keyed on the test binary plus the env vars and files the tests
+# read — TMPDIR among them (t.TempDir) — so a per-run TMPDIR missed the cache
+# every time. Safe to share: both targets prepare it INSIDE the /tmp/heavy
+# lock, so only one run ever uses it (a dir made before the lock is what
+# #2236 broke). Per user, because rich and foci both run tests and cannot
+# empty each other's dir. The log stays unique per run (fgw_logfile).
+# Cached results: a package re-runs only when its test binary (its code or
+# anything it imports) or a file/env it read changed. To run for real — e.g.
+# to check a flake — pass COUNT=N (any explicit -count bypasses the cache).
+# `integration` stays uncached (-count): its tests run separately built
+# binaries the cache cannot see.
+# Shared ACROSS checkouts too: seal-test.sh builds tests with -trimpath (no
+# checkout path in the binary) and scripts/restore-mtime.py first sets every
+# unmodified tracked file to its last commit time (Go keys a file a test read
+# on its mtime, and a fresh checkout writes every file "now").
+fgw_shared_testdir := /tmp/fgw/run-$(shell id -un)
+fgw_logfile = $(shell mkdir -p /tmp/fgw && mktemp /tmp/fgw/$(1)-XXXXXXXX.log)
+
 # `make test` seals itself under Landlock BY DEFAULT (foci_todo #1523) via
 # scripts/seal-test.sh — read that script for the full design (whitelist,
 # the diagnostic re-run). Degrades gracefully to unsealed (single warning
@@ -169,9 +189,9 @@ fgw_testdir = $(shell mkdir -p /tmp/fgw && mktemp -d /tmp/fgw/$(1)-XXXXXXXX)
 # explicitly, for debugging a test that genuinely needs to write somewhere
 # odd.
 test: llbox
-	$(eval TESTDIR := $(call fgw_testdir,test))
-	$(eval LOGFILE := $(TESTDIR).log)
-	@mkdir -p $(TESTDIR)/home
+	$(eval TESTDIR := $(fgw_shared_testdir))
+	$(eval LOGFILE := $(call fgw_logfile,test))
+	@python3 scripts/restore-mtime.py . || true
 	@# /tmp/heavy serialises the test runner against any other heavy build
 	@# (e.g. a concurrent `update.sh` deploy build) that holds the same lock,
 	@# so they do not starve each other for CPU and memory. It is NOT a
@@ -199,7 +219,7 @@ test: llbox
 	@# #1498). The /tmp/fgw daily cron sweep (entries >24h) remains as a backstop
 	@# for anything this recipe doesn't reach (e.g. an aborted run).
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; $(REAP_GRADLE) bash scripts/seal-test.sh unit $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) 9<&- ; STATUS=$$? ; \
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; rm -rf $(TESTDIR) && mkdir -p $(TESTDIR)/home; $(REAP_GRADLE) bash scripts/seal-test.sh unit $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; bash scripts/test-fail-summary.sh $(LOGFILE); fi ; \
 	  rm -rf $(TESTDIR) ; \
@@ -224,14 +244,14 @@ test: llbox
 # var, no passthrough existed).
 test-one: llbox
 	@if [ -z "$(PKG)" ]; then echo "usage: make test-one PKG=./internal/<pkg>/ [RUN=<TestName>] [V=1] [COUNT=N]" >&2; exit 2; fi
-	$(eval TESTDIR := $(call fgw_testdir,test-one))
-	$(eval LOGFILE := $(TESTDIR).log)
-	@mkdir -p $(TESTDIR)/home
+	$(eval TESTDIR := $(fgw_shared_testdir))
+	$(eval LOGFILE := $(call fgw_logfile,test-one))
+	@python3 scripts/restore-mtime.py . || true
 	@# Same /tmp/heavy compute lock as `test`/`integration` — see those targets
 	@# for the rationale (serialises against other heavy builds; read-only lock
 	@# fd so go test's children don't inherit it).
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; $(REAP_GRADLE) bash scripts/seal-test.sh one $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) $(PKG) "$(RUN)" "$(V)" "$(COUNT)" 9<&- ; STATUS=$$? ; \
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; rm -rf $(TESTDIR) && mkdir -p $(TESTDIR)/home; $(REAP_GRADLE) bash scripts/seal-test.sh one $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) $(PKG) "$(RUN)" "$(V)" "$(COUNT)" 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; bash scripts/test-fail-summary.sh $(LOGFILE); fi ; \
 	  rm -rf $(TESTDIR) ; \

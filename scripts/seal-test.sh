@@ -136,11 +136,11 @@ diagnostic_rerun() {
   while IFS= read -r pkg; do
     [ -z "$pkg" ] && continue
     echo "--- unsealed re-run: $pkg ---" >> "$LOGFILE"
-    if "${TESTENV[@]}" nice -n 19 go test -count=1 "${extra_flags[@]}" "$pkg" >> "$LOGFILE" 2>&1; then
+    if "${TESTENV[@]}" nice -n 19 go test -trimpath -count=1 "${extra_flags[@]}" "$pkg" >> "$LOGFILE" 2>&1; then
       # A pass unsealed is also what a flake looks like. Only a second sealed
       # failure pins it on the sandbox (#2132).
       echo "--- sealed re-run: $pkg ---" >> "$LOGFILE"
-      if "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -count=1 "${extra_flags[@]}" "$pkg" >> "$LOGFILE" 2>&1; then
+      if "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -trimpath -count=1 "${extra_flags[@]}" "$pkg" >> "$LOGFILE" 2>&1; then
         echo ">>> DIAGNOSTIC: $pkg passes on re-run both UNSEALED and SEALED — the failure is a FLAKE, not a sandbox write." | tee -a "$LOGFILE" >&2
       else
         echo ">>> DIAGNOSTIC: $pkg fails SEALED again but passes UNSEALED — it is writing outside the sandbox. Add the path to the whitelist in scripts/seal-test.sh, or stop writing there." | tee -a "$LOGFILE" >&2
@@ -163,7 +163,7 @@ env_header() {
 
 run_unit() {
   env_header "sealed unit suite"
-  "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -p="$PARALLEL" -parallel=16 ./... >> "$LOGFILE" 2>&1
+  "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -trimpath -p="$PARALLEL" -parallel=16 ./... >> "$LOGFILE" 2>&1
   local status=$?
 
   diagnostic_rerun
@@ -231,11 +231,16 @@ run_one() {
     exit 2
   fi
   check_count
-  env_header "sealed single-package run: $PKG${RUNFILTER:+ -run $RUNFILTER}${VERBOSE:+ -v} -count=${COUNT:-1}"
-  local extra=(-count="${COUNT:-1}")
+  env_header "sealed single-package run: $PKG${RUNFILTER:+ -run $RUNFILTER}${VERBOSE:+ -v}${COUNT:+ -count=$COUNT}"
+  # No default -count: go test's result cache serves a package whose test
+  # binary and inputs are unchanged (the Makefile's shared TESTDIR keeps TMPDIR
+  # stable for exactly this). COUNT=N (e.g. a flake check) passes -count=N,
+  # which always runs for real.
+  local extra=()
+  [ -n "$COUNT" ] && extra+=(-count="$COUNT")
   [ -n "$RUNFILTER" ] && extra+=(-run "$RUNFILTER")
   [ -n "$VERBOSE" ] && extra+=(-v)
-  "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test "${extra[@]}" "$PKG" >> "$LOGFILE" 2>&1
+  "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -trimpath "${extra[@]}" "$PKG" >> "$LOGFILE" 2>&1
   local status=$?
 
   diagnostic_rerun
