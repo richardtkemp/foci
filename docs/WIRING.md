@@ -66,6 +66,7 @@ config.Load(path)                                        ← validates values; l
 
 → initSecrets(configPath, cfg)                           ← secrets_init.go
   → secrets.Load(secretsPath)                            ← secrets.toml overrides foci.toml
+  → #1269: every secrets read stats secrets.toml (mtime/size/inode) and re-parses on change; per-agent views (ForAgent) share the root source, so tools and ag.Redact see edits without restart; the system prompt's secret-name list stays startup-frozen
   → [if bitwarden.enabled] bitwarden.New(executor, ttl) ← aisudo-backed vault store
   → seedDefaultPrompts (per-agent)
   → returns secretsResult{store, bwStore, httpAPIKey, cleanup}
@@ -254,7 +255,7 @@ main
  ├── log           → timeutil (the event, API-call JSONL and payload files; api.db belongs to delegator/accounting, conversation storage to convo)
  ├── convo         → log, session, sqlite, timeutil (per-agent conversation SQLite store + memory-index Hook; extracted from log so log stays lean)
  ├── display       (no deps — table rendering with Unicode display-width handling)
- ├── secrets       → BurntSushi/toml
+ ├── secrets       → log, BurntSushi/toml
  │   └── secrets/bitwarden → log, procx
  ├── provider      → clock, log, modelinfo (provider-neutral types and Client interface)
  ├── turnevent     → provider (leaf — the agent's per-turn event stream: event types, Sink interface, context helpers, and pure-utility sinks (BufferSink, NopSink); no platform or turn deps; moved out of agent/ per #1983 since tools and telemetry both import it too)
@@ -1409,6 +1410,8 @@ Implements `provider.Client` and `provider.StreamingClient` using `github.com/op
 ## Secrets (`secrets/`)
 
 Loaded from `secrets.toml` (same directory as `foci.toml`). Stored as flat keys: `anthropic.setup_token`, `custom.github_token`, etc. Overrides `foci.toml` credentials at startup. See [SECRETS.md](SECRETS.md) for the full security model, OS-level protection, setup, and Bitwarden configuration.
+
+Hot reload (#1269): the file is re-read on the next use whenever it changed. `Store` is a thin view (`{src *source, agentID}`) over one shared `source` (`secrets_source.go`): every file-derived read (`Get`, `Names`, `Resolve`, `Redact`, `AllowedHosts`, `CheckHostAllowed`, `IsAllowedInBody`, …) takes one `current()` snapshot — an `os.Stat` (mtime at full resolution, size, `os.SameFile` identity) and a re-parse when the stamp differs from the last successful load. Per-agent views (`ForAgent`) share the root source, so the store pointers the tools and `ag.Redact` already hold see edits without restart; the agent filter (`valueFor`/`hostsFor`/`bodyKeysFor`/`namesFor`) is re-applied per read. A bad file keeps the last good contents with one warning per file state. The blocklist and mutators (`Set`, host/body mutators, `Save`+`markSaved`) live on the source behind one `sync.RWMutex` — `Store` is concurrency-safe. The system prompt's secret-name list stays frozen at startup. Provider API keys, bot tokens, `brave.api_key`, voice keys, `http.api_key` and tracing remain one-time startup reads.
 
 Data flow:
 - **Template resolution:** `{{secret:custom.github_token}}` in `http_request` headers/body → replaced with actual value before sending. Regular secret templates are blocked in shell (returns error). Bitwarden `{{secret:bw.*}}` templates are allowed in shell (approval-gated via aisudo).

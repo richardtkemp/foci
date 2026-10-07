@@ -19,9 +19,9 @@ func TestCheckSecurityMissingFile(t *testing.T) {
 }
 
 func TestCheckSecurityEmptyPath(t *testing.T) {
-	// Proves that a Store with an empty path field returns
-	// no security warnings, handling the zero-value case safely.
-	s := &Store{path: ""}
+	// Proves that a Store loaded from an empty path returns
+	// no security warnings, handling the empty-path case safely.
+	s, _ := Load("")
 	warnings := s.CheckSecurity()
 	if len(warnings) != 0 {
 		t.Errorf("expected no warnings for empty path, got: %v", warnings)

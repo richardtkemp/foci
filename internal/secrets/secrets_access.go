@@ -42,23 +42,27 @@ func (s *Store) AllowedHosts(name string) []string {
 	if len(parts) < 2 {
 		return nil
 	}
-	return s.allowedHosts[parts[0]]
+	return s.src.current().hostsFor(s.agentID, parts[0])
 }
 
 // SectionAllowedHosts returns the allowed_hosts for a section name directly
 // (e.g. "anthropic", "custom"). Returns nil if no hosts are configured.
 func (s *Store) SectionAllowedHosts(section string) []string {
-	return s.allowedHosts[section]
+	return s.src.current().hostsFor(s.agentID, section)
 }
 
 // SetAllowedHosts replaces the allowed_hosts list for a section.
 // Pass nil or empty to remove all allowed_hosts for the section.
 func (s *Store) SetAllowedHosts(section string, hosts []string) {
-	if len(hosts) == 0 {
-		delete(s.allowedHosts, section)
-	} else {
-		s.allowedHosts[section] = hosts
-	}
+	s.src.mutate(func(st *fileState) *fileState {
+		allowed := cloneMap(st.allowedHosts)
+		if len(hosts) == 0 {
+			delete(allowed, section)
+		} else {
+			allowed[section] = append([]string(nil), hosts...)
+		}
+		return st.withAllowedHosts(allowed)
+	})
 }
 
 // AddAllowedHost adds a host to the section's allowed_hosts list.
@@ -68,28 +72,46 @@ func (s *Store) AddAllowedHost(section, host string) {
 	if host == "" {
 		return
 	}
-	for _, h := range s.allowedHosts[section] {
-		if strings.EqualFold(h, host) {
-			return // already present
+	s.src.mutate(func(st *fileState) *fileState {
+		hosts := st.allowedHosts[section]
+		for _, h := range hosts {
+			if strings.EqualFold(h, host) {
+				return st // already present
+			}
 		}
-	}
-	s.allowedHosts[section] = append(s.allowedHosts[section], host)
+		allowed := cloneMap(st.allowedHosts)
+		next := make([]string, len(hosts), len(hosts)+1)
+		copy(next, hosts)
+		allowed[section] = append(next, host)
+		return st.withAllowedHosts(allowed)
+	})
 }
 
 // RemoveAllowedHost removes a host from the section's allowed_hosts list.
 // Case-insensitive comparison. Returns true if found and removed.
 func (s *Store) RemoveAllowedHost(section, host string) bool {
-	hosts := s.allowedHosts[section]
-	for i, h := range hosts {
-		if strings.EqualFold(h, host) {
-			s.allowedHosts[section] = append(hosts[:i], hosts[i+1:]...)
-			if len(s.allowedHosts[section]) == 0 {
-				delete(s.allowedHosts, section)
+	removed := false
+	s.src.mutate(func(st *fileState) *fileState {
+		hosts := st.allowedHosts[section]
+		for i, h := range hosts {
+			if !strings.EqualFold(h, host) {
+				continue
 			}
-			return true
+			allowed := cloneMap(st.allowedHosts)
+			next := make([]string, 0, len(hosts))
+			next = append(next, hosts[:i]...)
+			next = append(next, hosts[i+1:]...)
+			if len(next) == 0 {
+				delete(allowed, section)
+			} else {
+				allowed[section] = next
+			}
+			removed = true
+			return st.withAllowedHosts(allowed)
 		}
-	}
-	return false
+		return st
+	})
+	return removed
 }
 
 // CheckHostAllowed verifies that the target URL's host is in the allowed_hosts
@@ -102,10 +124,12 @@ func (s *Store) RemoveAllowedHost(section, host string) bool {
 // userinfo injection attacks (e.g. https://api.example.com@evil.com/steal).
 // Host comparison is case-insensitive per RFC 4343.
 func (s *Store) CheckHostAllowed(secretName, targetURL string) error {
-	hosts := s.AllowedHosts(secretName)
+	st := s.src.current()
+	section := strings.SplitN(secretName, ".", 2)[0]
+	hosts := st.hostsFor(s.agentID, section)
 	if len(hosts) == 0 {
 		return fmt.Errorf("secret %q has no allowed_hosts configured — add allowed_hosts to the [%s] section in secrets.toml",
-			secretName, strings.SplitN(secretName, ".", 2)[0])
+			secretName, section)
 	}
 
 	parsed, err := url.Parse(targetURL)
@@ -126,12 +150,13 @@ func (s *Store) CheckHostAllowed(secretName, targetURL string) error {
 // Resolve expands all {{secret:NAME}} templates in text with their values.
 // Returns an error if any template references an unknown secret.
 func (s *Store) Resolve(text string) (string, error) {
+	st := s.src.current()
 	var resolveErr error
 
 	result := templateRe.ReplaceAllStringFunc(text, func(match string) string {
 		submatch := templateRe.FindStringSubmatch(match)
 		name := submatch[1]
-		val, ok := s.values[name]
+		val, ok := st.valueFor(s.agentID, name)
 		if !ok {
 			resolveErr = fmt.Errorf("unknown secret: %q", name)
 			return match // leave unresolved
@@ -153,9 +178,9 @@ func (s *Store) IsAllowedInBody(name string) bool {
 	if len(parts) < 2 {
 		return false
 	}
-	section, key := parts[0], parts[1]
-	for _, k := range s.allowedInBody[section] {
-		if k == key {
+	st := s.src.current()
+	for _, k := range st.bodyKeysFor(s.agentID, parts[0]) {
+		if k == parts[1] {
 			return true
 		}
 	}
@@ -165,65 +190,89 @@ func (s *Store) IsAllowedInBody(name string) bool {
 // SectionAllowedInBody returns the allowed_in_body list for a section name
 // (e.g. "custom"). Returns nil if none are configured.
 func (s *Store) SectionAllowedInBody(section string) []string {
-	return s.allowedInBody[section]
+	return s.src.current().bodyKeysFor(s.agentID, section)
 }
 
 // SetAllowedInBody replaces the allowed_in_body list for a section.
 // Pass nil or empty to remove all allowed_in_body for the section.
 func (s *Store) SetAllowedInBody(section string, keys []string) {
-	if len(keys) == 0 {
-		delete(s.allowedInBody, section)
-	} else {
-		s.allowedInBody[section] = keys
-	}
+	s.src.mutate(func(st *fileState) *fileState {
+		body := cloneMap(st.allowedInBody)
+		if len(keys) == 0 {
+			delete(body, section)
+		} else {
+			body[section] = append([]string(nil), keys...)
+		}
+		return st.withAllowedInBody(body)
+	})
 }
 
 // AddAllowedInBody adds a key to the section's allowed_in_body list.
 // No-op if already present.
 func (s *Store) AddAllowedInBody(section, key string) {
-	for _, k := range s.allowedInBody[section] {
-		if k == key {
-			return
+	s.src.mutate(func(st *fileState) *fileState {
+		keys := st.allowedInBody[section]
+		for _, k := range keys {
+			if k == key {
+				return st // already present
+			}
 		}
-	}
-	s.allowedInBody[section] = append(s.allowedInBody[section], key)
+		body := cloneMap(st.allowedInBody)
+		next := make([]string, len(keys), len(keys)+1)
+		copy(next, keys)
+		body[section] = append(next, key)
+		return st.withAllowedInBody(body)
+	})
 }
 
 // RemoveAllowedInBody removes a key from the section's allowed_in_body list.
 // Returns true if found and removed.
 func (s *Store) RemoveAllowedInBody(section, key string) bool {
-	keys := s.allowedInBody[section]
-	for i, k := range keys {
-		if k == key {
-			s.allowedInBody[section] = append(keys[:i], keys[i+1:]...)
-			if len(s.allowedInBody[section]) == 0 {
-				delete(s.allowedInBody, section)
+	removed := false
+	s.src.mutate(func(st *fileState) *fileState {
+		keys := st.allowedInBody[section]
+		for i, k := range keys {
+			if k != key {
+				continue
 			}
-			return true
+			body := cloneMap(st.allowedInBody)
+			next := make([]string, 0, len(keys))
+			next = append(next, keys[:i]...)
+			next = append(next, keys[i+1:]...)
+			if len(next) == 0 {
+				delete(body, section)
+			} else {
+				body[section] = next
+			}
+			removed = true
+			return st.withAllowedInBody(body)
 		}
-	}
-	return false
+		return st
+	})
+	return removed
 }
 
 // Redact replaces any occurrence of a secret value in text with [REDACTED].
-// Longer values are checked first to avoid partial matches.
+// Longer values are checked first to avoid partial matches. The values are
+// the current ones (a value added or changed since startup is redacted too).
 func (s *Store) Redact(text string) string {
-	if len(s.values) == 0 {
+	vals := s.src.current().valuesFor(s.agentID)
+	if len(vals) == 0 {
 		return text
 	}
 
 	// Sort values by length descending so longer secrets are redacted first
-	vals := make([]string, 0, len(s.values))
-	for _, v := range s.values {
+	redactable := make([]string, 0, len(vals))
+	for _, v := range vals {
 		if len(v) >= 4 { // don't redact very short values that would cause false positives
-			vals = append(vals, v)
+			redactable = append(redactable, v)
 		}
 	}
-	sort.Slice(vals, func(i, j int) bool {
-		return len(vals[i]) > len(vals[j])
+	sort.Slice(redactable, func(i, j int) bool {
+		return len(redactable[i]) > len(redactable[j])
 	})
 
-	for _, v := range vals {
+	for _, v := range redactable {
 		text = strings.ReplaceAll(text, v, "[REDACTED]")
 	}
 	return text
@@ -231,12 +280,12 @@ func (s *Store) Redact(text string) string {
 
 // AddBlockedPaths adds additional paths to the blocklist.
 func (s *Store) AddBlockedPaths(paths []string) {
-	s.blockedPaths = append(s.blockedPaths, paths...)
+	s.src.addBlockedPaths(paths)
 }
 
 // containsBlockedRef returns true if text contains any blocked path substring.
 func (s *Store) containsBlockedRef(text string) bool {
-	for _, blocked := range s.blockedPaths {
+	for _, blocked := range s.src.blockedSnapshot() {
 		if strings.Contains(text, blocked) {
 			return true
 		}
@@ -286,7 +335,7 @@ func CanonicalPath(path string) string {
 func (s *Store) IsBlockedPath(path string) bool {
 	target := CanonicalPath(path)
 	sep := string(filepath.Separator)
-	for _, blocked := range s.blockedPaths {
+	for _, blocked := range s.src.blockedSnapshot() {
 		if filepath.IsAbs(blocked) {
 			b := CanonicalPath(blocked)
 			if target == b || strings.HasPrefix(target, b+sep) {
@@ -324,20 +373,25 @@ var securityGroupName = SecurityGroupName
 // CheckSecurity verifies the OS-level protection of secrets.toml.
 // Returns a list of warning messages for any issues found.
 // Does not prevent startup — issues are advisory only.
+// Only the root store has a file to audit; per-agent views return nil.
 func (s *Store) CheckSecurity() []string {
-	if s.path == "" {
+	if s.agentID != "" {
+		return nil
+	}
+	path := s.src.path
+	if path == "" {
 		return nil
 	}
 
 	var warnings []string
 
-	info, err := os.Stat(s.path)
+	info, err := os.Stat(path)
 	if os.IsNotExist(err) {
 		// No secrets file — nothing to protect
 		return nil
 	}
 	if err != nil {
-		return []string{fmt.Sprintf("cannot stat %s: %v", s.path, err)}
+		return []string{fmt.Sprintf("cannot stat %s: %v", path, err)}
 	}
 
 	stat, ok := info.Sys().(*syscall.Stat_t)
@@ -348,7 +402,7 @@ func (s *Store) CheckSecurity() []string {
 	// Check owner is root (uid 0)
 	if stat.Uid != 0 {
 		warnings = append(warnings,
-			fmt.Sprintf("secrets.toml owner is uid %d, expected root (uid 0) — run: sudo chown root:%s %s", stat.Uid, SecurityGroupName, s.path))
+			fmt.Sprintf("secrets.toml owner is uid %d, expected root (uid 0) — run: sudo chown root:%s %s", stat.Uid, SecurityGroupName, path))
 	}
 
 	// Check group is foci-secrets
@@ -361,7 +415,7 @@ func (s *Store) CheckSecurity() []string {
 		if uint64(stat.Gid) != expectedGID {
 			warnings = append(warnings,
 				fmt.Sprintf("secrets.toml group is gid %d, expected %s (gid %s) — run: sudo chown root:%s %s",
-					stat.Gid, SecurityGroupName, grp.Gid, SecurityGroupName, s.path))
+					stat.Gid, SecurityGroupName, grp.Gid, SecurityGroupName, path))
 		}
 	}
 
@@ -369,7 +423,7 @@ func (s *Store) CheckSecurity() []string {
 	mode := info.Mode().Perm()
 	if mode != 0660 {
 		warnings = append(warnings,
-			fmt.Sprintf("secrets.toml permissions are %04o, expected 0660 — run: sudo chmod 0660 %s", mode, s.path))
+			fmt.Sprintf("secrets.toml permissions are %04o, expected 0660 — run: sudo chmod 0660 %s", mode, path))
 	}
 
 	// Check process has foci-secrets in supplementary groups

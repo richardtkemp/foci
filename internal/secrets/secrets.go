@@ -2,8 +2,9 @@ package secrets
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
-	"github.com/BurntSushi/toml"
+	"io/fs"
 	"math/big"
 	"os"
 	"sort"
@@ -36,303 +37,147 @@ var defaultBlockedPaths = []string{
 	"/proc/self/environ",
 }
 
-// Store holds secrets loaded from secrets.toml.
-// Values are stored as flat keys: "anthropic.setup_token", "custom.github_token", etc.
+// Store holds the secrets of one secrets.toml file. The root store returned
+// by Load can mutate and Save the file; ForAgent returns per-agent views
+// that share the same underlying source, so every store — including ones
+// handed to tools long ago — sees file edits and in-process mutations on its
+// next read, with no restart (#1269). Stores are safe for concurrent use.
+// The zero value is not usable; construct stores with Load.
 type Store struct {
-	path               string
-	values             map[string]string
-	allowedHosts       map[string][]string // section name → allowed hosts
-	allowedAgents      map[string][]string // section name → agent whitelist
-	deniedAgents       map[string][]string // section name → agent blacklist
-	allowedInBody      map[string][]string // section name → key names allowed in request body
-	blockedPaths       []string
-	agentValues        map[string]map[string]string   // agent ID → flat key → value
-	agentHosts         map[string]map[string][]string // agent ID → section → allowed hosts
-	agentAllowedInBody map[string]map[string][]string // agent ID → section → key names allowed in body
+	src     *source
+	agentID string // "" is the root store; otherwise this view's agent ID
 }
 
-// Load reads secrets from a TOML file. Returns an empty store (not error) if the file doesn't exist.
+// Load reads secrets from a TOML file. Returns an empty store (not error) if
+// the file doesn't exist; if the file is created later it is loaded on the
+// next use. Every read re-checks the file (one os.Stat: modification time at
+// full resolution, size, inode identity) and re-parses it when it changed —
+// see source.current. A file that changed but cannot be re-parsed keeps the
+// last good contents and logs one warning per file state.
 func Load(path string) (*Store, error) {
-	s := &Store{
-		path:          path,
-		values:        make(map[string]string),
-		allowedHosts:  make(map[string][]string),
-		allowedAgents: make(map[string][]string),
-		deniedAgents:  make(map[string][]string),
-		allowedInBody: make(map[string][]string),
-		blockedPaths:  append([]string{}, defaultBlockedPaths...),
+	src := &source{
+		path: path,
+		// The secrets file itself is always blocked, even when missing.
+		blocked: append(append([]string{}, defaultBlockedPaths...), path),
 	}
-
-	// Add the secrets file itself to blocked paths
-	s.blockedPaths = append(s.blockedPaths, path)
-
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return s, nil
-	}
+	st, err := parseFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read secrets: %w", err)
-	}
-
-	var raw map[string]map[string]interface{}
-	if err := toml.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("parse secrets: %w", err)
-	}
-
-	// Flatten: [section] key = value → "section.key" = value
-	for section, pairs := range raw {
-		if section == "agents" {
-			// [agents.ID] sections → per-agent overrides
-			s.agentValues = make(map[string]map[string]string)
-			s.agentHosts = make(map[string]map[string][]string)
-			s.agentAllowedInBody = make(map[string]map[string][]string)
-			for agentID, v := range pairs {
-				agentTable, ok := v.(map[string]interface{})
-				if !ok {
-					return nil, fmt.Errorf("parse secrets: [agents.%s] must be a table, got %T", agentID, v)
-				}
-				flattenInto(agentID, agentTable, s)
-			}
-			continue
+		if errors.Is(err, fs.ErrNotExist) {
+			src.state, src.loaded = emptyState(), statFile(path)
+			return &Store{src: src}, nil
 		}
-		for key, value := range pairs {
-			switch v := value.(type) {
-			case string:
-				s.values[section+"."+key] = v
-			case int64:
-				s.values[section+"."+key] = strconv.FormatInt(v, 10)
-			case []interface{}:
-				strs := make([]string, 0, len(v))
-				for _, h := range v {
-					if hs, ok := h.(string); ok {
-						strs = append(strs, hs)
-					}
-				}
-				switch key {
-				case "allowed_hosts":
-					s.allowedHosts[section] = strs
-				case "allowed_agents":
-					s.allowedAgents[section] = strs
-				case "denied_agents":
-					s.deniedAgents[section] = strs
-				case "allowed_in_body":
-					s.allowedInBody[section] = strs
-				}
-				// silently skip other array keys
-			default:
-				// silently skip unknown types
-			}
-		}
+		return nil, err
 	}
-
-	// Validate: no section may have both allowed_agents and denied_agents
-	for section := range s.allowedAgents {
-		if _, ok := s.deniedAgents[section]; ok {
-			return nil, fmt.Errorf("section [%s] has both allowed_agents and denied_agents — use one or the other", section)
-		}
-	}
-
-	return s, nil
+	src.state, src.loaded = st, statFile(path)
+	return &Store{src: src}, nil
 }
 
-// flattenInto parses one [agents.ID] sub-table and stores its values
-// into s.agentValues and s.agentHosts.
-func flattenInto(agentID string, table map[string]interface{}, s *Store) {
-	if s.agentValues[agentID] == nil {
-		s.agentValues[agentID] = make(map[string]string)
-	}
-	for section, v := range table {
-		subTable, ok := v.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		for key, val := range subTable {
-			switch tv := val.(type) {
-			case string:
-				s.agentValues[agentID][section+"."+key] = tv
-			case int64:
-				s.agentValues[agentID][section+"."+key] = strconv.FormatInt(tv, 10)
-			case []interface{}:
-				strs := make([]string, 0, len(tv))
-				for _, h := range tv {
-					if hs, ok := h.(string); ok {
-						strs = append(strs, hs)
-					}
-				}
-				switch key {
-				case "allowed_hosts":
-					if s.agentHosts[agentID] == nil {
-						s.agentHosts[agentID] = make(map[string][]string)
-					}
-					s.agentHosts[agentID][section] = strs
-				case "allowed_in_body":
-					if s.agentAllowedInBody[agentID] == nil {
-						s.agentAllowedInBody[agentID] = make(map[string][]string)
-					}
-					s.agentAllowedInBody[agentID][section] = strs
-				}
-			}
-		}
-	}
-}
-
-// ForAgent returns a new Store scoped to the given agent ID.
-// Agent-specific values overlay globals; keys not overridden fall back to globals.
-// Global sections with allowed_agents/denied_agents are filtered before overlay.
-// The returned Store has no path (cannot Save) and no agentValues (doesn't nest further).
+// ForAgent returns a Store scoped to the given agent ID, sharing the same
+// source as s. Agent-specific values overlay globals; keys not overridden
+// fall back to globals; global sections with allowed_agents/denied_agents
+// are filtered out. That filtering is re-applied on every use, so the view
+// always reflects the current file. The returned Store cannot Save.
 func (s *Store) ForAgent(agentID string) *Store {
-	// 1. Copy globals
-	merged := make(map[string]string, len(s.values))
-	for k, v := range s.values {
-		merged[k] = v
-	}
-	// 2. Filter globals by agent restrictions
-	for k := range merged {
-		section := k[:strings.IndexByte(k, '.')]
-		if !s.agentAllowed(agentID, section) {
-			delete(merged, k)
-		}
-	}
-	// 3. Overlay agent-specific (always allowed)
-	if s.agentValues != nil {
-		for k, v := range s.agentValues[agentID] {
-			merged[k] = v
-		}
-	}
-
-	// Same for hosts: filter globals, then overlay agent hosts
-	mergedHosts := make(map[string][]string, len(s.allowedHosts))
-	for k, v := range s.allowedHosts {
-		if s.agentAllowed(agentID, k) {
-			mergedHosts[k] = v
-		}
-	}
-	if s.agentHosts != nil {
-		for k, v := range s.agentHosts[agentID] {
-			mergedHosts[k] = v
-		}
-	}
-
-	// Same for allowedInBody: filter globals, overlay agent-specific
-	mergedAllowedInBody := make(map[string][]string, len(s.allowedInBody))
-	for k, v := range s.allowedInBody {
-		if s.agentAllowed(agentID, k) {
-			mergedAllowedInBody[k] = v
-		}
-	}
-	if s.agentAllowedInBody != nil {
-		for k, v := range s.agentAllowedInBody[agentID] {
-			mergedAllowedInBody[k] = v
-		}
-	}
-
-	return &Store{
-		values:        merged,
-		allowedHosts:  mergedHosts,
-		allowedInBody: mergedAllowedInBody,
-		blockedPaths:  s.blockedPaths,
-	}
-}
-
-// agentAllowed checks whether agentID is permitted to access the given section
-// based on allowed_agents/denied_agents rules. No restrictions means allowed.
-func (s *Store) agentAllowed(agentID, section string) bool {
-	if allowed, ok := s.allowedAgents[section]; ok {
-		for _, a := range allowed {
-			if a == agentID {
-				return true
-			}
-		}
-		return false
-	}
-	if denied, ok := s.deniedAgents[section]; ok {
-		for _, a := range denied {
-			if a == agentID {
-				return false
-			}
-		}
-	}
-	return true
+	return &Store{src: s.src, agentID: agentID}
 }
 
 // HasAgentRestrictions reports whether any section has allowed_agents or denied_agents.
 func (s *Store) HasAgentRestrictions() bool {
-	return len(s.allowedAgents) > 0 || len(s.deniedAgents) > 0
+	st := s.src.current()
+	return len(st.allowedAgents) > 0 || len(st.deniedAgents) > 0
 }
 
 // Get returns a secret value by its flat key (e.g. "anthropic.setup_token").
 func (s *Store) Get(name string) (string, bool) {
-	v, ok := s.values[name]
-	return v, ok
+	return s.src.current().valueFor(s.agentID, name)
 }
 
-// Names returns all secret names (keys), sorted.
+// Names returns all secret names (keys) visible to this store, sorted.
 func (s *Store) Names() []string {
-	names := make([]string, 0, len(s.values))
-	for k := range s.values {
-		names = append(names, k)
-	}
-	sort.Strings(names)
-	return names
+	return s.src.current().namesFor(s.agentID)
 }
 
 // Set adds or updates a secret value by its flat key (e.g. "section.key").
+// The change is visible to every store sharing the source; call Save on the
+// root store to persist it.
 func (s *Store) Set(name, value string) {
-	s.values[name] = value
+	s.src.mutate(func(st *fileState) *fileState {
+		values := cloneMap(st.values)
+		values[name] = value
+		return st.withValues(values)
+	})
 }
 
 // Remove deletes a secret by its flat key. Returns true if found.
 func (s *Store) Remove(name string) bool {
-	if _, ok := s.values[name]; !ok {
-		return false
-	}
-	delete(s.values, name)
-	return true
+	removed := false
+	s.src.mutate(func(st *fileState) *fileState {
+		if _, ok := st.values[name]; !ok {
+			return st
+		}
+		values := cloneMap(st.values)
+		delete(values, name)
+		removed = true
+		return st.withValues(values)
+	})
+	return removed
 }
 
-// Save writes the current secrets back to the TOML file.
+// Save writes the current secrets back to the TOML file. Only the root store
+// can save; per-agent views return an error. The write is deliberately not
+// atomic (no write-and-rename): the file's root:foci-secrets ownership must
+// survive, and a rename would reset it (see docs/SECRETS.md).
 func (s *Store) Save() error {
-	sections := flatKeysToSections(s.values)
+	if s.agentID != "" {
+		return fmt.Errorf("secrets store for agent %q cannot save — save via the root store", s.agentID)
+	}
+	st := s.src.snapshot()
 
 	var buf strings.Builder
 
 	// Write global sections
-	secNames := sortedKeyUnion(keysOf(sections), keysOf(s.allowedHosts), keysOf(s.allowedAgents), keysOf(s.deniedAgents), keysOf(s.allowedInBody))
+	sections := flatKeysToSections(st.values)
+	secNames := sortedKeyUnion(keysOf(sections), keysOf(st.allowedHosts), keysOf(st.allowedAgents), keysOf(st.deniedAgents), keysOf(st.allowedInBody))
 	for i, sec := range secNames {
 		if i > 0 {
 			buf.WriteByte('\n')
 		}
 		fmt.Fprintf(&buf, "[%s]\n", sec)
 		writeKeyValues(&buf, sections[sec])
-		writeStringArrayField(&buf, "allowed_hosts", s.allowedHosts[sec])
-		writeStringArrayField(&buf, "allowed_agents", s.allowedAgents[sec])
-		writeStringArrayField(&buf, "denied_agents", s.deniedAgents[sec])
-		writeStringArrayField(&buf, "allowed_in_body", s.allowedInBody[sec])
+		writeStringArrayField(&buf, "allowed_hosts", st.allowedHosts[sec])
+		writeStringArrayField(&buf, "allowed_agents", st.allowedAgents[sec])
+		writeStringArrayField(&buf, "denied_agents", st.deniedAgents[sec])
+		writeStringArrayField(&buf, "allowed_in_body", st.allowedInBody[sec])
 	}
 
 	// Write [agents.*] sections
-	agentIDs := sortedKeyUnion(keysOf(s.agentValues), keysOf(s.agentHosts), keysOf(s.agentAllowedInBody))
+	agentIDs := sortedKeyUnion(keysOf(st.agentValues), keysOf(st.agentHosts), keysOf(st.agentAllowedInBody))
 	for _, agentID := range agentIDs {
-		agentSections := flatKeysToSections(s.agentValues[agentID])
-		var agentHosts map[string][]string
-		if s.agentHosts != nil {
-			agentHosts = s.agentHosts[agentID]
-		}
-		var agentBody map[string][]string
-		if s.agentAllowedInBody != nil {
-			agentBody = s.agentAllowedInBody[agentID]
-		}
-		subSecs := sortedKeyUnion(keysOf(agentSections), keysOf(agentHosts), keysOf(agentBody))
+		agentSections := flatKeysToSections(st.agentValues[agentID])
+		subSecs := sortedKeyUnion(keysOf(agentSections), keysOf(st.agentHosts[agentID]), keysOf(st.agentAllowedInBody[agentID]))
 		for _, sec := range subSecs {
 			buf.WriteByte('\n')
 			fmt.Fprintf(&buf, "[agents.%s.%s]\n", agentID, sec)
 			writeKeyValues(&buf, agentSections[sec])
-			writeStringArrayField(&buf, "allowed_hosts", agentHosts[sec])
-			writeStringArrayField(&buf, "allowed_in_body", agentBody[sec])
+			writeStringArrayField(&buf, "allowed_hosts", st.agentHosts[agentID][sec])
+			writeStringArrayField(&buf, "allowed_in_body", st.agentAllowedInBody[agentID][sec])
 		}
 	}
 
-	return os.WriteFile(s.path, []byte(buf.String()), 0600)
+	if err := os.WriteFile(s.src.path, []byte(buf.String()), 0600); err != nil {
+		return err
+	}
+	s.src.markSaved()
+	return nil
+}
+
+// cloneMap copies m (copy-on-write support for the mutators).
+func cloneMap[V any](m map[string]V) map[string]V {
+	out := make(map[string]V, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // flatKeysToSections groups "section.key" flat keys into a nested map.

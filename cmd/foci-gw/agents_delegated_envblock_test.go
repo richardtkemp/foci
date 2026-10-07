@@ -41,12 +41,18 @@ func wiringFixture(t *testing.T) (setupParams, *sharedAgentSetup) {
 		}
 	}
 	resolved := &config.ResolvedAgentConfig{}
+	// Build the store the way production does (Load of a missing file is the
+	// documented empty-store case); the zero value is not a usable Store.
+	store, err := secrets.Load(filepath.Join(t.TempDir(), "secrets.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	p := setupParams{
 		acfg:         config.AgentConfig{ID: "wiretester", Workspace: ws},
 		cfg:          &config.Config{},
 		resolved:     resolved,
 		resolvedLive: config.NewLiveValue(resolved),
-		store:        &secrets.Store{},
+		store:        store,
 		connMgr:      stubConnMgr{},
 		plat:         &platform.Messaging{},
 	}

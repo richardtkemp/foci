@@ -117,6 +117,23 @@ foci_http_request https://api.example.com/x --basic-auth '{{secret:custom.user}}
 
 Templates are resolved before the request is sent. The secret value never appears in the agent's context — only the template string. Secret templates are **blocked in exec** — use `http_request` or the `foci_http_request` shell function (available inside exec) for any API call that needs credentials. The shell function passes `{{secret:NAME}}` as a literal string to the server for resolution, so the secret never touches the shell.
 
+## Hot Reload (no restart)
+
+Edits to `secrets.toml` — by hand, by `foci secrets set`, or by the `/secrets` command — take effect on the **next use**, without a restart (#1269). Every read from a secrets store checks the file first (one `os.Stat`: modification time at full resolution, size, and inode identity, so an editor that replaces the file by rename is caught too) and re-parses it when it changed. No watcher, timer or restart is involved.
+
+A reload covers:
+
+- **Added, changed and removed values** — a later `{{secret:NAME}}` for a removed secret fails with the usual "unknown secret" error.
+- **`allowed_hosts` and `allowed_in_body`** — host and body rules follow the current file.
+- **`allowed_agents` / `denied_agents` and `[agents.<id>.*]` overrides** — every agent's view re-filters against the new file. The per-agent stores the tools already hold are live views over the shared file; nothing is rebuilt or rewired.
+- **`Redact`** — uses the current values, so a newly added or changed value is redacted immediately.
+
+If the changed file cannot be read, does not parse, or fails validation (e.g. a section with both `allowed_agents` and `denied_agents`), the store keeps the **last good contents** and logs **one** warning per file state (not one per use); it retries as soon as the file changes again. A `secrets.toml` that did not exist at startup is picked up when it is created. The secrets file path and the default blocked paths stay blocked across reloads. In-process edits (`/secrets set` and friends) mutate the shared store directly and reach every agent on the next use, before and after `Save`.
+
+**Still needs a restart** (read once at startup to build clients and tokens — see [Out of scope in WIRING.md](WIRING.md)): provider API keys and clients (`anthropic.*`, OpenAI/Gemini tokens — bound into provider clients at startup), bot tokens, `brave.api_key`, voice keys, `http.api_key` (bound to the gateway's own HTTP auth at startup), and tracing config.
+
+**The system prompt's secret list only changes on restart.** The agent's system prompt lists secret names once, at startup, so the prompt and its cache are untouched: a newly added secret works immediately, but its NAME only appears in the prompt after a restart.
+
 ## Domain-Locked Secrets (`http_request`)
 
 The `http_request` tool provides secure API calls with secrets that are domain-locked — each secret can only be sent to explicitly allowed hosts. Secrets without `allowed_hosts` cannot be used in `http_request` at all; the request will be rejected.

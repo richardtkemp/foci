@@ -75,7 +75,7 @@ func TestAddAndCheckBlockedPaths(t *testing.T) {
 	// Proves that AddBlockedPaths appends entries without
 	// removing existing ones, and that the count grows by exactly the number added.
 	s, _ := Load("/nonexistent")
-	originalLen := len(s.blockedPaths)
+	originalLen := len(s.src.blocked)
 
 	s.AddBlockedPaths([]string{".aws/credentials", ".ssh/id_rsa"})
 
@@ -85,7 +85,7 @@ func TestAddAndCheckBlockedPaths(t *testing.T) {
 	if !s.IsBlockedPath(".ssh/id_rsa") {
 		t.Error(".ssh/id_rsa should be blocked")
 	}
-	if len(s.blockedPaths) != originalLen+2 {
-		t.Errorf("expected %d blocked paths, got %d", originalLen+2, len(s.blockedPaths))
+	if len(s.src.blocked) != originalLen+2 {
+		t.Errorf("expected %d blocked paths, got %d", originalLen+2, len(s.src.blocked))
 	}
 }
