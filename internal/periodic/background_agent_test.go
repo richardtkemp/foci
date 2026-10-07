@@ -13,19 +13,19 @@ import (
 // Runner literal. Unset fields use benign defaults that reproduce the old
 // nil-closure degradation (Branch=false, CanFire=allowed, SessionKey="", etc.).
 type fakeBackgroundAgent struct {
-	branchFn            func(branchType, parentKey, promptText string, noCompact bool) bool
-	hasActiveWorkFn     func() int
-	isTurnInFlightFn    func(parentBase string) bool
-	sessionKeyFn        func() string
-	canFireFn           func(ctx context.Context, sessionKey string) (bool, string)
-	rateLimitedFn       func(sessionKey string) (bool, string)
-	runBatchFn          func(ctx context.Context, req delegator.BatchRequest) (string, error)
-	resetFn             func(ctx context.Context, sessionKey string) error
-	cleanupFn           func(ctx context.Context, retentionDays int) int
-	lastTurnEndFn       func(sessionKey string) time.Time
-	contextUsageFn      func(sessionKey string) (fill, limit int)
-	quietBlockedFn      func(sessionKey string) string
-	quietCompactFn      func(ctx context.Context, sessionKey string) error
+	branchFn         func(branchType, parentKey, promptText string, noCompact bool) bool
+	hasActiveWorkFn  func() int
+	isTurnInFlightFn func(parentBase string) bool
+	sessionKeyFn     func() string
+	canFireFn        func(ctx context.Context, sessionKey string) (bool, string)
+	rateLimitedFn    func(sessionKey string) (bool, string)
+	runBatchFn       func(ctx context.Context, req delegator.BatchRequest) (string, error)
+	resetFn          func(ctx context.Context, sessionKey string) error
+	cleanupFn        func(ctx context.Context, retentionDays int) int
+	lastTurnEndFn    func(sessionKey string) time.Time
+	contextUsageFn   func(sessionKey string) (fill, limit int)
+	quietBlockedFn   func(sessionKey string) string
+	quietCompactFn   func(ctx context.Context, sessionKey string) error
 }
 
 func (f *fakeBackgroundAgent) Branch(branchType, parentKey, promptText string, noCompact bool) bool {
