@@ -348,13 +348,7 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 			}
 			ts.NewMessages = append(ts.NewMessages, errMsg)
 
-			a.metaMu.Lock()
-			endpoint := ts.SessionMeta.modelEndpoint
-			if endpoint == "" {
-				endpoint = a.Endpoint
-			}
-			a.metaMu.Unlock()
-			return a.classifyAPIError(ts.Ctx, err, ts.SessionKey, endpoint, duration)
+			return a.classifyAPIError(ts.Ctx, err, ts.SessionKey, a.resolveEndpoint(ts.SessionKey), duration)
 		}
 
 		// Any successful response proves this endpoint is accepting requests

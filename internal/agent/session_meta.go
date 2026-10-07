@@ -38,11 +38,11 @@ type sessionMeta struct {
 	effort          string                 // per-session effort override (empty = use agent default)
 	thinking        string                 // per-session thinking override (empty = use agent default)
 	speed           string                 // per-session speed override (empty = use agent default)
-	model           string                 // per-session model override (empty = use agent default)
-	modelEndpoint   string                 // per-session endpoint override (empty = use agent default)
-	modelFormat     string                 // per-session format override (empty = use agent default)
+	model           string                 // per-session model override; non-empty makes this session the OWNER of its model tuple (see sessionModelTuple)
+	modelEndpoint   string                 // per-session endpoint override, read only when this session owns the tuple (empty = agent default)
+	modelFormat     string                 // per-session format override, read only when this session owns the tuple (empty = agent default)
 	permissionMode  string                 // per-session CC permission mode (empty = ccstream default "default")
-	client          provider.Client        // per-session client override (nil = use a.Client)
+	client          provider.Client        // per-session client override, read only when this session owns the tuple (nil = a.Client)
 	modelUserSet    bool                   // true if model was explicitly set by user (prevents backend clobber)
 	contextLimit    int                    // override from backend get_context_usage; 0 = use model default
 	noCompact       bool                   // per-session no_compact flag (sticky across async operations)
@@ -62,12 +62,6 @@ type sessionStringSetting struct {
 	getter       func(*sessionMeta) string  // read field value
 	setter       func(*sessionMeta, string) // write field value
 	agentDefault func(*Agent) string        // agent-level default (nil = returns "")
-	// rootFallback: when a non-root (branch/independent) session has no own
-	// value, inherit the root session's value before falling to the agent
-	// default. Set on the model tuple (model/endpoint/format) so a branch
-	// launches on the SAME model the root is live on — the prompt cache is
-	// per-model and a branch exists precisely to reuse root's warm cache.
-	rootFallback bool
 }
 
 var (
@@ -89,25 +83,24 @@ var (
 		setter:       func(sm *sessionMeta, v string) { sm.speed = v },
 		agentDefault: nil,
 	}
+	// The model tuple (model/endpoint/format) stays in this table so restore,
+	// /overrides and clear iterate over it, but its RESOLUTION is not
+	// per-field: sessionModelTuple resolves all four legs (client included)
+	// from one owning session. No agentDefault for these entries.
 	settingModel = sessionStringSetting{
-		prefix:       session.MetaKeyModel,
-		getter:       func(sm *sessionMeta) string { return sm.model },
-		setter:       func(sm *sessionMeta, v string) { sm.model = v },
-		agentDefault: func(a *Agent) string { return a.Model },
-		rootFallback: true,
+		prefix: session.MetaKeyModel,
+		getter: func(sm *sessionMeta) string { return sm.model },
+		setter: func(sm *sessionMeta, v string) { sm.model = v },
 	}
 	settingModelEndpoint = sessionStringSetting{
-		prefix:       session.MetaKeyModelEndpoint,
-		getter:       func(sm *sessionMeta) string { return sm.modelEndpoint },
-		setter:       func(sm *sessionMeta, v string) { sm.modelEndpoint = v },
-		rootFallback: true,
+		prefix: session.MetaKeyModelEndpoint,
+		getter: func(sm *sessionMeta) string { return sm.modelEndpoint },
+		setter: func(sm *sessionMeta, v string) { sm.modelEndpoint = v },
 	}
 	settingModelFormat = sessionStringSetting{
-		prefix:       session.MetaKeyModelFormat,
-		getter:       func(sm *sessionMeta) string { return sm.modelFormat },
-		setter:       func(sm *sessionMeta, v string) { sm.modelFormat = v },
-		agentDefault: func(a *Agent) string { return a.Format },
-		rootFallback: true,
+		prefix: session.MetaKeyModelFormat,
+		getter: func(sm *sessionMeta) string { return sm.modelFormat },
+		setter: func(sm *sessionMeta, v string) { sm.modelFormat = v },
 	}
 	settingShowToolCalls = sessionStringSetting{
 		prefix:       session.MetaKeyShowToolCalls,
@@ -155,19 +148,14 @@ func (a *Agent) setSessionString(sessionKey, prefix, value string, setter func(*
 	a.persistSessionString(sessionKey, prefix, value)
 }
 
-// getStringSetting returns the session-specific value for a setting. Resolution
-// order: own override → (for rootFallback settings on a non-root session) the
-// root session's value → the agent default.
+// getStringSetting returns the session-specific value for a string setting.
+// Resolution order: own override → the agent default. The model tuple
+// (model/endpoint/format/client) is NOT read this way — its one-owner rule,
+// which inherits the root's whole tuple for a model-less child, lives in
+// sessionModelTuple.
 func (a *Agent) getStringSetting(sessionKey string, s sessionStringSetting) string {
 	if val := a.readSessionString(sessionKey, s.getter); val != "" {
 		return val
-	}
-	if s.rootFallback {
-		if rootKey, ok := rootKeyIfChild(sessionKey); ok {
-			if val := a.readSessionString(rootKey, s.getter); val != "" {
-				return val
-			}
-		}
 	}
 	if s.agentDefault != nil {
 		return s.agentDefault(a)
@@ -257,15 +245,65 @@ func (a *Agent) SetSessionSpeed(sessionKey, value string) {
 // value persisted before that guard existed.
 const SyntheticModel = "<synthetic>"
 
-// SessionModel returns the effective model for the session.
-func (a *Agent) SessionModel(sessionKey string) string {
-	m := a.getStringSetting(sessionKey, settingModel)
-	if m == SyntheticModel {
-		// Pre-guard pollution (own or root override): fall back to the agent
-		// default rather than handing callers an unlaunchable sentinel.
-		return a.Model
+// modelTuple is a session's effective provider setup: which model to run, on
+// which endpoint and wire format, through which client. The four legs are one
+// fact — which session owns the provider setup — and are resolved together by
+// sessionModelTuple, never field by field.
+type modelTuple struct {
+	model    string
+	endpoint string
+	format   string
+	client   provider.Client
+}
+
+// sessionModelTuple returns the effective model tuple for a session, resolved
+// from ONE owning session — never a mix of two:
+//   - the session itself, when it has its own model override;
+//   - otherwise, for a branch/independent child (rootKeyIfChild), the root,
+//     when the root has its own model override;
+//   - otherwise the agent-wide defaults.
+//
+// Endpoint, format and client are read from the owning session only; an empty
+// endpoint/format or nil client on the owner falls to the agent default
+// (a.Endpoint / a.Format / a.Client), never to another session. An owner
+// whose model is the unlaunchable SyntheticModel sentinel (pre-guard
+// pollution) resolves to the agent default tuple — no leg of a synthetic
+// tuple is used.
+func (a *Agent) sessionModelTuple(sessionKey string) modelTuple {
+	t := a.readModelTuple(sessionKey)
+	if t.model == "" {
+		if rootKey, ok := rootKeyIfChild(sessionKey); ok {
+			t = a.readModelTuple(rootKey)
+		}
 	}
-	return m
+	if t.model == "" || t.model == SyntheticModel {
+		return modelTuple{model: a.Model, endpoint: a.Endpoint, format: a.Format, client: a.Client}
+	}
+	if t.endpoint == "" {
+		t.endpoint = a.Endpoint
+	}
+	if t.format == "" {
+		t.format = a.Format
+	}
+	if t.client == nil {
+		t.client = a.Client
+	}
+	return t
+}
+
+// readModelTuple snapshots one session's own model-tuple fields under the
+// meta lock.
+func (a *Agent) readModelTuple(sessionKey string) modelTuple {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	return modelTuple{model: sm.model, endpoint: sm.modelEndpoint, format: sm.modelFormat, client: sm.client}
+}
+
+// SessionModel returns the effective model for the session, per the one-owner
+// tuple rule — see sessionModelTuple.
+func (a *Agent) SessionModel(sessionKey string) string {
+	return a.sessionModelTuple(sessionKey).model
 }
 
 // CacheExpiry returns the wall-clock time at which the session's prompt cache
@@ -442,8 +480,12 @@ func (a *Agent) CompactionLimitTokens(sessionKey string) int64 {
 	return int64(a.Compactor.EffectiveThreshold(limit))
 }
 
-// SetSessionModel sets the per-session model, endpoint, format, and client override and persists it.
-// client may be nil to fall back to the agent's default client.
+// SetSessionModel sets the per-session model, endpoint, format, and client
+// override and persists it. client may be nil to fall back to the agent's
+// default client. Persistence is symmetric (delete-on-empty, like
+// persistSessionString): a non-empty model with empty legs DELETES the
+// endpoint/format rows, so a later clear cannot be resurrected by
+// RestoreSessionOverrides from a stale row.
 func (a *Agent) SetSessionModel(sessionKey, value, endpoint, format string, client provider.Client) {
 	sm := a.getSessionMeta(sessionKey)
 	a.metaMu.Lock()
@@ -453,27 +495,18 @@ func (a *Agent) SetSessionModel(sessionKey, value, endpoint, format string, clie
 	sm.client = client
 	a.metaMu.Unlock()
 
-	if a.SessionIndex != nil {
-		if value == "" {
-			_ = a.SessionIndex.DeleteSessionMetadata(sessionKey, session.MetaKeyModel)
-			_ = a.SessionIndex.DeleteSessionMetadata(sessionKey, session.MetaKeyModelEndpoint)
-			_ = a.SessionIndex.DeleteSessionMetadata(sessionKey, session.MetaKeyModelFormat)
-		} else {
-			if err := a.SessionIndex.SetSessionMetadata(sessionKey, session.MetaKeyModel, value); err != nil {
-				a.logger().Errorf("session=%s persist model: %v", sessionKey, err)
-			}
-			if endpoint != "" {
-				if err := a.SessionIndex.SetSessionMetadata(sessionKey, session.MetaKeyModelEndpoint, endpoint); err != nil {
-					a.logger().Errorf("session=%s persist model_endpoint: %v", sessionKey, err)
-				}
-			}
-			if format != "" {
-				if err := a.SessionIndex.SetSessionMetadata(sessionKey, session.MetaKeyModelFormat, format); err != nil {
-					a.logger().Errorf("session=%s persist model_format: %v", sessionKey, err)
-				}
-			}
-		}
+	if a.SessionIndex == nil {
+		return
 	}
+	if value == "" {
+		_ = a.SessionIndex.DeleteSessionMetadata(sessionKey, session.MetaKeyModel)
+		_ = a.SessionIndex.DeleteSessionMetadata(sessionKey, session.MetaKeyModelEndpoint)
+		_ = a.SessionIndex.DeleteSessionMetadata(sessionKey, session.MetaKeyModelFormat)
+		return
+	}
+	a.persistSessionString(sessionKey, session.MetaKeyModel, value)
+	a.persistSessionString(sessionKey, session.MetaKeyModelEndpoint, endpoint)
+	a.persistSessionString(sessionKey, session.MetaKeyModelFormat, format)
 }
 
 // SetModel is the high-level orchestrator for /model. It tells the delegated
@@ -619,32 +652,18 @@ func (a *Agent) refreshContextFromBackend(ctx context.Context, sessionKey string
 		sessionKey, wnd.MaxTokens, wnd.Model)
 }
 
-// SessionFormat returns the effective wire format for the session.
+// SessionFormat returns the effective wire format for the session: the format
+// leg of the one-owner model tuple (see sessionModelTuple) — the owning
+// session's override, else the agent default.
 func (a *Agent) SessionFormat(sessionKey string) string {
-	return a.getStringSetting(sessionKey, settingModelFormat)
+	return a.sessionModelTuple(sessionKey).format
 }
 
-// SessionClient returns the effective client for the session. Resolution mirrors
-// the model tuple: own override → root session's client (for a non-root child) →
-// the agent-wide default.
+// SessionClient returns the effective client for the session: the client leg
+// of the one-owner model tuple (see sessionModelTuple) — the owning session's
+// override, else the agent default.
 func (a *Agent) SessionClient(sessionKey string) provider.Client {
-	if c := a.readSessionClient(sessionKey); c != nil {
-		return c
-	}
-	if rootKey, ok := rootKeyIfChild(sessionKey); ok {
-		if c := a.readSessionClient(rootKey); c != nil {
-			return c
-		}
-	}
-	return a.Client
-}
-
-// readSessionClient reads a session's client override under lock (nil if unset).
-func (a *Agent) readSessionClient(sessionKey string) provider.Client {
-	sm := a.getSessionMeta(sessionKey)
-	a.metaMu.Lock()
-	defer a.metaMu.Unlock()
-	return sm.client
+	return a.sessionModelTuple(sessionKey).client
 }
 
 // SessionNoCompact returns the effective no_compact setting for the session.

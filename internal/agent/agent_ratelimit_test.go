@@ -252,14 +252,18 @@ func TestPerEndpointRateLimiting(t *testing.T) {
 	session1 := "test/c123"
 	session2 := "test/c456"
 
-	// Set endpoints
+	// Set model+endpoint together (the shape SetSessionModel writes; an
+	// endpoint without a model is unreachable in production, and the tuple
+	// rule only reads the endpoint of a model-owning session)
 	sm1 := ag.getSessionMeta(session1)
 	ag.metaMu.Lock()
+	sm1.model = "m-anthropic"
 	sm1.modelEndpoint = "anthropic"
 	ag.metaMu.Unlock()
 
 	sm2 := ag.getSessionMeta(session2)
 	ag.metaMu.Lock()
+	sm2.model = "m-gemini"
 	sm2.modelEndpoint = "gemini"
 	ag.metaMu.Unlock()
 
