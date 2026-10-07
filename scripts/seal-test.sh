@@ -235,12 +235,14 @@ run_one() {
   # No default -count: go test's result cache serves a package whose test
   # binary and inputs are unchanged (the Makefile's shared TESTDIR keeps TMPDIR
   # stable for exactly this). COUNT=N (e.g. a flake check) passes -count=N,
-  # which always runs for real.
+  # which always runs for real. -parallel=16 matches run_unit exactly: test
+  # flags are part of the cache key, so a package make test already passed is
+  # served from cache here too.
   local extra=()
   [ -n "$COUNT" ] && extra+=(-count="$COUNT")
   [ -n "$RUNFILTER" ] && extra+=(-run "$RUNFILTER")
   [ -n "$VERBOSE" ] && extra+=(-v)
-  "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -trimpath "${extra[@]}" "$PKG" >> "$LOGFILE" 2>&1
+  "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -trimpath -parallel=16 "${extra[@]}" "$PKG" >> "$LOGFILE" 2>&1
   local status=$?
 
   diagnostic_rerun
