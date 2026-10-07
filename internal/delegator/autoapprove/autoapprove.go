@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"foci/internal/execguard"
 	"foci/internal/secrets"
@@ -261,8 +263,10 @@ var varSettingCommands = map[string]bool{
 // Structural safety checks (AST-level):
 //   - Output redirects (>, >>, >|, &>, &>>) are rejected
 //   - Process substitution <() is rejected
-//   - Command substitution $() and backticks are recursively validated
-//   - Brace expansion {a,b} is rejected
+//   - Command substitution $() and backticks are recursively validated (and
+//     an argument of a flag-checked command is rejected outright, #2216)
+//   - Brace expansion {a,b} is rejected at the literal level (and, on
+//     flag-checked commands, in every quoting shape, #2216)
 //   - Function declarations and coprocesses are rejected
 //   - Command wrappers (env, nice, timeout, etc.) with arguments are rejected
 //   - Shell interceptors (bash -c, sh -c, etc.) are unwrapped: the inner
@@ -469,7 +473,7 @@ func validateParsedStmt(rules []Rule, stmt *syntax.Stmt, depth int, vc *varCtx) 
 			return false
 		}
 
-		if !matchBashSegment(rules, cmdStr, vc) {
+		if !matchBashSegment(rules, cmdStr, cmd, vc) {
 			return false
 		}
 	}
@@ -661,6 +665,12 @@ func resolveWordPart(part syntax.WordPart, vc *varCtx) (string, bool) {
 	case *syntax.Lit:
 		return p.Value, true
 	case *syntax.SglQuoted:
+		if p.Dollar {
+			// ANSI-C quoting ($'…'): the value is the escape-decoded text.
+			// Undecodable content fails closed like every other non-static
+			// construct (#2216).
+			return decodeAnsiC(p.Value)
+		}
 		return p.Value, true
 	case *syntax.DblQuoted:
 		if len(p.Parts) == 0 {
@@ -876,6 +886,128 @@ func isSpecialParam(name string) bool {
 	return false
 }
 
+// ---------- Expansion resolution (#2216) ----------
+
+// wordHasParamExp reports whether a word references a variable: a top-level
+// ParamExp, or one inside double quotes. Words without one were already
+// checked as literal text; resolution only engages for these.
+func wordHasParamExp(w *syntax.Word) bool {
+	for _, part := range w.Parts {
+		switch p := part.(type) {
+		case *syntax.ParamExp:
+			return true
+		case *syntax.DblQuoted:
+			for _, inner := range p.Parts {
+				if _, ok := inner.(*syntax.ParamExp); ok {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// resolveArgWord resolves one argument word of a flag-checked command into
+// the effective argument(s) the shell would pass: variable references are
+// resolved through the existing resolver (varCtx.resolveParamExp via
+// resolveWordPart — the same symbol table and environment snapshot, and the
+// same fail-closed rules for substitutions, special parameters and complex
+// expansions, that the shell-interceptor path uses), and the results are fed
+// to the shared quoting model (wordFacts) with their true liveness:
+//
+//   - unquoted values are LIVE: their glob and brace characters are active
+//     (`X='*'; rg foo $X` globs) and their whitespace word-splits
+//     (`X='-i x'; sed $X …` becomes two arguments);
+//   - quoted values ("$X", '$X', $'…', $"…") are inert text, checked as
+//     quoted.
+//
+// It returns false when any part cannot be resolved exactly — an
+// unresolvable variable, a substitution (blocked earlier by substArgUnsafe,
+// kept here as a fail-closed backstop), an undecodable ANSI-C string — so
+// the caller prompts instead of checking approximate text.
+func resolveArgWord(w *syntax.Word, vc *varCtx) ([]shellWord, bool) {
+	var f wordFacts
+	anyQuoted := false
+	for _, part := range w.Parts {
+		switch p := part.(type) {
+		case *syntax.Lit:
+			f.addLive(p.Value)
+		case *syntax.ParamExp:
+			val, ok := vc.resolveParamExp(p)
+			if !ok {
+				return nil, false
+			}
+			f.addLive(val)
+		case *syntax.SglQuoted:
+			anyQuoted = true
+			if p.Dollar {
+				decoded, ok := decodeAnsiC(p.Value)
+				if !ok {
+					return nil, false
+				}
+				f.addQuoted(decoded)
+			} else {
+				f.addQuoted(p.Value)
+			}
+		case *syntax.DblQuoted:
+			anyQuoted = true
+			s, ok := resolveWordPart(p, vc)
+			if !ok {
+				return nil, false
+			}
+			f.addQuoted(s)
+		default:
+			return nil, false // CmdSubst, ArithmExp, … — never approve blindly
+		}
+	}
+	words := f.take()
+	if len(words) == 0 && anyQuoted {
+		// A quoted word keeps its argument slot even when it resolves empty.
+		words = append(words, shellWord{})
+	}
+	return words, true
+}
+
+// expandedArgsUnsafe resolves variable references in the arguments of a
+// flag-checked command and re-checks the effective argument vector exactly
+// as if it had been typed (#2216) — through the same
+// containsUnsafeFlagWords, so the flag tables, the #2213 glob rule and the
+// brace rule all apply to resolved values. The command word itself is not an
+// argument and is never resolved. Commands without unsafe-flag machinery
+// keep their previous behaviour (variables pass through unresolved), and a
+// variable that cannot be resolved fails closed: the printed segment keeps
+// `$X` unexpanded, so approving it would mean approving an unknown value.
+func expandedArgsUnsafe(ce *syntax.CallExpr, words []shellWord, vc *varCtx) bool {
+	if len(words) == 0 || len(ce.Args) == 0 || !flagCheckedCommand(filepath.Base(words[0].visible)) {
+		return false
+	}
+	// The scanner's words must correspond one-to-one with the AST's argument
+	// words for resolution to be meaningful; they do for anything the printer
+	// produces. Any divergence fails closed.
+	if len(ce.Args) != len(words) {
+		return true
+	}
+	anyParam := false
+	for _, w := range ce.Args[1:] {
+		if wordHasParamExp(w) {
+			anyParam = true
+			break
+		}
+	}
+	if !anyParam {
+		return false // literal words — already checked by containsUnsafeFlagWords
+	}
+	effective := []shellWord{words[0]} // the command word is not an argument
+	for _, w := range ce.Args[1:] {
+		resolved, ok := resolveArgWord(w, vc)
+		if !ok {
+			return true
+		}
+		effective = append(effective, resolved...)
+	}
+	return containsUnsafeFlagWords(effective)
+}
+
 // ---------- Command segment validation ----------
 
 // guardEnv supplies the filesystem/PATH view for the substitutability check
@@ -919,11 +1051,20 @@ func commandIsSubstitutable(segment string) (bool, string, string) {
 // matchBashSegment checks whether a single command string matches at least one
 // Bash rule. The match is rejected regardless of which rule matched when the
 // segment contains flags or arguments known to make an otherwise safe command
-// unsafe (e.g. sed -i, sort -o, a git grep pager flag), when any argument is
-// an unquoted glob whose expansion could begin with '-' (#2213), or when the
-// segment's executable could be substituted by this process.
-func matchBashSegment(rules []Rule, segment string, vc *varCtx) bool {
-	if containsUnsafeFlags(segment) {
+// unsafe (e.g. sed -i, sort -o, a git grep pager flag) — compared on
+// shell-visible text, so quoting cannot hide them — when any argument is an
+// unquoted glob whose expansion could begin with '-' (#2213), when an
+// argument of a flag-checked command carries a live brace group or
+// substitution or a variable that resolves to unsafe or unresolvable text
+// (#2216), or when the segment's executable could be substituted by this
+// process. ce is the CallExpr the segment was printed from, for the variable
+// resolution.
+func matchBashSegment(rules []Rule, segment string, ce *syntax.CallExpr, vc *varCtx) bool {
+	words := scanShellWords(segment)
+	if containsUnsafeFlagWords(words) {
+		return false
+	}
+	if expandedArgsUnsafe(ce, words, vc) {
 		return false
 	}
 	if sub, path, reason := commandIsSubstitutable(segment); sub {
@@ -974,8 +1115,9 @@ type unsafeCmdFlags struct {
 // unsafeFlags maps command base names to their unsafe flag/argument specs.
 // Only commands listed here are checked — all other commands pass through.
 // The set of keys (plus sqlite3, which has its own whole-vector check in
-// containsUnsafeFlags) also defines which commands the #2213 glob rule
-// applies to; see flagCheckedCommand.
+// containsUnsafeFlagWords) also defines which commands the #2213 glob rule
+// and the #2216 brace, substitution and variable rules apply to; see
+// flagCheckedCommand.
 var unsafeFlags = map[string]unsafeCmdFlags{
 	"sed": {
 		shortFlags: "if",
@@ -1024,9 +1166,10 @@ func gitArgUnsafe(arg string) bool {
 
 // flagCheckedCommand reports whether a command has unsafe-argument machinery
 // at all: an entry in unsafeFlags, or sqlite3's own whole-vector check. This
-// set is also the gate for the #2213 glob rule, so a command added to
-// unsafeFlags automatically joins it — and a command without machinery keeps
-// its previous, glob-ignoring behaviour.
+// set is also the gate for the #2213 glob rule and the #2216 brace,
+// substitution and variable rules, so a command added to unsafeFlags
+// automatically joins them — and a command without machinery keeps its
+// previous behaviour.
 func flagCheckedCommand(cmdBase string) bool {
 	_, ok := unsafeFlags[cmdBase]
 	return ok || cmdBase == "sqlite3"
@@ -1044,8 +1187,49 @@ func globArgUnsafe(words []shellWord) bool {
 	return false
 }
 
-// containsUnsafeFlags checks whether a command string contains flags or
-// arguments that make it unsafe for auto-approval. Returns true if any of:
+// braceArgUnsafe reports whether any argument word carries a brace group the
+// shell would expand (#2216) — see shellWord.hasLiveBrace for the exact
+// shape. An expanded group can assemble a dangerous flag out of parts that
+// are each individually harmless (`rg foo {"--pre=./x.sh",}` runs
+// `rg foo --pre=./x.sh`), and quoting parts of the group does not suppress
+// the expansion, so liveness is tracked across the quotes. The command word
+// itself is not an argument and is skipped.
+//
+// Known follow-up: commands WITHOUT unsafe-flag machinery are not covered
+// here (`cat {"a",b}` still approves) — their brace handling remains the
+// AST-level litContainsBraceExpansion, which only sees one literal at a time.
+func braceArgUnsafe(words []shellWord) bool {
+	for _, w := range words[1:] {
+		if w.hasLiveBrace {
+			return true
+		}
+	}
+	return false
+}
+
+// substArgUnsafe reports whether any argument word carries a live
+// substitution (#2216) — $(…), $((…)) or a backtick, none of them single-
+// quoted or backslash-escaped. The walker recursively approves a
+// substitution whose inner commands are approved, but the OUTER command
+// receives the substituted TEXT as an argument: `rg foo $(echo --pre=./x.sh)`
+// feeds rg a flag the tables never saw. So for flag-checked commands the
+// argument prompts instead. The command word itself is not an argument and
+// is skipped.
+func substArgUnsafe(words []shellWord) bool {
+	for _, w := range words[1:] {
+		if w.hasLiveSubst {
+			return true
+		}
+	}
+	return false
+}
+
+// containsUnsafeFlagWords checks whether a command's scanned words contain
+// flags or arguments that make it unsafe for auto-approval. It is the single
+// flag-checking function: matchBashSegment feeds it the literal segment's
+// words, and the #2216 variable resolver feeds it the resolved argument
+// vector, so literal and expanded arguments are judged by one code path.
+// Returns true if any of:
 //
 //   - a flag matching the command's unsafeFlags entry — short flags
 //     (including bundled forms like -ni), word flags (single-dash
@@ -1054,26 +1238,28 @@ func globArgUnsafe(words []shellWord) bool {
 //   - an unquoted, unescaped glob argument whose expansion could begin with
 //     '-' (#2213): the shell expands globs before the command runs, so a
 //     file name planted in the working directory (--pre=./x.sh in a cloned
-//     repo) would arrive as a flag. Only flag-checked commands are covered
-//     (see flagCheckedCommand); quoting or escaping the glob keeps
-//     approval, and there is deliberately no `--` exemption — some commands
-//     (find) do not honour it for every later argument;
+//     repo) would arrive as a flag;
+//   - a brace group the shell would expand (#2216), which can assemble a
+//     flag out of quoted parts — see braceArgUnsafe;
+//   - a live substitution argument (#2216) — see substArgUnsafe;
 //   - a command-specific whole-vector finding: sqlite3 dot-commands
 //     (sqliteCommandUnsafe) or a git grep pager flag (gitGrepPagerUnsafe).
 //
-// Quoting for the glob and git-grep controls is read from the word scan
-// (scanShellWords), not from the tokens: tokenizeCommand keeps quote
-// characters but drops backslashes, so `'*.go'` and `\*` are only
-// recognisable as shell-literal in the raw segment.
-func containsUnsafeFlags(segment string) bool {
-	words := scanShellWords(segment)
+// Every check compares the words' shell-visible text — quoting a flag
+// (`sed '-i'`) or assembling it from quoted parts does not change what the
+// program receives, so it must not change the verdict (#2216). The command
+// name is read from the visible text too, so `"sed" -i …` is flag-checked.
+// Only flag-checked commands (see flagCheckedCommand) are covered by the
+// glob, brace, substitution and flag-table rules; quoting or escaping a glob
+// keeps approval, and there is deliberately no `--` exemption — some
+// commands (find) do not honour it for every later argument.
+func containsUnsafeFlagWords(words []shellWord) bool {
 	if len(words) == 0 {
 		return false
 	}
-	tokens := wordTexts(words)
 
-	cmdBase := filepath.Base(tokens[0])
-	if cmdBase == "sqlite3" && sqliteCommandUnsafe(tokens) {
+	cmdBase := filepath.Base(words[0].visible)
+	if cmdBase == "sqlite3" && sqliteCommandUnsafe(visibleTexts(words)) {
 		return true
 	}
 	if cmdBase == "git" && gitGrepPagerUnsafe(words) {
@@ -1082,7 +1268,7 @@ func containsUnsafeFlags(segment string) bool {
 	if !flagCheckedCommand(cmdBase) {
 		return false
 	}
-	if globArgUnsafe(words) {
+	if globArgUnsafe(words) || braceArgUnsafe(words) || substArgUnsafe(words) {
 		return true
 	}
 	spec, ok := unsafeFlags[cmdBase]
@@ -1090,7 +1276,8 @@ func containsUnsafeFlags(segment string) bool {
 		return false // sqlite3 — its whole argument vector is checked above
 	}
 
-	for _, tok := range tokens[1:] {
+	for _, w := range words[1:] {
+		tok := w.visible
 		if len(tok) >= 2 && tok[0] == '-' {
 			// Flag token.
 			if strings.HasPrefix(tok, "--") {
@@ -1141,7 +1328,9 @@ func containsUnsafeFlags(segment string) bool {
 //
 // Auto-approved SQLite calls must include both a database argument and an
 // explicit SQL argument. Any dot-command or additional CLI option is prompted
-// instead of being interpreted as safe SQL.
+// instead of being interpreted as safe SQL. The tokens are the words'
+// shell-visible text (#2216): quoting (`'.'shell`) does not change what
+// sqlite3 receives.
 func sqliteCommandUnsafe(tokens []string) bool {
 	// The built-in rules require "sqlite3 -readonly". Require a database and
 	// SQL argument as well, so stdin cannot supply a dot-command.
@@ -1149,7 +1338,7 @@ func sqliteCommandUnsafe(tokens []string) bool {
 		return true
 	}
 	for _, token := range tokens[2:] {
-		arg := strings.TrimSpace(stripOuterQuotes(token))
+		arg := strings.TrimSpace(token)
 		if strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, ".") {
 			return true
 		}
@@ -1162,13 +1351,6 @@ func sqliteCommandUnsafe(tokens []string) bool {
 		}
 	}
 	return false
-}
-
-func stripOuterQuotes(s string) string {
-	if len(s) >= 2 && ((s[0] == '\'' && s[len(s)-1] == '\'') || (s[0] == '"' && s[len(s)-1] == '"')) {
-		return s[1 : len(s)-1]
-	}
-	return s
 }
 
 // gitGrepPagerUnsafe reports whether words run git's grep subcommand with a
@@ -1204,13 +1386,14 @@ func gitGrepPagerUnsafe(words []shellWord) bool {
 // ---------- sed script argument analysis ----------
 
 // sedArgUnsafe checks if a sed script argument contains potentially dangerous
-// sed commands or flags. Returns true if the argument contains:
+// sed commands or flags. The argument is shell-visible text (#2216): quoting
+// part of a script (`sed 's/a/b/w'out`) does not change what sed receives.
+// Returns true if the argument contains:
 //   - A 'w'/'W' command (write matched lines to file)
 //   - An 'e'/'E' command (execute pattern space as shell command)
 //   - A substitute command with 'e' flag: s/pattern/replacement/e
 //   - A substitute command with 'w' flag: s/pattern/replacement/w file
 func sedArgUnsafe(arg string) bool {
-	arg = stripOuterQuotes(arg)
 	for _, command := range splitSedCommands(arg) {
 		if sedCommandUnsafe(command) {
 			return true
@@ -1343,13 +1526,15 @@ func skipSedAddress(s string) int {
 // ---------- Command tokenization ----------
 
 // shellWord is one shell word of a command string, recording the quoting
-// facts the #2213 argument controls need on top of the token text
+// facts the #2213/#2216 argument controls need on top of the token text
 // tokenizeCommand has always produced.
 type shellWord struct {
 	text          string // token text (quotes kept, backslash escapes resolved) — tokenizeCommand's exact output
-	visible       string // shell-visible text (quote delimiters dropped too) — what the program receives
+	visible       string // shell-visible text (quote delimiters dropped, $'…' decoded) — what the program receives
 	firstLiveGlob bool   // first visible character is an unquoted, unescaped * ? [
 	hasLiveGlob   bool   // the word contains an unquoted, unescaped * ? [
+	hasLiveBrace  bool   // the word contains a brace group the shell would expand (#2216)
+	hasLiveSubst  bool   // the word contains a live $(, $(( or ` substitution (#2216)
 }
 
 // canYieldFlag reports whether glob expansion of the word can produce a word
@@ -1362,32 +1547,169 @@ func (w shellWord) canYieldFlag() bool {
 	return w.firstLiveGlob || (len(w.visible) > 0 && w.visible[0] == '-' && w.hasLiveGlob)
 }
 
-// scanShellWords splits a command string into whitespace-delimited shell
-// words, respecting single and double quotes and backslash escapes, and
-// records each word's quoting facts. Word boundaries, the token text
-// (quotes kept, escapes resolved) and the escape/quote-end handling are
-// byte-for-byte tokenizeCommand's historical behaviour, pinned by
-// TestTokenizeCommand; visible and the glob-liveness flags are the additions.
+// wordFacts accumulates the shell-visible text and quoting facts of one shell
+// word while it is being built. It is the single quoting model behind both
+// producers (#2216): scanShellWords feeds it the characters of a printed
+// segment, and the flag-checked argument resolver feeds it resolved variable
+// values — so "what would the shell do to this text" is computed once, in one
+// place.
 //
-// Variables ($X, $HOME/*) are not modelled: a variable whose VALUE carries a
-// glob can still reach the flag position through expansion. Known gap,
-// follow-up to #2213.
+// Live means quote- and escape-transparent: a live character is one the shell
+// itself sees and acts on (glob metacharacters, brace expansion syntax,
+// substitution introducers). Quoted or backslash-escaped text is literal and
+// only ever contributes bytes to the visible text.
+type wordFacts struct {
+	visible strings.Builder // shell-visible text of the word being built
+	split   []shellWord     // words completed by unquoted whitespace in resolved values
+
+	firstLiveGlob bool
+	hasLiveGlob   bool
+	hasLiveBrace  bool
+	hasLiveSubst  bool
+
+	braceDepth int  // open unquoted { count
+	braceSep   bool // unquoted , or .. seen inside the open braces
+	dotRun     int  // consecutive unquoted dots — a second one inside braces is a {x..y} separator
+}
+
+// addQuoted appends inert text: the bytes reach the program verbatim and no
+// character inside them is live. Quoted content interrupts a dot run, because
+// a quoted dot never completes a {x..y} sequence — bash scans for the
+// separator in the unquoted text (`{1".."10}` stays literal).
+func (f *wordFacts) addQuoted(s string) {
+	f.visible.WriteString(s)
+	f.dotRun = 0
+}
+
+// addLive appends shell-active text: every character is one the shell acts
+// on. Unquoted whitespace ends the current word — bash field-splits the
+// result of an unquoted expansion — which is how a resolved variable value
+// carrying spaces becomes several arguments.
+func (f *wordFacts) addLive(s string) {
+	for i := 0; i < len(s); i++ {
+		f.addLiveByte(s[i])
+	}
+}
+
+// addLiveByte records one shell-active character: its visible byte and its
+// quoting facts.
+func (f *wordFacts) addLiveByte(ch byte) {
+	switch ch {
+	case ' ', '\t': // reachable only from addLive — the scanner splits first
+		if f.visible.Len() > 0 {
+			f.finishWord()
+		}
+		return
+	case '*', '?', '[':
+		f.hasLiveGlob = true
+	case '{':
+		f.braceDepth++
+		if f.braceDepth == 1 {
+			f.braceSep = false // a fresh outermost group needs its own separator
+		}
+	case '}':
+		if f.braceDepth > 0 {
+			f.braceDepth--
+			if f.braceDepth == 0 && f.braceSep {
+				f.hasLiveBrace = true
+			}
+		}
+	case ',':
+		if f.braceDepth > 0 {
+			f.braceSep = true
+		}
+	case '.':
+		f.dotRun++
+		if f.dotRun >= 2 && f.braceDepth > 0 {
+			f.braceSep = true
+		}
+	}
+	if ch != '.' {
+		f.dotRun = 0
+	}
+	f.visible.WriteByte(ch)
+	if f.hasLiveGlob && f.visible.Len() == 1 {
+		f.firstLiveGlob = true // this live glob is the word's first visible character
+	}
+}
+
+// noteSubst records a live command or arithmetic substitution introducer.
+func (f *wordFacts) noteSubst() { f.hasLiveSubst = true }
+
+// current returns the word being built (its token text is the caller's to
+// fill in — the accumulator only knows the shell-visible side).
+func (f *wordFacts) current() shellWord {
+	return shellWord{
+		visible:       f.visible.String(),
+		firstLiveGlob: f.firstLiveGlob,
+		hasLiveGlob:   f.hasLiveGlob,
+		hasLiveBrace:  f.hasLiveBrace,
+		hasLiveSubst:  f.hasLiveSubst,
+	}
+}
+
+// finishWord completes the word being built into the split list.
+func (f *wordFacts) finishWord() {
+	f.split = append(f.split, f.current())
+	f.resetCurrent()
+}
+
+// resetCurrent clears the word being built without emitting it.
+func (f *wordFacts) resetCurrent() {
+	f.visible.Reset()
+	f.firstLiveGlob, f.hasLiveGlob = false, false
+	f.hasLiveBrace, f.hasLiveSubst = false, false
+	f.braceDepth, f.braceSep, f.dotRun = 0, false, 0
+}
+
+// reset clears all state, including words split out of resolved values.
+func (f *wordFacts) reset() {
+	f.resetCurrent()
+	f.split = nil
+}
+
+// take returns every word held — any words split out of unquoted whitespace,
+// plus the word being built if it has visible content — and clears the
+// accumulator.
+func (f *wordFacts) take() []shellWord {
+	if f.visible.Len() > 0 {
+		f.finishWord()
+	}
+	words := f.split
+	f.split = nil
+	return words
+}
+
+// scanShellWords splits a command string into whitespace-delimited shell
+// words, respecting single and double quotes, backslash escapes, ANSI-C
+// ($'…') and locale ($"…") runs, and records each word's quoting facts.
+// Word boundaries, the token text (quotes kept, escapes resolved) and the
+// escape/quote-end handling are byte-for-byte tokenizeCommand's historical
+// behaviour, pinned by TestTokenizeCommand; visible and the liveness flags
+// are the #2213/#2216 additions:
+//
+//   - visible drops the `$` of $'…' and $"…" and decodes ANSI-C content, so
+//     a flag assembled through those forms (`rg $'--pre=./x.sh'`) is seen by
+//     the flag tables;
+//   - hasLiveBrace/hasLiveSubst record brace groups and substitutions the
+//     shell would expand (see wordFacts).
+//
+// A variable reference is NOT resolved here — the scanner cannot know the
+// value. Arguments of flag-checked commands are resolved separately by
+// expandedArgsUnsafe (#2216), against the symbol table and the environment
+// snapshot; anything unresolvable fails closed there.
 func scanShellWords(cmd string) []shellWord {
 	var words []shellWord
-	var text, visible strings.Builder
-	firstLive, hasLive := false, false
+	var text strings.Builder
+	var facts wordFacts
 	flush := func() {
 		if text.Len() > 0 {
-			words = append(words, shellWord{
-				text:          text.String(),
-				visible:       visible.String(),
-				firstLiveGlob: firstLive,
-				hasLiveGlob:   hasLive,
-			})
-			text.Reset()
-			visible.Reset()
-			firstLive, hasLive = false, false
+			w := facts.current()
+			w.text = text.String()
+			words = append(words, w)
 		}
+		text.Reset()
+		facts.reset()
 	}
 	i := 0
 	for i < len(cmd) {
@@ -1400,20 +1722,72 @@ func scanShellWords(cmd string) []shellWord {
 			continue
 		}
 
+		// ANSI-C ($'…') and locale ($"…") runs: an unescaped $ immediately
+		// before a quote starts the extended form. The $ is token text but
+		// not shell-visible; the run's content reaches the visible text
+		// through the form's own semantics. Only visible and the facts are
+		// affected — the byte-for-byte text and word boundaries follow the
+		// historical tokenizer by construction, so a pathological run (an
+		// escaped quote inside $'…') partitions exactly as before and can
+		// only over-block, never hide: the residue fails closed below.
+		if ch == '$' && i+1 < len(cmd) && (cmd[i+1] == '\'' || cmd[i+1] == '"') {
+			quote := cmd[i+1]
+			end := indexUnescapedQuote(cmd, i+2, quote)
+			text.WriteByte('$')
+			if end < 0 {
+				// Unmatched quote — take rest of string, as the plain-quote
+				// path does. Printed segments cannot produce this; fail
+				// closed rather than guess the decoded residue.
+				text.WriteString(cmd[i+1:])
+				facts.noteSubst()
+				facts.addQuoted(cmd[i+2:])
+				i = len(cmd)
+				continue
+			}
+			content := cmd[i+2 : end]
+			text.WriteString(cmd[i+1 : end+1])
+			if quote == '\'' {
+				if decoded, ok := decodeAnsiC(content); ok {
+					facts.addQuoted(decoded)
+				} else {
+					// Undecodable escape content — fail closed instead of
+					// checking approximate text.
+					facts.noteSubst()
+					facts.addQuoted(content)
+				}
+			} else {
+				facts.addQuoted(content)
+				if quotedSubstLive(content) {
+					facts.noteSubst()
+				}
+			}
+			i = end + 1
+			continue
+		}
+
 		// Quoted run — consume through the matching quote. Content goes
-		// into the token text with its delimiters (as always) and into
-		// the visible text without them; nothing inside quotes is a live
-		// glob or changed by being quoted.
+		// into the token text with its delimiters (as always) and into the
+		// visible text without them; nothing inside single quotes is live.
+		// Inside double quotes globs and braces stay literal too, but
+		// substitutions still expand, so they are live there.
 		if ch == '\'' || ch == '"' {
 			end := indexUnescapedQuote(cmd, i+1, ch)
 			if end < 0 {
 				// Unmatched quote — take rest of string.
+				content := cmd[i+1:]
 				text.WriteString(cmd[i:])
-				visible.WriteString(cmd[i+1:])
+				facts.addQuoted(content)
+				if ch == '"' && quotedSubstLive(content) {
+					facts.noteSubst()
+				}
 				i = len(cmd)
 			} else {
+				content := cmd[i+1 : end]
 				text.WriteString(cmd[i : end+1])
-				visible.WriteString(cmd[i+1 : end])
+				facts.addQuoted(content)
+				if ch == '"' && quotedSubstLive(content) {
+					facts.noteSubst()
+				}
 				i = end + 1
 			}
 			continue
@@ -1422,23 +1796,155 @@ func scanShellWords(cmd string) []shellWord {
 		// Backslash escape — the next character is literal, never live.
 		if ch == '\\' && i+1 < len(cmd) {
 			text.WriteByte(cmd[i+1])
-			visible.WriteByte(cmd[i+1])
+			facts.addQuoted(string(cmd[i+1]))
 			i += 2
 			continue
 		}
 
 		text.WriteByte(ch)
-		visible.WriteByte(ch)
-		if ch == '*' || ch == '?' || ch == '[' {
-			hasLive = true
-			if visible.Len() == 1 {
-				firstLive = true // this live glob is the word's first visible character
-			}
+		facts.addLiveByte(ch)
+		if ch == '`' {
+			facts.noteSubst()
+		}
+		if ch == '$' && i+1 < len(cmd) && cmd[i+1] == '(' {
+			facts.noteSubst() // covers both $(…) and $((…)
 		}
 		i++
 	}
 	flush()
 	return words
+}
+
+// decodeAnsiC decodes the escape sequences of a $'…' (ANSI-C quoted) string
+// to the bytes bash would produce. It returns false for constructs it cannot
+// decode exactly — a trailing backslash, a truncated \c, \x, \u or \U — so
+// callers fail closed instead of checking approximate text. Unknown letter
+// escapes keep their backslash, as bash does.
+func decodeAnsiC(s string) (string, bool) {
+	var sb strings.Builder
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c != '\\' {
+			sb.WriteByte(c)
+			i++
+			continue
+		}
+		if i+1 >= len(s) {
+			return "", false // trailing backslash
+		}
+		switch e := s[i+1]; e {
+		case '\\', '\'', '"', '?':
+			sb.WriteByte(e)
+			i += 2
+		case 'a':
+			sb.WriteByte('\a')
+			i += 2
+		case 'b':
+			sb.WriteByte('\b')
+			i += 2
+		case 'e', 'E':
+			sb.WriteByte('\x1b')
+			i += 2
+		case 'f':
+			sb.WriteByte('\f')
+			i += 2
+		case 'n':
+			sb.WriteByte('\n')
+			i += 2
+		case 'r':
+			sb.WriteByte('\r')
+			i += 2
+		case 't':
+			sb.WriteByte('\t')
+			i += 2
+		case 'v':
+			sb.WriteByte('\v')
+			i += 2
+		case 'c':
+			// \cX: the control character of a letter. Anything else has no
+			// exact short form worth reproducing — fail closed.
+			if i+2 >= len(s) || !isASCIILetter(s[i+2]) {
+				return "", false
+			}
+			sb.WriteByte(s[i+2] & 0x1f)
+			i += 3
+		case 'x':
+			j := i + 2
+			for j < len(s) && j < i+4 && isHexDigit(s[j]) {
+				j++
+			}
+			if j == i+2 {
+				return "", false // \x with no digits
+			}
+			v, _ := strconv.ParseUint(s[i+2:j], 16, 8)
+			sb.WriteByte(byte(v))
+			i = j
+		case 'u', 'U':
+			width := 4
+			if e == 'U' {
+				width = 8
+			}
+			if i+2+width > len(s) {
+				return "", false // truncated \u or \U
+			}
+			v, err := strconv.ParseUint(s[i+2:i+2+width], 16, 32)
+			if err != nil || v > unicode.MaxRune {
+				return "", false
+			}
+			sb.WriteRune(rune(v))
+			i += 2 + width
+		case '0', '1', '2', '3', '4', '5', '6', '7':
+			// Octal: up to three digits, or \0 followed by up to three more.
+			digits := 3
+			if e == '0' {
+				digits = 4
+			}
+			j := i + 1
+			for j-i-1 < digits && j < len(s) && s[j] >= '0' && s[j] <= '7' {
+				j++
+			}
+			v, _ := strconv.ParseUint(s[i+1:j], 8, 16)
+			if v > 0xff {
+				return "", false
+			}
+			sb.WriteByte(byte(v))
+			i = j
+		default:
+			// Unknown escape — bash keeps the backslash and the character.
+			sb.WriteByte('\\')
+			sb.WriteByte(e)
+			i += 2
+		}
+	}
+	return sb.String(), true
+}
+
+func isASCIILetter(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
+
+func isHexDigit(c byte) bool {
+	return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
+}
+
+// quotedSubstLive reports whether double-quoted content contains a live
+// substitution: `$(…)` (which covers `$((…))`), or a backtick, neither
+// backslash-escaped. Inside double quotes globs and brace metacharacters are
+// literal, but substitutions still expand.
+func quotedSubstLive(content string) bool {
+	for i := 0; i < len(content); i++ {
+		switch content[i] {
+		case '\\':
+			if i+1 < len(content) {
+				i++ // skip the escaped character
+			}
+		case '`':
+			return true
+		case '$':
+			if i+1 < len(content) && content[i+1] == '(' {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // wordTexts returns just the token text of the words — the exact tokens
@@ -1450,6 +1956,19 @@ func wordTexts(words []shellWord) []string {
 	tokens := make([]string, len(words))
 	for i, w := range words {
 		tokens[i] = w.text
+	}
+	return tokens
+}
+
+// visibleTexts returns the shell-visible text of each word — the argv the
+// executed program receives, with quoting resolved.
+func visibleTexts(words []shellWord) []string {
+	if len(words) == 0 {
+		return nil
+	}
+	tokens := make([]string, len(words))
+	for i, w := range words {
+		tokens[i] = w.visible
 	}
 	return tokens
 }
