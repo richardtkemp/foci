@@ -63,16 +63,16 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 		} else if strings.HasPrefix(args[i], "-m=") {
 			flags.model = args[i][len("-m="):]
 			consumed = true
-	} else if c, ni := flags.gateFlags.tryParseGateArg(args, i); c {
-		i = ni
-		consumed = true
-	} else if c, ni := flags.waitFlags.tryParseWaitArg(args, i); c {
-		i = ni
-		consumed = true
-	} else if c, ni := flags.humanFlag.tryParseHumanArg(args, i); c {
-		i = ni
-		consumed = true
-	} else if args[i] == "--message-text" || args[i] == "--mt" || args[i] == "-mt" {
+		} else if c, ni := flags.gateFlags.tryParseGateArg(args, i); c {
+			i = ni
+			consumed = true
+		} else if c, ni := flags.waitFlags.tryParseWaitArg(args, i); c {
+			i = ni
+			consumed = true
+		} else if c, ni := flags.humanFlag.tryParseHumanArg(args, i); c {
+			i = ni
+			consumed = true
+		} else if args[i] == "--message-text" || args[i] == "--mt" || args[i] == "-mt" {
 			if i+1 < len(args) {
 				flags.messageText = args[i+1]
 				i++

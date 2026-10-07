@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"foci/internal/command"
+	"foci/internal/periodic"
 )
 
 // userActivityRecorded reports whether the session index has a
@@ -197,6 +198,40 @@ func TestBranch_HumanSetsUserActivityOnBranchSession(t *testing.T) {
 	}
 	if userActivityRecorded(d, testSessionKey) {
 		t.Error("human branch stamped the PARENT session; the write belongs to the branch turn's own key")
+	}
+}
+
+// TestBranch_HumanReceiptStampsOnlyWhenDispatched pins the dispatch boundary
+// of the #1130 in-process receipt on /branch: the receipt belongs to a branch
+// that actually ran, not to a request that merely passed its gates. A bad
+// model override is refused inside runBranchTurn — after every gate, before
+// any turn exists — and stamps neither receipt, while a human branch that
+// runs stamps the runner receipt (the durable timestamp stays the branch
+// turn's own entry write, on the new session key).
+func TestBranch_HumanReceiptStampsOnlyWhenDispatched(t *testing.T) {
+	runner := &periodic.Runner{}
+	d, _ := httpTestSetup(t, httpTestOpts{kaRunner: runner})
+	mux := newTestMux(d)
+
+	w := postJSON(mux, "/branch", `{"text":"hi","human":true,"model":"cheap"}`)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+	if _, ok := runner.LastUserActivity(); ok {
+		t.Error("human branch refused for a bad model stamped the in-process receipt; the stamp belongs to a dispatched run")
+	}
+	if userActivityRecorded(d, testSessionKey) {
+		t.Error("human branch refused for a bad model recorded durable user activity on the parent session")
+	}
+
+	w = postJSON(mux, "/branch", `{"text":"hi","human":true}`)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	if _, ok := runner.LastUserActivity(); !ok {
+		t.Error("dispatched human branch did not stamp the in-process receipt")
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/command"
 	"foci/internal/config"
+	"foci/internal/periodic"
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
@@ -106,6 +107,7 @@ type httpTestOpts struct {
 	webhooks  map[string]string  // hook ID → prompt path
 	commands  []*command.Command // slash commands registered on the agent
 	noSession bool               // skip session registration (no-session error paths)
+	kaRunner  *periodic.Runner   // optional periodic runner on the agent (nil = none, as production tests run); a bare &periodic.Runner{} exposes the in-process interaction receipt
 }
 
 // httpTestSetup builds httpHandlerDeps around a single mockClient-backed
@@ -148,6 +150,7 @@ func httpTestSetup(t *testing.T, opts httpTestOpts) (httpHandlerDeps, *mockClien
 		id:               testAgentID,
 		ag:               ag,
 		cmds:             cmds,
+		kaRunner:         opts.kaRunner,
 		promptSearchDirs: []string{opts.promptDir},
 		resolved:         config.NewLiveValue(&config.ResolvedAgentConfig{Webhooks: opts.webhooks}),
 	}

@@ -152,21 +152,28 @@ func buildActivityCheckers(d httpHandlerDeps) (userActivityChecker, sessionActiv
 // a human-declared HTTP request (#1130) — the same stamp the platforms'
 // OnUserMessage hook leaves — so the request counts as attention for the
 // periodic idle checks even when its turn is queued behind in-flight work or
-// it starts no turn at all. No-op when the agent has no periodic runner (the
-// HTTP test harness wires none).
+// it starts no turn at all. It belongs to the DISPATCH boundary: call it only
+// once the request is actually running or queued, never while a gate or a
+// validation error can still refuse it — a request that fails to dispatch is
+// not user attention. No-op when the agent has no periodic runner (the HTTP
+// test harness wires none).
 func notifyHumanInteraction(inst *agentInstance) {
 	if inst.kaRunner != nil {
 		inst.kaRunner.NotifyInteraction()
 	}
 }
 
-// touchHumanUserActivity writes last_user_activity_at directly for a
-// human-declared HTTP request that dispatches NO turn — a /command dispatch,
-// or a /send whose text is a slash command: no turn ever runs for them, so
-// nothing else would stamp the timestamp. Turn-carrying paths never call
-// this; their turn's entry write owns the timestamp, on the turn's own
-// session key. No-op with no session index or an empty key.
-func touchHumanUserActivity(d httpHandlerDeps, sessionKey string) {
+// stampHumanCommandDispatch stamps BOTH user-activity receipts for a
+// human-declared request whose dispatch starts no turn — a /command dispatch,
+// or a /send whose text is a slash command (#1130): no turn ever runs for
+// them, so nothing else would write last_user_activity_at for the session,
+// and the in-process receipt mirrors what a platform slash command leaves
+// (the app's command path fires OnUserMessage too). Call it only once a
+// command actually HANDLED the request — a name the registry answers still
+// counts, a registered command that fails to dispatch does not. No-op with
+// no session index or an empty key.
+func stampHumanCommandDispatch(d httpHandlerDeps, inst *agentInstance, sessionKey string) {
+	notifyHumanInteraction(inst)
 	if d.sessionIndex != nil && sessionKey != "" {
 		d.sessionIndex.TouchUserActivity(sessionKey, time.Now())
 	}
@@ -345,14 +352,13 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			}
 		}
 
-		// #1130: a human declaration takes effect only now — every gate has
-		// passed and the request dispatches. Everything above (skip/defer/rate
-		// limit/bad model) returns without stamping, so a request's own
-		// declaration can never satisfy or block its own if_user_*/wait_user_*
-		// gate, which was read earlier in this same invocation.
-		if req.Human {
-			notifyHumanInteraction(inst)
-		}
+		// #1130: a human declaration's receipts start here, at the dispatch
+		// boundary — every gate has passed and the request runs now. Every
+		// earlier return (skip, defer, rate limit, bad model) records
+		// nothing, so a request's own declaration can never satisfy or block
+		// its own if_user_*/wait_user_* gate, which was read earlier in this
+		// same invocation; a request that still fails to dispatch below (full
+		// inbox, failed turn) records no receipt either.
 
 		httpLog.Infof("send (agent=%s, session=%s): %s", inst.id, sessionKey, previewForLog(req.Text))
 
@@ -361,9 +367,9 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			cmdCtx := tools.WithSessionKey(d.ctx, sessionKey)
 			if result, ok, _ := inst.cmds.Dispatch(cmdCtx, cmdReq, inst.cc); ok {
 				// A dispatched slash command starts no turn, so nothing else
-				// would stamp the durable timestamp — write it here (#1130).
+				// would stamp either receipt — write both here (#1130).
 				if req.Human {
-					touchHumanUserActivity(d, sessionKey)
+					stampHumanCommandDispatch(d, inst, sessionKey)
 				}
 				writeJSONReceipt(w, result.Text, rcpt)
 				return
@@ -393,7 +399,12 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 		// StreamingSink/SessionSink for chat delivery, run off the same turn) —
 		// deliberately not built now (Dick, #1385: skip the tee).
 		if req.Async {
-			asyncDispatch(w, inst, d.connMgr, sendCtx, sessionKey, req.Text, "http", false, res.Policy, rcpt)
+			// #1130: stamp the in-process receipt only once the request is
+			// actually queued — a full inbox refused it and nothing ran. The
+			// durable timestamp stays the queued turn's own entry write.
+			if asyncDispatch(w, inst, d.connMgr, sendCtx, sessionKey, req.Text, "http", false, res.Policy, rcpt) && req.Human {
+				notifyHumanInteraction(inst)
+			}
 			return
 		}
 
@@ -402,6 +413,11 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			httpLog.Errorf("send error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
+		}
+		// #1130: the turn ran — its entry write already stamped the durable
+		// timestamp via the marker; stamp the in-process receipt alongside.
+		if req.Human {
+			notifyHumanInteraction(inst)
 		}
 		// PolicyBroadcast: the caller gets the response in the body AND every
 		// live surface for the agent gets it delivered.
@@ -534,14 +550,11 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 		}
 
 		// #1130: a command starts no turn, so a human declaration stamps both
-		// receipts itself — the in-process one (mirroring the platforms'
-		// OnUserMessage hook) and the durable timestamp for the command's
-		// target session. Only now: after every gate passed AND a command
+		// receipts itself. Only now: after every gate passed AND a command
 		// actually handled the request, so a skipped, deferred or
 		// unexecutable command records nothing.
 		if req.Human {
-			notifyHumanInteraction(inst)
-			touchHumanUserActivity(d, sk)
+			stampHumanCommandDispatch(d, inst, sk)
 		}
 		writeJSONResponse(w, result.Text)
 	}
@@ -638,16 +651,17 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 		// #1130: a human declaration takes effect only now — every gate has
 		// passed and the branch runs. The durable timestamp is written by the
 		// branch turn's own entry write (runBranchTurn carries the human flag
-		// to the turn context), landing on the NEW branch session key.
-		if req.Human {
-			notifyHumanInteraction(inst)
-		}
-
+		// to the turn context), landing on the NEW branch session key; the
+		// in-process receipt waits for the run below, so a bad model, fork
+		// error or full inbox stamps nothing.
 		result, err := runBranchTurn(d, inst, parentKey, branchRcpt, branchTurnOptions{
 			Text: req.Text, Model: req.Model,
 			NoCompact: req.NoCompact, NoResetHook: req.NoResetHook, Silent: req.Silent,
 		}, !req.Async, req.Human)
 		if err == nil {
+			if req.Human {
+				notifyHumanInteraction(inst)
+			}
 			if req.Async {
 				writeAccepted(w, result.Receipt)
 				return

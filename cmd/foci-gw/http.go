@@ -459,11 +459,18 @@ func writeAccepted(w http.ResponseWriter, rcpt route.Receipt) {
 	})
 }
 
+// asyncDispatch handles async fire-and-forget requests: queues the agent
+// message on the session's inbox worker, writes a 202 response, and
+// delivers the result via platform. Returns whether the request was queued —
+// false means the session inbox was full, a 503 has been written, and the
+// caller must not treat the request as dispatched (the #1130 human receipt
+// stamps only on true).
 func asyncDispatch(w http.ResponseWriter, inst *agentInstance, connMgr platform.ConnectionManager,
-	ctx context.Context, sessionKey, text, logTag string, silent bool, policy route.Policy, rcpt route.Receipt) {
+	ctx context.Context, sessionKey, text, logTag string, silent bool, policy route.Policy, rcpt route.Receipt) bool {
 	if !deliverBufferedQueued(inst, connMgr, ctx, sessionKey, text, logTag, silent, policy) {
 		http.Error(w, "session inbox full", http.StatusServiceUnavailable)
-		return
+		return false
 	}
 	writeAccepted(w, rcpt)
+	return true
 }
