@@ -93,7 +93,8 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	// (every turn — any trigger refreshes the cached prefix), last_activity_at
 	// (skipped for memory-formation turns, so reflection isn't defeated), and
 	// last_user_activity_at (only real-time interactive input — telegram/app/
-	// discord/voice, NOT /send/cron/webhook/agent/memory). Replaces the former
+	// discord/voice — or an HTTP request declared human, NOT plain
+	// /send/cron/webhook/agent/memory). Replaces the former
 	// separate RegisterSessionIndex + recordCacheTouch + touchUserActivity writes.
 	a.recordTurnActivity(ts)
 

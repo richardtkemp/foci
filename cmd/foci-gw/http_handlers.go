@@ -52,9 +52,10 @@ type agentResolver func(agentID string) (*agentInstance, bool)
 // userActivityChecker reports whether a real user has interacted with the agent
 // within the given duration. Reads the derived max of session_index
 // last_user_activity_at (written only on real-time interactive turns —
-// telegram/app/discord/voice). This is the narrow signal used by
-// --if-user-active / --if-user-inactive — independent of any agent turns
-// triggered by /send, cron, webhook, or the agent itself.
+// telegram/app/discord/voice — or an HTTP request declared human). This is
+// the narrow signal used by --if-user-active / --if-user-inactive —
+// independent of any agent turns triggered by /send, cron, webhook, or the
+// agent itself.
 type userActivityChecker func(agentID string, within time.Duration) bool
 
 // sessionActivityChecker reports whether the session at the given base has had
@@ -147,6 +148,30 @@ func buildActivityCheckers(d httpHandlerDeps) (userActivityChecker, sessionActiv
 	return isUserActive, isSessionActive
 }
 
+// notifyHumanInteraction stamps the agent's in-process interaction receipt for
+// a human-declared HTTP request (#1130) — the same stamp the platforms'
+// OnUserMessage hook leaves — so the request counts as attention for the
+// periodic idle checks even when its turn is queued behind in-flight work or
+// it starts no turn at all. No-op when the agent has no periodic runner (the
+// HTTP test harness wires none).
+func notifyHumanInteraction(inst *agentInstance) {
+	if inst.kaRunner != nil {
+		inst.kaRunner.NotifyInteraction()
+	}
+}
+
+// touchHumanUserActivity writes last_user_activity_at directly for a
+// human-declared HTTP request that dispatches NO turn — a /command dispatch,
+// or a /send whose text is a slash command: no turn ever runs for them, so
+// nothing else would stamp the timestamp. Turn-carrying paths never call
+// this; their turn's entry write owns the timestamp, on the turn's own
+// session key. No-op with no session index or an empty key.
+func touchHumanUserActivity(d httpHandlerDeps, sessionKey string) {
+	if d.sessionIndex != nil && sessionKey != "" {
+		d.sessionIndex.TouchUserActivity(sessionKey, time.Now())
+	}
+}
+
 // resolveTargetSession resolves an endpoint's (agent, session-selector) pair
 // through the single route.Resolver ladder, writing the appropriate HTTP error
 // on failure. Every endpoint that takes a session selector resolves here, so
@@ -214,6 +239,7 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			Policy         string `json:"policy"` // strict | fallback | broadcast (delivery policy)
 			Text           string `json:"text"`
 			Model          string `json:"model"`
+			Human          bool   `json:"human"` // #1130: caller declares a human sent this
 			IfUserActive   string `json:"if_user_active"`
 			IfUserInactive string `json:"if_user_inactive"`
 			IfActive       string `json:"if_active"`
@@ -319,12 +345,26 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			}
 		}
 
+		// #1130: a human declaration takes effect only now — every gate has
+		// passed and the request dispatches. Everything above (skip/defer/rate
+		// limit/bad model) returns without stamping, so a request's own
+		// declaration can never satisfy or block its own if_user_*/wait_user_*
+		// gate, which was read earlier in this same invocation.
+		if req.Human {
+			notifyHumanInteraction(inst)
+		}
+
 		httpLog.Infof("send (agent=%s, session=%s): %s", inst.id, sessionKey, previewForLog(req.Text))
 
 		if strings.HasPrefix(req.Text, "/") {
 			cmdReq := command.RequestFromText(req.Text, sessionKey, "", 0)
 			cmdCtx := tools.WithSessionKey(d.ctx, sessionKey)
 			if result, ok, _ := inst.cmds.Dispatch(cmdCtx, cmdReq, inst.cc); ok {
+				// A dispatched slash command starts no turn, so nothing else
+				// would stamp the durable timestamp — write it here (#1130).
+				if req.Human {
+					touchHumanUserActivity(d, sessionKey)
+				}
 				writeJSONReceipt(w, result.Text, rcpt)
 				return
 			}
@@ -333,6 +373,12 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 		app.DeliverExternalPrompt(sessionKey, req.Text)
 
 		sendCtx := agent.WithTrigger(d.ctx, "user")
+		if req.Human {
+			// The turn's entry write (recordTurnActivity) reads this marker
+			// and bumps last_user_activity_at on the turn's own session key —
+			// for sync AND async sends alike, both derive from sendCtx.
+			sendCtx = agent.WithHumanSource(sendCtx)
+		}
 		// NOTE (#1385): this is the sync/async fork for /send delivery shape.
 		// async → asyncDispatch → deliverBufferedQueued streams to the resolved
 		// chat AS THE TURN RUNS (typing indicator + StreamingSink/SessionSink —
@@ -420,6 +466,7 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 		var req struct {
 			Agent          string `json:"agent"`
 			Command        string `json:"command"`
+			Human          bool   `json:"human"` // #1130: caller declares a human sent this
 			IfUserActive   string `json:"if_user_active"`
 			IfUserInactive string `json:"if_user_inactive"`
 			IfActive       string `json:"if_active"`
@@ -480,6 +527,15 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 			return
 		}
 
+		// #1130: a command starts no turn, so a human declaration stamps both
+		// receipts itself — the in-process one, and the durable timestamp for
+		// the command's target session. Only now, after every gate passed; a
+		// skipped or deferred command records nothing.
+		if req.Human {
+			notifyHumanInteraction(inst)
+			touchHumanUserActivity(d, sk)
+		}
+
 		result, ok := dispatchAgentCommand(d, inst, r.Context(), sk, req.Command)
 		if !ok {
 			http.Error(w, "unknown command", http.StatusNotFound)
@@ -502,6 +558,7 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 			Text           string `json:"text"`
 			Model          string `json:"model"`
 			Session        string `json:"session"`
+			Human          bool   `json:"human"` // #1130: caller declares a human sent this
 			NoCompact      bool   `json:"no_compact"`
 			NoResetHook    bool   `json:"no_reset_hook"`
 			IfUserActive   string `json:"if_user_active"`
@@ -576,10 +633,18 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 			return
 		}
 
+		// #1130: a human declaration takes effect only now — every gate has
+		// passed and the branch runs. The durable timestamp is written by the
+		// branch turn's own entry write (runBranchTurn carries the human flag
+		// to the turn context), landing on the NEW branch session key.
+		if req.Human {
+			notifyHumanInteraction(inst)
+		}
+
 		result, err := runBranchTurn(d, inst, parentKey, branchRcpt, branchTurnOptions{
 			Text: req.Text, Model: req.Model,
 			NoCompact: req.NoCompact, NoResetHook: req.NoResetHook, Silent: req.Silent,
-		}, !req.Async)
+		}, !req.Async, req.Human)
 		if err == nil {
 			if req.Async {
 				writeAccepted(w, result.Receipt)

@@ -90,6 +90,29 @@ func SteerPreferenceFromContext(ctx context.Context) SteerPreference {
 	return p
 }
 
+// humanSourceKey is the context key marking a turn as dispatched by a human
+// through a surface that is not real-time interactive — the HTTP API's
+// `"human": true` declaration (foci send/branch/command --human, #1130). It
+// widens ONLY the user-activity write (recordTurnActivity): the trigger stays
+// "user"/"branch", so the turn still does not steer an in-flight turn
+// (isInteractiveTrigger is unchanged) and is still refused during shutdown
+// drain. Absent = automated, exactly as before.
+type humanSourceKey struct{}
+
+// WithHumanSource marks ctx's turn as human-sent despite its non-interactive
+// trigger. Attached by the HTTP send/branch handlers for requests that
+// declared a human sender; see humanSourceKey.
+func WithHumanSource(ctx context.Context) context.Context {
+	return context.WithValue(ctx, humanSourceKey{}, true)
+}
+
+// HumanSourceFromContext reports whether the turn's ctx carries the
+// human-source marker (false if absent).
+func HumanSourceFromContext(ctx context.Context) bool {
+	v, _ := ctx.Value(humanSourceKey{}).(bool)
+	return v
+}
+
 // receivedAtKey is the context key for the user-message receipt time.
 type receivedAtKey struct{}
 

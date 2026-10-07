@@ -350,10 +350,11 @@ func (a *Agent) autonomousTurnSink(conn platform.Connection, sessionKey string) 
 // old value before the write overwrites it — then issues the single
 // RecordTurnActivity upsert that sets, atomically: last_cache_touch (always),
 // last_activity_at (unless a memory-formation turn), and last_user_activity_at
-// (only interactive human turns). Replaces the former separate RegisterSessionIndex
-// + touchCacheFreshness + touchUserActivity writes. Must run at turn entry,
-// before inference. Own key only — root warmth is handled at branch creation by
-// TouchRootCacheForBranch.
+// (only interactive human turns — a platform/voice trigger, or an HTTP request
+// declared human via the human-source marker). Replaces the former separate
+// RegisterSessionIndex + touchCacheFreshness + touchUserActivity writes. Must
+// run at turn entry, before inference. Own key only — root warmth is handled
+// at branch creation by TouchRootCacheForBranch.
 func (a *Agent) recordTurnActivity(ts *TurnState) {
 	if a.SessionIndex == nil || ts.SessionKey == "" {
 		return
@@ -373,13 +374,14 @@ func (a *Agent) recordTurnActivity(ts *TurnState) {
 	if a.DelegatedManager != nil {
 		filePath = a.DelegatedManager.SessionFilePath(ts.SessionKey)
 	}
+	bumpUser := isInteractiveTrigger(ts.Trigger) || HumanSourceFromContext(ts.Ctx)
 	a.SessionIndex.RecordTurnActivity(session.SessionIndexEntry{
 		SessionKey:  ts.SessionKey,
 		FilePath:    filePath,
 		CreatedAt:   time.Now(),
 		SessionType: session.ClassifySessionKey(ts.SessionKey),
 		Status:      session.SessionStatusActive,
-	}, !isMemoryTrigger(ts.Trigger), isInteractiveTrigger(ts.Trigger))
+	}, !isMemoryTrigger(ts.Trigger), bumpUser)
 	a.emitCacheExpiry(ts.SessionKey) // last_cache_touch just advanced → refresh client
 }
 

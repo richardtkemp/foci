@@ -118,8 +118,14 @@ func createBranchSession(d httpHandlerDeps, inst *agentInstance, parentKey strin
 // send on the parent. sync selects the run shape, exactly as the two
 // handleBranch paths always did: sync runs the turn queued and returns its
 // reply; async schedules it on the session's inbox (streaming to the chat
-// unless silent) and returns no reply.
-func runBranchTurn(d httpHandlerDeps, inst *agentInstance, parentKey string, fallbackRcpt route.Receipt, o branchTurnOptions, sync bool) (branchTurnResult, error) {
+// unless silent) and returns no reply. human marks a request whose caller
+// declared a human sent it (#1130): the turn context then carries the
+// human-source marker, so the turn's entry write stamps last_user_activity_at
+// on the branch session. Deliberately a parameter, NOT a branchTurnOptions
+// field — the options are the deferrable subset, and the human flag is
+// intentionally NOT deferrable: the deferred sweep always passes false (the
+// human may be gone by delivery time).
+func runBranchTurn(d httpHandlerDeps, inst *agentInstance, parentKey string, fallbackRcpt route.Receipt, o branchTurnOptions, sync, human bool) (branchTurnResult, error) {
 	bs, err := createBranchSession(d, inst, parentKey, o.NoResetHook)
 	if err != nil {
 		return branchTurnResult{}, err
@@ -159,6 +165,9 @@ func runBranchTurn(d httpHandlerDeps, inst *agentInstance, parentKey string, fal
 	}
 
 	branchCtx := agent.WithTrigger(d.ctx, "branch")
+	if human {
+		branchCtx = agent.WithHumanSource(branchCtx)
+	}
 	if !sync {
 		if !deliverBufferedQueued(inst, d.connMgr, branchCtx, runKey, o.Text, "branch", o.Silent, route.PolicyFallback) {
 			return branchTurnResult{}, errBranchInboxFull

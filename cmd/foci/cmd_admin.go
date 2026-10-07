@@ -89,6 +89,8 @@ warm):
   --wait-user-inactive <dur> Defer until the user has NOT touched this agent within duration (env: FOCI_WAIT_USER_INACTIVE)
   --wait-timeout <dur>      Max wait before running anyway (default 2h; alias --deadline; env: FOCI_WAIT_TIMEOUT)
   --no-gate                 Run now, ignoring any wait condition (env: FOCI_NO_GATE)
+  --human                   Declare a human sent this: counts as user attention on the
+                            command's session once dispatched (env: FOCI_HUMAN)
 
 --wait-* DEFER the command until the condition holds, then dispatch it.
 Deferred requests are persisted (they survive a gateway restart) and are
@@ -104,12 +106,13 @@ instead of skipping and hoping the next cron tick lands):
 }
 
 // commandFlags is the parsed flag set of `foci command`: the shared if/wait
-// gate flag sets. Everything else is the command string itself. Parsed by
-// parseCommandFlags so the flag handling is testable in-process (the
-// parseSendFlags pattern).
+// gate flag sets plus the human declaration. Everything else is the command
+// string itself. Parsed by parseCommandFlags so the flag handling is
+// testable in-process (the parseSendFlags pattern).
 type commandFlags struct {
 	gateFlags
 	waitFlags
+	humanFlag
 }
 
 // parseCommandFlags consumes `foci command`'s flags (and their env defaults)
@@ -124,10 +127,15 @@ func parseCommandFlags(args []string) (flags commandFlags, rest []string) {
 			i = ni
 			continue
 		}
+		if c, ni := flags.humanFlag.tryParseHumanArg(args, i); c {
+			i = ni
+			continue
+		}
 		rest = append(rest, args[i])
 	}
 	flags.gateFlags.applyEnvDefaults()
 	flags.waitFlags.applyEnvDefaults()
+	flags.humanFlag.applyEnvDefault()
 	return flags, rest
 }
 
@@ -151,6 +159,7 @@ func cmdCommand(base string, args []string) error {
 	}
 	flags.gateFlags.addToBody(body)
 	flags.waitFlags.addToBody(body)
+	flags.humanFlag.addToBody(body)
 	return postJSON(base+"/command", body)
 }
 

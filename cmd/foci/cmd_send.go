@@ -12,6 +12,7 @@ type sendFlags struct {
 	model       string // model override (group name, alias, or developer/model_id)
 	gateFlags          // ifWarm / ifCold / ifUserActive / ifUserInactive (TODO #753)
 	waitFlags          // wait-until gates + --no-gate
+	humanFlag          // --human: a human, not a cron, sent this (#1130)
 	messageText string // explicit --message-text / -mt
 	messageFile string // explicit --message-file / -mf
 	async       bool   // fire-and-forget mode
@@ -62,13 +63,16 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 		} else if strings.HasPrefix(args[i], "-m=") {
 			flags.model = args[i][len("-m="):]
 			consumed = true
-		} else if c, ni := flags.gateFlags.tryParseGateArg(args, i); c {
-			i = ni
-			consumed = true
-		} else if c, ni := flags.waitFlags.tryParseWaitArg(args, i); c {
-			i = ni
-			consumed = true
-		} else if args[i] == "--message-text" || args[i] == "--mt" || args[i] == "-mt" {
+	} else if c, ni := flags.gateFlags.tryParseGateArg(args, i); c {
+		i = ni
+		consumed = true
+	} else if c, ni := flags.waitFlags.tryParseWaitArg(args, i); c {
+		i = ni
+		consumed = true
+	} else if c, ni := flags.humanFlag.tryParseHumanArg(args, i); c {
+		i = ni
+		consumed = true
+	} else if args[i] == "--message-text" || args[i] == "--mt" || args[i] == "-mt" {
 			if i+1 < len(args) {
 				flags.messageText = args[i+1]
 				i++
@@ -109,6 +113,7 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 	flags.model = envDefault(flags.model, "FOCI_MODEL")
 	flags.gateFlags.applyEnvDefaults()
 	flags.waitFlags.applyEnvDefaults()
+	flags.humanFlag.applyEnvDefault()
 	flags.messageText = envDefault(flags.messageText, "FOCI_MESSAGE_TEXT")
 	flags.messageFile = envDefault(flags.messageFile, "FOCI_MESSAGE_FILE")
 	flags.async = envBool(flags.async, "FOCI_ASYNC")
@@ -182,6 +187,8 @@ Flags:
   --wait-user-inactive <dur> Defer until the user has NOT touched this agent within duration (env: FOCI_WAIT_USER_INACTIVE)
   --wait-timeout <dur>      Max wait before sending anyway (default 2h; alias --deadline; env: FOCI_WAIT_TIMEOUT)
   --no-gate                 Send immediately: no wait default, no gating (env: FOCI_NO_GATE)
+  --human                   Declare a human sent this: counts as user attention once
+                            dispatched; skipped/deferred requests never do (env: FOCI_HUMAN)
   --sync, --wait            Wait for the agent's reply; NOT a --wait-* gate (env: FOCI_SYNC)
   --async, --no-wait        Fire-and-forget (default) (env: FOCI_ASYNC)
   -mt, --message-text       Message text (env: FOCI_MESSAGE_TEXT)
@@ -222,6 +229,7 @@ func cmdSend(base string, args []string) error {
 	}
 	flags.gateFlags.addToBody(body)
 	flags.waitFlags.addToBody(body)
+	flags.humanFlag.addToBody(body)
 	if flags.model != "" {
 		body["model"] = flags.model
 	}
@@ -269,6 +277,8 @@ Flags:
   --wait-user-inactive <dur> Defer until the user has NOT touched this agent within duration (env: FOCI_WAIT_USER_INACTIVE)
   --wait-timeout <dur>      Max wait before running anyway (default 2h; alias --deadline; env: FOCI_WAIT_TIMEOUT)
   --no-gate                 Run now, ignoring any wait condition (env: FOCI_NO_GATE)
+  --human                   Declare a human sent this: counts as user attention on the
+                            new branch session once it runs (env: FOCI_HUMAN)
   --no-compact              Skip compaction if context limit reached (env: FOCI_NO_COMPACT)
   --no-reset-hook           Skip pre-reset memory hook (env: FOCI_NO_RESET_HOOK)
   --oneshot                 Shorthand for --no-compact --no-reset-hook --silent
@@ -289,6 +299,7 @@ Flags:
 type branchFlags struct {
 	gateFlags
 	waitFlags
+	humanFlag
 	noCompact   bool
 	noResetHook bool
 	silent      bool
@@ -314,6 +325,10 @@ func parseBranchFlags(args []string) (flags branchFlags, rest []string) {
 			continue
 		}
 		if c, ni := flags.waitFlags.tryParseWaitArg(args, i); c {
+			i = ni
+			continue
+		}
+		if c, ni := flags.humanFlag.tryParseHumanArg(args, i); c {
 			i = ni
 			continue
 		}
@@ -369,6 +384,7 @@ func parseBranchFlags(args []string) (flags branchFlags, rest []string) {
 	flags.sync = envBool(flags.sync, "FOCI_SYNC")
 	flags.gateFlags.applyEnvDefaults()
 	flags.waitFlags.applyEnvDefaults()
+	flags.humanFlag.applyEnvDefault()
 	flags.messageText = envDefault(flags.messageText, "FOCI_MESSAGE_TEXT")
 	flags.messageFile = envDefault(flags.messageFile, "FOCI_MESSAGE_FILE")
 	return flags, filtered
@@ -409,6 +425,7 @@ func cmdBranch(base string, args []string) error {
 	}
 	flags.gateFlags.addToBody(body)
 	flags.waitFlags.addToBody(body)
+	flags.humanFlag.addToBody(body)
 	if flags.silent {
 		body["silent"] = true
 	}

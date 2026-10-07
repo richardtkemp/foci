@@ -9,7 +9,8 @@ import "time"
 //
 // The durable source of truth is session_index.last_user_activity_at (agent
 // max via SessionIndex.LastUserActivityForAgent). The turn path writes it on
-// every interactive human turn (telegram/discord/app/voice), it excludes
+// every interactive human turn (telegram/discord/app/voice, or an HTTP
+// request declared human), it excludes
 // wake/cron/keepalive/background/memory turns, and it survives a restart. It
 // is read live on every call, not seeded once, so a restart can never make an
 // idle agent look active (#2023: the old boot-seeded in-memory timestamp made

@@ -319,11 +319,14 @@ func (s *deferSweeper) deliverSend(inst *agentInstance, r defersend.Record) {
 // is long gone). A delivery failure (bad model at delivery time, fork error,
 // full inbox) is logged and the record dropped after that one attempt — a
 // branch has not started yet, and silently forking on the wrong model is
-// worse than a loud drop.
+// worse than a loud drop. The human flag is deliberately false (#1130): it is
+// not part of the deferrable record, and whoever declared themselves human at
+// enqueue time may be gone by delivery — a deferred request always delivers
+// as automated.
 func (s *deferSweeper) deliverBranch(inst *agentInstance, r defersend.Record) {
 	_, err := runBranchTurn(s.deps, inst, r.SessionKey, route.Receipt{SessionKey: r.SessionKey}, branchTurnOptions{
 		Text: r.Text, Model: r.Model, NoCompact: r.NoCompact, NoResetHook: r.NoResetHook, Silent: r.Silent,
-	}, false)
+	}, false, false)
 	if err != nil {
 		deferLog.Warnf("deferred branch %d delivery failed (agent=%s parent=%s): %v", r.ID, r.AgentID, r.SessionKey, err)
 	}

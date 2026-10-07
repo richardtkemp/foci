@@ -39,6 +39,7 @@ These flags are accepted by all commands:
 | `--wait-user-inactive <dur>` | | `FOCI_WAIT_USER_INACTIVE` | **Send/branch/command**: defer until the user has NOT touched this agent within duration, then run it. |
 | `--wait-timeout <dur>` | | `FOCI_WAIT_TIMEOUT` | **Send/branch/command**: max time a deferred request waits before running anyway. Default `2h`. Alias `--deadline`. |
 | `--no-gate` | | `FOCI_NO_GATE` | **Send/branch/command**: run now, ignoring any wait condition (and send's `--wait-cold 1m` default). Non-empty = true. |
+| `--human` | | `FOCI_HUMAN` | **Send/branch/command**: declare a human (not a cron or script) sent this request. It counts as user attention (`--if-user-*` / `--wait-user-*` activity) once dispatched; a skipped or deferred request never does. Non-empty = true. |
 
 **Resolution order:** explicit flag > env var > default. Every flag has a corresponding `FOCI_` env var and vice versa.
 
@@ -81,7 +82,7 @@ foci send [-a agent] [-s session] [-m model] [--if-warm <duration>] [--if-cold <
 | `--model <model>` | `-m` | Model override for this request. Group name (`powerful`/`fast`/`cheap`), model name (`opus`), or `developer/model_id`. |
 | `--if-warm <dur>` (`--if-active`) | | **Session-level gate**: skip if the target session has not run a turn within duration. Go duration format (e.g. `8h`, `30m`). A turn currently in flight always counts as active. |
 | `--if-cold <dur>` (`--if-inactive`) | | **Session-level gate**: skip if the target session has run a turn within duration. Opposite of `--if-warm` — keepalive shape; in-flight always counts. |
-| `--if-user-active <dur>` | | **User-attention gate**: skip if the user has not touched this agent within duration. CLI/cron/agent-to-agent traffic does not count. |
+| `--if-user-active <dur>` | | **User-attention gate**: skip if the user has not touched this agent within duration. CLI/cron/agent-to-agent traffic does not count — unless sent with `--human`. |
 | `--if-user-inactive <dur>` | | **User-attention gate**: skip if the user has touched this agent within duration. |
 | `--wait-warm <dur>` (`--wait-active`) | | **Deferral gate**: defer until the target session has run a turn within duration (in-flight counts), then send. |
 | `--wait-cold <dur>` (`--wait-inactive`) | | **Deferral gate**: defer until the target session has been idle the whole duration, then send. |
@@ -89,6 +90,7 @@ foci send [-a agent] [-s session] [-m model] [--if-warm <duration>] [--if-cold <
 | `--wait-user-inactive <dur>` | | **Deferral gate**: defer until the user has NOT touched this agent within duration, then send. |
 | `--wait-timeout <dur>` (`--deadline`) | | Max deferral before sending anyway. Default **2h**. |
 | `--no-gate` | | Send immediately: no wait default, no wait condition. |
+| `--human` | | Declare a human sent this: counts as user attention once dispatched; skipped/deferred requests never do. |
 | `--sync` / `--wait` | | Wait for the agent's reply instead of returning immediately. Not a `--wait-*` gate. |
 | `--async` / `--no-wait` | | Fire-and-forget mode (default). Returns immediately, response goes to Telegram. |
 | `--message-text <text>` | `-mt` | Explicit message text (alternative to trailing args). |
@@ -130,6 +132,9 @@ foci send -m opus "think carefully about this"
 
 # Send file contents with session-level activity gating
 foci send -a clutch --if-warm 4h -mf tasks/review.md
+
+# A human-typed send: counts as user attention once dispatched
+foci send --human "checking in on this thread"
 ```
 
 **Exit codes:** 0 on success, 1 on error (network failure, HTTP error).
@@ -165,6 +170,7 @@ foci branch [-a agent] [-m model] [--if-warm <duration>] [--if-cold <duration>] 
 | `--wait-user-inactive <dur>` | **Deferral gate**: defer until the user has NOT touched this agent within duration, then branch. |
 | `--wait-timeout <dur>` (`--deadline`) | Max deferral before branching anyway. Default **2h**. |
 | `--no-gate` | Branch now: ignore any wait condition. |
+| `--human` | Declare a human sent this: counts as user attention on the new branch session once it runs. |
 | `--sync` / `--wait` | Wait for the agent's reply instead of returning immediately. Not a `--wait-*` gate. |
 | `--async` / `--no-wait` | Fire-and-forget mode (default). Returns immediately, response goes to Telegram. |
 | `--no-compact` | Skip compaction if context limit is reached during the branch. |
@@ -198,6 +204,9 @@ foci branch --if-user-active 4h -a clutch "follow-up on this morning's chat"
 
 # Branch once the parent session has been cold for 55m (deferred, not skipped)
 foci branch --wait-cold 55m --oneshot -a helen "nightly maintenance"
+
+# A human-typed branch: the branch session counts as touched by its user
+foci branch --human --oneshot -a clutch "side quest while we talk"
 
 # Empty branch (agent wakes up with fork context only)
 foci branch -a research
@@ -285,6 +294,8 @@ foci command [-a agent] [--if-warm <dur>] [--if-cold <dur>] [--if-user-active <d
 
 **Wait gates (deferral, not blocking):** `command` also accepts the `--wait-*` gates (`--wait-warm`, `--wait-cold`, `--wait-user-active`, `--wait-user-inactive`, `--wait-timeout`/`--deadline`, `--no-gate`; same `FOCI_WAIT_*` env vars), evaluated against the session the command targets. Unlike send there is **no default gate** — a command with no if/wait flag runs immediately. An unmet `--wait-*` gate does not skip and does not block: the gateway stores the command (it survives a restart), answers with a "deferred" receipt immediately, and dispatches it once the condition holds; `--wait-timeout`/`--deadline` (default **2h**) dispatches anyway. `--no-gate` ignores any wait condition.
 
+**`--human`:** declare a human (not a cron) dispatched this command. A command starts no turn, so the declaration itself stamps the user-attention timestamp on the command's target session once the command dispatches. A skipped or deferred command records nothing.
+
 **Examples:**
 ```bash
 foci command /cache
@@ -300,6 +311,9 @@ foci command --if-cold 55m -a helen /reset
 # deferred shape: instead of skipping and hoping the next cron tick lands,
 # the gateway holds the /reset and dispatches it at the moment of idleness:
 foci command --wait-cold 55m -a helen /reset
+
+# A human-typed command: the session counts as touched by its user
+foci command --human -a helen /reset
 ```
 
 ---
@@ -464,7 +478,7 @@ The CLI is designed for cron jobs. Both `send` and `branch` default to async mod
 
 **Choosing the right gate:**
 
-- `--if-user-active` / `--if-user-inactive` track *user attention* (real platform inbound — Telegram/Discord). Use these for nudges that should only fire when the user is engaged or specifically away.
+- `--if-user-active` / `--if-user-inactive` track *user attention* (real platform inbound — Telegram/Discord — or an HTTP request declared human with `--human`). Use these for nudges that should only fire when the user is engaged or specifically away.
 - `--if-warm` (`--if-active`) / `--if-cold` (`--if-inactive`) track *session activity* — whether any turn (user, cron, CLI, agent-to-agent) ran on the session, plus an in-flight short-circuit so a turn currently running always counts as active. Use these for keepalives that must yield to running work — they prevent crons piling up behind a long turn.
 
 ## HTTP API

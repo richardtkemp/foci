@@ -326,7 +326,8 @@ func (idx *SessionIndex) upsertLocked(e SessionIndexEntry) {
 //   - last_cache_touch  → always (every turn refreshes the cached prefix),
 //   - last_activity_at   → only when bumpActivity (false for memory-formation
 //     turns, which must not defeat the reflection-skip guard); kept monotonic,
-//   - last_user_activity_at → only when bumpUser (interactive human turns).
+//   - last_user_activity_at → only when bumpUser (interactive human turns —
+//     a platform/voice trigger, or an HTTP request declared human).
 //
 // It replaces the former three separate writes (Upsert + touchCacheFreshness +
 // touchUserActivity). e.CreatedAt carries the turn's `now`. On CONFLICT the
@@ -461,9 +462,10 @@ func (idx *SessionIndex) LastUserActivity(sessionKey string) (time.Time, bool) {
 }
 
 // TouchUserActivity records that a human interacted with this session at time
-// `at`. Written only on user-triggered turns (telegram/app/discord/voice), so
-// unlike last_cache_touch it excludes cron/keepalive/agent/memory turns — it is
-// the clean "a human spoke recently" signal. No-op if the row doesn't exist.
+// `at`. Written on user-triggered turns (telegram/app/discord/voice — or an
+// HTTP request declared human), so unlike last_cache_touch it excludes
+// cron/keepalive/agent/memory turns — it is the clean "a human spoke
+// recently" signal. No-op if the row doesn't exist.
 func (idx *SessionIndex) TouchUserActivity(sessionKey string, at time.Time) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
