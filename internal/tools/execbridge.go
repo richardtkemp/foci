@@ -795,9 +795,9 @@ var todoActions = []struct {
 	Flags string // space-separated --flag list valid for this action; empty = no flags
 }{
 	{"add", "add <text> | --text TEXT | [<title>] --body TEXT  [--title TEXT] [--priority high|medium|low] [--tag TAGS]   (alias: create; with --body, bare words are the title; the title is prepended in bold)", "--text --body --title --priority --tag"},
-	{"list", "list [--tag T] [--status open|done|dropped|all] [--priority P] [--sort F] [--reverse] [--limit N] [--format jsonl|md]", "--tag --status --priority --sort --reverse --limit --format"},
-	{"list-all", "list-all [--tag T] [--priority P] [--sort F] [--reverse] [--limit N] [--format jsonl|md]", "--tag --priority --sort --reverse --limit --format"},
-	{"search", "search <query> [--sort F] [--reverse] [--limit N] [--format jsonl|md]   (query may also be given as --query TEXT)", "--query --sort --reverse --limit --format"},
+	{"list", "list [--tag T] [--status open|done|dropped|all] [--priority P] [--sort F] [--reverse] [--limit N] [--truncate N] [--format jsonl|md]", "--tag --status --priority --sort --reverse --limit --truncate --format"},
+	{"list-all", "list-all [--tag T] [--priority P] [--sort F] [--reverse] [--limit N] [--truncate N] [--format jsonl|md]", "--tag --priority --sort --reverse --limit --truncate --format"},
+	{"search", "search <query> [--sort F] [--reverse] [--limit N] [--truncate N] [--format jsonl|md]   (query may also be given as --query TEXT; --truncate: chars per item, default 300 unpiped / none piped, 0 = none)", "--query --sort --reverse --limit --truncate --format"},
 	{"get", "get <id> [--format jsonl|md]   (alias: show; or --id N)", "--id --format"},
 	{"complete", "complete <id> [--reason|--notes|--note|--text TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason --notes --note --text"},
 	{"drop", "drop <id> [--reason|--notes|--note|--text TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason --notes --note --text"},
@@ -978,7 +978,7 @@ func generateShellFunc(t *Tool) string {
     fi
     return 0
   fi
-  local text="" priority="" tag="" query="" status="" id="" ids="" reason="" sort="" reverse="" limit="" append="" append_text="" body="" title="" add_words="" add_tag="" remove_tag=""
+  local text="" priority="" tag="" query="" status="" id="" ids="" reason="" sort="" reverse="" limit="" truncate="" append="" append_text="" body="" title="" add_words="" add_tag="" remove_tag=""
   while [ $# -gt 0 ]; do
     # #1218: reject flags that are globally-known but not valid for THIS action
     # (e.g. edit --status done — --status is a list/search filter that edit's
@@ -1025,6 +1025,7 @@ func generateShellFunc(t *Tool) string {
       --append) append=true; shift ;;
       --sort) sort="$2"; shift 2 ;;
       --limit) foci__json_arg --limit number "$2" || return 1; limit="$2"; shift 2 ;;
+      --truncate) foci__json_arg --truncate number "$2" || return 1; truncate="$2"; shift 2 ;;
       --reverse) reverse=true; shift ;;
       # #2048: explicit output form, overriding the stdout-piped detection in
       # the prologue. Carried to the tool as a hint, not a schema param, so the
@@ -1042,7 +1043,7 @@ func generateShellFunc(t *Tool) string {
         elif [ -n "$action" ]; then
           echo "'$action' takes no flags" >&2
         else
-          echo "valid flags: --text --priority --tag --query --status --id --ids --reason --notes --note --append --append-text --add --sort --reverse --limit --format" >&2
+          echo "valid flags: --text --priority --tag --query --status --id --ids --reason --notes --note --append --append-text --add --sort --reverse --limit --truncate --format" >&2
         fi
         return 1 ;;
       *) # positional: first positional is text/query/id depending on action
@@ -1146,6 +1147,7 @@ func generateShellFunc(t *Tool) string {
       [ -n "$sort" ] && params="$(echo "$params" | jq --arg o "$sort" '. + {sort: $o}')"
       [ -n "$reverse" ] && params="$(echo "$params" | jq '. + {reverse: true}')"
       [ -n "$limit" ] && params="$(echo "$params" | jq --argjson l "$limit" '. + {limit: $l}')"
+      [ -n "$truncate" ] && params="$(echo "$params" | jq --argjson n "$truncate" '. + {truncate: $n}')"
       foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
       ;;
     list-all)
@@ -1155,6 +1157,7 @@ func generateShellFunc(t *Tool) string {
       [ -n "$sort" ] && params="$(echo "$params" | jq --arg o "$sort" '. + {sort: $o}')"
       [ -n "$reverse" ] && params="$(echo "$params" | jq '. + {reverse: true}')"
       [ -n "$limit" ] && params="$(echo "$params" | jq --argjson l "$limit" '. + {limit: $l}')"
+      [ -n "$truncate" ] && params="$(echo "$params" | jq --argjson n "$truncate" '. + {truncate: $n}')"
       foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
       ;;
     search)
@@ -1163,6 +1166,7 @@ func generateShellFunc(t *Tool) string {
       [ -n "$sort" ] && params="$(echo "$params" | jq --arg o "$sort" '. + {sort: $o}')"
       [ -n "$reverse" ] && params="$(echo "$params" | jq '. + {reverse: true}')"
       [ -n "$limit" ] && params="$(echo "$params" | jq --argjson l "$limit" '. + {limit: $l}')"
+      [ -n "$truncate" ] && params="$(echo "$params" | jq --argjson n "$truncate" '. + {truncate: $n}')"
       foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
       ;;
     get)

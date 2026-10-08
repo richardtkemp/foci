@@ -54,7 +54,7 @@ func TestTodoJSONL_ListShape(t *testing.T) {
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
-	longBody := strings.Repeat("word ", 200) // 1000 chars: must be excerpted
+	longBody := strings.Repeat("word ", 200) // 1000 chars: piped, so kept whole
 	id1, _ := store.Add("agent1", "*Ship the thing*\n\n"+longBody, "high", "foci,tools")
 	id2, _ := store.Add("agent1", "plain item\nsecond line <a> & b", "medium", "")
 
@@ -88,8 +88,8 @@ func TestTodoJSONL_ListShape(t *testing.T) {
 		t.Errorf("tags = %#v, want [foci tools]", a["tags"])
 	}
 	body, _ := a["body"].(string)
-	if body == "" || len([]rune(body)) > todoJSONLBodyExcerpt+1 || !strings.HasSuffix(body, "…") {
-		t.Errorf("body should be a short excerpt ending in …, got %d runes: %q", len([]rune(body)), body)
+	if body != longBody {
+		t.Errorf("piped body should be the full verbatim body (no --truncate), got %d runes: %q", len([]rune(body)), body)
 	}
 	if strings.Contains(body, "Ship the thing") {
 		t.Errorf("body excerpt repeats the title: %q", body)

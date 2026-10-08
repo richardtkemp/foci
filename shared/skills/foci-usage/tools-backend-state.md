@@ -11,7 +11,7 @@ Per-tool reference for the Claude Code (shell) backend. How `foci_*` shell funct
 - `complete|drop <id>` accept `--reason`/`--note`/`--notes` (all map to the close reason); ID forms `<id>` positional, `--id N`, or `--ids 1,2,3`.
 - **No `reopen` verb.** To reopen a closed item, write the DB directly: `UPDATE todos SET status='open', completed_at=NULL, close_reason='' WHERE agent_id=? AND id=?` on `~/<agent>/.data/todo.db`.
 - Chain with Unix tools to keep output small: `foci_todo list --status open | wc -l`.
-- **Piped output is JSONL:** piped or `$(...)`-captured `list`/`list-all`/`search`/`get` prints one JSON object per item (`id, status, priority, tags[], title, created_at, updated_at, body` excerpt; `get` = full body; closed items add `close_reason`/`closed_at`). A capped list ends `{"truncated":true,...}`; no match = empty. `--format jsonl|md` forces either; `--json` = `--format jsonl`.
+- **Piped output is JSONL:** piped or `$(...)`-captured `list`/`list-all`/`search`/`get` prints one JSON object per item (`id, status, priority, tags[], title, created_at, updated_at, body` — full unless `--truncate`; `get` = full body; closed items add `close_reason`/`closed_at`). A capped list ends `{"truncated":true,...}`; no match = empty. `--format jsonl|md` forces either; `--json` = `--format jsonl`. **`--truncate N`** (list/search) caps each item's text at N chars, cut items ending `… [+K chars: get <id>]`; default 300 unpiped, none when piped; `0` = none.
 
 ### `foci_remind` — defer a thought
 - `--text T --when SPEC`. SPEC: duration (`2h`, `30m`), `tomorrow`, `next_keepalive`, `next_session`, a date (`YYYY-MM-DD`), or an ISO timestamp.
