@@ -745,3 +745,188 @@ func TestMutatorMergesUnseenFileEdit(t *testing.T) {
 		t.Errorf("Get(svc.chat2) = %q, %v — want the merged hand edit", v, ok)
 	}
 }
+
+func TestSeparateStoreSaveIsSeenByExistingView(t *testing.T) {
+	// Proves the reload also covers a writer in another process: a second
+	// store loaded from the same file (what `foci secrets set` is) Set+Save's,
+	// and a view the first store handed out BEFORE that resolves the new
+	// value on its next use (#1269).
+	path := writeSecrets(t, "[svc]\nkey = \"aaaa1111\"\nallowed_hosts = [\"h\"]\n")
+	gw, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	view := gw.ForAgent("alice")
+
+	cli, err := Load(path)
+	if err != nil {
+		t.Fatalf("second Load: %v", err)
+	}
+	mustMutate(t, cli.Set("svc.new", "cli12345"))
+	if err := cli.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if r, err := view.Resolve("{{secret:svc.new}}"); err != nil || r != "cli12345" {
+		t.Errorf("view Resolve = %q, %v — want the value the second store saved", r, err)
+	}
+}
+
+func TestMutateOverBrokenFileKeepsLastGood(t *testing.T) {
+	// Proves what an in-process mutation does when the file on disk has
+	// become unparseable: the mutator's refresh fails with exactly one
+	// warning, the mutation applies to the last good contents, and Save
+	// writes those merged contents — the unparseable fragment is dropped,
+	// because a fragment that cannot be parsed cannot be merged.
+	buf := captureWarns(t)
+	path := writeSecrets(t, "[svc]\nkey = \"aaaa1111\"\n")
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	next := mtimeSeq()
+	rewrite(t, path, "[svc]\nkey = \"aaaa1111\"\nhand = \"half-typed\n", next()) // unbalanced quote
+
+	mustMutate(t, s.Set("svc.chat", "chat1234"))
+	if err := s.Save(); err != nil {
+		t.Fatalf("Save over a broken file: %v", err)
+	}
+	if n := strings.Count(buf.String(), reloadWarnMarker); n != 1 {
+		t.Errorf("%d warnings for the broken file — want exactly 1", n)
+	}
+
+	disk, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`key = "aaaa1111"`, `chat = "chat1234"`} {
+		if !strings.Contains(string(disk), want) {
+			t.Errorf("secrets.toml after Set+Save lacks %q:\n%s", want, disk)
+		}
+	}
+	if strings.Contains(string(disk), "half-typed") {
+		t.Errorf("secrets.toml after Set+Save kept the unparseable fragment:\n%s", disk)
+	}
+}
+
+func TestFailedSaveKeepsMutationLiveForViews(t *testing.T) {
+	// Proves store-first semantics when the file cannot be written: after a
+	// failed Save the mutation is still served to the agents (reads come
+	// from the store, which remains authoritative), while the disk keeps
+	// its old contents.
+	if os.Geteuid() == 0 {
+		t.Skip("running as root — chmod cannot make the file unwritable")
+	}
+	path := writeSecrets(t, "[svc]\nkey = \"aaaa1111\"\n")
+	root, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	view := root.ForAgent("alice")
+
+	if err := os.Chmod(path, 0400); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(path, 0600) })
+
+	mustMutate(t, root.Set("svc.key", "unsaved99"))
+	if err := root.Save(); err == nil {
+		t.Fatal("Save on a read-only file unexpectedly succeeded")
+	}
+	if v, ok := view.Get("svc.key"); !ok || v != "unsaved99" {
+		t.Errorf("view Get = %q, %v — want the unsaved mutation", v, ok)
+	}
+
+	disk, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(disk), "unsaved99") || !strings.Contains(string(disk), "aaaa1111") {
+		t.Errorf("disk = %q — want the pre-Save contents only", disk)
+	}
+}
+
+func TestUnreadableFileKeepsLastGoodAndWarnsOnce(t *testing.T) {
+	// Proves the keep-last-good arm for a file that stats but cannot be
+	// read (permissions): reads keep answering the last good contents with
+	// exactly one warning for that file state, and the store recovers only
+	// when a stamp changes again — fixing the permissions alone changes
+	// neither mtime, size nor identity, so it does not trigger a re-read.
+	if os.Geteuid() == 0 {
+		t.Skip("running as root — chmod cannot make the file unreadable")
+	}
+	buf := captureWarns(t)
+	path := writeSecrets(t, "[svc]\nkey = \"aaaa1111\"\n")
+	root, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	view := root.ForAgent("alice")
+
+	next := mtimeSeq()
+	rewrite(t, path, "[svc]\nkey = \"bbbb2222\"\n", next())
+	if err := os.Chmod(path, 0000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(path, 0600) })
+
+	for i := 0; i < 50; i++ {
+		if v, ok := view.Get("svc.key"); !ok || v != "aaaa1111" {
+			t.Fatalf("Get under an unreadable file = %q, %v — want the last good value", v, ok)
+		}
+	}
+	if n := strings.Count(buf.String(), reloadWarnMarker); n != 1 {
+		t.Fatalf("%d warnings for the unreadable file — want exactly 1", n)
+	}
+
+	// Permissions restored, stamp untouched: still the last good contents.
+	if err := os.Chmod(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := view.Get("svc.key"); !ok || v != "aaaa1111" {
+		t.Fatalf("Get after a bare chmod back = %q, %v — no stamp changed, so no re-read was due", v, ok)
+	}
+
+	// A stamp change on the readable file is picked up.
+	rewrite(t, path, "[svc]\nkey = \"bbbb2222\"\n", next())
+	if v, ok := view.Get("svc.key"); !ok || v != "bbbb2222" {
+		t.Errorf("Get after the file changed again = %q, %v — want the reloaded value", v, ok)
+	}
+}
+
+func TestDirectoryAtPathKeepsLastGoodAndStaysBlocked(t *testing.T) {
+	// Proves the keep-last-good arm for a directory replacing the file
+	// (the stat succeeds, the read fails): the last good contents keep
+	// being served, exactly one warning is logged, and the secrets path
+	// stays blocked for exec after the failed reloads.
+	buf := captureWarns(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "secrets.toml")
+	next := mtimeSeq()
+	rewrite(t, path, "[svc]\nkey = \"aaaa1111\"\n", next())
+	root, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	view := root.ForAgent("alice")
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 50; i++ {
+		if v, ok := view.Get("svc.key"); !ok || v != "aaaa1111" {
+			t.Fatalf("Get with a directory at the path = %q, %v — want the last good value", v, ok)
+		}
+	}
+	if n := strings.Count(buf.String(), reloadWarnMarker); n != 1 {
+		t.Errorf("%d warnings for the directory — want exactly 1", n)
+	}
+	if !view.IsBlockedPath(path) || !view.IsBlockedCommand("cat " + path) {
+		t.Errorf("the secrets path stopped being blocked after failed reloads")
+	}
+}

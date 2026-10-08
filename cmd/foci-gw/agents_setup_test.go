@@ -1,10 +1,16 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"foci/internal/agent"
 	"foci/internal/config"
 	"foci/internal/nudge"
+	"foci/internal/secrets"
+	"foci/internal/workspace"
 )
 
 // TestBuildCompactor_LiveConfigEditUpdatesCompactor proves the OnChange
@@ -87,5 +93,54 @@ func TestNudgeCapabilities(t *testing.T) {
 			t.Errorf("nudgeCapabilities(%q) = (%v, %v), want (%v, %v)",
 				tt.backend, gotPostTool, gotPreAnswer, tt.wantPostTool, tt.wantPreAnswer)
 		}
+	}
+}
+
+// TestSetupRedactionFollowsFileWhileSecretsListStays pins both halves of the
+// #1269 prompt-cache contract: the Redact function setupRedaction binds to the
+// agent follows later secrets.toml edits (a value added after startup is
+// redacted), while the system prompt's secret list — built once at startup via
+// SetSecretNames (agents_setup.go) — does not change, so the prompt and its
+// cache stay valid.
+func TestSetupRedactionFollowsFileWhileSecretsListStays(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "secrets.toml")
+	if err := os.WriteFile(path, []byte("[old]\nkey = \"oldvalue1\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	root, err := secrets.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentStore := root.ForAgent("alice")
+
+	p := minimalSetupParams(t, "alice")
+	p.store = root
+	p.acfg.Workspace = filepath.Join(dir, "ws")
+	if err := os.MkdirAll(p.acfg.Workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	ag := &agent.Agent{}
+	setupRedaction(ag, p, agentStore)
+
+	bs := workspace.NewBootstrap(p.acfg.Workspace, nil)
+	bs.SetSecretNames(agentStore.Names(), p.bwStore != nil)
+	before := bs.SystemBlocks()
+
+	if err := os.WriteFile(path, []byte("[old]\nkey = \"oldvalue1\"\n[newsec]\nkey = \"addedLater99\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if out := ag.Redact("token=addedLater99"); strings.Contains(out, "addedLater99") {
+		t.Fatalf("bound Redact did not redact a value added after startup: %q", out)
+	}
+	if names := agentStore.Names(); len(names) != 2 {
+		t.Fatalf("store names after the edit = %v — want the added secret visible to the store", names)
+	}
+
+	after := bs.SystemBlocks()
+	last := after[len(after)-1].Text
+	if strings.Contains(last, "newsec") || len(before) != len(after) || before[len(before)-1].Text != last {
+		t.Fatalf("the system prompt's secrets block changed after the edit: %q", last)
 	}
 }

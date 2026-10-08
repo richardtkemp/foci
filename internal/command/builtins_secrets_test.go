@@ -3,8 +3,12 @@ package command
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"foci/internal/secrets"
 )
 
 // errBoom is the canned mutator error for the error-surfacing tests.
@@ -897,5 +901,30 @@ func TestSecretsWizardMutatorErrorsSurface(t *testing.T) {
 	addW := newSecretsHostsAddWizard(store, "custom")
 	if msg, done := addW.Handle("api.example.com"); !done || !strings.Contains(msg, "Failed to add host") {
 		t.Errorf("hosts-add wizard = %q, %v — want the AddAllowedHost failure reported", msg, done)
+	}
+}
+
+// TestSecretsCommandSetReachesViewMadeBefore proves the /secrets set flow
+// reaches the agents' stores end to end: the command mutates the ROOT store
+// (SecretsDeps.Store), and a per-agent view handed out BEFORE the command ran
+// resolves the new value on its next use — no restart, no rebuild (#1269).
+func TestSecretsCommandSetReachesViewMadeBefore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secrets.toml")
+	if err := os.WriteFile(path, []byte("[svc]\nallowed_hosts = [\"x\"]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	root, err := secrets.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := root.ForAgent("alice")
+
+	cc := CommandContext{SecretsDeps: &SecretsDeps{Store: root}}
+	if _, err := SecretsCommand().Execute(context.Background(), Request{Args: "set svc.key value1234"}, cc); err != nil {
+		t.Fatal(err)
+	}
+
+	if r, err := view.Resolve("{{secret:svc.key}}"); err != nil || r != "value1234" {
+		t.Fatalf("view Resolve after /secrets set = %q, %v — want the value the command set", r, err)
 	}
 }
