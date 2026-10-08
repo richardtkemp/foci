@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"foci/internal/agent"
+	"foci/internal/compaction"
 	"foci/internal/config"
 	"foci/internal/delegator"
 	"foci/internal/delegator/accounting"
@@ -261,5 +262,27 @@ func TestBackgroundAgentContextUsageIgnoresPreCompactionFill(t *testing.T) {
 	book("2", accounting.SourceCompaction, now.Add(-45*time.Minute), accounting.KindCompaction, 124000)
 	if fill, _ := ba.ContextUsage(sk); fill != 0 {
 		t.Errorf("after a compaction: fill = %d, want 0 (unknown) — the last fill predates the compaction", fill)
+	}
+}
+
+// TestBackgroundAgentContextUsageLimitIsAutoCompactionLimit: the quiet
+// threshold is a fraction of the USABLE context — the limit at which foci
+// auto-compacts (Agent.CompactionLimitTokens) — not the model's whole window
+// (Dick, 2026-10-08). On a 1M window the default curve compacts near 48%,
+// so a fraction of the raw window let 370-450K sessions sit below 50% all
+// night. With no Compactor (auto-compaction off) the window is the limit.
+func TestBackgroundAgentContextUsageLimitIsAutoCompactionLimit(t *testing.T) {
+	const sk = "qa/c1"
+	inst := newQuietSetupInstance(t, &config.Config{}, config.AgentConfig{ID: "qa"}, func(a *agent.Agent) {
+		a.ModelMetaFn = func(string) modelinfo.ModelMeta { return modelinfo.ModelMeta{ContextWindow: 200000} }
+		a.Compactor = compaction.NewCompactor(nil, 0.5)
+	})
+	ba := &backgroundAgent{inst: inst, agentID: "qa"}
+	if _, limit := ba.ContextUsage(sk); limit != 100000 {
+		t.Errorf("limit = %d, want 100000 (0.5 auto-compaction threshold of a 200000 window)", limit)
+	}
+	inst.ag.Compactor = nil
+	if _, limit := ba.ContextUsage(sk); limit != 200000 {
+		t.Errorf("no Compactor: limit = %d, want the 200000 window", limit)
 	}
 }

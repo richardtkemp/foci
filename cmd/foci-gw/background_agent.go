@@ -99,10 +99,17 @@ func (b *backgroundAgent) LastTurnEnd(sessionKey string) time.Time {
 // from the cost ledger — every backend books there — and 0 (unknown) when no
 // turn with a fill is recorded OR a compaction is booked after the latest
 // fill (#2235: that fill is the pre-compaction size, and acting on it would
-// compact a just-compacted session again); limit from the session's model
-// context window.
+// compact a just-compacted session again). limit is the session's USABLE
+// context: the token count at which foci auto-compacts it
+// (CompactionLimitTokens), so the quiet threshold is a fraction of that, not
+// of the model's whole window (Dick, 2026-10-08: on a 1M window the default
+// curve compacts near 48%, and 370-450K sessions sat below "50%" all night).
+// With auto-compaction off it falls back to the model's context window.
 func (b *backgroundAgent) ContextUsage(sessionKey string) (fill, limit int) {
-	limit = b.inst.ag.SessionContextLimit(sessionKey)
+	limit = int(b.inst.ag.CompactionLimitTokens(sessionKey))
+	if limit <= 0 {
+		limit = b.inst.ag.SessionContextLimit(sessionKey)
+	}
 	if l := accounting.Live(); l != nil {
 		if f, err := l.CurrentContextFill(sessionKey); err == nil {
 			fill = f

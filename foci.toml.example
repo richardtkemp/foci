@@ -476,7 +476,7 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # compaction_handoff_msg = ""
 # compaction_preserve_messages = 25
 # compaction_quiet_hours = "23:00-07:00"     # nightly idle-compaction window (process tz, may wrap midnight); default shown; "" = off
-# compaction_quiet_threshold = 0.5           # fraction of the context window at or above which an idle session compacts in the quiet window
+# compaction_quiet_threshold = 0.5           # fraction of the usable context (auto-compaction point) at or above which an idle session compacts in the quiet window
 # compaction_quiet_min_idle = "30m"          # how idle a session must be before the quiet window may compact it
 # facet_no_compact = true                  # set no_compact on facet sessions
 # max_system_prompt_chars_file = 20000
