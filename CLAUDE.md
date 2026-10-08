@@ -92,6 +92,18 @@ gh codeql query run query.ql --database=codeql-db
 	  max_turns = 10
 	```
 
+- **User-facing commits carry an announcement.** If a change alters what a user of foci sees or can do (not an internal fix or refactor), end the commit message body with an announcement block, after the normal content and before any trailers: 3-5 sentences telling the user what they get, in their words, with no technology. Include every limit or exception they will hit. Commit with `git commit -F <file>` or `-m`, not through an editor: git deletes `#` lines from a message it opens in an editor. For example:
+	```
+	secrets: pick up secrets.toml edits on the next use, no restart
+
+	<normal message: what changed and why>
+	---
+	# Announcement
+	When you add or change a secret, your agents can use it on their next request; you no longer need to restart foci. If a bad edit breaks the file, agents keep using the last good version until you fix it.
+
+	Co-Authored-By: ...
+	```
+
 ## Key Constraints
 
 - **No circular imports.** `log` and `config` are leaf packages. Check the dependency graph in WIRING.md.
