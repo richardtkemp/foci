@@ -488,6 +488,19 @@ type ContextWindowQuerier interface {
 	GetContextWindow(ctx context.Context) (*ContextWindow, error)
 }
 
+// LiveModelReporter is optionally implemented by backends that can name the
+// model their live process is running without waiting for a turn result —
+// the same value that backend's TurnResult.Model will carry, available from
+// the moment the process reports it (e.g. CC's system/init).
+type LiveModelReporter interface {
+	// LiveModel returns the model the backend last learned from its own
+	// process, spelled exactly as that backend's TurnResult.Model.
+	// It does no I/O, sends nothing to the backend process and never blocks
+	// on a turn. It returns "" when the backend does not know a model yet,
+	// and never returns the synthetic sentinel.
+	LiveModel() string
+}
+
 // HumanReadableBackendName returns the display name for a delegated backend
 // type (the config `[agents].backend` value), e.g. "claude-code" ->
 // "Claude Code", from its Spec.DisplayName. Used anywhere a command's help

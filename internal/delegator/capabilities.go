@@ -74,6 +74,7 @@ const (
 	CapDeliveryTracking
 	CapThreadNaming
 	CapContextWindow
+	CapLiveModel
 
 	// Sessions.
 	CapBranch
@@ -157,6 +158,7 @@ var capabilityTable = [numCapabilities]CapabilityInfo{
 	CapDeliveryTracking: {Name: "delivery_tracking", Kind: KindInterface, Iface: ifaceOf[DeliveryTracker](), Doc: "proves each input reached the model and hands back the rest (DeliveryTracker + Spec.TranscriptChecker)"},
 	CapThreadNaming:     {Name: "thread_naming", Kind: KindInterface, Iface: ifaceOf[ThreadNameConsumer](), Doc: "names its own sessions (ThreadNameConsumer)"},
 	CapContextWindow:    {Name: "context_window", Kind: KindInterface, Iface: ifaceOf[ContextWindowQuerier](), Doc: "reports the model's context window and usage (ContextWindowQuerier)"},
+	CapLiveModel:        {Name: "live_model", Kind: KindInterface, Iface: ifaceOf[LiveModelReporter](), Doc: "reports the model its live process last named, without a turn result (LiveModelReporter)"},
 
 	CapBranch:        {Name: "branch", Kind: KindInterface, Iface: ifaceOf[BackendBrancher](), Doc: "forks and deletes its own sessions (BackendBrancher)"},
 	CapScopedCleanup: {Name: "scoped_cleanup", Kind: KindInterface, Iface: ifaceOf[RunningBackendCleaner](), Requires: []Capability{CapBranch}, Doc: "needs a live server to delete sessions and opens it once per sweep (RunningBackendCleaner)"},

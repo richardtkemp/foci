@@ -162,6 +162,7 @@ Every delegated backend declares every capability in its `delegator.Spec` (`inte
 | `delivery_tracking` | proves each input reached the model and hands back the rest (DeliveryTracker + Spec.TranscriptChecker) | ✓ | ✗ | ✗ |
 | `thread_naming` | names its own sessions (ThreadNameConsumer) | ✗ | ✓ | ✗ |
 | `context_window` | reports the model's context window and usage (ContextWindowQuerier) | ✓ | ✓ | ✓ |
+| `live_model` | reports the model its live process last named, without a turn result (LiveModelReporter) | ✓ | ✗ | ✗ |
 | `branch` | forks and deletes its own sessions (BackendBrancher) | ✓ | ✓ | ✓ |
 | `scoped_cleanup` | needs a live server to delete sessions and opens it once per sweep (RunningBackendCleaner) | ✗ | ✓ | ✓ |
 | `host_hooks` | takes the gateway's HostHooks: auth-failure and rate-limit reports, pretool and stop rules (HostHooksAcceptor) | ✓ | ✗ | ✓ |
@@ -195,6 +196,7 @@ Why not:
 - `fold_attachments`: codex: a message folded into a running turn carries text only; opencode: a message folded into a running turn carries text only.
 - `delivery_tracking`: codex: inputs are fire-and-forget: no proof of consumption; opencode: inputs are fire-and-forget: no proof of consumption.
 - `thread_naming`: claude-code: CC does not name its sessions; agents get the set_session_alias tool instead; opencode: foci does not take opencode's session titles.
+- `live_model`: codex: its model reaches foci only through thread start and turn results; opencode: its model is reported only at session idle.
 - `scoped_cleanup`: claude-code: fork and cleanup are local transcript file operations, no server needed.
 - `host_hooks`: codex: reports no auth failures or rate limits foci acts on, and has no pretool or stop hooks.
 - `unstarted_readiness_probe`: opencode: CheckReady needs the server that only Start creates.
@@ -643,6 +645,7 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - M1: `cc/lifecycle.go:Start` (`--model`) | `oc/backend_lifecycle.go:Start` (`resolveModelFn`) | `cx/lifecycle.go:prepareConfiguredModel`
 - `control_model`: `cc/control.go:sendSetModel` | `oc/control.go:SendControl` | `cx/control.go:SendControl`
 - `model_resolve`: n/a | `oc/model_validate.go:resolveModel` (not the interface) | `cx/model_resolver.go:ResolveModel`
+- `live_model`: `cc/livemodel.go:LiveModel` (reads `lastModel`, set by `OnSystem` init and top-level `OnAssistant`) | ✗ grep `LiveModel` | ✗ same
 - M4: `gw/main.go` modelcaps fetcher for `BackendCCStream` | ✗ grep `modelcaps` | `cx/modelcaps.go:refreshModelCaps` → `publishModelCaps`
 - M5: `cc/lifecycle.go:Start` (`--effort`), `cc/control.go:SendControl` | n/a | `cx/control.go` `pendingEffort`
 - `voice_mode`: `cc/voicemode.go` | n/a | `cx/voicemode.go`

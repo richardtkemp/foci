@@ -62,6 +62,7 @@ var spec = delegator.Spec{
 		delegator.CapDeliveryTracking: delegator.Yes(),
 		delegator.CapThreadNaming:     delegator.No("CC does not name its sessions; agents get the set_session_alias tool instead"),
 		delegator.CapContextWindow:    delegator.Yes(),
+		delegator.CapLiveModel:        delegator.Yes(),
 
 		delegator.CapBranch:        delegator.Yes(),
 		delegator.CapScopedCleanup: delegator.No("fork and cleanup are local transcript file operations, no server needed"),

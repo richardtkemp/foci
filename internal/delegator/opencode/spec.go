@@ -51,6 +51,7 @@ var spec = delegator.Spec{
 		delegator.CapDeliveryTracking: delegator.No("inputs are fire-and-forget: no proof of consumption"),
 		delegator.CapThreadNaming:     delegator.No("foci does not take opencode's session titles"),
 		delegator.CapContextWindow:    delegator.Yes(),
+		delegator.CapLiveModel:        delegator.No("its model is reported only at session idle"),
 
 		delegator.CapBranch:        delegator.Yes(),
 		delegator.CapScopedCleanup: delegator.Yes(),

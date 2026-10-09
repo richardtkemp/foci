@@ -464,7 +464,7 @@ var toolTable = []toolEntry{
 					return ""
 				}
 				if ag := d.agLazy(); ag != nil {
-					return ag.SessionModel(sessionKey)
+					return ag.ReportedSessionModel(sessionKey)
 				}
 				return ""
 			},

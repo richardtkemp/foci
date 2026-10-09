@@ -322,6 +322,24 @@ func (m *DelegatedManager) BackendTurnInFlight(sessionKey string) bool {
 	return mb.be.IsTurnInFlight()
 }
 
+// BackendLiveModel returns the model the session's ALREADY-RUNNING backend
+// last learned from its own process (delegator.LiveModelReporter) — the
+// resolved, provider-qualified id, available before the first turn completes.
+// Non-creating: "" when there is no managed backend for the key, it is not
+// running, or it lacks the interface. Never starts, creates or resumes a
+// backend (whoami calls this; a read must not spawn a process).
+func (m *DelegatedManager) BackendLiveModel(sessionKey string) string {
+	mb, ok := m.getManaged(sessionKey)
+	if !ok || !mb.be.IsRunning() {
+		return ""
+	}
+	lr, ok := delegator.As[delegator.LiveModelReporter](mb.be)
+	if !ok {
+		return ""
+	}
+	return lr.LiveModel()
+}
+
 // RunningSubagents returns what the session's live backend has running in the
 // background: Agent-tool subagents and background shell commands (#2127).
 // Non-creating; nil when there is no backend or it does not track them.

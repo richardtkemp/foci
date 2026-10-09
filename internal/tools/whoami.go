@@ -28,8 +28,11 @@ type WhoamiDeps struct {
 	// the same lookup set_session_alias uses. Nil or "" = unknown.
 	PlatformForChat func(agentID string, chatID int64) string
 
-	// SessionModel returns the session's effective model (per-session
-	// override, else the agent default). Nil or "" = unknown.
+	// SessionModel returns the model the session's running backend last
+	// reported (the resolved, provider-qualified id), else the session's
+	// effective model (per-session override, else the agent default), which
+	// may still be the configured alias before the first turn completes.
+	// Nil or "" = unknown.
 	SessionModel func(sessionKey string) string
 }
 

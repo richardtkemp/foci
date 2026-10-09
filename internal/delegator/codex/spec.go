@@ -59,6 +59,7 @@ var spec = delegator.Spec{
 		delegator.CapDeliveryTracking: delegator.No("inputs are fire-and-forget: no proof of consumption"),
 		delegator.CapThreadNaming:     delegator.Yes(),
 		delegator.CapContextWindow:    delegator.Yes(),
+		delegator.CapLiveModel:        delegator.No("its model reaches foci only through thread start and turn results"),
 
 		delegator.CapBranch:        delegator.Yes(),
 		delegator.CapScopedCleanup: delegator.Yes(),

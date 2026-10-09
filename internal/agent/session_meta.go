@@ -314,6 +314,22 @@ func (a *Agent) SessionModel(sessionKey string) string {
 	return a.SessionModelTuple(sessionKey).Model
 }
 
+// ReportedSessionModel returns the model this session runs as its backend
+// reports it: the live backend's own last-learned model id (the resolved,
+// provider-qualified value TurnResult will carry, available before the first
+// turn completes) when one is running and knows one; else SessionModel — the
+// one-owner tuple, which until the first turn completes may still be the
+// configured alias (e.g. "opus"). Read-only: writes no sessionMeta value,
+// nothing to the session index or ledger, and starts no backend (#2252).
+func (a *Agent) ReportedSessionModel(sessionKey string) string {
+	if a.DelegatedManager != nil {
+		if m := a.DelegatedManager.BackendLiveModel(sessionKey); m != "" {
+			return m
+		}
+	}
+	return a.SessionModel(sessionKey)
+}
+
 // CacheExpiry returns the wall-clock time at which the session's prompt cache
 // goes cold if untouched: `at` plus the session's cache TTL. TTL resolution, in
 // order: an explicit [models.*] cache_ttl override; else the live backend's own
