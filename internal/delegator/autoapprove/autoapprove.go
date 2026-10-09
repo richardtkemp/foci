@@ -1591,6 +1591,40 @@ func longFlagValue(tok string) (string, bool) {
 	return "", false
 }
 
+// shortBundleUnsafe scans a short-option bundle — a flag token's text after
+// its leading '-', e.g. "i" for -i, "ni" for -ni — one letter at a time and
+// reports whether any of it is unsafe:
+//
+//   - a letter listed in shortFlags is an unsafe flag (-i, -ni);
+//   - a letter equal to argShortFlag (sed's -e) ends the flags: getopt
+//     hands the rest of the token to the option as its argument
+//     (-e<script>, -ne<script>), or the next word when the letter ends the
+//     token (-e <script>), and that value goes to argCheck — the rest of
+//     the token is that option's argument, not more flags.
+//
+// The bundle ends at its first non-letter: for -i.bak the bundle is "i" and
+// ".bak" is the option's suffix argument. A spec with no short flags and no
+// argShortFlag scans nothing, so the scan needs no guard at the call site.
+func (spec unsafeCmdFlags) shortBundleUnsafe(bundle, next string) bool {
+	for j := 0; j < len(bundle); j++ {
+		ch := bundle[j]
+		if ch < 'A' || (ch > 'Z' && ch < 'a') || ch > 'z' {
+			return false // non-letter terminates the flag bundle
+		}
+		if strings.IndexByte(spec.shortFlags, ch) >= 0 {
+			return true
+		}
+		if ch == spec.argShortFlag {
+			value := bundle[j+1:]
+			if value == "" {
+				value = next
+			}
+			return spec.argCheck != nil && spec.argCheck(value)
+		}
+	}
+	return false
+}
+
 // containsUnsafeFlags checks whether a command string contains flags or
 // arguments that make it unsafe for auto-approval: it scans the segment into
 // shell words and applies containsUnsafeFlagWords — see that function for
@@ -1699,35 +1733,11 @@ func containsUnsafeFlagWords(words []shellWord) bool {
 						return true
 					}
 				}
-				// Short flag(s): -i, -i.bak, -ni, etc.
-				// Everything after the leading '-' up to the first non-alpha
-				// character is the flag bundle. For -i.bak the bundle is "i"
-				// (the dot terminates it, rest is the suffix argument).
-				if spec.shortFlags != "" || spec.argShortFlag != 0 {
-					bundle := tok[1:]
-					for j := 0; j < len(bundle); j++ {
-						ch := bundle[j]
-						if ch < 'A' || (ch > 'Z' && ch < 'a') || ch > 'z' {
-							break // non-letter terminates the flag bundle
-						}
-						if strings.IndexByte(spec.shortFlags, ch) >= 0 {
-							return true
-						}
-						if ch == spec.argShortFlag {
-							// getopt hands the rest of the token to the
-							// option as its argument (-e<script>,
-							// -ne<script>); at the end of the bundle the
-							// argument is the next word.
-							value := bundle[j+1:]
-							if value == "" {
-								value = next
-							}
-							if spec.argCheck != nil && spec.argCheck(value) {
-								return true
-							}
-							break // the rest is an argument, not flags
-						}
-					}
+				// Short flag(s): -i, -i.bak, -ni, -e<script> — the bundle
+				// scan, including a value riding on argShortFlag, lives in
+				// shortBundleUnsafe.
+				if spec.shortBundleUnsafe(tok[1:], next) {
+					return true
 				}
 			}
 		} else if spec.argCheck != nil {
