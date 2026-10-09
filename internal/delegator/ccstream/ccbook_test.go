@@ -30,9 +30,13 @@ type testBook struct {
 	clock  time.Time
 }
 
+// bookStart is every testBook's starting clock, and the instant mustCost
+// prices at: a fixed date inside modelinfo's price table.
+var bookStart = time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC)
+
 func newTestBook(t *testing.T, baseline map[string]ModelUsage) *testBook {
 	t.Helper()
-	tb := &testBook{path: filepath.Join(t.TempDir(), "api-shadow.db"), clock: time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC)}
+	tb := &testBook{path: filepath.Join(t.TempDir(), "api-shadow.db"), clock: bookStart}
 	l, _, err := accounting.Open(tb.path, accounting.Options{Shadow: true, NoBackup: true,
 		OnAlarm: func(a accounting.Alarm) { tb.alarms = append(tb.alarms, a) }})
 	if err != nil {
@@ -665,7 +669,7 @@ func TestRemainderTTLSolvedFromReportedCost(t *testing.T) {
 
 func mustCost(t *testing.T, tk modelinfo.Tokens) float64 {
 	t.Helper()
-	usd, ok := modelinfo.CostAsOf(opus, time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC), tk)
+	usd, ok := modelinfo.CostAsOf(opus, bookStart, tk)
 	if !ok {
 		t.Fatal("opus unpriced")
 	}

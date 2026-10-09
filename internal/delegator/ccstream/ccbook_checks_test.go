@@ -318,7 +318,9 @@ func TestTurnEndedAfterExitClosesTheTurn(t *testing.T) {
 // refusal billing: a refusal before any output is billed only in the bio,
 // frontier_llm and reasoning_extraction categories, a mid-stream one always.
 // CC's own cost counts the attempt either way, so an unbilled one is excluded
-// from the divergence check rather than booked at CC's figure.
+// from the divergence check rather than booked at CC's figure. The retracted
+// case streams the message the refusal retracted (#2255): the attempt's own
+// call must not be waited for, or the case alarms invStreamIdBooked.
 func TestRefusedAttemptBookedByCategory(t *testing.T) {
 	const fallback = "claude-opus-4-8"
 	// The 2026-10-06 incident's refused attempt: no output, 1h cache writes.
@@ -348,8 +350,15 @@ func TestRefusedAttemptBookedByCategory(t *testing.T) {
 			if tc.output > 0 {
 				tok[modelinfo.ClassOutput] = tc.output
 			}
-			tb.refusalFallback(ccRefusal{turn: "T1", at: tb.clock, model: opus, fallback: fallback,
-				category: tc.category, requestID: "req_1", retracted: tc.retracted})
+			// A mid-stream refusal retracted a message the stream had already
+			// named, under its own id (#2255): the attempt streamed.
+			if len(tc.retracted) > 0 {
+				tb.streamNamed("m0", tc.retracted[0], "T1", tb.clock)
+			}
+			r := ccRefusal{turn: "T1", at: tb.clock, model: opus, fallback: fallback,
+				category: tc.category, requestID: "req_1", retracted: tc.retracted}
+			tb.refusalFallback(r)
+			tb.retract(r.retracted) // as ccLedger.run does
 			tb.streamNamed("m1", "", "T1", tb.clock)
 			ans := line("m1", fallback, tb.clock, "end_turn", 4, 300, 0, 0, 100000)
 			tb.mainLine(ans)
@@ -381,5 +390,214 @@ func TestRefusedAttemptBookedByCategory(t *testing.T) {
 				t.Errorf("refusal cost = %v, want $%.6f (billed=%v)", c.cost, want, tc.billed)
 			}
 		})
+	}
+}
+
+// ---- refusal retraction (#2255) ---------------------------------------------
+
+// incidentRefused is the 2026-10-08 incident's refused attempt (CC 2.1.293,
+// claude-opus-5-5): one thinking frame streamed, then the refusal retracted
+// it — input 4, cache read 147710, cache write 742, output 8.
+var incidentRefused = modelinfo.Tokens{
+	modelinfo.ClassInput: 4, modelinfo.ClassCacheRead: 147710,
+	modelinfo.ClassCacheWrite1h: 742, modelinfo.ClassOutput: 8,
+}
+
+// refusalFallbackModel is the model CC retried on after the refusal.
+const refusalFallbackModel = "claude-opus-4-8"
+
+// retractedRefusalBook runs the #2255 incident's shape on a fresh book: on
+// turn T1 the refused model streams attempt m0 (one frame per uuid in
+// frames), a mid-stream refusal (category cyber, request req_1) retracts the
+// listed uuids and CC answers on the fallback model (m1, completed), the turn
+// ends and the result reports CC's cumulative counts — the incident's on the
+// refused model, the answer's on the fallback. m0's transcript line, when CC
+// wrote one, is handed over as m0Line before the fallback answer. It returns
+// the book, its clock still at the result's time, and the refused attempt's
+// tokens.
+func retractedRefusalBook(t *testing.T, m0Line *ccLine, frames, retracted []string) (*testBook, modelinfo.Tokens) {
+	t.Helper()
+	tb := newTestBook(t, nil)
+	tb.recordTurn(t, "T1")
+	for _, u := range frames {
+		tb.streamNamed("m0", u, "T1", tb.clock)
+	}
+	r := ccRefusal{turn: "T1", at: tb.clock, model: opus, fallback: refusalFallbackModel,
+		category: "cyber", requestID: "req_1", retracted: retracted}
+	tb.refusalFallback(r)
+	tb.retract(r.retracted) // as ccLedger.run does
+	if m0Line != nil {
+		tb.mainLine(m0Line)
+	}
+	tb.streamNamed("m1", "", "T1", tb.clock)
+	ans := line("m1", refusalFallbackModel, tb.clock, "end_turn", 4, 300, 0, 0, 100000)
+	tb.mainLine(ans)
+	tb.turnEnded("T1", tb.clock)
+	ansCost, ok := modelinfo.CostAsOf(refusalFallbackModel, tb.clock, ans.tokens)
+	if !ok {
+		t.Fatal("premise: the fallback model is unpriced")
+	}
+	refused := maps.Clone(incidentRefused)
+	tb.result(map[string]ModelUsage{
+		opus: {InputTokens: 4, OutputTokens: 8, CacheReadInputTokens: 147710,
+			CacheCreationInputTokens: 742, CostUSD: mustCost(t, refused)},
+		refusalFallbackModel: {InputTokens: 4, OutputTokens: 300, CacheCreationInputTokens: 100000, CostUSD: ansCost},
+	}, 0, tb.clock)
+	return tb, refused
+}
+
+// bookedTotals sums a model's booked tokens over every row, in report
+// classes — the classes CC's own modelUsage counts.
+func bookedTotals(calls []bookedCall, model string) modelinfo.Tokens {
+	got := modelinfo.Tokens{}
+	for _, c := range calls {
+		if c.model != model {
+			continue
+		}
+		for class, n := range ReportClasses(c.tokens) {
+			got[class] += n
+		}
+	}
+	return got
+}
+
+// TestRetractedRefusalSettlesAndBooksTheRefusal is #2255's core: a call a
+// mid-stream refusal retracted is not awaited, so the refusal's own result
+// settles at once — at the result's time, no clock advance — and the refused
+// attempt (the incident's counts) books then and there as the refusal row on
+// the turn open at the refusal, with no alarm and the turn's activity closed.
+// Before the fix the retracted call held the settle, the flush barrier and
+// the turn's activity until its bound, and the attempt booked late, off the
+// turn's cost line.
+func TestRetractedRefusalSettlesAndBooksTheRefusal(t *testing.T) {
+	tb, refused := retractedRefusalBook(t, nil, []string{"u1"}, []string{"u1"})
+	tb.settle(false) // no advance: the result must settle at its own time
+	if len(tb.results) != 0 {
+		t.Errorf("results pending = %d, want 0: a retracted call must not hold its result's settle", len(tb.results))
+	}
+	c := find(tb.calls(t), "refusal:req_1")
+	if c == nil {
+		t.Fatalf("no refusal row booked at the result's own time: %+v", tb.calls(t))
+	}
+	if c.turn != "T1" {
+		t.Errorf("refusal row turn = %q, want T1 (the turn open at the refusal)", c.turn)
+	}
+	if c.model != opus {
+		t.Errorf("refusal row model = %q, want the refused %s", c.model, opus)
+	}
+	if !c.cost.Valid || math.Abs(c.cost.Float64-mustCost(t, refused)) > 1e-9 {
+		t.Errorf("refusal row cost = %v, want the billed price of the refused attempt $%.6f", c.cost, mustCost(t, refused))
+	}
+	if len(tb.alarms) != 0 {
+		t.Errorf("alarms = %+v, want none: a retraction is a known cause", tb.alarms)
+	}
+	if got := activity(t, tb.path, "T1"); got == "" {
+		t.Error("turn T1's activity is still open, want it closed at the refusal's result")
+	}
+}
+
+// TestRetractedStoplessLineBooksOnce: a retracted call's stopless line must
+// not book as interrupted. CC's cumulative modelUsage counts the refused
+// attempt, so the refusal remainder already holds that spend — the
+// interrupted rule (for calls CC counts nowhere) would book it twice.
+func TestRetractedStoplessLineBooksOnce(t *testing.T) {
+	tb, refused := retractedRefusalBook(t,
+		line("m0", opus, bookStart, "", 0, 8, 0, 0, 0), // the streamed frame's stopless line
+		[]string{"u1"}, []string{"u1"})
+	tb.settle(false)
+	tb.advance(ccLineBound + time.Millisecond)
+
+	if c := find(tb.calls(t), "m0"); c != nil {
+		t.Errorf("m0 = %+v, want no row: a retracted call's spend books with the refused attempt, never as interrupted", c)
+	}
+	want, got := ReportClasses(refused), bookedTotals(tb.calls(t), opus)
+	for class, n := range want {
+		if got[class] != n {
+			t.Errorf("booked %s %s = %d, want %d — one booking, the refusal row", opus, class, got[class], n)
+		}
+	}
+	if len(tb.alarms) != 0 {
+		t.Errorf("alarms = %+v, want none", tb.alarms)
+	}
+}
+
+// TestRetractedLineThatLandsBooksFromItsLine characterises the other side of
+// #2255: "retracted" means the line MAY never come, not that it will not — a
+// retracted call whose FINAL line CC did write (stop_reason refusal) still
+// books from that line, completed, at its counts, and the refusal remainder
+// shrinks by the same amount, so the refused model books exactly its
+// modelUsage, once. Passes on the code before #2255; a retract that marks ids
+// done (dropping the line as a copy) must fail it.
+func TestRetractedLineThatLandsBooksFromItsLine(t *testing.T) {
+	tb, refused := retractedRefusalBook(t,
+		line("m0", opus, bookStart, "refusal", 4, 8, 147710, 0, 742), // the incident's counts, final
+		[]string{"u1"}, []string{"u1"})
+	tb.settle(false)
+	tb.advance(ccLineBound + time.Millisecond)
+
+	c := find(tb.calls(t), "m0")
+	if c == nil || c.finality != accounting.FinalityCompleted ||
+		c.tokens[modelinfo.ClassInput] != 4 || c.tokens[modelinfo.ClassOutput] != 8 ||
+		c.tokens[modelinfo.ClassCacheRead] != 147710 || c.tokens[modelinfo.ClassCacheWrite1h] != 742 {
+		t.Errorf("m0 = %+v, want completed at the incident's counts (input 4, output 8, read 147710, 1h writes 742)", c)
+	}
+	want, got := ReportClasses(refused), bookedTotals(tb.calls(t), opus)
+	for class, n := range want {
+		if got[class] != n {
+			t.Errorf("booked %s %s = %d, want %d: the line books the attempt and the remainder shrinks by it", opus, class, got[class], n)
+		}
+	}
+	if n := tb.alarmsOf(accounting.InvNegativeRemainder); n != 0 {
+		t.Errorf("negative-remainder alarms = %d, want none: %+v", n, tb.alarms)
+	}
+	if len(tb.alarms) != 0 {
+		t.Errorf("alarms = %+v, want none", tb.alarms)
+	}
+}
+
+// TestRetractMatchesAnyBlockUuid: CC streams one assistant event per content
+// block, so one call carries several frame uuids — a retraction listing ANY
+// of them retracts the call. (A streamNamed that kept only the first uuid —
+// the old early return — leaves the call awaited and fails this.)
+func TestRetractMatchesAnyBlockUuid(t *testing.T) {
+	tb, _ := retractedRefusalBook(t, nil, []string{"u1", "u2"}, []string{"u2"})
+	tb.settle(false)
+	if len(tb.results) != 0 {
+		t.Errorf("results pending = %d, want 0: retracting u2 must retract the call that streamed u1 and u2", len(tb.results))
+	}
+	tb.advance(ccLineBound + time.Millisecond)
+	if len(tb.alarms) != 0 {
+		t.Errorf("alarms = %+v, want none: the call is not awaited once any of its frames is retracted", tb.alarms)
+	}
+}
+
+// TestRetractIgnoresUnknownAndUnrelated characterises the matching rule: the
+// retraction list can hold uuids foci never named (a tool result's, a
+// subagent frame's) — they retract nothing, and an unrelated named call
+// whose line never comes still alarms invStreamIdBooked after its bound.
+// Passes on the code before #2255; a retract that marks every named call in
+// the window retracted must fail it.
+func TestRetractIgnoresUnknownAndUnrelated(t *testing.T) {
+	tb := newTestBook(t, nil)
+	tb.recordTurn(t, "T1")
+	tb.streamNamed("m3", "u3", "T1", tb.clock)
+	r := ccRefusal{turn: "T1", at: tb.clock, model: opus, fallback: refusalFallbackModel,
+		category: "cyber", requestID: "req_9", retracted: []string{"toolu_9", "subagent-frame-uuid"}}
+	tb.refusalFallback(r)
+	tb.retract(r.retracted)
+	tb.result(map[string]ModelUsage{}, 0, tb.clock)
+	tb.advance(time.Second)
+
+	var a *accounting.Alarm
+	for i := range tb.alarms {
+		if tb.alarms[i].Invariant == accounting.InvStreamIdBooked {
+			a = &tb.alarms[i]
+		}
+	}
+	if a == nil {
+		t.Fatalf("alarms = %+v, want one invStreamIdBooked for the unrelated m3", tb.alarms)
+	}
+	if !strings.Contains(a.Detail, "m3") {
+		t.Errorf("alarm detail = %q, want it to name m3", a.Detail)
 	}
 }

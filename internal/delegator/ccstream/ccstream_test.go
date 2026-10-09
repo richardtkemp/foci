@@ -2584,6 +2584,39 @@ func TestFormatModelFallbackNotice_LocalScope(t *testing.T) {
 	}
 }
 
+// TestOnSystem_ModelRefusalFallback_RetractsTheNamedFrame is #2255 end to
+// end: OnAssistant passes the stream frame's uuid on the naming event and
+// OnSystem passes retracted_message_uuids on the refusal, so the ledger does
+// not wait out the flush barrier for the retracted frame's never-coming
+// line. Asserted only through the barrier — the book belongs to the adapter
+// goroutine, so the test touches no book state. Not parallel: it sets the
+// bound.
+func TestOnSystem_ModelRefusalFallback_RetractsTheNamedFrame(t *testing.T) {
+	orig := ccBarrierBound
+	ccBarrierBound = time.Minute // far past the deadline below: waiting it out fails
+	t.Cleanup(func() { ccBarrierBound = orig })
+	b := newTestBackend(&bytes.Buffer{})
+	lg := newCCLedger(b, "cap/c1", "cap", nil)
+	b.ledger.Store(lg)
+	t.Cleanup(lg.close)
+	lg.enqueue(ccEvent{kind: ccSessionFile, id: "transcript.jsonl"}) // a main tail is running
+
+	var msg AssistantMessage
+	if err := json.Unmarshal([]byte(`{"type":"assistant","uuid":"u1","message":{"id":"m1","model":"claude-opus-5","content":[{"type":"text","text":"partial"}],"usage":{"input_tokens":4,"output_tokens":8}}}`), &msg); err != nil {
+		t.Fatal(err)
+	}
+	b.OnAssistant(&msg)
+	b.OnSystem("model_refusal_fallback", json.RawMessage(`{"type":"system","subtype":"model_refusal_fallback","trigger":"refusal","direction":"retry","scope":"session","original_model":"claude-opus-5-5","fallback_model":"claude-opus-4-8","request_id":"req_011CfpamB5bjpwZJ5GJjfEnL","api_refusal_category":"cyber","retracted_message_uuids":["u1"],"content":"Opus 5.5's safeguards flagged this session. Opus 4.8 is answering instead."}`))
+
+	done := make(chan struct{})
+	go func() { lg.flush(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("flush waited out its bound: the retracted frame's uuid never reached the ledger")
+	}
+}
+
 // jsonQuote JSON-encodes a Go string for splicing into a hand-built JSON
 // fixture literal above (keeps the fixture readable as a raw string while
 // still producing valid embedded JSON for a multi-line value).

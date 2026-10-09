@@ -42,6 +42,14 @@
 //     billed category, else booked with no counts at $0 — and its CC figure is
 //     kept off CC's side of the divergence check, as CC's own cost over-counts
 //     it. Either way it is a known cause, logged at INFO and never an alarm.
+//     A mid-stream refusal also RETRACTS the message CC had already streamed
+//     (#2255): the book matches the retracted frame uuids against the named
+//     calls' (ccBook.retract), and a retracted call is not waited for — not
+//     by a result's settle, not by a turn's flush, not by its turn's
+//     activity — and at its window's close it is dropped with no alarm and
+//     no interrupted booking, because CC's modelUsage counts the refused
+//     attempt and the refusal remainder already holds its spend. A FINAL
+//     line that lands anyway still books it, completed, at its counts.
 //   - At process exit the last remainder is flushed from the cost-state record
 //     CC appends on a graceful close, else from the last result.
 //   - CHECKS (#2111 §8), once the booked set is what CC counted — at each
@@ -227,7 +235,9 @@ type ccBoundary struct {
 
 // ccRefusal is one model_refusal_fallback: CC's primary model refused and CC
 // retried on a fallback model (#2200). The refused attempt has no transcript
-// record, so this is all the book learns of it.
+// record, so this is all the book learns of it. A mid-stream refusal also
+// retracts the message CC had already streamed: retracted holds its frame
+// uuids, which ccBook.retract matches against the named calls (#2255).
 type ccRefusal struct {
 	at        time.Time
 	turn      string // the foci turn open at the refusal, or ""
@@ -593,8 +603,9 @@ func (c *ccBook) turnEnded(turn string, at time.Time) {
 
 // closeIfIdle closes turn's activity at at if it has ended and nothing of it
 // is still spending: no subagent tail of it open, no call the stream named on
-// it unbooked. A background subagent that outlives its turn keeps the turn
-// running until its tail closes (R8).
+// it unbooked — a retracted one's spend books with the refused attempt
+// (#2255), so it does not hold the turn. A background subagent that outlives
+// its turn keeps the turn running until its tail closes (R8).
 func (c *ccBook) closeIfIdle(turn string, at time.Time) {
 	if turn == "" || !c.ended[turn] || c.closed[turn] {
 		return
@@ -605,7 +616,7 @@ func (c *ccBook) closeIfIdle(turn string, at time.Time) {
 		}
 	}
 	for _, n := range c.named {
-		if n.turn == turn {
+		if n.turn == turn && !n.retracted {
 			return
 		}
 	}
@@ -735,10 +746,11 @@ func (c *ccBook) settle(force bool) {
 
 // outstanding counts, for windows up to w, the named calls not yet booked (an
 // interrupted one waiting at its stopless line counts as in) and the subagent
-// tails still open.
+// tails still open. A call a refusal fallback retracted is not waited for
+// (#2255): its spend books with the refused attempt.
 func (c *ccBook) outstanding(w int) (named, tails int) {
 	for _, n := range c.named {
-		if n.window <= w && n.pending == nil {
+		if n.window <= w && n.pending == nil && !n.retracted {
 			named++
 		}
 	}
@@ -751,11 +763,12 @@ func (c *ccBook) outstanding(w int) (named, tails int) {
 }
 
 // unseenNamed counts the main-thread calls the stream named whose transcript
-// line has not been read yet — what a turn's flush waits for.
+// line has not been read yet — what a turn's flush waits for. A retracted
+// call's line may never come (#2255), so it is not waited for.
 func (c *ccBook) unseenNamed() int {
 	n := 0
 	for _, nc := range c.named {
-		if nc.pending == nil {
+		if nc.pending == nil && !nc.retracted {
 			n++
 		}
 	}
@@ -764,7 +777,10 @@ func (c *ccBook) unseenNamed() int {
 
 // closeWindows finalises the main-thread calls of windows up to w: a call seen
 // only at a stopless line was interrupted, and is booked — priced — from it; a
-// call whose line never came alarms. Held lines no stream named are copies.
+// call whose line never came alarms (a retracted one's line may never come
+// (#2255): it is dropped with neither, because CC's modelUsage counts the
+// refused attempt and the refusal remainder already holds its spend). Held
+// lines no stream named are copies.
 func (c *ccBook) closeWindows(w int) {
 	var turns []string
 	for _, id := range slices.Sorted(maps.Keys(c.named)) {
@@ -774,6 +790,16 @@ func (c *ccBook) closeWindows(w int) {
 		}
 		delete(c.named, id)
 		turns = append(turns, n.turn)
+		if n.retracted {
+			// No alarm, and no interrupted booking either — even with a
+			// stopless pending line, whose spend the refusal remainder holds.
+			// The interrupted rule is for calls CC counts nowhere. A later
+			// line for the id is a copy.
+			c.done[id] = true
+			c.lg.Infof("ledger: session %s: call %s was retracted by a refusal fallback; its spend books with the refused attempt",
+				c.session, id)
+			continue
+		}
 		if n.pending != nil {
 			c.bookCall(n.pending, n.turn, "", n.window, accounting.FinalityInterrupted)
 			continue

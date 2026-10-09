@@ -246,6 +246,8 @@ func (s *ccLedger) markExited() {
 
 // release passes every barrier whose named calls are all booked (or that has
 // no main tail to wait on, or whose bound has passed), and returns the rest.
+// A call a refusal fallback retracted is not one it waits for (#2255): its
+// line may never come, and its spend books with the refused attempt.
 func (s *ccLedger) release(waiting []barrier) []barrier {
 	if len(waiting) == 0 {
 		return waiting

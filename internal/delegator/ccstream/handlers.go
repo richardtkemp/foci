@@ -884,7 +884,9 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		// session's chat so the user knows which model is now answering, and
 		// handed to the ledger, which books the refused attempt — in no
 		// transcript — by its refusal billing rather than as unexplained
-		// overhead.
+		// overhead. Its retracted_message_uuids also reach the ledger
+		// (#2255): the adapter retracts the named calls they match, so a
+		// retracted attempt is not awaited for a line that may never come.
 		var mrf ModelRefusalFallbackMessage
 		if err := json.Unmarshal(raw, &mrf); err != nil {
 			b.logger().Warnf("drop model_refusal_fallback message (unmarshal failed): %v — model switch will go unlogged", err)

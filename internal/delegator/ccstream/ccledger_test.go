@@ -118,6 +118,31 @@ func TestLedgerFlushPassesWithoutAMainTail(t *testing.T) {
 	}
 }
 
+// TestLedgerFlushPassesWhenOnlyARetractedCallIsUnseen is #2255 on the flush
+// barrier: a named call a refusal fallback retracted is not one a turn's
+// completion waits for, so the barrier passes at once even with a main tail
+// running and the retracted line certain never to come. Not parallel: it
+// sets the bound.
+func TestLedgerFlushPassesWhenOnlyARetractedCallIsUnseen(t *testing.T) {
+	orig := ccBarrierBound
+	ccBarrierBound = time.Minute // far past the deadline below: waiting it out fails
+	t.Cleanup(func() { ccBarrierBound = orig })
+	b := newTestBackend(&bytes.Buffer{})
+	lg := newCCLedger(b, "cap/c1", "cap", nil)
+	t.Cleanup(lg.close)
+	lg.enqueue(ccEvent{kind: ccSessionFile, id: "transcript.jsonl"}) // a main tail is running
+	lg.enqueue(ccEvent{kind: ccNamed, id: "m1", uuid: "u1", turn: "T1"})
+	lg.enqueue(ccEvent{kind: ccRefusalEv, refusal: &ccRefusal{model: opus, fallback: "claude-opus-4-8",
+		retracted: []string{"u1"}}})
+	done := make(chan struct{})
+	go func() { lg.flush(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("flush waited for a line a refusal fallback retracted")
+	}
+}
+
 // TestWorkflowAgentsBookOnInvokingTurn is #2130 defect 1. A Workflow
 // run's agents write their transcripts under subagents/workflows/<run id>/,
 // not subagents/, and the stream announces the whole run with one

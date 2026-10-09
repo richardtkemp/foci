@@ -1741,7 +1741,7 @@ interval less the counted calls' (`solveRemainderTTL`, `class_method=solved`; ex
 `accounting.SolveTolerance`, like the migration's solve), and one that will not solve stays
 TTL-unknown at the 1h rate and alarms `invRemainderTTLUnsolved`; a negative class alarms
 `invNegativeRemainder` and books nothing; a named call whose line never came alarms
-`invStreamIdBooked`. At exit the last remainder comes from the `cost-state` record, else the
+`invStreamIdBooked` (a call a refusal fallback retracted is not waited for — below). At exit the last remainder comes from the `cost-state` record, else the
 last result. A call on a run no foci turn opened books on a minted `run` turn, recorded as
 `autonomous`. Every process writes its baseline (the totals CC restored on --resume,
 `resumeBaselineFor`, #2012) and each result as cumulative `backend_reports` for the scope
@@ -1766,7 +1766,15 @@ Anthropic's refusal billing (`refusalBilled`): at its counts when it refused mid
 retracted a message, or it counts output) or its category is `bio`/`frontier_llm`/
 `reasoning_extraction`; otherwise with no counts at $0, CC's counts kept in `detail`, and CC's
 figure kept off CC's side of `checkDivergence` (`unbilled`). Either way it is logged at INFO,
-not alarmed, and never counts as overhead. **Turn activity (R8):** `completeTurn` and `finalizeExit`
+not alarmed, and never counts as overhead. A mid-stream refusal also retracts the message CC
+had already streamed (`retracted_message_uuids`: one frame uuid per content block, possibly
+uuids foci never named — tool results, subagent frames). The book remembers each named call's
+frame uuids (`ccEvent.uuid` → `namedCall.uuids`) and `ccBook.retract` (#2255) marks every named
+call sharing a retracted uuid; a retracted call is not waited for — not by a result's settle, not
+by a turn's flush barrier, not by its turn's activity — books from its line as a completed call
+if CC writes it before its window closes, and is otherwise dropped at window close with an INFO
+line and no alarm, and no interrupted booking either: CC's `modelUsage` counts the refused
+attempt, so the refusal remainder already holds its spend. **Turn activity (R8):** `completeTurn` and `finalizeExit`
 send `ccLedger.turnEnded`; the book closes a turn's `activity_closed_at` once it has ended,
 no subagent tail of it is open and no call the stream named on it is unbooked, else when
 the last of those clears (`closeIfIdle`, from `tailClosed`, `mainLine`, `closeWindows`); a
