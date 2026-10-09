@@ -1,13 +1,17 @@
 package tools
 
 import (
+	"bytes"
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"foci/internal/config"
 	"foci/internal/delegator/accounting"
+	"foci/internal/log"
 	"foci/internal/provider"
 )
 
@@ -35,9 +39,14 @@ func summaryCalls(t *testing.T, l *accounting.Ledger) []accounting.CallRow {
 
 // TestSummariseBooksServedFallbackTuple proves a summary a fallback hop
 // served (through its own client) books its ledger row on the SERVING tuple:
-// Provider and Model name the hop's format and canonical model. Not parallel:
-// it makes a ledger the live one.
+// Provider and Model name the hop's format and canonical model, and the
+// completion log line names the served model too. Not parallel: it makes a
+// ledger the live one and captures the process log output.
 func TestSummariseBooksServedFallbackTuple(t *testing.T) {
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
 	l := openSummaryLedger(t)
 	primary := &fallbackProbeClient{responses: []fallbackProbeResponse{
 		{err: &provider.APIError{StatusCode: 503, Body: "unavailable"}},
@@ -64,6 +73,15 @@ func TestSummariseBooksServedFallbackTuple(t *testing.T) {
 	}
 	if got.Provider != "openai" || got.Model != "openai/gpt-5.6" {
 		t.Errorf("booked Provider/Model = %q/%q, want openai / openai/gpt-5.6", got.Provider, got.Model)
+	}
+
+	// The completion line (model=… input=) must name the SERVED model, not
+	// the requested primary.
+	if !strings.Contains(logs.String(), "model=openai/gpt-5.6 input=") {
+		t.Errorf("summary completion log line does not name the served model; logs:\n%s", logs.String())
+	}
+	if strings.Contains(logs.String(), "model=anthropic/claude-haiku-4-5 input=") {
+		t.Errorf("summary completion log line names the requested primary model; logs:\n%s", logs.String())
 	}
 }
 
