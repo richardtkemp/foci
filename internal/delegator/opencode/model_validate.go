@@ -12,7 +12,7 @@ import (
 // substring. Returns the full model ID on a unique match, or an error if
 // zero or more than one match is found.
 func matchModel(model string, lines []string) (string, error) {
-	var matches []string
+	var matches, exact []string
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -21,6 +21,15 @@ func matchModel(model string, lines []string) (string, error) {
 		if strings.Contains(line, model) {
 			matches = append(matches, line)
 		}
+		// An exact id — the whole line, or the model part after the
+		// provider — beats longer ids that merely contain it ("glm-5.3"
+		// vs "glm-5.3-flash").
+		if line == model || line[strings.LastIndex(line, "/")+1:] == model {
+			exact = append(exact, line)
+		}
+	}
+	if len(exact) > 0 {
+		matches = exact
 	}
 	switch len(matches) {
 	case 0:

@@ -82,3 +82,36 @@ func TestMatchModel_EmptyLines(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// An exact model id wins over longer ids that merely contain it: once
+// glm-5.3-flash and glm-5.3-highspeed joined the catalogue, the bare
+// "glm-5.3" (what opencode reports back as the session's model, and what a
+// batch turn then launches with) stopped resolving (2026-10-08, arnix).
+func TestMatchModel_ExactIDBeatsLongerSubstrings(t *testing.T) {
+	lines := []string{
+		"zai-coding-plan/glm-5.3",
+		"zai-coding-plan/glm-5.3-flash",
+		"zai-coding-plan/glm-5.3-highspeed",
+	}
+	for _, in := range []string{"glm-5.3", "zai-coding-plan/glm-5.3"} {
+		got, err := matchModel(in, lines)
+		if err != nil {
+			t.Fatalf("%q: unexpected error: %v", in, err)
+		}
+		if got != "zai-coding-plan/glm-5.3" {
+			t.Errorf("%q: got %q, want zai-coding-plan/glm-5.3", in, got)
+		}
+	}
+}
+
+// The same bare id under two providers is still ambiguous.
+func TestMatchModel_ExactIDUnderTwoProvidersIsAmbiguous(t *testing.T) {
+	lines := []string{
+		"zai-coding-plan/glm-5.3",
+		"openrouter/glm-5.3",
+	}
+	_, err := matchModel("glm-5.3", lines)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("want an ambiguity error, got %v", err)
+	}
+}
