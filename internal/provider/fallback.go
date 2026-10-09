@@ -76,7 +76,11 @@ func stripUnsupportedParams(req *MessageRequest, apiErr *APIError, logf func(str
 // has already done that.
 //
 // Returns the successful response/nil error, or the last error from the chain.
-// On success, req.Model reflects the model that succeeded.
+// On success, req.Model reflects the model that succeeded, and resp.Served
+// reports the hop that served: its canonical model, plus its endpoint and
+// format when the hop went through a client from clientProvider (a hop that
+// reused the caller's client reports empty legs — the caller's legs served).
+// Read it through ServedTuple.
 func walkFallback(
 	ctx context.Context,
 	client Client,
@@ -100,9 +104,11 @@ func walkFallback(
 		}
 
 		fbClient := client
+		hopEndpoint, hopFormat := "", "" // hop legs apply only with the hop's own client
 		if clientProvider != nil {
 			if c := clientProvider.GetClient(endpoint, format); c != nil {
 				fbClient = c
+				hopEndpoint, hopFormat = endpoint, format
 			}
 		}
 
@@ -116,6 +122,9 @@ func walkFallback(
 		}
 		resp, err := sendWithRetry(ctx, fbClient, req, handler)
 		if err == nil {
+			if resp != nil {
+				resp.Served = ServedReport{Model: fbCanonical, Endpoint: hopEndpoint, Format: hopFormat}
+			}
 			if logf != nil {
 				logf("fallback succeeded on %s", fbCanonical)
 			}
@@ -146,8 +155,10 @@ func walkFallback(
 // clientProvider resolves clients for fallback endpoint:format pairs; nil = reuse caller's client.
 // logf receives diagnostic messages; nil = silent.
 //
-// On success from a fallback model, req.Model reflects that model. The caller
-// should restore the original model if needed for subsequent iterations.
+// On success from a fallback model, req.Model reflects that model and
+// resp.Served reports the hop that served (zero = the primary served); read
+// the serving tuple with ServedTuple. The caller should restore the original
+// model if needed for subsequent iterations.
 func Send(
 	ctx context.Context,
 	client Client,

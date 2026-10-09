@@ -415,6 +415,9 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 	}
 
 	duration := time.Since(start)
+	// The call is booked on the tuple that served — after a fallback, the
+	// hop's model on its own format (when it had its own client).
+	served := provider.ServedTuple(provider.ModelTuple{Model: model, Format: format}, resp)
 	// A compaction is one direct-API call. It is booked on the turn that ran
 	// it (the post-turn compaction of a conversation turn), or — run by no
 	// turn, as an operator's /compact is — on a compaction turn of its own.
@@ -423,7 +426,7 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 		sessionKey, c.AgentID, accounting.SourceCompaction, start, start.Add(duration)))
 	if err := accounting.Record(turn,
 		accounting.APIResponse{
-			ID: resp.ID, Kind: accounting.KindCompaction, Provider: format, Model: model,
+			ID: resp.ID, Kind: accounting.KindCompaction, Provider: served.Format, Model: served.Model,
 			Session: sessionKey, AgentID: c.AgentID, TurnID: turn.TurnID,
 			Start: start, Duration: duration, Tokens: resp.Usage.Tokens(), StopReason: resp.StopReason,
 			PreMessages: len(messages),

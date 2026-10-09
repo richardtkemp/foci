@@ -42,7 +42,6 @@ func fbEndTurnClient(id string) selfRetryingTestClient {
 			ID: id, Type: "message", Role: "assistant",
 			Content:    provider.TextContent("served by fallback"),
 			StopReason: "end_turn",
-			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})}
 }
@@ -124,7 +123,6 @@ func TestFallbackTurnReusedClientBooksHopModelOnCallerFormat(t *testing.T) {
 				ID: "msg_fb_b", Type: "message", Role: "assistant",
 				Content:    provider.TextContent("hop on the caller's client"),
 				StopReason: "end_turn",
-				Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 			}, nil
 		})}
 	ag := fallbackAgent(t, shared, tupleClientProvider{})
@@ -161,7 +159,6 @@ func TestFallbackTurnThenPrimaryBooksBothTuplesInOrder(t *testing.T) {
 				ID: "msg_p2", Type: "message", Role: "assistant",
 				Content:    provider.TextContent("primary recovered"),
 				StopReason: "end_turn",
-				Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 			}, nil
 		})}
 	var fbCalls atomic.Int32
@@ -173,7 +170,6 @@ func TestFallbackTurnThenPrimaryBooksBothTuplesInOrder(t *testing.T) {
 				Type: "tool_use", ID: "tu_fb1", Name: "nonexistent_tool", Input: json.RawMessage(`{}`),
 			}},
 			StopReason: "tool_use",
-			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})}
 	ag := fallbackAgent(t, primary, tupleClientProvider{clients: map[string]provider.Client{

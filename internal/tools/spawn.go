@@ -468,11 +468,14 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 
 	// The spawn model is loop-invariant, so resolve its [models.*.provider]
 	// routing once; every loop request carries it, plus the lookup so any
-	// fallback hop lands on the hop model's own routing.
+	// fallback hop lands on the hop model's own routing. The primary triple
+	// is loop-invariant the same way — each loop's booking pairs with the
+	// tuple that served that request (ServedTuple).
 	var routing *provider.ProviderRouting
 	if routingFor != nil {
 		routing = routingFor(model)
 	}
+	primary := provider.ModelTuple{Model: model, Format: format}
 
 	for i := 0; i < maxLoops; i++ {
 		req := &provider.MessageRequest{
@@ -496,10 +499,11 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 		}
 
 		duration := time.Since(start)
-		cost, _ := modelinfo.CostAsOf(model, time.Now(), resp.Usage.Tokens())
+		served := provider.ServedTuple(primary, resp)
+		cost, _ := modelinfo.CostAsOf(served.Model, time.Now(), resp.Usage.Tokens())
 
 		spawnLog.Infof("session=%s model=%s input=%d output=%d cost=$%.4f stop=%s",
-			sessionKey, model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, resp.StopReason)
+			sessionKey, served.Model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, resp.StopReason)
 		var sessionFile string
 		if sessions != nil {
 			if p, err := sessions.SessionPath(sessionKey); err == nil {
@@ -513,7 +517,7 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 			turnID, sessionKey, agentID, accounting.SourceSystem, spawnStart, time.Now()))
 		if err := accounting.Record(turn,
 			accounting.APIResponse{
-				ID: resp.ID, Kind: accounting.KindSpawn, Provider: format, Model: model,
+				ID: resp.ID, Kind: accounting.KindSpawn, Provider: served.Format, Model: served.Model,
 				Session: sessionKey, AgentID: agentID, TurnID: turn.TurnID,
 				Start: start, Duration: duration, Tokens: resp.Usage.Tokens(), StopReason: resp.StopReason,
 				SessionFile: sessionFile,

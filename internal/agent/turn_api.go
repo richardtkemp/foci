@@ -149,8 +149,12 @@ func (t *APITransport) LoadAndRepairSession(ts *TurnState) error {
 // defaults. The model tuple is read as ONE SessionModelTuple snapshot: a
 // SetSessionModel on the session or its root while the request is in flight
 // must not re-pair this turn's model with another owner's client, gate or
-// format — so the post-request paths (classifyAPIError, releaseRateLimit,
-// logAPIResponse) reuse the snapshotted legs, never a fresh resolution.
+// format — so the post-request paths reuse the snapshotted legs, never a
+// fresh resolution: classifyAPIError always (the error path), and
+// releaseRateLimit/logAPIResponse when the primary serves. A response a
+// fallback hop serves pairs with the serving tuple instead
+// (provider.ServedTuple); the snapshot still drives the next iteration's
+// request.
 // Extracted from agent.go:409-429.
 func (t *APITransport) ResolveModelEffort(ts *TurnState) {
 	a := t.agent
@@ -269,6 +273,12 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 	var batchedText strings.Builder
 	primaryWritten := false
 
+	// The turn's primary tuple, from the one snapshot ResolveModelEffort
+	// took (#2224): every iteration first tries it, and a response it serves
+	// pairs with it. A response a fallback hop serves pairs with the serving
+	// tuple instead (ServedTuple below).
+	primary := provider.ModelTuple{Model: ts.TurnModel, Endpoint: ts.TurnEndpoint, Format: ts.TurnFormat}
+
 	// sendOrBatchText delivers text respecting batch mode.
 	sendOrBatchText := func(r provider.MessageResponse) {
 		if text := provider.TextOf(r.Content); text != "" {
@@ -366,11 +376,14 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 			return a.classifyAPIError(ts.Ctx, err, ts.SessionKey, ts.TurnEndpoint, duration)
 		}
 
-		// Any successful response proves this endpoint is accepting requests
-		// again. Release a prior gate immediately; queued system work remains
-		// queued for the normal drain tick. The endpoint is the turn-start
-		// snapshot, for the same one-owner pairing as the error path.
-		a.releaseRateLimit(ts.TurnEndpoint)
+		// Any successful response proves the endpoint that SERVED is
+		// accepting requests again — after a fallback, that is the hop's
+		// endpoint, not the primary's. Release that endpoint's prior gate
+		// immediately; queued system work remains queued for the normal
+		// drain tick. With no fallback it is the turn-start snapshot
+		// endpoint, the same one-owner pairing as the error path.
+		served := provider.ServedTuple(primary, resp)
+		a.releaseRateLimit(served.Endpoint)
 
 		// Primary HTTP roundtrip succeeded — analog of the delegated
 		// transport's stdin write completing. Signal the inbox so
@@ -391,7 +404,7 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 			return ts.Ctx.Err()
 		}
 
-		cost := a.logAPIResponse(ts, ts.TurnModel, start, duration, req, resp, len(ts.Messages))
+		cost := a.logAPIResponse(ts, served, start, duration, req, resp, len(ts.Messages))
 		lastStop = resp.StopReason
 		a.processAPIResponse(ts.SessionKey, ts.SessionMeta, resp, cost, ts.StartedAt, maxOutput)
 

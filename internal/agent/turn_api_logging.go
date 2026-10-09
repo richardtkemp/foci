@@ -16,9 +16,11 @@ import (
 )
 
 // logAPIResponse logs usage, cost, and optionally the full request/response payload.
-func (a *Agent) logAPIResponse(ts *TurnState, model string, start time.Time, duration time.Duration, req *provider.MessageRequest, resp *provider.MessageResponse, msgCount int) float64 {
+// served is the tuple that produced resp — the turn's primary, or the fallback
+// hop that served it: the ledger row, its cost and the payload log all name it.
+func (a *Agent) logAPIResponse(ts *TurnState, served provider.ModelTuple, start time.Time, duration time.Duration, req *provider.MessageRequest, resp *provider.MessageResponse, msgCount int) float64 {
 	sessionKey := ts.SessionKey
-	cost, _ := modelinfo.CostAsOf(model, time.Now(), resp.Usage.Tokens())
+	cost, _ := modelinfo.CostAsOf(served.Model, time.Now(), resp.Usage.Tokens())
 
 	a.logger().Infof("session=%s stop_reason=%s input=%d output=%d cache_read=%d cache_write=%d cost=$%.4f",
 		sessionKey, resp.StopReason, resp.Usage.InputTokens, resp.Usage.OutputTokens,
@@ -37,7 +39,7 @@ func (a *Agent) logAPIResponse(ts *TurnState, model string, start time.Time, dur
 		turn.TurnID, turn.StartedAt = accounting.MintTurnID(sessionKey, accounting.KindCall, start), start
 	}
 	if err := accounting.Record(turn, accounting.APIResponse{
-		ID: resp.ID, Kind: accounting.KindCall, Provider: ts.TurnFormat, Model: model,
+		ID: resp.ID, Kind: accounting.KindCall, Provider: served.Format, Model: served.Model,
 		Session: sessionKey, AgentID: turn.AgentID, TurnID: turn.TurnID,
 		Start: start, Duration: duration, Tokens: resp.Usage.Tokens(), StopReason: resp.StopReason,
 		SessionFile: sessionFile,
@@ -70,7 +72,7 @@ func (a *Agent) logAPIResponse(ts *TurnState, model string, start time.Time, dur
 			Timestamp:  start,
 			Session:    sessionKey,
 			SeqNum:     seqNum,
-			Model:      model,
+			Model:      served.Model,
 			SystemHash: log.SystemHash(sysTexts),
 			Request:    reqJSON,
 			Response:   respJSON,
