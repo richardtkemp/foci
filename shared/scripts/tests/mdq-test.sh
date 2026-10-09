@@ -164,17 +164,18 @@ check "raw arm: multi-section match concatenates verbatim ranges in doc order" "
 # ---------------------------------------------------------------------------
 # ERROR ARMS: --raw refuses to guess where it has no clean line range.
 # ---------------------------------------------------------------------------
-"$MDQ" --raw '## Section A' "$FIX" "$FIX" >/dev/null 2>/tmp/mdq-test-err-multi
+# stderr captures go under $TMP — a fixed /tmp path may belong to another user.
+"$MDQ" --raw '## Section A' "$FIX" "$FIX" >/dev/null 2>"$TMP/mdq-test-err-multi"
 check "raw refuses two files (ambiguous line numbers)" "1" "$?"
 
 : > "$TMP/second.md"
-if "$MDQ" --raw '## Section A' < "$FIX" >/dev/null 2>/tmp/mdq-test-err-stdin; then
+if "$MDQ" --raw '## Section A' < "$FIX" >/dev/null 2>"$TMP/mdq-test-err-stdin"; then
     echo "FAIL raw should refuse stdin-only input (no file to slice)"; RC=1
 else
     echo "ok   raw refuses stdin-only input (no file to slice)"
 fi
 
-if "$MDQ" --raw '# NoSuchHeadingAtAll' "$FIX" >/dev/null 2>/tmp/mdq-test-err-nomatch; then
+if "$MDQ" --raw '# NoSuchHeadingAtAll' "$FIX" >/dev/null 2>"$TMP/mdq-test-err-nomatch"; then
     echo "FAIL raw should fail when the selector matches nothing"; RC=1
 else
     echo "ok   raw fails cleanly when the selector matches nothing"
@@ -211,7 +212,7 @@ fail_baseline() {
     RC=1
 }
 OLD="$TMP/mdq-old"
-if git -C "$REPO" show "$PRE_1705":shared/scripts/mdq > "$OLD" 2>/tmp/mdq-test-err-gitshow; then
+if git -C "$REPO" show "$PRE_1705":shared/scripts/mdq > "$OLD" 2>"$TMP/mdq-test-err-gitshow"; then
     chmod +x "$OLD"
     run_both() { # run_both <label> <args...>
         local label=$1; shift
@@ -242,7 +243,7 @@ if git -C "$REPO" show "$PRE_1705":shared/scripts/mdq > "$OLD" 2>/tmp/mdq-test-e
     run_both "flags-only passthrough branch" -o json '' "$FIX"
     run_both "no args at all"
 else
-    fail_baseline shared/scripts/mdq /tmp/mdq-test-err-gitshow
+    fail_baseline shared/scripts/mdq "$TMP/mdq-test-err-gitshow"
 fi
 
 # ---------------------------------------------------------------------------
@@ -254,7 +255,7 @@ mds_raw=$("$MDS" "$FIX" "Section A" --raw)
 check "mds --raw matches mdq --raw for the same section" "$raw_out" "$mds_raw"
 
 OLDS="$TMP/mds-old"
-if git -C "$REPO" show "$PRE_1705":shared/scripts/mds > "$OLDS" 2>/tmp/mds-test-err-gitshow; then
+if git -C "$REPO" show "$PRE_1705":shared/scripts/mds > "$OLDS" 2>"$TMP/mds-test-err-gitshow"; then
     chmod +x "$OLDS"
     # mds delegates extraction to whatever `mdq` is on PATH, so the OLD mds must
     # be paired with the OLD mdq or this compares new-against-new and proves
@@ -271,7 +272,7 @@ if git -C "$REPO" show "$PRE_1705":shared/scripts/mds > "$OLDS" 2>/tmp/mds-test-
         RC=1
     fi
 else
-    fail_baseline shared/scripts/mds /tmp/mds-test-err-gitshow
+    fail_baseline shared/scripts/mds "$TMP/mds-test-err-gitshow"
 fi
 
 # #1921: a bare 'mds file.md' (no pattern) is the documented primary TOC
@@ -280,8 +281,8 @@ fi
 # here and are silently ignored rather than erroring. This used to error
 # ("mds --raw: needs a pattern...") because raw defaulted on after #1705;
 # assert success + the heading list, both with and without an explicit --raw.
-toc_bare=$("$MDS" "$FIX" 2>/tmp/mds-test-err-bare); rc_bare=$?
-toc_raw=$("$MDS" "$FIX" --raw 2>/tmp/mds-test-err-raw); rc_raw=$?
+toc_bare=$("$MDS" "$FIX" 2>"$TMP/mds-test-err-bare"); rc_bare=$?
+toc_raw=$("$MDS" "$FIX" --raw 2>"$TMP/mds-test-err-raw"); rc_raw=$?
 check "mds with no pattern succeeds (rc)" "0" "$rc_bare"
 check "mds with no pattern, explicit --raw, still succeeds (rc)" "0" "$rc_raw"
 check "mds --raw with no pattern prints the same TOC as bare (raw is a no-op here)" "$toc_bare" "$toc_raw"
@@ -344,13 +345,13 @@ check "mds DEFAULT (no flag) emits source bytes" "$raw_out" "$default_mds"
 # Fallback: a stream cannot be sliced. stdout must still carry the render and
 # stderr must SAY so — silence here would be the original footgun wearing a
 # different hat, and an error would break every existing stdin caller.
-fb_out=$(printf '# S\n\nWith *emph*.\n' | "$MDQ" '# S' 2>/tmp/mdq-fb-err); fb_rc=$?
+fb_out=$(printf '# S\n\nWith *emph*.\n' | "$MDQ" '# S' 2>"$TMP/mdq-fb-err"); fb_rc=$?
 if [[ $fb_rc -eq 0 && -n "$fb_out" ]]; then
     echo "ok   stream fallback still produces output on stdout"
 else
     echo "FAIL stream fallback produced no output (rc=$fb_rc)"; RC=1
 fi
-if grep -q "RE-RENDER" /tmp/mdq-fb-err; then
+if grep -q "RE-RENDER" "$TMP/mdq-fb-err"; then
     echo "ok   stream fallback announces the substitution on stderr"
 else
     echo "FAIL stream fallback was silent — the footgun is back"; RC=1
