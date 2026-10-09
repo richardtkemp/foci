@@ -57,9 +57,12 @@ func TestAbbreviatedLongFlagsNotAutoApproved(t *testing.T) {
 // reaches sedArgUnsafe when it is attached to its flag — as the value of
 // --expression (exact or abbreviated, after '=' or as the next argument) and
 // as the text following an 'e' in a short-flag bundle (-e…, -ne…, including
-// the next-word value when the 'e' ends the token). Every script here is one
-// sedArgUnsafe refuses as a separate argument, and every row is auto-approved
-// by the pre-#2263 code, which scanned only separate non-flag arguments.
+// the next-word value when the 'e' ends the token). The next-word rows use a
+// script that itself starts with '--': a word not starting with '-' is
+// scanned as a plain argument anyway and a '-e…' word as an attached script,
+// so a '--' word is the shape ONLY the next-word rule reaches. Every script
+// here is one sedArgUnsafe refuses, and every row is auto-approved by the
+// pre-#2263 code, which scanned only separate non-flag arguments.
 func TestSedAttachedScriptFlagsScanned(t *testing.T) {
 	rules := parseAutoApproveRules(CommonReadonlyRules)
 	for _, tt := range []struct {
@@ -68,11 +71,12 @@ func TestSedAttachedScriptFlagsScanned(t *testing.T) {
 	}{
 		{"long flag with attached value", `sed --expression='p;e whoami' f`},
 		{"abbreviated long flag with attached value", `sed --expr='p;e whoami' f`},
-		{"long flag value next argument", `sed --expression '-ep;e whoami'`},
 		{"attached to lone -e", `sed '-ep;e whoami'`},
 		{"attached to -e at end of a bundle", `sed '-nep;e whoami'`},
-		{"-e at token end takes next word", `sed -e '-ep;e whoami'`},
-		{"bundle-ending e takes next word", `sed -ne '-ep;e whoami'`},
+		{"long flag value is the next word", `sed --expression '--x;e id' f`},
+		{"abbreviated long flag value is the next word", `sed --expr '--x;e id' f`},
+		{"-e at token end takes the next word", `sed -e '--x;e id' f`},
+		{"bundle-ending e takes the next word", `sed -ne '--x;e id' f`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assertApproval(t, rules, tt.cmd, false)
