@@ -406,16 +406,16 @@ var incidentRefused = modelinfo.Tokens{
 // refusalFallbackModel is the model CC retried on after the refusal.
 const refusalFallbackModel = "claude-opus-4-8"
 
-// retractedRefusalBook runs the #2255 incident's shape on a fresh book: on
-// turn T1 the refused model streams attempt m0 (one frame per uuid in
-// frames), a mid-stream refusal (category cyber, request req_1) retracts the
-// listed uuids and CC answers on the fallback model (m1, completed), the turn
-// ends and the result reports CC's cumulative counts — the incident's on the
-// refused model, the answer's on the fallback. m0's transcript line, when CC
-// wrote one, is handed over as m0Line before the fallback answer. It returns
-// the book, its clock still at the result's time, and the refused attempt's
-// tokens.
-func retractedRefusalBook(t *testing.T, m0Line *ccLine, frames, retracted []string) (*testBook, modelinfo.Tokens) {
+// retractedRefusalTurn runs the #2255 incident's shape on a fresh book up to
+// the turn's end: on turn T1 the refused model streams attempt m0 (one frame
+// per uuid in frames), a mid-stream refusal (category cyber, request req_1)
+// retracts the listed uuids and CC answers on the fallback model (m1,
+// completed), and the turn ends — the retracted m0 still named, its window
+// not yet settled. m0's transcript line, when CC wrote one, is handed over as
+// m0Line before the fallback answer. It returns the book, its clock still at
+// the turn's end, and the result CC reports next — the incident's counts on
+// the refused model, the answer's on the fallback.
+func retractedRefusalTurn(t *testing.T, m0Line *ccLine, frames, retracted []string) (*testBook, map[string]ModelUsage) {
 	t.Helper()
 	tb := newTestBook(t, nil)
 	tb.recordTurn(t, "T1")
@@ -437,13 +437,21 @@ func retractedRefusalBook(t *testing.T, m0Line *ccLine, frames, retracted []stri
 	if !ok {
 		t.Fatal("premise: the fallback model is unpriced")
 	}
-	refused := maps.Clone(incidentRefused)
-	tb.result(map[string]ModelUsage{
+	return tb, map[string]ModelUsage{
 		opus: {InputTokens: 4, OutputTokens: 8, CacheReadInputTokens: 147710,
-			CacheCreationInputTokens: 742, CostUSD: mustCost(t, refused)},
+			CacheCreationInputTokens: 742, CostUSD: mustCost(t, incidentRefused)},
 		refusalFallbackModel: {InputTokens: 4, OutputTokens: 300, CacheCreationInputTokens: 100000, CostUSD: ansCost},
-	}, 0, tb.clock)
-	return tb, refused
+	}
+}
+
+// retractedRefusalBook completes the incident's shape with the result CC
+// reports at the refusal's own quiet point. It returns the book, its clock
+// still at the result's time, and the refused attempt's tokens.
+func retractedRefusalBook(t *testing.T, m0Line *ccLine, frames, retracted []string) (*testBook, modelinfo.Tokens) {
+	t.Helper()
+	tb, mu := retractedRefusalTurn(t, m0Line, frames, retracted)
+	tb.result(mu, 0, tb.clock)
+	return tb, maps.Clone(incidentRefused)
 }
 
 // bookedTotals sums a model's booked tokens over every row, in report
@@ -493,6 +501,19 @@ func TestRetractedRefusalSettlesAndBooksTheRefusal(t *testing.T) {
 	}
 	if got := activity(t, tb.path, "T1"); got == "" {
 		t.Error("turn T1's activity is still open, want it closed at the refusal's result")
+	}
+}
+
+// TestRetractedCallDoesNotHoldTurnActivity: the third thing a retracted call
+// must not hold is its turn's activity (#2255): the turn closes at its end,
+// while the retracted call is still named and its window not yet settled. A
+// closeIfIdle that awaited retracted calls too would leave the activity open
+// until the window's settle dropped the call and closed it, stamped late —
+// and the refusal row that settle books would then re-stamp it again.
+func TestRetractedCallDoesNotHoldTurnActivity(t *testing.T) {
+	tb, _ := retractedRefusalTurn(t, nil, []string{"u1"}, []string{"u1"})
+	if got := activity(t, tb.path, "T1"); got != stamp(tb.clock) {
+		t.Errorf("activity = %q at the turn's end, want closed at %s: a retracted call does not hold its turn", got, stamp(tb.clock))
 	}
 }
 
