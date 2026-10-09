@@ -1564,6 +1564,11 @@ func visibleCmdBase(words []shellWord) string {
 //     --out=x. An empty name (-- or --=x) is not a flag name and never
 //     matches.
 //
+// Only a token that starts with '--' is a long-flag spelling: a plain word
+// is an argument, never a flag, however it prefixes the name — gitGrepPager
+// Unsafe passes every word of the command, so a pattern like `open` must
+// not count as the pager flag.
+//
 // A prefix that is shorter than several of the program's long options would
 // be ambiguous and rejected by the program itself; matching it anyway only
 // refuses, which is the safe direction (#2263).
@@ -1571,10 +1576,10 @@ func longFlagMatches(tok, lf string, abbrev bool) bool {
 	if tok == lf || strings.HasPrefix(tok, lf+"=") {
 		return true
 	}
-	if !abbrev {
+	if !abbrev || !strings.HasPrefix(tok, "--") {
 		return false
 	}
-	name := strings.TrimPrefix(tok, "--")
+	name := tok[2:]
 	if eq := strings.IndexByte(name, '='); eq >= 0 {
 		name = name[:eq]
 	}

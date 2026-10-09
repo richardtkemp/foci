@@ -132,7 +132,10 @@ func TestExactUnsafeLongFlagsStillRefused(t *testing.T) {
 // script-passing shape, and flag spellings the parsers of rg, yq and git's
 // top level reject as abbreviations — unknown flags that stay the non-events
 // they always were (their parsers were verified to reject abbreviations, so
-// abbreviation matching is deliberately not enabled for them).
+// abbreviation matching is deliberately not enabled for them). A word that
+// does not start with '--' is an argument, not a flag spelling: patterns,
+// paths and option values that happen to prefix a long-flag name (git grep
+// scans every word for the pager flag) keep their approval too.
 func TestSafeLongFlagFormsStillApproved(t *testing.T) {
 	readonly := parseAutoApproveRules(CommonReadonlyRules)
 	git := parseAutoApproveRules([]string{"Bash:git *"})
@@ -148,6 +151,11 @@ func TestSafeLongFlagFormsStillApproved(t *testing.T) {
 		{"sed --expression=safe script", nil, "sed --expression=p f"},
 		{"sed --expression safe script", nil, "sed --expression p f"},
 		{"git grep pattern", git, "git grep foo"},
+		// Non-flag words that prefix a long-flag name are not flags.
+		{"git grep pattern prefixing pager flag", git, "git grep open"},
+		{"git grep -e pattern prefixing pager flag", git, "git grep -e open src"},
+		{"git grep -n partial prefix pattern", git, "git grep -n open-files src"},
+		{"git -C dir prefixing pager flag", git, "git -C open grep foo"},
 		// rg, yq and git top-level options reject abbreviations: a shortened
 		// spelling is an unknown flag, not the unsafe one.
 		{"rg shortened --pre stays unknown", nil, "rg --pr=./x.sh foo"},
