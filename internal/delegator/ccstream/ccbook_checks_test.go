@@ -91,16 +91,16 @@ func TestCostDivergenceAlarm(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tb := newTestBook(t, map[string]ModelUsage{opus: {InputTokens: 5000, CostUSD: 3}})
-			tb.streamNamed("m0", "T1", tb.clock)
+			tb.streamNamed("m0", "", "T1", tb.clock)
 			tb.mainLine(line("m0", opus, tb.clock, "", 300, 1, 0, 0, 0)) // interrupted
-			tb.streamNamed("m1", "T1", tb.clock)
+			tb.streamNamed("m1", "", "T1", tb.clock)
 			main := line("m1", opus, tb.clock, "end_turn", 10, 20, 0, 0, 4000)
 			tb.mainLine(main)
 			price := mustCost(t, main.tokens)
 			tb.result(map[string]ModelUsage{opus: {InputTokens: 5010, OutputTokens: 20, CacheCreationInputTokens: 4000,
 				CostUSD: 3 + tc.factor*price}}, 0, tb.clock)
 			// The next window's call is booked before the result settles.
-			tb.streamNamed("m2", "T2", tb.clock)
+			tb.streamNamed("m2", "", "T2", tb.clock)
 			tb.mainLine(line("m2", opus, tb.clock, "end_turn", 10, 90000, 0, 0, 0))
 			tb.advance(time.Second)
 			if got := tb.alarmsOf(accounting.InvCostDivergence); got != tc.alarms {
@@ -142,7 +142,7 @@ func TestOverheadBounded(t *testing.T) {
 	})
 	t.Run("within 2% of a large window is silent", func(t *testing.T) {
 		tb := newTestBook(t, nil)
-		tb.streamNamed("m1", "T1", tb.clock)
+		tb.streamNamed("m1", "", "T1", tb.clock)
 		main := line("m1", opus, tb.clock, "end_turn", 0, 0, 0, 0, 20_000_000)
 		tb.mainLine(main)
 		over := modelinfo.Tokens{modelinfo.ClassOutput: 60000}
@@ -255,7 +255,7 @@ func TestTurnActivityClosesWhenItsSubagentsStop(t *testing.T) {
 	t.Run("named call not yet read", func(t *testing.T) {
 		tb := newTestBook(t, nil)
 		tb.recordTurn(t, "T1")
-		tb.streamNamed("m1", "T1", tb.clock)
+		tb.streamNamed("m1", "", "T1", tb.clock)
 		tb.turnEnded("T1", tb.clock)
 		if got := activity(t, tb.path, "T1"); got != "" {
 			t.Fatalf("activity = %q, want running until m1 is booked", got)
@@ -268,7 +268,7 @@ func TestTurnActivityClosesWhenItsSubagentsStop(t *testing.T) {
 	})
 	t.Run("run turn closes at its result", func(t *testing.T) {
 		tb := newTestBook(t, nil)
-		tb.streamNamed("m1", "", tb.clock)
+		tb.streamNamed("m1", "", "", tb.clock)
 		tb.mainLine(line("m1", opus, tb.clock, "end_turn", 1, 1, 0, 0, 0))
 		run := find(tb.calls(t), "m1").turn
 		tb.result(map[string]ModelUsage{opus: {InputTokens: 1, OutputTokens: 1}}, 0, tb.clock)
@@ -349,8 +349,8 @@ func TestRefusedAttemptBookedByCategory(t *testing.T) {
 				tok[modelinfo.ClassOutput] = tc.output
 			}
 			tb.refusalFallback(ccRefusal{turn: "T1", at: tb.clock, model: opus, fallback: fallback,
-				category: tc.category, requestID: "req_1", retracted: len(tc.retracted)})
-			tb.streamNamed("m1", "T1", tb.clock)
+				category: tc.category, requestID: "req_1", retracted: tc.retracted})
+			tb.streamNamed("m1", "", "T1", tb.clock)
 			ans := line("m1", fallback, tb.clock, "end_turn", 4, 300, 0, 0, 100000)
 			tb.mainLine(ans)
 			ansCost, ok := modelinfo.CostAsOf(fallback, tb.clock, ans.tokens)

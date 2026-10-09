@@ -202,9 +202,13 @@ func ReportClasses(t modelinfo.Tokens) modelinfo.Tokens {
 
 // namedCall is a main-thread call the stream named in this process.
 type namedCall struct {
-	window  int
-	turn    string
-	pending *ccLine // latest line seen without a stop_reason
+	window int
+	turn   string
+	uuids  []string // the stream frames' uuids (one per content block), for retract matching
+	// retracted: a refusal fallback retracted this call (#2255) — not waited
+	// for from here on, and dropped at its window's close.
+	retracted bool
+	pending   *ccLine // latest line seen without a stop_reason
 }
 
 // ccAgent is one subagent seen in this process.
@@ -230,8 +234,8 @@ type ccRefusal struct {
 	model     string // the model that refused
 	fallback  string // the model CC retried on
 	category  string // the API's refusal category, "" when it gave none
-	requestID string // the refused request's id, "" when CC gave none
-	retracted int    // messages CC retracted: output had already streamed
+	requestID string   // the refused request's id, "" when CC gave none
+	retracted []string // frame uuids CC retracted: output had already streamed
 }
 
 // refusalBilledCategories are the refusal categories Anthropic bills when the
@@ -245,7 +249,7 @@ var refusalBilledCategories = map[string]bool{"bio": true, "frontier_llm": true,
 // mid-stream (output had streamed — CC retracted a message, or the attempt
 // counts output tokens) or its category is billed before any output.
 func refusalBilled(r ccRefusal, t modelinfo.Tokens) bool {
-	return r.retracted > 0 || t[modelinfo.ClassOutput] > 0 || refusalBilledCategories[r.category]
+	return len(r.retracted) > 0 || t[modelinfo.ClassOutput] > 0 || refusalBilledCategories[r.category]
 }
 
 // ccResult is a result awaiting its settle.
@@ -403,18 +407,54 @@ func ScopeLaunch(scope string) (time.Time, bool) {
 }
 
 // streamNamed records a main-thread call the stream delivered, on the turn
-// open now. A line already read for it is booked at once.
-func (c *ccBook) streamNamed(id, turn string, at time.Time) {
-	if id == "" || c.done[id] || c.named[id] != nil {
+// open now, collecting the frame's uuid: CC streams one assistant event per
+// content block, each with its own uuid, all sharing the message id, and a
+// refusal fallback's retraction names those uuids (ccBook.retract, #2255). A
+// line already read for it is booked at once.
+func (c *ccBook) streamNamed(id, uuid, turn string, at time.Time) {
+	if id == "" || c.done[id] {
+		return
+	}
+	if n := c.named[id]; n != nil {
+		if uuid != "" && !slices.Contains(n.uuids, uuid) {
+			n.uuids = append(n.uuids, uuid)
+		}
 		return
 	}
 	if turn == "" {
 		turn = c.runTurnFor(c.window, at)
 	}
-	c.named[id] = &namedCall{window: c.window, turn: turn}
+	var uuids []string
+	if uuid != "" {
+		uuids = []string{uuid}
+	}
+	c.named[id] = &namedCall{window: c.window, turn: turn, uuids: uuids}
 	if l := c.held[id]; l != nil {
 		delete(c.held, id)
 		c.mainLine(l)
+	}
+}
+
+// retract marks every named call whose frame uuids share a member with uuids
+// as retracted by a refusal fallback (#2255): from here on the book does not
+// wait for the call — its spend books with the refused attempt. Unknown uuids
+// (a tool result's, a subagent frame's) match nothing; a second call changes
+// nothing; a call already booked is no longer named and is not touched. A
+// turn whose last named call this retracts can close its activity now.
+func (c *ccBook) retract(uuids []string) {
+	if len(uuids) == 0 {
+		return
+	}
+	var turns []string
+	for _, n := range c.named {
+		if n.retracted || !slices.ContainsFunc(n.uuids, func(u string) bool { return slices.Contains(uuids, u) }) {
+			continue
+		}
+		n.retracted = true
+		turns = append(turns, n.turn)
+	}
+	for _, t := range turns {
+		c.closeIfIdle(t, c.now())
 	}
 }
 

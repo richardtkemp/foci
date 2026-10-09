@@ -117,9 +117,10 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 	// reasons that have nothing to do with what was billed.
 	b.checkCacheWriteSplit(msg)
 	// The stream names which main-thread calls this process made; their
-	// usage is booked from the main transcript (ccbook.go).
+	// usage is booked from the main transcript (ccbook.go). The frame's uuid
+	// rides along: a refusal fallback's retraction names those uuids (#2255).
 	if isTopLevel {
-		b.ledger.Load().enqueue(ccEvent{kind: ccNamed, id: msg.Message.ID, turn: b.openTurnRowID()})
+		b.ledger.Load().enqueue(ccEvent{kind: ccNamed, id: msg.Message.ID, turn: b.openTurnRowID(), uuid: msg.UUID})
 	}
 
 	// CC's synthetic "No response requested." placeholder is a no-API-call turn,
@@ -906,7 +907,7 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		b.logger().Infof("model_refusal_fallback session=%s scope=%s from_model=%s to_model=%s category=%s retracted=%d content=%q",
 			sessionID, scope, mrf.OriginalModel, mrf.FallbackModel, category, len(mrf.RetractedMessageUUIDs), mrf.Content)
 		r := &ccRefusal{model: mrf.OriginalModel, fallback: mrf.FallbackModel, category: category,
-			retracted: len(mrf.RetractedMessageUUIDs)}
+			retracted: mrf.RetractedMessageUUIDs}
 		if mrf.RequestID != nil {
 			r.requestID = *mrf.RequestID
 		}

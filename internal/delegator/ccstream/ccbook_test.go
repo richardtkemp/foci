@@ -176,7 +176,7 @@ func replay(t *testing.T, name string) (*testBook, map[string]ModelUsage, replay
 		tb.clock = start.Add(time.Duration(e.T * float64(time.Second)))
 		switch e.Kind {
 		case "named":
-			tb.streamNamed(e.ID, "", tb.clock)
+			tb.streamNamed(e.ID, "", "", tb.clock)
 		case "result":
 			tb.result(e.MU, e.Running, tb.clock)
 			final = e.MU
@@ -315,7 +315,7 @@ func TestReplayInterruptedIsPriced(t *testing.T) {
 // observed TTL.
 func TestMainCallBooksOnItsNamingTurn(t *testing.T) {
 	tb := newTestBook(t, nil)
-	tb.streamNamed("msg_1", "cap/c1@1", tb.clock)
+	tb.streamNamed("msg_1", "", "cap/c1@1", tb.clock)
 	tb.result(map[string]ModelUsage{opus: {InputTokens: 10, OutputTokens: 20, CacheCreationInputTokens: 300}}, 0, tb.clock)
 	tb.advance(time.Millisecond)
 	tb.mainLine(line("msg_1", opus, tb.clock, "end_turn", 10, 20, 0, 0, 300))
@@ -338,7 +338,7 @@ func TestMainCallBooksOnItsNamingTurn(t *testing.T) {
 // ledger, and a genuinely new, named call in the same batch still books.
 func TestHistoryCopiesAreDropped(t *testing.T) {
 	tb := newTestBook(t, nil)
-	tb.streamNamed("msg_new", "T1", tb.clock)
+	tb.streamNamed("msg_new", "", "T1", tb.clock)
 	tb.mainLine(line("msg_old", opus, tb.clock, "end_turn", 1, 1, 0, 0, 0)) // pre-cutover history
 	tb.mainLine(line("msg_new", opus, tb.clock, "end_turn", 5, 5, 0, 0, 0))
 	tb.mainLine(line("msg_new", opus, tb.clock, "end_turn", 5, 5, 0, 0, 0)) // re-appended copy
@@ -463,7 +463,7 @@ func TestSubagentRereadIsHarmless(t *testing.T) {
 // nothing, never a clamp.
 func TestRemainderOnlyAtQuietPoints(t *testing.T) {
 	tb := newTestBook(t, map[string]ModelUsage{opus: {InputTokens: 1000}})
-	tb.streamNamed("m1", "T1", tb.clock)
+	tb.streamNamed("m1", "", "T1", tb.clock)
 	tb.mainLine(line("m1", opus, tb.clock, "end_turn", 10, 10, 0, 0, 0))
 	tb.result(map[string]ModelUsage{opus: {InputTokens: 1015, OutputTokens: 10}}, 1, tb.clock) // a subagent runs
 	tb.advance(time.Second)
@@ -472,7 +472,7 @@ func TestRemainderOnlyAtQuietPoints(t *testing.T) {
 			t.Fatalf("remainder booked while a subagent ran: %+v", c)
 		}
 	}
-	tb.streamNamed("m2", "T2", tb.clock)
+	tb.streamNamed("m2", "", "T2", tb.clock)
 	tb.mainLine(line("m2", opus, tb.clock, "end_turn", 20, 5, 0, 0, 0))
 	tb.result(map[string]ModelUsage{opus: {InputTokens: 1040, OutputTokens: 15}}, 0, tb.clock)
 	tb.advance(time.Second)
@@ -487,7 +487,7 @@ func TestRemainderOnlyAtQuietPoints(t *testing.T) {
 		t.Fatalf("overhead = %+v, want input 10 (1040 − 1000 − 10 − 20), no turn", over)
 	}
 
-	tb.streamNamed("m3", "T3", tb.clock)
+	tb.streamNamed("m3", "", "T3", tb.clock)
 	tb.mainLine(line("m3", opus, tb.clock, "end_turn", 999, 0, 0, 0, 0))
 	tb.result(map[string]ModelUsage{opus: {InputTokens: 1041, OutputTokens: 15}}, 0, tb.clock)
 	tb.advance(time.Second)
@@ -508,7 +508,7 @@ func TestRemainderOnlyAtQuietPoints(t *testing.T) {
 // exact; swapping either would make it wrong.
 func TestInterruptedVersusStopless(t *testing.T) {
 	tb := newTestBook(t, nil)
-	tb.streamNamed("m1", "T1", tb.clock)
+	tb.streamNamed("m1", "", "T1", tb.clock)
 	tb.mainLine(line("m1", opus, tb.clock, "", 300, 1, 0, 0, 0)) // interrupted: never completes
 	tb.tailOpened("agent-a", "T1")
 	tb.subLine("agent-a", "T1", line("s1", opus, tb.clock, "", 100, 1, 0, 0, 0))
@@ -624,7 +624,7 @@ func TestRemainderTTLSolvedFromReportedCost(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tb := newTestBook(t, nil)
 			// A counted main-thread call, priced by the ledger, shares the interval.
-			tb.streamNamed("m1", "T1", tb.clock)
+			tb.streamNamed("m1", "", "T1", tb.clock)
 			main := line("m1", opus, tb.clock, "end_turn", 10, 20, 500, 0, 4000)
 			tb.mainLine(main)
 			rem := modelinfo.Tokens{modelinfo.ClassInput: 7, modelinfo.ClassCacheWrite5m: tc.w5m, modelinfo.ClassCacheWrite1h: tc.w1h}
@@ -780,7 +780,7 @@ func TestResultWaitsForMainTailRead(t *testing.T) {
 		tb := newTestBook(t, nil)
 		tb.mainTailRunning(true)
 		tb.mainRead(tb.clock)
-		tb.streamNamed("msg_1", "T1", tb.clock)
+		tb.streamNamed("msg_1", "", "T1", tb.clock)
 		resultAt := tb.clock
 		tb.result(mu, 0, resultAt)
 		tb.advance(ccLineBound + time.Second) // the tail is stalled: no read yet
@@ -804,7 +804,7 @@ func TestResultWaitsForMainTailRead(t *testing.T) {
 	t.Run("read past the bound without the line alarms", func(t *testing.T) {
 		tb := newTestBook(t, nil)
 		tb.mainTailRunning(true)
-		tb.streamNamed("msg_1", "T1", tb.clock)
+		tb.streamNamed("msg_1", "", "T1", tb.clock)
 		tb.result(mu, 0, tb.clock)
 		tb.advance(ccLineBound + time.Second)
 		tb.mainRead(tb.clock)
@@ -817,7 +817,7 @@ func TestResultWaitsForMainTailRead(t *testing.T) {
 
 	t.Run("no tail settles on the bound", func(t *testing.T) {
 		tb := newTestBook(t, nil)
-		tb.streamNamed("msg_1", "T1", tb.clock)
+		tb.streamNamed("msg_1", "", "T1", tb.clock)
 		tb.result(mu, 0, tb.clock)
 		tb.advance(ccLineBound + time.Second)
 		if len(tb.results) != 0 || tb.alarmsOf(accounting.InvStreamIdBooked) != 1 {
@@ -832,7 +832,7 @@ func TestResultWaitsForMainTailRead(t *testing.T) {
 func TestAlarmCarriesCCVersion(t *testing.T) {
 	tb := newTestBook(t, map[string]ModelUsage{opus: {InputTokens: 1000}})
 	tb.setVersion("2.1.286")
-	tb.streamNamed("m1", "T1", tb.clock)
+	tb.streamNamed("m1", "", "T1", tb.clock)
 	tb.mainLine(line("m1", opus, tb.clock, "end_turn", 999, 0, 0, 0, 0))
 	tb.result(map[string]ModelUsage{opus: {InputTokens: 1001}}, 0, tb.clock)
 	tb.advance(time.Second)
