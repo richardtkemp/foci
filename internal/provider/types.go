@@ -378,6 +378,12 @@ type MessageResponse struct {
 	// KeySuffix holds the last 4 chars of the API key used (e.g. "...agAA").
 	// Set by providers when log.DebugLogKeySuffix is true. Never persisted.
 	KeySuffix string `json:"-"`
+
+	// Served reports which fallback hop produced this response; the zero
+	// value means the primary request served it. Set by Send on a
+	// fallback-served success, read through ServedTuple. Like WireRequest
+	// and KeySuffix it is process-local and never serialised.
+	Served ServedReport `json:"-"`
 }
 
 // TextContent creates a single text content block.
