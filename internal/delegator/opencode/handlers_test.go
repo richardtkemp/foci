@@ -962,3 +962,29 @@ func TestTurnResult_NilUsageWhenNoTokensReceived(t *testing.T) {
 		t.Errorf("result.Usage = %+v, want nil when no Tokens received", (*c.completed).Usage)
 	}
 }
+
+// TestOnSessionIdle_ReportsProviderQualifiedModel: foci stores the reported
+// model as the session's launch model, and a bare "glm-5.3" became ambiguous
+// once glm-5.3-flash appeared. The backend must report opencode's own
+// provider/model pair (#2264), and fall back to the bare id with no provider.
+func TestOnSessionIdle_ReportsProviderQualifiedModel(t *testing.T) {
+	for _, tc := range []struct{ provider, model, want string }{
+		{"zai-coding-plan", "glm-5.3", "zai-coding-plan/glm-5.3"},
+		{"", "glm-5.3", "glm-5.3"},
+	} {
+		b := newHandlerTestBackend(t)
+		c := b.captures()
+		b.mu.Lock()
+		b.lastModel, b.lastProvider = tc.model, tc.provider
+		b.mu.Unlock()
+
+		b.onSessionIdle("sess-test")
+
+		if *c.completed == nil {
+			t.Fatal("OnTurnComplete was not called")
+		}
+		if got := (*c.completed).Model; got != tc.want {
+			t.Errorf("provider=%q model=%q: result.Model = %q, want %q", tc.provider, tc.model, got, tc.want)
+		}
+	}
+}

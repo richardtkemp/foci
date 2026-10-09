@@ -57,7 +57,7 @@ func (b *Backend) GetContextWindow(ctx context.Context) (*delegator.ContextWindo
 
 	return &delegator.ContextWindow{
 		MaxTokens: limit,
-		Model:     model,
+		Model:     qualifiedModel(provider, model),
 	}, nil
 }
 

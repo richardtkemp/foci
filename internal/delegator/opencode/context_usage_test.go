@@ -1,6 +1,10 @@
 package opencode
 
-import "testing"
+import (
+	"context"
+	"net/http"
+	"testing"
+)
 
 // mkProvider builds a providerInfo with the given id and model→context map.
 func mkProvider(id string, models map[string]int) providerInfo {
@@ -47,5 +51,32 @@ func TestLookupModelLimit(t *testing.T) {
 				t.Errorf("lookupModelLimit(%q, %q) = %d, want %d", tt.providerID, tt.modelID, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestGetContextWindow_ReportsProviderQualifiedModel: GetContextWindow's model
+// also becomes the session model (session_meta), so it must carry the provider
+// like TurnResult.Model does (#2264).
+func TestGetContextWindow_ReportsProviderQualifiedModel(t *testing.T) {
+	_, b := newTestBackendServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/config/providers" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"providers":[{"id":"zai-coding-plan","models":{"glm-5.3":{"limit":{"context":1000000}}}}]}`))
+	})
+	b.mu.Lock()
+	b.lastModel, b.lastProvider = "glm-5.3", "zai-coding-plan"
+	b.mu.Unlock()
+
+	wnd, err := b.GetContextWindow(context.Background())
+	if err != nil {
+		t.Fatalf("GetContextWindow: %v", err)
+	}
+	if wnd.MaxTokens != 1000000 {
+		t.Errorf("MaxTokens = %d, want 1000000", wnd.MaxTokens)
+	}
+	if wnd.Model != "zai-coding-plan/glm-5.3" {
+		t.Errorf("Model = %q, want %q", wnd.Model, "zai-coding-plan/glm-5.3")
 	}
 }

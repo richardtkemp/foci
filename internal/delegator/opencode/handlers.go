@@ -438,6 +438,20 @@ func (b *Backend) onMessageUpdated(msg Message) {
 	// for the last assistant message" invariant).
 }
 
+// qualifiedModel joins opencode's providerID/modelID pair into the
+// "provider/model" id `opencode models` lists. foci stores the model a backend
+// reports as the session's launch model, so reporting the bare modelID made
+// every relaunch re-resolve it by substring, which broke once a second model
+// shared the prefix (glm-5.3 vs glm-5.3-flash, #2264). With no provider the
+// bare id is returned. modelinfo lookups key on the leaf, so the prefix does not
+// change pricing or context-window resolution.
+func qualifiedModel(providerID, modelID string) string {
+	if providerID == "" || modelID == "" {
+		return modelID
+	}
+	return providerID + "/" + modelID
+}
+
 // handleMessageError dispatches on msg.error.name.
 func (b *Backend) handleMessageError(err *MessageError) {
 	component := b.logComponent()
@@ -492,7 +506,7 @@ func (b *Backend) onSessionIdle(sessionID string) {
 	b.turnMu.Unlock()
 
 	b.mu.Lock()
-	model := b.lastModel
+	model := qualifiedModel(b.lastProvider, b.lastModel)
 	usage := b.lastUsage
 	b.mu.Unlock()
 

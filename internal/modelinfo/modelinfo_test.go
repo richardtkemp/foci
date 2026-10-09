@@ -468,3 +468,29 @@ func lookupAsOf(provider, modelID string, at time.Time) (Model, bool) {
 	r, ok := historyLookupAsOfSegs(segs, bare, at)
 	return r.row.model, ok
 }
+
+// TestProviderQualifiedOpencodeIDResolvesToBareOverride: the opencode backend
+// reports "zai-coding-plan/glm-5.3" (#2264). The operator's $0 override is a
+// providerless [[modelinfo]] row keyed "glm-5.3", alongside the built-in
+// openrouter/z-ai row. The qualified id must resolve to the override exactly as
+// the bare id does: priced at $0 (not unpriced, cf. #2172, nor the OpenRouter
+// rate) with the override's context window.
+func TestProviderQualifiedOpencodeIDResolvesToBareOverride(t *testing.T) {
+	t.Cleanup(ResetToBuiltIn)
+	Register("", "glm-5.3", Model{
+		ContextWindow: 1_000_000,
+		Rates:         Prices{CacheReadSet: true, CacheWriteSet: true}.Rates(),
+	})
+
+	for _, id := range []string{"glm-5.3", "zai-coding-plan/glm-5.3"} {
+		usd, priced := CostAsOf(id, time.Now(), Tokens{
+			ClassInput: 1_000_000, ClassOutput: 1_000_000, ClassCacheRead: 1_000_000, ClassCacheWrite: 1_000_000,
+		})
+		if !priced || usd != 0 {
+			t.Errorf("CostAsOf(%q) = $%v priced=%v, want $0 priced", id, usd, priced)
+		}
+		if got := ContextWindow(id); got != 1_000_000 {
+			t.Errorf("ContextWindow(%q) = %d, want 1000000", id, got)
+		}
+	}
+}
