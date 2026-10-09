@@ -156,8 +156,8 @@ func (s *ccLedger) run() {
 		select {
 		case e := <-s.events:
 			switch e.kind {
-		case ccNamed:
-			c.streamNamed(e.id, e.uuid, e.turn, e.at)
+			case ccNamed:
+				c.streamNamed(e.id, e.uuid, e.turn, e.at)
 			case ccMainLine:
 				c.mainLine(e.line)
 			case ccSubLine:
@@ -168,11 +168,11 @@ func (s *ccLedger) run() {
 				c.tailClosed(e.agent)
 			case ccBoundaryEv:
 				c.compactBoundary(e.turn, e.at)
-		case ccRefusalEv:
-			r := *e.refusal
-			r.turn, r.at = e.turn, e.at
-			c.refusalFallback(r)
-			c.retract(r.retracted)
+			case ccRefusalEv:
+				r := *e.refusal
+				r.turn, r.at = e.turn, e.at
+				c.refusalFallback(r)
+				c.retract(r.retracted)
 			case ccResultEv:
 				c.result(e.mu, e.running, e.at)
 			case ccCostState:

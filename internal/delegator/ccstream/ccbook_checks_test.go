@@ -609,16 +609,17 @@ func TestRetractIgnoresUnknownAndUnrelated(t *testing.T) {
 	tb.result(map[string]ModelUsage{}, 0, tb.clock)
 	tb.advance(time.Second)
 
-	var a *accounting.Alarm
+	n, details := 0, ""
 	for i := range tb.alarms {
 		if tb.alarms[i].Invariant == accounting.InvStreamIdBooked {
-			a = &tb.alarms[i]
+			n++
+			details += tb.alarms[i].Detail
 		}
 	}
-	if a == nil {
-		t.Fatalf("alarms = %+v, want one invStreamIdBooked for the unrelated m3", tb.alarms)
+	if n != 1 {
+		t.Fatalf("invStreamIdBooked alarms = %d (%+v), want exactly one, for the unrelated m3", n, tb.alarms)
 	}
-	if !strings.Contains(a.Detail, "m3") {
-		t.Errorf("alarm detail = %q, want it to name m3", a.Detail)
+	if !strings.Contains(details, "m3") {
+		t.Errorf("alarm detail = %q, want it to name m3", details)
 	}
 }

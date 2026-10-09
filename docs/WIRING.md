@@ -1741,7 +1741,8 @@ interval less the counted calls' (`solveRemainderTTL`, `class_method=solved`; ex
 `accounting.SolveTolerance`, like the migration's solve), and one that will not solve stays
 TTL-unknown at the 1h rate and alarms `invRemainderTTLUnsolved`; a negative class alarms
 `invNegativeRemainder` and books nothing; a named call whose line never came alarms
-`invStreamIdBooked` (a call a refusal fallback retracted is not waited for — below). At exit the last remainder comes from the `cost-state` record, else the
+`invStreamIdBooked` (a call a refusal fallback retracted is not waited for — below). At exit
+the last remainder comes from the `cost-state` record, else the
 last result. A call on a run no foci turn opened books on a minted `run` turn, recorded as
 `autonomous`. Every process writes its baseline (the totals CC restored on --resume,
 `resumeBaselineFor`, #2012) and each result as cumulative `backend_reports` for the scope

@@ -240,10 +240,10 @@ type ccBoundary struct {
 // uuids, which ccBook.retract matches against the named calls (#2255).
 type ccRefusal struct {
 	at        time.Time
-	turn      string // the foci turn open at the refusal, or ""
-	model     string // the model that refused
-	fallback  string // the model CC retried on
-	category  string // the API's refusal category, "" when it gave none
+	turn      string   // the foci turn open at the refusal, or ""
+	model     string   // the model that refused
+	fallback  string   // the model CC retried on
+	category  string   // the API's refusal category, "" when it gave none
 	requestID string   // the refused request's id, "" when CC gave none
 	retracted []string // frame uuids CC retracted: output had already streamed
 }
@@ -777,9 +777,9 @@ func (c *ccBook) unseenNamed() int {
 
 // closeWindows finalises the main-thread calls of windows up to w: a call seen
 // only at a stopless line was interrupted, and is booked — priced — from it; a
-// call whose line never came alarms (a retracted one's line may never come
+// call whose line never came alarms. A retracted call's line may never come
 // (#2255): it is dropped with neither, because CC's modelUsage counts the
-// refused attempt and the refusal remainder already holds its spend). Held
+// refused attempt and the refusal remainder already holds its spend. Held
 // lines no stream named are copies.
 func (c *ccBook) closeWindows(w int) {
 	var turns []string
