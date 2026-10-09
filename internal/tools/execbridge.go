@@ -690,11 +690,12 @@ func generateHelpText(t *Tool) string {
 				// #1786: state which actions accept this flag from the SAME data the
 				// shell gate enforces, so the table cannot contradict the subcommand
 				// lines below it or the rejection the user actually gets.
-				// #2244: foci_todo's alone — it is the only sub-actioned tool, and
-				// the lookup is keyed by flag name, so other tools with a same-named
-				// parameter (remind --text, http_request --body) have no actions and
-				// must not inherit the annotation.
-				if t.Name == todoToolName {
+				// #2244: foci_todo's alone ("todo" is the Name NewTodoTool
+				// sets) — it is the only sub-actioned tool, and the lookup is
+				// keyed by flag name, so other tools with a same-named
+				// parameter (remind --text, http_request --body) have no
+				// actions and must not inherit the annotation.
+				if t.Name == "todo" {
 					if acts := todoFlagActions(flag); len(acts) > 0 {
 						desc = strings.TrimSpace(desc) + " [actions: " + strings.Join(acts, ", ") + "]"
 					}
@@ -942,7 +943,7 @@ func generateShellFunc(t *Tool) string {
 }
 `, name, helpCheck, guard, toolFlagList(t, "--header"), name)
 
-	case todoToolName:
+	case "todo":
 		// action as first arg, rest varies by action. helpCheck above is the
 		// generic schema-driven help; override it here so top-level
 		// `foci_todo --help` also lists subcommands. Per-action --help is

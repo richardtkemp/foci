@@ -14,16 +14,10 @@ import (
 	"foci/internal/memory"
 )
 
-// todoToolName is the todo tool's registry name, set by NewTodoTool. The exec
-// bridge's todo special cases — the [actions: ...] help annotation gate in
-// generateHelpText and the hand-rolled shell-function case in generateShellFunc
-// — key off it, so the name has one source of truth.
-const todoToolName = "todo"
-
 // NewTodoTool creates the todo management tool.
 func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 	return &Tool{
-		Name:        todoToolName,
+		Name:        "todo",
 		ExecExport:  true,
 		Positional:  []string{"action"},
 		JSONOutput:  `list, list-all, search and get: JSONL, exactly as --format jsonl (see below). Other actions: {"result": "<the text output>"}.`,
