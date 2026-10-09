@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// Sonnet 5.5 cache reads dropped from $0.20 to $0.10 per million on the
-// pricing page (seen 2026-10-09; CC 2.1.296 made the same change). The rate
+// Sonnet 5.5 cache reads dropped from $0.20 to $0.10 per million on
+// 2026-10-07 (Anthropic API release notes; CC 2.1.296 followed). The rate
 // history keeps both: calls before the new row price at 0.20, calls after at
 // 0.10, so the ledger's past rows are not repriced.
 func TestSonnet55CacheReadRateHistory(t *testing.T) {
@@ -15,8 +15,8 @@ func TestSonnet55CacheReadRateHistory(t *testing.T) {
 		at   string
 		want float64
 	}{
-		{"2026-10-05T12:00:00Z", 0.20},
-		{"2026-10-10T12:00:00Z", 0.10},
+		{"2026-10-06T12:00:00Z", 0.20},
+		{"2026-10-07T12:00:00Z", 0.10},
 	} {
 		at, _ := time.Parse(time.RFC3339, tc.at)
 		usd, priced := CostAsOf("claude-sonnet-5-5", at, Tokens{ClassCacheRead: 1_000_000})
