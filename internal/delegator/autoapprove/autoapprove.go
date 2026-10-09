@@ -1392,10 +1392,32 @@ func (r Rule) matchesToolStr(toolName, matchStr string) bool {
 // unsafeCmdFlags describes flags and argument patterns that make an otherwise
 // safe command unsafe for auto-approval.
 type unsafeCmdFlags struct {
-	shortFlags string            // unsafe single-letter flags, e.g. "i" for -i
-	wordFlags  []string          // unsafe single-dash word flags, e.g. "-exec", "-delete"
-	longFlags  []string          // long flag stems (matched as prefix for --flag=value)
+	shortFlags string // unsafe single-letter flags, e.g. "i" for -i
+	wordFlags  []string // unsafe single-dash word flags, e.g. "-exec", "-delete"
+	longFlags  []string // unsafe long flags, e.g. "--in-place" — matched as longFlagMatches accepts them
+	// abbrevLongFlags: the command's option parser accepts abbreviated long
+	// options — GNU getopt_long matches any unambiguous prefix of a long
+	// option name — so a prefix of a longFlags entry IS that flag (--in for
+	// --in-place, --out for --output). Set for sed and sort only: ripgrep,
+	// yq (mikefarah v4) and git's TOP-LEVEL options were verified to REJECT
+	// abbreviations, so their entries match exact spellings only (git's
+	// SUBCOMMAND options — parse-options, e.g. git grep's pager flag — do
+	// accept them; gitGrepPagerUnsafe models that separately). A prefix the
+	// program itself would reject as ambiguous still refuses: fail closed.
+	abbrevLongFlags bool
 	argCheck   func(string) bool // optional: check non-flag arguments for dangerous content
+	// argLongFlags: long flags whose VALUE is an argument argCheck must
+	// judge even when it rides on the flag token itself — sed's --expression,
+	// whose script is the text after '=' (--expression=script) or the next
+	// word when there is none. Matched by the same rule as longFlags.
+	argLongFlags []string
+	// argShortFlag: a short option letter whose ATTACHED value — the rest of
+	// the token after the letter, as getopt hands it to the option (-e…,
+	// -ne…) — is an argument argCheck must judge; a letter that ends the
+	// token takes the next word as its value instead. The letters before it
+	// are still shortFlags-scanned; the text after it is the option's
+	// argument, not more flags.
+	argShortFlag byte // 0 = none
 }
 
 // unsafeFlags maps command base names to their unsafe flag/argument specs.
@@ -1408,7 +1430,11 @@ var unsafeFlags = map[string]unsafeCmdFlags{
 	"sed": {
 		shortFlags: "if",
 		longFlags:  []string{"--in-place", "--file"},
-		argCheck:   sedArgUnsafe,
+		// GNU getopt_long parses sed's options.
+		abbrevLongFlags: true,
+		argLongFlags:    []string{"--expression"},
+		argShortFlag:    'e',
+		argCheck:        sedArgUnsafe,
 	},
 	"find": {
 		wordFlags: []string{"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fls", "-fprintf"},
@@ -1416,6 +1442,8 @@ var unsafeFlags = map[string]unsafeCmdFlags{
 	"sort": {
 		shortFlags: "o",
 		longFlags:  []string{"--output", "--compress-program"},
+		// GNU getopt_long parses sort's options, like sed's.
+		abbrevLongFlags: true,
 	},
 	"rg": {
 		longFlags: []string{"--pre"},
@@ -1526,6 +1554,43 @@ func visibleCmdBase(words []shellWord) string {
 	return filepath.Base(words[0].visible)
 }
 
+// longFlagMatches reports whether token tok is the long flag lf as the
+// command's option parser accepts it:
+//   - exactly (--output) or with an attached value (--output=x), for every
+//     command;
+//   - and, when the parser accepts abbreviated long options (abbrev — GNU
+//     getopt_long for sed and sort, parse-options for a git subcommand), as
+//     any non-empty prefix of the flag's name in either form: --out,
+//     --out=x. An empty name (-- or --=x) is not a flag name and never
+//     matches.
+//
+// A prefix that is shorter than several of the program's long options would
+// be ambiguous and rejected by the program itself; matching it anyway only
+// refuses, which is the safe direction (#2263).
+func longFlagMatches(tok, lf string, abbrev bool) bool {
+	if tok == lf || strings.HasPrefix(tok, lf+"=") {
+		return true
+	}
+	if !abbrev {
+		return false
+	}
+	name := strings.TrimPrefix(tok, "--")
+	if eq := strings.IndexByte(name, '='); eq >= 0 {
+		name = name[:eq]
+	}
+	return name != "" && strings.HasPrefix(lf, "--"+name)
+}
+
+// longFlagValue splits a long-flag token at its first '=' and returns the
+// attached value. ok is false when the token carries none: a value-taking
+// option then takes its value from the NEXT word.
+func longFlagValue(tok string) (string, bool) {
+	if eq := strings.IndexByte(tok, '='); eq >= 0 {
+		return tok[eq+1:], true
+	}
+	return "", false
+}
+
 // containsUnsafeFlags checks whether a command string contains flags or
 // arguments that make it unsafe for auto-approval: it scans the segment into
 // shell words and applies containsUnsafeFlagWords — see that function for
@@ -1547,7 +1612,11 @@ func containsUnsafeFlags(segment string) bool {
 //   - a flag matching the command's unsafeFlags entry — short flags
 //     (including bundled forms like -ni), word flags (single-dash
 //     multi-letter flags like -exec), long flags (including --flag=value
-//     forms) — or dangerous argument content (via the optional argCheck);
+//     forms, and — where the parser accepts them, see abbrevLongFlags —
+//     abbreviated spellings like --out for --output) — or dangerous
+//     argument content (via the optional argCheck), including a value
+//     attached to the flag itself (sed --expression=…, -e…): see argLongFlags
+//     and argShortFlag;
 //   - an unquoted, unescaped glob argument whose expansion could begin with
 //     '-' (#2213): the shell expands globs before the command runs, so a
 //     file name planted in the working directory (--pre=./x.sh in a cloned
@@ -1589,14 +1658,36 @@ func containsUnsafeFlagWords(words []shellWord) bool {
 		return false // sqlite3 — its whole argument vector is checked above
 	}
 
-	for _, w := range words[1:] {
-		tok := w.visible
+	// The scan is positional, not per-token: a value-taking flag whose value
+	// rides on the NEXT word (getopt's --expression script and -e at the end
+	// of a bundle) makes the following word that flag's argument (#2263).
+	for i := 1; i < len(words); i++ {
+		tok := words[i].visible
+		next := ""
+		if i+1 < len(words) {
+			next = words[i+1].visible
+		}
 		if len(tok) >= 2 && tok[0] == '-' {
 			// Flag token.
 			if strings.HasPrefix(tok, "--") {
-				// Long flag: --in-place or --in-place=.bak
+				// Long flag: --in-place, --in-place=.bak and — where the
+				// parser accepts them — abbreviated spellings (--in).
 				for _, lf := range spec.longFlags {
-					if tok == lf || strings.HasPrefix(tok, lf+"=") {
+					if longFlagMatches(tok, lf, spec.abbrevLongFlags) {
+						return true
+					}
+				}
+				// A script-bearing long flag (sed's --expression): its value
+				// is attached after '=' or is the next word.
+				for _, lf := range spec.argLongFlags {
+					if !longFlagMatches(tok, lf, spec.abbrevLongFlags) {
+						continue
+					}
+					value, attached := longFlagValue(tok)
+					if !attached {
+						value = next
+					}
+					if spec.argCheck != nil && spec.argCheck(value) {
 						return true
 					}
 				}
@@ -1612,7 +1703,7 @@ func containsUnsafeFlagWords(words []shellWord) bool {
 				// Everything after the leading '-' up to the first non-alpha
 				// character is the flag bundle. For -i.bak the bundle is "i"
 				// (the dot terminates it, rest is the suffix argument).
-				if spec.shortFlags != "" {
+				if spec.shortFlags != "" || spec.argShortFlag != 0 {
 					bundle := tok[1:]
 					for j := 0; j < len(bundle); j++ {
 						ch := bundle[j]
@@ -1621,6 +1712,20 @@ func containsUnsafeFlagWords(words []shellWord) bool {
 						}
 						if strings.IndexByte(spec.shortFlags, ch) >= 0 {
 							return true
+						}
+						if ch == spec.argShortFlag {
+							// getopt hands the rest of the token to the
+							// option as its argument (-e<script>,
+							// -ne<script>); at the end of the bundle the
+							// argument is the next word.
+							value := bundle[j+1:]
+							if value == "" {
+								value = next
+							}
+							if spec.argCheck != nil && spec.argCheck(value) {
+								return true
+							}
+							break // the rest is an argument, not flags
 						}
 					}
 				}
@@ -1669,6 +1774,10 @@ func sqliteCommandUnsafe(tokens []string) bool {
 // gitGrepPagerUnsafe reports whether words run git's grep subcommand with a
 // pager flag (-O, -O<pager>, --open-files-in-pager[=<cmd>]): the pager is
 // executed over the matched files and may be an arbitrary command (#2213).
+// The grep SUBCOMMAND's parse-options accepts any unambiguous prefix of a
+// long option, so an abbreviated --open… is the pager flag too (#2263) —
+// unlike git's TOP-LEVEL options, which reject abbreviations (see
+// unsafeFlags); a prefix git itself would call ambiguous still refuses.
 //
 // Both facts are tested on the words' shell-VISIBLE text, because quoting
 // does not change what git receives: git grep '-Oevil.sh', "-O"evil and
@@ -1688,8 +1797,7 @@ func gitGrepPagerUnsafe(words []shellWord) bool {
 		case w.visible == "grep":
 			isGrep = true
 		case strings.HasPrefix(w.visible, "-O"), // -O and -O<pager>
-			w.visible == "--open-files-in-pager",
-			strings.HasPrefix(w.visible, "--open-files-in-pager="):
+			longFlagMatches(w.visible, "--open-files-in-pager", true):
 			hasPager = true
 		}
 	}
