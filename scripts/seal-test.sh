@@ -127,6 +127,20 @@ diagnostic_rerun() {
   local failed
   failed=$(grep -oP '^FAIL\t\K\S+' "$LOGFILE" 2>/dev/null | sort -u || true)
   [ -z "$failed" ] && return 0
+  # A package that failed by TIMING OUT is a hang (deadlock, missed wakeup),
+  # not a sandbox write: re-running it unsealed only holds the /tmp/heavy lock
+  # for another full timeout (foci_todo #2290). go test prints the panic inside
+  # the package's own (unbroken) output block, before its FAIL line.
+  local hung
+  hung=$(awk '/^panic: test timed out after /{t=1} /^(ok|FAIL)\t/{if($1=="FAIL"&&t)print $2; t=0}' "$LOGFILE" 2>/dev/null | sort -u)
+  if [ -n "$hung" ]; then
+    local h
+    while IFS= read -r h; do
+      echo ">>> DIAGNOSTIC: $h TIMED OUT — a hang, not a sandbox artifact; not re-run. See the 'running tests:' list above its FAIL line for the stuck test." | tee -a "$LOGFILE" >&2
+    done <<<"$hung"
+    failed=$(comm -23 <(printf '%s\n' "$failed") <(printf '%s\n' "$hung"))
+    [ -z "$failed" ] && return 0
+  fi
 
   {
     echo ""
@@ -158,15 +172,15 @@ diagnostic_rerun() {
 # lets a peer (or foci_todo #1709's own verification) DIFF two runs' logs and
 # see the environment matched, instead of taking it on faith.
 env_header() {
-  echo "=== $1 (env: ${TESTENV[*]:1}) ===" >> "$LOGFILE"
+  echo "=== $1 (env: ${TESTENV[*]:1}) [$(date +%FT%T%z)] ===" >> "$LOGFILE"
 }
 
 run_unit() {
   env_header "sealed unit suite"
-  "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -trimpath -p="$PARALLEL" -parallel=16 ./... >> "$LOGFILE" 2>&1
+  "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -trimpath -p="$PARALLEL" -parallel=16 -timeout "$(test_timeout)" ./... >> "$LOGFILE" 2>&1
   local status=$?
 
-  diagnostic_rerun
+  diagnostic_rerun -timeout "$(test_timeout)"
 
   # Shell-script suites. They ran nowhere before, so mdq-test.sh sat red on
   # main unnoticed (#1976) — and scripts/tests/ (the repo's own tooling, e.g.
@@ -184,6 +198,18 @@ run_unit() {
     fi
   done
   return "$status"
+}
+
+# test_timeout [count] — go test's per-package -timeout (foci_todo #2290). go's
+# default is 10m, so one hung test held the /tmp/heavy lock 10 min (20 with the
+# diagnostic re-run) while every other build queued behind it. The slowest
+# package takes ~48s under a full suite (2026-10-10), so 180s per pass is ~4x
+# headroom. TEST_TIMEOUT (make's TIMEOUT=, a go duration) overrides it. run_unit
+# and run_one pass the SAME value: test flags are part of go's test-cache key,
+# so a package `make test` passed is still served from cache by test-one.
+test_timeout() {
+  local count="${1:-1}"
+  if [ -n "${TEST_TIMEOUT:-}" ]; then echo "$TEST_TIMEOUT"; else echo "$((180 * count))s"; fi
 }
 
 # check_count — COUNT (make's COUNT=N) repeats the run N times, e.g. to check
@@ -242,10 +268,14 @@ run_one() {
   [ -n "$COUNT" ] && extra+=(-count="$COUNT")
   [ -n "$RUNFILTER" ] && extra+=(-run "$RUNFILTER")
   [ -n "$VERBOSE" ] && extra+=(-v)
-  "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -trimpath -parallel=16 "${extra[@]}" "$PKG" >> "$LOGFILE" 2>&1
+  "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -trimpath -parallel=16 -timeout "$(test_timeout "${COUNT:-1}")" "${extra[@]}" "$PKG" >> "$LOGFILE" 2>&1
   local status=$?
 
-  diagnostic_rerun
+  # Re-run with the SAME -run filter and -timeout: without them a narrowed run's
+  # re-run ran the whole package, under go's 10m default (foci_todo #2290).
+  local rerun=(-timeout "$(test_timeout "${COUNT:-1}")")
+  [ -n "$RUNFILTER" ] && rerun+=(-run "$RUNFILTER")
+  diagnostic_rerun "${rerun[@]}"
   return "$status"
 }
 

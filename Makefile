@@ -86,7 +86,7 @@ $(SIMPLE_BINS):
 # (#2229; lint-unlocked checks this).
 build:
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; $(MAKE) --no-print-directory foci-gw 9<&- || exit $$? ) 9</tmp/heavy
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ... [$$(date +%T)]" >&2; flock 9; echo ">>> acquired heavy lock [$$(date +%T)]" >&2; $(MAKE) --no-print-directory foci-gw 9<&- || exit $$? ) 9</tmp/heavy
 cli: foci
 
 # nosgid.so — LD_PRELOAD shim that strips setuid/setgid bits from chmod-family
@@ -230,14 +230,14 @@ test: llbox
 	@# #1498). The /tmp/fgw daily cron sweep (entries >24h) remains as a backstop
 	@# for anything this recipe doesn't reach (e.g. an aborted run).
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; rm -rf $(TESTDIR) && mkdir -p $(TESTDIR)/home && ln -sfn $(CURDIR) $(fgw_srclink) && touch -h -d @946684800 $(fgw_srclink) && cd $(fgw_srclink) && $(REAP_GRADLE) bash scripts/seal-test.sh unit $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) 9<&- ; STATUS=$$? ; \
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ... [$$(date +%T)]" >&2; flock 9; echo ">>> acquired heavy lock [$$(date +%T)]" >&2; rm -rf $(TESTDIR) && mkdir -p $(TESTDIR)/home && ln -sfn $(CURDIR) $(fgw_srclink) && touch -h -d @946684800 $(fgw_srclink) && cd $(fgw_srclink) && $(REAP_GRADLE) TEST_TIMEOUT='$(TIMEOUT)' bash scripts/seal-test.sh unit $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; bash scripts/test-fail-summary.sh $(LOGFILE); fi ; \
 	  rm -rf $(TESTDIR) ; \
 	  if [ -n "$(CI_HOOK)" ]; then mkdir -p "$$(dirname "$(CI_HOOK)")" && printf '%s,foci,%s,unit,%s,%s\n' "$$(date -Is)" "$(GIT_COMMIT)" "$$([ $$STATUS -eq 0 ] && echo pass || echo fail)" "$$(bash scripts/ci-failed-tests.sh go $(LOGFILE))" >> "$(CI_HOOK)" || true; fi ; \
 	  exit $$STATUS ) 9</tmp/heavy
 
-# `make test-one PKG=./internal/<pkg>/ [RUN=<TestName>] [V=1] [COUNT=N]` — the single-package
+# `make test-one PKG=./internal/<pkg>/ [RUN=<TestName>] [V=1] [COUNT=N] [TIMEOUT=<go duration>]` — the single-package
 # counterpart to `make test` for a fail-arm iteration loop (foci_todo #1709).
 # `make test` has no package filter, and a bare `go test ./<pkg>/` drops the
 # harness environment (FOCI_TMPDIR et al — some packages panic without it,
@@ -253,8 +253,10 @@ test: llbox
 # PASS (foci_todo #1982) — until this, the only way to see it was to force a
 # FAIL (t.Errorf), and a bare ARGS=-v was silently dropped (unrecognised make
 # var, no passthrough existed).
+# TIMEOUT overrides go test's per-package -timeout (default 180s x COUNT, also
+# used by `make test`; foci_todo #2290) — see test_timeout in scripts/seal-test.sh.
 test-one: llbox
-	@if [ -z "$(PKG)" ]; then echo "usage: make test-one PKG=./internal/<pkg>/ [RUN=<TestName>] [V=1] [COUNT=N]" >&2; exit 2; fi
+	@if [ -z "$(PKG)" ]; then echo "usage: make test-one PKG=./internal/<pkg>/ [RUN=<TestName>] [V=1] [COUNT=N] [TIMEOUT=<go duration>]" >&2; exit 2; fi
 	$(eval TESTDIR := $(fgw_shared_testdir))
 	$(eval LOGFILE := $(call fgw_logfile,test-one))
 	@python3 scripts/restore-mtime.py . || true
@@ -262,7 +264,7 @@ test-one: llbox
 	@# for the rationale (serialises against other heavy builds; read-only lock
 	@# fd so go test's children don't inherit it).
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; rm -rf $(TESTDIR) && mkdir -p $(TESTDIR)/home && ln -sfn $(CURDIR) $(fgw_srclink) && touch -h -d @946684800 $(fgw_srclink) && cd $(fgw_srclink) && $(REAP_GRADLE) bash scripts/seal-test.sh one $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) $(PKG) "$(RUN)" "$(V)" "$(COUNT)" 9<&- ; STATUS=$$? ; \
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ... [$$(date +%T)]" >&2; flock 9; echo ">>> acquired heavy lock [$$(date +%T)]" >&2; rm -rf $(TESTDIR) && mkdir -p $(TESTDIR)/home && ln -sfn $(CURDIR) $(fgw_srclink) && touch -h -d @946684800 $(fgw_srclink) && cd $(fgw_srclink) && $(REAP_GRADLE) TEST_TIMEOUT='$(TIMEOUT)' bash scripts/seal-test.sh one $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) $(PKG) "$(RUN)" "$(V)" "$(COUNT)" 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; bash scripts/test-fail-summary.sh $(LOGFILE); fi ; \
 	  rm -rf $(TESTDIR) ; \
@@ -307,7 +309,7 @@ integration: llbox
 	@# any runaway foci-gw/cc-stub first avoids racing a still-open binary FD
 	@# against the removal (harmless on Linux either way, but tidier).
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; $(REAP_GRADLE) bash scripts/seal-test.sh integration $(TESTDIR) $(LOGFILE) $(IPARALLEL) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) "" '$(value RUN)' "" "$(COUNT)" 9<&- ; STATUS=$$? ; \
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ... [$$(date +%T)]" >&2; flock 9; echo ">>> acquired heavy lock [$$(date +%T)]" >&2; $(REAP_GRADLE) bash scripts/seal-test.sh integration $(TESTDIR) $(LOGFILE) $(IPARALLEL) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) "" '$(value RUN)' "" "$(COUNT)" 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -ne 0 ]; then echo ">>> non-zero exit ($$STATUS) — sweeping any orphaned foci-gw/cc-stub subprocesses from this run ..." >&2; pkill -f "$(TESTDIR)/foci-l2-bin[0-9]" 2>/dev/null || true; fi ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; bash scripts/test-fail-summary.sh $(LOGFILE); fi ; \
@@ -447,7 +449,7 @@ setup-hooks:
 
 vet:
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; go vet ./... 9<&- || exit $$? ) 9</tmp/heavy
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ... [$$(date +%T)]" >&2; flock 9; echo ">>> acquired heavy lock [$$(date +%T)]" >&2; go vet ./... 9<&- || exit $$? ) 9</tmp/heavy
 
 # lint takes the /tmp/heavy compute lock (Dick, 2026-09-23): deadcode alone peaks
 # at ~3.7 GB, and running it beside a test run or a gradle build got it killed by
@@ -456,7 +458,7 @@ vet:
 # re-entrant across processes, so nesting lint under heavy would deadlock).
 lint:
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ..." >&2; flock 9; echo ">>> acquired heavy lock" >&2; $(REAP_GRADLE) $(MAKE) --no-print-directory lint-unlocked 9<&- || exit $$? ) 9</tmp/heavy
+	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ... [$$(date +%T)]" >&2; flock 9; echo ">>> acquired heavy lock [$$(date +%T)]" >&2; $(REAP_GRADLE) $(MAKE) --no-print-directory lint-unlocked 9<&- || exit $$? ) 9</tmp/heavy
 
 lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift
 	@echo "=== golangci-lint ==="
