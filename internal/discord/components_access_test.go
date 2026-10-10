@@ -379,3 +379,39 @@ func TestHandleComponentInteraction_ThinkingUsesTurnSessionKey(t *testing.T) {
 		t.Errorf("expected thinking expansion, got %q", got.content)
 	}
 }
+
+func TestHandleComponentInteraction_FacetThinkingUsesFacetSessionKey(t *testing.T) {
+	// Proves a facet (secondary) bot's thinking toggle resolves display
+	// overrides with the bot's override session key — the key its turns
+	// render with — not the pressing channel's per-chat key, and never a
+	// key that would register a stray chat 0 (#2303; the discord twin of
+	// the telegram facet check, shipping the reviewer's H12 scratch check).
+	var (
+		ovMu  sync.Mutex
+		ovKey string
+	)
+	b, fs, idx := newTestBot(t, "a")
+	b.isSecondary = true
+	b.SetSessionKeyDirect("facet:key")
+	b.displayOverrideFn = func(sessionKey string) DisplayOverrides {
+		ovMu.Lock()
+		defer ovMu.Unlock()
+		ovKey = sessionKey
+		return DisplayOverrides{}
+	}
+	b.thinkingStore.Store(int64(100), thinkingEntry{responseText: "the answer", thinkingText: "deep thought"})
+
+	b.handleComponentInteraction(context.Background(), componentInteraction("42", "100", "th:show"))
+
+	ovMu.Lock()
+	defer ovMu.Unlock()
+	if ovKey != "facet:key" {
+		t.Errorf("display overrides resolved for %q, want facet:key", ovKey)
+	}
+	if got, _ := idx.GetChatMetadata("a", "discord", 0, "registered"); got != "" {
+		t.Errorf("chat 0 registered metadata = %q, want empty (no chat-0 registration)", got)
+	}
+	if got := fs.lastEdit(t); !strings.Contains(got.content, "deep thought") {
+		t.Errorf("expected thinking expansion, got %q", got.content)
+	}
+}
