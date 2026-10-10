@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -209,6 +210,23 @@ func TestValidateTracing(t *testing.T) {
 				t.Errorf("validateTracing() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestTracingContentDescMentionsOperationalExports(t *testing.T) {
+	// Proves the tracing.content reference text (shown by config edit and
+	// /config set help, mirrored by hand into docs/CONFIG.md) stays truthful
+	// about what content = false still exports: redacted error messages and
+	// subagent labels (#2298). Without the parenthetical the help regresses
+	// to "shape, timing, usage and cost only", which is false.
+	f, ok := LookupField("tracing.content")
+	if !ok {
+		t.Fatal("field tracing.content not found in the config registry")
+	}
+	for _, want := range []string{"error messages", "subagent labels"} {
+		if !strings.Contains(f.Description, want) {
+			t.Errorf("tracing.content description must say content = false still exports %s (redacted) — docs/CONFIG.md mirrors this text", want)
+		}
 	}
 }
 
