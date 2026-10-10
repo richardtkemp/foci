@@ -336,8 +336,12 @@ func (b *ExecBridge) exportedToolCount() int {
 //
 // The guard fires only when ALL three conditions are met:
 //  1. Exactly one argument provided
-//  2. It parses as a JSON object (not array, string, number, etc.)
-//  3. Every key in the parsed object is a valid parameter name for the tool
+//  2. The whole argument is exactly one JSON object (slurped, stderr-
+//     silenced jq): a parse error anywhere or concatenated values ('{}{}')
+//     are not a passthrough (#2300)
+//  3. Every key in the parsed object is a valid parameter name for the
+//     tool, compared as a whole string inside the jq call — no shell word
+//     splitting or pathname expansion of keys (#2300)
 //
 // On a match the helper calls foci-call exactly once and stores that call's
 // exit status into the caller's __foci_json_rc local (bash dynamic scoping:
@@ -359,20 +363,18 @@ const jsonPassthroughHelper = `# Trace helper: logs to stderr when FOCI_TRACE is
 foci__trace() { [ -n "${FOCI_TRACE:-}" ] && echo "FOCI_TRACE[$1]: ${*:2}" >&2; return 0; }
 export -f foci__trace
 
-# JSON passthrough: if the sole arg is a JSON object with valid param keys, use it directly.
+# JSON passthrough: if the sole arg is exactly one JSON object with valid
+# param keys, use it directly. The check slurps the WHOLE argument (#2300):
+# a parse error anywhere or concatenated values ('{}{}') kill jq before the
+# filter runs — empty output — so they are not a passthrough, and each key
+# is compared inside jq as a whole string (no word splitting, no pathname
+# expansion).
 foci__json() {
   local tool="$1" valid_keys="$2"; shift 2
   [ $# -eq 1 ] || return 1
   [ "${1:0:1}" = "{" ] || return 1
-  # Verify it parses as an object and every key is a valid param name.
-  local keys
-  keys="$(echo "$1" | jq -r 'if type=="object" then keys[] else error end' 2>/dev/null)" || return 1
-  for k in $keys; do
-    case " $valid_keys " in
-      *" $k "*) ;;
-      *) return 1 ;;
-    esac
-  done
+  [ "$(printf '%s' "$1" | jq -sr --arg ks "$valid_keys" \
+    'if length==1 and (.[0]|type=="object") and all(.[0]|keys[]; . as $k | ($ks|split(" ")|map(select(length>0))|index($k)) != null) then "ok" else "no" end' 2>/dev/null)" = "ok" ] || return 1
   foci-call "$(jq -nc --argjson p "$1" '{"tool":"'"$tool"'","params":$p}')"
   __foci_json_rc=$?
   return 0
@@ -383,10 +385,12 @@ export -f foci__json
 # the flag. Without this the caller sees jq's "invalid JSON text passed to
 # --argjson", which names neither the flag nor the value, and which prints TWICE
 # because the first failure leaves $params empty and the next jq rejects that
-# too (#1811).
+# too (#1811). The value is slurped whole (#2300): empty input, a parse error
+# anywhere, or more than one JSON value all yield empty output — the not-JSON
+# branch below — so a valid prefix with trailing text ('1 x') is rejected too.
 foci__json_arg() {
   local flag="$1" want="$2" val="$3" got
-  got="$(printf '%s' "$val" | jq -r 'type' 2>/dev/null)"
+  got="$(printf '%s' "$val" | jq -sr 'if length==1 then .[0]|type else empty end' 2>/dev/null)"
   if [ -z "$got" ]; then
     echo "error: $flag expects a JSON $want, but this value is not JSON: $val" >&2
     case "$want" in
@@ -1372,9 +1376,12 @@ func generateShellFunc(t *Tool) string {
 		// Primarily JSON-only input (no flat per-field flags for questions, per
 		// design): accept the questions object as a positional arg (also caught
 		// by the foci__json passthrough guard), via --json, or piped on stdin.
-		// The optional grader params may live INSIDE that JSON object, or be
-		// supplied as flags (merged in below) for CLI convenience. Async tool —
-		// returns immediately after posting the first question.
+		// Whatever supplied it, $json is verified to be exactly one JSON object
+		// before jq sees it (#2300): anything else gets the usage error, not
+		// jq's --argjson internals. The optional grader params may live INSIDE
+		// that JSON object, or be supplied as flags (merged in below) for CLI
+		// convenience. Async tool — returns immediately after posting the first
+		// question.
 		return fmt.Sprintf(`%s() {
 %s
 %s
@@ -1399,7 +1406,10 @@ func generateShellFunc(t *Tool) string {
   if [ -z "$json" ] && [ ! -t 0 ]; then
     json="$(cat)"
   fi
-  if [ -z "$json" ]; then
+  if [ -z "$json" ] || [ "$(printf '%%s' "$json" | jq -sr 'if length==1 then .[0]|type else "many" end' 2>/dev/null)" != object ]; then
+    if [ -n "$json" ]; then
+      echo "error: %s expects one JSON object, got: $json" >&2
+    fi
     echo "usage: %s '{\"questions\":[{\"question\":\"...\",\"options\":[{\"label\":\"...\"}]}]}'" >&2
     echo "  or: %s --json '<json>'   or:  echo '<json>' | %s" >&2
     return 1
@@ -1410,7 +1420,7 @@ func generateShellFunc(t *Tool) string {
   if [ -n "$grader_on_error" ]; then json="$(echo "$json" | jq --arg e "$grader_on_error" '. + {grader_on_error:$e}')"; fi
   foci-call "$(jq -nc --argjson p "$json" '{"tool":"ask","params":$p}')"
 }
-`, name, helpCheck, guard, name, name, name)
+`, name, helpCheck, guard, name, name, name, name)
 
 	default:
 		// Schema-driven generic: emits a flag-parsing function whose
