@@ -211,13 +211,14 @@ type Agent struct {
 	// + worker. Bot calls Enqueue(envelope) after filtering; agent owns
 	// queueing, batching, steer dispatch, and turn execution via the
 	// platform-supplied Driver. See inbox.go.
-	inboxes        map[string]*sessionInbox                                          // per-session inbox registry, lazy-created
-	inboxesMu      sync.Mutex                                                        // protects inboxes map + StartInbox idempotency
-	inboxStarted   bool                                                              // true once StartInbox has been called
-	inboxCtx       context.Context                                                   //nolint:containedctx // parent ctx for session worker goroutines
-	inboxSteerMode bool                                                              // urgent-steer dispatch enabled
-	inboxBackend   func(ctx context.Context, sk string) (delegator.Delegator, error) // test seam; nil = use DelegatedManager
-	turnObserver   func(sk string, batch []Envelope)                                 // test seam — see SetTurnObserver / TODO #746 Stage C
+	inboxes               map[string]*sessionInbox                                          // per-session inbox registry, lazy-created
+	inboxesMu             sync.Mutex                                                        // protects inboxes map + StartInbox idempotency
+	inboxStarted          bool                                                              // true once StartInbox has been called
+	inboxCtx              context.Context                                                   //nolint:containedctx // parent ctx for session worker goroutines
+	inboxSteerMode        bool                                                              // urgent-steer dispatch enabled
+	inboxBackend          func(ctx context.Context, sk string) (delegator.Delegator, error) // test seam; nil = use DelegatedManager
+	turnObserver          func(sk string, batch []Envelope)                                 // test seam — see SetTurnObserver / TODO #746 Stage C
+	turnSlotGrantObserver func()                                                            // test seam — see SetTurnSlotGrantObserver (the #2281 grant-vs-/stop settle window)
 
 	// Session-lifecycle hooks fired at the turn boundary in HandleMessage, so
 	// EVERY backend turn (platform-driven AND system-injected) fires them —

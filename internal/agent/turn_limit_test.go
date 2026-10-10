@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -155,6 +156,30 @@ func (n *noticeRecorder) recorded() []noticeCall {
 
 const wantQueuedNotice = "⏳ Busy right now. Your message is queued and will run when a slot frees up."
 
+// recvSoon receives from c within d, reporting false on timeout. Every
+// handoff in these tests is bounded so a regression fails in seconds
+// instead of hanging the package until go test's own timeout kills it; the
+// boolean shape lets non-test goroutines (turn observers run on worker
+// goroutines, where t.Fatalf is illegal) propagate the failure through a
+// channel instead.
+func recvSoon(c chan struct{}, d time.Duration) bool {
+	select {
+	case <-c:
+		return true
+	case <-time.After(d):
+		return false
+	}
+}
+
+// mustRecv receives from c or fails the test — for handoffs observed on the
+// test goroutine.
+func mustRecv(t *testing.T, c chan struct{}, what string) {
+	t.Helper()
+	if !recvSoon(c, 2*time.Second) {
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
 // TestTurnLimit_AgentLimit1_SecondSessionWaitsAndNotified proves the core
 // cap: with max_concurrent_turns = 1, session B's turn does not start while
 // session A's turn still runs, B's sender gets exactly ONE queued notice
@@ -171,10 +196,10 @@ func TestTurnLimit_AgentLimit1_SecondSessionWaitsAndNotified(t *testing.T) {
 	a.TurnQueuedNotifyFunc = notices.hook()
 
 	a.Enqueue(Envelope{SessionKey: "sess/A", Text: "a", Driver: dA})
-	<-dA.ready // A holds the only slot inside WrapTurn
+	mustRecv(t, dA.ready, "A to hold the only slot inside WrapTurn")
 
 	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "b", Driver: dB})
-	<-notices.signal // B's wait began
+	mustRecv(t, notices.signal, "B's wait to begin")
 
 	// B must not start while A holds the slot.
 	select {
@@ -223,12 +248,12 @@ func TestTurnLimit_AgentLimit1_FIFOThirdAfterSecond(t *testing.T) {
 	a.TurnQueuedNotifyFunc = notices.hook()
 
 	a.Enqueue(Envelope{SessionKey: "sess/A", Text: "a", Driver: dA})
-	<-dA.ready
+	mustRecv(t, dA.ready, "A's turn to start")
 
 	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "b", Driver: dB})
-	<-notices.signal // B queued first
+	mustRecv(t, notices.signal, "B to queue first")
 	a.Enqueue(Envelope{SessionKey: "sess/C", Text: "c", Driver: dC})
-	<-notices.signal // then C
+	mustRecv(t, notices.signal, "C to queue behind B")
 
 	close(releaseA)
 	select {
@@ -272,10 +297,10 @@ func TestTurnLimit_GlobalLimit1_SharedAcrossAgents(t *testing.T) {
 	a2.TurnQueuedNotifyFunc = notices.hook()
 
 	a1.Enqueue(Envelope{SessionKey: "one/s", Text: "a", Driver: dA})
-	<-dA.ready // agent 1's turn holds the global slot
+	mustRecv(t, dA.ready, "agent 1's turn to hold the global slot")
 
 	a2.Enqueue(Envelope{SessionKey: "two/s", Text: "b", Driver: dB})
-	<-notices.signal // agent 2's turn began waiting
+	mustRecv(t, notices.signal, "agent 2's turn to begin waiting")
 	select {
 	case <-dB.ready:
 		t.Fatal("agent 2's turn ran while agent 1 held the only global slot")
@@ -306,15 +331,15 @@ func TestTurnLimit_AgentLimit2_TwoConcurrentThirdWaits(t *testing.T) {
 	a.TurnQueuedNotifyFunc = notices.hook()
 
 	a.Enqueue(Envelope{SessionKey: "sess/A", Text: "a", Driver: dA})
-	<-dA.ready
+	mustRecv(t, dA.ready, "A's turn to start")
 	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "b", Driver: dB})
-	<-dB.ready // two turns run concurrently — no notice for either
+	mustRecv(t, dB.ready, "B to start concurrently with A (limit 2)")
 	if calls := notices.recorded(); len(calls) != 0 {
 		t.Fatalf("notice fired for a turn that got a slot at once: %+v", calls)
 	}
 
 	a.Enqueue(Envelope{SessionKey: "sess/C", Text: "c", Driver: dC})
-	<-notices.signal // the third must wait — and be told
+	mustRecv(t, notices.signal, "the third session's wait to begin")
 	select {
 	case <-dC.ready:
 		t.Fatal("C started while both slots were held")
@@ -337,7 +362,7 @@ func TestTurnLimit_Unlimited_NoNoticeAndParallel(t *testing.T) {
 	a, cancel := startedAgent(t)
 	defer cancel()
 
-	sessions := []string{"sess/A", "sess/B", "sess/C"}
+	sessions := []string{"sess/A", "sess/B", "sess/C", "sess/D", "sess/E"}
 	drivers := make([]*driverGated, len(sessions))
 	for i := range drivers {
 		drivers[i] = &driverGated{ready: make(chan struct{}, 1), release: make(chan struct{})}
@@ -389,16 +414,16 @@ func TestTurnLimit_JoinerMergesIntoWaitingBatch(t *testing.T) {
 	})
 
 	a.Enqueue(Envelope{SessionKey: "sess/A", Text: "a", Driver: dA})
-	<-dA.ready
+	mustRecv(t, dA.ready, "A's turn to start")
 
 	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "first", Driver: dB})
-	<-notices.signal // B is waiting
+	mustRecv(t, notices.signal, "B's wait to begin")
 	// A second B message arrives while the batch waits — it must not get a
 	// second notice, and must fold into the waiting batch.
 	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "joiner", Driver: dB})
 
 	close(releaseA)
-	<-dB.ready
+	mustRecv(t, dB.ready, "B's turn to start")
 	time.Sleep(100 * time.Millisecond) // let driveAndDrainOrphans settle: no follow-up may fire
 
 	mu.Lock()
@@ -433,9 +458,9 @@ func TestTurnLimit_InjectionRunsWhileWaitingNoSlot(t *testing.T) {
 	a.TurnQueuedNotifyFunc = notices.hook()
 
 	a.Enqueue(Envelope{SessionKey: "sess/A", Text: "a", Driver: dA})
-	<-dA.ready
+	mustRecv(t, dA.ready, "A's turn to start")
 	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "b", Driver: dB})
-	<-notices.signal // B's user batch is waiting
+	mustRecv(t, notices.signal, "B's user batch to be waiting")
 
 	injRan := make(chan struct{})
 	a.Enqueue(Envelope{SessionKey: "sess/B", Inject: &InjectMeta{
@@ -501,14 +526,14 @@ func TestTurnLimit_FollowUpTurnSameSlotNotReleasedEarly(t *testing.T) {
 	a.TurnQueuedNotifyFunc = notices.hook()
 
 	a.Enqueue(Envelope{SessionKey: "sess/A", Text: "first", Driver: dA})
-	<-dA.ready // turn 1 running under the slot
+	mustRecv(t, dA.ready, "turn 1 to start under the slot")
 	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "b", Driver: dB})
-	<-notices.signal // B waits
+	mustRecv(t, notices.signal, "B's wait to begin")
 
 	// A late A message becomes a follow-up turn once turn 1 completes.
 	a.Enqueue(Envelope{SessionKey: "sess/A", Text: "late", Driver: dA})
 	close(gate1)
-	<-dA.ready // turn 2 (the follow-up) running
+	mustRecv(t, dA.ready, "the follow-up turn to start")
 
 	select {
 	case <-dB.ready:
@@ -561,13 +586,13 @@ func TestTurnLimit_StopDropsWaitingBatch(t *testing.T) {
 	a.TurnQueuedNotifyFunc = notices.hook()
 
 	a.Enqueue(Envelope{SessionKey: "sess/A", Text: "a", Driver: dA})
-	<-dA.ready
+	mustRecv(t, dA.ready, "A's turn to start")
 
 	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "first", Driver: dB})
-	<-notices.signal                                                      // B queued (before C, so B would win a freed slot)
+	mustRecv(t, notices.signal, "B to queue first (before C, so B would win a freed slot)")
 	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "joiner", Driver: dB}) // merged into B's waiting batch
 	a.Enqueue(Envelope{SessionKey: "sess/C", Text: "c", Driver: dC})
-	<-notices.signal // C queued behind B
+	mustRecv(t, notices.signal, "C to queue behind B")
 
 	if !a.CancelSession("sess/B") {
 		t.Fatal("CancelSession returned false for a slot-waiting batch")
@@ -599,10 +624,10 @@ func TestTurnLimit_StopRunningTurnReleasesSlot(t *testing.T) {
 	a.TurnQueuedNotifyFunc = notices.hook()
 
 	a.Enqueue(Envelope{SessionKey: "sess/A", Text: "a", Driver: dA})
-	<-dA.ready // A's turn is running (gated) under the only slot
+	mustRecv(t, dA.ready, "A's running turn to hold the only slot")
 
 	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "b", Driver: dB})
-	<-notices.signal
+	mustRecv(t, notices.signal, "a queued notice")
 	select {
 	case <-dB.ready:
 		t.Fatal("B started while A's turn held the only slot")
@@ -652,9 +677,9 @@ func TestTurnLimit_StopWhileWaitingGlobalReleasesAgentSlot(t *testing.T) {
 	<-dA.ready // agent 1 holds the global slot
 
 	a2.Enqueue(Envelope{SessionKey: "two/B", Text: "b", Driver: dB})
-	<-notices.signal // B: took agent 2's slot, waiting on the global one
+	mustRecv(t, notices.signal, "B to take agent 2's slot and wait on the global one")
 	a2.Enqueue(Envelope{SessionKey: "two/C", Text: "c", Driver: dC})
-	<-notices.signal // C: waiting on agent 2's slot (held by B)
+	mustRecv(t, notices.signal, "C to wait on agent 2's slot held by B")
 
 	if !a2.CancelSession("two/B") {
 		t.Fatal("CancelSession returned false for a batch waiting on the global limiter")
@@ -693,9 +718,9 @@ func TestTurnLimit_InboxCtxDoneDuringWait(t *testing.T) {
 	a.TurnQueuedNotifyFunc = notices.hook()
 
 	a.Enqueue(Envelope{SessionKey: "sess/A", Text: "a", Driver: dA})
-	<-dA.ready
+	mustRecv(t, dA.ready, "A's turn to start")
 	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "b", Driver: dB})
-	<-notices.signal // B is waiting
+	mustRecv(t, notices.signal, "B's wait to begin")
 
 	cancel() // agent shutdown — the wait ends, the batch never runs
 	select {
@@ -705,4 +730,358 @@ func TestTurnLimit_InboxCtxDoneDuringWait(t *testing.T) {
 	}
 	// Let A's blocked turn finish so no goroutine is left behind.
 	close(releaseA)
+}
+
+// TestTurnLimit_EnqueueInjectWaitFromSlotHolderNoDeadlock proves the
+// deadlock rule end to end (H3's exact shape): a turn that HOLDS the only
+// slot calls EnqueueInjectWait on ANOTHER session whose user batch is queued
+// behind that same slot. The injection must run while the holder still waits
+// (B's worker serves it slot-free), EnqueueInjectWait must return nil, and
+// B's queued batch must run afterwards once the holder releases.
+func TestTurnLimit_EnqueueInjectWaitFromSlotHolderNoDeadlock(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+	a.TurnLimit = NewTurnLimiter(1)
+
+	releaseA := make(chan struct{})
+	dA := &driverGated{ready: make(chan struct{}, 1), release: releaseA}
+	dB := &driverGated{ready: make(chan struct{}, 1)}
+	notices := newNoticeRecorder()
+	a.TurnQueuedNotifyFunc = notices.hook()
+
+	errc := make(chan error, 1)
+	injRan := make(chan struct{})
+	// The turn observer fires inside driveOnce — under A's held slot, before
+	// WrapTurn — so this is "inside A's slot-holding turn". It queues B,
+	// waits for B to be parked behind A's slot, then blocks on B's injection.
+	a.SetTurnObserver(func(sk string, batch []Envelope) {
+		if sk != "sess/A" {
+			return
+		}
+		a.Enqueue(Envelope{SessionKey: "sess/B", Text: "b", Driver: dB})
+		if !recvSoon(notices.signal, 2*time.Second) {
+			errc <- errors.New("B never queued behind A's slot")
+			return
+		}
+		errc <- a.EnqueueInjectWait(context.Background(), "sess/B", "test", func() { close(injRan) })
+	})
+
+	a.Enqueue(Envelope{SessionKey: "sess/A", Text: "a", Driver: dA})
+	select {
+	case err := <-errc:
+		if err != nil {
+			t.Fatalf("EnqueueInjectWait from inside a slot-holding turn: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("EnqueueInjectWait deadlocked behind the slot its caller holds")
+	}
+	mustRecv(t, injRan, "the injection to run")
+	// The injection ran while A still held the slot (releaseA is not closed
+	// until after this point) — no slot, no deadlock.
+	mustRecv(t, dA.ready, "A's turn to enter WrapTurn after the observer")
+	close(releaseA)
+	mustRecv(t, dB.ready, "B's queued batch to run after the release")
+}
+
+// TestTurnLimit_SteerAlwaysJoinerMergesIntoWaitingBatch proves a message
+// sent with SteerAlways while its session's batch waits for a slot still
+// goes to the channel (turnActive is false while waiting — there is nothing
+// to steer into) and joins the waiting batch: ONE WrapTurn call carries
+// both envelopes, in arrival order, with no second notice.
+func TestTurnLimit_SteerAlwaysJoinerMergesIntoWaitingBatch(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+	a.TurnLimit = NewTurnLimiter(1)
+
+	releaseA := make(chan struct{})
+	dA := &driverGated{ready: make(chan struct{}, 1), release: releaseA}
+	dB := &driverGated{ready: make(chan struct{}, 1)}
+	notices := newNoticeRecorder()
+	a.TurnQueuedNotifyFunc = notices.hook()
+
+	var mu sync.Mutex
+	var bBatches [][]Envelope
+	a.SetTurnObserver(func(sk string, batch []Envelope) {
+		if sk != "sess/B" {
+			return
+		}
+		mu.Lock()
+		bBatches = append(bBatches, append([]Envelope(nil), batch...))
+		mu.Unlock()
+	})
+
+	a.Enqueue(Envelope{SessionKey: "sess/A", Text: "a", Driver: dA})
+	mustRecv(t, dA.ready, "A to hold the only slot")
+	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "first", Driver: dB})
+	mustRecv(t, notices.signal, "B's wait to begin")
+	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "joiner", Driver: dB, Steer: SteerAlways})
+
+	close(releaseA)
+	mustRecv(t, dB.ready, "B's turn to start after the release")
+	time.Sleep(100 * time.Millisecond) // let driveAndDrainOrphans settle: no follow-up may fire
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(bBatches) != 1 {
+		t.Fatalf("B drove %d batches, want 1 (SteerAlways joiner merged into the waiting batch): %+v", len(bBatches), bBatches)
+	}
+	if len(bBatches[0]) != 2 {
+		t.Fatalf("B batch has %d envelopes, want 2: %+v", len(bBatches[0]), bBatches[0])
+	}
+	if got := []string{bBatches[0][0].Text, bBatches[0][1].Text}; got[0] != "first" || got[1] != "joiner" {
+		t.Errorf("B batch texts = %v, want [first joiner]", got)
+	}
+	if calls := notices.recorded(); len(calls) != 1 {
+		t.Errorf("notice calls = %d, want 1 (no second notice for the joiner): %+v", len(calls), calls)
+	}
+}
+
+// TestTurnLimit_CancelSessionIdleReturnsFalse proves /stop semantics with
+// nothing waiting and nothing running: an idle session returns false (and
+// touches no slot state), and an unknown session key returns false.
+func TestTurnLimit_CancelSessionIdleReturnsFalse(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+	a.TurnLimit = NewTurnLimiter(1)
+
+	// Run one turn to completion (release == nil returns immediately).
+	d := &driverGated{ready: make(chan struct{}, 1)}
+	a.Enqueue(Envelope{SessionKey: "sess/A", Text: "a", Driver: d})
+	mustRecv(t, d.ready, "A's turn to start")
+	// The slot returning to the pool proves the turn fully unwound — its
+	// turnCancel was cleared before the release — so the session is idle.
+	if !waitFor(2*time.Second, func() bool { return a.TurnLimit.TryAcquire() }) {
+		t.Fatal("the finished turn never released the slot")
+	}
+	a.TurnLimit.Release()
+
+	if a.CancelSession("sess/A") {
+		t.Error("CancelSession on an idle session returned true")
+	}
+	if a.CancelSession("sess/unknown") {
+		t.Error("CancelSession on an unknown session returned true")
+	}
+}
+
+// TestTurnLimit_StopWhileQueuedKeepsGatedInjection proves the in-wait
+// injection path keeps its gates on the inbox ctx: a /stop that drops the
+// queued USER batch must not abandon an injection already pulled off the
+// channel and held in a gate — the injection runs to completion once the
+// gate opens, and only the batch is dropped.
+//
+// Determinism: inFlightChanged gains a "sess/B" entry exactly when the
+// worker enters the inject gate's wait loop (nothing else calls
+// InFlightWaitCh for B here), which proves the injection is parked IN the
+// gate before the /stop. The marker message then separates the two worlds:
+// on the fixed path the worker stays parked in the gate (marker immobile,
+// no second notice); on the broken path the /stop aborts the batch, the
+// worker comes back around, and the marker queues (second notice) — all
+// before the gate is ever opened.
+func TestTurnLimit_StopWhileQueuedKeepsGatedInjection(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+	a.TurnLimit = NewTurnLimiter(1)
+
+	releaseA := make(chan struct{})
+	dA := &driverGated{ready: make(chan struct{}, 1), release: releaseA}
+	dB := &driverGated{ready: make(chan struct{}, 1)}
+	notices := newNoticeRecorder()
+	a.TurnQueuedNotifyFunc = notices.hook()
+
+	a.Enqueue(Envelope{SessionKey: "sess/A", Text: "a", Driver: dA})
+	mustRecv(t, dA.ready, "A to hold the only slot")
+	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "b", Driver: dB})
+	mustRecv(t, notices.signal, "B's user batch to be waiting")
+
+	// Close the inject gate on B: an adopted delivering run is in flight.
+	releaseInFlight := a.markInFlight("sess/B", true)
+
+	// An injection for B is pulled off the channel by the waiting worker
+	// and held in the (closed) inject gate. inFlightChanged["sess/B"]
+	// appearing proves the worker is parked INSIDE the gate's wait loop.
+	injRan := make(chan struct{})
+	refused := make(chan struct{})
+	a.Enqueue(Envelope{SessionKey: "sess/B", Inject: &InjectMeta{
+		Trigger: "test",
+		Run:     func() { close(injRan) },
+		Refused: func() { close(refused) },
+	}})
+	if !waitFor(2*time.Second, func() bool {
+		a.inFlightMu.Lock()
+		defer a.inFlightMu.Unlock()
+		_, gated := a.inFlightChanged["sess/B"]
+		return gated
+	}) {
+		t.Fatal("the injection never entered the inject gate")
+	}
+
+	// /stop drops the queued user batch — and nothing else.
+	if !a.CancelSession("sess/B") {
+		t.Fatal("CancelSession returned false for a slot-waiting batch")
+	}
+
+	// A further B message separates "worker back around (batch already
+	// dropped — the injection was lost with it)" from "worker still parked
+	// in the injection's gate". The gate is still closed, so on the fixed
+	// path the marker cannot move and no second notice can fire.
+	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "marker", Driver: dB})
+	if recvSoon(notices.signal, 2*time.Second) {
+		releaseInFlight()
+		select {
+		case <-injRan:
+			t.Fatal("injection ran after its batch was already dropped — impossible ordering")
+		case <-refused:
+			t.Fatal("injection refused after /stop of the queued user batch — it was gated, not declined")
+		case <-time.After(2 * time.Second):
+			t.Fatal("injection lost after /stop of the queued user batch: never ran, never refused")
+		}
+		t.Fatal("unreachable")
+	}
+
+	// Open the gate: the injection runs despite the /stop.
+	releaseInFlight()
+	select {
+	case <-injRan:
+	case <-refused:
+		t.Fatal("the gated injection was refused instead of run")
+	case <-time.After(5 * time.Second):
+		t.Fatal("the gated injection never ran after the gate opened")
+	}
+
+	// Only the user batch was dropped: B's turns never drive (A still holds
+	// the slot; the marker is queued behind it, not dropped).
+	select {
+	case <-dB.ready:
+		t.Fatal("B's dropped batch ran")
+	case <-time.After(150 * time.Millisecond):
+	}
+	if got := dB.count.Load(); got != 0 {
+		t.Errorf("dropped batch reached the driver: B WrapTurn calls = %d, want 0", got)
+	}
+	close(releaseA)
+}
+
+// TestTurnLimit_CompactionDuringWaitHoldsAfterGrant proves the gates are
+// re-checked AFTER the slots are granted: a compaction that starts on the
+// session while its batch queues delays the drive — the granted slot is
+// given back, the #856 hold is waited out, and only then does the batch run
+// (with no second queued notice for the same batch).
+func TestTurnLimit_CompactionDuringWaitHoldsAfterGrant(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+	a.TurnLimit = NewTurnLimiter(1)
+
+	releaseA := make(chan struct{})
+	dA := &driverGated{ready: make(chan struct{}, 1), release: releaseA}
+	dB := &driverGated{ready: make(chan struct{}, 1)}
+	notices := newNoticeRecorder()
+	a.TurnQueuedNotifyFunc = notices.hook()
+
+	a.Enqueue(Envelope{SessionKey: "sess/A", Text: "a", Driver: dA})
+	mustRecv(t, dA.ready, "A to hold the only slot")
+	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "b", Driver: dB})
+	mustRecv(t, notices.signal, "B's user batch to be waiting")
+
+	// A /compact starts on B while its batch queues.
+	a.markCompacting("sess/B")
+
+	// A's turn finishes and frees the slot — B is granted it, but the
+	// compaction hold must stop the drive (#856 would be bypassed otherwise).
+	close(releaseA)
+	select {
+	case <-dB.ready:
+		t.Fatal("B's turn drove while its session was compacting (#856 hold bypassed by the slot wait)")
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	a.clearCompacting("sess/B")
+	mustRecv(t, dB.ready, "B's turn to start after the compaction cleared")
+	if calls := notices.recorded(); len(calls) != 1 {
+		t.Errorf("notice calls = %d, want 1 (no re-notice when a gate re-check requeues the same batch): %+v", len(calls), calls)
+	}
+}
+
+// TestTurnLimit_NonDeliveringInFlightDuringWaitHoldsAfterGrant proves the
+// same post-grant re-check for the #767 hold: a non-delivering turn that
+// goes in flight on the session while its batch queues (e.g. a delegated
+// branch pass run as an in-wait injection) holds the drive until it clears.
+func TestTurnLimit_NonDeliveringInFlightDuringWaitHoldsAfterGrant(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+	a.TurnLimit = NewTurnLimiter(1)
+
+	releaseA := make(chan struct{})
+	dA := &driverGated{ready: make(chan struct{}, 1), release: releaseA}
+	dB := &driverGated{ready: make(chan struct{}, 1)}
+	notices := newNoticeRecorder()
+	a.TurnQueuedNotifyFunc = notices.hook()
+
+	a.Enqueue(Envelope{SessionKey: "sess/A", Text: "a", Driver: dA})
+	mustRecv(t, dA.ready, "A to hold the only slot")
+	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "b", Driver: dB})
+	mustRecv(t, notices.signal, "B's user batch to be waiting")
+
+	// A non-delivering turn goes in flight on B while its batch queues.
+	releaseInFlight := a.markInFlight("sess/B", false)
+
+	close(releaseA)
+	select {
+	case <-dB.ready:
+		t.Fatal("B's turn drove while a non-delivering turn was in flight (#767 hold bypassed by the slot wait)")
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	releaseInFlight()
+	mustRecv(t, dB.ready, "B's turn to start after the non-delivering turn cleared")
+	if calls := notices.recorded(); len(calls) != 1 {
+		t.Errorf("notice calls = %d, want 1: %+v", len(calls), calls)
+	}
+}
+
+// TestTurnLimit_StopAfterGrantDropsBatch proves a /stop that lands after
+// the slots were granted but before the wait is settled still drops the
+// batch: CancelSession returned true (and logged the drop), so the batch
+// must never run, and the slot it briefly held comes back for the next
+// session. The grant observer fires the /stop from inside the exact race
+// window, so this is deterministic.
+func TestTurnLimit_StopAfterGrantDropsBatch(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+	a.TurnLimit = NewTurnLimiter(1)
+
+	dB := &driverGated{ready: make(chan struct{}, 1)}
+	dC := &driverGated{ready: make(chan struct{}, 1)}
+	notices := newNoticeRecorder()
+	a.TurnQueuedNotifyFunc = notices.hook()
+
+	// The test holds the only slot, so B must queue behind it.
+	if !a.TurnLimit.TryAcquire() {
+		t.Fatal("test could not take the only slot")
+	}
+	stopped := make(chan bool, 1)
+	a.SetTurnSlotGrantObserver(func() {
+		// Runs on the worker between the grant and the settle — inside the
+		// exact grant-vs-/stop race window.
+		stopped <- a.CancelSession("sess/B")
+	})
+
+	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "b", Driver: dB})
+	mustRecv(t, notices.signal, "B to queue behind the test's slot")
+
+	a.TurnLimit.Release() // grant B; the observer fires /stop inside the window
+	if got := <-stopped; !got {
+		t.Fatal("CancelSession inside the grant window returned false")
+	}
+
+	select {
+	case <-dB.ready:
+		t.Fatal("the batch ran although /stop landed after the grant")
+	case <-time.After(150 * time.Millisecond):
+	}
+	if got := dB.count.Load(); got != 0 {
+		t.Errorf("stopped batch reached the driver: B WrapTurn calls = %d, want 0", got)
+	}
+	// The slot the batch briefly held came back: C runs at once.
+	a.Enqueue(Envelope{SessionKey: "sess/C", Text: "c", Driver: dC})
+	mustRecv(t, dC.ready, "C to run on the released slot")
 }

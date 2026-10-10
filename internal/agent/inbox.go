@@ -18,8 +18,9 @@
 //         - otherwise → push to session channel
 //     → per-session worker passes the relogin/in-flight/compaction
 //       gates, takes a turn-limit slot (#2281: the agent's cap first,
-//       then the gateway-wide cap; injections exempt), then drains,
-//       batches, calls Driver.Drive                            [agent]
+//       then the gateway-wide cap; injections exempt), re-checks the
+//       gates once granted, then drains, batches, calls Driver.Drive
+//                                                              [agent]
 //
 // The Driver interface lets the platform-specific renderer/tracker stay
 // platform-side while the agent owns the queueing, batching, and routing.
@@ -351,6 +352,20 @@ func (inb *sessionInbox) clearWaitCancel() {
 	inb.cancelMu.Lock()
 	inb.waitCancel = nil
 	inb.cancelMu.Unlock()
+}
+
+// claimWaitCancel atomically unregisters the queued-batch cancel handle and
+// reports whether its wait was already cancelled — i.e. whether a /stop
+// whose CancelSession already returned true landed while the batch's slots
+// were being granted. CancelSession fires the handle under the same mutex,
+// so the two cannot miss each other: a true here must be honoured (the
+// batch is dropped, its slots released); a false means no /stop can find
+// the handle anymore and the batch may drive.
+func (inb *sessionInbox) claimWaitCancel(waitCtx context.Context) bool {
+	inb.cancelMu.Lock()
+	defer inb.cancelMu.Unlock()
+	inb.waitCancel = nil
+	return waitCtx.Err() != nil
 }
 
 // --- Agent integration ---
@@ -783,19 +798,24 @@ func (a *Agent) waitInjectGate(ctx context.Context, sk string) bool {
 	return true
 }
 
+// reloginHoldClosed reports whether a CC re-login is in progress on a
+// delegated agent (#843/#1932): the shared OAuth credential is dead until it
+// completes, so dispatching now would only 401 again. API agents (no
+// DelegatedManager) are never held.
+func (a *Agent) reloginHoldClosed() bool {
+	return a.DelegatedManager != nil && relogin.G.Active()
+}
+
 // waitReloginGate blocks while a CC re-login is in progress for a delegated
 // agent (#843/#1932). The shared OAuth credential is dead until it completes,
 // so dispatching now would only 401 again; the envelope is held instead and
 // runs once the gate releases (success or abort — the driver always releases).
 // Event-driven via relogin.G.Released. Returns false if ctx ends while waiting.
 func (a *Agent) waitReloginGate(ctx context.Context, sk string) bool {
-	if a.DelegatedManager == nil {
-		return true
-	}
-	if relogin.G.Active() {
+	if a.reloginHoldClosed() {
 		log.Extra("inbox", "gate_wait sk=%s reason=cc_relogin — holding dispatch until re-login ends (#1932)", sk)
 	}
-	for relogin.G.Active() {
+	for a.reloginHoldClosed() {
 		select {
 		case <-ctx.Done():
 			return false
@@ -803,6 +823,18 @@ func (a *Agent) waitReloginGate(ctx context.Context, sk string) bool {
 		}
 	}
 	return true
+}
+
+// refuseDroppedInject releases an injection's waiter when the worker must
+// drop the envelope without running it — the inbox ctx ended while the
+// injection was held in a gate. Refused exists for exactly this (#2059): an
+// EnqueueInjectWait caller is released with ErrShuttingDown instead of
+// waiting out its own ctx. User envelopes dropped at shutdown have no waiter
+// and no equivalent hook; they are just dropped. No-op when Refused is unset.
+func (a *Agent) refuseDroppedInject(env Envelope) {
+	if env.Inject != nil && env.Inject.Refused != nil {
+		env.Inject.Refused()
+	}
 }
 
 // InboxTurnActive reports whether the given session has a turn in flight,
@@ -894,6 +926,7 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 			// and batch via drainAvailable once the gate opens, as with the
 			// #767 and compaction holds below.
 			if !a.waitReloginGate(ctx, env.SessionKey) {
+				a.refuseDroppedInject(env)
 				return
 			}
 			// System injection: run it serialised with this session's platform
@@ -909,6 +942,7 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 				// autonomous case (a platform turn occupies the worker
 				// synchronously below), never a normal platform turn.
 				if !a.waitInjectGate(ctx, env.SessionKey) {
+					a.refuseDroppedInject(env)
 					return
 				}
 				a.runInject(inb, env)
@@ -924,6 +958,7 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 			// path, not a direct runInject (the Phase 3 bypass fix).
 			for _, inj := range held {
 				if !a.waitReloginGate(ctx, inj.SessionKey) || !a.waitInjectGate(ctx, inj.SessionKey) {
+					a.refuseDroppedInject(inj)
 					return
 				}
 				a.runInject(inb, inj)
@@ -932,20 +967,38 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 	}
 }
 
-// runUserBatch runs one user (platform) batch on the session worker: the
-// #767 and compaction gates, the turn-limit slot step (#2281), the batching,
-// the driven turn plus its follow-ups (driveAndDrainOrphans), and the
-// turnActive bookkeeping around them. It returns the injections drained
-// alongside the batch (to run slot-free after it returns — the worker's
-// dequeue path treats them identically) and whether the worker should keep
-// going; false means the inbox ctx ended and the worker must return.
+// userTurnGatesClosed reports whether any pre-dispatch hold is active on sk
+// right now that a USER turn must wait out before it may drive:
 //
-// The turn-limit slot is released via defer when runUserBatch returns —
-// every exit path (normal return, /stop of the running turn, ctx done,
-// panic) gives it back — so one slot covers the batch AND the follow-up
-// turns driveAndDrainOrphans builds from orphan steers and late arrivals,
-// and the post-batch injections run without holding it.
-func (a *Agent) runUserBatch(ctx context.Context, inb *sessionInbox, env Envelope) (heldInjects []Envelope, keepGoing bool) {
+//   - a CC re-login in progress (#1932);
+//   - a turn in flight whose sink does not deliver to a user-facing
+//     platform (#767);
+//   - a compaction in flight (#856).
+//
+// runUserBatch checks it before the turn-limit wait AND re-checks after the
+// slots are granted: the wait can outlast any turn, so a gate may close
+// while the batch queues, and driving past it would reintroduce exactly the
+// bug each gate prevents (#856's mid-compaction write, #767's discarded
+// response, #1932's dispatch into a dead credential).
+func (a *Agent) userTurnGatesClosed(sk string) bool {
+	return a.reloginHoldClosed() ||
+		(a.IsTurnInFlight(sk) && !a.IsInFlightDelivering(sk)) ||
+		a.IsCompacting(sk)
+}
+
+// waitUserTurnGates blocks until no userTurnGatesClosed hold is active on
+// sk. Envelopes that arrive while the worker waits accumulate in the session
+// channel and batch afterwards (via waitTurnSlot's joiner path or
+// drainAvailable). Returns false when ctx ends while waiting; the worker
+// returns, like every other gate.
+func (a *Agent) waitUserTurnGates(ctx context.Context, sk string) bool {
+	// Re-login hold (#1932): no turn may reach a backend that cannot
+	// authenticate. waitReloginGate is the same gate the dequeue path
+	// applies; re-waiting it here covers a re-login that started while a
+	// previous slot wait was in flight.
+	if !a.waitReloginGate(ctx, sk) {
+		return false
+	}
 	// Sink-delivery gate (TODO #767): if a turn is currently in
 	// flight on this session base AND its sink does NOT deliver to
 	// a user-facing platform (reflection, keepalive, compaction-
@@ -967,15 +1020,14 @@ func (a *Agent) runUserBatch(ctx context.Context, inb *sessionInbox, env Envelop
 	// root would be the #719 bug). Root-injected reflection/memory
 	// turns run under the root key, so a root envelope still sees
 	// them.
-	ifk := env.SessionKey
-	if a.IsTurnInFlight(env.SessionKey) && !a.IsInFlightDelivering(env.SessionKey) {
-		log.Extra("inbox", "gate_wait sk=%s ifk=%s reason=in_flight_non_delivering — holding fresh turn until non-delivering turn clears (#767)", env.SessionKey, ifk)
+	if a.IsTurnInFlight(sk) && !a.IsInFlightDelivering(sk) {
+		log.Extra("inbox", "gate_wait sk=%s ifk=%s reason=in_flight_non_delivering — holding fresh turn until non-delivering turn clears (#767)", sk, sk)
 	}
-	for a.IsTurnInFlight(env.SessionKey) && !a.IsInFlightDelivering(env.SessionKey) {
-		wait := a.InFlightWaitCh(env.SessionKey)
+	for a.IsTurnInFlight(sk) && !a.IsInFlightDelivering(sk) {
+		wait := a.InFlightWaitCh(sk)
 		select {
 		case <-ctx.Done():
-			return nil, false
+			return false
 		case <-wait:
 			// State changed — re-check the predicate.
 		}
@@ -990,21 +1042,59 @@ func (a *Agent) runUserBatch(ctx context.Context, inb *sessionInbox, env Envelop
 	// expiry), so a poll cannot miss-wake-wedge. Compaction is rare and
 	// brief; in the common auto path the worker is already past compaction
 	// by the time it dequeues, so this never spins.
-	for a.IsCompacting(env.SessionKey) {
+	for a.IsCompacting(sk) {
 		select {
 		case <-ctx.Done():
-			return nil, false
+			return false
 		case <-time.After(compactionHoldPoll):
 		}
 	}
-	// Turn-limit slot (#2281): user turns are capped per agent and
-	// gateway-wide; injections (above and below) never take a slot.
-	release, batch, outcome := a.acquireTurnSlots(ctx, inb, env)
-	switch outcome {
-	case slotShutdown:
-		return nil, false
-	case slotDropped:
-		return nil, true
+	return true
+}
+
+// runUserBatch runs one user (platform) batch on the session worker: the
+// re-login/#767/compaction gates, the turn-limit slot step (#2281), the
+// batching, the driven turn plus its follow-ups (driveAndDrainOrphans), and
+// the turnActive bookkeeping around them. It returns the injections drained
+// alongside the batch (to run slot-free after it returns — the worker's
+// dequeue path treats them identically) and whether the worker should keep
+// going; false means the inbox ctx ended and the worker must return.
+//
+// The gates and the slot step alternate: the slot wait can last as long as
+// any turn, long enough for a gate to close while the batch queues, so the
+// grants are re-checked against userTurnGatesClosed before the batch drives.
+// A closed gate hands the slots back and is waited out before re-acquiring —
+// the batch never drives past a hold, and a slot is never parked through one
+// (a compaction can hold for minutes; the slot belongs to a turn that runs).
+//
+// The turn-limit slot is released via defer when runUserBatch returns —
+// every exit path (normal return, /stop of the running turn, ctx done,
+// panic) gives it back — so one slot covers the batch AND the follow-up
+// turns driveAndDrainOrphans builds from orphan steers and late arrivals,
+// and the post-batch injections run without holding it.
+func (a *Agent) runUserBatch(ctx context.Context, inb *sessionInbox, env Envelope) (heldInjects []Envelope, keepGoing bool) {
+	batch := []Envelope{env}
+	var notified bool
+	var release turnSlotRelease
+	for {
+		if !a.waitUserTurnGates(ctx, env.SessionKey) {
+			return nil, false
+		}
+		var outcome turnSlotOutcome
+		release, batch, outcome = a.acquireTurnSlots(ctx, inb, batch, &notified)
+		switch outcome {
+		case slotShutdown:
+			return nil, false
+		case slotDropped:
+			return nil, true
+		}
+		if !a.userTurnGatesClosed(env.SessionKey) {
+			break
+		}
+		if release != nil {
+			release()
+		}
+		release = nil
 	}
 	if release != nil {
 		defer release()
@@ -1064,17 +1154,28 @@ type turnSlotRelease func()
 // gateway-wide cap, so releases mirror acquisitions. A limiter that is nil
 // (limit 0) is skipped entirely — no wait, no notice, no log.
 //
-// first seeds the batch; platform envelopes that arrive while the worker
-// waits are appended to it by waitTurnSlot (what drainAvailable would have
-// batched). On abort, every limiter already held is released and no slot is
-// kept; the outcome distinguishes /stop (drop the batch, keep the worker)
-// from inbox-ctx cancellation (worker returns) by the PARENT ctx — waitCtx
-// is cancelled by both, only the parent ends on shutdown.
-func (a *Agent) acquireTurnSlots(ctx context.Context, inb *sessionInbox, first Envelope) (turnSlotRelease, []Envelope, turnSlotOutcome) {
+// seed is the batch so far (the dequeued envelope plus any joiners earlier
+// gate waits already collected); platform envelopes that arrive while the
+// worker waits are appended to it by waitTurnSlot (what drainAvailable would
+// have batched). notified suppresses a second queued notice when runUserBatch
+// re-acquires after a gate re-check bounced the batch.
+//
+// On abort, every limiter already held is released and no slot is kept; the
+// outcome distinguishes /stop (drop the batch, keep the worker) from
+// inbox-ctx cancellation (worker returns) by the PARENT ctx — waitCtx is
+// cancelled by both, only the parent ends on shutdown.
+//
+// A /stop can also land AFTER the slots were granted but BEFORE the wait
+// handle is unregistered; its CancelSession already returned true and logged
+// the drop, so the grants are settled against it (claimWaitCancel, under
+// cancelMu) and the batch is dropped rather than run — the stop is never
+// lost to the race. The grant observer (test seam) fires inside that exact
+// window so the race is exercisable deterministically.
+func (a *Agent) acquireTurnSlots(ctx context.Context, inb *sessionInbox, seed []Envelope, notified *bool) (turnSlotRelease, []Envelope, turnSlotOutcome) {
 	// Fast path (requirement 9): no limiter at all is exactly today's
 	// behaviour — no waitCtx, no registered cancel, no notice, no log.
 	if a.TurnLimit == nil && a.GlobalTurnLimit == nil {
-		return nil, []Envelope{first}, slotAcquired
+		return nil, seed, slotAcquired
 	}
 	waitCtx, waitCancel := context.WithCancel(ctx)
 	inb.setWaitCancel(waitCancel)
@@ -1082,8 +1183,7 @@ func (a *Agent) acquireTurnSlots(ctx context.Context, inb *sessionInbox, first E
 		waitCancel()
 		inb.clearWaitCancel()
 	}()
-	batch := []Envelope{first}
-	notified := false
+	batch := seed
 	var held []*TurnLimiter
 	abort := func() turnSlotOutcome {
 		for i := len(held) - 1; i >= 0; i-- {
@@ -1105,13 +1205,19 @@ func (a *Agent) acquireTurnSlots(ctx context.Context, inb *sessionInbox, first E
 		if step.lim == nil {
 			continue
 		}
-		granted, aborted := a.waitTurnSlot(waitCtx, inb, step.lim, step.scope, &batch, &notified)
+		granted, aborted := a.waitTurnSlot(ctx, waitCtx, inb, step.lim, step.scope, &batch, notified)
 		if aborted {
 			return nil, nil, abort()
 		}
 		if granted {
 			held = append(held, step.lim)
 		}
+	}
+	if a.turnSlotGrantObserver != nil {
+		a.turnSlotGrantObserver()
+	}
+	if inb.claimWaitCancel(waitCtx) {
+		return nil, nil, abort()
 	}
 	release := func() {
 		for i := len(held) - 1; i >= 0; i-- {
@@ -1124,16 +1230,19 @@ func (a *Agent) acquireTurnSlots(ctx context.Context, inb *sessionInbox, first E
 // waitTurnSlot acquires one limiter's slot for a user batch, serving the
 // session channel while it waits (#2281 requirement 4): platform envelopes
 // join the batch in arrival order, injections run inline through the same
-// gates as the dequeue path — without a slot, the second half of the
-// deadlock rule (a turn holding a slot can be blocked in EnqueueInjectWait
-// on another session's injection). A grant that lands while the worker is
-// inside an in-wait injection simply waits for it to finish; the slot is
-// never re-queued or released because of that.
+// gates as the dequeue path — on the PARENT ctx, never waitCtx, so a /stop
+// that cancels the user batch's wait can never abandon an injection held in
+// a gate (dropped unrun, Refused never called, its producer — cron, a wake,
+// an EnqueueInjectWait caller — waiting forever). Without a slot, this is
+// the second half of the deadlock rule (a turn holding a slot can be
+// blocked in EnqueueInjectWait on another session's injection). A grant
+// that lands while the worker is inside an in-wait injection simply waits
+// for it to finish; the slot is never re-queued or released because of that.
 //
 // notified is shared across both limiter steps so the queued notice fires
 // once per wait, not once per semaphore: the first step that must block
 // fires it, joiners never re-fire it.
-func (a *Agent) waitTurnSlot(waitCtx context.Context, inb *sessionInbox, lim *TurnLimiter, scope string, batch *[]Envelope, notified *bool) (granted bool, aborted bool) {
+func (a *Agent) waitTurnSlot(ctx, waitCtx context.Context, inb *sessionInbox, lim *TurnLimiter, scope string, batch *[]Envelope, notified *bool) (granted bool, aborted bool) {
 	if lim.TryAcquire() {
 		return true, false
 	}
@@ -1169,7 +1278,11 @@ func (a *Agent) waitTurnSlot(waitCtx context.Context, inb *sessionInbox, lim *Tu
 			return false, true
 		case env := <-inb.ch:
 			if env.Inject != nil {
-				if !a.waitReloginGate(waitCtx, env.SessionKey) || !a.waitInjectGate(waitCtx, env.SessionKey) {
+				if !a.waitReloginGate(ctx, env.SessionKey) || !a.waitInjectGate(ctx, env.SessionKey) {
+					// Shutdown while the injection sat in a gate:
+					// release its waiter rather than dropping it
+					// silently (#2059).
+					a.refuseDroppedInject(env)
 					return abortIfDead()
 				}
 				a.runInject(inb, env)
@@ -1295,6 +1408,15 @@ func (a *Agent) SetTurnObserver(fn func(sk string, batch []Envelope)) {
 	a.turnObserver = fn
 }
 
+// SetTurnSlotGrantObserver installs a callback fired after a queued batch
+// has been granted its turn-limit slots and before the grants are settled
+// against a concurrent /stop (#2281) — the exact grant-vs-stop race window,
+// exposed so tests can act inside it deterministically. Test-only —
+// production wires nil.
+func (a *Agent) SetTurnSlotGrantObserver(fn func()) {
+	a.turnSlotGrantObserver = fn
+}
+
 // SetTurnLifecycleHooks wires the session-lifecycle callbacks fired at the
 // turn boundary in HandleMessage — onTurnComplete after the turn's completion
 // event, onTurnEnd last. Fired for every backend turn regardless of origin
@@ -1324,6 +1446,12 @@ func (a *Agent) SetOnAliasChanged(fn func(agentID, platform string, chatID int64
 // With no turn running it still drops a batch waiting for a turn-limit slot
 // (#2281); no-op if the session has no inbox and neither is pending.
 //
+// The queued-batch cancel is fired UNDER cancelMu so the worker's
+// claimWaitCancel (the post-grant settle in acquireTurnSlots) either
+// observes the cancel or finds the handle already unregistered: a /stop
+// that returns true is never lost to the grant race — the batch it stopped
+// never runs.
+//
 // Replaces the old per-bot cancelTurn() which was a single field for all
 // sessions on a shared bot — TODO #743's per-session /stop precision.
 func (a *Agent) CancelSession(sk string) bool {
@@ -1336,10 +1464,13 @@ func (a *Agent) CancelSession(sk string) bool {
 	inb.cancelMu.Lock()
 	waitCancel := inb.waitCancel
 	cancel := inb.turnCancel
+	if waitCancel != nil {
+		// Under the mutex — see claimWaitCancel.
+		waitCancel()
+	}
 	inb.cancelMu.Unlock()
 	if waitCancel != nil {
 		a.logger().Infof("CancelSession sk=%s dropping queued turn", sk)
-		waitCancel()
 		return true
 	}
 	if cancel == nil {
