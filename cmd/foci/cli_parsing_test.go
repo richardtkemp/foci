@@ -142,9 +142,9 @@ func TestParseSendFlags(t *testing.T) {
 			if flags.agent != tt.wantAgent {
 				t.Errorf("agent = %q, want %q", flags.agent, tt.wantAgent)
 			}
-			if flags.session != tt.wantSession {
-				t.Errorf("session = %q, want %q", flags.session, tt.wantSession)
-			}
+		if flags.sessionFlag.selector != tt.wantSession {
+			t.Errorf("session = %q, want %q", flags.sessionFlag.selector, tt.wantSession)
+		}
 			if flags.ifWarm != tt.wantIfActive {
 				t.Errorf("ifWarm = %q, want %q", flags.ifWarm, tt.wantIfActive)
 			}

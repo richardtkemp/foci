@@ -88,13 +88,23 @@ func TestBranchSessionFlagForwarded(t *testing.T) {
 }
 
 // TestBranchUsageDocumentsSession is the R2 red test: `foci branch -h` must
-// document the -s/--session flag and its FOCI_SESSION env var.
+// document the -s/--session flag — in the usage line, in the flags table with
+// its FOCI_SESSION env var — and its intro must offer the named session as
+// the parent instead of claiming the branch always forks the main chat.
 func TestBranchUsageDocumentsSession(t *testing.T) {
 	help := captureStderr(t, branchUsage)
-	for _, want := range []string{"-s, --session", "FOCI_SESSION"} {
+	for _, want := range []string{
+		"[-s session]",       // R2: the usage line shows the flag
+		"-s, --session",      // R2: the flags table documents it
+		"FOCI_SESSION",       // R2: with its env var
+		"-s/--session names", // R2: the intro names the flag as the parent selector
+	} {
 		if !strings.Contains(help, want) {
 			t.Errorf("R2: branchUsage output does not mention %q", want)
 		}
+	}
+	if strings.Contains(help, "main chat.") {
+		t.Errorf("R2: branchUsage still says the branch always forks the agent's main chat")
 	}
 }
 

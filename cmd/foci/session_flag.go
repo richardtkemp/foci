@@ -11,7 +11,12 @@ package main
 // lookup twice (branch used to have none of them, and its -s words silently
 // became message text).
 type sessionFlag struct {
-	session string
+	// selector is deliberately not named "session": sendFlags/branchFlags
+	// embed this type, and a field named session would promote to
+	// flags.session — a write path around the spec table below, i.e. the
+	// hand-rolled parsing this type exists to remove. The table is the only
+	// way in.
+	selector string
 }
 
 // specs declares the flag once — long and short spellings, env var, and
@@ -19,7 +24,7 @@ type sessionFlag struct {
 // apart (the gateFlags pattern over flagSpec).
 func (sf *sessionFlag) specs() []flagSpec {
 	return []flagSpec{
-		{"--session", []string{"-s"}, "FOCI_SESSION", "", "session", &sf.session},
+		{"--session", []string{"-s"}, "FOCI_SESSION", "", "session", &sf.selector},
 	}
 }
 
