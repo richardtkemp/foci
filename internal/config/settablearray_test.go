@@ -351,6 +351,21 @@ replace = "y"
 	}
 }
 
+func TestSetTableArray_ControlCharactersRoundTrip(t *testing.T) {
+	// A string holding U+0007 must be written with a TOML-legal \u escape —
+	// Go's %q writes \a, which the parser rejects and would leave foci.toml
+	// unloadable after an app-editor object-list write (#2221).
+	path := p3write(t, "[keepalive]\nenabled = true\n")
+	if _, err := SetTableArray(path, "message_transforms",
+		[]map[string]any{{"find": "a\x07b", "replace": "c"}}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := p3reparse(t, path)
+	if len(cfg.MessageTransforms) != 1 || cfg.MessageTransforms[0].Find != "a\x07b" || cfg.MessageTransforms[0].Replace != "c" {
+		t.Errorf("MessageTransforms = %+v, want one entry with find a\\x07b replace c", cfg.MessageTransforms)
+	}
+}
+
 func TestSetTableArray_RoundTripStable(t *testing.T) {
 	path := p3write(t, "[keepalive]\nenabled = true\n")
 	entries := []map[string]any{

@@ -8,6 +8,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"github.com/BurntSushi/toml"
 )
 
 // SetTarget specifies where to write a key in the TOML config file.
@@ -512,17 +515,109 @@ func quoteRun(line string, j int, q byte) int {
 	return n
 }
 
-// FormatTOMLValue formats a raw string value for TOML output based on field type.
-// Returns the formatted TOML value or an error if the value is invalid for the type.
+// errNotUTF8 is the refusal for string values TOML cannot hold: invalid
+// UTF-8. Go's %q would write it as \xff (which reads back as the different
+// character U+00FF), and the parser silently substitutes U+FFFD — both lose
+// the value, so it is refused instead.
+func errNotUTF8(s string) error {
+	return fmt.Errorf("not valid UTF-8 (TOML cannot hold it): %q", s)
+}
+
+// encodeTOMLBasicString encodes a Go string as one TOML basic string
+// (double-quoted): `"` and `\` are escaped, \b \t \n \f \r stand for
+// themselves, and every other control character (U+0000–U+001F and U+007F)
+// becomes \uXXXX. Everything else — printable and non-ASCII alike — is
+// written as-is. This is the ONE encoder for every string this package
+// writes into foci.toml; Go's %q is not a substitute (it emits \a, \v and
+// \xff, which TOML rejects or misreads).
+func encodeTOMLBasicString(s string) (string, error) {
+	if !utf8.ValidString(s) {
+		return "", errNotUTF8(s)
+	}
+	var sb strings.Builder
+	sb.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"':
+			sb.WriteString(`\"`)
+		case '\\':
+			sb.WriteString(`\\`)
+		case '\b':
+			sb.WriteString(`\b`)
+		case '\t':
+			sb.WriteString(`\t`)
+		case '\n':
+			sb.WriteString(`\n`)
+		case '\f':
+			sb.WriteString(`\f`)
+		case '\r':
+			sb.WriteString(`\r`)
+		default:
+			if r < 0x20 || r == 0x7f {
+				fmt.Fprintf(&sb, `\u%04x`, r)
+			} else {
+				sb.WriteRune(r)
+			}
+		}
+	}
+	sb.WriteByte('"')
+	return sb.String(), nil
+}
+
+// decodeTOMLQuotedValue decodes an already-quoted TOML value by parsing
+// "v = <value>" with the same parser Load uses. It returns the decoded string
+// only when the value is exactly ONE string-valued key; anything else — a
+// parse error, trailing garbage, a second key, a non-string type — is an
+// error naming the value.
+func decodeTOMLQuotedValue(value string) (string, error) {
+	invalid := fmt.Errorf("invalid quoted string: %q", value)
+	var m map[string]any
+	if err := toml.Unmarshal([]byte("v = "+value), &m); err != nil {
+		return "", invalid
+	}
+	if len(m) != 1 {
+		return "", invalid
+	}
+	s, ok := m["v"].(string)
+	if !ok {
+		return "", invalid
+	}
+	return s, nil
+}
+
+// FormatTOMLValue formats a raw string value for TOML output based on field
+// type. Returns the formatted TOML value or an error if the value is invalid
+// for the type. For FieldString the result is always ONE well-formed TOML
+// string: it parses, as `v = <result>`, to exactly one key v holding the
+// intended string — see the FieldString case for the quoting rules. The
+// other types emit bare scalars or checked durations exactly as before.
 func FormatTOMLValue(value string, ft FieldType) (string, error) {
 	value = strings.TrimSpace(value)
 	switch ft {
 	case FieldString:
-		// Already quoted — pass through.
-		if strings.HasPrefix(value, `"`) && strings.HasSuffix(value, `"`) {
-			return value, nil
+		// A value that is not valid UTF-8 is refused outright (see
+		// errNotUTF8) — the quoted-decode path below would otherwise let it
+		// through as the parser's U+FFFD substitution.
+		//
+		// An already-quoted value (length ≥ 2, starting and ending with `"`;
+		// the one-character value `"` is NOT already quoted) is decoded as
+		// `v = <value>` and re-encoded in canonical form, so only a value
+		// that is exactly one TOML string passes: `"x" # "y"` becomes `"x"`,
+		// while trailing garbage, unterminated strings and smuggled second
+		// keys are refused instead of written into foci.toml. Unquoted
+		// values (and the bare `"`) go through encodeTOMLBasicString, which
+		// escapes every control character.
+		if !utf8.ValidString(value) {
+			return "", errNotUTF8(value)
 		}
-		return fmt.Sprintf("%q", value), nil
+		if len(value) >= 2 && strings.HasPrefix(value, `"`) && strings.HasSuffix(value, `"`) {
+			decoded, err := decodeTOMLQuotedValue(value)
+			if err != nil {
+				return "", err
+			}
+			return encodeTOMLBasicString(decoded)
+		}
+		return encodeTOMLBasicString(value)
 
 	case FieldDuration:
 		// The runtime parses durations with time.ParseDuration, so an
@@ -574,13 +669,19 @@ func FormatTOMLValue(value string, ft FieldType) (string, error) {
 		// The wire value is a JSON array of strings; emit a single-line TOML
 		// array. Writing single-line keeps replaceOrInsertKey's span logic in
 		// sync (it collapses any prior multi-line array to this one line).
+		// Each item is encoded by encodeTOMLBasicString — Go's %q would emit
+		// \a/\v escapes TOML rejects.
 		var items []string
 		if err := json.Unmarshal([]byte(value), &items); err != nil {
 			return "", fmt.Errorf("invalid string list (expected a JSON array): %w", err)
 		}
 		parts := make([]string, len(items))
 		for i, s := range items {
-			parts[i] = fmt.Sprintf("%q", s)
+			enc, err := encodeTOMLBasicString(s)
+			if err != nil {
+				return "", fmt.Errorf("item %d: %w", i, err)
+			}
+			parts[i] = enc
 		}
 		return "[" + strings.Join(parts, ", ") + "]", nil
 	}

@@ -422,6 +422,24 @@ func TestConfigSetDirectShowsOldValue(t *testing.T) {
 	}
 }
 
+// TestConfigSetDirectRefusesMalformedStringValue proves the direct set form
+// refuses a string value that is not one well-formed TOML string BEFORE any
+// file write: the stub SetInFileFn counts its calls and must stay at zero.
+func TestConfigSetDirectRefusesMalformedStringValue(t *testing.T) {
+	calls := 0
+	deps := testConfigSetDeps(func(path string, target config.SetTarget, value string) (string, error) {
+		calls++
+		return "", nil
+	})
+
+	if _, err := ConfigSetDirect(deps, `keepalive.prompt="x" y "z"`); err == nil {
+		t.Fatal("expected error for a value that is not one TOML string")
+	}
+	if calls != 0 {
+		t.Errorf("SetInFileFn called %d time(s), want 0 — the malformed value must never reach the file", calls)
+	}
+}
+
 // TestConfigSetSectionKey verifies the "section key" form (from keyboard button
 // selection) feeds both values into the wizard and returns the value prompt,
 // skipping the section listing and key listing steps.

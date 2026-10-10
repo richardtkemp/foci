@@ -12,11 +12,11 @@ import (
 // SetTableArray replaces the [[section]] array-of-tables blocks in the TOML
 // file at path with one block per entry, preserving every other line (other
 // sections, scalar keys, blank lines, comments). Each entry maps a sub-field
-// name to its value; values are formatted by Go type: string -> quoted
-// (%q), float64 -> bare number, int/int64 -> bare integer, bool ->
-// true/false. section may be dotted ("memory.sources" -> [[memory.sources]]).
-// Passing zero entries removes the section's blocks entirely. It returns the
-// number of blocks written.
+// name to its value; values are formatted by Go type: string -> TOML basic
+// string (encodeTOMLBasicString), float64 -> bare number, int/int64 -> bare
+// integer, bool -> true/false. section may be dotted ("memory.sources" ->
+// [[memory.sources]]). Passing zero entries removes the section's blocks
+// entirely. It returns the number of blocks written.
 func SetTableArray(path, section string, entries []map[string]any, mode os.FileMode) (int, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -77,7 +77,10 @@ func SetTableArray(path, section string, entries []map[string]any, mode os.FileM
 		i++
 	}
 
-	rendered := renderTableArrayBlocks(section, entries)
+	rendered, err := renderTableArrayBlocks(section, entries)
+	if err != nil {
+		return 0, err
+	}
 
 	var result []string
 	if insertAt < 0 {
@@ -130,8 +133,9 @@ func tableArrayHeaderRe(section string) *regexp.Regexp {
 
 // renderTableArrayBlocks renders one "[[section]]" block per entry, each
 // followed by its "key = value" lines, with exactly one blank line between
-// consecutive blocks (and none trailing after the last one).
-func renderTableArrayBlocks(section string, entries []map[string]any) []string {
+// consecutive blocks (and none trailing after the last one). An error names
+// the first value that cannot be written as valid TOML.
+func renderTableArrayBlocks(section string, entries []map[string]any) ([]string, error) {
 	var out []string
 	for idx, entry := range entries {
 		if idx > 0 {
@@ -144,31 +148,37 @@ func renderTableArrayBlocks(section string, entries []map[string]any) []string {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			out = append(out, fmt.Sprintf("%s = %s", k, formatTableArrayValue(entry[k])))
+			val, err := formatTableArrayValue(entry[k])
+			if err != nil {
+				return nil, fmt.Errorf("%s.%s: %w", section, k, err)
+			}
+			out = append(out, fmt.Sprintf("%s = %s", k, val))
 		}
 	}
-	return out
+	return out, nil
 }
 
 // formatTableArrayValue formats a Go value for TOML output based on its
-// dynamic type: string -> quoted, float64 -> bare number, int/int64 -> bare
-// integer, bool -> true/false. Any other type falls back to fmt.Sprintf.
-func formatTableArrayValue(v any) string {
+// dynamic type: string -> TOML basic string (encodeTOMLBasicString — Go's %q
+// would emit \a/\v escapes the parser rejects), float64 -> bare number,
+// int/int64 -> bare integer, bool -> true/false. Any other type falls back to
+// fmt.Sprintf.
+func formatTableArrayValue(v any) (string, error) {
 	switch val := v.(type) {
 	case string:
-		return fmt.Sprintf("%q", val)
+		return encodeTOMLBasicString(val)
 	case bool:
 		if val {
-			return "true"
+			return "true", nil
 		}
-		return "false"
+		return "false", nil
 	case int:
-		return strconv.Itoa(val)
+		return strconv.Itoa(val), nil
 	case int64:
-		return strconv.FormatInt(val, 10)
+		return strconv.FormatInt(val, 10), nil
 	case float64:
-		return strconv.FormatFloat(val, 'g', -1, 64)
+		return strconv.FormatFloat(val, 'g', -1, 64), nil
 	default:
-		return fmt.Sprintf("%v", val)
+		return fmt.Sprintf("%v", val), nil
 	}
 }

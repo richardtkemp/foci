@@ -227,7 +227,7 @@ type ModelConfig struct {
 	Speed           string        `toml:"speed"`            // "fast" or ""
 	Context         ContextWindow `toml:"context"`          // context window size in tokens (e.g. 262000 or "262k")
 	EnableKeepalive *bool         `toml:"enable_keepalive"` // nil=auto-detect, true/false=explicit
-	CacheTTL        string        `toml:"cache_ttl"`        // cache TTL: Go duration, empty=auto-detect (Anthropic: "5m"/"1h"; Gemini: any duration)
+	CacheTTL        string        `toml:"cache_ttl" type:"duration"` // cache TTL: Go duration, empty=auto-detect (Anthropic: "5m"/"1h"; Gemini: any duration); checked at load like every type:"duration" field
 	CacheStrategy   string        `toml:"cache_strategy"`   // cache marker strategy: "auto" or "explicit" (Anthropic only, default "auto")
 	// Provider carries OpenRouter provider-routing preferences (order, sort,
 	// ignore, max_price, ...) from a [models.*.provider] sub-table. Only

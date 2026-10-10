@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	tomlParser "github.com/BurntSushi/toml"
 )
 
 func TestSetInFile_UpdateExistingKey(t *testing.T) {
@@ -552,6 +554,116 @@ func TestFormatTOMLValue(t *testing.T) {
 		}
 		if got != tt.want {
 			t.Errorf("FormatTOMLValue(%q, %d) = %q, want %q", tt.value, tt.ft, got, tt.want)
+		}
+	}
+}
+
+// decodeSingleStringRoundTrip parses "v = <formatted>" with the same TOML
+// parser Load uses and returns the single string value key v holds — the
+// contract every FieldString result must satisfy.
+func decodeSingleStringRoundTrip(t *testing.T, formatted string) string {
+	t.Helper()
+	var m map[string]any
+	if err := tomlParser.Unmarshal([]byte("v = "+formatted), &m); err != nil {
+		t.Fatalf("v = %s does not parse as TOML: %v", formatted, err)
+	}
+	if len(m) != 1 {
+		t.Fatalf("v = %s decoded to %d keys (%v), want exactly one key v", formatted, len(m), m)
+	}
+	s, ok := m["v"].(string)
+	if !ok {
+		t.Fatalf("v = %s decoded to %T, want string", formatted, m["v"])
+	}
+	return s
+}
+
+// TestFormatTOMLValueStringRefusesValuesThatAreNotOneTOMLString proves a
+// FieldString value that is not exactly one well-formed TOML string is refused
+// rather than written into foci.toml: trailing garbage after the closing quote,
+// a backslash that unterminates the string, a second key smuggled after a
+// newline, and invalid UTF-8 (which TOML cannot hold at all).
+func TestFormatTOMLValueStringRefusesValuesThatAreNotOneTOMLString(t *testing.T) {
+	for _, v := range []string{
+		`"x" y "z"`,              // trailing garbage after the closing quote
+		`"a\"`,                   // the backslash escapes the quote: string never terminates
+		"\"x\"\nbackend = \"y\"", // a second key after a newline
+		"\"a\xffb\"",             // invalid UTF-8 (a real 0xFF byte) inside the quotes
+	} {
+		if _, err := FormatTOMLValue(v, FieldString); err == nil {
+			t.Errorf("FormatTOMLValue(%q, FieldString) accepted a value that is not one TOML string, want error", v)
+		}
+	}
+}
+
+// TestFormatTOMLValueStringEncodesControlCharacters proves FieldString encodes
+// control characters as escapes TOML actually has (\uXXXX for U+0007/U+000B,
+// which Go's %q writes as the TOML-invalid \a and \v), that the one-character
+// value `"` is encoded as the string `"` rather than passed through as an
+// unterminated quote, and that each result decodes back to the exact input.
+func TestFormatTOMLValueStringEncodesControlCharacters(t *testing.T) {
+	for _, v := range []string{"a\x07b", "a\x0bb", `"`} {
+		got, err := FormatTOMLValue(v, FieldString)
+		if err != nil {
+			t.Fatalf("FormatTOMLValue(%q, FieldString): %v", v, err)
+		}
+		if back := decodeSingleStringRoundTrip(t, got); back != v {
+			t.Errorf("FormatTOMLValue(%q) = %s, which decodes back to %q — not the exact input", v, got, back)
+		}
+	}
+}
+
+// TestFormatTOMLValueStringQuotedValueKeepsDecodedString proves an
+// already-quoted value keeps only its decoded TOML meaning: `"x" # "y"` (a
+// quoted string with a trailing comment) becomes exactly `"x"`, not a line
+// carrying the comment into foci.toml.
+func TestFormatTOMLValueStringQuotedValueKeepsDecodedString(t *testing.T) {
+	got, err := FormatTOMLValue(`"x" # "y"`, FieldString)
+	if err != nil {
+		t.Fatalf("FormatTOMLValue: %v", err)
+	}
+	if got != `"x"` {
+		t.Errorf("FormatTOMLValue(`\"x\" # \"y\"`) = %s, want \"x\"", got)
+	}
+}
+
+// TestFormatTOMLValueStringListEncodesControlCharacters proves every
+// FieldStringList item is encoded with TOML-legal escapes, so a list holding
+// U+0007 round-trips instead of writing \a (which the next Load rejects).
+func TestFormatTOMLValueStringListEncodesControlCharacters(t *testing.T) {
+	got, err := FormatTOMLValue(`["a\u0007b","c"]`, FieldStringList)
+	if err != nil {
+		t.Fatalf("FormatTOMLValue: %v", err)
+	}
+	var m map[string]any
+	if err := tomlParser.Unmarshal([]byte("v = "+got), &m); err != nil {
+		t.Fatalf("v = %s does not parse as TOML: %v", got, err)
+	}
+	items, ok := m["v"].([]any)
+	if !ok || len(items) != 2 {
+		t.Fatalf("v = %s decoded to %#v, want a 2-item array", got, m["v"])
+	}
+	if items[0] != "a\x07b" || items[1] != "c" {
+		t.Errorf("v = %s decoded to [%#v %#v], want [a\\x07b c]", got, items[0], items[1])
+	}
+}
+
+// TestFormatTOMLValueStringAcceptedRoundTrip is a characterisation test: plain
+// values, already-quoted values, embedded quotes and TOML escapes in quoted
+// values all decode back to exactly the intended string today, and the encoder
+// change must keep that.
+func TestFormatTOMLValueStringAcceptedRoundTrip(t *testing.T) {
+	for _, tt := range []struct{ raw, want string }{
+		{"hello", "hello"},
+		{`"already-quoted"`, "already-quoted"},
+		{`say "hi"`, `say "hi"`},
+		{`"a\tb"`, "a\tb"}, // a quoted value using a TOML escape
+	} {
+		got, err := FormatTOMLValue(tt.raw, FieldString)
+		if err != nil {
+			t.Fatalf("FormatTOMLValue(%q, FieldString): %v", tt.raw, err)
+		}
+		if back := decodeSingleStringRoundTrip(t, got); back != tt.want {
+			t.Errorf("FormatTOMLValue(%q) = %s, which decodes back to %q, want %q", tt.raw, got, back, tt.want)
 		}
 	}
 }

@@ -437,7 +437,10 @@ func (cfg *Config) Validate(knownBackends []string) error {
 		return fmt.Errorf("[resources] memory_pressure_threshold = %g: must not be negative", DerefFloat(cfg.Resources.MemoryPressureThreshold))
 	}
 
-	// Table-driven duration validation — all fields that must be valid Go durations
+	// Table-driven duration validation — all fields that must be valid Go durations.
+	// Every OTHER `type:"duration"` field is checked last by
+	// validateTaggedDurations' reflection walk, so a field both check keeps
+	// this table's message.
 	durations := []durationEntry{
 		{"logging", "warning_window_duration", cfg.Logging.WarningWindowDuration},
 		{"logging", "warning_proactive_active_interval", cfg.Logging.WarningProactiveActiveInterval},
@@ -488,6 +491,14 @@ func (cfg *Config) Validate(knownBackends []string) error {
 				return fmt.Errorf("agent %q [groups] %s = %q: %w", a.ID, name, model, err)
 			}
 		}
+	}
+
+	// Last: every `type:"duration"` field, wherever it sits (global sections,
+	// [[agents]] blocks, [[platforms]] entries, [models.*] map values), is
+	// checked by the tag-driven reflection walk — the table and special
+	// cases above keep precedence for fields they already check.
+	if err := cfg.validateTaggedDurations(); err != nil {
+		return err
 	}
 
 	return nil
