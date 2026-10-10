@@ -74,6 +74,38 @@ func pressData(t *testing.T, w *buttonWizard, suffix string) string {
 	return "wz:" + command.WizardStepToken(q) + ":" + suffix
 }
 
+// wizardCustomIDs flattens a message's button custom IDs in row order, for
+// asserting which wz:/cmd: buttons sent components carry.
+func wizardCustomIDs(components []discordgo.MessageComponent) []string {
+	var ids []string
+	for _, comp := range components {
+		row, ok := comp.(discordgo.ActionsRow)
+		if !ok {
+			continue
+		}
+		for _, c := range row.Components {
+			if btn, ok := c.(discordgo.Button); ok {
+				ids = append(ids, btn.CustomID)
+			}
+		}
+	}
+	return ids
+}
+
+// assertWizardButtons fails the test unless components carry one wz: button
+// per option of the wizard's current structured step, plus Cancel — each
+// carrying the step's token.
+func assertWizardButtons(t *testing.T, components []discordgo.MessageComponent, w *buttonWizard) {
+	t.Helper()
+	want := "wz:" + command.WizardStepToken(w.PendingStep())
+	joined := strings.Join(wizardCustomIDs(components), ",")
+	for _, wantID := range []string{want + ":0", want + ":1", want + ":cancel"} {
+		if !strings.Contains(joined, wantID) {
+			t.Errorf("buttons %v missing %q", joined, wantID)
+		}
+	}
+}
+
 // TestTryIntercept_WizardStepReplyHasButtons proves a wizard reply for a
 // structured step is sent WITH wz: buttons to the asking channel (not the
 // default): one per option plus Cancel, carrying the step's token.
@@ -108,23 +140,7 @@ func TestTryIntercept_WizardStepReplyHasButtons(t *testing.T) {
 	if !strings.Contains(got.content, "Okay to restart") {
 		t.Fatalf("reply text = %q, want the restart prompt", got.content)
 	}
-	want := "wz:" + command.WizardStepToken(w.PendingStep())
-	var customIDs []string
-	for _, comp := range got.components {
-		if row, ok := comp.(discordgo.ActionsRow); ok {
-			for _, c := range row.Components {
-				if btn, ok := c.(discordgo.Button); ok {
-					customIDs = append(customIDs, btn.CustomID)
-				}
-			}
-		}
-	}
-	joined := strings.Join(customIDs, ",")
-	for _, wantID := range []string{want + ":0", want + ":1", want + ":cancel"} {
-		if !strings.Contains(joined, wantID) {
-			t.Errorf("buttons %v missing %q", customIDs, wantID)
-		}
-	}
+	assertWizardButtons(t, got.components, w)
 }
 
 // TestWizardStepReply_ButtonSendFallsBackToPlain proves that when the button
@@ -165,6 +181,60 @@ func TestWizardStepReply_ButtonSendFallsBackToPlain(t *testing.T) {
 	if !strings.Contains(last.content, "Okay to restart") {
 		t.Errorf("fallback text = %q, want the wizard's prompt", last.content)
 	}
+}
+
+// TestCommandActivatedWizard_PromptHasButtons proves a typed command that
+// ACTIVATES a wizard with a structured first step (as /config set and /android
+// do) renders its response — the carrier of the first step's prompt — with wz:
+// buttons, not as plain text.
+func TestCommandActivatedWizard_PromptHasButtons(t *testing.T) {
+	w := &buttonWizard{}
+	b, fs := newWizardScopeBot(t, w)
+
+	// /wizstart's dispatch activates the wizard (step 0 is structured), so
+	// the command's own reply is the first buttoned prompt.
+	startWizardInChannel(t, b, "100", "u1")
+
+	if !b.commands.WizardActive("a/c100") {
+		t.Fatal("wizard must be active after the command")
+	}
+	got := fs.lastSend(t)
+	if !strings.Contains(got.content, "wizard started") {
+		t.Fatalf("command reply = %q, want the /wizstart ack", got.content)
+	}
+	assertWizardButtons(t, got.components, w)
+}
+
+// TestCommandCallbackPress_ActivatesWizardWithButtons proves a cmd: button
+// press whose command ACTIVATES a wizard with a structured first step (e.g. a
+// /config chain-keyboard pick of "set" landing on /config set) strips the
+// pressed message's buttons and sends the wizard's prompt as a NEW buttoned
+// message, instead of editing the pressed message into the prompt.
+func TestCommandCallbackPress_ActivatesWizardWithButtons(t *testing.T) {
+	w := &buttonWizard{}
+	b, fs := newWizardScopeBot(t, w)
+
+	b.handleComponentInteraction(context.Background(), componentInteraction("100", "42", "cmd:/wizstart"))
+
+	if !b.commands.WizardActive("a/c100") {
+		t.Fatal("command press must activate the wizard")
+	}
+	if fs.sendCount() != 1 {
+		t.Fatalf("sends = %d, want 1 (the wizard's prompt as a new message)", fs.sendCount())
+	}
+	// The pressed message was stripped, not rewritten: the edit changes no text.
+	strip := fs.lastEdit(t)
+	if strip.msgID != "42" || strip.channelID != "100" {
+		t.Fatalf("strip edit = (%q, %q), want message 42 in channel 100", strip.channelID, strip.msgID)
+	}
+	if strip.content != "" {
+		t.Errorf("strip edit rewrote the message to %q; the prompt must go out as a new message", strip.content)
+	}
+	if len(strip.components) != 0 {
+		t.Errorf("strip edit left %d components on the pressed message", len(strip.components))
+	}
+	// The wizard's prompt went out as a new message with wz: buttons.
+	assertWizardButtons(t, fs.lastSend(t).components, w)
 }
 
 // TestWizardButtonPress_AdvancesAndStrips proves a valid wz: press answers

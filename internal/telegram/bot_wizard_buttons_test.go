@@ -73,6 +73,32 @@ func pressData(t *testing.T, w *buttonWizard, suffix string) string {
 	return "wz:" + command.WizardStepToken(q) + ":" + suffix
 }
 
+// callbackDataFromMarkup flattens an inline keyboard's callback data in row
+// order, for asserting which wz:/cmd: buttons a sent keyboard carries.
+func callbackDataFromMarkup(kb gotgbot.InlineKeyboardMarkup) []string {
+	var data []string
+	for _, row := range kb.InlineKeyboard {
+		for _, btn := range row {
+			data = append(data, btn.CallbackData)
+		}
+	}
+	return data
+}
+
+// assertWizardKeyboard fails the test unless kb carries one wz: button per
+// option of the wizard's current structured step, plus Cancel — each carrying
+// the step's token.
+func assertWizardKeyboard(t *testing.T, kb gotgbot.InlineKeyboardMarkup, w *buttonWizard) {
+	t.Helper()
+	want := "wz:" + command.WizardStepToken(w.PendingStep())
+	joined := strings.Join(callbackDataFromMarkup(kb), ",")
+	for _, wantBtn := range []string{want + ":0", want + ":1", want + ":cancel"} {
+		if !strings.Contains(joined, wantBtn) {
+			t.Errorf("keyboard %v missing %q", joined, wantBtn)
+		}
+	}
+}
+
 // TestTryIntercept_WizardStepReplyHasButtons proves a wizard reply for a
 // structured step is sent WITH wz: buttons to the asking chat (not the
 // default): one per option plus Cancel, carrying the step's token.
@@ -107,19 +133,7 @@ func TestTryIntercept_WizardStepReplyHasButtons(t *testing.T) {
 	if !ok {
 		t.Fatalf("reply sent without an inline keyboard (markup=%T)", opts.ReplyMarkup)
 	}
-	var data []string
-	for _, row := range kb.InlineKeyboard {
-		for _, btn := range row {
-			data = append(data, btn.CallbackData)
-		}
-	}
-	want := command.WizardStepToken(w.PendingStep())
-	joined := strings.Join(data, ",")
-	for _, wantBtn := range []string{"wz:" + want + ":0", "wz:" + want + ":1", "wz:" + want + ":cancel"} {
-		if !strings.Contains(joined, wantBtn) {
-			t.Errorf("keyboard %v missing %q", data, wantBtn)
-		}
-	}
+	assertWizardKeyboard(t, kb, w)
 }
 
 // TestWizardStepReply_ButtonSendFallsBackToPlain proves that when the button
@@ -155,6 +169,70 @@ func TestWizardStepReply_ButtonSendFallsBackToPlain(t *testing.T) {
 	if !strings.Contains(mock.lastSendInjected, "Okay to restart") {
 		t.Errorf("fallback text = %q, want the wizard's prompt", mock.lastSendInjected)
 	}
+}
+
+// TestCommandActivatedWizard_PromptHasButtons proves a typed command that
+// ACTIVATES a wizard with a structured first step (as /config set and /android
+// do) renders its response — the carrier of the first step's prompt — with wz:
+// buttons, not as plain text.
+func TestCommandActivatedWizard_PromptHasButtons(t *testing.T) {
+	w := &buttonWizard{}
+	b, mock, cmds := newWizardScopeBot(t, w)
+
+	// /wizstart's dispatch activates the wizard (step 0 is structured), so
+	// the command's own reply is the first buttoned prompt.
+	startWizardInChat(t, b, 12345, 111)
+
+	if !cmds.WizardActive("test-agent/c12345") {
+		t.Fatal("wizard must be active after the command")
+	}
+	mock.mu.Lock()
+	opts := mock.lastSendOpts
+	mock.mu.Unlock()
+	if opts == nil {
+		t.Fatal("no send recorded for the command's reply")
+	}
+	kb, ok := opts.ReplyMarkup.(gotgbot.InlineKeyboardMarkup)
+	if !ok {
+		t.Fatalf("command reply sent without an inline keyboard (markup=%T)", opts.ReplyMarkup)
+	}
+	assertWizardKeyboard(t, kb, w)
+}
+
+// TestCommandCallbackPress_ActivatesWizardWithButtons proves a cmd: button
+// press whose command ACTIVATES a wizard with a structured first step (e.g. a
+// /config chain-keyboard pick of "set" landing on /config set) strips the
+// pressed message's keyboard and sends the wizard's prompt as a NEW buttoned
+// message, instead of editing the pressed message into the prompt.
+func TestCommandCallbackPress_ActivatesWizardWithButtons(t *testing.T) {
+	w := &buttonWizard{}
+	b, mock, cmds := newWizardScopeBot(t, w)
+
+	b.handleCallbackQuery(context.Background(), makeCallbackQuery(55, "cmd:/wizstart"))
+
+	if !cmds.WizardActive("test-agent/c12345") {
+		t.Fatal("command press must activate the wizard")
+	}
+	if mock.markupEdits != 1 {
+		t.Fatalf("markup edits = %d, want 1 (strip the pressed message's keyboard)", mock.markupEdits)
+	}
+	mock.mu.Lock()
+	markupOpts, sendOpts := mock.lastMarkupOpts, mock.lastSendOpts
+	mock.mu.Unlock()
+	if markupOpts == nil || markupOpts.MessageId != 55 {
+		t.Fatalf("markup edit opts = %+v, want the pressed message 55", markupOpts)
+	}
+	if len(markupOpts.ReplyMarkup.InlineKeyboard) != 0 {
+		t.Errorf("markup edit left %d keyboard rows on the pressed message", len(markupOpts.ReplyMarkup.InlineKeyboard))
+	}
+	if sendOpts == nil {
+		t.Fatal("the wizard's prompt was not sent as a new message")
+	}
+	kb, ok := sendOpts.ReplyMarkup.(gotgbot.InlineKeyboardMarkup)
+	if !ok {
+		t.Fatalf("prompt sent without an inline keyboard (markup=%T)", sendOpts.ReplyMarkup)
+	}
+	assertWizardKeyboard(t, kb, w)
 }
 
 // TestWizardButtonPress_AdvancesAndStrips proves a valid wz: press answers the
