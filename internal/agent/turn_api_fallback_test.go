@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -109,8 +110,9 @@ func TestFallbackTurnReleasesAndBooksServingEndpoint(t *testing.T) {
 // TestFallbackTurnReusedClientBooksHopModelOnCallerFormat proves the
 // reused-client rule end to end: with ClientProvider returning nil for the
 // fallback pair, the hop reuses the primary's client, so the ledger books the
-// HOP model on the CALLER's format (and the caller's endpoint gate is the one
-// the release lands on).
+// HOP model on the CALLER's format, and the release lands on the CALLER's
+// endpoint gate — that client served — leaving the never-contacted fallback
+// endpoint's gate closed.
 func TestFallbackTurnReusedClientBooksHopModelOnCallerFormat(t *testing.T) {
 	ledger := openTestLedger(t)
 	var calls atomic.Int32
@@ -127,11 +129,21 @@ func TestFallbackTurnReusedClientBooksHopModelOnCallerFormat(t *testing.T) {
 		})}
 	ag := fallbackAgent(t, shared, tupleClientProvider{})
 
+	// Both gates closed; a USER trigger may probe through the primary's.
+	ag.getOrCreateRateLimitGate("anthropic").Close(time.Now().Add(1 * time.Hour))
+	ag.getOrCreateRateLimitGate("openai").Close(time.Now().Add(1 * time.Hour))
+
 	ctx := WithTrigger(context.Background(), "user")
 	if _, err := ag.hmTest(ctx, "test/ifb-b", "Hello"); err != nil {
 		t.Fatalf("turn: %v", err)
 	}
 
+	if limited, _ := ag.getOrCreateRateLimitGate("anthropic").IsLimited(); limited {
+		t.Error(`"anthropic" gate still closed after the caller's client served the hop, want released`)
+	}
+	if limited, _ := ag.getOrCreateRateLimitGate("openai").IsLimited(); !limited {
+		t.Error(`"openai" gate released by a reused-client hop, want still closed (no openai client served)`)
+	}
 	rows := ledgerCalls(t, ledger)
 	if len(rows) == 0 {
 		t.Fatal("no calls booked in the ledger")
@@ -150,8 +162,10 @@ func TestFallbackTurnReusedClientBooksHopModelOnCallerFormat(t *testing.T) {
 func TestFallbackTurnThenPrimaryBooksBothTuplesInOrder(t *testing.T) {
 	ledger := openTestLedger(t)
 	var primaryCalls atomic.Int32
+	var primaryModels []string
 	primary := selfRetryingTestClient{newTestClientWithError(
-		func(_ context.Context, _ *provider.MessageRequest) (*provider.MessageResponse, error) {
+		func(_ context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
+			primaryModels = append(primaryModels, req.Model)
 			if primaryCalls.Add(1) == 1 {
 				return nil, &provider.APIError{StatusCode: 503, Body: "unavailable"}
 			}
@@ -162,7 +176,9 @@ func TestFallbackTurnThenPrimaryBooksBothTuplesInOrder(t *testing.T) {
 			}, nil
 		})}
 	var fbCalls atomic.Int32
-	fbClient := selfRetryingTestClient{newTestClient(func(_ *provider.MessageRequest) *provider.MessageResponse {
+	var fbModels []string
+	fbClient := selfRetryingTestClient{newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
+		fbModels = append(fbModels, req.Model)
 		fbCalls.Add(1)
 		return &provider.MessageResponse{
 			ID: "msg_fb_c", Type: "message", Role: "assistant",
@@ -200,5 +216,13 @@ func TestFallbackTurnThenPrimaryBooksBothTuplesInOrder(t *testing.T) {
 	}
 	if got := fbCalls.Load(); got != 1 {
 		t.Errorf("fallback client calls = %d, want 1 (only the first iteration fell back)", got)
+	}
+	// The snapshot model is what each request carried: the hop model is not
+	// sticky on the primary client after a fallback-served iteration.
+	if want := []string{"claude-haiku-4-5", "claude-haiku-4-5"}; !slices.Equal(primaryModels, want) {
+		t.Errorf("models sent to the primary client = %v, want %v (iteration 2 must retry the primary model)", primaryModels, want)
+	}
+	if want := []string{"openai/gpt-5.6"}; !slices.Equal(fbModels, want) {
+		t.Errorf("models sent to the fallback client = %v, want %v", fbModels, want)
 	}
 }
