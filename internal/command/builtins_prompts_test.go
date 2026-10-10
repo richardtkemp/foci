@@ -10,6 +10,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/config"
 	"foci/internal/delegator"
+	"foci/internal/provider"
 	"foci/internal/tools"
 )
 
@@ -832,5 +833,84 @@ func TestPromptsCommandDiffDelegatedRunsBatch(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "## Summary\n\nBATCH SUMMARY") {
 		t.Errorf("diff file lacks the batch summary:\n%s", body)
+	}
+}
+
+// promptsCaptureClient records the one request buildDiffSummary's API path
+// sends. ProviderRouting/RoutingFor are json:"-" fields, invisible to a
+// wire-capture server, so this stub observes them on the request object.
+// HandlesOwnRetries makes sendWithRetry a single pass.
+type promptsCaptureClient struct {
+	req *provider.MessageRequest
+}
+
+func (c *promptsCaptureClient) SendMessage(_ context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
+	c.req = req
+	return &provider.MessageResponse{
+		ID: "msg_1", Type: "message", Role: "assistant",
+		Content: provider.TextContent("a diff summary"), StopReason: "end_turn",
+		Usage: provider.Usage{InputTokens: 10, OutputTokens: 5},
+	}, nil
+}
+
+func (c *promptsCaptureClient) CountTokens(_ context.Context, _ *provider.MessageRequest) (int, error) {
+	return 0, nil
+}
+
+func (c *promptsCaptureClient) IsCachingAvailable() bool { return false }
+
+// HandlesOwnRetries makes sendWithRetry skip its retry loop.
+func (c *promptsCaptureClient) HandlesOwnRetries() bool { return true }
+
+// TestBuildDiffSummaryCarriesRouting proves the prompt-diff API summary
+// request carries the prompt-diff model's [models.*.provider] routing plus
+// the per-model lookup (RoutingFor) — previously this one-off site sent
+// neither, so a pinned OpenRouter model was load-balanced across upstream
+// providers and its fallback hops got no routing at all.
+func TestBuildDiffSummaryCarriesRouting(t *testing.T) {
+	routingDiff := &provider.ProviderRouting{Order: []string{"prov-diff"}}
+	routingOther := &provider.ProviderRouting{Order: []string{"prov-other"}}
+	client := &promptsCaptureClient{}
+	cc := CommandContext{
+		Client: client,
+		GroupResolver: config.NewGroupResolver(config.GroupsConfig{Groups: map[string]string{
+			"powerful": "anthropic/claude-opus-4-6",
+			"cheap":    "openrouter/diff-model",
+		}}, nil, true),
+		Agent: &agent.Agent{
+			ModelDefaultsFn: func(model string) config.ModelDefaults {
+				switch model {
+				case "openrouter/diff-model":
+					return config.ModelDefaults{ProviderRouting: routingDiff}
+				case "openrouter/other":
+					return config.ModelDefaults{ProviderRouting: routingOther}
+				default:
+					return config.ModelDefaults{}
+				}
+			},
+		},
+	}
+
+	summary, err := buildDiffSummary(context.Background(), cc, "custom keepalive", "default keepalive", "keepalive")
+	if err != nil {
+		t.Fatalf("buildDiffSummary: %v", err)
+	}
+	if summary != "a diff summary" {
+		t.Fatalf("summary = %q, want the captured response text", summary)
+	}
+	if client.req == nil {
+		t.Fatal("no prompt-diff request captured")
+	}
+	if client.req.Model != "openrouter/diff-model" {
+		t.Errorf("prompt-diff model = %q, want openrouter/diff-model", client.req.Model)
+	}
+	if client.req.ProviderRouting != routingDiff {
+		t.Errorf("ProviderRouting = %+v, want the prompt-diff model's table", client.req.ProviderRouting)
+	}
+	if client.req.RoutingFor == nil {
+		t.Fatal("RoutingFor not set on prompt-diff request")
+	}
+	if got := client.req.RoutingFor("openrouter/other"); got != routingOther {
+		t.Errorf("RoutingFor(other) = %+v, want the other model's table", got)
 	}
 }

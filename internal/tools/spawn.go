@@ -216,7 +216,21 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 					return ToolResult{}, fmt.Errorf("create temp dir: %w", err)
 				}
 				toolDefs, tools := spawnIsolatedToolSet(deps.Registry, spawnRawBlacklist, deps.Store, tempDir, deps.FileMode)
-				result, err := spawnOneShot(ctx, client, model, format, nil, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.maxToolLoops(), deps.FallbackFunc, deps.ClientProvider, deps.ProviderRoutingFor)
+				result, err := spawnOneShot(ctx, oneShotParams{
+					client:         client,
+					model:          model,
+					format:         format,
+					prompt:         p.Prompt,
+					timeout:        timeout,
+					toolDefs:       toolDefs,
+					tools:          tools,
+					sessions:       deps.Sessions,
+					maxResultChars: spawnMaxResultChars,
+					maxLoops:       deps.maxToolLoops(),
+					fallbackFn:     deps.FallbackFunc,
+					clientProvider: deps.ClientProvider,
+					routingFor:     deps.ProviderRoutingFor,
+				})
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -245,7 +259,22 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 					system = deps.Bootstrap.SystemBlocks()
 				}
 				toolDefs, tools := spawnToolSet(deps.Registry, spawnCharacterBlacklist)
-				result, err := spawnOneShot(ctx, client, model, format, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.maxToolLoops(), deps.FallbackFunc, deps.ClientProvider, deps.ProviderRoutingFor)
+				result, err := spawnOneShot(ctx, oneShotParams{
+					client:         client,
+					model:          model,
+					format:         format,
+					system:         system,
+					prompt:         p.Prompt,
+					timeout:        timeout,
+					toolDefs:       toolDefs,
+					tools:          tools,
+					sessions:       deps.Sessions,
+					maxResultChars: spawnMaxResultChars,
+					maxLoops:       deps.maxToolLoops(),
+					fallbackFn:     deps.FallbackFunc,
+					clientProvider: deps.ClientProvider,
+					routingFor:     deps.ProviderRoutingFor,
+				})
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -257,7 +286,22 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 					{Type: "text", Text: exploreSystemPrompt},
 				}
 				toolDefs, tools := spawnExploreToolSet(deps.Registry)
-				result, err := spawnOneShot(ctx, client, model, format, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnExploreMaxResultChars, deps.exploreMaxDepth(), deps.FallbackFunc, deps.ClientProvider, deps.ProviderRoutingFor)
+				result, err := spawnOneShot(ctx, oneShotParams{
+					client:         client,
+					model:          model,
+					format:         format,
+					system:         system,
+					prompt:         p.Prompt,
+					timeout:        timeout,
+					toolDefs:       toolDefs,
+					tools:          tools,
+					sessions:       deps.Sessions,
+					maxResultChars: spawnExploreMaxResultChars,
+					maxLoops:       deps.exploreMaxDepth(),
+					fallbackFn:     deps.FallbackFunc,
+					clientProvider: deps.ClientProvider,
+					routingFor:     deps.ProviderRoutingFor,
+				})
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -451,16 +495,36 @@ func spawnGuardResult(toolName, result string, limit int) string {
 	return fmt.Sprintf("Result too large (%d chars). Full output saved to %s. Use the read tool to inspect it.", len(result), f.Name())
 }
 
+// oneShotParams carries everything a one-shot spawn needs, named. The
+// three call modes (raw/character/explore) differ in almost every field,
+// so a positional parameter list left every call site a same-typed wall.
+type oneShotParams struct {
+	client         provider.Client
+	model          string
+	format         string
+	system         []provider.SystemBlock
+	prompt         string
+	timeout        time.Duration
+	toolDefs       []provider.ToolDef
+	tools          map[string]*Tool
+	sessions       SessionBrancher
+	maxResultChars int
+	maxLoops       int
+	fallbackFn     provider.FallbackFunc
+	clientProvider provider.ClientProvider
+	routingFor     func(model string) *provider.ProviderRouting
+}
+
 // spawnOneShot makes API calls with optional tool access (raw/character/explore modes).
-func spawnOneShot(ctx context.Context, client provider.Client, model, format string, system []provider.SystemBlock, prompt string, timeout time.Duration, toolDefs []provider.ToolDef, tools map[string]*Tool, sessions SessionBrancher, maxResultChars int, maxLoops int, fallbackFn provider.FallbackFunc, clientProvider provider.ClientProvider, routingFor func(model string) *provider.ProviderRouting) (string, error) {
-	callCtx, cancel := context.WithTimeout(ctx, timeout)
+func spawnOneShot(ctx context.Context, p oneShotParams) (string, error) {
+	callCtx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
 
 	sessionKey := SessionKeyFromContext(ctx)
-	spawnLog.Infof("session=%s one-shot model=%s system_blocks=%d tools=%d prompt=%d chars", sessionKey, model, len(system), len(toolDefs), len(prompt))
+	spawnLog.Infof("session=%s one-shot model=%s system_blocks=%d tools=%d prompt=%d chars", sessionKey, p.model, len(p.system), len(p.toolDefs), len(p.prompt))
 
 	messages := []provider.Message{
-		{Role: "user", Content: provider.TextContent(prompt)},
+		{Role: "user", Content: provider.TextContent(p.prompt)},
 	}
 	spawnStart := time.Now()
 	agentID := session.AgentIDFromKey(sessionKey)
@@ -472,30 +536,30 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 	// is loop-invariant the same way — each loop's booking pairs with the
 	// tuple that served that request (ServedTuple).
 	var routing *provider.ProviderRouting
-	if routingFor != nil {
-		routing = routingFor(model)
+	if p.routingFor != nil {
+		routing = p.routingFor(p.model)
 	}
-	primary := provider.ModelTuple{Model: model, Format: format}
+	primary := provider.ModelTuple{Model: p.model, Format: p.format}
 
-	for i := 0; i < maxLoops; i++ {
+	for i := 0; i < p.maxLoops; i++ {
 		req := &provider.MessageRequest{
-			Model:           model,
+			Model:           p.model,
 			MaxTokens:       16384,
-			System:          system,
+			System:          p.system,
 			Messages:        messages,
-			Tools:           toolDefs,
+			Tools:           p.toolDefs,
 			ProviderRouting: routing,
-			RoutingFor:      routingFor,
+			RoutingFor:      p.routingFor,
 			SessionKey:      sessionKey,
 		}
 
 		start := time.Now()
-		resp, err := provider.Send(callCtx, client, req, nil,
-			fallbackFn, clientProvider, func(f string, args ...any) {
+		resp, err := provider.Send(callCtx, p.client, req, nil,
+			p.fallbackFn, p.clientProvider, func(f string, args ...any) {
 				spawnLog.Errorf(f, args...)
 			})
 		if err != nil {
-			return "", fmt.Errorf("spawn %s: %w", model, err)
+			return "", fmt.Errorf("spawn %s: %w", p.model, err)
 		}
 
 		duration := time.Since(start)
@@ -505,9 +569,9 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 		spawnLog.Infof("session=%s model=%s input=%d output=%d cost=$%.4f stop=%s",
 			sessionKey, served.Model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, resp.StopReason)
 		var sessionFile string
-		if sessions != nil {
-			if p, err := sessions.SessionPath(sessionKey); err == nil {
-				sessionFile = p
+		if p.sessions != nil {
+			if path, err := p.sessions.SessionPath(sessionKey); err == nil {
+				sessionFile = path
 			}
 		}
 		// Each loop is one direct-API call, booked on the turn whose tool call
@@ -549,7 +613,7 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 			if callCtx.Err() != nil {
 				return "", callCtx.Err()
 			}
-			tool, ok := tools[block.Name]
+			tool, ok := p.tools[block.Name]
 			if !ok {
 				toolResults = append(toolResults, provider.ToolResultBlock(
 					block.ID, fmt.Sprintf("Unknown tool: %s", block.Name), true,
@@ -564,7 +628,7 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 				))
 				continue
 			}
-			guarded := spawnGuardResult(block.Name, result.Text, maxResultChars)
+			guarded := spawnGuardResult(block.Name, result.Text, p.maxResultChars)
 			toolResults = append(toolResults, provider.ToolResultBlock(
 				block.ID, guarded, false,
 			))

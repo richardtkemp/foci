@@ -114,11 +114,18 @@ func walkFallback(
 
 		req.Model = fbCanonical
 		// Each hop runs under the fallback model's own [models.*.provider]
-		// routing — the primary's lock (order/allow_fallbacks) may name
-		// providers that don't serve this model at all.
+		// routing and [models.*] cache settings — the primary's lock
+		// (order/allow_fallbacks) or TTL/strategy may name providers or
+		// durations that don't serve this model at all. A nil lookup
+		// clears both, mirroring RoutingFor: the primary's values must
+		// never ride onto another model.
 		req.ProviderRouting = nil
 		if req.RoutingFor != nil {
 			req.ProviderRouting = req.RoutingFor(fbCanonical)
+		}
+		req.CacheStrategy, req.CacheTTL = "", ""
+		if req.CacheFor != nil {
+			req.CacheStrategy, req.CacheTTL = req.CacheFor(fbCanonical)
 		}
 		resp, err := sendWithRetry(ctx, fbClient, req, handler)
 		if err == nil {
@@ -150,6 +157,8 @@ func walkFallback(
 //  1. Send the request with retries (exponential backoff + extended retry).
 //  2. On 400 errors, strip unsupported params (Thinking, Output, Speed) and retry.
 //  3. On transient errors (529, 5xx, deadline exceeded), walk the fallback chain.
+//     Every hop re-resolves the model's own provider routing and cache
+//     settings through req.RoutingFor / req.CacheFor.
 //
 // If fallbackFn is nil, step 3 is skipped (no fallback models configured).
 // clientProvider resolves clients for fallback endpoint:format pairs; nil = reuse caller's client.

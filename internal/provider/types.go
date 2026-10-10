@@ -333,6 +333,13 @@ type MessageRequest struct {
 	// ProviderRouting: it never has a wire form of its own.
 	RoutingFor func(model string) *ProviderRouting `json:"-"`
 
+	// CacheFor returns the cache strategy and TTL to send for a canonical
+	// developer/model_id. The fallback walker uses it to put each hop on
+	// the fallback model's own cache settings instead of the primary's.
+	// json:"-" for the same reason as ProviderRouting: it never has a
+	// wire form of its own.
+	CacheFor func(model string) (strategy, ttl string) `json:"-"`
+
 	// SessionKey is the foci session key this request belongs to. Only read
 	// by the openai translate layer, which sends it as OpenRouter's top-level
 	// "session_id" (OpenRouter endpoints only) so a session's generations

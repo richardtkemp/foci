@@ -1689,3 +1689,57 @@ func TestRunInference_RequestCarriesRoutingLookup(t *testing.T) {
 		t.Errorf("RoutingFor(openrouter/other) = %+v, want routing R (a different model's table)", got.RoutingFor("openrouter/other"))
 	}
 }
+
+// TestTurnModelOwnCacheSettings verifies that the turn loop's request
+// carries the TURN model's own cache strategy/TTL from [models.*] even when
+// it differs from the agent's primary-model default (a.CacheStrategy), and
+// that CacheFor — the per-model lookup a fallback hop re-resolves through —
+// answers for a different model with that model's values.
+func TestTurnModelOwnCacheSettings(t *testing.T) {
+	var got *provider.MessageRequest
+	client := &mockClient{
+		sendFn: func(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
+			got = req // fresh request object per loop iteration — safe to keep
+			return &provider.MessageResponse{
+				Role:       "assistant",
+				Content:    provider.TextContent("done"),
+				StopReason: "end_turn",
+				Usage:      provider.Usage{InputTokens: 100, OutputTokens: 10},
+			}, nil
+		},
+	}
+
+	a := newInferenceAgent(t, client) // primary model: anthropic/test-model
+	a.CacheStrategy = "auto"          // the PRIMARY's strategy — must not win for a different turn model
+	a.ModelDefaultsFn = func(model string) config.ModelDefaults {
+		switch model {
+		case "anthropic/turn-model":
+			return config.ModelDefaults{CacheStrategy: "explicit", CacheTTL: "1h"}
+		case "anthropic/third-model":
+			return config.ModelDefaults{CacheStrategy: "auto", CacheTTL: "30m"}
+		default:
+			return config.ModelDefaults{}
+		}
+	}
+	tr := &APITransport{sharedTurnOps{agent: a}}
+	ts := newInferenceTS(t, a, client)
+	ts.TurnModel = "anthropic/turn-model" // not the agent's primary
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+
+	if got == nil {
+		t.Fatal("no request captured")
+	}
+	if got.CacheStrategy != "explicit" || got.CacheTTL != "1h" {
+		t.Errorf("cache = {%q %q}, want {explicit 1h} (the turn model's own, not the primary's %q)", got.CacheStrategy, got.CacheTTL, a.CacheStrategy)
+	}
+	if got.CacheFor == nil {
+		t.Fatal("CacheFor not set on request")
+	}
+	s, ttl := got.CacheFor("anthropic/third-model")
+	if s != "auto" || ttl != "30m" {
+		t.Errorf("CacheFor(third-model) = {%q %q}, want {auto 30m} (a different model's values)", s, ttl)
+	}
+}

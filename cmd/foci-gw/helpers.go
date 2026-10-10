@@ -59,13 +59,16 @@ func resolveShowToolCalls(rc *config.ResolvedAgentConfig) string {
 
 // modelMetaFn returns a function that looks up per-model metadata
 // from [models.*] config by matching the developer/model_id string.
+// Matching is case-insensitive on the whole string (config.ModelKey):
+// "OpenRouter/Qwen/X" in config matches "openrouter/qwen/x" at lookup.
 func modelMetaFn(models map[string]config.ModelConfig) func(string) modelinfo.ModelMeta {
 	if len(models) == 0 {
 		return nil
 	}
 	return func(model string) modelinfo.ModelMeta {
+		key := config.ModelKey(model)
 		for _, mc := range models {
-			if mc.Model == model {
+			if config.ModelKey(mc.Model) == key {
 				return modelinfo.ModelMeta{
 					ContextWindow: int(mc.Context),
 				}
@@ -76,14 +79,16 @@ func modelMetaFn(models map[string]config.ModelConfig) func(string) modelinfo.Mo
 }
 
 // modelDefaultsFn returns a function that looks up per-model defaults
-// from [models.*] config by matching the developer/model_id string.
+// from [models.*] config by matching the developer/model_id string,
+// case-insensitively (config.ModelKey) — see modelMetaFn.
 func modelDefaultsFn(models map[string]config.ModelConfig) func(string) config.ModelDefaults {
 	if len(models) == 0 {
 		return nil
 	}
 	return func(model string) config.ModelDefaults {
+		key := config.ModelKey(model)
 		for _, mc := range models {
-			if mc.Model == model {
+			if config.ModelKey(mc.Model) == key {
 				return config.ModelDefaults{
 					Thinking:        string(mc.Thinking),
 					Effort:          mc.Effort,

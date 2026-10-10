@@ -613,3 +613,59 @@ func TestGuardHintPlainTextInstallRecommendation(t *testing.T) {
 		t.Error("should not recommend installing jq when it's present")
 	}
 }
+
+func TestSummariseToolResultCarriesRouting(t *testing.T) {
+	// Proves the tool-result auto-summary request carries the SUMMARY
+	// model's [models.*.provider] routing plus the per-model lookup
+	// (RoutingFor) — previously this one-off site sent neither, so a
+	// pinned OpenRouter model was load-balanced across upstream providers
+	// and its fallback hops got no routing at all.
+	routingSummary := &provider.ProviderRouting{Order: []string{"prov-summary"}}
+	routingOther := &provider.ProviderRouting{Order: []string{"prov-other"}}
+	var gotReq *provider.MessageRequest
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
+		gotReq = req // one request per summary — safe to keep the pointer
+		return &provider.MessageResponse{
+			Role:       "assistant",
+			Content:    provider.TextContent("a summary"),
+			StopReason: "end_turn",
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+
+	a := &Agent{
+		Client: client,
+		GroupResolver: config.NewGroupResolver(config.GroupsConfig{Groups: map[string]string{
+			"powerful": "anthropic/claude-opus-4-6",
+			"cheap":    "openrouter/summary-model",
+		}}, nil, true),
+		ModelDefaultsFn: func(model string) config.ModelDefaults {
+			switch model {
+			case "openrouter/summary-model":
+				return config.ModelDefaults{ProviderRouting: routingSummary}
+			case "openrouter/other":
+				return config.ModelDefaults{ProviderRouting: routingOther}
+			default:
+				return config.ModelDefaults{}
+			}
+		},
+	}
+
+	a.summariseToolResult(context.Background(), nil, "test-session", "shell", "", "some oversized result", nil, "/tmp/saved.txt")
+
+	if gotReq == nil {
+		t.Fatal("no summary request captured")
+	}
+	if gotReq.Model != "openrouter/summary-model" {
+		t.Errorf("summary model = %q, want openrouter/summary-model", gotReq.Model)
+	}
+	if gotReq.ProviderRouting != routingSummary {
+		t.Errorf("ProviderRouting = %+v, want the summary model's table", gotReq.ProviderRouting)
+	}
+	if gotReq.RoutingFor == nil {
+		t.Fatal("RoutingFor not set on summary request")
+	}
+	if got := gotReq.RoutingFor("openrouter/other"); got != routingOther {
+		t.Errorf("RoutingFor(other) = %+v, want the other model's table", got)
+	}
+}

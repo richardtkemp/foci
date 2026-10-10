@@ -19,7 +19,8 @@ type APISummariser struct {
 	clientProvider provider.ClientProvider
 	groupResolver  *config.GroupResolver
 	fallbackFn     provider.FallbackFunc
-	maxInputChars  func() int // rune-count cap on input; 0 disables cap
+	maxInputChars  func() int                                   // rune-count cap on input; 0 disables cap
+	routingFor     func(model string) *provider.ProviderRouting // per-model [models.*.provider] routing; nil = no routing
 }
 
 // NewAPISummariser builds the API-path summariser. maxInputChars is called
@@ -32,6 +33,15 @@ func NewAPISummariser(client provider.Client, clientProvider provider.ClientProv
 		fallbackFn:     fallbackFn,
 		maxInputChars:  maxInputChars,
 	}
+}
+
+// WithRoutingFor sets the per-model provider-routing lookup the summariser
+// puts on its requests (nil = no routing, today's behaviour), so the summary
+// model runs under its own [models.*.provider] table and any fallback hop
+// resolves the hop model's.
+func (s *APISummariser) WithRoutingFor(fn func(model string) *provider.ProviderRouting) *APISummariser {
+	s.routingFor = fn
+	return s
 }
 
 // resolveForCall picks the model/client/format for the summarisation call,
@@ -71,7 +81,14 @@ func (s *APISummariser) Summarise(ctx context.Context, content []byte, prompt, f
 				Content: provider.TextContent(summaryUserMessage(content, prompt, filePath)),
 			},
 		},
+		RoutingFor: s.routingFor,
 		SessionKey: SessionKeyFromContext(ctx),
+	}
+	// The summary model's own [models.*.provider] table rides on the
+	// request; a nil lookup (no [models.*] configured) means no routing,
+	// today's behaviour.
+	if s.routingFor != nil {
+		req.ProviderRouting = s.routingFor(model)
 	}
 
 	start := time.Now()

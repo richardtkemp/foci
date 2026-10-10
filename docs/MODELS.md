@@ -179,6 +179,8 @@ Recognised per-model settings:
 | `cache_ttl` | Prompt-cache TTL override |
 | `cache_strategy` | Prompt-cache strategy override |
 
+**Matching is case-insensitive; the wire keeps your case.** A model string is matched against `[models.*]` entries (and `[groups.fallbacks]` keys) ignoring case on the whole `developer/model_id`: `OpenRouter/DeepSeek/DeepSeek-V4-Flash` in config matches a session or fallback asking for `openrouter/deepseek/deepseek-v4-flash`. The model id actually sent to the provider keeps the case written in config, exactly as you spelled it — some providers' model ids are case-sensitive. Two `[models.*]` entries that name the same model ignoring case (including two identical strings) are a config error: which entry's settings would win would be random.
+
 ### Provider routing (`[models.*.provider]`)
 
 For OpenRouter-backed models, a `[models.<name>.provider]` sub-table controls OpenRouter's provider selection. All keys are optional and map directly onto OpenRouter's routing parameters:
@@ -266,6 +268,8 @@ When a model fails (rate limit, 5xx, etc.), Foci can fall back to a designated a
 ```
 
 With the above, a failed call to `anthropic/claude-haiku-4-5` is automatically retried against `anthropic/claude-opus-4-6`. Fallbacks apply to the API backend only — the delegated backends (CC, Codex, OpenCode) pick their own fallback internally and ignore this table.
+
+A fallback model runs under its OWN `[models.*]` settings, never the primary's: its `cache_ttl`/`cache_strategy` and its `[models.*.provider]` routing table are re-resolved on every hop. Keys match case-insensitively on the whole `developer/model_id` (a key spelled `anthropic/Claude-Opus-4-6` fires for `anthropic/claude-opus-4-6`), while the fallback value is sent to the provider exactly as written in config.
 
 ---
 

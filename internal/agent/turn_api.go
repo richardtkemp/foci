@@ -239,6 +239,22 @@ func (t *APITransport) InjectNudges(ts *TurnState) {
 
 // --- Phase 3: Core execution ---
 
+// cacheSettingsFor returns the cache strategy and TTL a request for model
+// carries: the model's own [models.*] cache_strategy/cache_ttl, with the
+// agent's primary-model strategy as the default when the model sets none.
+// A nil ModelDefaultsFn (no models configured) keeps the agent strategy.
+func (a *Agent) cacheSettingsFor(model string) (strategy, ttl string) {
+	if a.ModelDefaultsFn == nil {
+		return a.CacheStrategy, ""
+	}
+	md := a.ModelDefaultsFn(model)
+	strategy = md.CacheStrategy
+	if strategy == "" {
+		strategy = a.CacheStrategy
+	}
+	return strategy, md.CacheTTL
+}
+
 // RunInference runs the API tool loop. This is the largest extraction —
 // the entire for loop from agent.go:521-811 plus the safety-net defer.
 // On completion, closes ts.CompletionChan and sets ts.FinalText/FinalUsage.
@@ -265,6 +281,9 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 	// Per-model routing lookup so a fallback hop lands on the fallback
 	// model's own [models.*.provider] routing.
 	routingFor := config.RoutingFor(a.ModelDefaultsFn)
+	// The turn model's own cache settings, and the per-model lookup so a
+	// fallback hop re-resolves them for the hop model.
+	cacheStrategy, cacheTTL := a.cacheSettingsFor(ts.TurnModel)
 
 	displayNoted := false
 	verified := false
@@ -303,10 +322,11 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 			System:          ts.System,
 			Messages:        ts.Messages,
 			Tools:           ts.ToolDefs,
-			CacheStrategy:   a.CacheStrategy,
-			CacheTTL:        md.CacheTTL,
+			CacheStrategy:   cacheStrategy,
+			CacheTTL:        cacheTTL,
 			ProviderRouting: md.ProviderRouting,
 			RoutingFor:      routingFor,
+			CacheFor:        a.cacheSettingsFor,
 			SessionKey:      ts.SessionKey,
 		}
 		if ts.TurnEffort != "" && ts.TurnEffort != "off" {

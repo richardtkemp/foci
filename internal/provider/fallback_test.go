@@ -81,18 +81,20 @@ type fallbackMockResponse struct {
 
 // capturedRequest snapshots what a request carried AT CALL TIME. Send and
 // walkFallback reuse and mutate the same *MessageRequest across the whole
-// chain (req.Model, req.ProviderRouting), so recording the pointer would
-// alias every entry to the last hop's state.
+// chain (req.Model, req.ProviderRouting, req.CacheStrategy), so recording
+// the pointer would alias every entry to the last hop's state.
 type capturedRequest struct {
-	model   string
-	routing *ProviderRouting
+	model         string
+	routing       *ProviderRouting
+	cacheStrategy string
+	cacheTTL      string
 }
 
 func (m *fallbackMockClient) SendMessage(_ context.Context, req *MessageRequest) (*MessageResponse, error) {
 	if m.callIdx >= len(m.responses) {
 		panic("fallbackMockClient: no more responses")
 	}
-	m.calls = append(m.calls, capturedRequest{model: req.Model, routing: req.ProviderRouting})
+	m.calls = append(m.calls, capturedRequest{model: req.Model, routing: req.ProviderRouting, cacheStrategy: req.CacheStrategy, cacheTTL: req.CacheTTL})
 	r := m.responses[m.callIdx]
 	m.callIdx++
 	if r.resp != nil && r.resp.Model == "" {
@@ -587,6 +589,189 @@ func TestSend_StripRetryKeepsRouting(t *testing.T) {
 	for i, c := range mc.calls {
 		if c.model != "primary" || c.routing != routingA {
 			t.Errorf("call %d = %+v, want {primary routing A}", i, c)
+		}
+	}
+}
+
+// newCacheFallbackChain builds the standard two-model chain (primary fails
+// 529, fallback succeeds) used by the cache-settings tests.
+func newCacheFallbackChain() (primary, fb *fallbackMockClient, cp *fallbackMockClientProvider, fallbackFn FallbackFunc) {
+	primary = &fallbackMockClient{responses: []fallbackMockResponse{
+		{err: &APIError{StatusCode: 529}},
+	}}
+	fb = &fallbackMockClient{responses: []fallbackMockResponse{
+		{resp: &MessageResponse{Content: TextContent("fb ok")}},
+	}}
+	cp = &fallbackMockClientProvider{clients: map[string]Client{
+		"fb-ep:fb-fmt": fb,
+	}}
+	fallbackFn = func(model string) (string, string, string, bool) {
+		if model == "primary-model" {
+			return "fb-model", "fb-ep", "fb-fmt", true
+		}
+		return "", "", "", false
+	}
+	return primary, fb, cp, fallbackFn
+}
+
+func TestSend_FallbackUsesFallbackModelCacheSettings(t *testing.T) {
+	t.Parallel()
+	// Proves that a fallback hop runs with the FALLBACK model's own cache
+	// strategy/TTL (via CacheFor), not the primary's — the same per-model
+	// re-resolution routing already gets, applied to cache settings.
+	primaryClient, fbClient, cp, fallbackFn := newCacheFallbackChain()
+	req := &MessageRequest{
+		Model:         "primary-model",
+		CacheStrategy: "auto",
+		CacheTTL:      "5m",
+		CacheFor: func(model string) (string, string) {
+			if model == "fb-model" {
+				return "explicit", "1h"
+			}
+			return "auto", "5m"
+		},
+	}
+	if _, err := Send(context.Background(), primaryClient, req, nil, fallbackFn, cp, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(primaryClient.calls) != 1 || primaryClient.calls[0].cacheStrategy != "auto" || primaryClient.calls[0].cacheTTL != "5m" {
+		t.Errorf("primary snapshot = %+v, want {auto 5m}", primaryClient.calls)
+	}
+	if len(fbClient.calls) != 1 {
+		t.Fatalf("fallback client calls = %d, want 1", len(fbClient.calls))
+	}
+	got := fbClient.calls[0]
+	if got.cacheStrategy != "explicit" || got.cacheTTL != "1h" {
+		t.Errorf("fallback snapshot = {%s %s}, want {explicit 1h}", got.cacheStrategy, got.cacheTTL)
+	}
+}
+
+func TestSend_FallbackNilCacheForClearsCacheSettings(t *testing.T) {
+	t.Parallel()
+	// Proves that a request without a cache-settings lookup (no [models.*]
+	// configured, or a caller that never set one) sends EMPTY cache fields
+	// on a fallback hop — the primary's TTL/strategy must never ride onto
+	// another model. Mirrors RoutingFor's nil-clears design.
+	primaryClient, fbClient, cp, fallbackFn := newCacheFallbackChain()
+	req := &MessageRequest{
+		Model:         "primary-model",
+		CacheStrategy: "auto",
+		CacheTTL:      "5m",
+	}
+	if _, err := Send(context.Background(), primaryClient, req, nil, fallbackFn, cp, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(fbClient.calls) != 1 {
+		t.Fatalf("fallback client calls = %d, want 1", len(fbClient.calls))
+	}
+	got := fbClient.calls[0]
+	if got.cacheStrategy != "" || got.cacheTTL != "" {
+		t.Errorf("fallback snapshot = {%q %q}, want both empty", got.cacheStrategy, got.cacheTTL)
+	}
+}
+
+func TestSend_ChainEachHopOwnCacheSettings(t *testing.T) {
+	t.Parallel()
+	// Proves that every hop of a multi-hop chain resolves its OWN cache
+	// settings: primary→fb1→fb2 with (auto,5m)/(explicit,1h)/("","") sends
+	// exactly those, never the primary's. Call-time snapshots make this
+	// assertable: the same *MessageRequest is mutated per hop.
+	mc := &fallbackMockClient{responses: []fallbackMockResponse{
+		{err: &APIError{StatusCode: 529}},                        // primary fails
+		{err: &APIError{StatusCode: 503}},                        // fb1 fails
+		{resp: &MessageResponse{Content: TextContent("fb2 ok")}}, // fb2 succeeds
+	}}
+	fallbackFn := func(model string) (string, string, string, bool) {
+		switch model {
+		case "primary":
+			return "fb1", "", "", true
+		case "fb1":
+			return "fb2", "", "", true
+		default:
+			return "", "", "", false
+		}
+	}
+	req := &MessageRequest{
+		Model:         "primary",
+		CacheStrategy: "auto",
+		CacheTTL:      "5m",
+		CacheFor: func(model string) (string, string) {
+			switch model {
+			case "fb1":
+				return "explicit", "1h"
+			case "fb2":
+				return "", ""
+			default:
+				return "auto", "5m"
+			}
+		},
+	}
+	if _, err := Send(context.Background(), mc, req, nil, fallbackFn, nil, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []capturedRequest{
+		{model: "primary", cacheStrategy: "auto", cacheTTL: "5m"},
+		{model: "fb1", cacheStrategy: "explicit", cacheTTL: "1h"},
+		{model: "fb2", cacheStrategy: "", cacheTTL: ""},
+	}
+	if len(mc.calls) != len(want) {
+		t.Fatalf("calls = %+v, want %+v", mc.calls, want)
+	}
+	for i, w := range want {
+		if mc.calls[i].model != w.model || mc.calls[i].cacheStrategy != w.cacheStrategy || mc.calls[i].cacheTTL != w.cacheTTL {
+			t.Errorf("call %d = %+v, want %+v", i, mc.calls[i], w)
+		}
+	}
+}
+
+func TestSend_PrimarySuccessKeepsCacheSettings(t *testing.T) {
+	t.Parallel()
+	// Proves the unchanged case: a successful primary request keeps its
+	// own cache settings — walkFallback is never entered, so CacheFor is
+	// not consulted.
+	mc := &fallbackMockClient{responses: []fallbackMockResponse{
+		{resp: &MessageResponse{Content: TextContent("primary ok")}},
+	}}
+	req := &MessageRequest{
+		Model:         "primary",
+		CacheStrategy: "auto",
+		CacheTTL:      "5m",
+		CacheFor: func(string) (string, string) {
+			t.Error("CacheFor consulted on a successful primary request")
+			return "", ""
+		},
+	}
+	if _, err := Send(context.Background(), mc, req, nil, nil, nil, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mc.calls) != 1 || mc.calls[0].cacheStrategy != "auto" || mc.calls[0].cacheTTL != "5m" {
+		t.Errorf("snapshot = %+v, want {auto 5m}", mc.calls)
+	}
+}
+
+func TestSend_StripRetryKeepsCacheSettings(t *testing.T) {
+	t.Parallel()
+	// Proves the unchanged case: the 400 strip-and-retry in Send keeps the
+	// request's cache fields untouched — both attempts carry them as set.
+	mc := &fallbackMockClient{responses: []fallbackMockResponse{
+		{err: &APIError{StatusCode: 400, Body: `{"error":"thinking is not supported"}`}},
+		{resp: &MessageResponse{Content: TextContent("ok after strip")}},
+	}}
+	req := &MessageRequest{
+		Model:         "primary",
+		Thinking:      &ThinkingConfig{Type: "enabled", BudgetTokens: 1024},
+		CacheStrategy: "auto",
+		CacheTTL:      "5m",
+	}
+	if _, err := Send(context.Background(), mc, req, nil, nil, nil, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mc.calls) != 2 {
+		t.Fatalf("calls = %d, want 2", len(mc.calls))
+	}
+	for i, c := range mc.calls {
+		if c.cacheStrategy != "auto" || c.cacheTTL != "5m" {
+			t.Errorf("call %d = {%s %s}, want {auto 5m}", i, c.cacheStrategy, c.cacheTTL)
 		}
 	}
 }

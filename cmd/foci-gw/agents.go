@@ -246,14 +246,15 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	// which is the one source of truth shared with the delegated exec path.
 	out := &toolOutputs{}
 	registerTools(&toolDeps{
-		p:                p,
-		path:             pathAPI,
-		registry:         registry,
-		agentStore:       agentStore,
-		notifier:         notifier,
-		connMgr:          connMgr,
-		agLazy:           agLazy,
-		summariser:       tools.NewAPISummariser(client, p.clientProvider, groupResolver, fallbackFn, func() int { return p.resolvedLive.Load().Summary.MaxSummaryInputChars }),
+		p:          p,
+		path:       pathAPI,
+		registry:   registry,
+		agentStore: agentStore,
+		notifier:   notifier,
+		connMgr:    connMgr,
+		agLazy:     agLazy,
+		summariser: tools.NewAPISummariser(client, p.clientProvider, groupResolver, fallbackFn, func() int { return p.resolvedLive.Load().Summary.MaxSummaryInputChars }).
+			WithRoutingFor(config.RoutingFor(modelDefaultsFn(p.cfg.Models))),
 		wakeFn:           shared.wakeScheduleFn,
 		wakeCancelFn:     shared.wakeCancelFn,
 		sessionNotify:    newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr, "session_notify"),

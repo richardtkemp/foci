@@ -761,3 +761,107 @@ func TestRateLimitNotifyTargetDefault(t *testing.T) {
 		t.Errorf("RateLimitNotifyTarget() = %q, want %q", got, RateLimitNotifyBoth)
 	}
 }
+
+func TestValidateFallbacks_CaseFoldCycleReported(t *testing.T) {
+	// Proves the depth/cycle walk uses the same folded keys as the
+	// resolver, so a cycle that exists only under case folding (a/X → a/y,
+	// a/Y → a/x) is a config error instead of a runtime surprise silently
+	// broken by NewFallbackResolver.
+	err := validateFallbacks("groups.fallbacks", map[string]string{
+		"a/X": "a/y",
+		"a/Y": "a/x",
+	}, nil)
+	if err == nil {
+		t.Fatal("expected error for a case-fold-only cycle")
+	}
+	if !strings.Contains(err.Error(), "cycle") {
+		t.Errorf("error = %q, want a cycle report", err.Error())
+	}
+}
+
+func TestValidateModelKeys_CollisionRejected(t *testing.T) {
+	// Proves two [models.*] entries whose model strings differ only by
+	// case are rejected at load: the per-model lookups range over a map,
+	// so which entry's settings win would be random. The error names both
+	// entries and both spellings.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	toml := `
+[groups]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
+[[agents]]
+id = "test"
+
+[models.qwen]
+model = "openrouter/Qwen/X"
+
+[models.qwen-fast]
+model = "openrouter/qwen/x"
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	_, err := Load(path, nil)
+	if err == nil {
+		t.Fatal("expected error for colliding model keys")
+	}
+	for _, want := range []string{"models.qwen", "models.qwen-fast", "openrouter/Qwen/X", "openrouter/qwen/x", "model matching ignores case"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want mention of %q", err.Error(), want)
+		}
+	}
+}
+
+func TestValidateModelKeys_IdenticalStringRejected(t *testing.T) {
+	// Proves the collision check includes exactly-equal model strings —
+	// two entries naming the identical model are just as random a match.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	toml := `
+[groups]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
+[[agents]]
+id = "test"
+
+[models.a]
+model = "openrouter/qwen/x"
+
+[models.b]
+model = "openrouter/qwen/x"
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	_, err := Load(path, nil)
+	if err == nil {
+		t.Fatal("expected error for identical model strings")
+	}
+	if !strings.Contains(err.Error(), "models.a") || !strings.Contains(err.Error(), "models.b") {
+		t.Errorf("error = %q, want both entry names", err.Error())
+	}
+}
+
+func TestValidateModelKeys_DistinctModelsStillValid(t *testing.T) {
+	// Characterisation: two [models.*] entries with distinct model keys
+	// (differing by more than case) still validate.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	toml := `
+[groups]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
+[[agents]]
+id = "test"
+
+[models.a]
+model = "openrouter/qwen/x"
+
+[models.b]
+model = "openrouter/qwen/y"
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	if _, err := Load(path, nil); err != nil {
+		t.Fatalf("unexpected error for distinct model keys: %v", err)
+	}
+}

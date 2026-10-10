@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/provider"
 
@@ -21,8 +20,10 @@ var _ provider.StreamingClient = (*Client)(nil)
 //
 // Retry logic is handled by the provider layer. Pre-stream errors (before any deltas)
 // are retryable. Mid-stream errors (after deltas have been emitted) are not retryable.
+// Like SendMessage, the request is not mutated — buildSDKParams strips the
+// developer prefix, and stripping in place would break walkFallback's
+// model lookup (see SendMessage).
 func (c *Client) StreamMessage(ctx context.Context, req *MessageRequest, handler *provider.StreamHandler) (*MessageResponse, error) {
-	req.Model = config.StripDeveloperPrefix(req.Model)
 	stripUnsupportedParams(req)
 	return c.streamOnce(ctx, req, handler)
 }

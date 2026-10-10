@@ -30,8 +30,9 @@ func cacheControlWithTTL(ttl string) sdk.CacheControlEphemeralParam {
 // buildSDKParams translates a provider.MessageRequest into SDK MessageNewParams.
 // Cache placement is handled entirely here — provider types carry no cache markers.
 func buildSDKParams(req *MessageRequest) sdk.MessageNewParams {
-	// Developer prefix is already stripped by SendMessage, but strip again
-	// defensively for callers that bypass SendMessage (e.g. tests).
+	// Strip the developer prefix (e.g., "anthropic/claude-opus-4-6" →
+	// "claude-opus-4-6"). The CALLER's request keeps its canonical
+	// developer-prefixed model — see SendMessage.
 	modelID := config.StripDeveloperPrefix(req.Model)
 
 	params := sdk.MessageNewParams{

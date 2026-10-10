@@ -645,11 +645,25 @@ func buildDiffSummary(ctx context.Context, cc CommandContext, customText, defaul
 		}
 	}
 
-	resp, err := provider.Send(callCtx, diffClient, &provider.MessageRequest{
-		Model:     cheapModel,
-		MaxTokens: 1024,
-		Messages:  []provider.Message{{Role: "user", Content: provider.TextContent(prompt)}},
-	}, nil, cc.FallbackFunc, cc.ClientProvider, nil)
+	// The prompt-diff model's own [models.*.provider] table rides on the
+	// request; a nil lookup (nil agent / no models configured) means no
+	// routing, today's behaviour.
+	var routingFor func(model string) *provider.ProviderRouting
+	if cc.Agent != nil {
+		routingFor = config.RoutingFor(cc.Agent.ModelDefaultsFn)
+	}
+
+	req := &provider.MessageRequest{
+		Model:      cheapModel,
+		MaxTokens:  1024,
+		Messages:   []provider.Message{{Role: "user", Content: provider.TextContent(prompt)}},
+		RoutingFor: routingFor,
+	}
+	if routingFor != nil {
+		req.ProviderRouting = routingFor(cheapModel)
+	}
+
+	resp, err := provider.Send(callCtx, diffClient, req, nil, cc.FallbackFunc, cc.ClientProvider, nil)
 	if err != nil {
 		return "", err
 	}

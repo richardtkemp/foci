@@ -222,3 +222,67 @@ func TestFallbackResolver_SelfCycleDetection(t *testing.T) {
 		t.Fatal("expected nil resolver for self-cycle")
 	}
 }
+
+func TestFallbackResolver_CaseInsensitiveKeys(t *testing.T) {
+	// Proves a [fallbacks] key spelled with different case still matches:
+	// matching folds the whole developer/model_id, so "openrouter/Qwen/X"
+	// in config fires for a session running "openrouter/qwen/x". Before
+	// the fold the key never matched and the fallback silently never ran.
+	fr := NewFallbackResolver(
+		map[string]string{"openrouter/Qwen/X": "openrouter/qwen/y"},
+		nil, nil,
+	)
+	if fr == nil {
+		t.Fatal("expected non-nil resolver")
+	}
+	got := fr.Resolve("openrouter/qwen/x")
+	if got == nil {
+		t.Fatal("expected fallback for the lowercase spelling of a mixed-case key")
+	}
+	if got.Developer != "openrouter" || got.ModelID != "qwen/y" {
+		t.Errorf("got %s/%s, want openrouter/qwen/y", got.Developer, got.ModelID)
+	}
+}
+
+func TestFallbackResolver_ValueKeepsConfigCase(t *testing.T) {
+	// Proves folding is for MATCHING only: the resolved fallback keeps the
+	// value's config spelling — some providers' model ids are
+	// case-sensitive, so the wire model must be exactly as written.
+	fr := NewFallbackResolver(
+		map[string]string{"openrouter/Qwen/X": "openrouter/DeepSeek/V4-Pro"},
+		nil, nil,
+	)
+	got := fr.Resolve("openrouter/qwen/x")
+	if got == nil {
+		t.Fatal("expected fallback for the lowercase spelling of a mixed-case key")
+	}
+	if got.ModelID != "DeepSeek/V4-Pro" {
+		t.Errorf("ModelID = %q, want the config spelling %q", got.ModelID, "DeepSeek/V4-Pro")
+	}
+}
+
+func TestFallbackResolver_CaseFoldCycleBroken(t *testing.T) {
+	// Proves a cycle that exists only under case folding (a/X → a/y,
+	// a/Y → a/x) is broken at construction — the cycle walk must fold its
+	// visited set and edge lookups like the resolver folds its keys, or
+	// the two mixed-case spellings walk as distinct nodes and loop forever.
+	fr := NewFallbackResolver(
+		map[string]string{
+			"a/X": "a/y",
+			"a/Y": "a/x",
+		},
+		nil, nil,
+	)
+	if fr == nil {
+		t.Fatal("expected non-nil resolver (cycle should be broken, not discarded)")
+	}
+	model := "a/X"
+	for i := 0; i < MaxFallbackDepth+1; i++ {
+		got := fr.Resolve(model)
+		if got == nil {
+			return // chain terminated — no cycle
+		}
+		model = got.Developer + "/" + got.ModelID
+	}
+	t.Fatal("chain did not terminate — case-fold cycle was not broken")
+}

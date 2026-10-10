@@ -209,11 +209,13 @@ func (c *Client) sendOnce(ctx context.Context, req *MessageRequest) (*MessageRes
 
 // SendMessage sends a message request and returns the response.
 // Retry logic is handled by the provider layer.
+//
+// The request is NOT mutated: buildSDKParams strips the developer prefix
+// when translating. Mutating req.Model here would leak the stripped id
+// back into the shared request, so walkFallback's fallbackFn would be
+// asked for the bare model id and never match a canonical
+// "developer/model_id" fallback key.
 func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*MessageResponse, error) {
-	// Strip developer prefix (e.g., "anthropic/claude-opus-4-6" → "claude-opus-4-6").
-	req.Model = config.StripDeveloperPrefix(req.Model)
-
-	// Strip params the target model doesn't support (avoids 400 errors).
 	stripUnsupportedParams(req)
 
 	return c.sendOnce(ctx, req)

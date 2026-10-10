@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -369,6 +370,11 @@ func (cfg *Config) Validate(knownBackends []string) error {
 			return err
 		}
 	}
+	// Two entries naming the same model (ignoring case) would make every
+	// per-model lookup pick between them at random.
+	if err := validateModelKeys(cfg.Models); err != nil {
+		return err
+	}
 
 	// Memory sources
 	for i, src := range cfg.Memory.Sources {
@@ -531,13 +537,43 @@ func validateQuietCompaction(where string, c CompactionConfig) error {
 	return nil
 }
 
+// validateModelKeys rejects two [models.*] entries whose model strings fold
+// to the same ModelKey: the per-model lookups range over a map, so which
+// entry's settings win would be random.
+func validateModelKeys(models map[string]ModelConfig) error {
+	type seenEntry struct {
+		name  string
+		model string
+	}
+	names := make([]string, 0, len(models))
+	for name := range models {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	seen := make(map[string]seenEntry, len(models))
+	for _, name := range names {
+		model := models[name].Model
+		key := ModelKey(model)
+		if first, ok := seen[key]; ok {
+			return fmt.Errorf("[models.%s] model %q and [models.%s] model %q are the same model (model matching ignores case)",
+				first.name, first.model, name, model)
+		}
+		seen[key] = seenEntry{name: name, model: model}
+	}
+	return nil
+}
+
 // validateFallbacks checks that all keys and values in a fallback map resolve
-// to valid models, and that no chain exceeds MaxFallbackDepth.
+// to valid models, and that no chain exceeds MaxFallbackDepth. Chain keys are
+// matched case-insensitively (ModelKey), exactly like the resolver, so the
+// two can never disagree about whether a cycle or over-deep chain exists.
 func validateFallbacks(section string, fallbacks map[string]string, models map[string]ModelConfig) error {
 	if len(fallbacks) == 0 {
 		return nil
 	}
-	// Validate each entry resolves
+	// Validate each entry resolves. Keys are folded match keys (matching
+	// ignores case); values keep their config spelling so the error
+	// messages quote what the operator wrote.
 	canonical := make(map[string]string, len(fallbacks))
 	for k, v := range fallbacks {
 		rk, err := ResolveModel(k, "", models)
@@ -548,7 +584,7 @@ func validateFallbacks(section string, fallbacks map[string]string, models map[s
 		if err != nil {
 			return fmt.Errorf("[%s] value %q (for key %q): %w", section, v, k, err)
 		}
-		ck := rk.Developer + "/" + rk.ModelID
+		ck := ModelKey(rk.Developer + "/" + rk.ModelID)
 		cv := rv.Developer + "/" + rv.ModelID
 		canonical[ck] = cv
 	}
@@ -566,11 +602,12 @@ func validateFallbacks(section string, fallbacks map[string]string, models map[s
 			if depth > MaxFallbackDepth {
 				return fmt.Errorf("[%s] chain starting at %q exceeds max depth %d", section, start, MaxFallbackDepth)
 			}
-			if visited[next] {
+			folded := ModelKey(next)
+			if visited[folded] {
 				return fmt.Errorf("[%s] cycle detected: %q → %q", section, cur, next)
 			}
-			visited[next] = true
-			cur = next
+			visited[folded] = true
+			cur = folded
 		}
 	}
 	return nil

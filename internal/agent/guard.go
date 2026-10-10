@@ -147,16 +147,26 @@ func (a *Agent) summariseToolResult(ctx context.Context, _ provider.Client, sess
 			toolName, summaryInput)
 	}
 
+	// Per-model routing lookup so the summary runs under the summary
+	// model's own [models.*.provider] table (and its fallback hops resolve
+	// theirs). config.RoutingFor(nil) is nil — no models configured means
+	// no routing, today's behaviour.
+	routingFor := config.RoutingFor(a.ModelDefaultsFn)
+
 	req := &provider.MessageRequest{
 		Model:     model,
 		MaxTokens: 4096,
 		System: []provider.SystemBlock{
-			{Type: "text", Text: "You are a tool output summarisation assistant. Your job is to summarise oversized tool output so the reader gets useful visibility without the full content in context.\n\nYour summary must have two parts:\n1. **Overview**: A concise general summary of the content (what it is, how large, key structure).\n2. **Relevant details**: Exact quotes from the parts most relevant to the conversation context, each annotated with its address — line number, section header, JSON path, key name, or other locator. These addresses let the reader jump directly to the source if they need more detail.\n\nBe concise. Preserve exact values (numbers, names, paths, error messages) rather than paraphrasing them."},
+			{Type: "text", Text: "You are a tool output summarisation assistant. Your job is to summarise oversized tool output so the reader gets useful visibility without the full content in context.\n\nYour summary must have two parts:\n1. **Overview**: A concise general summary of the content (what it is, how large, key structure).\n2. **Relevant details**: Exact quotes from the parts most relevant to the conversation context, each annotated with their address — line number, section header, JSON path, key name, or other locator. These addresses let the reader jump directly to the source if they need more detail.\n\nBe concise. Preserve exact values (numbers, names, paths, error messages) rather than paraphrasing them."},
 		},
 		Messages: []provider.Message{
 			{Role: "user", Content: provider.TextContent(userText)},
 		},
+		RoutingFor: routingFor,
 		SessionKey: sessionKey,
+	}
+	if routingFor != nil {
+		req.ProviderRouting = routingFor(model)
 	}
 
 	start := time.Now()

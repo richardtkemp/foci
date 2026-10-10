@@ -50,3 +50,87 @@ func TestModelDefaultsFn_ThreadsProviderRouting(t *testing.T) {
 		t.Errorf("ProviderRouting = %+v, want nil for a model not present in the models map", mdUnknown.ProviderRouting)
 	}
 }
+
+func TestModelDefaultsFn_CaseInsensitiveModelKey(t *testing.T) {
+	// Proves that per-model defaults match the developer/model_id
+	// case-insensitively on the WHOLE string: an entry spelled
+	// "OpenRouter/DeepSeek/DeepSeek-V4-Flash" in config is found when the
+	// session or a fallback asks for the all-lowercase spelling, and the
+	// reverse. Before the fold, every per-model default (thinking, effort,
+	// speed, cache, provider routing) was silently dropped on a case
+	// difference.
+	sort := &provider.ProviderSort{By: "price"}
+	models := map[string]config.ModelConfig{
+		"deepseek": {
+			Model:         "OpenRouter/DeepSeek/DeepSeek-V4-Flash",
+			Provider:      &provider.ProviderRouting{Sort: sort},
+			CacheTTL:      "1h",
+			CacheStrategy: "explicit",
+			Thinking:      "adaptive",
+			Effort:        "low",
+			Speed:         "fast",
+			Context:       123456,
+		},
+		"lower": {
+			Model: "openrouter/qwen/qwen3-x",
+		},
+	}
+
+	fn := modelDefaultsFn(models)
+	if fn == nil {
+		t.Fatal("modelDefaultsFn returned nil for non-empty models map")
+	}
+
+	// Config spelled in mixed case, asked in lowercase.
+	md := fn("openrouter/deepseek/deepseek-v4-flash")
+	if md.ProviderRouting == nil || md.ProviderRouting.Sort == nil || md.ProviderRouting.Sort.By != "price" {
+		t.Errorf("md(config-mixed-case, ask-lower) ProviderRouting = %+v, want the [models.deepseek.provider] table", md.ProviderRouting)
+	}
+	if md.CacheTTL != "1h" || md.CacheStrategy != "explicit" {
+		t.Errorf("md(config-mixed-case, ask-lower) cache = {%q %q}, want {1h explicit}", md.CacheStrategy, md.CacheTTL)
+	}
+
+	// The reverse: config lowercase, asked in a different case.
+	mdRev := fn("OpenRouter/Qwen/Qwen3-X")
+	if mdRev.Thinking != "" || mdRev.ProviderRouting != nil {
+		// "lower" sets nothing; matching it must return its (empty) settings,
+		// not the zero fallback — proved by the deepseek settings NOT leaking.
+		t.Errorf("md(config-lower, ask-mixed) = %+v, want the lower entry's (empty) settings", mdRev)
+	}
+
+	// A model id in yet another spelling still misses (no substring folding).
+	mdMiss := fn("openrouter/deepseek/deepseek-v4-pro")
+	if mdMiss.ProviderRouting != nil || mdMiss.CacheTTL != "" {
+		t.Errorf("md(different model) = %+v, want the empty defaults (a different model id must not match)", mdMiss)
+	}
+}
+
+func TestModelMetaFn_CaseInsensitiveModelKey(t *testing.T) {
+	// Proves modelMetaFn (the context-window lookup) matches
+	// case-insensitively too — same match rule as modelDefaultsFn, same
+	// silent-drop bug before the fold.
+	models := map[string]config.ModelConfig{
+		"deepseek": {
+			Model:   "OpenRouter/DeepSeek/DeepSeek-V4-Flash",
+			Context: 200000,
+		},
+		"lower": {
+			Model:   "openrouter/qwen/qwen3-x",
+			Context: 111000,
+		},
+	}
+
+	fn := modelMetaFn(models)
+	if fn == nil {
+		t.Fatal("modelMetaFn returned nil for non-empty models map")
+	}
+	if got := fn("openrouter/deepseek/deepseek-v4-flash").ContextWindow; got != 200000 {
+		t.Errorf("meta(config-mixed-case, ask-lower) ContextWindow = %d, want 200000", got)
+	}
+	if got := fn("OpenRouter/Qwen/Qwen3-X").ContextWindow; got != 111000 {
+		t.Errorf("meta(config-lower, ask-mixed) ContextWindow = %d, want 111000", got)
+	}
+	if got := fn("openrouter/other/model").ContextWindow; got != 0 {
+		t.Errorf("meta(unknown model) ContextWindow = %d, want 0", got)
+	}
+}
