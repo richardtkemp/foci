@@ -1,9 +1,24 @@
 package config
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // MaxFallbackDepth is the maximum number of fallback hops allowed per request.
 const MaxFallbackDepth = 3
+
+// sortedKeys returns the map's keys in sorted order, for deterministic
+// iteration over config maps (stable validation errors, deterministic
+// merges).
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
 
 // FallbackResolver resolves model fallbacks for automatic failover.
 // Keys are case-folded canonical "developer/model_id" match keys (ModelKey);
@@ -25,24 +40,11 @@ func NewFallbackResolver(global, perAgent map[string]string, models map[string]M
 		return nil
 	}
 
-	merged := make(map[string]string, len(global)+len(perAgent))
-
-	// Start with global entries
-	for k, v := range global {
-		ck := ModelKey(canonicalize(k, models))
-		cv := canonicalize(v, models)
-		if ck != "" && cv != "" {
-			merged[ck] = cv
-		}
-	}
-
-	// Per-agent overrides
-	for k, v := range perAgent {
-		ck := ModelKey(canonicalize(k, models))
-		cv := canonicalize(v, models)
-		if ck != "" && cv != "" {
-			merged[ck] = cv
-		}
+	// Global entries first, then per-agent overrides. Each level folds
+	// deterministically (foldFallbacks).
+	merged := foldFallbacks(global, models)
+	for k, v := range foldFallbacks(perAgent, models) {
+		merged[k] = v
 	}
 
 	if len(merged) == 0 {
@@ -57,6 +59,29 @@ func NewFallbackResolver(global, perAgent map[string]string, models map[string]M
 	}
 
 	return &FallbackResolver{fallbacks: merged}
+}
+
+// foldFallbacks folds ONE fallback table to its match-key map: keys through
+// ModelKey (matching ignores case), values canonicalized with the case
+// written in config. Keys are inserted in sorted order so two keys that fold
+// to the same match key (differing only by case) keep a deterministic winner
+// — the first in sorted order. Validate rejects such tables; this only keeps
+// resolvers built outside validation (tests, programmatic use) from flipping
+// on map iteration order.
+func foldFallbacks(m map[string]string, models map[string]ModelConfig) map[string]string {
+	out := make(map[string]string, len(m))
+	for _, k := range sortedKeys(m) {
+		ck := ModelKey(canonicalize(k, models))
+		cv := canonicalize(m[k], models)
+		if ck == "" || cv == "" {
+			continue
+		}
+		if _, dup := out[ck]; dup {
+			continue
+		}
+		out[ck] = cv
+	}
+	return out
 }
 
 // Resolve returns the fallback model for the given model, or nil if no

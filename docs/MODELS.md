@@ -269,7 +269,7 @@ When a model fails (rate limit, 5xx, etc.), Foci can fall back to a designated a
 
 With the above, a failed call to `anthropic/claude-haiku-4-5` is automatically retried against `anthropic/claude-opus-4-6`. Fallbacks apply to the API backend only — the delegated backends (CC, Codex, OpenCode) pick their own fallback internally and ignore this table.
 
-A fallback model runs under its OWN `[models.*]` settings, never the primary's: its `cache_ttl`/`cache_strategy` and its `[models.*.provider]` routing table are re-resolved on every hop. Keys match case-insensitively on the whole `developer/model_id` (a key spelled `anthropic/Claude-Opus-4-6` fires for `anthropic/claude-opus-4-6`), while the fallback value is sent to the provider exactly as written in config.
+A fallback model runs under its OWN `[models.*]` settings, never the primary's: its `cache_ttl`/`cache_strategy` and its `[models.*.provider]` routing table are re-resolved on every hop. Keys match case-insensitively on the whole `developer/model_id` (a key spelled `anthropic/Claude-Opus-4-6` fires for `anthropic/claude-opus-4-6`), while the fallback value is sent to the provider exactly as written in config. Two keys in one `[groups.fallbacks]` table that name the same model ignoring case are a config error: which value would win would be random.
 
 ---
 

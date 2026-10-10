@@ -325,3 +325,28 @@ func TestFallbackResolver_CaseFoldCycleUppercaseValuesBroken(t *testing.T) {
 	}
 	t.Fatal("chain did not terminate — case-fold cycle through uppercase values was not broken")
 }
+
+func TestFallbackResolver_FoldCollidingKeysDeterministic(t *testing.T) {
+	// Proves two keys in ONE fallback table that differ only by case fold
+	// to a single match key and the resolver picks a DETERMINISTIC winner —
+	// the value of the key that sorts first — instead of whichever entry Go
+	// map iteration happens to yield. Validate rejects such tables; this
+	// keeps resolvers built outside validation from flipping between runs.
+	const want = "openrouter/p/one" // value of "openrouter/a/X", which sorts before "openrouter/a/x"
+	for i := 0; i < 20; i++ {
+		fr := NewFallbackResolver(map[string]string{
+			"openrouter/a/X": want,
+			"openrouter/a/x": "openrouter/q/two",
+		}, nil, nil)
+		if fr == nil {
+			t.Fatal("expected non-nil resolver")
+		}
+		got := fr.Resolve("openrouter/a/x")
+		if got == nil {
+			t.Fatal("expected a fallback for the folded key")
+		}
+		if m := got.Developer + "/" + got.ModelID; m != want {
+			t.Fatalf("run %d: resolved %q, want %q on every run (deterministic winner)", i, m, want)
+		}
+	}
+}

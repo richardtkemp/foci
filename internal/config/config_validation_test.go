@@ -882,3 +882,75 @@ model = "openrouter/qwen/y"
 		t.Fatalf("unexpected error for distinct model keys: %v", err)
 	}
 }
+
+func TestValidateFallbacks_FoldCollidingKeysRejected(t *testing.T) {
+	// Proves two keys in one [groups.fallbacks] table that differ only by
+	// case are rejected at load: they fold to a single match key, and the
+	// resolver would otherwise pick between their values at random (map
+	// iteration order). The error names both keys in sorted order, and the
+	// message is identical on every validation.
+	const want = `[groups.fallbacks] key "openrouter/a/X" and key "openrouter/a/x" are the same model (model matching ignores case)`
+	for i := 0; i < 30; i++ {
+		err := validateFallbacks("groups.fallbacks", map[string]string{
+			"openrouter/a/X": "openrouter/p/one",
+			"openrouter/a/x": "openrouter/q/two",
+		}, nil)
+		if err == nil {
+			t.Fatal("expected error for fold-colliding fallback keys")
+		}
+		if err.Error() != want {
+			t.Fatalf("run %d: error = %q, want exactly %q (stable, keys in sorted order)", i, err.Error(), want)
+		}
+	}
+}
+
+func TestValidateFallbacks_MessagesQuoteWrittenKeys(t *testing.T) {
+	// Proves the depth/cycle errors quote the key spelling the operator
+	// wrote, not the folded lowercase match key: a cycle among mixed-case
+	// keys names the written key that closes it, and an over-deep chain
+	// anchored at a mixed-case key reports that spelling. Walk starts are
+	// sorted, so both messages are identical on every validation.
+	const wantCycle = `[groups.fallbacks] cycle detected: "a/Y" → "a/x"`
+	for i := 0; i < 30; i++ {
+		cycleErr := validateFallbacks("groups.fallbacks", map[string]string{
+			"a/X": "a/y",
+			"a/Y": "a/x",
+		}, nil)
+		if cycleErr == nil {
+			t.Fatal("expected error for a case-fold-only cycle")
+		}
+		if cycleErr.Error() != wantCycle {
+			t.Fatalf("run %d: cycle error = %q, want exactly %q (the written key spelling, stable)", i, cycleErr.Error(), wantCycle)
+		}
+	}
+
+	depthErr := validateFallbacks("groups.fallbacks", map[string]string{
+		"a/A": "a/b",
+		"a/b": "a/c",
+		"a/c": "a/d",
+		"a/d": "a/e",
+	}, nil)
+	if depthErr == nil {
+		t.Fatal("expected error for an over-deep chain")
+	}
+	if msg := depthErr.Error(); !strings.Contains(msg, `chain starting at "a/A"`) {
+		t.Errorf("depth error = %q, want the written key spelling %q", msg, `"a/A"`)
+	}
+}
+
+func TestValidateModelKeys_EmptyModelRequired(t *testing.T) {
+	// Proves a [models.*] entry with no model is reported as the missing
+	// required value it is, instead of two empty strings colliding as
+	// "the same model" — which pointed at case matching instead of the
+	// actual problem.
+	err := validateModelKeys(map[string]ModelConfig{
+		"a": {},
+		"b": {},
+	})
+	if err == nil {
+		t.Fatal("expected error for model-less entries")
+	}
+	if !strings.Contains(err.Error(), "model is required") || !strings.Contains(err.Error(), "models.a") {
+		t.Errorf("error = %q, want [models.a] model is required (first entry in sorted order)", err.Error())
+	}
+}

@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"net/url"
-	"sort"
 	"strings"
 	"time"
 
@@ -539,20 +538,20 @@ func validateQuietCompaction(where string, c CompactionConfig) error {
 
 // validateModelKeys rejects two [models.*] entries whose model strings fold
 // to the same ModelKey: the per-model lookups range over a map, so which
-// entry's settings win would be random.
+// entry's settings win would be random. An entry with no model at all is
+// reported as the missing required value it is, not as two empty strings
+// colliding.
 func validateModelKeys(models map[string]ModelConfig) error {
 	type seenEntry struct {
 		name  string
 		model string
 	}
-	names := make([]string, 0, len(models))
-	for name := range models {
-		names = append(names, name)
-	}
-	sort.Strings(names)
 	seen := make(map[string]seenEntry, len(models))
-	for _, name := range names {
+	for _, name := range sortedKeys(models) {
 		model := models[name].Model
+		if model == "" {
+			return fmt.Errorf("[models.%s] model is required", name)
+		}
 		key := ModelKey(model)
 		if first, ok := seen[key]; ok {
 			return fmt.Errorf("[models.%s] model %q and [models.%s] model %q are the same model (model matching ignores case)",
@@ -564,18 +563,24 @@ func validateModelKeys(models map[string]ModelConfig) error {
 }
 
 // validateFallbacks checks that all keys and values in a fallback map resolve
-// to valid models, and that no chain exceeds MaxFallbackDepth. Chain keys are
-// matched case-insensitively (ModelKey), exactly like the resolver, so the
-// two can never disagree about whether a cycle or over-deep chain exists.
+// to valid models, that no two keys in one table fold to the same match key
+// (the resolver would have to pick between their values at random), and that
+// no chain exceeds MaxFallbackDepth. Chain keys are matched case-insensitively
+// (ModelKey), exactly like the resolver, so the two can never disagree about
+// whether a collision, cycle or over-deep chain exists. Error messages quote
+// the key spellings the operator wrote, never the folded match keys.
 func validateFallbacks(section string, fallbacks map[string]string, models map[string]ModelConfig) error {
 	if len(fallbacks) == 0 {
 		return nil
 	}
 	// Validate each entry resolves. Keys are folded match keys (matching
 	// ignores case); values keep their config spelling so the error
-	// messages quote what the operator wrote.
+	// messages quote what the operator wrote. written maps each folded key
+	// back to the key as written, for the depth/cycle messages below.
 	canonical := make(map[string]string, len(fallbacks))
-	for k, v := range fallbacks {
+	written := make(map[string]string, len(fallbacks))
+	for _, k := range sortedKeys(fallbacks) {
+		v := fallbacks[k]
 		rk, err := ResolveModel(k, "", models)
 		if err != nil {
 			return fmt.Errorf("[%s] key %q: %w", section, k, err)
@@ -586,10 +591,16 @@ func validateFallbacks(section string, fallbacks map[string]string, models map[s
 		}
 		ck := ModelKey(rk.Developer + "/" + rk.ModelID)
 		cv := rv.Developer + "/" + rv.ModelID
+		if first, dup := written[ck]; dup {
+			return fmt.Errorf("[%s] key %q and key %q are the same model (model matching ignores case)", section, first, k)
+		}
 		canonical[ck] = cv
+		written[ck] = k
 	}
-	// Check chain depth
-	for start := range canonical {
+	// Check chain depth. Walk starts in sorted order so the reported anchor
+	// (and, with several disjoint cycles, which one is reported first) is
+	// stable across runs.
+	for _, start := range sortedKeys(canonical) {
 		depth := 0
 		visited := map[string]bool{start: true}
 		cur := start
@@ -600,11 +611,11 @@ func validateFallbacks(section string, fallbacks map[string]string, models map[s
 			}
 			depth++
 			if depth > MaxFallbackDepth {
-				return fmt.Errorf("[%s] chain starting at %q exceeds max depth %d", section, start, MaxFallbackDepth)
+				return fmt.Errorf("[%s] chain starting at %q exceeds max depth %d", section, written[start], MaxFallbackDepth)
 			}
 			folded := ModelKey(next)
 			if visited[folded] {
-				return fmt.Errorf("[%s] cycle detected: %q → %q", section, cur, next)
+				return fmt.Errorf("[%s] cycle detected: %q → %q", section, written[cur], next)
 			}
 			visited[folded] = true
 			cur = folded

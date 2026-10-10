@@ -3,6 +3,7 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -50,6 +51,61 @@ func newAnsweringFBServer(t *testing.T) *fbWireServer {
 			"content": [{"type": "text", "text": "fb ok"}],
 			"usage": {"input_tokens": 1, "output_tokens": 1}
 		}`))
+	}))
+	t.Cleanup(w.srv.Close)
+	return w
+}
+
+// newInternalErrorFBServer answers every request with HTTP 500 — a
+// fallback-eligible error that, unlike the blocking server, also works for
+// STREAMING primaries: a stalled stream surfaces as the client's plain
+// "stream idle timeout" error, which is not fallback-eligible, while an
+// immediate 500 classifies as a retryable APIError. Pair it with
+// SetRetryBaseDelay(1ms) so the retry phases stay fast.
+func newInternalErrorFBServer(t *testing.T) *fbWireServer {
+	t.Helper()
+	w := &fbWireServer{}
+	w.srv = httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		w.record(r)
+		rw.Header().Set("Content-Type", "application/json")
+		rw.WriteHeader(http.StatusInternalServerError)
+		_, _ = rw.Write([]byte(`{"type":"error","error":{"type":"api_error","message":"boom"}}`))
+	}))
+	t.Cleanup(w.srv.Close)
+	return w
+}
+
+// newSSEAnsweringFBServer records each request body and answers with a
+// complete SSE event stream, so a streaming client (StreamMessage) succeeds
+// and the recorded body shows what the hop actually sent.
+func newSSEAnsweringFBServer(t *testing.T) *fbWireServer {
+	t.Helper()
+	w := &fbWireServer{}
+	w.srv = httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		w.record(r)
+		rw.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := rw.(http.Flusher)
+		if !ok {
+			t.Error("server doesn't support flushing")
+			return
+		}
+		for _, event := range []string{
+			`event: message_start
+data: {"type":"message_start","message":{"id":"msg_fb","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4-6","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`,
+			`event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+			`event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"fb ok"}}`,
+			`event: content_block_stop
+data: {"type":"content_block_stop","index":0}`,
+			`event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}`,
+			`event: message_stop
+data: {"type":"message_stop"}`,
+		} {
+			fmt.Fprintf(rw, "%s\n\n", event)
+			flusher.Flush()
+		}
 	}))
 	t.Cleanup(w.srv.Close)
 	return w
@@ -150,6 +206,73 @@ func TestSendFallbackHop_WireCacheTTL(t *testing.T) {
 		t.Fatalf("fallback server saw %d requests, want 1", fbSrv.bodyCount())
 	}
 	hop := fbSrv.body(0)
+	cc, ok := hop["cache_control"].(map[string]any)
+	if !ok {
+		t.Fatalf("hop body cache_control = %v, want the auto-strategy top-level marker", hop["cache_control"])
+	}
+	if got := cc["ttl"]; got != "1h" {
+		t.Errorf("hop body cache_control.ttl = %v, want 1h (the fallback model's own TTL, not the primary's 5m)", got)
+	}
+}
+
+// TestStreamFallbackHop_WireCacheTTL is the streaming counterpart of
+// TestSendFallbackHop_WireCacheTTL: the turn loop's streaming path must fire
+// an Anthropic primary's fallback chain too. That pins the StreamMessage fix
+// — it must NOT strip the developer prefix off req.Model in place, or
+// walkFallback asks the resolver for a bare model id ("claude-opus-4-6")
+// that matches no canonical fallback key and the chain never fires. The hop
+// body carries the fallback model's own cache TTL, exactly like the
+// non-streaming path. The primary answers 500 (fallback-eligible on the
+// streaming path, where a stalled stream is not) with a 1ms retry base, so
+// the test runs in ~0.2s with no real backoff sleeps.
+func TestStreamFallbackHop_WireCacheTTL(t *testing.T) {
+	t.Parallel()
+	primarySrv := newInternalErrorFBServer(t)
+	fbSrv := newSSEAnsweringFBServer(t)
+	primary := NewClient(func() (string, error) { return "test-key", nil }, 5*time.Second)
+	primary.SetRetryBaseDelay(time.Millisecond)
+	primary.SetBaseURL(primarySrv.srv.URL)
+	fb := NewClient(func() (string, error) { return "test-key", nil }, 5*time.Second)
+	fb.SetBaseURL(fbSrv.srv.URL)
+
+	fr := config.NewFallbackResolver(map[string]string{
+		"anthropic/claude-opus-4-6": "anthropic/claude-sonnet-4-6",
+	}, nil, nil)
+	fallbackFn := func(model string) (string, string, string, bool) {
+		rm := fr.Resolve(model)
+		if rm == nil {
+			return "", "", "", false
+		}
+		return rm.Developer + "/" + rm.ModelID, rm.Endpoint, rm.Format, true
+	}
+
+	req := &MessageRequest{
+		Model:         "anthropic/claude-opus-4-6",
+		MaxTokens:     64,
+		CacheStrategy: "auto",
+		CacheTTL:      "5m",
+		CacheFor: func(model string) (string, string) {
+			if model == "anthropic/claude-sonnet-4-6" {
+				return "auto", "1h"
+			}
+			return "auto", "5m"
+		},
+		Messages: []provider.Message{{Role: "user", Content: provider.TextContent("hi")}},
+	}
+
+	// Non-nil handler: Send dispatches to StreamMessage on this StreamingClient.
+	if _, err := provider.Send(context.Background(), primary, req, &provider.StreamHandler{}, fallbackFn,
+		&fbWireClientProvider{fbClient: fb}, nil); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	if fbSrv.bodyCount() != 1 {
+		t.Fatalf("fallback server saw %d requests, want 1 — the streaming fallback chain did not fire", fbSrv.bodyCount())
+	}
+	hop := fbSrv.body(0)
+	if got := hop["model"]; got != "claude-sonnet-4-6" {
+		t.Errorf("hop body model = %v, want claude-sonnet-4-6", got)
+	}
 	cc, ok := hop["cache_control"].(map[string]any)
 	if !ok {
 		t.Fatalf("hop body cache_control = %v, want the auto-strategy top-level marker", hop["cache_control"])
