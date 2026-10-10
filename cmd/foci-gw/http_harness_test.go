@@ -49,13 +49,18 @@ type mockClient struct {
 
 func (m *mockClient) SendMessage(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
 	var text string
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		if req.Messages[i].Role == "user" {
+			text = provider.TextOf(req.Messages[i].Content)
+			break
+		}
+	}
+	// #2284: the full "role:text" history of the request, in order, so a test
+	// can prove WHICH session's history a turn read (the last-user-text scan
+	// above cannot).
 	allTexts := make([]string, 0, len(req.Messages))
 	for _, msg := range req.Messages {
 		allTexts = append(allTexts, msg.Role+":"+provider.TextOf(msg.Content))
-		if msg.Role != "user" {
-			continue
-		}
-		text = provider.TextOf(msg.Content)
 	}
 	m.mu.Lock()
 	m.calls = append(m.calls, mockCall{text: text, trigger: agent.TriggerFromContext(ctx), allTexts: allTexts})

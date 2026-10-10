@@ -321,12 +321,18 @@ func (s *deferSweeper) deliverSend(inst *agentInstance, r defersend.Record) {
 // full inbox, a named parent on a backend that cannot branch — #2284's
 // refusal, from the same shared runBranchTurn) is logged and the record
 // dropped after that one attempt — a branch has not started yet, and silently
-// forking on the wrong model is worse than a loud drop. The human flag is
-// deliberately false (#1130): it is not part of the deferrable record, and
-// whoever declared themselves human at enqueue time may be gone by delivery —
-// a deferred request always delivers as automated.
+// forking on the wrong model is worse than a loud drop. The main/named
+// oracle here is the plain default key (defaultSessionKey, no create hook):
+// the record carries no rung (#2284 R1: no deferred-record change), so a
+// deferred empty-selector branch whose default was CreateDefault-minted
+// (#1859) is refused at delivery rather than sent — an acceptable corner for
+// a backend that cannot branch. The human flag is deliberately false (#1130):
+// it is not part of the deferrable record, and whoever declared themselves
+// human at enqueue time may be gone by delivery — a deferred request always
+// delivers as automated.
 func (s *deferSweeper) deliverBranch(inst *agentInstance, r defersend.Record) {
-	_, err := runBranchTurn(s.deps, inst, r.SessionKey, route.Receipt{SessionKey: r.SessionKey}, branchTurnOptions{
+	parentIsDefault := r.SessionKey == defaultSessionKey(s.deps, inst.id)
+	_, err := runBranchTurn(s.deps, inst, r.SessionKey, parentIsDefault, route.Receipt{SessionKey: r.SessionKey}, branchTurnOptions{
 		Text: r.Text, Model: r.Model, NoCompact: r.NoCompact, NoResetHook: r.NoResetHook, Silent: r.Silent,
 	}, false, false)
 	if err != nil {

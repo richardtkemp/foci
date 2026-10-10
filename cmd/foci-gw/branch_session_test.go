@@ -10,9 +10,12 @@ import (
 	"time"
 
 	"foci/internal/agent"
+	"foci/internal/defersend"
 	"foci/internal/delegator"
+	"foci/internal/log"
 	"foci/internal/provider"
 	"foci/internal/session"
+	"foci/internal/timeutil"
 	"foci/internal/tools"
 	"foci/internal/workspace"
 )
@@ -252,39 +255,100 @@ func delegatedBranchHarness(t *testing.T, opts httpTestOpts) (httpHandlerDeps, *
 // the backend cannot branch and the resolved parent IS the agent's default
 // session, /branch keeps today's behaviour exactly — the request degrades
 // to a send on the parent (the caller's default-resolution receipt), the
-// backend sees exactly one turn, and no branch session is created.
+// backend sees exactly one turn, and no branch session is created. "Main"
+// is every shape the EMPTY selector can resolve to: the plainly resolved
+// default, a CreateDefault-minted key (#1859 — an agent whose every
+// conversation is archived gets one minted rather than a 412), and — given
+// explicitly — the default key itself.
 func TestBranch_CannotBranchMainFallsThrough(t *testing.T) {
-	d, be := delegatedBranchHarness(t, httpTestOpts{})
-	mux := newTestMux(d)
+	// The plainly resolved default session: no selector at all.
+	t.Run("resolved default", func(t *testing.T) {
+		d, be := delegatedBranchHarness(t, httpTestOpts{})
+		mux := newTestMux(d)
 
-	w := postJSON(mux, "/branch", `{"text":"q"}`)
+		w := postJSON(mux, "/branch", `{"text":"q"}`)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (the main-session fall-through stays); body: %s", w.Code, w.Body.String())
-	}
-	var resp map[string]string
-	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["response"] != delegatedReply {
-		t.Errorf("response = %q, want the delegated turn's %q", resp["response"], delegatedReply)
-	}
-	if resp["session"] != testSessionKey {
-		t.Errorf("session = %q, want the parent %q (the fallback runs the turn on the parent)", resp["session"], testSessionKey)
-	}
-	if resp["resolved_via"] != "default" {
-		t.Errorf("resolved_via = %q, want default (the caller's resolution receipt)", resp["resolved_via"])
-	}
-	if inj := be.injectSnapshot(); len(inj) != 1 {
-		t.Errorf("backend injects = %q, want exactly one turn on the parent", inj)
-	}
-	entries, err := d.sessions.ScanAllSessions()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range entries {
-		if strings.HasPrefix(e.SessionKey, testSessionKey+"/b") {
-			t.Errorf("branch session %q created — a backend that cannot branch must not mint one", e.SessionKey)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (the main-session fall-through stays); body: %s", w.Code, w.Body.String())
 		}
-	}
+		var resp map[string]string
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp["response"] != delegatedReply {
+			t.Errorf("response = %q, want the delegated turn's %q", resp["response"], delegatedReply)
+		}
+		if resp["session"] != testSessionKey {
+			t.Errorf("session = %q, want the parent %q (the fallback runs the turn on the parent)", resp["session"], testSessionKey)
+		}
+		if resp["resolved_via"] != "default" {
+			t.Errorf("resolved_via = %q, want default (the caller's resolution receipt)", resp["resolved_via"])
+		}
+		if inj := be.injectSnapshot(); len(inj) != 1 {
+			t.Errorf("backend injects = %q, want exactly one turn on the parent", inj)
+		}
+		entries, err := d.sessions.ScanAllSessions()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			if strings.HasPrefix(e.SessionKey, testSessionKey+"/b") {
+				t.Errorf("branch session %q created — a backend that cannot branch must not mint one", e.SessionKey)
+			}
+		}
+	})
+
+	// A main key minted by the CreateDefault hook (#1859): no visible
+	// default session, so the empty selector resolves through the create
+	// hook. That key is still main — the fall-through must survive it, not
+	// be refused by the plain default-key comparison (review finding: the
+	// minted key is invisible to defaultSessionKey).
+	t.Run("CreateDefault-minted default", func(t *testing.T) {
+		d, be := delegatedBranchHarness(t, httpTestOpts{noSession: true})
+		d.createDefault = func(agentID string) (string, error) {
+			return testAgentID + "/c99", nil
+		}
+		mux := newTestMux(d)
+
+		w := postJSON(mux, "/branch", `{"text":"q"}`)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (a CreateDefault-minted main key keeps the fall-through); body: %s", w.Code, w.Body.String())
+		}
+		var resp map[string]string
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp["session"] != testAgentID+"/c99" {
+			t.Errorf("session = %q, want the minted main key %q", resp["session"], testAgentID+"/c99")
+		}
+		if resp["response"] != delegatedReply {
+			t.Errorf("response = %q, want the delegated turn's %q", resp["response"], delegatedReply)
+		}
+		if inj := be.injectSnapshot(); len(inj) != 1 {
+			t.Errorf("backend injects = %q, want exactly one turn on the minted main session", inj)
+		}
+	})
+
+	// The default key given EXPLICITLY as the selector (RungExact): the
+	// resolved parent equals the default key, so the fall-through stays.
+	t.Run("explicit default-key selector", func(t *testing.T) {
+		d, be := delegatedBranchHarness(t, httpTestOpts{})
+		mux := newTestMux(d)
+
+		w := postJSON(mux, "/branch", `{"text":"q","session":"i0"}`)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (the default key by name keeps the fall-through); body: %s", w.Code, w.Body.String())
+		}
+		var resp map[string]string
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp["session"] != testSessionKey {
+			t.Errorf("session = %q, want the parent %q", resp["session"], testSessionKey)
+		}
+		if resp["resolved_via"] != "exact" {
+			t.Errorf("resolved_via = %q, want exact (the selector was the full key)", resp["resolved_via"])
+		}
+		if inj := be.injectSnapshot(); len(inj) != 1 {
+			t.Errorf("backend injects = %q, want exactly one turn on the parent", inj)
+		}
+	})
 }
 
 // TestBranch_CannotBranchNamedParentRefused is the R5 red test: a backend
@@ -292,14 +356,23 @@ func TestBranch_CannotBranchMainFallsThrough(t *testing.T) {
 // parent — the fallback would interrupt the very session the caller asked
 // to leave alone. The request is refused with a 422 naming the agent and
 // the session and saying nothing ran; the backend is never started, nothing
-// is injected, and the parent's session file is unchanged.
+// is injected, and the parent's session file and index row are unchanged.
 func TestBranch_CannotBranchNamedParentRefused(t *testing.T) {
 	t.Run("named parent", func(t *testing.T) {
 		d, be := delegatedBranchHarness(t, httpTestOpts{})
-		registerRoot(t, d, testAgentID+"/iside")
+		// Seed the parent with a message and an index row, so "unchanged"
+		// below compares real state, not two empties.
+		seedMarker(t, d, testAgentID+"/iside", "parent marker")
 		before, err := d.sessions.Load(testAgentID + "/iside")
 		if err != nil {
 			t.Fatalf("load parent: %v", err)
+		}
+		if len(before) == 0 {
+			t.Fatal("seeding failed: parent has no messages before the request")
+		}
+		rowBefore, err := d.sessionIndex.Get(testAgentID + "/iside")
+		if err != nil {
+			t.Fatalf("index row before: %v", err)
 		}
 		mux := newTestMux(d)
 
@@ -327,6 +400,18 @@ func TestBranch_CannotBranchNamedParentRefused(t *testing.T) {
 		if len(after) != len(before) {
 			t.Errorf("R5: parent session changed: %d message(s) before, %d after — nothing may touch it", len(before), len(after))
 		}
+		rowAfter, err := d.sessionIndex.Get(testAgentID + "/iside")
+		if err != nil {
+			t.Fatalf("index row after: %v", err)
+		}
+		// Compare as instants: time.Time's == is zone-sensitive, and the
+		// zero timestamps come back from SQLite in a fixed -0001 zone.
+		if rowAfter.Status != rowBefore.Status ||
+			rowAfter.SessionType != rowBefore.SessionType ||
+			!rowAfter.LastActivityAt.Equal(rowBefore.LastActivityAt) ||
+			!rowAfter.LastUserActivityAt.Equal(rowBefore.LastUserActivityAt) {
+			t.Errorf("R5: parent index row changed: %+v before, %+v after — a refused request stamps no activity", rowBefore, rowAfter)
+		}
 	})
 
 	// With no default session at all, every parent is a named one: an
@@ -348,4 +433,122 @@ func TestBranch_CannotBranchNamedParentRefused(t *testing.T) {
 			t.Errorf("R5: backend injects = %q, want none", inj)
 		}
 	})
+}
+
+// TestBranch_CannotBranchRefusedBeforeDispatch pins WHERE in runBranchTurn
+// the R5 refusal sits: before every dispatch shape and before the model
+// override, so neither an async request (which would answer 202 and enqueue
+// a turn on the named parent) nor a model override (which a delegated agent
+// rejects with its own 400) ever runs. A delegated agent cannot store a
+// per-session model override at all — applyModelOverride rejects delegated
+// agents outright — so the ordering is the observable: the 422 says the
+// backend cannot branch, not that the model was refused.
+func TestBranch_CannotBranchRefusedBeforeDispatch(t *testing.T) {
+	t.Run("async never enqueues", func(t *testing.T) {
+		d, be := delegatedBranchHarness(t, httpTestOpts{})
+		seedMarker(t, d, testAgentID+"/iside", "parent marker")
+		mux := newTestMux(d)
+
+		w := postJSON(mux, "/branch", `{"text":"q","session":"side","async":true}`)
+
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("R5: status = %d, want 422 (async must not turn the refusal into a 202 + a turn on the named parent); body: %s", w.Code, w.Body.String())
+		}
+		if strings.Contains(w.Body.String(), "queued") {
+			t.Errorf("R5: async refusal answered 422 with a queued receipt: %s", w.Body.String())
+		}
+		if inj := be.injectSnapshot(); len(inj) != 0 {
+			t.Errorf("R5: backend injects = %q, want none — nothing was ever enqueued", inj)
+		}
+		entries, err := d.sessions.ScanAllSessions()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			if strings.HasPrefix(e.SessionKey, testAgentID+"/iside/b") {
+				t.Errorf("R5: branch session %q minted for an async refusal", e.SessionKey)
+			}
+		}
+	})
+
+	t.Run("model override never applied", func(t *testing.T) {
+		d, be := delegatedBranchHarness(t, httpTestOpts{})
+		seedMarker(t, d, testAgentID+"/iside", "parent marker")
+		mux := newTestMux(d)
+
+		w := postJSON(mux, "/branch", `{"text":"q","session":"side","model":"test-model"}`)
+
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("R5: status = %d, want 422 (the refusal precedes the model override); body: %s", w.Code, w.Body.String())
+		}
+		body := w.Body.String()
+		if !strings.Contains(body, "cannot branch") {
+			t.Errorf("R5: refusal body %q must name the cannot-branch cause, not a model rejection", body)
+		}
+		if strings.Contains(body, "model") {
+			t.Errorf("R5: refusal body %q mentions the model — the override was applied before the refusal", body)
+		}
+		if inj := be.injectSnapshot(); len(inj) != 0 {
+			t.Errorf("R5: backend injects = %q, want none", inj)
+		}
+	})
+}
+
+// TestSweep_BranchNamedParentRefusedWhenBackendCannotBranch pins the R5
+// refusal on the deferred sweep's entry point: a wait-deferred /branch whose
+// stored parent is a named session is refused at delivery time by the same
+// shared runBranchTurn — the refusal WARN is logged synchronously during the
+// sweep, no turn is ever enqueued, no branch session is minted, and the
+// record is dropped after that one attempt (never retried forever).
+func TestSweep_BranchNamedParentRefusedWhenBackendCannotBranch(t *testing.T) {
+	d, be := delegatedBranchHarness(t, httpTestOpts{})
+	registerRoot(t, d, testAgentID+"/iside")
+	store := withDeferStore(t, &d)
+
+	var mu sync.Mutex
+	refused := 0
+	// Drain any warnings buffered before this point first: SetWarnHook
+	// replays the startup buffer into the new hook, and earlier tests'
+	// refusals must not count here.
+	log.SetWarnHook(func(log.Level, string, string) {})
+	log.SetWarnHook(func(level log.Level, component, msg string) {
+		if component == "branch" && strings.Contains(msg, "refused branch on named parent") {
+			mu.Lock()
+			refused++
+			mu.Unlock()
+		}
+	})
+	t.Cleanup(func() { log.SetWarnHook(nil) })
+
+	now := timeutil.Now()
+	// wait_cold holds (the named session never ran a turn) → deliverable on
+	// the first sweep.
+	_, _ = store.Enqueue(defersend.Record{
+		Kind: defersend.KindBranch, AgentID: testAgentID, SessionKey: testAgentID + "/iside",
+		Text: "deferred branch", WaitCold: "1m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
+	})
+	sweepFor(d, store).sweep()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if refused != 1 {
+		t.Fatalf("R5: refusal WARN logged %d time(s) during the sweep, want exactly 1 — the deferred branch must be refused by the shared runBranchTurn", refused)
+	}
+	// The refusal returns before any dispatch, so nothing was ever enqueued:
+	// an immediate check is race-free (no envelope exists to run later).
+	if inj := be.injectSnapshot(); len(inj) != 0 {
+		t.Errorf("R5: backend injects = %q, want none — the sweep must not run a turn on the named parent", inj)
+	}
+	entries, err := d.sessions.ScanAllSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.SessionKey, testAgentID+"/iside/b") {
+			t.Errorf("R5: branch session %q minted by the sweep", e.SessionKey)
+		}
+	}
+	if all, _ := store.All(); len(all) != 0 {
+		t.Errorf("R5: store not drained after the refused delivery: %d record(s) — a refusal must not retry forever", len(all))
+	}
 }

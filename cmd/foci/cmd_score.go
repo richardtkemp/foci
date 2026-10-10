@@ -43,8 +43,9 @@ func cmdScore(base string, args []string) error {
 	}
 	agent, args := parseAgentFlag(args)
 	agent = envDefault(agent, "FOCI_AGENT")
-	sess, args := parseSessionFlag(args)
-	sess = envDefault(sess, "FOCI_SESSION")
+	var sf sessionFlag
+	args = sf.stripArgs(args)
+	sf.applyEnvDefault()
 	turn, args := parseFlagValue(args, "turn")
 	obs, args := parseFlagValue(args, "obs")
 	user, args := parseFlagValue(args, "user")
@@ -56,7 +57,7 @@ func cmdScore(base string, args []string) error {
 		return fmt.Errorf("name and value are required")
 	}
 	body, _ := json.Marshal(map[string]string{
-		"agent": agent, "session": sess, "turn": turn, "observation": obs,
+		"agent": agent, "session": sf.session, "turn": turn, "observation": obs,
 		"name": args[0], "value": args[1], "comment": strings.Join(args[2:], " "), "user": user,
 	})
 	resp, err := client.Post(base+"/score", "application/json", bytes.NewReader(body))
@@ -167,24 +168,4 @@ func cmdEvals(base string, args []string) error {
 		evalsUsage()
 		return fmt.Errorf("unknown evals subcommand %q", args[0])
 	}
-}
-
-// parseSessionFlag extracts -s/--session (both spaced and = forms), mirroring
-// parseAgentFlag; send/branch parse it inline in parseSendFlags.
-func parseSessionFlag(args []string) (session string, rest []string) {
-	for i := 0; i < len(args); i++ {
-		if (args[i] == "-s" || args[i] == "--session") && i+1 < len(args) {
-			rest = append(rest, args[:i]...)
-			rest = append(rest, args[i+2:]...)
-			return args[i+1], rest
-		}
-		for _, prefix := range []string{"--session=", "-s="} {
-			if strings.HasPrefix(args[i], prefix) {
-				rest = append(rest, args[:i]...)
-				rest = append(rest, args[i+1:]...)
-				return args[i][len(prefix):], rest
-			}
-		}
-	}
-	return "", args
 }

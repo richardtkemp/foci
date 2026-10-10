@@ -660,7 +660,16 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 		// to the turn context), landing on the NEW branch session key; the
 		// in-process receipt waits for the run below, so a bad model, fork
 		// error or full inbox stamps nothing.
-		result, err := runBranchTurn(d, inst, parentKey, branchRcpt, branchTurnOptions{
+		//
+		// R1 (option B): the cannot-branch send fallback is for the agent's
+		// DEFAULT session only — the key an EMPTY selector resolves to. With
+		// no selector that is parentKey by definition, including a
+		// CreateDefault-minted main key (#1859: resolveTargetSession resolved
+		// THROUGH the create hook, and re-resolving must never mint a
+		// conversation just for the comparison). A named selector must name
+		// that key itself to keep the fallback.
+		parentIsDefault := req.Session == "" || parentKey == defaultSessionKey(d, inst.id)
+		result, err := runBranchTurn(d, inst, parentKey, parentIsDefault, branchRcpt, branchTurnOptions{
 			Text: req.Text, Model: req.Model,
 			NoCompact: req.NoCompact, NoResetHook: req.NoResetHook, Silent: req.Silent,
 		}, !req.Async, req.Human)
