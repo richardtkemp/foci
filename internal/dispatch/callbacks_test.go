@@ -143,3 +143,53 @@ func TestParseCallbackSubagentHide(t *testing.T) {
 		t.Errorf("expected 'deadbeefdeadbeef', got %q", data)
 	}
 }
+
+// TestParseCallbackWizard verifies that the "wz:" prefix is parsed as
+// CallbackWizard with the full "<token>:<payload>" data extracted (the
+// payload itself is split by ParseWizardCallback).
+func TestParseCallbackWizard(t *testing.T) {
+	action, data := ParseCallback("wz:0123456789abcdef:3")
+	if action != CallbackWizard {
+		t.Errorf("expected CallbackWizard, got %d", action)
+	}
+	if data != "0123456789abcdef:3" {
+		t.Errorf("expected '0123456789abcdef:3', got %q", data)
+	}
+}
+
+// TestParseWizardCallback verifies the CallbackWizard payload grammar:
+// "<token>:<index>" yields the option index, "<token>:cancel" yields -1 (the
+// Cancel button), and anything malformed is rejected so the platform can
+// answer it as a stale press instead of touching the wizard.
+func TestParseWizardCallback(t *testing.T) {
+	tok, choice, ok := ParseWizardCallback("0123456789abcdef:2")
+	if !ok || tok != "0123456789abcdef" || choice != 2 {
+		t.Errorf("index payload: token=%q choice=%d ok=%v", tok, choice, ok)
+	}
+
+	tok, choice, ok = ParseWizardCallback("0123456789abcdef:cancel")
+	if !ok || tok != "0123456789abcdef" || choice != -1 {
+		t.Errorf("cancel payload: token=%q choice=%d ok=%v", tok, choice, ok)
+	}
+
+	tok, choice, ok = ParseWizardCallback("0123456789abcdef:12")
+	if !ok || tok != "0123456789abcdef" || choice != 12 {
+		t.Errorf("two-digit index payload: token=%q choice=%d ok=%v", tok, choice, ok)
+	}
+
+	bad := []string{
+		"",                        // empty
+		"0123456789abcdef",        // no choice separator
+		":2",                      // empty token
+		"0123456789abcdef:",       // empty choice
+		"0123456789abcdef:x",      // non-numeric index
+		"0123456789abcdef:-1",     // negative index (not the cancel form)
+		"0123456789abcdef:1:2",    // trailing garbage — index must be the whole choice
+		"0123456789abcdef:CANCEL", // cancel is case-sensitive (button data is generated)
+	}
+	for _, data := range bad {
+		if tok, choice, ok := ParseWizardCallback(data); ok {
+			t.Errorf("ParseWizardCallback(%q) = (%q, %d, true), want ok=false", data, tok, choice)
+		}
+	}
+}

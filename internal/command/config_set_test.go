@@ -540,3 +540,68 @@ func TestConfigSetDirectAcceptsScheduleClockTime(t *testing.T) {
 		t.Errorf("value = %q, want %q", capturedValue, `"04:00"`)
 	}
 }
+
+// TestConfigSetWizardPendingSteps verifies the wizard's structured steps: the
+// section step offers one option per SectionsFn entry, the key step one per
+// FieldsInSection field (label Key, description Description), and the value
+// step true/false only for a bool field — every other value type stays free
+// text (nil).
+func TestConfigSetWizardPendingSteps(t *testing.T) {
+	deps := testConfigSetDeps(nil)
+	w := newConfigSetWizard(deps)
+
+	// Step 0: one option per section, labels usable as typed answers.
+	q := w.PendingStep()
+	if q == nil {
+		t.Fatal("section step: PendingStep = nil, want structured question")
+	}
+	sections := config.FieldSections()
+	if len(q.Options) != len(sections) {
+		t.Fatalf("section step has %d options, want %d (one per section)", len(q.Options), len(sections))
+	}
+	for i, s := range sections {
+		if q.Options[i].Label != s {
+			t.Errorf("section option %d = %q, want %q", i, q.Options[i].Label, s)
+		}
+	}
+
+	// Step 1: one option per field in the chosen section, with descriptions.
+	w.Handle("debug")
+	q = w.PendingStep()
+	if q == nil {
+		t.Fatal("key step: PendingStep = nil, want structured question")
+	}
+	fields := config.FieldsInSection("debug")
+	if len(q.Options) != len(fields) {
+		t.Fatalf("key step has %d options, want %d (one per field)", len(q.Options), len(fields))
+	}
+	for i, f := range fields {
+		if q.Options[i].Label != f.Key {
+			t.Errorf("key option %d label = %q, want %q", i, q.Options[i].Label, f.Key)
+		}
+		if q.Options[i].Description != f.Description {
+			t.Errorf("key option %d description = %q, want %q", i, q.Options[i].Description, f.Description)
+		}
+	}
+
+	// Step 2 on a bool field: true/false options.
+	w.Handle("messages_in_log")
+	q = w.PendingStep()
+	if q == nil {
+		t.Fatal("bool value step: PendingStep = nil, want true/false options")
+	}
+	if len(q.Options) != 2 || q.Options[0].Label != "true" || q.Options[1].Label != "false" {
+		t.Errorf("bool value options = %+v, want true/false", q.Options)
+	}
+
+	// Step 2 on a non-bool field: free text.
+	w2 := newConfigSetWizard(testConfigSetDeps(nil))
+	w2.Handle("agent_loop")
+	w2.Handle("max_output_tokens") // FieldInt
+	if got := w2.PendingStep(); got != nil {
+		t.Errorf("int value step: PendingStep = %+v, want nil (free text)", got)
+	}
+}
+
+// Compile-time check: configSetWizard implements the optional provider interface.
+var _ WizardStepProvider = (*configSetWizard)(nil)

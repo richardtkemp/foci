@@ -7,6 +7,7 @@ import (
 
 	"foci/internal/command"
 	"foci/internal/platform"
+	"foci/internal/question"
 )
 
 // StaleCommandAge is the maximum age of a slash command before it is dropped.
@@ -87,6 +88,12 @@ type InterceptResult struct {
 	Outcome       *CommandOutcome // command dispatched, render this
 	// Consumed && WizardReply=="" && Outcome==nil → silently consumed (stale/idle drop)
 
+	// WizardStep is the wizard's CURRENT structured step when the wizard is
+	// still active after handling the message and the step has at least one
+	// option. Platforms send WizardReply with wizard buttons (WizardButtons,
+	// "wz:" callbacks) when it is set; nil means a plain-text reply.
+	WizardStep *question.Question
+
 	// Text is the final message text after any transforms have been applied.
 	// Always set — either the original text or the transformed version.
 	// When Consumed is false, callers should use this for downstream processing.
@@ -110,7 +117,7 @@ func (i *Interceptor) TryIntercept(ctx context.Context, msg *InterceptMessage) I
 			scope = i.Dispatcher.SessionKeyForChat(msg.ChatID)
 		}
 		if result, docPath, ok := i.Commands.HandleMessage(scope, msg.Text); ok {
-			return InterceptResult{Consumed: true, WizardReply: result, WizardDocPath: docPath, Text: msg.Text}
+			return InterceptResult{Consumed: true, WizardReply: result, WizardDocPath: docPath, WizardStep: wizardStepIfAny(i.Commands, scope), Text: msg.Text}
 		}
 	}
 
@@ -167,4 +174,34 @@ func (i *Interceptor) tryDispatch(ctx context.Context, msg *InterceptMessage) *C
 		return nil
 	}
 	return &outcome
+}
+
+// wizardStepIfAny returns the scope's wizard's current structured step when it
+// has at least one option (a button step), else nil. Shared by the intercept
+// result and the dispatch outcome so both surfaces report the same rule —
+// free-text steps and finished wizards never carry buttons.
+func wizardStepIfAny(reg *command.Registry, scope string) *question.Question {
+	if reg == nil {
+		return nil
+	}
+	if q := reg.WizardPendingStep(scope); q != nil && len(q.Options) > 0 {
+		return q
+	}
+	return nil
+}
+
+// IsWizardCancel reports whether text is a bare /cancel (any case, surrounding
+// spaces ignored) from a chat whose scope has an active wizard. This is the
+// one slash command platforms must route to the wizard intercept instead of
+// the command channel: there is no /cancel command, so the command channel
+// would answer "unknown command" and leave the wizard running. Every other
+// command keeps today's routing. Nil-receiver safe.
+func (d *Dispatcher) IsWizardCancel(chatID int64, text string) bool {
+	if d == nil {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(text), "/cancel") {
+		return false
+	}
+	return d.registry.WizardActive(d.SessionKeyForChat(chatID))
 }

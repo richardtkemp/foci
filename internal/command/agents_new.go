@@ -248,11 +248,12 @@ func (w *agentWizard) RestoreWizard(data []byte) error {
 }
 
 // PendingStep implements WizardStepProvider: it describes the current step as
-// structured data for out-of-band (app) rendering. Only the two choice steps
+// structured data for button-capable renderers (the app's out-of-band wizard
+// screens and the chat platforms' inline wz: buttons). The three choice steps
 // are structured — option labels are fed back into Handle verbatim when
-// picked, so they must be valid Handle inputs. The free-text steps (name,
-// model) return nil: the transport falls back to the plain prompt text, which
-// also carries validation re-asks.
+// picked, so they must be valid Handle inputs. The free-text name step
+// returns nil: the transport falls back to the plain prompt text, which also
+// carries validation re-asks.
 func (w *agentWizard) PendingStep() *question.Question {
 	switch w.step {
 	case stepBackend:
@@ -271,6 +272,16 @@ func (w *agentWizard) PendingStep() *question.Question {
 			Question: "How should this agent run?" + w.preflight,
 			Options:  opts,
 		}
+	case stepModel:
+		return &question.Question{
+			Header:   "Model",
+			Question: "Model — pick a family, or type a full model ID (default: `sonnet`):",
+			Options: []question.Option{
+				{Label: "opus"},
+				{Label: "sonnet"},
+				{Label: "haiku"},
+			},
+		}
 	case stepCharMode:
 		return &question.Question{
 			Header:   "Character files",
@@ -282,7 +293,7 @@ func (w *agentWizard) PendingStep() *question.Question {
 			},
 		}
 	default:
-		return nil // free-text step (name, model) — plain prompt text
+		return nil // free-text step (name) — plain prompt text
 	}
 }
 

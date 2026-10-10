@@ -99,13 +99,20 @@ func (b *telegramBackend) SubagentTextRaw() bool                            { re
 // stripSubagentButton removes the inline keyboard from a prior subagent message
 // so only the newest message carries the rolling Hide button.
 func (b *Bot) stripSubagentButton(chatID, msgID int64) {
+	b.stripInlineKeyboard(chatID, msgID)
+}
+
+// stripInlineKeyboard removes the inline keyboard from a message, leaving its
+// text untouched — the shared primitive for "these buttons are done" (the
+// subagent rolling Hide button and answered wizard step messages).
+func (b *Bot) stripInlineKeyboard(chatID, msgID int64) {
 	_, _, err := b.client.EditMessageReplyMarkup(&gotgbot.EditMessageReplyMarkupOpts{
 		ChatId:      chatID,
 		MessageId:   msgID,
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{},
 	})
 	if err != nil {
-		b.logger().Debugf("subagent strip button %d: %v", msgID, err)
+		b.logger().Debugf("strip inline keyboard (chat %d msg %d): %v", chatID, msgID, err)
 	}
 }
 

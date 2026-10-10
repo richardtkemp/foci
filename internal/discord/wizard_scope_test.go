@@ -20,13 +20,13 @@ func (w *scopeWizard) Handle(text string) (string, bool) {
 	return w.response, false // never done — keeps the wizard active for further asserts
 }
 
-// newWizardScopeBot builds a primary-bot test bot for wizard-scoping tests:
-// two allowed users (u1=A, u2=B), a real session index (so the first message
+// newWizardScopeBot builds a primary-bot test bot for wizard tests: two
+// allowed users (u1=A, u2=B), a real session index (so the first message
 // in channel 100 sets the default channel), and the production dispatcher
 // wiring (SetCommandContext → dispatchSessionKey). The registry's /wizstart
 // command activates the given wizard under req.SessionKey — the key the real
 // wizard commands (/secrets set, /config set, …) use.
-func newWizardScopeBot(t *testing.T, w *scopeWizard) (*Bot, *fakeSession) {
+func newWizardScopeBot(t *testing.T, w command.WizardHandler) (*Bot, *fakeSession) {
 	t.Helper()
 	b, fs, _ := newTestBot(t, "a")
 	b.allowedUsers = map[string]bool{"u1": true, "u2": true}

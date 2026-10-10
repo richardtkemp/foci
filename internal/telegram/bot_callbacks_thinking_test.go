@@ -13,13 +13,19 @@ import (
 // makeCallbackQuery builds a Telegram callback query pressed by allowed user
 // 111 against chat 12345.
 func makeCallbackQuery(msgID int64, data string) *gotgbot.CallbackQuery {
+	return makeCallbackQueryInChat(12345, msgID, data)
+}
+
+// makeCallbackQueryInChat builds a Telegram callback query against an
+// arbitrary chat (wizard scoping needs presses from more than one chat).
+func makeCallbackQueryInChat(chatID, msgID int64, data string) *gotgbot.CallbackQuery {
 	return &gotgbot.CallbackQuery{
 		Id:   "cq1",
 		Data: data,
 		From: gotgbot.User{Id: 111},
 		Message: gotgbot.Message{
 			MessageId: msgID,
-			Chat:      gotgbot.Chat{Id: 12345},
+			Chat:      gotgbot.Chat{Id: chatID},
 		},
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"foci/internal/config"
+	"foci/internal/question"
 )
 
 // ConfigSetDeps holds dependencies for the /config set wizard and direct
@@ -76,6 +77,61 @@ func (w *configSetWizard) RestoreWizard(data []byte) error {
 		}
 	}
 	return nil
+}
+
+// PendingStep implements WizardStepProvider: the section and key steps offer
+// one option per candidate (section names, then the section's field keys with
+// their descriptions), and the value step offers true/false when the chosen
+// field is a bool. Every other value type is free text and returns nil. Every
+// option label is a valid Handle input at that step — a section name passes
+// handleSection, a key passes handleKey (including the agent section's dotted
+// keys, which LookupFn matches as one "section.key" string), and true/false
+// pass formatAndValidateValue for a FieldBool.
+func (w *configSetWizard) PendingStep() *question.Question {
+	switch w.step {
+	case 0:
+		sections := w.deps.SectionsFn()
+		if len(sections) == 0 {
+			return nil
+		}
+		opts := make([]question.Option, len(sections))
+		for i, s := range sections {
+			opts[i] = question.Option{Label: s}
+		}
+		return &question.Question{
+			Header:   "Section",
+			Question: "Which section?",
+			Options:  opts,
+		}
+	case 1:
+		fields := w.deps.FieldsInSection(w.section)
+		if len(fields) == 0 {
+			return nil
+		}
+		opts := make([]question.Option, len(fields))
+		for i, f := range fields {
+			opts[i] = question.Option{Label: f.Key, Description: f.Description}
+		}
+		return &question.Question{
+			Header:   "Key",
+			Question: fmt.Sprintf("Which key in [%s]?", w.section),
+			Options:  opts,
+		}
+	case 2:
+		if w.field.Type != config.FieldBool {
+			return nil // free-text value for every non-bool type
+		}
+		return &question.Question{
+			Header:   "Value",
+			Question: fmt.Sprintf("New value for [%s] %s?", w.section, w.key),
+			Options: []question.Option{
+				{Label: "true"},
+				{Label: "false"},
+			},
+		}
+	default:
+		return nil
+	}
 }
 
 // Handle processes a wizard step and returns the response.

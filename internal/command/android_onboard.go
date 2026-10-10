@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"foci/internal/question"
 )
 
 // AndroidDeps holds dependencies for the /android onboarding wizard. Mirrors the
@@ -178,6 +180,37 @@ func (w *androidWizard) RestoreWizard(data []byte) error {
 	}
 	w.step, w.justEnabled, w.host = s.Step, s.JustEnabled, s.Host
 	return nil
+}
+
+// PendingStep implements WizardStepProvider: the two yes/no confirmation
+// steps are structured (chat platforms render them as tap-to-answer buttons,
+// the app as option choices); the host step is free text and returns nil.
+// Option labels are valid Handle inputs — both confirm steps accept
+// `yes`/`no` (case-insensitively) — so a picked label feeds straight back
+// into Handle.
+func (w *androidWizard) PendingStep() *question.Question {
+	switch w.step {
+	case androidStepConfirmEnable:
+		return &question.Question{
+			Header:   "App provider",
+			Question: "Enable the app provider now? (`yes`/`no`)",
+			Options:  yesNoOptions(),
+		}
+	case androidStepConfirmRestart:
+		return &question.Question{
+			Header:   "Restart",
+			Question: "Okay to restart foci now? (`yes`/`no`)",
+			Options:  yesNoOptions(),
+		}
+	default:
+		return nil // host step — free text
+	}
+}
+
+// yesNoOptions is the shared option set of the wizard's yes/no confirmation
+// steps.
+func yesNoOptions() []question.Option {
+	return []question.Option{{Label: "yes"}, {Label: "no"}}
 }
 
 // Handle processes a wizard step and returns the response.

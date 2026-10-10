@@ -34,7 +34,11 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	// a long command (e.g. /reset) blocks getUpdates, preventing callback_query
 	// delivery for interactive prompts like permission "Allow" buttons.
 	// /stop is kept here because it must cancel a live turn immediately.
-	if dispatch.IsRoutableCommand(qm.text, b.commands) && !b.commands.IsImmediateText(qm.text) {
+	// A bare /cancel whose chat has an active wizard is also kept here: there is
+	// no /cancel command, so the command channel would answer "unknown command"
+	// and strand the wizard — the intercept cancels it instead.
+	if dispatch.IsRoutableCommand(qm.text, b.commands) && !b.commands.IsImmediateText(qm.text) &&
+		!b.dispatcher.IsWizardCancel(msg.Chat.Id, qm.text) {
 		ts := time.Unix(int64(msg.Date), 0)
 		if !ts.IsZero() && time.Since(ts) > dispatch.StaleCommandAge {
 			b.logger().Warnf("dropping stale command %q (age=%s)", qm.text, time.Since(ts).Truncate(time.Second))
@@ -296,7 +300,7 @@ func (b *Bot) tryIntercept(ctx context.Context, qm *queuedMessage) bool {
 		return false
 	}
 	if result.WizardReply != "" {
-		b.sendReply(qm.msg, result.WizardReply)
+		b.sendWizardStep(qm.msg.Chat.Id, result.WizardReply, result.WizardStep)
 		_ = platform.SendDocAndRemove(b, qm.msg.Chat.Id, result.WizardDocPath, "")
 		return true
 	}

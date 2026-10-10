@@ -30,8 +30,12 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *discordgo.Message) {
 	}
 	// Non-immediate commands go to the command channel so the worker dispatches
 	// them without blocking the event handler goroutine. /stop is kept here
-	// because it must cancel a live turn immediately.
-	if dispatch.IsRoutableCommand(qm.text, b.commands) && !b.commands.IsImmediateText(qm.text) {
+	// because it must cancel a live turn immediately. A bare /cancel whose
+	// channel has an active wizard is also kept here: there is no /cancel
+	// command, so the command channel would answer "unknown command" and strand
+	// the wizard — the intercept cancels it instead.
+	if dispatch.IsRoutableCommand(qm.text, b.commands) && !b.commands.IsImmediateText(qm.text) &&
+		!b.dispatcher.IsWizardCancel(chatIDFromMsg(msg), qm.text) {
 		if !msg.Timestamp.IsZero() && time.Since(msg.Timestamp) > dispatch.StaleCommandAge {
 			b.logger().Warnf("dropping stale command %q (age=%s)", qm.text, time.Since(msg.Timestamp).Truncate(time.Second))
 			return
@@ -209,7 +213,7 @@ func (b *Bot) tryIntercept(ctx context.Context, qm *queuedMessage) bool {
 		return false
 	}
 	if result.WizardReply != "" {
-		b.sendReply(qm.msg, result.WizardReply)
+		b.sendWizardStep(chatIDFromMsg(qm.msg), result.WizardReply, result.WizardStep)
 		_ = platform.SendDocAndRemove(b, chatIDFromMsg(qm.msg), result.WizardDocPath, "")
 		return true
 	}

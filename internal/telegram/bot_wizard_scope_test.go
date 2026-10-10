@@ -35,14 +35,14 @@ func makeMsgInChat(chatID, userID int64, username, text string) *gotgbot.Message
 	}
 }
 
-// newWizardScopeBot builds a primary-bot testBot for wizard-scoping tests: two
+// newWizardScopeBot builds a primary-bot testBot for wizard tests: two
 // allowed users (111=A, 222=B), no override session key, a real session index
 // (so the first message in chat 12345 sets the default chat), and the
 // production dispatcher wiring (SetCommandContext → dispatchSessionKey). The
 // registry's /wizstart command activates the given wizard under
 // req.SessionKey — the key the real wizard commands (/secrets set, /config
 // set, …) use.
-func newWizardScopeBot(t *testing.T, w *scopeWizard) (*Bot, *mockClient, *command.Registry) {
+func newWizardScopeBot(t *testing.T, w command.WizardHandler) (*Bot, *mockClient, *command.Registry) {
 	t.Helper()
 	cmds := command.NewRegistry()
 	cmds.Register(&command.Command{

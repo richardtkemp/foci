@@ -16,6 +16,8 @@ package command
 // longer strands the user mid-flow.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"time"
@@ -42,10 +44,13 @@ type WizardDocProvider interface {
 // WizardStepProvider is an optional wizard capability: a wizard implementing
 // it describes its CURRENT step as structured data (question text, header,
 // options), which capable clients render as buttons instead of a plain text
-// prompt. nil means "no structure for this step" — the transport falls back to
-// a free-text step built from the plain prompt string. Option labels double as
-// the text fed back to Handle when the user picks one (see the app path's
-// answer translation), so they must be valid Handle inputs.
+// prompt — the native app's out-of-band wizard screens and the chat
+// platforms' inline wz: buttons (see WizardStepToken / HandleWizardChoice)
+// both read it. nil means "no structure for this step" — the transport falls
+// back to a free-text step built from the plain prompt string. Option labels
+// double as the text fed back to Handle when the user picks one (see the app
+// path's answer translation and HandleWizardChoice), so they must be valid
+// Handle inputs.
 type WizardStepProvider interface {
 	PendingStep() *question.Question
 }
@@ -170,12 +175,84 @@ func (r *Registry) HandleMessage(scope, text string) (response string, docPath s
 
 	lower := strings.ToLower(strings.TrimSpace(text))
 	if lower == "/cancel" || lower == "/stop" || lower == ".cancel" || lower == ".stop" {
-		delete(r.wizards, scope)
-		r.persistWizardsLocked()
-		return "Wizard cancelled.", "", true
+		return r.cancelWizardLocked(scope)
+	}
+	return r.deliverWizardLocked(scope, e, text)
+}
+
+// HandleWizardChoice answers scope's wizard's current structured step from a
+// chat button press: token is the step's WizardStepToken as carried by the
+// pressed button, and choice is the option index (-1 for the Cancel button).
+// The token check and the answer run under ONE hold of wizardMu, so a double
+// press — or a press racing a typed answer — can never feed an answer to a
+// later step (unless that later step asks the identical question, which by
+// construction takes the identical answer). Any mismatch (no wizard, wizard
+// without structured steps, stale token, choice not an option index) returns
+// handled == false WITHOUT calling Handle. A valid press behaves exactly like
+// HandleMessage with the option's label (or "/cancel" for -1): same cancel
+// reply, same WizardDocProvider doc, same clearing on done, same persistence
+// checkpoint.
+func (r *Registry) HandleWizardChoice(scope, token string, choice int) (response string, docPath string, handled bool) {
+	r.wizardMu.Lock()
+	defer r.wizardMu.Unlock()
+
+	e := r.wizards[scope]
+	if e == nil {
+		return "", "", false
+	}
+	p, ok := e.handler.(WizardStepProvider)
+	if !ok {
+		return "", "", false
+	}
+	step := p.PendingStep()
+	if step == nil || len(step.Options) == 0 || WizardStepToken(step) != token {
+		return "", "", false
 	}
 
+	switch {
+	case choice == -1: // the Cancel button
+		return r.cancelWizardLocked(scope)
+	case choice >= 0 && choice < len(step.Options):
+		return r.deliverWizardLocked(scope, e, step.Options[choice].Label)
+	default:
+		return "", "", false
+	}
+}
+
+// WizardStepToken derives the short, deterministic identity of a wizard step:
+// 16 hex characters (SHA-256 of the question's header, text, and option labels
+// in order, NUL-separated so no concatenation is ambiguous). Equal steps give
+// equal tokens, so a button press survives an in-flight wizard replacement or
+// a restart-restored wizard on the same step, while any change to the
+// question or its options invalidates older buttons. Chat button callback data
+// carries it (dispatch.WizardButtons).
+func WizardStepToken(q *question.Question) string {
+	h := sha256.New()
+	h.Write([]byte(q.Header))
+	h.Write([]byte{0})
+	h.Write([]byte(q.Question))
+	for _, opt := range q.Options {
+		h.Write([]byte{0})
+		h.Write([]byte(opt.Label))
+	}
+	sum := h.Sum(nil)
+	return hex.EncodeToString(sum[:8])
+}
+
+// cancelWizardLocked aborts scope's wizard: clears it, checkpoints
+// persistence, and returns the cancel reply. Caller holds wizardMu.
+func (r *Registry) cancelWizardLocked(scope string) (string, string, bool) {
+	delete(r.wizards, scope)
+	r.persistWizardsLocked()
+	return "Wizard cancelled.", "", true
+}
+
+// deliverWizardLocked feeds text to scope's wizard and returns its reply,
+// consuming any WizardDocProvider doc and clearing the wizard on done.
+// Caller holds wizardMu.
+func (r *Registry) deliverWizardLocked(scope string, e *wizardEntry, text string) (string, string, bool) {
 	resp, done := e.handler.Handle(text)
+	docPath := ""
 	if p, ok := e.handler.(WizardDocProvider); ok {
 		docPath = p.PendingDoc()
 	}

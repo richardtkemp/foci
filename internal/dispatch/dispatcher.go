@@ -143,11 +143,14 @@ func (d *Dispatcher) DispatchCommand(ctx context.Context, text string, chatID in
 		return CommandOutcome{Chain: &ChainOutcome{CommandName: name, Label: text + ":", Options: opts}}
 	}
 
+	genBefore := d.registry.WizardGen(sessionKey)
 	result := d.DispatchText(ctx, text, chatID, userID)
 	if !result.Handled {
 		return CommandOutcome{NotHandled: true}
 	}
-	return CommandOutcome{Response: &ResponseOutcome{Result: result, LookupText: lookupText}}
+	ro := &ResponseOutcome{Result: result, LookupText: lookupText}
+	d.setActivatedWizardStep(ro, sessionKey, genBefore)
+	return CommandOutcome{Response: ro}
 }
 
 // DispatchCommandCallback runs the callback dispatch pipeline: check for chain
@@ -165,12 +168,27 @@ func (d *Dispatcher) DispatchCommandCallback(ctx context.Context, chatID int64, 
 		return CommandOutcome{Chain: &ChainOutcome{CommandName: chainName, Label: cmdText + ":", Options: opts}}
 	}
 
+	genBefore := d.registry.WizardGen(sessionKey)
 	result := d.DispatchCallback(ctx, chatID, cmdText)
 	if !result.Handled {
 		return CommandOutcome{NotHandled: true}
 	}
 	_ = name // used only for chain keyboard lookup above
-	return CommandOutcome{Response: &ResponseOutcome{Result: result, LookupText: cmdText}}
+	ro := &ResponseOutcome{Result: result, LookupText: cmdText}
+	d.setActivatedWizardStep(ro, sessionKey, genBefore)
+	return CommandOutcome{Response: ro}
+}
+
+// setActivatedWizardStep records the wizard step a just-completed dispatch
+// ACTIVATED for sessionKey: the scope's wizard generation changed across the
+// dispatch and a wizard is still active (the same activation test the app's
+// maybeStartWizard uses). A command that only ran while an older wizard was
+// already active leaves the generation unchanged and gets no buttons.
+func (d *Dispatcher) setActivatedWizardStep(ro *ResponseOutcome, sessionKey string, genBefore uint64) {
+	if d.registry.WizardGen(sessionKey) == genBefore || !d.registry.WizardActive(sessionKey) {
+		return
+	}
+	ro.WizardStep = wizardStepIfAny(d.registry, sessionKey)
 }
 
 // SessionKeyForChat resolves the stable session key for a chat ID — the ONE

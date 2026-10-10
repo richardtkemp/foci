@@ -99,6 +99,8 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery
 		b.handleThinkingCallback(chatID, data, msgID)
 	case dispatch.CallbackSubagentHide:
 		b.handleSubagentHideCallback(chatID, data)
+	case dispatch.CallbackWizard:
+		b.handleWizardCallback(chatID, msgID, data)
 	}
 }
 
@@ -130,6 +132,17 @@ func (b *Bot) handleCommandCallback(ctx context.Context, chatID, msgID int64, cm
 		}
 	} else {
 		result = "Unknown command: " + cmdText
+	}
+
+	// The command activated a wizard with a structured first step (e.g. a
+	// chain-keyboard pick landing on a buttoned prompt): don't edit the
+	// pressed message — strip its keyboard and send the prompt as a new
+	// buttoned message, doc after.
+	if outcome.Response != nil && outcome.Response.WizardStep != nil {
+		b.stripInlineKeyboard(chatID, msgID)
+		b.sendWizardStep(chatID, result, outcome.Response.WizardStep)
+		_ = platform.SendDocAndRemove(b, chatID, resp.DocPath, "")
+		return
 	}
 
 	display := ConvertToTelegramHTML(result, b.tableOpts())

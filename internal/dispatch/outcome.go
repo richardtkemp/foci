@@ -1,6 +1,9 @@
 package dispatch
 
-import "foci/internal/command"
+import (
+	"foci/internal/command"
+	"foci/internal/question"
+)
 
 // CommandOutcome describes the result of a full command dispatch pipeline
 // (normalize → keyboard lookup → chain keyboard → dispatch). Exactly one
@@ -37,4 +40,11 @@ type ResponseOutcome struct {
 	// commands converted to slash form). Used by the platform to extract the
 	// command name for keyboard rendering.
 	LookupText string
+	// WizardStep is the structured step of the wizard THIS command activated
+	// (the scope's wizard generation changed across the dispatch and a wizard
+	// is still active), when that step has at least one option. Platforms
+	// render the response with wizard buttons (WizardButtons, "wz:"
+	// callbacks); nil renders plain text. A command run while an OLDER wizard
+	// was already active does not get that wizard's buttons.
+	WizardStep *question.Question
 }

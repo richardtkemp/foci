@@ -71,6 +71,8 @@ func (b *Bot) handleComponentInteraction(ctx context.Context, i *discordgo.Inter
 		b.handleToolCallCallback(channelID, cbData, msgID)
 	case dispatch.CallbackThinking:
 		b.handleThinkingCallback(channelID, cbData, msgID)
+	case dispatch.CallbackWizard:
+		b.handleWizardCallback(channelID, msgID, cbData, chatID)
 	}
 }
 
@@ -109,6 +111,17 @@ func (b *Bot) handleCommandCallback(ctx context.Context, channelID, msgID, cmdTe
 		}
 	} else {
 		result = "Unknown command: " + cmdText
+	}
+
+	// The command activated a wizard with a structured first step (e.g. a
+	// chain-keyboard pick landing on a buttoned prompt): don't edit the
+	// pressed message — strip its buttons and send the prompt as a new
+	// buttoned message, doc after.
+	if outcome.Response != nil && outcome.Response.WizardStep != nil {
+		b.stripMessageButtons(channelID, msgID)
+		b.sendWizardStep(chatID, result, outcome.Response.WizardStep)
+		_ = platform.SendDocAndRemove(b, chatID, resp.DocPath, "")
+		return
 	}
 
 	if len(result) > discordMaxChars {

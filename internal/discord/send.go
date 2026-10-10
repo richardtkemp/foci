@@ -575,6 +575,13 @@ func (b *Bot) SendTextWithButtonsToSession(sessionKey, text string, buttons []pl
 	return b.sendTextWithButtonsToChannel(channelID, text, buttons, callbackPrefix)
 }
 
+// SendTextWithButtonsToChat sends a text message with inline buttons to a specific channel — the
+// channel-scoped form wizard replies need (a wizard runs in the channel that started
+// it, which need not be the default). Returns the message ID (as string).
+func (b *Bot) SendTextWithButtonsToChat(channelID int64, text string, buttons []platform.ButtonChoice, callbackPrefix string) (string, error) {
+	return b.sendTextWithButtonsToChannel(channelID, text, buttons, callbackPrefix)
+}
+
 // sendTextWithButtonsToChannel is the single send-with-buttons implementation
 // shared by the default-channel and session-addressed entry points.
 func (b *Bot) sendTextWithButtonsToChannel(channelID int64, text string, buttons []platform.ButtonChoice, callbackPrefix string) (string, error) {

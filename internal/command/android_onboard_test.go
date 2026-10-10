@@ -298,3 +298,45 @@ func TestNormalizeAndroidHost(t *testing.T) {
 		}
 	}
 }
+
+// Verifies androidWizard's structured steps: both confirmations expose yes/no
+// options whose labels are valid Handle inputs, the host step stays free text
+// (nil), and each question text mirrors what the step's plain prompt asks.
+func TestAndroidWizardPendingSteps(t *testing.T) {
+	w := newTestAndroidWizard(&mockSecretsStore{data: map[string]string{}}, "/c/foci.toml")
+
+	// Host step: free text — a pasted URL or host:port can't be enumerated.
+	w.step = androidStepHost
+	if got := w.PendingStep(); got != nil {
+		t.Errorf("host step: PendingStep = %+v, want nil (free text)", got)
+	}
+
+	// Enable confirmation: yes/no buttons.
+	w.step = androidStepConfirmEnable
+	q := w.PendingStep()
+	if q == nil {
+		t.Fatal("confirmEnable step: PendingStep = nil, want a structured question")
+	}
+	if want := "Enable the app provider now? (`yes`/`no`)"; q.Question != want {
+		t.Errorf("confirmEnable question = %q, want %q", q.Question, want)
+	}
+	if len(q.Options) != 2 || q.Options[0].Label != "yes" || q.Options[1].Label != "no" {
+		t.Errorf("confirmEnable options = %+v, want yes/no", q.Options)
+	}
+
+	// Restart confirmation: yes/no buttons.
+	w.step = androidStepConfirmRestart
+	q = w.PendingStep()
+	if q == nil {
+		t.Fatal("confirmRestart step: PendingStep = nil, want a structured question")
+	}
+	if want := "Okay to restart foci now? (`yes`/`no`)"; q.Question != want {
+		t.Errorf("confirmRestart question = %q, want %q", q.Question, want)
+	}
+	if len(q.Options) != 2 || q.Options[0].Label != "yes" || q.Options[1].Label != "no" {
+		t.Errorf("confirmRestart options = %+v, want yes/no", q.Options)
+	}
+}
+
+// Compile-time check: androidWizard implements the optional provider interface.
+var _ WizardStepProvider = (*androidWizard)(nil)

@@ -125,9 +125,11 @@ func TestAgentWizardPendingStep(t *testing.T) {
 		t.Fatal("backend pick should advance, not finish")
 	}
 
-	// Model step is free text again.
-	if got := w.PendingStep(); got != nil {
-		t.Errorf("model step: PendingStep = %+v, want nil", got)
+	// Model step: structured — the three families as buttons (a full model ID
+	// can still be typed; see TestAgentWizardModelStepStructured).
+	q = w.PendingStep()
+	if q == nil {
+		t.Fatal("model step: PendingStep = nil, want structured question")
 	}
 	if _, done := w.Handle("opus"); done {
 		t.Fatal("model step should not finish the wizard")
@@ -162,6 +164,53 @@ func TestAgentWizardPendingStepPreflight(t *testing.T) {
 	}
 	if !strings.Contains(q.Question, "user missing") {
 		t.Errorf("backend question %q missing pre-flight warning", q.Question)
+	}
+}
+
+// Verifies the model step's structured question: it offers the opus/sonnet/
+// haiku families AND its text says a full model ID may be typed instead (the
+// plain prompt's "or full model ID" contract must survive structuring).
+func TestAgentWizardModelStepStructured(t *testing.T) {
+	w := newAgentWizard(testDeps(nil, nil))
+	w.step = stepModel
+
+	q := w.PendingStep()
+	if q == nil {
+		t.Fatal("model step: PendingStep = nil, want structured question")
+	}
+	want := []string{"opus", "sonnet", "haiku"}
+	if len(q.Options) != len(want) {
+		t.Fatalf("model options = %+v, want %v", q.Options, want)
+	}
+	for i, label := range want {
+		if q.Options[i].Label != label {
+			t.Errorf("model option %d = %q, want %q", i, q.Options[i].Label, label)
+		}
+	}
+	if !strings.Contains(q.Question, "full model ID") {
+		t.Errorf("model question %q must say a full model ID may be typed", q.Question)
+	}
+}
+
+// Characterises the name step: it is and stays free text (nil PendingStep) —
+// an agent name can't be enumerated, so the transport uses the plain prompt.
+func TestAgentWizardNameStepStillFreeText(t *testing.T) {
+	w := newAgentWizard(testDeps(nil, nil))
+	w.step = stepName
+	if got := w.PendingStep(); got != nil {
+		t.Errorf("name step: PendingStep = %+v, want nil (free text)", got)
+	}
+}
+
+// Characterises the secrets wizards: neither implements WizardStepProvider —
+// their steps (key name, secret value, host names) are free text, so the
+// optional interface deliberately stays unimplemented.
+func TestSecretsWizardsHaveNoPendingStep(t *testing.T) {
+	store := &mockSecretsStore{data: map[string]string{}}
+	for _, w := range []WizardHandler{newSecretsSetWizard(store), newSecretsHostsAddWizard(store, "")} {
+		if _, ok := w.(WizardStepProvider); ok {
+			t.Errorf("%T must not implement WizardStepProvider (free-text steps only)", w)
+		}
 	}
 }
 

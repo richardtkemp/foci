@@ -45,9 +45,10 @@ type fakeSession struct {
 	typingCalls         int
 	interactionResponds int
 
-	sendErr   error // returned by all send variants
-	editErr   error
-	deleteErr error
+	sendErr        error // returned by all send variants
+	complexSendErr error // returned by ChannelMessageSendComplex only (e.g. Discord's component limits)
+	editErr        error
+	deleteErr      error
 
 	nextID int // message ID counter
 }
@@ -74,6 +75,12 @@ func (f *fakeSession) ChannelMessageSend(channelID string, content string, _ ...
 }
 
 func (f *fakeSession) ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend, _ ...discordgo.RequestOption) (*discordgo.Message, error) {
+	f.mu.Lock()
+	err := f.complexSendErr
+	f.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
 	return f.record(channelID, data.Content, data.Components, data.Files)
 }
 
