@@ -44,6 +44,9 @@ type fakeSession struct {
 
 	typingCalls         int
 	interactionResponds int
+	// lastInteractionResponseType records the type of the last
+	// InteractionRespond call (e.g. DeferredMessageUpdate).
+	lastInteractionResponseType discordgo.InteractionResponseType
 
 	sendErr        error // returned by all send variants
 	complexSendErr error // returned by ChannelMessageSendComplex only (e.g. Discord's component limits)
@@ -128,10 +131,11 @@ func (f *fakeSession) ChannelTyping(string, ...discordgo.RequestOption) error {
 	return nil
 }
 
-func (f *fakeSession) InteractionRespond(*discordgo.Interaction, *discordgo.InteractionResponse, ...discordgo.RequestOption) error {
+func (f *fakeSession) InteractionRespond(_ *discordgo.Interaction, resp *discordgo.InteractionResponse, _ ...discordgo.RequestOption) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.interactionResponds++
+	f.lastInteractionResponseType = resp.Type
 	return nil
 }
 

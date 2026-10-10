@@ -161,8 +161,8 @@ func TestHandleCallbackQuery_NilMessageAnsweredNoPanic(t *testing.T) {
 
 func TestHandleCallbackQuery_RejectedEmptyDataStillAnswered(t *testing.T) {
 	// Proves the access gate runs before the empty-data drop: a rejected
-	// presser's query is still answered even with degenerate data, while the
-	// empty-data case itself stays silent for allowed pressers (pinned by
+	// presser's query is still answered even with degenerate data. An
+	// allowed presser's empty-data press is answered too (pinned by
 	// TestHandleCallbackQuery_EmptyDataIgnored) (#2276).
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
@@ -232,5 +232,103 @@ func TestHandleCallbackQuery_OpenAccessAnyPresserWorks(t *testing.T) {
 
 	if got := runs.Load(); got != 1 {
 		t.Errorf("command ran %d times, want 1", got)
+	}
+}
+
+func TestHandleCallbackQuery_EmptyDataAnsweredWithQueryID(t *testing.T) {
+	// Proves an ALLOWED presser's query is answered even when Data is empty:
+	// the deferred answer must be installed before the empty-data drop, or
+	// the presser's spinner runs until Telegram times it out (#2303). The
+	// answer carries the query's own id and nothing is edited or run.
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+
+	b.handleCallbackQuery(context.Background(), callbackQueryFrom(111, 55, ""))
+
+	if mock.answerCBCalls != 1 {
+		t.Errorf("answered = %d, want 1", mock.answerCBCalls)
+	}
+	if mock.lastAnswerCBID != "cq-access" {
+		t.Errorf("answered id = %q, want cq-access", mock.lastAnswerCBID)
+	}
+	if mock.editCount() != 0 {
+		t.Errorf("edits = %d, want 0", mock.editCount())
+	}
+}
+
+func TestHandleCallbackQuery_AnswersWithQueryID(t *testing.T) {
+	// Proves every press — rejected or allowed — is answered with the
+	// pressed query's own id, so Telegram dismisses the right spinner
+	// (#2303, shipping the #2276 reviewer's answer-id check).
+	cmds := command.NewRegistry()
+	runs := countingPing(cmds)
+	b, mock := testBot([]string{"111"}, cmds)
+
+	b.handleCallbackQuery(context.Background(), callbackQueryFrom(999, 55, "cmd:/ping"))
+	if mock.answerCBCalls != 1 || mock.lastAnswerCBID != "cq-access" {
+		t.Errorf("after rejected press: answered=%d id=%q, want 1/cq-access", mock.answerCBCalls, mock.lastAnswerCBID)
+	}
+
+	b.handleCallbackQuery(context.Background(), callbackQueryFrom(111, 55, "cmd:/ping"))
+	if mock.answerCBCalls != 2 || mock.lastAnswerCBID != "cq-access" {
+		t.Errorf("after allowed press: answered=%d id=%q, want 2/cq-access", mock.answerCBCalls, mock.lastAnswerCBID)
+	}
+	if got := runs.Load(); got != 1 {
+		t.Errorf("command ran %d times, want 1 (allowed press only)", got)
+	}
+}
+
+func TestHandleCallbackQuery_LockdownEmptyAllowlistBlocksAll(t *testing.T) {
+	// Proves lockdown (empty allowlist with allowed_users_only true) blocks
+	// every presser — even a user id that appears in no list — while still
+	// answering each press (#2303, shipping the #2276 reviewer's lockdown
+	// check for telegram).
+	cmds := command.NewRegistry()
+	runs := countingPing(cmds)
+	b, mock := testBot(nil, cmds)
+	b.allowedUsersOnly = true
+
+	b.handleCallbackQuery(context.Background(), callbackQueryFrom(111, 55, "cmd:/ping"))
+	b.handleCallbackQuery(context.Background(), callbackQueryFrom(999, 55, "cmd:/ping"))
+
+	if got := runs.Load(); got != 0 {
+		t.Errorf("command ran %d times, want 0", got)
+	}
+	if mock.editCount() != 0 {
+		t.Errorf("edits = %d, want 0", mock.editCount())
+	}
+	if mock.answerCBCalls != 2 {
+		t.Errorf("answered = %d, want 2 (each press answered once)", mock.answerCBCalls)
+	}
+}
+
+func TestHandleCallbackQuery_FacetThinkingUsesFacetSessionKey(t *testing.T) {
+	// Proves a facet (secondary) bot's thinking toggle resolves display
+	// overrides with the bot's override session key — the key its turns
+	// render with — not the per-chat key of the chat the button was pressed
+	// in (#2303).
+	var (
+		ovMu sync.Mutex
+		ovKey string
+	)
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	b.isSecondary = true
+	b.SetSessionKeyDirect("facet:key")
+	b.displayOverrideFn = func(sessionKey string) DisplayOverrides {
+		ovMu.Lock()
+		defer ovMu.Unlock()
+		ovKey = sessionKey
+		return DisplayOverrides{}
+	}
+	b.thinkingStore.Store(int64(100), thinkingEntry{responseHTML: "r", thinkingText: "t"})
+
+	b.handleCallbackQuery(context.Background(), callbackQueryFrom(111, 100, "th:show"))
+
+	ovMu.Lock()
+	defer ovMu.Unlock()
+	if ovKey != "facet:key" {
+		t.Errorf("display overrides resolved for %q, want facet:key", ovKey)
+	}
+	if mock.editCount() != 1 {
+		t.Errorf("edits = %d, want 1 (thinking expanded)", mock.editCount())
 	}
 }

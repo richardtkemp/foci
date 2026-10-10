@@ -137,12 +137,13 @@ func TestHandleCallbackQuery_RoutesThinkingAndAnswers(t *testing.T) {
 }
 
 func TestHandleCallbackQuery_EmptyDataIgnored(t *testing.T) {
-	// Proves callbacks with no data are dropped before answering (nothing to
-	// route, nothing to dismiss).
+	// Proves callbacks with no data run no action but are still answered:
+	// an allowed presser's spinner must stop even when there is nothing
+	// to route (#2303).
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	b.handleCallbackQuery(context.Background(), makeCallbackQuery(100, ""))
-	if mock.answerCBCalls != 0 || mock.editCount() != 0 {
-		t.Errorf("answered=%d edits=%d, want 0/0", mock.answerCBCalls, mock.editCount())
+	if mock.answerCBCalls != 1 || mock.editCount() != 0 {
+		t.Errorf("answered=%d edits=%d, want 1/0", mock.answerCBCalls, mock.editCount())
 	}
 }
 

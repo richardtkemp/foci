@@ -89,15 +89,6 @@ func (b *Bot) toPlatformMessage(msg *gotgbot.Message, qm queuedMessage) platform
 	}
 }
 
-// userAllowed reports whether userID passes the access allowlist — the single
-// rule for the sender of a message and the presser of a button (#2276).
-// access.allowed_users_only (default true): only listed users pass — an empty
-// list blocks everyone. When explicitly false, an empty list allows anyone;
-// a non-empty list still filters.
-func (b *Bot) userAllowed(userID string) bool {
-	return b.allowedUsers[userID] || (!b.allowedUsersOnly && len(b.allowedUsers) == 0)
-}
-
 // buildReceivedMessage performs auth, text extraction, and attachment downloading.
 // Returns a populated queuedMessage and true, or zero value and false if the
 // message should be silently dropped (unauthorized, empty, or failed voice).
@@ -111,7 +102,7 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 	}
 	userID := fmt.Sprintf("%d", msg.From.Id)
 
-	if !b.userAllowed(userID) {
+	if !platform.UserAllowed(b.allowedUsers, b.allowedUsersOnly, userID) {
 		b.logger().Warnf("rejected message from %s", formatUserInfo(msg.From))
 		return queuedMessage{}, false
 	}

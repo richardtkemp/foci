@@ -43,7 +43,7 @@ func (b *Bot) handleComponentInteraction(ctx context.Context, i *discordgo.Inter
 		b.logger().Warnf("rejected interaction with no presser (channel %s)", i.ChannelID)
 		return
 	}
-	if !b.userAllowed(presser.ID) || !b.guildAllowed(i.GuildID) {
+	if !platform.UserAllowed(b.allowedUsers, b.allowedUsersOnly, presser.ID) || !b.guildAllowed(i.GuildID) {
 		b.logger().Warnf("rejected interaction from %s", formatUserInfo(presser))
 		return
 	}
@@ -200,10 +200,15 @@ func (b *Bot) handleThinkingCallback(channelID, action, msgID string) {
 		return
 	}
 	entry := val.(thinkingEntry)
-	dw := b.resolveDisplay(b.sessionKeyForMsg(0)).DisplayWidth
 
 	switch action {
 	case "show":
+		// The toggle re-renders a message a turn produced, so it reads the
+		// display settings of that turn's session — resolved by the same
+		// rule the turn used (override key for facet bots, per-channel key
+		// otherwise), never a key that would register a stray chat 0 (#2303).
+		chatID, _ := strconv.ParseInt(channelID, 10, 64)
+		dw := b.resolveDisplay(b.SessionKeyForChannelID(chatID)).DisplayWidth
 		expanded := formatThinkingExpanded(entry.thinkingText, entry.responseText, dw)
 		if len(expanded) > discordMaxChars {
 			expanded = expanded[:discordMaxChars-4] + "\n..."

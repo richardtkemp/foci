@@ -51,19 +51,22 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery
 	// callback on an inline-mode message) and before any action. A rejected
 	// press runs nothing and is still answered, so the presser's spinner stops
 	// without revealing why.
-	if !b.userAllowed(fmt.Sprintf("%d", cq.From.Id)) {
+	if !platform.UserAllowed(b.allowedUsers, b.allowedUsersOnly, fmt.Sprintf("%d", cq.From.Id)) {
 		b.logger().Warnf("rejected callback from %s", formatUserInfo(&cq.From))
 		_, _ = b.client.AnswerCallbackQuery(cq.Id, nil)
 		return
 	}
-	if cq.Data == "" {
-		return
-	}
 
 	// Always answer the callback query to dismiss the loading indicator.
+	// Installed before the empty-data drop so an allowed press with no data
+	// is answered too (#2303).
 	defer func() {
 		_, _ = b.client.AnswerCallbackQuery(cq.Id, nil)
 	}()
+
+	if cq.Data == "" {
+		return // answered above; nothing to route
+	}
 
 	// cq.Message is nil for a callback on an inline-mode message: there is no
 	// chat message to act on or edit — answer (deferred above) and stop.
@@ -252,7 +255,11 @@ func (b *Bot) handleThinkingCallback(chatID int64, action string, msgID int64) {
 
 	switch action {
 	case "show":
-		expanded := formatThinkingExpanded(entry.thinkingText, entry.responseHTML, b.resolveDisplay(b.sessionKeyForMsg(chatID)).DisplayWidth)
+		// The toggle re-renders a message a turn produced, so it reads the
+		// display settings of that turn's session — resolved by the same
+		// rule the turn used (override key for facet bots, per-chat key
+		// otherwise), never a key that would register a stray chat (#2303).
+		expanded := formatThinkingExpanded(entry.thinkingText, entry.responseHTML, b.resolveDisplay(b.SessionKeyForChatID(chatID)).DisplayWidth)
 		rows := buildButtonRows([]platform.ButtonChoice{{Label: "Hide thinking", Data: "hide"}}, "th:")
 		_, _, _ = b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,

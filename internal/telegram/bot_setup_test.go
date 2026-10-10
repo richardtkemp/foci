@@ -29,6 +29,7 @@ type mockClient struct {
 	lastEditOpts     *gotgbot.EditMessageTextOpts // last EditMessageText opts
 	lastEditText     string                       // last EditMessageText text
 	answerCBCalls    int                          // counts AnswerCallbackQuery calls
+	lastAnswerCBID   string                       // id of the last AnswerCallbackQuery call
 	editErr          error                        // error to return from EditMessageText
 	editErrOnce      bool                         // if true, only return editErr on first call
 	sendErr          error                        // error to return from SendMessage
@@ -149,6 +150,7 @@ func (m *mockClient) AnswerCallbackQuery(callbackQueryId string, opts *gotgbot.A
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.answerCBCalls++
+	m.lastAnswerCBID = callbackQueryId
 	return true, nil
 }
 

@@ -90,18 +90,12 @@ func (b *Bot) handoffToAgent(qm platform.QueuedMessage) {
 	b.agentRef.Enqueue(env)
 }
 
-// sessionKeyForQueuedMessage resolves the session key for a queued message
-// using the same rules as processAgentMessage used to: secondary bots use
-// their override, primary bots derive from chat ID, fallback to bot's
-// default session key.
+// sessionKeyForQueuedMessage resolves the session key a queued message's
+// turn renders with — by definition SessionKeyForChatID's rule (#2303):
+// secondary bots use their override, primary bots derive from chat ID,
+// fallback to the bot's default session key.
 func (b *Bot) sessionKeyForQueuedMessage(qm platform.QueuedMessage) string {
-	if b.isSecondary {
-		return b.SessionKey()
-	}
-	if b.agentID != "" {
-		return b.sessionKeyForMsg(qm.ChatID)
-	}
-	return b.SessionKey()
+	return b.SessionKeyForChatID(qm.ChatID)
 }
 
 // processQueuedCommand dispatches a command that was routed via the command
