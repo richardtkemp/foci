@@ -91,22 +91,27 @@ func TestDelegatedManager_BackendLiveModel_EmptyWhenUnavailable(t *testing.T) {
 // TestReportedSessionModel_UsesLiveBackendModel is the #2252 ticket scenario:
 // an agent configured with the alias "opus" whose session's running backend
 // already learned the exact id from its process, before the first turn
-// completed. ReportedSessionModel must return the backend's id.
+// completed. ReportedSessionModel must return the backend's id — winning over
+// the alias SessionModel still resolves to, not instead of it.
 func TestReportedSessionModel_UsesLiveBackendModel(t *testing.T) {
 	t.Parallel()
 
 	a, dm := newReportedModelAgent()
 	dm.backends["test/s"] = &managedBackend{be: &liveModelFake{running: true, model: "claude/claude-opus-5-5"}}
 
+	if got := a.SessionModel("test/s"); got != "opus" {
+		t.Errorf("SessionModel = %q, want the configured alias %q (the live report wins over it)", got, "opus")
+	}
 	if got := a.ReportedSessionModel("test/s"); got != "claude/claude-opus-5-5" {
 		t.Errorf("ReportedSessionModel = %q, want the backend's live model %q", got, "claude/claude-opus-5-5")
 	}
 }
 
 // TestReportedSessionModel_FallsBackToSessionModel pins every arm where no
-// live model exists: ReportedSessionModel equals SessionModel (the agent
-// default "opus") when there is no managed backend, the backend is not
-// running, it reports no model, or it lacks the interface — and for an API
+// live model exists: ReportedSessionModel equals SessionModel — the agent
+// default "opus", or the session's own override when one is recorded (a
+// /model switch) — when there is no managed backend, the backend is not
+// running, it reports no model, or it lacks the interface; and for an API
 // agent with no DelegatedManager at all. Calling it never creates a managed
 // backend.
 func TestReportedSessionModel_FallsBackToSessionModel(t *testing.T) {
@@ -161,6 +166,29 @@ func TestReportedSessionModel_FallsBackToSessionModel(t *testing.T) {
 		a := &Agent{Model: "opus"}
 		if got := a.ReportedSessionModel("test/s"); got != "opus" {
 			t.Errorf("ReportedSessionModel for an API agent = %q, want SessionModel %q", got, "opus")
+		}
+	})
+
+	t.Run("per-session override, no live backend", func(t *testing.T) {
+		t.Parallel()
+		a, _ := seeded(t)
+		a.SetSessionModel("test/s", "claude/claude-x-1", "", "", nil)
+		if got, want := a.ReportedSessionModel("test/s"), a.SessionModel("test/s"); got != want || want != "claude/claude-x-1" {
+			t.Errorf("ReportedSessionModel = %q, SessionModel = %q, want both the per-session override %q", got, want, "claude/claude-x-1")
+		}
+	})
+
+	t.Run("per-session override, backend reports no model", func(t *testing.T) {
+		// The post-/model shape at the agent layer: the backend's learned id
+		// was invalidated (set_model confirmed, process not yet restated) and
+		// the session's own recorded model is the fresh value — the fallback
+		// must reach it, not the agent default (#2252).
+		t.Parallel()
+		a, dm := seeded(t)
+		a.SetSessionModel("test/s", "claude/claude-x-1", "", "", nil)
+		dm.backends["test/s"] = &managedBackend{be: &liveModelFake{running: true, model: ""}}
+		if got := a.ReportedSessionModel("test/s"); got != "claude/claude-x-1" {
+			t.Errorf("ReportedSessionModel = %q, want the per-session model %q", got, "claude/claude-x-1")
 		}
 	})
 }

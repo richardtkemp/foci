@@ -9,14 +9,21 @@
 // claude-opus-5-5. LiveModel exposes the same lastModel OnResult reads, with
 // the same prefixedModel spelling, so callers can ask for the resolved id any
 // time the process is running.
+//
+// lastModel stays honest across a /model switch: a confirmed set_model clears
+// it (the process switched; the old id is stale — reporting it made whoami
+// lag a /model switch), and the get_context_usage response that /model's
+// refresh issues re-learns the resolved id, so LiveModel never reports a model
+// the process has moved off.
 
 package ccstream
 
-// LiveModel implements delegator.LiveModelReporter: the model CC last named
-// (system/init or a top-level assistant message), spelled exactly as
-// TurnResult.Model (prefixedModel). Read-only: no I/O, nothing sent to the CC
-// process, never blocks on a turn. Returns "" when no model is known yet;
-// never returns the synthetic sentinel.
+// LiveModel implements delegator.LiveModelReporter: the model CC last named —
+// system/init, a top-level assistant message, or a get_context_usage response
+// — spelled exactly as TurnResult.Model (prefixedModel). Read-only: no I/O,
+// nothing sent to the CC process, never blocks on a turn. Returns "" when no
+// model is known yet, including between a confirmed set_model and the process
+// restating one; never returns the synthetic sentinel.
 func (b *Backend) LiveModel() string {
 	b.mu.Lock()
 	model := b.lastModel

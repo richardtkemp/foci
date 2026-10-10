@@ -213,7 +213,11 @@ type Backend struct {
 
 	// Context tracking (from result/assistant messages)
 	contextWindow int                // from modelUsage.contextWindow
-	lastModel     string             // from assistant message
+	// The model CC's process last named: system/init, a top-level assistant
+	// message, or a get_context_usage response. A confirmed set_model clears
+	// it (the old id is stale) until one of those restates the new one. Read
+	// for TurnResult.Model and LiveModel.
+	lastModel     string
 	lastUsage     *TokenUsage        // per-call usage from last assistant message
 	rlThrottle    *RateLimitThrottle // OnRateLimit throttle; shared per agent (agentThrottle)
 

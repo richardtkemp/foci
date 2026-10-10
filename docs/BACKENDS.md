@@ -645,7 +645,7 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - M1: `cc/lifecycle.go:Start` (`--model`) | `oc/backend_lifecycle.go:Start` (`resolveModelFn`) | `cx/lifecycle.go:prepareConfiguredModel`
 - `control_model`: `cc/control.go:sendSetModel` | `oc/control.go:SendControl` | `cx/control.go:SendControl`
 - `model_resolve`: n/a | `oc/model_validate.go:resolveModel` (not the interface) | `cx/model_resolver.go:ResolveModel`
-- `live_model`: `cc/livemodel.go:LiveModel` (reads `lastModel`, set by `OnSystem` init and top-level `OnAssistant`) | ✗ grep `LiveModel` | ✗ same
+- `live_model`: `cc/livemodel.go:LiveModel` (reads `lastModel`, set by `OnSystem` init, top-level `OnAssistant` and `get_context_usage` responses; a confirmed `set_model` clears it until one of those restates the new id) | ✗ grep `LiveModel` | ✗ same
 - M4: `gw/main.go` modelcaps fetcher for `BackendCCStream` | ✗ grep `modelcaps` | `cx/modelcaps.go:refreshModelCaps` → `publishModelCaps`
 - M5: `cc/lifecycle.go:Start` (`--effort`), `cc/control.go:SendControl` | n/a | `cx/control.go` `pendingEffort`
 - `voice_mode`: `cc/voicemode.go` | n/a | `cx/voicemode.go`

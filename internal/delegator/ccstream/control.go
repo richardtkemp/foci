@@ -203,6 +203,15 @@ func (b *Backend) sendSetModel(ctx context.Context, model string) error {
 			}
 			return fmt.Errorf("set_model returned subtype %q", env.Response.Subtype)
 		}
+		// CC confirmed the switch, so the id learned from init/assistant
+		// messages is now stale. Drop it: LiveModel reports "" (callers fall
+		// back to the session's recorded model — /model has already written
+		// the fresh one there) until the process restates an id: the
+		// get_context_usage response /model's refresh issues right after
+		// this, or the next assistant message (#2252).
+		b.mu.Lock()
+		b.lastModel = ""
+		b.mu.Unlock()
 		return nil
 	case <-ctx.Done():
 		b.pendingControlMu.Lock()
@@ -263,6 +272,16 @@ func (b *Backend) GetContextWindow(ctx context.Context) (*delegator.ContextWindo
 		var payload contextUsagePayload
 		if err := json.Unmarshal(env.Response.Response, &payload); err != nil {
 			return nil, fmt.Errorf("unmarshal context_usage payload: %w", err)
+		}
+		// The process just named its current model: record it as the learned
+		// id (the same field init/assistant messages write) so LiveModel and
+		// TurnResult.Model agree with the Model this response itself reports.
+		// /model's refresh (refreshContextFromBackend) relies on this to
+		// re-learn the id its confirmed set_model invalidated (#2252).
+		if payload.Model != "" && payload.Model != syntheticModel {
+			b.mu.Lock()
+			b.lastModel = payload.Model
+			b.mu.Unlock()
 		}
 		cats := make([]delegator.ContextCategory, len(payload.Categories))
 		for i, c := range payload.Categories {
