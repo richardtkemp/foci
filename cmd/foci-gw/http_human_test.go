@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -489,5 +490,214 @@ func TestSend_HumanTriggerStillUser(t *testing.T) {
 	}
 	if calls := mock.snapshot(); len(calls) != 1 || calls[0].trigger != "user" {
 		t.Errorf("calls = %+v, want one call with trigger %q", calls, "user")
+	}
+}
+
+// newPingCommand is the ping command the automated-declaration tests use as
+// their no-turn dispatch shape: it answers "pong" and touches nothing, so any
+// receipt observed alongside it can only come from the endpoint's own #1130
+// stamps, never from the command or a turn.
+func newPingCommand() *command.Command {
+	return &command.Command{
+		Name: "ping",
+		Execute: func(_ context.Context, _ command.Request, _ command.CommandContext) (command.Response, error) {
+			return command.Response{Text: "pong"}, nil
+		},
+	}
+}
+
+// runnerReceiptStamped is the in-process mirror of userActivityRecorded: it
+// reports whether the agent's periodic runner holds the "a human interacted"
+// receipt — #1130's second, non-durable stamp.
+func runnerReceiptStamped(runner *periodic.Runner) bool {
+	_, ok := runner.LastUserActivity()
+	return ok
+}
+
+// assertNoHumanReceipts asserts the automated half of the #1130 declaration:
+// neither receipt exists — no durable last_user_activity_at on any of
+// sessionKeys, and no in-process receipt on the runner. why names the case's
+// reason in the failure message ("explicit human:false", "omitted human
+// key", "wait-deferred").
+func assertNoHumanReceipts(t *testing.T, endpoint, caseName, why string, d httpHandlerDeps, runner *periodic.Runner, sessionKeys ...string) {
+	t.Helper()
+	for _, key := range sessionKeys {
+		if userActivityRecorded(d, key) {
+			t.Errorf("%s %s: %s stamped last_user_activity_at on session %q", endpoint, caseName, why, key)
+		}
+	}
+	if runnerReceiptStamped(runner) {
+		t.Errorf("%s %s: %s stamped the in-process runner receipt", endpoint, caseName, why)
+	}
+}
+
+// dispatchProof asserts, inside a subtest, that the request really dispatched
+// — so a negative receipt assertion cannot pass because nothing ran — and
+// returns any session keys beyond testSessionKey that the human version of
+// the same request would stamp (the new branch key for /branch).
+type dispatchProof func(t *testing.T, endpoint, caseName string, w *httptest.ResponseRecorder, mock *mockClient) []string
+
+// proveTurnDispatched is the /send dispatch proof: the request ran exactly
+// one backend turn. The turn stamps only its own session, so no extra keys.
+func proveTurnDispatched(t *testing.T, endpoint, caseName string, _ *httptest.ResponseRecorder, mock *mockClient) []string {
+	t.Helper()
+	if calls := mock.snapshot(); len(calls) != 1 {
+		t.Fatalf("%s %s: backend calls = %d, want 1 (the send's turn must run)", endpoint, caseName, len(calls))
+	}
+	return nil
+}
+
+// proveSlashCommandAnswered is the slash-command dispatch proof: the command
+// answered "pong" and no backend turn ran — dispatched, and with no turn
+// whose entry write could stamp either receipt on the stamps' behalf.
+func proveSlashCommandAnswered(t *testing.T, endpoint, caseName string, w *httptest.ResponseRecorder, mock *mockClient) []string {
+	t.Helper()
+	var resp map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["response"] != "pong" {
+		t.Fatalf("%s %s: response = %q, want pong (command not dispatched?)", endpoint, caseName, resp["response"])
+	}
+	if calls := mock.snapshot(); len(calls) != 0 {
+		t.Fatalf("%s %s: backend called %d time(s), want 0", endpoint, caseName, len(calls))
+	}
+	return nil
+}
+
+// proveBranchSessionCreated is the /branch dispatch proof: the response
+// carries a new branch session key. The human version of the same request
+// stamps THAT key, so it is returned for the caller to assert on too.
+func proveBranchSessionCreated(t *testing.T, endpoint, caseName string, w *httptest.ResponseRecorder, _ *mockClient) []string {
+	t.Helper()
+	var resp map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	branchKey := resp["session"]
+	if !strings.HasPrefix(branchKey, testSessionKey+"/b") {
+		t.Fatalf("%s %s: session = %q, want a branch of %s", endpoint, caseName, branchKey, testSessionKey)
+	}
+	return []string{branchKey}
+}
+
+// automatedCase is one row of the automated-declaration tables (#2230): a
+// request body on an endpoint plus its dispatch proof.
+type automatedCase struct {
+	name     string
+	endpoint string
+	body     string
+	proof    dispatchProof
+}
+
+// runAutomatedCase drives one automated-declaration case end to end: a fresh
+// harness with the runner wired and ping registered, the POST, the 200, the
+// dispatch proof, then the assertion that neither #1130 receipt was left on
+// the target session(s) or the runner.
+func runAutomatedCase(t *testing.T, tc automatedCase, why string) {
+	t.Helper()
+	runner := &periodic.Runner{}
+	d, mock := httpTestSetup(t, httpTestOpts{kaRunner: runner, commands: []*command.Command{newPingCommand()}})
+	mux := newTestMux(d)
+
+	w := postJSON(mux, tc.endpoint, tc.body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("%s %s: status = %d, want 200; body: %s", tc.endpoint, tc.name, w.Code, w.Body.String())
+	}
+	keys := tc.proof(t, tc.endpoint, tc.name, w, mock)
+	assertNoHumanReceipts(t, tc.endpoint, tc.name, why, d, runner, append([]string{testSessionKey}, keys...)...)
+}
+
+// TestEndpoints_ExplicitHumanFalseIsAutomated pins #2230 req 1: an explicit
+// "human":false is a declaration of automation, not a no-op key. On every
+// endpoint that takes the field the request still dispatches (each case
+// proves it) and leaves neither receipt — no last_user_activity_at on the
+// session the human version would stamp (for /branch: the new branch session
+// AND the parent), no in-process runner receipt.
+func TestEndpoints_ExplicitHumanFalseIsAutomated(t *testing.T) {
+	for _, tc := range []automatedCase{
+		{"send", "/send", `{"text":"hi","human":false,"wait_none":true}`, proveTurnDispatched},
+		{"send slash command", "/send", `{"text":"/ping","human":false,"wait_none":true}`, proveSlashCommandAnswered},
+		{"command", "/command", `{"command":"/ping","human":false}`, proveSlashCommandAnswered},
+		{"branch", "/branch", `{"text":"branch hi","human":false}`, proveBranchSessionCreated},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runAutomatedCase(t, tc, "explicit human:false")
+		})
+	}
+}
+
+// TestEndpoints_AbsentHumanKeyIsAutomated pins #2230 req 2: omitting the
+// human key keeps today's automated behaviour on the no-turn paths and on
+// /branch — the decode-to-false default must stamp nothing. Each case proves
+// the request dispatched, so the negative assertions cannot pass vacuously.
+func TestEndpoints_AbsentHumanKeyIsAutomated(t *testing.T) {
+	for _, tc := range []automatedCase{
+		{"send slash command", "/send", `{"text":"/ping","wait_none":true}`, proveSlashCommandAnswered},
+		{"command", "/command", `{"command":"/ping"}`, proveSlashCommandAnswered},
+		{"branch", "/branch", `{"text":"branch hi"}`, proveBranchSessionCreated},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runAutomatedCase(t, tc, "omitted human key")
+		})
+	}
+}
+
+// TestEndpoints_HumanNoTurnPathsStampBothReceipts pins #2230 req 3: a human
+// /command dispatch and a human /send whose text is a slash command start no
+// turn, so stampHumanCommandDispatch must leave BOTH receipts — the durable
+// last_user_activity_at on the target session and the in-process runner
+// receipt. Zero backend calls prove no turn ran, so neither stamp can come
+// from a turn's entry write.
+func TestEndpoints_HumanNoTurnPathsStampBothReceipts(t *testing.T) {
+	for _, tc := range []struct{ name, endpoint, body string }{
+		{"command", "/command", `{"command":"/ping","human":true}`},
+		{"send slash command", "/send", `{"text":"/ping","human":true,"wait_none":true}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &periodic.Runner{}
+			d, mock := httpTestSetup(t, httpTestOpts{kaRunner: runner, commands: []*command.Command{newPingCommand()}})
+			mux := newTestMux(d)
+
+			w := postJSON(mux, tc.endpoint, tc.body)
+			if w.Code != http.StatusOK {
+				t.Fatalf("%s %s: status = %d, want 200; body: %s", tc.endpoint, tc.name, w.Code, w.Body.String())
+			}
+			proveSlashCommandAnswered(t, tc.endpoint, tc.name, w, mock)
+			if !userActivityRecorded(d, testSessionKey) {
+				t.Errorf("%s %s: human dispatch did not set last_user_activity_at on the target session", tc.endpoint, tc.name)
+			}
+			if !runnerReceiptStamped(runner) {
+				t.Errorf("%s %s: human dispatch did not stamp the in-process runner receipt", tc.endpoint, tc.name)
+			}
+		})
+	}
+}
+
+// TestEndpoints_HumanDeferredByWaitStampsNothing pins #2230 req 4: a human
+// /command or /branch that a wait_* gate defers records neither receipt —
+// the stamps belong to the dispatch boundary, which a deferred request has
+// not crossed (the sweep later delivers it as automated). The session stays
+// cold so wait_warm is unmet; no branch session exists at defer time, so the
+// durable check covers both the command's target and the branch's parent:
+// testSessionKey.
+func TestEndpoints_HumanDeferredByWaitStampsNothing(t *testing.T) {
+	for _, tc := range []struct{ name, endpoint, body string }{
+		{"command", "/command", `{"command":"/ping","human":true,"wait_warm":"1h"}`},
+		{"branch", "/branch", `{"text":"branch hi","human":true,"wait_warm":"1h"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &periodic.Runner{}
+			d, _ := httpTestSetup(t, httpTestOpts{kaRunner: runner, commands: []*command.Command{newPingCommand()}})
+			withDeferStore(t, &d)
+			mux := newTestMux(d)
+
+			w := postJSON(mux, tc.endpoint, tc.body)
+			if w.Code != http.StatusAccepted {
+				t.Fatalf("%s %s: status = %d, want 202 deferred; body: %s", tc.endpoint, tc.name, w.Code, w.Body.String())
+			}
+			var resp map[string]interface{}
+			_ = json.Unmarshal(w.Body.Bytes(), &resp)
+			if resp["status"] != "deferred" {
+				t.Fatalf("%s %s: status = %v, want deferred", tc.endpoint, tc.name, resp["status"])
+			}
+			assertNoHumanReceipts(t, tc.endpoint, tc.name, "wait-deferred", d, runner, testSessionKey)
+		})
 	}
 }
