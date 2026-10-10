@@ -812,10 +812,13 @@ func (a *Agent) reloginHoldClosed() bool {
 // runs once the gate releases (success or abort — the driver always releases).
 // Event-driven via relogin.G.Released. Returns false if ctx ends while waiting.
 func (a *Agent) waitReloginGate(ctx context.Context, sk string) bool {
-	if a.reloginHoldClosed() {
+	if a.DelegatedManager == nil {
+		return true
+	}
+	if relogin.G.Active() {
 		log.Extra("inbox", "gate_wait sk=%s reason=cc_relogin — holding dispatch until re-login ends (#1932)", sk)
 	}
-	for a.reloginHoldClosed() {
+	for relogin.G.Active() {
 		select {
 		case <-ctx.Done():
 			return false

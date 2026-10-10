@@ -146,6 +146,159 @@ func TestInbox_InjectGateReleasedByShutdown(t *testing.T) {
 	}
 }
 
+// The three tests below pin the ctx-done drop sites (#2059): an injection
+// that is inside a gate when the inbox ctx ends — not via BeginShutdown,
+// which opens the inject gate so runInject can refuse — must have Refused
+// called by the dropping path, releasing an EnqueueInjectWait caller instead
+// of leaving it to wait out its own ctx. One test per site: the dequeue
+// re-login gate, the dequeue inject gate, and the post-batch held-injects
+// gate. Each hands the worker a gated injection, ends the ctx, and asserts
+// the caller is released promptly (a silent drop blocks until the caller's
+// own ctx expires, so a short bound fails fast on a regression).
+
+// Dequeue path: the injection is held in the re-login gate when the inbox
+// ctx ends.
+func TestInbox_InjectionRefusedWhenCtxEndsInReloginGate(t *testing.T) {
+	a, cancel := startedAgent(t)
+	a.DelegatedManager = &DelegatedManager{}
+	claimRelogin(t)
+	const sk = "test/s"
+
+	var ran atomic.Bool
+	errc := make(chan error, 1)
+	go func() {
+		ctx, done := context.WithTimeout(context.Background(), 10*time.Second)
+		defer done()
+		errc <- a.EnqueueInjectWait(ctx, sk, "scheduled_wake", func() { ran.Store(true) })
+	}()
+	// Wait until the worker has pulled the injection off the channel.
+	if !waitFor(10*time.Second, func() bool { return a.lookupInbox(sk) != nil && len(a.lookupInbox(sk).ch) == 0 }) {
+		t.Fatal("worker never dequeued the injection")
+	}
+	if ran.Load() {
+		t.Fatal("premise failed: injection ran while the re-login gate was closed")
+	}
+
+	cancel()
+	select {
+	case err := <-errc:
+		if !errors.Is(err, ErrShuttingDown) {
+			t.Fatalf("EnqueueInjectWait err = %v, want ErrShuttingDown", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("injection dropped without Refused: caller never released after the ctx ended inside the re-login gate")
+	}
+	if ran.Load() {
+		t.Fatal("injection ran although its gate never opened")
+	}
+}
+
+// Dequeue path: the injection is held in the inject gate (a delivering
+// autonomous run in flight) when the inbox ctx ends.
+func TestInbox_InjectionRefusedWhenCtxEndsInInjectGate(t *testing.T) {
+	a, cancel := startedAgent(t)
+	const sk = "test/s"
+
+	// Close the inject gate: a delivering autonomous run is in flight.
+	releaseInFlight := a.markInFlight(sk, true)
+	defer releaseInFlight()
+
+	var ran atomic.Bool
+	errc := make(chan error, 1)
+	go func() {
+		ctx, done := context.WithTimeout(context.Background(), 10*time.Second)
+		defer done()
+		errc <- a.EnqueueInjectWait(ctx, sk, "scheduled_wake", func() { ran.Store(true) })
+	}()
+	// inFlightChanged[sk] appears exactly when the worker enters the gate's
+	// wait loop (InFlightWaitCh creates the entry; nothing else creates it
+	// here) — proof the injection is parked INSIDE the gate, not merely
+	// dequeued.
+	if !waitFor(10*time.Second, func() bool {
+		a.inFlightMu.Lock()
+		defer a.inFlightMu.Unlock()
+		_, gated := a.inFlightChanged[sk]
+		return gated
+	}) {
+		t.Fatal("the injection never entered the inject gate")
+	}
+	if ran.Load() {
+		t.Fatal("premise failed: injection ran past a held gate")
+	}
+
+	cancel()
+	select {
+	case err := <-errc:
+		if !errors.Is(err, ErrShuttingDown) {
+			t.Fatalf("EnqueueInjectWait err = %v, want ErrShuttingDown", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("injection dropped without Refused: caller never released after the ctx ended inside the inject gate")
+	}
+	if ran.Load() {
+		t.Fatal("injection ran although its gate never opened")
+	}
+}
+
+// Post-batch path: an injection drained alongside a user batch is held at
+// the re-login gate — which closed while the batch's turn ran — when the
+// inbox ctx ends.
+func TestInbox_HeldInjectRefusedWhenCtxEndsInPostBatchGate(t *testing.T) {
+	a, cancel := startedAgent(t)
+	a.DelegatedManager = &DelegatedManager{} // the re-login hold is delegated-only
+	const sk = "test/s"
+
+	releaseTurn := make(chan struct{})
+	d := &driverGated{ready: make(chan struct{}, 1), release: releaseTurn}
+	a.Enqueue(Envelope{SessionKey: sk, Text: "turn", Driver: d})
+	if !waitFor(10*time.Second, func() bool {
+		select {
+		case <-d.ready:
+			return true
+		default:
+			return false
+		}
+	}) {
+		t.Fatal("the user turn never started")
+	}
+
+	// An injection lands while the turn runs; a re-login then starts, so the
+	// post-batch gate holds the injection once the turn returns.
+	var ran atomic.Bool
+	errc := make(chan error, 1)
+	go func() {
+		ctx, done := context.WithTimeout(context.Background(), 10*time.Second)
+		defer done()
+		errc <- a.EnqueueInjectWait(ctx, sk, "scheduled_wake", func() { ran.Store(true) })
+	}()
+	if !waitFor(10*time.Second, func() bool { return len(a.lookupInbox(sk).ch) == 1 }) {
+		t.Fatal("the injection never reached the session channel")
+	}
+	claimRelogin(t)
+	close(releaseTurn)
+	// The worker drains the injection into the post-batch held set and parks
+	// it at the now-closed re-login gate.
+	if !waitFor(10*time.Second, func() bool { return len(a.lookupInbox(sk).ch) == 0 }) {
+		t.Fatal("the injection was never drained into the post-batch hold")
+	}
+	if ran.Load() {
+		t.Fatal("premise failed: the held injection ran while the re-login gate was closed")
+	}
+
+	cancel()
+	select {
+	case err := <-errc:
+		if !errors.Is(err, ErrShuttingDown) {
+			t.Fatalf("EnqueueInjectWait err = %v, want ErrShuttingDown", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("held injection dropped without Refused: caller never released after the ctx ended inside the post-batch gate")
+	}
+	if ran.Load() {
+		t.Fatal("injection ran although its gate never opened")
+	}
+}
+
 // The observed #2059 shape: a system turn is waiting in RunInference for an
 // in-flight turn to finish; shutdown begins; the in-flight turn then ends. The
 // system turn must not be dispatched into the draining session.

@@ -1038,6 +1038,40 @@ func TestTurnLimit_NonDeliveringInFlightDuringWaitHoldsAfterGrant(t *testing.T) 
 	}
 }
 
+// TestTurnLimit_ReloginNeverHoldsAPIAgent pins the delegated-only scope of
+// the #1932 re-login hold through the #2281 gate-then-slot order: the gate
+// is process-wide, but an API agent (no DelegatedManager) shares no CC
+// credential, so its user batch must pass every re-login hold and reach the
+// slot wait — proven by the queued notice, which only fires once the gates
+// are open (a held gate parks the worker before the slot step).
+func TestTurnLimit_ReloginNeverHoldsAPIAgent(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+	a.TurnLimit = NewTurnLimiter(1)
+	// No DelegatedManager: an API agent.
+
+	releaseA := make(chan struct{})
+	dA := &driverGated{ready: make(chan struct{}, 1), release: releaseA}
+	dB := &driverGated{ready: make(chan struct{}, 1)}
+	notices := newNoticeRecorder()
+	a.TurnQueuedNotifyFunc = notices.hook()
+
+	a.Enqueue(Envelope{SessionKey: "sess/A", Text: "a", Driver: dA})
+	mustRecv(t, dA.ready, "A to hold the only slot")
+
+	claimRelogin(t)
+	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "b", Driver: dB})
+	mustRecv(t, notices.signal, "B to pass the re-login hold and queue for the slot")
+	select {
+	case <-dB.ready:
+		t.Fatal("B ran while A held the only slot")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	close(releaseA)
+	mustRecv(t, dB.ready, "B to run once the slot frees")
+}
+
 // TestTurnLimit_StopAfterGrantDropsBatch proves a /stop that lands after
 // the slots were granted but before the wait is settled still drops the
 // batch: CancelSession returned true (and logged the drop), so the batch
