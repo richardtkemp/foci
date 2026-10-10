@@ -89,7 +89,7 @@ func TestLoadRejectsInvalidTaggedDurations(t *testing.T) {
 		},
 		{
 			"model map keys visited in sorted order",
-			durationTestBase + "\n[models.zeta]\nmodel = \"anthropic/claude-haiku-4-5-20251001\"\ncache_ttl = \"banana\"\n\n[models.alpha]\nmodel = \"anthropic/claude-haiku-4-5-20251001\"\ncache_ttl = \"banana\"",
+			durationTestBase + "\n[models.zeta]\nmodel = \"anthropic/claude-sonnet-4-5\"\ncache_ttl = \"banana\"\n\n[models.alpha]\nmodel = \"anthropic/claude-haiku-4-5-20251001\"\ncache_ttl = \"banana\"",
 			`[models.alpha] cache_ttl = "banana":`,
 		},
 	}
