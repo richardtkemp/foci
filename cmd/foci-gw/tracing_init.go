@@ -25,7 +25,7 @@ func initTracing(ctx context.Context, cfg *config.Config, store *secrets.Store) 
 	}
 	pk, _ := store.Get("langfuse.public_key")
 	sk, _ := store.Get("langfuse.secret_key")
-	err := telemetry.Init(ctx, telemetry.Options{
+	opts := telemetry.Options{
 		Endpoint:       cfg.Tracing.Endpoint,
 		PublicKey:      pk,
 		SecretKey:      sk,
@@ -36,7 +36,8 @@ func initTracing(ctx context.Context, cfg *config.Config, store *secrets.Store) 
 		FlushTimeout:   cfg.Tracing.FlushTimeoutDuration(),
 		ServiceVersion: version,
 		SecretValues:   store.RedactionValues,
-	})
+	}
+	err := telemetry.Init(ctx, opts)
 	if err != nil {
 		// Misconfiguration disables tracing; it never stops the gateway.
 		tracingLog.Errorf("tracing disabled: %v", err)
