@@ -353,9 +353,16 @@ func (t *Turn) thinking() string {
 	return t.thinkingDeltas.String()
 }
 
-// Retry records an upstream retry as a span event on the root.
+// Retry records an upstream retry as a span event on the root. The error
+// text is free text that exports with content = false too, so it goes
+// through field — the one redaction-and-cap path — like every other
+// exported text.
 func (t *Turn) Retry(attempt int, endpoint string, err error) {
 	if t == nil {
+		return
+	}
+	_, o, ok := current()
+	if !ok {
 		return
 	}
 	t.mu.Lock()
@@ -366,7 +373,7 @@ func (t *Turn) Retry(attempt int, endpoint string, err error) {
 	t.retries++
 	msg := ""
 	if err != nil {
-		msg = err.Error()
+		msg, _ = field(o, err.Error())
 	}
 	t.root.AddEvent("retry", trace.WithAttributes(
 		attribute.Int("attempt", attempt),
@@ -378,8 +385,11 @@ func (t *Turn) Retry(attempt int, endpoint string, err error) {
 // Complete closes the root span: output, model, usage (as metadata — cost and
 // usage are BILLED on the generation observations the api.db hook writes, so
 // the root carries them for reading only, never for summing), the system
-// prompt record, and error status. Any tool span still open is closed as
-// unresolved so the export is never held hostage to a lost hook.
+// prompt record, and error status. The error text is free text that exports
+// with content = false too, so it goes through field — the one
+// redaction-and-cap path — like every other exported text, once, for both
+// the status attribute and the span status. Any tool span still open is
+// closed as unresolved so the export is never held hostage to a lost hook.
 func (t *Turn) Complete(finalText, model string, usage *provider.Usage, cost float64, err error) {
 	if t == nil {
 		return
@@ -449,11 +459,12 @@ func (t *Turn) Complete(finalText, model string, usage *provider.Usage, cost flo
 		}
 	}
 	if err != nil {
+		msg, _ := field(o, err.Error())
 		attrs = append(attrs,
 			attribute.String(attrObsLevel, "ERROR"),
-			attribute.String(attrObsStatus, err.Error()),
+			attribute.String(attrObsStatus, msg),
 		)
-		t.root.SetStatus(codes.Error, err.Error())
+		t.root.SetStatus(codes.Error, msg)
 	}
 	t.root.SetAttributes(attrs...)
 

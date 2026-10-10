@@ -1950,7 +1950,13 @@ scrubbed and values removed from the file stay scrubbed (a rotated-out
 credential can still appear in later output). `Redactor` replaces the values
 outright (longest first, ≥ 8 chars) before the generic credential patterns
 run — no hashing dance, unlike the backfill ETL which runs outside the
-process. `content = false` keeps shape, timing, usage and cost only.
+process. `content = false` keeps shape, timing, usage and cost only — plus the
+operational free text: error messages (the retry event's `error` attribute, an
+errored turn's `langfuse.observation.status_message` and OTel status
+description) and subagent labels (span name + `label` metadata — the Agent
+tool's model-written description) still export, and every one of them goes
+through the same redactor and `max_field_bytes` cap via `field`; no exported
+free text bypasses it.
 
 **Export path**: OTel SDK `BatchSpanProcessor` (2 s / 256 spans / 4096 queue) →
 `otlptracehttp` with basic auth → `<endpoint>/v1/traces`. Exporter errors go through

@@ -60,8 +60,9 @@ type Options struct {
 	PublicKey, SecretKey string
 	// Environment is stamped on every span as langfuse.environment.
 	Environment string
-	// Content attaches prompt/reply/thinking/tool text; false exports shape,
-	// timing, usage and cost only.
+	// Content attaches prompt/reply/thinking/tool text; false exports
+	// shape, timing, usage and cost only, plus (redacted) error messages
+	// and subagent labels — operational data, not conversation content.
 	Content bool
 	// SystemPrompt additionally exports the full system prompt text once per
 	// session per distinct prompt hash (hash + length are always recorded).
@@ -249,6 +250,12 @@ func current() (trace.Tracer, Options, bool) {
 // the live secret-value function in o, applied, then capped at MaxFieldBytes
 // with a marker saying how much was cut. Returns the number of redactions
 // applied so callers can record it in metadata.
+//
+// Every free text that leaves the process goes through field — the one
+// redaction-and-cap path. That is the content fields while Content is on,
+// and always the error strings (the retry event's error attribute, an
+// errored turn's status_message and span status) and the subagent label,
+// which are operational data and export with Content off too.
 func field(o Options, s string) (string, int) {
 	if s == "" {
 		return "", 0

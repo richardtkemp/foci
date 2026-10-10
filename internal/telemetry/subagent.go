@@ -19,7 +19,6 @@ import (
 type subagentRun struct {
 	span    trace.Span
 	turnID  string // the SPAWNING turn — the trace this run belongs to
-	label   string
 	texts   []string
 	prompts []string
 	started time.Time
@@ -59,7 +58,11 @@ func itoa(n int) string {
 // SubagentStart opens an "agent" child under this turn's root for the run.
 // groupKey is the Agent tool's tool_use id — also api.db's subagent_id for
 // the run's spend (#1946; agent_id there is the OWNING agent, not this),
-// which is why SubagentSpanID keys on it.
+// which is why SubagentSpanID keys on it. The label is the Agent tool's
+// description — model-written free text that exports with content = false
+// too (span name + metadata), so it goes through field — the one
+// redaction-and-cap path — like every other exported text, once, for both
+// carriers.
 func (t *Turn) SubagentStart(groupKey, label, prompt string, run int) {
 	if t == nil {
 		return
@@ -84,6 +87,7 @@ func (t *Turn) SubagentStart(groupKey, label, prompt string, run int) {
 	if _, dup := subRuns[key]; dup {
 		return
 	}
+	label, _ = field(o, label)
 	name := "subagent"
 	if label != "" {
 		name = "subagent: " + label
@@ -107,7 +111,7 @@ func (t *Turn) SubagentStart(groupKey, label, prompt string, run int) {
 	}
 	ctx := withIDs(rootCtx, trace.TraceID{}, SubagentSpanID(turnID, groupKey, run))
 	_, span := tr.Start(ctx, name, trace.WithAttributes(attrs...))
-	subRuns[key] = &subagentRun{span: span, turnID: turnID, label: label, started: time.Now()}
+	subRuns[key] = &subagentRun{span: span, turnID: turnID, started: time.Now()}
 }
 
 // SubagentText appends a text block the run produced.

@@ -13,7 +13,7 @@ type TracingConfig struct {
 	Enabled       bool   `toml:"enabled" desc:"Export a trace for every agent turn (tool calls, subagents, prompt/reply content, usage and cost) over OTLP/HTTP to the endpoint below"`
 	Endpoint      string `toml:"endpoint" desc:"OTLP/HTTP base URL; spans are POSTed to <endpoint>/v1/traces. For self-hosted Langfuse: http://127.0.0.1:3100/api/public/otel"`
 	Environment   string `toml:"environment" default:"production" desc:"Value of the langfuse.environment attribute stamped on every span (e.g. production, dev)"`
-	Content       *bool  `toml:"content" default:"true" desc:"Attach prompt, reply, thinking and tool input/output text to spans (secret values are redacted before export); false exports shape, timing, usage and cost only"`
+	Content       *bool  `toml:"content" default:"true" desc:"Attach prompt, reply, thinking and tool input/output text to spans (secret values are redacted before export); false exports shape, timing, usage and cost only (plus redacted error messages and subagent labels)"`
 	SystemPrompt  *bool  `toml:"system_prompt" default:"true" desc:"Also export the full system prompt text as a child event the first time a session launches with a new prompt hash (the hash and length are always recorded)"`
 	MaxFieldBytes int    `toml:"max_field_bytes" default:"2097152" desc:"Longest text field exported on a span before truncation, in bytes"`
 	FlushTimeout  string `toml:"flush_timeout" default:"5s" type:"duration" desc:"How long shutdown waits for buffered spans to export"`
