@@ -629,3 +629,82 @@ func (r *permRecorder) findallPath(suffix string) []permRequest {
 	}
 	return out
 }
+
+// TestQuestionPermission_UsesQuestionPromptFnWhenSet proves the
+// question/approval split (#2275): with a question function installed via
+// SetQuestionPromptFunc, a question-type permission goes to IT and never to
+// permPromptFn — the question reaches the asking session's chat, not the
+// owner's default chat.
+func TestQuestionPermission_UsesQuestionPromptFnWhenSet(t *testing.T) {
+	b, _ := newPermTestBackend(t)
+	var questionCalls, permCalls int
+	var gotID string
+	// newPermTestBackend installs its own permPromptFn recorder; layer the
+	// split-fn counters on top of it.
+	prevPerm := b.permPromptFn
+	b.permPromptFn = func(id, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+		permCalls++
+		prevPerm(id, text, summary, attachmentPath, choices)
+	}
+	b.SetQuestionPromptFunc(func(id, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+		questionCalls++
+		gotID = id
+	})
+
+	meta, _ := json.Marshal(questionMetadata{
+		Header: "Flavour",
+		Text:   "Which flavour?",
+		Options: []questionOption{
+			{Label: "Vanilla"},
+			{Label: "Chocolate"},
+		},
+	})
+	b.onPermissionUpdated(Permission{
+		ID:        "perm-q-split",
+		Type:      PermQuestion,
+		Title:     "Which flavour?",
+		SessionID: "sess-perm",
+		Metadata:  meta,
+	})
+
+	if questionCalls != 1 {
+		t.Errorf("question fn called %d times, want 1", questionCalls)
+	}
+	if permCalls != 0 {
+		t.Errorf("permPromptFn called %d times, want 0 (a question is not an approval)", permCalls)
+	}
+	if gotID != "perm-q-split" {
+		t.Errorf("question fn id = %q, want %q", gotID, "perm-q-split")
+	}
+}
+
+// TestRegularPermission_KeepsPermPromptFnWhenQuestionFnSet is the other half
+// of the split: with a question function installed, a REGULAR permission still
+// goes through permPromptFn and never through the question function (#2275).
+func TestRegularPermission_KeepsPermPromptFnWhenQuestionFnSet(t *testing.T) {
+	b, _ := newPermTestBackend(t)
+	var questionCalls, permCalls int
+	prevPerm := b.permPromptFn
+	b.permPromptFn = func(id, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+		permCalls++
+		prevPerm(id, text, summary, attachmentPath, choices)
+	}
+	b.SetQuestionPromptFunc(func(id, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+		questionCalls++
+	})
+
+	b.onPermissionUpdated(Permission{
+		ID:        "perm-bash-split",
+		Type:      PermBash,
+		Title:     "Run bash: git status",
+		SessionID: "sess-perm",
+		Metadata:  json.RawMessage(`{}`),
+	})
+
+	if permCalls != 1 {
+		t.Errorf("permPromptFn called %d times, want 1 (approvals keep the permission fn)", permCalls)
+	}
+	if questionCalls != 0 {
+		t.Errorf("question fn called %d times, want 0 (a regular permission is not a question)", questionCalls)
+	}
+}

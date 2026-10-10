@@ -103,7 +103,9 @@ func (b *Backend) handleUserQuestion(msg *PermissionRequest) {
 
 // presentQuestion sends question idx of pp as an interactive prompt. idx is
 // passed in rather than read from pp.currentIndex, which an answer may be
-// advancing concurrently under permMu.
+// advancing concurrently under permMu. A question is the agent asking its own
+// user: it goes through the question function when the gateway set one, else
+// the permission function (#2275).
 func (b *Backend) presentQuestion(pp *pendingPermission, idx int) {
 	q := &pp.questions[idx]
 	text := formatQuestionText(q, idx, len(pp.questions))
@@ -113,10 +115,10 @@ func (b *Backend) presentQuestion(pp *pendingPermission, idx int) {
 	}
 	choices := questionChoices(q)
 
-	if b.permPromptFn != nil {
-		b.permPromptFn(pp.requestID, text, summary, "", choices)
+	if fn := b.questionOrPermPromptFn(); fn != nil {
+		fn(pp.requestID, text, summary, "", choices)
 	} else {
-		b.logger().Warnf("permPromptFn nil for question req_id=%s, not displayed", pp.requestID)
+		b.logger().Warnf("prompt fn nil for question req_id=%s, not displayed", pp.requestID)
 	}
 }
 

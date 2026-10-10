@@ -309,6 +309,7 @@ type Backend struct {
 
 	// Callbacks (set before Start, read-only after)
 	permPromptFn    delegator.PermissionPromptFunc
+	questionFn      delegator.PermissionPromptFunc // the agent asking its own user (AskUserQuestion, elicitation); nil = share permPromptFn (#2275)
 	onSessionReady  func(sessionID string)
 	typingFunc      func(typing bool)
 	onAuthFailure   func(detail string)             // fired when CC reports a 401 auth failure (#843)

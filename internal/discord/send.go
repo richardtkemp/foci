@@ -218,15 +218,34 @@ func (b *Bot) SendNotificationToSession(sessionKey, text string) string {
 // sessionKey, rather than the default channel. The compaction flow sends a ⏳
 // start notice and edits it in place to ✅ — both must target the session's
 // channel, else the edit addresses a message ID from a different channel and
-// fails (#911). Implements platform.SessionNotifier.
+// fails (#911). Implements platform.SessionNotifier; also the body of
+// EditMessageTextInSession (the interactive-prompt spelling of the same
+// operation).
 func (b *Bot) EditNotificationInSession(sessionKey, msgID, text string) error {
 	channelID := b.channelIDForSession(sessionKey)
 	if channelID == 0 {
 		return fmt.Errorf("no channel for session %s", sessionKey)
 	}
+	return b.editMessageInChannel(channelID, msgID, text)
+}
+
+// EditMessageTextInSession edits an existing message's text and removes
+// buttons, in the channel that owns sessionKey. A question the agent asks its
+// own user must be edited in THAT user's channel on a shared primary bot, else
+// the edit addresses a message ID from a different channel and fails (#2275).
+// Implements platform.SessionButtonSender.
+func (b *Bot) EditMessageTextInSession(sessionKey, msgID, text string) error {
+	return b.EditNotificationInSession(sessionKey, msgID, text)
+}
+
+// editMessageInChannel is the single button-stripping edit implementation
+// shared by EditNotificationInSession / EditMessageTextInSession and the
+// default-channel EditMessageText.
+func (b *Bot) editMessageInChannel(channelID int64, msgID, text string) error {
+	channelIDStr := strconv.FormatInt(channelID, 10)
 	noComponents := []discordgo.MessageComponent{}
 	_, err := b.api.ChannelMessageEditComplex(&discordgo.MessageEdit{
-		Channel:    strconv.FormatInt(channelID, 10),
+		Channel:    channelIDStr,
 		ID:         msgID,
 		Content:    &text,
 		Components: &noComponents,
@@ -530,19 +549,35 @@ func (b *Bot) SendAnimationToChat(chatID int64, filePath, caption string) error 
 	return b.sendMediaFile(chatID, filePath, caption)
 }
 
-// SendTextWithButtons sends a text message with inline buttons to the default channel.
-// Returns the message ID (as string) for later editing.
+// SendTextWithButtons sends a text message with inline buttons to the default
+// channel (falling back to the last channel). Returns the message ID (as
+// string) for later editing. Prompt routing (which channel a given prompt must
+// reach) is decided by the caller — see SendTextWithButtonsToSession.
 func (b *Bot) SendTextWithButtons(text string, buttons []platform.ButtonChoice, callbackPrefix string) (string, error) {
-	channelID := b.DefaultChatID()
-	if channelID == 0 {
-		b.channelMu.Lock()
-		channelID = b.channelID
-		b.channelMu.Unlock()
-	}
+	channelID := b.defaultChannelIDOrLast()
 	if channelID == 0 {
 		return "", fmt.Errorf("no channel ID -- no default channel configured")
 	}
+	return b.sendTextWithButtonsToChannel(channelID, text, buttons, callbackPrefix)
+}
 
+// SendTextWithButtonsToSession sends a text message with inline buttons to the
+// channel that owns sessionKey, rather than the default channel. A question
+// the agent asks its own user must land in THAT user's channel on a shared
+// primary bot, else the wrong user sees it and a typed answer cannot reach the
+// asking session (#2275). Falls back to the default channel when the key
+// carries no channel ID. Implements platform.SessionButtonSender.
+func (b *Bot) SendTextWithButtonsToSession(sessionKey, text string, buttons []platform.ButtonChoice, callbackPrefix string) (string, error) {
+	channelID := b.channelIDForSession(sessionKey)
+	if channelID == 0 {
+		return "", fmt.Errorf("no channel ID -- no default channel configured")
+	}
+	return b.sendTextWithButtonsToChannel(channelID, text, buttons, callbackPrefix)
+}
+
+// sendTextWithButtonsToChannel is the single send-with-buttons implementation
+// shared by the default-channel and session-addressed entry points.
+func (b *Bot) sendTextWithButtonsToChannel(channelID int64, text string, buttons []platform.ButtonChoice, callbackPrefix string) (string, error) {
 	channelIDStr := strconv.FormatInt(channelID, 10)
 	components := buildButtonComponents(buttons, callbackPrefix)
 	msg, err := b.api.ChannelMessageSendComplex(channelIDStr, &discordgo.MessageSend{
@@ -555,41 +590,37 @@ func (b *Bot) SendTextWithButtons(text string, buttons []platform.ButtonChoice, 
 	return msg.ID, nil
 }
 
-// EditMessageText edits an existing message's text and removes buttons.
+// EditMessageText edits an existing message's text and removes buttons, in the
+// default channel (falling back to the last channel).
 func (b *Bot) EditMessageText(msgID string, text string) error {
-	channelID := b.DefaultChatID()
-	if channelID == 0 {
-		b.channelMu.Lock()
-		channelID = b.channelID
-		b.channelMu.Unlock()
-	}
+	channelID := b.defaultChannelIDOrLast()
 	if channelID == 0 {
 		return fmt.Errorf("no channel ID -- no default channel configured")
 	}
-
-	channelIDStr := strconv.FormatInt(channelID, 10)
-	noComponents := []discordgo.MessageComponent{}
-	_, err := b.api.ChannelMessageEditComplex(&discordgo.MessageEdit{
-		Channel:    channelIDStr,
-		ID:         msgID,
-		Content:    &text,
-		Components: &noComponents,
-	})
-	return err
+	return b.editMessageInChannel(channelID, msgID, text)
 }
 
-// EditMessageWithButtons edits an existing message's text and replaces its buttons.
+// EditMessageWithButtons edits an existing message's text and replaces its
+// buttons, in the default channel (falling back to the last channel).
 func (b *Bot) EditMessageWithButtons(msgID string, text string, buttons []platform.ButtonChoice, callbackPrefix string) error {
-	channelID := b.DefaultChatID()
-	if channelID == 0 {
-		b.channelMu.Lock()
-		channelID = b.channelID
-		b.channelMu.Unlock()
-	}
+	channelID := b.defaultChannelIDOrLast()
 	if channelID == 0 {
 		return fmt.Errorf("no channel ID -- no default channel configured")
 	}
+	return b.editMessageWithButtonsInChannel(channelID, msgID, text, buttons, callbackPrefix)
+}
 
+// EditMessageWithButtonsInSession edits an existing message's text and
+// replaces its buttons, in the channel that owns sessionKey (#2275).
+// Implements platform.SessionButtonSender.
+func (b *Bot) EditMessageWithButtonsInSession(sessionKey, msgID, text string, buttons []platform.ButtonChoice, callbackPrefix string) error {
+	return b.editMessageWithButtonsInChannel(b.channelIDForSession(sessionKey), msgID, text, buttons, callbackPrefix)
+}
+
+// editMessageWithButtonsInChannel is the single edit-with-buttons
+// implementation shared by the default-channel and session-addressed entry
+// points.
+func (b *Bot) editMessageWithButtonsInChannel(channelID int64, msgID, text string, buttons []platform.ButtonChoice, callbackPrefix string) error {
 	channelIDStr := strconv.FormatInt(channelID, 10)
 	components := buildButtonComponents(buttons, callbackPrefix)
 	_, err := b.api.ChannelMessageEditComplex(&discordgo.MessageEdit{

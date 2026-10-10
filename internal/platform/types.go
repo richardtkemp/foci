@@ -327,6 +327,12 @@ type ButtonToggle struct {
 // ButtonSender is optionally implemented by Connection types that support
 // inline keyboard buttons and message editing. Platforms that implement this
 // get interactive messages (buttons with callbacks that edit the message).
+//
+// The three methods address the connection's DEFAULT chat (falling back to
+// the last chat). A prompt that must reach a SPECIFIC session's chat — a
+// question the agent asks its own user, on a multi-user transport where the
+// default chat belongs to someone else — goes through SessionButtonSender
+// instead (see sessionChatResolver in cmd/foci-gw).
 type ButtonSender interface {
 	// SendTextWithButtons sends a message with inline buttons.
 	// Returns the platform message ID (as string) for later editing.
@@ -335,6 +341,32 @@ type ButtonSender interface {
 	EditMessageText(msgID string, text string) error
 	// EditMessageWithButtons edits an existing message's text and replaces its buttons.
 	EditMessageWithButtons(msgID string, text string, buttons []ButtonChoice, callbackPrefix string) error
+}
+
+// SessionButtonSender is optionally implemented by multi-chat ButtonSender
+// connections (Telegram, Discord) with session-addressed versions of the
+// three ButtonSender operations: each one posts to / edits in the chat that
+// owns sessionKey instead of the connection's default chat. It exists for
+// prompts the AGENT asks its own user (the ask tool, AskUserQuestion, MCP
+// elicitation): on a shared primary bot the default chat belongs to the
+// first user, and a question must reach the asking session's chat so its
+// user can answer it (#2275). The target chat is the chat ID embedded in
+// the session key, falling back to the default chat for chatless keys
+// (agent/i<name>) — the same rule as SessionNotifier. A connection that is
+// already session-bound (the app transport) does NOT implement this; it is
+// returned unchanged by the session-chat resolver so its other capabilities
+// keep working.
+type SessionButtonSender interface {
+	// SendTextWithButtonsToSession sends a message with inline buttons to
+	// the chat owning sessionKey. Returns the platform message ID (as
+	// string) for later editing.
+	SendTextWithButtonsToSession(sessionKey, text string, buttons []ButtonChoice, callbackPrefix string) (msgID string, err error)
+	// EditMessageTextInSession edits an existing message's text (removes
+	// buttons) in the chat owning sessionKey.
+	EditMessageTextInSession(sessionKey, msgID, text string) error
+	// EditMessageWithButtonsInSession edits an existing message's text and
+	// replaces its buttons in the chat owning sessionKey.
+	EditMessageWithButtonsInSession(sessionKey, msgID, text string, buttons []ButtonChoice, callbackPrefix string) error
 }
 
 // InteractiveHeaderSetter is optionally implemented by connections that
@@ -351,6 +383,7 @@ type InteractiveHeaderSetter interface {
 // DMs): a per-session notice — e.g. a compaction ⏳/✅ for a non-default user — must
 // land in that user's chat, not the default (#911). Transports that don't implement
 // it fall back to the default-chat SendNotificationDirect/EditMessageText, unchanged.
+// SessionButtonSender is the interactive-prompt counterpart of the same rule.
 type SessionNotifier interface {
 	// SendNotificationToSession sends text to the chat owning sessionKey,
 	// returning the platform message ID (for a later in-place edit) or "".

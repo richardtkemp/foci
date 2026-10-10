@@ -326,20 +326,36 @@ func (b *Bot) SendStartupNotificationWithDiagnosis(agentID string, diagnosis Sta
 	}
 }
 
-// SendTextWithButtons sends a text message with inline keyboard buttons.
-// callbackPrefix is prepended to each button's Data for callback routing.
-// Returns the platform message ID (as string) for later editing.
+// SendTextWithButtons sends a text message with inline keyboard buttons to the
+// default chat (falling back to the last chat). callbackPrefix is prepended to
+// each button's Data for callback routing. Returns the platform message ID (as
+// string) for later editing. Prompt routing (which chat a given prompt must
+// reach) is decided by the caller — see SendTextWithButtonsToSession.
 func (b *Bot) SendTextWithButtons(text string, buttons []platform.ButtonChoice, callbackPrefix string) (string, error) {
-	chatID := b.DefaultChatID()
-	if chatID == 0 {
-		b.chatMu.Lock()
-		chatID = b.chatID
-		b.chatMu.Unlock()
-	}
+	chatID := b.defaultChatIDOrLast()
 	if chatID == 0 {
 		return "", fmt.Errorf("no chat ID — no default chat configured")
 	}
+	return b.sendTextWithButtonsToChat(chatID, text, buttons, callbackPrefix)
+}
 
+// SendTextWithButtonsToSession sends a text message with inline keyboard
+// buttons to the chat that owns sessionKey, rather than the default chat. A
+// question the agent asks its own user must land in THAT user's chat on a
+// shared primary bot, else the wrong user sees it and a typed answer cannot
+// reach the asking session (#2275). Falls back to the default chat when the
+// key carries no chat ID. Implements platform.SessionButtonSender.
+func (b *Bot) SendTextWithButtonsToSession(sessionKey, text string, buttons []platform.ButtonChoice, callbackPrefix string) (string, error) {
+	chatID := b.chatIDForSession(sessionKey)
+	if chatID == 0 {
+		return "", fmt.Errorf("no chat ID — no default chat configured")
+	}
+	return b.sendTextWithButtonsToChat(chatID, text, buttons, callbackPrefix)
+}
+
+// sendTextWithButtonsToChat is the single send-with-keyboard implementation
+// shared by the default-chat and session-addressed entry points.
+func (b *Bot) sendTextWithButtonsToChat(chatID int64, text string, buttons []platform.ButtonChoice, callbackPrefix string) (string, error) {
 	rows := buildButtonRows(buttons, callbackPrefix)
 	msg, err := b.client.SendMessage(chatID, ConvertToTelegramHTML(text, b.tableOpts()), &gotgbot.SendMessageOpts{
 		ParseMode: "HTML",
@@ -353,7 +369,8 @@ func (b *Bot) SendTextWithButtons(text string, buttons []platform.ButtonChoice, 
 	return strconv.FormatInt(msg.MessageId, 10), nil
 }
 
-// EditMessageText edits an existing message's text and removes buttons.
+// EditMessageText edits an existing message's text and removes buttons, in the
+// default chat (falling back to the last chat).
 func (b *Bot) EditMessageText(msgID string, text string) error {
 	return b.editMessageInChat(b.defaultChatIDOrLast(), msgID, text)
 }
@@ -377,19 +394,36 @@ func (b *Bot) editMessageInChat(chatID int64, msgID, text string) error {
 // rather than the default chat. The compaction flow sends a ⏳ start notice and
 // edits it in place to ✅ — both must target the session's chat, else the edit
 // hits the wrong chat (and Telegram rejects it, since the msgID belongs to the
-// session's chat) (#911). Implements platform.SessionNotifier.
+// session's chat) (#911). Implements platform.SessionNotifier; also the body of
+// EditMessageTextInSession (the interactive-prompt spelling of the same
+// operation).
 func (b *Bot) EditNotificationInSession(sessionKey, msgID, text string) error {
 	return b.editMessageInChat(b.chatIDForSession(sessionKey), msgID, text)
 }
 
-// EditMessageWithButtons edits an existing message's text and replaces its buttons.
+// EditMessageTextInSession edits an existing message's text and removes
+// buttons, in the chat that owns sessionKey (#2275). Implements
+// platform.SessionButtonSender.
+func (b *Bot) EditMessageTextInSession(sessionKey, msgID, text string) error {
+	return b.EditNotificationInSession(sessionKey, msgID, text)
+}
+
+// EditMessageWithButtons edits an existing message's text and replaces its
+// buttons, in the default chat (falling back to the last chat).
 func (b *Bot) EditMessageWithButtons(msgID string, text string, buttons []platform.ButtonChoice, callbackPrefix string) error {
-	chatID := b.DefaultChatID()
-	if chatID == 0 {
-		b.chatMu.Lock()
-		chatID = b.chatID
-		b.chatMu.Unlock()
-	}
+	return b.editMessageWithButtonsInChat(b.defaultChatIDOrLast(), msgID, text, buttons, callbackPrefix)
+}
+
+// EditMessageWithButtonsInSession edits an existing message's text and
+// replaces its buttons, in the chat that owns sessionKey (#2275). Implements
+// platform.SessionButtonSender.
+func (b *Bot) EditMessageWithButtonsInSession(sessionKey, msgID, text string, buttons []platform.ButtonChoice, callbackPrefix string) error {
+	return b.editMessageWithButtonsInChat(b.chatIDForSession(sessionKey), msgID, text, buttons, callbackPrefix)
+}
+
+// editMessageWithButtonsInChat is the single edit-with-keyboard implementation
+// shared by the default-chat and session-addressed entry points.
+func (b *Bot) editMessageWithButtonsInChat(chatID int64, msgID, text string, buttons []platform.ButtonChoice, callbackPrefix string) error {
 	id, _ := strconv.ParseInt(msgID, 10, 64)
 	rows := buildButtonRows(buttons, callbackPrefix)
 	_, _, err := b.client.EditMessageText(

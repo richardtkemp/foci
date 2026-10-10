@@ -46,6 +46,7 @@ var spec = delegator.Spec{
 		delegator.CapQuestions:          delegator.Yes(),
 		delegator.CapElicitation:        delegator.No("opencode does not surface MCP elicitation requests"),
 		delegator.CapPlanPermission:     delegator.No("plan approval is not a permission request on opencode"),
+		delegator.CapQuestionPrompt:     delegator.Yes(),
 
 		delegator.CapFoldAttachments:  delegator.No("a message folded into a running turn carries text only"),
 		delegator.CapDeliveryTracking: delegator.No("inputs are fire-and-forget: no proof of consumption"),

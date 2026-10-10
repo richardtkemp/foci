@@ -158,6 +158,7 @@ Every delegated backend declares every capability in its `delegator.Spec` (`inte
 | `questions` | routes answers to the agent's own questions (QuestionResponder) | ✓ | ✗ | ✓ |
 | `elicitation` | answers MCP elicitation requests (ElicitationResponder) | ✓ | ✗ | ✗ |
 | `plan_permission` | turns a typed reply into plan-revision feedback (PlanResponder) | ✓ | n/a | ✗ |
+| `question_prompt` | presents its own questions (AskUserQuestion, elicitation, the question tool) through a separate question prompt function (QuestionPromptSetter) | ✓ | ✗ | ✓ |
 | `fold_attachments` | delivers attachments folded into a running turn (FoldAttachmentCarrier) | ✓ | ✗ | ✗ |
 | `delivery_tracking` | proves each input reached the model and hands back the rest (DeliveryTracker + Spec.TranscriptChecker) | ✓ | ✗ | ✗ |
 | `thread_naming` | names its own sessions (ThreadNameConsumer) | ✗ | ✓ | ✗ |
@@ -193,6 +194,7 @@ Why not:
 - `questions`: codex: the app-server has no question tool.
 - `elicitation`: codex: the app-server does not surface MCP elicitation requests; opencode: opencode does not surface MCP elicitation requests.
 - `plan_permission`: codex (n/a): no plan mode; opencode: plan approval is not a permission request on opencode.
+- `question_prompt`: codex: the app-server has no question prompts.
 - `fold_attachments`: codex: a message folded into a running turn carries text only; opencode: a message folded into a running turn carries text only.
 - `delivery_tracking`: codex: inputs are fire-and-forget: no proof of consumption; opencode: inputs are fire-and-forget: no proof of consumption.
 - `thread_naming`: claude-code: CC does not name its sessions; agents get the set_session_alias tool instead; opencode: foci does not take opencode's session titles.

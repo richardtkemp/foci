@@ -378,7 +378,12 @@ type PromptToggle struct {
 }
 
 // PermissionPromptFunc sends an interactive prompt to the user with keyboard
-// choices. Used for both permission requests and AskUserQuestion prompts.
+// choices. It carries APPROVAL prompts (tool permissions, including
+// ExitPlanMode): requests the agent must be allowed to make, which on a
+// multi-user transport are shown in the owner's default chat. The agent asking
+// its OWN user something (AskUserQuestion, MCP elicitation, the question tool)
+// goes through the separate question function when the backend has one
+// (QuestionPromptSetter) — same signature, routed to the asking session's chat.
 // requestID is the backend's protocol request ID.
 // summary is a short description for post-action display (e.g.
 // "Edit memory/2026-03-27.md"). If nil, the backend falls back to plain text.
@@ -387,6 +392,20 @@ type PromptToggle struct {
 // ExitPlanMode prompt — see ccstream handleToolRequest). Empty for the common
 // case; the platform layer ignores it then.
 type PermissionPromptFunc func(requestID, text, summary, attachmentPath string, choices []PromptChoice)
+
+// QuestionPromptSetter is optionally implemented by backends that can tell
+// their own questions apart from approval prompts: AskUserQuestion, MCP
+// elicitation, the question tool. The gateway installs a second function of
+// the same PermissionPromptFunc shape for those, so it can route a question to
+// the asking session's chat while approval prompts keep going to the owner's
+// default chat (#2275). When no question function is set, the backend presents
+// its questions through the permission function exactly as before — so a
+// caller that never calls the setter keeps its existing behaviour and every
+// existing test fake stays valid. Declared as CapQuestionPrompt
+// (KindInterface) in capabilities.go.
+type QuestionPromptSetter interface {
+	SetQuestionPromptFunc(fn PermissionPromptFunc)
+}
 
 // QuestionResponder is optionally implemented by backends that support
 // the AskUserQuestion tool. It allows the agent layer to route user

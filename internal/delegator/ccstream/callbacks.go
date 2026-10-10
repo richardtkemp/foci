@@ -4,8 +4,27 @@ import (
 	"foci/internal/delegator"
 )
 
-// SetPermissionPromptFunc sets the function used to send permission prompts.
+// SetPermissionPromptFunc sets the function used to send permission prompts
+// (approval prompts, including ExitPlanMode). Questions the agent asks its own
+// user go through SetQuestionPromptFunc when one is set.
 func (b *Backend) SetPermissionPromptFunc(fn delegator.PermissionPromptFunc) { b.permPromptFn = fn }
+
+// SetQuestionPromptFunc sets the function used to present the agent's own
+// questions (AskUserQuestion, MCP elicitation) — the same shape as the
+// permission function, but routed by the gateway to the asking session's chat
+// (#2275). Implements delegator.QuestionPromptSetter. Optional: unset, every
+// question falls back to the permission function exactly as before.
+func (b *Backend) SetQuestionPromptFunc(fn delegator.PermissionPromptFunc) { b.questionFn = fn }
+
+// questionOrPermPromptFn returns the prompt function a question the agent asks
+// its own user should go through: the question function when the gateway set
+// one, else the permission function (the pre-#2275 single-pipeline behaviour).
+func (b *Backend) questionOrPermPromptFn() delegator.PermissionPromptFunc {
+	if b.questionFn != nil {
+		return b.questionFn
+	}
+	return b.permPromptFn
+}
 
 // SetOnPromptsCleared sets a callback fired when the last outstanding prompt
 // (permission, question, or elicitation) is removed. Used by

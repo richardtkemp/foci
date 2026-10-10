@@ -84,13 +84,22 @@ type DelegatedManager struct {
 	// ran it. Empty in tests that build the manager by hand.
 	BackendType string
 
-	// PermissionPromptFunc sends a permission prompt with keyboard choices.
-	// requestID is the CC protocol request ID. The platform layer should
-	// register a per-prompt cancel listener via RegisterPromptCancelListener
-	// at the same time it sends the interactive UI, so the UI is cleaned up
-	// if CC cancels the prompt before the user responds (e.g. follow-up
-	// message aborted the in-flight tool).
+	// PermissionPromptFunc sends a permission prompt (an APPROVAL prompt) with
+	// keyboard choices. requestID is the CC protocol request ID. The platform
+	// layer should register a per-prompt cancel listener via
+	// RegisterPromptCancelListener at the same time it sends the interactive
+	// UI, so the UI is cleaned up if CC cancels the prompt before the user
+	// responds (e.g. follow-up message aborted the in-flight tool).
 	PermissionPromptFunc func(sessionKey, requestID, text, summary, attachmentPath string, choices []delegator.PromptChoice)
+
+	// QuestionPromptFunc presents a question the agent asks its OWN user
+	// (AskUserQuestion, MCP elicitation, the question tool) with keyboard
+	// choices — same signature and contract as PermissionPromptFunc, but the
+	// gateway routes it to the asking session's chat instead of the default
+	// chat (#2275). Only wired to backends implementing
+	// delegator.QuestionPromptSetter; on the others the backend presents its
+	// questions through the permission function and this field is unused.
+	QuestionPromptFunc func(sessionKey, requestID, text, summary, attachmentPath string, choices []delegator.PromptChoice)
 
 	// TypingFunc controls the platform typing indicator for a session.
 	// Called with true when CC starts working, false on turn complete.
@@ -1186,6 +1195,19 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 			m.SetPermissionPending(key, true)
 			m.PermissionPromptFunc(key, requestID, text, summary, attachmentPath, choices)
 		})
+	}
+	// Questions the agent asks its own user get their own function on backends
+	// that can tell them apart (delegator.QuestionPromptSetter); the wrapper
+	// does the same pending-prompt bookkeeping as the permission one, so a
+	// blocking question still gates WaitForPermission exactly as before (#2275).
+	if m.QuestionPromptFunc != nil {
+		if qs, ok := delegator.As[delegator.QuestionPromptSetter](mb.be); ok {
+			qs.SetQuestionPromptFunc(func(requestID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+				key := sk()
+				m.SetPermissionPending(key, true)
+				m.QuestionPromptFunc(key, requestID, text, summary, attachmentPath, choices)
+			})
+		}
 	}
 	mb.be.SetOnPromptsCleared(func() {
 		m.SetPermissionPending(sk(), false)

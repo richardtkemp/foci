@@ -212,7 +212,10 @@ func parseElicProperty(raw json.RawMessage) (elicProperty, bool) {
 
 // OnElicitationRequest handles an elicitation control_request from CC.
 // It builds pending state, stores it, and presents the first prompt to the
-// user via permPromptFn — reusing the same platform pipeline as permissions.
+// user via the question prompt function (falling back to the permission
+// pipeline when no question function is set) — an elicitation's free-text
+// answers are typed into the session's own chat, so it counts as a question
+// (#2275).
 func (b *Backend) OnElicitationRequest(msg *ElicitationRequest) {
 	b.touchActivity()
 	b.handleElicitation(msg)
@@ -392,15 +395,16 @@ func elicFieldChoices(prop elicProperty) []delegator.PromptChoice {
 	return choices
 }
 
-// callPrompt forwards to permPromptFn, logging a warning when the callback
-// is nil so the prompt isn't silently dropped. Matches permissions.go's
-// warning style for parity.
+// callPrompt forwards a question to the prompt function the gateway picked for
+// questions (SetQuestionPromptFunc, else the permission function), logging a
+// warning when neither is set so the prompt isn't silently dropped. Matches
+// permissions.go's warning style for parity.
 func (b *Backend) callPrompt(requestID, text, summary string, choices []delegator.PromptChoice) {
-	if b.permPromptFn != nil {
-		b.permPromptFn(requestID, text, summary, "", choices)
+	if fn := b.questionOrPermPromptFn(); fn != nil {
+		fn(requestID, text, summary, "", choices)
 		return
 	}
-	b.logger().Warnf("permPromptFn nil for elicitation req_id=%s, prompt not displayed", requestID)
+	b.logger().Warnf("prompt fn nil for elicitation req_id=%s, prompt not displayed", requestID)
 }
 
 // ---------------------------------------------------------------------------

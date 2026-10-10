@@ -851,3 +851,46 @@ func TestRespondToQuestion_OneResponsePerRequest(t *testing.T) {
 		buf.Reset()
 	}
 }
+
+// TestAskUserQuestion_UsesQuestionPromptFnWhenSet proves the question/approval
+// split (#2275): with a question function installed via SetQuestionPromptFunc,
+// an AskUserQuestion prompt goes to IT, and the permission function is not
+// called — the question reaches the asking session's chat, not the owner's
+// default chat.
+func TestAskUserQuestion_UsesQuestionPromptFnWhenSet(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := newTestBackend(&buf)
+	var questionCalls, permCalls int
+	var gotReqID string
+	b.permPromptFn = func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+		permCalls++
+	}
+	b.SetQuestionPromptFunc(func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+		questionCalls++
+		gotReqID = reqID
+	})
+
+	msg := &PermissionRequest{
+		Type:      "control_request",
+		RequestID: "req-q-split",
+		Request: PermissionRequestPayload{
+			Subtype:   "can_use_tool",
+			ToolName:  "AskUserQuestion",
+			ToolUseID: "tu-split",
+			Input:     json.RawMessage(`{"questions":[{"question":"Which color?","header":"Color","options":[{"label":"Red","description":"Warm"}]}]}`),
+		},
+	}
+	b.handleUserQuestion(msg)
+
+	if questionCalls != 1 {
+		t.Errorf("question fn called %d times, want 1", questionCalls)
+	}
+	if permCalls != 0 {
+		t.Errorf("permPromptFn called %d times, want 0 (a question is not an approval)", permCalls)
+	}
+	if gotReqID != "req-q-split" {
+		t.Errorf("question fn reqID = %q, want %q", gotReqID, "req-q-split")
+	}
+}

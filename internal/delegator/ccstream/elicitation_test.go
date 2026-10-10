@@ -719,3 +719,43 @@ func TestElicitation_OneResponsePerRequest(t *testing.T) {
 		buf.Reset()
 	}
 }
+
+// TestElicitation_UsesQuestionPromptFnWhenSet proves the question/approval
+// split for elicitation (#2275): with a question function installed, an
+// elicitation prompt goes to IT, and the permission function is not called.
+// Elicitation counts as a question because its free-text answers are typed
+// into the session's own chat — in the default chat they could never be
+// answered.
+func TestElicitation_UsesQuestionPromptFnWhenSet(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := newTestBackend(&buf)
+	var questionCalls, permCalls int
+	b.permPromptFn = func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+		permCalls++
+	}
+	b.SetQuestionPromptFunc(func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+		questionCalls++
+	})
+
+	msg := &ElicitationRequest{
+		RequestID: "elic-split",
+		Request: ElicitationRequestPayload{
+			Subtype:       "elicitation",
+			McpServerName: "auth-server",
+			Message:       "Please authorize in the browser.",
+			Mode:          "url",
+			URL:           "https://example.test/authorize?state=abc",
+			ElicitationID: "e-43",
+		},
+	}
+	b.OnElicitationRequest(msg)
+
+	if questionCalls != 1 {
+		t.Errorf("question fn called %d times, want 1", questionCalls)
+	}
+	if permCalls != 0 {
+		t.Errorf("permPromptFn called %d times, want 0 (elicitation is a question)", permCalls)
+	}
+}

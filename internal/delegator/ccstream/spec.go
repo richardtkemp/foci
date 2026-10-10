@@ -57,6 +57,7 @@ var spec = delegator.Spec{
 		delegator.CapQuestions:          delegator.Yes(),
 		delegator.CapElicitation:        delegator.Yes(),
 		delegator.CapPlanPermission:     delegator.Yes(),
+		delegator.CapQuestionPrompt:     delegator.Yes(),
 
 		delegator.CapFoldAttachments:  delegator.Yes(),
 		delegator.CapDeliveryTracking: delegator.Yes(),

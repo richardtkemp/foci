@@ -278,6 +278,7 @@ type Backend struct {
 	// by the matching Set* method below; that's enough production-code
 	// use for the unused linter (which excludes tests) to be satisfied.
 	permPromptFn   delegator.PermissionPromptFunc
+	questionFn     delegator.PermissionPromptFunc // the agent asking its own user (the question tool); nil = share permPromptFn (#2275)
 	onSessionReady func(sessionID string)
 	typingFunc     func(typing bool)
 	onAuthFailure  func(detail string)
@@ -336,6 +337,25 @@ func (b *Backend) SessionFilePath() string {
 // permissions.go surfaces pending permissions through it.
 func (b *Backend) SetPermissionPromptFunc(fn delegator.PermissionPromptFunc) {
 	b.permPromptFn = fn
+}
+
+// SetQuestionPromptFunc stores the callback used to present the agent's own
+// questions (the question tool) — the same shape as the permission function,
+// but routed by the gateway to the asking session's chat (#2275). Implements
+// delegator.QuestionPromptSetter. Optional: unset, every question falls back
+// to the permission function exactly as before.
+func (b *Backend) SetQuestionPromptFunc(fn delegator.PermissionPromptFunc) {
+	b.questionFn = fn
+}
+
+// questionOrPermPromptFn returns the prompt function a question the agent asks
+// its own user should go through: the question function when the gateway set
+// one, else the permission function (the pre-#2275 single-pipeline behaviour).
+func (b *Backend) questionOrPermPromptFn() delegator.PermissionPromptFunc {
+	if b.questionFn != nil {
+		return b.questionFn
+	}
+	return b.permPromptFn
 }
 
 // SetOnPromptsCleared wires the delegator.OutstandingRegistry's onEmpty drain hook

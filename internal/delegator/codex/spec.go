@@ -54,6 +54,7 @@ var spec = delegator.Spec{
 		delegator.CapQuestions:          delegator.No("the app-server has no question tool"),
 		delegator.CapElicitation:        delegator.No("the app-server does not surface MCP elicitation requests"),
 		delegator.CapPlanPermission:     delegator.NotApplicable("no plan mode"),
+		delegator.CapQuestionPrompt:     delegator.No("the app-server has no question prompts"),
 
 		delegator.CapFoldAttachments:  delegator.No("a message folded into a running turn carries text only"),
 		delegator.CapDeliveryTracking: delegator.No("inputs are fire-and-forget: no proof of consumption"),

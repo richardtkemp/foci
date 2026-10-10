@@ -26,11 +26,88 @@ import (
 // connection coming and going: a platform reconnect, or a restart where a
 // persisted prompt is re-registered before the platform connection is back up.
 // Resolving lazily at fire time is the same pattern the notify path already uses
-// (see newSessionNotifyFn); this is the one canonical builder for it.
+// (see newSessionNotifyFn); this is the canonical default-chat builder — the
+// session-chat counterpart is sessionChatResolver, and which prompt uses which
+// is: permission/approval prompts and askgw go through this one (the default
+// chat, Dick's 2026-10-09 ruling), questions the agent asks its own user (the
+// ask tool, backend AskUserQuestion/elicitation/opencode question) go through
+// sessionChatResolver (#2275).
 func connResolver(connMgr platform.ConnectionManager, sessionKey, agentID string) platform.ConnResolver {
 	return func() platform.Connection {
 		return connMgr.ForSessionOrPrimary(sessionKey, agentID)
 	}
+}
+
+// sessionChatResolver is connResolver's session-chat counterpart: the thunk it
+// returns re-resolves the live connection for (sessionKey, agentID) on every
+// call and, when that connection can address a SPECIFIC session's chat
+// (platform.SessionButtonSender — Telegram/Discord), wraps it so the three
+// ButtonSender operations post to and edit in the asking session's chat
+// instead of the connection's default one. A question the agent asks its own
+// user must land in that user's chat: on a shared primary bot the default chat
+// belongs to someone else, and a typed answer only feeds the session it is
+// typed into (#2275).
+//
+// A connection without SessionButtonSender (the app, already session-bound) is
+// returned UNCHANGED, so its other prompt capabilities
+// (InteractiveHeaderSetter, InteractiveRemover, BatchButtonSender) keep working
+// exactly as today. Like connResolver, resolution stays lazy: the resolver is
+// re-invoked at edit time (cancel/expiry), never captured up front.
+func sessionChatResolver(connMgr platform.ConnectionManager, sessionKey, agentID string) platform.ConnResolver {
+	return func() platform.Connection {
+		conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
+		if conn == nil {
+			return nil
+		}
+		if sb, ok := conn.(platform.SessionButtonSender); ok {
+			return &sessionChatConn{Connection: conn, sb: sb, sessionKey: sessionKey}
+		}
+		return conn
+	}
+}
+
+// sessionChatConn adapts a platform.SessionButtonSender connection so its
+// ButtonSender methods address the chat owning sessionKey (see
+// sessionChatResolver); every other Connection method forwards unchanged.
+//
+// It deliberately forwards only the Connection surface: Telegram and Discord
+// implement none of the other optional prompt interfaces
+// (InteractiveHeaderSetter, InteractiveRemover, BatchButtonSender,
+// DetailAttacher are app-only today), so the wrapper hides no capability. If a
+// chat platform ever implements one of those, this wrapper must forward it
+// too or that capability is silently lost on the wrapped path.
+type sessionChatConn struct {
+	platform.Connection
+	sb         platform.SessionButtonSender
+	sessionKey string
+}
+
+func (c *sessionChatConn) SendTextWithButtons(text string, buttons []platform.ButtonChoice, callbackPrefix string) (string, error) {
+	return c.sb.SendTextWithButtonsToSession(c.sessionKey, text, buttons, callbackPrefix)
+}
+
+func (c *sessionChatConn) EditMessageText(msgID, text string) error {
+	return c.sb.EditMessageTextInSession(c.sessionKey, msgID, text)
+}
+
+func (c *sessionChatConn) EditMessageWithButtons(msgID, text string, buttons []platform.ButtonChoice, callbackPrefix string) error {
+	return c.sb.EditMessageWithButtonsInSession(c.sessionKey, msgID, text, buttons, callbackPrefix)
+}
+
+// The session-addressed surface forwards too, so the wrapper itself satisfies
+// platform.SessionButtonSender and callers that ask "does this connection
+// address chats?" (e.g. the prompt-attachment routing) get the same answer as
+// for the raw connection.
+func (c *sessionChatConn) SendTextWithButtonsToSession(sessionKey, text string, buttons []platform.ButtonChoice, callbackPrefix string) (string, error) {
+	return c.sb.SendTextWithButtonsToSession(sessionKey, text, buttons, callbackPrefix)
+}
+
+func (c *sessionChatConn) EditMessageTextInSession(sessionKey, msgID, text string) error {
+	return c.sb.EditMessageTextInSession(sessionKey, msgID, text)
+}
+
+func (c *sessionChatConn) EditMessageWithButtonsInSession(sessionKey, msgID, text string, buttons []platform.ButtonChoice, callbackPrefix string) error {
+	return c.sb.EditMessageWithButtonsInSession(sessionKey, msgID, text, buttons, callbackPrefix)
 }
 
 // sharedAgentSetup holds resolved config and helpers shared by both the

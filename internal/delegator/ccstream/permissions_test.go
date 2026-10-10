@@ -1418,3 +1418,59 @@ func TestChoices_BashNoToggle(t *testing.T) {
 		}
 	}
 }
+
+// TestToolPermissions_KeepPermPromptFnWhenQuestionFnSet is the other half of
+// the question/approval split (#2275): with a question function installed,
+// TOOL permissions — plain Bash and ExitPlanMode alike — still go through
+// permPromptFn and never through the question function. Approval prompts stay
+// in the owner's default chat (Dick's 2026-10-09 ruling).
+func TestToolPermissions_KeepPermPromptFnWhenQuestionFnSet(t *testing.T) {
+	t.Parallel()
+
+	planFile := filepath.Join(t.TempDir(), "plan-split.md")
+	if err := os.WriteFile(planFile, []byte("# Plan"), 0o600); err != nil {
+		t.Fatalf("write plan file: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		tool    string
+		input   string
+	}{
+		{"bash", "Bash", `{"command":"rm -rf /"}`},
+		{"exit plan mode", "ExitPlanMode", `{"plan":"# Plan","planFilePath":"` + planFile + `"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			b := &Backend{
+				writer:       NewWriter(nopWriteCloser{&buf}),
+				pendingPerms: make(map[string]*pendingPermission),
+				outstanding:  delegator.NewOutstandingRegistry(),
+			}
+			var permCalls, questionCalls int
+			b.permPromptFn = func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+				permCalls++
+			}
+			b.SetQuestionPromptFunc(func(reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+				questionCalls++
+			})
+
+			b.handleToolRequest(&PermissionRequest{
+				RequestID: "req-perm-split",
+				Request: PermissionRequestPayload{
+					ToolName:    tc.tool,
+					ToolUseID:   "toolu_SPLIT",
+					Description: "Run a command",
+					Input:       json.RawMessage(tc.input),
+				},
+			})
+
+			if permCalls != 1 {
+				t.Errorf("permPromptFn called %d times, want 1 (approvals keep the permission fn)", permCalls)
+			}
+			if questionCalls != 0 {
+				t.Errorf("question fn called %d times, want 0 (a tool permission is not a question)", questionCalls)
+			}
+		})
+	}
+}

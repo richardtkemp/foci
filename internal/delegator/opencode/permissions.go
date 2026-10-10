@@ -27,8 +27,8 @@ import (
 // onPermissionUpdated handles a permission.updated SSE event. Stores
 // the permission, registers it in the OutstandingRegistry, and surfaces
 // it to the user via permPromptFn. Question-type permissions are routed
-// to handleQuestionPermission; all others get the binary Allow/Deny/
-// Always-Allow keyboard.
+// to handleQuestionPermission (which prefers the question prompt function,
+// #2275); all others get the binary Allow/Deny/Always-Allow keyboard.
 func (b *Backend) onPermissionUpdated(perm Permission) {
 	b.surfacePermission(pendingPermission{
 		id:        perm.ID,
@@ -397,13 +397,15 @@ type questionOption struct {
 	Label string `json:"label"`
 }
 
-// handleQuestionPermission renders a question-type permission via
-// permPromptFn. The option list becomes the button choices; the user
-// can also type a custom answer (the platform layer intercepts typed
-// text and calls RespondToQuestion).
+// handleQuestionPermission renders a question-type permission as a prompt to
+// the session's own user. A question goes through the question function when
+// the gateway set one, else the permission function (#2275). The option list
+// becomes the button choices; the user can also type a custom answer (the
+// platform layer intercepts typed text and calls RespondToQuestion).
 func (b *Backend) handleQuestionPermission(perm Permission) {
-	if b.permPromptFn == nil {
-		log.NewComponentLogger(b.logComponent()).Warnf("handleQuestionPermission: permPromptFn nil — question %s not displayed", perm.ID)
+	fn := b.questionOrPermPromptFn()
+	if fn == nil {
+		log.NewComponentLogger(b.logComponent()).Warnf("handleQuestionPermission: prompt fn nil — question %s not displayed", perm.ID)
 		return
 	}
 
@@ -412,7 +414,7 @@ func (b *Backend) handleQuestionPermission(perm Permission) {
 	if err := json.Unmarshal(perm.Metadata, &qm); err != nil {
 		log.NewComponentLogger(b.logComponent()).Warnf("handleQuestionPermission: unmarshal metadata: %v", err)
 		// Fall back to the raw title as the prompt text.
-		b.permPromptFn(perm.ID, perm.Title, perm.Title, "", []delegator.PromptChoice{})
+		fn(perm.ID, perm.Title, perm.Title, "", []delegator.PromptChoice{})
 		return
 	}
 
@@ -427,7 +429,7 @@ func (b *Backend) handleQuestionPermission(perm Permission) {
 	if qm.Header != "" {
 		text = qm.Header + ": " + qm.Text
 	}
-	b.permPromptFn(perm.ID, text, qm.Header, "", choices)
+	fn(perm.ID, text, qm.Header, "", choices)
 }
 
 // RespondToQuestion sends the user's answer to a question-type permission.

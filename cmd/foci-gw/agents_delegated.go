@@ -20,6 +20,7 @@ import (
 	"foci/internal/relogin"
 	"foci/internal/route"
 	"foci/internal/secrets"
+	"foci/internal/session"
 	"foci/internal/tools"
 	"foci/internal/turn"
 	"foci/internal/turnevent"
@@ -362,84 +363,15 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			Env: bc.Env,
 		},
 		PermissionPromptFunc: func(sessionKey, requestID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
-			resolve := connResolver(connMgr, sessionKey, agentID)
-			conn := resolve()
-			if conn == nil {
-				log.NewComponentLogger("agent:"+agentID).Warnf("permission prompt: ForSessionOrPrimary returned nil for session=%s, prompt dropped", sessionKey)
-				return
-			}
-			log.NewComponentLogger("agent:"+agentID).Debugf("permission prompt: sending via %s for session=%s summary=%q reqID=%s", conn.PlatformName(), sessionKey, summary, requestID)
-			// Attachment (e.g. the full ExitPlanMode plan markdown) is sent as a
-			// document before the keyboard so the user sees the content, then the
-			// Allow/Deny buttons. A send failure is non-fatal — fall through to
-			// the prompt so the permission gate still resolves.
-			if attachmentPath != "" {
-				if err := conn.SendDocument(attachmentPath, ""); err != nil {
-					log.NewComponentLogger("agent:"+agentID).Warnf("permission prompt: SendDocument(%q) failed for session=%s: %v", attachmentPath, sessionKey, err)
-				}
-			}
-			var buttons []platform.ButtonChoice
-			for _, c := range choices {
-				btn := platform.ButtonChoice{Label: c.Label, Data: c.Data}
-				if c.Toggle != nil {
-					btn.Toggle = &platform.ButtonToggle{
-						ExtraBody: c.Toggle.ExtraBody,
-						ShowLabel: c.Toggle.ShowLabel,
-						HideLabel: c.Toggle.HideLabel,
-					}
-				}
-				buttons = append(buttons, btn)
-			}
-			reqID := requestID // capture for closure
-			// Use the requestID as the platform prompt ID so the cancel
-			// listener (registered below) can find and edit this exact
-			// message later if CC cancels the request before the user
-			// responds. The resolver (not the conn grabbed above) is stored for
-			// those later edits so they survive a reconnect.
-			_, _ = platform.SendInteractiveMessageWithID(resolve, requestID, summary, text, buttons, func(choice platform.ButtonChoice) string {
-				log.NewComponentLogger("agent:"+agentID).Debugf("permission button pressed: sk=%s reqID=%s choice=%q", sessionKey, reqID, choice.Data)
-				if err := ag.SendPermissionResponse(context.Background(), sessionKey, reqID, choice.Data); err != nil {
-					log.NewComponentLogger("agent:"+agentID).Errorf("SendPermissionResponse failed: sk=%s reqID=%s choice=%q err=%v", sessionKey, reqID, choice.Data, err)
-				}
-				switch {
-				case choice.Data == "deny" || choice.Data == "qa:cancel":
-					if summary != "" {
-						return "❌ " + summary
-					}
-					return "❌ Cancelled"
-				case strings.HasPrefix(choice.Data, "qa:"):
-					return "✅ " + choice.Label
-				default:
-					if summary != "" {
-						return "✅ " + summary
-					}
-					return "✅ Approved"
-				}
-			}, func() {
-				// Expiry: deny the prompt so a turn blocked in WaitForPermission
-				// unblocks instead of orphaning. The message edit to an "expired"
-				// notice is handled by CleanupExpiredInteractive.
-				if err := ag.SendPermissionResponse(context.Background(), sessionKey, reqID, "deny"); err != nil {
-					log.NewComponentLogger("agent:"+agentID).Warnf("expire permission deny failed: sk=%s reqID=%s err=%v", sessionKey, reqID, err)
-				}
-			})
-			// Register a cancel listener so the orphaned inline keyboard is
-			// disabled if CC aborts this prompt before the user responds
-			// (typically because a follow-up message interrupted the
-			// in-flight tool). This replaces the global PermissionCancelFunc
-			// chain with a per-prompt registration owned by the same closure
-			// that created the UI.
-			ag.DelegatedManager.RegisterPromptCancelListener(sessionKey, reqID, func(reason string) {
-				finalText := "❌ tool request cancelled by follow-up message"
-				if summary != "" {
-					finalText = fmt.Sprintf("❌ %s cancelled by follow-up message", summary)
-				}
-				if err := platform.CancelInteractiveMessage(reqID, finalText); err != nil {
-					log.NewComponentLogger("agent:"+agentID).Warnf("cancel interactive message: sk=%s reqID=%s err=%v", sessionKey, reqID, err)
-				} else {
-					log.NewComponentLogger("agent:"+agentID).Debugf("permission cancelled: sk=%s reqID=%s reason=%q", sessionKey, reqID, reason)
-				}
-			})
+			postBackendPrompt(backendPromptDeps{ag: ag, connMgr: connMgr, sessionIdx: sessionIdx, agentID: agentID},
+				promptToDefaultChat, sessionKey, requestID, text, summary, attachmentPath, choices)
+		},
+		// Questions the agent asks its own user go to the asking session's
+		// chat (#2275); only wired on backends implementing
+		// delegator.QuestionPromptSetter (see setBackendCallbacks).
+		QuestionPromptFunc: func(sessionKey, requestID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+			postBackendPrompt(backendPromptDeps{ag: ag, connMgr: connMgr, sessionIdx: sessionIdx, agentID: agentID},
+				promptToSessionChat, sessionKey, requestID, text, summary, attachmentPath, choices)
 		},
 		TypingFunc: func(sessionKey string, typing bool) {
 			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
@@ -499,6 +431,182 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		skillRegistry: br.skillRegistry,
 		skillsDirs:    br.skillsDirs,
 	}, true
+}
+
+// backendPromptKind selects which chat a backend prompt is shown in (#2275):
+// approval prompts go to the owner's default chat (Dick's 2026-10-09 ruling:
+// he approves other users' requests), questions the agent asks its own user
+// go to the asking session's chat.
+type backendPromptKind int
+
+const (
+	// promptToDefaultChat: approval prompts (tool permissions, ExitPlanMode).
+	promptToDefaultChat backendPromptKind = iota
+	// promptToSessionChat: the agent asking its own user (AskUserQuestion,
+	// elicitation, the question tool).
+	promptToSessionChat
+)
+
+// backendPromptDeps are the agent-scoped inputs of postBackendPrompt, explicit
+// so the prompt tests can drive the shared body directly.
+type backendPromptDeps struct {
+	ag         *agent.Agent
+	connMgr    platform.ConnectionManager
+	sessionIdx *session.SessionIndex
+	agentID    string
+}
+
+// postBackendPrompt is the one body behind the two gateway prompt closures
+// (DelegatedManager.PermissionPromptFunc and QuestionPromptFunc — wired in
+// configureDelegated as one-line delegations). It resolves the connection for
+// the prompt's chat (which one depends on kind), sends the optional attachment
+// to that same chat, posts the interactive prompt with the shared click and
+// expiry callbacks, and registers the per-prompt cancel listener. Everything
+// except the destination chat is identical for both kinds.
+func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, requestID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+	logger := log.NewComponentLogger("agent:" + d.agentID)
+	resolve := connResolver(d.connMgr, sessionKey, d.agentID)
+	if kind == promptToSessionChat {
+		resolve = sessionChatResolver(d.connMgr, sessionKey, d.agentID)
+	}
+	conn := resolve()
+	if conn == nil {
+		logger.Warnf("backend prompt: ForSessionOrPrimary returned nil for session=%s, prompt dropped", sessionKey)
+		return
+	}
+	logger.Debugf("backend prompt: sending via %s for session=%s summary=%q reqID=%s", conn.PlatformName(), sessionKey, summary, requestID)
+	if kind == promptToDefaultChat {
+		text = prependRequestOrigin(d.sessionIdx, d.agentID, conn, sessionKey, text)
+	}
+	// Attachment (e.g. the full ExitPlanMode plan markdown) is sent as a
+	// document before the keyboard so the user sees the content, then the
+	// Allow/Deny buttons — to the chat the buttons go to. A send failure is
+	// non-fatal — fall through to the prompt so the permission gate still
+	// resolves.
+	if attachmentPath != "" {
+		if err := sendPromptAttachment(conn, kind, sessionKey, attachmentPath); err != nil {
+			logger.Warnf("backend prompt: SendDocument(%q) failed for session=%s: %v", attachmentPath, sessionKey, err)
+		}
+	}
+	var buttons []platform.ButtonChoice
+	for _, c := range choices {
+		btn := platform.ButtonChoice{Label: c.Label, Data: c.Data}
+		if c.Toggle != nil {
+			btn.Toggle = &platform.ButtonToggle{
+				ExtraBody: c.Toggle.ExtraBody,
+				ShowLabel: c.Toggle.ShowLabel,
+				HideLabel: c.Toggle.HideLabel,
+			}
+		}
+		buttons = append(buttons, btn)
+	}
+	// Use the requestID as the platform prompt ID so the cancel listener
+	// (registered below) can find and edit this exact message later if the
+	// backend cancels the request before the user responds. The resolver
+	// (not the conn grabbed above) is stored for those later edits so they
+	// survive a reconnect — and, for a question, so the cancel/expiry edits
+	// address the asking session's chat.
+	if _, err := platform.SendInteractiveMessageWithID(resolve, requestID, summary, text, buttons, func(choice platform.ButtonChoice) string {
+		logger.Debugf("prompt button pressed: sk=%s reqID=%s choice=%q", sessionKey, requestID, choice.Data)
+		if err := d.ag.SendPermissionResponse(context.Background(), sessionKey, requestID, choice.Data); err != nil {
+			logger.Errorf("SendPermissionResponse failed: sk=%s reqID=%s choice=%q err=%v", sessionKey, requestID, choice.Data, err)
+		}
+		switch {
+		case choice.Data == "deny" || choice.Data == "qa:cancel":
+			if summary != "" {
+				return "❌ " + summary
+			}
+			return "❌ Cancelled"
+		case strings.HasPrefix(choice.Data, "qa:"):
+			return "✅ " + choice.Label
+		default:
+			if summary != "" {
+				return "✅ " + summary
+			}
+			return "✅ Approved"
+		}
+	}, func() {
+		// Expiry: deny the prompt so a turn blocked in WaitForPermission
+		// unblocks instead of orphaning. The message edit to an "expired"
+		// notice is handled by CleanupExpiredInteractive.
+		if err := d.ag.SendPermissionResponse(context.Background(), sessionKey, requestID, "deny"); err != nil {
+			logger.Warnf("expire prompt deny failed: sk=%s reqID=%s err=%v", sessionKey, requestID, err)
+		}
+	}); err != nil {
+		logger.Warnf("backend prompt send failed: sk=%s reqID=%s err=%v", sessionKey, requestID, err)
+	}
+	// Register a cancel listener so the orphaned inline keyboard is
+	// disabled if the backend aborts this prompt before the user responds
+	// (typically because a follow-up message interrupted the in-flight
+	// tool). This is a per-prompt registration owned by the same function
+	// that created the UI.
+	d.ag.DelegatedManager.RegisterPromptCancelListener(sessionKey, requestID, func(reason string) {
+		finalText := "❌ tool request cancelled by follow-up message"
+		if summary != "" {
+			finalText = fmt.Sprintf("❌ %s cancelled by follow-up message", summary)
+		}
+		if err := platform.CancelInteractiveMessage(requestID, finalText); err != nil {
+			logger.Warnf("cancel interactive message: sk=%s reqID=%s err=%v", sessionKey, requestID, err)
+		} else {
+			logger.Debugf("prompt cancelled: sk=%s reqID=%s reason=%q", sessionKey, requestID, reason)
+		}
+	})
+}
+
+// prependRequestOrigin prepends one origin line to a permission prompt that is
+// shown in a chat which is not the requesting session's own — exactly the case
+// where the connection addresses chats itself (platform.SessionButtonSender —
+// Telegram/Discord) and the session key's chat ID is absent or differs from
+// the default chat's. The owner approving another user's request needs to see
+// whose it is (#2275). Sessions of the default chat (including branch keys
+// such as main/c999/b123, which parse to the root chat) and every app prompt
+// (the connection is already session-bound) get the text unchanged.
+func prependRequestOrigin(sessionIdx *session.SessionIndex, agentID string, conn platform.Connection, sessionKey, text string) string {
+	if sessionIdx == nil {
+		return text
+	}
+	if _, ok := conn.(platform.SessionButtonSender); !ok {
+		return text
+	}
+	chatID := session.ChatIDFromKey(sessionKey)
+	if chatID != 0 && chatID == session.ChatIDFromKey(conn.DefaultSessionKey()) {
+		return text
+	}
+	origin := fmt.Sprintf("🔐 Request from session %s (%s", sessionKey, conn.PlatformName())
+	if chatID != 0 {
+		origin += fmt.Sprintf(" chat %d", chatID)
+		if name, err := sessionIdx.GetChatMetadataAnyPlatform(agentID, chatID, "username"); err == nil && name != "" {
+			origin += fmt.Sprintf(", @%s", name)
+		}
+	}
+	return origin + ")\n\n" + text
+}
+
+// sendPromptAttachment sends a prompt's attachment to the chat the prompt's
+// buttons go to. On Telegram/Discord the plain SendDocument targets the LAST
+// chat, which differs from the buttons' chat when two users share the bot
+// (#2275), so the target is resolved explicitly: the default chat for approval
+// prompts, the session's chat for questions — both falling back to the default
+// and then the last chat (the destination rule of SendTextWithButtons /
+// chatIDForSession). A connection that does not address chats itself (the app,
+// already session-bound) uses SendDocument unchanged.
+func sendPromptAttachment(conn platform.Connection, kind backendPromptKind, sessionKey, attachmentPath string) error {
+	if _, ok := conn.(platform.SessionButtonSender); !ok {
+		return conn.SendDocument(attachmentPath, "")
+	}
+	chatID := session.ChatIDFromKey(conn.DefaultSessionKey())
+	if kind == promptToSessionChat {
+		if id := session.ChatIDFromKey(sessionKey); id != 0 {
+			chatID = id
+		}
+	}
+	if chatID == 0 {
+		chatID = conn.ChatID()
+	}
+	if chatID == 0 {
+		return conn.SendDocument(attachmentPath, "") // last-chat fallback, as the keyboard send does
+	}
+	return conn.SendDocumentToChat(chatID, attachmentPath, "")
 }
 
 // buildDelegatedSystemPrompt concatenates workspace bootstrap blocks and the

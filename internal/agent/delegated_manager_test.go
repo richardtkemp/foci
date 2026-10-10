@@ -29,6 +29,7 @@ type mockBackendDM struct {
 	startOpts   delegator.StartOptions
 
 	permPromptFunc   delegator.PermissionPromptFunc
+	questionFunc     delegator.PermissionPromptFunc // captured by SetQuestionPromptFunc (#2275)
 	onPermCleared    func()
 	cancelListeners  map[string][]func(reason string)
 	onSessionReady   func(string)
@@ -168,6 +169,14 @@ func (m *mockBackendDM) SetPermissionPromptFunc(fn delegator.PermissionPromptFun
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.permPromptFunc = fn
+}
+
+// SetQuestionPromptFunc makes the mock a delegator.QuestionPromptSetter, so
+// the manager's question wiring (setBackendCallbacks) can be observed (#2275).
+func (m *mockBackendDM) SetQuestionPromptFunc(fn delegator.PermissionPromptFunc) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.questionFunc = fn
 }
 
 func (m *mockBackendDM) SetOnPromptsCleared(fn func()) {
@@ -2218,5 +2227,77 @@ func TestGet_ResumeFallback_NoticeUsesLastUse(t *testing.T) {
 	}
 	if !contains(noticeText, "retention") || !contains(noticeText, "stale-uuid") {
 		t.Errorf("notice should blame retention for a 45-day-idle session, got: %q", noticeText)
+	}
+}
+
+// TestGet_QuestionPromptFuncRouting proves the manager wires
+// QuestionPromptFunc to a backend that implements QuestionPromptSetter
+// (#2275): the installed function receives the backend's CURRENT session key
+// and does the same SetPermissionPending bookkeeping as the permission one,
+// so a blocking question still gates WaitForPermission.
+func TestGet_QuestionPromptFuncRouting(t *testing.T) {
+	var gotKey, gotReqID, gotText string
+	mgr, mocks := newTestManager(t, nil)
+	mgr.QuestionPromptFunc = func(sk, reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+		gotKey = sk
+		gotReqID = reqID
+		gotText = text
+	}
+
+	sk := "test-agent/c1"
+	if _, err := mgr.Get(context.Background(), sk); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	mock := (*mocks)[0]
+	mock.mu.Lock()
+	qf := mock.questionFunc
+	mock.mu.Unlock()
+	if qf == nil {
+		t.Fatal("question prompt func not set on backend implementing QuestionPromptSetter")
+	}
+
+	qf("req-q1", "Which colour?", "", "", nil)
+
+	if gotKey != sk {
+		t.Errorf("sessionKey = %q, want %q", gotKey, sk)
+	}
+	if gotReqID != "req-q1" {
+		t.Errorf("requestID = %q, want %q", gotReqID, "req-q1")
+	}
+	if gotText != "Which colour?" {
+		t.Errorf("text = %q, want %q", gotText, "Which colour?")
+	}
+	// Same bookkeeping as a permission prompt: pending gates WaitForPermission
+	// while the question is outstanding.
+	if !mgr.IsPermissionPending(sk) {
+		t.Error("permission should be pending after a question prompt (shared pending gate)")
+	}
+}
+
+// TestGet_QuestionPromptFuncSkippedWithoutSetter proves a backend that does
+// NOT implement delegator.QuestionPromptSetter is left alone when
+// QuestionPromptFunc is set: no panic, no wiring — that backend keeps
+// presenting its questions through the permission function (#2275).
+func TestGet_QuestionPromptFuncSkippedWithoutSetter(t *testing.T) {
+	called := false
+	mgr := &DelegatedManager{
+		NewBackend: func() (delegator.Delegator, error) {
+			return &mockBackendDT{}, nil // implements Delegator, not QuestionPromptSetter
+		},
+		StartOpts:    delegator.StartOptions{WorkDir: t.TempDir()},
+		AgentID:      "test-agent",
+		IdleTimeout:  time.Hour,
+		QuestionPromptFunc: func(sk, reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+			called = true
+		},
+	}
+	t.Cleanup(func() { mgr.Close() })
+
+	if _, err := mgr.Get(context.Background(), "test-agent/c1"); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if called {
+		t.Error("QuestionPromptFunc should not be invoked merely by wiring; the setter is absent")
 	}
 }

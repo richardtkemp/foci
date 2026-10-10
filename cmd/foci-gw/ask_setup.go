@@ -9,17 +9,21 @@ import (
 )
 
 // newAskPresentFn builds the presenter for the foci-native `ask` tool. It posts
-// one question's options as interactive buttons to the session's chat (the same
-// mechanism the permission/AskUserQuestion prompts use) and invokes onResponse
-// with the chosen button data when the user clicks. Non-blocking: the tool's
-// Execute returns immediately; this fires later on the platform callback.
+// one question's options as interactive buttons to the ASKING SESSION'S chat
+// (via sessionChatResolver — a question the agent asks its own user must reach
+// that user, not the bot's default chat, #2275; the mechanism is otherwise the
+// same one permission prompts use) and invokes onResponse with the chosen
+// button data when the user clicks. Non-blocking: the tool's Execute returns
+// immediately; this fires later on the platform callback. The stored resolver
+// also addresses every later proactive edit (post-click, cancel, expiry) to
+// the session's chat.
 func newAskPresentFn(agentID string, connMgr platform.ConnectionManager) tools.AskPresentFn {
 	return func(sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) string {
 		buttons := make([]platform.ButtonChoice, len(choices))
 		for i, c := range choices {
 			buttons[i] = platform.ButtonChoice{Label: c.Label, Data: c.Data}
 		}
-		platformMsgID, err := platform.SendInteractiveMessageWithID(connResolver(connMgr, sessionKey, agentID), msgID, summary, text, buttons, func(choice platform.ButtonChoice) string {
+		platformMsgID, err := platform.SendInteractiveMessageWithID(sessionChatResolver(connMgr, sessionKey, agentID), msgID, summary, text, buttons, func(choice platform.ButtonChoice) string {
 			onResponse(choice.Data)
 			if choice.Data == question.CancelData {
 				return "❌ Cancelled"
@@ -136,6 +140,11 @@ func newAskRemoveFn(agentID string, connMgr platform.ConnectionManager) tools.As
 // platform-side message id is unknown here (we didn't re-send), so proactive
 // edits (cancel/expiry) can't touch the message; click-driven routing and the
 // "✅ <label>" edit work regardless, since those use the callback's own message.
+// The resolver is the session-chat one (see newAskPresentFn): proactive edits of
+// a restored ask address the asking session's chat too (#2275). Asks presented
+// BEFORE #2275 were posted in the default chat; their restored cancel/expiry
+// edits now address the session's chat and fail with a logged warning — click
+// handling still works (it uses the callback's own message).
 func newAskRestoreFn(agentID string, connMgr platform.ConnectionManager) tools.AskRestoreFn {
 	return func(sessionKey, msgID, platformMsgID string, choices []question.Choice, onResponse func(data string)) {
 		buttons := make([]platform.ButtonChoice, len(choices))
@@ -147,7 +156,7 @@ func newAskRestoreFn(agentID string, connMgr platform.ConnectionManager) tools.A
 		// so an eager lookup would capture nil. The resolver re-queries at edit
 		// time, by when the connection is live. platformMsgID (persisted across
 		// the restart) lets cancel/expiry edit the on-screen message too.
-		platform.RestoreInteractiveCallback(msgID, platformMsgID, connResolver(connMgr, sessionKey, agentID), buttons, func(choice platform.ButtonChoice) string {
+		platform.RestoreInteractiveCallback(msgID, platformMsgID, sessionChatResolver(connMgr, sessionKey, agentID), buttons, func(choice platform.ButtonChoice) string {
 			onResponse(choice.Data)
 			if choice.Data == question.CancelData {
 				return "❌ Cancelled"

@@ -68,6 +68,7 @@ const (
 	CapQuestions
 	CapElicitation
 	CapPlanPermission
+	CapQuestionPrompt
 
 	// Input and delivery.
 	CapFoldAttachments
@@ -153,6 +154,7 @@ var capabilityTable = [numCapabilities]CapabilityInfo{
 	CapQuestions:          {Name: "questions", Kind: KindInterface, Iface: ifaceOf[QuestionResponder](), Doc: "routes answers to the agent's own questions (QuestionResponder)"},
 	CapElicitation:        {Name: "elicitation", Kind: KindInterface, Iface: ifaceOf[ElicitationResponder](), Doc: "answers MCP elicitation requests (ElicitationResponder)"},
 	CapPlanPermission:     {Name: "plan_permission", Kind: KindInterface, Iface: ifaceOf[PlanResponder](), Doc: "turns a typed reply into plan-revision feedback (PlanResponder)"},
+	CapQuestionPrompt:     {Name: "question_prompt", Kind: KindInterface, Iface: ifaceOf[QuestionPromptSetter](), Doc: "presents its own questions (AskUserQuestion, elicitation, the question tool) through a separate question prompt function (QuestionPromptSetter)"},
 
 	CapFoldAttachments:  {Name: "fold_attachments", Kind: KindInterface, Iface: ifaceOf[FoldAttachmentCarrier](), Doc: "delivers attachments folded into a running turn (FoldAttachmentCarrier)"},
 	CapDeliveryTracking: {Name: "delivery_tracking", Kind: KindInterface, Iface: ifaceOf[DeliveryTracker](), Doc: "proves each input reached the model and hands back the rest (DeliveryTracker + Spec.TranscriptChecker)"},
