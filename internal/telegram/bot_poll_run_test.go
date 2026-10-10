@@ -134,6 +134,7 @@ func TestRun_ProcessesCallbackQueryEndToEnd(t *testing.T) {
 		CallbackQuery: &gotgbot.CallbackQuery{
 			Id:      "cq1",
 			Data:    "cmd:/ping",
+			From:    gotgbot.User{Id: 111},
 			Message: gotgbot.Message{MessageId: 5, Chat: gotgbot.Chat{Id: 12345}},
 		},
 	})

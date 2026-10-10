@@ -61,6 +61,14 @@ func (b *Bot) Run(ctx context.Context) {
 	b.logger().Infof("bot shutting down")
 }
 
+// guildAllowed reports whether an event from guildID is acceptable: when a
+// guild restriction is configured, events from any other (non-DM) guild are
+// dropped — the single rule for inbound messages and button presses (#2276).
+// An empty guildID (a DM) always passes.
+func (b *Bot) guildAllowed(guildID string) bool {
+	return b.guildID == "" || guildID == "" || guildID == b.guildID
+}
+
 // onMessageCreate handles incoming message events from the Discord gateway.
 func (b *Bot) onMessageCreate(ctx context.Context, m *discordgo.MessageCreate) {
 	// Ignore messages from the bot itself
@@ -74,7 +82,7 @@ func (b *Bot) onMessageCreate(ctx context.Context, m *discordgo.MessageCreate) {
 	}
 
 	// Guild restriction check
-	if b.guildID != "" && m.GuildID != "" && m.GuildID != b.guildID {
+	if !b.guildAllowed(m.GuildID) {
 		return
 	}
 

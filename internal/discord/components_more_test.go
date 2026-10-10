@@ -16,7 +16,9 @@ func storeToolResult(b *Bot, msgID string, entry turn.ToolResultEntry) {
 	b.toolStore.Update(msgID, entry)
 }
 
-// componentInteraction builds a button-press interaction event.
+// componentInteraction builds a button-press interaction event pressed by
+// user 111 (an allowed presser for restricted test bots, anyone for the open
+// newTestBot default).
 func componentInteraction(channelID, msgID, customID string) *discordgo.InteractionCreate {
 	return &discordgo.InteractionCreate{
 		Interaction: &discordgo.Interaction{
@@ -24,6 +26,7 @@ func componentInteraction(channelID, msgID, customID string) *discordgo.Interact
 			ChannelID: channelID,
 			Data:      discordgo.MessageComponentInteractionData{CustomID: customID},
 			Message:   &discordgo.Message{ID: msgID},
+			User:      &discordgo.User{ID: "111", Username: "user-111"},
 		},
 	}
 }

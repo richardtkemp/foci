@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -45,15 +46,34 @@ func (b *Bot) sendCommandKeyboard(cmdName string, header string, opts []command.
 // handleCallbackQuery processes inline keyboard button presses for tool result
 // and thinking block expansion, and command keyboard selections.
 func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery) {
-	if cq.Data == "" || cq.Message.GetChat().Id == 0 {
+	// Access check (#2276): the presser of a button passes the same allowlist
+	// as the sender of a message. Runs before cq.Message is read (nil for a
+	// callback on an inline-mode message) and before any action. A rejected
+	// press runs nothing and is still answered, so the presser's spinner stops
+	// without revealing why.
+	if !b.userAllowed(fmt.Sprintf("%d", cq.From.Id)) {
+		b.logger().Warnf("rejected callback from %s", formatUserInfo(&cq.From))
+		_, _ = b.client.AnswerCallbackQuery(cq.Id, nil)
 		return
 	}
-	chatID := cq.Message.GetChat().Id
+	if cq.Data == "" {
+		return
+	}
 
 	// Always answer the callback query to dismiss the loading indicator.
 	defer func() {
 		_, _ = b.client.AnswerCallbackQuery(cq.Id, nil)
 	}()
+
+	// cq.Message is nil for a callback on an inline-mode message: there is no
+	// chat message to act on or edit — answer (deferred above) and stop.
+	if cq.Message == nil {
+		return
+	}
+	chatID := cq.Message.GetChat().Id
+	if chatID == 0 {
+		return
+	}
 
 	msgID := cq.Message.GetMessageId()
 	action, data := dispatch.ParseCallback(cq.Data)

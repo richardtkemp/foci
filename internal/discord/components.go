@@ -24,13 +24,32 @@ func (b *Bot) handleComponentInteraction(ctx context.Context, i *discordgo.Inter
 		return
 	}
 
-	channelID := i.ChannelID
-	chatID, _ := strconv.ParseInt(channelID, 10, 64)
-
-	// Always acknowledge the interaction to prevent the "interaction failed" error.
+	// Always acknowledge the interaction to prevent the "interaction failed"
+	// error — allowed and rejected presses alike, so a rejected presser gets
+	// no detail about why (#2276).
 	_ = b.api.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredMessageUpdate,
 	})
+
+	// Access check (#2276): the presser of a button passes the same allowlist
+	// as the sender of a message, plus the same guild restriction as
+	// onMessageCreate. discordgo sets Member.User for a press in a guild and
+	// User for a press in a DM; neither present = reject.
+	presser := i.User
+	if i.Member != nil && i.Member.User != nil {
+		presser = i.Member.User
+	}
+	if presser == nil {
+		b.logger().Warnf("rejected interaction with no presser (channel %s)", i.ChannelID)
+		return
+	}
+	if !b.userAllowed(presser.ID) || !b.guildAllowed(i.GuildID) {
+		b.logger().Warnf("rejected interaction from %s", formatUserInfo(presser))
+		return
+	}
+
+	channelID := i.ChannelID
+	chatID, _ := strconv.ParseInt(channelID, 10, 64)
 
 	msgID := i.Message.ID
 	cbAction, cbData := dispatch.ParseCallback(data.CustomID)
