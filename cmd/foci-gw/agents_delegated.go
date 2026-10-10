@@ -283,6 +283,10 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		}
 	}
 
+	// The manager's two prompt surfaces (#2275): approvals land in the
+	// owner's default chat, questions in the asking session's chat.
+	permPromptFn, questionPromptFn := backendPromptFuncs(backendPromptDeps{ag: ag, connMgr: connMgr, sessionIdx: sessionIdx, agentID: agentID})
+
 	ag.DelegatedManager = &agent.DelegatedManager{
 		SessionIndex: p.sessionIndex,
 		AgentID:      agentID,
@@ -362,17 +366,11 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			// bridge's BASH_ENV/FOCI_SOCK so both layers survive.
 			Env: bc.Env,
 		},
-		PermissionPromptFunc: func(sessionKey, requestID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
-			postBackendPrompt(backendPromptDeps{ag: ag, connMgr: connMgr, sessionIdx: sessionIdx, agentID: agentID},
-				promptToDefaultChat, sessionKey, requestID, text, summary, attachmentPath, choices)
-		},
+		PermissionPromptFunc: permPromptFn,
 		// Questions the agent asks its own user go to the asking session's
 		// chat (#2275); only wired on backends implementing
 		// delegator.QuestionPromptSetter (see setBackendCallbacks).
-		QuestionPromptFunc: func(sessionKey, requestID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
-			postBackendPrompt(backendPromptDeps{ag: ag, connMgr: connMgr, sessionIdx: sessionIdx, agentID: agentID},
-				promptToSessionChat, sessionKey, requestID, text, summary, attachmentPath, choices)
-		},
+		QuestionPromptFunc: questionPromptFn,
 		TypingFunc: func(sessionKey string, typing bool) {
 			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
 			if conn == nil {
@@ -551,6 +549,22 @@ func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, 
 			logger.Debugf("prompt cancelled: sk=%s reqID=%s reason=%q", sessionKey, requestID, reason)
 		}
 	})
+}
+
+// backendPromptFuncs returns the two prompt closures the DelegatedManager
+// takes — the pair the gateway wires as PermissionPromptFunc (approvals, the
+// owner's default chat) and QuestionPromptFunc (questions, the asking
+// session's chat, #2275). Both are thin delegations to postBackendPrompt; the
+// pair exists as a unit so the manager can route the two kinds without the
+// backend knowing either's destination.
+func backendPromptFuncs(d backendPromptDeps) (approval, question func(sessionKey, requestID, text, summary, attachmentPath string, choices []delegator.PromptChoice)) {
+	approval = func(sessionKey, requestID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+		postBackendPrompt(d, promptToDefaultChat, sessionKey, requestID, text, summary, attachmentPath, choices)
+	}
+	question = func(sessionKey, requestID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+		postBackendPrompt(d, promptToSessionChat, sessionKey, requestID, text, summary, attachmentPath, choices)
+	}
+	return approval, question
 }
 
 // prependRequestOrigin prepends one origin line to a permission prompt that is

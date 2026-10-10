@@ -3,10 +3,12 @@ package main
 import (
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"foci/internal/agent"
 	"foci/internal/delegator"
+	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
 )
@@ -34,17 +36,18 @@ func (c *docRoutingConn) SendDocumentToChat(chatID int64, path, _ string) error 
 	return nil
 }
 
-// promptDeps builds the backendPromptDeps postBackendPrompt needs against a
-// fake connection manager: a bare agent (nil DelegatedManager would panic on
-// RegisterPromptCancelListener; a zero-value manager accepts the registration
-// as a no-op) and, when non-nil, a real session index for the origin line.
-func promptDeps(conn platform.Connection, sessionIdx *session.SessionIndex) backendPromptDeps {
-	return backendPromptDeps{
+// promptClosures builds the wired prompt pair (approval → default chat,
+// question → session chat) against a fake connection manager: a bare agent
+// (nil DelegatedManager would panic on RegisterPromptCancelListener; a
+// zero-value manager accepts the registration as a no-op) and, when non-nil, a
+// real session index for the origin line.
+func promptClosures(conn platform.Connection, sessionIdx *session.SessionIndex) (approval, question func(sessionKey, requestID, text, summary, attachmentPath string, choices []delegator.PromptChoice)) {
+	return backendPromptFuncs(backendPromptDeps{
 		ag:         &agent.Agent{DelegatedManager: &agent.DelegatedManager{}},
 		connMgr:    oneConnMgr{conn: conn},
 		sessionIdx: sessionIdx,
 		agentID:    "main",
-	}
+	})
 }
 
 // promptChoices is the shared Allow/Deny shape for the prompt tests.
@@ -66,7 +69,8 @@ func telegramLikeConn() *docRoutingConn {
 func TestQuestionPrompt_PostsToAskingSessionChat(t *testing.T) {
 	conn := telegramLikeConn()
 
-	postBackendPrompt(promptDeps(conn, nil), promptToSessionChat, "main/c222", "req-q-2275", "Which colour?", "Question", "", promptChoices())
+	_, question := promptClosures(conn, nil)
+	question("main/c222", "req-q-2275", "Which colour?", "Question", "", promptChoices())
 
 	sends, _, _, dSends, _, _ := conn.counts()
 	if sends != 1 || dSends != 0 {
@@ -84,7 +88,8 @@ func TestQuestionPrompt_PostsToAskingSessionChat(t *testing.T) {
 func TestPermissionPrompt_UsesDefaultChatButtonSender(t *testing.T) {
 	conn := telegramLikeConn()
 
-	postBackendPrompt(promptDeps(conn, nil), promptToDefaultChat, "main/c222", "req-p-2275", "Allow Bash?", "Bash", "", promptChoices())
+	approval, _ := promptClosures(conn, nil)
+	approval("main/c222", "req-p-2275", "Allow Bash?", "Bash", "", promptChoices())
 
 	sends, _, _, dSends, _, _ := conn.counts()
 	if dSends != 1 || sends != 0 {
@@ -129,7 +134,8 @@ func TestPermissionPrompt_OriginLine(t *testing.T) {
 			conn := telegramLikeConn()
 			idx := newOriginIndex(t, tc.username)
 
-			postBackendPrompt(promptDeps(conn, idx), promptToDefaultChat, tc.session, "req-origin", "Allow Bash?", "Bash", "", promptChoices())
+			approval, _ := promptClosures(conn, idx)
+			approval(tc.session, "req-origin", "Allow Bash?", "Bash", "", promptChoices())
 
 			_, _, _, dSends, _, _ := conn.counts()
 			if dSends != 1 {
@@ -162,7 +168,8 @@ func TestPermissionPrompt_NoOriginForOwnSessions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			idx := newOriginIndex(t, "bob")
 
-			postBackendPrompt(promptDeps(tc.conn, idx), promptToDefaultChat, tc.sk, "req-no-origin", "Allow Bash?", "Bash", "", promptChoices())
+			approval, _ := promptClosures(tc.conn, idx)
+			approval(tc.sk, "req-no-origin", "Allow Bash?", "Bash", "", promptChoices())
 
 			if strings.Contains(tc.conn.lastSendText, "🔐") {
 				t.Errorf("prompt text = %q, want no origin line for the default chat's own session", tc.conn.lastSendText)
@@ -175,7 +182,8 @@ func TestPermissionPrompt_NoOriginForOwnSessions(t *testing.T) {
 		conn := &appishConn{buttonStubConn: buttonStubConn{stubConn{sessionKey: "main/c222"}}}
 		idx := newOriginIndex(t, "bob")
 
-		postBackendPrompt(promptDeps(conn, idx), promptToDefaultChat, "main/c222", "req-no-origin-app", "Allow Bash?", "Bash", "", promptChoices())
+		approval, _ := promptClosures(conn, idx)
+		approval("main/c222", "req-no-origin-app", "Allow Bash?", "Bash", "", promptChoices())
 
 		if strings.Contains(conn.lastText, "🔐") {
 			t.Errorf("prompt text = %q, want no origin line on the app (already session-bound)", conn.lastText)
@@ -190,7 +198,8 @@ func TestPermissionPrompt_NoOriginForOwnSessions(t *testing.T) {
 func TestPermissionPrompt_AttachmentGoesToDefaultChat(t *testing.T) {
 	conn := telegramLikeConn() // DefaultSessionKey main/c999; ChatID() (last chat) = 222
 
-	postBackendPrompt(promptDeps(conn, nil), promptToDefaultChat, "main/c222", "req-att", "Plan ready?", "Plan", "/tmp/plan.md", promptChoices())
+	approval, _ := promptClosures(conn, nil)
+	approval("main/c222", "req-att", "Plan ready?", "Plan", "/tmp/plan.md", promptChoices())
 
 	if conn.docToChat != 1 || conn.lastChat != 999 {
 		t.Errorf("SendDocumentToChat calls = %d (chat %d), want 1 to chat 999 (the chat the buttons go to)", conn.docToChat, conn.lastChat)
@@ -210,7 +219,8 @@ func TestPermissionPrompt_AttachmentGoesToDefaultChat(t *testing.T) {
 func TestPermissionPrompt_AttachmentAppConnUnchanged(t *testing.T) {
 	conn := &appDocConn{appishConn: appishConn{buttonStubConn: buttonStubConn{stubConn{sessionKey: "main/c222"}}}}
 
-	postBackendPrompt(promptDeps(conn, nil), promptToDefaultChat, "main/c222", "req-att-app", "Plan ready?", "Plan", "/tmp/plan.md", promptChoices())
+	approval, _ := promptClosures(conn, nil)
+	approval("main/c222", "req-att-app", "Plan ready?", "Plan", "/tmp/plan.md", promptChoices())
 
 	if conn.docs != 1 || conn.chatDocs != 0 {
 		t.Errorf("SendDocument = %d, SendDocumentToChat = %d, want 1/0 (app connection unchanged)", conn.docs, conn.chatDocs)
@@ -233,4 +243,40 @@ func (c *appDocConn) SendDocument(string, string) error {
 func (c *appDocConn) SendDocumentToChat(int64, string, string) error {
 	c.chatDocs++
 	return nil
+}
+
+// TestBackendPrompt_NilConnectionDropped proves both prompt closures survive a
+// resolver with no live connection (platform down, prompt arriving during a
+// restart): each prompt is dropped with a WARN naming the session, not a
+// panic — the body dereferences the connection right after the nil check.
+// The warn hook is collected (after draining any startup-buffered entries) so
+// the WARNs do not linger in the global buffer for the next hook to replay.
+func TestBackendPrompt_NilConnectionDropped(t *testing.T) {
+	log.SetWarnHook(func(log.Level, string, string) {}) // drain buffered entries
+	var mu sync.Mutex
+	var warns []string
+	log.SetWarnHook(func(level log.Level, _, msg string) {
+		if level != log.WARN {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		warns = append(warns, msg)
+	})
+	t.Cleanup(func() { log.SetWarnHook(nil) })
+
+	approval, question := promptClosures(nil, nil)
+	approval("main/c222", "req-nil-1", "Allow Bash?", "Bash", "", promptChoices())
+	question("main/c222", "req-nil-2", "Which colour?", "Question", "", promptChoices())
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(warns) != 2 {
+		t.Fatalf("drop WARNs = %d (%v), want 2 (one per kind, no panic)", len(warns), warns)
+	}
+	for _, msg := range warns {
+		if !strings.Contains(msg, "prompt dropped") || !strings.Contains(msg, "main/c222") {
+			t.Errorf("drop WARN %q, want it to name the session and the drop", msg)
+		}
+	}
 }

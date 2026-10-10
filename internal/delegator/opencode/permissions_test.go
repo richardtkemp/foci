@@ -678,6 +678,44 @@ func TestQuestionPermission_UsesQuestionPromptFnWhenSet(t *testing.T) {
 	}
 }
 
+// TestQuestionPermission_BadMetadataStillUsesQuestionFn pins the other prompt
+// call in handleQuestionPermission (#2275): when the question metadata cannot
+// be parsed, the raw-title FALLBACK prompt must also go through the question
+// function — a malformed question is still a question for the asking user,
+// not an approval for the owner.
+func TestQuestionPermission_BadMetadataStillUsesQuestionFn(t *testing.T) {
+	b, _ := newPermTestBackend(t)
+	var questionCalls, permCalls int
+	var gotText string
+	prevPerm := b.permPromptFn
+	b.permPromptFn = func(id, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+		permCalls++
+		prevPerm(id, text, summary, attachmentPath, choices)
+	}
+	b.SetQuestionPromptFunc(func(id, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
+		questionCalls++
+		gotText = text
+	})
+
+	b.onPermissionUpdated(Permission{
+		ID:        "perm-q-badmeta",
+		Type:      PermQuestion,
+		Title:     "Pick one",
+		SessionID: "sess-perm",
+		Metadata:  json.RawMessage(`{not json`),
+	})
+
+	if questionCalls != 1 {
+		t.Errorf("question fn called %d times, want 1 (the fallback prompt is still a question)", questionCalls)
+	}
+	if permCalls != 0 {
+		t.Errorf("permPromptFn called %d times, want 0 (even the fallback must not reach the owner's chat)", permCalls)
+	}
+	if gotText != "Pick one" {
+		t.Errorf("fallback prompt text = %q, want the raw title %q", gotText, "Pick one")
+	}
+}
+
 // TestRegularPermission_KeepsPermPromptFnWhenQuestionFnSet is the other half
 // of the split: with a question function installed, a REGULAR permission still
 // goes through permPromptFn and never through the question function (#2275).
