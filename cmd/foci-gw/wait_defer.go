@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"foci/internal/agent"
 	"foci/internal/app"
+	"foci/internal/command"
 	"foci/internal/defersend"
 	"foci/internal/log"
 	"foci/internal/route"
@@ -340,12 +340,14 @@ func (s *deferSweeper) deliverBranch(inst *agentInstance, r defersend.Record) {
 // text). The delivery is logged with metadata only (id, agent, session,
 // kind, text length); the result text is never logged, because it can carry
 // secrets such as a pairing key (#2259). The !ok warning likewise logs the
-// command name only, never its arguments.
+// command name only, never its arguments: the name comes from the same
+// command.RequestFromText the dispatch parsed, so it is exactly the name the
+// registry looked up.
 func (s *deferSweeper) deliverCommand(inst *agentInstance, r defersend.Record) {
 	result, ok := dispatchAgentCommand(s.deps, inst, s.deps.ctx, r.SessionKey, r.Text)
 	if !ok {
-		name, _, _ := strings.Cut(strings.TrimSpace(r.Text), " ")
-		deferLog.Warnf("deferred command %d not executable — registered command has no Execute (agent=%s session=%s): %s",
+		name := command.RequestFromText(r.Text, r.SessionKey, "", 0).Name
+		deferLog.Warnf("deferred command %d not executable — registered command has no Execute (agent=%s session=%s): /%s",
 			r.ID, r.AgentID, r.SessionKey, name)
 		return
 	}
