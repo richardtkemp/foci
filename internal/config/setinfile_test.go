@@ -1068,18 +1068,22 @@ func TestFormatTOMLValueLongPollTimeoutRowRefusesBadValue(t *testing.T) {
 	}
 }
 
-// TestFormatTOMLValueScheduleRoundTrips is a characterisation test: the
-// FieldSchedule case outputs exactly the quoting contract FieldDuration has
-// always produced — a quoted string, with an already-quoted value passed
-// through — so the documented clock form (04:00) and interval form ("20h")
-// round-trip through /config set and the app editor, and each result decodes
-// back with the real TOML parser to the same string.
+// TestFormatTOMLValueScheduleRoundTrips pins the FieldSchedule case's output
+// to the quoting contract FieldDuration has always produced — a quoted
+// string, with an already-quoted value passed through — so the documented
+// clock forms (04:00, single-digit-hour 4:20) and interval forms (20h,
+// "20h") round-trip through /config set and the app editor, and each result
+// decodes back with the real TOML parser to the same string. Without the
+// case, the switch's fall-through returns the value unquoted, which is
+// malformed TOML — so this test is red on the pre-change tree.
 func TestFormatTOMLValueScheduleRoundTrips(t *testing.T) {
 	tests := []struct {
 		value string
 		want  string
 	}{
 		{"04:00", `"04:00"`},
+		{"4:20", `"4:20"`},
+		{"20h", `"20h"`},
 		{`"20h"`, `"20h"`},
 		{"", `""`},
 	}
