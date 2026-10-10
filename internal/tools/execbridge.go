@@ -549,7 +549,8 @@ func validateShellFuncSchemaParity(t *Tool) error {
 		Properties map[string]json.RawMessage `json:"properties"`
 	}
 	if err := json.Unmarshal(t.Parameters, &schema); err != nil || len(schema.Properties) == 0 {
-		// Tools with empty schemas use the JSON-blob fallback; nothing to validate.
+		// Empty or unparseable schemas have no schema params to wire into
+		// flags; nothing to validate.
 		return nil
 	}
 	posSet := make(map[string]bool)
@@ -1421,6 +1422,31 @@ func generateShellFunc(t *Tool) string {
 	}
 }
 
+// blobFociCallTail is the shared closing of both empty-schema fallback
+// bodies in generateGenericShellFunc: send "$1" — the params blob, defaulted
+// to {} by the branch that emitted it — to the gateway and close the
+// function. One emitter so the request shape cannot drift between the two
+// bodies; TestGenerateGenericShellFuncEmptyFallback pins the exact line.
+func blobFociCallTail(toolName string) string {
+	return fmt.Sprintf("  foci-call \"$(jq -nc --argjson p \"$1\" '{\"tool\":\"%s\",\"params\":$p}')\"\n}\n", toolName)
+}
+
+// shellFuncUsageLine renders the "usage: foci_<name>[ [--json]][ <args>]"
+// line the fallback bodies print on a rejected call. " [--json]" appears
+// only when the tool has the --json OUTPUT flag (hasJSONOutputFlag): a tool
+// like ask, whose --json is an input flag that takes a value, must not
+// advertise a bare [--json].
+func shellFuncUsageLine(t *Tool, args string) string {
+	usage := "usage: foci_" + t.Name
+	if hasJSONOutputFlag(t) {
+		usage += " [--json]"
+	}
+	if args != "" {
+		usage += " " + args
+	}
+	return usage
+}
+
 // generateGenericShellFunc emits a flag-parsing bash function for a tool from
 // its JSON schema. Both --help text (via generateHelpText) and the body
 // emitted here derive from the same schema, so the two cannot drift.
@@ -1440,11 +1466,19 @@ func generateShellFunc(t *Tool) string {
 //     foci__json_arg before jq --argjson sees them, so a bad value names the
 //     flag instead of printing jq internals twice (#1811)
 //
-// If the schema is unparseable or empty the function falls back to the legacy
-// JSON-blob behavior so the foci__json passthrough still works for callers
-// that hand-construct the params object. A bare call passes {} — without that
-// default, jq --argjson dies on the empty string, so a zero-property tool
-// (whoami, #1135) could not be called with no arguments at all.
+// A schema with no properties to drive a flag parser gets a fallback body
+// instead, split by WHY it is empty (#2271). A schema that parses with zero
+// properties means the tool takes no arguments at all: any argument left
+// after the prologue is a usage error naming the tool — the body used to
+// hand $1 to jq --argjson unchecked, so `foci_whoami foo` printed jq's
+// internals and `'' foo` silently dropped foo. A bare call still passes {}
+// — without that default, jq --argjson dies on the empty string, so a
+// zero-property tool (whoami, #1135) could not be called with no arguments
+// at all. Only an unparseable schema keeps the legacy JSON-blob contract —
+// no argument sends {}, one JSON object with any keys is sent as the params
+// (the foci__json passthrough still works for callers that hand-construct
+// it), and anything else is an error, with the blob's type checked before
+// jq --argjson sees it.
 func generateGenericShellFunc(t *Tool) string {
 	name := "foci_" + t.Name
 	helpText := generateHelpText(t)
@@ -1460,17 +1494,56 @@ func generateGenericShellFunc(t *Tool) string {
 		} `json:"properties"`
 		Required []string `json:"required"`
 	}
-	if err := json.Unmarshal(t.Parameters, &schema); err != nil || len(schema.Properties) == 0 {
-		// Fallback to legacy JSON-blob behavior when schema unavailable.
-		// The guard line defaults an absent blob to {} so a bare call works:
-		// a zero-property tool (whoami, #1135) is called with no arguments.
+	schemaParses := json.Unmarshal(t.Parameters, &schema) == nil
+	if !schemaParses || len(schema.Properties) == 0 {
+		// No properties to drive a flag parser. The two emptiness causes
+		// promise callers different things (#2271), so they get different
+		// bodies over the same foci-call tail.
+		if schemaParses {
+			// Zero-property schema: the tool takes no arguments at all.
+			// Reject whatever survived the prologue (--json was stripped,
+			// the foci__json guard did not take it) BEFORE jq sees it: the
+			// old body handed $1 to --argjson unchecked, printing jq
+			// internals, and `set -- '{}'` on an empty $1 replaced ALL
+			// arguments, so `'' foo` silently dropped foo. '' is an error
+			// on purpose — "any argument is an error", like a schema
+			// tool's unexpected positional; special-casing it would bring
+			// the dropped-argument bug back. The bare call still
+			// defaults to {} (#1135).
+			return fmt.Sprintf(`%s() {
+%s
+%s
+  if [ $# -gt 0 ]; then
+    echo "error: %s takes no arguments, got '$1'" >&2
+    echo "%s" >&2
+    return 1
+  fi
+  set -- '{}'
+%s`, name, helpCheck, guard, name, shellFuncUsageLine(t, ""), blobFociCallTail(t.Name))
+		}
+		// Unparseable schema: legacy JSON-blob contract — no argument sends
+		// {}, exactly one JSON object (any keys; there is no schema to
+		// check them against) is the params. Anything else is rejected
+		// before jq --argjson sees it (#2271): the type check compares
+		// jq's stderr-silenced OUTPUT (the foci__json_arg idiom), not its
+		// exit status, because jq exits 0 on EMPTY input — an exit-code
+		// check would pass '' straight through to --argjson.
+		usage := shellFuncUsageLine(t, "'<json-object>'")
 		return fmt.Sprintf(`%s() {
 %s
 %s
-  if [ -z "${1:-}" ]; then set -- '{}'; fi
-  foci-call "$(jq -nc --argjson p "$1" '{"tool":"%s","params":$p}')"
-}
-`, name, helpCheck, guard, t.Name)
+  if [ $# -eq 0 ]; then
+    set -- '{}'
+  elif [ "$(printf '%%s' "$1" | jq -r 'type' 2>/dev/null)" != object ]; then
+    echo "error: %s takes a single JSON object argument, got '$1'" >&2
+    echo "%s" >&2
+    return 1
+  elif [ $# -gt 1 ]; then
+    echo "error: %s takes a single JSON object argument, got an extra argument '$2'" >&2
+    echo "%s" >&2
+    return 1
+  fi
+%s`, name, helpCheck, guard, name, usage, name, usage, blobFociCallTail(t.Name))
 	}
 
 	// Collect param names in stable (sorted) order so generated bash is
