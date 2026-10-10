@@ -41,6 +41,14 @@ func (wc waitConds) any() bool {
 	return wc.warm != "" || wc.cold != "" || wc.userActive != "" || wc.userInactive != ""
 }
 
+// present reports whether an active wait is requested: at least one gate
+// flag is set and the opt-out is not. The exact negation of the "no wait"
+// early-out in deferUnmetWait — one definition for both, and for
+// handleBranch's #2301 enqueue gate.
+func (wc waitConds) present() bool {
+	return !wc.none && wc.any()
+}
+
 // activityProbes builds the two "within duration?" closures shared by the
 // one-shot if-gate and the wait evaluator. Both apply the in-flight
 // short-circuit: a turn executing on the target counts as active. The SESSION
@@ -174,7 +182,7 @@ func enqueueDeferred(w http.ResponseWriter, d httpHandlerDeps, rec defersend.Rec
 // the graceful degradation /send has always had: a missing queue must not
 // break every request.
 func deferUnmetWait(w http.ResponseWriter, d httpHandlerDeps, in activityGateInputs, wc waitConds, rec defersend.Record, rcpt route.Receipt) bool {
-	if wc.none || !wc.any() {
+	if !wc.present() {
 		return false
 	}
 	isUserActive, isSessionActive := buildActivityCheckers(d)

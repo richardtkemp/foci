@@ -640,6 +640,36 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 			return
 		}
 
+		// R1 (option B): the cannot-branch send fallback is for the agent's
+		// DEFAULT session only — the key an EMPTY selector resolves to. With
+		// no selector that is parentKey by definition, including a
+		// CreateDefault-minted main key (#1859: resolveTargetSession resolved
+		// THROUGH the create hook, and re-resolving must never mint a
+		// conversation just for the comparison). A named selector must name
+		// that key itself to keep the fallback. Computed before the wait
+		// gates: the #2301 refusal below needs the same oracle runBranchTurn
+		// gets.
+		parentIsDefault := req.Session == "" || parentKey == defaultSessionKey(d, inst.id)
+
+		// #2301: a wait-carrying branch of a NAMED parent on a backend that
+		// cannot branch is refused at ENQUEUE — the same 422, from the same
+		// shared refusal, the request would get without the wait (Dick,
+		// 2026-10-10): its delivery could only ever end in that refusal, so
+		// a 202 "deferred" would hide it until the sweep dropped the record,
+		// and the caller would never learn nothing ran. The gate asks wait
+		// PRESENCE (the same test deferUnmetWait uses), not unmet-ness — a
+		// condition that holds now skips the deferral below and meets the
+		// same refusal in runBranchTurn (so a malformed duration on this
+		// shape answers the 422, not deferUnmetWait's 400). Nothing is
+		// stored: the return precedes the defer store entirely. Everything
+		// else still defers below — the default parent (its delivery ends in
+		// the allowed send fallback), an API agent and a branching backend.
+		wc := req.conds()
+		if wc.present() && backendCannotBranch(inst) && !parentIsDefault {
+			writeUnbranchableParent(w, refuseBranchOnNamedParent(inst, parentKey, true))
+			return
+		}
+
 		// Wait/defer gate (#1272): unlike /send there is NO default — a
 		// branch with no wait field runs now, exactly as before. An unmet
 		// wait (evaluated against the resolved PARENT session) stores the
@@ -647,7 +677,7 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 		// forking from the parent's state at DELIVERY time. Deferred requests
 		// are inherently async: --sync callers get the 202 deferred receipt
 		// now too.
-		if deferUnmetWait(w, d, gateIn, req.conds(), defersend.Record{
+		if deferUnmetWait(w, d, gateIn, wc, defersend.Record{
 			Kind: defersend.KindBranch, AgentID: inst.id, SessionKey: parentKey, Text: req.Text,
 			Model: req.Model, NoCompact: req.NoCompact, NoResetHook: req.NoResetHook, Silent: req.Silent,
 		}, branchRcpt) {
@@ -660,15 +690,6 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 		// to the turn context), landing on the NEW branch session key; the
 		// in-process receipt waits for the run below, so a bad model, fork
 		// error or full inbox stamps nothing.
-		//
-		// R1 (option B): the cannot-branch send fallback is for the agent's
-		// DEFAULT session only — the key an EMPTY selector resolves to. With
-		// no selector that is parentKey by definition, including a
-		// CreateDefault-minted main key (#1859: resolveTargetSession resolved
-		// THROUGH the create hook, and re-resolving must never mint a
-		// conversation just for the comparison). A named selector must name
-		// that key itself to keep the fallback.
-		parentIsDefault := req.Session == "" || parentKey == defaultSessionKey(d, inst.id)
 		result, err := runBranchTurn(d, inst, parentKey, parentIsDefault, branchRcpt, branchTurnOptions{
 			Text: req.Text, Model: req.Model,
 			NoCompact: req.NoCompact, NoResetHook: req.NoResetHook, Silent: req.Silent,
@@ -688,13 +709,7 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 		case errors.Is(err, errBranchBadModel):
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		case errors.Is(err, errBranchUnbranchableParent):
-			// 422: the request was well-formed and resolvable, but the
-			// agent's backend cannot branch and the named parent must not
-			// be interrupted (#2284). No other /branch cause uses this
-			// code, so a caller can tell this refusal from a bad
-			// model/body/selector (400), an ambiguous alias (409), no
-			// default session (412) or a full inbox (503).
-			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			writeUnbranchableParent(w, err)
 		case errors.Is(err, errBranchInboxFull):
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		default:
@@ -702,6 +717,18 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 			http.Error(w, "internal error", http.StatusInternalServerError)
 		}
 	}
+}
+
+// writeUnbranchableParent answers a branch refusal with
+// errBranchUnbranchableParent over HTTP — the #2284 run-time refusal and the
+// #2301 enqueue gate share it, so status and body cannot drift. 422: the
+// request was well-formed and resolvable, but the agent's backend cannot
+// branch and the named parent must not be interrupted. No other /branch
+// cause uses this code, so a caller can tell this refusal from a bad
+// model/body/selector (400), an ambiguous alias (409), no default session
+// (412) or a full inbox (503).
+func writeUnbranchableParent(w http.ResponseWriter, err error) {
+	http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 }
 
 // buildVoiceConfig creates the voice.HandlerConfig from handler deps.

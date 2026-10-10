@@ -149,7 +149,7 @@ A `-s` name that matches no key, named session or alias creates a **new, empty s
 
 By default, branch is **asynchronous** (fire-and-forget): the CLI returns immediately with "queued" and the agent's response is delivered to Telegram. Use `--sync`/`--wait` to block until the response is available.
 
-**Wait gates (deferral, not blocking):** `foci branch` accepts the same `--wait-*` gates as `foci send`, evaluated against the PARENT session. Unlike send there is **no default gate**: a branch with no if/wait flag runs immediately. An unmet `--wait-*` gate never blocks the CLI — the gateway stores the branch request (it survives a restart), answers with a "deferred" receipt immediately (even with `--sync`), and creates the branch once the condition holds, forking from the parent's state at that moment; `--wait-timeout`/`--deadline` (default **2h**) branches anyway. `--no-gate` ignores any wait condition.
+**Wait gates (deferral, not blocking):** `foci branch` accepts the same `--wait-*` gates as `foci send`, evaluated against the PARENT session. Unlike send there is **no default gate**: a branch with no if/wait flag runs immediately. An unmet `--wait-*` gate never blocks the CLI — the gateway stores the branch request (it survives a restart), answers with a "deferred" receipt immediately (even with `--sync`), and creates the branch once the condition holds, forking from the parent's state at that moment; `--wait-timeout`/`--deadline` (default **2h**) branches anyway. `--no-gate` ignores any wait condition. One gated request never defers: on a backend that cannot branch (rare — every shipped backend can), a `--wait-*` gate with `-s` naming anything but the default session is refused immediately with the same error as an ungated branch — nothing is queued, because the deferral could only ever end in that refusal.
 
 **Usage:**
 ```
@@ -218,7 +218,7 @@ foci branch -a clutch -s Fabro --sync --silent "question"
 foci branch -a research
 ```
 
-**Exit codes:** 0 on success, 1 on error. Returns HTTP 412 if the agent has no default session yet (no Telegram chat has been started), and HTTP 422 if `-s` names a session (other than the default) on an agent whose backend cannot branch.
+**Exit codes:** 0 on success, 1 on error. Returns HTTP 412 if the agent has no default session yet (no Telegram chat has been started), and HTTP 422 if `-s` names a session (other than the default) on an agent whose backend cannot branch — with or without a `--wait-*` gate (a gated request is refused at once, not deferred).
 
 ---
 

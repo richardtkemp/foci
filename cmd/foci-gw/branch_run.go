@@ -34,7 +34,8 @@ type branchTurnResult struct {
 	// (Via "branch"), or the parent session when the backend cannot branch
 	// at all and the request degrades to a send — a fallback only the
 	// agent's DEFAULT session may take; any other parent is refused with
-	// errBranchUnbranchableParent (#2284). On that fallback the receipt is
+	// errBranchUnbranchableParent (#2284, also at enqueue for a
+	// wait-carrying request, #2301). On that fallback the receipt is
 	// the caller's resolution receipt.
 	Receipt route.Receipt
 	// Resp is the turn's final text, set for sync runs only.
@@ -53,16 +54,50 @@ var (
 	// session: the cannot-branch fallback would run the turn on — and
 	// interrupt — the very session the caller asked to leave alone, so the
 	// request is refused before anything runs (#2284). The HTTP handler
-	// answers 422; the deferred sweep logs it like any delivery error.
+	// answers 422 — immediately, and since #2301 also at ENQUEUE for a
+	// wait-carrying request, before the defer store receives anything. The
+	// deferred sweep still refuses any record that predates the gate (one
+	// enqueued before a backend change, say), logging it like any delivery
+	// error.
 	errBranchUnbranchableParent = errors.New("backend cannot branch this session")
 )
+
+// backendCannotBranch reports whether inst is a delegated agent whose
+// backend Spec lacks delegator.CapBranch: no branch of any kind exists for
+// it, so a /branch degrades to a send on the parent — a fallback only the
+// agent's default session may take. Asked through the manager's capability
+// declaration, never a backend-name comparison (#2154). THE one predicate:
+// runBranchTurn's #2284 refusal and handleBranch's #2301 enqueue gate both
+// ask it.
+func backendCannotBranch(inst *agentInstance) bool {
+	return inst.ag.DelegatedManager != nil && !inst.ag.DelegatedManager.BackendCanBranch()
+}
+
+// refuseBranchOnNamedParent is THE one #2284 refusal, shared by runBranchTurn
+// (at run time) and handleBranch's enqueue gate (#2301, atEnqueue=true): it
+// logs the WARN — the run-time line plus "at enqueue" at the gate — and
+// returns the wrapped sentinel the HTTP layer answers with 422. One
+// definition, so the message and the log fields cannot drift between the two
+// sites. "Nothing ran" is true at enqueue too: nothing ran AND nothing was
+// stored.
+func refuseBranchOnNamedParent(inst *agentInstance, parentKey string, atEnqueue bool) error {
+	site := ""
+	if atEnqueue {
+		site = " at enqueue"
+	}
+	branchLog.Warnf("refused branch on named parent%s: agent=%s session=%s (backend %q cannot branch)",
+		site, inst.id, parentKey, inst.ag.Backend)
+	return fmt.Errorf("%w: agent %q session %q: the agent's backend cannot branch, and the fallback would run the request on that session — nothing ran",
+		errBranchUnbranchableParent, inst.id, parentKey)
+}
 
 // branchSession names the session a branch turn runs on and how it was made.
 type branchSession struct {
 	// key is the session the turn runs on: the new branch key, or the
 	// parent key when the backend cannot branch at all (a fallback only the
 	// agent's default session may take — runBranchTurn refuses every other
-	// parent with errBranchUnbranchableParent, #2284).
+	// parent with errBranchUnbranchableParent BEFORE this is computed,
+	// #2284).
 	key string
 	// inherited reports that a delegated branch carries the parent's
 	// backend conversation (a real fork) rather than starting fresh.
@@ -70,6 +105,10 @@ type branchSession struct {
 	// fellBack reports that the backend cannot branch AT ALL, so the
 	// request degrades to a send on the parent. Distinct from a fresh
 	// branch (a parent with nothing to fork still yields a real branch).
+	// Reachable only for a backendCannotBranch agent (for BranchType
+	// "branch", ForkOrFreshBranch yields branchKey=="" exactly then) —
+	// hence only for the default session, every named parent having been
+	// refused above.
 	fellBack bool
 }
 
@@ -89,8 +128,8 @@ type branchSession struct {
 //
 // The fellBack shape (a send on the parent) is taken only from the
 // agent's DEFAULT session — runBranchTurn refuses every other parent
-// (#2284), because that fallback would interrupt the named session the
-// caller explicitly asked to leave alone.
+// BEFORE calling this (#2284), because that fallback would interrupt the
+// named session the caller explicitly asked to leave alone.
 //
 // NoResetHook and the orientation template are branch-CREATION options, so
 // they are resolved here (once — handleBranch used to resolve the template
@@ -133,14 +172,15 @@ func createBranchSession(d httpHandlerDeps, inst *agentInstance, parentKey strin
 // reports, per R1 (option B), whether parentKey IS the agent's default
 // session — the session the EMPTY selector resolves to: the cannot-branch
 // send fallback below is allowed only then, and a named parent is refused
-// with errBranchUnbranchableParent before a model override, the NoCompact
-// latch or any dispatch happens, so nothing runs and the parent gets no
-// message and no turn (#2284). Each caller supplies the oracle it can:
-// handleBranch knows whether a selector was given at all (an empty one
-// resolved through the CreateDefault hook, so a MINTED main key #1859 is
-// still main), while the deferred sweep — whose record carries no rung —
-// compares against the plain default key (defaultSessionKey, no create
-// hook).
+// with errBranchUnbranchableParent before the branch session is even
+// created — before the fork attempt, a model override, the NoCompact latch
+// or any dispatch — so nothing runs and the parent gets no message and no
+// turn (#2284; the same shared refusal answers a wait-carrying request at
+// enqueue, #2301). Each caller supplies the oracle it can: handleBranch
+// knows whether a selector was given at all (an empty one resolved through
+// the CreateDefault hook, so a MINTED main key #1859 is still main), while
+// the deferred sweep — whose record carries no rung — compares against the
+// plain default key (defaultSessionKey, no create hook).
 //
 // fallbackRcpt is the receipt used when the backend cannot branch and the
 // request degrades to a send on the parent. sync selects the run shape,
@@ -152,8 +192,16 @@ func createBranchSession(d httpHandlerDeps, inst *agentInstance, parentKey strin
 // last_user_activity_at on the branch session. Deliberately a parameter,
 // NOT a branchTurnOptions field — the options are the deferrable subset, and
 // the human flag is intentionally NOT deferrable: the deferred sweep always
-// passes false (the human may be gone by delivery time).
+// passes false (the human may be gone at delivery time).
 func runBranchTurn(d httpHandlerDeps, inst *agentInstance, parentKey string, parentIsDefault bool, fallbackRcpt route.Receipt, o branchTurnOptions, sync, human bool) (branchTurnResult, error) {
+	// #2284, before any branch machinery runs: a backend that cannot branch
+	// degrades the request to a send on the parent, and a named parent must
+	// never take that fallback — it would run the turn on, and interrupt,
+	// the session the caller asked to leave alone (the R1 option-B ruling
+	// sits with the parentIsDefault oracle, in handleBranch).
+	if backendCannotBranch(inst) && !parentIsDefault {
+		return branchTurnResult{}, refuseBranchOnNamedParent(inst, parentKey, false)
+	}
 	bs, err := createBranchSession(d, inst, parentKey, o.NoResetHook)
 	if err != nil {
 		return branchTurnResult{}, err
@@ -165,20 +213,7 @@ func runBranchTurn(d httpHandlerDeps, inst *agentInstance, parentKey string, par
 	rcpt := route.Receipt{SessionKey: bs.key, Via: "branch"}
 	switch {
 	case bs.fellBack:
-		if !parentIsDefault {
-			// R1 ruling (option B): "main" is the resolved parent key
-			// being the agent's default session — the key the EMPTY
-			// selector resolves to, including a CreateDefault-minted one
-			// (#1859). A named parent must never take the send fallback —
-			// it would run the turn on, and interrupt, the session the
-			// caller asked to leave alone. Refuse before the model
-			// override, the NoCompact latch and both dispatch shapes
-			// below: the parent gets no message and no turn.
-			err := fmt.Errorf("%w: agent %q session %q: the agent's backend cannot branch, and the fallback would run the request on that session — nothing ran",
-				errBranchUnbranchableParent, inst.id, parentKey)
-			branchLog.Warnf("refused branch on named parent: agent=%s session=%s (backend %q cannot branch)", inst.id, parentKey, inst.ag.Backend)
-			return branchTurnResult{}, err
-		}
+		// The default session only (every named parent was refused above).
 		runKey, rcpt = parentKey, fallbackRcpt
 		branchLog.Warnf("agent %q backend %q cannot branch — falling through to send (branching options ignored: no_compact=%v no_reset_hook=%v silent=%v)",
 			inst.id, inst.ag.Backend, o.NoCompact, o.NoResetHook, o.Silent)

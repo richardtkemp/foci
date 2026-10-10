@@ -222,19 +222,20 @@ func (b *noBranchBackend) injectSnapshot() []string {
 	return append([]string(nil), b.injects...)
 }
 
-// delegatedBranchHarness swaps the harness's API agent for a delegated one
-// whose backend cannot branch: a real DelegatedManager over noBranchBackend.
-// The /branch path (runBranchTurn) consults only inst.ag, so the API
-// harness's inst.cmds/inst.cc wiring going stale is harmless. StartInbox is
-// required by the sync path (EnqueueInjectWait — see httpTestSetup).
-func delegatedBranchHarness(t *testing.T, opts httpTestOpts) (httpHandlerDeps, *noBranchBackend) {
+// delegatedBranchHarnessWith is delegatedBranchHarness parameterised on the
+// backend double and its capability Spec: the wiring is identical except the
+// manager's NewBackend and Spec. A double that implements
+// delegator.BackendBrancher should carry a Spec declaring CapBranch (and one
+// that does not, a Spec declaring nothing), so the declaration always
+// matches the method set — the ethos of Spec declarations (#2154).
+func delegatedBranchHarnessWith(t *testing.T, opts httpTestOpts, be delegator.Delegator, spec delegator.Spec) httpHandlerDeps {
 	t.Helper()
 	d, _ := httpTestSetup(t, opts)
-	be := &noBranchBackend{}
 	mgr := &agent.DelegatedManager{
 		AgentID:    testAgentID,
 		StartOpts:  delegator.StartOptions{AgentID: testAgentID, WorkDir: t.TempDir()},
 		NewBackend: func() (delegator.Delegator, error) { return be, nil },
+		Spec:       spec,
 	}
 	t.Cleanup(mgr.Close)
 	ag := &agent.Agent{
@@ -248,7 +249,49 @@ func delegatedBranchHarness(t *testing.T, opts httpTestOpts) (httpHandlerDeps, *
 	}
 	d.agents[testAgentID].ag = ag
 	ag.StartInbox(d.ctx)
-	return d, be
+	return d
+}
+
+// delegatedBranchHarness swaps the harness's API agent for a delegated one
+// whose backend cannot branch: a real DelegatedManager over noBranchBackend
+// (its Spec declares nothing, matching the double's missing
+// delegator.BackendBrancher method set). The /branch path (runBranchTurn)
+// consults only inst.ag, so the API harness's inst.cmds/inst.cc wiring
+// going stale is harmless. StartInbox is required by the sync path
+// (EnqueueInjectWait — see httpTestSetup).
+func delegatedBranchHarness(t *testing.T, opts httpTestOpts) (httpHandlerDeps, *noBranchBackend) {
+	t.Helper()
+	be := &noBranchBackend{}
+	return delegatedBranchHarnessWith(t, opts, be, delegator.Spec{}), be
+}
+
+// branchCapableBackend is noBranchBackend's branching twin: the same
+// synchronous ImmediateInject double plus an honest delegator.BackendBrancher
+// method set (no-op fork/cleanup, mirroring internal/agent/branch_test.go's
+// brancherBackend), to pair with a Spec that declares CapBranch.
+type branchCapableBackend struct{ noBranchBackend }
+
+var _ delegator.BackendBrancher = (*branchCapableBackend)(nil)
+
+func (b *branchCapableBackend) ForkSession(_ context.Context, _ delegator.ForkRequest) (delegator.ForkResult, error) {
+	return delegator.ForkResult{SessionID: "forked"}, nil
+}
+
+func (b *branchCapableBackend) CleanupSession(_ context.Context, _ delegator.CleanupRequest) error {
+	return nil
+}
+
+// capBranchSpec is branchCapableBackend's Spec: it declares exactly
+// CapBranch, which is what BackendCanBranch asks.
+var capBranchSpec = delegator.Spec{Caps: map[delegator.Capability]delegator.Support{delegator.CapBranch: delegator.Yes()}}
+
+// delegatedBranchingHarness is delegatedBranchHarness over a backend that
+// CAN branch (Spec declares CapBranch), so /branch takes the real-fork
+// path instead of the send fallback.
+func delegatedBranchingHarness(t *testing.T, opts httpTestOpts) (httpHandlerDeps, *branchCapableBackend) {
+	t.Helper()
+	be := &branchCapableBackend{}
+	return delegatedBranchHarnessWith(t, opts, be, capBranchSpec), be
 }
 
 // TestBranch_CannotBranchMainFallsThrough pins R1's option-B ruling: when
@@ -550,5 +593,331 @@ func TestSweep_BranchNamedParentRefusedWhenBackendCannotBranch(t *testing.T) {
 	}
 	if all, _ := store.All(); len(all) != 0 {
 		t.Errorf("R5: store not drained after the refused delivery: %d record(s) — a refusal must not retry forever", len(all))
+	}
+}
+
+// warmNamedParent seeds the named parent session and makes it WARM, so a
+// wait_cold duration does not hold now: a wait-carrying /branch against it
+// is deferral-shaped on the pre-#2301 code.
+func warmNamedParent(t *testing.T, d httpHandlerDeps) {
+	t.Helper()
+	seedMarker(t, d, testAgentID+"/iside", "parent marker")
+	d.sessionIndex.TouchCacheTouch(testAgentID+"/iside", time.Now())
+}
+
+// warnRecorder drains the warn buffer and then records every branch WARN
+// line for the rest of the test (the SetWarnHook replay pattern from
+// TestSweep_BranchNamedParentRefusedWhenBackendCannotBranch).
+func warnRecorder(t *testing.T) func() []string {
+	t.Helper()
+	log.SetWarnHook(func(log.Level, string, string) {})
+	var mu sync.Mutex
+	var lines []string
+	log.SetWarnHook(func(_ log.Level, component, msg string) {
+		if component == "branch" {
+			mu.Lock()
+			lines = append(lines, msg)
+			mu.Unlock()
+		}
+	})
+	t.Cleanup(func() { log.SetWarnHook(nil) })
+	return func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), lines...)
+	}
+}
+
+// TestBranch_DeferredCannotBranchNamedParentRefusedAtEnqueue is the #2301 red
+// test: a /branch carrying a wait condition that names a NON-default parent
+// on a delegated backend that cannot branch is refused at ENQUEUE with the
+// same 422 — same shared refusal — the request gets without the wait. On the
+// pre-#2301 code the request was stored and answered 202 "deferred"; the
+// refusal surfaced only as a WARN at delivery, and the caller never learned
+// nothing ran.
+func TestBranch_DeferredCannotBranchNamedParentRefusedAtEnqueue(t *testing.T) {
+	// namedWarm seeds a WARM named parent, so wait_cold:"1h" does not hold
+	// now and the base code defers.
+	namedWarm := func(t *testing.T) (*noBranchBackend, *defersend.Store, *http.ServeMux) {
+		d, be := delegatedBranchHarness(t, httpTestOpts{})
+		warmNamedParent(t, d)
+		store := withDeferStore(t, &d)
+		return be, store, newTestMux(d)
+	}
+
+	t.Run("422, nothing stored, nothing ran", func(t *testing.T) {
+		be, store, mux := namedWarm(t)
+
+		w := postJSON(mux, "/branch", `{"text":"later","session":"side","wait_cold":"1h"}`)
+
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("#2301: status = %d, want 422 at enqueue (base: 202 deferred, refused only at delivery); body: %s", w.Code, w.Body.String())
+		}
+		body := w.Body.String()
+		for _, want := range []string{"cannot branch", testAgentID, testAgentID + "/iside", "nothing ran"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("#2301: refusal body %q does not say %q", body, want)
+			}
+		}
+		if all, _ := store.All(); len(all) != 0 {
+			t.Errorf("#2301: defer store holds %d record(s), want 0 — a refused request stores nothing", len(all))
+		}
+		if starts := len(be.started); starts != 0 {
+			t.Errorf("#2301: backend started %d time(s), want 0", starts)
+		}
+		if inj := be.injectSnapshot(); len(inj) != 0 {
+			t.Errorf("#2301: backend injects = %q, want none — nothing ran", inj)
+		}
+	})
+
+	t.Run("sync caller gets the same 422", func(t *testing.T) {
+		be, store, mux := namedWarm(t)
+
+		w := postJSON(mux, "/branch", `{"text":"later","session":"side","wait_cold":"1h","async":false}`)
+
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("#2301: status = %d, want the same 422 for a sync caller; body: %s", w.Code, w.Body.String())
+		}
+		if strings.Contains(w.Body.String(), "deferred") {
+			t.Errorf("#2301: sync refusal answered with a deferred receipt: %s", w.Body.String())
+		}
+		if all, _ := store.All(); len(all) != 0 {
+			t.Errorf("#2301: defer store holds %d record(s), want 0", len(all))
+		}
+		if inj := be.injectSnapshot(); len(inj) != 0 {
+			t.Errorf("#2301: backend injects = %q, want none", inj)
+		}
+	})
+
+	t.Run("same message as the immediate refusal", func(t *testing.T) {
+		_, _, mux := namedWarm(t)
+
+		waited := postJSON(mux, "/branch", `{"text":"later","session":"side","wait_cold":"1h"}`)
+		immediate := postJSON(mux, "/branch", `{"text":"later","session":"side"}`)
+
+		if waited.Code != http.StatusUnprocessableEntity || immediate.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("#2301: waited=%d immediate=%d, want both 422", waited.Code, immediate.Code)
+		}
+		if waited.Body.String() != immediate.Body.String() {
+			t.Errorf("#2301: the enqueue refusal and the immediate refusal disagree (R2: one message):\nwaited:    %s\nimmediate: %s",
+				waited.Body.String(), immediate.Body.String())
+		}
+	})
+
+	t.Run("met condition still refuses at enqueue", func(t *testing.T) {
+		// The parent is COLD, so wait_cold HOLDS — the deferral below would
+		// be skipped. The enqueue gate fires on wait PRESENCE (R1's test),
+		// so the refusal is the enqueue one and the caller still gets the
+		// same 422 the run path would give.
+		d, _ := delegatedBranchHarness(t, httpTestOpts{})
+		seedMarker(t, d, testAgentID+"/iside", "parent marker") // cold: never touched
+		store := withDeferStore(t, &d)
+		warns := warnRecorder(t)
+		mux := newTestMux(d)
+
+		w := postJSON(mux, "/branch", `{"text":"later","session":"side","wait_cold":"1m"}`)
+
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("#2301: status = %d, want 422 (a met condition is no escape: delivery could only end in the refusal); body: %s", w.Code, w.Body.String())
+		}
+		refusals := 0
+		for _, msg := range warns() {
+			if strings.Contains(msg, "refused branch on named parent") {
+				refusals++
+				if !strings.Contains(msg, "at enqueue") {
+					t.Errorf("#2301: a holding condition was refused by the run-time gate, not the enqueue one: %q", msg)
+				}
+			}
+		}
+		if refusals != 1 {
+			t.Errorf("#2301: refusal WARNs = %d, want exactly 1", refusals)
+		}
+		if all, _ := store.All(); len(all) != 0 {
+			t.Errorf("#2301: defer store holds %d record(s), want 0", len(all))
+		}
+	})
+
+	t.Run("logged once at WARN marked at enqueue", func(t *testing.T) {
+		be, store, mux := namedWarm(t)
+		warns := warnRecorder(t)
+
+		w := postJSON(mux, "/branch", `{"text":"later","session":"side","wait_cold":"1h"}`)
+
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("#2301: status = %d, want 422; body: %s", w.Code, w.Body.String())
+		}
+		var enqueueMarked, unmarked int
+		for _, msg := range warns() {
+			switch {
+			case strings.Contains(msg, "refused branch on named parent at enqueue"):
+				enqueueMarked++
+			case strings.Contains(msg, "refused branch on named parent"):
+				unmarked++
+			}
+		}
+		if enqueueMarked != 1 {
+			t.Errorf("#2301: enqueue-marked refusal WARNs = %d, want exactly 1 (lines: %q)", enqueueMarked, warns())
+		}
+		if unmarked != 0 {
+			t.Errorf("#2301: run-time refusal WARNs = %d, want 0 — nothing reached runBranchTurn (lines: %q)", unmarked, warns())
+		}
+		if all, _ := store.All(); len(all) != 0 {
+			t.Errorf("#2301: defer store holds %d record(s), want 0", len(all))
+		}
+		if inj := be.injectSnapshot(); len(inj) != 0 {
+			t.Errorf("#2301: backend injects = %q, want none", inj)
+		}
+	})
+}
+
+// TestBranch_DeferredDefaultParentStillDefersWhenCannotBranch pins #2301's
+// "everything else unchanged": on a backend that cannot branch, a
+// wait-carrying branch of the agent's DEFAULT session still defers — its
+// delivery ends in the allowed send fallback, so the enqueue refusal must
+// not swallow it.
+func TestBranch_DeferredDefaultParentStillDefersWhenCannotBranch(t *testing.T) {
+	d, be := delegatedBranchHarness(t, httpTestOpts{})
+	store := withDeferStore(t, &d)
+	d.sessionIndex.TouchCacheTouch(testSessionKey, time.Now()) // warm default → wait_cold unmet
+	mux := newTestMux(d)
+
+	w := postJSON(mux, "/branch", `{"text":"later","wait_cold":"1h"}`)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 (the default parent still defers); body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["status"] != "deferred" {
+		t.Errorf("status field = %v, want deferred; body: %s", resp["status"], w.Body.String())
+	}
+	all, _ := store.All()
+	if len(all) != 1 {
+		t.Fatalf("queued = %d, want 1", len(all))
+	}
+	if all[0].Kind != defersend.KindBranch || all[0].SessionKey != testSessionKey {
+		t.Errorf("record = %+v, want one branch on the default session %q", all[0], testSessionKey)
+	}
+	if inj := be.injectSnapshot(); len(inj) != 0 {
+		t.Errorf("backend injects = %q, want none at enqueue", inj)
+	}
+}
+
+// TestBranch_DeferredNamedParentStillDefersOnBranchingBackend pins #2301's
+// "everything else unchanged": a backend that CAN branch still defers a
+// wait-carrying branch of a named parent — the enqueue refusal is only for a
+// backend that cannot branch.
+func TestBranch_DeferredNamedParentStillDefersOnBranchingBackend(t *testing.T) {
+	d, be := delegatedBranchingHarness(t, httpTestOpts{})
+	warmNamedParent(t, d) // wait_cold unmet
+	store := withDeferStore(t, &d)
+	mux := newTestMux(d)
+
+	w := postJSON(mux, "/branch", `{"text":"later","session":"side","wait_cold":"1h"}`)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 (a branching backend still defers); body: %s", w.Code, w.Body.String())
+	}
+	all, _ := store.All()
+	if len(all) != 1 {
+		t.Fatalf("queued = %d, want 1", len(all))
+	}
+	if all[0].Kind != defersend.KindBranch || all[0].SessionKey != testAgentID+"/iside" {
+		t.Errorf("record = %+v, want one branch on the named parent", all[0])
+	}
+	if inj := be.injectSnapshot(); len(inj) != 0 {
+		t.Errorf("backend injects = %q, want none at enqueue", inj)
+	}
+}
+
+// TestBranch_DeferredNamedParentStillDefersForAPIAgent pins #2301's
+// "everything else unchanged": an API agent (no DelegatedManager — the
+// cannot-branch predicate does not apply) still defers a wait-carrying
+// branch of a named parent with 202.
+func TestBranch_DeferredNamedParentStillDefersForAPIAgent(t *testing.T) {
+	d, mock := httpTestSetup(t, httpTestOpts{})
+	warmNamedParent(t, d) // wait_cold unmet
+	store := withDeferStore(t, &d)
+	mux := newTestMux(d)
+
+	w := postJSON(mux, "/branch", `{"text":"later","session":"side","wait_cold":"1h"}`)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 (an API agent still defers); body: %s", w.Code, w.Body.String())
+	}
+	all, _ := store.All()
+	if len(all) != 1 {
+		t.Fatalf("queued = %d, want 1", len(all))
+	}
+	if all[0].Kind != defersend.KindBranch || all[0].SessionKey != testAgentID+"/iside" {
+		t.Errorf("record = %+v, want one branch on the named parent", all[0])
+	}
+	if calls := mock.snapshot(); len(calls) != 0 {
+		t.Errorf("backend called %d time(s) at enqueue, want 0", len(calls))
+	}
+}
+
+// TestBranch_NamedParentNoWaitStillRefused characterises the arms of R1 the
+// enqueue gate must NOT change: with no wait field at all, or with
+// wait_none, a named parent on a cannot-branch backend is refused by
+// runBranchTurn's #2284 gate exactly as before — 422, nothing stored,
+// nothing runs.
+func TestBranch_NamedParentNoWaitStillRefused(t *testing.T) {
+	cases := []struct{ name, body string }{
+		{"no wait field", `{"text":"q","session":"side"}`},
+		// The parent is warm and the wait would defer — wait_none must skip
+		// the defer machinery into the same refusal, not around it.
+		{"wait_none", `{"text":"q","session":"side","wait_cold":"1h","wait_none":true}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d, be := delegatedBranchHarness(t, httpTestOpts{})
+			warmNamedParent(t, d)
+			store := withDeferStore(t, &d)
+			mux := newTestMux(d)
+
+			w := postJSON(mux, "/branch", tc.body)
+
+			if w.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("status = %d, want 422 as before (#2284); body: %s", w.Code, w.Body.String())
+			}
+			if all, _ := store.All(); len(all) != 0 {
+				t.Errorf("defer store holds %d record(s), want 0", len(all))
+			}
+			if inj := be.injectSnapshot(); len(inj) != 0 {
+				t.Errorf("backend injects = %q, want none", inj)
+			}
+		})
+	}
+}
+
+// TestBranch_CannotBranchDefaultParentWaitNoneRunsNow characterises R1/R4:
+// wait_none on the DEFAULT parent of a cannot-branch backend skips the wait
+// gate (and the enqueue refusal — the parent is the default) and runs the
+// send fallback NOW: the deferred machinery is not involved.
+func TestBranch_CannotBranchDefaultParentWaitNoneRunsNow(t *testing.T) {
+	d, be := delegatedBranchHarness(t, httpTestOpts{})
+	store := withDeferStore(t, &d)
+	d.sessionIndex.TouchCacheTouch(testSessionKey, time.Now()) // warm: the wait_cold would otherwise defer
+	mux := newTestMux(d)
+
+	w := postJSON(mux, "/branch", `{"text":"now","wait_cold":"1h","wait_none":true}`)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (wait_none runs the default-session fallback now); body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["response"] != delegatedReply {
+		t.Errorf("response = %q, want the delegated turn's %q", resp["response"], delegatedReply)
+	}
+	if resp["session"] != testSessionKey || resp["resolved_via"] != "default" {
+		t.Errorf("receipt = %q via %q, want the parent %q via default", resp["session"], resp["resolved_via"], testSessionKey)
+	}
+	if inj := be.injectSnapshot(); len(inj) != 1 {
+		t.Errorf("backend injects = %q, want exactly one turn on the parent", inj)
+	}
+	if all, _ := store.All(); len(all) != 0 {
+		t.Errorf("defer store holds %d record(s), want 0", len(all))
 	}
 }
