@@ -393,11 +393,14 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		b.fireAuthFailure(text)
 	}
 
-	// Determine model from lastModel (set by OnAssistant, filtered to top-level
-	// messages only — subagent models are excluded). Use per-call usage from
-	// the last assistant message (not the result's accumulated total) — this
-	// matches what the tmux watcher reports and gives compaction the actual
-	// context window fill, not a sum of all calls.
+	// Determine model from lastModel — the id the process last named: the
+	// system/init message, a top-level assistant message (subagent models are
+	// excluded), or a get_context_usage response; a CONFIRMED set_model clears
+	// it until one of those restates the new id, so a turn that follows a /model
+	// switch whose refresh failed reports "" (never the stale pre-switch id).
+	// Use per-call usage from the last assistant message (not the result's
+	// accumulated total) — this matches what the tmux watcher reports and gives
+	// compaction the actual context window fill, not a sum of all calls.
 	b.mu.Lock()
 	resultModel := b.lastModel
 	lastUsage := b.lastUsage

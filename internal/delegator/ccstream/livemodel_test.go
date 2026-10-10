@@ -159,18 +159,21 @@ func TestLiveModel_ConfirmedModelSwitchInvalidatesUntilRestated(t *testing.T) {
 
 // TestLiveModel_RejectedModelSwitchKeepsLearnedModel pins the other arm of
 // the set_model writer: CC rejecting the switch (e.g. an unrecognized id)
-// means the process still runs the learned model, so LiveModel keeps
-// reporting it — only a CONFIRMED switch invalidates.
+// means the process still runs the learned model, so the learned id is kept
+// — only a CONFIRMED switch invalidates. The pin observes the id the way
+// every turn end does (OnResult reads lastModel into TurnResult.Model)
+// rather than through LiveModel, so it holds from the structural step on
+// (characterisation; listed in .factory/red-gate-exempt.txt).
 func TestLiveModel_RejectedModelSwitchKeepsLearnedModel(t *testing.T) {
 	t.Parallel()
 
 	b, done := newLiveModelControlBackend(t)
 	defer done()
 
+	var completed *delegator.TurnResult
+	applyHandler(b, &testHandler{OnTurnComplete: func(r *delegator.TurnResult) { completed = r }})
+
 	feedInit(t, b, "claude-opus-5-5")
-	if got := b.LiveModel(); got != "claude/claude-opus-5-5" {
-		t.Fatalf("LiveModel after init = %q, want %q", got, "claude/claude-opus-5-5")
-	}
 
 	sendErr := make(chan error, 1)
 	go func() {
@@ -181,7 +184,15 @@ func TestLiveModel_RejectedModelSwitchKeepsLearnedModel(t *testing.T) {
 	if err := <-sendErr; err == nil {
 		t.Fatal("set_model: got nil error, want the rejection surfaced")
 	}
-	if got := b.LiveModel(); got != "claude/claude-opus-5-5" {
-		t.Errorf("LiveModel after a rejected set_model = %q, want the still-running %q", got, "claude/claude-opus-5-5")
+
+	// No assistant message restates the id after the rejection: the turn's
+	// result must still carry the learned one. A clear on the error path
+	// (the way a confirmed switch clears) would report "" here.
+	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
+	if completed == nil {
+		t.Fatal("OnTurnComplete was not called")
+	}
+	if completed.Model != "claude/claude-opus-5-5" {
+		t.Errorf("TurnResult.Model after a rejected set_model = %q, want the still-running %q", completed.Model, "claude/claude-opus-5-5")
 	}
 }
