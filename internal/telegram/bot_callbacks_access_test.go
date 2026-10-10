@@ -307,7 +307,7 @@ func TestHandleCallbackQuery_FacetThinkingUsesFacetSessionKey(t *testing.T) {
 	// render with — not the per-chat key of the chat the button was pressed
 	// in (#2303).
 	var (
-		ovMu sync.Mutex
+		ovMu  sync.Mutex
 		ovKey string
 	)
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
