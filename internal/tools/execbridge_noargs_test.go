@@ -145,7 +145,13 @@ func TestShellFuncZeroPropertyUsageLineJSONFlag(t *testing.T) {
 // an object is rejected with `error: foci_<name>`, naming the offender, no
 // jq output, rc 1, and no foci-call. Before #2271 the blob went to
 // `jq --argjson` unchecked, so `foo` leaked jq's internals and `[1]` was
-// sent to the gateway as the params.
+// sent to the gateway as the params. `{"a":1} x` and `{"a":1}{"b":2}` pin
+// that the check proves the WHOLE argument is one object: unslurped
+// `jq -r 'type'` emits `object` per parsed value and nothing else, so
+// trailing garbage fails jq only AFTER the first value's output exists (an
+// output-only check sees `object` and waves `{"a":1} x` through), while
+// `{"a":1}{"b":2}` was caught only by the accident of a second output line.
+// The slurped check (`length==1`) rejects both by construction.
 func TestShellFuncUnparseableSchemaRejectsBadArguments(t *testing.T) {
 	t.Parallel()
 	for _, bin := range []string{"bash", "jq"} {
@@ -163,6 +169,8 @@ func TestShellFuncUnparseableSchemaRejectsBadArguments(t *testing.T) {
 		{args: []string{""}, wantErr: "error: foci_blob takes a single JSON object argument, got ''"},
 		{args: []string{"[1]"}, wantErr: "error: foci_blob takes a single JSON object argument, got '[1]'"},
 		{args: []string{"{}", "{}"}, wantErr: "error: foci_blob takes a single JSON object argument, got an extra argument '{}'"},
+		{args: []string{`{"a":1} x`}, wantErr: `error: foci_blob takes a single JSON object argument, got '{"a":1} x'`},
+		{args: []string{`{"a":1}{"b":2}`}, wantErr: `error: foci_blob takes a single JSON object argument, got '{"a":1}{"b":2}'`},
 	})
 }
 

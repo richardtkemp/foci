@@ -1477,8 +1477,9 @@ func shellFuncUsageLine(t *Tool, args string) string {
 // at all. Only an unparseable schema keeps the legacy JSON-blob contract —
 // no argument sends {}, one JSON object with any keys is sent as the params
 // (the foci__json passthrough still works for callers that hand-construct
-// it), and anything else is an error, with the blob's type checked before
-// jq --argjson sees it.
+// it), and anything else is an error, the blob verified — slurped whole, so
+// trailing garbage and concatenated objects fail too — before jq --argjson
+// sees it.
 func generateGenericShellFunc(t *Tool) string {
 	name := "foci_" + t.Name
 	helpText := generateHelpText(t)
@@ -1522,19 +1523,24 @@ func generateGenericShellFunc(t *Tool) string {
 %s`, name, helpCheck, guard, name, shellFuncUsageLine(t, ""), blobFociCallTail(t.Name))
 		}
 		// Unparseable schema: legacy JSON-blob contract — no argument sends
-		// {}, exactly one JSON object (any keys; there is no schema to
-		// check them against) is the params. Anything else is rejected
-		// before jq --argjson sees it (#2271): the type check compares
-		// jq's stderr-silenced OUTPUT (the foci__json_arg idiom), not its
-		// exit status, because jq exits 0 on EMPTY input — an exit-code
-		// check would pass '' straight through to --argjson.
+		// {}, exactly one JSON object (any keys; there is no schema to check
+		// them against) is the params. Anything else is rejected before jq
+		// --argjson sees it (#2271). The check slurps the WHOLE argument and
+		// compares jq's stderr-silenced output (the foci__json_arg idiom):
+		// slurping makes a parse error anywhere kill jq before the filter
+		// runs — empty output — so trailing garbage (`{"a":1} x`) cannot
+		// pass as its valid prefix, while every input that is not exactly
+		// one value (empty string, concatenated objects) prints "many".
+		// Comparing output rather than exit status is deliberate: jq exits
+		// 0 on empty input, and a parse error already yields empty output,
+		// so the one comparison covers both.
 		usage := shellFuncUsageLine(t, "'<json-object>'")
 		return fmt.Sprintf(`%s() {
 %s
 %s
   if [ $# -eq 0 ]; then
     set -- '{}'
-  elif [ "$(printf '%%s' "$1" | jq -r 'type' 2>/dev/null)" != object ]; then
+  elif [ "$(printf '%%s' "$1" | jq -sr 'if length==1 then .[0]|type else "many" end' 2>/dev/null)" != object ]; then
     echo "error: %s takes a single JSON object argument, got '$1'" >&2
     echo "%s" >&2
     return 1
