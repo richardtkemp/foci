@@ -97,6 +97,28 @@ func TestParseObjectListValue(t *testing.T) {
 	}
 }
 
+// TestParseObjectListValueScheduleSubField proves a FieldSchedule sub-field
+// coerces like the other string-ish types in the object-list editor path: the
+// value passes through as a string (the schedule grammar itself is enforced by
+// FormatTOMLValue on write), and a non-string is rejected. No production
+// object-list spec carries a schedule sub-field yet; the synthetic spec keeps
+// coerceObjectValue's FieldSchedule case honest when one does.
+func TestParseObjectListValueScheduleSubField(t *testing.T) {
+	spec := ObjectFieldSpec{Section: "test.schedules", Fields: []ObjectSubField{
+		{Key: "at", Type: FieldSchedule},
+	}}
+	entries, err := ParseObjectListValue(spec, `[{"at":"04:00"},{"at":"20h"}]`)
+	if err != nil {
+		t.Fatalf("ParseObjectListValue(schedule sub-field): %v", err)
+	}
+	if len(entries) != 2 || entries[0]["at"] != "04:00" || entries[1]["at"] != "20h" {
+		t.Errorf("entries = %v, want clock time and duration preserved as strings", entries)
+	}
+	if _, err := ParseObjectListValue(spec, `[{"at":5}]`); err == nil {
+		t.Error("expected error for a non-string schedule value")
+	}
+}
+
 func TestTableArrayEntries(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "foci.toml")
 	toml := `data_dir = "/tmp"
