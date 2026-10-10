@@ -85,6 +85,15 @@ func wireAgentPlatformCallbacks(
 		broadcastNotify(fmt.Sprintf("⚡ Rate limited (resets %s).", resetTime.Format(time.Kitchen)))
 	})
 
+	// Queued-turn notice (#2281) — the chat whose session must wait for a
+	// turn-limit slot is told so (SessionNotifier where supported, so a
+	// non-default Telegram/Discord DM gets it in its own chat). The inbox
+	// fires this in its own goroutine, so a slow platform never stalls a
+	// worker.
+	ag.TurnQueuedNotifyFunc = func(sessionKey, text string) {
+		route.NotifySessionChat(connMgr, acfg.ID, sessionKey, text)
+	}
+
 	// Max tokens — broadcast to every surface
 	ag.MaxTokensWarnFunc.Add(func(warn string) {
 		broadcastNotify("⚠️ " + warn)

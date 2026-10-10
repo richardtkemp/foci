@@ -118,6 +118,26 @@ func TestResolve_GroupsMergeMaps(t *testing.T) {
 	}
 }
 
+func TestResolve_BehaviorMaxConcurrentTurns(t *testing.T) {
+	// Proves the #2281 per-agent turn cap resolves through the standard
+	// behavior cascade: agent override beats [behavior], global applies when
+	// the agent leaves it unset, and unset resolves to 0 (no limit).
+	cfg := &Config{
+		Behavior: BehaviorConfig{MaxConcurrentTurns: Ptr(4)},
+	}
+	overriding := AgentConfig{Behavior: BehaviorConfig{MaxConcurrentTurns: Ptr(2)}}
+	if got := Resolve(cfg, overriding).Behavior.MaxConcurrentTurns; got != 2 {
+		t.Errorf("MaxConcurrentTurns = %d, want 2 (agent override)", got)
+	}
+	inheriting := AgentConfig{}
+	if got := Resolve(cfg, inheriting).Behavior.MaxConcurrentTurns; got != 4 {
+		t.Errorf("MaxConcurrentTurns = %d, want 4 (global fallback)", got)
+	}
+	if got := Resolve(&Config{}, AgentConfig{}).Behavior.MaxConcurrentTurns; got != 0 {
+		t.Errorf("MaxConcurrentTurns = %d, want 0 when unset (no limit)", got)
+	}
+}
+
 func TestResolve_WebhooksMerge(t *testing.T) {
 	// Proves Webhooks uses MergeMaps with global defaults as base and agent
 	// as overlay — agent keys override global, global-only keys are kept.
@@ -148,7 +168,7 @@ func TestResolve_AllFieldsPopulated(t *testing.T) {
 	// fields being added to the struct without updating Resolve().
 	cfg := &Config{
 		AgentLoop: AgentLoopConfig{MaxToolLoops: Ptr(1), Streaming: Ptr(true)},
-		Behavior:  BehaviorConfig{SteerMode: Ptr(true), GroupThrottle: Ptr("1s"), EnableStopAliases: Ptr(true), StopAliases: []string{"stop"}},
+		Behavior:  BehaviorConfig{SteerMode: Ptr(true), GroupThrottle: Ptr("1s"), EnableStopAliases: Ptr(true), StopAliases: []string{"stop"}, MaxConcurrentTurns: Ptr(2)},
 		Voice:     VoiceConfig{TTS: Ptr("test")},
 		Nudge:     NudgeConfig{NudgeEnable: Ptr(true), NudgeCooldown: Ptr(1)},
 		System:    SystemConfig{SystemFiles: []string{"a.md"}, Webhooks: map[string]string{"hook": "path"}},

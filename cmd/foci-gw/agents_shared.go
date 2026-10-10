@@ -205,6 +205,13 @@ func configureUniversal(ag *agent.Agent, p setupParams, compactor *compaction.Co
 	ag.TurnLockWarnThreshold = parseDurationDefault(bc.TurnLockWarnThreshold, 0)
 	ag.ModelDefaultsFn = modelDefaultsFn(p.cfg.Models)
 
+	// Turn limits (#2281): the per-agent cap from the resolved behavior
+	// cascade; the gateway-wide cap is the one shared limiter built in main.
+	// Both nil when their limit is 0 (unlimited) — the inbox then takes no
+	// slot at all.
+	ag.TurnLimit = agent.NewTurnLimiter(bc.MaxConcurrentTurns) // static-cfg:ignore: sizes a FIFO semaphore at start-up, can't be live-resized — like MaxConcurrentSpawns (tool_table.go)
+	ag.GlobalTurnLimit = p.globalTurnLimit
+
 	// Reset lifecycle: orientation template resolver (closed over config for lazy resolution).
 	resetOrientPath := config.DerefStr(config.First(p.acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
 	resetSearchDirs := ag.PromptSearchDirs

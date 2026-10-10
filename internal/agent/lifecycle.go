@@ -312,8 +312,10 @@ func (a *Agent) ResetSessionHard(ctx context.Context, sessionKey string) error {
 		return fmt.Errorf("no active session to reset")
 	}
 
-	// Cancel any in-flight turn ctx. CancelSession is a no-op if no turn is
-	// running, so this is safe to call unconditionally.
+	// Cancel any in-flight turn ctx — and, since #2281, also drop a batch
+	// still waiting for a turn-limit slot: running a stale queued message
+	// after a hard reset would contradict the reset. CancelSession is a
+	// no-op when neither is pending, so this is safe to call unconditionally.
 	a.CancelSession(sessionKey)
 
 	if a.DelegatedManager != nil {

@@ -88,6 +88,8 @@ model = "anthropic/claude-haiku-4-5-20251001"
 # group_throttle = ""                      # group chat throttle window (e.g. "30s", "" = disabled)
 # stop_aliases = ["stop", "wait"]          # aliases for /stop command
 # enable_stop_aliases = true               # enable stop command aliases
+# max_concurrent_turns = 0                 # max user conversations ONE agent works on at once; 0 = no limit (waiting senders get a queued notice; restart required)
+# max_concurrent_turns_all_agents = 0      # max user conversations across ALL agents at once (global only); 0 = no limit (restart required)
 
 # [voice]
 # tts = ""                                 # TTS provider id (empty = default entry)

@@ -1356,8 +1356,10 @@ func TestInbox_ContextCancellation_StopsWorker(t *testing.T) {
 }
 
 // driverGated is a Driver that signals on `ready` when entered, then
-// blocks on `release` (if non-nil) before returning. Used to verify
-// per-session parallelism.
+// blocks on `release` (if non-nil) before returning. While gated it also
+// exits on ctx.Done() — the real-driver shape, where /stop cancels the
+// turn ctx and the platform turn ends. Used to verify per-session
+// parallelism and turn-limit slot release on /stop.
 type driverGated struct {
 	ready   chan struct{}
 	release chan struct{}
@@ -1372,7 +1374,14 @@ func (d *driverGated) WrapTurn(ctx context.Context, fn func() error) error {
 	default:
 	}
 	if d.release != nil {
-		<-d.release
+		select {
+		case <-d.release:
+		case <-ctx.Done():
+			if d.done != nil {
+				d.done <- struct{}{}
+			}
+			return ctx.Err()
+		}
 	}
 	OnPrimaryWrittenFromContext(ctx)()
 	err := fn()

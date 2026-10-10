@@ -16,7 +16,10 @@
 //         - in-flight + steer-eligible + CC backend → Inject(SourceSteer)
 //         - in-flight + steer-eligible + API backend → AppendSteer
 //         - otherwise → push to session channel
-//     → per-session worker drains, batches, calls Driver.Drive [agent]
+//     → per-session worker passes the relogin/in-flight/compaction
+//       gates, takes a turn-limit slot (#2281: the agent's cap first,
+//       then the gateway-wide cap; injections exempt), then drains,
+//       batches, calls Driver.Drive                            [agent]
 //
 // The Driver interface lets the platform-specific renderer/tracker stay
 // platform-side while the agent owns the queueing, batching, and routing.
@@ -263,12 +266,18 @@ type sessionInbox struct {
 
 	workerStarted sync.Once
 
-	// cancelMu guards turnCancel. Set by the session worker before each
-	// turn; cleared on turn return. Agent.CancelSession reads under the
-	// mutex to fire /stop with race safety against the worker's turn
-	// boundaries.
+	// cancelMu guards turnCancel and waitCancel. turnCancel is set by the
+	// session worker before each turn and cleared on turn return; waitCancel
+	// is set while the worker waits for turn-limit slots (#2281) for a
+	// queued batch and cleared once the slots are acquired. Agent.CancelSession
+	// reads both under the mutex to fire /stop with race safety against the
+	// worker's turn boundaries: firing waitCancel drops the still-waiting
+	// batch, firing turnCancel stops the running turn. They never overlap on
+	// one worker — waitCancel is cleared before the batch drives, at which
+	// point turnCancel is still nil.
 	cancelMu   sync.Mutex
 	turnCancel context.CancelFunc
+	waitCancel context.CancelFunc
 
 	log *log.ComponentLogger
 }
@@ -326,6 +335,22 @@ func (inb *sessionInbox) drainAvailable() []Envelope {
 			return out
 		}
 	}
+}
+
+// setWaitCancel registers cancel as this inbox's queued-batch cancel — the
+// handle CancelSession fires to drop a batch still waiting for turn-limit
+// slots (#2281). Cleared by clearWaitCancel the moment the slots are acquired.
+func (inb *sessionInbox) setWaitCancel(cancel context.CancelFunc) {
+	inb.cancelMu.Lock()
+	inb.waitCancel = cancel
+	inb.cancelMu.Unlock()
+}
+
+// clearWaitCancel unregisters the queued-batch cancel (see setWaitCancel).
+func (inb *sessionInbox) clearWaitCancel() {
+	inb.cancelMu.Lock()
+	inb.waitCancel = nil
+	inb.cancelMu.Unlock()
 }
 
 // --- Agent integration ---
@@ -873,7 +898,10 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 			}
 			// System injection: run it serialised with this session's platform
 			// turns (the worker is idle between turns here) rather than in a
-			// detached goroutine that races them.
+			// detached goroutine that races them. Injections never take a
+			// turn-limit slot (#2281) — a turn holding a slot can be blocked
+			// in EnqueueInjectWait on another session's injection, so
+			// counting them would deadlock at small limits.
 			if env.Inject != nil {
 				// Hold the injection while a delivering autonomous run is live
 				// or its background-work window is open (#1070/spec §4). The
@@ -886,99 +914,270 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 				a.runInject(inb, env)
 				continue
 			}
-			// Sink-delivery gate (TODO #767): if a turn is currently in
-			// flight on this session base AND its sink does NOT deliver to
-			// a user-facing platform (reflection, keepalive, compaction-
-			// memory, session-end-memory — all of which dispatch via
-			// handleDelegatedBranch with no sink on ctx), folding this
-			// envelope into that turn via the existing RunInference inject
-			// path would discard the response. Wait for the non-delivering
-			// turn to clear before dispatching a fresh turn whose own sink
-			// reaches the user.
-			//
-			// Each query is independent — the combination "in flight AND
-			// NOT delivering = wait" is visible at the call site rather
-			// than baked into a single overloaded predicate. While we wait,
-			// further envelopes accumulate in inb.ch (buffered) and will
-			// be batched together via drainAvailable once the gate opens.
-			// In-flight tracking keys directly by session key. A facet
-			// envelope gates on the facet's OWN in-flight turn, not the
-			// parent root's (a facet runs on its own backend; coupling it to
-			// root would be the #719 bug). Root-injected reflection/memory
-			// turns run under the root key, so a root envelope still sees
-			// them.
-			ifk := env.SessionKey
-			if a.IsTurnInFlight(env.SessionKey) && !a.IsInFlightDelivering(env.SessionKey) {
-				log.Extra("inbox", "gate_wait sk=%s ifk=%s reason=in_flight_non_delivering — holding fresh turn until non-delivering turn clears (#767)", env.SessionKey, ifk)
+			held, ok := a.runUserBatch(ctx, inb, env)
+			if !ok {
+				return
 			}
-			for a.IsTurnInFlight(env.SessionKey) && !a.IsInFlightDelivering(env.SessionKey) {
-				wait := a.InFlightWaitCh(env.SessionKey)
-				select {
-				case <-ctx.Done():
-					return
-				case <-wait:
-					// State changed — re-check the predicate.
-				}
-			}
-			// Compaction hold (#856). While a /compact turn is in flight,
-			// dispatching a fresh turn writes CC's stdin mid-compaction and the
-			// text folds into the compaction transcript unframed. Hold until it
-			// clears, then dispatch as a clean turn — further arrivals accumulate
-			// in inb.ch and batch via drainAvailable once the gate opens (same as
-			// the #767 gate above). Poll rather than event-wait: clearCompacting
-			// has no broadcast and the IsCompacting latch self-heals (5-min
-			// expiry), so a poll cannot miss-wake-wedge. Compaction is rare and
-			// brief; in the common auto path the worker is already past compaction
-			// by the time it dequeues, so this never spins.
-			for a.IsCompacting(env.SessionKey) {
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(compactionHoldPoll):
-				}
-			}
-			// turnActive flips true only after the transport has written
-			// the primary message to the backend, not the moment we
-			// dequeue (TODO #777). This closes the reorder race where a
-			// fast follow-up Enqueue could match the steer predicate and
-			// reach ccstream's stdin via ImmediateInject(SourceSteer) before the
-			// primary's own Inject call completed inside RunInference,
-			// stripping the [meta] header off the displaced message. See
-			// clutch/docs/inbox-steer-reorder-bug.md.
-			//
-			// One sync.Once spans the entire driveAndDrainOrphans call so
-			// follow-up turns inside the orphan-drain loop don't reset the
-			// flag — once the backend has primary, steering stays open for
-			// the duration of this batch's processing.
-			var once sync.Once
-			workerCtx := WithOnPrimaryWritten(ctx, func() {
-				once.Do(func() { inb.turnActive.Store(true) })
-			})
-			// Batch consecutive platform messages into this turn, but hold back
-			// any injections drained alongside them — they run individually after
-			// the turn (an inject has no Driver and must not enter driveAndDrainOrphans).
-			batch := []Envelope{env}
-			var heldInjects []Envelope
-			for _, d := range inb.drainAvailable() {
-				if d.Inject != nil {
-					heldInjects = append(heldInjects, d)
-				} else {
-					batch = append(batch, d)
-				}
-			}
-			steerer := turnevent.SteererFunc(inb.drainSteerTexts)
-			heldInjects = append(heldInjects, a.driveAndDrainOrphans(workerCtx, inb, batch, steerer, env)...)
-			inb.turnActive.Store(false)
 			// The just-finished platform turn may have spawned background work
 			// (a subagent / run_in_background Bash) whose autonomous run now owns
 			// delivery — so each held inject passes the same gate as the dequeue
 			// path, not a direct runInject (the Phase 3 bypass fix).
-			for _, inj := range heldInjects {
+			for _, inj := range held {
 				if !a.waitReloginGate(ctx, inj.SessionKey) || !a.waitInjectGate(ctx, inj.SessionKey) {
 					return
 				}
 				a.runInject(inb, inj)
 			}
+		}
+	}
+}
+
+// runUserBatch runs one user (platform) batch on the session worker: the
+// #767 and compaction gates, the turn-limit slot step (#2281), the batching,
+// the driven turn plus its follow-ups (driveAndDrainOrphans), and the
+// turnActive bookkeeping around them. It returns the injections drained
+// alongside the batch (to run slot-free after it returns — the worker's
+// dequeue path treats them identically) and whether the worker should keep
+// going; false means the inbox ctx ended and the worker must return.
+//
+// The turn-limit slot is released via defer when runUserBatch returns —
+// every exit path (normal return, /stop of the running turn, ctx done,
+// panic) gives it back — so one slot covers the batch AND the follow-up
+// turns driveAndDrainOrphans builds from orphan steers and late arrivals,
+// and the post-batch injections run without holding it.
+func (a *Agent) runUserBatch(ctx context.Context, inb *sessionInbox, env Envelope) (heldInjects []Envelope, keepGoing bool) {
+	// Sink-delivery gate (TODO #767): if a turn is currently in
+	// flight on this session base AND its sink does NOT deliver to
+	// a user-facing platform (reflection, keepalive, compaction-
+	// memory, session-end-memory — all of which dispatch via
+	// handleDelegatedBranch with no sink on ctx), folding this
+	// envelope into that turn via the existing RunInference inject
+	// path would discard the response. Wait for the non-delivering
+	// turn to clear before dispatching a fresh turn whose own sink
+	// reaches the user.
+	//
+	// Each query is independent — the combination "in flight AND
+	// NOT delivering = wait" is visible at the call site rather
+	// than baked into a single overloaded predicate. While we wait,
+	// further envelopes accumulate in inb.ch (buffered) and will
+	// be batched together via drainAvailable once the gate opens.
+	// In-flight tracking keys directly by session key. A facet
+	// envelope gates on the facet's OWN in-flight turn, not the
+	// parent root's (a facet runs on its own backend; coupling it to
+	// root would be the #719 bug). Root-injected reflection/memory
+	// turns run under the root key, so a root envelope still sees
+	// them.
+	ifk := env.SessionKey
+	if a.IsTurnInFlight(env.SessionKey) && !a.IsInFlightDelivering(env.SessionKey) {
+		log.Extra("inbox", "gate_wait sk=%s ifk=%s reason=in_flight_non_delivering — holding fresh turn until non-delivering turn clears (#767)", env.SessionKey, ifk)
+	}
+	for a.IsTurnInFlight(env.SessionKey) && !a.IsInFlightDelivering(env.SessionKey) {
+		wait := a.InFlightWaitCh(env.SessionKey)
+		select {
+		case <-ctx.Done():
+			return nil, false
+		case <-wait:
+			// State changed — re-check the predicate.
+		}
+	}
+	// Compaction hold (#856). While a /compact turn is in flight,
+	// dispatching a fresh turn writes CC's stdin mid-compaction and the
+	// text folds into the compaction transcript unframed. Hold until it
+	// clears, then dispatch as a clean turn — further arrivals accumulate
+	// in inb.ch and batch via drainAvailable once the gate opens (same as
+	// the #767 gate above). Poll rather than event-wait: clearCompacting
+	// has no broadcast and the IsCompacting latch self-heals (5-min
+	// expiry), so a poll cannot miss-wake-wedge. Compaction is rare and
+	// brief; in the common auto path the worker is already past compaction
+	// by the time it dequeues, so this never spins.
+	for a.IsCompacting(env.SessionKey) {
+		select {
+		case <-ctx.Done():
+			return nil, false
+		case <-time.After(compactionHoldPoll):
+		}
+	}
+	// Turn-limit slot (#2281): user turns are capped per agent and
+	// gateway-wide; injections (above and below) never take a slot.
+	release, batch, outcome := a.acquireTurnSlots(ctx, inb, env)
+	switch outcome {
+	case slotShutdown:
+		return nil, false
+	case slotDropped:
+		return nil, true
+	}
+	if release != nil {
+		defer release()
+	}
+	// turnActive flips true only after the transport has written
+	// the primary message to the backend, not the moment we
+	// dequeue (TODO #777). This closes the reorder race where a
+	// fast follow-up Enqueue could match the steer predicate and
+	// reach ccstream's stdin via ImmediateInject(SourceSteer) before the
+	// primary's own Inject call completed inside RunInference,
+	// stripping the [meta] header off the displaced message. See
+	// clutch/docs/inbox-steer-reorder-bug.md.
+	//
+	// One sync.Once spans the entire driveAndDrainOrphans call so
+	// follow-up turns inside the orphan-drain loop don't reset the
+	// flag — once the backend has primary, steering stays open for
+	// the duration of this batch's processing.
+	var once sync.Once
+	workerCtx := WithOnPrimaryWritten(ctx, func() {
+		once.Do(func() { inb.turnActive.Store(true) })
+	})
+	// Batch consecutive platform messages into this turn, but hold back
+	// any injections drained alongside them — they run individually after
+	// the turn (an inject has no Driver and must not enter driveAndDrainOrphans).
+	for _, d := range inb.drainAvailable() {
+		if d.Inject != nil {
+			heldInjects = append(heldInjects, d)
+		} else {
+			batch = append(batch, d)
+		}
+	}
+	steerer := turnevent.SteererFunc(inb.drainSteerTexts)
+	heldInjects = append(heldInjects, a.driveAndDrainOrphans(workerCtx, inb, batch, steerer, env)...)
+	inb.turnActive.Store(false)
+	return heldInjects, true
+}
+
+// turnSlotOutcome classifies how acquireTurnSlots ended.
+type turnSlotOutcome int
+
+const (
+	// slotAcquired: the batch holds its slots — run it.
+	slotAcquired turnSlotOutcome = iota
+	// slotDropped: /stop cancelled the wait — the batch is dropped and the
+	// worker continues with later envelopes as normal.
+	slotDropped
+	// slotShutdown: the inbox ctx ended — the worker must return, like the
+	// other gates.
+	slotShutdown
+)
+
+// turnSlotRelease returns every slot acquireTurnSlots took, in reverse order.
+type turnSlotRelease func()
+
+// acquireTurnSlots takes the turn-limit slots (#2281) a user batch needs
+// before it may drive: the agent's own cap first, then the shared
+// gateway-wide cap, so releases mirror acquisitions. A limiter that is nil
+// (limit 0) is skipped entirely — no wait, no notice, no log.
+//
+// first seeds the batch; platform envelopes that arrive while the worker
+// waits are appended to it by waitTurnSlot (what drainAvailable would have
+// batched). On abort, every limiter already held is released and no slot is
+// kept; the outcome distinguishes /stop (drop the batch, keep the worker)
+// from inbox-ctx cancellation (worker returns) by the PARENT ctx — waitCtx
+// is cancelled by both, only the parent ends on shutdown.
+func (a *Agent) acquireTurnSlots(ctx context.Context, inb *sessionInbox, first Envelope) (turnSlotRelease, []Envelope, turnSlotOutcome) {
+	// Fast path (requirement 9): no limiter at all is exactly today's
+	// behaviour — no waitCtx, no registered cancel, no notice, no log.
+	if a.TurnLimit == nil && a.GlobalTurnLimit == nil {
+		return nil, []Envelope{first}, slotAcquired
+	}
+	waitCtx, waitCancel := context.WithCancel(ctx)
+	inb.setWaitCancel(waitCancel)
+	defer func() {
+		waitCancel()
+		inb.clearWaitCancel()
+	}()
+	batch := []Envelope{first}
+	notified := false
+	var held []*TurnLimiter
+	abort := func() turnSlotOutcome {
+		for i := len(held) - 1; i >= 0; i-- {
+			held[i].Release()
+		}
+		if ctx.Err() != nil {
+			return slotShutdown
+		}
+		a.logger().Infof("inbox: /stop dropped queued turn sk=%s envelopes=%d", inb.sk, len(batch))
+		return slotDropped
+	}
+	for _, step := range []struct {
+		lim   *TurnLimiter
+		scope string
+	}{
+		{a.TurnLimit, "agent"},
+		{a.GlobalTurnLimit, "global"},
+	} {
+		if step.lim == nil {
+			continue
+		}
+		granted, aborted := a.waitTurnSlot(waitCtx, inb, step.lim, step.scope, &batch, &notified)
+		if aborted {
+			return nil, nil, abort()
+		}
+		if granted {
+			held = append(held, step.lim)
+		}
+	}
+	release := func() {
+		for i := len(held) - 1; i >= 0; i-- {
+			held[i].Release()
+		}
+	}
+	return release, batch, slotAcquired
+}
+
+// waitTurnSlot acquires one limiter's slot for a user batch, serving the
+// session channel while it waits (#2281 requirement 4): platform envelopes
+// join the batch in arrival order, injections run inline through the same
+// gates as the dequeue path — without a slot, the second half of the
+// deadlock rule (a turn holding a slot can be blocked in EnqueueInjectWait
+// on another session's injection). A grant that lands while the worker is
+// inside an in-wait injection simply waits for it to finish; the slot is
+// never re-queued or released because of that.
+//
+// notified is shared across both limiter steps so the queued notice fires
+// once per wait, not once per semaphore: the first step that must block
+// fires it, joiners never re-fire it.
+func (a *Agent) waitTurnSlot(waitCtx context.Context, inb *sessionInbox, lim *TurnLimiter, scope string, batch *[]Envelope, notified *bool) (granted bool, aborted bool) {
+	if lim.TryAcquire() {
+		return true, false
+	}
+	if !*notified {
+		*notified = true
+		if a.TurnQueuedNotifyFunc != nil {
+			notify := a.TurnQueuedNotifyFunc
+			// In its own goroutine, outside every inbox lock: a slow
+			// platform must never stall the worker.
+			go notify(inb.sk, turnQueuedNotice)
+		}
+	}
+	a.logger().Infof("inbox: turn slot wait sk=%s scope=%s limit=%d", inb.sk, scope, lim.Size())
+	start := time.Now()
+	grantedCh := make(chan bool, 1)
+	go func() { grantedCh <- lim.Acquire(waitCtx) }()
+	// abortIfDead drains the child's single result on every abort path and
+	// hands back a slot the cancel-vs-grant race already awarded — one place,
+	// so no path leaks one.
+	abortIfDead := func() (bool, bool) {
+		if <-grantedCh {
+			lim.Release()
+		}
+		return false, true
+	}
+	for {
+		select {
+		case g := <-grantedCh:
+			if g {
+				a.logger().Infof("inbox: turn slot acquired sk=%s scope=%s waited=%s", inb.sk, scope, time.Since(start).Round(time.Millisecond))
+				return true, false
+			}
+			return false, true
+		case env := <-inb.ch:
+			if env.Inject != nil {
+				if !a.waitReloginGate(waitCtx, env.SessionKey) || !a.waitInjectGate(waitCtx, env.SessionKey) {
+					return abortIfDead()
+				}
+				a.runInject(inb, env)
+				continue
+			}
+			*batch = append(*batch, env)
+		case <-waitCtx.Done():
+			return abortIfDead()
 		}
 	}
 }
@@ -1122,7 +1321,8 @@ func (a *Agent) SetOnAliasChanged(fn func(agentID, platform string, chatID int64
 
 // CancelSession cancels the in-flight turn for sk, if any. Used by /stop
 // (and any other consumer that needs per-session cancellation precision).
-// No-op if the session has no inbox or no turn is currently in flight.
+// With no turn running it still drops a batch waiting for a turn-limit slot
+// (#2281); no-op if the session has no inbox and neither is pending.
 //
 // Replaces the old per-bot cancelTurn() which was a single field for all
 // sessions on a shared bot — TODO #743's per-session /stop precision.
@@ -1134,8 +1334,14 @@ func (a *Agent) CancelSession(sk string) bool {
 		return false
 	}
 	inb.cancelMu.Lock()
+	waitCancel := inb.waitCancel
 	cancel := inb.turnCancel
 	inb.cancelMu.Unlock()
+	if waitCancel != nil {
+		a.logger().Infof("CancelSession sk=%s dropping queued turn", sk)
+		waitCancel()
+		return true
+	}
 	if cancel == nil {
 		return false
 	}

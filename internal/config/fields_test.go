@@ -516,3 +516,33 @@ func TestMaintenanceScheduleRows(t *testing.T) {
 		}
 	}
 }
+
+func TestBehaviorTurnLimitRegistryRows(t *testing.T) {
+	// Proves the #2281 turn-limit keys emit registry rows, that the
+	// all-agents key has NO agent row (scope:"global" — it is read from
+	// [behavior] only), and that both keys are restart-required (no hot tag:
+	// they size semaphores at start-up, like max_concurrent_spawns).
+	present := []string{
+		"behavior.max_concurrent_turns",
+		"agent.behavior.max_concurrent_turns",
+		"behavior.max_concurrent_turns_all_agents",
+	}
+	for _, k := range present {
+		f, ok := LookupField(k)
+		if !ok {
+			t.Errorf("field %s should be in the registry", k)
+			continue
+		}
+		if !f.NeedsRestart {
+			t.Errorf("field %s should be NeedsRestart (sizes a semaphore at start-up)", k)
+		}
+	}
+	for _, k := range []string{
+		"agent.behavior.max_concurrent_turns_all_agents",
+		"platforms.behavior.max_concurrent_turns_all_agents",
+	} {
+		if _, ok := LookupField(k); ok {
+			t.Errorf("field %s should be excluded by its scope tag but is in the registry", k)
+		}
+	}
+}

@@ -151,6 +151,30 @@ id = "test"
 	}
 }
 
+func TestBehaviorTurnLimitDefaultsZero(t *testing.T) {
+	// Proves the #2281 turn-limit keys default to 0 (= unlimited) at both
+	// levels: [behavior] via the default tag, [[agents]].behavior by staying
+	// nil (unset = inherit = no limit). This is the default that keeps
+	// today's unlimited behaviour.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte("[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n"), 0644)
+
+	cfg, err := Load(path, nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := DerefInt(cfg.Behavior.MaxConcurrentTurns); got != 0 {
+		t.Errorf("default Behavior.MaxConcurrentTurns = %d, want 0", got)
+	}
+	if got := DerefInt(cfg.Behavior.MaxConcurrentTurnsAllAgents); got != 0 {
+		t.Errorf("default Behavior.MaxConcurrentTurnsAllAgents = %d, want 0", got)
+	}
+	if cfg.Agents[0].Behavior.MaxConcurrentTurns != nil {
+		t.Errorf("default Agents[0].Behavior.MaxConcurrentTurns should be nil (inherit), got %v", *cfg.Agents[0].Behavior.MaxConcurrentTurns)
+	}
+}
+
 func TestApplyDefaultsReflect(t *testing.T) {
 	// Verify that the reflect-based waterfall copies all config section fields.
 	// Note: effort and thinking are now per-model in [models.<name>], not global sections.

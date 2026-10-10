@@ -378,3 +378,26 @@ func TestFormatAvailableDeduplication(t *testing.T) {
 		t.Errorf("branch_orientation_facet_prompt appears %d times, expected 1 after dedup", facetCount)
 	}
 }
+
+func TestCollectAgentRowsMaxConcurrentTurns(t *testing.T) {
+	// Proves the per-agent #2281 turn-limit override gets an agent display
+	// row (next to steer_mode) when set, and no row when unset — the
+	// all-agents key is global-only and never appears here.
+	set := AgentConfig{Behavior: BehaviorConfig{MaxConcurrentTurns: Ptr(3)}}
+	var found string
+	for _, r := range collectAgentRows(set) {
+		if r.Key == "max_concurrent_turns" {
+			found = r.Value
+		}
+	}
+	if found != "3" {
+		t.Errorf("max_concurrent_turns row = %q, want \"3\" when the agent override is set", found)
+	}
+
+	unset := AgentConfig{}
+	for _, r := range collectAgentRows(unset) {
+		if r.Key == "max_concurrent_turns" {
+			t.Errorf("max_concurrent_turns row should be absent when the override is unset, got %q", r.Value)
+		}
+	}
+}

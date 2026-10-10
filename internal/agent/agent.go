@@ -178,6 +178,9 @@ type Agent struct {
 	DefaultPlatform               string                                  // configured default_platform (per-agent, else global); preferred for default-session resolution and delivery fallback
 	ResetOrientTemplateFn         func() string                           // resolves orientation template for session reset; nil = no orientation
 	ReloadSystemFn                func() ([]provider.SystemBlock, int)    // reloads skills/extra blocks; returns new blocks + count; nil = no-op
+	TurnLimit                     *TurnLimiter                            // per-agent cap on concurrent user turns across all its sessions; nil = unlimited (#2281)
+	GlobalTurnLimit               *TurnLimiter                            // gateway-wide cap shared by every agent (one pointer, built once in main); nil = unlimited
+	TurnQueuedNotifyFunc          func(sessionKey, text string)           // fired (in its own goroutine) when a user turn must wait for a turn-limit slot; nil = no queued notice
 
 	platforms  map[string]platform.Sender // per-agent platforms (telegram, discord, etc.); key = platform name
 	platformMu sync.RWMutex               // protects platforms map access

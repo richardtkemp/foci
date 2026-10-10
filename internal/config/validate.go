@@ -261,6 +261,13 @@ func (cfg *Config) Validate(knownBackends []string) error {
 		}
 	}
 
+	// Validate the turn-limit keys (#2281): negative values fail at either
+	// level; a non-negative agent-level max_concurrent_turns_all_agents is
+	// dead config (the key is global-only) and only warns.
+	if err := validateBehaviorTurnLimits(cfg); err != nil {
+		return err
+	}
+
 	// Validate webhook keys contain no path separators (defense in depth)
 	for k := range cfg.System.Webhooks {
 		if strings.ContainsAny(k, "/\\") {
@@ -508,6 +515,34 @@ func (cfg *Config) Validate(knownBackends []string) error {
 		return err
 	}
 
+	return nil
+}
+
+// validateBehaviorTurnLimits checks the #2281 turn-limit keys at both levels:
+// the global [behavior] values and each agent's override. A negative value
+// fails load naming the key; 0 (or unset) means no limit. A non-negative
+// agent-level max_concurrent_turns_all_agents is dead config — the key is
+// global-only (scope:"global"), read from [behavior] alone — so it warns
+// rather than fails, matching the dead-weight-warn pattern.
+func validateBehaviorTurnLimits(cfg *Config) error {
+	if err := validateNonNegative(DerefInt(cfg.Behavior.MaxConcurrentTurns), "[behavior] max_concurrent_turns"); err != nil {
+		return err
+	}
+	if err := validateNonNegative(DerefInt(cfg.Behavior.MaxConcurrentTurnsAllAgents), "[behavior] max_concurrent_turns_all_agents"); err != nil {
+		return err
+	}
+	for _, a := range cfg.Agents {
+		where := fmt.Sprintf("agent %q [behavior]", a.ID)
+		if err := validateNonNegative(DerefInt(a.Behavior.MaxConcurrentTurns), where+" max_concurrent_turns"); err != nil {
+			return err
+		}
+		if a.Behavior.MaxConcurrentTurnsAllAgents != nil {
+			if err := validateNonNegative(*a.Behavior.MaxConcurrentTurnsAllAgents, where+" max_concurrent_turns_all_agents"); err != nil {
+				return err
+			}
+			configLog.Warnf("%s max_concurrent_turns_all_agents is set but the key is global-only (read from [behavior]) — the per-agent value is ignored", a.ID)
+		}
+	}
 	return nil
 }
 

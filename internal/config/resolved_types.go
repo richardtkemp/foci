@@ -30,6 +30,11 @@ type ResolvedBehavior struct {
 	TurnLockWarnThreshold string
 	EnableStopAliases     bool // default true
 	StopAliases           []string
+	// MaxConcurrentTurns is the per-agent user-turn cap ([behavior]
+	// max_concurrent_turns, overridable per agent). The all-agents cap
+	// (max_concurrent_turns_all_agents) is global-only and read straight from
+	// [behavior] by the gateway, so it deliberately has no resolved field.
+	MaxConcurrentTurns int
 }
 
 func resolveBehavior(m BehaviorConfig) ResolvedBehavior {
@@ -39,6 +44,7 @@ func resolveBehavior(m BehaviorConfig) ResolvedBehavior {
 		TurnLockWarnThreshold: DerefStr(m.TurnLockWarnThreshold),
 		EnableStopAliases:     DerefBool(m.EnableStopAliases),
 		StopAliases:           m.StopAliases,
+		MaxConcurrentTurns:    DerefInt(m.MaxConcurrentTurns),
 	}
 }
 

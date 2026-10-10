@@ -315,6 +315,58 @@ weight = 2.0
 	}
 }
 
+func TestValidateBehaviorMaxConcurrentTurnsNegative(t *testing.T) {
+	// Proves that a negative #2281 turn-limit value fails config load naming
+	// the key, at every level the key can be written: [behavior] and the
+	// [[agents]].behavior override, for both max_concurrent_turns and
+	// max_concurrent_turns_all_agents.
+	base := "[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n"
+	tests := []struct {
+		name string
+		toml string
+	}{
+		{"global max_concurrent_turns", base + "[behavior]\nmax_concurrent_turns = -1"},
+		{"global max_concurrent_turns_all_agents", base + "[behavior]\nmax_concurrent_turns_all_agents = -1"},
+		{"agent max_concurrent_turns", base + "[agents.behavior]\nmax_concurrent_turns = -2"},
+		{"agent max_concurrent_turns_all_agents", base + "[agents.behavior]\nmax_concurrent_turns_all_agents = -2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "foci.toml")
+			os.WriteFile(path, []byte(tt.toml), 0644)
+
+			_, err := Load(path, nil)
+			if err == nil {
+				t.Fatal("expected error for negative turn limit")
+			}
+			key := "max_concurrent_turns"
+			if strings.Contains(tt.name, "all_agents") {
+				key = "max_concurrent_turns_all_agents"
+			}
+			if !strings.Contains(err.Error(), key) {
+				t.Errorf("error = %q, want mention of %s", err.Error(), key)
+			}
+			if !strings.Contains(err.Error(), "must not be negative") {
+				t.Errorf("error = %q, want a must-not-be-negative message", err.Error())
+			}
+		})
+	}
+
+	// Zero (no limit) and unset must both load cleanly.
+	for name, toml := range map[string]string{
+		"zero":  base + "[behavior]\nmax_concurrent_turns = 0\nmax_concurrent_turns_all_agents = 0",
+		"unset": base,
+	} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		os.WriteFile(path, []byte(toml), 0644)
+		if _, err := Load(path, nil); err != nil {
+			t.Errorf("%s: Load: %v", name, err)
+		}
+	}
+}
+
 func TestLoadMemoryConversationWeightDefault(t *testing.T) {
 	// Proves that conversation_weight defaults to 0.1 when not specified in the
 	// [memory] section.

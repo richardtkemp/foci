@@ -389,6 +389,9 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.Behavior.SteerMode != nil {
 		add("steer_mode", *agent.Behavior.SteerMode)
 	}
+	if agent.Behavior.MaxConcurrentTurns != nil {
+		add("max_concurrent_turns", *agent.Behavior.MaxConcurrentTurns)
+	}
 	if agent.Sessions.FacetNoCompact != nil {
 		add("facet_no_compact", *agent.Sessions.FacetNoCompact)
 	}
