@@ -1743,3 +1743,45 @@ func TestTurnModelOwnCacheSettings(t *testing.T) {
 		t.Errorf("CacheFor(third-model) = {%q %q}, want {auto 30m} (a different model's values)", s, ttl)
 	}
 }
+
+// TestTurnCacheSettingsWithoutModelDefaults pins the nil-ModelDefaultsFn
+// branch of cacheSettingsFor: with no [models.*] configured, the request
+// still carries the agent's cache strategy (prompt caching stays on) and no
+// TTL, and CacheFor answers with the agent strategy for any model.
+func TestTurnCacheSettingsWithoutModelDefaults(t *testing.T) {
+	var got *provider.MessageRequest
+	client := &mockClient{
+		sendFn: func(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
+			got = req // fresh request object per loop iteration — safe to keep
+			return &provider.MessageResponse{
+				Role:       "assistant",
+				Content:    provider.TextContent("done"),
+				StopReason: "end_turn",
+				Usage:      provider.Usage{InputTokens: 100, OutputTokens: 10},
+			}, nil
+		},
+	}
+
+	a := newInferenceAgent(t, client) // ModelDefaultsFn nil: no [models.*] configured
+	a.CacheStrategy = "auto"
+	tr := &APITransport{sharedTurnOps{agent: a}}
+	ts := newInferenceTS(t, a, client)
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+
+	if got == nil {
+		t.Fatal("no request captured")
+	}
+	if got.CacheStrategy != "auto" || got.CacheTTL != "" {
+		t.Errorf("cache = {%q %q}, want {auto \"\"} (the agent strategy, no TTL)", got.CacheStrategy, got.CacheTTL)
+	}
+	if got.CacheFor == nil {
+		t.Fatal("CacheFor not set on request")
+	}
+	s, ttl := got.CacheFor("anthropic/any-model")
+	if s != "auto" || ttl != "" {
+		t.Errorf("CacheFor(any-model) = {%q %q}, want {auto \"\"} (agent strategy for every model)", s, ttl)
+	}
+}

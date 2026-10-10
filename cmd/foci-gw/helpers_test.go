@@ -60,6 +60,7 @@ func TestModelDefaultsFn_CaseInsensitiveModelKey(t *testing.T) {
 	// speed, cache, provider routing) was silently dropped on a case
 	// difference.
 	sort := &provider.ProviderSort{By: "price"}
+	lowerSort := &provider.ProviderSort{By: "latency"}
 	models := map[string]config.ModelConfig{
 		"deepseek": {
 			Model:         "OpenRouter/DeepSeek/DeepSeek-V4-Flash",
@@ -72,7 +73,9 @@ func TestModelDefaultsFn_CaseInsensitiveModelKey(t *testing.T) {
 			Context:       123456,
 		},
 		"lower": {
-			Model: "openrouter/qwen/qwen3-x",
+			Model:    "openrouter/qwen/qwen3-x",
+			Provider: &provider.ProviderRouting{Sort: lowerSort},
+			Effort:   "high",
 		},
 	}
 
@@ -90,12 +93,19 @@ func TestModelDefaultsFn_CaseInsensitiveModelKey(t *testing.T) {
 		t.Errorf("md(config-mixed-case, ask-lower) cache = {%q %q}, want {1h explicit}", md.CacheStrategy, md.CacheTTL)
 	}
 
-	// The reverse: config lowercase, asked in a different case.
+	// The reverse: config lowercase, asked in a different case. The lower
+	// entry carries distinguishing settings so a hit cannot look like the
+	// zero fallback a miss returns.
 	mdRev := fn("OpenRouter/Qwen/Qwen3-X")
-	if mdRev.Thinking != "" || mdRev.ProviderRouting != nil {
-		// "lower" sets nothing; matching it must return its (empty) settings,
-		// not the zero fallback — proved by the deepseek settings NOT leaking.
-		t.Errorf("md(config-lower, ask-mixed) = %+v, want the lower entry's (empty) settings", mdRev)
+	if mdRev.Effort != "high" {
+		t.Errorf("md(config-lower, ask-mixed) Effort = %q, want high (the lower entry's own setting)", mdRev.Effort)
+	}
+	if mdRev.ProviderRouting == nil || mdRev.ProviderRouting.Sort == nil || mdRev.ProviderRouting.Sort.By != "latency" {
+		t.Errorf("md(config-lower, ask-mixed) ProviderRouting = %+v, want the [models.lower.provider] table", mdRev.ProviderRouting)
+	}
+	// The deepseek entry's settings must not leak into the lower hit.
+	if mdRev.CacheTTL != "" || mdRev.CacheStrategy != "" {
+		t.Errorf("md(config-lower, ask-mixed) cache = {%q %q}, want empty (no leakage from the deepseek entry)", mdRev.CacheStrategy, mdRev.CacheTTL)
 	}
 
 	// A model id in yet another spelling still misses (no substring folding).
