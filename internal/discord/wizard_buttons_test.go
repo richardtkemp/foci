@@ -214,7 +214,7 @@ func TestCommandCallbackPress_ActivatesWizardWithButtons(t *testing.T) {
 	w := &buttonWizard{}
 	b, fs := newWizardScopeBot(t, w)
 
-	b.handleComponentInteraction(context.Background(), componentInteraction("100", "42", "cmd:/wizstart"))
+	b.handleComponentInteraction(context.Background(), wizardPress("100", "42", "cmd:/wizstart"))
 
 	if !b.commands.WizardActive("a/c100") {
 		t.Fatal("command press must activate the wizard")
@@ -246,7 +246,7 @@ func TestWizardButtonPress_AdvancesAndStrips(t *testing.T) {
 	b, fs := newWizardScopeBot(t, w)
 	startWizardInChannel(t, b, "100", "u1")
 
-	b.handleComponentInteraction(context.Background(), componentInteraction("100", "42", pressData(t, w, "0")))
+	b.handleComponentInteraction(context.Background(), wizardPress("100", "42", pressData(t, w, "0")))
 
 	if len(w.handles) != 1 || w.handles[0] != "yes" {
 		t.Fatalf("wizard handled %v, want [yes] (the pressed option's label)", w.handles)
@@ -282,7 +282,7 @@ func TestWizardButtonPress_CancelButtonCancels(t *testing.T) {
 	b, fs := newWizardScopeBot(t, w)
 	startWizardInChannel(t, b, "100", "u1")
 
-	b.handleComponentInteraction(context.Background(), componentInteraction("100", "42", pressData(t, w, "cancel")))
+	b.handleComponentInteraction(context.Background(), wizardPress("100", "42", pressData(t, w, "cancel")))
 
 	if b.commands.WizardActive("a/c100") {
 		t.Error("Cancel press must clear the wizard")
@@ -311,7 +311,7 @@ func TestWizardButtonPress_StaleTokenDoesNotReachWizard(t *testing.T) {
 		"wz:deadbeefdeadbeef",   // malformed payload
 		"wz::0",                 // malformed token
 	} {
-		b.handleComponentInteraction(context.Background(), componentInteraction("100", "42", data))
+		b.handleComponentInteraction(context.Background(), wizardPress("100", "42", data))
 	}
 
 	if len(w.handles) != 0 {
@@ -341,8 +341,8 @@ func TestWizardButtonPress_SecondPressRejected(t *testing.T) {
 	startWizardInChannel(t, b, "100", "u1")
 	data := pressData(t, w, "0")
 
-	b.handleComponentInteraction(context.Background(), componentInteraction("100", "42", data))
-	b.handleComponentInteraction(context.Background(), componentInteraction("100", "42", data))
+	b.handleComponentInteraction(context.Background(), wizardPress("100", "42", data))
+	b.handleComponentInteraction(context.Background(), wizardPress("100", "42", data))
 
 	if len(w.handles) != 1 {
 		t.Errorf("wizard handled %v, want exactly one answer", w.handles)
@@ -364,7 +364,7 @@ func TestWizardButtonPress_OtherChannelScopeIsolated(t *testing.T) {
 	startWizardInChannel(t, b, "100", "u1") // wizard lives under a/c100
 
 	// The same button data, pressed in another channel.
-	b.handleComponentInteraction(context.Background(), componentInteraction("200", "42", pressData(t, w, "0")))
+	b.handleComponentInteraction(context.Background(), wizardPress("200", "42", pressData(t, w, "0")))
 
 	if len(w.handles) != 0 {
 		t.Errorf("channel A's wizard handled %v; channel B's press must not reach it", w.handles)
@@ -455,4 +455,13 @@ func TestDiscordWizardFreeTextStepPlain(t *testing.T) {
 	if len(got.components) != 0 {
 		t.Errorf("free-text reply carries %d components; must stay plain", len(got.components))
 	}
+}
+
+// wizardPress is componentInteraction with the presser set to "u1", the user
+// newWizardScopeBot allows: since #2276 a press passes the same allowlist as a
+// message, and the default componentInteraction presser ("111") is not on it.
+func wizardPress(channelID, msgID, customID string) *discordgo.InteractionCreate {
+	i := componentInteraction(channelID, msgID, customID)
+	i.User = &discordgo.User{ID: "u1", Username: "user-u1"}
+	return i
 }
