@@ -261,6 +261,19 @@ func TestFallbackResolver_ValueKeepsConfigCase(t *testing.T) {
 	}
 }
 
+func TestModelKey(t *testing.T) {
+	// Proves ModelKey is the one match key used on both sides of every
+	// model-config match: the canonical developer/model_id lowercased in
+	// full, and the raw string lowercased when it does not resolve — so
+	// two spellings differing only in case always share a key.
+	if got := ModelKey("OpenRouter/Qwen/X"); got != "openrouter/qwen/x" {
+		t.Errorf("ModelKey(mixed-case resolvable) = %q, want %q", got, "openrouter/qwen/x")
+	}
+	if got := ModelKey("OpenRouter-Qwen"); got != "openrouter-qwen" {
+		t.Errorf("ModelKey(mixed-case unresolvable) = %q, want the raw string lowercased", got)
+	}
+}
+
 func TestFallbackResolver_CaseFoldCycleBroken(t *testing.T) {
 	// Proves a cycle that exists only under case folding (a/X → a/y,
 	// a/Y → a/x) is broken at construction — the cycle walk must fold its
@@ -285,4 +298,30 @@ func TestFallbackResolver_CaseFoldCycleBroken(t *testing.T) {
 		model = got.Developer + "/" + got.ModelID
 	}
 	t.Fatal("chain did not terminate — case-fold cycle was not broken")
+}
+
+func TestFallbackResolver_CaseFoldCycleUppercaseValuesBroken(t *testing.T) {
+	// Proves the cycle walk follows an edge through ModelKey, not the raw
+	// value: here the VALUES carry the config case (a/x → a/Y, a/y → a/X),
+	// so a raw walk stops at "a/Y" — not a key — and leaves the fold-only
+	// cycle in place forever. The folded walk sees it and breaks it.
+	fr := NewFallbackResolver(
+		map[string]string{
+			"a/x": "a/Y",
+			"a/y": "a/X",
+		},
+		nil, nil,
+	)
+	if fr == nil {
+		t.Fatal("expected non-nil resolver (cycle should be broken, not discarded)")
+	}
+	model := "a/x"
+	for i := 0; i < MaxFallbackDepth+1; i++ {
+		got := fr.Resolve(model)
+		if got == nil {
+			return // chain terminated — no cycle
+		}
+		model = got.Developer + "/" + got.ModelID
+	}
+	t.Fatal("chain did not terminate — case-fold cycle through uppercase values was not broken")
 }

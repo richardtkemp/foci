@@ -779,6 +779,23 @@ func TestValidateFallbacks_CaseFoldCycleReported(t *testing.T) {
 	}
 }
 
+func TestValidateFallbacks_CaseFoldCycleUppercaseValuesReported(t *testing.T) {
+	// Proves the validator's depth/cycle walk follows an edge through
+	// ModelKey, not the raw value: with the config case on the VALUES
+	// (a/x → a/Y, a/y → a/X) a raw walk stops at "a/Y" — not a key — and
+	// misses the fold-only cycle the resolver would have to break.
+	err := validateFallbacks("groups.fallbacks", map[string]string{
+		"a/x": "a/Y",
+		"a/y": "a/X",
+	}, nil)
+	if err == nil {
+		t.Fatal("expected error for a case-fold-only cycle through uppercase values")
+	}
+	if !strings.Contains(err.Error(), "cycle") {
+		t.Errorf("error = %q, want a cycle report", err.Error())
+	}
+}
+
 func TestValidateModelKeys_CollisionRejected(t *testing.T) {
 	// Proves two [models.*] entries whose model strings differ only by
 	// case are rejected at load: the per-model lookups range over a map,
