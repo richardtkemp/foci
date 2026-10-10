@@ -64,7 +64,7 @@ func (t *Turn) SubagentStart(groupKey, label, prompt string, run int) {
 	if t == nil {
 		return
 	}
-	tr, o, r, ok := current()
+	tr, o, ok := current()
 	if !ok {
 		return
 	}
@@ -99,7 +99,7 @@ func (t *Turn) SubagentStart(groupKey, label, prompt string, run int) {
 		attribute.String(attrEnvironment, o.Environment),
 	}
 	if o.Content {
-		in, n := field(o, r, prompt)
+		in, n := field(o, prompt)
 		attrs = append(attrs, attribute.String(attrObsInput, in))
 		if n > 0 {
 			attrs = append(attrs, attribute.Int(attrObsMetaPrefix+"input_redactions", n))
@@ -115,7 +115,7 @@ func (t *Turn) SubagentText(groupKey, text string, run int) {
 	if t == nil || text == "" {
 		return
 	}
-	if _, _, _, ok := current(); !ok {
+	if _, _, ok := current(); !ok {
 		return
 	}
 	session := t.session()
@@ -134,7 +134,7 @@ func (t *Turn) SubagentPrompt(groupKey, prompt string, run int) {
 	if t == nil || prompt == "" {
 		return
 	}
-	if _, _, _, ok := current(); !ok {
+	if _, _, ok := current(); !ok {
 		return
 	}
 	session := t.session()
@@ -153,7 +153,7 @@ func (t *Turn) SubagentEnd(groupKey string, run int) {
 	if t == nil {
 		return
 	}
-	_, o, r, ok := current()
+	_, o, ok := current()
 	if !ok {
 		return
 	}
@@ -168,10 +168,10 @@ func (t *Turn) SubagentEnd(groupKey string, run int) {
 	if sr == nil {
 		return
 	}
-	endSubagent(sr, o, r, false)
+	endSubagent(sr, o, false)
 }
 
-func endSubagent(sr *subagentRun, o Options, r *Redactor, unresolved bool) {
+func endSubagent(sr *subagentRun, o Options, unresolved bool) {
 	out := strings.Join(sr.texts, "\n\n")
 	sr.span.SetAttributes(
 		attribute.Int(attrObsMetaPrefix+"text_blocks", len(sr.texts)),
@@ -182,13 +182,13 @@ func endSubagent(sr *subagentRun, o Options, r *Redactor, unresolved bool) {
 		sr.span.SetAttributes(attribute.Bool(attrObsMetaPrefix+"end_unobserved", true))
 	}
 	if o.Content {
-		s, n := field(o, r, out)
+		s, n := field(o, out)
 		sr.span.SetAttributes(attribute.String(attrObsOutput, s))
 		if n > 0 {
 			sr.span.SetAttributes(attribute.Int(attrObsMetaPrefix+"output_redactions", n))
 		}
 		if len(sr.prompts) > 0 {
-			p, _ := field(o, r, strings.Join(sr.prompts, "\n\n---\n\n"))
+			p, _ := field(o, strings.Join(sr.prompts, "\n\n---\n\n"))
 			sr.span.SetAttributes(attribute.String(attrObsMetaPrefix+"follow_ups", p))
 		}
 	}
@@ -197,7 +197,7 @@ func endSubagent(sr *subagentRun, o Options, r *Redactor, unresolved bool) {
 
 // pruneSubagentsLocked closes runs that never received an end signal.
 func pruneSubagentsLocked() {
-	_, o, r, ok := current()
+	_, o, ok := current()
 	if !ok {
 		return
 	}
@@ -205,7 +205,7 @@ func pruneSubagentsLocked() {
 	for k, sr := range subRuns {
 		if sr.started.Before(cutoff) {
 			delete(subRuns, k)
-			endSubagent(sr, o, r, true)
+			endSubagent(sr, o, true)
 		}
 	}
 }

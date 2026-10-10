@@ -1411,7 +1411,7 @@ Implements `provider.Client` and `provider.StreamingClient` using `github.com/op
 
 Loaded from `secrets.toml` (same directory as `foci.toml`). Stored as flat keys: `anthropic.setup_token`, `custom.github_token`, etc. Overrides `foci.toml` credentials at startup. See [SECRETS.md](SECRETS.md) for the full security model, OS-level protection, setup, and Bitwarden configuration.
 
-Hot reload (#1269): the file is re-read on the next use whenever it changed. `Store` is a thin view (`{src *source, agentID}`) over one shared `source` (`secrets_source.go`): every file-derived read (`Get`, `Names`, `Resolve`, `Redact`, `AllowedHosts`, `CheckHostAllowed`, `IsAllowedInBody`, …) takes one `current()` snapshot — an `os.Stat` (mtime at full resolution, size, `os.SameFile` identity) and a re-parse when the stamp differs from the last successful load. Per-agent views (`ForAgent`) share the root source, so the store pointers the tools and `ag.Redact` already hold see edits without restart; the agent filter (`valueFor`/`hostsFor`/`bodyKeysFor`/`namesFor`) is re-applied per read. Views are read-only: `Save` and every mutator refuse them (`rootOnly`). A bad file keeps the last good contents with one warning per file state. The blocklist and mutators (`Set`, host/body mutators, `Save`) live on the source behind one `sync.RWMutex` — `Store` is concurrency-safe. A reload stamps the PRE-read file observation (`reloadLocked`), so a torn read of a non-atomic writer's half-written file is re-parsed once the write completes instead of being pinned; `Save` renders, writes and stamps under the write lock (readers never see the gateway's own half-written file; the write stays non-atomic to preserve root:foci-secrets ownership); mutators refresh from the file before applying, so an unseen external edit is merged rather than overwritten. The system prompt's secret-name list stays frozen at startup. Provider API keys, bot tokens, `brave.api_key`, voice keys, `http.api_key` and tracing remain one-time startup reads.
+Hot reload (#1269): the file is re-read on the next use whenever it changed. `Store` is a thin view (`{src *source, agentID}`) over one shared `source` (`secrets_source.go`): every file-derived read (`Get`, `Names`, `Resolve`, `Redact`, `RedactionValues`, `AllowedHosts`, `CheckHostAllowed`, `IsAllowedInBody`, …) takes one `current()` snapshot — an `os.Stat` (mtime at full resolution, size, `os.SameFile` identity) and a re-parse when the stamp differs from the last successful load. Per-agent views (`ForAgent`) share the root source, so the store pointers the tools and `ag.Redact` already hold see edits without restart; the agent filter (`valueFor`/`hostsFor`/`bodyKeysFor`/`namesFor`) is re-applied per read. Views are read-only: `Save` and every mutator refuse them (`rootOnly`). A bad file keeps the last good contents with one warning per file state. The blocklist and mutators (`Set`, host/body mutators, `Save`) live on the source behind one `sync.RWMutex` — `Store` is concurrency-safe. A reload stamps the PRE-read file observation (`reloadLocked`), so a torn read of a non-atomic writer's half-written file is re-parsed once the write completes instead of being pinned; `Save` renders, writes and stamps under the write lock (readers never see the gateway's own half-written file; the write stays non-atomic to preserve root:foci-secrets ownership); mutators refresh from the file before applying, so an unseen external edit is merged rather than overwritten. The system prompt's secret-name list stays frozen at startup. Provider API keys, bot tokens, `brave.api_key`, voice keys, `http.api_key` and the tracing endpoint/Langfuse keys remain one-time startup reads (telemetry's redaction values are read live per exported field through `Store.RedactionValues` — the root's whole value set, `[agents.<id>.*]` tables included).
 
 Data flow:
 - **Template resolution:** `{{secret:custom.github_token}}` in `http_request` headers/body → replaced with actual value before sending. Regular secret templates are blocked in shell (returns error). Bitwarden `{{secret:bw.*}}` templates are allowed in shell (approval-gated via aisudo).
@@ -1937,10 +1937,16 @@ mis-attaching.
 **Content and redaction.** With `content = true` (default) the prompt, reply,
 thinking, tool args/output, subagent prompt/output and system prompt are exported,
 each capped at `max_field_bytes`. The gateway holds the secrets store, so
-`cmd/foci-gw/tracing_init.go` hands the exporter every secret *value* and
-`Redactor` replaces them outright (longest first, ≥ 8 chars) before the generic
-credential patterns run — no hashing dance, unlike the backfill ETL which runs
-outside the process. `content = false` keeps shape, timing, usage and cost only.
+`cmd/foci-gw/tracing_init.go` hands telemetry a function over the live root
+store (`Store.RedactionValues`) rather than a list at startup: each exported
+field refreshes the redactor from it (one store snapshot per field, on the
+exporting goroutine — no watcher) over a never-shrinking union of the values
+seen since startup, so `[agents.<id>.*]` overrides and values added later are
+scrubbed and values removed from the file stay scrubbed (a rotated-out
+credential can still appear in later output). `Redactor` replaces the values
+outright (longest first, ≥ 8 chars) before the generic credential patterns
+run — no hashing dance, unlike the backfill ETL which runs outside the
+process. `content = false` keeps shape, timing, usage and cost only.
 
 **Export path**: OTel SDK `BatchSpanProcessor` (2 s / 256 spans / 4096 queue) →
 `otlptracehttp` with basic auth → `<endpoint>/v1/traces`. Exporter errors go through

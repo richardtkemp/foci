@@ -29,7 +29,7 @@ func TestFullTurn(t *testing.T) {
 		Content:       true,
 		SystemPrompt:  true,
 		MaxFieldBytes: 1 << 20,
-		SecretValues:  []string{secret},
+		SecretValues:  func() []string { return []string{secret} },
 	})
 
 	const turnID = "agent/c1@1700000000000000000"

@@ -101,7 +101,7 @@ func (t *Turn) Begin(info TurnInfo) {
 	if t == nil {
 		return
 	}
-	tr, o, _, ok := current()
+	tr, o, ok := current()
 	if !ok {
 		return
 	}
@@ -181,7 +181,7 @@ func (t *Turn) SetInput(prompt, model string) {
 	if t == nil {
 		return
 	}
-	_, o, r, ok := current()
+	_, o, ok := current()
 	if !ok {
 		return
 	}
@@ -197,7 +197,7 @@ func (t *Turn) SetInput(prompt, model string) {
 	if !o.Content {
 		return
 	}
-	in, n := field(o, r, prompt)
+	in, n := field(o, prompt)
 	t.root.SetAttributes(
 		attribute.String(attrObsInput, in),
 		attribute.String(attrTraceInput, in),
@@ -213,7 +213,7 @@ func (t *Turn) ToolStart(id, name string, args []byte) {
 	if t == nil {
 		return
 	}
-	tr, o, r, ok := current()
+	tr, o, ok := current()
 	if !ok {
 		return
 	}
@@ -243,7 +243,7 @@ func (t *Turn) ToolStart(id, name string, args []byte) {
 		}
 	}
 	if o.Content {
-		in, n := field(o, r, string(args))
+		in, n := field(o, string(args))
 		attrs = append(attrs, attribute.String(attrObsInput, in))
 		if n > 0 {
 			attrs = append(attrs, attribute.Int(attrObsMetaPrefix+"input_redactions", n))
@@ -261,7 +261,7 @@ func (t *Turn) ToolEnd(id, name, output string, isError bool) {
 	if t == nil {
 		return
 	}
-	tr, o, r, ok := current()
+	tr, o, ok := current()
 	if !ok {
 		return
 	}
@@ -289,7 +289,7 @@ func (t *Turn) ToolEnd(id, name, output string, isError bool) {
 	delete(t.tools, id)
 	ts.span.SetAttributes(attribute.Int(attrObsMetaPrefix+"output_chars", len(output)))
 	if o.Content {
-		out, n := field(o, r, output)
+		out, n := field(o, output)
 		ts.span.SetAttributes(attribute.String(attrObsOutput, out))
 		if n > 0 {
 			ts.span.SetAttributes(attribute.Int(attrObsMetaPrefix+"output_redactions", n))
@@ -384,7 +384,7 @@ func (t *Turn) Complete(finalText, model string, usage *provider.Usage, cost flo
 	if t == nil {
 		return
 	}
-	tr, o, r, ok := current()
+	tr, o, ok := current()
 	if !ok {
 		return
 	}
@@ -429,7 +429,7 @@ func (t *Turn) Complete(finalText, model string, usage *provider.Usage, cost flo
 		output = strings.Join(t.texts, "\n\n")
 	}
 	if o.Content {
-		out, n := field(o, r, output)
+		out, n := field(o, output)
 		attrs = append(attrs,
 			attribute.String(attrObsOutput, out),
 			attribute.String(attrTraceOutput, out),
@@ -439,12 +439,12 @@ func (t *Turn) Complete(finalText, model string, usage *provider.Usage, cost flo
 		}
 		if len(t.texts) > 1 || (len(t.texts) == 1 && t.texts[0] != finalText) {
 			if b, jerr := json.Marshal(t.texts); jerr == nil {
-				s, _ := field(o, r, string(b))
+				s, _ := field(o, string(b))
 				attrs = append(attrs, attribute.String(attrObsMetaPrefix+"texts", s))
 			}
 		}
 		if th := t.thinking(); th != "" {
-			s, _ := field(o, r, th)
+			s, _ := field(o, th)
 			attrs = append(attrs, attribute.String(attrObsMetaPrefix+"thinking", s))
 		}
 	}
@@ -465,7 +465,7 @@ func (t *Turn) Complete(finalText, model string, usage *provider.Usage, cost flo
 			attribute.Int(attrObsMetaPrefix+"system_prompt_chars", len(sp.text)),
 		)
 		if o.Content && o.SystemPrompt && markSystemPromptExported(t.info.SessionKey, sp.hash) {
-			text, n := field(o, r, sp.text)
+			text, n := field(o, sp.text)
 			ctx := withIDs(t.ctx, trace.TraceID{}, EventSpanID("system_prompt", t.info.TurnID, sp.hash))
 			_, ev := tr.Start(ctx, "system_prompt",
 				trace.WithTimestamp(t.info.StartedAt),

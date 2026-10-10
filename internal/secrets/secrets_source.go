@@ -239,6 +239,26 @@ func (st *fileState) valuesFor(agentID string) []string {
 	return out
 }
 
+// redactionValuesFor returns every value that must be scrubbed from
+// anything exported out of the process, as seen by agentID. The root (which
+// is what telemetry is wired to) gets every value in the file: the global
+// values plus every [agents.<id>.*] table — an override value is as much a
+// secret as the global it shadows. A view keeps its valuesFor visibility
+// (its permitted globals plus its own overrides) and never gains another
+// agent's values. Returns a fresh slice the caller may keep.
+func (st *fileState) redactionValuesFor(agentID string) []string {
+	out := st.valuesFor(agentID)
+	if agentID != "" {
+		return out
+	}
+	for _, values := range st.agentValues {
+		for _, v := range values {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 // source is the shared, lazily-reloading state behind every Store: the last
 // good file contents, the file observation they correspond to, the last
 // observation that failed (warned about once), and the blocked-path list.

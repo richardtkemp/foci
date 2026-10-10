@@ -298,6 +298,17 @@ func (s *Store) Redact(text string) string {
 	return text
 }
 
+// RedactionValues returns the current secret values to scrub from anything
+// exported out of the process, from one snapshot of the live file (one
+// current() per call, like every other read). The root store gets every
+// value in the file — the globals plus every [agents.<id>.*] table; a
+// per-agent view gets only the values that view can already see (its Redact
+// set), never another agent's overrides. Returns a fresh slice the caller
+// may keep.
+func (s *Store) RedactionValues() []string {
+	return s.src.current().redactionValuesFor(s.agentID)
+}
+
 // AddBlockedPaths adds additional paths to the blocklist.
 func (s *Store) AddBlockedPaths(paths []string) {
 	s.src.addBlockedPaths(paths)

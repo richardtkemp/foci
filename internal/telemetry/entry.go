@@ -24,7 +24,7 @@ import (
 // and a helper call booked on a turn of its own (compaction, summary, spawn)
 // becomes its own one-observation trace named after its call type.
 func recordBooking(b accounting.Booking) {
-	tr, o, _, ok := current()
+	tr, o, ok := current()
 	if !ok {
 		return
 	}

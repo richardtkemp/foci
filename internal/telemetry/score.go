@@ -82,14 +82,14 @@ func apiBase(endpoint string) string {
 // ScoringAvailable reports whether scores can be posted: tracing is on and
 // the endpoint is Langfuse's.
 func ScoringAvailable() bool {
-	_, o, _, ok := current()
+	_, o, ok := current()
 	return ok && apiBase(o.Endpoint) != ""
 }
 
 // PostScore upserts s. Synchronous (one HTTP round trip) — call it from a
 // command handler or a batch pass, never from the turn path.
 func PostScore(ctx context.Context, s Score) error {
-	_, o, _, ok := current()
+	_, o, ok := current()
 	if !ok {
 		return fmt.Errorf("tracing is not enabled")
 	}
@@ -167,7 +167,7 @@ var (
 // a logged one — so a mismatch between the rubric and the stored config is
 // returned as a warning string alongside the id.
 func EnsureScoreConfig(ctx context.Context, c ScoreConfig) (id string, warning string, err error) {
-	_, o, _, ok := current()
+	_, o, ok := current()
 	if !ok {
 		return "", "", fmt.Errorf("tracing is not enabled")
 	}

@@ -72,10 +72,16 @@ type Options struct {
 	FlushTimeout time.Duration
 	// ServiceVersion is the foci build version, for the resource.
 	ServiceVersion string
-	// SecretValues are redacted from every exported text field — the
-	// gateway holds the secrets store, so it can scrub the VALUES directly
-	// rather than hashing candidate substrings the way the backfill ETL must.
-	SecretValues []string
+	// SecretValues is called each time a text field is exported, so values
+	// added, changed or overridden in an [agents.<id>.*] table after Init
+	// are scrubbed too — the gateway holds the secrets store, so it hands
+	// over a function reading the store's CURRENT values and scrubs the
+	// VALUES directly rather than hashing candidate substrings the way the
+	// backfill ETL must. Results are accumulated for the process lifetime
+	// (a value removed from the store stays scrubbed — a rotated-out
+	// credential can still appear in later output). Nil means only the
+	// generic credential patterns apply.
+	SecretValues func() []string
 }
 
 var (
@@ -85,7 +91,11 @@ var (
 	tracerProvider *sdktrace.TracerProvider
 	tracer         trace.Tracer
 	opts           Options
-	redactor       *Redactor
+	// redactSet is the never-shrinking union of secret values seen since
+	// Init; redactor is derived from it and replaced whole (never mutated)
+	// when the set grows. Both are guarded by mu and reset by initWith.
+	redactSet map[string]bool
+	redactor  *Redactor
 
 	tlog = log.NewComponentLogger("telemetry")
 )
@@ -176,8 +186,17 @@ func initWith(exp sdktrace.SpanExporter, o Options) error {
 	tracerProvider = tp
 	tracer = tp.Tracer(tracerName)
 	opts = o
-	redactor = NewRedactor(o.SecretValues)
+	redactSet = nil // fresh union per arm; seeded from o.SecretValues below
+	redactor = nil  // rebuilt by redactorFor, never carried across arms
 	mu.Unlock()
+
+	// Seed the union with the startup values BEFORE arming, so a secret
+	// removed from the store between Init and the first exported field is
+	// still scrubbed — the behaviour the one-time slice of old had. The
+	// function runs here outside mu: the secrets store's own lock never
+	// nests under telemetry's. No field can export yet (enabled is still
+	// false), so the seed cannot race the first export.
+	redactorFor(o.SecretValues)
 
 	accounting.BookedHook = recordBooking
 	enabled.Store(true)
@@ -214,29 +233,67 @@ func Shutdown(ctx context.Context) {
 
 // current returns the tracer and options under the read lock, or ok=false
 // when tracing is off.
-func current() (trace.Tracer, Options, *Redactor, bool) {
+func current() (trace.Tracer, Options, bool) {
 	if !enabled.Load() {
-		return nil, Options{}, nil, false
+		return nil, Options{}, false
 	}
 	mu.RLock()
 	defer mu.RUnlock()
 	if tracer == nil {
-		return nil, Options{}, nil, false
+		return nil, Options{}, false
 	}
-	return tracer, opts, redactor, true
+	return tracer, opts, true
 }
 
-// field prepares a text field for export: redacted, then capped at
-// MaxFieldBytes with a marker saying how much was cut. Returns the number of
-// redactions applied so callers can record it in metadata.
-func field(o Options, r *Redactor, s string) (string, int) {
+// field prepares a text field for export: the redactor is refreshed from
+// the live secret-value function in o, applied, then capped at MaxFieldBytes
+// with a marker saying how much was cut. Returns the number of redactions
+// applied so callers can record it in metadata.
+func field(o Options, s string) (string, int) {
 	if s == "" {
 		return "", 0
 	}
-	s, n := r.Redact(s)
+	s, n := redactorFor(o.SecretValues).Redact(s)
 	if len(s) > o.MaxFieldBytes {
 		cut := len(s) - o.MaxFieldBytes
 		s = s[:o.MaxFieldBytes] + fmt.Sprintf("\n…[truncated %d bytes]", cut)
 	}
 	return s, n
+}
+
+// redactorFor returns the Redactor to scrub one exported field with. It
+// reads the current secret values from fn OUTSIDE the lock (nil fn = only
+// the generic credential patterns apply, as with an empty list), merges any
+// never-seen values into redactSet — the never-shrinking union that keeps a
+// value removed from the store scrubbed, because a rotated-out credential
+// can still appear in later output — and rebuilds the redactor via
+// NewRedactor when the union grew, so NewRedactor stays the single owner of
+// the value rules (trim, ≥ 8 chars, dedupe, longest first, generic
+// patterns). No watcher: fn runs on the exporting goroutine, the same way
+// the secrets store's own redaction does for tool output.
+func redactorFor(fn func() []string) *Redactor {
+	var fresh []string
+	if fn != nil {
+		fresh = fn()
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if redactSet == nil {
+		redactSet = make(map[string]bool, len(fresh))
+	}
+	grew := false
+	for _, v := range fresh {
+		if !redactSet[v] {
+			redactSet[v] = true
+			grew = true
+		}
+	}
+	if grew || redactor == nil {
+		values := make([]string, 0, len(redactSet))
+		for v := range redactSet {
+			values = append(values, v)
+		}
+		redactor = NewRedactor(values)
+	}
+	return redactor
 }
