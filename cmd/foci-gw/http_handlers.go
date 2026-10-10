@@ -182,9 +182,12 @@ func stampHumanCommandDispatch(d httpHandlerDeps, inst *agentInstance, sessionKe
 // resolveTargetSession resolves an endpoint's (agent, session-selector) pair
 // through the single route.Resolver ladder, writing the appropriate HTTP error
 // on failure. Every endpoint that takes a session selector resolves here, so
-// /send, /branch, /command, and /webhook behave identically: exact key → named
-// session → chat alias → create-named; empty selector → the agent's default
-// session. Returns ok=false after an error response has been written.
+// /send, /branch, and /webhook behave identically (/command targets the
+// default session directly via defaultSessionKey): exact key → named
+// session → chat alias → create-named — an unknown-but-valid name resolves
+// to a NEW, empty named key (Ruling #2284, Dick 2026-10-09: keep); empty
+// selector → the agent's default session. Returns ok=false after an error
+// response has been written.
 func resolveTargetSession(d httpHandlerDeps, w http.ResponseWriter, agentID, selector, policy, endpoint string) (route.Resolution, route.Receipt, bool) {
 	// CreateDefault is set here and nowhere else in the HTTP layer: /send,
 	// /branch and /webhook are delivery paths, so an agent whose every
@@ -675,6 +678,14 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 		switch {
 		case errors.Is(err, errBranchBadModel):
 			http.Error(w, err.Error(), http.StatusBadRequest)
+		case errors.Is(err, errBranchUnbranchableParent):
+			// 422: the request was well-formed and resolvable, but the
+			// agent's backend cannot branch and the named parent must not
+			// be interrupted (#2284). No other /branch cause uses this
+			// code, so a caller can tell this refusal from a bad
+			// model/body/selector (400), an ambiguous alias (409), no
+			// default session (412) or a full inbox (503).
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		case errors.Is(err, errBranchInboxFull):
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		default:

@@ -143,7 +143,9 @@ foci send --human "checking in on this thread"
 
 ### `branch` — Fork a branch session
 
-Creates a branch session from the agent's default chat session, optionally injects a message, and runs the agent on the branch. Used for cron jobs and background tasks that shouldn't pollute the main conversation.
+Creates a branch session from the agent's default session — or from the session `-s/--session` names (a full session key, a session name, or a chat alias) — optionally injects a message, and runs the agent on the branch. The parent session is not interrupted: a copy of its context answers. Used for cron jobs and background tasks that shouldn't pollute the main conversation.
+
+A `-s` name that matches no key, named session or alias creates a **new, empty session** and branches that, so the branch runs with no context. A backend that cannot branch (rare — every shipped backend can) refuses a named session with an error rather than interrupting it; only the agent's default session falls through to a plain send.
 
 By default, branch is **asynchronous** (fire-and-forget): the CLI returns immediately with "queued" and the agent's response is delivered to Telegram. Use `--sync`/`--wait` to block until the response is available.
 
@@ -151,7 +153,7 @@ By default, branch is **asynchronous** (fire-and-forget): the CLI returns immedi
 
 **Usage:**
 ```
-foci branch [-a agent] [-m model] [--if-warm <duration>] [--if-cold <duration>] [--if-user-active <duration>] [--if-user-inactive <duration>] [--wait-warm <duration>] [--wait-cold <duration>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
+foci branch [-a agent] [-s session] [-m model] [--if-warm <duration>] [--if-cold <duration>] [--if-user-active <duration>] [--if-user-inactive <duration>] [--wait-warm <duration>] [--wait-cold <duration>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
 ```
 
 **Flags:**
@@ -159,6 +161,7 @@ foci branch [-a agent] [-m model] [--if-warm <duration>] [--if-cold <duration>] 
 | Flag | Description |
 |------|-------------|
 | `--agent <id>` / `-a` | Target agent. |
+| `--session <sel>` / `-s` | Parent session selector, resolved through one ladder on the server: full session key (`clutch/c123`) → existing named session (`research` → `clutch/iresearch`) → chat alias → create-named. An unknown name creates a new, empty session (the branch then has no context). Empty = the agent's default session. Env `FOCI_SESSION`. |
 | `--model <model>` / `-m` | Model override for this branch. Group name, model name, or `developer/model_id`. |
 | `--if-warm <dur>` (`--if-active`) | **Session-level gate**: skip if the target session has not run a turn within duration. In-flight counts. |
 | `--if-cold <dur>` (`--if-inactive`) | **Session-level gate**: skip if the target session has run a turn within duration. In-flight counts. Keepalive shape. |
@@ -208,11 +211,14 @@ foci branch --wait-cold 55m --oneshot -a helen "nightly maintenance"
 # A human-typed branch: the branch session counts as touched by its user
 foci branch --human --oneshot -a clutch "side quest while we talk"
 
+# Ask a named session a question without interrupting it (reply on stdout)
+foci branch -a clutch -s Fabro --sync --silent "question"
+
 # Empty branch (agent wakes up with fork context only)
 foci branch -a research
 ```
 
-**Exit codes:** 0 on success, 1 on error. Returns HTTP 412 if the agent has no default session yet (no Telegram chat has been started).
+**Exit codes:** 0 on success, 1 on error. Returns HTTP 412 if the agent has no default session yet (no Telegram chat has been started), and HTTP 422 if `-s` names a session (other than the default) on an agent whose backend cannot branch.
 
 ---
 

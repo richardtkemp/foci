@@ -28,8 +28,9 @@ const (
 
 // mockCall records one SendMessage invocation for assertions.
 type mockCall struct {
-	text    string // last user message text in the request
-	trigger string // agent trigger label from ctx ("user", "branch", "webhook", ...)
+	text     string   // last user message text in the request
+	trigger  string   // agent trigger label from ctx ("user", "branch", "webhook", ...)
+	allTexts []string // every message's "role:text" in the request, in order — the full history the provider saw
 }
 
 // mockClient is a minimal provider.Client for HTTP endpoint tests: it returns
@@ -48,14 +49,16 @@ type mockClient struct {
 
 func (m *mockClient) SendMessage(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
 	var text string
-	for i := len(req.Messages) - 1; i >= 0; i-- {
-		if req.Messages[i].Role == "user" {
-			text = provider.TextOf(req.Messages[i].Content)
-			break
+	allTexts := make([]string, 0, len(req.Messages))
+	for _, msg := range req.Messages {
+		allTexts = append(allTexts, msg.Role+":"+provider.TextOf(msg.Content))
+		if msg.Role != "user" {
+			continue
 		}
+		text = provider.TextOf(msg.Content)
 	}
 	m.mu.Lock()
-	m.calls = append(m.calls, mockCall{text: text, trigger: agent.TriggerFromContext(ctx)})
+	m.calls = append(m.calls, mockCall{text: text, trigger: agent.TriggerFromContext(ctx), allTexts: allTexts})
 	m.mu.Unlock()
 	if m.entered != nil {
 		m.entered <- text

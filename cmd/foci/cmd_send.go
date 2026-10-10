@@ -8,7 +8,7 @@ import (
 
 type sendFlags struct {
 	agent       string
-	session     string
+	sessionFlag        // -s/--session selector + FOCI_SESSION (#2284)
 	model       string // model override (group name, alias, or developer/model_id)
 	gateFlags          // ifWarm / ifCold / ifUserActive / ifUserInactive (TODO #753)
 	waitFlags          // wait-until gates + --no-gate
@@ -33,23 +33,14 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 		} else if args[i] == "--broadcast" {
 			flags.broadcast = true
 			consumed = true
-		} else if args[i] == "-s" || args[i] == "--session" {
-			if i+1 < len(args) {
-				flags.session = args[i+1]
-				i++
-				consumed = true
-			}
+		} else if c, ni := flags.sessionFlag.tryParseSessionArg(args, i); c {
+			i = ni
+			consumed = true
 		} else if strings.HasPrefix(args[i], "--agent=") {
 			flags.agent = args[i][len("--agent="):]
 			consumed = true
 		} else if strings.HasPrefix(args[i], "-a=") {
 			flags.agent = args[i][len("-a="):]
-			consumed = true
-		} else if strings.HasPrefix(args[i], "--session=") {
-			flags.session = args[i][len("--session="):]
-			consumed = true
-		} else if strings.HasPrefix(args[i], "-s=") {
-			flags.session = args[i][len("-s="):]
 			consumed = true
 		} else if args[i] == "-m" || args[i] == "--model" {
 			if i+1 < len(args) {
@@ -109,7 +100,7 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 	}
 	// Apply env var fallbacks (flag > env > default)
 	flags.agent = envDefault(flags.agent, "FOCI_AGENT")
-	flags.session = envDefault(flags.session, "FOCI_SESSION")
+	flags.sessionFlag.applyEnvDefault()
 	flags.model = envDefault(flags.model, "FOCI_MODEL")
 	flags.gateFlags.applyEnvDefaults()
 	flags.waitFlags.applyEnvDefaults()
@@ -221,9 +212,7 @@ func cmdSend(base string, args []string) error {
 	if flags.agent != "" {
 		body["agent"] = flags.agent
 	}
-	if flags.session != "" {
-		body["session"] = flags.session
-	}
+	flags.sessionFlag.addToBody(body)
 	if flags.broadcast {
 		body["policy"] = "broadcast"
 	}
@@ -237,9 +226,11 @@ func cmdSend(base string, args []string) error {
 }
 
 func branchUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: foci branch [-a agent] [-m model] [--if-active <dur>] [--if-inactive <dur>] [--if-user-active <dur>] [--if-user-inactive <dur>] [--wait-warm <dur>] [--wait-cold <dur>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
+	fmt.Fprintf(os.Stderr, `Usage: foci branch [-a agent] [-s session] [-m model] [--if-active <dur>] [--if-inactive <dur>] [--if-user-active <dur>] [--if-user-inactive <dur>] [--wait-warm <dur>] [--wait-cold <dur>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
 
-Fork a branch session from the agent's main chat.
+Fork a branch session from the agent's main (default) session, or from the
+session -s/--session names. The parent session is not interrupted: a copy of
+its context answers.
 
 By default, branch is asynchronous (fire-and-forget): the CLI returns immediately
 and the agent's response is delivered to the chat. Use --sync/--wait to block
@@ -266,6 +257,8 @@ runs immediately. Use --no-gate to ignore any wait condition.
 
 Flags:
   -a, --agent <id>          Target agent (env: FOCI_AGENT)
+  -s, --session <id|alias>  Parent session: key, name or chat alias; a name that
+                            matches nothing creates a new, empty session (env: FOCI_SESSION, default: the agent's main (default) session)
   -m, --model <model>       Model override: group name, alias, or developer/model_id (env: FOCI_MODEL)
   --if-warm <dur>           Skip if the parent session has not run a turn within duration (env: FOCI_IF_WARM; alias --if-active)
   --if-cold <dur>           Skip if the parent session has run a turn within duration (env: FOCI_IF_COLD; alias --if-inactive)
@@ -293,13 +286,15 @@ Flags:
 }
 
 // branchFlags is the parsed flag set of `foci branch`: the shared if/wait gate
-// flag sets plus the branch-specific options, model override, sync/async and
-// message source. Parsed by parseBranchFlags so the flag handling is testable
-// in-process (the parseSendFlags pattern).
+// flag sets, the -s/--session parent selector, and the branch-specific
+// options, model override, sync/async and message source. Parsed by
+// parseBranchFlags so the flag handling is testable in-process (the
+// parseSendFlags pattern).
 type branchFlags struct {
 	gateFlags
 	waitFlags
 	humanFlag
+	sessionFlag // -s/--session parent selector + FOCI_SESSION (#2284)
 	noCompact   bool
 	noResetHook bool
 	silent      bool
@@ -329,6 +324,10 @@ func parseBranchFlags(args []string) (flags branchFlags, rest []string) {
 			continue
 		}
 		if c, ni := flags.humanFlag.tryParseHumanArg(args, i); c {
+			i = ni
+			continue
+		}
+		if c, ni := flags.sessionFlag.tryParseSessionArg(args, i); c {
 			i = ni
 			continue
 		}
@@ -382,6 +381,7 @@ func parseBranchFlags(args []string) (flags branchFlags, rest []string) {
 	flags.model = envDefault(flags.model, "FOCI_MODEL")
 	flags.async = envBool(flags.async, "FOCI_ASYNC")
 	flags.sync = envBool(flags.sync, "FOCI_SYNC")
+	flags.sessionFlag.applyEnvDefault()
 	flags.gateFlags.applyEnvDefaults()
 	flags.waitFlags.applyEnvDefaults()
 	flags.humanFlag.applyEnvDefault()
@@ -414,6 +414,7 @@ func cmdBranch(base string, args []string) error {
 	if agent != "" {
 		body["agent"] = agent
 	}
+	flags.sessionFlag.addToBody(body)
 	if text != "" {
 		body["text"] = text
 	}
