@@ -35,10 +35,10 @@ api_key = "agentover01"
 
 	root := s.RedactionValues()
 	if !has(root, "globalval01") {
-		t.Errorf("root RedactionValues() = %q — missing the global value of custom.api_key", root)
+		t.Error("root RedactionValues() is missing the global value of custom.api_key")
 	}
 	if !has(root, "agentover01") {
-		t.Errorf("root RedactionValues() = %q — missing the override value of agents.worker.custom.api_key", root)
+		t.Error("root RedactionValues() is missing the override value of agents.worker.custom.api_key")
 	}
 
 	// The slice is fresh: appending to it must not corrupt the shared state.
@@ -53,22 +53,22 @@ api_key = "agentover01"
 	rewrite(t, path, "[custom]\napi_key = \"globalval01\"\n\n[extra]\nlive = \"lateadded01\"\n\n[agents.worker.custom]\napi_key = \"agentover01\"\n", next())
 	live := s.RedactionValues()
 	if !has(live, "lateadded01") {
-		t.Errorf("root RedactionValues() after the file changed = %q — missing extra.live; the read was not live", live)
+		t.Error("root RedactionValues() after the file changed is missing extra.live — the read was not live")
 	}
 
 	// A view never gains another agent's override, but keeps the globals it
 	// can see.
 	other := s.ForAgent("other").RedactionValues()
 	if has(other, "agentover01") {
-		t.Errorf("view RedactionValues() = %q — leaks agents.worker.custom.api_key, a value the view cannot see", other)
+		t.Error("view RedactionValues() holds agents.worker.custom.api_key — a value the view cannot see")
 	}
 	if !has(other, "globalval01") {
-		t.Errorf("view RedactionValues() = %q — missing the unrestricted global custom.api_key", other)
+		t.Error("view RedactionValues() is missing the unrestricted global custom.api_key")
 	}
 
 	// Store.Redact is untouched by this change: it keeps scrubbing exactly
 	// valuesFor's set — for the root the globals, NOT the agent tables.
 	if out := s.Redact("x agentover01 globalval01 y"); out != "x agentover01 [REDACTED] y" {
-		t.Errorf("root Redact() = %q — its valuesFor-derived behaviour must not change", out)
+		t.Error("root Redact() deviated from its valuesFor-derived behaviour — custom.api_key's value must be replaced and agents.worker.custom.api_key's value must survive")
 	}
 }
