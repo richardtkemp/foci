@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"foci/internal/agent"
@@ -335,15 +336,19 @@ func (s *deferSweeper) deliverBranch(inst *agentInstance, r defersend.Record) {
 // deliverCommand dispatches a deferred command through the agent's command
 // registry — the same dispatch handleCommand uses, DocPath send included.
 // ok=false means a REGISTERED command without an Execute function; unknown
-// names are answered by the registry itself (ok=true, "Unknown command" text,
-// logged below). The undeliverable case is warned, the result text is logged
-// at INFO (there is no HTTP caller to return it to).
+// names are answered by the registry itself (ok=true, "Unknown command"
+// text). The delivery is logged with metadata only (id, agent, session,
+// kind, text length); the result text is never logged, because it can carry
+// secrets such as a pairing key (#2259). The !ok warning likewise logs the
+// command name only, never its arguments.
 func (s *deferSweeper) deliverCommand(inst *agentInstance, r defersend.Record) {
 	result, ok := dispatchAgentCommand(s.deps, inst, s.deps.ctx, r.SessionKey, r.Text)
 	if !ok {
+		name, _, _ := strings.Cut(strings.TrimSpace(r.Text), " ")
 		deferLog.Warnf("deferred command %d not executable — registered command has no Execute (agent=%s session=%s): %s",
-			r.ID, r.AgentID, r.SessionKey, r.Text)
+			r.ID, r.AgentID, r.SessionKey, name)
 		return
 	}
-	deferLog.Infof("deferred command %d delivered (agent=%s session=%s): %s", r.ID, r.AgentID, r.SessionKey, result.Text)
+	deferLog.Infof("deferred command %d delivered (agent=%s session=%s kind=%s text_len=%d)",
+		r.ID, r.AgentID, r.SessionKey, r.EffectiveKind(), len(result.Text))
 }
