@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"foci/internal/command"
+	"foci/internal/session"
 )
 
 // TestDispatchTextDotCommand verifies that dot-prefix commands (.model) are
@@ -212,5 +213,22 @@ func TestSetSessionKeyFunc(t *testing.T) {
 	}
 	if result.SessionKey != "custom-key" {
 		t.Errorf("expected custom session key, got %q", result.SessionKey)
+	}
+}
+
+// TestDispatcherSessionKeyForChatFallback verifies that the shared session-key
+// resolver (used by both command activation and the wizard intercept) falls
+// back to session.NewChatSessionKey when no custom resolver is wired, so the
+// two consumers cannot derive different keys for the same chat.
+func TestDispatcherSessionKeyForChatFallback(t *testing.T) {
+	reg := command.NewRegistry()
+	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+
+	want := session.NewChatSessionKey("agent1", 123)
+	if got := d.SessionKeyForChat(123); got != want {
+		t.Errorf("SessionKeyForChat(123) = %q, want %q", got, want)
+	}
+	if got := d.SessionKeyForChat(456); got == want {
+		t.Errorf("SessionKeyForChat(456) = %q, want a distinct key per chat", got)
 	}
 }

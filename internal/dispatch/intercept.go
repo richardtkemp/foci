@@ -65,7 +65,7 @@ type Interceptor struct {
 	Handler      platform.MessageHandler // for TransformMessage; may be nil
 	Dispatcher   *Dispatcher
 	IsSecondary  bool
-	SessionKeyFn func() string // returns current session key; empty for idle secondary bots
+	SessionKeyFn func() string // reports the bot's current session key; used ONLY by the idle-secondary drop below (empty = idle). Wizard scoping comes from Dispatcher.SessionKeyForChat.
 	LogWarnf     func(string, ...any)
 	LogDebugf    func(string, ...any)
 }
@@ -98,12 +98,16 @@ type InterceptResult struct {
 // responsible for platform-specific rendering based on the result.
 func (i *Interceptor) TryIntercept(ctx context.Context, msg *InterceptMessage) InterceptResult {
 	// Wizard intercept — route the message to this session's active wizard (if
-	// any) before normal dispatch. Wizards are scoped by session key, so a chat
-	// can only advance its own wizard, never another conversation's.
+	// any) before normal dispatch. Wizards are scoped by session key: the scope
+	// is the Dispatcher's SessionKeyForChat(msg.ChatID) for the INBOUND chat —
+	// the same key command activations pass as req.SessionKey — so a chat only
+	// ever advances the wizard it started, never another conversation's. With
+	// no Dispatcher, no command can have started a wizard here, so the scope
+	// stays "".
 	if msg.Text != "" {
 		scope := ""
-		if i.SessionKeyFn != nil {
-			scope = i.SessionKeyFn()
+		if i.Dispatcher != nil {
+			scope = i.Dispatcher.SessionKeyForChat(msg.ChatID)
 		}
 		if result, docPath, ok := i.Commands.HandleMessage(scope, msg.Text); ok {
 			return InterceptResult{Consumed: true, WizardReply: result, WizardDocPath: docPath, Text: msg.Text}

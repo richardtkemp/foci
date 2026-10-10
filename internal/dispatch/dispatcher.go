@@ -47,7 +47,7 @@ type Result struct {
 // The caller is responsible for extracting text, chatID, and userID from the
 // platform-specific message type.
 func (d *Dispatcher) DispatchText(ctx context.Context, text string, chatID int64, userID string) Result {
-	sessionKey := d.sessionKeyForChat(chatID)
+	sessionKey := d.SessionKeyForChat(chatID)
 	trimmed := strings.TrimSpace(text)
 
 	isDot := len(trimmed) > 1 && trimmed[0] == '.' &&
@@ -86,18 +86,18 @@ func (d *Dispatcher) DispatchCallback(ctx context.Context, chatID int64, cmdText
 	name = strings.ToLower(strings.TrimSpace(name))
 	args = strings.TrimSpace(args)
 
-	return d.dispatchRequest(ctx, name, args, d.sessionKeyForChat(chatID), "", chatID)
+	return d.dispatchRequest(ctx, name, args, d.SessionKeyForChat(chatID), "", chatID)
 }
 
 // LookupKeyboard checks if a command has a keyboard to display.
 func (d *Dispatcher) LookupKeyboard(ctx context.Context, text string, chatID int64) (string, string, []command.KeyboardOption, bool) {
-	ctx = tools.WithSessionKey(ctx, d.sessionKeyForChat(chatID))
+	ctx = tools.WithSessionKey(ctx, d.SessionKeyForChat(chatID))
 	return d.registry.LookupKeyboard(ctx, text, d.cc)
 }
 
 // LookupChainKeyboard checks if a command has a chained keyboard to display.
 func (d *Dispatcher) LookupChainKeyboard(ctx context.Context, text string, chatID int64) (string, []command.KeyboardOption, bool) {
-	sessionKey := d.sessionKeyForChat(chatID)
+	sessionKey := d.SessionKeyForChat(chatID)
 	ctx = tools.WithSessionKey(ctx, sessionKey)
 	return d.registry.LookupChainKeyboard(ctx, text, d.cc)
 }
@@ -129,7 +129,7 @@ func (d *Dispatcher) DispatchCommand(ctx context.Context, text string, chatID in
 		lookupText = "/" + text[1:]
 	}
 
-	sessionKey := d.sessionKeyForChat(chatID)
+	sessionKey := d.SessionKeyForChat(chatID)
 	ctx = tools.WithSessionKey(ctx, sessionKey)
 
 	// Check for keyboard display before dispatch so commands with keyboards
@@ -153,7 +153,7 @@ func (d *Dispatcher) DispatchCommand(ctx context.Context, text string, chatID in
 // DispatchCommandCallback runs the callback dispatch pipeline: check for chain
 // keyboard, then dispatch. Returns a CommandOutcome for the platform to render.
 func (d *Dispatcher) DispatchCommandCallback(ctx context.Context, chatID int64, cmdText string) CommandOutcome {
-	sessionKey := d.sessionKeyForChat(chatID)
+	sessionKey := d.SessionKeyForChat(chatID)
 	ctx = tools.WithSessionKey(ctx, sessionKey)
 
 	// Check for chain keyboard before dispatch (e.g. /config set → section picker).
@@ -173,7 +173,12 @@ func (d *Dispatcher) DispatchCommandCallback(ctx context.Context, chatID int64, 
 	return CommandOutcome{Response: &ResponseOutcome{Result: result, LookupText: cmdText}}
 }
 
-func (d *Dispatcher) sessionKeyForChat(chatID int64) string {
+// SessionKeyForChat resolves the stable session key for a chat ID — the ONE
+// resolver shared by command activation (command.Request.SessionKey) and the
+// wizard intercept (Interceptor.TryIntercept), so a wizard is always looked
+// up under the key it was started with (#2277). Falls back to
+// session.NewChatSessionKey when no resolver is wired.
+func (d *Dispatcher) SessionKeyForChat(chatID int64) string {
 	if d.sessionKeyFn != nil {
 		return d.sessionKeyFn(chatID)
 	}
