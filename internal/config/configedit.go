@@ -24,7 +24,7 @@ func AllFields() []ConfigField {
 }
 
 // TypeName renders a FieldType as its wire name ("string", "int", "float",
-// "bool", "duration").
+// "bool", "duration", "string[]", "schedule").
 func (t FieldType) TypeName() string {
 	switch t {
 	case FieldInt:
@@ -37,6 +37,8 @@ func (t FieldType) TypeName() string {
 		return "duration"
 	case FieldStringList:
 		return "string[]"
+	case FieldSchedule:
+		return "schedule"
 	default:
 		return "string"
 	}
@@ -330,7 +332,7 @@ func ParseObjectListValue(spec ObjectFieldSpec, jsonStr string) ([]map[string]an
 // Go type SetTableArray's formatter expects for the given FieldType.
 func coerceObjectValue(v any, ft FieldType) (any, error) {
 	switch ft {
-	case FieldString, FieldDuration:
+	case FieldString, FieldDuration, FieldSchedule:
 		s, ok := v.(string)
 		if !ok {
 			return nil, fmt.Errorf("expected a string")

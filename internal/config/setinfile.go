@@ -643,6 +643,28 @@ func FormatTOMLValue(value string, ft FieldType) (string, error) {
 		}
 		return fmt.Sprintf("%q", value), nil
 
+	case FieldSchedule:
+		// Same shape as FieldDuration, held to ParseSchedule instead: the
+		// load-time walk (validateTaggedDurations) and every write path must
+		// accept exactly the same values, so a "HH:MM" clock time like 04:00
+		// (Dick's live-config form) passes while banana / 25:00 / 0s are
+		// refused here rather than written and rejected at run time. Empty
+		// stays valid: reset_time = "" means "never".
+		inner := value
+		quoted := len(value) >= 2 && strings.HasPrefix(value, `"`) && strings.HasSuffix(value, `"`)
+		if quoted {
+			inner = value[1 : len(value)-1]
+		}
+		if inner != "" {
+			if _, err := ParseSchedule(inner); err != nil {
+				return "", fmt.Errorf("invalid schedule: %q (use HH:MM like 04:00, or a duration like 20h)", value)
+			}
+		}
+		if quoted {
+			return value, nil
+		}
+		return fmt.Sprintf("%q", value), nil
+
 	case FieldInt:
 		if _, err := strconv.Atoi(value); err != nil {
 			return "", fmt.Errorf("invalid integer: %q", value)

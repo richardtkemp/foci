@@ -282,6 +282,8 @@ func fieldTypeHint(ft config.FieldType) string {
 		return "bool"
 	case config.FieldDuration:
 		return "duration, e.g. 5m, 30s, 1h"
+	case config.FieldSchedule:
+		return "clock time or duration, e.g. 04:00, 20h"
 	}
 	return "value"
 }

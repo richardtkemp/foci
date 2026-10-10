@@ -153,6 +153,158 @@ func TestLoadTaggedDurationFieldRegistryCoverage(t *testing.T) {
 	}
 }
 
+// TestLoadRejectsPerAgentTelegramLongPollTimeout proves a bad
+// long_poll_timeout inside an [[agents.platforms]] block is refused at Load
+// with the walk's per-agent naming. Nothing checked it before the field was
+// tagged type:"duration" — the hand-written table in Validate loops global
+// [[platforms]] only, so the bot silently kept the default at run time.
+func TestLoadRejectsPerAgentTelegramLongPollTimeout(t *testing.T) {
+	toml := durationTestBase + "\n[[agents.platforms]]\nid = \"telegram\"\nfacet_session_ttl = \"30m\"\n\n[agents.platforms.telegram]\nlong_poll_timeout = \"banana\""
+	err := loadDurationFixture(t, toml)
+	if err == nil {
+		t.Fatal("expected Load to reject the per-agent long_poll_timeout, got nil — the bot silently keeps the default at run time")
+	}
+	want := `invalid config: agent "test" [platforms.telegram.telegram] long_poll_timeout = "banana":`
+	if !strings.HasPrefix(err.Error(), want) {
+		t.Errorf("error = %q, want prefix %q", err.Error(), want)
+	}
+}
+
+// TestLoadRejectsInvalidTaggedSchedules proves a type:"schedule" value that is
+// neither a "HH:MM" clock time nor a positive duration is refused at Load —
+// globally and per agent — instead of loading and then silently disabling
+// consolidation or the daily reset with a run-time warning on every tick.
+func TestLoadRejectsInvalidTaggedSchedules(t *testing.T) {
+	tests := []struct {
+		name       string
+		toml       string
+		wantPrefix string
+	}{
+		{
+			"global consolidation_time",
+			durationTestBase + "\n[maintenance]\nconsolidation_time = \"banana\"",
+			`[maintenance] consolidation_time = "banana":`,
+		},
+		{
+			"global reset_time 25:00",
+			durationTestBase + "\n[maintenance]\nreset_time = \"25:00\"",
+			`[maintenance] reset_time = "25:00":`,
+		},
+		{
+			"global reset_time 0 (non-positive duration)",
+			durationTestBase + "\n[maintenance]\nreset_time = \"0\"",
+			`[maintenance] reset_time = "0":`,
+		},
+		{
+			"agent consolidation_time -5m",
+			durationTestBase + "\n[agents.maintenance]\nconsolidation_time = \"-5m\"",
+			`agent "test" [maintenance] consolidation_time = "-5m":`,
+		},
+		{
+			"agent reset_time",
+			durationTestBase + "\n[agents.maintenance]\nreset_time = \"banana\"",
+			`agent "test" [maintenance] reset_time = "banana":`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := loadDurationFixture(t, tt.toml)
+			if err == nil {
+				t.Fatal("expected Load to reject the bad schedule, got nil — consolidation or the reset would never run at run time")
+			}
+			if want := "invalid config: " + tt.wantPrefix + " want HH:MM or a positive duration like 20h"; !strings.HasPrefix(err.Error(), want) {
+				t.Errorf("error = %q, want prefix %q", err.Error(), want)
+			}
+		})
+	}
+}
+
+// TestLoadTaggedScheduleFieldRegistryCoverage walks every FieldSchedule row of
+// the field registry — the same rows /config set and the app editor offer — in
+// section "agent" and in every global section except the skipped ones (same
+// exclusions as the duration coverage walk). Writing "banana" through the
+// row's TOML place must make Load fail naming the key, so a schedule row can
+// never silently drop out of load-time checking.
+func TestLoadTaggedScheduleFieldRegistryCoverage(t *testing.T) {
+	skipped := map[string]bool{
+		"platforms": true, // [[platforms]] is a list, not a [section]
+		"tracing":   true, // validated only when enabled
+		"bitwarden": true, // validated only when enabled
+	}
+	found := 0
+	for _, section := range FieldSections() {
+		if skipped[section] {
+			continue
+		}
+		for _, f := range FieldsInSection(section) {
+			if f.Type != FieldSchedule {
+				continue
+			}
+			found++
+			t.Run(section+"."+f.Key, func(t *testing.T) {
+				// Fresh TOML per row — subtests never share fixture state.
+				toml := durationTestBase + "\n"
+				if section == "agent" {
+					tablePath, leaf, dotted := cutLastDot(f.Key)
+					if !dotted {
+						t.Fatalf("agent-section schedule row %q is flat — no [agents.<table>] place to write it; extend the test", f.Key)
+					}
+					toml += fmt.Sprintf("[agents.%s]\n%s = \"banana\"", tablePath, leaf)
+				} else {
+					toml += fmt.Sprintf("[%s]\n%s = \"banana\"", section, f.Key)
+				}
+
+				err := loadDurationFixture(t, toml)
+				if err == nil {
+					t.Fatalf("Load accepted %s.%s = \"banana\" — the row is not checked at load time", section, f.Key)
+				}
+				_, leaf, _ := cutLastDot(f.Key)
+				if want := leaf + ` = "banana"`; !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %q, want it to contain %q", err.Error(), want)
+				}
+			})
+		}
+	}
+	if found == 0 {
+		t.Fatal("no FieldSchedule rows found in the registry — the schedule tag is missing from every field")
+	}
+}
+
+// TestLoadValidTaggedSchedules is a characterisation test: schedule shapes
+// that load today must keep loading once the fields are tagged — the clock
+// forms Dick's live config uses (03:45, 4:20, 00:00, 23:59), positive
+// durations, and the explicit empty string (reset_time = "" means "never") —
+// in both [maintenance] and [agents.maintenance], plus a well-formed
+// long_poll_timeout in the per-agent and global telegram blocks.
+func TestLoadValidTaggedSchedules(t *testing.T) {
+	for _, v := range []string{"03:45", "4:20", "00:00", "23:59", "20h", "90m", ""} {
+		t.Run("global maintenance schedule = "+v, func(t *testing.T) {
+			toml := durationTestBase + fmt.Sprintf("\n[maintenance]\nconsolidation_time = %q\nreset_time = %q", v, v)
+			if err := loadDurationFixture(t, toml); err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+		t.Run("agent maintenance schedule = "+v, func(t *testing.T) {
+			toml := durationTestBase + fmt.Sprintf("\n[agents.maintenance]\nconsolidation_time = %q\nreset_time = %q", v, v)
+			if err := loadDurationFixture(t, toml); err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+	t.Run("agent telegram long_poll_timeout = 30s", func(t *testing.T) {
+		toml := durationTestBase + "\n[[agents.platforms]]\nid = \"telegram\"\n\n[agents.platforms.telegram]\nlong_poll_timeout = \"30s\""
+		if err := loadDurationFixture(t, toml); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("global telegram long_poll_timeout = 30s", func(t *testing.T) {
+		toml := durationTestBase + "\n[[platforms]]\nid = \"telegram\"\n\n[platforms.telegram]\nlong_poll_timeout = \"30s\""
+		if err := loadDurationFixture(t, toml); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+}
+
 // TestLoadValidTaggedDurations is a characterisation test: values that load
 // today must keep loading — valid durations ("10m", "1h30m", "0"), the explicit
 // empty string ("empty = default" / "empty disables it" fields), a valid model

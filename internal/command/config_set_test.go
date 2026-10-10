@@ -485,3 +485,58 @@ func TestConfigSetSectionKeyValue(t *testing.T) {
 		t.Errorf("value = %q, want 'true'", capturedValue)
 	}
 }
+
+// TestConfigSetDirectRefusesBadScheduleValue proves the direct set form
+// refuses a maintenance-schedule value that is neither a "HH:MM" clock time
+// nor a positive duration BEFORE any file write: the stub SetInFileFn counts
+// its calls and must stay at zero, for both the global and the per-agent row.
+func TestConfigSetDirectRefusesBadScheduleValue(t *testing.T) {
+	for _, arg := range []string{
+		"maintenance.reset_time=banana",
+		"agent.maintenance.consolidation_time=25:00",
+	} {
+		calls := 0
+		deps := testConfigSetDeps(func(path string, target config.SetTarget, value string) (string, error) {
+			calls++
+			return "", nil
+		})
+		if _, err := ConfigSetDirect(deps, arg); err == nil {
+			t.Errorf("ConfigSetDirect(%q): expected error for a bad schedule value", arg)
+		}
+		if calls != 0 {
+			t.Errorf("ConfigSetDirect(%q): SetInFileFn called %d time(s), want 0 — the bad schedule must never reach the file", arg, calls)
+		}
+	}
+}
+
+// TestFieldTypeHintSchedule proves the /config set wizard prompts for a
+// schedule field with the clock-time-or-duration hint instead of the generic
+// "value", so the user knows both accepted forms.
+func TestFieldTypeHintSchedule(t *testing.T) {
+	if got := fieldTypeHint(config.FieldSchedule); got != "clock time or duration, e.g. 04:00, 20h" {
+		t.Errorf("fieldTypeHint(FieldSchedule) = %q, want %q", got, "clock time or duration, e.g. 04:00, 20h")
+	}
+}
+
+// TestConfigSetDirectAcceptsScheduleClockTime is a characterisation test: the
+// documented clock form (04:00) already sets successfully through today's
+// string row and must keep setting through FieldSchedule — one call, value
+// "04:00".
+func TestConfigSetDirectAcceptsScheduleClockTime(t *testing.T) {
+	calls := 0
+	var capturedValue string
+	deps := testConfigSetDeps(func(path string, target config.SetTarget, value string) (string, error) {
+		calls++
+		capturedValue = value
+		return "", nil
+	})
+	if _, err := ConfigSetDirect(deps, "maintenance.reset_time=04:00"); err != nil {
+		t.Fatalf("ConfigSetDirect: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("SetInFileFn called %d time(s), want 1", calls)
+	}
+	if capturedValue != `"04:00"` {
+		t.Errorf("value = %q, want %q", capturedValue, `"04:00"`)
+	}
+}

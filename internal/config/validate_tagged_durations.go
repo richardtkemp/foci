@@ -15,13 +15,17 @@ import (
 // string or *string field tagged `type:"duration"` — wherever it sits: global
 // sections, structs reached through pointers, embedded structs, map values
 // ([models.<name>]), every [[agents]] block, and every [[platforms]] entry,
-// global and per agent — to hold a value time.ParseDuration accepts.
+// global and per agent — to hold a value time.ParseDuration accepts. Fields
+// tagged `type:"schedule"` ([maintenance] consolidation_time/reset_time) are
+// held to ParseSchedule instead: a "HH:MM" clock time or a positive duration.
 //
 // Empty values and nil pointers are skipped: several duration fields document
-// "empty = <default>" or "empty disables it", and per-agent pointer fields
-// stay nil to inherit. "0" is a valid duration and stays valid. Disabled
-// [tracing] and [bitwarden] sections are skipped entirely — the documented
-// rule that an unused endpoint/timeout typo shouldn't block startup.
+// "empty = <default>" or "empty disables it" (schedule reset_time = "" means
+// "never"), and per-agent pointer fields stay nil to inherit. "0" is a valid
+// duration and stays valid — but not a valid schedule, which requires > 0.
+// Disabled [tracing] and [bitwarden] sections are skipped entirely — the
+// documented rule that an unused endpoint/timeout typo shouldn't block
+// startup.
 func (cfg *Config) validateTaggedDurations() error {
 	// Globals first, then agents, so a config with bad values in both scopes
 	// reports the global one — mirroring validateQuietCompaction's order.
@@ -118,10 +122,10 @@ func walkTaggedDurations(v reflect.Value, s durationScope) error {
 			}
 		}
 
-		// Duration leaf.
-		if f.Tag.Get("type") == "duration" {
-			if val, ok := durationValue(fv); ok {
-				if _, err := time.ParseDuration(val); err != nil {
+		// Tagged time-value leaf: one acceptance rule per tag kind.
+		if parse := taggedTimeParser(f.Tag.Get("type")); parse != nil {
+			if val, ok := taggedStringValue(fv); ok {
+				if err := parse(val); err != nil {
 					return fmt.Errorf("%s = %q: %w", s.where(tag), val, err)
 				}
 			}
@@ -180,10 +184,30 @@ func walkTaggedDurations(v reflect.Value, s durationScope) error {
 	return nil
 }
 
-// durationValue returns the string a duration-tagged field holds and whether
-// it holds one at all: only string and non-nil *string fields qualify, and an
-// empty string counts as unset ("empty = <default>" / "empty disables it").
-func durationValue(fv reflect.Value) (string, bool) {
+// taggedTimeParser maps a `type` tag kind to its acceptance rule: durations
+// must satisfy time.ParseDuration, schedules ParseSchedule ("HH:MM" or a
+// positive duration). Nil for every other kind — not a tagged time value.
+func taggedTimeParser(kind string) func(string) error {
+	switch kind {
+	case "duration":
+		return func(s string) error {
+			_, err := time.ParseDuration(s)
+			return err
+		}
+	case "schedule":
+		return func(s string) error {
+			_, err := ParseSchedule(s)
+			return err
+		}
+	}
+	return nil
+}
+
+// taggedStringValue returns the string a duration- or schedule-tagged field
+// holds and whether it holds one at all: only string and non-nil *string
+// fields qualify, and an empty string counts as unset ("empty = <default>" /
+// "empty disables it" / schedule "empty = never").
+func taggedStringValue(fv reflect.Value) (string, bool) {
 	if fv.Kind() == reflect.Pointer {
 		if fv.IsNil() {
 			return "", false

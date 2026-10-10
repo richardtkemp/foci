@@ -1037,3 +1037,62 @@ webhooks = { deploy = "deploy.md" }
 		t.Fatalf("Load unexpectedly succeeded on a file with both inline and expanded [system.webhooks] — silent corruption risk:\n%s", data)
 	}
 }
+
+// TestFormatTOMLValueScheduleRefusesBadValues proves the FieldSchedule case
+// holds schedule values to the same acceptance rule as the load-time walk:
+// neither a "HH:MM" clock time nor a positive Go duration is refused BEFORE
+// any file write, quoted or not — including the non-positive durations "0s",
+// "0" and "-5m" the run-time scheduler would reject on every tick.
+func TestFormatTOMLValueScheduleRefusesBadValues(t *testing.T) {
+	for _, v := range []string{"banana", "25:00", "12:60", "0s", "0", "-5m", `"banana"`} {
+		if _, err := FormatTOMLValue(v, FieldSchedule); err == nil {
+			t.Errorf("FormatTOMLValue(%q, FieldSchedule) accepted a value that is not a clock time or positive duration, want error", v)
+		}
+	}
+	if got, err := FormatTOMLValue("", FieldSchedule); err != nil || got != `""` {
+		t.Errorf("FormatTOMLValue(\"\", FieldSchedule) = %q, %v; want %q, nil (empty = never)", got, err, `""`)
+	}
+}
+
+// TestFormatTOMLValueLongPollTimeoutRowRefusesBadValue proves the registry
+// row /config set and the app editor actually use for long_poll_timeout —
+// not just the FieldType constant in isolation — refuses a value the Telegram
+// bot would silently ignore at run time.
+func TestFormatTOMLValueLongPollTimeoutRowRefusesBadValue(t *testing.T) {
+	f, ok := LookupField("platforms.telegram.long_poll_timeout")
+	if !ok {
+		t.Fatal("LookupField(platforms.telegram.long_poll_timeout) returned false")
+	}
+	if _, err := FormatTOMLValue("banana", f.Type); err == nil {
+		t.Errorf("FormatTOMLValue(banana, %v) accepted an invalid duration, want error", f.Type)
+	}
+}
+
+// TestFormatTOMLValueScheduleRoundTrips is a characterisation test: the
+// FieldSchedule case outputs exactly the quoting contract FieldDuration has
+// always produced — a quoted string, with an already-quoted value passed
+// through — so the documented clock form (04:00) and interval form ("20h")
+// round-trip through /config set and the app editor, and each result decodes
+// back with the real TOML parser to the same string.
+func TestFormatTOMLValueScheduleRoundTrips(t *testing.T) {
+	tests := []struct {
+		value string
+		want  string
+	}{
+		{"04:00", `"04:00"`},
+		{`"20h"`, `"20h"`},
+		{"", `""`},
+	}
+	for _, tt := range tests {
+		got, err := FormatTOMLValue(tt.value, FieldSchedule)
+		if err != nil {
+			t.Fatalf("FormatTOMLValue(%q, FieldSchedule): %v", tt.value, err)
+		}
+		if got != tt.want {
+			t.Errorf("FormatTOMLValue(%q, FieldSchedule) = %s, want %s", tt.value, got, tt.want)
+		}
+		if back := decodeSingleStringRoundTrip(t, got); back != strings.Trim(tt.value, `"`) {
+			t.Errorf("v = %s decodes back to %q, want %q", got, back, strings.Trim(tt.value, `"`))
+		}
+	}
+}

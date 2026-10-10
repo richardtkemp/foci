@@ -796,7 +796,7 @@ func (p *PlatformConfig) SafeDisplay() DisplayConfig {
 
 // TelegramSpecific holds Telegram-only config fields.
 type TelegramSpecific struct {
-	LongPollTimeout string `toml:"long_poll_timeout"  hot:"event" desc:"HTTP-client timeout for getUpdates; the Telegram-side long-poll timeout is derived as this minus 5s (default 30s)"`
+	LongPollTimeout string `toml:"long_poll_timeout"  hot:"event" desc:"HTTP-client timeout for getUpdates; the Telegram-side long-poll timeout is derived as this minus 5s (default 30s)" type:"duration"`
 
 	// APIBase overrides the Telegram Bot API base URL (default
 	// "https://api.telegram.org"). Used by integration tests to point bots
@@ -1227,10 +1227,10 @@ type SchedulerConfig struct {
 // Merge-based resolution (per-agent → global).
 type MaintenanceConfig struct {
 	ConsolidationEnabled        *bool   `toml:"consolidation_enabled" default:"true" hot:"event" desc:"Periodically curate the recent daily memory files into the long-term MEMORY.md file"`                                                                  // curate MEMORY.md periodically
-	ConsolidationTime           *string `toml:"consolidation_time"    default:"20h"  hot:"event" desc:"When to run MEMORY.md consolidation: either a daily clock time like 20:00, or a duration like 20h since the last run"`                                 // "HH:MM" daily or duration
+	ConsolidationTime           *string `toml:"consolidation_time"    default:"20h"  hot:"event" desc:"When to run MEMORY.md consolidation: either a daily clock time like 20:00, or a duration like 20h since the last run" type:"schedule"`                                 // "HH:MM" daily or duration
 	ConsolidationPrompt         *string `toml:"consolidation_prompt"                 hot:"event" desc:"Path to a custom consolidation prompt file. Leave unset for the built-in default, or set to none to disable consolidation"`                            // prompt override (nil = embedded, "none" = disabled)
 	ConsolidationMaxIdle        *string `toml:"consolidation_max_idle" default:"1h" hot:"event" desc:"Skip consolidation if the user has not interacted within this window, since there is nothing new to curate" type:"duration"`                            // skip if idle longer than this
-	ResetTime                   *string `toml:"reset_time"            default:""     hot:"event" desc:"When to reset the daily session: a clock time like 04:00, a duration like 24h since the last reset, or empty to never auto-reset"`                     // "HH:MM" daily, duration, or "" = never
+	ResetTime                   *string `toml:"reset_time"            default:""     hot:"event" desc:"When to reset the daily session: a clock time like 04:00, a duration like 24h since the last reset, or empty to never auto-reset" type:"schedule"`                     // "HH:MM" daily, duration, or "" = never
 	ResetIdleGuard              *string `toml:"reset_idle_guard"      default:"55m"  hot:"event" desc:"Skip a scheduled session reset if the user interacted within this window, so an active conversation is not wiped out from under them" type:"duration"` // skip reset if recently active
 	ConsolidationForceInSession *bool   `toml:"consolidation_force_in_session" hot:"event" desc:"Force memory consolidation to run in the existing/independent session instead of a real backend fork, even on a backend that can branch. Backends that can't fork already behave this way; this opts a fork-capable backend into the same behaviour for consolidation only"`
 }

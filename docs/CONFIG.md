@@ -1201,7 +1201,7 @@ All prompt fields use 3-state resolution: `""` or `"default"` → embedded defau
 
 ### Maintenance (`[maintenance]` / `[[agents.maintenance]]`)
 
-Scheduled housekeeping that runs at a wall-clock time of day **or** on a fixed interval: MEMORY.md consolidation and a daily session reset. Both `consolidation_time` and `reset_time` accept either a `"HH:MM"` 24-hour clock time (interpreted in the process timezone, fired daily) **or** a Go duration like `"20h"` (fixed interval since the last run). A daemon that was asleep past a scheduled clock time fires once on wake (catch-up), never once per missed day.
+Scheduled housekeeping that runs at a wall-clock time of day **or** on a fixed interval: MEMORY.md consolidation and a daily session reset. Both `consolidation_time` and `reset_time` accept either a `"HH:MM"` 24-hour clock time (interpreted in the process timezone, fired daily) **or** a Go duration like `"20h"` (fixed interval since the last run). A daemon that was asleep past a scheduled clock time fires once on wake (catch-up), never once per missed day. Any other value is refused when the config loads.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|

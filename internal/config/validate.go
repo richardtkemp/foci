@@ -438,7 +438,8 @@ func (cfg *Config) Validate(knownBackends []string) error {
 	}
 
 	// Table-driven duration validation — all fields that must be valid Go durations.
-	// Every OTHER `type:"duration"` field is checked last by
+	// Every OTHER `type:"duration"` field, and every `type:"schedule"` field
+	// ([maintenance] consolidation_time/reset_time), is checked last by
 	// validateTaggedDurations' reflection walk, so a field both check keeps
 	// this table's message.
 	durations := []durationEntry{
@@ -493,10 +494,11 @@ func (cfg *Config) Validate(knownBackends []string) error {
 		}
 	}
 
-	// Last: every `type:"duration"` field, wherever it sits (global sections,
-	// [[agents]] blocks, [[platforms]] entries, [models.*] map values), is
-	// checked by the tag-driven reflection walk — the table and special
-	// cases above keep precedence for fields they already check.
+	// Last: every `type:"duration"` and `type:"schedule"` field, wherever it
+	// sits (global sections, [[agents]] blocks, [[platforms]] entries,
+	// [models.*] map values), is checked by the tag-driven reflection walk —
+	// the table and special cases above keep precedence for fields they
+	// already check.
 	if err := cfg.validateTaggedDurations(); err != nil {
 		return err
 	}

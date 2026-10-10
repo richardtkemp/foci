@@ -476,3 +476,43 @@ func TestScopeAllowlistExcludesRows(t *testing.T) {
 		t.Errorf("debug.enable_pprof should be present and hot (NeedsRestart=false)")
 	}
 }
+
+// TestTelegramLongPollTimeoutRowIsDuration proves the registry row
+// /config set and the app editor use for long_poll_timeout is FieldDuration,
+// so a value like banana is refused before it reaches foci.toml — and would
+// otherwise be silently ignored by the Telegram bot at run time.
+func TestTelegramLongPollTimeoutRowIsDuration(t *testing.T) {
+	f, ok := LookupField("platforms.telegram.long_poll_timeout")
+	if !ok {
+		t.Fatal("LookupField(platforms.telegram.long_poll_timeout) returned false")
+	}
+	if f.Type != FieldDuration {
+		t.Errorf("platforms.telegram.long_poll_timeout row type = %v, want FieldDuration", f.Type)
+	}
+}
+
+// TestMaintenanceScheduleRows proves the four maintenance-schedule registry
+// rows (global and per-agent consolidation_time / reset_time) are
+// FieldSchedule with the "schedule" wire type, so /config set, the app editor
+// and the load-time walk all enforce the clock-time-or-positive-duration rule
+// instead of accepting any string.
+func TestMaintenanceScheduleRows(t *testing.T) {
+	for _, path := range []string{
+		"maintenance.consolidation_time",
+		"maintenance.reset_time",
+		"agent.maintenance.consolidation_time",
+		"agent.maintenance.reset_time",
+	} {
+		f, ok := LookupField(path)
+		if !ok {
+			t.Errorf("LookupField(%q) returned false", path)
+			continue
+		}
+		if f.Type != FieldSchedule {
+			t.Errorf("%s row type = %v, want FieldSchedule", path, f.Type)
+		}
+		if got := f.Type.TypeName(); got != "schedule" {
+			t.Errorf("%s TypeName() = %q, want %q", path, got, "schedule")
+		}
+	}
+}

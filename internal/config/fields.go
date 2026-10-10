@@ -19,6 +19,7 @@ const (
 	FieldBool                        // true/false
 	FieldDuration                    // Go duration string (e.g. "5m"), quoted in TOML
 	FieldStringList                  // []string; wire value is a JSON array, TOML value is ["a", "b"]
+	FieldSchedule                    // "HH:MM" clock time or positive Go duration, quoted in TOML
 )
 
 // ConfigField describes a single settable config key.
@@ -288,8 +289,11 @@ func extractTOMLTag(f reflect.StructField) string {
 // inferFieldType determines the FieldType for a struct field from its Go type
 // and optional `type` tag override.
 func inferFieldType(f reflect.StructField) FieldType {
-	if f.Tag.Get("type") == "duration" {
+	switch f.Tag.Get("type") {
+	case "duration":
 		return FieldDuration
+	case "schedule":
+		return FieldSchedule
 	}
 
 	typ := f.Type

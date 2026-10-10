@@ -1,14 +1,10 @@
 package periodic
 
 import (
-	"regexp"
-	"strconv"
 	"time"
-)
 
-// clockTimeRe matches a 24-hour "HH:MM" wall-clock time (e.g. "04:00", "4:20",
-// "23:59"). Hours 0-23, minutes 00-59. A single-digit hour is allowed.
-var clockTimeRe = regexp.MustCompile(`^([01]?[0-9]|2[0-3]):([0-5][0-9])$`)
+	"foci/internal/config"
+)
 
 // schedule is a parsed maintenance schedule. It is one of two kinds:
 //
@@ -23,22 +19,17 @@ type schedule struct {
 	interval    time.Duration // valid when !isTimeOfDay
 }
 
-// parseSchedule parses s as either a "HH:MM" daily clock time or a positive Go
-// duration ("20h", "90m"). ok is false when s is empty or matches neither form
-// (caller should treat that as "disabled" / skip with a warning).
+// parseSchedule parses s via config.ParseSchedule — the ONE acceptance rule
+// for schedule values, shared with the config loader, /config set and the app
+// editor — keeping this package's (schedule, bool) shape. ok is false when s
+// is empty or matches neither form (caller should treat that as "disabled" /
+// skip with a warning).
 func parseSchedule(s string) (sched schedule, ok bool) {
-	if s == "" {
+	sc, err := config.ParseSchedule(s)
+	if err != nil {
 		return schedule{}, false
 	}
-	if m := clockTimeRe.FindStringSubmatch(s); m != nil {
-		h, _ := strconv.Atoi(m[1])
-		mn, _ := strconv.Atoi(m[2])
-		return schedule{isTimeOfDay: true, hour: h, min: mn}, true
-	}
-	if d, err := time.ParseDuration(s); err == nil && d > 0 {
-		return schedule{interval: d}, true
-	}
-	return schedule{}, false
+	return schedule{isTimeOfDay: sc.Clock, hour: sc.Hour, min: sc.Min, interval: sc.Interval}, true
 }
 
 // nextFire returns the earliest instant strictly after lastFired at which this
