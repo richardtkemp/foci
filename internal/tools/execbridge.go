@@ -357,6 +357,13 @@ func (b *ExecBridge) exportedToolCount() int {
 // This prevents false positives when a single positional arg happens to
 // look like JSON (e.g. searching for a JSON string).
 //
+// The same const ships foci__json_type, the shared "exactly one JSON
+// value" check (#2300): it prints the type of its argument when the WHOLE
+// text is one JSON value and nothing otherwise (empty, unparseable, or
+// several values). foci__json_arg types a flag's value with it, and the
+// wrappers that need one JSON object (ask) test its output for "object" —
+// one filter, so the slurp semantics cannot drift between callers.
+//
 // Note: helpers use foci__ prefix (not _foci_) because Claude Code's shell
 // snapshot mechanism filters out underscore-prefixed functions.
 const jsonPassthroughHelper = `# Trace helper: logs to stderr when FOCI_TRACE is set.
@@ -365,10 +372,11 @@ export -f foci__trace
 
 # JSON passthrough: if the sole arg is exactly one JSON object with valid
 # param keys, use it directly. The check slurps the WHOLE argument (#2300):
-# a parse error anywhere or concatenated values ('{}{}') kill jq before the
-# filter runs — empty output — so they are not a passthrough, and each key
-# is compared inside jq as a whole string (no word splitting, no pathname
-# expansion).
+# jq parses the text into one array, so concatenated values ('{}{}') reach
+# the filter as length 2 and the length==1 test rejects them, while a parse
+# error anywhere kills jq before the filter runs (empty output) — either
+# way it is not a passthrough. Each key is compared inside jq as a whole
+# string (no word splitting, no pathname expansion).
 foci__json() {
   local tool="$1" valid_keys="$2"; shift 2
   [ $# -eq 1 ] || return 1
@@ -381,16 +389,27 @@ foci__json() {
 }
 export -f foci__json
 
+# Print the JSON type of $1 when it is EXACTLY one JSON value, and nothing
+# in every other case: empty input, a parse error anywhere, or several
+# values — a JSON text is exactly one value (#2300). The one shared
+# whole-value check: foci__json_arg types a flag's value with it, and the
+# wrappers that need one JSON object (ask) test its output for "object".
+foci__json_type() {
+  printf '%s' "$1" | jq -sr 'if length==1 then .[0]|type else empty end' 2>/dev/null
+}
+export -f foci__json_type
+
 # Validate a JSON-typed flag value where the flag is given, so a bad value names
 # the flag. Without this the caller sees jq's "invalid JSON text passed to
 # --argjson", which names neither the flag nor the value, and which prints TWICE
 # because the first failure leaves $params empty and the next jq rejects that
-# too (#1811). The value is slurped whole (#2300): empty input, a parse error
-# anywhere, or more than one JSON value all yield empty output — the not-JSON
-# branch below — so a valid prefix with trailing text ('1 x') is rejected too.
+# too (#1811). foci__json_type supplies the whole-value check (#2300): anything
+# that is not exactly one JSON value — empty input, a parse error anywhere,
+# several values, a valid prefix with trailing text ('1 x') — yields no type,
+# so the not-JSON branch below rejects it.
 foci__json_arg() {
   local flag="$1" want="$2" val="$3" got
-  got="$(printf '%s' "$val" | jq -sr 'if length==1 then .[0]|type else empty end' 2>/dev/null)"
+  got="$(foci__json_type "$val")"
   if [ -z "$got" ]; then
     echo "error: $flag expects a JSON $want, but this value is not JSON: $val" >&2
     case "$want" in
@@ -1375,13 +1394,18 @@ func generateShellFunc(t *Tool) string {
 	case "ask":
 		// Primarily JSON-only input (no flat per-field flags for questions, per
 		// design): accept the questions object as a positional arg (also caught
-		// by the foci__json passthrough guard), via --json, or piped on stdin.
-		// Whatever supplied it, $json is verified to be exactly one JSON object
-		// before jq sees it (#2300): anything else gets the usage error, not
-		// jq's --argjson internals. The optional grader params may live INSIDE
-		// that JSON object, or be supplied as flags (merged in below) for CLI
-		// convenience. Async tool — returns immediately after posting the first
-		// question.
+		// by the foci__json passthrough guard), via --json, or piped on stdin —
+		// from exactly ONE of those sources: a second positional or a repeated
+		// --json is an error, not a silent overwrite of what was already given
+		// (the dropped-argument bug class #2271 fixed for zero-property tools).
+		// The stdin read shares the generic generator's FOCI_STDIN_WAIT bound
+		// (#1552), so a never-closing pipe cannot hang the wrapper. Whatever
+		// supplied it, $json is verified by foci__json_type to be exactly one
+		// JSON object before jq sees it (#2300): anything else gets the usage
+		// error, not jq's --argjson internals. The optional grader params may
+		// live INSIDE that JSON object, or be supplied as flags (merged in
+		// below) for CLI convenience. Async tool — returns immediately after
+		// posting the first question.
 		return fmt.Sprintf(`%s() {
 %s
 %s
@@ -1389,7 +1413,12 @@ func generateShellFunc(t *Tool) string {
   local __foci_json_via=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --json) if [ "$__foci_json_via" = pos ]; then echo "error: the questions JSON was already given positionally; use --json OR the positional form, not both" >&2; return 1; fi; __foci_json_via=flag; foci__json_arg --json any "$2" || return 1; json="$2"; shift 2 ;;
+      --json)
+        if [ "$__foci_json_via" = pos ]; then echo "error: the questions JSON was already given positionally; use --json OR the positional form, not both" >&2; return 1; fi
+        if [ "$__foci_json_via" = flag ]; then echo "error: the questions JSON was already given as --json; pass the questions JSON exactly once" >&2; return 1; fi
+        __foci_json_via=flag
+        foci__json_arg --json any "$2" || return 1
+        json="$2"; shift 2 ;;
       --grader) grader="$2"; shift 2 ;;
       --grader-args) foci__json_arg --grader-args array "$2" || return 1; grader_args="$2"; shift 2 ;;
       --grader-timeout-seconds) foci__json_arg --grader-timeout-seconds number "$2" || return 1; grader_timeout="$2"; shift 2 ;;
@@ -1400,13 +1429,12 @@ func generateShellFunc(t *Tool) string {
         return 1 ;;
       *)
         if [ "$__foci_json_via" = flag ]; then echo "error: the questions JSON was already given as --json; use --json OR the positional form, not both" >&2; return 1; fi
+        if [ "$__foci_json_via" = pos ]; then echo "error: the questions JSON was already given; expected ONE questions JSON object, not several arguments" >&2; return 1; fi
         __foci_json_via=pos; json="$1"; shift ;;
     esac
   done
-  if [ -z "$json" ] && [ ! -t 0 ]; then
-    json="$(cat)"
-  fi
-  if [ -z "$json" ] || [ "$(printf '%%s' "$json" | jq -sr 'if length==1 then .[0]|type else "many" end' 2>/dev/null)" != object ]; then
+%s
+  if [ -z "$json" ] || [ "$(foci__json_type "$json")" != object ]; then
     if [ -n "$json" ]; then
       echo "error: %s expects one JSON object, got: $json" >&2
     fi
@@ -1420,7 +1448,7 @@ func generateShellFunc(t *Tool) string {
   if [ -n "$grader_on_error" ]; then json="$(echo "$json" | jq --arg e "$grader_on_error" '. + {grader_on_error:$e}')"; fi
   foci-call "$(jq -nc --argjson p "$json" '{"tool":"ask","params":$p}')"
 }
-`, name, helpCheck, guard, name, name, name, name)
+`, name, helpCheck, guard, stdinReadSnippet("json", "", "json"), name, name, name, name)
 
 	default:
 		// Schema-driven generic: emits a flag-parsing function whose
@@ -1439,6 +1467,48 @@ func generateShellFunc(t *Tool) string {
 // bodies; TestGenerateGenericShellFuncEmptyFallback pins the exact line.
 func blobFociCallTail(toolName string) string {
 	return fmt.Sprintf("  foci-call \"$(jq -nc --argjson p \"$1\" '{\"tool\":\"%s\",\"params\":$p}')\"\n}\n", toolName)
+}
+
+// stdinReadSnippet emits the "no value given, so stdin IS the value" read
+// shared by the generic generator and the ask wrapper (#1552). Reading is
+// the job here — but blocking is legitimate only until the stream ends,
+// and two stdin shapes never end:
+//
+//	B1  nothing ever arrives — an fd a supervisor left open (systemd
+//	    StandardInput, an inherited `exec 3< <(cmd)`), with no --flag to
+//	    fall back on.
+//	B2  data arrives but the stream does not close — a `tail -f` or a
+//	    `curl -N` piped in. Reads happily, returns never.
+//
+// Both present as SILENCE rather than an error, which is the actual harm: a
+// cron job simply stops, and you find out when the message never arrives.
+// So the read is bounded at FOCI_STDIN_WAIT (default 30s), then WARN and
+// proceed with whatever was read. The warning is the load-bearing half: a
+// bound alone would make B2 truncate a slow-but-finite upstream and send
+// the fragment looking like a success — corruption traded for a hang,
+// which is a bad trade. Announced on stderr, it is a diagnosis. (Note the
+// common slow-pipe case degrades safely on its own: an upstream that
+// buffers and flushes at the end delivers nothing by 30s, so the value is
+// empty and the caller's own required-value check below rejects the call
+// outright rather than sending a fragment.)
+//
+// FOCI_STDIN_WAIT overrides the bound, and exists so the regression test
+// can assert this in a second instead of thirty. flag names the argument
+// the warning suggests instead of the pipe; extraGuard appends a condition
+// (the generic generator passes one when a `--file -` param already
+// consumed stdin, which is single-use).
+func stdinReadSnippet(param, extraGuard, flag string) string {
+	return fmt.Sprintf(
+		"  if [ -z \"$%[1]s\" ] && [ ! -t 0 ]%[2]s; then\n"+
+			"    %[1]s=\"$(timeout \"${FOCI_STDIN_WAIT:-30}\" cat)\"\n"+
+			"    if [ $? -eq 124 ]; then\n"+
+			"      echo \"warning: stdin was still open after ${FOCI_STDIN_WAIT:-30}s and has been cut off there;"+
+			" using the ${#%[1]s} bytes that had arrived (if that is 0 this call fails below)."+
+			" A never-ending stream (tail -f, curl -N) or an inherited pipe nobody writes to always lands here —"+
+			" pass the body with --%[3]s instead.\" >&2\n"+
+			"    fi\n"+
+			"  fi\n",
+		param, extraGuard, flag)
 }
 
 // shellFuncUsageLine renders the "usage: foci_<name>[ [--json]][ <args>]"
@@ -1790,41 +1860,10 @@ func generateGenericShellFunc(t *Tool) string {
 				"    fi\n"+
 				"  fi\n",
 			t.StdinParam, extraGuard, stdinFlag, suggestion)
-		// The sibling branch: no value given, so stdin IS the body and reading it is
-		// the job. Blocking here is legitimate in a way it is not in the guard above
-		// — but only until the stream ends, and two shapes never end:
-		//
-		//   B1  nothing ever arrives — an fd a supervisor left open (systemd
-		//       StandardInput, an inherited `exec 3< <(cmd)`), with no --%[3]s to fall
-		//       back on. Same fd as #1552, other branch.
-		//   B2  data arrives but the stream does not close — a `tail -f` or a
-		//       `curl -N` piped in. Reads happily, returns never.
-		//
-		// Both present as SILENCE rather than an error, which is the actual harm: a
-		// cron job simply stops, and you find out when the message never arrives.
-		//
-		// 30s, then WARN and proceed with whatever was read. The warning is the
-		// load-bearing half. A bound alone would make B2 truncate a slow-but-finite
-		// upstream and send the fragment looking like a success — corruption traded
-		// for a hang, which is a bad trade. Announced on stderr, it is a diagnosis.
-		// (Note the common slow-pipe case degrades safely on its own: an upstream
-		// that buffers and flushes at the end delivers nothing by 30s, so the body
-		// is empty and the required-param check below rejects the call outright
-		// rather than sending a fragment.)
-		//
-		// FOCI_STDIN_WAIT overrides the bound, and exists so the regression test can
-		// assert this in a second instead of thirty.
-		fmt.Fprintf(&b,
-			"  if [ -z \"$%[1]s\" ] && [ ! -t 0 ]%[2]s; then\n"+
-				"    %[1]s=\"$(timeout \"${FOCI_STDIN_WAIT:-30}\" cat)\"\n"+
-				"    if [ $? -eq 124 ]; then\n"+
-				"      echo \"warning: stdin was still open after ${FOCI_STDIN_WAIT:-30}s and has been cut off there;"+
-				" using the ${#%[1]s} bytes that had arrived (if that is 0 this call fails below)."+
-				" A never-ending stream (tail -f, curl -N) or an inherited pipe nobody writes to always lands here —"+
-				" pass the body with --%[3]s instead.\" >&2\n"+
-				"    fi\n"+
-				"  fi\n",
-			t.StdinParam, extraGuard, stdinFlag)
+		// The sibling branch: no value given, so stdin IS the body and reading
+		// it is the job. stdinReadSnippet owns that branch's rationale and its
+		// text; the ask wrapper emits the same snippet for its questions JSON.
+		b.WriteString(stdinReadSnippet(t.StdinParam, extraGuard, stdinFlag))
 	}
 
 	// Required-param usage check.

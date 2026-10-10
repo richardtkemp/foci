@@ -6,7 +6,10 @@
 // space passed after word splitting, an empty key was dropped entirely, and
 // a valid JSON prefix with trailing text ('1 x') satisfied foci__json_arg.
 // The ask wrapper never checked its questions JSON at all. Every test here
-// fails on the pre-#2300 helpers.
+// fails on the pre-#2300 helpers; the TestAsk… and TestJSONType… functions
+// below were added in review and fail on the first #2300 cut (which still
+// let a second positional silently overwrite the questions JSON, read
+// stdin unbounded, and inlined the one-value type check).
 package tools
 
 import (
@@ -16,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // requireBashJq skips the test when bash or jq is missing — the tests here
@@ -383,5 +387,139 @@ func TestAskRejectsNonObjectQuestionsJSON(t *testing.T) {
 	calls, rc, out = runCountingShellFunc(t, body, `foci_ask '{"questions":[]}'`, 3)
 	if calls != 1 || rc != 3 || !strings.Contains(out, `"questions":[]`) {
 		t.Errorf("valid foci_ask: want 1 call with the questions params returning 3, got calls=%d rc=%d\nout=%s", calls, rc, out)
+	}
+}
+
+// jsonTypeProbe runs the real foci__json_type helper (only
+// jsonPassthroughHelper is sourced) against one value and reports the
+// combined output, with the helper's type answer echoed on a TYPE= line so
+// an empty answer (the whole point of the check) is still visible.
+func jsonTypeProbe(t *testing.T, val string) (rc int, out string) {
+	t.Helper()
+	cmd := fmt.Sprintf("printf 'TYPE=%%s\\n' \"$(foci__json_type %s)\"; echo RC=$?",
+		bashSingleQuote(val))
+	_, rc, out = runCountingShellFunc(t, "", cmd, 0)
+	return rc, out
+}
+
+// TestJSONTypePrintsTypeOfExactlyOneValue pins the shared whole-value check
+// foci__json_type (#2300): it prints the type of its argument ONLY when the
+// whole text is exactly one JSON value — a JSON text is one value — and
+// prints nothing for empty input, a parse error anywhere, or several
+// values. foci__json_arg and the ask wrapper both delegate to it, so this
+// is the one place the slurp semantics are pinned; before the shared
+// helper existed, two near-copies of the jq filter had already drifted
+// apart ("empty" output vs a "many" sentinel).
+func TestJSONTypePrintsTypeOfExactlyOneValue(t *testing.T) {
+	t.Parallel()
+	requireBashJq(t)
+
+	for _, c := range []struct {
+		name string
+		val  string
+		want string
+	}{
+		{"object", `{}`, "object"},
+		{"array", `[1]`, "array"},
+		{"number", `5`, "number"},
+		{"string", `"x"`, "string"},
+		{"boolean", `true`, "boolean"},
+		{"null", `null`, "null"},
+		{"empty input", ``, ""},
+		{"trailing text", `1 x`, ""},
+		{"two objects", `{}` + `{}`, ""},
+		{"two values with a space", `1 2`, ""},
+		{"leading garbage", `x {}`, ""},
+		{"parse error", `{`, ""},
+	} {
+		rc, out := jsonTypeProbe(t, c.val)
+		if want := "TYPE=" + c.want + "\nRC=0\n"; rc != 0 || out != want {
+			t.Errorf("%s: foci__json_type %q should answer exactly %q\nout=%s", c.name, c.val, c.want, out)
+		}
+	}
+}
+
+// TestAskTakesQuestionsJSONFromExactlyOneSource pins the one-source rule for
+// the questions JSON: positional, --json and stdin are three spellings of
+// ONE input, and a second spelling (a second positional, a repeated --json)
+// is an error naming the clash — never a silent overwrite. Before,
+// `foci_ask '{"questions":[1]}' '{"x":1}'` sent only the SECOND object, and
+// `foci_ask '{"questions":[]}' foo` reported `got: foo`, hiding the dropped
+// object entirely (the dropped-argument class #2271 fixed elsewhere). The
+// last two arms characterise the pre-existing --json/positional clash
+// errors so the whole matrix stays asserted in one place.
+func TestAskTakesQuestionsJSONFromExactlyOneSource(t *testing.T) {
+	t.Parallel()
+	requireBashJq(t)
+	ask := &Tool{
+		Name:       "ask",
+		ExecExport: true,
+		Positional: []string{"questions"},
+		Parameters: json.RawMessage(`{"type":"object","properties":{"questions":{"type":"array"}}}`),
+	}
+	body := generateShellFunc(ask)
+
+	for _, c := range []struct{ cmd, wantErr string }{
+		{`foci_ask '{"questions":[1]}' '{"x":1}'`, "error: the questions JSON was already given; expected ONE questions JSON object, not several arguments"},
+		{`foci_ask '{"questions":[]}' foo`, "error: the questions JSON was already given; expected ONE questions JSON object, not several arguments"},
+		{`foci_ask --json '{"questions":[]}' --json '{"x":1}'`, "error: the questions JSON was already given as --json; pass the questions JSON exactly once"},
+		{`foci_ask '{"questions":[]}' --json '{"x":1}'`, "error: the questions JSON was already given positionally; use --json OR the positional form, not both"},
+		{`foci_ask --json '{"questions":[]}' '{"x":1}'`, "error: the questions JSON was already given as --json; use --json OR the positional form, not both"},
+	} {
+		calls, rc, out := runCountingShellFunc(t, body, c.cmd, 0)
+		if rc != 1 || calls != 0 {
+			t.Errorf("%s: rc=%d calls=%d, want rc 1 and 0 foci-calls (a source clash sends nothing)\nout=%s", c.cmd, rc, calls, out)
+		}
+		if !strings.Contains(out, c.wantErr) {
+			t.Errorf("%s: error should name the clash\nwant: %s\nout=%s", c.cmd, c.wantErr, out)
+		}
+	}
+
+	// Positive control: grader flags around the one questions JSON still work.
+	calls, rc, out := runCountingShellFunc(t, body, `foci_ask '{"questions":[]}' --grader g`, 0)
+	if calls != 1 || rc != 0 || !strings.Contains(out, `"grader":"g"`) || !strings.Contains(out, `"questions":[]`) {
+		t.Errorf("questions JSON plus grader flags: want 1 call with both merged, got calls=%d rc=%d\nout=%s", calls, rc, out)
+	}
+}
+
+// TestAskStdinReadIsBounded proves the ask wrapper's stdin read carries the
+// #1552 bound the generic generator has: a pipe nobody closes cannot hang
+// foci_ask. After FOCI_STDIN_WAIT the read is cut off with a stderr warning,
+// the empty value falls to the usage error, and nothing is sent. Before,
+// the read was a bare `cat`, so `sleep 20 | foci_ask` hung until killed.
+// The blocking condition itself expires (the fifo's only writer is a sleep
+// with stderr discarded), so the test asserts termination, not speed.
+func TestAskStdinReadIsBounded(t *testing.T) {
+	t.Parallel()
+	requireBashJq(t)
+	ask := &Tool{
+		Name:       "ask",
+		ExecExport: true,
+		Positional: []string{"questions"},
+		Parameters: json.RawMessage(`{"type":"object","properties":{"questions":{"type":"array"}}}`),
+	}
+	body := generateShellFunc(ask)
+
+	start := time.Now()
+	calls, rc, out := runCountingShellFunc(t, body, `export FOCI_STDIN_WAIT=1
+__d=$(mktemp -d); mkfifo "$__d/f"
+sleep 20 > "$__d/f" 2>/dev/null &
+foci_ask < "$__d/f"; __ask_rc=$?
+rm -rf "$__d"
+exit $__ask_rc`, 0)
+	if elapsed := time.Since(start); elapsed > 15*time.Second {
+		t.Errorf("foci_ask on a never-closing pipe took %v; the read must be bounded (#1552)", elapsed)
+	}
+	if rc != 1 || calls != 0 {
+		t.Errorf("a cut-off read leaves an empty questions JSON: want the usage error, rc 1, 0 calls; got rc=%d calls=%d\nout=%s", rc, calls, out)
+	}
+	if !strings.Contains(out, "still open after") {
+		t.Errorf("a cut-off read must WARN — silent truncation is worse than the hang it replaced\nout=%s", out)
+	}
+
+	// Positive control: a closing pipe still delivers the questions JSON.
+	calls, rc, out = runCountingShellFunc(t, body, `echo '{"questions":[]}' | foci_ask`, 3)
+	if calls != 1 || rc != 3 || !strings.Contains(out, `"questions":[]`) {
+		t.Errorf("piped valid questions JSON: want 1 call returning 3, got calls=%d rc=%d\nout=%s", calls, rc, out)
 	}
 }
