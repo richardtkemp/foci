@@ -323,6 +323,38 @@ func TestConfigGetAgentKeyFromFile(t *testing.T) {
 	}
 }
 
+// TestConfigGetAgentKeyFileValueBeatsRunning is a characterisation test
+// (listed in .factory/red-gate-exempt.txt): a file value must never be
+// shadowed by the running fallback — main's explicit 10m and clutch's
+// file-inherited 30m both win over a running value the fake supplies for
+// every ask.
+func TestConfigGetAgentKeyFileValueBeatsRunning(t *testing.T) {
+	deps := agentFormDeps(nil)
+	deps.ConfigPath = writeAgentConfigFile(t)
+	deps.AgentRunningValueFn = func(agentID, key string) string { return "77m" }
+	cc := CommandContext{ConfigSetDeps: &deps}
+
+	text := execConfigCommand(t, cc, "get main keepalive.interval")
+	for _, want := range []string{"10m", "set for main in foci.toml"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("explicit value: reply %q missing %q", text, want)
+		}
+	}
+	if strings.Contains(text, "77m") {
+		t.Errorf("explicit value: running value must not shadow the file: %q", text)
+	}
+
+	text = execConfigCommand(t, cc, "get clutch keepalive.interval")
+	for _, want := range []string{"30m", "inherited from [keepalive] in foci.toml"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("inherited value: reply %q missing %q", text, want)
+		}
+	}
+	if strings.Contains(text, "77m") {
+		t.Errorf("inherited value: running value must not shadow the file: %q", text)
+	}
+}
+
 // TestConfigGetReportsRestartOnlyField proves get reads restart-only fields
 // too (reading is harmless) and says the field needs a restart to change.
 func TestConfigGetReportsRestartOnlyField(t *testing.T) {

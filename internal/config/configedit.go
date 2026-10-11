@@ -3,10 +3,12 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/BurntSushi/toml"
 )
@@ -361,12 +363,11 @@ func coerceObjectValue(v any, ft FieldType) (any, error) {
 	}
 }
 
-// AgentGlobalSections maps an agent-override key prefix (the AgentConfig
-// field's TOML tag, e.g. "loop") to the GLOBAL registry section holding the
-// same struct type (e.g. "agent_loop") — the section an unset agent override
-// inherits from. Computed by matching struct types, so it can't drift from
-// the registry.
-func AgentGlobalSections() map[string]string {
+// agentGlobalSections is the memoized AgentGlobalSections computation: a
+// pure function of compile-time struct types, so it runs once per process.
+// ResolveAgentValue consults the mapping per (agent × field), which would
+// otherwise repeat this reflection walk on every schema build.
+var agentGlobalSections = sync.OnceValue(func() map[string]string {
 	byType := map[string]string{}
 	for section, typ := range globalSections {
 		byType[typ.String()] = section
@@ -398,4 +399,54 @@ func AgentGlobalSections() map[string]string {
 		}
 	}
 	return out
+})
+
+// AgentGlobalSections maps an agent-override key prefix (the AgentConfig
+// field's TOML tag, e.g. "loop") to the GLOBAL registry section holding the
+// same struct type (e.g. "agent_loop") — the section an unset agent override
+// inherits from. Computed by matching struct types, so it can't drift from
+// the registry. The result is memoized; every call returns a fresh copy, so
+// callers cannot mutate the shared cache.
+func AgentGlobalSections() map[string]string {
+	out := agentGlobalSections()
+	cp := make(map[string]string, len(out))
+	maps.Copy(cp, out)
+	return cp
+}
+
+// ResolveAgentValue resolves one agent's effective value for a registry
+// field through the ONE agent-value ladder, shared by /config get and the
+// app config editor: an explicit [[agents]] value in foci.toml, else the
+// inherited global section value in foci.toml, else the running value, else
+// the field's built-in default. global and agents are the flattened file
+// values from ExplicitFileValues; running supplies the running-config rung
+// (nil skips it). Pure; no I/O.
+//
+// Semantics, so the two callers cannot drift again:
+//   - "Explicit" on the agent rung means the key is PRESENT in the agent's
+//     [[agents]] block — a present empty string wins (and is returned).
+//   - A present-but-empty GLOBAL value falls through to the later rungs,
+//     and the running rung sits between the file and the default. Where the
+//     two ladders this replaces differed (both of those cases), the shared
+//     behaviour is the app editor's.
+//
+// The returned source names the rung that produced the value; only the
+// editor's use discards it (its wire format carries values, not sources).
+func ResolveAgentValue(global map[string]string, agents map[string]map[string]string, agentID string, field ConfigField, running func() string) (value, source string) {
+	if v, ok := agents[agentID][field.Key]; ok {
+		return v, fmt.Sprintf("set for %s in foci.toml", agentID)
+	}
+	if prefix, rest, dotted := strings.Cut(field.Key, "."); dotted {
+		if gs, mapped := agentGlobalSections()[prefix]; mapped {
+			if v, ok := global[gs+"."+rest]; ok && v != "" {
+				return v, fmt.Sprintf("inherited from [%s] in foci.toml", gs)
+			}
+		}
+	}
+	if running != nil {
+		if v := running(); v != "" {
+			return v, "running config (not set in foci.toml)"
+		}
+	}
+	return field.Default, "built-in default"
 }

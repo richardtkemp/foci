@@ -109,6 +109,18 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		EffectiveValueFn: func(section, key string) string {
 			return config.LookupValue(p.cfg, p.acfg, section, key)
 		},
+		// /config get <agent> <key> can be asked about ANY running agent, so
+		// resolve the agent's row in the startup config by id — the same walk
+		// the live appliers do over cfg.Agents (liveapply.go). An id with no
+		// row yields "" (the running rung is skipped).
+		AgentRunningValueFn: func(agentID, key string) string {
+			for _, acfg := range p.cfg.Agents {
+				if acfg.ID == agentID {
+					return config.LookupValue(p.cfg, acfg, "agent", key)
+				}
+			}
+			return ""
+		},
 	}
 
 	// Build SecretsDeps (needs registry reference for wizard activation)

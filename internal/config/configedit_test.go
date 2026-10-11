@@ -199,3 +199,104 @@ func TestMapObjectEntries(t *testing.T) {
 		t.Errorf("nonexistent = %v, want empty", got)
 	}
 }
+
+// TestResolveAgentValue pins the ONE agent-value ladder shared by /config get
+// and the app config editor — an explicit [[agents]] value, then the
+// inherited file global, then the running value, then the built-in default —
+// including the source string each rung reports and the two edges where the
+// duplicated ladders it replaces differed: a present-but-empty global falls
+// through, and the running rung sits between the file and the default.
+func TestResolveAgentValue(t *testing.T) {
+	interval, ok := LookupField("agent.keepalive.interval")
+	if !ok {
+		t.Fatal("agent.keepalive.interval missing from the registry")
+	}
+	systemFiles, ok := LookupField("agent.system.system_files")
+	if !ok {
+		t.Fatal("agent.system.system_files missing from the registry")
+	}
+	if _, mapped := agentGlobalSections()["system"]; mapped {
+		t.Fatal("test premise broken: system must have no global-section mapping")
+	}
+
+	running9s := func() string { return "9s" }
+	cases := []struct {
+		name    string
+		field   ConfigField
+		global  map[string]string
+		agents  map[string]map[string]string
+		running func() string
+		wantVal string
+		wantSrc string
+	}{
+		{
+			name:    "explicit agent value wins",
+			field:   interval,
+			global:  map[string]string{"keepalive.interval": "30m"},
+			agents:  map[string]map[string]string{"main": {"keepalive.interval": "10m"}},
+			running: running9s,
+			wantVal: "10m",
+			wantSrc: "set for main in foci.toml",
+		},
+		{
+			name:    "explicit empty agent value is still explicit",
+			field:   interval,
+			agents:  map[string]map[string]string{"main": {"keepalive.interval": ""}},
+			running: running9s,
+			wantVal: "",
+			wantSrc: "set for main in foci.toml",
+		},
+		{
+			name:    "inherited global value",
+			field:   interval,
+			global:  map[string]string{"keepalive.interval": "30m"},
+			running: running9s,
+			wantVal: "30m",
+			wantSrc: "inherited from [keepalive] in foci.toml",
+		},
+		{
+			name:    "present-but-empty global falls through to running",
+			field:   interval,
+			global:  map[string]string{"keepalive.interval": ""},
+			running: running9s,
+			wantVal: "9s",
+			wantSrc: "running config (not set in foci.toml)",
+		},
+		{
+			name:    "running used when neither file rung is set",
+			field:   interval,
+			running: running9s,
+			wantVal: "9s",
+			wantSrc: "running config (not set in foci.toml)",
+		},
+		{
+			name:    "nil running fn and nil maps land on the default",
+			field:   interval,
+			wantVal: "55m",
+			wantSrc: "built-in default",
+		},
+		{
+			name:    "empty running value falls to the default",
+			field:   interval,
+			running: func() string { return "" },
+			wantVal: "55m",
+			wantSrc: "built-in default",
+		},
+		{
+			name:    "key with no global mapping ignores a same-named global key",
+			field:   systemFiles,
+			global:  map[string]string{"system.system_files": `["x.md"]`},
+			running: running9s,
+			wantVal: "9s",
+			wantSrc: "running config (not set in foci.toml)",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			val, src := ResolveAgentValue(tc.global, tc.agents, "main", tc.field, tc.running)
+			if val != tc.wantVal || src != tc.wantSrc {
+				t.Errorf("ResolveAgentValue = (%q, %q), want (%q, %q)", val, src, tc.wantVal, tc.wantSrc)
+			}
+		})
+	}
+}
