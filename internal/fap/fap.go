@@ -473,6 +473,12 @@ type Notification struct {
 	// summary) — the client renders the notification as a tappable chit that
 	// fetches and shows the blob on tap.
 	DetailBlobID string `json:"detailBlobId,omitempty"`
+	// Ambient marks a notification that is a trace in the transcript, not news:
+	// it is stored, replayed and rendered like any other, but the server does not
+	// treat it as user-facing activity (no offline push, no conversation-list
+	// preview, no unread bump). Server-side only (never on the wire): it is read
+	// by pushPreview at send time, and the stored visible flag carries it after.
+	Ambient bool `json:"-"`
 }
 
 func (Notification) Type() string { return TypeNotification }

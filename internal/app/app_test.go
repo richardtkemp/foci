@@ -290,6 +290,44 @@ func TestAppSink_ToolLifecycle(t *testing.T) {
 	}
 }
 
+// TestAppSink_SkillReadEmitsLoadedSkillNotification: a main-agent read of a
+// skill's SKILL.md leaves the "Loaded skill" line (#1299) in the transcript as
+// a notification frame — the app has no compact tool lines — while a read of
+// any other file, and a non-read tool, leave nothing (#2335). The chip is
+// ambient: it must not become the conversation-list preview or count as
+// activity for push.
+func TestAppSink_SkillReadEmitsLoadedSkillNotification(t *testing.T) {
+	c := fakeClient()
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}}
+	s := newAppSink(b)
+	ctx := context.Background()
+
+	s.Emit(ctx, turnevent.ToolCall{Name: "Read", Args: json.RawMessage(`{"file_path":"/home/foci/shared/skills/silent-cron/SKILL.md"}`)})
+	s.Emit(ctx, turnevent.ToolCall{Name: "Read", Args: json.RawMessage(`{"file_path":"/home/foci/shared/skills/writing-code/go.md"}`)})
+	s.Emit(ctx, turnevent.ToolCall{Name: "Bash", Args: json.RawMessage(`{"command":"cat /x/SKILL.md"}`)})
+	s.Emit(ctx, turnevent.ToolCall{Name: "Read", Args: json.RawMessage(`not json`)})
+
+	var notes []string
+	for _, d := range drain(t, c) {
+		if d.t == fap.TypeNotification {
+			text, _ := d.d["text"].(string)
+			notes = append(notes, text)
+			if _, onWire := d.d["Ambient"]; onWire {
+				t.Errorf("Ambient must never reach the wire: %v", d.d)
+			}
+			if _, onWire := d.d["ambient"]; onWire {
+				t.Errorf("ambient must never reach the wire: %v", d.d)
+			}
+		}
+	}
+	if len(notes) != 1 || notes[0] != "📖 Loaded skill: silent-cron" {
+		t.Fatalf("want exactly one notification %q, got %q", "📖 Loaded skill: silent-cron", notes)
+	}
+	if b.lastPreview != "" || b.lastActMs != 0 {
+		t.Fatalf("an ambient notification must not set the list preview or activity time; got preview=%q act=%d", b.lastPreview, b.lastActMs)
+	}
+}
+
 // TestAppSink_ShellActivityDescribesCall: a delegated agent's foci tools all
 // run through Bash, so the caption says what the call does (its description,
 // else its foci command), not just "Bash" (#1110).
@@ -2234,6 +2272,9 @@ func TestPushPreview_Classification(t *testing.T) {
 		}}, true, "report.pdf +2 — see these"},
 		{fap.ServerMessage{Role: "user", Attachments: []fap.AttachmentRef{{MIME: "image/png"}, {MIME: "image/png"}}}, true, "Sent a photo +1"},
 		{fap.Notification{Text: "note"}, true, "note"},
+		// #2335: an ambient notification (the "Loaded skill" chip) is stored and
+		// shown but is neither a push nor a list preview.
+		{fap.Notification{Text: "📖 Loaded skill: x", Ambient: true}, false, ""},
 		{fap.Interactive{Text: "approve?"}, true, "approve?"},
 		{fap.Interactive{Questions: []fap.Question{{Text: "batched ask?"}}}, true, "batched ask?"},
 		{fap.Interactive{}, true, "Question from agent"},

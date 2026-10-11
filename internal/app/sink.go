@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -128,6 +129,13 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 
 	case turnevent.ToolCall:
 		s.b.setTurnTool(fap.ActivityKindTool, toolformat.ActivityLabel(e.Name, e.Args), toolformat.FullCommand(e.Name, e.Args), toolformat.IsShellTool(e.Name))
+		// A read of a skill's SKILL.md leaves the same "Loaded skill" line in the
+		// transcript that Telegram and Discord show (#1299, #2335). The app has no
+		// compact tool lines, so it travels as an ambient notification: stored and
+		// replayed like any system row, but never a push or a list preview.
+		if line := skillLoadLine(e); line != "" {
+			s.b.send(fap.Notification{ConversationID: s.b.convID, MessageID: fap.NewULID(), Text: line, Level: "info", Ambient: true})
+		}
 		s.inner.Emit(ctx, ev)
 
 	case turnevent.ToolResult:
@@ -296,4 +304,14 @@ func (s *appSink) emitMeta(e turnevent.TurnComplete) {
 		return
 	}
 	s.b.send(meta)
+}
+
+// skillLoadLine returns the "Loaded skill" chip for a tool call that reads a
+// skill's SKILL.md, or "" for any other call (including unparseable args).
+func skillLoadLine(e turnevent.ToolCall) string {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(e.Args, &m); err != nil {
+		return ""
+	}
+	return toolformat.LoadedSkillLine(e.Name, m)
 }

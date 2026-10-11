@@ -577,6 +577,9 @@ func pushPreview(frame fap.ServerFrame) (string, bool) {
 		// "Sent a <noun>" fallback.
 		return mediaPreview(f.MIME, f.Name, f.Caption, ""), true
 	case fap.Notification:
+		if f.Ambient {
+			return "", false
+		}
 		return truncatePreview(f.Text), true
 	case fap.Interactive:
 		// Batched asks carry their text in Questions[0].Text (f.Text is empty);
