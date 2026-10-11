@@ -11,8 +11,8 @@ import (
 // an identical string.
 //
 // This is MESSAGE pin (#893's bubble bookmark, surfaced in the media view's
-// Pinned tab). The roster's CONVERSATION pin is a separate, deliberately
-// per-device preference and is not stored here (#1882).
+// Pinned tab). The roster's CONVERSATION pin is a separate scalar mirror under
+// chatMetaConvPinned (convpin_sync.go, #2313).
 const chatMetaPins = "pins"
 
 // decodePinSet parses a stored pins value. It never returns nil: an absent key,

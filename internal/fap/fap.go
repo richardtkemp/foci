@@ -119,8 +119,8 @@ const (
 	// asymmetry is deliberate: the app knows only the message it just toggled,
 	// while a receiver that was offline needs the absolute set, not a delta it
 	// missed the base for. One frame therefore serves both live fan-out and the
-	// post-hello replay. Message pin only — the roster's conversation pin stays a
-	// deliberate per-device preference and has no wire representation (#1882).
+	// post-hello replay. MESSAGE pin only — the roster's CONVERSATION pin is a
+	// separate scalar mirror (TypeConvPinPut/TypeConvPinSync below, #2313).
 	TypePinPut  = "pin.put"
 	TypePinSync = "pin.sync"
 	// TypeScrollPut (app->server) mirrors where the user left a conversation
@@ -128,6 +128,14 @@ const (
 	// and is replayed after a hello, exactly like the draft pair.
 	TypeScrollPut  = "scroll.put"
 	TypeScrollSync = "scroll.sync"
+	// TypeConvPinPut (app->server) mirrors the roster's CONVERSATION pin
+	// (#2313) — the pin that sorts a chat to the top of the roster and exempts
+	// it from auto-archive; TypeConvPinSync (server->app) fans it to the user's
+	// other devices and is replayed after a hello, exactly like the scroll
+	// pair. CONVERSATION pin, not the message pin above (TypePinPut/
+	// TypePinSync): one boolean per conversation, not a set of messages.
+	TypeConvPinPut  = "convpin.put"
+	TypeConvPinSync = "convpin.sync"
 	// TypeViewingPut (app->server) reports the one conversation the device has
 	// on screen right now, or none (#2202); TypeViewingSync (server->app) tells
 	// each device which conversations its user's OTHER devices are viewing, so
@@ -1029,6 +1037,32 @@ type ScrollSync struct {
 }
 
 func (ScrollSync) Type() string { return TypeScrollSync }
+
+// ConvPinPut mirrors the roster's CONVERSATION pin — the pin that sorts a chat
+// to the top of the roster and exempts it from auto-archive — to the server
+// (app->server, #2313). Pinned carries the NEW state, so the frame is
+// idempotent and a re-delivery cannot flip the pin back. Not the message pin
+// (PinPut above, #1882): one boolean per conversation, not a per-message set.
+// The server is a dumb store: it persists the flag under the chat's
+// "conv_pinned" metadata key and rebroadcasts a ConvPinSync. Fire-and-forget
+// like DraftPut — not conversation-reliability-scoped (see inboundConvID), so
+// there is no ack to fold.
+type ConvPinPut struct {
+	ConversationID string `json:"conversationId"`
+	Pinned         bool   `json:"pinned"`
+}
+
+// ConvPinSync mirrors a conversation's roster pin to a user's other devices
+// (server->client, #2313). Sent when one device pins or unpins (a ConvPinPut),
+// and replayed per-conversation after a hello so a device offline during the
+// change catches up. Both Pinned values are replayed: an unpin is a real
+// event that must reach a device that was offline for it.
+type ConvPinSync struct {
+	ConversationID string `json:"conversationId"`
+	Pinned         bool   `json:"pinned"`
+}
+
+func (ConvPinSync) Type() string { return TypeConvPinSync }
 
 // ViewingPut reports the conversation this device is showing the user right now
 // (app->server, #2202): the app is in the foreground (Android) or its window is

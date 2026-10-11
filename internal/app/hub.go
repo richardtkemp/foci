@@ -1799,13 +1799,14 @@ func (h *Hub) snapshotClients() []*wsClient {
 // change locally and must not be echoed back into its own optimistic state.
 //
 // This is the shared shape behind the cross-device mirrors (read.sync,
-// draft.sync, conversation.openSync, pin.sync, scroll.sync). Every one of those
-// frames is idempotent and last-write-wins by design, so it is deliberately sent
-// to clients that do not currently hold the conversation too: a read advance is
-// monotonic, a draft is stored for the chat's next open, an open-set is a full
-// replace, a pin set is absolute, and a scroll position is stored for the chat's
-// next open. There is no per-frame recipient filter and
-// adding one would be a behaviour change, not an optimisation.
+// draft.sync, conversation.openSync, pin.sync, scroll.sync, convpin.sync).
+// Every one of those frames is idempotent and last-write-wins by design, so it
+// is deliberately sent to clients that do not currently hold the conversation
+// too: a read advance is monotonic, a draft is stored for the chat's next
+// open, an open-set is a full replace, a pin set is absolute, and a scroll
+// position is stored for the chat's next open. There is no per-frame
+// recipient filter and adding one would be a behaviour change, not an
+// optimisation.
 //
 // The frame is built by the CALLER, before this returns — one value shared by
 // every recipient, never rebuilt per client.

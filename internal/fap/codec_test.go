@@ -415,6 +415,7 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		ConversationForeground{ConversationID: "c"},
 		PinSync{ConversationID: "c", MessageIDs: []string{"m1", "m2"}},
 		ScrollSync{ConversationID: "c", MessageID: "m", Following: false},
+		ConvPinSync{ConversationID: "c", Pinned: true},
 		ViewingSync{ConversationIDs: []string{"c"}},
 		ConversationAck{ConversationID: "c"},
 		MessageConsumed{ConversationID: "c", MessageID: "m"},
@@ -536,6 +537,52 @@ func TestDecode_ScrollPut_FollowingWithoutMessage(t *testing.T) {
 	}
 	if f := in.Frame.(ScrollPut); !f.Following || f.MessageID != "" {
 		t.Errorf("decoded = %+v, want following with no message", f)
+	}
+}
+
+// TestDecode_ConvPinPut proves the app->server half of conversation-pin sync
+// decodes, so the Kotlin encoder's field names are pinned on this side too
+// (#2313). Not to be confused with TestDecode_PinPut: this is the roster's
+// conversation pin, not a message pin.
+func TestDecode_ConvPinPut(t *testing.T) {
+	in, err := Decode(`{"t":"convpin.put","id":"i1","d":{"conversationId":"c1","pinned":true}}`)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	f, ok := in.Frame.(ConvPinPut)
+	if !ok {
+		t.Fatalf("frame = %T, want ConvPinPut", in.Frame)
+	}
+	if f.ConversationID != "c1" || !f.Pinned {
+		t.Errorf("decoded = %+v, want c1/true", f)
+	}
+}
+
+// An absent "pinned" must decode as false (an unpin), matching the peer's
+// default-filling decoder rather than erroring.
+func TestDecode_ConvPinPut_DefaultsUnpinned(t *testing.T) {
+	in, err := Decode(`{"t":"convpin.put","id":"i1","d":{"conversationId":"c1"}}`)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if f := in.Frame.(ConvPinPut); f.Pinned {
+		t.Errorf("absent pinned decoded as %v, want false", f.Pinned)
+	}
+}
+
+// TestEncode_ConvPinSync pins the server->app half of conversation-pin sync:
+// envelope `t` and the payload keys the Kotlin decoder selects by (#2313).
+func TestEncode_ConvPinSync(t *testing.T) {
+	wire, err := Encode(ConvPinSync{ConversationID: "c1", Pinned: true}, 0, 0, "X", "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, d := wireFields(t, wire)
+	if env["t"] != "convpin.sync" {
+		t.Errorf("t = %v, want convpin.sync", env["t"])
+	}
+	if d["conversationId"] != "c1" || d["pinned"] != true {
+		t.Errorf("payload = %v, want conversationId=c1 pinned=true", d)
 	}
 }
 

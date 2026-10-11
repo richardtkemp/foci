@@ -7,8 +7,9 @@ import (
 )
 
 // chatMetaScroll is the chat_metadata key holding a conversation's last-left
-// scroll position (#2144), alongside "draft", "last_read" and "pins". The value
-// is the JSON form of storedScroll; an empty string means never written.
+// scroll position (#2144), alongside "draft", "last_read", "pins" and
+// "conv_pinned". The value is the JSON form of storedScroll; an empty string
+// means never written.
 const chatMetaScroll = "scroll"
 
 // storedScroll is the persisted form of a ScrollPut. Kept separate from the

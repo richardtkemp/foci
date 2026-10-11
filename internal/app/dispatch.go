@@ -115,6 +115,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.pushDrafts(client)
 		h.pushPins(client)
 		h.pushScrolls(client)
+		h.pushConvPins(client)
 		h.pushOpenSet(client)
 		h.pushViewing(client)
 		// Reconnect resume: re-attach (which recomputes the capability union across
@@ -165,6 +166,8 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.handlePin(client, f)
 	case fap.ScrollPut:
 		h.handleScroll(client, f)
+	case fap.ConvPinPut:
+		h.handleConvPin(client, f)
 	case fap.ConfigGet:
 		h.handleConfigGet(client)
 
@@ -646,8 +649,8 @@ func (h *Hub) handleDraft(client *wsClient, f fap.DraftPut) {
 
 // handlePin folds one message's pin toggle into the conversation's stored pinned
 // set and mirrors the WHOLE resulting set to the user's other devices. Message
-// pin only: the roster's conversation pin is a deliberate per-device preference
-// and is NOT synced (#1882).
+// pin only: the roster's conversation pin is a separate scalar mirror
+// (handleConvPin / chatMetaConvPinned, #2313).
 //
 // Unlike handleDraft/handleRead this is a read-modify-write, so it is serialised
 // on pinsMu: two devices toggling different messages in the same chat at the same
