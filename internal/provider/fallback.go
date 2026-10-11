@@ -75,12 +75,16 @@ func stripUnsupportedParams(req *MessageRequest, apiErr *APIError, logf func(str
 // fallback-eligible error. It does NOT retry the primary model — the caller
 // has already done that.
 //
-// Returns the successful response/nil error, or the last error from the chain.
-// On success, req.Model reflects the model that succeeded, and resp.Served
-// reports the hop that served: its canonical model, plus its endpoint and
-// format when the hop went through a client from clientProvider (a hop that
-// reused the caller's client reports empty legs — the caller's legs served).
-// Read it through ServedTuple.
+// Returns the successful response/nil error, or the last error from the
+// chain. A hop's error arrives wrapped in *FailedHop carrying that hop's
+// ServedReport — read the failing tuple with FailedTuple; Unwrap keeps
+// errors.As/errors.Is reaching the hop's own error — while the original
+// error, returned when no fallbacks were attempted, is bare (no hop: the
+// primary failed). On success, req.Model reflects the model that succeeded,
+// and resp.Served reports the hop that served: its canonical model, plus its
+// endpoint and format when the hop went through a client from clientProvider
+// (a hop that reused the caller's client reports empty legs — the caller's
+// legs served). Read it through ServedTuple.
 func walkFallback(
 	ctx context.Context,
 	client Client,
@@ -104,11 +108,11 @@ func walkFallback(
 		}
 
 		fbClient := client
-		hopEndpoint, hopFormat := "", "" // hop legs apply only with the hop's own client
+		hop := ServedReport{Model: fbCanonical} // legs apply only with the hop's own client
 		if clientProvider != nil {
 			if c := clientProvider.GetClient(endpoint, format); c != nil {
 				fbClient = c
-				hopEndpoint, hopFormat = endpoint, format
+				hop.Endpoint, hop.Format = endpoint, format
 			}
 		}
 
@@ -130,22 +134,26 @@ func walkFallback(
 		resp, err := sendWithRetry(ctx, fbClient, req, handler)
 		if err == nil {
 			if resp != nil {
-				resp.Served = ServedReport{Model: fbCanonical, Endpoint: hopEndpoint, Format: hopFormat}
+				resp.Served = hop
 			}
 			if logf != nil {
 				logf("fallback succeeded on %s", fbCanonical)
 			}
 			return resp, nil
 		}
-		lastErr = err
+		// Label the failure with the hop that returned it — the error-side
+		// twin of resp.Served above — so a caller pairs error-path work
+		// (rate-limit gate closure) with the tuple that FAILED.
+		lastErr = &FailedHop{Report: hop, Err: err}
 		if !IsFallbackEligible(err) {
 			break // non-transient error, stop trying
 		}
 		fbModel = fbCanonical
 	}
 
-	// Return the last fallback error, or the original error if no fallbacks
-	// were attempted (no fallback model configured for this model).
+	// Return the last fallback error (wrapped in its hop), or the original
+	// error if no fallbacks were attempted (no fallback model configured
+	// for this model).
 	if lastErr != nil {
 		return nil, lastErr
 	}
@@ -166,8 +174,10 @@ func walkFallback(
 //
 // On success from a fallback model, req.Model reflects that model and
 // resp.Served reports the hop that served (zero = the primary served); read
-// the serving tuple with ServedTuple. The caller should restore the original
-// model if needed for subsequent iterations.
+// the serving tuple with ServedTuple. An error a fallback hop returned
+// arrives wrapped in *FailedHop labelling that hop; read the failing tuple
+// with FailedTuple. The caller should restore the original model if needed
+// for subsequent iterations.
 func Send(
 	ctx context.Context,
 	client Client,

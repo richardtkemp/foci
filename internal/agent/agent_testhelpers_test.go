@@ -2,12 +2,14 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"foci/internal/delegator/accounting"
 	"foci/internal/provider"
+	"foci/internal/sqlite"
 )
 
 // testClient is a mock provider.Client for unit tests.
@@ -71,7 +73,17 @@ func newTestClientWithError(handler func(ctx context.Context, req *provider.Mess
 // (accounting.Live) for the test.
 func openTestLedger(t *testing.T) *accounting.Ledger {
 	t.Helper()
-	l, _, err := accounting.Open(filepath.Join(t.TempDir(), "api.db"), accounting.Options{
+	l, _ := openPathTestLedger(t)
+	return l
+}
+
+// openPathTestLedger is openTestLedger returning the db path too, so tests
+// can read rows back through the sqlite read-only side door
+// (ledgerFinalModel).
+func openPathTestLedger(t *testing.T) (*accounting.Ledger, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "api.db")
+	l, _, err := accounting.Open(path, accounting.Options{
 		OnAlarm: func(a accounting.Alarm) { t.Errorf("ledger alarm: %+v", a) },
 	})
 	if err != nil {
@@ -82,7 +94,32 @@ func openTestLedger(t *testing.T) *accounting.Ledger {
 		accounting.SetLive(nil)
 		_ = l.Close()
 	})
-	return l
+	return l, path
+}
+
+// ledgerFinalModel reads the session's newest turn row's final_model through
+// the sqlite read-only side door (the turn_delegated_test.go pattern): the
+// ledger has no public turns-row reader, and one only tests would call is
+// test-only production code.
+func ledgerFinalModel(t *testing.T, l *accounting.Ledger, path, session string) string {
+	t.Helper()
+	turnID, err := l.LastTurnID(session)
+	if err != nil {
+		t.Fatalf("last turn id: %v", err)
+	}
+	if turnID == "" {
+		t.Fatalf("no turn row for session %s", session)
+	}
+	db, err := sqlite.OpenReadOnly(path)
+	if err != nil {
+		t.Fatalf("open ledger read-only: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	var model sql.NullString
+	if err := db.QueryRow(`SELECT final_model FROM turns WHERE turn_id = ?`, turnID).Scan(&model); err != nil {
+		t.Fatalf("read final_model: %v", err)
+	}
+	return model.String
 }
 
 // ledgerCalls reads every call booked in l.

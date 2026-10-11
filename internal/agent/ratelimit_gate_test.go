@@ -80,6 +80,26 @@ func TestEngageRateLimit_UsageFallback(t *testing.T) {
 	}
 }
 
+func TestEngageRateLimitClosesOneAgentWideGate(t *testing.T) {
+	// Characterisation (#2287): a delegated agent's limit is backend-wide,
+	// so its gate is agent-wide — EngageRateLimit closes the agent's ONE
+	// gate, keyed on its default endpoint, and the hook takes no session
+	// key, so no per-session gate can exist. Spec ruling: document, change
+	// nothing.
+	ag := &Agent{Endpoint: "be-endpoint"}
+	ag.EngageRateLimit(ratelimit.Signal{Kind: ratelimit.KindUsage, ResetAt: time.Now().Add(1 * time.Hour)})
+
+	if limited, _ := ag.getOrCreateRateLimitGate("be-endpoint").IsLimited(); !limited {
+		t.Error(`agent endpoint gate open after EngageRateLimit, want closed`)
+	}
+	ag.rateLimitGatesMu.RLock()
+	defer ag.rateLimitGatesMu.RUnlock()
+	if len(ag.rateLimitGates) != 1 {
+		t.Errorf("gates = %d (%v), want exactly 1 — one gate per agent, never per session",
+			len(ag.rateLimitGates), ag.rateLimitGates)
+	}
+}
+
 func TestRateLimitGate_OpenPreservesQueue(t *testing.T) {
 	// Proves a successful user probe releases the deadline immediately while
 	// preserving already-queued system work for the normal replay drain.

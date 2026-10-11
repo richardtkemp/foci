@@ -153,8 +153,9 @@ func (t *APITransport) LoadAndRepairSession(ts *TurnState) error {
 // fresh resolution: classifyAPIError always (the error path), and
 // releaseRateLimit/logAPIResponse when the primary serves. A response a
 // fallback hop serves pairs with the serving tuple instead
-// (provider.ServedTuple); the snapshot still drives the next iteration's
-// request.
+// (provider.ServedTuple), and an error a hop returned pairs with the failing
+// hop's (provider.FailedTuple) — a 429 closes the gate of the endpoint that
+// answered it. The snapshot still drives the next iteration's request.
 // Extracted from agent.go:409-429.
 func (t *APITransport) ResolveModelEffort(ts *TurnState) {
 	a := t.agent
@@ -390,10 +391,13 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 			}
 			ts.NewMessages = append(ts.NewMessages, errMsg)
 
-			// Pair the error with the endpoint the request actually went to
-			// (the turn-start snapshot), not a fresh resolution — a model
+			// Pair the error with the tuple that returned it — the turn-start
+			// snapshot when the primary failed, the failing hop's when a
+			// fallback hop did (FailedTuple fills a reused-client hop's empty
+			// legs with the snapshot's) — never a fresh resolution: a model
 			// switch mid-request must not close a gate the request never hit.
-			return a.classifyAPIError(ts.Ctx, err, ts.SessionKey, ts.TurnEndpoint, duration)
+			// A 429 closes the gate of the endpoint that answered it.
+			return a.classifyAPIError(ts.Ctx, err, ts.SessionKey, provider.FailedTuple(primary, err).Endpoint, duration)
 		}
 
 		// Any successful response proves the endpoint that SERVED is
@@ -404,6 +408,9 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 		// endpoint, the same one-owner pairing as the error path.
 		served := provider.ServedTuple(primary, resp)
 		a.releaseRateLimit(served.Endpoint)
+		// The ledger turn row's FinalModel names the model that served
+		// the turn's LAST response — this runs after every response.
+		ts.LastServedModel = served.Model
 
 		// Primary HTTP roundtrip succeeded — analog of the delegated
 		// transport's stdin write completing. Signal the inbox so
