@@ -50,6 +50,49 @@ func TestFormatToolCallCompact(t *testing.T) {
 	}
 }
 
+func TestFormatToolCallCompact_LoadedSkill(t *testing.T) {
+	// Proves a Read of a SKILL.md renders the whole compact line as the
+	// "📖 Loaded skill: <dir>" chip (#1299) for both read forms that reach
+	// the formatter — ccstream's Read/file_path and the API transport's
+	// read/path — while a read of a file inside a skill directory keeps the
+	// generic summary, and a directory name with HTML specials is escaped.
+	tests := []struct {
+		name   string
+		tool   string
+		params string
+		want   string
+	}{
+		{"ccstream Read form", "Read", `{"file_path":"/home/foci/shared/skills/writing-code/SKILL.md"}`, "📖 Loaded skill: writing-code"},
+		{"API read form", "read", `{"path":"/home/foci/shared/skills/writing-code/SKILL.md"}`, "📖 Loaded skill: writing-code"},
+		{"relative path", "read", `{"path":"./shared/skills/writing-code/SKILL.md"}`, "📖 Loaded skill: writing-code"},
+		{"HTML-special dir name", "Read", `{"file_path":"/home/foci/shared/skills/a&b/SKILL.md"}`, "📖 Loaded skill: a&amp;b"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatToolCallCompact(tt.tool, json.RawMessage(tt.params)); got != tt.want {
+				t.Errorf("formatToolCallCompact(%s) = %q, want %q", tt.tool, got, tt.want)
+			}
+		})
+	}
+
+	got := formatToolCallCompact("read", json.RawMessage(`{"path":"/home/foci/shared/skills/writing-code/go.md"}`))
+	if want := "📖 <b>read</b>: /home/foci/shared/skills/writing-code/go.md"; got != want {
+		t.Errorf("sub-file read = %q, want generic summary %q", got, want)
+	}
+}
+
+func TestFormatToolCallCompact_OrdinaryReadSummary(t *testing.T) {
+	// CHARACTERISATION: pins the pre-#1299 compact line for reads of
+	// ordinary files, in both read forms, so the chip substitution cannot
+	// leak beyond SKILL.md reads.
+	if got := formatToolCallCompact("read", json.RawMessage(`{"path":"/home/foci/notes.txt"}`)); got != "📖 <b>read</b>: /home/foci/notes.txt" {
+		t.Errorf("ordinary read = %q, want %q", got, "📖 <b>read</b>: /home/foci/notes.txt")
+	}
+	if got := formatToolCallCompact("Read", json.RawMessage(`{"file_path":"/home/foci/notes.txt"}`)); got != "🔧 <b>Read</b>: /home/foci/notes.txt" {
+		t.Errorf("ordinary CC Read = %q, want %q", got, "🔧 <b>Read</b>: /home/foci/notes.txt")
+	}
+}
+
 func TestFormatToolCallCompact_HTMLEscape(t *testing.T) {
 	// Verifies that HTML is properly escaped
 	// in compact tool call messages.

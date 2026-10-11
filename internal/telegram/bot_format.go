@@ -212,7 +212,9 @@ func (b *Bot) formatToolCall(toolName string, params json.RawMessage, showMode s
 }
 
 // formatToolCallCompact returns a compact one-line summary for "full" mode.
-// e.g. "⚡ exec: ls -la /tmp" or "📡 http_request: GET https://example.com"
+// e.g. "⚡ exec: ls -la /tmp" or "📡 http_request: GET https://example.com".
+// A read of a skill's SKILL.md is the whole line: the "📖 Loaded skill: <dir>"
+// chip from toolformat.LoadedSkillLine (#1299).
 func formatToolCallCompact(toolName string, params json.RawMessage) string {
 	emoji := emojiForTool(toolName)
 	var m map[string]json.RawMessage
@@ -220,6 +222,9 @@ func formatToolCallCompact(toolName string, params json.RawMessage) string {
 		return fmt.Sprintf("%s <b>%s</b>", emoji, htmlEscape(toolName))
 	}
 
+	if line := toolformat.LoadedSkillLine(toolName, m); line != "" {
+		return htmlEscape(line)
+	}
 	summary := toolformat.CompactSummary(toolName, m)
 	if summary == "" {
 		return fmt.Sprintf("%s <b>%s</b>", emoji, htmlEscape(toolName))

@@ -122,7 +122,9 @@ func emojiForTool(name string) string {
 	return "## "
 }
 
-// formatToolCallCompact returns a compact one-line summary.
+// formatToolCallCompact returns a compact one-line summary. A read of a
+// skill's SKILL.md is the whole line: the "📖 Loaded skill: <dir>" chip from
+// toolformat.LoadedSkillLine (#1299).
 func formatToolCallCompact(toolName string, params json.RawMessage) string {
 	prefix := emojiForTool(toolName)
 	var m map[string]json.RawMessage
@@ -130,6 +132,9 @@ func formatToolCallCompact(toolName string, params json.RawMessage) string {
 		return fmt.Sprintf("%s**%s**", prefix, toolName)
 	}
 
+	if line := toolformat.LoadedSkillLine(toolName, m); line != "" {
+		return line
+	}
 	summary := toolformat.CompactSummary(toolName, m)
 	if summary == "" {
 		return fmt.Sprintf("%s**%s**", prefix, toolName)

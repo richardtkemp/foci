@@ -1,11 +1,13 @@
 package telegram
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 
 	"foci/internal/command"
+	"foci/internal/turn"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -169,5 +171,40 @@ func TestNewToolCallTracker(t *testing.T) {
 	tr := newToolCallTracker(b, 12345, b.resolveDisplay(""))
 	if tr == nil {
 		t.Fatal("tracker is nil")
+	}
+}
+
+func TestTrackerFullMode_StoresLoadedSkillLine(t *testing.T) {
+	// Proves a SKILL.md read flowing through the full tracker chain — the
+	// verbatim ccstream tool name/params — lands in chat and in the stored
+	// entry as the chip: the sent message and CompactText are the chip line,
+	// FullInput still carries the real path, and a second load of the same
+	// skill gets its own entry (no de-duplication, #1299).
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	tr := newToolCallTracker(b, 12345, turn.TurnDisplay{ShowToolCalls: "full"})
+
+	const skillPath = "/home/foci/shared/skills/writing-code/SKILL.md"
+	params := json.RawMessage(`{"file_path":"` + skillPath + `"}`)
+	tr.ObserveToolCall("t1", "Read", params)
+	tr.ObserveToolCall("t2", "Read", params)
+
+	const chip = "📖 Loaded skill: writing-code"
+	if got := mock.sentCount(); got != 2 {
+		t.Fatalf("sends = %d, want 2 (one per load, no dedup)", got)
+	}
+	if got := mock.lastSendInjected; got != chip {
+		t.Errorf("sent text = %q, want %q", got, chip)
+	}
+	for _, id := range []string{"1", "2"} {
+		e, ok := b.toolStore.Load(id)
+		if !ok {
+			t.Fatalf("no stored entry for message %s", id)
+		}
+		if e.CompactText != chip {
+			t.Errorf("entry %s CompactText = %q, want %q", id, e.CompactText, chip)
+		}
+		if !strings.Contains(e.FullInput, skillPath) {
+			t.Errorf("entry %s FullInput lost the real path: %q", id, e.FullInput)
+		}
 	}
 }

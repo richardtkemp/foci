@@ -171,3 +171,75 @@ func TestCompactResultHint(t *testing.T) {
 		t.Errorf("expected no hint for unknown tool, got %q", got)
 	}
 }
+
+// TestFormatToolCallCompact_LoadedSkill proves a Read of a SKILL.md renders
+// the whole compact line as the "📖 Loaded skill: <dir>" chip (#1299) for
+// both read forms that reach the formatter — ccstream's Read/file_path and
+// the API transport's read/path — while a read of a file inside a skill
+// directory keeps the generic summary.
+func TestFormatToolCallCompact_LoadedSkill(t *testing.T) {
+	tests := []struct {
+		name   string
+		tool   string
+		params string
+		want   string
+	}{
+		{"ccstream Read form", "Read", `{"file_path":"/home/foci/shared/skills/writing-code/SKILL.md"}`, "📖 Loaded skill: writing-code"},
+		{"API read form", "read", `{"path":"/home/foci/shared/skills/writing-code/SKILL.md"}`, "📖 Loaded skill: writing-code"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatToolCallCompact(tt.tool, json.RawMessage(tt.params)); got != tt.want {
+				t.Errorf("formatToolCallCompact(%s) = %q, want %q", tt.tool, got, tt.want)
+			}
+		})
+	}
+
+	got := formatToolCallCompact("read", json.RawMessage(`{"path":"/home/foci/shared/skills/writing-code/go.md"}`))
+	if want := "[] **read**: /home/foci/shared/skills/writing-code/go.md"; got != want {
+		t.Errorf("sub-file read = %q, want generic summary %q", got, want)
+	}
+}
+
+// TestFormatToolCallCompact_OrdinaryReadSummary is a CHARACTERISATION test:
+// it pins the pre-#1299 compact line for reads of ordinary files, in both
+// read forms, so the chip substitution cannot leak beyond SKILL.md reads.
+func TestFormatToolCallCompact_OrdinaryReadSummary(t *testing.T) {
+	if got := formatToolCallCompact("read", json.RawMessage(`{"path":"/home/foci/notes.txt"}`)); got != "[] **read**: /home/foci/notes.txt" {
+		t.Errorf("ordinary read = %q, want %q", got, "[] **read**: /home/foci/notes.txt")
+	}
+	if got := formatToolCallCompact("Read", json.RawMessage(`{"file_path":"/home/foci/notes.txt"}`)); got != "## **Read**: /home/foci/notes.txt" {
+		t.Errorf("ordinary CC Read = %q, want %q", got, "## **Read**: /home/foci/notes.txt")
+	}
+}
+
+// TestTrackerFullMode_StoresLoadedSkillLine proves a SKILL.md read flowing
+// through the full tracker chain — the API transport's verbatim read/path —
+// lands in chat and in the stored entry as the chip: the sent message and
+// CompactText are the chip line, and FullInput still carries the real path
+// (#1299).
+func TestTrackerFullMode_StoresLoadedSkillLine(t *testing.T) {
+	b, fs, _ := newTestBot(t, "a")
+	tracker := newToolCallTracker(b, "42", turn.TurnDisplay{ShowToolCalls: "full"})
+
+	const skillPath = "/home/foci/shared/skills/writing-code/SKILL.md"
+	tracker.ObserveToolCall("t1", "read", json.RawMessage(`{"path":"`+skillPath+`"}`))
+
+	const chip = "📖 Loaded skill: writing-code"
+	if got := fs.sendCount(); got != 1 {
+		t.Fatalf("sends = %d, want 1", got)
+	}
+	if got := fs.lastSend(t).content; got != chip {
+		t.Errorf("sent text = %q, want %q", got, chip)
+	}
+	e, ok := b.toolStore.Load("1")
+	if !ok {
+		t.Fatal("no stored entry for message 1")
+	}
+	if e.CompactText != chip {
+		t.Errorf("CompactText = %q, want %q", e.CompactText, chip)
+	}
+	if !strings.Contains(e.FullInput, skillPath) {
+		t.Errorf("FullInput lost the real path: %q", e.FullInput)
+	}
+}

@@ -269,6 +269,7 @@ main
  ├── memory        → convo, log, session, sqlite, timeutil, fsnotify, blevesearch/bleve/v2 (FTS5 + bleve backends)
  ├── voice         → config, log, procx, ratelimit, session, tempdir, gorilla/websocket
  ├── skills        → log, procx
+ ├── toolformat    → skills (shared pure tool-call display helpers — compact summaries, result hints, activity captions, the SKILL.md loaded-skill chip #1299)
  ├── startup       → log, session (leaf package for crash detection)
  ├── resources     → log (goroutine monitor, memory guard)
  ├── procx         → log (process-spawn helper: strips foci-secrets/foci-askgw supplementary groups from child processes, own process group; used by every subprocess spawn site)
@@ -1130,6 +1131,8 @@ Tool call display is controlled by `show_tool_calls` (string: `"off"`, `"preview
 `ToolCall` and `ToolResult` are `turnevent.Event` types routed by `StreamingSink` directly to the platform tracker — there is no separate `BuildTurnObservers` wiring.
 
 **Tracker state machine (`internal/turn/tracker.go`):** `ToolCallTracker` keys its per-tool state by `tool_use_id`, not by insertion order. This matters when Claude batches multiple `tool_use` blocks in a single assistant message (common: three `Read` calls, a `Grep` + `Bash`, etc.) — each tool call gets its own `trackerEntry{msgID, text, fullText, lastParams}` so parallel `ObserveToolResult` calls each update the correct message's hint and store entry, regardless of arrival order. Preview mode uses a sentinel `""` key for the single shared preview message that every call edits in place. `LastMsgID` / `ResetMsgID` return and clear the most-recently-inserted entry respectively, preserving the preview-mode "one message edited by reply" UX.
+
+A Read of a skill's `SKILL.md` (base name exactly `SKILL.md`, case-sensitive) renders its compact line — the entry's `CompactText` — as `📖 Loaded skill: <dir>` instead of the path summary: one rule in `toolformat.LoadedSkillLine` over `skills.NameFromReadPath`, shared by both platform compact formatters (Telegram escapes it, Discord sends it raw) (#1299); the expanded view still shows the real path and params.
 
 Ccstream plumbs the id via the CC hook integration described above, feeding `handler.OnToolEnd(id, name, output, isError)` which the StreamingSink forwards to the tracker.
 
