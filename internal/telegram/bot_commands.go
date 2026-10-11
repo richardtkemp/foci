@@ -33,26 +33,16 @@ func (b *Bot) renderCommandOutcome(msg *gotgbot.Message, outcome *dispatch.Comma
 
 		result := outcome.Response.Result
 		if len(result.Response.Keyboard) > 0 {
-			text := result.Response.Text
-			if len(result.Response.Parts) > 0 {
-				text = strings.Join(result.Response.Parts, "\n\n")
-			}
 			cmdName, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(outcome.Response.LookupText), "/"), " ")
-			_, _ = b.SendTextWithButtons(text, dispatch.CmdButtons(cmdName, result.Response.Keyboard), "cmd:")
+			_, _ = b.SendTextWithButtons(result.Response.DisplayText(), dispatch.CmdButtons(cmdName, result.Response.Keyboard), "cmd:")
 		} else if outcome.Response.WizardStep != nil {
 			// The command activated a wizard whose first step is structured —
 			// the prompt (the command's response) goes out with wz: buttons.
-			text := result.Response.Text
-			if len(result.Response.Parts) > 0 {
-				text = strings.Join(result.Response.Parts, "\n\n")
-			}
-			b.sendWizardStep(msg.Chat.Id, text, outcome.Response.WizardStep)
-		} else if len(result.Response.Parts) > 0 {
-			for _, part := range result.Response.Parts {
+			b.sendWizardStep(msg.Chat.Id, result.Response.DisplayText(), outcome.Response.WizardStep)
+		} else {
+			for _, part := range result.Response.DisplayParts() {
 				b.sendReply(msg, part)
 			}
-		} else if result.Response.Text != "" {
-			b.sendReply(msg, result.Response.Text)
 		}
 		_ = platform.SendDocAndRemove(b, msg.Chat.Id, result.Response.DocPath, "")
 	}

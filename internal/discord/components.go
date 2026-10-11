@@ -101,11 +101,7 @@ func (b *Bot) handleCommandCallback(ctx context.Context, channelID, msgID, cmdTe
 	var resp command.Response
 	if outcome.Response != nil {
 		resp = outcome.Response.Result.Response
-		if len(resp.Parts) > 0 {
-			result = strings.Join(resp.Parts, "\n\n")
-		} else {
-			result = resp.Text
-		}
+		result = resp.DisplayText()
 		if !outcome.Response.Result.Handled {
 			result = "Unknown command: " + cmdText
 		}

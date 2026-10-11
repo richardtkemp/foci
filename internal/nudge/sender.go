@@ -41,11 +41,15 @@ const (
 )
 
 // CommandDispatcher runs one slash-command line through the agent's command
-// registry on a session key, returning the command's reply text and whether
-// it executed. It is injected because nudge cannot import the command package
-// (command → agent → nudge would cycle); the gateway wires it to the same
-// dispatch core /command and the deferred sweep use (runAgentCommand in
-// cmd/foci-gw), so a button press runs exactly what typing the command runs.
+// registry on a session key, returning the command's reply rendered for a
+// single message and whether it executed. It is injected because nudge
+// cannot import the command package (command → agent → nudge would cycle);
+// the gateway wires it to the same dispatch core /command and the deferred
+// sweep use (runAgentCommand in cmd/foci-gw), so a button press runs
+// exactly what typing the command runs. The reply text must be the response
+// rendered as one message (command.Response.DisplayText: Parts joined by a
+// blank line, else Text) — the same rendering every platform command-reply
+// path shows, so a command that answers in Parts is not flattened away.
 type CommandDispatcher func(ctx context.Context, sessionKey, commandLine string) (text string, ok bool)
 
 // SenderDeps are the collaborators a nudge Sender needs.
@@ -71,10 +75,26 @@ type Sender struct {
 	mutes *muteStore
 }
 
-// NewSender builds a Sender. deps must be complete (nil Index or Registry,
-// or a nil ConnFor/Dispatch, make Send or a press fail closed).
-func NewSender(deps SenderDeps) *Sender {
-	return &Sender{deps: deps, mutes: newMuteStore(deps.Index)}
+// NewSender builds a Sender. Every dep is required: a nil Registry, Index,
+// ConnFor or Dispatch is rejected here, at construction — the wiring is
+// gateway startup code, and a missing collaborator must fail the startup
+// rather than surface as a nil dereference inside a platform button-press
+// callback.
+func NewSender(deps SenderDeps) (*Sender, error) {
+	for _, dep := range []struct {
+		name string
+		bad  bool
+	}{
+		{"Registry", deps.Registry == nil},
+		{"Index", deps.Index == nil},
+		{"ConnFor", deps.ConnFor == nil},
+		{"Dispatch", deps.Dispatch == nil},
+	} {
+		if dep.bad {
+			return nil, fmt.Errorf("nudge: NewSender requires a non-nil %s", dep.name)
+		}
+	}
+return &Sender{deps: deps, mutes: newMuteStore(deps.Index)}, nil
 }
 
 // Send posts the nudge nudgeID to the chat owning sessionKey.

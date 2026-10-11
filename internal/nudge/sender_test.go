@@ -171,7 +171,7 @@ func newSenderFixture(t *testing.T) *senderFixture {
 	if err := f.reg.Register(validSpec()); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	f.sender = NewSender(SenderDeps{
+	sender, err := NewSender(SenderDeps{
 		Registry: f.reg,
 		Index:    f.idx,
 		ConnFor: func(agentID, sessionKey string) platform.ConnResolver {
@@ -187,6 +187,10 @@ func newSenderFixture(t *testing.T) *senderFixture {
 		},
 		Dispatch: f.disp.dispatch,
 	})
+	if err != nil {
+		t.Fatalf("NewSender: %v", err)
+	}
+	f.sender = sender
 	return f
 }
 
@@ -218,6 +222,45 @@ func interactiveIDOf(t *testing.T, data string) string {
 }
 
 // --- Send ---------------------------------------------------------------
+
+// TestNewSenderRequiresEveryDep proves NewSender's construction contract:
+// every dep is required, and a nil one is rejected at construction — the
+// wiring is gateway startup code, so a missing collaborator must fail there
+// rather than surface as a nil dereference inside a platform button-press
+// callback (Send would panic on a nil Registry/Index/ConnFor, a press on a
+// nil Dispatch).
+func TestNewSenderRequiresEveryDep(t *testing.T) {
+	base := SenderDeps{
+		Registry: NewRegistry(),
+		Index:    tempMuteIndex(t),
+		ConnFor: func(_, _ string) platform.ConnResolver {
+			return func() platform.Connection { return nil }
+		},
+		Dispatch: func(context.Context, string, string) (string, bool) { return "", false },
+	}
+	for _, dep := range []struct {
+		name string
+		zap  func(*SenderDeps)
+	}{
+		{"Registry", func(d *SenderDeps) { d.Registry = nil }},
+		{"Index", func(d *SenderDeps) { d.Index = nil }},
+		{"ConnFor", func(d *SenderDeps) { d.ConnFor = nil }},
+		{"Dispatch", func(d *SenderDeps) { d.Dispatch = nil }},
+	} {
+		deps := base
+		dep.zap(&deps)
+		s, err := NewSender(deps)
+		if err == nil {
+			t.Errorf("NewSender without %s = nil error, want rejection", dep.name)
+		}
+		if s != nil {
+			t.Errorf("NewSender without %s returned a Sender (%v), want nil", dep.name, s)
+		}
+	}
+	if s, err := NewSender(base); err != nil || s == nil {
+		t.Errorf("NewSender with every dep = (%v, %v), want a Sender and no error", s, err)
+	}
+}
 
 // TestSendPostsSpecTextAndButtons proves the posted message: exactly one
 // interactive send carrying the spec's text, one button per action in order,

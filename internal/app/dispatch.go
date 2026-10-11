@@ -780,7 +780,7 @@ func (h *Hub) dispatchCommand(client *wsClient, conn *appConn, b *convBinding, r
 	// wizard.step frame (capable clients only) — the plain-text render below
 	// would duplicate it.
 	if !h.maybeStartWizard(conn, b, resp, userText, req.SessionKey, wizardGenBefore) {
-		for _, part := range commandParts(resp) {
+		for _, part := range resp.DisplayParts() {
 			b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: fap.NewULID(), Role: "system", Text: part})
 		}
 	}
@@ -796,18 +796,6 @@ func (h *Hub) dispatchCommand(client *wsClient, conn *appConn, b *convBinding, r
 	if req.Name == "model" || req.Name == "effort" || req.Name == "thinking" || req.Name == "speed" || req.Name == "mode" {
 		h.pushCommands(b)
 	}
-}
-
-// commandParts returns the message parts of a command response (multi-part when
-// Parts is set, else the single Text).
-func commandParts(resp command.Response) []string {
-	if len(resp.Parts) > 0 {
-		return resp.Parts
-	}
-	if strings.TrimSpace(resp.Text) != "" {
-		return []string{resp.Text}
-	}
-	return nil
 }
 
 // inboundConvID returns the conversationId a client frame is scoped to, or ""

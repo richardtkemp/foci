@@ -2628,18 +2628,6 @@ func TestAdoptSession_RejectsForeignAgentKey(t *testing.T) {
 	}
 }
 
-func TestCommandParts(t *testing.T) {
-	if got := commandParts(command.Response{Text: "hi"}); len(got) != 1 || got[0] != "hi" {
-		t.Errorf("text-only = %v", got)
-	}
-	if got := commandParts(command.Response{Parts: []string{"a", "b"}}); len(got) != 2 {
-		t.Errorf("parts = %v", got)
-	}
-	if got := commandParts(command.Response{Text: "   "}); got != nil {
-		t.Errorf("blank text must yield nil, got %v", got)
-	}
-}
-
 func TestRouteCommand_NoCommandsErrors(t *testing.T) {
 	h := newTestHub()
 	registerBareAgent(h, "ag") // bare appConn → commands registry nil

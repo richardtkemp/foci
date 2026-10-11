@@ -246,6 +246,19 @@ type finalizeParams struct {
 	skillsDirs          []string
 }
 
+// nudgeCommandDispatcher adapts runAgentCommand — the dispatch core
+// POST /command and the deferred sweep use — to a nudge action press. The
+// reply is rendered through command.Response.DisplayText, the one renderer
+// every platform command-reply path uses, so a command that answers in
+// Parts (e.g. /config) shows its full output on the press edit instead of
+// being flattened to "Done".
+func nudgeCommandDispatcher(cmds *command.Registry, cc command.CommandContext, connMgr platform.ConnectionManager, agentID string) nudge.CommandDispatcher {
+	return func(ctx context.Context, sessionKey, line string) (string, bool) {
+		resp, ok := runAgentCommand(ctx, cmds, cc, connMgr, agentID, sessionKey, line)
+		return resp.DisplayText(), ok
+	}
+}
+
 // finalize performs the common postamble: nudge rules, slash commands,
 // server-originated nudge sender, platform connections, nudge init, and
 // instance assembly.
@@ -336,17 +349,17 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 	// and the deferred sweep use, on the nudge's own session key; the
 	// message resolves through the session-chat resolver so a nudge lands
 	// in the session's own chat (#2275's rule).
-	nudgeSender := nudge.NewSender(nudge.SenderDeps{
+	nudgeSender, err := nudge.NewSender(nudge.SenderDeps{
 		Registry: nudge.NewRegistry(),
 		Index:    p.sessionIndex,
 		ConnFor: func(agentID, sessionKey string) platform.ConnResolver {
 			return sessionChatResolver(p.connMgr, sessionKey, agentID)
 		},
-		Dispatch: func(ctx context.Context, sessionKey, line string) (string, bool) {
-			resp, ok := runAgentCommand(ctx, cmds, cc, p.connMgr, acfg.ID, sessionKey, line)
-			return resp.Text, ok
-		},
+		Dispatch: nudgeCommandDispatcher(cmds, cc, p.connMgr, acfg.ID),
 	})
+	if err != nil {
+		log.Fatalf("agent:"+acfg.ID, "nudge sender: %v", err)
+	}
 
 	// Finalize tools (API agents only).
 	if fp.registry != nil {

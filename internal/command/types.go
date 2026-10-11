@@ -60,6 +60,30 @@ type Response struct {
 	OpenConversationID string
 }
 
+// DisplayParts renders the response as the message parts to show the user:
+// each element of Parts when the command answered in parts, else Text as a
+// single part. A response with nothing readable yields no parts, so a
+// surface that iterates the parts sends nothing rather than a blank
+// message. This is the one renderer for command replies — every transport
+// (app, Telegram, Discord) and the nudge press path draws from it.
+func (r Response) DisplayParts() []string {
+	if len(r.Parts) > 0 {
+		return r.Parts
+	}
+	if strings.TrimSpace(r.Text) != "" {
+		return []string{r.Text}
+	}
+	return nil
+}
+
+// DisplayText renders the response as a single text: the display parts
+// joined by a blank line. This is what a surface that can show only one
+// message presents — an edited button prompt, a one-line reply;
+// multi-message surfaces iterate DisplayParts instead.
+func (r Response) DisplayText() string {
+	return strings.Join(r.DisplayParts(), "\n\n")
+}
+
 // CommandContext bundles all per-agent dependencies that slash commands need.
 // Function-typed fields are ONLY runtime state resolvers or cross-boundary
 // capability injection — never command handler logic.
