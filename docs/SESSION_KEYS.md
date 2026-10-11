@@ -189,10 +189,14 @@ marked registered or not against `SessionMetadataKeys` — the key list is
 fetched live via `go run ./scripts/print-meta-keys`, so it can never drift
 from the registry — plus unregistered keys, orphan rows with no
 `session_index` entry, duplicate `(session_key, key)` pairs, and the biggest
-values. It exits 0 whenever the table exists (it is a report, not a gate), 2
-if the table is absent, and non-zero on a sqlite error. The database is opened
-with `sqlite3 -readonly`, but opening a WAL-mode database — which `state.db`
-is — can still create `-wal`/`-shm` sidecar files next to it.
+values. Each section labels its columns, and sample text is escaped for the
+report's pipe-separated layout (`\n`, `\r`, `\|`, `\\`) so one row always
+prints on one line; values sqlite3 cannot print faithfully (a NUL byte,
+non-text storage) appear as `<nul>`/`<typeof>`, with byte lengths in the
+biggest-values section. It exits 0 whenever the table exists (it is a report,
+not a gate), 2 if the table is absent, and non-zero on a sqlite error. The
+database is opened with `sqlite3 -readonly`, but opening a WAL-mode database —
+which `state.db` is — can still create `-wal`/`-shm` sidecar files next to it.
 
 ### Index resolution
 

@@ -13,6 +13,11 @@
 # (internal/session SessionMetadataKeys) via `go run ./scripts/print-meta-keys`
 # in this checkout — the key list is never copied into this script.
 #
+# Sections print a column header and pipe-separated rows; text columns are
+# escaped for that layout (\n, \r, \|, \\) so one row always prints on one
+# line. Values sqlite3 cannot print faithfully (a NUL byte, non-text storage)
+# show as <nul>/<typeof>; the biggest-values section reports byte lengths.
+#
 # Exit:  0 report printed (findings never change the status; the DB is opened
 #          read-only, but opening a WAL-mode DB can create -wal/-shm sidecar
 #          files next to it — see docs/SESSION_KEYS.md)
@@ -28,7 +33,7 @@ SAMPLES=20    # sample rows shown per section
 TOP_VALUES=10 # rows shown in the biggest-values section
 
 case "${1:-}" in
--h|--help) sed -n '2,23p' "$0" | sed 's/^#//; s/^ //'; exit 0;;
+-h|--help) sed -n '2,28p' "$0" | sed 's/^#//; s/^ //'; exit 0;;
 esac
 
 if [ $# -ne 1 ] || [ -z "$1" ]; then
@@ -36,6 +41,11 @@ if [ $# -ne 1 ] || [ -z "$1" ]; then
 	exit 1
 fi
 DB=$1
+# A path starting with '-' is parsed by sqlite3 as an option; prefixing ./
+# names the same file and keeps it out of the option parser.
+case $DB in
+-*) DB="./$DB" ;;
+esac
 
 for bin in go sqlite3; do
 	command -v "$bin" >/dev/null 2>&1 || {
@@ -81,6 +91,21 @@ q() {
 	sqlite3 -readonly "$DB" "$1" </dev/null || sqlite_failed
 }
 
+# disp <expr> [limit] — SQL display expression for one text column of the
+# report's pipe-separated layout: NULL -> <null>, non-text storage ->
+# <typeof>, a NUL byte (sqlite3's list mode prints such values truncated)
+# -> <nul>, otherwise backslash, newline, CR and the | separator escaped so
+# one row always prints on exactly one line. The checks run on the raw
+# expression — substr/length stop at a NUL, so truncation happens only inside
+# the escape branch, with <limit> characters (values). char(92) is the
+# backslash: as the SQL literal '\' it would need shell-hostile quoting
+# inside the double-quoted q() strings.
+disp() {
+	local body=$1
+	[ $# -gt 1 ] && body="substr($1,1,$2)"
+	printf '%s' "CASE WHEN $1 IS NULL THEN '<null>' WHEN typeof($1) <> 'text' THEN '<' || typeof($1) || '>' WHEN instr(CAST($1 AS BLOB), x'00') > 0 THEN '<nul>' ELSE replace(replace(replace(replace($body, char(92), char(92) || char(92)), char(10), char(92) || 'n'), char(13), char(92) || 'r'), '|', char(92) || '|') END"
+}
+
 # capped <shown> <total> — the "up to N" note line when a section is capped.
 capped() {
 	[ "$2" -gt "$1" ] && echo "showing $1 of $2"
@@ -101,7 +126,8 @@ echo "total rows: $total  distinct keys: $distinct  registry keys: $REG_KEYS"
 
 echo
 echo "== rows per key =="
-q "SELECT ifnull(key,'<null>'), COUNT(*), CASE WHEN key IN ($KEYLIST) THEN 'yes' ELSE 'no' END
+echo "key|rows|registered"
+q "SELECT $(disp key), COUNT(*), CASE WHEN key IN ($KEYLIST) THEN 'yes' ELSE 'no' END
 	FROM session_metadata
 	GROUP BY key
 	ORDER BY COUNT(*) DESC, key
@@ -113,7 +139,8 @@ echo "== unregistered keys (not in SessionMetadataKeys) =="
 unreg_rows=$(q "SELECT COUNT(*) FROM session_metadata WHERE key IS NULL OR key NOT IN ($KEYLIST)") || exit $?
 unreg_keys=$(q "SELECT COUNT(DISTINCT key) FROM session_metadata WHERE key IS NULL OR key NOT IN ($KEYLIST)") || exit $?
 echo "rows: $unreg_rows  distinct keys: $unreg_keys"
-q "SELECT ifnull(session_key,'<null>'), ifnull(key,'<null>'), ifnull(substr(value,1,$TRUNC),'<null>')
+echo "session_key|key|value"
+q "SELECT $(disp session_key), $(disp key), $(disp value "$TRUNC")
 	FROM session_metadata
 	WHERE key IS NULL OR key NOT IN ($KEYLIST)
 	ORDER BY session_key, key
@@ -125,7 +152,8 @@ echo "== orphan rows (session_key not in session_index) =="
 orphan_rows=$(q "SELECT COUNT(*) FROM session_metadata m
 	WHERE NOT EXISTS (SELECT 1 FROM session_index s WHERE s.session_key = m.session_key)") || exit $?
 echo "rows: $orphan_rows"
-q "SELECT ifnull(m.session_key,'<null>'), ifnull(m.key,'<null>'), ifnull(substr(m.value,1,$TRUNC),'<null>')
+echo "session_key|key|value"
+q "SELECT $(disp m.session_key), $(disp m.key), $(disp m.value "$TRUNC")
 	FROM session_metadata m
 	WHERE NOT EXISTS (SELECT 1 FROM session_index s WHERE s.session_key = m.session_key)
 	ORDER BY m.session_key, m.key
@@ -141,7 +169,8 @@ if [ "$pk_pair" = "2" ] && [ "$pk_other" = "0" ]; then
 else
 	dup_groups=$(q "SELECT count(*) FROM (SELECT 1 FROM session_metadata GROUP BY session_key, key HAVING COUNT(*) > 1)") || exit $?
 	echo "duplicate groups: $dup_groups"
-	q "SELECT ifnull(session_key,'<null>'), ifnull(key,'<null>'), COUNT(*)
+	echo "session_key|key|rows"
+	q "SELECT $(disp session_key), $(disp key), COUNT(*)
 		FROM session_metadata
 		GROUP BY session_key, key
 		HAVING COUNT(*) > 1
@@ -152,9 +181,10 @@ fi
 
 echo
 echo "== biggest values (top $TOP_VALUES by length) =="
-q "SELECT ifnull(session_key,'<null>'), ifnull(key,'<null>'), ifnull(length(value), 0), ifnull(substr(value,1,$TRUNC),'<null>')
+echo "session_key|key|bytes|value"
+q "SELECT $(disp session_key), $(disp key), ifnull(length(CAST(value AS BLOB)), 0), $(disp value "$TRUNC")
 	FROM session_metadata
-	ORDER BY length(value) DESC, session_key, key
+	ORDER BY length(CAST(value AS BLOB)) DESC, session_key, key
 	LIMIT $TOP_VALUES"
 
 # The table existed, so the report ran: findings never change the status.
