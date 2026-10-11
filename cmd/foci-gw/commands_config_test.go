@@ -77,7 +77,8 @@ func TestRegisterAgentCommandsConfigGetRunningValue(t *testing.T) {
 // only on the global [sessions] struct — the agent's row alone reads ""
 // — so the running rung must supply the mapped global section's running
 // value (20000 here), the same value internal/app's
-// TestConfigGet_AgentScopeRunningGlobal pins on the editor's side. Before
+// TestConfigGet_AgentScopeSharedRunningRung pins on the editor's side.
+// Before
 // the rung was unified, get replied "(not set)" / built-in default here
 // while the editor showed 20000 for the very same agent and config.
 func TestRegisterAgentCommandsConfigGetOverrideField(t *testing.T) {

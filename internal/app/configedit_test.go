@@ -432,39 +432,62 @@ func TestConfigPut_ObjectListRoutesToApplyLive(t *testing.T) {
 	}
 }
 
-// TestConfigGet_AgentScopeRunningGlobal is a characterisation test (the
-// rewiring #2294 must not change the editor's output): an override field
-// set nowhere in the file shows the mapped global section's RUNNING value
-// — the startup default 20000 lives only on the global [sessions] struct,
-// and the agent's row alone reads "" — via the running rung
-// (config.AgentRunningValue) that /config get shares since the rung was
-// unified. cmd/foci-gw's TestRegisterAgentCommandsConfigGetOverrideField
-// pins the same 20000 on the /config get side, proving the two agree.
-func TestConfigGet_AgentScopeRunningGlobal(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "foci.toml")
-	if err := os.WriteFile(path, []byte("[[agents]]\nid = \"clutch\"\n"), 0o600); err != nil {
-		t.Fatal(err)
+// TestConfigGet_AgentScopeSharedRunningRung proves the editor's agent scope
+// feeds the ONE running rung (#2294, config.AgentRunningValue): when no file
+// rung answers — an override field written nowhere, or a global entry left
+// explicitly EMPTY, which counts as unset — the scope shows the mapped
+// global section's RUNNING value (20000), not the agent's own stale running
+// row (9999: held at startup, since removed from foci.toml) and not the
+// built-in default. The empty-entry case is the one editor-visible change
+// of the unification: the old inline ladder fell back to the agent's row
+// there, while /config get had no running rung at all. The file-silent
+// case pins the value cmd/foci-gw's
+// TestRegisterAgentCommandsConfigGetOverrideField asserts on the /config
+// get side, so the two surfaces are proven to agree.
+func TestConfigGet_AgentScopeSharedRunningRung(t *testing.T) {
+	staleRow := 9999
+	cases := []struct {
+		name string
+		file string
+	}{
+		{
+			name: "override field written nowhere in the file",
+			file: "[[agents]]\nid = \"clutch\"\n",
+		},
+		{
+			name: "explicitly empty global entry counts as unset",
+			file: "[[agents]]\nid = \"clutch\"\n\n[sessions]\nmax_system_prompt_chars_file = \"\"\n",
+		},
 	}
-	h := newTestHub()
-	h.deps = platform.ProviderDeps{Config: &config.Config{
-		SourcePath: path,
-		FileMode:   "0600",
-		// As Load() would leave it: the global struct holds the 20000 the
-		// agent's override row lacks.
-		Sessions: config.SessionsConfig{MaxSystemPromptFile: 20000},
-		Agents:   []config.AgentConfig{{ID: "clutch"}},
-	}}
-	c := fakeClient()
-	c.features = map[string]struct{}{featureConfigEdit: {}}
-	h.clients[c] = struct{}{}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "foci.toml")
+			if err := os.WriteFile(path, []byte(tc.file), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			h := newTestHub()
+			h.deps = platform.ProviderDeps{Config: &config.Config{
+				SourcePath: path,
+				FileMode:   "0600",
+				// As startup left it: the global runs the 20000 default
+				// while the agent's row still holds the 9999 the file no
+				// longer sets.
+				Sessions: config.SessionsConfig{MaxSystemPromptFile: 20000},
+				Agents:   []config.AgentConfig{{ID: "clutch", Sessions: config.AgentSessionsOverride{MaxSystemPromptFile: &staleRow}}},
+			}}
+			c := fakeClient()
+			c.features = map[string]struct{}{featureConfigEdit: {}}
+			h.clients[c] = struct{}{}
 
-	h.handleConfigGet(c)
-	schema := lastConfigSchema(t, c)
-	if schema == nil {
-		t.Fatal("no config.schema frame")
-	}
-	av, _ := scopeByID(t, schema, "clutch")["values"].(map[string]any)
-	if got := av["agent.sessions.max_system_prompt_chars_file"]; got != "20000" {
-		t.Errorf("agent.sessions.max_system_prompt_chars_file = %v, want 20000 (the running global default)", got)
+			h.handleConfigGet(c)
+			schema := lastConfigSchema(t, c)
+			if schema == nil {
+				t.Fatal("no config.schema frame")
+			}
+			av, _ := scopeByID(t, schema, "clutch")["values"].(map[string]any)
+			if got := av["agent.sessions.max_system_prompt_chars_file"]; got != "20000" {
+				t.Errorf("agent.sessions.max_system_prompt_chars_file = %v, want 20000 (the mapped global's running value)", got)
+			}
+		})
 	}
 }
