@@ -320,6 +320,61 @@ func TestSendNonChatSessionKeyErrors(t *testing.T) {
 	}
 }
 
+// TestSendUnusableChatKeyErrors: a chat key whose id does not parse (or is
+// 0) must fail closed. SessionKey.ChatID silently maps every such key to
+// chat 0, so accepting one would key the mute on the bucket ALL malformed
+// keys share (review round 4, finding 1: cabc, cxyz and c0 muted each
+// other). A negative id is a real chat (Telegram groups) and still sends.
+func TestSendUnusableChatKeyErrors(t *testing.T) {
+	f := newSenderFixture(t)
+
+	for _, key := range []string{"clutch/cabc", "clutch/c0"} {
+		if _, err := f.sender.Send(context.Background(), "clutch", key, validSpec().ID); err == nil {
+			t.Errorf("Send(%q) = nil error, want error", key)
+		}
+	}
+	if got := f.conn.sendCount(); got != 0 {
+		t.Errorf("posted %d messages for unusable chat keys, want 0", got)
+	}
+	muted, err := newMuteStore(f.idx).muted("clutch", 0, validSpec().ID)
+	if err != nil {
+		t.Fatalf("muted(chat 0): %v", err)
+	}
+	if muted {
+		t.Error("an unusable chat key keyed a mute in the shared 0 bucket")
+	}
+
+	// A negative chat id is a real chat (Telegram groups): it still sends.
+	negKey := session.NewChatSessionKey("clutch", -77)
+	if res, err := f.sender.Send(context.Background(), "clutch", negKey, validSpec().ID); err != nil || res != ResultSent {
+		t.Errorf("Send(negative chat id) = %q, %v; want %q, nil", res, err, ResultSent)
+	}
+}
+
+// TestSendAgentKeyMismatchErrors: the mute is keyed by (agent, chatID), so
+// a Send whose agentID disagrees with the session key's agent must fail
+// closed — accepting it would store the mute under the wrong agent's bucket
+// and the chat would keep seeing the nudge (review round 4, finding 2).
+func TestSendAgentKeyMismatchErrors(t *testing.T) {
+	f := newSenderFixture(t)
+
+	if _, err := f.sender.Send(context.Background(), "other", f.chatKey, validSpec().ID); err == nil {
+		t.Error("Send(agentID=other, clutch's key) = nil error, want error")
+	}
+	if got := f.conn.sendCount(); got != 0 {
+		t.Errorf("posted %d messages under a mismatched agentID, want 0", got)
+	}
+	for _, agent := range []string{"clutch", "other"} {
+		muted, err := newMuteStore(f.idx).muted(agent, 42, validSpec().ID)
+		if err != nil {
+			t.Fatalf("muted(%s, 42): %v", agent, err)
+		}
+		if muted {
+			t.Errorf("mismatched Send keyed a mute under agent %q", agent)
+		}
+	}
+}
+
 // TestSendTextOnlyConnectionGetsNumberedFallback proves the degradation on a
 // connection without ButtonSender: one numbered plain-text message (the
 // built-ins included), no buttons, and no execution path — the fallback

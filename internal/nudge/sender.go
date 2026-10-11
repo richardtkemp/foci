@@ -79,13 +79,16 @@ func NewSender(deps SenderDeps) *Sender {
 
 // Send posts the nudge nudgeID to the chat owning sessionKey.
 //
-// Unknown nudge id, a non-chat session key (the per-chat mute unit does not
-// exist for it), an unreadable mute store or a failed send return an error.
-// ResultMuted returns without posting; ResultNoConnection returns without
-// posting when no live connection resolves. A connection without buttons
-// (platform.ButtonSender unimplemented) still counts as Sent: the interactive
-// layer falls back to numbered plain text, which registers no callback and
-// therefore offers no execution path — a typed reply cannot run a command.
+// Unknown nudge id, a session key that does not name agentID's own numeric
+// chat (another agent's key, a non-chat type, or a chat id that is not a
+// non-zero number — the per-chat mute unit must exist and be unambiguous
+// before anything is keyed on it), an unreadable mute store or a failed
+// send return an error. ResultMuted returns without posting;
+// ResultNoConnection returns without posting when no live connection
+// resolves. A connection without buttons (platform.ButtonSender
+// unimplemented) still counts as Sent: the interactive layer falls back to
+// numbered plain text, which registers no callback and therefore offers no
+// execution path — a typed reply cannot run a command.
 func (s *Sender) Send(ctx context.Context, agentID, sessionKey, nudgeID string) (Result, error) {
 	spec, ok := s.deps.Registry.Get(nudgeID)
 	if !ok {
@@ -95,10 +98,20 @@ func (s *Sender) Send(ctx context.Context, agentID, sessionKey, nudgeID string) 
 	if err != nil {
 		return "", fmt.Errorf("nudge %q: bad session key %q: %w", nudgeID, sessionKey, err)
 	}
+	if sk.AgentID != agentID {
+		return "", fmt.Errorf("nudge %q: session key %q belongs to agent %q, not %q", nudgeID, sessionKey, sk.AgentID, agentID)
+	}
 	if sk.Type != 'c' {
 		return "", fmt.Errorf("nudge %q requires a chat session, got %q", nudgeID, sessionKey)
 	}
-	chatID := sk.ChatID()
+	// Fail closed on the chat id itself: SessionKey.ChatID silently maps a
+	// non-numeric id to 0, and no platform mints chat 0 (the app remaps a 0
+	// hash to 1), so either would key the mute on the shared fallback
+	// bucket every malformed key lands in.
+	chatID, err := strconv.ParseInt(sk.ID, 10, 64)
+	if err != nil || chatID == 0 {
+		return "", fmt.Errorf("nudge %q: session key %q has no usable chat id", nudgeID, sessionKey)
+	}
 	muted, err := s.mutes.muted(agentID, chatID, nudgeID)
 	if err != nil {
 		return "", fmt.Errorf("nudge %q: read mute for chat %d: %w", nudgeID, chatID, err)
