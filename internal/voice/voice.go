@@ -133,12 +133,27 @@ type OpenAISTT struct {
 	HTTP     HTTPOpts
 }
 
+// STTCredential declares the direct-call contract for this provider (#2315):
+// the same endpoint, key and model Transcribe uses, plus the multipart shape it
+// sends them in. OpenAI-multipart is the only shape NewSTT can build, so it is
+// the only format a client will ever see here.
+func (w *OpenAISTT) STTCredential() STTCredential {
+	return STTCredential{
+		Endpoint:   w.Endpoint,
+		Model:      w.Model,
+		APIKey:     w.APIKey,
+		Format:     sttFormatOpenAIMultipart,
+		FileField:  sttFileField,
+		ModelField: sttModelField,
+	}
+}
+
 func (w *OpenAISTT) Transcribe(ctx context.Context, audioData []byte, filename string) (string, error) {
 	voiceLog.Debugf("stt audio=%d bytes model=%s key=%s", len(audioData), w.Model, log.FormatKeySuffix(w.APIKey))
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 
-	fw, err := mw.CreateFormFile("file", filename)
+	fw, err := mw.CreateFormFile(sttFileField, filename)
 	if err != nil {
 		return "", fmt.Errorf("create form file: %w", err)
 	}
@@ -147,7 +162,7 @@ func (w *OpenAISTT) Transcribe(ctx context.Context, audioData []byte, filename s
 	}
 
 	if w.Model != "" {
-		if err := mw.WriteField("model", w.Model); err != nil {
+		if err := mw.WriteField(sttModelField, w.Model); err != nil {
 			return "", fmt.Errorf("write model field: %w", err)
 		}
 	}

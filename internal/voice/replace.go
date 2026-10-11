@@ -113,6 +113,13 @@ func (r *ReplacingSTT) Transcribe(ctx context.Context, audioData []byte, filenam
 	return ApplyReplacements(text, r.Replacements), nil
 }
 
+// STTCredential delegates to the wrapped provider: replacements post-process
+// transcribed text, they do not change how the provider is called.
+func (r *ReplacingSTT) STTCredential() STTCredential {
+	cred, _ := CredentialOf(r.Inner)
+	return cred
+}
+
 // MergeReplacements merges multiple replacement maps. Later maps take
 // precedence over earlier ones (per-agent overrides entry-level, etc.).
 func MergeReplacements(maps ...map[string]string) map[string]string {
