@@ -1893,7 +1893,7 @@ func (h *Hub) pushReads(client *wsClient) {
 // It also drops one frame per conversation from every handshake.
 func (h *Hub) pushPins(client *wsClient) {
 	h.pushChatScalar(client, chatMetaPins, false, func(convID, v string) fap.ServerFrame {
-		return fap.PinSync{ConversationID: convID, MessageIDs: decodePinSet(v)}
+		return fap.PinSync{ConversationID: convID, MessageIDs: session.DecodeChatSet(v)}
 	})
 }
 

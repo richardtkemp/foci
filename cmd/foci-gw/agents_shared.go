@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"path/filepath"
 	"sync"
 
@@ -10,6 +11,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	mcpkg "foci/internal/mcp"
+	"foci/internal/nudge"
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/route"
@@ -244,8 +246,9 @@ type finalizeParams struct {
 	skillsDirs          []string
 }
 
-// finalize performs the common postamble: nudge system, slash commands,
-// platform connections, nudge init, and instance assembly.
+// finalize performs the common postamble: nudge rules, slash commands,
+// server-originated nudge sender, platform connections, nudge init, and
+// instance assembly.
 func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentInstance {
 	acfg := s.p.acfg
 	p := s.p
@@ -326,6 +329,25 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 		},
 	}, lastMsgStore)
 
+	// Server-originated nudges (#1321): a per-agent registry — empty, since
+	// no concrete nudge ships in this change — and the sender later call
+	// sites will use (exposed as agentInstance.nudgeSender). A button press
+	// dispatches through runAgentCommand, the same dispatch core /command
+	// and the deferred sweep use, on the nudge's own session key; the
+	// message resolves through the session-chat resolver so a nudge lands
+	// in the session's own chat (#2275's rule).
+	nudgeSender := nudge.NewSender(nudge.SenderDeps{
+		Registry: nudge.NewRegistry(),
+		Index:    p.sessionIndex,
+		ConnFor: func(agentID, sessionKey string) platform.ConnResolver {
+			return sessionChatResolver(p.connMgr, sessionKey, agentID)
+		},
+		Dispatch: func(ctx context.Context, sessionKey, line string) (string, bool) {
+			resp, ok := runAgentCommand(ctx, cmds, cc, p.connMgr, acfg.ID, sessionKey, line)
+			return resp.Text, ok
+		},
+	})
+
 	// Finalize tools (API agents only).
 	if fp.registry != nil {
 		fp.registry.FinalizeShellDescription()
@@ -364,6 +386,7 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 		tmuxClearAll:     fp.tmuxClearAll,
 		tmuxWatchCount:   fp.tmuxWatchCount,
 		mcpManager:       fp.mcpManager,
+		nudgeSender:      nudgeSender,
 		platforms:        platforms,
 	}
 	// testActiveWorkOverride uses -1 as the "unset" sentinel so the

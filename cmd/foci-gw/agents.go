@@ -15,6 +15,7 @@ import (
 	"foci/internal/log"
 	mcpkg "foci/internal/mcp"
 	"foci/internal/memory"
+	"foci/internal/nudge"
 	"foci/internal/periodic"
 	"foci/internal/platform"
 	"foci/internal/provider"
@@ -45,6 +46,11 @@ type agentInstance struct {
 	tmuxWatchCount   func() int                                     // returns number of active tmux watches
 	kaRunner         *periodic.Runner                               // keepalive & background work timer
 	mcpManager       *mcpkg.Manager                                 // nil if no MCP servers configured
+	// nudgeSender posts server-originated nudges (#1321). Built in
+	// shared.finalize with an empty registry — no concrete nudge ships yet —
+	// so this is the exposure point for the first call site (the SR
+	// onboarding nudge, a later ticket). Write-only for now, like bootstrap.
+	nudgeSender *nudge.Sender
 	// platforms names every platform the agent has a connection on, including
 	// one still connecting in the background (#2043) — the answer to "which
 	// platforms is this agent on", which the ConnectionManager (live

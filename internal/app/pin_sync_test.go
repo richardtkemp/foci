@@ -6,6 +6,7 @@ import (
 
 	"foci/internal/fap"
 	"foci/internal/platform"
+	"foci/internal/session"
 )
 
 // pinSyncsFor collects every PinSync frame queued to c, keyed by conversationId
@@ -201,7 +202,7 @@ func TestPushPins_ReplaysStoredSet(t *testing.T) {
 	h.convs["c2"] = &convBinding{convID: "c2", agentID: "clutch", chatID: 43}
 	h.convs["c3"] = &convBinding{convID: "c3", agentID: "clutch", chatID: 44}
 	_ = idx.SetChatMetadata("clutch", "app", 42, chatMetaPins, `["m1","m9"]`)
-	_ = idx.SetChatMetadata("clutch", "app", 43, chatMetaPins, encodePinSet(nil))
+	_ = idx.SetChatMetadata("clutch", "app", 43, chatMetaPins, session.EncodeChatSet(nil))
 
 	c := fakeClient()
 	h.pushPins(c)

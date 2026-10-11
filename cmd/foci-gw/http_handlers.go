@@ -463,21 +463,28 @@ func handleStatus(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFun
 	}
 }
 
-// dispatchAgentCommand runs one slash command through the agent's registry —
-// the single dispatch site shared by handleCommand (immediate) and the
-// deferred sweep (delivery time), DocPath platform send included. ok is false
-// only for a registered command with no Execute function; unknown names are
-// answered by the registry itself (found=true, "Unknown command" text).
-func dispatchAgentCommand(d httpHandlerDeps, inst *agentInstance, ctx context.Context, sessionKey, text string) (command.Response, bool) {
+// runAgentCommand runs one slash command through an agent's command
+// registry — the single dispatch core shared by handleCommand (immediate),
+// the deferred sweep (delivery time), and the nudge button press (#1321),
+// DocPath platform send included. ok is false only for a registered command
+// with no Execute function; unknown names are answered by the registry
+// itself (found=true, "Unknown command" text).
+func runAgentCommand(ctx context.Context, cmds *command.Registry, cc command.CommandContext, connMgr platform.ConnectionManager, agentID, sessionKey, text string) (command.Response, bool) {
 	cmdReq := command.RequestFromText(text, sessionKey, "", 0)
-	result, ok, _ := inst.cmds.Dispatch(tools.WithSessionKey(ctx, sessionKey), cmdReq, inst.cc)
+	result, ok, _ := cmds.Dispatch(tools.WithSessionKey(ctx, sessionKey), cmdReq, cc)
 	if !ok {
 		return result, false
 	}
-	if err := platform.SendDocAndRemove(d.connMgr.ForSessionOrPrimary(sessionKey, inst.id), 0, result.DocPath, ""); err != nil {
+	if err := platform.SendDocAndRemove(connMgr.ForSessionOrPrimary(sessionKey, agentID), 0, result.DocPath, ""); err != nil {
 		httpLog.Warnf("command dispatch: send document: %v", err)
 	}
 	return result, true
+}
+
+// dispatchAgentCommand adapts runAgentCommand to the HTTP layer's agent
+// instance and handler deps (dispatch contract: see runAgentCommand).
+func dispatchAgentCommand(d httpHandlerDeps, inst *agentInstance, ctx context.Context, sessionKey, text string) (command.Response, bool) {
+	return runAgentCommand(ctx, inst.cmds, inst.cc, d.connMgr, inst.id, sessionKey, text)
 }
 
 // handleCommand returns the handler for POST /command.

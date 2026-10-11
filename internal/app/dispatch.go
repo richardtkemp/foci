@@ -683,8 +683,8 @@ func (h *Hub) handlePin(client *wsClient, f fap.PinPut) {
 		appLog.Warnf("pin %s/%s: read pins: %v", f.ConversationID, f.MessageID, err)
 		return
 	}
-	ids := applyPin(decodePinSet(stored), f.MessageID, f.Pinned)
-	if err := idx.SetChatMetadata(b.agentID, "app", b.chatID, chatMetaPins, encodePinSet(ids)); err != nil {
+	ids := applyPin(session.DecodeChatSet(stored), f.MessageID, f.Pinned)
+	if err := idx.SetChatMetadata(b.agentID, "app", b.chatID, chatMetaPins, session.EncodeChatSet(ids)); err != nil {
 		h.pinsMu.Unlock()
 		appLog.Warnf("pin %s/%s: write pins: %v", f.ConversationID, f.MessageID, err)
 		return
