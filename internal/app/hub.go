@@ -637,6 +637,13 @@ func (h *Hub) ServeReplay(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// ServeSTT handles GET /app/stt?agentId=<id> (#2315, server half of #1151):
+// hands a paired device the STT credential of its agent so it can transcribe
+// directly at the provider instead of routing audio through the server.
+func (h *Hub) ServeSTT(w http.ResponseWriter, r *http.Request) {
+	http.Error(w, "not implemented", http.StatusNotImplemented)
+}
+
 // closeDeviceSockets force-closes every live socket for a deviceID with 4403.
 func (h *Hub) closeDeviceSockets(deviceID string) {
 	h.mu.RLock()

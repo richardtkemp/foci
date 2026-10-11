@@ -406,6 +406,9 @@ func HistoryHandler() http.HandlerFunc { return withHub((*Hub).ServeHistory) }
 // ReplayHandler returns the GET /app/replay handler (durable content backfill).
 func ReplayHandler() http.HandlerFunc { return withHub((*Hub).ServeReplay) }
 
+// STTHandler returns the GET /app/stt handler (direct-call STT credential).
+func STTHandler() http.HandlerFunc { return withHub((*Hub).ServeSTT) }
+
 // AvatarHandler returns the GET /app/avatar/<agentId> handler (agent avatar image).
 func AvatarHandler() http.HandlerFunc { return withHub((*Hub).ServeAvatar) }
 
