@@ -175,8 +175,9 @@ func TestCompactResultHint(t *testing.T) {
 // TestFormatToolCallCompact_LoadedSkill proves a Read of a SKILL.md renders
 // the whole compact line as the "📖 Loaded skill: <dir>" chip (#1299) for
 // both read forms that reach the formatter — ccstream's Read/file_path and
-// the API transport's read/path — while a read of a file inside a skill
-// directory keeps the generic summary.
+// the API transport's read/path — and that the chip is exclusive to
+// SKILL.md: a sub-file inside a skill directory and reads of ordinary files
+// (both read forms) keep the exact pre-#1299 summaries.
 func TestFormatToolCallCompact_LoadedSkill(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -186,6 +187,9 @@ func TestFormatToolCallCompact_LoadedSkill(t *testing.T) {
 	}{
 		{"ccstream Read form", "Read", `{"file_path":"/home/foci/shared/skills/writing-code/SKILL.md"}`, "📖 Loaded skill: writing-code"},
 		{"API read form", "read", `{"path":"/home/foci/shared/skills/writing-code/SKILL.md"}`, "📖 Loaded skill: writing-code"},
+		{"sub-file inside skill dir keeps generic summary", "read", `{"path":"/home/foci/shared/skills/writing-code/go.md"}`, "[] **read**: /home/foci/shared/skills/writing-code/go.md"},
+		{"ordinary read keeps generic summary", "read", `{"path":"/home/foci/notes.txt"}`, "[] **read**: /home/foci/notes.txt"},
+		{"ordinary CC Read keeps generic summary", "Read", `{"file_path":"/home/foci/notes.txt"}`, "## **Read**: /home/foci/notes.txt"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -193,23 +197,6 @@ func TestFormatToolCallCompact_LoadedSkill(t *testing.T) {
 				t.Errorf("formatToolCallCompact(%s) = %q, want %q", tt.tool, got, tt.want)
 			}
 		})
-	}
-
-	got := formatToolCallCompact("read", json.RawMessage(`{"path":"/home/foci/shared/skills/writing-code/go.md"}`))
-	if want := "[] **read**: /home/foci/shared/skills/writing-code/go.md"; got != want {
-		t.Errorf("sub-file read = %q, want generic summary %q", got, want)
-	}
-}
-
-// TestFormatToolCallCompact_OrdinaryReadSummary is a CHARACTERISATION test:
-// it pins the pre-#1299 compact line for reads of ordinary files, in both
-// read forms, so the chip substitution cannot leak beyond SKILL.md reads.
-func TestFormatToolCallCompact_OrdinaryReadSummary(t *testing.T) {
-	if got := formatToolCallCompact("read", json.RawMessage(`{"path":"/home/foci/notes.txt"}`)); got != "[] **read**: /home/foci/notes.txt" {
-		t.Errorf("ordinary read = %q, want %q", got, "[] **read**: /home/foci/notes.txt")
-	}
-	if got := formatToolCallCompact("Read", json.RawMessage(`{"file_path":"/home/foci/notes.txt"}`)); got != "## **Read**: /home/foci/notes.txt" {
-		t.Errorf("ordinary CC Read = %q, want %q", got, "## **Read**: /home/foci/notes.txt")
 	}
 }
 
