@@ -353,13 +353,60 @@ func TestSendNoConnectionReturnsNoConnection(t *testing.T) {
 
 // TestSendNonChatSessionKeyErrors: the per-chat mute unit does not exist for
 // a non-chat session, so Send refuses rather than keying a mute at chat 0.
+// The independent key's id is deliberately NUMERIC ("i42"): a named id
+// (like "inosend") would also be rejected later by the chat-id parse, but
+// "42" parses — so ONLY the chat-type guard rejects this key. Without that
+// guard, an independent session whose id parses would post into, and mute,
+// that chat's bucket.
 func TestSendNonChatSessionKeyErrors(t *testing.T) {
 	f := newSenderFixture(t)
-	if _, err := f.sender.Send(context.Background(), "clutch", "clutch/inosend", validSpec().ID); err == nil {
-		t.Error("Send(independent session) = nil error, want error")
+	numKey, err := session.NamedIndependentSessionKey("clutch", "42")
+	if err != nil {
+		t.Fatalf("NamedIndependentSessionKey: %v", err)
+	}
+	if _, err := f.sender.Send(context.Background(), "clutch", numKey, validSpec().ID); err == nil {
+		t.Error("Send(numeric independent session) = nil error, want error")
 	}
 	if got := f.conn.sendCount(); got != 0 {
 		t.Errorf("posted %d messages for a non-chat session, want 0", got)
+	}
+	muted, err := newMuteStore(f.idx).muted("clutch", 42, validSpec().ID)
+	if err != nil {
+		t.Fatalf("muted: %v", err)
+	}
+	if muted {
+		t.Error("an independent session keyed a mute in chat 42's bucket")
+	}
+}
+
+// TestSendChildSessionKeyErrors: a child key (branch or spawn off a chat)
+// still names the chat, but it is a transient work session — a nudge's
+// buttons must neither post there nor run their commands there. Send
+// accepts only the chat's ROOT session key.
+func TestSendChildSessionKeyErrors(t *testing.T) {
+	f := newSenderFixture(t)
+	root := session.NewChatSession("clutch", 42)
+	children := map[string]string{
+		"branch": root.Branch().String(),
+		"spawn":  session.SessionKey{AgentID: "clutch", Type: 'c', ID: "42", ChildType: 'i', ChildTS: 1700000000}.String(),
+	}
+	for name, key := range children {
+		if _, err := f.sender.Send(context.Background(), "clutch", key, validSpec().ID); err == nil {
+			t.Errorf("Send(%s key %q) = nil error, want error", name, key)
+		}
+	}
+	if got := f.conn.sendCount(); got != 0 {
+		t.Errorf("posted %d messages for child session keys, want 0", got)
+	}
+	if calls := f.disp.callsSnapshot(); len(calls) != 0 {
+		t.Errorf("child-key Send dispatched commands: %v", calls)
+	}
+	muted, err := newMuteStore(f.idx).muted("clutch", 42, validSpec().ID)
+	if err != nil {
+		t.Fatalf("muted: %v", err)
+	}
+	if muted {
+		t.Error("a child session key keyed a mute in chat 42's bucket")
 	}
 }
 
@@ -689,6 +736,40 @@ func TestMuteSurvivesPlatformRowAppearingLaterThroughSend(t *testing.T) {
 	}
 	if got := f.conn.sendCount(); got != 1 {
 		t.Errorf("posted %d messages after the platform row appeared, want 1 (mute lost)", got)
+	}
+}
+
+// TestMuteWithPlatformRowAlreadyPresentThroughSend pins the mute key
+// agreement in the state that is NORMAL in production: the chat already has
+// its registered platform row when the mute is pressed (every real chat
+// gets one on first contact). The press must store the mute under exactly
+// the key Send later reads — the platform-agnostic (agent, chatID) bucket.
+// Keying the WRITE by PlatformForChat instead would store the mute where no
+// read ever looks, edit "Muted" all the same, and the nudge would come
+// back on the next Send (the mirror image of the row-appears-later test
+// above, which pins the READ).
+func TestMuteWithPlatformRowAlreadyPresentThroughSend(t *testing.T) {
+	f := newSenderFixture(t)
+
+	// The platform row exists BEFORE the nudge is even sent.
+	if err := f.idx.SetChatMetadata("clutch", "telegram", 42, "registered", "clutch"); err != nil {
+		t.Fatalf("seed platform row: %v", err)
+	}
+
+	if _, err := f.sender.Send(context.Background(), "clutch", f.chatKey, validSpec().ID); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	pressButton(t, f.conn, 0, 3) // Stop showing me this
+
+	res, err := f.sender.Send(context.Background(), "clutch", f.chatKey, validSpec().ID)
+	if err != nil {
+		t.Fatalf("Send after mute: %v", err)
+	}
+	if res != ResultMuted {
+		t.Errorf("Send after mute = %q, want %q", res, ResultMuted)
+	}
+	if got := f.conn.sendCount(); got != 1 {
+		t.Errorf("posted %d messages total, want 1 (nothing after the mute)", got)
 	}
 }
 

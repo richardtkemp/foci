@@ -99,11 +99,11 @@ return &Sender{deps: deps, mutes: newMuteStore(deps.Index)}, nil
 
 // Send posts the nudge nudgeID to the chat owning sessionKey.
 //
-// Unknown nudge id, a session key that does not name agentID's own numeric
-// chat (another agent's key, a non-chat type, or a chat id that is not a
-// non-zero number — the per-chat mute unit must exist and be unambiguous
-// before anything is keyed on it), an unreadable mute store or a failed
-// send return an error. ResultMuted returns without posting;
+// Unknown nudge id, a session key that does not name agentID's own ROOT
+// chat session (another agent's key, a non-chat type, a child branch/spawn
+// key, or a chat id that is not a non-zero number — the per-chat mute unit
+// must exist and be unambiguous before anything is keyed on it), an
+// unreadable mute store or a failed send return an error. ResultMuted returns without posting;
 // ResultNoConnection returns without posting when no live connection
 // resolves. A connection without buttons (platform.ButtonSender
 // unimplemented) still counts as Sent: the interactive layer falls back to
@@ -123,6 +123,13 @@ func (s *Sender) Send(ctx context.Context, agentID, sessionKey, nudgeID string) 
 	}
 	if sk.Type != 'c' {
 		return "", fmt.Errorf("nudge %q requires a chat session, got %q", nudgeID, sessionKey)
+	}
+	// A nudge targets the chat's ROOT session: a child key (branch or
+	// spawn) names a transient work session off the chat, and its buttons'
+	// commands must run where typing them would — on the chat session the
+	// user is being nudged in.
+	if sk.ChildType != 0 {
+		return "", fmt.Errorf("nudge %q requires the chat's root session, got child key %q", nudgeID, sessionKey)
 	}
 	// Fail closed on the chat id itself: SessionKey.ChatID silently maps a
 	// non-numeric id to 0, and no platform mints chat 0 (the app remaps a 0
