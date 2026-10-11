@@ -4,19 +4,25 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"foci/internal/log"
 	"foci/internal/provider"
 )
 
-// These tests pin #2287's two accounting rules on the error side of a
-// fallback turn: a 429 closes the gate of the endpoint that RETURNED it —
-// the hop's, not the primary's — and the ledger turn row's FinalModel names
-// the model that served the turn's LAST response. They reuse the #2246
-// fixtures (fallbackAgent, openAIFallbackFn, selfRetryingTestClient). None
-// run in parallel: each makes a ledger the live one.
+// These tests pin #2287's error-side rules: a 429 closes the gate of the
+// endpoint that RETURNED it — the hop's, not the primary's — the ledger turn
+// row's FinalModel names the model that served the turn's LAST response, and
+// every user-visible naming of a closed gate (the returned error, the
+// scheduler-facing reason) and of a failed request (the error payload log)
+// names the endpoint or model that was actually involved. They reuse the
+// #2246 fixtures (fallbackAgent, openAIFallbackFn, selfRetryingTestClient).
+// None run in parallel: each makes a ledger or the payload log the live one.
 
 // fb429Client scripts an always-429 hop client.
 func fb429Client() selfRetryingTestClient {
@@ -154,5 +160,83 @@ func TestFailedTurnRecordsTurnModelAsFinalModel(t *testing.T) {
 
 	if got := ledgerFinalModel(t, ledger, path, "test/ifh-e"); got != "claude-haiku-4-5" {
 		t.Errorf("final_model = %q, want the turn-start model %q (no response arrived)", got, "claude-haiku-4-5")
+	}
+}
+
+// TestGateBlockedTurnErrorNamesEndpoint proves the other construction of the
+// user-facing error names the endpoint too: a non-user turn refused by an
+// already-closed gate gets the usual *RateLimitedError, and its text names
+// the endpoint whose gate closed — the same rendering the 429 path gives.
+func TestGateBlockedTurnErrorNamesEndpoint(t *testing.T) {
+	ag := fallbackAgent(t, fbEndTurnClient("msg_ifh_f"), tupleClientProvider{})
+	ag.getOrCreateRateLimitGate("anthropic").Close(time.Now().Add(1 * time.Hour))
+
+	// "keepalive" is a system trigger: the gate refuses it instead of letting
+	// it through as a recovery probe.
+	_, err := ag.hmTest(WithTrigger(context.Background(), "keepalive"), "test/ifh-f", "Hello")
+	if err == nil {
+		t.Fatal("expected the closed gate to refuse the system turn")
+	}
+	var rlErr *RateLimitedError
+	if !errors.As(err, &rlErr) {
+		t.Fatalf("expected *RateLimitedError, got %T: %v", err, err)
+	}
+	if !strings.Contains(rlErr.Error(), "rate limited on anthropic") {
+		t.Errorf("gate-block error should name the endpoint whose gate closed, got: %s", rlErr.Error())
+	}
+}
+
+// TestFailedTurnErrorPayloadNamesFailingModel proves the error payload log
+// labels the failed request with the model being tried when it failed: a
+// primary 503 whose fallback hop answers 429 logs the HOP's model and status,
+// not the turn-start model — and the hop's plain-text error body survives in
+// the entry (quoted), instead of silently dropping the whole record. Flips
+// the global payload log on for the turn and off again in cleanup — safe
+// because package tests run one at a time.
+func TestFailedTurnErrorPayloadNamesFailingModel(t *testing.T) {
+	payloadPath := filepath.Join(t.TempDir(), "payload.jsonl")
+	if err := log.Init(log.Config{Level: "INFO", PayloadFile: payloadPath, FullPayload: true}); err != nil {
+		t.Fatalf("init payload log: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := log.Init(log.Config{Level: "INFO"}); err != nil {
+			t.Fatalf("restore payload log: %v", err)
+		}
+	})
+
+	ag := fallbackAgent(t, fb503Client(), tupleClientProvider{clients: map[string]provider.Client{
+		"openai/openai": fb429Client(),
+	}})
+
+	ctx := WithTrigger(context.Background(), "user")
+	if _, err := ag.hmTest(ctx, "test/ifh-g", "Hello"); err == nil {
+		t.Fatal("expected the hop's 429 to fail the turn")
+	}
+
+	data, err := os.ReadFile(payloadPath)
+	if err != nil {
+		t.Fatalf("read payload log: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("payload log lines = %d, want exactly 1 (the turn's failed request): %q", len(lines), string(data))
+	}
+	var entry struct {
+		Model        string          `json:"model"`
+		StatusCode   int             `json:"status_code"`
+		ResponseBody json.RawMessage `json:"response_body"`
+	}
+	if err := json.Unmarshal([]byte(lines[0]), &entry); err != nil {
+		t.Fatalf("unmarshal payload entry: %v (line: %s)", err, lines[0])
+	}
+	if entry.Model != "openai/gpt-5.6" {
+		t.Errorf("payload model = %q, want the failing hop's model %q", entry.Model, "openai/gpt-5.6")
+	}
+	if entry.StatusCode != 429 {
+		t.Errorf("payload status_code = %d, want the hop's 429", entry.StatusCode)
+	}
+	var body string
+	if err := json.Unmarshal(entry.ResponseBody, &body); err != nil || body != "rate limited" {
+		t.Errorf("payload response_body = %s, want the hop's plain-text body \"rate limited\" quoted", entry.ResponseBody)
 	}
 }

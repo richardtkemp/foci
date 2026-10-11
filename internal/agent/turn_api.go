@@ -382,10 +382,10 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 		a.logger().Debugf("api_call_done session=%s duration=%s key=%s err=%v", ts.SessionKey, duration, keySuffix, err)
 		req.Model = ts.TurnModel
 
-	if err != nil {
-		// Label the failed request's payload with the model that was being
-		// tried when it failed — a fallback hop's when the hop failed.
-		a.logErrorPayload(ts.SessionKey, provider.FailedTuple(primary, err).Model, start, duration, req, err)
+		if err != nil {
+			// Label the failed request's payload with the model that was being
+			// tried when it failed — a fallback hop's when the hop failed.
+			a.logErrorPayload(ts.SessionKey, provider.FailedTuple(primary, err).Model, start, duration, req, err)
 
 			errMsg := provider.Message{
 				Role:    "assistant",

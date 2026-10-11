@@ -122,11 +122,24 @@ func (a *Agent) logErrorPayload(sessionKey, model string, start time.Time, durat
 
 	if perr != nil {
 		entry.StatusCode = perr.StatusCode
-		entry.ResponseBody = json.RawMessage(perr.Body)
+		entry.ResponseBody = rawJSONOrString(perr.Body)
 		entry.RequestID = perr.RequestID()
 	}
 
 	log.Payload(entry)
+}
+
+// rawJSONOrString renders an error body for the payload log: as-is when it is
+// valid JSON, quoted as a JSON string when it is not (an *APIError body is
+// whatever the server sent — often plain text), and nil for empty. An invalid
+// json.RawMessage would fail the whole entry's Marshal, silently dropping the
+// failed request's record exactly when it is needed.
+func rawJSONOrString(body string) json.RawMessage {
+	if body == "" || json.Valid([]byte(body)) {
+		return json.RawMessage(body)
+	}
+	quoted, _ := json.Marshal(body)
+	return quoted
 }
 
 // recordAPITurnEnd closes a direct-API turn in the ledger. Its spend is final

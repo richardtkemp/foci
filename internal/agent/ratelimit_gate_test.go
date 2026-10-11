@@ -230,6 +230,26 @@ func TestRateLimitedError_Message(t *testing.T) {
 	}
 }
 
+func TestSessionRateLimited_UnknownEndpointStaysEndpointless(t *testing.T) {
+	// Proves the scheduler-facing reason shares the one rendering of a closed
+	// gate: an agent with no endpoint configured gates on its single default
+	// gate, and the reason keeps the endpoint-less form — no dangling
+	// "rate limited on  (resets …)" with an empty endpoint name.
+	ag := &Agent{}
+	ag.getOrCreateRateLimitGate("").Close(time.Now().Add(1 * time.Hour))
+
+	limited, reason := ag.SessionRateLimited("test/rl-anon")
+	if !limited {
+		t.Fatal("session should be limited while its endpoint's gate is closed")
+	}
+	if strings.Contains(reason, "rate limited on") {
+		t.Errorf("reason should name no endpoint when none is known, got: %s", reason)
+	}
+	if !strings.Contains(reason, "rate limited (resets") {
+		t.Errorf("reason should keep the endpoint-less form, got: %s", reason)
+	}
+}
+
 func TestRateLimitGate_DrainEmptyQueueNoItems(t *testing.T) {
 	// Proves that DrainQueue on an empty, non-limited gate returns nil without panicking.
 	var g RateLimitGate
