@@ -1,5 +1,10 @@
 package provider
 
+import (
+	"errors"
+	"fmt"
+)
+
 // ModelTuple names one way of reaching a model: the canonical model id
 // (developer/model_id) plus the endpoint and wire format a request to it
 // uses. The client leg is the caller's concern — this triple is what a
@@ -33,11 +38,50 @@ type ServedReport struct {
 //
 // The empty-means-primary rule lives here alone; callers never re-derive it.
 func ServedTuple(primary ModelTuple, resp *MessageResponse) ModelTuple {
-	if resp == nil || resp.Served == (ServedReport{}) {
+	if resp == nil {
 		return primary
 	}
-	if resp.Served.Endpoint == "" && resp.Served.Format == "" {
-		return ModelTuple{Model: resp.Served.Model, Endpoint: primary.Endpoint, Format: primary.Format}
+	return tupleFor(primary, resp.Served)
+}
+
+// FailedHop is the error-side twin of MessageResponse.Served: it labels a
+// provider.Send error with the fallback hop that returned it, so a caller
+// can pair its error-path work (rate-limit gate closure) with the tuple that
+// FAILED — the hop's — instead of the primary's. Read it through
+// FailedTuple. Unwrap keeps errors.As/errors.Is reaching the hop's own
+// error (*APIError, context.DeadlineExceeded, ...).
+type FailedHop struct {
+	// Report names the hop whose error this is, exactly as a successful
+	// response's Served would: the hop's canonical model, plus its endpoint
+	// and format when it went through its own client — empty legs mean the
+	// hop reused the caller's client.
+	Report ServedReport
+	Err    error
+}
+
+func (h *FailedHop) Error() string { return fmt.Sprintf("fallback hop %s: %v", h.Report.Model, h.Err) }
+
+func (h *FailedHop) Unwrap() error { return h.Err }
+
+// FailedTuple returns the tuple whose failure a provider.Send error carries:
+// the hop's (under ServedTuple's leg rules) when the error wraps a FailedHop,
+// else the primary — the primary's own failure, no fallback hop attempted.
+func FailedTuple(primary ModelTuple, err error) ModelTuple {
+	var hop *FailedHop
+	if !errors.As(err, &hop) {
+		return primary
 	}
-	return ModelTuple{Model: resp.Served.Model, Endpoint: resp.Served.Endpoint, Format: resp.Served.Format}
+	return tupleFor(primary, hop.Report)
+}
+
+// tupleFor applies the empty-means-primary leg rule shared by ServedTuple
+// (success) and FailedTuple (failure). Unexported; the rule lives here alone.
+func tupleFor(primary ModelTuple, report ServedReport) ModelTuple {
+	if report == (ServedReport{}) {
+		return primary
+	}
+	if report.Endpoint == "" && report.Format == "" {
+		return ModelTuple{Model: report.Model, Endpoint: primary.Endpoint, Format: primary.Format}
+	}
+	return ModelTuple{Model: report.Model, Endpoint: report.Endpoint, Format: report.Format}
 }

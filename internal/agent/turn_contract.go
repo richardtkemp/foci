@@ -196,7 +196,16 @@ type TurnState struct {
 	// re-dispatch, which folds into the turn like a steer (#1856).
 	FinalUsage *provider.Usage
 	FinalCost  float64 // calculated cost (turn-total)
-	FinalModel string  // model used (delegated: from JSONL; API: from TurnModel); may be SyntheticModel
+	FinalModel string  // model used (delegated: from JSONL; API: the ledger turn row's, = the model that served the last response); may be SyntheticModel
+
+	// LastServedModel is the model that served the turn's most recent API
+	// response (ServedTuple(primary, resp).Model — a fallback hop's model
+	// when a hop served), set after every successful response and never
+	// reset, so at turn end it names the LAST response's model. "" until
+	// the first response; the ledger turn row's FinalModel falls back to
+	// TurnModel then. API path only — the delegated path reads its model
+	// from JSONL into FinalModel.
+	LastServedModel string
 
 	// --- Async coordination ---
 

@@ -131,13 +131,20 @@ func (a *Agent) logErrorPayload(sessionKey, model string, start time.Time, durat
 
 // recordAPITurnEnd closes a direct-API turn in the ledger. Its spend is final
 // with its last response, so its activity closes when it ends (#2111 R8).
+// FinalModel names the model that served the turn's LAST response
+// (LastServedModel — a fallback hop's model included); a turn that errored
+// before any response keeps the turn-start model.
 func (a *Agent) recordAPITurnEnd(ts *TurnState, stopReason string) {
 	t := a.ledgerTurn(ts)
 	if t.TurnID == "" {
 		return
 	}
+	finalModel := ts.LastServedModel
+	if finalModel == "" {
+		finalModel = ts.TurnModel
+	}
 	now := time.Now()
-	t.EndedAt, t.ActivityClosedAt, t.StopReason, t.FinalModel = now, now, stopReason, ts.TurnModel
+	t.EndedAt, t.ActivityClosedAt, t.StopReason, t.FinalModel = now, now, stopReason, finalModel
 	if err := accounting.RecordTurn(t); err != nil {
 		a.logger().Errorf("session=%s record turn end: %v", ts.SessionKey, err)
 	}
