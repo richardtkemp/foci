@@ -26,8 +26,11 @@ func TestRegisterAgentCommandsConfigGetRunningValue(t *testing.T) {
 	}
 	resolved := &config.ResolvedAgentConfig{}
 	p := cmdRegParams{
-		ag:         &agent.Agent{},
-		acfg:       config.AgentConfig{ID: "main"},
+		ag: &agent.Agent{},
+		// The registry's OWN agent runs a distinct value (7m): the reply
+		// must come from the ASKED agent's row (a → 42m), never from
+		// p.acfg, or /config get would answer the wrong agent.
+		acfg:       config.AgentConfig{ID: "main", Keepalive: config.KeepaliveConfig{Interval: ptr("7m")}},
 		configPath: path,
 		cfg: &config.Config{
 			SourcePath: path,
@@ -55,6 +58,9 @@ func TestRegisterAgentCommandsConfigGetRunningValue(t *testing.T) {
 		if !strings.Contains(resp.Text, want) {
 			t.Errorf("reply %q missing %q", resp.Text, want)
 		}
+	}
+	if strings.Contains(resp.Text, "7m") {
+		t.Errorf("reply must not report the registry's own agent value, found it: %q", resp.Text)
 	}
 
 	resp, err = configCmd.Execute(context.Background(), command.Request{Name: "config", Args: "get ghost keepalive.interval"}, cc)
