@@ -181,6 +181,19 @@ Both migrations run automatically at startup and are idempotent:
   plus the clean-shutdown marker so the index rebuilds from the migrated
   files.
 
+### Auditing session_metadata
+
+`scripts/audit-session-metadata.sh <state.db>` (run from a checkout) prints a
+read-only report on the `session_metadata` rows already on disk: rows per key
+marked registered or not against `SessionMetadataKeys` — the key list is
+fetched live via `go run ./scripts/print-meta-keys`, so it can never drift
+from the registry — plus unregistered keys, orphan rows with no
+`session_index` entry, duplicate `(session_key, key)` pairs, and the biggest
+values. It exits 0 whenever the table exists (it is a report, not a gate), 2
+if the table is absent, and non-zero on a sqlite error. The database is opened
+with `sqlite3 -readonly`, but opening a WAL-mode database — which `state.db`
+is — can still create `-wal`/`-shm` sidecar files next to it.
+
 ### Index resolution
 
 The session index stores structured columns (`agent_id`, `chat_id`, `is_root`)
