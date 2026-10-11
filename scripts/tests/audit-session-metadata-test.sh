@@ -4,13 +4,15 @@
 # (#1126): findings and counts on a fixture DB, the 20-sample cap, exit codes
 # (0 with findings, 2 absent table, non-zero on sqlite error with the fixed
 # note and no own diagnosis), hostile values (newline, pipe, backslash, NUL)
-# keeping one row per line, a dash-prefixed DB path, and the docs mention.
+# keeping one row per line, a dash-prefixed DB path, the registry bridge via
+# META_KEYS_BRIDGE (empty output refused; a stub bridge's keys classified),
+# the -h residuals wording, and the docs mention.
 # Builds throwaway fixture DBs under /tmp; never touches a live DB.
 #
 # Usage: audit-session-metadata-test.sh [-h]
 # Exit:  0 all assertions passed; 1 otherwise (prints which).
 set -uo pipefail
-case "${1:-}" in -h|--help) sed -n '2,11p' "$0" | sed 's/^#//; s/^ //'; exit 0;; esac
+case "${1:-}" in -h|--help) sed -n '2,13p' "$0" | sed 's/^#//; s/^ //'; exit 0;; esac
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 SCRIPT="$ROOT/scripts/audit-session-metadata.sh"
@@ -91,7 +93,7 @@ run "$A" >"$TMP/a.out" 2>"$TMP/a.err"; rc=$?
 check "exit 0 with findings present" "0" "$rc"
 has "report names the DB" "$(cat "$TMP/a.out")" "db: $A"
 has "sections label their columns" "$(cat "$TMP/a.out")" "session_key|key|value"
-regcount=$(cd "$ROOT" && go run ./scripts/print-meta-keys | awk 'END{print NR}')
+regcount=$(cd "$ROOT" && go run ./scripts/print-meta-keys | awk 'NF {n++} END{print n+0}')
 has "header counts (registry wired live)" "$(cat "$TMP/a.out")" "total rows: 6  distinct keys: 4  registry keys: $regcount"
 has "rows per key: model|3|yes (ghost row included)" "$(section "$TMP/a.out" "== rows per key")" "model|3|yes"
 has "rows per key: bogus_legacy|1|no" "$(section "$TMP/a.out" "== rows per key")" "bogus_legacy|1|no"
@@ -225,11 +227,30 @@ cp "$A" "$TMP/-x.db"
 check "dash-prefixed relative path exits 0" "0" "$rc"
 has "dash-prefixed path opened and reported" "$(cat "$TMP/dash.out")" "db: ./-x.db"
 
+### The registry bridge, heard through the META_KEYS_BRIDGE seam. Empty
+### bridge output must refuse the report (an empty key list would mark every
+### key unregistered and still exit 0 — review r5 F1); a stub bridge's keys
+### are the registered ones.
+
+( META_KEYS_BRIDGE=true run "$A" ) >"$TMP/empty.out" 2>"$TMP/empty.err"; rc=$?
+check "empty bridge output refuses the report" "1" "$rc"
+has "empty bridge message names the bridge" "$(cat "$TMP/empty.err")" "printed no keys"
+check "no report printed on empty bridge output" "0" "$(wc -l <"$TMP/empty.out" | tr -d ' ')"
+
+( META_KEYS_BRIDGE='printf model\n' run "$A" ) >"$TMP/stub.out" 2>"$TMP/stub.err"; rc=$?
+check "stub-bridge report exits 0" "0" "$rc"
+has "stub bridge key count in header" "$(cat "$TMP/stub.out")" "registry keys: 1"
+has "stub bridge key classified registered" "$(section "$TMP/stub.out" "== rows per key")" "model|3|yes"
+has "key outside stub bridge classified unregistered" "$(section "$TMP/stub.out" "== rows per key")" "no_compact|1|no"
+
 ### Docs and -h.
 
 has "docs mention the script" "$(cat "$ROOT/docs/SESSION_KEYS.md")" "audit-session-metadata.sh"
-bash "$SCRIPT" -h >/dev/null 2>&1
-check "-h exits 0" "0" "$?"
-has "-h names the accepted residuals" "$(bash "$SCRIPT" -h 2>&1)" "residuals"
+help=$(bash "$SCRIPT" -h 2>&1); rc=$?
+check "-h exits 0" "0" "$rc"
+has "-h names the accepted residuals" "$help" "residuals"
+has "-h: control bytes in values print raw" "$help" "print raw"
+has "-h: one sqlite3 process per section" "$help" "one sqlite3"
+has "-h: file: path treated as URI" "$help" "file:"
 
 exit $RC

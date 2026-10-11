@@ -23,9 +23,9 @@
 #          files next to it — see docs/SESSION_KEYS.md)
 #        2 the DB has no session_metadata table
 #        1 bad usage, go or sqlite3 missing, registry fetch failed, sqlite error
-# Accepted residuals (review r3): no output-format controls, one sqlite3
-# process per section, and a <db> argument starting with "file:" is treated by
-# sqlite3 as a URI.
+# Accepted residuals: control bytes in values other than the escaped \n and
+# \r (e.g. ESC sequences, tabs) print raw; one sqlite3 process per section;
+# a <db> path starting with "file:" is treated by sqlite3 as a URI.
 set -uo pipefail
 
 TRUNC=80      # sample values are truncated to this many characters
@@ -56,26 +56,33 @@ done
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd) || exit 1
 
-# The registry keys, one per line, printed by the Go registry itself. The
+# The registry keys, one per line, printed by the Go registry itself; the
 # tool's (and go's) own stderr passes through untouched on failure.
-KEYS=$(cd "$ROOT" && go run ./scripts/print-meta-keys) || {
-	echo "audit-session-metadata: go run ./scripts/print-meta-keys failed" >&2
-	exit 1
-}
-REG_KEYS=$(printf '%s\n' "$KEYS" | awk 'END{print NR}')
-[ "$REG_KEYS" -gt 0 ] || {
-	echo "audit-session-metadata: print-meta-keys printed no keys" >&2
+# META_KEYS_BRIDGE substitutes the bridge command (argv words, not a shell
+# line) — the seam the test suite's stub bridges plug into.
+BRIDGE=${META_KEYS_BRIDGE:-go run ./scripts/print-meta-keys}
+KEYS=$(cd "$ROOT" && $BRIDGE) || {
+	echo "audit-session-metadata: $BRIDGE failed" >&2
 	exit 1
 }
 
 # KEYLIST — the registry keys as a SQL literal list ('a','b',…), any embedded
-# single quote doubled. One builder, used by every section that classifies keys.
+# single quote doubled; REG_KEYS counts the same parsed keys in the same
+# loop, so the bridge output is parsed exactly once. A bridge that prints no
+# keys refuses the report: an empty key IN () list matches nothing, which
+# would mark every key on disk unregistered and still exit 0.
 KEYLIST=
+REG_KEYS=0
 while IFS= read -r k; do
 	[ -n "$k" ] || continue
 	esc=${k//\'/\'\'}
 	KEYLIST="${KEYLIST:+$KEYLIST, }'$esc'"
+	REG_KEYS=$((REG_KEYS + 1))
 done <<<"$KEYS"
+[ "$REG_KEYS" -gt 0 ] || {
+	echo "audit-session-metadata: $BRIDGE printed no keys" >&2
+	exit 1
+}
 
 # sqlite_failed — the one fixed note printed after any sqlite error. It claims
 # nothing about causes, permissions or the user: sqlite's own message has
