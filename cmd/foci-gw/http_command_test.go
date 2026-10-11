@@ -308,6 +308,171 @@ func TestCommand_SessionGateEvaluatedAgainstTarget(t *testing.T) {
 	})
 }
 
+// TestCommand_SessionGateInFlightReadsTarget pins the InFlight input of the
+// #2296 gate wiring: a mid-turn TARGET with an idle default must hold the
+// command back — the if-gate skips and the wait-gate defers, because a
+// running turn counts as active for both. This is the safety property behind
+// `foci command -s <side> --if-inactive /reset`: a gate probing the default
+// instead (the pre-#2296 key) would see an idle session and fire the reset
+// into the middle of the named session's turn.
+func TestCommand_SessionGateInFlightReadsTarget(t *testing.T) {
+	// markTargetInFlight marks the named target mid-turn, mirroring what a
+	// real turn under its key does to IsTurnInFlight.
+	markTargetInFlight := func(t *testing.T, d httpHandlerDeps) {
+		t.Helper()
+		ag := d.agents[testAgentID].ag
+		ag.SetTurnInFlightForTest(testAgentID+"/iside", true)
+		t.Cleanup(func() { ag.SetTurnInFlightForTest(testAgentID+"/iside", false) })
+	}
+
+	t.Run("in-flight target skips the if-gate", func(t *testing.T) {
+		probe, keys := sessionKeySpy()
+		d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
+		registerRoot(t, d, testAgentID+"/iside")
+		markTargetInFlight(t, d) // target mid-turn, default idle and cold
+		mux := newTestMux(d)
+
+		w := postJSON(mux, "/command", `{"command":"/probe","session":"side","if_inactive":"1h"}`)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("#2296: status = %d, want 200 (a skip answers 200); body: %s", w.Code, w.Body.String())
+		}
+		var resp map[string]string
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp["response"] != "skipped: session recently active" {
+			t.Errorf("#2296: response = %q, want the skip message (a turn is mid-flight on the TARGET)", resp["response"])
+		}
+		if got := keys(); len(got) != 0 {
+			t.Errorf("#2296: command ran %d time(s) on %v despite the in-flight target", len(got), got)
+		}
+	})
+
+	t.Run("in-flight target defers the wait-gate", func(t *testing.T) {
+		probe, keys := sessionKeySpy()
+		d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
+		registerRoot(t, d, testAgentID+"/iside")
+		markTargetInFlight(t, d) // target mid-turn, default idle and cold
+		withDeferStore(t, &d)
+		mux := newTestMux(d)
+
+		w := postJSON(mux, "/command", `{"command":"/probe","session":"side","wait_cold":"1h"}`)
+
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("#2296: status = %d, want 202 (the TARGET is mid-turn, so wait_cold is unmet); body: %s", w.Code, w.Body.String())
+		}
+		var resp map[string]interface{}
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp["status"] != "deferred" {
+			t.Errorf("#2296: status field = %v, want deferred; body: %s", resp["status"], w.Body.String())
+		}
+		if got := keys(); len(got) != 0 {
+			t.Errorf("#2296: command ran %d time(s) on %v despite the in-flight target", len(got), got)
+		}
+	})
+}
+
+// TestCommand_SessionGateLastTurnEndReadsTarget pins the LastTurnEnd input
+// of the #2296 gate wiring: "cold" must mean CONTINUOUS dead time on the
+// TARGET — a turn that just ENDED on the named session still counts as
+// active, so the if-gate skips and the wait-gate defers. The target's
+// LastTurnEnd is seeded by a real /send turn (its completion records the
+// turn-end moment on that key); the last_cache_touch the same turn stamped
+// is then aged past the window, so LastTurnEnd is the ONLY recent signal a
+// correctly-reading gate can find. The default session never ran a turn
+// (zero LastTurnEnd) and has no cache touch, so a gate probing it instead
+// reads cold and wrongly dispatches.
+func TestCommand_SessionGateLastTurnEndReadsTarget(t *testing.T) {
+	// seedRecentTurnEnd runs one real turn on the named target and ages its
+	// last_cache_touch past the 1h window, leaving LastTurnEnd as the only
+	// in-window activity on the target. Its preconditions fail the test
+	// (rather than making the assertions vacuous) if the seeding ever stops
+	// producing that state.
+	seedRecentTurnEnd := func(t *testing.T, d httpHandlerDeps, mux *http.ServeMux) {
+		t.Helper()
+		w := postJSON(mux, "/send", `{"text":"seed","session":"side","wait_none":true}`)
+		if w.Code != http.StatusOK {
+			t.Fatalf("seeding /send: status = %d; body: %s", w.Code, w.Body.String())
+		}
+		d.sessionIndex.TouchCacheTouch(testAgentID+"/iside", time.Now().Add(-2*time.Hour))
+		if end := d.agents[testAgentID].ag.LastTurnEnd(testAgentID + "/iside"); end.IsZero() || time.Since(end) > time.Minute {
+			t.Fatalf("seeding turn left LastTurnEnd = %v on the target, want a moment ago", end)
+		}
+		if touched, ok := d.sessionIndex.LastCacheTouch(testAgentID + "/iside"); !ok || time.Since(touched) < time.Hour {
+			t.Fatalf("target last_cache_touch = (%v, %v), want aged past the 1h window", touched, ok)
+		}
+	}
+
+	t.Run("recent target turn-end skips the if-gate", func(t *testing.T) {
+		probe, keys := sessionKeySpy()
+		d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
+		registerRoot(t, d, testAgentID+"/iside")
+		mux := newTestMux(d)
+		seedRecentTurnEnd(t, d, mux)
+
+		w := postJSON(mux, "/command", `{"command":"/probe","session":"side","if_inactive":"1h"}`)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("#2296: status = %d, want 200 (a skip answers 200); body: %s", w.Code, w.Body.String())
+		}
+		var resp map[string]string
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp["response"] != "skipped: session recently active" {
+			t.Errorf("#2296: response = %q, want the skip message (a turn just ended on the TARGET — dead time must be CONTINUOUS)", resp["response"])
+		}
+		if got := keys(); len(got) != 0 {
+			t.Errorf("#2296: command ran %d time(s) on %v despite the target's just-ended turn", len(got), got)
+		}
+	})
+
+	t.Run("recent target turn-end defers the wait-gate", func(t *testing.T) {
+		probe, keys := sessionKeySpy()
+		d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
+		registerRoot(t, d, testAgentID+"/iside")
+		withDeferStore(t, &d)
+		mux := newTestMux(d)
+		seedRecentTurnEnd(t, d, mux)
+
+		w := postJSON(mux, "/command", `{"command":"/probe","session":"side","wait_cold":"1h"}`)
+
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("#2296: status = %d, want 202 (the TARGET's turn just ended, so wait_cold is unmet); body: %s", w.Code, w.Body.String())
+		}
+		var resp map[string]interface{}
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp["status"] != "deferred" {
+			t.Errorf("#2296: status field = %v, want deferred; body: %s", resp["status"], w.Body.String())
+		}
+		if got := keys(); len(got) != 0 {
+			t.Errorf("#2296: command ran %d time(s) on %v despite the target's just-ended turn", len(got), got)
+		}
+	})
+}
+
+// TestCommand_HumanStampOnTargetSession pins the #2296 human-stamp wiring:
+// a human /command with a selector stamps last_user_activity_at on the
+// session the selector resolved to — the one the human actually acted on —
+// not the agent's default (stampHumanCommandDispatch takes the resolved
+// key). A stamp pointed back at the default would record attention the
+// named session never received.
+func TestCommand_HumanStampOnTargetSession(t *testing.T) {
+	probe, keys := sessionKeySpy()
+	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
+	registerRoot(t, d, testAgentID+"/iside")
+	mux := newTestMux(d)
+
+	w := postJSON(mux, "/command", `{"command":"/probe","session":"side","human":true}`)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("#2296: status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	if got := keys(); len(got) != 1 || got[0] != testAgentID+"/iside" {
+		t.Fatalf("#2296: command ran on %v, want exactly the named target (the stamp assertion needs the dispatch)", got)
+	}
+	if !userActivityRecorded(d, testAgentID+"/iside") {
+		t.Errorf("#2296: human command with a selector did not set last_user_activity_at on the named session %q", testAgentID+"/iside")
+	}
+}
+
 // TestCommand_SessionUnknownNameCreatesKey pins the #2284 create rung for
 // /command (#2296): a selector that matches no key, named session or alias
 // is a valid NAME — the command dispatches on the created <agent>/i<name>
