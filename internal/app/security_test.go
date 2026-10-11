@@ -2,7 +2,7 @@ package app
 
 // Security / attack-surface tests for the internet-exposed app-provider (FAP)
 // endpoints — /app/ws, /app/blob[/<id>], /app/pair, /app/pair/revoke,
-// /app/devices, /app/push/register, /app/history, /app/avatar/<id>.
+// /app/devices, /app/push/register, /app/history, /app/stt, /app/avatar/<id>.
 //
 // These are the only foci endpoints intended to be reachable from outside the
 // LAN (the app connects from anywhere). They self-authenticate (a per-device
@@ -31,6 +31,7 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/platform"
+	"foci/internal/voice"
 )
 
 // secHub returns a hub with one paired device, plus that device's token, for the
@@ -83,6 +84,7 @@ func restEndpoints(h *Hub) []endpoint {
 		{"push-register", http.MethodPost, "/app/push/register", `{"deviceId":"d","pushToken":"t"}`, h.ServePushRegister},
 		{"history", http.MethodGet, "/app/history?conversationId=c", "", h.ServeHistory},
 		{"replay", http.MethodGet, "/app/replay?conversationId=c", "", h.ServeReplay},
+		{"stt", http.MethodGet, "/app/stt?agentId=c", "", h.ServeSTT},
 		{"blob-post", http.MethodPost, "/app/blob", "x", h.ServeBlobPost},
 		{"blob-get", http.MethodGet, "/app/blob/abc", "", h.ServeBlobGet},
 		{"avatar", http.MethodGet, "/app/avatar/clutch", "", h.ServeAvatar},
@@ -165,14 +167,20 @@ func TestSecurity_ManagementAcceptsDeviceToken_PairStillNeedsPairKey(t *testing.
 	}
 }
 
-//  3. The use endpoints (history / push-register / blob) DO accept a valid device
-//     token — confirming the auth split lets a paired device work without the
-//     master key.
+//  3. The use endpoints (history / replay / push-register / blob / stt) DO accept
+//     a valid device token — confirming the auth split lets a paired device work
+//     without the master key.
 func TestSecurity_UseEndpoints_AcceptDeviceToken(t *testing.T) {
 	h, devTok := secHub(t)
+	// /app/stt answers 200 only for a registered agent with an STT provider;
+	// without this registration the row below would pass vacuously on a 404.
+	h.agents["clutch"] = &appConn{hub: h, agentID: "clutch", stt: &voice.OpenAISTT{
+		Endpoint: "https://stt.example/v1/audio/transcriptions", APIKey: "k", Model: "m",
+	}}
 	use := []endpoint{
 		{"history", http.MethodGet, "/app/history?conversationId=c", "", h.ServeHistory},
 		{"replay", http.MethodGet, "/app/replay?conversationId=c", "", h.ServeReplay},
+		{"stt", http.MethodGet, "/app/stt?agentId=clutch", "", h.ServeSTT},
 		{"push-register", http.MethodPost, "/app/push/register", `{"pushToken":"t"}`, h.ServePushRegister},
 		{"blob-post", http.MethodPost, "/app/blob", "x", h.ServeBlobPost},
 	}
@@ -363,6 +371,7 @@ func TestSecurity_MethodEnforcement(t *testing.T) {
 		{"GET-revoke", http.MethodGet, "/app/pair/revoke", "", h.ServeRevoke, http.StatusMethodNotAllowed},
 		{"POST-history", http.MethodPost, "/app/history?conversationId=c", "", h.ServeHistory, http.StatusMethodNotAllowed},
 		{"POST-replay", http.MethodPost, "/app/replay?conversationId=c", "", h.ServeReplay, http.StatusMethodNotAllowed},
+		{"POST-stt", http.MethodPost, "/app/stt?agentId=clutch", "", h.ServeSTT, http.StatusMethodNotAllowed},
 		{"POST-pushreg", http.MethodGet, "/app/push/register", "", h.ServePushRegister, http.StatusMethodNotAllowed},
 		{"DELETE-blob", http.MethodDelete, "/app/blob", "x", h.ServeBlobPost, http.StatusMethodNotAllowed},
 		{"POST-avatar", http.MethodPost, "/app/avatar/clutch", "", h.ServeAvatar, http.StatusMethodNotAllowed},

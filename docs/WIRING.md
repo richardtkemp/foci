@@ -2642,6 +2642,37 @@ model, a pending ask) is evaluated only in the per-conversation `Commands`
 frame; the roster list is the app's fallback until that frame arrives. The list rides the existing `hello`/`conversation.open` roster
 frames, so it refreshes whenever the roster does; no dedicated frame type.
 
+**Direct STT credential (`GET /app/stt?agentId=<id>`, #2315 — server half of
+#1151):** hands a paired device the agent's speech-to-text provider credential
+so the app can transcribe a preview-the-text voice note directly at the
+provider, without the audio round-tripping through foci. Same Bearer gate as
+the other `/app` routes (`Hub.authenticate`: any valid device token; a revoked
+one is refused). `ServeSTT` (hub.go) answers `200 application/json` with
+`Cache-Control: no-store` and six fields: `endpoint`, `model`, `apiKey`,
+`format`, `fileField`, `modelField`. The values come from the SAME provider
+`conn.stt` transcribes through — `voice.CredentialOf` on the declared
+`STTCredentialer` capability (`internal/voice/credential.go`), delegated by
+`ReplacingSTT` and the gateway's `lazySTT`, never re-read from config — so the
+client and `transcribeVoice` can never disagree on endpoint, model or key, and
+a hot `voice.stt` change reaches the next fetch. The key is the one
+`resolveVoiceAPIKey` resolved at startup (identical to the server's own
+transcription key), so a `secrets.toml` rotation reaches `/app/stt` only after
+a restart — exactly when it reaches the server's own calls. `format` names the
+request shape the client must build; `openai-multipart` (multipart POST, audio
+in `fileField`=`file`, model in `modelField`=`model`, Bearer key) is the only
+shape `NewSTT` can build today — the constants `OpenAISTT.Transcribe` itself
+uses — and a future provider format declares its own shape name at the
+provider. No STT configured, or a provider with no direct-call shape → 404 `no
+speech-to-text configured for this agent` (the client falls back to the server
+path). **Security trade-off (accepted, Dick 2026-10-10): the provider API key
+lives on every paired device that fetches it.** Revoking a device
+(`/app/pair/revoke`) stops it fetching the credential again, but a key already
+issued to it stays valid at the provider until that key is rotated — there is
+no scoping, and only rotation kills a copied key. The server-side path is
+unchanged and remains the fallback: inbound `voice` frames are still
+transcribed by `Hub.transcribeVoice` when the client's direct call fails or it
+never fetches a credential.
+
 **Auth hardening (`devices.go`, slice 7):** there is **no shared master key** —
 `app.api_key` was removed in #862, so no long-lived shared secret exists to leak.
 The bootstrap is instead a single-use, short-TTL **pairing key** held only in

@@ -27,6 +27,7 @@ import (
 	"foci/internal/question"
 	"foci/internal/session"
 	"foci/internal/tools"
+	"foci/internal/voice"
 )
 
 // WebSocket tuning. pingPeriod < pongWait so a silent socket is detected
@@ -637,11 +638,64 @@ func (h *Hub) ServeReplay(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// sttCredentialResponse is the GET /app/stt wire shape (#2315): everything the
+// app needs to call its agent's STT provider directly.
+type sttCredentialResponse struct {
+	Endpoint   string `json:"endpoint"`
+	Model      string `json:"model"`
+	APIKey     string `json:"apiKey"`
+	Format     string `json:"format"`
+	FileField  string `json:"fileField"`
+	ModelField string `json:"modelField"`
+}
+
 // ServeSTT handles GET /app/stt?agentId=<id> (#2315, server half of #1151):
-// hands a paired device the STT credential of its agent so it can transcribe
-// directly at the provider instead of routing audio through the server.
+// hands a paired device the STT credential of its agent so a preview-the-text
+// voice note is transcribed directly at the provider instead of round-tripping
+// the audio through the server. The values come from the same provider
+// conn.stt transcribes through — live resolution included — so the client and
+// the server can never disagree on endpoint, model or key; the key is the one
+// the server itself resolved at startup. Authenticated exactly like
+// ServeHistory (a revoked device token is refused); the server-side voice path
+// (Hub.transcribeVoice) is unchanged and remains the client's fallback.
 func (h *Hub) ServeSTT(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+	dev, ok := h.authenticate(w, r)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	agentID := r.URL.Query().Get("agentId")
+	if agentID == "" {
+		http.Error(w, "agentId required", http.StatusBadRequest)
+		return
+	}
+	conn := h.PrimaryBot(agentID)
+	if conn == nil {
+		http.Error(w, "unknown agent", http.StatusNotFound)
+		return
+	}
+	cred, ok := voice.CredentialOf(conn.stt)
+	if !ok {
+		// One body for every "cannot issue" case: no provider, a live
+		// resolution that currently has none, or a provider with no
+		// direct-call shape.
+		http.Error(w, "no speech-to-text configured for this agent", http.StatusNotFound)
+		return
+	}
+	appLog.Infof("stt credential issued: device=%s agent=%s", dev.DeviceID, agentID)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(sttCredentialResponse{
+		Endpoint:   cred.Endpoint,
+		Model:      cred.Model,
+		APIKey:     cred.APIKey,
+		Format:     cred.Format,
+		FileField:  cred.FileField,
+		ModelField: cred.ModelField,
+	})
 }
 
 // closeDeviceSockets force-closes every live socket for a deviceID with 4403.

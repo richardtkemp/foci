@@ -244,6 +244,15 @@ func (l *lazySTT) Transcribe(ctx context.Context, audioData []byte, filename str
 	return stt.Transcribe(ctx, audioData, filename)
 }
 
+// STTCredential resolves the live provider and delegates, so /app/stt issues a
+// snapshot of exactly the provider the NEXT Transcribe would use — including
+// after a hot voice.stt change. A resolution that currently has no provider
+// yields the zero credential (CredentialOf reports nothing to issue).
+func (l *lazySTT) STTCredential() voice.STTCredential {
+	cred, _ := voice.CredentialOf(l.resolve())
+	return cred
+}
+
 // lazyTTS re-resolves the underlying voice.TTS on every call instead of once
 // at setup, so voice.tts/voice.tts_rate changes propagate without a restart
 // for this consumer too (the send_to_chat tool's own TTS already does this

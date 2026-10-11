@@ -372,6 +372,44 @@ func TestResolveTTS_ChainLinksKeepTheirOwnRate(t *testing.T) {
 	}
 }
 
+// TestLazySTT_STTCredentialDelegates proves the lazy adapter forwards the
+// direct-call capability of the provider it resolves: /app/stt sees the live
+// provider's credential (following a hot voice.stt change, like Transcribe),
+// and a resolution with no provider yields the zero credential — nothing to
+// issue.
+func TestLazySTT_STTCredentialDelegates(t *testing.T) {
+	inner := &voice.OpenAISTT{Endpoint: "https://stt.example/v1/audio/transcriptions", APIKey: "k", Model: "m"}
+	l := &lazySTT{resolve: func() voice.STT { return inner }}
+
+	cred, ok := voice.CredentialOf(l)
+	if !ok {
+		t.Fatal("CredentialOf(*lazySTT) = !ok, want the resolved provider's credential")
+	}
+	if want := inner.STTCredential(); cred != want {
+		t.Errorf("credential = %+v, want the resolved provider's %+v", cred, want)
+	}
+
+	// The credential follows the live resolution, not the setup-time one.
+	swapped := &voice.OpenAISTT{Endpoint: "https://other.example/v1/audio/transcriptions", APIKey: "k2", Model: "m2"}
+	current := voice.STT(inner)
+	live := &lazySTT{resolve: func() voice.STT { return current }}
+	before := live.STTCredential()
+	current = swapped
+	after := live.STTCredential()
+	if after != swapped.STTCredential() || before.Endpoint != inner.Endpoint {
+		t.Errorf("live credential did not follow the resolver: before=%+v after=%+v", before, after)
+	}
+
+	// A nil resolution (no provider for the current live override) issues nothing.
+	empty := &lazySTT{resolve: func() voice.STT { return nil }}
+	if _, ok := voice.CredentialOf(empty); ok {
+		t.Error("CredentialOf(*lazySTT resolving nil) = ok, want false")
+	}
+	if got := empty.STTCredential(); got != (voice.STTCredential{}) {
+		t.Errorf("nil-resolution credential = %+v, want the zero value", got)
+	}
+}
+
 func mapKeys(m map[string]voice.TTS) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
