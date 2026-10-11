@@ -431,3 +431,40 @@ func TestConfigPut_ObjectListRoutesToApplyLive(t *testing.T) {
 		t.Errorf("ApplyLive calls = %+v, want %+v (put then unset)", calls, want)
 	}
 }
+
+// TestConfigGet_AgentScopeRunningGlobal is a characterisation test (the
+// rewiring #2294 must not change the editor's output): an override field
+// set nowhere in the file shows the mapped global section's RUNNING value
+// — the startup default 20000 lives only on the global [sessions] struct,
+// and the agent's row alone reads "" — via the running rung
+// (config.AgentRunningValue) that /config get shares since the rung was
+// unified. cmd/foci-gw's TestRegisterAgentCommandsConfigGetOverrideField
+// pins the same 20000 on the /config get side, proving the two agree.
+func TestConfigGet_AgentScopeRunningGlobal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "foci.toml")
+	if err := os.WriteFile(path, []byte("[[agents]]\nid = \"clutch\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{Config: &config.Config{
+		SourcePath: path,
+		FileMode:   "0600",
+		// As Load() would leave it: the global struct holds the 20000 the
+		// agent's override row lacks.
+		Sessions: config.SessionsConfig{MaxSystemPromptFile: 20000},
+		Agents:   []config.AgentConfig{{ID: "clutch"}},
+	}}
+	c := fakeClient()
+	c.features = map[string]struct{}{featureConfigEdit: {}}
+	h.clients[c] = struct{}{}
+
+	h.handleConfigGet(c)
+	schema := lastConfigSchema(t, c)
+	if schema == nil {
+		t.Fatal("no config.schema frame")
+	}
+	av, _ := scopeByID(t, schema, "clutch")["values"].(map[string]any)
+	if got := av["agent.sessions.max_system_prompt_chars_file"]; got != "20000" {
+		t.Errorf("agent.sessions.max_system_prompt_chars_file = %v, want 20000 (the running global default)", got)
+	}
+}

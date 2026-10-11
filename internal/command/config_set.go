@@ -25,9 +25,12 @@ type ConfigSetDeps struct {
 	// AgentRunningValueFn returns the running (startup-frozen config) value
 	// of one registry key (registry spelling, e.g. maintenance.reset_time)
 	// for ANY agent id — unlike EffectiveValueFn, which is bound to the one
-	// agent the registry's commands belong to. /config get's fallback rung
-	// uses it when the key is in neither the agent block nor the global
-	// section. nil (tests, or an unwired command set) skips that rung.
+	// agent the registry's commands belong to. The gateway wires it to
+	// config.AgentRunningValue over the asked agent's row, the same running
+	// rung the app config editor feeds the shared resolver, so the two
+	// surfaces agree. /config get's fallback rung uses it when the key is in
+	// neither the agent block nor the global section. nil (tests, or an
+	// unwired command set) skips that rung.
 	AgentRunningValueFn func(agentID, key string) string
 }
 

@@ -300,3 +300,80 @@ func TestResolveAgentValue(t *testing.T) {
 		})
 	}
 }
+
+// TestAgentRunningValue pins the ONE running rung both ResolveAgentValue
+// callers feed in (/config get and the app config editor, #2294 review
+// round 1): the mapped global section's running value first — override
+// fields carry their defaults only on the global struct, so the agent's
+// row alone reads "" — else the agent's own running row. A key whose
+// prefix maps to no global section reads only the agent's row.
+func TestAgentRunningValue(t *testing.T) {
+	loaded := &Config{
+		// As Load() would leave it: global defaults filled in.
+		Sessions:  SessionsConfig{MaxSystemPromptFile: 20000},
+		Keepalive: KeepaliveConfig{Interval: ptrStr("55m")},
+	}
+	bare := &Config{Sessions: SessionsConfig{MaxSystemPromptFile: 20000}}
+	row := AgentConfig{ID: "a", Keepalive: KeepaliveConfig{Interval: ptrStr("42m")}}
+
+	cases := []struct {
+		name string
+		cfg  *Config
+		a    AgentConfig
+		key  string
+		want string
+	}{
+		{
+			name: "override field reads the global default the agent row lacks",
+			cfg:  loaded,
+			a:    AgentConfig{ID: "a"},
+			key:  "sessions.max_system_prompt_chars_file",
+			want: "20000",
+		},
+		{
+			name: "mapped running global wins over the agent row (the order both callers share)",
+			cfg:  loaded,
+			a:    row,
+			key:  "keepalive.interval",
+			want: "55m",
+		},
+		{
+			name: "agent row feeds the rung when the mapped global runs empty",
+			cfg:  bare,
+			a:    row,
+			key:  "keepalive.interval",
+			want: "42m",
+		},
+		{
+			name: "empty when the mapped global and the row are both empty",
+			cfg:  bare,
+			a:    AgentConfig{ID: "a"},
+			key:  "keepalive.interval",
+			want: "",
+		},
+		{
+			name: "unmapped key reads only the agent row, ignoring a set global",
+			cfg:  &Config{System: SystemConfig{SystemFiles: []string{"global.md"}}},
+			a:    AgentConfig{ID: "a", System: SystemConfig{SystemFiles: []string{"row.md"}}},
+			key:  "system.system_files",
+			want: "[row.md]",
+		},
+		{
+			// A nil slice renders "[]" (reflectToDisplay's %v) — non-empty,
+			// so an unset slice row still feeds the rung, as it always has
+			// for the editor.
+			name: "unset slice row renders its empty form",
+			cfg:  &Config{System: SystemConfig{SystemFiles: []string{"global.md"}}},
+			a:    AgentConfig{ID: "a"},
+			key:  "system.system_files",
+			want: "[]",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := AgentRunningValue(tc.cfg, tc.a, tc.key); got != tc.want {
+				t.Errorf("AgentRunningValue(%q) = %q, want %q", tc.key, got, tc.want)
+			}
+		})
+	}
+}

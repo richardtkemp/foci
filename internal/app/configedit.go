@@ -315,7 +315,6 @@ func (h *Hub) buildConfigSchema(errMsg string) fap.ConfigSchema {
 			errMsg = fmt.Sprintf("config file unreadable: %v", err)
 		}
 	}
-	agentToGlobal := agentToGlobalMap
 
 	// globalValue resolves a global-section field: file value, else the
 	// running config's value, else the built-in default from the struct tag.
@@ -398,22 +397,13 @@ func (h *Hub) buildConfigSchema(errMsg string) fap.ConfigSchema {
 				continue
 			}
 			full := "agent." + f.Key
-			// The resolver's running rung: the running GLOBAL value of the
-			// mapped section first (globalValue's fallback — override fields
-			// like sessions.max_system_prompt_chars_file carry their default
-			// only on the global struct, so the agent row alone would show
-			// ""), else the agent's own running value.
-			running := func() string {
-				if prefix, rest, ok := strings.Cut(f.Key, "."); ok {
-					if gs, mapped := agentToGlobal[prefix]; mapped {
-						if v, _ := globalValue(gs, rest); v != "" {
-							return v
-						}
-					}
-				}
-				return config.LookupValue(cfg, a, "agent", f.Key)
-			}
-			v, _ := config.ResolveAgentValue(fileGlobal, fileAgents, a.ID, f, running)
+			// The shared running rung (config.AgentRunningValue): the mapped
+			// section's running global first, else this agent's row — override
+			// fields like sessions.max_system_prompt_chars_file carry their
+			// default only on the global struct, so the row alone would show "".
+			v, _ := config.ResolveAgentValue(fileGlobal, fileAgents, a.ID, f, func() string {
+				return config.AgentRunningValue(cfg, a, f.Key)
+			})
 			s.Values[full] = v
 			if _, ok := av[f.Key]; ok {
 				s.Explicit = append(s.Explicit, full)

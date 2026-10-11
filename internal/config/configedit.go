@@ -420,7 +420,8 @@ func AgentGlobalSections() map[string]string {
 // inherited global section value in foci.toml, else the running value, else
 // the field's built-in default. global and agents are the flattened file
 // values from ExplicitFileValues; running supplies the running-config rung
-// (nil skips it). Pure; no I/O.
+// (nil skips it) — AgentRunningValue is that rung's one implementation, so
+// every caller feeds in the same running value. Pure; no I/O.
 //
 // Semantics, so the two callers cannot drift again:
 //   - "Explicit" on the agent rung means the key is PRESENT in the agent's
@@ -449,4 +450,30 @@ func ResolveAgentValue(global map[string]string, agents map[string]map[string]st
 		}
 	}
 	return field.Default, "built-in default"
+}
+
+// AgentRunningValue returns the running value one agent effectively runs
+// for a registry key (registry spelling, e.g. maintenance.reset_time): the
+// mapped global section's running value first, else the agent's own
+// running row. The global comes first because override fields
+// (sessions.*, tools.*) carry their defaults only on the global struct —
+// an unset override row reads "" — so the row alone cannot answer "what is
+// this agent running?"; the row then covers keys whose prefix maps to no
+// global section, and globals that run empty. This is the running rung
+// ResolveAgentValue asks its running fn for; /config get and the app
+// config editor both pass it, so the two surfaces cannot disagree.
+//
+// The file's say is settled before this runs: the resolver reaches the
+// running rung only when the key is in neither the agent block nor the
+// global section (a present-but-empty global counts as unset). Pure; no
+// I/O.
+func AgentRunningValue(cfg *Config, a AgentConfig, key string) string {
+	if prefix, rest, dotted := strings.Cut(key, "."); dotted {
+		if gs, mapped := agentGlobalSections()[prefix]; mapped {
+			if v := LookupValue(cfg, AgentConfig{}, gs, rest); v != "" {
+				return v
+			}
+		}
+	}
+	return LookupValue(cfg, a, "agent", key)
 }
