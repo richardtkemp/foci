@@ -208,15 +208,25 @@ func TestRateLimitGate_ConcurrentAccess(t *testing.T) {
 }
 
 func TestRateLimitedError_Message(t *testing.T) {
-	// Proves that RateLimitedError.Error() produces a human-readable message with "rate limited" and reset info.
+	// Proves that RateLimitedError.Error() produces a human-readable message
+	// with "rate limited" and reset info that NAMES the endpoint whose gate
+	// closed — the endpoint that limited — and keeps an endpoint-less form
+	// when no endpoint is known.
 	until := time.Now().Add(2 * time.Hour)
-	err := &RateLimitedError{Until: until}
+	err := &RateLimitedError{Until: until, Endpoint: "openai"}
 	msg := err.Error()
 	if !strings.Contains(msg, "rate limited") {
 		t.Errorf("error should contain 'rate limited', got: %s", msg)
 	}
 	if !strings.Contains(msg, "resets") {
 		t.Errorf("error should contain 'resets', got: %s", msg)
+	}
+	if !strings.Contains(msg, "rate limited on openai") {
+		t.Errorf("error should name the limited endpoint, got: %s", msg)
+	}
+	bare := (&RateLimitedError{Until: until}).Error()
+	if !strings.Contains(bare, "rate limited") || strings.Contains(bare, "rate limited on") {
+		t.Errorf("error with no endpoint should stay endpoint-less, got: %s", bare)
 	}
 }
 

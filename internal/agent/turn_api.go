@@ -34,7 +34,7 @@ func (t *APITransport) RateLimitGate(ts *TurnState) error {
 		gate.Enqueue(ts.SessionKey, ts.Texts[0], ts.Trigger)
 		a.logger().Infof("rate limit gate (%s): queued message for session=%s trigger=%s (resets %s)",
 			endpoint, ts.SessionKey, ts.Trigger, until.Format(time.Kitchen))
-		return &RateLimitedError{Until: until}
+		return &RateLimitedError{Until: until, Endpoint: endpoint}
 	}
 	return nil
 }
@@ -382,8 +382,10 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 		a.logger().Debugf("api_call_done session=%s duration=%s key=%s err=%v", ts.SessionKey, duration, keySuffix, err)
 		req.Model = ts.TurnModel
 
-		if err != nil {
-			a.logErrorPayload(ts.SessionKey, ts.TurnModel, start, duration, req, err)
+	if err != nil {
+		// Label the failed request's payload with the model that was being
+		// tried when it failed — a fallback hop's when the hop failed.
+		a.logErrorPayload(ts.SessionKey, provider.FailedTuple(primary, err).Model, start, duration, req, err)
 
 			errMsg := provider.Message{
 				Role:    "assistant",

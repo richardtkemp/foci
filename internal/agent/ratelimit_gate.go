@@ -31,13 +31,26 @@ type QueuedItem struct {
 }
 
 // RateLimitedError is returned when the gate blocks a message.
-// Callers can type-assert to access the reset time.
+// Callers can type-assert to access the reset time and the endpoint whose
+// gate closed — the endpoint that limited.
 type RateLimitedError struct {
-	Until time.Time
+	Until    time.Time
+	Endpoint string
 }
 
 func (e *RateLimitedError) Error() string {
-	return fmt.Sprintf("rate limited (resets %s)", e.Until.Format(time.Kitchen))
+	return rateLimitedText(e.Endpoint, e.Until)
+}
+
+// rateLimitedText is the one rendering of a closed gate, shared by the
+// user-facing RateLimitedError and the scheduler-facing SessionRateLimited
+// reason: it names the endpoint that limited when one is known, and keeps
+// the endpoint-less form otherwise.
+func rateLimitedText(endpoint string, until time.Time) string {
+	if endpoint == "" {
+		return fmt.Sprintf("rate limited (resets %s)", until.Format(time.Kitchen))
+	}
+	return fmt.Sprintf("rate limited on %s (resets %s)", endpoint, until.Format(time.Kitchen))
 }
 
 // Close marks the gate as rate-limited until the given time.
@@ -223,7 +236,7 @@ func (a *Agent) SessionRateLimited(sessionKey string) (limited bool, reason stri
 	endpoint := a.resolveEndpoint(sessionKey)
 	gate := a.getOrCreateRateLimitGate(endpoint)
 	if lim, until := gate.IsLimited(); lim {
-		return true, fmt.Sprintf("rate limited on %s (resets %s)", endpoint, until.Format(time.Kitchen))
+		return true, rateLimitedText(endpoint, until)
 	}
 	return false, ""
 }

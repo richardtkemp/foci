@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -26,12 +27,12 @@ func fb429Client() selfRetryingTestClient {
 }
 
 // TestFallbackTurn429OnHopClosesHopEndpointGate proves the gate pairing on
-// the failure side: a turn whose primary 503s and whose fallback hop (own
+// the failure side: a turn whose primary 529s and whose fallback hop (own
 // client, different endpoint) answers 429 closes the FALLBACK endpoint's
 // gate — the endpoint that limited — leaves the primary's open, and surfaces
-// the usual *RateLimitedError to the user.
+// the usual *RateLimitedError to the user, naming the endpoint that limited.
 func TestFallbackTurn429OnHopClosesHopEndpointGate(t *testing.T) {
-	ag := fallbackAgent(t, fb503Client(), tupleClientProvider{clients: map[string]provider.Client{
+	ag := fallbackAgent(t, fbStatusClient(529), tupleClientProvider{clients: map[string]provider.Client{
 		"openai/openai": fb429Client(),
 	}})
 
@@ -43,6 +44,9 @@ func TestFallbackTurn429OnHopClosesHopEndpointGate(t *testing.T) {
 	var rlErr *RateLimitedError
 	if !errors.As(err, &rlErr) {
 		t.Fatalf("expected *RateLimitedError, got %T: %v", err, err)
+	}
+	if !strings.Contains(rlErr.Error(), "rate limited on openai") {
+		t.Errorf("user-facing error should name the endpoint that limited, got: %s", rlErr.Error())
 	}
 
 	if limited, _ := ag.getOrCreateRateLimitGate("openai").IsLimited(); !limited {

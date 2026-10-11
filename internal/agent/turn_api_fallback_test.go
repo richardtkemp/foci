@@ -28,13 +28,17 @@ type selfRetryingTestClient struct{ *testClient }
 
 func (selfRetryingTestClient) HandlesOwnRetries() bool { return true }
 
-// fb503Client scripts an always-503 primary.
-func fb503Client() selfRetryingTestClient {
+// fbStatusClient scripts a primary that always fails with the given HTTP
+// status (fallback-eligible statuses: 529, 5xx).
+func fbStatusClient(status int) selfRetryingTestClient {
 	return selfRetryingTestClient{newTestClientWithError(
 		func(_ context.Context, _ *provider.MessageRequest) (*provider.MessageResponse, error) {
-			return nil, &provider.APIError{StatusCode: 503, Body: "unavailable"}
+			return nil, &provider.APIError{StatusCode: status, Body: "unavailable"}
 		})}
 }
+
+// fb503Client scripts an always-503 primary.
+func fb503Client() selfRetryingTestClient { return fbStatusClient(503) }
 
 // fbEndTurnClient scripts a single end_turn response.
 func fbEndTurnClient(id string) selfRetryingTestClient {

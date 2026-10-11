@@ -206,7 +206,9 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 		}
 		resetTime := a.engageRateLimit(endpoint, signal, !isUserTrigger(TriggerFromContext(ctx)))
 		a.logger().Infof("session=%s API rate limit recorded for %s", sessionKey, endpoint)
-		return &RateLimitedError{Until: resetTime}
+		// The user-facing error names the endpoint whose gate closed — the
+		// one that answered 429 (a fallback hop's when a hop limited).
+		return &RateLimitedError{Until: resetTime, Endpoint: endpoint}
 	}
 	if apiErr.IsOverloaded() {
 		return fmt.Errorf("API is overloaded (HTTP %d) — try again shortly", apiErr.StatusCode)
