@@ -64,7 +64,7 @@ Sends a text message to the agent's default session (or a named session / chat a
 
 `--broadcast` delivers the agent's response to **every surface** for the agent — each platform's default destination (telegram default chat, the app's default conversation, else its newest — auto-created if the agent has none) — instead of only the target session's chat. Useful for "heads up" crons that must reach you wherever you are. Equivalent to `policy=broadcast` in the request (or embedded in the selector: `-s 'research?policy=broadcast'`).
 
-Every response carries a **routing receipt** — which session the message resolved to and which resolution rung matched (`exact`, `named`, `alias`, `created`, `default`). The CLI prints it to stderr (`session: clutch/iresearch (named)`), so cron logs show where a send actually landed instead of trusting silent fallbacks.
+Every response carries a **routing receipt** — which session the message resolved to and which resolution rung matched (`exact`, `named`, `alias`, `created`, `default`). The CLI prints it to stderr as one timestamped line (`2026-10-11T09:00:00Z session: clutch/iresearch (named) status=` — `status=` carries `deferred` for a queued request, empty otherwise), so cron logs show where a send actually landed, dated, instead of trusting silent fallbacks.
 
 **Wait gates (deferral, not blocking):** an unmet `--wait-*` gate never blocks the CLI — the gateway stores the request (it survives a restart), answers with a "deferred" receipt immediately (even with `--sync`), and delivers it once the condition holds; `--wait-timeout`/`--deadline` (default **2h**) delivers anyway. A send with no if/wait flag defaults to `--wait-cold 1m` (waits for 1m of session idleness first); `--no-gate` opts out of the default and any wait condition.
 
@@ -298,7 +298,7 @@ foci command [-a agent] [-s session] [--if-warm <dur>] [--if-cold <dur>] [--if-u
 
 **Target session:** `-s/--session` names the session the command runs on — a full session key, a session name, or a chat alias, resolved through the same server-side ladder as `foci send` (a name nothing matches creates a new, empty session). Unlike send, `foci command` does **not** read `FOCI_SESSION`: a cron or script that happens to have it exported keeps dispatching on the agent's default session. With no `-s`, the command runs on the default session.
 
-Every response carries the same **routing receipt** as `send` — which session the command resolved to and which resolution rung matched (`exact`, `named`, `alias`, `created`, `default`). The CLI prints it to stderr (`session: clutch/ireserch (created)`), so a mistyped `-s` is visible in cron logs instead of silently running on a brand-new empty session.
+Every response carries the same **routing receipt** as `send` — which session the command resolved to and which resolution rung matched (`exact`, `named`, `alias`, `created`, `default`). The CLI prints it to stderr as one timestamped line (`2026-10-11T09:00:00Z session: clutch/ireserch (created) status=`), so a mistyped `-s` is visible in cron logs instead of silently running on a brand-new empty session.
 
 **Activity gates:** `command` accepts the same four activity-gate flags as `send` (and reads the same `FOCI_IF_*` env vars). The gate is evaluated server-side against the session the command targets; a turn in flight always counts as active, so a gated command never interrupts mid-turn work.
 

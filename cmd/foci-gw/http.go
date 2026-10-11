@@ -43,8 +43,8 @@ type httpHandlerDeps struct {
 	// non-archived. Production wires app.CreateDefaultConversation. It is
 	// injected only into the delivery resolver (resolveTargetSession — /send,
 	// /branch, /webhook, and /command's optional session selector, #2296);
-	// defaultSessionKey (/status and a selector-less /command) leaves it nil
-	// so those never mint a conversation (#1859).
+	// resolveDefaultSession (/status and a selector-less /command) leaves it
+	// nil so those never mint a conversation (#1859).
 	createDefault func(agentID string) (string, error)
 	// rubrics is the evals registry (nil when it failed to load): /score
 	// validates against it, /evals/rubrics lists it.
@@ -341,14 +341,32 @@ func broadcastResponse(connMgr platform.ConnectionManager, agentID, sessionKey, 
 	log.NewComponentLogger(logTag).Infof("broadcast response for session %s delivered to %d connection(s)", sessionKey, delivered)
 }
 
+// resolveDefaultSession resolves an agent's default session through the same
+// resolver ladder resolveTargetSession runs for an empty selector, minus the
+// CreateDefault hook — control paths (/status, a selector-less /command)
+// never mint a conversation (#1859). The receipt is the resolver's own result
+// (Resolution.ReceiptFor), so its rung and canonical target are exactly what
+// /send answers for the same empty selector, never re-derived by the caller.
+// An agent with no default session yet resolves to the zero values — callers
+// that dispatch commands tolerate that as an empty key.
+func resolveDefaultSession(d httpHandlerDeps, agentID string) (route.Resolution, route.Receipt) {
+	r := &route.Resolver{Index: d.sessionIndex, PreferredPlatform: d.cfg.DefaultPlatformFor}
+	// The same target resolveTargetSession builds for an empty selector
+	// (Create included: it is the canonical form ReceiptFor renders, and the
+	// default rung never consults it — minting is the Resolver's absent
+	// CreateDefault hook, not this flag).
+	t := route.Target{Agent: agentID, Create: true, Policy: route.PolicyFallback}
+	res, err := r.Resolve(t)
+	if err != nil {
+		return route.Resolution{}, route.Receipt{}
+	}
+	return res, res.ReceiptFor(t)
+}
+
 // defaultSessionKey resolves an agent's default session, tolerating "no
 // session yet" as an empty key (handlers that dispatch commands accept that).
 func defaultSessionKey(d httpHandlerDeps, agentID string) string {
-	r := &route.Resolver{Index: d.sessionIndex, PreferredPlatform: d.cfg.DefaultPlatformFor}
-	res, err := r.Resolve(route.Target{Agent: agentID})
-	if err != nil {
-		return ""
-	}
+	res, _ := resolveDefaultSession(d, agentID)
 	return res.SessionKey
 }
 

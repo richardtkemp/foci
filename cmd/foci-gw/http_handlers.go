@@ -185,7 +185,8 @@ func stampHumanCommandDispatch(d httpHandlerDeps, inst *agentInstance, sessionKe
 // on failure. Every endpoint that takes a session selector resolves here, so
 // /send, /branch, /webhook and /command's optional session selector (#2296)
 // behave identically (only a selector-less /command targets the default
-// session directly via defaultSessionKey): exact key → named session → chat
+// session directly, via resolveDefaultSession — the same ladder minus
+// CreateDefault minting): exact key → named session → chat
 // alias → create-named — an unknown-but-valid name resolves to a NEW, empty
 // named key (Ruling #2284, Dick 2026-10-09: keep); empty selector → the
 // agent's default session. Returns ok=false after an error response has been
@@ -517,26 +518,23 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 		// gate, the defer record, the dispatch and the human stamp all act
 		// on the session the caller named. An empty selector keeps the plain
 		// default key: /command with no selector is a control path, so no
-		// CreateDefault minting (#1859). Either way the caller gets the
-		// receipt — the immediate dispatch answers with it like /send, so a
+		// CreateDefault minting (#1859). Either arm's receipt comes from the
+		// resolver's own result — the same envelope /send's slash-command
+		// path uses — so the immediate dispatch answers with it and a
 		// mistyped selector says where the command ran (resolved_via
 		// "created") instead of landing silently on a fresh empty session.
-		sk := defaultSessionKey(d, inst.id)
-		rcpt := route.Receipt{SessionKey: sk}
-		if sk != "" {
-			// The plain default key IS the default rung's result
-			// (defaultSessionKey runs the same ladder minus minting), so
-			// the receipt names the rung exactly like /send's empty
-			// selector does.
-			rcpt.Via = route.RungDefault
-		}
+		var res route.Resolution
+		var rcpt route.Receipt
 		if req.Session != "" {
-			_, resolved, ok := resolveTargetSession(d, w, inst.id, req.Session, "", "/command")
+			var ok bool
+			res, rcpt, ok = resolveTargetSession(d, w, inst.id, req.Session, "", "/command")
 			if !ok {
 				return
 			}
-			sk, rcpt = resolved.SessionKey, resolved
+		} else {
+			res, rcpt = resolveDefaultSession(d, inst.id)
 		}
+		sk := res.SessionKey
 
 		// Activity gate (TODO #753): a gated command — e.g. an overnight
 		// `/reset` cron with --if-inactive — is skipped when the target

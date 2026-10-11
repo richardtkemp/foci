@@ -507,10 +507,42 @@ func TestCommand_ReceiptInImmediateResponse(t *testing.T) {
 		if resp["session"] != testSessionKey {
 			t.Errorf("#2296: receipt session = %q, want the default %q", resp["session"], testSessionKey)
 		}
+		if resp["target"] != testAgentID {
+			t.Errorf("#2296: receipt target = %q, want the agent %q — the resolver's canonical target, like /send's empty selector", resp["target"], testAgentID)
+		}
 		if resp["resolved_via"] != "default" {
 			t.Errorf("#2296: receipt resolved_via = %q, want default (the plain default key is that rung's result)", resp["resolved_via"])
 		}
 	})
+}
+
+// TestCommand_NoSelectorReceiptMatchesSend pins that a selector-less
+// /command answers with EXACTLY /send's receipt for the same empty selector:
+// both arms build the receipt from the resolver's own result, so target,
+// session and resolved_via must match field for field — never from a
+// hand-assembled receipt that drops the canonical target.
+func TestCommand_NoSelectorReceiptMatchesSend(t *testing.T) {
+	probe, _ := sessionKeySpy()
+	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
+	mux := newTestMux(d)
+
+	cmdW := postJSON(mux, "/command", `{"command":"/probe"}`)
+	sendW := postJSON(mux, "/send", `{"text":"/probe"}`)
+
+	if cmdW.Code != http.StatusOK || sendW.Code != http.StatusOK {
+		t.Fatalf("status /command=%d /send=%d, want 200/200; bodies: %q / %q", cmdW.Code, sendW.Code, cmdW.Body.String(), sendW.Body.String())
+	}
+	var cmdResp, sendResp map[string]string
+	_ = json.Unmarshal(cmdW.Body.Bytes(), &cmdResp)
+	_ = json.Unmarshal(sendW.Body.Bytes(), &sendResp)
+	if sendResp["target"] != testAgentID {
+		t.Fatalf("/send receipt target = %q, want %q — the comparison baseline is broken", sendResp["target"], testAgentID)
+	}
+	for _, field := range []string{"target", "session", "resolved_via"} {
+		if cmdResp[field] != sendResp[field] {
+			t.Errorf("receipt %s: /command=%q /send=%q — a selector-less /command must answer /send's receipt for the same empty selector", field, cmdResp[field], sendResp[field])
+		}
+	}
 }
 
 // TestCommand_DecodeErrorNamesField pins the #2296 decode-error contract: a
