@@ -273,6 +273,38 @@ func TestHandleCommandCallback_Chain(t *testing.T) {
 	}
 }
 
+func TestHandleCommandCallback_BlankReply(t *testing.T) {
+	// Verifies that a command whose reply is whitespace-only (no Parts)
+	// renders as nothing: the edit carries the shared renderer's output
+	// (Response.DisplayText), not the raw blank Text.
+	reg := command.NewRegistry()
+	reg.Register(&command.Command{
+		Name: "blank",
+		Execute: func(ctx context.Context, req command.Request, cc command.CommandContext) (command.Response, error) {
+			return command.Response{Text: "   "}, nil
+		},
+	})
+
+	b, mock := testBot([]string{"111"}, reg)
+
+	// Fail the HTML edit so the plain-text fallback edit fires with the
+	// unconverted result, pinning exactly what the renderer produced.
+	mock.editErr = fmt.Errorf("Bad Request: message text is empty")
+	mock.editErrOnce = true
+
+	b.handleCommandCallback(context.Background(), 12345, 1, "/blank")
+
+	mock.mu.Lock()
+	defer mock.mu.Unlock()
+
+	if mock.edits != 2 {
+		t.Fatalf("expected 2 edits (HTML + fallback), got %d", mock.edits)
+	}
+	if mock.lastEditText != "" {
+		t.Errorf("blank reply edit = %q, want empty", mock.lastEditText)
+	}
+}
+
 func TestToolResultObserver_StoresResult(t *testing.T) {
 	// Verifies that tool results are stored
 	// for later display.

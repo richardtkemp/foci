@@ -165,6 +165,22 @@ func TestHandleCommandCallback(t *testing.T) {
 	}
 }
 
+// TestHandleCommandCallbackBlankReply verifies a whitespace-only command
+// reply edits the pressed message with the shared renderer's output —
+// nothing — instead of the raw blank text.
+func TestHandleCommandCallbackBlankReply(t *testing.T) {
+	b, fs, _ := newTestBot(t, "a")
+	registerTestCommand(b, "blank", "   ")
+	b.SetCommandContext(commandTestContext())
+
+	b.handleCommandCallback(context.Background(), "42", "100", "/blank", 42)
+
+	got := fs.lastEdit(t)
+	if got.msgID != "100" || got.content != "" {
+		t.Errorf("expected empty edit on the pressed message, got %+v", got)
+	}
+}
+
 // TestSendCommandKeyboard verifies the command keyboard helper sends header
 // text with command-prefixed buttons to the default channel.
 func TestSendCommandKeyboard(t *testing.T) {
