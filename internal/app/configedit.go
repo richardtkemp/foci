@@ -200,9 +200,11 @@ func (h *Hub) broadcastConfigSchema() {
 
 // buildConfigSchema assembles the wire §13 payload: the field registry plus
 // one scope per editing surface. Explicitness and explicit values come from a
-// fresh parse of the FILE (truthful immediately after an edit); non-explicit
-// values fall back to the inherited chain — for an agent scope the global
-// value (file, then running config), then the built-in default. Per-field
+// fresh parse of the FILE (truthful immediately after an edit); an agent
+// scope's values resolve through the ONE agent-value ladder
+// (config.ResolveAgentValue): the file's inherited global-section value,
+// then the running value (the mapped section's running global first, then
+// the agent's own running row), then the built-in default. Per-field
 // NeedsRestart records each field's intrinsic consumption pattern (see
 // config.ConfigField.NeedsRestart): hot fields apply live via applyLive on
 // edit, restart-required fields take effect on the next restart.
@@ -396,28 +398,26 @@ func (h *Hub) buildConfigSchema(errMsg string) fap.ConfigSchema {
 				continue
 			}
 			full := "agent." + f.Key
-			if v, ok := av[f.Key]; ok {
-				s.Values[full] = v
-				s.Explicit = append(s.Explicit, full)
-				continue
-			}
-			// Inherited: the matching global section's value (the agent key's
-			// first segment names the AgentConfig sub-struct; AgentGlobalSections
-			// maps it to the global registry section), else the running merged
-			// value, else the built-in default.
-			v := ""
-			if prefix, rest, ok := strings.Cut(f.Key, "."); ok {
-				if gs, mapped := agentToGlobal[prefix]; mapped {
-					v, _ = globalValue(gs, rest)
+			// The resolver's running rung: the running GLOBAL value of the
+			// mapped section first (globalValue's fallback — override fields
+			// like sessions.max_system_prompt_chars_file carry their default
+			// only on the global struct, so the agent row alone would show
+			// ""), else the agent's own running value.
+			running := func() string {
+				if prefix, rest, ok := strings.Cut(f.Key, "."); ok {
+					if gs, mapped := agentToGlobal[prefix]; mapped {
+						if v, _ := globalValue(gs, rest); v != "" {
+							return v
+						}
+					}
 				}
+				return config.LookupValue(cfg, a, "agent", f.Key)
 			}
-			if v == "" {
-				v = config.LookupValue(cfg, a, "agent", f.Key)
-			}
-			if v == "" {
-				v = f.Default
-			}
+			v, _ := config.ResolveAgentValue(fileGlobal, fileAgents, a.ID, f, running)
 			s.Values[full] = v
+			if _, ok := av[f.Key]; ok {
+				s.Explicit = append(s.Explicit, full)
+			}
 		}
 		sort.Strings(s.Explicit)
 		scopes = append(scopes, s)

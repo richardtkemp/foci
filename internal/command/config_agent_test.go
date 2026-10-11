@@ -323,6 +323,36 @@ func TestConfigGetAgentKeyFromFile(t *testing.T) {
 	}
 }
 
+// TestConfigGetAgentKeyRunningFallback proves the running rung of the
+// shared ladder: when the key is in neither the agent block nor the global
+// section of the file, /config get falls back to the RUNNING value and says
+// so — and the fallback receives the asked-about agent's id and the
+// registry's key spelling, not the chat's own agent.
+func TestConfigGetAgentKeyRunningFallback(t *testing.T) {
+	deps := agentFormDeps(nil)
+	deps.ConfigPath = writeAgentConfigFile(t) // nothing for scheduler.tick_interval
+	var gotAgent, gotKey string
+	deps.AgentRunningValueFn = func(agentID, key string) string {
+		gotAgent, gotKey = agentID, key
+		return "9s"
+	}
+	cc := CommandContext{ConfigSetDeps: &deps}
+
+	text := execConfigCommand(t, cc, "get clutch scheduler.tick_interval")
+
+	for _, want := range []string{"9s", "Source: running config (not set in foci.toml)"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("reply %q missing %q", text, want)
+		}
+	}
+	if strings.Contains(text, "built-in default") {
+		t.Errorf("the running value must win over the default: %q", text)
+	}
+	if gotAgent != "clutch" || gotKey != "scheduler.tick_interval" {
+		t.Errorf("AgentRunningValueFn called with (%q, %q), want (clutch, scheduler.tick_interval)", gotAgent, gotKey)
+	}
+}
+
 // TestConfigGetAgentKeyFileValueBeatsRunning is a characterisation test
 // (listed in .factory/red-gate-exempt.txt): a file value must never be
 // shadowed by the running fallback — main's explicit 10m and clutch's

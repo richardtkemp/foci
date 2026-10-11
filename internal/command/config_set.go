@@ -22,12 +22,12 @@ type ConfigSetDeps struct {
 	LookupFn         func(sectionKey string) (config.ConfigField, bool)
 	SetInFileFn      func(path string, target config.SetTarget, value string) (string, error)
 	EffectiveValueFn func(section, key string) string // returns the running value (includes defaults)
-	// AgentRunningValueFn returns the running value of one registry key
-	// (registry spelling, e.g. maintenance.reset_time) for ANY agent id —
-	// unlike EffectiveValueFn, which is bound to the one agent the registry's
-	// commands belong to. /config get's fallback rung uses it when the key is
-	// in neither the agent block nor the global section. nil (tests, or an
-	// unwired command set) skips that rung.
+	// AgentRunningValueFn returns the running (startup-frozen config) value
+	// of one registry key (registry spelling, e.g. maintenance.reset_time)
+	// for ANY agent id — unlike EffectiveValueFn, which is bound to the one
+	// agent the registry's commands belong to. /config get's fallback rung
+	// uses it when the key is in neither the agent block nor the global
+	// section. nil (tests, or an unwired command set) skips that rung.
 	AgentRunningValueFn func(agentID, key string) string
 }
 

@@ -146,8 +146,10 @@ func configSetAgent(deps *ConfigSetDeps, agentID, rest string) (string, error) {
 //	get <agent>       → the per-agent keys the per-agent set accepts (hot ones)
 //	get <agent> <key> → the agent's current value for one key, with its source
 //
-// Values are read from the config FILE at call time, not the frozen startup
-// config, so a value just written by the per-agent set is what get shows.
+// Values are read from the config FILE at call time, so a value just written
+// by the per-agent set is what get shows; only when the key is in neither
+// the agent block nor the global section does the reply fall back to the
+// running config's value, before the built-in default.
 func configGet(deps *ConfigSetDeps, args string) (string, error) {
 	parts := strings.Fields(args)
 	switch len(parts) {
@@ -185,9 +187,11 @@ func configGetKeyList(deps *ConfigSetDeps, agentID string) string {
 }
 
 // configGetAgentKey replies with one agent's current value for one key and
-// where it comes from. Any agent.<key> registry row is readable — hot or
-// not, reading is harmless — and the reply states whether the field can
-// also be set live.
+// where it comes from, resolved through the ONE agent-value ladder
+// (config.ResolveAgentValue): an explicit [[agents]] value, the inherited
+// global section value, the running config's value, the built-in default.
+// Any agent.<key> registry row is readable — hot or not, reading is
+// harmless — and the reply states whether the field can also be set live.
 func configGetAgentKey(deps *ConfigSetDeps, agentID, key string) (string, error) {
 	if msg, valid := validateAgentID(deps, agentID); !valid {
 		return msg, nil
@@ -202,7 +206,11 @@ func configGetAgentKey(deps *ConfigSetDeps, agentID, key string) (string, error)
 	if err != nil {
 		return fmt.Sprintf("Failed to read config file: %s", err), nil
 	}
-	value, source := agentFileValue(global, agents, agentID, field)
+	var running func() string
+	if deps.AgentRunningValueFn != nil {
+		running = func() string { return deps.AgentRunningValueFn(agentID, field.Key) }
+	}
+	value, source := config.ResolveAgentValue(global, agents, agentID, field, running)
 
 	display := value
 	if display == "" {
@@ -216,24 +224,4 @@ func configGetAgentKey(deps *ConfigSetDeps, agentID, key string) (string, error)
 		fmt.Fprintf(&sb, "\nSettable live: /config set %s %s=<value>", agentID, field.Key)
 	}
 	return sb.String(), nil
-}
-
-// agentFileValue resolves one agent's effective value for field from the
-// config FILE at call time: an explicit [[agents]] override, else the
-// inherited global section value, else the built-in default. It never
-// consults the frozen startup config — that would go stale the moment a
-// set lands; consulting the running config is the one extra rung the app
-// config editor's equivalent ladder adds on top of these three.
-func agentFileValue(global map[string]string, agents map[string]map[string]string, agentID string, field config.ConfigField) (value, source string) {
-	if v, ok := agents[agentID][field.Key]; ok {
-		return v, fmt.Sprintf("set for %s in foci.toml", agentID)
-	}
-	if prefix, rest, dotted := strings.Cut(field.Key, "."); dotted {
-		if gs, mapped := config.AgentGlobalSections()[prefix]; mapped {
-			if v, ok := global[gs+"."+rest]; ok {
-				return v, fmt.Sprintf("inherited from [%s] in foci.toml", gs)
-			}
-		}
-	}
-	return field.Default, "built-in default"
 }
