@@ -1,4 +1,4 @@
-package nudge
+package suggestion
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 // button send (text, labels, per-button data — which carries the
 // interactive-message id) and every edit. Unimplemented Connection methods
 // panic via the embedded nil interface, so a test only reaches what the
-// nudge path actually calls.
+// suggestion path actually calls.
 type fakeButtonConn struct {
 	platform.Connection // embedded nil: satisfies the rest of the surface
 
@@ -91,7 +91,7 @@ func (c *fakeButtonConn) editsSnapshot() []msgEdit {
 	return out
 }
 
-// fakeTextConn is a connection WITHOUT the ButtonSender surface: the nudge
+// fakeTextConn is a connection WITHOUT the ButtonSender surface: the suggestion
 // must degrade to the numbered plain-text fallback.
 type fakeTextConn struct {
 	platform.Connection
@@ -294,8 +294,8 @@ func TestSendPostsSpecTextAndButtons(t *testing.T) {
 	}
 	for i, data := range send.datas {
 		id := interactiveIDOf(t, data)
-		if !strings.HasPrefix(id, "nudge-"+validSpec().ID+"-") {
-			t.Errorf("interactive id %q lacks the nudge-<nudgeID>- prefix", id)
+		if !strings.HasPrefix(id, "suggestion-"+validSpec().ID+"-") {
+			t.Errorf("interactive id %q lacks the suggestion-<suggestionID>- prefix", id)
 		}
 		if idx := data[len(id)+1:]; idx != strconv.Itoa(i) {
 			t.Errorf("button %d carries press data %q, want index %d only", i, idx, i)
@@ -323,10 +323,10 @@ func TestSendUniqueInteractiveIDPerSend(t *testing.T) {
 	}
 }
 
-// TestSendUnknownNudgeIDErrors: an unregistered id is an error, not a send.
-func TestSendUnknownNudgeIDErrors(t *testing.T) {
+// TestSendUnknownSuggestionIDErrors: an unregistered id is an error, not a send.
+func TestSendUnknownSuggestionIDErrors(t *testing.T) {
 	f := newSenderFixture(t)
-	if _, err := f.sender.Send(context.Background(), "clutch", f.chatKey, "nope.nudge"); err == nil {
+	if _, err := f.sender.Send(context.Background(), "clutch", f.chatKey, "nope.suggestion"); err == nil {
 		t.Error("Send(unknown id) = nil error, want error")
 	}
 	if got := f.conn.sendCount(); got != 0 {
@@ -380,7 +380,7 @@ func TestSendNonChatSessionKeyErrors(t *testing.T) {
 }
 
 // TestSendChildSessionKeyErrors: a child key (branch or spawn off a chat)
-// still names the chat, but it is a transient work session — a nudge's
+// still names the chat, but it is a transient work session — a suggestion's
 // buttons must neither post there nor run their commands there. Send
 // accepts only the chat's ROOT session key.
 func TestSendChildSessionKeyErrors(t *testing.T) {
@@ -444,7 +444,7 @@ func TestSendUnusableChatKeyErrors(t *testing.T) {
 // TestSendAgentKeyMismatchErrors: the mute is keyed by (agent, chatID), so
 // a Send whose agentID disagrees with the session key's agent must fail
 // closed — accepting it would store the mute under the wrong agent's bucket
-// and the chat would keep seeing the nudge (review round 4, finding 2).
+// and the chat would keep seeing the suggestion (review round 4, finding 2).
 func TestSendAgentKeyMismatchErrors(t *testing.T) {
 	f := newSenderFixture(t)
 
@@ -496,12 +496,12 @@ func TestSendTextOnlyConnectionGetsNumberedFallback(t *testing.T) {
 		}
 	}
 	// No callback was registered, so no typed reply can run a command: the
-	// dispatcher stays silent and the router knows no nudge prompt.
+	// dispatcher stays silent and the router knows no suggestion prompt.
 	if calls := f.disp.callsSnapshot(); len(calls) != 0 {
 		t.Errorf("dispatcher ran with a text-only connection: %v", calls)
 	}
-	if edit, _, ok := platform.HandleInteractiveCallback("nudge-" + validSpec().ID + "-forged:0"); ok || edit != "" {
-		t.Error("a nudge press routed without a ButtonSender connection")
+	if edit, _, ok := platform.HandleInteractiveCallback("suggestion-" + validSpec().ID + "-forged:0"); ok || edit != "" {
+		t.Error("a suggestion press routed without a ButtonSender connection")
 	}
 }
 
@@ -509,7 +509,7 @@ func TestSendTextOnlyConnectionGetsNumberedFallback(t *testing.T) {
 
 // TestPressRunsSpecCommandOnSessionKey proves the press path: pressing action
 // i dispatches exactly Actions[i].Command — the command from the REGISTERED
-// SPEC, not from the press data — through the dispatcher on the nudge's
+// SPEC, not from the press data — through the dispatcher on the suggestion's
 // session key, and the message is edited with the command's result.
 func TestPressRunsSpecCommandOnSessionKey(t *testing.T) {
 	f := newSenderFixture(t)
@@ -527,7 +527,7 @@ func TestPressRunsSpecCommandOnSessionKey(t *testing.T) {
 		t.Fatalf("dispatch calls = %v, want exactly one", calls)
 	}
 	if calls[0][0] != f.chatKey {
-		t.Errorf("dispatch session key = %q, want the nudge's %q", calls[0][0], f.chatKey)
+		t.Errorf("dispatch session key = %q, want the suggestion's %q", calls[0][0], f.chatKey)
 	}
 	if calls[0][1] != "/sr snooze" {
 		t.Errorf("dispatched %q, want the spec's action 1 command %q", calls[0][1], "/sr snooze")
@@ -541,12 +541,12 @@ func TestPressRunsSpecCommandOnSessionKey(t *testing.T) {
 		t.Errorf("edit text = %q, want the command result", edits[0].text)
 	}
 	if edits[0].msgID != "msg-1" {
-		t.Errorf("edit msgID = %q, want the nudge message msg-1", edits[0].msgID)
+		t.Errorf("edit msgID = %q, want the suggestion message msg-1", edits[0].msgID)
 	}
 }
 
 // TestPressEmptyResultEditsDone: a command that answers nothing still closes
-// the nudge with "Done".
+// the suggestion with "Done".
 func TestPressEmptyResultEditsDone(t *testing.T) {
 	f := newSenderFixture(t)
 	f.disp.text = ""
@@ -563,7 +563,7 @@ func TestPressEmptyResultEditsDone(t *testing.T) {
 }
 
 // TestPressNotExecutableCommandEditsUnavailable: ok=false must not claim
-// success — the nudge edits to the honest unavailable text.
+// success — the suggestion edits to the honest unavailable text.
 func TestPressNotExecutableCommandEditsUnavailable(t *testing.T) {
 	f := newSenderFixture(t)
 	f.disp.ok = false
@@ -601,7 +601,7 @@ func TestPressNotNowEditsOKWithoutSideEffects(t *testing.T) {
 		t.Fatalf("muted: %v", err)
 	}
 	if muted {
-		t.Error("Not now muted the nudge")
+		t.Error("Not now muted the suggestion")
 	}
 }
 
@@ -641,14 +641,14 @@ func TestPressOutOfRangeRunsNothing(t *testing.T) {
 		t.Fatalf("muted: %v", err)
 	}
 	if muted {
-		t.Error("out-of-range press muted the nudge")
+		t.Error("out-of-range press muted the suggestion")
 	}
 }
 
 // --- the mute built-in ----------------------------------------------------
 
 // TestPressStopShowingMutes proves the mute built-in: the press stores the
-// nudge id for the chat and edits the message to the mute confirmation —
+// suggestion id for the chat and edits the message to the mute confirmation —
 // which the sender may only claim because the mute lands under exactly the
 // key Send reads (proved by TestSendReturnsMutedAfterMutePress).
 func TestPressStopShowingMutes(t *testing.T) {
@@ -668,7 +668,7 @@ func TestPressStopShowingMutes(t *testing.T) {
 		t.Fatalf("muted: %v", err)
 	}
 	if !muted {
-		t.Error("mute press did not store the nudge id")
+		t.Error("mute press did not store the suggestion id")
 	}
 	if calls := f.disp.callsSnapshot(); len(calls) != 0 {
 		t.Errorf("mute press dispatched commands: %v", calls)
@@ -677,10 +677,10 @@ func TestPressStopShowingMutes(t *testing.T) {
 
 // TestSendReturnsMutedAfterMutePress proves the round trip the confirmation
 // text promises: after the mute press, a later Send of that id returns Muted
-// and posts nothing, while a different nudge id still sends.
+// and posts nothing, while a different suggestion id still sends.
 func TestSendReturnsMutedAfterMutePress(t *testing.T) {
 	f := newSenderFixture(t)
-	if err := f.reg.Register(Spec{ID: "other.nudge", Text: "Another thing"}); err != nil {
+	if err := f.reg.Register(Spec{ID: "other.suggestion", Text: "Another thing"}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 
@@ -700,13 +700,13 @@ func TestSendReturnsMutedAfterMutePress(t *testing.T) {
 		t.Errorf("posted %d messages total, want 1 (nothing after the mute)", got)
 	}
 
-	// Another nudge id is unaffected: it still sends.
-	res, err = f.sender.Send(context.Background(), "clutch", f.chatKey, "other.nudge")
+	// Another suggestion id is unaffected: it still sends.
+	res, err = f.sender.Send(context.Background(), "clutch", f.chatKey, "other.suggestion")
 	if err != nil {
-		t.Fatalf("Send other nudge: %v", err)
+		t.Fatalf("Send other suggestion: %v", err)
 	}
 	if res != ResultSent || f.conn.sendCount() != 2 {
-		t.Errorf("other nudge: res=%q sends=%d, want sent and a second post", res, f.conn.sendCount())
+		t.Errorf("other suggestion: res=%q sends=%d, want sent and a second post", res, f.conn.sendCount())
 	}
 }
 
@@ -745,13 +745,13 @@ func TestMuteSurvivesPlatformRowAppearingLaterThroughSend(t *testing.T) {
 // gets one on first contact). The press must store the mute under exactly
 // the key Send later reads — the platform-agnostic (agent, chatID) bucket.
 // Keying the WRITE by PlatformForChat instead would store the mute where no
-// read ever looks, edit "Muted" all the same, and the nudge would come
+// read ever looks, edit "Muted" all the same, and the suggestion would come
 // back on the next Send (the mirror image of the row-appears-later test
 // above, which pins the READ).
 func TestMuteWithPlatformRowAlreadyPresentThroughSend(t *testing.T) {
 	f := newSenderFixture(t)
 
-	// The platform row exists BEFORE the nudge is even sent.
+	// The platform row exists BEFORE the suggestion is even sent.
 	if err := f.idx.SetChatMetadata("clutch", "telegram", 42, "registered", "clutch"); err != nil {
 		t.Fatalf("seed platform row: %v", err)
 	}

@@ -6,8 +6,8 @@ import (
 )
 
 // Chat-set codec: the shared encode/decode pair for chat_metadata values that
-// hold a SET of ids (app message pins under "pins", nudge mutes under
-// "nudge_muted"). Both consumers need identical storage semantics — sorted,
+// hold a SET of ids (app message pins under "pins", suggestion mutes under
+// "suggestion_muted"). Both consumers need identical storage semantics — sorted,
 // de-duplicated, `[]`-never-`null`, garbage degrading to empty — so the codec
 // lives here once, next to the chat_metadata table it renders for.
 

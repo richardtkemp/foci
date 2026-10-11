@@ -65,7 +65,7 @@ type Response struct {
 // single part. A response with nothing readable yields no parts, so a
 // surface that iterates the parts sends nothing rather than a blank
 // message. This is the one renderer for command replies — every transport
-// (app, Telegram, Discord) and the nudge press path draws from it.
+// (app, Telegram, Discord) and the suggestion press path draws from it.
 func (r Response) DisplayParts() []string {
 	if len(r.Parts) > 0 {
 		return r.Parts

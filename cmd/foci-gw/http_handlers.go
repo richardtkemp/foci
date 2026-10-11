@@ -465,7 +465,7 @@ func handleStatus(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFun
 
 // runAgentCommand runs one slash command through an agent's command
 // registry — the single dispatch core shared by handleCommand (immediate),
-// the deferred sweep (delivery time), and the nudge button press (#1321),
+// the deferred sweep (delivery time), and the suggestion button press (#1321),
 // DocPath platform send included. ok is false only for a registered command
 // with no Execute function; unknown names are answered by the registry
 // itself (found=true, "Unknown command" text).

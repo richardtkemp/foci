@@ -102,14 +102,14 @@ config.Load(path)                                        ← validates values; l
    → voice STT/TTS providers                              ← shared across agents
 
    Per-agent loop (for each cfg.Agents[i]):
-   → setupAgent(params)                                    ← agents.go → agentInstance{ag, cmds, registry, bootstrap, nudgeSender}
+   → setupAgent(params)                                    ← agents.go → agentInstance{ag, cmds, registry, bootstrap, suggestionSender}
      → resolveSharedSetup(params)                           ← agents_shared.go — config cascade, prompt dirs, group resolver
      → IF delegated agent (acfg.Backend != "" && != "api"):
        → configureDelegated(params, delegator)              ← agents_delegated.go
          → delegator.New(name, config)                      ← Spec.New from the registry (each backend's spec.go Register(Spec), #2154)
          → workspace.NewBootstrap → system prompt            ← concatenate workspace *.md files
          → delegator.Start(ctx, opts)                       ← spawn the coding agent subprocess
-         → shared.finalize(ag, params)                      ← commands, platform, nudge rules + nudge sender (#1321; shared postamble)
+         → shared.finalize(ag, params)                      ← commands, platform, nudge rules + suggestion sender (#1321; shared postamble)
      → ELSE (traditional API agent):
        → tools.NewAsyncNotifier()                           ← shared by exec + http_request + tmux, routes by session key
        → tools.NewRegistry() + registerTools(pathAPI)        ← unified tool table (tool_table.go), one source of truth shared with exec path
@@ -133,7 +133,7 @@ config.Load(path)                                        ← validates values; l
        → compaction.NewCompactor(sessions, model, threshold)
        → config.NewFallbackResolver(global, perAgent, aliases) ← nil if no fallbacks configured
        → agent.Agent{shared fields + Client, Tools, Bootstrap, EnvironmentBlock, FallbackResolver, ...}
-       → shared.finalize(ag, params)                        ← commands, platform, nudge rules + nudge sender (#1321; shared postamble)
+       → shared.finalize(ag, params)                        ← commands, platform, nudge rules + suggestion sender (#1321; shared postamble)
          → registerAgentCommands(cmdRegParams)              ← commands.go — all slash command registration
          → plat.SetupAgentConnection(AgentConnectionParams) ← creates platform connections (bots) for all active providers — NO network:
              telegram/discord build + wire each bot and register it PENDING via BotManager.ConnectBeforeRun (#2043). The network connect
@@ -286,7 +286,8 @@ main
  │     ├── tools/browser  → tools, config, log, tempdir, tools/browserjs (browser automation — imports root for Tool/ToolResult)
  │     └── tools/browserjs (no foci deps — vendored go-rod JS snippets)
  ├── workspace     → log, provider
- ├── nudge         → delegator, fap, log, platform, session, turnevent, workspace (rule extraction, scheduling, file I/O; server-originated nudge messages — registry, sender, per-chat mute, #1321)
+ ├── nudge         → delegator, log, platform, turnevent, workspace (rule extraction, scheduling, file I/O)
+ ├── suggestion    → fap, log, platform, session (server-originated suggestions: registry, sender, per-chat mute, #1321)
  ├── prompts       (top-level package, not internal — lives at `shared/prompts/`) → log, timeutil (embedded .md files incl. nudge framing + ResolveOrientationTemplate helpers)
  ├── modelinfo     (no deps — stdlib-only leaf package for model attributes: context window, capabilities, pricing)
  ├── ratelimit     (no deps — neutral limit signals + shared reset/fallback policy)
@@ -3091,19 +3092,19 @@ Two more triggers live outside it: the manual `/compact` (and `/compact force`) 
 
 ## Nudge System (`nudge/`)
 
-The package holds two features: mid-turn behavioral reminders extracted from character files (rule extraction, scheduling, file I/O — see below), and server-originated nudge messages with command buttons (`registry.go`/`sender.go`/`mute.go`, #1321 — see [Server-originated nudges](#server-originated-nudges-1321)). Its imports: `delegator`, `fap`, `log`, `platform`, `session`, `turnevent`, `workspace`.
+The package holds one feature: mid-turn behavioral reminders extracted from character files (rule extraction, scheduling, file I/O — see below). Server-originated messages with command buttons used to live here too; they are now the `suggestion` package (#1321, see [Server-originated suggestions](#server-originated-suggestions-1321)) — a different thing: a nudge talks to the agent, a suggestion talks to the person. Its imports: `delegator`, `log`, `platform`, `turnevent`, `workspace`.
 
-### Server-originated nudges (#1321)
+### Server-originated suggestions (#1321) — package `internal/suggestion`
 
-A **nudge** is a system message the GATEWAY sends a chat, with buttons that run a slash command: `Spec{ID, Text, Actions}` registered in a `Registry`, sent by `Sender.Send(ctx, agentID, sessionKey, nudgeID)` → `Sent`/`Muted`/`NoConnection`. The posted message is one interactive prompt (`platform.SendInteractiveMessageWithID`, id `nudge-<nudgeID>-<ulid>`) with the spec's text, one button per action, plus two built-ins appended: `Not now` (edits to `OK.`, no state) and `Stop showing me this` (writes the per-chat mute, edits to `Muted. You will not see this again.`).
+A **suggestion** is a system message the GATEWAY sends a chat, with buttons that run a slash command: `Spec{ID, Text, Actions}` registered in a `Registry`, sent by `Sender.Send(ctx, agentID, sessionKey, suggestionID)` → `Sent`/`Muted`/`NoConnection`. The posted message is one interactive prompt (`platform.SendInteractiveMessageWithID`, id `suggestion-<suggestionID>-<ulid>`) with the spec's text, one button per action, plus two built-ins appended: `Not now` (edits to `OK.`, no state) and `Stop showing me this` (writes the per-chat mute, edits to `Muted. You will not see this again.`).
 
 **Server-originated only.** Specs are registered exclusively by gateway Go code at startup (`Registry.Register`); there is no config key, tool, file or message-text path that can register or alter one, and agent text / tool output can never create a command button. The rule exists because a button is a one-tap command execution: a prompt-injected agent must not be able to mint one.
 
-**Press path.** A button's callback data carries ONLY the button's index — never the command. The callback resolves the index back through the registered Spec and dispatches that action's `Command` through the same dispatch core `/command` and the deferred sweep use (`runAgentCommand` in `cmd/foci-gw/http_handlers.go` → `command.Registry.Dispatch`), on the nudge's own session key; the message is then edited to the command's reply rendered as one text (`command.Response.DisplayText` — Parts joined by a blank line, else Text — the one renderer every platform command-reply path uses, so a command that answers in Parts like `/config` shows its full output), `Done` when the reply is empty, and an honest unavailable text when the command did not execute. The registry validates at registration that ids are 1–64 chars of `[a-z0-9._-]`, unique, ≤4 actions, non-empty labels and `/`-prefixed commands.
+**Press path.** A button's callback data carries ONLY the button's index — never the command. The callback resolves the index back through the registered Spec and dispatches that action's `Command` through the same dispatch core `/command` and the deferred sweep use (`runAgentCommand` in `cmd/foci-gw/http_handlers.go` → `command.Registry.Dispatch`), on the suggestion's own session key; the message is then edited to the command's reply rendered as one text (`command.Response.DisplayText` — Parts joined by a blank line, else Text — the one renderer every platform command-reply path uses, so a command that answers in Parts like `/config` shows its full output), `Done` when the reply is empty, and an honest unavailable text when the command did not execute. The registry validates at registration that ids are 1–64 chars of `[a-z0-9._-]`, unique, ≤4 actions, non-empty labels and `/`-prefixed commands.
 
-**Mute.** `chat_metadata` key `nudge_muted`, a JSON array of nudge ids (sorted, de-duplicated — the shared `session` chat-set codec), keyed by (agent, chatID) alone — the index's platform-agnostic bucket — so a mute stored before the chat's registered platform row exists is read under exactly the same key after that row appears. `Send` fails closed on a session key that does not name the given agent's own ROOT chat session: another agent's key, a non-chat type, a child (branch/spawn) key, or a chat id that is not a non-zero number (`SessionKey.ChatID` would silently map all of those to chat 0, the shared fallback bucket every malformed key would otherwise mute; a child key would run the buttons' commands on a transient work session instead of the chat). `Send` checks the mute key before posting; the confirmation text only claims "Muted" because the write landed under the key Send reads (a failed write edits an honest failure text). The mute applies to that chat only: a new chat on the same platform sees the nudge once more (per chat is the stable unit the index offers). The read-modify-write is serialised by a mutex (like `Hub.pinsMu`), so two simultaneous mutes both persist; an unreadable stored value is treated as empty and overwritten by the next mute.
+**Mute.** `chat_metadata` key `suggestion_muted`, a JSON array of suggestion ids (sorted, de-duplicated — the shared `session` chat-set codec), keyed by (agent, chatID) alone — the index's platform-agnostic bucket — so a mute stored before the chat's registered platform row exists is read under exactly the same key after that row appears. `Send` fails closed on a session key that does not name the given agent's own ROOT chat session: another agent's key, a non-chat type, a child (branch/spawn) key, or a chat id that is not a non-zero number (`SessionKey.ChatID` would silently map all of those to chat 0, the shared fallback bucket every malformed key would otherwise mute; a child key would run the buttons' commands on a transient work session instead of the chat). `Send` checks the mute key before posting; the confirmation text only claims "Muted" because the write landed under the key Send reads (a failed write edits an honest failure text). The mute applies to that chat only: a new chat on the same platform sees the suggestion once more (per chat is the stable unit the index offers). The read-modify-write is serialised by a mutex (like `Hub.pinsMu`), so two simultaneous mutes both persist; an unreadable stored value is treated as empty and overwritten by the next mute.
 
-**Wiring.** `shared.finalize` builds a per-agent `Registry` (empty — no concrete nudge ships yet; the SR onboarding nudge is a later ticket) and `Sender`, and stores the sender on `agentInstance.nudgeSender` for the first call site. `NewSender` requires every dep and rejects a nil one at construction, so a wiring mistake fails agent startup instead of surfacing as a nil dereference inside a platform press callback. Connection resolution goes through `sessionChatResolver` (the nudge lands in the session's own chat, #2275's rule). A connection without `ButtonSender` gets the interactive layer's numbered text fallback — which registers no callback, so it offers no execution path (and no mute path).
+**Wiring.** `shared.finalize` builds a per-agent `Registry` (empty — no concrete suggestion ships yet; the SR onboarding suggestion is a later ticket) and `Sender`, and stores the sender on `agentInstance.suggestionSender` for the first call site. `NewSender` requires every dep and rejects a nil one at construction, so a wiring mistake fails agent startup instead of surfacing as a nil dereference inside a platform press callback. Connection resolution goes through `sessionChatResolver` (the suggestion lands in the session's own chat, #2275's rule). A connection without `ButtonSender` gets the interactive layer's numbered text fallback — which registers no callback, so it offers no execution path (and no mute path).
 
 ### Rule Extraction
 

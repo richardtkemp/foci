@@ -1,4 +1,4 @@
-package nudge
+package suggestion
 
 import (
 	"path/filepath"
@@ -24,13 +24,13 @@ func TestMuteStoresSortedDeduplicatedJSONArray(t *testing.T) {
 	idx := tempMuteIndex(t)
 	m := newMuteStore(idx)
 
-	if err := m.mute("clutch", 42, "z.nudge"); err != nil {
+	if err := m.mute("clutch", 42, "z.suggestion"); err != nil {
 		t.Fatalf("mute: %v", err)
 	}
-	if err := m.mute("clutch", 42, "a.nudge"); err != nil {
+	if err := m.mute("clutch", 42, "a.suggestion"); err != nil {
 		t.Fatalf("mute: %v", err)
 	}
-	if err := m.mute("clutch", 42, "a.nudge"); err != nil { // duplicate collapses
+	if err := m.mute("clutch", 42, "a.suggestion"); err != nil { // duplicate collapses
 		t.Fatalf("mute: %v", err)
 	}
 
@@ -38,8 +38,8 @@ func TestMuteStoresSortedDeduplicatedJSONArray(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetChatMetadata: %v", err)
 	}
-	if stored != `["a.nudge","z.nudge"]` {
-		t.Errorf("stored = %s, want [\"a.nudge\",\"z.nudge\"]", stored)
+	if stored != `["a.suggestion","z.suggestion"]` {
+		t.Errorf("stored = %s, want [\"a.suggestion\",\"z.suggestion\"]", stored)
 	}
 }
 
@@ -53,7 +53,7 @@ func TestMuteUnreadableStoredValueTreatedAsEmpty(t *testing.T) {
 	if err := idx.SetChatMetadata("clutch", "", 42, MuteKey, `{"not":"an array"}`); err != nil {
 		t.Fatalf("seed garbage: %v", err)
 	}
-	muted, err := m.muted("clutch", 42, "a.nudge")
+	muted, err := m.muted("clutch", 42, "a.suggestion")
 	if err != nil {
 		t.Fatalf("muted: %v", err)
 	}
@@ -61,33 +61,33 @@ func TestMuteUnreadableStoredValueTreatedAsEmpty(t *testing.T) {
 		t.Error("muted(garbage stored) = true, want false")
 	}
 
-	if err := m.mute("clutch", 42, "a.nudge"); err != nil {
+	if err := m.mute("clutch", 42, "a.suggestion"); err != nil {
 		t.Fatalf("mute over garbage: %v", err)
 	}
 	stored, err := idx.GetChatMetadata("clutch", "", 42, MuteKey)
 	if err != nil {
 		t.Fatalf("GetChatMetadata: %v", err)
 	}
-	if stored != `["a.nudge"]` {
-		t.Errorf("stored after overwrite = %s, want [\"a.nudge\"]", stored)
+	if stored != `["a.suggestion"]` {
+		t.Errorf("stored after overwrite = %s, want [\"a.suggestion\"]", stored)
 	}
 }
 
-// TestMuteOtherNudgeUnaffected proves mutes are per nudge id: muting one id
+// TestMuteOtherSuggestionUnaffected proves mutes are per suggestion id: muting one id
 // leaves another sendable for the same chat.
-func TestMuteOtherNudgeUnaffected(t *testing.T) {
+func TestMuteOtherSuggestionUnaffected(t *testing.T) {
 	idx := tempMuteIndex(t)
 	m := newMuteStore(idx)
 
-	if err := m.mute("clutch", 42, "a.nudge"); err != nil {
+	if err := m.mute("clutch", 42, "a.suggestion"); err != nil {
 		t.Fatalf("mute: %v", err)
 	}
-	muted, err := m.muted("clutch", 42, "b.nudge")
+	muted, err := m.muted("clutch", 42, "b.suggestion")
 	if err != nil {
 		t.Fatalf("muted: %v", err)
 	}
 	if muted {
-		t.Error("muting a.nudge muted b.nudge too")
+		t.Error("muting a.suggestion muted b.suggestion too")
 	}
 }
 
@@ -102,7 +102,7 @@ func TestMuteConcurrentPressesBothPersist(t *testing.T) {
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
-		id := string(rune('a'+i)) + ".nudge"
+		id := string(rune('a'+i)) + ".suggestion"
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -119,7 +119,7 @@ func TestMuteConcurrentPressesBothPersist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetChatMetadata: %v", err)
 	}
-	want := `["a.nudge","b.nudge","c.nudge","d.nudge","e.nudge","f.nudge","g.nudge","h.nudge"]`
+	want := `["a.suggestion","b.suggestion","c.suggestion","d.suggestion","e.suggestion","f.suggestion","g.suggestion","h.suggestion"]`
 	if stored != want {
 		t.Errorf("stored = %s, want %s", stored, want)
 	}
@@ -136,7 +136,7 @@ func TestMuteSurvivesPlatformRowAppearingLater(t *testing.T) {
 	m := newMuteStore(idx)
 
 	// No platform row exists yet.
-	if err := m.mute("clutch", 42, "a.nudge"); err != nil {
+	if err := m.mute("clutch", 42, "a.suggestion"); err != nil {
 		t.Fatalf("mute before platform row: %v", err)
 	}
 
@@ -146,7 +146,7 @@ func TestMuteSurvivesPlatformRowAppearingLater(t *testing.T) {
 		t.Fatalf("seed platform row: %v", err)
 	}
 
-	muted, err := m.muted("clutch", 42, "a.nudge")
+	muted, err := m.muted("clutch", 42, "a.suggestion")
 	if err != nil {
 		t.Fatalf("muted after platform row: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestMuteWriteFailurePropagates(t *testing.T) {
 	if err := idx.Close(); err != nil {
 		t.Fatalf("close index: %v", err)
 	}
-	if err := m.mute("clutch", 42, "a.nudge"); err == nil {
+	if err := m.mute("clutch", 42, "a.suggestion"); err == nil {
 		t.Error("mute on a closed index = nil, want error")
 	}
 }
