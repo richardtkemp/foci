@@ -42,8 +42,9 @@ type httpHandlerDeps struct {
 	// one visible conversation for an agent whose default rung finds nothing
 	// non-archived. Production wires app.CreateDefaultConversation. It is
 	// injected only into the delivery resolver (resolveTargetSession — /send,
-	// /branch, /webhook); defaultSessionKey (command dispatch) leaves it nil so
-	// /status and /command never mint a conversation (#1859).
+	// /branch, /webhook, and /command's optional session selector, #2296);
+	// defaultSessionKey (/status and a selector-less /command) leaves it nil
+	// so those never mint a conversation (#1859).
 	createDefault func(agentID string) (string, error)
 	// rubrics is the evals registry (nil when it failed to load): /score
 	// validates against it, /evals/rubrics lists it.

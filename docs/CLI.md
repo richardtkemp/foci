@@ -20,7 +20,7 @@ These flags are accepted by all commands:
 | `--socket <path>` | | `FOCI_GW_SOCK` | Gateway Unix socket path. Auto-detected from `~/data/foci-gw.sock`. No API key needed. |
 | `--addr <host:port>` | | `FOCI_ADDR` | Gateway TCP address. Default: `127.0.0.1:18791`. Used when no Unix socket is available. |
 | `--agent <id>` | `-a` | `FOCI_AGENT` | Target a specific agent. Default: first configured agent. |
-| `--session <sel>` | `-s` | `FOCI_SESSION` | Target session selector: full session key, session name, or chat alias. Empty = the agent's default session. |
+| `--session <sel>` | `-s` | `FOCI_SESSION` | Target session selector: full session key, session name, or chat alias. Empty = the agent's default session. Send/branch/score read the env var; `command` accepts `-s` but does **not** read `FOCI_SESSION` (see `command`). |
 | `--model <model>` | `-m` | `FOCI_MODEL` | Model override: group name (`powerful`/`fast`/`cheap`), model name, or `developer/model_id`. See [MODELS.md](MODELS.md). |
 | `--if-warm <dur>` (`--if-active`) | | `FOCI_IF_WARM` (`FOCI_IF_ACTIVE`) | **Session-level**: skip if the target session has not run a turn within duration (e.g. `8h`, `30m`). A turn currently in flight always counts as active. |
 | `--if-cold <dur>` (`--if-inactive`) | | `FOCI_IF_COLD` (`FOCI_IF_INACTIVE`) | **Session-level**: skip if the target session has run a turn within duration (e.g. `30m`, `1h`). Opposite of `--if-warm`; in-flight always counts. Standard keepalive shape. |
@@ -293,8 +293,10 @@ Dispatches a slash command directly via the HTTP API and returns the result to t
 
 **Usage:**
 ```
-foci command [-a agent] [--if-warm <dur>] [--if-cold <dur>] [--if-user-active <dur>] [--if-user-inactive <dur>] [--wait-warm <dur>] [--wait-cold <dur>] </cmd> [args]
+foci command [-a agent] [-s session] [--if-warm <dur>] [--if-cold <dur>] [--if-user-active <dur>] [--if-user-inactive <dur>] [--wait-warm <dur>] [--wait-cold <dur>] </cmd> [args]
 ```
+
+**Target session:** `-s/--session` names the session the command runs on — a full session key, a session name, or a chat alias, resolved through the same server-side ladder as `foci send` (a name nothing matches creates a new, empty session). Unlike send, `foci command` does **not** read `FOCI_SESSION`: a cron or script that happens to have it exported keeps dispatching on the agent's default session. With no `-s`, the command runs on the default session.
 
 **Activity gates:** `command` accepts the same four activity-gate flags as `send` (and reads the same `FOCI_IF_*` env vars). The gate is evaluated server-side against the session the command targets; a turn in flight always counts as active, so a gated command never interrupts mid-turn work.
 

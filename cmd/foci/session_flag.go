@@ -1,10 +1,15 @@
 package main
 
 // sessionFlag holds the -s/--session selector shared by `foci send`,
-// `foci branch` and `foci score` (#2284): the session the request targets —
-// a full session key, a session name, or a chat alias — resolved server-side
-// through the one route ladder. An empty selector targets the agent's default
-// session.
+// `foci branch`, `foci score` and `foci command` (#2284, #2296): the session
+// the request targets — a full session key, a session name, or a chat alias —
+// resolved server-side through the one route ladder. An empty selector
+// targets the agent's default session.
+//
+// `foci command` is a deliberate exception to the env default: it parses and
+// emits the flag but never applies FOCI_SESSION (parseCommandFlags skips
+// applyEnvDefault), so a cron or script that happens to export it keeps
+// dispatching on the agent's default session (#2296 ruling).
 //
 // Centralised here for the same reason as gateFlags/waitFlags/humanFlag: the
 // subcommands parse, env-default and emit it identically, from one

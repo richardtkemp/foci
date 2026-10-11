@@ -69,16 +69,21 @@ func cmdEval(base string, args []string) error {
 }
 
 func commandUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: foci command [-a agent] [gate flags] </cmd> [args]
+	fmt.Fprintf(os.Stderr, `Usage: foci command [-a agent] [-s session] [gate flags] </cmd> [args]
 
 Dispatch a slash command via the gateway (bypasses agent conversation).
 
 Flags:
   -a, --agent <id>          Target agent (env: FOCI_AGENT)
+  -s, --session <id|alias>  Target session the command runs on: full session key,
+                            session name, or chat alias; a name nothing matches
+                            creates a new, empty session. Unlike send, foci
+                            command does not read FOCI_SESSION — with no -s, the
+                            command runs on the agent's default session
 
 Activity gates come in two dispositions on the same conditions, evaluated
-against the session the command targets (a turn in flight always counts as
-warm):
+against the session the command targets (-s names it; otherwise the agent's
+default session — a turn in flight always counts as warm):
   --if-warm <dur>           Skip unless this session ran a turn within duration (env: FOCI_IF_WARM; alias --if-active)
   --if-cold <dur>           Skip if this session ran a turn within duration (env: FOCI_IF_COLD; alias --if-inactive)
   --if-user-active <dur>    Skip unless the user touched this agent within duration (env: FOCI_IF_USER_ACTIVE)
@@ -106,13 +111,14 @@ instead of skipping and hoping the next cron tick lands):
 }
 
 // commandFlags is the parsed flag set of `foci command`: the shared if/wait
-// gate flag sets plus the human declaration. Everything else is the command
-// string itself. Parsed by parseCommandFlags so the flag handling is
-// testable in-process (the parseSendFlags pattern).
+// gate flag sets, the human declaration and the session selector. Everything
+// else is the command string itself. Parsed by parseCommandFlags so the flag
+// handling is testable in-process (the parseSendFlags pattern).
 type commandFlags struct {
 	gateFlags
 	waitFlags
 	humanFlag
+	sessionFlag // -s/--session target (#2296) — no FOCI_SESSION default, see parseCommandFlags
 }
 
 // parseCommandFlags consumes `foci command`'s flags (and their env defaults)
@@ -131,11 +137,19 @@ func parseCommandFlags(args []string) (flags commandFlags, rest []string) {
 			i = ni
 			continue
 		}
+		if c, ni := flags.sessionFlag.tryParseSessionArg(args, i); c {
+			i = ni
+			continue
+		}
 		rest = append(rest, args[i])
 	}
 	flags.gateFlags.applyEnvDefaults()
 	flags.waitFlags.applyEnvDefaults()
 	flags.humanFlag.applyEnvDefault()
+	// Deliberately NO flags.sessionFlag.applyEnvDefault(): unlike send and
+	// branch, `foci command` must not inherit FOCI_SESSION — a cron or
+	// script that happens to have it exported keeps dispatching on the
+	// agent's default session (#2296 ruling).
 	return flags, rest
 }
 
@@ -147,7 +161,7 @@ func cmdCommand(base string, args []string) error {
 	agent, args := parseAgentFlag(args)
 	flags, rest := parseCommandFlags(args)
 	if len(rest) == 0 {
-		return fmt.Errorf("usage: foci command [-a agent] [gate flags] </cmd> [args]")
+		return fmt.Errorf("usage: foci command [-a agent] [-s session] [gate flags] </cmd> [args]")
 	}
 	cmd := strings.Join(rest, " ")
 	if !strings.HasPrefix(cmd, "/") {
@@ -160,6 +174,7 @@ func cmdCommand(base string, args []string) error {
 	flags.gateFlags.addToBody(body)
 	flags.waitFlags.addToBody(body)
 	flags.humanFlag.addToBody(body)
+	flags.sessionFlag.addToBody(body)
 	return postJSON(base+"/command", body)
 }
 

@@ -269,3 +269,31 @@ func TestBranch_BadWaitDuration(t *testing.T) {
 		t.Fatalf("code=%d want 400; body=%s", w.Code, w.Body.String())
 	}
 }
+
+// TestBranch_DecodeErrorNamesField pins the #2296 decode-error contract for
+// /branch: a body that fails to decode ("human" as a string where the struct
+// wants a bool) answers 400 naming the decode problem — encoding/json's
+// error names the field and type — instead of the "need {...}" hint the
+// decode site used to answer. Which requests are rejected is unchanged.
+func TestBranch_DecodeErrorNamesField(t *testing.T) {
+	d, mock := httpTestSetup(t, httpTestOpts{})
+	mux := newTestMux(d)
+
+	w := postJSON(mux, "/branch", `{"text":"q","human":"yes"}`)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("#2296: status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	for _, want := range []string{"bad request:", "cannot unmarshal", "human"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("#2296: decode-error body %q does not name %q", body, want)
+		}
+	}
+	if strings.Contains(body, "need {") {
+		t.Errorf("#2296: decode-error body %q claims a missing field — a mistyped field must be named as the decode problem", body)
+	}
+	if calls := mock.snapshot(); len(calls) != 0 {
+		t.Errorf("backend called %d time(s) for an undecodable body, want 0", len(calls))
+	}
+}

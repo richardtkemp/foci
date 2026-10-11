@@ -1,0 +1,98 @@
+package main
+
+import (
+	"strings"
+	"testing"
+)
+
+// TestParseCommandFlagsSessionConsumed is the #2296 red test at the parser
+// level: `foci command` must consume -s/--session in all four forms, leaving
+// only the command words in rest. On the base the flag tokens fall into the
+// command string.
+func TestParseCommandFlagsSessionConsumed(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"-s value", []string{"-s", "Fabro", "/ping"}},
+		{"-s=value", []string{"-s=Fabro", "/ping"}},
+		{"--session value", []string{"--session", "Fabro", "/ping"}},
+		{"--session=value", []string{"--session=Fabro", "/ping"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			flags, rest := parseCommandFlags(tc.args)
+			if flags.sessionFlag.session != "Fabro" {
+				t.Errorf("#2296: parsed selector = %q, want Fabro", flags.sessionFlag.session)
+			}
+			if len(rest) != 1 || rest[0] != "/ping" {
+				t.Errorf("#2296: parseCommandFlags(%v) rest = %v, want only the command word [/ping] — the session flag leaked into the command string", tc.args, rest)
+			}
+		})
+	}
+
+	// A valueless -s at the end of the args stays in the command words,
+	// exactly as `foci send` treats it (no next token to consume).
+	_, rest := parseCommandFlags([]string{"/ping", "-s"})
+	if len(rest) != 2 || rest[0] != "/ping" || rest[1] != "-s" {
+		t.Errorf("rest = %v, want [/ping -s] — a bare valueless flag is command text", rest)
+	}
+}
+
+// TestCommandSessionFlagForwarded is the #2296 red test at the body level:
+// `foci command -s <sel> /ping` must put the selector on the /command body
+// as "session" and keep the command word as the command, in all four flag
+// forms.
+func TestCommandSessionFlagForwarded(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"-s value", []string{"-a", "clutch", "-s", "Fabro", "/ping"}},
+		{"-s=value", []string{"-a", "clutch", "-s=Fabro", "/ping"}},
+		{"--session value", []string{"-a", "clutch", "--session", "Fabro", "/ping"}},
+		{"--session=value", []string{"-a", "clutch", "--session=Fabro", "/ping"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := captureBody(t, func(base string) error {
+				return cmdCommand(base, tc.args)
+			})
+			if body["session"] != "Fabro" {
+				t.Errorf("#2296: body session = %v, want Fabro — the selector never reached the gateway", body["session"])
+			}
+			if body["command"] != "/ping" {
+				t.Errorf("#2296: body command = %v, want /ping only (the session flag leaked?)", body["command"])
+			}
+		})
+	}
+}
+
+// TestCommandUsageDocumentsSession is the #2296 doc red test: `foci command
+// -h` must document -s/--session in the usage line and the flags table, and
+// state the deliberate carve-out that command does NOT read FOCI_SESSION.
+func TestCommandUsageDocumentsSession(t *testing.T) {
+	help := captureStderr(t, commandUsage)
+	for _, want := range []string{
+		"[-s session]",               // the usage line shows the flag
+		"-s, --session",              // the flags table documents it
+		"does not read FOCI_SESSION", // the env carve-out is stated
+	} {
+		if !strings.Contains(help, want) {
+			t.Errorf("#2296: commandUsage output does not mention %q", want)
+		}
+	}
+}
+
+// TestCommandSessionFlagNoEnvDefault characterises the deliberate env
+// carve-out (#2296 ruling): unlike `foci send`, `foci command` never applies
+// the FOCI_SESSION default — with the env var set and no -s, the body
+// carries no session key, so a cron or script that happens to export it
+// keeps dispatching on the agent's default session.
+func TestCommandSessionFlagNoEnvDefault(t *testing.T) {
+	t.Setenv("FOCI_SESSION", "research")
+	body := captureBody(t, func(base string) error {
+		return cmdCommand(base, []string{"-a", "clutch", "/reset"})
+	})
+	if _, ok := body["session"]; ok {
+		t.Errorf("body carries session = %v from FOCI_SESSION — command must not apply the env default", body["session"])
+	}
+}

@@ -155,8 +155,9 @@ func buildActivityCheckers(d httpHandlerDeps) (userActivityChecker, sessionActiv
 // it starts no turn at all. It belongs to the DISPATCH boundary: call it only
 // once the request is actually running or queued, never while a gate or a
 // validation error can still refuse it — a request that fails to dispatch is
-// not user attention. No-op when the agent has no periodic runner (the HTTP
-// test harness wires none).
+// not user attention. No-op when the agent has no periodic runner
+// (inst.kaRunner == nil — e.g. an agent whose keepalive/periodic runner is
+// not configured).
 func notifyHumanInteraction(inst *agentInstance) {
 	if inst.kaRunner != nil {
 		inst.kaRunner.NotifyInteraction()
@@ -182,16 +183,18 @@ func stampHumanCommandDispatch(d httpHandlerDeps, inst *agentInstance, sessionKe
 // resolveTargetSession resolves an endpoint's (agent, session-selector) pair
 // through the single route.Resolver ladder, writing the appropriate HTTP error
 // on failure. Every endpoint that takes a session selector resolves here, so
-// /send, /branch, and /webhook behave identically (/command targets the
-// default session directly via defaultSessionKey): exact key → named
-// session → chat alias → create-named — an unknown-but-valid name resolves
-// to a NEW, empty named key (Ruling #2284, Dick 2026-10-09: keep); empty
-// selector → the agent's default session. Returns ok=false after an error
-// response has been written.
+// /send, /branch, /webhook and /command's optional session selector (#2296)
+// behave identically (only a selector-less /command targets the default
+// session directly via defaultSessionKey): exact key → named session → chat
+// alias → create-named — an unknown-but-valid name resolves to a NEW, empty
+// named key (Ruling #2284, Dick 2026-10-09: keep); empty selector → the
+// agent's default session. Returns ok=false after an error response has been
+// written.
 func resolveTargetSession(d httpHandlerDeps, w http.ResponseWriter, agentID, selector, policy, endpoint string) (route.Resolution, route.Receipt, bool) {
 	// CreateDefault is set here and nowhere else in the HTTP layer: /send,
-	// /branch and /webhook are delivery paths, so an agent whose every
-	// conversation is archived gets one minted rather than a 412 (#1859).
+	// /branch, /webhook and /command's session selector are delivery paths,
+	// so an agent whose every conversation is archived gets one minted
+	// rather than a 412 (#1859).
 	r := &route.Resolver{Index: d.sessionIndex, PreferredPlatform: d.cfg.DefaultPlatformFor, CreateDefault: d.createDefault}
 	t := route.Target{Agent: agentID, Rest: selector, Create: true, Policy: route.PolicyFallback}
 	if strings.Contains(selector, "?") {
@@ -257,12 +260,10 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			waitRequest
 			Async bool `json:"async"`
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, jsonMaxBodyBytes)
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Text == "" {
-			if bodyTooLarge(err) {
-				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
-				return
-			}
+		if !decodeCappedJSON(w, r, &req) {
+			return
+		}
+		if req.Text == "" {
 			http.Error(w, "bad request: need {\"text\": \"...\"}", http.StatusBadRequest)
 			return
 		}
@@ -487,6 +488,7 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 		}
 		var req struct {
 			Agent          string `json:"agent"`
+			Session        string `json:"session"`
 			Command        string `json:"command"`
 			Human          bool   `json:"human"` // #1130: caller declares a human sent this
 			IfUserActive   string `json:"if_user_active"`
@@ -495,12 +497,10 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 			IfInactive     string `json:"if_inactive"`
 			waitRequest
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, jsonMaxBodyBytes)
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Command == "" {
-			if bodyTooLarge(err) {
-				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
-				return
-			}
+		if !decodeCappedJSON(w, r, &req) {
+			return
+		}
+		if req.Command == "" {
 			http.Error(w, "bad request: need {\"command\": \"/ping\"}", http.StatusBadRequest)
 			return
 		}
@@ -510,7 +510,23 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 			http.Error(w, fmt.Sprintf("unknown agent: %q", req.Agent), http.StatusBadRequest)
 			return
 		}
+
+		// Session target (#2296): a non-empty selector resolves through the
+		// one ladder — identically to /send and /branch, embedded
+		// create=/policy= params included — BEFORE the activity gate, so the
+		// gate, the defer record, the dispatch and the human stamp all act
+		// on the session the caller named. An empty selector keeps the plain
+		// default key: /command with no selector is a control path, so no
+		// CreateDefault minting (#1859).
 		sk := defaultSessionKey(d, inst.id)
+		rcpt := route.Receipt{SessionKey: sk}
+		if req.Session != "" {
+			_, resolved, ok := resolveTargetSession(d, w, inst.id, req.Session, "", "/command")
+			if !ok {
+				return
+			}
+			sk, rcpt = resolved.SessionKey, resolved
+		}
 
 		// Activity gate (TODO #753): a gated command — e.g. an overnight
 		// `/reset` cron with --if-inactive — is skipped when the target
@@ -537,7 +553,9 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 		// command with no wait field dispatches now, exactly as before. An
 		// unmet wait defers the command (persisted, restart-surviving) for
 		// the sweep to dispatch once the condition holds; the caller gets the
-		// 202 deferred receipt instead of a dispatch.
+		// 202 deferred receipt instead of a dispatch — the resolution's
+		// receipt when a selector was given, so it names where the deferred
+		// command will land (#2296).
 		if deferUnmetWait(w, d, activityGateInputs{
 			AgentID:     inst.id,
 			SessionBase: sessionBase,
@@ -545,7 +563,7 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 			LastTurnEnd: inst.ag.LastTurnEnd(sessionBase),
 		}, req.conds(), defersend.Record{
 			Kind: defersend.KindCommand, AgentID: inst.id, SessionKey: sk, Text: req.Command,
-		}, route.Receipt{SessionKey: sk}) {
+		}, rcpt) {
 			return
 		}
 
@@ -591,13 +609,7 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 			Silent bool `json:"silent"`
 		}
 		if r.ContentLength > 0 {
-			r.Body = http.MaxBytesReader(w, r.Body, jsonMaxBodyBytes)
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				if bodyTooLarge(err) {
-					http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
-					return
-				}
-				http.Error(w, "bad request: need {\"text\": \"...\"}", http.StatusBadRequest)
+			if !decodeCappedJSON(w, r, &req) {
 				return
 			}
 		}
@@ -796,6 +808,28 @@ const jsonMaxBodyBytes = 1 << 20
 func bodyTooLarge(err error) bool {
 	var mbe *http.MaxBytesError
 	return errors.As(err, &mbe)
+}
+
+// decodeCappedJSON caps r.Body at jsonMaxBodyBytes and decodes one JSON value
+// into v, writing the error response itself: 413 "request body too large" for
+// an over-cap body, 400 "bad request: <err>" for any other decode failure —
+// encoding/json's error names the offending field and type (e.g. `json:
+// cannot unmarshal string into Go struct field .human of type bool`), so a
+// mistyped body is no longer misreported as a missing field (#2296). An empty
+// body is a decode failure like any other (io.EOF → "bad request: EOF").
+// Returns false once a response has been written; the caller keeps only the
+// required-field check for a body that decodes cleanly.
+func decodeCappedJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, jsonMaxBodyBytes)
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		if bodyTooLarge(err) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return false
+		}
+		http.Error(w, fmt.Sprintf("bad request: %v", err), http.StatusBadRequest)
+		return false
+	}
+	return true
 }
 
 // handleWebhook returns the handler for POST /webhook/{agent}/{hookid}.

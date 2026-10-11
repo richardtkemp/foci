@@ -235,3 +235,45 @@ func TestSend_NoDefaultSession_CreatesDefault(t *testing.T) {
 		t.Errorf("backend saw %q, want text ending in %q", got, "hello")
 	}
 }
+
+// TestSend_DecodeErrorNamesField pins the #2296 decode-error contract for
+// /send: a body that fails to decode ("human" as a string where the struct
+// wants a bool) answers 400 naming the decode problem — encoding/json's
+// error names the field and type — instead of the "need {...}" hint that
+// misreports a mistyped field as a missing one.
+func TestSend_DecodeErrorNamesField(t *testing.T) {
+	d, _ := httpTestSetup(t, httpTestOpts{})
+	mux := newTestMux(d)
+
+	w := postJSON(mux, "/send", `{"text":"x","human":"yes"}`)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("#2296: status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	for _, want := range []string{"bad request:", "cannot unmarshal", "human"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("#2296: decode-error body %q does not name %q", body, want)
+		}
+	}
+	if strings.Contains(body, "need {") {
+		t.Errorf("#2296: decode-error body %q claims a missing field — a mistyped field must be named as the decode problem", body)
+	}
+}
+
+// TestSend_EmptyBodyStillNeedText characterises the kept half of the decode
+// split: a body that decodes cleanly but leaves "text" empty still answers
+// the "need {...}" hint.
+func TestSend_EmptyBodyStillNeedText(t *testing.T) {
+	d, _ := httpTestSetup(t, httpTestOpts{})
+	mux := newTestMux(d)
+
+	w := postJSON(mux, "/send", `{}`)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+	if body := w.Body.String(); !strings.Contains(body, `need {"text": "..."}`) {
+		t.Errorf("body = %q, want the kept need-text hint", body)
+	}
+}

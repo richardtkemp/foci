@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -203,5 +204,264 @@ func TestCommand_BadWaitDuration(t *testing.T) {
 	w := postJSON(mux, "/command", `{"command":"/reset","wait_cold":"nope"}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("code=%d want 400; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// sessionKeySpy registers a /probe command that records the session key of
+// every execution (command.Request.SessionKey), so a test can assert WHICH
+// session a /command dispatch landed on — the observable behind every
+// session-selector test below. The mutex keeps it race-clean if a test ever
+// drives the deferred sweep concurrently.
+func sessionKeySpy() (*command.Command, func() []string) {
+	var mu sync.Mutex
+	var keys []string
+	return &command.Command{
+			Name: "probe",
+			Execute: func(_ context.Context, req command.Request, _ command.CommandContext) (command.Response, error) {
+				mu.Lock()
+				keys = append(keys, req.SessionKey)
+				mu.Unlock()
+				return command.Response{Text: "probed"}, nil
+			},
+		}, func() []string {
+			mu.Lock()
+			defer mu.Unlock()
+			return append([]string(nil), keys...)
+		}
+}
+
+// TestCommand_SessionNamedDispatchesThere is the #2296 red test: a /command
+// whose body names an existing named session dispatches the command on THAT
+// session's key, not the agent's default — the probe command sees the named
+// key, and the response is the command's own reply.
+func TestCommand_SessionNamedDispatchesThere(t *testing.T) {
+	probe, keys := sessionKeySpy()
+	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
+	registerRoot(t, d, testAgentID+"/iside")
+	mux := newTestMux(d)
+
+	w := postJSON(mux, "/command", `{"command":"/probe","session":"side"}`)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("#2296: status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["response"] != "probed" {
+		t.Errorf("#2296: response = %q, want the command's reply", resp["response"])
+	}
+	if got := keys(); len(got) != 1 || got[0] != testAgentID+"/iside" {
+		t.Errorf("#2296: command ran on session key(s) %v, want exactly %q — the selector was ignored", got, testAgentID+"/iside")
+	}
+}
+
+// TestCommand_SessionGateEvaluatedAgainstTarget pins that the activity gate
+// consults the session the SELECTOR resolved to, not the agent's default:
+// if_inactive must dispatch while the named target is cold even with a warm
+// default, and skip while the named target is warm even with a cold default.
+// On the base code both arms evaluate the default and get it wrong in
+// opposite directions.
+func TestCommand_SessionGateEvaluatedAgainstTarget(t *testing.T) {
+	t.Run("warm default, cold target dispatches", func(t *testing.T) {
+		probe, keys := sessionKeySpy()
+		d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
+		registerRoot(t, d, testAgentID+"/iside")
+		d.sessionIndex.TouchCacheTouch(testSessionKey, time.Now()) // default warm, target cold
+		mux := newTestMux(d)
+
+		w := postJSON(mux, "/command", `{"command":"/probe","session":"side","if_inactive":"1h"}`)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("#2296: status = %d, want 200; body: %s", w.Code, w.Body.String())
+		}
+		var resp map[string]string
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp["response"] != "probed" {
+			t.Errorf("#2296: response = %q, want the command's reply (the gate consulted the warm DEFAULT, not the cold target)", resp["response"])
+		}
+		if got := keys(); len(got) != 1 || got[0] != testAgentID+"/iside" {
+			t.Errorf("#2296: command ran on %v, want %q", got, testAgentID+"/iside")
+		}
+	})
+
+	t.Run("cold default, warm target skips", func(t *testing.T) {
+		probe, keys := sessionKeySpy()
+		d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
+		registerRoot(t, d, testAgentID+"/iside")
+		d.sessionIndex.TouchCacheTouch(testAgentID+"/iside", time.Now()) // target warm, default cold
+		mux := newTestMux(d)
+
+		w := postJSON(mux, "/command", `{"command":"/probe","session":"side","if_inactive":"1h"}`)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("#2296: status = %d, want 200 (a skip answers 200); body: %s", w.Code, w.Body.String())
+		}
+		var resp map[string]string
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp["response"] != "skipped: session recently active" {
+			t.Errorf("#2296: response = %q, want the skip message (the gate must see the warm TARGET, not the cold default)", resp["response"])
+		}
+		if got := keys(); len(got) != 0 {
+			t.Errorf("#2296: command ran %d time(s) on %v despite the warm target", len(got), got)
+		}
+	})
+}
+
+// TestCommand_SessionUnknownNameCreatesKey pins the #2284 create rung for
+// /command (#2296): a selector that matches no key, named session or alias
+// is a valid NAME — the command dispatches on the created <agent>/i<name>
+// key, the same rule /send and /branch resolve by.
+func TestCommand_SessionUnknownNameCreatesKey(t *testing.T) {
+	probe, keys := sessionKeySpy()
+	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
+	mux := newTestMux(d)
+
+	w := postJSON(mux, "/command", `{"command":"/probe","session":"nosuch"}`)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("#2296: status = %d, want 200 (an unknown name creates the session); body: %s", w.Code, w.Body.String())
+	}
+	if got := keys(); len(got) != 1 || got[0] != testAgentID+"/inosuch" {
+		t.Errorf("#2296: command ran on %v, want the created key %q", got, testAgentID+"/inosuch")
+	}
+}
+
+// TestCommand_SessionSelectorParamRefused pins that /command's selector
+// carries the same embedded-parameter grammar /branch's does: ?create=false
+// on an otherwise-unknown name is refused with the SAME 400 body /branch
+// answers (the resolver's create-disabled error), not dispatched on the
+// default session.
+func TestCommand_SessionSelectorParamRefused(t *testing.T) {
+	probe, keys := sessionKeySpy()
+	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
+	mux := newTestMux(d)
+
+	w := postJSON(mux, "/command", `{"command":"/probe","session":"nosuch?create=false"}`)
+	branch := postJSON(mux, "/branch", `{"text":"q","session":"nosuch?create=false"}`)
+
+	if w.Code != http.StatusBadRequest || branch.Code != http.StatusBadRequest {
+		t.Fatalf("#2296: /command=%d /branch=%d, want both 400; bodies: %q / %q", w.Code, branch.Code, w.Body.String(), branch.Body.String())
+	}
+	if w.Body.String() != branch.Body.String() {
+		t.Errorf("#2296: /command refusal %q differs from /branch's %q — the selector must resolve identically", w.Body.String(), branch.Body.String())
+	}
+	if got := keys(); len(got) != 0 {
+		t.Errorf("#2296: command ran %d time(s) on %v despite the refused selector", len(got), got)
+	}
+}
+
+// TestCommand_NoSessionStillDefault characterises the empty-selector rule:
+// with no session field, /command keeps dispatching on the agent's default
+// session key directly (defaultSessionKey, no CreateDefault minting) — the
+// pre-#2296 behaviour, unchanged.
+func TestCommand_NoSessionStillDefault(t *testing.T) {
+	probe, keys := sessionKeySpy()
+	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
+	mux := newTestMux(d)
+
+	w := postJSON(mux, "/command", `{"command":"/probe"}`)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	if got := keys(); len(got) != 1 || got[0] != testSessionKey {
+		t.Errorf("command ran on %v, want the default session %q", got, testSessionKey)
+	}
+}
+
+// TestCommand_DeferredWithSessionStoresResolvedKey is the deferred arm of
+// #2296: a /command with a selector and an unmet wait (evaluated against the
+// named target) stores the RESOLVED key in the defer record — so the sweep
+// dispatches on the named session — and the 202 receipt names the resolved
+// session and rung from the resolution, not a bare default-key receipt.
+func TestCommand_DeferredWithSessionStoresResolvedKey(t *testing.T) {
+	spy, runs := resetSpy()
+	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{spy}})
+	registerRoot(t, d, testAgentID+"/iside")
+	store := withDeferStore(t, &d)
+	d.sessionIndex.TouchCacheTouch(testAgentID+"/iside", time.Now()) // target warm → wait_cold unmet
+	mux := newTestMux(d)
+
+	w := postJSON(mux, "/command", `{"command":"/reset","session":"side","wait_cold":"1h"}`)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("#2296: status = %d, want 202 (the TARGET is warm, so wait_cold defers); body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["status"] != "deferred" {
+		t.Errorf("status field = %v, want deferred; body: %s", resp["status"], w.Body.String())
+	}
+	if resp["session"] != testAgentID+"/iside" {
+		t.Errorf("#2296: receipt session = %v, want the resolved %q", resp["session"], testAgentID+"/iside")
+	}
+	if resp["resolved_via"] != "named" {
+		t.Errorf("#2296: receipt resolved_via = %v, want named (the resolution's rung)", resp["resolved_via"])
+	}
+	all, _ := store.All()
+	if len(all) != 1 {
+		t.Fatalf("queued = %d, want 1", len(all))
+	}
+	if all[0].Kind != defersend.KindCommand || all[0].SessionKey != testAgentID+"/iside" {
+		t.Errorf("#2296: record = %+v, want one command on the resolved key %q", all[0], testAgentID+"/iside")
+	}
+	if n := runs.Load(); n != 0 {
+		t.Errorf("command executed %d time(s) despite the unmet wait, want 0", n)
+	}
+}
+
+// TestCommand_DecodeErrorNamesField pins the #2296 decode-error contract: a
+// body that fails to decode ("human" as a string where the struct wants a
+// bool) answers 400 naming the decode problem — encoding/json's error names
+// the field and type — instead of the "need {...}" hint that misreports a
+// mistyped field as a missing one.
+func TestCommand_DecodeErrorNamesField(t *testing.T) {
+	d, _ := httpTestSetup(t, httpTestOpts{})
+	mux := newTestMux(d)
+
+	w := postJSON(mux, "/command", `{"command":"/ping","human":"yes"}`)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("#2296: status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	for _, want := range []string{"bad request:", "cannot unmarshal", "human"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("#2296: decode-error body %q does not name %q", body, want)
+		}
+	}
+	if strings.Contains(body, "need {") {
+		t.Errorf("#2296: decode-error body %q claims a missing field — a mistyped field must be named as the decode problem", body)
+	}
+}
+
+// TestCommand_EmptyBodyStillNeedText characterises the kept half of the
+// decode split: a body that decodes CLEANLY but leaves the required field
+// empty still answers the "need {...}" hint.
+func TestCommand_EmptyBodyStillNeedText(t *testing.T) {
+	d, _ := httpTestSetup(t, httpTestOpts{})
+	mux := newTestMux(d)
+
+	w := postJSON(mux, "/command", `{}`)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+	if body := w.Body.String(); !strings.Contains(body, `need {"command": "/ping"}`) {
+		t.Errorf("body = %q, want the kept need-command hint", body)
+	}
+}
+
+// TestCommand_BodyTooLarge413 characterises the unchanged cap: an over-cap
+// /command body answers 413, not a 400 decode message.
+func TestCommand_BodyTooLarge413(t *testing.T) {
+	d, _ := httpTestSetup(t, httpTestOpts{})
+	mux := newTestMux(d)
+	big := strings.Repeat("a", (1<<20)+1024) // just over the 1 MiB cap
+
+	w := postJSON(mux, "/command", `{"command":"/`+big+`"}`)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, want 413", w.Code)
 	}
 }
