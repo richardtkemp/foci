@@ -70,18 +70,19 @@ type Skill struct {
 // inside a skill directory (writing-code/go.md). The path is cleaned first, so
 // "./x/SKILL.md", "x/SKILL.md/" and "/a/../b/SKILL.md" behave; a path whose
 // containing directory has no usable name — empty, bare "SKILL.md", "/SKILL.md",
-// "../SKILL.md" — is not a match. Pure: no I/O, no state; the directory NAME is
+// "../SKILL.md" and any deeper parent hop ("../../SKILL.md", whose directory
+// is "..") — is not a match. Pure: no I/O, no state; the directory NAME is
 // the skill's identity, matching how SystemBlock lists skills by directory.
 func NameFromReadPath(path string) (name string, ok bool) {
 	clean := filepath.Clean(path)
 	if filepath.Base(clean) != "SKILL.md" {
 		return "", false
 	}
-	dir := filepath.Dir(clean)
-	if dir == "." || dir == ".." || dir == string(filepath.Separator) {
+	name = filepath.Base(filepath.Dir(clean))
+	if name == "." || name == ".." || name == string(filepath.Separator) {
 		return "", false
 	}
-	return filepath.Base(dir), true
+	return name, true
 }
 
 // Registry holds loaded skills.

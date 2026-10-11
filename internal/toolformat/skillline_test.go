@@ -26,6 +26,7 @@ func TestLoadedSkillLine(t *testing.T) {
 		{"ordinary read keeps summary", "read", raw(map[string]string{"path": "/home/foci/notes.txt"}), ""},
 		{"ordinary CC Read keeps summary", "Read", raw(map[string]string{"file_path": "/home/foci/notes.txt"}), ""},
 		{"sub-file inside skill dir", "read", raw(map[string]string{"path": "/home/foci/shared/skills/writing-code/go.md"}), ""},
+		{"parent-hop SKILL.md is not a load", "Read", raw(map[string]string{"file_path": "../../SKILL.md"}), ""},
 		{"write to a SKILL.md is not a load", "write", raw(map[string]string{"path": skill, "content": "x"}), ""},
 		{"edit of a SKILL.md is not a load", "edit", raw(map[string]string{"path": skill, "old_string": "a", "new_string": "b"}), ""},
 		{"non-read tool", "shell", raw(map[string]string{"command": "cat " + skill}), ""},

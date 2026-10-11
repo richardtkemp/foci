@@ -21,12 +21,13 @@ func LoadedSkillLine(toolName string, m map[string]json.RawMessage) string {
 
 // readToolPath resolves the file path a read tool call targets, across the
 // tool names and param keys the transports use: Claude Code's Read carries
-// file_path, foci's own read tool (API transport, and the exec bridge's
-// foci_read) carries path, and opencode's read carries filePath (that key is
-// unverified in this checkout — no fixture carries a read part's input; if it
-// is wrong the branch is simply dead and the generic summary shows, never a
-// false chip). Non-read tools — including a write or edit aimed at a
-// SKILL.md — return "".
+// file_path, foci's own read tool (API transport) carries path, and
+// opencode's read carries filePath (that key is unverified in this checkout —
+// no fixture carries a read part's input; if it is wrong the branch is simply
+// dead and the generic summary shows, never a false chip). Non-read tools
+// return "" — including a write or edit aimed at a SKILL.md, and the exec
+// bridge's foci_read, which reaches the tracker as a shell call, never as a
+// read.
 func readToolPath(toolName string, m map[string]json.RawMessage) string {
 	switch toolName {
 	case "Read":

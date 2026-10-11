@@ -29,6 +29,8 @@ func TestNameFromReadPath(t *testing.T) {
 		{"bare SKILL.md has no dir name", "SKILL.md", "", false},
 		{"root SKILL.md has no dir name", "/SKILL.md", "", false},
 		{"dot-dot SKILL.md has no dir name", "../SKILL.md", "", false},
+		{"multi dot-dot SKILL.md has no dir name", "../../SKILL.md", "", false},
+		{"deep dot-dot SKILL.md has no dir name", "../../../SKILL.md", "", false},
 		{"empty path", "", "", false},
 	}
 	for _, tt := range tests {
