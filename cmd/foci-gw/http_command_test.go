@@ -12,6 +12,7 @@ import (
 
 	"foci/internal/command"
 	"foci/internal/defersend"
+	"foci/internal/session"
 )
 
 // TestCommand_HappyPath proves POST /command dispatches a registered slash
@@ -353,20 +354,49 @@ func TestCommand_SessionSelectorParamRefused(t *testing.T) {
 // TestCommand_NoSessionStillDefault characterises the empty-selector rule:
 // with no session field, /command keeps dispatching on the agent's default
 // session key directly (defaultSessionKey, no CreateDefault minting) — the
-// pre-#2296 behaviour, unchanged.
+// pre-#2296 behaviour, unchanged. Both halves are pinned directly: dispatch
+// on the default key, and a counting createDefault hook that must stay at
+// zero in a harness where minting is the only way a session could appear.
 func TestCommand_NoSessionStillDefault(t *testing.T) {
-	probe, keys := sessionKeySpy()
-	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
-	mux := newTestMux(d)
+	t.Run("dispatches on the default key", func(t *testing.T) {
+		probe, keys := sessionKeySpy()
+		d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
+		mux := newTestMux(d)
 
-	w := postJSON(mux, "/command", `{"command":"/probe"}`)
+		w := postJSON(mux, "/command", `{"command":"/probe"}`)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
-	}
-	if got := keys(); len(got) != 1 || got[0] != testSessionKey {
-		t.Errorf("command ran on %v, want the default session %q", got, testSessionKey)
-	}
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+		}
+		if got := keys(); len(got) != 1 || got[0] != testSessionKey {
+			t.Errorf("command ran on %v, want the default session %q", got, testSessionKey)
+		}
+	})
+
+	t.Run("never mints a default conversation", func(t *testing.T) {
+		probe, keys := sessionKeySpy()
+		// noSession: the agent has no session a default rung could find, so
+		// the counting hook is the only way /command could produce a key.
+		d, _ := httpTestSetup(t, httpTestOpts{noSession: true, commands: []*command.Command{probe}})
+		var mints atomic.Int32
+		d.createDefault = func(agentID string) (string, error) {
+			mints.Add(1)
+			return session.NewChatSessionKey(agentID, 99), nil
+		}
+		mux := newTestMux(d)
+
+		w := postJSON(mux, "/command", `{"command":"/probe"}`)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (an empty default key is dispatched on, not refused); body: %s", w.Code, w.Body.String())
+		}
+		if n := mints.Load(); n != 0 {
+			t.Errorf("createDefault called %d time(s) — a selector-less /command must never mint a conversation (#1859)", n)
+		}
+		if got := keys(); len(got) != 1 || got[0] != "" {
+			t.Errorf("command ran on %v, want the plain defaultSessionKey result (empty here)", got)
+		}
+	})
 }
 
 // TestCommand_DeferredWithSessionStoresResolvedKey is the deferred arm of
@@ -408,6 +438,79 @@ func TestCommand_DeferredWithSessionStoresResolvedKey(t *testing.T) {
 	if n := runs.Load(); n != 0 {
 		t.Errorf("command executed %d time(s) despite the unmet wait, want 0", n)
 	}
+}
+
+// TestCommand_ReceiptInImmediateResponse pins the receipt half of #2296's
+// selector ruling: an immediate /command answers with the routing receipt
+// ({response, target, session, resolved_via}) — the same envelope /send's
+// slash-command path uses — so the caller can SEE where the command ran,
+// including the resolved_via "created" of a mistyped selector, which without
+// the receipt would run /reset on a brand-new empty session unseen. With no
+// selector the receipt names the default key with rung "default".
+func TestCommand_ReceiptInImmediateResponse(t *testing.T) {
+	t.Run("named selector", func(t *testing.T) {
+		probe, _ := sessionKeySpy()
+		d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
+		registerRoot(t, d, testAgentID+"/iside")
+		mux := newTestMux(d)
+
+		w := postJSON(mux, "/command", `{"command":"/probe","session":"side"}`)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("#2296: status = %d, want 200; body: %s", w.Code, w.Body.String())
+		}
+		var resp map[string]string
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp["response"] != "probed" {
+			t.Errorf("#2296: response = %q, want the command's reply", resp["response"])
+		}
+		if resp["session"] != testAgentID+"/iside" {
+			t.Errorf("#2296: receipt session = %q, want %q — the response must say where the command ran", resp["session"], testAgentID+"/iside")
+		}
+		if resp["resolved_via"] != "named" {
+			t.Errorf("#2296: receipt resolved_via = %q, want named", resp["resolved_via"])
+		}
+	})
+
+	t.Run("mistyped selector says created", func(t *testing.T) {
+		probe, _ := sessionKeySpy()
+		d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
+		mux := newTestMux(d)
+
+		w := postJSON(mux, "/command", `{"command":"/probe","session":"reserch"}`)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("#2296: status = %d, want 200; body: %s", w.Code, w.Body.String())
+		}
+		var resp map[string]string
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp["session"] != testAgentID+"/ireserch" {
+			t.Errorf("#2296: receipt session = %q, want the created %q", resp["session"], testAgentID+"/ireserch")
+		}
+		if resp["resolved_via"] != "created" {
+			t.Errorf("#2296: receipt resolved_via = %q, want created — a typo must be visible, not a silent fresh session", resp["resolved_via"])
+		}
+	})
+
+	t.Run("no selector names the default key", func(t *testing.T) {
+		probe, _ := sessionKeySpy()
+		d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
+		mux := newTestMux(d)
+
+		w := postJSON(mux, "/command", `{"command":"/probe"}`)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("#2296: status = %d, want 200; body: %s", w.Code, w.Body.String())
+		}
+		var resp map[string]string
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp["session"] != testSessionKey {
+			t.Errorf("#2296: receipt session = %q, want the default %q", resp["session"], testSessionKey)
+		}
+		if resp["resolved_via"] != "default" {
+			t.Errorf("#2296: receipt resolved_via = %q, want default (the plain default key is that rung's result)", resp["resolved_via"])
+		}
+	})
 }
 
 // TestCommand_DecodeErrorNamesField pins the #2296 decode-error contract: a

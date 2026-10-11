@@ -517,9 +517,19 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 		// gate, the defer record, the dispatch and the human stamp all act
 		// on the session the caller named. An empty selector keeps the plain
 		// default key: /command with no selector is a control path, so no
-		// CreateDefault minting (#1859).
+		// CreateDefault minting (#1859). Either way the caller gets the
+		// receipt — the immediate dispatch answers with it like /send, so a
+		// mistyped selector says where the command ran (resolved_via
+		// "created") instead of landing silently on a fresh empty session.
 		sk := defaultSessionKey(d, inst.id)
 		rcpt := route.Receipt{SessionKey: sk}
+		if sk != "" {
+			// The plain default key IS the default rung's result
+			// (defaultSessionKey runs the same ladder minus minting), so
+			// the receipt names the rung exactly like /send's empty
+			// selector does.
+			rcpt.Via = route.RungDefault
+		}
 		if req.Session != "" {
 			_, resolved, ok := resolveTargetSession(d, w, inst.id, req.Session, "", "/command")
 			if !ok {
@@ -533,12 +543,11 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 		// session ran a turn recently or has one in flight. Gating here, on
 		// the session this command actually targets, keeps it from
 		// interrupting active or mid-turn work.
-		sessionBase := sk
 		if !gate(w, activityGateInputs{
 			AgentID:        inst.id,
-			SessionBase:    sessionBase,
-			InFlight:       inst.ag.IsTurnInFlight(sessionBase),
-			LastTurnEnd:    inst.ag.LastTurnEnd(sessionBase),
+			SessionBase:    sk,
+			InFlight:       inst.ag.IsTurnInFlight(sk),
+			LastTurnEnd:    inst.ag.LastTurnEnd(sk),
 			IfUserActive:   req.IfUserActive,
 			IfUserInactive: req.IfUserInactive,
 			IfActive:       req.IfActive,
@@ -558,9 +567,9 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 		// command will land (#2296).
 		if deferUnmetWait(w, d, activityGateInputs{
 			AgentID:     inst.id,
-			SessionBase: sessionBase,
-			InFlight:    inst.ag.IsTurnInFlight(sessionBase),
-			LastTurnEnd: inst.ag.LastTurnEnd(sessionBase),
+			SessionBase: sk,
+			InFlight:    inst.ag.IsTurnInFlight(sk),
+			LastTurnEnd: inst.ag.LastTurnEnd(sk),
 		}, req.conds(), defersend.Record{
 			Kind: defersend.KindCommand, AgentID: inst.id, SessionKey: sk, Text: req.Command,
 		}, rcpt) {
@@ -580,7 +589,10 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 		if req.Human {
 			stampHumanCommandDispatch(d, inst, sk)
 		}
-		writeJSONResponse(w, result.Text)
+		// The receipt envelope /send's slash-command path uses: the command's
+		// reply plus where it landed, so `foci command -s <typo>` says the
+		// session was created instead of resetting a fresh empty one unseen.
+		writeJSONReceipt(w, result.Text, rcpt)
 	}
 }
 
