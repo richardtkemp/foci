@@ -67,14 +67,18 @@ func TestCommandSessionFlagForwarded(t *testing.T) {
 }
 
 // TestCommandUsageDocumentsSession is the #2296 doc red test: `foci command
-// -h` must document -s/--session in the usage line and the flags table, and
-// state the deliberate carve-out that command does NOT read FOCI_SESSION.
+// -h` must document -s/--session in the usage line and the flags table, say
+// which session the activity gates evaluate on, and state the deliberate
+// carve-out that command does NOT read FOCI_SESSION.
 func TestCommandUsageDocumentsSession(t *testing.T) {
-	help := captureStderr(t, commandUsage)
+	// Whitespace-normalised: the help text wraps at 78 columns, so phrases
+	// must match across line breaks.
+	help := strings.Join(strings.Fields(captureStderr(t, commandUsage)), " ")
 	for _, want := range []string{
-		"[-s session]",               // the usage line shows the flag
-		"-s, --session",              // the flags table documents it
-		"does not read FOCI_SESSION", // the env carve-out is stated
+		"[-s session]",  // the usage line shows the flag
+		"-s, --session", // the flags table documents it
+		"-s names it; otherwise the agent's default session", // the gates paragraph says which session they evaluate on
+		"does not read FOCI_SESSION",                         // the env carve-out is stated
 	} {
 		if !strings.Contains(help, want) {
 			t.Errorf("#2296: commandUsage output does not mention %q", want)
@@ -94,5 +98,19 @@ func TestCommandSessionFlagNoEnvDefault(t *testing.T) {
 	})
 	if _, ok := body["session"]; ok {
 		t.Errorf("body carries session = %v from FOCI_SESSION — command must not apply the env default", body["session"])
+	}
+}
+
+// TestCommandUsageErrorMentionsSession pins the usage error cmdCommand returns
+// when the command word is missing: it must offer -s/--session exactly like
+// the -h text, so a user sent to the error line still discovers the flag.
+// cmdCommand errors before any HTTP call, so the base URL is never used.
+func TestCommandUsageErrorMentionsSession(t *testing.T) {
+	err := cmdCommand("http://unused.invalid", []string{"-a", "clutch", "--wait-cold", "55m"})
+	if err == nil {
+		t.Fatal("#2296: no command word returned nil, want the usage error")
+	}
+	if !strings.Contains(err.Error(), "[-s session]") {
+		t.Errorf("#2296: usage error = %q, want it to document [-s session]", err.Error())
 	}
 }
