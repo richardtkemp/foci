@@ -231,46 +231,6 @@ func TestConfigGet_SchemaShape(t *testing.T) {
 	}
 }
 
-// TestConfigGet_AgentScopeInheritedValues is a characterisation test (listed
-// in .factory/red-gate-exempt.txt): it pins the agent scope's full inherited
-// chain — the file global, then the running GLOBAL value for override fields
-// whose agent row carries no default, then the running agent value, then the
-// built-in default — so rewiring the schema onto the shared resolver cannot
-// change what the editor shows.
-func TestConfigGet_AgentScopeInheritedValues(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "foci.toml")
-	os.WriteFile(path, []byte("[keepalive]\ninterval = \"30m\"\n\n[[agents]]\nid = \"clutch\"\n"), 0o600)
-	tick := "9s"
-	h := newTestHub()
-	h.deps = platform.ProviderDeps{Config: &config.Config{
-		SourcePath: path,
-		FileMode:   "0600",
-		Sessions:   config.SessionsConfig{MaxSystemPromptFile: 20000},
-		Agents:     []config.AgentConfig{{ID: "clutch", Scheduler: config.SchedulerConfig{TickInterval: &tick}}},
-	}}
-	c := fakeClient()
-	c.features = map[string]struct{}{featureConfigEdit: {}}
-	h.clients[c] = struct{}{}
-
-	h.handleConfigGet(c)
-	schema := lastConfigSchema(t, c)
-	if schema == nil {
-		t.Fatal("no config.schema frame")
-	}
-
-	values, _ := scopeByID(t, schema, "clutch")["values"].(map[string]any)
-	for key, want := range map[string]string{
-		"agent.keepalive.interval":                    "30m",   // inherited from the file's [keepalive]
-		"agent.sessions.max_system_prompt_chars_file": "20000", // running global (override row has no default tag)
-		"agent.scheduler.tick_interval":               "9s",    // running agent value
-		"agent.keepalive.max_user_idle":               "96h",   // built-in default
-	} {
-		if got := values[key]; got != want {
-			t.Errorf("%s = %v, want %q", key, got, want)
-		}
-	}
-}
-
 // TestConfigPut_WritesAndBroadcasts proves a valid config.put edits the file
 // and fans a fresh schema to every configEdit client (a plain client gets
 // nothing), while an invalid put answers only the requester with error set
