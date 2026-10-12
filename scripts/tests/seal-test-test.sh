@@ -120,7 +120,7 @@ ln -sfn "$TMP/work" "$TMP/worklink"
 expect "env: PWD is the logical (symlink) cwd" "PWD=$TMP/worklink" "$(cat "$TMP/goroot/seen")"
 expect "env: an opt-in var passes" "FOCI_OPENCODE_LIVE=1" "$seenA"
 expect "env: Go config passes" "GOFLAGS=-mod=mod" "$seenA"
-expect "one: -v without V=1" "test -trimpath -parallel=16 -v " "$seenA"
+expect "one: -v without V=1" "test -trimpath -ldflags=-w -parallel=16 -v " "$seenA"
 
 # Two callers with different PATHs and shells: the same test env.
 run pass one PATH="/srv/snap-bbb/bin:$TMP/goroot/bin:$PATH" OTEL_ZZ=1 FOCI_OPENCODE_LIVE=1 GOFLAGS=-mod=mod >/dev/null

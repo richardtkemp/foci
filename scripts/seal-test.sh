@@ -156,7 +156,11 @@ TESTENV_SHOWN=("${PASSTHRU_SHOWN[@]}" "${PINNED[@]}")
 # results. -v is therefore always on: per-test PASS/FAIL/SKIP lines and t.Logf
 # output are in LOGFILE for every run, and the terminal still shows only the
 # summary. -run and -count are added per run and do change the key.
-GOTEST_FLAGS=(-trimpath -parallel=16 -v)
+# -ldflags=-w drops DWARF debug info from the test binaries: linking the
+# cmd/foci-gw test binary took 5.1 s with it and 3.0 s without (make
+# bench-test-build, 2026-10-12). Stack traces and runtime.Caller still work;
+# only a debugger loses symbols, and none is used on test binaries.
+GOTEST_FLAGS=(-trimpath -ldflags=-w -parallel=16 -v)
 
 if [ -n "${FOCI_TEST_UNSEALED:-}" ]; then
   echo ">>> FOCI_TEST_UNSEALED=1 set — skipping Landlock sealing entirely" | tee -a "$LOGFILE" >&2
@@ -198,11 +202,11 @@ diagnostic_rerun() {
   while IFS= read -r pkg; do
     [ -z "$pkg" ] && continue
     echo "--- unsealed re-run: $pkg ---" >> "$LOGFILE"
-    if "${TESTENV[@]}" nice -n 19 go test -trimpath -count=1 "${extra_flags[@]}" "$pkg" >> "$LOGFILE" 2>&1; then
+    if "${TESTENV[@]}" nice -n 19 go test -trimpath -ldflags=-w -count=1 "${extra_flags[@]}" "$pkg" >> "$LOGFILE" 2>&1; then
       # A pass unsealed is also what a flake looks like. Only a second sealed
       # failure pins it on the sandbox (#2132).
       echo "--- sealed re-run: $pkg ---" >> "$LOGFILE"
-      if "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -trimpath -count=1 "${extra_flags[@]}" "$pkg" >> "$LOGFILE" 2>&1; then
+      if "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -trimpath -ldflags=-w -count=1 "${extra_flags[@]}" "$pkg" >> "$LOGFILE" 2>&1; then
         echo ">>> DIAGNOSTIC: $pkg passes on re-run both UNSEALED and SEALED — the failure is a FLAKE, not a sandbox write." | tee -a "$LOGFILE" >&2
       else
         echo ">>> DIAGNOSTIC: $pkg fails SEALED again but passes UNSEALED — it is writing outside the sandbox. Add the path to the whitelist in scripts/seal-test.sh, or stop writing there." | tee -a "$LOGFILE" >&2
