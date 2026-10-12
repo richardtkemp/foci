@@ -66,9 +66,9 @@ SIMPLE_BINS := foci-gw foci foci-call foci-cc-hook foci-codex-hook
 # same lock (~6 GB resident). Absent script (another host) = no-op.
 REAP_GRADLE = { [ -f /home/foci/shared/scripts/heavy-lock-reap-gradle.sh ] && bash /home/foci/shared/scripts/heavy-lock-reap-gradle.sh 9<&- ; true; };
 
-.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals llbox test test-one integration coverage coverage-report coverage-html coverage-check vet lint lint-unlocked lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check bench-test-build land clean setup-hooks
+.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals find-metadata-key-registry-drift llbox test test-one integration coverage coverage-report coverage-html coverage-check vet lint lint-unlocked lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check bench-test-build land clean setup-hooks
 
-all: $(SIMPLE_BINS) nosgid find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals llbox
+all: $(SIMPLE_BINS) nosgid find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals find-metadata-key-registry-drift llbox
 
 BUILDVCS := $(shell git rev-parse --git-dir >/dev/null 2>&1 && echo true || echo false)
 
@@ -154,6 +154,16 @@ find-wiring-drift:
 find-metadata-key-literals:
 	@mkdir -p bin
 	go build -o bin/find-metadata-key-literals ./scripts/find-metadata-key-literals
+
+# find-metadata-key-registry-drift checks internal/session's MetaKey*
+# constants against the SessionMetadataKeys registry: every constant
+# registered, every entry backed by a constant, no duplicates. Was a pair of
+# source-parsing go tests in internal/session, which keyed that package's
+# test cache on its files' modes and mtimes, so every fresh checkout re-ran
+# it (#2353). Stdlib-only, so it lives in the main module.
+find-metadata-key-registry-drift:
+	@mkdir -p bin
+	go build -o bin/find-metadata-key-registry-drift ./scripts/find-metadata-key-registry-drift
 
 # llbox — Landlock write-whitelist sealer, promoted from a throwaway POC
 # (foci_todo #1517) into a proper repo tool for #1523. `make test`/`make
@@ -476,7 +486,7 @@ lint:
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
 	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ... [$$(date +%T)]" >&2; flock 9; echo ">>> acquired heavy lock [$$(date +%T)]" >&2; $(REAP_GRADLE) $(MAKE) --no-print-directory lint-unlocked 9<&- || exit $$? ) 9</tmp/heavy
 
-lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals
+lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals find-metadata-key-registry-drift
 	@echo "=== golangci-lint ==="
 	@# --allow-serial-runners: golangci-lint has its own lock and by default a second
 	@# instance FAILS ("parallel golangci-lint is running") instead of waiting. The heavy
@@ -493,6 +503,8 @@ lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-cap
 	@./bin/find-wiring-drift
 	@echo "=== find-metadata-key-literals (string-literal session_metadata keys; use session.MetaKey*) ==="
 	@./bin/find-metadata-key-literals
+	@echo "=== find-metadata-key-registry-drift (MetaKey* constants vs SessionMetadataKeys) ==="
+	@./bin/find-metadata-key-registry-drift
 	@echo "=== deadcode (whole-program reachability, app code only) ==="
 	@# internal/testharness and internal/testtemp are test-only scaffolding:
 	# reachable solely from -tags=integration tests and _test.go files, which

@@ -1,67 +1,12 @@
 package session
 
-import (
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"os"
-	"strconv"
-	"strings"
-	"testing"
-)
+import "testing"
 
-// TestSessionMetadataKeysComplete proves the registry is the single source of
-// truth: every MetaKey* constant declared in this package appears in
-// SessionMetadataKeys, and every registry entry is backed by one of those
-// constants — so a new key added without registering (or a registry entry with
-// no constant) fails the build.
-func TestSessionMetadataKeysComplete(t *testing.T) {
-	consts := metaKeyConstants(t)
-	if len(consts) == 0 {
-		t.Fatal("no MetaKey* constants found in package source")
-	}
-	registered := make(map[string]bool, len(SessionMetadataKeys))
-	for _, mk := range SessionMetadataKeys {
-		registered[mk.Key] = true
-	}
-	for name, value := range consts {
-		if !registered[value] {
-			t.Errorf("%s = %q is missing from SessionMetadataKeys", name, value)
-		}
-	}
-	for _, mk := range SessionMetadataKeys {
-		backed := false
-		for _, value := range consts {
-			if value == mk.Key {
-				backed = true
-				break
-			}
-		}
-		if !backed {
-			t.Errorf("SessionMetadataKeys entry %q has no MetaKey* constant", mk.Key)
-		}
-	}
-}
-
-// TestSessionMetadataKeysNoDuplicates proves no key is registered twice and no
-// two MetaKey* constants collide on the same storage string, which would make
-// the registry order ambiguous.
-func TestSessionMetadataKeysNoDuplicates(t *testing.T) {
-	seen := make(map[string]bool, len(SessionMetadataKeys))
-	for _, mk := range SessionMetadataKeys {
-		if seen[mk.Key] {
-			t.Errorf("duplicate registry entry for key %q", mk.Key)
-		}
-		seen[mk.Key] = true
-	}
-	byValue := make(map[string]string, len(metaKeyConstants(t)))
-	for name, value := range metaKeyConstants(t) {
-		if other, ok := byValue[value]; ok {
-			t.Errorf("%s and %s share the same value %q", name, other, value)
-		}
-		byValue[value] = name
-	}
-}
+// Registry completeness (every MetaKey* constant registered, every entry
+// backed by a constant, no duplicates) is a static source check, run by
+// `make lint` via scripts/find-metadata-key-registry-drift rather than here:
+// a test that parsed this package's source keyed its cached result on every
+// file's mode and mtime, so each fresh checkout re-ran the package (#2353).
 
 // TestSessionMetadataKeysDisplayOrder pins the /sessions info display contract
 // at the registry: the Shown entries, in slice order, must equal the exact
@@ -133,51 +78,4 @@ func TestSessionMetadataKeyValuesStable(t *testing.T) {
 			t.Errorf("%s = %q, must stay %q (storage format — renaming requires a migration)", s.name, s.got, s.want)
 		}
 	}
-}
-
-// metaKeyConstants parses this package's non-test Go files and returns every
-// MetaKey* string constant declared in them, keyed by constant name. Parsing
-// the source (rather than a hand-maintained list) means a newly added
-// constant is automatically subject to the completeness checks.
-func metaKeyConstants(t *testing.T) map[string]string {
-	t.Helper()
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("read package dir: %v", err)
-	}
-	consts := make(map[string]string)
-	fset := token.NewFileSet()
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		file, err := parser.ParseFile(fset, name, nil, 0)
-		if err != nil {
-			t.Fatalf("parse %s: %v", name, err)
-		}
-		for _, decl := range file.Decls {
-			gen, ok := decl.(*ast.GenDecl)
-			if !ok || gen.Tok != token.CONST {
-				continue
-			}
-			for _, spec := range gen.Specs {
-				vs, ok := spec.(*ast.ValueSpec)
-				if !ok {
-					continue
-				}
-				for i, id := range vs.Names {
-					if !strings.HasPrefix(id.Name, "MetaKey") || i >= len(vs.Values) {
-						continue
-					}
-					if lit, ok := vs.Values[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-						if v, err := strconv.Unquote(lit.Value); err == nil {
-							consts[id.Name] = v
-						}
-					}
-				}
-			}
-		}
-	}
-	return consts
 }

@@ -81,8 +81,8 @@ type SessionMetadataKey struct {
 // data. It is an ordered slice, not a map: the Shown entries come first, in
 // the exact order /sessions info renders them (display order is not
 // derivable by sorting), followed by the keys /sessions info does not list.
-// metadata_keys_test.go fails if a MetaKey* constant is missing from this
-// slice or a key is duplicated.
+// `make lint` (scripts/find-metadata-key-registry-drift) fails if a MetaKey*
+// constant is missing from this slice or a key is duplicated.
 var SessionMetadataKeys = []SessionMetadataKey{
 	{Key: MetaKeyModel, Unset: "null", Shown: true},
 	{Key: MetaKeyModelEndpoint, Unset: "null", Shown: true},
