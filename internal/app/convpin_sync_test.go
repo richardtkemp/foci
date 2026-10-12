@@ -8,29 +8,6 @@ import (
 	"foci/internal/session"
 )
 
-// conversationPinned reports whether this conversation's roster pin is set and
-// whether the server knows at all: known=false means the key was never written
-// (or there is no session index to ask), which a caller must treat as "cannot
-// say", never as "explicitly unpinned". Intended consumer is the server-side
-// auto-archive sweep (#1159 step 2), which needs the pinned exemption.
-//
-// TEST-ONLY HOME, deliberately: the deadcode gate rejects a production
-// function whose only caller is a test, so this lives beside its tests and
-// #1159's sweep promotes it verbatim into convpin_sync.go — widening the
-// binding-scoped signature (the shape of conversationArchived) to
-// (agentID, chatID) if it must ask about conversations with no live binding.
-func (h *Hub) conversationPinned(b *convBinding) (pinned, known bool) {
-	idx := h.deps.SessionIndex
-	if idx == nil {
-		return false, false
-	}
-	v, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, chatMetaConvPinned)
-	if err != nil {
-		return false, false
-	}
-	return decodeConvPin(v)
-}
-
 // convPinSyncs collects every ConvPinSync frame queued for c, keyed by
 // conversation (last one wins, matching what the client would end up applying).
 func convPinSyncs(t *testing.T, c *wsClient) map[string]bool {
@@ -201,10 +178,13 @@ func TestHello_SeedsConvPinsToReconnectingDevice(t *testing.T) {
 	}
 }
 
-// TestConversationPinned_ThreeStates pins the accessor's contract for #1159
-// step 2: (true, true) for pinned, (false, true) for explicitly unpinned, and
-// (false, false) for never-written (or unanswerable — no session index, or a
-// read error), which a caller must not conflate with "unpinned".
+// TestConversationPinned_ThreeStates pins the accessor's contract for its
+// consumers (#1243's sweep now, #1159's later): (true, true) for pinned,
+// (false, true) for explicitly unpinned, and (false, false) for never-written
+// (or unanswerable — no session index), which a caller must not conflate with
+// "unpinned". Since the promotion to production the third state is split: a
+// row that cannot be READ returns err instead, which a caller must fail safe
+// on (the sweep keeps the chat).
 func TestConversationPinned_ThreeStates(t *testing.T) {
 	h, idx := convPinHub(t)
 	_ = idx.SetChatMetadata("clutch", "app", 42, chatMetaConvPinned, "1")
@@ -213,19 +193,19 @@ func TestConversationPinned_ThreeStates(t *testing.T) {
 	h.convs["c3"] = &convBinding{convID: "c3", agentID: "clutch", chatID: 44}
 	// c3: never written.
 
-	if pinned, known := h.conversationPinned(h.convs["c1"]); !pinned || !known {
-		t.Errorf("conversationPinned(c1) = %v/%v, want true/true", pinned, known)
+	if pinned, known, err := h.conversationPinned(h.convs["c1"]); err != nil || !pinned || !known {
+		t.Errorf("conversationPinned(c1) = %v/%v/%v, want true/true", pinned, known, err)
 	}
-	if pinned, known := h.conversationPinned(h.convs["c2"]); pinned || !known {
-		t.Errorf("conversationPinned(c2) = %v/%v, want false/true", pinned, known)
+	if pinned, known, err := h.conversationPinned(h.convs["c2"]); err != nil || pinned || !known {
+		t.Errorf("conversationPinned(c2) = %v/%v/%v, want false/true", pinned, known, err)
 	}
-	if pinned, known := h.conversationPinned(h.convs["c3"]); pinned || known {
-		t.Errorf("conversationPinned(c3) = %v/%v, want false/false", pinned, known)
+	if pinned, known, err := h.conversationPinned(h.convs["c3"]); err != nil || pinned || known {
+		t.Errorf("conversationPinned(c3) = %v/%v/%v, want false/false", pinned, known, err)
 	}
 
 	bare := newTestHub() // no SessionIndex at all
-	if pinned, known := bare.conversationPinned(&convBinding{convID: "c1", agentID: "clutch", chatID: 42}); pinned || known {
-		t.Errorf("conversationPinned with no session index = %v/%v, want false/false", pinned, known)
+	if pinned, known, err := bare.conversationPinned(&convBinding{convID: "c1", agentID: "clutch", chatID: 42}); err != nil || pinned || known {
+		t.Errorf("conversationPinned with no session index = %v/%v/%v, want false/false", pinned, known, err)
 	}
 }
 

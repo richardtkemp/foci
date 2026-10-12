@@ -51,6 +51,46 @@ func TestFrameStore_LastVisible(t *testing.T) {
 	}
 }
 
+// TestFrameStore_LastVisibleMessageID pins the sweep's "newest visible
+// message" source (#1243): the newest stored VISIBLE frame that carries a
+// messageId wins (a newer visible non-message frame does not shadow it, an
+// invisible message does not count), and no-such-frame / nil store report
+// ok=false with no error — the error return is reserved for a failed read,
+// which the sweep fails safe on.
+func TestFrameStore_LastVisibleMessageID(t *testing.T) {
+	s := tempFrameStore(t)
+	enc := func(f fap.ServerFrame, seq int64) string {
+		w, err := fap.Encode(f, seq, 0, "", "")
+		if err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		return w
+	}
+	msg := func(id string, seq int64) frameWrite {
+		return frameWrite{convID: "c1", seq: seq, sentMs: int64(seq) * 100, visible: true,
+			wire: enc(fap.ServerMessage{ConversationID: "c1", MessageID: id, Role: "assistant", Text: "x"}, seq)}
+	}
+	s.insert(msg("m1", 1))
+	// A NEWER visible frame with no message id (an ask) must not shadow m1…
+	s.insert(frameWrite{convID: "c1", seq: 2, sentMs: 200, visible: true,
+		wire: enc(fap.Interactive{ConversationID: "c1", PromptID: "p1", Text: "allow?"}, 2)})
+	// …and neither may a newer still, message-carrying but INVISIBLE frame.
+	s.insert(frameWrite{convID: "c1", seq: 4, sentMs: 400, visible: false,
+		wire: enc(fap.ServerMessage{ConversationID: "c1", MessageID: "m3", Role: "assistant", Text: "hidden"}, 4)})
+	s.insert(msg("m2", 3))
+
+	if id, ok, err := s.LastVisibleMessageID("c1"); err != nil || !ok || id != "m2" {
+		t.Errorf("LastVisibleMessageID(c1) = (%q, %v, %v), want (m2, true, nil)", id, ok, err)
+	}
+	if id, ok, err := s.LastVisibleMessageID("ghost"); err != nil || ok || id != "" {
+		t.Errorf("LastVisibleMessageID(ghost) = (%q, %v, %v), want (\"\", false, nil)", id, ok, err)
+	}
+	var nilStore *frameStore
+	if id, ok, err := nilStore.LastVisibleMessageID("c1"); err != nil || ok || id != "" {
+		t.Errorf("nil store = (%q, %v, %v), want (\"\", false, nil)", id, ok, err)
+	}
+}
+
 func TestFrameStore_PromptIndex(t *testing.T) {
 	s := tempFrameStore(t)
 	s.PutPrompt("p1", "c1", "clutch", 100)

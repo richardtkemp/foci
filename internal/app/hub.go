@@ -129,6 +129,18 @@ type Hub struct {
 	// read+write, and here across the sends too.
 	settingsMu sync.Mutex
 
+	// openSetMu serialises every writer of the shared open-set (open_chats):
+	// handleConversationOpenSet's full replace, mintFacetConversation's append
+	// and the auto-close sweep's filter (#1243), each together with its
+	// conversation.openSync fan-out — with the send outside the lock an older
+	// set can reach a device after a newer one and close a just-opened tab
+	// (the #2081 shape settingsMu guards against for settings). Held across
+	// the sends on purpose; deliberately not h.mu — see settingsMu.
+	openSetMu sync.Mutex
+
+	autoCloseOnce  sync.Once     // startAutoCloseSweep starts at most one loop per hub
+	autoCloseEvery time.Duration // sweep cadence override; 0 = autoCloseSweepInterval (tests shrink it)
+
 	wizardMu      sync.Mutex
 	wizards       map[string]*wizardSession // wizardId → live out-of-band wizard session
 	wizardByScope map[string]string         // wizard scope (session key) → wizardId
@@ -848,7 +860,13 @@ func (h *Hub) HasFacet(string) bool                 { return false }
 // the roster. ensureBinding with a nil client creates the socketless durable
 // binding; the real socket re-attaches on the app's next hello/resume
 // (#app-binding-restore).
+//
+// It also starts the auto-close sweep, deferred so it runs after the rebuild
+// above on every return path: the sweep judges open chats by their bindings'
+// last-activity stamps, and those are what the rebuild rehydrates. Test hubs
+// with no gateway context start no loop (startAutoCloseSweep).
 func (h *Hub) StartAll(context.Context) {
+	defer h.startAutoCloseSweep()
 	if h.frames == nil {
 		return
 	}
@@ -1276,7 +1294,10 @@ func (h *Hub) adoptSession(b *convBinding, sessionKey string) {
 // tab opens on every device, and pushes the updated roster. Returns the new
 // conversation ID. Focus stays device-local — the requesting client foregrounds
 // it via the command response's OpenConversationID (a ConversationForeground
-// frame sent only to that socket).
+// frame sent only to that socket). The open-set append runs under openSetMu with
+// the other two open-set writers (see handleConversationOpenSet), so a sweep or
+// a device's replace running concurrently can neither lose this tab nor have
+// its own newer set overwritten by the mint's stale copy.
 func (h *Hub) mintFacetConversation(agentID, sessionKey string) (string, error) {
 	b := h.ensureBinding(nil, agentID, fap.NewULID())
 	h.adoptSession(b, sessionKey)
@@ -1287,6 +1308,7 @@ func (h *Hub) mintFacetConversation(agentID, sessionKey string) (string, error) 
 		return "", fmt.Errorf("facet conversation %s: session key %q refused", b.convID, sessionKey)
 	}
 
+	h.openSetMu.Lock()
 	ids := h.loadOpenChats()
 	present := false
 	for _, id := range ids {
@@ -1302,6 +1324,7 @@ func (h *Hub) mintFacetConversation(agentID, sessionKey string) (string, error) 
 		// no originating device to exclude — every client must learn the new tab.
 		h.broadcastExcept(nil, fap.ConversationOpenSync{ConversationIDs: ids})
 	}
+	h.openSetMu.Unlock()
 	h.pushRosterAll()
 	return b.convID, nil
 }
@@ -1733,14 +1756,21 @@ func (h *Hub) loadOpenChats() []string {
 	return ids
 }
 
-// storeOpenChats persists the shared open-set as a JSON array. Last-write-wins.
+// storeOpenChats persists the shared open-set as a JSON array. Every caller
+// that read-modify-writes the set (handleConversationOpenSet's replace,
+// mintFacetConversation's append, the auto-close sweep's filter, #1243) holds
+// openSetMu across its load and this store, so no writer can save a stale set
+// over a newer one. A failed persist is logged, not dropped: the sweep and the
+// mirrors both depend on this row surviving a restart.
 func (h *Hub) storeOpenChats(ids []string) {
 	idx := h.deps.SessionIndex
 	if idx == nil {
 		return
 	}
 	if b, err := json.Marshal(ids); err == nil {
-		_ = idx.SetSystemState(systemStateOpenChats, string(b))
+		if err := idx.SetSystemState(systemStateOpenChats, string(b)); err != nil {
+			appLog.Warnf("open-set persist: %v", err)
+		}
 	}
 }
 
@@ -1800,8 +1830,11 @@ func (h *Hub) snapshotClients() []*wsClient {
 //
 // This is the shared shape behind the cross-device mirrors (read.sync,
 // draft.sync, conversation.openSync, pin.sync, scroll.sync, convpin.sync).
-// Every one of those frames is idempotent and last-write-wins by design, so it
-// is deliberately sent to clients that do not currently hold the conversation
+// Most are user-originated; conversation.openSync is also sent with sender=nil
+// for the server-originated open-set changes (mintFacetConversation's append,
+// the auto-close sweep #1243), so every device hears them. Every one of those
+// frames is idempotent and last-write-wins by design, so it is deliberately
+// sent to clients that do not currently hold the conversation
 // too: a read advance is monotonic, a draft is stored for the chat's next
 // open, an open-set is a full replace, a pin set is absolute, and a scroll
 // position is stored for the chat's next open. There is no per-frame
@@ -2177,7 +2210,10 @@ func (h *Hub) removeClient(c *wsClient) {
 // fell back to warming only the root, and every non-root open cache silently
 // expired (~1h after its last touch). Persisted open_chats is kept in sync while a
 // client is connected (ConversationOpenSync → storeOpenChats), so it is a strict
-// superset of the live view and correct in both states.
+// superset of the live view and correct in both states. It is no longer
+// user-written only: the auto-close sweep (#1243) removes inactive chats from it,
+// so a chat the sweep closes stops being warmed from its next resolution here —
+// exactly the bound the sweep exists to put on warming.
 //
 // Each persisted conv ID is resolved through the durable hub binding registry
 // (h.convs — rebuilt at startup by StartAll, survives socket churn) to its session
@@ -2458,6 +2494,19 @@ func (b *convBinding) agentActivityLocked() (kind fap.ActivityKind, detail, comm
 		return b.turnKind, b.turnDetail, b.turnCommand, b.turnShell
 	}
 	return fap.ActivityKindIdle, "", "", false
+}
+
+// activityIdle reports whether the roster would report NO activity for this
+// conversation: no turn in flight and nothing session-scoped pending (no
+// running subagents, spawns or awaited agent) — the full resolved activity of
+// resolveActivity, flattened to the one bit the auto-close sweep (#1243)
+// exempts a chat on: one with anything in flight is being worked in and stays
+// open.
+func (b *convBinding) activityIdle() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	kind, _ := b.resolveActivity()
+	return kind == fap.ActivityKindIdle
 }
 
 // activityFrameLocked builds the full Activity frame from the current inputs:

@@ -33,6 +33,27 @@ func decodeConvPin(v string) (pinned, known bool) {
 	return false, false
 }
 
+// conversationPinned reports this conversation's roster pin and whether the
+// server knows at all: known=false means the key was never written (or there
+// is no session index to ask), which a caller must treat as "cannot say",
+// never as "explicitly unpinned". err means the stored value could not be
+// read — a third state, distinct from both, so a decision never has to guess
+// through a storage hiccup. Consumers: the auto-close sweep (#1243), which
+// exempts pinned chats and keeps a chat whose pin it could not read; the
+// server-side auto-archive sweep (#1159) will need the same exemption.
+func (h *Hub) conversationPinned(b *convBinding) (pinned, known bool, err error) {
+	idx := h.deps.SessionIndex
+	if idx == nil {
+		return false, false, nil
+	}
+	v, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, chatMetaConvPinned)
+	if err != nil {
+		return false, false, err
+	}
+	pinned, known = decodeConvPin(v)
+	return pinned, known, nil
+}
+
 // handleConvPin persists the roster's CONVERSATION pin and mirrors it to the
 // user's other devices — the scroll mirror's shape exactly (#2313): a scalar
 // last-write-wins store plus a fan-out that skips the sender. Not a

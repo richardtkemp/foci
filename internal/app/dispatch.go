@@ -593,21 +593,23 @@ func readWatermarkAdvances(cur, next string) bool {
 	return next > cur
 }
 
-// handleDraft persists a conversation's unsent composer text and mirrors it to
-// the user's other devices. Empty Text is a valid clear (composer emptied /
-// message sent) — unlike handleRead, there is no non-empty guard. Fire-and-
-// forget: DraftPut is not conversation-reliability-scoped (see inboundConvID),
-// so there is no ack to fold here.
 // handleConversationOpenSet records this connection's open-set (for keepalive
 // warming), persists it as the user's shared open-set, and mirrors it to the
 // user's other devices so they reconcile their open tabs. Idempotent full
-// replace, last-write-wins.
+// replace — but no longer the only writer: mintFacetConversation appends a
+// minted facet chat and the auto-close sweep (#1243) removes stale ones, so
+// the store + fan-out pair runs under openSetMu (like the sweep's and the
+// mint's own pairs), keeping one writer's set from being overwritten by
+// another's stale copy.
 func (h *Hub) handleConversationOpenSet(client *wsClient, f fap.ConversationOpenSet) {
 	// storeOpenChats is the load-bearing half. The per-socket map that used to be
 	// built here was written and never read (#1742); OpenSessionsForAgent resolves
 	// keepalive warming from the PERSISTED set, precisely because a live-socket
 	// view was abandoned the moment the app backgrounded.
+	h.openSetMu.Lock()
 	h.storeOpenChats(f.ConversationIDs)
+	h.broadcastExcept(client, fap.ConversationOpenSync{ConversationIDs: f.ConversationIDs})
+	h.openSetMu.Unlock()
 	// Attach this socket as a live fan-out target for every open conversation it
 	// already has a binding for but isn't attached to yet. A conversation first
 	// learned AFTER the socket's hello — minted on another device and mirrored via
@@ -618,7 +620,8 @@ func (h *Hub) handleConversationOpenSet(client *wsClient, f fap.ConversationOpen
 	// the current high-water: the socket backfilled history over HTTP and needs only
 	// future frames, and the seed keeps a fresh reader from pinning the replay-buffer
 	// trim floor at 0. Idempotent — skip an already-attached socket so an established
-	// reader's ack isn't reset.
+	// reader's ack isn't reset. Outside openSetMu: it touches bindings, not the
+	// open-set row.
 	for _, id := range f.ConversationIDs {
 		h.mu.RLock()
 		b := h.convs[id]
@@ -629,9 +632,13 @@ func (h *Hub) handleConversationOpenSet(client *wsClient, f fap.ConversationOpen
 		b.attach(client)
 		b.seedClientAck(client, b.currentSeq())
 	}
-	h.broadcastExcept(client, fap.ConversationOpenSync{ConversationIDs: f.ConversationIDs})
 }
 
+// handleDraft persists a conversation's unsent composer text and mirrors it to
+// the user's other devices. Empty Text is a valid clear (composer emptied /
+// message sent) — unlike handleRead, there is no non-empty guard. Fire-and-
+// forget: DraftPut is not conversation-reliability-scoped (see inboundConvID),
+// so there is no ack to fold here.
 func (h *Hub) handleDraft(client *wsClient, f fap.DraftPut) {
 	h.mu.RLock()
 	b := h.convs[f.ConversationID]

@@ -3,6 +3,7 @@ package app
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -275,6 +276,43 @@ func (s *frameStore) LastVisible(convID string) (preview string, sentMs int64, o
 		return "", 0, false
 	}
 	return preview, sentMs, true
+}
+
+// LastVisibleMessageID returns the message id of convID's newest stored VISIBLE
+// frame that carries one — the id a read frame names for "read to the newest
+// message", which is how the auto-close sweep (#1243) tells read from unread.
+// Only message-carrying frames (message/textEnd/media/notification-with-id)
+// have a messageId field, so the instr prefilter skips interactive and control
+// frames without decoding them; a frame whose id does not survive decoding
+// counts as none rather than guessed-at. ok is false when no such frame is
+// stored (a nil store included); a DB read failure is returned as err so a
+// caller can fail safe instead of judging the chat unread.
+func (s *frameStore) LastVisibleMessageID(convID string) (id string, ok bool, err error) {
+	if s == nil {
+		return "", false, nil
+	}
+	var wire string
+	err = s.db.QueryRow(
+		`SELECT wire FROM app_frames WHERE conv_id = ? AND visible = 1 AND instr(wire, '"messageId":"') > 0 ORDER BY seq DESC LIMIT 1`,
+		convID,
+	).Scan(&wire)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	var env fap.Envelope
+	if json.Unmarshal([]byte(wire), &env) != nil {
+		return "", false, nil
+	}
+	var d struct {
+		MessageID string `json:"messageId"`
+	}
+	if json.Unmarshal(env.D, &d) != nil || d.MessageID == "" {
+		return "", false, nil
+	}
+	return d.MessageID, true, nil
 }
 
 // Range returns up to limit frames with seq > fromSeq, in ascending seq order —
