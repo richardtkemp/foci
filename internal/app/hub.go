@@ -1760,8 +1760,9 @@ func (h *Hub) loadOpenChats() []string {
 // that read-modify-writes the set (handleConversationOpenSet's replace,
 // mintFacetConversation's append, the auto-close sweep's filter, #1243) holds
 // openSetMu across its load and this store, so no writer can save a stale set
-// over a newer one. A failed persist is logged, not dropped: the sweep and the
-// mirrors both depend on this row surviving a restart.
+// over a newer one. A persist that fails warns instead of vanishing silently:
+// the row is what a restart replays as the user's open tabs, so its loss must
+// be diagnosable from the log.
 func (h *Hub) storeOpenChats(ids []string) {
 	idx := h.deps.SessionIndex
 	if idx == nil {

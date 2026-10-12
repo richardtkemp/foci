@@ -118,8 +118,8 @@ func TestSweepOpenChats_DefaultOnRemovesStaleKeepsFreshAndBroadcasts(t *testing.
 	if got := h.loadOpenChats(); len(got) != 2 || got[0] != "freshA" || got[1] != "freshB" {
 		t.Errorf("stored open-set = %v, want [freshA freshB] in their original order", got)
 	}
-	if ids, seen := lastOpenSync(t, other); !seen || len(ids) != 2 || ids[0] != "freshA" || ids[1] != "freshB" {
-		t.Errorf("other client OpenSync = %v (seen=%v), want [freshA freshB]", ids, seen)
+	if ids, n := lastOpenSync(t, other); n != 1 || len(ids) != 2 || ids[0] != "freshA" || ids[1] != "freshB" {
+		t.Errorf("other client OpenSync = %v (frames=%d), want exactly one [freshA freshB]", ids, n)
 	}
 }
 
@@ -138,7 +138,7 @@ func TestSweepOpenChats_DisabledRemovesNothing(t *testing.T) {
 	if got := h.loadOpenChats(); len(got) != 1 || got[0] != "stale" {
 		t.Errorf("stored open-set = %v, want [stale] untouched while disabled", got)
 	}
-	if _, seen := lastOpenSync(t, other); seen {
+	if _, n := lastOpenSync(t, other); n != 0 {
 		t.Error("a disabled sweep must not broadcast")
 	}
 }
@@ -211,7 +211,7 @@ func TestSweepOpenChats_UnreadableBagDoesNothing(t *testing.T) {
 	if got := h.loadOpenChats(); len(got) != 1 || got[0] != "stale" {
 		t.Errorf("stored open-set = %v, want [stale] untouched on an unreadable bag", got)
 	}
-	if _, seen := lastOpenSync(t, other); seen {
+	if _, n := lastOpenSync(t, other); n != 0 {
 		t.Error("a sweep that could not read its setting must not broadcast")
 	}
 }
@@ -441,7 +441,7 @@ func TestSweepOpenChats_NoopWhenNothingStale(t *testing.T) {
 	if before != after {
 		t.Errorf("open_chats rewritten by a no-op sweep: %q → %q", before, after)
 	}
-	if _, seen := lastOpenSync(t, other); seen {
+	if _, n := lastOpenSync(t, other); n != 0 {
 		t.Error("a no-op sweep must not broadcast")
 	}
 }
@@ -462,8 +462,8 @@ func TestSweepOpenChats_LastStaleChatClosesToEmptySet(t *testing.T) {
 	if raw, _ := idx.GetSystemState(systemStateOpenChats); raw != "[]" {
 		t.Errorf("stored open-set = %q, want []", raw)
 	}
-	if ids, seen := lastOpenSync(t, other); !seen || len(ids) != 0 {
-		t.Errorf("other client OpenSync = %v (seen=%v), want an empty list", ids, seen)
+	if ids, n := lastOpenSync(t, other); n != 1 || len(ids) != 0 {
+		t.Errorf("other client OpenSync = %v (frames=%d), want exactly one empty list", ids, n)
 	}
 }
 
