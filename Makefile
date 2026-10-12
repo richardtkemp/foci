@@ -381,9 +381,9 @@ bucket-audit:
 # Measure how build flags change the time to compile and link a package's test
 # binary (go test -c only; no tests run). Holds the heavy lock. See the header of
 # scripts/bench-test-build.sh for MODE (link|cold|both) and VARIANTS syntax.
-#   make bench-test-build PKG=./cmd/foci-gw/ REPS=3 MODE=link VARIANTS='default|-ldflags=-w'
+#   make bench-test-build PKG=./cmd/foci-gw/ REPS=3 MODE=link VARIANTS="default|-ldflags='-s -w'"
 bench-test-build:
-	@PKG='$(or $(PKG),./cmd/foci-gw/)' REPS='$(or $(REPS),3)' MODE='$(or $(MODE),both)' VARIANTS='$(VARIANTS)' bash scripts/bench-test-build.sh
+	@PKG='$(or $(PKG),./cmd/foci-gw/)' REPS='$(or $(REPS),3)' MODE='$(or $(MODE),both)' VARIANTS="$(VARIANTS)" bash scripts/bench-test-build.sh
 
 land:
 	@LAND_LOCK=/tmp/foci-merge.lock LAND_TEST_TARGET=test bash /home/foci/shared/scripts/land.sh

@@ -13,7 +13,9 @@
 #             cold: an empty, private GOCACHE per build, so the time is the
 #                   full compile of the package and all its dependencies + link
 #             both: run both (default)
-#   VARIANTS  '|'-separated build-flag sets; the word "default" means no flags
+#   VARIANTS  '|'-separated build-flag sets; the word "default" means no flags.
+#             Each set is split like a shell command line, so quote a flag
+#             value that holds a space: VARIANTS="default|-ldflags='-s -w'"
 #
 # Output: one row per variant and mode: median, min and max seconds, and the
 # binary size. A variant that fails to build is reported as FAILED with its log.
@@ -26,7 +28,7 @@ set -u
 PKG=${PKG:-./cmd/foci-gw/}
 REPS=${REPS:-3}
 MODE=${MODE:-both}
-VARIANTS=${VARIANTS:-'default|-ldflags=-w|-ldflags=-s -w'}
+VARIANTS=${VARIANTS:-"default|-ldflags=-w|-ldflags='-s -w'"}
 
 case $MODE in both) modes="link cold" ;; link|cold) modes=$MODE ;; *) echo "MODE must be both, link or cold" >&2; exit 2 ;; esac
 case $REPS in ''|*[!0-9]*|0) echo "REPS must be a positive integer" >&2; exit 2 ;; esac
@@ -39,13 +41,12 @@ trap 'rm -rf "$work"' EXIT
 results=$work/results.tsv
 : >"$results"
 
-flags_of() { [ "$1" = default ] && return; printf '%s' "$1"; }
-
 # build <variant-index> <mode>: one timed build; appends "idx mode seconds bytes|FAILED"
 build() {
 	local i=$1 mode=$2 v=${variants[$1]} out=$work/bin-$1 log=$work/build-$1-$2.log
 	local -a f=()
-	[ "$v" != default ] && read -r -a f <<<"$v"
+	# eval: split like a shell line so a quoted value with a space stays one argument.
+	[ "$v" != default ] && eval "f=($v)"
 	local -a env=()
 	if [ "$mode" = cold ]; then
 		rm -rf "$work/cold-cache"
