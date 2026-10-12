@@ -13,18 +13,20 @@ with a plain `go test`. The difference between the two **is** the answer — and
 `make test` never runs `go test` directly. It calls `scripts/seal-test.sh unit …`, which does two
 things a bare `go test` does not:
 
-1. **Redirects the environment** — `TMPDIR`, `FOCI_TMPDIR`, `FOCI_TEST_TMPDIR`, `HOME`, `GOCACHE`,
-   `GOMODCACHE`, `GOPATH` are all overridden (`HOME` → `$TESTDIR/home`, so tests cannot scribble
-   into the real account's home).
+1. **Replaces the environment** — the tests start from `env -i` (#2348), so nothing from your
+   shell reaches them except what `TESTENV` lists: a fixed system `PATH`, `USER`, the logical `PWD`,
+   your `GO*`/`CGO_*` settings, the opt-ins in `OPTIN_VARS`, and `TMPDIR`, `FOCI_TMPDIR`,
+   `FOCI_TEST_TMPDIR`, `HOME`, `GOCACHE`, `GOMODCACHE`, `GOPATH` (`HOME` → `$TESTDIR/home`, so tests
+   cannot scribble into the real account's home). A test that passes in your shell but not here may
+   need a tool outside the system dirs, or an env var that is not passed.
 2. **Seals the whole process tree under Landlock** via `bin/llbox -w <whitelist>`, so every write
    outside `$TESTDIR` / the go caches / a few `/dev` nodes is denied. Rules are inherited across
    fork+exec, so one seal at the top covers `go test`, every package binary, and anything they
    spawn (tmux, git, chrome…).
 
 **To run one package under the harness env, use `make test-one PKG=./internal/<pkg>/ [RUN=<Name>]
-[V=1] [COUNT=N]`.** `COUNT=N` repeats the run (go test's `-count`) for flake checks. `V=1` adds `-v`,
-so a PASSING test's `t.Logf` lines reach the log — without it a pass swallows them, and forcing a
-`t.Errorf` just to see them fakes a failure. It calls `scripts/seal-test.sh one`, the exact
+[COUNT=N]`.** `COUNT=N` repeats the run (go test's `-count`) for flake checks. Every run is `go test
+-v` (#2348), so a PASSING test's `t.Logf` lines are in the log too (`V=1` is accepted, a no-op). It calls `scripts/seal-test.sh one`, the exact
 `TESTENV`/seal construction `make test` uses, so it cannot omit a variable. It always applies the full
 env, though — to find which ingredient a failure depends on, use the manual recipe and isolation
 table below.
@@ -40,7 +42,8 @@ grows, and the variable you omit is the one that mattered. Currently:
 TESTDIR=$(mktemp -d /tmp/fgw/probe-XXXXXX); mkdir -p "$TESTDIR/home"
 GC=$(go env GOCACHE); GMC=$(go env GOMODCACHE); GP=$(go env GOPATH)
 WL="$TESTDIR,$GC,$GMC,/dev/null,/dev/ptmx,/dev/pts,/dev/shm"
-TESTENV=(env "TMPDIR=$TESTDIR" "FOCI_TMPDIR=$TESTDIR" "FOCI_TEST_TMPDIR=$TESTDIR" \
+TESTENV=(env -i "PATH=$(go env GOROOT)/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+  "USER=$(id -un)" "PWD=$PWD" "TMPDIR=$TESTDIR" "FOCI_TMPDIR=$TESTDIR" "FOCI_TEST_TMPDIR=$TESTDIR" \
   "HOME=$TESTDIR/home" "GOCACHE=$GC" "GOMODCACHE=$GMC" "GOPATH=$GP")
 
 # one package, sealed (= make test-one; kept as the base to peel layers off)

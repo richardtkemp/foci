@@ -34,15 +34,21 @@ const (
 // and the answers are deterministic.
 //
 // Opt-in, because it spawns opencode (seconds, and opencode may fetch
-// packages on a cold HOME):
+// packages on a cold HOME). The tests' PATH is fixed to the system dirs
+// (scripts/seal-test.sh, #2348), so a user-local opencode is named explicitly:
 //
-//	FOCI_OPENCODE_LIVE=1 make test-one PKG=./internal/delegator/opencode/ RUN=TestLive_PreAnswerRedispatch V=1
+//	FOCI_OPENCODE_LIVE=1 FOCI_OPENCODE_BIN=$(command -v opencode) make test-one PKG=./internal/delegator/opencode/ RUN=TestLive_PreAnswerRedispatch
 func TestLive_PreAnswerRedispatch(t *testing.T) {
 	if os.Getenv("FOCI_OPENCODE_LIVE") == "" {
 		t.Skip("set FOCI_OPENCODE_LIVE=1 to run against a real opencode binary")
 	}
-	if _, err := exec.LookPath("opencode"); err != nil {
-		t.Skipf("opencode not on PATH: %v", err)
+	bin := os.Getenv("FOCI_OPENCODE_BIN")
+	if bin == "" {
+		bin = "opencode"
+	}
+	bin, err := exec.LookPath(bin)
+	if err != nil {
+		t.Skipf("no opencode binary (set FOCI_OPENCODE_BIN, or put it on the tests' PATH): %v", err)
 	}
 
 	provider := newFakeChatProvider(t)
@@ -58,7 +64,7 @@ func TestLive_PreAnswerRedispatch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	d, err := newFromConfig(map[string]any{})
+	d, err := newFromConfig(map[string]any{"binary": bin})
 	if err != nil {
 		t.Fatal(err)
 	}

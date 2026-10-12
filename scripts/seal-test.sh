@@ -7,13 +7,12 @@
 # Usage: seal-test.sh <unit|integration|one> <TESTDIR> <LOGFILE> <parallel-n> \
 #          <GOCACHE_PIN> <GOMODCACHE_PIN> <GOPATH_PIN> [PKG] [RUN] [VERBOSE] [COUNT]
 #
-#   PKG and VERBOSE are only used by the `one` mode — see run_one below. RUN
+#   PKG is only used by the `one` mode — see run_one below. RUN
 #   and COUNT also apply to `integration` (e.g. looping one L2 test to repro a
 #   flake, foci_todo #2044); PKG is ignored there.
-#   VERBOSE (make's V=1) adds go test's own -v so a PASSING test's t.Logf
-#   output actually reaches LOGFILE — foci_todo #1982: before this, the only
-#   way to see it was to force a FAIL (t.Errorf), because a bare ARGS=-v on
-#   the make command line isn't a real make var and was silently dropped.
+#   VERBOSE (make's V=1) is accepted and ignored: every run now passes go
+#   test's -v (foci_todo #2348, see GOTEST_FLAGS), so a PASSING test's t.Logf
+#   output always reaches LOGFILE (the need behind #1982's V=1).
 #
 #   foci_todo #1709: this is the ONE place
 #   the harness environment (TESTENV/SEAL) is constructed; unit/integration/
@@ -92,7 +91,7 @@ GOMODCACHE_DIR="${6:?}"
 GOPATH_DIR="${7:?}"
 PKG="${8:-}"
 RUNFILTER="${9:-}"
-VERBOSE="${10:-}"
+# ${10} is VERBOSE (make's V=1): accepted and ignored; see the header.
 COUNT="${11:-}"
 
 LLBOX="bin/llbox"
@@ -107,8 +106,57 @@ mkdir -p "$GOCACHE_DIR" "$GOMODCACHE_DIR"
 
 WHITELIST="$TESTDIR,$GOCACHE_DIR,$GOMODCACHE_DIR,/dev/null,/dev/ptmx,/dev/pts,/dev/shm"
 
-TESTENV=(env "TMPDIR=$TESTDIR" "FOCI_TMPDIR=$TESTDIR" "FOCI_TEST_TMPDIR=$TESTDIR" "HOME=$TESTDIR/home" \
-  "GOCACHE=$GOCACHE_DIR" "GOMODCACHE=$GOMODCACHE_DIR" "GOPATH=$GOPATH_DIR")
+# ---- A fixed environment (foci_todo #2348) ---------------------------------
+# go test keys a cached result on every env var a test reads (os.Getenv,
+# exec.LookPath's PATH), so an inherited env made the SAME code miss the cache
+# whenever the caller's shell differed: the factory puts a per-snapshot
+# runs/snapshots/<tree>/bin first on PATH (25 of 87 packages re-ran, the slow
+# ones), and agent shells add CLAUDE_CODE_*, FOCI_*, LD_PRELOAD, proxies, ...
+# So the tests start from `env -i` and see only what is listed here:
+#   PATH        fixed: the Go toolchain's own bin, then the system dirs.
+#               Tests DO need PATH (they exec bash, sh, git, tmux, jq, python3,
+#               sqlite3, soffice, chromium, mmdc, crontab, ...), but every tool
+#               they use is in a system dir, so its value need not vary. `go`
+#               is run from GOROOT/bin, not through the caller's PATH (which in
+#               the factory starts with a `go` guard that needs make's MAKELEVEL).
+#   USER        the account, from id(1) rather than the shell.
+#   PWD         the LOGICAL cwd, i.e. the Makefile's fixed /tmp/fgw/src-<user>
+#               symlink (#2238). go's os.Getwd trusts $PWD; without it the
+#               tests see the checkout's real path and every checkout misses.
+#   GO*, CGO_*  the caller's Go configuration (GOFLAGS, GOTOOLCHAIN, ...):
+#               build settings, not shell noise; unset in normal use.
+#   OPTIN_VARS  deliberate opt-ins to live tests (see each test's skip line).
+#               Values are never written to the log (one is an API key).
+#   the rest    the sandbox dirs and pinned Go caches below.
+GOROOT_DIR=$(go env GOROOT)
+TEST_PATH="$GOROOT_DIR/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+OPTIN_VARS=(FOCI_OPENCODE_LIVE FOCI_OPENCODE_BIN ANTHROPIC_API_KEY)
+PASSTHRU=()
+PASSTHRU_SHOWN=()
+for v in $(compgen -e); do
+  case "$v" in
+  GOCACHE | GOMODCACHE | GOPATH) continue ;; # pinned below
+  GO* | CGO_*) PASSTHRU+=("$v=${!v}") PASSTHRU_SHOWN+=("$v=${!v}") ;;
+  esac
+done
+for v in "${OPTIN_VARS[@]}"; do
+  [ -n "${!v+set}" ] || continue
+  PASSTHRU+=("$v=${!v}")
+  PASSTHRU_SHOWN+=("$v=<set>")
+done
+PINNED=("PATH=$TEST_PATH" "USER=$(id -un)" "PWD=$PWD" "TMPDIR=$TESTDIR" "FOCI_TMPDIR=$TESTDIR" "FOCI_TEST_TMPDIR=$TESTDIR" \
+  "HOME=$TESTDIR/home" "GOCACHE=$GOCACHE_DIR" "GOMODCACHE=$GOMODCACHE_DIR" "GOPATH=$GOPATH_DIR")
+TESTENV=(env -i "${PASSTHRU[@]}" "${PINNED[@]}")
+TESTENV_SHOWN=("${PASSTHRU_SHOWN[@]}" "${PINNED[@]}")
+
+# The go test flags every unit and single-package run shares (foci_todo #2348).
+# Test flags are part of go's test-cache key, so `make test`, a plain
+# `make test-one PKG=`, and the factory gates (which want per-test results and
+# used to add V=1 for them) must pass the SAME set to reuse each other's
+# results. -v is therefore always on: per-test PASS/FAIL/SKIP lines and t.Logf
+# output are in LOGFILE for every run, and the terminal still shows only the
+# summary. -run and -count are added per run and do change the key.
+GOTEST_FLAGS=(-trimpath -parallel=16 -v)
 
 if [ -n "${FOCI_TEST_UNSEALED:-}" ]; then
   echo ">>> FOCI_TEST_UNSEALED=1 set — skipping Landlock sealing entirely" | tee -a "$LOGFILE" >&2
@@ -166,18 +214,18 @@ diagnostic_rerun() {
 }
 
 # env_header <label>
-# Logs the label plus the exact TESTENV assignments (skipping TESTENV[0],
-# which is just the literal "env" command name) this run is about to use.
+# Logs the label plus the exact TESTENV assignments this run is about to use
+# (the whole env: TESTENV starts from env -i), opt-in values masked.
 # Same array for every mode (see the top-of-file note) — this line is what
 # lets a peer (or foci_todo #1709's own verification) DIFF two runs' logs and
 # see the environment matched, instead of taking it on faith.
 env_header() {
-  echo "=== $1 (env: ${TESTENV[*]:1}) [$(date +%FT%T%z)] ===" >> "$LOGFILE"
+  echo "=== $1 (env -i ${TESTENV_SHOWN[*]}) [$(date +%FT%T%z)] ===" >> "$LOGFILE"
 }
 
 run_unit() {
   env_header "sealed unit suite"
-  "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -trimpath -p="$PARALLEL" -parallel=16 -timeout "$(test_timeout)" ./... >> "$LOGFILE" 2>&1
+  "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test "${GOTEST_FLAGS[@]}" -p="$PARALLEL" -timeout "$(test_timeout)" ./... >> "$LOGFILE" 2>&1
   local status=$?
 
   diagnostic_rerun -timeout "$(test_timeout)"
@@ -249,26 +297,25 @@ run_integration() {
 # run_one — the fail-arm iteration target (foci_todo #1709): one package
 # (required), optionally narrowed with -run, through the IDENTICAL
 # SEAL/TESTENV arrays run_unit uses — never re-derive them here. RUNFILTER
-# empty means "whole package", same as `go test ./pkg/` with no -run. VERBOSE
-# (foci_todo #1982) adds -v so t.Logf reaches LOGFILE even on a PASS.
+# empty means "whole package", same as `go test ./pkg/` with no -run. -v is
+# always on (GOTEST_FLAGS), so t.Logf reaches LOGFILE even on a PASS.
 run_one() {
   if [ -z "$PKG" ]; then
     echo "seal-test.sh: mode 'one' requires PKG (arg 8), e.g. ./internal/agent/" >&2
     exit 2
   fi
   check_count
-  env_header "sealed single-package run: $PKG${RUNFILTER:+ -run $RUNFILTER}${VERBOSE:+ -v}${COUNT:+ -count=$COUNT}"
+  env_header "sealed single-package run: $PKG${RUNFILTER:+ -run $RUNFILTER}${COUNT:+ -count=$COUNT}"
   # No default -count: go test's result cache serves a package whose test
   # binary and inputs are unchanged (the Makefile's shared TESTDIR keeps TMPDIR
   # stable for exactly this). COUNT=N (e.g. a flake check) passes -count=N,
-  # which always runs for real. -parallel=16 matches run_unit exactly: test
+  # which always runs for real. GOTEST_FLAGS matches run_unit exactly: test
   # flags are part of the cache key, so a package make test already passed is
   # served from cache here too.
   local extra=()
   [ -n "$COUNT" ] && extra+=(-count="$COUNT")
   [ -n "$RUNFILTER" ] && extra+=(-run "$RUNFILTER")
-  [ -n "$VERBOSE" ] && extra+=(-v)
-  "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -trimpath -parallel=16 -timeout "$(test_timeout "${COUNT:-1}")" "${extra[@]}" "$PKG" >> "$LOGFILE" 2>&1
+  "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test "${GOTEST_FLAGS[@]}" -timeout "$(test_timeout "${COUNT:-1}")" "${extra[@]}" "$PKG" >> "$LOGFILE" 2>&1
   local status=$?
 
   # Re-run with the SAME -run filter and -timeout: without them a narrowed run's

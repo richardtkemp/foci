@@ -59,10 +59,17 @@ Gotchas: the changelog line (`foci: changelog staged (<old> -> <new>)`) is the c
 make test-one PKG=./internal/<pkg>/ RUN=<Name>
 ```
 
-`RUN` is optional — omit it to run the whole package. `PKG` is required. `V=1` adds go test's `-v`
-so `t.Logf` output reaches the log on a PASS too (foci_todo #1982) — without it, only a FAIL surfaces
-that output, so a bare `ARGS=-v` (not a real make var — silently dropped) used to force `t.Errorf`
-just to see it. `COUNT=N` repeats the run N times, for flake checks.
+`RUN` is optional — omit it to run the whole package. `PKG` is required. Every run is `go test -v`,
+so the log always has per-test PASS/FAIL/SKIP lines and `t.Logf` output, even on a PASS (`V=1` is
+accepted and does nothing; #2348). `COUNT=N` repeats the run N times, for flake checks.
+
+**The tests see a fixed environment, not your shell's (#2348).** `seal-test.sh` starts them from
+`env -i`: a pinned system `PATH` (GOROOT/bin, then `/usr/local/sbin` … `/bin`), `USER`, the logical
+`PWD`, the sandbox dirs and Go caches, the caller's `GO*`/`CGO_*` settings, and the opt-ins in
+`OPTIN_VARS`. So the same code gets the same go test-cache key from the factory, a gate or an agent
+shell, and an unfiltered `test-one` reuses `make test`'s result. Consequences: a tool a test needs
+must be in a system dir (or passed by an opt-in var, like `FOCI_OPENCODE_BIN`), and a new env var a
+test should read from the caller must be added to `OPTIN_VARS`, or it never arrives.
 
 **Bare `go build`/`go test`/`go vet` are denied (Dick, 2026-09-23).** Claude Code's `permissions.deny`
 refuses them, including `/usr/bin/go …` and `go -C <dir> …`. Use `make build` (foci-gw), `make vet`

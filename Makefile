@@ -246,7 +246,7 @@ test: llbox
 	  if [ -n "$(CI_HOOK)" ]; then mkdir -p "$$(dirname "$(CI_HOOK)")" && printf '%s,foci,%s,unit,%s,%s\n' "$$(date -Is)" "$(GIT_COMMIT)" "$$([ $$STATUS -eq 0 ] && echo pass || echo fail)" "$$(bash scripts/ci-failed-tests.sh go $(LOGFILE))" >> "$(CI_HOOK)" || true; fi ; \
 	  exit $$STATUS ) 9</tmp/heavy
 
-# `make test-one PKG=./internal/<pkg>/ [RUN=<TestName>] [V=1] [COUNT=N] [TIMEOUT=<go duration>]` — the single-package
+# `make test-one PKG=./internal/<pkg>/ [RUN=<TestName>] [COUNT=N] [TIMEOUT=<go duration>]` — the single-package
 # counterpart to `make test` for a fail-arm iteration loop (foci_todo #1709).
 # `make test` has no package filter, and a bare `go test ./<pkg>/` drops the
 # harness environment (FOCI_TMPDIR et al — some packages panic without it,
@@ -258,14 +258,14 @@ test: llbox
 # arrays as `test`/`integration`, see that script) rather than re-deriving
 # it here — do NOT hand-roll FOCI_TMPDIR/GOCACHE/etc in this recipe; that is
 # the exact anti-pattern #1709 exists to make unnecessary.
-# V=1 adds `go test`'s own -v, so t.Logf output reaches $(LOGFILE) even on a
-# PASS (foci_todo #1982) — until this, the only way to see it was to force a
-# FAIL (t.Errorf), and a bare ARGS=-v was silently dropped (unrecognised make
-# var, no passthrough existed).
+# Every run passes `go test -v` (foci_todo #2348), so t.Logf output reaches
+# $(LOGFILE) even on a PASS (the need behind #1982's V=1) and `test`, `test-one`
+# and the factory gates share one go test-cache key. V=1 is still accepted and
+# does nothing.
 # TIMEOUT overrides go test's per-package -timeout (default 180s x COUNT, also
 # used by `make test`; foci_todo #2290) — see test_timeout in scripts/seal-test.sh.
 test-one: llbox
-	@if [ -z "$(PKG)" ]; then echo "usage: make test-one PKG=./internal/<pkg>/ [RUN=<TestName>] [V=1] [COUNT=N] [TIMEOUT=<go duration>]" >&2; exit 2; fi
+	@if [ -z "$(PKG)" ]; then echo "usage: make test-one PKG=./internal/<pkg>/ [RUN=<TestName>] [COUNT=N] [TIMEOUT=<go duration>]" >&2; exit 2; fi
 	$(eval TESTDIR := $(fgw_shared_testdir))
 	$(eval LOGFILE := $(call fgw_logfile,test-one))
 	@python3 scripts/restore-mtime.py . || true
