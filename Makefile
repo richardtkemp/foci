@@ -66,7 +66,7 @@ SIMPLE_BINS := foci-gw foci foci-call foci-cc-hook foci-codex-hook
 # same lock (~6 GB resident). Absent script (another host) = no-op.
 REAP_GRADLE = { [ -f /home/foci/shared/scripts/heavy-lock-reap-gradle.sh ] && bash /home/foci/shared/scripts/heavy-lock-reap-gradle.sh 9<&- ; true; };
 
-.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals llbox test test-one integration coverage coverage-report coverage-html coverage-check vet lint lint-unlocked lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check land clean setup-hooks
+.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals llbox test test-one integration coverage coverage-report coverage-html coverage-check vet lint lint-unlocked lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check bench-test-build land clean setup-hooks
 
 all: $(SIMPLE_BINS) nosgid find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals llbox
 
@@ -378,6 +378,13 @@ bucket-audit:
 # `make -n` — so a `make -n land` "dry run" on a clean tree would really fetch,
 # rebase, test, and PUSH TO MAIN. A script keeps `make test` inside bash (not
 # make-scanned), so `make -n land` just prints the script call and runs nothing.
+# Measure how build flags change the time to compile and link a package's test
+# binary (go test -c only; no tests run). Holds the heavy lock. See the header of
+# scripts/bench-test-build.sh for MODE (link|cold|both) and VARIANTS syntax.
+#   make bench-test-build PKG=./cmd/foci-gw/ REPS=3 MODE=link VARIANTS='default|-ldflags=-w'
+bench-test-build:
+	@PKG='$(or $(PKG),./cmd/foci-gw/)' REPS='$(or $(REPS),3)' MODE='$(or $(MODE),both)' VARIANTS='$(VARIANTS)' bash scripts/bench-test-build.sh
+
 land:
 	@LAND_LOCK=/tmp/foci-merge.lock LAND_TEST_TARGET=test bash /home/foci/shared/scripts/land.sh
 
