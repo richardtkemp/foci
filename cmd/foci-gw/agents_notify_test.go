@@ -494,11 +494,12 @@ func TestBuildWakeSchedulerRestoresPending(t *testing.T) {
 // Activity frame. turnSinkForConn must hand an agent.Driver connection's own
 // turn sink the turn's events, not a SessionSink around the connection.
 func TestTurnSinkForConn_AppGetsDriverSink(t *testing.T) {
-	initTestConvo(t)
+	t.Parallel()
+	sessionKey, _ := initTestConvo(t)
 	inner := turnevent.NewBufferSink()
-	conn := &driverConn{stubConn: &stubConn{sessionKey: testSessionKey}, inner: inner}
+	conn := &driverConn{stubConn: &stubConn{sessionKey: sessionKey}, inner: inner}
 
-	sink, cleanup := turnSinkForConn(&agent.Agent{}, conn, testSessionKey, "proactive_warning")
+	sink, cleanup := turnSinkForConn(&agent.Agent{}, conn, sessionKey, "proactive_warning")
 	if cleanup != nil {
 		defer cleanup()
 	}

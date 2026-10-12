@@ -449,3 +449,67 @@ func TestRowKind(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenAgentIsolatesAgents(t *testing.T) {
+	// Verifies OpenAgent (#2358) registers one agent's log beside others
+	// without a fallback: each agent's rows reach only its own DB, a row
+	// for an agent with no open log is dropped rather than spilling into
+	// another agent's DB, a second open of the same agent is refused, and
+	// closing one agent's log leaves the other routing.
+	t.Cleanup(resetConvo)
+	dir := t.TempDir()
+	pathA := filepath.Join(dir, "a.db")
+	pathB := filepath.Join(dir, "b.db")
+	closeA, err := OpenAgent("a", pathA)
+	if err != nil {
+		t.Fatalf("OpenAgent(a): %v", err)
+	}
+	closeB, err := OpenAgent("b", pathB)
+	if err != nil {
+		t.Fatalf("OpenAgent(b): %v", err)
+	}
+	defer closeB()
+	if _, err := OpenAgent("a", filepath.Join(dir, "a2.db")); err == nil {
+		t.Error("second OpenAgent(a) succeeded, want an already-open error")
+	}
+
+	rec := func(text, sess string) {
+		Record(Entry{Direction: "sent", UserID: "1", Username: "u", ChatID: 1, Text: text, Session: sess})
+	}
+	texts := func(path string) []string {
+		db, err := sql.Open("sqlite", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		rows, err := db.Query("SELECT text FROM messages ORDER BY id")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out []string
+		for rows.Next() {
+			var s string
+			if err := rows.Scan(&s); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, s)
+		}
+		return out
+	}
+
+	rec("to a", "a/i0")
+	rec("to b", "b/c1")
+	rec("to nobody", "other/i0")
+	closeA()
+	closeA() // idempotent
+	rec("to a after close", "a/i0")
+	rec("to b again", "b/i0")
+
+	if got := strings.Join(texts(pathA), "|"); got != "to a" {
+		t.Errorf("a's rows = %q, want only %q", got, "to a")
+	}
+	if got := strings.Join(texts(pathB), "|"); got != "to b|to b again" {
+		t.Errorf("b's rows = %q, want %q", got, "to b|to b again")
+	}
+}

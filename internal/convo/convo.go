@@ -80,6 +80,9 @@ type agentLog struct {
 }
 
 var (
+	// logsMu guards convLogs and convFallback (the registry), not the
+	// databases: each agentLog serialises its own inserts.
+	logsMu       sync.RWMutex
 	convLogs     map[string]*agentLog // agentID → log
 	convFallback *agentLog            // used when session can't be routed
 )
@@ -122,35 +125,83 @@ func openLog(path string) (*agentLog, error) {
 }
 
 // InitPerAgent opens per-agent conversation log databases. pathFn maps each
-// agent ID to its database path.
+// agent ID to its database path. It starts from an empty registry (closing
+// any logs already open), opens each agent with OpenAgent, and makes the
+// first agent's log the fallback for entries whose session names no open
+// agent. On error the logs it opened are closed and the registry is empty.
 func InitPerAgent(agentIDs []string, pathFn func(string) string) error {
-	m := make(map[string]*agentLog, len(agentIDs))
+	Close()
+	closers := make([]func(), 0, len(agentIDs))
 	for _, id := range agentIDs {
-		cl, err := openLog(pathFn(id))
+		closeLog, err := OpenAgent(id, pathFn(id))
 		if err != nil {
-			// Close already-opened logs on failure.
-			for _, opened := range m {
-				_ = opened.db.Close()
+			for _, c := range closers {
+				c()
 			}
 			return fmt.Errorf("init conversation log for %s: %w", id, err)
 		}
-		m[id] = cl
+		closers = append(closers, closeLog)
 	}
-	convLogs = m
 	// Use the first agent as fallback for entries without a routable session.
 	if len(agentIDs) > 0 {
-		convFallback = m[agentIDs[0]]
+		logsMu.Lock()
+		convFallback = convLogs[agentIDs[0]]
+		logsMu.Unlock()
 	}
 	return nil
 }
 
+// OpenAgent opens agentID's conversation log at path and registers it beside
+// the logs already open, so Record routes that agent's sessions to it. It
+// returns a func that unregisters and closes that log alone (idempotent).
+// OpenAgent never sets the fallback: only InitPerAgent does, so a log opened
+// here receives its own agent's rows and nothing else. Each agent's rows go
+// to that agent's database only, which lets independent users (parallel
+// tests, #2358) each hold their own agent's log at once. An agent that is
+// already open is an error.
+func OpenAgent(agentID, path string) (closeLog func(), err error) {
+	cl, err := openLog(path)
+	if err != nil {
+		return nil, err
+	}
+	logsMu.Lock()
+	if _, dup := convLogs[agentID]; dup {
+		logsMu.Unlock()
+		_ = cl.db.Close()
+		return nil, fmt.Errorf("conversation log for %s already open", agentID)
+	}
+	if convLogs == nil {
+		convLogs = make(map[string]*agentLog)
+	}
+	convLogs[agentID] = cl
+	logsMu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			logsMu.Lock()
+			if convLogs[agentID] == cl {
+				delete(convLogs, agentID)
+			}
+			if convFallback == cl {
+				convFallback = nil
+			}
+			logsMu.Unlock()
+			_ = cl.db.Close()
+		})
+	}, nil
+}
+
 // Close closes all conversation log databases.
 func Close() {
-	for _, cl := range convLogs {
-		_ = cl.db.Close()
-	}
+	logsMu.Lock()
+	logs := convLogs
 	convLogs = nil
 	convFallback = nil
+	logsMu.Unlock()
+	for _, cl := range logs {
+		_ = cl.db.Close()
+	}
 }
 
 // Record logs a conversation entry. No-op if not initialized.
@@ -169,6 +220,8 @@ func Record(entry Entry) {
 // resolveLog picks the per-agent log for a session key, falling back to the
 // default log when the session can't be routed.
 func resolveLog(sessionKey string) *agentLog {
+	logsMu.RLock()
+	defer logsMu.RUnlock()
 	if len(convLogs) == 0 {
 		return nil
 	}

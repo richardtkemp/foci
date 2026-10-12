@@ -8,6 +8,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/convo"
 	"foci/internal/platform"
+	"foci/internal/session"
 	"foci/internal/turnevent"
 
 	_ "modernc.org/sqlite"
@@ -25,20 +26,24 @@ import (
 // the logging wrapper and it must stay green — that is what makes these
 // specific to the persistence defect rather than to the fixture.
 
-// initTestConvo points the conversation store at a temp DB for testAgentID and
-// returns a reader for the outbound rows recorded against it.
-func initTestConvo(t *testing.T) func() []string {
+// initTestConvo opens a conversation log in a temp DB for an agent id unique
+// to this run (convo.OpenAgent, beside any other test's agent logs) and
+// returns a session key of that agent plus a reader for the outbound rows
+// recorded against it. The store routes rows by the session key's agent and
+// OpenAgent sets no fallback, so only this run's rows reach this DB and the
+// test can run in parallel (#2358).
+func initTestConvo(t *testing.T) (sessionKey string, sentRows func() []string) {
 	t.Helper()
-	dir := t.TempDir()
-	if err := convo.InitPerAgent([]string{testAgentID}, func(id string) string {
-		return dir + "/" + id + ".db"
-	}); err != nil {
-		t.Fatalf("InitPerAgent: %v", err)
+	agentID := runToken("convo")
+	path := t.TempDir() + "/" + agentID + ".db"
+	closeLog, err := convo.OpenAgent(agentID, path)
+	if err != nil {
+		t.Fatalf("OpenAgent: %v", err)
 	}
-	t.Cleanup(convo.Close)
+	t.Cleanup(closeLog)
 
-	return func() []string {
-		db, err := sql.Open("sqlite", dir+"/"+testAgentID+".db")
+	return agentID + "/i0", func() []string {
+		db, err := sql.Open("sqlite", path)
 		if err != nil {
 			t.Fatalf("open conv DB: %v", err)
 		}
@@ -89,18 +94,21 @@ func (c *driverConn) Connection() platform.Connection { return c }
 // return a logging sink. Covering the fallback alone would leave the branch the
 // reported bug was actually observed on untested.
 func TestTurnSinkForConn_LogsOnBothBranches(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
-		conn platform.Connection
+		conn func(sessionKey string) platform.Connection
 	}{
-		{"driver branch (app)", &driverConn{stubConn: &stubConn{sessionKey: testSessionKey}, inner: turnevent.NewBufferSink()}},
-		{"session-sink fallback (telegram/discord)", newRecordingConn(testSessionKey)},
+		{"driver branch (app)", func(sk string) platform.Connection {
+			return &driverConn{stubConn: &stubConn{sessionKey: sk}, inner: turnevent.NewBufferSink()}
+		}},
+		{"session-sink fallback (telegram/discord)", func(sk string) platform.Connection { return newRecordingConn(sk) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			sentRows := initTestConvo(t)
+			sessionKey, sentRows := initTestConvo(t)
 			ag := &agent.Agent{}
 
-			sink, cleanup := turnSinkForConn(ag, tc.conn, testSessionKey, "test")
+			sink, cleanup := turnSinkForConn(ag, tc.conn(sessionKey), sessionKey, "test")
 			if cleanup != nil {
 				defer cleanup()
 			}
@@ -124,11 +132,12 @@ func TestTurnSinkForConn_LogsOnBothBranches(t *testing.T) {
 // behind a BufferSink that emits no TextBlock, so it cannot be covered by the
 // sink wrapper and records explicitly instead.
 func TestBroadcastResponse_LogsSentText(t *testing.T) {
-	sentRows := initTestConvo(t)
+	t.Parallel()
+	sessionKey, sentRows := initTestConvo(t)
 
-	conn := newRecordingConn(testSessionKey)
-	cm := recordingConnMgr{sessionKey: testSessionKey, conn: conn}
-	broadcastResponse(cm, testAgentID, testSessionKey, "broadcast me", "test")
+	conn := newRecordingConn(sessionKey)
+	cm := recordingConnMgr{sessionKey: sessionKey, conn: conn}
+	broadcastResponse(cm, session.AgentIDFromKey(sessionKey), sessionKey, "broadcast me", "test")
 
 	got := sentRows()
 	if len(got) != 1 || got[0] != "broadcast me" {
