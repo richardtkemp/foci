@@ -118,6 +118,13 @@ type Envelope struct {
 	// Driver.Drive, serialising it with this session's platform turns, and
 	// (for non-control triggers) defers it while a foci_ask is pending.
 	Inject *InjectMeta
+
+	// enqSeq is the session-local order Enqueue put this user message on the
+	// channel in (1-based; 0 = never queued through Enqueue). A /stop that
+	// drops a queued batch drops every message queued up to it, including
+	// ones the worker had not yet pulled into the batch (#2337) — see
+	// sessionInbox.stopThrough.
+	enqSeq uint64
 }
 
 // InjectMeta carries a system injection's execution closure and classification.
@@ -279,6 +286,18 @@ type sessionInbox struct {
 	cancelMu   sync.Mutex
 	turnCancel context.CancelFunc
 	waitCancel context.CancelFunc
+
+	// enqSeq numbers the user messages Enqueue puts on ch (the last number
+	// handed out). stopThrough is the highest of those a /stop of a queued
+	// batch covered: CancelSession sets it while it fires waitCancel. The
+	// worker drops a user message numbered at or below it when it dequeues
+	// one — a message accepted before the /stop that the waiting worker had
+	// not yet pulled into the batch (Enqueue only queues on ch, and the
+	// worker's select picks at random between that message and the /stop).
+	// Without it such a message outlived the /stop and ran as a fresh turn
+	// (#2337). Messages queued after the /stop are numbered above it and run.
+	enqSeq      atomic.Uint64
+	stopThrough atomic.Uint64
 
 	log *log.ComponentLogger
 }
@@ -481,6 +500,7 @@ func (a *Agent) Enqueue(env Envelope) bool {
 		}
 	}
 	if reloginHold {
+		env.enqSeq = inb.enqSeq.Add(1)
 		select {
 		case inb.ch <- env:
 			a.logger().Infof("inbox: holding message during CC re-login sk=%s (%dB)", env.SessionKey, len(env.Text))
@@ -608,6 +628,7 @@ func (a *Agent) Enqueue(env Envelope) bool {
 	}
 
 	// Push to this session's channel; drop with warning if full.
+	env.enqSeq = inb.enqSeq.Add(1)
 	select {
 	case inb.ch <- env:
 		return true
@@ -924,6 +945,13 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 		case <-ctx.Done():
 			return
 		case env := <-inb.ch:
+			// Queued before a /stop that dropped this session's waiting
+			// batch, but not yet pulled into it: the /stop covers it too
+			// (#2337, see stopThrough). Injections are never dropped here.
+			if env.Inject == nil && env.enqSeq != 0 && env.enqSeq <= inb.stopThrough.Load() {
+				a.logger().Infof("inbox: /stop dropped queued message sk=%s seq=%d", inb.sk, env.enqSeq)
+				continue
+			}
 			// Re-login hold (#1932): no turn or injection may reach a backend
 			// that cannot authenticate. Further arrivals accumulate in inb.ch
 			// and batch via drainAvailable once the gate opens, as with the
@@ -1468,6 +1496,10 @@ func (a *Agent) CancelSession(sk string) bool {
 	waitCancel := inb.waitCancel
 	cancel := inb.turnCancel
 	if waitCancel != nil {
+		// Cover the messages queued so far that the worker has not pulled
+		// into the batch yet (see stopThrough). Set before the cancel fires,
+		// so the worker sees it once it observes the drop.
+		inb.stopThrough.Store(inb.enqSeq.Load())
 		// Under the mutex — see claimWaitCancel.
 		waitCancel()
 	}

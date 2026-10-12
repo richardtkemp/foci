@@ -58,6 +58,11 @@ func (l *TurnLimiter) TryAcquire() bool {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	return l.tryAcquireLocked()
+}
+
+// tryAcquireLocked is TryAcquire's body; the caller holds l.mu.
+func (l *TurnLimiter) tryAcquireLocked() bool {
 	if l.held < l.limit && len(l.waiters) == 0 {
 		l.held++
 		return true
@@ -73,11 +78,16 @@ func (l *TurnLimiter) Acquire(ctx context.Context) bool {
 	if l == nil {
 		return true
 	}
-	if l.TryAcquire() {
+	// The free-slot check and the waiter registration are ONE critical
+	// section: split, a Release landing between them finds no waiter and
+	// gives the slot back, and this waiter then queues on a free limiter that
+	// nothing will ever wake — wedging every later caller behind it (#2337).
+	l.mu.Lock()
+	if l.tryAcquireLocked() {
+		l.mu.Unlock()
 		return true
 	}
 	grant := make(chan struct{})
-	l.mu.Lock()
 	l.waiters = append(l.waiters, grant)
 	l.mu.Unlock()
 	select {

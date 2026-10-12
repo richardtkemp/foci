@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -113,6 +114,42 @@ func TestTurnLimiter_AcquireCtxCancel(t *testing.T) {
 	l.Release()
 	if !l.TryAcquire() {
 		t.Fatal("slot leaked: TryAcquire failed after cancelled waiter + Release")
+	}
+}
+
+// TestTurnLimiter_ReleaseDuringAcquireNotLost proves a Release racing a
+// blocking Acquire is never lost (#2337). Acquire used to try for a free slot
+// and then register as a waiter in two separate critical sections: a Release
+// landing between them found no waiter, gave the slot back, and the waiter
+// then queued on a free limiter that no Release would ever wake — and every
+// later caller queued behind it, wedging the limiter for good. The race window
+// is narrow, so this repeats the hand-off many times, sweeping the Release
+// across the start of Acquire with a varying spin; each Acquire must return
+// true. The deadline is only a hang guard for a lost wake-up.
+func TestTurnLimiter_ReleaseDuringAcquireNotLost(t *testing.T) {
+	var sink atomic.Int64
+	for i := 0; i < 20000; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		l := NewTurnLimiter(1)
+		if !l.TryAcquire() {
+			t.Fatal("holder TryAcquire failed")
+		}
+		got := make(chan bool, 1)
+		started := make(chan struct{})
+		go func() {
+			close(started)
+			got <- l.Acquire(ctx)
+		}()
+		<-started
+		for s := 0; s < i%200; s++ {
+			sink.Add(1)
+		}
+		l.Release()
+		ok := <-got
+		cancel()
+		if !ok {
+			t.Fatalf("iteration %d: Acquire lost the Release that freed its slot (wait ended only by the hang guard)", i)
+		}
 	}
 }
 
@@ -1118,4 +1155,55 @@ func TestTurnLimit_StopAfterGrantDropsBatch(t *testing.T) {
 	// The slot the batch briefly held came back: C runs at once.
 	a.Enqueue(Envelope{SessionKey: "sess/C", Text: "c", Driver: dC})
 	mustRecv(t, dC.ready, "C to run on the released slot")
+}
+
+// TestTurnLimit_StopDropsUnabsorbedJoiner proves /stop drops a message the
+// session accepted (Enqueue returned) before the /stop but that the worker had
+// not yet pulled into the waiting batch (#2337). Enqueue only puts a message on
+// the session channel; the waiting worker absorbs it whenever it next selects,
+// and Go's select picks at random between that message and the /stop. So a
+// joiner still sitting in the channel survived the drop and ran as a fresh
+// turn: /stop failed to drop a queued message. The grant observer enqueues the
+// joiner while the worker is outside its select — it cannot be absorbed — and
+// then fires /stop, so the unabsorbed case is deterministic here.
+//
+// A message sent AFTER the /stop must still run. It also proves the joiner's
+// non-run synchronously: the worker serves the channel in order, so by the
+// time the later message drives, the joiner was either run or dropped.
+func TestTurnLimit_StopDropsUnabsorbedJoiner(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+	a.TurnLimit = NewTurnLimiter(1)
+
+	dB := &driverGated{ready: make(chan struct{}, 1)}
+	dAfter := &driverGated{ready: make(chan struct{}, 1)}
+	notices := newNoticeRecorder()
+	a.TurnQueuedNotifyFunc = notices.hook()
+
+	// The test holds the only slot, so B must queue behind it.
+	if !a.TurnLimit.TryAcquire() {
+		t.Fatal("test could not take the only slot")
+	}
+	stopped := make(chan bool, 1)
+	a.SetTurnSlotGrantObserver(func() {
+		a.SetTurnSlotGrantObserver(nil) // only the first wait
+		// On the worker, outside waitTurnSlot's select: the joiner lands in
+		// the channel and stays there, unabsorbed, when /stop fires.
+		a.Enqueue(Envelope{SessionKey: "sess/B", Text: "joiner", Driver: dB})
+		stopped <- a.CancelSession("sess/B")
+	})
+
+	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "first", Driver: dB})
+	mustRecv(t, notices.signal, "B to queue behind the test's slot")
+
+	a.TurnLimit.Release() // grant B; the observer enqueues the joiner, then /stop
+	if got := <-stopped; !got {
+		t.Fatal("CancelSession returned false for a queued batch")
+	}
+
+	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "after", Driver: dAfter})
+	mustRecv(t, dAfter.ready, "the message sent after /stop to run")
+	if got := dB.count.Load(); got != 0 {
+		t.Errorf("a message queued before /stop reached the driver: B WrapTurn calls = %d, want 0", got)
+	}
 }
