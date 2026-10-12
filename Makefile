@@ -35,6 +35,17 @@ LDFLAGS = -s -w -X main.version=$(VERSION) \
 # path. The remote-build check already builds CGO_ENABLED=0.
 export CGO_ENABLED = 0
 
+# No DWARF debug info in any binary this Makefile builds (Dick, 2026-10-12: no
+# debugger is used). Linking the cmd/foci-gw test binary took 5.1 s with it and
+# 3.0 s without (make bench-test-build). GOFLAGS reaches every go command a
+# recipe runs, including the go build calls inside tests (TestMain, the
+# testharness) and golangci-lint/deadcode. A command's own -ldflags replaces
+# it: the release LDFLAGS above already carry -s -w. Added once, so a sub-make
+# that inherits it does not append it again.
+ifeq (,$(filter -ldflags=-w,$(GOFLAGS)))
+export GOFLAGS := $(strip $(GOFLAGS) -ldflags=-w)
+endif
+
 # CI test-history hook: CI_HOOK is the path to the shared results CSV.
 # Row shape (6 cols): time,repo,commit,target,pass|fail,failing-test-names
 # Column 6 (foci_todo #1754) is '|'-joined failing test names, empty on pass, so
