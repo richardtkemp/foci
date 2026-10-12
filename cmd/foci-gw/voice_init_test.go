@@ -54,6 +54,7 @@ func newTestStore(t *testing.T, vals map[string]string) *secrets.Store {
 // TestResolveVoiceAPIKey_Explicit verifies that an explicit secret name
 // is looked up directly in the secrets store.
 func TestResolveVoiceAPIKey_Explicit(t *testing.T) {
+	t.Parallel()
 	store := newTestStore(t, map[string]string{
 		"groq.api_key": "groq-key-123",
 	})
@@ -67,6 +68,7 @@ func TestResolveVoiceAPIKey_Explicit(t *testing.T) {
 // is given, the hostname prefix is extracted from the endpoint URL and used
 // to look up "{prefix}.api_key" in the secrets store.
 func TestResolveVoiceAPIKey_HostnameFallback(t *testing.T) {
+	t.Parallel()
 	store := newTestStore(t, map[string]string{
 		"groq.api_key": "groq-key-456",
 	})
@@ -79,6 +81,7 @@ func TestResolveVoiceAPIKey_HostnameFallback(t *testing.T) {
 // TestResolveVoiceAPIKey_MissingReturnsEmpty verifies that missing secrets
 // return an empty string without error.
 func TestResolveVoiceAPIKey_MissingReturnsEmpty(t *testing.T) {
+	t.Parallel()
 	store := newTestStore(t, map[string]string{})
 	got := resolveVoiceAPIKey(store, "nonexistent.key", "")
 	if got != "" {
@@ -89,6 +92,7 @@ func TestResolveVoiceAPIKey_MissingReturnsEmpty(t *testing.T) {
 // TestResolveVoiceAPIKey_NoEndpoint verifies that an empty endpoint with no
 // explicit secret returns empty.
 func TestResolveVoiceAPIKey_NoEndpoint(t *testing.T) {
+	t.Parallel()
 	store := newTestStore(t, map[string]string{})
 	got := resolveVoiceAPIKey(store, "", "")
 	if got != "" {
@@ -99,6 +103,7 @@ func TestResolveVoiceAPIKey_NoEndpoint(t *testing.T) {
 // TestResolveTTS_DefaultFallback verifies that resolveTTS falls back to
 // the default ("") entry when the requested ID is not found.
 func TestResolveTTS_DefaultFallback(t *testing.T) {
+	t.Parallel()
 	base := &voice.OpenAITTS{Model: "tts-1"}
 	ttsMap := map[string]voice.TTS{
 		"":     base,
@@ -115,6 +120,7 @@ func TestResolveTTS_DefaultFallback(t *testing.T) {
 // TestResolveTTS_RateComposition verifies that entry rate and agent rate
 // are multiplied together (0 treated as 1.0).
 func TestResolveTTS_RateComposition(t *testing.T) {
+	t.Parallel()
 	base := &voice.OpenAITTS{Model: "tts-1"}
 	ttsMap := map[string]voice.TTS{
 		"fast": base,
@@ -136,6 +142,7 @@ func TestResolveTTS_RateComposition(t *testing.T) {
 // TestResolveTTS_EntryRateOnly verifies that when agentRate is 0 (no override),
 // only the entry rate is applied.
 func TestResolveTTS_EntryRateOnly(t *testing.T) {
+	t.Parallel()
 	base := &voice.OpenAITTS{Model: "tts-1"}
 	ttsMap := map[string]voice.TTS{"x": base}
 	entries := []config.TTSConfig{{ID: "x", Rate: 1.3}}
@@ -153,6 +160,7 @@ func TestResolveTTS_EntryRateOnly(t *testing.T) {
 // TestResolveTTS_NilMap verifies that resolveTTS returns nil when given
 // an empty map.
 func TestResolveTTS_NilMap(t *testing.T) {
+	t.Parallel()
 	result := resolveTTS(nil, nil, "", 0, nil)
 	if result != nil {
 		t.Errorf("expected nil, got %v", result)
@@ -162,6 +170,7 @@ func TestResolveTTS_NilMap(t *testing.T) {
 // TestResolveSTT_DefaultFallback verifies that resolveSTT falls back to
 // the default ("") entry when the requested ID is not found.
 func TestResolveSTT_DefaultFallback(t *testing.T) {
+	t.Parallel()
 	base := &voice.OpenAISTT{Model: "whisper-large-v3"}
 	sttMap := map[string]voice.STT{
 		"": base,
@@ -176,6 +185,7 @@ func TestResolveSTT_DefaultFallback(t *testing.T) {
 // TestResolveSTT_ExactMatch verifies that resolveSTT returns the exact match
 // when the requested ID exists.
 func TestResolveSTT_ExactMatch(t *testing.T) {
+	t.Parallel()
 	base := &voice.OpenAISTT{Model: "whisper-large-v3"}
 	other := &voice.OpenAISTT{Model: "whisper-1"}
 	sttMap := map[string]voice.STT{
@@ -192,6 +202,7 @@ func TestResolveSTT_ExactMatch(t *testing.T) {
 // TestResolveSTT_NilMap verifies that resolveSTT returns nil when given
 // an empty map.
 func TestResolveSTT_NilMap(t *testing.T) {
+	t.Parallel()
 	result := resolveSTT(nil, nil, "", nil)
 	if result != nil {
 		t.Errorf("expected nil, got %v", result)
@@ -219,6 +230,7 @@ func chainIDs(t *testing.T, tts voice.TTS) []string {
 // TestInitVoice_RegistersBuiltinFallback: a configured cloud provider must gain
 // a key-less local provider to fall back to, without it being declared.
 func TestInitVoice_RegistersBuiltinFallback(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{TTS: []config.TTSConfig{
 		{ID: "groq", Format: "openai", Endpoint: "https://api.groq.com/openai/v1/audio/speech", Model: "m"},
 	}}
@@ -235,6 +247,7 @@ func TestInitVoice_RegistersBuiltinFallback(t *testing.T) {
 // TestInitVoice_NoTTSConfiguredStaysEmpty: graceful text-only degradation (#1439)
 // must survive the built-in — a deployment that configured no TTS gets none.
 func TestInitVoice_NoTTSConfiguredStaysEmpty(t *testing.T) {
+	t.Parallel()
 	ttsMap, _ := initVoice(&config.Config{}, newTestStore(t, nil))
 	if len(ttsMap) != 0 {
 		t.Errorf("ttsMap = %v, want empty when no [[tts]] entries are configured", mapKeys(ttsMap))
@@ -244,6 +257,7 @@ func TestInitVoice_NoTTSConfiguredStaysEmpty(t *testing.T) {
 // TestInitVoice_ConfiguredEdgeEntryWins: declaring the id explicitly must
 // replace the built-in, so the edge voice/command stay configurable.
 func TestInitVoice_ConfiguredEdgeEntryWins(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{TTS: []config.TTSConfig{
 		{ID: builtinFallbackTTSID, Format: "edge-tts", Voice: "en-GB-RyanNeural"},
 	}}
@@ -261,6 +275,7 @@ func TestInitVoice_ConfiguredEdgeEntryWins(t *testing.T) {
 // TestResolveTTS_DefaultsToEdgeFallback is the behaviour Groq's daily token cap
 // motivated: an unconfigured cloud entry still ends up with a local backstop.
 func TestResolveTTS_DefaultsToEdgeFallback(t *testing.T) {
+	t.Parallel()
 	ttsMap := map[string]voice.TTS{
 		"":                   &voice.OpenAITTS{Model: "tts-1"},
 		"groq":               &voice.OpenAITTS{Model: "tts-1"},
@@ -278,6 +293,7 @@ func TestResolveTTS_DefaultsToEdgeFallback(t *testing.T) {
 // TestResolveTTS_ExplicitEmptyFallbackDisables: `fallback = ""` must opt out,
 // which is why the config field is a pointer rather than a plain string.
 func TestResolveTTS_ExplicitEmptyFallbackDisables(t *testing.T) {
+	t.Parallel()
 	ttsMap := map[string]voice.TTS{
 		"groq":               &voice.OpenAITTS{Model: "tts-1"},
 		builtinFallbackTTSID: &voice.EdgeTTS{},
@@ -291,6 +307,7 @@ func TestResolveTTS_ExplicitEmptyFallbackDisables(t *testing.T) {
 
 // TestResolveTTS_ExplicitChain: fallback ids compose into a multi-hop chain.
 func TestResolveTTS_ExplicitChain(t *testing.T) {
+	t.Parallel()
 	ttsMap := map[string]voice.TTS{
 		"groq":               &voice.OpenAITTS{Model: "a"},
 		"openrouter":         &voice.OpenAITTS{Model: "b"},
@@ -311,6 +328,7 @@ func TestResolveTTS_ExplicitChain(t *testing.T) {
 // TestResolveTTS_EdgeEntryDoesNotChainToItself: an edge-tts entry is already
 // the local backstop, so the default fallback must not point it at itself.
 func TestResolveTTS_EdgeEntryDoesNotChainToItself(t *testing.T) {
+	t.Parallel()
 	ttsMap := map[string]voice.TTS{
 		"local":              &voice.EdgeTTS{},
 		builtinFallbackTTSID: &voice.EdgeTTS{},
@@ -325,6 +343,7 @@ func TestResolveTTS_EdgeEntryDoesNotChainToItself(t *testing.T) {
 // TestResolveTTS_CycleTerminates: a config that points two entries at each
 // other must not loop, and must not repeat a provider in the chain.
 func TestResolveTTS_CycleTerminates(t *testing.T) {
+	t.Parallel()
 	ttsMap := map[string]voice.TTS{
 		"a": &voice.OpenAITTS{Model: "a"},
 		"b": &voice.OpenAITTS{Model: "b"},
@@ -343,6 +362,7 @@ func TestResolveTTS_CycleTerminates(t *testing.T) {
 // TestResolveTTS_ChainLinksKeepTheirOwnRate: each link is decorated with its
 // own entry rate, not the head's, so a fallback voice is not left at 1.0.
 func TestResolveTTS_ChainLinksKeepTheirOwnRate(t *testing.T) {
+	t.Parallel()
 	ttsMap := map[string]voice.TTS{
 		"groq":               &voice.OpenAITTS{Model: "tts-1"},
 		builtinFallbackTTSID: &voice.EdgeTTS{},
@@ -378,6 +398,7 @@ func TestResolveTTS_ChainLinksKeepTheirOwnRate(t *testing.T) {
 // and a resolution with no provider yields the zero credential — nothing to
 // issue.
 func TestLazySTT_STTCredentialDelegates(t *testing.T) {
+	t.Parallel()
 	inner := &voice.OpenAISTT{Endpoint: "https://stt.example/v1/audio/transcriptions", APIKey: "k", Model: "m"}
 	l := &lazySTT{resolve: func() voice.STT { return inner }}
 

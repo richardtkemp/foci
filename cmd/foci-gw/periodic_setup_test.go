@@ -55,6 +55,7 @@ func newQuietSetupInstance(t *testing.T, cfg *config.Config, acfg config.AgentCo
 // window and defaults first, then a per-agent override including the ""-window
 // opt-out — into Settings.QuietCompaction, which applySettings installs.
 func TestPeriodicRederiveCarriesQuietCompaction(t *testing.T) {
+	t.Parallel()
 	base := &config.Config{Sessions: config.SessionsConfig{CompactionConfig: config.CompactionConfig{
 		CompactionQuietHours: config.Ptr("23:00-07:00"),
 	}}}
@@ -272,6 +273,7 @@ func TestBackgroundAgentContextUsageIgnoresPreCompactionFill(t *testing.T) {
 // so a fraction of the raw window let 370-450K sessions sit below 50% all
 // night. With no Compactor (auto-compaction off) the window is the limit.
 func TestBackgroundAgentContextUsageLimitIsAutoCompactionLimit(t *testing.T) {
+	t.Parallel()
 	const sk = "qa/c1"
 	inst := newQuietSetupInstance(t, &config.Config{}, config.AgentConfig{ID: "qa"}, func(a *agent.Agent) {
 		a.ModelMetaFn = func(string) modelinfo.ModelMeta { return modelinfo.ModelMeta{ContextWindow: 200000} }

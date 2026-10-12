@@ -14,6 +14,7 @@ func (m mapStore) Get(key string) (string, bool) {
 }
 
 func TestMissingOptionalSecretDowngradedToInfo(t *testing.T) {
+	t.Parallel()
 	// Proves that a missing optional secret (brave.api_key — search_provider
 	// defaults to "brave", but the web-search tool self-gates on the key) is
 	// downgraded to INFO rather than emitting a startup WARN on every boot (#852).
@@ -42,6 +43,7 @@ func TestMissingOptionalSecretDowngradedToInfo(t *testing.T) {
 }
 
 func TestMissingPlatformSecretDowngradedWhenAlternativeExists(t *testing.T) {
+	t.Parallel()
 	// Proves that when an agent has both Telegram and Discord configured and
 	// only one secret is present, the missing platform secret is downgraded
 	// (INFO not WARN) because the agent can still operate.
@@ -79,6 +81,7 @@ func TestMissingPlatformSecretDowngradedWhenAlternativeExists(t *testing.T) {
 }
 
 func TestMissingPlatformSecretWarnWhenNoAlternative(t *testing.T) {
+	t.Parallel()
 	// Proves that when an agent has only one platform configured and its
 	// secret is missing, the warning is NOT downgraded — the agent has
 	// no working platform at all.
@@ -112,6 +115,7 @@ func TestMissingPlatformSecretWarnWhenNoAlternative(t *testing.T) {
 }
 
 func TestMissingPlatformSecretWarnWhenBothMissing(t *testing.T) {
+	t.Parallel()
 	// Proves that when both platform secrets are missing, neither is
 	// downgraded — the agent has no working platform.
 	cfg := &config.Config{
@@ -137,6 +141,7 @@ func TestMissingPlatformSecretWarnWhenBothMissing(t *testing.T) {
 }
 
 func TestNonPlatformSecretNeverDowngraded(t *testing.T) {
+	t.Parallel()
 	// Proves that non-platform secrets (e.g. endpoint API keys) are never
 	// downgraded regardless of other platform state.
 	cfg := &config.Config{
@@ -170,6 +175,7 @@ func TestNonPlatformSecretNeverDowngraded(t *testing.T) {
 }
 
 func TestGlobalFacetBotNotDowngraded(t *testing.T) {
+	t.Parallel()
 	// Proves that global facet bot secrets (no AgentID) are never downgraded,
 	// since they don't belong to a specific agent.
 	cfg := &config.Config{
@@ -200,6 +206,7 @@ func TestGlobalFacetBotNotDowngraded(t *testing.T) {
 }
 
 func TestAllSecretsPresent(t *testing.T) {
+	t.Parallel()
 	// Proves that when all secrets are present, no missing entries are reported.
 	cfg := &config.Config{
 		Agents: []config.AgentConfig{
@@ -224,6 +231,7 @@ func TestAllSecretsPresent(t *testing.T) {
 }
 
 func TestMissingPlatformSecretDowngradedWhenAppPlatformEnabled(t *testing.T) {
+	t.Parallel()
 	// Proves that when the app (Android) platform is enabled globally, an
 	// agent's missing telegram/discord bot secrets downgrade to INFO — the
 	// agent is reachable via the app even with no bot tokens. And, crucially,

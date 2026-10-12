@@ -16,6 +16,7 @@ import (
 // TestWebhook_SyncSuccess tests the happy path: known agent, configured hook ID,
 // existing prompt file, body payload, sync=true → 200 with agent response.
 func TestWebhook_SyncSuccess(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "deploy.md"), []byte("Handle this deploy event."), 0644)
 
@@ -54,6 +55,7 @@ func TestWebhook_SyncSuccess(t *testing.T) {
 // only means "accepted", so the test then waits for the mock backend to see
 // the combined prompt+payload message.
 func TestWebhook_AsyncDefault(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "alert.md"), []byte("Process this alert."), 0644)
 
@@ -89,6 +91,7 @@ func TestWebhook_AsyncDefault(t *testing.T) {
 // TestWebhook_EmptyBody tests that a webhook with no body still works
 // (sends just the prompt text, no payload heading).
 func TestWebhook_EmptyBody(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "ping.md"), []byte("Ping check."), 0644)
 
@@ -112,6 +115,7 @@ func TestWebhook_EmptyBody(t *testing.T) {
 
 // TestWebhook_UnknownAgent returns 400 for an unknown agent ID.
 func TestWebhook_UnknownAgent(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{promptDir: t.TempDir()})
 	mux := newTestMux(d)
 
@@ -126,6 +130,7 @@ func TestWebhook_UnknownAgent(t *testing.T) {
 
 // TestWebhook_UnknownHookID returns 404 when the hook ID is not in the webhooks map.
 func TestWebhook_UnknownHookID(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{promptDir: t.TempDir(), webhooks: map[string]string{"deploy": "deploy.md"}})
 	mux := newTestMux(d)
 
@@ -141,6 +146,7 @@ func TestWebhook_UnknownHookID(t *testing.T) {
 // TestWebhook_PathTraversal tests that path-traversal-style hook IDs return 404.
 // Since hookid is a map key lookup, traversal strings simply won't match any key.
 func TestWebhook_PathTraversal(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{promptDir: t.TempDir(), webhooks: map[string]string{"deploy": "deploy.md"}})
 	mux := newTestMux(d)
 
@@ -162,6 +168,7 @@ func TestWebhook_PathTraversal(t *testing.T) {
 
 // TestWebhook_PromptFileNotFound returns 404 when the hook is configured but the prompt file doesn't exist.
 func TestWebhook_PromptFileNotFound(t *testing.T) {
+	t.Parallel()
 	// empty dir, no prompts
 	d, _ := httpTestSetup(t, httpTestOpts{promptDir: t.TempDir(), webhooks: map[string]string{"missing": "nonexistent.md"}})
 	mux := newTestMux(d)
@@ -177,6 +184,7 @@ func TestWebhook_PromptFileNotFound(t *testing.T) {
 
 // TestWebhook_BadPath tests various malformed paths.
 func TestWebhook_BadPath(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{promptDir: t.TempDir()})
 	mux := newTestMux(d)
 
@@ -197,6 +205,7 @@ func TestWebhook_BadPath(t *testing.T) {
 
 // TestWebhook_MethodNotAllowed verifies only POST is accepted.
 func TestWebhook_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{promptDir: t.TempDir()})
 	mux := newTestMux(d)
 
@@ -217,6 +226,7 @@ func TestWebhook_MethodNotAllowed(t *testing.T) {
 // (agent/i<hookID>, here test-agent/itest), created lazily (RungCreated) and
 // dispatched to — so the request is ACCEPTED and delivered.
 func TestWebhook_NoSession_StartsIndependent(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.md"), []byte("prompt text"), 0644)
 
@@ -250,6 +260,7 @@ func TestWebhook_NoSession_StartsIndependent(t *testing.T) {
 // (user inbound only). The narrower user-only behaviour lives behind
 // --if-user-inactive.
 func TestWebhook_IfInactive(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.md"), []byte("prompt"), 0644)
 
@@ -284,6 +295,7 @@ func TestWebhook_IfInactive(t *testing.T) {
 // only `last_user_activity` (real user inbound) counts, not session-level
 // activity from cron/CLI/webhook turns. Confirms the split is honoured.
 func TestWebhook_IfUserInactive_LegacyUserActivityOnly(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.md"), []byte("prompt"), 0644)
 
@@ -314,6 +326,7 @@ func TestWebhook_IfUserInactive_LegacyUserActivityOnly(t *testing.T) {
 
 // TestWebhook_NoWebhooksConfigured returns 404 when agent has no webhooks configured.
 func TestWebhook_NoWebhooksConfigured(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{promptDir: t.TempDir()}) // nil webhooks
 	mux := newTestMux(d)
 

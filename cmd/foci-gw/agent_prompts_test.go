@@ -7,6 +7,7 @@ import (
 )
 
 func TestSeedDefaultPrompts_BackendGating(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	seedDefaultPrompts(dir, 0o644, map[string]bool{"opencode": true, "no-default-backend": true})
 
@@ -24,6 +25,7 @@ func TestSeedDefaultPrompts_BackendGating(t *testing.T) {
 }
 
 func TestSeedDefaultPrompts_DoesNotOverwrite(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	p := filepath.Join(dir, "backend-api.md")
 	if err := os.WriteFile(p, []byte("USER EDIT"), 0o644); err != nil {

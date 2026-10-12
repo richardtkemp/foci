@@ -12,6 +12,7 @@ import (
 // the embed are left alone. Uses the real embedded foci-usage skill, which ships a
 // SKILL.md plus sibling content files.
 func TestSeedDefaultSkills_TwoTier(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	mode := os.FileMode(0o644)
 

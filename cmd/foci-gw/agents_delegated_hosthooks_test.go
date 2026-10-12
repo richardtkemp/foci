@@ -55,6 +55,7 @@ func registerHookCatcher(name string, caps ...delegator.Capability) *delegator.H
 // callbacks always, the rules only where the Spec declares them, and the
 // Claude Code re-login only for a backend declaring relogin.
 func TestConfigureDelegated_HostHooksFollowSpec(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		caps  []delegator.Capability

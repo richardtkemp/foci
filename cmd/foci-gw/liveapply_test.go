@@ -19,6 +19,7 @@ import (
 // an applier for a restart-tagged row would apply silently while the UI says
 // "restart required".
 func TestLiveApplyCoversHotFields(t *testing.T) {
+	t.Parallel()
 	covered := map[string]bool{}
 	for _, addrs := range [][]string{liveApplyLoggingAddrs, liveApplyDebugAddrs, liveApplyPeriodicAddrs, liveApplyResolvedAddrs, liveApplyWarningAddrs, liveApplyNudgeAddrs} {
 		for _, a := range addrs {

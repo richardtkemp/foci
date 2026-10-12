@@ -7,6 +7,7 @@ import "testing"
 // both the changelog and the restart injection; without one, the first agent
 // gets the changelog and the restart injection is unrestricted (every agent).
 func TestSystemInjectionTargets(t *testing.T) {
+	t.Parallel()
 	order := []string{"alpha", "beta", "clutch"}
 
 	welcome, restartOnly := systemInjectionTargets("clutch", order)

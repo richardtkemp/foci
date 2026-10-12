@@ -29,6 +29,7 @@ func userActivityRecorded(d httpHandlerDeps, sessionKey string) bool {
 // harness wires no periodic runner, so passing also proves the receipt stamp
 // is nil-runner safe.
 func TestSend_HumanSyncSetsUserActivity(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	mux := newTestMux(d)
 
@@ -49,6 +50,7 @@ func TestSend_HumanSyncSetsUserActivity(t *testing.T) {
 // req 2: without the human declaration a /send behaves exactly as before —
 // automated, no user activity recorded on the target session.
 func TestSend_AutomatedSyncNoUserActivity(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	mux := newTestMux(d)
 
@@ -66,6 +68,7 @@ func TestSend_AutomatedSyncNoUserActivity(t *testing.T) {
 // dispatch path: the queued turn runs off the request context, and once it
 // reaches the backend its entry write has stamped last_user_activity_at.
 func TestSend_HumanAsyncSetsUserActivity(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	mock.entered = make(chan string, 1)
 	mux := newTestMux(d)
@@ -91,6 +94,7 @@ func TestSend_HumanAsyncSetsUserActivity(t *testing.T) {
 // durable timestamp is written by the turn either way, so only this test
 // notices if either notifyHumanInteraction call in handleSend is lost (#2230).
 func TestSend_HumanSendStampsInProcessReceipt(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, body string
 		wantCode   int
@@ -123,6 +127,7 @@ func TestSend_HumanSendStampsInProcessReceipt(t *testing.T) {
 // starts no turn, so the handler itself stamps last_user_activity_at for the
 // target session.
 func TestSend_HumanSlashCommandSetsUserActivity(t *testing.T) {
+	t.Parallel()
 	ping := &command.Command{
 		Name: "ping",
 		Execute: func(_ context.Context, _ command.Request, _ command.CommandContext) (command.Response, error) {
@@ -154,6 +159,7 @@ func TestSend_HumanSlashCommandSetsUserActivity(t *testing.T) {
 // /command dispatch stamps last_user_activity_at on the command's target
 // session (a command starts no turn, so nothing else would).
 func TestCommand_HumanSetsUserActivity(t *testing.T) {
+	t.Parallel()
 	ping := &command.Command{
 		Name: "ping",
 		Execute: func(_ context.Context, _ command.Request, _ command.CommandContext) (command.Response, error) {
@@ -180,6 +186,7 @@ func TestCommand_HumanSetsUserActivity(t *testing.T) {
 // ANSWERING an unknown name is a dispatch — a human typo is still human
 // attention and stamps.
 func TestCommand_HumanStampsOnlyWhenDispatched(t *testing.T) {
+	t.Parallel()
 	broken := &command.Command{Name: "broken"} // registered, no Execute → Dispatch reports not-dispatched
 	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{broken}})
 	mux := newTestMux(d)
@@ -213,6 +220,7 @@ func TestCommand_HumanStampsOnlyWhenDispatched(t *testing.T) {
 // the durable write lands on the NEW branch session key at turn entry, not
 // the parent's.
 func TestBranch_HumanSetsUserActivityOnBranchSession(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	mux := newTestMux(d)
 
@@ -243,6 +251,7 @@ func TestBranch_HumanSetsUserActivityOnBranchSession(t *testing.T) {
 // runs stamps the runner receipt (the durable timestamp stays the branch
 // turn's own entry write, on the new session key).
 func TestBranch_HumanReceiptStampsOnlyWhenDispatched(t *testing.T) {
+	t.Parallel()
 	runner := &periodic.Runner{}
 	d, _ := httpTestSetup(t, httpTestOpts{kaRunner: runner})
 	mux := newTestMux(d)
@@ -273,6 +282,7 @@ func TestBranch_HumanReceiptStampsOnlyWhenDispatched(t *testing.T) {
 // human-declared send that an if_* gate SKIPS records no user activity — the
 // declaration takes effect only when the request dispatches.
 func TestSend_HumanGateSkippedNoUserActivity(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	d.sessionIndex.TouchCacheTouch(testSessionKey, time.Now()) // warm → if_inactive trips
 	mux := newTestMux(d)
@@ -299,6 +309,7 @@ func TestSend_HumanGateSkippedNoUserActivity(t *testing.T) {
 // human-declared send that a wait_* gate DEFERS records no user activity, and
 // the declaration must not satisfy the wait condition itself.
 func TestSend_HumanWaitDeferredNoUserActivity(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	withDeferStore(t, &d)
 	mux := newTestMux(d)
@@ -327,6 +338,7 @@ func TestSend_HumanWaitDeferredNoUserActivity(t *testing.T) {
 // activity. The stamp a DISPATCHED human request leaves behind is durable,
 // though: a later request's if_user_active gate sees it and runs.
 func TestSend_HumanUserGateReadsBeforeOwnStamp(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	mux := newTestMux(d)
 
@@ -378,6 +390,7 @@ func TestSend_HumanUserGateReadsBeforeOwnStamp(t *testing.T) {
 // the stamp from an earlier dispatched human request releases a later one
 // immediately.
 func TestSend_HumanWaitUserGateReadsBeforeOwnStamp(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	withDeferStore(t, &d)
 	mux := newTestMux(d)
@@ -423,6 +436,7 @@ func TestSend_HumanWaitUserGateReadsBeforeOwnStamp(t *testing.T) {
 // human send to a session with no user activity RUNS, and only its dispatch
 // stamps the session.
 func TestSend_HumanIfUserInactiveRuns(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	mux := newTestMux(d)
 
@@ -448,6 +462,7 @@ func TestSend_HumanIfUserInactiveRuns(t *testing.T) {
 // part of the deferred record, so the sweep delivers the request as
 // automated — no user activity is recorded at delivery time.
 func TestSweep_DeferredHumanDeliveredAutomated(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	mock.entered = make(chan string, 1)
 	store := withDeferStore(t, &d)
@@ -480,6 +495,7 @@ func TestSweep_DeferredHumanDeliveredAutomated(t *testing.T) {
 // "user" — the declaration widens only the user-activity write, never the
 // turn's classification (steering, shutdown refusal, platform tagging).
 func TestSend_HumanTriggerStillUser(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	mux := newTestMux(d)
 
@@ -611,6 +627,7 @@ func runAutomatedCase(t *testing.T, tc automatedCase, why string) {
 // session the human version would stamp (for /branch: the new branch session
 // AND the parent), no in-process runner receipt.
 func TestEndpoints_ExplicitHumanFalseIsAutomated(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []automatedCase{
 		{"send", "/send", `{"text":"hi","human":false,"wait_none":true}`, proveTurnDispatched},
 		{"send slash command", "/send", `{"text":"/ping","human":false,"wait_none":true}`, proveSlashCommandAnswered},
@@ -628,6 +645,7 @@ func TestEndpoints_ExplicitHumanFalseIsAutomated(t *testing.T) {
 // /branch — the decode-to-false default must stamp nothing. Each case proves
 // the request dispatched, so the negative assertions cannot pass vacuously.
 func TestEndpoints_AbsentHumanKeyIsAutomated(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []automatedCase{
 		{"send slash command", "/send", `{"text":"/ping","wait_none":true}`, proveSlashCommandAnswered},
 		{"command", "/command", `{"command":"/ping"}`, proveSlashCommandAnswered},
@@ -646,6 +664,7 @@ func TestEndpoints_AbsentHumanKeyIsAutomated(t *testing.T) {
 // receipt. Zero backend calls prove no turn ran, so neither stamp can come
 // from a turn's entry write.
 func TestEndpoints_HumanNoTurnPathsStampBothReceipts(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, endpoint, body string }{
 		{"command", "/command", `{"command":"/ping","human":true}`},
 		{"send slash command", "/send", `{"text":"/ping","human":true,"wait_none":true}`},
@@ -678,6 +697,7 @@ func TestEndpoints_HumanNoTurnPathsStampBothReceipts(t *testing.T) {
 // durable check covers both the command's target and the branch's parent:
 // testSessionKey.
 func TestEndpoints_HumanDeferredByWaitStampsNothing(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, endpoint, body string }{
 		{"command", "/command", `{"command":"/ping","human":true,"wait_warm":"1h"}`},
 		{"branch", "/branch", `{"text":"branch hi","human":true,"wait_warm":"1h"}`},

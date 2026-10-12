@@ -15,6 +15,7 @@ import (
 // with the "branch" trigger label (which downstream code uses to distinguish
 // branch turns from user turns).
 func TestWake_RunsWithWakeTrigger(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	mux := newTestMux(d)
 
@@ -46,6 +47,7 @@ func TestWake_RunsWithWakeTrigger(t *testing.T) {
 // backend is never touched. The gate matrix is unit-tested elsewhere; this
 // pins that the handler actually consults it.
 func TestWake_GateClosedSkips(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	d.sessionIndex.TouchCacheTouch(testSessionKey, time.Now())
 	mux := newTestMux(d)
@@ -70,6 +72,7 @@ func TestWake_GateClosedSkips(t *testing.T) {
 // a branch key (resolved_via "branch"), the turn's messages land in the branch
 // session file, and the parent session file is untouched.
 func TestWake_BranchFlow(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	mux := newTestMux(d)
 
@@ -116,6 +119,7 @@ func TestWake_BranchFlow(t *testing.T) {
 // inherently async; the caller's connection cannot be held until the
 // condition holds).
 func TestBranch_UnmetWaitDefers(t *testing.T) {
+	t.Parallel()
 	warmSetup := func(t *testing.T) (httpHandlerDeps, *mockClient, *defersend.Store, *http.ServeMux) {
 		d, mock := httpTestSetup(t, httpTestOpts{})
 		store := withDeferStore(t, &d)
@@ -219,6 +223,7 @@ func TestBranch_UnmetWaitDefers(t *testing.T) {
 // field, or one whose condition already holds (or wait_none), branches
 // immediately exactly as before — nothing is queued.
 func TestBranch_WaitHoldsRunsNow(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		warm bool
@@ -260,6 +265,7 @@ func TestBranch_WaitHoldsRunsNow(t *testing.T) {
 // TestBranch_BadWaitDuration proves a malformed wait duration on /branch is a
 // client error, not a deferred branch.
 func TestBranch_BadWaitDuration(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	withDeferStore(t, &d)
 	mux := newTestMux(d)
@@ -276,6 +282,7 @@ func TestBranch_BadWaitDuration(t *testing.T) {
 // error names the field and type — instead of the "need {...}" hint the
 // decode site used to answer. Which requests are rejected is unchanged.
 func TestBranch_DecodeErrorNamesField(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	mux := newTestMux(d)
 

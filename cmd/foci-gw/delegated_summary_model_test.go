@@ -123,6 +123,7 @@ func runDelegatedSummary(t *testing.T, be startRecorder, agentModel, summaryMode
 // opencode server's own default model. With no cheap model of its own and
 // none configured, the batch must run on the agent's own model.
 func TestDelegatedSummary_OpencodeModelIsResolvable(t *testing.T) {
+	t.Parallel()
 	got := runDelegatedSummary(t, &summaryModelBackend{}, "zai-coding-plan/glm-4.6", "")
 	if len(got) != 1 || got[0] != "zai-coding-plan/glm-4.6" {
 		t.Fatalf("opencode summary batch launched with models %q, want the agent's own [zai-coding-plan/glm-4.6]", got)
@@ -132,6 +133,7 @@ func TestDelegatedSummary_OpencodeModelIsResolvable(t *testing.T) {
 // TestDelegatedSummary_BackendCheapModel: a backend with a cheap model of its
 // own (CC: haiku) runs summaries on it.
 func TestDelegatedSummary_BackendCheapModel(t *testing.T) {
+	t.Parallel()
 	got := runDelegatedSummary(t, &cheapSummaryModelBackend{}, "opus", "")
 	if len(got) != 1 || got[0] != "haiku" {
 		t.Fatalf("summary batch launched with models %q, want the backend's cheap model [haiku]", got)
@@ -141,6 +143,7 @@ func TestDelegatedSummary_BackendCheapModel(t *testing.T) {
 // TestDelegatedSummary_ConfiguredModelWins: [tools] summary_model overrides
 // both the backend's cheap model and the agent's model.
 func TestDelegatedSummary_ConfiguredModelWins(t *testing.T) {
+	t.Parallel()
 	got := runDelegatedSummary(t, &cheapSummaryModelBackend{}, "opus", "sonnet")
 	if len(got) != 1 || got[0] != "sonnet" {
 		t.Fatalf("summary batch launched with models %q, want the configured [sonnet]", got)

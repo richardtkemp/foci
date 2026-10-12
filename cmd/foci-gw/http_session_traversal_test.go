@@ -12,6 +12,7 @@ import (
 // returns 400 Bad Request instead of constructing a key that would escape the
 // session directory. Reuses httpTestSetup, which wires the full handler mux.
 func TestSend_RejectsSessionTraversal(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	mux := newTestMux(d)
 

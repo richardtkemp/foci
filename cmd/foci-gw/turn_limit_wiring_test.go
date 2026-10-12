@@ -52,6 +52,7 @@ func (m *sessionRoutingConnMgr) ForSessionOrPrimary(_, agentID string) platform.
 // not as a broadcast. Without the wiring the hook stays nil and a user turn that
 // waits for a turn-limit slot is never announced.
 func TestWireAgentPlatformCallbacks_TurnQueuedNotifyDeliversToSessionChat(t *testing.T) {
+	t.Parallel()
 	conn := &sessionNotifyConn{stubConn: &stubConn{sessionKey: "x/c1"}}
 	connMgr := &sessionRoutingConnMgr{conn: conn}
 	acfg := config.AgentConfig{ID: "x"}

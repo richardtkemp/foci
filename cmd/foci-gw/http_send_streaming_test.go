@@ -88,6 +88,7 @@ func (m recordingConnMgr) Wait()                                                
 // deliverToSessionChat/agents_notify.go already uses for wakes and
 // send_to_session), so typing toggles true→false around the turn.
 func TestSend_AsyncDeliveryTogglesTypingIndicator(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	mock.entered = make(chan string, 1)
 	conn := newRecordingConn(testSessionKey)

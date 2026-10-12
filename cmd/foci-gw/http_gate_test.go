@@ -33,6 +33,7 @@ func fakeCheckers(userActive, sessionActive bool) (userActivityChecker, sessionA
 //   - --if-inactive skips if InFlight=true
 //   - --if-active passes if InFlight=true
 func TestCheckActivityGate_FourFlagMatrix(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		in             activityGateInputs
@@ -197,6 +198,7 @@ func TestCheckActivityGate_FourFlagMatrix(t *testing.T) {
 // with --if-inactive 45m. Without the in-flight short-circuit, the cron
 // would queue behind the running turn. With the short-circuit, it skips.
 func TestCheckActivityGate_KeepaliveBugRegression(t *testing.T) {
+	t.Parallel()
 	// State: the agent is mid-turn (e.g. 2h health-check still running, or
 	// blocked waiting on a CC permission decision). No recent user activity.
 	// Session metadata's last_activity hasn't fired yet for THIS turn — it
@@ -232,6 +234,7 @@ func TestCheckActivityGate_KeepaliveBugRegression(t *testing.T) {
 // flags would skip, the first one in this order wins. This matters because
 // the response body identifies *which* gate fired, and tooling may parse it.
 func TestCheckActivityGate_FlagOrdering(t *testing.T) {
+	t.Parallel()
 	uc, sc := fakeCheckers(false, false)
 
 	// All four set; user is inactive AND session is inactive. With no
@@ -257,6 +260,7 @@ func TestCheckActivityGate_FlagOrdering(t *testing.T) {
 // caller (foci CLI / cron) treats the skip as "successful no-op", not
 // "request failed."
 func TestCheckActivityGate_HTTPStatusOnSkip(t *testing.T) {
+	t.Parallel()
 	uc, sc := fakeCheckers(false, true)
 	in := activityGateInputs{IfInactive: "1h"}
 	w := httptest.NewRecorder()
@@ -276,6 +280,7 @@ func TestCheckActivityGate_HTTPStatusOnSkip(t *testing.T) {
 // TestCheckActivityGate_HTTPStatusOnBadDuration verifies that an unparseable
 // duration string fails fast with 400.
 func TestCheckActivityGate_HTTPStatusOnBadDuration(t *testing.T) {
+	t.Parallel()
 	uc, sc := fakeCheckers(false, false)
 	in := activityGateInputs{IfActive: "garbage"}
 	w := httptest.NewRecorder()

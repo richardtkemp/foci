@@ -59,6 +59,7 @@ func (p *summariserWireClientProvider) ResolveEndpointClient(string, string) pro
 // model's own [models.*.provider] table (and its fallback hops resolve
 // theirs) — end to end, not just via a unit test of the setter.
 func TestConfigureAPI_SummariserCarriesRouting(t *testing.T) {
+	t.Parallel()
 	routingCheap := &provider.ProviderRouting{Order: []string{"prov-cheap"}}
 
 	client := &summariserWireClient{}

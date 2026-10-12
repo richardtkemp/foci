@@ -13,6 +13,7 @@ import (
 // exist for Claude Code backends. An opencode agent (arnix) used to see it and
 // get Claude's numbers back.
 func TestRegisterAgentCommands_ManaOnlyForClaudeCode(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		backend string
 		want    bool

@@ -10,6 +10,7 @@ import (
 // and that no warnings appear when the config is consistent.
 // Covers: global default, per-agent overrides, per-agent streaming override.
 func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
+	t.Parallel()
 	trueVal := true
 	falseVal := false
 

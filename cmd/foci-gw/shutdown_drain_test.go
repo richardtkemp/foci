@@ -17,6 +17,7 @@ import (
 // #2059: a wake whose turn is refused because foci is shutting down must stay
 // pending so the next process re-fires it; any other outcome consumes it.
 func TestWakeTurnDone_KeepsRowOnlyWhenShuttingDown(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name        string
 		err         error
@@ -53,6 +54,7 @@ func TestWakeTurnDone_KeepsRowOnlyWhenShuttingDown(t *testing.T) {
 // #2059: an injection the inbox refuses during shutdown never runs, so its
 // completion hook never fires — which is what leaves a wake's row pending.
 func TestDeliverToSessionChatThen_RefusedInjectionSkipsHook(t *testing.T) {
+	t.Parallel()
 	ag := &agent.Agent{}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -77,6 +79,7 @@ func TestDeliverToSessionChatThen_RefusedInjectionSkipsHook(t *testing.T) {
 }
 
 func TestDescribeBusyTurn_ElapsedFromDispatch(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 26, 15, 25, 56, 0, time.UTC)
 	queued := now.Add(-(3*time.Minute + 26*time.Second))
 

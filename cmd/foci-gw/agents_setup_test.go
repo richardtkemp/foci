@@ -19,6 +19,7 @@ import (
 // (already covered by TestLiveApplyResolvedActuallySwaps), but that the
 // derived handle itself picks up the new values without being reconstructed.
 func TestBuildCompactor_LiveConfigEditUpdatesCompactor(t *testing.T) {
+	t.Parallel()
 	p := minimalSetupParams(t, "test")
 	p.resolved.Compaction = config.ResolvedCompaction{
 		CompactionThreshold:        0.5,
@@ -59,6 +60,7 @@ func TestBuildCompactor_LiveConfigEditUpdatesCompactor(t *testing.T) {
 // field-mapping bug here (e.g. a typo'd struct field) would silently make
 // the config knob a no-op without any compile error.
 func TestNudgeSettingsMapsMaxPerTurn(t *testing.T) {
+	t.Parallel()
 	nc := config.ResolvedNudge{
 		NudgeCooldown:    5,
 		NudgeMaxPerBatch: 1,
@@ -76,6 +78,7 @@ func TestNudgeSettingsMapsMaxPerTurn(t *testing.T) {
 // (opencode only), so codex agents kept mid-turn rules that their
 // turns never armed: the rules silently never fired, with no skip warning.
 func TestNudgeCapabilities(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		backend                     string
 		wantPostTool, wantPreAnswer bool
@@ -103,6 +106,7 @@ func TestNudgeCapabilities(t *testing.T) {
 // SetSecretNames (agents_setup.go) — does not change, so the prompt and its
 // cache stay valid.
 func TestSetupRedactionFollowsFileWhileSecretsListStays(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "secrets.toml")
 	if err := os.WriteFile(path, []byte("[old]\nkey = \"oldvalue1\"\n"), 0600); err != nil {

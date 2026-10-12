@@ -20,6 +20,7 @@ import (
 // the process's CC cost is compared with the adapter's, and the day totals
 // are printed.
 func TestLedgerShadowCompare(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	at := time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC)
 	livePath, shadowPath := filepath.Join(dir, "api.db"), filepath.Join(dir, "api-shadow.db")
@@ -83,6 +84,7 @@ func TestLedgerShadowCompare(t *testing.T) {
 // exactly the calls that report counts — found by token equality, never by a
 // cut at the report's time.
 func TestLedgerShadowProcessInterval(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	at := time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC)
 	const model = "claude-opus-5"
@@ -195,6 +197,7 @@ func TestLedgerShadowProcessInterval(t *testing.T) {
 // overhead by design, and the unknown-TTL writes priced both ways (#2131) —
 // while a clean process and a small by-design overhead row stay unflagged.
 func TestLedgerShadowFlagsTurnlessTTLRemainder(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	at := time.Date(2026, 9, 29, 20, 0, 0, 0, time.UTC)
 	const opus, sonnet = "claude-opus-5-5", "claude-sonnet-5"

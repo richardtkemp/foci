@@ -11,6 +11,7 @@ import (
 // TestCleanupStaleSessionMetadata_RemovesStaleNoCompact proves that no_compact
 // entries for sessions whose files no longer exist are removed.
 func TestCleanupStaleSessionMetadata_RemovesStaleNoCompact(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
 	if err != nil {
@@ -49,6 +50,7 @@ func TestCleanupStaleSessionMetadata_RemovesStaleNoCompact(t *testing.T) {
 // TestCleanupStaleSessionMetadata_PreservesOtherMetadata proves that cleanup
 // only affects no_compact metadata and leaves other metadata untouched.
 func TestCleanupStaleSessionMetadata_PreservesOtherMetadata(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
 	if err != nil {

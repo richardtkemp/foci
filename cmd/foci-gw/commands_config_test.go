@@ -20,6 +20,7 @@ import (
 // running agent but has no row in the startup config skips the rung and
 // lands on the built-in default.
 func TestRegisterAgentCommandsConfigGetRunningValue(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "foci.toml")
 	if err := os.WriteFile(path, []byte("[[agents]]\nid = \"a\"\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -88,6 +89,7 @@ func TestRegisterAgentCommandsConfigGetRunningValue(t *testing.T) {
 // the rung was unified, get replied "(not set)" / built-in default here
 // while the editor showed 20000 for the very same agent and config.
 func TestRegisterAgentCommandsConfigGetOverrideField(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "foci.toml")
 	if err := os.WriteFile(path, []byte("[[agents]]\nid = \"a\"\n"), 0o600); err != nil {
 		t.Fatal(err)

@@ -34,6 +34,7 @@ func (m oneConnMgr) ForSessionOrPrimary(string, string) platform.Connection { re
 // so the agent is told the ask expired rather than that the user cancelled it.
 // Not parallel: CleanupExpiredInteractive sweeps the process-global prompt store.
 func TestAskPrompt_ExpiryResolvesAsExpired(t *testing.T) {
+	t.Parallel()
 	mgr := oneConnMgr{conn: &buttonStubConn{stubConn{sessionKey: "a/s"}}}
 	choices := []question.Choice{{Label: "Yes", Data: "qa:0"}, {Label: "Cancel", Data: question.CancelData}}
 

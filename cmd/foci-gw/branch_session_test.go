@@ -65,6 +65,7 @@ func historyTexts(t *testing.T, mock *mockClient) string {
 // <agent>/i<name> and the branch is made from that new, empty session. The
 // caller gets a 200 and an answer with no inherited context; nothing errors.
 func TestBranch_UnknownSelectorCreatesEmptyNamedParent(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	mux := newTestMux(d)
 
@@ -93,6 +94,7 @@ func TestBranch_UnknownSelectorCreatesEmptyNamedParent(t *testing.T) {
 // branch made from a named session reads THAT session's history — not the
 // default session's — and the receipt names a branch of the named key.
 func TestBranch_NamedSessionHistory(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	seedMarker(t, d, testSessionKey, "default marker")
 	seedMarker(t, d, testAgentID+"/iside", "named marker")
@@ -124,6 +126,7 @@ func TestBranch_NamedSessionHistory(t *testing.T) {
 // made from a chat-alias selector reads that alias's session history, and
 // the receipt names a branch of the alias's chat key.
 func TestBranch_AliasSessionHistory(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	if err := d.sessionIndex.SetChatAliasUnique(testAgentID, "app", 77, "Fabro"); err != nil {
 		t.Fatal(err)
@@ -159,6 +162,7 @@ func TestBranch_AliasSessionHistory(t *testing.T) {
 // reply in the HTTP body with a branch receipt, and no connection gets any
 // send — not the named session's chat, nor the agent's primary.
 func TestBranch_SyncSilentNamedParentNoChatDelivery(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	seedMarker(t, d, testSessionKey, "default marker")
 	seedMarker(t, d, testAgentID+"/iside", "named marker")
@@ -304,6 +308,7 @@ func delegatedBranchingHarness(t *testing.T, opts httpTestOpts) (httpHandlerDeps
 // conversation is archived gets one minted rather than a 412), and — given
 // explicitly — the default key itself.
 func TestBranch_CannotBranchMainFallsThrough(t *testing.T) {
+	t.Parallel()
 	// The plainly resolved default session: no selector at all.
 	t.Run("resolved default", func(t *testing.T) {
 		d, be := delegatedBranchHarness(t, httpTestOpts{})
@@ -401,6 +406,7 @@ func TestBranch_CannotBranchMainFallsThrough(t *testing.T) {
 // the session and saying nothing ran; the backend is never started, nothing
 // is injected, and the parent's session file and index row are unchanged.
 func TestBranch_CannotBranchNamedParentRefused(t *testing.T) {
+	t.Parallel()
 	t.Run("named parent", func(t *testing.T) {
 		d, be := delegatedBranchHarness(t, httpTestOpts{})
 		// Seed the parent with a message and an index row, so "unchanged"
@@ -487,6 +493,7 @@ func TestBranch_CannotBranchNamedParentRefused(t *testing.T) {
 // agents outright — so the ordering is the observable: the 422 says the
 // backend cannot branch, not that the model was refused.
 func TestBranch_CannotBranchRefusedBeforeDispatch(t *testing.T) {
+	t.Parallel()
 	t.Run("async never enqueues", func(t *testing.T) {
 		d, be := delegatedBranchHarness(t, httpTestOpts{})
 		seedMarker(t, d, testAgentID+"/iside", "parent marker")
@@ -776,6 +783,7 @@ func TestBranch_DeferredCannotBranchNamedParentRefusedAtEnqueue(t *testing.T) {
 // delivery ends in the allowed send fallback, so the enqueue refusal must
 // not swallow it.
 func TestBranch_DeferredDefaultParentStillDefersWhenCannotBranch(t *testing.T) {
+	t.Parallel()
 	d, be := delegatedBranchHarness(t, httpTestOpts{})
 	store := withDeferStore(t, &d)
 	d.sessionIndex.TouchCacheTouch(testSessionKey, time.Now()) // warm default → wait_cold unmet
@@ -808,6 +816,7 @@ func TestBranch_DeferredDefaultParentStillDefersWhenCannotBranch(t *testing.T) {
 // wait-carrying branch of a named parent — the enqueue refusal is only for a
 // backend that cannot branch.
 func TestBranch_DeferredNamedParentStillDefersOnBranchingBackend(t *testing.T) {
+	t.Parallel()
 	d, be := delegatedBranchingHarness(t, httpTestOpts{})
 	warmNamedParent(t, d) // wait_cold unmet
 	store := withDeferStore(t, &d)
@@ -835,6 +844,7 @@ func TestBranch_DeferredNamedParentStillDefersOnBranchingBackend(t *testing.T) {
 // cannot-branch predicate does not apply) still defers a wait-carrying
 // branch of a named parent with 202.
 func TestBranch_DeferredNamedParentStillDefersForAPIAgent(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	warmNamedParent(t, d) // wait_cold unmet
 	store := withDeferStore(t, &d)
@@ -863,6 +873,7 @@ func TestBranch_DeferredNamedParentStillDefersForAPIAgent(t *testing.T) {
 // runBranchTurn's #2284 gate exactly as before — 422, nothing stored,
 // nothing runs.
 func TestBranch_NamedParentNoWaitStillRefused(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ name, body string }{
 		{"no wait field", `{"text":"q","session":"side"}`},
 		// The parent is warm and the wait would defer — wait_none must skip
@@ -896,6 +907,7 @@ func TestBranch_NamedParentNoWaitStillRefused(t *testing.T) {
 // gate (and the enqueue refusal — the parent is the default) and runs the
 // send fallback NOW: the deferred machinery is not involved.
 func TestBranch_CannotBranchDefaultParentWaitNoneRunsNow(t *testing.T) {
+	t.Parallel()
 	d, be := delegatedBranchHarness(t, httpTestOpts{})
 	store := withDeferStore(t, &d)
 	d.sessionIndex.TouchCacheTouch(testSessionKey, time.Now()) // warm: the wait_cold would otherwise defer

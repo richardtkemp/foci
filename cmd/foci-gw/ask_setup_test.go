@@ -11,6 +11,7 @@ import (
 // button (the app's full-screen form supplies its own; only the chat/sequential
 // path via question.Choices carries a per-question Cancel).
 func TestBatchQuestionsFor(t *testing.T) {
+	t.Parallel()
 	qs := []question.Question{
 		{
 			Question: "Pick a colour",

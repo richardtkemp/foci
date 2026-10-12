@@ -177,6 +177,20 @@ func httpTestSetup(t *testing.T, opts httpTestOpts) (httpHandlerDeps, *mockClien
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	ag.StartInbox(ctx)
+	// An async endpoint (/webhook default, /send async) returns before its turn
+	// ends, and a test may finish once the turn has merely reached the backend.
+	// That turn still writes the session file under sessDir, racing the
+	// TempDir cleanup ("unlinkat ...: directory not empty") — rare when the
+	// package ran serially, real once its tests run in parallel (#2352).
+	// Cleanups run LIFO, so this drain runs before cancel and before any
+	// TempDir removal. Bounded: a turn a test leaves parked on mock.proceed
+	// must not hang the package.
+	t.Cleanup(func() {
+		deadline := time.Now().Add(10 * time.Second)
+		for ag.IsAnyTurnInFlight() && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+	})
 
 	d := httpHandlerDeps{
 		agents:       map[string]*agentInstance{testAgentID: inst},

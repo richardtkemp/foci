@@ -13,6 +13,7 @@ import (
 // names a chat alias resolves to it even though it contains '?'; a selector
 // that matches no alias still has its '?' read as the start of options.
 func TestResolveTargetSession_LiteralAliasWithQuestionMark(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	if err := d.sessionIndex.SetChatAliasUnique(testAgentID, "app", 77, "what next?"); err != nil {
 		t.Fatal(err)

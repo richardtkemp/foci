@@ -10,6 +10,7 @@ import (
 )
 
 func TestBuildEnvironmentDelegated_SkipPermissionsOmitsApproval(t *testing.T) {
+	t.Parallel()
 	base := config.AgentConfig{ID: "x", Workspace: "/tmp/x", Backend: "claude-code"}
 	cfg := &config.Config{Logging: config.LoggingConfig{EventFile: "/tmp/foci.log"}}
 
@@ -33,6 +34,7 @@ func TestBuildEnvironmentDelegated_SkipPermissionsOmitsApproval(t *testing.T) {
 // enforces foci's auto-approve allowlist gets the Command Approval section
 // (#2154), and only the Claude Code family lists the --allowedTools layer.
 func TestBuildEnvironmentDelegated_ApprovalFollowsSpec(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{Logging: config.LoggingConfig{EventFile: "/tmp/foci.log"}}
 	cfg.CCBackend.DefaultAllowedTools = []string{"Edit(/tmp/**)"}
 	for _, tc := range []struct {
@@ -66,6 +68,7 @@ func TestBuildEnvironmentDelegated_ApprovalFollowsSpec(t *testing.T) {
 // the foci-generated environment block (not a character file) so it reaches
 // every agent regardless of character-file content.
 func TestWriteEnvironmentCore_ViaVoiceExplainsTTSReply(t *testing.T) {
+	t.Parallel()
 	base := config.AgentConfig{ID: "x", Workspace: "/tmp/x", Backend: "claude-code"}
 	cfg := &config.Config{Logging: config.LoggingConfig{EventFile: "/tmp/foci.log"}}
 	rc := config.Resolve(cfg, base)
@@ -87,6 +90,7 @@ func TestWriteEnvironmentCore_ViaVoiceExplainsTTSReply(t *testing.T) {
 }
 
 func TestWriteAPIConfig(t *testing.T) {
+	t.Parallel()
 	acfg := config.AgentConfig{BlockedPaths: []config.BlockedPath{{Path: "/etc"}}}
 	cfg := &config.Config{}
 	cfg.Tools.ExecDefaultTimeout = 30
@@ -124,6 +128,7 @@ func TestWriteAPIConfig(t *testing.T) {
 }
 
 func TestWriteMemorySearch(t *testing.T) {
+	t.Parallel()
 	mk := func(backend string) (config.AgentConfig, *config.ResolvedAgentConfig) {
 		acfg := config.AgentConfig{}
 		acfg.Memory.Sources = []config.MemorySource{{Name: "canonical", Dir: "/home/foci/clutch/memory", Weight: 1.0}}
@@ -159,6 +164,7 @@ func TestWriteMemorySearch(t *testing.T) {
 }
 
 func TestWritePlatform(t *testing.T) {
+	t.Parallel()
 	var tg strings.Builder
 	writePlatform(&tg, "telegram", nil)
 	out := tg.String()
@@ -182,6 +188,7 @@ func TestWritePlatform(t *testing.T) {
 }
 
 func TestWriteCommandApproval(t *testing.T) {
+	t.Parallel()
 	var b strings.Builder
 	rc := &config.ResolvedAgentConfig{}
 	rc.Permissions.AutoApproveCommonReadonly = true
@@ -209,6 +216,7 @@ func TestWriteCommandApproval(t *testing.T) {
 }
 
 func TestWriteBackend(t *testing.T) {
+	t.Parallel()
 	for _, tt := range []struct {
 		backend string
 		want    string
@@ -239,6 +247,7 @@ func TestWriteBackend(t *testing.T) {
 // tool; the note is meaningless (and misleading) for backends that have no such
 // tool, so it must not leak into their sections.
 func TestWriteBackend_CronCreateIsCCOnly(t *testing.T) {
+	t.Parallel()
 	var cc strings.Builder
 	writeBackend(&cc, "claude-code", nil)
 	if !strings.Contains(cc.String(), "CronCreate") {
@@ -264,6 +273,7 @@ func TestWriteBackend_CronCreateIsCCOnly(t *testing.T) {
 // which foci does not render, so a result written there never reaches the user
 // (#1303).
 func TestWriteBackend_CCFinalMessageRule(t *testing.T) {
+	t.Parallel()
 	var cc strings.Builder
 	writeBackend(&cc, "claude-code", nil)
 	if !strings.Contains(cc.String(), "final message") {
@@ -272,6 +282,7 @@ func TestWriteBackend_CCFinalMessageRule(t *testing.T) {
 }
 
 func TestWriteBackend_UnknownYieldsNoSection(t *testing.T) {
+	t.Parallel()
 	var b strings.Builder
 	writeBackend(&b, "no-such-backend", nil)
 	if b.Len() != 0 {
@@ -280,6 +291,7 @@ func TestWriteBackend_UnknownYieldsNoSection(t *testing.T) {
 }
 
 func TestWriteCommandApproval_ReadonlyDisabled(t *testing.T) {
+	t.Parallel()
 	var b strings.Builder
 	rc := &config.ResolvedAgentConfig{}
 	rc.Permissions.AutoApproveCommonReadonly = false
@@ -300,6 +312,7 @@ func TestWriteCommandApproval_ReadonlyDisabled(t *testing.T) {
 // chat-less or unclaimed keys yield "" (no section) instead of a fallback
 // platform's guidance.
 func TestPlatformForSession(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)

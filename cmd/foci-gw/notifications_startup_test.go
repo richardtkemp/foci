@@ -71,6 +71,7 @@ func crashDiagnosis() *startup.DiagnosisResult {
 // The "restarted at" notice goes to a platform when it attaches, not only to
 // the platforms that happened to be connected at the notification point.
 func TestHandleRestart_NoticeReachesPlatformThatAttachesLate(t *testing.T) {
+	t.Parallel()
 	agents, whenConnected, attach := restartFixture(t)
 	handleRestartAndFirstRun(agents, []string{"a"}, nil, &config.Config{}, context.Background(),
 		stubConnMgr{}, whenConnected, crashDiagnosis())

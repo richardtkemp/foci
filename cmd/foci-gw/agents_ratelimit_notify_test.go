@@ -68,6 +68,7 @@ func newRLMgr() *rlConnMgr {
 // facet/app session must reach THAT session's chat under the default config,
 // while "default" preserves the old primary-only behaviour and "both" copies it.
 func TestDeliverRateLimitNoticeTargets(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		target      string
@@ -100,6 +101,7 @@ func TestDeliverRateLimitNoticeTargets(t *testing.T) {
 // or headless session) — that is PolicyFallback, and it is today's behaviour
 // for every session that isn't separately connected.
 func TestDeliverRateLimitNoticeFallsBackToPrimary(t *testing.T) {
+	t.Parallel()
 	m := newRLMgr()
 	m.session = nil
 	deliverRateLimitNotice(m, "clutch", "clutch/headless", rlNotice, config.RateLimitNotifySession)
@@ -111,6 +113,7 @@ func TestDeliverRateLimitNoticeFallsBackToPrimary(t *testing.T) {
 // TestDeliverRateLimitNoticeBothCollapsesWhenSame: under "both", a session whose
 // own connection IS the primary must be notified once, not twice.
 func TestDeliverRateLimitNoticeBothCollapsesWhenSame(t *testing.T) {
+	t.Parallel()
 	m := newRLMgr()
 	m.session = m.primary
 	deliverRateLimitNotice(m, "clutch", m.sessionKey, rlNotice, config.RateLimitNotifyBoth)
@@ -121,6 +124,7 @@ func TestDeliverRateLimitNoticeBothCollapsesWhenSame(t *testing.T) {
 
 // TestDeliverRateLimitNoticeNoConnection: nothing live anywhere must not panic.
 func TestDeliverRateLimitNoticeNoConnection(t *testing.T) {
+	t.Parallel()
 	m := &rlConnMgr{}
 	for _, target := range config.ValidRateLimitNotifyTargets {
 		deliverRateLimitNotice(m, "clutch", "clutch/main", rlNotice, target)

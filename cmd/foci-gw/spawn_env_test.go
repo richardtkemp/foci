@@ -10,6 +10,7 @@ import (
 // trusted PATH is writable by the foci process. It must FAIL loudly on an
 // unexplained writable directory — that is the whole alarm.
 func TestCheckTrustedPathFooting_UnexplainedWritableIsAViolation(t *testing.T) {
+	t.Parallel()
 	writable := map[string]bool{"/opt/agentbin": true}
 	findings := checkTrustedPathFooting(
 		[]string{"/usr/bin", "/opt/agentbin"},
@@ -33,6 +34,7 @@ func TestCheckTrustedPathFooting_UnexplainedWritableIsAViolation(t *testing.T) {
 // must be recognised through ~ expansion and must carry its reason, so the
 // report explains itself rather than merely staying quiet.
 func TestCheckTrustedPathFooting_NamedExceptionIsExplained(t *testing.T) {
+	t.Parallel()
 	home := "/home/foci"
 	localBin := filepath.Join(home, ".local", "bin")
 
@@ -54,6 +56,7 @@ func TestCheckTrustedPathFooting_NamedExceptionIsExplained(t *testing.T) {
 // silently no-ops (empty home), the allowlist must not match the literal "~/…"
 // against a real path.
 func TestCheckTrustedPathFooting_ExceptionDoesNotMatchOtherDirs(t *testing.T) {
+	t.Parallel()
 	findings := checkTrustedPathFooting(
 		[]string{"/home/someoneelse/.local/bin"},
 		"/home/foci",
@@ -69,6 +72,7 @@ func TestCheckTrustedPathFooting_ExceptionDoesNotMatchOtherDirs(t *testing.T) {
 // something foci cannot; trusted-only dirs mean the reverse, and a bare name
 // foci hands an agent will not resolve for it.
 func TestPathDelta_BothDirections(t *testing.T) {
+	t.Parallel()
 	trusted := []string{"/usr/bin", "/home/foci/bin"}
 	operator := []string{"/home/foci/scripts", "/usr/bin", "/home/foci/bin"}
 
@@ -89,6 +93,7 @@ func TestPathDelta_BothDirections(t *testing.T) {
 // hides the real diff, and it would also be double-counted by the footing
 // check.
 func TestDedupePreservesFirstOccurrenceOrder(t *testing.T) {
+	t.Parallel()
 	got := dedupe([]string{"/a", "/b", "/a", "", "/c", "/b"})
 	if !slices.Equal(got, []string{"/a", "/b", "/c"}) {
 		t.Fatalf("dedupe = %v, want [/a /b /c]", got)
@@ -98,6 +103,7 @@ func TestDedupePreservesFirstOccurrenceOrder(t *testing.T) {
 // "Nothing differs" must be STATED, not shown as a blank the reader has to
 // interpret — the report's value is that it is always legible.
 func TestFormatListNamesTheEmptyCase(t *testing.T) {
+	t.Parallel()
 	if got := formatList(nil); got != "(none)" {
 		t.Errorf("formatList(nil) = %q, want %q", got, "(none)")
 	}

@@ -46,6 +46,7 @@ func (c *fakeSuggestionConn) EditMessageWithButtons(msgID, text string, _ []plat
 // flattened "Done". The press goes through the real interactive router and
 // the real dispatch core (runAgentCommand), exactly as a live press does.
 func TestSuggestionPressShowsPartsCommandReply(t *testing.T) {
+	t.Parallel()
 	multi := &command.Command{
 		Name: "parts",
 		Execute: func(_ context.Context, _ command.Request, _ command.CommandContext) (command.Response, error) {

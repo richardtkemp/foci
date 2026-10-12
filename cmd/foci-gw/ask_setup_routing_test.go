@@ -92,6 +92,7 @@ func (c *chatRoutingConn) counts() (sends, sText, sBtn, dSends, dText, dBtn int)
 // resolver wraps a SessionButtonSender connection so its ButtonSender methods
 // address the session's chat (#2275).
 func TestSessionChatResolver_WrapsSessionCapableConn(t *testing.T) {
+	t.Parallel()
 	conn := &chatRoutingConn{stubConn: stubConn{sessionKey: "main/c999"}, defaultSessionKey: "main/c999"}
 	resolve := sessionChatResolver(oneConnMgr{conn: conn}, "main/c222", "main")
 
@@ -124,6 +125,7 @@ func TestSessionChatResolver_WrapsSessionCapableConn(t *testing.T) {
 // TestSessionChatResolver_NilConnStaysNil proves a resolver over no live
 // connection yields nil (the caller treats that as "skip the edit").
 func TestSessionChatResolver_NilConnStaysNil(t *testing.T) {
+	t.Parallel()
 	if got := sessionChatResolver(oneConnMgr{conn: nil}, "main/c222", "main")(); got != nil {
 		t.Errorf("resolver returned %v, want nil", got)
 	}
@@ -134,6 +136,7 @@ func TestSessionChatResolver_NilConnStaysNil(t *testing.T) {
 // returned AS IS (its InteractiveHeaderSetter / InteractiveRemover /
 // BatchButtonSender capabilities keep working through the resolver).
 func TestSessionChatResolver_ReturnsAppConnUnchanged(t *testing.T) {
+	t.Parallel()
 	conn := &appishConn{buttonStubConn: buttonStubConn{stubConn{sessionKey: "main/c222"}}}
 	got := sessionChatResolver(oneConnMgr{conn: conn}, "main/c222", "main")()
 	if got != platform.Connection(conn) {
@@ -163,6 +166,7 @@ func askChoices() []question.Choice {
 // on a Telegram-like connection, an ask from a non-default chat (main/c222,
 // default 999) is POSTED to the session's own chat, not the default one.
 func TestAskPrompt_PostsToAskingSessionChat(t *testing.T) {
+	t.Parallel()
 	conn := &chatRoutingConn{stubConn: stubConn{sessionKey: "main/c999"}, defaultSessionKey: "main/c999"}
 
 	id := newAskPresentFn("main", oneConnMgr{conn: conn})("main/c222", "ask-routing-1", "Q?", "Q", askChoices(), func(string) {})
@@ -184,6 +188,7 @@ func TestAskPrompt_PostsToAskingSessionChat(t *testing.T) {
 // edit addresses the asking session's chat (the stored resolver is the
 // session-chat one) (#2275).
 func TestAskPrompt_CancelEditsAskingSessionChat(t *testing.T) {
+	t.Parallel()
 	conn := &chatRoutingConn{stubConn: stubConn{sessionKey: "main/c999"}, defaultSessionKey: "main/c999"}
 
 	newAskPresentFn("main", oneConnMgr{conn: conn})("main/c222", "ask-routing-2", "Q?", "Q", askChoices(), func(string) {})
@@ -207,6 +212,7 @@ func TestAskPrompt_CancelEditsAskingSessionChat(t *testing.T) {
 // edit addresses the asking session's chat too. Not parallel: it sweeps the
 // process-global interactive prompt store.
 func TestAskPrompt_ExpiryEditsAskingSessionChat(t *testing.T) {
+	t.Parallel()
 	conn := &chatRoutingConn{stubConn: stubConn{sessionKey: "main/c999"}, defaultSessionKey: "main/c999"}
 
 	newAskPresentFn("main", oneConnMgr{conn: conn})("main/c222", "ask-routing-3", "Q?", "Q", askChoices(), func(string) {})
@@ -224,6 +230,7 @@ func TestAskPrompt_ExpiryEditsAskingSessionChat(t *testing.T) {
 // TestAskPrompt_RestoreCancelEditsAskingSessionChat proves a RESTORED ask (after
 // a restart) edits in the asking session's chat when cancelled (#2275).
 func TestAskPrompt_RestoreCancelEditsAskingSessionChat(t *testing.T) {
+	t.Parallel()
 	conn := &chatRoutingConn{stubConn: stubConn{sessionKey: "main/c999"}, defaultSessionKey: "main/c999"}
 
 	newAskRestoreFn("main", oneConnMgr{conn: conn})("main/c222", "ask-routing-4", "m-9", askChoices(), func(string) {})
@@ -245,6 +252,7 @@ func TestAskPrompt_RestoreCancelEditsAskingSessionChat(t *testing.T) {
 // unchanged — its own (session-bound) ButtonSender posts the ask (#2275
 // characterisation).
 func TestAskPrompt_AppConnUsedUnchanged(t *testing.T) {
+	t.Parallel()
 	conn := &appishConn{buttonStubConn: buttonStubConn{stubConn{sessionKey: "main/c222"}}}
 	if id := newAskPresentFn("main", oneConnMgr{conn: conn})("main/c222", "ask-routing-5", "Q?", "Q", askChoices(), func(string) {}); id != "m-1" {
 		t.Errorf("platform msg id = %q, want the app connection's own send id (m-1)", id)

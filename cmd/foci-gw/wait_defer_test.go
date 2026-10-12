@@ -22,7 +22,32 @@ func engageRateLimit(t *testing.T, d httpHandlerDeps, retryAfter time.Duration) 
 	d.agents[testAgentID].ag.EngageRateLimit(ratelimit.Signal{Kind: ratelimit.KindRequest, RetryAfter: retryAfter})
 }
 
+// heldRateLimit is how long the withhold-then-deliver sweep tests keep the gate
+// closed. It must outlast the gap between engaging the gate and the first
+// sweep's gate check, which is microseconds idle but unbounded under host load
+// with the package's tests running in parallel (#2352): a gate that reopens
+// before that check lets the first sweep deliver and fails the test.
+const heldRateLimit = 2 * time.Second
+
+// waitRateLimitClear blocks until the test agent's endpoint gate has reopened
+// on its own deadline (hang-guarded), instead of sleeping a fixed margin past
+// it.
+func waitRateLimitClear(t *testing.T, d httpHandlerDeps) {
+	t.Helper()
+	deadline := time.Now().Add(heldRateLimit + 10*time.Second)
+	for {
+		if limited, _ := d.agents[testAgentID].ag.SessionRateLimited(testSessionKey); !limited {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("rate-limit gate never reopened")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestWaitSatisfied(t *testing.T) {
+	t.Parallel()
 	active := func(_ string, _ time.Duration) bool { return true }
 	inactive := func(_ string, _ time.Duration) bool { return false }
 	in := activityGateInputs{SessionBase: "a/c1"}
@@ -57,6 +82,7 @@ func TestWaitSatisfied(t *testing.T) {
 }
 
 func TestWaitSatisfied_InFlightCountsActive(t *testing.T) {
+	t.Parallel()
 	never := func(_ string, _ time.Duration) bool { return false }
 	// A turn in flight makes the session "warm" even though the checker says cold,
 	// so --wait-cold must NOT be satisfied while a turn runs.
@@ -70,6 +96,7 @@ func TestWaitSatisfied_InFlightCountsActive(t *testing.T) {
 }
 
 func TestWaitSatisfied_RecentTurnEndCountsActive(t *testing.T) {
+	t.Parallel()
 	never := func(_ string, _ time.Duration) bool { return false }
 	// A turn that ENDED within the window keeps the session "active" even though
 	// nothing is in flight now and the durable checker says cold — so --wait-cold
@@ -97,6 +124,7 @@ func TestWaitSatisfied_RecentTurnEndCountsActive(t *testing.T) {
 }
 
 func TestWaitSatisfied_TurnEndDoesNotAffectUserGate(t *testing.T) {
+	t.Parallel()
 	never := func(_ string, _ time.Duration) bool { return false }
 	// A recent turn end is SESSION activity, not USER activity (it may be a
 	// cron/agent/memory turn). --wait-user-inactive must still hold despite a
@@ -112,6 +140,7 @@ func TestWaitSatisfied_TurnEndDoesNotAffectUserGate(t *testing.T) {
 }
 
 func TestWaitSatisfied_BadDuration(t *testing.T) {
+	t.Parallel()
 	if _, err := waitSatisfied(waitConds{cold: "nope"}, activityGateInputs{}, nil, nil); err == nil {
 		t.Fatal("expected error for malformed duration")
 	}
@@ -129,6 +158,7 @@ func withDeferStore(t *testing.T, d *httpHandlerDeps) *defersend.Store {
 }
 
 func TestSend_DefaultDefersWhenWarm(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	store := withDeferStore(t, &d)
 	d.sessionIndex.TouchCacheTouch(testSessionKey, time.Now()) // warm → default wait_cold=1m unmet
@@ -149,6 +179,7 @@ func TestSend_DefaultDefersWhenWarm(t *testing.T) {
 }
 
 func TestSend_WaitNoneBypasses(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	store := withDeferStore(t, &d)
 	d.sessionIndex.TouchCacheTouch(testSessionKey, time.Now()) // warm — default would otherwise defer
@@ -164,6 +195,7 @@ func TestSend_WaitNoneBypasses(t *testing.T) {
 }
 
 func TestSend_ExplicitWaitDefers(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	store := withDeferStore(t, &d)
 	mux := newTestMux(d)
@@ -185,6 +217,7 @@ func TestSend_ExplicitWaitDefers(t *testing.T) {
 // capacity constraint, not a scheduling preference — it must defer even
 // under wait_none ("--no-gate"), which would otherwise send immediately.
 func TestSend_DefersWhenRateLimited(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	store := withDeferStore(t, &d)
 	engageRateLimit(t, d, time.Hour)
@@ -213,6 +246,7 @@ func TestSend_DefersWhenRateLimited(t *testing.T) {
 // delivered exactly once the gate reopens — no "send anyway on deadline"
 // escape hatch for rate limiting (that would just fail again).
 func TestSweep_WithholdsWhileRateLimited(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	mock.entered = make(chan string, 1)
 	store := withDeferStore(t, &d)
@@ -221,7 +255,7 @@ func TestSweep_WithholdsWhileRateLimited(t *testing.T) {
 		AgentID: testAgentID, SessionKey: testSessionKey, Text: "held msg", Policy: "fallback",
 		CreatedAt: now, DeadlineAt: now.Add(time.Hour),
 	})
-	engageRateLimit(t, d, 150*time.Millisecond)
+	engageRateLimit(t, d, heldRateLimit)
 	isU, isS := buildActivityCheckers(d)
 	sw := &deferSweeper{store: store, deps: d, isUserActive: isU, isSessionActive: isS}
 
@@ -235,7 +269,7 @@ func TestSweep_WithholdsWhileRateLimited(t *testing.T) {
 		t.Errorf("queued=%d want 1 (still withheld)", len(all))
 	}
 
-	time.Sleep(200 * time.Millisecond) // past the 150ms gate deadline
+	waitRateLimitClear(t, d)
 	sw.sweep()
 	select {
 	case text := <-mock.entered:
@@ -251,6 +285,7 @@ func TestSweep_WithholdsWhileRateLimited(t *testing.T) {
 }
 
 func TestSweep_DeliversWhenSatisfied(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	mock.entered = make(chan string, 1)
 	store := withDeferStore(t, &d)
@@ -278,6 +313,7 @@ func TestSweep_DeliversWhenSatisfied(t *testing.T) {
 }
 
 func TestSweep_DeliversOnDeadline(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	mock.entered = make(chan string, 1)
 	store := withDeferStore(t, &d)
@@ -328,6 +364,7 @@ func eventually(cond func() bool) bool {
 // session stays untouched, no receipt is expected (the caller is long gone),
 // and the record is deleted after delivery.
 func TestSweep_DeliversBranchRecord(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	mock.entered = make(chan string, 1)
 	store := withDeferStore(t, &d)
@@ -392,6 +429,7 @@ func TestSweep_DeliversBranchRecord(t *testing.T) {
 // dispatched through the agent's command registry against the stored session
 // and deleted after the one delivery.
 func TestSweep_DeliversCommandRecord(t *testing.T) {
+	t.Parallel()
 	spy, runs := resetSpy()
 	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{spy}})
 	store := withDeferStore(t, &d)
@@ -415,6 +453,7 @@ func TestSweep_DeliversCommandRecord(t *testing.T) {
 // covers branches: a wait that never held delivers the branch once the
 // deadline has passed.
 func TestSweep_DeliversBranchOnDeadline(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	mock.entered = make(chan string, 1)
 	store := withDeferStore(t, &d)
@@ -446,6 +485,7 @@ func TestSweep_DeliversBranchOnDeadline(t *testing.T) {
 // turn never reaches the backend — the failure is logged and the record is
 // dropped after that single attempt, never retried forever.
 func TestSweep_DropsBranchOnBadModel(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	store := withDeferStore(t, &d)
 	now := timeutil.Now()
@@ -476,6 +516,7 @@ func TestSweep_DropsBranchOnBadModel(t *testing.T) {
 // the branch waits while its parent's endpoint gate is closed and is
 // delivered once the gate reopens.
 func TestSweep_WithholdsBranchWhileRateLimited(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	mock.entered = make(chan string, 1)
 	store := withDeferStore(t, &d)
@@ -484,7 +525,7 @@ func TestSweep_WithholdsBranchWhileRateLimited(t *testing.T) {
 		Kind: defersend.KindBranch, AgentID: testAgentID, SessionKey: testSessionKey,
 		Text: "held branch", WaitCold: "1m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
 	})
-	engageRateLimit(t, d, 150*time.Millisecond)
+	engageRateLimit(t, d, heldRateLimit)
 	sw := sweepFor(d, store)
 
 	sw.sweep()
@@ -497,7 +538,7 @@ func TestSweep_WithholdsBranchWhileRateLimited(t *testing.T) {
 		t.Errorf("queued=%d want 1 (still withheld)", len(all))
 	}
 
-	time.Sleep(200 * time.Millisecond) // past the 150ms gate deadline
+	waitRateLimitClear(t, d)
 	sw.sweep()
 	select {
 	case <-mock.entered:

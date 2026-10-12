@@ -26,6 +26,7 @@ func postJSON(mux *http.ServeMux, path, body string) *httptest.ResponseRecorder 
 // names the resolved session and the ladder rung that matched (empty selector
 // → the agent's default session via rung "default").
 func TestSend_SyncHappyPath(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	mux := newTestMux(d)
 
@@ -59,6 +60,7 @@ func TestSend_SyncHappyPath(t *testing.T) {
 // afterwards — the 202 is an acceptance, not a completed turn, so the test
 // waits for the mock backend to see the text.
 func TestSend_Async(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	mock.entered = make(chan string, 1)
 	mux := newTestMux(d)
@@ -91,6 +93,7 @@ func TestSend_Async(t *testing.T) {
 // through the agent's command registry instead of the agent loop: the command
 // result comes back with the routing receipt and the backend is never called.
 func TestSend_SlashCommand(t *testing.T) {
+	t.Parallel()
 	ping := &command.Command{
 		Name: "ping",
 		Execute: func(_ context.Context, _ command.Request, _ command.CommandContext) (command.Response, error) {
@@ -126,6 +129,7 @@ func TestSend_SlashCommand(t *testing.T) {
 // first is in flight — it queues, runs only after the first is released, and
 // the backend sees the two texts in order, never interleaved.
 func TestSend_SerialisesBehindInFlightTurn(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	mock.entered = make(chan string)   // unbuffered: receive == a turn is inside the backend
 	mock.proceed = make(chan struct{}) // each turn blocks until released
@@ -187,6 +191,7 @@ func TestSend_SerialisesBehindInFlightTurn(t *testing.T) {
 // default session gets 412 and the backend is never called — the semantics
 // the warm/keepalive resolvers rely on.
 func TestSend_NoDefaultSession_NilHook_412(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{noSession: true})
 	mux := newTestMux(d)
 
@@ -205,6 +210,7 @@ func TestSend_NoDefaultSession_NilHook_412(t *testing.T) {
 // conversation archived) goes through the createDefault hook, resolves to the
 // minted session with rung "created", and dispatches the turn there.
 func TestSend_NoDefaultSession_CreatesDefault(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{noSession: true})
 	created := session.NewChatSessionKey(testAgentID, 99)
 	var hookCalls []string
@@ -242,6 +248,7 @@ func TestSend_NoDefaultSession_CreatesDefault(t *testing.T) {
 // error names the field and type — instead of the "need {...}" hint that
 // misreports a mistyped field as a missing one.
 func TestSend_DecodeErrorNamesField(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	mux := newTestMux(d)
 
@@ -265,6 +272,7 @@ func TestSend_DecodeErrorNamesField(t *testing.T) {
 // split: a body that decodes cleanly but leaves "text" empty still answers
 // the "need {...}" hint.
 func TestSend_EmptyBodyStillNeedText(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	mux := newTestMux(d)
 

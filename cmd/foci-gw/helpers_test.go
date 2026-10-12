@@ -8,6 +8,7 @@ import (
 )
 
 func TestModelDefaultsFn_ThreadsProviderRouting(t *testing.T) {
+	t.Parallel()
 	// Proves that modelDefaultsFn (used by both the agent turn loop and
 	// compaction to look up per-model settings) carries a model's
 	// [models.X.provider] config through into config.ModelDefaults.ProviderRouting
@@ -52,6 +53,7 @@ func TestModelDefaultsFn_ThreadsProviderRouting(t *testing.T) {
 }
 
 func TestModelDefaultsFn_CaseInsensitiveModelKey(t *testing.T) {
+	t.Parallel()
 	// Proves that per-model defaults match the developer/model_id
 	// case-insensitively on the WHOLE string: an entry spelled
 	// "OpenRouter/DeepSeek/DeepSeek-V4-Flash" in config is found when the
@@ -116,6 +118,7 @@ func TestModelDefaultsFn_CaseInsensitiveModelKey(t *testing.T) {
 }
 
 func TestModelMetaFn_CaseInsensitiveModelKey(t *testing.T) {
+	t.Parallel()
 	// Proves modelMetaFn (the context-window lookup) matches
 	// case-insensitively too — same match rule as modelDefaultsFn, same
 	// silent-drop bug before the fold.

@@ -145,7 +145,7 @@ func TestNewSessionNotifyFnParsesSlashKeys(t *testing.T) {
 		if got != "clutch" {
 			t.Errorf("agent ID = %q, want %q", got, "clutch")
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("resolver was not called — session key parsing likely failed")
 	}
 }
@@ -177,7 +177,7 @@ func TestNewSessionNotifyFnParsesBranchKeys(t *testing.T) {
 		if got != "fotini" {
 			t.Errorf("agent ID = %q, want %q", got, "fotini")
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("resolver was not called — branch key parsing failed")
 	}
 }
@@ -230,7 +230,7 @@ func TestNewSessionNotifyFnParsesIndependentKeys(t *testing.T) {
 		if got != "myagent" {
 			t.Errorf("agent ID = %q, want %q", got, "myagent")
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("resolver was not called")
 	}
 }
@@ -268,7 +268,7 @@ func TestNewAsyncNotifier_CrossAgentTarget_UsesResolver(t *testing.T) {
 		if got != "target" {
 			t.Errorf("resolver called with %q, want %q", got, "target")
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("resolver was not called — cross-agent target was dispatched on the caller's Agent (bug regression)")
 	}
 }

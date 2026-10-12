@@ -20,6 +20,7 @@ import (
 // with the command's text, and the agent backend never called (commands run
 // outside the agent loop).
 func TestCommand_HappyPath(t *testing.T) {
+	t.Parallel()
 	ping := &command.Command{
 		Name: "ping",
 		Execute: func(_ context.Context, _ command.Request, _ command.CommandContext) (command.Response, error) {
@@ -50,6 +51,7 @@ func TestCommand_HappyPath(t *testing.T) {
 // text rather than the handler's 404 branch — which only fires for a
 // registered command with no Execute function.
 func TestCommand_Unknown(t *testing.T) {
+	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
 	mux := newTestMux(d)
 
@@ -77,6 +79,7 @@ func TestCommand_Unknown(t *testing.T) {
 // Mirrors TestWebhook_IfInactive: same stubConnMgr session base and same
 // cache-touch seeding via session_index.last_cache_touch.
 func TestCommand_IfInactive(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 
 	// Recent session activity → an --if-inactive command must skip.
@@ -116,6 +119,7 @@ func resetSpy() (*command.Command, *atomic.Int32) {
 // HTTP 202 with the deferred receipt, nothing dispatched — instead of
 // skipping and hoping the next cron tick lands.
 func TestCommand_UnmetWaitDeferred(t *testing.T) {
+	t.Parallel()
 	spy, runs := resetSpy()
 	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{spy}})
 	store := withDeferStore(t, &d)
@@ -156,6 +160,7 @@ func TestCommand_UnmetWaitDeferred(t *testing.T) {
 // field, or one whose condition already holds (or wait_none), dispatches
 // immediately exactly as before — nothing is queued.
 func TestCommand_WaitHoldsRunsNow(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		warm bool
@@ -198,6 +203,7 @@ func TestCommand_WaitHoldsRunsNow(t *testing.T) {
 // TestCommand_BadWaitDuration proves a malformed wait duration on /command is
 // a client error, not a dispatch.
 func TestCommand_BadWaitDuration(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	withDeferStore(t, &d)
 	mux := newTestMux(d)
@@ -236,6 +242,7 @@ func sessionKeySpy() (*command.Command, func() []string) {
 // session's key, not the agent's default — the probe command sees the named
 // key, and the response is the command's own reply.
 func TestCommand_SessionNamedDispatchesThere(t *testing.T) {
+	t.Parallel()
 	probe, keys := sessionKeySpy()
 	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
 	registerRoot(t, d, testAgentID+"/iside")
@@ -263,6 +270,7 @@ func TestCommand_SessionNamedDispatchesThere(t *testing.T) {
 // On the base code both arms evaluate the default and get it wrong in
 // opposite directions.
 func TestCommand_SessionGateEvaluatedAgainstTarget(t *testing.T) {
+	t.Parallel()
 	t.Run("warm default, cold target dispatches", func(t *testing.T) {
 		probe, keys := sessionKeySpy()
 		d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
@@ -316,6 +324,7 @@ func TestCommand_SessionGateEvaluatedAgainstTarget(t *testing.T) {
 // instead (the pre-#2296 key) would see an idle session and fire the reset
 // into the middle of the named session's turn.
 func TestCommand_SessionGateInFlightReadsTarget(t *testing.T) {
+	t.Parallel()
 	// markTargetInFlight marks the named target mid-turn, mirroring what a
 	// real turn under its key does to IsTurnInFlight.
 	markTargetInFlight := func(t *testing.T, d httpHandlerDeps) {
@@ -382,6 +391,7 @@ func TestCommand_SessionGateInFlightReadsTarget(t *testing.T) {
 // (zero LastTurnEnd) and has no cache touch, so a gate probing it instead
 // reads cold and wrongly dispatches.
 func TestCommand_SessionGateLastTurnEndReadsTarget(t *testing.T) {
+	t.Parallel()
 	// seedRecentTurnEnd runs one real turn on the named target and ages its
 	// last_cache_touch past the 1h window, leaving LastTurnEnd as the only
 	// in-window activity on the target. Its preconditions fail the test
@@ -455,6 +465,7 @@ func TestCommand_SessionGateLastTurnEndReadsTarget(t *testing.T) {
 // key). A stamp pointed back at the default would record attention the
 // named session never received.
 func TestCommand_HumanStampOnTargetSession(t *testing.T) {
+	t.Parallel()
 	probe, keys := sessionKeySpy()
 	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
 	registerRoot(t, d, testAgentID+"/iside")
@@ -478,6 +489,7 @@ func TestCommand_HumanStampOnTargetSession(t *testing.T) {
 // is a valid NAME — the command dispatches on the created <agent>/i<name>
 // key, the same rule /send and /branch resolve by.
 func TestCommand_SessionUnknownNameCreatesKey(t *testing.T) {
+	t.Parallel()
 	probe, keys := sessionKeySpy()
 	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
 	mux := newTestMux(d)
@@ -498,6 +510,7 @@ func TestCommand_SessionUnknownNameCreatesKey(t *testing.T) {
 // answers (the resolver's create-disabled error), not dispatched on the
 // default session.
 func TestCommand_SessionSelectorParamRefused(t *testing.T) {
+	t.Parallel()
 	probe, keys := sessionKeySpy()
 	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
 	mux := newTestMux(d)
@@ -523,6 +536,7 @@ func TestCommand_SessionSelectorParamRefused(t *testing.T) {
 // on the default key, and a counting createDefault hook that must stay at
 // zero in a harness where minting is the only way a session could appear.
 func TestCommand_NoSessionStillDefault(t *testing.T) {
+	t.Parallel()
 	t.Run("dispatches on the default key", func(t *testing.T) {
 		probe, keys := sessionKeySpy()
 		d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
@@ -570,6 +584,7 @@ func TestCommand_NoSessionStillDefault(t *testing.T) {
 // dispatches on the named session — and the 202 receipt names the resolved
 // session and rung from the resolution, not a bare default-key receipt.
 func TestCommand_DeferredWithSessionStoresResolvedKey(t *testing.T) {
+	t.Parallel()
 	spy, runs := resetSpy()
 	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{spy}})
 	registerRoot(t, d, testAgentID+"/iside")
@@ -613,6 +628,7 @@ func TestCommand_DeferredWithSessionStoresResolvedKey(t *testing.T) {
 // the receipt would run /reset on a brand-new empty session unseen. With no
 // selector the receipt names the default key with rung "default".
 func TestCommand_ReceiptInImmediateResponse(t *testing.T) {
+	t.Parallel()
 	t.Run("named selector", func(t *testing.T) {
 		probe, _ := sessionKeySpy()
 		d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
@@ -687,6 +703,7 @@ func TestCommand_ReceiptInImmediateResponse(t *testing.T) {
 // session and resolved_via must match field for field — never from a
 // hand-assembled receipt that drops the canonical target.
 func TestCommand_NoSelectorReceiptMatchesSend(t *testing.T) {
+	t.Parallel()
 	probe, _ := sessionKeySpy()
 	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{probe}})
 	mux := newTestMux(d)
@@ -716,6 +733,7 @@ func TestCommand_NoSelectorReceiptMatchesSend(t *testing.T) {
 // the field and type — instead of the "need {...}" hint that misreports a
 // mistyped field as a missing one.
 func TestCommand_DecodeErrorNamesField(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	mux := newTestMux(d)
 
@@ -739,6 +757,7 @@ func TestCommand_DecodeErrorNamesField(t *testing.T) {
 // decode split: a body that decodes CLEANLY but leaves the required field
 // empty still answers the "need {...}" hint.
 func TestCommand_EmptyBodyStillNeedText(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	mux := newTestMux(d)
 
@@ -755,6 +774,7 @@ func TestCommand_EmptyBodyStillNeedText(t *testing.T) {
 // TestCommand_BodyTooLarge413 characterises the unchanged cap: an over-cap
 // /command body answers 413, not a 400 decode message.
 func TestCommand_BodyTooLarge413(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	mux := newTestMux(d)
 	big := strings.Repeat("a", (1<<20)+1024) // just over the 1 MiB cap

@@ -16,6 +16,7 @@ import (
 // gone since the cutover, #2111 P2). The source must come out byte-identical;
 // the kept copy must hold the ledger.
 func TestLedgerMigrateDryRun(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	src := filepath.Join(dir, "api.db")
 	ddl, err := os.ReadFile("../../internal/delegator/accounting/testdata/v1_api_calls.sql")

@@ -41,6 +41,7 @@ func (m *trackingConnMgr) AllForAgent(agentID string) []platform.Connection {
 // to notify.task_list_notify takes effect on the very next notification,
 // without reconstructing anything.
 func TestWireAgentPlatformCallbacks_NotifyReadsLiveConfig(t *testing.T) {
+	t.Parallel()
 	conn := &trackingConn{stubConn: &stubConn{sessionKey: "x/c1"}, platformName: "test"}
 	connMgr := &trackingConnMgr{agentID: "x", conns: []platform.Connection{conn}}
 

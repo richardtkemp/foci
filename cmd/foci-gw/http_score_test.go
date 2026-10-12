@@ -411,6 +411,7 @@ func TestHandleEvalsRubrics_AgentFilter(t *testing.T) {
 // gateway's "rubrics dir failed to load" state) renders an empty list
 // without panicking.
 func TestHandleEvalsRubrics_NilRegistry(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{}) // d.rubrics left nil
 	mux := newTestMux(d)
 	req := httptest.NewRequest(http.MethodGet, "/evals/rubrics", nil)

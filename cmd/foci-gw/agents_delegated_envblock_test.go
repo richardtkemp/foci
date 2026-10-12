@@ -127,6 +127,7 @@ func TestNewDelegatedSystemPromptFunc_RetainsEnvBlock(t *testing.T) {
 // such a regression because they never exercise configureDelegated's wiring;
 // this test fails if either path is wired to drop the env block.
 func TestConfigureDelegated_WiresEnvBlockIntoBothPromptPaths(t *testing.T) {
+	t.Parallel()
 	p, shared := wiringFixture(t)
 	ag := &agent.Agent{}
 
@@ -174,6 +175,7 @@ func TestConfigureDelegated_WiresEnvBlockIntoBothPromptPaths(t *testing.T) {
 // disk, the two paths MUST produce identical output. A future change that makes
 // the rebuild reconstruct the prompt differently from setup-time fails here.
 func TestConfigureDelegated_BothPromptPathsAgree(t *testing.T) {
+	t.Parallel()
 	p, shared := wiringFixture(t)
 	ag := &agent.Agent{}
 

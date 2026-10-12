@@ -67,6 +67,7 @@ func telegramLikeConn() *docRoutingConn {
 // prompt kind posts through the session-addressed surface — a backend question
 // from a non-default chat reaches that chat, not the default one.
 func TestQuestionPrompt_PostsToAskingSessionChat(t *testing.T) {
+	t.Parallel()
 	conn := telegramLikeConn()
 
 	_, question := promptClosures(conn, nil)
@@ -86,6 +87,7 @@ func TestQuestionPrompt_PostsToAskingSessionChat(t *testing.T) {
 // ruling (#2275 characterisation): an approval prompt from a non-default chat
 // still posts to the DEFAULT chat via the plain ButtonSender surface.
 func TestPermissionPrompt_UsesDefaultChatButtonSender(t *testing.T) {
+	t.Parallel()
 	conn := telegramLikeConn()
 
 	approval, _ := promptClosures(conn, nil)
@@ -120,6 +122,7 @@ func newOriginIndex(t *testing.T, username string) *session.SessionIndex {
 // line naming the session key, the platform, the chat ID and the recorded
 // username (each segment omitted when unknown).
 func TestPermissionPrompt_OriginLine(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		session  string
@@ -157,6 +160,7 @@ func TestPermissionPrompt_OriginLine(t *testing.T) {
 // (already session-bound) carry NO origin line, so the owner's own prompts look
 // exactly as before.
 func TestPermissionPrompt_NoOriginForOwnSessions(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		conn *docRoutingConn
@@ -196,6 +200,7 @@ func TestPermissionPrompt_NoOriginForOwnSessions(t *testing.T) {
 // attachment is sent to the chat the buttons go to — the DEFAULT chat, not the
 // LAST chat (which differs when two users share the bot).
 func TestPermissionPrompt_AttachmentGoesToDefaultChat(t *testing.T) {
+	t.Parallel()
 	conn := telegramLikeConn() // DefaultSessionKey main/c999; ChatID() (last chat) = 222
 
 	approval, _ := promptClosures(conn, nil)
@@ -217,6 +222,7 @@ func TestPermissionPrompt_AttachmentGoesToDefaultChat(t *testing.T) {
 // attachment goes through the connection's own SendDocument — the app is
 // session-bound and needs no chat resolution (#2275 characterisation).
 func TestPermissionPrompt_AttachmentAppConnUnchanged(t *testing.T) {
+	t.Parallel()
 	conn := &appDocConn{appishConn: appishConn{buttonStubConn: buttonStubConn{stubConn{sessionKey: "main/c222"}}}}
 
 	approval, _ := promptClosures(conn, nil)

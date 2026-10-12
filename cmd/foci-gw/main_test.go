@@ -20,6 +20,7 @@ import (
 )
 
 func TestGracefulShutdown_AllIdle(t *testing.T) {
+	t.Parallel()
 	agents := map[string]*agentInstance{
 		"a": {id: "a", ag: &agent.Agent{}},
 		"b": {id: "b", ag: &agent.Agent{}},
@@ -39,6 +40,7 @@ func TestGracefulShutdown_AllIdle(t *testing.T) {
 }
 
 func TestGracefulShutdown_WaitsForProcessing(t *testing.T) {
+	t.Parallel()
 	const sk = "a/c1"
 	ag := &agent.Agent{}
 	ag.SetTurnInFlightForTest(sk, true)
@@ -72,6 +74,7 @@ func TestGracefulShutdown_WaitsForProcessing(t *testing.T) {
 }
 
 func TestGracefulShutdown_TimesOut(t *testing.T) {
+	t.Parallel()
 	const sk = "a/c1"
 	ag := &agent.Agent{}
 	ag.SetTurnInFlightForTest(sk, true) // never cleared — simulates stuck agent
@@ -97,6 +100,7 @@ func TestGracefulShutdown_TimesOut(t *testing.T) {
 }
 
 func TestReadAndConsumeWelcomeFile(t *testing.T) {
+	t.Parallel()
 	// Proves that readAndConsumeWelcomeFile reads the file, deletes it, and
 	// returns the trimmed content.
 	dir := t.TempDir()
@@ -121,6 +125,7 @@ func TestReadAndConsumeWelcomeFile(t *testing.T) {
 }
 
 func TestReadAndConsumeWelcomeFile_NoFile(t *testing.T) {
+	t.Parallel()
 	// Proves that a missing file returns empty string without error.
 	content := readAndConsumeWelcomeFile("/nonexistent/path/WELCOME.md")
 	if content != "" {
@@ -129,6 +134,7 @@ func TestReadAndConsumeWelcomeFile_NoFile(t *testing.T) {
 }
 
 func TestReadAndConsumeWelcomeFile_EmptyFile(t *testing.T) {
+	t.Parallel()
 	// Proves that an empty file is consumed (deleted) but returns empty string.
 	dir := t.TempDir()
 
@@ -149,6 +155,7 @@ func TestReadAndConsumeWelcomeFile_EmptyFile(t *testing.T) {
 }
 
 func TestReadAndConsumeWelcomeFile_EmptyPath(t *testing.T) {
+	t.Parallel()
 	// Proves that an empty path returns empty string without panic.
 	content := readAndConsumeWelcomeFile("")
 	if content != "" {
@@ -159,6 +166,7 @@ func TestReadAndConsumeWelcomeFile_EmptyPath(t *testing.T) {
 // ========== buildEnvironmentBlock visibility tests ==========
 
 func TestBuildEnvironmentBlock_VisibilitySection(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		toolCalls config.ToolCallDisplay
@@ -224,6 +232,7 @@ func TestBuildEnvironmentBlock_VisibilitySection(t *testing.T) {
 }
 
 func TestBuildEnvironmentBlock_AgentOverridesGlobal(t *testing.T) {
+	t.Parallel()
 	acfg := config.AgentConfig{
 		ID:        "test",
 		Workspace: "/tmp/test",
@@ -257,6 +266,7 @@ func TestBuildEnvironmentBlock_AgentOverridesGlobal(t *testing.T) {
 }
 
 func TestBuildEnvironmentBlock_CrontabInfo(t *testing.T) {
+	t.Parallel()
 	acfg := config.AgentConfig{
 		ID:        "test",
 		Workspace: "/tmp/test",
@@ -284,6 +294,7 @@ func TestBuildEnvironmentBlock_CrontabInfo(t *testing.T) {
 }
 
 func TestBuildEnvironmentDelegated(t *testing.T) {
+	t.Parallel()
 	acfg := config.AgentConfig{
 		ID:        "clutch",
 		Workspace: "/home/foci/clutch",
@@ -347,6 +358,7 @@ func TestBuildEnvironmentDelegated(t *testing.T) {
 // ========== Per-agent memory tests ==========
 
 func TestBuildAgentMemorySources_GlobalOnly(t *testing.T) {
+	t.Parallel()
 	global := map[string]memory.SourceConfig{
 		"canonical": {Dir: "/shared/memory", Weight: 1.0},
 		"docs":      {Dir: "/shared/docs", Weight: 0.5},
@@ -365,6 +377,7 @@ func TestBuildAgentMemorySources_GlobalOnly(t *testing.T) {
 }
 
 func TestBuildAgentMemorySources_AgentOnly(t *testing.T) {
+	t.Parallel()
 	agentSources := []config.MemorySource{
 		{Name: "workspace", Dir: "/agent/memory", Weight: 0.8},
 	}
@@ -385,6 +398,7 @@ func TestBuildAgentMemorySources_AgentOnly(t *testing.T) {
 }
 
 func TestBuildAgentMemorySources_Combined(t *testing.T) {
+	t.Parallel()
 	global := map[string]memory.SourceConfig{
 		"canonical": {Dir: "/shared/memory", Weight: 1.0},
 	}
@@ -416,6 +430,7 @@ func TestBuildAgentMemorySources_Combined(t *testing.T) {
 }
 
 func TestBuildAgentMemorySources_Empty(t *testing.T) {
+	t.Parallel()
 	combined := buildAgentMemorySources(nil, nil)
 	if len(combined) != 0 {
 		t.Errorf("expected 0 sources, got %d", len(combined))
@@ -423,6 +438,7 @@ func TestBuildAgentMemorySources_Empty(t *testing.T) {
 }
 
 func TestPerAgentMemoryIndex(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	// Create directories for global and agent-specific memory
@@ -476,6 +492,7 @@ func TestPerAgentMemoryIndex(t *testing.T) {
 // ========== /-/reload-credentials endpoint tests ==========
 
 func TestReloadCredentialsEndpoint_Success(t *testing.T) {
+	t.Parallel()
 	// Write a secrets.toml with an API key
 	dir := t.TempDir()
 	secretsPath := filepath.Join(dir, "secrets.toml")
@@ -525,6 +542,7 @@ api_key = "sk-ant-test-new-token-value-for-reload"`+"\n"), 0600)
 }
 
 func TestReloadCredentialsEndpoint_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	d.reloadCredentials = func() error { return nil }
 	mux := newTestMux(d)
@@ -539,6 +557,7 @@ func TestReloadCredentialsEndpoint_MethodNotAllowed(t *testing.T) {
 }
 
 func TestReloadCredentialsEndpoint_NotRegisteredWithoutHolder(t *testing.T) {
+	t.Parallel()
 	// reloadCredentials stays nil — endpoint should not be registered.
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	mux := newTestMux(d)
@@ -553,6 +572,7 @@ func TestReloadCredentialsEndpoint_NotRegisteredWithoutHolder(t *testing.T) {
 }
 
 func TestPprofGatedByConfig(t *testing.T) {
+	t.Parallel()
 	// Proves /debug/pprof/* returns 404 when the gate is off and 200 when on.
 	// The gate is seeded from [debug] enable_pprof at startup (as main.go does).
 	enabled := true
@@ -583,6 +603,7 @@ func TestPprofGatedByConfig(t *testing.T) {
 }
 
 func TestPprofLiveToggle(t *testing.T) {
+	t.Parallel()
 	// Proves the pprof gate can be toggled at runtime via POST /-/pprof,
 	// and that the change takes effect immediately without a restart.
 	gate := &atomic.Bool{} // start disabled
@@ -634,6 +655,7 @@ func TestPprofLiveToggle(t *testing.T) {
 }
 
 func TestSendBodySizeLimit(t *testing.T) {
+	t.Parallel()
 	// Proves POST /send rejects an over-cap request body with 413 before it is
 	// buffered, rather than reading an unbounded body into memory. (P3.)
 	d, _ := httpTestSetup(t, httpTestOpts{})
@@ -649,6 +671,7 @@ func TestSendBodySizeLimit(t *testing.T) {
 }
 
 func TestAuthMiddleware(t *testing.T) {
+	t.Parallel()
 	const apiKey = "test-secret-key"
 
 	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
