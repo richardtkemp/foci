@@ -66,9 +66,9 @@ SIMPLE_BINS := foci-gw foci foci-call foci-cc-hook foci-codex-hook
 # same lock (~6 GB resident). Absent script (another host) = no-op.
 REAP_GRADLE = { [ -f /home/foci/shared/scripts/heavy-lock-reap-gradle.sh ] && bash /home/foci/shared/scripts/heavy-lock-reap-gradle.sh 9<&- ; true; };
 
-.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift llbox test test-one integration coverage coverage-report coverage-html coverage-check vet lint lint-unlocked lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check land clean setup-hooks
+.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals llbox test test-one integration coverage coverage-report coverage-html coverage-check vet lint lint-unlocked lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check land clean setup-hooks
 
-all: $(SIMPLE_BINS) nosgid find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift llbox
+all: $(SIMPLE_BINS) nosgid find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals llbox
 
 BUILDVCS := $(shell git rev-parse --git-dir >/dev/null 2>&1 && echo true || echo false)
 
@@ -145,6 +145,15 @@ find-unscoped-logging:
 find-wiring-drift:
 	@mkdir -p bin
 	go build -o bin/find-wiring-drift ./scripts/find-wiring-drift
+
+# find-metadata-key-literals flags a string-literal key passed to the
+# session_metadata API (Set/Get/DeleteSessionMetadata, SessionKeysWithMetadata)
+# outside _test.go files: keys must be session.MetaKey* constants. Was a
+# repo-walking go test in internal/session, which keyed that package's test
+# cache on every .go file (#2349). Stdlib-only, so it lives in the main module.
+find-metadata-key-literals:
+	@mkdir -p bin
+	go build -o bin/find-metadata-key-literals ./scripts/find-metadata-key-literals
 
 # llbox — Landlock write-whitelist sealer, promoted from a throwaway POC
 # (foci_todo #1517) into a proper repo tool for #1523. `make test`/`make
@@ -460,7 +469,7 @@ lint:
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
 	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ... [$$(date +%T)]" >&2; flock 9; echo ">>> acquired heavy lock [$$(date +%T)]" >&2; $(REAP_GRADLE) $(MAKE) --no-print-directory lint-unlocked 9<&- || exit $$? ) 9</tmp/heavy
 
-lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift
+lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals
 	@echo "=== golangci-lint ==="
 	@# --allow-serial-runners: golangci-lint has its own lock and by default a second
 	@# instance FAILS ("parallel golangci-lint is running") instead of waiting. The heavy
@@ -475,6 +484,8 @@ lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-cap
 	@./bin/find-unscoped-logging ./...
 	@echo "=== find-wiring-drift (docs/WIRING.md dependency tree vs go list) ==="
 	@./bin/find-wiring-drift
+	@echo "=== find-metadata-key-literals (string-literal session_metadata keys; use session.MetaKey*) ==="
+	@./bin/find-metadata-key-literals
 	@echo "=== deadcode (whole-program reachability, app code only) ==="
 	@# internal/testharness and internal/testtemp are test-only scaffolding:
 	# reachable solely from -tags=integration tests and _test.go files, which

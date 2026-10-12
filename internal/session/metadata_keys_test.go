@@ -4,9 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -134,90 +132,6 @@ func TestSessionMetadataKeyValuesStable(t *testing.T) {
 		if s.got != s.want {
 			t.Errorf("%s = %q, must stay %q (storage format — renaming requires a migration)", s.name, s.got, s.want)
 		}
-	}
-}
-
-// TestSessionMetadataCallSitesUseRegistry mechanically enforces requirement 2:
-// no non-test call to the session_metadata API may pass a bare string literal
-// as the key — keys flow from the MetaKey* registry constants only.
-func TestSessionMetadataCallSitesUseRegistry(t *testing.T) {
-	if len(SessionMetadataKeys) == 0 {
-		t.Fatal("SessionMetadataKeys registry is empty — no keys to enforce")
-	}
-	// Root at the module root: walk up from the test's working directory (go
-	// test runs in the package dir) to go.mod. Not runtime.Caller: tests are
-	// built with -trimpath (scripts/seal-test.sh, shared test cache), which
-	// turns this file's path into "foci/internal/session/..." — a walk of a
-	// directory that does not exist. A RELATIVE root also keeps the files this
-	// walk reads portable in go test's cache key across checkouts.
-	root := "."
-	for i := 0; ; i++ {
-		if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
-			break
-		}
-		if i == 8 {
-			t.Fatal("no go.mod above the package directory — cannot locate module root")
-		}
-		root = filepath.Join(root, "..")
-	}
-	keyArgIndex := map[string]int{
-		"SetSessionMetadata":      1, // (sessionKey, key, value)
-		"GetSessionMetadata":      1, // (sessionKey, key)
-		"DeleteSessionMetadata":   1, // (sessionKey, key)
-		"SessionKeysWithMetadata": 0, // (key)
-	}
-	var offenders []string
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		name := d.Name()
-		if d.IsDir() {
-			// Never skip the root itself: its base is "." or "..", which the
-			// dot-dir rule below would otherwise prune the whole walk with.
-			if path == root {
-				return nil
-			}
-			// bin holds build output (no sources); reading it would key this
-			// test's cached result on binaries rebuilt every run.
-			if strings.HasPrefix(name, ".") || name == "vendor" || name == "testdata" || name == "bin" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			return nil
-		}
-		fset := token.NewFileSet()
-		file, err := parser.ParseFile(fset, path, nil, 0)
-		if err != nil {
-			return err
-		}
-		ast.Inspect(file, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok {
-				return true
-			}
-			idx, ok := keyArgIndex[sel.Sel.Name]
-			if !ok || idx >= len(call.Args) {
-				return true
-			}
-			if lit, ok := call.Args[idx].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-				offenders = append(offenders, fset.Position(call.Pos()).String())
-			}
-			return true
-		})
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk module sources: %v", err)
-	}
-	for _, o := range offenders {
-		t.Errorf("%s: %s", o, "string-literal session_metadata key — use a session.MetaKey* constant")
 	}
 }
 
