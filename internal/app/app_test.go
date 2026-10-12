@@ -1477,6 +1477,11 @@ func TestInteractive_BatchExpirySweep(t *testing.T) {
 // the assertion itself is exact, so a correct claim passes every round
 // regardless of scheduling.
 func TestInteractive_BatchResolvesOnce(t *testing.T) {
+	// Each round logs several INFO lines; 10000 rounds wrote ~7.5 MB into every
+	// `make test -v` log (#2350). Keep WARN/ERROR so a real problem still shows.
+	// Not parallel, so the process-global level touches no other test.
+	flog.SetLevel(flog.WARN)
+	t.Cleanup(func() { flog.SetLevel(flog.INFO) })
 	h, c, b, _ := boundConn(t)
 	const rounds, submitters = 10000, 4
 	for i := range rounds {

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	flog "foci/internal/log"
 	"foci/internal/question"
 )
 
@@ -896,6 +897,11 @@ func TestE2E_NotifyForUnknownIDIsDropped(t *testing.T) {
 // no seam inside that window, so each round races a cancel against an answer
 // and checks that the answered rounds got no "Cancelled by App" edit.
 func TestCancel_NoCancelledEditWhenAnswerWins(t *testing.T) {
+	// Each round logs an INFO answered/cancelled line; 10000 rounds wrote ~1 MB
+	// into every `make test -v` log (#2350). Keep WARN/ERROR so a real problem
+	// still shows. Not parallel, so the process-global level touches no other test.
+	flog.SetLevel(flog.WARN)
+	t.Cleanup(func() { flog.SetLevel(flog.INFO) })
 	const rounds = 10000
 	var mu sync.Mutex
 	appEdits := map[string]int{}
