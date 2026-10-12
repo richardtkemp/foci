@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"foci/internal/fap"
+	"foci/internal/platform"
 	"foci/internal/tools"
 )
 
@@ -47,16 +48,25 @@ func TestDeliverAgentMessage_BoundSessionGetsFrameWithFromFields(t *testing.T) {
 // TestDeliverAgentMessage_UnboundSessionGetsNoFrameAnywhere pins the
 // bound-only rule: a session with no bound conversation of its own (a branch
 // the app never opened) gets no chit in ANY conversation — even though the
-// agent's default chat is live and the session's turn output would fall back
-// to it. No fallback, no misdelivery.
+// agent's default chat is pinned and live, so a fallback there would really
+// deliver. The fixture guard proves the forbidden destination resolves;
+// without it a default-chat fallback could silently deliver nowhere and the
+// test would still pass.
 func TestDeliverAgentMessage_UnboundSessionGetsNoFrameAnywhere(t *testing.T) {
 	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: newTestIndex(t)}
 	setActiveHub(h)
 	t.Cleanup(func() { setActiveHub(nil) })
 
-	// The agent HAS a live bound conversation (its default chat); the branch
-	// session named in the delivery does not.
+	// The agent HAS a live bound conversation pinned as its default chat; the
+	// branch session named in the delivery does not.
 	b := h.ensureBinding(nil, "scout", "conv-default")
+	if err := h.deps.SessionIndex.SetDefaultChat("scout", "app", b.chatID); err != nil {
+		t.Fatalf("SetDefaultChat: %v", err)
+	}
+	if got := h.defaultChatBinding("scout"); got != b {
+		t.Fatalf("fixture: scout's default chat resolves to %v, want the pinned binding — the no-fallback rule is unproven otherwise", got)
+	}
 	defClient := fakeClient()
 	b.attach(defClient)
 
@@ -65,6 +75,19 @@ func TestDeliverAgentMessage_UnboundSessionGetsNoFrameAnywhere(t *testing.T) {
 	if got := drain(t, defClient); len(got) != 0 {
 		t.Fatalf("default-chat conversation saw %v, want nothing (chits are bound-only, no fallback)", types(got))
 	}
+	// A bound delivery also buffers the frame for replay on sockets that are
+	// not attached right now, so the pin must hold on every conversation's
+	// replay buffer, not just the live client.
+	h.mu.RLock()
+	for convID, cb := range h.convs {
+		cb.mu.Lock()
+		n := len(cb.buffer)
+		cb.mu.Unlock()
+		if n != 0 {
+			t.Errorf("conversation %s buffered %d frame(s), want none", convID, n)
+		}
+	}
+	h.mu.RUnlock()
 }
 
 // TestDeliverAgentMessage_NoHubIsNoop proves delivery is a clean no-op when

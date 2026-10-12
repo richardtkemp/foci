@@ -394,6 +394,77 @@ func TestNewAsyncNotifier_AgentMessage_EmptyReply_NoCallerChit(t *testing.T) {
 	}
 }
 
+// TestNewAsyncNotifier_AgentMessage_BusyTarget_ChitWaitsForTurnStart pins the
+// req-4 timing on the reply_to=caller path: the target chit fires when the
+// injected turn STARTS, never at tool-call time. The target is first held
+// mid-turn by a predecessor injection, so the agent message queues FIFO behind
+// it on the session inbox: while the predecessor is parked no chit may exist,
+// and once it completes the chit must appear after its output and directly
+// before the reply it triggers.
+func TestNewAsyncNotifier_AgentMessage_BusyTarget_ChitWaitsForTurnStart(t *testing.T) {
+	f := newChitFixture(t)
+	f.targetCl.entered = make(chan string, 4)
+	f.targetCl.proceed = make(chan struct{})
+	f.targetCl.setReply("busy turn output")
+
+	// Park a predecessor turn on the target session — the "busy target". Its
+	// injection body occupies the session's inbox worker, exactly like an
+	// in-flight platform turn would.
+	deliverToSessionChat(f.target, f.ctx, "async_notify", f.cm, "scout", "scout/c42", "hold the line", nil, "")
+	waitTurnStart(t, f.targetCl)
+
+	notifier := newAsyncNotifier(func() *agent.Agent { return f.caller }, "clutch", f.resolver, f.ctx, f.cm, f.rec.deliver)
+	notifier.InjectAgentMessage("scout/c42", "tagged injection body",
+		"clutch/c1", tools.NewAgentOrigin("clutch/c1", "what changed overnight?"))
+
+	// The injection is FIFO behind the parked predecessor, so its body — the
+	// only place the chit fires — cannot have run. The sleep only widens the
+	// observed window; the park is what makes this deterministic. A chit here
+	// would mean it fired at tool-call time.
+	time.Sleep(100 * time.Millisecond)
+	if got := f.rec.snapshot(); len(got) != 0 {
+		t.Fatalf("chits while the target's prior turn is still parked = %v, want none (the chit fires with the turn it prompts, not at tool-call time)", got)
+	}
+
+	// Release the predecessor: its output reaches the target chat, then the
+	// queued injection runs — chit first, the turn it prompts second.
+	f.targetCl.setReply("the answer")
+	f.targetCl.proceed <- struct{}{}
+	waitTurnStart(t, f.targetCl)
+	got := f.rec.snapshot()
+	if len(got) != 1 {
+		t.Fatalf("chits once the injected turn started = %v, want exactly the target chit", got)
+	}
+	if ev := got[0]; ev.chat != "scout/c42" || ev.msg.Text != "what changed overnight?" || ev.msg.AgentID != "clutch" || ev.msg.SessionKey != "clutch/c1" {
+		t.Errorf("target chit = %+v, want scout/c42 chat, the raw message, clutch + clutch/c1 ids", ev)
+	}
+	// The chit slots in AFTER the predecessor's output (already delivered)
+	// and BEFORE the reply it triggers (the injected turn is parked at the
+	// backend right now).
+	if _, texts := f.targetConn.snapshot(); len(texts) != 1 || texts[0] != "busy turn output" {
+		t.Errorf("target chat at chit time = %q, want exactly the predecessor's output (the chit follows it)", texts)
+	}
+
+	// Finish the exchange: the captured reply relays to the caller, whose
+	// chit fires at the start of the caller's relay turn. The target probe
+	// runs first — completing it means the relay was enqueued on the caller.
+	f.targetCl.proceed <- struct{}{}
+	probeInbox(t, f.target, "scout/c42")
+	probeInbox(t, f.caller, "clutch/c1")
+	got = f.rec.snapshot()
+	if len(got) != 2 {
+		t.Fatalf("chits after the relay = %d events, want 2 (target + caller)", len(got))
+	}
+	if ev := got[1]; ev.chat != "clutch/c1" || ev.msg.Text != "the answer" || ev.msg.AgentID != "scout" || ev.msg.SessionKey != "scout/c42" {
+		t.Errorf("caller chit = %+v, want clutch/c1 chat, the captured reply, scout + scout/c42 ids", ev)
+	}
+	// #480: the target's own reply stayed out of its chat — the
+	// predecessor's output is all it ever saw.
+	if _, texts := f.targetConn.snapshot(); len(texts) != 1 {
+		t.Errorf("target chat = %q, want only the predecessor's output (#480 keeps the captured reply out)", texts)
+	}
+}
+
 // ─── reply_to=session and the oneshot downgrade ─────────────────────────────
 
 // TestNewSessionNotifyFn_AgentMessage_ChitBeforeTurn: the reply_to=session
