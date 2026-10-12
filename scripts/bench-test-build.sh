@@ -57,6 +57,9 @@ build() {
 	if env "${env[@]}" go test -c -trimpath "${f[@]}" -o "$out" "$PKG" >"$log" 2>&1; then
 		e=$(date +%s.%N)
 		printf '%s\t%s\t%s\t%s\n' "$i" "$mode" "$(echo "$e - $s" | bc)" "$(stat -c %s "$out")" >>"$results"
+		# Also print each timing as it lands, so a run killed before the summary
+		# (a time limit, a restart) still leaves its data in the caller's log.
+		printf '>>> result: %s %s %.1fs\n' "$v" "$mode" "$(echo "$e - $s" | bc)" >&2
 	else
 		printf '%s\t%s\tFAILED\t%s\n' "$i" "$mode" "$log" >>"$results"
 		cp "$log" "/tmp/fgw/bench-failed-$i-$mode.log"
