@@ -70,10 +70,13 @@ func expandStatuslineTemplate(tmpl string) string {
 
 // Statusline command execution bounds. The command runs synchronously before
 // every turn, so these are deliberately tight.
-const (
+const statuslineCmdMaxBytes = 4096
+
+// Vars, not consts, only so the timeout test can shorten them instead of
+// waiting 5s of real time (#2351).
+var (
 	statuslineCmdTimeout  = 3 * time.Second
 	statuslineCmdWaitKill = 2 * time.Second // force pipes closed if a child outlives the kill
-	statuslineCmdMaxBytes = 4096
 )
 
 // statuslineInputs carries everything the field providers need for one render.

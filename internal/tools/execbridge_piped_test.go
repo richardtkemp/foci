@@ -44,20 +44,6 @@ func TestExecBridgeRequestHintsReachTool(t *testing.T) {
 	}
 }
 
-// buildFociCall compiles cmd/foci-call into a temp dir and returns that dir.
-func buildFociCall(t *testing.T) string {
-	t.Helper()
-	binDir := t.TempDir()
-	// -buildvcs=false: see TestExecBridgePipeFunctions (#1561).
-	statFociCallSources(t)
-	build := osexec.Command("go", "build", "-buildvcs=false", "-o", filepath.Join(binDir, "foci-call"), "foci/cmd/foci-call")
-	build.Dir = findModuleRoot(t)
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build foci-call: %v\n%s", err, out)
-	}
-	return binDir
-}
-
 // TestShellFuncStdoutPipedDetection drives the GENERATED wrappers through real
 // bash + the real foci-call and records what hint each call delivered (#2048).
 //

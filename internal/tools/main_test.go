@@ -19,5 +19,7 @@ func TestMain(m *testing.M) {
 	for _, k := range []string{"FOCI_SOCK", "BASH_ENV", "FOCI_GW_SOCK", "FOCI_ADDR", "FOCI_SESSION_KEY"} {
 		os.Unsetenv(k)
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	removeFociCallBin() // os.Exit skips defers
+	os.Exit(code)
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -40,25 +41,43 @@ func TestHTTPRequestAutoBackgroundFast(t *testing.T) {
 	}
 }
 
+// newGatedServer serves body only once release is called, so a test can hold
+// a request past the auto-background threshold for exactly as long as it
+// needs instead of sleeping a fixed margin. release is idempotent and also
+// runs at cleanup (before the server closes) so a failing test never leaves
+// the handler parked.
+func newGatedServer(t *testing.T, body string) (*httptest.Server, func()) {
+	t.Helper()
+	gate := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(gate) }) }
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-gate:
+		case <-r.Context().Done():
+			return
+		}
+		fmt.Fprint(w, body)
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(release) // cleanups run LIFO: release first, then Close
+	return srv, release
+}
+
 func TestHTTPRequestAutoBackgroundSlow(t *testing.T) {
 	// Proves that when a request exceeds the auto-background threshold, the tool returns a "still running" message immediately and delivers the final result via the notifier.
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(5 * time.Second)
-		fmt.Fprint(w, "slow response")
-	}))
-	defer srv.Close()
+	srv, release := newGatedServer(t, "slow response")
 
 	completeCh := make(chan string, 1)
 	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 1 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 0 }, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		completeCh <- msg
 	}), 0640)
 
-	// The response must clearly outlast the 1s auto-background threshold —
-	// not just nominally (1.5s previously), which raced the response's
-	// arrival against the threshold timer's select under host load (same
-	// shape as #1975 in internal/tools/shell/shell_test.go). A wide margin
-	// makes the outcome deterministic regardless of scheduling delay.
+	// The response is held until the test has seen "still running", so it
+	// cannot race the 1s threshold timer under host load (the race #1975 hit
+	// in internal/tools/shell/shell_test.go with a 0.5s margin), and the test
+	// waits only the threshold rather than a fixed 5s sleep (#2351).
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":     srv.URL,
 		"timeout": 10,
@@ -73,6 +92,7 @@ func TestHTTPRequestAutoBackgroundSlow(t *testing.T) {
 	if !strings.Contains(result.Text, "still running") {
 		t.Errorf("expected auto-background message, got %q", result.Text)
 	}
+	release()
 
 	// Wait for the request to complete
 	select {
@@ -91,11 +111,7 @@ func TestHTTPRequestAutoBackgroundSlow(t *testing.T) {
 func TestHTTPRequestAutoBackgroundSessionKey(t *testing.T) {
 	// Proves that the session key embedded in the context is propagated to the notifier callback when a request auto-backgrounds.
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(5 * time.Second)
-		fmt.Fprint(w, "done")
-	}))
-	defer srv.Close()
+	srv, release := newGatedServer(t, "done")
 
 	type result struct {
 		sk, msg string
@@ -105,8 +121,8 @@ func TestHTTPRequestAutoBackgroundSessionKey(t *testing.T) {
 		ch <- result{sk, msg}
 	}), 0640)
 
-	// See the identical comment in TestHTTPRequestAutoBackgroundSlow above:
-	// the response must clearly outlast the 1s threshold, not just nominally.
+	// See TestHTTPRequestAutoBackgroundSlow: the response is held until the
+	// test has seen "still running".
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":     srv.URL,
 		"timeout": 10,
@@ -120,6 +136,7 @@ func TestHTTPRequestAutoBackgroundSessionKey(t *testing.T) {
 	if !strings.Contains(out.Text, "still running") {
 		t.Fatalf("expected auto-background message, got %q", out.Text)
 	}
+	release()
 
 	select {
 	case r := <-ch:

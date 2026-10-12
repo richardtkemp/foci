@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -302,6 +303,26 @@ func TestExecAutoBackgroundFastCommand(t *testing.T) {
 	}
 }
 
+// gatedCommand returns a shell command that blocks until release is called
+// (it polls for a file release creates), so a test can hold a command past
+// the auto-background threshold for exactly as long as it needs. release is
+// idempotent and also runs at cleanup so a failing test never leaves the
+// command running out its timeout.
+func gatedCommand(t *testing.T) (string, func()) {
+	t.Helper()
+	flag := filepath.Join(t.TempDir(), "release")
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			if err := os.WriteFile(flag, nil, 0o600); err != nil {
+				t.Errorf("release gate: %v", err)
+			}
+		})
+	}
+	t.Cleanup(release)
+	return fmt.Sprintf("until [ -e %q ]; do sleep 0.05; done; echo released", flag), release
+}
+
 func TestExecAutoBackgroundSlowCommand(t *testing.T) {
 	// Proves that a command exceeding the auto-background threshold returns immediately with a "still running"
 	// message, then delivers the final result via the notifier when the command completes.
@@ -311,16 +332,16 @@ func TestExecAutoBackgroundSlowCommand(t *testing.T) {
 		completeCh <- msg
 	}), "", nil, func() int64 { return 0 }, "", nil, 0)
 
-	// The command must clearly outlast the 1s threshold — not just nominally
-	// (1.5s previously), which raced the real subprocess's exit against the
-	// threshold timer under full-suite CPU contention (#1975: a 0.5s margin
-	// let a loaded scheduler delay the goroutine past BOTH becoming ready,
-	// so `select` could pick the just-completed branch instead of "still
-	// running" — the same shape TestExecAutoBackgroundCtxCancelled below
-	// already had to fix once). A wide margin makes the outcome deterministic
-	// regardless of scheduling delay.
+	// The command must not finish until the test has seen "still running".
+	// A fixed margin (0.5s, then 4s) raced the subprocess's exit against the
+	// threshold timer under full-suite CPU contention (#1975: a loaded
+	// scheduler delayed the goroutine past BOTH becoming ready, so `select`
+	// could pick the just-completed branch) and cost 5s of wall time per run
+	// (#2351). Gating on a file the test creates is deterministic and waits
+	// only the threshold.
+	cmd, release := gatedCommand(t)
 	params, _ := json.Marshal(map[string]interface{}{
-		"command": "timeout 5 tail -f /dev/null",
+		"command": cmd,
 		"timeout": 10,
 	})
 
@@ -333,12 +354,16 @@ func TestExecAutoBackgroundSlowCommand(t *testing.T) {
 	if !strings.Contains(result.Text, "still running") {
 		t.Errorf("expected auto-background message, got %q", result.Text)
 	}
+	release()
 
 	// Wait for the command to complete
 	select {
 	case completed := <-completeCh:
 		if strings.Contains(completed, "still running") {
 			t.Errorf("should have completed, got auto-background message: %q", completed)
+		}
+		if !strings.Contains(completed, "released") {
+			t.Errorf("completed message lacks the command's output: %q", completed)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for auto-backgrounded command")
@@ -357,11 +382,11 @@ func TestExecAutoBackgroundSessionKeyPropagated(t *testing.T) {
 		ch <- result{sk, msg}
 	}), "", nil, func() int64 { return 0 }, "", nil, 0)
 
-	// See the identical comment in TestExecAutoBackgroundSlowCommand above:
-	// the command must clearly outlast the 1s threshold, not just nominally
-	// (#1975 suite-only flake from a 0.5s margin).
+	// See TestExecAutoBackgroundSlowCommand: the command is held until the
+	// test has seen "still running" (#1975, #2351).
+	cmd, release := gatedCommand(t)
 	params, _ := json.Marshal(map[string]interface{}{
-		"command": "timeout 5 tail -f /dev/null",
+		"command": cmd,
 		"timeout": 10,
 	})
 
@@ -373,6 +398,7 @@ func TestExecAutoBackgroundSessionKeyPropagated(t *testing.T) {
 	if !strings.Contains(out.Text, "still running") {
 		t.Fatalf("expected auto-background message, got %q", out.Text)
 	}
+	release()
 
 	select {
 	case r := <-ch:

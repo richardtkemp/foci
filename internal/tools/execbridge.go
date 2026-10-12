@@ -1551,7 +1551,7 @@ func shellFuncUsageLine(t *Tool, args string) string {
 // properties means the tool takes no arguments at all: any argument left
 // after the prologue is a usage error naming the tool — the body used to
 // hand $1 to jq --argjson unchecked, so `foci_whoami foo` printed jq's
-// internals and `'' foo` silently dropped foo. A bare call still passes {}
+// internals and `"" foo` silently dropped foo. A bare call still passes {}
 // — without that default, jq --argjson dies on the empty string, so a
 // zero-property tool (whoami, #1135) could not be called with no arguments
 // at all. Only an unparseable schema keeps the legacy JSON-blob contract —
@@ -1852,9 +1852,11 @@ func generateGenericShellFunc(t *Tool) string {
 			// the most ordinary pipeline there is (measured: the 10MB case below
 			// went green-but-wrong). Waiting is correct here; waiting FOREVER is the
 			// bug. 5s keeps the warning for every realistic writer and caps the
-			// pathological fd at a rounding error.
+			// pathological fd at a rounding error. FOCI_STDIN_GUARD_WAIT overrides
+			// the 5s only so the #1552 regression test runs in ~1s (#2351), the
+			// same kind of test seam as FOCI_STDIN_WAIT.
 			"  if [ -n \"$%[1]s\" ] && [ ! -t 0 ]%[2]s; then\n"+
-				"    if [ \"$(timeout 5 head -c 1 | wc -c)\" -gt 0 ]; then\n"+
+				"    if [ \"$(timeout \"${FOCI_STDIN_GUARD_WAIT:-5}\" head -c 1 | wc -c)\" -gt 0 ]; then\n"+
 				"      echo \"error: --%s is set but stdin has piped content that will be discarded. %s.\" >&2\n"+
 				"      return 1\n"+
 				"    fi\n"+

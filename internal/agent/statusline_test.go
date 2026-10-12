@@ -176,12 +176,17 @@ func TestStatuslineCommandEmbedding(t *testing.T) {
 
 // TestStatuslineCommandTimeout proves a command that exceeds the timeout embeds
 // nothing (rather than blocking the turn); a present field keeps the line.
+// It shortens the timeout and the WaitDelay backstop (the `sleep` outlives the
+// kill of `sh` and holds stdout, so both bounds are on the path), so it must
+// not be t.Parallel. The command sleeps far past even the production bounds,
+// so a loaded host cannot let it finish inside the shortened ones.
 func TestStatuslineCommandTimeout(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skips the multi-second timeout in -short")
-	}
+	oldTimeout, oldWaitKill := statuslineCmdTimeout, statuslineCmdWaitKill
+	statuslineCmdTimeout, statuslineCmdWaitKill = 200*time.Millisecond, 200*time.Millisecond
+	t.Cleanup(func() { statuslineCmdTimeout, statuslineCmdWaitKill = oldTimeout, oldWaitKill })
 	now := time.Date(2026, 2, 21, 5, 30, 0, 0, time.UTC)
-	got := renderTmpl("v={model} x=${sleep 10}", statuslineInputs{now: now, model: "m", sm: &sessionMeta{}})
+	// "late" proves the cut: a command left to finish would embed it.
+	got := renderTmpl("v={model} x=${sleep 10; echo late}", statuslineInputs{now: now, model: "m", sm: &sessionMeta{}})
 	if got != "v=m x=" {
 		t.Errorf("timed-out command should embed nothing: got %q", got)
 	}
