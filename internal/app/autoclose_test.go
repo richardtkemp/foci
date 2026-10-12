@@ -546,6 +546,40 @@ func TestSweepOpenChats_ConcurrentOpenSetNeverLost(t *testing.T) {
 	})
 }
 
+// TestHandleConversationOpenSet_MirrorsExactlyOnceWhileAttaching pins the
+// writer protocol's mirror count on the socket-driven replace: one open-set
+// change is ONE conversation.openSync per device, sent inside the openSetMu
+// pairing with its store. The handler's attach pass — which runs for every id
+// that has a live binding the socket is not yet attached to — must stay
+// silent: a fan-out there escapes the pairing and, sent after the unlock,
+// would follow a newer writer's set and roll back what it did (reopen a swept
+// tab, un-open a just-opened one).
+func TestHandleConversationOpenSet_MirrorsExactlyOnceWhileAttaching(t *testing.T) {
+	h, _ := sweepHub(t, nil)
+	// A live binding for one id, so the attach pass runs its body (binding
+	// present, sender not yet attached) — the ground a stray second fan-out
+	// would grow from.
+	warm := sweepBinding(h, "warm", 0, time.Now())
+	sender := fakeClient()
+	other := fakeClient()
+	h.clients[sender] = struct{}{}
+	h.clients[other] = struct{}{}
+
+	h.handleConversationOpenSet(sender, fap.ConversationOpenSet{ConversationIDs: []string{"warm", "cold"}})
+
+	if ids, n := lastOpenSync(t, other); n != 1 || len(ids) != 2 || ids[0] != "warm" || ids[1] != "cold" {
+		t.Errorf("other client OpenSync = %v (frames=%d), want exactly one [warm cold]", ids, n)
+	}
+	if len(drain(t, sender)) != 0 {
+		t.Error("sender must not receive its own open-set echo")
+	}
+	// The attach pass must actually have run for the bound id — the count
+	// above is only load-bearing while this holds.
+	if !warm.isAttached(sender) {
+		t.Error("the sender must end up attached to the bound conversation's binding")
+	}
+}
+
 // TestStartAll_AutoCloseSweepRunsPeriodicallyAndStops proves the ticker loop:
 // a hub with a gateway context sweeps on its (shrunk) cadence until the
 // context is cancelled, a double StartAll still leaves exactly one working
