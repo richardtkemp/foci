@@ -131,8 +131,8 @@ func TestL2_Steer_FoldedBeforeDeathNotRedelivered(t *testing.T) {
 // acknowledged (user_message_uuids on their response) — a turn-starting
 // message and a second turn's message — are not redelivered when CC later
 // dies holding an unconsumed steer. Only the steer is. cc-stub keeps no
-// transcript for these, so only the ack can be what spares them. Ordered like
-// the test above: the follow-up is queued after every redelivery.
+// transcript for these, so only the ack can be what spares them. Ordered: the
+// follow-up is pushed only once the steer's redelivery has arrived.
 func TestL2_Steer_AckedInputsNotRedelivered(t *testing.T) {
 	testharness.ParallelWait(t)
 	const userID = 20503
@@ -166,6 +166,15 @@ func TestL2_Steer_AckedInputsNotRedelivered(t *testing.T) {
 		t.Fatalf("steer never reached cc-stub; recorder:\n%s", recorderTail(t, h.RecorderPath()))
 	}
 	waitForStubExitObserved(t, h, "alpha", userID, "workspaces/alpha")
+	// foci marks the backend dead (what waitForStubExitObserved sees) before
+	// it hands the unconsumed inputs back, so a follow-up pushed now can be
+	// queued, and run, ahead of the redeliveries (#2334). Wait for the steer's
+	// redelivery first: the hand-back queues every redelivery in write order,
+	// and the steer was written last, so all of them are queued by then.
+	if !waitForUserMessage(t, h, "workspaces/alpha", steer, 20*time.Second) {
+		t.Fatalf("unconsumed steer was never redelivered; recorder:\n%s\nstderr:\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
 
 	pushUserMessage(t, h, "alpha", userID, followUp)
 	if !waitForUserMessage(t, h, "workspaces/alpha", followUp, 20*time.Second) {

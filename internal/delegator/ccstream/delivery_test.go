@@ -12,6 +12,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"foci/internal/delegator"
 )
@@ -390,5 +391,95 @@ func TestReader_DispatchesInputAck(t *testing.T) {
 	}
 	if len(h.streamEvents) != 1 || len(h.assistants) != 1 {
 		t.Fatalf("ack detection swallowed normal dispatch: streams=%d assistants=%d", len(h.streamEvents), len(h.assistants))
+	}
+}
+
+// An ack CC wrote before it died must decide its input, however far behind
+// the reader goroutine is when the process is reaped (#2334). The stub acks
+// U0 and U1 and exits at once; the OnConsumed hook for U0 holds the reader
+// past the reap, so with the old wiring (cmd.Wait closing stdout under the
+// reader, then handing back whatever was still pending) U1's ack was never
+// read and U1 was redelivered — the double delivery seen under host load.
+func TestFinalizeExit_ReaderDrainsAcksBeforeHandBack(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	gate := filepath.Join(dir, "go")
+	script := filepath.Join(dir, "fake-claude")
+	body := "#!/bin/sh\nwhile [ ! -e " + gate + " ]; do sleep 0.01; done\n" +
+		`echo '{"type":"system","subtype":"thinking_tokens","user_message_uuid":"U0"}'` + "\n" +
+		`echo '{"type":"system","subtype":"thinking_tokens","user_message_uuid":"U1"}'` + "\n" +
+		"exit 1\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatalf("write stub: %v", err)
+	}
+	d, err := newFromConfig(map[string]any{"binary": script})
+	if err != nil {
+		t.Fatalf("newFromConfig: %v", err)
+	}
+	b := d.(*Backend)
+
+	var mu sync.Mutex
+	var consumed, undelivered []string
+	handedBack := make(chan struct{})
+	var handedBackOnce sync.Once
+	b.SetDeliveryHooks(delegator.DeliveryHooks{
+		OnConsumed: func(p delegator.PendingInput) {
+			if p.ID == "U0" {
+				// Hold the reader until the process is reaped, then until
+				// the hand-back has run or a beat has passed.
+				<-b.exitCh
+				select {
+				case <-handedBack:
+				case <-time.After(300 * time.Millisecond):
+				}
+			}
+			mu.Lock()
+			consumed = append(consumed, p.ID)
+			mu.Unlock()
+		},
+		OnUndelivered: func(ps []delegator.PendingInput) {
+			mu.Lock()
+			undelivered = append(undelivered, ids(ps)...)
+			mu.Unlock()
+			handedBackOnce.Do(func() { close(handedBack) })
+		},
+	})
+	if err := b.Start(context.Background(), delegator.StartOptions{WorkDir: dir, AgentID: "drain"}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	for _, id := range []string{"U0", "U1"} {
+		if _, err := b.registerInput(trackedInput{id: id, text: id}); err != nil {
+			t.Fatalf("register %s: %v", id, err)
+		}
+	}
+	if err := os.WriteFile(gate, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-b.done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("reader never stopped after the stub exited")
+	}
+	// Both paths into finalizeExit have run once the reader is done and the
+	// waiter has finished; poll for the waiter's side.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		b.mu.Lock()
+		fin := b.finalized
+		b.mu.Unlock()
+		if fin && len(b.waitCh) == 1 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(undelivered) != 0 {
+		t.Fatalf("handed back %v (consumed %v): an ack CC wrote before dying was dropped", undelivered, consumed)
+	}
+	if strings.Join(consumed, ",") != "U0,U1" {
+		t.Fatalf("consumed = %v, want [U0 U1]", consumed)
 	}
 }

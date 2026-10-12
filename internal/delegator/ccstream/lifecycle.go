@@ -24,6 +24,9 @@ var (
 	closeGracefulWait = 5 * time.Second // wait for clean exit before SIGTERM
 	closeSigtermWait  = 2 * time.Second // wait after SIGTERM before SIGKILL
 	closeSigkillWait  = 2 * time.Second // wait after SIGKILL before abandoning the waiter goroutine
+	// readerDrainWait bounds how long the waiter lets the reader drain stdout
+	// to EOF after the process is reaped, before closing the pipe (#2334).
+	readerDrainWait = 2 * time.Second
 )
 
 // Start launches the Claude Code subprocess with stream-json pipes.
@@ -149,20 +152,34 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		cmdCancel()
 		return fmt.Errorf("ccstream: stdin pipe: %w", err)
 	}
-	stdoutPipe, err := cmd.StdoutPipe()
+	// stdout is our own pipe, not cmd.StdoutPipe: cmd.Wait closes a
+	// StdoutPipe as soon as the process is reaped, discarding whatever CC
+	// wrote that the reader has not read yet — including the
+	// user_message_uuids acks that decide which inputs are redelivered
+	// (#2334). With our own pipe the reader drains it to EOF; the waiter
+	// closes it only if that takes longer than readerDrainWait.
+	stdoutPipe, stdoutW, err := os.Pipe()
 	if err != nil {
 		cmdCancel()
 		return fmt.Errorf("ccstream: stdout pipe: %w", err)
 	}
+	cmd.Stdout = stdoutW
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
 		cmdCancel()
+		_ = stdoutPipe.Close()
+		_ = stdoutW.Close()
 		return fmt.Errorf("ccstream: stderr pipe: %w", err)
 	}
 
 	// Start the process.
-	if err := cmd.Start(); err != nil {
+	err = cmd.Start()
+	// The child holds its own copy of the write end; ours must go, or the
+	// reader would never see EOF.
+	_ = stdoutW.Close()
+	if err != nil {
 		cmdCancel()
+		_ = stdoutPipe.Close()
 		return fmt.Errorf("ccstream: start: %w", err)
 	}
 
@@ -203,6 +220,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// run exactly once, even if the reader path also reaches OnReaderStopped.
 	b.waitCh = make(chan error, 1)
 	b.exitCh = make(chan struct{})
+	readerDone := b.done
 	go func() {
 		err := cmd.Wait()
 		b.exitErr = err // store for OnError; read after exitCh is closed
@@ -226,6 +244,20 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		default:
 			b.logger().Warnf("process exited: %s", describeExitError(err))
 		}
+
+		// Let the reader dispatch everything the process wrote before it
+		// died (#2334): an ack still in the pipe decides an input as
+		// consumed, and handing back before it is read redelivers a message
+		// CC already has. The reader normally hits EOF at once and finalizes
+		// itself with the full picture; a descendant still holding stdout
+		// keeps it from EOF, so the wait is bounded and the pipe is then
+		// closed under it.
+		select {
+		case <-readerDone:
+		case <-time.After(readerDrainWait):
+			b.logger().Warnf("stdout not at EOF %s after the process exited (a descendant holds it?) — closing it", readerDrainWait)
+		}
+		_ = stdoutPipe.Close()
 
 		// Drive cleanup regardless of whether the reader goroutine notices.
 		// finalizeExit is idempotent — if OnReaderStopped already ran, this
