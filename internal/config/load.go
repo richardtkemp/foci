@@ -139,16 +139,39 @@ func ApplyProviderDefaults(cfg *Config, getDefaults PlatformDefaulter) {
 // validateAgentBackends.
 //
 // Load has no process-global side effects (#2356): it reads the file and
-// returns the parsed config. Applying config to process state is the
-// caller's job (foci-gw main sets log.DebugLogKeySuffix and calls
-// ApplyModelInfo), so config can be loaded from parallel tests and from
-// reload paths without changing what the running process does.
+// returns the parsed config (decodeConfig, the full parse + defaults +
+// Validate pipeline). Applying config to process state is the caller's job
+// (foci-gw main sets log.DebugLogKeySuffix and calls ApplyModelInfo), so
+// config can be loaded from parallel tests and from reload paths without
+// changing what the running process does.
 func Load(path string, knownBackends []string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config %s: %w", path, err)
 	}
+	return decodeConfig(data, path, knownBackends)
+}
 
+// CheckFileContent runs the exact decode + Validate pipeline Load runs (via
+// decodeConfig) on candidate file CONTENT, reporting whether the next restart
+// would accept it. It is the config editor's whole-file check: an edit is
+// refused when its result fails here. Unknown keys do NOT fail (UndefinedKeys
+// is a field on the decoded config, reported by callers, never an error) and,
+// like Load, it touches no process-global state. path is used only for
+// relative-path resolution and error text.
+func CheckFileContent(content, path string, knownBackends []string) error {
+	_, err := decodeConfig([]byte(content), path, knownBackends)
+	return err
+}
+
+// decodeConfig is Load's whole pipeline minus the file read: parse (with
+// quoted-bool normalization), group extraction, unknown-key collection, tag
+// and convention defaults, endpoint defaults, path resolution, load warnings,
+// and Validate. Nothing it touches
+// writes a package global — ApplyTagDefaults, ResolveAllPaths and
+// ensureAgentPlatform mutate only the Config under construction — so it is
+// safe to run on candidate content (CheckFileContent).
+func decodeConfig(data []byte, path string, knownBackends []string) (*Config, error) {
 	var cfg Config
 	md, err := toml.Decode(normalizeBoolStrings(string(data)), &cfg)
 	if err != nil {

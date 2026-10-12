@@ -3,10 +3,12 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/fap"
 )
 
@@ -77,10 +79,20 @@ func (h *Hub) handleServerRestart(client *wsClient) {
 	}
 }
 
-// applyConfigEdit validates a put (value non-nil) or unset (value nil) against
-// the field registry and performs the file edit.
+// applyConfigEdit validates a put (value non-nil) or unset (value nil) and
+// performs the file edit, routing by section kind: mapObject sections
+// (models, endpoints) to applyMapObjectEdit, object lists
+// (message_transforms, ...) to applyObjectListEdit, and scalar/map registry
+// fields to the SetInFile/UnsetInFile planners. Every write goes through
+// checkedFileEdit, which runs the whole-file load check before anything is
+// written.
 func (h *Hub) applyConfigEdit(scope, section, key string, value *string) error {
-	cfg := h.deps.Config
+	// Map-object sections first, before the generic scope check, so a scoped
+	// put is refused with the real reason (no per-agent override exists for
+	// models/endpoints) rather than the generic scope/section mismatch.
+	if spec, isMO := config.MapObjectFieldSpecFor(section); isMO {
+		return h.applyMapObjectEdit(scope, spec, key, value)
+	}
 	if scope != "" && section != "agent" {
 		return fmt.Errorf("agent scope %q requires the agent section, got [%s]", scope, section)
 	}
@@ -90,9 +102,9 @@ func (h *Hub) applyConfigEdit(scope, section, key string, value *string) error {
 	// Object-list (array-of-tables) sections — message_transforms, blocked_paths,
 	// memory.sources — are addressed with an empty key and carry the WHOLE list as
 	// a JSON array-of-objects; there is no per-element set path. Route them to
-	// SetTableArray, which replaces every [[section]] block atomically.
+	// the table-array planner, which replaces every [[section]] block atomically.
 	if spec, isObj := config.ObjectFieldSpecFor(section); isObj && key == "" {
-		return h.applyObjectListEdit(cfg, scope, spec, value)
+		return h.applyObjectListEdit(scope, spec, value)
 	}
 
 	field, ok := config.LookupField(section + "." + key)
@@ -108,9 +120,11 @@ func (h *Hub) applyConfigEdit(scope, section, key string, value *string) error {
 		target = config.SetTarget{Section: "agents", AgentID: scope, Key: key}
 	}
 
-	mode, _ := config.ParseFileMode(cfg.FileMode)
 	if value == nil {
-		if _, err := config.UnsetInFile(cfg.SourcePath, target, mode); err != nil {
+		if err := h.checkedFileEdit(func(cur string) (string, error) {
+			next, _, err := config.PlanUnsetInFile(cur, target)
+			return next, err
+		}); err != nil {
 			return err
 		}
 		h.applyLive(section, key)
@@ -123,10 +137,96 @@ func (h *Hub) applyConfigEdit(scope, section, key string, value *string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := config.SetInFile(cfg.SourcePath, target, formatted, mode); err != nil {
+	if err := h.checkedFileEdit(func(cur string) (string, error) {
+		next, _, err := config.PlanSetInFile(cur, target, formatted)
+		return next, err
+	}); err != nil {
 		return err
 	}
 	h.applyLive(section, key)
+	return nil
+}
+
+// checkedFileEdit is the ONE funnel every config-editor file write goes
+// through: it serialises concurrent editor frames (configEditMu), reads the
+// file once, runs the caller's pure plan to compute the post-edit content,
+// refuses the edit when the whole-file load check fails (checkFileEdit — the
+// next restart's verdict on the result), and only then writes atomically
+// (config.WriteFileAtomic: temp file + rename, so no reader ever sees a
+// half-written file). Nothing is written unless every check passes.
+func (h *Hub) checkedFileEdit(plan func(cur string) (string, error)) error {
+	h.configEditMu.Lock()
+	defer h.configEditMu.Unlock()
+	cfg := h.deps.Config
+	data, err := os.ReadFile(cfg.SourcePath)
+	if err != nil {
+		return fmt.Errorf("read config: %w", err)
+	}
+	cur := string(data)
+	next, err := plan(cur)
+	if err != nil {
+		return err
+	}
+	if err := h.checkFileEdit(cur, next); err != nil {
+		return err
+	}
+	mode, err := config.ParseFileMode(cfg.FileMode)
+	if err != nil {
+		mode = 0o600
+	}
+	return config.WriteFileAtomic(cfg.SourcePath, next, mode)
+}
+
+// checkFileEdit is the editor's whole-file check: an edit is refused when its
+// RESULT would stop the server from starting — the post-edit content is run
+// through the same parse + Validate the next restart runs
+// (config.CheckFileContent, with the registered backend names; unknown keys
+// do not fail it, and like Load it touches no process-global state). A
+// file that ALREADY fails the check stays editable — an operator must be
+// able to repair a broken foci.toml through the editor rather than be locked
+// out — so only a write that breaks a loadable file is refused; the error
+// reply carries the load error verbatim. Validate's WARN lines re-logging on
+// every check of a warning-carrying config is expected: this is deliberately
+// the same Validate, with no quiet mode.
+func (h *Hub) checkFileEdit(cur, next string) error {
+	backends := delegator.RegisteredNames()
+	if err := config.CheckFileContent(cur, h.deps.Config.SourcePath, backends); err != nil {
+		return nil // already unloadable: stay editable
+	}
+	return config.CheckFileContent(next, h.deps.Config.SourcePath, backends)
+}
+
+// applyMapObjectEdit writes one mapObject-section entry edit ([models.*],
+// [endpoints.*]): a put carries a JSON object of sub-field → display-form
+// value with key "<entry>" (create or merge); an unset with key "<entry>"
+// deletes the whole entry including its sub-tables, key "<entry>.<sub>"
+// removes that one sub-field. Global scope only — there is no per-agent
+// models/endpoints override surface. Like object lists, edits apply on
+// restart: applyLive logs the uniform takes-effect-on-restart line (no
+// applier is registered for these sections).
+func (h *Hub) applyMapObjectEdit(scope string, spec config.MapObjectFieldSpec, key string, value *string) error {
+	if scope != "" {
+		return fmt.Errorf("mapObject section %q has no per-agent scope", spec.Section)
+	}
+	if value == nil {
+		if err := h.checkedFileEdit(func(cur string) (string, error) {
+			return config.PlanUnsetMapObject(cur, spec, key)
+		}); err != nil {
+			return err
+		}
+		h.applyLive(spec.Section, "")
+		return nil
+	}
+	settings, err := config.ParseMapObjectValue(spec, *value)
+	if err != nil {
+		return err
+	}
+	if err := h.checkedFileEdit(func(cur string) (string, error) {
+		return config.PlanSetMapObjectEntry(cur, spec, key, settings)
+	}); err != nil {
+		return err
+	}
+	h.applyLive(spec.Section, "")
 	return nil
 }
 
@@ -137,11 +237,10 @@ func (h *Hub) applyConfigEdit(scope, section, key string, value *string) error {
 // ObjectFieldSpec.Live) is pushed into the process via applyLive, addressed by
 // section with an empty key. Restart-required ones go through applyLive too,
 // which logs that they take effect on restart.
-func (h *Hub) applyObjectListEdit(cfg *config.Config, scope string, spec config.ObjectFieldSpec, value *string) error {
+func (h *Hub) applyObjectListEdit(scope string, spec config.ObjectFieldSpec, value *string) error {
 	if scope != "" {
 		return fmt.Errorf("object-list section %q has no per-agent scope yet", spec.Section)
 	}
-	mode, _ := config.ParseFileMode(cfg.FileMode)
 	var entries []map[string]any
 	if value != nil {
 		parsed, err := config.ParseObjectListValue(spec, *value)
@@ -150,7 +249,9 @@ func (h *Hub) applyObjectListEdit(cfg *config.Config, scope string, spec config.
 		}
 		entries = parsed
 	}
-	if _, err := config.SetTableArray(cfg.SourcePath, spec.Section, entries, mode); err != nil {
+	if err := h.checkedFileEdit(func(cur string) (string, error) {
+		return config.PlanSetTableArray(cur, spec.Section, entries)
+	}); err != nil {
 		return err
 	}
 	h.applyLive(spec.Section, "")
@@ -200,14 +301,18 @@ func (h *Hub) broadcastConfigSchema() {
 
 // buildConfigSchema assembles the wire §13 payload: the field registry plus
 // one scope per editing surface. Explicitness and explicit values come from a
-// fresh parse of the FILE (truthful immediately after an edit); an agent
-// scope's values resolve through the ONE agent-value ladder
-// (config.ResolveAgentValue): the file's inherited global-section value,
-// then the running value (the mapped section's running global first, then
-// the agent's own running row), then the built-in default. Per-field
-// NeedsRestart records each field's intrinsic consumption pattern (see
-// config.ConfigField.NeedsRestart): hot fields apply live via applyLive on
-// edit, restart-required fields take effect on the next restart.
+// fresh parse of the FILE (truthful immediately after an edit); mapObject
+// sections' entries are read from the decoded TOML tree
+// (config.MapObjectFileEntries); an agent scope's values resolve through the
+// ONE agent-value ladder (config.ResolveAgentValue): the file's inherited
+// global-section value, then the running value (the mapped section's running
+// global first, then the agent's own running row), then the built-in default.
+// Per-field NeedsRestart records each field's intrinsic consumption pattern
+// (see config.ConfigField.NeedsRestart): hot fields apply live via applyLive
+// on edit, restart-required fields take effect on the next restart — the
+// broadcast a client receives after every successful edit (a FAILED edit
+// answers only the requester, with Error carrying the refusal: the field's
+// own validation or the whole-file load check, see checkedFileEdit).
 func (h *Hub) buildConfigSchema(errMsg string) fap.ConfigSchema {
 	cfg := h.deps.Config
 	fields := config.AllFields()
@@ -371,9 +476,15 @@ func (h *Hub) buildConfigSchema(errMsg string) fap.ConfigSchema {
 			gScope.Explicit = append(gScope.Explicit, of.Section)
 		}
 	}
-	// Map-object sections: current [section.*] entries as a JSON object-of-objects.
+	// Map-object sections (models, endpoints): current [section.*] entries as
+	// a JSON object-of-objects, read from the decoded TOML tree so dotted
+	// quoted entry names stay intact and sub-tables (e.g. [models.*.provider])
+	// never leak in as sub-fields (config.MapObjectFileEntries).
 	for _, mo := range config.MapObjectFields() {
-		entries := config.MapObjectEntries(mo.Section, fileGlobal)
+		entries, err := config.MapObjectFileEntries(cfg.SourcePath, mo)
+		if err != nil {
+			continue
+		}
 		b, err := json.Marshal(entries)
 		if err != nil {
 			continue

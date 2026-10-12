@@ -1229,6 +1229,22 @@ type ConfigGet struct{}
 // ConfigPut sets one server-config key in foci.toml (wire §13). Scope "" is
 // the global section; an agent id targets that agent's [[agents]] block.
 // Value is the raw string the user typed — the server validates + quotes.
+//
+// For a mapObject section descriptor (type "mapObject": models, endpoints),
+// the frame shape is instead an ENTRY edit, global scope only:
+//
+//	ConfigPut{Section: "models", Key: "<entry name>",
+//	          Value: `{"model": "anthropic/claude-...", "cache_ttl": "5m"}`}
+//
+// Key is the entry's name (a bare TOML key: letters, digits, _, -); Value is
+// a JSON object mapping sub-field keys (the descriptor's Fields) to
+// display-form strings. The put creates the entry or merges into it —
+// sub-fields it does not mention stay as written. A models create must set
+// "model" non-empty. Refused with an error reply (and nothing written):
+// names that aren't bare TOML keys, unknown sub-fields, values that do not
+// fit their type, entries the file holds as inline/dotted tables rather than
+// a [models.<name>] table, and any edit whose result would stop the server
+// from starting.
 type ConfigPut struct {
 	Scope   string `json:"scope,omitempty"`
 	Section string `json:"section"`
@@ -1237,7 +1253,11 @@ type ConfigPut struct {
 }
 
 // ConfigUnset removes one explicitly-set server-config key (wire §13),
-// reverting it to the inherited/default value.
+// reverting it to the inherited/default value. For a mapObject section
+// (models, endpoints), the key instead addresses an ENTRY, global scope
+// only: "<entry>" deletes the whole entry including its [S.<entry>.*]
+// sub-tables, and "<entry>.<sub>" removes that one sub-field from the entry.
+// Same refusals as the mapObject ConfigPut.
 type ConfigUnset struct {
 	Scope   string `json:"scope,omitempty"`
 	Section string `json:"section"`
@@ -1280,10 +1300,13 @@ type ConfigFieldDesc struct {
 	// the GLOBAL field this per-agent field overrides (e.g. "agent_loop.max_tool_loops"
 	// for "loop.max_tool_loops"). Empty = per-agent only, no global counterpart.
 	GlobalKey string `json:"globalKey,omitempty"`
-	// Fields, on type=="object[]" descriptors only, describes the sub-fields of
-	// one array-of-tables entry (e.g. find/replace for message_transforms). Each
-	// carries its own Key/ValueType/Description; the section's current entries are
-	// a JSON array-of-objects at the scope's Values[section].
+	// Fields, on type=="object[]" and type=="mapObject" descriptors, describes
+	// the sub-fields of one entry: each array-of-tables element for object[]
+	// (e.g. find/replace for message_transforms; the section's current entries
+	// are a JSON array-of-objects at the scope's Values[section]), each named
+	// entry for mapObject (e.g. model/context for models; the entries are a
+	// JSON object-of-objects at Values[section]). Each carries its own
+	// Key/ValueType/Description; see ConfigPut for the mapObject frame shape.
 	Fields []ConfigFieldDesc `json:"fields,omitempty"`
 }
 

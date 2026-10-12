@@ -528,8 +528,16 @@ lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-cap
 	# files to mark injected fake values that reach WARN/ERROR log lines.
 	# internal/mermaid/mermaidtest too (#2195): the fake mmdc shared by the
 	# mermaid, app and tools tests.
+	# config's UnsetInFile/SetTableArray are the same shape since #1476: the
+	# app editor (their last production caller) now goes plan -> whole-file
+	# check -> WriteFileAtomic through the Plan* cores, so the wrappers'
+	# remaining callers are the config package's round-trip tests, which pin
+	# the public writer contract. MapObjectEntries likewise: the editor reads
+	# entries with the tree-based MapObjectFileEntries, and #1476 requires
+	# TestMapObjectEntries to keep passing unedited against the production
+	# flat-split helper.
 	@raw=$$($(GOBIN)/deadcode ./...) || { echo "deadcode failed or was killed (exit $$?) — reachability gate did NOT run"; exit 1; }; \
-	output=$$(printf '%s' "$$raw" | grep -v -e '/testharness/' -e '/testtemp/' -e '/clock/fake.go:' -e '/testmarker/' -e '/mermaidtest/' || true); \
+	output=$$(printf '%s' "$$raw" | grep -v -e '/testharness/' -e '/testtemp/' -e '/clock/fake.go:' -e '/testmarker/' -e '/mermaidtest/' -e 'config/settablearray.go:.*SetTableArray' -e 'config/configedit.go:.*UnsetInFile' -e 'config/configedit.go:.*MapObjectEntries' || true); \
 	if [ -n "$$output" ]; then echo "$$output"; exit 1; fi
 	@echo "=== find-disconnected-tests (Test* functions that don't touch prod) ==="
 	@./bin/find-disconnected-tests ./...

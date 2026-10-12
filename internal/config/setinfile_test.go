@@ -168,6 +168,27 @@ model = "haiku"
 	}
 }
 
+func TestSetInFile_CommentedHeaderSection(t *testing.T) {
+	// Proves a section whose header carries a trailing comment ([notify] # x)
+	// is found by the scalar writer: the key is edited inside that table,
+	// header comment preserved, instead of writing a duplicate section
+	// header (which TOML rejects). The header regexes accept trailing
+	// comments for every writer — see sectionHeaderRe.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	content := "[notify] # boot notifications\nstartup_notify = false\n"
+	os.WriteFile(path, []byte(content), 0o644)
+
+	if _, err := SetInFile(path, SetTarget{Section: "notify", Key: "startup_notify"}, "true", 0640); err != nil {
+		t.Fatalf("SetInFile: %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	if want := "[notify] # boot notifications\nstartup_notify = true\n"; string(data) != want {
+		t.Errorf("file =\n%s\nwant\n%s", data, want)
+	}
+}
+
 func TestSetInFile_NestedMapSection(t *testing.T) {
 	// Regression test for MapFieldSpec's longest-prefix-match: this fixture
 	// mirrors the real live foci.toml, which has a bare [groups] section
@@ -252,6 +273,31 @@ model = "sonnet"
 	}
 }
 
+func TestSetInFile_NewSectionBeforeCommentedAgentsHeader(t *testing.T) {
+	// Proves the new-section anchor still finds the first [[agents]] header
+	// when it carries a trailing comment: the new section goes before the
+	// block (TestSetInFile_NewSectionBeforeAgents's ordering), not after it
+	// at EOF. The header regexes accept trailing comments for every writer —
+	// see arrayHeaderRe.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	content := "[agent_loop]\nmodel = \"haiku\"\n\n[[agents]] # main agent\nid = \"main\"\n"
+	os.WriteFile(path, []byte(content), 0o644)
+
+	if _, err := SetInFile(path, SetTarget{Section: "keepalive", Key: "enabled"}, "true", 0640); err != nil {
+		t.Fatalf("SetInFile: %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	result := string(data)
+
+	keepaliveIdx := strings.Index(result, "[keepalive]")
+	agentsIdx := strings.Index(result, "[[agents]]")
+	if keepaliveIdx > agentsIdx {
+		t.Errorf("[keepalive] should appear before [[agents]] in output:\n%s", result)
+	}
+}
+
 func TestSetInFile_AgentBlock(t *testing.T) {
 	// Proves that SetInFile updates only the [[agents]] block with the matching ID,
 	// leaving other agents' values unchanged, and returns the old value.
@@ -308,6 +354,31 @@ model = "haiku"
 			}
 			break
 		}
+	}
+}
+
+func TestSetInFile_AgentBlockCommentedHeader(t *testing.T) {
+	// Proves a [[agents]] header carrying a trailing comment is still found
+	// by the per-agent writer: the edit lands inside that block, header
+	// comment preserved, instead of failing with a false "agent not found".
+	// The header regexes accept trailing comments for every writer — see
+	// arrayHeaderRe.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	content := "[[agents]] # main agent\nid = \"main\"\nmodel = \"sonnet\"\n"
+	os.WriteFile(path, []byte(content), 0o644)
+
+	old, err := SetInFile(path, SetTarget{Section: "agents", AgentID: "main", Key: "model"}, `"opus"`, 0640)
+	if err != nil {
+		t.Fatalf("SetInFile: %v", err)
+	}
+	if old != `"sonnet"` {
+		t.Errorf("old value = %q, want %q", old, `"sonnet"`)
+	}
+
+	data, _ := os.ReadFile(path)
+	if want := "[[agents]] # main agent\nid = \"main\"\nmodel = \"opus\"\n"; string(data) != want {
+		t.Errorf("file =\n%s\nwant\n%s", data, want)
 	}
 }
 

@@ -32,42 +32,67 @@ func SetInFile(path string, target SetTarget, value string, mode os.FileMode) (s
 	if err != nil {
 		return "", fmt.Errorf("read config: %w", err)
 	}
-
-	lines := strings.Split(string(data), "\n")
-
-	var oldValue string
-	if target.Section == "agents" {
-		oldValue, lines, err = setInAgentBlock(lines, target.AgentID, target.Key, value)
-	} else {
-		oldValue, lines, err = setInSection(lines, target.Section, target.Key, value)
-	}
+	next, old, err := PlanSetInFile(string(data), target, value)
 	if err != nil {
 		return "", err
 	}
+	if err := WriteFileAtomic(path, next, mode); err != nil {
+		return "", err
+	}
+	return old, nil
+}
 
-	output := strings.Join(lines, "\n")
+// PlanSetInFile is SetInFile's pure core: it computes the post-edit file
+// content (and the key's previous value, "" when absent) from candidate
+// content, touching no disk. The config editor runs it inside its
+// check-then-write funnel (Hub.checkedFileEdit) so the whole-file load check
+// can vet the result before anything is written.
+func PlanSetInFile(content string, target SetTarget, value string) (next, old string, err error) {
+	lines := strings.Split(content, "\n")
 
-	// Atomic write: temp file + rename.
+	if target.Section == "agents" {
+		old, lines, err = setInAgentBlock(lines, target.AgentID, target.Key, value)
+	} else {
+		old, lines, err = setInSection(lines, target.Section, target.Key, value)
+	}
+	if err != nil {
+		return "", "", err
+	}
+	return strings.Join(lines, "\n"), old, nil
+}
+
+// WriteFileAtomic replaces the file at path with content in one atomic step:
+// write a temp file beside it, then rename over the target. No reader ever
+// sees a half-written file. This is the ONE atomic-write primitive for every
+// foci.toml writer (SetInFile, UnsetInFile, SetTableArray and the app config
+// editor's funnel).
+func WriteFileAtomic(path, content string, mode os.FileMode) error {
 	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(output), mode); err != nil {
-		return "", fmt.Errorf("write temp: %w", err)
+	if err := os.WriteFile(tmpPath, []byte(content), mode); err != nil {
+		return fmt.Errorf("write temp: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		_ = os.Remove(tmpPath) // best effort cleanup
-		return "", fmt.Errorf("rename: %w", err)
+		return fmt.Errorf("rename: %w", err)
 	}
-
-	return oldValue, nil
+	return nil
 }
 
+// The header regexes accept an optional trailing comment after the closing
+// bracket (`[models.a] # main model`): tableArrayHeaderRe always has, TOML
+// readers report entries under such headers, and an entry the read side
+// lists must be findable by the write side — a blind spot here makes the
+// editors refuse a perfectly ordinary table with a false "not set" (or try
+// to create a duplicate the whole-file check then rejects).
+
 // sectionHeaderRe matches [section] (not [[array]]).
-var sectionHeaderRe = regexp.MustCompile(`^\s*\[([^\[\]]+)\]\s*$`)
+var sectionHeaderRe = regexp.MustCompile(`^\s*\[([^\[\]]+)\]\s*(?:#.*)*$`)
 
 // arrayHeaderRe matches [[agents]].
-var arrayHeaderRe = regexp.MustCompile(`^\s*\[\[([^\[\]]+)\]\]\s*$`)
+var arrayHeaderRe = regexp.MustCompile(`^\s*\[\[([^\[\]]+)\]\]\s*(?:#.*)*$`)
 
 // anySectionRe matches any section header (single or double bracket).
-var anySectionRe = regexp.MustCompile(`^\s*\[{1,2}[^\[\]]+\]{1,2}\s*$`)
+var anySectionRe = regexp.MustCompile(`^\s*\[{1,2}[^\[\]]+\]{1,2}\s*(?:#.*)*$`)
 
 // topLevel reports, per line, whether the line starts outside any value: a
 // header, key line, comment or blank line rather than the body of a multi-line
@@ -103,24 +128,38 @@ func setInSection(lines []string, section, key, value string) (string, []string,
 	start, end := findSectionBounds(lines, section)
 
 	if start < 0 {
-		// Section not found — insert it.
-		insertAt := findAgentsStart(lines)
-		if insertAt < 0 {
-			insertAt = len(lines)
-		}
-		// Ensure blank line before new section.
-		newLines := make([]string, 0, len(lines)+3)
-		newLines = append(newLines, lines[:insertAt]...)
-		if insertAt > 0 && strings.TrimSpace(lines[insertAt-1]) != "" {
-			newLines = append(newLines, "")
-		}
-		newLines = append(newLines, fmt.Sprintf("[%s]", section))
-		newLines = append(newLines, fmt.Sprintf("%s = %s", key, value))
-		newLines = append(newLines, lines[insertAt:]...)
-		return "", newLines, nil
+		// Section not found — insert it where a brand-new section goes.
+		return "", insertSectionBlock(lines, newSectionInsertAt(lines), section, []string{key + " = " + value}), nil
 	}
 
 	return replaceOrInsertKey(lines, start+1, end, key, value)
+}
+
+// newSectionInsertAt returns the line index where a block for a section that
+// has no table in the file goes: before the first [[agents]] header, else at
+// EOF — the placement every "create a section" writer uses.
+func newSectionInsertAt(lines []string) int {
+	if at := findAgentsStart(lines); at >= 0 {
+		return at
+	}
+	return len(lines)
+}
+
+// insertSectionBlock inserts a new "[header]" block (header line plus body
+// lines) at line index at, adding a separating blank line before the block
+// when the preceding line isn't blank. Content from at on follows unchanged.
+// at is expected to already sit after the block's intended predecessor —
+// callers back off over trailing blank lines so the separator spacing ends up
+// on the far side of the new block.
+func insertSectionBlock(lines []string, at int, header string, body []string) []string {
+	out := make([]string, 0, len(lines)+len(body)+2)
+	out = append(out, lines[:at]...)
+	if at > 0 && strings.TrimSpace(lines[at-1]) != "" {
+		out = append(out, "")
+	}
+	out = append(out, fmt.Sprintf("[%s]", header))
+	out = append(out, body...)
+	return append(out, lines[at:]...)
 }
 
 // setInAgentBlock finds the [[agents]] block with the given id and sets the

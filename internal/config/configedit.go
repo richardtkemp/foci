@@ -15,8 +15,10 @@ import (
 
 // This file backs the app protocol's config editing (wire §13): enumerating every
 // registry field with its file state ("explicitly set" vs default), and removing a
-// key so it reverts to the inherited/default value. SetInFile (setinfile.go) is the
-// write half; both share the same line-oriented, comment-preserving conventions.
+// key so it reverts to the inherited/default value. The write halves are
+// setinfile.go (scalar/map keys), settablearray.go (object lists) and
+// mapobject.go (named [models.*]/[endpoints.*] entries); all share the same
+// line-oriented, comment-preserving conventions.
 
 // AllFields returns the full registry (sorted by section then key).
 func AllFields() []ConfigField {
@@ -56,20 +58,33 @@ func UnsetInFile(path string, target SetTarget, mode os.FileMode) (string, error
 	if err != nil {
 		return "", fmt.Errorf("read config: %w", err)
 	}
+	next, old, err := PlanUnsetInFile(string(data), target)
+	if err != nil {
+		return "", err
+	}
+	if err := WriteFileAtomic(path, next, mode); err != nil {
+		return "", err
+	}
+	return old, nil
+}
 
-	lines := strings.Split(string(data), "\n")
+// PlanUnsetInFile is UnsetInFile's pure core (see PlanSetInFile): the
+// post-edit content and the removed value, computed from candidate content
+// without touching disk.
+func PlanUnsetInFile(content string, target SetTarget) (next, old string, err error) {
+	lines := strings.Split(content, "\n")
 
 	line := -1
 	if target.Section == "agents" {
 		loc, err := locateAgentKey(lines, target.AgentID, target.Key)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		line = loc.found
 	} else {
 		from, to := findSectionBounds(lines, target.Section)
 		if from < 0 {
-			return "", fmt.Errorf("section [%s] not found in config file", target.Section)
+			return "", "", fmt.Errorf("section [%s] not found in config file", target.Section)
 		}
 		active := keyLineRe(target.Key)
 		top := topLevel(lines)
@@ -81,25 +96,16 @@ func UnsetInFile(path string, target SetTarget, mode os.FileMode) (string, error
 		}
 	}
 	if line < 0 {
-		return "", fmt.Errorf("%s is not set in the config file", target.Key)
+		return "", "", fmt.Errorf("%s is not set in the config file", target.Key)
 	}
 
 	end, old, err := valueSpan(lines, line)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	lines = replaceSpan(lines, line, end, "")
 
-	output := strings.Join(lines, "\n")
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(output), mode); err != nil {
-		return "", fmt.Errorf("write temp: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath) // best effort cleanup
-		return "", fmt.Errorf("rename: %w", err)
-	}
-	return old, nil
+	return strings.Join(lines, "\n"), old, nil
 }
 
 // ExplicitFileValues re-parses the config FILE (not the running config) and
@@ -156,6 +162,12 @@ func ExplicitFileValues(path string) (global map[string]string, agents map[strin
 // a map[string]Struct section (e.g. [models.powerful]). Returns entryName →
 // subKey → value. Each entry is a direct child of the section prefix; deeper
 // nesting (e.g. models.powerful.model) becomes a sub-key.
+//
+// Not the editor's reader any more (#1476): flat splitting is ambiguous for
+// dotted quoted entry names ([models."glm-4.6"]) and lets sub-tables leak in
+// as sub-fields (provider.order), so buildConfigSchema reads entries with the
+// tree-based MapObjectFileEntries. Kept, unchanged, as public API that
+// TestMapObjectEntries pins; the deadcode gate carries it (Makefile).
 func MapObjectEntries(section string, flat map[string]string) map[string]map[string]string {
 	prefix := section + "."
 	out := map[string]map[string]string{}
@@ -175,6 +187,48 @@ func MapObjectEntries(section string, flat map[string]string) map[string]map[str
 		out[entry][subKey] = v
 	}
 	return out
+}
+
+// MapObjectFileEntries reads a map[string]Struct section's named entries
+// directly from the decoded TOML tree of the file at path: entryName →
+// subKey → display-form value. Reading the TREE (not the flattened keys) is
+// what makes the report right: a dotted quoted entry name
+// ([models."glm-4.6"]) stays one entry key, and a sub-table such as
+// [models.*.provider] is a map child that never leaks in as a fake
+// sub-field. Only the section's REGISTERED sub-fields are reported, each
+// rendered by renderScalar; an entry with none of them set still appears as
+// an empty object, so the schema's Explicit can list the section. An absent
+// section yields an empty map, not an error.
+func MapObjectFileEntries(path string, spec MapObjectFieldSpec) (map[string]map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read config: %w", err)
+	}
+	tree, err := decodeTOMLTree(string(data))
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]map[string]string{}
+	sec, ok := tree[spec.Section].(map[string]any)
+	if !ok {
+		return out, nil
+	}
+	for name, v := range sec {
+		m, ok := v.(map[string]any)
+		if !ok {
+			continue // a scalar under [S] is not an entry
+		}
+		entry := map[string]string{}
+		for _, sf := range spec.Fields {
+			if raw, set := m[sf.Key]; set {
+				if s, ok := renderScalar(raw); ok {
+					entry[sf.Key] = s
+				}
+			}
+		}
+		out[name] = entry
+	}
+	return out, nil
 }
 
 // flattenScalars walks nested TOML tables, writing "prefix.key" → rendered

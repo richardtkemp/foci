@@ -231,9 +231,18 @@ Show or edit configuration.
 The native app can also view and edit the config: its Settings → "Server config"
 page renders the same field registry over `config.get`/`config.put`/`config.unset`
 frames (FAP wire §13), split into "set in foci.toml" vs defaults, per scope
-(global / per-agent `[[agents]]` overrides). Edits use the same comment-preserving
-file writer as `/config set` and take effect on restart. Gated on the client's
-`configEdit` capability; see `internal/app/configedit.go`.
+(global / per-agent `[[agents]]` overrides). Named model definitions
+(`[models.*]`) and endpoints (`[endpoints.*]`) are editable there too: the page
+lists every entry, and can add one, change an entry's sub-fields, or delete an
+entry. Edits use the same comment-preserving file writer as `/config set` and
+take effect on restart. An edit whose result would stop the server from
+starting (e.g. deleting a model one of your groups still uses) is refused with
+the reason. The one exception: when foci.toml already fails to load (e.g. a
+hand edit broke it), edits are written unchecked so the file can be repaired
+from the app. Entries whose names are not bare TOML keys, or that live in
+foci.toml as inline/dotted tables rather than `[models.<name>]` tables, must be
+edited by hand. Gated on the client's `configEdit` capability; see
+`internal/app/configedit.go`.
 
 ### `/prompts <subcommand>`
 Show configured prompts and prompt files on disk.

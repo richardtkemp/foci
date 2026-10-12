@@ -22,8 +22,22 @@ func SetTableArray(path, section string, entries []map[string]any, mode os.FileM
 	if err != nil {
 		return 0, fmt.Errorf("read config: %w", err)
 	}
+	next, err := PlanSetTableArray(string(data), section, entries)
+	if err != nil {
+		return 0, err
+	}
+	if err := WriteFileAtomic(path, next, mode); err != nil {
+		return 0, err
+	}
+	return len(entries), nil
+}
 
-	lines := strings.Split(string(data), "\n")
+// PlanSetTableArray is SetTableArray's pure core (see PlanSetInFile): the
+// post-edit content computed from candidate content, touching no disk. It
+// keeps SetTableArray's own output convention — the result always ends in
+// exactly one trailing newline — so the two are byte-identical.
+func PlanSetTableArray(content, section string, entries []map[string]any) (string, error) {
+	lines := strings.Split(content, "\n")
 	// strings.Split on a trailing "\n" yields a final "" element; strip it so
 	// block-boundary scanning (which treats EOF as a block terminator) isn't
 	// thrown off by whether the file happens to end in a newline. A single
@@ -45,32 +59,10 @@ func SetTableArray(path, section string, entries []map[string]any, mode os.FileM
 			if insertAt < 0 {
 				insertAt = len(out)
 			}
-			// Skip this block: from the header up to (but not including)
-			// the next header line (any [section] or [[section]]), or EOF.
-			hardEnd := i + 1
-			for hardEnd < len(lines) && !(top[hardEnd] && anySectionRe.MatchString(lines[hardEnd])) {
-				hardEnd++
-			}
-			// The block proper is the header + its contiguous key lines. Trailing
-			// blank/comment lines after the last key are ambiguous: pure blank
-			// lines are just separator spacing (consumed with the block), but a
-			// trailing COMMENT is unrelated user content that must be preserved —
-			// deleting it would silently eat foci.toml content. So back off over
-			// the trailing blank/comment run, and only keep it (end the removal
-			// early) when it actually contains a comment.
-			k := hardEnd
-			hasComment := false
-			for k > i+1 && isBlankOrComment(lines[k-1]) {
-				k--
-				if strings.HasPrefix(strings.TrimSpace(lines[k]), "#") {
-					hasComment = true
-				}
-			}
-			if hasComment {
-				i = k
-			} else {
-				i = hardEnd
-			}
+			// Skip this block: the header plus its body (blockBodyEnd),
+			// minus any trailing comment run that must stay
+			// (blockRemovalEnd — the shared comment-keeping rule).
+			i = blockRemovalEnd(lines, i, blockBodyEnd(lines, top, i))
 			continue
 		}
 		out = append(out, lines[i])
@@ -79,7 +71,7 @@ func SetTableArray(path, section string, entries []map[string]any, mode os.FileM
 
 	rendered, err := renderTableArrayBlocks(section, entries)
 	if err != nil {
-		return 0, err
+		return "", err
 	}
 
 	var result []string
@@ -104,18 +96,42 @@ func SetTableArray(path, section string, entries []map[string]any, mode os.FileM
 		result = out
 	}
 
-	output := strings.Join(result, "\n") + "\n"
+	return strings.Join(result, "\n") + "\n", nil
+}
 
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(output), mode); err != nil {
-		return 0, fmt.Errorf("write temp: %w", err)
+// blockBodyEnd returns the exclusive end of the table block whose header is
+// lines[header]: the next top-level section header (any [section] or
+// [[section]]), or EOF. top is topLevel(lines).
+func blockBodyEnd(lines []string, top []bool, header int) int {
+	end := header + 1
+	for end < len(lines) && !(top[end] && anySectionRe.MatchString(lines[end])) {
+		end++
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath) // best effort cleanup
-		return 0, fmt.Errorf("rename: %w", err)
-	}
+	return end
+}
 
-	return len(entries), nil
+// blockRemovalEnd returns the exclusive end to use when REMOVING the table
+// block that spans lines[header:bodyEnd]. Trailing blank lines after the
+// block's last key are separator spacing — consumed with the block — but a
+// trailing COMMENT is unrelated user content that must be preserved: deleting
+// it would silently eat foci.toml content. So it backs off over the trailing
+// blank/comment run and ends the removal early (before the run) only when the
+// run actually contains a comment. This is the ONE comment-keeping rule for
+// block removal, shared by SetTableArray's section replacement and mapObject
+// entry deletion (mapobject.go).
+func blockRemovalEnd(lines []string, header, bodyEnd int) int {
+	k := bodyEnd
+	hasComment := false
+	for k > header+1 && isBlankOrComment(lines[k-1]) {
+		k--
+		if strings.HasPrefix(strings.TrimSpace(lines[k]), "#") {
+			hasComment = true
+		}
+	}
+	if hasComment {
+		return k
+	}
+	return bodyEnd
 }
 
 // isBlankOrComment reports whether a line is empty/whitespace-only or a

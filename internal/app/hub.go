@@ -141,6 +141,12 @@ type Hub struct {
 	autoCloseOnce  sync.Once     // startAutoCloseSweep starts at most one loop per hub
 	autoCloseEvery time.Duration // sweep cadence override; 0 = autoCloseSweepInterval (tests shrink it)
 
+	// configEditMu serialises every config-editor file write (checkedFileEdit):
+	// the whole read → plan → whole-file check → atomic-write sequence, so two
+	// concurrent config.* frames cannot interleave their plans over one file.
+	// Leaf-level like pinsMu — taken and released inside one handler call.
+	configEditMu sync.Mutex
+
 	wizardMu      sync.Mutex
 	wizards       map[string]*wizardSession // wizardId → live out-of-band wizard session
 	wizardByScope map[string]string         // wizard scope (session key) → wizardId

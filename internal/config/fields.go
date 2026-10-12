@@ -541,17 +541,28 @@ func ObjectFieldSpecFor(section string) (ObjectFieldSpec, bool) {
 // entries (like MapFieldSpec) where each entry has typed sub-fields (like
 // ObjectFieldSpec). Section is the TOML table prefix (e.g. "models" for
 // [models.powerful]); each entry is a sub-table with the Fields shape.
-// Used for [models.*] and [endpoints.*].
+// Read-write over the app config editor: config.put with key "<entry>" and a
+// JSON object of sub-field → display-form value creates the entry or merges
+// into it; config.unset with key "<entry>" deletes the entry (sub-tables
+// included), key "<entry>.<sub>" removes one sub-field (mapobject.go's
+// planners). Entry names must be bare TOML keys, and an entry the file holds
+// as an inline table or dotted keys (not a [S.<name>] table) is refused —
+// both errors point at editing foci.toml by hand.
 type MapObjectFieldSpec struct {
 	Section     string
 	Description string
 	Fields      []ObjectSubField
+	// Required is the sub-field key that must be set to a non-empty value
+	// when an entry is CREATED ("" = none). [models.*] is meaningless
+	// without its model ID; validateModelKeys is the load-time backstop.
+	Required string
 }
 
 // mapObjectFieldSpecs is the registry of map[string]Struct config sections
-// surfaced in the app config schema as named entries with typed sub-fields.
+// the app config schema reports and edits as named entries with typed
+// sub-fields.
 var mapObjectFieldSpecs = []MapObjectFieldSpec{
-	{Section: "models", Description: "Named model definitions with per-model settings", Fields: []ObjectSubField{
+	{Section: "models", Description: "Named model definitions with per-model settings", Required: "model", Fields: []ObjectSubField{
 		{Key: "model", Type: FieldString, Description: "Developer/model ID (e.g. anthropic/claude-sonnet-4-20250514)"},
 		{Key: "endpoint", Type: FieldString, Description: "Explicit endpoint override (empty = auto-select from developer)"},
 		{Key: "thinking", Type: FieldString, Description: "Thinking mode: adaptive, off"},
@@ -578,6 +589,20 @@ func MapObjectFields() []MapObjectFieldSpec {
 	out := make([]MapObjectFieldSpec, len(mapObjectFieldSpecs))
 	copy(out, mapObjectFieldSpecs)
 	return out
+}
+
+// MapObjectFieldSpecFor returns the spec whose Section matches
+// (case-insensitive), or ok=false when section is not a registered
+// mapObject section — the accessor the app editor routes puts/unsets by,
+// mirroring ObjectFieldSpecFor.
+func MapObjectFieldSpecFor(section string) (MapObjectFieldSpec, bool) {
+	lower := strings.ToLower(section)
+	for _, s := range mapObjectFieldSpecs {
+		if strings.ToLower(s.Section) == lower {
+			return s, true
+		}
+	}
+	return MapObjectFieldSpec{}, false
 }
 
 // bareTOMLKeyRe matches a valid unquoted TOML bare key: letters, digits,
