@@ -18,7 +18,7 @@ func TestTmuxStartAutoWatch(t *testing.T) {
 	t.Parallel()
 	sock := tmuxIsolatedSocket(t)
 
-	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
+	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {})
 	dir := t.TempDir()
 	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
 	if err != nil {
@@ -78,7 +78,7 @@ func TestTmuxStartWatchFalse(t *testing.T) {
 	t.Parallel()
 	sock := tmuxIsolatedSocket(t)
 
-	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
+	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {})
 	dir := t.TempDir()
 	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
 	if err != nil {
@@ -151,7 +151,7 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 
 	var mu sync.Mutex
 	var notifications []string
-	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {
 		mu.Lock()
 		notifications = append(notifications, msg)
 		mu.Unlock()
@@ -218,7 +218,7 @@ func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 	t.Parallel()
 	sock := tmuxIsolatedSocket(t)
 
-	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
+	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {})
 	dir := t.TempDir()
 	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
 	if err != nil {
@@ -283,7 +283,7 @@ func TestTmuxAutopilotDisabled(t *testing.T) {
 	t.Parallel()
 	sock := tmuxIsolatedSocket(t)
 
-	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
+	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {})
 	dir := t.TempDir()
 	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
 	if err != nil {

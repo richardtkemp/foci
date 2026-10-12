@@ -60,7 +60,7 @@ func TestSpawnInherit_ObserverListsAndStopStops(t *testing.T) {
 	// it on its own, the agent being told it was stopped (#2139).
 	t.Parallel()
 	delivered := make(chan string, 1)
-	notifier := NewAsyncNotifier(func(_, msg, _, _ string) { delivered <- msg })
+	notifier := NewAsyncNotifier(func(_, msg, _, _ string, _ *AgentOrigin) { delivered <- msg })
 	obs := &recordingSpawnObserver{}
 	tracker := NewSpawnTracker()
 	agent := &blockingSpawnAgent{running: make(chan struct{})}

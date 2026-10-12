@@ -9,7 +9,7 @@ import "sync"
 // It also tracks pending async results per session so that compaction
 // can be deferred until all outstanding results have been delivered.
 type AsyncNotifier struct {
-	fn func(targetSession, message, replyToSession, trigger string)
+	fn func(targetSession, message, replyToSession, trigger string, origin *AgentOrigin)
 
 	mu      sync.Mutex
 	pending map[string]int // session key → count of pending results
@@ -20,7 +20,10 @@ type AsyncNotifier struct {
 // If replyToSession is non-empty, the response is routed to that session
 // instead of being sent to targetSession's chat.
 // The trigger identifies the source (e.g. "async_notify", "tmux_watch").
-func NewAsyncNotifier(fn func(targetSession, message, replyToSession, trigger string)) *AsyncNotifier {
+// origin is non-nil exactly when the message is an agent-to-agent message
+// (send_to_session — see InjectAgentMessage); every other caller delivers
+// with a nil origin.
+func NewAsyncNotifier(fn func(targetSession, message, replyToSession, trigger string, origin *AgentOrigin)) *AsyncNotifier {
 	return &AsyncNotifier{
 		fn:      fn,
 		pending: make(map[string]int),
@@ -72,8 +75,23 @@ func (n *AsyncNotifier) HasPending(sessionKey string) bool {
 // the [meta] via= header.
 // Safe to call on a nil receiver or with a nil fn.
 func (n *AsyncNotifier) InjectToAgent(targetSession, message, replyToSession, trigger string) {
+	n.inject(targetSession, message, replyToSession, trigger, nil)
+}
+
+// InjectAgentMessage delivers an agent-to-agent message (send_to_session with
+// reply_to=caller, including its oneshot downgrade to fire-and-forget): same
+// delivery as InjectToAgent under the shared "async_notify" trigger, plus the
+// origin that lets the receiving chat surface what prompted the turn as a
+// chit. replyToSession follows the tool's downgrade rules ("" = deliver the
+// reply to the target's own chat). Safe to call on a nil receiver or with a
+// nil fn.
+func (n *AsyncNotifier) InjectAgentMessage(targetSession, message, replyToSession string, origin AgentOrigin) {
+	n.inject(targetSession, message, replyToSession, "async_notify", &origin)
+}
+
+func (n *AsyncNotifier) inject(targetSession, message, replyToSession, trigger string, origin *AgentOrigin) {
 	if n == nil || n.fn == nil {
 		return
 	}
-	n.fn(targetSession, message, replyToSession, trigger)
+	n.fn(targetSession, message, replyToSession, trigger, origin)
 }

@@ -126,7 +126,7 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 	sock := tmuxIsolatedSocket(t)
 
 	var wakeMsg atomic.Value
-	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {
 		wakeMsg.Store(msg)
 	})
 
@@ -191,7 +191,7 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 
 	var msgs []string
 	var mu sync.Mutex
-	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {
 		mu.Lock()
 		msgs = append(msgs, msg)
 		mu.Unlock()

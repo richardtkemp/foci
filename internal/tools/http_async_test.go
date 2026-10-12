@@ -21,7 +21,7 @@ func TestHTTPRequestAutoBackgroundFast(t *testing.T) {
 	defer srv.Close()
 
 	var called bool
-	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 5 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 0 }, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 5 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 0 }, NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 		called = true
 	}), 0640)
 
@@ -70,7 +70,7 @@ func TestHTTPRequestAutoBackgroundSlow(t *testing.T) {
 	srv, release := newGatedServer(t, "slow response")
 
 	completeCh := make(chan string, 1)
-	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 1 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 0 }, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 1 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 0 }, NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 		completeCh <- msg
 	}), 0640)
 
@@ -117,7 +117,7 @@ func TestHTTPRequestAutoBackgroundSessionKey(t *testing.T) {
 		sk, msg string
 	}
 	ch := make(chan result, 1)
-	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 1 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 0 }, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 1 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 0 }, NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 		ch <- result{sk, msg}
 	}), 0640)
 
@@ -160,7 +160,7 @@ func TestHTTPRequestExplicitBackground(t *testing.T) {
 	defer srv.Close()
 
 	completeCh := make(chan string, 1)
-	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 0 }, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 0 }, NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 		completeCh <- msg
 	}), 0640)
 
@@ -225,7 +225,7 @@ func TestHTTPRequestBackgroundSpilledBodyNamesFile(t *testing.T) {
 	defer srv.Close()
 
 	completeCh := make(chan string, 1)
-	tool := NewHTTPRequestTool(nil, nil, t.TempDir(), func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 100 }, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	tool := NewHTTPRequestTool(nil, nil, t.TempDir(), func() int { return 0 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 100 }, NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 		completeCh <- msg
 	}), 0640)
 

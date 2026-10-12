@@ -126,8 +126,8 @@ func TestNewSessionNotifyFnParsesSlashKeys(t *testing.T) {
 		return nil // stop processing
 	}
 
-	fn := newSessionNotifyFn(resolver, context.Background(), stubConnMgr{}, "session_notify")
-	fn("clutch/c5970082313", "test message")
+	fn := newSessionNotifyFn(resolver, context.Background(), stubConnMgr{}, "session_notify", nil)
+	fn("clutch/c5970082313", "test message", nil)
 
 	select {
 	case <-resolverCalled:
@@ -158,8 +158,8 @@ func TestNewSessionNotifyFnParsesBranchKeys(t *testing.T) {
 		return nil
 	}
 
-	fn := newSessionNotifyFn(resolver, context.Background(), stubConnMgr{}, "session_notify")
-	fn("fotini/c8792716180/b1741826300", "branch message")
+	fn := newSessionNotifyFn(resolver, context.Background(), stubConnMgr{}, "session_notify", nil)
+	fn("fotini/c8792716180/b1741826300", "branch message", nil)
 
 	select {
 	case <-resolverCalled:
@@ -184,8 +184,8 @@ func TestNewSessionNotifyFnRejectsGarbage(t *testing.T) {
 		return nil
 	}
 
-	fn := newSessionNotifyFn(resolver, context.Background(), stubConnMgr{}, "session_notify")
-	fn("not-a-valid-key", "bad message")
+	fn := newSessionNotifyFn(resolver, context.Background(), stubConnMgr{}, "session_notify", nil)
+	fn("not-a-valid-key", "bad message", nil)
 
 	select {
 	case <-resolverCalled:
@@ -211,8 +211,8 @@ func TestNewSessionNotifyFnParsesIndependentKeys(t *testing.T) {
 		return nil
 	}
 
-	fn := newSessionNotifyFn(resolver, context.Background(), stubConnMgr{}, "session_notify")
-	fn("myagent/i1709596800", "independent message")
+	fn := newSessionNotifyFn(resolver, context.Background(), stubConnMgr{}, "session_notify", nil)
+	fn("myagent/i1709596800", "independent message", nil)
 
 	select {
 	case <-resolverCalled:
@@ -251,6 +251,7 @@ func TestNewAsyncNotifier_CrossAgentTarget_UsesResolver(t *testing.T) {
 		resolver,
 		context.Background(),
 		stubConnMgr{},
+		nil, // no chit deliverer — these tests drive no app frames
 	)
 	// reply_to=caller path: targetSession owned by "target", replyToSession owned by "caller".
 	notifier.InjectToAgent("target/c42", "msg", "caller/c1", "test")
@@ -284,6 +285,7 @@ func TestNewAsyncNotifier_SameAgentTarget_SkipsResolver(t *testing.T) {
 		resolver,
 		context.Background(),
 		stubConnMgr{},
+		nil, // no chit deliverer — these tests drive no app frames
 	)
 	// Same-agent target — resolver path should not fire.
 	notifier.InjectToAgent("caller/c1", "msg", "caller/c2", "test")

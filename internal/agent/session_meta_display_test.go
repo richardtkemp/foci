@@ -16,7 +16,7 @@ func TestSessionDisplayOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer idx.Close()
-	ag := &Agent{SessionIndex: idx, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
+	ag := &Agent{SessionIndex: idx, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string, _ *tools.AgentOrigin) {})}
 	sk := "bot/c100"
 
 	// Initially empty
@@ -70,7 +70,7 @@ func TestSessionDisplayOverrides_Restore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer idx.Close()
-	ag := &Agent{SessionIndex: idx, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
+	ag := &Agent{SessionIndex: idx, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string, _ *tools.AgentOrigin) {})}
 	sk := "bot/c100"
 
 	ag.SetSessionShowToolCalls(sk, "preview")
@@ -79,7 +79,7 @@ func TestSessionDisplayOverrides_Restore(t *testing.T) {
 	ag.SetSessionDisplayWidth(sk, "60")
 
 	// Simulate restart: new Agent, same session index
-	ag2 := &Agent{SessionIndex: idx, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
+	ag2 := &Agent{SessionIndex: idx, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string, _ *tools.AgentOrigin) {})}
 	ag2.RestoreSessionOverrides(sk)
 
 	if v := ag2.SessionShowToolCalls(sk); v != "preview" {
@@ -99,7 +99,7 @@ func TestSessionDisplayOverrides_Restore(t *testing.T) {
 func TestSessionShowToolCalls_AgentDefault(t *testing.T) {
 	// Proves that SessionShowToolCalls returns the agent-level ShowToolCalls default
 	// when no per-session override is set, and that a per-session override takes precedence.
-	ag := &Agent{ShowToolCalls: "preview", AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
+	ag := &Agent{ShowToolCalls: "preview", AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string, _ *tools.AgentOrigin) {})}
 	sk := "bot/c100"
 
 	// No per-session override → agent default
@@ -152,7 +152,7 @@ func TestSessionDisplayOverrides_ClearedByClearSessionState(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer idx.Close()
-	ag := &Agent{SessionIndex: idx, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
+	ag := &Agent{SessionIndex: idx, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string, _ *tools.AgentOrigin) {})}
 
 	key := "bot/c100"
 

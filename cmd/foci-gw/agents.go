@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"foci/internal/agent"
+	"foci/internal/app"
 	"foci/internal/command"
 	"foci/internal/compaction"
 	"foci/internal/config"
@@ -231,7 +232,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 
 	// Per-agent tool registry and supporting services
 	registry := tools.NewRegistry()
-	notifier := newAsyncNotifier(agLazy, acfg.ID, p.agentResolverFn, p.ctx, connMgr)
+	notifier := newAsyncNotifier(agLazy, acfg.ID, p.agentResolverFn, p.ctx, connMgr, app.DeliverAgentMessage)
 	agentStore := p.store.ForAgent(acfg.ID)
 
 	// Bootstrap and skills — computed before tool registration because the spawn
@@ -264,7 +265,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 			WithRoutingFor(config.RoutingFor(modelDefaultsFn(p.cfg.Models))),
 		wakeFn:           shared.wakeScheduleFn,
 		wakeCancelFn:     shared.wakeCancelFn,
-		sessionNotify:    newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr, "session_notify"),
+		sessionNotify:    newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr, "session_notify", app.DeliverAgentMessage),
 		askDeliver:       newAskDeliverFn(p.agentResolverFn, p.ctx, connMgr),
 		agentTTS:         agentTTS,
 		blockedPaths:     blockedPaths,

@@ -52,7 +52,7 @@ func TestSendToSession(t *testing.T) {
 	t.Parallel()
 	store := &mockSessionAppender{}
 	delivered := make(chan struct{ sk, msg string }, 1)
-	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 		delivered <- struct{ sk, msg string }{sk, msg}
 	})
 
@@ -92,8 +92,8 @@ func TestSendToSessionOnWait(t *testing.T) {
 	// agent id (derived from the target session key); reply_to=session does not.
 	t.Parallel()
 	store := &mockSessionAppender{}
-	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	sessionNotifyFn := SessionNotifyFn(func(sk, msg string) {})
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {})
+	sessionNotifyFn := SessionNotifyFn(func(sk, msg string, _ *AgentOrigin) {})
 
 	type wait struct{ caller, target string }
 	waits := make(chan wait, 2)
@@ -134,12 +134,12 @@ func TestSendToSessionReplyToSession(t *testing.T) {
 	t.Parallel()
 	store := &mockSessionAppender{}
 	callerNotified := false
-	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 		callerNotified = true
 	})
 
 	sessionDelivered := make(chan struct{ sk, msg string }, 1)
-	sessionNotifyFn := SessionNotifyFn(func(sk, msg string) {
+	sessionNotifyFn := SessionNotifyFn(func(sk, msg string, _ *AgentOrigin) {
 		sessionDelivered <- struct{ sk, msg string }{sk, msg}
 	})
 
@@ -264,7 +264,7 @@ func TestSendToSessionPerUserChatRouting(t *testing.T) {
 	// for Telegram delivery.
 	t.Parallel()
 	store := &mockSessionAppender{}
-	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 		// reply_to=caller: verify the notifier receives the TARGET session key
 		// so the async_notify callback can extract the chat ID.
 		if ChatIDFromSessionKey(sk) == 0 {
@@ -273,7 +273,7 @@ func TestSendToSessionPerUserChatRouting(t *testing.T) {
 	})
 
 	sessionDelivered := make(chan struct{ sk, msg string }, 1)
-	sessionNotifyFn := SessionNotifyFn(func(sk, msg string) {
+	sessionNotifyFn := SessionNotifyFn(func(sk, msg string, _ *AgentOrigin) {
 		sessionDelivered <- struct{ sk, msg string }{sk, msg}
 	})
 
@@ -335,7 +335,7 @@ func TestSendToSessionBareNameResolution(t *testing.T) {
 	t.Parallel()
 	store := &mockSessionAppender{}
 	delivered := make(chan struct{ sk, msg string }, 1)
-	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 		delivered <- struct{ sk, msg string }{sk, msg}
 	})
 
@@ -375,7 +375,7 @@ func TestSendToSessionFullKeyFallsBackVerbatim(t *testing.T) {
 	t.Parallel()
 	store := &mockSessionAppender{}
 	delivered := make(chan struct{ sk, msg string }, 1)
-	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 		delivered <- struct{ sk, msg string }{sk, msg}
 	})
 
@@ -412,7 +412,7 @@ func TestSendToSessionKeyShapedAlias(t *testing.T) {
 	t.Parallel()
 	store := &mockSessionAppender{}
 	delivered := make(chan struct{ sk, msg string }, 1)
-	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 		delivered <- struct{ sk, msg string }{sk, msg}
 	})
 
@@ -510,7 +510,7 @@ func TestSendToSessionOneshotCallerNoRelay(t *testing.T) {
 
 	// Records the replyToSession InjectToAgent was actually called with.
 	relays := make(chan string, 1)
-	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 		relays <- replyTo
 	})
 
@@ -589,11 +589,11 @@ func TestSendToSessionBarsBarredCaller(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &mockSessionAppender{}
 			var notifyCalled bool
-			notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+			notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 				notifyCalled = true
 			})
 			var sessionNotifyCalled bool
-			sessionNotify := func(sessionKey, message string) { sessionNotifyCalled = true }
+			sessionNotify := func(sessionKey, message string, _ *AgentOrigin) { sessionNotifyCalled = true }
 
 			tool := NewSendToSessionTool(store, notifier, sessionNotify, nil, nil, callerSessionTypeFn)
 
@@ -621,7 +621,7 @@ func TestSendToSessionBarsBarredCaller(t *testing.T) {
 	t.Run("chat_caller_unaffected", func(t *testing.T) {
 		store := &mockSessionAppender{}
 		delivered := make(chan string, 1)
-		notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+		notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 			delivered <- sk
 		})
 
@@ -636,4 +636,174 @@ func TestSendToSessionBarsBarredCaller(t *testing.T) {
 			t.Errorf("chat caller: notifier target = %q, want %q", got, "scout/c0")
 		}
 	})
+}
+
+// --- #1286: the agent-message origin carried on every delivering dispatch ---
+
+// TestSendToSession_OriginCallerMode proves the reply_to=caller path delivers
+// the caller's RAW message and ids alongside the wrapped injection, so the
+// target chat can show what prompted the turn: origin non-nil, Text = the
+// message parameter, ids parsed from the caller's session key. An exec-bridge
+// call with no session in context still delivers — with an origin that names
+// no sender (the chit then shows no from fields).
+func TestSendToSession_OriginCallerMode(t *testing.T) {
+	t.Parallel()
+	type delivery struct {
+		target, replyTo, trigger string
+		origin                   *AgentOrigin
+	}
+	delivered := make(chan delivery, 2)
+	notifier := NewAsyncNotifier(func(sk, _ string, replyTo, trigger string, origin *AgentOrigin) {
+		delivered <- delivery{target: sk, replyTo: replyTo, trigger: trigger, origin: origin}
+	})
+	tool := NewSendToSessionTool(&mockSessionAppender{}, notifier, nil, nil, nil, nil)
+
+	ctx := WithSessionKey(context.Background(), "clutch/c111")
+	params, _ := json.Marshal(map[string]string{"session_key": "scout/c42", "message": "what changed overnight?"})
+	if _, err := tool.Execute(ctx, params); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	d := <-delivered
+	if d.target != "scout/c42" || d.replyTo != "clutch/c111" || d.trigger != "async_notify" {
+		t.Fatalf("delivery = %+v, want target scout/c42 replyTo clutch/c111 trigger async_notify", d)
+	}
+	if d.origin == nil {
+		t.Fatal("origin = nil on the reply_to=caller path, want the agent-message origin")
+	}
+	if d.origin.Text != "what changed overnight?" {
+		t.Errorf("origin.Text = %q, want the raw message parameter", d.origin.Text)
+	}
+	if d.origin.SessionKey != "clutch/c111" || d.origin.AgentID != "clutch" {
+		t.Errorf("origin ids = %q/%q, want clutch + clutch/c111", d.origin.AgentID, d.origin.SessionKey)
+	}
+
+	// No session in context (exec-bridge call): the origin still carries the
+	// raw text, but names no sender.
+	params2, _ := json.Marshal(map[string]string{"session_key": "scout/c42", "message": "headless ping"})
+	if _, err := tool.Execute(context.Background(), params2); err != nil {
+		t.Fatalf("Execute (no session): %v", err)
+	}
+	d = <-delivered
+	if d.origin == nil {
+		t.Fatal("origin = nil for a no-session caller, want a senderless origin (chit with no from fields)")
+	}
+	if d.origin.Text != "headless ping" || d.origin.SessionKey != "" || d.origin.AgentID != "" {
+		t.Errorf("senderless origin = %+v, want Text=headless ping and empty sender ids", *d.origin)
+	}
+}
+
+// TestSendToSession_OriginSessionMode proves the reply_to=session path carries
+// the same origin on the sessionNotifyFn seam.
+func TestSendToSession_OriginSessionMode(t *testing.T) {
+	t.Parallel()
+	type delivery struct {
+		key    string
+		origin *AgentOrigin
+	}
+	delivered := make(chan delivery, 1)
+	sessionNotifyFn := SessionNotifyFn(func(sk, _ string, origin *AgentOrigin) {
+		delivered <- delivery{key: sk, origin: origin}
+	})
+	tool := NewSendToSessionTool(&mockSessionAppender{}, NewAsyncNotifier(func(_, _ string, _, _ string, _ *AgentOrigin) {}), sessionNotifyFn, nil, nil, nil)
+
+	ctx := WithSessionKey(context.Background(), "alpha/c111")
+	params, _ := json.Marshal(map[string]string{"session_key": "beta/c222", "message": "Tell Eleni about dinner.", "reply_to": "session"})
+	if _, err := tool.Execute(ctx, params); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	d := <-delivered
+	if d.key != "beta/c222" {
+		t.Errorf("session notify key = %q, want beta/c222", d.key)
+	}
+	if d.origin == nil {
+		t.Fatal("origin = nil on the reply_to=session path, want the agent-message origin")
+	}
+	if d.origin.Text != "Tell Eleni about dinner." {
+		t.Errorf("origin.Text = %q, want the raw message parameter", d.origin.Text)
+	}
+	if d.origin.SessionKey != "alpha/c111" || d.origin.AgentID != "alpha" {
+		t.Errorf("origin ids = %q/%q, want alpha + alpha/c111", d.origin.AgentID, d.origin.SessionKey)
+	}
+}
+
+// TestSendToSession_OneshotDowngradeKeepsOrigin proves the #1430 oneshot
+// downgrade (replyToSession="") still delivers the origin: the target chat
+// shows the message even though no reply is ever relayed back to the caller.
+func TestSendToSession_OneshotDowngradeKeepsOrigin(t *testing.T) {
+	t.Parallel()
+	type delivery struct {
+		replyTo string
+		origin  *AgentOrigin
+	}
+	delivered := make(chan delivery, 1)
+	notifier := NewAsyncNotifier(func(_, _ string, replyTo, _ string, origin *AgentOrigin) {
+		delivered <- delivery{replyTo: replyTo, origin: origin}
+	})
+	callerSessionTypeFn := func(sk string) session.SessionType {
+		if sk == "clutch/c1/b1" {
+			return session.SessionTypeSpawn
+		}
+		return session.SessionTypeChat
+	}
+	tool := NewSendToSessionTool(&mockSessionAppender{}, notifier, nil, nil, nil, callerSessionTypeFn)
+
+	ctx := WithSessionKey(context.Background(), "clutch/c1/b1")
+	params, _ := json.Marshal(map[string]string{"session_key": "scout/c42", "message": "status update"})
+	if _, err := tool.Execute(ctx, params); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	d := <-delivered
+	if d.replyTo != "" {
+		t.Errorf("downgraded replyTo = %q, want \"\" (fire-and-forget)", d.replyTo)
+	}
+	if d.origin == nil {
+		t.Fatal("origin = nil on the downgraded dispatch, want the agent-message origin (target chit still fires)")
+	}
+	if d.origin.Text != "status update" || d.origin.SessionKey != "clutch/c1/b1" || d.origin.AgentID != "clutch" {
+		t.Errorf("origin = %+v, want raw text + caller ids clutch/c1/b1", *d.origin)
+	}
+}
+
+// TestSendToSession_RefusedSendsNoOrigin proves a refused call (barred caller,
+// unresolvable target) dispatches nothing at all — so no chit can ever fire.
+func TestSendToSession_RefusedSendsNoOrigin(t *testing.T) {
+	t.Parallel()
+
+	sessionTypes := map[string]session.SessionType{"clutch/c1/b1": session.SessionTypeReflection}
+	callerSessionTypeFn := func(sk string) session.SessionType { return sessionTypes[sk] }
+	resolveKeyFn := func(target string) (string, string, error) {
+		return "", "", fmt.Errorf("no such target %q", target)
+	}
+
+	// Barred caller (#1409): refused before resolving or delivering.
+	var dispatched bool
+	notifier := NewAsyncNotifier(func(_, _ string, _, _ string, _ *AgentOrigin) { dispatched = true })
+	sessionNotify := func(_ string, _ string, _ *AgentOrigin) { dispatched = true }
+	tool := NewSendToSessionTool(&mockSessionAppender{}, notifier, sessionNotify, resolveKeyFn, nil, callerSessionTypeFn)
+
+	ctx := WithSessionKey(context.Background(), "clutch/c1/b1")
+	params, _ := json.Marshal(map[string]string{"session_key": "scout/c42", "message": "leak attempt"})
+	if _, err := tool.Execute(ctx, params); err == nil {
+		t.Fatal("barred caller: expected refusal, got success")
+	}
+	if dispatched {
+		t.Error("barred caller: dispatch happened, want nothing delivered")
+	}
+
+	// Unresolvable target: refused after the bar, still before delivering.
+	dispatched = false
+	notifier2 := NewAsyncNotifier(func(_, _ string, _, _ string, _ *AgentOrigin) { dispatched = true })
+	sessionNotify2 := func(_ string, _ string, _ *AgentOrigin) { dispatched = true }
+	tool2 := NewSendToSessionTool(&mockSessionAppender{}, notifier2, sessionNotify2, resolveKeyFn, nil, nil)
+
+	params2, _ := json.Marshal(map[string]string{"session_key": "nonexistent", "message": "hello"})
+	if _, err := tool2.Execute(WithSessionKey(context.Background(), "clutch/c2"), params2); err == nil {
+		t.Fatal("unresolvable target: expected error, got success")
+	}
+	if dispatched {
+		t.Error("unresolvable target: dispatch happened, want nothing delivered")
+	}
 }

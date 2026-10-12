@@ -6,7 +6,7 @@ func TestAsyncNotifierDelivers(t *testing.T) {
 	// Verifies that InjectToAgent calls the notify func with the correct session key, message, and replyTo fields.
 	t.Parallel()
 	var gotKey, gotMsg, gotReplyTo string
-	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 		gotKey = sk
 		gotMsg = msg
 		gotReplyTo = replyTo
@@ -40,7 +40,7 @@ func TestAsyncNotifierNilFunc(t *testing.T) {
 func TestAsyncNotifierPendingCounter(t *testing.T) {
 	// Verifies that HasPending tracks MarkPending/MarkDone correctly per session key and does not bleed across sessions.
 	t.Parallel()
-	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
+	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {})
 
 	if n.HasPending("sess-1") {
 		t.Error("should not have pending before MarkPending")
@@ -65,7 +65,7 @@ func TestAsyncNotifierPendingCounter(t *testing.T) {
 func TestAsyncNotifierMultiplePending(t *testing.T) {
 	// Verifies that the pending counter counts correctly when multiple goroutines mark pending before any completes.
 	t.Parallel()
-	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
+	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {})
 
 	n.MarkPending("sess-1")
 	n.MarkPending("sess-1")
@@ -86,7 +86,7 @@ func TestAsyncNotifierMultiplePending(t *testing.T) {
 func TestAsyncNotifierMarkDoneUnderflow(t *testing.T) {
 	// Verifies that calling MarkDone without a prior MarkPending does not panic or produce a negative count.
 	t.Parallel()
-	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
+	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {})
 
 	// MarkDone without MarkPending should not panic or go negative
 	n.MarkDone("sess-1")

@@ -131,10 +131,10 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 	sock := tmuxIsolatedSocket(t)
 
 	var wakeA, wakeB atomic.Int32
-	_, toolA, _ := NewTmuxTool(300, 30, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	_, toolA, _ := NewTmuxTool(300, 30, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {
 		wakeA.Add(1)
 	}), nil, "", false, 30, 0, sock)
-	_, toolB, _ := NewTmuxTool(300, 30, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	_, toolB, _ := NewTmuxTool(300, 30, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {
 		wakeB.Add(1)
 	}), nil, "", false, 30, 0, sock)
 

@@ -66,29 +66,79 @@ func defaultSessionKeyFor(ag *agent.Agent, agentID string) string {
 //     rather than showing it, it cannot collapse into deliverToSessionChat.
 //     Used only by send_to_session with reply_to=caller.
 //
+// Agent-to-agent chits (#1286): a send_to_session injection also carries an
+// *tools.AgentOrigin (nil for every other injection — see tools/agent_origin.go
+// for why the trigger name cannot discriminate). Both shapes wrap it as an
+// agentChit and fire it as the FIRST statement of the enqueued turn body, so
+// the app shows the incoming agent message in the target chat (and the relayed
+// reply in the caller chat) exactly where the turn it prompted begins — and
+// never when the inbox refuses the injection.
+//
 // Owner resolution (which Agent owns the target session) differs per caller and
 // stays at each call site; the primitives below take an already-resolved Agent.
 // ───────────────────────────────────────────────────────────────────────────
 
+// chitDeliverer surfaces one agent-to-agent message chit in the app
+// conversation bound to sessionKey. Production wiring passes
+// app.DeliverAgentMessage (app only — Telegram/Discord get nothing, #1286);
+// nil means "no app provider" and shows nothing.
+type chitDeliverer func(sessionKey string, msg tools.AgentOrigin)
+
+// agentChit is a pending chit: the agent message to surface plus the deliverer
+// that will surface it. A nil *agentChit (every non-agent injection) fires
+// nothing.
+type agentChit struct {
+	msg     tools.AgentOrigin
+	deliver chitDeliverer
+}
+
+// newAgentChit wraps an agent message as a fireable chit.
+func newAgentChit(deliver chitDeliverer, msg tools.AgentOrigin) *agentChit {
+	return &agentChit{msg: msg, deliver: deliver}
+}
+
+// agentChitFor converts an injection's origin into a chit; a nil origin (not an
+// agent-to-agent message) stays nil, so fire sites need no origin check.
+func agentChitFor(origin *tools.AgentOrigin, deliver chitDeliverer) *agentChit {
+	if origin == nil {
+		return nil
+	}
+	return newAgentChit(deliver, *origin)
+}
+
+// fire surfaces the chit in the conversation bound to sessionKey. Nil-safe on
+// both the chit and its deliverer (nil deliverer ≈ app provider absent).
+func (c *agentChit) fire(sessionKey string) {
+	if c == nil || c.deliver == nil {
+		return
+	}
+	c.deliver(sessionKey, c.msg)
+}
+
 // newAsyncNotifier builds the callback fired when a backgrounded tool
-// (exec/tmux auto-background) completes and reports its result. The result
-// either goes to the target session's own chat (DELIVER-TO-CHAT) or, when
-// reply_to names a calling session, is captured and relayed back to it
-// (CAPTURE-AND-RELAY). See the path taxonomy above.
+// (exec/tmux auto-background) completes and reports its result, and when
+// send_to_session injects an agent-to-agent message (via InjectAgentMessage —
+// the only caller that carries a non-nil origin). The result either goes to
+// the target session's own chat (DELIVER-TO-CHAT) or, when reply_to names a
+// calling session, is captured and relayed back to it (CAPTURE-AND-RELAY).
+// See the path taxonomy above.
 //
 // getAgent is a lazy getter (the agent is nil at construction time).
 // agentResolverFn resolves a session key's agent ID to its owning instance: for
 // a cross-agent target the TARGET's Agent must run the turn — running it on the
 // caller's Agent would put the foreign session in the wrong
 // workdir/backend/permission scope.
+// deliverChit surfaces agent-message chits in the app (app.DeliverAgentMessage
+// in production); nil shows nothing.
 func newAsyncNotifier(
 	getAgent func() *agent.Agent,
 	agentID string,
 	agentResolverFn func(agentID string) *agentInstance,
 	ctx context.Context,
 	connMgr platform.ConnectionManager,
+	deliverChit chitDeliverer,
 ) *tools.AsyncNotifier {
-	return tools.NewAsyncNotifier(func(targetSession, message, replyToSession, trigger string) {
+	return tools.NewAsyncNotifier(func(targetSession, message, replyToSession, trigger string, origin *tools.AgentOrigin) {
 		target := targetSession
 		if target == "" {
 			target = defaultSessionKeyFor(getAgent(), agentID)
@@ -116,32 +166,43 @@ func newAsyncNotifier(
 
 		if replyToSession != "" {
 			// CAPTURE-AND-RELAY: run on the target, hand its output to the caller.
-			relayResponseToCaller(getAgent, ctx, connMgr, agentID, targetAg, target, replyToSession, message, trigger)
+			relayResponseToCaller(getAgent, ctx, connMgr, deliverChit, agentID, targetAg, target, replyToSession, message, trigger, origin)
 			return
 		}
 		// DELIVER-TO-CHAT: the result belongs to the target's own chat.
-		deliverToSessionChat(targetAg, ctx, trigger, connMgr, targetAgentID, target, message, "")
+		deliverToSessionChat(targetAg, ctx, trigger, connMgr, targetAgentID, target, message, agentChitFor(origin, deliverChit), "")
 	})
 }
 
 // relayResponseToCaller runs the target session's turn, CAPTURES its output with
 // a BufferSink instead of delivering it anywhere, then relays that text to the
-// calling session as an injected [SESSION RESPONSE].
+// calling session as an injected [SESSION RESPONSE]. Used only by
+// send_to_session with reply_to=caller.
 //
 // This is the one injection shape that cannot be a deliverToSessionChat: every
 // other path DELIVERS its turn's output to a platform chat; this one READS the
 // output so it can hand it to a different session. Two turns on two sessions — a
 // capture on the target, a delivery on the caller — is why it can't collapse
 // into a single deliver call. See the path taxonomy above.
+//
+// When origin names an agent-to-agent message, the target chat gets one chit
+// with it — fired at the start of the target's injected turn. The target's own
+// reply stays invisible in the target chat (#480): the capture sink is exactly
+// what keeps it out.
 func relayResponseToCaller(
 	getAgent func() *agent.Agent,
 	ctx context.Context,
 	connMgr platform.ConnectionManager,
+	deliverChit chitDeliverer,
 	callerAgentID string,
 	targetAg *agent.Agent,
 	targetSession, callerSession, message, trigger string,
+	origin *tools.AgentOrigin,
 ) {
 	enqueueInject(targetAg, targetSession, trigger, "", func() {
+		// The chit precedes the turn it prompted: a busy target shows it after
+		// the in-flight turn's output, directly before the reply it triggers.
+		agentChitFor(origin, deliverChit).fire(targetSession)
 		// Capture the target's output instead of delivering it to a chat.
 		buf := turnevent.NewBufferSink()
 		notifyCtx := turnevent.WithSink(agent.WithTrigger(ctx, trigger), buf)
@@ -153,61 +214,87 @@ func relayResponseToCaller(
 		if resp == "" {
 			return
 		}
-
-		// Relay it to the caller's own chat as a normal injected turn. Running
-		// it through HandleMessage on the caller maintains role alternation and
-		// lets the agent process/relay it.
-		formattedResp := "Response from session " + targetSession + ":\n" + resp
-		injected := prompts.FormatInjectedMessage("SESSION RESPONSE", time.Now(), formattedResp,
-			"[Inter-session response — the target session processed your message and returned this result. Relay the result to the user.]")
-		// The caller's relay turn descends from the target turn that just
-		// answered (its last completed turn) — the reverse edge of the link
-		// send_to_session staged on the way out.
-		telemetry.LinkPending(callerSession, targetSession)
-		deliverToSessionChat(getAgent(), ctx, trigger, connMgr, callerAgentID, callerSession, injected, "")
+		relayCapturedResponse(getAgent, ctx, connMgr, deliverChit, callerAgentID, callerSession, targetSession, resp, trigger)
 	})
+}
+
+// relayCapturedResponse relays a captured target reply (resp) to the caller's
+// own chat as a normal injected turn — running it through HandleMessage on the
+// caller maintains role alternation and lets the agent process/relay it. The
+// caller chat also gets one chit with the reply itself (text stripped of the
+// silencing sentinels, sender = the target session), fired at the start of the
+// caller's relay turn; a silent reply ([[NO_RESPONSE]]) or an empty one gets no
+// chit — there is nothing worth showing — while the relay itself runs
+// unchanged. Only StripSilencingSuffix is applied (not StripSpuriousPrefix):
+// #1286 rules the chit text by that one transformation.
+func relayCapturedResponse(
+	getAgent func() *agent.Agent,
+	ctx context.Context,
+	connMgr platform.ConnectionManager,
+	deliverChit chitDeliverer,
+	callerAgentID, callerSession, targetSession, resp, trigger string,
+) {
+	formattedResp := "Response from session " + targetSession + ":\n" + resp
+	injected := prompts.FormatInjectedMessage("SESSION RESPONSE", time.Now(), formattedResp,
+		"[Inter-session response — the target session processed your message and returned this result. Relay the result to the user.]")
+	// The caller's relay turn descends from the target turn that just
+	// answered (its last completed turn) — the reverse edge of the link
+	// send_to_session staged on the way out.
+	telemetry.LinkPending(callerSession, targetSession)
+	var replyChit *agentChit
+	if !platform.IsSilent(resp) {
+		replyChit = newAgentChit(deliverChit, tools.NewAgentOrigin(targetSession, platform.StripSilencingSuffix(resp)))
+	}
+	deliverToSessionChat(getAgent(), ctx, trigger, connMgr, callerAgentID, callerSession, injected, replyChit, "")
 }
 
 // newSessionNotifyFn builds the callback that injects a message into a target
 // session and delivers the response to that session's chat — the DELIVER-TO-CHAT
-// path (see the taxonomy above) for send_to_session (trigger "session_notify",
-// via=agent) and the ask tool's answer/grader delivery (trigger "ask_grader",
-// via=ask-grader). Cross-agent by nature: the target key names its own owning
-// agent, resolved here.
+// path (see the taxonomy above) for send_to_session with reply_to=session
+// (trigger "session_notify", via=agent) and the ask tool's answer/grader
+// delivery (trigger "ask_grader", via=ask-grader — wired through the sibling
+// newAskDeliverFn, which passes a nil origin so asks stay chit-free).
+// Cross-agent by nature: the target key names its own owning agent, resolved
+// here. deliverChit surfaces agent-message chits in the app
+// (app.DeliverAgentMessage in production); nil shows nothing.
 func newSessionNotifyFn(
 	agentResolverFn func(agentID string) *agentInstance,
 	ctx context.Context,
 	connMgr platform.ConnectionManager,
 	trigger string,
+	deliverChit chitDeliverer,
 ) tools.SessionNotifyFn {
-	return tools.SessionNotifyFn(func(targetSessionKey, message string) {
-		deliverToResolvedSession(agentResolverFn, ctx, connMgr, trigger, targetSessionKey, "", message)
+	return tools.SessionNotifyFn(func(targetSessionKey, message string, origin *tools.AgentOrigin) {
+		deliverToResolvedSession(agentResolverFn, ctx, connMgr, trigger, targetSessionKey, "", message, agentChitFor(origin, deliverChit))
 	})
 }
 
 // newAskDeliverFn is newSessionNotifyFn for the ask tool's answer/grader
 // delivery: identical resolution and delivery, but it tags the injection with the
-// requestID of the ask that produced the message. That tag is what lets the inbox
-// tell a verdict for the ask that just resolved from a proactive interruption, so
-// it is no longer held behind the NEXT ask (#1712).
+// requestID of the ask that produced the message, and never a chit — an ask
+// answer is not an agent-to-agent message. The requestID tag is what lets the
+// inbox tell a verdict for the ask that just resolved from a proactive
+// interruption, so it is no longer held behind the NEXT ask (#1712).
 func newAskDeliverFn(
 	agentResolverFn func(agentID string) *agentInstance,
 	ctx context.Context,
 	connMgr platform.ConnectionManager,
 ) tools.AskDeliverFn {
 	return func(targetSessionKey, requestID, message string) {
-		deliverToResolvedSession(agentResolverFn, ctx, connMgr, "ask_grader", targetSessionKey, requestID, message)
+		deliverToResolvedSession(agentResolverFn, ctx, connMgr, "ask_grader", targetSessionKey, requestID, message, nil)
 	}
 }
 
 // deliverToResolvedSession resolves targetSessionKey's owning agent and delivers
 // message into its chat as an injected turn. Shared by newSessionNotifyFn and
-// newAskDeliverFn so the two cannot drift.
+// newAskDeliverFn so the two cannot drift. chit (nil for ask deliveries) fires
+// at the start of the injected turn.
 func deliverToResolvedSession(
 	agentResolverFn func(agentID string) *agentInstance,
 	ctx context.Context,
 	connMgr platform.ConnectionManager,
 	trigger, targetSessionKey, askReqID, message string,
+	chit *agentChit,
 ) {
 	sk, err := session.ParseSessionKey(targetSessionKey)
 	if err != nil {
@@ -219,7 +306,7 @@ func deliverToResolvedSession(
 		log.NewComponentLogger(trigger).Errorf("unknown agent %q for session %s", sk.AgentID, targetSessionKey)
 		return
 	}
-	deliverToSessionChat(inst.ag, ctx, trigger, connMgr, sk.AgentID, targetSessionKey, message, askReqID)
+	deliverToSessionChat(inst.ag, ctx, trigger, connMgr, sk.AgentID, targetSessionKey, message, chit, askReqID)
 }
 
 // turnSinkForConn returns the best turn-event sink for a connection. For app
@@ -295,39 +382,47 @@ func enqueueInject(ag *agent.Agent, sessionKey, trigger, askReqID string, body f
 // deliverToSessionChat runs a system-injected turn on sessionKey and renders its
 // response to that session's platform chat — the shared DELIVER-TO-CHAT
 // primitive (see the path taxonomy above), used by restart changelogs, scheduled
-// wakes, proactive warnings, inter-session reply delivery, backgrounded
-// async-tool results, and cross-agent send_to_session.
+// wakes, proactive warnings, ask-answer deliveries, backgrounded async-tool
+// results, and cross-agent send_to_session.
 //
 // (ag, agentID) is the ALREADY-RESOLVED owner of sessionKey — resolution differs
 // per caller and stays at the call site; this only delivers. Uses
 // route.PolicyFallback: if the session has no live connection of its own,
-// delivery falls back to the agent's primary chat.
+// delivery falls back to the agent's primary chat. That fallback governs only
+// the turn's OUTPUT — a chit still goes to the session's own bound conversation
+// (see agentChit).
 func deliverToSessionChat(
 	ag *agent.Agent,
 	ctx context.Context,
 	trigger string,
 	connMgr platform.ConnectionManager,
 	agentID, sessionKey, message string,
+	chit *agentChit,
 	askReqID string,
 ) {
-	deliverToSessionChatThen(ag, ctx, trigger, connMgr, agentID, sessionKey, message, askReqID, nil)
+	deliverToSessionChatThen(ag, ctx, trigger, connMgr, agentID, sessionKey, message, chit, askReqID, nil)
 }
 
 // deliverToSessionChatThen is deliverToSessionChat with a completion hook:
 // after (when non-nil) is called with HandleMessage's result once the injected
 // turn has run. It is NOT called when the inbox never runs the injection
 // (shutdown drain, full inbox), so a caller that consumes a durable record in
-// after — a scheduled wake dismissing its row — leaves that record pending.
+// after — a scheduled wake dismissing its row — leaves that record pending; the
+// same refusal also leaves chit unfired.
 func deliverToSessionChatThen(
 	ag *agent.Agent,
 	ctx context.Context,
 	trigger string,
 	connMgr platform.ConnectionManager,
 	agentID, sessionKey, message string,
+	chit *agentChit,
 	askReqID string,
 	after func(err error),
 ) {
 	enqueueInject(ag, sessionKey, trigger, askReqID, func() {
+		// The chit (if any) fires with the turn it precedes, never at enqueue
+		// time — an injection the inbox refuses shows nothing (#1286).
+		chit.fire(sessionKey)
 		var err error
 		if after != nil {
 			defer func() { after(err) }()
@@ -450,7 +545,7 @@ func buildWakeScheduler(
 				// refused because foci is shutting down, stays pending and is
 				// re-fired by the restore below in the next process.
 				deliverToSessionChatThen(getAgent(), ctx, "scheduled_wake", connMgr, agentID, sk,
-					prompts.FormatInjectedMessage("SCHEDULED WAKE", time.Now(), message), "",
+					prompts.FormatInjectedMessage("SCHEDULED WAKE", time.Now(), message), nil, "",
 					wakeTurnDone(reminderStore, id))
 			case <-wakeCtx.Done():
 				// wakeCancelFn already claimed the entry.

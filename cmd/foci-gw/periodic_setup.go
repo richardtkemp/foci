@@ -204,7 +204,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 				warningLog.Warnf("[%s] no active session for proactive warning dispatch", agentID)
 				return
 			}
-			deliverToSessionChat(inst.ag, p.ctx, "proactive_warning", p.connMgr, agentID, sk, warningText, "")
+			deliverToSessionChat(inst.ag, p.ctx, "proactive_warning", p.connMgr, agentID, sk, warningText, nil, "")
 		},
 		ActiveInterval:        warningActiveInterval,
 		InactiveInterval:      warningInactiveInterval,

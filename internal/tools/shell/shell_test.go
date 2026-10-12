@@ -283,7 +283,7 @@ func TestExecAutoBackgroundFastCommand(t *testing.T) {
 	// A fast command should complete before the threshold
 	t.Parallel()
 	var called bool
-	tool := NewExecTool(nil, nil, func() int { return 5 }, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	tool := NewExecTool(nil, nil, func() int { return 5 }, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {
 		called = true
 	}), "", nil, func() int64 { return 0 }, "", nil, 0)
 
@@ -328,7 +328,7 @@ func TestExecAutoBackgroundSlowCommand(t *testing.T) {
 	// message, then delivers the final result via the notifier when the command completes.
 	t.Parallel()
 	completeCh := make(chan string, 1)
-	tool := NewExecTool(nil, nil, func() int { return 1 }, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	tool := NewExecTool(nil, nil, func() int { return 1 }, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {
 		completeCh <- msg
 	}), "", nil, func() int64 { return 0 }, "", nil, 0)
 
@@ -378,7 +378,7 @@ func TestExecAutoBackgroundSessionKeyPropagated(t *testing.T) {
 		sk, msg string
 	}
 	ch := make(chan result, 1)
-	tool := NewExecTool(nil, nil, func() int { return 1 }, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	tool := NewExecTool(nil, nil, func() int { return 1 }, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {
 		ch <- result{sk, msg}
 	}), "", nil, func() int64 { return 0 }, "", nil, 0)
 
@@ -619,7 +619,7 @@ func TestExecAutoBackgroundCtxCancelled(t *testing.T) {
 	// When the parent context is cancelled mid-execution (turn cancelled),
 	// results should still be delivered via the notifier — not silently lost.
 	completeCh := make(chan string, 1)
-	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {
 		completeCh <- msg
 	})
 	// Use a 10s threshold so the ctx.Done() path fires before the threshold.
@@ -764,7 +764,7 @@ func TestExecAutoBackgroundLeakedChild(t *testing.T) {
 	// The auto-background path had the same leaked-FD bug. A fast command
 	// that leaks a child should still complete before the threshold.
 	t.Parallel()
-	tool := NewExecTool(nil, nil, func() int { return 5 }, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {}), "", nil, func() int64 { return 0 }, "", nil, 0)
+	tool := NewExecTool(nil, nil, func() int { return 5 }, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {}), "", nil, func() int64 { return 0 }, "", nil, 0)
 
 	start := time.Now()
 	params, _ := json.Marshal(map[string]interface{}{

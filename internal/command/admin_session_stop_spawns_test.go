@@ -35,7 +35,7 @@ func TestStopSubagents_StopsBackgroundSpawns(t *testing.T) {
 	tool := tools.NewSpawnTool(tools.SpawnDeps{
 		Sessions:   forkOnce{},
 		MaxInherit: 1,
-		Notifier:   tools.NewAsyncNotifier(func(_, msg, _, _ string) { done <- msg }),
+		Notifier:   tools.NewAsyncNotifier(func(_, msg, _, _ string, _ *tools.AgentOrigin) { done <- msg }),
 		Tracker:    tools.Spawns,
 	}, func() tools.SpawnAgent { return ag })
 	ctx := tools.WithSessionKey(context.Background(), "agent:stoptest:main")

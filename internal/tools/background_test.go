@@ -14,7 +14,7 @@ func TestRunInBackgroundSyncCompletion(t *testing.T) {
 	t.Parallel()
 
 	var notified bool
-	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 		notified = true
 	})
 
@@ -49,7 +49,7 @@ func TestRunInBackgroundThresholdExceeded(t *testing.T) {
 	t.Parallel()
 
 	completeCh := make(chan string, 1)
-	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 		completeCh <- msg
 	})
 
@@ -90,7 +90,7 @@ func TestRunInBackgroundAlwaysAsync(t *testing.T) {
 	t.Parallel()
 
 	completeCh := make(chan string, 1)
-	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 		completeCh <- fmt.Sprintf("%s:%s", sk, msg)
 	})
 
@@ -130,7 +130,7 @@ func TestRunInBackgroundCtxCancelledWithNotify(t *testing.T) {
 	t.Parallel()
 
 	completeCh := make(chan string, 1)
-	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 		completeCh <- msg
 	})
 
@@ -173,7 +173,7 @@ func TestRunInBackgroundCtxCancelledWithoutNotify(t *testing.T) {
 
 	var notified bool
 	cleanedUp := make(chan struct{})
-	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 		notified = true
 	})
 
@@ -218,7 +218,7 @@ func TestRunInBackgroundCleanupCalled(t *testing.T) {
 	t.Parallel()
 
 	cleanedUp := make(chan struct{})
-	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {})
 
 	signal := make(chan struct{})
 	close(signal) // already done
@@ -250,7 +250,7 @@ func TestRunInBackgroundPendingCount(t *testing.T) {
 	// MarkPending/MarkDone lifecycle is correct — count goes to 0 after delivery.
 	t.Parallel()
 
-	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {})
 
 	signal := make(chan struct{})
 
@@ -296,7 +296,7 @@ func TestRunInBackgroundID(t *testing.T) {
 	t.Parallel()
 
 	completeCh := make(chan string, 1)
-	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 		completeCh <- msg
 	})
 
@@ -348,7 +348,7 @@ func TestRunInBackgroundSyncNoID(t *testing.T) {
 	// background ID — the ID is only added when actually backgrounding.
 	t.Parallel()
 
-	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {})
 
 	signal := make(chan struct{})
 	close(signal) // already done

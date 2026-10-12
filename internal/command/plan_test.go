@@ -97,7 +97,7 @@ func TestPlanExecuteInvokesDelivery(t *testing.T) {
 	rec := &deliveryRecord{}
 	cmd := PlanCommand(okDelivery(rec))
 
-	notifier := tools.NewAsyncNotifier(func(string, string, string, string) {})
+	notifier := tools.NewAsyncNotifier(func(string, string, string, string, *tools.AgentOrigin) {})
 	cc := CommandContext{Agent: &agent.Agent{
 		DelegatedManager: &agent.DelegatedManager{},
 		AsyncNotifier:    notifier,

@@ -23,7 +23,7 @@ func TestTmuxConditionalWatchNoActivityNoFire(t *testing.T) {
 	sock := tmuxIsolatedSocket(t)
 
 	var fired atomic.Int32
-	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {
 		fired.Add(1)
 	})
 
@@ -90,7 +90,7 @@ func TestTmuxConditionalWatchActivityThenFire(t *testing.T) {
 
 	var mu sync.Mutex
 	var notifications []string
-	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {
 		mu.Lock()
 		notifications = append(notifications, msg)
 		mu.Unlock()
@@ -167,7 +167,7 @@ func TestTmuxReadNoConditionalWatchWithoutAutopilot(t *testing.T) {
 	t.Parallel()
 	sock := tmuxIsolatedSocket(t)
 
-	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
+	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {})
 	dir := t.TempDir()
 	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
 	if err != nil {
@@ -209,7 +209,7 @@ func TestTmuxReadNoConditionalWatchIfAlreadyWatched(t *testing.T) {
 	t.Parallel()
 	sock := tmuxIsolatedSocket(t)
 
-	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
+	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {})
 	dir := t.TempDir()
 	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
 	if err != nil {
@@ -262,7 +262,7 @@ func TestTmuxConditionalWatchPersistence(t *testing.T) {
 	t.Parallel()
 	sock := tmuxIsolatedSocket(t)
 
-	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
+	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {})
 	dir := t.TempDir()
 	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
 	if err != nil {

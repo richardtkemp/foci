@@ -446,15 +446,22 @@ type ServerMessage struct {
 
 func (ServerMessage) Type() string { return TypeMessage }
 
-// ExternalPrompt surfaces a prompt the agent received via the external HTTP
-// /send endpoint (foci send CLI / raw API) as its own client-side entry — a
-// user-side "chit" the app renders on the user edge, click-to-reveal the raw
-// Text. Without it the app sees only the agent's response, never what drove the
-// turn. Text is the verbatim prompt (foci send applies no wrapper).
+// ExternalPrompt surfaces a prompt the agent received as its own client-side
+// entry — a user-side "chit" the app renders on the user edge, click-to-reveal
+// the raw Text. Without it the app sees only the agent's response, never what
+// drove the turn. Two senders reuse the frame: an external HTTP /send prompt
+// (foci send CLI / raw API; Text is the verbatim prompt, no wrapper) and an
+// agent-to-agent message (send_to_session, #1286). The latter names its sender
+// through FromAgent/FromSession; a foci send prompt sets neither, so its wire
+// bytes are unchanged.
 type ExternalPrompt struct {
 	ConversationID string `json:"conversationId"`
 	MessageID      string `json:"messageId"`
 	Text           string `json:"text"`
+	// FromAgent is the SENDING agent's id — empty for a foci send prompt.
+	FromAgent string `json:"fromAgent,omitempty"`
+	// FromSession is the SENDING session's key — empty for a foci send prompt.
+	FromSession string `json:"fromSession,omitempty"`
 }
 
 func (ExternalPrompt) Type() string { return TypeExternalPrompt }

@@ -415,7 +415,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		// re-sent as a fresh turn in its session's chat; a consumed input the
 		// app sent becomes ✓✓ on the user's bubble.
 		Redeliver: func(sessionKey string, r agent.Redelivery) {
-			deliverToSessionChat(ag, agent.WithRedelivery(p.ctx, r), agent.TriggerRedelivery, connMgr, agentID, sessionKey, r.Input.Text, "")
+			deliverToSessionChat(ag, agent.WithRedelivery(p.ctx, r), agent.TriggerRedelivery, connMgr, agentID, sessionKey, r.Input.Text, nil, "")
 		},
 		InputConsumed: func(_ string, refs []delegator.InputRef) {
 			for _, ref := range refs {
@@ -824,7 +824,7 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, wakeC
 	}
 	var notifier *tools.AsyncNotifier
 	if agLazy != nil {
-		notifier = newAsyncNotifier(agLazy, acfg.ID, p.agentResolverFn, p.ctx, connMgr)
+		notifier = newAsyncNotifier(agLazy, acfg.ID, p.agentResolverFn, p.ctx, connMgr, app.DeliverAgentMessage)
 	}
 	ttsRepls := voice.MergeReplacements(p.cfg.Voice.TTSReplacements, acfg.Voice.TTSReplacements)
 	resolvedLive := p.resolvedLive
@@ -872,7 +872,7 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, wakeC
 		summariser:    batchSummariser,
 		wakeFn:        wakeScheduleFn,
 		wakeCancelFn:  wakeCancelFn,
-		sessionNotify: newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr, "session_notify"),
+		sessionNotify: newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr, "session_notify", app.DeliverAgentMessage),
 		askDeliver:    newAskDeliverFn(p.agentResolverFn, p.ctx, connMgr),
 		agentTTS:      agentTTS,
 		out:           out,

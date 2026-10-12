@@ -144,7 +144,7 @@ func TestSpawnContextClone(t *testing.T) {
 		called:   make(chan struct{}, 1),
 	}
 	mockSessions := &mockSessionBrancher{}
-	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 		called <- msg
 	})
 

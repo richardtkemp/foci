@@ -18,7 +18,7 @@ func TestMaybeInjectCompactionResume(t *testing.T) {
 	const sk = "test/s"
 
 	newNotifier := func(got *[]string, mu *sync.Mutex) *tools.AsyncNotifier {
-		return tools.NewAsyncNotifier(func(_ string, msg, _, _ string) {
+		return tools.NewAsyncNotifier(func(_ string, msg, _, _ string, _ *tools.AgentOrigin) {
 			mu.Lock()
 			defer mu.Unlock()
 			*got = append(*got, msg)

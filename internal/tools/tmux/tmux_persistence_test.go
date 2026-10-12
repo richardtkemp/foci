@@ -352,7 +352,7 @@ func TestTmuxPersistWatches(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
+	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {})
 	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, sock)
 
 	name := "foci-test-persist-watch"
@@ -435,7 +435,7 @@ func TestTmuxRestoreWatches(t *testing.T) {
 		t.Fatalf("set watch state: %v", err)
 	}
 
-	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
+	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {})
 	_, _, cleanup := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, sock)
 
 	// Verify the watch was restored by checking the state is still persisted
@@ -478,7 +478,7 @@ func TestTmuxRestoreWatchesStaleSessions(t *testing.T) {
 		t.Fatalf("set watch state: %v", err)
 	}
 
-	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
+	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {})
 	NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, sock)
 
 	// Stale watch should have been cleaned from state
@@ -506,7 +506,7 @@ func TestTmuxUnwatchPersists(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
+	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {})
 	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, sock)
 
 	name := "foci-test-unwatch-persist"
@@ -577,7 +577,7 @@ func TestTmuxClearAllPersistsWatches(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
+	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {})
 	_, tool, cleanup := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, sock)
 
 	name := "foci-test-clearall-watch"
@@ -743,7 +743,7 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
+	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {})
 	_, tool1, cleanup1 := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, sock)
 	defer cleanup1()
 

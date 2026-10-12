@@ -22,8 +22,11 @@ type SessionAppender interface {
 }
 
 // SessionNotifyFn handles routing a response back to the target session's
-// own chat, rather than the calling session.
-type SessionNotifyFn func(sessionKey, message string)
+// own chat, rather than the calling session. origin is non-nil exactly when
+// the injection is an agent-to-agent message (send_to_session with
+// reply_to=session) — the receiving chat surfaces it as a chit; every other
+// caller passes nil.
+type SessionNotifyFn func(sessionKey, message string, origin *AgentOrigin)
 
 // SessionKeyResolverFn resolves a session target: a full session key, a bare
 // agent name ("scout" → the agent's default session), a named session
@@ -63,6 +66,11 @@ type CallerSessionTypeFn func(sessionKey string) session.SessionType
 // IsBarredFromSessionSend check below), and otherwise a downgrade of a
 // reply_to=caller relay to fire-and-forget when the CALLER is oneshot (#1430,
 // see the oneshotCaller check below).
+//
+// Every delivering dispatch also carries an AgentOrigin (the caller's raw
+// message and ids) so the app can show the message in the receiving chat as
+// a chit (#1286); see AgentOrigin for why the origin, not the trigger name,
+// is the discriminator.
 func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, sessionNotifyFn SessionNotifyFn, resolveKeyFn SessionKeyResolverFn, onWaitFn SessionWaitFn, callerSessionTypeFn CallerSessionTypeFn) *Tool {
 	return &Tool{
 		Name:       "send_to_session",
@@ -199,6 +207,12 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 				contextNote,
 			)
 
+			// The chit origin: the caller's raw message, unwrapped. Built
+			// after every refusal gate above so a refused call surfaces
+			// nothing, and carried on the delivery so the chit appears when
+			// the target's turn starts, not when the tool is called.
+			origin := NewAgentOrigin(originSession, p.Message)
+
 			send_to_sessionLog.Infof("from=%s to=%s reply_to=%s oneshot_caller=%v len=%d", originSession, targetKey, p.ReplyTo, oneshotCaller, len(p.Message))
 			// The target's injected turn will record this turn as its parent
 			// trace (metadata parent_trace_id); Langfuse has no cross-trace
@@ -210,22 +224,22 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 				// Don't Append here — sessionNotifyFn calls HandleMessage which
 				// loads the session and appends the message itself.
 				if sessionNotifyFn != nil {
-					sessionNotifyFn(targetKey, tagged)
+					sessionNotifyFn(targetKey, tagged, &origin)
 				}
 			} else {
 				// Default: route the response back to the caller — unless the
 				// caller is a oneshot (see above), in which case downgrade to
 				// fire-and-forget by passing replyToSession="" instead of
-				// originSession: InjectToAgent then delivers the target's
+				// originSession: InjectAgentMessage then delivers the target's
 				// reply to the target's own chat rather than relaying it back.
-				// Don't Append here — InjectToAgent triggers HandleMessage which
+				// Don't Append here — the inject triggers HandleMessage which
 				// loads the session and appends the message itself.
 				if notifier != nil {
 					replyToSession := originSession
 					if oneshotCaller {
 						replyToSession = ""
 					}
-					notifier.InjectToAgent(targetKey, tagged, replyToSession, "async_notify")
+					notifier.InjectAgentMessage(targetKey, tagged, replyToSession, origin)
 				}
 				// reply_to=caller genuinely waits for the target's reply — mark the
 				// caller as waiting on the target agent (cleared when the caller's
@@ -246,8 +260,8 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 // session key, for the "waiting on <agent>" indicator. Falls back to the key
 // itself when it doesn't parse as agentID/typeID.
 func targetAgentOf(sessionKey string) string {
-	if sk, err := session.ParseSessionKey(sessionKey); err == nil {
-		return sk.AgentID
+	if id := agentIDOf(sessionKey); id != "" {
+		return id
 	}
 	return sessionKey
 }

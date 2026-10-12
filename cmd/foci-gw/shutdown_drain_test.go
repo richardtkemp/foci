@@ -63,7 +63,7 @@ func TestDeliverToSessionChatThen_RefusedInjectionSkipsHook(t *testing.T) {
 
 	const sk = "test/main"
 	var called atomic.Bool
-	deliverToSessionChatThen(ag, ctx, "scheduled_wake", stubConnMgr{}, "test", sk, "wake", "",
+	deliverToSessionChatThen(ag, ctx, "scheduled_wake", stubConnMgr{}, "test", sk, "wake", nil, "",
 		func(error) { called.Store(true) })
 
 	// The inbox is FIFO per session: once a probe behind the wake has been

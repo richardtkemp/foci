@@ -231,12 +231,15 @@ func SetCacheExpiry(sessionKey string, expiryMs int64) {
 	}
 }
 
-// DeliverExternalPrompt surfaces a prompt received via the external HTTP /send
-// endpoint to the app clients bound to sessionKey, as a durable ExternalPrompt
-// frame. No-op when the app provider is not running or the session has no live
-// binding (foci send to a telegram/discord-only agent surfaces via that
-// transport's injected-message header instead).
-func DeliverExternalPrompt(sessionKey, text string) {
+// deliverBoundPrompt sends one durable ExternalPrompt frame to the
+// conversation bound to sessionKey — the shared bound-only chit rule behind
+// DeliverExternalPrompt and DeliverAgentMessage. No-op when the app provider
+// is not running or the session has no bound conversation (a branch, a
+// session the app never opened): there is deliberately NO fallback to the
+// agent's default chat. Frames sent through the binding are stored and
+// replayed on resume, and fall through pushPreview's default case (no push,
+// no unread bump — #1279).
+func deliverBoundPrompt(sessionKey, text, fromAgent, fromSession string) {
 	activeMu.RLock()
 	h := activeHub
 	activeMu.RUnlock()
@@ -244,8 +247,29 @@ func DeliverExternalPrompt(sessionKey, text string) {
 		return
 	}
 	if b := h.bindingForSession(sessionKey); b != nil {
-		b.send(fap.ExternalPrompt{ConversationID: b.convID, MessageID: fap.NewULID(), Text: text})
+		b.send(fap.ExternalPrompt{ConversationID: b.convID, MessageID: fap.NewULID(), Text: text, FromAgent: fromAgent, FromSession: fromSession})
 	}
+}
+
+// DeliverExternalPrompt surfaces a prompt received via the external HTTP /send
+// endpoint to the app clients bound to sessionKey, as a durable ExternalPrompt
+// frame with no sender fields (foci send has no foci-agent sender). No-op when
+// the app provider is not running or the session has no bound conversation
+// (foci send to a telegram/discord-only agent surfaces via that transport's
+// injected-message header instead).
+func DeliverExternalPrompt(sessionKey, text string) {
+	deliverBoundPrompt(sessionKey, text, "", "")
+}
+
+// DeliverAgentMessage surfaces an agent-to-agent message (send_to_session,
+// #1286) to the app clients bound to the RECEIVING sessionKey, as a durable
+// ExternalPrompt frame whose FromAgent/FromSession name the sending agent and
+// session. Same bound-only rule as DeliverExternalPrompt: only the
+// conversation bound to sessionKey, no fallback to the agent's default chat,
+// no-op when the app provider is not running or the session has no bound
+// conversation. App only — Telegram/Discord hear nothing (#1286 ruling).
+func DeliverAgentMessage(sessionKey string, origin tools.AgentOrigin) {
+	deliverBoundPrompt(sessionKey, origin.Text, origin.AgentID, origin.SessionKey)
 }
 
 // SetWaiting marks the conversation bound to callerSessionKey as waiting on
