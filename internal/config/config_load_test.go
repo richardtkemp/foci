@@ -1,14 +1,69 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 
+	"foci/internal/log"
+	"foci/internal/modelinfo"
+
 	tomlParser "github.com/BurntSushi/toml"
 )
+
+func TestLoad_NoGlobalSideEffects(t *testing.T) {
+	// Proves config.Load leaves process-global state alone (#2356): loading a
+	// config is a pure read, so tests that load config can run in parallel
+	// and reload paths do not change the running process. foci-gw main
+	// applies these instead. The config asks for the opposite of the current
+	// log.DebugLogKeySuffix (a Load that applied it would flip the global)
+	// and declares a [[modelinfo]] model the registry does not have.
+	const modelID = "load-side-effect-probe-2356"
+	if _, ok := modelinfo.Lookup("", modelID); ok {
+		t.Fatalf("premise: %s already registered", modelID)
+	}
+	before := log.DebugLogKeySuffix
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	body := fmt.Sprintf(`
+[groups]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
+[[agents]]
+id = "a"
+
+[debug]
+log_api_key_suffix = %t
+
+[[modelinfo]]
+id = %q
+context_window = 1000
+input_per_1m = 1.0
+output_per_1m = 2.0
+`, !before, modelID)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path, nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := DerefBool(cfg.Debug.LogAPIKeySuffix); got != !before {
+		t.Fatalf("premise: cfg.Debug.LogAPIKeySuffix = %v, want %v", got, !before)
+	}
+	if len(cfg.ModelInfo) != 1 || cfg.ModelInfo[0].ID != modelID {
+		t.Fatalf("premise: cfg.ModelInfo = %+v, want the one probe entry", cfg.ModelInfo)
+	}
+	if log.DebugLogKeySuffix != before {
+		t.Errorf("config.Load set log.DebugLogKeySuffix to %v; Load must not touch process-global log state", log.DebugLogKeySuffix)
+	}
+	if _, ok := modelinfo.Lookup("", modelID); ok {
+		t.Errorf("config.Load registered [[modelinfo]] %s in the global registry; Load must not (main calls ApplyModelInfo)", modelID)
+	}
+}
 
 func TestLoadFullConfig(t *testing.T) {
 	// Proves that a config file with multiple sections (agent, telegram, sessions,

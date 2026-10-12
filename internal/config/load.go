@@ -10,8 +10,6 @@ import (
 	"time"
 	"unicode"
 
-	"foci/internal/log"
-
 	"github.com/BurntSushi/toml"
 )
 
@@ -139,6 +137,12 @@ func ApplyProviderDefaults(cfg *Config, getDefaults PlatformDefaulter) {
 // config-only test binary that never imported the backend packages) and
 // skips backend-name validation rather than rejecting every backend — see
 // validateAgentBackends.
+//
+// Load has no process-global side effects (#2356): it reads the file and
+// returns the parsed config. Applying config to process state is the
+// caller's job (foci-gw main sets log.DebugLogKeySuffix and calls
+// ApplyModelInfo), so config can be loaded from parallel tests and from
+// reload paths without changing what the running process does.
 func Load(path string, knownBackends []string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -236,9 +240,6 @@ func Load(path string, knownBackends []string) (*Config, error) {
 	// stay nil for Merge to work correctly.
 	ApplyTagDefaults(&cfg)
 
-	// Apply debug.log_api_key_suffix to the log package global.
-	log.DebugLogKeySuffix = DerefBool(cfg.Debug.LogAPIKeySuffix)
-
 	// Dynamic defaults that can't be expressed as struct tags.
 	if cfg.DataDir == "" {
 		home, _ := os.UserHomeDir()
@@ -333,9 +334,6 @@ func Load(path string, knownBackends []string) (*Config, error) {
 	if err := cfg.Validate(knownBackends); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
-
-	// Merge [[modelinfo]] entries into the modelinfo registry.
-	ApplyModelInfo(cfg.ModelInfo)
 
 	return &cfg, nil
 }

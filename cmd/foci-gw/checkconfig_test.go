@@ -28,6 +28,7 @@ func writeTempConfig(t *testing.T, body string) string {
 }
 
 func TestRunConfigCheck_Clean(t *testing.T) {
+	t.Parallel()
 	// A config that loads and validates with no unknown keys exits 0.
 	path := writeTempConfig(t, validConfigTOML)
 	if got := runConfigCheck(path, io.Discard, io.Discard); got != 0 {
@@ -36,6 +37,7 @@ func TestRunConfigCheck_Clean(t *testing.T) {
 }
 
 func TestRunConfigCheck_UnknownKey(t *testing.T) {
+	t.Parallel()
 	// Strict policy: a config that loads fine but carries an unknown/deprecated
 	// key (e.g. a renamed setting) must exit 1 — the old setting is silently
 	// lost at startup, which is a real upgrade incompatibility. A renamed key
@@ -48,6 +50,7 @@ func TestRunConfigCheck_UnknownKey(t *testing.T) {
 }
 
 func TestRunConfigCheck_ParseError(t *testing.T) {
+	t.Parallel()
 	// A malformed TOML file fails to load and exits 1.
 	path := writeTempConfig(t, "[[agents]\nid = \"main\"\n")
 	if got := runConfigCheck(path, io.Discard, io.Discard); got != 1 {
@@ -56,6 +59,7 @@ func TestRunConfigCheck_ParseError(t *testing.T) {
 }
 
 func TestRunConfigCheck_ValidateError(t *testing.T) {
+	t.Parallel()
 	// A syntactically valid TOML that fails Validate (missing required
 	// [groups] powerful) exits 1.
 	path := writeTempConfig(t, "[[agents]]\nid = \"main\"\n")
@@ -65,6 +69,7 @@ func TestRunConfigCheck_ValidateError(t *testing.T) {
 }
 
 func TestRunConfigCheck_MissingFile(t *testing.T) {
+	t.Parallel()
 	if got := runConfigCheck("/nonexistent/path/foci.toml", io.Discard, io.Discard); got != 1 {
 		t.Errorf("runConfigCheck(missing) = %d, want 1", got)
 	}
@@ -73,6 +78,7 @@ func TestRunConfigCheck_MissingFile(t *testing.T) {
 // A missing config must say how to point at one explicitly — a bare
 // "no such file" read like the live config was broken (#2117).
 func TestRunConfigCheck_MissingFileNamesConfigFlag(t *testing.T) {
+	t.Parallel()
 	var stdout, stderr strings.Builder
 	missing := "/nonexistent/path/foci.toml"
 	if got := runConfigCheck(missing, &stdout, &stderr); got != 1 {
@@ -87,6 +93,7 @@ func TestRunConfigCheck_MissingFileNamesConfigFlag(t *testing.T) {
 }
 
 func TestRunConfigCheck_IgnoredBackendConfigWarnsButPasses(t *testing.T) {
+	t.Parallel()
 	// A backend_config key the agent's backend does not read (#2178) is
 	// listed as a warning, naming the agent, key and backend. It does not
 	// fail the check: it was never honoured, so the upgrade loses nothing.
@@ -132,6 +139,7 @@ allowed_tools = ["Read"]
 // WITHOUT a when-script fails the check (exit 1), naming the agent, rule
 // and example, and the rule that matched instead.
 func TestRunConfigCheck_ExampleFailureFails(t *testing.T) {
+	t.Parallel()
 	path := writeTempConfig(t, validConfigTOML+`
 
 [[agents]]
@@ -173,6 +181,7 @@ reason = "r"
 // never changes the exit status — even when a deny example does not match
 // the rule's patterns.
 func TestRunConfigCheck_WhenRuleExamplesWarnOnly(t *testing.T) {
+	t.Parallel()
 	marker := filepath.Join(t.TempDir(), "marker")
 	path := writeTempConfig(t, validConfigTOML+`
 
@@ -214,6 +223,7 @@ reason = "r"
 // TestRunConfigCheck_ExamplesPass proves a config whose examples all hold
 // exits 0 with the OK line and no example output.
 func TestRunConfigCheck_ExamplesPass(t *testing.T) {
+	t.Parallel()
 	path := writeTempConfig(t, validConfigTOML+`
 
 [[agents]]

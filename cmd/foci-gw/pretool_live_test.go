@@ -12,6 +12,7 @@ import (
 // without a restart (#2033): each call re-reads the file, and a file that no
 // longer loads keeps the last good rules instead of dropping them.
 func TestLivePreToolRules(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "foci.toml")
 	write := func(body string) {
 		t.Helper()
@@ -60,6 +61,7 @@ reason = "stage paths"
 // TestLiveStopRules proves a stop rule edit reaches the next CC launch the
 // same way (#2089), and that an agent with none gets none.
 func TestLiveStopRules(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "foci.toml")
 	write := func(body string) {
 		t.Helper()

@@ -147,6 +147,10 @@ Subcommands:
 	if err != nil {
 		log.Fatalf("main", "load config: %v", err)
 	}
+	// config.Load has no global side effects (#2356): the daemon applies the
+	// process-wide parts of the config itself.
+	log.DebugLogKeySuffix = config.DerefBool(cfg.Debug.LogAPIKeySuffix)
+	config.ApplyModelInfo(cfg.ModelInfo)
 
 	// ========== Timezone ==========
 	// Configure timeutil before any logging or agent init uses it.

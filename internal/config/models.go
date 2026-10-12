@@ -258,7 +258,8 @@ func (e ModelInfoEntry) toModel() (modelinfo.Model, error) {
 }
 
 // ApplyModelInfo merges [[modelinfo]] config entries into the modelinfo
-// registry. Called from Load() at startup and from the live-apply applier.
+// registry. Called by foci-gw main after Load at startup (#2356: Load itself
+// has no global side effects) and from the live-apply applier.
 //
 // Provider semantics: a provider-prefixed id (e.g. "openrouter/gemini-2.5-flash")
 // creates a provider-specific entry that only matches lookups carrying that

@@ -7,8 +7,11 @@ How the pieces connect. Read this before touching the code.
 Each phase is extracted into its own file. `main()` has grown to ~670 lines (still one function, but each phase below is a one/two-line call into its own file).
 
 ```
-config.Load(path)                                        ← validates values; logs to stderr + buffer
-                                                         ← merges [[modelinfo]] entries into modelinfo.registry
+config.Load(path)                                        ← validates values; logs to stderr + buffer. No
+                                                            process-global side effects (#2356), so reloads and
+                                                            parallel tests can call it freely
+→ log.DebugLogKeySuffix = debug.log_api_key_suffix       ← applied by main, not by config.Load
+  config.ApplyModelInfo(cfg.ModelInfo)                    ← merges [[modelinfo]] entries into modelinfo.registry
 
 → timeutil.SetLocation(tz)                               ← [timezone], before anything logs/init's
 → shellenv.Load(cfg.ShellEnvFile)                        ← internal/shellenv; captures the operator's shell
