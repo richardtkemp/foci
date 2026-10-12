@@ -1,10 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -16,49 +14,40 @@ import (
 	"foci/internal/timeutil"
 )
 
-// captureEventLog redirects the event log into a buffer for the duration of
-// the test and raises the level to DEBUG, so a leaked text is caught no
-// matter which level it was logged at. Restores stderr and INFO on cleanup.
-func captureEventLog(t *testing.T) *bytes.Buffer {
-	t.Helper()
-	var buf bytes.Buffer
-	log.SetOutput(&buf)
-	log.SetLevel(log.DEBUG)
-	t.Cleanup(func() {
-		log.SetOutput(os.Stderr)
-		log.SetLevel(log.INFO)
-	})
-	return &buf
+// These tests read the event log through a DEBUG log tap (captureLog), so a
+// leaked text is caught at any level without raising the process-wide level
+// or swapping its output, and they run in parallel (#2357). Each queues its
+// command on a session key unique to its run (commandSession), and every
+// positive assertion matches "session=<that key> ", so a parallel sibling's
+// "deferred command 1 delivered" line can never satisfy it. The negative
+// assertions (a marker never logged) scan every captured line: the markers
+// are unique to their test.
+
+// commandSession returns a fresh independent session key for one test run.
+func commandSession() string {
+	return testAgentID + "/i" + runToken("defercmd")
 }
 
 // logLineWith returns the first captured line containing every given
 // substring, failing the test when no line matches.
-func logLineWith(t *testing.T, out string, substrs ...string) string {
+func logLineWith(t *testing.T, logs *logCapture, substrs ...string) string {
 	t.Helper()
-	for _, line := range strings.Split(out, "\n") {
-		matches := true
-		for _, s := range substrs {
-			if !strings.Contains(line, s) {
-				matches = false
-				break
-			}
-		}
-		if matches {
-			return line
-		}
+	if lines := logs.Lines(substrs...); len(lines) > 0 {
+		return lines[0].String()
 	}
-	t.Fatalf("no log line contains all of %q:\n%s", substrs, out)
+	t.Fatalf("no log line contains all of %q:\n%s", substrs, logs.String())
 	return ""
 }
 
-// enqueueCommand queues one deferred command record that is deliverable on
-// the very first sweep (wait_cold holds immediately on a never-touched
-// session) and returns the store-assigned id for log-line assertions.
-func enqueueCommand(t *testing.T, store *defersend.Store, text string) int64 {
+// enqueueCommand queues one deferred command record on sessionKey that is
+// deliverable on the very first sweep (wait_cold holds immediately on a
+// never-touched session) and returns the store-assigned id for log-line
+// assertions.
+func enqueueCommand(t *testing.T, store *defersend.Store, sessionKey, text string) int64 {
 	t.Helper()
 	now := timeutil.Now()
 	id, err := store.Enqueue(defersend.Record{
-		Kind: defersend.KindCommand, AgentID: testAgentID, SessionKey: testSessionKey,
+		Kind: defersend.KindCommand, AgentID: testAgentID, SessionKey: sessionKey,
 		Text: text, WaitCold: "1m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
 	})
 	if err != nil {
@@ -73,6 +62,7 @@ func enqueueCommand(t *testing.T, store *defersend.Store, text string) int64 {
 // into its text). The delivery line records metadata only: id, agent,
 // session, kind and the length of the text.
 func TestSweep_DeliveredCommandLogsMetadataOnly(t *testing.T) {
+	t.Parallel()
 	const marker = "DEFERRED-RESULT-MARKER-2259"
 	resultText := "deferred echo result " + marker
 	var runs atomic.Int32
@@ -83,23 +73,23 @@ func TestSweep_DeliveredCommandLogsMetadataOnly(t *testing.T) {
 			return command.Response{Text: resultText}, nil
 		},
 	}}})
-	buf := captureEventLog(t)
+	logs := captureLog(t, log.DEBUG)
 	store := withDeferStore(t, &d)
-	id := enqueueCommand(t, store, "/echo2259")
+	session := commandSession()
+	id := enqueueCommand(t, store, session, "/echo2259")
 
 	sweepFor(d, store).sweep()
 
 	if n := runs.Load(); n != 1 {
 		t.Errorf("command executed %d time(s), want 1", n)
 	}
-	out := buf.String()
-	if strings.Contains(out, marker) {
-		t.Errorf("log contains the command result text %s — a deferred command's output must never be logged:\n%s", marker, out)
+	if leaked := logs.Lines(marker); len(leaked) > 0 {
+		t.Errorf("log contains the command result text %s — a deferred command's output must never be logged:\n%s", marker, logs)
 	}
-	line := logLineWith(t, out, "[defersend]", "INFO", fmt.Sprintf("deferred command %d delivered", id))
+	line := logLineWith(t, logs, "[defersend]", "INFO", fmt.Sprintf("deferred command %d delivered", id), "session="+session+" ")
 	for _, want := range []string{
 		"agent=" + testAgentID + " ",
-		"session=" + testSessionKey + " ",
+		"session=" + session + " ",
 		"kind=command ",
 		fmt.Sprintf("text_len=%d)", len(resultText)),
 	} {
@@ -115,6 +105,7 @@ func TestSweep_DeliveredCommandLogsMetadataOnly(t *testing.T) {
 // path used to break that promise by writing the text to the log at INFO.
 // The stub mints an obviously fake marker, never a real key.
 func TestSweep_DeferredPairKeyNotLogged(t *testing.T) {
+	t.Parallel()
 	const fakeKey = "FAKE-PAIRKEY-MARKER-2259"
 	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{command.PairKeyCommand()}})
 	d.agents[testAgentID].cc.AndroidDeps = &command.AndroidDeps{
@@ -122,19 +113,19 @@ func TestSweep_DeferredPairKeyNotLogged(t *testing.T) {
 			return fakeKey, time.Now().Add(ttl), nil
 		},
 	}
-	buf := captureEventLog(t)
+	logs := captureLog(t, log.DEBUG)
 	store := withDeferStore(t, &d)
+	session := commandSession()
 	// No host argument: with one the command also emits a foci://pair string
 	// and a QR file; neither is needed to prove the key stays out of the log.
-	id := enqueueCommand(t, store, "/pair")
+	id := enqueueCommand(t, store, session, "/pair")
 
 	sweepFor(d, store).sweep()
 
-	out := buf.String()
-	if strings.Contains(out, fakeKey) {
-		t.Errorf("log contains the minted pairing key marker %s — a pairing key must never be logged:\n%s", fakeKey, out)
+	if leaked := logs.Lines(fakeKey); len(leaked) > 0 {
+		t.Errorf("log contains the minted pairing key marker %s — a pairing key must never be logged:\n%s", fakeKey, logs)
 	}
-	logLineWith(t, out, "[defersend]", "INFO", fmt.Sprintf("deferred command %d delivered", id))
+	logLineWith(t, logs, "[defersend]", "INFO", fmt.Sprintf("deferred command %d delivered", id), "session="+session+" ")
 }
 
 // TestSweep_NotExecutableCommandLogsNameOnly is the red test for the #2259
@@ -144,21 +135,22 @@ func TestSweep_DeferredPairKeyNotLogged(t *testing.T) {
 // result text, so deferred arguments leaked the same way as result texts.
 // The WARN must carry the command name only, never its arguments.
 func TestSweep_NotExecutableCommandLogsNameOnly(t *testing.T) {
+	t.Parallel()
 	const argMarker = "NOEXEC-ARG-MARKER-2259"
 	d, _ := httpTestSetup(t, httpTestOpts{commands: []*command.Command{
 		{Name: "noexec2259"}, // registered, but no Execute: reaches the !ok branch
 	}})
-	buf := captureEventLog(t)
+	logs := captureLog(t, log.DEBUG)
 	store := withDeferStore(t, &d)
-	id := enqueueCommand(t, store, "/noexec2259 "+argMarker)
+	session := commandSession()
+	id := enqueueCommand(t, store, session, "/noexec2259 "+argMarker)
 
 	sweepFor(d, store).sweep()
 
-	out := buf.String()
-	if strings.Contains(out, argMarker) {
-		t.Errorf("log contains the command argument marker %s — the not-executable warning must log the command name only:\n%s", argMarker, out)
+	if leaked := logs.Lines(argMarker); len(leaked) > 0 {
+		t.Errorf("log contains the command argument marker %s — the not-executable warning must log the command name only:\n%s", argMarker, logs)
 	}
-	line := logLineWith(t, out, "[defersend]", "WARN", fmt.Sprintf("deferred command %d not executable", id))
+	line := logLineWith(t, logs, "[defersend]", "WARN", fmt.Sprintf("deferred command %d not executable", id), "session="+session+")")
 	if !strings.Contains(line, "/noexec2259") {
 		t.Errorf("not-executable warning lost the command name /noexec2259: %s", line)
 	}

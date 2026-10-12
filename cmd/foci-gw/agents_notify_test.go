@@ -31,33 +31,25 @@ import (
 // logInjectionError, both cases logged at ERROR and this test's first
 // assertion failed.
 func TestLogInjectionErrorSeverity(t *testing.T) {
-	var (
-		mu      sync.Mutex
-		entries []log.Level
-	)
-	log.SetWarnHook(func(level log.Level, component, msg string) {
-		mu.Lock()
-		defer mu.Unlock()
-		entries = append(entries, level)
-	})
-	t.Cleanup(func() { log.SetWarnHook(nil) })
+	t.Parallel()
+	logs := captureLog(t, log.WARN)
+	session := "test/" + runToken("severity")
 
 	closedErr := fmt.Errorf("ccstream: send user message: %w", delegator.ErrBackendClosed)
-	logInjectionError("async_notify", closedErr, "error for session %s", "test/main")
+	logInjectionError("async_notify", closedErr, "error for session %s", session)
 
 	genuineErr := errors.New("boom")
-	logInjectionError("async_notify", genuineErr, "error for session %s", "test/main")
+	logInjectionError("async_notify", genuineErr, "error for session %s", session)
 
-	mu.Lock()
-	defer mu.Unlock()
+	entries := logs.Lines("session " + session)
 	if len(entries) != 2 {
-		t.Fatalf("got %d warn-hook events %v, want 2", len(entries), entries)
+		t.Fatalf("got %d WARN/ERROR lines for this run %v, want 2", len(entries), entries)
 	}
-	if entries[0] != log.WARN {
-		t.Errorf("backend-closed error logged at %v, want WARN (self-healing race, not a real failure)", entries[0])
+	if entries[0].Level != log.WARN {
+		t.Errorf("backend-closed error logged at %v, want WARN (self-healing race, not a real failure)", entries[0].Level)
 	}
-	if entries[1] != log.ERROR {
-		t.Errorf("genuine error logged at %v, want ERROR", entries[1])
+	if entries[1].Level != log.ERROR {
+		t.Errorf("genuine error logged at %v, want ERROR", entries[1].Level)
 	}
 }
 

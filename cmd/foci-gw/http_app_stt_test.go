@@ -6,11 +6,8 @@ package main
 // startup endpoint inventory names it.
 
 import (
-	"bytes"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"strings"
 	"testing"
 
 	"foci/internal/app"
@@ -63,18 +60,19 @@ func TestAppSTTEndpoint_Registered(t *testing.T) {
 // "... endpoints enabled" line) names /app/stt when the app block is
 // registered — an endpoint missing from the inventory reads as missing from
 // the server.
+//
+// Serial, for two reasons the log tap does not remove (#2357):
+// enableAppProvider turns on the process-global app hub, and the inventory
+// line carries nothing unique to this run, so in the parallel phase another
+// test's handler registration could satisfy the assertion.
 func TestAppSTTEndpoint_NamedInStartupLog(t *testing.T) {
 	enableAppProvider(t)
-
-	var buf bytes.Buffer
-	flog.SetOutput(&buf)
-	flog.SetLevel(flog.INFO)
-	t.Cleanup(func() { flog.SetOutput(os.Stderr); flog.SetLevel(flog.INFO) })
+	logs := captureLog(t, flog.INFO)
 
 	d, _ := httpTestSetup(t, httpTestOpts{})
 	_ = newTestMux(d) // registering the handlers is what logs
 
-	if !strings.Contains(buf.String(), "/app/stt") {
-		t.Errorf("registered-endpoints log does not name /app/stt:\n%s", buf.String())
+	if len(logs.Lines("/app/stt")) == 0 {
+		t.Errorf("registered-endpoints log does not name /app/stt:\n%s", logs)
 	}
 }

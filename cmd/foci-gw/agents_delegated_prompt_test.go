@@ -3,7 +3,6 @@ package main
 import (
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"foci/internal/agent"
@@ -255,34 +254,24 @@ func (c *appDocConn) SendDocumentToChat(int64, string, string) error {
 // resolver with no live connection (platform down, prompt arriving during a
 // restart): each prompt is dropped with a WARN naming the session, not a
 // panic — the body dereferences the connection right after the nil check.
-// The warn hook is collected (after draining any startup-buffered entries) so
-// the WARNs do not linger in the global buffer for the next hook to replay.
+// The WARNs are read through a log tap and tied to this run by its own
+// session key, so the test needs no process-wide hook and runs in parallel.
 func TestBackendPrompt_NilConnectionDropped(t *testing.T) {
-	log.SetWarnHook(func(log.Level, string, string) {}) // drain buffered entries
-	var mu sync.Mutex
-	var warns []string
-	log.SetWarnHook(func(level log.Level, _, msg string) {
-		if level != log.WARN {
-			return
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		warns = append(warns, msg)
-	})
-	t.Cleanup(func() { log.SetWarnHook(nil) })
+	t.Parallel()
+	logs := captureLog(t, log.WARN)
+	session := "main/" + runToken("nilconn")
 
 	approval, question := promptClosures(nil, nil)
-	approval("main/c222", "req-nil-1", "Allow Bash?", "Bash", "", promptChoices())
-	question("main/c222", "req-nil-2", "Which colour?", "Question", "", promptChoices())
+	approval(session, "req-nil-1", "Allow Bash?", "Bash", "", promptChoices())
+	question(session, "req-nil-2", "Which colour?", "Question", "", promptChoices())
 
-	mu.Lock()
-	defer mu.Unlock()
+	warns := logs.Lines("WARN", session)
 	if len(warns) != 2 {
 		t.Fatalf("drop WARNs = %d (%v), want 2 (one per kind, no panic)", len(warns), warns)
 	}
-	for _, msg := range warns {
-		if !strings.Contains(msg, "prompt dropped") || !strings.Contains(msg, "main/c222") {
-			t.Errorf("drop WARN %q, want it to name the session and the drop", msg)
+	for _, l := range warns {
+		if !strings.Contains(l.Msg, "prompt dropped") || !strings.Contains(l.Msg, "session="+session+",") {
+			t.Errorf("drop WARN %q, want it to name the session and the drop", l.Msg)
 		}
 	}
 }

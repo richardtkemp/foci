@@ -551,37 +551,25 @@ func TestBranch_CannotBranchRefusedBeforeDispatch(t *testing.T) {
 // sweep, no turn is ever enqueued, no branch session is minted, and the
 // record is dropped after that one attempt (never retried forever).
 func TestSweep_BranchNamedParentRefusedWhenBackendCannotBranch(t *testing.T) {
+	t.Parallel()
 	d, be := delegatedBranchHarness(t, httpTestOpts{})
-	registerRoot(t, d, testAgentID+"/iside")
+	// A parent name unique to this run: the refusal WARN names it, which is
+	// what ties the counted WARN to this test and not a parallel sibling's.
+	parent := testAgentID + "/i" + runToken("side")
+	registerRoot(t, d, parent)
 	store := withDeferStore(t, &d)
-
-	var mu sync.Mutex
-	refused := 0
-	// Drain any warnings buffered before this point first: SetWarnHook
-	// replays the startup buffer into the new hook, and earlier tests'
-	// refusals must not count here.
-	log.SetWarnHook(func(log.Level, string, string) {})
-	log.SetWarnHook(func(level log.Level, component, msg string) {
-		if component == "branch" && strings.Contains(msg, "refused branch on named parent") {
-			mu.Lock()
-			refused++
-			mu.Unlock()
-		}
-	})
-	t.Cleanup(func() { log.SetWarnHook(nil) })
+	logs := captureLog(t, log.WARN)
 
 	now := timeutil.Now()
 	// wait_cold holds (the named session never ran a turn) → deliverable on
 	// the first sweep.
 	_, _ = store.Enqueue(defersend.Record{
-		Kind: defersend.KindBranch, AgentID: testAgentID, SessionKey: testAgentID + "/iside",
+		Kind: defersend.KindBranch, AgentID: testAgentID, SessionKey: parent,
 		Text: "deferred branch", WaitCold: "1m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
 	})
 	sweepFor(d, store).sweep()
 
-	mu.Lock()
-	defer mu.Unlock()
-	if refused != 1 {
+	if refused := len(refusalWarns(logs, parent)); refused != 1 {
 		t.Fatalf("R5: refusal WARN logged %d time(s) during the sweep, want exactly 1 — the deferred branch must be refused by the shared runBranchTurn", refused)
 	}
 	// The refusal returns before any dispatch, so nothing was ever enqueued:
@@ -594,7 +582,7 @@ func TestSweep_BranchNamedParentRefusedWhenBackendCannotBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, e := range entries {
-		if strings.HasPrefix(e.SessionKey, testAgentID+"/iside/b") {
+		if strings.HasPrefix(e.SessionKey, parent+"/b") {
 			t.Errorf("R5: branch session %q minted by the sweep", e.SessionKey)
 		}
 	}
@@ -603,36 +591,20 @@ func TestSweep_BranchNamedParentRefusedWhenBackendCannotBranch(t *testing.T) {
 	}
 }
 
-// warmNamedParent seeds the named parent session and makes it WARM, so a
-// wait_cold duration does not hold now: a wait-carrying /branch against it
-// is deferral-shaped on the pre-#2301 code.
-func warmNamedParent(t *testing.T, d httpHandlerDeps) {
+// warmNamedParent seeds the named parent session (testAgentID/i<name>) and
+// makes it WARM, so a wait_cold duration does not hold now: a wait-carrying
+// /branch against it is deferral-shaped on the pre-#2301 code.
+func warmNamedParent(t *testing.T, d httpHandlerDeps, name string) {
 	t.Helper()
-	seedMarker(t, d, testAgentID+"/iside", "parent marker")
-	d.sessionIndex.TouchCacheTouch(testAgentID+"/iside", time.Now())
+	seedMarker(t, d, testAgentID+"/i"+name, "parent marker")
+	d.sessionIndex.TouchCacheTouch(testAgentID+"/i"+name, time.Now())
 }
 
-// warnRecorder drains the warn buffer and then records every branch WARN
-// line for the rest of the test (the SetWarnHook replay pattern from
-// TestSweep_BranchNamedParentRefusedWhenBackendCannotBranch).
-func warnRecorder(t *testing.T) func() []string {
-	t.Helper()
-	log.SetWarnHook(func(log.Level, string, string) {})
-	var mu sync.Mutex
-	var lines []string
-	log.SetWarnHook(func(_ log.Level, component, msg string) {
-		if component == "branch" {
-			mu.Lock()
-			lines = append(lines, msg)
-			mu.Unlock()
-		}
-	})
-	t.Cleanup(func() { log.SetWarnHook(nil) })
-	return func() []string {
-		mu.Lock()
-		defer mu.Unlock()
-		return append([]string(nil), lines...)
-	}
+// refusalWarns returns the captured branch refusal WARNs (enqueue-time and
+// run-time) for parentKey. The refusal line names the parent session, so a
+// parent unique to the run (runToken) ties the WARNs to that run.
+func refusalWarns(logs *logCapture, parentKey string) []capturedLine {
+	return logs.Lines("WARN", "[branch]", "refused branch on named parent", "session="+parentKey+" (")
 }
 
 // TestBranch_DeferredCannotBranchNamedParentRefusedAtEnqueue is the #2301 red
@@ -645,23 +617,27 @@ func warnRecorder(t *testing.T) func() []string {
 func TestBranch_DeferredCannotBranchNamedParentRefusedAtEnqueue(t *testing.T) {
 	// namedWarm seeds a WARM named parent, so wait_cold:"1h" does not hold
 	// now and the base code defers.
-	namedWarm := func(t *testing.T) (*noBranchBackend, *defersend.Store, *http.ServeMux) {
+	// Each subtest's parent name is unique to its run (runToken), so the
+	// refusal WARNs it counts are its own even beside parallel tests.
+	t.Parallel()
+	namedWarm := func(t *testing.T) (*noBranchBackend, *defersend.Store, *http.ServeMux, string) {
 		d, be := delegatedBranchHarness(t, httpTestOpts{})
-		warmNamedParent(t, d)
+		name := runToken("side")
+		warmNamedParent(t, d, name)
 		store := withDeferStore(t, &d)
-		return be, store, newTestMux(d)
+		return be, store, newTestMux(d), name
 	}
 
 	t.Run("422, nothing stored, nothing ran", func(t *testing.T) {
-		be, store, mux := namedWarm(t)
+		be, store, mux, name := namedWarm(t)
 
-		w := postJSON(mux, "/branch", `{"text":"later","session":"side","wait_cold":"1h"}`)
+		w := postJSON(mux, "/branch", `{"text":"later","session":"`+name+`","wait_cold":"1h"}`)
 
 		if w.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("#2301: status = %d, want 422 at enqueue (base: 202 deferred, refused only at delivery); body: %s", w.Code, w.Body.String())
 		}
 		body := w.Body.String()
-		for _, want := range []string{"cannot branch", testAgentID, testAgentID + "/iside", "nothing ran"} {
+		for _, want := range []string{"cannot branch", testAgentID, testAgentID + "/i" + name, "nothing ran"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("#2301: refusal body %q does not say %q", body, want)
 			}
@@ -678,9 +654,9 @@ func TestBranch_DeferredCannotBranchNamedParentRefusedAtEnqueue(t *testing.T) {
 	})
 
 	t.Run("sync caller gets the same 422", func(t *testing.T) {
-		be, store, mux := namedWarm(t)
+		be, store, mux, name := namedWarm(t)
 
-		w := postJSON(mux, "/branch", `{"text":"later","session":"side","wait_cold":"1h","async":false}`)
+		w := postJSON(mux, "/branch", `{"text":"later","session":"`+name+`","wait_cold":"1h","async":false}`)
 
 		if w.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("#2301: status = %d, want the same 422 for a sync caller; body: %s", w.Code, w.Body.String())
@@ -697,10 +673,10 @@ func TestBranch_DeferredCannotBranchNamedParentRefusedAtEnqueue(t *testing.T) {
 	})
 
 	t.Run("same message as the immediate refusal", func(t *testing.T) {
-		_, _, mux := namedWarm(t)
+		_, _, mux, name := namedWarm(t)
 
-		waited := postJSON(mux, "/branch", `{"text":"later","session":"side","wait_cold":"1h"}`)
-		immediate := postJSON(mux, "/branch", `{"text":"later","session":"side"}`)
+		waited := postJSON(mux, "/branch", `{"text":"later","session":"`+name+`","wait_cold":"1h"}`)
+		immediate := postJSON(mux, "/branch", `{"text":"later","session":"`+name+`"}`)
 
 		if waited.Code != http.StatusUnprocessableEntity || immediate.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("#2301: waited=%d immediate=%d, want both 422", waited.Code, immediate.Code)
@@ -717,23 +693,22 @@ func TestBranch_DeferredCannotBranchNamedParentRefusedAtEnqueue(t *testing.T) {
 		// so the refusal is the enqueue one and the caller still gets the
 		// same 422 the run path would give.
 		d, _ := delegatedBranchHarness(t, httpTestOpts{})
-		seedMarker(t, d, testAgentID+"/iside", "parent marker") // cold: never touched
+		name := runToken("side")
+		seedMarker(t, d, testAgentID+"/i"+name, "parent marker") // cold: never touched
 		store := withDeferStore(t, &d)
-		warns := warnRecorder(t)
+		logs := captureLog(t, log.WARN)
 		mux := newTestMux(d)
 
-		w := postJSON(mux, "/branch", `{"text":"later","session":"side","wait_cold":"1m"}`)
+		w := postJSON(mux, "/branch", `{"text":"later","session":"`+name+`","wait_cold":"1m"}`)
 
 		if w.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("#2301: status = %d, want 422 (a met condition is no escape: delivery could only end in the refusal); body: %s", w.Code, w.Body.String())
 		}
 		refusals := 0
-		for _, msg := range warns() {
-			if strings.Contains(msg, "refused branch on named parent") {
-				refusals++
-				if !strings.Contains(msg, "at enqueue") {
-					t.Errorf("#2301: a holding condition was refused by the run-time gate, not the enqueue one: %q", msg)
-				}
+		for _, l := range refusalWarns(logs, testAgentID+"/i"+name) {
+			refusals++
+			if !strings.Contains(l.Msg, "at enqueue") {
+				t.Errorf("#2301: a holding condition was refused by the run-time gate, not the enqueue one: %q", l.Msg)
 			}
 		}
 		if refusals != 1 {
@@ -745,28 +720,29 @@ func TestBranch_DeferredCannotBranchNamedParentRefusedAtEnqueue(t *testing.T) {
 	})
 
 	t.Run("logged once at WARN marked at enqueue", func(t *testing.T) {
-		be, store, mux := namedWarm(t)
-		warns := warnRecorder(t)
+		be, store, mux, name := namedWarm(t)
+		logs := captureLog(t, log.WARN)
 
-		w := postJSON(mux, "/branch", `{"text":"later","session":"side","wait_cold":"1h"}`)
+		w := postJSON(mux, "/branch", `{"text":"later","session":"`+name+`","wait_cold":"1h"}`)
 
 		if w.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("#2301: status = %d, want 422; body: %s", w.Code, w.Body.String())
 		}
 		var enqueueMarked, unmarked int
-		for _, msg := range warns() {
+		warns := refusalWarns(logs, testAgentID+"/i"+name)
+		for _, l := range warns {
 			switch {
-			case strings.Contains(msg, "refused branch on named parent at enqueue"):
+			case strings.Contains(l.Msg, "refused branch on named parent at enqueue"):
 				enqueueMarked++
-			case strings.Contains(msg, "refused branch on named parent"):
+			default:
 				unmarked++
 			}
 		}
 		if enqueueMarked != 1 {
-			t.Errorf("#2301: enqueue-marked refusal WARNs = %d, want exactly 1 (lines: %q)", enqueueMarked, warns())
+			t.Errorf("#2301: enqueue-marked refusal WARNs = %d, want exactly 1 (lines: %q)", enqueueMarked, warns)
 		}
 		if unmarked != 0 {
-			t.Errorf("#2301: run-time refusal WARNs = %d, want 0 — nothing reached runBranchTurn (lines: %q)", unmarked, warns())
+			t.Errorf("#2301: run-time refusal WARNs = %d, want 0 — nothing reached runBranchTurn (lines: %q)", unmarked, warns)
 		}
 		if all, _ := store.All(); len(all) != 0 {
 			t.Errorf("#2301: defer store holds %d record(s), want 0", len(all))
@@ -818,7 +794,7 @@ func TestBranch_DeferredDefaultParentStillDefersWhenCannotBranch(t *testing.T) {
 func TestBranch_DeferredNamedParentStillDefersOnBranchingBackend(t *testing.T) {
 	t.Parallel()
 	d, be := delegatedBranchingHarness(t, httpTestOpts{})
-	warmNamedParent(t, d) // wait_cold unmet
+	warmNamedParent(t, d, "side") // wait_cold unmet
 	store := withDeferStore(t, &d)
 	mux := newTestMux(d)
 
@@ -846,7 +822,7 @@ func TestBranch_DeferredNamedParentStillDefersOnBranchingBackend(t *testing.T) {
 func TestBranch_DeferredNamedParentStillDefersForAPIAgent(t *testing.T) {
 	t.Parallel()
 	d, mock := httpTestSetup(t, httpTestOpts{})
-	warmNamedParent(t, d) // wait_cold unmet
+	warmNamedParent(t, d, "side") // wait_cold unmet
 	store := withDeferStore(t, &d)
 	mux := newTestMux(d)
 
@@ -883,7 +859,7 @@ func TestBranch_NamedParentNoWaitStillRefused(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			d, be := delegatedBranchHarness(t, httpTestOpts{})
-			warmNamedParent(t, d)
+			warmNamedParent(t, d, "side")
 			store := withDeferStore(t, &d)
 			mux := newTestMux(d)
 

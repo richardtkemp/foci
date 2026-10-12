@@ -148,6 +148,7 @@ func Init(cfg Config) error {
 	if time.Now().Year() < 1900 {
 		SetAPIWriter(nil)
 		SetOutput(nil)
+		AddTap(DEBUG, func(Level, string, string) {})()
 	}
 
 	level := ParseLevel(cfg.Level)
@@ -499,9 +500,94 @@ func SetOutput(w io.Writer) {
 	std.mu.Unlock()
 }
 
-// event writes a formatted log line if the level is at or above the configured level.
+// noTaps is tapMin's value while no tap is registered: above every level,
+// so the tap check never lets an event past event()'s level gate.
+const noTaps = int32(1 << 30)
+
+// tap is one AddTap subscriber.
+type tap struct {
+	min Level
+	fn  func(level Level, component, msg string)
+}
+
+var (
+	tapMu sync.Mutex
+	taps  []*tap
+	// tapMin is the lowest min of the registered taps (noTaps when none), so
+	// event() decides with one atomic load whether a below-level event is
+	// still wanted by a tap.
+	tapMin atomic.Int32
+)
+
+func init() { tapMin.Store(noTaps) }
+
+// AddTap subscribes fn to every event at or above min, and returns a func
+// that removes the subscription. Taps are ADDITIVE: they do not replace the
+// event output, the level or the warn hook, and min is the tap's own
+// threshold, independent of the global level (a DEBUG tap sees DEBUG events
+// while the event log stays at INFO). fn gets the same component and
+// formatted message the event line carries, and is called synchronously on
+// the logging goroutine, outside every log lock, so it must be goroutine-
+// safe and may itself log.
+//
+// For tests (#2357): many tests can each hold a tap at once, so a test can
+// assert on log lines without swapping process-wide logging and can run in
+// parallel. A tap sees every test's events; a test ties its assertions to
+// its own run by filtering on something only its run logs (a session key,
+// agent id or marker unique to the run).
+func AddTap(min Level, fn func(level Level, component, msg string)) (remove func()) {
+	tp := &tap{min: min, fn: fn}
+	tapMu.Lock()
+	taps = append(taps, tp)
+	recomputeTapMinLocked()
+	tapMu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			tapMu.Lock()
+			defer tapMu.Unlock()
+			kept := make([]*tap, 0, len(taps))
+			for _, other := range taps {
+				if other != tp {
+					kept = append(kept, other)
+				}
+			}
+			taps = kept
+			recomputeTapMinLocked()
+		})
+	}
+}
+
+func recomputeTapMinLocked() {
+	lowest := noTaps
+	for _, tp := range taps {
+		if int32(tp.min) < lowest {
+			lowest = int32(tp.min)
+		}
+	}
+	tapMin.Store(lowest)
+}
+
+// fireTaps hands one event to every tap whose min it meets. The slice is
+// copied under tapMu and the taps are called after releasing it, so a tap
+// that logs, or adds/removes a tap, cannot deadlock.
+func fireTaps(level Level, component, msg string) {
+	tapMu.Lock()
+	snapshot := append([]*tap(nil), taps...)
+	tapMu.Unlock()
+	for _, tp := range snapshot {
+		if level >= tp.min {
+			tp.fn(level, component, msg)
+		}
+	}
+}
+
+// event writes a formatted log line if the level is at or above the
+// configured level, and hands it to any tap that wants it (AddTap).
 func (l *Logger) event(level Level, component string, format string, args ...interface{}) {
-	if level < Level(l.level.Load()) {
+	logged := level >= Level(l.level.Load())
+	tapped := int32(level) >= tapMin.Load()
+	if !logged && !tapped {
 		return
 	}
 
@@ -511,6 +597,12 @@ func (l *Logger) event(level Level, component string, format string, args ...int
 	// injection built from it, where it gets swept into an auto-linked URL. Inner
 	// newlines are still escaped to keep each entry a single line.
 	msg := strings.ReplaceAll(strings.TrimRight(fmt.Sprintf(format, args...), " \t\r\n"), "\n", "\\n")
+	if tapped {
+		fireTaps(level, component, msg)
+	}
+	if !logged {
+		return
+	}
 	ts := timeutil.Format(timeutil.Now())
 
 	// Pad level to 5 chars: "DEBUG", "INFO ", "WARN ", "ERROR"

@@ -6,7 +6,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -32,13 +31,13 @@ func (c *startupConn) SendNotification(s string) { c.notices = append(c.notices,
 // restartFixture is one agent on telegram (startup_notify on) whose telegram
 // connection has NOT attached yet: the ConnectionManager has nothing live, and
 // whenConnected parks callbacks until the test attaches the platform.
-func restartFixture(t *testing.T) (agents map[string]*agentInstance, whenConnected func(string, func(platform.Connection)), attach func(platform.Connection)) {
+func restartFixture(t *testing.T, agentID string) (agents map[string]*agentInstance, whenConnected func(string, func(platform.Connection)), attach func(platform.Connection)) {
 	t.Helper()
 	on := true
 	cfg := &config.Config{Platforms: []config.PlatformConfig{{ID: "telegram", Notify: config.NotifyConfig{StartupNotify: &on}}}}
-	acfg := config.AgentConfig{ID: "a"}
-	agents = map[string]*agentInstance{"a": {
-		id:        "a",
+	acfg := config.AgentConfig{ID: agentID}
+	agents = map[string]*agentInstance{agentID: {
+		id:        agentID,
 		agentCfg:  acfg,
 		resolved:  config.NewLiveValue(config.Resolve(cfg, acfg)),
 		platforms: []string{"telegram"},
@@ -48,7 +47,7 @@ func restartFixture(t *testing.T) (agents map[string]*agentInstance, whenConnect
 	whenConnected = func(agentID string, fn func(platform.Connection)) {
 		mu.Lock()
 		defer mu.Unlock()
-		if agentID == "a" {
+		if agentID == acfg.ID {
 			parked = append(parked, fn)
 		}
 	}
@@ -72,7 +71,7 @@ func crashDiagnosis() *startup.DiagnosisResult {
 // the platforms that happened to be connected at the notification point.
 func TestHandleRestart_NoticeReachesPlatformThatAttachesLate(t *testing.T) {
 	t.Parallel()
-	agents, whenConnected, attach := restartFixture(t)
+	agents, whenConnected, attach := restartFixture(t, "a")
 	handleRestartAndFirstRun(agents, []string{"a"}, nil, &config.Config{}, context.Background(),
 		stubConnMgr{}, whenConnected, crashDiagnosis())
 
@@ -86,20 +85,22 @@ func TestHandleRestart_NoticeReachesPlatformThatAttachesLate(t *testing.T) {
 // The restart TURN is gated on the platforms the agent is on, not the ones
 // live at that instant: with telegram still connecting, the injection must
 // still be attempted (here it stops at "no active session", ag being nil).
+// The agent id is unique to the run and the log line names it, so a log tap
+// (no process-wide output or level swap, #2357) sees only this run's line.
 func TestHandleRestart_InjectionNotSkippedWhilePlatformConnects(t *testing.T) {
-	var buf syncBuf
-	flog.SetOutput(&buf)
-	flog.SetLevel(flog.DEBUG)
-	t.Cleanup(func() { flog.SetOutput(os.Stderr); flog.SetLevel(flog.INFO) })
+	t.Parallel()
+	logs := captureLog(t, flog.DEBUG)
+	id := runToken("restart")
 
-	agents, whenConnected, _ := restartFixture(t)
-	handleRestartAndFirstRun(agents, []string{"a"}, nil, &config.Config{}, context.Background(),
+	agents, whenConnected, _ := restartFixture(t, id)
+	handleRestartAndFirstRun(agents, []string{id}, nil, &config.Config{}, context.Background(),
 		stubConnMgr{}, whenConnected, crashDiagnosis())
 
+	want := "[" + id + "] no active session for restart injection"
 	deadline := time.Now().Add(10 * time.Second) // hang guard; the goroutine logs at once
-	for !strings.Contains(buf.String(), "no active session for restart injection") {
+	for len(logs.Lines(want)) == 0 {
 		if time.Now().After(deadline) {
-			t.Fatalf("restart injection was skipped: a still-connecting platform did not count as one the agent is on\nlog:\n%s", buf.String())
+			t.Fatalf("restart injection was skipped: a still-connecting platform did not count as one the agent is on\nlog:\n%s", logs)
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
