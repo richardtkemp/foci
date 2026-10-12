@@ -61,7 +61,7 @@ func TestSendToChat_MermaidFileSendsSourceAndRender(t *testing.T) {
 		t.Errorf("source not sent as captioned document: calls=%v captions=%v", s.documentCalls, s.documentCaptions)
 	}
 	if len(s.photoNames) != 1 || s.photoNames[0] != "flow.png" {
-		t.Fatalf("render not sent as flow.png photo: %v", s.photoNames)
+		t.Fatalf("render not sent as flow.png photo: %v (result %q)", s.photoNames, res)
 	}
 	// Opaque white, light theme: a transparent PNG vanishes in a dark-mode chat.
 	if !strings.HasPrefix(s.photoBodies[0], "\x89PNG") || !strings.HasSuffix(s.photoBodies[0], "bg=white") {
@@ -81,9 +81,9 @@ func TestSendToChat_MermaidDetectedByDisplayName(t *testing.T) {
 	r := mermaid.New(t.TempDir(), cmd, "/no/browser")
 	src := writeDiagram(t, "tmp123", "graph TD\n A-->B\n")
 
-	s, _ := runMermaidSend(t, r, map[string]any{"file": src, "filename": "Arch.MERMAID"})
+	s, res := runMermaidSend(t, r, map[string]any{"file": src, "filename": "Arch.MERMAID"})
 	if len(s.photoNames) != 1 || s.photoNames[0] != "Arch.png" {
-		t.Errorf("photos = %v, want Arch.png", s.photoNames)
+		t.Errorf("photos = %v, want Arch.png (result %q)", s.photoNames, res)
 	}
 }
 

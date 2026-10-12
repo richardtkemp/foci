@@ -3,10 +3,13 @@
 package mermaidtest
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"foci/internal/procx"
 )
 
 // FakeCmd writes a stand-in for mermaid-cli: it writes a fake PNG (ending
@@ -42,10 +45,22 @@ if grep -q SLEEP "$in"; then sleep 5; fi
 if grep -q SLOW "$in"; then sleep 0.3; fi
 printf '\211PNG\r\n\032\nfake bg=%s' "$bg" > "$out"
 `
-	if err := os.WriteFile(cmd, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecutable(t, cmd, script)
 	return cmd, runs
+}
+
+// writeExecutable creates an executable at path holding body, written by a
+// child process so the test process never holds a write fd on it. Writing it
+// in-process (os.WriteFile) races sibling parallel tests' fork/exec: a child
+// forked while the fd is open inherits it until its own exec, and an exec of
+// path meanwhile fails with ETXTBSY "text file busy" (golang/go#22315; #2354).
+func writeExecutable(t testing.TB, path, body string) {
+	t.Helper()
+	cmd := procx.Spawn(context.Background(), procx.Trusted, "sh", "-c", `cat > "$1" && chmod 755 "$1"`, "sh", path)
+	cmd.Stdin = strings.NewReader(body)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("write %s: %v: %s", path, err, out)
+	}
 }
 
 func RunCount(t testing.TB, runs string) int {
