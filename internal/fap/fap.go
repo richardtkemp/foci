@@ -374,10 +374,36 @@ type Choice struct {
 // markdown). Header is an optional bold title. Choices carry "qa:<index>" data
 // (positional answers, so no per-prompt routing token) and NO Cancel button (the
 // app's full-screen form has its own Cancel). Empty Choices ⇒ typed-answer-only.
+// Quiz, when set, marks a QUIZ question (#1316) whose answer the app hides until
+// the user reveals it — the frame carries everything (question, options, answer,
+// explanation) in one go and the reveal is purely client-side.
 type Question struct {
 	Text    string   `json:"text"`
 	Header  string   `json:"header,omitempty"`
 	Choices []Choice `json:"choices,omitempty"`
+	Quiz    *Quiz    `json:"quiz,omitempty"`
+}
+
+// Quiz is the quiz data of one batched question (#1316): what the app hides
+// until the user reveals it. Field-for-field mirror of question.Quiz (fap is
+// stdlib-only by design — see the package doc), mapped like Choices already
+// is. Wire contract for the client:
+//   - "correct" — 0-based indexes into Question.Choices (the array the agent
+//     authored; NOT the 1-based numbers the UI displays);
+//   - "answer" — the model answer, present only when Choices is empty
+//     (free-recall question);
+//   - "explanation" — optional, shown on reveal.
+//
+// Every key is omitempty, so a non-quiz question's frame is byte-identical to
+// pre-#1316, and a decoder that ignores unknown keys — the protocol's standing
+// rule; additive optional fields are how frames version (Choice.Description,
+// SubagentStart.RunIndex #1355) — keeps working. Quiz data reaches ONLY this
+// frame: chat transports and the plain-text fallback never include it in a
+// prompt (they reveal in a separate post-answer message instead).
+type Quiz struct {
+	Correct     []int  `json:"correct,omitempty"`     // 0-based indexes into Question.Choices
+	ModelAnswer string `json:"answer,omitempty"`      // only when Choices is empty (free recall)
+	Explanation string `json:"explanation,omitempty"` // shown on reveal
 }
 
 // --- Server -> App frame payloads (mirror Kotlin Frames.kt) ---

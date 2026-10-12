@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/question"
 	"foci/internal/secrets"
 	"foci/internal/session"
 
@@ -429,10 +430,14 @@ type DetailAttacher interface {
 // Choices are the option buttons (empty ⇒ typed-answer-only) with NO Cancel — the
 // app's full-screen form supplies its own. The button Data carries the unprefixed
 // "qa:<index>" token — the answer's POSITION in the reply identifies its question.
+// Quiz carries the question's quiz data verbatim (#1316) so the app frame holds
+// the answer the form hides until the user reveals it; nil = a plain question
+// (the wire frame omits the key entirely).
 type BatchQuestion struct {
 	Text    string
 	Header  string
 	Choices []ButtonChoice
+	Quiz    *question.Quiz
 }
 
 // BatchButtonSender is optionally implemented by Connection types that can render

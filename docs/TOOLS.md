@@ -37,6 +37,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - **Optional grader subprocess.** When `grader` is configured, the answer is fed to an external program that decides accept/reject. Keys: `grader` (binary), `grader_args`, `grader_timeout_seconds`, `grader_on_error` (controls behaviour when the grader itself fails or times out).
 - **Button clicks always work.** Selecting a button option submits the answer directly to the originating ask.
 - **Typed replies route to the ask when the session is idle** — so free-text answers reach the right outstanding question without disambiguation prompts.
+- **Quiz mode (#1316).** Mark any question with `quiz` (`correct`: 0-based option indexes, or `answer` for a free-recall question with no options; optional `explanation`) and the user's client hides the answer until they reveal it. On the app the whole quiz rides the interactive form; on chat platforms the options are numbered and a typed reply that is just a number selects that option, with one reveal message after each answer. The answer batch carries a per-question true/false `quiz_results` verdict for quiz option questions; free recall is the agent's to judge.
 - **Capture control.** `/pause`, `/resume`, and `/complete` commands start, stop, and finalize answer capture for an ask.
 
 See [ASKGW.md](ASKGW.md) and [ASKGW-PROTOCOL.md](ASKGW-PROTOCOL.md) for the wire protocol and gateway details.

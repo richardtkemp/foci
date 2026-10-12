@@ -1,7 +1,9 @@
 // Package question holds the backend-agnostic core of the AskUserQuestion
-// interaction: the question/option types, JSON parsing, display formatting,
-// button-choice construction, answer resolution, and the sequential-answer
-// accumulator. It has zero backend dependencies so it can be shared by:
+// interaction: the question/option/quiz types, JSON parsing, display
+// formatting, button-choice construction, answer resolution (including the
+// quiz typed-number rule), quiz validation/verdict/reveal, and the
+// sequential-answer accumulator. It has zero backend dependencies so it can be
+// shared by:
 //
 //   - internal/delegator/ccstream — presents CC's AskUserQuestion tool calls
 //     (blocking: the answer returns to CC as a control-response), and
@@ -31,6 +33,29 @@ type Question struct {
 	// "answers_by_id") so the agent can correlate answers deterministically
 	// without matching on question text.
 	ID string `json:"id,omitempty"`
+	// Quiz, when set, marks the question as a QUIZ question — one with a known
+	// answer the client hides until the user reveals it (#1316). nil = a plain
+	// question, presented and answered exactly as before. Validated by
+	// ValidateQuiz at ask-call time.
+	Quiz *Quiz `json:"quiz,omitempty"`
+}
+
+// Quiz is the quiz data of a question the agent marked as having a known
+// answer (#1316): what the prompt withholds and the reveal shows. Exactly one
+// arm is set — Correct (option questions) or ModelAnswer (free-recall, i.e.
+// option-less questions); Explanation is optional and shown on reveal.
+type Quiz struct {
+	// Correct holds 0-based indexes into Question.Options — the agent authored
+	// that array, so the index space is the array's, NOT the 1-based display
+	// numbering FormatText renders (the reveal prints "Answer: 2. Oslo" for
+	// correct=[1]). Documented wherever the input is described because the
+	// off-by-one is the obvious mistake.
+	Correct []int `json:"correct,omitempty"`
+	// ModelAnswer is the known good answer of a free-recall (option-less)
+	// question, shown on reveal; the agent judges the user's own text.
+	ModelAnswer string `json:"answer,omitempty"`
+	// Explanation is shown alongside the answer on reveal.
+	Explanation string `json:"explanation,omitempty"`
 }
 
 // Option is one selectable option within a question.
@@ -134,6 +159,96 @@ func Choices(q *Question) []Choice {
 	return choices
 }
 
+// ValidateQuiz checks the quiz data of one question (#1316): nil (no error) for
+// a non-quiz question; a quiz question needs exactly one arm — Correct indexes
+// on an option question, or a ModelAnswer on a free-recall (option-less)
+// question — and every index must name one of the question's options exactly
+// once. The ask tool wraps the returned error with the question's position and
+// text, so each message states the rule it broke.
+func ValidateQuiz(q *Question) error {
+	if q.Quiz == nil {
+		return nil
+	}
+	if len(q.Options) > 0 {
+		if q.Quiz.ModelAnswer != "" {
+			return fmt.Errorf("quiz answer (model answer) is only for a free-recall question with no options — set \"correct\" option indexes instead")
+		}
+		if len(q.Quiz.Correct) == 0 {
+			return fmt.Errorf("quiz question with options needs \"correct\" — the 0-based indexes of its correct option(s)")
+		}
+		seen := make(map[int]bool, len(q.Quiz.Correct))
+		for _, idx := range q.Quiz.Correct {
+			if idx < 0 || idx >= len(q.Options) {
+				return fmt.Errorf("quiz correct option 0-based index %d is out of range: question has %d options", idx, len(q.Options))
+			}
+			if seen[idx] {
+				return fmt.Errorf("quiz correct option 0-based index %d is repeated", idx)
+			}
+			seen[idx] = true
+		}
+		return nil
+	}
+	if len(q.Quiz.Correct) > 0 {
+		return fmt.Errorf("quiz correct option indexes are only for a question with options — give a model \"answer\" instead")
+	}
+	if q.Quiz.ModelAnswer == "" {
+		return fmt.Errorf("quiz question needs the correct option(s) (\"correct\") or a model answer (\"answer\")")
+	}
+	return nil
+}
+
+// QuizVerdict reports whether answer — exactly as delivered to the agent (an
+// option's label, a typed number already resolved to its label, or the user's
+// typed text) — equals one of q's correct option labels. ok is false when
+// there is no mechanical verdict to give: q is not a quiz option question, or
+// the answer is empty. Free-recall quiz questions never get a verdict (the
+// agent judges the text); non-quiz questions are untouched by this.
+func QuizVerdict(q *Question, answer string) (correct, ok bool) {
+	if q.Quiz == nil || len(q.Options) == 0 || answer == "" {
+		return false, false
+	}
+	for _, idx := range q.Quiz.Correct {
+		if idx >= 0 && idx < len(q.Options) && q.Options[idx].Label == answer {
+			return true, true
+		}
+	}
+	return false, true
+}
+
+// FormatReveal renders the post-answer reveal for quiz question q: the correct
+// option(s) with their 1-based display numbers, or the model answer, plus the
+// explanation and — for an option question — whether the user's answer was
+// correct. PLAIN TEXT ONLY, no markdown markers: chat notifications are sent
+// without a parse mode (e.g. Telegram's notification path), so any marker
+// would reach the user literally, and `<`/`>`/`&` in the question text pass
+// through as-is (#1316 round-3 finding F1). q must carry Quiz data; answer is
+// the delivered answer (may be empty — then no verdict line).
+func FormatReveal(q *Question, answer string) string {
+	lines := []string{q.Question}
+	if len(q.Options) > 0 {
+		correct := make([]string, 0, len(q.Quiz.Correct))
+		for _, idx := range q.Quiz.Correct {
+			if idx >= 0 && idx < len(q.Options) {
+				correct = append(correct, fmt.Sprintf("%d. %s", idx+1, q.Options[idx].Label))
+			}
+		}
+		lines = append(lines, "Answer: "+strings.Join(correct, ", "))
+		if right, ok := QuizVerdict(q, answer); ok {
+			if right {
+				lines = append(lines, "✅ Correct.")
+			} else {
+				lines = append(lines, fmt.Sprintf("❌ Incorrect — you answered %s.", answer))
+			}
+		}
+	} else {
+		lines = append(lines, "Model answer: "+q.Quiz.ModelAnswer)
+	}
+	if q.Quiz.Explanation != "" {
+		lines = append(lines, "Explanation: "+q.Quiz.Explanation)
+	}
+	return strings.Join(lines, "\n")
+}
+
 // ResolveAnswer maps a raw choice string to a concrete answer label. The choice
 // is one of:
 //   - "qa:<index>"  — a button click selecting the option at that index
@@ -154,6 +269,17 @@ func ResolveAnswer(q *Question, choice string) (answer string, cancelled bool, e
 			return "", false, fmt.Errorf("invalid question option index %q", suffix)
 		}
 		return q.Options[idx].Label, false, nil
+	}
+	// A typed reply that is just a number selects that option by its DISPLAYED
+	// number on a quiz option question (#1316): FormatText renders options as
+	// "N. label", so "2" is easy entry for the second option. The number always
+	// means the position — even when a label is itself numeric — and anything
+	// out of range or non-numeric falls through to the verbatim behaviour
+	// below, as does every typed number on a NON-quiz question.
+	if q.Quiz != nil && len(q.Options) > 0 {
+		if n, convErr := strconv.Atoi(strings.TrimSpace(choice)); convErr == nil && n >= 1 && n <= len(q.Options) {
+			return q.Options[n-1].Label, false, nil
+		}
 	}
 	// Custom typed text — use as-is.
 	return choice, false, nil

@@ -341,6 +341,9 @@ var toolTable = []toolEntry{
 			tools.WithBatchPresent(newAskPresentBatchFn(d.p.acfg.ID, d.connMgr)),
 			tools.WithBatchRestore(newAskRestoreBatchFn(d.p.acfg.ID, d.connMgr)),
 			tools.WithRemove(newAskRemoveFn(d.p.acfg.ID, d.connMgr)),
+			// Quiz reveals (#1316): after a chat user answers a quiz question,
+			// post its withheld answer+explanation to the asking session's chat.
+			tools.WithReveal(newAskRevealFn(d.p.acfg.ID, d.connMgr)),
 			// Per-ask (#1711 ruling 5): release only what THIS ask was holding,
 			// so a sibling ask's backlog stays deferred (#1712).
 			tools.WithOnResolve(func(sk, reqID string) {

@@ -51,6 +51,109 @@ func TestEncode_InteractiveOmitsQuestionsWhenSingle(t *testing.T) {
 	}
 }
 
+// A batched question's quiz data (#1316) rides the Interactive frame intact —
+// correct (0-based), model answer and explanation — while a question WITHOUT
+// quiz data omits the `quiz` key entirely, so its frame is byte-compatible
+// with pre-#1316 clients. Guard test (passes as soon as it compiles); mutation
+// arm: rename a Quiz JSON tag (e.g. "answer" → "model") or drop the omitempty
+// and the exact-wire-key assertions go red.
+func TestEncode_InteractiveQuizRoundTrip(t *testing.T) {
+	orig := Interactive{
+		ConversationID: "c1",
+		PromptID:       "p1",
+		Questions: []Question{
+			{
+				Text:    "Capital of <Norway>?",
+				Choices: []Choice{{Label: "Bergen", Data: "qa:0"}, {Label: "Oslo", Data: "qa:1"}},
+				Quiz:    &Quiz{Correct: []int{1}, Explanation: "Oslo since 1299."},
+			},
+			{Text: "Translate dog.", Quiz: &Quiz{ModelAnswer: "σκύλος"}}, // free recall
+			{Text: "Plain?"}, // non-quiz
+		},
+	}
+	wire, err := Encode(orig, 0, 0, "X", "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Exact wire shape: decode the raw payload as generic JSON so the KEY
+	// names themselves are asserted, not just Go's view of them.
+	var env struct {
+		D struct {
+			Questions []map[string]any `json:"questions"`
+		} `json:"d"`
+	}
+	if err := json.Unmarshal([]byte(wire), &env); err != nil {
+		t.Fatal(err)
+	}
+	if len(env.D.Questions) != 3 {
+		t.Fatalf("questions = %d, want 3", len(env.D.Questions))
+	}
+	q0 := env.D.Questions[0]["quiz"].(map[string]any)
+	if _, has := q0["answer"]; has {
+		t.Errorf("option question's quiz must not carry an answer key: %v", q0)
+	}
+	// json numbers decode as float64; 1 (the 0-based index of Oslo).
+	if correct, _ := q0["correct"].([]any); len(correct) != 1 || correct[0] != float64(1) {
+		t.Errorf("quiz.correct = %v, want [1] (0-based index into choices)", q0["correct"])
+	}
+	if q0["explanation"] != "Oslo since 1299." {
+		t.Errorf("quiz.explanation = %v", q0["explanation"])
+	}
+	q1 := env.D.Questions[1]["quiz"].(map[string]any)
+	if q1["answer"] != "σκύλος" {
+		t.Errorf("quiz.answer = %v", q1["answer"])
+	}
+	if _, has := q1["correct"]; has {
+		t.Errorf("free-recall quiz must not carry a correct key: %v", q1)
+	}
+	if _, has := env.D.Questions[2]["quiz"]; has {
+		t.Errorf("non-quiz question must omit the quiz key entirely: %s", wire)
+	}
+
+	// Typed round-trip through the codec.
+	var round struct {
+		D Interactive `json:"d"`
+	}
+	if err := json.Unmarshal([]byte(wire), &round); err != nil {
+		t.Fatal(err)
+	}
+	got := round.D.Questions[0].Quiz
+	if got == nil || len(got.Correct) != 1 || got.Correct[0] != 1 || got.Explanation != "Oslo since 1299." {
+		t.Errorf("q0 quiz round-trip wrong: %+v", got)
+	}
+	if got := round.D.Questions[1].Quiz; got == nil || got.ModelAnswer != "σκύλος" {
+		t.Errorf("q1 quiz round-trip wrong: %+v", got)
+	}
+	if got := round.D.Questions[2].Quiz; got != nil {
+		t.Errorf("q2 (non-quiz) round-trip wrong: %+v", got)
+	}
+}
+
+// A pre-#1316 client's Question decoder has no `quiz` field; a frame that
+// carries one must still decode for it — the additive-omitempty versioning
+// rule (unknown keys are ignored, the standing guarantee pinned for ClientHello
+// in TestDecode_ClientHelloIgnoresLegacyResumeOpen). Mutation arm: set
+// DisallowUnknownFields in Decode and this goes red.
+func TestDecode_InteractiveQuizLegacyClient(t *testing.T) {
+	var legacy struct {
+		D struct {
+			Questions []struct {
+				Text    string   `json:"text"`
+				Choices []Choice `json:"choices"`
+			} `json:"questions"`
+		} `json:"d"`
+	}
+	wire := `{"t":"interactive","id":"i1","d":{"conversationId":"c1","promptId":"p1","questions":[` +
+		`{"text":"Q?","choices":[{"label":"A","data":"qa:0"}],"quiz":{"correct":[0],"explanation":"x"}}]}}`
+	if err := json.Unmarshal([]byte(wire), &legacy); err != nil {
+		t.Fatalf("legacy decoder must ignore the quiz key: %v", err)
+	}
+	if len(legacy.D.Questions) != 1 || legacy.D.Questions[0].Text != "Q?" || len(legacy.D.Questions[0].Choices) != 1 {
+		t.Errorf("legacy decode wrong: %+v", legacy.D.Questions)
+	}
+}
+
 // A batched InteractiveResponse decodes its Answers list; Data stays empty.
 func TestDecode_InteractiveResponseBatchAnswers(t *testing.T) {
 	wire := `{"t":"interactive.response","id":"r1","d":{"conversationId":"c1","promptId":"p1","answers":["qa:0","qa:cancel","typed text"]}}`

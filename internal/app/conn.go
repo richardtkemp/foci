@@ -14,6 +14,7 @@ import (
 	"foci/internal/command"
 	"foci/internal/fap"
 	"foci/internal/platform"
+	"foci/internal/question"
 	"foci/internal/session"
 	"foci/internal/tools"
 	"foci/internal/turn"
@@ -542,7 +543,7 @@ func (c *appConn) SendInteractiveBatch(promptID string, questions []platform.Bat
 	qs := make([]fap.Question, len(questions))
 	choiceCounts := make([]string, len(questions))
 	for i, q := range questions {
-		qs[i] = fap.Question{Text: q.Text, Header: q.Header, Choices: toChoices(q.Choices)}
+		qs[i] = fap.Question{Text: q.Text, Header: q.Header, Choices: toChoices(q.Choices), Quiz: toQuiz(q.Quiz)}
 		choiceCounts[i] = strconv.Itoa(len(q.Choices))
 	}
 	appLog.Debugf("SendInteractiveBatch: conv=%s prompt=%s questions=%d choicesPerQ=[%s]",
@@ -686,6 +687,15 @@ func toChoices(buttons []platform.ButtonChoice) []fap.Choice {
 		out = append(out, fap.Choice{Label: b.Label, Data: b.Data, Row: b.Row, Description: b.Description})
 	}
 	return out
+}
+
+// toQuiz maps a question's quiz data onto the wire Quiz type (#1316); nil
+// passes through so a non-quiz question's frame omits the key entirely.
+func toQuiz(q *question.Quiz) *fap.Quiz {
+	if q == nil {
+		return nil
+	}
+	return &fap.Quiz{Correct: q.Correct, ModelAnswer: q.ModelAnswer, Explanation: q.Explanation}
 }
 
 // --- agent.Driver ---

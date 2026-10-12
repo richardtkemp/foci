@@ -5,6 +5,7 @@ import (
 
 	"foci/internal/platform"
 	"foci/internal/question"
+	"foci/internal/route"
 	"foci/internal/tools"
 )
 
@@ -71,11 +72,13 @@ func newAskPresentBatchFn(agentID string, connMgr platform.ConnectionManager) to
 
 // batchQuestionsFor maps the ask layer's questions onto the app's batched-prompt
 // payload. The app renders its own layout, so each question carries STRUCTURED
-// fields — raw text, optional header, and per-option label+description — rather
-// than pre-rendered markdown. Option buttons get "qa:<index>" data and NO Cancel
-// button: the app's full-screen ask form supplies its own Cancel (chat platforms,
-// which DO need a per-question Cancel, take a separate sequential path via
-// question.Choices). An option-less question yields empty Choices (typed-only).
+// fields — raw text, optional header, per-option label+description, and the
+// question's quiz data verbatim (#1316: the app frame carries the answer the
+// form hides until the user reveals it) — rather than pre-rendered markdown.
+// Option buttons get "qa:<index>" data and NO Cancel button: the app's
+// full-screen ask form supplies its own Cancel (chat platforms, which DO need a
+// per-question Cancel, take a separate sequential path via question.Choices).
+// An option-less question yields empty Choices (typed-only).
 func batchQuestionsFor(qs []question.Question) []platform.BatchQuestion {
 	questions := make([]platform.BatchQuestion, len(qs))
 	for i := range qs {
@@ -92,9 +95,25 @@ func batchQuestionsFor(qs []question.Question) []platform.BatchQuestion {
 			Text:    q.Question,
 			Header:  q.Header,
 			Choices: buttons,
+			Quiz:    q.Quiz,
 		}
 	}
 	return questions
+}
+
+// newAskRevealFn builds the ask layer's quiz-reveal hook (#1316): after the
+// user answers a quiz question on the SEQUENTIAL (chat) path, it posts the
+// reveal — the correct option(s)/model answer and explanation the prompt
+// withheld — to the asking session's chat via route.NotifySessionChat (the
+// SessionNotifier path lands it in the asking user's chat on Telegram/Discord,
+// #2275; the app's own notification surface otherwise). The text must be PLAIN
+// TEXT (it is question.FormatReveal output): Telegram's notification path sends
+// without a parse mode, so a markdown marker would render literally (round-3
+// finding F1).
+func newAskRevealFn(agentID string, connMgr platform.ConnectionManager) tools.AskRevealFn {
+	return func(sessionKey, text string) {
+		route.NotifySessionChat(connMgr, agentID, sessionKey, text)
+	}
 }
 
 // newAskRestoreBatchFn builds the BATCHED restore hook: after a restart it

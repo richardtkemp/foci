@@ -132,11 +132,22 @@ type AskRestoreFn func(sessionKey, msgID, platformMsgID string, choices []questi
 type AskRestoreBatchFn func(sessionKey, promptID string, questionCount int, onResponse func(answers []string))
 
 // AskRemoveFn deletes an ask's on-screen prompt outright — no "expired" edit, no
-// resolved marker — on transports that support it (the native app); a no-op
+// resolved marker — on transports that support it (the native app); a no-op,
 // elsewhere. Used when an ask dies unanswered with nothing else to clear its
 // prompt: dropped as stale on restart (#2080/#1868 ruling 2: an expired question
 // disappears). msgID is the prompt's routing id (questionMsgID).
 type AskRemoveFn func(sessionKey, msgID string)
+
+// AskRevealFn posts ONE plain-text message to the user's chat for sessionKey —
+// a quiz reveal: the correct answer and explanation the prompt withheld until
+// the user answered (#1316). Fired by the ask layer only on the SEQUENTIAL
+// (chat) answer path; the batched app path never calls it (the app's form
+// carries the quiz data in its frame and reveals locally). Like AskCloseFn it
+// may block briefly on the platform send, so the ask layer fires it outside
+// its lock. The text is question.FormatReveal output and must be sent as-is:
+// chat notification paths deliver plain text without a parse mode (round-3
+// finding F1).
+type AskRevealFn func(sessionKey, text string)
 
 // pendingAsk is one in-flight ask: a sequential accumulator plus the context
 // needed to present follow-up questions and deliver the final answers.
@@ -195,6 +206,7 @@ type askState struct {
 	restore      AskRestoreFn
 	restoreBatch AskRestoreBatchFn // app-only batched re-registration on restart; nil = sequential restore only
 	remove       AskRemoveFn       // deletes a dead ask's prompt from the app; nil = leave it
+	reveal       AskRevealFn       // posts a quiz question's post-answer reveal to the user's chat (#1316); nil = no reveals
 	deliver      AskDeliverFn
 	closeMsg     AskCloseFn
 	store        *session.SessionIndex // nil = no persistence
@@ -308,6 +320,16 @@ func WithBatchRestore(fn AskRestoreBatchFn) AskOption {
 // from the app instead of lingering answerable-looking (#2080). Nil-safe.
 func WithRemove(fn AskRemoveFn) AskOption {
 	return func(s *askState) { s.remove = fn }
+}
+
+// WithReveal wires the quiz-reveal hook (#1316): after the user answers a quiz
+// question on the sequential (chat) path, the ask layer posts ONE plain-text
+// reveal — the correct option(s)/model answer and the explanation the prompt
+// withheld — to the user's chat via fn. The batched app path never reveals
+// server-side (its frame already carries the quiz data; the client reveals).
+// Nil-safe (no reveals without it).
+func WithReveal(fn AskRevealFn) AskOption {
+	return func(s *askState) { s.reveal = fn }
 }
 
 // askMetaKey is the agent_metadata key under which pending asks are persisted.
@@ -594,6 +616,17 @@ func (a *askState) handleResponse(requestID, data string) {
 	// option buttons, so this is what makes a typed-answered question "close".
 	if a.closeMsg != nil {
 		a.closeMsg(questionMsgID(p.requestID, answeredIdx), "✅ "+answerEcho(answer))
+	}
+
+	// Quiz reveal (#1316): the sequential prompt withheld the answer, so post
+	// it to the user's chat now — exactly once per answered quiz question,
+	// after the answered question closes and BEFORE the next one is presented
+	// (the user reads answer → reveal → next question). Sequential path only:
+	// the batched app form carries the quiz data and reveals locally, and
+	// cancel/expiry returned above without recording an answer. Like closeMsg,
+	// fired outside a.mu because the hook reaches into the platform layer.
+	if q.Quiz != nil && a.reveal != nil {
+		a.reveal(p.sessionKey, question.FormatReveal(q, answer))
 	}
 
 	if !done {
@@ -1224,8 +1257,9 @@ func formatPartialBatch(qs []question.Question, answers map[string]string, answe
 }
 
 // writeAnswerBody appends the human-readable "• header → answer" lines and the
-// compact JSON payload (answers + optional answers_by_id) to b. Shared by the
-// full and partial batch formatters so their body shape can't drift.
+// compact JSON payload (answers + optional answers_by_id, quiz_results) to b.
+// Shared by the full and partial batch formatters so their body shape can't
+// drift.
 func writeAnswerBody(b *strings.Builder, qs []question.Question, answers map[string]string) {
 	for _, q := range qs {
 		ans := answers[q.Question]
@@ -1233,16 +1267,54 @@ func writeAnswerBody(b *strings.Builder, qs []question.Question, answers map[str
 		if label == "" {
 			label = q.Question
 		}
-		fmt.Fprintf(b, "\n• %s → %s", label, ans)
+		// Quiz option questions carry the verdict inline (#1316), so a plain
+		// multiple-choice drill needs no grader run to interpret.
+		verdict := ""
+		if correct, ok := question.QuizVerdict(&q, ans); ok {
+			if correct {
+				verdict = " ✅"
+			} else {
+				verdict = " ❌"
+			}
+		}
+		fmt.Fprintf(b, "\n• %s → %s%s", label, ans, verdict)
 	}
 	payload := map[string]any{"answers": answers}
 	if byID := answersByID(qs, answers); len(byID) > 0 {
 		payload["answers_by_id"] = byID
 	}
+	// Quiz verdicts (#1316): per quiz OPTION question, whether the user chose
+	// a correct option — keyed by question text (and by id when the question
+	// carried one), mirroring answers/answers_by_id. Free-recall quiz questions
+	// get no verdict (the agent judges the text), and the keys are omitted
+	// entirely when no verdict exists, so non-quiz batches are unchanged.
+	if results := quizVerdicts(qs, answers, func(q *question.Question) string { return q.Question }); len(results) > 0 {
+		payload["quiz_results"] = results
+	}
+	if byID := quizVerdicts(qs, answers, func(q *question.Question) string { return q.ID }); len(byID) > 0 {
+		payload["quiz_results_by_id"] = byID
+	}
 	if js, err := json.Marshal(payload); err == nil {
 		b.WriteString("\n\n")
 		b.Write(js)
 	}
+}
+
+// quizVerdicts maps each verdict-carrying quiz option question to whether the
+// user answered it correctly (#1316), keyed by key(q) — question text for
+// "quiz_results", opaque id for "quiz_results_by_id". nil when nothing has a
+// mechanical verdict (non-quiz and free-recall questions never do).
+func quizVerdicts(qs []question.Question, answers map[string]string, key func(q *question.Question) string) map[string]bool {
+	var out map[string]bool
+	for _, q := range qs {
+		if correct, ok := question.QuizVerdict(&q, answers[q.Question]); ok {
+			if out == nil {
+				out = make(map[string]bool)
+			}
+			out[key(&q)] = correct
+		}
+	}
+	return out
 }
 
 // answersByID maps each question's optional opaque ID to its answer, including
@@ -1439,7 +1511,7 @@ func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn
 		Name:        "ask",
 		ExecExport:  true,
 		Positional:  []string{"questions"},
-		Description: "Ask the user one or more questions with selectable options, and receive their answers. Mirrors the built-in AskUserQuestion but with NO limit on the number of questions or options. Options are OPTIONAL per question: omit them for an open-ended, typed-answer-only prompt (presented with just a Cancel button; the user types their reply). ASYNC: this call returns immediately after posting the first question — it does NOT block waiting for an answer. End your turn after calling it; the user's answers arrive later as a new message. Input is JSON only: pass {\"questions\":[...]} as a positional arg, via --json, or piped on stdin.",
+		Description: "Ask the user one or more questions with selectable options, and receive their answers. Mirrors the built-in AskUserQuestion but with NO limit on the number of questions or options. Options are OPTIONAL per question: omit them for an open-ended, typed-answer-only prompt (presented with just a Cancel button; the user types their reply). ASYNC: this call returns immediately after posting the first question — it does NOT block waiting for an answer. End your turn after calling it; the user's answers arrive later as a new message. QUIZ MODE: mark any question with \"quiz\" (\"correct\": 0-based option indexes, or \"answer\": a model answer for a question with no options; optional \"explanation\") and the user's client HIDES the answer until they reveal it — do NOT put the answer in the question text. The delivered answer batch then carries \"quiz_results\" (question text → true/false) for quiz OPTION questions, so plain multiple choice needs no grader; free-recall answers carry no verdict and are yours to judge. Input is JSON only: pass {\"questions\":[...]} as a positional arg, via --json, or piped on stdin.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -1463,6 +1535,15 @@ func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn
 										"description": {"type": "string", "description": "Optional longer explanation shown in the question body"}
 									},
 									"required": ["label"]
+								}
+							},
+							"quiz": {
+								"type": "object",
+								"description": "Mark this question as a QUIZ question with a known answer the user's client hides until they reveal it (#1316). NEVER put the answer in the question text itself. A quiz question needs \"correct\" (option questions) or \"answer\" (free recall); mixing the two is rejected, as is an out-of-range index. Output: quiz option questions come back with a per-question true/false verdict in \"quiz_results\" (and \"quiz_results_by_id\" when ids are set); free-recall answers carry no verdict. If a grader is configured, each question object in its stdin payload also carries this quiz data.",
+								"properties": {
+									"correct": {"type": "array", "items": {"type": "integer"}, "description": "0-BASED indexes into THIS question's options array (the array you wrote; NOT the 1-based numbers shown to the user — correct:[1] means the 2nd option)."},
+									"answer": {"type": "string", "description": "A model answer, ONLY for a free-recall question (no options)."},
+									"explanation": {"type": "string", "description": "Optional, shown when the user reveals the answer."}
 								}
 							}
 						},
@@ -1491,6 +1572,12 @@ func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn
 			for i, q := range in.Questions {
 				if q.Question == "" {
 					return ToolResult{}, fmt.Errorf("ask: question %d has an empty %q field", i+1, "question")
+				}
+				// Quiz data is validated up front (same style as the empty-question
+				// check) so a bad quiz input is rejected at call time — the ask is
+				// never presented with a question whose reveal cannot render.
+				if err := question.ValidateQuiz(&q); err != nil {
+					return ToolResult{}, fmt.Errorf("ask: question %d (%q): %v", i+1, q.Question, err)
 				}
 				// A question with no options is allowed: it is presented with only a
 				// Cancel button and answered by typing (the typed-answer path resolves

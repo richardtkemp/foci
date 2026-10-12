@@ -1410,6 +1410,56 @@ func TestInteractive_BatchRoundTrip(t *testing.T) {
 	}
 }
 
+// TestInteractive_BatchFrameCarriesQuiz: a quiz question's data (#1316) rides
+// the batched frame — correct (0-based), model answer and explanation — so the
+// client can hide and reveal locally, while a NON-quiz question's frame omits
+// the quiz key entirely (byte-compatible with pre-#1316 clients). Guard test
+// (passes as soon as it compiles); mutation arm: drop the Quiz mapping in
+// SendInteractiveBatch (or in batchQuestionsFor) and both halves go red.
+func TestInteractive_BatchFrameCarriesQuiz(t *testing.T) {
+	_, c, b, conn := boundConn(t)
+	c.features = map[string]struct{}{featureInteractiveBatch: {}}
+	b.attach(c)
+
+	quiz := &question.Quiz{Correct: []int{1}, Explanation: "XPLAN-9-reveal-only"}
+	batched, err := conn.SendInteractiveBatch("req-q",
+		[]platform.BatchQuestion{
+			{
+				Text:    "Capital?",
+				Choices: []platform.ButtonChoice{{Label: "Bergen", Data: "qa:0"}, {Label: "Oslo", Data: "qa:1"}},
+				Quiz:    quiz,
+			},
+			{Text: "Free recall?", Quiz: &question.Quiz{ModelAnswer: "M0DEL-ANSWER"}},
+			{Text: "Plain?"},
+		},
+		func(answers []string) {})
+	if err != nil || !batched {
+		t.Fatalf("SendInteractiveBatch: batched=%v err=%v; want true,nil", batched, err)
+	}
+	ds := drain(t, c)
+	if len(ds) != 1 || ds[0].t != fap.TypeInteractive {
+		t.Fatalf("present frames = %v, want [interactive]", types(ds))
+	}
+	questions, ok := ds[0].d["questions"].([]any)
+	if !ok || len(questions) != 3 {
+		t.Fatalf("frame questions = %v, want 3", ds[0].d["questions"])
+	}
+	q0 := questions[0].(map[string]any)["quiz"].(map[string]any)
+	if correct, _ := q0["correct"].([]any); len(correct) != 1 || correct[0] != float64(1) {
+		t.Errorf("quiz.correct = %v, want [1] (0-based)", q0["correct"])
+	}
+	if q0["explanation"] != "XPLAN-9-reveal-only" {
+		t.Errorf("quiz.explanation = %v", q0["explanation"])
+	}
+	q1 := questions[1].(map[string]any)["quiz"].(map[string]any)
+	if q1["answer"] != "M0DEL-ANSWER" {
+		t.Errorf("quiz.answer = %v", q1["answer"])
+	}
+	if _, has := questions[2].(map[string]any)["quiz"]; has {
+		t.Errorf("non-quiz question's frame must omit the quiz key: %v", questions[2])
+	}
+}
+
 // TestInteractive_BatchProgressSyncAndStreamedResolve: answers streamed one at a
 // time via InteractiveProgress are mirrored to attached clients and accumulated
 // server-side, so the completion frame can carry NO answers and still resolve

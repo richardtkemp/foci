@@ -61,3 +61,33 @@ func TestBatchQuestionsFor(t *testing.T) {
 		t.Errorf("q1 has %d choices, want 0 (typed-only, no Cancel)", len(q1.Choices))
 	}
 }
+
+// TestBatchQuestionsFor_QuizMapping pins #1316's app-frame mapping: a question's
+// quiz data crosses to the batched payload verbatim (same pointer — the wire
+// layer owns the fap mirror), and a non-quiz question maps nil so its frame
+// omits the key. Mutation arm: drop the Quiz field from the mapping and the
+// non-nil/nil assertions go red.
+func TestBatchQuestionsFor_QuizMapping(t *testing.T) {
+	optionQuiz := &question.Quiz{Correct: []int{1}, Explanation: "Oslo since 1299."}
+	freeQuiz := &question.Quiz{ModelAnswer: "σκύλος"}
+	qs := []question.Question{
+		{
+			Question: "Capital?",
+			Options:  []question.Option{{Label: "Bergen"}, {Label: "Oslo"}},
+			Quiz:     optionQuiz,
+		},
+		{Question: "Translate dog.", Quiz: freeQuiz},
+		{Question: "Plain?"},
+	}
+
+	got := batchQuestionsFor(qs)
+	if got[0].Quiz != optionQuiz {
+		t.Errorf("q0.Quiz = %+v, want the question's quiz data carried verbatim", got[0].Quiz)
+	}
+	if got[1].Quiz != freeQuiz {
+		t.Errorf("q1.Quiz = %+v, want the free-recall quiz data carried verbatim", got[1].Quiz)
+	}
+	if got[2].Quiz != nil {
+		t.Errorf("q2.Quiz = %+v, want nil for a non-quiz question", got[2].Quiz)
+	}
+}

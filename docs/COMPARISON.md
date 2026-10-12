@@ -57,7 +57,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), [Nanobot](https://github
 | [Tool piping](TOOLS.md#tool-piping-exec-bridge) | ✅ tools ↔ shell ↔ each other | ❌ | ❌ | ❌ |
 | Loop detection | ✅ configurable threshold | ✅ pattern-based detectors | ❌ | ❌ |
 | Mid-turn behavioral nudges | ✅ LLM-extracted from character files, 5 trigger types, frequency guardrails | ❌ | ❌ | ✅ budget/memory nudges |
-| Interactive human-in-the-loop | ✅ `foci_ask` (async, button-based, restart-persistent) + [askgw](ASKGW.md) for external apps | ❌ permission prompts only | ❌ | ❌ permission prompts only |
+| Interactive human-in-the-loop | ✅ `foci_ask` (async, button-based, restart-persistent, quiz mode with hidden answers and reveal) + [askgw](ASKGW.md) for external apps | ❌ permission prompts only | ❌ | ❌ permission prompts only |
 
 ## Prompt Caching
 
