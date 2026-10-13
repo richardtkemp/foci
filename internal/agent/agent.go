@@ -214,6 +214,7 @@ type Agent struct {
 	inboxes               map[string]*sessionInbox                                          // per-session inbox registry, lazy-created
 	inboxesMu             sync.Mutex                                                        // protects inboxes map + StartInbox idempotency
 	inboxStarted          bool                                                              // true once StartInbox has been called
+	reloginDrainOnce      sync.Once                                                         // registers DrainReloginDeferred with relogin.G once, on the first paused injection (#2384)
 	inboxCtx              context.Context                                                   //nolint:containedctx // parent ctx for session worker goroutines
 	inboxSteerMode        bool                                                              // urgent-steer dispatch enabled
 	inboxBackend          func(ctx context.Context, sk string) (delegator.Delegator, error) // test seam; nil = use DelegatedManager

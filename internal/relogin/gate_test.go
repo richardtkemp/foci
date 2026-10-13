@@ -102,3 +102,45 @@ func TestGateReleased(t *testing.T) {
 	}
 	g.Release() // idempotent: must not double-close
 }
+
+// TestGatePending (#2384): the pending state outlives a failed attempt and
+// ends only on Complete, or ClearPendingIf for the attempt that is still current.
+func TestGatePending(t *testing.T) {
+	g := &Gate{}
+	var completed int
+	g.OnComplete(func() { completed++ })
+	if g.Pending() {
+		t.Fatal("fresh gate should not be pending")
+	}
+	g.Start()
+	g.Release() // aborted attempt
+	if !g.Pending() {
+		t.Fatal("a failed attempt must leave the login pending")
+	}
+	attempt, pending := g.PendingAttempt()
+	if !pending {
+		t.Fatal("PendingAttempt should report pending")
+	}
+	g.Start() // a new attempt began after the read
+	if g.ClearPendingIf(attempt) {
+		t.Fatal("ClearPendingIf must not clear while an attempt is running")
+	}
+	g.Release()
+	if g.ClearPendingIf(attempt) {
+		t.Fatal("ClearPendingIf must not clear for a stale attempt number")
+	}
+	attempt, _ = g.PendingAttempt()
+	if !g.ClearPendingIf(attempt) || g.Pending() {
+		t.Fatal("ClearPendingIf should clear for the current attempt with none running")
+	}
+	if completed != 1 {
+		t.Fatalf("OnComplete ran %d times, want 1", completed)
+	}
+	g.Start()
+	g.Complete()
+	g.Complete() // second call is a no-op
+	g.Release()
+	if g.Pending() || completed != 2 {
+		t.Fatalf("after Complete: pending=%v completed=%d, want false,2", g.Pending(), completed)
+	}
+}

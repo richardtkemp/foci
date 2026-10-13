@@ -104,6 +104,9 @@ func TestRunHappyPath(t *testing.T) {
 	if g.Active() {
 		t.Error("gate should be released after a completed login")
 	}
+	if g.Pending() {
+		t.Error("a completed login must end the pending state (#2384)")
+	}
 
 	lines := fp.sentLines()
 	if len(lines) < 2 || lines[0] != "/login" || lines[len(lines)-1] != "logincode" {
@@ -138,6 +141,9 @@ func TestRunCodeTimeoutReleasesGate(t *testing.T) {
 	cfg.CodeTimeout = 20 * time.Millisecond // never submit a code
 
 	Run(context.Background(), cfg)
+	if !g.Pending() {
+		t.Error("a timed-out attempt must leave the login pending (#2384)")
+	}
 
 	if g.Active() {
 		t.Error("gate must be released even when the login times out")

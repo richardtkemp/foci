@@ -207,7 +207,9 @@ func Run(ctx context.Context, c Config) {
 		return
 	}
 
-	// Steps 9–11: pane killed by defer, gate released by defer.
+	// Steps 9–11: pane killed by defer, gate released by defer. Complete ends
+	// the pending state so paused injections resume (#2384).
+	g.Complete()
 	notify("✅ Login completed.")
 	log.NewComponentLogger(comp).Infof("re-login completed for agent %s", c.AgentID)
 }
@@ -233,7 +235,9 @@ func (c *Config) waitFor(ctx context.Context, pn pane, anchor string) (string, b
 			}
 		}
 		if time.Now().After(deadline) {
-			log.NewComponentLogger(comp).Warnf("gave up waiting for %q after %s (%d capture errors)", anchor, time.Since(start).Round(time.Second), captureErrs)
+			// INFO, not WARN (#2384): the caller decides whether this is a
+			// failure and logs that, with the screen dump, at WARN/ERROR.
+			log.NewComponentLogger(comp).Infof("gave up waiting for %q after %s (%d capture errors)", anchor, time.Since(start).Round(time.Second), captureErrs)
 			return last, false
 		}
 		c.sleep(c.PollInterval)

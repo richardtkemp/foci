@@ -476,9 +476,12 @@ func (a *Agent) Enqueue(env Envelope) bool {
 	// releases (#1932 — this used to drop, after the front end had already
 	// shown the message as sent). Mid-turn routing (steer, plan-cancel, ask
 	// capture) is skipped: the backend it would write to cannot authenticate.
+	// Only a user message can be the code (#2384): an injection (HTTP /send,
+	// proactive warning) has no Text, and capturing one submitted an empty
+	// code and failed the attempt.
 	reloginHold := false
 	if a.DelegatedManager != nil && relogin.G.Active() {
-		if relogin.G.ShouldCapture(a.AgentID) {
+		if env.Inject == nil && strings.TrimSpace(env.Text) != "" && relogin.G.ShouldCapture(a.AgentID) {
 			relogin.G.SubmitCode(env.Text)
 			a.logger().Infof("inbox: captured CC login code sk=%s", env.SessionKey)
 			return true
@@ -827,6 +830,35 @@ func (a *Agent) reloginHoldClosed() bool {
 	return a.DelegatedManager != nil && relogin.G.Active()
 }
 
+// reloginPendingAttempt reports, for a delegated agent, the current re-login
+// attempt number and whether a login is pending (#2384). API agents: false.
+func (a *Agent) reloginPendingAttempt() (uint64, bool) {
+	if a.DelegatedManager == nil {
+		return 0, false
+	}
+	return relogin.G.PendingAttempt()
+}
+
+// reloginHeldBy is the deferredInject.heldBy tag for an injection paused while
+// a CC login is pending (#2384). A NUL prefix keeps it apart from any ask
+// requestID.
+const reloginHeldBy = "\x00relogin"
+
+// DrainReloginDeferred re-enqueues every injection paused while a CC login was
+// pending, on all of this agent's sessions (#2384). Registered with
+// relogin.G.OnComplete for each delegated agent.
+func (a *Agent) DrainReloginDeferred() {
+	a.inboxesMu.Lock()
+	keys := make([]string, 0, len(a.inboxes))
+	for sk := range a.inboxes {
+		keys = append(keys, sk)
+	}
+	a.inboxesMu.Unlock()
+	for _, sk := range keys {
+		a.DrainDeferredInjects(sk, reloginHeldBy)
+	}
+}
+
 // waitReloginGate blocks while a CC re-login is in progress for a delegated
 // agent (#843/#1932). The shared OAuth credential is dead until it completes,
 // so dispatching now would only 401 again; the envelope is held instead and
@@ -979,9 +1011,16 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 				a.runInject(inb, env)
 				continue
 			}
+			// A login is owed (#2384): if this user turn ends with no new
+			// attempt started, the credential works again, so the pending
+			// state ends and paused injections resume.
+			attempt, loginPending := a.reloginPendingAttempt()
 			held, ok := a.runUserBatch(ctx, inb, env)
 			if !ok {
 				return
+			}
+			if loginPending {
+				relogin.G.ClearPendingIf(attempt)
 			}
 			// The just-finished platform turn may have spawned background work
 			// (a subagent / run_in_background Bash) whose autonomous run now owns
@@ -1358,6 +1397,24 @@ func (a *Agent) runInject(inb *sessionInbox, env Envelope) {
 		a.logger().Infof("inbox: injection not run sk=%s trigger=%s: shutting down", inb.sk, env.Inject.Trigger)
 		if env.Inject.Refused != nil {
 			env.Inject.Refused()
+		}
+		return
+	}
+	// CC login pending (#2384): the attempt has ended (the worker waited out
+	// the active gate before getting here) but failed, so the credential is
+	// still dead. Running this would 401 and start another attempt with a new
+	// sign-in link. Every injection is paused, control ones included (they
+	// drive the same backend); DrainReloginDeferred resumes them.
+	if a.DelegatedManager != nil && relogin.G.Pending() {
+		a.reloginDrainOnce.Do(func() { relogin.G.OnComplete(a.DrainReloginDeferred) })
+		inb.injMu.Lock()
+		inb.deferredInjects = append(inb.deferredInjects, deferredInject{env: env, heldBy: reloginHeldBy})
+		inb.injMu.Unlock()
+		a.logger().Infof("inbox: paused injection sk=%s trigger=%s: CC login pending", inb.sk, env.Inject.Trigger)
+		// The login may have completed between the check and the append,
+		// after its drain ran: release it now rather than strand it.
+		if !relogin.G.Pending() {
+			a.DrainDeferredInjects(inb.sk, reloginHeldBy)
 		}
 		return
 	}
