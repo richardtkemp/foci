@@ -258,6 +258,53 @@ func TestTodoShellEditPositionalUnchanged(t *testing.T) {
 	}
 }
 
+// TestTodoShellFlagOnlyActionsRefusePositional closes the #2306 review's
+// blocking finding: list and list-all take no positional argument at all,
+// but the positional dispatch had no arm for them, so `foci_todo list 3`
+// silently sent {"action":"list"} and returned 0 — the word vanished, the
+// #1778 silently-dropped-input class. They now refuse the word, naming the
+// action and the value, before any foci-call. The refusal must not
+// over-fire (bare and flag-only list forms keep sending exactly today's
+// payload), and an empty action keeps today's ending: its words are
+// dropped, but the call still fails on the master usage line — there is no
+// action to name in a refusal.
+func TestTodoShellFlagOnlyActionsRefusePositional(t *testing.T) {
+	t.Parallel()
+	body := todoIDShellBody(t)
+	for _, c := range []struct{ cmd, wantErr, wantUsage string }{
+		{`foci_todo list 3`,
+			"error: foci_todo list takes no positional argument, got '3'",
+			"usage: foci_todo list [--tag T]"},
+		{`foci_todo list open`,
+			"error: foci_todo list takes no positional argument, got 'open'",
+			"usage: foci_todo list [--tag T]"},
+		{`foci_todo list-all foo`,
+			"error: foci_todo list-all takes no positional argument, got 'foo'",
+			"usage: foci_todo list-all [--tag T]"},
+	} {
+		assertTodoIDRefusal(t, body, c.cmd, c.wantErr, c.wantUsage)
+	}
+	for _, c := range []struct{ cmd, wantReq string }{
+		{`foci_todo list`, `{"tool":"todo","params":{"action":"list"}}`},
+		{`foci_todo list --tag x`, `{"tool":"todo","params":{"action":"list","tag":"x"}}`},
+		{`foci_todo list-all --tag x`, `{"tool":"todo","params":{"action":"list","status":"all","tag":"x"}}`},
+	} {
+		if got := todoShellSingleCall(t, body, c.cmd); got != c.wantReq {
+			t.Errorf("%s: request = %s, want exactly %s", c.cmd, got, c.wantReq)
+		}
+	}
+	calls, rc, out := runCountingShellFunc(t, body, `foci_todo '' foo`, 0)
+	if rc != 1 || calls != 0 {
+		t.Errorf("foci_todo '' foo: rc=%d calls=%d, want rc 1 and 0 foci-calls\nout=%s", rc, calls, out)
+	}
+	if !strings.Contains(out, "usage: foci_todo <add|list|list-all|search|get|complete|drop|reopen|start|edit|remove> [args...]") {
+		t.Errorf("foci_todo '' foo: an empty action must keep the master usage error\nout=%s", out)
+	}
+	if strings.Contains(out, "takes no positional") {
+		t.Errorf("foci_todo '' foo: no action to name — the refusal must not fire\nout=%s", out)
+	}
+}
+
 // collatingUTF8Locale returns an installed UTF-8 locale under which bash
 // folds a non-ASCII digit into a [0-9] glob range (glibc's en_*.UTF-8 do;
 // C and C.UTF-8 do not), or "" when none is installed. That is the

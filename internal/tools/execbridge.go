@@ -1161,6 +1161,20 @@ func generateShellFunc(t *Tool) string {
               ''|*[!0-9]*) text="$text $1" ;;
               *) if [ -z "$id" ]; then id="$1"; else text="$text $1"; fi ;;
             esac ;;
+          *)
+            # Every other action takes NO positional argument — list and
+            # list-all today, and any action added without an arm above.
+            # The word used to be silently dropped: 'foci_todo list 3'
+            # sent {"action":"list"} and returned 0, the same
+            # silently-misread-positional class the id checks above close
+            # (#1778: input is never dropped without a word). An empty
+            # action falls through untouched — its call already fails on
+            # the master usage line in the dispatch below.
+            if [ -n "$action" ]; then
+              echo "error: foci_todo $action takes no positional argument, got '$1'" >&2
+              echo "usage: foci_todo $action_usage" >&2
+              return 1
+            fi ;;
         esac
         shift ;;
     esac
