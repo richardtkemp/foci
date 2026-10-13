@@ -407,14 +407,20 @@ func TestAsk_QuizPromptNoLeak(t *testing.T) {
 
 // TestAsk_DescriptionDocumentsQuizOutput pins that the tool's self-description
 // (what agents actually see) documents the quiz input and the quiz_results
-// output, including the 0-based correct indexing (review note: the footgun
-// must be stated in the schema itself).
+// output in the DESCRIPTION itself — the first thing an agent reads, which a
+// schema-only mention would leave out — and that the parameter schema restates
+// the quiz contract, including the 0-based correct indexing (review note: the
+// footgun must be stated in the schema itself).
 func TestAsk_DescriptionDocumentsQuizOutput(t *testing.T) {
 	t.Parallel()
 	tool, _, _, _ := newAskFixture()
-	schema := tool.Description + " " + string(tool.Parameters)
+	for _, want := range []string{"QUIZ MODE", "quiz_results", "reveal", "do NOT put the answer in the question text", "free-recall"} {
+		if !strings.Contains(tool.Description, want) {
+			t.Errorf("tool description missing %q", want)
+		}
+	}
 	for _, want := range []string{"quiz", "quiz_results", "0-BASED", "reveal", "quiz_results_by_id", "free-recall"} {
-		if !strings.Contains(schema, want) {
+		if !strings.Contains(string(tool.Parameters), want) {
 			t.Errorf("tool schema missing %q", want)
 		}
 	}
