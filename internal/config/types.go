@@ -308,7 +308,7 @@ type BackendConfig struct {
 	ServerAuth        *string           `toml:"server_auth"        desc:"HTTP basic auth password for the opencode server (empty = no auth)"`
 	LogLevel          *string           `toml:"log_level"          desc:"opencode serve --log-level (empty = INFO)"`
 	Port              *int              `toml:"port"               desc:"TCP port for the opencode serve subprocess (0 = auto-pick)"`
-	DefaultPermission *string           `toml:"default_permission" desc:"opencode permission mode: ask, allow, or deny (default ask)"`
+	DefaultPermission *string           `toml:"default_permission" desc:"opencode permission mode applied at Start to the session's own ruleset: ask, allow, or deny"`
 }
 
 // ToMap converts the struct to the map[string]any shape the delegator

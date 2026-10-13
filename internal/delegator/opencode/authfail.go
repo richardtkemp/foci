@@ -30,8 +30,8 @@ import (
 // authCheckingTransport wraps an http.RoundTripper to detect 401
 // responses and fire fanOutAuthFailure. Installed on every Server's
 // HTTP client in newServer so all outbound requests are covered —
-// POST /prompt_async, PATCH /config, POST /permissions, DELETE /session,
-// etc. — without per-method checkHTTP401 calls.
+// POST /prompt_async, PATCH /session/:id, POST /permissions,
+// DELETE /session, etc. — without per-method checkHTTP401 calls.
 type authCheckingTransport struct {
 	base  http.RoundTripper
 	on401 func(url string)

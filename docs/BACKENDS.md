@@ -457,8 +457,11 @@ Notes:
 13. `command_approval_allowlist`, partial on codex: it auto-approves command approvals only (`cx/permissions.go:tryAutoApprove`, called from
     `onCommandApproval`). File-change approvals always prompt, and `item/permissions/requestApproval`
     is always declined (`onPermissionApproval`).
-14. `--allowedTools` is a Claude Code launch flag. opencode's analogue is
-    `default_permission` + PATCH `/config`; codex's would be the sandbox/approval policy.
+14. `--allowedTools` is a Claude Code launch flag. opencode's analogue is `default_permission`,
+    applied to each session's own permission ruleset via PATCH `/session/:id` (enforced and
+    session-scoped; subagent (task tool) child sessions evaluate asks against the task agent's
+    rules merged with the parent session's — opencode 1.17.15 source-read, not live-verified,
+    no workaround built); codex's would be the sandbox/approval policy.
 15. ccstream passes `--dangerously-skip-permissions` and denies anything CC still asks
     (`cc/permissions.go:denyUnattended`, #2096). opencode has no launch flag and shares one
     server across the agent's sessions, so `surfacePermission` answers each ask of a
@@ -593,7 +596,7 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - `command_approval_allowlist`: `cc/autoapprove.go:autoApprovePermission` | `oc/permissions.go:checkAutoApprove` | `cx/permissions.go:tryAutoApprove`
 - P4: `cc/lifecycle.go:Start` (`--allowedTools` from `cfg["allowed_tools"]`) | n/a | n/a
 - P5: `cc/lifecycle.go:Start` (`--dangerously-skip-permissions`), `cc/permissions.go:denyUnattended` | `oc/backend_lifecycle.go:Start` (`skipPermissions`), `oc/permissions.go:answerUnattended` | ✗ grep `SkipPermissions|skip_permissions|dangerously`
-- `control_permission_mode`: `cc/control.go:SendControl` (`set_permission_mode`) | `oc/control.go:SendControl` (`patchConfig`, `mapPermissionMode`) | `cx/control.go:SendControl`, `codexApprovalPolicy`
+- `control_permission_mode`: `cc/control.go:SendControl` (`set_permission_mode`) | `oc/control.go:SendControl` (`applySessionPermission`, `mapPermissionMode`) | `cx/control.go:SendControl`, `codexApprovalPolicy`
 - P7: `cc/callbacks.go:RegisterPromptCancelListener` + `dg/outstanding.go` | `oc/opencode.go:RegisterPromptCancelListener`, `oc/permissions.go:onPermissionReplied` | ✗ `cx/callbacks.go` TODO
 - P8: `cc/callbacks.go:SetOnPromptsCleared` | `oc/opencode.go:SetOnPromptsCleared` | `cx/permissions.go:respondApproval`, `cx/handlers.go:onServerRequestResolved`
 - P9: `cc/permissions.go:formatEditDiff`, `planAttachmentPath` | ✗ `oc/permissions.go:surfacePermission` sends title only (grep `diff`) | `cx/permissions.go:lookupItemDetail`

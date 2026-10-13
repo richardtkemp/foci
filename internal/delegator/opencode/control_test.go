@@ -3,9 +3,13 @@ package opencode
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -17,31 +21,47 @@ import (
 // Test infrastructure
 // ---------------------------------------------------------------------------
 
-// newControlTestBackend returns a Backend wired to an httptest server
-// that records PATCH /config and POST /abort requests.
+// newControlTestBackend returns a Backend (session "sess-ctrl") wired to
+// a fresh recorded test server.
 func newControlTestBackend(t *testing.T) (*Backend, *controlRecorder) {
 	t.Helper()
-	rec := &controlRecorder{}
-	hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		rec.mu.Lock()
-		rec.requests = append(rec.requests, controlRequest{
-			Method: r.Method,
-			Path:   r.URL.Path,
-			Body:   body,
-		})
-		rec.mu.Unlock()
-		w.WriteHeader(http.StatusOK)
-	}))
+	hs, rec := newControlTestServer(t)
+	return newControlTestBackendForSession(t, hs, "sess-ctrl"), rec
+}
+
+// newControlTestServer starts ONE httptest server recording every
+// request into a shared controlRecorder. One opencode server serves
+// every session of an agent, so tests exercising sibling Backends must
+// share a server + recorder (#2330). For PATCH /session/:id the
+// recorder mirrors opencode's session.update semantics — the body's
+// permission rules are concatenated onto the session's accumulated
+// ruleset — so evaluate resolves the accumulated state the way opencode
+// does (findLast).
+func newControlTestServer(t *testing.T) (*httptest.Server, *controlRecorder) {
+	t.Helper()
+	rec := &controlRecorder{rules: map[string][]rule{}}
+	hs := httptest.NewServer(http.HandlerFunc(rec.serveHTTP))
 	t.Cleanup(hs.Close)
-	b := &Backend{
-		server:      &Server{baseURL: hs.URL, http: hs.Client(), agentID: "ctrl-test"},
+	return hs, rec
+}
+
+// newControlTestBackendForSession returns a Backend bound to sessionID
+// on the shared test server — the state a SendControl caller is in once
+// Start has created/resumed that session.
+func newControlTestBackendForSession(t *testing.T, hs *httptest.Server, sessionID string) *Backend {
+	t.Helper()
+	return &Backend{
+		server: &Server{
+			baseURL:  hs.URL,
+			http:     hs.Client(),
+			agentID:  "ctrl-test",
+			sessions: map[string]*Backend{},
+		},
 		agentID:     "ctrl-test",
-		sessionID:   "sess-ctrl",
+		sessionID:   sessionID,
 		readyCh:     make(chan struct{}),
 		outstanding: delegator.NewOutstandingRegistry(),
 	}
-	return b, rec
 }
 
 type controlRequest struct {
@@ -50,20 +70,153 @@ type controlRequest struct {
 	Body   []byte
 }
 
+// rule is the test-side shape of one session-ruleset entry — the wire
+// form a permission apply sends.
+type rule struct {
+	Permission string `json:"permission"`
+	Pattern    string `json:"pattern"`
+	Action     string `json:"action"`
+}
+
+// controlRecorder records every request hitting its test server and
+// accumulates per-session permission rules the way opencode does
+// (concatenation — there is no rule-removal API).
 type controlRecorder struct {
 	mu       sync.Mutex
 	requests []controlRequest
+	rules    map[string][]rule
+
+	// sessionPatchStatus, when non-zero, is the response status for
+	// PATCH /session/:id (set via failSessionPatches). Guarded by mu.
+	sessionPatchStatus int
 }
 
-func (r *controlRecorder) lastConfigPatch() (controlRequest, bool) {
+// serveHTTP records the request and answers it like the opencode
+// endpoints the backend talks to.
+func (r *controlRecorder) serveHTTP(w http.ResponseWriter, req *http.Request) {
+	body, _ := io.ReadAll(req.Body)
+	path := req.URL.Path
+	isSessionPatch := req.Method == http.MethodPatch && sessionPatchTarget(path) != ""
+
+	status := http.StatusOK
+	r.mu.Lock()
+	r.requests = append(r.requests, controlRequest{Method: req.Method, Path: path, Body: body})
+	if isSessionPatch {
+		var patch struct {
+			Permission []rule `json:"permission"`
+		}
+		if err := json.Unmarshal(body, &patch); err == nil {
+			sid := sessionPatchTarget(path)
+			r.rules[sid] = append(r.rules[sid], patch.Permission...)
+		}
+		if r.sessionPatchStatus != 0 {
+			status = r.sessionPatchStatus
+		}
+	}
+	n := len(r.requests)
+	r.mu.Unlock()
+
+	if req.Method == http.MethodPost && path == "/session" {
+		// session.create → a distinct id per call.
+		_, _ = fmt.Fprintf(w, `{"id":"sess-%d"}`, n)
+		return
+	}
+	w.WriteHeader(status)
+}
+
+// sessionPatchTarget extracts the session id from a /session/:id path
+// without further segments, or "" when the path is not that shape.
+func sessionPatchTarget(path string) string {
+	rest, ok := strings.CutPrefix(path, "/session/")
+	if !ok || rest == "" || strings.Contains(rest, "/") {
+		return ""
+	}
+	return rest
+}
+
+// allRequests returns a copy of every recorded request.
+func (r *controlRecorder) allRequests() []controlRequest {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]controlRequest, len(r.requests))
+	copy(out, r.requests)
+	return out
+}
+
+// lastSessionPatch returns the last PATCH recorded against the given
+// opencode session id.
+func (r *controlRecorder) lastSessionPatch(sessionID string) (controlRequest, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for i := len(r.requests) - 1; i >= 0; i-- {
-		if r.requests[i].Method == http.MethodPatch && r.requests[i].Path == "/config" {
+		if r.requests[i].Method == http.MethodPatch && r.requests[i].Path == "/session/"+sessionID {
 			return r.requests[i], true
 		}
 	}
 	return controlRequest{}, false
+}
+
+// assertNoConfigRequests fails the test if any request of any method
+// hit /config — the server-wide permission lever that was never
+// enforced, aborted every session's turns, and wrote config.json into
+// the agent's workDir (#2330).
+func (r *controlRecorder) assertNoConfigRequests(t testing.TB) {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, req := range r.requests {
+		if req.Path == "/config" {
+			t.Errorf("recorded %s /config — permissions must be session-scoped, never server config", req.Method)
+		}
+	}
+}
+
+// seedRules pre-seeds a session's accumulated ruleset — the state a
+// resumed session can carry from applies foci made earlier.
+func (r *controlRecorder) seedRules(sessionID string, rules ...rule) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rules[sessionID] = append(r.rules[sessionID], rules...)
+}
+
+// failSessionPatches makes every PATCH /session/:id respond 500.
+func (r *controlRecorder) failSessionPatches() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sessionPatchStatus = http.StatusInternalServerError
+}
+
+// evaluate resolves a permission ask the way opencode does over the
+// accumulated rules: findLast — the LAST rule whose permission glob
+// matches the tool AND whose pattern glob matches the target wins;
+// "ask" when none matches.
+func (r *controlRecorder) evaluate(sessionID, permission, target string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	action := "ask"
+	for _, rl := range r.rules[sessionID] {
+		if globMatch(rl.Permission, permission) && globMatch(rl.Pattern, target) {
+			action = rl.Action
+		}
+	}
+	return action
+}
+
+// globMatch reports whether s matches pattern under opencode's wildcard
+// glob: "*" matches any run of characters, everything else is literal,
+// anchored at both ends.
+func globMatch(pattern, s string) bool {
+	var re strings.Builder
+	re.WriteString("^")
+	for _, c := range pattern {
+		if c == '*' {
+			re.WriteString(".*")
+		} else {
+			re.WriteString(regexp.QuoteMeta(string(c)))
+		}
+	}
+	re.WriteString("$")
+	return regexp.MustCompile(re.String()).MatchString(s)
 }
 
 func (r *controlRecorder) lastAbort() (controlRequest, bool) {
@@ -110,8 +263,12 @@ func TestSendControl_SetModel(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSendControl_SetPermissionMode(t *testing.T) {
-	// Verifies SetPermissionModeRequest translates to PATCH /config with
-	// a permission map derived from the mode.
+	// Verifies SetPermissionModeRequest translates mapPermissionMode into
+	// the SESSION-scoped ruleset opencode actually enforces: one PATCH
+	// /session/:id carrying the mode's rules, with the "*" catch-all
+	// FIRST and the specific categories after it, sorted — opencode
+	// resolves findLast, so a specific rule must follow its own
+	// catch-all. Nothing may touch /config any more (#2330).
 	b, rec := newControlTestBackend(t)
 
 	if err := b.SendControl(context.Background(), &delegator.SetPermissionModeRequest{
@@ -120,21 +277,167 @@ func TestSendControl_SetPermissionMode(t *testing.T) {
 		t.Fatalf("SendControl: %v", err)
 	}
 
-	patch, ok := rec.lastConfigPatch()
+	patch, ok := rec.lastSessionPatch("sess-ctrl")
 	if !ok {
-		t.Fatal("PATCH /config was not sent")
+		t.Fatal("PATCH /session/sess-ctrl was not sent")
 	}
 	var body struct {
-		Permission map[string]string `json:"permission"`
+		Permission []rule `json:"permission"`
 	}
 	if err := json.Unmarshal(patch.Body, &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body.Permission["edit"] != "allow" {
-		t.Errorf("permission.edit = %q, want allow", body.Permission["edit"])
+	want := []rule{
+		{Permission: "*", Pattern: "*", Action: "ask"},
+		{Permission: "bash", Pattern: "*", Action: "ask"},
+		{Permission: "edit", Pattern: "*", Action: "allow"},
 	}
-	if body.Permission["*"] != "ask" {
-		t.Errorf("permission.* = %q, want ask", body.Permission["*"])
+	if !reflect.DeepEqual(body.Permission, want) {
+		t.Errorf("permission rules = %+v, want %+v", body.Permission, want)
+	}
+	rec.assertNoConfigRequests(t)
+}
+
+func TestSendControl_SetPermissionMode_ScopedToOwnSession(t *testing.T) {
+	// One opencode server serves every session of an agent, so /mode on
+	// one Backend must send exactly one request, PATCH'd to ITS session —
+	// nothing may touch the sibling session or the server-wide /config.
+	hs, rec := newControlTestServer(t)
+	a := newControlTestBackendForSession(t, hs, "sess-a")
+	_ = newControlTestBackendForSession(t, hs, "sess-b") // the sibling sharing the server
+
+	if err := a.SendControl(context.Background(), &delegator.SetPermissionModeRequest{
+		Mode: "plan",
+	}); err != nil {
+		t.Fatalf("SendControl: %v", err)
+	}
+
+	reqs := rec.allRequests()
+	if len(reqs) != 1 {
+		t.Fatalf("got %d requests, want exactly 1: %+v", len(reqs), reqs)
+	}
+	if reqs[0].Method != http.MethodPatch || reqs[0].Path != "/session/sess-a" {
+		t.Errorf("request = %s %s, want PATCH /session/sess-a", reqs[0].Method, reqs[0].Path)
+	}
+	if _, ok := rec.lastSessionPatch("sess-b"); ok {
+		t.Error("a request touched sibling session sess-b")
+	}
+	rec.assertNoConfigRequests(t)
+}
+
+func TestSendControl_SetPermissionMode_LatestModeWins(t *testing.T) {
+	// opencode's session ruleset is append-only (findLast resolution),
+	// so "the latest mode wins" has two halves: the second apply's body
+	// is EXACTLY the new mode's rules (nothing carried over in the
+	// request), and the ACCUMULATED ruleset still evaluates to the new
+	// mode's outcome — the new batch's "*" rule shadows every rule of
+	// the earlier batch.
+	b, rec := newControlTestBackend(t)
+
+	apply := func(mode string) {
+		t.Helper()
+		if err := b.SendControl(context.Background(), &delegator.SetPermissionModeRequest{
+			Mode: mode,
+		}); err != nil {
+			t.Fatalf("SendControl(%s): %v", mode, err)
+		}
+	}
+	apply("acceptEdits")
+	apply("plan")
+
+	patch, ok := rec.lastSessionPatch("sess-ctrl")
+	if !ok {
+		t.Fatal("PATCH /session/sess-ctrl was not sent")
+	}
+	var body struct {
+		Permission []rule `json:"permission"`
+	}
+	if err := json.Unmarshal(patch.Body, &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	want := []rule{
+		{Permission: "*", Pattern: "*", Action: "ask"},
+		{Permission: "edit", Pattern: "*", Action: "deny"},
+		{Permission: "read", Pattern: "*", Action: "allow"},
+	}
+	if !reflect.DeepEqual(body.Permission, want) {
+		t.Errorf("last PATCH rules = %+v, want exactly plan's %+v", body.Permission, want)
+	}
+
+	for perm, wantAction := range map[string]string{
+		"edit":  "deny",
+		"read":  "allow",
+		"bash":  "ask",
+		"write": "ask",
+	} {
+		if got := rec.evaluate("sess-ctrl", perm, "src/main.go"); got != wantAction {
+			t.Errorf("accumulated rules: %s → %s, want %s (no acceptEdits leftovers)", perm, got, wantAction)
+		}
+	}
+}
+
+func TestSendControl_SetPermissionMode_WinsOverExistingRules(t *testing.T) {
+	// A resumed session may still carry rules foci set on it before
+	// (a previous /mode, a previous Start). The apply must outrank ALL
+	// of them, including specific-pattern rules: the new batch's
+	// {*,*} rule sorts after every earlier rule under findLast.
+	b, rec := newControlTestBackend(t)
+	rec.seedRules("sess-ctrl",
+		rule{Permission: "bash", Pattern: "git status", Action: "allow"},
+		rule{Permission: "edit", Pattern: "*", Action: "deny"},
+	)
+
+	if err := b.SendControl(context.Background(), &delegator.SetPermissionModeRequest{
+		Mode: "plan",
+	}); err != nil {
+		t.Fatalf("SendControl: %v", err)
+	}
+
+	for _, tc := range []struct{ perm, target, want string }{
+		{"bash", "git status", "ask"}, // new {*,*} outranks the seeded specific rule
+		{"edit", "src/main.go", "deny"},
+		{"read", "src/main.go", "allow"},
+	} {
+		if got := rec.evaluate("sess-ctrl", tc.perm, tc.target); got != tc.want {
+			t.Errorf("evaluate(%s, %q) = %s, want %s", tc.perm, tc.target, got, tc.want)
+		}
+	}
+}
+
+func TestSendControl_SetPermissionMode_Guards(t *testing.T) {
+	// Pins the guard shape: no server or no sessionID → error to the
+	// caller (a failed /mode apply must surface, not silently pass).
+	t.Run("no server", func(t *testing.T) {
+		b := &Backend{sessionID: "sess-x", outstanding: delegator.NewOutstandingRegistry()}
+		if err := b.SendControl(context.Background(), &delegator.SetPermissionModeRequest{
+			Mode: "plan",
+		}); err == nil {
+			t.Error("expected error with no server")
+		}
+	})
+	t.Run("empty sessionID", func(t *testing.T) {
+		hs, _ := newControlTestServer(t)
+		b := newControlTestBackendForSession(t, hs, "")
+		if err := b.SendControl(context.Background(), &delegator.SetPermissionModeRequest{
+			Mode: "plan",
+		}); err == nil {
+			t.Error("expected error with empty sessionID")
+		}
+	})
+}
+
+func TestSendControl_SetPermissionMode_FailedPatchReturnsError(t *testing.T) {
+	// A failed /mode apply must return an error to the caller — not
+	// silently succeed by falling back to some other endpoint.
+	hs, rec := newControlTestServer(t)
+	b := newControlTestBackendForSession(t, hs, "sess-ctrl")
+	rec.failSessionPatches()
+
+	err := b.SendControl(context.Background(), &delegator.SetPermissionModeRequest{
+		Mode: "plan",
+	})
+	if err == nil {
+		t.Fatal("SendControl should error when the session PATCH fails")
 	}
 }
 

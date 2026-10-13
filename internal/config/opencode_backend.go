@@ -27,9 +27,12 @@ type OpencodeBackendConfig struct {
 	// (passed to opencode via OPENCODE_SERVER_PASSWORD env var).
 	ServerAuth string `toml:"server_auth" desc:"HTTP basic auth password for the opencode server (empty = no auth)"`
 
-	// DefaultPermission is the opencode permission mode applied at
-	// Server start via PATCH /config. "ask" = prompt for everything
-	// (safest default); "allow" = auto-approve; "deny" = block.
+	// DefaultPermission is the opencode permission mode applied at Start
+	// to each session's own ruleset (PATCH /session/:id — per session and
+	// enforced). "ask" = prompt for everything (safest default);
+	// "allow" = auto-approve; "deny" = block. NOTE: this global is not
+	// currently folded into per-agent backend_config — only
+	// [[agents]].backend_config.default_permission is read.
 	DefaultPermission string `toml:"default_permission" default:"ask" desc:"opencode permission mode: ask, allow, or deny (default ask)"`
 
 	// LogLevel sets the opencode serve --log-level flag. Empty = opencode

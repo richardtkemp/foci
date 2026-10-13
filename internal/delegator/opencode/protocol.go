@@ -264,6 +264,25 @@ const (
 	PermDoomLoop          = "doom_loop"
 )
 
+// permissionRule is one entry of opencode's session-scoped permission
+// ruleset. The session API (POST /session and PATCH /session/:id, live
+// 1.17.15 /doc) accepts `permission` as an array of these; all three
+// fields are required, and a "*" permission/pattern matches every
+// tool/target (glob).
+type permissionRule struct {
+	Permission string `json:"permission"` // tool category, "*" = every tool
+	Pattern    string `json:"pattern"`    // command/target glob, "*" = every target
+	Action     string `json:"action"`     // "ask" | "allow" | "deny"
+}
+
+// sessionPermissionPatch is the PATCH /session/:id body carrying a
+// permission ruleset for that one session. opencode merges it into the
+// session's accumulated rules by concatenation (no rule removal) — see
+// applySessionPermission for the resolution semantics.
+type sessionPermissionPatch struct {
+	Permission []permissionRule `json:"permission"`
+}
+
 // ---------------------------------------------------------------------------
 // Session status
 // ---------------------------------------------------------------------------

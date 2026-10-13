@@ -165,15 +165,17 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	b.server.registerSession(b)
 	log.NewComponentLogger(b.logComponent()).Debugf("Start: registered with server, dispatcher started")
 
-	// Apply default permission mode if configured. opencode's defaults
-	// are permissive (most tools "allow"); foci wants "ask" for side-
-	// effecting tools so the user gets prompted via the permission
-	// keyboard. Per-agent backend_config.default_permission overrides.
-	if dp, ok := b.cfg["default_permission"].(string); ok && dp != "" {
-		if err := b.patchConfig(ctx, map[string]any{
-			"permission": map[string]string{"*": dp},
-		}); err != nil {
-			log.NewComponentLogger(b.logComponent()).Warnf("default_permission PATCH failed: %v — using opencode defaults", err)
+	// Apply the configured default permission mode to THIS session's own
+	// ruleset (PATCH /session/:id — enforced and session-scoped; see
+	// applySessionPermission for why permissions must never go through
+	// /config). opencode's defaults are permissive (most tools "allow");
+	// foci wants "ask" for side-effecting tools so the user gets prompted
+	// via the permission keyboard. Per-agent backend_config.default_permission
+	// overrides; a failure is a WARN — an unenforceable default must not
+	// make the agent unusable.
+	if rules := defaultPermissionRules(b.cfg); len(rules) > 0 {
+		if err := b.applySessionPermission(ctx, rules); err != nil {
+			log.NewComponentLogger(b.logComponent()).Warnf("default_permission apply failed: %v — using opencode defaults", err)
 		}
 	}
 
@@ -383,6 +385,21 @@ func (b *Backend) createSession(ctx context.Context) (string, error) {
 		return "", errors.New("POST /session returned empty id")
 	}
 	return session.ID, nil
+}
+
+// defaultPermissionRules builds the session ruleset for backend_config
+// default_permission ("ask"|"allow"|"deny" for every tool): a single
+// {*,*,action} rule — the same meaning the config-style {"*": dp} map
+// carried before #2330. nil when unset (Start sends no permission
+// request and opencode's own defaults stand). The {*,*} rule is what
+// lets a later apply outrank these rules under findLast — keep
+// emitting it.
+func defaultPermissionRules(cfg map[string]any) []permissionRule {
+	dp, ok := cfg["default_permission"].(string)
+	if !ok || dp == "" {
+		return nil
+	}
+	return []permissionRule{{Permission: "*", Pattern: "*", Action: dp}}
 }
 
 // resumeSession probes whether session ID still exists on the opencode

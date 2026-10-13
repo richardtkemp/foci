@@ -2,10 +2,12 @@ package opencode
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -536,6 +538,147 @@ func TestBackend_Start_Idempotent(t *testing.T) {
 	if got := readyFires.Load(); got != 1 {
 		t.Errorf("onSessionReady fired %d times, want 1", got)
 	}
+	_ = b.Close()
+}
+
+// ---------------------------------------------------------------------------
+// Start — default_permission (session-scoped, #2330)
+// ---------------------------------------------------------------------------
+
+func TestBackend_Start_DefaultPermission_AppliedToNewSession(t *testing.T) {
+	// Verifies default_permission lands on the NEW session's own ruleset
+	// (PATCH /session/:id, meaning one {*,*,action} rule) — never on the
+	// server-wide /config, which was never enforced and aborted every
+	// session's turns (#2330).
+	rec := &controlRecorder{rules: map[string][]rule{}}
+	_, b := newTestBackendServer(t, rec.serveHTTP)
+	b.cfg = map[string]any{"default_permission": "deny"}
+
+	if err := b.Start(context.Background(), delegator.StartOptions{AgentID: "test-agent"}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	patch, ok := rec.lastSessionPatch(b.sessionID)
+	if !ok {
+		t.Fatalf("PATCH /session/%s was not sent", b.sessionID)
+	}
+	var body struct {
+		Permission []rule `json:"permission"`
+	}
+	if err := json.Unmarshal(patch.Body, &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	want := []rule{{Permission: "*", Pattern: "*", Action: "deny"}}
+	if !reflect.DeepEqual(body.Permission, want) {
+		t.Errorf("permission rules = %+v, want %+v", body.Permission, want)
+	}
+	rec.assertNoConfigRequests(t)
+	_ = b.Close()
+}
+
+func TestBackend_Start_DefaultPermission_AppliedToResumedSession(t *testing.T) {
+	// Verifies the Start-time apply covers resumed sessions too: a
+	// session still carrying rules foci set before the restart gets the
+	// configured mode appended, and findLast makes it win. No POST
+	// /session (resume path), no /config request.
+	rec := &controlRecorder{rules: map[string][]rule{}}
+	rec.seedRules("ses-r", rule{Permission: "edit", Pattern: "*", Action: "allow"})
+	_, b := newTestBackendServer(t, rec.serveHTTP)
+	b.cfg = map[string]any{"default_permission": "deny"}
+
+	if err := b.Start(context.Background(), delegator.StartOptions{
+		AgentID:         "test-agent",
+		ResumeSessionID: "ses-r",
+	}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	if _, ok := rec.lastSessionPatch("ses-r"); !ok {
+		t.Error("PATCH /session/ses-r was not sent")
+	}
+	if got := rec.evaluate("ses-r", "edit", "src/main.go"); got != "deny" {
+		t.Errorf("edit → %s, want deny (Start apply must outrank pre-existing rules)", got)
+	}
+	for _, req := range rec.allRequests() {
+		if req.Method == http.MethodPost && req.Path == "/session" {
+			t.Error("POST /session fired on the resume path")
+		}
+	}
+	rec.assertNoConfigRequests(t)
+	_ = b.Close()
+}
+
+func TestBackend_Start_DefaultPermission_ApplyFailureDoesNotFailStart(t *testing.T) {
+	// Verifies a failed Start-time apply is a WARN, not a Start failure
+	// (unchanged semantics) — AND that the apply was attempted on the
+	// session (isolates the WARN arm from a silent no-request bug).
+	rec := &controlRecorder{rules: map[string][]rule{}}
+	rec.failSessionPatches()
+	_, b := newTestBackendServer(t, rec.serveHTTP)
+	b.cfg = map[string]any{"default_permission": "deny"}
+
+	if err := b.Start(context.Background(), delegator.StartOptions{
+		AgentID:         "test-agent",
+		ResumeSessionID: "ses-r",
+	}); err != nil {
+		t.Fatalf("Start: %v, want nil (apply failure is WARN-only)", err)
+	}
+
+	if _, ok := rec.lastSessionPatch("ses-r"); !ok {
+		t.Fatal("PATCH /session/ses-r was not attempted")
+	}
+	_ = b.Close()
+}
+
+func TestBackend_Start_NoDefaultPermission_NoPermissionRequest(t *testing.T) {
+	// Characterisation (req 4): an agent with no default_permission and
+	// no /mode sends NO permission request at Start — opencode's own
+	// defaults stand, and the POST /session body stays empty. Green
+	// before and after by design.
+	rec := &controlRecorder{rules: map[string][]rule{}}
+	_, b := newTestBackendServer(t, rec.serveHTTP)
+
+	if err := b.Start(context.Background(), delegator.StartOptions{AgentID: "test-agent"}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	var createBody []byte
+	for _, req := range rec.allRequests() {
+		if req.Method == http.MethodPost && req.Path == "/session" {
+			createBody = req.Body
+		}
+		if req.Method == http.MethodPatch {
+			t.Errorf("unexpected %s %s — no permission request should be sent", req.Method, req.Path)
+		}
+	}
+	if string(createBody) != "{}" {
+		t.Errorf("POST /session body = %q, want exactly \"{}\"", createBody)
+	}
+	rec.assertNoConfigRequests(t)
+	_ = b.Close()
+}
+
+func TestBackend_Start_SkipPermissions_NoDefaultPermission(t *testing.T) {
+	// Characterisation (req 4): a skip_permissions session with no
+	// default_permission sends no permission request at Start; asks that
+	// do surface are answered by answerUnattended (pinned by the
+	// permissions tests, untouched here). Green before and after.
+	rec := &controlRecorder{rules: map[string][]rule{}}
+	_, b := newTestBackendServer(t, rec.serveHTTP)
+
+	if err := b.Start(context.Background(), delegator.StartOptions{
+		AgentID:         "test-agent",
+		SkipPermissions: true,
+	}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	for _, req := range rec.allRequests() {
+		if req.Method == http.MethodPatch {
+			t.Errorf("unexpected %s %s — no permission request should be sent", req.Method, req.Path)
+		}
+	}
+	rec.assertNoConfigRequests(t)
 	_ = b.Close()
 }
 

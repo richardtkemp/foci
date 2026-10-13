@@ -1729,9 +1729,13 @@ Applies to every agent whose `backend` is `opencode`:
 # Passed to opencode via OPENCODE_SERVER_PASSWORD env var.
 # server_auth = ""
 
-# default_permission — opencode permission mode applied at Start via
-# PATCH /config. "ask" = prompt for side-effecting tools (foci default);
-# "allow" = auto-approve; "deny" = block.
+# default_permission — opencode permission mode applied at Start to the
+# session's own ruleset (PATCH /session/:id: per session, enforced by
+# opencode; a /mode in one session no longer touches any other).
+# "ask" = prompt for every tool; "allow" = auto-approve; "deny" = block.
+# NOTE: only the per-agent [[agents]].backend_config value is read today;
+# a value in this global [opencode_backend] section is not folded into
+# backend_config.
 # default_permission = "ask"
 ```
 
