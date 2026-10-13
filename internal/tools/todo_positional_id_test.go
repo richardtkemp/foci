@@ -10,10 +10,14 @@
 // errors naming foci_todo <action> and the offending value. The three
 // Test…Unchanged functions are characterisation: they pin today's payloads
 // and the #1811 --id message so the new checks cannot displace them (listed
-// in .factory/red-gate-exempt.txt).
+// in .factory/red-gate-exempt.txt). The digits rule is also pinned under an
+// installed collating UTF-8 locale: bash collates a [0-9] glob range by
+// locale, so only there does the range accept non-ASCII digits (٣), which
+// the C-locale test environment cannot see at all.
 package tools
 
 import (
+	osexec "os/exec"
 	"strings"
 	"testing"
 )
@@ -251,5 +255,76 @@ func TestTodoShellEditPositionalUnchanged(t *testing.T) {
 		if got := todoShellSingleCall(t, body, c.cmd); got != c.wantReq {
 			t.Errorf("%s: request = %s, want exactly %s", c.cmd, got, c.wantReq)
 		}
+	}
+}
+
+// collatingUTF8Locale returns an installed UTF-8 locale under which bash
+// folds a non-ASCII digit into a [0-9] glob range (glibc's en_*.UTF-8 do;
+// C and C.UTF-8 do not), or "" when none is installed. That is the
+// deployment shape where the pre-fix range check waved ٣/０ through as
+// item ids. The locale is probed rather than hardcoded, so the test
+// below neither skips where the defect is reproducible nor runs where it
+// is not — the probe itself fails (exit 1) under locales that reject ٣.
+func collatingUTF8Locale(t *testing.T) string {
+	t.Helper()
+	out, err := osexec.Command("locale", "-a").Output()
+	if err != nil {
+		return ""
+	}
+	for _, name := range strings.Fields(string(out)) {
+		if l := strings.ToLower(name); !strings.Contains(l, "utf8") && !strings.Contains(l, "utf-8") {
+			continue
+		}
+		probe := osexec.Command("bash", "-c",
+			"export LC_ALL="+bashSingleQuote(name)+"\n"+
+				"case ٣ in ''|*[!0-9]*) exit 1 ;; esac")
+		if probe.Run() == nil {
+			return name
+		}
+	}
+	return ""
+}
+
+// todoLocaleCmd prefixes cmd with an in-shell LC_ALL export, so the
+// generated function's glob matching collates the way it would for an
+// agent shell running in that locale. The assignment inside the script
+// overrides any outer LC_ALL, making the run independent of the (scrubbed)
+// test-process environment.
+func todoLocaleCmd(locale, cmd string) string {
+	return "export LC_ALL=" + bashSingleQuote(locale) + "; " + cmd
+}
+
+// TestTodoShellPositionalIDRejectsNonASCIIDigitsInUTF8Locale pins the ASCII
+// half of req 1 of #2306: bash collates a [!0-9] glob RANGE by locale, so
+// under glibc's UTF-8 locales the check as first written accepted
+// non-ASCII digits — `get ٣` and `complete ０ --reason x` then leaked jq's
+// --argjson text, called foci-call with an empty payload and returned 0,
+// the exact defect #2306 exists to fix, invisible in the C-locale test
+// environment. The explicit [!0123456789] digit set must refuse them in
+// every locale, while plain digits keep working in the same locale. Skips
+// only when no installed locale exhibits the collation.
+func TestTodoShellPositionalIDRejectsNonASCIIDigitsInUTF8Locale(t *testing.T) {
+	t.Parallel()
+	locale := collatingUTF8Locale(t)
+	if locale == "" {
+		t.Skip("no installed UTF-8 locale collates non-ASCII digits into [0-9]")
+	}
+	body := todoIDShellBody(t)
+	for _, c := range []struct{ cmd, wantErr, wantUsage string }{
+		{todoLocaleCmd(locale, `foci_todo get ٣`),
+			"error: foci_todo get: the item id must be a whole number, got '٣'",
+			"usage: foci_todo get <id>"},
+		{todoLocaleCmd(locale, `foci_todo complete ０ --reason x`),
+			"error: foci_todo complete: the item id must be a whole number, got '０'",
+			"usage: foci_todo complete <id>"},
+	} {
+		assertTodoIDRefusal(t, body, c.cmd, c.wantErr, c.wantUsage)
+	}
+	// The explicit set must not over-refuse in the same locale: plain
+	// digits still send exactly one call with the same payload.
+	cmd := todoLocaleCmd(locale, `foci_todo get 5`)
+	if got, want := todoShellSingleCall(t, body, cmd),
+		`{"tool":"todo","params":{"action":"get","id":5}}`; got != want {
+		t.Errorf("%s (LC_ALL=%s): request = %s, want exactly %s", cmd, locale, got, want)
 	}
 }

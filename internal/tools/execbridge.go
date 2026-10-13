@@ -1133,23 +1133,30 @@ func generateShellFunc(t *Tool) string {
           search) query="$query $1" ;;
           %s)
             # #2306: for these actions every positional IS the item id: it
-            # must be one or more ASCII digits (the same rule edit's numeric
-            # positional test uses below) and may be given only once, in one
-            # form (positional or --id). Before, any word went straight to
-            # jq --argjson, so the caller saw jq's invalid-JSON text instead
-            # of a usage error.
+            # must be one or more ASCII digits and may be given only once,
+            # in one form (positional or --id). Before, any word went
+            # straight to jq --argjson, so the caller saw jq's invalid-JSON
+            # text instead of a usage error. The digit set is spelled out
+            # rather than written as a [!0-9] range because bash collates
+            # ranges by locale: under en_*.UTF-8 the range folds in
+            # non-ASCII digits (get ٣), which then leak the very jq text
+            # this check exists to stop.
 %s            case "$1" in
-              ''|*[!0-9]*)
+              ''|*[!0123456789]*)
                 echo "error: foci_todo $action: the item id must be a whole number, got '$1'" >&2
                 echo "usage: foci_todo $action_usage" >&2
                 return 1 ;;
               *) id="$1" ;;
             esac ;;
           edit)
-            # A numeric positional is the item id (the same ''|*[!0-9]*
-            # digits test the id-actions above use, so "update 6 ..." works
-            # like complete/drop); anything else falls back to text for
-            # back-compat.
+            # A numeric positional is the item id, anything else falls back
+            # to text for back-compat ("update 6 ..." works like
+            # complete/drop). This still uses the [!0-9] range, NOT the
+            # id-actions' spelled-out digit set above: bash collates the
+            # range by locale, so under a UTF-8 locale a non-ASCII digit
+            # word (edit ٣) is still taken as the id here. Edit's argument
+            # parsing is out of #2306's scope — a known neighbouring
+            # defect, not a rule to copy.
             case "$1" in
               ''|*[!0-9]*) text="$text $1" ;;
               *) if [ -z "$id" ]; then id="$1"; else text="$text $1"; fi ;;
