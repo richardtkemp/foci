@@ -767,7 +767,17 @@ Rules from global `[permissions]` and per-agent `[[agents]].permissions` are com
 >
 > **Startup additionally drops** any `auto_approve` entry that already fails the test, with a warning
 > naming it. That is hygiene, not the control — it reports an entry that would never have matched
-> anyway. The entry stays in the config file; it is ignored, not rewritten.
+> anyway. The entry stays in the config file; it is ignored, not rewritten. Startup and
+> `-check-config` (run as the service user) also name each **built-in group command** (read-only,
+> safe-write) that will be vetoed, with the group, the command, the reason and the path — a vetoed
+> built-in otherwise just falls through to an approval prompt with no line anywhere saying so — and
+> `-check-config` adds a summary line with the count and the sorted command names, config entries
+> and built-ins together. A group is reported only when at least one agent has it enabled.
+> `-check-config` does not check any of this when run as root (root's `access(2)` says every file
+> is writable, and it never sources the rc file as root) or when the shell env file, or any
+> directory on its path, is writable by anyone other than the invoking user and root — not
+> group-writable (a shared home is the common case), not world-writable, not another user's, not
+> reached through a symlink, and not a bare relative name; it prints one warning saying so instead.
 >
 > **A writable `PATH` directory that does not contain the command is deliberately NOT a finding.** It
 > describes a shadow that *could* be created, not one that exists. Reporting it would drop working
@@ -777,12 +787,15 @@ Rules from global `[permissions]` and per-agent `[[agents]].permissions` are com
 >
 > Exempt: **Read/Edit/Write entries** (they name data, not code), **bash builtins** (`cd`, `echo`,
 > `test` — the shell resolves these before searching `PATH`, so no planted file can shadow them),
-> **glob tokens** (`foci_*` names no single file), relative paths (no cwd exists at config-load time),
-> and the built-in readonly/safe-write groups.
+> **glob tokens** (`foci_*` names no single file), and relative paths (no cwd exists at
+> config-load time). The built-in readonly/safe-write groups are NOT exempt: the match-time veto
+> covers them like any other rule — which is exactly why startup and `-check-config` report the
+> built-in commands it will refuse.
 >
-> `PATH` is read from the foci daemon's own environment. That is a *proxy* for the `PATH` an agent's
-> Bash tool sees — an agent shell initialised from the user profile may prepend more directories — so
-> the check can miss a writable directory added later, but never invents one.
+> `PATH` is read from the operator population (`execguard.Live()` → `procx.PathDirs` for the
+> operator) — the environment captured from the operator's rc file and handed to every agent shell
+> — so the check searches the same `PATH` those shells search; it is read at check time, never
+> captured once at startup.
 
 > **⚠ Safe-write rules are not path-scoped.** Unlike `Edit`/`Write` rules, which can be pinned to a workspace (`Edit:/path/to/workspace/*`), Bash-command rules are prefix-matched on the command string. Enabling `auto_approve_common_safe_write` means `mkdir ./build` and `mkdir /etc/foo` are both auto-approved — the allowlist trusts the agent not to target paths outside its workspace. Leave this off unless you've reasoned about that trust boundary for your deployment.
 

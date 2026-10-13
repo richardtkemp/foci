@@ -22,21 +22,22 @@ import (
 // Scope: Bash entries only. Read/Edit/Write entries name DATA, not code, and a
 // writable data path is the normal case.
 //
-// WHEN THIS RUNS MATTERS AS MUCH AS WHAT IT CHECKS (#1900). It reads the
-// process PATH, and foci-gw's PATH is written twice: once by the unit, and
-// again by shellenv.Apply() partway through main(), which is the one tool
-// shells inherit. So this pass is deliberately NOT called from config.Load —
-// Load necessarily runs before shellenv can know which file to source — but
-// from cmd/foci-gw/main.go immediately after shellenv.Apply(). Moving it back
-// into Load would silently restore the defect: every verdict would describe a
-// PATH nothing executes under, and the unresolved-command warning below would
-// name commands that exist.
+// WHEN THIS RUNS MATTERS AS MUCH AS WHAT IT CHECKS (#1900). It judges
+// commands against the PATH an agent shell will search, and that is not
+// foci-gw's own PATH: main() first captures the operator's rc file
+// (shellenv.Load) and hands it to procx.SetOperatorEnv, and only then does
+// execguard.Live() — which reads the operator population's PATH by name —
+// describe the PATH the shells inherit. So this pass is deliberately NOT
+// called from config.Load — Load necessarily runs before shellenv can know
+// which file to source. Judging there would name commands that exist and
+// miss shadows that do not, against a PATH nothing executes under.
 
 // DroppedAutoApproveRule records one entry removed by the startup check.
 type DroppedAutoApproveRule struct {
-	Rule   string // the config entry, verbatim
-	Path   string // the executable that failed the check
-	Reason string // human-readable cause
+	Rule    string // the config entry, verbatim
+	Command string // the command token that failed the check
+	Path    string // the executable that failed the check
+	Reason  string // human-readable cause
 }
 
 // UnlocatableAutoApproveCommand records an entry naming a bare command that no
@@ -89,7 +90,7 @@ func filterWritableAutoApproveRules(rules []string, env execguard.Env) ([]string
 		var missing []UnlocatableAutoApproveCommand
 		for _, token := range commandTokens(rule) {
 			if substitutable, path, reason := execguard.Substitutable(token, env); substitutable {
-				bad = &DroppedAutoApproveRule{Rule: rule, Path: path, Reason: reason}
+				bad = &DroppedAutoApproveRule{Rule: rule, Command: token, Path: path, Reason: reason}
 				break
 			}
 			if execguard.UnresolvedBareName(token, env) {
@@ -106,11 +107,65 @@ func filterWritableAutoApproveRules(rules []string, env execguard.Env) ([]string
 	return kept, dropped, unlocatable
 }
 
+// autoApproveScope is one place auto_approve entries can live: the global
+// [permissions] block or a single agent. Globalness is a BOOLEAN, never a
+// string comparison of the label — the config accepts an agent whose id is
+// "global", and its scope must never be mistaken for the global block
+// (#1897). label is the drop WARN's exact scope word(s), pre-formed so the
+// log text cannot drift.
+type autoApproveScope struct {
+	global  bool
+	agentID string // "" for the global block
+	label   string // "global" or `agent "<id>"`
+	rules   *[]string
+}
+
+// autoApproveScopes lists every scope carrying auto_approve entries: the
+// global block first, then each agent in config order.
+func (cfg *Config) autoApproveScopes() []autoApproveScope {
+	scopes := []autoApproveScope{{global: true, label: "global", rules: &cfg.Permissions.AutoApprove}}
+	for i := range cfg.Agents {
+		scopes = append(scopes, autoApproveScope{
+			agentID: cfg.Agents[i].ID,
+			label:   fmt.Sprintf("agent %q", cfg.Agents[i].ID),
+			rules:   &cfg.Agents[i].Permissions.AutoApprove,
+		})
+	}
+	return scopes
+}
+
+// AutoApproveScopeReport is one scope's findings under ScanAutoApproveRules.
+type AutoApproveScopeReport struct {
+	Global      bool   // the global [permissions] block; AgentID is ""
+	AgentID     string // the agent's id; empty for the global block
+	Dropped     []DroppedAutoApproveRule
+	Unlocatable []UnlocatableAutoApproveCommand
+}
+
+// ScanAutoApproveRules reports what DropSubstitutableAutoApproveRules would
+// drop, without logging and without touching the config: the same filter,
+// the same env judgement, the same scope order (#1897). Callers that need
+// the mutation and the WARNs take the Drop; callers that only report (the
+// -check-config preview) take this, so the two can never disagree.
+func (cfg *Config) ScanAutoApproveRules(env execguard.Env) []AutoApproveScopeReport {
+	out := make([]AutoApproveScopeReport, 0, 1+len(cfg.Agents))
+	for _, s := range cfg.autoApproveScopes() {
+		_, dropped, unlocatable := filterWritableAutoApproveRules(*s.rules, env)
+		out = append(out, AutoApproveScopeReport{
+			Global:      s.global,
+			AgentID:     s.agentID,
+			Dropped:     dropped,
+			Unlocatable: unlocatable,
+		})
+	}
+	return out
+}
+
 // DropSubstitutableAutoApproveRules applies the check to the global block and
 // to every agent block, warning once per dropped entry and once per entry whose
 // command could not be located.
 //
-// Call this from startup AFTER the process PATH is final — see the package-level
+// Call this from startup AFTER the operator PATH is final — see the package-level
 // note above. It is safe to call more than once: it only ever removes entries.
 func (cfg *Config) DropSubstitutableAutoApproveRules(env execguard.Env) {
 	warn := func(scope string, dropped []DroppedAutoApproveRule, unlocatable []UnlocatableAutoApproveCommand) {
@@ -123,13 +178,9 @@ func (cfg *Config) DropSubstitutableAutoApproveRules(env execguard.Env) {
 				scope, u.Rule, u.Command)
 		}
 	}
-	kept, dropped, unlocatable := filterWritableAutoApproveRules(cfg.Permissions.AutoApprove, env)
-	cfg.Permissions.AutoApprove = kept
-	warn("global", dropped, unlocatable)
-
-	for i := range cfg.Agents {
-		agentKept, agentDropped, agentUnlocatable := filterWritableAutoApproveRules(cfg.Agents[i].Permissions.AutoApprove, env)
-		cfg.Agents[i].Permissions.AutoApprove = agentKept
-		warn(fmt.Sprintf("agent %q", cfg.Agents[i].ID), agentDropped, agentUnlocatable)
+	for _, s := range cfg.autoApproveScopes() {
+		kept, dropped, unlocatable := filterWritableAutoApproveRules(*s.rules, env)
+		*s.rules = kept
+		warn(s.label, dropped, unlocatable)
 	}
 }

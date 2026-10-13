@@ -77,18 +77,25 @@ mp=$(systemctl show -p MainPID --value foci.service)   # pgrep -f foci-gw does N
 tr '\0' '\n' < /proc/$(pgrep -A -P $mp | head -1)/environ | grep '^PATH='
 ```
 
-**Never `/proc/<the daemon's own pid>/environ`.** That is the environment at *exec* time and is
-never updated by `os.Setenv` — and `main()` calls `shellenv.Apply()`, which sets the operator's
-dotfile env over the unit's. Reading it gives a confident, wrong answer that looks authoritative;
+**Never `/proc/<the daemon's own pid>/environ`.** That is the environment at *exec* time — and
+since #1914 the operator's dotfile env is never applied to the daemon's own environment at all:
+it is captured once as a value (`shellenv.Load`) and handed to every agent-shell spawn
+(`procx.SetOperatorEnv`). So the daemon's environ never shows the `PATH` a tool shell searches,
+no matter when you read it. Reading it gives a confident, wrong answer that looks authoritative;
 two independent investigations of the same bug were both misled by it. Agreement between two
 readings of one broken instrument is not corroboration.
 
-- **`-check-config` no longer previews dropped entries.** The hygiene pass had to move after
-  `shellenv.Apply`, and as root every `access(2)` succeeds so the preview was lying anyway. The
-  per-entry warnings fire at **startup** — read the log, not the pre-flight.
-- **Built-in rule groups never appear in that report at all.** `CommonReadonlyRules` is assembled
-  at backend rule-build time, not from `cfg.Permissions.AutoApprove`. The match-time veto still
-  covers them, so this is a reporting gap — but a built-in can stop working with no warning.
+- **`-check-config` previews the drop again, but only as the service user.** As root it says it
+  did not check (root's `access(2)` succeeds for every file) and sources nothing. As a user it
+  sources the rc file only when the file and every directory on its path is writable only by the
+  invoking user and root — a group-writable home (e.g. mode 0770), a world-writable directory,
+  another user's file, a symlink, or a bare relative `shell_env_file` all refuse with one warning.
+  In those states read the startup log instead.
+- **Built-in rule groups appear in both reports.** Startup logs one WARN per substitutable
+  built-in (`CommonReadonlyRules`/`CommonSafeWriteRules` commands resolved per agent exactly as
+  `buildAutoApproveRules` reads the toggles), and `-check-config` lists them with a summary
+  count — group, command, reason and path in both. Only substitutable commands are named; a
+  built-in whose tool is not installed on the host (`ack`, `yq`) is silent.
 - **Only the FIRST WORD of each `&&`/`||`/`;`/`|` segment is inspected.** Arguments are never
   checked, so wrapping a script in an interpreter restores the auto-approval without restoring the
   safety. Do not "fix" a vetoed entry that way.

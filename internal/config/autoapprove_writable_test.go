@@ -1,9 +1,12 @@
 package config
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	"foci/internal/execguard"
+	"foci/internal/log"
 )
 
 // testEnv builds an execEnv from explicit sets, so no test touches the host's
@@ -167,5 +170,98 @@ func TestFilterWritableAutoApproveRules_ReportsCommandsItCannotLocate(t *testing
 	}
 	if unlocatable[0].Command != "mds" || unlocatable[0].Rule != "Bash:mds *" {
 		t.Errorf("unlocatable[0] = %+v, want {Rule:\"Bash:mds *\" Command:\"mds\"}", unlocatable[0])
+	}
+}
+
+// TestScanAutoApproveRules_ScopesFieldsAndPurity proves the -check-config
+// preview sees exactly what the startup drop would do, and that seeing it
+// costs nothing: ScanAutoApproveRules reports every scope in drop order
+// (global block first, then agents in config order), carries the fields the
+// renderer needs (the dropped entry's Command for the summary line, and the
+// Path/Reason pair execguard gave), and neither logs nor mutates the config.
+func TestScanAutoApproveRules_ScopesFieldsAndPurity(t *testing.T) {
+	cfg := &Config{}
+	cfg.Permissions.AutoApprove = []string{"Bash:/bad/g.sh *", "Bash:gone *"}
+	cfg.Agents = []AgentConfig{
+		{ID: "clutch", Permissions: PermissionsConfig{AutoApprove: []string{"Bash:/bad/a.sh *"}}},
+		{ID: "scout", Permissions: PermissionsConfig{AutoApprove: []string{"Bash:/good/s.sh *"}}},
+	}
+	env := testEnv(nil, []string{"/bad/g.sh", "/bad/a.sh"}, nil)
+
+	var logged []string
+	remove := log.AddTap(log.WARN, func(level log.Level, component, msg string) {
+		if strings.Contains(msg, "[permissions]") {
+			logged = append(logged, msg)
+		}
+	})
+	defer remove()
+
+	got := cfg.ScanAutoApproveRules(env)
+
+	if len(logged) != 0 {
+		t.Errorf("ScanAutoApproveRules logged %d line(s); a report must not log: %v", len(logged), logged)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d scopes, want 3 (global + 2 agents): %+v", len(got), got)
+	}
+	if !got[0].Global || got[0].AgentID != "" {
+		t.Errorf("scope[0] = {Global:%v AgentID:%q}, want the global block", got[0].Global, got[0].AgentID)
+	}
+	if got[1].Global || got[1].AgentID != "clutch" || got[2].AgentID != "scout" {
+		t.Errorf("agent scopes mislabelled or out of config order: %+v %+v", got[1], got[2])
+	}
+	if len(got[0].Dropped) != 1 {
+		t.Fatalf("global Dropped = %+v, want the one substitutable entry", got[0].Dropped)
+	}
+	d := got[0].Dropped[0]
+	if d.Rule != "Bash:/bad/g.sh *" || d.Command != "/bad/g.sh" || d.Path != "/bad/g.sh" || d.Reason == "" {
+		t.Errorf("dropped entry missing a field: %+v", d)
+	}
+	if len(got[0].Unlocatable) != 1 || got[0].Unlocatable[0].Command != "gone" || got[0].Unlocatable[0].Rule != "Bash:gone *" {
+		t.Errorf("global Unlocatable = %+v, want the one bare command no PATH directory provides", got[0].Unlocatable)
+	}
+	if len(got[1].Dropped) != 1 || got[1].Dropped[0].Command != "/bad/a.sh" {
+		t.Errorf("clutch Dropped = %+v, want its own substitutable entry", got[1].Dropped)
+	}
+	if len(got[2].Dropped) != 0 || len(got[2].Unlocatable) != 0 {
+		t.Errorf("scout findings = %+v %+v, want none: a safe entry is not reported", got[2].Dropped, got[2].Unlocatable)
+	}
+
+	if want := []string{"Bash:/bad/g.sh *", "Bash:gone *"}; !slices.Equal(cfg.Permissions.AutoApprove, want) {
+		t.Errorf("scan mutated the global list: %v, want %v", cfg.Permissions.AutoApprove, want)
+	}
+	if want := []string{"Bash:/bad/a.sh *"}; !slices.Equal(cfg.Agents[0].Permissions.AutoApprove, want) {
+		t.Errorf("scan mutated the agent list: %v, want %v", cfg.Agents[0].Permissions.AutoApprove, want)
+	}
+}
+
+// TestDropWritableAutoApproveRules_AgentNamedGlobalLabels is a
+// characterisation test (listed in .factory/red-gate-exempt.txt: the labels
+// are unchanged on both sides of #1897). It pins requirement 4's startup
+// half: the global block is labelled `global`, and an agent whose id happens
+// to be "global" is labelled as that agent — `agent "global"` — so the drop
+// WARN's scopes never collide.
+func TestDropWritableAutoApproveRules_AgentNamedGlobalLabels(t *testing.T) {
+	var lines []string
+	remove := log.AddTap(log.WARN, func(level log.Level, component, msg string) {
+		if strings.Contains(msg, "[permissions]") {
+			lines = append(lines, msg)
+		}
+	})
+	defer remove()
+
+	cfg := &Config{}
+	cfg.Permissions.AutoApprove = []string{"Bash:/bad/g.sh *"}
+	cfg.Agents = []AgentConfig{
+		{ID: "global", Permissions: PermissionsConfig{AutoApprove: []string{"Bash:/bad/a.sh *"}}},
+	}
+	cfg.DropSubstitutableAutoApproveRules(testEnv(nil, []string{"/bad/g.sh", "/bad/a.sh"}, nil))
+
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, `[permissions] global: ignoring auto_approve entry "Bash:/bad/g.sh *"`) {
+		t.Errorf("global block not labelled global:\n%s", joined)
+	}
+	if !strings.Contains(joined, `[permissions] agent "global": ignoring auto_approve entry "Bash:/bad/a.sh *"`) {
+		t.Errorf("agent named global not labelled as that agent:\n%s", joined)
 	}
 }

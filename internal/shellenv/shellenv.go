@@ -125,6 +125,16 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// Gate judges whether the env file Resolve chose may be sourced by THIS
+// caller. It returns the path to actually source — which may be rewritten,
+// because the file judged must be the file the shell runs (-check-config
+// absolute-ises relative paths; see checkEnvFileGate) — or an error
+// explaining why the file must not be sourced. A refused file is never run;
+// the error is returned to the caller untouched, for it to report. A nil
+// gate always allows, unrewritten: that is startup, which runs as the
+// service user the file belongs to.
+type Gate func(path string) (string, error)
+
 // Load resolves the configured file and captures it, returning the operator's
 // environment AS A VALUE. It does not touch this process's environment.
 //
@@ -139,22 +149,40 @@ func shellQuote(s string) string {
 // supported states in which Operator and Trusted are simply identical. A
 // capture failure is logged at WARN, a no-op at DEBUG.
 func Load(cfg *string) (map[string]string, string, bool) {
+	env, path, loaded, _ := LoadGated(cfg, nil)
+	return env, path, loaded
+}
+
+// LoadGated is Load with a Gate between Resolve and Capture. Everything
+// else — home resolution, the ladder, capture-failure handling — is Load's,
+// in one place, so a gated caller (check-config) cannot drift from startup:
+// it sees exactly the derivation main() sees, minus the file its gate
+// refused. Returns the gate's error (nil when there is no gate or it
+// allowed) alongside Load's three values; a refused file is never captured.
+func LoadGated(cfg *string, gate Gate) (env map[string]string, path string, loaded bool, refused error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		shellenvLog.Warnf("cannot resolve home dir: %v", err)
-		return nil, "", false
+		return nil, "", false, nil
 	}
 	path, load := Resolve(cfg, home)
 	if !load {
 		shellenvLog.Debugf("no shell env file loaded (cfg=%v)", derefOr(cfg, "<ladder>"))
-		return nil, "", false
+		return nil, "", false, nil
 	}
-	env, err := Capture(path)
+	if gate != nil {
+		gated, err := gate(path)
+		if err != nil {
+			return nil, path, false, err
+		}
+		path = gated
+	}
+	env, err = Capture(path)
 	if err != nil {
 		shellenvLog.Warnf("capture %s failed: %v", path, err)
-		return nil, path, false
+		return nil, path, false, nil
 	}
-	return env, path, true
+	return env, path, true, nil
 }
 
 func derefOr(p *string, dflt string) string {

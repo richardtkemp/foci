@@ -183,6 +183,13 @@ Subcommands:
 	// shellenv.Apply — separating them is how the defect comes back.
 	cfg.DropSubstitutableAutoApproveRules(execguard.Live())
 
+	// The drop report covers config entries; the match-time veto also hits
+	// the built-in groups buildAutoApproveRules adds per agent, so a vetoed
+	// built-in could otherwise stop auto-approving with no line anywhere
+	// saying so (#1897). Same environment as the drop: Live() is re-derived
+	// from the same populations, which nothing rewrites between the calls.
+	warnSubstitutableBuiltins(cfg, execguard.Live())
+
 	// Announce the split. Both ways of misclassifying a spawn site are silent
 	// (see cmd/foci-gw/spawn_env.go), so the flip has to carry its own alarm:
 	// this prints both PATHs, their difference, and whether any directory on
