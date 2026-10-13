@@ -183,19 +183,18 @@ Subcommands:
 	// shellenv.Apply — separating them is how the defect comes back.
 	cfg.DropSubstitutableAutoApproveRules(execguard.Live())
 
-	// The drop report covers config entries; the match-time veto also hits
-	// the built-in groups buildAutoApproveRules adds per agent, so a vetoed
-	// built-in could otherwise stop auto-approving with no line anywhere
-	// saying so (#1897). Same environment as the drop: Live() is re-derived
-	// from the same populations, which nothing rewrites between the calls.
-	warnSubstitutableBuiltins(cfg, execguard.Live())
-
-	// Announce the split. Both ways of misclassifying a spawn site are silent
-	// (see cmd/foci-gw/spawn_env.go), so the flip has to carry its own alarm:
-	// this prints both PATHs, their difference, and whether any directory on
-	// the TRUSTED path is writable by this process.
+	// One startup report of what the captured operator environment means
+	// for permissions (see cmd/foci-gw/spawn_env.go): the built-in group
+	// commands the match-time veto will refuse — the drop above covers
+	// config entries only, while the veto also hits the built-in groups
+	// buildAutoApproveRules adds per agent, so a vetoed built-in could
+	// otherwise stop auto-approving with no line anywhere saying so (#1897)
+	// — then the population split with its difference and the trusted-PATH
+	// footing (#1914). The env is the same execguard.Live() view the drop
+	// just judged: re-derived from the same populations, which nothing
+	// rewrites between the two calls.
 	home, _ := os.UserHomeDir()
-	reportPopulations(operatorEnvFile, home, liveCanWrite())
+	reportOperatorEnv(cfg, execguard.Live(), operatorEnvFile, home, liveCanWrite())
 
 	// Inject the nosgid LD_PRELOAD shim (same inheritance mechanism) so shell
 	// tools and delegated backends get POSIX "drop the setgid bit" chmod

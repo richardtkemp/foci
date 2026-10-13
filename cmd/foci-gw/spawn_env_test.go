@@ -3,7 +3,12 @@ package main
 import (
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+
+	"foci/internal/config"
+	"foci/internal/execguard"
+	"foci/internal/log"
 )
 
 // The invariant that defines #1914 as done: no directory on the daemon's
@@ -109,5 +114,45 @@ func TestFormatListNamesTheEmptyCase(t *testing.T) {
 	}
 	if got := formatList([]string{"/a", "/b"}); got != "/a /b" {
 		t.Errorf("formatList = %q", got)
+	}
+}
+
+// The startup operator-env report opens with the #1897 half: one WARN per
+// built-in group command the match-time veto will refuse, carrying the
+// group, the command, and execguard's own reason and path, before the
+// population-split lines of the same report (#1914). This is the seam
+// main() calls at startup — without it a vetoed built-in falls through to
+// an approval prompt with no line anywhere saying so. yq, not mds/mdq, so
+// the line is distinguishable from every sibling test's in the shared tap.
+func TestReportOperatorEnv_BuiltinVetoRidesTheStartupReport(t *testing.T) {
+	t.Parallel()
+	// INFO, not WARN: the veto WARNs must be judged alongside the INFO
+	// population-split lines of the same report.
+	c := captureLog(t, log.INFO)
+	dir := t.TempDir()
+	env := guardEnvFor([]string{dir}, []string{dir + "/yq"}, []string{dir + "/yq"})
+	// One agent is enough: read-only defaults on, safe-write defaults off.
+	cfg := &config.Config{Agents: []config.AgentConfig{{ID: "main"}}}
+
+	reportOperatorEnv(cfg, env, "", t.TempDir(), func(string) bool { return false })
+
+	lines := c.Lines("built-in read-only group", `command "yq"`)
+	if len(lines) != 1 {
+		t.Fatalf("got %d built-in read-only WARN(s) for yq, want 1:\n%s", len(lines), c.String())
+	}
+	if lines[0].Level != log.WARN || lines[0].Component != "config" {
+		t.Errorf("line = %s, want a config-component WARN", lines[0].String())
+	}
+	line := lines[0].Msg
+	if !strings.Contains(line, "approval prompt") {
+		t.Errorf("WARN must say the command falls through to an approval prompt: %s", line)
+	}
+	if _, path, reason := execguard.Substitutable("yq", env); !strings.Contains(line, reason) || !strings.Contains(line, path) {
+		t.Errorf("WARN must carry execguard's own reason and path, got %q (want reason %q, path %q)", line, reason, path)
+	}
+	// The population half of the same report ran too: the #1897 WARNs ride
+	// the startup report, they do not replace it.
+	if got := c.Lines("spawn populations:"); len(got) != 1 {
+		t.Errorf("got %d spawn-populations line(s), want 1:\n%s", len(got), c.String())
 	}
 }

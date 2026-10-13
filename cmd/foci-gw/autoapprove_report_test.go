@@ -24,7 +24,10 @@ func TestWarnSubstitutableBuiltins_LogsGroupCommandReasonPath(t *testing.T) {
 
 	warnSubstitutableBuiltins(cfg, env)
 
-	lines := c.Lines("built-in read-only group")
+	// Filtered to this test's own command, not just the group line: the tap
+	// sees every parallel test's WARNs, and reportOperatorEnv's test warns
+	// about another built-in read-only command.
+	lines := c.Lines("built-in read-only group", `command "mds"`)
 	if len(lines) != 1 {
 		t.Fatalf("got %d built-in read-only WARN(s), want 1:\n%s", len(lines), c.String())
 	}

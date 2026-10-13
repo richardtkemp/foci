@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"foci/internal/config"
 	"foci/internal/execguard"
 	"foci/internal/procx"
 )
@@ -20,7 +21,7 @@ import (
 //   - a daemon site wrongly marked OPERATOR → the hole simply persists, and
 //     every test still passes.
 //
-// Neither has a natural alarm, so the flip has to build one. reportPopulations
+// Neither has a natural alarm, so the flip has to build one. reportOperatorEnv
 // makes the split ANNOUNCE what it changed — at startup, in the log, in terms
 // an operator can act on — rather than leaving it to be inferred later from a
 // symptom. If you are reading this because something stopped resolving, the
@@ -118,15 +119,23 @@ func formatList(in []string) string {
 	return strings.Join(in, " ")
 }
 
-// reportPopulations logs the two spawn populations and the difference between
-// them, once, at startup.
+// reportOperatorEnv reports, once at startup, what the captured operator
+// environment means for permissions: first the built-in auto-approve group
+// commands the match-time veto will refuse (#1897 — the startup drop that
+// runs just before this covers config entries only, while the veto also hits
+// the built-in groups buildAutoApproveRules adds per agent, so a vetoed
+// built-in would otherwise fall through to an approval prompt with no line
+// anywhere saying so), then the two spawn populations, the difference between
+// them, and the trusted-PATH footing. env is the same execguard view that
+// drop judged.
 //
 // It logs at INFO even when nothing differs: the value of this report is that
 // it is ALWAYS there, so "the operator population is empty" is a visible state
 // rather than an absent line. The writability findings escalate — an
 // unexplained writable directory on the trusted PATH is an ERROR, because it
 // means foci can replace a binary it execs by bare name.
-func reportPopulations(envFile string, home string, canWrite func(string) bool) {
+func reportOperatorEnv(cfg *config.Config, env execguard.Env, envFile string, home string, canWrite func(string) bool) {
+	warnSubstitutableBuiltins(cfg, env)
 	trustedDirs := dedupe(procx.PathDirs(procx.Trusted))
 	operatorDirs := dedupe(procx.PathDirs(procx.Operator))
 
