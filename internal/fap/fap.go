@@ -1152,9 +1152,14 @@ type CheckboxPut struct {
 // CheckboxPut), and replayed per-document after a hello so a device that was
 // offline while the user ticked catches up. Absolute, not a delta: the receiver
 // applies exactly Lines, so one frame serves both the fan-out and the replay
-// and the receiver never needs a base it might have missed. An empty Lines is a
-// valid "nothing is checked" and MUST be applied — it is how a clear reaches a
-// device that was offline for it.
+// and the receiver never needs a base it might have missed. An empty Lines is
+// a valid "nothing is checked" and MUST be applied when the frame arrives —
+// with one asymmetry a client must know: a clear reaches only the devices
+// online at that moment. The server deletes a cleared document rather than
+// storing an empty state, so the post-hello replay sends nothing for it: a
+// device that was offline for the clear keeps its previous ticks until the
+// next put on that document, and absence from the replay never means
+// "cleared" (the replay is bounded besides).
 type CheckboxSync struct {
 	DocumentID string `json:"documentId"`
 	Lines      []int  `json:"lines"`

@@ -144,9 +144,11 @@ func TestHandleCheckboxPut_SecondPutReplacesFirst(t *testing.T) {
 
 // TestHandleCheckboxPut_EmptyPutRemovesStoredDocAndStillFansOut proves an
 // empty state is a clear: the stored document is REMOVED, and the clear still
-// fans out (so it reaches devices offline at tick time via the replay being
-// empty, and live devices directly). Both the existing-key and the absent-key
-// case fan out — a device clearing an already-clear list is still a clear.
+// fans out to the devices online at that moment. Both the existing-key and
+// the absent-key case fan out — a device clearing an already-clear list is
+// still a clear. The removed row also means a later hello replays nothing
+// for the document — a device offline for the clear keeps its previous ticks
+// (pinned at the wire level by TestCheckbox_ClearNotReplayedToOfflineDevice).
 func TestHandleCheckboxPut_EmptyPutRemovesStoredDocAndStillFansOut(t *testing.T) {
 	h, s := checkboxHub(t)
 	sender, other := fakeClient(), fakeClient()
@@ -355,6 +357,48 @@ func TestCheckbox_DispatchPutsAndReplaysAfterHello(t *testing.T) {
 	h.dispatchInbound(tablet, []byte(`{"t":"hello","id":"i2","d":{"client":{"deviceId":"tablet","app":"foci","os":"android","version":"1"}}}`))
 	if got, ok := checkboxSyncs(t, tablet)["doc-01J"]; !ok || len(got) != 2 || got[0] != 2 || got[1] != 5 {
 		t.Errorf("hello replay = %v/%v, want doc-01J/[2 5] (the replay is not wired into the handshake)", got, ok)
+	}
+}
+
+// TestCheckbox_ClearNotReplayedToOfflineDevice pins the clear's documented
+// limit: an empty put DELETES the stored document, so its fan-out reaches the
+// devices online at that moment and ONLY those. A device offline for the clear
+// is replayed nothing for that document at its next hello and keeps its
+// previous ticks until another put lands on it — absence from a replay is
+// therefore never "cleared" (the replay is bounded besides: 200 documents, 90
+// days). Making a clear survive reconnects would need tombstone rows, a design
+// change beyond #1360's delete-on-clear.
+func TestCheckbox_ClearNotReplayedToOfflineDevice(t *testing.T) {
+	h, _ := checkboxHub(t)
+	phone, mac := fakeClient(), fakeClient()
+	phone.deviceID = "phone"
+	h.clients[phone] = struct{}{}
+	h.clients[mac] = struct{}{}
+
+	h.dispatchInbound(phone, []byte(`{"t":"checkbox.put","id":"i1","d":{"documentId":"doc-01J","lines":[1,2]}}`))
+
+	// The tablet comes online and syncs the document through its hello.
+	tablet := wideClient()
+	h.dispatchInbound(tablet, []byte(`{"t":"hello","id":"i2","d":{"client":{"deviceId":"tablet","app":"foci","os":"android","version":"1"}}}`))
+	if got, ok := checkboxSyncs(t, tablet)["doc-01J"]; !ok || len(got) != 2 || got[0] != 1 || got[1] != 2 {
+		t.Fatalf("hello replay = %v/%v, want doc-01J/[1 2]", got, ok)
+	}
+	h.clients[tablet] = struct{}{}
+
+	// The tablet goes offline, then the phone clears the list: mac (online)
+	// gets the clear's empty sync, the offline tablet does not.
+	delete(h.clients, tablet)
+	h.dispatchInbound(phone, []byte(`{"t":"checkbox.put","id":"i3","d":{"documentId":"doc-01J","lines":[]}}`))
+	if got, ok := checkboxSyncs(t, mac)["doc-01J"]; !ok || len(got) != 0 {
+		t.Errorf("live clear = %v/%v, want doc-01J/[] (empty-state sync to the online device)", got, ok)
+	}
+
+	// The tablet reconnects: its hello replays NOTHING for the cleared
+	// document — the row is gone, so the tablet keeps its stale [1 2] until
+	// another put on doc-01J lands.
+	h.dispatchInbound(tablet, []byte(`{"t":"hello","id":"i4","d":{"client":{"deviceId":"tablet","app":"foci","os":"android","version":"1"}}}`))
+	if n := len(checkboxSyncsOrdered(t, tablet)); n != 0 {
+		t.Errorf("post-clear hello replayed %d checkbox.sync frame(s), want 0 (a deleted document has no state to replay)", n)
 	}
 }
 
