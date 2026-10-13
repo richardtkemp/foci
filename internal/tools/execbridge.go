@@ -807,12 +807,15 @@ func todoActionAliasesBashCase() string {
 }
 
 // todoActions defines per-subcommand usage and flag lists for foci_todo, the
-// only sub-actioned shell tool today. Single source of truth for both
+// only sub-actioned shell tool today. Single source of truth for
 //
 //   - the "Subcommands" block appended to top-level `foci_todo --help`, and
 //   - the per-action `foci_todo <action> --help` intercept, and
 //   - the per-action "valid flags" list shown when an unknown flag is rejected
-//     while a known action is in scope.
+//     while a known action is in scope, and
+//   - which actions take the todo item id positionally (PositionalID, fed
+//     through todoIDActionsPattern into both id-accepting arms of the
+//     generated parser: the digits-only and given-once checks of #2306).
 //
 // Closes the recovery loop documented in TODO #729: previously,
 // `foci_todo complete --help` was rejected as "unrecognized flag" and
@@ -824,18 +827,24 @@ var todoActions = []struct {
 	Name  string
 	Usage string // single-line: e.g. "complete <id> [--reason TEXT]"
 	Flags string // space-separated --flag list valid for this action; empty = no flags
+	// PositionalID: this action's positional argument IS the todo item id —
+	// accepted digits-only and at most once, in one form (positional or
+	// --id). Zero value (false) covers every action whose positional is
+	// text/query (add, list, list-all, search) and edit, whose id-or-text
+	// positional is deliberately out of #2306's scope.
+	PositionalID bool
 }{
-	{"add", "add <text> | --text TEXT | [<title>] --body TEXT  [--title TEXT] [--priority high|medium|low] [--tag TAGS]   (alias: create; with --body, bare words are the title; the title is prepended in bold)", "--text --body --title --priority --tag"},
-	{"list", "list [--tag T] [--status open|done|dropped|all] [--priority P] [--sort F] [--reverse] [--limit N] [--truncate N] [--format jsonl|md]", "--tag --status --priority --sort --reverse --limit --truncate --format"},
-	{"list-all", "list-all [--tag T] [--priority P] [--sort F] [--reverse] [--limit N] [--truncate N] [--format jsonl|md]", "--tag --priority --sort --reverse --limit --truncate --format"},
-	{"search", "search <query> [--sort F] [--reverse] [--limit N] [--truncate N] [--format jsonl|md]   (query may also be given as --query TEXT; --truncate: chars per item, default 300 unpiped / none piped, 0 = none)", "--query --sort --reverse --limit --truncate --format"},
-	{"get", "get <id> [--format jsonl|md]   (alias: show; or --id N)", "--id --format"},
-	{"complete", "complete <id> [--reason|--notes|--note|--text TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason --notes --note --text"},
-	{"drop", "drop <id> [--reason|--notes|--note|--text TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason --notes --note --text"},
-	{"reopen", "reopen <id>   (status→open, clears completed_at/close_reason; or --id N / --ids 1,2,3)", "--id --ids"},
-	{"start", "start <id>   (status→started; or --id N / --ids 1,2,3)", "--id --ids"},
-	{"edit", "edit <id> [--text TEXT] [--title TEXT] [--append-text|--note|--add TEXT] [--append] [--priority P] [--tag T | --add-tag T --remove-tag T]   (alias: update; or --id N / --ids 1,2,3; --tag replaces the whole tag set, --add-tag/--remove-tag change one tag and keep the rest)", "--id --ids --text --title --append --append-text --add --note --notes --priority --tag --add-tag --remove-tag"},
-	{"remove", "remove --id N   (or --ids 1,2,3)", "--id --ids"},
+	{"add", "add <text> | --text TEXT | [<title>] --body TEXT  [--title TEXT] [--priority high|medium|low] [--tag TAGS]   (alias: create; with --body, bare words are the title; the title is prepended in bold)", "--text --body --title --priority --tag", false},
+	{"list", "list [--tag T] [--status open|done|dropped|all] [--priority P] [--sort F] [--reverse] [--limit N] [--truncate N] [--format jsonl|md]", "--tag --status --priority --sort --reverse --limit --truncate --format", false},
+	{"list-all", "list-all [--tag T] [--priority P] [--sort F] [--reverse] [--limit N] [--truncate N] [--format jsonl|md]", "--tag --priority --sort --reverse --limit --truncate --format", false},
+	{"search", "search <query> [--sort F] [--reverse] [--limit N] [--truncate N] [--format jsonl|md]   (query may also be given as --query TEXT; --truncate: chars per item, default 300 unpiped / none piped, 0 = none)", "--query --sort --reverse --limit --truncate --format", false},
+	{"get", "get <id> [--format jsonl|md]   (alias: show; or --id N)", "--id --format", true},
+	{"complete", "complete <id> [--reason|--notes|--note|--text TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason --notes --note --text", true},
+	{"drop", "drop <id> [--reason|--notes|--note|--text TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason --notes --note --text", true},
+	{"reopen", "reopen <id>   (status→open, clears completed_at/close_reason; or --id N / --ids 1,2,3)", "--id --ids", true},
+	{"start", "start <id>   (status→started; or --id N / --ids 1,2,3)", "--id --ids", true},
+	{"edit", "edit <id> [--text TEXT] [--title TEXT] [--append-text|--note|--add TEXT] [--append] [--priority P] [--tag T | --add-tag T --remove-tag T]   (alias: update; or --id N / --ids 1,2,3; --tag replaces the whole tag set, --add-tag/--remove-tag change one tag and keep the rest)", "--id --ids --text --title --append --append-text --add --note --notes --priority --tag --add-tag --remove-tag", false},
+	{"remove", "remove --id N   (or --ids 1,2,3)", "--id --ids", true},
 }
 
 // todoFlagActions returns the actions whose allowlist accepts flag, in
@@ -873,6 +882,36 @@ func todoActionsBashCase() string {
 		fmt.Fprintf(&b, "    %s)\n      action_usage='%s'\n      action_flags='%s' ;;\n", a.Name, a.Usage, a.Flags)
 	}
 	return b.String()
+}
+
+// todoIDActionsPattern returns the bash `case` pattern matching the
+// todoActions entries whose positional argument is the item id. Emitted at
+// BOTH id-accepting arms of the generated foci_todo parser — the --id arm
+// and the positional arm — so the given-once rule cannot drift between them
+// (#2306); an action added with PositionalID set joins both automatically.
+func todoIDActionsPattern() string {
+	names := make([]string, 0, len(todoActions))
+	for _, a := range todoActions {
+		if a.PositionalID {
+			names = append(names, a.Name)
+		}
+	}
+	return strings.Join(names, "|")
+}
+
+// todoRejectSecondID emits the bash refusal for a second item id in one
+// foci_todo call (#2306, applying the #1778 given-twice rule to the todo
+// id). pos is the index of the newly arrived value's shell parameter ("1"
+// at the positional arm, "2" at the --id arm); the id already in hand is
+// always "$id", so the message names both. Both call sites sit at the same
+// nesting depth, so one indentation serves them equally.
+func todoRejectSecondID(pos string) string {
+	return fmt.Sprintf(`            if [ -n "$id" ]; then
+              echo "error: foci_todo $action: the item id was already given as '$id'; unexpected second id '$%s'" >&2
+              echo "usage: foci_todo $action_usage" >&2
+              return 1
+            fi
+`, pos)
 }
 
 // todoSubcommandsHelpBlock returns the "Subcommands:" section appended to
@@ -1046,7 +1085,17 @@ func generateShellFunc(t *Tool) string {
       --remove-tag) if [ -n "$remove_tag" ]; then remove_tag="$remove_tag,$2"; else remove_tag="$2"; fi; shift 2 ;;
       --query) query="$2"; shift 2 ;;
       --status) status="$2"; shift 2 ;;
-      --id) foci__json_arg --id number "$2" || return 1; id="$2"; shift 2 ;;
+      --id)
+        foci__json_arg --id number "$2" || return 1
+        # #2306: the item id may be given once (#1778 given-twice rule): a
+        # --id after a positional id, or a second --id, used to silently win
+        # (whichever came last). Refused instead, for the id-positional
+        # actions only — edit keeps its historical handling (out of scope).
+        case "$action" in
+          %s)
+%s          ;;
+        esac
+        id="$2"; shift 2 ;;
       --ids) ids="$2"; shift 2 ;;
       --reason) reason="$2"; shift 2 ;;
       --notes) reason="$2"; shift 2 ;;
@@ -1077,14 +1126,30 @@ func generateShellFunc(t *Tool) string {
           echo "valid flags: --text --priority --tag --query --status --id --ids --reason --notes --note --append --append-text --add --sort --reverse --limit --truncate --format" >&2
         fi
         return 1 ;;
-      *) # positional: first positional is text/query/id depending on action
+      *) # positional: text/query/id depending on action; for the id actions
+        # (#2306) the positional is the item id — digits only, exactly one
         case "$action" in
           add) add_words="$add_words $1" ;;
           search) query="$query $1" ;;
-          get|complete|drop|reopen|start|remove) id="$1" ;;
+          %s)
+            # #2306: for these actions every positional IS the item id: it
+            # must be one or more ASCII digits (the same rule edit's numeric
+            # positional test uses below) and may be given only once, in one
+            # form (positional or --id). Before, any word went straight to
+            # jq --argjson, so the caller saw jq's invalid-JSON text instead
+            # of a usage error.
+%s            case "$1" in
+              ''|*[!0-9]*)
+                echo "error: foci_todo $action: the item id must be a whole number, got '$1'" >&2
+                echo "usage: foci_todo $action_usage" >&2
+                return 1 ;;
+              *) id="$1" ;;
+            esac ;;
           edit)
-            # A numeric positional is the item id (so "update 6 ..." works like
-            # complete/drop); anything else falls back to text for back-compat.
+            # A numeric positional is the item id (the same ''|*[!0-9]*
+            # digits test the id-actions above use, so "update 6 ..." works
+            # like complete/drop); anything else falls back to text for
+            # back-compat.
             case "$1" in
               ''|*[!0-9]*) text="$text $1" ;;
               *) if [ -z "$id" ]; then id="$1"; else text="$text $1"; fi ;;
@@ -1201,6 +1266,14 @@ func generateShellFunc(t *Tool) string {
       foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
       ;;
     get)
+      # #2306: get is the one id action that must refuse a missing id in the
+      # wrapper — it used to feed an empty string to jq --argjson. The other
+      # id actions keep sending the call and get the server's "id is required".
+      if [ -z "$id" ]; then
+        echo "error: foci_todo get: the item id is missing" >&2
+        echo "usage: foci_todo $action_usage" >&2
+        return 1
+      fi
       foci-call "$(jq -nc --argjson id "$id" '{"tool":"todo","params":{"action":"get","id":$id}}')"
       ;;
     complete)
@@ -1254,7 +1327,9 @@ func generateShellFunc(t *Tool) string {
       ;;
   esac
 }
-`, name, todoHelpCheck, guard, todoActionAliasesBashCase(), todoActionsBashCase(), name)
+`, name, todoHelpCheck, guard, todoActionAliasesBashCase(), todoActionsBashCase(),
+			todoIDActionsPattern(), todoRejectSecondID("2"),
+			todoIDActionsPattern(), todoRejectSecondID("1"), name)
 
 	case "summary":
 		// Prompt as argument; content from --file or stdin
