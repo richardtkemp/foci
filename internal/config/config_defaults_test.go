@@ -283,33 +283,59 @@ id = "override"
 func TestApplyDefaultsAppCheckboxFields(t *testing.T) {
 	// Proves the [platforms.app] checkbox_* fields inherit down the platform
 	// cascade (agent platform ← global platform ← provider defaults) exactly
-	// like every sibling app setting, and that values already set stay put
-	// (#1360).
-	replayDocs, maxDocs := 5, 6
+	// like every sibling app setting (#1360). Both arms of every field: a
+	// platform that sets a value keeps it, and one that sets nothing inherits
+	// the default — including the string fields' empty-means-inherit branch.
+	defReplayDocs, defMaxDocs := 5, 6
 	defaults := PlatformConfig{App: &AppSpecific{
 		CheckboxStorePath:  "default-checkboxes.db",
 		CheckboxReplayTTL:  "90h",
-		CheckboxReplayDocs: &replayDocs,
+		CheckboxReplayDocs: &defReplayDocs,
 		CheckboxRetention:  "365h",
-		CheckboxMaxDocs:    &maxDocs,
+		CheckboxMaxDocs:    &defMaxDocs,
 	}}
-	p := PlatformConfig{App: &AppSpecific{CheckboxStorePath: "custom-checkboxes.db"}}
-	p.ApplyDefaults(defaults)
-	a := p.App
-	if a.CheckboxStorePath != "custom-checkboxes.db" {
-		t.Errorf("CheckboxStorePath = %q, want the set value custom-checkboxes.db", a.CheckboxStorePath)
+	setReplayDocs, setMaxDocs := 25, 500
+	set := PlatformConfig{App: &AppSpecific{
+		CheckboxStorePath:  "custom-checkboxes.db",
+		CheckboxReplayTTL:  "48h",
+		CheckboxReplayDocs: &setReplayDocs,
+		CheckboxRetention:  "600h",
+		CheckboxMaxDocs:    &setMaxDocs,
+	}}
+	set.ApplyDefaults(defaults)
+	s := set.App
+	if s.CheckboxStorePath != "custom-checkboxes.db" {
+		t.Errorf("CheckboxStorePath = %q, want the set value custom-checkboxes.db", s.CheckboxStorePath)
 	}
-	if a.CheckboxReplayTTL != "90h" {
-		t.Errorf("CheckboxReplayTTL = %q, want inherited 90h", a.CheckboxReplayTTL)
+	if s.CheckboxReplayTTL != "48h" {
+		t.Errorf("CheckboxReplayTTL = %q, want the set value 48h", s.CheckboxReplayTTL)
 	}
-	if DerefInt(a.CheckboxReplayDocs) != 5 {
-		t.Errorf("CheckboxReplayDocs = %v, want inherited 5", a.CheckboxReplayDocs)
+	if DerefInt(s.CheckboxReplayDocs) != 25 {
+		t.Errorf("CheckboxReplayDocs = %v, want the set value 25", s.CheckboxReplayDocs)
 	}
-	if a.CheckboxRetention != "365h" {
-		t.Errorf("CheckboxRetention = %q, want inherited 365h", a.CheckboxRetention)
+	if s.CheckboxRetention != "600h" {
+		t.Errorf("CheckboxRetention = %q, want the set value 600h", s.CheckboxRetention)
 	}
-	if DerefInt(a.CheckboxMaxDocs) != 6 {
-		t.Errorf("CheckboxMaxDocs = %v, want inherited 6", a.CheckboxMaxDocs)
+	if DerefInt(s.CheckboxMaxDocs) != 500 {
+		t.Errorf("CheckboxMaxDocs = %v, want the set value 500", s.CheckboxMaxDocs)
+	}
+	bare := PlatformConfig{App: &AppSpecific{}}
+	bare.ApplyDefaults(defaults)
+	b := bare.App
+	if b.CheckboxStorePath != "default-checkboxes.db" {
+		t.Errorf("CheckboxStorePath = %q, want inherited default-checkboxes.db", b.CheckboxStorePath)
+	}
+	if b.CheckboxReplayTTL != "90h" {
+		t.Errorf("CheckboxReplayTTL = %q, want inherited 90h", b.CheckboxReplayTTL)
+	}
+	if DerefInt(b.CheckboxReplayDocs) != 5 {
+		t.Errorf("CheckboxReplayDocs = %v, want inherited 5", b.CheckboxReplayDocs)
+	}
+	if b.CheckboxRetention != "365h" {
+		t.Errorf("CheckboxRetention = %q, want inherited 365h", b.CheckboxRetention)
+	}
+	if DerefInt(b.CheckboxMaxDocs) != 6 {
+		t.Errorf("CheckboxMaxDocs = %v, want inherited 6", b.CheckboxMaxDocs)
 	}
 }
 
