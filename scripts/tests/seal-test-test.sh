@@ -4,6 +4,8 @@
 #  - the diagnostic re-run (#2132): a sealed failure that passes on re-run both
 #    unsealed and sealed is a flake, and only one that fails sealed again is
 #    blamed on the sandbox;
+#  - FGW_HEAVY_LOCK=external (#2396): the diagnostic re-runs take the heavy
+#    lock and pass HEAVY_LOCK_HELD;
 #  - the fixed test environment (#2348): go test sees env -i plus a pinned
 #    PATH, whatever the caller's PATH and env, and every run passes -v.
 #
@@ -14,7 +16,7 @@
 # Usage: seal-test-test.sh [-h]
 # Exit:  0 all assertions passed; 1 otherwise (prints which).
 set -uo pipefail
-case "${1:-}" in -h|--help) sed -n '2,15p' "$0" | sed 's/^#//; s/^ //'; exit 0;; esac
+case "${1:-}" in -h|--help) sed -n '2,17p' "$0" | sed 's/^#//; s/^ //'; exit 0;; esac
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 SEALTEST="$HERE/seal-test.sh"
@@ -44,6 +46,10 @@ if [ "$1" = env ] && [ "$2" = GOROOT ]; then echo "$root"; exit 0; fi
 n=$(( $(cat "$root/calls" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$root/calls"
 { echo "--- call $n: $*"; env | grep -v '^SEALED=' | sort; } >> "$root/seen"
+# Whether the heavy lock file named in $root/lockpath is held while this call runs.
+if [ -s "$root/lockpath" ]; then
+  if flock -n "$(cat "$root/lockpath")" true; then echo "call $n: lock free"; else echo "call $n: lock held"; fi >> "$root/locks"
+fi
 pkg="${!#}"
 fail=0
 case "$(cat "$root/mode")" in
@@ -148,5 +154,32 @@ if [ -n "$unitargs" ] && [ "$unitargs" = "$oneargs" ]; then
 else
   printf 'FAIL flags: unit [%s] vs one [%s]\n' "$unitargs" "$oneargs"; RC=1
 fi
+
+# ---- #2396: the heavy lock with FGW_HEAVY_LOCK=external -------------------
+# The caller locks lazily (on a Go cache miss), so seal-test.sh must take the
+# lock itself for the -count=1 diagnostic re-runs, which the cache cannot cover,
+# and tell them with HEAVY_LOCK_HELD.
+: > "$TMP/heavy"
+echo "$TMP/heavy" > "$TMP/goroot/lockpath"
+rm -f "$TMP/goroot/locks"
+run sandbox one FGW_HEAVY_LOCK=external SEAL_TEST_HEAVY_LOCK="$TMP/heavy" >/dev/null   # sealed fails, unsealed passes: both re-runs run
+locks=$(cat "$TMP/goroot/locks"); seen=$(cat "$TMP/goroot/seen")
+expect "external: the sealed run is not locked by seal-test.sh" "call 1: lock free" "$locks"
+expect "external: the unsealed re-run holds the lock" "call 2: lock held" "$locks"
+expect "external: the sealed re-run holds the lock" "call 3: lock held" "$locks"
+expect "external: the re-runs are told the lock is held" "HEAVY_LOCK_HELD=$TMP/heavy" "$(sed -n '/^--- call 2/,$p' <<<"$seen")"
+reject "external: the first run is not told so" "HEAVY_LOCK_HELD" "$(sed -n '/^--- call 1/,/^--- call 2/p' <<<"$seen")"
+# Default mode: the Makefile holds the lock around all of it; seal-test.sh takes nothing.
+rm -f "$TMP/goroot/locks"
+run real one SEAL_TEST_HEAVY_LOCK="$TMP/heavy" >/dev/null
+reject "default: no re-run lock" "lock held" "$(cat "$TMP/goroot/locks")"
+reject "default: no HEAVY_LOCK_HELD" "HEAVY_LOCK_HELD" "$(cat "$TMP/goroot/seen")"
+# A caller already holding it (make integration, COUNT=N) passes HEAVY_LOCK_HELD to the
+# tests; seal-test.sh then takes nothing for the re-runs.
+rm -f "$TMP/goroot/locks"
+run real one FGW_HEAVY_LOCK=external HEAVY_LOCK_HELD=/tmp/heavy SEAL_TEST_HEAVY_LOCK="$TMP/heavy" >/dev/null
+reject "held by caller: no re-run lock" "lock held" "$(cat "$TMP/goroot/locks")"
+expect "held by caller: the tests see HEAVY_LOCK_HELD" "HEAVY_LOCK_HELD=/tmp/heavy" "$(sed -n '/^--- call 1/,/^--- call 2/p' "$TMP/goroot/seen")"
+: > "$TMP/goroot/lockpath"
 
 exit "$RC"

@@ -77,6 +77,35 @@ SIMPLE_BINS := foci-gw foci foci-call foci-cc-hook foci-codex-hook
 # same lock (~6 GB resident). Absent script (another host) = no-op.
 REAP_GRADLE = { [ -f /home/foci/shared/scripts/heavy-lock-reap-gradle.sh ] && bash /home/foci/shared/scripts/heavy-lock-reap-gradle.sh 9<&- ; true; };
 
+# The heavy lock of the test targets (test, test-one, integration), foci_todo #2396.
+# Default (FGW_HEAVY_LOCK unset): every run takes /tmp/heavy up front, as below.
+# FGW_HEAVY_LOCK=external: the CALLER handles locking for the runs the Go cache can
+# cover (`test`, `test-one` without COUNT): this Makefile neither takes the lock nor
+# runs REAP_GRADLE (which must only run under the lock). The caller's build-cache
+# helper takes /tmp/heavy itself, on the first cache miss. Runs the cache cannot
+# cover (`integration`, COUNT=N, seal-test.sh's diagnostic re-runs) still lock up
+# front, and say so to everything they start with HEAVY_LOCK_HELD=/tmp/heavy, so a
+# helper below them does not wait on a lock its own ancestor holds.
+FGW_HEAVY_LOCK ?=
+FGW_TESTDIR ?=
+FGW_SRCLINK ?=
+ifneq ($(filter-out external,$(FGW_HEAVY_LOCK)),)
+$(error FGW_HEAVY_LOCK must be unset or "external", not "$(FGW_HEAVY_LOCK)")
+endif
+ifneq ($(FGW_HEAVY_LOCK),)
+# Unlocked runs must not share the per-user test dir and source symlink.
+ifeq ($(and $(FGW_TESTDIR),$(FGW_SRCLINK)),)
+$(error FGW_HEAVY_LOCK=external needs FGW_TESTDIR and FGW_SRCLINK: unlocked runs must not share the per-user test dir)
+endif
+export FGW_HEAVY_LOCK
+endif
+heavy_take = echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ... [$$(date +%T)]" >&2; flock 9; echo ">>> acquired heavy lock [$$(date +%T)]" >&2;
+# $(call heavy_enter,<1 if the Go cache can cover the run>) etc.: the lock steps of one run.
+heavy_lazy = $(and $(FGW_HEAVY_LOCK),$(1))
+heavy_enter = $(if $(call heavy_lazy,$(1)),echo ">>> heavy lock: left to the caller (FGW_HEAVY_LOCK=external) [$$(date +%T)]" >&2;,$(heavy_take))
+heavy_reap = $(if $(call heavy_lazy,$(1)),,$(REAP_GRADLE))
+heavy_held = $(if $(FGW_HEAVY_LOCK),$(if $(1),,HEAVY_LOCK_HELD=/tmp/heavy ))
+
 .PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals find-metadata-key-registry-drift llbox test test-one integration coverage coverage-report coverage-html coverage-check vet lint lint-unlocked lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check bench-test-build land clean setup-hooks
 
 all: $(SIMPLE_BINS) nosgid find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals find-metadata-key-registry-drift llbox
@@ -183,9 +212,20 @@ find-metadata-key-registry-drift:
 # unavailable, so it's always safe to invoke. Lives in its own go.mod for the
 # same reason as the other checkers above (dependency-free, out of foci's
 # main module) — see scripts/llbox/main.go for the full design.
+# FGW_HEAVY_LOCK=external (#2396): built only when missing or older than its
+# sources. Linking a binary is always a Go cache miss, so rebuilding it on every
+# test call would make the caller's helper take the heavy lock for every call,
+# fully cached or not. Default: rebuilt every time, as before.
+ifeq ($(FGW_HEAVY_LOCK),external)
+llbox: bin/llbox
+bin/llbox: $(wildcard scripts/llbox/*.go) scripts/llbox/go.mod
+	@mkdir -p bin
+	cd scripts/llbox && go build -o ../../bin/llbox .
+else
 llbox:
 	@mkdir -p bin
 	cd scripts/llbox && go build -o ../../bin/llbox .
+endif
 
 # fgw_testdir makes a fresh, UNIQUE per-run test dir under /tmp/fgw (#2236).
 # The name used to be <prefix>-$(date +%s): two runs started in the same
@@ -213,6 +253,11 @@ fgw_testdir = $(shell mkdir -p /tmp/fgw && mktemp -d /tmp/fgw/$(1)-XXXXXXXX)
 # unmodified tracked file to its last commit time (Go keys a file a test read
 # on its mtime, and a fresh checkout writes every file "now").
 fgw_shared_testdir := /tmp/fgw/run-$(shell id -un)
+# FGW_TESTDIR / FGW_SRCLINK (foci_todo #2396): a caller that runs test calls
+# concurrently with other callers' (it does not hold /tmp/heavy for them, see
+# FGW_HEAVY_LOCK) gives each of its runs its own test dir and source symlink.
+# It also deletes them when its run ends. Unset: the shared per-user ones.
+# (FGW_TESTDIR ?= and FGW_SRCLINK ?= are set with FGW_HEAVY_LOCK above.)
 # go test also keys every file a test READS by its ABSOLUTE path (traced with
 # GODEBUG=gocachehash=1: "open /home/rich/git/<checkout>/foci.toml.example"), so
 # two checkouts never share a result for such a test. Inside the heavy lock the
@@ -221,6 +266,9 @@ fgw_shared_testdir := /tmp/fgw/run-$(shell id -un)
 # the link (one per user). The link's own mtime is pinned too: go hashes an
 # Lstat of any path a test stats, and the link is recreated on every run.
 fgw_srclink := /tmp/fgw/src-$(shell id -un)
+test_dir = $(or $(FGW_TESTDIR),$(fgw_shared_testdir))
+src_link = $(or $(FGW_SRCLINK),$(fgw_srclink))
+src_link_dir = $(if $(FGW_SRCLINK),mkdir -p $(dir $(FGW_SRCLINK)) && )
 fgw_logfile = $(shell mkdir -p /tmp/fgw && mktemp /tmp/fgw/$(1)-XXXXXXXX.log)
 
 # `make test` seals itself under Landlock BY DEFAULT (foci_todo #1523) via
@@ -230,7 +278,7 @@ fgw_logfile = $(shell mkdir -p /tmp/fgw && mktemp /tmp/fgw/$(1)-XXXXXXXX.log)
 # explicitly, for debugging a test that genuinely needs to write somewhere
 # odd.
 test: llbox
-	$(eval TESTDIR := $(fgw_shared_testdir))
+	$(eval TESTDIR := $(test_dir))
 	$(eval LOGFILE := $(call fgw_logfile,test))
 	@python3 scripts/restore-mtime.py . || true
 	@# /tmp/heavy serialises the test runner against any other heavy build
@@ -260,7 +308,7 @@ test: llbox
 	@# #1498). The /tmp/fgw daily cron sweep (entries >24h) remains as a backstop
 	@# for anything this recipe doesn't reach (e.g. an aborted run).
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ... [$$(date +%T)]" >&2; flock 9; echo ">>> acquired heavy lock [$$(date +%T)]" >&2; rm -rf $(TESTDIR) && mkdir -p $(TESTDIR)/home && ln -sfn $(CURDIR) $(fgw_srclink) && touch -h -d @946684800 $(fgw_srclink) && cd $(fgw_srclink) && $(REAP_GRADLE) TEST_TIMEOUT='$(TIMEOUT)' bash scripts/seal-test.sh unit $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) 9<&- ; STATUS=$$? ; \
+	@( $(call heavy_enter,1) rm -rf $(TESTDIR) && mkdir -p $(TESTDIR)/home && $(src_link_dir)ln -sfn $(CURDIR) $(src_link) && touch -h -d @946684800 $(src_link) && cd $(src_link) && $(call heavy_reap,1) $(call heavy_held,1)TEST_TIMEOUT='$(TIMEOUT)' bash scripts/seal-test.sh unit $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; bash scripts/test-fail-summary.sh $(LOGFILE); fi ; \
 	  rm -rf $(TESTDIR) ; \
@@ -285,16 +333,18 @@ test: llbox
 # does nothing.
 # TIMEOUT overrides go test's per-package -timeout (default 180s x COUNT, also
 # used by `make test`; foci_todo #2290) — see test_timeout in scripts/seal-test.sh.
+# COUNT=N always runs the tests (no cached result), so it is never left to a lazy lock.
+test_one_cacheable = $(if $(COUNT),,1)
 test-one: llbox
 	@if [ -z "$(PKG)" ]; then echo "usage: make test-one PKG=./internal/<pkg>/ [RUN=<TestName>] [COUNT=N] [TIMEOUT=<go duration>]" >&2; exit 2; fi
-	$(eval TESTDIR := $(fgw_shared_testdir))
+	$(eval TESTDIR := $(test_dir))
 	$(eval LOGFILE := $(call fgw_logfile,test-one))
 	@python3 scripts/restore-mtime.py . || true
 	@# Same /tmp/heavy compute lock as `test`/`integration` — see those targets
 	@# for the rationale (serialises against other heavy builds; read-only lock
 	@# fd so go test's children don't inherit it).
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ... [$$(date +%T)]" >&2; flock 9; echo ">>> acquired heavy lock [$$(date +%T)]" >&2; rm -rf $(TESTDIR) && mkdir -p $(TESTDIR)/home && ln -sfn $(CURDIR) $(fgw_srclink) && touch -h -d @946684800 $(fgw_srclink) && cd $(fgw_srclink) && $(REAP_GRADLE) TEST_TIMEOUT='$(TIMEOUT)' bash scripts/seal-test.sh one $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) $(PKG) "$(RUN)" "$(V)" "$(COUNT)" 9<&- ; STATUS=$$? ; \
+	@( $(call heavy_enter,$(test_one_cacheable)) rm -rf $(TESTDIR) && mkdir -p $(TESTDIR)/home && $(src_link_dir)ln -sfn $(CURDIR) $(src_link) && touch -h -d @946684800 $(src_link) && cd $(src_link) && $(call heavy_reap,$(test_one_cacheable)) $(call heavy_held,$(test_one_cacheable))TEST_TIMEOUT='$(TIMEOUT)' bash scripts/seal-test.sh one $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) $(PKG) "$(RUN)" "$(V)" "$(COUNT)" 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; bash scripts/test-fail-summary.sh $(LOGFILE); fi ; \
 	  rm -rf $(TESTDIR) ; \
@@ -312,7 +362,7 @@ test-one: llbox
 # RUN is passed unexpanded ($(value RUN)) so RUN='A$|B' reaches go test intact.
 integration: llbox
 	@echo "=== Integration tests (L2: real foci-gw against stubbed edges) ==="
-	$(eval TESTDIR := $(call fgw_testdir,integration))
+	$(eval TESTDIR := $(or $(FGW_TESTDIR),$(call fgw_testdir,integration)))
 	$(eval LOGFILE := $(TESTDIR).log)
 	@mkdir -p $(TESTDIR)/home
 	@# Full -v output (every RUN/PASS line + on-failure gateway stderr dumps) is
@@ -339,7 +389,7 @@ integration: llbox
 	@# any runaway foci-gw/cc-stub first avoids racing a still-open binary FD
 	@# against the removal (harmless on Linux either way, but tidier).
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
-	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ... [$$(date +%T)]" >&2; flock 9; echo ">>> acquired heavy lock [$$(date +%T)]" >&2; $(REAP_GRADLE) bash scripts/seal-test.sh integration $(TESTDIR) $(LOGFILE) $(IPARALLEL) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) "" '$(value RUN)' "" "$(COUNT)" 9<&- ; STATUS=$$? ; \
+	@( $(call heavy_enter,) $(call heavy_reap,) $(call heavy_held,)bash scripts/seal-test.sh integration $(TESTDIR) $(LOGFILE) $(IPARALLEL) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) "" '$(value RUN)' "" "$(COUNT)" 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -ne 0 ]; then echo ">>> non-zero exit ($$STATUS) — sweeping any orphaned foci-gw/cc-stub subprocesses from this run ..." >&2; pkill -f "$(TESTDIR)/foci-l2-bin[0-9]" 2>/dev/null || true; fi ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; bash scripts/test-fail-summary.sh $(LOGFILE); fi ; \

@@ -95,6 +95,8 @@ RUNFILTER="${9:-}"
 COUNT="${11:-}"
 
 LLBOX="bin/llbox"
+# The Makefile's heavy lock. SEAL_TEST_HEAVY_LOCK is for scripts/tests/seal-test-test.sh only.
+HEAVY_LOCK_FILE="${SEAL_TEST_HEAVY_LOCK:-/tmp/heavy}"
 
 : > "$LOGFILE"
 
@@ -144,6 +146,13 @@ for v in "${OPTIN_VARS[@]}"; do
   PASSTHRU+=("$v=${!v}")
   PASSTHRU_SHOWN+=("$v=<set>")
 done
+# HEAVY_LOCK_HELD (foci_todo #2396): the Makefile holds /tmp/heavy for this whole
+# run and says so to the tests, so a build-cache helper inside them that takes
+# the lock lazily does not wait on a lock its own ancestor holds. Unset by default.
+if [ -n "${HEAVY_LOCK_HELD:-}" ]; then
+  PASSTHRU+=("HEAVY_LOCK_HELD=$HEAVY_LOCK_HELD")
+  PASSTHRU_SHOWN+=("HEAVY_LOCK_HELD=$HEAVY_LOCK_HELD")
+fi
 PINNED=("PATH=$TEST_PATH" "USER=$(id -un)" "PWD=$PWD" "TMPDIR=$TESTDIR" "FOCI_TMPDIR=$TESTDIR" "FOCI_TEST_TMPDIR=$TESTDIR" \
   "HOME=$TESTDIR/home" "GOCACHE=$GOCACHE_DIR" "GOMODCACHE=$GOMODCACHE_DIR" "GOPATH=$GOPATH_DIR")
 TESTENV=(env -i "${PASSTHRU[@]}" "${PINNED[@]}")
@@ -198,15 +207,29 @@ diagnostic_rerun() {
     echo ""
     echo "=== diagnostic re-run: retrying sealed failures UNSEALED to isolate a sandbox artifact from a real bug ==="
   } >> "$LOGFILE"
+  # -count=1 re-runs always run the tests, so the Go cache cannot cover them: with
+  # FGW_HEAVY_LOCK=external (the caller locks lazily, on a cache miss) take
+  # /tmp/heavy up front here, and say so to the re-runs (foci_todo #2396).
+  local env=("${TESTENV[@]}") locked=""
+  if [ "${FGW_HEAVY_LOCK:-}" = external ] && [ -z "${HEAVY_LOCK_HELD:-}" ]; then
+    echo ">>> diagnostic re-run: waiting for heavy lock ($HEAVY_LOCK_FILE) ... [$(date +%T)]" >&2
+    if ! { exec 8<"$HEAVY_LOCK_FILE" && flock 8; }; then
+      echo ">>> diagnostic re-run SKIPPED: could not take $HEAVY_LOCK_FILE (it does not run unlocked)" | tee -a "$LOGFILE" >&2
+      return 0
+    fi
+    locked=1
+    echo ">>> diagnostic re-run: acquired heavy lock [$(date +%T)]" >&2
+    env+=("HEAVY_LOCK_HELD=$HEAVY_LOCK_FILE")
+  fi
   local pkg
   while IFS= read -r pkg; do
     [ -z "$pkg" ] && continue
     echo "--- unsealed re-run: $pkg ---" >> "$LOGFILE"
-    if "${TESTENV[@]}" nice -n 19 go test -trimpath -ldflags=-w -count=1 "${extra_flags[@]}" "$pkg" >> "$LOGFILE" 2>&1; then
+    if "${env[@]}" nice -n 19 go test -trimpath -ldflags=-w -count=1 "${extra_flags[@]}" "$pkg" >> "$LOGFILE" 2>&1 8<&-; then
       # A pass unsealed is also what a flake looks like. Only a second sealed
       # failure pins it on the sandbox (#2132).
       echo "--- sealed re-run: $pkg ---" >> "$LOGFILE"
-      if "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -trimpath -ldflags=-w -count=1 "${extra_flags[@]}" "$pkg" >> "$LOGFILE" 2>&1; then
+      if "${SEAL[@]}" "${env[@]}" nice -n 19 go test -trimpath -ldflags=-w -count=1 "${extra_flags[@]}" "$pkg" >> "$LOGFILE" 2>&1 8<&-; then
         echo ">>> DIAGNOSTIC: $pkg passes on re-run both UNSEALED and SEALED — the failure is a FLAKE, not a sandbox write." | tee -a "$LOGFILE" >&2
       else
         echo ">>> DIAGNOSTIC: $pkg fails SEALED again but passes UNSEALED — it is writing outside the sandbox. Add the path to the whitelist in scripts/seal-test.sh, or stop writing there." | tee -a "$LOGFILE" >&2
@@ -215,6 +238,7 @@ diagnostic_rerun() {
       echo ">>> $pkg fails both sealed and unsealed — a real test failure, not a sealing artifact." | tee -a "$LOGFILE" >&2
     fi
   done <<<"$failed"
+  if [ -n "$locked" ]; then exec 8<&-; fi
 }
 
 # env_header <label>
