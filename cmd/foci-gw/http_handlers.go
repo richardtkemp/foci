@@ -254,6 +254,7 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			Text           string `json:"text"`
 			Model          string `json:"model"`
 			Human          bool   `json:"human"` // #1130: caller declares a human sent this
+			Steer          string `json:"steer"` // #1318: "steer" | "queue" | "" (unknown → default)
 			IfUserActive   string `json:"if_user_active"`
 			IfUserInactive string `json:"if_user_inactive"`
 			IfActive       string `json:"if_active"`
@@ -307,15 +308,21 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 		// does not hold now enqueues the send for later delivery by the sweep
 		// (persisted, restart-surviving) instead of blocking or dropping.
 		// This default is /send-only: /branch and /command run now when no
-		// wait field is given (#1272).
+		// wait field is given (#1272). A per-message steer choice skips only
+		// this implicit default (#1318): a running turn counts as active, so
+		// the default would defer every --steer until turn-end + 1m idle and
+		// the choice could not do the one thing it exists for. Explicit
+		// --if-*/--wait-* gates still apply verbatim to choice-carrying sends.
+		pref := platform.SteerPreferenceFromWire(req.Steer)
 		wc := req.conds()
 		noIfGate := req.IfActive == "" && req.IfInactive == "" && req.IfUserActive == "" && req.IfUserInactive == ""
-		if !wc.none && !wc.any() && noIfGate {
+		if !wc.none && !wc.any() && noIfGate && pref == platform.SteerDefault {
 			wc.cold = "1m"
 		}
 		deferredRec := defersend.Record{
 			Kind: defersend.KindSend, AgentID: inst.id, SessionKey: sessionKey,
 			Text: req.Text, Policy: string(res.Policy), Model: req.Model,
+			Steer: req.Steer,
 		}
 
 		// Rate-limit gate (#1417): a session whose endpoint is currently
@@ -385,6 +392,30 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 		}
 
 		app.DeliverExternalPrompt(sessionKey, req.Text)
+
+		// Per-message delivery choice (#1318): dispatch as a USER envelope so
+		// Inbox.Enqueue's existing routing honours the choice. Two shapes keep
+		// today's paths because the choice cannot matter there:
+		//   - policy=broadcast — the fan-out contract returns the reply in the
+		//     body AND to every live surface; a user envelope has no such
+		//     contract, so the mode is inert (documented exception);
+		//   - sync + idle session — the blocking reply is preserved; with
+		//     nothing in flight the choice is inert (a pending foci_ask holds
+		//     the turn like today instead of consuming it as an answer).
+		// Sync + a turn in flight returns the 202 accepted receipt immediately:
+		// the reply belongs to the in-flight/following turn, and blocking on it
+		// could hang on a raced fold.
+		if pref != platform.SteerDefault && res.Policy != route.PolicyBroadcast && (req.Async || inst.ag.IsTurnInFlight(sessionKey)) {
+			ok := enqueueSteerChoice(inst, d, sessionKey, req.Text, pref, req.Human, res.Policy)
+			writeSteerChoiceReceipt(w, ok, rcpt)
+			if ok && req.Human {
+				// #1130: stamp the in-process receipt only once the request
+				// is actually queued — the durable timestamp is the turn's
+				// own entry write via Envelope.Human.
+				notifyHumanInteraction(inst)
+			}
+			return
+		}
 
 		sendCtx := agent.WithTrigger(d.ctx, "user")
 		if req.Human {

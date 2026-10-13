@@ -18,6 +18,25 @@ type sendFlags struct {
 	async       bool   // fire-and-forget mode
 	sync        bool   // wait for response (overrides async)
 	broadcast   bool   // deliver the response to every live surface for the agent
+	steerFlag   bool   // --steer / FOCI_STEER=steer: fold into a running turn (#1318)
+	queueFlag   bool   // --queue / FOCI_STEER=queue: fresh turn behind a running one
+}
+
+// steerBody resolves the mutually-exclusive delivery-mode flags (#1318) to
+// the wire body's steer value: "steer", "queue", or "" (no choice — the body
+// carries no key). Both flags set — directly or flag+env — is a usage error:
+// two live sources disagreeing is a mistake to surface, not resolve.
+func (f sendFlags) steerBody() (string, error) {
+	if f.steerFlag && f.queueFlag {
+		return "", fmt.Errorf("--steer and --queue are mutually exclusive")
+	}
+	if f.steerFlag {
+		return "steer", nil
+	}
+	if f.queueFlag {
+		return "queue", nil
+	}
+	return "", nil
 }
 
 func parseSendFlags(args []string) (flags sendFlags, rest []string) {
@@ -93,6 +112,12 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 		} else if args[i] == "--sync" || args[i] == "--wait" {
 			flags.sync = true
 			consumed = true
+		} else if args[i] == "--steer" {
+			flags.steerFlag = true
+			consumed = true
+		} else if args[i] == "--queue" {
+			flags.queueFlag = true
+			consumed = true
 		}
 		if !consumed {
 			filtered = append(filtered, args[i])
@@ -109,6 +134,14 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 	flags.messageFile = envDefault(flags.messageFile, "FOCI_MESSAGE_FILE")
 	flags.async = envBool(flags.async, "FOCI_ASYNC")
 	flags.sync = envBool(flags.sync, "FOCI_SYNC")
+	// FOCI_STEER sets the delivery mode ("steer"/"queue"); other values are
+	// ignored → absent, and an explicit --steer/--queue flag wins over it.
+	switch envDefault("", "FOCI_STEER") {
+	case "steer":
+		flags.steerFlag = true
+	case "queue":
+		flags.queueFlag = true
+	}
 	return flags, filtered
 }
 
@@ -136,7 +169,7 @@ func resolveMessage(flags sendFlags, trailingArgs []string) (string, error) {
 }
 
 func sendUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: foci send [-a agent] [-s session] [-m model] [--if-active <dur>] [--if-inactive <dur>] [--if-user-active <dur>] [--if-user-inactive <dur>] [--wait-warm <dur>] [--wait-cold <dur>] [--sync] [-mt text | -mf file] <message>
+	fmt.Fprintf(os.Stderr, `Usage: foci send [-a agent] [-s session] [-m model] [--steer | --queue] [--if-active <dur>] [--if-inactive <dur>] [--if-user-active <dur>] [--if-user-inactive <dur>] [--wait-warm <dur>] [--wait-cold <dur>] [--sync] [-mt text | -mf file] <message>
 
 Send a message to the agent's session.
 
@@ -161,13 +194,21 @@ user-active/user-inactive):
 
 DEFAULT: a send with NO if/wait flag defaults to --wait-cold 1m, so it waits for
 the session to be idle 1m before delivering (avoids interleaving with active
-work). Use --no-gate to send immediately with no gating.
+work). Use --no-gate to send immediately with no gating. An explicit --steer or
+--queue skips only this implicit default; explicit gates still apply.
+
+Delivery mode (#1318): --steer folds the message into the agent's running turn
+(if one runs — otherwise it delivers at once); --queue runs it as its own fresh
+turn behind a running one (and is never consumed as plan feedback or an ask
+answer). Both are mutual-exclusive switches; a deferred send keeps its mode.
 
 Flags:
   -a, --agent <id>          Target agent (env: FOCI_AGENT)
   -s, --session <id|alias>  Target session name or a chat alias (env: FOCI_SESSION, default: main)
-  --broadcast               Deliver the response to every live surface for the agent (telegram, app, …)
+  --broadcast               Deliver the response to every live surface for the agent (telegram, app, …); with a delivery mode the mode is ignored
   -m, --model <model>       Model override: group name, alias, or developer/model_id (env: FOCI_MODEL)
+  --steer                   Redirect the agent now: fold into the running turn, else deliver at once (env: FOCI_STEER=steer)
+  --queue                   Wait for the current turn to finish, then run as its own fresh turn (env: FOCI_STEER=queue)
   --if-warm <dur>           Skip if this session has not run a turn within duration (env: FOCI_IF_WARM; alias --if-active)
   --if-cold <dur>           Skip if this session has run a turn within duration (env: FOCI_IF_COLD; alias --if-inactive)
   --if-user-active <dur>    Skip if user has not touched this agent within duration (env: FOCI_IF_USER_ACTIVE)
@@ -179,14 +220,14 @@ Flags:
   --wait-timeout <dur>      Max wait before sending anyway (default 2h; alias --deadline; env: FOCI_WAIT_TIMEOUT)
   --no-gate                 Send immediately: no wait default, no gating (env: FOCI_NO_GATE)
   --human                   Declare a human sent this: counts as user attention once
-                            dispatched; skipped/deferred requests never do (env: FOCI_HUMAN)
+                             dispatched; skipped/deferred requests never do (env: FOCI_HUMAN)
   --sync, --wait            Wait for the agent's reply; NOT a --wait-* gate (env: FOCI_SYNC)
   --async, --no-wait        Fire-and-forget (default) (env: FOCI_ASYNC)
   -mt, --message-text       Message text (env: FOCI_MESSAGE_TEXT)
   -mf, --message-file       Read message from file (env: FOCI_MESSAGE_FILE)
 
 Trailing args without a flag are treated as implicit --message-text.
-Cannot use both -mt and -mf.
+Cannot use both -mt and -mf, or both --steer and --queue.
 `)
 }
 
@@ -196,6 +237,10 @@ func cmdSend(base string, args []string) error {
 		return nil
 	}
 	flags, args := parseSendFlags(args)
+	steer, err := flags.steerBody()
+	if err != nil {
+		return err
+	}
 	text, err := resolveMessage(flags, args)
 	if err != nil {
 		return err
@@ -221,6 +266,9 @@ func cmdSend(base string, args []string) error {
 	flags.humanFlag.addToBody(body)
 	if flags.model != "" {
 		body["model"] = flags.model
+	}
+	if steer != "" {
+		body["steer"] = steer
 	}
 	return postJSON(base+"/send", body)
 }

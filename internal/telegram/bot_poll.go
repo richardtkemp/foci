@@ -79,6 +79,14 @@ func (b *Bot) RegisterCommands() {
 			Description: desc,
 		})
 	}
+	// /steer and /queue are delivery-mode prefixes, not registry commands
+	// (#1318): appended after the registry-derived list so the menu offers
+	// them. A menu tap sends the bare word ("/queue", "/queue@mybot" in a
+	// group), which the receive path answers with the one-line usage.
+	cmds = append(cmds,
+		gotgbot.BotCommand{Command: "steer", Description: "Redirect the agent now"},
+		gotgbot.BotCommand{Command: "queue", Description: "Wait for the current turn to finish"},
+	)
 
 	if _, err := b.client.SetMyCommands(cmds, nil); err != nil {
 		b.logger().Warnf("setMyCommands: %s", b.sanitizeError(err))

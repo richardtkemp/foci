@@ -26,17 +26,19 @@ func TestRegisterCommands(t *testing.T) {
 		t.Fatal("SetMyCommands was not called")
 	}
 
-	// 3 user commands + stop (visible). Done is hidden → excluded.
-	if len(mock.setCmds) != 4 {
-		t.Fatalf("expected 4 commands, got %d", len(mock.setCmds))
+	// 3 user commands + stop (visible). Done is hidden → excluded. Plus the
+	// /steer and /queue delivery-mode menu entries (#1318).
+	if len(mock.setCmds) != 6 {
+		t.Fatalf("expected 6 commands, got %d", len(mock.setCmds))
 	}
 
-	// Registry commands sorted by name: help, ping, status, stop
+	// Registry commands sorted by name: help, ping, status, stop; the two
+	// delivery-mode entries are appended after the registry-derived list.
 	names := make([]string, len(mock.setCmds))
 	for i, c := range mock.setCmds {
 		names[i] = c.Command
 	}
-	wantOrder := []string{"help", "ping", "status", "stop"}
+	wantOrder := []string{"help", "ping", "status", "stop", "steer", "queue"}
 	for i, want := range wantOrder {
 		if names[i] != want {
 			t.Errorf("command[%d] = %q, want %q", i, names[i], want)
@@ -133,7 +135,8 @@ func TestRegisterCommands_OnlyAvailable(t *testing.T) {
 	for _, c := range mock.setCmds {
 		got = append(got, c.Command)
 	}
-	if len(got) != 2 || got[0] != "help" || got[1] != "pause" {
-		t.Errorf("menu = %v, want [help pause]", got)
+	// help + pause from the registry, then the appended steer/queue entries.
+	if len(got) != 4 || got[0] != "help" || got[1] != "pause" || got[2] != "steer" || got[3] != "queue" {
+		t.Errorf("menu = %v, want [help pause steer queue]", got)
 	}
 }

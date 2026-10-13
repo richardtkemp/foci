@@ -64,6 +64,14 @@ type queuedMessage struct {
 	// note (rather than typed) — propagated to Envelope.Voice so the turn's
 	// trigger reads "voice" instead of "telegram" (#1436).
 	voice bool
+	// steer is the sender's per-message delivery choice parsed from a
+	// /steer or /queue prefix (#1318) — propagated to QueuedMessage.Steer
+	// and Envelope.Steer. SteerDefault when the message carried no prefix.
+	steer platform.SteerPreference
+	// bareSteerPrefix is true when the first word was a bare /steer or
+	// /queue (no message text): receiveMessage replies with the usage line
+	// and delivers nothing to the agent (#1318).
+	bareSteerPrefix bool
 }
 
 // Bot wraps the Telegram bot API with agent integration.

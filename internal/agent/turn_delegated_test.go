@@ -1248,7 +1248,7 @@ func TestDelegatedTransport_RunInference_QueuedMessageNeverFolds(t *testing.T) {
 	mgr := newMockDelegatedManager(t, be)
 	a := &Agent{Model: "test-model", DelegatedManager: mgr}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
-	ctx := WithSteerPreference(interactiveTestCtx(), SteerNever)
+	ctx := WithSteerPreference(interactiveTestCtx(), platform.SteerNever)
 	ts := NewTurnState(ctx, "test/s", []string{"queued message"}, nil)
 	ts.Trigger = "testplat"
 	ts.Prompt = "queued message"

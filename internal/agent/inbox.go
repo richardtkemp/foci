@@ -44,28 +44,6 @@ import (
 	"foci/internal/turnevent"
 )
 
-// SteerPreference is a sender's per-message routing choice, overriding the
-// agent's steer_mode config for this envelope only. Platforms that offer a
-// per-message affordance (the app's send options) set it; everything else
-// leaves SteerDefault.
-type SteerPreference int
-
-const (
-	// SteerDefault follows the agent's steer_mode config.
-	SteerDefault SteerPreference = iota
-
-	// SteerAlways steers mid-turn even when steer_mode is off.
-	SteerAlways
-
-	// SteerNever queues the message for a fresh turn after the in-flight
-	// turn completes. An explicitly-queued message is a turn and nothing
-	// else: it is also exempt from the conversational intercepts that would
-	// otherwise consume it mid-turn — plan-cancel feedback (#858), pending
-	// foci_ask answer capture (#884), and the backend question/elicitation
-	// typed-answer intercepts.
-	SteerNever
-)
-
 // Envelope is a session-resolved, platform-neutral message ready for the
 // agent's per-session worker. Constructed by the bot after inbound filtering
 // and session-key resolution; consumed by the worker to drive a turn.
@@ -90,8 +68,14 @@ type Envelope struct {
 	Voice bool
 
 	// Steer is the sender's per-message steer/queue choice; SteerDefault
-	// when the platform offers none. See SteerPreference.
-	Steer SteerPreference
+	// when the platform offers none. See platform.SteerPreference.
+	Steer platform.SteerPreference
+
+	// Human marks the message as sent by a human through a non-interactive
+	// surface (HTTP /send --human, #1130/#1318). RunTurn applies
+	// WithHumanSource when any envelope in the batch sets it, so the turn's
+	// entry write bumps last_user_activity_at.
+	Human bool
 
 	// Original is the platform-specific raw message (e.g. *gotgbot.Message
 	// for telegram, *discordgo.Message for discord). Opaque to the agent;
@@ -545,7 +529,7 @@ func (a *Agent) Enqueue(env Envelope) bool {
 	// SteerNever carve-out: a message the sender explicitly marked "queue" is a
 	// turn, not feedback — it must not be consumed here. It queues below and
 	// waits for the plan flow (and turn) to resolve.
-	if isActive && env.Steer != SteerNever && env.Text != "" && len(env.Attachments) == 0 {
+	if isActive && env.Steer != platform.SteerNever && env.Text != "" && len(env.Attachments) == 0 {
 		if be, err := a.resolveSessionBackend(a.inboxCtx, env.SessionKey); err == nil && be != nil {
 			if pr, ok := delegator.As[delegator.PlanResponder](be); ok {
 				if reqID := pr.HasPendingPlanPermission(); reqID != "" {
@@ -580,7 +564,7 @@ func (a *Agent) Enqueue(env Envelope) bool {
 	//
 	// SteerNever carve-out: an explicitly-queued message is a turn, never an
 	// answer — same rationale as the plan-cancel carve-out above.
-	if isActive && env.Steer != SteerNever && env.Text != "" && len(env.Attachments) == 0 && env.platformName() != platformApp &&
+	if isActive && env.Steer != platform.SteerNever && env.Text != "" && len(env.Attachments) == 0 && env.platformName() != platformApp &&
 		a.AskRouter != nil && a.AskRouter.PendingForSession != nil && a.AskRouter.HandleResponse != nil {
 		if reqID := a.AskRouter.PendingForSession(env.SessionKey); reqID != "" &&
 			!(a.AskRouter.IsPaused != nil && a.AskRouter.IsPaused(env.SessionKey)) {
@@ -598,9 +582,9 @@ func (a *Agent) Enqueue(env Envelope) bool {
 	// into a compaction transcript.
 	steerMode := a.steerMode()
 	switch env.Steer {
-	case SteerAlways:
+	case platform.SteerAlways:
 		steerMode = true
-	case SteerNever:
+	case platform.SteerNever:
 		steerMode = false
 	}
 	hasAttachments := len(env.Attachments) > 0

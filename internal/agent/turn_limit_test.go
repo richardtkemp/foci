@@ -851,7 +851,7 @@ func TestTurnLimit_SteerAlwaysJoinerMergesIntoWaitingBatch(t *testing.T) {
 	mustRecv(t, dA.ready, "A to hold the only slot")
 	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "first", Driver: dB})
 	mustRecv(t, notices.signal, "B's wait to begin")
-	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "joiner", Driver: dB, Steer: SteerAlways})
+	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "joiner", Driver: dB, Steer: platform.SteerAlways})
 
 	close(releaseA)
 	mustRecv(t, dB.ready, "B's turn to start after the release")

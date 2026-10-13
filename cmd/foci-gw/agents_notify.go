@@ -322,15 +322,26 @@ func deliverToResolvedSession(
 // the two current callers — asyncDispatch (http.go) and deliverToSessionChat —
 // and any future one from having to remember.
 func turnSinkForConn(ag *agent.Agent, conn platform.Connection, sessionKey, trigger string) (turnevent.Sink, func()) {
+	sink, cleanup := rawTurnSinkForConn(conn, sessionKey, trigger)
+	return ag.WrapConversationLogging(sink, sessionKey), cleanup
+}
+
+// rawTurnSinkForConn is turnSinkForConn's sink ladder WITHOUT the
+// conversation-logging wrapper: the app driver's sink for app connections
+// (activity frames), else a SessionSink (typing indicator + per-block
+// delivery). The httpDriver hands its result to Agent.RunTurn, which adds
+// newLoggingSink itself with the batch's real TurnMetadata — a pre-wrapped
+// sink would log every TextBlock twice (#1318).
+func rawTurnSinkForConn(conn platform.Connection, sessionKey, trigger string) (turnevent.Sink, func()) {
 	if driver, ok := conn.(agent.Driver); ok {
 		if sink, cleanup := driver.NewTurnSink(agent.Envelope{SessionKey: sessionKey}); sink != nil {
-			return ag.WrapConversationLogging(sink, sessionKey), cleanup
+			return sink, cleanup
 		}
 	}
-	return ag.WrapConversationLogging(turn.NewSessionSink(conn, sessionKey, trigger,
+	return turn.NewSessionSink(conn, sessionKey, trigger,
 		turn.WithSessionSinkErrorHandler(func(t string, err error) {
 			log.NewComponentLogger(t).Errorf("platform delivery: %v", err)
-		})), sessionKey), nil
+		})), nil
 }
 
 // logInjectionError logs a failed HandleMessage from an injected turn (system

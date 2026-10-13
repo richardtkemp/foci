@@ -186,7 +186,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.handleServerRestart(client)
 
 	case fap.ClientMessage:
-		h.routeUserTurn(client, f.ConversationID, f.AgentID, f.Text, h.resolveAttachments(f.Attachments), h.echoAttachmentRefs(f.Attachments), in.ID, in.Seq, steerPreference(f.Steer), f.TranscribeOnly)
+		h.routeUserTurn(client, f.ConversationID, f.AgentID, f.Text, h.resolveAttachments(f.Attachments), h.echoAttachmentRefs(f.Attachments), in.ID, in.Seq, platform.SteerPreferenceFromWire(f.Steer), f.TranscribeOnly)
 
 	case fap.InteractiveResponse:
 		h.handleInteractiveResponse(client, f)
@@ -852,7 +852,7 @@ func inboundConvID(frame any) string {
 // echoRefs are the message's attachment refs as the client sent them (see
 // echoAttachmentRefs); they ride on the user-role echo so the user's other
 // devices can show the files (#2161). atts is the resolved form the agent gets.
-func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts []platform.Attachment, echoRefs []fap.AttachmentRef, inID string, inSeq int64, steer agent.SteerPreference, transcribeOnly bool) {
+func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts []platform.Attachment, echoRefs []fap.AttachmentRef, inID string, inSeq int64, steer platform.SteerPreference, transcribeOnly bool) {
 	if convID == "" || (text == "" && len(atts) == 0) {
 		return
 	}
@@ -1012,21 +1012,6 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 		// it too), so the backend's consumption ack can tick it ✓✓ (#2050).
 		Ref: delegator.InputRef{ConversationID: convID, MessageID: inID},
 	})
-}
-
-// steerPreference maps the wire-level steer field ("steer" / "queue" / "")
-// to the agent's per-envelope preference. Unknown values degrade to the
-// config default rather than erroring — forward compatibility with newer
-// clients.
-func steerPreference(s string) agent.SteerPreference {
-	switch s {
-	case "steer":
-		return agent.SteerAlways
-	case "queue":
-		return agent.SteerNever
-	default:
-		return agent.SteerDefault
-	}
 }
 
 // transcribeVoice replaces voice attachments with their STT transcript, merged

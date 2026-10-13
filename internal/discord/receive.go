@@ -28,6 +28,19 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *discordgo.Message) {
 	if !ok {
 		return
 	}
+	// A bare /steer or /queue (no message text) is not a prefix and not a
+	// command: reply with the one-line usage and deliver nothing (#1318).
+	// Runs BEFORE the command gate so the two words never reach the command
+	// channel, and only when the message is addressed — in a require-mention
+	// channel an un-mentioned bare prefix is ignored exactly like any other
+	// unaddressed message.
+	if qm.bareSteerPrefix {
+		if !b.mq.IsAddressed(b.toPlatformMessage(msg, qm)) {
+			return
+		}
+		b.sendReply(msg, platform.SteerPrefixUsage)
+		return
+	}
 	// Non-immediate commands go to the command channel so the worker dispatches
 	// them without blocking the event handler goroutine. /stop is kept here
 	// because it must cancel a live turn immediately. A bare /cancel whose
@@ -79,6 +92,7 @@ func (b *Bot) toPlatformMessage(msg *discordgo.Message, qm queuedMessage) platfo
 		IsMention:   isMention,
 		Original:    msg,
 		ReceivedAt:  msg.Timestamp,
+		Steer:       qm.steer,
 	}
 }
 
@@ -141,6 +155,23 @@ func (b *Bot) buildReceivedMessage(_ context.Context, msg *discordgo.Message) (q
 		text = strings.TrimSpace(text)
 	}
 
+	// /steer|/queue delivery-mode prefix (#1318): parse the user's own text
+	// AFTER the mention strip (an "@bot /queue x" parses) but BEFORE the
+	// reply header is prepended (a reply whose text is "/queue x" still
+	// parses — the header would mask it), and strip the prefix, so the
+	// payload reaches the agent alone, carrying the choice on the queued
+	// message. A bare prefix (no message text) keeps the text and flags the
+	// bare form for receiveMessage's usage reply.
+	steer := platform.SteerDefault
+	bareSteerPrefix := false
+	if pref, rest, matched := platform.ParseSteerPrefix(text); matched {
+		if rest == "" {
+			bareSteerPrefix = true
+		} else {
+			text, steer = rest, pref
+		}
+	}
+
 	// Handle reply context
 	if msg.ReferencedMessage != nil && msg.ReferencedMessage.Content != "" {
 		ts := " (" + timeutil.Format(msg.ReferencedMessage.Timestamp) + ")"
@@ -175,7 +206,7 @@ func (b *Bot) buildReceivedMessage(_ context.Context, msg *discordgo.Message) (q
 		b.logger().Debugf("message from %s", formatUserInfo(msg.Author))
 	}
 
-	return queuedMessage{msg: msg, userID: userID, text: text, attachments: attachments}, true
+	return queuedMessage{msg: msg, userID: userID, text: text, attachments: attachments, steer: steer, bareSteerPrefix: bareSteerPrefix}, true
 }
 
 // tryIntercept handles local consumption of a message: wizard intercept,

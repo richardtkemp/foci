@@ -86,6 +86,7 @@ func (b *Bot) handoffToAgent(qm platform.QueuedMessage) {
 		Original:    qm.Original,
 		Driver:      b,
 		Voice:       qm.Voice,
+		Steer:       qm.Steer,
 	}
 	b.agentRef.Enqueue(env)
 }

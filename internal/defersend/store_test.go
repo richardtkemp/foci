@@ -184,6 +184,101 @@ func TestStore_AlterFailureSurfaces(t *testing.T) {
 	}
 }
 
+// TestStore_SteerChoiceRoundtrip proves a deferred send keeps its per-message
+// delivery choice (#1318): the steer column round-trips (so the choice
+// survives the wait and a restart), an unset choice reads back "", and a
+// pre-steer database migrates in place with the empty default.
+func TestStore_SteerChoiceRoundtrip(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	if _, err := s.Enqueue(Record{
+		AgentID: "clutch", SessionKey: "clutch/c1", Text: "redirect it", Policy: "fallback",
+		Steer: "steer", WaitCold: "1m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Enqueue(Record{
+		AgentID: "clutch", SessionKey: "clutch/c1", Text: "no choice", Policy: "fallback",
+		CreatedAt: now, DeadlineAt: now.Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := s.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("len=%d, want 2", len(all))
+	}
+	if all[0].Steer != "steer" {
+		t.Errorf("steer roundtrip = %q, want %q", all[0].Steer, "steer")
+	}
+	if all[1].Steer != "" {
+		t.Errorf("unset steer = %q, want empty", all[1].Steer)
+	}
+}
+
+// TestStore_PreSteerSchemaMigration proves NewStore opens a database created
+// before the steer column existed: the old rows survive, read back with the
+// empty steer default, and the store accepts a steer-carrying row afterwards.
+func TestStore_PreSteerSchemaMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pre-steer.db")
+	db, err := sqlite.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE deferred_sends (
+			id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+			agent_id           TEXT NOT NULL,
+			session_key        TEXT NOT NULL,
+			text               TEXT NOT NULL,
+			policy             TEXT NOT NULL DEFAULT '',
+			model              TEXT NOT NULL DEFAULT '',
+			wait_warm          TEXT NOT NULL DEFAULT '',
+			wait_cold          TEXT NOT NULL DEFAULT '',
+			wait_user_active   TEXT NOT NULL DEFAULT '',
+			wait_user_inactive TEXT NOT NULL DEFAULT '',
+			created_at         TEXT NOT NULL,
+			deadline_at        TEXT NOT NULL
+		)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO deferred_sends
+		(agent_id, session_key, text, policy, model, wait_warm, wait_cold, wait_user_active, wait_user_inactive, created_at, deadline_at)
+		VALUES ('clutch', 'clutch/i0', 'queued before steer', '', '', '', '1m', '', '', '2026-01-01T00:00:00Z', '2026-01-01T02:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := NewStore(path)
+	if err != nil {
+		t.Fatalf("NewStore on pre-steer db: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	all, err := s.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 || all[0].Text != "queued before steer" {
+		t.Fatalf("pre-steer row lost: %+v", all)
+	}
+	if all[0].Steer != "" {
+		t.Errorf("pre-steer row steer = %q, want the empty default", all[0].Steer)
+	}
+
+	// The migrated store accepts a choice-carrying row alongside the old one.
+	if _, err := s.Enqueue(Record{AgentID: "clutch", SessionKey: "clutch/i0", Text: "x", Steer: "queue", CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if all, _ := s.All(); len(all) != 2 || all[1].Steer != "queue" {
+		t.Errorf("steer-carrying row not stored after migration: %+v", all)
+	}
+}
+
 // TestStore_ReopenSameFile proves opening the same database twice (a restart,
 // or a second handle) neither fails nor loses the queued rows.
 func TestStore_ReopenSameFile(t *testing.T) {

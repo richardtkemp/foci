@@ -120,6 +120,15 @@ func (a *Agent) RunTurn(
 	// RunInference dispatches a SteerNever turn like a system turn (never
 	// folds, waits for backend idle) and skips the typed-answer intercepts.
 	ctx = WithSteerPreference(ctx, first.Steer)
+	// A batch containing a human-sent envelope (HTTP /send --human with a
+	// steer choice, #1318) carries the human-source marker so the turn's
+	// entry write bumps last_user_activity_at. Any-envelope, mirroring Voice
+	// below: a platform message batched with a human /send envelope gains the
+	// marker too, which is harmless — that batch's own platform trigger
+	// already counts as user activity.
+	if batchHuman(batch) {
+		ctx = WithHumanSource(ctx)
+	}
 	ctx = WithInputRefs(ctx, batchInputRefs(batch))
 
 	// Collect texts and attachments across the batch. Group-chat messages
@@ -154,7 +163,7 @@ func (a *Agent) RunTurn(
 	// SteerNever carve-out (mirrors inbox.go): an explicitly-queued message is a
 	// turn, never an answer.
 	if a.AskRouter != nil && a.AskRouter.PendingForSession != nil && len(texts) > 0 && platformName != platformApp &&
-		first.Steer != SteerNever {
+		first.Steer != platform.SteerNever {
 		if reqID := a.AskRouter.PendingForSession(sk); reqID != "" &&
 			!(a.AskRouter.IsPaused != nil && a.AskRouter.IsPaused(sk)) {
 			answer := strings.TrimSpace(texts[0])
@@ -182,4 +191,15 @@ func batchTrigger(platformName string, batch []Envelope) string {
 		}
 	}
 	return platformName
+}
+
+// batchHuman reports whether any envelope in the batch carries the
+// Envelope.Human marker — the any-envelope pattern Voice uses above.
+func batchHuman(batch []Envelope) bool {
+	for _, env := range batch {
+		if env.Human {
+			return true
+		}
+	}
+	return false
 }

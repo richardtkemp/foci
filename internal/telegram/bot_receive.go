@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
+	"unicode"
 
 	"foci/internal/dispatch"
 	"foci/internal/platform"
@@ -27,6 +29,19 @@ func formatUserInfo(user *gotgbot.User) string {
 func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	qm, ok := b.buildReceivedMessage(ctx, msg)
 	if !ok {
+		return
+	}
+	// A bare /steer or /queue (no message text) is not a prefix and not a
+	// command: reply with the one-line usage and deliver nothing (#1318).
+	// Runs BEFORE the command gate so the two words never reach the command
+	// channel, and only when the message is addressed — in a require-mention
+	// group an un-mentioned bare prefix is ignored exactly like any other
+	// unaddressed message.
+	if qm.bareSteerPrefix {
+		if !b.mq.IsAddressed(b.toPlatformMessage(msg, qm)) {
+			return
+		}
+		b.sendReply(msg, platform.SteerPrefixUsage)
 		return
 	}
 	// Non-immediate commands go to the command channel so the worker dispatches
@@ -86,6 +101,7 @@ func (b *Bot) toPlatformMessage(msg *gotgbot.Message, qm queuedMessage) platform
 		Original:    msg,
 		ReceivedAt:  time.Unix(int64(msg.Date), 0),
 		Voice:       qm.voice,
+		Steer:       qm.steer,
 	}
 }
 
@@ -141,6 +157,23 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 	text := msg.Text
 	if text == "" {
 		text = msg.Caption
+	}
+
+	// /steer|/queue delivery-mode prefix (#1318): parse the user's own text
+	// BEFORE the reply/quote header is prepended (a reply whose text is
+	// "/queue x" still parses — the header would mask it) and strip the
+	// prefix, so the payload reaches the agent alone, carrying the choice on
+	// the queued message. A bare prefix (no message text) keeps the text and
+	// flags the bare form for receiveMessage's usage reply.
+	text = b.stripSteerTarget(text)
+	steer := platform.SteerDefault
+	bareSteerPrefix := false
+	if pref, rest, matched := platform.ParseSteerPrefix(text); matched {
+		if rest == "" {
+			bareSteerPrefix = true
+		} else {
+			text, steer = rest, pref
+		}
 	}
 
 	// Include quoted message context when user replies to a specific message.
@@ -262,7 +295,38 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 		b.logger().Debugf("message from %s", formatUserInfo(msg.From))
 	}
 
-	return queuedMessage{msg: msg, userID: userID, text: text, attachments: attachments, voice: isVoice}, true
+	return queuedMessage{msg: msg, userID: userID, text: text, attachments: attachments, voice: isVoice, steer: steer, bareSteerPrefix: bareSteerPrefix}, true
+}
+
+// stripSteerTarget removes THIS bot's @username suffix from a /steer|/queue
+// first word ("/queue@mybot x" → "/queue x"), so a Telegram command-menu tap
+// in a group parses as the prefix (#1318). Deliberately narrow: only the two
+// prefix words, and only this bot's own suffix — "/status@mybot" keeps its
+// shape (command routing is unchanged by this ticket), and "/queue@otherbot"
+// is another bot's menu tap, not ours to answer.
+func (b *Bot) stripSteerTarget(text string) string {
+	username := ""
+	if b.api != nil {
+		username = b.api.Username
+	}
+	if username == "" {
+		return text
+	}
+	start := len(text) - len(strings.TrimLeftFunc(text, unicode.IsSpace))
+	rest := text[start:]
+	word := rest
+	if end := strings.IndexFunc(rest, unicode.IsSpace); end >= 0 {
+		word = rest[:end]
+	}
+	if len(word) <= len("@")+len(username) ||
+		!strings.EqualFold(word[len(word)-len(username)-1:], "@"+username) {
+		return text
+	}
+	base := word[:len(word)-len(username)-1]
+	if !strings.EqualFold(base, "/steer") && !strings.EqualFold(base, "/queue") {
+		return text
+	}
+	return text[:start] + base + rest[len(word):]
 }
 
 // tryIntercept handles local consumption of a message: wizard intercept,

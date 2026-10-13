@@ -27,6 +27,10 @@ type QueuedMessage struct {
 	// so the turn's trigger reads "voice" instead of the platform's default
 	// (#1436).
 	Voice bool
+	// Steer is the sender's per-message delivery choice (the /steer|/queue
+	// chat prefix the receive path parsed and stripped, #1318). Propagated
+	// to Envelope.Steer; SteerDefault when the message carried none.
+	Steer SteerPreference
 }
 
 // MessageQueue manages inbound message buffering and group-chat
@@ -93,7 +97,7 @@ func (q *MessageQueue) Enqueue(msg QueuedMessage) {
 	throttle := q.throttle.Load()
 
 	// Rule 1: group + require_mention + not a mention + no throttle → drop.
-	if msg.IsGroupChat && q.requireMention && !msg.IsMention && throttle == nil {
+	if !q.addressed(msg, throttle) {
 		if q.log != nil {
 			q.log.Debugf("queue: dropping non-mention group message from %s", q.senderLabel(msg))
 		}
@@ -108,6 +112,24 @@ func (q *MessageQueue) Enqueue(msg QueuedMessage) {
 
 	// Rule 3: push to main channel.
 	q.pushToChannel(msg)
+}
+
+// addressed reports whether Enqueue would deliver msg (directly or via the
+// throttle) rather than drop it under Rule 1: a group message in a
+// require-mention queue is addressed when it mentions the bot or a throttle
+// will buffer it. The one statement of Rule 1 — Enqueue and IsAddressed share
+// it so they cannot drift (#1318).
+func (q *MessageQueue) addressed(msg QueuedMessage, throttle *GroupThrottle) bool {
+	return !(msg.IsGroupChat && q.requireMention && !msg.IsMention && throttle == nil)
+}
+
+// IsAddressed reports whether Enqueue would deliver msg (directly or via the
+// throttle) rather than drop it under Rule 1. Receive paths consult it BEFORE
+// prefix parsing so an unaddressed message is ignored exactly as Enqueue
+// would ignore it — in a require-mention group a bare /steer or /queue that
+// does not mention the bot gets no usage reply (#1318).
+func (q *MessageQueue) IsAddressed(msg QueuedMessage) bool {
+	return q.addressed(msg, q.throttle.Load())
 }
 
 // pushToChannel sends a message to the main queue channel, dropping with a

@@ -9,6 +9,7 @@ import (
 	"foci/internal/delegator"
 	"foci/internal/delegator/accounting"
 	"foci/internal/log"
+	"foci/internal/platform"
 	"foci/internal/provider"
 )
 
@@ -230,7 +231,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// sender can opt out per message (SteerNever, the app's explicit "queue"
 	// choice), which gets the full system-turn dispatch guarantees: never
 	// folds, never consumed as an answer, waits for backend idle.
-	foldable := isInteractiveTrigger(ts.Trigger) && SteerPreferenceFromContext(ts.Ctx) != SteerNever
+	foldable := isInteractiveTrigger(ts.Trigger) && SteerPreferenceFromContext(ts.Ctx) != platform.SteerNever
 
 	// A redelivery whose input was dropped while it queued (a /reset of the
 	// session) must not reach the fresh session (#2050).

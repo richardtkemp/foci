@@ -398,7 +398,7 @@ func TestInbox_Enqueue_SteerNever_QueuesInsteadOfSteering(t *testing.T) {
 	inb := a.getOrCreateInbox("test/s")
 	inb.turnActive.Store(true)
 
-	a.Enqueue(Envelope{SessionKey: "test/s", Text: "queue this please", Steer: SteerNever})
+	a.Enqueue(Envelope{SessionKey: "test/s", Text: "queue this please", Steer: platform.SteerNever})
 
 	if injects := be.Injects(); len(injects) != 0 {
 		t.Errorf("SteerNever message was steered: %+v", injects)
@@ -431,7 +431,7 @@ func TestInbox_Enqueue_SteerAlways_OverridesConfigOff(t *testing.T) {
 	inb := a.getOrCreateInbox("test/s")
 	inb.turnActive.Store(true)
 
-	a.Enqueue(Envelope{SessionKey: "test/s", Text: "steer this", Steer: SteerAlways})
+	a.Enqueue(Envelope{SessionKey: "test/s", Text: "steer this", Steer: platform.SteerAlways})
 
 	injects := be.Injects()
 	if len(injects) != 1 || injects[0].Source != delegator.SourceSteer || injects[0].Text != "steer this" {
@@ -455,7 +455,7 @@ func TestInbox_Enqueue_SteerNever_PendingPlan_Queues(t *testing.T) {
 	inb := a.getOrCreateInbox("test/s")
 	inb.turnActive.Store(true)
 
-	a.Enqueue(Envelope{SessionKey: "test/s", Text: "queued, not feedback", Steer: SteerNever})
+	a.Enqueue(Envelope{SessionKey: "test/s", Text: "queued, not feedback", Steer: platform.SteerNever})
 
 	if be.cancelCalls != 0 {
 		t.Errorf("CancelPlanWithFeedback called %d times, want 0 (message was explicitly queued)", be.cancelCalls)
@@ -490,7 +490,7 @@ func TestInbox_Enqueue_SteerNever_PendingAsk_Queues(t *testing.T) {
 	inb := a.getOrCreateInbox("test/s")
 	inb.turnActive.Store(true)
 
-	a.Enqueue(Envelope{SessionKey: "test/s", Text: "not an answer", Steer: SteerNever})
+	a.Enqueue(Envelope{SessionKey: "test/s", Text: "not an answer", Steer: platform.SteerNever})
 
 	if handled {
 		t.Error("HandleResponse consumed an explicitly-queued message as an ask answer")

@@ -2,6 +2,8 @@
 
 Messages starting with `/` are intercepted at the Telegram router level before reaching the agent — they execute immediately and never enter session history. A period (`.`) prefix also works as an alias (e.g. `.status` → `/status`), but only when it matches a registered command — `.net` or other non-command text passes through to the agent normally. The `.` prefix exists because it's easier to type on most phone keyboards than `/`.
 
+**Two `/`-words are delivery modes, not commands (#1318):** `/steer <message>` and `/queue <message>` (Telegram/Discord, case-insensitive, first word only). The word is stripped and the rest is delivered with that mode — `/steer` redirects the running turn now, `/queue` waits for it to finish and runs as its own fresh turn. A bare `/steer` or `/queue` (no message text) answers with one usage line and delivers nothing. They are not registered commands and never reach the agent as text.
+
 All registered slash commands are also available to the agent as tools (without the `/` prefix), except those marked **CLI-only** below. See [TOOLS.md](TOOLS.md) for details.
 
 ---

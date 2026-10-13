@@ -7,6 +7,7 @@ import (
 
 	"foci/internal/convo"
 	"foci/internal/delegator"
+	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/turnevent"
 )
@@ -80,13 +81,13 @@ func TriggerFromContext(ctx context.Context) string {
 type steerPrefKey struct{}
 
 // WithSteerPreference attaches a per-message steer preference to a context.
-func WithSteerPreference(ctx context.Context, p SteerPreference) context.Context {
+func WithSteerPreference(ctx context.Context, p platform.SteerPreference) context.Context {
 	return context.WithValue(ctx, steerPrefKey{}, p)
 }
 
 // SteerPreferenceFromContext extracts the steer preference (SteerDefault if absent).
-func SteerPreferenceFromContext(ctx context.Context) SteerPreference {
-	p, _ := ctx.Value(steerPrefKey{}).(SteerPreference)
+func SteerPreferenceFromContext(ctx context.Context) platform.SteerPreference {
+	p, _ := ctx.Value(steerPrefKey{}).(platform.SteerPreference)
 	return p
 }
 
@@ -101,7 +102,9 @@ type humanSourceKey struct{}
 
 // WithHumanSource marks ctx's turn as human-sent despite its non-interactive
 // trigger. Attached by the HTTP send/branch handlers for requests that
-// declared a human sender; see humanSourceKey.
+// declared a human sender, and by RunTurn when any envelope in the batch
+// carries Envelope.Human (a choice-carrying /send dispatches as a user
+// envelope, #1318); see humanSourceKey.
 func WithHumanSource(ctx context.Context) context.Context {
 	return context.WithValue(ctx, humanSourceKey{}, true)
 }

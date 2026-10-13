@@ -358,6 +358,44 @@ func eventually(cond func() bool) bool {
 	return cond()
 }
 
+// TestSweep_DeliversSteerRecord_AsUserEnvelope proves a deferred send keeps
+// its delivery choice across the wait (#1318): at delivery time a
+// choice-carrying record dispatches as a USER envelope — observable as the
+// user-envelope turn's "" trigger, where the plain deferred send runs the
+// injection path's trigger "user" — and delivers as automated (no human
+// declaration survives the deferral, #1130).
+func TestSweep_DeliversSteerRecord_AsUserEnvelope(t *testing.T) {
+	t.Parallel()
+	d, mock := httpTestSetup(t, httpTestOpts{})
+	mock.entered = make(chan string, 1)
+	store := withDeferStore(t, &d)
+	now := timeutil.Now()
+	_, _ = store.Enqueue(defersend.Record{
+		AgentID: testAgentID, SessionKey: testSessionKey, Text: "deferred redirect",
+		Policy: "fallback", Steer: "steer",
+		WaitCold: "1m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
+	})
+	sweepFor(d, store).sweep()
+
+	select {
+	case text := <-mock.entered:
+		if !strings.HasSuffix(text, "deferred redirect") {
+			t.Errorf("delivered text = %q", text)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("deferred steer record was not delivered by the sweep")
+	}
+	if calls := mock.snapshot(); len(calls) != 1 || calls[0].trigger != "" {
+		t.Errorf("calls = %+v, want one turn with trigger \"\" (the user-envelope dispatch, not the injection path's \"user\")", calls)
+	}
+	if userActivityRecorded(d, testSessionKey) {
+		t.Error("deferred choice delivery recorded user activity; deferred delivery is automated (#1130)")
+	}
+	if all, _ := store.All(); len(all) != 0 {
+		t.Errorf("store not drained: %d", len(all))
+	}
+}
+
 // TestSweep_DeliversBranchRecord proves a deferred branch record is delivered
 // as a BRANCH: the fork happens at delivery time from the stored parent, the
 // turn runs async with trigger "branch" on the new branch session, the parent

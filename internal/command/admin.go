@@ -7,17 +7,16 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/display"
+	"foci/internal/log"
+	"foci/internal/platform"
 )
-import
-
-// ToolInfo holds data for a single tool in the /tools listing.
-"foci/internal/log"
 
 var (
 	commandLog = log.NewComponentLogger("command")
 	facetLog   = log.NewComponentLogger("facet")
 )
 
+// ToolInfo holds data for a single tool in the /tools listing.
 type ToolInfo struct {
 	Name        string
 	Description string
@@ -271,7 +270,11 @@ func helpTable(ctx context.Context, registry *Registry, req Request, cc CommandC
 			rows = append(rows, []string{"/" + cmd.Name, cmd.Description})
 		}
 	}
-	return display.MarkdownTable(cols, rows)
+	// The /steer and /queue delivery-mode prefixes are not registry commands
+	// (their word is stripped and the rest is delivered with that mode), so
+	// the table cannot list them — teach them in the same footer both bots'
+	// bare-prefix replies use (#1318).
+	return display.MarkdownTable(cols, rows) + "\n\n" + platform.SteerPrefixUsage
 }
 
 // helpDetail renders "/help <command>": the command's description, its

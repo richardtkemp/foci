@@ -160,8 +160,9 @@ func TestRun_ProcessesCallbackQueryEndToEnd(t *testing.T) {
 	mock.mu.Lock()
 	registered := len(mock.setCmds)
 	mock.mu.Unlock()
-	if registered != 1 {
-		t.Errorf("registered commands = %d, want 1 (ping)", registered)
+	// The registry's ping plus the two appended delivery-mode entries (#1318).
+	if registered != 3 {
+		t.Errorf("registered commands = %d, want 3 (ping + steer/queue menu entries)", registered)
 	}
 }
 

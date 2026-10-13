@@ -12,6 +12,7 @@ import (
 	"foci/internal/command"
 	"foci/internal/defersend"
 	"foci/internal/log"
+	"foci/internal/platform"
 	"foci/internal/route"
 	"foci/internal/timeutil"
 )
@@ -310,7 +311,9 @@ func (s *deferSweeper) deliver(inst *agentInstance, r defersend.Record) {
 
 // deliverSend injects a deferred send onto the target session's inbox — the
 // same buffered, queued delivery asyncDispatch uses, minus the HTTP receipt
-// (the caller is long gone; a deferred send is fire-and-forget).
+// (the caller is long gone; a deferred send is fire-and-forget). A
+// choice-carrying record (Steer, #1318) routes as a user envelope instead so
+// its mode takes effect at delivery.
 func (s *deferSweeper) deliverSend(inst *agentInstance, r defersend.Record) {
 	if r.Model != "" {
 		if err := applyModelOverride(inst, r.SessionKey, r.Model, s.deps.cfg.Models); err != nil {
@@ -318,6 +321,15 @@ func (s *deferSweeper) deliverSend(inst *agentInstance, r defersend.Record) {
 		}
 	}
 	app.DeliverExternalPrompt(r.SessionKey, r.Text)
+	if pref := platform.SteerPreferenceFromWire(r.Steer); pref != platform.SteerDefault {
+		// Human is deliberately false, mirroring the branch ruling below
+		// (#1130): whoever declared themselves human at enqueue time may be
+		// gone by delivery — a deferred request always delivers as automated.
+		if !enqueueSteerChoice(inst, s.deps, r.SessionKey, r.Text, pref, false, route.Policy(r.Policy)) {
+			deferLog.Warnf("deferred steer choice for session %s not delivered: inbox full", r.SessionKey)
+		}
+		return
+	}
 	sendCtx := agent.WithTrigger(s.deps.ctx, "user")
 	deliverBufferedQueued(inst, s.deps.connMgr, sendCtx, r.SessionKey, r.Text, "defersend", false, route.Policy(r.Policy))
 }

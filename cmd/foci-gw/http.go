@@ -261,9 +261,11 @@ func runAgentBuffered(ctx context.Context, ag *agent.Agent, sessionKey, text str
 // runAgentBuffered — which drives the turn on the calling goroutine and can
 // therefore race an in-flight turn — the queued turn serialises with the
 // session's platform turns and defers behind a pending foci_ask: system
-// input (HTTP /send, branch fall-through, webhook) never steers running work,
-// it waits gracefully for turn completion. The InjectMeta trigger is taken
-// from the ctx trigger label.
+// input (HTTP /send without a per-message steer choice, branch fall-through,
+// webhook) never steers running work, it waits gracefully for turn
+// completion. A choice-carrying /send never comes through here — it
+// dispatches as a user envelope (http_steer.go, #1318). The InjectMeta
+// trigger is taken from the ctx trigger label.
 //
 // Callers already running on the session's inbox worker (Inject.Run
 // closures) must keep using runAgentBuffered — see Agent.EnqueueInjectWait.

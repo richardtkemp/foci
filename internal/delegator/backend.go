@@ -889,7 +889,7 @@ const (
 	// SourceSystem is text that must never fold into an in-flight turn:
 	// system-initiated input (foci send / HTTP /send, cron keepalives,
 	// webhooks, inter-session notifies, error and restart notifications) and
-	// user messages the sender explicitly marked "queue" (agent.SteerNever).
+	// user messages the sender explicitly marked "queue" (platform.SteerNever).
 	// At idle it begins a new turn exactly like SourceUser (the idle check
 	// and turn begin are atomic, so two racing injects cannot clobber each
 	// other's turn bookkeeping); in flight it returns ErrTurnInFlight and

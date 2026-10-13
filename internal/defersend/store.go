@@ -37,6 +37,9 @@ const (
 // the PARENT session (the fork happens at delivery time, so the branch
 // inherits the parent's state then, not at enqueue time). Model carries the
 // model override (sends and branches; commands are not turns and ignore it).
+// Steer carries the per-message delivery choice ("steer"/"queue"/"" — the
+// wire value, mapped at delivery time) for a send (#1318), so the choice
+// survives both the wait and a restart.
 type Record struct {
 	ID               int64
 	Kind             Kind
@@ -45,6 +48,7 @@ type Record struct {
 	Text             string
 	Policy           string
 	Model            string
+	Steer            string
 	WaitWarm         string
 	WaitCold         string
 	WaitUserActive   string
@@ -85,6 +89,7 @@ func NewStore(path string) (*Store, error) {
 			text               TEXT NOT NULL,
 			policy             TEXT NOT NULL DEFAULT '',
 			model              TEXT NOT NULL DEFAULT '',
+			steer              TEXT NOT NULL DEFAULT '',
 			wait_warm          TEXT NOT NULL DEFAULT '',
 			wait_cold          TEXT NOT NULL DEFAULT '',
 			wait_user_active   TEXT NOT NULL DEFAULT '',
@@ -111,6 +116,7 @@ func NewStore(path string) (*Store, error) {
 		{"no_compact", `ALTER TABLE deferred_sends ADD COLUMN no_compact INTEGER NOT NULL DEFAULT 0`},
 		{"no_reset_hook", `ALTER TABLE deferred_sends ADD COLUMN no_reset_hook INTEGER NOT NULL DEFAULT 0`},
 		{"silent", `ALTER TABLE deferred_sends ADD COLUMN silent INTEGER NOT NULL DEFAULT 0`},
+		{"steer", `ALTER TABLE deferred_sends ADD COLUMN steer TEXT NOT NULL DEFAULT ''`},
 	} {
 		if _, err := db.Exec(col.ddl); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			_ = db.Close()
@@ -129,11 +135,11 @@ func (s *Store) Enqueue(r Record) (int64, error) {
 	defer s.mu.Unlock()
 	res, err := s.db.Exec(
 		`INSERT INTO deferred_sends
-		   (agent_id, session_key, text, policy, model,
+		   (agent_id, session_key, text, policy, model, steer,
 		    wait_warm, wait_cold, wait_user_active, wait_user_inactive,
 		    kind, no_compact, no_reset_hook, silent, created_at, deadline_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.AgentID, r.SessionKey, r.Text, r.Policy, r.Model,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.AgentID, r.SessionKey, r.Text, r.Policy, r.Model, r.Steer,
 		r.WaitWarm, r.WaitCold, r.WaitUserActive, r.WaitUserInactive,
 		string(r.Kind), r.NoCompact, r.NoResetHook, r.Silent,
 		timeutil.Format(r.CreatedAt), timeutil.Format(r.DeadlineAt),
@@ -149,7 +155,7 @@ func (s *Store) All() ([]Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rows, err := s.db.Query(
-		`SELECT id, agent_id, session_key, text, policy, model,
+		`SELECT id, agent_id, session_key, text, policy, model, steer,
 		        wait_warm, wait_cold, wait_user_active, wait_user_inactive,
 		        kind, no_compact, no_reset_hook, silent, created_at, deadline_at
 		   FROM deferred_sends ORDER BY id`)
@@ -163,7 +169,7 @@ func (s *Store) All() ([]Record, error) {
 		var r Record
 		var kind string
 		var created, deadline string
-		if err := rows.Scan(&r.ID, &r.AgentID, &r.SessionKey, &r.Text, &r.Policy, &r.Model,
+		if err := rows.Scan(&r.ID, &r.AgentID, &r.SessionKey, &r.Text, &r.Policy, &r.Model, &r.Steer,
 			&r.WaitWarm, &r.WaitCold, &r.WaitUserActive, &r.WaitUserInactive,
 			&kind, &r.NoCompact, &r.NoResetHook, &r.Silent, &created, &deadline); err != nil {
 			return nil, err
