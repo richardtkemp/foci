@@ -76,13 +76,21 @@ reject() { # reject <label> <needle> <haystack>
 }
 
 # run <stub mode> [seal-test.sh mode] [caller env assignments...]: seal-test.sh
-# (`one` on a fake package by default); prints its output.
+# (`one` on a fake package by default); prints its output. Every arm starts from
+# the default heavy-lock policy: `make test` itself may run under
+# FGW_HEAVY_LOCK=external or hold the lock and pass HEAVY_LOCK_HELD (it exports
+# both to everything it starts), and the default-mode arms below assert that
+# seal-test.sh then takes no lock — so neither may leak in from the caller.
+# Arms that test a policy set the vars themselves as caller assignments, which
+# env applies after the -u flags, and SEALED/FOCI_TEST_UNSEALED are the stubs'
+# own markers from an earlier arm.
 run() {
   local stub=$1 mode=${2:-one}
   shift; [ "$#" -gt 0 ] && shift
   rm -f "$TMP/goroot/calls" "$TMP/goroot/seen"
   echo "$stub" > "$TMP/goroot/mode"
-  (cd "$TMP/work" && env -u SEALED -u FOCI_TEST_UNSEALED PATH="$TMP/goroot/bin:$PATH" "$@" \
+  (cd "$TMP/work" && env -u SEALED -u FOCI_TEST_UNSEALED -u FGW_HEAVY_LOCK -u HEAVY_LOCK_HELD \
+    PATH="$TMP/goroot/bin:$PATH" "$@" \
     bash "$SEALTEST" "$mode" "$TMP/testdir" "$TMP/log" 1 "$TMP/gocache" "$TMP/gomod" "$TMP/gopath" ./internal/zz2132/ \
     2>&1)
 }
