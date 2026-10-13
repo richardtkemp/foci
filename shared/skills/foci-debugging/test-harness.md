@@ -13,23 +13,18 @@ with a plain `go test`. The difference between the two **is** the answer — and
 `make test` never runs `go test` directly. It calls `scripts/seal-test.sh unit …`, which does two
 things a bare `go test` does not:
 
-1. **Replaces the environment** — the tests start from `env -i` (#2348), so nothing from your
-   shell reaches them except what `TESTENV` lists: a fixed system `PATH`, `USER`, the logical `PWD`,
-   your `GO*`/`CGO_*` settings, the opt-ins in `OPTIN_VARS`, and `TMPDIR`, `FOCI_TMPDIR`,
-   `FOCI_TEST_TMPDIR`, `HOME`, `GOCACHE`, `GOMODCACHE`, `GOPATH` (`HOME` → `$TESTDIR/home`, so tests
-   cannot scribble into the real account's home). A test that passes in your shell but not here may
-   need a tool outside the system dirs, or an env var that is not passed.
+1. **Replaces the environment** — `env -i` (#2348): only what `TESTENV` lists gets through (system
+   `PATH`, `USER`, `PWD`, `GO*`/`CGO_*`, `OPTIN_VARS`, the tmp/cache vars, `HOME` → `$TESTDIR/home`).
+   Passes in your shell, fails here → a tool outside the system dirs, or an env var not passed.
 2. **Seals the whole process tree under Landlock** via `bin/llbox -w <whitelist>`, so every write
    outside `$TESTDIR` / the go caches / a few `/dev` nodes is denied. Rules are inherited across
    fork+exec, so one seal at the top covers `go test`, every package binary, and anything they
    spawn (tmux, git, chrome…).
 
 **To run one package under the harness env, use `make test-one PKG=./internal/<pkg>/ [RUN=<Name>]
-[COUNT=N]`.** `COUNT=N` repeats the run (go test's `-count`) for flake checks. Every run is `go test
--v` (#2348), so a PASSING test's `t.Logf` lines are in the log too (`V=1` is accepted, a no-op). It calls `scripts/seal-test.sh one`, the exact
-`TESTENV`/seal construction `make test` uses, so it cannot omit a variable. It always applies the full
-env, though — to find which ingredient a failure depends on, use the manual recipe and isolation
-table below.
+[COUNT=N]`.** `COUNT=N` is `-count` for flake checks. Runs are always `-v` (#2348), so a passing
+test's `t.Logf` lines are logged. It uses the exact `TESTENV`/seal of `make test`, all of it — to find
+which ingredient matters, use the manual recipe and table below.
 
 **Agents cannot run bare `go build`/`test`/`vet`** (`permissions.deny`, incl. `/usr/bin/go` and
 `go -C`): use `make build`/`vet`/`test-one`, which take the `/tmp/heavy` lock. The manual recipe is for
