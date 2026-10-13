@@ -99,27 +99,33 @@ func TestParseAutoCloseSettings(t *testing.T) {
 }
 
 // TestSweepOpenChats_DefaultOnRemovesStaleKeepsFreshAndBroadcasts pins the
-// default-on threshold through the whole round: with an empty bag a chat whose
-// last message is 25h old leaves the open-set while a 23h-old one stays, the
-// survivors keep their original order in the stored set, and a second socket
-// receives a conversation.openSync carrying exactly them.
+// default-on threshold through the whole round: with an empty bag chats whose
+// last message is 25h and 30h old leave the open-set while 23h-old ones stay,
+// the survivors keep their original order in the stored set, and EVERY other
+// connected socket — including one that never sent a frame — receives a
+// conversation.openSync carrying exactly them.
 func TestSweepOpenChats_DefaultOnRemovesStaleKeepsFreshAndBroadcasts(t *testing.T) {
 	h, _ := sweepHub(t, nil)
 	now := time.Now()
 	sweepBinding(h, "freshA", 23*time.Hour, now)
 	sweepBinding(h, "stale", 25*time.Hour, now)
 	sweepBinding(h, "freshB", 23*time.Hour, now)
+	sweepBinding(h, "ancient", 30*time.Hour, now)
 	other := fakeClient()
+	other2 := fakeClient()
 	h.clients[other] = struct{}{}
-	h.storeOpenChats([]string{"freshA", "stale", "freshB"})
+	h.clients[other2] = struct{}{}
+	h.storeOpenChats([]string{"freshA", "stale", "freshB", "ancient"})
 
 	h.sweepOpenChats(now)
 
 	if got := h.loadOpenChats(); len(got) != 2 || got[0] != "freshA" || got[1] != "freshB" {
 		t.Errorf("stored open-set = %v, want [freshA freshB] in their original order", got)
 	}
-	if ids, n := lastOpenSync(t, other); n != 1 || len(ids) != 2 || ids[0] != "freshA" || ids[1] != "freshB" {
-		t.Errorf("other client OpenSync = %v (frames=%d), want exactly one [freshA freshB]", ids, n)
+	for _, c := range []*wsClient{other, other2} {
+		if ids, n := lastOpenSync(t, c); n != 1 || len(ids) != 2 || ids[0] != "freshA" || ids[1] != "freshB" {
+			t.Errorf("other client OpenSync = %v (frames=%d), want exactly one [freshA freshB]", ids, n)
+		}
 	}
 }
 
@@ -193,8 +199,9 @@ func TestSweepOpenChats_HoursHonouredAndClamped(t *testing.T) {
 }
 
 // TestSweepOpenChats_UnreadableBagDoesNothing proves a bag that cannot be read
-// (system_state holds non-JSON) neither removes nor sends anything — the sweep
-// never falls back to defaults on a read error (#2081).
+// (system_state holds non-JSON) neither removes nor sends anything and says so
+// with exactly one skip warning — the sweep never falls back to defaults on a
+// read error (#2081).
 func TestSweepOpenChats_UnreadableBagDoesNothing(t *testing.T) {
 	h, idx := sweepHub(t, nil)
 	if err := idx.SetSystemState(systemStateAppSettings, "this is not json"); err != nil {
@@ -205,6 +212,7 @@ func TestSweepOpenChats_UnreadableBagDoesNothing(t *testing.T) {
 	other := fakeClient()
 	h.clients[other] = struct{}{}
 	h.storeOpenChats([]string{"stale"})
+	warns := captureWarns(t)
 
 	h.sweepOpenChats(now)
 
@@ -213,6 +221,11 @@ func TestSweepOpenChats_UnreadableBagDoesNothing(t *testing.T) {
 	}
 	if _, n := lastOpenSync(t, other); n != 0 {
 		t.Error("a sweep that could not read its setting must not broadcast")
+	}
+	// captureWarns is unfiltered on purpose: exactly one warning — the skip —
+	// must be the whole story of this round.
+	if w := warns(); len(w) != 1 || !strings.Contains(w[0], "auto-close: skipping this round") {
+		t.Errorf("sweep warnings = %v, want exactly one auto-close skip warning", w)
 	}
 }
 
@@ -305,6 +318,26 @@ func TestSweepOpenChats_KeepsPinnedChat(t *testing.T) {
 	}
 	if slices.Contains(got, "gone") {
 		t.Error("control: the never-written-pin stale sibling must close")
+	}
+}
+
+// TestSweepOpenChats_ExplicitUnpinnedChatCloses proves a WRITTEN pin row of
+// "0" is unpinned: only "1" exempts (decodeConvPin), so a stale chat whose pin
+// a device explicitly cleared must close — a sweep treating any stored row as
+// pinned would keep it open forever.
+func TestSweepOpenChats_ExplicitUnpinnedChatCloses(t *testing.T) {
+	h, idx := sweepHub(t, nil)
+	now := time.Now()
+	only := sweepBinding(h, "unpinned", 25*time.Hour, now)
+	if err := idx.SetChatMetadata("clutch", "app", only.chatID, chatMetaConvPinned, "0"); err != nil {
+		t.Fatal(err)
+	}
+	h.storeOpenChats([]string{"unpinned"})
+
+	h.sweepOpenChats(now)
+
+	if slices.Contains(h.loadOpenChats(), "unpinned") {
+		t.Error(`conv_pinned="0" is explicitly unpinned — a stale chat must close`)
 	}
 }
 
@@ -507,14 +540,19 @@ func TestSweepOpenChats_ConcurrentOpenSetNeverLost(t *testing.T) {
 		h, _ := sweepHub(t, nil)
 		registerBareAgent(h, "clutch")
 		now := time.Now()
-		fleet := make([]string, 0, 24)
-		for i := range 24 {
+		// A six-chat fleet, not a 24-chat one: every round costs a pin read
+		// per fleet chat (the sweep) plus an alias read per live binding
+		// (the mint's roster fan-out), so fleet width × rounds is this
+		// subtest's price. Six still gives the resurrection arm several
+		// stale ids to catch.
+		fleet := make([]string, 0, 6)
+		for i := range 6 {
 			id := fmt.Sprintf("stale%02d", i)
 			sweepBinding(h, id, 25*time.Hour, now)
 			fleet = append(fleet, id)
 		}
 		facetKey := session.NewChatSessionKey("clutch", 777)
-		for range 400 {
+		for range 200 {
 			h.storeOpenChats(fleet)
 			var wg sync.WaitGroup
 			minted := make(chan string, 1)
@@ -531,19 +569,29 @@ func TestSweepOpenChats_ConcurrentOpenSetNeverLost(t *testing.T) {
 				defer wg.Done()
 				h.sweepOpenChats(now)
 			}()
-			wg.Wait()
-			got := h.loadOpenChats()
-			id := <-minted
-			if !slices.Contains(got, id) {
-				t.Fatalf("the minted tab %s was lost to the racing sweep; stored set = %v", id, got)
-			}
-			for _, stale := range fleet {
-				if slices.Contains(got, stale) {
-					t.Fatalf("the mint's stale copy resurrected swept chat %s; stored set = %v", stale, got)
-				}
+		wg.Wait()
+		got := h.loadOpenChats()
+		id := <-minted
+		if !slices.Contains(got, id) {
+			t.Fatalf("the minted tab %s was lost to the racing sweep; stored set = %v", id, got)
+		}
+		for _, stale := range fleet {
+			if slices.Contains(got, stale) {
+				t.Fatalf("the mint's stale copy resurrected swept chat %s; stored set = %v", stale, got)
 			}
 		}
-	})
+		// Retire this round's binding: the mint's pushRosterAll re-resolves
+		// every live binding's alias from the index (one query per binding),
+		// so 400 accumulating minted bindings made the round O(n²) in DB
+		// reads — 35s plain, 140s under -race. The mint's open-set effect is
+		// what the round asserts (above); from here the binding is dead
+		// weight, and the next round's adoptSession overwrites the bySession
+		// entry it leaves behind.
+		h.mu.Lock()
+		delete(h.convs, id)
+		h.mu.Unlock()
+	}
+})
 }
 
 // TestHandleConversationOpenSet_MirrorsExactlyOnceWhileAttaching pins the
