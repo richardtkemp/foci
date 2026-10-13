@@ -25,6 +25,10 @@ type Config struct {
 
 	// SendMessage pushes a message to the triggering agent's user (Telegram).
 	SendMessage func(text string) error
+	// Link is where the sign-in link goes, as an updatable message that every
+	// attempt of one pending login rewrites in place (link.go, #2384).
+	// nil: the link goes out through SendMessage, untracked.
+	Link *LinkTarget
 
 	// Timeouts (zero → defaults).
 	SettleDelay   time.Duration // step 2: wait for the TUI to settle (default 5s)
@@ -107,8 +111,16 @@ func Run(ctx context.Context, c Config) {
 			log.NewComponentLogger(comp).Errorf("send message to user failed (%q): %v", firstLineOf(text), err)
 		}
 	}
+	linkShown := false
 	fail := func(reason string) {
 		log.NewComponentLogger(comp).Errorf("re-login ABORTED: %s", reason)
+		// The link died with this attempt: it must not stay visible as if
+		// valid (#2384).
+		if linkShown {
+			if err := g.expireLink(); err != nil {
+				log.NewComponentLogger(comp).Warnf("could not mark the sign-in link expired: %v", err)
+			}
+		}
 		notify("🔐 Claude Code re-login failed: " + reason + "\nSend /login here to try again.")
 	}
 	// dumpScreen writes a captured TUI screen to the log on a failure path so the
@@ -172,8 +184,15 @@ func Run(ctx context.Context, c Config) {
 	// Step 7: open the capture window and ask the user to sign in. A failure to
 	// relay the URL is fatal — the user can never complete login without it.
 	g.OpenCapture(c.AgentID)
-	if c.SendMessage != nil {
-		if err := c.SendMessage("🔐 Sign in to re-authenticate Claude Code, then paste the code back to me:\n\n" + url); err != nil {
+	linkText := "🔐 Sign in to re-authenticate Claude Code, then paste the code back to me:\n\n" + url
+	if c.Link != nil {
+		if err := g.showLink(c.Link, linkText); err != nil {
+			fail("could not send the login URL to you: " + err.Error())
+			return
+		}
+		linkShown = true
+	} else if c.SendMessage != nil {
+		if err := c.SendMessage(linkText); err != nil {
 			fail("could not send the login URL to you: " + err.Error())
 			return
 		}

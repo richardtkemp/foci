@@ -689,3 +689,27 @@ func TestFormatDuration(t *testing.T) {
 		})
 	}
 }
+
+// TestQueue_DropComponent (#2384): the relogin abort errors are dropped, with
+// their sub-components and suppressed summaries; other warnings stay.
+func TestQueue_DropComponent(t *testing.T) {
+	q := NewQueue(1, time.Hour)
+	q.Push("ERROR", "relogin/clutch", "re-login ABORTED: timed out waiting for the login code")
+	q.Push("ERROR", "relogin/clutch", "re-login ABORTED: timed out waiting for the login code") // suppressed
+	q.Push("ERROR", "relogin", "top-level")
+	q.Push("ERROR", "reloginx", "not a sub-component")
+	q.Push("WARN", "app", "keep me")
+	if got := q.DropComponent("relogin"); got != 2 {
+		t.Fatalf("DropComponent = %d, want 2", got)
+	}
+	got := q.Drain()
+	want := []string{"[ERROR] [reloginx] not a sub-component", "[WARN] [app] keep me"}
+	if len(got) != len(want) {
+		t.Fatalf("Drain = %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("Drain = %q, want %q", got, want)
+		}
+	}
+}

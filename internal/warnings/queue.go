@@ -338,3 +338,43 @@ func FormatDuration(d time.Duration) string {
 	}
 	return fmt.Sprintf("%dh", int(d.Hours()))
 }
+
+// DropComponent removes every queued warning from component, or from any
+// sub-component "component/<x>", along with any suppressed-count summary
+// still owed for it. Returns how many queued entries it removed. Used to
+// discard the re-login abort errors once the login they reported on has
+// succeeded (#2384): they were held while it was pending, and are moot now.
+func (q *Queue) DropComponent(component string) int {
+	matches := func(c string) bool {
+		return c == component || strings.HasPrefix(c, component+"/")
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	kept := q.warnings[:0]
+	dropped := 0
+	for _, w := range q.warnings {
+		if c, ok := entryComponent(w); ok && matches(c) {
+			dropped++
+			continue
+		}
+		kept = append(kept, w)
+	}
+	q.warnings = kept
+	for key, b := range q.buckets {
+		if matches(b.component) {
+			delete(q.buckets, key)
+		}
+	}
+	return dropped
+}
+
+// entryComponent parses the component out of a queued entry, which is
+// formatted "[LEVEL] [component] msg" by pushLocked and summaryMessage.
+func entryComponent(entry string) (string, bool) {
+	_, rest, ok := strings.Cut(entry, "] [")
+	if !ok {
+		return "", false
+	}
+	c, _, ok := strings.Cut(rest, "] ")
+	return c, ok
+}

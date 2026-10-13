@@ -11,6 +11,7 @@ import (
 	"foci/internal/periodic"
 	"foci/internal/platform"
 	"foci/internal/provider"
+	"foci/internal/relogin"
 	"foci/internal/route"
 	"foci/internal/session"
 	"foci/internal/warnings"
@@ -193,8 +194,12 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 			sk := defaultSessionKeyFor(inst.ag, agentID)
 			return sk != "" && inst.ag.IsTurnInFlight(sk)
 		},
-		// A dispatch runs a turn; none may begin once shutdown drains (#2059).
-		HoldFn: inst.ag.ShuttingDown,
+		// A dispatch runs a turn; none may begin once shutdown drains (#2059),
+		// nor on a delegated agent while a CC login is pending (#2384): the
+		// turn would 401 and start another attempt. Warnings stay queued.
+		HoldFn: func() bool {
+			return inst.ag.ShuttingDown() || (inst.ag.DelegatedManager != nil && relogin.G.Pending())
+		},
 		FormatFn: func(body string) string {
 			return prompts.FormatInjectedMessage("PROACTIVE WARNINGS", time.Now(), body)
 		},
@@ -212,6 +217,19 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		LastUserMessageTimeFn: lastUserMsgFn,
 		LastDispatchStore:     p.sessionIndex.PersistedTime(agentID, "warnings_dispatch_last:agent"),
 	})
+
+	// Once the login succeeds, the held re-login abort errors are moot: drop
+	// them, and let every other held warning dispatch as normal (Dick's
+	// ruling on #2384). Only delegated agents hold, so only they register.
+	if inst.ag.DelegatedManager != nil {
+		relogin.G.OnComplete(func() {
+			if q := inst.ag.Warnings(); q != nil {
+				if n := q.DropComponent("relogin"); n > 0 {
+					warningLog.Infof("[%s] dropped %d held re-login warning(s): login completed", agentID, n)
+				}
+			}
+		})
+	}
 
 	// Chat warning dispatcher (platform notifications).
 	// PeerQueues: same cross-queue feedback prevention as above — a failed

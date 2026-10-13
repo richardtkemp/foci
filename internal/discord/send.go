@@ -675,3 +675,21 @@ func buildButtonComponents(buttons []platform.ButtonChoice, callbackPrefix strin
 	}
 	return components
 }
+
+// SendEditableToSession sends text to the channel owning sessionKey and
+// returns the message id for a later EditSessionMessage. Implements
+// platform.SessionMessageEditor (#2384). Over-length text is chunked like a
+// notification; the id is the first chunk's, so only that chunk is editable.
+func (b *Bot) SendEditableToSession(sessionKey, text string) (string, error) {
+	id := b.sendNotificationToChannel(b.channelIDForSession(sessionKey), text)
+	if id == "" {
+		return "", fmt.Errorf("send editable message for session %q failed", sessionKey)
+	}
+	return id, nil
+}
+
+// EditSessionMessage rewrites message msgID in the channel owning sessionKey.
+// Implements platform.SessionMessageEditor (#2384).
+func (b *Bot) EditSessionMessage(sessionKey, msgID, text string) error {
+	return b.EditNotificationInSession(sessionKey, msgID, text)
+}

@@ -87,6 +87,10 @@ const (
 	// client must never wait for it: without it a message stays at ✓ ("the
 	// server has it").
 	TypeMessageConsumed = "message.consumed"
+	// TypeMessageEdit (server->app) rewrites the text of an agent message the
+	// server sent earlier, in place (#2384): same row, same position, no
+	// unread bump, no push, no "edited" marker.
+	TypeMessageEdit = "message.edit"
 
 	// app -> server
 	TypeCommand                = "command"
@@ -845,6 +849,21 @@ type MessageConsumed struct {
 }
 
 func (MessageConsumed) Type() string { return TypeMessageConsumed }
+
+// MessageEdit replaces the text of the agent-role message MessageID (a
+// ServerMessage the server sent) in place. It is the updatable-message
+// counterpart of InteractiveEdit, for plain messages rather than prompts
+// (#2384): the row keeps its position and timestamp, no unread or push
+// fires, and no "edited" marker shows. User messages are never edited. An id
+// the client does not have is a no-op. Durable and seq'd, so a replay applies
+// it after the message it edits.
+type MessageEdit struct {
+	ConversationID string `json:"conversationId"`
+	MessageID      string `json:"messageId"`
+	Text           string `json:"text"`
+}
+
+func (MessageEdit) Type() string { return TypeMessageEdit }
 
 // --- App -> Server frame payloads (mirror Kotlin ClientFrame) ---
 

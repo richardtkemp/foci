@@ -513,3 +513,27 @@ func (b *Bot) SendToSession(sessionKey, text string) error {
 	}
 	return b.SendTextToChat(chatID, text)
 }
+
+// SendEditableToSession sends text (markdown, converted as SendTextToChat
+// does) to the chat owning sessionKey as one message and returns its id for a
+// later EditSessionMessage. Implements platform.SessionMessageEditor (#2384).
+// Text longer than one Telegram message is not split: an editable message
+// must be a single message.
+func (b *Bot) SendEditableToSession(sessionKey, text string) (string, error) {
+	chatID := b.chatIDForSession(sessionKey)
+	if chatID == 0 {
+		return "", fmt.Errorf("no chat ID for session %q and no default chat", sessionKey)
+	}
+	msg, ok := sendHTMLWithFallback(b, b.client, chatID, ConvertToTelegramHTML(text, b.tableOpts()))
+	if !ok || msg == nil {
+		return "", fmt.Errorf("send editable message to chat %d failed", chatID)
+	}
+	b.refreshTyping()
+	return strconv.FormatInt(msg.MessageId, 10), nil
+}
+
+// EditSessionMessage rewrites message msgID in the chat owning sessionKey.
+// Implements platform.SessionMessageEditor (#2384).
+func (b *Bot) EditSessionMessage(sessionKey, msgID, text string) error {
+	return b.EditNotificationInSession(sessionKey, msgID, text)
+}

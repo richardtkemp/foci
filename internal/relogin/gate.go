@@ -41,9 +41,10 @@ type Gate struct {
 	codeCh         chan string   // buffered(1); delivers the captured code to the driver
 	released       chan struct{} // closed by Release; nil while inactive
 
-	pending    bool     // a login is owed: set by Start, cleared by Complete / ClearPendingIf
-	attempt    uint64   // incremented by every successful Start
-	onComplete []func() // run (outside mu) each time pending clears
+	pending    bool         // a login is owed: set by Start, cleared by Complete / ClearPendingIf
+	attempt    uint64       // incremented by every successful Start
+	onComplete []func()     // run (outside mu) each time pending clears
+	link       *linkMessage // the sign-in link message of this pending login (link.go); cleared with pending
 }
 
 // G is the process-wide re-login gate.
@@ -112,6 +113,7 @@ func (g *Gate) Complete() {
 // clearPendingLocked clears pending, unlocks mu and runs the callbacks.
 func (g *Gate) clearPendingLocked() bool {
 	g.pending = false
+	g.link = nil
 	cbs := append([]func(){}, g.onComplete...)
 	g.mu.Unlock()
 	for _, fn := range cbs {

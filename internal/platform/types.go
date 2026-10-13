@@ -392,6 +392,24 @@ type SessionNotifier interface {
 	EditNotificationInSession(sessionKey, msgID, text string) error
 }
 
+// SessionMessageEditor is optionally implemented by connections that can send
+// an ordinary message to a session's chat and later rewrite that same message
+// in place: the updatable-message class (#2384). The rewrite keeps the
+// message where it is and shows no "edited" marker; on the app it fires no
+// unread bump or push either. It exists for a message whose content goes
+// stale while the conversation moves on, where only the newest version may
+// stay visible (the CC sign-in link: only the latest link is valid). The app
+// implements it with fap.MessageEdit; Telegram and Discord with their
+// edit-message APIs.
+type SessionMessageEditor interface {
+	// SendEditableToSession sends text to the chat owning sessionKey and
+	// returns an id for EditSessionMessage. An error means nothing was sent.
+	SendEditableToSession(sessionKey, text string) (msgID string, err error)
+	// EditSessionMessage replaces the text of message msgID (from
+	// SendEditableToSession on this connection) in the chat owning sessionKey.
+	EditSessionMessage(sessionKey, msgID, text string) error
+}
+
 // DetailAttacher is optionally implemented by connections that can attach a
 // large supplementary payload (e.g. a compaction summary) to an
 // already-sent message, addressable by its platform message ID. Only the

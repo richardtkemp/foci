@@ -921,6 +921,35 @@ func TestSendToSession_EmitsMessageFrame(t *testing.T) {
 	}
 }
 
+// TestEditableMessage_SendThenEditInPlace (#2384): an editable send is an
+// ordinary agent message frame whose id a later message.edit names, with the
+// new text, in the same conversation.
+func TestEditableMessage_SendThenEditInPlace(t *testing.T) {
+	h := newTestHub()
+	c := fakeClient()
+	b := &convBinding{convID: "c1", sessionKey: "ag/c7", clients: map[*wsClient]struct{}{c: {}}}
+	h.bySession[b.sessionKey] = b
+
+	var conn platform.SessionMessageEditor = &appConn{hub: h, agentID: "ag"}
+	id, err := conn.SendEditableToSession(b.sessionKey, "link one")
+	if err != nil || id == "" {
+		t.Fatalf("SendEditableToSession = %q, %v", id, err)
+	}
+	if err := conn.EditSessionMessage(b.sessionKey, id, "link two"); err != nil {
+		t.Fatal(err)
+	}
+	got := drain(t, c)
+	if len(got) != 2 || got[0].t != fap.TypeMessage || got[1].t != fap.TypeMessageEdit {
+		t.Fatalf("frames = %v, want [message, message.edit]", types(got))
+	}
+	if got[0].d["messageId"] != id || got[0].d["role"] != "agent" || got[0].d["text"] != "link one" {
+		t.Errorf("message frame = %v", got[0].d)
+	}
+	if got[1].d["messageId"] != id || got[1].d["conversationId"] != "c1" || got[1].d["text"] != "link two" {
+		t.Errorf("edit frame = %v, want id %s, conv c1, text link two", got[1].d, id)
+	}
+}
+
 func TestSendToSession_FallsBackToDefaultChat(t *testing.T) {
 	// An unsolicited send to a session with no binding surfaces in the agent's
 	// default app chat instead of vanishing (#959).

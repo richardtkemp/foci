@@ -193,12 +193,15 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		if !relogin.G.Start() {
 			return false
 		}
-		log.NewComponentLogger("agent:"+agentID).Warnf("CC re-login starting: %s", reason)
+		// Logged under relogin/<agent> with the driver's lines, so the held
+		// warning is dropped with them once the login succeeds (#2384).
+		log.NewComponentLogger("relogin/"+agentID).Warnf("CC re-login starting: %s", reason)
 		go relogin.Run(context.Background(), relogin.Config{
 			AgentID:   agentID,
 			WorkDir:   workDir,
 			ClaudeBin: claudeBin,
 			Gate:      relogin.G,
+			Link:      reloginLinkTarget(connMgr, agentID, sessionKey),
 			SendMessage: func(text string) error {
 				// Resolve via the triggering session key so the login URL reaches
 				// the chat that asked for it. An empty key falls back to the

@@ -180,6 +180,46 @@ func (c *appConn) SendToSession(sessionKey, text string) error {
 	return nil
 }
 
+// SendEditableToSession sends an agent message like SendToSession and returns
+// its messageID, so EditSessionMessage can rewrite it later. Implements
+// platform.SessionMessageEditor (#2384).
+func (c *appConn) SendEditableToSession(sessionKey, text string) (string, error) {
+	clean := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(text))
+	if clean == "" {
+		return "", fmt.Errorf("editable message for session %q is empty", sessionKey)
+	}
+	b, fellBack := c.sendBinding(sessionKey)
+	if b == nil {
+		return "", fmt.Errorf("no conversation for session %q", sessionKey)
+	}
+	if fellBack {
+		clean = misdeliveryBanner(sessionKey, b.convID, clean)
+	}
+	msgID := fap.NewULID()
+	b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: msgID, Role: "agent", Text: clean})
+	return msgID, nil
+}
+
+// EditSessionMessage rewrites the agent message msgID in place with a
+// fap.MessageEdit: same row and position, no unread bump, no push. It
+// resolves the conversation the same way the send did. Implements
+// platform.SessionMessageEditor (#2384).
+func (c *appConn) EditSessionMessage(sessionKey, msgID, text string) error {
+	clean := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(text))
+	if clean == "" {
+		return fmt.Errorf("edit of message %s is empty", msgID)
+	}
+	b, fellBack := c.sendBinding(sessionKey)
+	if b == nil {
+		return fmt.Errorf("no conversation for session %q", sessionKey)
+	}
+	if fellBack {
+		clean = misdeliveryBanner(sessionKey, b.convID, clean)
+	}
+	b.send(fap.MessageEdit{ConversationID: b.convID, MessageID: msgID, Text: clean})
+	return nil
+}
+
 func (c *appConn) SendInjectedMessage(sessionKey, text string) error {
 	b, fellBack := c.sendBinding(sessionKey)
 	if b == nil {
