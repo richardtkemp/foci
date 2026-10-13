@@ -35,7 +35,9 @@ func (c *wsClient) sendRaw(frame fap.ServerFrame) {
 func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 	in, err := fap.Decode(string(data))
 	if err != nil {
-		appLog.Warnf("drop malformed inbound frame: %v", err)
+		// The device names the sender; the payload did not decode, so a
+		// frame-specific field (key, conversation) cannot be named here.
+		appLog.Warnf("drop malformed inbound frame from device %s: %v", client.device(), err)
 		return
 	}
 

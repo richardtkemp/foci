@@ -107,11 +107,12 @@ type checkboxDoc struct {
 }
 
 // replay returns up to limit documents updated at or after minUpdatedMs, most
-// recently updated first. A row whose state does not decode is the caller's to
-// skip (finding B), and it still spends one of the SQL limit's slots —
-// accepted: corrupt rows are rare (no writer of ours can produce one), the
-// sweep eventually removes them by age, and filtering validity in SQL would
-// duplicate the state encoding here. No retry logic for the same reason.
+// recently updated first. A corrupt row (a state that does not decode or
+// breaks the put limits) is the caller's to skip (finding B), and it still
+// spends one of the SQL limit's slots — accepted: corrupt rows are rare (no
+// writer of ours can produce one), the sweep eventually removes them by age,
+// and filtering validity in SQL would duplicate the state encoding here. No
+// retry logic for the same reason.
 func (s *checkboxStore) replay(limit int, minUpdatedMs int64) []checkboxDoc {
 	if s == nil {
 		return nil

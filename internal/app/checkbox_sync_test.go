@@ -289,7 +289,7 @@ func TestHandleCheckboxPut_PersistFailure_NoFanOutErrorReplyOldStateReplays(t *t
 	if msg, _ := got[0].d["message"].(string); !strings.Contains(msg, "doc-01J") {
 		t.Errorf("error reply message %q must name the document key", msg)
 	}
-	warns := strings.Count(buf.String(), `checkbox "doc-01J" from device dev-a: persist:`)
+	warns := strings.Count(buf.String(), `checkbox.put "doc-01J" from device dev-a: persist:`)
 	if warns != 1 {
 		t.Errorf("persist WARN logged %d time(s), want exactly 1:\n%s", warns, buf.String())
 	}
@@ -355,6 +355,38 @@ func TestCheckbox_DispatchPutsAndReplaysAfterHello(t *testing.T) {
 	}
 }
 
+// TestCheckbox_DispatchDropsNonIntegerLines is requirement 5's "line indexes
+// are integers" row at the wire level: a non-integer entry cannot decode into
+// []int, so the codec rejects the frame and dispatch drops it — one WARN naming
+// the device, nothing stored, nothing fanned out, no reply. This is the one
+// limit row enforced below the handler (the fap layer, where []int lives), so
+// dispatchInbound is the level that can prove the drop.
+func TestCheckbox_DispatchDropsNonIntegerLines(t *testing.T) {
+	h, s := checkboxHub(t)
+	buf := captureAppLog(t)
+	sender, other := fakeClient(), fakeClient()
+	sender.deviceID = "dev-a"
+	h.clients[sender] = struct{}{}
+	h.clients[other] = struct{}{}
+
+	h.dispatchInbound(sender, []byte(`{"t":"checkbox.put","id":"i1","d":{"documentId":"doc-01J","lines":[3,1.5]}}`))
+	h.dispatchInbound(sender, []byte(`{"t":"checkbox.put","id":"i2","d":{"documentId":"doc-02J","lines":["7"]}}`))
+
+	if got := s.replay(10, 0); len(got) != 0 {
+		t.Errorf("non-integer put was stored: %+v", got)
+	}
+	if n := len(checkboxSyncsOrdered(t, other)); n != 0 {
+		t.Errorf("fanned out %d sync(s), want 0", n)
+	}
+	if n := len(drain(t, sender)); n != 0 {
+		t.Errorf("sender got %d frame(s), want 0 (a decode drop is silent)", n)
+	}
+	warns := strings.Count(buf.String(), "drop malformed inbound frame from device dev-a")
+	if warns != 2 {
+		t.Errorf("decode-drop WARNs = %d, want exactly 2 (one per frame):\n%s", warns, buf.String())
+	}
+}
+
 // TestPushCheckboxes_ReplayBoundsAndOrder pins requirement 4's bounds: at most
 // checkboxReplayMaxDocs documents, only those updated within the last
 // checkboxReplayMaxAge days, most recently updated first.
@@ -412,6 +444,42 @@ func TestPushCheckboxes_SkipsUndecodableEntry(t *testing.T) {
 	}
 	if lines, ok := got["doc-good"]; !ok || len(lines) != 1 || lines[0] != 1 {
 		t.Errorf("good document = %v/%v, want [1]; it must still replay", lines, ok)
+	}
+}
+
+// TestPushCheckboxes_SkipsInvalidStoredState is the round-3 review's finding
+// that a stored state which DECODES but breaks the put limits must not be
+// replayed: a `null` row is corrupt, not a clear (a clear is an absent row),
+// and an out-of-range or oversized list must not reach a device out of
+// contract. validateCheckboxPut gates the read path exactly as it gates the
+// write path, so the replay can only send what a put could have stored.
+func TestPushCheckboxes_SkipsInvalidStoredState(t *testing.T) {
+	h, s := checkboxHub(t)
+	seed := map[string]string{
+		"doc-null":  `null`,
+		"doc-range": `[-5,999999999]`,
+		"doc-many":  "[" + strings.TrimSuffix(strings.Repeat("0,", checkboxMaxEntries+1), ",") + "]",
+		"doc-good":  `[4]`,
+	}
+	now := time.Now().UnixMilli()
+	for key, state := range seed {
+		if _, err := s.db.Exec(
+			`INSERT OR REPLACE INTO app_checkboxes (doc_key, state, updated_ms) VALUES (?, ?, ?)`, key, state, now,
+		); err != nil {
+			t.Fatalf("seed %s: %v", key, err)
+		}
+	}
+
+	c := fakeClient()
+	h.pushCheckboxes(c) // must not panic
+	got := checkboxSyncs(t, c)
+	for _, key := range []string{"doc-null", "doc-range", "doc-many"} {
+		if lines, ok := got[key]; ok {
+			t.Errorf("invalid stored state %s was replayed as %v; it must be skipped, not sent out of contract", key, lines)
+		}
+	}
+	if lines, ok := got["doc-good"]; !ok || len(lines) != 1 || lines[0] != 4 {
+		t.Errorf("valid document = %v/%v, want [4]; it must still replay", lines, ok)
 	}
 }
 

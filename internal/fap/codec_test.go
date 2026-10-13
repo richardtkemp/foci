@@ -621,6 +621,21 @@ func TestDecode_CheckboxPut_AbsentLinesIsClear(t *testing.T) {
 	}
 }
 
+// A non-integer lines entry (a fraction, a string) fails the decode itself —
+// the "line indexes are integers" limit row, enforced at the wire layer where
+// []int lives, so the frame is dropped before any handler could store or fan
+// it out.
+func TestDecode_CheckboxPut_RejectsNonIntegerLines(t *testing.T) {
+	for name, wire := range map[string]string{
+		"fraction": `{"t":"checkbox.put","id":"i1","d":{"documentId":"blob-01J","lines":[3,1.5]}}`,
+		"string":   `{"t":"checkbox.put","id":"i1","d":{"documentId":"blob-01J","lines":["7"]}}`,
+	} {
+		if _, err := Decode(wire); err == nil {
+			t.Errorf("%s: decode = nil error, want a reject (line indexes are integers)", name)
+		}
+	}
+}
+
 // TestEncode_CheckboxSync pins the server->app half of checkbox-state sync:
 // envelope `t` and the payload keys the Kotlin decoder selects by (#1360). An
 // empty state must encode as "lines":[] (never null), so a clear round-trips

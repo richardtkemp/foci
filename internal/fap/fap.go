@@ -1139,8 +1139,9 @@ func (ConvPinSync) Type() string { return TypeConvPinSync }
 // empty Lines is a valid clear. The server is a dumb store: a put replaces any
 // stored state (last-write-wins by arrival) and rebroadcasts a CheckboxSync.
 // Fire-and-forget like DraftPut — not conversation-reliability-scoped (see
-// inboundConvID). Entries breaking the handler's limits (key charset/length,
-// line range, count) are dropped there, not on the wire.
+// inboundConvID). Non-integer entries fail the decode itself (Lines is []int,
+// so the frame is dropped at the wire layer); a decoded put breaking the
+// handler's limits (key charset/length, line range, count) is dropped there.
 type CheckboxPut struct {
 	DocumentID string `json:"documentId"`
 	Lines      []int  `json:"lines"`

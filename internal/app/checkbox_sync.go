@@ -82,15 +82,18 @@ func encodeCheckboxState(lines []int) string {
 	return string(b)
 }
 
-// decodeCheckboxState parses a stored state. ok is false for an empty or
-// unreadable value — no writer of ours can produce one, so it means a corrupt
-// row (finding B), which the replay skips rather than send as a state.
+// decodeCheckboxState parses a stored state. ok is false for an empty,
+// unreadable or null value — no writer of ours can produce one (a clear is
+// stored as a delete, never a row), so it means a corrupt row (finding B),
+// which the replay skips rather than send as a state. A value that decodes but
+// breaks the put limits (an out-of-range index, an oversized list) is the
+// caller's to reject with validateCheckboxPut — decode alone cannot know.
 func decodeCheckboxState(state string) (lines []int, ok bool) {
 	if state == "" {
 		return nil, false
 	}
 	var out []int
-	if err := json.Unmarshal([]byte(state), &out); err != nil {
+	if err := json.Unmarshal([]byte(state), &out); err != nil || out == nil {
 		return nil, false
 	}
 	return out, true
@@ -126,7 +129,7 @@ func (h *Hub) handleCheckboxPut(client *wsClient, f fap.CheckboxPut) {
 			appLog.Warnf("checkbox.put %q from device %s: %v", f.DocumentID, client.device(), err)
 			return
 		default:
-			appLog.Warnf("checkbox %q from device %s: persist: %v", f.DocumentID, client.device(), err)
+			appLog.Warnf("checkbox.put %q from device %s: persist: %v", f.DocumentID, client.device(), err)
 			client.sendRaw(fap.ErrorFrame{
 				Code:      "checkbox_put_failed",
 				Message:   "Couldn't save the checkbox state for " + f.DocumentID + ".",
@@ -149,9 +152,12 @@ func (h *Hub) handleCheckboxPut(client *wsClient, f fap.CheckboxPut) {
 // document is not a conversation, there is no binding to walk, and the state
 // lives in its own store (checkbox_store.go) with the updated_ms the ordering
 // needs. Bounded to checkboxReplayMaxDocs documents updated within
-// checkboxReplayMaxAge. A row whose state does not decode is skipped, not sent
-// and not fatal (finding B; it still spent one of the SQL limit's slots — see
-// checkboxStore.replay).
+// checkboxReplayMaxAge. A corrupt row is skipped, not sent and not fatal
+// (finding B; it still spent one of the SQL limit's slots — see
+// checkboxStore.replay): corrupt means the state does not decode, is null, or
+// breaks validateCheckboxPut — the write path's own limits gate the read path
+// too, so the replay can never send a device what a put could not have stored
+// (a `null` row is NOT a clear; a clear is an absent row).
 //
 // The burst goes through enqueue, which blocks (then closes the socket) rather
 // than drop a frame — acceptable here for the same reason as every other
@@ -163,7 +169,7 @@ func (h *Hub) pushCheckboxes(client *wsClient) {
 	cutoff := time.Now().Add(-checkboxReplayMaxAge).UnixMilli()
 	for _, doc := range h.checkboxes.replay(checkboxReplayMaxDocs, cutoff) {
 		lines, ok := decodeCheckboxState(doc.state)
-		if !ok {
+		if !ok || validateCheckboxPut(doc.key, lines) != nil {
 			continue
 		}
 		client.sendRaw(fap.CheckboxSync{DocumentID: doc.key, Lines: normaliseCheckboxLines(lines)})
