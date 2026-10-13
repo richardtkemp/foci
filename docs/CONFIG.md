@@ -1733,6 +1733,12 @@ Applies to every agent whose `backend` is `opencode`:
 # session's own ruleset (PATCH /session/:id: per session, enforced by
 # opencode; a /mode in one session no longer touches any other).
 # "ask" = prompt for every tool; "allow" = auto-approve; "deny" = block.
+# "allow" also drops opencode's built-in .env read guard for that
+# session — allow means allow ("/mode plan" keeps it: its read-allow
+# re-states the guard, so secret files still prompt).
+# A failed apply logs a WARN and Start continues; the session then runs
+# under opencode's own permissive defaults, so check the log when a
+# lock-down ("ask"/"deny") matters.
 # NOTE: only the per-agent [[agents]].backend_config value is read today;
 # a value in this global [opencode_backend] section is not folded into
 # backend_config.

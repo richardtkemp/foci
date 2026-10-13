@@ -30,7 +30,8 @@ type OpencodeBackendConfig struct {
 	// DefaultPermission is the opencode permission mode applied at Start
 	// to each session's own ruleset (PATCH /session/:id — per session and
 	// enforced). "ask" = prompt for everything (safest default);
-	// "allow" = auto-approve; "deny" = block. NOTE: this global is not
+	// "allow" = auto-approve (and no .env read guard — allow means
+	// allow); "deny" = block. NOTE: this global is not
 	// currently folded into per-agent backend_config — only
 	// [[agents]].backend_config.default_permission is read.
 	DefaultPermission string `toml:"default_permission" default:"ask" desc:"opencode permission mode applied at Start to the session's own ruleset: ask, allow, or deny (per-agent backend_config only)"`

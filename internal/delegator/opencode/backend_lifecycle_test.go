@@ -609,6 +609,38 @@ func TestBackend_Start_DefaultPermission_AppliedToResumedSession(t *testing.T) {
 	_ = b.Close()
 }
 
+func TestBackend_Start_DefaultPermission_AllowCarriesNoEnvGuards(t *testing.T) {
+	// Pins the documented decision (#2330 threat scan):
+	// default_permission = "allow" is an explicit allow-everything, so
+	// its Start-time ruleset is exactly one {*,*,allow} rule — no .env
+	// read guard (plan via /mode keeps one; see control_test.go) — and
+	// the {*,*} shape still lets a later /mode supersede it.
+	rec := &controlRecorder{rules: map[string][]rule{}}
+	_, b := newTestBackendServer(t, rec.serveHTTP)
+	b.cfg = map[string]any{"default_permission": "allow"}
+
+	if err := b.Start(context.Background(), delegator.StartOptions{AgentID: "test-agent"}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	patch, ok := rec.lastSessionPatch(b.sessionID)
+	if !ok {
+		t.Fatalf("PATCH /session/%s was not sent", b.sessionID)
+	}
+	var body struct {
+		Permission []rule `json:"permission"`
+	}
+	if err := json.Unmarshal(patch.Body, &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	want := []rule{{Permission: "*", Pattern: "*", Action: "allow"}}
+	if !reflect.DeepEqual(body.Permission, want) {
+		t.Errorf("permission rules = %+v, want %+v (no guards)", body.Permission, want)
+	}
+	rec.assertNoConfigRequests(t)
+	_ = b.Close()
+}
+
 func TestBackend_Start_DefaultPermission_ApplyFailureDoesNotFailStart(t *testing.T) {
 	// Verifies a failed Start-time apply is a WARN, not a Start failure
 	// (unchanged semantics) — AND that the apply was attempted on the

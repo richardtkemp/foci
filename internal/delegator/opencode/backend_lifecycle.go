@@ -393,7 +393,9 @@ func (b *Backend) createSession(ctx context.Context) (string, error) {
 // carried before #2330. nil when unset (Start sends no permission
 // request and opencode's own defaults stand). The {*,*} rule is what
 // lets a later apply outrank these rules under findLast — keep
-// emitting it.
+// emitting it. "allow" carries no .env read guard (envReadGuards in
+// control.go): an explicit allow-everything is the user's choice, the
+// documented counterpart of permissionRuleset's guarded plan mode.
 func defaultPermissionRules(cfg map[string]any) []permissionRule {
 	dp, ok := cfg["default_permission"].(string)
 	if !ok || dp == "" {

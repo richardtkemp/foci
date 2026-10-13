@@ -58,7 +58,7 @@ func (b *Backend) Interrupt(ctx context.Context) error {
 	if b.server == nil || b.sessionID == "" {
 		return errors.New("opencode: Interrupt before Start")
 	}
-	url := fmt.Sprintf("%s/session/%s/abort", b.server.baseURL, b.sessionID)
+	url := sessionURL(b.server.baseURL, b.sessionID, "/abort")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {
 		return err
@@ -107,7 +107,7 @@ func (b *Backend) applySessionPermission(ctx context.Context, rules []permission
 	if err != nil {
 		return err
 	}
-	url := fmt.Sprintf("%s/session/%s", b.server.baseURL, b.sessionID)
+	url := sessionURL(b.server.baseURL, b.sessionID, "")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(payload))
 	if err != nil {
 		return err
@@ -122,10 +122,45 @@ func (b *Backend) applySessionPermission(ctx context.Context, rules []permission
 		// Name the real session id and carry opencode's response body
 		// (e.g. the 400 validation message for a bad default_permission
 		// value) so a failed apply is self-explanatory in the WARN/error.
-		body, _ := io.ReadAll(resp.Body)
+		// The read is bounded: a misbehaving local server must not be
+		// able to balloon the error, the WARN, or foci's memory.
+		body := readErrorBody(resp)
 		return fmt.Errorf("PATCH /session/%s: HTTP %d: %s", b.sessionID, resp.StatusCode, string(body))
 	}
 	return nil
+}
+
+// maxErrorBodyBytes bounds how much of an HTTP error response is read
+// into memory and echoed into returned errors and WARN logs — enough
+// for opencode's validation messages, immune to an unbounded body.
+const maxErrorBodyBytes = 8 << 10 // 8 KiB
+
+// readErrorBody reads up to maxErrorBodyBytes of resp's body for an
+// error message. Best-effort: a read error yields nil.
+func readErrorBody(resp *http.Response) []byte {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+	return body
+}
+
+// envReadGuards mirrors the .env read guards opencode builds into every
+// agent's default permission (opencode 1.17.15:
+// read {"*.env": "ask", "*.env.*": "ask", "*.env.example": "allow"}).
+// opencode resolves an ask with findLast over
+// agent.permission ++ session.permission, so a session rule
+// {read,*,allow} — plan's "reads are free" — would come after them and
+// shadow them: reading .env or .env.local would pass with no prompt,
+// putting secret contents into the transcript (#2330 threat scan).
+// Restating the guards AFTER the read rule in the same batch makes them
+// the last match again, so plan keeps the secret-file prompt.
+//
+// The allow-everything shapes — bypassPermissions/auto, and
+// default_permission "allow" (defaultPermissionRules) — deliberately
+// carry NO guard: their whole meaning is "the user allowed everything".
+// Documented in docs/CONFIG.md and docs/BACKENDS.md (note 14).
+var envReadGuards = []permissionRule{
+	{Permission: PermRead, Pattern: "*.env", Action: "ask"},
+	{Permission: PermRead, Pattern: "*.env.*", Action: "ask"},
+	{Permission: PermRead, Pattern: "*.env.example", Action: "allow"},
 }
 
 // permissionRuleset converts mapPermissionMode's category→action map
@@ -142,13 +177,21 @@ func (b *Backend) applySessionPermission(ctx context.Context, rules []permission
 // outranks every rule of every earlier batch. mapPermissionMode's every
 // branch emits "*" — keep it that way, or modes applied earlier would
 // resurface.
+//
+// When the mode allows the read category (plan), envReadGuards are
+// appended AFTER the {read,*,allow} rule — see their comment for why
+// dropping them would silently un-guard .env files.
 func permissionRuleset(actions map[string]any) []permissionRule {
-	rules := make([]permissionRule, 0, len(actions))
+	rules := make([]permissionRule, 0, len(actions)+len(envReadGuards))
 	specific := make([]string, 0, len(actions))
+	readAllowed := false
 	for category, action := range actions {
 		if category == "*" {
 			rules = append(rules, permissionRule{Permission: "*", Pattern: "*", Action: fmt.Sprint(action)})
 			continue
+		}
+		if category == PermRead && fmt.Sprint(action) == "allow" {
+			readAllowed = true
 		}
 		specific = append(specific, category)
 	}
@@ -159,6 +202,9 @@ func permissionRuleset(actions map[string]any) []permissionRule {
 			Pattern:    "*",
 			Action:     fmt.Sprint(actions[category]),
 		})
+	}
+	if readAllowed {
+		rules = append(rules, envReadGuards...)
 	}
 	return rules
 }

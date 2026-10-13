@@ -461,7 +461,11 @@ Notes:
     applied to each session's own permission ruleset via PATCH `/session/:id` (enforced and
     session-scoped; subagent (task tool) child sessions evaluate asks against the task agent's
     rules merged with the parent session's — opencode 1.17.15 source-read, not live-verified,
-    no workaround built); codex's would be the sandbox/approval policy.
+    no workaround built). opencode resolves asks with findLast over its agent defaults followed by
+    the session rules, so `/mode plan` re-states opencode's built-in `.env` read guards after its
+    read-allow rule (secret files still prompt), while the explicit allow-everything shapes —
+    `bypassPermissions`/`auto` via /mode and `default_permission = "allow"` — deliberately carry no
+    guard: the user asked for no prompts; codex's would be the sandbox/approval policy.
 15. ccstream passes `--dangerously-skip-permissions` and denies anything CC still asks
     (`cc/permissions.go:denyUnattended`, #2096). opencode has no launch flag and shares one
     server across the agent's sessions, so `surfacePermission` answers each ask of a

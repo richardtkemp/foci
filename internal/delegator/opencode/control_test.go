@@ -370,6 +370,9 @@ func TestSendControl_SetPermissionMode_LatestModeWins(t *testing.T) {
 		{Permission: "*", Pattern: "*", Action: "ask"},
 		{Permission: "edit", Pattern: "*", Action: "deny"},
 		{Permission: "read", Pattern: "*", Action: "allow"},
+		{Permission: "read", Pattern: "*.env", Action: "ask"},
+		{Permission: "read", Pattern: "*.env.*", Action: "ask"},
+		{Permission: "read", Pattern: "*.env.example", Action: "allow"},
 	}
 	if !reflect.DeepEqual(body.Permission, want) {
 		t.Errorf("last PATCH rules = %+v, want exactly plan's %+v", body.Permission, want)
@@ -384,6 +387,160 @@ func TestSendControl_SetPermissionMode_LatestModeWins(t *testing.T) {
 		if got := rec.evaluate("sess-ctrl", perm, "src/main.go"); got != wantAction {
 			t.Errorf("accumulated rules: %s → %s, want %s (no acceptEdits leftovers)", perm, got, wantAction)
 		}
+	}
+	// plan keeps opencode's .env read guards (see
+	// TestSendControl_SetPermissionMode_PlanKeepsEnvReadGuards).
+	for _, tc := range []struct{ target, want string }{
+		{".env", "ask"},
+		{".env.local", "ask"},
+		{".env.example", "allow"},
+	} {
+		if got := rec.evaluate("sess-ctrl", "read", tc.target); got != tc.want {
+			t.Errorf("accumulated rules: read %s → %s, want %s", tc.target, got, tc.want)
+		}
+	}
+}
+
+func TestSendControl_SetPermissionMode_PlanKeepsEnvReadGuards(t *testing.T) {
+	// opencode resolves a permission ask with findLast over
+	// agent.permission ++ session.permission, and its agent defaults
+	// guard .env reads ("*.env"/"*.env.*" ask, "*.env.example" allow —
+	// opencode 1.17.15). plan allows the read category, so the session
+	// batch must re-state those guards AFTER its {read,*,allow} rule:
+	// without them the session rule is the last match and reading .env
+	// passes with no prompt, putting secrets in the transcript (#2330
+	// threat scan). The seed mirrors the agent defaults the live server
+	// resolves before the session's own rules.
+	b, rec := newControlTestBackend(t)
+	rec.seedRules("sess-ctrl",
+		rule{Permission: "read", Pattern: "*.env", Action: "ask"},
+		rule{Permission: "read", Pattern: "*.env.*", Action: "ask"},
+		rule{Permission: "read", Pattern: "*.env.example", Action: "allow"},
+	)
+
+	if err := b.SendControl(context.Background(), &delegator.SetPermissionModeRequest{
+		Mode: "plan",
+	}); err != nil {
+		t.Fatalf("SendControl: %v", err)
+	}
+
+	if _, ok := rec.lastSessionPatch("sess-ctrl"); !ok {
+		t.Fatal("PATCH /session/sess-ctrl was not sent")
+	}
+	for _, tc := range []struct{ perm, target, want string }{
+		{"read", ".env", "ask"},           // guard re-asserted after read:allow
+		{"read", ".env.local", "ask"},     // *.env.* guard
+		{"read", ".env.example", "allow"}, // examples stay allowed, as in opencode's defaults
+		{"read", "src/main.go", "allow"},  // plan's reads-are-free kept
+		{"edit", "src/main.go", "deny"},   // plan's edit deny kept
+	} {
+		if got := rec.evaluate("sess-ctrl", tc.perm, tc.target); got != tc.want {
+			t.Errorf("evaluate(%s, %q) = %s, want %s", tc.perm, tc.target, got, tc.want)
+		}
+	}
+}
+
+func TestSendControl_SetPermissionMode_AllowAllCarriesNoEnvGuards(t *testing.T) {
+	// Pins the documented decision (#2330 threat scan): modes whose
+	// whole meaning is "allow everything" (bypassPermissions, auto)
+	// deliberately drop opencode's .env read guards — the user asked
+	// for no prompts. Their ruleset stays one {*,*,allow} rule so a
+	// later mode can still supersede it under findLast.
+	for _, mode := range []string{"bypassPermissions", "auto"} {
+		t.Run(mode, func(t *testing.T) {
+			b, rec := newControlTestBackend(t)
+
+			if err := b.SendControl(context.Background(), &delegator.SetPermissionModeRequest{
+				Mode: mode,
+			}); err != nil {
+				t.Fatalf("SendControl: %v", err)
+			}
+
+			patch, ok := rec.lastSessionPatch("sess-ctrl")
+			if !ok {
+				t.Fatal("PATCH /session/sess-ctrl was not sent")
+			}
+			var body struct {
+				Permission []rule `json:"permission"`
+			}
+			if err := json.Unmarshal(patch.Body, &body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			want := []rule{{Permission: "*", Pattern: "*", Action: "allow"}}
+			if !reflect.DeepEqual(body.Permission, want) {
+				t.Errorf("%s rules = %+v, want exactly %+v (no guards)", mode, body.Permission, want)
+			}
+			if got := rec.evaluate("sess-ctrl", "read", ".env"); got != "allow" {
+				t.Errorf("%s: read .env → %s, want allow (explicit allow-everything)", mode, got)
+			}
+		})
+	}
+}
+
+func TestBackend_SessionRequestsEscapeTheSessionID(t *testing.T) {
+	// A session id containing "/" (e.g. from a corrupted
+	// ResumeSessionID) must not extend the request path to another
+	// server resource: /session/:id URLs are built through sessionURL,
+	// which path-escapes the id (#2330 threat scan — a PATCH meant for
+	// one session must never be routable to /config). Observable at the
+	// server as the ESCAPED request path.
+	var mu sync.Mutex
+	var paths []string
+	hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.Method+" "+r.URL.EscapedPath())
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(hs.Close)
+	b := newControlTestBackendForSession(t, hs, "ses/sion")
+
+	if err := b.SendControl(context.Background(), &delegator.SetPermissionModeRequest{
+		Mode: "default",
+	}); err != nil {
+		t.Fatalf("SendControl: %v", err)
+	}
+	if err := b.Interrupt(context.Background()); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{
+		"PATCH /session/ses%2Fsion",
+		"POST /session/ses%2Fsion/abort",
+	}
+	if !reflect.DeepEqual(paths, want) {
+		t.Errorf("requests = %v, want %v (session id must arrive escaped)", paths, want)
+	}
+}
+
+func TestSendControl_SetPermissionMode_ErrorBodyIsBounded(t *testing.T) {
+	// The apply error carries opencode's response body so a rejection
+	// is self-explanatory, but the read is bounded (maxErrorBodyBytes):
+	// a misbehaving local server returning a huge error body must not
+	// balloon the returned error, the WARN at Start, or foci's memory
+	// (#2330 threat scan).
+	hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, strings.Repeat("x", 1<<20)) // 1 MiB, far above the cap
+	}))
+	t.Cleanup(hs.Close)
+	b := newControlTestBackendForSession(t, hs, "sess-ctrl")
+
+	err := b.SendControl(context.Background(), &delegator.SetPermissionModeRequest{
+		Mode: "plan",
+	})
+	if err == nil {
+		t.Fatal("SendControl should error when the session PATCH fails")
+	}
+	if !strings.Contains(err.Error(), "PATCH /session/sess-ctrl: HTTP 500") {
+		t.Errorf("error = %q, want it to name PATCH /session/sess-ctrl: HTTP 500", err)
+	}
+	// 16 KiB is generously above the 8 KiB cap + the message prefix;
+	// an unbounded read would carry the full 1 MiB body.
+	if n := len(err.Error()); n > 16*1024 {
+		t.Errorf("error message is %d bytes — the error body read is not bounded", n)
 	}
 }
 

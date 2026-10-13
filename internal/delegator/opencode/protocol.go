@@ -12,6 +12,7 @@ package opencode
 
 import (
 	"encoding/json"
+	"net/url"
 )
 
 // ---------------------------------------------------------------------------
@@ -281,6 +282,18 @@ type permissionRule struct {
 // applySessionPermission for the resolution semantics.
 type sessionPermissionPatch struct {
 	Permission []permissionRule `json:"permission"`
+}
+
+// sessionURL builds the URL of a per-session opencode endpoint,
+// /session/<id><suffix>. The session id is path-escaped so an id that
+// contains "/" or ".." (e.g. a corrupted ResumeSessionID read back from
+// the session store) can never extend the request path to another
+// server resource — a PATCH meant for one session must not be routable
+// to /config, the server-wide lever #2330 removed. suffix is appended
+// verbatim ("/abort", "/permissions/<escaped-id>"); escape any id the
+// caller embeds in it.
+func sessionURL(baseURL, sessionID, suffix string) string {
+	return baseURL + "/session/" + url.PathEscape(sessionID) + suffix
 }
 
 // ---------------------------------------------------------------------------
