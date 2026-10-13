@@ -83,25 +83,28 @@ func TestReplayChecksSilentOnRealCaptures(t *testing.T) {
 func TestCostDivergenceAlarm(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
+		model  string
 		factor float64
 		alarms int
 	}{
-		{"agrees", 1, 0},
-		{"rate disagrees", 1.10, 1},
+		{"agrees", opus, 1, 0},
+		{"rate disagrees", opus, 1.10, 1},
+		// #2382: a tiered model (Haiku 5.5) is not checked, whatever the gap.
+		{"tiered model disagrees", "claude-haiku-5-5", 1.50, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			tb := newTestBook(t, map[string]ModelUsage{opus: {InputTokens: 5000, CostUSD: 3}})
+			tb := newTestBook(t, map[string]ModelUsage{tc.model: {InputTokens: 5000, CostUSD: 3}})
 			tb.streamNamed("m0", "", "T1", tb.clock)
-			tb.mainLine(line("m0", opus, tb.clock, "", 300, 1, 0, 0, 0)) // interrupted
+			tb.mainLine(line("m0", tc.model, tb.clock, "", 300, 1, 0, 0, 0)) // interrupted
 			tb.streamNamed("m1", "", "T1", tb.clock)
-			main := line("m1", opus, tb.clock, "end_turn", 10, 20, 0, 0, 4000)
+			main := line("m1", tc.model, tb.clock, "end_turn", 10, 20, 0, 0, 4000)
 			tb.mainLine(main)
 			price := mustCost(t, main.tokens)
-			tb.result(map[string]ModelUsage{opus: {InputTokens: 5010, OutputTokens: 20, CacheCreationInputTokens: 4000,
+			tb.result(map[string]ModelUsage{tc.model: {InputTokens: 5010, OutputTokens: 20, CacheCreationInputTokens: 4000,
 				CostUSD: 3 + tc.factor*price}}, 0, tb.clock)
 			// The next window's call is booked before the result settles.
 			tb.streamNamed("m2", "", "T2", tb.clock)
-			tb.mainLine(line("m2", opus, tb.clock, "end_turn", 10, 90000, 0, 0, 0))
+			tb.mainLine(line("m2", tc.model, tb.clock, "end_turn", 10, 90000, 0, 0, 0))
 			tb.advance(time.Second)
 			if got := tb.alarmsOf(accounting.InvCostDivergence); got != tc.alarms {
 				t.Errorf("divergence alarms = %d, want %d: %+v", got, tc.alarms, tb.alarms)

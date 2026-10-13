@@ -1773,7 +1773,9 @@ last result. A call on a run no foci turn opened books on a minted `run` turn, r
 just settled join the process total, and `checkDivergence` compares, per model, CC's cost
 since launch (`modelUsage.costUSD` less the launch baseline's) with the ledger's price of
 everything booked in the process that CC counts: beyond `delegator.CostDivergenceTolerance`
-(3%, both sides under $0.01 skipped, a model with an unpriced call skipped) it alarms
+(3%, both sides under $0.01 skipped, a model with an unpriced call skipped, a model with
+prompt-size price tiers skipped — a TEMPORARY workaround for CC bug #84223, #2382: the
+remainder has no prompt size to pick a tier from) it alarms
 `invCostDivergence`, the interrupted calls' price shown beside (CC counts them nowhere). A
 remainder's TTL solve makes its own window match CC's cost exactly, so the check bites on
 the counted calls' rates and on an unsolved remainder. `checkOverhead` alarms

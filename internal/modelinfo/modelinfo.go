@@ -1005,6 +1005,16 @@ func Caching(model string) bool {
 	return cachingFallback(bare)
 }
 
+// HasTiers reports whether model has prompt-size price tiers (see Tier). Only
+// a registry row can: an unknown model has none.
+func HasTiers(model string) bool {
+	segs, bare := splitSegs(model)
+	registryMu.RLock()
+	m, ok := registryLookupSegs(segs, bare)
+	registryMu.RUnlock()
+	return ok && len(m.Tiers) > 0
+}
+
 // cachingFallback is Caching's family-default rule, factored out for the same
 // reason as contextWindowFallback — see its doc comment.
 func cachingFallback(bare string) bool {
