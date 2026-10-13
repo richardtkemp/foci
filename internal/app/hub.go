@@ -960,27 +960,17 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 	order := append([]string(nil), h.agentOrder...)
 	sort.Strings(order)
 
-	// Per-agent default chat (app platform), memoised so each agent's index is
-	// queried at most once per roster build. Marks the matching conversation's
-	// IsDefault for the golden pin (#app-default).
+	// Per-agent default chat (app platform), resolved through memoDefaultChat
+	// (queried at most once per agent per roster build). Marks the matching
+	// conversation's IsDefault for the golden pin (#app-default).
 	idx := h.deps.SessionIndex
 	defaultChatByAgent := make(map[string]int64)
-	defaultChat := func(agentID string) int64 {
-		if idx == nil {
-			return 0
-		}
-		if v, ok := defaultChatByAgent[agentID]; ok {
-			return v
-		}
-		v := idx.DefaultChatForAgent(agentID, "app")
-		defaultChatByAgent[agentID] = v
-		return v
-	}
 
-	// Per-agent archived-chat set (app platform), memoised the same way as
-	// defaultChat so each agent's chat_metadata is queried at most once per
-	// roster build. Marks matching conversations' Archived flag — the roster is
-	// the app's source of truth for archived state (see ConversationInfo.Archived).
+	// Per-agent archived-chat set (app platform), memoised per agent (the
+	// memoDefaultChat shape) so each agent's chat_metadata is queried at most
+	// once per roster build. Marks matching conversations' Archived flag — the
+	// roster is the app's source of truth for archived state (see
+	// ConversationInfo.Archived).
 	archivedByAgent := make(map[string]map[int64]bool)
 	archivedChats := func(agentID string) map[int64]bool {
 		if idx == nil {
@@ -1013,7 +1003,7 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 		if conn := h.agents[b.agentID]; conn != nil && conn.agentRef != nil {
 			ci.CacheExpiryMs = conn.agentRef.CacheExpiryMs(b.sessionKey, time.Now())
 		}
-		if dc := defaultChat(b.agentID); dc != 0 && dc == b.chatID {
+		if dc := memoDefaultChat(idx, defaultChatByAgent, b.agentID); dc != 0 && dc == b.chatID {
 			ci.IsDefault = true
 		}
 		if archivedChats(b.agentID)[b.chatID] {
@@ -1035,6 +1025,23 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 		})
 	}
 	return out
+}
+
+// memoDefaultChat resolves an agent's default app chat, memoised in
+// defaultChats so the index is queried at most once per agent per pass:
+// agentRoster builds one lookup per agent (the golden #app-default pin), and
+// the auto-close sweep (#1243) must not turn a one-agent fleet into one query
+// per chat. A hub with no SessionIndex has no default chats.
+func memoDefaultChat(idx *session.SessionIndex, defaultChats map[string]int64, agentID string) int64 {
+	if idx == nil {
+		return 0
+	}
+	if v, ok := defaultChats[agentID]; ok {
+		return v
+	}
+	v := idx.DefaultChatForAgent(agentID, "app")
+	defaultChats[agentID] = v
+	return v
 }
 
 // commandInfos builds the agent-level command palette carried in the roster:

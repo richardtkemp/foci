@@ -103,7 +103,7 @@ func (h *Hub) sweepOpenChats(now time.Time) {
 	kept := make([]string, 0, len(ids)) // non-nil, so an emptied set stores and sends [] rather than null
 	defaultChats := make(map[string]int64)
 	for _, id := range ids {
-		if h.shouldAutoClose(id, cfg, now, defaultChats) {
+		if h.shouldAutoClose(idx, id, cfg, now, defaultChats) {
 			continue
 		}
 		kept = append(kept, id)
@@ -123,14 +123,11 @@ func (h *Hub) sweepOpenChats(now time.Time) {
 // exemption (live binding, known-and-stale activity, not viewed, idle roster,
 // not the default chat, not pinned, not unread) must clear, checked cheapest
 // first so the chat_metadata reads run only for otherwise-stale chats. Every
-// per-chat read that errors fails toward KEEP — a chat whose state cannot be
-// read is never closed on a guess. defaultChats memoises per-agent
-// default-chat lookups across one round (agentRoster's memoisation).
-func (h *Hub) shouldAutoClose(id string, cfg autoCloseSettings, now time.Time, defaultChats map[string]int64) bool {
-	idx := h.deps.SessionIndex
-	if idx == nil {
-		return false // unreachable via sweepOpenChats (the bag read needs the index)
-	}
+// read that errors fails toward KEEP — a chat whose state cannot be read is
+// never closed on a guess. idx is the index sweepOpenChats already resolved;
+// defaultChats memoises per-agent default-chat lookups across one round
+// (memoDefaultChat, shared with agentRoster).
+func (h *Hub) shouldAutoClose(idx *session.SessionIndex, id string, cfg autoCloseSettings, now time.Time, defaultChats map[string]int64) bool {
 	// No live binding → keep: there is no activity to judge the chat by.
 	h.mu.RLock()
 	b := h.convs[id]
@@ -180,18 +177,6 @@ func (h *Hub) shouldAutoClose(id string, cfg autoCloseSettings, now time.Time, d
 	// No message-carrying frame at all (an ask-only history): nothing a read
 	// watermark could cover — judged read.
 	return true
-}
-
-// memoDefaultChat resolves an agent's default app chat through defaultChats,
-// querying the index at most once per agent per round (agentRoster's
-// memoisation — a fleet of one agent's chats must not be one query each).
-func memoDefaultChat(idx *session.SessionIndex, defaultChats map[string]int64, agentID string) int64 {
-	if v, ok := defaultChats[agentID]; ok {
-		return v
-	}
-	v := idx.DefaultChatForAgent(agentID, "app")
-	defaultChats[agentID] = v
-	return v
 }
 
 // startAutoCloseSweep starts the periodic sweep, once per hub. It rides the
