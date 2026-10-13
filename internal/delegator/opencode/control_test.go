@@ -86,9 +86,11 @@ type controlRecorder struct {
 	requests []controlRequest
 	rules    map[string][]rule
 
-	// sessionPatchStatus, when non-zero, is the response status for
-	// PATCH /session/:id (set via failSessionPatches). Guarded by mu.
+	// sessionPatchStatus/sessionPatchBody, when status is non-zero, are
+	// the response for PATCH /session/:id (set via failSessionPatches).
+	// Guarded by mu.
 	sessionPatchStatus int
+	sessionPatchBody   string
 }
 
 // serveHTTP records the request and answers it like the opencode
@@ -99,6 +101,7 @@ func (r *controlRecorder) serveHTTP(w http.ResponseWriter, req *http.Request) {
 	isSessionPatch := req.Method == http.MethodPatch && sessionPatchTarget(path) != ""
 
 	status := http.StatusOK
+	var statusBody string
 	r.mu.Lock()
 	r.requests = append(r.requests, controlRequest{Method: req.Method, Path: path, Body: body})
 	if isSessionPatch {
@@ -111,6 +114,7 @@ func (r *controlRecorder) serveHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		if r.sessionPatchStatus != 0 {
 			status = r.sessionPatchStatus
+			statusBody = r.sessionPatchBody
 		}
 	}
 	n := len(r.requests)
@@ -122,6 +126,9 @@ func (r *controlRecorder) serveHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	w.WriteHeader(status)
+	if statusBody != "" {
+		_, _ = w.Write([]byte(statusBody))
+	}
 }
 
 // sessionPatchTarget extracts the session id from a /session/:id path
@@ -179,11 +186,15 @@ func (r *controlRecorder) seedRules(sessionID string, rules ...rule) {
 	r.rules[sessionID] = append(r.rules[sessionID], rules...)
 }
 
-// failSessionPatches makes every PATCH /session/:id respond 500.
+// failSessionPatches makes every PATCH /session/:id respond 500 with a
+// diagnostic body — opencode answers a rejected apply (e.g. an invalid
+// default_permission value → 400) with a validation message, and the
+// apply error must carry that body to the operator.
 func (r *controlRecorder) failSessionPatches() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.sessionPatchStatus = http.StatusInternalServerError
+	r.sessionPatchBody = "permission action must be allow, deny, or ask"
 }
 
 // evaluate resolves a permission ask the way opencode does over the
@@ -430,8 +441,10 @@ func TestSendControl_SetPermissionMode_FailedPatchReturnsError(t *testing.T) {
 	// A failed /mode apply must return an error to the caller — not
 	// silently succeed by falling back to some other endpoint. Both
 	// failure shapes must NAME the session-scoped apply (PATCH
-	// /session/:id), so the message can never read as the old server-wide
-	// PATCH /config wording (#2330).
+	// /session/<the real id>), so the message can never read as the old
+	// server-wide PATCH /config wording (#2330), and the HTTP arm must
+	// also carry opencode's response body so a rejected apply (e.g. an
+	// invalid mode value) is self-explanatory.
 	t.Run("HTTP error status", func(t *testing.T) {
 		hs, rec := newControlTestServer(t)
 		b := newControlTestBackendForSession(t, hs, "sess-ctrl")
@@ -443,13 +456,19 @@ func TestSendControl_SetPermissionMode_FailedPatchReturnsError(t *testing.T) {
 		if err == nil {
 			t.Fatal("SendControl should error when the session PATCH fails")
 		}
-		if !strings.Contains(err.Error(), "PATCH /session/:id: HTTP 500") {
-			t.Errorf("error = %q, want it to name PATCH /session/:id: HTTP 500", err)
+		for _, want := range []string{
+			"PATCH /session/sess-ctrl: HTTP 500",
+			"permission action must be allow, deny, or ask",
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error = %q, want it to contain %q", err, want)
+			}
 		}
 	})
 	t.Run("transport failure", func(t *testing.T) {
 		// Nothing listens behind baseURL any more: the request itself
-		// fails, and the wrap must still name the endpoint it failed on.
+		// fails, and the wrap must still name the endpoint and session
+		// it failed on.
 		hs, _ := newControlTestServer(t)
 		b := newControlTestBackendForSession(t, hs, "sess-ctrl")
 		hs.Close()
@@ -460,8 +479,8 @@ func TestSendControl_SetPermissionMode_FailedPatchReturnsError(t *testing.T) {
 		if err == nil {
 			t.Fatal("SendControl should error when the session PATCH cannot be sent")
 		}
-		if !strings.HasPrefix(err.Error(), "PATCH /session/:id: ") {
-			t.Errorf("error = %q, want it to name PATCH /session/:id before the cause", err)
+		if !strings.HasPrefix(err.Error(), "PATCH /session/sess-ctrl: ") {
+			t.Errorf("error = %q, want it to name PATCH /session/sess-ctrl before the cause", err)
 		}
 	})
 }

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 
@@ -114,11 +115,15 @@ func (b *Backend) applySessionPermission(ctx context.Context, rules []permission
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := b.httpClient().Do(req)
 	if err != nil {
-		return fmt.Errorf("PATCH /session/:id: %w", err)
+		return fmt.Errorf("PATCH /session/%s: %w", b.sessionID, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("PATCH /session/:id: HTTP %d", resp.StatusCode)
+		// Name the real session id and carry opencode's response body
+		// (e.g. the 400 validation message for a bad default_permission
+		// value) so a failed apply is self-explanatory in the WARN/error.
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("PATCH /session/%s: HTTP %d: %s", b.sessionID, resp.StatusCode, string(body))
 	}
 	return nil
 }

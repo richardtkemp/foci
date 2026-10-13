@@ -33,7 +33,7 @@ type OpencodeBackendConfig struct {
 	// "allow" = auto-approve; "deny" = block. NOTE: this global is not
 	// currently folded into per-agent backend_config — only
 	// [[agents]].backend_config.default_permission is read.
-	DefaultPermission string `toml:"default_permission" default:"ask" desc:"opencode permission mode: ask, allow, or deny (default ask)"`
+	DefaultPermission string `toml:"default_permission" default:"ask" desc:"opencode permission mode applied at Start to the session's own ruleset: ask, allow, or deny (per-agent backend_config only)"`
 
 	// LogLevel sets the opencode serve --log-level flag. Empty = opencode
 	// default (INFO). Set to "DEBUG" for verbose projector/persistence

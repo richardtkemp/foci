@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/log"
 )
 
 // ---------------------------------------------------------------------------
@@ -611,11 +612,23 @@ func TestBackend_Start_DefaultPermission_AppliedToResumedSession(t *testing.T) {
 func TestBackend_Start_DefaultPermission_ApplyFailureDoesNotFailStart(t *testing.T) {
 	// Verifies a failed Start-time apply is a WARN, not a Start failure
 	// (unchanged semantics) — AND that the apply was attempted on the
-	// session (isolates the WARN arm from a silent no-request bug).
+	// session (isolates the WARN arm from a silent no-request bug), AND
+	// that the WARN is actually emitted naming default_permission and the
+	// session it failed on (observed through a log tap, #2357, so the
+	// operator-visible symptom is pinned, not just the return value).
 	rec := &controlRecorder{rules: map[string][]rule{}}
 	rec.failSessionPatches()
 	_, b := newTestBackendServer(t, rec.serveHTTP)
 	b.cfg = map[string]any{"default_permission": "deny"}
+
+	var tapMu sync.Mutex
+	var warns []string
+	remove := log.AddTap(log.WARN, func(level log.Level, component, msg string) {
+		tapMu.Lock()
+		warns = append(warns, msg)
+		tapMu.Unlock()
+	})
+	defer remove()
 
 	if err := b.Start(context.Background(), delegator.StartOptions{
 		AgentID:         "test-agent",
@@ -626,6 +639,24 @@ func TestBackend_Start_DefaultPermission_ApplyFailureDoesNotFailStart(t *testing
 
 	if _, ok := rec.lastSessionPatch("ses-r"); !ok {
 		t.Fatal("PATCH /session/ses-r was not attempted")
+	}
+
+	// "default_permission apply failed" is emitted only by this Start
+	// path, so the message filter ties the assertion to this run without
+	// a token. The WARN must also carry the apply error, which names the
+	// session and opencode's response body.
+	tapMu.Lock()
+	snapshot := append([]string(nil), warns...)
+	found := false
+	for _, msg := range snapshot {
+		if strings.Contains(msg, "default_permission apply failed") && strings.Contains(msg, "ses-r") {
+			found = true
+			break
+		}
+	}
+	tapMu.Unlock()
+	if !found {
+		t.Errorf("no WARN naming default_permission and session ses-r; tapped WARNs: %v", snapshot)
 	}
 	_ = b.Close()
 }
