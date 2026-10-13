@@ -140,6 +140,8 @@ func decodeClient(t string, d json.RawMessage) (any, error) {
 		dst = &ScrollPut{}
 	case TypeConvPinPut:
 		dst = &ConvPinPut{}
+	case TypeCheckboxPut:
+		dst = &CheckboxPut{}
 	case TypeViewingPut:
 		dst = &ViewingPut{}
 	case TypeConfigGet:
@@ -207,6 +209,8 @@ func derefClient(dst any) any {
 	case *ScrollPut:
 		return *v
 	case *ConvPinPut:
+		return *v
+	case *CheckboxPut:
 		return *v
 	case *ViewingPut:
 		return *v

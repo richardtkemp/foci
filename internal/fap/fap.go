@@ -140,6 +140,14 @@ const (
 	// TypePinSync): one boolean per conversation, not a set of messages.
 	TypeConvPinPut  = "convpin.put"
 	TypeConvPinSync = "convpin.sync"
+	// TypeCheckboxPut (app->server) mirrors one document's WHOLE markdown
+	// checkbox tick state (#1360) — which line indexes are checked.
+	// TypeCheckboxSync (server->app) fans it to the user's other devices and
+	// is replayed after a hello, exactly like the scroll pair. The document
+	// is named by the attachment's blob id: a global id, not scoped to a
+	// conversation, so the same document ticks the same on every device.
+	TypeCheckboxPut  = "checkbox.put"
+	TypeCheckboxSync = "checkbox.sync"
 	// TypeViewingPut (app->server) reports the one conversation the device has
 	// on screen right now, or none (#2202); TypeViewingSync (server->app) tells
 	// each device which conversations its user's OTHER devices are viewing, so
@@ -1121,6 +1129,37 @@ type ConvPinSync struct {
 }
 
 func (ConvPinSync) Type() string { return TypeConvPinSync }
+
+// CheckboxPut mirrors one document's whole markdown checkbox tick state to the
+// server (app->server, #1360): which line indexes are checked. DocumentID is
+// the attachment's blob id — a global id, NOT scoped to a conversation, so the
+// same document is the same checkbox state wherever it appears. The app sends
+// it when the user ticks or unticks a rendered checkbox (a shopping or task
+// list). Lines is the COMPLETE set of checked line indexes, not a delta: an
+// empty Lines is a valid clear. The server is a dumb store: a put replaces any
+// stored state (last-write-wins by arrival) and rebroadcasts a CheckboxSync.
+// Fire-and-forget like DraftPut — not conversation-reliability-scoped (see
+// inboundConvID). Entries breaking the handler's limits (key charset/length,
+// line range, count) are dropped there, not on the wire.
+type CheckboxPut struct {
+	DocumentID string `json:"documentId"`
+	Lines      []int  `json:"lines"`
+}
+
+// CheckboxSync mirrors a document's checkbox tick state to a user's other
+// devices (server->client, #1360). Sent when one device puts a state (a
+// CheckboxPut), and replayed per-document after a hello so a device that was
+// offline while the user ticked catches up. Absolute, not a delta: the receiver
+// applies exactly Lines, so one frame serves both the fan-out and the replay
+// and the receiver never needs a base it might have missed. An empty Lines is a
+// valid "nothing is checked" and MUST be applied — it is how a clear reaches a
+// device that was offline for it.
+type CheckboxSync struct {
+	DocumentID string `json:"documentId"`
+	Lines      []int  `json:"lines"`
+}
+
+func (CheckboxSync) Type() string { return TypeCheckboxSync }
 
 // ViewingPut reports the conversation this device is showing the user right now
 // (app->server, #2202): the app is in the foreground (Android) or its window is

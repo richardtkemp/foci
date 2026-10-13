@@ -85,6 +85,7 @@ type Hub struct {
 	replayDepth    int             // config-driven replay buffer depth (0 = default)
 	replayTTL      time.Duration   // config-driven replay buffer TTL (0 = default)
 	frames         *frameStore     // durable replay-frame backstop (nil when no data_dir)
+	checkboxes     *checkboxStore  // durable checkbox-state mirror store (nil when no data_dir → live-only mirror, #1360)
 	allowedDevices map[string]bool // non-empty = pairing allowlist
 
 	mu           sync.RWMutex
@@ -247,8 +248,24 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		}
 	}
 
+	// Durable checkbox-state store (#1360). Its own file, not chat_metadata:
+	// document keys are attachment blob ids — global, not conversation-scoped —
+	// so there is no agent+chatID to key. Absent data_dir or a failed open
+	// leaves it nil: the mirror still runs live (puts fan out), but such a put
+	// is not persisted and not replayed after reconnect.
+	var checkboxes *checkboxStore
+	if deps.Config != nil && deps.Config.DataDir != "" {
+		cbPath := filepath.Join(deps.Config.DataDir, defaultCheckboxStoreFile)
+		if cs, err := newCheckboxStore(cbPath); err != nil {
+			appLog.Errorf("checkbox store %s: %v — checkbox sync runs live-only (puts are not persisted and not replayed)", cbPath, err)
+		} else {
+			checkboxes = cs
+		}
+	}
+
 	h := &Hub{
 		frames:        frames,
+		checkboxes:    checkboxes,
 		deps:          deps,
 		pairKeys:      newPairKeyStore(),
 		blobs:         blobs,
@@ -873,6 +890,14 @@ func (h *Hub) HasFacet(string) bool                 { return false }
 // with no gateway context start no loop (startAutoCloseSweep).
 func (h *Hub) StartAll(context.Context) {
 	defer h.startAutoCloseSweep()
+	// Aged-checkbox sweep (#1360): documents not updated for checkboxDocMaxAge
+	// go at hub start (the spec's allowed cadence). Before the frames early
+	// return on purpose — the two stores open independently, and a hub whose
+	// frame store failed still sheds stale checkbox documents. No-op with no
+	// checkbox store.
+	if n := h.checkboxes.removeOlderThan(time.Now().Add(-checkboxDocMaxAge).UnixMilli()); n > 0 {
+		appLog.Infof("checkbox store: swept %d document(s) not updated for %s", n, checkboxDocMaxAge)
+	}
 	if h.frames == nil {
 		return
 	}
@@ -935,6 +960,7 @@ func (h *Hub) Close() error {
 	// Drain + flush the durable replay store so a graceful shutdown (the deploy
 	// path) persists every in-flight frame before exit.
 	h.frames.Close()
+	h.checkboxes.Close()
 	return nil
 }
 
@@ -1843,17 +1869,18 @@ func (h *Hub) snapshotClients() []*wsClient {
 // change locally and must not be echoed back into its own optimistic state.
 //
 // This is the shared shape behind the cross-device mirrors (read.sync,
-// draft.sync, conversation.openSync, pin.sync, scroll.sync, convpin.sync).
-// Most are user-originated; conversation.openSync is also sent with sender=nil
-// for the server-originated open-set changes (mintFacetConversation's append,
-// the auto-close sweep #1243), so every device hears them. Every one of those
-// frames is idempotent and last-write-wins by design, so it is deliberately
-// sent to clients that do not currently hold the conversation
-// too: a read advance is monotonic, a draft is stored for the chat's next
-// open, an open-set is a full replace, a pin set is absolute, and a scroll
-// position is stored for the chat's next open. There is no per-frame
-// recipient filter and adding one would be a behaviour change, not an
-// optimisation.
+// draft.sync, conversation.openSync, pin.sync, scroll.sync, convpin.sync,
+// checkbox.sync). Most are user-originated; conversation.openSync is also sent
+// with sender=nil for the server-originated open-set changes
+// (mintFacetConversation's append, the auto-close sweep #1243), so every device
+// hears them. Every one of those frames is idempotent and last-write-wins by
+// design, so it is deliberately sent to clients that do not currently hold the
+// conversation too: a read advance is monotonic, a draft is stored for the
+// chat's next open, an open-set is a full replace, a pin set is absolute, a
+// scroll position is stored for the chat's next open, and a checkbox state is
+// stored for the document's next open (it names no conversation at all). There
+// is no per-frame recipient filter and adding one would be a behaviour change,
+// not an optimisation.
 //
 // The frame is built by the CALLER, before this returns — one value shared by
 // every recipient, never rebuilt per client.

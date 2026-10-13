@@ -116,6 +116,7 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.pushPins(client)
 		h.pushScrolls(client)
 		h.pushConvPins(client)
+		h.pushCheckboxes(client)
 		h.pushOpenSet(client)
 		h.pushViewing(client)
 		// Reconnect resume: re-attach (which recomputes the capability union across
@@ -168,6 +169,8 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.handleScroll(client, f)
 	case fap.ConvPinPut:
 		h.handleConvPin(client, f)
+	case fap.CheckboxPut:
+		h.handleCheckboxPut(client, f)
 	case fap.ConfigGet:
 		h.handleConfigGet(client)
 

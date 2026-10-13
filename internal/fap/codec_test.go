@@ -416,6 +416,7 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		PinSync{ConversationID: "c", MessageIDs: []string{"m1", "m2"}},
 		ScrollSync{ConversationID: "c", MessageID: "m", Following: false},
 		ConvPinSync{ConversationID: "c", Pinned: true},
+		CheckboxSync{DocumentID: "b", Lines: []int{1}},
 		ViewingSync{ConversationIDs: []string{"c"}},
 		ConversationAck{ConversationID: "c"},
 		MessageConsumed{ConversationID: "c", MessageID: "m"},
@@ -584,6 +585,69 @@ func TestEncode_ConvPinSync(t *testing.T) {
 	}
 	if d["conversationId"] != "c1" || d["pinned"] != true {
 		t.Errorf("payload = %v, want conversationId=c1 pinned=true", d)
+	}
+}
+
+// TestDecode_CheckboxPut pins the app->server half of checkbox-state sync's
+// field names on this side too (#1360), so the Kotlin encoder's keys cannot
+// drift from the Go decoder's.
+func TestDecode_CheckboxPut(t *testing.T) {
+	in, err := Decode(`{"t":"checkbox.put","id":"i1","d":{"documentId":"blob-01J","lines":[3,7,12]}}`)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	f, ok := in.Frame.(CheckboxPut)
+	if !ok {
+		t.Fatalf("frame = %T, want CheckboxPut", in.Frame)
+	}
+	if f.DocumentID != "blob-01J" || len(f.Lines) != 3 || f.Lines[0] != 3 || f.Lines[1] != 7 || f.Lines[2] != 12 {
+		t.Errorf("decoded = %+v, want blob-01J/[3 7 12]", f)
+	}
+}
+
+// An absent "lines" is a valid clear (nothing checked), not an error — matching
+// the peer's default-filling decoder rather than erroring.
+func TestDecode_CheckboxPut_AbsentLinesIsClear(t *testing.T) {
+	in, err := Decode(`{"t":"checkbox.put","id":"i1","d":{"documentId":"blob-01J"}}`)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	f, ok := in.Frame.(CheckboxPut)
+	if !ok {
+		t.Fatalf("frame = %T, want CheckboxPut", in.Frame)
+	}
+	if f.DocumentID != "blob-01J" || len(f.Lines) != 0 {
+		t.Errorf("decoded = %+v, want blob-01J with no lines (a clear)", f)
+	}
+}
+
+// TestEncode_CheckboxSync pins the server->app half of checkbox-state sync:
+// envelope `t` and the payload keys the Kotlin decoder selects by (#1360). An
+// empty state must encode as "lines":[] (never null), so a clear round-trips
+// as an applicable absolute state.
+func TestEncode_CheckboxSync(t *testing.T) {
+	wire, err := Encode(CheckboxSync{DocumentID: "blob-01J", Lines: []int{3, 7}}, 0, 0, "X", "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, d := wireFields(t, wire)
+	if env["t"] != "checkbox.sync" {
+		t.Errorf("t = %v, want checkbox.sync", env["t"])
+	}
+	if d["documentId"] != "blob-01J" {
+		t.Errorf("documentId = %v, want blob-01J", d["documentId"])
+	}
+	lines, ok := d["lines"].([]any)
+	if !ok || len(lines) != 2 || lines[0].(float64) != 3 || lines[1].(float64) != 7 {
+		t.Errorf("lines = %v, want [3 7]", d["lines"])
+	}
+
+	wire, err = Encode(CheckboxSync{DocumentID: "blob-01J", Lines: []int{}}, 0, 0, "X", "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(wire, `"lines":[]`) {
+		t.Errorf("empty state encoded as %s, want \"lines\":[] (never null)", wire)
 	}
 }
 
