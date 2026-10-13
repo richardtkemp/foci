@@ -498,8 +498,10 @@ func TestInboundConvID_CheckboxPutIsFireAndForget(t *testing.T) {
 }
 
 // TestHub_CloseWithAndWithoutCheckboxStore proves Hub.Close is safe both with
-// no checkbox store (nil receiver) and with one, and that a second Close of
-// the store itself is harmless.
+// no checkbox store (nil receiver) and with one, and — the load-bearing part —
+// that Hub.Close owns the store's DB: after it, the store refuses further use
+// (the graceful-shutdown drain-and-close contract, alongside h.frames.Close).
+// A second Close of the store itself is harmless (sql.DB.Close is idempotent).
 func TestHub_CloseWithAndWithoutCheckboxStore(t *testing.T) {
 	bare := newTestHub()
 	if err := bare.Close(); err != nil {
@@ -508,6 +510,9 @@ func TestHub_CloseWithAndWithoutCheckboxStore(t *testing.T) {
 	h, s := checkboxHub(t)
 	if err := h.Close(); err != nil {
 		t.Errorf("Close with a checkbox store: %v", err)
+	}
+	if err := s.put("doc-after-close", "[1]", 0); err == nil {
+		t.Errorf("put after Hub.Close succeeded; want the store's DB closed by Hub.Close")
 	}
 	s.Close() // idempotent
 }
