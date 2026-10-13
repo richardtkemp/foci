@@ -760,6 +760,31 @@ func newDelegatedSystemPromptFunc(buildEnv func(sessionPlatform string) string, 
 	}
 }
 
+// agentConsultsAllowlist is the one predicate for "this agent's permission
+// requests flow through foci's auto-approve allowlist, with a prompt the
+// match-time veto can reach":
+//
+//   - only DELEGATED agents get the rules at all: buildAutoApproveRules
+//     runs in configureDelegated, so an API agent's toggles are inert;
+//   - only backends that consult foci's allowlist (Spec declares
+//     CapCommandApprovalAllowlist) ever match a rule against a permission
+//     request;
+//   - a skip_permissions agent never prompts: its backend runs everything
+//     unattended, so no command there can stop auto-approving, and text
+//     about an approval prompt would be false.
+//
+// Every consumer of that condition calls this — the Command Approval
+// section of the agent environment (buildEnvironmentDelegated) and the
+// built-in veto reporters (#1897) — so the prompt text and the reporters
+// cannot drift from each other or from the enforcer.
+func agentConsultsAllowlist(a config.AgentConfig) bool {
+	if !a.IsDelegated() {
+		return false
+	}
+	spec, ok := delegator.SpecFor(a.Backend)
+	return ok && spec.Supports(delegator.CapCommandApprovalAllowlist) && !config.DerefBool(a.BackendConfig.SkipPermissions)
+}
+
 // buildAutoApproveRules assembles the foci-level auto-approve rules for a
 // delegated backend from resolved config + workspace-scoped defaults.
 //

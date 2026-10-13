@@ -376,16 +376,16 @@ func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *
 	writeShellTools(&b, shellTools)
 
 	// Shown for every backend that enforces foci's auto-approve allowlist
-	// (its Spec declares command_approval_allowlist), so the prompt describes
+	// and still prompts for approval (agentConsultsAllowlist — the same
+	// predicate the built-in veto reporters use), so the prompt describes
 	// the regime the backend actually applies. skip_permissions bypasses all
 	// prompts, so a Command Approval section would just be confusing noise —
 	// omit it entirely (everything is permitted).
-	spec, _ := delegator.SpecFor(acfg.Backend)
-	if spec.Supports(delegator.CapCommandApprovalAllowlist) && !config.DerefBool(acfg.BackendConfig.SkipPermissions) {
+	if agentConsultsAllowlist(acfg) {
 		// The --allowedTools pre-approval layer exists only for the Claude
 		// Code config family ([cc_backend].default_allowed_tools).
 		var preApproved string
-		if spec.ConfigFamily == delegator.ConfigFamilyClaudeCode {
+		if spec, _ := delegator.SpecFor(acfg.Backend); spec.ConfigFamily == delegator.ConfigFamilyClaudeCode {
 			preApproved = cfg.CCBackend.MergedAllowedTools(acfg.BackendConfig.AllowedTools)
 		}
 		writeCommandApproval(&b, bakedPerms, preApproved)

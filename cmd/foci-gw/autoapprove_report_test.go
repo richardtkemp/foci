@@ -76,7 +76,11 @@ func TestWarnSubstitutableBuiltins_NoLiveAgentNoWarn(t *testing.T) {
 		}}},
 	} {
 		warnSubstitutableBuiltins(cfg, env)
-		if lines := c.Lines("built-in"); len(lines) != 0 {
+		// Filtered to this test's own temp dir: the tap is process-wide, so
+		// an unfiltered negative check also sees the built-in WARNs parallel
+		// tests emit and fails intermittently. Every WARN this call could
+		// wrongly log carries the path of this test's mds, under dir.
+		if lines := c.Lines("built-in", dir+"/"); len(lines) != 0 {
 			t.Errorf("%s: got %d built-in WARN(s), want none — no shell of these agents consults the groups:\n%s", name, len(lines), c.String())
 		}
 	}

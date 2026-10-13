@@ -126,9 +126,10 @@ func shellQuote(s string) string {
 }
 
 // Gate judges whether the env file Resolve chose may be sourced by THIS
-// caller. It returns the path to actually source — which may be rewritten,
-// because the file judged must be the file the shell runs (-check-config
-// absolute-ises relative paths; see cmd/foci-gw's envFileGate) — or an error
+// caller. It returns the path to actually source — which a gate may rewrite,
+// as long as the file judged stays the file the shell runs (-check-config's
+// envFileGate in cmd/foci-gw returns it unchanged, and refuses relative
+// paths rather than resolving them against its own cwd) — or an error
 // explaining why the file must not be sourced. A refused file is never run;
 // the error is returned to the caller untouched, for it to report. A nil
 // gate always allows, unrewritten: that is startup, which runs as the

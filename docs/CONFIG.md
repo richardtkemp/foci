@@ -780,7 +780,11 @@ Rules from global `[permissions]` and per-agent `[[agents]].permissions` are com
 > is writable, and it never sources the rc file as root) or when the shell env file, or any
 > directory on its path, is writable by anyone other than the invoking user and root — not
 > group-writable (a shared home is the common case), not world-writable, not another user's, not
-> reached through a symlink, and not a bare relative name; it prints one warning saying so instead.
+> reached through a symlink, with no `..` component in the path (`..` resolves after symlinks, so
+> the written path can hide the directory the file really lands in), and not a relative path (a bare
+> name is searched on `PATH`, and any other relative path resolves against the daemon's
+> `WorkingDirectory`, not the check's cwd — give an absolute or `~/` path); it prints one warning
+> saying so instead.
 > A configured shell env file that is missing, or that cannot be sourced, does not stop the check:
 > startup gets no overlay from it either, so the verdicts agree — but `-check-config` says in one
 > warning that the PATH it judged has no rc overlay.

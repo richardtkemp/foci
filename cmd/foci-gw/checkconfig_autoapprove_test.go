@@ -46,7 +46,7 @@ func mdsMdqEnv() execguard.Env {
 // delegatedConfigTOML is validConfigTOML with the agent on a delegated
 // backend. The built-in groups reach a match-time veto only through
 // buildAutoApproveRules, which runs for delegated agents alone
-// (builtinGroupsLiveFor), so every fixture that expects — or must be seen
+// (agentConsultsAllowlist), so every fixture that expects — or must be seen
 // not to suppress — built-in lines needs one.
 const delegatedConfigTOML = `
 [groups]
@@ -465,7 +465,7 @@ func TestRunConfigCheck_UntrustedEnvFileNotCheckedNeverRun(t *testing.T) {
 	if got := strings.Count(out, "auto_approve was not checked"); got != 1 {
 		t.Fatalf("%d not-checked warnings, want exactly 1:\n%s", got, out)
 	}
-	for _, want := range []string{"world-writable", rc, "group-writable", "symlink", "bare relative name"} {
+	for _, want := range []string{"world-writable", rc, "group-writable", "symlink", `".."`, "not a relative path"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("not-checked warning lacks %q:\n%s", want, out)
 		}
@@ -519,6 +519,147 @@ func TestRunConfigCheck_RelativeEnvFileNeverRunsPathFile(t *testing.T) {
 	}
 	if strings.Contains(out, "vetoed") {
 		t.Errorf("a refused check must not probe:\n%s", out)
+	}
+}
+
+// TestRunConfigCheck_RelativeSlashEnvFileNotCheckedNeverRun pins the
+// relative-with-slash rule end to end through the real loader composition:
+// bash's "." resolves "rcd/rc" against the cwd, but the daemon's shells run
+// from the service's WorkingDirectory, not the check's. Judging it against
+// the check's cwd made the verdict depend on where the operator stood (one
+// cwd sourced the file, another called it missing and claimed that "is also
+// what the daemon would run with"). So it is refused: never sourced — even
+// when a tight file sits at that path under the check's cwd — nothing is
+// probed, and the single warning says why.
+func TestRunConfigCheck_RelativeSlashEnvFileNotCheckedNeverRun(t *testing.T) {
+	// Not parallel: it changes the working directory for the duration.
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "marker")
+	rcd := filepath.Join(dir, "rcd")
+	if err := os.Mkdir(rcd, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rcd, "rc"), []byte("touch '"+marker+"'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil { // umask-proof the chain
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	// A tight chain judged as its real owner up to dir: every refusal the
+	// trust walk has stays silent, so only the relative-path rule can stop
+	// the source.
+	uid := os.Getuid()
+	gate := envFileGate{euid: func() int { return uid }, walkRoot: dir}
+	ov := &envFileOverlays{}
+	d := checkDeps{
+		euid: func() int { return uid },
+		loadEnvFile: func(cfg *string) (map[string]string, string, error) {
+			return classifyEnvFile(shellenv.LoadGated(cfg, gate.check))
+		},
+		setOperatorEnv: func(m map[string]string) { ov.calls = append(ov.calls, m) },
+		probe:          func() execguard.Env { return mdsMdqEnv() },
+	}
+
+	code, out := runConfigCheckDeps(t, "shell_env_file = \"rcd/rc\"\n"+delegatedConfigTOML, d)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr:\n%s", code, out)
+	}
+	if got := strings.Count(out, "auto_approve was not checked"); got != 1 {
+		t.Fatalf("%d not-checked warnings, want exactly 1:\n%s", got, out)
+	}
+	for _, want := range []string{"relative path", `"rcd/rc"`, "WorkingDirectory"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("not-checked warning lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "vetoed") {
+		t.Errorf("a refused check must not probe:\n%s", out)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("the env file ran (marker exists): a relative path must never be sourced")
+	}
+	if len(ov.calls) != 0 {
+		t.Errorf("overlay installed %d time(s); a refused check derives nothing", len(ov.calls))
+	}
+}
+
+// TestRunConfigCheck_DotDotEnvFileNotCheckedNeverRun pins the review's
+// escape, end to end through the real loader composition: a shell_env_file
+// with a ".." after a symlinked component names a file in a directory the
+// lexical trust walk never visits — the kernel resolves ".." AFTER symlinks,
+// while filepath.Dir cleans "lnk/.." away — so the gate refuses ".."
+// outright: the file is never sourced, nothing is probed, and the single
+// warning says why.
+func TestRunConfigCheck_DotDotEnvFileNotCheckedNeverRun(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "marker")
+	// The real rc lives in a group-writable directory the WRITTEN path never
+	// names. The kernel resolves ".." AFTER symlinks: trusted/lnk/../rc is
+	// gwdir/rc (lnk -> gwdir/sub, then ".." -> gwdir), so that is the file
+	// the shells run and where the marker-writing rc must sit. Before the
+	// refusal the walk judged only dir and dir/trusted (both tight) and this
+	// file was sourced — with walkRoot=dir this fixture reproduces that.
+	gw := filepath.Join(dir, "gwdir")
+	sub := filepath.Join(gw, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rc := filepath.Join(gw, "rc")
+	if err := os.WriteFile(rc, []byte("touch '"+marker+"'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(gw, 0o770); err != nil { // umask-proof the mode
+		t.Fatal(err)
+	}
+	trusted := filepath.Join(dir, "trusted")
+	if err := os.Mkdir(trusted, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(sub, filepath.Join(trusted, "lnk")); err != nil {
+		t.Fatal(err)
+	}
+	written := trusted + "/lnk/../rc"
+	// Judged as the fixture's real owner (files are created as os.Getuid on
+	// every host, root included), so the pre-fix walk had no ownership arm
+	// to refuse on and the file really was sourced — that is the escape
+	// this test pins; the ".." refusal fires before any ownership check.
+	uid := os.Getuid()
+	gate := envFileGate{
+		euid:     func() int { return uid },
+		walkRoot: dir,
+	}
+	ov := &envFileOverlays{}
+	d := checkDeps{
+		euid: func() int { return uid },
+		loadEnvFile: func(cfg *string) (map[string]string, string, error) {
+			return classifyEnvFile(shellenv.LoadGated(cfg, gate.check))
+		},
+		setOperatorEnv: func(m map[string]string) { ov.calls = append(ov.calls, m) },
+		probe:          func() execguard.Env { return mdsMdqEnv() },
+	}
+
+	code, out := runConfigCheckDeps(t, "shell_env_file = '"+written+"'\n"+delegatedConfigTOML, d)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr:\n%s", code, out)
+	}
+	if got := strings.Count(out, "auto_approve was not checked"); got != 1 {
+		t.Fatalf("%d not-checked warnings, want exactly 1:\n%s", got, out)
+	}
+	for _, want := range []string{`".."`, written} {
+		if !strings.Contains(out, want) {
+			t.Errorf("not-checked warning lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "vetoed") {
+		t.Errorf("a refused check must not probe:\n%s", out)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("the env file ran (marker exists): a \"..\" path must never be sourced")
+	}
+	if len(ov.calls) != 0 {
+		t.Errorf("overlay installed %d time(s); a refused check derives nothing", len(ov.calls))
 	}
 }
 
@@ -800,8 +941,12 @@ func TestEnvFileConcern(t *testing.T) {
 			// A setgid group-writable home (mode 2770) must be reported as
 			// 2770: Perm() alone would print 0770, and an operator fixing
 			// exactly the reported mode would not have fixed the directory.
-			if err := os.Chmod(filepath.Dir(filepath.Dir(rc)), os.FileMode(0o770)|os.ModeSetgid); err != nil {
-				t.Fatal(err)
+			home := filepath.Dir(filepath.Dir(rc))
+			if err := os.Chmod(home, os.FileMode(0o770)|os.ModeSetgid); err != nil {
+				t.Skipf("cannot set the setgid bit here (sandboxed or unprivileged): %v", err)
+			}
+			if fi, err := os.Stat(home); err != nil || fi.Mode()&os.ModeSetgid == 0 {
+				t.Skip("this filesystem or sandbox drops the setgid bit; the 2770 case cannot be set up")
 			}
 			return rc, uid, dir
 		}, "is group-writable (mode 2770)"},
@@ -831,10 +976,10 @@ func TestEnvFileConcern(t *testing.T) {
 }
 
 // TestEnvFileGate_AllArmsHermetic drives the gate itself — the composition
-// of bare-relative refusal, absolutisation, the missing-file sentinel and
-// the trust walk — with injected euid, wd and walkRoot, so its ALLOW arm is
-// covered without depending on the host's real uid, working directory or
-// the ancestors of the temp directory.
+// of the relative-path refusals, the missing-file sentinel and the trust
+// walk — with injected euid and walkRoot, so its ALLOW arm is covered
+// without depending on the host's real uid or the ancestors of the temp
+// directory.
 func TestEnvFileGate_AllArmsHermetic(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -849,7 +994,6 @@ func TestEnvFileGate_AllArmsHermetic(t *testing.T) {
 	}
 	gate := envFileGate{
 		euid:     func() int { return uid },
-		wd:       func() (string, error) { return dir, nil },
 		walkRoot: dir,
 	}
 
@@ -859,11 +1003,12 @@ func TestEnvFileGate_AllArmsHermetic(t *testing.T) {
 		t.Errorf("allow = (%q, %v), want (%q, nil)", got, err, rc)
 	}
 
-	// Relative-with-slash is absolutised against the injected cwd, so the
-	// file walked is the file the shell would run.
-	got, err = gate.check(filepath.Join("g", "a", "rc"))
-	if err != nil || got != rc {
-		t.Errorf("absolutise = (%q, %v), want (%q, nil)", got, err, rc)
+	// Relative-with-slash refuses too: bash's "." resolves it against the
+	// cwd, and the daemon's shells run from its systemd WorkingDirectory,
+	// not the check's — so no cwd the check could pick is known to be the
+	// daemon's, and the file judged would not be the file startup runs.
+	if _, err := gate.check(filepath.Join("g", "a", "rc")); err == nil || !strings.Contains(err.Error(), "relative path") {
+		t.Errorf("relative with slash = %v, want the relative-path refusal", err)
 	}
 
 	// Bare relative names refuse: bash searches PATH for those.
@@ -886,5 +1031,35 @@ func TestEnvFileGate_AllArmsHermetic(t *testing.T) {
 	}
 	if _, err := gate.check(loose); err == nil || !strings.Contains(err.Error(), envFileRefusalRule) {
 		t.Errorf("loose file = %v, want the trust refusal with the full rule", err)
+	}
+
+	// ".." components refuse however they arise: the kernel resolves ".."
+	// after symlinks, so the written path can name a directory the walk
+	// never sees. The escape itself: dir/lnk/../rc2 is physically
+	// dir/gwdir/rc2 (lnk -> dir/gwdir/sub, ".." -> gwdir), and the walk
+	// would judge dir and dir/lnk only — never the group-writable gwdir.
+	if err := os.MkdirAll(filepath.Join(dir, "gwdir", "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	esc := filepath.Join(dir, "gwdir", "rc2")
+	if err := os.WriteFile(esc, []byte("export X=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(dir, "gwdir"), 0o770); err != nil { // umask-proof the mode
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "gwdir", "sub"), filepath.Join(dir, "lnk")); err != nil {
+		t.Fatal(err)
+	}
+	// Literal strings, not filepath.Join: Join cleans ".." away, which is
+	// exactly the difference under test.
+	for _, dd := range []string{
+		filepath.Join(dir, "lnk") + "/../rc2", // the escape: real dir never walked
+		"g/../rc",                             // relative form Join would clean away
+		sub + "/../../rc",                     // plain ..: refused even with no symlink
+	} {
+		if _, err := gate.check(dd); err == nil || !strings.Contains(err.Error(), `".."`) {
+			t.Errorf("check(%q) = %v, want the \"..\" refusal", dd, err)
+		}
 	}
 }

@@ -89,10 +89,13 @@ readings of one broken instrument is not corroboration.
   did not check (root's `access(2)` succeeds for every file) and sources nothing. As a user it
   sources the rc file only when the file and every directory on its path is writable only by the
   invoking user and root — a group-writable home (e.g. mode 2770), a world-writable directory,
-  another user's file, a symlink, or a bare relative `shell_env_file` all refuse with one warning.
-  A configured rc file that is missing, or that cannot be sourced, is not a refusal (startup gets
-  no overlay from it either, so the verdicts agree) but gets its own warning naming the PATH judged.
-  In the refused states read the startup log instead.
+  another user's file, a symlink, a `..` component in the path (`..` resolves after symlinks, so
+  the written path can hide the directory the file really lands in), or a relative
+  `shell_env_file` (a bare name is searched on PATH; any other relative path resolves against
+  the daemon's WorkingDirectory, not the check's cwd) all refuse with one warning. A configured rc file that is missing, or that
+  cannot be sourced, is not a refusal (startup gets no overlay from it either, so the verdicts
+  agree) but gets its own warning naming the PATH judged. In the refused states read the startup
+  log instead.
 - **Built-in rule groups appear in both reports.** Startup logs one WARN per substitutable
   built-in (`CommonReadonlyRules`/`CommonSafeWriteRules` commands, named once per group and
   command — six read-only rules share the token `go`, and `go` is one line), and `-check-config`

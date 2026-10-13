@@ -23,7 +23,7 @@ package main
 //   - every built-in group command (read-only, safe-write) the match-time
 //     veto will refuse — once per group and command, and only for the agents
 //     the groups are live for (delegated backends that still ask for
-//     approval; see builtinGroupsLiveFor) — with the reason and the path. A
+//     approval; see agentConsultsAllowlist) — with the reason and the path. A
 //     vetoed built-in otherwise just falls through to an approval prompt
 //     silently;
 //   - one summary line with the count and the sorted command names.
@@ -45,9 +45,12 @@ package main
 //   - as a user, the rc file is sourced only when the file and every
 //     directory on its path is writable only by the invoking user and root —
 //     not group-writable, not world-writable, not another user's, not
-//     reached through a symlink, and not a bare relative name (bash searches
-//     PATH for those). #2347 owns the full trust rule; this is the
-//     fail-closed subset.
+//     reached through a symlink, carrying no ".." component (".." resolves
+//     after symlinks, so a lexical walk of the written path can skip the
+//     directory the file really lands in), and not a relative path (bash
+//     searches PATH for a bare name, and resolves any other relative path
+//     against the daemon's WorkingDirectory, not the check's cwd). #2347
+//     owns the full trust rule; this is the fail-closed subset.
 //
 // A configured rc file that is missing, or that cannot be sourced, is not a
 // refusal: startup gets no overlay from it either, so the preview still runs
@@ -243,36 +246,38 @@ var errEnvFileMissing = errors.New("shell env file does not exist")
 // envFileGate is the shellenv.Gate -check-config installs: the file must be
 // shown writable only by the invoking user and root before the check will
 // source it (#2347 owns the full trust rule; this is the fail-closed
-// subset). It also absolute-ises a relative path containing a slash — bash's
-// `.` resolves such a path against the cwd, so walking and sourcing the
-// absolute path judges the file the shell will run — and refuses a bare
-// relative name outright: bash searches PATH for those, so the file judged
-// could differ from the file run.
+// subset). It refuses three path shapes outright, because in each the file
+// the shell would run cannot be pinned down by walking the written path: a
+// bare relative name (bash searches PATH for those), any path with a ".."
+// component (".." is resolved after symlinks, so a lexical walk can skip
+// the directory the file really lands in — see hasDotDot), and any other
+// relative path (bash's `.` resolves it against the cwd, and the daemon's
+// shells run from its systemd WorkingDirectory, not the check's — judging it
+// against the check's cwd made the verdict depend on where the operator
+// stood). The path reaches the gate after Resolve's "~/" expansion, so
+// "~/.bashrc" is absolute here.
 //
-// euid, wd and walkRoot are injected so every arm — including the allow arm
-// — is testable without the host's real uid, working directory or ancestor
-// directories.
+// euid and walkRoot are injected so every arm — including the allow arm —
+// is testable without the host's real uid or ancestor directories.
 type envFileGate struct {
 	euid     func() int
-	wd       func() (string, error)
 	walkRoot string // the trust walk inspects the file and every parent up to AND INCLUDING this directory
 }
 
-// prodEnvFileGate is the production gate: the real effective uid, the real
-// working directory, and a walk that stops only at the filesystem root.
-var prodEnvFileGate = envFileGate{euid: os.Geteuid, wd: os.Getwd, walkRoot: "/"}
+// prodEnvFileGate is the production gate: the real effective uid and a walk
+// that stops only at the filesystem root.
+var prodEnvFileGate = envFileGate{euid: os.Geteuid, walkRoot: "/"}
 
 // check implements shellenv.Gate.
 func (g envFileGate) check(path string) (string, error) {
 	if !filepath.IsAbs(path) && !strings.Contains(path, "/") {
 		return "", fmt.Errorf("shell_env_file %q is a bare relative name — bash sources the first match on PATH for such a name, so the check cannot know which file the shells will run. Give shell_env_file an absolute path", path)
 	}
+	if hasDotDot(path) {
+		return "", fmt.Errorf("shell_env_file %q contains a \"..\" component — \"..\" is resolved after symlinks, so the file the shells run can live in a directory a walk of the written path never sees. Give shell_env_file a plain path without \"..\" components", path)
+	}
 	if !filepath.IsAbs(path) {
-		cwd, err := g.wd()
-		if err != nil {
-			return "", fmt.Errorf("cannot resolve the working directory to make shell_env_file %q absolute: %w", path, err)
-		}
-		path = filepath.Join(cwd, path)
+		return "", fmt.Errorf("shell_env_file %q is a relative path — bash resolves it against the working directory, and the daemon's shells run from the service's WorkingDirectory, not this check's, so the check cannot know which file they will run. Give shell_env_file an absolute path (or one starting with ~/)", path)
 	}
 	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
 		return "", errEnvFileMissing
@@ -283,11 +288,27 @@ func (g envFileGate) check(path string) (string, error) {
 	return path, nil
 }
 
+// hasDotDot reports whether path contains a ".." component. The trust walk
+// is lexical — it Lstats the written path and each filepath.Dir parent,
+// which cleans "lnk/.." away — while the kernel resolves ".." physically,
+// AFTER symlinks: for <t>/lnk/../rc with lnk -> <w>/sub, the file the shell
+// runs is <w>/rc, and the walk would judge <t> only, never <w>. No walk of
+// the written string can close that gap, so the gate refuses ".." outright
+// (fail-closed); resolving it physically is #2347's trust rule.
+func hasDotDot(path string) bool {
+	for _, part := range strings.Split(path, "/") {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
+}
+
 // envFileRefusalRule names every shape the trust walk refuses. It is part of
 // the user-facing warning, so it must stay true on ordinary machines: the
 // common case is a group-writable home directory, and an earlier attempt's
 // text named only a rare one (#1897 requirement 8).
-const envFileRefusalRule = "-check-config will not source a shell env file unless the file and every directory on its path is writable only by the invoking user and root — not group-writable, not world-writable, not another user's, not reached through a symlink, and not a bare relative name (bash searches PATH for those). Fix the file or point shell_env_file somewhere safe, then re-run."
+const envFileRefusalRule = "-check-config will not source a shell env file unless the file and every directory on its path is writable only by the invoking user and root — not group-writable, not world-writable, not another user's, not reached through a symlink, with no \"..\" component (\"..\" resolves after symlinks, so the written path can hide the directory the file really lands in), and not a relative path (bash searches PATH for a bare name, and the daemon resolves any other relative path against its own WorkingDirectory, not this check's). Fix the file or point shell_env_file somewhere safe, then re-run."
 
 // envFileConcern reports why path cannot be shown writable only by uid and
 // root, or "" when it can. Every component from the file up to AND INCLUDING
@@ -297,7 +318,10 @@ const envFileRefusalRule = "-check-config will not source a shell env file unles
 // replaced or planted even when the file itself is tight, and a symlink
 // anywhere on the path means the file the shell runs is the target, which
 // this walk did not judge. Lstat is used throughout — the link itself is the
-// identity being judged.
+// identity being judged. The walk is sound only for paths free of ".."
+// components (hasDotDot explains why); the gate refuses those before
+// calling, so every directory the kernel traverses opening the path is one
+// this walk inspects.
 func envFileConcern(path string, uid int, stopAt string) string {
 	cur := path
 	for {
