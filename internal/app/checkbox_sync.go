@@ -10,8 +10,8 @@ import (
 	"foci/internal/fap"
 )
 
-// Checkbox-put validation and replay bounds (#1360) — the spec's own numbers,
-// living beside the rule each one bounds. A put that breaks one is logged at
+// Checkbox-put validation (#1360) — the protocol contract with the client,
+// so it stays constants rather than config. A put that breaks one is logged at
 // WARN and dropped: not stored, not fanned out, no reply (the neighbouring
 // mirrors' refused-put shape — a misbehaving client cannot be helped by an
 // error it will not read).
@@ -19,10 +19,6 @@ const (
 	checkboxKeyMaxLen    = 128    // document key: 1–128 chars of [A-Za-z0-9._-]
 	checkboxLineIndexMax = 100000 // line indexes are 0–100000
 	checkboxMaxEntries   = 2000   // max entries (checked lines) per document
-	// Replay bounds: what one post-hello replay may send. Without them a hello
-	// could be made to push an unbounded burst by an unbounded store.
-	checkboxReplayMaxDocs = 200
-	checkboxReplayMaxAge  = 90 * 24 * time.Hour
 )
 
 // validateCheckboxPut enforces a checkbox.put's wire limits. The error names
@@ -151,13 +147,15 @@ func (h *Hub) handleCheckboxPut(client *wsClient, f fap.CheckboxPut) {
 // Deliberately NOT pushChatScalar — the one mirror whose replay is not: a
 // document is not a conversation, there is no binding to walk, and the state
 // lives in its own store (checkbox_store.go) with the updated_ms the ordering
-// needs. Bounded to checkboxReplayMaxDocs documents updated within
-// checkboxReplayMaxAge. A corrupt row is skipped, not sent and not fatal
-// (finding B; it still spent one of the SQL limit's slots — see
-// checkboxStore.replay): corrupt means the state does not decode, is null, or
-// breaks validateCheckboxPut — the write path's own limits gate the read path
-// too, so the replay can never send a device what a put could not have stored
-// (a `null` row is NOT a clear; a clear is an absent row).
+// needs. Bounded by the hub's resolved replay knobs ([platforms.app]
+// checkbox_replay_docs / checkbox_replay_ttl; zero fields mean the code
+// defaults — the trimBufferLocked discipline — so a directly-constructed hub
+// (tests) is bounded the same as a configured one). A corrupt row is skipped,
+// not sent and not fatal (finding B; it still spent one of the SQL limit's
+// slots — see checkboxStore.replay): corrupt means the state does not decode,
+// is null, or breaks validateCheckboxPut — the write path's own limits gate
+// the read path too, so the replay can never send a device what a put could
+// not have stored (a `null` row is NOT a clear; a clear is an absent row).
 //
 // The burst goes through enqueue, which blocks (then closes the socket) rather
 // than drop a frame — acceptable here for the same reason as every other
@@ -166,8 +164,15 @@ func (h *Hub) handleCheckboxPut(client *wsClient, f fap.CheckboxPut) {
 // client hits the block, whose close-forces-resume is the designed heal. The
 // replay bounds are what keep that burst finite.
 func (h *Hub) pushCheckboxes(client *wsClient) {
-	cutoff := time.Now().Add(-checkboxReplayMaxAge).UnixMilli()
-	for _, doc := range h.checkboxes.replay(checkboxReplayMaxDocs, cutoff) {
+	docs, age := h.checkboxReplayDocs, h.checkboxReplayAge
+	if docs <= 0 {
+		docs = defaultCheckboxReplayDocs
+	}
+	if age <= 0 {
+		age = defaultCheckboxReplayTTL
+	}
+	cutoff := time.Now().Add(-age).UnixMilli()
+	for _, doc := range h.checkboxes.replay(docs, cutoff) {
 		lines, ok := decodeCheckboxState(doc.state)
 		if !ok || validateCheckboxPut(doc.key, lines) != nil {
 			continue

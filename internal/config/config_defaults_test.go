@@ -40,6 +40,15 @@ long_poll_timeout = "70s"
 id = "discord"
 facet_session_ttl = "30m"
 
+[[platforms]]
+id = "app"
+[platforms.app]
+checkbox_store_path = "cb.db"
+checkbox_replay_ttl = "48h"
+checkbox_replay_docs = 25
+checkbox_retention = "600h"
+checkbox_max_docs = 500
+
 [http]
 graceful_shutdown_timeout = "10s"
 
@@ -80,6 +89,25 @@ web_fetch_max_bytes = 2097152
 	}
 	if dcPlat.FacetSessionTTL != "30m" {
 		t.Errorf("Platform(discord).FacetSessionTTL = %q, want 30m", dcPlat.FacetSessionTTL)
+	}
+	appPlat := cfg.Platform("app")
+	if appPlat == nil || appPlat.App == nil {
+		t.Fatal("Platform(app).App = nil")
+	}
+	if appPlat.App.CheckboxStorePath != "cb.db" {
+		t.Errorf("App.CheckboxStorePath = %q, want cb.db", appPlat.App.CheckboxStorePath)
+	}
+	if appPlat.App.CheckboxReplayTTL != "48h" {
+		t.Errorf("App.CheckboxReplayTTL = %q, want 48h", appPlat.App.CheckboxReplayTTL)
+	}
+	if DerefInt(appPlat.App.CheckboxReplayDocs) != 25 {
+		t.Errorf("App.CheckboxReplayDocs = %v, want 25", appPlat.App.CheckboxReplayDocs)
+	}
+	if appPlat.App.CheckboxRetention != "600h" {
+		t.Errorf("App.CheckboxRetention = %q, want 600h", appPlat.App.CheckboxRetention)
+	}
+	if DerefInt(appPlat.App.CheckboxMaxDocs) != 500 {
+		t.Errorf("App.CheckboxMaxDocs = %v, want 500", appPlat.App.CheckboxMaxDocs)
 	}
 	if cfg.HTTP.GracefulShutdownTimeout != "10s" {
 		t.Errorf("HTTP.GracefulShutdownTimeout = %q, want 10s", cfg.HTTP.GracefulShutdownTimeout)
@@ -249,6 +277,39 @@ id = "override"
 	al := Merge(bare.Loop, cfg.AgentLoop)
 	if DerefInt(al.MaxToolLoops) != 50 {
 		t.Errorf("Merge resolved MaxToolLoops = %v, want 50", al.MaxToolLoops)
+	}
+}
+
+func TestApplyDefaultsAppCheckboxFields(t *testing.T) {
+	// Proves the [platforms.app] checkbox_* fields inherit down the platform
+	// cascade (agent platform ← global platform ← provider defaults) exactly
+	// like every sibling app setting, and that values already set stay put
+	// (#1360).
+	replayDocs, maxDocs := 5, 6
+	defaults := PlatformConfig{App: &AppSpecific{
+		CheckboxStorePath:  "default-checkboxes.db",
+		CheckboxReplayTTL:  "90h",
+		CheckboxReplayDocs: &replayDocs,
+		CheckboxRetention:  "365h",
+		CheckboxMaxDocs:    &maxDocs,
+	}}
+	p := PlatformConfig{App: &AppSpecific{CheckboxStorePath: "custom-checkboxes.db"}}
+	p.ApplyDefaults(defaults)
+	a := p.App
+	if a.CheckboxStorePath != "custom-checkboxes.db" {
+		t.Errorf("CheckboxStorePath = %q, want the set value custom-checkboxes.db", a.CheckboxStorePath)
+	}
+	if a.CheckboxReplayTTL != "90h" {
+		t.Errorf("CheckboxReplayTTL = %q, want inherited 90h", a.CheckboxReplayTTL)
+	}
+	if DerefInt(a.CheckboxReplayDocs) != 5 {
+		t.Errorf("CheckboxReplayDocs = %v, want inherited 5", a.CheckboxReplayDocs)
+	}
+	if a.CheckboxRetention != "365h" {
+		t.Errorf("CheckboxRetention = %q, want inherited 365h", a.CheckboxRetention)
+	}
+	if DerefInt(a.CheckboxMaxDocs) != 6 {
+		t.Errorf("CheckboxMaxDocs = %v, want inherited 6", a.CheckboxMaxDocs)
 	}
 }
 

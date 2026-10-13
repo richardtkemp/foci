@@ -125,6 +125,8 @@ func (p *appProvider) DefaultPlatformConfig() config.PlatformConfig {
 	pushOn := true
 	replayBuf := defaultReplayBufferDepth
 	maxBlobMB := defaultMaxBlobMB
+	checkboxReplayDocs := defaultCheckboxReplayDocs
+	checkboxMaxDocs := defaultCheckboxDocCap
 	return config.PlatformConfig{
 		ID:     "app",
 		Notify: config.NotifyConfig{StartupNotify: &startupNotify},
@@ -134,16 +136,21 @@ func (p *appProvider) DefaultPlatformConfig() config.PlatformConfig {
 			StreamOutput:  &streamOn,
 		},
 		App: &config.AppSpecific{
-			Push:            &pushOn,
-			ReplayBuffer:    &replayBuf,
-			ReplayTTL:       defaultReplayTTL.String(),
-			ReplayStoreTTL:  defaultReplayStoreTTL.String(),
-			ReplayStorePath: defaultReplayStoreFile,
-			MaxBlobMB:       &maxBlobMB,
-			BlobTTL:         defaultBlobTTL.String(),
-			PushCoalesce:    defaultPushCoalesce.String(),
-			DevicesPath:     defaultDevicesFile,
-			MermaidCmd:      mermaid.DefaultCmd,
+			Push:               &pushOn,
+			ReplayBuffer:       &replayBuf,
+			ReplayTTL:          defaultReplayTTL.String(),
+			ReplayStoreTTL:     defaultReplayStoreTTL.String(),
+			ReplayStorePath:    defaultReplayStoreFile,
+			MaxBlobMB:          &maxBlobMB,
+			BlobTTL:            defaultBlobTTL.String(),
+			PushCoalesce:       defaultPushCoalesce.String(),
+			DevicesPath:        defaultDevicesFile,
+			CheckboxStorePath:  defaultCheckboxStoreFile,
+			CheckboxReplayTTL:  defaultCheckboxReplayTTL.String(),
+			CheckboxReplayDocs: &checkboxReplayDocs,
+			CheckboxRetention:  defaultCheckboxRetention.String(),
+			CheckboxMaxDocs:    &checkboxMaxDocs,
+			MermaidCmd:         mermaid.DefaultCmd,
 		},
 	}
 }

@@ -11,7 +11,9 @@ import (
 
 	flog "foci/internal/log"
 
+	"foci/internal/config"
 	"foci/internal/fap"
+	"foci/internal/platform"
 )
 
 func checkboxHub(t *testing.T) (*Hub, *checkboxStore) {
@@ -70,11 +72,12 @@ func checkboxSyncsOrdered(t *testing.T, c *wsClient) []checkboxSyncFrame {
 }
 
 // wideClient is a fakeClient whose send buffer can hold a full replay burst
-// (checkboxReplayMaxDocs frames): enqueue blocks 2s and then closes the socket
-// when the 64-slot default fills, which would hang the test and drop frames.
+// (defaultCheckboxReplayDocs frames): enqueue blocks 2s and then closes the
+// socket when the 64-slot default fills, which would hang the test and drop
+// frames.
 func wideClient() *wsClient {
 	c := fakeClient()
-	c.send = make(chan []byte, 512+checkboxReplayMaxDocs)
+	c.send = make(chan []byte, 512+defaultCheckboxReplayDocs)
 	return c
 }
 
@@ -219,7 +222,7 @@ func TestHandleCheckboxPut_ValidationDrops(t *testing.T) {
 func TestHandleCheckboxPut_CapDrop_NoFanOutNoReply(t *testing.T) {
 	h, s := checkboxHub(t)
 	buf := captureAppLog(t)
-	seedCheckboxDocs(t, s, checkboxDocCap, time.Now().UnixMilli())
+	seedCheckboxDocs(t, s, defaultCheckboxDocCap, time.Now().UnixMilli())
 	sender, other := fakeClient(), fakeClient()
 	sender.deviceID = "dev-a"
 	h.clients[sender] = struct{}{}
@@ -227,8 +230,8 @@ func TestHandleCheckboxPut_CapDrop_NoFanOutNoReply(t *testing.T) {
 
 	h.handleCheckboxPut(sender, fap.CheckboxPut{DocumentID: "doc-new", Lines: []int{1}})
 
-	if got := s.replay(checkboxDocCap+1, 0); len(got) != checkboxDocCap {
-		t.Errorf("store holds %d documents after a refused put, want exactly the cap %d", len(got), checkboxDocCap)
+	if got := s.replay(defaultCheckboxDocCap+1, 0); len(got) != defaultCheckboxDocCap {
+		t.Errorf("store holds %d documents after a refused put, want exactly the cap %d", len(got), defaultCheckboxDocCap)
 	}
 	for _, c := range []*wsClient{other, sender} {
 		if n := len(drain(t, c)); n != 0 {
@@ -387,39 +390,67 @@ func TestCheckbox_DispatchDropsNonIntegerLines(t *testing.T) {
 	}
 }
 
-// TestPushCheckboxes_ReplayBoundsAndOrder pins requirement 4's bounds: at most
-// checkboxReplayMaxDocs documents, only those updated within the last
-// checkboxReplayMaxAge days, most recently updated first.
+// TestPushCheckboxes_ReplayBoundsAndOrder pins requirement 4's two bounds as
+// INDEPENDENT limits, each proved in a fixture where the other cannot mask
+// it: the age bound with FEWER stored documents than the count bound (so the
+// LIMIT alone would replay everything), and the count bound with every
+// document fresh (so the age filter excludes nothing). Order is
+// most-recently-updated first.
 func TestPushCheckboxes_ReplayBoundsAndOrder(t *testing.T) {
-	h, s := checkboxHub(t)
-	now := time.Now().UnixMilli()
-	for i := 0; i < checkboxReplayMaxDocs+50; i++ {
-		if err := s.put(fmt.Sprintf("doc-%05d", i), "[1]", now-int64(i)); err != nil {
-			t.Fatalf("put doc-%05d: %v", i, err)
+	t.Run("age bound excludes documents older than it", func(t *testing.T) {
+		h, s := checkboxHub(t)
+		now := time.Now().UnixMilli()
+		// Three documents — well under the 200 count bound — one just inside
+		// the age and one just outside, so only the age filter can exclude
+		// doc-ancient.
+		seed := map[string]int64{
+			"doc-fresh":   now,
+			"doc-edge":    now - (defaultCheckboxReplayTTL - time.Hour).Milliseconds(),
+			"doc-ancient": now - (defaultCheckboxReplayTTL + time.Hour).Milliseconds(),
 		}
-	}
-	if err := s.put("doc-ancient", "[1]", now-(checkboxReplayMaxAge+24*time.Hour).Milliseconds()); err != nil {
-		t.Fatalf("put ancient: %v", err)
-	}
+		for key, ms := range seed {
+			if err := s.put(key, "[1]", ms); err != nil {
+				t.Fatalf("put %s: %v", key, err)
+			}
+		}
 
-	c := wideClient()
-	h.pushCheckboxes(c)
-	syncs := checkboxSyncsOrdered(t, c)
+		c := fakeClient()
+		h.pushCheckboxes(c)
+		got := checkboxSyncs(t, c)
 
-	if len(syncs) != checkboxReplayMaxDocs {
-		t.Errorf("replayed %d document(s), want the %d bound", len(syncs), checkboxReplayMaxDocs)
-	}
-	if syncs[0].key != "doc-00000" {
-		t.Errorf("first replayed = %q, want doc-00000 (most recently updated first)", syncs[0].key)
-	}
-	if syncs[len(syncs)-1].key != "doc-00199" {
-		t.Errorf("last replayed = %q, want doc-00199", syncs[len(syncs)-1].key)
-	}
-	for _, f := range syncs {
-		if f.key == "doc-ancient" {
+		if _, ok := got["doc-ancient"]; ok {
 			t.Error("a document older than the replay age bound was replayed")
 		}
-	}
+		for _, key := range []string{"doc-fresh", "doc-edge"} {
+			if lines, ok := got[key]; !ok || len(lines) != 1 || lines[0] != 1 {
+				t.Errorf("document within the age bound %s = %v/%v, want [1] replayed", key, lines, ok)
+			}
+		}
+	})
+
+	t.Run("count bound caps the burst, most recent first", func(t *testing.T) {
+		h, s := checkboxHub(t)
+		now := time.Now().UnixMilli()
+		for i := 0; i < defaultCheckboxReplayDocs+50; i++ {
+			if err := s.put(fmt.Sprintf("doc-%05d", i), "[1]", now-int64(i)); err != nil {
+				t.Fatalf("put doc-%05d: %v", i, err)
+			}
+		}
+
+		c := wideClient()
+		h.pushCheckboxes(c)
+		syncs := checkboxSyncsOrdered(t, c)
+
+		if len(syncs) != defaultCheckboxReplayDocs {
+			t.Errorf("replayed %d document(s), want the %d bound", len(syncs), defaultCheckboxReplayDocs)
+		}
+		if syncs[0].key != "doc-00000" {
+			t.Errorf("first replayed = %q, want doc-00000 (most recently updated first)", syncs[0].key)
+		}
+		if syncs[len(syncs)-1].key != "doc-00199" {
+			t.Errorf("last replayed = %q, want doc-00199", syncs[len(syncs)-1].key)
+		}
+	})
 }
 
 // TestPushCheckboxes_SkipsUndecodableEntry proves a corrupt stored row cannot
@@ -512,17 +543,17 @@ func TestCheckbox_ReplayPersistsAcrossHubRebuild(t *testing.T) {
 }
 
 // TestStartAll_SweepsAgedCheckboxDocs proves requirement 6's housekeeping: a
-// document not updated for checkboxDocMaxAge is removed at hub start. The hub
-// here has NO frame store — newTestHub's default — which is exactly what
-// proves the sweep sits before StartAll's frames early return (it must run
-// even when the frame store is absent or failed to open).
+// document not updated for defaultCheckboxRetention is removed at hub start.
+// The hub here has NO frame store — newTestHub's default — which is exactly
+// what proves the sweep sits before StartAll's frames early return (it must
+// run even when the frame store is absent or failed to open).
 func TestStartAll_SweepsAgedCheckboxDocs(t *testing.T) {
 	h, s := checkboxHub(t)
 	if h.frames != nil {
 		t.Fatal("test premise: newTestHub has no frame store")
 	}
 	now := time.Now()
-	if err := s.put("doc-old", "[1]", now.Add(-checkboxDocMaxAge-time.Hour).UnixMilli()); err != nil {
+	if err := s.put("doc-old", "[1]", now.Add(-defaultCheckboxRetention-time.Hour).UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.put("doc-new", "[1]", now.Add(-time.Hour).UnixMilli()); err != nil {
@@ -534,6 +565,174 @@ func TestStartAll_SweepsAgedCheckboxDocs(t *testing.T) {
 	got := s.replay(10, 0)
 	if len(got) != 1 || got[0].key != "doc-new" {
 		t.Errorf("after the start sweep = %+v, want only doc-new", got)
+	}
+}
+
+// intPtr returns a pointer to n: the optional-int [platforms.app] knobs are
+// set by address in the config-override tests below.
+func intPtr(n int) *int { return &n }
+
+// checkboxCfgHub builds a hub through newHub with a data_dir and the given
+// [platforms.app] checkbox knobs set, returning the hub and its data dir —
+// the level at which a knob's resolution (newHub) and its effect can be
+// proved together.
+func checkboxCfgHub(t *testing.T, mutate func(*config.AppSpecific)) (*Hub, string) {
+	t.Helper()
+	app := &config.AppSpecific{}
+	mutate(app)
+	dataDir := t.TempDir()
+	h := newHub(platform.ProviderDeps{Config: &config.Config{ // Ctx nil → no background goroutines
+		DataDir:   dataDir,
+		Platforms: []config.PlatformConfig{{ID: "app", App: app}},
+	}})
+	if h.checkboxes == nil {
+		t.Fatal("test premise: the hub opened a checkbox store")
+	}
+	t.Cleanup(func() { _ = h.Close() })
+	return h, dataDir
+}
+
+// TestNewHub_CheckboxConfigOverrides proves the [platforms.app] checkbox_*
+// knobs resolve through newHub into the behaviour they name (review finding
+// 3): the store path, the document cap, each replay bound and the retention
+// age — one hub per knob, so no knob's numbers can mask another's failure.
+func TestNewHub_CheckboxConfigOverrides(t *testing.T) {
+	t.Run("checkbox_store_path", func(t *testing.T) {
+		h, dataDir := checkboxCfgHub(t, func(a *config.AppSpecific) {
+			a.CheckboxStorePath = "custom-checkboxes.db"
+		})
+		sender := fakeClient()
+		h.clients[sender] = struct{}{}
+
+		h.handleCheckboxPut(sender, fap.CheckboxPut{DocumentID: "doc-a", Lines: []int{1}})
+
+		if _, err := os.Stat(filepath.Join(dataDir, "custom-checkboxes.db")); err != nil {
+			t.Fatalf("put did not land in the configured store file: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(dataDir, defaultCheckboxStoreFile)); !os.IsNotExist(err) {
+			t.Errorf("default store file exists besides the configured one (err=%v), want it untouched", err)
+		}
+		if lines := storedCheckboxState(t, h.checkboxes, "doc-a"); len(lines) != 1 || lines[0] != 1 {
+			t.Errorf("state in the configured store = %v, want [1]", lines)
+		}
+	})
+
+	t.Run("checkbox_max_docs", func(t *testing.T) {
+		h, _ := checkboxCfgHub(t, func(a *config.AppSpecific) { a.CheckboxMaxDocs = intPtr(2) })
+		buf := captureAppLog(t)
+		sender, other := fakeClient(), fakeClient()
+		sender.deviceID = "dev-a"
+		h.clients[sender] = struct{}{}
+		h.clients[other] = struct{}{}
+
+		h.handleCheckboxPut(sender, fap.CheckboxPut{DocumentID: "doc-a", Lines: []int{1}})
+		h.handleCheckboxPut(sender, fap.CheckboxPut{DocumentID: "doc-b", Lines: []int{2}})
+		h.handleCheckboxPut(sender, fap.CheckboxPut{DocumentID: "doc-c", Lines: []int{3}})
+
+		if got := h.checkboxes.replay(10, 0); len(got) != 2 {
+			t.Errorf("store holds %d document(s) at a cap of 2, want 2 (doc-c refused)", len(got))
+		}
+		if n := len(checkboxSyncsOrdered(t, other)); n != 2 {
+			t.Errorf("fanned out %d sync(s), want 2 (the refused put must not fan out)", n)
+		}
+		warns := strings.Count(buf.String(), `checkbox.put "doc-c" from device dev-a`)
+		if warns != 1 {
+			t.Errorf("cap WARN logged %d time(s), want exactly 1:\n%s", warns, buf.String())
+		}
+
+		// An existing document is always updatable, at the configured cap too.
+		h.handleCheckboxPut(sender, fap.CheckboxPut{DocumentID: "doc-a", Lines: []int{9}})
+		if lines := storedCheckboxState(t, h.checkboxes, "doc-a"); len(lines) != 1 || lines[0] != 9 {
+			t.Errorf("existing key at the configured cap = %v, want [9]", lines)
+		}
+	})
+
+	t.Run("checkbox_replay_ttl", func(t *testing.T) {
+		h, _ := checkboxCfgHub(t, func(a *config.AppSpecific) { a.CheckboxReplayTTL = "1h" })
+		now := time.Now()
+		seed := map[string]time.Duration{
+			"doc-in":  -30 * time.Minute, // inside the configured 1h bound
+			"doc-out": -90 * time.Minute, // outside it (inside the 90-day default)
+		}
+		for key, age := range seed {
+			if err := h.checkboxes.put(key, "[1]", now.Add(age).UnixMilli()); err != nil {
+				t.Fatalf("seed %s: %v", key, err)
+			}
+		}
+
+		c := fakeClient()
+		h.pushCheckboxes(c)
+		got := checkboxSyncs(t, c)
+		if _, ok := got["doc-out"]; ok {
+			t.Error("a document older than the configured replay age was replayed")
+		}
+		if lines, ok := got["doc-in"]; !ok || len(lines) != 1 || lines[0] != 1 {
+			t.Errorf("document inside the configured age = %v/%v, want [1] replayed", lines, ok)
+		}
+	})
+
+	t.Run("checkbox_replay_docs", func(t *testing.T) {
+		h, _ := checkboxCfgHub(t, func(a *config.AppSpecific) { a.CheckboxReplayDocs = intPtr(2) })
+		now := time.Now().UnixMilli()
+		for i, key := range []string{"doc-1", "doc-2", "doc-3"} {
+			if err := h.checkboxes.put(key, "[1]", now-int64(i)*1000); err != nil {
+				t.Fatalf("seed %s: %v", key, err)
+			}
+		}
+
+		c := fakeClient()
+		h.pushCheckboxes(c)
+		syncs := checkboxSyncsOrdered(t, c)
+		if len(syncs) != 2 {
+			t.Fatalf("replayed %d document(s) at a configured bound of 2, want 2", len(syncs))
+		}
+		if syncs[0].key != "doc-1" || syncs[1].key != "doc-2" {
+			t.Errorf("replayed %+v, want doc-1 then doc-2 (the 2 most recent)", syncs)
+		}
+	})
+
+	t.Run("checkbox_retention", func(t *testing.T) {
+		h, _ := checkboxCfgHub(t, func(a *config.AppSpecific) { a.CheckboxRetention = "2h" })
+		now := time.Now()
+		if err := h.checkboxes.put("doc-old", "[1]", now.Add(-3*time.Hour).UnixMilli()); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.checkboxes.put("doc-new", "[1]", now.Add(-30*time.Minute).UnixMilli()); err != nil {
+			t.Fatal(err)
+		}
+
+		h.StartAll(nil)
+
+		got := h.checkboxes.replay(10, 0)
+		if len(got) != 1 || got[0].key != "doc-new" {
+			t.Errorf("after the start sweep = %+v, want only doc-new (the 3h-old document is past the configured 2h retention)", got)
+		}
+	})
+}
+
+// TestDefaultPlatformConfig_CheckboxKnobs pins the app provider's
+// DefaultPlatformConfig registering the checkbox-mirror knobs with their code
+// defaults — the registration through which the [platforms.app] cascade and
+// the config editor see them, exactly like every sibling app setting.
+func TestDefaultPlatformConfig_CheckboxKnobs(t *testing.T) {
+	app := new(appProvider).DefaultPlatformConfig().App
+	if app == nil {
+		t.Fatal("DefaultPlatformConfig carries no App section")
+	}
+	if app.CheckboxStorePath != defaultCheckboxStoreFile {
+		t.Errorf("CheckboxStorePath default = %q, want %q", app.CheckboxStorePath, defaultCheckboxStoreFile)
+	}
+	if app.CheckboxReplayTTL != defaultCheckboxReplayTTL.String() {
+		t.Errorf("CheckboxReplayTTL default = %q, want %q", app.CheckboxReplayTTL, defaultCheckboxReplayTTL)
+	}
+	if got := config.DerefInt(app.CheckboxReplayDocs); got != defaultCheckboxReplayDocs {
+		t.Errorf("CheckboxReplayDocs default = %d, want %d", got, defaultCheckboxReplayDocs)
+	}
+	if app.CheckboxRetention != defaultCheckboxRetention.String() {
+		t.Errorf("CheckboxRetention default = %q, want %q", app.CheckboxRetention, defaultCheckboxRetention)
+	}
+	if got := config.DerefInt(app.CheckboxMaxDocs); got != defaultCheckboxDocCap {
+		t.Errorf("CheckboxMaxDocs default = %d, want %d", got, defaultCheckboxDocCap)
 	}
 }
 

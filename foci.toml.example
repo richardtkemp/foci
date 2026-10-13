@@ -465,6 +465,11 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # max_blob_mb = 50                     # max upload size via /app/blob
 # blob_ttl = "24h"                     # how long uploaded blobs are kept
 # devices_path = "app-devices.json"    # paired devices file (relative to data dir)
+# checkbox_store_path = "app-checkboxes.db"  # markdown-checkbox state DB (relative to data dir)
+# checkbox_replay_docs = 200           # max checkbox documents replayed to a reconnecting device
+# checkbox_replay_ttl = "2160h"        # max age of a replayed checkbox document (90 days)
+# checkbox_retention = "8760h"         # how long checkbox state is kept after its last update (365 days)
+# checkbox_max_docs = 10000            # max stored checkbox documents (existing ones always updatable)
 # mermaid_cmd = "mmdc"                 # renders mermaid (app ```mermaid blocks, send_to_chat .mmd files); "off" disables
 # mermaid_browser = ""                 # Chrome/Chromium for mmdc (default: chromium etc. on PATH)
 # allowed_devices = []                 # device IDs allowed to pair (empty = any)

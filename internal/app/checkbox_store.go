@@ -9,20 +9,22 @@ import (
 	"foci/internal/sqlite"
 )
 
-// Checkbox-state store bounds (#1360). These are protocol limits, not
-// deployment knobs: a hello replay, one put and the store must each be unable
-// to grow without limit, so they live beside the rule they bound (the spec's
-// own numbers).
+// Checkbox-mirror deployment defaults (#1360) — what the [platforms.app]
+// checkbox_* knobs resolve to when unset (provider.go registers them as the
+// platform defaults; newHub resolves any override). Bounds are needed so a
+// hello replay, one put and the store cannot grow without limit.
 const (
-	defaultCheckboxStoreFile = "app-checkboxes.db"  // durable checkbox-state DB, relative to data_dir (the app-frames.db naming)
-	checkboxDocCap           = 10000                // max stored documents; an existing one can always be updated
-	checkboxDocMaxAge        = 365 * 24 * time.Hour // hub-start sweep removes documents not updated for this long
+	defaultCheckboxStoreFile  = "app-checkboxes.db"  // durable checkbox-state DB, relative to data_dir (the app-frames.db naming)
+	defaultCheckboxDocCap     = 10000                // max stored documents; an existing one can always be updated
+	defaultCheckboxReplayDocs = 200                  // max documents one post-hello replay sends
+	defaultCheckboxReplayTTL  = 90 * 24 * time.Hour  // max age of a document a post-hello replay sends
+	defaultCheckboxRetention  = 365 * 24 * time.Hour // hub-start sweep removes documents not updated for this long
 )
 
-// errCheckboxCap is returned by put when a NEW document would exceed
-// checkboxDocCap. Deliberately not sent to the client: a full store is not
-// something the sender can fix by retrying, so the put is logged, dropped, and
-// stays un-mirrored until the sweep frees room.
+// errCheckboxCap is returned by put when a NEW document would exceed the
+// store's document cap. Deliberately not sent to the client: a full store is
+// not something the sender can fix by retrying, so the put is logged,
+// dropped, and stays un-mirrored until the sweep frees room.
 var errCheckboxCap = errors.New("checkbox document cap exceeded")
 
 // checkboxStore is the durable half of the checkbox-state cross-device mirror
@@ -41,6 +43,11 @@ var errCheckboxCap = errors.New("checkbox document cap exceeded")
 type checkboxStore struct {
 	db *sql.DB
 	mu sync.Mutex
+
+	// maxDocs is the resolved document cap: defaultCheckboxDocCap from the
+	// constructor, overridden by newHub from [platforms.app].checkbox_max_docs
+	// (the blobStore maxBytes idiom).
+	maxDocs int
 }
 
 // newCheckboxStore opens (or creates) the checkbox-state DB.
@@ -56,7 +63,7 @@ func newCheckboxStore(path string) (*checkboxStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &checkboxStore{db: db}, nil
+	return &checkboxStore{db: db, maxDocs: defaultCheckboxDocCap}, nil
 }
 
 // put stores one document's whole state, replacing any previous one
@@ -86,7 +93,7 @@ func (s *checkboxStore) put(key, state string, nowMs int64) error {
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM app_checkboxes`).Scan(&n); err != nil {
 			return err
 		}
-		if n >= checkboxDocCap {
+		if n >= s.maxDocs {
 			return errCheckboxCap
 		}
 	case err != nil:

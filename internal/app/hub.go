@@ -88,6 +88,14 @@ type Hub struct {
 	checkboxes     *checkboxStore  // durable checkbox-state mirror store (nil when no data_dir → live-only mirror, #1360)
 	allowedDevices map[string]bool // non-empty = pairing allowlist
 
+	// Checkbox-mirror bounds (#1360), resolved from [platforms.app] in
+	// newHub. Zero = the code default at the use site (the trimBufferLocked
+	// discipline), so a directly-constructed hub (tests) is bounded the same
+	// as a configured one.
+	checkboxReplayDocs int           // max documents one post-hello replay sends
+	checkboxReplayAge  time.Duration // max age of a document that replay sends
+	checkboxRetention  time.Duration // hub-start sweep removes documents not updated for this long
+
 	mu           sync.RWMutex
 	agents       map[string]*appConn     // agentID → its connection
 	agentOrder   []string                // registration order (for default-agent resolution)
@@ -252,14 +260,23 @@ func newHub(deps platform.ProviderDeps) *Hub {
 	// document keys are attachment blob ids — global, not conversation-scoped —
 	// so there is no agent+chatID to key. Absent data_dir or a failed open
 	// leaves it nil: the mirror still runs live (puts fan out), but such a put
-	// is not persisted and not replayed after reconnect.
+	// is not persisted and not replayed after reconnect. The path and the
+	// document cap are [platforms.app] knobs (checkbox_store_path /
+	// checkbox_max_docs), resolved like the frame store's above.
 	var checkboxes *checkboxStore
 	if deps.Config != nil && deps.Config.DataDir != "" {
-		cbPath := filepath.Join(deps.Config.DataDir, defaultCheckboxStoreFile)
+		cbFile := defaultCheckboxStoreFile
+		if appCfg != nil && appCfg.CheckboxStorePath != "" {
+			cbFile = appCfg.CheckboxStorePath
+		}
+		cbPath := filepath.Join(deps.Config.DataDir, cbFile)
 		if cs, err := newCheckboxStore(cbPath); err != nil {
 			appLog.Errorf("checkbox store %s: %v — checkbox sync runs live-only (puts are not persisted and not replayed)", cbPath, err)
 		} else {
 			checkboxes = cs
+		}
+		if checkboxes != nil && appCfg != nil && appCfg.CheckboxMaxDocs != nil && *appCfg.CheckboxMaxDocs > 0 {
+			checkboxes.maxDocs = *appCfg.CheckboxMaxDocs
 		}
 	}
 
@@ -290,6 +307,11 @@ func newHub(deps platform.ProviderDeps) *Hub {
 			h.replayDepth = *appCfg.ReplayBuffer
 		}
 		h.replayTTL = durationOr(appCfg.ReplayTTL, 0)
+		if appCfg.CheckboxReplayDocs != nil && *appCfg.CheckboxReplayDocs > 0 {
+			h.checkboxReplayDocs = *appCfg.CheckboxReplayDocs
+		}
+		h.checkboxReplayAge = durationOr(appCfg.CheckboxReplayTTL, 0)
+		h.checkboxRetention = durationOr(appCfg.CheckboxRetention, 0)
 		if len(appCfg.AllowedDevices) > 0 {
 			h.allowedDevices = make(map[string]bool, len(appCfg.AllowedDevices))
 			for _, id := range appCfg.AllowedDevices {
@@ -890,13 +912,18 @@ func (h *Hub) HasFacet(string) bool                 { return false }
 // with no gateway context start no loop (startAutoCloseSweep).
 func (h *Hub) StartAll(context.Context) {
 	defer h.startAutoCloseSweep()
-	// Aged-checkbox sweep (#1360): documents not updated for checkboxDocMaxAge
-	// go at hub start (the spec's allowed cadence). Before the frames early
-	// return on purpose — the two stores open independently, and a hub whose
-	// frame store failed still sheds stale checkbox documents. No-op with no
-	// checkbox store.
-	if n := h.checkboxes.removeOlderThan(time.Now().Add(-checkboxDocMaxAge).UnixMilli()); n > 0 {
-		appLog.Infof("checkbox store: swept %d document(s) not updated for %s", n, checkboxDocMaxAge)
+	// Aged-checkbox sweep (#1360): documents not updated for the resolved
+	// retention age ([platforms.app].checkbox_retention; zero = the code
+	// default) go at hub start (the spec's allowed cadence). Before the
+	// frames early return on purpose — the two stores open independently, and
+	// a hub whose frame store failed still sheds stale checkbox documents.
+	// No-op with no checkbox store.
+	retention := h.checkboxRetention
+	if retention <= 0 {
+		retention = defaultCheckboxRetention
+	}
+	if n := h.checkboxes.removeOlderThan(time.Now().Add(-retention).UnixMilli()); n > 0 {
+		appLog.Infof("checkbox store: swept %d document(s) not updated for %s", n, retention)
 	}
 	if h.frames == nil {
 		return

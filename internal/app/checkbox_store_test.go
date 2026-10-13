@@ -20,7 +20,8 @@ func tempCheckboxStore(t *testing.T) *checkboxStore {
 }
 
 // seedCheckboxDocs fills the store to exactly n documents by direct SQL in one
-// transaction — the fast seeding path for cap tests, where n is checkboxDocCap
+// transaction — the fast seeding path for cap tests, where n is the resolved
+// document cap
 // and put()ing each row would be ten thousand round-trips.
 func seedCheckboxDocs(t *testing.T, s *checkboxStore, n int, nowMs int64) {
 	t.Helper()
@@ -137,7 +138,7 @@ func TestCheckboxStore_ReopenOnSamePathPersists(t *testing.T) {
 // can always be updated" rule).
 func TestCheckboxStore_CapRefusesNewDocumentAllowsExisting(t *testing.T) {
 	s := tempCheckboxStore(t)
-	seedCheckboxDocs(t, s, checkboxDocCap, time.Now().UnixMilli())
+	seedCheckboxDocs(t, s, defaultCheckboxDocCap, time.Now().UnixMilli())
 
 	err := s.put("doc-new", "[1]", time.Now().UnixMilli())
 	if !errors.Is(err, errCheckboxCap) {
@@ -163,7 +164,7 @@ func TestCheckboxStore_CapRefusesNewDocumentAllowsExisting(t *testing.T) {
 // cap is still refused.
 func TestCheckboxStore_CapAllowsCorruptExisting(t *testing.T) {
 	s := tempCheckboxStore(t)
-	seedCheckboxDocs(t, s, checkboxDocCap, time.Now().UnixMilli())
+	seedCheckboxDocs(t, s, defaultCheckboxDocCap, time.Now().UnixMilli())
 	if _, err := s.db.Exec(`UPDATE app_checkboxes SET state = 'not json' WHERE doc_key = 'doc-00042'`); err != nil {
 		t.Fatalf("corrupt row: %v", err)
 	}
@@ -188,7 +189,7 @@ func TestCheckboxStore_CapAllowsCorruptExisting(t *testing.T) {
 func TestCheckboxStore_ConcurrentPutsRespectCapAndStayConsistent(t *testing.T) {
 	s := tempCheckboxStore(t)
 	now := time.Now().UnixMilli()
-	seedCheckboxDocs(t, s, checkboxDocCap-50, now)
+	seedCheckboxDocs(t, s, defaultCheckboxDocCap-50, now)
 
 	// 8 goroutines × 20 distinct NEW keys for the 50 slots below the cap.
 	var wg sync.WaitGroup
@@ -213,8 +214,8 @@ func TestCheckboxStore_ConcurrentPutsRespectCapAndStayConsistent(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM app_checkboxes`).Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	if n != checkboxDocCap {
-		t.Errorf("document count after concurrent puts = %d, want exactly %d (no overshoot, no refusal gap)", n, checkboxDocCap)
+	if n != defaultCheckboxDocCap {
+		t.Errorf("document count after concurrent puts = %d, want exactly %d (no overshoot, no refusal gap)", n, defaultCheckboxDocCap)
 	}
 
 	// Same key from every goroutine: one row, one coherent state afterwards.
@@ -253,17 +254,17 @@ func linesAreSortedSet(lines []int) bool {
 func TestCheckboxStore_RemoveOlderThan(t *testing.T) {
 	s := tempCheckboxStore(t)
 	now := time.Now().UnixMilli()
-	if err := s.put("old-1", "[1]", now-(checkboxDocMaxAge+time.Second).Milliseconds()); err != nil {
+	if err := s.put("old-1", "[1]", now-(defaultCheckboxRetention+time.Second).Milliseconds()); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.put("old-2", "[1]", now-(checkboxDocMaxAge+time.Hour).Milliseconds()); err != nil {
+	if err := s.put("old-2", "[1]", now-(defaultCheckboxRetention+time.Hour).Milliseconds()); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.put("new-1", "[1]", time.Now().Add(-time.Hour).UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 
-	if n := s.removeOlderThan(now - checkboxDocMaxAge.Milliseconds()); n != 2 {
+	if n := s.removeOlderThan(now - defaultCheckboxRetention.Milliseconds()); n != 2 {
 		t.Errorf("removeOlderThan removed %d, want 2", n)
 	}
 	got := s.replay(10, 0)

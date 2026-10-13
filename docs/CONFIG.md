@@ -143,6 +143,32 @@ auto_thread = true
 | `auto_thread` | bool | `true` | Create threads for facet sessions. |
 | `guild_id` | string | `""` | Restrict to a single guild. Empty allows all guilds. |
 
+#### App-specific fields (`[platforms.app]`)
+
+Settings for the native FOCI app (WebSocket) platform.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `host` | string | `""` | Public hostname the app should use to reconnect to this server, sent during the connection handshake. |
+| `push` | bool | `true` | Send an FCM wake-up push when the app is offline and a message arrives; requires the `app.fcm_credentials` secret. |
+| `fcm_credentials` | string | `""` | Path to an FCM service-account JSON key file, used instead of the `app.fcm_credentials` secret. |
+| `push_coalesce` | string | `"15s"` | Minimum time between wake-up pushes to one device for the same conversation. |
+| `replay_buffer` | int | `1000` | Number of recent server messages kept in memory per conversation so the app can catch up after reconnecting. |
+| `replay_ttl` | string | `"24h"` | Maximum age of a message kept in the in-memory reconnect-replay buffer. |
+| `replay_store_path` | string | `"app-frames.db"` | File path, relative to `data_dir`, of the database that durably stores replay messages. |
+| `replay_store_ttl` | string | `"720h"` | Maximum age of a message kept in the on-disk replay database (30 days). |
+| `max_blob_mb` | int | `50` | Maximum size, in megabytes, of a file the app can upload via `/app/blob`. |
+| `blob_ttl` | string | `"24h"` | How long an uploaded blob is kept on the server before deletion. |
+| `devices_path` | string | `"app-devices.json"` | File path, relative to `data_dir`, where paired app devices are stored. |
+| `allowed_devices` | string[] | `[]` | Device IDs permitted to pair. Empty allows any device. |
+| `checkbox_store_path` | string | `"app-checkboxes.db"` | File path, relative to `data_dir`, of the database that durably stores markdown-checkbox tick state (the cross-device checkbox mirror). |
+| `checkbox_replay_docs` | int | `200` | How many most-recently-updated checkbox documents one post-reconnect replay sends at most. |
+| `checkbox_replay_ttl` | string | `"2160h"` | Maximum age of a checkbox document still replayed to a device after it reconnects (90 days). |
+| `checkbox_retention` | string | `"8760h"` | How long a checkbox document is kept after its last update before the startup sweep deletes it (365 days). |
+| `checkbox_max_docs` | int | `10000` | Maximum number of checkbox documents stored on the server; a document already stored can always be updated. |
+| `mermaid_cmd` | string | `"mmdc"` | Command that renders mermaid diagrams (app `mermaid` blocks and `send_to_chat` `.mmd` files); `"off"` disables. Without it the app shows the diagram source. |
+| `mermaid_browser` | string | `""` | Path to the Chrome/Chromium that renders mermaid diagrams. Default: first of `chromium`, `chromium-browser`, `google-chrome-stable`, `google-chrome` on `PATH`, else puppeteer's own download. |
+
 #### Bot token resolution
 
 Bot tokens are resolved by convention: `"<platform>.<botname>"` in `secrets.toml`. No explicit bot map is needed.
