@@ -698,6 +698,17 @@ func toQuiz(q *question.Quiz) *fap.Quiz {
 	return &fap.Quiz{Correct: q.Correct, ModelAnswer: q.ModelAnswer, Explanation: q.Explanation}
 }
 
+// fromQuiz is toQuiz's inverse: it maps a wire Quiz back onto the ask layer's
+// type. Used when rebuilding questions from a stored frame (the late-answer
+// path), so a late answer to a quiz question still carries its verdict and
+// reveal data (#1316). nil passes through.
+func fromQuiz(q *fap.Quiz) *question.Quiz {
+	if q == nil {
+		return nil
+	}
+	return &question.Quiz{Correct: q.Correct, ModelAnswer: q.ModelAnswer, Explanation: q.Explanation}
+}
+
 // --- agent.Driver ---
 
 // WrapTurn runs the turn. The app has no platform-delivery-hygiene state to

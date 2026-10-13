@@ -86,6 +86,46 @@ func TestLateAnswer_UnregisteredBatchedAsk_DeliveredAndRemoved(t *testing.T) {
 	onlyRemove(t, "sibling", sibling, lateBatchPrompt)
 }
 
+// #1316 (round-3 review finding 2): the quiz data rides the stored frame, and
+// the late-answer rebuild maps it back onto the question — so a late answer to
+// a quiz question still carries its verdict — while a non-quiz question in the
+// same frame stays quiz-less. On the pre-fix tree every rebuilt question lost
+// its Quiz.
+func TestLateAnswer_QuizDataRecoveredFromFrame(t *testing.T) {
+	h, b, answerer, sibling, late := lateAskHub(t)
+	b.send(fap.Interactive{ConversationID: b.convID, PromptID: lateBatchPrompt, Questions: []fap.Question{
+		{Text: "Capital?", Choices: []fap.Choice{{Label: "Bergen", Data: "qa:0"}, {Label: "Oslo", Data: "qa:1"}},
+			Quiz: &fap.Quiz{Correct: []int{1}, Explanation: "XPLAN-9-never-in-a-prompt"}},
+		{Text: "Translate dog.", Quiz: &fap.Quiz{ModelAnswer: "M0DEL-ANSWER-skylos"}},
+		{Text: "Plain?", Choices: []fap.Choice{{Label: "Yes", Data: "qa:0"}}},
+	}})
+	drain(t, answerer)
+	drain(t, sibling)
+
+	h.handleInteractiveResponse(answerer, fap.InteractiveResponse{
+		ConversationID: "c1", PromptID: lateBatchPrompt, Answers: []string{"qa:1", "a dog", "qa:0"},
+	})
+
+	if len(*late) != 1 {
+		t.Fatalf("late answers routed = %d, want 1", len(*late))
+	}
+	qs := (*late)[0].Questions
+	if len(qs) != 3 {
+		t.Fatalf("late answer questions = %+v, want the three asked", qs)
+	}
+	if qs[0].Quiz == nil || len(qs[0].Quiz.Correct) != 1 || qs[0].Quiz.Correct[0] != 1 || qs[0].Quiz.Explanation != "XPLAN-9-never-in-a-prompt" {
+		t.Errorf("option quiz data = %+v, want the frame's correct index and explanation mapped back", qs[0].Quiz)
+	}
+	if qs[1].Quiz == nil || qs[1].Quiz.ModelAnswer != "M0DEL-ANSWER-skylos" {
+		t.Errorf("free-recall quiz data = %+v, want the frame's model answer mapped back", qs[1].Quiz)
+	}
+	if qs[2].Quiz != nil {
+		t.Errorf("non-quiz question gained quiz data: %+v", qs[2].Quiz)
+	}
+	onlyRemove(t, "answerer", answerer, lateBatchPrompt)
+	onlyRemove(t, "sibling", sibling, lateBatchPrompt)
+}
+
 // The question survives in the DURABLE frame store after a restart has emptied
 // the in-memory buffer, which is the real #2080 case (answers days later).
 func TestLateAnswer_QuestionRecoveredFromDurableStore(t *testing.T) {

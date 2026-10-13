@@ -158,7 +158,9 @@ func containsCancel(answers []string) bool {
 
 // lateQuestions rebuilds the ask-layer questions from the frame that showed
 // them. A batched form carries them structured; a single prompt carries one
-// question as text plus buttons, the last of which is the ask's Cancel.
+// question as text plus buttons, the last of which is the ask's Cancel. Quiz
+// data maps back too (fromQuiz), so a late answer to a quiz question still
+// gets its verdict (#1316).
 func lateQuestions(in *fap.Interactive) []question.Question {
 	if in == nil {
 		return nil
@@ -166,7 +168,7 @@ func lateQuestions(in *fap.Interactive) []question.Question {
 	if len(in.Questions) > 0 {
 		qs := make([]question.Question, len(in.Questions))
 		for i, fq := range in.Questions {
-			qs[i] = question.Question{Question: fq.Text, Header: fq.Header, Options: optionsOf(fq.Choices)}
+			qs[i] = question.Question{Question: fq.Text, Header: fq.Header, Options: optionsOf(fq.Choices), Quiz: fromQuiz(fq.Quiz)}
 		}
 		return qs
 	}

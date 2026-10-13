@@ -51,6 +51,9 @@ func TestValidateQuiz(t *testing.T) {
 			Quiz: &Quiz{ModelAnswer: "skY"},
 		}, "only for a free-recall question"},
 		{"free recall with answer", &Question{Question: "Q", Quiz: &Quiz{ModelAnswer: "skY"}}, ""},
+		{"free recall, whitespace-only answer (round-3 finding 3)", &Question{
+			Question: "Q", Quiz: &Quiz{ModelAnswer: " \t "},
+		}, "needs the correct option(s)"},
 		{"free recall, no answer", &Question{Question: "Q", Quiz: &Quiz{}}, "needs the correct option(s)"},
 		{"free recall carrying correct indexes", &Question{
 			Question: "Q", Quiz: &Quiz{Correct: []int{0}, ModelAnswer: "skY"},

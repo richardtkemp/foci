@@ -163,8 +163,10 @@ func Choices(q *Question) []Choice {
 // a non-quiz question; a quiz question needs exactly one arm — Correct indexes
 // on an option question, or a ModelAnswer on a free-recall (option-less)
 // question — and every index must name one of the question's options exactly
-// once. The ask tool wraps the returned error with the question's position and
-// text, so each message states the rule it broke.
+// once. A model answer made only of whitespace is rejected: it would render an
+// empty "Model answer:" line on reveal. The ask tool wraps the returned error
+// with the question's position and text, so each message states the rule it
+// broke.
 func ValidateQuiz(q *Question) error {
 	if q.Quiz == nil {
 		return nil
@@ -191,7 +193,7 @@ func ValidateQuiz(q *Question) error {
 	if len(q.Quiz.Correct) > 0 {
 		return fmt.Errorf("quiz correct option indexes are only for a question with options — give a model \"answer\" instead")
 	}
-	if q.Quiz.ModelAnswer == "" {
+	if strings.TrimSpace(q.Quiz.ModelAnswer) == "" {
 		return fmt.Errorf("quiz question needs the correct option(s) (\"correct\") or a model answer (\"answer\")")
 	}
 	return nil

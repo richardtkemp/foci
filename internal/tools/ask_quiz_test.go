@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"foci/internal/question"
 )
@@ -197,6 +198,83 @@ func TestAsk_QuizVerdictInDeliveredBatch(t *testing.T) {
 	msg, _ = d.last()
 	if strings.Contains(msg, "quiz_results") {
 		t.Errorf("non-quiz batch must not carry quiz_results:\n%s", msg)
+	}
+}
+
+// TestAsk_QuizVerdictIDKeysOnlyForIDedQuestions pins the by-id contract the
+// schema states ("quiz_results_by_id" when ids are set): an id-less quiz
+// question contributes to "quiz_results" (keyed by text) but never to
+// "quiz_results_by_id" — id-less questions must not collide on an "" key
+// (round-3 review finding 1). Two id-less quiz questions keep separate
+// verdicts. On the pre-fix tree both land on "" and the last one wins.
+func TestAsk_QuizVerdictIDKeysOnlyForIDedQuestions(t *testing.T) {
+	t.Parallel()
+	tool, _, p, d := newAskFixture()
+	execAsk(t, tool, `{"questions":[
+		{"question":"Capital?","options":[{"label":"Bergen"},{"label":"Oslo"}],"quiz":{"correct":[1]}},
+		{"question":"Season?","options":[{"label":"Winter"},{"label":"Summer"}],"quiz":{"correct":[0]}}]}`)
+	p.answer("qa:1") // Capital? → Oslo → correct
+	p.answer("qa:1") // Season? → Summer → wrong
+	msg, ok := d.last()
+	if !ok {
+		t.Fatal("answer batch not delivered")
+	}
+	idx := strings.Index(msg, `{"answers"`)
+	if idx < 0 {
+		t.Fatalf("delivered batch missing JSON payload:\n%s", msg)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(msg[idx:]), &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v\n%s", err, msg)
+	}
+	results, ok := payload["quiz_results"].(map[string]any)
+	if !ok || len(results) != 2 || results["Capital?"] != true || results["Season?"] != false {
+		t.Errorf("quiz_results = %+v, want separate verdicts for both id-less questions", payload["quiz_results"])
+	}
+	if _, ok := payload["quiz_results_by_id"]; ok {
+		t.Errorf("quiz_results_by_id = %+v, want the key absent when no question has an id", payload["quiz_results_by_id"])
+	}
+	if strings.Contains(msg[idx:], `"":`) {
+		t.Errorf("payload carries an empty key:\n%s", msg)
+	}
+}
+
+// TestAsk_QuizVerdictInLateAnswer pins requirement 4 on the late-answer entry
+// point (round-3 review finding 2): a late answer to a quiz OPTION question
+// carries the same inline verdict and "quiz_results" as a live batch — the two
+// share one body writer — while a late free-recall answer carries no verdict.
+// No reveal fires on this path: the client that rendered the form reveals
+// locally, and the ask is already closed.
+func TestAsk_QuizVerdictInLateAnswer(t *testing.T) {
+	t.Parallel()
+	rec := &quizRevealRecorder{}
+	_, router, _, _, d := newAskBatchFixtureWithReveal(rec)
+	if !router.DeliverLateAnswer(LateAnswer{
+		PromptID:   "ask-test-01LATEQZ-q0",
+		SessionKey: askSession,
+		AskedAt:    time.Date(2026, 10, 10, 9, 0, 0, 0, time.UTC),
+		Questions: []question.Question{
+			{Question: "Capital?", Options: []question.Option{{Label: "Bergen"}, {Label: "Oslo"}}, Quiz: &question.Quiz{Correct: []int{1}, Explanation: quizSecretExpl}},
+			{Question: "Translate dog.", Quiz: &question.Quiz{ModelAnswer: quizSecretAnswer}},
+		},
+		Answers: []string{"qa:1", "a dog"},
+	}) {
+		t.Fatal("late answer not delivered")
+	}
+	msg, _ := d.last()
+	if !strings.Contains(msg, "• Capital? → Oslo ✅") {
+		t.Errorf("late answer to a quiz option question missing its verdict marker:\n%s", msg)
+	}
+	if !strings.Contains(msg, `"quiz_results":{"Capital?":true}`) {
+		t.Errorf("late answer payload missing quiz_results:\n%s", msg)
+	}
+	for _, noVerdict := range []string{"a dog ✅", "a dog ❌", "quiz_results_by_id"} {
+		if strings.Contains(msg, noVerdict) {
+			t.Errorf("late answer must not carry %q (free recall has no verdict, no question has an id):\n%s", noVerdict, msg)
+		}
+	}
+	if rec.count() != 0 {
+		t.Errorf("late answers must not reveal server-side, got %d", rec.count())
 	}
 }
 

@@ -1071,7 +1071,10 @@ func (a *askState) deliverLateAnswer(la LateAnswer) bool {
 // formatLateAnswer renders a late answer for the agent. Each line names the
 // question by its TEXT (a header alone does not say what was asked) and the
 // choice by its label; a raw answer that no longer resolves (the question text
-// aged out) is passed through verbatim so nothing the user chose is lost.
+// aged out) is passed through verbatim so nothing the user chose is lost. A
+// quiz option question carries the same inline verdict and "quiz_results" as a
+// live batch (#1316) — the payload writer is shared — so a late answer is read
+// the same way as a punctual one.
 func formatLateAnswer(reqID string, la LateAnswer, now time.Time) string {
 	var b strings.Builder
 	asked := "at an unknown time"
@@ -1096,19 +1099,13 @@ func formatLateAnswer(reqID string, la LateAnswer, now time.Time) string {
 		if q.Header != "" && q.Header != q.Question {
 			label = q.Header + ": " + q.Question
 		}
-		fmt.Fprintf(&b, "\n• %s → %s", label, ans)
+		fmt.Fprintf(&b, "\n• %s → %s%s", label, ans, quizVerdictMarker(q, ans))
 	}
-	payload := map[string]any{"late": true, "request_id": reqID, "answers": answers}
+	extras := map[string]any{"late": true, "request_id": reqID}
 	if !la.AskedAt.IsZero() {
-		payload["asked_at"] = la.AskedAt.UTC().Format(time.RFC3339)
+		extras["asked_at"] = la.AskedAt.UTC().Format(time.RFC3339)
 	}
-	if byID := answersByID(la.Questions, answers); len(byID) > 0 {
-		payload["answers_by_id"] = byID
-	}
-	if js, err := json.Marshal(payload); err == nil {
-		b.WriteString("\n\n")
-		b.Write(js)
-	}
+	writeAnswersJSON(&b, la.Questions, answers, extras)
 	return b.String()
 }
 
@@ -1257,9 +1254,8 @@ func formatPartialBatch(qs []question.Question, answers map[string]string, answe
 }
 
 // writeAnswerBody appends the human-readable "• header → answer" lines and the
-// compact JSON payload (answers + optional answers_by_id, quiz_results) to b.
-// Shared by the full and partial batch formatters so their body shape can't
-// drift.
+// compact JSON answer payload to b. Shared by the full and partial batch
+// formatters so their body shape can't drift.
 func writeAnswerBody(b *strings.Builder, qs []question.Question, answers map[string]string) {
 	for _, q := range qs {
 		ans := answers[q.Question]
@@ -1269,17 +1265,37 @@ func writeAnswerBody(b *strings.Builder, qs []question.Question, answers map[str
 		}
 		// Quiz option questions carry the verdict inline (#1316), so a plain
 		// multiple-choice drill needs no grader run to interpret.
-		verdict := ""
-		if correct, ok := question.QuizVerdict(&q, ans); ok {
-			if correct {
-				verdict = " ✅"
-			} else {
-				verdict = " ❌"
-			}
-		}
-		fmt.Fprintf(b, "\n• %s → %s%s", label, ans, verdict)
+		fmt.Fprintf(b, "\n• %s → %s%s", label, ans, quizVerdictMarker(&q, ans))
 	}
+	writeAnswersJSON(b, qs, answers, nil)
+}
+
+// quizVerdictMarker returns the inline verdict appended to a delivered answer
+// line for a quiz OPTION question (#1316): " ✅" when the user chose a correct
+// option, " ❌" when they did not, and "" when there is no mechanical verdict
+// (non-quiz and free-recall questions).
+func quizVerdictMarker(q *question.Question, ans string) string {
+	correct, ok := question.QuizVerdict(q, ans)
+	switch {
+	case !ok:
+		return ""
+	case correct:
+		return " ✅"
+	default:
+		return " ❌"
+	}
+}
+
+// writeAnswersJSON appends to b the compact JSON payload shared by every
+// delivered answer batch (#1316): "answers", the caller's batch-specific extras
+// (the late marker, request id, asked-at time), and the optional keyed extras —
+// "answers_by_id", and the quiz verdict maps when any question has a mechanical
+// verdict. json.Marshal sorts map keys, so the extras merge in any order.
+func writeAnswersJSON(b *strings.Builder, qs []question.Question, answers map[string]string, extras map[string]any) {
 	payload := map[string]any{"answers": answers}
+	for k, v := range extras {
+		payload[k] = v
+	}
 	if byID := answersByID(qs, answers); len(byID) > 0 {
 		payload["answers_by_id"] = byID
 	}
@@ -1302,16 +1318,23 @@ func writeAnswerBody(b *strings.Builder, qs []question.Question, answers map[str
 
 // quizVerdicts maps each verdict-carrying quiz option question to whether the
 // user answered it correctly (#1316), keyed by key(q) — question text for
-// "quiz_results", opaque id for "quiz_results_by_id". nil when nothing has a
-// mechanical verdict (non-quiz and free-recall questions never do).
+// "quiz_results", opaque id for "quiz_results_by_id". Questions whose key is
+// empty are skipped, mirroring answersByID's guard, so an id-less question
+// never emits an "" key (they would collide and only the last verdict would
+// survive). nil when nothing has a mechanical verdict (non-quiz and
+// free-recall questions never do).
 func quizVerdicts(qs []question.Question, answers map[string]string, key func(q *question.Question) string) map[string]bool {
 	var out map[string]bool
 	for _, q := range qs {
+		k := key(&q)
+		if k == "" {
+			continue
+		}
 		if correct, ok := question.QuizVerdict(&q, answers[q.Question]); ok {
 			if out == nil {
 				out = make(map[string]bool)
 			}
-			out[key(&q)] = correct
+			out[k] = correct
 		}
 	}
 	return out
