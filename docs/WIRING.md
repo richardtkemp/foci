@@ -1741,7 +1741,10 @@ is a history copy (F1b: re-appended after every 2nd compaction, batch writes) an
 as is a re-append of a call already booked; a named call seen only at a stopless line is
 `interrupted` — booked and priced from it at the result's settle, excluded from the
 remainder; a subagent call books on its spawning turn, `completed` on its stop_reason line or
-`stopless` at the next id in its file or its tail's close, billed at its own line's time (so a
+`stopless` at the next id in its file or its tail's close — or `interrupted`, excluded from the
+remainder, when a bare `[Request interrupted by user]` record follows its line with no
+tool_result between (the request was aborted mid-stream; CC counts it nowhere, #2399; the
+transcript's user records reach the book as `ccSubSignal`) — billed at its own line's time (so a
 subagent running past midnight books each call to its own day), and a subagent line billed
 before the process launched is skipped — which is also why a reactivation tail, re-reading
 the transcript from byte 0, books no earlier run again (#2057, #2087); a Workflow run is an

@@ -291,6 +291,8 @@ func (m *subagentTailManager) readWorkflowFile(w *workflowRun, path string, f *w
 		w.lines++
 		if l, _ := parseCCRecord(line); l != nil {
 			m.ledgerEvent(ccEvent{kind: ccSubLine, agent: f.key, turn: w.turn, line: l})
+		} else if sig := parseCCSignal(line); sig != ccSignalNone {
+			m.ledgerEvent(ccEvent{kind: ccSubSignal, agent: f.key, signal: sig})
 		}
 		var rec transcriptLine
 		if json.Unmarshal(line, &rec) != nil {

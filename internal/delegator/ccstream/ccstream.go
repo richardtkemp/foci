@@ -212,14 +212,14 @@ type Backend struct {
 	pendingElicits map[string]*pendingElicitation
 
 	// Context tracking (from result/assistant messages)
-	contextWindow int                // from modelUsage.contextWindow
+	contextWindow int // from modelUsage.contextWindow
 	// The model CC's process last named: system/init, a top-level assistant
 	// message, or a get_context_usage response. A confirmed set_model clears
 	// it (the old id is stale) until one of those restates the new one. Read
 	// for TurnResult.Model and LiveModel.
-	lastModel     string
-	lastUsage     *TokenUsage        // per-call usage from last assistant message
-	rlThrottle    *RateLimitThrottle // OnRateLimit throttle; shared per agent (agentThrottle)
+	lastModel  string
+	lastUsage  *TokenUsage        // per-call usage from last assistant message
+	rlThrottle *RateLimitThrottle // OnRateLimit throttle; shared per agent (agentThrottle)
 
 	// prevModelUsage is this process's previous result's modelUsage, for the
 	// monotonic check (checkModelUsageMonotonic); nil until its first result.
@@ -432,6 +432,8 @@ func (b *Backend) subagentTails() *subagentTailManager {
 					b.agents.SetModel(groupKey, l.model)
 				}
 				b.ledger.Load().enqueue(ccEvent{kind: ccSubLine, agent: groupKey, turn: b.openTurnRowID(), line: l})
+			} else if sig := parseCCSignal(line); sig != ccSignalNone {
+				b.ledger.Load().enqueue(ccEvent{kind: ccSubSignal, agent: groupKey, signal: sig})
 			}
 		}
 		b.subagentTailMgr.ledgerEvent = func(e ccEvent) { b.ledger.Load().enqueue(e) }

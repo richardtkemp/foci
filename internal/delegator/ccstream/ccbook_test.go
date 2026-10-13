@@ -541,6 +541,62 @@ func TestInterruptedVersusStopless(t *testing.T) {
 	}
 }
 
+// TestSubagentAbortedMidStreamIsInterrupted is #2399 (session c2138... q33): a
+// subagent stopped by the user while its request was still streaming leaves a
+// thinking-only line with no stop_reason, then "[Request interrupted by user]"
+// with no tool_result between. CC never finished that request, so modelUsage
+// counts it nowhere (the booked set was over by exactly its cache_read 40302,
+// cache_write 4808 and input 2). It is booked interrupted — priced, outside
+// the subtraction — so the remainder is exact and nothing alarms. The control:
+// a stopless call whose tool ran (a tool_result follows) before the interrupt
+// IS counted by CC, as the Oct 2 and Oct 5 captures show.
+func TestSubagentAbortedMidStreamIsInterrupted(t *testing.T) {
+	tb := newTestBook(t, nil)
+	tb.tailOpened("agent-a", "T1")
+	tb.subLine("agent-a", "T1", line("ran", opus, tb.clock, "", 2, 4, 1000, 100, 0))
+	tb.subSignal("agent-a", ccSignalToolResult)
+	tb.subSignal("agent-a", ccSignalInterrupt) // the tool ran: "ran" stays pending, counted
+	tb.subLine("agent-a", "T1", line("aborted", opus, tb.clock, "", 2, 4, 40302, 4808, 0))
+	tb.subSignal("agent-a", ccSignalInterrupt)
+	tb.tailClosed("agent-a")
+	// CC counts "ran" (true output 9) and nothing of "aborted".
+	tb.result(map[string]ModelUsage{opus: {InputTokens: 2, OutputTokens: 9, CacheReadInputTokens: 1000, CacheCreationInputTokens: 100}}, 0, tb.clock)
+	tb.advance(time.Second)
+
+	calls := tb.calls(t)
+	ran, aborted := find(calls, "ran"), find(calls, "aborted")
+	if ran == nil || ran.finality != accounting.FinalityStopless {
+		t.Errorf("ran = %+v, want stopless (its tool ran, CC counts it)", ran)
+	}
+	if aborted == nil || aborted.finality != accounting.FinalityInterrupted || !aborted.cost.Valid || aborted.cost.Float64 <= 0 {
+		t.Errorf("aborted = %+v, want an interrupted, priced call", aborted)
+	}
+	if n := tb.alarmsOf(accounting.InvNegativeRemainder); n != 0 {
+		t.Errorf("negative remainder alarmed: %+v", tb.alarms)
+	}
+}
+
+// TestParseCCSignal pins the two user records of a subagent transcript the
+// ledger reads, as CC 2.1.296 wrote them (#2399).
+func TestParseCCSignal(t *testing.T) {
+	cases := []struct {
+		name, raw string
+		want      ccSignal
+	}{
+		{"interrupt", `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}`, ccSignalInterrupt},
+		{"interrupt for tool use is not an abort in flight", `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}`, ccSignalNone},
+		{"tool result", `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":"x"}]}}`, ccSignalToolResult},
+		{"prompt string", `{"type":"user","message":{"role":"user","content":"do the thing"}}`, ccSignalNone},
+		{"assistant", `{"type":"assistant","message":{"id":"m","content":[]}}`, ccSignalNone},
+		{"torn", `{"type":"us`, ccSignalNone},
+	}
+	for _, c := range cases {
+		if got := parseCCSignal([]byte(c.raw)); got != c.want {
+			t.Errorf("%s: got %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
 // TestIdleCompactionIsItsOwnTurn is T24/T5: a /compact between turns reports
 // nothing per call (its result.usage is zero, P0-a); it is the remainder of
 // the quiet window holding its compact_boundary, booked exactly, as a

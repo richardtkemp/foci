@@ -19,8 +19,11 @@
 //     spawned the subagent, completed on its stop_reason line, or — never
 //     completed — as `stopless` at its last-seen counts when a later id appears
 //     in the same file or the tail closes. Stopless calls ARE counted by CC, so
-//     they are in the remainder subtraction. A Workflow run's agents are
-//     subagents of the turn that invoked the Workflow (#2130): the run is
+//     they are in the remainder subtraction — except a call a subagent's stop
+//     aborted mid-stream (#2399): a bare "[Request interrupted by user]" record
+//     right after its line, no tool_result between, means CC never finished the
+//     request and counts it nowhere, so it books `interrupted` like a main call.
+//     A Workflow run's agents are subagents of the turn that invoked the Workflow (#2130): the run is
 //     opened as an agent on that turn, and each of its agents under it.
 //   - The REMAINDER — what CC's cumulative modelUsage counts and no call record
 //     holds (utility calls, stopless true output, compactions) — is booked only
@@ -155,6 +158,62 @@ func parseCCRecord(raw []byte) (line *ccLine, costState *ccRecord) {
 	return l, nil
 }
 
+// ccSignal is what a non-assistant transcript record tells the ledger about the
+// call before it (#2399).
+type ccSignal int
+
+const (
+	ccSignalNone ccSignal = iota
+	// ccSignalToolResult: a tool_result user record. The assistant message
+	// before it streamed to its end, as the tool ran on its tool_use block.
+	ccSignalToolResult
+	// ccSignalInterrupt: CC's "[Request interrupted by user]" record, written
+	// when a subagent is stopped. The bare form (not "... for tool use") is the
+	// abort of a request in flight.
+	ccSignalInterrupt
+)
+
+// ccInterruptText is the text of the user record CC writes when it aborts a
+// request in flight.
+const ccInterruptText = "[Request interrupted by user]"
+
+// parseCCSignal classifies a user record of a subagent transcript.
+func parseCCSignal(raw []byte) ccSignal {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || raw[0] != '{' {
+		return ccSignalNone
+	}
+	var r struct {
+		Type    string `json:"type"`
+		Message struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"message"`
+	}
+	if json.Unmarshal(raw, &r) != nil || r.Type != "user" {
+		return ccSignalNone
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(r.Message.Content, &blocks) != nil {
+		var s string
+		if json.Unmarshal(r.Message.Content, &s) == nil && s == ccInterruptText {
+			return ccSignalInterrupt
+		}
+		return ccSignalNone
+	}
+	for _, b := range blocks {
+		switch {
+		case b.Type == "tool_result":
+			return ccSignalToolResult
+		case b.Type == "text" && b.Text == ccInterruptText:
+			return ccSignalInterrupt
+		}
+	}
+	return ccSignalNone
+}
+
 // ccTokens normalises a per-message usage into disjoint ledger classes: the
 // cache-write split CC reports is observed; writes the split does not cover
 // are TTL-unknown (and would be for a message that reports no split).
@@ -225,6 +284,10 @@ type ccAgent struct {
 	window  int
 	open    bool    // its tail is running
 	pending *ccLine // latest line of an id not yet completed
+	// ran: a tool_result came after pending's line, so its message streamed to
+	// its end (the tool ran on it). Without one, an interrupt record that
+	// follows aborted pending's request in flight (#2399).
+	ran bool
 }
 
 // ccBoundary is one compact_boundary.
@@ -532,6 +595,30 @@ func (c *ccBook) subLine(agent, turn string, l *ccLine) {
 		return
 	}
 	a.pending = l
+	a.ran = false
+}
+
+// subSignal handles a tool_result or interrupt record of a subagent's
+// transcript. An interrupt right after an assistant line with no tool_result
+// between them aborted that request mid-stream: CC never finished it, so
+// modelUsage counts it nowhere, like an interrupted main-thread call, and it
+// is booked priced and kept out of the remainder subtraction (#2399). One
+// whose tool ran is complete and counted, final record or not.
+func (c *ccBook) subSignal(agent string, sig ccSignal) {
+	a := c.agents[agent]
+	if a == nil || a.pending == nil {
+		return
+	}
+	switch sig {
+	case ccSignalToolResult:
+		a.ran = true
+	case ccSignalInterrupt:
+		if a.ran {
+			return
+		}
+		c.bookCall(a.pending, a.turn, agent, a.window, accounting.FinalityInterrupted)
+		a.pending = nil
+	}
 }
 
 // agent is agent's state, created at first sight on the turn open then (the

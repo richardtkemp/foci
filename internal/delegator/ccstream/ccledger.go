@@ -28,6 +28,7 @@ const (
 	ccNamed ccEventKind = iota
 	ccMainLine
 	ccSubLine
+	ccSubSignal
 	ccTailOpened
 	ccTailClosed
 	ccBoundaryEv
@@ -52,6 +53,7 @@ type ccEvent struct {
 	agent   string
 	parent  string // ccTailOpened: the agent whose turn this one books on
 	line    *ccLine
+	signal  ccSignal // ccSubSignal
 	mu      map[string]ModelUsage
 	running int
 	refusal *ccRefusal    // ccRefusalEv
@@ -162,6 +164,8 @@ func (s *ccLedger) run() {
 				c.mainLine(e.line)
 			case ccSubLine:
 				c.subLine(e.agent, e.turn, e.line)
+			case ccSubSignal:
+				c.subSignal(e.agent, e.signal)
 			case ccTailOpened:
 				c.tailOpenedUnder(e.agent, e.parent, e.turn)
 			case ccTailClosed:
