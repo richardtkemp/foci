@@ -769,15 +769,21 @@ Rules from global `[permissions]` and per-agent `[[agents]].permissions` are com
 > naming it. That is hygiene, not the control — it reports an entry that would never have matched
 > anyway. The entry stays in the config file; it is ignored, not rewritten. Startup and
 > `-check-config` (run as the service user) also name each **built-in group command** (read-only,
-> safe-write) that will be vetoed, with the group, the command, the reason and the path — a vetoed
-> built-in otherwise just falls through to an approval prompt with no line anywhere saying so — and
+> safe-write) that will be vetoed — once per group and command, and only when some agent the groups
+> are live for has the group enabled: a delegated backend that still asks for approval (an API agent
+> never receives the groups, and `skip_permissions` never prompts, so neither can stop
+> auto-approving) — with the group, the command, the reason and the path; a vetoed built-in
+> otherwise just falls through to an approval prompt with no line anywhere saying so. And
 > `-check-config` adds a summary line with the count and the sorted command names, config entries
-> and built-ins together. A group is reported only when at least one agent has it enabled.
+> and built-ins together.
 > `-check-config` does not check any of this when run as root (root's `access(2)` says every file
 > is writable, and it never sources the rc file as root) or when the shell env file, or any
 > directory on its path, is writable by anyone other than the invoking user and root — not
 > group-writable (a shared home is the common case), not world-writable, not another user's, not
 > reached through a symlink, and not a bare relative name; it prints one warning saying so instead.
+> A configured shell env file that is missing, or that cannot be sourced, does not stop the check:
+> startup gets no overlay from it either, so the verdicts agree — but `-check-config` says in one
+> warning that the PATH it judged has no rc overlay.
 >
 > **A writable `PATH` directory that does not contain the command is deliberately NOT a finding.** It
 > describes a shadow that *could* be created, not one that exists. Reporting it would drop working

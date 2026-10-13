@@ -2,18 +2,44 @@ package main
 
 import (
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/delegator/autoapprove"
 	"foci/internal/execguard"
 )
 
-// autoApproveGroupToggles resolves, per agent, the same built-in group
-// switches buildAutoApproveRules reads — config.Resolve's cascade over
-// [permissions] and [[agents]].permissions — and ORs them over all agents: a
-// group is reported when at least one agent has it enabled, so a per-agent
-// true under a global false counts, and a group disabled everywhere is not
-// reported.
+// builtinGroupsLiveFor reports whether the built-in auto-approve groups are
+// live at match time for this agent. The report must mirror the whole
+// condition under which the enforcer applies the groups to an agent, not just
+// the toggle value buildAutoApproveRules reads:
+//
+//   - only DELEGATED agents get the groups at all: buildAutoApproveRules runs
+//     in configureDelegated, so an API agent's toggle is inert — reporting on
+//     its strength would invent veto lines for shells that never see a rule;
+//   - only backends that consult foci's allowlist (Spec declares
+//     CapCommandApprovalAllowlist) ever match a rule against a permission
+//     request;
+//   - a skip_permissions agent never prompts: its backend runs everything
+//     unattended, so no command there can "stop auto-approving", and a line
+//     saying the command falls through to an approval prompt would be false.
+func builtinGroupsLiveFor(a config.AgentConfig) bool {
+	if !a.IsDelegated() {
+		return false
+	}
+	spec, ok := delegator.SpecFor(a.Backend)
+	return ok && spec.Supports(delegator.CapCommandApprovalAllowlist) && !config.DerefBool(a.BackendConfig.SkipPermissions)
+}
+
+// autoApproveGroupToggles resolves, per agent the built-in groups are live
+// for, the same group switches buildAutoApproveRules reads — config.Resolve's
+// cascade over [permissions] and [[agents]].permissions — and ORs them: a
+// group is reported when at least one such agent has it enabled, so a
+// per-agent true under a global false counts, and a group disabled everywhere
+// (or enabled only where it cannot run) is not reported.
 func autoApproveGroupToggles(cfg *config.Config) (readonly, safeWrite bool) {
 	for i := range cfg.Agents {
+		if !builtinGroupsLiveFor(cfg.Agents[i]) {
+			continue
+		}
 		perms := config.Resolve(cfg, cfg.Agents[i]).Permissions
 		readonly = readonly || perms.AutoApproveCommonReadonly
 		safeWrite = safeWrite || perms.AutoApproveCommonSafeWrite

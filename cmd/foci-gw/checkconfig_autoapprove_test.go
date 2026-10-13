@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +43,20 @@ func mdsMdqEnv() execguard.Env {
 	)
 }
 
+// delegatedConfigTOML is validConfigTOML with the agent on a delegated
+// backend. The built-in groups reach a match-time veto only through
+// buildAutoApproveRules, which runs for delegated agents alone
+// (builtinGroupsLiveFor), so every fixture that expects — or must be seen
+// not to suppress — built-in lines needs one.
+const delegatedConfigTOML = `
+[groups]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
+[[agents]]
+id = "main"
+backend = "claude-code"
+`
+
 // envFileOverlays records what planAutoApproveCheck installs as the operator
 // population, without touching procx's process-wide state.
 type envFileOverlays struct {
@@ -53,7 +69,7 @@ func fakeCheckDeps(env execguard.Env) (checkDeps, *envFileOverlays) {
 	ov := &envFileOverlays{}
 	return checkDeps{
 		euid:           func() int { return 1000 },
-		loadEnvFile:    func(*string) (map[string]string, error) { return nil, nil },
+		loadEnvFile:    func(*string) (map[string]string, string, error) { return nil, "", nil },
 		setOperatorEnv: func(m map[string]string) { ov.calls = append(ov.calls, m) },
 		probe:          func() execguard.Env { return env },
 	}, ov
@@ -79,7 +95,7 @@ func TestRunConfigCheck_SubstitutableBuiltinWarned(t *testing.T) {
 	env := mdsMdqEnv()
 	d, _ := fakeCheckDeps(env)
 
-	code, out := runConfigCheckDeps(t, validConfigTOML, d)
+	code, out := runConfigCheckDeps(t, delegatedConfigTOML, d)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0 (warnings never change it); stderr:\n%s", code, out)
 	}
@@ -220,18 +236,95 @@ func TestRunConfigCheck_AgentTurnsReadonlyOn_GivesBuiltinLine(t *testing.T) {
 	t.Parallel()
 	d, _ := fakeCheckDeps(mdsMdqEnv())
 
-	_, out := runConfigCheckDeps(t, validConfigTOML+`
+	_, out := runConfigCheckDeps(t, `[groups]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [permissions]
 auto_approve_common_readonly = false
 
 [[agents]]
 id = "reader"
+backend = "claude-code"
 
 [agents.permissions]
 auto_approve_common_readonly = true
 `, d)
 	if !strings.Contains(out, `built-in read-only group: command "mds"`) {
 		t.Errorf("a per-agent true under a global false must give the builtin line:\n%s", out)
+	}
+}
+
+// TestRunConfigCheck_APIOnlyAndSkipAgents_NoBuiltinLines pins the serving
+// condition: the built-in groups reach a match-time veto only through
+// buildAutoApproveRules, which runs for delegated agents whose backends
+// still ask for approval. A config of API agents only, or of delegated
+// agents with skip_permissions (which never prompt), has no shell the groups
+// are live in — veto lines for it would be false, and there is no summary
+// because nothing stops auto-approving.
+func TestRunConfigCheck_APIOnlyAndSkipAgents_NoBuiltinLines(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		toml string
+	}{
+		{"API-only config", validConfigTOML},
+		{"API agent turns read-only on under a global off", `
+[groups]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
+[permissions]
+auto_approve_common_readonly = false
+
+[[agents]]
+id = "main"
+
+[agents.permissions]
+auto_approve_common_readonly = true
+`},
+		{"skip_permissions agent", delegatedConfigTOML + `
+[agents.backend_config]
+skip_permissions = true
+`},
+	}
+	for _, tc := range cases {
+		d, _ := fakeCheckDeps(mdsMdqEnv())
+		code, out := runConfigCheckDeps(t, tc.toml, d)
+		if code != 0 {
+			t.Fatalf("%s: exit = %d, want 0; stderr:\n%s", tc.name, code, out)
+		}
+		if strings.Contains(out, "built-in") {
+			t.Errorf("%s: no shell of these agents consults the built-in groups, so no veto line may appear:\n%s", tc.name, out)
+		}
+		if strings.Contains(out, "will stop auto-approving under this config") {
+			t.Errorf("%s: nothing stops auto-approving, so there is no summary:\n%s", tc.name, out)
+		}
+	}
+}
+
+// TestRunConfigCheck_SharedCommandNamedOncePerGroup pins the per-command
+// report on the -check-config side: six read-only rules share the token
+// `go`, the veto judges the token, so exactly one line names it.
+func TestRunConfigCheck_SharedCommandNamedOncePerGroup(t *testing.T) {
+	t.Parallel()
+	// Only go is executable-and-writable on the fake PATH: mds/mdq stay
+	// silent, so the count is about go alone.
+	env := guardEnvFor(
+		[]string{"/home/foci/bin"},
+		[]string{"/home/foci/bin/go"},
+		[]string{"/home/foci/bin/go"},
+	)
+	d, _ := fakeCheckDeps(env)
+
+	code, out := runConfigCheckDeps(t, delegatedConfigTOML, d)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr:\n%s", code, out)
+	}
+	if got := strings.Count(out, `built-in read-only group: command "go" will be vetoed`); got != 1 {
+		t.Errorf("go named %d time(s) in the veto lines, want exactly 1 (six rules share the token):\n%s", got, out)
+	}
+	if want := "1 command(s) will stop auto-approving under this config: go"; !strings.Contains(out, want) {
+		t.Errorf("stderr lacks summary %q:\n%s", want, out)
 	}
 }
 
@@ -247,7 +340,7 @@ func TestRunConfigCheck_SafeWriteEnabled_WritableCurlNamed(t *testing.T) {
 	)
 	d, _ := fakeCheckDeps(env)
 
-	_, out := runConfigCheckDeps(t, validConfigTOML+`
+	_, out := runConfigCheckDeps(t, delegatedConfigTOML+`
 [permissions]
 auto_approve_common_safe_write = true
 `, d)
@@ -305,15 +398,16 @@ func TestRunConfigCheck_RootSkipsAutoApproveNeverRunsEnvFile(t *testing.T) {
 	loaded := 0
 	d := checkDeps{
 		euid: func() int { return 0 },
-		loadEnvFile: func(*string) (map[string]string, error) {
+		loadEnvFile: func(*string) (map[string]string, string, error) {
 			loaded++
-			return shellenv.Capture(rc)
+			env, err := shellenv.Capture(rc)
+			return env, "", err
 		},
 		setOperatorEnv: func(m map[string]string) { ov.calls = append(ov.calls, m) },
 		probe:          func() execguard.Env { return mdsMdqEnv() },
 	}
 
-	code, out := runConfigCheckDeps(t, "shell_env_file = '"+rc+"'\n"+validConfigTOML, d)
+	code, out := runConfigCheckDeps(t, "shell_env_file = '"+rc+"'\n"+delegatedConfigTOML, d)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr:\n%s", code, out)
 	}
@@ -364,7 +458,7 @@ func TestRunConfigCheck_UntrustedEnvFileNotCheckedNeverRun(t *testing.T) {
 		probe:          func() execguard.Env { return mdsMdqEnv() },
 	}
 
-	code, out := runConfigCheckDeps(t, "shell_env_file = '"+rc+"'\n"+validConfigTOML, d)
+	code, out := runConfigCheckDeps(t, "shell_env_file = '"+rc+"'\n"+delegatedConfigTOML, d)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr:\n%s", code, out)
 	}
@@ -408,7 +502,7 @@ func TestRunConfigCheck_RelativeEnvFileNeverRunsPathFile(t *testing.T) {
 		probe:          func() execguard.Env { return mdsMdqEnv() },
 	}
 
-	code, out := runConfigCheckDeps(t, "shell_env_file = \"checkrc.sh\"\n"+validConfigTOML, d)
+	code, out := runConfigCheckDeps(t, "shell_env_file = \"checkrc.sh\"\n"+delegatedConfigTOML, d)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr:\n%s", code, out)
 	}
@@ -448,14 +542,15 @@ func TestRunConfigCheck_TrustedEnvFileCapturedAndProbed(t *testing.T) {
 	probedWith := -1
 	d := checkDeps{
 		euid: func() int { return 1000 },
-		loadEnvFile: func(*string) (map[string]string, error) {
-			return shellenv.Capture(rc)
+		loadEnvFile: func(*string) (map[string]string, string, error) {
+			env, err := shellenv.Capture(rc)
+			return env, "", err
 		},
 		setOperatorEnv: func(m map[string]string) { ov.calls = append(ov.calls, m) },
 		probe:          func() execguard.Env { probedWith = len(ov.calls); return mdsMdqEnv() },
 	}
 
-	code, out := runConfigCheckDeps(t, "shell_env_file = '"+rc+"'\n"+validConfigTOML, d)
+	code, out := runConfigCheckDeps(t, "shell_env_file = '"+rc+"'\n"+delegatedConfigTOML, d)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr:\n%s", code, out)
 	}
@@ -479,11 +574,13 @@ func TestRunConfigCheck_TrustedEnvFileCapturedAndProbed(t *testing.T) {
 	}
 }
 
-// TestRunConfigCheck_MissingEnvFileProbesQuietly pins the mirror with the
-// real loader: a configured env file that does not exist is never sourced;
-// startup's capture of it would fail and leave the populations identical, so
-// the preview quietly probes the same PATH.
-func TestRunConfigCheck_MissingEnvFileProbesQuietly(t *testing.T) {
+// TestRunConfigCheck_MissingEnvFileWarnsUnsourcedStillProbes pins the mirror
+// with the real loader: a configured env file that does not exist is never
+// sourced and does not refuse the check — startup's capture of it yields no
+// overlay either, so the preview probes the same PATH — but it is no longer
+// SILENT: the operator configured an rc file, and the PATH judged (and the
+// daemon's) has no overlay from it.
+func TestRunConfigCheck_MissingEnvFileWarnsUnsourcedStillProbes(t *testing.T) {
 	t.Parallel()
 	missing := filepath.Join(t.TempDir(), "nope.rc")
 	ov := &envFileOverlays{}
@@ -494,12 +591,15 @@ func TestRunConfigCheck_MissingEnvFileProbesQuietly(t *testing.T) {
 		probe:          func() execguard.Env { return mdsMdqEnv() },
 	}
 
-	code, out := runConfigCheckDeps(t, "shell_env_file = '"+missing+"'\n"+validConfigTOML, d)
+	code, out := runConfigCheckDeps(t, "shell_env_file = '"+missing+"'\n"+delegatedConfigTOML, d)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr:\n%s", code, out)
 	}
 	if strings.Contains(out, "auto_approve was not checked") {
 		t.Errorf("a missing env file is ordinary, not a refusal:\n%s", out)
+	}
+	if want := "config check warning: the shell env file " + missing + " does not exist — the preview judges the PATH without it"; !strings.Contains(out, want) {
+		t.Errorf("stderr lacks the unsourced warning %q:\n%s", want, out)
 	}
 	if !strings.Contains(out, `built-in read-only group: command "mds"`) {
 		t.Errorf("the preview must still probe:\n%s", out)
@@ -509,26 +609,64 @@ func TestRunConfigCheck_MissingEnvFileProbesQuietly(t *testing.T) {
 	}
 }
 
+// TestClassifyEnvFile pins the one place LoadGated's returns become the
+// plan's three states: refusal beats everything, a loaded overlay installs
+// quietly, a configured-but-unsourced file is reported (missing or capture
+// failure — startup gets no overlay from either), and only
+// nothing-configured stays silent.
+func TestClassifyEnvFile(t *testing.T) {
+	t.Parallel()
+	refusal := errors.New("gate refusal")
+
+	env, unsourced, refused := classifyEnvFile(map[string]string{"PATH": "x"}, "/rc", true, nil)
+	if env == nil || unsourced != "" || refused != nil {
+		t.Errorf("loaded = (%v, %q, %v), want the overlay, silent, allowed", env != nil, unsourced, refused)
+	}
+
+	env, unsourced, refused = classifyEnvFile(nil, "/rc", false, fmt.Errorf("wrapped: %w", errEnvFileMissing))
+	if env != nil || unsourced != "/rc does not exist" || refused != nil {
+		t.Errorf("missing = (%v, %q, %v), want nil, reported, not a refusal", env != nil, unsourced, refused)
+	}
+
+	env, unsourced, refused = classifyEnvFile(nil, "/rc", false, nil)
+	if env != nil || unsourced != "/rc could not be sourced (startup logs the capture failure; the same overlay is missing there)" || refused != nil {
+		t.Errorf("capture failure = (%v, %q, %v), want nil, reported, not a refusal", env != nil, unsourced, refused)
+	}
+
+	env, unsourced, refused = classifyEnvFile(nil, "", false, refusal)
+	if env != nil || unsourced != "" || refused == nil {
+		t.Errorf("refusal = (%v, %q, %v), want nil, silent, the refusal passed through", env != nil, unsourced, refused)
+	}
+
+	env, unsourced, refused = classifyEnvFile(nil, "", false, nil)
+	if env != nil || unsourced != "" || refused != nil {
+		t.Errorf("nothing to load = (%v, %q, %v), want fully silent", env != nil, unsourced, refused)
+	}
+}
+
 // TestRunConfigCheck_NothingLoadedProbesQuietly pins the other silent
-// branches of the one derivation (home error, empty ladder, capture
-// failure): to the plan they all look like "no overlay", and the preview
-// quietly probes — exactly what startup does in those states.
+// branch of the one derivation (no env file configured): to the plan it
+// looks like "no overlay", and the preview quietly probes — exactly what
+// startup does in that state.
 func TestRunConfigCheck_NothingLoadedProbesQuietly(t *testing.T) {
 	t.Parallel()
 	ov := &envFileOverlays{}
 	d := checkDeps{
 		euid:           func() int { return 1000 },
-		loadEnvFile:    func(*string) (map[string]string, error) { return nil, nil },
+		loadEnvFile:    func(*string) (map[string]string, string, error) { return nil, "", nil },
 		setOperatorEnv: func(m map[string]string) { ov.calls = append(ov.calls, m) },
 		probe:          func() execguard.Env { return mdsMdqEnv() },
 	}
 
-	code, out := runConfigCheckDeps(t, validConfigTOML, d)
+	code, out := runConfigCheckDeps(t, delegatedConfigTOML, d)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr:\n%s", code, out)
 	}
 	if strings.Contains(out, "auto_approve was not checked") {
 		t.Errorf("nothing-to-load is ordinary, not a refusal:\n%s", out)
+	}
+	if strings.Contains(out, "shell env file") {
+		t.Errorf("nothing-to-load must stay silent (no file was configured):\n%s", out)
 	}
 	if !strings.Contains(out, `built-in read-only group: command "mds"`) {
 		t.Errorf("the preview must still probe:\n%s", out)
@@ -541,12 +679,12 @@ func TestRunConfigCheck_NothingLoadedProbesQuietly(t *testing.T) {
 // TestRunConfigCheck_ReadonlyDisabledEverywhere_NoBuiltinLine is a
 // characterisation test (listed in .factory/red-gate-exempt.txt): a group
 // disabled everywhere prints nothing on either side of the change. It pins
-// that disabling really silences the report.
+// that disabling really silences the report, for a live (delegated) agent.
 func TestRunConfigCheck_ReadonlyDisabledEverywhere_NoBuiltinLine(t *testing.T) {
 	t.Parallel()
 	d, _ := fakeCheckDeps(mdsMdqEnv())
 
-	_, out := runConfigCheckDeps(t, validConfigTOML+`
+	_, out := runConfigCheckDeps(t, delegatedConfigTOML+`
 [permissions]
 auto_approve_common_readonly = false
 `, d)
@@ -568,7 +706,7 @@ func TestRunConfigCheck_SafeWriteDisabledByDefault_NoSafeWriteLine(t *testing.T)
 	)
 	d, _ := fakeCheckDeps(env)
 
-	_, out := runConfigCheckDeps(t, validConfigTOML, d)
+	_, out := runConfigCheckDeps(t, delegatedConfigTOML, d)
 	if strings.Contains(out, "safe-write") {
 		t.Errorf("safe-write off must not be reported:\n%s", out)
 	}
@@ -657,6 +795,16 @@ func TestEnvFileConcern(t *testing.T) {
 			}
 			return rc, uid, dir
 		}, "is group-writable (mode 0770)"},
+		{"setgid directory keeps its full mode in the report", func(t *testing.T) (string, int, string) {
+			rc := chain(t, "setgid")
+			// A setgid group-writable home (mode 2770) must be reported as
+			// 2770: Perm() alone would print 0770, and an operator fixing
+			// exactly the reported mode would not have fixed the directory.
+			if err := os.Chmod(filepath.Dir(filepath.Dir(rc)), os.FileMode(0o770)|os.ModeSetgid); err != nil {
+				t.Fatal(err)
+			}
+			return rc, uid, dir
+		}, "is group-writable (mode 2770)"},
 		{"inspectable-error component", func(t *testing.T) (string, int, string) {
 			rc := chain(t, "notdir")
 			// A non-directory mid-path: Lstat fails with ENOTDIR, not
@@ -668,7 +816,7 @@ func TestEnvFileConcern(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			path, judgeAs, stopAt := tt.setup(t)
-			got := envFileConcernIn(path, judgeAs, stopAt)
+			got := envFileConcern(path, judgeAs, stopAt)
 			if tt.want == "" {
 				if got != "" {
 					t.Errorf("concern = %q, want trusted (\"\")", got)
@@ -679,5 +827,64 @@ func TestEnvFileConcern(t *testing.T) {
 				t.Errorf("concern = %q, want it to contain %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestEnvFileGate_AllArmsHermetic drives the gate itself — the composition
+// of bare-relative refusal, absolutisation, the missing-file sentinel and
+// the trust walk — with injected euid, wd and walkRoot, so its ALLOW arm is
+// covered without depending on the host's real uid, working directory or
+// the ancestors of the temp directory.
+func TestEnvFileGate_AllArmsHermetic(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	uid := os.Getuid()
+	sub := filepath.Join(dir, "g", "a")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rc := filepath.Join(sub, "rc")
+	if err := os.WriteFile(rc, []byte("export X=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gate := envFileGate{
+		euid:     func() int { return uid },
+		wd:       func() (string, error) { return dir, nil },
+		walkRoot: dir,
+	}
+
+	// ALLOW: a tight chain passes through unchanged, judged to its root.
+	got, err := gate.check(rc)
+	if err != nil || got != rc {
+		t.Errorf("allow = (%q, %v), want (%q, nil)", got, err, rc)
+	}
+
+	// Relative-with-slash is absolutised against the injected cwd, so the
+	// file walked is the file the shell would run.
+	got, err = gate.check(filepath.Join("g", "a", "rc"))
+	if err != nil || got != rc {
+		t.Errorf("absolutise = (%q, %v), want (%q, nil)", got, err, rc)
+	}
+
+	// Bare relative names refuse: bash searches PATH for those.
+	if _, err := gate.check("rc"); err == nil || !strings.Contains(err.Error(), "bare relative name") {
+		t.Errorf("bare relative = %v, want the bare-relative refusal", err)
+	}
+
+	// A missing file returns the sentinel, not a trust refusal.
+	if _, err := gate.check(filepath.Join(dir, "nope.rc")); !errors.Is(err, errEnvFileMissing) {
+		t.Errorf("missing = %v, want errEnvFileMissing", err)
+	}
+
+	// A group-writable file on the chain refuses with the full rule.
+	loose := filepath.Join(sub, "loose")
+	if err := os.WriteFile(loose, []byte("export X=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(loose, 0o660); err != nil { // umask-proof the mode
+		t.Fatal(err)
+	}
+	if _, err := gate.check(loose); err == nil || !strings.Contains(err.Error(), envFileRefusalRule) {
+		t.Errorf("loose file = %v, want the trust refusal with the full rule", err)
 	}
 }

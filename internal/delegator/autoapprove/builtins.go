@@ -36,8 +36,13 @@ type SubstitutableBuiltin struct {
 // Substitutable already answers false for a name with no PATH winner.
 // FociShellRulesFor output is never scanned: those name bash functions, not
 // files on PATH, and there is nothing to substitute.
+//
+// The findings are per COMMAND, not per rule: several rules share one command
+// token (`go env`, `go list`, … are all `go`), the veto judges the token, and
+// a report that prints the same command six times buries the real count.
 func SubstitutableBuiltins(readonly, safeWrite bool, env execguard.Env) []SubstitutableBuiltin {
 	var found []SubstitutableBuiltin
+	seen := make(map[string]bool)
 	scan := func(group string, rules []string) {
 		for _, rule := range rules {
 			r := parseAutoApproveRule(rule)
@@ -49,6 +54,11 @@ func SubstitutableBuiltins(readonly, safeWrite bool, env execguard.Env) []Substi
 				continue
 			}
 			if substitutable, path, reason := execguard.Substitutable(tokens[0], env); substitutable {
+				key := group + "\x00" + tokens[0]
+				if seen[key] {
+					continue // same group, same command: already reported
+				}
+				seen[key] = true
 				found = append(found, SubstitutableBuiltin{Group: group, Command: tokens[0], Path: path, Reason: reason})
 			}
 		}

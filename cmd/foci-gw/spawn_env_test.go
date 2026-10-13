@@ -131,8 +131,10 @@ func TestReportOperatorEnv_BuiltinVetoRidesTheStartupReport(t *testing.T) {
 	c := captureLog(t, log.INFO)
 	dir := t.TempDir()
 	env := guardEnvFor([]string{dir}, []string{dir + "/yq"}, []string{dir + "/yq"})
-	// One agent is enough: read-only defaults on, safe-write defaults off.
-	cfg := &config.Config{Agents: []config.AgentConfig{{ID: "main"}}}
+	// One live agent is enough: read-only defaults on, safe-write defaults
+	// off. Delegated, because the built-in groups reach a match-time veto
+	// only through buildAutoApproveRules (delegated agents only).
+	cfg := &config.Config{Agents: []config.AgentConfig{{ID: "main", Backend: "claude-code"}}}
 
 	reportOperatorEnv(cfg, env, "", t.TempDir(), func(string) bool { return false })
 

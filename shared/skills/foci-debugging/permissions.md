@@ -88,14 +88,19 @@ readings of one broken instrument is not corroboration.
 - **`-check-config` previews the drop again, but only as the service user.** As root it says it
   did not check (root's `access(2)` succeeds for every file) and sources nothing. As a user it
   sources the rc file only when the file and every directory on its path is writable only by the
-  invoking user and root — a group-writable home (e.g. mode 0770), a world-writable directory,
+  invoking user and root — a group-writable home (e.g. mode 2770), a world-writable directory,
   another user's file, a symlink, or a bare relative `shell_env_file` all refuse with one warning.
-  In those states read the startup log instead.
+  A configured rc file that is missing, or that cannot be sourced, is not a refusal (startup gets
+  no overlay from it either, so the verdicts agree) but gets its own warning naming the PATH judged.
+  In the refused states read the startup log instead.
 - **Built-in rule groups appear in both reports.** Startup logs one WARN per substitutable
-  built-in (`CommonReadonlyRules`/`CommonSafeWriteRules` commands resolved per agent exactly as
-  `buildAutoApproveRules` reads the toggles), and `-check-config` lists them with a summary
-  count — group, command, reason and path in both. Only substitutable commands are named; a
-  built-in whose tool is not installed on the host (`ack`, `yq`) is silent.
+  built-in (`CommonReadonlyRules`/`CommonSafeWriteRules` commands, named once per group and
+  command — six read-only rules share the token `go`, and `go` is one line), and `-check-config`
+  lists them with a summary count — group, command, reason and path in both. The groups are
+  reported only for the agents they are live for (delegated backends that still ask for approval,
+  which is where `buildAutoApproveRules` runs; an API agent or a `skip_permissions` agent cannot
+  stop auto-approving and is never named). Only substitutable commands are named; a built-in whose
+  tool is not installed on the host (`ack`, `yq`) is silent.
 - **Only the FIRST WORD of each `&&`/`||`/`;`/`|` segment is inspected.** Arguments are never
   checked, so wrapping a script in an interpreter restores the auto-approval without restoring the
   safety. Do not "fix" a vetoed entry that way.

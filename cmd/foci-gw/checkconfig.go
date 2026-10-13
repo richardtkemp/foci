@@ -21,8 +21,11 @@ package main
 //   - every entry naming a command on no directory of PATH, kept but approved
 //     unchecked;
 //   - every built-in group command (read-only, safe-write) the match-time
-//     veto will refuse, with the reason and the path — a vetoed built-in
-//     otherwise just falls through to an approval prompt silently;
+//     veto will refuse — once per group and command, and only for the agents
+//     the groups are live for (delegated backends that still ask for
+//     approval; see builtinGroupsLiveFor) — with the reason and the path. A
+//     vetoed built-in otherwise just falls through to an approval prompt
+//     silently;
 //   - one summary line with the count and the sorted command names.
 //
 // All of those are WARNINGS: the finding is identical before and after the
@@ -45,6 +48,11 @@ package main
 //     reached through a symlink, and not a bare relative name (bash searches
 //     PATH for those). #2347 owns the full trust rule; this is the
 //     fail-closed subset.
+//
+// A configured rc file that is missing, or that cannot be sourced, is not a
+// refusal: startup gets no overlay from it either, so the preview still runs
+// and judges the same PATH — but it says so in one warning, because that
+// PATH is not the one the operator's rc would have built.
 //
 // Exit codes:
 //
@@ -95,7 +103,7 @@ import (
 // test's runConfigCheck.
 type checkDeps struct {
 	euid           func() int
-	loadEnvFile    func(cfg *string) (map[string]string, error) // shellenv.LoadGated + the trust gate; an error is the gate's refusal
+	loadEnvFile    func(cfg *string) (env map[string]string, unsourced string, refused error) // shellenv.LoadGated + the trust gate; unsourced names a configured file that was not sourced (missing or capture failure)
 	setOperatorEnv func(map[string]string)
 	probe          func() execguard.Env
 }
@@ -107,12 +115,33 @@ type checkDeps struct {
 // PATH startup judges, minus what the gate refused to source.
 var prodCheckDeps = checkDeps{
 	euid: os.Geteuid,
-	loadEnvFile: func(cfg *string) (map[string]string, error) {
-		env, _, _, err := shellenv.LoadGated(cfg, checkEnvFileGate)
-		return env, err
+	loadEnvFile: func(cfg *string) (map[string]string, string, error) {
+		return classifyEnvFile(shellenv.LoadGated(cfg, prodEnvFileGate.check))
 	},
 	setOperatorEnv: procx.SetOperatorEnv,
 	probe:          execguard.Live,
+}
+
+// classifyEnvFile turns LoadGated's four returns into the plan's three
+// states: a refusal (the check says nothing was checked), a configured file
+// that was not sourced (the check still runs, against a PATH with no overlay
+// — which is also what startup gets from that file, so the verdicts agree),
+// or a captured overlay to install. Only nothing-configured stays silent:
+// no rc file at all is an ordinary state both sides share.
+func classifyEnvFile(env map[string]string, path string, loaded bool, refused error) (map[string]string, string, error) {
+	switch {
+	case refused != nil:
+		if errors.Is(refused, errEnvFileMissing) {
+			return nil, path + " does not exist", nil
+		}
+		return nil, "", refused
+	case loaded:
+		return env, "", nil
+	case path != "":
+		return nil, path + " could not be sourced (startup logs the capture failure; the same overlay is missing there)", nil
+	default:
+		return nil, "", nil
+	}
 }
 
 // runConfigCheck loads the config at path and returns the process exit code.
@@ -153,9 +182,13 @@ func runConfigCheckWith(path string, stdout, stderr io.Writer, d checkDeps) int 
 	}
 
 	plan := planAutoApproveCheck(cfg, d)
-	if plan.skip != "" {
+	switch {
+	case plan.skip != "":
 		_, _ = fmt.Fprintf(stderr, "config check warning: auto_approve was not checked: %s\n", plan.skip)
-	} else {
+	default:
+		if plan.unsourced != "" {
+			_, _ = fmt.Fprintf(stderr, "config check warning: the shell env file %s — the preview judges the PATH without it, which is also what the daemon would run with\n", plan.unsourced)
+		}
 		reportAutoApproveWarnings(stderr, cfg, plan.env)
 	}
 
@@ -171,8 +204,9 @@ func runConfigCheckWith(path string, stdout, stderr io.Writer, d checkDeps) int 
 // autoApproveCheckPlan is the outcome of deriving the view the preview will
 // judge auto-approve commands against.
 type autoApproveCheckPlan struct {
-	skip string        // the single not-checked warning; empty when the check ran
-	env  execguard.Env // the view to judge; zero when skip != ""
+	skip      string        // the single not-checked warning; empty when the check ran
+	unsourced string        // a configured env file that was not sourced (missing or capture failure); the preview still runs, and says so
+	env       execguard.Env // the view to judge; zero when skip != ""
 }
 
 // planAutoApproveCheck derives that view exactly as main() does — load the
@@ -180,44 +214,61 @@ type autoApproveCheckPlan struct {
 // execguard's live view — never its own PATH resolution, with the two
 // fail-closed refusals described in the file header.
 //
-// Every silent branch (home error, nothing to load, capture failure) mirrors
-// shellenv.Load's own handling, which WARNs on its side and leaves the
-// operator and trusted populations identical: the preview then judges the
-// same PATH startup would judge. A missing explicit file is one of those
-// states — startup's capture of it would fail — but is never sourced by the
-// check itself, so nothing that appears in the window between check and
-// source is run.
+// The quiet branches (home error, nothing to load) mirror shellenv.Load's
+// own handling, which WARNs on its side and leaves the operator and trusted
+// populations identical: the preview then judges the same PATH startup
+// would judge. A configured file that is missing or fails to capture is
+// reported as unsourced rather than silent — the PATH judged has no rc
+// overlay the operator configured, and they must see that — but it is never
+// sourced by the check itself, so nothing that appears in the window
+// between check and source is run.
 func planAutoApproveCheck(cfg *config.Config, d checkDeps) autoApproveCheckPlan {
 	if d.euid() == 0 {
 		return autoApproveCheckPlan{skip: "this check runs as root, where every file is writable, so it would flag every command. Run foci-gw -check-config as the service user to see which commands will stop auto-approving."}
 	}
-	env, refused := d.loadEnvFile(cfg.ShellEnvFile)
-	if refused != nil && !errors.Is(refused, errEnvFileMissing) {
+	env, unsourced, refused := d.loadEnvFile(cfg.ShellEnvFile)
+	if refused != nil {
 		return autoApproveCheckPlan{skip: refused.Error()}
 	}
 	d.setOperatorEnv(env)
-	return autoApproveCheckPlan{env: d.probe()}
+	return autoApproveCheckPlan{unsourced: unsourced, env: d.probe()}
 }
 
 // errEnvFileMissing reports a configured shell_env_file that does not exist.
 // Not a refusal: startup would attempt the source, fail, and run with no
-// operator overlay, so the preview silently judges the same PATH.
+// operator overlay, so the preview judges the same PATH — and says so via
+// the plan's unsourced message.
 var errEnvFileMissing = errors.New("shell env file does not exist")
 
-// checkEnvFileGate is the shellenv.Gate -check-config installs: the file must
-// be shown writable only by the invoking user and root before the check will
+// envFileGate is the shellenv.Gate -check-config installs: the file must be
+// shown writable only by the invoking user and root before the check will
 // source it (#2347 owns the full trust rule; this is the fail-closed
 // subset). It also absolute-ises a relative path containing a slash — bash's
 // `.` resolves such a path against the cwd, so walking and sourcing the
 // absolute path judges the file the shell will run — and refuses a bare
 // relative name outright: bash searches PATH for those, so the file judged
 // could differ from the file run.
-func checkEnvFileGate(path string) (string, error) {
+//
+// euid, wd and walkRoot are injected so every arm — including the allow arm
+// — is testable without the host's real uid, working directory or ancestor
+// directories.
+type envFileGate struct {
+	euid     func() int
+	wd       func() (string, error)
+	walkRoot string // the trust walk inspects the file and every parent up to AND INCLUDING this directory
+}
+
+// prodEnvFileGate is the production gate: the real effective uid, the real
+// working directory, and a walk that stops only at the filesystem root.
+var prodEnvFileGate = envFileGate{euid: os.Geteuid, wd: os.Getwd, walkRoot: "/"}
+
+// check implements shellenv.Gate.
+func (g envFileGate) check(path string) (string, error) {
 	if !filepath.IsAbs(path) && !strings.Contains(path, "/") {
 		return "", fmt.Errorf("shell_env_file %q is a bare relative name — bash sources the first match on PATH for such a name, so the check cannot know which file the shells will run. Give shell_env_file an absolute path", path)
 	}
 	if !filepath.IsAbs(path) {
-		cwd, err := os.Getwd()
+		cwd, err := g.wd()
 		if err != nil {
 			return "", fmt.Errorf("cannot resolve the working directory to make shell_env_file %q absolute: %w", path, err)
 		}
@@ -226,7 +277,7 @@ func checkEnvFileGate(path string) (string, error) {
 	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
 		return "", errEnvFileMissing
 	}
-	if concern := envFileConcern(path, os.Geteuid()); concern != "" {
+	if concern := envFileConcern(path, g.euid(), g.walkRoot); concern != "" {
 		return "", fmt.Errorf("%s. %s", concern, envFileRefusalRule)
 	}
 	return path, nil
@@ -239,37 +290,35 @@ func checkEnvFileGate(path string) (string, error) {
 const envFileRefusalRule = "-check-config will not source a shell env file unless the file and every directory on its path is writable only by the invoking user and root — not group-writable, not world-writable, not another user's, not reached through a symlink, and not a bare relative name (bash searches PATH for those). Fix the file or point shell_env_file somewhere safe, then re-run."
 
 // envFileConcern reports why path cannot be shown writable only by uid and
-// root, or "" when it can. Every component from the file up to the filesystem
-// root is inspected: a writable or foreign-owned directory lets the file be
+// root, or "" when it can. Every component from the file up to AND INCLUDING
+// stopAt is inspected (production passes "/" via prodEnvFileGate; tests pass
+// a controlled chain's root so they do not depend on the ancestors of their
+// temp directories): a writable or foreign-owned directory lets the file be
 // replaced or planted even when the file itself is tight, and a symlink
 // anywhere on the path means the file the shell runs is the target, which
 // this walk did not judge. Lstat is used throughout — the link itself is the
 // identity being judged.
-func envFileConcern(path string, uid int) string {
-	return envFileConcernIn(path, uid, "/")
-}
-
-// envFileConcernIn is envFileConcern bounded by stopAt: the walk covers path
-// and every parent up to AND INCLUDING stopAt, then stops. Production passes
-// "/" (see envFileConcern); tests pass a controlled chain's root so they do
-// not depend on the ancestors of their temp directories.
-func envFileConcernIn(path string, uid int, stopAt string) string {
+func envFileConcern(path string, uid int, stopAt string) string {
 	cur := path
 	for {
 		info, err := os.Lstat(cur)
 		if err != nil {
 			return fmt.Sprintf("cannot inspect %s: %v", cur, err)
 		}
+		st, _ := info.Sys().(*syscall.Stat_t)
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Sprintf("%s is a symlink, so the file the shells would run is its target, which the check did not judge", cur)
 		}
 		if info.Mode().Perm()&0o002 != 0 {
-			return fmt.Sprintf("%s is world-writable (mode %04o)", cur, info.Mode().Perm())
+			return fmt.Sprintf("%s is world-writable (mode %04o)", cur, rawMode(st, info))
 		}
 		if info.Mode().Perm()&0o020 != 0 {
-			return fmt.Sprintf("%s is group-writable (mode %04o)", cur, info.Mode().Perm())
+			return fmt.Sprintf("%s is group-writable (mode %04o)", cur, rawMode(st, info))
 		}
-		owner := info.Sys().(*syscall.Stat_t).Uid
+		owner := uint32(0)
+		if st != nil {
+			owner = st.Uid
+		}
 		invoking := uint32(uid) // #nosec G115 - uids from Getuid/Geteuid are non-negative and fit in uint32
 		if owner != 0 && owner != invoking {
 			return fmt.Sprintf("%s is owned by uid %d, not the invoking user (uid %d) or root", cur, owner, uid)
@@ -283,6 +332,27 @@ func envFileConcernIn(path string, uid int, stopAt string) string {
 		}
 		cur = parent
 	}
+}
+
+// rawMode renders the full permission bits including setuid, setgid and
+// sticky — a setgid home directory (mode 2770) must not be reported as 0770,
+// or an operator who fixed exactly the reported mode would not have fixed
+// the file. The type bits are masked off: the message is about permissions.
+func rawMode(st *syscall.Stat_t, info fs.FileInfo) uint32 {
+	if st != nil {
+		return uint32(st.Mode) & 0o7777
+	}
+	mode := uint32(info.Mode().Perm())
+	if info.Mode()&os.ModeSetuid != 0 {
+		mode |= 0o4000
+	}
+	if info.Mode()&os.ModeSetgid != 0 {
+		mode |= 0o2000
+	}
+	if info.Mode()&os.ModeSticky != 0 {
+		mode |= 0o1000
+	}
+	return mode
 }
 
 // reportAutoApproveWarnings writes the auto-approve preview described in the

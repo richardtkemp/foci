@@ -93,3 +93,42 @@ func TestSubstitutableBuiltins_GroupTogglesAndNonBash(t *testing.T) {
 		t.Fatalf("safe-write findings = %+v, want exactly curl under the safe-write group", safeFound)
 	}
 }
+
+// TestSubstitutableBuiltins_SharedCommandNamedOncePerGroup pins the
+// de-duplication key: several rules share one command token (go env, go
+// version, go list … are all "go"), the veto judges the token, so the report
+// is per (group, command) — one "go" finding for read-only no matter how many
+// read-only rules name it, and a second one only when the safe-write group is
+// also live (its own rules, its own line).
+func TestSubstitutableBuiltins_SharedCommandNamedOncePerGroup(t *testing.T) {
+	env := builtinsEnv(
+		[]string{"/home/foci/bin", "/usr/bin"},
+		[]string{"/home/foci/bin/go"},
+		[]string{"/home/foci/bin/go"},
+	)
+
+	readonly := SubstitutableBuiltins(true, false, env)
+	goFindings := 0
+	for _, b := range readonly {
+		if b.Command == "go" {
+			goFindings++
+		}
+	}
+	if goFindings != 1 {
+		t.Errorf("read-only reported go %d time(s), want exactly 1 (six rules share the token): %+v", goFindings, readonly)
+	}
+
+	both := SubstitutableBuiltins(true, true, env)
+	goFindings = 0
+	for _, b := range both {
+		if b.Command == "go" {
+			goFindings++
+			if b.Group != GroupReadonly && b.Group != GroupSafeWrite {
+				t.Errorf("go finding carries group %q, want read-only or safe-write", b.Group)
+			}
+		}
+	}
+	if goFindings != 2 {
+		t.Errorf("both groups reported go %d time(s), want exactly 2 (once per live group): %+v", goFindings, both)
+	}
+}
