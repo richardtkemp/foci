@@ -428,17 +428,42 @@ func TestSendControl_SetPermissionMode_Guards(t *testing.T) {
 
 func TestSendControl_SetPermissionMode_FailedPatchReturnsError(t *testing.T) {
 	// A failed /mode apply must return an error to the caller — not
-	// silently succeed by falling back to some other endpoint.
-	hs, rec := newControlTestServer(t)
-	b := newControlTestBackendForSession(t, hs, "sess-ctrl")
-	rec.failSessionPatches()
+	// silently succeed by falling back to some other endpoint. Both
+	// failure shapes must NAME the session-scoped apply (PATCH
+	// /session/:id), so the message can never read as the old server-wide
+	// PATCH /config wording (#2330).
+	t.Run("HTTP error status", func(t *testing.T) {
+		hs, rec := newControlTestServer(t)
+		b := newControlTestBackendForSession(t, hs, "sess-ctrl")
+		rec.failSessionPatches()
 
-	err := b.SendControl(context.Background(), &delegator.SetPermissionModeRequest{
-		Mode: "plan",
+		err := b.SendControl(context.Background(), &delegator.SetPermissionModeRequest{
+			Mode: "plan",
+		})
+		if err == nil {
+			t.Fatal("SendControl should error when the session PATCH fails")
+		}
+		if !strings.Contains(err.Error(), "PATCH /session/:id: HTTP 500") {
+			t.Errorf("error = %q, want it to name PATCH /session/:id: HTTP 500", err)
+		}
 	})
-	if err == nil {
-		t.Fatal("SendControl should error when the session PATCH fails")
-	}
+	t.Run("transport failure", func(t *testing.T) {
+		// Nothing listens behind baseURL any more: the request itself
+		// fails, and the wrap must still name the endpoint it failed on.
+		hs, _ := newControlTestServer(t)
+		b := newControlTestBackendForSession(t, hs, "sess-ctrl")
+		hs.Close()
+
+		err := b.SendControl(context.Background(), &delegator.SetPermissionModeRequest{
+			Mode: "plan",
+		})
+		if err == nil {
+			t.Fatal("SendControl should error when the session PATCH cannot be sent")
+		}
+		if !strings.HasPrefix(err.Error(), "PATCH /session/:id: ") {
+			t.Errorf("error = %q, want it to name PATCH /session/:id before the cause", err)
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------

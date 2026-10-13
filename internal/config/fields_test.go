@@ -183,6 +183,25 @@ func TestLookupField_MapSections(t *testing.T) {
 	}
 }
 
+func TestDefaultPermissionDescriptionNamesSessionScope(t *testing.T) {
+	// Pins the default_permission help text reworded by #2330. The desc
+	// tag is the field registry's single source of truth for the config
+	// editor's one-line help, and must say the mode is applied at Start
+	// to the session's own ruleset: the old wording ("... (default
+	// ask)") described the server-wide apply opencode never enforced —
+	// and "default ask" was itself wrong, since unset means Start sends
+	// no permission request at all and opencode's own permissive
+	// defaults stand.
+	f, ok := LookupField("agent.backend_config.default_permission")
+	if !ok {
+		t.Fatal("agent.backend_config.default_permission not in the field registry")
+	}
+	want := "opencode permission mode applied at Start to the session's own ruleset: ask, allow, or deny"
+	if f.Description != want {
+		t.Errorf("description = %q, want %q", f.Description, want)
+	}
+}
+
 func TestFieldSections(t *testing.T) {
 	// Proves FieldSections returns a deduplicated list of section names that
 	// includes all well-known sections.
