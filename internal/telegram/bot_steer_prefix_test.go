@@ -210,31 +210,118 @@ func TestReceive_SteerPrefix_GroupUnaddressed_DroppedSilently(t *testing.T) {
 	}
 }
 
-// TestReceive_SteerPrefix_GroupMentionDelivered: the same group message WITH
-// a mention of this bot is delivered — but, matching how commands behave
-// today, telegram does not strip the mention from the text, so the prefix is
-// not the first word and the message carries no choice. The mention is what
-// makes it addressed; the prefix only ever consumes an already-accepted
-// message (#1318).
+// TestReceive_SteerPrefix_GroupMentionDelivered: every way a group message
+// addresses this bot still lets the prefix work — the leading @mention is an
+// addressing token, not payload (stripped, like discord's mention strip), a
+// command-menu tap arrives as "/queue@mybot" (a bot_command entity aimed at
+// this bot, so it counts as addressed), and a TRAILING mention stays part of
+// the payload (#1318).
 func TestReceive_SteerPrefix_GroupMentionDelivered(t *testing.T) {
-	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	tests := []struct {
+		name     string
+		text     string
+		entities []gotgbot.MessageEntity
+		wantText string
+	}{
+		{
+			name:     "leading mention",
+			text:     "@mybot /queue do it next",
+			entities: []gotgbot.MessageEntity{{Type: "mention", Offset: 0, Length: int64(len("@mybot"))}},
+			wantText: "do it next",
+		},
+		{
+			name:     "bot_command with this bot's suffix",
+			text:     "/queue@mybot do it next",
+			entities: []gotgbot.MessageEntity{{Type: "bot_command", Offset: 0, Length: int64(len("/queue@mybot"))}},
+			wantText: "do it next",
+		},
+		{
+			name: "trailing mention is payload",
+			text: "/queue do it next @mybot",
+			entities: []gotgbot.MessageEntity{{Type: "mention",
+				Offset: int64(len("/queue do it next ")), Length: int64(len("@mybot"))}},
+			wantText: "do it next @mybot",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			b, _ := testBot([]string{"111"}, command.NewRegistry())
+			requireMentionBot(t, b)
+			b.api = &gotgbot.Bot{User: gotgbot.User{Id: 42, Username: "mybot"}}
+
+			msg := makeGroupMsg(111, "owner", tc.text)
+			msg.Entities = tc.entities
+			b.receiveMessage(context.Background(), msg)
+
+			select {
+			case qm := <-b.mq.Chan():
+				if qm.Text != tc.wantText {
+					t.Errorf("queued text = %q, want %q", qm.Text, tc.wantText)
+				}
+				if qm.Steer != platform.SteerNever {
+					t.Errorf("queued steer = %v, want SteerNever", qm.Steer)
+				}
+			default:
+				t.Fatal("expected the addressed group message on the main queue")
+			}
+		})
+	}
+}
+
+// TestReceive_SteerPrefix_GroupBareMenuTap_RepliesUsage: a bare command-menu
+// tap in a require-mention group ("/queue@mybot" — a bot_command entity
+// addressed to this bot) gets the one usage reply and delivers nothing
+// (#1318); the menu entry the bot itself registered must not be a dead tap.
+func TestReceive_SteerPrefix_GroupBareMenuTap_RepliesUsage(t *testing.T) {
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	requireMentionBot(t, b)
 	b.api = &gotgbot.Bot{User: gotgbot.User{Id: 42, Username: "mybot"}}
 
-	msg := makeGroupMsg(111, "owner", "@mybot /queue do it next")
-	msg.Entities = []gotgbot.MessageEntity{{Type: "mention", Offset: 0, Length: int64(len("@mybot"))}}
+	msg := makeGroupMsg(111, "owner", "/queue@mybot")
+	msg.Entities = []gotgbot.MessageEntity{{Type: "bot_command", Offset: 0, Length: int64(len("/queue@mybot"))}}
+	b.receiveMessage(context.Background(), msg)
+
+	if mock.sends != 1 || sentUsageText(mock) != platform.SteerPrefixUsage {
+		t.Errorf("sends = %d last = %q, want the one usage reply", mock.sends, sentUsageText(mock))
+	}
+	select {
+	case <-b.mq.Chan():
+		t.Fatal("bare menu tap enqueued a message")
+	default:
+	}
+	select {
+	case <-b.mq.CmdChan():
+		t.Fatal("bare menu tap reached the command channel")
+	default:
+	}
+}
+
+// TestReceive_QueuePrefix_PhotoCaptionMention: a photo whose caption leads
+// with a mention of this bot parses the prefix on the caption in a
+// require-mention group too — the caption's entity list is what addresses
+// the message (#1318).
+func TestReceive_QueuePrefix_PhotoCaptionMention(t *testing.T) {
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	requireMentionBot(t, b)
+	b.api = &gotgbot.Bot{User: gotgbot.User{Id: 42, Username: "mybot"}}
+	mock.files = map[string]string{"large_id": "photos/test.jpg"}
+	b.botToken = "test-token"
+
+	msg := makeMsgWithPhoto(111, "owner", "@mybot /queue look at this")
+	msg.Chat.Type = "supergroup"
+	msg.CaptionEntities = []gotgbot.MessageEntity{{Type: "mention", Offset: 0, Length: int64(len("@mybot"))}}
 	b.receiveMessage(context.Background(), msg)
 
 	select {
 	case qm := <-b.mq.Chan():
-		if qm.Text != "@mybot /queue do it next" {
-			t.Errorf("queued text = %q, want the message verbatim", qm.Text)
+		if qm.Text != "look at this" {
+			t.Errorf("queued text = %q, want %q", qm.Text, "look at this")
 		}
-		if qm.Steer != platform.SteerDefault {
-			t.Errorf("queued steer = %v, want SteerDefault (the mention, not the prefix, is the first word)", qm.Steer)
+		if qm.Steer != platform.SteerNever {
+			t.Errorf("queued steer = %v, want SteerNever", qm.Steer)
 		}
 	default:
-		t.Fatal("expected the mentioned group message on the main queue")
+		t.Fatal("expected the captioned photo on the main queue")
 	}
 }
 

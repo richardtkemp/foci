@@ -223,8 +223,9 @@ func TestFormatUserInfo(t *testing.T) {
 
 func TestMessageContainsMention(t *testing.T) {
 	// Proves @mention detection: matches the bot's username via a "mention"
-	// entity, matches text_mention by user ID, and ignores other users or
-	// bots without API identity.
+	// entity, matches text_mention by user ID, matches a bot_command entity
+	// carrying this bot's @suffix (a group menu tap addresses that bot,
+	// #1318), and ignores other users or bots without API identity.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.api = &gotgbot.Bot{User: gotgbot.User{Id: 99, Username: "focibot"}}
 
@@ -245,6 +246,20 @@ func TestMessageContainsMention(t *testing.T) {
 	}
 	if b.messageContainsMention(mention("hi", gotgbot.MessageEntity{Type: "text_mention", User: &gotgbot.User{Id: 7}})) {
 		t.Error("should not match text_mention for another user")
+	}
+	if !b.messageContainsMention(mention("/queue@focibot x", gotgbot.MessageEntity{Type: "bot_command", Offset: 0, Length: 14})) {
+		t.Error("should detect a bot_command with this bot's @suffix (group menu tap)")
+	}
+	if b.messageContainsMention(mention("/queue@otherbot x", gotgbot.MessageEntity{Type: "bot_command", Offset: 0, Length: 15})) {
+		t.Error("should not match another bot's @suffix")
+	}
+	if b.messageContainsMention(mention("/queue x", gotgbot.MessageEntity{Type: "bot_command", Offset: 0, Length: 6})) {
+		t.Error("a bot_command without an @suffix addresses no bot in particular")
+	}
+	caption := makeMsgWithPhoto(111, "owner", "look @focibot")
+	caption.CaptionEntities = []gotgbot.MessageEntity{{Type: "mention", Offset: 5, Length: 8}}
+	if !b.messageContainsMention(caption) {
+		t.Error("should detect a mention in a photo caption")
 	}
 
 	b.api = nil

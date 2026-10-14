@@ -153,10 +153,11 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 		b.OnUserMessage()
 	}
 
-	// Get text from message or caption (photos use caption)
-	text := msg.Text
+	// Get text from message or caption (photos use caption); each text form
+	// has its own entity list, indexing that text.
+	text, entities := msg.Text, msg.Entities
 	if text == "" {
-		text = msg.Caption
+		text, entities = msg.Caption, msg.CaptionEntities
 	}
 
 	// /steer|/queue delivery-mode prefix (#1318): parse the user's own text
@@ -164,7 +165,12 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 	// "/queue x" still parses — the header would mask it) and strip the
 	// prefix, so the payload reaches the agent alone, carrying the choice on
 	// the queued message. A bare prefix (no message text) keeps the text and
-	// flags the bare form for receiveMessage's usage reply.
+	// flags the bare form for receiveMessage's usage reply. The leading
+	// addressing tokens go first — the mention strip is entity-based, so it
+	// must run before any text edit shifts entity offsets, and it is what
+	// makes "@mybot /queue x" parse (the discord twin of this path strips
+	// mentions before parsing too).
+	text = b.stripSelfMention(text, entities)
 	text = b.stripSteerTarget(text)
 	steer := platform.SteerDefault
 	bareSteerPrefix := false
@@ -296,6 +302,33 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 	}
 
 	return queuedMessage{msg: msg, userID: userID, text: text, attachments: attachments, voice: isVoice, steer: steer, bareSteerPrefix: bareSteerPrefix}, true
+}
+
+// stripSelfMention removes a LEADING @mention of this bot — the first
+// entity, at the start of the text — so the addressing token is not part of
+// the payload: "@mybot /queue x" parses as the /queue prefix and the agent
+// sees only the user's own words (#1318). Only the leading token: a
+// trailing mention ("/queue do it @mybot") is ordinary payload, and mentions
+// of other bots are left verbatim. Must run before any text edit (offsets
+// shift); discord's receive path strips mentions before parsing the same
+// way.
+func (b *Bot) stripSelfMention(text string, entities []gotgbot.MessageEntity) string {
+	if b.api == nil || b.api.User.Id == 0 {
+		return text
+	}
+	start := len(text) - len(strings.TrimLeftFunc(text, unicode.IsSpace))
+	for _, e := range entities {
+		if e.Offset != int64(start) {
+			continue
+		}
+		self := (e.Type == "mention" && b.api.User.Username != "" &&
+			entityText(text, e) == "@"+b.api.User.Username) ||
+			(e.Type == "text_mention" && e.User != nil && e.User.Id == b.api.User.Id)
+		if self {
+			return text[:start] + strings.TrimLeftFunc(text[start+int(e.Length):], unicode.IsSpace)
+		}
+	}
+	return text
 }
 
 // stripSteerTarget removes THIS bot's @username suffix from a /steer|/queue

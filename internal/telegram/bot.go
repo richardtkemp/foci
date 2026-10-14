@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -470,25 +471,49 @@ func (b *Bot) streamInterval() time.Duration {
 	return 250 * time.Millisecond
 }
 
-// messageContainsMention returns true if the message @mentions the bot.
+// messageContainsMention returns true if the message addresses this bot:
+// an @mention entity (in the text or a media caption), a text_mention of
+// its user id, or a bot_command entity carrying its own @suffix — Telegram
+// delivers a command-menu tap in a group as "/queue@mybot", addressed to
+// that bot (#1318). Another bot's mention or @suffix does not count.
 func (b *Bot) messageContainsMention(msg *gotgbot.Message) bool {
 	if b.api == nil || b.api.User.Id == 0 {
 		return false
 	}
 	botUsername := b.api.User.Username
 	botUserID := b.api.User.Id
-	for _, entity := range msg.Entities {
-		if entity.Type == "mention" && botUsername != "" {
-			mentioned := msg.Text[entity.Offset : entity.Offset+entity.Length]
-			if mentioned == "@"+botUsername {
-				return true
+	addressedToUs := func(text string, entities []gotgbot.MessageEntity) bool {
+		for _, entity := range entities {
+			switch entity.Type {
+			case "mention":
+				if botUsername != "" && entityText(text, entity) == "@"+botUsername {
+					return true
+				}
+			case "text_mention":
+				if entity.User != nil && entity.User.Id == botUserID {
+					return true
+				}
+			case "bot_command":
+				if cmd := entityText(text, entity); botUsername != "" {
+					if at := strings.LastIndex(cmd, "@"); at >= 0 && strings.EqualFold(cmd[at+1:], botUsername) {
+						return true
+					}
+				}
 			}
 		}
-		if entity.Type == "text_mention" && entity.User != nil && entity.User.Id == botUserID {
-			return true
-		}
+		return false
 	}
-	return false
+	return addressedToUs(msg.Text, msg.Entities) || addressedToUs(msg.Caption, msg.CaptionEntities)
+}
+
+// entityText slices the entity's span out of the text it indexes (caption
+// entities index the caption, text entities the text), or "" when the span
+// falls outside it — Telegram offsets are advisory, never a reason to panic.
+func entityText(text string, e gotgbot.MessageEntity) string {
+	if e.Offset < 0 || e.Length < 0 || e.Offset+e.Length > int64(len(text)) {
+		return ""
+	}
+	return text[e.Offset : e.Offset+e.Length]
 }
 
 // SetToolDetailStore sets the persistent store for tool call details.

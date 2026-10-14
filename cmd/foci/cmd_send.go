@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"foci/internal/platform"
 )
 
 type sendFlags struct {
@@ -135,11 +137,14 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 	flags.async = envBool(flags.async, "FOCI_ASYNC")
 	flags.sync = envBool(flags.sync, "FOCI_SYNC")
 	// FOCI_STEER sets the delivery mode ("steer"/"queue"); other values are
-	// ignored → absent, and an explicit --steer/--queue flag wins over it.
-	switch envDefault("", "FOCI_STEER") {
-	case "steer":
+	// ignored → absent. Mapped through the one shared wire mapping
+	// (platform.SteerPreferenceFromWire, #1318). A flag plus the OTHER
+	// mode's env value is a usage error (steerBody below) — two live
+	// sources disagreeing is a mistake to surface, not resolve.
+	switch platform.SteerPreferenceFromWire(envDefault("", "FOCI_STEER")) {
+	case platform.SteerAlways:
 		flags.steerFlag = true
-	case "queue":
+	case platform.SteerNever:
 		flags.queueFlag = true
 	}
 	return flags, filtered
@@ -200,7 +205,7 @@ work). Use --no-gate to send immediately with no gating. An explicit --steer or
 Delivery mode (#1318): --steer folds the message into the agent's running turn
 (if one runs — otherwise it delivers at once); --queue runs it as its own fresh
 turn behind a running one (and is never consumed as plan feedback or an ask
-answer). Both are mutual-exclusive switches; a deferred send keeps its mode.
+answer). The two are mutually exclusive; a deferred send keeps its mode.
 
 Flags:
   -a, --agent <id>          Target agent (env: FOCI_AGENT)
@@ -208,7 +213,7 @@ Flags:
   --broadcast               Deliver the response to every live surface for the agent (telegram, app, …); with a delivery mode the mode is ignored
   -m, --model <model>       Model override: group name, alias, or developer/model_id (env: FOCI_MODEL)
   --steer                   Redirect the agent now: fold into the running turn, else deliver at once (env: FOCI_STEER=steer)
-  --queue                   Wait for the current turn to finish, then run as its own fresh turn (env: FOCI_STEER=queue)
+  --queue                   Run as its own fresh turn, behind a running one if any (an idle session starts it at once; env: FOCI_STEER=queue)
   --if-warm <dur>           Skip if this session has not run a turn within duration (env: FOCI_IF_WARM; alias --if-active)
   --if-cold <dur>           Skip if this session has run a turn within duration (env: FOCI_IF_COLD; alias --if-inactive)
   --if-user-active <dur>    Skip if user has not touched this agent within duration (env: FOCI_IF_USER_ACTIVE)

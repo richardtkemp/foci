@@ -41,9 +41,9 @@ These flags are accepted by all commands:
 | `--no-gate` | | `FOCI_NO_GATE` | **Send/branch/command**: run now, ignoring any wait condition (and send's `--wait-cold 1m` default). Non-empty = true. |
 | `--human` | | `FOCI_HUMAN` | **Send/branch/command**: declare a human (not a cron or script) sent this request. It counts as user attention (`--if-user-*` / `--wait-user-*` activity) once dispatched; a skipped or deferred request never does. Non-empty = true. |
 | `--steer` | | `FOCI_STEER` | **Send**: redirect the agent now — fold into the running turn if one runs, else deliver at once. Mutually exclusive with `--queue` (env value `steer`). See [Delivery mode](#delivery-mode-steer--queue). |
-| `--queue` | | `FOCI_STEER` | **Send**: wait for the current turn to finish, then run as its own fresh turn (never plan feedback, never an ask answer). Mutually exclusive with `--steer` (env value `queue`). |
+| `--queue` | | `FOCI_STEER` | **Send**: run as its own fresh turn, behind a running one if any (an idle session starts it at once; never plan feedback, never an ask answer). Mutually exclusive with `--steer` (env value `queue`). |
 
-**Resolution order:** explicit flag > env var > default. Every flag has a corresponding `FOCI_` env var and vice versa.
+**Resolution order:** explicit flag > env var > default. Every flag has a corresponding `FOCI_` env var and vice versa. One exception: the delivery-mode pair `--steer`/`--queue` — giving a flag plus the *other* mode's `FOCI_STEER` value is a usage error (two live sources disagreeing), rather than the flag silently winning.
 
 ## Environment Variables
 
@@ -95,7 +95,7 @@ foci send [-a agent] [-s session] [-m model] [--steer | --queue] [--if-warm <dur
 | `--wait-timeout <dur>` (`--deadline`) | | Max deferral before sending anyway. Default **2h**. |
 | `--no-gate` | | Send immediately: no wait default, no wait condition. |
 | `--steer` | | Redirect the agent now: fold into the running turn, else deliver at once (env: `FOCI_STEER=steer`). |
-| `--queue` | | Wait for the current turn to finish, then run as its own fresh turn (env: `FOCI_STEER=queue`). |
+| `--queue` | | Run as its own fresh turn, behind a running one if any (an idle session starts it at once; env: `FOCI_STEER=queue`). |
 | `--human` | | Declare a human sent this: counts as user attention once dispatched; skipped/deferred requests never do. |
 | `--sync` / `--wait` | | Wait for the agent's reply instead of returning immediately. Not a `--wait-*` gate. |
 | `--async` / `--no-wait` | | Fire-and-forget mode (default). Returns immediately, response goes to Telegram. |
@@ -148,8 +148,10 @@ foci send --steer "stop digging, use the other approach"
 # Queue behind the running turn as its own fresh turn (never an ask answer)
 foci send --queue "once you finish that, also check the logs"
 
-# A mode skips only send's implicit --wait-cold 1m default: this runs now on a
-# busy session (an explicit --wait-* gate would still defer it, mode kept)
+# A mode skips only send's implicit --wait-cold 1m default: the message is
+# delivered to the session now (not deferred); on a busy session it then
+# queues behind the running turn. An explicit --wait-* gate would still
+# defer it, mode kept.
 foci send --queue "follow-up while you work"
 ```
 

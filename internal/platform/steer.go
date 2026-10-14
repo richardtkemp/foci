@@ -40,9 +40,11 @@ const SteerPrefixUsage = "Usage: /queue <message> — wait for the current turn 
 // SteerPreferenceFromWire maps the wire-level steer field ("steer" / "queue" /
 // anything else) to a preference; unknown values degrade to the config
 // default rather than erroring — forward compatibility with newer clients.
-// The single mapping for every entry point: the app's ClientMessage.Steer,
-// HTTP /send's steer field (foci send --steer/--queue, deferred sends) — all
-// use the same wire strings (#1318).
+// The single string→preference mapping for every entry point: the app's
+// ClientMessage.Steer, HTTP /send's steer field (foci send --steer/--queue,
+// FOCI_STEER, deferred sends) and the /steer|/queue chat prefixes
+// (ParseSteerPrefix reduces its word to a wire value) — all use the same
+// wire strings (#1318).
 func SteerPreferenceFromWire(s string) SteerPreference {
 	switch s {
 	case "steer":
@@ -61,19 +63,20 @@ func SteerPreferenceFromWire(s string) SteerPreference {
 // for the bare form, which the caller answers with SteerPrefixUsage and
 // delivers nothing (#1318). Only these two whole first words match: /queued,
 // /steerage and /queue, are not prefixes, and a prefix anywhere but the first
-// word is ignored.
+// word is ignored. The prefixes are the wire values with a slash prepended,
+// so the ONE mapping decides which words carry a choice — the word minus its
+// slash, lowercased, goes through SteerPreferenceFromWire; there is no
+// second string→preference switch anywhere (#1318).
 func ParseSteerPrefix(text string) (pref SteerPreference, rest string, matched bool) {
 	trimmed := strings.TrimLeftFunc(text, unicode.IsSpace)
 	word := trimmed
 	if i := strings.IndexFunc(trimmed, unicode.IsSpace); i >= 0 {
 		word = trimmed[:i]
 	}
-	switch {
-	case strings.EqualFold(word, "/steer"):
-		pref = SteerAlways
-	case strings.EqualFold(word, "/queue"):
-		pref = SteerNever
-	default:
+	if len(word) < 2 || word[0] != '/' {
+		return SteerDefault, text, false
+	}
+	if pref = SteerPreferenceFromWire(strings.ToLower(word[1:])); pref == SteerDefault {
 		return SteerDefault, text, false
 	}
 	return pref, strings.TrimLeftFunc(trimmed[len(word):], unicode.IsSpace), true
