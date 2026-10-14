@@ -363,14 +363,15 @@ func preToolBody(toolName, input string) []byte {
 		`","tool_use_id":"toolu_pre","tool_input":` + input + `}`)
 }
 
-// runWithRules runs process with the default pretool rules on the command line.
+// runWithRules runs process with the default pretool rules in the environment.
 func runWithRules(t *testing.T, body []byte) hookOutput {
 	t.Helper()
 	enc, err := pretool.Encode(pretool.Defaults)
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, ok := process([]string{"foci-cc-hook", installIDFlag, "id", rulesFlag, enc}, body)
+	t.Setenv(rulesEnv, enc)
+	out, ok := process([]string{"foci-cc-hook", installIDFlag, "id"}, body)
 	if !ok {
 		t.Fatal("process rejected fixture")
 	}
@@ -420,10 +421,11 @@ func TestPreToolUse_RulesIgnoredOnPost(t *testing.T) {
 	}
 }
 
-// TestPreToolUse_BadRulesFailOpen proves an undecodable --rules value blocks
+// TestPreToolUse_BadRulesFailOpen proves an undecodable rules value blocks
 // nothing.
 func TestPreToolUse_BadRulesFailOpen(t *testing.T) {
-	out, ok := process([]string{"foci-cc-hook", rulesFlag, "!!not-base64!!"}, preToolBody("AskUserQuestion", `{}`))
+	t.Setenv(rulesEnv, "!!not-base64!!")
+	out, ok := process([]string{"foci-cc-hook"}, preToolBody("AskUserQuestion", `{}`))
 	if !ok || out.HookSpecificOutput != nil {
 		t.Errorf("bad rules produced a decision: ok=%v out=%+v", ok, out)
 	}
@@ -444,7 +446,8 @@ func TestPreToolUse_CwdReachesRules(t *testing.T) {
 	for cwd, want := range map[string]string{"/repo": "no_commit_here", "/repo-wt": ""} {
 		body := []byte(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_use_id":"t","cwd":"` + cwd +
 			`","tool_input":{"command":"git commit -m x"}}`)
-		out, ok := process([]string{"foci-cc-hook", rulesFlag, enc}, body)
+		t.Setenv(rulesEnv, enc)
+		out, ok := process([]string{"foci-cc-hook"}, body)
 		if !ok || out.DeniedRule != want {
 			t.Errorf("cwd %s: DeniedRule = %q, want %q", cwd, out.DeniedRule, want)
 		}
@@ -469,7 +472,8 @@ func TestPreToolUse_WhenCheck(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		out, ok := process([]string{"foci-cc-hook", rulesFlag, enc}, preToolBody("Edit", `{"file_path":"/golden"}`))
+		t.Setenv(rulesEnv, enc)
+		out, ok := process([]string{"foci-cc-hook"}, preToolBody("Edit", `{"file_path":"/golden"}`))
 		if !ok || out.DeniedRule != want.rule || (out.HookSpecificOutput != nil) != (want.rule != "") || len(out.WhenErrors) != want.errs {
 			t.Errorf("when %q: out = %+v, want rule %q and %d errors", when, out, want.rule, want.errs)
 		}

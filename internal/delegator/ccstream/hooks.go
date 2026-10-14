@@ -58,14 +58,16 @@ import (
 // PreToolUse rules (#2028): the same helper also enforces foci's configurable
 // pretool rules (internal/delegator/pretool). The PreToolUse entry's matcher
 // widens from "Agent" to "Agent|<every ruled tool>", and its command line
-// carries the encoded rules via --rules. A matching rule makes the helper emit
+// gets the encoded rules via $FOCI_CC_PRETOOL_RULES on the CC process (#2414:
+// CC logs each hook command line into the transcript, and the env is out of
+// the agent's reach). A matching rule makes the helper emit
 // hookSpecificOutput.permissionDecision="deny"; CC then skips the tool and
 // hands the reason to the model as the tool's error result. The helper never
 // emits "allow". The deny still reaches foci as a hook_response (with
 // denied_rule set), which handleHookResponse logs.
 //
 // Stop rules (#2089): when the agent has stop rules, the same helper is also
-// installed as a Stop hook with the rules in --stop-rules. It blocks the end
+// installed as a Stop hook with the rules in $FOCI_CC_STOP_RULES. It blocks the end
 // of a turn whose final text announces work while nothing was launched (see
 // internal/delegator/stoprule), and reports every verdict in its stdout, which
 // handleHookResponse logs as stop_rule_eval. No rules, no Stop hook.
@@ -81,11 +83,16 @@ const hookCommandName = "foci-cc-hook"
 // surface as build errors in the tests.
 const installIDFlag = "--install"
 
-// rulesFlag must match cmd/foci-cc-hook/main.go rulesFlag.
-const rulesFlag = "--rules"
+// rulesEnv must match cmd/foci-cc-hook/main.go rulesEnv.
+const rulesEnv = "FOCI_CC_PRETOOL_RULES"
 
-// stopRulesFlag must match cmd/foci-cc-hook/main.go stopRulesFlag.
-const stopRulesFlag = "--stop-rules"
+// stopRulesEnv must match cmd/foci-cc-hook/main.go stopRulesEnv.
+const stopRulesEnv = "FOCI_CC_STOP_RULES"
+
+// maxRulesEnvBytes bounds one rules variable. Linux caps a single environment
+// string at 128 KiB (MAX_ARG_STRLEN); past it execve fails with E2BIG and the
+// CC process would not start, so an oversize rule set is refused up front.
+const maxRulesEnvBytes = 120 * 1024
 
 // hookTimeoutSeconds is the CC hook-script timeout foci configures. 10
 // seconds is comfortable for the helper binary's ~10ms startup cost while
@@ -182,9 +189,9 @@ func fociHookSpec(hookCmd string) hookSpec {
 // buildHookSettingsJSON returns a JSON string encoding a settings object
 // containing PreToolUse, PostToolUse, PostToolUseFailure and PermissionDenied
 // hook entries
-// pointing at the given hook command. rules (may be empty) are appended to the
-// PreToolUse command only, and widen its matcher. stopRules, when present, add
-// a Stop entry whose command carries them. CC accepts this string via
+// pointing at the given hook command. rules (may be empty) widen the PreToolUse
+// matcher; stopRules, when present, add a Stop entry. The rules themselves
+// travel in hookRulesEnv, never in the command (#2414). CC accepts this string via
 // `--settings <json>` and loads it as an additional merged-in settings source.
 // No filesystem I/O happens here — the caller passes the returned JSON as an
 // argv to the claude subprocess.
@@ -194,18 +201,10 @@ func buildHookSettingsJSON(hookCmd string, rules []pretool.Rule, stopRules []sto
 		Matcher: "*",
 		Hooks:   []hookSpec{spec},
 	}}
-	preCmd := hookCmd
-	if len(rules) > 0 {
-		enc, err := pretool.Encode(rules)
-		if err != nil {
-			return "", fmt.Errorf("encode pretool rules: %w", err)
-		}
-		preCmd = hookCmd + " " + rulesFlag + " " + enc
-	}
 	hooks := hooksConfig{
 		// PreToolUse for the Agent tool (a precise subagent start) and the
 		// tools pretool rules police.
-		eventPreToolUse:         {{Matcher: preToolMatcher(rules), Hooks: []hookSpec{fociHookSpec(preCmd)}}},
+		eventPreToolUse:         {{Matcher: preToolMatcher(rules), Hooks: []hookSpec{spec}}},
 		eventPostToolUse:        allTools,
 		eventPostToolUseFailure: allTools,
 		// An auto-mode classifier denial fires neither Post hook, only this
@@ -213,12 +212,8 @@ func buildHookSettingsJSON(hookCmd string, rules []pretool.Rule, stopRules []sto
 		eventPermissionDenied: allTools,
 	}
 	if len(stopRules) > 0 {
-		enc, err := stoprule.Encode(stopRules)
-		if err != nil {
-			return "", fmt.Errorf("encode stop rules: %w", err)
-		}
 		// Stop takes no matcher.
-		hooks[eventStop] = []hookMatcher{{Hooks: []hookSpec{fociHookSpec(hookCmd + " " + stopRulesFlag + " " + enc)}}}
+		hooks[eventStop] = []hookMatcher{{Hooks: []hookSpec{spec}}}
 	}
 	top := map[string]any{"hooks": hooks}
 	body, err := json.Marshal(top)
@@ -228,22 +223,50 @@ func buildHookSettingsJSON(hookCmd string, rules []pretool.Rule, stopRules []sto
 	return string(body), nil
 }
 
+// hookRulesEnv encodes the pretool and stop rules into the environment
+// variables foci-cc-hook reads. They go on the CC process env, not the hook
+// command line, so CC's transcript logging of the command stays small and the
+// agent's Bash cannot rewrite its parent's env. Empty rule sets set nothing.
+func hookRulesEnv(rules []pretool.Rule, stopRules []stoprule.Rule) (map[string]string, error) {
+	env := map[string]string{}
+	if len(rules) > 0 {
+		enc, err := pretool.Encode(rules)
+		if err != nil {
+			return nil, fmt.Errorf("encode pretool rules: %w", err)
+		}
+		env[rulesEnv] = enc
+	}
+	if len(stopRules) > 0 {
+		enc, err := stoprule.Encode(stopRules)
+		if err != nil {
+			return nil, fmt.Errorf("encode stop rules: %w", err)
+		}
+		env[stopRulesEnv] = enc
+	}
+	for k, v := range env {
+		if len(v) > maxRulesEnvBytes {
+			return nil, fmt.Errorf("%s is %d bytes, over the %d byte environment limit", k, len(v), maxRulesEnvBytes)
+		}
+	}
+	return env, nil
+}
+
 // ---------------------------------------------------------------------------
 // Backend lifecycle
 // ---------------------------------------------------------------------------
 
 // prepareHooks resolves the helper binary, generates a unique install ID,
 // and returns the JSON settings string to pass to CC via `--settings`.
-// The second return value is false when hook install should be skipped
+// The second return value is the rules environment for the CC process. The last is false when hook install should be skipped
 // entirely (binary not found on sibling or PATH, or JSON marshal failure);
 // callers omit the `--settings` argv in that case and CC launches without
 // foci's hooks. A Warn-level log explains the skip so operators running
 // stripped builds can diagnose missing tool-result display in ccstream.
-func (b *Backend) prepareHooks() (string, bool) {
+func (b *Backend) prepareHooks() (string, map[string]string, bool) {
 	hookPath, err := hookbin.Resolve(hookCommandName)
 	if err != nil {
 		b.logger().Warnf("CC hook install skipped: %v (ccstream OnToolEnd events will not fire)", err)
-		return "", false
+		return "", nil, false
 	}
 	installID := newInstallID()
 	hookCmd := buildHookCommand(hookPath, installID)
@@ -258,7 +281,12 @@ func (b *Backend) prepareHooks() (string, bool) {
 	settingsJSON, err := buildHookSettingsJSON(hookCmd, rules, stopRules)
 	if err != nil {
 		b.logger().Warnf("CC hook install skipped: %v", err)
-		return "", false
+		return "", nil, false
+	}
+	rulesEnvVars, err := hookRulesEnv(rules, stopRules)
+	if err != nil {
+		b.logger().Errorf("CC hook install skipped, rules not enforced: %v", err)
+		return "", nil, false
 	}
 
 	b.mu.Lock()
@@ -266,7 +294,7 @@ func (b *Backend) prepareHooks() (string, bool) {
 	b.hookInstallID = installID
 	b.mu.Unlock()
 	b.logger().Infof("CC hooks installed via --settings (install_id=%s pretool_rules=%d stop_rules=%d)", installID, len(rules), len(stopRules))
-	return settingsJSON, true
+	return settingsJSON, rulesEnvVars, true
 }
 
 // ---------------------------------------------------------------------------

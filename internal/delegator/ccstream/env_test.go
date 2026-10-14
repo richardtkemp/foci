@@ -44,7 +44,7 @@ func clearEnvVar(t *testing.T, key string) {
 func TestBuildEnv_RaisesBashMaxTimeout(t *testing.T) {
 	clearEnvVar(t, "BASH_MAX_TIMEOUT_MS")
 
-	env := buildEnv(nil)
+	env := buildEnv(nil, nil)
 
 	got, n := envValue(env, "BASH_MAX_TIMEOUT_MS")
 	if n == 0 {
@@ -66,7 +66,7 @@ func TestBuildEnv_RaisesBashMaxTimeout(t *testing.T) {
 func TestBuildEnv_RaisesMaxRetries(t *testing.T) {
 	clearEnvVar(t, "CLAUDE_CODE_MAX_RETRIES")
 
-	got, n := envValue(buildEnv(nil), "CLAUDE_CODE_MAX_RETRIES")
+	got, n := envValue(buildEnv(nil, nil), "CLAUDE_CODE_MAX_RETRIES")
 	if n == 0 {
 		t.Fatal("CLAUDE_CODE_MAX_RETRIES missing from CC subprocess env — subagents die after CC's default 10 retries of a 529")
 	}
@@ -81,7 +81,7 @@ func TestBuildEnv_RaisesMaxRetries(t *testing.T) {
 func TestBuildEnv_SetsRetryWatchdog(t *testing.T) {
 	clearEnvVar(t, "CLAUDE_CODE_RETRY_WATCHDOG")
 
-	if got, n := envValue(buildEnv(nil), "CLAUDE_CODE_RETRY_WATCHDOG"); n == 0 || got != "1" {
+	if got, n := envValue(buildEnv(nil, nil), "CLAUDE_CODE_RETRY_WATCHDOG"); n == 0 || got != "1" {
 		t.Errorf("CLAUDE_CODE_RETRY_WATCHDOG = %q (n=%d), want %q — 529s would kill subagents after the bounded budget", got, n, "1")
 	}
 }
@@ -91,7 +91,7 @@ func TestBuildEnv_SetsRetryWatchdog(t *testing.T) {
 func TestBuildEnv_RetryWatchdogOverridable(t *testing.T) {
 	clearEnvVar(t, "CLAUDE_CODE_RETRY_WATCHDOG")
 
-	if got, _ := envValue(buildEnv(map[string]string{"CLAUDE_CODE_RETRY_WATCHDOG": ""}), "CLAUDE_CODE_RETRY_WATCHDOG"); got != "" {
+	if got, _ := envValue(buildEnv(map[string]string{"CLAUDE_CODE_RETRY_WATCHDOG": ""}, nil), "CLAUDE_CODE_RETRY_WATCHDOG"); got != "" {
 		t.Errorf("per-agent override lost: CLAUDE_CODE_RETRY_WATCHDOG = %q, want empty", got)
 	}
 }
@@ -102,7 +102,7 @@ func TestBuildEnv_RetryWatchdogOverridable(t *testing.T) {
 func TestBuildEnv_LeavesBashDefaultTimeoutAlone(t *testing.T) {
 	clearEnvVar(t, "BASH_DEFAULT_TIMEOUT_MS")
 
-	if _, n := envValue(buildEnv(nil), "BASH_DEFAULT_TIMEOUT_MS"); n != 0 {
+	if _, n := envValue(buildEnv(nil, nil), "BASH_DEFAULT_TIMEOUT_MS"); n != 0 {
 		t.Error("BASH_DEFAULT_TIMEOUT_MS set — only the MAX should be raised")
 	}
 }
@@ -114,7 +114,7 @@ func TestBuildEnv_LeavesBashDefaultTimeoutAlone(t *testing.T) {
 func TestBuildEnv_PerAgentEnvOverrides(t *testing.T) {
 	clearEnvVar(t, "BASH_MAX_TIMEOUT_MS")
 
-	env := buildEnv(map[string]string{"BASH_MAX_TIMEOUT_MS": "300000"})
+	env := buildEnv(map[string]string{"BASH_MAX_TIMEOUT_MS": "300000"}, nil)
 
 	if got, _ := envValue(env, "BASH_MAX_TIMEOUT_MS"); got != "300000" {
 		t.Errorf("effective BASH_MAX_TIMEOUT_MS = %q, want per-agent override %q", got, "300000")
@@ -130,7 +130,7 @@ func TestBuildEnv_KeepsSessionExtras(t *testing.T) {
 		"FOCI_SESSION_KEY":  "agent/chat",
 		"CCSTUB_RESPONSE":   "hi",
 		"SOMETHING_PERAGNT": "1",
-	})
+	}, nil)
 	for k, want := range map[string]string{
 		"BASH_ENV":                              "/tmp/funcs.sh",
 		"FOCI_SOCK":                             "/tmp/foci.sock",

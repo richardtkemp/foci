@@ -108,11 +108,14 @@ func TestBuildHookSettingsJSON_PreToolRules(t *testing.T) {
 		t.Errorf("PreToolUse matcher = %q", pre[0].Matcher)
 	}
 	preCmd := pre[0].Hooks[0].Command
-	prefix := cmd + " " + rulesFlag + " "
-	if !strings.HasPrefix(preCmd, prefix) {
-		t.Fatalf("PreToolUse command = %q, want prefix %q", preCmd, prefix)
+	if preCmd != cmd {
+		t.Fatalf("PreToolUse command = %q, want bare %q (rules ride the env, #2414)", preCmd, cmd)
 	}
-	got, err := pretool.Decode(strings.TrimPrefix(preCmd, prefix))
+	envVars, err := hookRulesEnv(rules, nil)
+	if err != nil || len(envVars) != 1 {
+		t.Fatalf("hookRulesEnv = %v err=%v", envVars, err)
+	}
+	got, err := pretool.Decode(envVars[rulesEnv])
 	if err != nil || len(got) != len(rules) || got[0].Reason != "r1" {
 		t.Errorf("decoded rules = %+v err=%v", got, err)
 	}
@@ -147,12 +150,14 @@ func TestBuildHookSettingsJSON_StopRules(t *testing.T) {
 	if len(stop) != 1 || stop[0].Matcher != "" || len(stop[0].Hooks) != 1 {
 		t.Fatalf("Stop entries = %+v, want one matcher-less entry", stop)
 	}
-	prefix := cmd + " " + stopRulesFlag + " "
-	c := stop[0].Hooks[0].Command
-	if !strings.HasPrefix(c, prefix) {
-		t.Fatalf("Stop command = %q, want prefix %q", c, prefix)
+	if c := stop[0].Hooks[0].Command; c != cmd {
+		t.Fatalf("Stop command = %q, want bare %q", c, cmd)
 	}
-	got, err := stoprule.Decode(strings.TrimPrefix(c, prefix))
+	envVars, err := hookRulesEnv(nil, []stoprule.Rule{{Name: "s", Text: []string{"starting"}, Reason: "r"}})
+	if err != nil || len(envVars) != 1 {
+		t.Fatalf("hookRulesEnv = %v err=%v", envVars, err)
+	}
+	got, err := stoprule.Decode(envVars[stopRulesEnv])
 	if err != nil || len(got) != 1 || got[0].Name != "s" {
 		t.Errorf("decoded stop rules = %+v err=%v", got, err)
 	}
@@ -1026,5 +1031,26 @@ func TestHandleHookResponse_RuntimeShownLogged(t *testing.T) {
 	}
 	if strings.Contains(got, "toolu_fast") {
 		t.Errorf("logged a runtime note for a fast call:\n%s", got)
+	}
+}
+
+// TestHookRulesEnv_EmptyAndOversize proves no rules sets nothing and a rule
+// set past the single-env-string limit is refused (#2414).
+func TestHookRulesEnv_EmptyAndOversize(t *testing.T) {
+	if env, err := hookRulesEnv(nil, nil); err != nil || len(env) != 0 {
+		t.Errorf("empty = %v err=%v", env, err)
+	}
+	big := []pretool.Rule{{Name: "big", Tool: "Bash", Action: "deny", Reason: strings.Repeat("x", 4*maxRulesEnvBytes)}}
+	if _, err := hookRulesEnv(big, nil); err == nil {
+		t.Error("oversize rules accepted")
+	}
+}
+
+// TestBuildEnv_HookRulesWin proves the hook rules reach the CC env and that a
+// per-agent env of the same name cannot displace them.
+func TestBuildEnv_HookRulesWin(t *testing.T) {
+	env := buildEnv(map[string]string{rulesEnv: "agent"}, map[string]string{rulesEnv: "foci"})
+	if got, _ := envValue(env, rulesEnv); got != "foci" {
+		t.Errorf("%s = %q, want foci", rulesEnv, got)
 	}
 }

@@ -76,7 +76,7 @@ const ccRetryWatchdog = "1"
 // precisely so the CC-only vars reach ONLY the Claude Code subprocess: the
 // opencode, codex and api backends build their environments in their own
 // packages and never see these.
-func buildEnv(extra map[string]string) []string {
+func buildEnv(extra, hookRules map[string]string) []string {
 	env := procx.Env(procx.Operator)
 
 	// Turn completion is keyed to CC's session_state_changed running/idle SDK
@@ -96,6 +96,10 @@ func buildEnv(extra map[string]string) []string {
 	env = append(env, "CLAUDE_CODE_RETRY_WATCHDOG="+ccRetryWatchdog)
 
 	for k, v := range extra {
+		env = append(env, k+"="+v)
+	}
+	// Hook rules come last so no per-agent env can displace them (#2414).
+	for k, v := range hookRules {
 		env = append(env, k+"="+v)
 	}
 	return env

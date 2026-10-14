@@ -122,8 +122,10 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// with user hooks automatically). Skipped when the foci-cc-hook
 	// binary can't be located — Warn logged, ccstream runs without
 	// OnToolEnd events. See hooks.go for the full flow.
-	if hookSettings, ok := b.prepareHooks(); ok {
+	var hookEnv map[string]string
+	if hookSettings, env, ok := b.prepareHooks(); ok {
 		args = append(args, "--settings", hookSettings)
+		hookEnv = env
 	}
 
 	// Production runs use "claude" (resolved via $PATH); integration tests
@@ -143,7 +145,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// so it must be the operator's full environment.
 	cmd := procx.Spawn(cmdCtx, procx.Operator, claudeBin, args...)
 	cmd.Dir = opts.WorkDir
-	cmd.Env = buildEnv(opts.Env)
+	cmd.Env = buildEnv(opts.Env, hookEnv)
 	b.autoApproveEnv = autoapprove.EnvironmentFromList(cmd.Env)
 
 	// Get pipes.

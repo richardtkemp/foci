@@ -13,7 +13,7 @@
 // response payloads to keep stream-json lines under ccstream's
 // scanner limit, and writes a compact JSON object to stdout.
 //
-// On PreToolUse it also evaluates the pretool rules foci passed via --rules
+// On PreToolUse it also evaluates the pretool rules foci passed via $FOCI_CC_PRETOOL_RULES
 // (internal/delegator/pretool). A matching deny rule adds a
 // hookSpecificOutput.permissionDecision="deny" to the same JSON object; CC
 // honours it and returns permissionDecisionReason to the model as the tool's
@@ -23,7 +23,7 @@
 // never denies, and is reported in when_errors for foci to log.
 //
 // When an agent has stop rules (internal/delegator/stoprule, #2089) foci also
-// installs it as a Stop hook, with the rules in --stop-rules. On Stop it
+// installs it as a Stop hook, with the rules in $FOCI_CC_STOP_RULES (env, #2414). On Stop it
 // evaluates the turn's final text and transcript and writes a stopOutput:
 // decision="block" plus a reason when a rule fires (CC then continues the
 // turn with the reason as a "Stop hook feedback" user message, verified live
@@ -56,13 +56,16 @@ import (
 // which hook_response events belong to which backend.
 const installIDFlag = "--install"
 
-// rulesFlag carries the encoded pretool rules (pretool.Encode). Only the
-// PreToolUse command line has it; must match internal/delegator/ccstream.
-const rulesFlag = "--rules"
+// rulesEnv names the environment variable carrying the encoded pretool rules
+// (pretool.Encode). foci sets it on the CC process, not on the hook command
+// line: CC logs every hook command into the transcript (#2414), and only the
+// CC process env is out of the agent's reach (rules are a security gate). Must
+// match internal/delegator/ccstream.
+const rulesEnv = "FOCI_CC_PRETOOL_RULES"
 
-// stopRulesFlag carries the encoded stop rules (stoprule.Encode). Only the
-// Stop command line has it; must match internal/delegator/ccstream.
-const stopRulesFlag = "--stop-rules"
+// stopRulesEnv names the variable carrying the encoded stop rules
+// (stoprule.Encode); same delivery and sync rules as rulesEnv.
+const stopRulesEnv = "FOCI_CC_STOP_RULES"
 
 // eventStop is CC's hook_event_name for the end-of-turn hook.
 const eventStop = "Stop"
@@ -240,12 +243,12 @@ func handle(args []string, body []byte) (any, bool) {
 	return toolOutputFor(args, in), true
 }
 
-// stopFor evaluates the stop rules foci passed via --stop-rules. With no
+// stopFor evaluates the stop rules foci passed via $FOCI_CC_STOP_RULES. With no
 // rules, or rules that don't decode, it passes: a broken rule set must never
 // hold a turn open.
 func stopFor(args []string, in hookInput) stopOutput {
 	out := stopOutput{HookEvent: eventStop, InstallID: parseInstallID(args), Result: stoprule.ResultPass}
-	enc := parseFlag(args, stopRulesFlag)
+	enc := os.Getenv(stopRulesEnv)
 	if enc == "" {
 		return out
 	}
@@ -282,7 +285,7 @@ func toolOutputFor(args []string, in hookInput) hookOutput {
 		IsError:   in.HookEventName == "PostToolUseFailure" || in.HookEventName == eventPermissionDenied || in.IsInterrupt || in.IsTimeout,
 	}
 	if in.HookEventName == "PreToolUse" {
-		applyRules(&out, parseFlag(args, rulesFlag), pretool.Call{Tool: in.ToolName, Input: in.ToolInput, Cwd: in.Cwd})
+		applyRules(&out, os.Getenv(rulesEnv), pretool.Call{Tool: in.ToolName, Input: in.ToolInput, Cwd: in.Cwd})
 	}
 	if len(in.ToolInput) > 0 {
 		// Forward the raw tool_input JSON so downstream nudge rules can match

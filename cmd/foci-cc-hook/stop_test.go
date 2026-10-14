@@ -54,7 +54,8 @@ func runStop(t *testing.T, body []byte) stopOutput {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, ok := handle([]string{"foci-cc-hook", installIDFlag, "id", stopRulesFlag, enc}, body)
+	t.Setenv(stopRulesEnv, enc)
+	out, ok := handle([]string{"foci-cc-hook", installIDFlag, "id"}, body)
 	if !ok {
 		t.Fatal("handle rejected fixture")
 	}
@@ -113,7 +114,7 @@ func TestStop_NonMatchingPasses(t *testing.T) {
 	}
 }
 
-// TestStop_NoRulesPasses: a Stop with no --stop-rules never blocks.
+// TestStop_NoRulesPasses: a Stop with no stop rules never blocks.
 func TestStop_NoRulesPasses(t *testing.T) {
 	out, _ := handle([]string{"foci-cc-hook"}, stopBody(t, "", "I'm starting it now.", false))
 	so := out.(stopOutput)
