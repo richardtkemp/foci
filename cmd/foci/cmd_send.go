@@ -20,7 +20,7 @@ type sendFlags struct {
 	async       bool   // fire-and-forget mode
 	sync        bool   // wait for response (overrides async)
 	broadcast   bool   // deliver the response to every live surface for the agent
-	steerFlag   bool   // --steer / FOCI_STEER=steer: fold into a running turn (#1318)
+	steerFlag   bool   // --steer / FOCI_STEER=steer: fold into a running USER turn (#1318)
 	queueFlag   bool   // --queue / FOCI_STEER=queue: fresh turn behind a running one
 }
 
@@ -202,17 +202,21 @@ the session to be idle 1m before delivering (avoids interleaving with active
 work). Use --no-gate to send immediately with no gating. An explicit --steer or
 --queue skips only this implicit default; explicit gates still apply.
 
-Delivery mode (#1318): --steer folds the message into the agent's running turn
-(if one runs — otherwise it delivers at once); --queue runs it as its own fresh
-turn behind a running one (and is never consumed as plan feedback or an ask
-answer). The two are mutually exclusive; a deferred send keeps its mode.
+Delivery mode (#1318): --steer folds the message into a running user turn
+(a turn started by a chat message or a choice-carrying send) at its next
+tool boundary; a system turn in flight (cron, keepalive, webhook, a plain
+send with no mode) is never folded — the message waits for it to finish
+and then runs as its own turn; an idle session starts at once. --queue
+runs it as its own fresh turn behind a running one (and is never consumed
+as plan feedback or an ask answer). The two are mutually exclusive; a
+deferred send keeps its mode.
 
 Flags:
   -a, --agent <id>          Target agent (env: FOCI_AGENT)
   -s, --session <id|alias>  Target session name or a chat alias (env: FOCI_SESSION, default: main)
   --broadcast               Deliver the response to every live surface for the agent (telegram, app, …); with a delivery mode the mode is ignored
   -m, --model <model>       Model override: group name, alias, or developer/model_id (env: FOCI_MODEL)
-  --steer                   Redirect the agent now: fold into the running turn, else deliver at once (env: FOCI_STEER=steer)
+  --steer                   Redirect the agent now: fold into a running user turn; behind a system turn it waits and runs as its own turn; idle starts at once (env: FOCI_STEER=steer)
   --queue                   Run as its own fresh turn, behind a running one if any (an idle session starts it at once; env: FOCI_STEER=queue)
   --if-warm <dur>           Skip if this session has not run a turn within duration (env: FOCI_IF_WARM; alias --if-active)
   --if-cold <dur>           Skip if this session has run a turn within duration (env: FOCI_IF_COLD; alias --if-inactive)

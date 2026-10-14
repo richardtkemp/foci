@@ -211,7 +211,7 @@ func testBot(allowedUsers []string, cmds *command.Registry) (*Bot, *mockClient) 
 
 		Logger: lg,
 	})
-	b.dispatcher = dispatch.NewDispatcher(cmds, command.CommandContext{}, "test")
+	b.dispatcher = dispatch.NewDispatcher(cmds, command.CommandContext{}, "test", "")
 	return b, mock
 }
 

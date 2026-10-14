@@ -273,8 +273,24 @@ func helpTable(ctx context.Context, registry *Registry, req Request, cc CommandC
 	// The /steer and /queue delivery-mode prefixes are not registry commands
 	// (their word is stripped and the rest is delivered with that mode), so
 	// the table cannot list them — teach them in the same footer both bots'
-	// bare-prefix replies use (#1318).
-	return display.MarkdownTable(cols, rows) + "\n\n" + platform.SteerPrefixUsage
+	// bare-prefix replies use (#1318), and only on the chat surfaces whose
+	// receive paths parse them: the app and HTTP set the mode as a field and
+	// answer the bare words with "Unknown command", so advertising the
+	// prefixes there would teach a syntax those surfaces do not honour.
+	out := display.MarkdownTable(cols, rows)
+	if steerPrefixSource(req.Source) {
+		out += "\n\n" + platform.SteerPrefixUsage
+	}
+	return out
+}
+
+// steerPrefixSource reports whether a transport's users type the /steer|/queue
+// delivery-mode prefixes in chat: only the telegram/discord receive paths
+// parse them (platform.ResolveSteerPrefix). Every other source — including an
+// unidentified one — gets no prefix teaching: never advertise a syntax the
+// surface answers with "Unknown command" (#1318).
+func steerPrefixSource(src string) bool {
+	return src == SourceTelegram || src == SourceDiscord
 }
 
 // helpDetail renders "/help <command>": the command's description, its

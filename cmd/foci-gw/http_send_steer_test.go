@@ -252,6 +252,97 @@ func TestSend_Steer_MidTurn_FoldsIntoRunningTurn(t *testing.T) {
 	}
 }
 
+// TestSend_Steer_MidTurn_InjectedTurn_DoesNotFold pins the fold matrix the
+// docs state (#1318 review F2): --steer folds only into a running USER turn.
+// An injected turn (a plain modeless send — likewise keepalive, cron, webhook)
+// never opens the inbox's steer window (turnActive opens only under a user
+// batch), so a steer choice arriving while one runs is NOT folded: it waits
+// for the turn to finish and then runs as its own fresh turn. The idle half
+// of the matrix (delivers at once) is TestSend_SteerChoice_IdleAsyncDeliversOnce.
+func TestSend_Steer_MidTurn_InjectedTurn_DoesNotFold(t *testing.T) {
+	t.Parallel()
+	d, _ := httpTestSetup(t, httpTestOpts{})
+	fc := &foldingClient{mockClient: &mockClient{}}
+	d.agents[testAgentID].ag.Client = fc
+	toolEntered := make(chan struct{})
+	toolRelease := make(chan struct{})
+	holdOpenTool(d.agents[testAgentID].ag, toolEntered, toolRelease)
+	observe := steerEnvelopeObserver(d)
+	mux := newTestMux(d)
+
+	// A PLAIN modeless async send: today's injected dispatch — a system
+	// turn, never a user batch.
+	firstDone := make(chan struct{})
+	go func() { postJSON(mux, "/send", `{"text":"first","async":true}`); close(firstDone) }()
+	select {
+	case <-toolEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("injected turn never reached its tool")
+	}
+	// The crux: the turn is in flight but the inbox's steer window is NOT
+	// open — only a user batch opens it, so a steer cannot fold here.
+	waitForCond(t, "injected turn in flight", func() bool { return d.agents[testAgentID].ag.IsTurnInFlight(testSessionKey) })
+	if d.agents[testAgentID].ag.InboxTurnActive(testSessionKey) {
+		t.Fatal("an injected turn must not open the inbox steer window — --steer cannot fold into it")
+	}
+
+	w := postJSON(mux, "/send", `{"text":"redirect this","async":true,"steer":"steer"}`)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body: %s", w.Code, w.Body.String())
+	}
+
+	// No fold: while the injected turn is held mid-tool the steer text
+	// reaches no backend request (a fold would fire the turn's next round).
+	time.Sleep(200 * time.Millisecond)
+	if calls := fc.snapshot(); len(calls) != 1 {
+		t.Fatalf("backend calls = %d while the injected turn is held, want 1 (no fold)", len(calls))
+	}
+
+	// Release: the injected turn finishes, then the steer runs as its OWN
+	// fresh turn after it — never as a [user] block inside the first turn.
+	close(toolRelease)
+	<-firstDone
+	waitForCond(t, "steer's fresh turn ran", func() bool { return len(fc.snapshot()) == 3 })
+	calls := fc.snapshot()
+	if joined := strings.Join(calls[1].allTexts, "\n"); strings.Contains(joined, "redirect this") {
+		t.Errorf("injected turn's finishing round carries the steer text (%q) — it must not fold", joined)
+	}
+	if joined := strings.Join(calls[2].allTexts, "\n"); !strings.Contains(joined, "redirect this") {
+		t.Errorf("fresh turn text = %q, want it to carry the steer text as its own turn", joined)
+	}
+	// And the steer still dispatched as a user envelope, not an injection.
+	for _, env := range observe() {
+		if env.Steer == platform.SteerAlways {
+			return
+		}
+	}
+	t.Errorf("driven envelopes = %+v, want a SteerAlways user envelope", observe())
+}
+
+// TestSend_HelpOnHTTP_HidesChatOnlyPrefixes proves /help teaches the
+// /steer|/queue prefixes only on surfaces that parse them (#1318 review F1):
+// on HTTP the mode is the /send steer field and the bare words are unknown
+// commands, so the help listing reached over HTTP must not advertise the
+// chat-prefix syntax.
+func TestSend_HelpOnHTTP_HidesChatOnlyPrefixes(t *testing.T) {
+	t.Parallel()
+	d, _ := httpTestSetup(t, httpTestOpts{})
+	reg := d.agents[testAgentID].cmds
+	reg.Register(command.HelpCommand(reg))
+	mux := newTestMux(d)
+
+	w := postJSON(mux, "/send", `{"text":"/help","async":true}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "/help") {
+		t.Fatalf("body = %q, want the help listing itself", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "/queue <message>") {
+		t.Errorf("/help on HTTP teaches the chat-only prefixes:\n%s", w.Body.String())
+	}
+}
+
 // TestSend_SyncSteerChoice_InFlight_Returns202AndStampsUserActivity proves
 // the sync matrix row (#1318 decision 2) plus the #1130 carry: --sync with a
 // choice while a turn runs answers the 202 accepted receipt IMMEDIATELY (the

@@ -590,7 +590,7 @@ func (b *Bot) SetCommandContext(cc command.CommandContext) {
 		}
 	}
 	b.cmdCtx = cc
-	b.dispatcher = dispatch.NewDispatcher(b.commands, cc, b.agentID)
+	b.dispatcher = dispatch.NewDispatcher(b.commands, cc, b.agentID, command.SourceTelegram)
 	b.dispatcher.SetSessionKeyFunc(b.dispatchSessionKey)
 }
 

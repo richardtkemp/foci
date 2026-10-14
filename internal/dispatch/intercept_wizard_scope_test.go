@@ -27,7 +27,7 @@ func (w *countingWizard) Handle(text string) (string, bool) {
 // (chat N → "kN"), and a SessionKeyFn that reports chat 1's key — the DEFAULT
 // chat's key, exactly what Bot.SessionKey() returns in production.
 func newScopedInterceptor(reg *command.Registry) (*Interceptor, *Dispatcher) {
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := NewDispatcher(reg, command.CommandContext{}, "agent1", "")
 	d.SetSessionKeyFunc(func(chatID int64) string { return fmt.Sprintf("k%d", chatID) })
 	ic := &Interceptor{
 		Commands:     reg,

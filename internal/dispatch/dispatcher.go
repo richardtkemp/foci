@@ -18,15 +18,20 @@ type Dispatcher struct {
 	registry     *command.Registry
 	cc           command.CommandContext
 	agentID      string
+	source       string                    // originating transport (a command.Source* constant); stamped on every dispatched Request
 	sessionKeyFn func(chatID int64) string // stable session key resolver; falls back to NewChatSessionKey
 }
 
-// NewDispatcher creates a new command dispatcher.
-func NewDispatcher(registry *command.Registry, cc command.CommandContext, agentID string) *Dispatcher {
+// NewDispatcher creates a new command dispatcher. source is the calling
+// platform (command.SourceTelegram / command.SourceDiscord / …) and travels on
+// every dispatched command.Request so surface-aware commands and help
+// rendering know where a command came from.
+func NewDispatcher(registry *command.Registry, cc command.CommandContext, agentID, source string) *Dispatcher {
 	return &Dispatcher{
 		registry: registry,
 		cc:       cc,
 		agentID:  agentID,
+		source:   source,
 	}
 }
 
@@ -111,6 +116,7 @@ func (d *Dispatcher) dispatchRequest(ctx context.Context, name, args, sessionKey
 		SessionKey: sessionKey,
 		UserID:     userID,
 		ChatID:     chatID,
+		Source:     d.source,
 	}
 	resp, handled, err := d.registry.Dispatch(ctx, req, d.cc)
 	if err != nil {

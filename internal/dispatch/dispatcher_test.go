@@ -19,7 +19,7 @@ func TestDispatchTextDotCommand(t *testing.T) {
 		},
 	})
 
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := NewDispatcher(reg, command.CommandContext{}, "agent1", "")
 
 	result := d.DispatchText(context.Background(), ".model", 123, "user1")
 	if !result.Handled {
@@ -44,7 +44,7 @@ func TestDispatchTextDotCommandWithArgs(t *testing.T) {
 		},
 	})
 
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := NewDispatcher(reg, command.CommandContext{}, "agent1", "")
 
 	result := d.DispatchText(context.Background(), ".model opus", 123, "user1")
 	if !result.Handled {
@@ -66,7 +66,7 @@ func TestDispatchTextSlashCommand(t *testing.T) {
 		},
 	})
 
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := NewDispatcher(reg, command.CommandContext{}, "agent1", "")
 
 	result := d.DispatchText(context.Background(), "/status", 99999, "user1")
 	if !result.Handled {
@@ -81,7 +81,7 @@ func TestDispatchTextSlashCommand(t *testing.T) {
 // handled (registry.Get returns nil).
 func TestDispatchTextUnknownDotCommand(t *testing.T) {
 	reg := command.NewRegistry()
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := NewDispatcher(reg, command.CommandContext{}, "agent1", "")
 
 	result := d.DispatchText(context.Background(), ".nosuchcommand", 123, "user1")
 	if result.Handled {
@@ -93,7 +93,7 @@ func TestDispatchTextUnknownDotCommand(t *testing.T) {
 // dispatched.
 func TestDispatchTextPlainText(t *testing.T) {
 	reg := command.NewRegistry()
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := NewDispatcher(reg, command.CommandContext{}, "agent1", "")
 
 	result := d.DispatchText(context.Background(), "just a normal message", 123, "user1")
 	if result.Handled {
@@ -114,7 +114,7 @@ func TestDispatchTextSlashPathFallsThrough(t *testing.T) {
 			return command.Response{Text: "should not run"}, nil
 		},
 	})
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := NewDispatcher(reg, command.CommandContext{}, "agent1", "")
 
 	for _, path := range []string{"/home/foci/notes.md", "/etc/hosts", "/var/log/foci.log"} {
 		result := d.DispatchText(context.Background(), path, 123, "user1")
@@ -147,7 +147,7 @@ func TestDispatchCallback(t *testing.T) {
 		},
 	})
 
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := NewDispatcher(reg, command.CommandContext{}, "agent1", "")
 
 	result := d.DispatchCallback(context.Background(), 12345, "/model opus")
 	if !result.Handled {
@@ -163,7 +163,7 @@ func TestDispatchCallback(t *testing.T) {
 func TestDispatchSlashStopHandled(t *testing.T) {
 	reg := command.NewRegistry()
 	reg.Register(command.StopCommand())
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := NewDispatcher(reg, command.CommandContext{}, "agent1", "")
 
 	result := d.DispatchText(context.Background(), "/stop", 12345, "user1")
 	if !result.Handled {
@@ -180,7 +180,7 @@ func TestDispatchSlashStopHandled(t *testing.T) {
 func TestDispatchSlashDoneHandled(t *testing.T) {
 	reg := command.NewRegistry()
 	reg.Register(command.DoneCommand())
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := NewDispatcher(reg, command.CommandContext{}, "agent1", "")
 
 	result := d.DispatchText(context.Background(), "/done", 12345, "user1")
 	if !result.Handled {
@@ -202,7 +202,7 @@ func TestSetSessionKeyFunc(t *testing.T) {
 		},
 	})
 
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := NewDispatcher(reg, command.CommandContext{}, "agent1", "")
 	d.SetSessionKeyFunc(func(chatID int64) string {
 		return "custom-key"
 	})
@@ -222,7 +222,7 @@ func TestSetSessionKeyFunc(t *testing.T) {
 // two consumers cannot derive different keys for the same chat.
 func TestDispatcherSessionKeyForChatFallback(t *testing.T) {
 	reg := command.NewRegistry()
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := NewDispatcher(reg, command.CommandContext{}, "agent1", "")
 
 	want := session.NewChatSessionKey("agent1", 123)
 	if got := d.SessionKeyForChat(123); got != want {

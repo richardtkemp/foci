@@ -40,7 +40,7 @@ These flags are accepted by all commands:
 | `--wait-timeout <dur>` | | `FOCI_WAIT_TIMEOUT` | **Send/branch/command**: max time a deferred request waits before running anyway. Default `2h`. Alias `--deadline`. |
 | `--no-gate` | | `FOCI_NO_GATE` | **Send/branch/command**: run now, ignoring any wait condition (and send's `--wait-cold 1m` default). Non-empty = true. |
 | `--human` | | `FOCI_HUMAN` | **Send/branch/command**: declare a human (not a cron or script) sent this request. It counts as user attention (`--if-user-*` / `--wait-user-*` activity) once dispatched; a skipped or deferred request never does. Non-empty = true. |
-| `--steer` | | `FOCI_STEER` | **Send**: redirect the agent now — fold into the running turn if one runs, else deliver at once. Mutually exclusive with `--queue` (env value `steer`). See [Delivery mode](#delivery-mode-steer--queue). |
+| `--steer` | | `FOCI_STEER` | **Send**: redirect the agent now — fold into a running user turn; behind a running system turn (cron, keepalive, webhook, a modeless send) it waits and then runs as its own turn; an idle session starts at once. Mutually exclusive with `--queue` (env value `steer`). See [Delivery mode](#delivery-mode-steer--queue). |
 | `--queue` | | `FOCI_STEER` | **Send**: run as its own fresh turn, behind a running one if any (an idle session starts it at once; never plan feedback, never an ask answer). Mutually exclusive with `--steer` (env value `queue`). |
 
 **Resolution order:** explicit flag > env var > default. Every flag has a corresponding `FOCI_` env var and vice versa. One exception: the delivery-mode pair `--steer`/`--queue` — giving a flag plus the *other* mode's `FOCI_STEER` value is a usage error (two live sources disagreeing), rather than the flag silently winning.
@@ -70,7 +70,7 @@ Every response carries a **routing receipt** — which session the message resol
 
 **Wait gates (deferral, not blocking):** an unmet `--wait-*` gate never blocks the CLI — the gateway stores the request (it survives a restart), answers with a "deferred" receipt immediately (even with `--sync`), and delivers it once the condition holds; `--wait-timeout`/`--deadline` (default **2h**) delivers anyway. A send with no if/wait flag defaults to `--wait-cold 1m` (waits for 1m of session idleness first); `--no-gate` opts out of the default and any wait condition.
 
-**Delivery mode (`--steer` / `--queue`):** chooses what the message does when the agent is already mid-turn. `--steer` folds into the running turn at its next tool boundary if one runs — an idle session delivers at once. `--queue` always runs as its own fresh turn, behind a running one if any — and is never consumed as plan feedback or an ask answer (`--steer`, being a user message, CAN be captured as the answer to a pending ask; `--queue` never is — cron users beware). An explicit mode skips only send's implicit `--wait-cold 1m` default — explicit `--if-*`/`--wait-*` gates still apply verbatim (a deferred mode-carrying send keeps its mode), and `--no-gate` still skips everything. With `--sync`, a mode-carrying send against a session with a turn in flight returns the 202 "queued" receipt immediately — the reply belongs to the turns, so the CLI does not block for it — while an idle session blocks and returns the reply as usual (the mode is inert with nothing in flight). With `--broadcast` the mode is ignored. Both flags take their value from `FOCI_STEER` (`steer`/`queue`; other values are ignored); giving both — two flags, or a flag plus the other switch's env value — is a usage error.
+**Delivery mode (`--steer` / `--queue`):** chooses what the message does when the agent is already mid-turn. `--steer` folds into the running turn at its next tool boundary — but only a turn a user started (a chat message or a choice-carrying send); a system turn in flight (cron, keepalive, webhook, a plain `foci send` with no mode) is never folded, and the message waits for it to finish and then runs as its own fresh turn. An idle session delivers at once. `--queue` always runs as its own fresh turn, behind a running one if any — and is never consumed as plan feedback or an ask answer (`--steer`, being a user message, CAN be captured as the answer to a pending ask; `--queue` never is — cron users beware). An explicit mode skips only send's implicit `--wait-cold 1m` default — explicit `--if-*`/`--wait-*` gates still apply verbatim (a deferred mode-carrying send keeps its mode), and `--no-gate` still skips everything. With `--sync`, a mode-carrying send against a session with a turn in flight returns the 202 "queued" receipt immediately — the reply belongs to the turns, so the CLI does not block for it — while an idle session blocks and returns the reply as usual (the mode is inert with nothing in flight). With `--broadcast` the mode is ignored. Both flags take their value from `FOCI_STEER` (`steer`/`queue`; other values are ignored); giving both — two flags, or a flag plus the other switch's env value — is a usage error.
 
 **Usage:**
 ```
@@ -94,7 +94,7 @@ foci send [-a agent] [-s session] [-m model] [--steer | --queue] [--if-warm <dur
 | `--wait-user-inactive <dur>` | | **Deferral gate**: defer until the user has NOT touched this agent within duration, then send. |
 | `--wait-timeout <dur>` (`--deadline`) | | Max deferral before sending anyway. Default **2h**. |
 | `--no-gate` | | Send immediately: no wait default, no wait condition. |
-| `--steer` | | Redirect the agent now: fold into the running turn, else deliver at once (env: `FOCI_STEER=steer`). |
+| `--steer` | | Redirect the agent now: fold into a running user turn; behind a system turn it waits and runs as its own turn; idle starts at once (env: `FOCI_STEER=steer`). |
 | `--queue` | | Run as its own fresh turn, behind a running one if any (an idle session starts it at once; env: `FOCI_STEER=queue`). |
 | `--human` | | Declare a human sent this: counts as user attention once dispatched; skipped/deferred requests never do. |
 | `--sync` / `--wait` | | Wait for the agent's reply instead of returning immediately. Not a `--wait-*` gate. |
@@ -142,7 +142,9 @@ foci send -a clutch --if-warm 4h -mf tasks/review.md
 # A human-typed send: counts as user attention once dispatched
 foci send --human "checking in on this thread"
 
-# Redirect the agent NOW: folds into the running turn (delivers at once if idle)
+# Redirect the agent NOW: folds into a running user turn (an idle session
+# starts at once; a system turn in flight — cron, keepalive, a modeless
+# send — is waited out, then the message runs as its own turn)
 foci send --steer "stop digging, use the other approach"
 
 # Queue behind the running turn as its own fresh turn (never an ask answer)

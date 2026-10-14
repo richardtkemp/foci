@@ -19,7 +19,7 @@ func TestReceiveMessage_StopCancelsTurn(t *testing.T) {
 	cc := command.CommandContext{
 		StopFunc: b.cancelTurn,
 	}
-	b.dispatcher = dispatch.NewDispatcher(cmds, cc, b.agentID)
+	b.dispatcher = dispatch.NewDispatcher(cmds, cc, b.agentID, "")
 
 	// Simulate an active turn
 
@@ -48,7 +48,7 @@ func TestReceiveMessage_DotStopCancelsTurn(t *testing.T) {
 	cc := command.CommandContext{
 		StopFunc: b.cancelTurn,
 	}
-	b.dispatcher = dispatch.NewDispatcher(cmds, cc, b.agentID)
+	b.dispatcher = dispatch.NewDispatcher(cmds, cc, b.agentID, "")
 
 	msg := makeMsg(111, "owner", ".stop")
 	b.receiveMessage(context.Background(), msg)
@@ -79,7 +79,7 @@ func TestReceiveMessage_StopAlias(t *testing.T) {
 	cc := command.CommandContext{
 		StopFunc: b.cancelTurn,
 	}
-	b.dispatcher = dispatch.NewDispatcher(cmds, cc, b.agentID)
+	b.dispatcher = dispatch.NewDispatcher(cmds, cc, b.agentID, "")
 
 	// Simulate an active turn
 
@@ -109,7 +109,7 @@ func TestReceiveMessage_StopAliasNotConfigured(t *testing.T) {
 	cc := command.CommandContext{
 		StopFunc: b.cancelTurn,
 	}
-	b.dispatcher = dispatch.NewDispatcher(cmds, cc, b.agentID)
+	b.dispatcher = dispatch.NewDispatcher(cmds, cc, b.agentID, "")
 
 	msg := makeMsg(111, "owner", "/wait")
 	b.receiveMessage(context.Background(), msg)

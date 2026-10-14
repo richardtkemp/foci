@@ -379,6 +379,7 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 
 		if strings.HasPrefix(req.Text, "/") {
 			cmdReq := command.RequestFromText(req.Text, sessionKey, "", 0)
+			cmdReq.Source = command.SourceHTTP
 			cmdCtx := tools.WithSessionKey(d.ctx, sessionKey)
 			if result, ok, _ := inst.cmds.Dispatch(cmdCtx, cmdReq, inst.cc); ok {
 				// A dispatched slash command starts no turn, so nothing else
@@ -502,6 +503,7 @@ func handleStatus(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFun
 // itself (found=true, "Unknown command" text).
 func runAgentCommand(ctx context.Context, cmds *command.Registry, cc command.CommandContext, connMgr platform.ConnectionManager, agentID, sessionKey, text string) (command.Response, bool) {
 	cmdReq := command.RequestFromText(text, sessionKey, "", 0)
+	cmdReq.Source = command.SourceHTTP
 	result, ok, _ := cmds.Dispatch(tools.WithSessionKey(ctx, sessionKey), cmdReq, cc)
 	if !ok {
 		return result, false

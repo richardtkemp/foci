@@ -155,7 +155,7 @@ func TestDispatchCommand_WizardStepOnActivation(t *testing.T) {
 
 	t.Run("typed command activates wizard", func(t *testing.T) {
 		reg := newReg()
-		d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+		d := NewDispatcher(reg, command.CommandContext{}, "agent1", "")
 		d.SetSessionKeyFunc(func(chatID int64) string { return fmt.Sprintf("k%d", chatID) })
 
 		outcome := d.DispatchCommand(context.Background(), "/wizstart", 2, "u")
@@ -169,7 +169,7 @@ func TestDispatchCommand_WizardStepOnActivation(t *testing.T) {
 
 	t.Run("button callback activates wizard", func(t *testing.T) {
 		reg := newReg()
-		d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+		d := NewDispatcher(reg, command.CommandContext{}, "agent1", "")
 		d.SetSessionKeyFunc(func(chatID int64) string { return fmt.Sprintf("k%d", chatID) })
 
 		outcome := d.DispatchCommandCallback(context.Background(), 2, "/wizstart")
@@ -183,7 +183,7 @@ func TestDispatchCommand_WizardStepOnActivation(t *testing.T) {
 
 	t.Run("command under an older wizard gets no buttons", func(t *testing.T) {
 		reg := newReg()
-		d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+		d := NewDispatcher(reg, command.CommandContext{}, "agent1", "")
 		d.SetSessionKeyFunc(func(chatID int64) string { return fmt.Sprintf("k%d", chatID) })
 
 		// An older wizard is already active for chat 2's scope…
@@ -207,7 +207,7 @@ func TestDispatchCommand_WizardStepOnActivation(t *testing.T) {
 				return command.Response{Text: "wizard started"}, nil
 			},
 		})
-		d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+		d := NewDispatcher(reg, command.CommandContext{}, "agent1", "")
 		d.SetSessionKeyFunc(func(chatID int64) string { return fmt.Sprintf("k%d", chatID) })
 
 		outcome := d.DispatchCommand(context.Background(), "/wizfree", 1, "u")
@@ -227,7 +227,7 @@ func TestDispatchCommand_WizardStepOnActivation(t *testing.T) {
 func TestDispatcherIsWizardCancel(t *testing.T) {
 	reg := command.NewRegistry()
 	reg.SetWizard("k1", &stepWizard{response: "waiting"})
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := NewDispatcher(reg, command.CommandContext{}, "agent1", "")
 	d.SetSessionKeyFunc(func(chatID int64) string { return fmt.Sprintf("k%d", chatID) })
 
 	for _, text := range []string{"/cancel", "/CANCEL", "/Cancel", "  /cancel  "} {

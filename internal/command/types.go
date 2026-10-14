@@ -25,8 +25,17 @@ type Request struct {
 	SessionKey string
 	UserID     string
 	ChatID     int64  // platform conversation identifier
-	Source     string // originating transport ("app", "telegram", …); "" for legacy callers
+	Source     string // originating transport (a Source* constant); "" for unidentified callers
 }
+
+// Source values for Request.Source — the transport a command arrived on.
+// The app package stamps its own literal "app" (internal/app, pre-existing);
+// "" is an unidentified caller and always gets the surface-agnostic behaviour.
+const (
+	SourceTelegram = "telegram"
+	SourceDiscord  = "discord"
+	SourceHTTP     = "http"
+)
 
 // RequestFromText parses a slash command string like "/status args" into a Request.
 func RequestFromText(text, sessionKey, userID string, chatID int64) Request {

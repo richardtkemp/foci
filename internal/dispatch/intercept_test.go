@@ -266,7 +266,7 @@ func TestTryInterceptCommandDispatch(t *testing.T) {
 		},
 	})
 
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := NewDispatcher(reg, command.CommandContext{}, "agent1", "")
 	ic := newTestInterceptor(reg)
 	ic.Dispatcher = d
 
@@ -299,7 +299,7 @@ func TestTryInterceptTransformProducesCommand(t *testing.T) {
 		},
 	})
 
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := NewDispatcher(reg, command.CommandContext{}, "agent1", "")
 	ic := newTestInterceptor(reg)
 	ic.Dispatcher = d
 	ic.Handler = &fakeHandler{
@@ -488,7 +488,7 @@ func TestTryInterceptDotCommandDispatch(t *testing.T) {
 		},
 	})
 
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := NewDispatcher(reg, command.CommandContext{}, "agent1", "")
 	ic := newTestInterceptor(reg)
 	ic.Dispatcher = d
 
