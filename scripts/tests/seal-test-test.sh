@@ -6,6 +6,9 @@
 #    blamed on the sandbox;
 #  - FGW_HEAVY_LOCK=external (#2396): the diagnostic re-runs take the heavy
 #    lock and pass HEAVY_LOCK_HELD;
+#  - heavy-lock lines (#2412): go's `>>> waiting for/acquired heavy lock` lines
+#    reach stderr as they come, every other line only LOGFILE, and the exit
+#    status is still go test's;
 #  - the fixed test environment (#2348): go test sees env -i plus a pinned
 #    PATH, whatever the caller's PATH and env, and every run passes -v.
 #
@@ -16,7 +19,7 @@
 # Usage: seal-test-test.sh [-h]
 # Exit:  0 all assertions passed; 1 otherwise (prints which).
 set -uo pipefail
-case "${1:-}" in -h|--help) sed -n '2,17p' "$0" | sed 's/^#//; s/^ //'; exit 0;; esac
+case "${1:-}" in -h|--help) sed -n '2,20p' "$0" | sed 's/^#//; s/^ //'; exit 0;; esac
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 SEALTEST="$HERE/seal-test.sh"
@@ -49,6 +52,12 @@ echo "$n" > "$root/calls"
 # Whether the heavy lock file named in $root/lockpath is held while this call runs.
 if [ -s "$root/lockpath" ]; then
   if flock -n "$(cat "$root/lockpath")" true; then echo "call $n: lock free"; else echo "call $n: lock held"; fi >> "$root/locks"
+fi
+# $root/lines: lines to print on stderr first, as the build-cache helper does
+# (@N@ -> the call number). $root/hold: then wait (up to 20 s) for $root/release.
+if [ -s "$root/lines" ]; then sed "s/@N@/$n/g" "$root/lines" >&2; fi
+if [ -e "$root/hold" ]; then
+  for _ in $(seq 200); do [ -e "$root/release" ] && break; sleep 0.1; done
 fi
 pkg="${!#}"
 fail=0
@@ -189,5 +198,46 @@ run real one FGW_HEAVY_LOCK=external HEAVY_LOCK_HELD=/tmp/heavy SEAL_TEST_HEAVY_
 reject "held by caller: no re-run lock" "lock held" "$(cat "$TMP/goroot/locks")"
 expect "held by caller: the tests see HEAVY_LOCK_HELD" "HEAVY_LOCK_HELD=/tmp/heavy" "$(sed -n '/^--- call 1/,/^--- call 2/p' "$TMP/goroot/seen")"
 : > "$TMP/goroot/lockpath"
+
+# ---- #2412: the heavy-lock lines reach stderr, live ------------------------
+# gocache-overlay -lock prints them on go's stderr; go's output goes to LOGFILE,
+# which no caller shows. The factory's timeline charts read them from stderr.
+WAITL='>>> waiting for heavy lock ... [12:00:0@N@] (gocache-overlay: /tmp/heavy; another build may be running)'
+GOTL='>>> acquired heavy lock [12:00:1@N@] (gocache-overlay: /tmp/heavy)'
+printf '%s\n' "$WAITL" "$GOTL" '>>> some other status line' 'a test line: >>> acquired heavy lock [12:00:00]' \
+  > "$TMP/goroot/lines"
+for mode in one unit integration; do
+  rc=0; out=$(run pass "$mode") || rc=$?
+  log=$(cat "$TMP/log")
+  expect "lines $mode: the waiting line reaches stderr" "${WAITL//@N@/1}" "$out"
+  expect "lines $mode: the acquired line reaches stderr" "${GOTL//@N@/1}" "$out"
+  reject "lines $mode: other >>> lines stay in the log" "some other status line" "$out"
+  reject "lines $mode: a line that only contains the text stays in the log" "a test line" "$out"
+  reject "lines $mode: go's own output stays in the log" "0.01s" "$out"
+  expect "lines $mode: the log keeps the waiting line" "${WAITL//@N@/1}" "$log"
+  expect "lines $mode: the log keeps the other lines" "a test line: >>> acquired" "$log"
+  expect "lines $mode: the log keeps go's output" "0.01s" "$log"
+  if [ "$rc" = 0 ]; then echo "ok   lines $mode: a pass exits 0"; else echo "FAIL lines $mode: a pass exits $rc"; RC=1; fi
+done
+rc=0; out=$(run real one) || rc=$?
+if [ "$rc" = 1 ]; then echo "ok   lines: a failure still exits 1"; else echo "FAIL lines: a failure exits $rc, want 1"; RC=1; fi
+# The diagnostic re-runs (calls 2 and 3) relay theirs too.
+out=$(run sandbox one)
+expect "lines: the unsealed re-run's lines reach stderr" "${WAITL//@N@/2}" "$out"
+expect "lines: the sealed re-run's lines reach stderr" "${GOTL//@N@/3}" "$out"
+# Live: the waiting line is on stderr while go test is still running.
+: > "$TMP/goroot/hold"; rm -f "$TMP/goroot/release" "$TMP/live.out"
+run pass one > "$TMP/live.out" &
+pid=$!
+live=""
+for _ in $(seq 100); do
+  if grep -qF -- "${WAITL//@N@/1}" "$TMP/live.out"; then live=1; break; fi
+  sleep 0.1
+done
+: > "$TMP/goroot/release"
+wait "$pid"
+if [ -n "$live" ]; then echo "ok   lines: the waiting line arrives while go test runs"
+else echo "FAIL lines: the waiting line did not arrive while go test ran"; RC=1; fi
+rm -f "$TMP/goroot/lines" "$TMP/goroot/hold" "$TMP/goroot/release"
 
 exit "$RC"

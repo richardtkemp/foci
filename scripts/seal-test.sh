@@ -178,6 +178,24 @@ else
   SEAL=("$LLBOX" -w "$WHITELIST" --)
 fi
 
+# ---- Heavy-lock lines (foci_todo #2412) -------------------------------------
+# With FGW_HEAVY_LOCK=external the build-cache helper (gocache-overlay -lock)
+# takes /tmp/heavy itself on the first cache miss and says so on go's stderr:
+#   >>> waiting for heavy lock ... [HH:MM:SS] (...)
+#   >>> acquired heavy lock [HH:MM:SS] (...)
+# go's output goes to LOGFILE, which no caller shows, so the factory's timeline
+# charts (which read these lines from the build's own output) never saw a wait.
+# go_test_logged therefore appends ALL of go's output to LOGFILE, as before,
+# and also copies just these lines to stderr AS THEY COME: one chart times the
+# wait by when each line arrives. Its status is the go command's.
+# tee -p: if stderr goes away, keep writing LOGFILE rather than dying (and
+# taking go test with it on SIGPIPE).
+HEAVY_LOCK_LINE='^>>> (waiting for|acquired) heavy lock'
+go_test_logged() {
+  "$@" 2>&1 | tee -p -a "$LOGFILE" | { grep --line-buffered -E "$HEAVY_LOCK_LINE" >&2; true; }
+  return "${PIPESTATUS[0]}"
+}
+
 # diagnostic_rerun <extra go-test flags...>
 # Scans $LOGFILE (built up so far) for go test's own `FAIL <pkg>` summary
 # lines and re-runs each one unsealed (then, if that passes, sealed again) to
@@ -225,11 +243,11 @@ diagnostic_rerun() {
   while IFS= read -r pkg; do
     [ -z "$pkg" ] && continue
     echo "--- unsealed re-run: $pkg ---" >> "$LOGFILE"
-    if "${env[@]}" nice -n 19 go test -trimpath -ldflags=-w -count=1 "${extra_flags[@]}" "$pkg" >> "$LOGFILE" 2>&1 8<&-; then
+    if go_test_logged "${env[@]}" nice -n 19 go test -trimpath -ldflags=-w -count=1 "${extra_flags[@]}" "$pkg" 8<&-; then
       # A pass unsealed is also what a flake looks like. Only a second sealed
       # failure pins it on the sandbox (#2132).
       echo "--- sealed re-run: $pkg ---" >> "$LOGFILE"
-      if "${SEAL[@]}" "${env[@]}" nice -n 19 go test -trimpath -ldflags=-w -count=1 "${extra_flags[@]}" "$pkg" >> "$LOGFILE" 2>&1 8<&-; then
+      if go_test_logged "${SEAL[@]}" "${env[@]}" nice -n 19 go test -trimpath -ldflags=-w -count=1 "${extra_flags[@]}" "$pkg" 8<&-; then
         echo ">>> DIAGNOSTIC: $pkg passes on re-run both UNSEALED and SEALED — the failure is a FLAKE, not a sandbox write." | tee -a "$LOGFILE" >&2
       else
         echo ">>> DIAGNOSTIC: $pkg fails SEALED again but passes UNSEALED — it is writing outside the sandbox. Add the path to the whitelist in scripts/seal-test.sh, or stop writing there." | tee -a "$LOGFILE" >&2
@@ -253,7 +271,7 @@ env_header() {
 
 run_unit() {
   env_header "sealed unit suite"
-  "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test "${GOTEST_FLAGS[@]}" -p="$PARALLEL" -timeout "$(test_timeout)" ./... >> "$LOGFILE" 2>&1
+  go_test_logged "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test "${GOTEST_FLAGS[@]}" -p="$PARALLEL" -timeout "$(test_timeout)" ./...
   local status=$?
 
   diagnostic_rerun -timeout "$(test_timeout)"
@@ -307,8 +325,8 @@ run_integration() {
   local extra=(-count="$count" -timeout "$((600 * count))s")
   local filter=()
   [ -n "$RUNFILTER" ] && filter=(-run "$RUNFILTER")
-  "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -tags=integration "${extra[@]}" "${filter[@]}" \
-    -parallel="$PARALLEL" -v ./test/integration/... ./internal/testharness/... >> "$LOGFILE" 2>&1
+  go_test_logged "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -tags=integration "${extra[@]}" "${filter[@]}" \
+    -parallel="$PARALLEL" -v ./test/integration/... ./internal/testharness/...
   local status=$?
 
   # A filter that matches nothing "passes" with zero tests run — refuse that
@@ -343,7 +361,7 @@ run_one() {
   local extra=()
   [ -n "$COUNT" ] && extra+=(-count="$COUNT")
   [ -n "$RUNFILTER" ] && extra+=(-run "$RUNFILTER")
-  "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test "${GOTEST_FLAGS[@]}" -timeout "$(test_timeout "${COUNT:-1}")" "${extra[@]}" "$PKG" >> "$LOGFILE" 2>&1
+  go_test_logged "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test "${GOTEST_FLAGS[@]}" -timeout "$(test_timeout "${COUNT:-1}")" "${extra[@]}" "$PKG"
   local status=$?
 
   # Re-run with the SAME -run filter and -timeout: without them a narrowed run's
