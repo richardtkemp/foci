@@ -623,7 +623,7 @@ func (s *Server) resolveChildPermissionViaAPI(sid string, ev rawEvent) {
 // (parentID, true) on success — parentID is "" for a root session — and
 // ("", false) on any non-200 or transport error.
 func (s *Server) fetchParentID(sid string) (string, bool) {
-	req, err := http.NewRequest(http.MethodGet, s.baseURL+"/session/"+sid, nil)
+	req, err := http.NewRequest(http.MethodGet, sessionURL(s.baseURL, sid, ""), nil)
 	if err != nil {
 		return "", false
 	}

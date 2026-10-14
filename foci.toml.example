@@ -379,7 +379,7 @@ system_files = [
 # hostname = "127.0.0.1"                   # bind address for `opencode serve`
 # port = 0                                 # 0 = auto-pick
 # server_auth = ""                         # HTTP basic auth password (empty = none)
-# default_permission = "ask"               # ask, allow, or deny
+# default_permission = "ask"               # ask, allow, or deny; unset = no Start request
 # log_level = ""                           # opencode --log-level (empty = INFO)
 
 # ─── Gemini ────────────────────────────────────────────────────────────

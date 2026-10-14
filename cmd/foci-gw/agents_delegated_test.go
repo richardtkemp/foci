@@ -9,6 +9,7 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/memory"
 	"foci/internal/provider"
 	"foci/internal/tools"
@@ -272,4 +273,56 @@ func TestBuildExecRegistrySkipsRemindWhenWakeFnNil(t *testing.T) {
 	if got := registry.Get("remind"); got != nil {
 		t.Error("registry contains remind tool despite nil wakeFn")
 	}
+}
+
+// TestFoldGlobalBackendConfig_OpencodeDefaultPermission pins the #2330
+// threat-scan fix: the global [opencode_backend] default_permission must
+// actually reach every opencode agent's backend_config. It was documented
+// as "applies to every agent" but never read — an operator setting a
+// lockdown there silently got opencode's permissive defaults instead.
+// Per-agent backend_config wins, an unset global stays unset (so Start
+// sends no permission request — the field deliberately has no tag
+// default), and other config families skip opencode keys entirely.
+func TestFoldGlobalBackendConfig_OpencodeDefaultPermission(t *testing.T) {
+	oc := delegator.Spec{ConfigFamily: delegator.ConfigFamilyOpencode}
+
+	t.Run("global reaches backend_config", func(t *testing.T) {
+		cfg := &config.Config{OpencodeBackend: config.OpencodeBackendConfig{DefaultPermission: "deny"}}
+		bc := foldGlobalBackendConfig(cfg, oc, config.BackendConfig{})
+		if bc.DefaultPermission == nil || *bc.DefaultPermission != "deny" {
+			t.Errorf("DefaultPermission = %v, want the global \"deny\" folded in", bc.DefaultPermission)
+		}
+		if got := bc.ToMap()["default_permission"]; got != "deny" {
+			t.Errorf("ToMap default_permission = %v, want \"deny\"", got)
+		}
+	})
+
+	t.Run("per-agent value wins", func(t *testing.T) {
+		agentVal := "ask"
+		cfg := &config.Config{OpencodeBackend: config.OpencodeBackendConfig{DefaultPermission: "deny"}}
+		bc := foldGlobalBackendConfig(cfg, oc, config.BackendConfig{DefaultPermission: &agentVal})
+		if bc.DefaultPermission == nil || *bc.DefaultPermission != "ask" {
+			t.Errorf("DefaultPermission = %v, want the per-agent \"ask\" to win", bc.DefaultPermission)
+		}
+	})
+
+	t.Run("unset global stays unset", func(t *testing.T) {
+		cfg := &config.Config{} // no tag default: DefaultPermission is ""
+		bc := foldGlobalBackendConfig(cfg, oc, config.BackendConfig{})
+		if bc.DefaultPermission != nil {
+			t.Errorf("DefaultPermission = %q, want nil (Start must send no permission request)", *bc.DefaultPermission)
+		}
+		if _, ok := bc.ToMap()["default_permission"]; ok {
+			t.Error("ToMap carries default_permission — Start would send a permission request")
+		}
+	})
+
+	t.Run("other family skips opencode keys", func(t *testing.T) {
+		cfg := &config.Config{OpencodeBackend: config.OpencodeBackendConfig{DefaultPermission: "deny"}}
+		cc := delegator.Spec{ConfigFamily: delegator.ConfigFamilyClaudeCode}
+		bc := foldGlobalBackendConfig(cfg, cc, config.BackendConfig{})
+		if bc.DefaultPermission != nil {
+			t.Error("cc agent folded the opencode global default_permission")
+		}
+	})
 }

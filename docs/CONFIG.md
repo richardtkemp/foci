@@ -1736,13 +1736,18 @@ Applies to every agent whose `backend` is `opencode`:
 # "allow" also drops opencode's built-in .env read guard for that
 # session — allow means allow ("/mode plan" keeps it: its read-allow
 # re-states the guard, so secret files still prompt).
+# Precedence: opencode resolves each ask over its agent defaults
+# followed by the session rules (last match wins), so the rules foci
+# applies outrank the agent's own config — a "deny" in the workspace's
+# opencode.json does not beat a session "allow" from default_permission
+# or /mode.
 # A failed apply logs a WARN and Start continues; the session then runs
 # under opencode's own permissive defaults, so check the log when a
 # lock-down ("ask"/"deny") matters.
-# NOTE: only the per-agent [[agents]].backend_config value is read today;
-# a value in this global [opencode_backend] section is not folded into
-# backend_config.
-# default_permission = "ask"
+# Unset (as above) = no permission request at Start at all. This global
+# is folded into every opencode agent's backend_config;
+# [[agents]].backend_config.default_permission wins.
+# default_permission = "deny"
 ```
 
 ### See also

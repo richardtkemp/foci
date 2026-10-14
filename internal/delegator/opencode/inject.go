@@ -401,7 +401,7 @@ func (b *Backend) postMessage(ctx context.Context, suffix string, body []byte) e
 // postMessageWithClient is the core HTTP POST; postMessage passes the shared
 // client, callers needing a different timeout pass their own.
 func (b *Backend) postMessageWithClient(ctx context.Context, suffix string, body []byte, client *http.Client) error {
-	url := fmt.Sprintf("%s/session/%s%s", b.server.baseURL, b.sessionID, suffix)
+	url := sessionURL(b.server.baseURL, b.sessionID, suffix)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return err

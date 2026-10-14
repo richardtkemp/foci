@@ -191,10 +191,11 @@ func TestDefaultPermissionDescriptionNamesSessionScope(t *testing.T) {
 	// ask)") described the server-wide apply opencode never enforced —
 	// and "default ask" was itself wrong, since unset means Start sends
 	// no permission request at all and opencode's own permissive
-	// defaults stand. The global [opencode_backend] field must carry the
-	// same session-scope wording plus the dead-global caveat its comment
-	// documents, so the editor never shows the user a default that never
-	// applies.
+	// defaults stand. Both the per-agent and the global
+	// [opencode_backend] field carry the SAME wording: the global is
+	// folded into every opencode agent's backend_config
+	// (foldGlobalBackendConfig), so the editor must never suggest the
+	// two differ.
 	f, ok := LookupField("agent.backend_config.default_permission")
 	if !ok {
 		t.Fatal("agent.backend_config.default_permission not in the field registry")
@@ -208,9 +209,8 @@ func TestDefaultPermissionDescriptionNamesSessionScope(t *testing.T) {
 	if !ok {
 		t.Fatal("opencode_backend.default_permission not in the field registry")
 	}
-	wantGlobal := want + " (per-agent backend_config only)"
-	if g.Description != wantGlobal {
-		t.Errorf("global description = %q, want %q", g.Description, wantGlobal)
+	if g.Description != want {
+		t.Errorf("global description = %q, want %q (same wording as the per-agent field)", g.Description, want)
 	}
 }
 

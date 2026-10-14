@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 
@@ -336,7 +337,7 @@ func permDedupKey(pp pendingPermission) string {
 // reject). Verified against the live 1.2.18 OpenAPI.
 func (b *Backend) replyPermissionNext(requestID, reply string) error {
 	payload, _ := json.Marshal(map[string]any{"reply": reply})
-	url := fmt.Sprintf("%s/permission/%s/reply", b.server.baseURL, requestID)
+	url := fmt.Sprintf("%s/permission/%s/reply", b.server.baseURL, url.PathEscape(requestID))
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return err
@@ -360,7 +361,9 @@ func (b *Backend) postPermissionResponse(permID, response string, remember bool)
 		body["remember"] = true
 	}
 	payload, _ := json.Marshal(body)
-	url := fmt.Sprintf("%s/session/%s/permissions/%s", b.server.baseURL, b.sessionID, permID)
+	// Both ids are path-escaped (sessionURL's contract): a corrupted id
+	// must never extend the request path past this session's permission.
+	url := sessionURL(b.server.baseURL, b.sessionID, "/permissions/"+url.PathEscape(permID))
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return err

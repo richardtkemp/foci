@@ -465,7 +465,13 @@ Notes:
     the session rules, so `/mode plan` re-states opencode's built-in `.env` read guards after its
     read-allow rule (secret files still prompt), while the explicit allow-everything shapes —
     `bypassPermissions`/`auto` via /mode and `default_permission = "allow"` — deliberately carry no
-    guard: the user asked for no prompts; codex's would be the sandbox/approval policy.
+    guard: the user asked for no prompts. The same order means the session rules outrank the
+    agent's own config: a `deny` in the workspace `opencode.json` loses to a session `allow` from
+    `default_permission` or `/mode bypassPermissions`. Start re-applies `default_permission` on
+    every start, resumes included, but the `/mode` value foci persists in session metadata is
+    re-applied only once #666 lands — so with `default_permission = "allow"` and a last
+    `/mode plan`, a foci restart leaves the session allow-all even though `/mode` still reports
+    `plan`; codex's would be the sandbox/approval policy.
 15. ccstream passes `--dangerously-skip-permissions` and denies anything CC still asks
     (`cc/permissions.go:denyUnattended`, #2096). opencode has no launch flag and shares one
     server across the agent's sessions, so `surfacePermission` answers each ask of a

@@ -65,42 +65,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 
 	// Work on a copy so global-default folding below doesn't mutate the
 	// shared AgentConfig.BackendConfig (struct is a value type — assignment copies).
-	bc := backendConfig
-
-	// Fold the global section of the backend's config family
-	// (Spec.ConfigFamily) into the per-agent backend_config. Other families'
-	// keys are skipped so they don't leak into this backend's config surface.
-	//
-	// [cc_backend] folded keys (per-agent values always win):
-	//   allowed_tools — merged (per-agent rules appended to global)
-	//   binary — global default; per-agent override wins
-	switch spec.ConfigFamily {
-	case delegator.ConfigFamilyClaudeCode:
-		merged := p.cfg.CCBackend.MergedAllowedTools(bc.AllowedTools)
-		if merged != "" {
-			bc.AllowedTools = strings.Split(merged, ",")
-		}
-		if bc.Binary == nil && p.cfg.CCBackend.Binary != "" {
-			bc.Binary = &p.cfg.CCBackend.Binary
-		}
-	case delegator.ConfigFamilyOpencode:
-		// [opencode_backend]: per-agent values always win.
-		if bc.Binary == nil {
-			bc.Binary = &p.cfg.OpencodeBackend.Binary
-		}
-		if bc.Hostname == nil {
-			bc.Hostname = &p.cfg.OpencodeBackend.Hostname
-		}
-		if bc.ServerAuth == nil {
-			bc.ServerAuth = &p.cfg.OpencodeBackend.ServerAuth
-		}
-		if bc.LogLevel == nil {
-			bc.LogLevel = &p.cfg.OpencodeBackend.LogLevel
-		}
-		if bc.Port == nil {
-			bc.Port = &p.cfg.OpencodeBackend.Port
-		}
-	}
+	bc := foldGlobalBackendConfig(p.cfg, spec, backendConfig)
 
 	// Build a tool registry with exec-exported tools so foci shell commands
 	// (foci_todo, foci_send_to_chat, etc.) are available in the backend's
@@ -432,6 +397,54 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		skillRegistry: br.skillRegistry,
 		skillsDirs:    br.skillsDirs,
 	}, true
+}
+
+// foldGlobalBackendConfig folds the global section of the backend's config
+// family (Spec.ConfigFamily) into a copy of the per-agent backend_config —
+// per-agent values always win. Other families' keys are skipped so they
+// don't leak into this backend's config surface.
+//
+// [cc_backend] folded keys:
+//
+//	allowed_tools — merged (per-agent rules appended to global)
+//	binary — global default; per-agent override wins
+//
+// [opencode_backend] folded keys: binary, hostname, server_auth, log_level,
+// port, default_permission. default_permission folds only when SET: the
+// field deliberately carries no tag default, so an unset global leaves the
+// agent with no default_permission and Start sends no permission request
+// (#2330) — opencode's own defaults stand.
+func foldGlobalBackendConfig(cfg *config.Config, spec delegator.Spec, bc config.BackendConfig) config.BackendConfig {
+	switch spec.ConfigFamily {
+	case delegator.ConfigFamilyClaudeCode:
+		merged := cfg.CCBackend.MergedAllowedTools(bc.AllowedTools)
+		if merged != "" {
+			bc.AllowedTools = strings.Split(merged, ",")
+		}
+		if bc.Binary == nil && cfg.CCBackend.Binary != "" {
+			bc.Binary = &cfg.CCBackend.Binary
+		}
+	case delegator.ConfigFamilyOpencode:
+		if bc.Binary == nil {
+			bc.Binary = &cfg.OpencodeBackend.Binary
+		}
+		if bc.Hostname == nil {
+			bc.Hostname = &cfg.OpencodeBackend.Hostname
+		}
+		if bc.ServerAuth == nil {
+			bc.ServerAuth = &cfg.OpencodeBackend.ServerAuth
+		}
+		if bc.LogLevel == nil {
+			bc.LogLevel = &cfg.OpencodeBackend.LogLevel
+		}
+		if bc.Port == nil {
+			bc.Port = &cfg.OpencodeBackend.Port
+		}
+		if bc.DefaultPermission == nil && cfg.OpencodeBackend.DefaultPermission != "" {
+			bc.DefaultPermission = &cfg.OpencodeBackend.DefaultPermission
+		}
+	}
+	return bc
 }
 
 // backendPromptKind selects which chat a backend prompt is shown in (#2275):

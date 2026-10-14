@@ -62,7 +62,7 @@ func (b *Backend) ForkSession(ctx context.Context, req delegator.ForkRequest) (d
 		return delegator.ForkResult{}, fmt.Errorf("opencode fork: no running server for agent %q", req.AgentID)
 	}
 
-	url := srv.baseURL + "/session/" + req.ParentSessionID + "/fork"
+	url := sessionURL(srv.baseURL, req.ParentSessionID, "/fork")
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader([]byte(`{}`)))
 	if err != nil {
 		return delegator.ForkResult{}, err
@@ -132,7 +132,7 @@ func (b *Backend) CleanupSession(ctx context.Context, req delegator.CleanupReque
 		return fmt.Errorf("opencode cleanup: no running server for agent %q", req.AgentID)
 	}
 
-	url := srv.baseURL + "/session/" + req.SessionID
+	url := sessionURL(srv.baseURL, req.SessionID, "")
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
 	if err != nil {
 		return err

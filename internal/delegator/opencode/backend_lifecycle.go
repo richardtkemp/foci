@@ -170,9 +170,10 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// applySessionPermission for why permissions must never go through
 	// /config). opencode's defaults are permissive (most tools "allow");
 	// foci wants "ask" for side-effecting tools so the user gets prompted
-	// via the permission keyboard. Per-agent backend_config.default_permission
-	// overrides; a failure is a WARN — an unenforceable default must not
-	// make the agent unusable.
+	// via the permission keyboard. backend_config default_permission
+	// (per-agent, or the [opencode_backend] global folded into it) wins;
+	// a failure is a WARN — an unenforceable default must not make the
+	// agent unusable.
 	if rules := defaultPermissionRules(b.cfg); len(rules) > 0 {
 		if err := b.applySessionPermission(ctx, rules); err != nil {
 			log.NewComponentLogger(b.logComponent()).Warnf("default_permission apply failed: %v — using opencode defaults", err)
@@ -412,7 +413,7 @@ func defaultPermissionRules(cfg map[string]any) []permissionRule {
 // error fails Start so DelegatedManager's retry-without-resume path runs —
 // preventing a transient hiccup from silently discarding the resume ID.
 func (b *Backend) resumeSession(ctx context.Context, id string) (bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.server.baseURL+"/session/"+id, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sessionURL(b.server.baseURL, id, ""), nil)
 	if err != nil {
 		return false, err
 	}

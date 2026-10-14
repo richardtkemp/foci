@@ -480,38 +480,97 @@ func TestSendControl_SetPermissionMode_AllowAllCarriesNoEnvGuards(t *testing.T) 
 func TestBackend_SessionRequestsEscapeTheSessionID(t *testing.T) {
 	// A session id containing "/" (e.g. from a corrupted
 	// ResumeSessionID) must not extend the request path to another
-	// server resource: /session/:id URLs are built through sessionURL,
-	// which path-escapes the id (#2330 threat scan — a PATCH meant for
-	// one session must never be routable to /config). Observable at the
-	// server as the ESCAPED request path.
+	// server resource: EVERY /session/<id> URL this package builds goes
+	// through sessionURL, which path-escapes the id (#2330 threat scan —
+	// a request meant for one session must never be routable to /config
+	// or a sibling resource). Drives each call site in turn — the
+	// permission apply, abort, message POST, compaction read, resume
+	// probe, fork, cleanup delete, both permission-reply endpoints and
+	// the subagent parent lookup — and observes the ESCAPED request
+	// path at the server.
 	var mu sync.Mutex
 	var paths []string
 	hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		paths = append(paths, r.Method+" "+r.URL.EscapedPath())
 		mu.Unlock()
-		w.WriteHeader(http.StatusOK)
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/message"):
+			_, _ = w.Write([]byte(`[]`)) // CompactionSummary: empty message list
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/fork"):
+			_, _ = w.Write([]byte(`{"id":"ses_new"}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		}
 	}))
 	t.Cleanup(hs.Close)
-	b := newControlTestBackendForSession(t, hs, "ses/sion")
+	srv := &Server{
+		baseURL:  hs.URL,
+		http:     hs.Client(),
+		agentID:  "esc-test",
+		sessions: map[string]*Backend{},
+	}
 
-	if err := b.SendControl(context.Background(), &delegator.SetPermissionModeRequest{
-		Mode: "default",
-	}); err != nil {
+	// Start's resume probe: GET /session/<ResumeSessionID>.
+	sb := &Backend{server: srv, agentID: "esc-test", readyCh: make(chan struct{}), outstanding: delegator.NewOutstandingRegistry()}
+	if err := sb.Start(context.Background(), delegator.StartOptions{AgentID: "esc-test", ResumeSessionID: "res/ume"}); err != nil {
+		t.Fatalf("Start (resume): %v", err)
+	}
+	t.Cleanup(func() { _ = sb.Close() })
+
+	// Every direct per-session call site of the session-bound Backend.
+	b := newControlTestBackendForSession(t, hs, "ses/sion")
+	if err := b.SendControl(context.Background(), &delegator.SetPermissionModeRequest{Mode: "default"}); err != nil {
 		t.Fatalf("SendControl: %v", err)
 	}
 	if err := b.Interrupt(context.Background()); err != nil {
 		t.Fatalf("Interrupt: %v", err)
 	}
+	if err := b.postMessage(context.Background(), "/message", []byte(`{}`)); err != nil {
+		t.Fatalf("postMessage: %v", err)
+	}
+	if _, err := b.CompactionSummary(context.Background()); err != nil {
+		t.Fatalf("CompactionSummary: %v", err)
+	}
+	if err := b.postPermissionResponse("per/m", "allow", false); err != nil {
+		t.Fatalf("postPermissionResponse: %v", err)
+	}
+	if err := b.replyPermissionNext("req/id", "once"); err != nil {
+		t.Fatalf("replyPermissionNext: %v", err)
+	}
+
+	// fork + cleanup route through the agent's POOLED server, and the
+	// subagent parent lookup is a Server call.
+	const agentID = "esc-pool"
+	injectPooledServer(t, agentID, hs)
+	fb := &Backend{}
+	if _, err := fb.ForkSession(context.Background(), delegator.ForkRequest{ParentSessionID: "par/ent", AgentID: agentID}); err != nil {
+		t.Fatalf("ForkSession: %v", err)
+	}
+	if err := fb.CleanupSession(context.Background(), delegator.CleanupRequest{SessionID: "del/ete", AgentID: agentID}); err != nil {
+		t.Fatalf("CleanupSession: %v", err)
+	}
+	if _, ok := srv.fetchParentID("chi/ld"); !ok {
+		t.Fatal("fetchParentID failed")
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
 	want := []string{
+		"GET /session/res%2Fume", // Start resume probe
 		"PATCH /session/ses%2Fsion",
 		"POST /session/ses%2Fsion/abort",
+		"POST /session/ses%2Fsion/message",
+		"GET /session/ses%2Fsion/message",
+		"POST /session/ses%2Fsion/permissions/per%2Fm",
+		"POST /permission/req%2Fid/reply",
+		"POST /session/par%2Fent/fork",
+		"DELETE /session/del%2Fete",
+		"GET /session/chi%2Fld",
 	}
 	if !reflect.DeepEqual(paths, want) {
-		t.Errorf("requests = %v, want %v (session id must arrive escaped)", paths, want)
+		t.Errorf("requests = %v,\nwant %v (every session id and permission id must arrive escaped)", paths, want)
 	}
 }
 

@@ -118,7 +118,7 @@ func (b *Backend) CompactionSummary(ctx context.Context) (string, error) {
 	armed := b.compactArmedAt
 	b.turnMu.Unlock()
 
-	url := fmt.Sprintf("%s/session/%s/message?limit=%d", b.server.baseURL, b.sessionID, compactSummaryScan)
+	url := sessionURL(b.server.baseURL, b.sessionID, fmt.Sprintf("/message?limit=%d", compactSummaryScan))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
