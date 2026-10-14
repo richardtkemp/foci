@@ -225,7 +225,7 @@ Flags:
   --wait-timeout <dur>      Max wait before sending anyway (default 2h; alias --deadline; env: FOCI_WAIT_TIMEOUT)
   --no-gate                 Send immediately: no wait default, no gating (env: FOCI_NO_GATE)
   --human                   Declare a human sent this: counts as user attention once
-                             dispatched; skipped/deferred requests never do (env: FOCI_HUMAN)
+                            dispatched; skipped/deferred requests never do (env: FOCI_HUMAN)
   --sync, --wait            Wait for the agent's reply; NOT a --wait-* gate (env: FOCI_SYNC)
   --async, --no-wait        Fire-and-forget (default) (env: FOCI_ASYNC)
   -mt, --message-text       Message text (env: FOCI_MESSAGE_TEXT)

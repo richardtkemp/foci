@@ -127,3 +127,37 @@ func TestSendUsageMentionsSteerFlags(t *testing.T) {
 		}
 	}
 }
+
+// TestSendUsageWrappedFlagDescriptionsAlign pins the -h layout the feature
+// edit broke: a wrapped flag description's continuation line returns to
+// its own row's description column (--human's continuation sat one space
+// deep).
+func TestSendUsageWrappedFlagDescriptionsAlign(t *testing.T) {
+	help := captureStderr(t, sendUsage)
+	lines := strings.Split(help, "\n")
+	descColumn := func(line string) (int, bool) {
+		if !strings.HasPrefix(line, "  -") {
+			return 0, false
+		}
+		rest := strings.TrimLeft(line, " ")
+		specEnd := strings.Index(rest, "  ")
+		if specEnd < 0 {
+			return 0, false // a row whose description is one space off the spec
+		}
+		at := len(line) - len(rest) + specEnd
+		return len(line) - len(strings.TrimLeft(line[at:], " ")), true
+	}
+	for i, line := range lines {
+		col, ok := descColumn(line)
+		if !ok || i+1 >= len(lines) {
+			continue
+		}
+		next := lines[i+1]
+		if strings.TrimSpace(next) == "" || strings.HasPrefix(next, "  -") {
+			continue
+		}
+		if indent := len(next) - len(strings.TrimLeft(next, " ")); indent != col {
+			t.Errorf("continuation %q indented %d, want its row's description column %d", next, indent, col)
+		}
+	}
+}

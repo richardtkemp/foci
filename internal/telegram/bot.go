@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"foci/internal/agent"
 	"foci/internal/chatmeta"
@@ -506,14 +507,62 @@ func (b *Bot) messageContainsMention(msg *gotgbot.Message) bool {
 	return addressedToUs(msg.Text, msg.Entities) || addressedToUs(msg.Caption, msg.CaptionEntities)
 }
 
-// entityText slices the entity's span out of the text it indexes (caption
+// entityText returns the entity's span of the text it indexes (caption
 // entities index the caption, text entities the text), or "" when the span
-// falls outside it — Telegram offsets are advisory, never a reason to panic.
+// falls outside it — Telegram offsets are advisory, never a reason to
+// panic. UTF-16 aware; see entitySpan.
 func entityText(text string, e gotgbot.MessageEntity) string {
-	if e.Offset < 0 || e.Length < 0 || e.Offset+e.Length > int64(len(text)) {
+	span, _, _, ok := entitySpan(text, e)
+	if !ok {
 		return ""
 	}
-	return text[e.Offset : e.Offset+e.Length]
+	return span
+}
+
+// entitySpan slices an entity's span out of the text it indexes (caption
+// entities index the caption, text entities the text) and reports the
+// span's byte range in that text. Telegram expresses entity offsets and
+// lengths in UTF-16 code units (MessageEntity.Offset), which part ways
+// with byte indexes wherever the text carries multi-byte runes — in
+// "привет @focibot" the mention starts at code unit 7 but byte 13.
+// ok=false when the span falls outside the text or splits a rune.
+func entitySpan(text string, e gotgbot.MessageEntity) (span string, start, end int, ok bool) {
+	if e.Offset < 0 || e.Length < 0 {
+		return "", 0, 0, false
+	}
+	start, ok = utf16ToByte(text, e.Offset)
+	if !ok {
+		return "", 0, 0, false
+	}
+	end, ok = utf16ToByte(text, e.Offset+e.Length)
+	if !ok || end < start {
+		return "", 0, 0, false
+	}
+	return text[start:end], start, end, true
+}
+
+// utf16ToByte returns the byte index just past text's first n UTF-16 code
+// units (0 → 0), ok=false when n exceeds the text's UTF-16 length or
+// falls inside a surrogate pair, where a cut would split the rune.
+func utf16ToByte(text string, n int64) (int, bool) {
+	if n == 0 {
+		return 0, true
+	}
+	var units int64
+	for i, r := range text {
+		units++
+		if r > 0xFFFF {
+			units++ // a rune above the BMP encodes as a surrogate pair
+		}
+		if units >= n {
+			if units > n {
+				return 0, false
+			}
+			_, size := utf8.DecodeRuneInString(text[i:])
+			return i + size, true
+		}
+	}
+	return 0, false
 }
 
 // SetToolDetailStore sets the persistent store for tool call details.

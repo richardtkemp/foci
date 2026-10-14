@@ -155,22 +155,13 @@ func (b *Bot) buildReceivedMessage(_ context.Context, msg *discordgo.Message) (q
 		text = strings.TrimSpace(text)
 	}
 
-	// /steer|/queue delivery-mode prefix (#1318): parse the user's own text
-	// AFTER the mention strip (an "@bot /queue x" parses) but BEFORE the
-	// reply header is prepended (a reply whose text is "/queue x" still
-	// parses — the header would mask it), and strip the prefix, so the
-	// payload reaches the agent alone, carrying the choice on the queued
-	// message. A bare prefix (no message text) keeps the text and flags the
-	// bare form for receiveMessage's usage reply.
-	steer := platform.SteerDefault
-	bareSteerPrefix := false
-	if pref, rest, matched := platform.ParseSteerPrefix(text); matched {
-		if rest == "" {
-			bareSteerPrefix = true
-		} else {
-			text, steer = rest, pref
-		}
-	}
+	// /steer|/queue delivery-mode prefix (#1318): parsed after the mention
+	// strip (an "@bot /queue x" parses) and before the reply header is
+	// prepended (a reply whose text is "/queue x" still parses — the
+	// header would mask it), so the payload reaches the agent alone,
+	// carrying the choice on the queued message. A bare prefix keeps the
+	// text and flags the bare form for receiveMessage's usage reply.
+	text, steer, bareSteerPrefix := platform.ResolveSteerPrefix(text)
 
 	// Handle reply context
 	if msg.ReferencedMessage != nil && msg.ReferencedMessage.Content != "" {

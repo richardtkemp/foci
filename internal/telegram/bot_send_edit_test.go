@@ -223,9 +223,11 @@ func TestFormatUserInfo(t *testing.T) {
 
 func TestMessageContainsMention(t *testing.T) {
 	// Proves @mention detection: matches the bot's username via a "mention"
-	// entity, matches text_mention by user ID, matches a bot_command entity
-	// carrying this bot's @suffix (a group menu tap addresses that bot,
-	// #1318), and ignores other users or bots without API identity.
+	// entity (behind ASCII and multi-byte text alike — Telegram counts
+	// offsets in UTF-16 code units), matches text_mention by user ID,
+	// matches a bot_command entity carrying this bot's @suffix (a group
+	// menu tap addresses that bot, #1318), and ignores other users or bots
+	// without API identity.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.api = &gotgbot.Bot{User: gotgbot.User{Id: 99, Username: "focibot"}}
 
@@ -256,10 +258,24 @@ func TestMessageContainsMention(t *testing.T) {
 	if b.messageContainsMention(mention("/queue x", gotgbot.MessageEntity{Type: "bot_command", Offset: 0, Length: 6})) {
 		t.Error("a bot_command without an @suffix addresses no bot in particular")
 	}
+	// Multi-byte runes before the mention: Telegram counts entity offsets
+	// in UTF-16 code units, so byte slicing reads garbage and misses the
+	// mention (the round-5 bug; pins the UTF-16 decode in entitySpan).
+	if !b.messageContainsMention(mention("привет @focibot", gotgbot.MessageEntity{Type: "mention", Offset: 7, Length: 8})) {
+		t.Error("should detect the mention behind cyrillic text")
+	}
+	if !b.messageContainsMention(mention("😀 hi @focibot", gotgbot.MessageEntity{Type: "mention", Offset: 6, Length: 8})) {
+		t.Error("should detect the mention behind an emoji")
+	}
 	caption := makeMsgWithPhoto(111, "owner", "look @focibot")
 	caption.CaptionEntities = []gotgbot.MessageEntity{{Type: "mention", Offset: 5, Length: 8}}
 	if !b.messageContainsMention(caption) {
 		t.Error("should detect a mention in a photo caption")
+	}
+	cyrillicCaption := makeMsgWithPhoto(111, "owner", "фото @focibot")
+	cyrillicCaption.CaptionEntities = []gotgbot.MessageEntity{{Type: "mention", Offset: 5, Length: 8}}
+	if !b.messageContainsMention(cyrillicCaption) {
+		t.Error("should detect a caption mention behind cyrillic text")
 	}
 
 	b.api = nil

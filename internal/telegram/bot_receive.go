@@ -160,27 +160,17 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 		text, entities = msg.Caption, msg.CaptionEntities
 	}
 
-	// /steer|/queue delivery-mode prefix (#1318): parse the user's own text
-	// BEFORE the reply/quote header is prepended (a reply whose text is
-	// "/queue x" still parses — the header would mask it) and strip the
-	// prefix, so the payload reaches the agent alone, carrying the choice on
-	// the queued message. A bare prefix (no message text) keeps the text and
-	// flags the bare form for receiveMessage's usage reply. The leading
-	// addressing tokens go first — the mention strip is entity-based, so it
-	// must run before any text edit shifts entity offsets, and it is what
-	// makes "@mybot /queue x" parse (the discord twin of this path strips
-	// mentions before parsing too).
-	text = b.stripSelfMention(text, entities)
-	text = b.stripSteerTarget(text)
-	steer := platform.SteerDefault
-	bareSteerPrefix := false
-	if pref, rest, matched := platform.ParseSteerPrefix(text); matched {
-		if rest == "" {
-			bareSteerPrefix = true
-		} else {
-			text, steer = rest, pref
-		}
-	}
+	// /steer|/queue delivery-mode prefix (#1318): resolved on the user's
+	// own text BEFORE the reply/quote header is prepended (a reply whose
+	// text is "/queue x" still parses — the header would mask it), so the
+	// payload reaches the agent alone, carrying the choice on the queued
+	// message; a bare prefix keeps the text and flags the bare form for
+	// receiveMessage's usage reply. The leading addressing tokens (an
+	// @mention of this bot, its @username suffix on the prefix word) are
+	// stripped to look, but kept unless a prefix is what they uncover —
+	// every other message is delivered verbatim, exactly as before this
+	// feature (steerPrefixChoice).
+	text, steer, bareSteerPrefix := b.steerPrefixChoice(text, entities)
 
 	// Include quoted message context when user replies to a specific message.
 	// Prefer the specific quote text (user highlighted a portion) over the
@@ -304,39 +294,69 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 	return queuedMessage{msg: msg, userID: userID, text: text, attachments: attachments, voice: isVoice, steer: steer, bareSteerPrefix: bareSteerPrefix}, true
 }
 
+// steerPrefixChoice resolves a Telegram text's /steer|/queue
+// delivery-mode prefix (#1318), letting the leading addressing tokens
+// uncover it first: a LEADING @mention of this bot (stripSelfMention —
+// entity-based, so it runs before any text edit shifts offsets) and this
+// bot's @username suffix on the prefix word itself (stripSteerTarget — a
+// command-menu tap). The uncovering is conditional: only a message that
+// actually carries a prefix loses its addressing tokens. Any other text
+// is returned verbatim with no choice, exactly as before this feature —
+// the tokens are not stripped from ordinary messages, and a mention-only
+// "@mybot" is still a delivered message, not a silent drop. The bare
+// prefix comes back with bare=true, which receiveMessage answers with
+// platform.SteerPrefixUsage, delivering nothing.
+func (b *Bot) steerPrefixChoice(text string, entities []gotgbot.MessageEntity) (string, platform.SteerPreference, bool) {
+	candidate := b.stripSteerTarget(b.stripSelfMention(text, entities))
+	out, pref, bare := platform.ResolveSteerPrefix(candidate)
+	if pref == platform.SteerDefault {
+		// No prefix, or the bare form: the addressing tokens were
+		// stripped only to look for one; the original text stands.
+		return text, platform.SteerDefault, bare
+	}
+	return out, pref, false
+}
+
 // stripSelfMention removes a LEADING @mention of this bot — the first
-// entity, at the start of the text — so the addressing token is not part of
-// the payload: "@mybot /queue x" parses as the /queue prefix and the agent
-// sees only the user's own words (#1318). Only the leading token: a
-// trailing mention ("/queue do it @mybot") is ordinary payload, and mentions
-// of other bots are left verbatim. Must run before any text edit (offsets
-// shift); discord's receive path strips mentions before parsing the same
-// way.
+// entity, at the start of the text — so the addressing token is not part
+// of the payload: "@mybot /queue x" parses as the /queue prefix and the
+// agent sees only the user's own words (#1318). Entity offsets are
+// decoded as the UTF-16 code units Telegram sends (entitySpan), so a
+// mention behind Cyrillic text or an emoji — or a text_mention of this
+// bot whose displayed name is non-ASCII — cuts correctly. Only the
+// leading token: a trailing mention ("/queue do it @mybot") is ordinary
+// payload, and mentions of other bots are left verbatim. Called only
+// while looking for a prefix (steerPrefixChoice), before any text edit
+// shifts entity offsets.
 func (b *Bot) stripSelfMention(text string, entities []gotgbot.MessageEntity) string {
 	if b.api == nil || b.api.User.Id == 0 {
 		return text
 	}
 	start := len(text) - len(strings.TrimLeftFunc(text, unicode.IsSpace))
 	for _, e := range entities {
-		if e.Offset != int64(start) {
+		span, spanStart, end, ok := entitySpan(text, e)
+		if !ok || spanStart != start {
 			continue
 		}
 		self := (e.Type == "mention" && b.api.User.Username != "" &&
-			entityText(text, e) == "@"+b.api.User.Username) ||
+			span == "@"+b.api.User.Username) ||
 			(e.Type == "text_mention" && e.User != nil && e.User.Id == b.api.User.Id)
 		if self {
-			return text[:start] + strings.TrimLeftFunc(text[start+int(e.Length):], unicode.IsSpace)
+			return text[:start] + strings.TrimLeftFunc(text[end:], unicode.IsSpace)
 		}
 	}
 	return text
 }
 
 // stripSteerTarget removes THIS bot's @username suffix from a /steer|/queue
-// first word ("/queue@mybot x" → "/queue x"), so a Telegram command-menu tap
-// in a group parses as the prefix (#1318). Deliberately narrow: only the two
-// prefix words, and only this bot's own suffix — "/status@mybot" keeps its
-// shape (command routing is unchanged by this ticket), and "/queue@otherbot"
-// is another bot's menu tap, not ours to answer.
+// first word ("/queue@mybot x" → "/queue x"), so a Telegram command-menu
+// tap in a group parses as the prefix (#1318). Deliberately narrow — only
+// the two prefix words, and only this bot's own suffix: "/status@mybot"
+// keeps its shape (general @suffix stripping would reroute registered
+// commands, which this ticket must not change), and "/queue@otherbot" is
+// another bot's menu tap, not ours to answer. Called only while looking
+// for a prefix (steerPrefixChoice), so no delivered text loses its suffix
+// otherwise.
 func (b *Bot) stripSteerTarget(text string) string {
 	username := ""
 	if b.api != nil {

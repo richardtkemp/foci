@@ -189,3 +189,39 @@ func TestEnqueueDeliversExactlyWhatIsAddressedSays(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveSteerPrefix pins the receive-path classification both bots
+// share (#1318): a prefix yields payload + choice, the bare form is flagged
+// for the usage reply, and any other text comes back unchanged with
+// SteerDefault — what the bot delivered before the feature.
+func TestResolveSteerPrefix(t *testing.T) {
+	tests := []struct {
+		name     string
+		in       string
+		wantOut  string
+		wantPref SteerPreference
+		wantBare bool
+	}{
+		{name: "steer prefix stripped", in: "/steer stop that", wantOut: "stop that", wantPref: SteerAlways},
+		{name: "queue prefix stripped", in: "/QUEUE upper", wantOut: "upper", wantPref: SteerNever},
+		{name: "bare queue flagged, text kept", in: "/queue", wantOut: "/queue", wantBare: true},
+		{name: "bare queue with spaces flagged", in: "/queue   ", wantOut: "/queue   ", wantBare: true},
+		{name: "plain text unchanged", in: "hello there", wantOut: "hello there", wantPref: SteerDefault},
+		{name: "other command unchanged", in: "/status now", wantOut: "/status now", wantPref: SteerDefault},
+		{name: "longer word unchanged", in: "/queued x", wantOut: "/queued x", wantPref: SteerDefault},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out, pref, bare := ResolveSteerPrefix(tc.in)
+			if out != tc.wantOut {
+				t.Errorf("out = %q, want %q", out, tc.wantOut)
+			}
+			if pref != tc.wantPref {
+				t.Errorf("pref = %v, want %v", pref, tc.wantPref)
+			}
+			if bare != tc.wantBare {
+				t.Errorf("bare = %v, want %v", bare, tc.wantBare)
+			}
+		})
+	}
+}

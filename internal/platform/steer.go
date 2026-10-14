@@ -81,3 +81,22 @@ func ParseSteerPrefix(text string) (pref SteerPreference, rest string, matched b
 	}
 	return pref, strings.TrimLeftFunc(trimmed[len(word):], unicode.IsSpace), true
 }
+
+// ResolveSteerPrefix classifies a receive path's message text for the
+// /steer|/queue delivery-mode prefixes (#1318): a text whose first word is
+// one yields the payload (prefix stripped) and the sender's choice; the
+// bare form (no message text after the word) is flagged bare for the
+// bot's SteerPrefixUsage reply and delivers nothing; any other text is
+// returned unchanged with SteerDefault — exactly what the bot delivered
+// before the feature. Both bots' receive paths classify through this one
+// helper so the three outcomes cannot drift.
+func ResolveSteerPrefix(text string) (out string, pref SteerPreference, bare bool) {
+	pref, rest, matched := ParseSteerPrefix(text)
+	switch {
+	case !matched:
+		return text, SteerDefault, false
+	case rest == "":
+		return text, SteerDefault, true
+	}
+	return rest, pref, false
+}

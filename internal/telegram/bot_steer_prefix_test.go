@@ -399,3 +399,188 @@ func TestReceive_SteerMenuTapBotSuffix(t *testing.T) {
 		}
 	})
 }
+
+// mentionUnits builds a mention entity of the bot from a UTF-16 offset —
+// the coordinate system Telegram actually sends (multi-byte runes before
+// the mention shift it away from the byte offset).
+func mentionUnits(offset, length int64) gotgbot.MessageEntity {
+	return gotgbot.MessageEntity{Type: "mention", Offset: offset, Length: length}
+}
+
+// TestReceive_SteerPrefix_MentionBehindNonAsciiText: a mention behind
+// multi-byte runes still addresses a require-mention group message, and
+// the prefix still parses — Telegram counts entity offsets in UTF-16 code
+// units, so byte slicing (the round-5 bug) dropped "/queue привет @mybot"
+// entirely: the mention was missed, the message ignored.
+func TestReceive_SteerPrefix_MentionBehindNonAsciiText(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		text      string
+		entities  []gotgbot.MessageEntity
+		wantText  string
+		wantSteer platform.SteerPreference
+	}{
+		{
+			name:      "cyrillic before the mention",
+			text:      "/queue привет @mybot",
+			entities:  []gotgbot.MessageEntity{mentionUnits(14, 6)},
+			wantText:  "привет @mybot",
+			wantSteer: platform.SteerNever,
+		},
+		{
+			name:      "emoji before the mention",
+			text:      "/steer 😀 stop that @mybot",
+			entities:  []gotgbot.MessageEntity{mentionUnits(20, 6)},
+			wantText:  "😀 stop that @mybot",
+			wantSteer: platform.SteerAlways,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, _ := testBot([]string{"111"}, command.NewRegistry())
+			requireMentionBot(t, b)
+			b.api = &gotgbot.Bot{User: gotgbot.User{Id: 42, Username: "mybot"}}
+
+			msg := makeGroupMsg(111, "owner", tc.text)
+			msg.Entities = tc.entities
+			b.receiveMessage(context.Background(), msg)
+
+			select {
+			case qm := <-b.mq.Chan():
+				if qm.Text != tc.wantText {
+					t.Errorf("queued text = %q, want %q", qm.Text, tc.wantText)
+				}
+				if qm.Steer != tc.wantSteer {
+					t.Errorf("queued steer = %v, want %v", qm.Steer, tc.wantSteer)
+				}
+			default:
+				t.Fatal("expected the addressed message on the main queue")
+			}
+		})
+	}
+}
+
+// TestReceive_SteerPrefix_LeadingTextMentionNonAsciiName: a text_mention
+// of this bot whose displayed name is multi-byte ("Фоци") strips by its
+// UTF-16 length, not its byte length — the prefix behind it parses and no
+// half of the name reaches the agent (the round-5 byte cut left "ци
+// /queue x").
+func TestReceive_SteerPrefix_LeadingTextMentionNonAsciiName(t *testing.T) {
+	newBot := func(t *testing.T) (*Bot, *mockClient) {
+		t.Helper()
+		b, mock := testBot([]string{"111"}, command.NewRegistry())
+		requireMentionBot(t, b)
+		b.api = &gotgbot.Bot{User: gotgbot.User{Id: 42}} // no username: text_mention is the only mention form
+		return b, mock
+	}
+	entity := gotgbot.MessageEntity{Type: "text_mention", Offset: 0, Length: 4, User: &gotgbot.User{Id: 42}}
+
+	t.Run("prefix behind the name parses", func(t *testing.T) {
+		b, _ := newBot(t)
+		msg := makeGroupMsg(111, "owner", "Фоци /queue x")
+		msg.Entities = []gotgbot.MessageEntity{entity}
+		b.receiveMessage(context.Background(), msg)
+
+		select {
+		case qm := <-b.mq.Chan():
+			if qm.Text != "x" {
+				t.Errorf("queued text = %q, want %q", qm.Text, "x")
+			}
+			if qm.Steer != platform.SteerNever {
+				t.Errorf("queued steer = %v, want SteerNever", qm.Steer)
+			}
+		default:
+			t.Fatal("expected the payload behind the text_mention on the main queue")
+		}
+	})
+
+	t.Run("bare prefix behind the name gets the usage reply", func(t *testing.T) {
+		b, mock := newBot(t)
+		msg := makeGroupMsg(111, "owner", "Фоци /queue")
+		msg.Entities = []gotgbot.MessageEntity{entity}
+		b.receiveMessage(context.Background(), msg)
+
+		if mock.sends != 1 || sentUsageText(mock) != platform.SteerPrefixUsage {
+			t.Errorf("sends = %d last = %q, want the one usage reply", mock.sends, sentUsageText(mock))
+		}
+		select {
+		case <-b.mq.Chan():
+			t.Fatal("bare prefix behind a text_mention enqueued a message")
+		default:
+		}
+	})
+}
+
+// TestReceive_NonPrefixMentionMessagesUnchanged: the leading-mention strip
+// exists only to uncover a /steer|/queue prefix. Without one, a message
+// keeps its addressing verbatim, exactly as before the feature (round-5
+// regression, review F2): the agent sees "@mybot hello there", a
+// mention-only "@mybot" is still a delivered message — not a silent drop —
+// and "@mybot /status" is payload for the agent, not a command.
+func TestReceive_NonPrefixMentionMessagesUnchanged(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		text     string
+		wantText string
+	}{
+		{"mention and text kept", "@mybot hello there", "@mybot hello there"},
+		{"mention-only message still delivered", "@mybot", "@mybot"},
+		{"mentioned command stays payload", "@mybot /status now", "@mybot /status now"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, mock := testBot([]string{"111"}, command.NewRegistry())
+			requireMentionBot(t, b)
+			b.api = &gotgbot.Bot{User: gotgbot.User{Id: 42, Username: "mybot"}}
+
+			msg := makeGroupMsg(111, "owner", tc.text)
+			msg.Entities = []gotgbot.MessageEntity{mentionUnits(0, 6)}
+			b.receiveMessage(context.Background(), msg)
+
+			select {
+			case qm := <-b.mq.Chan():
+				if qm.Text != tc.wantText {
+					t.Errorf("queued text = %q, want %q verbatim", qm.Text, tc.wantText)
+				}
+				if qm.Steer != platform.SteerDefault {
+					t.Errorf("queued steer = %v, want SteerDefault (no prefix, no choice)", qm.Steer)
+				}
+			default:
+				t.Fatal("expected the message on the main queue, delivered as before the feature")
+			}
+			select {
+			case <-b.mq.CmdChan():
+				t.Fatal("non-prefix message reached the command channel")
+			default:
+			}
+			if mock.sends != 0 {
+				t.Errorf("sends = %d, want 0 (nothing to answer)", mock.sends)
+			}
+		})
+	}
+}
+
+// TestReceive_BarePrefixBehindMention_RepliesUsage: the bare form behind a
+// leading mention ("@mybot /queue") replies the usage line like any other
+// bare prefix — the mention is an addressing token, not message text.
+func TestReceive_BarePrefixBehindMention_RepliesUsage(t *testing.T) {
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	requireMentionBot(t, b)
+	b.api = &gotgbot.Bot{User: gotgbot.User{Id: 42, Username: "mybot"}}
+
+	msg := makeGroupMsg(111, "owner", "@mybot /queue")
+	msg.Entities = []gotgbot.MessageEntity{mentionUnits(0, 6)}
+	b.receiveMessage(context.Background(), msg)
+
+	if mock.sends != 1 || sentUsageText(mock) != platform.SteerPrefixUsage {
+		t.Errorf("sends = %d last = %q, want the one usage reply", mock.sends, sentUsageText(mock))
+	}
+	select {
+	case <-b.mq.Chan():
+		t.Fatal("bare prefix behind a mention enqueued a message")
+	default:
+	}
+	select {
+	case <-b.mq.CmdChan():
+		t.Fatal("bare prefix behind a mention reached the command channel")
+	default:
+	}
+}
