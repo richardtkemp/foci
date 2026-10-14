@@ -326,3 +326,96 @@ func TestFoldGlobalBackendConfig_OpencodeDefaultPermission(t *testing.T) {
 		}
 	})
 }
+
+// cfgRecord is the shared storage of a registered cfgCatcher backend: the
+// last backend_config map its constructor was handed.
+type cfgRecord struct{ got map[string]any }
+
+// cfgCatcher is a registered test-only backend that records the config map
+// the gateway's NewBackend closure hands its constructor.
+type cfgCatcher struct {
+	delegator.Delegator
+	rec *cfgRecord
+}
+
+// registerCfgCatcher registers a test-only backend in config family family
+// that records, into the returned record, the backend_config map
+// configureDelegated's NewBackend closure builds for it — the folded config a
+// real backend launches with. The registry is process-global, so each test
+// uses its own name and a rerun (-count) resets the record. Mirrors
+// registerHookCatcher (agents_delegated_hosthooks_test.go).
+func registerCfgCatcher(name, family string) *cfgRecord {
+	if s, ok := delegator.SpecFor(name); ok {
+		be, _ := s.New(nil)
+		rec := be.(*cfgCatcher).rec
+		rec.got = nil
+		return rec
+	}
+	rec := &cfgRecord{}
+	spec := delegator.Spec{
+		Name:         name,
+		DisplayName:  name,
+		New:          func(cfg map[string]any) (delegator.Delegator, error) { rec.got = cfg; return &cfgCatcher{rec: rec}, nil },
+		Prototype:    (*cfgCatcher)(nil),
+		Caps:         map[delegator.Capability]delegator.Support{},
+		ModelcapsKey: name,
+		LedgerKey:    name,
+		ConfigFamily: family,
+	}
+	for _, c := range delegator.AllCapabilities() {
+		spec.Caps[c] = delegator.No("test backend")
+	}
+	delegator.Register(spec)
+	return rec
+}
+
+// TestConfigureDelegated_FoldsGlobalDefaultPermissionIntoBackendConfig pins
+// foldGlobalBackendConfig's CALL SITE, which the unit test above cannot see:
+// configureDelegated must hand every backend it creates the folded
+// backend_config, so the global [opencode_backend] default_permission reaches
+// the backend's config map (the key opencode's Start reads, #2330), the
+// per-agent value still wins, and an unset global sends no
+// default_permission at all (requirement 4: no permission request at Start).
+// The call site once survived the mutation gate precisely because only the
+// extracted function was tested, never its caller.
+func TestConfigureDelegated_FoldsGlobalDefaultPermissionIntoBackendConfig(t *testing.T) {
+	t.Parallel()
+
+	ask := "ask"
+	for _, tc := range []struct {
+		name     string
+		backend  string
+		perAgent *string
+		global   string
+		want     string // "" = the key must be absent
+	}{
+		{"global default_permission reaches the backend", "test-cfg-fold-global", nil, "deny", "deny"},
+		{"per-agent default_permission wins over the global", "test-cfg-fold-agent", &ask, "deny", "ask"},
+		{"no global and no per-agent sends none", "test-cfg-fold-none", nil, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := registerCfgCatcher(tc.backend, delegator.ConfigFamilyOpencode)
+			p, shared := wiringFixture(t)
+			p.cfg.OpencodeBackend.DefaultPermission = tc.global
+			ag := &agent.Agent{}
+			if _, ok := configureDelegated(ag, p, shared, tc.backend, config.BackendConfig{DefaultPermission: tc.perAgent}); !ok {
+				t.Fatal("configureDelegated returned ok=false")
+			}
+			if _, err := ag.DelegatedManager.NewBackend(); err != nil {
+				t.Fatalf("NewBackend: %v", err)
+			}
+			if rec.got == nil {
+				t.Fatal("test backend constructor was not handed a config map")
+			}
+			if tc.want == "" {
+				if _, ok := rec.got["default_permission"]; ok {
+					t.Errorf("backend config carries default_permission %v; an unset global must send none", rec.got["default_permission"])
+				}
+				return
+			}
+			if got := rec.got["default_permission"]; got != tc.want {
+				t.Errorf("backend config default_permission = %v, want %q", got, tc.want)
+			}
+		})
+	}
+}
