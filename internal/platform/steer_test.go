@@ -2,6 +2,9 @@ package platform
 
 import (
 	"testing"
+	"time"
+
+	"foci/internal/clock"
 )
 
 // TestParseSteerPrefix pins the pure prefix parser (#1318): a whole first
@@ -121,6 +124,67 @@ func TestMessageQueueIsAddressed(t *testing.T) {
 			defer q.Stop()
 			if got := q.IsAddressed(tc.msg); got != tc.want {
 				t.Errorf("IsAddressed(%+v) = %v, want %v", tc.msg, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEnqueueDeliversExactlyWhatIsAddressedSays proves the receive-path
+// oracle on Enqueue's own behaviour, not just IsAddressed's answers: across
+// the addressing matrix, a message reaches the pump — the channel or a
+// throttle flush — exactly when IsAddressed says it will, and is silently
+// dropped exactly when IsAddressed says that. The bots consult IsAddressed
+// before prefix parsing (#1318), so the two can never be allowed to drift;
+// a fake clock fires the throttle windows, keeping every case synchronous.
+func TestEnqueueDeliversExactlyWhatIsAddressedSays(t *testing.T) {
+	// Rule 1 drops exactly one shape: an unmentioned group message while
+	// require-mention is on and no throttle will buffer it. Everything else
+	// is delivered — DMs always, mentions always, and anything a throttle
+	// buffers (mentions flush at once, the rest when the window closes).
+	tests := []struct {
+		name           string
+		isGroup        bool
+		isMention      bool
+		requireMention bool
+		throttle       bool
+		wantDelivered  bool
+	}{
+		{"dm", false, false, false, false, true},
+		{"dm under require-mention", false, false, true, false, true},
+		{"dm with throttle on", false, false, true, true, true},
+		{"dm with mention flag", false, true, true, false, true},
+		{"group without require-mention", true, false, false, false, true},
+		{"group without require-mention, throttle on", true, false, false, true, true},
+		{"group unmentioned dropped", true, false, true, false, false},
+		{"group unmentioned buffered by throttle", true, false, true, true, true},
+		{"group mention delivered", true, true, true, false, true},
+		{"group mention flushes the throttle", true, true, true, true, true},
+		{"group mention without require-mention", true, true, false, false, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			const window = time.Minute
+			var flushed int
+			clk := clock.NewFake()
+			cfg := MessageQueueConfig{RequireMention: tc.requireMention}
+			if tc.throttle {
+				cfg.Throttle = NewGroupThrottleWithClock(window, func(msgs []QueuedMessage) {
+					flushed += len(msgs)
+				}, nil, clk)
+			}
+			q := NewMessageQueue(cfg)
+			defer q.Stop()
+
+			msg := QueuedMessage{ChatID: 1, IsGroupChat: tc.isGroup, IsMention: tc.isMention}
+			if got := q.IsAddressed(msg); got != tc.wantDelivered {
+				t.Errorf("IsAddressed(%+v) = %v, want %v", msg, got, tc.wantDelivered)
+			}
+			q.Enqueue(msg)
+			clk.Advance(window) // close any throttle window the message landed in
+			delivered := len(q.DrainQueue())+flushed > 0
+			if delivered != tc.wantDelivered {
+				t.Errorf("Enqueue delivered = %v, want %v (IsAddressed said %v)",
+					delivered, tc.wantDelivered, q.IsAddressed(msg))
 			}
 		})
 	}
