@@ -77,33 +77,18 @@ mp=$(systemctl show -p MainPID --value foci.service)   # pgrep -f foci-gw does N
 tr '\0' '\n' < /proc/$(pgrep -A -P $mp | head -1)/environ | grep '^PATH='
 ```
 
-**Never `/proc/<the daemon's own pid>/environ`.** That is the environment at *exec* time — and
-since #1914 the operator's dotfile env is never applied to the daemon's own environment at all:
-it is captured once as a value (`shellenv.Load`) and handed to every agent-shell spawn
-(`procx.SetOperatorEnv`). So the daemon's environ never shows the `PATH` a tool shell searches,
-no matter when you read it. Reading it gives a confident, wrong answer that looks authoritative;
-two independent investigations of the same bug were both misled by it. Agreement between two
-readings of one broken instrument is not corroboration.
+**Never `/proc/<the daemon's own pid>/environ`.** Since #1914 the operator's dotfile env is
+captured once (`shellenv.Load`) and handed only to agent-shell spawns (`procx.SetOperatorEnv`),
+so the daemon's environ never shows the `PATH` a tool shell searches. It looks authoritative and
+is wrong; it misled two independent investigations of one bug.
 
-- **`-check-config` previews the drop again, but only as the service user.** As root it says it
-  did not check (root's `access(2)` succeeds for every file) and sources nothing. As a user it
-  sources the rc file only when the file and every directory on its path is writable only by the
-  invoking user and root — a group-writable home (e.g. mode 2770), a world-writable directory,
-  another user's file, a symlink, a `..` component in the path (`..` resolves after symlinks, so
-  the written path can hide the directory the file really lands in), or a relative
-  `shell_env_file` (a bare name is searched on PATH; any other relative path resolves against
-  the daemon's WorkingDirectory, not the check's cwd) all refuse with one warning. A configured rc file that is missing, or that
-  cannot be sourced, is not a refusal (startup gets no overlay from it either, so the verdicts
-  agree) but gets its own warning naming the PATH judged. In the refused states read the startup
-  log instead.
-- **Built-in rule groups appear in both reports.** Startup logs one WARN per substitutable
-  built-in (`CommonReadonlyRules`/`CommonSafeWriteRules` commands, named once per group and
-  command — six read-only rules share the token `go`, and `go` is one line), and `-check-config`
-  lists them with a summary count — group, command, reason and path in both. The groups are
-  reported only for the agents they are live for (delegated backends that still ask for approval,
-  which is where `buildAutoApproveRules` runs; an API agent or a `skip_permissions` agent cannot
-  stop auto-approving and is never named). Only substitutable commands are named; a built-in whose
-  tool is not installed on the host (`ack`, `yq`) is silent.
+- **`-check-config` previews the drop only as the service user.** As root it skips the check. As a
+  user it sources the rc file only if the file and every directory on its path is writable by
+  that user and root alone; otherwise (group/world-writable, foreign owner, symlink, `..`,
+  relative path) it refuses with one warning; then read the startup log. A missing or unsourceable
+  rc file is not a refusal: it warns and judges the bare PATH, as startup does.
+- **Built-in groups are reported too**: one WARN per substitutable built-in command, only for
+  agents that still prompt (delegated, not `skip_permissions`). Uninstalled tools are silent.
 - **Only the FIRST WORD of each `&&`/`||`/`;`/`|` segment is inspected.** Arguments are never
   checked, so wrapping a script in an interpreter restores the auto-approval without restoring the
   safety. Do not "fix" a vetoed entry that way.
