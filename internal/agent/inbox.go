@@ -111,6 +111,31 @@ type Envelope struct {
 	enqSeq uint64
 }
 
+// EnvelopeFromQueuedMessage builds the Envelope for a turn driven by a queued
+// platform message: every sender-visible QueuedMessage field — text,
+// attachments, the voice and steer markers, receipt time, the raw original —
+// is copied verbatim and bound to sk and the originating bot as Driver. The
+// ONE QueuedMessage→Envelope mapping: both bots' handoff paths go through it,
+// so a QueuedMessage field can never reach the agent on one platform but be
+// silently dropped on the other (discord's handoff was missing Voice until
+// this was unified, #1318).
+func EnvelopeFromQueuedMessage(sk string, qm platform.QueuedMessage, driver Driver) Envelope {
+	return Envelope{
+		SessionKey:  sk,
+		Text:        qm.Text,
+		Attachments: qm.Attachments,
+		UserID:      qm.UserID,
+		SenderName:  qm.SenderName,
+		ChatID:      qm.ChatID,
+		IsGroupChat: qm.IsGroupChat,
+		ReceivedAt:  qm.ReceivedAt,
+		Voice:       qm.Voice,
+		Steer:       qm.Steer,
+		Original:    qm.Original,
+		Driver:      driver,
+	}
+}
+
 // InjectMeta carries a system injection's execution closure and classification.
 // Run is built where the platform wiring lives (cmd/foci-gw) and does the whole
 // HandleMessage + delivery/relay; the worker only decides WHEN to call it, so no

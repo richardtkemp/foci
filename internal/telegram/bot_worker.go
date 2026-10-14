@@ -61,9 +61,10 @@ func (b *Bot) agentMessagePump(ctx context.Context) {
 }
 
 // handoffToAgent converts a platform.QueuedMessage to an agent.Envelope
-// and pushes it through the agent's per-session inbox. Each envelope
-// carries this Bot as its Driver so the agent's worker can call back
-// into the bot for renderer/tracker/sink construction.
+// (agent.EnvelopeFromQueuedMessage — the one mapping) and pushes it through
+// the agent's per-session inbox. Each envelope carries this Bot as its
+// Driver so the agent's worker can call back into the bot for
+// renderer/tracker/sink construction.
 func (b *Bot) handoffToAgent(qm platform.QueuedMessage) {
 	if b.agentRef == nil {
 		b.logger().Debugf("handoffToAgent: no agent ref, dropping message")
@@ -74,21 +75,7 @@ func (b *Bot) handoffToAgent(qm platform.QueuedMessage) {
 		b.logger().Debugf("handoffToAgent: no session key for chatID=%d", qm.ChatID)
 		return
 	}
-	env := agent.Envelope{
-		SessionKey:  sk,
-		Text:        qm.Text,
-		Attachments: qm.Attachments,
-		UserID:      qm.UserID,
-		SenderName:  qm.SenderName,
-		ChatID:      qm.ChatID,
-		IsGroupChat: qm.IsGroupChat,
-		ReceivedAt:  qm.ReceivedAt,
-		Original:    qm.Original,
-		Driver:      b,
-		Voice:       qm.Voice,
-		Steer:       qm.Steer,
-	}
-	b.agentRef.Enqueue(env)
+	b.agentRef.Enqueue(agent.EnvelopeFromQueuedMessage(sk, qm, b))
 }
 
 // sessionKeyForQueuedMessage resolves the session key a queued message's

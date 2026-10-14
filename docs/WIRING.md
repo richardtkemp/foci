@@ -2222,7 +2222,7 @@ Three goroutines per bot:
                                                               - GroupThrottle (group chat + throttle configured)
                                                               - drop (group + require_mention + no throttle + no mention)
                                                               - main channel (everything else)
-[agentMessagePump goroutine]  →  drain mq.Chan()  →  build Envelope  →  agent.Enqueue(env)
+[agentMessagePump goroutine]  →  drain mq.Chan()  →  agent.EnvelopeFromQueuedMessage (the ONE QueuedMessage→Envelope mapping, shared with discord)  →  agent.Enqueue(env)
 [commandWorker goroutine]     →  drain mq.CmdChan()  →  execute command  →  reply
 
 [per-session worker goroutines — lazy, one per active session key, owned by agent.Inbox]
