@@ -97,31 +97,42 @@ func TestTmuxKillCleansUpChildProcesses(t *testing.T) {
 		t.Errorf("kill result = %q, want session name", result.Text)
 	}
 
-	// Wait for processes to actually die — poll Signal(0) rather than
-	// guessing how long kill-session's SIGHUP takes to propagate.
+	// Wait for processes to actually die. Signal(0) is NOT a death test: it
+	// succeeds on a zombie (killed, exit status not yet reaped by its parent
+	// — here the tmux server, or init once the server is gone), and under load
+	// reaping can lag arbitrarily. A zombie has executed its last instruction,
+	// so it counts as dead; poll for "gone or zombie" (#2421).
+	var alive []int
 	pollUntil(t, 5*time.Second, func() bool {
+		alive = alive[:0]
 		for _, pid := range allPIDs {
-			proc, err := os.FindProcess(pid)
-			if err != nil {
-				continue
-			}
-			if proc.Signal(syscall.Signal(0)) == nil {
-				return false // still alive
+			if processRunning(pid) {
+				alive = append(alive, pid)
 			}
 		}
-		return true
+		return len(alive) == 0
 	})
-
-	// Verify all processes are gone
-	for _, pid := range allPIDs {
-		proc, err := os.FindProcess(pid)
-		if err != nil {
-			continue // process doesn't exist, good
-		}
-		if err := proc.Signal(syscall.Signal(0)); err == nil {
-			t.Errorf("process %d still alive after kill", pid)
-		}
+	for _, pid := range alive {
+		st, _ := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+		t.Errorf("process %d still running after kill: %s", pid, st)
 	}
+}
+
+// processRunning reports whether pid exists and is not a zombie (state Z) or
+// dead (X). Zombies still answer Signal(0), so that cannot tell them apart.
+func processRunning(pid int) bool {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return false
+	}
+	// Format: "pid (comm) S ..." — comm may contain spaces/parens, so anchor
+	// on the LAST ')'.
+	i := strings.LastIndexByte(string(data), ')')
+	if i < 0 || i+2 >= len(data) {
+		return false
+	}
+	state := data[i+2]
+	return state != 'Z' && state != 'X'
 }
 
 func TestCollectDescendants(t *testing.T) {
