@@ -406,7 +406,7 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 		// Sync + a turn in flight returns the 202 accepted receipt immediately:
 		// the reply belongs to the in-flight/following turn, and blocking on it
 		// could hang on a raced fold.
-		if pref != platform.SteerDefault && res.Policy != route.PolicyBroadcast && (req.Async || inst.ag.IsTurnInFlight(sessionKey)) {
+		if steerChoiceRoutes(pref, res.Policy) && (req.Async || inst.ag.IsTurnInFlight(sessionKey)) {
 			ok := enqueueSteerChoice(inst, d, sessionKey, req.Text, pref, req.Human, res.Policy)
 			writeSteerChoiceReceipt(w, ok, rcpt)
 			if ok && req.Human {

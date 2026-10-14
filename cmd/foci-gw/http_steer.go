@@ -29,11 +29,21 @@ import (
 // still reaches the session's chat.
 //
 // Connection returns nil DELIBERATELY. A nil connection resolves the turn's
-// platformName to "" — non-interactive, exactly like today's injected /send
-// turns (trigger ""/"user", [meta] via=external, never transport-folds, no
-// app ask-capture carve-out). A real-looking platform name would leak into
-// isInteractiveTrigger (transport-level fold in RunInference's race path) and
-// the platformApp carve-outs, both wrong for an HTTP send.
+// platformName to "" — non-interactive like today's injected /send turns
+// (trigger ""/"user", [meta] via=external, never transport-folds). A
+// real-looking platform name would leak into isInteractiveTrigger
+// (transport-level fold in RunInference's race path) and the platformApp
+// carve-outs, both wrong for an HTTP send.
+//
+// Unlike an injection, a user envelope DOES reach the typed-answer intercepts
+// (CC re-login code, plan-cancel feedback, foci_ask answer capture), because
+// "" is not platformApp. enqueueSteerChoice therefore sets Envelope.Automated
+// unless the caller declared a human sender (#1130), so automation never
+// answers an ask, denies a plan or submits a login code on the human's behalf
+// — also when an API-mode agent buffers the steer and replays it as a
+// follow-up turn (SteerEntry carries the marker). A human-declared send
+// captures exactly like a Telegram/Discord reply, unless it is a --queue
+// (SteerNever) send, which no intercept consumes.
 type httpDriver struct {
 	inst    *agentInstance
 	connMgr platform.ConnectionManager
@@ -76,12 +86,23 @@ func (d *httpDriver) WrapTurn(ctx context.Context, fn func() error) error {
 	return err
 }
 
+// steerChoiceRoutes reports whether a send's delivery choice takes the
+// user-envelope route (enqueueSteerChoice) — the ONE predicate shared by the
+// immediate /send path and the deferred-send sweep. A default (absent) choice
+// keeps today's injection dispatch, and so does policy=broadcast: the fan-out
+// contract wins and the mode is inert (documented exception), since
+// httpDriver resolves a single connection and would drop the fan-out.
+func steerChoiceRoutes(pref platform.SteerPreference, policy route.Policy) bool {
+	return pref != platform.SteerDefault && policy != route.PolicyBroadcast
+}
+
 // enqueueSteerChoice enqueues a choice-carrying /send as a USER envelope
 // (#1318): Steer is honoured by Inbox.Enqueue's existing user routing (fold
 // via steerToBackend for SteerAlways, queue for SteerNever), Human carries
-// the #1130 stamp (RunTurn applies WithHumanSource), and httpDriver renders
-// and delivers via the resolved connection. Returns false when the session
-// inbox is full.
+// the #1130 stamp (RunTurn applies WithHumanSource), Automated (= !human) keeps
+// the send out of the typed-answer intercepts, and httpDriver renders and
+// delivers via the resolved connection. Returns false when the session inbox
+// is full.
 func enqueueSteerChoice(inst *agentInstance, d httpHandlerDeps, sessionKey, text string, pref platform.SteerPreference, human bool, policy route.Policy) bool {
 	return inst.ag.Enqueue(agent.Envelope{
 		SessionKey: sessionKey,
@@ -90,6 +111,7 @@ func enqueueSteerChoice(inst *agentInstance, d httpHandlerDeps, sessionKey, text
 		ReceivedAt: timeutil.Now(),
 		Steer:      pref,
 		Human:      human,
+		Automated:  !human,
 		Driver:     &httpDriver{inst: inst, connMgr: d.connMgr, policy: policy, logTag: "http"},
 	})
 }

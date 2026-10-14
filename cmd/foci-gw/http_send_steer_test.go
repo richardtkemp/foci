@@ -447,6 +447,122 @@ func TestSend_SteerChoice_Broadcast_KeepsTodayPath(t *testing.T) {
 	}
 }
 
+// TestSend_SteerChoice_PendingAsk_OnlyHumanAnswers pins the #1318 threat-scan
+// fix on the idle path (RunTurn's answer capture): with an unpaused foci_ask
+// pending, a choice-carrying send WITHOUT the #1130 human declaration is not
+// taken as the ask's answer — it runs as a normal turn — while a
+// human-declared one answers exactly like a Telegram/Discord reply.
+func TestSend_SteerChoice_PendingAsk_OnlyHumanAnswers(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		body       string
+		wantAnswer bool
+	}{
+		{"automated runs a turn", `{"text":"yes","async":true,"steer":"steer"}`, false},
+		{"human answers the ask", `{"text":"yes","async":true,"human":true,"steer":"steer"}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, mock := httpTestSetup(t, httpTestOpts{})
+			mock.entered = make(chan string, 1)
+			answered := make(chan string, 1)
+			d.agents[testAgentID].ag.AskRouter = &tools.AskRouter{
+				PendingForSession: func(string) string { return "ask-1" },
+				IsPaused:          func(string) bool { return false },
+				HandleResponse:    func(_, data string) { answered <- data },
+			}
+			mux := newTestMux(d)
+
+			if w := postJSON(mux, "/send", tc.body); w.Code != http.StatusAccepted {
+				t.Fatalf("status = %d, want 202; body: %s", w.Code, w.Body.String())
+			}
+			if tc.wantAnswer {
+				select {
+				case got := <-answered:
+					if got != "yes" {
+						t.Errorf("answer = %q, want yes", got)
+					}
+				case <-time.After(5 * time.Second):
+					t.Fatal("human-declared send did not answer the pending ask")
+				}
+				return
+			}
+			select {
+			case <-mock.entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("automated send neither answered nor ran a turn")
+			}
+			select {
+			case got := <-answered:
+				t.Fatalf("automated send answered the pending ask with %q as if it were the human", got)
+			default:
+			}
+		})
+	}
+}
+
+// TestSend_SteerChoice_OrphanedAutomatedSteer_NotAnAnswer is the orphan-path
+// bypass of the above: on an API-mode agent a mid-turn automated --steer is
+// buffered (the steer buffer, no backend to fold into); when the turn ends
+// without a tool boundary to drain it, buildFollowUp rebuilds it as a
+// follow-up envelope. That envelope must stay Automated, so RunTurn's idle
+// ask capture runs it as a turn instead of answering the pending ask.
+func TestSend_SteerChoice_OrphanedAutomatedSteer_NotAnAnswer(t *testing.T) {
+	t.Parallel()
+	d, _ := httpTestSetup(t, httpTestOpts{})
+	// Round 1 answers with a tool_use (its primary write opens the steer
+	// window); the tool returns at once; round 2 blocks inside the backend —
+	// AFTER its request drained the steer buffer — so a steer arriving now is
+	// buffered and, round 2 ending text-only, orphaned.
+	fc := &foldingClient{mockClient: &mockClient{entered: make(chan string), proceed: make(chan struct{})}}
+	ag := d.agents[testAgentID].ag
+	ag.Client = fc
+	toolRelease := make(chan struct{})
+	close(toolRelease)
+	holdOpenTool(ag, make(chan struct{}, 1), toolRelease)
+	answered := make(chan string, 1)
+	ag.AskRouter = &tools.AskRouter{
+		PendingForSession: func(string) string { return "ask-1" },
+		IsPaused:          func(string) bool { return false },
+		HandleResponse:    func(_, data string) { answered <- data },
+	}
+	mux := newTestMux(d)
+
+	recvRound := func(what string) string {
+		t.Helper()
+		select {
+		case text := <-fc.entered:
+			return text
+		case got := <-answered:
+			t.Fatalf("%s: the orphaned automated steer answered the pending ask with %q as if it were the human", what, got)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s never reached the backend", what)
+		}
+		return ""
+	}
+
+	// A user-envelope turn (a queued choice: never an answer itself) — only a
+	// user batch opens the inbox steer window.
+	if w := postJSON(mux, "/send", `{"text":"first","async":true,"steer":"queue"}`); w.Code != http.StatusAccepted {
+		t.Fatalf("first: status = %d; body: %s", w.Code, w.Body.String())
+	}
+	recvRound("round 1")
+	fc.proceed <- struct{}{}
+	recvRound("round 2")
+	waitForCond(t, "steer window open", func() bool { return ag.InboxTurnActive(testSessionKey) })
+
+	if w := postJSON(mux, "/send", `{"text":"yes","async":true,"steer":"steer"}`); w.Code != http.StatusAccepted {
+		t.Fatalf("steer: status = %d; body: %s", w.Code, w.Body.String())
+	}
+	waitForCond(t, "steer buffered", func() bool { return ag.InboxHasPendingInput(testSessionKey) })
+	fc.proceed <- struct{}{} // round 2 ends text-only → the buffered steer is orphaned
+
+	if text := recvRound("follow-up turn"); !strings.HasSuffix(text, "yes") {
+		t.Errorf("follow-up turn text = %q, want the orphaned steer", text)
+	}
+	fc.proceed <- struct{}{}
+}
+
 // TestSend_SteerChoice_SlashCommandStillDispatches pins the pre-existing
 // short-circuit a choice cannot ride (#1318, documented): a /send whose text
 // is a slash command dispatches the command — no turn exists for a mode to

@@ -396,6 +396,35 @@ func TestSweep_DeliversSteerRecord_AsUserEnvelope(t *testing.T) {
 	}
 }
 
+// TestSweep_SteerRecord_Broadcast_KeepsTodayPath mirrors the immediate path's
+// broadcast exception (TestSend_SteerChoice_Broadcast_KeepsTodayPath): a
+// deferred policy=broadcast record keeps the fan-out injection dispatch
+// (trigger "user") and its mode is inert — it must not be routed through
+// httpDriver's single-connection user envelope.
+func TestSweep_SteerRecord_Broadcast_KeepsTodayPath(t *testing.T) {
+	t.Parallel()
+	d, mock := httpTestSetup(t, httpTestOpts{})
+	mock.entered = make(chan string, 1)
+	store := withDeferStore(t, &d)
+	now := timeutil.Now()
+	_, _ = store.Enqueue(defersend.Record{
+		AgentID: testAgentID, SessionKey: testSessionKey, Text: "deferred heads up",
+		Policy: "broadcast", Steer: "steer",
+		WaitCold: "1m", CreatedAt: now, DeadlineAt: now.Add(time.Hour),
+	})
+	sweepFor(d, store).sweep()
+
+	select {
+	case <-mock.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("deferred broadcast record was not delivered by the sweep")
+	}
+	waitForCond(t, "turn recorded", func() bool { return len(mock.snapshot()) == 1 })
+	if calls := mock.snapshot(); calls[0].trigger != "user" {
+		t.Errorf("deferred broadcast choice turn trigger = %q, want \"user\" (today's injection path, mode inert)", calls[0].trigger)
+	}
+}
+
 // TestSweep_DeliversBranchRecord proves a deferred branch record is delivered
 // as a BRANCH: the fork happens at delivery time from the stored parent, the
 // turn runs async with trigger "branch" on the new branch session, the parent

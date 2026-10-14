@@ -313,7 +313,8 @@ func (s *deferSweeper) deliver(inst *agentInstance, r defersend.Record) {
 // same buffered, queued delivery asyncDispatch uses, minus the HTTP receipt
 // (the caller is long gone; a deferred send is fire-and-forget). A
 // choice-carrying record (Steer, #1318) routes as a user envelope instead so
-// its mode takes effect at delivery.
+// its mode takes effect at delivery — except policy=broadcast, where the mode
+// is inert exactly as on the immediate path (steerChoiceRoutes).
 func (s *deferSweeper) deliverSend(inst *agentInstance, r defersend.Record) {
 	if r.Model != "" {
 		if err := applyModelOverride(inst, r.SessionKey, r.Model, s.deps.cfg.Models); err != nil {
@@ -321,7 +322,7 @@ func (s *deferSweeper) deliverSend(inst *agentInstance, r defersend.Record) {
 		}
 	}
 	app.DeliverExternalPrompt(r.SessionKey, r.Text)
-	if pref := platform.SteerPreferenceFromWire(r.Steer); pref != platform.SteerDefault {
+	if pref := platform.SteerPreferenceFromWire(r.Steer); steerChoiceRoutes(pref, route.Policy(r.Policy)) {
 		// Human is deliberately false, mirroring the branch ruling below
 		// (#1130): whoever declared themselves human at enqueue time may be
 		// gone by delivery — a deferred request always delivers as automated.

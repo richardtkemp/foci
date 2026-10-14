@@ -63,7 +63,7 @@ func TestMaybeInjectCompactionResume(t *testing.T) {
 		var got []string
 		a := &Agent{AsyncNotifier: newNotifier(&got, &mu)}
 		inb := a.getOrCreateInbox(sk)
-		inb.appendSteer("mid-flow paste", time.Now())
+		inb.appendSteer(SteerEntry{Text: "mid-flow paste", ReceivedAt: time.Now()})
 
 		a.maybeInjectCompactionResume(sk)
 

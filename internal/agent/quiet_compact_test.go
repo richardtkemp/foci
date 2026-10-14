@@ -55,7 +55,7 @@ func TestQuietCompactBlocked_AllGuards(t *testing.T) {
 
 	// Leg 3: queued inbox input (a buffered steer text).
 	inb := ag.getOrCreateInbox(quietGuardSK)
-	inb.appendSteer("queued follow-up", time.Now())
+	inb.appendSteer(SteerEntry{Text: "queued follow-up", ReceivedAt: time.Now()})
 	if got := ag.QuietCompactBlocked(quietGuardSK); got != "inbox input queued" {
 		t.Errorf("inbox queued: QuietCompactBlocked = %q, want \"inbox input queued\"", got)
 	}

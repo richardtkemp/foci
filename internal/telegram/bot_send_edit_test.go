@@ -224,10 +224,11 @@ func TestFormatUserInfo(t *testing.T) {
 func TestMessageContainsMention(t *testing.T) {
 	// Proves @mention detection: matches the bot's username via a "mention"
 	// entity (behind ASCII and multi-byte text alike — Telegram counts
-	// offsets in UTF-16 code units), matches text_mention by user ID,
-	// matches a bot_command entity carrying this bot's @suffix (a group
-	// menu tap addresses that bot, #1318), and ignores other users or bots
-	// without API identity.
+	// offsets in UTF-16 code units), matches text_mention by user ID, and
+	// ignores other users or bots without API identity. Only for a
+	// /steer|/queue-prefixed message (#1318) does it also count caption
+	// entities and a bot_command entity carrying this bot's @suffix (a group
+	// menu tap); every other message is addressed exactly as before.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.api = &gotgbot.Bot{User: gotgbot.User{Id: 99, Username: "focibot"}}
 
@@ -237,49 +238,59 @@ func TestMessageContainsMention(t *testing.T) {
 		return m
 	}
 
-	if !b.messageContainsMention(mention("hi @focibot", gotgbot.MessageEntity{Type: "mention", Offset: 3, Length: 8})) {
-		t.Error("should detect @focibot mention")
+	for _, prefixed := range []bool{false, true} {
+		if !b.messageContainsMention(mention("hi @focibot", gotgbot.MessageEntity{Type: "mention", Offset: 3, Length: 8}), prefixed) {
+			t.Errorf("prefixed=%v: should detect @focibot mention", prefixed)
+		}
+		if b.messageContainsMention(mention("hi @otherbot", gotgbot.MessageEntity{Type: "mention", Offset: 3, Length: 9}), prefixed) {
+			t.Errorf("prefixed=%v: should not match a different bot's mention", prefixed)
+		}
+		if !b.messageContainsMention(mention("hi", gotgbot.MessageEntity{Type: "text_mention", User: &gotgbot.User{Id: 99}}), prefixed) {
+			t.Errorf("prefixed=%v: should detect text_mention by user ID", prefixed)
+		}
+		if b.messageContainsMention(mention("hi", gotgbot.MessageEntity{Type: "text_mention", User: &gotgbot.User{Id: 7}}), prefixed) {
+			t.Errorf("prefixed=%v: should not match text_mention for another user", prefixed)
+		}
+		// Multi-byte runes before the mention: Telegram counts entity offsets
+		// in UTF-16 code units, so byte slicing reads garbage and misses the
+		// mention (the round-5 bug; pins the UTF-16 decode in entitySpan).
+		if !b.messageContainsMention(mention("привет @focibot", gotgbot.MessageEntity{Type: "mention", Offset: 7, Length: 8}), prefixed) {
+			t.Errorf("prefixed=%v: should detect the mention behind cyrillic text", prefixed)
+		}
+		if !b.messageContainsMention(mention("😀 hi @focibot", gotgbot.MessageEntity{Type: "mention", Offset: 6, Length: 8}), prefixed) {
+			t.Errorf("prefixed=%v: should detect the mention behind an emoji", prefixed)
+		}
+		if b.messageContainsMention(mention("/queue@otherbot x", gotgbot.MessageEntity{Type: "bot_command", Offset: 0, Length: 15}), prefixed) {
+			t.Errorf("prefixed=%v: should not match another bot's @suffix", prefixed)
+		}
+		if b.messageContainsMention(mention("/queue x", gotgbot.MessageEntity{Type: "bot_command", Offset: 0, Length: 6}), prefixed) {
+			t.Errorf("prefixed=%v: a bot_command without an @suffix addresses no bot in particular", prefixed)
+		}
 	}
-	if b.messageContainsMention(mention("hi @otherbot", gotgbot.MessageEntity{Type: "mention", Offset: 3, Length: 9})) {
-		t.Error("should not match a different bot's mention")
+
+	menuTap := mention("/queue@focibot x", gotgbot.MessageEntity{Type: "bot_command", Offset: 0, Length: 14})
+	if !b.messageContainsMention(menuTap, true) {
+		t.Error("prefixed: should detect a bot_command with this bot's @suffix (group menu tap)")
 	}
-	if !b.messageContainsMention(mention("hi", gotgbot.MessageEntity{Type: "text_mention", User: &gotgbot.User{Id: 99}})) {
-		t.Error("should detect text_mention by user ID")
-	}
-	if b.messageContainsMention(mention("hi", gotgbot.MessageEntity{Type: "text_mention", User: &gotgbot.User{Id: 7}})) {
-		t.Error("should not match text_mention for another user")
-	}
-	if !b.messageContainsMention(mention("/queue@focibot x", gotgbot.MessageEntity{Type: "bot_command", Offset: 0, Length: 14})) {
-		t.Error("should detect a bot_command with this bot's @suffix (group menu tap)")
-	}
-	if b.messageContainsMention(mention("/queue@otherbot x", gotgbot.MessageEntity{Type: "bot_command", Offset: 0, Length: 15})) {
-		t.Error("should not match another bot's @suffix")
-	}
-	if b.messageContainsMention(mention("/queue x", gotgbot.MessageEntity{Type: "bot_command", Offset: 0, Length: 6})) {
-		t.Error("a bot_command without an @suffix addresses no bot in particular")
-	}
-	// Multi-byte runes before the mention: Telegram counts entity offsets
-	// in UTF-16 code units, so byte slicing reads garbage and misses the
-	// mention (the round-5 bug; pins the UTF-16 decode in entitySpan).
-	if !b.messageContainsMention(mention("привет @focibot", gotgbot.MessageEntity{Type: "mention", Offset: 7, Length: 8})) {
-		t.Error("should detect the mention behind cyrillic text")
-	}
-	if !b.messageContainsMention(mention("😀 hi @focibot", gotgbot.MessageEntity{Type: "mention", Offset: 6, Length: 8})) {
-		t.Error("should detect the mention behind an emoji")
+	if b.messageContainsMention(mention("/status@focibot", gotgbot.MessageEntity{Type: "bot_command", Offset: 0, Length: 15}), false) {
+		t.Error("unprefixed: a bot_command @suffix must not newly count as addressed (addressing stays as before)")
 	}
 	caption := makeMsgWithPhoto(111, "owner", "look @focibot")
 	caption.CaptionEntities = []gotgbot.MessageEntity{{Type: "mention", Offset: 5, Length: 8}}
-	if !b.messageContainsMention(caption) {
-		t.Error("should detect a mention in a photo caption")
+	if !b.messageContainsMention(caption, true) {
+		t.Error("prefixed: should detect a mention in a photo caption")
+	}
+	if b.messageContainsMention(caption, false) {
+		t.Error("unprefixed: a caption mention must not newly count as addressed (a require_mention group dropped it before)")
 	}
 	cyrillicCaption := makeMsgWithPhoto(111, "owner", "фото @focibot")
 	cyrillicCaption.CaptionEntities = []gotgbot.MessageEntity{{Type: "mention", Offset: 5, Length: 8}}
-	if !b.messageContainsMention(cyrillicCaption) {
-		t.Error("should detect a caption mention behind cyrillic text")
+	if !b.messageContainsMention(cyrillicCaption, true) {
+		t.Error("prefixed: should detect a caption mention behind cyrillic text")
 	}
 
 	b.api = nil
-	if b.messageContainsMention(mention("hi @focibot", gotgbot.MessageEntity{Type: "mention", Offset: 3, Length: 8})) {
+	if b.messageContainsMention(mention("hi @focibot", gotgbot.MessageEntity{Type: "mention", Offset: 3, Length: 8}), true) {
 		t.Error("bot without API identity cannot be mentioned")
 	}
 }

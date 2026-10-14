@@ -472,12 +472,17 @@ func (b *Bot) streamInterval() time.Duration {
 	return 250 * time.Millisecond
 }
 
-// messageContainsMention returns true if the message addresses this bot:
-// an @mention entity (in the text or a media caption), a text_mention of
-// its user id, or a bot_command entity carrying its own @suffix — Telegram
-// delivers a command-menu tap in a group as "/queue@mybot", addressed to
-// that bot (#1318). Another bot's mention or @suffix does not count.
-func (b *Bot) messageContainsMention(msg *gotgbot.Message) bool {
+// messageContainsMention returns true if the message addresses this bot: an
+// @mention entity or a text_mention of its user id in the message text.
+// Another bot's mention does not count.
+//
+// steerPrefixed widens the check for a message carrying a /steer or /queue
+// prefix (bare or not, #1318) and ONLY for it, so addressing of every other
+// message stays as it was: a media caption's entities count too (a prefixed
+// photo caption), and so does a bot_command entity carrying this bot's own
+// @suffix — Telegram delivers a group command-menu tap as "/queue@mybot",
+// addressed to that bot. Another bot's @suffix does not count.
+func (b *Bot) messageContainsMention(msg *gotgbot.Message, steerPrefixed bool) bool {
 	if b.api == nil || b.api.User.Id == 0 {
 		return false
 	}
@@ -495,6 +500,9 @@ func (b *Bot) messageContainsMention(msg *gotgbot.Message) bool {
 					return true
 				}
 			case "bot_command":
+				if !steerPrefixed {
+					continue
+				}
 				if cmd := entityText(text, entity); botUsername != "" {
 					if at := strings.LastIndex(cmd, "@"); at >= 0 && strings.EqualFold(cmd[at+1:], botUsername) {
 						return true
@@ -504,7 +512,10 @@ func (b *Bot) messageContainsMention(msg *gotgbot.Message) bool {
 		}
 		return false
 	}
-	return addressedToUs(msg.Text, msg.Entities) || addressedToUs(msg.Caption, msg.CaptionEntities)
+	if addressedToUs(msg.Text, msg.Entities) {
+		return true
+	}
+	return steerPrefixed && addressedToUs(msg.Caption, msg.CaptionEntities)
 }
 
 // entityText returns the entity's span of the text it indexes (caption

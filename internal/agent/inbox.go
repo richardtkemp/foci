@@ -77,6 +77,15 @@ type Envelope struct {
 	// entry write bumps last_user_activity_at.
 	Human bool
 
+	// Automated marks a user envelope sent by automation: a choice-carrying
+	// HTTP /send WITHOUT the #1130 human declaration (cron scripts, anything
+	// holding the API key). It folds or queues like any user message, but it
+	// never answers for the human — the typed-answer intercepts (CC re-login
+	// code, plan-cancel feedback, foci_ask answer capture in Enqueue and
+	// RunTurn) skip it. Platform envelopes never set it, so a Telegram or
+	// Discord reply still captures.
+	Automated bool
+
 	// Original is the platform-specific raw message (e.g. *gotgbot.Message
 	// for telegram, *discordgo.Message for discord). Opaque to the agent;
 	// the Driver type-asserts to recover it for renderer/reply targeting.
@@ -242,10 +251,13 @@ type Driver interface {
 // SteerEntry is a buffered steer message together with the time it was
 // received. Preserving receipt time lets orphaned steers (drained after a
 // turn completes and rebuilt as follow-up turns) show accurate meta header
-// timestamps.
+// timestamps. Automated carries Envelope.Automated through the buffer, so an
+// orphan rebuilt by buildFollowUp keeps it and still never answers for the
+// human (RunTurn's ask capture skips it).
 type SteerEntry struct {
 	Text       string
 	ReceivedAt time.Time
+	Automated  bool
 }
 
 // inboxChanSize is the per-session channel buffer. Matches the legacy
@@ -319,10 +331,15 @@ func newSessionInbox(sk string, lg *log.ComponentLogger) *sessionInbox {
 	}
 }
 
-func (inb *sessionInbox) appendSteer(text string, receivedAt time.Time) {
+func (inb *sessionInbox) appendSteer(e SteerEntry) {
 	inb.steerMu.Lock()
-	inb.steer = append(inb.steer, SteerEntry{Text: text, ReceivedAt: receivedAt})
+	inb.steer = append(inb.steer, e)
 	inb.steerMu.Unlock()
+}
+
+// steerEntryFor is the one Envelope→SteerEntry mapping for the steer buffer.
+func steerEntryFor(env Envelope) SteerEntry {
+	return SteerEntry{Text: env.Text, ReceivedAt: env.ReceivedAt, Automated: env.Automated}
 }
 
 func (inb *sessionInbox) drainSteer() []SteerEntry {
@@ -485,12 +502,17 @@ func (a *Agent) Enqueue(env Envelope) bool {
 	// releases (#1932 — this used to drop, after the front end had already
 	// shown the message as sent). Mid-turn routing (steer, plan-cancel, ask
 	// capture) is skipped: the backend it would write to cannot authenticate.
-	// Only a user message can be the code (#2384): an injection (HTTP /send,
-	// proactive warning) has no Text, and capturing one submitted an empty
-	// code and failed the attempt.
+	// Only a human's user message can be the code. An injection (a plain HTTP
+	// /send, a proactive warning) has no Text, and capturing one submitted an
+	// empty code and failed the attempt (#2384). A choice-carrying HTTP /send
+	// (#1318) is a user envelope WITH Text, so it is excluded by Automated
+	// unless the caller declared a human sender (#1130). An explicitly-queued
+	// message (SteerNever) is a turn, never the code — the same carve-out as
+	// plan-cancel and ask capture below.
 	reloginHold := false
 	if a.DelegatedManager != nil && relogin.G.Active() {
-		if env.Inject == nil && strings.TrimSpace(env.Text) != "" && relogin.G.ShouldCapture(a.AgentID) {
+		if env.Inject == nil && !env.Automated && env.Steer != platform.SteerNever &&
+			strings.TrimSpace(env.Text) != "" && relogin.G.ShouldCapture(a.AgentID) {
 			relogin.G.SubmitCode(env.Text)
 			a.logger().Infof("inbox: captured CC login code sk=%s", env.SessionKey)
 			return true
@@ -554,7 +576,10 @@ func (a *Agent) Enqueue(env Envelope) bool {
 	// SteerNever carve-out: a message the sender explicitly marked "queue" is a
 	// turn, not feedback — it must not be consumed here. It queues below and
 	// waits for the plan flow (and turn) to resolve.
-	if isActive && env.Steer != platform.SteerNever && env.Text != "" && len(env.Attachments) == 0 {
+	//
+	// Automated carve-out: a send that did not declare a human sender must not
+	// deny the plan on the human's behalf (see Envelope.Automated).
+	if isActive && env.Steer != platform.SteerNever && !env.Automated && env.Text != "" && len(env.Attachments) == 0 {
 		if be, err := a.resolveSessionBackend(a.inboxCtx, env.SessionKey); err == nil && be != nil {
 			if pr, ok := delegator.As[delegator.PlanResponder](be); ok {
 				if reqID := pr.HasPendingPlanPermission(); reqID != "" {
@@ -588,8 +613,9 @@ func (a *Agent) Enqueue(env Envelope) bool {
 	// free-text answer channel IS a typed reply).
 	//
 	// SteerNever carve-out: an explicitly-queued message is a turn, never an
-	// answer — same rationale as the plan-cancel carve-out above.
-	if isActive && env.Steer != platform.SteerNever && env.Text != "" && len(env.Attachments) == 0 && env.platformName() != platformApp &&
+	// answer — same rationale as the plan-cancel carve-out above. Automated
+	// carve-out: likewise, an automated send never answers for the human.
+	if isActive && env.Steer != platform.SteerNever && !env.Automated && env.Text != "" && len(env.Attachments) == 0 && env.platformName() != platformApp &&
 		a.AskRouter != nil && a.AskRouter.PendingForSession != nil && a.AskRouter.HandleResponse != nil {
 		if reqID := a.AskRouter.PendingForSession(env.SessionKey); reqID != "" &&
 			!(a.AskRouter.IsPaused != nil && a.AskRouter.IsPaused(env.SessionKey)) {
@@ -622,14 +648,14 @@ func (a *Agent) Enqueue(env Envelope) bool {
 			a.logger().Warnf("inbox: backend lookup failed sk=%s: %v (queueing message with attachments for a fresh turn)", env.SessionKey, err)
 		case err != nil:
 			a.logger().Warnf("inbox: backend lookup failed sk=%s: %v (falling back to buffer)", env.SessionKey, err)
-			inb.appendSteer(env.Text, env.ReceivedAt)
+			inb.appendSteer(steerEntryFor(env))
 			return true
 		case be == nil && hasAttachments:
 			// API mode: the steer buffer is text-only, so a message with
 			// attachments waits for a fresh turn.
 		case be == nil:
 			// API-mode fallback: buffer for next tool-boundary drain.
-			inb.appendSteer(env.Text, env.ReceivedAt)
+			inb.appendSteer(steerEntryFor(env))
 			a.logger().Debugf("inbox: buffered steer sk=%s %dB", env.SessionKey, len(env.Text))
 			return true
 		default:
@@ -1802,6 +1828,7 @@ func (a *Agent) driveOnce(ctx context.Context, inb *sessionInbox, batch []Envelo
 // conversation"; their receipt timestamps are preserved so meta headers
 // render with the original send time, not the drain time. Extras retain
 // their own metadata since they're standalone messages that just arrived.
+// An orphan's Automated marker is its own (SteerEntry), never the seed's.
 func buildFollowUp(seed Envelope, orphans []SteerEntry, extras []Envelope) []Envelope {
 	if len(orphans) == 0 && len(extras) == 0 {
 		return nil
@@ -1817,6 +1844,7 @@ func buildFollowUp(seed Envelope, orphans []SteerEntry, extras []Envelope) []Env
 			ChatID:      seed.ChatID,
 			IsGroupChat: seed.IsGroupChat,
 			ReceivedAt:  s.ReceivedAt,
+			Automated:   s.Automated,
 			Original:    seed.Original,
 			Driver:      seed.Driver,
 		})

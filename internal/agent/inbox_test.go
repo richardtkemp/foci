@@ -1058,7 +1058,7 @@ func TestInbox_Worker_DrainsOrphansAfterTurn(t *testing.T) {
 	// Pre-seed the inbox so we can push an orphan steer before the
 	// worker creates it.
 	inb := a.getOrCreateInbox("test/s")
-	inb.appendSteer("buffered-1", time.Now())
+	inb.appendSteer(SteerEntry{Text: "buffered-1", ReceivedAt: time.Now()})
 
 	a.Enqueue(Envelope{SessionKey: "test/s", Text: "primary", Driver: d})
 
@@ -1089,7 +1089,7 @@ func TestInbox_Worker_OrphanDrainIsRecursive(t *testing.T) {
 
 	// Pre-seed orphan-1 before the primary turn.
 	inb := a.getOrCreateInbox("test/s")
-	inb.appendSteer("orphan-1", time.Now())
+	inb.appendSteer(SteerEntry{Text: "orphan-1", ReceivedAt: time.Now()})
 
 	// Recording driver that, on seeing "orphan-1" arrive as a follow-up,
 	// pushes orphan-2 into the steer buffer mid-Drive — simulating a
@@ -1131,7 +1131,7 @@ type recursiveDriver struct {
 func (d *recursiveDriver) observeBatch(sk string, batch []Envelope) {
 	if len(batch) > 0 && batch[0].Text == d.onText {
 		d.once.Do(func() {
-			d.inb.appendSteer(d.appendNext, time.Now())
+			d.inb.appendSteer(SteerEntry{Text: d.appendNext, ReceivedAt: time.Now()})
 		})
 	}
 	d.recordingDriver.recordBatch(sk, batch)

@@ -80,7 +80,8 @@ func (b *Bot) toPlatformMessage(msg *gotgbot.Message, qm queuedMessage) platform
 	}
 
 	isGroup := msg.Chat.Type == "group" || msg.Chat.Type == "supergroup"
-	isMention := isGroup && b.messageContainsMention(msg)
+	steerPrefixed := qm.steer != platform.SteerDefault || qm.bareSteerPrefix
+	isMention := isGroup && b.messageContainsMention(msg, steerPrefixed)
 
 	senderName := ""
 	if msg.From != nil {

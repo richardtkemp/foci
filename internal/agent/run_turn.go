@@ -162,8 +162,14 @@ func (a *Agent) RunTurn(
 	// driver.Connection(); "" (unknown source) falls through to capture as before.
 	// SteerNever carve-out (mirrors inbox.go): an explicitly-queued message is a
 	// turn, never an answer.
-	if a.AskRouter != nil && a.AskRouter.PendingForSession != nil && len(texts) > 0 && platformName != platformApp &&
-		first.Steer != platform.SteerNever {
+	// Automated carve-out (mirrors inbox.go): a choice-carrying HTTP /send
+	// without the human declaration is a user envelope that reaches RunTurn
+	// (directly, or as a buffered steer rebuilt by buildFollowUp), so the
+	// "never eats system injects" guarantee above does not cover it on its
+	// own. A batch containing ANY automated envelope runs as a normal turn:
+	// capturing would either take automation's text as the human's answer or,
+	// with the human's text first, silently drop the automated text.
+	if a.AskRouter != nil && a.AskRouter.PendingForSession != nil && len(texts) > 0 && typedAnswerEligible(platformName, batch) {
 		if reqID := a.AskRouter.PendingForSession(sk); reqID != "" &&
 			!(a.AskRouter.IsPaused != nil && a.AskRouter.IsPaused(sk)) {
 			answer := strings.TrimSpace(texts[0])
@@ -191,6 +197,25 @@ func batchTrigger(platformName string, batch []Envelope) string {
 		}
 	}
 	return platformName
+}
+
+// typedAnswerEligible reports whether a (non-empty) batch may be captured as
+// the typed answer to a pending foci_ask: not from the app (which answers via
+// interactive frames), not explicitly queued (SteerNever on the first
+// envelope), and containing no Automated envelope at all.
+func typedAnswerEligible(platformName string, batch []Envelope) bool {
+	return platformName != platformApp && batch[0].Steer != platform.SteerNever && !batchAutomated(batch)
+}
+
+// batchAutomated reports whether any envelope in the batch carries the
+// Envelope.Automated marker.
+func batchAutomated(batch []Envelope) bool {
+	for _, env := range batch {
+		if env.Automated {
+			return true
+		}
+	}
+	return false
 }
 
 // batchHuman reports whether any envelope in the batch carries the
