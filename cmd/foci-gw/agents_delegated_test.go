@@ -353,9 +353,12 @@ func registerCfgCatcher(name, family string) *cfgRecord {
 	}
 	rec := &cfgRecord{}
 	spec := delegator.Spec{
-		Name:         name,
-		DisplayName:  name,
-		New:          func(cfg map[string]any) (delegator.Delegator, error) { rec.got = cfg; return &cfgCatcher{rec: rec}, nil },
+		Name:        name,
+		DisplayName: name,
+		New: func(cfg map[string]any) (delegator.Delegator, error) {
+			rec.got = cfg
+			return &cfgCatcher{rec: rec}, nil
+		},
 		Prototype:    (*cfgCatcher)(nil),
 		Caps:         map[delegator.Capability]delegator.Support{},
 		ModelcapsKey: name,
