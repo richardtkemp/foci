@@ -492,7 +492,7 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # branch_orientation_headless_prompt = ""  # prompt for headless branches (cron, spawn, keepalive)
 # archive_after = "24h"                   # gzip idle sessions after 24 hours
 # file_mode = "0600"                      # octal permissions for session files
-# ephemeral_retention_days = 30           # delete ephemeral branch/fork transcripts after N days (0 = never)
+# ephemeral_retention_days = 7            # delete ephemeral branch/fork transcripts after N days (0 = never)
 
 # ─── Skills ───────────────────────────────────────────────────────────
 # [skills]

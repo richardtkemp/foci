@@ -951,7 +951,7 @@ type SessionsConfig struct {
 	ArchiveAfter string `toml:"archive_after" default:"24h"  desc:"How long a session sits idle before its transcript is gzip-archived (default 24h)" type:"duration"`
 	FileMode     string `toml:"file_mode"     default:"0600" desc:"Octal file permissions for session files (default 0600)"`
 
-	EphemeralRetentionDays int `toml:"ephemeral_retention_days" default:"30" hot:"event" desc:"Days to keep ephemeral branch and fork session transcripts before automatic daily cleanup deletes them; 0 disables cleanup" min:"0"` // daily GC of stale ephemeral session files
+	EphemeralRetentionDays int `toml:"ephemeral_retention_days" default:"7" hot:"event" desc:"Days to keep ephemeral branch and fork session transcripts before automatic daily cleanup deletes them; 0 disables cleanup" min:"0"` // daily GC of stale ephemeral session files
 }
 
 type MemorySource struct {

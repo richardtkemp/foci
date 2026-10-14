@@ -165,3 +165,14 @@ func TestReflectionConfigMerge(t *testing.T) {
 		}
 	})
 }
+
+func TestSessionsEphemeralRetentionDefaultIsSevenDays(t *testing.T) {
+	// Proves the shipped default for sessions.ephemeral_retention_days is 7
+	// (Dick 2026-10-14, cut from 30: fork transcripts copy the parent's whole
+	// history and were ~94% of transcript disk; see #2410).
+	var s SessionsConfig
+	ApplyTagDefaults(&s)
+	if s.EphemeralRetentionDays != 7 {
+		t.Errorf("EphemeralRetentionDays default = %d, want 7", s.EphemeralRetentionDays)
+	}
+}
