@@ -91,7 +91,7 @@ const stopRulesEnv = "FOCI_CC_STOP_RULES"
 
 // maxRulesEnvBytes bounds one rules variable. Linux caps a single environment
 // string at 128 KiB (MAX_ARG_STRLEN); past it execve fails with E2BIG and the
-// CC process would not start, so an oversize rule set is refused up front.
+// CC process would not start, so an oversize rule set is truncated to fit.
 const maxRulesEnvBytes = 120 * 1024
 
 // hookTimeoutSeconds is the CC hook-script timeout foci configures. 10
@@ -223,32 +223,79 @@ func buildHookSettingsJSON(hookCmd string, rules []pretool.Rule, stopRules []sto
 	return string(body), nil
 }
 
+// rulesEnvResult is hookRulesEnv's outcome: the environment to set, the rules
+// that made it in (the settings JSON must be built from these, not the
+// originals), and the names of rules dropped to fit the size limit.
+type rulesEnvResult struct {
+	env         map[string]string
+	rules       []pretool.Rule
+	stopRules   []stoprule.Rule
+	droppedPre  []string
+	droppedStop []string
+}
+
+// fitRules keeps rules, in order, while the base64(JSON array) encoding stays
+// within max bytes, and skips (drops) any rule that would push it over. A
+// smaller later rule can still fit after a large one is skipped, so as many
+// rules as possible survive (#2416). Sizes are computed incrementally from each
+// rule's own JSON; the caller re-encodes the kept set for the real value.
+func fitRules[T any](rules []T, max int, name func(T) string) (kept []T, dropped []string, err error) {
+	jsonLen := 2 // "[]"
+	for _, r := range rules {
+		body, merr := json.Marshal(r)
+		if merr != nil {
+			return nil, nil, merr
+		}
+		add := len(body)
+		if len(kept) > 0 {
+			add++ // comma
+		}
+		if (jsonLen+add)*4/3+2 > max {
+			dropped = append(dropped, name(r))
+			continue
+		}
+		jsonLen += add
+		kept = append(kept, r)
+	}
+	return kept, dropped, nil
+}
+
 // hookRulesEnv encodes the pretool and stop rules into the environment
 // variables foci-cc-hook reads. They go on the CC process env, not the hook
 // command line, so CC's transcript logging of the command stays small and the
 // agent's Bash cannot rewrite its parent's env. Empty rule sets set nothing.
-func hookRulesEnv(rules []pretool.Rule, stopRules []stoprule.Rule) (map[string]string, error) {
-	env := map[string]string{}
-	if len(rules) > 0 {
-		enc, err := pretool.Encode(rules)
+// A set over maxRulesEnvBytes is truncated to the rules that fit (config order,
+// skipping any that do not) rather than refused; the dropped names are
+// reported in the result so the caller can fail loudly (#2416).
+func hookRulesEnv(rules []pretool.Rule, stopRules []stoprule.Rule) (rulesEnvResult, error) {
+	res := rulesEnvResult{env: map[string]string{}}
+	var err error
+	if res.rules, res.droppedPre, err = fitRules(rules, maxRulesEnvBytes, func(r pretool.Rule) string { return r.Name }); err != nil {
+		return res, fmt.Errorf("encode pretool rules: %w", err)
+	}
+	if res.stopRules, res.droppedStop, err = fitRules(stopRules, maxRulesEnvBytes, func(r stoprule.Rule) string { return r.Name }); err != nil {
+		return res, fmt.Errorf("encode stop rules: %w", err)
+	}
+	if len(res.rules) > 0 {
+		enc, err := pretool.Encode(res.rules)
 		if err != nil {
-			return nil, fmt.Errorf("encode pretool rules: %w", err)
+			return res, fmt.Errorf("encode pretool rules: %w", err)
 		}
-		env[rulesEnv] = enc
+		res.env[rulesEnv] = enc
 	}
-	if len(stopRules) > 0 {
-		enc, err := stoprule.Encode(stopRules)
+	if len(res.stopRules) > 0 {
+		enc, err := stoprule.Encode(res.stopRules)
 		if err != nil {
-			return nil, fmt.Errorf("encode stop rules: %w", err)
+			return res, fmt.Errorf("encode stop rules: %w", err)
 		}
-		env[stopRulesEnv] = enc
+		res.env[stopRulesEnv] = enc
 	}
-	for k, v := range env {
-		if len(v) > maxRulesEnvBytes {
-			return nil, fmt.Errorf("%s is %d bytes, over the %d byte environment limit", k, len(v), maxRulesEnvBytes)
+	for k, v := range res.env {
+		if len(v) > maxRulesEnvBytes { // fitRules' estimate is exact-or-high; this is the backstop
+			return res, fmt.Errorf("%s is %d bytes after truncation, over the %d byte environment limit", k, len(v), maxRulesEnvBytes)
 		}
 	}
-	return env, nil
+	return res, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -278,16 +325,25 @@ func (b *Backend) prepareHooks() (string, map[string]string, bool) {
 	if b.stopRules != nil {
 		stopRules = b.stopRules()
 	}
+	// Rules over the env limit are truncated, not refused: the tracking hooks
+	// and as many rules as fit still install, and the drop is an ERROR (which
+	// the warnings queue forwards to the user) naming every rule lost (#2416).
+	res, err := hookRulesEnv(rules, stopRules)
+	if err != nil {
+		b.logger().Errorf("CC hook install skipped, rules not enforced: %v", err)
+		return "", nil, false
+	}
+	if len(res.droppedPre) > 0 || len(res.droppedStop) > 0 {
+		b.logger().Errorf("CC hook rules exceed the %d byte env limit; truncated, NOT enforced: pretool rules %v (kept %d of %d), stop rules %v (kept %d of %d)",
+			maxRulesEnvBytes, res.droppedPre, len(res.rules), len(rules), res.droppedStop, len(res.stopRules), len(stopRules))
+	}
+	rules, stopRules = res.rules, res.stopRules
 	settingsJSON, err := buildHookSettingsJSON(hookCmd, rules, stopRules)
 	if err != nil {
 		b.logger().Warnf("CC hook install skipped: %v", err)
 		return "", nil, false
 	}
-	rulesEnvVars, err := hookRulesEnv(rules, stopRules)
-	if err != nil {
-		b.logger().Errorf("CC hook install skipped, rules not enforced: %v", err)
-		return "", nil, false
-	}
+	rulesEnvVars := res.env
 
 	b.mu.Lock()
 	b.hookCmd = hookCmd

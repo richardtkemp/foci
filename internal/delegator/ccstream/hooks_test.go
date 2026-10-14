@@ -3,6 +3,7 @@ package ccstream
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -111,7 +112,8 @@ func TestBuildHookSettingsJSON_PreToolRules(t *testing.T) {
 	if preCmd != cmd {
 		t.Fatalf("PreToolUse command = %q, want bare %q (rules ride the env, #2414)", preCmd, cmd)
 	}
-	envVars, err := hookRulesEnv(rules, nil)
+	envRes, err := hookRulesEnv(rules, nil)
+	envVars := envRes.env
 	if err != nil || len(envVars) != 1 {
 		t.Fatalf("hookRulesEnv = %v err=%v", envVars, err)
 	}
@@ -153,7 +155,8 @@ func TestBuildHookSettingsJSON_StopRules(t *testing.T) {
 	if c := stop[0].Hooks[0].Command; c != cmd {
 		t.Fatalf("Stop command = %q, want bare %q", c, cmd)
 	}
-	envVars, err := hookRulesEnv(nil, []stoprule.Rule{{Name: "s", Text: []string{"starting"}, Reason: "r"}})
+	envRes, err := hookRulesEnv(nil, []stoprule.Rule{{Name: "s", Text: []string{"starting"}, Reason: "r"}})
+	envVars := envRes.env
 	if err != nil || len(envVars) != 1 {
 		t.Fatalf("hookRulesEnv = %v err=%v", envVars, err)
 	}
@@ -1035,14 +1038,42 @@ func TestHandleHookResponse_RuntimeShownLogged(t *testing.T) {
 }
 
 // TestHookRulesEnv_EmptyAndOversize proves no rules sets nothing and a rule
-// set past the single-env-string limit is refused (#2414).
+// set past the single-env-string limit is truncated to what fits, in order,
+// with the dropped rules named (#2416).
 func TestHookRulesEnv_EmptyAndOversize(t *testing.T) {
-	if env, err := hookRulesEnv(nil, nil); err != nil || len(env) != 0 {
-		t.Errorf("empty = %v err=%v", env, err)
+	if res, err := hookRulesEnv(nil, nil); err != nil || len(res.env) != 0 {
+		t.Errorf("empty = %v err=%v", res.env, err)
 	}
-	big := []pretool.Rule{{Name: "big", Tool: "Bash", Action: "deny", Reason: strings.Repeat("x", 4*maxRulesEnvBytes)}}
-	if _, err := hookRulesEnv(big, nil); err == nil {
-		t.Error("oversize rules accepted")
+	mk := func(n string, size int) pretool.Rule {
+		return pretool.Rule{Name: n, Tool: "Bash", Action: "deny", Reason: strings.Repeat("x", size)}
+	}
+	rules := []pretool.Rule{mk("a", 100), mk("big", 4*maxRulesEnvBytes), mk("c", 100)}
+	stops := []stoprule.Rule{{Name: "s", Text: []string{"starting"}, Reason: "r"}}
+	res, err := hookRulesEnv(rules, stops)
+	if err != nil {
+		t.Fatalf("oversize refused: %v", err)
+	}
+	if len(res.rules) != 2 || res.rules[0].Name != "a" || res.rules[1].Name != "c" {
+		t.Errorf("kept = %+v, want a,c", res.rules)
+	}
+	if len(res.droppedPre) != 1 || res.droppedPre[0] != "big" || len(res.droppedStop) != 0 {
+		t.Errorf("dropped = %v / %v", res.droppedPre, res.droppedStop)
+	}
+	if len(res.stopRules) != 1 || res.env[stopRulesEnv] == "" {
+		t.Errorf("stop rules lost: %+v", res.stopRules)
+	}
+	dec, err := pretool.Decode(res.env[rulesEnv])
+	if err != nil || len(dec) != 2 {
+		t.Errorf("decode = %v err=%v", dec, err)
+	}
+	// Many rules that together exceed the limit: the env value stays in bounds.
+	var many []pretool.Rule
+	for i := 0; i < 200; i++ {
+		many = append(many, mk(fmt.Sprintf("r%d", i), 1000))
+	}
+	res, err = hookRulesEnv(many, nil)
+	if err != nil || len(res.env[rulesEnv]) > maxRulesEnvBytes || len(res.droppedPre) == 0 || len(res.rules)+len(res.droppedPre) != 200 {
+		t.Errorf("many: err=%v len=%d kept=%d dropped=%d", err, len(res.env[rulesEnv]), len(res.rules), len(res.droppedPre))
 	}
 }
 
