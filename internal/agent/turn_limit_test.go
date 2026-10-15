@@ -906,14 +906,16 @@ func TestTurnLimit_CancelSessionIdleReturnsFalse(t *testing.T) {
 // channel and held in a gate — the injection runs to completion once the
 // gate opens, and only the batch is dropped.
 //
-// Determinism: inFlightChanged gains a "sess/B" entry exactly when the
-// worker enters the inject gate's wait loop (nothing else calls
-// InFlightWaitCh for B here), which proves the injection is parked IN the
-// gate before the /stop. The marker message then separates the two worlds:
-// on the fixed path the worker stays parked in the gate (marker immobile,
-// no second notice); on the broken path the /stop aborts the batch, the
-// worker comes back around, and the marker queues (second notice) — all
-// before the gate is ever opened.
+// Determinism: inFlightChanged gains a "sess/B" entry exactly when the held
+// inject's gate watcher enters its wait loop (nothing else calls
+// InFlightWaitCh for B here), which proves the injection is parked in the
+// gate before the /stop. Since #2233 a held inject no longer parks the
+// WORKER: the marker message queues for its slot behind A (second notice)
+// while the injection stays parked. When the gate then opens while the
+// marker's batch still waits for the slot, the slot wait releases the
+// injection inline — it must NOT wait for the batch's slot: a turn holding
+// that slot can itself be blocked on this session's injection, so making
+// the released inject queue behind the batch is the #2281 deadlock.
 func TestTurnLimit_StopWhileQueuedKeepsGatedInjection(t *testing.T) {
 	a, cancel := startedAgent(t)
 	defer cancel()
@@ -933,9 +935,9 @@ func TestTurnLimit_StopWhileQueuedKeepsGatedInjection(t *testing.T) {
 	// Close the inject gate on B: an adopted delivering run is in flight.
 	releaseInFlight := a.markInFlight("sess/B", true)
 
-	// An injection for B is pulled off the channel by the waiting worker
-	// and held in the (closed) inject gate. inFlightChanged["sess/B"]
-	// appearing proves the worker is parked INSIDE the gate's wait loop.
+	// An injection for B is pulled off the channel by the waiting worker and
+	// parked in the (closed) inject gate. inFlightChanged["sess/B"] appearing
+	// proves the gate watcher is parked INSIDE its wait loop.
 	injRan := make(chan struct{})
 	refused := make(chan struct{})
 	a.Enqueue(Envelope{SessionKey: "sess/B", Inject: &InjectMeta{
@@ -957,45 +959,95 @@ func TestTurnLimit_StopWhileQueuedKeepsGatedInjection(t *testing.T) {
 		t.Fatal("CancelSession returned false for a slot-waiting batch")
 	}
 
-	// A further B message separates "worker back around (batch already
-	// dropped — the injection was lost with it)" from "worker still parked
-	// in the injection's gate". The gate is still closed, so on the fixed
-	// path the marker cannot move and no second notice can fire.
+	// A further B message proves the worker serves user messages while the
+	// injection stays parked (#2233): the marker queues for its slot behind A
+	// (second notice) instead of waiting behind the held injection.
 	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "marker", Driver: dB})
-	if recvSoon(notices.signal, 2*time.Second) {
-		releaseInFlight()
-		select {
-		case <-injRan:
-			t.Fatal("injection ran after its batch was already dropped — impossible ordering")
-		case <-refused:
-			t.Fatal("injection refused after /stop of the queued user batch — it was gated, not declined")
-		case <-time.After(2 * time.Second):
-			t.Fatal("injection lost after /stop of the queued user batch: never ran, never refused")
-		}
-		t.Fatal("unreachable")
+	if !recvSoon(notices.signal, 2*time.Second) {
+		t.Fatal("marker never queued — the held injection is blocking user messages (head-of-line block, #2233)")
 	}
 
-	// Open the gate: the injection runs despite the /stop.
+	// Open the gate. The injection must run NOW, while the marker's batch
+	// still waits for A's slot: the slot wait serves the held-inject watcher
+	// and releases it inline, slot-free (#2281's deadlock rule).
 	releaseInFlight()
 	select {
 	case <-injRan:
 	case <-refused:
-		t.Fatal("the gated injection was refused instead of run")
-	case <-time.After(5 * time.Second):
-		t.Fatal("the gated injection never ran after the gate opened")
+		t.Fatal("injection refused after /stop of the queued user batch — it was gated, not declined")
+	case <-time.After(2 * time.Second):
+		t.Fatal("the gated injection waited for the marker batch's slot after its gate opened — the #2281 deadlock (a slot-holding turn blocked on this injection would wedge)")
 	}
-
-	// Only the user batch was dropped: B's turns never drive (A still holds
-	// the slot; the marker is queued behind it, not dropped).
 	select {
 	case <-dB.ready:
-		t.Fatal("B's dropped batch ran")
-	case <-time.After(150 * time.Millisecond):
+		t.Fatal("the marker batch drove before the released injection ran")
+	default:
 	}
-	if got := dB.count.Load(); got != 0 {
-		t.Errorf("dropped batch reached the driver: B WrapTurn calls = %d, want 0", got)
-	}
+
+	// The marker's batch drives once A releases — the stopped batch never
+	// ran, and the injection never displaced the user message.
 	close(releaseA)
+	mustRecv(t, dB.ready, "the marker batch to drive")
+	if got := dB.count.Load(); got != 1 {
+		t.Errorf("B WrapTurn calls = %d, want 1 (only the marker; the stopped batch never ran)", got)
+	}
+}
+
+// TestTurnLimit_HeldInjectRunsWhenGateOpensDuringSlotWait is the bare #2281
+// deadlock shape behind the /stop variant above: session A holds the only
+// turn slot — in production that turn is blocked in EnqueueInjectWait on a
+// sync /send into B — B's user batch queues for the slot, and B's inject is
+// parked by the pending-work gate. When the gate opens while the slot is
+// still held, the inject MUST run then: the slot wait serves the held-inject
+// watcher and releases the inject inline, slot-free. A released inject that
+// waited for the batch's slot would deadlock the pair (each blocked on the
+// other's release).
+func TestTurnLimit_HeldInjectRunsWhenGateOpensDuringSlotWait(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+	a.TurnLimit = NewTurnLimiter(1)
+
+	releaseA := make(chan struct{})
+	dA := &driverGated{ready: make(chan struct{}, 1), release: releaseA}
+	dB := &driverGated{ready: make(chan struct{}, 1)}
+	notices := newNoticeRecorder()
+	a.TurnQueuedNotifyFunc = notices.hook()
+
+	const skB = "sess/B"
+	a.Enqueue(Envelope{SessionKey: "sess/A", Text: "a", Driver: dA})
+	mustRecv(t, dA.ready, "A to hold the only slot")
+	a.Enqueue(Envelope{SessionKey: skB, Text: "b", Driver: dB})
+	mustRecv(t, notices.signal, "B's user batch to be waiting for its slot")
+
+	// Close the gate and let the slot-waiting worker park an inject.
+	releaseInFlight := a.markInFlight(skB, true)
+	injRan := make(chan struct{})
+	a.Enqueue(Envelope{SessionKey: skB, Inject: &InjectMeta{
+		Trigger: "reflection",
+		Run:     func() { close(injRan) },
+	}})
+	if !waitFor(2*time.Second, func() bool { return gateWatcherParked(a, skB) }) {
+		t.Fatal("the injection never parked in the gate during the slot wait")
+	}
+
+	// The gate opens while A still holds the slot and B's batch still waits:
+	// the inject runs now, not when the slot frees.
+	releaseInFlight()
+	select {
+	case <-injRan:
+	case <-time.After(2 * time.Second):
+		t.Fatal("held inject did not run when its gate opened during the slot wait — it is queued behind the batch's slot (#2281 deadlock)")
+	}
+	select {
+	case <-dB.ready:
+		t.Fatal("B's batch drove although A still holds the only slot")
+	default:
+	}
+
+	// The waiting batch still drives once the slot frees — the inline release
+	// did not consume or displace it.
+	close(releaseA)
+	mustRecv(t, dB.ready, "the waiting user batch to drive")
 }
 
 // TestTurnLimit_CompactionDuringWaitHoldsAfterGrant proves the gates are

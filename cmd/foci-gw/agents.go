@@ -267,6 +267,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 		wakeCancelFn:     shared.wakeCancelFn,
 		sessionNotify:    newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr, "session_notify", app.DeliverAgentMessage),
 		askDeliver:       newAskDeliverFn(p.agentResolverFn, p.ctx, connMgr),
+		askUserDeliver:   newAskUserDeliverFn(p.agentResolverFn, p.ctx, connMgr),
 		agentTTS:         agentTTS,
 		blockedPaths:     blockedPaths,
 		client:           client,

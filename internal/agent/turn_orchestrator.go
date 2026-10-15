@@ -136,9 +136,18 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	// router's late-delivery fallback (which would leak reflection text to chat).
 	// Registering HERE — after RunInference's exclusive begin was accepted, not
 	// before dispatch — is what stops a mid-wait system turn from clobbering a
-	// concurrent autonomous run's delivery (the #1068 poison). Cleared after
-	// post-turn's completion wait so a later autonomous run falls through to
-	// late-delivery.
+	// concurrent autonomous run's delivery (the #1068 poison). The release (not
+	// a bare Clear) runs after post-turn's completion wait: it clears only
+	// while this turn's registration is still current, so an autonomous run
+	// adopted while this turn ran keeps its own sink registered (#2233).
+	//
+	// A FOLDED follow-up never registers at all (ts.foldedFollowUp, set by
+	// RunInference's fold branch): the in-flight turn it folded into owns the
+	// run and the registration — an ask answer arriving during an adopted
+	// autonomous run (steer mode off) takes this path, and registering over
+	// the run's sink would divert the rest of the run to the late-delivery
+	// fallback when the answer's release clears it. The typed-message twin
+	// of this guard is RunTurn's fold branch (#1274, #2233).
 	//
 	// "Is the router" must see through decorators: HandleMessage wraps the ctx
 	// sink for tracing, so on a platform turn the ctx sink is a turnSink whose
@@ -153,11 +162,10 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	// A non-delivered turn's sink also stamps its tool calls with the turn's
 	// kind, so background work that outlives the turn (and CC's reaction to its
 	// result) stays out of the chat after the Clear below (#2093, bg_origin.go).
-	if router := a.sessionRouter(ts.SessionKey); !router.routesTo(turnevent.SinkFromContext(ctx)) {
+	if router := a.sessionRouter(ts.SessionKey); !ts.foldedFollowUp && !router.routesTo(turnevent.SinkFromContext(ctx)) {
 		ctxSink := turnevent.SinkFromContext(ctx)
-		router.Register(a.withOriginStamp(a.recordingSystemSink(ctxSink, ts), ts.SessionKey,
-			nonDeliveredOriginKind(ts.Trigger, ctxSink)))
-		defer router.Clear()
+		defer router.Register(a.withOriginStamp(a.recordingSystemSink(ctxSink, ts), ts.SessionKey,
+			nonDeliveredOriginKind(ts.Trigger, ctxSink)))()
 	}
 
 	// Phase 4: Post-turn (sync for API, async for delegated)

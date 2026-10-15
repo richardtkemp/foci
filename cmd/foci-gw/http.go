@@ -467,18 +467,32 @@ func deliverBufferedQueued(inst *agentInstance, connMgr platform.ConnectionManag
 	})
 }
 
+// heldReasonBackgroundWork is the async 202 receipt's "held" value: the target
+// session is held behind background work, so the queued message waits for that
+// work to finish before its turn runs (#2233).
+const heldReasonBackgroundWork = "background_work"
+
 // writeAccepted writes the async 202 receipt: status "queued" plus the
 // routing receipt, so a fire-and-forget caller can still verify where its
-// request landed. Shared by asyncDispatch and handleBranch's async path.
-func writeAccepted(w http.ResponseWriter, rcpt route.Receipt) {
+// request landed. held, when non-empty, adds a "held" field naming why the
+// message will wait before its turn runs (currently only background work);
+// empty omits the field, so an unheld receipt is byte-identical to the old
+// form. Shared by asyncDispatch, handleBranch's async path and the
+// choice-carrying user-envelope receipt (the latter two pass "" — a user
+// envelope and a branch turn are never held behind background work).
+func writeAccepted(w http.ResponseWriter, rcpt route.Receipt, held string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(map[string]string{
+	resp := map[string]string{
 		"status":       "queued",
 		"target":       rcpt.Target,
 		"session":      rcpt.SessionKey,
 		"resolved_via": string(rcpt.Via),
-	})
+	}
+	if held != "" {
+		resp["held"] = held
+	}
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // asyncDispatch handles async fire-and-forget requests: queues the agent
@@ -487,12 +501,20 @@ func writeAccepted(w http.ResponseWriter, rcpt route.Receipt) {
 // false means the session inbox was full, a 503 has been written, and the
 // caller must not treat the request as dispatched (the #1130 human receipt
 // stamps only on true).
+//
+// The receipt reports held=background_work when the target session is held
+// behind background work at the moment of acceptance (#2233): the message is
+// queued all the same, it just waits for that work to clear first.
 func asyncDispatch(w http.ResponseWriter, inst *agentInstance, connMgr platform.ConnectionManager,
 	ctx context.Context, sessionKey, text, logTag string, silent bool, policy route.Policy, rcpt route.Receipt) bool {
 	if !deliverBufferedQueued(inst, connMgr, ctx, sessionKey, text, logTag, silent, policy) {
 		http.Error(w, "session inbox full", http.StatusServiceUnavailable)
 		return false
 	}
-	writeAccepted(w, rcpt)
+	held := ""
+	if inst.ag.SystemInputHeld(sessionKey) {
+		held = heldReasonBackgroundWork
+	}
+	writeAccepted(w, rcpt, held)
 	return true
 }

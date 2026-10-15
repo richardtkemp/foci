@@ -958,6 +958,15 @@ type Inject struct {
 	// Redeliveries is how many times this input has already been re-sent
 	// (PendingInput.Redeliveries); zero for a first write.
 	Redeliveries int
+
+	// PendingWorkExempt lets a SourceSystem inject begin while the backend
+	// still tracks pending background work (a keepalive, whose whole purpose
+	// is keeping the prompt cache warm — holding it for the background-work
+	// window would defeat it, #2233). Backends that track pending work honour
+	// it by skipping only that refusal; an active-turn refusal and any
+	// post-run grace still apply. Ignored for every other source and by
+	// backends that track no pending work.
+	PendingWorkExempt bool
 }
 
 // TurnUsage holds token counts from a completed backend turn: the FINAL

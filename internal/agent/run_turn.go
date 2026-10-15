@@ -88,8 +88,10 @@ func (a *Agent) RunTurn(
 			a.logger().Debugf("session=%s RunTurn: folding into an in-flight turn — leaving the existing router registration intact (#1274)", sk)
 			dispatchSink = router
 		} else {
-			router.Register(sink)
-			defer router.Clear()
+			// The release (not a bare Clear) clears only while this turn's
+			// registration is still current, so an autonomous run adopted
+			// while this turn ran keeps its own sink registered (#2233).
+			defer router.Register(sink)()
 			dispatchSink = router
 		}
 	}

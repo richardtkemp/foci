@@ -21,12 +21,60 @@ type ScheduleWakeFn func(id int64, delay time.Duration, message, sessionKey stri
 // scheduler that owns the timer.
 type CancelWakeFn func(id int64) bool
 
-func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWakeFn, cancelFn CancelWakeFn) *Tool {
+// SessionHeldFn reports whether a session's system input is currently held
+// behind background work (wired to Agent.SystemInputHeld). The remind tool
+// uses it to tell a fired wake "held behind background work" from one merely
+// "waiting to run" (#2233). Nil disables the distinction (every fired wake
+// reads "waiting to run").
+type SessionHeldFn func(sessionKey string) bool
+
+// RemindOption customises the remind tool at construction — optional wiring
+// that would otherwise widen NewRemindTool's frozen signature.
+type RemindOption func(*remindConfig)
+
+// remindConfig is the accumulated RemindOption state.
+type remindConfig struct {
+	held SessionHeldFn
+}
+
+// WithSessionHeld wires the held-behind-background-work predicate the list
+// and cancel paths consult for a fired wake (#2233). Nil-safe.
+func WithSessionHeld(fn SessionHeldFn) RemindOption {
+	return func(c *remindConfig) { c.held = fn }
+}
+
+// Wake list/cancel states (the JSON list's "state" field, #2233): a wake is
+// pending until its timer fires; from firing until its turn runs it is held
+// (behind background work) or fired (waiting to run); once the turn runs the
+// row is dismissed and no longer listed.
+const (
+	wakeStatePending = "pending"
+	wakeStateHeld    = "held"
+	wakeStateFired   = "fired"
+)
+
+// wakeStateOf classifies one listed row against the store's fired overlay.
+func wakeStateOf(rs *memory.ReminderStore, r memory.Reminder, held SessionHeldFn) string {
+	sk, fired := rs.FiredWake(r.ID)
+	if !fired {
+		return wakeStatePending
+	}
+	if held != nil && held(sk) {
+		return wakeStateHeld
+	}
+	return wakeStateFired
+}
+
+func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWakeFn, cancelFn CancelWakeFn, opts ...RemindOption) *Tool {
+	var cfg remindConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	return &Tool{
 		Name:        "remind",
 		Description: "Defer a thought for later. By default the reminder surfaces as injected context at the specified time. Set wake=true to actively wake the session (fires a message to yourself at the specified time). Set list=true to show pending wakes, or cancel=<id> to cancel one.",
 		ExecExport:  true,
-		JSONOutput:  `list: [{"id", "due_at" (RFC 3339), "text" (full)}], [] when none pending. Otherwise one object: {"set": "reminder", "when", "text"} for a passive reminder, {"set": "wake", "id", "due_at", "text"} for wake=true, {"cancelled": id, "due_at", "text"} for cancel.`,
+		JSONOutput:  `list: [{"id", "due_at" (RFC 3339), "text" (full), "state" ("pending" until the timer fires, then "held" while background work delays the wake or "fired" while it waits to run)}], [] when none pending. Otherwise one object: {"set": "reminder", "when", "text"} for a passive reminder, {"set": "wake", "id", "due_at", "text"} for wake=true, {"cancelled": id, "due_at", "text"} for cancel.`,
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -65,10 +113,10 @@ func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWake
 			}
 
 			if p.List {
-				return remindListWakes(rs, agentID, WantsJSON(ctx))
+				return remindListWakes(rs, agentID, cfg.held, WantsJSON(ctx))
 			}
 			if p.Cancel != 0 {
-				return remindCancelWake(rs, agentID, p.Cancel, cancelFn, WantsJSON(ctx))
+				return remindCancelWake(rs, agentID, p.Cancel, cancelFn, cfg.held, WantsJSON(ctx))
 			}
 
 			if p.Text == "" {
@@ -128,8 +176,12 @@ func remindWake(sessionKey string, rs *memory.ReminderStore, agentID, text, when
 	return TextResult(fmt.Sprintf("Wake scheduled in %v (id=%d): %q", dur, id, text)), nil
 }
 
-// remindListWakes renders this agent's pending scheduled wakes, newest due first.
-func remindListWakes(rs *memory.ReminderStore, agentID string, asJSON bool) (ToolResult, error) {
+// remindListWakes renders this agent's pending scheduled wakes, newest due
+// first. A wake whose timer has fired but whose turn has not run reads as
+// "fired" — held behind background work when held says so, otherwise waiting
+// to run — never as "overdue" (#2233); the JSON list carries the same
+// classification in each row's "state".
+func remindListWakes(rs *memory.ReminderStore, agentID string, held SessionHeldFn, asJSON bool) (ToolResult, error) {
 	pending, err := rs.PendingWakes(agentID)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("list wakes: %w", err)
@@ -139,10 +191,11 @@ func remindListWakes(rs *memory.ReminderStore, agentID string, asJSON bool) (Too
 			ID    int64  `json:"id"`
 			DueAt string `json:"due_at"`
 			Text  string `json:"text"`
+			State string `json:"state"`
 		}
 		out := make([]wake, 0, len(pending))
 		for _, r := range pending {
-			out = append(out, wake{r.ID, r.DueAt.Format(time.RFC3339), r.Text})
+			out = append(out, wake{r.ID, r.DueAt.Format(time.RFC3339), r.Text, wakeStateOf(rs, r, held)})
 		}
 		return JSONResult(out)
 	}
@@ -154,10 +207,18 @@ func remindListWakes(rs *memory.ReminderStore, agentID string, asJSON bool) (Too
 	fmt.Fprintf(&b, "%d pending wake(s):\n", len(pending))
 	now := time.Now()
 	for _, r := range pending {
-		until := r.DueAt.Sub(now).Round(time.Second)
-		when := fmt.Sprintf("in %v", until)
-		if until < 0 {
-			when = "overdue"
+		var when string
+		switch wakeStateOf(rs, r, held) {
+		case wakeStateHeld:
+			when = "fired, held behind background work"
+		case wakeStateFired:
+			when = "fired, waiting to run"
+		default:
+			until := r.DueAt.Sub(now).Round(time.Second)
+			when = fmt.Sprintf("in %v", until)
+			if until < 0 {
+				when = "overdue"
+			}
 		}
 		fmt.Fprintf(&b, "  id=%d  due %s (%s)  %q\n",
 			r.ID, r.DueAt.Format(time.RFC3339), when, truncateWakeText(r.Text))
@@ -168,7 +229,10 @@ func remindListWakes(rs *memory.ReminderStore, agentID string, asJSON bool) (Too
 // remindCancelWake stops a pending wake's timer and removes its stored row.
 // The id must belong to this agent — PendingWakes is agent-scoped, so an id
 // from another agent reads as not found rather than cancelling across agents.
-func remindCancelWake(rs *memory.ReminderStore, agentID string, id int64, cancelFn CancelWakeFn, asJSON bool) (ToolResult, error) {
+// A wake that already fired is NOT cancellable (#2036 claim rule): the error
+// says it fired and whether it is held behind background work (it will run
+// when that work ends) or merely waiting to run (#2233).
+func remindCancelWake(rs *memory.ReminderStore, agentID string, id int64, cancelFn CancelWakeFn, held SessionHeldFn, asJSON bool) (ToolResult, error) {
 	if cancelFn == nil {
 		return ToolResult{}, fmt.Errorf("wake not configured")
 	}
@@ -191,6 +255,14 @@ func remindCancelWake(rs *memory.ReminderStore, agentID string, id int64, cancel
 	// The timer owns the DB row: cancelling it makes the scheduler dismiss the
 	// row itself. Deleting here as well would race that cleanup for no gain.
 	if !cancelFn(id) {
+		// One classifier for list and cancel alike (wakeStateOf), so the
+		// fired/held wording of the two paths cannot drift (#2233).
+		switch wakeStateOf(rs, *target, held) {
+		case wakeStateHeld:
+			return ToolResult{}, fmt.Errorf("wake id %d has fired and is held behind background work; it will run when that work ends", id)
+		case wakeStateFired:
+			return ToolResult{}, fmt.Errorf("wake id %d has fired and is waiting to run", id)
+		}
 		return ToolResult{}, fmt.Errorf("wake id %d is stored but has no live timer — it may have already fired", id)
 	}
 

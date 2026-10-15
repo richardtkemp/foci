@@ -15,11 +15,16 @@
 //     → agent routes per-session:                              [agent]
 //         - in-flight + steer-eligible + CC backend → Inject(SourceSteer)
 //         - in-flight + steer-eligible + API backend → AppendSteer
+//         - a user-input injection (an ask answer) → the same steer
+//           paths, else push to session channel
 //         - otherwise → push to session channel
 //     → per-session worker passes the relogin/in-flight/compaction
 //       gates, takes a turn-limit slot (#2281: the agent's cap first,
 //       then the gateway-wide cap; injections exempt), re-checks the
-//       gates once granted, then drains, batches, calls Driver.Drive
+//       gates once granted, then drains, batches, calls Driver.Drive.
+//       A system inject held by the pending-work gate parks on the
+//       inbox's held list instead of blocking the worker, so user
+//       messages keep running (#2233; see inbox_gate.go)
 //                                                              [agent]
 //
 // The Driver interface lets the platform-specific renderer/tracker stay
@@ -161,6 +166,13 @@ type InjectMeta struct {
 	// the injection because the agent is shutting down (#2059), so a caller
 	// waiting on Run's effect is released rather than left waiting forever.
 	Refused func()
+	// UserInput marks the injection as the user's own action — a foci_ask
+	// answer (#2233). Envelope.Text carries the message so the steer path can
+	// fold it; the injection steers like typed text, is never held by the
+	// pending-work gate, and waits only for the user-turn gates. It never runs
+	// the plan-cancel or pending-ask captures (injections skip them by
+	// construction), and never answers a backend prompt.
+	UserInput bool
 }
 
 // controlInjectTriggers are exempt from ask-deferral: they resume/drive the agent
@@ -292,6 +304,37 @@ type sessionInbox struct {
 	// was pending on this session, drained (re-enqueued) when THAT ask resolves.
 	injMu           sync.Mutex
 	deferredInjects []deferredInject
+
+	// held is the list of injections parked by the pending-work gate (#2233),
+	// in arrival order; entries whose own hold clears may run past still-held
+	// earlier ones (a keepalive past a pending-held sibling — requirement 4).
+	// Worker-goroutine-confined: every access (dispatchInject, releaseHeld,
+	// refuseHeld) runs on the session worker, so no lock is needed.
+	held []Envelope
+
+	// heldGen counts parks. The gate watcher is armed for one generation;
+	// ensureHeldWatch re-arms whenever an inject parks past it, so the watch
+	// always covers every parked entry's OWN hold (#2233 review F1: a
+	// keepalive parking behind a pending-held sibling must wake when its
+	// adopted-run half clears, not when the sibling's hold does). Releases
+	// need no bump: an unspent watch keeps covering the remaining entries,
+	// and a spent one is stopped, so the next ensure re-arms on nil.
+	// Worker-confined.
+	heldGen      int
+	heldWatchGen int
+
+	// heldWatch is the gate watcher watching over `held` (worker-confined;
+	// see inbox_gate.go). Started the moment an inject parks — wherever the
+	// worker happens to be — and stopped when the list empties or its signal
+	// is consumed.
+	heldWatch *gateWatch
+
+	// busy is >0 while the worker is inside a turn (driveOnce for a user
+	// batch, Inject.Run for an injection) — NOT during the waits around it.
+	// holdActive reads it cross-goroutine to keep a turn the worker itself
+	// runs from reading as a pending-work hold: the reporting half of the
+	// gate only.
+	busy atomic.Int32
 
 	workerStarted sync.Once
 
@@ -477,6 +520,7 @@ func (a *Agent) StartInbox(ctx context.Context) {
 //
 //	in-flight + text-only + CC backend     → Backend.ImmediateInject(SourceSteer)
 //	in-flight + text-only + API backend    → AppendSteer (drained at tool boundary)
+//	user-input injection (an ask answer)   → the same steer paths, else push to channel (#2233)
 //	otherwise (idle, or has attachments)   → push to session's channel
 //
 // Returns true when the envelope was accepted — queued, dispatched, or
@@ -491,6 +535,9 @@ func (a *Agent) Enqueue(env Envelope) bool {
 	if env.SessionKey == "" {
 		a.logger().Warnf("inbox: enqueue with empty session key, dropping (text=%dB)", len(env.Text))
 		return false
+	}
+	if a.enqueueObserver != nil {
+		a.enqueueObserver(env)
 	}
 
 	// CC re-login gate (#843). A 401 on the shared OAuth credential pauses every
@@ -524,14 +571,10 @@ func (a *Agent) Enqueue(env Envelope) bool {
 
 	// Injections skip all user-message routing (plan-cancel, ask-capture, steer)
 	// — they are system turns, not user input. Queue straight to the worker.
+	// The ONE exception is a user-input injection (an ask answer, #2233): it
+	// takes the steer path a typed message takes before queueing.
 	if env.Inject != nil {
-		select {
-		case inb.ch <- env:
-			return true
-		default:
-			a.logger().Warnf("inbox: queue full for sk=%s, dropping injection trigger=%s", env.SessionKey, env.Inject.Trigger)
-			return false
-		}
+		return a.enqueueInjection(inb, env, reloginHold)
 	}
 	if reloginHold {
 		env.enqSeq = inb.enqSeq.Add(1)
@@ -545,18 +588,7 @@ func (a *Agent) Enqueue(env Envelope) bool {
 		}
 	}
 
-	isActive := inb.turnActive.Load()
-	// An adopted autonomous run (a CC-initiated continuation after a background
-	// subagent completes) sets the BACKEND's turnActive but not inb.turnActive,
-	// which is private to the worker's dispatch loop. Without this, a follow-up
-	// during an autonomous run fails the steer gate below, queues as a fresh turn,
-	// and its RunTurn clobbers the autonomous run's router registration (#1274).
-	// The backend flag flips at primary-written time for a normal turn — the same
-	// instant inb.turnActive does — so this adds no new pre-primary steer window
-	// (#777-safe), only the autonomous case.
-	if !isActive && a.DelegatedManager != nil {
-		isActive = a.DelegatedManager.BackendTurnInFlight(env.SessionKey)
-	}
+	isActive := a.sessionTurnActive(inb, env.SessionKey)
 	// Compaction hold (#856): a /compact turn is rewriting CC's transcript.
 	// Steering or folding a message now makes CC absorb the raw text into the
 	// compaction turn (it arrives unframed — no [meta] header). Route to the
@@ -627,6 +659,48 @@ func (a *Agent) Enqueue(env Envelope) bool {
 		}
 	}
 
+	if a.trySteer(inb, env, isActive, compacting) {
+		return true
+	}
+
+	// Push to this session's channel; drop with warning if full.
+	env.enqSeq = inb.enqSeq.Add(1)
+	select {
+	case inb.ch <- env:
+		return true
+	default:
+		a.logger().Warnf("inbox: queue full for sk=%s, dropping message (%dB)", env.SessionKey, len(env.Text))
+		return false
+	}
+}
+
+// sessionTurnActive reports whether a turn is active on inb's session for
+// Enqueue's routing: the worker's own turnActive flag (flipped on
+// primary-written, #777) or, on a delegated agent, a backend turn in flight the
+// worker is not driving — an adopted autonomous run, whose registration a
+// fresh turn would clobber (#1274). The backend flag flips at primary-written
+// time for a normal turn — the same instant inb.turnActive does — so this adds
+// no new pre-primary steer window, only the autonomous case.
+func (a *Agent) sessionTurnActive(inb *sessionInbox, sk string) bool {
+	if inb.turnActive.Load() {
+		return true
+	}
+	if a.DelegatedManager == nil {
+		return false
+	}
+	return a.DelegatedManager.BackendTurnInFlight(sk)
+}
+
+// trySteer is Enqueue's urgent-steer block, extracted so a user-input injection
+// (an ask answer, #2233) can take the identical path. When env is
+// steer-eligible — a turn active, steer mode on (the per-message
+// SteerAlways/SteerNever preference applied), not compacting, and text or
+// foldable attachments present — it dispatches to the backend
+// (ImmediateInject(SourceSteer)) or the API steer buffer and reports whether
+// the message was consumed. A declined or failed steer returns false so the
+// caller falls back to the channel, exactly as a user message does: steering is
+// an optimisation, never a place to lose input.
+func (a *Agent) trySteer(inb *sessionInbox, env Envelope, active, compacting bool) bool {
 	// Per-message preference beats the agent's steer_mode config: SteerAlways
 	// steers even with the config off, SteerNever queues even with it on. The
 	// compaction hold still applies — a SteerAlways message can't be folded
@@ -639,39 +713,54 @@ func (a *Agent) Enqueue(env Envelope) bool {
 		steerMode = false
 	}
 	hasAttachments := len(env.Attachments) > 0
-	steerEligible := steerMode && isActive && !compacting && (env.Text != "" || hasAttachments)
-
-	if steerEligible {
-		be, err := a.resolveSessionBackend(a.inboxCtx, env.SessionKey)
-		switch {
-		case err != nil && hasAttachments:
-			a.logger().Warnf("inbox: backend lookup failed sk=%s: %v (queueing message with attachments for a fresh turn)", env.SessionKey, err)
-		case err != nil:
-			a.logger().Warnf("inbox: backend lookup failed sk=%s: %v (falling back to buffer)", env.SessionKey, err)
-			inb.appendSteer(steerEntryFor(env))
+	if !(steerMode && active && !compacting && (env.Text != "" || hasAttachments)) {
+		return false
+	}
+	be, err := a.resolveSessionBackend(a.inboxCtx, env.SessionKey)
+	switch {
+	case err != nil && hasAttachments:
+		a.logger().Warnf("inbox: backend lookup failed sk=%s: %v (queueing message with attachments for a fresh turn)", env.SessionKey, err)
+	case err != nil:
+		a.logger().Warnf("inbox: backend lookup failed sk=%s: %v (falling back to buffer)", env.SessionKey, err)
+		inb.appendSteer(steerEntryFor(env))
+		return true
+	case be == nil && hasAttachments:
+		// API mode: the steer buffer is text-only, so a message with
+		// attachments waits for a fresh turn.
+	case be == nil:
+		// API-mode fallback: buffer for next tool-boundary drain.
+		inb.appendSteer(steerEntryFor(env))
+		a.logger().Debugf("inbox: buffered steer sk=%s %dB", env.SessionKey, len(env.Text))
+		return true
+	default:
+		if a.steerToBackend(be, env) {
 			return true
-		case be == nil && hasAttachments:
-			// API mode: the steer buffer is text-only, so a message with
-			// attachments waits for a fresh turn.
-		case be == nil:
-			// API-mode fallback: buffer for next tool-boundary drain.
-			inb.appendSteer(steerEntryFor(env))
-			a.logger().Debugf("inbox: buffered steer sk=%s %dB", env.SessionKey, len(env.Text))
-			return true
-		default:
-			if a.steerToBackend(be, env) {
-				return true
-			}
 		}
 	}
+	return false
+}
 
-	// Push to this session's channel; drop with warning if full.
-	env.enqSeq = inb.enqSeq.Add(1)
+// enqueueInjection routes one injection into the session's queue. A user-input
+// injection (an ask answer, #2233) first takes the steer path a typed message
+// takes — when a turn is in flight and steer mode is on it folds into the
+// running turn, with the same compaction carve-out and the same declined-steer
+// fallback to the queue. It never runs the plan-cancel (#858) or pending-ask
+// (#884) captures: those live in the user-message path above, which injections
+// skip; an ask answer IS the answer, not a reply to be captured. Skipped under
+// a re-login hold, as for user messages — the backend it would write to cannot
+// authenticate.
+func (a *Agent) enqueueInjection(inb *sessionInbox, env Envelope, reloginHold bool) bool {
+	if env.Inject.UserInput && !reloginHold {
+		active := a.sessionTurnActive(inb, env.SessionKey)
+		if a.trySteer(inb, env, active, a.IsCompacting(env.SessionKey)) {
+			return true
+		}
+	}
 	select {
 	case inb.ch <- env:
 		return true
 	default:
-		a.logger().Warnf("inbox: queue full for sk=%s, dropping message (%dB)", env.SessionKey, len(env.Text))
+		a.logger().Warnf("inbox: queue full for sk=%s, dropping injection trigger=%s", env.SessionKey, env.Inject.Trigger)
 		return false
 	}
 }
@@ -804,59 +893,6 @@ func (a *Agent) resolveSessionBackend(ctx context.Context, sk string) (delegator
 	return nil, nil
 }
 
-// injectGatePollInterval is the backstop tick for the inject gate's wait loop.
-// The adoption edge broadcasts via InFlightWaitCh, but a pending-background-work
-// transition (a tracked subagent/Bash completing) has no channel, so the wait
-// polls backendAwaitingAutonomousRun at this cadence (ALARP: a poll beats new
-// callback plumbing for a rare, bounded wait). Not configurable — a fixed 1s
-// tick on an already-blocked worker.
-const injectGatePollInterval = 1 * time.Second
-
-// backendAwaitingAutonomousRun is the nil-safe wrapper over
-// DelegatedManager.BackendAwaitingAutonomousRun: false for API agents (no
-// DelegatedManager) and for idle/non-tracking backends. Used by the inbox
-// inject gate to hold system injects across the background-work window (spec §4).
-func (a *Agent) backendAwaitingAutonomousRun(sk string) bool {
-	if a.DelegatedManager == nil {
-		return false
-	}
-	return a.DelegatedManager.BackendAwaitingAutonomousRun(sk)
-}
-
-// waitInjectGate blocks until sk has no delivering work active or pending — an
-// adopted autonomous run (IsInFlightDelivering) or the backend's whole
-// background-work window (backendAwaitingAutonomousRun, spec §4). Running an
-// inject during that window rebinds the shared session sink to the inject's
-// NopSink and swallows the run's output (#1068). Returns false if ctx is
-// cancelled while waiting (the worker should stop), true when the gate is open.
-// The adoption edge broadcasts via InFlightWaitCh; a pending→run→clear
-// transition has no channel, so it also polls at injectGatePollInterval. Applied
-// at every runInject site — the dequeue path and the post-batch heldInjects loop.
-func (a *Agent) waitInjectGate(ctx context.Context, sk string) bool {
-	// Shutdown opens the gate: runInject then refuses the injection, so the
-	// worker is not left holding it until the process dies (#2059).
-	gated := func() bool {
-		return !a.ShuttingDown() && (a.IsInFlightDelivering(sk) || a.backendAwaitingAutonomousRun(sk))
-	}
-	if gated() {
-		log.Extra("inbox", "gate_wait sk=%s reason=autonomous_or_pending — holding injection until the run and any pending background work clear (#1070/spec§4)", sk)
-	}
-	for gated() {
-		wait := a.InFlightWaitCh(sk)
-		select {
-		case <-ctx.Done():
-			return false
-		case <-wait:
-			// Adoption edge fired — re-check.
-		case <-a.shutdown.done():
-			// Draining — re-check (the gate opens).
-		case <-time.After(injectGatePollInterval):
-			// Pending-work transitions have no broadcast — poll.
-		}
-	}
-	return true
-}
-
 // reloginHoldClosed reports whether a CC re-login is in progress on a
 // delegated agent (#843/#1932): the shared OAuth credential is dead until it
 // completes, so dispatching now would only 401 again. API agents (no
@@ -916,17 +952,8 @@ func (a *Agent) waitReloginGate(ctx context.Context, sk string) bool {
 	return true
 }
 
-// refuseDroppedInject releases an injection's waiter when the worker must
-// drop the envelope without running it — the inbox ctx ended while the
-// injection was held in a gate. Refused exists for exactly this (#2059): an
-// EnqueueInjectWait caller is released with ErrShuttingDown instead of
-// waiting out its own ctx. User envelopes dropped at shutdown have no waiter
-// and no equivalent hook; they are just dropped. No-op when Refused is unset.
-func (a *Agent) refuseDroppedInject(env Envelope) {
-	if env.Inject != nil && env.Inject.Refused != nil {
-		env.Inject.Refused()
-	}
-}
+// refuseDroppedInject and the pending-work gate machinery it serves live in
+// inbox_gate.go.
 
 // InboxTurnActive reports whether the given session has a turn in flight,
 // according to the per-session inbox flag. Returns false for unknown
@@ -1002,15 +1029,54 @@ func (a *Agent) getOrCreateInbox(sk string) *sessionInbox {
 // The worker exits on inboxCtx cancellation (agent shutdown). turnActive
 // is flipped around each Driver.Drive call so Enqueue's routing decisions
 // see "in-flight" while a turn is running and "idle" between turns.
+//
+// A system inject held by the pending-work gate no longer blocks the worker
+// (#2233): it is parked on the inbox's held list (dispatchInject) and the
+// worker keeps serving the channel, so a later user message runs as a normal
+// user turn while the inject waits. The inbox's heldWatch runs one gate wait
+// per parked inject (waitHeldGate — each entry's OWN hold, so a keepalive
+// parked behind a sibling held by pending work is released the moment its
+// adopted run ends, even while other background work is still outstanding)
+// with the first completion signalling. The signal is only a hint (the worker
+// may be busy, or an entry's hold may still be active), so it is consumed by
+// dropping the spent watch, re-checking each held inject against the hold
+// right before it runs and starting a fresh watch only after that re-check —
+// here via the loop-top releaseHeld, and inside waitTurnSlot's slot wait
+// (which has no loop top to return to) via consumeHeldHint.
 func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 	a.logger().Debugf("inbox: session worker started sk=%s", inb.sk)
 	defer func() {
+		stopHeldWatch(inb)
+		a.refuseHeld(inb)
 		a.logger().Debugf("inbox: session worker exiting sk=%s", inb.sk)
 	}()
 	for {
+		if !a.releaseHeld(ctx, inb) {
+			return
+		}
+		if len(inb.held) > 0 {
+			a.ensureHeldWatch(ctx, inb)
+		} else {
+			stopHeldWatch(inb)
+		}
+		var openCh <-chan bool
+		if inb.heldWatch != nil {
+			openCh = inb.heldWatch.open
+		}
 		select {
 		case <-ctx.Done():
 			return
+		case <-openCh:
+			// Gate signalled open — a hint. Drop the watch (it is spent: one
+			// result per watch) and loop: releaseHeld re-checks the head
+			// inject against the hold, and the next iteration starts a fresh
+			// watch only if it is still held (which is what keeps a spurious
+			// hint from spinning). Without the drop the spent watch would sit
+			// in heldWatch and ensureHeldWatch would never re-arm — a head
+			// that stays held after a hint would then wait forever. The slot
+			// wait has no loop top to return to, so waitTurnSlot consumes its
+			// hints with consumeHeldHint instead — same protocol, inline.
+			stopHeldWatch(inb)
 		case env := <-inb.ch:
 			// Queued before a /stop that dropped this session's waiting
 			// batch, but not yet pulled into it: the /stop covers it too
@@ -1022,35 +1088,30 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 			// Re-login hold (#1932): no turn or injection may reach a backend
 			// that cannot authenticate. Further arrivals accumulate in inb.ch
 			// and batch via drainAvailable once the gate opens, as with the
-			// #767 and compaction holds below.
+			// compaction hold below.
 			if !a.waitReloginGate(ctx, env.SessionKey) {
 				a.refuseDroppedInject(env)
 				return
 			}
 			// System injection: run it serialised with this session's platform
 			// turns (the worker is idle between turns here) rather than in a
-			// detached goroutine that races them. Injections never take a
-			// turn-limit slot (#2281) — a turn holding a slot can be blocked
-			// in EnqueueInjectWait on another session's injection, so
-			// counting them would deadlock at small limits.
+			// detached goroutine that races them. dispatchInject is the one
+			// decision path — user-input injects wait the user gates, gated
+			// system injects park on the held list, everything else runs.
+			// Injections never take a turn-limit slot (#2281) — a turn holding
+			// a slot can be blocked in EnqueueInjectWait on another session's
+			// injection, so counting them would deadlock at small limits.
 			if env.Inject != nil {
-				// Hold the injection while a delivering autonomous run is live
-				// or its background-work window is open (#1070/spec §4). The
-				// worker reaching here while such work is live is exactly the
-				// autonomous case (a platform turn occupies the worker
-				// synchronously below), never a normal platform turn.
-				if !a.waitInjectGate(ctx, env.SessionKey) {
-					a.refuseDroppedInject(env)
+				if !a.dispatchInject(ctx, inb, env) {
 					return
 				}
-				a.runInject(inb, env)
 				continue
 			}
 			// A login is owed (#2384): if this user turn ends with no new
 			// attempt started, the credential works again, so the pending
 			// state ends and paused injections resume.
 			attempt, loginPending := a.reloginPendingAttempt()
-			held, ok := a.runUserBatch(ctx, inb, env)
+			drained, ok := a.runUserBatch(ctx, inb, env)
 			if !ok {
 				return
 			}
@@ -1059,14 +1120,13 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 			}
 			// The just-finished platform turn may have spawned background work
 			// (a subagent / run_in_background Bash) whose autonomous run now owns
-			// delivery — so each held inject passes the same gate as the dequeue
-			// path, not a direct runInject (the Phase 3 bypass fix).
-			for _, inj := range held {
-				if !a.waitReloginGate(ctx, inj.SessionKey) || !a.waitInjectGate(ctx, inj.SessionKey) {
-					a.refuseDroppedInject(inj)
+			// delivery — so each drained inject goes through the same dispatch
+			// path as the dequeue site (the Phase 3 bypass fix): it runs now, or
+			// parks on the held list until the gate opens.
+			for _, inj := range drained {
+				if !a.dispatchInject(ctx, inb, inj) {
 					return
 				}
-				a.runInject(inb, inj)
 			}
 		}
 	}
@@ -1177,7 +1237,7 @@ func (a *Agent) waitUserTurnGates(ctx context.Context, sk string) bool {
 // panic) gives it back — so one slot covers the batch AND the follow-up
 // turns driveAndDrainOrphans builds from orphan steers and late arrivals,
 // and the post-batch injections run without holding it.
-func (a *Agent) runUserBatch(ctx context.Context, inb *sessionInbox, env Envelope) (heldInjects []Envelope, keepGoing bool) {
+func (a *Agent) runUserBatch(ctx context.Context, inb *sessionInbox, env Envelope) (drained []Envelope, keepGoing bool) {
 	batch := []Envelope{env}
 	var notified bool
 	var release turnSlotRelease
@@ -1226,15 +1286,15 @@ func (a *Agent) runUserBatch(ctx context.Context, inb *sessionInbox, env Envelop
 	// the turn (an inject has no Driver and must not enter driveAndDrainOrphans).
 	for _, d := range inb.drainAvailable() {
 		if d.Inject != nil {
-			heldInjects = append(heldInjects, d)
+			drained = append(drained, d)
 		} else {
 			batch = append(batch, d)
 		}
 	}
 	steerer := turnevent.SteererFunc(inb.drainSteerTexts)
-	heldInjects = append(heldInjects, a.driveAndDrainOrphans(workerCtx, inb, batch, steerer, env)...)
+	drained = append(drained, a.driveAndDrainOrphans(workerCtx, inb, batch, steerer, env)...)
 	inb.turnActive.Store(false)
-	return heldInjects, true
+	return drained, true
 }
 
 // turnSlotOutcome classifies how acquireTurnSlots ended.
@@ -1334,15 +1394,24 @@ func (a *Agent) acquireTurnSlots(ctx context.Context, inb *sessionInbox, seed []
 
 // waitTurnSlot acquires one limiter's slot for a user batch, serving the
 // session channel while it waits (#2281 requirement 4): platform envelopes
-// join the batch in arrival order, injections run inline through the same
-// gates as the dequeue path — on the PARENT ctx, never waitCtx, so a /stop
-// that cancels the user batch's wait can never abandon an injection held in
-// a gate (dropped unrun, Refused never called, its producer — cron, a wake,
-// an EnqueueInjectWait caller — waiting forever). Without a slot, this is
+// join the batch in arrival order, injections dispatch through the same path
+// as the dequeue site — on the PARENT ctx, never waitCtx, so a /stop that
+// cancels the user batch's wait can never abandon an injection held in a gate
+// (dropped unrun, Refused never called, its producer — cron, a wake, an
+// EnqueueInjectWait caller — waiting forever). Without a slot, this is
 // the second half of the deadlock rule (a turn holding a slot can be
 // blocked in EnqueueInjectWait on another session's injection). A grant
 // that lands while the worker is inside an in-wait injection simply waits
 // for it to finish; the slot is never re-queued or released because of that.
+//
+// An injection dispatched here that parks on the inbox's held list is served
+// BY this same wait (#2233): the select watches the held-inject watcher too,
+// and a gate that opens mid-wait releases the parked injects inline —
+// slot-free, exactly as the dequeue path would — via consumeHeldHint. The
+// #2281 deadlock rule demands it: a turn holding a slot can be blocked in
+// EnqueueInjectWait on this session's injection, so making a released inject
+// wait for THIS batch's slot would deadlock the pair. An ungated inject
+// always ran inline, before and after the held-list rework.
 //
 // notified is shared across both limiter steps so the queued notice fires
 // once per wait, not once per semaphore: the first step that must block
@@ -1374,6 +1443,13 @@ func (a *Agent) waitTurnSlot(ctx, waitCtx context.Context, inb *sessionInbox, li
 		return false, true
 	}
 	for {
+		// The held watch may have been armed by dispatchInject parking an
+		// inject since the last iteration (worker-confined state, so reading
+		// it per iteration is safe).
+		var openCh <-chan bool
+		if inb.heldWatch != nil {
+			openCh = inb.heldWatch.open
+		}
 		select {
 		case g := <-grantedCh:
 			if g {
@@ -1383,17 +1459,21 @@ func (a *Agent) waitTurnSlot(ctx, waitCtx context.Context, inb *sessionInbox, li
 			return false, true
 		case env := <-inb.ch:
 			if env.Inject != nil {
-				if !a.waitReloginGate(ctx, env.SessionKey) || !a.waitInjectGate(ctx, env.SessionKey) {
-					// Shutdown while the injection sat in a gate:
-					// release its waiter rather than dropping it
-					// silently (#2059).
-					a.refuseDroppedInject(env)
+				if !a.dispatchInject(ctx, inb, env) {
+					// Shutdown while the injection sat in a gate: release its
+					// waiter rather than dropping it silently (#2059).
 					return abortIfDead()
 				}
-				a.runInject(inb, env)
 				continue
 			}
 			*batch = append(*batch, env)
+		case <-openCh:
+			// The gate opened for the parked injects — release them now,
+			// inline and slot-free (#2281's deadlock rule; see the comment
+			// above). A spurious hint merely re-arms a fresh watch.
+			if !a.consumeHeldHint(ctx, inb) {
+				return abortIfDead()
+			}
 		case <-waitCtx.Done():
 			return abortIfDead()
 		}
@@ -1467,6 +1547,15 @@ func (a *Agent) runInject(inb *sessionInbox, env Envelope) {
 		}
 	}()
 	if env.Inject.Run != nil {
+		// busy marks the injected turn itself (see sessionInbox.busy): the
+		// Run closure drives a whole HandleMessage turn synchronously.
+		// Deferred, so the recovered panic above cannot strand the counter
+		// at 1 — a stuck counter permanently blinds holdActive's busy
+		// refinement, and the worker would never read idle again, masking
+		// every later adopted delivering run from the pending-work gate
+		// (#1068, #2233 review F4).
+		inb.busy.Add(1)
+		defer inb.busy.Add(-1)
 		env.Inject.Run()
 	}
 }
@@ -1538,6 +1627,15 @@ func (a *Agent) SetTurnObserver(fn func(sk string, batch []Envelope)) {
 // production wires nil.
 func (a *Agent) SetTurnSlotGrantObserver(fn func()) {
 	a.turnSlotGrantObserver = fn
+}
+
+// SetEnqueueObserver installs a callback fired at the top of Enqueue for
+// every envelope with a session key, before any routing decision. Test-only —
+// production wires nil. Lets wiring tests outside this package observe the
+// envelope a delivery route produced (an ask answer's user-input marker and
+// text, #2233) without reaching into the session inbox.
+func (a *Agent) SetEnqueueObserver(fn func(Envelope)) {
+	a.enqueueObserver = fn
 }
 
 // SetTurnLifecycleHooks wires the session-lifecycle callbacks fired at the
@@ -1771,19 +1869,19 @@ func (a *Agent) driveAndDrainOrphans(ctx context.Context, inb *sessionInbox, bat
 	}
 	router := a.sessionRouter(inb.sk)
 	a.driveOnce(ctx, inb, batch, steerer, router, driver)
-	var heldInjects []Envelope
+	var drained []Envelope
 	for {
 		orphans := inb.drainSteer()
 		var extras []Envelope
 		for _, d := range inb.drainAvailable() {
 			if d.Inject != nil {
-				heldInjects = append(heldInjects, d)
+				drained = append(drained, d)
 			} else {
 				extras = append(extras, d)
 			}
 		}
 		if len(orphans) == 0 && len(extras) == 0 {
-			return heldInjects
+			return drained
 		}
 		followUp := buildFollowUp(seed, orphans, extras)
 		a.logger().Infof("inbox: follow-up sk=%s orphans=%d extras=%d", inb.sk, len(orphans), len(extras))
@@ -1801,6 +1899,11 @@ func (a *Agent) driveAndDrainOrphans(ctx context.Context, inb *sessionInbox, bat
 // indicators, notification drain, OnTurnEnd / OnTurnComplete hooks);
 // Agent.RunTurn does the actual turn execution.
 func (a *Agent) driveOnce(ctx context.Context, inb *sessionInbox, batch []Envelope, steerer turnevent.Steerer, router *sessionRouter, driver Driver) {
+	// busy marks the turn itself (not the waits around it): holdActive's
+	// reporting half uses it to keep a turn the worker is running from reading
+	// as a pending-work hold (#2233).
+	inb.busy.Add(1)
+	defer inb.busy.Add(-1)
 	turnCtx, cancel := context.WithCancel(ctx)
 	inb.cancelMu.Lock()
 	inb.turnCancel = cancel

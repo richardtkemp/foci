@@ -52,10 +52,11 @@ type toolDeps struct {
 	wakeFn       tools.ScheduleWakeFn
 	wakeCancelFn tools.CancelWakeFn
 
-	sessionNotify tools.SessionNotifyFn // send_to_session → via=agent
-	askDeliver    tools.AskDeliverFn    // ask answer/grader delivery → via=ask-grader
-	agentTTS      func() voice.TTS
-	blockedPaths  []config.BlockedPath // API-only (write/edit)
+	sessionNotify  tools.SessionNotifyFn // send_to_session → via=agent
+	askDeliver     tools.AskDeliverFn    // ask system notices (expiry/restore) → via=ask-grader
+	askUserDeliver tools.AskDeliverFn    // ask user-input deliveries (answers, cancel) → user path, via=ask-grader (#2233)
+	agentTTS       func() voice.TTS
+	blockedPaths   []config.BlockedPath // API-only (write/edit)
 
 	// API-only deps for spawn.
 	client           provider.Client
@@ -338,6 +339,9 @@ var toolTable = []toolEntry{
 			d.askDeliver,
 			func(msgID, finalText string) { _ = platform.CancelInteractiveMessage(msgID, finalText) },
 			d.p.sessionIndex, d.p.acfg.ID,
+			// The user-input delivery route (#2233): answer batches, late
+			// answers and the cancel notice dispatch like typed messages.
+			tools.WithUserInputDeliver(d.askUserDeliver),
 			tools.WithBatchPresent(newAskPresentBatchFn(d.p.acfg.ID, d.connMgr)),
 			tools.WithBatchRestore(newAskRestoreBatchFn(d.p.acfg.ID, d.connMgr)),
 			tools.WithRemove(newAskRemoveFn(d.p.acfg.ID, d.connMgr)),
@@ -414,7 +418,14 @@ var toolTable = []toolEntry{
 	{name: "remind", paths: pathBoth,
 		enabled: func(d *toolDeps) bool { return d.p.reminderStore != nil && d.wakeFn != nil },
 		build: func(d *toolDeps) *tools.Tool {
-			return tools.NewRemindTool(d.p.reminderStore, d.p.acfg.ID, d.wakeFn, d.wakeCancelFn)
+			// The lazy agent getter keeps this nil-safe: the tool is built
+			// before the agent exists on some paths, and the predicate is
+			// consulted per call (#2233).
+			return tools.NewRemindTool(d.p.reminderStore, d.p.acfg.ID, d.wakeFn, d.wakeCancelFn,
+				tools.WithSessionHeld(func(sk string) bool {
+					ag := d.agLazy()
+					return ag != nil && ag.SystemInputHeld(sk)
+				}))
 		}},
 
 	{name: "app_android", paths: pathBoth,

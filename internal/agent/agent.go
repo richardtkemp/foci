@@ -220,6 +220,7 @@ type Agent struct {
 	inboxBackend          func(ctx context.Context, sk string) (delegator.Delegator, error) // test seam; nil = use DelegatedManager
 	turnObserver          func(sk string, batch []Envelope)                                 // test seam — see SetTurnObserver / TODO #746 Stage C
 	turnSlotGrantObserver func()                                                            // test seam — see SetTurnSlotGrantObserver (the #2281 grant-vs-/stop settle window)
+	enqueueObserver       func(Envelope)                                                    // test seam — see SetEnqueueObserver (observes every envelope entering the inbox)
 
 	// Session-lifecycle hooks fired at the turn boundary in HandleMessage, so
 	// EVERY backend turn (platform-driven AND system-injected) fires them —

@@ -223,8 +223,16 @@ type TurnState struct {
 
 	// --- Delegated-specific ---
 
-	Backend         delegator.Delegator // backend instance for this session (nil for API)
-	sessionFilePath string              // cached before SendToPane to avoid deadlock in OnTurnComplete
+	Backend delegator.Delegator // backend instance for this session (nil for API)
+	// foldedFollowUp is set when RunInference folded this turn's prompt into
+	// a turn that was already in flight (a SourceUser follow-up inject): the
+	// in-flight turn owns the run — and the session router's registration —
+	// so this turn has no delivery of its own to register and no sink to
+	// release (#2233: an ask answer folding into an adopted autonomous run
+	// must not clobber the run's registration the way a typed message's
+	// RunTurn fold branch already avoids).
+	foldedFollowUp  bool
+	sessionFilePath string // cached before SendToPane to avoid deadlock in OnTurnComplete
 }
 
 // NewTurnState creates a TurnState with a properly initialised CompletionChan.

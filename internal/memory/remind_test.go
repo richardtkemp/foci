@@ -330,3 +330,62 @@ func TestReminderStoreBusyTimeout(t *testing.T) {
 		t.Errorf("busy_timeout = %d, want 5000", timeout)
 	}
 }
+
+func TestReminderStore_FiredLifecycle(t *testing.T) {
+	// Verifies the fired-wake overlay (#2233): MarkWakeFired records the
+	// session a wake fired on until its turn runs (ClearWakeFired) or the row
+	// is dismissed — the runtime state the remind tool reports "fired, held
+	// behind background work" from.
+	rs := testReminderStore(t)
+
+	id, _ := rs.AddWake("test", "test/c1", "wake me", "1h")
+	if _, ok := rs.FiredWake(id); ok {
+		t.Fatal("fresh wake reads as fired")
+	}
+
+	rs.MarkWakeFired(id, "test/c1")
+	sk, ok := rs.FiredWake(id)
+	if !ok || sk != "test/c1" {
+		t.Fatalf("FiredWake = (%q, %v), want (test/c1, true)", sk, ok)
+	}
+
+	rs.ClearWakeFired(id)
+	if _, ok := rs.FiredWake(id); ok {
+		t.Fatal("cleared wake still reads as fired")
+	}
+
+	// Dismiss clears the overlay with the row.
+	rs.MarkWakeFired(id, "test/c1")
+	if err := rs.Dismiss(id); err != nil {
+		t.Fatalf("Dismiss: %v", err)
+	}
+	if _, ok := rs.FiredWake(id); ok {
+		t.Fatal("dismissed wake still reads as fired")
+	}
+
+	// DismissAll keeps the overlay: it removes only passive rows, and the
+	// overlay holds wake ids only — a fired wake held behind background work
+	// must keep reporting "fired" even after a turn surfaced (and dismissed)
+	// due passive reminders (#2233).
+	id2, _ := rs.AddWake("test", "test/c1", "another", "1h")
+	rs.MarkWakeFired(id2, "test/c1")
+	if err := rs.Add("test", "passive", "now"); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := rs.DismissAll("test"); err != nil {
+		t.Fatalf("DismissAll: %v", err)
+	}
+	if due, _ := rs.Due("test"); len(due) != 0 {
+		t.Fatalf("due passive reminders after DismissAll = %d, want 0", len(due))
+	}
+	if _, ok := rs.FiredWake(id2); !ok {
+		t.Fatal("wake fired-marker wiped by DismissAll — the held wake reads overdue again the moment a passive reminder surfaces")
+	}
+	wakes, err := rs.PendingWakes("test")
+	if err != nil {
+		t.Fatalf("PendingWakes: %v", err)
+	}
+	if len(wakes) != 1 {
+		t.Fatalf("wake rows after DismissAll = %d, want 1 (the wake row survives)", len(wakes))
+	}
+}

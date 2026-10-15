@@ -334,9 +334,21 @@ func (m *mockBackendDT) ImmediateInject(ctx context.Context, inj delegator.Injec
 	return nil
 }
 
+// WaitForTurn models the real contract: it returns once no turn is in flight
+// (or ctx ends). It must NOT return at once while turnInFlight is set — a
+// caller looping on ErrTurnInFlight (RunInference's SourceSystem retry) then
+// busy-spins, appending to injects without bound until memory_guard kills the
+// test binary instead of the test failing (#2435).
 func (m *mockBackendDT) WaitForTurn(ctx context.Context) error {
 	if m.waitForTurnFn != nil {
 		return m.waitForTurnFn(ctx)
+	}
+	for m.IsTurnInFlight() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Millisecond):
+		}
 	}
 	return nil
 }

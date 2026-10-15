@@ -96,6 +96,11 @@ type AskPresentBatchFn func(sessionKey, promptID string, qs []question.Question,
 // resulting injection with it so ask-deferral can tell "the verdict for the ask
 // that just resolved" from "a proactive interruption", and stop holding the
 // former behind an unrelated, later ask (#1712).
+//
+// Which route a message takes is decided by its deliveryKind (deliverMsg):
+// the user's own answers and cancel notices go through the WithUserInputDeliver
+// route (user path and timing, #2233) when one is wired; expiry and restore
+// notices stay system input.
 type AskDeliverFn func(sessionKey, requestID, message string)
 
 // AskCloseFn edits an already-displayed question message to finalText and
@@ -226,15 +231,37 @@ type askState struct {
 	// (#1894). held is released by deliverRestoreNotices once startup is done.
 	restoring bool
 	held      []heldNotice
+	// deliverUser is the user-input delivery route (#2233): the route for
+	// messages that carry the user's own action. Wired via WithUserInputDeliver;
+	// nil falls back to deliver (the system route), which keeps every caller
+	// that wires only `deliver` working as before.
+	deliverUser AskDeliverFn
 }
+
+// deliveryKind classifies a message produced by the ask layer by whose action
+// it carries, deciding its delivery route (#2233): the user's own input takes
+// the user path and timing (steers a running turn, never held behind
+// background work); system notices stay gated system injects.
+type deliveryKind int
+
+const (
+	// deliverSystem is a notice the user did not cause: expiry (the TTL
+	// sweeps, a queued ask aging out) and restore-time notices.
+	deliverSystem deliveryKind = iota
+	// deliverUserInput is the user's own action: the full or partial answer
+	// batch (raw or graded), a late answer, and the user-cancel notice.
+	deliverUserInput
+)
 
 // heldNotice is a restore-time message to the agent, parked until the gateway can
 // deliver it (see askState.restoring). removeMsgID, when set, is the on-screen
 // prompt of the ask the notice is about, deleted from the app at the same point:
-// at restore time the app transport is not up yet either.
+// at restore time the app transport is not up yet either. kind replays through
+// the same route the message would have taken live (#2233).
 type heldNotice struct {
 	sessionKey, requestID, msg string
 	removeMsgID                string
+	kind                       deliveryKind
 }
 
 // WithOnResolve sets a callback fired (async) when ONE ask resolves — per-ask,
@@ -258,29 +285,33 @@ func WithCacheWarm(fn func(sessionKey string) bool) AskOption {
 // unless the session's prompt cache is cold, in which case it is suppressed:
 // delivering it would run a turn that rebuilds the whole cached prefix, and the
 // asking turn has already ended, so the agent needs nothing from it. (#1302)
+// The user pressed Cancel, so the notice is USER input (#2233): it is delivered
+// at once like their message, never held behind background work.
 func (a *askState) deliverCancel(sessionKey, requestID string, answered, total int) {
-	a.deliverUnlessCold(sessionKey, requestID, "cancelled", answered, total, fmt.Sprintf(
+	a.deliverUnlessCold(deliverUserInput, sessionKey, requestID, "cancelled", answered, total, fmt.Sprintf(
 		"[SYSTEM: the user CANCELLED your `ask` request after %d of %d answers. Do not retry unless they ask.]",
 		answered, total))
 }
 
 // deliverExpired tells the agent a live ask expired unanswered — the expiry
 // sweeps' counterpart of deliverCancel (#2091: expiry used to be reported as the
-// user cancelling). Same #1302 cold-cache gate as the cancel notice it replaces.
+// user cancelling). The user did not cause it, so it stays SYSTEM input (#2233).
+// Same #1302 cold-cache gate as the cancel notice it replaces.
 func (a *askState) deliverExpired(sessionKey, requestID string, age time.Duration, answered, total int) {
-	a.deliverUnlessCold(sessionKey, requestID, "expired", answered, total,
+	a.deliverUnlessCold(deliverSystem, sessionKey, requestID, "expired", answered, total,
 		expiredAskNotice(requestID, false, age, answered, total))
 }
 
 // deliverUnlessCold delivers an ask-ended notice unless the session's prompt
-// cache is cold (#1302). how names the ending for the suppression log line.
-func (a *askState) deliverUnlessCold(sessionKey, requestID, how string, answered, total int, msg string) {
+// cache is cold (#1302). how names the ending for the suppression log line;
+// kind picks the delivery route (see deliveryKind).
+func (a *askState) deliverUnlessCold(kind deliveryKind, sessionKey, requestID, how string, answered, total int, msg string) {
 	if a.cacheWarm != nil && !a.cacheWarm(sessionKey) {
 		askLog.Infof("session=%s req=%s ask %s (%d/%d answered) but prompt cache is cold — suppressing trivial %s injection (would rebuild the prompt cache)",
 			sessionKey, requestID, how, answered, total, how)
 		return
 	}
-	a.deliverMsg(sessionKey, requestID, msg)
+	a.deliverMsg(kind, sessionKey, requestID, msg)
 }
 
 // expireLocked resolves p because its prompt expired unanswered (the platform's
@@ -489,7 +520,7 @@ func (a *askState) promoteQueued(sessionKey string) {
 			a.persistLocked()
 			a.mu.Unlock()
 			askLog.Warnf("session=%s req=%s queued ask expired (%s old) before it could be shown — dropped", sessionKey, p.requestID, waited.Round(time.Minute))
-			a.deliverMsg(sessionKey, p.requestID, expiredAskNotice(p.requestID, true, waited, 0, 0))
+			a.deliverMsg(deliverSystem, sessionKey, p.requestID, expiredAskNotice(p.requestID, true, waited, 0, 0))
 			continue
 		}
 		p.queued = false
@@ -647,7 +678,7 @@ func (a *askState) handleResponse(requestID, data string) {
 // Caller has already removed p from the registry.
 func (a *askState) deliverBatch(p *pendingAsk) {
 	if p.grader.path == "" {
-		a.deliverMsg(p.sessionKey, p.requestID, formatAnswerBatch(p.acc.Questions(), p.acc.Answers()))
+		a.deliverMsg(deliverUserInput, p.sessionKey, p.requestID, formatAnswerBatch(p.acc.Questions(), p.acc.Answers()))
 		return
 	}
 	// A grader is set: it may run for up to its timeout. Run it (and deliver
@@ -656,7 +687,7 @@ func (a *askState) deliverBatch(p *pendingAsk) {
 	go func() {
 		raw := formatAnswerBatch(p.acc.Questions(), p.acc.Answers())
 		total := p.acc.Total()
-		a.deliverMsg(p.sessionKey, p.requestID, a.runGrader(p, p.acc.Questions(), p.acc.Answers(), raw, false, total, total))
+		a.deliverMsg(deliverUserInput, p.sessionKey, p.requestID, a.runGrader(p, p.acc.Questions(), p.acc.Answers(), raw, false, total, total))
 	}()
 }
 
@@ -1064,7 +1095,7 @@ func (a *askState) deliverLateAnswer(la LateAnswer) bool {
 	}
 	askLog.Infof("session=%s req=%s late answer to a closed ask (%d answers, %d questions on record) — delivering to the agent",
 		la.SessionKey, reqID, len(la.Answers), len(la.Questions))
-	a.deliverMsg(la.SessionKey, reqID, formatLateAnswer(reqID, la, time.Now()))
+	a.deliverMsg(deliverUserInput, la.SessionKey, reqID, formatLateAnswer(reqID, la, time.Now()))
 	return true
 }
 
@@ -1112,18 +1143,42 @@ func formatLateAnswer(reqID string, la LateAnswer, now time.Time) string {
 // deliverMsg delivers a message produced BY an ask back into its session.
 // requestID names the ask it came from, so the inbox can tell this apart from a
 // proactive interruption when deciding whether a pending ask should hold it
-// (#1712).
-func (a *askState) deliverMsg(sessionKey, requestID, msg string) {
+// (#1712). kind picks the route: the user's own answers and cancel notices go
+// through the WithUserInputDeliver route (the user path and timing, #2233);
+// expiry and restore notices stay system input.
+func (a *askState) deliverMsg(kind deliveryKind, sessionKey, requestID, msg string) {
 	a.mu.Lock()
 	if a.restoring {
-		a.held = append(a.held, heldNotice{sessionKey: sessionKey, requestID: requestID, msg: msg})
+		a.held = append(a.held, heldNotice{sessionKey: sessionKey, requestID: requestID, msg: msg, kind: kind})
 		a.mu.Unlock()
 		return
 	}
 	a.mu.Unlock()
-	if a.deliver != nil {
-		a.deliver(sessionKey, requestID, msg)
+	fn := a.deliver
+	if kind == deliverUserInput {
+		if a.deliverUser != nil {
+			fn = a.deliverUser
+		} else {
+			// A missing wiring degrades the user's answers to system input
+			// (held behind background work, never steering a turn) — warn
+			// loudly rather than letting the degradation pass silently.
+			askLog.Warnf("session=%s req=%s user-input delivery has no user route wired (WithUserInputDeliver) — falling back to the system route", sessionKey, requestID)
+		}
 	}
+	if fn != nil {
+		fn(sessionKey, requestID, msg)
+	}
+}
+
+// WithUserInputDeliver wires the delivery route for messages that carry the
+// user's own action (answer batches, late answers, the cancel notice) — the
+// user path and timing (#2233): they are delivered at once like a human
+// message instead of waiting behind background work. Production wires a
+// function that marks the injection user input; without it those deliveries
+// fall back to `deliver` (the system route), so every existing NewAskTool
+// caller keeps working unchanged.
+func WithUserInputDeliver(fn AskDeliverFn) AskOption {
+	return func(s *askState) { s.deliverUser = fn }
 }
 
 // deliverRestoreNotices sends, once, the notices restorePending held back, and
@@ -1137,7 +1192,7 @@ func (a *askState) deliverRestoreNotices() {
 		if n.removeMsgID != "" && a.remove != nil {
 			a.remove(n.sessionKey, n.removeMsgID)
 		}
-		a.deliverMsg(n.sessionKey, n.requestID, n.msg)
+		a.deliverMsg(n.kind, n.sessionKey, n.requestID, n.msg)
 	}
 }
 
@@ -1220,14 +1275,14 @@ func (a *askState) completeSession(sessionKey string) (answered, total int, ok b
 
 	raw := formatPartialBatch(answeredQs, answers, idx, total)
 	if !hasGrader {
-		a.deliverMsg(sess, p.requestID, raw)
+		a.deliverMsg(deliverUserInput, sess, p.requestID, raw)
 		return idx, total, true
 	}
 	// Grader configured: run it on the partial set off the caller's goroutine
 	// (mirrors the full-answer path) so the slash-command handler returns at once;
 	// the graded result is delivered to the agent when ready.
 	go func() {
-		a.deliverMsg(sess, p.requestID, a.runGrader(p, answeredQs, answers, raw, true, idx, total))
+		a.deliverMsg(deliverUserInput, sess, p.requestID, a.runGrader(p, answeredQs, answers, raw, true, idx, total))
 	}()
 	return idx, total, true
 }

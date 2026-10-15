@@ -425,15 +425,22 @@ func printResponse(resp *http.Response) error {
 		Status      string `json:"status"`
 		Session     string `json:"session"`
 		ResolvedVia string `json:"resolved_via"`
+		Held        string `json:"held"`
 	}
 	if json.Unmarshal(body, &result) == nil {
 		// The receipt carries the STATUS too. Without it the only record of a
 		// no-op run ("skipped: session recently active") is the bare stdout token,
 		// which is undated and unattributable in a shared cron log — the whole
 		// point of #1787. Duplicating one word on stderr is the cheap half of
-		// that; corrupting stdout would be the expensive half.
+		// that; corrupting stdout would be the expensive half. A held receipt
+		// (the session is busy with background work, #2233) appends the reason
+		// so the log says why nothing happened yet.
 		if result.Session != "" || result.Status != "" {
-			logStderr("session: %s (%s) status=%s", result.Session, result.ResolvedVia, result.Status)
+			if result.Held != "" {
+				logStderr("session: %s (%s) status=%s held=%s", result.Session, result.ResolvedVia, result.Status, result.Held)
+			} else {
+				logStderr("session: %s (%s) status=%s", result.Session, result.ResolvedVia, result.Status)
+			}
 		}
 		if result.Response != "" {
 			fmt.Println(result.Response)

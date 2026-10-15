@@ -17,6 +17,7 @@ Per-tool reference for the Claude Code (shell) backend. How `foci_*` shell funct
 ### `foci_remind` — defer a thought
 - `--text T --when SPEC`. SPEC: duration (`2h`, `30m`), `tomorrow`, `next_keepalive`, `next_session`, a date (`YYYY-MM-DD`), or an ISO timestamp.
 - `--wake` (default false): passive reminders inject as context at the time; `--wake` actively wakes the session with a message to yourself.
+- `--list`: each wake shows its state — `pending` until its timer fires, then `held` ("fired, held behind background work") while a running subagent or background command delays it, or `fired` ("waiting to run"). A wake in either fired state is NOT cancellable; it WILL run when the work ends.
 
 ### `foci_memory_search` — full-text search of memory + conversation history
 - Positional `query`, stemmed FTS. Memory files rank above chat history.

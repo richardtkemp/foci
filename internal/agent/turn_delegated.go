@@ -20,6 +20,16 @@ import (
 // resilience detail, not a deployment-tunable behaviour.
 const systemInjectRetryInterval = 5 * time.Second
 
+// ErrKeepaliveSkipped is RunInference's result for a keepalive whose exclusive
+// begin the backend refused (ErrTurnInFlight: a turn is running, or one just
+// ended inside the post-run grace). The keepalive is dropped, not retried: a
+// turn that is active or just ended has already warmed the prompt cache, so
+// nothing is lost — while retrying would park the session WORKER in the
+// SourceSystem wait loop for the whole of a run CC chains in that window,
+// head-of-line-blocking user messages behind a cache-warming pass (#2233
+// review N1). Callers treat it as a skip, not a failure.
+var ErrKeepaliveSkipped = errors.New("agent: keepalive skipped: a turn is in flight")
+
 // ---------------------------------------------------------------------------
 // DelegatedTransport — TurnContract implementations for the delegated transport
 // path. Methods that are genuinely no-ops return zero values with a comment
@@ -219,6 +229,12 @@ func answerPendingBackendPrompt(lg *log.ComponentLogger, be delegator.Delegator,
 // handler captures the combined result (this turn's CompletionChan is closed
 // immediately so runPostTurn skips it).
 //
+// A user-input turn (an foci_ask answer, #2233) folds and begins like
+// interactive input — it is the user's own action — but never answers a
+// pending backend prompt (answerPendingBackendPrompt): the answer was meant
+// for the ask, and a CC AskUserQuestion or elicitation must keep waiting for
+// its own reply.
+//
 // System-initiated turns (foci send / HTTP /send, cron, notifications,
 // error/restart injections) NEVER fold — they must not steer running work.
 // They dispatch as Inject(SourceSystem), and when the backend reports a turn
@@ -226,12 +242,18 @@ func answerPendingBackendPrompt(lg *log.ComponentLogger, be delegator.Delegator,
 // fresh, fully-tracked turn of their own.
 func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	a := t.agent
-	// foldable = may this turn's text merge into an in-flight turn or answer a
-	// pending prompt? Only real-time user input qualifies — and even then the
-	// sender can opt out per message (SteerNever, the app's explicit "queue"
-	// choice), which gets the full system-turn dispatch guarantees: never
-	// folds, never consumed as an answer, waits for backend idle.
-	foldable := isInteractiveTrigger(ts.Trigger) && SteerPreferenceFromContext(ts.Ctx) != platform.SteerNever
+	// answersPrompts = may this turn's text be consumed as the answer to a
+	// pending backend prompt (a CC AskUserQuestion or MCP elicitation field)?
+	// Only real-time interactive input — and even then the sender can opt out
+	// per message (SteerNever, the app's explicit "queue" choice), which gets
+	// the full system-turn dispatch guarantees: never folds, never consumed as
+	// an answer, waits for backend idle. A user-input turn (an ask answer)
+	// deliberately does NOT qualify: it must never answer a backend prompt.
+	answersPrompts := isInteractiveTrigger(ts.Trigger) && SteerPreferenceFromContext(ts.Ctx) != platform.SteerNever
+	// foldable = may this turn's text merge into an in-flight turn or begin as
+	// SourceUser? Interactive input, plus the user's own ask answers (#2233):
+	// they arrive from the user and take the user path and timing.
+	foldable := answersPrompts || UserInputFromContext(ts.Ctx)
 
 	// A redelivery whose input was dropped while it queued (a /reset of the
 	// session) must not reach the fresh session (#2050).
@@ -249,13 +271,15 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	t.logger().Debugf("RunInference: Get backend done sk=%s", ts.SessionKey)
 	ts.Backend = be
 
-	// Typed-answer intercepts apply to foldable input only: a user can
+	// Typed-answer intercepts apply to interactive input only: a user can
 	// answer a pending AskUserQuestion / elicitation field by typing instead
-	// of clicking buttons. System text (keepalive, notification, foci send)
-	// and explicitly-queued messages (SteerNever) must never be consumed as
-	// an answer — they wait below (WaitForPermission + the SourceSystem retry
-	// loop) until the prompt resolves and the turn completes.
-	if foldable && answerPendingBackendPrompt(t.logger(), be, ts.SessionKey, ts.Texts) {
+	// of clicking buttons. System text (keepalive, notification, foci send),
+	// explicitly-queued messages (SteerNever) and ask answers (#2233 — the
+	// answer belongs to the ask, not to a backend prompt) must never be
+	// consumed as an answer — they wait below (WaitForPermission + the
+	// SourceSystem retry loop) until the prompt resolves and the turn
+	// completes.
+	if answersPrompts && answerPendingBackendPrompt(t.logger(), be, ts.SessionKey, ts.Texts) {
 		close(ts.CompletionChan)
 		return nil
 	}
@@ -277,10 +301,11 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// immediately so runPostTurn exits without doing any post-turn work
 	// (the original turn's handler will handle usage, compaction, etc.).
 	//
-	// Foldable input only: system turns and explicitly-queued messages
-	// (SteerNever) skip this and wait via the SourceSystem retry loop below —
-	// folding a keepalive / notification / foci send / "queue this" message
-	// into running work would steer it.
+	// Foldable input only (interactive user input, and ask answers as the
+	// user's own action — both fold as SourceUser, #2233): system turns and
+	// explicitly-queued messages (SteerNever) skip this and wait via the
+	// SourceSystem retry loop below — folding a keepalive / notification /
+	// foci send / "queue this" message into running work would steer it.
 	//
 	// Note: urgent steers (steer_mode=true) on CC backends don't reach
 	// this path — they're dispatched immediately by the agent.Inbox
@@ -313,6 +338,11 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 			return err
 		}
 		t.logger().Debugf("RunInference: Inject(SourceUser, follow-up) done sk=%s", ts.SessionKey)
+		// The in-flight turn owns the run and the router's registration; this
+		// turn folds into it and delivers nothing of its own (see TurnState.
+		// foldedFollowUp — Phase 3.5 skips its registration for exactly the
+		// reason RunTurn's fold branch does, #1274/#2233).
+		ts.foldedFollowUp = true
 		a.markTurnDispatched(ts.TurnDetail)
 		// Backend has received the message — signal the inbox so steer
 		// routing opens for any further follow-ups arriving on the heels
@@ -382,8 +412,9 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 	// backend.
 	atts := ts.delegatedAttachments
 
-	// Foldable turns begin as SourceUser (idle here — the in-flight case
-	// folded above). System turns and explicitly-queued messages begin as
+	// Foldable turns (interactive user input, and ask answers as the user's
+	// own action) begin as SourceUser (idle here — the in-flight case folded
+	// above). System turns and explicitly-queued messages begin as
 	// SourceSystem: the backend's exclusive begin rejects with
 	// ErrTurnInFlight instead of folding, so the prompt can never steer
 	// running work. The session inbox worker is the primary serialisation
@@ -413,6 +444,16 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 			Turn:        turnEvents,
 			Refs:        InputRefsFromContext(ts.Ctx),
 		}
+		if src == delegator.SourceSystem && isKeepaliveTrigger(ts.Trigger) {
+			// A keepalive's whole purpose is to keep the prompt cache warm
+			// (#2233): it may begin while background work is pending, or a
+			// two-hour hold would defeat it. The turnActive refusal and the
+			// post-run grace still apply inside the backend's exclusive
+			// begin — and a keepalive they refuse is skipped below, never
+			// retried (ErrKeepaliveSkipped). Identified by trigger, never by
+			// prompt text.
+			inj.PendingWorkExempt = true
+		}
 		if r := redeliveryFromContext(ts.Ctx); r != nil {
 			inj.ID = r.Input.ID
 			inj.Refs = r.Input.Refs
@@ -421,6 +462,12 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 		}
 		err = be.ImmediateInject(ts.Ctx, inj)
 		if !errors.Is(err, delegator.ErrTurnInFlight) {
+			break
+		}
+		if isKeepaliveTrigger(ts.Trigger) {
+			// Never wait on the worker for a keepalive (ErrKeepaliveSkipped).
+			t.logger().Infof("session=%s keepalive skipped: a turn is in flight (the cache is already warm)", ts.SessionKey)
+			err = ErrKeepaliveSkipped
 			break
 		}
 		// Only SourceSystem returns ErrTurnInFlight: a turn is running and

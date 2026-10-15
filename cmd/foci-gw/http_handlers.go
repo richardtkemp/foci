@@ -761,7 +761,7 @@ func handleBranch(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalua
 				notifyHumanInteraction(inst)
 			}
 			if req.Async {
-				writeAccepted(w, result.Receipt)
+				writeAccepted(w, result.Receipt, "")
 				return
 			}
 			writeJSONReceipt(w, result.Resp, result.Receipt)

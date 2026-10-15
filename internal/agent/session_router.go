@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 
 	"foci/internal/turnevent"
@@ -62,13 +63,23 @@ func newSessionRouter(fallback turnevent.Sink) *sessionRouter {
 	return &sessionRouter{fallback: fallback}
 }
 
-// Register installs sink as the current per-turn target. Subsequent
-// Emit calls forward to it until Clear or another Register replaces it.
-// Passing a nil sink is equivalent to Clear.
-func (r *sessionRouter) Register(sink turnevent.Sink) {
+// Register installs sink as the current per-turn target. Subsequent Emit
+// calls forward to it until the returned release is called, another Register
+// replaces it (that registration's own release then does nothing), or Clear.
+// Passing a nil sink is equivalent to Clear; the returned release is a no-op
+// there, as it is when registration was refused as self-routing.
+//
+// The release clears ONLY while its own registration is still current
+// (idempotent): a turn whose registration a LATER Register replaced — an
+// adopted autonomous run opening while a system turn still runs (#2233) —
+// must not wipe the newer one mid-run with its deferred cleanup, or the rest
+// of that run (and a possible streamed-vs-final duplicate) diverts to the
+// late-delivery fallback instead of the adopted sink. Prefer the release over
+// Clear at every turn-scoped call site.
+func (r *sessionRouter) Register(sink turnevent.Sink) (release func()) {
 	if sink == nil {
 		r.current.Store(nil)
-		return
+		return func() {}
 	}
 	if r.routesTo(sink) {
 		// Registering the router (or any decoration of it) as its own current
@@ -80,9 +91,14 @@ func (r *sessionRouter) Register(sink turnevent.Sink) {
 		if r.warnf != nil {
 			r.warnf("sessionRouter: refused to register a sink that routes back to this router (%T) — would recurse (#1944)", sink)
 		}
-		return
+		return func() {}
 	}
-	r.current.Store(&sinkRef{s: sink})
+	ref := &sinkRef{s: sink}
+	r.current.Store(ref)
+	var once sync.Once
+	return func() {
+		once.Do(func() { r.current.CompareAndSwap(ref, nil) })
+	}
 }
 
 // routesTo reports whether emitting to sink would land on this router —

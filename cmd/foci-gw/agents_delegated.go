@@ -903,20 +903,21 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, wakeC
 	// table's pathExec filter selects exactly the exec-bridge tools.
 	out := &toolOutputs{}
 	registerTools(&toolDeps{
-		p:             p,
-		path:          pathExec,
-		registry:      registry,
-		agentStore:    agentStore,
-		notifier:      notifier,
-		connMgr:       connMgr,
-		agLazy:        agLazy,
-		summariser:    batchSummariser,
-		wakeFn:        wakeScheduleFn,
-		wakeCancelFn:  wakeCancelFn,
-		sessionNotify: newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr, "session_notify", app.DeliverAgentMessage),
-		askDeliver:    newAskDeliverFn(p.agentResolverFn, p.ctx, connMgr),
-		agentTTS:      agentTTS,
-		out:           out,
+		p:              p,
+		path:           pathExec,
+		registry:       registry,
+		agentStore:     agentStore,
+		notifier:       notifier,
+		connMgr:        connMgr,
+		agLazy:         agLazy,
+		summariser:     batchSummariser,
+		wakeFn:         wakeScheduleFn,
+		wakeCancelFn:   wakeCancelFn,
+		sessionNotify:  newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr, "session_notify", app.DeliverAgentMessage),
+		askDeliver:     newAskDeliverFn(p.agentResolverFn, p.ctx, connMgr),
+		askUserDeliver: newAskUserDeliverFn(p.agentResolverFn, p.ctx, connMgr),
+		agentTTS:       agentTTS,
+		out:            out,
 	})
 	if agLazy != nil {
 		if a := agLazy(); a != nil {

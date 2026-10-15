@@ -80,6 +80,28 @@ func TriggerFromContext(ctx context.Context) string {
 // backend's typed-answer intercepts.
 type steerPrefKey struct{}
 
+// userInputKey is the context key marking a turn as carrying the user's own
+// action through a non-interactive surface — a foci_ask answer (#2233).
+// Unlike the human-source marker it changes ROUTING, not just bookkeeping: the
+// delivery takes the user path and timing (steers a running turn, never held
+// behind background work, folds as SourceUser), while the trigger stays
+// "ask_grader" so the model still sees via=ask-grader.
+type userInputKey struct{}
+
+// WithUserInput marks ctx's message as the user's own input (an ask answer,
+// #2233). Attached by the ask tool's user-input delivery route; read by the
+// turn transport (RunInference) and the injection wiring (asUserInput).
+func WithUserInput(ctx context.Context) context.Context {
+	return context.WithValue(ctx, userInputKey{}, true)
+}
+
+// UserInputFromContext reports whether the turn's ctx carries the user-input
+// marker (false if absent).
+func UserInputFromContext(ctx context.Context) bool {
+	v, _ := ctx.Value(userInputKey{}).(bool)
+	return v
+}
+
 // WithSteerPreference attaches a per-message steer preference to a context.
 func WithSteerPreference(ctx context.Context, p platform.SteerPreference) context.Context {
 	return context.WithValue(ctx, steerPrefKey{}, p)
@@ -165,6 +187,18 @@ func isInteractiveTrigger(trigger string) bool {
 		return true
 	}
 	return trigger == "voice"
+}
+
+// TriggerKeepalive is the trigger label of a keepalive pass. An in-place
+// delegated keepalive injects under the periodic branch type of the same name
+// (injectInPlace → EnqueueInjectWait("keepalive")), so one constant identifies
+// it at both the inbox gate and the backend's exclusive begin. The pending-work
+// exemptions key on the trigger, never on prompt text (#2233).
+const TriggerKeepalive = "keepalive"
+
+// isKeepaliveTrigger reports whether trigger names a keepalive pass.
+func isKeepaliveTrigger(trigger string) bool {
+	return trigger == TriggerKeepalive
 }
 
 // isMemoryTrigger reports whether a turn is a memory-formation pass —

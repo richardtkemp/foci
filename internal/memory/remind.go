@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"foci/internal/session"
@@ -52,6 +53,46 @@ type Reminder struct {
 // ReminderStore manages deferred thoughts in SQLite.
 type ReminderStore struct {
 	db *sql.DB
+
+	// firedMu guards fired: the in-process overlay of wakes whose timer has
+	// fired but whose turn has not run yet (#2233). It is runtime state on top
+	// of the persisted rows — deliberately not persisted, because a restart's
+	// restore re-fires every pending row, so "fired and waiting" is by
+	// definition empty at startup.
+	firedMu sync.Mutex
+	fired   map[int64]string // wake id → resolved session key
+}
+
+// MarkWakeFired records that wake id's timer has fired on sessionKey and its
+// turn is waiting to run — the runtime overlay that lets the remind tool
+// report "fired, held behind background work" / "fired, waiting to run"
+// instead of a misleading "overdue" while the wake sits behind background
+// work (#2233). Cleared by ClearWakeFired when the turn runs or the injection
+// is refused; Dismiss clears it with the row.
+func (rs *ReminderStore) MarkWakeFired(id int64, sessionKey string) {
+	rs.firedMu.Lock()
+	if rs.fired == nil {
+		rs.fired = make(map[int64]string)
+	}
+	rs.fired[id] = sessionKey
+	rs.firedMu.Unlock()
+}
+
+// ClearWakeFired drops the fired marker for id — its turn has run, its
+// injection was refused, or the wake is otherwise no longer waiting.
+func (rs *ReminderStore) ClearWakeFired(id int64) {
+	rs.firedMu.Lock()
+	delete(rs.fired, id)
+	rs.firedMu.Unlock()
+}
+
+// FiredWake reports the session key wake id fired on and whether it is still
+// waiting for its turn.
+func (rs *ReminderStore) FiredWake(id int64) (sessionKey string, ok bool) {
+	rs.firedMu.Lock()
+	defer rs.firedMu.Unlock()
+	sk, ok := rs.fired[id]
+	return sk, ok
 }
 
 // NewReminderStore creates or opens the reminder store.
@@ -180,14 +221,20 @@ func (rs *ReminderStore) Due(agentID string) ([]Reminder, error) {
 	return reminders, rows.Err()
 }
 
-// Dismiss removes a reminder by ID.
+// Dismiss removes a reminder by ID. A wake's fired marker goes with the row —
+// its turn ran (the wake path dismisses on completion) or it was cancelled.
 func (rs *ReminderStore) Dismiss(id int64) error {
+	rs.ClearWakeFired(id)
 	_, err := rs.db.Exec("DELETE FROM reminders WHERE id = ?", id)
 	return err
 }
 
 // DismissAll removes all due passive reminders for the given agent.
 // Wake reminders are excluded — they are dismissed explicitly by ID when they fire.
+// The fired overlay is left untouched: it only ever holds wake ids (#2233), and
+// those rows survive this call, so wiping the overlay would make a fired wake
+// held behind background work read as "overdue" again the moment any passive
+// reminder surfaces (a turn calling DismissAll).
 func (rs *ReminderStore) DismissAll(agentID string) error {
 	now := timeutil.Format(timeutil.Now())
 	_, err := rs.db.Exec("DELETE FROM reminders WHERE agent_id = ? AND unixepoch(due_at) <= unixepoch(?) AND wake = 0", agentID, now)

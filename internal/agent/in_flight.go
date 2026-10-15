@@ -81,6 +81,26 @@ func (a *Agent) SetTurnInFlightForTest(sessionKey string, inFlight bool) {
 	a.notifyInFlightChangedLocked(base)
 }
 
+// SetInFlightDeliveringForTest marks a session's base as having an in-flight
+// DELIVERING turn (an adopted autonomous run's half of the pending-work
+// predicate, #2233) or clears it — so tests outside this package (the async
+// /send receipt's held field) can exercise held reporting without driving a
+// real delivering turn. Test-only.
+func (a *Agent) SetInFlightDeliveringForTest(sessionKey string, delivering bool) {
+	base := sessionKey
+	a.inFlightMu.Lock()
+	defer a.inFlightMu.Unlock()
+	if a.inFlightDelivering == nil {
+		a.inFlightDelivering = make(map[string]int32)
+	}
+	if delivering {
+		a.inFlightDelivering[base] = 1
+	} else {
+		delete(a.inFlightDelivering, base)
+	}
+	a.notifyInFlightChangedLocked(base)
+}
+
 // IsInFlightDelivering returns true if at least one in-flight turn under base
 // has a sink that reports DeliversToPlatform=true (i.e. routes output to a
 // user-facing platform). Kept distinct from IsTurnInFlight so that combining
@@ -271,7 +291,10 @@ func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator, tr
 	sink, tspan := telemetry.NewTurnSink(sink)
 
 	router := a.sessionRouter(sessionKey)
-	router.Register(sink) // synchronous — registered before the run's first delta
+	// The release (not a bare Clear) clears only while this registration is
+	// still current: something may legitimately register over it later in the
+	// run's life, and the completion path must not wipe that (#2233).
+	releaseRegistration := router.Register(sink) // synchronous — registered before the run's first delta
 
 	t := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ctx := turnevent.WithSink(WithTrigger(context.Background(), "autonomous"), sink)
@@ -289,7 +312,7 @@ func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator, tr
 
 	if !adopter.AdoptRunningTurn(turnEvents) {
 		// A foci-initiated turn raced this open and now owns the run — unwind.
-		router.Clear()
+		releaseRegistration()
 		if cleanup != nil {
 			cleanup()
 		}
@@ -315,7 +338,7 @@ func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator, tr
 		if cleanup != nil {
 			cleanup()
 		}
-		router.Clear()
+		releaseRegistration()
 		markDone()
 	}()
 }

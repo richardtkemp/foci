@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -96,6 +97,11 @@ func handleDelegatedBranch(ag *agent.Agent, agentID, branchType, parentKey, prom
 		}); err != nil {
 			log.NewComponentLogger(branchType).Warnf("[%s] session=%s inject error: %v", agentID, parentKey, err)
 			return false
+		}
+		if errors.Is(turnErr, agent.ErrKeepaliveSkipped) {
+			// A turn was in flight, so the cache is already warm (#2233 N1).
+			log.NewComponentLogger(branchType).Infof("[%s] session=%s %v", agentID, parentKey, turnErr)
+			return true
 		}
 		if turnErr != nil {
 			log.NewComponentLogger(branchType).Warnf("[%s] session=%s turn error: %v", agentID, parentKey, turnErr)

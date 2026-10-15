@@ -67,6 +67,17 @@ func (d *recordingDriver) NewTurnSink(_ Envelope) (turnevent.Sink, func()) { ret
 // Connection returns nil — these tests don't exercise platform-side ops.
 func (d *recordingDriver) Connection() platform.Connection { return nil }
 
+// sinkDriver is a recordingDriver whose NewTurnSink returns a real sink, so
+// Agent.RunTurn runs its own registration path (run_turn.go) instead of
+// returning at the nil-sink check. For tests that need the platform turn's
+// router registration to actually happen.
+type sinkDriver struct {
+	recordingDriver
+	sink turnevent.Sink
+}
+
+func (d *sinkDriver) NewTurnSink(Envelope) (turnevent.Sink, func()) { return d.sink, nil }
+
 // appConnStub reports the native-app platform name. Everything else inherits
 // recordingConn's no-op/panic surface — unused by the ask-capture carve-out,
 // which only reads PlatformName and returns before any send.
@@ -215,6 +226,33 @@ func TestInbox_Enqueue_InFlight_CCBackend_InjectsSteer(t *testing.T) {
 	// Buffer must NOT have been used — Inject takes precedence.
 	if entries := inb.drainSteer(); len(entries) != 0 {
 		t.Errorf("steer buffer should be empty, got %d entries", len(entries))
+	}
+}
+
+// TestInbox_Enqueue_AdoptedAutonomousRun_SteersFollowUp (#1274) pins the
+// backend half of the active-turn check: an adopted autonomous run holds the
+// BACKEND's turn in flight while the inbox's own turnActive stays false (the
+// worker is not driving it). A user follow-up arriving then must still be
+// recognised as mid-turn and steer into the running turn — queueing it as a
+// fresh turn is what clobbered the adopted run's router registration.
+func TestInbox_Enqueue_AdoptedAutonomousRun_SteersFollowUp(t *testing.T) {
+	a := newTestAgent(t) // inbox not started — a queued envelope stays observable
+	a.SetInboxSteerMode(true)
+
+	be := &mockBackendDT{}
+	be.setTurnInFlight(true) // the adopted run: backend in flight, worker idle
+	a.DelegatedManager = newMockDelegatedManager(t, be)
+
+	inb := a.getOrCreateInbox("test/s")
+
+	a.Enqueue(Envelope{SessionKey: "test/s", Text: "follow-up during adopted run"})
+
+	injects := be.InjectsRecorded()
+	if len(injects) != 1 || injects[0].Source != delegator.SourceSteer || injects[0].Text != "follow-up during adopted run" {
+		t.Fatalf("injects = %+v, want one SourceSteer carrying the follow-up text", injects)
+	}
+	if queued := inb.drainAvailable(); len(queued) != 0 {
+		t.Errorf("follow-up queued as a fresh turn behind the adopted run: %+v", queued)
 	}
 }
 

@@ -126,5 +126,6 @@ func writeSteerChoiceReceipt(w http.ResponseWriter, ok bool, rcpt route.Receipt)
 		http.Error(w, "session inbox full", http.StatusServiceUnavailable)
 		return
 	}
-	writeAccepted(w, rcpt)
+	// A user envelope is never held behind background work (#2233).
+	writeAccepted(w, rcpt, "")
 }

@@ -36,18 +36,33 @@ func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
 	b.resetTurnScratch()
 }
 
-// tryBeginTurn begins a new turn only if none is in flight, returning
-// ErrTurnInFlight otherwise. The idle check and the turn begin happen under
-// one turnMu hold, so two racing SourceSystem injects cannot both begin and
-// clobber each other's TurnEvents — exactly one wins; the loser waits for
-// completion and retries.
+// tryBeginTurn begins a new system turn only if none is in flight and no
+// background work is pending, returning ErrTurnInFlight otherwise. The idle
+// check and the turn begin happen under one turnMu hold, so two racing
+// SourceSystem injects cannot both begin and clobber each other's TurnEvents —
+// exactly one wins; the loser waits for completion and retries.
 func (b *Backend) tryBeginTurn(turn *delegator.TurnEvents) error {
+	return b.tryBegin(turn, false)
+}
+
+// tryBeginTurnIgnoringPending is tryBeginTurn minus the pending-work refusal:
+// for a SourceSystem inject flagged PendingWorkExempt (a keepalive, #2233).
+// The active-turn and post-run-grace refusals still apply — they guard turn
+// exclusivity and the autonomous chain gap, not the pending-work window.
+func (b *Backend) tryBeginTurnIgnoringPending(turn *delegator.TurnEvents) error {
+	return b.tryBegin(turn, true)
+}
+
+// tryBegin is the shared exclusive begin: the pending-work gate (unless
+// pendingExempt), then under turnMu the active-turn check and the post-run
+// chain grace (#1048).
+func (b *Backend) tryBegin(turn *delegator.TurnEvents, pendingExempt bool) error {
 	// Pending background work (a spawned subagent or run_in_background Bash not
 	// yet completed) will chain an autonomous run that owns delivery, so a
 	// SourceSystem turn must not begin during the pending window (spec §4).
 	// Checked before turnMu — Pending() takes the tracker's own lock, and the
 	// retry loop re-checks, so the TOCTOU gap is benign.
-	if b.agents.Pending() > 0 {
+	if !pendingExempt && b.agents.Pending() > 0 {
 		return delegator.ErrTurnInFlight
 	}
 	b.turnMu.Lock()
@@ -175,14 +190,20 @@ func (b *Backend) sendToPane(_ context.Context, inj delegator.Inject, exclusive 
 // writes it. Registration comes first so a backend whose process has already
 // exited refuses before any turn state is touched. A begin that loses the race
 // to another turn (exclusive) or a failed write abandons the registration and
-// unwinds the turn.
+// unwinds the turn. An exclusive begin honours inj.PendingWorkExempt (#2233):
+// the exempt variant keeps the active-turn and grace refusals but skips the
+// pending-work one.
 func (b *Backend) beginTrackedTurn(inj delegator.Inject, exclusive bool, write func(id string) error) error {
 	p, err := b.registerInput(trackedInputFor(inj))
 	if err != nil {
 		return err
 	}
 	if exclusive {
-		if err := b.tryBeginTurn(inj.Turn); err != nil {
+		begin := b.tryBeginTurn
+		if inj.PendingWorkExempt {
+			begin = b.tryBeginTurnIgnoringPending
+		}
+		if err := begin(inj.Turn); err != nil {
 			b.abandonInput(p)
 			return err
 		}

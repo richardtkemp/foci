@@ -251,12 +251,11 @@ func relayCapturedResponse(
 // newSessionNotifyFn builds the callback that injects a message into a target
 // session and delivers the response to that session's chat — the DELIVER-TO-CHAT
 // path (see the taxonomy above) for send_to_session with reply_to=session
-// (trigger "session_notify", via=agent) and the ask tool's answer/grader
-// delivery (trigger "ask_grader", via=ask-grader — wired through the sibling
-// newAskDeliverFn, which passes a nil origin so asks stay chit-free).
-// Cross-agent by nature: the target key names its own owning agent, resolved
-// here. deliverChit surfaces agent-message chits in the app
-// (app.DeliverAgentMessage in production); nil shows nothing.
+// (trigger "session_notify", via=agent). Cross-agent by nature: the target key
+// names its own owning agent, resolved here. deliverChit surfaces agent-message
+// chits in the app (app.DeliverAgentMessage in production); nil shows nothing.
+// (The ask tool's deliveries are the sibling newAskDeliverFn /
+// newAskUserDeliverFn, which pass a nil origin so asks stay chit-free.)
 func newSessionNotifyFn(
 	agentResolverFn func(agentID string) *agentInstance,
 	ctx context.Context,
@@ -269,12 +268,13 @@ func newSessionNotifyFn(
 	})
 }
 
-// newAskDeliverFn is newSessionNotifyFn for the ask tool's answer/grader
-// delivery: identical resolution and delivery, but it tags the injection with the
-// requestID of the ask that produced the message, and never a chit — an ask
-// answer is not an agent-to-agent message. The requestID tag is what lets the
-// inbox tell a verdict for the ask that just resolved from a proactive
-// interruption, so it is no longer held behind the NEXT ask (#1712).
+// newAskDeliverFn is newSessionNotifyFn for the ask tool's SYSTEM deliveries:
+// expiry and restore notices (the user did not cause them, #2233). Identical
+// resolution and delivery, but it tags the injection with the requestID of the
+// ask that produced the message, and never a chit — an ask notice is not an
+// agent-to-agent message. The requestID tag is what lets the inbox tell a
+// verdict for the ask that just resolved from a proactive interruption, so it
+// is no longer held behind the NEXT ask (#1712).
 func newAskDeliverFn(
 	agentResolverFn func(agentID string) *agentInstance,
 	ctx context.Context,
@@ -282,6 +282,24 @@ func newAskDeliverFn(
 ) tools.AskDeliverFn {
 	return func(targetSessionKey, requestID, message string) {
 		deliverToResolvedSession(agentResolverFn, ctx, connMgr, "ask_grader", targetSessionKey, requestID, message, nil)
+	}
+}
+
+// newAskUserDeliverFn is the user-input delivery route for the ask tool's
+// answer messages (#2233): full and partial answer batches (raw or graded),
+// late answers, and the user-cancel notice. Same resolution and delivery as
+// newAskDeliverFn, but the ctx carries the user-input marker so the injection
+// is dispatched like a typed message — it steers a running turn, is never held
+// behind background work, and never answers a backend prompt — while the model
+// still sees via=ask-grader and the request id tags the injection (#1712).
+// Never a chit, like the system route.
+func newAskUserDeliverFn(
+	agentResolverFn func(agentID string) *agentInstance,
+	ctx context.Context,
+	connMgr platform.ConnectionManager,
+) tools.AskDeliverFn {
+	return func(targetSessionKey, requestID, message string) {
+		deliverToResolvedSession(agentResolverFn, agent.WithUserInput(ctx), connMgr, "ask_grader", targetSessionKey, requestID, message, nil)
 	}
 }
 
@@ -367,13 +385,38 @@ func logInjectionError(trigger string, err error, format string, args ...interfa
 	logger.Errorf(format+": %v", append(args, err)...)
 }
 
+// injectOption adjusts the injection envelope enqueueInject builds.
+type injectOption func(*agent.Envelope)
+
+// asUserInput marks the injection as the user's own input (an ask answer,
+// #2233): Envelope.Text carries the message so the steer path can fold it, and
+// InjectMeta.UserInput routes it through the user gates and timing.
+func asUserInput(message string) injectOption {
+	return func(env *agent.Envelope) {
+		env.Text = message
+		env.Inject.UserInput = true
+	}
+}
+
+// onInjectRefused arranges fn to fire when the inbox declines to run the
+// injection — a full inbox at enqueue, or a shutdown/ctx-end drop (#2059) —
+// so a caller holding runtime state on the assumption the turn would run can
+// undo it (a wake's fired overlay, #2233).
+func onInjectRefused(fn func()) injectOption {
+	return func(env *agent.Envelope) {
+		env.Inject.Refused = fn
+	}
+}
+
 // enqueueInject queues body as a system injection on sessionKey's inbox worker —
 // the ONE place injection queueing/serialisation/safety is defined. body runs
 // wrapped in panic recovery (a bad injection must never crash the foci process),
-// and a rejected enqueue (full inbox) is logged and dropped. Queueing serialises
-// the turn with the session's platform turns and defers it behind a pending
-// foci_ask — a system injection waits for an in-flight turn, never steers it.
-func enqueueInject(ag *agent.Agent, sessionKey, trigger, askReqID string, body func()) {
+// and a rejected enqueue (full inbox) is logged, the refusal hook fired, and the
+// injection dropped. Queueing serialises the turn with the session's platform
+// turns and defers it behind a pending foci_ask — a system injection waits for
+// an in-flight turn, never steers it. opts adjust the envelope (asUserInput,
+// onInjectRefused).
+func enqueueInject(ag *agent.Agent, sessionKey, trigger, askReqID string, body func(), opts ...injectOption) {
 	run := func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -382,11 +425,18 @@ func enqueueInject(ag *agent.Agent, sessionKey, trigger, askReqID string, body f
 		}()
 		body()
 	}
-	if !ag.Enqueue(agent.Envelope{
+	env := agent.Envelope{
 		SessionKey: sessionKey,
 		Inject:     &agent.InjectMeta{Trigger: trigger, Run: run, AskReqID: askReqID},
-	}) {
+	}
+	for _, opt := range opts {
+		opt(&env)
+	}
+	if !ag.Enqueue(env) {
 		log.NewComponentLogger(trigger).Warnf("inbox rejected injected turn for session %s", sessionKey)
+		if env.Inject.Refused != nil {
+			env.Inject.Refused()
+		}
 	}
 }
 
@@ -420,6 +470,12 @@ func deliverToSessionChat(
 // (shutdown drain, full inbox), so a caller that consumes a durable record in
 // after — a scheduled wake dismissing its row — leaves that record pending; the
 // same refusal also leaves chit unfired.
+//
+// When ctx carries the user-input marker (an ask answer, #2233) the injection is
+// marked as the user's own input: it takes the user path and timing — steers a
+// running turn, never held behind background work — and Envelope.Text carries
+// the message so the steer path can fold it. opts pass further injectOptions
+// through to enqueueInject.
 func deliverToSessionChatThen(
 	ag *agent.Agent,
 	ctx context.Context,
@@ -429,7 +485,11 @@ func deliverToSessionChatThen(
 	chit *agentChit,
 	askReqID string,
 	after func(err error),
+	opts ...injectOption,
 ) {
+	if agent.UserInputFromContext(ctx) {
+		opts = append([]injectOption{asUserInput(message)}, opts...)
+	}
 	enqueueInject(ag, sessionKey, trigger, askReqID, func() {
 		// The chit (if any) fires with the turn it precedes, never at enqueue
 		// time — an injection the inbox refuses shows nothing (#1286).
@@ -465,15 +525,17 @@ func deliverToSessionChatThen(
 		if err = ag.HandleMessage(notifyCtx, sessionKey, []string{message}, nil); err != nil {
 			logInjectionError(trigger, err, "error for session %s", sessionKey)
 		}
-	})
+	}, opts...)
 }
 
 // wakeTurnDone returns the completion hook for wake id's turn: it dismisses the
 // wake's row, unless the turn was refused because foci is shutting down — then
-// the row stays pending and the next process re-fires it (#2059).
+// the row stays pending and the next process re-fires it (#2059), and the fired
+// overlay goes too (the next process re-marks it when its timer fires).
 func wakeTurnDone(store *memory.ReminderStore, id int64) func(error) {
 	return func(err error) {
 		if errors.Is(err, agent.ErrShuttingDown) {
+			store.ClearWakeFired(id)
 			remindLog.Infof("wake id=%d not run (shutting down) — left pending for restart", id)
 			return
 		}
@@ -508,12 +570,30 @@ func buildWakeScheduler(
 	var wakesMu sync.Mutex
 	wakes := make(map[int64]context.CancelFunc)
 
-	claim := func(id int64) (context.CancelFunc, bool) {
+	// take removes the wake's map entry and hands back its cancel func — the
+	// claim primitive the cancel path routes through (see wakes).
+	take := func(id int64) (context.CancelFunc, bool) {
 		wakesMu.Lock()
 		defer wakesMu.Unlock()
 		cancel, ok := wakes[id]
 		delete(wakes, id)
 		return cancel, ok
+	}
+
+	// claimForFire claims the wake for firing AND marks it fired in the
+	// store's overlay under the same hold (#2233): from the moment the timer
+	// fires until the turn runs, the remind tool reports the wake as fired
+	// rather than overdue, and a cancel can never observe the gap between "no
+	// live timer" and "not fired".
+	claimForFire := func(id int64, sk string) bool {
+		wakesMu.Lock()
+		defer wakesMu.Unlock()
+		if _, ok := wakes[id]; !ok {
+			return false
+		}
+		delete(wakes, id)
+		reminderStore.MarkWakeFired(id, sk)
+		return true
 	}
 
 	wakeScheduleFn := func(id int64, delay time.Duration, message, sessionKey string) error {
@@ -526,7 +606,23 @@ func buildWakeScheduler(
 		go func() {
 			select {
 			case <-time.After(delay):
-				if _, ok := claim(id); !ok {
+				// Resolve the destination session FIRST so the fired overlay is
+				// stamped with the key the hold predicate will be asked for.
+				sk := sessionKey
+				if sk == "" {
+					sk = defaultSessionKeyFor(getAgent(), agentID)
+				}
+				if sk == "" {
+					// Nowhere to fire: claim anyway (a cancel racing this must
+					// lose, #2036) and dismiss — the row and the claim go
+					// together, no turn will run.
+					if claimForFire(id, "") {
+						_ = reminderStore.Dismiss(id)
+					}
+					remindLog.Warnf("no session for agent %s, skipping wake id=%d", agentID, id)
+					return
+				}
+				if !claimForFire(id, sk) {
 					// A cancel won the claim while the timer fired; it
 					// cancelled wakeCtx, which this select no longer watches.
 					_ = reminderStore.Dismiss(id)
@@ -534,17 +630,6 @@ func buildWakeScheduler(
 				}
 				wakeCancel()
 				remindLog.Infof("firing wake id=%d after %v for agent %s: %q", id, delay, agentID, message)
-				// Use the originating session key if stored, otherwise
-				// pick the most recently active session.
-				sk := sessionKey
-				if sk == "" {
-					sk = defaultSessionKeyFor(getAgent(), agentID)
-				}
-				if sk == "" {
-					remindLog.Warnf("no session for agent %s, skipping", agentID)
-					_ = reminderStore.Dismiss(id)
-					return
-				}
 				// deliverToSessionChat queues on the session's inbox worker,
 				// which serialises with any in-flight turn on THIS session —
 				// no manual in-flight wait needed. A facet key queues on the
@@ -552,12 +637,14 @@ func buildWakeScheduler(
 				// delay the wake (#719).
 				//
 				// The row is dismissed only once the wake's turn has actually
-				// run (#2059). A wake the inbox never runs, or whose turn is
-				// refused because foci is shutting down, stays pending and is
-				// re-fired by the restore below in the next process.
+				// run (#2059); until then the fired overlay reports the wake as
+				// fired (held behind background work or waiting to run, #2233),
+				// and the refusal hook below clears the overlay when the inbox
+				// declines to run the injection at all.
 				deliverToSessionChatThen(getAgent(), ctx, "scheduled_wake", connMgr, agentID, sk,
 					prompts.FormatInjectedMessage("SCHEDULED WAKE", time.Now(), message), nil, "",
-					wakeTurnDone(reminderStore, id))
+					wakeTurnDone(reminderStore, id),
+					onInjectRefused(func() { reminderStore.ClearWakeFired(id) }))
 			case <-wakeCtx.Done():
 				// wakeCancelFn already claimed the entry.
 				_ = reminderStore.Dismiss(id)
@@ -571,7 +658,7 @@ func buildWakeScheduler(
 	// context then makes the wake goroutine take its Done branch, which
 	// dismisses the DB row — so the row cleanup stays in one place.
 	wakeCancelFn := func(id int64) bool {
-		cancel, ok := claim(id)
+		cancel, ok := take(id)
 		if !ok {
 			return false
 		}
