@@ -233,13 +233,30 @@ func TestInbox_HeldInjectsKeepFIFO(t *testing.T) {
 	}
 }
 
+// workerlessInbox returns sk's inbox on an agent whose inbox was never started
+// (no StartInbox), so no session worker exists to touch the worker-confined
+// held list: the test goroutine is its only user and may park, release and
+// inspect entries by hand. On a started agent the worker's loop-top
+// releaseHeld races any such hand edit (#2447: the race detector flags it
+// every run, and a late-scheduled worker panicked releaseHeld with a slice
+// out of range) — hence the guard rather than a comment.
+func workerlessInbox(t *testing.T, a *Agent, sk string) *sessionInbox {
+	t.Helper()
+	a.inboxesMu.Lock()
+	started := a.inboxStarted
+	a.inboxesMu.Unlock()
+	if started {
+		t.Fatal("workerlessInbox on a started agent: a live session worker would race the test's hand edits of inb.held (#2447)")
+	}
+	return a.getOrCreateInbox(sk)
+}
+
 // TestInbox_HeldInjectRecheckedBeforeRun pins that the hold is re-evaluated
 // right before a held inject runs (characterisation of releaseHeld's
 // decision): a gate that closed again between the watcher's signal and the
 // release keeps the inject parked.
 func TestInbox_HeldInjectRecheckedBeforeRun(t *testing.T) {
-	a, cancel := startedAgent(t)
-	defer cancel()
+	a := newTestAgent(t)
 
 	sk := "test/s"
 	var ran atomic.Int32
@@ -247,10 +264,10 @@ func TestInbox_HeldInjectRecheckedBeforeRun(t *testing.T) {
 		Trigger: "reflection",
 		Run:     func() { ran.Add(1) },
 	}}
-	inb := a.getOrCreateInbox(sk)
+	inb := workerlessInbox(t, a, sk)
 
-	// Park by hand (the worker is idle and nothing is enqueued, so the
-	// worker-confined held list is quiescent) and close the gate.
+	// Park by hand (worker-less, so the held list is the test's alone) and
+	// close the gate.
 	inb.held = []Envelope{env}
 	release := a.markInFlight(sk, true)
 	defer release()
@@ -605,8 +622,7 @@ func TestInbox_UserMessageRunsWhileKeepaliveParksBehindAdoptedRun(t *testing.T) 
 // even while the hold reads open (the flicker-FIFO arm). White-box on a
 // WORKER-LESS agent (no StartInbox, so nothing drains the held list besides
 // the test itself — the worker-confined held list is quiescent by
-// construction), like TestInbox_HeldInjectRecheckedBeforeRun's hand-parked
-// shape but deterministic.
+// construction; see workerlessInbox).
 func TestDispatchInject_KeepaliveNotParkedBehindPendingHeldSibling(t *testing.T) {
 	a := newTestAgent(t)
 	be := &mockBackendDT{sessionFile: "/tmp/s.jsonl"}
@@ -614,7 +630,7 @@ func TestDispatchInject_KeepaliveNotParkedBehindPendingHeldSibling(t *testing.T)
 	a.DelegatedManager = newMockDelegatedManager(t, be)
 
 	sk := "test/s"
-	inb := a.getOrCreateInbox(sk)
+	inb := workerlessInbox(t, a, sk)
 	parkWake := func() {
 		inb.held = []Envelope{{SessionKey: sk, Inject: &InjectMeta{Trigger: "scheduled_wake"}}}
 	}
@@ -795,7 +811,7 @@ func TestReleaseHeld_FIFOWhenGateOpensMidWalk(t *testing.T) {
 	be := &gateFlipBackend{mockBackendDT: mockBackendDT{sessionFile: "/tmp/s.jsonl"}}
 	a.DelegatedManager = newMockDelegatedManager(t, be)
 	sk := "test/s"
-	inb := a.getOrCreateInbox(sk)
+	inb := workerlessInbox(t, a, sk)
 	var mu sync.Mutex
 	var order []string
 	mk := func(tag string) Envelope {
