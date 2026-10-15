@@ -169,7 +169,15 @@ TESTENV_SHOWN=("${PASSTHRU_SHOWN[@]}" "${PINNED[@]}")
 # cmd/foci-gw test binary took 5.1 s with it and 3.0 s without (make
 # bench-test-build, 2026-10-12). Stack traces and runtime.Caller still work;
 # only a debugger loses symbols, and none is used on test binaries.
-GOTEST_FLAGS=(-trimpath -ldflags=-w -parallel=16 -v)
+# MEMCAP: every test binary runs under scripts/test-memcap.sh, which stops it
+# (SIGQUIT goroutine dump, then SIGKILL) if its OWN resident memory passes
+# 1 GB, so a test that spins and allocates fails fast as an ordinary test
+# failure instead of growing until memory_guard kills it under box-wide
+# pressure (foci_todo #2436). Absolute path: go test runs the -exec program
+# from each package's directory. $PWD is the stable /tmp/fgw/src-<user> link,
+# so the path (part of go's test-cache key) is the same in every run.
+MEMCAP=(-exec "$PWD/scripts/test-memcap.sh")
+GOTEST_FLAGS=(-trimpath -ldflags=-w -parallel=16 -v "${MEMCAP[@]}")
 
 if [ -n "${FOCI_TEST_UNSEALED:-}" ]; then
   echo ">>> FOCI_TEST_UNSEALED=1 set — skipping Landlock sealing entirely" | tee -a "$LOGFILE" >&2
@@ -243,11 +251,11 @@ diagnostic_rerun() {
   while IFS= read -r pkg; do
     [ -z "$pkg" ] && continue
     echo "--- unsealed re-run: $pkg ---" >> "$LOGFILE"
-    if go_test_logged "${env[@]}" nice -n 19 go test -trimpath -ldflags=-w -count=1 "${extra_flags[@]}" "$pkg" 8<&-; then
+    if go_test_logged "${env[@]}" nice -n 19 go test -trimpath -ldflags=-w -count=1 "${MEMCAP[@]}" "${extra_flags[@]}" "$pkg" 8<&-; then
       # A pass unsealed is also what a flake looks like. Only a second sealed
       # failure pins it on the sandbox (#2132).
       echo "--- sealed re-run: $pkg ---" >> "$LOGFILE"
-      if go_test_logged "${SEAL[@]}" "${env[@]}" nice -n 19 go test -trimpath -ldflags=-w -count=1 "${extra_flags[@]}" "$pkg" 8<&-; then
+      if go_test_logged "${SEAL[@]}" "${env[@]}" nice -n 19 go test -trimpath -ldflags=-w -count=1 "${MEMCAP[@]}" "${extra_flags[@]}" "$pkg" 8<&-; then
         echo ">>> DIAGNOSTIC: $pkg passes on re-run both UNSEALED and SEALED — the failure is a FLAKE, not a sandbox write." | tee -a "$LOGFILE" >&2
       else
         echo ">>> DIAGNOSTIC: $pkg fails SEALED again but passes UNSEALED — it is writing outside the sandbox. Add the path to the whitelist in scripts/seal-test.sh, or stop writing there." | tee -a "$LOGFILE" >&2
@@ -325,7 +333,7 @@ run_integration() {
   local extra=(-count="$count" -timeout "$((600 * count))s")
   local filter=()
   [ -n "$RUNFILTER" ] && filter=(-run "$RUNFILTER")
-  go_test_logged "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -tags=integration "${extra[@]}" "${filter[@]}" \
+  go_test_logged "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -tags=integration "${MEMCAP[@]}" "${extra[@]}" "${filter[@]}" \
     -parallel="$PARALLEL" -v ./test/integration/... ./internal/testharness/...
   local status=$?
 
