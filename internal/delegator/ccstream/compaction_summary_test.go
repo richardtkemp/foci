@@ -154,3 +154,41 @@ func TestContentText_Blocks(t *testing.T) {
 		t.Errorf("contentText = %q, want %q", got, "a\nb")
 	}
 }
+
+// TestCompactionSummary_ColdStartInfersPathFromResume reproduces #2469: a
+// compaction on a cold-started, resumed process arms its wait before CC's
+// system/init has supplied the session id, so the transcript path must be
+// inferred from the resume session id and workdir foci started CC with.
+func TestCompactionSummary_ColdStartInfersPathFromResume(t *testing.T) {
+	b, path := compactTestBackend(t)
+	sid := b.sessionID
+	b.sessionID = "" // system/init not seen yet
+	b.startOpts.ResumeSessionID = sid
+	appendFile(t, path, compactTranscriptLines(t, "## OLD summary"))
+
+	b.ArmCompactionWait()
+	appendFile(t, path, compactTranscriptLines(t, "## NEW summary"))
+
+	got, err := b.CompactionSummary(context.Background())
+	if err != nil {
+		t.Fatalf("CompactionSummary: %v", err)
+	}
+	if want := "## NEW summary"; got != want {
+		t.Errorf("summary = %q, want %q", got, want)
+	}
+}
+
+// TestSessionFilePath_CCSessionIDWins proves the inference is only a
+// fallback (#2469): once CC has reported its session id, that path is used
+// even if it differs from the resume id foci asked for.
+func TestSessionFilePath_CCSessionIDWins(t *testing.T) {
+	b, path := compactTestBackend(t)
+	b.startOpts.ResumeSessionID = "99999999-8888-7777-6666-555555555555"
+	if got := b.SessionFilePath(); got != path {
+		t.Errorf("SessionFilePath = %q, want CC's %q", got, path)
+	}
+	b.sessionID, b.startOpts.ResumeSessionID = "", ""
+	if got := b.SessionFilePath(); got != "" {
+		t.Errorf("SessionFilePath with no ids = %q, want empty", got)
+	}
+}

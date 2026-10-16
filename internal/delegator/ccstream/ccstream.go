@@ -396,10 +396,18 @@ func (b *Backend) SessionID() string {
 // inactive transcripts get gzipped, and index rows for manually-deleted
 // transcripts get pruned. The path is derived (not stored) from the session id
 // and workdir — the same construction ForkSession uses to locate a parent.
+//
+// Until CC's system/init has reported the session id, the id is inferred from
+// the one foci resumed (#2469): a cold-started process is ready before init
+// arrives, so a /compact sent as its first message would otherwise arm its
+// wait with no transcript. The id from CC, once known, wins.
 func (b *Backend) SessionFilePath() string {
 	b.mu.Lock()
 	sid := b.sessionID
 	b.mu.Unlock()
+	if sid == "" {
+		sid = b.startOpts.ResumeSessionID
+	}
 	if sid == "" || b.workDir == "" {
 		return ""
 	}
