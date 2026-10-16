@@ -285,7 +285,9 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		stopCmd := cmds.Get("stop")
 		for _, alias := range bc.StopAliases {
 			if alias != "stop" {
-				cmds.Register(&command.Command{Name: alias, Hidden: true, Execute: stopCmd.Execute})
+				// Immediate like /stop: an alias that queued behind the live turn would
+				// run only after that turn ended, with nothing left to stop.
+				cmds.Register(&command.Command{Name: alias, Hidden: true, Immediate: stopCmd.Immediate, Execute: stopCmd.Execute})
 			}
 		}
 	}
