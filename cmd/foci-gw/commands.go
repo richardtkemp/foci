@@ -279,15 +279,19 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	cmds.Register(command.LoginCommand())
 	cmds.Register(command.DoneCommand())
 
-	// Stop aliases (e.g. "wait" → same as "stop")
+	// Stop aliases (e.g. "wait" → same as "stop"). Each alias is its own
+	// hidden command — unlisted, its own /help line — and Immediate like
+	// /stop: an alias that queued behind the live turn would run only after
+	// that turn ended, with nothing left to stop. AliasOf links it to /stop
+	// so the operator gate judges it as /stop (an alias names its command,
+	// #2279). Registered last, so an alias still overrides any same-named
+	// command registered above (Register is last-wins).
 	bc := p.resolved.Behavior // static-cfg:ignore: decides which command names get REGISTERED — structural, like tool_table.go's SearchProvider/FetchProvider (bucket C)
 	if bc.EnableStopAliases {
 		stopCmd := cmds.Get("stop")
 		for _, alias := range bc.StopAliases {
 			if alias != "stop" {
-				// Immediate like /stop: an alias that queued behind the live turn would
-				// run only after that turn ended, with nothing left to stop.
-				cmds.Register(&command.Command{Name: alias, Hidden: true, Immediate: stopCmd.Immediate, Execute: stopCmd.Execute})
+				cmds.Register(&command.Command{Name: alias, Hidden: true, Immediate: stopCmd.Immediate, Execute: stopCmd.Execute, AliasOf: stopCmd})
 			}
 		}
 	}
@@ -309,6 +313,14 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 			}
 		}
 	}
+
+	// Operator gate (#2279): resolve after every command is registered (the
+	// command list is matched against the registry) and before the context
+	// is handed to any consumer, so every bot that receives it — primary,
+	// facet, and any dispatcher rebuilt from it — carries the same gate, and
+	// the wizards restored below re-inject their deps from a context that
+	// already carries the policy.
+	cc.Operators = command.NewOperatorPolicies(cmds, p.cfg, p.acfg)
 
 	// In-flight wizards survive restarts (mirrors the ask tool's ask_pending):
 	// checkpoint to the session index on every mutation, and restore whatever a

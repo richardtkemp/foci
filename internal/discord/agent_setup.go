@@ -278,6 +278,9 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 	}
 
 	primaryBot.SetCommandContext(p.CommandContext)
+	// One report line per platform the agent has operators on (#2279):
+	// nothing is logged (nil policy) when no operators are configured.
+	p.CommandContext.Operators[command.SourceDiscord].LogReport(discordLog, acfg.ID)
 
 	if p.SessionIndex != nil {
 		primaryBot.SetSessionIndex(p.SessionIndex)

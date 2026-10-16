@@ -149,12 +149,18 @@ func TestDispatchCallback(t *testing.T) {
 
 	d := NewDispatcher(reg, command.CommandContext{}, "agent1", "")
 
-	result := d.DispatchCallback(context.Background(), 12345, "/model opus")
+	result := d.DispatchCallback(context.Background(), 12345, "/model opus", "user1")
 	if !result.Handled {
 		t.Fatal("expected callback command to be handled")
 	}
 	if result.Response.Text != "set to opus" {
 		t.Errorf("unexpected response: %q", result.Response.Text)
+	}
+	// The presser gates the dispatch, but the request carries no user (the
+	// sender of the message the button rode on is unknown here) — exactly as
+	// before the operator gate existed (#2279 requirement 8).
+	if result.UserID != "" {
+		t.Errorf("callback carried userID %q, want empty", result.UserID)
 	}
 }
 

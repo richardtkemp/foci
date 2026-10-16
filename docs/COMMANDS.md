@@ -295,6 +295,14 @@ Repeat the last message. Not shown in `/help`.
 
 ---
 
+## Operator-Only Commands (#2279)
+
+An agent can name its **operators** per chat platform (`operator_users` under `[platforms.access]`, agent and global lists add up). Everyone else in `allowed_users` may still chat with the agent, but can only run the commands in `non_operator_commands` — by default `/help`, `/reset` and `/stop`. A forbidden command answers "`/tmux` is only for this agent's operators." (typed, `.dot` form, an alias, or a button press — a press is judged by who pressed it). `/help` and the "Did you mean" suggestions only list what the caller may run. Unknown commands keep the usual "Unknown command" reply.
+
+Notes: an entry can name a subcommand, and a bare name permits only the command itself (`reset` permits `/reset` but not `/reset hard`, which needs `"reset hard"`); the gate covers Telegram and Discord chats only (not the app or the HTTP endpoints); with no operators configured nothing changes. See [CONFIG.md](CONFIG.md#access-fields-platformsaccess) for the settings.
+
+---
+
 ## Onboarding
 
 ### `/android`

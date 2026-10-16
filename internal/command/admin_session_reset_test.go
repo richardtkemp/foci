@@ -163,7 +163,7 @@ func TestResetCommand_BareShowsNoKeyboard(t *testing.T) {
 	r := NewRegistry()
 	r.Register(cmd)
 
-	_, _, opts, ok := r.LookupKeyboard(context.Background(), "/reset", CommandContext{})
+	_, _, opts, ok := r.LookupKeyboard(context.Background(), "/reset", Caller{}, CommandContext{})
 	if ok {
 		t.Errorf("LookupKeyboard(\"/reset\") returned ok=true with opts=%+v; bare /reset must execute via DefaultExecute, not show a keyboard", opts)
 	}

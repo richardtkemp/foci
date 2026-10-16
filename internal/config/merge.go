@@ -108,6 +108,38 @@ func SuperveneSlice[T any](agent, global []T, keyFn func(T) string) []T {
 	return result
 }
 
+// DedupeBy returns the cleaned entries of in, de-duplicated: every entry is
+// mapped through clean, entries whose cleaned value is the zero value drop,
+// and only the first entry of each distinct cleaned value survives, in
+// first-seen order. The one order-preserving "clean a configured list"
+// helper, shared by the operator_users resolution (clean strings.TrimSpace —
+// padded IDs collapse to the ID, blank entries drop; internal/config/
+// access.go) and the process PATH populations (clean is the entry itself,
+// via Dedupe; cmd/foci-gw/spawn_env.go).
+func DedupeBy[T any, C comparable](in []T, clean func(T) C) []C {
+	var zero C
+	seen := make(map[C]struct{}, len(in))
+	out := make([]C, 0, len(in))
+	for _, v := range in {
+		c := clean(v)
+		if c == zero {
+			continue
+		}
+		if _, dup := seen[c]; dup {
+			continue
+		}
+		seen[c] = struct{}{}
+		out = append(out, c)
+	}
+	return out
+}
+
+// Dedupe is DedupeBy with the entry itself as its own cleaned value: repeats
+// and zero values drop, first-seen order preserved.
+func Dedupe[T comparable](in []T) []T {
+	return DedupeBy(in, func(v T) T { return v })
+}
+
 // MergeMaps merges two string maps with the overlay taking priority.
 // Returns nil if both are nil/empty.
 func MergeMaps(base, overlay map[string]string) map[string]string {

@@ -257,6 +257,8 @@ system_files = [
 # facet_bots = []                         # additional bot names for facet
 # [agents.platforms.access]
 # allowed_users = []                      # per-agent allowed users (empty = use global)
+# operator_users = ["YOUR_TELEGRAM_USER_ID"]  # per-agent operators; everyone else allowed to talk can only run non_operator_commands
+# non_operator_commands = ["help", "reset", "stop"] # what non-operators may run (unset = help, reset, stop; [] = nothing)
 # [agents.platforms.display]
 # show_tool_calls = "preview"             # off, preview, full
 # show_thinking = "off"                   # off, compact, true
@@ -273,6 +275,8 @@ system_files = [
 # bot_secret = ""                         # override secret key (default: "discord.<bot>")
 # [agents.platforms.access]
 # allowed_users = []                      # per-agent Discord user filter
+# operator_users = ["YOUR_DISCORD_USER_ID"]   # per-agent operators; everyone else allowed to talk can only run non_operator_commands
+# non_operator_commands = ["help", "reset", "stop"] # what non-operators may run (unset = help, reset, stop; [] = nothing)
 # require_mention = true                  # require @mention in guild channels
 # [agents.platforms.display]
 # show_tool_calls = "off"                 # off, preview, full
@@ -417,6 +421,8 @@ id = "telegram"
 allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # require_mention = true              # require @mention in group chats
 # allowed_users_only = true           # true: empty allowed_users blocks everyone; false: empty allows anyone
+# operator_users = []                 # operators can run every command; everyone else allowed to talk can only run non_operator_commands (empty = no restriction)
+# non_operator_commands = []              # what non-operators may run (unset = help, reset, stop; [] = nothing)
 # [platforms.notify]
 # startup_notify = true
 # [platforms.display]
@@ -437,6 +443,8 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # facet_session_ttl = "60m"            # idle TTL before thread reclaim
 # [platforms.access]
 # allowed_users = ["YOUR_DISCORD_USER_ID"]
+# operator_users = []                 # operators can run every command; everyone else allowed to talk can only run non_operator_commands (empty = no restriction)
+# non_operator_commands = []              # what non-operators may run (unset = help, reset, stop; [] = nothing)
 # require_mention = true               # require @mention in guild channels
 # [platforms.notify]
 # startup_notify = true

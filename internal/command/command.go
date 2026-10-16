@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -16,8 +17,10 @@ import (
 type KeyboardOption = platform.ButtonChoice
 
 // Subcommand declares a named subcommand within a parent command.
-// When Command.Subcommands is populated, Execute and KeyboardOptions
-// are auto-wired from the subcommand list by Register.
+// When Command.Subcommands is populated and Command.Execute is nil, Execute
+// and KeyboardOptions are auto-wired from the subcommand list by Register.
+// A command with its own Execute may still declare its subcommands (with no
+// Execute) so /help lists them and non_operator_commands can name them (#2279).
 type Subcommand struct {
 	Name        string
 	Label       string   // keyboard button label (defaults to Name)
@@ -76,6 +79,12 @@ type Command struct {
 	// Execute is nil, Register auto-wires Execute and (if nil) KeyboardOptions
 	// from this list.
 	Subcommands []Subcommand
+
+	// AliasOf links a hidden alias entry to the command it names (a stop
+	// alias): dispatch runs the shared Execute, while immediacy, listings
+	// and /help keep the alias's own hidden identity; the operator gate
+	// judges the linked command, because an alias names its command (#2279).
+	AliasOf *Command
 
 	Execute func(ctx context.Context, req Request, cc CommandContext) (Response, error)
 
@@ -217,6 +226,27 @@ func (r *Registry) Get(name string) *Command {
 	return r.commands[name]
 }
 
+// canonical returns the command cmd is judged as: itself, or — for an alias
+// entry linked by AliasOf — the command it names. The operator gate resolves
+// both non_operator_commands entries and dispatched commands through this, so an
+// alias shares its command's permission (#2279).
+func (cmd *Command) canonical() *Command {
+	if cmd.AliasOf != nil {
+		return cmd.AliasOf
+	}
+	return cmd
+}
+
+// CommandKey normalises a command name to its registry key: lower-cased,
+// trimmed, one leading "/" dropped. It is the ONE name normaliser — typed
+// and callback dispatch (internal/dispatch), /help detail and the operator
+// command lists all map through it, so "/TMUX", "tmux" and an operator list
+// entry name the same command everywhere.
+func CommandKey(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	return strings.TrimPrefix(s, "/")
+}
+
 // IsImmediateText reports whether the command named in text has Immediate set.
 // Used by platform receive loops to decide whether to dispatch a command in the
 // polling goroutine (immediate) or defer it to the worker goroutine (non-immediate).
@@ -238,22 +268,24 @@ func (r *Registry) IsImmediateText(text string) bool {
 	if cmd.Immediate {
 		return true
 	}
-	if args == "" || len(cmd.Subcommands) == 0 {
+	if args == "" {
 		return false
 	}
-	first := strings.ToLower(strings.Fields(args)[0])
+	sub := cmd.subcommand(strings.Fields(args)[0])
+	return sub != nil && sub.Immediate
+}
+
+// subcommand returns the declared subcommand named word (its name or one of
+// its aliases, any case), or nil.
+func (cmd *Command) subcommand(word string) *Subcommand {
+	word = strings.ToLower(word)
 	for i := range cmd.Subcommands {
 		sub := &cmd.Subcommands[i]
-		if sub.Name == first {
-			return sub.Immediate
-		}
-		for _, alias := range sub.Aliases {
-			if alias == first {
-				return sub.Immediate
-			}
+		if sub.Name == word || slices.Contains(sub.Aliases, word) {
+			return sub
 		}
 	}
-	return false
+	return nil
 }
 
 // IsKnownCommand reports whether text is a slash- or dot-prefix command
@@ -303,13 +335,15 @@ func (r *Registry) All() []*Command {
 }
 
 // Available reports whether cmd may be listed to this caller: not Hidden, its
-// transport requirement met, and its Visible gate (if any) passing. Every
-// surface that lists commands (/help, the app palette and roster, the Telegram
-// menu) filters through this, so no listing offers a command that would only
-// answer "not available" when picked (#898). Dispatch does not consult it: a
-// typed command still runs, or explains why it can't.
+// transport requirement met, its Visible gate (if any) passing, and not
+// forbidden to the caller by the operator gate. Every surface that lists
+// commands (/help, the app palette and roster, the Telegram menu) filters
+// through this, so no listing offers a command that would only answer "not
+// available" — or "operators only" — when picked (#898, #2279). Dispatch does
+// not consult it: a typed command still runs, or explains why it can't.
 func Available(ctx context.Context, cmd *Command, req Request, cc CommandContext) bool {
-	return !cmd.Hidden && checkRequires(cmd, cc) == "" && (cmd.Visible == nil || cmd.Visible(ctx, req, cc))
+	return !cmd.Hidden && checkRequires(cmd, cc) == "" && (cmd.Visible == nil || cmd.Visible(ctx, req, cc)) &&
+		!cc.Operators.Hides(req.Caller(), cmd)
 }
 
 // VisibleList returns the app-facing command palette for a specific session:
@@ -354,7 +388,8 @@ type CommandInfo struct {
 // Returns (command_name, header, options, true) if a keyboard should be shown,
 // or ("", "", nil, false) otherwise. The header is contextual text to display above
 // the keyboard (e.g. current value); it defaults to "/<name>:" when KeyboardHeader is nil.
-func (r *Registry) LookupKeyboard(ctx context.Context, text string, cc CommandContext) (string, string, []KeyboardOption, bool) {
+// A command forbidden to caller by the operator gate shows nothing (#2279).
+func (r *Registry) LookupKeyboard(ctx context.Context, text string, caller Caller, cc CommandContext) (string, string, []KeyboardOption, bool) {
 	text = strings.TrimSpace(text)
 	if !strings.HasPrefix(text, "/") {
 		return "", "", nil, false
@@ -373,12 +408,15 @@ func (r *Registry) LookupKeyboard(ctx context.Context, text string, cc CommandCo
 	if cmd == nil || cmd.KeyboardOptions == nil {
 		return "", "", nil, false
 	}
+	if cc.Operators.Forbids(caller, cmd, "") {
+		return "", "", nil, false
+	}
 	req := Request{Name: name}
 	if cmd.Visible != nil && !cmd.Visible(ctx, req, cc) {
 		return "", "", nil, false
 	}
 
-	opts := cmd.KeyboardOptions(ctx, cc)
+	opts := permittedOptions(cmd.KeyboardOptions(ctx, cc), caller, cmd, cc)
 	if len(opts) == 0 {
 		return "", "", nil, false
 	}
@@ -397,7 +435,9 @@ func (r *Registry) LookupKeyboard(ctx context.Context, text string, cc CommandCo
 // a follow-up keyboard to select a parameter. The full args string is passed to
 // ChainKeyboard, which decides whether to chain at any depth. Returns
 // (command_name, options, true) if chaining should occur, or ("", nil, false) otherwise.
-func (r *Registry) LookupChainKeyboard(ctx context.Context, text string, cc CommandContext) (string, []KeyboardOption, bool) {
+// A command forbidden to caller by the operator gate shows nothing — no chained
+// step and no data listing (#2279).
+func (r *Registry) LookupChainKeyboard(ctx context.Context, text string, caller Caller, cc CommandContext) (string, []KeyboardOption, bool) {
 	text = strings.TrimSpace(text)
 	if !strings.HasPrefix(text, "/") {
 		return "", nil, false
@@ -416,8 +456,11 @@ func (r *Registry) LookupChainKeyboard(ctx context.Context, text string, cc Comm
 	if cmd == nil || cmd.ChainKeyboard == nil {
 		return "", nil, false
 	}
+	if cc.Operators.Forbids(caller, cmd, args) {
+		return "", nil, false
+	}
 
-	opts := cmd.ChainKeyboard(ctx, args, cc)
+	opts := permittedOptions(cmd.ChainKeyboard(ctx, args, cc), caller, cmd, cc)
 	if len(opts) == 0 {
 		return "", nil, false
 	}
@@ -425,12 +468,40 @@ func (r *Registry) LookupChainKeyboard(ctx context.Context, text string, cc Comm
 	return name, opts, true
 }
 
+// permittedOptions drops the keyboard options whose press (/<cmd> <Data>)
+// the operator gate would refuse to caller — e.g. a "hard" button for a
+// non-operator permitted only bare /reset — so a keyboard offers only what
+// the caller may run (#2279). opts is returned as is when nothing is dropped.
+func permittedOptions(opts []KeyboardOption, caller Caller, cmd *Command, cc CommandContext) []KeyboardOption {
+	for i, o := range opts {
+		if !cc.Operators.Forbids(caller, cmd, o.Data) {
+			continue
+		}
+		kept := slices.Clone(opts[:i])
+		for _, o := range opts[i+1:] {
+			if !cc.Operators.Forbids(caller, cmd, o.Data) {
+				kept = append(kept, o)
+			}
+		}
+		return kept
+	}
+	return opts
+}
+
 // Dispatch executes a command using the platform-agnostic Request/Response pattern.
 // Returns (Response, true) if the command was found, or (Response{}, false) if not.
+// A command forbidden to req.Caller() — the sender, or the presser of a cmd:
+// button — is refused here: the defence-in-depth layer under the keyboard
+// lookups and the dispatcher (#2279).
 func (r *Registry) Dispatch(ctx context.Context, req Request, cc CommandContext) (Response, bool, error) {
+	caller := req.Caller()
 	cmd := r.commands[req.Name]
 	if cmd == nil {
-		return Response{Text: r.suggestCommand(req.Name)}, true, nil
+		return Response{Text: r.suggestCommand(req.Name, caller, cc)}, true, nil
+	}
+
+	if reply, refused := cc.Operators.refusal(caller, cmd, req.Args); refused {
+		return Response{Text: reply}, true, nil
 	}
 
 	// Gate on transport requirements before executing.
@@ -467,20 +538,32 @@ func checkRequires(cmd *Command, cc CommandContext) string {
 }
 
 // suggestCommand returns a helpful message when a command isn't found,
-// with "did you mean?" suggestions based on edit distance.
-func (r *Registry) suggestCommand(name string) string {
+// with "did you mean?" suggestions based on edit distance. Only commands the
+// caller may run are suggested (#2279); hidden dispatch keys (e.g. a stop
+// alias) stay suggestible exactly as before. Matches are ordered by
+// distance, then alphabetically, so the list is deterministic however the
+// registry map iterates.
+func (r *Registry) suggestCommand(name string, caller Caller, cc CommandContext) string {
 	type match struct {
 		name string
 		dist int
 	}
 	var matches []match
 	for cmdName := range r.commands {
+		if cc.Operators.Hides(caller, r.commands[cmdName]) {
+			continue
+		}
 		d := levenshtein(name, cmdName)
 		if d <= 2 || (len(name) >= 3 && strings.HasPrefix(cmdName, name[:3])) {
 			matches = append(matches, match{cmdName, d})
 		}
 	}
-	sort.Slice(matches, func(i, j int) bool { return matches[i].dist < matches[j].dist })
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].dist != matches[j].dist {
+			return matches[i].dist < matches[j].dist
+		}
+		return matches[i].name < matches[j].name
+	})
 
 	if len(matches) > 0 {
 		// Show up to 3 suggestions

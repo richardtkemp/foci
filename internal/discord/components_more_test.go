@@ -144,7 +144,7 @@ func TestHandleCommandCallback(t *testing.T) {
 	registerTestCommand(b, "ver", "v9")
 	b.SetCommandContext(commandTestContext())
 
-	b.handleCommandCallback(context.Background(), "42", "100", "/ver", 42)
+	b.handleCommandCallback(context.Background(), "42", "100", "/ver", 42, "111")
 
 	got := fs.lastEdit(t)
 	if got.msgID != "100" || got.content != "v9" {
@@ -152,14 +152,14 @@ func TestHandleCommandCallback(t *testing.T) {
 	}
 
 	// Unknown command: edited with an error notice.
-	b.handleCommandCallback(context.Background(), "42", "100", "/nope", 42)
+	b.handleCommandCallback(context.Background(), "42", "100", "/nope", 42, "111")
 	if got := fs.lastEdit(t); !strings.Contains(got.content, "Unknown command") {
 		t.Errorf("expected unknown-command notice, got %q", got.content)
 	}
 
 	// Nil dispatcher: no edit.
 	bare, fs2, _ := newTestBot(t, "a")
-	bare.handleCommandCallback(context.Background(), "42", "100", "/ver", 42)
+	bare.handleCommandCallback(context.Background(), "42", "100", "/ver", 42, "111")
 	if len(fs2.edits) != 0 {
 		t.Error("expected no edit without dispatcher")
 	}
@@ -173,7 +173,7 @@ func TestHandleCommandCallbackBlankReply(t *testing.T) {
 	registerTestCommand(b, "blank", "   ")
 	b.SetCommandContext(commandTestContext())
 
-	b.handleCommandCallback(context.Background(), "42", "100", "/blank", 42)
+	b.handleCommandCallback(context.Background(), "42", "100", "/blank", 42, "111")
 
 	got := fs.lastEdit(t)
 	if got.msgID != "100" || got.content != "" {

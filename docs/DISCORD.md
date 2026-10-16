@@ -38,6 +38,7 @@ id = "discord"
 
   [platforms.access]
   allowed_users = ["YOUR_DISCORD_USER_ID"]
+  operator_users = ["YOUR_DISCORD_USER_ID"]   # optional: this user runs every command; others only non_operator_commands
 ```
 
 Add to `secrets.toml`:

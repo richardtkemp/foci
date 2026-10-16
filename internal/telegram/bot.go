@@ -583,6 +583,8 @@ func (b *Bot) SetToolDetailStore(store *tooldetail.Store) {
 }
 
 // SetCommandContext configures the command dispatcher with the unified CommandContext.
+// The operator gate rides in cc (cc.Operators), so every rebuild — facet
+// claim, facet restore, any re-wire — stays restricted (#2279).
 func (b *Bot) SetCommandContext(cc command.CommandContext) {
 	cc.StopFunc = b.cancelTurn
 	cc.IsSecondaryBot = b.isSecondary

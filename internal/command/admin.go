@@ -211,10 +211,18 @@ func HelpCommand(registry *Registry) *Command {
 			if len(fields) == 0 {
 				return Response{Text: helpTable(ctx, registry, req, cc)}, nil
 			}
-			name := strings.ToLower(strings.TrimPrefix(fields[0], "/"))
+			name := CommandKey(fields[0])
 			cmd := registry.Get(name)
 			if cmd == nil {
 				return Response{Text: fmt.Sprintf("Unknown command /%s.\n\n%s", name, helpTable(ctx, registry, req, cc))}, nil
+			}
+			// A command whose every form is forbidden to this caller is
+			// described nowhere, exactly as it is not run; the refusal (WARN
+			// included) comes from the one refusal site. Its bare form is
+			// forbidden too, so that is the form refused.
+			if cc.Operators.Hides(req.Caller(), cmd) {
+				reply, _ := cc.Operators.refusal(req.Caller(), cmd, "")
+				return Response{Text: reply}, nil
 			}
 			return Response{Text: helpDetail(ctx, cmd, req, cc)}, nil
 		},
@@ -299,7 +307,8 @@ func steerPrefixSource(src string) bool {
 // describes any registered command, including ones the table hides: calling
 // an existing command "Unknown" would be false. Subcommands marked Hidden are
 // still listed (Hidden only keeps them off the keyboard; they dispatch when
-// typed); ones whose Visible func says no are left out.
+// typed); ones whose Visible func says no, or that the operator gate forbids
+// to this caller, are left out.
 func helpDetail(ctx context.Context, cmd *Command, req Request, cc CommandContext) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "**/%s**", cmd.Name)
@@ -322,6 +331,9 @@ func helpDetail(ctx context.Context, cmd *Command, req Request, cc CommandContex
 	for _, sub := range cmd.Subcommands {
 		if sub.Visible != nil && !sub.Visible(ctx, cc) {
 			continue
+		}
+		if cc.Operators.Forbids(req.Caller(), cmd, sub.Name) {
+			continue // operator-only subcommand (#2279)
 		}
 		rows = append(rows, []string{sub.Name, sub.Description})
 	}

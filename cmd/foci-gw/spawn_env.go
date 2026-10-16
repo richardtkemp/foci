@@ -71,7 +71,7 @@ func checkTrustedPathFooting(dirs []string, home string, canWrite func(string) b
 	}
 
 	findings := make([]pathFinding, 0, len(dirs))
-	for _, dir := range dedupe(dirs) {
+	for _, dir := range config.Dedupe(dirs) {
 		f := pathFinding{Dir: dir, Writable: canWrite(dir)}
 		if f.Writable {
 			f.Exception = exceptions[filepath.Clean(dir)]
@@ -81,27 +81,11 @@ func checkTrustedPathFooting(dirs []string, home string, canWrite func(string) b
 	return findings
 }
 
-// dedupe removes repeated PATH entries while preserving order. The operator's
-// dotfiles routinely prepend a directory that is already present, and a
-// repeated entry in the report is noise that makes the real diff harder to see.
-func dedupe(in []string) []string {
-	seen := make(map[string]bool, len(in))
-	out := make([]string, 0, len(in))
-	for _, s := range in {
-		if s == "" || seen[s] {
-			continue
-		}
-		seen[s] = true
-		out = append(out, s)
-	}
-	return out
-}
-
 // pathDelta returns the directories present for one population and not the
 // other, order preserved.
 func pathDelta(have, lack []string) []string {
 	out := make([]string, 0)
-	for _, d := range dedupe(have) {
+	for _, d := range config.Dedupe(have) {
 		if !slices.Contains(lack, d) {
 			out = append(out, d)
 		}
@@ -136,8 +120,11 @@ func formatList(in []string) string {
 // means foci can replace a binary it execs by bare name.
 func reportOperatorEnv(cfg *config.Config, env execguard.Env, envFile string, home string, canWrite func(string) bool) {
 	warnSubstitutableBuiltins(cfg, env)
-	trustedDirs := dedupe(procx.PathDirs(procx.Trusted))
-	operatorDirs := dedupe(procx.PathDirs(procx.Operator))
+	// Deduped: the operator's dotfiles routinely prepend a directory that is
+	// already on PATH, and a repeated entry in the report is noise that makes
+	// the real difference harder to see.
+	trustedDirs := config.Dedupe(procx.PathDirs(procx.Trusted))
+	operatorDirs := config.Dedupe(procx.PathDirs(procx.Operator))
 
 	startupLog.Infof("spawn populations: TRUSTED = foci's own machinery (sh, git, tmux, sudo, the capture shell); OPERATOR = agent and tool shells (claude, opencode, codex, Bash, Tmux)")
 	if envFile == "" {

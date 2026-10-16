@@ -143,7 +143,7 @@ func TestTryInterceptCallbackStartedWizardFedByOwnChat(t *testing.T) {
 	ic, d := newScopedInterceptor(reg)
 
 	// Button pressed in chat 2 starts the wizard under chat 2's key.
-	outcome := d.DispatchCommandCallback(context.Background(), 2, "/wizstart")
+	outcome := d.DispatchCommandCallback(context.Background(), 2, "/wizstart", "user1")
 	if outcome.NotHandled {
 		t.Fatal("expected /wizstart callback to be handled")
 	}

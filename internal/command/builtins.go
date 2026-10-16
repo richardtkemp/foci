@@ -351,6 +351,12 @@ func AgentsCommand() *Command {
 		Name:        "agents",
 		Description: "List active agent sessions",
 		Category:    "session",
+		// Declared for /help and the operator gate only (non_operator_commands
+		// can name "agents new"); Execute below parses it itself, so Register
+		// does not auto-wire dispatch from this list (#2279).
+		Subcommands: []Subcommand{
+			{Name: "new", Description: "Start the new-agent wizard"},
+		},
 		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
 			// /agents new — start wizard
 			if strings.TrimSpace(strings.ToLower(req.Args)) == "new" {

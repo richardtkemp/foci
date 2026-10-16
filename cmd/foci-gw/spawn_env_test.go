@@ -13,12 +13,14 @@ import (
 
 // The invariant that defines #1914 as done: no directory on the daemon's
 // trusted PATH is writable by the foci process. It must FAIL loudly on an
-// unexplained writable directory — that is the whole alarm.
+// unexplained writable directory — that is the whole alarm. The repeated
+// /usr/bin also proves the deduped input: one finding per directory, however
+// often the operator's dotfiles prepend it.
 func TestCheckTrustedPathFooting_UnexplainedWritableIsAViolation(t *testing.T) {
 	t.Parallel()
 	writable := map[string]bool{"/opt/agentbin": true}
 	findings := checkTrustedPathFooting(
-		[]string{"/usr/bin", "/opt/agentbin"},
+		[]string{"/usr/bin", "/opt/agentbin", "/usr/bin"},
 		"/home/foci",
 		func(p string) bool { return writable[p] },
 	)
@@ -75,10 +77,13 @@ func TestCheckTrustedPathFooting_ExceptionDoesNotMatchOtherDirs(t *testing.T) {
 // The report is the only alarm for a misclassification, so its PATH diff has
 // to be right in both directions. Operator-only dirs mean agents can reach
 // something foci cannot; trusted-only dirs mean the reverse, and a bare name
-// foci hands an agent will not resolve for it.
+// foci hands an agent will not resolve for it. The repeated /usr/bin in
+// trusted mirrors the operator's dotfiles prepending an existing directory:
+// each directory must be listed once, in first-occurrence order (the
+// config.Dedupe contract; its unit tests live in internal/config).
 func TestPathDelta_BothDirections(t *testing.T) {
 	t.Parallel()
-	trusted := []string{"/usr/bin", "/home/foci/bin"}
+	trusted := []string{"/usr/bin", "/home/foci/bin", "/usr/bin"}
 	operator := []string{"/home/foci/scripts", "/usr/bin", "/home/foci/bin"}
 
 	if got := pathDelta(operator, trusted); !slices.Equal(got, []string{"/home/foci/scripts"}) {
@@ -89,19 +94,6 @@ func TestPathDelta_BothDirections(t *testing.T) {
 	}
 	if got := pathDelta(trusted, []string{"/usr/bin"}); !slices.Equal(got, []string{"/home/foci/bin"}) {
 		t.Errorf("trusted-only = %v, want [/home/foci/bin]", got)
-	}
-}
-
-// The operator's dotfiles routinely prepend a directory that is already on
-// PATH (~/.shellcommon does exactly this), and the live daemon's PATH has
-// ~/.local/bin and ~/bin twice. A repeated entry in the report is noise that
-// hides the real diff, and it would also be double-counted by the footing
-// check.
-func TestDedupePreservesFirstOccurrenceOrder(t *testing.T) {
-	t.Parallel()
-	got := dedupe([]string{"/a", "/b", "/a", "", "/c", "/b"})
-	if !slices.Equal(got, []string{"/a", "/b", "/c"}) {
-		t.Fatalf("dedupe = %v, want [/a /b /c]", got)
 	}
 }
 

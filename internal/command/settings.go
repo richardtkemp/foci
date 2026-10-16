@@ -492,6 +492,17 @@ func DisplayCommand() *Command {
 		Name:        "display",
 		Description: "Show or set display options (show_tool_calls, show_thinking, stream_output, display_width)",
 		Category:    "operations",
+		// Declared for /help and the operator gate only (non_operator_commands
+		// can name "display reset"); Execute below parses the option names
+		// itself, so Register does not auto-wire dispatch from this list.
+		// Keep in step with applyDisplaySetting (#2279).
+		Subcommands: []Subcommand{
+			{Name: "show_tool_calls", Description: "Show or set how tool calls are shown"},
+			{Name: "show_thinking", Description: "Show or set how thinking is shown"},
+			{Name: "stream_output", Aliases: []string{"stream"}, Description: "Show or set output streaming"}, // alias: displayKeyAliases
+			{Name: "display_width", Aliases: []string{"width"}, Description: "Show or set the display width"}, // alias: displayKeyAliases
+			{Name: "reset", Description: "Clear this session's display overrides"},
+		},
 		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
 			sk := tools.SessionKeyFromContext(ctx)
 			args := strings.TrimSpace(req.Args)

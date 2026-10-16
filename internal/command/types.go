@@ -26,16 +26,42 @@ type Request struct {
 	UserID     string
 	ChatID     int64  // platform conversation identifier
 	Source     string // originating transport (a Source* constant); "" for unidentified callers
+	// PressedBy is the user who pressed the cmd: button that triggered this
+	// dispatch; empty for a typed command. A button press carries no UserID —
+	// the sender of the message the button rode on is unknown, so user-keyed
+	// commands (/repeat) answer for nobody — but the presser is who is asking,
+	// so Caller() reports the presser to the operator gate (#2279).
+	PressedBy string
 }
 
 // Source values for Request.Source — the transport a command arrived on.
 // The app package stamps its own literal "app" (internal/app, pre-existing);
 // "" is an unidentified caller and always gets the surface-agnostic behaviour.
+// The chat-transport values double as the [[platforms]] id of their platform,
+// which is how the operator gate keys its policies (OperatorPolicies).
 const (
 	SourceTelegram = "telegram"
 	SourceDiscord  = "discord"
 	SourceHTTP     = "http"
 )
+
+// Caller is one dispatch's trigger identity: the transport it arrived on and
+// the user on that transport — what the operator gate checks (#2279).
+type Caller struct {
+	Source string // a Source* constant; "" for unidentified callers
+	UserID string
+}
+
+// Caller returns who triggered this request: the presser of a cmd: button
+// (PressedBy), else the sender (UserID). It is the ONE identity the operator
+// gate, the listings (/help, "Did you mean") and command bodies judge, so a
+// press is judged as the presser everywhere (#2279).
+func (r Request) Caller() Caller {
+	if r.PressedBy != "" {
+		return Caller{Source: r.Source, UserID: r.PressedBy}
+	}
+	return Caller{Source: r.Source, UserID: r.UserID}
+}
 
 // RequestFromText parses a slash command string like "/status args" into a Request.
 func RequestFromText(text, sessionKey, userID string, chatID int64) Request {
@@ -203,6 +229,11 @@ type CommandContext struct {
 	// there is no app binding for the session (non-app platforms), in which case
 	// /status omits the activity line. Nil = never rendered.
 	ActivityFunc func(sessionKey string) (kind, detail string, ok bool)
+
+	// Operators gates chat-platform callers (#2279): an entry per transport
+	// (keyed by Request.Source) where the agent has operators configured.
+	// Nil/empty gates nobody. See OperatorPolicies.
+	Operators OperatorPolicies
 }
 
 // TokenCountCache caches token counting results so /context doesn't re-count every call.

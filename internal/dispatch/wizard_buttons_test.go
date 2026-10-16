@@ -172,7 +172,7 @@ func TestDispatchCommand_WizardStepOnActivation(t *testing.T) {
 		d := NewDispatcher(reg, command.CommandContext{}, "agent1", "")
 		d.SetSessionKeyFunc(func(chatID int64) string { return fmt.Sprintf("k%d", chatID) })
 
-		outcome := d.DispatchCommandCallback(context.Background(), 2, "/wizstart")
+		outcome := d.DispatchCommandCallback(context.Background(), 2, "/wizstart", "user1")
 		if outcome.NotHandled || outcome.Response == nil {
 			t.Fatalf("outcome: notHandled=%v response=%v", outcome.NotHandled, outcome.Response)
 		}

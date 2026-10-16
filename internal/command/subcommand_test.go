@@ -312,7 +312,7 @@ func TestSubcommandChainKeyboardAlongside(t *testing.T) {
 	reg.Register(cmd)
 
 	// Chain keyboard should work
-	_, opts, ok := reg.LookupChainKeyboard(context.Background(), "/test sub", subCmdCC())
+	_, opts, ok := reg.LookupChainKeyboard(context.Background(), "/test sub", Caller{}, subCmdCC())
 	if !ok || len(opts) != 1 || opts[0].Label != "chained" {
 		t.Errorf("expected chain keyboard, got ok=%v opts=%v", ok, opts)
 	}

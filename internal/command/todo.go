@@ -312,6 +312,26 @@ func TodoCommand() *Command {
 		Name:        "todo",
 		Description: "Manage todo items",
 		Category:    "observability",
+		// Declared for /help and the operator gate only (non_operator_commands
+		// can name "todo new"); parseTodoArgs parses the verbs itself, so
+		// Register does not auto-wire dispatch from this list. Keep the names
+		// and aliases in step with parseTodoArgs (#2279). Listing is the bare
+		// command. "done" is judged as the subcommand even where
+		// parseTodoArgs reads it as a list filter (no IDs follow): the gate
+		// errs on the side of asking for the "todo done" entry.
+		Subcommands: []Subcommand{
+			{Name: "new", Aliases: []string{"add", "create"}, Description: "Create a new item"},
+			{Name: "done", Aliases: []string{"complete", "finish", "close"}, Description: "Mark items done"},
+			{Name: "start", Aliases: []string{"begin"}, Description: "Mark items started"},
+			{Name: "drop", Aliases: []string{"cancel", "abandon"}, Description: "Drop items"},
+			{Name: "reopen", Description: "Reopen items"},
+			{Name: "edit", Aliases: []string{"update", "modify"}, Description: "Edit an item"},
+			{Name: "show", Aliases: []string{"info", "detail"}, Description: "Show an item in full"},
+			{Name: "get", Description: "Filter and search"},
+			{Name: "search", Aliases: []string{"find"}, Description: "Full-text search"},
+			{Name: "rm", Aliases: []string{"remove", "delete", "del"}, Description: "Delete items"},
+			{Name: "stats", Aliases: []string{"summary"}, Description: "Counts"},
+		},
 		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
 			if cc.TodoStore == nil {
 				return Response{Text: "Todo store not configured."}, nil

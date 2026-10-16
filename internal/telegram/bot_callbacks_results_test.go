@@ -195,7 +195,7 @@ func TestHandleCommandCallback_HTMLFallback(t *testing.T) {
 	mock.editErr = fmt.Errorf("Bad Request: can't parse entities")
 	mock.editErrOnce = true
 
-	b.handleCommandCallback(context.Background(), 12345, 1, "/test")
+	b.handleCommandCallback(context.Background(), 12345, 1, "/test", "111")
 
 	mock.mu.Lock()
 	defer mock.mu.Unlock()
@@ -233,7 +233,7 @@ func TestHandleCommandCallback_Chain(t *testing.T) {
 	b, mock := testBot([]string{"111"}, reg)
 
 	// Callback for "/tmux kill" (bare subcommand) should chain to a second keyboard
-	b.handleCommandCallback(context.Background(), 12345, 1, "/tmux kill")
+	b.handleCommandCallback(context.Background(), 12345, 1, "/tmux kill", "111")
 
 	mock.mu.Lock()
 	defer mock.mu.Unlock()
@@ -292,7 +292,7 @@ func TestHandleCommandCallback_BlankReply(t *testing.T) {
 	mock.editErr = fmt.Errorf("Bad Request: message text is empty")
 	mock.editErrOnce = true
 
-	b.handleCommandCallback(context.Background(), 12345, 1, "/blank")
+	b.handleCommandCallback(context.Background(), 12345, 1, "/blank", "111")
 
 	mock.mu.Lock()
 	defer mock.mu.Unlock()

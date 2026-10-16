@@ -21,6 +21,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), [Nanobot](https://github
 | Native sandbox / container isolation | ✅ can run in Docker | ✅ Docker per-session/agent | ✅ can run in Docker | ✅ Docker + Modal/Daytona |
 | Workspace-only filesystem | ❌ | ✅ `tools.fs.workspaceOnly` | ✅ `restrictToWorkspace` | ✅ container only |
 | User allowlist | ✅ | ✅ | ✅ | ✅ |
+| Operator-restricted command set | ✅ per-agent operator_users / non_operator_commands, down to subcommands | — | — | — |
 | Security audit | ✅ verifies secret store integrity on startup | ✅ deep | ❌ | ❌ |
 | Bitwarden integration | ✅ approval-gated unlock | ❌ | ❌ | ❌ |
 | Elevated mode escape hatch | ❌ [aisudo](https://github.com/richardtkemp/ai-sudo) | ✅ `tools.elevated` | ❌ | ✅ `/yolo` |

@@ -177,7 +177,7 @@ func TestHandleCommandCallback_UnknownCommand(t *testing.T) {
 	// command" notice instead of silently eating the press.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
-	b.handleCommandCallback(context.Background(), 12345, 55, "/nope")
+	b.handleCommandCallback(context.Background(), 12345, 55, "/nope", "111")
 
 	if mock.editCount() != 1 {
 		t.Fatalf("edits = %d, want 1", mock.editCount())
@@ -191,7 +191,7 @@ func TestHandleCommandCallback_NilDispatcher(t *testing.T) {
 	// Proves a command callback without a dispatcher is a safe no-op.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	b.dispatcher = nil
-	b.handleCommandCallback(context.Background(), 12345, 55, "/ping")
+	b.handleCommandCallback(context.Background(), 12345, 55, "/ping", "111")
 	if mock.editCount() != 0 {
 		t.Errorf("edits = %d, want 0", mock.editCount())
 	}
@@ -212,7 +212,7 @@ func TestHandleCommandCallback_ResponseWithKeyboard(t *testing.T) {
 	})
 	b, mock := testBot([]string{"111"}, cmds)
 
-	b.handleCommandCallback(context.Background(), 12345, 55, "/pick x")
+	b.handleCommandCallback(context.Background(), 12345, 55, "/pick x", "111")
 
 	if mock.editCount() != 1 {
 		t.Fatalf("edits = %d, want 1", mock.editCount())

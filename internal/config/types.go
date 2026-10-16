@@ -643,9 +643,11 @@ type DisplayConfig struct {
 // AccessConfig holds access control settings that can be set at any level
 // of the configuration cascade.
 type AccessConfig struct {
-	AllowedUsersOnly *bool    `toml:"allowed_users_only" default:"true" desc:"When enabled (default), only user IDs in allowed_users may message this agent - an empty list blocks everyone. When disabled, an empty list allows anyone; a non-empty list still filters"`
-	AllowedUsers     []string `toml:"allowed_users"  desc:"Platform-specific user IDs allowed to interact with this agent. Empty means no allow-list restriction"` // platform-specific user IDs allowed to interact
-	RequireMention   *bool    `toml:"require_mention" desc:"Require @mention in group chats to trigger this agent"`
+	AllowedUsersOnly    *bool    `toml:"allowed_users_only" default:"true" desc:"When enabled (default), only user IDs in allowed_users may message this agent - an empty list blocks everyone. When disabled, an empty list allows anyone; a non-empty list still filters"`
+	AllowedUsers        []string `toml:"allowed_users"  desc:"Platform-specific user IDs allowed to interact with this agent. Empty means no allow-list restriction"`                                                                                                                                                                                                                                                                                                                                                                      // platform-specific user IDs allowed to interact
+	OperatorUsers       []string `toml:"operator_users" desc:"User IDs of this agent's operators on this platform, who can run every slash command. Everyone else allowed to talk to the agent can only run the commands in non_operator_commands. Agent and global operators add up. Empty means no restriction: every allowed user can run every command"`                                                                                                                                                                               // user IDs of this agent's operators; empty = no restriction
+	NonOperatorCommands []string `toml:"non_operator_commands" desc:"Slash commands a non-operator may run (names or aliases, any case, leading / optional). An entry may name a subcommand (reset hard); a bare command name permits the command without its subcommands, so reset permits /reset but not /reset hard. The agent's list replaces the global one. Unset means help, reset and stop; an explicitly empty list means non-operators can run no command. Only takes effect when operator_users is not empty. Needs a restart"` // nil = default list, empty = none
+	RequireMention      *bool    `toml:"require_mention" desc:"Require @mention in group chats to trigger this agent"`
 }
 
 // NotifyConfig holds notification/warning settings that can be configured at

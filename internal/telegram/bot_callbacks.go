@@ -46,12 +46,13 @@ func (b *Bot) sendCommandKeyboard(cmdName string, header string, opts []command.
 // handleCallbackQuery processes inline keyboard button presses for tool result
 // and thinking block expansion, and command keyboard selections.
 func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery) {
+	userID := fmt.Sprintf("%d", cq.From.Id)
 	// Access check (#2276): the presser of a button passes the same allowlist
 	// as the sender of a message. Runs before cq.Message is read (nil for a
 	// callback on an inline-mode message) and before any action. A rejected
 	// press runs nothing and is still answered, so the presser's spinner stops
 	// without revealing why.
-	if !platform.UserAllowed(b.allowedUsers, b.allowedUsersOnly, fmt.Sprintf("%d", cq.From.Id)) {
+	if !platform.UserAllowed(b.allowedUsers, b.allowedUsersOnly, userID) {
 		b.logger().Warnf("rejected callback from %s", formatUserInfo(&cq.From))
 		_, _ = b.client.AnswerCallbackQuery(cq.Id, nil)
 		return
@@ -83,7 +84,7 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery
 	b.logger().Debugf("callback_query: action=%d raw=%q chatID=%d msgID=%d", action, cq.Data, chatID, msgID)
 	switch action {
 	case dispatch.CallbackCommand:
-		b.handleCommandCallback(ctx, chatID, msgID, data)
+		b.handleCommandCallback(ctx, chatID, msgID, data, userID)
 	case dispatch.CallbackInteractive:
 		editText, _, ok := platform.HandleInteractiveCallback(data)
 		b.logger().Debugf("callback_query interactive: data=%q found=%v editText=%q", data, ok, editText)
@@ -108,13 +109,15 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery
 }
 
 // handleCommandCallback executes a command from an inline keyboard press
-// and edits the original message to show the result.
-func (b *Bot) handleCommandCallback(ctx context.Context, chatID, msgID int64, cmdText string) {
+// and edits the original message to show the result. userID is the presser,
+// who may differ from the sender of the message the button rode on; the
+// operator gate checks the presser (#2279).
+func (b *Bot) handleCommandCallback(ctx context.Context, chatID, msgID int64, cmdText, userID string) {
 	if b.dispatcher == nil {
 		return
 	}
 
-	outcome := b.dispatcher.DispatchCommandCallback(ctx, chatID, cmdText)
+	outcome := b.dispatcher.DispatchCommandCallback(ctx, chatID, cmdText, userID)
 
 	if outcome.Chain != nil {
 		b.editMessageWithKeyboard(chatID, msgID, outcome.Chain.CommandName, cmdText, outcome.Chain.Options)

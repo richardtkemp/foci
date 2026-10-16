@@ -92,7 +92,35 @@ auto_thread = true
 |-----|------|---------|-------------|
 | `allowed_users_only` | bool | `true` | When true, `allowed_users` must be non-empty or the platform won't start. When false, the platform starts without `allowed_users` and accepts messages from any user. |
 | `allowed_users` | string[] | `[]` | User IDs allowed to interact with the bot. |
+| `operator_users` | string[] | `[]` | User IDs of this agent's operators, who can run every slash command. Everyone else in `allowed_users` can only run the commands in `non_operator_commands`. Agent and global operators add up. Empty means no restriction: every allowed user can run every command. |
+| `non_operator_commands` | string[] | unset | The slash commands a non-operator may run (names or aliases, any case, a leading `/` is optional). An entry may name a subcommand (`"reset hard"`); a bare name permits the command without its subcommands. The agent's list replaces the global one. Unset means `help`, `reset` and `stop`; an explicitly empty list (`non_operator_commands = []`) means non-operators can run no command. Only takes effect when `operator_users` is not empty. |
 | `require_mention` | bool | `true` | Require @mention in group chats. DMs are always processed. |
+
+Operator example (Telegram, per-agent override of a global operator):
+
+```toml
+[[platforms]]
+id = "telegram"
+[platforms.access]
+allowed_users = ["123456", "789012"]
+operator_users = ["123456"]              # 123456 runs everything; 789012 only non_operator_commands
+
+[[agents.platforms]]
+id = "telegram"
+[agents.platforms.access]
+operator_users = []                      # this agent has no operators of its own (global ones still apply)
+non_operator_commands = ["help", "reset", "/stop", "stop all"]  # names, aliases and case all match; "stop all" is a subcommand
+```
+
+Notes on the operator gate (#2279):
+
+- Empty `operator_users` (with nothing set at either level) means **no restriction at all** — the gate is off, `non_operator_commands` is ignored, and every command path behaves exactly as it did before the setting existed.
+- The gate covers **Telegram and Discord chats only**: typed commands, dot-commands (`.tmux` is gated like `/tmux`, leading spaces and all), messages rewritten into commands by transforms, and `cmd:` button presses (judged by who pressed, not who sent the message the button rode on). The app (paired devices are the operator's own), the authenticated HTTP endpoints (`/send`, `/command`, `/status`), deferred commands, the action buttons under a suggestion and the Telegram command menu (which keeps listing every command) are **not** gated.
+- Wizard replies and permission/question prompt buttons (`im:`/`wz:`) are not gated: a non-operator cannot *start* a wizard (its command is refused), but answering a prompt another member started is a separate feature.
+- Entries can name **subcommands** (the ones `/help <command>` lists): `reset` permits `/reset` (and `/reset` with arguments that name no subcommand) but not `/reset hard`, which cancels the turn and skips memory formation; that needs its own `"reset hard"` entry. Likewise `stop` does not permit `/stop all`, `/stop subagents` or `/stop commands`, `agents` does not permit `/agents new` (the new-agent wizard), `todo` permits listing but not `/todo new`, `/todo rm` and the other verbs, and `display` permits showing the options but not setting them (`/display reset`, `/display show_thinking off`). So the default list lets non-operators run plain `/help`, `/reset` and `/stop` only. A command whose only permitted forms are subcommands is still listed by `/help`; its keyboard and `/help <command>` show only the permitted subcommands, and the refusal names the refused form ("`/reset hard` is only for this agent's operators.").
+- A forbidden command answers "`/tmux` is only for this agent's operators." and the refusal is logged at WARN on the agent's logger; `/help` and the "Did you mean" suggestions only offer commands the caller may run; a name that is not a registered command keeps the usual "Unknown command" reply.
+- A `non_operator_commands` entry naming no registered command (or no subcommand of it) is reported at WARN on startup and ignored.
+- Like `allowed_users`, a change needs a **restart** to apply.
 
 #### Display fields (`[platforms.display]`)
 

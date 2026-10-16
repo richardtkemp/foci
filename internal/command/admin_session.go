@@ -27,6 +27,14 @@ func StopCommand() *Command {
 		Description: "Cancel the current agent turn (or: subagents, commands, all)",
 		Category:    "operations",
 		Immediate:   true, // must run in polling goroutine to cancel a live turn
+		// Declared for /help and the operator gate only (non_operator_commands
+		// can name "stop all"); Execute below parses the modes itself, so
+		// Register does not auto-wire dispatch from this list.
+		Subcommands: []Subcommand{
+			{Name: "subagents", Description: "Stop only the running subagents; the turn goes on"},
+			{Name: "commands", Description: "Stop only the agent's shell commands; the turn goes on"},
+			{Name: "all", Description: "Stop the subagents, the commands and the turn"},
+		},
 		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
 			switch mode := strings.ToLower(strings.TrimSpace(req.Args)); mode {
 			case "":

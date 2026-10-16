@@ -2,6 +2,7 @@ package config
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -152,5 +153,33 @@ func TestSuperveneSlice_StringDedup(t *testing.T) {
 	want := []string{"111", "222", "333", "444"}
 	if !reflect.DeepEqual(result, want) {
 		t.Errorf("got %v, want %v", result, want)
+	}
+}
+
+// TestDedupeBy proves the keyed cleanup contract shared by every configured
+// list: entries are returned in their cleaned form, first per distinct
+// non-zero cleaned value wins, first-seen order is preserved, and entries
+// cleaning to the zero value drop (the blank entry).
+func TestDedupeBy(t *testing.T) {
+	trim := func(in []string) []string { return DedupeBy(in, strings.TrimSpace) }
+
+	if got := trim([]string{" 111 ", "111", "", "  ", "\t222\t", "111"}); !reflect.DeepEqual(got, []string{"111", "222"}) {
+		t.Errorf("DedupeBy(trim) = %v, want the trimmed, de-duplicated [111 222]", got)
+	}
+	if got := trim(nil); len(got) != 0 {
+		t.Errorf("DedupeBy(nil) = %v, want empty", got)
+	}
+
+	length := DedupeBy([]string{"a", "bb", "ccc", "dd", "e"}, func(s string) int { return len(s) })
+	if !reflect.DeepEqual(length, []int{1, 2, 3}) {
+		t.Errorf("DedupeBy(len) = %v, want one entry per length [1 2 3]", length)
+	}
+}
+
+// TestDedupe proves the plain form used by the PATH populations: repeats and
+// empty entries drop, order preserved.
+func TestDedupe(t *testing.T) {
+	if got := Dedupe([]string{"/bin", "", "/usr/bin", "/bin"}); !reflect.DeepEqual(got, []string{"/bin", "/usr/bin"}) {
+		t.Errorf("Dedupe() = %v, want [/bin /usr/bin]", got)
 	}
 }

@@ -139,6 +139,7 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 		if len(p.Access.AllowedUsers) > 0 {
 			add(sec, "allowed_users", p.Access.AllowedUsers)
 		}
+		addOperatorRows(func(key string, val interface{}) { add(sec, key, val) }, p.Access)
 		if len(p.FacetBots) > 0 {
 			add(sec, "facet_bots", p.FacetBots)
 		}
@@ -318,6 +319,20 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	return rows
 }
 
+// addOperatorRows adds the operator-gate display rows for one access block,
+// next to allowed_users (#2279): operator_users when set, and
+// non_operator_commands whenever configured (an explicitly empty list is shown —
+// it means non-operators may run no command — while an unset one shows
+// nothing and falls back to the default list).
+func addOperatorRows(add func(key string, val interface{}), access AccessConfig) {
+	if len(access.OperatorUsers) > 0 {
+		add("operator_users", access.OperatorUsers)
+	}
+	if access.NonOperatorCommands != nil {
+		add("non_operator_commands", access.NonOperatorCommands)
+	}
+}
+
 // collectAgentRows returns the standard set of agent config display rows.
 func collectAgentRows(agent AgentConfig) []configRow {
 	var rows []configRow
@@ -345,6 +360,10 @@ func collectAgentRows(agent AgentConfig) []configRow {
 		if len(p.FacetBots) > 0 {
 			add(sec+".facet_bots", p.FacetBots)
 		}
+		if len(p.Access.AllowedUsers) > 0 {
+			add(sec+".allowed_users", p.Access.AllowedUsers)
+		}
+		addOperatorRows(func(key string, val interface{}) { add(sec+"."+key, val) }, p.Access)
 	}
 	tg := agent.Platform("telegram")
 	if agent.Loop.MaxToolLoops != nil {
@@ -431,10 +450,6 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.Display.Statusline != nil && *agent.Display.Statusline != "" {
 		add("statusline", *agent.Display.Statusline)
 	}
-	if tg != nil && len(tg.Access.AllowedUsers) > 0 {
-		add("platforms.telegram.allowed_users", tg.Access.AllowedUsers)
-	}
-	_ = tg // suppress unused warning if no telegram-specific fields above
 	if agent.Sessions.CompactionPreserveMessages != nil {
 		add("compaction_preserve_messages", *agent.Sessions.CompactionPreserveMessages)
 	}

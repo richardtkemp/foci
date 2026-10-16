@@ -55,7 +55,7 @@ func (b *Bot) handleComponentInteraction(ctx context.Context, i *discordgo.Inter
 	cbAction, cbData := dispatch.ParseCallback(data.CustomID)
 	switch cbAction {
 	case dispatch.CallbackCommand:
-		b.handleCommandCallback(ctx, channelID, msgID, cbData, chatID)
+		b.handleCommandCallback(ctx, channelID, msgID, cbData, chatID, presser.ID)
 	case dispatch.CallbackInteractive:
 		editText, _, ok := platform.HandleInteractiveCallback(cbData)
 		if ok && editText != "" {
@@ -77,13 +77,15 @@ func (b *Bot) handleComponentInteraction(ctx context.Context, i *discordgo.Inter
 }
 
 // handleCommandCallback executes a command from a button press
-// and edits the original message to show the result.
-func (b *Bot) handleCommandCallback(ctx context.Context, channelID, msgID, cmdText string, chatID int64) {
+// and edits the original message to show the result. userID is the presser,
+// who may differ from the sender of the message the button rode on; the
+// operator gate checks the presser (#2279).
+func (b *Bot) handleCommandCallback(ctx context.Context, channelID, msgID, cmdText string, chatID int64, userID string) {
 	if b.dispatcher == nil {
 		return
 	}
 
-	outcome := b.dispatcher.DispatchCommandCallback(ctx, chatID, cmdText)
+	outcome := b.dispatcher.DispatchCommandCallback(ctx, chatID, cmdText, userID)
 
 	if outcome.Chain != nil {
 		display := "/" + outcome.Chain.CommandName + " " + strings.TrimPrefix(cmdText, "/"+outcome.Chain.CommandName+" ") + ":"

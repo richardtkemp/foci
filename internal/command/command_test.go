@@ -189,7 +189,7 @@ func TestLookupKeyboard(t *testing.T) {
 	cc := CommandContext{}
 
 	// Bare command with keyboard options → returns keyboard
-	name, header, opts, ok := r.LookupKeyboard(ctx, "/model", cc)
+	name, header, opts, ok := r.LookupKeyboard(ctx, "/model", Caller{}, cc)
 	if !ok {
 		t.Fatal("expected keyboard for bare /model")
 	}
@@ -207,25 +207,25 @@ func TestLookupKeyboard(t *testing.T) {
 	}
 
 	// Command with args → no keyboard (execute normally)
-	_, _, _, ok = r.LookupKeyboard(ctx, "/model sonnet", cc)
+	_, _, _, ok = r.LookupKeyboard(ctx, "/model sonnet", Caller{}, cc)
 	if ok {
 		t.Error("should not return keyboard when args provided")
 	}
 
 	// Command without keyboard options → no keyboard
-	_, _, _, ok = r.LookupKeyboard(ctx, "/ping", cc)
+	_, _, _, ok = r.LookupKeyboard(ctx, "/ping", Caller{}, cc)
 	if ok {
 		t.Error("should not return keyboard for command without KeyboardOptions")
 	}
 
 	// Unknown command → no keyboard
-	_, _, _, ok = r.LookupKeyboard(ctx, "/unknown", cc)
+	_, _, _, ok = r.LookupKeyboard(ctx, "/unknown", Caller{}, cc)
 	if ok {
 		t.Error("should not return keyboard for unknown command")
 	}
 
 	// Not a command → no keyboard
-	_, _, _, ok = r.LookupKeyboard(ctx, "regular message", cc)
+	_, _, _, ok = r.LookupKeyboard(ctx, "regular message", Caller{}, cc)
 	if ok {
 		t.Error("should not return keyboard for non-command")
 	}
@@ -251,7 +251,7 @@ func TestLookupKeyboardCaseInsensitive(t *testing.T) {
 		},
 	})
 
-	_, _, _, ok := r.LookupKeyboard(context.Background(), "/EFFORT", CommandContext{})
+	_, _, _, ok := r.LookupKeyboard(context.Background(), "/EFFORT", Caller{}, CommandContext{})
 	if !ok {
 		t.Error("keyboard lookup should be case-insensitive")
 	}
@@ -272,7 +272,7 @@ func TestLookupKeyboardCustomHeader(t *testing.T) {
 		},
 	})
 
-	_, header, _, ok := r.LookupKeyboard(context.Background(), "/speed", CommandContext{})
+	_, header, _, ok := r.LookupKeyboard(context.Background(), "/speed", Caller{}, CommandContext{})
 	if !ok {
 		t.Fatal("expected keyboard for /speed")
 	}
@@ -401,7 +401,7 @@ func TestLookupChainKeyboard(t *testing.T) {
 	cc := CommandContext{}
 
 	// Bare subcommand with chain → returns options
-	name, opts, ok := r.LookupChainKeyboard(ctx, "/tmux kill", cc)
+	name, opts, ok := r.LookupChainKeyboard(ctx, "/tmux kill", Caller{}, cc)
 	if !ok {
 		t.Fatal("expected chain keyboard for /tmux kill")
 	}
@@ -416,31 +416,31 @@ func TestLookupChainKeyboard(t *testing.T) {
 	}
 
 	// Subcommand with no chain options → no chain
-	_, _, ok = r.LookupChainKeyboard(ctx, "/tmux list", cc)
+	_, _, ok = r.LookupChainKeyboard(ctx, "/tmux list", Caller{}, cc)
 	if ok {
 		t.Error("should not chain for /tmux list (ChainKeyboard returns nil)")
 	}
 
 	// Multi-word args → ChainKeyboard receives full string, returns nil for unrecognised → no chain
-	_, _, ok = r.LookupChainKeyboard(ctx, "/tmux kill mysession", cc)
+	_, _, ok = r.LookupChainKeyboard(ctx, "/tmux kill mysession", Caller{}, cc)
 	if ok {
 		t.Error("should not chain when ChainKeyboard returns nil for multi-word args")
 	}
 
 	// Bare command (no subcommand) → no chain
-	_, _, ok = r.LookupChainKeyboard(ctx, "/tmux", cc)
+	_, _, ok = r.LookupChainKeyboard(ctx, "/tmux", Caller{}, cc)
 	if ok {
 		t.Error("should not chain for bare command with no subcommand")
 	}
 
 	// Command without ChainKeyboard → no chain
-	_, _, ok = r.LookupChainKeyboard(ctx, "/ping something", cc)
+	_, _, ok = r.LookupChainKeyboard(ctx, "/ping something", Caller{}, cc)
 	if ok {
 		t.Error("should not chain for command without ChainKeyboard")
 	}
 
 	// Not a command → no chain
-	_, _, ok = r.LookupChainKeyboard(ctx, "regular message", cc)
+	_, _, ok = r.LookupChainKeyboard(ctx, "regular message", Caller{}, cc)
 	if ok {
 		t.Error("should not chain for non-command")
 	}
@@ -474,7 +474,7 @@ func TestLookupChainKeyboardDeepChaining(t *testing.T) {
 	cc := CommandContext{}
 
 	// Level 1: "set" → section buttons
-	_, opts, ok := r.LookupChainKeyboard(ctx, "/config set", cc)
+	_, opts, ok := r.LookupChainKeyboard(ctx, "/config set", Caller{}, cc)
 	if !ok {
 		t.Fatal("expected chain for /config set")
 	}
@@ -483,7 +483,7 @@ func TestLookupChainKeyboardDeepChaining(t *testing.T) {
 	}
 
 	// Level 2: "set defaults" → key buttons
-	_, opts, ok = r.LookupChainKeyboard(ctx, "/config set defaults", cc)
+	_, opts, ok = r.LookupChainKeyboard(ctx, "/config set defaults", Caller{}, cc)
 	if !ok {
 		t.Fatal("expected chain for /config set defaults")
 	}
@@ -492,7 +492,7 @@ func TestLookupChainKeyboardDeepChaining(t *testing.T) {
 	}
 
 	// Level 3: "set defaults model" → no further chaining
-	_, _, ok = r.LookupChainKeyboard(ctx, "/config set defaults model", cc)
+	_, _, ok = r.LookupChainKeyboard(ctx, "/config set defaults model", Caller{}, cc)
 	if ok {
 		t.Error("should not chain for /config set defaults model")
 	}
@@ -603,7 +603,7 @@ func (m *mockSecretsStore) Names() []string {
 	return names
 }
 func (m *mockSecretsStore) Get(name string) (string, bool) { v, ok := m.data[name]; return v, ok }
-func (m *mockSecretsStore) Set(name, value string) error { m.data[name] = value; return m.mutErr }
+func (m *mockSecretsStore) Set(name, value string) error   { m.data[name] = value; return m.mutErr }
 func (m *mockSecretsStore) Remove(name string) (bool, error) {
 	if _, ok := m.data[name]; !ok {
 		return false, m.mutErr

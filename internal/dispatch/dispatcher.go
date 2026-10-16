@@ -48,6 +48,16 @@ type Result struct {
 	UserID     string
 }
 
+// isDotCommand reports whether trimmed text starts a dot-command: a leading
+// '.' followed by an ASCII letter (".status", not ".sigh" or a lone ".").
+// DispatchText and DispatchCommand share this one predicate, and both
+// classify TRIMMED text, so leading whitespace can never make one take a
+// different path than the other.
+func isDotCommand(trimmed string) bool {
+	return len(trimmed) > 1 && trimmed[0] == '.' &&
+		(trimmed[1] >= 'a' && trimmed[1] <= 'z' || trimmed[1] >= 'A' && trimmed[1] <= 'Z')
+}
+
 // DispatchText routes pre-extracted command text to the appropriate handler.
 // The caller is responsible for extracting text, chatID, and userID from the
 // platform-specific message type.
@@ -55,8 +65,7 @@ func (d *Dispatcher) DispatchText(ctx context.Context, text string, chatID int64
 	sessionKey := d.SessionKeyForChat(chatID)
 	trimmed := strings.TrimSpace(text)
 
-	isDot := len(trimmed) > 1 && trimmed[0] == '.' &&
-		(trimmed[1] >= 'a' && trimmed[1] <= 'z' || trimmed[1] >= 'A' && trimmed[1] <= 'Z')
+	isDot := isDotCommand(trimmed)
 	isSlash := strings.HasPrefix(trimmed, "/")
 
 	if !isDot && !isSlash {
@@ -65,7 +74,7 @@ func (d *Dispatcher) DispatchText(ctx context.Context, text string, chatID int64
 
 	body := trimmed[1:]
 	name, _, _ := strings.Cut(body, " ")
-	name = strings.ToLower(strings.TrimSpace(name))
+	name = command.CommandKey(name)
 	args := extractArgs(body)
 
 	// A leading-slash filesystem path is not a command — fall through as normal
@@ -81,34 +90,26 @@ func (d *Dispatcher) DispatchText(ctx context.Context, text string, chatID int64
 		return Result{}
 	}
 
-	return d.dispatchRequest(ctx, name, args, sessionKey, userID, chatID)
+	return d.dispatchRequest(ctx, name, args, sessionKey, userID, chatID, "")
 }
 
 // DispatchCallback dispatches a command from a button/callback interaction.
-func (d *Dispatcher) DispatchCallback(ctx context.Context, chatID int64, cmdText string) Result {
-	stripped := strings.TrimPrefix(cmdText, "/")
-	name, args, _ := strings.Cut(stripped, " ")
-	name = strings.ToLower(strings.TrimSpace(name))
+// pressedBy is who pressed the button, stamped as Request.PressedBy: the
+// identity the operator gate, /help and every other Caller() reader judge
+// (#2279). The Request carries no UserID: the sender of the message the button
+// rode on is unknown on this path, so user-keyed commands (/repeat) answer for
+// nobody, exactly as before the gate existed.
+func (d *Dispatcher) DispatchCallback(ctx context.Context, chatID int64, cmdText, pressedBy string) Result {
+	name, args, _ := strings.Cut(cmdText, " ")
 	args = strings.TrimSpace(args)
 
-	return d.dispatchRequest(ctx, name, args, d.SessionKeyForChat(chatID), "", chatID)
+	return d.dispatchRequest(ctx, command.CommandKey(name), args, d.SessionKeyForChat(chatID), "", chatID, pressedBy)
 }
 
-// LookupKeyboard checks if a command has a keyboard to display.
-func (d *Dispatcher) LookupKeyboard(ctx context.Context, text string, chatID int64) (string, string, []command.KeyboardOption, bool) {
-	ctx = tools.WithSessionKey(ctx, d.SessionKeyForChat(chatID))
-	return d.registry.LookupKeyboard(ctx, text, d.cc)
-}
-
-// LookupChainKeyboard checks if a command has a chained keyboard to display.
-func (d *Dispatcher) LookupChainKeyboard(ctx context.Context, text string, chatID int64) (string, []command.KeyboardOption, bool) {
-	sessionKey := d.SessionKeyForChat(chatID)
-	ctx = tools.WithSessionKey(ctx, sessionKey)
-	return d.registry.LookupChainKeyboard(ctx, text, d.cc)
-}
-
-// dispatchRequest dispatches a command request and wraps the result.
-func (d *Dispatcher) dispatchRequest(ctx context.Context, name, args, sessionKey, userID string, chatID int64) Result {
+// dispatchRequest dispatches a command request and wraps the result. userID
+// is the sender (empty on the callback path); pressedBy is the presser of a
+// cmd: button (empty for a typed command). Request.Caller() picks between them.
+func (d *Dispatcher) dispatchRequest(ctx context.Context, name, args, sessionKey, userID string, chatID int64, pressedBy string) Result {
 	ctx = tools.WithSessionKey(ctx, sessionKey)
 	req := command.Request{
 		Name:       name,
@@ -117,6 +118,7 @@ func (d *Dispatcher) dispatchRequest(ctx context.Context, name, args, sessionKey
 		UserID:     userID,
 		ChatID:     chatID,
 		Source:     d.source,
+		PressedBy:  pressedBy,
 	}
 	resp, handled, err := d.registry.Dispatch(ctx, req, d.cc)
 	if err != nil {
@@ -125,27 +127,37 @@ func (d *Dispatcher) dispatchRequest(ctx context.Context, name, args, sessionKey
 	return Result{Handled: handled, Response: resp, SessionKey: sessionKey, UserID: userID}
 }
 
+// caller stamps userID with this dispatcher's transport source — the identity
+// the operator gate checks (#2279).
+func (d *Dispatcher) caller(userID string) command.Caller {
+	return command.Caller{Source: d.source, UserID: userID}
+}
+
 // DispatchCommand runs the full command dispatch pipeline: normalize dot-commands
 // to slash form, check for keyboard display, check for chain keyboard, then dispatch.
 // Returns a CommandOutcome describing what the platform should render.
 func (d *Dispatcher) DispatchCommand(ctx context.Context, text string, chatID int64, userID string) CommandOutcome {
-	// Normalize dot-commands to slash form for keyboard lookups.
+	// Classify trimmed text, exactly as DispatchText does, so a dot-command
+	// behind whitespace (" .tmux") reaches the keyboard lookups like its
+	// trimmed form instead of falling through to the bare command.
+	text = strings.TrimSpace(text)
 	lookupText := text
-	if len(text) > 1 && text[0] == '.' && (text[1] >= 'a' && text[1] <= 'z' || text[1] >= 'A' && text[1] <= 'Z') {
+	if isDotCommand(text) {
 		lookupText = "/" + text[1:]
 	}
 
 	sessionKey := d.SessionKeyForChat(chatID)
 	ctx = tools.WithSessionKey(ctx, sessionKey)
+	caller := d.caller(userID)
 
 	// Check for keyboard display before dispatch so commands with keyboards
 	// don't execute their bare form (which is typically just usage text).
-	if name, header, opts, ok := d.registry.LookupKeyboard(ctx, lookupText, d.cc); ok {
+	if name, header, opts, ok := d.registry.LookupKeyboard(ctx, lookupText, caller, d.cc); ok {
 		return CommandOutcome{Keyboard: &KeyboardOutcome{CommandName: name, Header: header, Options: opts}}
 	}
 
 	// Check for chain keyboard (e.g. /config set → section buttons).
-	if name, opts, ok := d.registry.LookupChainKeyboard(ctx, lookupText, d.cc); ok {
+	if name, opts, ok := d.registry.LookupChainKeyboard(ctx, lookupText, caller, d.cc); ok {
 		return CommandOutcome{Chain: &ChainOutcome{CommandName: name, Label: text + ":", Options: opts}}
 	}
 
@@ -160,26 +172,24 @@ func (d *Dispatcher) DispatchCommand(ctx context.Context, text string, chatID in
 }
 
 // DispatchCommandCallback runs the callback dispatch pipeline: check for chain
-// keyboard, then dispatch. Returns a CommandOutcome for the platform to render.
-func (d *Dispatcher) DispatchCommandCallback(ctx context.Context, chatID int64, cmdText string) CommandOutcome {
+// keyboard, then dispatch. userID is the presser, who may differ from the
+// sender of the message the button rode on; the operator gate checks the
+// presser (#2279). Returns a CommandOutcome for the platform to render.
+func (d *Dispatcher) DispatchCommandCallback(ctx context.Context, chatID int64, cmdText, userID string) CommandOutcome {
 	sessionKey := d.SessionKeyForChat(chatID)
 	ctx = tools.WithSessionKey(ctx, sessionKey)
+	caller := d.caller(userID)
 
 	// Check for chain keyboard before dispatch (e.g. /config set → section picker).
-	stripped := strings.TrimPrefix(cmdText, "/")
-	name, _, _ := strings.Cut(stripped, " ")
-	name = strings.ToLower(strings.TrimSpace(name))
-
-	if chainName, opts, ok := d.registry.LookupChainKeyboard(ctx, cmdText, d.cc); ok {
+	if chainName, opts, ok := d.registry.LookupChainKeyboard(ctx, cmdText, caller, d.cc); ok {
 		return CommandOutcome{Chain: &ChainOutcome{CommandName: chainName, Label: cmdText + ":", Options: opts}}
 	}
 
 	genBefore := d.registry.WizardGen(sessionKey)
-	result := d.DispatchCallback(ctx, chatID, cmdText)
+	result := d.DispatchCallback(ctx, chatID, cmdText, userID)
 	if !result.Handled {
 		return CommandOutcome{NotHandled: true}
 	}
-	_ = name // used only for chain keyboard lookup above
 	ro := &ResponseOutcome{Result: result, LookupText: cmdText}
 	d.setActivatedWizardStep(ro, sessionKey, genBefore)
 	return CommandOutcome{Response: ro}
