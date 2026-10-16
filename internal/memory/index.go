@@ -22,6 +22,12 @@ type Result struct {
 	Rank    float64
 	Time    time.Time // message time for conversations, file mtime for memory files (zero if unavailable)
 	RowID   int64     // conversation message row ID (0 for non-conversation results)
+
+	// docID is the bleve document ID behind this hit (empty for FTS5
+	// results), so post-ranking steps that work in index terms — the #2327
+	// phrase boost — can look a returned result up in per-document maps.
+	// Unexported: it never leaves the memory package.
+	docID string
 }
 
 // SourceConfig describes a memory source directory with weight.

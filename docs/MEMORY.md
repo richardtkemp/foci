@@ -127,7 +127,7 @@ evergreen_patterns = ["MEMORY.md", "research-*"]  # basename globs never recency
 
 ## The `memory_search` Tool
 
-Full-text search with natural language queries and stemming support. Memory files are ranked higher than conversation history.
+Full-text search with natural language queries and stemming support. Memory files are ranked higher than conversation history. On the bleve backend, a relevance-sorted query of two or more words gets a mild boost (up to +10%) for results where its words appear next to each other, in the order typed; it never adds or removes results, only reorders them, and it does not affect newest/oldest sorts or one-word queries.
 
 ### Parameters
 

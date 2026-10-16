@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"foci/internal/sqlite"
 
 	"github.com/blevesearch/bleve/v2"
+	"github.com/blevesearch/bleve/v2/analysis"
 	"github.com/blevesearch/bleve/v2/mapping"
 	"github.com/blevesearch/bleve/v2/search"
 	blevehtml "github.com/blevesearch/bleve/v2/search/highlight/format/html"
@@ -623,11 +625,190 @@ func sanitizeBleveQuery(q string) string {
 	return strings.Join(terms, " ")
 }
 
+// phraseBoost is the mild rank boost (#2327) a relevance-sorted multi-word hit
+// gets for carrying the query's words next to each other: after the top-N cut,
+// Search scales each returned hit's weighted rank by 1 + phraseBoost ×
+// (adjacent query word pairs found as a phrase, in order, in the hit's
+// content / pairs counted). Relevance sort only — newest/oldest, one-word
+// queries and SearchTodos never boost — and it is applied to the hits the
+// unboosted search already chose to return, never inside the bleve query and
+// never before the cut, so it never changes which hits are returned: it can
+// only reorder them. Dick, 2026-10-11:
+// "I want a mild phrase boost: on the lower end of the reasonable range."
+//
+// Size, from an A/B on a copy of clutch's live index (2026-10-11: 98,368
+// conversation messages, 340 memory files, 2,304 todos) with 46 real
+// multi-word queries from clutch's own foci_memory_search history, boost range
+// 0.05-1.0 tried: pair-matching hits in the top 5 rose 104 (no boost) -> 115
+// at 0.1 -> 140 at 1.0. Those runs applied the factor before the final
+// truncation, which also let a phrase hit from outside the top N take one of
+// the last places at the cut (baseline top-20 hits kept fell 920 -> 909 at
+// 0.1 -> 886 at 1.0); the shipped after-the-cut application gives up that
+// promotion so the returned set stays exactly the unboosted one. 0.1 (a full
+// phrase match is worth +10%) gets most of the low-boost gain — the mild,
+// low-end size.
+//
+// Boosting inside the bleve query instead (a phrase clause added to the OR)
+// was measured and rejected: it lifts short conversation messages' raw score
+// before the source weights apply, so they fill the 2x over-fetch window and
+// push memory files out of the results — 15/31/46 memory-file hits lost from
+// the top 20 at 0.1/0.2/0.5 — reintroducing exactly the #2234 failure that
+// BM25 at b=0 fixed.
+//
+// Deliberately not a config key: it is a tuned constant, not a preference.
+const phraseBoost = 0.1
+
+// bleveContentField is the indexed text field ("content" in buildBleveMapping)
+// that Search highlights for snippets and the phrase boost analyses.
+const bleveContentField = "content"
+
+// adjacentPairs returns each neighbouring pair of words joined by one space,
+// in query order: ["a", "b", "c"] -> ["a b", "b c"]. Fewer than two words
+// yields nil.
+func adjacentPairs(words []string) []string {
+	if len(words) < 2 {
+		return nil
+	}
+	pairs := make([]string, 0, len(words)-1)
+	for i := 0; i+1 < len(words); i++ {
+		pairs = append(pairs, words[i]+" "+words[i+1])
+	}
+	return pairs
+}
+
+// contentAnalyzer returns the analyzer the index mapping applies to the
+// content field — the same analyzer a MatchPhraseQuery on that field analyses
+// with — so the boost counts pairs exactly as the phrase search will match
+// them. An error means no analyzer is registered; the caller skips the boost.
+// Caller holds b.mu.
+func (b *BleveIndex) contentAnalyzer() (analysis.Analyzer, error) {
+	im := b.index.Mapping()
+	name := im.AnalyzerNameForPath(bleveContentField)
+	analyzer := im.AnalyzerNamed(name)
+	if analyzer == nil {
+		return nil, fmt.Errorf("no analyzer registered as %q for field %q", name, bleveContentField)
+	}
+	return analyzer, nil
+}
+
+// phraseMatchIDs returns which of candidateIDs have pair as an exact adjacent
+// phrase, in order, in their content. One bleve search restricted to the
+// candidate IDs: it cannot match anything outside them and inherits any
+// filters the main query already applied. No stored fields, no highlighting.
+// candidateIDs must be non-empty (phraseShares checks). Caller holds b.mu.
+func (b *BleveIndex) phraseMatchIDs(pair string, candidateIDs []string) (map[string]bool, error) {
+	phrase := bleve.NewMatchPhraseQuery(pair)
+	phrase.SetField(bleveContentField)
+	req := bleve.NewSearchRequest(bleve.NewConjunctionQuery(
+		bleve.NewDocIDQuery(candidateIDs),
+		phrase,
+	))
+	req.Size = len(candidateIDs)
+	res, err := b.index.Search(req)
+	if err != nil {
+		return nil, fmt.Errorf("phrase search %q: %w", pair, err)
+	}
+	matched := make(map[string]bool, len(res.Hits))
+	for _, hit := range res.Hits {
+		matched[hit.ID] = true
+	}
+	return matched, nil
+}
+
+// phraseShares returns, per document ID, the share of the query's counted
+// adjacent word pairs that appear as an exact phrase in that document's
+// content; documents matching no pair are absent from the map (share 0). A
+// pair counts only when the content field's analyzer reduces it to two or more
+// terms: "the chart" analyses to the single term "chart", and a one-term
+// phrase would match every document containing it, so it counts neither as
+// matched nor in the total. Returns nil, nil — no boost, no extra searching —
+// for a query with fewer than two words, no documents, or no counted pair.
+// Caller holds b.mu.
+func (b *BleveIndex) phraseShares(queryStr string, docIDs []string) (map[string]float64, error) {
+	// strings.Fields: the same word split sanitizeBleveQuery quotes, so "word"
+	// means the same thing in the main query and the phrase pairs.
+	words := strings.Fields(queryStr)
+	if len(words) < 2 || len(docIDs) == 0 {
+		return nil, nil
+	}
+	analyzer, err := b.contentAnalyzer()
+	if err != nil {
+		return nil, err
+	}
+	var counted []string
+	for _, pair := range adjacentPairs(words) {
+		if len(analyzer.Analyze([]byte(pair))) >= 2 {
+			counted = append(counted, pair)
+		}
+	}
+	if len(counted) == 0 {
+		return nil, nil
+	}
+
+	matches := make(map[string]int, len(docIDs))
+	for _, pair := range counted {
+		matched, err := b.phraseMatchIDs(pair, docIDs)
+		if err != nil {
+			// All-or-nothing: a partial count would rank hits by which pair
+			// happened to finish rather than by phrase share.
+			return nil, err
+		}
+		for id := range matched {
+			matches[id]++
+		}
+	}
+
+	shares := make(map[string]float64, len(matches))
+	for id, n := range matches {
+		shares[id] = float64(n) / float64(len(counted))
+	}
+	return shares, nil
+}
+
+// applyPhraseBoost applies the mild phrase boost (#2327, see phraseBoost) to a
+// relevance-sorted, already-truncated result list: each hit's rank is scaled
+// by 1 + phraseBoost × (counted adjacent query word pairs appearing as a
+// phrase in its content / pairs counted), then the list is re-sorted. Because
+// it runs after the top-N cut, the boost can only reorder the returned hits —
+// never change which hits are returned. Fail open: if the phrase matching
+// fails, the results keep their unboosted ranks and order, and a warning is
+// logged. Caller holds b.mu.
+func (b *BleveIndex) applyPhraseBoost(queryStr string, results []Result) {
+	docIDs := make([]string, 0, len(results))
+	for i := range results {
+		docIDs = append(docIDs, results[i].docID)
+	}
+	shares, err := b.phraseShares(queryStr, docIDs)
+	if err != nil {
+		memoryLog.Warnf("bleve phrase boost skipped for query %q: %v", queryStr, err)
+		return
+	}
+	for i := range results {
+		// ×1 exactly unless this hit carries the query's words next to each
+		// other in its content (a nil map gives share 0).
+		results[i].Rank *= 1 + phraseBoost*shares[results[i].docID]
+	}
+	sort.SliceStable(results, func(i, j int) bool { return results[i].Rank > results[j].Rank })
+}
+
 // Search queries the bleve index. sort controls result ordering:
 // "relevance" (default/empty) orders by weighted score,
 // "newest" orders by mtime descending, "oldest" orders by mtime ascending.
-// opts provides optional date range filtering.
+// Any other sort is rejected: the ordering switch would treat it as relevance
+// while the re-rank gates skip it, returning an unranked, untruncated 2x
+// window. opts provides optional date range filtering.
+// On relevance sort, a query of two or more words also gets a mild phrase
+// boost (#2327): hits whose content carries the query's words next to each
+// other, in order, rank slightly higher (see phraseBoost). The boost is
+// applied after the result list is cut to the return limit, so it never
+// changes which hits are returned — only their order.
 func (b *BleveIndex) Search(queryStr string, sortOrder string, opts *SearchOptions) ([]Result, error) {
+	switch sortOrder {
+	case "", "relevance", "newest", "oldest":
+	default:
+		return nil, fmt.Errorf("invalid sort %q (use relevance, newest or oldest)", sortOrder)
+	}
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -679,7 +860,7 @@ func (b *BleveIndex) Search(queryStr string, sortOrder string, opts *SearchOptio
 
 	// Highlight content field for snippets
 	req.Highlight = bleve.NewHighlightWithStyle(blevehtml.Name)
-	req.Highlight.AddField("content")
+	req.Highlight.AddField(bleveContentField)
 
 	switch sortOrder {
 	case "newest":
@@ -718,6 +899,7 @@ func (b *BleveIndex) Search(queryStr string, sortOrder string, opts *SearchOptio
 			Snippet: snippet,
 			Source:  source,
 			Rank:    rank,
+			docID:   hit.ID,
 		}
 		if mtime, ok := hit.Fields["mtime"].(float64); ok && mtime > 0 {
 			r.Time = time.Unix(int64(mtime), 0)
@@ -739,12 +921,15 @@ func (b *BleveIndex) Search(queryStr string, sortOrder string, opts *SearchOptio
 	// truncate to the return limit. When temporal decay is off, hl/boost are 0 so
 	// rerankByRecency degenerates to a plain rank-descending sort + truncate —
 	// identical top-N to the pre-#352 behaviour.
-	if sortOrder == "" || sortOrder == "relevance" {
+	if isRelevanceSort(sortOrder) {
 		hl, boost := 0.0, 0.0
 		if b.temporalDecay {
 			hl, boost = b.decayHalfLifeDays, b.decayBoost
 		}
 		results = rerankByRecency(results, time.Now(), hl, boost, b.evergreenPatterns, b.searchLimitLocked(), true /* bleve rank: higher is better */)
+		// Mild phrase boost (#2327), after the cut: the returned set is
+		// exactly the unboosted one; only the order within it can change.
+		b.applyPhraseBoost(queryStr, results)
 	}
 
 	return results, nil

@@ -24,6 +24,14 @@ type Searcher interface {
 	Search(query, sort string, opts *SearchOptions) ([]Result, error)
 }
 
+// isRelevanceSort reports whether sort selects relevance order ("" or
+// "relevance") rather than a time order. The bleve backend gates its recency
+// re-rank (#352) and its phrase boost (#2327) on it; the FTS5 backend
+// (index.go) has its own inline copy of the same rule.
+func isRelevanceSort(sort string) bool {
+	return sort == "" || sort == "relevance"
+}
+
 // watchSources adds each existing source directory to the watcher, skipping
 // directories that don't exist yet. On any other error the watcher is closed.
 func watchSources(watcher *fsnotify.Watcher, sources map[string]SourceConfig) error {

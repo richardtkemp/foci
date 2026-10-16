@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -323,6 +324,25 @@ func TestBleveSearchRelevanceDefault(t *testing.T) {
 	}
 	if len(results2) == 0 {
 		t.Fatal("expected results with relevance sort")
+	}
+}
+
+func TestBleveSearchRejectsUnknownSort(t *testing.T) {
+	// Verifies that Search rejects a sort value outside its vocabulary instead
+	// of silently returning the over-fetched, un-re-ranked 2x window (the
+	// ordering switch treats an unknown value as relevance while the re-rank
+	// gates skip it).
+	idx, memDir := testBleveIndex(t)
+
+	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("Go programming language features"), 0644)
+	idx.Reindex()
+
+	_, err := idx.Search("Go programming", "bogus", nil)
+	if err == nil {
+		t.Fatal("Search with unknown sort succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "bogus") {
+		t.Errorf("error %q does not name the rejected sort", err)
 	}
 }
 
