@@ -89,6 +89,17 @@ var ccLedgerTick = 50 * time.Millisecond
 // only reached when a line never comes.
 var ccBarrierBound = time.Second
 
+// ccFlushWait is how long flush waits in total for the adapter to pass a
+// turn's barrier (#2500: 2s was too tight for an adapter briefly stalled on an
+// accounting write). It is never less than the adapter's own bound plus a
+// second, so the adapter's deadline always fires before flush gives up.
+var ccFlushWait = 5 * time.Second
+
+// flushWait is ccFlushWait, kept above the adapter's own bound.
+func flushWait() time.Duration {
+	return max(ccFlushWait, ccBarrierBound+time.Second)
+}
+
 // newCCLedger starts the adapter for a process launched now.
 func newCCLedger(b *Backend, session, agentID string, baseline map[string]ModelUsage) *ccLedger {
 	s := &ccLedger{
@@ -124,7 +135,7 @@ func (s *ccLedger) enqueue(e ccEvent) {
 }
 
 // flush waits until every main-thread call the stream has named so far is
-// booked, or ccBarrierBound passes: called as a turn completes, so the agent
+// booked, or flushWait passes: called as a turn completes, so the agent
 // layer's turn total (closeLedgerTurn) holds the turn's own calls. What books
 // at a later quiet point — a remainder, a background subagent's later calls —
 // is not waited for.
@@ -137,7 +148,7 @@ func (s *ccLedger) flush() {
 	select {
 	case <-reply:
 	case <-s.done:
-	case <-time.After(ccBarrierBound + time.Second):
+	case <-time.After(flushWait()):
 		s.book.lg.Warnf("ledger: adapter did not pass a turn's barrier in time")
 	}
 }

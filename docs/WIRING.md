@@ -1830,8 +1830,9 @@ close forward. A run turn ends at its result, or at exit. A turn end arriving af
 adapter's exit flush is applied directly (`markExited`).
 **A turn's completion waits for its calls** (`ccLedger.flush`, from `completeTurn` before
 `OnTurnComplete`): until every main-thread call the stream named has its line read (the
-main tail is poked to read at once), bounded by `ccBarrierBound`, and at once with no main
-tail — so `closeLedgerTurn`'s `FinalCost` holds the turn's own calls. A remainder or a
+main tail is poked to read at once), bounded by `ccBarrierBound` (the adapter's own release;
+`flush` itself gives up after `flushWait()` = max(`ccFlushWait` 5 s, `ccBarrierBound`+1 s) and
+logs a WARN, #2500), and at once with no main tail — so `closeLedgerTurn`'s `FinalCost` holds the turn's own calls. A remainder or a
 background subagent's later calls book after it, on the same turns. Replayed against the
 #2112 P0 captures (`ccstream/testdata/ledger/*.json.gz`: two idle compactions with the
 history re-append, an interrupted resume, graceful/killed exits, a subagent run) —

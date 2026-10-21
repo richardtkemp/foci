@@ -7,11 +7,14 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"foci/internal/delegator"
 	"foci/internal/delegator/accounting"
+	"foci/internal/log"
 	"foci/internal/modelinfo"
 )
 
@@ -223,5 +226,78 @@ func TestWorkflowAgentsBookOnInvokingTurn(t *testing.T) {
 			t.Errorf("%s = turn %q actor %q 5m %d, want the invoking turn cap/c1@1, a workflow actor, %d 5m writes",
 				r.Model, r.TurnID, r.Actor, r.Count(modelinfo.ClassCacheWrite5m), want[r.Model])
 		}
+	}
+}
+
+// stalledLedger is a running adapter whose clock, once armed, stalls the
+// adapter goroutine for d on its next read: an adapter blocked mid-turn.
+func stalledLedger(t *testing.T, d time.Duration) (lg *ccLedger, arm func()) {
+	t.Helper()
+	b := newTestBackend(&bytes.Buffer{})
+	var armed atomic.Bool
+	lg = &ccLedger{
+		book:     newCCBook(accounting.Live(), b.logger(), "cap/c1", "cap", time.Now(), nil),
+		events:   make(chan ccEvent, 8192),
+		done:     make(chan struct{}),
+		tailStop: make(chan struct{}),
+		tailDone: make(chan struct{}),
+		tailPoke: make(chan struct{}, 1),
+	}
+	lg.book.now = func() time.Time {
+		if armed.CompareAndSwap(true, false) {
+			time.Sleep(d)
+		}
+		return time.Now()
+	}
+	go lg.run()
+	t.Cleanup(lg.close)
+	return lg, func() { armed.Store(true) }
+}
+
+// flushWarned runs one flush against an adapter stalled for d and reports
+// whether the barrier WARN fired and how long flush took. Not parallel: the
+// warn hook is process-global.
+func flushWarned(t *testing.T, d time.Duration) (warned bool, took time.Duration) {
+	t.Helper()
+	var mu sync.Mutex
+	log.SetWarnHook(func(_ log.Level, _, msg string) {
+		mu.Lock()
+		defer mu.Unlock()
+		if msg == "ledger: adapter did not pass a turn's barrier in time" {
+			warned = true
+		}
+	})
+	t.Cleanup(func() { log.SetWarnHook(nil) })
+	lg, arm := stalledLedger(t, d)
+	arm()
+	start := time.Now()
+	lg.flush()
+	took = time.Since(start)
+	mu.Lock()
+	defer mu.Unlock()
+	return warned, took
+}
+
+// TestLedgerFlushToleratesA3sAdapterStall is #2500: an adapter that answers
+// the barrier 3s late is still waited for, with no WARN.
+func TestLedgerFlushToleratesA3sAdapterStall(t *testing.T) {
+	warned, took := flushWarned(t, 3*time.Second)
+	if warned {
+		t.Errorf("flush WARNed after %v; a 3s stall is inside the 5s wait", took)
+	}
+	if took < 2500*time.Millisecond {
+		t.Errorf("flush returned after %v, before the stalled adapter could have answered", took)
+	}
+}
+
+// TestLedgerFlushGivesUpAfter5sAdapterStall is the fail-arm of #2500: an
+// adapter stalled 6s still makes flush give up with the WARN, at about 5s.
+func TestLedgerFlushGivesUpAfter5sAdapterStall(t *testing.T) {
+	warned, took := flushWarned(t, 6*time.Second)
+	if !warned {
+		t.Errorf("flush returned after %v with no WARN; a 6s stall exceeds the 5s wait", took)
+	}
+	if took < 4900*time.Millisecond || took > 5800*time.Millisecond {
+		t.Errorf("flush gave up after %v, want about 5s", took)
 	}
 }
