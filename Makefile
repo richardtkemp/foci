@@ -553,6 +553,7 @@ lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-cap
 	@# instance FAILS ("parallel golangci-lint is running") instead of waiting. The heavy
 	@# lock only serialises foci's own make targets, so a golangci-lint started any other
 	@# way failed peers' pre-commit lint. With the flag, a second instance waits its turn.
+	@bash scripts/check-golangci-go.sh $(GOBIN)/golangci-lint
 	@$(GOBIN)/golangci-lint run --allow-serial-runners
 	@echo "=== find-static-config-reads (static reads of *config.ResolvedAgentConfig) ==="
 	@./bin/find-static-config-reads ./...
@@ -722,10 +723,12 @@ lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-cap
 
 lint-fix:
 	@echo "=== golangci-lint --fix ==="
+	@bash scripts/check-golangci-go.sh $(GOBIN)/golangci-lint
 	@$(GOBIN)/golangci-lint run --allow-serial-runners --fix
 
 # Run specific linter
 lint-dupl:
+	@bash scripts/check-golangci-go.sh $(GOBIN)/golangci-lint
 	@$(GOBIN)/golangci-lint run --allow-serial-runners --disable-all -E dupl
 
 # Also runs as part of `lint` — this target is for a quick standalone check.
