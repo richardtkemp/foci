@@ -24,7 +24,8 @@
 #   TESTDIR must already exist, with a TESTDIR/home subdir (the Makefile
 #   creates both — see #1521, which redirects $HOME there so tests can't
 #   scribble into the live account's real home).
-#   LOGFILE is truncated and then holds the FULL transcript of everything
+#   LOGFILE is truncated (then, if FGW_HEAVY_ACQUIRED is set, given an
+#   ">>> acquired heavy lock [<time>]" line, #2369) and then holds the FULL transcript of everything
 #   this script ran (sealed pass, diagnostic re-runs) — the Makefile's own
 #   PASS/FAILED summary greps it afterwards, same as before this script
 #   existed.
@@ -99,6 +100,13 @@ LLBOX="bin/llbox"
 HEAVY_LOCK_FILE="${SEAL_TEST_HEAVY_LOCK:-/tmp/heavy}"
 
 : > "$LOGFILE"
+# #2369: the Makefile creates LOGFILE before it waits for /tmp/heavy, so the log's
+# birth->mtime span mixes queue time with test time. Record when the lock was
+# taken (FGW_HEAVY_ACQUIRED, set by the Makefile after flock; unset when the lock
+# is left to the caller, whose helper writes its own line into go's output).
+if [ -n "${FGW_HEAVY_ACQUIRED:-}" ]; then
+  echo ">>> acquired heavy lock [$FGW_HEAVY_ACQUIRED]" >> "$LOGFILE"
+fi
 
 # GOMODCACHE in particular may not exist yet on a fresh clone before the
 # first `go mod download` — mkdir -p it defensively so llbox's whitelist

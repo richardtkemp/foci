@@ -225,3 +225,17 @@ func TestAccumulator(t *testing.T) {
 		t.Errorf("answers = %+v, want {Q1?:A1, Q2?:A2}", answers)
 	}
 }
+
+func TestParse_PlainStringOptions(t *testing.T) {
+	qs, err := Parse([]byte(`{"questions":[{"question":"Q?","options":["A",{"label":"B","description":"d"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := qs[0].Options
+	if len(got) != 2 || got[0] != (Option{Label: "A"}) || got[1] != (Option{Label: "B", Description: "d"}) {
+		t.Fatalf("options = %+v", got)
+	}
+	if _, err := Parse([]byte(`{"questions":[{"question":"Q?","options":[5]}]}`)); err == nil {
+		t.Fatal("expected error for numeric option")
+	}
+}

@@ -64,6 +64,24 @@ type Option struct {
 	Description string `json:"description"`
 }
 
+// UnmarshalJSON accepts either the object form {"label":..., "description":...}
+// or a bare JSON string, which is taken as the label (#2462): a plain
+// ["A","B"] options array is the natural first guess.
+func (o *Option) UnmarshalJSON(b []byte) error {
+	var label string
+	if err := json.Unmarshal(b, &label); err == nil {
+		*o = Option{Label: label}
+		return nil
+	}
+	type plain Option
+	var p plain
+	if err := json.Unmarshal(b, &p); err != nil {
+		return err
+	}
+	*o = Option(p)
+	return nil
+}
+
 // Choice is a presentation-agnostic button choice. Backends adapt it to their
 // own button type (e.g. delegator.PromptChoice).
 type Choice struct {

@@ -101,12 +101,22 @@ func (r *Resolver) Resolve(t Target) (Resolution, error) {
 		return Resolution{SessionKey: key, Rung: RungDefault, Policy: policy}, nil
 	}
 
-	// Exact session key.
+	// Exact session key. Rest is agent-relative ("c123"), but the documented
+	// full-key form ("clutch/c123", #2413) is accepted too when its agent is
+	// the target's agent.
 	full := t.Agent + "/" + t.Rest
+	fullForm := false
+	if k, err := session.ParseSessionKey(t.Rest); err == nil && k.AgentID == t.Agent {
+		full = t.Rest
+		fullForm = true
+	}
 	if _, err := session.ParseSessionKey(full); err == nil {
 		if r.Index != nil && r.Index.SessionExists(full) {
 			return Resolution{SessionKey: full, Rung: RungExact, Policy: policy}, nil
 		}
+	}
+	if fullForm {
+		return Resolution{}, fmt.Errorf("%w: session key %q does not exist", ErrUnknownTarget, t.Rest)
 	}
 
 	// Existing named independent session.

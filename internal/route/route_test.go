@@ -105,6 +105,15 @@ func TestResolve_Ladder(t *testing.T) {
 		t.Fatalf("exact: got %+v, %v", got, err)
 	}
 
+	// The documented full-key form (#2413) resolves to the same exact session,
+	// and a full key that does not exist is an unknown target, not a new name.
+	if got, err := r.Resolve(Target{Agent: "clutch", Rest: "clutch/c99", Create: true}); err != nil || got.SessionKey != "clutch/c99" || got.Rung != RungExact {
+		t.Fatalf("full key: got %+v, %v", got, err)
+	}
+	if _, err := r.Resolve(Target{Agent: "clutch", Rest: "clutch/c98", Create: true}); !errors.Is(err, ErrUnknownTarget) {
+		t.Fatalf("missing full key: err = %v, want ErrUnknownTarget", err)
+	}
+
 	// A fresh valid name with no alias and no session → created rung.
 	if got, err := r.Resolve(Target{Agent: "clutch", Rest: "brandnew", Create: true}); err != nil || got.SessionKey != "clutch/ibrandnew" || got.Rung != RungCreated {
 		t.Fatalf("created: got %+v, %v", got, err)

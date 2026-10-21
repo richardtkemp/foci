@@ -99,7 +99,10 @@ $(error FGW_HEAVY_LOCK=external needs FGW_TESTDIR and FGW_SRCLINK: unlocked runs
 endif
 export FGW_HEAVY_LOCK
 endif
-heavy_take = echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ... [$$(date +%T)]" >&2; flock 9; echo ">>> acquired heavy lock [$$(date +%T)]" >&2;
+# FGW_HEAVY_ACQUIRED carries the acquisition time to scripts/seal-test.sh, which
+# writes it into the run log (#2369): the log is created before the lock wait, so
+# birth->that line is queue time and that line->mtime is test time.
+heavy_take = echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ... [$$(date +%T)]" >&2; flock 9; echo ">>> acquired heavy lock [$$(date +%T)]" >&2; export FGW_HEAVY_ACQUIRED=$$(date +%FT%T%z);
 # $(call heavy_enter,<1 if the Go cache can cover the run>) etc.: the lock steps of one run.
 heavy_lazy = $(and $(FGW_HEAVY_LOCK),$(1))
 heavy_enter = $(if $(call heavy_lazy,$(1)),echo ">>> heavy lock: left to the caller (FGW_HEAVY_LOCK=external) [$$(date +%T)]" >&2;,$(heavy_take))

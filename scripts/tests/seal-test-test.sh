@@ -98,7 +98,7 @@ run() {
   shift; [ "$#" -gt 0 ] && shift
   rm -f "$TMP/goroot/calls" "$TMP/goroot/seen"
   echo "$stub" > "$TMP/goroot/mode"
-  (cd "$TMP/work" && env -u SEALED -u FOCI_TEST_UNSEALED -u FGW_HEAVY_LOCK -u HEAVY_LOCK_HELD \
+  (cd "$TMP/work" && env -u SEALED -u FOCI_TEST_UNSEALED -u FGW_HEAVY_LOCK -u HEAVY_LOCK_HELD -u FGW_HEAVY_ACQUIRED \
     PATH="$TMP/goroot/bin:$PATH" "$@" \
     bash "$SEALTEST" "$mode" "$TMP/testdir" "$TMP/log" 1 "$TMP/gocache" "$TMP/gomod" "$TMP/gopath" ./internal/zz2132/ \
     2>&1)
@@ -198,6 +198,13 @@ run real one FGW_HEAVY_LOCK=external HEAVY_LOCK_HELD=/tmp/heavy SEAL_TEST_HEAVY_
 reject "held by caller: no re-run lock" "lock held" "$(cat "$TMP/goroot/locks")"
 expect "held by caller: the tests see HEAVY_LOCK_HELD" "HEAVY_LOCK_HELD=/tmp/heavy" "$(sed -n '/^--- call 1/,/^--- call 2/p' "$TMP/goroot/seen")"
 : > "$TMP/goroot/lockpath"
+
+# ---- #2369: the log records when the Makefile took the heavy lock ----------
+: > "$TMP/goroot/lines"
+run pass one FGW_HEAVY_ACQUIRED=2026-10-21T16:22:00+0000 >/dev/null
+expect "acquired stamp: first line of the log" ">>> acquired heavy lock [2026-10-21T16:22:00+0000]" "$(head -n1 "$TMP/log")"
+run pass one >/dev/null
+reject "no stamp when the Makefile took no lock" ">>> acquired heavy lock" "$(cat "$TMP/log")"
 
 # ---- #2412: the heavy-lock lines reach stderr, live ------------------------
 # gocache-overlay -lock prints them on go's stderr; go's output goes to LOGFILE,
