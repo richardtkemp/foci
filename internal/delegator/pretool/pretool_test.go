@@ -17,14 +17,18 @@ func names(rules []Rule) []string {
 	return out
 }
 
-// TestDefaults_BlockAndPass is the per-rule contract: each preinstalled rule
-// denies its own tool and leaves an ordinary tool alone.
+// TestDefaults_BlockAndPass is the per-rule contract: each preinstalled
+// whole-tool rule denies its own tool, and an ordinary Bash call passes every
+// default. Bash defaults, which decide on the command, have their own tests.
 func TestDefaults_BlockAndPass(t *testing.T) {
 	rules, skipped := Resolve(Defaults)
 	if len(skipped) > 0 {
 		t.Fatalf("defaults skipped: %v", skipped)
 	}
 	for _, r := range rules {
+		if r.Tool == bashTool {
+			continue
+		}
 		if got := Match(rules, Call{Tool: r.Tool, Input: json.RawMessage(`{}`)}).Rule; got == nil || got.Name != r.Name {
 			t.Errorf("%s: Match(%s) = %v, want the rule", r.Name, r.Tool, got)
 		}
@@ -54,8 +58,8 @@ func TestDefaults_CronReasonRedirects(t *testing.T) {
 
 func TestResolve_DisableDefault(t *testing.T) {
 	rules, _ := Resolve(Defaults, []Rule{{Name: "ask_user_question", Enabled: boolp(false)}})
-	if got := names(rules); !reflect.DeepEqual(got, []string{"cron_create"}) {
-		t.Errorf("rules = %v, want only cron_create", got)
+	if got := names(rules); len(got) != len(Defaults)-1 || got[0] != "cron_create" {
+		t.Errorf("rules = %v, want every default but ask_user_question", got)
 	}
 	if Match(rules, Call{Tool: "AskUserQuestion"}).Rule != nil {
 		t.Error("disabled rule still matches")
@@ -71,7 +75,7 @@ func TestResolve_LaterLayerWins(t *testing.T) {
 	}
 	agent := []Rule{{Name: "ask_user_question", Enabled: boolp(true)}}
 	rules, _ := Resolve(Defaults, global, agent)
-	if got := names(rules); !reflect.DeepEqual(got, []string{"ask_user_question", "cron_create"}) {
+	if got := names(rules); len(got) != len(Defaults) || !reflect.DeepEqual(got[:2], []string{"ask_user_question", "cron_create"}) {
 		t.Fatalf("rules = %v", got)
 	}
 	if rules[1].Reason != "global reason" || rules[1].Tool != "CronCreate" || rules[1].Action != ActionDeny {

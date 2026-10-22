@@ -382,9 +382,20 @@ func runWithRules(t *testing.T, body []byte) hookOutput {
 // tool's PreToolUse into a CC deny carrying the rule's reason — and that the
 // decision is never "allow".
 func TestPreToolUse_DefaultRulesDeny(t *testing.T) {
+	// Bash defaults decide on the command, so each needs one it denies.
+	bashInput := map[string]string{
+		"kill_by_pattern": `{"command":"pkill -f foo"}`,
+	}
 	for _, r := range pretool.Defaults {
 		t.Run(r.Name, func(t *testing.T) {
-			out := runWithRules(t, preToolBody(r.Tool, `{}`))
+			input := `{}`
+			if r.Tool == "Bash" {
+				input = bashInput[r.Name]
+				if input == "" {
+					t.Fatalf("no deny input for Bash default %s", r.Name)
+				}
+			}
+			out := runWithRules(t, preToolBody(r.Tool, input))
 			if out.DeniedRule != r.Name {
 				t.Errorf("DeniedRule = %q, want %q", out.DeniedRule, r.Name)
 			}

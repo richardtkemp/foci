@@ -6,7 +6,13 @@ Applies to **Claude Code agents** (`backend = "claude-code"`) only. Codex, openc
 
 foci checks every call to a named tool against a set of **deny rules** before the call runs. If a rule matches, the call does not run. You get the rule's `reason` as the tool's error result, usually as `PreToolUse:<Tool> hook error: ...`. Rules can only deny. There is no allow rule, because a hook allow would bypass foci's permission prompts.
 
-Two rules ship preinstalled. `ask_user_question` redirects CC's `AskUserQuestion` to `foci_ask`. `cron_create` redirects CC's `CronCreate` to crontab or `foci_remind`, because CC's cron jobs are lost on restart, reload or compaction. Everything else comes from `foci.toml`, either for every CC agent (`[[cc_backend.pretool_rules]]`) or for one agent (`[[agents.backend_config.pretool_rules]]`).
+These rules ship preinstalled:
+
+- `ask_user_question` redirects CC's `AskUserQuestion` to `foci_ask`.
+- `cron_create` redirects CC's `CronCreate` to crontab or `foci_remind`, because CC's cron jobs are lost on restart, reload or compaction.
+- `kill_by_pattern` denies `pkill -f`, `kill $(pgrep -f ...)` and `pgrep -f ... | xargs kill` without `-A`: the pattern is in your own shell's command line, so the match kills your shell. Find the PID with `ps -eo pid,args | grep "[x]yz"` and kill it in a separate call, or add `-A`.
+
+Everything else comes from `foci.toml`, either for every CC agent (`[[cc_backend.pretool_rules]]`) or for one agent (`[[agents.backend_config.pretool_rules]]`).
 
 ## When a call is denied
 

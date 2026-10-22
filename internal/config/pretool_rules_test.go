@@ -184,8 +184,8 @@ id = "a"
 		t.Errorf("rule without example fields = %+v %+v", r.DenyExamples, r.AllowExamples)
 	}
 	rules, skipped, ok := cfg.PreToolRules("a")
-	if !ok || len(skipped) != 0 || len(rules) != 3 {
-		t.Errorf("PreToolRules = %v skipped %v ok %v, want the two defaults plus no_rm", namesOf(rules), skipped, ok)
+	if !ok || len(skipped) != 0 || len(rules) != len(pretool.Defaults)+1 {
+		t.Errorf("PreToolRules = %v skipped %v ok %v, want the defaults plus no_rm", namesOf(rules), skipped, ok)
 	}
 }
 

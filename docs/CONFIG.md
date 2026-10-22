@@ -1540,12 +1540,13 @@ The factory default grants CC agents free read/write access to `/tmp` so they ca
 
 `claude-code` agents run every call to a named tool past a set of deny rules before it executes. A matching rule stops the call, and the agent gets the rule's `reason` as the tool's error result, so the reason should say what to do instead. Rules can only deny. There is no allow action, because a hook allow would bypass foci's permission prompts.
 
-Two rules ship preinstalled:
+These rules ship preinstalled:
 
 | name | tool | why |
 |---|---|---|
 | `ask_user_question` | `AskUserQuestion` | Redirects to the `foci_ask` shell function. |
 | `cron_create` | `CronCreate` | CC's cron jobs are session-only and are lost on restart, reload or compaction. Redirects repeating events to crontab and one-shots to `foci_remind`. |
+| `kill_by_pattern` | `Bash` | Denies killing by full command line: `pkill -f`, `kill $(pgrep -f ...)`, `pgrep -f ... \| xargs kill`. The pattern is in the calling shell's own command line, so the match kills that shell (exit 144) and leaves the target half-dead. Allowed with `-A` (`--ignore-ancestors`), which excludes the shell; a `pgrep -f` that only lists is never denied. A `when` check decides, so the hook spawns bash once per `pkill`/`pgrep` call. |
 
 Rules merge by `name` in three layers: the preinstalled rules, then `[[cc_backend.pretool_rules]]`, then the agent's `[[agents.backend_config.pretool_rules]]`. A later layer only needs to give the fields it changes:
 

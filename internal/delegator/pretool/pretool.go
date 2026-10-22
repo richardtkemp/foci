@@ -99,7 +99,53 @@ var Defaults = []Rule{
 			"reload or compaction. For REPEATING events use crontab (see the crontab-edit skill). " +
 			"For SINGLE (one-shot) events use the foci_remind shell function.",
 	},
+	{
+		// #2441: the Bash tool runs the call as `bash -c '<script>'`, so a
+		// pattern written in the script is in that shell's own command line,
+		// and a full-command-line match finds the shell too and kills it
+		// (exit 144, no output, the real target left half-dead). -A
+		// (--ignore-ancestors, procps-ng 4) excludes the shell, so it is
+		// allowed. The when-check sees the pkill/pgrep words as $@.
+		Name:    "kill_by_pattern",
+		Tool:    bashTool,
+		Command: Patterns{`(sudo (\S+ )*)?(\S*/)?(pkill|pgrep)( |$)`},
+		When:    killByPatternWhen,
+		Action:  ActionDeny,
+		Reason: "Do not kill by command-line pattern (pkill -f, kill $(pgrep -f ...), pgrep -f ... | xargs kill): " +
+			"the pattern is in your own shell's command line, so the match kills the shell running this call " +
+			"(exit 144, no output) and leaves the target half-dead. Find the PID first, e.g. " +
+			"ps -eo pid,args | grep \"[x]yz\" (the brackets stop grep matching itself), then kill that PID " +
+			"in a separate call. Or add -A (--ignore-ancestors), which excludes your own shell.",
+	},
 }
+
+// killByPatternWhen decides kill_by_pattern for one pkill or pgrep command
+// (its words are $@): deny a full-command-line match (-f/--full) that does
+// not exclude its ancestors (-A/--ignore-ancestors) when it kills: pkill
+// always, pgrep only when its PIDs go to kill, through xargs or a kill
+// $(pgrep ...) in the same call. A plain pgrep -f lists the shell too, but
+// harms nothing.
+const killByPatternWhen = `prog= full=0
+for a in "$@"; do
+  if [ -z "$prog" ]; then
+    case ${a##*/} in pkill|pgrep) prog=${a##*/} ;; esac
+    continue
+  fi
+  case $a in
+    --) break ;;
+    --ignore-ancestors) exit 1 ;;
+    --full) full=1 ;;
+    --*) ;;
+    -*A*) exit 1 ;;
+    -*f*) full=1 ;;
+  esac
+done
+[ "$full" = 1 ] || exit 1
+[ "$prog" = pkill ] && exit 0
+printf '%s\n' "$CMD_PIPE" | grep -Eq '^(sudo( \S+)* )?xargs( \S+)* (sudo( \S+)* )?kill( |$)' && exit 0
+printf '%s\n' "$TOOL_COMMANDS" | grep -Eq '^(sudo( \S+)* )?kill .*\$\((sudo` + WordSpace + `)?pgrep` + WordSpace + `' && exit 0
+exit 1
+`
 
 // toolNameRe is the shape CC's hook matcher treats as an exact name list when
 // joined with "|" (anything else is compiled as a regex). Holding tool names
