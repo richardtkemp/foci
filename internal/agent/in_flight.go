@@ -378,17 +378,23 @@ func (a *Agent) autonomousTurnSink(conn platform.Connection, sessionKey string) 
 	return turnevent.NopSink{}, nil
 }
 
-// recordTurnActivity performs a turn's ENTIRE per-turn timestamp write. It first
-// captures the PREVIOUS request time (last_cache_touch as of turn entry) onto
-// the session meta for cache-bust idle detection — that capture MUST read the
-// old value before the write overwrites it — then issues the single
-// RecordTurnActivity upsert that sets, atomically: last_cache_touch (always),
-// last_activity_at (unless a memory-formation turn), and last_user_activity_at
+// recordTurnActivity performs a turn's per-turn timestamp write at turn ENTRY.
+// It first captures the PREVIOUS request time (last_cache_touch as of turn
+// entry) onto the session meta — read by cache-bust idle detection and, inside
+// DelegatedManager.Get, by the resume-missed notice (LastUseFunc), so it must
+// run before the backend is fetched — then issues one upsert that sets
+// last_activity_at (unless countsAsActivity says no) and last_user_activity_at
 // (only interactive human turns — a platform/voice trigger, or an HTTP request
-// declared human via the human-source marker). Replaces the former separate
-// RegisterSessionIndex + touchCacheFreshness + touchUserActivity writes. Must
-// run at turn entry, before inference. Own key only — root warmth is handled
-// at branch creation by TouchRootCacheForBranch.
+// declared human via the human-source marker).
+//
+// last_cache_touch is a claim that the turn RAN (#2446). On the API transport
+// the turn always runs once it gets here, so the same upsert stamps it. A
+// delegated turn's input can still be refused or abandoned before it reaches
+// the backend (a skipped keepalive, a system turn abandoned in the begin loop,
+// a failed write, a stale redelivery), so here it writes only the receipt
+// (RecordTurnReceipt) and recordTurnRan stamps last_cache_touch once the input
+// reached the backend. Own key only — root warmth is handled at branch
+// creation by TouchRootCacheForBranch.
 func (a *Agent) recordTurnActivity(ts *TurnState) {
 	if a.SessionIndex == nil || ts.SessionKey == "" {
 		return
@@ -409,13 +415,34 @@ func (a *Agent) recordTurnActivity(ts *TurnState) {
 		filePath = a.DelegatedManager.SessionFilePath(ts.SessionKey)
 	}
 	bumpUser := isInteractiveTrigger(ts.Trigger) || HumanSourceFromContext(ts.Ctx)
-	a.SessionIndex.RecordTurnActivity(session.SessionIndexEntry{
+	entry := session.SessionIndexEntry{
 		SessionKey:  ts.SessionKey,
 		FilePath:    filePath,
 		CreatedAt:   time.Now(),
 		SessionType: session.ClassifySessionKey(ts.SessionKey),
 		Status:      session.SessionStatusActive,
-	}, !isMemoryTrigger(ts.Trigger), bumpUser)
+	}
+	if a.DelegatedManager != nil {
+		a.SessionIndex.RecordTurnReceipt(entry, countsAsActivity(ts.Trigger), bumpUser)
+		return
+	}
+	a.SessionIndex.RecordTurnActivity(entry, countsAsActivity(ts.Trigger), bumpUser)
+	a.emitCacheExpiry(ts.SessionKey) // last_cache_touch just advanced → refresh client
+}
+
+// recordTurnRan performs the writes that claim a delegated turn RAN, once its
+// input reached the backend (TurnState.inputDelivered): last_cache_touch and
+// the app's warmth push, and lastMessageTime (the next turn's [meta] gap=).
+// ComposePrompt has already read the old lastMessageTime for this turn's own
+// gap. A turn whose input never reached the backend skips all of it (#2446).
+func (a *Agent) recordTurnRan(ts *TurnState) {
+	if ts.SessionMeta != nil {
+		ts.SessionMeta.lastMessageTime = ts.UserMessageTime()
+	}
+	if a.SessionIndex == nil || ts.SessionKey == "" {
+		return
+	}
+	a.SessionIndex.TouchCacheTouch(ts.SessionKey, time.Now())
 	a.emitCacheExpiry(ts.SessionKey) // last_cache_touch just advanced → refresh client
 }
 
@@ -430,8 +457,8 @@ func (a *Agent) recordTurnActivity(ts *TurnState) {
 // detection, the client's warmth avatar — sees the truth without waiting for
 // the turn to end.
 //
-// It advances last_cache_touch (always) and last_activity_at (unless a
-// memory-formation trigger), but NOT last_user_activity_at: a round is session
+// It advances last_cache_touch (always: a round proves the turn ran) and
+// last_activity_at (when countsAsActivity), but NOT last_user_activity_at: a round is session
 // progress, not a fresh human interaction. Unlike recordTurnActivity it does
 // NOT recapture prevRequestTime — cache-bust idle detection is a turn-entry
 // concern, and each round bumping last_cache_touch is exactly the request time
@@ -451,7 +478,7 @@ func (a *Agent) touchTurnActivity(sessionKey, trigger string) {
 		CreatedAt:   time.Now(),
 		SessionType: session.ClassifySessionKey(sessionKey),
 		Status:      session.SessionStatusActive,
-	}, !isMemoryTrigger(trigger), false) // bumpUser=false: a mid-turn round is not new user activity
+	}, countsAsActivity(trigger), false) // bumpUser=false: a mid-turn round is not new user activity
 	a.emitCacheExpiry(sessionKey) // last_cache_touch just advanced → refresh client warmth
 }
 

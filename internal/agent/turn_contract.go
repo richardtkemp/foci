@@ -231,7 +231,15 @@ type TurnState struct {
 	// release (#2233: an ask answer folding into an adopted autonomous run
 	// must not clobber the run's registration the way a typed message's
 	// RunTurn fold branch already avoids).
-	foldedFollowUp  bool
+	foldedFollowUp bool
+	// inputDelivered is set by RunInference once this turn's input reached the
+	// backend: a begin the backend accepted, a fold into the in-flight run, or
+	// a typed answer to a pending backend prompt. Only then has the turn RAN,
+	// so only then are the "turn ran" writes made — last_cache_touch and the
+	// warmth push, lastMessageTime (recordTurnRan), and the turn-end lifecycle
+	// hooks (HandleMessage). Delegated only; the API transport always runs a
+	// turn that gets that far (#2446).
+	inputDelivered  bool
 	sessionFilePath string // cached before SendToPane to avoid deadlock in OnTurnComplete
 }
 
@@ -314,12 +322,14 @@ func (s *sharedTurnOps) LogConversationRecv(ts *TurnState) {
 // TouchActivity fires OnActivity callbacks so session liveness is tracked.
 // Extracted from agent.go:353-355 and turn_delegated.go:17-19.
 func (s *sharedTurnOps) TouchActivity(ts *TurnState) {
-	// Memory-formation turns must not advance last_activity_at — see
-	// isMemoryTrigger and RegisterSessionIndex. The OnActivity callbacks are
-	// the session-index bump plus two sync.Once initialisers (nudge-init,
-	// first-run); the latter have already fired on a real turn long before any
-	// reflection runs, so skipping them here is a no-op in practice.
-	if isMemoryTrigger(ts.Trigger) {
+	// Memory-formation and keepalive turns must not advance last_activity_at —
+	// see countsAsActivity. The OnActivity callbacks are the session-index bump
+	// plus two sync.Once initialisers (nudge-init, first-run); the latter have
+	// already fired on a real turn long before any of those passes runs, so
+	// skipping them here is a no-op in practice. OnActivity records that input
+	// arrived, so it runs at entry even for a turn that never reaches the
+	// backend (#2446).
+	if !countsAsActivity(ts.Trigger) {
 		return
 	}
 	for _, fn := range s.agent.OnActivity {
@@ -354,8 +364,9 @@ func (s *sharedTurnOps) LogConversationSent(ts *TurnState) {
 // Same as TouchActivity — separate method for contract clarity and because
 // post-turn may run asynchronously (delegated path).
 func (s *sharedTurnOps) TouchActivityPost(ts *TurnState) {
-	// See TouchActivity: memory-formation turns are excluded from activity bumps.
-	if isMemoryTrigger(ts.Trigger) {
+	// See TouchActivity: memory-formation and keepalive turns are excluded
+	// from activity bumps.
+	if !countsAsActivity(ts.Trigger) {
 		return
 	}
 	for _, fn := range s.agent.OnActivity {

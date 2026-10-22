@@ -1890,6 +1890,49 @@ func TestRecordTurnActivity_MergedWrite(t *testing.T) {
 	}
 }
 
+func TestRecordTurnReceipt_LeavesCacheTouch(t *testing.T) {
+	// #2446: the receipt write upserts the row and the activity columns like
+	// RecordTurnActivity, but never writes last_cache_touch — NULL on insert,
+	// the old value on conflict. Varies one thing at a time: same key, same
+	// flags, only the method differs from the merged write.
+	idx := tempIndex(t)
+	key := "bot/c1"
+	at := time.Now().UTC().Truncate(time.Second)
+
+	idx.RecordTurnReceipt(SessionIndexEntry{
+		SessionKey: key, CreatedAt: at, SessionType: SessionTypeChat, Status: SessionStatusActive,
+	}, true, true)
+	if _, err := idx.Get(key); err != nil {
+		t.Fatalf("row not created: %v", err)
+	}
+	if got, ok := idx.LastCacheTouch(key); ok {
+		t.Fatalf("receipt insert set last_cache_touch = %v, want NULL", got)
+	}
+	if _, ok := idx.LastUserActivity(key); !ok {
+		t.Fatal("receipt insert did not set last_user_activity_at")
+	}
+
+	t0 := at.Add(-time.Hour)
+	idx.TouchCacheTouch(key, t0)
+	idx.RecordTurnReceipt(SessionIndexEntry{
+		SessionKey: key, CreatedAt: at.Add(time.Minute), SessionType: SessionTypeChat, Status: SessionStatusActive,
+	}, true, false)
+	if got, _ := idx.LastCacheTouch(key); !got.Equal(t0) {
+		t.Errorf("receipt update moved last_cache_touch to %v, want unchanged %v", got, t0)
+	}
+	if e, _ := idx.Get(key); !e.LastActivityAt.Equal(at.Add(time.Minute)) {
+		t.Errorf("receipt update last_activity_at = %v, want %v", e.LastActivityAt, at.Add(time.Minute))
+	}
+
+	// Control: the merged write through the same row does move it.
+	idx.RecordTurnActivity(SessionIndexEntry{
+		SessionKey: key, CreatedAt: at.Add(2 * time.Minute), SessionType: SessionTypeChat, Status: SessionStatusActive,
+	}, true, false)
+	if got, _ := idx.LastCacheTouch(key); !got.Equal(at.Add(2 * time.Minute)) {
+		t.Errorf("merged write last_cache_touch = %v, want %v", got, at.Add(2*time.Minute))
+	}
+}
+
 func TestSessionIndex_LastUserActivity_PerSession(t *testing.T) {
 	// Proves LastUserActivity is per-session (NOT the agent-wide max): it backs
 	// the session-scoped --if-user-active gate. bot/c1 and bot/c2 report their

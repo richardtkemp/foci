@@ -234,12 +234,13 @@ func isKeepaliveTrigger(trigger string) bool {
 // (Agent.SessionIndex.ReflectionRedundant): a reflection would forever look
 // like "new activity since the last reflection", so the next /reset would
 // always fire a redundant reflection. These triggers are therefore excluded
-// from last_activity_at bumps (RegisterSessionIndex / TouchActivity).
+// from last_activity_at bumps (see countsAsActivity).
 //
-// Note: this is deliberately narrow. Keepalive, background work, branch, and
-// cron turns DO count as activity — autonomous work is worth reflecting on.
-// Only the reflection/memory passes themselves are excluded, because only they
-// would self-trigger the guard.
+// Note: this is deliberately narrow. Background work, branch, and cron turns
+// DO count as activity — autonomous work is worth reflecting on. Only the
+// reflection/memory passes themselves are excluded here, because only they
+// would self-trigger the guard. Keepalive is excluded separately, by
+// countsAsActivity.
 func isMemoryTrigger(trigger string) bool {
 	switch trigger {
 	case "reflection", "session_end_memory":
@@ -247,6 +248,18 @@ func isMemoryTrigger(trigger string) bool {
 	default:
 		return false
 	}
+}
+
+// countsAsActivity reports whether a turn with this trigger is session
+// activity: whether it may advance last_activity_at and fire the OnActivity
+// hooks. Memory-formation passes are not (isMemoryTrigger), and neither is a
+// keepalive: it is cache maintenance, not work, and an in-place keepalive runs
+// on the parent session itself, where counting it would make an idle session
+// look active to the reflection guard and the activity gate (Dick 2026-10-22,
+// #2446). A keepalive still stamps last_cache_touch when it runs — warming the
+// cache is its whole purpose.
+func countsAsActivity(trigger string) bool {
+	return !isMemoryTrigger(trigger) && !isKeepaliveTrigger(trigger)
 }
 
 // nonDeliveredTurnKinds is THE rule for which turns the conversation DB

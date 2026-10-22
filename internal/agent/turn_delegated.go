@@ -280,6 +280,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// SourceSystem retry loop) until the prompt resolves and the turn
 	// completes.
 	if answersPrompts && answerPendingBackendPrompt(t.logger(), be, ts.SessionKey, ts.Texts) {
+		ts.inputDelivered = true // the answer resumes the backend's running turn
 		close(ts.CompletionChan)
 		return nil
 	}
@@ -346,6 +347,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		// foldedFollowUp — Phase 3.5 skips its registration for exactly the
 		// reason RunTurn's fold branch does, #1274/#2233).
 		ts.foldedFollowUp = true
+		ts.inputDelivered = true
 		a.markTurnDispatched(ts.TurnDetail)
 		// Backend has received the message — signal the inbox so steer
 		// routing opens for any further follow-ups arriving on the heels
@@ -502,6 +504,7 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 	}
 	t.logger().Debugf("RunInference: Inject(%s, begin-turn) done sk=%s err=%v", src, ts.SessionKey, err)
 	if err == nil {
+		ts.inputDelivered = true
 		a.markTurnDispatched(ts.TurnDetail)
 		// Primary has reached the backend. Signal the inbox so turnActive
 		// flips true and any further follow-ups can safely steer via

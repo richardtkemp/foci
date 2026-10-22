@@ -88,14 +88,23 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	// Phase 1b: Logging & tracking
 	tc.LogConversationRecv(ts)
 	tc.TouchActivity(ts)
-	// recordTurnActivity is the SINGLE per-turn timestamp write: one upsert that
-	// captures the prior request time (for cache-bust) then sets last_cache_touch
-	// (every turn — any trigger refreshes the cached prefix), last_activity_at
-	// (skipped for memory-formation turns, so reflection isn't defeated), and
-	// last_user_activity_at (only real-time interactive input — telegram/app/
-	// discord/voice — or an HTTP request declared human, NOT plain
-	// /send/cron/webhook/agent/memory). Replaces the former
-	// separate RegisterSessionIndex + recordCacheTouch + touchUserActivity writes.
+	// The entry writes record that input ARRIVED, so they run for every turn
+	// that gets this far: the recv row above, the OnActivity hooks, and
+	// recordTurnActivity's upsert — the prior request time captured (for
+	// cache-bust and the resume-missed notice), last_activity_at (not for
+	// memory-formation or keepalive turns, countsAsActivity) and
+	// last_user_activity_at (only real-time interactive input —
+	// telegram/app/discord/voice — or an HTTP request declared human, NOT plain
+	// /send/cron/webhook/agent/memory).
+	//
+	// The writes that claim the turn RAN — last_cache_touch with the warmth
+	// push, and lastMessageTime — are made here on the API transport, where a
+	// turn that gets this far always runs. On the delegated transport they wait
+	// for the backend to accept the input (recordTurnRan after RunInference),
+	// because the input can still be refused or abandoned first: a skipped
+	// keepalive, a system turn abandoned in the begin loop, a failed write, a
+	// stale redelivery (#2446).
+	delegated := a.DelegatedManager != nil
 	a.recordTurnActivity(ts)
 
 	// Phase 2: Preparation
@@ -108,11 +117,11 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 		return "", err
 	}
 	// lastMessageTime feeds the [meta] gap= display only (cache-bust reads
-	// prevRequestTime instead). Update it HERE — after ComposePrompt read the
-	// previous value for this turn's gap, so the NEXT turn measures from this
-	// message. Single central write covering both transports, replacing the
-	// former per-transport sites (turn_delegated / turn_api).
-	if ts.SessionMeta != nil {
+	// prevRequestTime instead). Update it after ComposePrompt read the previous
+	// value for this turn's gap, so the NEXT turn measures from this message:
+	// here on the API transport, in recordTurnRan on the delegated one (see
+	// Phase 1b).
+	if !delegated && ts.SessionMeta != nil {
 		ts.SessionMeta.lastMessageTime = ts.UserMessageTime()
 	}
 	tc.BuildSystemAndTools(ts)
@@ -120,7 +129,11 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	a.traceInput(ctx, ts)
 
 	// Phase 3: Execution
-	if err := tc.RunInference(ts); err != nil {
+	err := tc.RunInference(ts)
+	if delegated && ts.inputDelivered {
+		a.recordTurnRan(ts)
+	}
+	if err != nil {
 		// Flush accumulated messages — post-turn won't run.
 		if len(ts.NewMessages) > 0 {
 			_ = tc.SaveSession(ts)

@@ -672,13 +672,19 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, texts []st
 		// turn passes through (platform turns via turn.RunTurn→HandleMessage,
 		// injections via HandleMessage directly), so system injections warm
 		// the keepalive cache clock and flush deferred warnings just like
-		// platform turns. Fired unconditionally (mirrors the platform Driver's
-		// WrapTurn, which fired them regardless of turn error).
-		if a.onTurnComplete != nil {
-			a.onTurnComplete()
-		}
-		if a.onTurnEnd != nil {
-			a.onTurnEnd()
+		// platform turns. Fired regardless of turn error (mirrors the platform
+		// Driver's WrapTurn) — but only for a turn that RAN: a delegated turn
+		// whose input never reached the backend (a skipped keepalive, a system
+		// turn abandoned in the begin loop, a failed write, a stale redelivery)
+		// ended no turn, so it fires neither hook (#2446). TurnComplete above
+		// still fires: it pairs the sink's TurnStart and closes the trace.
+		if a.DelegatedManager == nil || ts.inputDelivered {
+			if a.onTurnComplete != nil {
+				a.onTurnComplete()
+			}
+			if a.onTurnEnd != nil {
+				a.onTurnEnd()
+			}
 		}
 	}()
 
