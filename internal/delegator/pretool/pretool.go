@@ -117,6 +117,21 @@ var Defaults = []Rule{
 			"ps -eo pid,args | grep \"[x]yz\" (the brackets stop grep matching itself), then kill that PID " +
 			"in a separate call. Or add -A (--ignore-ancestors), which excludes your own shell.",
 	},
+	{
+		// #2471: `--` ends option parsing, so a later `--include=*.go` is a
+		// file operand. grep errors on the missing file (ugrep then exits 2
+		// even after a match; GNU grep -q exits 0) and the filter is never
+		// applied. Only words after the one following `--` count: that one
+		// is the pattern, which may legitimately start with -.
+		Name:    "grep_option_after_dashdash",
+		Tool:    bashTool,
+		Command: Patterns{`(sudo (\S+ )*)?(\S*/)?(grep|egrep|fgrep|zgrep|rg|ugrep|ug)( \S+)* -- \S+( \S+)* -\S`},
+		Action:  ActionDeny,
+		Reason: "An option after a standalone -- in grep/rg is not an option: -- ends option parsing, so it is " +
+			"read as a FILE name. The option is silently not applied, grep reports a missing file, and the exit " +
+			"status can read as no match. Move every option before --, and quote globs: " +
+			"grep -rqw --include='*.go' -- \"$pat\" DIR...",
+	},
 }
 
 // killByPatternWhen decides kill_by_pattern for one pkill or pgrep command

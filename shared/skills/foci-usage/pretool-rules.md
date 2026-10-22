@@ -11,6 +11,7 @@ These rules ship preinstalled:
 - `ask_user_question` redirects CC's `AskUserQuestion` to `foci_ask`.
 - `cron_create` redirects CC's `CronCreate` to crontab or `foci_remind`, because CC's cron jobs are lost on restart, reload or compaction.
 - `kill_by_pattern` denies `pkill -f`, `kill $(pgrep -f ...)` and `pgrep -f ... | xargs kill` without `-A`: the pattern is in your own shell's command line, so the match kills your shell. Find the PID with `ps -eo pid,args | grep "[x]yz"` and kill it in a separate call, or add `-A`.
+- `grep_option_after_dashdash` denies grep/rg with an option after a standalone `--` (after the pattern): `--` ends option parsing, so the option is read as a file name and never applied. Put options before `--`: `grep -rqw --include='*.go' -- "$pat" DIR`.
 
 Everything else comes from `foci.toml`, either for every CC agent (`[[cc_backend.pretool_rules]]`) or for one agent (`[[agents.backend_config.pretool_rules]]`).
 

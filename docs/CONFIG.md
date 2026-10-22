@@ -1547,6 +1547,7 @@ These rules ship preinstalled:
 | `ask_user_question` | `AskUserQuestion` | Redirects to the `foci_ask` shell function. |
 | `cron_create` | `CronCreate` | CC's cron jobs are session-only and are lost on restart, reload or compaction. Redirects repeating events to crontab and one-shots to `foci_remind`. |
 | `kill_by_pattern` | `Bash` | Denies killing by full command line: `pkill -f`, `kill $(pgrep -f ...)`, `pgrep -f ... \| xargs kill`. The pattern is in the calling shell's own command line, so the match kills that shell (exit 144) and leaves the target half-dead. Allowed with `-A` (`--ignore-ancestors`), which excludes the shell; a `pgrep -f` that only lists is never denied. A `when` check decides, so the hook spawns bash once per `pkill`/`pgrep` call. |
+| `grep_option_after_dashdash` | `Bash` | Denies grep/egrep/fgrep/zgrep/rg/ugrep with an option-shaped word after the pattern that follows a standalone `--`, e.g. `grep -rqw -- "$n" DIR --include=*.go`. `--` ends option parsing, so that word is read as a file: the filter is silently not applied, and the missing-file error can turn the exit status into "no match". The pattern itself may start with `-`. |
 
 Rules merge by `name` in three layers: the preinstalled rules, then `[[cc_backend.pretool_rules]]`, then the agent's `[[agents.backend_config.pretool_rules]]`. A later layer only needs to give the fields it changes:
 

@@ -384,7 +384,8 @@ func runWithRules(t *testing.T, body []byte) hookOutput {
 func TestPreToolUse_DefaultRulesDeny(t *testing.T) {
 	// Bash defaults decide on the command, so each needs one it denies.
 	bashInput := map[string]string{
-		"kill_by_pattern": `{"command":"pkill -f foo"}`,
+		"kill_by_pattern":            `{"command":"pkill -f foo"}`,
+		"grep_option_after_dashdash": `{"command":"grep -r -- foo . --include=*.go"}`,
 	}
 	for _, r := range pretool.Defaults {
 		t.Run(r.Name, func(t *testing.T) {
