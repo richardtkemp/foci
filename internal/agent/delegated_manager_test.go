@@ -1262,7 +1262,7 @@ func TestGet_TypingFuncBoundedWhenManagerLockHeld(t *testing.T) {
 	// select's 2s timer fires regardless of what the inner goroutine
 	// is blocked on.
 	mgr, mocks := newTestManager(t, nil)
-	mgr.TypingFunc = func(sk string, typing bool) {}
+	mgr.TypingFunc = func(sk string, typing bool, _ *TypingStage) {}
 
 	if _, err := mgr.Get(context.Background(), "test-agent/c1"); err != nil {
 		t.Fatalf("Get: %v", err)
@@ -1316,7 +1316,7 @@ func TestGet_TypingFuncRouting(t *testing.T) {
 	var gotKey string
 	var gotTyping bool
 	mgr, mocks := newTestManager(t, nil)
-	mgr.TypingFunc = func(sk string, typing bool) {
+	mgr.TypingFunc = func(sk string, typing bool, _ *TypingStage) {
 		gotKey = sk
 		gotTyping = typing
 	}
@@ -1386,7 +1386,7 @@ func TestGet_TypingFuncBoundedWhenDownstreamHangs(t *testing.T) {
 	mgr, mocks := newTestManager(t, nil)
 	hangCh := make(chan struct{})
 	defer close(hangCh)
-	mgr.TypingFunc = func(sk string, typing bool) {
+	mgr.TypingFunc = func(sk string, typing bool, _ *TypingStage) {
 		<-hangCh // block until test cleanup
 	}
 
@@ -1437,7 +1437,7 @@ func TestGet_TypingFuncReturnsImmediatelyWhenFast(t *testing.T) {
 	// returns shortly after — no unnecessary delay introduced by the
 	// bounded-timeout machinery.
 	mgr, mocks := newTestManager(t, nil)
-	mgr.TypingFunc = func(sk string, typing bool) {
+	mgr.TypingFunc = func(sk string, typing bool, _ *TypingStage) {
 		// Return immediately.
 	}
 
@@ -2041,7 +2041,7 @@ func TestSetBackendCallbacks(t *testing.T) {
 
 	mgr := &DelegatedManager{
 		AgentID: "test-agent",
-		TypingFunc: func(sk string, typing bool) {
+		TypingFunc: func(sk string, typing bool, _ *TypingStage) {
 			typingKey = sk
 			typingState = typing
 		},
@@ -2285,9 +2285,9 @@ func TestGet_QuestionPromptFuncSkippedWithoutSetter(t *testing.T) {
 		NewBackend: func() (delegator.Delegator, error) {
 			return &mockBackendDT{}, nil // implements Delegator, not QuestionPromptSetter
 		},
-		StartOpts:    delegator.StartOptions{WorkDir: t.TempDir()},
-		AgentID:      "test-agent",
-		IdleTimeout:  time.Hour,
+		StartOpts:   delegator.StartOptions{WorkDir: t.TempDir()},
+		AgentID:     "test-agent",
+		IdleTimeout: time.Hour,
 		QuestionPromptFunc: func(sk, reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 			called = true
 		},

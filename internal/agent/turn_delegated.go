@@ -316,6 +316,9 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	if foldable && be.IsTurnInFlight() {
 		t.logger().Infof("session=%s follow-up message queued behind in-flight turn", ts.SessionKey)
 		t.logger().Debugf("RunInference: Inject(SourceUser, follow-up) start sk=%s", ts.SessionKey)
+		// User input folding into the running turn: its reply shows typing
+		// even when the turn it joins was a system one (#2320).
+		a.DelegatedManager.SetTypingAllowed(ts.SessionKey, true)
 		err := be.ImmediateInject(ts.Ctx, delegator.Inject{
 			Source: delegator.SourceUser,
 			Text:   ts.Prompt,
@@ -427,6 +430,7 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 	if !foldable {
 		src = delegator.SourceSystem
 	}
+	typingAllowed := typingAllowedFor(ts.Ctx, ts.Trigger)
 
 	t.logger().Debugf("RunInference: Inject(%s, begin-turn) start sk=%s attachments=%d", src, ts.SessionKey, len(atts))
 	for waited := false; ; waited = true {
@@ -460,10 +464,16 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 			inj.Attachments = r.Input.Attachments
 			inj.Redeliveries = r.Input.Redeliveries
 		}
+		// The turn's typing permission is set just before its begin, never
+		// earlier: a system turn waits here while another turn runs, and must
+		// not silence that turn's indicator meanwhile (#2320). A refused begin
+		// hands the permission back to the turn still running.
+		prevTyping := a.DelegatedManager.SetTypingAllowed(ts.SessionKey, typingAllowed)
 		err = be.ImmediateInject(ts.Ctx, inj)
 		if !errors.Is(err, delegator.ErrTurnInFlight) {
 			break
 		}
+		a.DelegatedManager.SetTypingAllowed(ts.SessionKey, prevTyping)
 		if isKeepaliveTrigger(ts.Trigger) {
 			// Never wait on the worker for a keepalive (ErrKeepaliveSkipped).
 			t.logger().Infof("session=%s keepalive skipped: a turn is in flight (the cache is already warm)", ts.SessionKey)

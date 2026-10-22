@@ -48,7 +48,8 @@ func backendReadyTimeout() time.Duration {
 }
 
 // typingFuncTimeout bounds how long the SetTypingFunc shim will wait for the
-// downstream platform call (e.g. Telegram SetChatTyping) before giving up.
+// downstream call (resolving the session's connection, then that connection's
+// SetTyping) before giving up.
 // Typing indicator is fire-and-forget by design — no caller cares about
 // completion. See TODO #749.
 const typingFuncTimeout = 2 * time.Second
@@ -102,8 +103,12 @@ type DelegatedManager struct {
 	QuestionPromptFunc func(sessionKey, requestID, text, summary, attachmentPath string, choices []delegator.PromptChoice)
 
 	// TypingFunc controls the platform typing indicator for a session.
-	// Called with true when CC starts working, false on turn complete.
-	TypingFunc func(sessionKey string, typing bool)
+	// Called with true when CC starts working, false on turn complete. It
+	// records each step it enters on stage (TypingStage.Set), so a call that
+	// overruns typingFuncTimeout is logged with the step that stalled rather
+	// than a guess. Not called while the session's current turn is one no
+	// human started (SetTypingAllowed, #2320).
+	TypingFunc func(sessionKey string, typing bool, stage *TypingStage)
 
 	// SubagentStatusFunc reports the running-subagent (CC Agent-tool spawn)
 	// status for a session: detail is the comma-joined running descriptions, or
@@ -240,6 +245,12 @@ type managedBackend struct {
 	// deferred behind background work, so a second compaction meanwhile does
 	// not start a second waiter (#1539).
 	bounceDeferred atomic.Bool
+
+	// typingSuppressed drops the backend's typing calls (true and false)
+	// while the session's current turn is one no human started: keepalive,
+	// reflection, wake, cron, foci send (#2320). Set by the agent before it
+	// dispatches each turn (SetTypingAllowed); the zero value keeps typing on.
+	typingSuppressed atomic.Bool
 }
 
 // getManaged looks up the managed backend for a session key under the lock.
@@ -801,6 +812,54 @@ func (m *DelegatedManager) RegisterPromptCancelListener(sessionKey, requestID st
 	mb.be.RegisterPromptCancelListener(requestID, fn)
 }
 
+// SetTypingAllowed records whether the session's current turn may drive the
+// typing indicator (#2320). The agent calls it before every dispatch to the
+// backend: false for a turn no human started, true for user input, including
+// input folded into a running system turn. Until the next call, every typing
+// call the backend makes for this session follows it, so the background tail
+// of a suppressed turn stays silent too. Returns the previous setting, so a
+// caller whose dispatch is refused can restore it. No-op (returning true) for
+// an unknown session or a nil manager.
+func (m *DelegatedManager) SetTypingAllowed(sessionKey string, allowed bool) (prev bool) {
+	if m == nil {
+		return true
+	}
+	mb, ok := m.getManaged(sessionKey)
+	if !ok {
+		return true
+	}
+	prev = !mb.typingSuppressed.Swap(!allowed)
+	if prev != allowed {
+		m.logger().Debugf("typing allowed=%v for %s", allowed, sessionKey)
+	}
+	return prev
+}
+
+// TypingStage records which step of a TypingFunc call is running, so the
+// bounded wrapper in setBackendCallbacks can name the step that stalled.
+// Safe for concurrent use; a nil *TypingStage ignores Set.
+type TypingStage struct {
+	p atomic.Pointer[string]
+}
+
+// Set records that the call has entered stage.
+func (s *TypingStage) Set(stage string) {
+	if s != nil {
+		s.p.Store(&stage)
+	}
+}
+
+// String returns the last stage set, or "" if none.
+func (s *TypingStage) String() string {
+	if s == nil {
+		return ""
+	}
+	if p := s.p.Load(); p != nil {
+		return *p
+	}
+	return ""
+}
+
 // SetPermissionPending marks a session as having an outstanding permission
 // prompt (pending=true) or clears it (pending=false). When pending, all
 // calls to WaitForPermission block until cleared.
@@ -1220,10 +1279,17 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 	_, isBatch := m.batchSpecFor(mb.sessionKey)
 	if m.TypingFunc != nil && !isBatch {
 		mb.be.SetTypingFunc(func(typing bool) {
+			// A turn no human started (keepalive, reflection, cron, ...) shows
+			// no typing indicator, and its typing(false) has nothing to clear
+			// (#2320). Checked before the goroutine: a suppressed call costs
+			// one atomic load and never reaches the connection lookup.
+			if mb.typingSuppressed.Load() {
+				return
+			}
 			// Typing indicator is fire-and-forget — no return value, no error.
-			// Run with a bounded timeout so a hung downstream call (e.g. a
-			// stale-connection-pool SetChatTyping waiting on a server response
-			// that won't come) cannot wedge the caller.
+			// Run with a bounded timeout so a hung downstream call (the
+			// session's connection lookup, or a connection's SetTyping waiting
+			// on a server response that won't come) cannot wedge the caller.
 			//
 			// sk() MUST be called from inside the inner goroutine. It acquires
 			// m.mu, and this wrapper runs synchronously on the ccstream waiter
@@ -1236,20 +1302,23 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 			// typingFuncTimeout.
 			done := make(chan struct{})
 			var keyHolder atomic.Pointer[string]
+			stage := &TypingStage{}
+			stage.Set("session key lookup (manager lock)")
 			go func() {
 				defer close(done)
 				key := sk()
 				keyHolder.Store(&key)
-				m.TypingFunc(key, typing)
+				stage.Set("TypingFunc")
+				m.TypingFunc(key, typing, stage)
 			}()
 			select {
 			case <-done:
 			case <-time.After(typingFuncTimeout):
-				keyStr := "<unknown — sk() still blocked>"
+				keyStr := "<unknown>"
 				if kp := keyHolder.Load(); kp != nil {
 					keyStr = *kp
 				}
-				m.logger().Warnf("typingFunc(typing=%v) for %s did not return within %s — abandoning (possible Telegram SetChatTyping stall or m.mu held by a slow caller)", typing, keyStr, typingFuncTimeout)
+				m.logger().Warnf("typingFunc(typing=%v) for %s did not return within %s — abandoning; stalled in: %s", typing, keyStr, typingFuncTimeout, stage)
 			}
 		})
 	}

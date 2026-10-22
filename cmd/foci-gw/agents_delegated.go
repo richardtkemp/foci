@@ -339,11 +339,16 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		// chat (#2275); only wired on backends implementing
 		// delegator.QuestionPromptSetter (see setBackendCallbacks).
 		QuestionPromptFunc: questionPromptFn,
-		TypingFunc: func(sessionKey string, typing bool) {
+		TypingFunc: func(sessionKey string, typing bool, stage *agent.TypingStage) {
+			// Each step is recorded so a call overrunning the manager's 2s
+			// bound is logged with what stalled (#2320): the lookup consults
+			// the session index (chat → platform) and the platform managers.
+			stage.Set("connection lookup (chat-platform index, platform managers)")
 			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
 			if conn == nil {
 				return
 			}
+			stage.Set(conn.PlatformName() + " connection SetTyping")
 			conn.SetTyping(typing)
 		},
 		SubagentStatusFunc: func(sessionKey, detail string) {

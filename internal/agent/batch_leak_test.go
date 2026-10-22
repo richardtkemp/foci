@@ -205,7 +205,7 @@ func TestRunBatch_DeliversNothingToAnyChat(t *testing.T) {
 	var uiMu sync.Mutex
 	note := func(s string) { uiMu.Lock(); ui = append(ui, s); uiMu.Unlock() }
 	mgr := a.DelegatedManager
-	mgr.TypingFunc = func(sk string, on bool) { note(fmt.Sprintf("typing %s %v", sk, on)) }
+	mgr.TypingFunc = func(sk string, on bool, _ *TypingStage) { note(fmt.Sprintf("typing %s %v", sk, on)) }
 	mgr.SubagentStatusFunc = func(sk, d string) { note(fmt.Sprintf("subagent-status %s %q", sk, d)) }
 	mgr.SystemNoticeFunc = func(sk, text string) { note(fmt.Sprintf("system-notice %s %q", sk, text)) }
 	mgr.PermissionPromptFunc = func(sk, _, text, _, _ string, _ []delegator.PromptChoice) {

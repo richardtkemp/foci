@@ -189,6 +189,30 @@ func isInteractiveTrigger(trigger string) bool {
 	return trigger == "voice"
 }
 
+// typingAllowedFor reports whether a turn may drive the typing indicator.
+// Dick's ruling (#2320): "typing should not be sent for turns that no user
+// message started", so keepalive, reflection, memory passes, wakes, webhooks,
+// notifies and error/restart injects run without one. Allowed: real-time
+// interactive input (a platform trigger or voice, including a message the
+// sender marked "queue"), the user's own ask answers, and the redelivery of a
+// platform message a dead backend never read (it carries the message's refs;
+// redelivered system input carries none).
+func typingAllowedFor(ctx context.Context, trigger string) bool {
+	if isInteractiveTrigger(trigger) || UserInputFromContext(ctx) {
+		return true
+	}
+	if r := redeliveryFromContext(ctx); r != nil && len(r.Input.Refs) > 0 {
+		return true
+	}
+	// DECISION POINT (chosen by Clutch, not yet ruled by Dick): foci send /
+	// HTTP /send (trigger "user") and cron sends show no typing unless the
+	// envelope carries the Human marker (a choice-carrying /send, #1318).
+	// isUserTrigger counts "user" as human for nudges and logging, but no user
+	// message started such a turn. To show typing for every foci send, return
+	// true for trigger "user" here.
+	return HumanSourceFromContext(ctx)
+}
+
 // TriggerKeepalive is the trigger label of a keepalive pass. An in-place
 // delegated keepalive injects under the periodic branch type of the same name
 // (injectInPlace → EnqueueInjectWait("keepalive")), so one constant identifies

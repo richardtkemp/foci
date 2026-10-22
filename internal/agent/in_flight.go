@@ -268,7 +268,9 @@ func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator, tr
 	chatID := session.ChatIDFromKey(sessionKey)
 	var sink turnevent.Sink
 	var cleanup func()
+	recordOnly := false
 	if kind := a.takeBgOriginKind(sessionKey, triggers); kind != "" {
+		recordOnly = true
 		a.logger().Infof("autonomous run sk=%s reacts to background work of a %s turn (triggers=%v): recorded, not delivered", sessionKey, kind, triggers)
 		// Record-only, and stamped like its originating turn, so background
 		// work this run starts in turn stays undelivered too.
@@ -310,8 +312,17 @@ func (a *Agent) OpenAutonomousTurn(sessionKey string, be delegator.Delegator, tr
 	ts.sessionFilePath = be.SessionFilePath()
 	turnEvents := t.buildTurnEvents(ts, be)
 
+	// DECISION POINT (chosen by Clutch, not yet ruled by Dick; #2320): no user
+	// message started an autonomous run, but one that delivers continues the
+	// user's work (a subagent they asked for finished) and shows typing, as
+	// #1257 made the app show activity for it. A record-only run — the follow-up
+	// of a keepalive's or reflection's background work — shows none. To
+	// suppress typing for every autonomous run, pass false here.
+	prevTyping := a.DelegatedManager.SetTypingAllowed(sessionKey, !recordOnly)
 	if !adopter.AdoptRunningTurn(turnEvents) {
-		// A foci-initiated turn raced this open and now owns the run — unwind.
+		// A foci-initiated turn raced this open and now owns the run — unwind,
+		// handing the typing permission back to it.
+		a.DelegatedManager.SetTypingAllowed(sessionKey, prevTyping)
 		releaseRegistration()
 		if cleanup != nil {
 			cleanup()

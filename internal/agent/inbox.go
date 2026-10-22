@@ -775,7 +775,14 @@ func (a *Agent) steerToBackend(be delegator.Delegator, env Envelope) bool {
 		a.logger().Infof("inbox: mid-turn message with %d attachment(s) can't fold into the running turn on this backend sk=%s — queueing for a fresh turn", len(env.Attachments), env.SessionKey)
 		return false
 	}
+	// User input folding into the running turn: its reply shows typing even
+	// when the turn it joins was a system one (#2320). Restored below if the
+	// fold does not land.
+	prevTyping := a.DelegatedManager.SetTypingAllowed(env.SessionKey, true)
 	err := be.ImmediateInject(a.inboxCtx, inj)
+	if err != nil {
+		a.DelegatedManager.SetTypingAllowed(env.SessionKey, prevTyping)
+	}
 	switch {
 	case err == nil:
 		a.logger().Debugf("inbox: urgent dispatch sk=%s sent %dB attachments=%d", env.SessionKey, len(inj.Text), len(inj.Attachments))

@@ -576,6 +576,14 @@ How a delegated backend's raw events become foci's turn callbacks. ccstream is t
 
 **Typing indicator:** Backends use `SetTypingFunc` to register a callback. Set to `true` when a turn begins (via `ImmediateInject(SourceUser)` at idle), set to `false` when `OnTurnComplete` fires. The platform `Connection.SetTyping(bool)` is stateful — `true` starts a periodic ticker (Telegram: 4s, Discord: 9s) that keeps the indicator alive until `false` is called. The ccstream backend also restarts the typing indicator on `OnAssistant` (mid-turn text) and `OnToolProgress` (heartbeats during long tools).
 
+**Typing gate (#2320):** `DelegatedManager.setBackendCallbacks` wraps the backend's typing func for every backend. The wrapper drops each call (true and false) while `managedBackend.typingSuppressed` is set, so turns no human started show no indicator. The agent sets the flag through `DelegatedManager.SetTypingAllowed`, with `typingAllowedFor` (context.go) deciding which turns count as human. Set sites:
+1. `DelegatedTransport.beginTurn`, just before each begin `ImmediateInject`. A refused begin restores the previous value, so a system turn waiting behind a user turn does not silence it.
+2. The `RunInference` fold branch: always allowed.
+3. `Agent.steerToBackend`: allowed, and restored if the steer fails.
+4. `OpenAutonomousTurn`: allowed unless the run is record-only. Restored if adoption loses the race.
+
+Two open decision points, chosen by Clutch and not yet ruled on by Dick: foci send / HTTP `/send` and cron count as human only with the Human marker; autonomous runs count as human only when they deliver. The gateway's `TypingFunc` records each step on a `TypingStage` (connection lookup, then `<platform> connection SetTyping`). A call that overruns `typingFuncTimeout` (2s) is logged with the session key and the step it stalled in.
+
 **Usage extraction:** ccstream extracts `TurnUsage` (InputTokens, OutputTokens, CacheCreationInputTokens, CacheReadInputTokens) from the last real `AssistantMessage` of each turn on stdout. This is reported via `TurnState.FinalUsage` on completion.
 
 **Per-turn completion callbacks:** `ImmediateInject(SourceUser)`'s begin-turn path registers a one-shot `OnTurnComplete` handler that fires when the turn ends (`ResultMessage` on stdout for ccstream). The callback sets `TurnState.FinalText` and `TurnState.FinalUsage`, then closes `TurnState.CompletionChan` — triggering the post-turn goroutine (save, metadata, compaction, logging). It travels on `Inject.Turn` (`TurnEvents` — per-turn bookkeeping); ccstream fires it from `OnResult`.
