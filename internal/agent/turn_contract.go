@@ -309,6 +309,15 @@ func (s *sharedTurnOps) LogConversationRecv(ts *TurnState) {
 		chatID = session.ChatIDFromKey(ts.SessionKey)
 	}
 	ts.ConvChatID = chatID
+	// A redelivery (#2050) re-sends an input the backend never consumed. Its
+	// text is that input as it was first composed — [meta] header, nudges and
+	// all — not something the user typed, and a message that started or
+	// folded into a turn was recorded when it first arrived. Recording it
+	// again duplicated the message (and recorded a redelivered nudge as if the
+	// user had sent it). Its reply is still recorded like any delivered turn's.
+	if redeliveryFromContext(ts.Ctx) != nil {
+		return
+	}
 	recordTurnEntry(ts.Trigger, convo.Entry{
 		Direction: "recv",
 		UserID:    ts.Meta.UserID,
