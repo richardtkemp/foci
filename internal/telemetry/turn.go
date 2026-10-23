@@ -3,6 +3,8 @@ package telemetry
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -606,8 +608,20 @@ func (s *turnSink) Emit(ctx context.Context, ev turnevent.Event) {
 		s.t.ThinkingBlock(e.Text)
 	case turnevent.RetryNotice:
 		s.t.Retry(e.Attempt, e.Endpoint, e.Err)
+	case turnevent.BackendRetry:
+		s.t.Retry(e.Attempt, e.Endpoint, backendRetryErr(e))
 	case turnevent.TurnComplete:
 		s.t.Complete(e.FinalText, e.Model, e.Usage, e.Cost, e.Err)
 	}
 	s.inner.Emit(ctx, ev)
+}
+
+// backendRetryErr is a BackendRetry's cause as the retry event's error
+// (#2260): the status, when there is one, and the error category.
+func backendRetryErr(e turnevent.BackendRetry) error {
+	status := "no status"
+	if e.Status != 0 {
+		status = "status " + strconv.Itoa(e.Status)
+	}
+	return errors.New(status + ": " + e.Category)
 }

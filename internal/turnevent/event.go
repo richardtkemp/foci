@@ -8,7 +8,8 @@
 // TurnStart opens the stream; TurnComplete is terminal and always fires (the
 // agent emits it via defer so it is reliable on error paths). Between them,
 // the agent emits TextDelta/TextBlock, ThinkingDelta/ThinkingBlock, ToolCall/
-// ToolResult, RetryNotice/RetrySuccess, and Activity events as appropriate.
+// ToolResult, RetryNotice/RetrySuccess, BackendRetry, and Activity events as
+// appropriate.
 //
 // Contract:
 //   - Emit is sequential within a single turn (single-producer invariant);
@@ -22,6 +23,7 @@ package turnevent
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"foci/internal/provider"
 )
@@ -155,6 +157,22 @@ type RetryNotice struct {
 // RetrySuccess fires when a retry succeeds, so UI can clear any retry notice.
 type RetrySuccess struct{}
 
+// BackendRetry fires when a delegated backend that owns inference (Claude
+// Code) is waiting to retry a failed API call of the main thread (#2260). It
+// is NOT a RetryNotice: Telegram and Discord show nothing for it, and only the
+// app shows it, as an ephemeral "retrying" activity. No event marks success;
+// the next content event (or the turn's end) is the sign the call went through.
+// Attempt is as the backend gives it and need not only grow (Claude Code counts
+// overload/rate-limit and other errors separately).
+type BackendRetry struct {
+	Endpoint   string        // who is retrying, e.g. "Claude Code"
+	Attempt    int           // the backend's attempt number
+	MaxRetries int           // the backend's cap; can be passed under CC's retry watchdog
+	Delay      time.Duration // wait until the next try
+	Status     int           // HTTP status; 0 = none (e.g. a dropped connection)
+	Category   string        // the backend's error category, e.g. "overloaded", "rate_limit"
+}
+
 // Activity is a heartbeat emitted during long silent stretches (e.g. an
 // in-flight tool execution with no intervening text) so sinks can refresh
 // liveness indicators without coupling to content events.
@@ -184,6 +202,7 @@ func (ToolCall) turnEvent()       {}
 func (ToolResult) turnEvent()     {}
 func (RetryNotice) turnEvent()    {}
 func (RetrySuccess) turnEvent()   {}
+func (BackendRetry) turnEvent()   {}
 func (Activity) turnEvent()       {}
 func (TurnComplete) turnEvent()   {}
 

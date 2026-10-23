@@ -111,6 +111,29 @@ func TestStreamingSinkTypingLifecycle(t *testing.T) {
 	}
 }
 
+// TestStreamingSinkIgnoresBackendRetry: a Claude Code retry (#2260) shows
+// nothing on Telegram/Discord: no NotifyRetry chat message, no typing change,
+// nothing rendered.
+func TestStreamingSinkIgnoresBackendRetry(t *testing.T) {
+	backend := newMockBackend()
+	tracker := &fakeSinkTracker{}
+	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{}, newTestSB)
+	conn := &fakeTypingConn{}
+	sink := NewStreamingSink(renderer, tracker, conn)
+
+	sink.Emit(context.Background(), turnevent.BackendRetry{Endpoint: "Claude Code", Attempt: 1, MaxRetries: 15, Status: 529, Category: "overloaded"})
+
+	if len(tracker.retries) != 0 || tracker.retryClears != 0 {
+		t.Errorf("tracker retries = %v, clears = %d, want none", tracker.retries, tracker.retryClears)
+	}
+	if len(conn.typingCalls) != 0 || backend.typingCount != 0 {
+		t.Errorf("typing calls = %v (backend %d), want none", conn.typingCalls, backend.typingCount)
+	}
+	if len(backend.deliverCalls) != 0 {
+		t.Errorf("deliver = %v, want none", backend.deliverCalls)
+	}
+}
+
 // TestStreamingSinkNilConnSkipsTyping asserts the sink tolerates a nil conn
 // for tests or headless call sites where typing indicator control is
 // irrelevant.

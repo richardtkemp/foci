@@ -214,10 +214,10 @@ func TestSubagentLabelRedacted(t *testing.T) {
 		StartedAt:  time.Unix(0, 1700000000000000000),
 	})
 	sink.Emit(context.Background(), turnevent.SubagentStart{
-		GroupKey:  "toolu_l1",
-		Label:     "check the vault for " + secret,
-		RunIndex:  1,
-		Prompt:    "go look",
+		GroupKey: "toolu_l1",
+		Label:    "check the vault for " + secret,
+		RunIndex: 1,
+		Prompt:   "go look",
 	})
 	sink.Emit(context.Background(), turnevent.SubagentEnd{GroupKey: "toolu_l1", RunIndex: 1})
 	sink.Emit(context.Background(), turnevent.TurnComplete{FinalText: "done", Model: "claude-opus-5"})
@@ -482,5 +482,45 @@ func TestCompleteErrorLiveValueRedacted(t *testing.T) {
 	}
 	if strings.Contains(status, "liveerrval001") {
 		t.Error("langfuse.observation.status_message leaks the secret value that entered the value function only after Init — the error path must read the function per field, not a copy")
+	}
+}
+
+// TestBackendRetryRecordedAsRetry is #2260: a Claude Code api_retry
+// (turnevent.BackendRetry) is a retry of "Claude Code" on the turn, carrying
+// its attempt, status and error category; a dropped connection has no status.
+func TestBackendRetryRecordedAsRetry(t *testing.T) {
+	exp := setupTest(t, Options{Content: true, MaxFieldBytes: 1 << 20})
+	sink, turn := NewTurnSink(turnevent.NopSink{})
+	turn.Begin(TurnInfo{
+		TurnID:     "agent/ccretry@1700000000000000000",
+		SessionKey: "agent/ccretry",
+		AgentID:    "agent",
+		Trigger:    "test",
+		Via:        "test",
+		Backend:    "ccstream",
+		StartedAt:  time.Unix(0, 1700000000000000000),
+	})
+	sink.Emit(context.Background(), turnevent.BackendRetry{Endpoint: "Claude Code", Attempt: 3, MaxRetries: 15, Delay: 2 * time.Minute, Status: 529, Category: "overloaded"})
+	sink.Emit(context.Background(), turnevent.BackendRetry{Endpoint: "Claude Code", Attempt: 1, MaxRetries: 15, Category: "unknown"})
+	sink.Emit(context.Background(), turnevent.TurnComplete{FinalText: "done", Model: "claude-opus-5"})
+	flush(t)
+
+	root := spanByID(exp.GetSpans(), RootSpanID("agent/ccretry@1700000000000000000"))
+	if root == nil {
+		t.Fatal("no root span")
+	}
+	for i, want := range []struct {
+		attempt int64
+		err     string
+	}{{3, "status 529: overloaded"}, {1, "no status: unknown"}} {
+		if got := eventAttr(t, root, i, "retry", "endpoint").AsString(); got != "Claude Code" {
+			t.Errorf("retry %d endpoint = %q, want Claude Code", i, got)
+		}
+		if got := eventAttr(t, root, i, "retry", "attempt").AsInt64(); got != want.attempt {
+			t.Errorf("retry %d attempt = %d, want %d", i, got, want.attempt)
+		}
+		if got := eventAttr(t, root, i, "retry", "error").AsString(); got != want.err {
+			t.Errorf("retry %d error = %q, want %q", i, got, want.err)
+		}
 	}
 }

@@ -3,7 +3,9 @@ package ccstream
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"foci/internal/delegator"
 	"foci/internal/ratelimit"
@@ -857,15 +859,12 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		}
 
 	case "api_retry":
-		// CC handles its own API retries internally; we parse the message
-		// for symmetry with the protocol but do not surface it to the user.
-		// The turnevent.RetryNotice / RetrySuccess UI is for the API tool
-		// loop's own retries, which don't apply when CC owns inference.
-		var retry APIRetryMessage
-		if err := json.Unmarshal(raw, &retry); err != nil {
-			return
-		}
-		_ = retry
+		// CC retries its own API calls (unbounded under the retry watchdog,
+		// env.go), and says so on the MAIN thread only. Logged at INFO and
+		// handed to the agent layer, which shows it as the app's ephemeral
+		// "retrying" activity — never a RetryNotice, so Telegram/Discord stay
+		// silent (#2260).
+		b.handleAPIRetry(raw)
 
 	case "hook_response":
 		// PostToolUse / PostToolUseFailure hook completions. Parsed and
@@ -1087,8 +1086,78 @@ func (b *Backend) OnRateLimit(ev *RateLimitEvent) {
 	b.fireRateLimited(FormatRateLimitNotice(info))
 }
 
-// OnToolProgress handles heartbeats during long-running tool execution.
+// handleAPIRetry logs one api_retry event and hands it to the agent layer
+// (#2260). A malformed one is logged at WARN and dropped.
+func (b *Backend) handleAPIRetry(raw json.RawMessage) {
+	var retry APIRetryMessage
+	if err := json.Unmarshal(raw, &retry); err != nil {
+		b.logger().Warnf("dropping malformed api_retry event: %v: %s", err, truncateRaw(raw))
+		return
+	}
+	status := 0
+	if retry.ErrorStatus != nil {
+		status = *retry.ErrorStatus
+	}
+	noResp := ""
+	if nr := retry.NoResponse; nr != nil {
+		noResp = fmt.Sprintf(" no_response_waited_ms=%d no_response_retry_wait_ms=%d", nr.WaitedMS, nr.RetryWaitMS)
+	}
+	b.logger().Infof("api_retry attempt=%d max_retries=%d retry_delay_ms=%d status=%s error=%s%s",
+		retry.Attempt, retry.MaxRetries, retry.RetryDelayMS, retryStatus(retry.ErrorStatus), retry.Error, noResp)
+	if se := b.sessionEvents.Load(); se != nil && se.OnAPIRetry != nil {
+		se.OnAPIRetry(delegator.APIRetry{Endpoint: "Claude Code", Attempt: retry.Attempt, MaxRetries: retry.MaxRetries,
+			Delay: time.Duration(retry.RetryDelayMS) * time.Millisecond, Status: status, Category: retry.Error})
+	}
+}
+
+// retryStatus renders a retry's HTTP status for a log line ("none" for null).
+func retryStatus(s *int) string {
+	if s == nil {
+		return "none"
+	}
+	return strconv.Itoa(*s)
+}
+
+// truncateRaw is raw for a log line, cut to a bound.
+func truncateRaw(raw json.RawMessage) string {
+	const limit = 300
+	if len(raw) > limit {
+		return string(raw[:limit]) + "..."
+	}
+	return string(raw)
+}
+
+// logSubagentRetry logs a subagent's API retry and its recovery (#2260; Dick
+// 2026-10-23: subagent retries are logged only, never shown). CC sends
+// tool_progress with subagent_retry while the subagent waits to retry, then
+// one without it once the subagent recovers; that one is logged only after a
+// retry, so ordinary Agent heartbeats stay silent.
+func (b *Backend) logSubagentRetry(msg *ToolProgressMessage) {
+	group := msg.ToolUseID
+	if msg.ParentToolUseID != nil && *msg.ParentToolUseID != "" {
+		group = *msg.ParentToolUseID
+	}
+	b.subagentRetryMu.Lock()
+	defer b.subagentRetryMu.Unlock()
+	if r := msg.SubagentRetry; r != nil {
+		if b.subagentRetrying == nil {
+			b.subagentRetrying = map[string]bool{}
+		}
+		b.subagentRetrying[group] = true
+		b.logger().Infof("subagent api_retry group=%s agent_id=%s attempt=%d max_retries=%d retry_delay_ms=%d status=%s error_category=%s",
+			group, r.AgentID, r.Attempt, r.MaxRetries, r.RetryDelayMS, retryStatus(r.ErrorStatus), r.ErrorCategory)
+		return
+	}
+	if b.subagentRetrying[group] {
+		delete(b.subagentRetrying, group)
+		b.logger().Infof("subagent api_retry recovered group=%s", group)
+	}
+}
+
+// OnToolProgress handles heartbeats during long-running tool execution, and
+// logs a subagent's API retries carried on an Agent tool's frames (#2260).
 func (b *Backend) OnToolProgress(msg *ToolProgressMessage) {
+	b.logSubagentRetry(msg)
 	b.touchActivity()
 	// Keep typing indicator alive during tool execution.
 	if b.typingFunc != nil {

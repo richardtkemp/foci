@@ -774,6 +774,18 @@ type SessionEvents struct {
 	OnThinkingDelta  func(delta string)                                 // streaming thinking delta (content_block_delta)
 	OnToolStart      func(id, name, input string)                       // tool execution began
 	OnToolEnd        func(id, name, output string, isError bool)        // tool execution finished
+	OnAPIRetry       func(r APIRetry)                                   // the backend is waiting to retry a failed API call of the main thread (#2260); optional
+}
+
+// APIRetry is one retry of a failed API call by a backend that owns inference
+// (Claude Code's api_retry event, #2260), in backend-neutral terms.
+type APIRetry struct {
+	Endpoint   string        // who is retrying, e.g. "Claude Code"
+	Attempt    int           // as the backend gives it; need not only grow
+	MaxRetries int           // the backend's cap; can be passed under CC's retry watchdog
+	Delay      time.Duration // wait until the next try
+	Status     int           // HTTP status; 0 = none (e.g. a dropped connection)
+	Category   string        // e.g. "overloaded", "rate_limit", "server_error", "unknown"
 }
 
 // CompactionToolName is the tool name a backend gives its own context

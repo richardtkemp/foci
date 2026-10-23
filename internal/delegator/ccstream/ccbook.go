@@ -60,7 +60,9 @@
 //     launch against the ledger's price of the process's counted calls and
 //     remainders (invCostDivergence, interrupted calls on neither side); and
 //     an overhead remainder larger than both $0.50 and 2% of its window's
-//     cost (invOverheadBounded).
+//     cost (invOverheadBounded): a WARN when every overhead model's spend has a
+//     known cause (output only, CC bug #84223; Haiku input/output in a window
+//     where WebFetch/WebSearch ran, their side calls, #2468), else an ERROR.
 //   - A turn's ACTIVITY (R8) closes once it has ended and nothing of it is
 //     still spending — no subagent tail of it open, no named call of it
 //     unbooked; a subagent resumed on it reopens it.
@@ -101,6 +103,9 @@ type ccLine struct {
 	complete   bool
 	tokens     modelinfo.Tokens
 	method     string // how its cache-write TTLs were decided
+	// webTool: the line holds a WebFetch or WebSearch tool_use. CC runs each
+	// on a side call to Haiku that no transcript records (#2468).
+	webTool bool
 }
 
 // ccUsageJSON is a per-message usage object with the fields the ledger prices.
@@ -124,10 +129,11 @@ type ccRecord struct {
 	Timestamp   string `json:"timestamp"`
 	SessionID   string `json:"sessionId"`
 	Message     struct {
-		ID         string      `json:"id"`
-		Model      string      `json:"model"`
-		StopReason *string     `json:"stop_reason"`
-		Usage      ccUsageJSON `json:"usage"`
+		ID         string          `json:"id"`
+		Model      string          `json:"model"`
+		StopReason *string         `json:"stop_reason"`
+		Usage      ccUsageJSON     `json:"usage"`
+		Content    json.RawMessage `json:"content"`
 	} `json:"message"`
 	ModelUsage map[string]ModelUsage `json:"modelUsage"`
 }
@@ -155,7 +161,30 @@ func parseCCRecord(raw []byte) (line *ccLine, costState *ccRecord) {
 		l.stopReason = *r.Message.StopReason
 	}
 	l.tokens, l.method = ccTokens(r.Message.Usage)
+	l.webTool = hasWebTool(r.Message.Content)
 	return l, nil
+}
+
+// hasWebTool reports whether an assistant message's content holds a WebFetch
+// or WebSearch tool_use. CC writes one line per content block, so a message's
+// web tool can sit on any of its lines, not only the one with the stop reason.
+func hasWebTool(content json.RawMessage) bool {
+	if !bytes.Contains(content, []byte(`"tool_use"`)) {
+		return false
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(content, &blocks) != nil {
+		return false
+	}
+	for _, b := range blocks {
+		if b.Type == "tool_use" && (b.Name == "WebFetch" || b.Name == "WebSearch") {
+			return true
+		}
+	}
+	return false
 }
 
 // ccSignal is what a non-assistant transcript record tells the ledger about the
@@ -353,11 +382,17 @@ type ccBook struct {
 	counted    map[int]map[string]*countedSum // counted bookings per window and model
 	boundaries map[int][]ccBoundary
 	refusals   map[int][]ccRefusal // model refusal fallbacks per window
-	results    []ccResult
-	baseline   map[string]ModelUsage
-	lastMU     map[string]ModelUsage
-	costState  map[string]ModelUsage
-	copies     int // transcript lines dropped as copies
+	// webTools marks the windows in which a WebFetch or WebSearch ran, on any
+	// thread (#2468), and mainWin is the window of each main-thread call booked
+	// in a window not yet settled: CC writes a call's blocks as several lines,
+	// and its web tool can come on one after the call is booked.
+	webTools  map[int]bool
+	mainWin   map[string]int
+	results   []ccResult
+	baseline  map[string]ModelUsage
+	lastMU    map[string]ModelUsage
+	costState map[string]ModelUsage
+	copies    int // transcript lines dropped as copies
 
 	// The main-transcript tail, when one runs: a call's line is only known
 	// missing once a read that began after its result's bound has finished,
@@ -449,6 +484,7 @@ func newCCBook(l *accounting.Ledger, lg *log.ComponentLogger, session, agentID s
 		named: map[string]*namedCall{}, held: map[string]*ccLine{}, done: map[string]bool{},
 		agents: map[string]*ccAgent{}, runTurn: map[int]string{},
 		counted: map[int]map[string]*countedSum{}, boundaries: map[int][]ccBoundary{}, refusals: map[int][]ccRefusal{},
+		webTools: map[int]bool{}, mainWin: map[string]int{},
 		baseline:   maps.Clone(baseline),
 		procBooked: map[string]*countedSum{}, interrupted: map[string]float64{}, unbilled: map[string]float64{},
 		ended: map[string]bool{}, closed: map[string]bool{},
@@ -558,19 +594,34 @@ func (c *ccBook) turnSource(turn string) string {
 // mainLine handles one assistant line of the main transcript.
 func (c *ccBook) mainLine(l *ccLine) {
 	if c.done[l.id] {
-		c.copies++ // a re-appended copy of a call this process already booked
+		// A re-appended copy of a call this process already booked, or a
+		// later block of it (counted as a copy too: the two look alike). While
+		// the call's window is open its web tool still marks that window.
+		if w, ok := c.mainWin[l.id]; ok && l.webTool {
+			c.webTools[w] = true
+		}
+		c.copies++
 		return
 	}
 	n := c.named[l.id]
 	if n == nil {
-		c.held[l.id] = l // not named (yet): a history copy unless the stream names it
+		// Not named (yet): a history copy unless the stream names it. Only
+		// the latest line is kept, so it carries an earlier one's web tool.
+		if h := c.held[l.id]; h != nil && h.webTool {
+			l.webTool = true
+		}
+		c.held[l.id] = l
 		return
+	}
+	if l.webTool {
+		c.webTools[n.window] = true
 	}
 	if !l.complete {
 		n.pending = l
 		return
 	}
 	c.bookCall(l, n.turn, "", n.window, accounting.FinalityCompleted)
+	c.mainWin[l.id] = n.window
 	delete(c.named, l.id)
 	c.closeIfIdle(n.turn, c.now())
 }
@@ -581,6 +632,11 @@ func (c *ccBook) subLine(agent, turn string, l *ccLine) {
 		return // billed by an earlier process: not this scope
 	}
 	a := c.agent(agent, turn, l.at)
+	if l.webTool {
+		// Before the done check: a call's web tool can come on a line after
+		// the one that booked it. Marked in the window its calls count in.
+		c.webTools[a.window] = true
+	}
 	if c.done[l.id] {
 		return
 	}
@@ -1027,9 +1083,14 @@ func (c *ccBook) remainder(w int, mu map[string]ModelUsage, label string, at tim
 			}
 		}
 	}
+	webRan := false
+	for win := range c.webTools {
+		webRan = webRan || win <= w
+	}
 	var overhead float64
 	var overheadModels []string
-	outputOnly := true
+	var webSide []string // overhead models whose spend is web tools' side calls
+	outputOnly, known, anyOut := true, true, false
 	for _, m := range slices.Sorted(maps.Keys(rem)) {
 		r := rem[m]
 		if !billed(r) {
@@ -1079,7 +1140,14 @@ func (c *ccBook) remainder(w int, mu map[string]ModelUsage, label string, at tim
 		if call.Kind == accounting.KindOverhead {
 			overhead += usd
 			overheadModels = append(overheadModels, fmt.Sprintf("%s $%.4f (%s)", m, usd, formatTokens(call.Tokens)))
-			outputOnly = outputOnly && onlyOutput(call.Tokens)
+			out := onlyOutput(call.Tokens)
+			web := webRan && webSideCall(m, call.Tokens)
+			outputOnly = outputOnly && out
+			anyOut = anyOut || out
+			known = known && (out || web)
+			if web && !out {
+				webSide = append(webSide, m)
+			}
 		} else if c.closed[turn.TurnID] {
 			// Spend booked on a turn whose activity had closed moves its
 			// close to this booking.
@@ -1087,7 +1155,7 @@ func (c *ccBook) remainder(w int, mu map[string]ModelUsage, label string, at tim
 		}
 	}
 	if len(overheadModels) > 0 {
-		c.checkOverhead(overhead, windowCost(mu, c.baseline), overheadModels, outputOnly, label)
+		c.checkOverhead(overhead, windowCost(mu, c.baseline), overheadModels, overheadCause(outputOnly, known, anyOut, webSide), label)
 	}
 	for m, u := range mu {
 		c.baseline[m] = u
@@ -1105,6 +1173,16 @@ func (c *ccBook) remainder(w int, mu map[string]ModelUsage, label string, at tim
 	for win := range c.refusals {
 		if win <= w {
 			delete(c.refusals, win)
+		}
+	}
+	for win := range c.webTools {
+		if win <= w {
+			delete(c.webTools, win)
+		}
+	}
+	for id, win := range c.mainWin {
+		if win <= w {
+			delete(c.mainWin, id)
 		}
 	}
 	c.checkDivergence(mu, label)
@@ -1207,22 +1285,62 @@ func windowCost(mu, base map[string]ModelUsage) float64 {
 // (#2160, #2175).
 const ccBugMissingFinalRecord = "https://github.com/anthropics/claude-code/issues/84223"
 
-// checkOverhead alarms when one remainder's overhead is beyond the bound.
-// Overhead that is output tokens only has a known cause, CC bug #84223, so it
-// alarms at WARN and names it (Dick, 2026-10-05 on #2160); any other class in
-// it is spend with no known source, an ERROR.
-func (c *ccBook) checkOverhead(overhead, window float64, models []string, outputOnly bool, label string) {
+// overheadCause is why an over-bound overhead is there, and whether that
+// cause is known (a WARN) or not (an ERROR). Output tokens only is CC bug
+// #84223 (Dick, 2026-10-05 on #2160). A Haiku remainder of input and output
+// alone in a window where a web tool ran is CC's WebFetch/WebSearch side calls,
+// which no transcript records (#2468, Dick 2026-10-23). Every overhead model
+// must have one of those causes for the alarm to be a WARN.
+type overheadReason struct {
+	known bool
+	cause string
+}
+
+func overheadCause(outputOnly, known, anyOut bool, webSide []string) overheadReason {
+	const bug = "output-only overhead: subagent transcripts missing their final record, CC bug " + ccBugMissingFinalRecord
+	switch {
+	case outputOnly:
+		return overheadReason{true, bug}
+	case known:
+		cause := strings.Join(webSide, ", ") + ": web tools' side calls to Haiku (WebFetch/WebSearch), which CC records in no transcript"
+		if anyOut {
+			cause += "; the rest is " + bug
+		}
+		return overheadReason{true, cause}
+	}
+	return overheadReason{false, "spend no transcript holds (a subagent tail that never opened, a lost resume baseline?)"}
+}
+
+// webSideCall reports whether a remainder on model m has the shape of CC's
+// web tools' Haiku side calls: a Haiku model, and no class but input, output
+// and web search requests (they are sent uncached, so no cache classes).
+func webSideCall(m string, t modelinfo.Tokens) bool {
+	if !strings.Contains(strings.ToLower(m), "haiku") {
+		return false
+	}
+	for class, n := range t {
+		switch class {
+		case modelinfo.ClassInput, modelinfo.ClassOutput, modelinfo.ClassWebSearch:
+		default:
+			if n != 0 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// checkOverhead alarms when one remainder's overhead is beyond the bound: at
+// WARN, naming the cause, when the cause is known; else an ERROR, spend with
+// no known source.
+func (c *ccBook) checkOverhead(overhead, window float64, models []string, why overheadReason, label string) {
 	bound := max(ccOverheadBoundUSD, ccOverheadBoundShare*window)
 	if overhead <= bound {
 		return
 	}
-	cause := "spend no transcript holds (a subagent tail that never opened, a lost resume baseline?)"
-	if outputOnly {
-		cause = "output-only overhead: subagent transcripts missing their final record, CC bug " + ccBugMissingFinalRecord
-	}
-	c.raise(accounting.Alarm{Invariant: accounting.InvOverheadBounded, Warn: outputOnly,
+	c.raise(accounting.Alarm{Invariant: accounting.InvOverheadBounded, Warn: why.known,
 		Detail: fmt.Sprintf("session %s %s: overhead $%.4f is over the bound $%.2f (CC's cost for the window $%.4f): %s — %s",
-			c.session, label, overhead, bound, window, strings.Join(models, "; "), cause)})
+			c.session, label, overhead, bound, window, strings.Join(models, "; "), why.cause)})
 }
 
 // onlyOutput reports whether output is the only class t bills.

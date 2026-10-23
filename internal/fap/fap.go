@@ -169,7 +169,7 @@ const (
 // unified Activity frame. The server resolves the concurrently-true inputs to a
 // single kind by this precedence (highest first):
 //
-//	subagents > waiting > tool > thinking > warming > typing > idle
+//	subagents > waiting > retrying > tool > thinking > warming > typing > idle
 //
 // The zero value is the empty string; treat it as ActivityKindIdle. Mirrors the
 // Kotlin ActivityKind enum in the :protocol module.
@@ -193,6 +193,12 @@ const (
 	// ActivityKindWaiting: this conversation dispatched a send_to_session and is
 	// waiting on another foci agent's reply (detail carries the target agent id).
 	ActivityKindWaiting ActivityKind = "waiting"
+	// ActivityKindRetrying: Claude Code is waiting to retry a failed API call
+	// of the main thread (an api_retry event, #2260). Detail is plain text built
+	// once per retry, e.g. "API overloaded (529), retry 3, next try in 2m". It
+	// clears when the turn produces output, a tool event, or ends. An app that
+	// does not know the kind shows its default caption.
+	ActivityKindRetrying ActivityKind = "retrying"
 )
 
 // WebSocket close codes (wire-protocol §7).
@@ -280,7 +286,7 @@ type ConversationInfo struct {
 	Activity string `json:"activity,omitempty"`
 	// ActivityDetail carries the kind-specific detail for Activity: the tool name
 	// (kind=tool), the running-subagent descriptions (kind=subagents), the target
-	// agent id (kind=waiting), else empty.
+	// agent id (kind=waiting), the retry text (kind=retrying), else empty.
 	ActivityDetail string `json:"activityDetail,omitempty"`
 	// ActivityAgentKind, ActivityAgentDetail, ActivityAgentCommand,
 	// ActivityAgentShell and Subagents are the snapshot halves of the Activity
@@ -529,18 +535,19 @@ type Notification struct {
 func (Notification) Type() string { return TypeNotification }
 
 // Activity is the unified agent-activity indicator: the server resolves the
-// per-turn state (warming/thinking/tool/typing) and the two session-scoped
-// states (subagents running, waiting on another agent) to a single Kind by the
-// ActivityKind precedence, and emits one Activity frame on every resolved
-// change. Detail carries the kind-specific payload: the tool name (kind=tool),
-// the running-subagent descriptions (kind=subagents), the target agent id
-// (kind=waiting), else empty. This REPLACES the former Typing/Thinking/Warming/
+// per-turn state (warming/thinking/tool/typing, and retrying while Claude Code
+// waits to retry an API call) and the two session-scoped states (subagents
+// running, waiting on another agent) to a single Kind by the ActivityKind
+// precedence, and emits one Activity frame on every resolved change. Detail
+// carries the kind-specific payload: the tool name (kind=tool), the
+// running-subagent descriptions (kind=subagents), the target agent id
+// (kind=waiting), the retry text (kind=retrying), else empty. This REPLACES the former Typing/Thinking/Warming/
 // Tool frames. App-only.
 //
 // Kind/Detail flatten everything to one line, so while subagents run the
 // agent's own activity is hidden. The optional fields keep the two apart
 // (#2138): AgentKind/AgentDetail are the agent's OWN resolved activity
-// (waiting > tool > thinking > warming > typing, never "subagents"; empty =
+// (waiting > retrying > tool > thinking > warming > typing, never "subagents"; empty =
 // idle), AgentCommand is the running tool call's full command, AgentShell says
 // that call is a shell command /stop commands can stop on its own (#2140), and
 // Subagents lists every running subagent and background command. A client that

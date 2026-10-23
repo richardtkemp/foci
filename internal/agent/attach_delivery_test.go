@@ -4,7 +4,9 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
+	"foci/internal/delegator"
 	"foci/internal/turnevent"
 )
 
@@ -27,6 +29,39 @@ func (s *eventCaptureSink) snapshot() []turnevent.Event {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]turnevent.Event(nil), s.events...)
+}
+
+// TestAttachDelivery_APIRetryReachesRouterAsBackendRetry: a backend's API
+// retry (Claude Code's api_retry, #2260) reaches the session router as a
+// turnevent.BackendRetry, and never as a RetryNotice, which would post a chat
+// message on Telegram/Discord.
+func TestAttachDelivery_APIRetryReachesRouterAsBackendRetry(t *testing.T) {
+	a := &Agent{}
+	be := &mockBackendDT{}
+	sk := "test/c2260"
+	a.AttachDelivery(be, sk)
+
+	capture := &eventCaptureSink{}
+	a.sessionRouter(sk).Register(capture)
+	defer a.sessionRouter(sk).Clear()
+
+	se := be.sessionEvents
+	if se == nil || se.OnAPIRetry == nil {
+		t.Fatal("AttachDelivery installed no OnAPIRetry: CC retries are dropped")
+	}
+	se.OnAPIRetry(delegator.APIRetry{Endpoint: "Claude Code", Attempt: 3, MaxRetries: 15, Delay: 2 * time.Minute, Status: 529, Category: "overloaded"})
+
+	got := capture.snapshot()
+	if len(got) != 1 {
+		t.Fatalf("router received %d events, want 1: %#v", len(got), got)
+	}
+	if _, ok := got[0].(turnevent.RetryNotice); ok {
+		t.Fatalf("router got a RetryNotice: %#v", got[0])
+	}
+	want := turnevent.BackendRetry{Endpoint: "Claude Code", Attempt: 3, MaxRetries: 15, Delay: 2 * time.Minute, Status: 529, Category: "overloaded"}
+	if got[0] != turnevent.Event(want) {
+		t.Errorf("router event = %#v, want %#v", got[0], want)
+	}
 }
 
 // TestAttachDelivery_SubagentPromptReachesRouter pins #2092: AttachDelivery

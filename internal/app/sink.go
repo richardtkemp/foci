@@ -159,6 +159,12 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 		// onto a later, unrelated bubble.
 		s.backend.voiceUnavailable = ""
 
+	case turnevent.BackendRetry:
+		// Claude Code is waiting to retry the main thread's API call (#2260):
+		// shown until the next content or tool event, or the turn's end, clears
+		// it (setTurnTool). Heartbeats and subagent events do not clear it.
+		s.b.setRetrying(retryDetail(e.Status, e.Attempt, e.Delay))
+
 	case turnevent.TurnComplete:
 		// Voice-mode bundling (#1439): synthesize BEFORE forwarding so the reply
 		// waits on synthesis — text and its voice-mode attachment land together,

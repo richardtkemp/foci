@@ -1796,6 +1796,11 @@ func (a *Agent) AttachDelivery(be delegator.Delegator, sk string) {
 				tally.end(id, name)
 				router.Emit(context.Background(), turnevent.ToolResult{ID: id, Name: name, Output: output, IsError: isError})
 			},
+			OnAPIRetry: func(r delegator.APIRetry) {
+				// A BackendRetry, never a RetryNotice: only the app shows it (#2260).
+				router.Emit(context.Background(), turnevent.BackendRetry{Endpoint: r.Endpoint, Attempt: r.Attempt,
+					MaxRetries: r.MaxRetries, Delay: r.Delay, Status: r.Status, Category: r.Category})
+			},
 		}
 		a.sessionEvents[sk] = se
 	}

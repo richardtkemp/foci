@@ -297,6 +297,12 @@ type Backend struct {
 	nestedAgents map[string]string // nested Agent tool_use_id -> spawner's groupKey ("" = spawner unresolved)
 	nestedTasks  map[string]string // nested task_id -> its own Agent tool_use_id
 
+	// subagentRetrying holds the subagent group keys in a logged API retry
+	// streak, so the frame that ends one logs a recovery and ordinary Agent
+	// heartbeats do not (#2260, logSubagentRetry).
+	subagentRetryMu  sync.Mutex
+	subagentRetrying map[string]bool
+
 	// subagentTails tails foreground subagent transcript files and forwards
 	// their assistant text as subagent progress (foreground subagent text is
 	// otherwise absent from the parent stdout stream). Lazily created on first

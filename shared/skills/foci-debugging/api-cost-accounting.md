@@ -38,7 +38,8 @@ ledger, its per-turn and total sections only compare the ledger with itself). Th
 every quiet point and alarms `ledger invCostDivergence` to operator chat; an oversized turn-less remainder
 alarms `ledger invOverheadBounded` — at WARN when it is output tokens only (CC bug
 https://github.com/anthropics/claude-code/issues/84223, subagent transcripts missing their final
-record), at ERROR when any other class is in it (#2175).
+record), or when it is Haiku input/output only in a window where WebFetch/WebSearch ran (CC's web
+tools' Haiku side calls, recorded in no transcript, #2468); at ERROR when any other spend is in it (#2175).
 
 **A remainder row is CC's spend no call record holds** (`kind` overhead or compaction,
 `finality='derived'`): utility calls, a subagent's real output when its transcript has no final line,

@@ -530,15 +530,25 @@ type SessionStateMessage struct {
 	State   string `json:"state"`   // "idle"|"running"|"requires_action"
 }
 
-// APIRetryMessage indicates an API call is being retried after a failure.
+// APIRetryMessage indicates an API call of the MAIN thread is being retried
+// after a failure (a subagent's retries come as ToolProgressMessage.
+// SubagentRetry instead, #2260). Attempt is not monotonic: under the retry
+// watchdog CC counts 529/429 and other errors separately (live: 1,2,1,2), and
+// it can pass MaxRetries.
 type APIRetryMessage struct {
 	Type         string `json:"type"`    // "system"
 	Subtype      string `json:"subtype"` // "api_retry"
 	Attempt      int    `json:"attempt"`
 	MaxRetries   int    `json:"max_retries"`
 	RetryDelayMS int    `json:"retry_delay_ms"`
-	ErrorStatus  int    `json:"error_status"`
-	Error        string `json:"error"`
+	ErrorStatus  *int   `json:"error_status"` // nil: no response status (e.g. a dropped connection)
+	Error        string `json:"error"`        // overloaded|rate_limit|server_error|authentication_failed|cloud_credential_error|unknown
+	// NoResponse is set only on a first-byte timeout; its MaxRetries is then
+	// that cause's own cap, not the session budget.
+	NoResponse *struct {
+		WaitedMS    int `json:"waited_ms"`
+		RetryWaitMS int `json:"retry_wait_ms"`
+	} `json:"no_response,omitempty"`
 }
 
 // ModelRefusalFallbackMessage is CC's "system / model_refusal_fallback"
@@ -599,12 +609,29 @@ type PermissionRequestPayload struct {
 }
 
 // ToolProgressMessage is a heartbeat emitted during long-running tool
-// execution.
+// execution. For an Agent tool it also carries a subagent's API retries
+// (#2260, CC 2.1.306): SubagentRetry set while the subagent waits to retry,
+// then one frame without it once the subagent's next good message arrives.
+// ParentToolUseID is then the Agent tool_use id, foci's subagent group key.
 type ToolProgressMessage struct {
-	Type               string `json:"type"` // "tool_progress"
-	ToolUseID          string `json:"tool_use_id"`
-	ToolName           string `json:"tool_name"`
-	ElapsedTimeSeconds int    `json:"elapsed_time_seconds"`
+	Type               string         `json:"type"` // "tool_progress"
+	ToolUseID          string         `json:"tool_use_id"`
+	ToolName           string         `json:"tool_name"`
+	ParentToolUseID    *string        `json:"parent_tool_use_id,omitempty"`
+	ElapsedTimeSeconds int            `json:"elapsed_time_seconds"`
+	SubagentType       string         `json:"subagent_type,omitempty"`
+	SubagentRetry      *SubagentRetry `json:"subagent_retry,omitempty"`
+}
+
+// SubagentRetry is a subagent's API retry, as tool_progress carries it. Note
+// the category field is "error_category" here, "error" on api_retry.
+type SubagentRetry struct {
+	AgentID       string `json:"agent_id"` // = task_started's task_id
+	Attempt       int    `json:"attempt"`
+	MaxRetries    int    `json:"max_retries"`
+	RetryDelayMS  int    `json:"retry_delay_ms"`
+	ErrorStatus   *int   `json:"error_status"`
+	ErrorCategory string `json:"error_category"`
 }
 
 // TaskEvent tracks agent/background task lifecycle (system/task_*).

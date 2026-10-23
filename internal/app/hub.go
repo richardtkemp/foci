@@ -2372,6 +2372,7 @@ type convBinding struct {
 	turnDetail     string                // turn-scoped detail (e.g. tool name)
 	turnCommand    string                // turn-scoped full tool command (kind=tool), for the stop dialog (#2138)
 	turnShell      bool                  // the turn-scoped tool is a shell command, stoppable on its own (#2140)
+	retryDetail    string                // turn-scoped: CC is waiting to retry an API call, the text to show (#2260); empty if not
 	subagentDetail string                // running-subagent descriptions, empty if none
 	subagents      []fap.RunningSubagent // the structured running list behind subagentDetail (#2138)
 	spawns         []fap.RunningSubagent // the session's background spawns, listed after its subagents (#2139)
@@ -2530,11 +2531,12 @@ func (b *convBinding) info() fap.ConversationInfo {
 // resolveActivity collapses the turn-scoped and session-scoped inputs to a
 // single (kind, detail) by the ActivityKind precedence:
 //
-//	subagents > waiting > tool > thinking > warming > typing > idle
+//	subagents > waiting > retrying > tool > thinking > warming > typing > idle
 //
 // The turn-scoped inputs (turnKind/turnDetail) already carry exactly one of
 // tool/thinking/warming/typing (appSink sets the latest per turn event), so the
-// resolver only layers the two session-scoped states above them. Caller holds mu.
+// resolver only layers the retry state and the two session-scoped states above
+// them. Caller holds mu.
 func (b *convBinding) resolveActivity() (fap.ActivityKind, string) {
 	if b.subagentDetail != "" || len(b.spawns) > 0 {
 		detail := b.subagentDetail
@@ -2551,12 +2553,15 @@ func (b *convBinding) resolveActivity() (fap.ActivityKind, string) {
 }
 
 // agentActivityLocked resolves the AGENT's own activity, ignoring subagents:
-// waiting > turn-scoped > idle, plus the running tool's full command and
+// waiting > retrying > turn-scoped > idle, plus the running tool's full command and
 // whether it is a shell command (#2140). This is what the app shows first,
 // above the subagent lines (#2138). Caller holds mu.
 func (b *convBinding) agentActivityLocked() (kind fap.ActivityKind, detail, command string, shell bool) {
 	if b.waitingDetail != "" {
 		return fap.ActivityKindWaiting, b.waitingDetail, "", false
+	}
+	if b.retryDetail != "" {
+		return fap.ActivityKindRetrying, b.retryDetail, "", false
 	}
 	if b.turnKind != "" && b.turnKind != fap.ActivityKindIdle {
 		return b.turnKind, b.turnDetail, b.turnCommand, b.turnShell
@@ -2601,14 +2606,23 @@ func (b *convBinding) setTurnActivity(kind fap.ActivityKind) {
 // setTurnTool records the turn-scoped kind with its detail and, for a tool, the
 // full command shown behind the stop dialog's "show full command" expander
 // (#2138) and whether it is a shell command the dialog can stop on its own
-// (#2140).
+// (#2140). Every turn-scoped change is a sign the main call went through (or
+// the turn ended), so it also clears a retry state (#2260), in the same frame.
 func (b *convBinding) setTurnTool(kind fap.ActivityKind, detail, command string, shell bool) {
 	b.applyActivity(func() {
+		b.retryDetail = ""
 		b.turnKind = kind
 		b.turnDetail = detail
 		b.turnCommand = command
 		b.turnShell = shell
 	})
+}
+
+// setRetrying records that Claude Code is waiting to retry an API call of the
+// turn, with the text to show (#2260). The turn-scoped kind under it is kept,
+// so the activity goes back to it when the retry clears (setTurnTool).
+func (b *convBinding) setRetrying(detail string) {
+	b.applyActivity(func() { b.retryDetail = detail })
 }
 
 // setCacheExpiry records the prompt-cache expiry (unix ms) and sends a

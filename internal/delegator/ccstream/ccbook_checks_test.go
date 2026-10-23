@@ -213,6 +213,126 @@ func TestOverheadBoundedSeverity(t *testing.T) {
 	}
 }
 
+// TestOverheadWebSideCallsWarn is #2468: CC runs WebFetch and WebSearch on
+// side calls to Haiku that no transcript records, so their spend is in the
+// remainder as Haiku input and output, uncached. Such a Haiku remainder in a
+// window where a web tool ran is a known cause: with the output-only Opus part
+// (#2175) beside it, the 2026-10-15 firing's shape, the alarm is a WARN. The
+// same Haiku remainder with no web tool in its window, or one with a cache
+// class, is still an ERROR; and a web tool in a window already settled does
+// not excuse a later one. The web tool is seen on a main or subagent line,
+// including one after the line that booked its call (CC writes each content
+// block as its own line, every one with the stop reason).
+func TestOverheadWebSideCallsWarn(t *testing.T) {
+	const haiku = "claude-haiku-5-5"
+	big := modelinfo.Tokens{modelinfo.ClassOutput: 200000}
+	if mustCost(t, big) <= ccOverheadBoundUSD {
+		t.Fatal("premise: the Opus output-only part must exceed the $ bound")
+	}
+	webLine := func(l *ccLine) *ccLine { l.webTool = true; return l }
+	for _, tc := range []struct {
+		name     string
+		feed     func(tb *testBook) // the window's lines, before its result
+		settle   bool               // settle a first quiet window (holding feed) before the remainder's
+		haikuMU  ModelUsage
+		wantWarn bool
+	}{
+		{"main web tool warns", func(tb *testBook) {
+			tb.streamNamed("m1", "", "T1", tb.clock)
+			tb.mainLine(webLine(line("m1", opus, tb.clock, "tool_use", 10, 10, 0, 0, 0)))
+		}, false, ModelUsage{InputTokens: 102321, OutputTokens: 16971}, true},
+		{"main web tool on a later block warns", func(tb *testBook) {
+			tb.streamNamed("m1", "", "T1", tb.clock)
+			tb.mainLine(line("m1", opus, tb.clock, "tool_use", 10, 10, 0, 0, 0))
+			tb.mainLine(webLine(line("m1", opus, tb.clock, "tool_use", 10, 10, 0, 0, 0)))
+		}, false, ModelUsage{InputTokens: 102321, OutputTokens: 16971}, true},
+		{"held main web tool warns", func(tb *testBook) {
+			tb.mainLine(webLine(line("m1", opus, tb.clock, "", 10, 10, 0, 0, 0)))
+			tb.mainLine(line("m1", opus, tb.clock, "tool_use", 10, 10, 0, 0, 0))
+			tb.streamNamed("m1", "", "T1", tb.clock)
+		}, false, ModelUsage{InputTokens: 102321, OutputTokens: 16971}, true},
+		{"subagent web tool on a later block warns", func(tb *testBook) {
+			tb.subLine("agent-a", "T1", line("s1", opus, tb.clock, "tool_use", 10, 10, 0, 0, 0))
+			tb.subLine("agent-a", "T1", webLine(line("s1", opus, tb.clock, "tool_use", 10, 10, 0, 0, 0)))
+		}, false, ModelUsage{InputTokens: 102321, OutputTokens: 16971, WebSearchRequests: 1}, true},
+		{"no web tool stays an error", func(tb *testBook) {
+			tb.streamNamed("m1", "", "T1", tb.clock)
+			tb.mainLine(line("m1", opus, tb.clock, "tool_use", 10, 10, 0, 0, 0))
+		}, false, ModelUsage{InputTokens: 102321, OutputTokens: 16971}, false},
+		{"a cache class stays an error", func(tb *testBook) {
+			tb.streamNamed("m1", "", "T1", tb.clock)
+			tb.mainLine(webLine(line("m1", opus, tb.clock, "tool_use", 10, 10, 0, 0, 0)))
+		}, false, ModelUsage{InputTokens: 102321, OutputTokens: 16971, CacheReadInputTokens: 5000}, false},
+		{"a web tool in a settled window stays an error", func(tb *testBook) {
+			tb.streamNamed("m1", "", "T1", tb.clock)
+			tb.mainLine(webLine(line("m1", opus, tb.clock, "tool_use", 10, 10, 0, 0, 0)))
+		}, true, ModelUsage{InputTokens: 102321, OutputTokens: 16971}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tb := newTestBook(t, nil)
+			counted := modelinfo.Tokens{modelinfo.ClassInput: 10, modelinfo.ClassOutput: 10}
+			tc.feed(tb)
+			if tc.settle {
+				tb.result(map[string]ModelUsage{opus: {InputTokens: 10, OutputTokens: 10, CostUSD: mustCost(t, counted)}}, 0, tb.clock)
+				tb.advance(time.Second)
+			}
+			hu := tc.haikuMU
+			hu.CostUSD = 0.0187
+			total := modelinfo.Tokens{modelinfo.ClassInput: 10, modelinfo.ClassOutput: 200010}
+			tb.result(map[string]ModelUsage{
+				opus:  {InputTokens: 10, OutputTokens: 200010, CostUSD: mustCost(t, total)},
+				haiku: hu,
+			}, 0, tb.clock)
+			tb.advance(time.Second)
+			if n := tb.alarmsOf(accounting.InvNegativeRemainder); n != 0 {
+				t.Fatalf("premise: negative remainder %+v", tb.alarms)
+			}
+			var got []accounting.Alarm
+			for _, a := range tb.alarms {
+				if a.Invariant == accounting.InvOverheadBounded {
+					got = append(got, a)
+				}
+			}
+			if len(got) != 1 {
+				t.Fatalf("alarms = %+v, want one invOverheadBounded", tb.alarms)
+			}
+			if !strings.Contains(got[0].Detail, haiku) {
+				t.Fatalf("premise: the Haiku remainder is overhead in the alarm: %s", got[0].Detail)
+			}
+			if got[0].Warn != tc.wantWarn {
+				t.Errorf("Warn = %v, want %v: %s", got[0].Warn, tc.wantWarn, got[0].Detail)
+			}
+			if named := strings.Contains(got[0].Detail, "WebFetch/WebSearch"); named != tc.wantWarn {
+				t.Errorf("detail names the web tools' side calls = %v, want %v: %s", named, tc.wantWarn, got[0].Detail)
+			}
+		})
+	}
+}
+
+// TestParseCCRecordWebTool: an assistant line holding a WebFetch or WebSearch
+// tool_use is marked; any other tool, or text, is not (#2468).
+func TestParseCCRecordWebTool(t *testing.T) {
+	for _, tc := range []struct {
+		content string
+		want    bool
+	}{
+		{`[{"type":"tool_use","id":"t1","name":"WebFetch","input":{"url":"https://x"}}]`, true},
+		{`[{"type":"tool_use","id":"t1","name":"WebSearch","input":{"query":"q"}}]`, true},
+		{`[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"WebFetch"}}]`, false},
+		{`[{"type":"text","text":"I will call \"tool_use\" WebFetch"}]`, false},
+		{`[{"type":"thinking","thinking":"..."}]`, false},
+	} {
+		raw := `{"type":"assistant","timestamp":"2026-10-15T17:12:00Z","message":{"id":"msg_1","model":"claude-opus-5-5","stop_reason":"tool_use","usage":{"input_tokens":1,"output_tokens":1},"content":` + tc.content + `}}`
+		l, _ := parseCCRecord([]byte(raw))
+		if l == nil {
+			t.Fatalf("premise: %s did not parse as an assistant line", raw)
+		}
+		if l.webTool != tc.want {
+			t.Errorf("webTool = %v, want %v for %s", l.webTool, tc.want, tc.content)
+		}
+	}
+}
+
 // TestTurnActivityClosesWhenItsSubagentsStop is T14 for activity_closed_at: a
 // turn that spawned no subagent closes at its end; one whose background
 // subagent outlives it stays running until the subagent's tail closes, and
