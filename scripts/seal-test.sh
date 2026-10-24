@@ -62,6 +62,8 @@
 #   /dev/ptmx, /dev/pts      tmux PTY master alloc + dynamically-numbered
 #                            slave device nodes
 #   /dev/shm                 Chrome's shared-memory IPC segments
+#   ROD_CACHE_DIR            go-rod's downloaded Chromium (foci_todo #2541):
+#                            see the ROD_CACHE_DIR block below
 # GOCACHE/GOMODCACHE are mkdir -p'd below before being whitelisted: llbox
 # opens each whitelist path to get an anchor fd, which fails if the
 # directory doesn't exist yet — exactly the fresh-clone case GOMODCACHE is
@@ -114,7 +116,22 @@ fi
 # the green-field run this is meant to protect (foci_todo #1523).
 mkdir -p "$GOCACHE_DIR" "$GOMODCACHE_DIR"
 
-WHITELIST="$TESTDIR,$GOCACHE_DIR,$GOMODCACHE_DIR,/dev/null,/dev/ptmx,/dev/pts,/dev/shm"
+# go-rod's launcher.New() never looks for an installed Chrome: it runs the
+# Chromium revision it pins, downloaded into $HOME/.cache/rod/browser. HOME is
+# a fresh TESTDIR/home on every run, so every run that launched a browser
+# downloaded it again (190 MB Linux, 136 MB macOS): 11 s download + 4 s unzip on
+# the NUC, 26 s + 1 s on the Mac Pro, charged to whichever test launched first
+# (foci_todo #2541). Point that path at a cache that outlives the run, the way
+# the Go caches are pinned. It is a dedicated dir, not the account's real
+# ~/.cache/rod, because rod deletes and re-fetches a revision that fails its
+# check, and the live gateway runs from the real one. Whitelisted so the first
+# run on a host can download into it; rod serialises concurrent downloads with
+# its own host-wide port lock.
+ROD_CACHE_DIR="${FOCI_TEST_ROD_CACHE:-$HOME/.cache/foci-test-rod}"
+mkdir -p "$ROD_CACHE_DIR" "$TESTDIR/home/.cache"
+ln -sfn "$ROD_CACHE_DIR" "$TESTDIR/home/.cache/rod"
+
+WHITELIST="$TESTDIR,$GOCACHE_DIR,$GOMODCACHE_DIR,$ROD_CACHE_DIR,/dev/null,/dev/ptmx,/dev/pts,/dev/shm"
 
 # ---- A fixed environment (foci_todo #2348) ---------------------------------
 # go test keys a cached result on every env var a test reads (os.Getenv,
