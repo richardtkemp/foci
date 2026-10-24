@@ -138,8 +138,14 @@ func (r *recordingBackend) Injects() []delegator.Inject {
 
 func newTestAgent(t *testing.T) *Agent {
 	t.Helper()
-	return &Agent{}
+	return &Agent{injectGatePoll: testGatePoll}
 }
+
+// testGatePoll is the inject gate's poll backstop in tests: a pending-work
+// transition (mockBackendDT.setAwaiting) has no broadcast, so production's 1s
+// poll would make every test that clears it wait a second. The poll path
+// itself is unchanged, only its cadence (#2537).
+const testGatePoll = 10 * time.Millisecond
 
 // startedAgent returns an agent with StartInbox called, suitable for
 // worker-driven tests. The returned cancel func must be called to stop

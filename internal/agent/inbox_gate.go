@@ -23,8 +23,18 @@ import (
 // transition (a tracked subagent/Bash completing) has no channel, so the wait
 // polls backendAwaitingAutonomousRun at this cadence (ALARP: a poll beats new
 // callback plumbing for a rare, bounded wait). Not configurable — a fixed 1s
-// tick on an already-blocked wait.
+// tick on an already-blocked wait. Tests shorten it per agent
+// (Agent.injectGatePoll) so a pending-work transition is seen in milliseconds,
+// through the same poll path (#2537).
 const injectGatePollInterval = 1 * time.Second
+
+// gatePollInterval is the poll backstop this agent's gate waits use.
+func (a *Agent) gatePollInterval() time.Duration {
+	if a.injectGatePoll > 0 {
+		return a.injectGatePoll
+	}
+	return injectGatePollInterval
+}
 
 // backendAwaitingAutonomousRun is the nil-safe wrapper over
 // DelegatedManager.BackendAwaitingAutonomousRun: false for API agents (no
@@ -179,7 +189,7 @@ func (a *Agent) gateWaitLoop(ctx context.Context, sk, reason string, gated func(
 			// Adoption / in-flight edge fired — re-check.
 		case <-a.shutdown.done():
 			// Draining — re-check (the gate opens).
-		case <-time.After(injectGatePollInterval):
+		case <-time.After(a.gatePollInterval()):
 			// Pending-work transitions have no broadcast — poll.
 		}
 	}

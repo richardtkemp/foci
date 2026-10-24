@@ -1257,12 +1257,16 @@ func TestClose_DoesNotHoldManagerLockDuringBackendClose(t *testing.T) {
 func TestGet_TypingFuncBoundedWhenManagerLockHeld(t *testing.T) {
 	// Defense-in-depth regression for TODO #749. Even if a future caller
 	// regresses and holds m.mu across be.Close (the original bug), the
-	// typingFunc wrapper must still return within typingFuncTimeout —
-	// because sk() now runs inside the inner goroutine, so the outer
-	// select's 2s timer fires regardless of what the inner goroutine
-	// is blocked on.
+	// typingFunc wrapper must still return when its typingFuncTimeout bound
+	// fires — because sk() now runs inside the inner goroutine, so the outer
+	// select's timer fires regardless of what the inner goroutine is blocked
+	// on. The bound is fired by the test (typingTimer seam, #2537) rather
+	// than waited out: what is proven is that the wrapper returns on it while
+	// m.mu is held, not the bound's 2s length.
 	mgr, mocks := newTestManager(t, nil)
 	mgr.TypingFunc = func(sk string, typing bool, _ *TypingStage) {}
+	expire := make(chan time.Time)
+	mgr.typingTimer = func() <-chan time.Time { return expire }
 
 	if _, err := mgr.Get(context.Background(), "test-agent/c1"); err != nil {
 		t.Fatalf("Get: %v", err)
@@ -1278,36 +1282,27 @@ func TestGet_TypingFuncBoundedWhenManagerLockHeld(t *testing.T) {
 
 	// Hold m.mu — sk() inside the wrapper's inner goroutine will block on this.
 	mgr.mu.Lock()
+	defer mgr.mu.Unlock()
 
-	start := time.Now()
 	done := make(chan struct{})
 	go func() {
-		tf(false) // must return within typingFuncTimeout despite m.mu being held
+		tf(false) // must return on the bound despite m.mu being held
 		close(done)
 	}()
 
+	// Fire the bound. The send completes only once the wrapper is in its
+	// select: if sk() ran outside the inner goroutine the wrapper would be
+	// stuck on m.mu before ever reaching it, and this hang-guard fails.
+	select {
+	case expire <- time.Time{}:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the wrapper never reached its bounded wait — sk() is running outside the inner goroutine and blocking on m.mu")
+	}
 	select {
 	case <-done:
-		elapsed := time.Since(start)
-		// Upper bound is a hang-guard against the wrapper NOT bounding sk(),
-		// not a precision check on the internal timer — widened from a 500ms
-		// margin (host load can delay the racing goroutine's scheduling past
-		// the nominal 2s well before anything is actually stuck) to several
-		// seconds of slack (#2000).
-		if elapsed > typingFuncTimeout+5*time.Second {
-			t.Errorf("tf returned in %s — slower than typingFuncTimeout (%s) + slack", elapsed, typingFuncTimeout)
-		}
-		// Lower bound is safe under load: time.After(typingFuncTimeout) cannot
-		// fire early, so elapsed can only grow, not shrink, below nominal.
-		if elapsed < typingFuncTimeout-200*time.Millisecond {
-			t.Errorf("tf returned in %s — faster than typingFuncTimeout (%s); did the 2s bound actually fire?", elapsed, typingFuncTimeout)
-		}
-	case <-time.After(typingFuncTimeout + 10*time.Second):
-		mgr.mu.Unlock()
-		t.Fatalf("tf did not return within %s — sk() is still running outside the inner goroutine and blocking the wrapper", typingFuncTimeout+10*time.Second)
+	case <-time.After(10 * time.Second):
+		t.Fatal("tf did not return after its bound fired")
 	}
-
-	mgr.mu.Unlock()
 }
 
 func TestGet_TypingFuncRouting(t *testing.T) {
@@ -1380,15 +1375,21 @@ func TestGet_SubagentStatusFuncRouting(t *testing.T) {
 func TestGet_TypingFuncBoundedWhenDownstreamHangs(t *testing.T) {
 	// Proves that when the manager's TypingFunc hangs (e.g. Telegram
 	// SetChatTyping waiting on a stale connection), the wrapper returned by
-	// SetTypingFunc returns within typingFuncTimeout instead of blocking
-	// indefinitely. This is the defense-in-depth fix for TODO #749 — a
-	// fire-and-forget call should never wedge its caller.
+	// SetTypingFunc returns when its typingFuncTimeout bound fires instead of
+	// blocking indefinitely. This is the defense-in-depth fix for TODO #749 — a
+	// fire-and-forget call should never wedge its caller. The bound is fired by
+	// the test (typingTimer seam, #2537) once the downstream call is known to
+	// be hanging, so no 2s wait is spent.
 	mgr, mocks := newTestManager(t, nil)
 	hangCh := make(chan struct{})
 	defer close(hangCh)
+	entered := make(chan struct{}, 1)
 	mgr.TypingFunc = func(sk string, typing bool, _ *TypingStage) {
+		entered <- struct{}{}
 		<-hangCh // block until test cleanup
 	}
+	expire := make(chan time.Time, 1)
+	mgr.typingTimer = func() <-chan time.Time { return expire }
 
 	_, err := mgr.Get(context.Background(), "test-agent/c1")
 	if err != nil {
@@ -1403,32 +1404,29 @@ func TestGet_TypingFuncBoundedWhenDownstreamHangs(t *testing.T) {
 		t.Fatal("typingFunc not set on backend")
 	}
 
-	// Override the timeout so the test doesn't take 2 seconds. We can't change
-	// the const, but we can verify the wrapper returns within a generous bound
-	// shorter than the no-timeout case (which would block forever).
-	start := time.Now()
 	done := make(chan struct{})
 	go func() {
-		tf(false) // should return after ~typingFuncTimeout, not block forever
+		tf(false) // returns on the bound, not after the hung downstream
 		close(done)
 	}()
+	// The downstream call was really made (the wrapper did not bypass it)...
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("downstream TypingFunc was never invoked")
+	}
+	// ...and while it hangs, the wrapper has not returned: only the bound
+	// can release it.
 	select {
 	case <-done:
-		elapsed := time.Since(start)
-		// Allow some slack: must complete close to the configured timeout, not
-		// hang forever and not return instantly (which would mean we bypassed
-		// the downstream call entirely).
-		if elapsed < 100*time.Millisecond {
-			t.Errorf("tf returned in %s — too fast, downstream should have been invoked", elapsed)
-		}
-		// Hang-guard, not a precision check — widened from a 500ms margin for
-		// the same reason as TestGet_TypingFuncBoundedWhenManagerLockHeld
-		// (#2000).
-		if elapsed > typingFuncTimeout+5*time.Second {
-			t.Errorf("tf returned in %s — slower than typingFuncTimeout (%s) + slack", elapsed, typingFuncTimeout)
-		}
-	case <-time.After(typingFuncTimeout + 10*time.Second):
-		t.Fatalf("tf did not return within %s — bounded-timeout fix not working", typingFuncTimeout+10*time.Second)
+		t.Fatal("tf returned while the downstream call hangs and before its bound fired")
+	default:
+	}
+	expire <- time.Time{}
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("tf did not return after its bound fired — bounded-timeout fix not working")
 	}
 }
 

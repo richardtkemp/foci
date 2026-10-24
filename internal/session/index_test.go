@@ -1833,12 +1833,16 @@ func TestRecordTurnActivity_MergedWrite(t *testing.T) {
 	// last_activity_at advances only when bumpActivity; last_user_activity_at
 	// advances only when bumpUser; the row is created if missing; and identity
 	// columns (created_at) are preserved across turns.
+	// Each turn's stamp is the entry's CreatedAt (recordTurn writes it as
+	// "now"), at whole-second resolution — so the turns are given explicit
+	// times two seconds apart instead of sleeping past each second (#2537).
 	idx := tempIndex(t)
 	key := "bot/c1"
+	t0 := time.Now().UTC().Truncate(time.Second)
 
 	// First turn (interactive): creates the row, sets all three.
 	idx.RecordTurnActivity(SessionIndexEntry{
-		SessionKey: key, CreatedAt: time.Now().UTC(), SessionType: SessionTypeChat, Status: SessionStatusActive,
+		SessionKey: key, CreatedAt: t0, SessionType: SessionTypeChat, Status: SessionStatusActive,
 	}, true, true)
 	e, err := idx.Get(key)
 	if err != nil {
@@ -1856,9 +1860,8 @@ func TestRecordTurnActivity_MergedWrite(t *testing.T) {
 	// Memory turn (bumpActivity=false, bumpUser=false): cache advances, activity
 	// and user do NOT; created_at preserved.
 	u1, _ := idx.LastUserActivity(key)
-	time.Sleep(1100 * time.Millisecond)
 	idx.RecordTurnActivity(SessionIndexEntry{
-		SessionKey: key, CreatedAt: time.Now().UTC(), SessionType: SessionTypeChat, Status: SessionStatusActive,
+		SessionKey: key, CreatedAt: t0.Add(2 * time.Second), SessionType: SessionTypeChat, Status: SessionStatusActive,
 	}, false, false)
 	e, _ = idx.Get(key)
 	if !e.LastActivityAt.Equal(act1) {
@@ -1877,9 +1880,8 @@ func TestRecordTurnActivity_MergedWrite(t *testing.T) {
 
 	// Non-interactive substantive turn (bumpActivity=true, bumpUser=false):
 	// activity advances, user does NOT.
-	time.Sleep(1100 * time.Millisecond)
 	idx.RecordTurnActivity(SessionIndexEntry{
-		SessionKey: key, CreatedAt: time.Now().UTC(), SessionType: SessionTypeChat, Status: SessionStatusActive,
+		SessionKey: key, CreatedAt: t0.Add(4 * time.Second), SessionType: SessionTypeChat, Status: SessionStatusActive,
 	}, true, false)
 	e, _ = idx.Get(key)
 	if !e.LastActivityAt.After(act1) {

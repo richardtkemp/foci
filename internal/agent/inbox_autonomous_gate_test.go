@@ -24,10 +24,16 @@ func TestWaitInjectGate_HoldsUntilClear(t *testing.T) {
 
 	returned := make(chan bool, 1)
 	go func() { returned <- a.waitInjectGate(context.Background(), "test/s") }()
+	// The wait has entered its gated loop (it subscribed to the in-flight
+	// edge, which it does only while the hold reads active) and has not
+	// returned: it is blocking on the hold.
+	if !waitFor(2*time.Second, func() bool { return gateWatcherParked(a, "test/s") }) {
+		t.Fatal("waitInjectGate never entered its wait loop while the backend was awaiting")
+	}
 	select {
 	case <-returned:
 		t.Fatal("waitInjectGate returned while the backend was awaiting; expected to block")
-	case <-time.After(300 * time.Millisecond):
+	default:
 	}
 
 	be.setAwaiting(false)
@@ -134,12 +140,18 @@ func TestInbox_Inject_HeldWhileBackendAwaitingPendingWork(t *testing.T) {
 		Run:     func() { ran.Add(1) },
 	}})
 
-	if waitFor(300*time.Millisecond, func() bool { return ran.Load() == 1 }) {
+	// Held, not run: the inject parks in the gate (a synchronous observable,
+	// no fixed wait) and has not run.
+	if !waitFor(2*time.Second, func() bool { return gateWatcherParked(a, sk) }) {
+		t.Fatal("the reflection inject never parked in the gate")
+	}
+	if ran.Load() != 0 {
 		t.Fatal("reflection inject ran while the backend reported pending background work (spec §4) — its autonomous run would own delivery")
 	}
 
-	// Background work completes → AwaitingAutonomousRun flips false; the ~1s poll
-	// backstop wakes the parked worker and the inject proceeds.
+	// Background work completes → AwaitingAutonomousRun flips false; the poll
+	// backstop (testGatePoll here, 1s in production) wakes the parked worker
+	// and the inject proceeds.
 	be.setAwaiting(false)
 	if !waitFor(2*time.Second, func() bool { return ran.Load() == 1 }) {
 		t.Fatalf("reflection inject did not run after pending work cleared; ran=%d", ran.Load())

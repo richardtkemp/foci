@@ -153,7 +153,12 @@ func TestInjectGate_HeldInjectsCharacterisation(t *testing.T) {
 				Trigger: trigger,
 				Run:     func() { ran.Add(1) },
 			}})
-			if waitFor(300*time.Millisecond, func() bool { return ran.Load() == 1 }) {
+			// Held: it parks in the gate (a synchronous observable, no fixed
+			// wait) and has not run.
+			if !waitFor(2*time.Second, func() bool { return gateWatcherParked(a, "test/s") }) {
+				t.Fatalf("%s inject never parked in the gate during pending work", trigger)
+			}
+			if ran.Load() != 0 {
 				t.Fatalf("%s inject ran during pending work — system inputs keep the hold (#2233 ruling)", trigger)
 			}
 		})

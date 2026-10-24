@@ -132,7 +132,7 @@ func newBatchTestAgent(t *testing.T, be delegator.Delegator) *Agent {
 		NewBackend: func() (delegator.Delegator, error) { return be, nil },
 		Spec:       batchSpecFor(be),
 	}
-	a := &Agent{AgentID: "helen", Model: "opus", DelegatedManager: mgr}
+	a := &Agent{AgentID: "helen", Model: "opus", DelegatedManager: mgr, injectGatePoll: testGatePoll}
 	mgr.AttachDelivery = a.AttachDelivery
 	mgr.RunBatchTurn = a.RunBatchTurn
 	return a

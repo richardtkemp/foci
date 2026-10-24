@@ -55,6 +55,15 @@ func backendReadyTimeout() time.Duration {
 // completion. See TODO #749.
 const typingFuncTimeout = 2 * time.Second
 
+// typingExpiry returns the channel that ends one typing call's wait: the
+// typingTimer test seam when set, else time.After(typingFuncTimeout).
+func (m *DelegatedManager) typingExpiry() <-chan time.Time {
+	if m.typingTimer != nil {
+		return m.typingTimer()
+	}
+	return time.After(typingFuncTimeout)
+}
+
 // DelegatedManager creates and manages per-session Backend instances lazily
 // for the delegated transport path. Each session key gets its own Backend
 // (own CC session). Idle backends are closed after IdleTimeout and resumed
@@ -110,6 +119,11 @@ type DelegatedManager struct {
 	// than a guess. Not called while the session's current turn is one no
 	// human started (SetTypingAllowed, #2320).
 	TypingFunc func(sessionKey string, typing bool, stage *TypingStage)
+
+	// typingTimer is a test seam: when set, it supplies the channel that ends
+	// a typing call's wait in place of time.After(typingFuncTimeout), so a
+	// test fires the bound when it chooses instead of waiting 2s (#2537).
+	typingTimer func() <-chan time.Time
 
 	// SubagentStatusFunc reports the running-subagent (CC Agent-tool spawn)
 	// status for a session: detail is the comma-joined running descriptions, or
@@ -1305,6 +1319,7 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 			var keyHolder atomic.Pointer[string]
 			stage := &TypingStage{}
 			stage.Set("session key lookup (manager lock)")
+			expired := m.typingExpiry()
 			go func() {
 				defer close(done)
 				key := sk()
@@ -1314,7 +1329,7 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 			}()
 			select {
 			case <-done:
-			case <-time.After(typingFuncTimeout):
+			case <-expired:
 				keyStr := "<unknown>"
 				if kp := keyHolder.Load(); kp != nil {
 					keyStr = *kp

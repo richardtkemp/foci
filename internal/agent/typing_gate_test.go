@@ -287,17 +287,23 @@ func TestTypingGate_AutonomousRuns(t *testing.T) {
 	}
 }
 
-// TestTypingWrapper_StallWarningNamesStage: a TypingFunc overrunning the 2s
-// bound is logged with the step it stalled in and the session key, and no
-// longer blames Telegram whatever the connection (#2320).
+// TestTypingWrapper_StallWarningNamesStage: a TypingFunc overrunning the
+// typingFuncTimeout bound is logged with the step it stalled in and the
+// session key, and no longer blames Telegram whatever the connection (#2320).
 func TestTypingWrapper_StallWarningNamesStage(t *testing.T) {
 	mgr, mocks := newTestManager(t, nil)
 	hang := make(chan struct{})
 	defer close(hang)
+	// The bound is fired by the test (typingTimer seam, #2537) once the call
+	// has entered the stage under test, instead of waiting out the real 2s.
+	staged := make(chan struct{}, 1)
 	mgr.TypingFunc = func(_ string, _ bool, stage *TypingStage) {
 		stage.Set("connection lookup (test marker 2320)")
+		staged <- struct{}{}
 		<-hang
 	}
+	expire := make(chan time.Time, 1)
+	mgr.typingTimer = func() <-chan time.Time { return expire }
 	if _, err := mgr.Get(context.Background(), "test-agent/c2320"); err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -314,7 +320,13 @@ func TestTypingWrapper_StallWarningNamesStage(t *testing.T) {
 	})
 	defer remove()
 
-	tf(true)
+	go func() {
+		<-staged
+		expire <- time.Time{}
+	}()
+	// On its own goroutine, so a wrapper that never honours its bound fails
+	// this test at the hang-guard below rather than hanging the package.
+	go tf(true)
 	select {
 	case msg := <-warned:
 		if !strings.Contains(msg, "stalled in: connection lookup (test marker 2320)") {

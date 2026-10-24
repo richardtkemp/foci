@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/log"
 )
 
 // gateWatcherParked reports whether sk's gate watcher has entered its wait
@@ -441,6 +443,34 @@ func TestInbox_HeldWatchStopsOnWorkerExit(t *testing.T) {
 	}
 }
 
+// goroutineIn reports whether some goroutine's stack currently contains every
+// one of frames (substrings of its stack dump) — the observable for "a worker
+// is blocked HERE" where the code under test exposes no other.
+func goroutineIn(frames ...string) bool {
+	buf := make([]byte, 1<<16)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			buf = buf[:n]
+			break
+		}
+		buf = make([]byte, 2*len(buf))
+	}
+	for _, g := range strings.Split(string(buf), "\n\n") {
+		all := true
+		for _, f := range frames {
+			if !strings.Contains(g, f) {
+				all = false
+				break
+			}
+		}
+		if all {
+			return true
+		}
+	}
+	return false
+}
+
 // TestInbox_HeldInjectRefusedOnceWhenCtxEndsMidRelease pins the #2233 review
 // F1 exit path: the inbox ctx ends while releaseHeld is mid-release — the
 // head inject's hold has cleared but the re-login gate keeps the worker
@@ -457,7 +487,23 @@ func TestInbox_HeldInjectRefusedOnceWhenCtxEndsMidRelease(t *testing.T) {
 	be.setAwaiting(true)
 	a.DelegatedManager = newMockDelegatedManager(t, be)
 
-	sk := "test/s"
+	// A session key no other test uses, so the worker-exit log line below is
+	// this test's worker's and nobody else's.
+	const sk = "test/refused-once-2537"
+	if _, err := a.DelegatedManager.Get(context.Background(), sk); err != nil {
+		t.Fatalf("pre-register backend: %v", err)
+	}
+	exited := make(chan struct{}, 1)
+	removeTap := log.AddTap(log.DEBUG, func(_ log.Level, _ string, msg string) {
+		if strings.Contains(msg, "session worker exiting sk="+sk) {
+			select {
+			case exited <- struct{}{}:
+			default:
+			}
+		}
+	})
+	defer removeTap()
+
 	var refused atomic.Int32
 	var ran atomic.Int32
 	a.Enqueue(Envelope{SessionKey: sk, Inject: &InjectMeta{
@@ -471,20 +517,29 @@ func TestInbox_HeldInjectRefusedOnceWhenCtxEndsMidRelease(t *testing.T) {
 
 	// The re-login gate is claimed BEFORE the hold clears, so the release
 	// parks the worker inside waitReloginGate on the head instead of running
-	// it. The watcher notices the cleared hold within its 1s poll backstop.
+	// it. The watcher notices the cleared hold on its poll backstop; wait
+	// until the worker is really blocked there, inside releaseHeld — the
+	// mid-release state this test exists for.
 	claimRelogin(t)
 	be.setAwaiting(false)
-	time.Sleep(1500 * time.Millisecond)
+	if !waitFor(5*time.Second, func() bool {
+		return goroutineIn(".(*Agent).waitReloginGate(", ".(*Agent).releaseHeld(")
+	}) {
+		t.Fatal("the worker never reached waitReloginGate inside releaseHeld")
+	}
 
 	// The inbox ctx ends mid-release: the worker returns and its exit path
-	// refuses every still-held inject — exactly once each.
+	// refuses every still-held inject — exactly once each. The worker's exit
+	// log line comes after refuseHeld, so once it is seen every refusal the
+	// worker will ever make has been made.
 	cancel()
-	if !waitFor(2*time.Second, func() bool { return refused.Load() >= 1 }) {
-		t.Fatal("held inject was not refused when the inbox ctx ended mid-release")
+	select {
+	case <-exited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the session worker did not exit after the inbox ctx ended")
 	}
-	time.Sleep(300 * time.Millisecond)
 	if got := refused.Load(); got != 1 {
-		t.Fatalf("held inject refused %d times; want exactly 1 (double refusal, #2233 review F1)", got)
+		t.Fatalf("held inject refused %d times; want exactly 1 (0 = dropped silently; 2 = double refusal, #2233 review F1)", got)
 	}
 	if ran.Load() != 0 {
 		t.Fatal("the inject ran although the ctx ended mid-release")
@@ -514,9 +569,10 @@ func (b *sourceRecordingBackend) ImmediateInject(_ context.Context, inj delegato
 // A non-steering user message on the same session drives while the keepalive
 // waits, and the keepalive runs the moment the adopted run ends — while
 // pending work is STILL outstanding, because background work never holds a
-// keepalive. The user turn is long enough to cross the watcher's poll tick, so
-// a (spurious) hint is consumed mid-test and the spent watch must be dropped
-// and re-armed for the real release to be signalled.
+// keepalive. The user turn is long enough to cross several of the watcher's
+// poll ticks (testGatePoll), so a (spurious) hint is consumed mid-test and the
+// spent watch must be dropped and re-armed for the real release to be
+// signalled.
 func TestInbox_UserMessageRunsWhileKeepaliveParksBehindAdoptedRun(t *testing.T) {
 	initTestConvo(t, "helen")
 	const sk = "helen/c42"
@@ -571,12 +627,12 @@ func TestInbox_UserMessageRunsWhileKeepaliveParksBehindAdoptedRun(t *testing.T) 
 	// A non-steering user message must drive while the keepalive waits.
 	hook := make(chan struct{}, 1)
 	done := make(chan struct{}, 1)
-	d := &recordingDriver{hookCh: hook, doneCh: done, delay: 1500 * time.Millisecond}
+	d := &recordingDriver{hookCh: hook, doneCh: done, delay: 10 * testGatePoll}
 	a.SetTurnObserver(d.recordBatch)
 	a.Enqueue(Envelope{SessionKey: sk, Text: "user speaks", Driver: d})
 	select {
 	case <-hook:
-	case <-time.After(2500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		t.Fatal("user message waited behind a keepalive the gate did not park (head-of-line block, #2233 review F1)")
 	}
 	<-done
@@ -756,8 +812,11 @@ func TestInbox_KeepaliveReleasedWhileSiblingStaysHeld(t *testing.T) {
 		t.Fatal("neither inject ever parked in the gate")
 	}
 	// Both sit on the held list while the adopted run and the pending work
-	// hold their respective halves.
-	time.Sleep(300 * time.Millisecond)
+	// hold their respective halves. A user-input inject (never gated) queued
+	// behind them is the sync point: once it has run, the worker has
+	// dispatched both earlier injects, so neither can still be on its way to
+	// running — they parked, or they already ran.
+	flushInbox(t, a, sk)
 	mu.Lock()
 	if len(order) != 0 {
 		mu.Unlock()
@@ -788,6 +847,25 @@ func TestInbox_KeepaliveReleasedWhileSiblingStaysHeld(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		t.Fatalf("the wake did not run after the background work ended; order=%v", order)
+	}
+}
+
+// flushInbox enqueues a user-input inject on sk — never held by the
+// pending-work gate — and waits until it has run. Envelopes are dispatched in
+// order by the session's one worker, so on return everything enqueued on sk
+// before the call has been dispatched (run, or parked on the held list).
+func flushInbox(t *testing.T, a *Agent, sk string) {
+	t.Helper()
+	ran := make(chan struct{})
+	a.Enqueue(Envelope{SessionKey: sk, Inject: &InjectMeta{
+		Trigger:   "ask_grader",
+		UserInput: true,
+		Run:       func() { close(ran) },
+	}})
+	select {
+	case <-ran:
+	case <-time.After(5 * time.Second):
+		t.Fatal("flushInbox: the user-input sync inject never ran")
 	}
 }
 
