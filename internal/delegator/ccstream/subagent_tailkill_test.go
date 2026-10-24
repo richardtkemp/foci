@@ -21,7 +21,7 @@ import (
 // tool input and was read as false. The tail must survive regardless, so this
 // test keeps guarding even once the labelling is fixed.
 func TestPostToolUse_NeverStopsASubagentTail(t *testing.T) {
-	withFastTail(t)
+	withFastTailNoSettle(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 

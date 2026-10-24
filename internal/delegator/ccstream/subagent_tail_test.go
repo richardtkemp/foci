@@ -46,6 +46,19 @@ func withFastTail(t *testing.T) {
 	})
 }
 
+// withFastTailNoSettle is withFastTail for a test whose transcript never ends
+// at a terminal record and which stops its tail with finalize. Such a tail
+// can only exit when the settle window closes, so withFastTail's 1s window
+// was a pure wall-clock wait in each of those tests (#2538). A zero window
+// loses nothing: run arms settle only on stop, and loops through one more
+// drain before it can select settle, so everything written before finalize
+// is still read.
+func withFastTailNoSettle(t *testing.T) {
+	t.Helper()
+	withFastTail(t) // its cleanup restores subagentTailSettle
+	subagentTailSettle = 0
+}
+
 func assistantLine(text string) string {
 	return `{"type":"assistant","isSidechain":true,"message":{"content":[{"type":"text","text":"` + text + `"}]}}` + "\n"
 }
@@ -65,7 +78,7 @@ func waitFor(t *testing.T, cond func() bool) {
 // TestSubagentTail_ForegroundStreamsAppendedText verifies the tailer forwards
 // each assistant text block as it is appended to the transcript, in order.
 func TestSubagentTail_ForegroundStreamsAppendedText(t *testing.T) {
-	withFastTail(t)
+	withFastTailNoSettle(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent-x.jsonl")
 
@@ -114,27 +127,32 @@ func TestSubagentTail_ForegroundStreamsAppendedText(t *testing.T) {
 // TestSubagentTail_FinalizeDrainsRemainder verifies finalize catches text
 // written just before completion (a line appended after the last poll).
 func TestSubagentTail_FinalizeDrainsRemainder(t *testing.T) {
-	withFastTail(t)
+	withFastTailNoSettle(t)
+	// No poll can read FINAL-MSG: only finalize's drain can. With the 2ms
+	// poll a tail that skipped that drain still passed, because a poll
+	// usually read the line between the write and finalize (#2538).
+	subagentTailPoll = time.Minute
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent-y.jsonl")
 
 	rec := &tailRecorder{}
 	mgr := newSubagentTailManager(rec.deliver, nil)
 	mgr.expectForeground("tool-2")
-	if err := os.WriteFile(path, nil, 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(assistantLine("FIRST")), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	mgr.maybeStart("tool-2", path)
-	// Give the tailer time to open the file, then append + immediately finalize.
-	waitFor(t, func() bool { return fileOpened(mgr, "tool-2") })
+	// FIRST delivered: the tail has done its opening read and now waits on
+	// stop or the (minute-long) poll.
+	waitFor(t, func() bool { return len(rec.texts()) == 1 })
 	f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
 	f.WriteString(assistantLine("FINAL-MSG"))
 	f.Close()
 	mgr.finalize("tool-2") // must drain FINAL-MSG before returning
 
 	got := rec.texts()
-	if len(got) != 1 || got[0] != "FINAL-MSG" {
-		t.Fatalf("finalize did not drain remainder: got %v", got)
+	if len(got) != 2 || got[1] != "FINAL-MSG" {
+		t.Fatalf("finalize did not drain remainder: got %v, want [FIRST FINAL-MSG]", got)
 	}
 }
 
@@ -160,7 +178,7 @@ func fileOpened(m *subagentTailManager, key string) bool {
 //
 // So the tail now runs for background subagents with text delivery OFF.
 func TestSubagentTail_BackgroundIsTailedForUsageButNotText(t *testing.T) {
-	withFastTail(t)
+	withFastTailNoSettle(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent-z.jsonl")
 	if err := os.WriteFile(path, []byte(assistantLine("SHOULD-NOT-APPEAR")), 0o644); err != nil {
@@ -173,18 +191,21 @@ func TestSubagentTail_BackgroundIsTailedForUsageButNotText(t *testing.T) {
 	mgr.maybeStart("tool-bg", path)
 
 	waitFor(t, func() bool { return fileOpened(mgr, "tool-bg") })
-	time.Sleep(30 * time.Millisecond)
-
-	if got := rec.texts(); len(got) != 0 {
-		t.Fatalf("background subagent text was forwarded (%v) — it already streams to "+
-			"the parent, so this would double it in the chat", got)
-	}
 	mgr.mu.Lock()
 	tail := mgr.tails["tool-bg"]
 	mgr.mu.Unlock()
 	if tail == nil {
 		t.Fatal("no tail for a background subagent — its usage would come from the " +
 			"stream alone, where output_tokens is a placeholder")
+	}
+	// The tail has READ the line (lines counts each one after deliverLine
+	// returns), so any text delivery for it has already happened: the
+	// non-event below needs no sleep (#2538).
+	waitFor(t, func() bool { return tail.lines.Load() == 1 })
+
+	if got := rec.texts(); len(got) != 0 {
+		t.Fatalf("background subagent text was forwarded (%v) — it already streams to "+
+			"the parent, so this would double it in the chat", got)
 	}
 	if tail.wantText {
 		t.Error("background tail must not deliver text")
@@ -311,7 +332,7 @@ func TestSubagentTail_MaybeStartKeepsTextForForeground(t *testing.T) {
 // The existing background test calls maybeStart and reads lines, but never
 // finalize, so it could not see this.
 func TestSubagentTail_BackgroundSurvivesPostToolUseAtLaunch(t *testing.T) {
-	withFastTail(t)
+	withFastTailNoSettle(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent-bg.jsonl")
 
@@ -364,7 +385,7 @@ func TestSubagentTail_BackgroundSurvivesPostToolUseAtLaunch(t *testing.T) {
 // finished, and its text must be drained before the chit closes. Exempting
 // background tails must not exempt foreground ones.
 func TestSubagentTail_ForegroundStillFinalizesAtPostToolUse(t *testing.T) {
-	withFastTail(t)
+	withFastTailNoSettle(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent-fg.jsonl")
 

@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"foci/internal/clock"
 	"foci/internal/delegator/accounting"
 )
 
@@ -62,7 +63,10 @@ type ccEvent struct {
 
 // ccLedger owns one CC process's ledger adapter.
 type ccLedger struct {
-	book    *ccBook
+	book *ccBook
+	// clk times flush's wait for the adapter, so a test can drive that wait
+	// with a clock.Fake instead of sitting through it (#2538). Nil means real.
+	clk     clock.Clock
 	events  chan ccEvent
 	dropped atomic.Int64
 	done    chan struct{}
@@ -145,10 +149,17 @@ func (s *ccLedger) flush() {
 	}
 	reply := make(chan struct{})
 	s.enqueue(ccEvent{kind: ccBarrier, reply: reply})
+	clk := s.clk
+	if clk == nil {
+		clk = clock.Real()
+	}
+	expired := make(chan struct{})
+	timer := clk.AfterFunc(flushWait(), func() { close(expired) })
+	defer timer.Stop()
 	select {
 	case <-reply:
 	case <-s.done:
-	case <-time.After(flushWait()):
+	case <-expired:
 		s.book.lg.Warnf("ledger: adapter did not pass a turn's barrier in time")
 	}
 }

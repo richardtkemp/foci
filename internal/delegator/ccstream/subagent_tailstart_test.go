@@ -16,7 +16,7 @@ import (
 // live from CC 2.1.261, carrying BOTH tool_use_id and task_id — and asserts a
 // tail is actually running for the group afterwards.
 func TestOnSystem_TaskStarted_StartsTheTailForAnAgent(t *testing.T) {
-	withFastTail(t)
+	withFastTailNoSettle(t)
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)

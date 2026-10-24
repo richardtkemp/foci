@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/clock"
 	"foci/internal/delegator"
 	"foci/internal/delegator/accounting"
 	"foci/internal/log"
@@ -229,14 +230,58 @@ func TestWorkflowAgentsBookOnInvokingTurn(t *testing.T) {
 	}
 }
 
-// stalledLedger is a running adapter whose clock, once armed, stalls the
-// adapter goroutine for d on its next read: an adapter blocked mid-turn.
-func stalledLedger(t *testing.T, d time.Duration) (lg *ccLedger, arm func()) {
+// armingClock is a clock.Fake that reports the duration of every timer armed
+// on it, so a test knows flush is already waiting before it moves time.
+type armingClock struct {
+	*clock.Fake
+	armed chan time.Duration
+}
+
+func (c *armingClock) AfterFunc(d time.Duration, f func()) clock.Timer {
+	tm := c.Fake.AfterFunc(d, f)
+	c.armed <- d
+	return tm
+}
+
+// stalledFlush is one flush against an adapter blocked mid-turn: the adapter
+// goroutine is parked on its next clock read until release, and flush's own
+// wait runs on clk, so the test moves time instead of sitting through it
+// (#2538: the two tests below used to take 3s and 6s of real time).
+type stalledFlush struct {
+	clk     *armingClock
+	wait    time.Duration // what flush armed its give-up timer for
+	done    chan struct{} // closed when flush returns
+	release func()        // unparks the adapter
+	mu      sync.Mutex
+	warn    bool
+}
+
+// startStalledFlush starts flush against a stalled adapter and returns once
+// flush has armed its timer. Not parallel: the warn hook is process-global.
+func startStalledFlush(t *testing.T) *stalledFlush {
 	t.Helper()
+	p := &stalledFlush{
+		clk:  &armingClock{Fake: clock.NewFake(), armed: make(chan time.Duration, 1)},
+		done: make(chan struct{}),
+	}
+	log.SetWarnHook(func(_ log.Level, _, msg string) {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if msg == "ledger: adapter did not pass a turn's barrier in time" {
+			p.warn = true
+		}
+	})
+	t.Cleanup(func() { log.SetWarnHook(nil) })
+
 	b := newTestBackend(&bytes.Buffer{})
-	var armed atomic.Bool
-	lg = &ccLedger{
+	parked := make(chan struct{}) // closed once the adapter is blocked
+	gate := make(chan struct{})
+	var releaseOnce sync.Once
+	p.release = func() { releaseOnce.Do(func() { close(gate) }) }
+	var stalled atomic.Bool
+	lg := &ccLedger{
 		book:     newCCBook(accounting.Live(), b.logger(), "cap/c1", "cap", time.Now(), nil),
+		clk:      p.clk,
 		events:   make(chan ccEvent, 8192),
 		done:     make(chan struct{}),
 		tailStop: make(chan struct{}),
@@ -244,60 +289,80 @@ func stalledLedger(t *testing.T, d time.Duration) (lg *ccLedger, arm func()) {
 		tailPoke: make(chan struct{}, 1),
 	}
 	lg.book.now = func() time.Time {
-		if armed.CompareAndSwap(true, false) {
-			time.Sleep(d)
+		if stalled.CompareAndSwap(false, true) {
+			close(parked)
+			<-gate
 		}
 		return time.Now()
 	}
 	go lg.run()
 	t.Cleanup(lg.close)
-	return lg, func() { armed.Store(true) }
+	t.Cleanup(p.release) // LIFO: unpark the adapter before closing it
+
+	// Park the adapter before the barrier is queued, so flush can only end
+	// on the timer or after release, never by the adapter answering first.
+	select {
+	case <-parked:
+	case <-time.After(10 * time.Second): // hang guard only
+		t.Fatal("adapter never read its clock: cannot stall it")
+	}
+	go func() { defer close(p.done); lg.flush() }()
+	select {
+	case p.wait = <-p.clk.armed:
+	case <-time.After(10 * time.Second): // hang guard only
+		t.Fatal("flush never armed its give-up timer")
+	}
+	return p
 }
 
-// flushWarned runs one flush against an adapter stalled for d and reports
-// whether the barrier WARN fired and how long flush took. Not parallel: the
-// warn hook is process-global.
-func flushWarned(t *testing.T, d time.Duration) (warned bool, took time.Duration) {
+func (p *stalledFlush) returned() bool {
+	select {
+	case <-p.done:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *stalledFlush) awaitReturn(t *testing.T) (warned bool) {
 	t.Helper()
-	var mu sync.Mutex
-	log.SetWarnHook(func(_ log.Level, _, msg string) {
-		mu.Lock()
-		defer mu.Unlock()
-		if msg == "ledger: adapter did not pass a turn's barrier in time" {
-			warned = true
-		}
-	})
-	t.Cleanup(func() { log.SetWarnHook(nil) })
-	lg, arm := stalledLedger(t, d)
-	arm()
-	start := time.Now()
-	lg.flush()
-	took = time.Since(start)
-	mu.Lock()
-	defer mu.Unlock()
-	return warned, took
+	select {
+	case <-p.done:
+	case <-time.After(10 * time.Second): // hang guard only
+		t.Fatal("flush did not return")
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.warn
 }
 
 // TestLedgerFlushToleratesA3sAdapterStall is #2500: an adapter that answers
 // the barrier 3s late is still waited for, with no WARN.
 func TestLedgerFlushToleratesA3sAdapterStall(t *testing.T) {
-	warned, took := flushWarned(t, 3*time.Second)
-	if warned {
-		t.Errorf("flush WARNed after %v; a 3s stall is inside the 5s wait", took)
+	p := startStalledFlush(t)
+	if p.wait != 5*time.Second {
+		t.Errorf("flush waits %v for the adapter, want 5s (#2500: 2s was too tight)", p.wait)
 	}
-	if took < 2500*time.Millisecond {
-		t.Errorf("flush returned after %v, before the stalled adapter could have answered", took)
+	p.clk.Advance(3 * time.Second)
+	if p.returned() {
+		t.Fatal("flush returned while the adapter was still stalled, before it could have answered")
+	}
+	p.release()
+	if p.awaitReturn(t) {
+		t.Error("flush WARNed; a 3s stall is inside the 5s wait")
 	}
 }
 
 // TestLedgerFlushGivesUpAfter5sAdapterStall is the fail-arm of #2500: an
-// adapter stalled 6s still makes flush give up with the WARN, at about 5s.
+// adapter still stalled when the 5s wait runs out makes flush give up with
+// the WARN, without waiting for the adapter.
 func TestLedgerFlushGivesUpAfter5sAdapterStall(t *testing.T) {
-	warned, took := flushWarned(t, 6*time.Second)
-	if !warned {
-		t.Errorf("flush returned after %v with no WARN; a 6s stall exceeds the 5s wait", took)
+	p := startStalledFlush(t)
+	if p.wait != 5*time.Second {
+		t.Errorf("flush gives up after %v, want 5s", p.wait)
 	}
-	if took < 4900*time.Millisecond || took > 5800*time.Millisecond {
-		t.Errorf("flush gave up after %v, want about 5s", took)
+	p.clk.Advance(5 * time.Second) // the adapter stays parked throughout
+	if !p.awaitReturn(t) {
+		t.Error("flush returned with no WARN; the adapter never passed the barrier")
 	}
 }

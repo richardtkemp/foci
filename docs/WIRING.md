@@ -312,7 +312,7 @@ main
   │   ├── delegator/accounting → log, modelinfo, sqlite (the per-call cost ledger in api.db, #2111 — schema, SQL cost views, rate render, Book/Report/RecordTurn and their observers (api.jsonl, BookedHook), the direct-API adapter, the legacy-row writer the readers' tests seed history with, the readers, the startup migration; see "Cost ledger")
   │   ├── delegator/all      → delegator/ccstream, delegator/codex, delegator/opencode (blank-imports every backend so each registers its Spec; imported by foci-gw and foci; its tests validate every Spec, the behavioural-capability proofs, the config schema, and the generated tables in BACKENDS.md)
   │   ├── delegator/autoapprove → execguard, secrets (shared by ccstream/codex/opencode — auto-approve rule compilation/matching)
-  │   ├── delegator/ccstream   → delegator, delegator/accounting, delegator/autoapprove, delegator/hookbin, delegator/pretool, delegator/stoprule, linkwalk, log, modelcaps, modelinfo, procx, question, ratelimit, tempdir, timeutil, toolformat (stream-json Claude Code; registers "claude-code" via init())
+  │   ├── delegator/ccstream   → clock, delegator, delegator/accounting, delegator/autoapprove, delegator/hookbin, delegator/pretool, delegator/stoprule, linkwalk, log, modelcaps, modelinfo, procx, question, ratelimit, tempdir, timeutil, toolformat (stream-json Claude Code; registers "claude-code" via init())
   │   ├── delegator/pretool    (no foci deps; stdlib + mvdan.cc/sh parser — PreToolUse deny-rule engine, #2028/#2033/#2034; spawns `when` checks with raw os/exec, not procx, as it runs only in foci-cc-hook and the foci CLI; shared by config, ccstream, cmd/foci-cc-hook and cmd/foci `pretool`; `examples.go` adds per-rule test examples (#2039) — decode, validation and the RunExamples engine shared by config validation, `foci pretool test --all` and `foci-gw -check-config`, whose WhenSkip mode never executes a `when` script)
   │   ├── delegator/stoprule   → delegator/pretool (only its Patterns type; stdlib otherwise — Stop-hook rule engine, #2089: matches the turn's final text, scans the CC transcript for the turn's background launches; shared by config, ccstream and cmd/foci-cc-hook)
   │   ├── delegator/sessionenv → tempdir (shared by codex/opencode + cmd/foci-codex-hook — per-session exec-bridge env file format, lifecycle, and the codex command wrap/unwrap)
@@ -1847,7 +1847,7 @@ adapter's exit flush is applied directly (`markExited`).
 `OnTurnComplete`): until every main-thread call the stream named has its line read (the
 main tail is poked to read at once), bounded by `ccBarrierBound` (the adapter's own release;
 `flush` itself gives up after `flushWait()` = max(`ccFlushWait` 5 s, `ccBarrierBound`+1 s) and
-logs a WARN, #2500), and at once with no main tail — so `closeLedgerTurn`'s `FinalCost` holds the turn's own calls. A remainder or a
+logs a WARN, #2500; that wait is timed on `ccLedger.clk`, a `clock.Clock`, nil = real, so its tests drive it with a `clock.Fake`, #2538), and at once with no main tail — so `closeLedgerTurn`'s `FinalCost` holds the turn's own calls. A remainder or a
 background subagent's later calls book after it, on the same turns. Replayed against the
 #2112 P0 captures (`ccstream/testdata/ledger/*.json.gz`: two idle compactions with the
 history re-append, an interrupted resume, graceful/killed exits, a subagent run) —
