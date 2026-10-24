@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -170,6 +171,10 @@ func overlayVarNames() []string {
 // #1914 as done.
 func reportTrustedPathFooting(trustedDirs []string, home string, canWrite func(string) bool) {
 	findings := checkTrustedPathFooting(trustedDirs, home, canWrite)
+	if singleUserInstall() {
+		reportSingleUserPathFooting(findings)
+		return
+	}
 
 	var unexplained, allowed int
 	for _, f := range findings {
@@ -196,3 +201,27 @@ func reportTrustedPathFooting(trustedDirs []string, home string, canWrite func(s
 // liveCanWrite is execguard's own writability primitive, taken from the same
 // Env the auto-approve guard uses so the two cannot drift.
 func liveCanWrite() func(string) bool { return execguard.Live().CanWrite }
+
+// singleUserInstall reports whether foci runs as the login user rather than a
+// dedicated service account — every macOS install (docs/INSTALL.md "macOS").
+// Overridable for tests.
+var singleUserInstall = func() bool { return runtime.GOOS == "darwin" }
+
+// reportSingleUserPathFooting is the trusted-PATH report for a single-user
+// install. The #1914 invariant guards against an AGENT choosing what the
+// daemon runs; it presumes the agent cannot already write the daemon's own
+// files. When foci runs as the login user, its agents run as that same user and
+// can rewrite foci's binary, config and LaunchAgent directly, so a writable
+// directory on the trusted PATH grants them nothing new. It is reported once,
+// at INFO, with that reason, instead of as an ERROR that would fire on every
+// boot of every Mac and could never be fixed.
+func reportSingleUserPathFooting(findings []pathFinding) {
+	var writable []string
+	for _, f := range findings {
+		if f.Writable {
+			writable = append(writable, f.Dir)
+		}
+	}
+	startupLog.Infof("  trusted PATH footing: %d dirs, %d writable by foci (%s) — expected on a single-user install: agents run as the same user as foci and could already replace foci itself, so this grants them nothing (see docs/INSTALL.md \"macOS\")",
+		len(findings), len(writable), formatList(writable))
+}

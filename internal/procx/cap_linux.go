@@ -8,12 +8,6 @@ import (
 	"syscall"
 
 	"golang.org/x/sys/unix"
-
-	"foci/internal/log"
-)
-
-var (
-	execLog = log.NewComponentLogger("exec")
 )
 
 // clearAmbientCaps empties the ambient capability set on every OS thread of

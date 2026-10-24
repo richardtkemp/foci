@@ -7,6 +7,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -430,6 +431,10 @@ func (s *Store) CheckSecurity() []string {
 		return []string{"cannot read file ownership (unsupported platform)"}
 	}
 
+	if runtime.GOOS != "linux" {
+		return checkSingleUserSecurity(path, stat.Uid, info.Mode().Perm())
+	}
+
 	// Check owner is root (uid 0)
 	if stat.Uid != 0 {
 		warnings = append(warnings,
@@ -478,5 +483,23 @@ func (s *Store) CheckSecurity() []string {
 		}
 	}
 
+	return warnings
+}
+
+// checkSingleUserSecurity is CheckSecurity off Linux (macOS). There is no
+// root:foci-secrets 0660 + supplementary-group-drop model there: foci runs as
+// the login user, and its children run as that same user, so the file cannot
+// be hidden from them (see SECRETS.md "macOS"). What can still be checked is
+// that nobody ELSE can read it: owned by this process's user, mode 0600.
+func checkSingleUserSecurity(path string, ownerUID uint32, mode os.FileMode) []string {
+	var warnings []string
+	if self := os.Getuid(); int64(ownerUID) != int64(self) {
+		warnings = append(warnings,
+			fmt.Sprintf("secrets.toml owner is uid %d, expected this user (uid %d) — run: chown %d %s", ownerUID, self, self, path))
+	}
+	if mode != 0o600 {
+		warnings = append(warnings,
+			fmt.Sprintf("secrets.toml permissions are %04o, expected 0600 — run: chmod 0600 %s", mode, path))
+	}
 	return warnings
 }

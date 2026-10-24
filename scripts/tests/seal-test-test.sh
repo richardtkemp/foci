@@ -127,7 +127,13 @@ SYS="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 run pass one PATH="/srv/snap-aaa/bin:$TMP/goroot/bin:$PATH" CLAUDE_CODE_ZZ=1 FOCI_SOCK=/x LD_PRELOAD= \
   FOCI_OPENCODE_LIVE=1 GOFLAGS=-mod=mod >/dev/null
 seenA=$(cat "$TMP/goroot/seen")
-expect "env: PATH is pinned" "PATH=$TMP/goroot/bin:$SYS" "$seenA"
+WANT_PATH="$TMP/goroot/bin:$SYS"
+# macOS: seal-test.sh adds the Makefile's Homebrew dirs (DARWIN_TOOL_PATH_FIRST
+# ahead, DARWIN_TOOL_PATH behind); still pinned, only longer.
+if [ "$(uname -s)" = Darwin ] && [ -n "${DARWIN_TOOL_PATH:-}" ]; then
+  WANT_PATH="${DARWIN_TOOL_PATH_FIRST:+$DARWIN_TOOL_PATH_FIRST:}$WANT_PATH:$DARWIN_TOOL_PATH"
+fi
+expect "env: PATH is pinned" "PATH=$WANT_PATH" "$seenA"
 reject "env: the caller's PATH entry is dropped" "/srv/snap-aaa" "$seenA"
 reject "env: an agent-shell var is dropped" "CLAUDE_CODE_ZZ" "$seenA"
 reject "env: FOCI_SOCK is dropped" "FOCI_SOCK" "$seenA"

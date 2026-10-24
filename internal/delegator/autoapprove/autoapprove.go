@@ -150,12 +150,39 @@ var CommonSafeWriteRules = []string{
 // Format: "ToolName" (match any input) or "ToolName:pattern" (match input).
 func parseAutoApproveRule(rule string) Rule {
 	if idx := strings.IndexByte(rule, ':'); idx >= 0 {
-		return Rule{
+		r := Rule{
 			ToolName: rule[:idx],
 			Pattern:  rule[idx+1:],
 		}
+		if pathTypedTools[r.ToolName] {
+			r.Pattern = canonicalPathPattern(r.Pattern)
+		}
+		return r
 	}
 	return Rule{ToolName: rule}
+}
+
+// canonicalPathPattern puts an absolute path-typed rule pattern into the same
+// canonical space as the candidate path, which matchToolAutoApprove resolves
+// through secrets.CanonicalPath. Only the literal directory prefix (everything
+// before the first glob metacharacter's path element) is resolved; the glob
+// tail is kept as written. Without this, a rule naming a symlinked directory
+// can never match: on macOS /tmp -> /private/tmp and /home ->
+// /System/Volumes/Data/home, so "Edit:/tmp/x/*" would never approve anything.
+// Relative and non-path patterns are returned unchanged.
+func canonicalPathPattern(pattern string) string {
+	if !filepath.IsAbs(pattern) {
+		return pattern
+	}
+	cut := strings.IndexAny(pattern, "*?[")
+	if cut < 0 {
+		return secrets.CanonicalPath(pattern)
+	}
+	slash := strings.LastIndexByte(pattern[:cut], '/')
+	if slash <= 0 {
+		return pattern // glob in the first element: nothing literal to resolve
+	}
+	return secrets.CanonicalPath(pattern[:slash]) + pattern[slash:]
 }
 
 // parseAutoApproveRules parses a slice of rule strings into compiled rules.
@@ -1392,7 +1419,7 @@ func (r Rule) matchesToolStr(toolName, matchStr string) bool {
 // unsafeCmdFlags describes flags and argument patterns that make an otherwise
 // safe command unsafe for auto-approval.
 type unsafeCmdFlags struct {
-	shortFlags string // unsafe single-letter flags, e.g. "i" for -i
+	shortFlags string   // unsafe single-letter flags, e.g. "i" for -i
 	wordFlags  []string // unsafe single-dash word flags, e.g. "-exec", "-delete"
 	longFlags  []string // unsafe long flags, e.g. "--in-place" — matched as longFlagMatches accepts them
 	// abbrevLongFlags: the command's option parser accepts abbreviated long
@@ -1405,7 +1432,7 @@ type unsafeCmdFlags struct {
 	// accept them; gitGrepPagerUnsafe models that separately). A prefix the
 	// program itself would reject as ambiguous still refuses: fail closed.
 	abbrevLongFlags bool
-	argCheck   func(string) bool // optional: check non-flag arguments for dangerous content
+	argCheck        func(string) bool // optional: check non-flag arguments for dangerous content
 	// argLongFlags: long flags whose VALUE is an argument argCheck must
 	// judge even when it rides on the flag token itself — sed's --expression,
 	// whose script is the text after '=' (--expression=script) or the next

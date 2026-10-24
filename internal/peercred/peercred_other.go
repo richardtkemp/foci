@@ -1,4 +1,4 @@
-//go:build !linux
+//go:build !linux && !darwin
 
 package peercred
 
@@ -7,9 +7,9 @@ import (
 	"net"
 )
 
-// UID is unsupported off Linux, which lacks SO_PEERCRED. It returns an error so
-// the module still builds (and its non-peercred dependents' tests run) on hosts
-// like a Mac. The real lookup lives in peercred_linux.go.
+// UID is unsupported off Linux and macOS. It returns an error so the module
+// still builds (and its non-peercred dependents' tests run) on other hosts. The
+// real lookups live in peercred_linux.go and peercred_darwin.go.
 func UID(_ *net.UnixConn) (uint32, error) {
-	return 0, errors.New("peercred: SO_PEERCRED peer-credential lookup is only supported on Linux")
+	return 0, errors.New("peercred: peer-credential lookup is only supported on Linux and macOS")
 }

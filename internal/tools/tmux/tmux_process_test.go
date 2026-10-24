@@ -7,39 +7,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
-
-// processHasSigIgn reports whether pid has sig in its /proc/<pid>/status
-// SigIgn bitmask (bit N-1 for signal N, per the kernel's sigset encoding) —
-// i.e. the process has set sig to be ignored, e.g. via the shell builtin
-// trap with an empty action. Lets a test poll for "the trap installed"
-// instead of a fixed sleep: no signal needs to be sent to observe it.
-func processHasSigIgn(pid int, sig syscall.Signal) bool {
-	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if !strings.HasPrefix(line, "SigIgn:") {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			return false
-		}
-		mask, err := strconv.ParseUint(fields[1], 16, 64)
-		if err != nil {
-			return false
-		}
-		return mask&(1<<uint(sig-1)) != 0
-	}
-	return false
-}
 
 func TestTmuxKillCleansUpChildProcesses(t *testing.T) {
 	// Verifies that killing a tmux session also terminates all descendant processes, not just the pane shell, preventing orphaned processes.
@@ -121,6 +95,12 @@ func TestTmuxKillCleansUpChildProcesses(t *testing.T) {
 // processRunning reports whether pid exists and is not a zombie (state Z) or
 // dead (X). Zombies still answer Signal(0), so that cannot tell them apart.
 func processRunning(pid int) bool {
+	if runtime.GOOS != "linux" {
+		// No procfs: ps prints the state letters, or nothing for a gone pid.
+		out, _ := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+		st := strings.TrimSpace(string(out))
+		return st != "" && st[0] != 'Z'
+	}
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
 		return false
@@ -179,20 +159,21 @@ func TestCollectDescendants(t *testing.T) {
 func TestTerminateProcesses(t *testing.T) {
 	// Verifies that terminateProcesses escalates to SIGKILL for processes that ignore SIGHUP and SIGTERM, ensuring they are reliably killed.
 	t.Parallel()
-	cmd := exec.Command("bash", "-c", "trap '' HUP TERM; sleep 300")
+	// The script writes a marker AFTER the trap builtin has run, so the
+	// marker existing means both signals are already ignored. (Polling the
+	// /proc SigIgn mask did the same on Linux only; macOS ps has no
+	// ignored-signal column.) No fixed sleep, no signal sent to observe it.
+	marker := filepath.Join(t.TempDir(), "trapped")
+	cmd := exec.Command("bash", "-c", `trap '' HUP TERM; : > "$1"; sleep 300`, "bash", marker)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	pid := cmd.Process.Pid
 
-	// Poll /proc/<pid>/status for the SigIgn bitmask rather than guessing how
-	// long bash takes to execute `trap '' HUP TERM` — SIGHUP(1) and
-	// SIGTERM(15) both show up as ignored (verified: `trap '' HUP TERM;
-	// sleep 300` sets /proc/<pid>/status SigIgn bit 0 and bit 14) the instant
-	// the trap builtin runs, no signal needs sending to observe it.
 	if !pollUntil(t, 5*time.Second, func() bool {
-		return processHasSigIgn(pid, syscall.SIGHUP) && processHasSigIgn(pid, syscall.SIGTERM)
+		_, err := os.Stat(marker)
+		return err == nil
 	}) {
 		t.Fatal("trap did not install within timeout")
 	}
@@ -346,7 +327,7 @@ func TestTmuxKillCleansUpServer(t *testing.T) {
 }
 
 func TestTmuxSessionPIDs(t *testing.T) {
-	// Verifies that tmuxSessionPIDs returns valid process IDs for a running session's panes, confirming they are real /proc entries.
+	// Verifies that tmuxSessionPIDs returns valid process IDs for a running session's panes, confirming they are live processes.
 	t.Parallel()
 	sock := tmuxIsolatedSocket(t)
 
@@ -369,9 +350,9 @@ func TestTmuxSessionPIDs(t *testing.T) {
 		if pid <= 1 {
 			t.Errorf("invalid pane PID: %d", pid)
 		}
-		// Verify PID exists
-		if _, err := os.Stat(fmt.Sprintf("/proc/%d", pid)); os.IsNotExist(err) {
-			t.Errorf("pane PID %d does not exist in /proc", pid)
+		// Verify PID exists (signal 0 checks existence and permission only).
+		if err := syscall.Kill(pid, 0); err != nil {
+			t.Errorf("pane PID %d does not exist: %v", pid, err)
 		}
 	}
 }

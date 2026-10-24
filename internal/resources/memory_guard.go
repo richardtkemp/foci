@@ -15,6 +15,9 @@ import (
 )
 
 // defaultProcDir is the real procfs mount point. Tests substitute a fake tree.
+// The procfs readers below are portable code (tests feed them a fake tree on
+// any OS); which source the live guard uses is chosen per platform by the
+// platform* functions in memory_guard_linux.go / _darwin.go / _other.go.
 const defaultProcDir = "/proc"
 
 // MemoryGuardConfig holds parsed configuration for the memory guard.
@@ -103,19 +106,19 @@ func (g *MemoryGuard) Stop() {
 func (g *MemoryGuard) checkOnce() {
 	getMemTotal := g.getMemTotalFn
 	if getMemTotal == nil {
-		getMemTotal = func() (int64, error) { return readMemTotal(defaultProcDir) }
+		getMemTotal = platformMemTotal
 	}
 	getUserRSS := g.getUserRSSFn
 	if getUserRSS == nil {
-		getUserRSS = func(uid int) (int64, error) { return readUserRSS(defaultProcDir, uid) }
+		getUserRSS = platformUserRSS
 	}
 	getSelfRSS := g.getSelfRSSFn
 	if getSelfRSS == nil {
-		getSelfRSS = func() (int64, error) { return readSelfRSS(defaultProcDir) }
+		getSelfRSS = platformSelfRSS
 	}
 	getPressure := g.getPressureFn
 	if getPressure == nil {
-		getPressure = func() (float64, error) { return readMemoryPressure(defaultProcDir) }
+		getPressure = platformPressure
 	}
 
 	memTotalKB, err := getMemTotal()
@@ -199,9 +202,7 @@ func (g *MemoryGuard) checkOnce() {
 func (g *MemoryGuard) doKill(userMB, totalMB, selfMB int64, pct, pressure float64) {
 	findLargest := g.findLargestFn
 	if findLargest == nil {
-		findLargest = func(uid, selfPid int) (int, string, int64, error) {
-			return findLargestProcess(defaultProcDir, uid, selfPid)
-		}
+		findLargest = platformFindLargest
 	}
 	killProc := g.killProcessFn
 	if killProc == nil {

@@ -2,6 +2,33 @@ VERSION ?= $(shell git -c safe.directory=$(CURDIR) describe --tags --always --di
 GIT_COMMIT ?= $(shell git -c safe.directory=$(CURDIR) rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
+# macOS: the recipes and scripts below are written for GNU coreutils, sed,
+# grep, findutils, tar, awk and util-linux flock. On a Mac those come from
+# Homebrew (`make macos-deps`) and are put FIRST on PATH, here and (via
+# DARWIN_TOOL_PATH) on the sealed test PATH in scripts/seal-test.sh. /tmp is a
+# symlink to /private/tmp there, so the test root is the resolved path: tests
+# that compare a resolved path against TMPDIR then agree.
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+BREW_PREFIX ?= $(shell brew --prefix 2>/dev/null || echo /opt/homebrew)
+DARWIN_TOOL_PATH := $(BREW_PREFIX)/opt/coreutils/libexec/gnubin:$(BREW_PREFIX)/opt/gnu-sed/libexec/gnubin:$(BREW_PREFIX)/opt/grep/libexec/gnubin:$(BREW_PREFIX)/opt/findutils/libexec/gnubin:$(BREW_PREFIX)/opt/gnu-tar/libexec/gnubin:$(BREW_PREFIX)/opt/gawk/libexec/gnubin:$(BREW_PREFIX)/bin:$(BREW_PREFIX)/sbin
+export DARWIN_TOOL_PATH
+# Apple's /usr/bin/sqlite3 fails `-readonly` opens of WAL databases that
+# Homebrew's sqlite handles; scripts and tests need the latter AHEAD of /usr/bin.
+DARWIN_TOOL_PATH_FIRST := $(BREW_PREFIX)/opt/sqlite/bin
+export DARWIN_TOOL_PATH_FIRST
+export PATH := $(DARWIN_TOOL_PATH_FIRST):$(DARWIN_TOOL_PATH):$(PATH)
+FGW_ROOT := /private/tmp/fgw
+# Apple ships GNU make 3.81, whose $(shell) does not see the exported PATH
+# above, so the two $(shell) uses that need GNU behaviour name it directly:
+# BSD mktemp rejects a suffix after the X's, and macOS has no nproc.
+MKTEMP := $(BREW_PREFIX)/opt/coreutils/libexec/gnubin/mktemp
+NPROC := $(shell sysctl -n hw.ncpu 2>/dev/null || echo 4)
+else
+FGW_ROOT := /tmp/fgw
+MKTEMP := mktemp
+endif
+
 GOBIN ?= $(shell go env GOPATH)/bin
 # Pinned at Makefile-parse time, under the REAL $HOME — not inside a recipe,
 # where the test/coverage targets below override HOME to a per-run scratch dir
@@ -14,7 +41,7 @@ GOBIN ?= $(shell go env GOPATH)/bin
 GOCACHE_PIN    := $(shell go env GOCACHE)
 GOMODCACHE_PIN := $(shell go env GOMODCACHE)
 GOPATH_PIN     := $(shell go env GOPATH)
-NPROC := $(shell nproc 2>/dev/null || echo 4)
+NPROC ?= $(shell nproc 2>/dev/null || echo 4)
 # -parallel ceiling for L2 integration tests. Set well above the real
 # governor — the weighted budget in internal/testharness/parallel.go
 # (loadPerCPU * NumCPU) — so the flag never binds before the semaphore.
@@ -236,7 +263,7 @@ endif
 # lock, and the first run to finish rm -rf'd it — so the second failed with
 # "llbox: ... sealing setup failed: open /tmp/fgw/...: no such file". mktemp
 # gives each run its own dir (and so its own $(TESTDIR).log).
-fgw_testdir = $(shell mkdir -p /tmp/fgw && mktemp -d /tmp/fgw/$(1)-XXXXXXXX)
+fgw_testdir = $(shell mkdir -p $(FGW_ROOT) && $(MKTEMP) -d $(FGW_ROOT)/$(1)-XXXXXXXX)
 
 # `test` and `test-one` share ONE fixed test dir per user, so Go's test-result
 # cache works (Dick 2026-10-07: speed up the Fabro pipeline). go test caches a
@@ -255,7 +282,7 @@ fgw_testdir = $(shell mkdir -p /tmp/fgw && mktemp -d /tmp/fgw/$(1)-XXXXXXXX)
 # checkout path in the binary) and scripts/restore-mtime.py first sets every
 # unmodified tracked file to its last commit time (Go keys a file a test read
 # on its mtime, and a fresh checkout writes every file "now").
-fgw_shared_testdir := /tmp/fgw/run-$(shell id -un)
+fgw_shared_testdir := $(FGW_ROOT)/run-$(shell id -un)
 # FGW_TESTDIR / FGW_SRCLINK (foci_todo #2396): a caller that runs test calls
 # concurrently with other callers' (it does not hold /tmp/heavy for them, see
 # FGW_HEAVY_LOCK) gives each of its runs its own test dir and source symlink.
@@ -268,11 +295,11 @@ fgw_shared_testdir := /tmp/fgw/run-$(shell id -un)
 # checkout presents the same path. Safe because the lock serialises all users of
 # the link (one per user). The link's own mtime is pinned too: go hashes an
 # Lstat of any path a test stats, and the link is recreated on every run.
-fgw_srclink := /tmp/fgw/src-$(shell id -un)
+fgw_srclink := $(FGW_ROOT)/src-$(shell id -un)
 test_dir = $(or $(FGW_TESTDIR),$(fgw_shared_testdir))
 src_link = $(or $(FGW_SRCLINK),$(fgw_srclink))
 src_link_dir = $(if $(FGW_SRCLINK),mkdir -p $(dir $(FGW_SRCLINK)) && )
-fgw_logfile = $(shell mkdir -p /tmp/fgw && mktemp /tmp/fgw/$(1)-XXXXXXXX.log)
+fgw_logfile = $(shell mkdir -p $(FGW_ROOT) && $(MKTEMP) $(FGW_ROOT)/$(1)-XXXXXXXX.log)
 
 # `make test` seals itself under Landlock BY DEFAULT (foci_todo #1523) via
 # scripts/seal-test.sh — read that script for the full design (whitelist,
@@ -1058,6 +1085,20 @@ restart:
 
 enable:
 	systemctl enable $(SERVICE_NAME)
+
+# macOS (docs/INSTALL.md "macOS"): no root, no systemd, no foci system user —
+# foci runs as the installing user under a LaunchAgent. macos-deps installs the
+# Homebrew packages the build, the tests and the agent tooling assume (the GNU
+# userland the recipes are written for, Homebrew sqlite, tmux, jq, mdq);
+# macos-install builds, installs into ~/foci (FOCI_HOME) and (re)starts foci.
+MACOS_BREW_DEPS := go coreutils flock gnu-sed findutils grep gawk gnu-tar sqlite tmux jq mdq bash
+.PHONY: macos-deps macos-install
+macos-deps:
+	@[ "$(UNAME_S)" = Darwin ] || { echo "macos-deps: macOS only" >&2; exit 1; }
+	HOMEBREW_NO_AUTO_UPDATE=1 brew install $(MACOS_BREW_DEPS)
+macos-install:
+	@[ "$(UNAME_S)" = Darwin ] || { echo "macos-install: macOS only — on Linux use sudo make setup / update" >&2; exit 1; }
+	scripts/macos-install.sh
 
 # First-time provision. Ordered explicitly (sub-make) so it is correct even
 # under -j. Usually invoked by download.sh after fetching the repo.

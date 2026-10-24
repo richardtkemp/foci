@@ -1,6 +1,11 @@
 package ccstream
 
-import "foci/internal/procx"
+import (
+	"os"
+	"strings"
+
+	"foci/internal/procx"
+)
 
 // bashMaxTimeoutMS raises the ceiling the CC model may request for a single
 // foreground Bash tool call, from CC's built-in 600000 ms (10 min) to 20
@@ -95,6 +100,27 @@ func buildEnv(extra, hookRules map[string]string) []string {
 	// Uncapped retry of 529/429 (see ccRetryWatchdog).
 	env = append(env, "CLAUDE_CODE_RETRY_WATCHDOG="+ccRetryWatchdog)
 
+	// The Bash tool must run bash: foci's foci_* shell functions reach it
+	// through BASH_ENV, which only bash reads. CC runs the Bash tool in the
+	// user's login shell ($SHELL) unless CLAUDE_CODE_SHELL names one, and on
+	// macOS $SHELL is zsh — measured on the work Mac, every foci_* call failed
+	// with "(eval):1: command not found". An operator env or a per-agent
+	// backend_config.env that sets CLAUDE_CODE_SHELL keeps its value.
+	if sh := claudeCodeShell(env); sh != "" {
+		env = append(env, "CLAUDE_CODE_SHELL="+sh)
+	}
+	// SHLVL must be present for CC's Bash tool to see BASH_ENV's functions on
+	// macOS. launchd starts foci with no SHLVL (a shell-launched process always
+	// has one), and with it absent every foci_* call fails "command not found"
+	// under both /bin/bash 3.2 and Homebrew bash 5; adding SHLVL=1 to the
+	// otherwise identical environment fixes it (measured on the work Mac,
+	// CC 2.1.310, 2026-10-24, by replaying foci's exact CC environment). The
+	// Linux CC processes run without SHLVL and are unaffected; setting it when
+	// absent is what any shell would have done, so it is harmless there.
+	if !envHas(env, "SHLVL") {
+		env = append(env, "SHLVL=1")
+	}
+
 	for k, v := range extra {
 		env = append(env, k+"="+v)
 	}
@@ -103,4 +129,41 @@ func buildEnv(extra, hookRules map[string]string) []string {
 		env = append(env, k+"="+v)
 	}
 	return env
+}
+
+// claudeCodeShell returns the bash CLAUDE_CODE_SHELL should name, or "" when
+// env already sets it or no bash resolves. It resolves bash on the OPERATOR
+// PATH, the PATH the CC subprocess and its tool shells search.
+func claudeCodeShell(env []string) string {
+	if envHas(env, "CLAUDE_CODE_SHELL") {
+		return ""
+	}
+	p, err := lookBash()
+	if err != nil {
+		return ""
+	}
+	return p
+}
+
+// lookBash is overridable for tests.
+var lookBash = func() (string, error) {
+	p, err := procx.LookPath(procx.Operator, "bash")
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(p); err != nil {
+		return "", err
+	}
+	return p, nil
+}
+
+// envHas reports whether a KEY=VALUE list sets key.
+func envHas(env []string, key string) bool {
+	prefix := key + "="
+	for _, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			return true
+		}
+	}
+	return false
 }

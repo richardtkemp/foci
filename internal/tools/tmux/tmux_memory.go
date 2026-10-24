@@ -1,14 +1,14 @@
 package tmux
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"foci/internal/procinfo"
 )
 
 // TmuxMemoryConfig holds the parsed configuration for the tmux memory monitor.
@@ -254,7 +254,7 @@ func ParseThreshold(s string, memTotalKB int64) (int64, error) {
 }
 
 // getTmuxRSS returns the RSS (in kB) of the tmux server process.
-// Finds PID via `tmux display-message -p '#{pid}'`, then reads /proc/{pid}/status.
+// Finds PID via `tmux display-message -p '#{pid}'`, then asks procinfo for its RSS.
 func getTmuxRSS() (int64, error) {
 	out, err := runTmux(context.Background(), "display-message", "-p", "#{pid}")
 	if err != nil {
@@ -267,38 +267,19 @@ func getTmuxRSS() (int64, error) {
 	return readProcVmRSS(pidStr)
 }
 
-// scanProcField reads the first integer value from the line in path beginning
-// with field+":" — the "<Field>: <value> kB" convention used across /proc.
-func scanProcField(path, field string) (int64, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = f.Close() }()
-
-	prefix := field + ":"
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, prefix) {
-			fields := strings.Fields(line)
-			if len(fields) < 2 {
-				return 0, fmt.Errorf("unexpected %s line: %s", field, line)
-			}
-			return strconv.ParseInt(fields[1], 10, 64)
-		}
-	}
-	return 0, fmt.Errorf("%s not found in %s", field, path)
-}
-
-// readProcVmRSS reads VmRSS from /proc/{pid}/status and returns it in kB.
+// readProcVmRSS returns the resident size of pid in kB (procinfo: /proc on
+// Linux, ps on macOS).
 func readProcVmRSS(pid string) (int64, error) {
-	return scanProcField(fmt.Sprintf("/proc/%s/status", pid), "VmRSS")
+	n, err := strconv.Atoi(pid)
+	if err != nil {
+		return 0, fmt.Errorf("bad pid %q: %w", pid, err)
+	}
+	return procinfo.RSSKB(n)
 }
 
-// readProcMemTotal reads MemTotal from /proc/meminfo in kB.
+// readProcMemTotal returns total RAM in kB.
 func readProcMemTotal() (int64, error) {
-	return scanProcField("/proc/meminfo", "MemTotal")
+	return procinfo.MemTotalKB()
 }
 
 // killTmuxServer lists active sessions and then kills the tmux server.

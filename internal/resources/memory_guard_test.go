@@ -742,13 +742,14 @@ func TestMemoryGuard_KillIncludesSelfRSS(t *testing.T) {
 func TestReadSelfRSS(t *testing.T) {
 	// Proves that readSelfRSS reads the calling process's VmRSS from a proc tree
 	// by locating <procDir>/<getpid()>/status, and errors when that file is missing.
-	// Against the real /proc, the value should be positive.
-	got, err := readSelfRSS("/proc")
+	// Against the live platform source (/proc on Linux, ps on macOS), the value
+	// should be positive.
+	got, err := platformSelfRSS()
 	if err != nil {
-		t.Fatalf("readSelfRSS(/proc) error = %v", err)
+		t.Fatalf("platformSelfRSS() error = %v", err)
 	}
 	if got <= 0 {
-		t.Errorf("readSelfRSS(/proc) = %d, want > 0", got)
+		t.Errorf("platformSelfRSS() = %d, want > 0", got)
 	}
 
 	// Missing <pid>/status in a fake proc dir → error.

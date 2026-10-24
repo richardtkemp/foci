@@ -140,6 +140,16 @@ WHITELIST="$TESTDIR,$GOCACHE_DIR,$GOMODCACHE_DIR,/dev/null,/dev/ptmx,/dev/pts,/d
 #   the rest    the sandbox dirs and pinned Go caches below.
 GOROOT_DIR=$(go env GOROOT)
 TEST_PATH="$GOROOT_DIR/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# macOS: the Makefile exports DARWIN_TOOL_PATH (Homebrew GNU tools + brew bin),
+# where tests find tmux, jq and bash 5. It goes AFTER the system dirs, as on a
+# real agent PATH: Homebrew is owned by the login user, so a brew binary that
+# shadowed /bin/ls would be (correctly) refused by auto-approve's
+# replaceable-binary veto, and tests of "a matching rule approves" would fail.
+# DARWIN_TOOL_PATH_FIRST (Homebrew sqlite only) is the one exception: Apple's
+# sqlite3 cannot do the -readonly WAL opens the ops scripts rely on.
+if [ "$(uname -s)" = Darwin ] && [ -n "${DARWIN_TOOL_PATH:-}" ]; then
+	TEST_PATH="${DARWIN_TOOL_PATH_FIRST:+$DARWIN_TOOL_PATH_FIRST:}$TEST_PATH:$DARWIN_TOOL_PATH"
+fi
 OPTIN_VARS=(FOCI_OPENCODE_LIVE FOCI_OPENCODE_BIN ANTHROPIC_API_KEY)
 PASSTHRU=()
 PASSTHRU_SHOWN=()

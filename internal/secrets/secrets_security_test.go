@@ -3,6 +3,7 @@ package secrets
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -29,6 +30,7 @@ func TestCheckSecurityEmptyPath(t *testing.T) {
 }
 
 func TestCheckSecurityBadPermissions(t *testing.T) {
+	skipUnlessLinuxSecretsModel(t)
 	// Proves that CheckSecurity detects both incorrect
 	// file ownership and overly permissive modes, producing warnings that mention
 	// "owner"/"uid" and "permission"/"0660" respectively.
@@ -63,6 +65,7 @@ func TestCheckSecurityGroupName(t *testing.T) {
 }
 
 func TestCheckSecurityGroupNotFound(t *testing.T) {
+	skipUnlessLinuxSecretsModel(t)
 	// Proves that CheckSecurity handles the edge case
 	// where the file's GID is 0 (root group) without panicking, even when the expected
 	// foci-secrets group doesn't exist on the system.
@@ -87,6 +90,7 @@ func TestCheckSecurityGroupNotFound(t *testing.T) {
 }
 
 func TestCheckSecurityGroupFound(t *testing.T) {
+	skipUnlessLinuxSecretsModel(t)
 	// Proves that CheckSecurity does not panic when run
 	// against a real file with 0660 permissions, regardless of what warnings it produces.
 	dir := t.TempDir()
@@ -102,5 +106,15 @@ func TestCheckSecurityGroupFound(t *testing.T) {
 	warnings := s.CheckSecurity()
 	if warnings != nil {
 		t.Logf("warnings: %v", warnings)
+	}
+}
+
+// skipUnlessLinuxSecretsModel skips tests of the Linux root:foci-secrets 0660
+// model. Off Linux CheckSecurity applies the single-user rule instead (own
+// file, 0600), covered by TestCheckSingleUserSecurity.
+func skipUnlessLinuxSecretsModel(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skipf("root:foci-secrets model is Linux-only; %s uses checkSingleUserSecurity", runtime.GOOS)
 	}
 }

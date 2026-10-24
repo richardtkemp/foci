@@ -140,7 +140,10 @@ func TestParseAutoApproveRule(t *testing.T) {
 		{"Read", "Read", ""},
 		{"Bash:ls", "Bash", "ls"},
 		{"Bash:git -C /home/rich/git/foci *", "Bash", "git -C /home/rich/git/foci *"},
-		{"Edit:/home/foci/clutch/*", "Edit", "/home/foci/clutch/*"},
+		// Path-typed rules resolve their literal directory prefix through
+		// symlinks (canonicalPathPattern): on Linux this is the same string,
+		// on macOS /home is a symlink to /System/Volumes/Data/home.
+		{"Edit:/home/foci/clutch/*", "Edit", secrets.CanonicalPath("/home/foci/clutch") + "/*"},
 		{"Bash:cd /tmp && make *", "Bash", "cd /tmp && make *"},
 	}
 	for _, tt := range tests {

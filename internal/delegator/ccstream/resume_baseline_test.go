@@ -86,7 +86,7 @@ func TestResumeBaseline_NoRecordMeansZero(t *testing.T) {
 // process.
 func startWithFakeClaude(t *testing.T, workDir, resumeID string, seed map[string]ModelUsage) *Backend {
 	t.Helper()
-	be, err := newFromConfig(map[string]any{"binary": "/bin/true"})
+	be, err := newFromConfig(map[string]any{"binary": "/usr/bin/true"})
 	if err != nil {
 		t.Fatalf("newFromConfig: %v", err)
 	}

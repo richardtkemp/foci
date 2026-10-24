@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -196,6 +197,12 @@ func TestRunWithETXTBSYRetry_Recovers(t *testing.T) {
 // from luck — and that the helper propagates a genuine ETXTBSY.
 func TestRunWithETXTBSYRetry_NoRetryFails(t *testing.T) {
 	t.Parallel()
+	if runtime.GOOS != "linux" {
+		// macOS execs a file that is open for writing; it never returns
+		// ETXTBSY, so there is nothing for the control to observe. The retry
+		// helper is harmless there (it retries only on ETXTBSY).
+		t.Skipf("ETXTBSY is Linux behaviour; %s execs a file open for write", runtime.GOOS)
+	}
 	prog := writeExecutable(t)
 
 	wf, err := os.OpenFile(prog, os.O_WRONLY, 0)

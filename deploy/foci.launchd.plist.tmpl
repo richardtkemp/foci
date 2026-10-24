@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  foci-gw as a per-user LaunchAgent (macOS). Rendered by scripts/macos-install.sh
+  into ~/Library/LaunchAgents/@LABEL@.plist; the macOS counterpart of
+  deploy/foci.service.tmpl. It runs as the logged-in user, in that user's GUI
+  session, so Claude Code finds its login keychain credentials.
+
+  HOME is FOCI_HOME, not the user's home. foci resolves its install root
+  (config/, data/, logs/, shared/, bin/, agent workspaces) from $HOME, as it does
+  on Linux where HOME=/home/foci; children inherit it, so Claude Code keeps its
+  own ~/.claude under FOCI_HOME (foci reads CC transcripts from there) instead
+  of sharing the user's interactive Claude Code config.
+
+  KeepAlive is unconditional (not SuccessfulExit=false): /restart and the app's
+  server.restart send foci-gw SIGTERM, and the graceful exit that follows is a
+  SUCCESS, which launchd would otherwise treat as "stay stopped". Stop it for
+  real with `launchctl bootout gui/$(id -u)/@LABEL@`.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>@LABEL@</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>@BIN_DIR@/foci-gw</string>
+		<string>-config</string>
+		<string>@FOCI_HOME@/config/foci.toml</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>@FOCI_HOME@</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>@SERVICE_PATH@</string>
+		<key>HOME</key>
+		<string>@FOCI_HOME@</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>ExitTimeOut</key>
+	<integer>45</integer>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+	<key>StandardOutPath</key>
+	<string>@FOCI_HOME@/logs/launchd.out.log</string>
+	<key>StandardErrorPath</key>
+	<string>@FOCI_HOME@/logs/launchd.err.log</string>
+</dict>
+</plist>

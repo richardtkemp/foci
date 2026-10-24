@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"foci/internal/log"
+	"foci/internal/procinfo"
 	"foci/internal/session"
 )
 
@@ -188,22 +189,7 @@ func WasCleanShutdown(idx *session.SessionIndex) bool {
 }
 
 func getSystemUptime() (time.Duration, error) {
-	data, err := os.ReadFile("/proc/uptime")
-	if err != nil {
-		return 0, err
-	}
-
-	fields := strings.Fields(string(data))
-	if len(fields) < 1 {
-		return 0, fmt.Errorf("unexpected format in /proc/uptime")
-	}
-
-	uptimeSeconds, err := strconv.ParseFloat(fields[0], 64)
-	if err != nil {
-		return 0, fmt.Errorf("parse uptime: %w", err)
-	}
-
-	return time.Duration(uptimeSeconds * float64(time.Second)), nil
+	return procinfo.Uptime()
 }
 
 func gatherDiagnostics(logsDir string, since time.Time) []string {

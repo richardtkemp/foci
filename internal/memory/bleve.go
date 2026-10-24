@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"foci/internal/log"
+	"foci/internal/procinfo"
 	"foci/internal/sqlite"
 
 	"github.com/blevesearch/bleve/v2"
@@ -303,22 +304,12 @@ func (b *BleveIndex) Reindex() error {
 }
 
 // readSelfRSSkB returns this process's resident set size in kB (0 on error).
-// Mirrors readSelfRSS in internal/resources/memory_guard.go.
 func readSelfRSSkB() int64 {
-	data, err := os.ReadFile("/proc/self/status")
+	v, err := procinfo.RSSKB(os.Getpid())
 	if err != nil {
 		return 0
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "VmRSS:") {
-			f := strings.Fields(line)
-			if len(f) >= 2 {
-				v, _ := strconv.ParseInt(f[1], 10, 64)
-				return v
-			}
-		}
-	}
-	return 0
+	return v
 }
 
 // heapAllocMB returns the current Go heap allocation in MB.

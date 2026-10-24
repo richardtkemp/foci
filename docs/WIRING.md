@@ -272,15 +272,16 @@ main
  ├── gemini        → config, log, messages, provider, google.golang.org/genai
  ├── openai        → config, log, messages, provider, github.com/openai/openai-go/v3
  ├── session       → provider, log, messages, sqlite, timeutil
- ├── memory        → convo, log, session, sqlite, timeutil, fsnotify, blevesearch/bleve/v2 (FTS5 + bleve backends)
+ ├── memory        → convo, log, procinfo, session, sqlite, timeutil, fsnotify, blevesearch/bleve/v2 (FTS5 + bleve backends)
  ├── voice         → config, log, procx, ratelimit, session, tempdir, gorilla/websocket
  ├── skills        → log, procx
  ├── toolformat    → skills (shared pure tool-call display helpers — compact summaries, result hints, activity captions, the SKILL.md loaded-skill chip #1299)
- ├── startup       → log, session (leaf package for crash detection)
- ├── resources     → log (goroutine monitor, memory guard)
+ ├── startup       → log, procinfo, session (leaf package for crash detection)
+ ├── resources     → log (goroutine monitor, memory guard; its live memory source is per-platform: procfs on Linux; the macOS build also imports procinfo for sysctl + ps)
+ ├── procinfo      (no deps on Linux; the macOS build imports procx to run ps — host process/memory facts behind one API — MemTotalKB, RSSKB, Snapshot, ChildrenFunc/Descendants, Cmdline, Uptime: procfs on Linux, sysctl + `ps` on macOS, ErrUnsupported elsewhere)
  ├── procx         → log (process-spawn helper: strips foci-secrets/foci-askgw supplementary groups from child processes, own process group; used by every subprocess spawn site)
  ├── mermaid       → procx, tempdir (mermaid-cli renderer + PNG disk cache, one process-wide instance per config via `Shared`; used by app's /app/render/mermaid and send_to_chat, #1980/#2195. `mermaid/mermaidtest`: fake mmdc for tests)
- ├── peercred      (stdlib syscall only — SO_PEERCRED extraction for Unix-socket auth; see HTTP Gateway)
+ ├── peercred      (stdlib syscall + x/sys/unix only — peer-UID extraction for Unix-socket auth: SO_PEERCRED on Linux, LOCAL_PEERCRED on macOS; see HTTP Gateway)
  ├── question      (no internal deps — backend-agnostic AskUserQuestion core: parsing, formatting, choice buttons, answer resolution/merge; shared by ccstream and tools so the two surfaces can't drift)
  ├── defersend     → sqlite, timeutil (leaf — SQLite-backed queue for deferred sends, branches and commands (#1272): a `foci send/branch/command --wait-*` request that isn't yet warm/cold/user-active/-inactive, OR a `/send` whose target endpoint is currently rate-limited (#1417), is persisted (Record.Kind = send/branch/command; branch records carry no_compact/no_reset_hook/silent) and delivered by a background sweep — branches fork from the parent's state at delivery time, commands dispatch through the agent's registry — surviving a restart. Wired in `cmd/foci-gw/wait_defer.go`.)
  ├── mcp           → log, procx, provider, tools, BurntSushi/toml, go-sdk/mcp
@@ -288,7 +289,7 @@ main
  ├── tools         → turnevent, config, convo, delegator, delegator/accounting, display, fap, log, memory, mermaid, modelinfo, peercred, platform, procx, prompts, provider, question, ratelimit, secrets, secrets/bitwarden, session, telemetry, tempdir, tools/spill, voice (Registry, Tool, shared helpers, the exec-bridge generator, web, http, and most tool impls)
  │     ├── tools/spill    → (stdlib only) shared spill-to-disk writer: bounded in-RAM head + overflow to temp file, optional total cap; used by tools/shell and the http tool
  │     ├── tools/shell    → tools, tools/spill, log, procx, secrets, secrets/bitwarden (the exec/shell tool; execbridge generator stays at root)
- │     ├── tools/tmux     → tools, log, display, session, procx, prompts, tempdir (tmux session tool — 8 files)
+ │     ├── tools/tmux     → tools, log, display, procinfo, session, procx, prompts, tempdir (tmux session tool — 8 files)
  │     ├── tools/browser  → tools, config, log, tempdir, tools/browserjs (browser automation — imports root for Tool/ToolResult)
  │     └── tools/browserjs (no foci deps — vendored go-rod JS snippets)
  ├── workspace     → log, provider
@@ -305,7 +306,7 @@ main
  ├── command       → agent, config, delegator, delegator/accounting, display, linkwalk, log, memory, modelinfo, platform, procx, prompts, provider, provision, question, session, tempdir, timeutil, tools, workspace
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
  ├── messages      → provider (shared message-inspection utilities: HasToolUse, ToolUseIDs)
- ├── timeutil      (no deps — centralised timestamp formatting with configurable timezone)
+ ├── timeutil      (no deps — centralised timestamp formatting with configurable timezone; UniqueNano, a strictly increasing wall-clock nanosecond for IDs — the macOS clock steps in microseconds)
  ├── relogin       → log, procx (automated CC re-login on 401 — see Backend Session Lifecycle)
  ├── delegator     → clock, delegator/pretool, delegator/stoprule, log, ratelimit (Delegator interface, registry, StartOptions, SessionEvents/TurnEvents; capabilities.go: the Capability enum, Spec, Register/SpecFor/Supports/As — every backend difference is declared there, #2154; config_schema.go: the config keys and StartOptions fields each backend reads, #2178)
   │   ├── delegator/accounting → log, modelinfo, sqlite (the per-call cost ledger in api.db, #2111 — schema, SQL cost views, rate render, Book/Report/RecordTurn and their observers (api.jsonl, BookedHook), the direct-API adapter, the legacy-row writer the readers' tests seed history with, the readers, the startup migration; see "Cost ledger")
@@ -316,7 +317,7 @@ main
   │   ├── delegator/stoprule   → delegator/pretool (only its Patterns type; stdlib otherwise — Stop-hook rule engine, #2089: matches the turn's final text, scans the CC transcript for the turn's background launches; shared by config, ccstream and cmd/foci-cc-hook)
   │   ├── delegator/sessionenv → tempdir (shared by codex/opencode + cmd/foci-codex-hook — per-session exec-bridge env file format, lifecycle, and the codex command wrap/unwrap)
   │   ├── delegator/codex      → delegator, delegator/accounting, delegator/autoapprove, delegator/hookbin, delegator/keyedmutex, delegator/sessionenv, log, modelcaps, modelinfo, procx (Codex app-server JSON-RPC; books its own calls in the cost ledger; registers "codex" via init())
-  │   └── delegator/opencode   → delegator, delegator/accounting, delegator/autoapprove, delegator/keyedmutex, delegator/sessionenv, log, modelinfo, procx, ratelimit, tempdir (HTTP/SSE OpenCode; books its own calls in the cost ledger; registers "opencode" via init())
+  │   └── delegator/opencode   → delegator, delegator/accounting, delegator/autoapprove, delegator/keyedmutex, delegator/sessionenv, log, modelinfo, procinfo, procx, ratelimit, tempdir (HTTP/SSE OpenCode; books its own calls in the cost ledger; registers "opencode" via init())
  ├── agent         → turnevent, compaction, config, convo, delegator, delegator/accounting, display, log, memory, messages, modelcaps, modelinfo, nudge, platform, procx, prompts, provider, ratelimit, relogin, session, skills, telemetry, tempdir, timeutil, tools, turn, warnings, workspace
  ├── periodic      → clock, config, delegator, log, memory, prompts, provider, session, skills, timeutil, warnings (NO agent)
  ├── dispatch      → command, platform, question, session, tools (shared command dispatch logic; platform wrappers delegate here)
@@ -709,7 +710,7 @@ The ccstream backend drives Claude Code with structured NDJSON communication ove
 
 #### Subprocess environment (`ccstream/env.go`)
 
-`buildEnv(extra)` assembles the `claude` subprocess's environment in three layers, later-wins (execve semantics): the gateway's own `os.Environ()`, then foci's **CC-only** defaults, then `StartOptions.Env` — the per-session extras `DelegatedManager` builds (`FOCI_SESSION_KEY`, and `BASH_ENV`/`FOCI_SOCK` from the exec bridge) merged with the agent's `[agents.backend_config] env`. Because the CC-only defaults sit in the middle, a per-agent `backend_config.env` can always override one without new config surface; and because they live in `ccstream` rather than in `DelegatedManager`'s shared per-session env, they reach **only** the Claude Code subprocess — codex (`codex/lifecycle.go buildEnv`) and opencode (`opencode/lifecycle.go buildCmdEnv`) build their own environments and never see them, and an API agent has no subprocess at all. Negative tests in each of those packages fail if a CC-only var migrates up to the shared layer.
+`buildEnv(extra)` assembles the `claude` subprocess's environment in three layers, later-wins (execve semantics): the gateway's own `os.Environ()`, then foci's **CC-only** defaults (including `CLAUDE_CODE_SHELL` = the bash on the operator PATH and `SHLVL=1`, each only when absent: the `foci_*` functions arrive via `BASH_ENV`, which needs CC's Bash tool to run bash — on macOS it would run the login shell, zsh — and on macOS CC drops `BASH_ENV`'s functions when `SHLVL` is unset, as it is under launchd), then `StartOptions.Env` — the per-session extras `DelegatedManager` builds (`FOCI_SESSION_KEY`, and `BASH_ENV`/`FOCI_SOCK` from the exec bridge) merged with the agent's `[agents.backend_config] env`. Because the CC-only defaults sit in the middle, a per-agent `backend_config.env` can always override one without new config surface; and because they live in `ccstream` rather than in `DelegatedManager`'s shared per-session env, they reach **only** the Claude Code subprocess — codex (`codex/lifecycle.go buildEnv`) and opencode (`opencode/lifecycle.go buildCmdEnv`) build their own environments and never see them, and an API agent has no subprocess at all. Negative tests in each of those packages fail if a CC-only var migrates up to the shared layer.
 
 The CC-only defaults are:
 

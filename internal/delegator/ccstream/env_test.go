@@ -207,3 +207,45 @@ func TestStart_SpawnedProcessReceivesBashMaxTimeout(t *testing.T) {
 		t.Errorf("FOCI_SESSION_KEY = %q, want %q — wrong process observed", got, "envtest/main")
 	}
 }
+
+// TestBuildEnv_PinsBashAsTheToolShell: the foci_* functions arrive through
+// BASH_ENV, so CC's Bash tool must run bash, not the login shell (zsh on
+// macOS, where every foci_* call failed with "command not found").
+func TestBuildEnv_PinsBashAsTheToolShell(t *testing.T) {
+	clearEnvVar(t, "CLAUDE_CODE_SHELL")
+	old := lookBash
+	t.Cleanup(func() { lookBash = old })
+	lookBash = func() (string, error) { return "/opt/x/bash", nil }
+
+	if got, n := envValue(buildEnv(nil, nil), "CLAUDE_CODE_SHELL"); n != 1 || got != "/opt/x/bash" {
+		t.Errorf("CLAUDE_CODE_SHELL = %q (seen %d times), want /opt/x/bash once", got, n)
+	}
+	// A per-agent backend_config.env still wins (later entries win in execve).
+	if got, _ := envValue(buildEnv(map[string]string{"CLAUDE_CODE_SHELL": "/bin/zsh"}, nil), "CLAUDE_CODE_SHELL"); got != "/bin/zsh" {
+		t.Errorf("per-agent CLAUDE_CODE_SHELL = %q, want /bin/zsh", got)
+	}
+	// An operator env that already sets it is not overridden.
+	t.Setenv("CLAUDE_CODE_SHELL", "/usr/local/bin/fish")
+	if got, n := envValue(buildEnv(nil, nil), "CLAUDE_CODE_SHELL"); n != 1 || got != "/usr/local/bin/fish" {
+		t.Errorf("operator CLAUDE_CODE_SHELL = %q (seen %d times), want the operator's once", got, n)
+	}
+	// No bash on PATH: nothing is set rather than a broken path.
+	os.Unsetenv("CLAUDE_CODE_SHELL")
+	lookBash = func() (string, error) { return "", os.ErrNotExist }
+	if _, n := envValue(buildEnv(nil, nil), "CLAUDE_CODE_SHELL"); n != 0 {
+		t.Error("CLAUDE_CODE_SHELL set although no bash resolved")
+	}
+}
+
+// TestBuildEnv_SetsSHLVLWhenAbsent: on macOS, CC's Bash tool loses BASH_ENV's
+// functions when SHLVL is absent, which it is under launchd.
+func TestBuildEnv_SetsSHLVLWhenAbsent(t *testing.T) {
+	clearEnvVar(t, "SHLVL")
+	if got, n := envValue(buildEnv(nil, nil), "SHLVL"); n != 1 || got != "1" {
+		t.Errorf("SHLVL = %q (seen %d times), want 1 once", got, n)
+	}
+	t.Setenv("SHLVL", "3")
+	if got, n := envValue(buildEnv(nil, nil), "SHLVL"); n != 1 || got != "3" {
+		t.Errorf("inherited SHLVL = %q (seen %d times), want 3 kept once", got, n)
+	}
+}

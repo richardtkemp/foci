@@ -267,6 +267,19 @@ Red team testing showed that an AI agent could bypass string-based defences by:
 
 None of these bypass OS-level file permissions. The child process simply does not have the `foci-secrets` group, so `open()` returns `EACCES` regardless of how the path is specified.
 
+### macOS
+
+The OS-level protection above does not exist on macOS. foci runs as the login
+user (no `foci` account), a LaunchAgent cannot grant a supplementary group to
+one process, and only root may call `setgroups()` to strip one from a child. So
+agents run as the same user as foci and **can read `secrets.toml`**. The
+in-process file tools still refuse the path ([In-process file tools](#in-process-file-tools)),
+and tool output is still redacted, but neither stops a Bash `cat`. Treat
+secrets on a Mac install as readable by the agents.
+
+The startup check adapts: it warns unless the file is owned by the user foci
+runs as and is mode `0600`, so at least no other account can read it.
+
 ## Startup Security Checks
 
 At startup, foci verifies:

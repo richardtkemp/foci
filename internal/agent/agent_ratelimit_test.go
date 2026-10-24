@@ -197,14 +197,14 @@ func TestCanFireBackgroundOperation_Success(t *testing.T) {
 func TestCanFireBackgroundOperation_CanRunBackgroundDeclined(t *testing.T) {
 	// Proves that a can_run_background executable exiting non-zero declines the
 	// operation, while one exiting zero permits it.
-	declined := &Agent{CanRunBackground: "/bin/false"}
+	declined := &Agent{CanRunBackground: "/usr/bin/false"}
 	if canFire, reason := declined.CanFireBackgroundOperation(context.Background(), "test/c123"); canFire {
 		t.Errorf("expected canFire=false when can_run_background exits non-zero, got reason: %s", reason)
 	} else if !strings.Contains(reason, "can_run_background") {
 		t.Errorf("expected can_run_background reason, got: %s", reason)
 	}
 
-	allowed := &Agent{CanRunBackground: "/bin/true"}
+	allowed := &Agent{CanRunBackground: "/usr/bin/true"}
 	if canFire, reason := allowed.CanFireBackgroundOperation(context.Background(), "test/c123"); !canFire {
 		t.Errorf("expected canFire=true when can_run_background exits zero, got reason: %s", reason)
 	}

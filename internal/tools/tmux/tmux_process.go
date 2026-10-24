@@ -8,6 +8,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"foci/internal/procinfo"
 )
 
 // killSessionWithChildren kills a tmux session and terminates any child
@@ -90,38 +92,9 @@ func (inst *tmuxInstance) tmuxSessionPIDs(session string) []int {
 }
 
 // collectDescendants returns all descendant PIDs for the given parent PIDs
-// by walking /proc/<pid>/task/*/children recursively.
+// (via procinfo: /proc/<pid>/task/*/children on Linux, a ps snapshot on macOS).
 func collectDescendants(pids []int) []int {
-	seen := make(map[int]bool)
-	var result []int
-
-	var walk func(pid int)
-	walk = func(pid int) {
-		if seen[pid] {
-			return
-		}
-		seen[pid] = true
-
-		// Read children from /proc/<pid>/task/<pid>/children
-		childrenFile := fmt.Sprintf("/proc/%d/task/%d/children", pid, pid)
-		data, err := os.ReadFile(childrenFile)
-		if err != nil {
-			return
-		}
-		for _, field := range strings.Fields(string(data)) {
-			childPID, err := strconv.Atoi(field)
-			if err != nil || childPID <= 1 {
-				continue
-			}
-			result = append(result, childPID)
-			walk(childPID)
-		}
-	}
-
-	for _, pid := range pids {
-		walk(pid)
-	}
-	return result
+	return procinfo.Descendants(pids)
 }
 
 // terminateProcesses sends SIGTERM, waits up to 2 seconds, then SIGKILLs

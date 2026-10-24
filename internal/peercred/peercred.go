@@ -1,13 +1,13 @@
 // Package peercred extracts the credentials of the process on the other end of
-// a Unix domain socket connection via SO_PEERCRED.
+// a Unix domain socket connection (SO_PEERCRED on Linux, LOCAL_PEERCRED on macOS).
 //
 // It backs the same-user authentication on the gateway control socket and the
 // exec bridge: even if a socket's filesystem permissions were somehow loosened,
 // a connection from a different user is rejected. This is defence in depth
 // alongside the 0600 socket mode the listeners set.
 //
-// UID is platform-specific (SO_PEERCRED is Linux-only): the real lookup lives in
-// peercred_linux.go; peercred_other.go is an erroring stub so the module still
+// UID is platform-specific: the real lookups live in peercred_linux.go and
+// peercred_darwin.go; peercred_other.go is an erroring stub so the module still
 // builds — and its non-peercred dependents' tests still run — on non-Linux hosts.
 package peercred
 

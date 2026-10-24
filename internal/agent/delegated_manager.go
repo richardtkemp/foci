@@ -14,6 +14,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/session"
 	"foci/internal/telemetry"
+	"foci/internal/timeutil"
 	"foci/internal/tools"
 
 	"golang.org/x/sync/singleflight"
@@ -1654,7 +1655,7 @@ func (m *DelegatedManager) RunBatch(ctx context.Context, req delegator.BatchRequ
 		root = sk.Root().String()
 		parent = ownerKey
 	}
-	batchKey := fmt.Sprintf("%s/b%d", root, time.Now().UnixNano())
+	batchKey := fmt.Sprintf("%s/b%d", root, timeutil.UniqueNano()) // UniqueNano: concurrent batches must not share a key on a microsecond clock (macOS)
 
 	m.setBatchSpec(batchKey, batchSpec{systemPrompt: req.SystemPrompt, model: req.Model, cheap: req.Cheap, workDir: req.WorkDir})
 	defer func() {

@@ -61,11 +61,11 @@ check() { # check <label> <expected> <actual>
 # it) — resolving "mdq" via a PATH that contains shared/scripts/ would find
 # our own wrapper first and test it against itself.
 REAL_MDQ=""
-for cand in /usr/local/bin/mdq /usr/bin/mdq "$HOME/.cargo/bin/mdq"; do
+for cand in /usr/local/bin/mdq /usr/bin/mdq /opt/homebrew/bin/mdq "$HOME/.cargo/bin/mdq"; do
     [[ -x "$cand" ]] && { REAL_MDQ="$cand"; break; }
 done
 if [[ -z "$REAL_MDQ" ]]; then
-    echo "SKIP: no real mdq binary found (checked /usr/local/bin, /usr/bin, ~/.cargo/bin)." >&2
+    echo "SKIP: no real mdq binary found (checked /usr/local/bin, /usr/bin, /opt/homebrew/bin, ~/.cargo/bin)." >&2
     echo "      --raw delegates section-location to it; without it, nothing here can run." >&2
     exit 1
 fi

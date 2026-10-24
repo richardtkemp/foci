@@ -20,6 +20,7 @@ import (
 	"foci/internal/delegator/pretool"
 	"foci/internal/delegator/stoprule"
 	"foci/internal/ratelimit"
+	"foci/internal/timeutil"
 )
 
 // autonomousInjectGrace is how long after an autonomous run goes idle that
@@ -375,9 +376,10 @@ type Backend struct {
 
 // newRequestID generates a simple unique request ID for control messages.
 // Not a real UUID, but unique within a process lifetime which is sufficient
-// for request correlation.
+// for request correlation. timeutil.UniqueNano, not time.Now().UnixNano():
+// the macOS clock steps in microseconds, so the latter repeats.
 func newRequestID() string {
-	return fmt.Sprintf("%d", time.Now().UnixNano())
+	return fmt.Sprintf("%d", timeutil.UniqueNano())
 }
 
 // IsRunning reports whether the Claude Code subprocess is alive.

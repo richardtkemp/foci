@@ -17,10 +17,13 @@ package opencode
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"foci/internal/procinfo"
 )
 
 // procDir is the procfs mount point. Tests override this to point at a
@@ -41,7 +44,12 @@ var sigtermGrace = 2 * time.Second
 // instance. Returns the number of processes reaped.
 func ReapOrphanedServers() int {
 	myUID := os.Getuid()
-	orphans := findOrphanedServers(procDir, myUID)
+	var orphans []int
+	if runtime.GOOS == "linux" {
+		orphans = findOrphanedServers(procDir, myUID)
+	} else {
+		orphans = findOrphanedFromTable(myUID)
+	}
 	if len(orphans) == 0 {
 		return 0
 	}
@@ -101,6 +109,41 @@ func findOrphanedServers(dir string, myUID int) []int {
 		orphans = append(orphans, pid)
 	}
 
+	return orphans
+}
+
+// findOrphanedFromTable is the non-procfs scan (macOS): the same rule —
+// owned by myUID, PPID 1, argv[0] basename "opencode" with a subcommand —
+// applied to procinfo's process table and kern.procargs2 argv. Returns nil
+// when the platform has no process table.
+func findOrphanedFromTable(myUID int) []int {
+	procs, err := procinfo.Snapshot()
+	if err != nil {
+		opencodeLog.Debugf("orphan scan skipped: %v", err)
+		return nil
+	}
+	return selectOrphans(procs, procinfo.Cmdline, myUID, os.Getpid())
+}
+
+// selectOrphans filters a process table down to orphaned opencode processes.
+func selectOrphans(procs []procinfo.Proc, cmdline func(int) ([]string, error), myUID, selfPID int) []int {
+	var orphans []int
+	for _, p := range procs {
+		if p.PID <= 1 || p.PID == selfPID || p.UID != myUID || p.PPID != 1 {
+			continue
+		}
+		// Cheap pre-filter on the executable name before reading argv.
+		if p.Comm != "opencode" {
+			continue
+		}
+		args, err := cmdline(p.PID)
+		if err != nil {
+			continue
+		}
+		if isOpencodeProcess([]byte(strings.Join(args, "\x00"))) {
+			orphans = append(orphans, p.PID)
+		}
+	}
 	return orphans
 }
 

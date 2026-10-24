@@ -1,6 +1,6 @@
 # Installation Guide
 
-Step-by-step setup for foci on a Linux server (Debian/Ubuntu). Takes about 10 minutes.
+Step-by-step setup for foci on a Linux server (Debian/Ubuntu). Takes about 10 minutes. For a Mac, see [macOS](#macos).
 
 ## Docker (Quickest)
 
@@ -165,6 +165,78 @@ old value would be silently dropped at startup). Without `-config` it checks `$F
 `make update` aborts with the running daemon untouched, so a config incompatibility
 can no longer brick the service mid-upgrade. You can run the same check by hand
 before upgrading.
+
+## macOS
+
+foci runs on macOS (Apple Silicon and Intel) as **your own user**, under a
+per-user LaunchAgent. There is no root step, no `foci` system user and no
+systemd.
+
+### Install
+
+```bash
+xcode-select --install          # git and make, if not already present
+git clone https://github.com/richardtkemp/foci.git && cd foci
+make macos-deps                 # Homebrew: go, GNU coreutils/sed/grep/findutils/tar/awk, flock, sqlite, tmux, jq, mdq, bash
+make macos-install              # builds, installs into ~/foci, (re)starts the LaunchAgent
+```
+
+The first `make macos-install` stops after creating the directories, because
+there is no config yet. Write `~/foci/config/foci.toml` (or run
+`HOME=~/foci ~/foci/bin/foci first-run --config-dir ~/foci/config`), then run
+`make macos-install` again. Re-running it is also how you update: it rebuilds,
+checks the config against the new binary before touching the running daemon,
+reinstalls and restarts.
+
+Claude Code must be installed (`~/.local/bin/claude`) and logged in once as you,
+in a normal terminal.
+
+### How it differs from Linux
+
+| | Linux | macOS |
+|---|---|---|
+| Runs as | dedicated `foci` user | you |
+| Service | systemd unit `foci` | LaunchAgent `com.github.richardtkemp.foci` (`~/Library/LaunchAgents/`), in your GUI session |
+| Install root (`HOME` of foci-gw) | `/home/foci` | `~/foci` (`FOCI_HOME`) |
+| Binaries | `/usr/local/bin` (root-owned) | `~/foci/bin` |
+| Logs | journal + `~/logs/foci.log` | `~/foci/logs/foci.log`, launchd stdout/stderr in `~/foci/logs/launchd.*.log` |
+| Restart | `sudo systemctl restart foci` | `launchctl kickstart -k gui/$(id -u)/com.github.richardtkemp.foci` (or `/restart`) |
+| Stop | `sudo systemctl stop foci` | `launchctl bootout gui/$(id -u)/com.github.richardtkemp.foci` |
+
+**`HOME` is `~/foci`, not your home.** foci takes its install root from `$HOME`
+(as on Linux, where it is `/home/foci`), and its children inherit it, so Claude
+Code keeps its own `~/foci/.claude`, separate from your interactive Claude Code.
+The one shared piece is the login keychain, through a `~/foci/Library/Keychains`
+symlink the installer makes: macOS finds the keychain through `$HOME`, and
+without it Claude Code reports "Not logged in". To use the `foci` CLI from your
+own shell, run it as `HOME=~/foci ~/foci/bin/foci <command>`.
+
+### What is not available
+
+- **Secrets isolation.** On Linux, `secrets.toml` is `root:foci-secrets 0660`,
+  foci-gw alone holds the group, and it strips the group from every child, so
+  agents cannot read the file. macOS has no per-process supplementary group for
+  a LaunchAgent and lets only root call `setgroups`, so agents run as you and
+  can read `~/foci/config/secrets.toml`. The startup check asks only that the
+  file is yours and mode `0600`. See [SECRETS.md](SECRETS.md#macos).
+- **The nosgid preload shim and Landlock sandboxing** (`llbox`): Linux-only.
+- **Auto-approval of commands from user-writable directories.** Before
+  auto-approving a command, foci checks that the agent cannot replace the file
+  the name resolves to. On a Mac everything outside the SIP-protected system
+  directories is yours, including Homebrew and `~/foci/bin`. So the daemon
+  `PATH` puts `/usr/bin` and `/bin` before Homebrew (`ls`, `grep`, `jq`,
+  `sqlite3`, `diff`, `git` auto-approve as usual), and tools that exist only in
+  Homebrew or `~/foci/bin` (`rg`, `go`, `npm`, `mdq`, `mds`, …) ask for
+  approval. `foci-gw -check-config` lists them.
+
+### Developing on a Mac
+
+`make test` works after `make macos-deps`. The Makefile puts the Homebrew GNU
+tools on `PATH` (the recipes and scripts are written for GNU userland), uses
+`/private/tmp/fgw` as the test root (`/tmp` is a symlink on macOS), and puts
+Homebrew `sqlite3` ahead of Apple's, which cannot open WAL databases
+`-readonly`. Tests that exercise Linux-only mechanisms (procfs, ETXTBSY, the
+`foci-secrets` group model) skip on macOS.
 
 ## Directory Layout
 
