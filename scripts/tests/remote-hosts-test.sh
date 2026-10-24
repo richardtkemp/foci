@@ -210,6 +210,17 @@ done
 if grep -q '^local-lint:' "$REPO/Makefile"; then ok "local-lint exists (remote-lint runs it on the Mac)"
 else fail "local-lint exists (remote-lint runs it on the Mac)" "no local-lint: rule in the Makefile"; fi
 
+# --- NPROC (go test -p): at most 8 on macOS, a command-line value wins (#2546) ---
+printf 'print-nproc:\n\t@echo $(NPROC)\n' > "$TMP/np.mk"
+nproc_of() { make -C "$REPO" --no-print-directory -s -f Makefile -f "$TMP/np.mk" print-nproc "$@" 2>&1; }
+if [ "$(uname -s)" = Darwin ]; then
+  ncpu=$(sysctl -n hw.ncpu); want=$(( ncpu > 8 ? 8 : ncpu ))
+  got=$(nproc_of)
+  [ "$got" = "$want" ] && ok "macOS NPROC is min(hw.ncpu, 8) = $want" || fail "macOS NPROC is min(hw.ncpu, 8)" "want $want got '$got'"
+fi
+got=$(nproc_of NPROC=3)
+[ "$got" = 3 ] && ok "command-line NPROC=3 wins" || fail "command-line NPROC=3 wins" "got '$got'"
+
 # --- make land's gate and lint dispatch too (Dick 2026-10-24, #2544) -------
 for t in test lint; do
   out=$(mk -n "$t" REMOTE_PICK=locked)

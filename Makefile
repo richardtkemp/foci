@@ -23,7 +23,9 @@ FGW_ROOT := /private/tmp/fgw
 # above, so the two $(shell) uses that need GNU behaviour name it directly:
 # BSD mktemp rejects a suffix after the X's, and macOS has no nproc.
 MKTEMP := $(BREW_PREFIX)/opt/coreutils/libexec/gnubin/mktemp
-NPROC := $(shell sysctl -n hw.ncpu 2>/dev/null || echo 4)
+# go test -p on the Mac: at most 8 (foci_todo #2546). Full-suite runs at -p 18 on an
+# 18-core Mac stalled helper-start tests 2-8.7 s and were no faster than -p 8.
+NPROC := $(shell n=$$(sysctl -n hw.ncpu 2>/dev/null || echo 4); [ $$n -gt 8 ] && echo 8 || echo $$n)
 # lint on the Mac analyses the LINUX build (production), not darwin: the
 # analysers load packages for this GOOS/GOARCH. foci is pure Go (no cgo), so the
 # analysis is the same one the NUC runs. Only the analysers get it: the find-*
