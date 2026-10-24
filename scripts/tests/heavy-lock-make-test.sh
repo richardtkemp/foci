@@ -68,15 +68,16 @@ for target in "test-one PKG=./internal/zz/ COUNT=2" integration; do
   expect "external $target: reaps under it" "$REAP" "$out"
   expect "external $target: tells the tests it is held" "HEAVY_LOCK_HELD=/tmp/heavy " "$out"
 done
+# These dry runs name local-test-one: bare test-one dispatches through a sub-make (mk/remote.mk, #2525), and the -W flag did not reach its llbox rule (this test failed on it).
 
 # llbox: rebuilt on every call by default; with external only when out of date (a link is always a Go cache miss,
 # which would make the caller's helper take the lock on every call). -o bin/llbox: make takes it as up to date.
 LLBOX_BUILD='go build -o ../../bin/llbox .'
-out=$(dry -- -o bin/llbox test-one PKG=./internal/zz/)
+out=$(dry -- -o bin/llbox local-test-one PKG=./internal/zz/)
 expect "default: llbox is rebuilt every call" "$LLBOX_BUILD" "$out"
-out=$(dry "${EXT[@]}" -- -o bin/llbox test-one PKG=./internal/zz/)
+out=$(dry "${EXT[@]}" -- -o bin/llbox local-test-one PKG=./internal/zz/)
 reject "external: an up-to-date llbox is not rebuilt" "$LLBOX_BUILD" "$out"
-out=$(dry "${EXT[@]}" -- -W scripts/llbox/main.go test-one PKG=./internal/zz/)
+out=$(dry "${EXT[@]}" -- -W scripts/llbox/main.go local-test-one PKG=./internal/zz/)
 expect "external: a stale llbox is rebuilt" "$LLBOX_BUILD" "$out"
 
 out=$(dry FGW_HEAVY_LOCK=external -- test-one PKG=./internal/zz/)
