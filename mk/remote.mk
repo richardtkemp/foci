@@ -145,6 +145,12 @@ REMOTE_GUARD = $(if $(strip $(REMOTE_AVAIL)),@:,$(error $(if $(strip $(REMOTE_HO
 
 .PHONY: $(REMOTE_DISPATCH) $(addprefix remote-,$(REMOTE_DISPATCH) test) remote-build
 
+# remote-test runs `make local-test` on the Mac (remote-run.sh passes local-<target>),
+# but `test` is not dispatched, so no local-test existed and remote-test failed with
+# "No rule to make target `local-test'" (found 2026-10-24). It is `test` itself.
+.PHONY: local-test
+local-test: test
+
 # Says where it ran, every time: a silent fallback would build somewhere other
 # than where the caller thinks.
 $(REMOTE_DISPATCH):

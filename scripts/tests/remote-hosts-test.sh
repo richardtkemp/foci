@@ -176,6 +176,14 @@ r=$(both REMOTE_HOSTS=free)
 [ "$r" = yes ] && ok "unlocked host: two runs overlap" || { fail "unlocked host: two runs overlap" "overlap=$r"; cat "$FAKE_GO_LOG" "$TMP/A.out" "$TMP/B.out"; }
 [ -f "$TMP/remote/git/foci-wt/repoA/Makefile" ] && [ -f "$TMP/remote/git/foci-wt/repoB/Makefile" ] && ok "each checkout ran in its own remote dir" || fail "each checkout ran in its own remote dir" "$(ls -R "$TMP/remote" | head)"
 
+# --- every local body a remote-* target runs exists -----------------------
+# remote-run.sh runs `make local-<target>` on the Mac; a missing one fails there
+# with "No rule to make target" (remote-test did, until local-test was added).
+for t in test test-one vet; do
+  out=$(make -n -C "$REPO" --no-print-directory "local-$t" PKG=./internal/zz/ 2>&1)
+  reject "local-$t exists (remote-$t runs it on the Mac)" "No rule to make target" "$out"
+done
+
 # --- the old format -------------------------------------------------------
 printf 'REMOTE_HOST := mac\nREMOTE_DIR := ~/git/foci\n' > "$REPO/.remote.mk"
 # shellcheck disable=SC2086
