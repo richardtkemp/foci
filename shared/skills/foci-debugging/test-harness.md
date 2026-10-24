@@ -45,6 +45,16 @@ TESTENV=(env -i "PATH=$(go env GOROOT)/bin:/usr/local/sbin:/usr/local/bin:/usr/s
 "${TESTENV[@]}" bin/llbox -w "$WL" -- go test -C /home/rich/git/foci ./internal/tools/tmux/ -count=1
 ```
 
+Other differences from a bare `go test` (#2551), each a place to look when only the suite fails:
+- **Linux: `$TESTDIR` is `/dev/shm/fgw-run-<user>` (tmpfs)**, not `/tmp/fgw/run-<user>`, so an
+  fsync costs nothing. `FGW_RUN_PREFIX=/tmp/fgw/run-` puts it back on disk.
+- **`-p` is 1.5 x the cores on Linux** (`NPROC`, 6 on the NUC), 8 on the Mac, and the slowest
+  packages start first (`SLOW_FIRST` in `seal-test.sh`), so a test meets more concurrent load.
+- **Every binary runs under `scripts/test-memcap.sh`** (`go test -exec`). On macOS that wrapper
+  runs it from an MD5-named copy in `~/Library/Caches/foci-test-bins`, so `os.Args[0]` is that
+  path; `FOCI_TEST_BIN_REUSE=0` runs the binary go built.
+- **The shell-script suites run at the same time as each other and as `go test`.**
+
 `FOCI_TEST_UNSEALED=1` makes `seal-test.sh` (and `make test-one`) skip Landlock — the cheapest
 split of "sandbox artifact" from "real bug".
 

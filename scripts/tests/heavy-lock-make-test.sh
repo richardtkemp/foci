@@ -42,6 +42,10 @@ user=$(id -un)
 # /tmp is a symlink to /private/tmp — see FGW_ROOT in the Makefile).
 FGW=/tmp/fgw
 [ "$(uname -s)" = Darwin ] && FGW=/private/tmp/fgw
+# The shared per-user test dir: in RAM (/dev/shm) on Linux, under FGW elsewhere
+# (the Makefile's FGW_RUN_PREFIX, foci_todo #2551).
+RUNDIR=$FGW/run-$user
+[ "$(uname -s)" != Darwin ] && [ -d /dev/shm ] && [ -w /dev/shm ] && RUNDIR=/dev/shm/fgw-run-$user
 FLOCK='flock 9; echo ">>> acquired heavy lock'
 REAP='heavy-lock-reap-gradle.sh'
 EXT=(FGW_HEAVY_LOCK=external FGW_TESTDIR=/tmp/fgw/run-zz2396 FGW_SRCLINK=/tmp/fgw/src-zz2396)
@@ -54,7 +58,7 @@ for target in test "test-one PKG=./internal/zz/" "test-one PKG=./internal/zz/ CO
   reject "default $target: no HEAVY_LOCK_HELD" "HEAVY_LOCK_HELD" "$out"
 done
 out=$(dry -- test-one PKG=./internal/zz/)
-expect "default: the shared per-user test dir" "rm -rf $FGW/run-$user && mkdir -p $FGW/run-$user/home" "$out"
+expect "default: the shared per-user test dir" "rm -rf $RUNDIR && mkdir -p $RUNDIR/home" "$out"
 expect "default: the shared per-user symlink" "ln -sfn $REPO $FGW/src-$user" "$out"
 
 for target in test "test-one PKG=./internal/zz/"; do

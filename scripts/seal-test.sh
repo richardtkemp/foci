@@ -199,6 +199,17 @@ if [ -n "${HEAVY_LOCK_HELD:-}" ]; then
 fi
 PINNED=("PATH=$TEST_PATH" "USER=$(id -un)" "PWD=$PWD" "TMPDIR=$TESTDIR" "FOCI_TMPDIR=$TESTDIR" "FOCI_TEST_TMPDIR=$TESTDIR" \
   "HOME=$TESTDIR/home" "GOCACHE=$GOCACHE_DIR" "GOMODCACHE=$GOMODCACHE_DIR" "GOPATH=$GOPATH_DIR")
+# macOS: the test binaries run from MD5-named copies that XProtect has already
+# scanned (scripts/test-memcap.sh, foci_todo #2551). The dir outlives the run,
+# like the Go caches; a copy not run for 12 h is removed here. It is not in the
+# sandbox whitelist: Landlock is Linux-only, and this is macOS-only.
+# FOCI_TEST_BIN_REUSE=0 (read here: the tests' env -i would drop it) turns it off.
+if [ "$(uname -s)" = Darwin ] && [ "${FOCI_TEST_BIN_REUSE:-1}" != 0 ]; then
+  BIN_CACHE="${FOCI_TEST_BIN_CACHE_DIR:-$HOME/Library/Caches/foci-test-bins}"
+  mkdir -p "$BIN_CACHE"
+  find "$BIN_CACHE" -mindepth 1 -maxdepth 1 -type d -mmin +720 -exec rm -rf {} +
+  PINNED+=("FOCI_TEST_BIN_CACHE=$BIN_CACHE")
+fi
 TESTENV=(env -i "${PASSTHRU[@]}" "${PINNED[@]}")
 TESTENV_SHOWN=("${PASSTHRU_SHOWN[@]}" "${PINNED[@]}")
 
@@ -213,6 +224,10 @@ TESTENV_SHOWN=("${PASSTHRU_SHOWN[@]}" "${PINNED[@]}")
 # cmd/foci-gw test binary took 5.1 s with it and 3.0 s without (make
 # bench-test-build, 2026-10-12). Stack traces and runtime.Caller still work;
 # only a debugger loses symbols, and none is used on test binaries.
+# -s also drops the symbol table (foci_todo #2551), as the release build does
+# (the Makefile's LDFLAGS): stack traces use the pclntab, which stays. A
+# smaller binary links faster and, on macOS, is faster to scan: XProtect reads
+# every new executable before its first run, at about 17 ms per MB on the Pro.
 # MEMCAP: every test binary runs under scripts/test-memcap.sh, which stops it
 # (SIGQUIT goroutine dump, then SIGKILL) if its OWN resident memory passes
 # 1 GB, so a test that spins and allocates fails fast as an ordinary test
@@ -221,7 +236,7 @@ TESTENV_SHOWN=("${PASSTHRU_SHOWN[@]}" "${PINNED[@]}")
 # from each package's directory. $PWD is the stable /tmp/fgw/src-<user> link,
 # so the path (part of go's test-cache key) is the same in every run.
 MEMCAP=(-exec "$PWD/scripts/test-memcap.sh")
-GOTEST_FLAGS=(-trimpath -ldflags=-w -parallel=16 -v "${MEMCAP[@]}")
+GOTEST_FLAGS=(-trimpath "-ldflags=-s -w" -parallel=16 -v "${MEMCAP[@]}")
 
 if [ -n "${FOCI_TEST_UNSEALED:-}" ]; then
   echo ">>> FOCI_TEST_UNSEALED=1 set — skipping Landlock sealing entirely" | tee -a "$LOGFILE" >&2
@@ -295,11 +310,11 @@ diagnostic_rerun() {
   while IFS= read -r pkg; do
     [ -z "$pkg" ] && continue
     echo "--- unsealed re-run: $pkg ---" >> "$LOGFILE"
-    if go_test_logged "${env[@]}" nice -n 19 go test -trimpath -ldflags=-w -count=1 "${MEMCAP[@]}" "${extra_flags[@]}" "$pkg" 8<&-; then
+    if go_test_logged "${env[@]}" nice -n 19 go test -trimpath "-ldflags=-s -w" -count=1 "${MEMCAP[@]}" "${extra_flags[@]}" "$pkg" 8<&-; then
       # A pass unsealed is also what a flake looks like. Only a second sealed
       # failure pins it on the sandbox (#2132).
       echo "--- sealed re-run: $pkg ---" >> "$LOGFILE"
-      if go_test_logged "${SEAL[@]}" "${env[@]}" nice -n 19 go test -trimpath -ldflags=-w -count=1 "${MEMCAP[@]}" "${extra_flags[@]}" "$pkg" 8<&-; then
+      if go_test_logged "${SEAL[@]}" "${env[@]}" nice -n 19 go test -trimpath "-ldflags=-s -w" -count=1 "${MEMCAP[@]}" "${extra_flags[@]}" "$pkg" 8<&-; then
         echo ">>> DIAGNOSTIC: $pkg passes on re-run both UNSEALED and SEALED — the failure is a FLAKE, not a sandbox write." | tee -a "$LOGFILE" >&2
       else
         echo ">>> DIAGNOSTIC: $pkg fails SEALED again but passes UNSEALED — it is writing outside the sandbox. Add the path to the whitelist in scripts/seal-test.sh, or stop writing there." | tee -a "$LOGFILE" >&2
@@ -321,10 +336,44 @@ env_header() {
   echo "=== $1 (env -i ${TESTENV_SHOWN[*]}) [$(date +%FT%T%z)] ===" >> "$LOGFILE"
 }
 
+# The slowest packages, slowest first (wall seconds in a full run on the NUC and
+# the Mac Pro, 2026-10-24). go test starts packages in the order it is given
+# them, and -p of them at a time; given ./... it went alphabetically, so a slow
+# package late in the alphabet (internal/tools, internal/tools/browser) started
+# when most of the run was over and ran on alone (foci_todo #2551). Naming
+# these first lets the many small packages fill in around them. Only the ORDER
+# changes: every package is still tested, whether or not it is listed here, and
+# a name here that no longer exists is skipped.
+SLOW_FIRST=(
+  foci/internal/agent foci/internal/app foci/internal/tools/browser
+  foci/internal/delegator/ccstream foci/cmd/foci-call foci/internal/memory
+  foci/internal/periodic foci/internal/discord foci/internal/command
+  foci/internal/delegator/codex foci/internal/tools foci/internal/delegator/opencode
+  foci/cmd/foci foci/internal/session foci/cmd/foci-gw foci/internal/delegator/accounting
+  foci/internal/mermaid foci/internal/telegram foci/internal/askgw foci/internal/tools/tmux
+)
+
+# unit_packages: the packages of ./... with SLOW_FIRST's first, one per line.
+# If go list fails, just ./... (go test then reports the same error itself).
+unit_packages() {
+  local all p
+  if ! all=$("${TESTENV[@]}" go list ./...); then
+    echo ./...
+    return
+  fi
+  for p in "${SLOW_FIRST[@]}"; do
+    grep -qxF -- "$p" <<<"$all" && echo "$p"
+  done
+  grep -vxF -f <(printf '%s\n' "${SLOW_FIRST[@]}") <<<"$all"
+}
+
 run_unit() {
   env_header "sealed unit suite"
   start_script_suites
-  go_test_logged "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test "${GOTEST_FLAGS[@]}" -p="$PARALLEL" -timeout "$(test_timeout)" ./...
+  local pkgs=() p # no mapfile: macOS /bin/bash is 3.2
+  while IFS= read -r p; do pkgs+=("$p"); done < <(unit_packages 2>>"$LOGFILE")
+  [ "${#pkgs[@]}" -gt 0 ] || pkgs=(./...)
+  go_test_logged "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test "${GOTEST_FLAGS[@]}" -p="$PARALLEL" -timeout "$(test_timeout)" "${pkgs[@]}"
   local status=$?
 
   diagnostic_rerun -timeout "$(test_timeout)"
@@ -340,11 +389,15 @@ run_unit() {
 # need git and the real mdq/jq binaries. Each prints its own "FAIL ..."
 # lines, which the Makefile's failure summary picks up.
 #
-# They run at the SAME TIME as go test (#2550), one after another among
-# themselves (some share /tmp/heavy, /tmp/fgw or /tmp/m.md): serial after go
-# test they were 26-47 s of a 52-70 s run. Each writes its own file under
-# $TESTDIR/scripts-out; finish_script_suites waits for the job and appends
-# them to the log in order, in the format the loop used to write directly.
+# They run at the SAME TIME as go test (#2550), and at the same time as each
+# other (foci_todo #2551): one after another they were the critical path of a
+# Mac run (30 s against go test's 24 s). Each suite works in its own mktemp dir;
+# the ones that run `make -n` meet /tmp/heavy and the test dirs only in the
+# commands make prints (it does create an empty, uniquely named log file under
+# /tmp/fgw per dry run, as it always did). Each writes
+# its own files under $TESTDIR/scripts-out; finish_script_suites waits for them
+# and appends them to the log in order, in the format the loop used to write
+# directly.
 start_script_suites() {
   SCRIPTS_OUT="$TESTDIR/scripts-out"
   rm -rf "$SCRIPTS_OUT" # a TESTDIR reused by a second run must not replay the first's suites
@@ -355,9 +408,9 @@ start_script_suites() {
       [ -e "$t" ] || continue
       n=$((n + 1))
       printf '%s\n' "$t" > "$SCRIPTS_OUT/$n.name"
-      bash "$t" > "$SCRIPTS_OUT/$n.log" 2>&1
-      echo $? > "$SCRIPTS_OUT/$n.rc"
+      { bash "$t" > "$SCRIPTS_OUT/$n.log" 2>&1; echo $? > "$SCRIPTS_OUT/$n.rc"; } &
     done
+    wait
     exit 0 # a suite's status is its .rc file; the loop's last test must not leak out
   ) 8<&- &
   SCRIPTS_PID=$!

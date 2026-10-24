@@ -46,6 +46,12 @@ cat > "$TMP/goroot/bin/go" <<'EOF'
 #!/usr/bin/env bash
 root=$(cd "$(dirname "$0")/.." && pwd)
 if [ "$1" = env ] && [ "$2" = GOROOT ]; then echo "$root"; exit 0; fi
+# go list ./... (the unit run's package list): two packages, the slow one second;
+# $root/listfail makes it fail. Not a recorded call.
+if [ "$1" = list ]; then
+  [ -e "$root/listfail" ] && { echo "go: zz list failure" >&2; exit 1; }
+  printf 'foci/zz-a\nfoci/internal/agent\n'; exit 0
+fi
 n=$(( $(cat "$root/calls" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$root/calls"
 { echo "--- call $n: $*"; env | grep -v '^SEALED=' | sort; } >> "$root/seen"
@@ -190,7 +196,7 @@ ln -sfn "$TMP/work" "$TMP/worklink"
 expect "env: PWD is the logical (symlink) cwd" "PWD=$TMP/worklink" "$(cat "$TMP/goroot/seen")"
 expect "env: an opt-in var passes" "FOCI_OPENCODE_LIVE=1" "$seenA"
 expect "env: Go config passes" "GOFLAGS=-mod=mod" "$seenA"
-expect "one: -v without V=1" "test -trimpath -ldflags=-w -parallel=16 -v " "$seenA"
+expect "one: -v without V=1" "test -trimpath -ldflags=-s -w -parallel=16 -v " "$seenA"
 
 # Two callers with different PATHs and shells: the same test env.
 run pass one PATH="/srv/snap-bbb/bin:$TMP/goroot/bin:$PATH" OTEL_ZZ=1 FOCI_OPENCODE_LIVE=1 GOFLAGS=-mod=mod >/dev/null
@@ -210,7 +216,18 @@ expect "opt-in: the log says it is set" "ANTHROPIC_API_KEY=<set>" "$(cat "$TMP/l
 # make test (unit) and test-one pass the same test flags, so they share go's
 # test cache: compare `go test <flags> -timeout <t>` without -p and the package.
 run pass unit >/dev/null
-unitargs=$(grep -m1 '^--- call' "$TMP/goroot/seen" | sed -E 's/^--- call [0-9]+: //; s/ -p=[0-9]+//; s/ \.\/\.\.\.$//')
+unitcall=$(grep -m1 '^--- call' "$TMP/goroot/seen")
+unitargs=$(sed -E 's/^--- call [0-9]+: //; s/ -p=[0-9]+//; s/ foci\/internal\/agent foci\/zz-a$//' <<<"$unitcall")
+# foci_todo #2551: the unit run names go list's packages, a SLOW_FIRST one first.
+case "$unitcall" in
+*" foci/internal/agent foci/zz-a") echo "ok   order: the unit run starts the slow packages first" ;;
+*) echo "FAIL order: want '... foci/internal/agent foci/zz-a', got: $unitcall"; RC=1 ;;
+esac
+: > "$TMP/goroot/listfail"
+run pass unit >/dev/null
+expect "order: a failing go list falls back to ./..." " ./..." "$(grep -m1 '^--- call' "$TMP/goroot/seen")"
+rm -f "$TMP/goroot/listfail"
+run pass unit >/dev/null
 run pass one >/dev/null
 oneargs=$(grep -m1 '^--- call' "$TMP/goroot/seen" | sed -E 's/^--- call [0-9]+: //; s/ \.\/internal\/zz2132\/$//')
 if [ -n "$unitargs" ] && [ "$unitargs" = "$oneargs" ]; then

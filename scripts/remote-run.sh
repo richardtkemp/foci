@@ -23,9 +23,15 @@ dir=${2#\~/}
 target=$3
 shift 3
 
-live=(-o "ConnectTimeout=${REMOTE_SSH_TIMEOUT:-5}" -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=8)
 root=${FGW_ROOT:-/tmp/fgw}
 mkdir -p "$root"
+# One ssh connection for the whole run (foci_todo #2551): the mkdir below opens
+# it, and the rsync, the remote make and the log copy reuse it instead of each
+# paying a new handshake (~0.3 s apiece to the Pro). ControlPersist keeps it 60 s
+# for the next run. The socket name has the local user in it: %C hashes only the
+# hosts, port and remote user, so rich's and foci's runs would share one path.
+mux=(-o ControlMaster=auto -o "ControlPath=$root/ssh-$(id -un)-%C" -o ControlPersist=60)
+live=(-o "ConnectTimeout=${REMOTE_SSH_TIMEOUT:-5}" -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=8 "${mux[@]}")
 log=$(mktemp "$root/remote-$target-XXXXXXXX.log")
 
 qdir=$(printf %q "$dir")

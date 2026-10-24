@@ -58,7 +58,11 @@ GOBIN ?= $(shell go env GOPATH)/bin
 GOCACHE_PIN    := $(shell go env GOCACHE)
 GOMODCACHE_PIN := $(shell go env GOMODCACHE)
 GOPATH_PIN     := $(shell go env GOPATH)
-NPROC ?= $(shell nproc 2>/dev/null || echo 4)
+# go test -p on Linux: 1.5 x the cores (foci_todo #2551). The suite waits on
+# timers, sockets and child processes as much as it computes, so -p = cores left
+# cores idle. On the 4-core NUC (2026-10-24, two full runs each): -p 4 45-46 s,
+# -p 6 38.5-39 s, -p 8 41.5-43.5 s. A command-line NPROC=N still sets -p N.
+NPROC ?= $(shell n=$$(nproc 2>/dev/null || echo 4); echo $$(( n * 3 / 2 )))
 # -parallel ceiling for L2 integration tests. Set well above the real
 # governor — the weighted budget in internal/testharness/parallel.go
 # (loadPerCPU * NumCPU) — so the flag never binds before the semaphore.
@@ -314,7 +318,22 @@ fgw_testdir = $(shell mkdir -p $(FGW_ROOT) && $(MKTEMP) -d $(FGW_ROOT)/$(1)-XXXX
 # t.TempDir() sockets fail "bind: invalid argument". Unset here: unchanged.
 FGW_RUN_TAG ?=
 fgw_run_suffix := $(or $(FGW_RUN_TAG),$(shell id -un))
-fgw_shared_testdir := $(FGW_ROOT)/run-$(fgw_run_suffix)
+# On Linux the shared test dir is in RAM, /dev/shm (tmpfs), not under /tmp
+# (foci_todo #2551). The tests' SQLite databases (WAL, default synchronous=FULL)
+# fsync on every commit. On the NUC a full run kept its 4 cores under half busy;
+# with this dir on tmpfs one run took 57.5 s against 64-65 s on disk at -p 4,
+# and 48.9 s against 54 s at -p 8 (2026-10-24, one run each). Nothing a test
+# can observe changes but the time an fsync takes. A top-level
+# name per user (/dev/shm/fgw-run-<user>), so no shared parent dir needs a mode
+# both accounts can write; the run removes it before and after, as before.
+# FGW_RUN_PREFIX=<path prefix> moves it (the old place: FGW_RUN_PREFIX=/tmp/fgw/run-).
+# macOS has no /dev/shm, and its fsync does not flush the disk anyway.
+ifeq ($(UNAME_S),Darwin)
+FGW_RUN_PREFIX ?= $(FGW_ROOT)/run-
+else
+FGW_RUN_PREFIX ?= $(shell [ -d /dev/shm ] && [ -w /dev/shm ] && echo /dev/shm/fgw-run- || echo $(FGW_ROOT)/run-)
+endif
+fgw_shared_testdir := $(FGW_RUN_PREFIX)$(fgw_run_suffix)
 # FGW_TESTDIR / FGW_SRCLINK (foci_todo #2396): a caller that runs test calls
 # concurrently with other callers' (it does not hold /tmp/heavy for them, see
 # FGW_HEAVY_LOCK) gives each of its runs its own test dir and source symlink.
