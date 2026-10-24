@@ -34,8 +34,9 @@ NPROC := $(shell sysctl -n hw.ncpu 2>/dev/null || echo 4)
 # cannot read Go 1.27 export data (every file failed typecheck, "export data
 # version 5 is greater than maximum supported version 2"; #2544), and that
 # mismatch is the >12 GB lint of #2501. go fetches the toolchain on first use.
-# Unset (a bare local-lint on the Mac): the Mac's own go.
-LINT_GOTOOLCHAIN ?=
+# A bare local-lint on the Mac (not dispatched) uses the default below, the
+# NUC's Go: keep it equal to `go env GOVERSION` on the NUC when that changes.
+LINT_GOTOOLCHAIN ?= go1.26.10
 LINT_ENV := GOOS=linux GOARCH=amd64$(if $(LINT_GOTOOLCHAIN), GOTOOLCHAIN=$(LINT_GOTOOLCHAIN))
 else
 LINT_ENV :=
