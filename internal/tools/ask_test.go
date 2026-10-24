@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -522,6 +524,13 @@ func TestAsk_CompleteRunsGraderOnPartial(t *testing.T) {
 // into its child, and that copy outlives our Close until the child execs. Run
 // serially, the attempt-2 release is the last write holder by construction.
 func TestAsk_GraderRetriesOnETXTBSY(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		// macOS execs a file that is open for writing, so attempt 1 never
+		// fails and the retry is never exercised: on the work Mac this test
+		// passed with the retries removed (#2545). Same skip as procx's
+		// TestRunWithETXTBSYRetry_NoRetryFails.
+		t.Skipf("ETXTBSY is Linux behaviour; %s execs a file open for write", runtime.GOOS)
+	}
 	grader := writeGrader(t, "#!/bin/sh\necho graded-ok\n")
 
 	// Hold a write fd open BEFORE triggering the grader so attempt 1 sees the
@@ -532,8 +541,10 @@ func TestAsk_GraderRetriesOnETXTBSY(t *testing.T) {
 	}
 	defer func() { _ = wf.Close() }() // no-op if already closed below
 
+	var lastAttempt atomic.Int32
 	releaseOnAttempt2 := AskOption(func(s *askState) {
 		s.onGraderAttempt = func(attempt int) {
+			lastAttempt.Store(int32(attempt))
 			if attempt == 2 {
 				_ = wf.Close()
 			}
@@ -556,6 +567,11 @@ func TestAsk_GraderRetriesOnETXTBSY(t *testing.T) {
 		t.Fatal("CompleteSession failed")
 	}
 	msg := waitDeliver(t, d)
+	// One attempt means the first exec was not refused: there was nothing to
+	// retry, so a pass would prove nothing about the retry.
+	if n := lastAttempt.Load(); n < 2 {
+		t.Fatalf("grader ran on attempt %d: the held write fd should have made attempt 1 fail with ETXTBSY", n)
+	}
 	if !strings.Contains(msg, "graded-ok") {
 		t.Errorf("grader should have retried past ETXTBSY and succeeded, got: %q", msg)
 	}
@@ -652,18 +668,29 @@ func writeGrader(t *testing.T, body string) string {
 	return path
 }
 
+// asyncDeliveryWait bounds how long a test polls for an asynchronous ask
+// delivery (the grader path delivers from a goroutine). It is derived from the
+// production bound, not guessed: runGrader always delivers within
+// defaultGraderTimeout (the grader's output, or the "timed out" fallback), so a
+// wait past it can never be the thing that fails. A shorter wait could expire
+// while a freshly written grader script was still being exec'd; on the work
+// Mac under full-suite load such a start took 2-14 s and the old 2-5 s waits
+// flaked (#2545). The bound only costs time when a test is already failing:
+// every poll returns as soon as the delivery it wants arrives.
+const asyncDeliveryWait = defaultGraderTimeout + 5*time.Second
+
 // waitDeliver polls for a delivered message (the grader path delivers from a
 // goroutine, so delivery is not synchronous with the final answer).
 func waitDeliver(t *testing.T, d *fakeDeliver) string {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(asyncDeliveryWait)
 	for time.Now().Before(deadline) {
 		if msg, ok := d.last(); ok {
 			return msg
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatal("no message delivered within timeout")
+	t.Fatalf("no message delivered within %s", asyncDeliveryWait)
 	return ""
 }
 

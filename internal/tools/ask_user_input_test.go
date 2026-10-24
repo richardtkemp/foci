@@ -317,10 +317,10 @@ func TestAskDelivery_FallsBackToDeliverWhenNoUserRoute(t *testing.T) {
 	}
 }
 
-// eventuallyDelivered waits (bounded) for a delivery matching want — the
-// graded goroutine delivers asynchronously.
+// eventuallyDelivered waits (bounded by asyncDeliveryWait, see ask_test.go)
+// for a delivery matching want — the graded goroutine delivers asynchronously.
 func eventuallyDelivered(d *fakeDeliver, want func(string) bool) bool {
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(asyncDeliveryWait)
 	for time.Now().Before(deadline) {
 		if delivered(d, want) {
 			return true
