@@ -97,9 +97,20 @@ func collectDescendants(pids []int) []int {
 	return procinfo.Descendants(pids)
 }
 
-// terminateProcesses sends SIGTERM, waits up to 2 seconds, then SIGKILLs
+// terminateGrace is how long terminateProcesses lets SIGTERMed processes
+// exit before it SIGKILLs the survivors.
+const terminateGrace = 2 * time.Second
+
+// terminateProcesses sends SIGTERM, waits up to terminateGrace, then SIGKILLs
 // any survivors. Returns the number of processes that were signaled.
 func terminateProcesses(pids []int) int {
+	return terminateProcessesWithin(pids, terminateGrace)
+}
+
+// terminateProcessesWithin is terminateProcesses with the grace period as a
+// parameter, so a test of the SIGKILL escalation need not sit out the
+// production 2s (#2536).
+func terminateProcessesWithin(pids []int, grace time.Duration) int {
 	if len(pids) == 0 {
 		return 0
 	}
@@ -121,8 +132,8 @@ func terminateProcesses(pids []int) int {
 		return 0
 	}
 
-	// Wait up to 2 seconds for graceful shutdown
-	deadline := time.Now().Add(2 * time.Second)
+	// Wait up to grace for graceful shutdown
+	deadline := time.Now().Add(grace)
 	for time.Now().Before(deadline) {
 		var stillAlive []int
 		for _, pid := range alive {

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/session"
 	"foci/internal/testtemp"
 	"foci/internal/tools"
 )
@@ -211,6 +212,69 @@ func pollUntil(t *testing.T, timeout time.Duration, cond func() bool) bool {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// watchDriver drives one tmuxInstance's watch monitors by hand (#2536): the
+// monitor's poll ticker is replaced by a channel only poll() sends on, and its
+// clock (shared with the send limiter) by a limiterClock that only moves when
+// the test advances it. A watch therefore never polls, and never sees time
+// pass, unless the test says so, so the tests assert the monitor's decisions
+// without waiting out real thresholds or poll intervals.
+//
+// Use one driver per instance with at most one live watch: monitors of one
+// instance share its channels.
+type watchDriver struct {
+	t     *testing.T
+	clk   *limiterClock
+	ticks chan time.Time
+	acks  chan struct{}
+}
+
+func newWatchDriver(t *testing.T) *watchDriver {
+	return &watchDriver{t: t, clk: &limiterClock{}, ticks: make(chan time.Time), acks: make(chan struct{})}
+}
+
+// install is the newTmuxTool setup hook that points inst's time seams at d.
+func (d *watchDriver) install(inst *tmuxInstance) {
+	inst.now = d.clk.Now
+	inst.sleep = d.clk.Sleep
+	inst.watchTicker = func(time.Duration) (<-chan time.Time, func()) {
+		return d.ticks, func() {}
+	}
+	inst.watchPolled = func() {
+		select {
+		case d.acks <- struct{}{}:
+		case <-time.After(10 * time.Second): // poll() gave up (test failed); don't wedge the monitor
+		}
+	}
+	inst.verifyPoll = 10 * time.Millisecond
+}
+
+// tool builds a tmux tool exactly as NewTmuxTool does, with d installed.
+func (d *watchDriver) tool(notifier *tools.AsyncNotifier, idx *session.SessionIndex, agentID string, autopilot bool, watchThresholdSec int, sock string) (func() int, *tools.Tool) {
+	watchCount, tool, _ := newTmuxTool(300, 30, notifier, idx, agentID, autopilot, watchThresholdSec, 0, sock, d.install)
+	return watchCount, tool
+}
+
+// poll makes the instance's watch monitor poll once and returns after the
+// monitor has fully acted on it (watchPolled): any notification has been
+// delivered (the notifier runs synchronously in the monitor) and any watch
+// removal is done. The deadlines are only hang guards.
+func (d *watchDriver) poll() {
+	d.t.Helper()
+	select {
+	case d.ticks <- d.clk.Now():
+	case <-time.After(10 * time.Second):
+		d.t.Fatal("watch monitor did not take a tick within 10s (not running?)")
+	}
+	select {
+	case <-d.acks:
+	case <-time.After(10 * time.Second):
+		d.t.Fatal("watch monitor did not finish a poll within 10s")
+	}
+}
+
+// advance moves the driver's clock forward by dur.
+func (d *watchDriver) advance(dur time.Duration) { d.clk.Advance(dur) }
 
 // NOTE on a poll that was tried and reverted here: a `pollUntilSessionUp`
 // helper (poll tmuxSessionPIDs until non-empty) previously replaced the

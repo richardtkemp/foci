@@ -122,10 +122,7 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir, key
 // on a controllable clock and assert its arithmetic independently of how long
 // the real tmux subprocess calls take on a loaded host (#2222).
 func (inst *tmuxInstance) paceSend(sessionKey, name string) {
-	now, sleep := inst.now, inst.sleep
-	if now == nil {
-		now = time.Now
-	}
+	now, sleep := inst.clockNow, inst.sleep
 	if sleep == nil {
 		sleep = time.Sleep
 	}
@@ -264,8 +261,12 @@ func (inst *tmuxInstance) verifyKeysInPane(ctx context.Context, name, keys strin
 
 	tmuxLog.Debugf("verifyKeysInPane: name=%s needle=%q", name, needle)
 
-	// Poll every 200ms for up to 2 seconds
-	ticker := time.NewTicker(200 * time.Millisecond)
+	// Poll every 200ms (inst.verifyPoll in tests) for up to 2 seconds
+	poll := inst.verifyPoll
+	if poll <= 0 {
+		poll = 200 * time.Millisecond
+	}
+	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 	timeout := time.After(2 * time.Second)
 

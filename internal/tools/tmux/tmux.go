@@ -76,8 +76,36 @@ type tmuxInstance struct {
 	sessionTTL        time.Duration        // auto-kill idle tmux sessions (0 = disabled)
 	reaperCancel      context.CancelFunc   // cancels the TTL reaper goroutine
 	socketPath        string               // tmux socket path (empty = default)
-	now               func() time.Time     // send-limiter clock; nil = time.Now (see paceSend)
+	now               func() time.Time     // send-limiter and watch-monitor clock; nil = time.Now (see clockNow)
 	sleep             func(time.Duration)  // send-limiter sleep; nil = time.Sleep (see paceSend)
+
+	// watchTicker, when non-nil, replaces the watch monitor's poll ticker
+	// (time.NewTicker in tmuxWatchMonitor). It returns the tick channel and a
+	// stop func. Tests hand the monitor a channel they send on, so each poll
+	// happens exactly when the test says instead of after a real pollInterval
+	// (#2536). nil in production.
+	watchTicker func(interval time.Duration) (<-chan time.Time, func())
+
+	// watchPolled, when non-nil, is called by the watch monitor after each
+	// poll has been fully acted on (notification sent, watch removed), so a
+	// test driving watchTicker knows when a poll's effects are complete
+	// (#2536). nil in production.
+	watchPolled func()
+
+	// verifyPoll is verifyKeysInPane's poll interval; 0 = 200ms. Only tests
+	// set it, so a send whose keys echo at once is confirmed without waiting
+	// out a whole production interval (#2536).
+	verifyPoll time.Duration
+}
+
+// clockNow is the instance's clock for the send limiter and the watch
+// monitor's inactivity arithmetic: inst.now when a test injected one, else
+// time.Now.
+func (inst *tmuxInstance) clockNow() time.Time {
+	if inst.now != nil {
+		return inst.now()
+	}
+	return time.Now()
 }
 
 // NewTmuxTool creates a tmux tool. cols and rows set the default window size
@@ -92,6 +120,14 @@ type tmuxInstance struct {
 // The returned cleanup function clears all watches and owned sessions (used by
 // the tmux memory monitor after kill-server).
 func NewTmuxTool(cols, rows int, notifier *tools.AsyncNotifier, sessionIndex *session.SessionIndex, agentID string, autopilot bool, watchThresholdSec int, sessionTTL time.Duration, socketPath string) (func() int, *tools.Tool, func()) {
+	return newTmuxTool(cols, rows, notifier, sessionIndex, agentID, autopilot, watchThresholdSec, sessionTTL, socketPath, nil)
+}
+
+// newTmuxTool is NewTmuxTool with a setup hook: when non-nil, setup runs on
+// the new instance before anything reads its time seams (restored watch
+// monitors, the TTL reaper), so tests can install a fake clock and a manual
+// watch ticker (#2536).
+func newTmuxTool(cols, rows int, notifier *tools.AsyncNotifier, sessionIndex *session.SessionIndex, agentID string, autopilot bool, watchThresholdSec int, sessionTTL time.Duration, socketPath string, setup func(*tmuxInstance)) (func() int, *tools.Tool, func()) {
 	if watchThresholdSec < 1 {
 		watchThresholdSec = 30
 	}
@@ -112,6 +148,9 @@ func NewTmuxTool(cols, rows int, notifier *tools.AsyncNotifier, sessionIndex *se
 		lastAccess:        make(map[string]time.Time),
 		sessionTTL:        sessionTTL,
 		socketPath:        socketPath,
+	}
+	if setup != nil {
+		setup(inst)
 	}
 
 	// Restore owned sessions from persistent state
@@ -157,7 +196,7 @@ func NewTmuxTool(cols, rows int, notifier *tools.AsyncNotifier, sessionIndex *se
 						session:         pw.Session,
 						window:          pw.Window,
 						threshold:       time.Duration(pw.ThresholdSecs) * time.Second,
-						lastActivity:    time.Now(),
+						lastActivity:    inst.clockNow(),
 						lastContent:     initialHash,
 						notifier:        notifier,
 						agentSessionKey: pw.AgentSessionKey,

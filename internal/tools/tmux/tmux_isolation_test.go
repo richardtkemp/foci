@@ -119,7 +119,7 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 	t.Parallel()
 
 	// Own socket, not the package-shared one: this test creates two sessions
-	// and needs both alive for ~10s while their watches poll. On the shared
+	// and needs both alive while their watches poll. On the shared
 	// socket a sibling test's maybeKillTmuxServer — which kills the server
 	// whenever it observes zero sessions, a read that races a concurrent
 	// create — destroys them mid-test. That is exactly what made this flaky
@@ -130,13 +130,16 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 	// sessions that must survive; this test was not following it.
 	sock := tmuxIsolatedSocket(t)
 
+	// One driver per instance, so the test decides which instance's watch
+	// polls and sees time pass.
+	dA, dB := newWatchDriver(t), newWatchDriver(t)
 	var wakeA, wakeB atomic.Int32
-	_, toolA, _ := NewTmuxTool(300, 30, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {
+	_, toolA := dA.tool(tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {
 		wakeA.Add(1)
-	}), nil, "", false, 30, 0, sock)
-	_, toolB, _ := NewTmuxTool(300, 30, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {
+	}), nil, "", false, 30, sock)
+	_, toolB := dB.tool(tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {
 		wakeB.Add(1)
-	}), nil, "", false, 30, 0, sock)
+	}), nil, "", false, 30, sock)
 
 	nameA := "foci-test-wakeroute-a"
 	nameB := "foci-test-wakeroute-b"
@@ -183,22 +186,21 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 		t.Fatalf("agent B watch: %v", err)
 	}
 
-	// Wait for both wake callbacks to fire
-	deadline := time.After(10 * time.Second)
-	for wakeA.Load() == 0 || wakeB.Load() == 0 {
-		select {
-		case <-deadline:
-			t.Fatalf("wake callbacks not called: A=%d B=%d", wakeA.Load(), wakeB.Load())
-		case <-time.After(200 * time.Millisecond):
-		}
+	// Idle A's watch past its threshold: only A's callback fires. A wake
+	// delivered through the wrong instance's notifier shows up as B=1 here.
+	dA.poll()
+	dA.advance(4 * time.Second)
+	dA.poll()
+	if a, b := wakeA.Load(), wakeB.Load(); a != 1 || b != 0 {
+		t.Fatalf("after A's watch fired: wake A=%d B=%d, want A=1 B=0", a, b)
 	}
 
-	// Each agent's wake function should have been called independently
-	if wakeA.Load() < 1 {
-		t.Errorf("agent A wake not called")
-	}
-	if wakeB.Load() < 1 {
-		t.Errorf("agent B wake not called")
+	// Then B's: only B's callback fires.
+	dB.poll()
+	dB.advance(4 * time.Second)
+	dB.poll()
+	if a, b := wakeA.Load(), wakeB.Load(); a != 1 || b != 1 {
+		t.Fatalf("after B's watch fired: wake A=%d B=%d, want A=1 B=1", a, b)
 	}
 
 	// Cleanup watches

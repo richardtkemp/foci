@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"foci/internal/tools"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -33,8 +32,10 @@ func TestTmuxConditionalWatchNoActivityNoFire(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// autopilot=true, threshold=2s for fast test
-	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-cond-nofire", true, 2, 0, sock)
+	// autopilot=true, threshold=2s. The monitor polls and sees time pass only
+	// when the driver says so.
+	d := newWatchDriver(t)
+	watchCount, tool := d.tool(notifier, idx, "test-cond-nofire", true, 2, sock)
 
 	name := "foci-test-cond-nofire"
 
@@ -62,15 +63,21 @@ func TestTmuxConditionalWatchNoActivityNoFire(t *testing.T) {
 		t.Errorf("expected conditional watch confirmation, got: %q", result.Text)
 	}
 
-	// Wait well past the threshold — should NOT fire because no activity
-	// occurred. This is a genuine fixed-duration wait, not a latent race: it's
-	// proving a negative (the callback did NOT fire), and polling can't prove
-	// an absence faster than just waiting out the window the monitor would
-	// need to have fired in (threshold 2s + its ~2s poll interval).
-	time.Sleep(5 * time.Second)
-
-	if n := fired.Load(); n != 0 {
-		t.Errorf("conditional watch fired %d time(s) without activity, want 0", n)
+	// Idle far past the threshold, polling before and after: the watch must
+	// NOT fire because no activity ever occurred. Proving this absence needs
+	// no real wait: the monitor only decides on a poll, and poll() returns
+	// once that decision has been acted on.
+	d.poll()
+	d.advance(10 * 2 * time.Second)
+	for range 2 {
+		d.poll()
+		if n := fired.Load(); n != 0 {
+			t.Fatalf("conditional watch fired %d time(s) without activity, want 0", n)
+		}
+		// Still armed (an autopilot watch that fired would also have removed itself).
+		if n := watchCount(); n != 1 {
+			t.Fatalf("watch count = %d after idling, want 1 (conditional watch still waiting for activity)", n)
+		}
 	}
 
 	// Cleanup
@@ -102,8 +109,14 @@ func TestTmuxConditionalWatchActivityThenFire(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// autopilot=true, threshold=2s
-	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-cond-fire", true, 2, 0, sock)
+	// autopilot=true, threshold=2s, driven clock and polls.
+	d := newWatchDriver(t)
+	_, tool := d.tool(notifier, idx, "test-cond-fire", true, 2, sock)
+	count := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(notifications)
+	}
 
 	name := "foci-test-cond-fire"
 
@@ -131,25 +144,43 @@ func TestTmuxConditionalWatchActivityThenFire(t *testing.T) {
 		t.Fatalf("expected conditional watch, got: %q", result.Text)
 	}
 
-	// Produce activity: send some text to cat (which echoes it)
-	exec.Command("tmux", "-S", sock, "send-keys", "-t", name, "-l", "activity!").Run()
-	exec.Command("tmux", "-S", sock, "send-keys", "-t", name, "Enter").Run()
+	// While still conditional, idling past the threshold fires nothing.
+	d.poll()
+	d.advance(3 * time.Second)
+	d.poll()
+	if n := count(); n != 0 {
+		t.Fatalf("conditional watch fired %d time(s) before any activity, want 0", n)
+	}
 
-	// Wait for the monitor to detect activity (poll interval 2s) then
-	// for the inactivity threshold (2s) to fire — total ~6s should be enough.
-	deadline := time.After(10 * time.Second)
-	for {
-		mu.Lock()
-		got := len(notifications)
-		mu.Unlock()
-		if got > 0 {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatal("conditional watch never fired after activity")
-		case <-time.After(200 * time.Millisecond):
-		}
+	// Produce activity: send some text to cat. The pane then shows it twice
+	// (the tty's echo of the typed line, then cat's copy); wait for both so
+	// the pane is settled before the monitor looks, or a late redraw could
+	// count as fresh activity after the clock has moved.
+	if out, err := runTmuxWithSocket(context.Background(), sock, "send-keys", "-t", name, "-l", "activity!"); err != nil {
+		t.Fatalf("send-keys: %v: %s", err, out)
+	}
+	if out, err := runTmuxWithSocket(context.Background(), sock, "send-keys", "-t", name, "Enter"); err != nil {
+		t.Fatalf("send-keys Enter: %v: %s", err, out)
+	}
+	if !pollUntil(t, 10*time.Second, func() bool {
+		out, err := runTmuxWithSocket(context.Background(), sock, "capture-pane", "-t", name, "-p")
+		return err == nil && strings.Count(out, "activity!") >= 2
+	}) {
+		t.Fatal("cat never echoed the activity into the pane")
+	}
+
+	// The monitor sees the change (converting the watch to a normal one and
+	// restarting the idle clock): no notification for activity itself.
+	d.poll()
+	if n := count(); n != 0 {
+		t.Fatalf("watch fired %d time(s) on the activity poll, want 0", n)
+	}
+
+	// Idle past the threshold after the activity: now it fires.
+	d.advance(3 * time.Second)
+	d.poll()
+	if n := count(); n != 1 {
+		t.Fatalf("notifications = %d after activity then idle, want 1", n)
 	}
 
 	mu.Lock()

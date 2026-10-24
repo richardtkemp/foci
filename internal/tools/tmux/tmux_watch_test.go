@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"foci/internal/tools"
-	"os/exec"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -125,12 +123,22 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 	t.Parallel()
 	sock := tmuxIsolatedSocket(t)
 
-	var wakeMsg atomic.Value
+	var mu sync.Mutex
+	var wakes []string
 	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {
-		wakeMsg.Store(msg)
+		mu.Lock()
+		wakes = append(wakes, msg)
+		mu.Unlock()
 	})
+	snapshot := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), wakes...)
+	}
 
-	_, tool, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30, 0, sock)
+	// The monitor polls and sees time pass only when the driver says so.
+	d := newWatchDriver(t)
+	_, tool := d.tool(notifier, nil, "", false, 30, sock)
 
 	name := "foci-test-wake"
 
@@ -145,27 +153,34 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 
-	// Watch with very short threshold (3 seconds)
+	const threshold = 3 * time.Second
 	params, _ = json.Marshal(map[string]interface{}{
 		"operation":         "watch",
 		"name":              name,
-		"threshold_seconds": 3,
+		"threshold_seconds": int(threshold / time.Second),
 	})
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("watch: %v", err)
 	}
 
-	// Wait for the wake callback to fire (threshold 3s + poll interval 2s)
-	deadline := time.After(10 * time.Second)
-	for wakeMsg.Load() == nil {
-		select {
-		case <-deadline:
-			t.Fatal("wake callback not called within timeout")
-		case <-time.After(200 * time.Millisecond):
-		}
+	// Exactly at the threshold the session has not been idle LONGER than it:
+	// no wake yet. (A monitor that fires on every poll fails here.)
+	d.poll()
+	d.advance(threshold)
+	d.poll()
+	if got := snapshot(); len(got) != 0 {
+		t.Fatalf("wake fired at exactly the threshold: %q", got)
 	}
 
-	msg := wakeMsg.Load().(string)
+	// Past the threshold the wake fires, once.
+	d.advance(time.Millisecond)
+	d.poll()
+	got := snapshot()
+	if len(got) != 1 {
+		t.Fatalf("wake callback calls = %d after idling past the threshold, want 1: %q", len(got), got)
+	}
+
+	msg := got[0]
 	if !strings.Contains(msg, name) {
 		t.Errorf("wake message = %q, want to contain session name %q", msg, name)
 	}
@@ -197,7 +212,8 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 		mu.Unlock()
 	})
 
-	watchCount, tool, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30, 0, sock)
+	d := newWatchDriver(t)
+	watchCount, tool := d.tool(notifier, nil, "", false, 30, sock)
 
 	name := "foci-test-dead"
 
@@ -222,17 +238,23 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 		t.Fatalf("watch: %v", err)
 	}
 
-	// Kill the tmux session externally
-	exec.Command("tmux", "-S", sock, "kill-session", "-t", name).Run()
+	// A poll of a live session keeps the watch.
+	d.poll()
+	if n := watchCount(); n != 1 {
+		t.Fatalf("watch count = %d after polling a live session, want 1", n)
+	}
 
-	// Poll until the monitor goroutine actually detects the dead session and
-	// removes it from the watched map, instead of guessing its ~2s poll
-	// interval. The monitor's death path (tmuxWatchMonitor's capture-pane
-	// error branch) deletes the watch entry WITHOUT ever calling the notifier,
-	// so once watchCount is back to 0 the "no notification sent" check below
-	// is no longer a race — that code path structurally can't have sent one.
-	if !pollUntil(t, 10*time.Second, func() bool { return watchCount() == 0 }) {
-		t.Fatal("watch was not cleaned up after session death")
+	// Kill the tmux session externally
+	if out, err := runTmuxWithSocket(context.Background(), sock, "kill-session", "-t", name); err != nil {
+		t.Fatalf("kill-session: %v: %s", err, out)
+	}
+
+	// The next poll's capture-pane fails, and the monitor's death path
+	// (pollWatch's capture-pane error branch) deletes the watch and exits
+	// WITHOUT ever calling the notifier. poll() returns once that is done.
+	d.poll()
+	if n := watchCount(); n != 0 {
+		t.Fatalf("watch count = %d after polling a dead session, want 0 (watch not cleaned up)", n)
 	}
 
 	// The watch entry should have been cleaned up — unwatching should fail

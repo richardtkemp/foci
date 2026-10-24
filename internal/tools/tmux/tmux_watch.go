@@ -53,7 +53,7 @@ func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresh
 		session:         name,
 		window:          window,
 		threshold:       time.Duration(thresholdSeconds) * time.Second,
-		lastActivity:    time.Now(),
+		lastActivity:    inst.clockNow(),
 		lastContent:     initialHash,
 		notifier:        inst.notifier,
 		agentSessionKey: tools.SessionKeyFromContext(ctx),
@@ -143,70 +143,92 @@ func tmuxWatchMonitor(ws *watchedSession, inst *tmuxInstance, key string) {
 	if pollInterval > 2*time.Second {
 		pollInterval = 2 * time.Second
 	}
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
+	var ticks <-chan time.Time
+	if inst.watchTicker != nil {
+		var stop func()
+		ticks, stop = inst.watchTicker(pollInterval)
+		defer stop()
+	} else {
+		ticker := time.NewTicker(pollInterval)
+		defer ticker.Stop()
+		ticks = ticker.C
+	}
 
 	for {
 		select {
-		case <-ticker.C:
-			// Read pane content
-			out, err := inst.runTmux(context.Background(), "capture-pane", "-t",
-				fmt.Sprintf("%s:%d", ws.session, ws.window), "-p")
-			if err != nil {
-				// Usually the session exited normally, but this branch also
-				// swallows a transient capture-pane failure — and either way
-				// the watch stops firing forever. Warn, with the underlying
-				// error: at Debug this was invisible at the default level, so
-				// a watch that vanished looked identical to one that was
-				// never registered (#1560).
-				tmuxLog.Warnf("watch: capture-pane on %s:%d failed (%v) — treating session as exited, removing watch", ws.session, ws.window, err)
-				inst.mu.Lock()
-				delete(inst.watched, key)
-				inst.persistWatches()
-				inst.mu.Unlock()
-				return
+		case <-ticks:
+			stop := pollWatch(ws, inst, key)
+			if inst.watchPolled != nil {
+				inst.watchPolled()
 			}
-
-			// Normalize pane content to filter out TUI noise (status bar
-			// clocks, spinners, token counts, etc.) before hashing.
-			normalized := normalizePaneContent(out)
-			hash := md5.Sum([]byte(normalized)) // #nosec G401 - content change detection, not security
-
-			// Check if content changed
-			if hash != ws.lastContent {
-				ws.lastContent = hash
-				if ws.conditional {
-					// First activity detected — convert to normal watch
-					tmuxLog.Debugf("watch: conditional watch on %s:%d converted to normal (activity detected)", ws.session, ws.window)
-					ws.conditional = false
-				}
-				ws.lastActivity = time.Now()
-			} else if !ws.conditional {
-				// Content unchanged and not conditional; check if threshold exceeded
-				if time.Since(ws.lastActivity) > ws.threshold {
-					tmuxLog.Infof("watch: inactivity detected on %s:%d (threshold %v exceeded)", ws.session, ws.window, ws.threshold)
-					msg := prompts.FormatInjectedMessage("TMUX WATCH",
-						time.Now(),
-						fmt.Sprintf("Session %s:%d has been inactive for %v", ws.session, ws.window, ws.threshold))
-					ws.notifier.InjectToAgent(ws.agentSessionKey, msg, "", "tmux_watch")
-
-					if ws.autopilot {
-						// Auto-unwatch: remove from watched map and exit goroutine
-						tmuxLog.Infof("autopilot: auto-unwatched %s after inactivity", ws.session)
-						inst.mu.Lock()
-						delete(inst.watched, key)
-						inst.persistWatches()
-						inst.mu.Unlock()
-						return
-					}
-
-					// Reset activity timer to avoid repeated alerts
-					ws.lastActivity = time.Now()
-				}
+			if stop {
+				return
 			}
 
 		case <-ws.ctx.Done():
 			return
 		}
 	}
+}
+
+// pollWatch is one poll of a watch: it reads the pane, and either records
+// activity, fires the inactivity notification, or (session gone, or autopilot
+// after firing) removes the watch. It reports whether the monitor must stop.
+func pollWatch(ws *watchedSession, inst *tmuxInstance, key string) (stop bool) {
+	// Read pane content
+	out, err := inst.runTmux(context.Background(), "capture-pane", "-t",
+		fmt.Sprintf("%s:%d", ws.session, ws.window), "-p")
+	if err != nil {
+		// Usually the session exited normally, but this branch also
+		// swallows a transient capture-pane failure — and either way
+		// the watch stops firing forever. Warn, with the underlying
+		// error: at Debug this was invisible at the default level, so
+		// a watch that vanished looked identical to one that was
+		// never registered (#1560).
+		tmuxLog.Warnf("watch: capture-pane on %s:%d failed (%v) — treating session as exited, removing watch", ws.session, ws.window, err)
+		inst.mu.Lock()
+		delete(inst.watched, key)
+		inst.persistWatches()
+		inst.mu.Unlock()
+		return true
+	}
+
+	// Normalize pane content to filter out TUI noise (status bar
+	// clocks, spinners, token counts, etc.) before hashing.
+	normalized := normalizePaneContent(out)
+	hash := md5.Sum([]byte(normalized)) // #nosec G401 - content change detection, not security
+
+	// Check if content changed
+	if hash != ws.lastContent {
+		ws.lastContent = hash
+		if ws.conditional {
+			// First activity detected — convert to normal watch
+			tmuxLog.Debugf("watch: conditional watch on %s:%d converted to normal (activity detected)", ws.session, ws.window)
+			ws.conditional = false
+		}
+		ws.lastActivity = inst.clockNow()
+	} else if !ws.conditional {
+		// Content unchanged and not conditional; check if threshold exceeded
+		if inst.clockNow().Sub(ws.lastActivity) > ws.threshold {
+			tmuxLog.Infof("watch: inactivity detected on %s:%d (threshold %v exceeded)", ws.session, ws.window, ws.threshold)
+			msg := prompts.FormatInjectedMessage("TMUX WATCH",
+				time.Now(),
+				fmt.Sprintf("Session %s:%d has been inactive for %v", ws.session, ws.window, ws.threshold))
+			ws.notifier.InjectToAgent(ws.agentSessionKey, msg, "", "tmux_watch")
+
+			if ws.autopilot {
+				// Auto-unwatch: remove from watched map and exit goroutine
+				tmuxLog.Infof("autopilot: auto-unwatched %s after inactivity", ws.session)
+				inst.mu.Lock()
+				delete(inst.watched, key)
+				inst.persistWatches()
+				inst.mu.Unlock()
+				return true
+			}
+
+			// Reset activity timer to avoid repeated alerts
+			ws.lastActivity = inst.clockNow()
+		}
+	}
+	return false
 }

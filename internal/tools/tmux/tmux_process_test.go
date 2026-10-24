@@ -183,14 +183,25 @@ func TestTerminateProcesses(t *testing.T) {
 		t.Fatalf("process not alive after start: %v", err)
 	}
 
-	// terminateProcesses should SIGTERM, wait, then SIGKILL
-	killed := terminateProcesses([]int{pid})
+	// terminateProcesses should SIGTERM, wait, then SIGKILL. The escalation
+	// is the subject, not the production 2s grace (terminateGrace), so the
+	// test passes a short one.
+	killed := terminateProcessesWithin([]int{pid}, 50*time.Millisecond)
 	if killed == 0 {
 		t.Error("expected terminateProcesses to signal at least 1 process")
 	}
 
-	// Wait for SIGKILL to take effect
-	cmd.Wait()
+	// Wait for SIGKILL to take effect. Bounded: without the escalation the
+	// trapped process would outlive the test (sleep 300).
+	waited := make(chan struct{})
+	go func() { cmd.Wait(); close(waited) }()
+	select {
+	case <-waited:
+	case <-time.After(10 * time.Second):
+		cmd.Process.Kill()
+		<-waited
+		t.Fatalf("process %d still alive 10s after terminateProcesses (no SIGKILL escalation?)", pid)
+	}
 
 	// Verify dead (Signal(0) should fail)
 	if err := cmd.Process.Signal(syscall.Signal(0)); err == nil {

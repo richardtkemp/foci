@@ -163,8 +163,9 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// autopilot=true, threshold=2s for fast test
-	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-autopilot-unwatch", true, 2, 0, sock)
+	// autopilot=true, threshold=2s, driven clock and polls.
+	d := newWatchDriver(t)
+	watchCount, tool := d.tool(notifier, idx, "test-autopilot-unwatch", true, 2, sock)
 
 	name := "foci-test-ap-unwatch"
 
@@ -182,15 +183,11 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 		t.Fatalf("expected auto-watch on start: %q", result.Text)
 	}
 
-	// Poll for the inactivity notification rather than guessing how long the
-	// monitor takes (threshold=2s, monitor polls every 2s) — an under-load
-	// scheduling delay on the monitor goroutine is a real race, not just
-	// "the machine was busy".
-	pollUntil(t, 10*time.Second, func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return len(notifications) > 0
-	})
+	// Idle past the threshold. The firing poll notifies, removes the watch
+	// and ends the monitor (autopilot); poll() returns once all that is done.
+	d.poll()
+	d.advance(3 * time.Second)
+	d.poll()
 
 	mu.Lock()
 	gotNotification := len(notifications) > 0
@@ -198,6 +195,9 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 
 	if !gotNotification {
 		t.Fatal("expected inactivity notification")
+	}
+	if n := watchCount(); n != 0 {
+		t.Errorf("watch count = %d after the inactivity notification, want 0 (autopilot auto-unwatch)", n)
 	}
 
 	// Verify watch was auto-removed (autopilot)
@@ -225,8 +225,10 @@ func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// autopilot=true
-	_, tool, _ := NewTmuxTool(300, 30, notifier, idx, "test-autopilot-send", true, 30, 0, sock)
+	// autopilot=true. The driver's clock also drives the send limiter, so the
+	// second send's 2s pacing costs no real time.
+	d := newWatchDriver(t)
+	_, tool := d.tool(notifier, idx, "test-autopilot-send", true, 30, sock)
 
 	name := "foci-test-ap-send"
 
@@ -242,11 +244,13 @@ func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 
-	// Send keys — should auto-watch
+	// Send keys — should auto-watch. enter=false: the auto-watch does not
+	// depend on Enter, and each Enter costs send's real 200ms TUI pause.
 	params, _ = json.Marshal(map[string]interface{}{
 		"operation": "send",
 		"name":      name,
 		"keys":      "hello",
+		"enter":     false,
 	})
 	result, err := tool.Execute(context.Background(), params)
 	if err != nil {
@@ -261,6 +265,7 @@ func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 		"operation": "send",
 		"name":      name,
 		"keys":      "world",
+		"enter":     false,
 	})
 	result, err = tool.Execute(context.Background(), params)
 	if err != nil {

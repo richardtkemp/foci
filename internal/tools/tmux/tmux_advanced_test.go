@@ -11,7 +11,8 @@ import (
 )
 
 // limiterClock is a fake clock for the send limiter's time seam
-// (tmuxInstance.now / tmuxInstance.sleep, see paceSend). Virtual time only
+// (tmuxInstance.now / tmuxInstance.sleep, see paceSend), also used as the
+// watch monitor's clock by watchDriver. Virtual time only
 // moves when the code under test sleeps or the test advances it — never when
 // the host is slow — so the limiter's gap arithmetic is deterministic on a
 // loaded host (#2222).
@@ -74,6 +75,7 @@ func TestTmuxSendRateLimit(t *testing.T) {
 		socketPath: sock,
 		now:        clk.Now,
 		sleep:      clk.Sleep,
+		verifyPoll: 10 * time.Millisecond, // confirm the echoed "x" without a 200ms production poll per send
 	}
 
 	nameA, nameB := "foci-test-ratelimit-a", "foci-test-ratelimit-b"
