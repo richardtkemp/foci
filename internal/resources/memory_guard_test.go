@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/log"
 	"foci/internal/testmarker"
 )
 
@@ -288,6 +289,35 @@ func TestMemoryGuard_Kill_NoProcess_WarnsError(t *testing.T) {
 	}
 	if !foundCritical {
 		t.Errorf("expected CRITICAL warning, got: %v", ms.warnings)
+	}
+}
+
+// The ERROR log line itself must carry the conditions that triggered the kill
+// attempt (RSS, share, kill threshold, pressure, pressure threshold), not only
+// the lookup error: on the Mac the bare "no eligible process found" line could
+// not be diagnosed.
+func TestMemoryGuard_Kill_NoProcess_LogsConditions(t *testing.T) {
+	log.SetWarnHook(func(log.Level, string, string) {}) // drain buffered warnings
+	var logged []string
+	log.SetWarnHook(func(_ log.Level, _ string, msg string) { logged = append(logged, msg) })
+	defer log.SetWarnHook(nil)
+
+	g, ms := newTestGuard(25, 40, 10.0)
+	ms.userRSSKB = ms.memTotalKB * 50 / 100
+	ms.pressureAvg10 = 20.0
+	ms.largestPid = 0
+	g.checkOnce()
+
+	var line string
+	for _, m := range logged {
+		if strings.Contains(m, "could not find process to kill") {
+			line = m
+		}
+	}
+	for _, want := range []string{"(50.0%", "kill at 40%", "pressure=20.0", "threshold 10.0"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("logged line %q missing %q", line, want)
+		}
 	}
 }
 

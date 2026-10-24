@@ -211,10 +211,13 @@ func (g *MemoryGuard) doKill(userMB, totalMB, selfMB int64, pct, pressure float6
 
 	pid, comm, rssKB, err := findLargest(g.uid, os.Getpid())
 	if err != nil {
-		memory_guardLog.Errorf("find largest process: %v", err)
+		// Log the conditions that called for the kill, not just the lookup error:
+		// the bare error said nothing about why the guard acted (#2544 follow-up).
+		msg := fmt.Sprintf("system memory CRITICAL: user RSS %dMB / %dMB (%.1f%%, kill at %d%%, self %dMB), pressure=%.1f (threshold %.1f) — could not find process to kill: %v",
+			userMB, totalMB, pct, g.cfg.KillPercent, selfMB, pressure, g.cfg.PressureThreshold, err)
+		memory_guardLog.Errorf("%s", msg)
 		if g.warnFn != nil {
-			g.warnFn(fmt.Sprintf("system memory CRITICAL: user RSS %dMB / %dMB (%.1f%%, self %dMB), pressure=%.1f (threshold %.1f) — could not find process to kill: %v",
-				userMB, totalMB, pct, selfMB, pressure, g.cfg.PressureThreshold, err))
+			g.warnFn(msg)
 		}
 		return
 	}
