@@ -149,23 +149,30 @@ func TestPersistedTimers_RoundTripAcrossRestart(t *testing.T) {
 // connection stalls the save deterministically: the runner must stay busy
 // until the lock is released, and the value must be on disk the moment it
 // reports idle.
+//
+// The timer save must be the run's only database write, or the held lock
+// stalls the goroutine at that earlier write instead and the save-after-clear
+// order goes unseen (#2543). Reflection stamps each session it reflected
+// (StampReflection) before its deferred save, so in that case the fake branch
+// reports "not run": nothing is stamped, and the save is the only write left.
 func TestPersistedTimers_SavedBeforeIdle(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		key  string
-		fire func(*Runner)
-		mem  func(*Runner) time.Time
+		name     string
+		key      string
+		fire     func(*Runner)
+		mem      func(*Runner) time.Time
+		branchNo bool // fake Branch reports "not run", so no StampReflection write precedes the save
 	}{
 		{"reflection", timerReflection, func(r *Runner) { r.maybeReflection() },
-			func(r *Runner) time.Time { return r.lastReflection }},
+			func(r *Runner) time.Time { return r.lastReflection }, true},
 		{"consolidation", timerConsolidation, func(r *Runner) { r.maybeConsolidation() },
-			func(r *Runner) time.Time { return r.lastConsolidation }},
+			func(r *Runner) time.Time { return r.lastConsolidation }, false},
 		{"reset", timerReset, func(r *Runner) { r.maybeReset(context.Background()) },
-			func(r *Runner) time.Time { return r.lastReset }},
+			func(r *Runner) time.Time { return r.lastReset }, false},
 		{"background", timerBackgroundEnded, func(r *Runner) { r.maybeBackgroundWork(context.Background()) },
-			func(r *Runner) time.Time { return r.lastBackgroundEnded }},
+			func(r *Runner) time.Time { return r.lastBackgroundEnded }, false},
 		{"ephemeralCleanup", timerEphemeralCleanup, func(r *Runner) { r.maybeEphemeralCleanup(context.Background()) },
-			func(r *Runner) time.Time { return r.lastEphemeralCleanup }},
+			func(r *Runner) time.Time { return r.lastEphemeralCleanup }, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// Each case owns its state.db, Runner and lock, so the five
@@ -177,6 +184,13 @@ func TestPersistedTimers_SavedBeforeIdle(t *testing.T) {
 			}
 			var c persistCounts
 			r := bootRunner(idx, &c)
+			var branched atomic.Int32
+			if tc.branchNo {
+				r.agent.(*fakeBackgroundAgent).branchFn = func(string, string, string, bool) bool {
+					branched.Add(1)
+					return false
+				}
+			}
 
 			locker, err := sqlite.Open(path)
 			if err != nil {
@@ -206,6 +220,9 @@ func TestPersistedTimers_SavedBeforeIdle(t *testing.T) {
 				t.Fatal(err)
 			}
 			waitIdle(t, r)
+			if tc.branchNo && branched.Load() == 0 {
+				t.Fatalf("premise: %s never reached Branch, so its run goroutine never started", tc.name)
+			}
 			got, ok := idx.PersistedTime("ag", tc.key).Load()
 			r.mu.Lock()
 			want := tc.mem(r)

@@ -2014,19 +2014,21 @@ func TestReliability_BufferTrimsByDepth(t *testing.T) {
 	// buffer, not socket back-pressure.
 	c.send = make(chan []byte, defaultReplayBufferDepth+50)
 	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}, seen: make(map[string]struct{})}
-	for i := 0; i < defaultReplayBufferDepth+50; i++ {
-		b.send(fap.Activity{ConversationID: "c1", Kind: "typing"})
+	// Check the bound after EVERY send, not only at the end: a trim that lets
+	// the buffer reach depth+k before cutting it back to depth (e.g. `n >
+	// depth+1`) lands on exactly depth whenever the overflow is a multiple of
+	// k+1, so an end-only check passes it (#2543).
+	for i := 1; i <= defaultReplayBufferDepth+50; i++ {
+		b.send(fap.Activity{ConversationID: "c1", Kind: "typing"}) // seq i
+		b.mu.Lock()
+		n, first := len(b.buffer), b.buffer[0].seq
+		b.mu.Unlock()
+		wantN, wantFirst := min(i, defaultReplayBufferDepth), int64(max(1, i-defaultReplayBufferDepth+1))
+		if n != wantN || first != wantFirst {
+			t.Fatalf("after send %d: buffer holds %d frames from seq %d, want %d from seq %d", i, n, first, wantN, wantFirst)
+		}
 	}
 	drainEnv(t, c)
-	b.mu.Lock()
-	n, first := len(b.buffer), b.buffer[0].seq
-	b.mu.Unlock()
-	if n != defaultReplayBufferDepth {
-		t.Errorf("buffer depth = %d, want %d", n, defaultReplayBufferDepth)
-	}
-	if first != 51 { // seq 1..50 dropped, 51..1050 retained
-		t.Errorf("oldest retained seq = %d, want 51", first)
-	}
 }
 
 // --- slice 4: media / blobs ---
