@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# remote-run.sh — run one make target of this checkout on the remote Mac (#2525).
+# remote-run.sh — run one make target of this checkout on a remote build host (#2525, #2526).
 #
 # Usage: scripts/remote-run.sh HOST DIR TARGET [VAR=value ...]
 #
@@ -11,9 +11,10 @@
 #      own log (the "full log: <path>" line the test targets print);
 #   4. exits with the remote make's exit status (255 = ssh itself failed).
 # DIR may start with ~/ : it is taken relative to the remote home.
+# REMOTE_NAME (env, optional) names the host in the closing line.
 set -uo pipefail
 
-usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; }
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 if [ $# -lt 3 ]; then usage >&2; exit 2; fi
 
@@ -40,9 +41,9 @@ if ! rsync -e "ssh ${live[*]}" --timeout=300 -az --delete \
   exit 255
 fi
 
-# REMOTE_AVAIL= : the Mac's make must never dispatch again (it has no
+# REMOTE_PICK= : the Mac's make must never dispatch again (it has no
 # .remote.mk anyway; this makes it explicit).
-cmd="cd $qdir && REMOTE_AVAIL= make --no-print-directory $(printf '%q ' "$target" "$@")"
+cmd="cd $qdir && REMOTE_PICK= make --no-print-directory $(printf '%q ' "$target" "$@")"
 echo ">>> remote-run: on $host: $cmd" >&2
 ssh -tt "${live[@]}" "$host" "$cmd" < /dev/null 2>&1 | tr -d '\r' | tee "$log"
 status=${PIPESTATUS[0]}
@@ -54,5 +55,5 @@ if [ -n "$remote_log" ]; then
     echo ">>> remote-run: the Mac's full log ($remote_log) copied to $local_copy" >&2
   fi
 fi
-echo ">>> remote-run: $target ran on the Mac ($host), exit $status; output: $log" >&2
+echo ">>> remote-run: $target ran on ${REMOTE_NAME:-$host}, exit $status; output: $log" >&2
 exit "$status"

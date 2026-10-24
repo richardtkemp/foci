@@ -63,11 +63,13 @@ make test-one PKG=./internal/<pkg>/ RUN=<Name>
 so the log always has per-test PASS/FAIL/SKIP lines and `t.Logf` output, even on a PASS (`V=1` is
 accepted and does nothing; #2348). `COUNT=N` repeats the run N times, for flake checks.
 
-**`test-one` and `vet` run on the Mac when it is reachable (#2525).** With `.remote.mk` set and the
-Mac up, the bare targets rsync the checkout over and run there (macOS, darwin build tags); else they
-run here. The first output line says which (`>>> test-one: running on the Mac` / `running LOCALLY
-(<why>)`); the exit code is the Mac's, and its full log is copied back (path printed). `local-test-one`
-/ `local-vet` force this host, `remote-*` force the Mac. A Linux-only behaviour (procx caps, Landlock
+**`test-one` and `vet` run on a Mac when one is reachable (#2525, #2526).** `.remote.mk` lists build
+hosts (`REMOTE_HOSTS`, in preference order, each with or without a build lock); the bare targets
+rsync the checkout to the first that answers and run there (macOS, darwin build tags); else they run
+here. The first output line says which (`>>> test-one: running on build host pro: …, no build lock`
+/ `running LOCALLY (<why>)`); the exit code is the Mac's, and its full log is copied back (path
+printed). `local-test-one` / `local-vet` force this host, `remote-*` force a Mac, `REMOTE_PICK=<name>`
+picks one. A Linux-only behaviour (procx caps, Landlock
 sealing, `_linux.go` files) needs `local-test-one`. `make test` (land's gate), `lint`, `build` and
 `integration` always run locally; see `mk/remote.mk` for why.
 
