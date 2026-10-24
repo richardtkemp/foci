@@ -87,11 +87,10 @@ endif
 -include $(shell git rev-parse --git-common-dir 2>/dev/null)/../.ci.mk
 -include .ci.mk
 
-# Opt-in remote build offload to a Mac (see the remote-build target). REMOTE_HOST
-# + REMOTE_DIR come from a gitignored .remote.mk, inherited by worktrees via
-# git-common-dir. Empty by default → remote-build errors; nothing else is affected.
--include $(shell git rev-parse --git-common-dir 2>/dev/null)/../.remote.mk
--include .remote.mk
+# Remote (Mac) offload: .remote.mk, the reachability probe, and the
+# remote-if-available dispatch of test-one and vet (#2525). Included here,
+# before any recipe, so its probe settings exist when the probe expands.
+include mk/remote.mk
 
 # Every plain cmd/<name> → bin/<name> binary shares one recipe (see $(SIMPLE_BINS)
 # below); adding another is a one-word change here, not a copy of the rule.
@@ -136,7 +135,7 @@ heavy_enter = $(if $(call heavy_lazy,$(1)),echo ">>> heavy lock: left to the cal
 heavy_reap = $(if $(call heavy_lazy,$(1)),,$(REAP_GRADLE))
 heavy_held = $(if $(FGW_HEAVY_LOCK),$(if $(1),,HEAVY_LOCK_HELD=/tmp/heavy ))
 
-.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals find-metadata-key-registry-drift llbox test test-one integration coverage coverage-report coverage-html coverage-check vet lint lint-unlocked lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check bench-test-build land clean setup-hooks
+.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals find-metadata-key-registry-drift llbox test local-test-one integration coverage coverage-report coverage-html coverage-check local-vet lint lint-unlocked lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check bench-test-build land clean setup-hooks
 
 all: $(SIMPLE_BINS) nosgid find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals find-metadata-key-registry-drift llbox
 
@@ -365,7 +364,9 @@ test: llbox
 # used by `make test`; foci_todo #2290) — see test_timeout in scripts/seal-test.sh.
 # COUNT=N always runs the tests (no cached result), so it is never left to a lazy lock.
 test_one_cacheable = $(if $(COUNT),,1)
-test-one: llbox
+# This is the local body; bare `make test-one` runs it on the Mac when it is
+# reachable, else here (mk/remote.mk, #2525).
+local-test-one: llbox
 	@if [ -z "$(PKG)" ]; then echo "usage: make test-one PKG=./internal/<pkg>/ [RUN=<TestName>] [COUNT=N] [TIMEOUT=<go duration>]" >&2; exit 2; fi
 	$(eval TESTDIR := $(test_dir))
 	$(eval LOGFILE := $(call fgw_logfile,test-one))
@@ -564,7 +565,8 @@ setup-hooks:
 	@git config core.hooksPath .githooks
 	@echo "✅ Git hooks configured to use .githooks/"
 
-vet:
+# Local body of `make vet`, which dispatches to the Mac when reachable (mk/remote.mk).
+local-vet:
 	@[ -e /tmp/heavy ] || : > /tmp/heavy
 	@( echo ">>> waiting for heavy lock (/tmp/heavy; another build may be running) ... [$$(date +%T)]" >&2; flock 9; echo ">>> acquired heavy lock [$$(date +%T)]" >&2; go vet ./... 9<&- || exit $$? ) 9</tmp/heavy
 
@@ -1177,34 +1179,3 @@ deploy-from-snapshot:
 	$(MAKE) install-unit
 	$(MAKE) stage-changelog
 	$(MAKE) restart
-
-# Offload a compile of the whole module to a Mac (opt-in), mirroring foci-client's
-# remote-* pattern: rsync the working tree over, build there. Cross-compiles for
-# the Linux deploy target (not the Mac's native darwin) so the linux-only files
-# (e.g. internal/procx/cap_linux.go) are the ones checked. Config in a gitignored
-# .remote.mk:  REMOTE_HOST := mac   REMOTE_DIR := ~/git/foci
-# Additive — no existing target uses it. Requires Go on the remote.
-REMOTE_SSH_TIMEOUT ?= 5
-# The reachability probe below already bounds CONNECTING. These bound an already-ESTABLISHED
-# session whose peer silently vanishes — a different failure, and the one that hangs forever:
-# no EOF ever arrives, so ssh/rsync block with no error and no exit. ServerAlive is not a
-# wall-clock cap and does not threaten a long quiet build; the probes are SSH-protocol-level and
-# sshd answers them whether or not the remote command is producing output.
-#
-# Measured on the foci-client side of this same fix (foci-client#1749), against a proxy SIGSTOPed
-# to black-hole the path: WITHOUT these, ssh was still hanging when the harness killed it at 87s;
-# WITH them it died on schedule. A healthy peer running a command that printed nothing for 60s
-# survived untouched. 15 x 8 = a 2 minute grace.
-#
-# This target is opt-in and currently unused, which is exactly why it is worth fixing now: it is
-# the same shape as the bug that cost foci-client an unattributable 19-minute stall — a protected
-# probe followed by unprotected work.
-REMOTE_LIVE_OPTS ?= -o ConnectTimeout=$(REMOTE_SSH_TIMEOUT) -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=8
-.PHONY: remote-build
-remote-build:
-	@[ -n "$(REMOTE_HOST)" ] || { echo ">>> set REMOTE_HOST + REMOTE_DIR in .remote.mk to enable remote builds"; exit 1; }
-	@ssh -o ConnectTimeout=$(REMOTE_SSH_TIMEOUT) -o BatchMode=yes $(REMOTE_HOST) true 2>/dev/null || { echo ">>> '$(REMOTE_HOST)' not reachable"; exit 1; }
-	@echo ">>> Syncing foci -> $(REMOTE_HOST):$(REMOTE_DIR) ..."
-	rsync -e 'ssh $(REMOTE_LIVE_OPTS)' --timeout=300 -az --delete --exclude='.git' --exclude='/bin/' --exclude='.remote.mk' --exclude='.ci.mk' ./ "$(REMOTE_HOST):$(REMOTE_DIR)/"
-	@echo ">>> GOOS=linux GOARCH=amd64 go build ./... on $(REMOTE_HOST) ..."
-	ssh $(REMOTE_LIVE_OPTS) $(REMOTE_HOST) 'cd $(REMOTE_DIR) && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./...'
