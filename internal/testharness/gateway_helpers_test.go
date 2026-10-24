@@ -175,7 +175,10 @@ func TestStartCaptured_LastWordsSurviveExit(t *testing.T) {
 	want := strings.Repeat("x", 60000) + "LAST-WORDS\n"
 	lost := 0
 	for i := 0; i < rounds; i++ {
-		cmd := exec.Command("sh", "-c", `head -c 60000 /dev/zero | tr '\0' x >&2; echo LAST-WORDS >&2; exit 1`) //nolint:forbidigo // test child with a known output shape
+		// gtr (Homebrew GNU tr) when present: Apple's tr takes ~18 ms for 600 KB
+		// against ~3 ms for GNU tr, which made 200 rounds 1.3 s on the Mac
+		// against 0.36 s on Linux (#2547). Elsewhere plain tr; same bytes.
+		cmd := exec.Command("sh", "-c", `t=tr; command -v gtr >/dev/null 2>&1 && t=gtr; head -c 60000 /dev/zero | "$t" '\0' x >&2; echo LAST-WORDS >&2; exit 1`) //nolint:forbidigo // test child with a known output shape
 		buf := newSyncBuffer()
 		stopped, err := startCaptured(cmd, buf)
 		if err != nil {
