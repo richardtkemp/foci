@@ -154,10 +154,12 @@ Show or set per-session display options.
 ### `/mode [mode]`
 Show or set the permission mode for the ccstream (Claude Code stream) backend. Only available for agents on the ccstream backend.
 - `/mode` — show current permission mode
-- `/mode ask` — prompt for side-effecting tools
-- `/mode acceptEdits` — auto-accept edits
-- `/mode plan` — plan mode (read-only exploration)
-- `/mode bypassPermissions` — skip all permission prompts
+- `/mode normal` — prompt for side-effecting tools (CC `default`; aliases `1`, `default`)
+- `/mode accept` — auto-accept edits (CC `acceptEdits`; aliases `2`, `edits`, `acceptedits`)
+- `/mode plan` — plan mode (read-only exploration; alias `3`)
+- `/mode auto` — Claude Code's classifier decides each call, no prompts (alias `4`)
+
+Any other value is rejected with the option list. There is no `ask` or `bypassPermissions` value (source: `ModeCommand`, `internal/command/settings.go`).
 
 ### `/plan`
 Put a coding-agent backend into plan mode. The agent explores and reasons read-only without making changes. Only available for agents with a delegated coding backend.
