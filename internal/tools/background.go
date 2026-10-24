@@ -51,11 +51,16 @@ type BackgroundParams struct {
 func RunInBackground(ctx context.Context, p BackgroundParams) (ToolResult, error) {
 	if p.ThresholdSecs > 0 {
 		threshold := time.Duration(p.ThresholdSecs) * time.Second
+		// The timer runs on the notifier's clock (the wall clock in
+		// production) so tests can fire it without waiting (#2539).
+		expired := make(chan struct{})
+		timer := p.Notifier.clock().AfterFunc(threshold, func() { close(expired) })
+		defer timer.Stop()
 		select {
 		case <-p.Done:
 			return p.SyncResult()
 
-		case <-time.After(threshold):
+		case <-expired:
 			// Fall through to background delivery.
 
 		case <-ctx.Done():

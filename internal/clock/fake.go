@@ -19,6 +19,9 @@ type Fake struct {
 	mu     sync.Mutex
 	now    time.Time
 	timers []*fakeTimer
+	// armed is closed (and replaced) whenever a timer is armed, waking
+	// BlockUntilArmed. nil until someone waits.
+	armed chan struct{}
 }
 
 // NewFake returns a Fake clock starting at an arbitrary fixed instant (not
@@ -45,7 +48,52 @@ func (c *Fake) AfterFunc(d time.Duration, f func()) Timer {
 	defer c.mu.Unlock()
 	t := &fakeTimer{clock: c, deadline: c.now.Add(d), fn: f, active: true}
 	c.timers = append(c.timers, t)
+	c.signalArmedLocked()
 	return t
+}
+
+// BlockUntilArmed waits until at least n timers are armed (scheduled, not yet
+// fired or stopped) or timeout passes, and reports whether n was reached.
+//
+// It closes the race between a goroutine under test arming its timer and the
+// test calling Advance: an Advance that lands first moves virtual time past
+// nothing, and the timer armed afterwards is due a full duration later, so it
+// never fires. Wait for the timer, then Advance. timeout is a real-time bound
+// so a timer that is never armed fails the test instead of hanging it.
+func (c *Fake) BlockUntilArmed(n int, timeout time.Duration) bool {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	for {
+		c.mu.Lock()
+		count := 0
+		for _, t := range c.timers {
+			if t.active {
+				count++
+			}
+		}
+		if count >= n {
+			c.mu.Unlock()
+			return true
+		}
+		if c.armed == nil {
+			c.armed = make(chan struct{})
+		}
+		wake := c.armed
+		c.mu.Unlock()
+		select {
+		case <-wake:
+		case <-deadline.C:
+			return false
+		}
+	}
+}
+
+// signalArmedLocked wakes every BlockUntilArmed waiter. Caller holds c.mu.
+func (c *Fake) signalArmedLocked() {
+	if c.armed != nil {
+		close(c.armed)
+		c.armed = nil
+	}
 }
 
 // Advance moves the fake clock's virtual time forward by d and then runs, in
@@ -98,5 +146,6 @@ func (t *fakeTimer) Reset(d time.Duration) bool {
 	was := t.active
 	t.deadline = t.clock.now.Add(d)
 	t.active = true
+	t.clock.signalArmedLocked()
 	return was
 }

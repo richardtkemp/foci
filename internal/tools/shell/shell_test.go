@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"foci/internal/tools"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/clock"
 	"foci/internal/secrets"
+	"foci/internal/tools"
 )
 
 func TestExecEcho(t *testing.T) {
@@ -328,24 +329,27 @@ func TestExecAutoBackgroundSlowCommand(t *testing.T) {
 	// message, then delivers the final result via the notifier when the command completes.
 	t.Parallel()
 	completeCh := make(chan string, 1)
+	fc := clock.NewFake()
 	tool := NewExecTool(nil, nil, func() int { return 1 }, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {
 		completeCh <- msg
-	}), "", nil, func() int64 { return 0 }, "", nil, 0)
+	}).WithClock(fc), "", nil, func() int64 { return 0 }, "", nil, 0)
 
 	// The command must not finish until the test has seen "still running".
 	// A fixed margin (0.5s, then 4s) raced the subprocess's exit against the
 	// threshold timer under full-suite CPU contention (#1975: a loaded
 	// scheduler delayed the goroutine past BOTH becoming ready, so `select`
 	// could pick the just-completed branch) and cost 5s of wall time per run
-	// (#2351). Gating on a file the test creates is deterministic and waits
-	// only the threshold.
+	// (#2351). Gating on a file the test creates is deterministic, and the 1s
+	// threshold passes on a fake clock, so nothing waits it out (#2539).
 	cmd, release := gatedCommand(t)
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": cmd,
 		"timeout": 10,
 	})
 
-	result, err := tool.Execute(context.Background(), params)
+	result, err := executePastThreshold(t, fc, time.Second, func() (tools.ToolResult, error) {
+		return tool.Execute(context.Background(), params)
+	})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -378,12 +382,14 @@ func TestExecAutoBackgroundSessionKeyPropagated(t *testing.T) {
 		sk, msg string
 	}
 	ch := make(chan result, 1)
+	fc := clock.NewFake()
 	tool := NewExecTool(nil, nil, func() int { return 1 }, tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *tools.AgentOrigin) {
 		ch <- result{sk, msg}
-	}), "", nil, func() int64 { return 0 }, "", nil, 0)
+	}).WithClock(fc), "", nil, func() int64 { return 0 }, "", nil, 0)
 
 	// See TestExecAutoBackgroundSlowCommand: the command is held until the
-	// test has seen "still running" (#1975, #2351).
+	// test has seen "still running" (#1975, #2351), and the threshold passes
+	// on fc (#2539).
 	cmd, release := gatedCommand(t)
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": cmd,
@@ -391,7 +397,9 @@ func TestExecAutoBackgroundSessionKeyPropagated(t *testing.T) {
 	})
 
 	ctx := tools.WithSessionKey(context.Background(), "test/ibranch-42")
-	out, err := tool.Execute(ctx, params)
+	out, err := executePastThreshold(t, fc, time.Second, func() (tools.ToolResult, error) {
+		return tool.Execute(ctx, params)
+	})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -625,9 +633,13 @@ func TestExecAutoBackgroundCtxCancelled(t *testing.T) {
 	// Use a 10s threshold so the ctx.Done() path fires before the threshold.
 	tool := NewExecTool(nil, nil, func() int { return 10 }, notifier, "", nil, func() int64 { return 0 }, "", nil, 0)
 
+	// The command blocks on a gate the test opens once Execute has returned,
+	// so the result can only arrive through the notifier. It used to block on
+	// `timeout 1 tail -f /dev/null`, a fixed 1s of wall time (#2539).
 	marker := filepath.Join(t.TempDir(), "started")
+	gated, release := gatedCommand(t)
 	params, _ := json.Marshal(map[string]interface{}{
-		"command": "echo ctx-cancel-result; touch " + marker + "; timeout 1 tail -f /dev/null",
+		"command": "echo ctx-cancel-result; touch " + marker + "; " + gated,
 		"timeout": 10,
 	})
 
@@ -637,8 +649,8 @@ func TestExecAutoBackgroundCtxCancelled(t *testing.T) {
 	// Cancel only once the command is provably running — it writes [marker] before
 	// blocking, so waiting on that instead of a fixed sleep removes the ordering race
 	// that flaked under parallel load (a scheduler stall could let the command finish
-	// before a wall-clock sleep(50ms) fired). The command still self-terminates
-	// (timeout 1) so the auto-backgrounded result is delivered to the notifier.
+	// before a wall-clock sleep(50ms) fired). The test releases the gate after
+	// Execute returns, so the auto-backgrounded result is delivered to the notifier.
 	go func() {
 		deadline := time.Now().Add(5 * time.Second)
 		for {
@@ -657,6 +669,7 @@ func TestExecAutoBackgroundCtxCancelled(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected context cancelled error")
 	}
+	release()
 
 	// The notifier should deliver the result when the command finishes
 	select {

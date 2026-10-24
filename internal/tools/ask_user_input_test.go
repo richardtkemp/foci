@@ -212,7 +212,18 @@ func TestAskDelivery_SystemKinds(t *testing.T) {
 		}) {
 			t.Fatalf("system route = %v, want the queued-expired notice", f.system.messages)
 		}
-		if eventuallyDelivered(f.user, func(msg string) bool {
+		// Wait for the primary's answer batch on the user route, then check
+		// the notice is not there too. Promotion (and so the notice) runs
+		// before the answer batch is delivered (resolveLocked, then
+		// deliverBatch), so once the batch is in, the user route has had
+		// every delivery this response makes. Polling for the notice's
+		// ABSENCE instead cost the full 2s poll bound on every pass (#2539).
+		if !eventuallyDelivered(f.user, func(msg string) bool {
+			return strings.Contains(msg, "the user answered")
+		}) {
+			t.Fatalf("user route = %v, want the primary's answer batch", f.user.messages)
+		}
+		if delivered(f.user, func(msg string) bool {
 			return strings.Contains(msg, "NEVER shown to the user")
 		}) {
 			t.Errorf("queued-expired notice hit the user route: %v", f.user.messages)
@@ -311,15 +322,22 @@ func TestAskDelivery_FallsBackToDeliverWhenNoUserRoute(t *testing.T) {
 func eventuallyDelivered(d *fakeDeliver, want func(string) bool) bool {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		d.mu.Lock()
-		messages := append([]string(nil), d.messages...)
-		d.mu.Unlock()
-		for _, m := range messages {
-			if want(m) {
-				return true
-			}
+		if delivered(d, want) {
+			return true
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+	return false
+}
+
+// delivered reports whether d has already received a delivery matching want.
+func delivered(d *fakeDeliver, want func(string) bool) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, m := range d.messages {
+		if want(m) {
+			return true
+		}
 	}
 	return false
 }

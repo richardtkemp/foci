@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"foci/internal/clock"
 )
 
 func TestHTTPRequestAutoBackgroundFast(t *testing.T) {
@@ -64,26 +66,60 @@ func newGatedServer(t *testing.T, body string) (*httptest.Server, func()) {
 	return srv, release
 }
 
+// executePastThreshold runs exec (a tool.Execute call whose notifier runs on
+// fc) on its own goroutine, waits for RunInBackground to arm its threshold
+// timer, advances fc past threshold, and returns what exec returned. The
+// threshold fires in virtual time, so the test costs no wall-clock wait
+// (#2539); the work under test must still be held (a gate) so it cannot
+// finish first.
+func executePastThreshold(t *testing.T, fc *clock.Fake, threshold time.Duration, exec func() (ToolResult, error)) (ToolResult, error) {
+	t.Helper()
+	type outcome struct {
+		res ToolResult
+		err error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		res, err := exec()
+		done <- outcome{res, err}
+	}()
+	if !fc.BlockUntilArmed(1, 10*time.Second) {
+		t.Fatal("the auto-background threshold timer was never armed")
+	}
+	fc.Advance(threshold)
+	select {
+	case o := <-done:
+		return o.res, o.err
+	case <-time.After(10 * time.Second):
+		t.Fatal("Execute did not return after the threshold passed")
+		return ToolResult{}, nil
+	}
+}
+
 func TestHTTPRequestAutoBackgroundSlow(t *testing.T) {
 	// Proves that when a request exceeds the auto-background threshold, the tool returns a "still running" message immediately and delivers the final result via the notifier.
 	t.Parallel()
 	srv, release := newGatedServer(t, "slow response")
 
 	completeCh := make(chan string, 1)
+	fc := clock.NewFake()
 	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 1 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 0 }, NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 		completeCh <- msg
-	}), 0640)
+	}).WithClock(fc), 0640)
 
 	// The response is held until the test has seen "still running", so it
-	// cannot race the 1s threshold timer under host load (the race #1975 hit
-	// in internal/tools/shell/shell_test.go with a 0.5s margin), and the test
-	// waits only the threshold rather than a fixed 5s sleep (#2351).
+	// cannot race the threshold timer under host load (the race #1975 hit
+	// in internal/tools/shell/shell_test.go with a 0.5s margin) (#2351). The
+	// 1s threshold passes on a fake clock, so the test does not wait it out
+	// (#2539).
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":     srv.URL,
 		"timeout": 10,
 	})
 
-	result, err := tool.Execute(context.Background(), params)
+	result, err := executePastThreshold(t, fc, time.Second, func() (ToolResult, error) {
+		return tool.Execute(context.Background(), params)
+	})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -117,19 +153,22 @@ func TestHTTPRequestAutoBackgroundSessionKey(t *testing.T) {
 		sk, msg string
 	}
 	ch := make(chan result, 1)
+	fc := clock.NewFake()
 	tool := NewHTTPRequestTool(nil, nil, "", func() int { return 1 }, func() int64 { return 50 * 1024 * 1024 }, func() int64 { return 0 }, func() int64 { return 0 }, NewAsyncNotifier(func(sk, msg, replyTo, trigger string, _ *AgentOrigin) {
 		ch <- result{sk, msg}
-	}), 0640)
+	}).WithClock(fc), 0640)
 
 	// See TestHTTPRequestAutoBackgroundSlow: the response is held until the
-	// test has seen "still running".
+	// test has seen "still running", and the threshold passes on fc.
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":     srv.URL,
 		"timeout": 10,
 	})
 
 	ctx := WithSessionKey(context.Background(), "agent:test:branch-42")
-	out, err := tool.Execute(ctx, params)
+	out, err := executePastThreshold(t, fc, time.Second, func() (ToolResult, error) {
+		return tool.Execute(ctx, params)
+	})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}

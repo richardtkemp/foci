@@ -371,9 +371,11 @@ func TestGitAllowedSubcommands(t *testing.T) {
 	tool := NewGitTool()
 
 	// Allowed subcommands should not error on parse (they may fail if not in a git repo,
-	// but the subcommand itself should be accepted).
+	// but the subcommand itself should be accepted). -h prints the short usage
+	// and exits; --help rendered each subcommand's whole man page, about 1s of
+	// CPU for the set (#2539).
 	for subcmd := range gitAllowedSubcommands {
-		params, _ := json.Marshal(map[string]string{"command": subcmd + " --help"})
+		params, _ := json.Marshal(map[string]string{"command": subcmd + " -h"})
 		_, err := tool.Execute(context.Background(), params)
 		// We only check that it didn't return a "not allowed" error.
 		if err != nil && strings.Contains(err.Error(), "not allowed") {

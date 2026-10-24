@@ -1949,7 +1949,7 @@ func generateGenericShellFunc(t *Tool) string {
 			// went green-but-wrong). Waiting is correct here; waiting FOREVER is the
 			// bug. 5s keeps the warning for every realistic writer and caps the
 			// pathological fd at a rounding error. FOCI_STDIN_GUARD_WAIT overrides
-			// the 5s only so the #1552 regression test runs in ~1s (#2351), the
+			// the 5s only so the #1552 regression test runs in ~0.1s (#2351, #2539), the
 			// same kind of test seam as FOCI_STDIN_WAIT.
 			"  if [ -n \"$%[1]s\" ] && [ ! -t 0 ]%[2]s; then\n"+
 				"    if [ \"$(timeout \"${FOCI_STDIN_GUARD_WAIT:-5}\" head -c 1 | wc -c)\" -gt 0 ]; then\n"+

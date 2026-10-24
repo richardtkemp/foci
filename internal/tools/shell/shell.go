@@ -375,7 +375,11 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 // pipeReapGrace is how long to wait for pipe readers after the main process
 // exits before killing the process group. Leaked child processes that inherit
 // pipe FDs keep the write-ends open, blocking io.Copy indefinitely.
-const pipeReapGrace = 2 * time.Second
+//
+// A var, not a const, only so this package's TestMain can shorten it before
+// any test runs: the leaked-child tests prove the reap happens, not how long
+// the grace is, and waited the full 2s each (#2539). Nothing else writes it.
+var pipeReapGrace = 2 * time.Second
 
 // waitAndReap waits for both the process to exit and all pipe reads to
 // complete. It uses Process.Wait() (low-level, does NOT close pipes) to

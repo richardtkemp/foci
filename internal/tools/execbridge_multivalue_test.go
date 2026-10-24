@@ -489,6 +489,8 @@ func TestAskTakesQuestionsJSONFromExactlyOneSource(t *testing.T) {
 // the read was a bare `cat`, so `sleep 20 | foci_ask` hung until killed.
 // The blocking condition itself expires (the fifo's only writer is a sleep
 // with stderr discarded), so the test asserts termination, not speed.
+// FOCI_STDIN_WAIT=0.1 (timeout takes fractional seconds) keeps the bound's
+// own wait to a tenth of a second; nothing has to happen inside it (#2539).
 func TestAskStdinReadIsBounded(t *testing.T) {
 	t.Parallel()
 	requireBashJq(t)
@@ -501,7 +503,7 @@ func TestAskStdinReadIsBounded(t *testing.T) {
 	body := generateShellFunc(ask)
 
 	start := time.Now()
-	calls, rc, out := runCountingShellFunc(t, body, `export FOCI_STDIN_WAIT=1
+	calls, rc, out := runCountingShellFunc(t, body, `export FOCI_STDIN_WAIT=0.1
 __d=$(mktemp -d); mkfifo "$__d/f"
 sleep 20 > "$__d/f" 2>/dev/null &
 foci_ask < "$__d/f"; __ask_rc=$?

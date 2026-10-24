@@ -1,6 +1,10 @@
 package tools
 
-import "sync"
+import (
+	"sync"
+
+	"foci/internal/clock"
+)
 
 // AsyncNotifier delivers async tool results to the agent session.
 // Tools call Notify() with the originating session key and a formatted
@@ -13,6 +17,30 @@ type AsyncNotifier struct {
 
 	mu      sync.Mutex
 	pending map[string]int // session key → count of pending results
+
+	// clk arms RunInBackground's auto-background threshold timer. nil means
+	// the wall clock; tests set a *clock.Fake through WithClock.
+	clk clock.Clock
+}
+
+// WithClock makes RunInBackground arm its auto-background threshold on c
+// instead of the wall clock, and returns n. The notifier is the one object
+// every auto-backgrounding tool (shell, http_request) already receives, so it
+// carries the seam: a test drives the threshold with clock.Fake.Advance
+// instead of waiting it out. Production never calls this. Set it before the
+// notifier is shared; it is not synchronised.
+func (n *AsyncNotifier) WithClock(c clock.Clock) *AsyncNotifier {
+	n.clk = c
+	return n
+}
+
+// clock returns the clock the threshold timer runs on (the wall clock unless
+// WithClock set one).
+func (n *AsyncNotifier) clock() clock.Clock {
+	if n == nil || n.clk == nil {
+		return clock.Real()
+	}
+	return n.clk
 }
 
 // NewAsyncNotifier creates an AsyncNotifier that calls fn with each message.

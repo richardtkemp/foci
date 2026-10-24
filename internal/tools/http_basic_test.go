@@ -97,11 +97,22 @@ func TestHTTPRequestCustomTimeout(t *testing.T) {
 }
 
 func TestHTTPRequestTimeoutCap(t *testing.T) {
-	// Proves that a 1-second timeout causes a deadline-exceeded error when the server takes 1.5 seconds to respond.
+	// Proves that a 1-second timeout causes a deadline-exceeded error when the server has not answered by then.
+	//
+	// This test keeps a real ~1s wait (#2539): the property is that the
+	// timeout parameter, whose unit is whole seconds, really cuts the request
+	// off, and 1s is the shortest value it accepts. The server holds the
+	// response until the client gives up (r.Context() ends when the request is
+	// cancelled), so the test costs the timeout and nothing more; it used to
+	// sleep 1.5s regardless, and srv.Close waited that out. The 10s fallback
+	// only bounds a broken timeout, so the test fails instead of hanging.
 	t.Parallel()
-	// A slow server that takes 1.5 seconds
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(1500 * time.Millisecond)
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(10 * time.Second):
+		}
 		fmt.Fprint(w, "slow")
 	}))
 	defer srv.Close()

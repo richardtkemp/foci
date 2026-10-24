@@ -89,3 +89,43 @@ func TestRealClockUsesWallTime(t *testing.T) {
 		t.Fatalf("Real().Now() = %v, want between %v and %v", got, before, after)
 	}
 }
+
+func TestFakeBlockUntilArmedWaitsForTimer(t *testing.T) {
+	c := NewFake()
+	armed := make(chan struct{})
+	go func() {
+		<-armed
+		c.AfterFunc(time.Second, func() {})
+	}()
+
+	if c.BlockUntilArmed(1, 10*time.Millisecond) {
+		t.Fatal("BlockUntilArmed(1) = true with no timer armed")
+	}
+	// Arm the timer while the waiter is (most likely) already blocked, so it
+	// must be woken rather than finding the timer on its first look. A waiter
+	// nobody wakes would sit out the whole 10s bound.
+	time.AfterFunc(20*time.Millisecond, func() { close(armed) })
+	start := time.Now()
+	if !c.BlockUntilArmed(1, 10*time.Second) {
+		t.Fatal("BlockUntilArmed(1) = false after a timer was armed")
+	}
+	if waited := time.Since(start); waited > 5*time.Second {
+		t.Fatalf("BlockUntilArmed took %v to notice the timer; arming must wake it", waited)
+	}
+}
+
+func TestFakeBlockUntilArmedIgnoresFiredAndStopped(t *testing.T) {
+	c := NewFake()
+	c.AfterFunc(time.Millisecond, func() {})
+	stopped := c.AfterFunc(time.Hour, func() {})
+	stopped.Stop()
+	c.Advance(time.Millisecond) // fires the first
+
+	if c.BlockUntilArmed(1, 10*time.Millisecond) {
+		t.Fatal("BlockUntilArmed(1) = true with only fired and stopped timers")
+	}
+	stopped.Reset(time.Hour)
+	if !c.BlockUntilArmed(1, 10*time.Second) {
+		t.Fatal("BlockUntilArmed(1) = false after Reset re-armed a timer")
+	}
+}

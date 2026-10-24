@@ -1659,10 +1659,11 @@ func TestExecBridgeStdinTextGuard(t *testing.T) {
 	// A FIFO whose only writer is a `sleep` reproduces it exactly: the writer holds
 	// the pipe open, never writes a byte, and releases it after WRITER_HOLD seconds.
 	// The hold MUST outlast the guard's own bound, so the two outcomes separate
-	// cleanly on elapsed time. FOCI_STDIN_GUARD_WAIT=1 shortens that bound from its
-	// production 5s so the case costs ~1s, not 5s (#2351):
+	// cleanly on elapsed time. FOCI_STDIN_GUARD_WAIT=0.1 shortens that bound from its
+	// production 5s so the case costs ~0.1s, not 5s (#2351, #2539; timeout takes
+	// fractional seconds, and nothing has to happen inside this bound):
 	//
-	//	fixed   -> the guard gives up at its bound (~1s) and sends
+	//	fixed   -> the guard gives up at its bound (~0.1s) and sends
 	//	unfixed -> the guard waits out the writer (~20s), then sends
 	//
 	// and it matters that the writer eventually lets go. An earlier version of this
@@ -1684,7 +1685,7 @@ func TestExecBridgeStdinTextGuard(t *testing.T) {
 	start7 := time.Now()
 	out7, err := runBash(fmt.Sprintf(
 		"set -o pipefail -o nounset; shopt -s failglob; source %s\n"+
-			"export FOCI_STDIN_GUARD_WAIT=1\n"+
+			"export FOCI_STDIN_GUARD_WAIT=0.1\n"+
 			"__d=$(mktemp -d); mkfifo \"$__d/f\"\n"+
 			// The writer: opens the FIFO, writes nothing, releases at 20s. stderr
 			// goes to /dev/null so it holds none of the pipes Go is reading, and a
@@ -1711,7 +1712,9 @@ func TestExecBridgeStdinTextGuard(t *testing.T) {
 	// Cases 8 and 9 cover the SIBLING branch — no --text, so stdin is the body and
 	// `cat` reads it. Blocking there is the job, but two stdin shapes never end, and
 	// both used to hang the call outright rather than report anything. The bound is
-	// 30s in production; FOCI_STDIN_WAIT exists so these run in ~1s.
+	// 30s in production; FOCI_STDIN_WAIT exists so these run in a fraction of a
+	// second: 0.1s for case 8, where nothing has to happen inside the bound, and
+	// 0.2s for case 9, where the read must take in the body first (#2539).
 	//
 	// Case 8 (B1): nothing ever arrives — the supervisor-inherited fd, same shape as
 	// case 7 but on the branch that actually wants stdin. Body ends up empty; what
@@ -1722,7 +1725,7 @@ func TestExecBridgeStdinTextGuard(t *testing.T) {
 	start8 := time.Now()
 	out8, _ := runBash(fmt.Sprintf(
 		"set -o pipefail -o nounset; shopt -s failglob; source %s\n"+
-			"export FOCI_STDIN_WAIT=1\n"+
+			"export FOCI_STDIN_WAIT=0.1\n"+
 			"__d=$(mktemp -d); mkfifo \"$__d/f\"\n"+
 			"sleep 20 > \"$__d/f\" 2>/dev/null &\n"+
 			"foci_send_to_chat <\"$__d/f\"; __rc=$?\n"+
@@ -1741,15 +1744,24 @@ func TestExecBridgeStdinTextGuard(t *testing.T) {
 	// bound alone would send the fragment looking like a clean success; the warning
 	// is what makes the truncation a diagnosis instead of corruption. So assert BOTH
 	// that the partial body went through and that it was announced.
+	//
+	// The body must already be in the pipe when the bounded read starts, or a
+	// loaded scheduler can run the writer's echo after the bound and the case
+	// fails on an empty body. So the shell opens the fifo on fd 3 first (that
+	// open returns once the writer has opened its end), waits for the writer's
+	// marker file, written after the echo, and only then calls the function
+	// on fd 3. That ordering lets the bound be 0.2s (#2539).
 	mu.Lock()
 	capturedText = ""
 	mu.Unlock()
 	out9, err9 := runBash(fmt.Sprintf(
 		"set -o pipefail -o nounset; shopt -s failglob; source %s\n"+
-			"export FOCI_STDIN_WAIT=1\n"+
+			"export FOCI_STDIN_WAIT=0.2\n"+
 			"__d=$(mktemp -d); mkfifo \"$__d/f\"\n"+
-			"{ echo 'partial body'; sleep 20; } > \"$__d/f\" 2>/dev/null &\n"+
-			"foci_send_to_chat <\"$__d/f\"; __rc=$?\n"+
+			"{ echo 'partial body'; : > \"$__d/written\"; sleep 20; } > \"$__d/f\" 2>/dev/null &\n"+
+			"exec 3<\"$__d/f\"\n"+
+			"until [ -e \"$__d/written\" ]; do sleep 0.01; done\n"+
+			"foci_send_to_chat <&3; __rc=$?\n"+
 			"rm -rf \"$__d\"\n"+
 			"exit $__rc",
 		bridge.FuncsPath(),
