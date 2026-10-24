@@ -10,7 +10,9 @@ import (
 
 // seedSharedDefaults seeds all default resources (character files, openclaw files,
 // crontab template, prompts, skills) to ~/shared/ from embedded defaults.
-// Files that already exist on disk are never overwritten.
+// Defaults and prompts are written only if missing. Skills follow
+// seedDefaultSkills: a SKILL.md only if missing, every other embedded skill
+// file overwritten on each start.
 func seedSharedDefaults(fileMode os.FileMode, liveBackends map[string]bool) {
 	home, err := os.UserHomeDir()
 	if err != nil {
