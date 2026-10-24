@@ -133,6 +133,11 @@ WANT_PATH="$TMP/goroot/bin:$SYS"
 if [ "$(uname -s)" = Darwin ] && [ -n "${DARWIN_TOOL_PATH:-}" ]; then
   WANT_PATH="${DARWIN_TOOL_PATH_FIRST:+$DARWIN_TOOL_PATH_FIRST:}$WANT_PATH:$DARWIN_TOOL_PATH"
 fi
+# macOS: and a fixed dir with sh -> /bin/dash goes first (#2549).
+if [ "$(uname -s)" = Darwin ] && [ -x /bin/dash ]; then
+  WANT_PATH="/private/tmp/fgw-shbin:$WANT_PATH"
+  expect "env: macOS sh shim points at /bin/dash" "/bin/dash" "$(readlink /private/tmp/fgw-shbin/sh)"
+fi
 expect "env: PATH is pinned" "PATH=$WANT_PATH" "$seenA"
 reject "env: the caller's PATH entry is dropped" "/srv/snap-aaa" "$seenA"
 reject "env: an agent-shell var is dropped" "CLAUDE_CODE_ZZ" "$seenA"

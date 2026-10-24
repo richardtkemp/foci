@@ -167,6 +167,15 @@ TEST_PATH="$GOROOT_DIR/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sb
 if [ "$(uname -s)" = Darwin ] && [ -n "${DARWIN_TOOL_PATH:-}" ]; then
 	TEST_PATH="${DARWIN_TOOL_PATH_FIRST:+$DARWIN_TOOL_PATH_FIRST:}$TEST_PATH:$DARWIN_TOOL_PATH"
 fi
+# macOS: a bare `sh` on PATH resolves to /bin/sh, which is a stub that execs bash
+# 3.2 (2.3 ms to start, against 1.25 ms for /bin/dash, which every Mac ships and
+# which is what /bin/sh is on the NUC; #2549). A fixed dir (not per run: PATH is
+# part of go test's cache key) with sh -> /bin/dash goes first, so tests that exec
+# "sh" by name get dash. A script's #!/bin/sh line still names /bin/sh directly.
+if [ "$(uname -s)" = Darwin ] && [ -x /bin/dash ]; then
+	SH_SHIM=/private/tmp/fgw-shbin
+	mkdir -p "$SH_SHIM" && ln -sfn /bin/dash "$SH_SHIM/sh" && TEST_PATH="$SH_SHIM:$TEST_PATH"
+fi
 OPTIN_VARS=(FOCI_OPENCODE_LIVE FOCI_OPENCODE_BIN ANTHROPIC_API_KEY)
 PASSTHRU=()
 PASSTHRU_SHOWN=()
