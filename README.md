@@ -19,8 +19,10 @@ Inspired by [OpenClaw](https://github.com/openclaw/openclaw), built from scratch
 ## Quick Start
 
 ```bash
-git clone https://github.com/richardtkemp/foci.git && cd foci && sudo make setup
+git clone https://github.com/richardtkemp/foci.git && cd foci && sudo make install
 ```
+
+On macOS, run `make install` as yourself (no sudo). See [docs/INSTALL.md](docs/INSTALL.md).
 
 See [docs/INSTALL.md](docs/INSTALL.md) for prerequisites, options, and next steps.
 

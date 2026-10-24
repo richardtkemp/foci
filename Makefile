@@ -1092,13 +1092,32 @@ enable:
 # userland the recipes are written for, Homebrew sqlite, tmux, jq, mdq);
 # macos-install builds, installs into ~/foci (FOCI_HOME) and (re)starts foci.
 MACOS_BREW_DEPS := go coreutils flock gnu-sed findutils grep gawk gnu-tar sqlite tmux jq mdq bash
-.PHONY: macos-deps macos-install
+.PHONY: macos-deps macos-install install
+# Installs only the formulas that are missing, so a re-run (every `make install`
+# on macOS) costs one `brew list` and no brew warnings.
 macos-deps:
 	@[ "$(UNAME_S)" = Darwin ] || { echo "macos-deps: macOS only" >&2; exit 1; }
-	HOMEBREW_NO_AUTO_UPDATE=1 brew install $(MACOS_BREW_DEPS)
+	@command -v brew >/dev/null || { echo "macos-deps: Homebrew not found — install it from https://brew.sh, then re-run" >&2; exit 1; }
+	@have=" $$(brew list --formula -1 | tr '\n' ' ') "; missing=; \
+	for f in $(MACOS_BREW_DEPS); do case "$$have" in *" $$f "*) ;; *) missing="$$missing $$f";; esac; done; \
+	if [ -n "$$missing" ]; then echo ">>> brew install$$missing" >&2; HOMEBREW_NO_AUTO_UPDATE=1 brew install $$missing; \
+	else echo ">>> macos-deps: all Homebrew dependencies present" >&2; fi
 macos-install:
-	@[ "$(UNAME_S)" = Darwin ] || { echo "macos-install: macOS only — on Linux use sudo make setup / update" >&2; exit 1; }
+	@[ "$(UNAME_S)" = Darwin ] || { echo "macos-install: macOS only — on Linux use sudo make install" >&2; exit 1; }
 	scripts/macos-install.sh
+
+# One entry point for both platforms: install, or update an existing install.
+#   macOS:  make install       (as you; Homebrew deps, then macos-install)
+#   Linux:  sudo make install  (setup on a fresh host, update once the unit exists)
+install:
+ifeq ($(UNAME_S),Darwin)
+	$(MAKE) macos-deps
+	$(MAKE) macos-install
+else
+	$(REQUIRE_ROOT)
+	@if [ -f $(SERVICE_FILE) ]; then echo ">>> install: $(SERVICE_FILE) exists — updating" >&2; $(MAKE) update; \
+	else echo ">>> install: no $(SERVICE_FILE) — first-time setup" >&2; $(MAKE) setup; fi
+endif
 
 # First-time provision. Ordered explicitly (sub-make) so it is correct even
 # under -j. Usually invoked by download.sh after fetching the repo.

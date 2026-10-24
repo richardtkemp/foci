@@ -4,7 +4,7 @@
 # The macOS counterpart of `sudo make setup` / `sudo make update`. There is no
 # separate `foci` system user, no root and no systemd: foci-gw runs as you, as a
 # per-user LaunchAgent (deploy/foci.launchd.plist.tmpl). Run from the repo root,
-# normally via `make macos-install`. Safe to re-run: it rebuilds, reinstalls the
+# normally via `make install`. Safe to re-run: it rebuilds, reinstalls the
 # binaries, docs and agent scripts, re-renders the LaunchAgent and restarts foci.
 #
 # Usage: scripts/macos-install.sh [-h|--help]
@@ -39,7 +39,7 @@ esac
 die() { echo "macos-install: $*" >&2; exit 1; }
 say() { echo ">>> $*" >&2; }
 
-[ "$(uname -s)" = Darwin ] || die "this script is for macOS; on Linux use sudo make setup / update"
+[ "$(uname -s)" = Darwin ] || die "this script is for macOS; on Linux use sudo make install"
 [ "$(id -u)" -ne 0 ] || die "run as your own user, not root: foci runs as the installing user on macOS"
 grep -qs '^module foci$' go.mod || die "run from the foci repo root"
 command -v go >/dev/null || die "go not found — run: make macos-deps"
@@ -103,9 +103,19 @@ SECRETS=$FOCI_HOME/config/secrets.toml
 
 CONFIG=$FOCI_HOME/config/foci.toml
 if [ ! -f "$CONFIG" ]; then
-	say "no $CONFIG yet. Create one, then re-run this script:"
-	echo "      $BIN_DIR/foci first-run --config-dir $FOCI_HOME/config" >&2
-	exit 0
+	# First install. At a terminal, run the setup wizard here (as `sudo make
+	# setup` does on Linux) and carry on; without one there is nobody to answer
+	# it, so stop and say what to run.
+	if [ -t 0 ] && [ -t 1 ]; then
+		say "no $CONFIG yet — running the setup wizard"
+		HOME="$FOCI_HOME" "$BIN_DIR/foci" first-run --config-dir "$FOCI_HOME/config"
+		[ -f "$CONFIG" ] || die "the wizard did not write $CONFIG"
+		[ -f "$SECRETS" ] && chmod 600 "$SECRETS"
+	else
+		say "no $CONFIG yet. Create one, then re-run this script:"
+		echo "      HOME=$FOCI_HOME $BIN_DIR/foci first-run --config-dir $FOCI_HOME/config" >&2
+		exit 0
+	fi
 fi
 
 say "checking config against the new binary"

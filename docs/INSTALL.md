@@ -71,8 +71,12 @@ cd foci
 The setup script creates a system user, builds binaries, sets up systemd, and launches the `foci first-run` wizard for interactive configuration:
 
 ```bash
-sudo make setup
+sudo make install
 ```
+
+`make install` is the one entry point on both Linux and macOS. On a Linux host
+with no foci unit yet it runs `make setup`; once the unit exists it runs
+`make update`. Both targets remain available directly.
 
 The wizard prompts for:
 - **LLM provider** — Anthropic, Google Gemini, OpenAI, OpenRouter, or Custom endpoint
@@ -143,7 +147,7 @@ Pull and re-run setup. It's idempotent — safe to run repeatedly:
 ```bash
 cd /path/to/foci
 git pull
-make update
+sudo make install    # = sudo make update on an existing install
 ```
 
 On update, setup generates a changelog (`WELCOME.md`) that the agent summarises and sends to you via Telegram.
@@ -177,14 +181,19 @@ systemd.
 ```bash
 xcode-select --install          # git and make, if not already present
 git clone https://github.com/richardtkemp/foci.git && cd foci
-make macos-deps                 # Homebrew: go, GNU coreutils/sed/grep/findutils/tar/awk, flock, sqlite, tmux, jq, mdq, bash
-make macos-install              # builds, installs into ~/foci, (re)starts the LaunchAgent
+make install                    # as you, no sudo
 ```
 
-The first `make macos-install` stops after creating the directories, because
-there is no config yet. Write `~/foci/config/foci.toml` (or run
+`make install` installs any missing Homebrew dependencies (`make macos-deps`:
+go, GNU coreutils/sed/grep/findutils/tar/awk, flock, sqlite, tmux, jq, mdq,
+bash), then runs `make macos-install`: build, install into `~/foci`, (re)start
+the LaunchAgent. Homebrew itself must already be installed.
+
+On the first install there is no config yet. At a terminal, the `foci first-run`
+wizard runs and the install continues. Without a terminal it stops after
+creating the directories; write `~/foci/config/foci.toml` (or run
 `HOME=~/foci ~/foci/bin/foci first-run --config-dir ~/foci/config`), then run
-`make macos-install` again. Re-running it is also how you update: it rebuilds,
+`make install` again. Re-running it is also how you update: it rebuilds,
 checks the config against the new binary before touching the running daemon,
 reinstalls and restarts.
 
