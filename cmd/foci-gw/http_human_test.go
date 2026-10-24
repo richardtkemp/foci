@@ -252,30 +252,46 @@ func TestBranch_HumanSetsUserActivityOnBranchSession(t *testing.T) {
 // turn's own entry write, on the new session key).
 func TestBranch_HumanReceiptStampsOnlyWhenDispatched(t *testing.T) {
 	t.Parallel()
-	runner := &periodic.Runner{}
-	d, _ := httpTestSetup(t, httpTestOpts{kaRunner: runner})
-	mux := newTestMux(d)
+	// Each half gets its own harness. On one shared harness the refused
+	// request's branch file (created before the model check) took this
+	// second's b<unix seconds> key, so the dispatched branch collided and
+	// CreateBranchWithOptions slept a real second before retrying (#2540).
+	t.Run("refused for a bad model", func(t *testing.T) {
+		t.Parallel()
+		runner := &periodic.Runner{}
+		d, _ := httpTestSetup(t, httpTestOpts{kaRunner: runner})
+		mux := newTestMux(d)
 
-	w := postJSON(mux, "/branch", `{"text":"hi","human":true,"model":"cheap"}`)
+		w := postJSON(mux, "/branch", `{"text":"hi","human":true,"model":"cheap"}`)
 
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
-	}
-	if _, ok := runner.LastUserActivity(); ok {
-		t.Error("human branch refused for a bad model stamped the in-process receipt; the stamp belongs to a dispatched run")
-	}
-	if userActivityRecorded(d, testSessionKey) {
-		t.Error("human branch refused for a bad model recorded durable user activity on the parent session")
-	}
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+		}
+		if _, ok := runner.LastUserActivity(); ok {
+			t.Error("human branch refused for a bad model stamped the in-process receipt; the stamp belongs to a dispatched run")
+		}
+		if userActivityRecorded(d, testSessionKey) {
+			t.Error("human branch refused for a bad model recorded durable user activity on the parent session")
+		}
+	})
+	t.Run("dispatched", func(t *testing.T) {
+		t.Parallel()
+		runner := &periodic.Runner{}
+		d, _ := httpTestSetup(t, httpTestOpts{kaRunner: runner})
+		mux := newTestMux(d)
+		if _, ok := runner.LastUserActivity(); ok {
+			t.Fatal("receipt stamped before any request — test premise broken")
+		}
 
-	w = postJSON(mux, "/branch", `{"text":"hi","human":true}`)
+		w := postJSON(mux, "/branch", `{"text":"hi","human":true}`)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
-	}
-	if _, ok := runner.LastUserActivity(); !ok {
-		t.Error("dispatched human branch did not stamp the in-process receipt")
-	}
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+		}
+		if _, ok := runner.LastUserActivity(); !ok {
+			t.Error("dispatched human branch did not stamp the in-process receipt")
+		}
+	})
 }
 
 // TestSend_HumanGateSkippedNoUserActivity pins req 3's skip boundary: a

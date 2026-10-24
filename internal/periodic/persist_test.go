@@ -168,6 +168,9 @@ func TestPersistedTimers_SavedBeforeIdle(t *testing.T) {
 			func(r *Runner) time.Time { return r.lastEphemeralCleanup }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// Each case owns its state.db, Runner and lock, so the five
+			// stall windows overlap instead of adding up (#2540).
+			t.Parallel()
 			idx, path := persistFixtureWithPath(t)
 			for _, k := range []string{timerReflection, timerConsolidation, timerReset} {
 				seedTimer(t, idx, k, time.Now().Add(-48*time.Hour))

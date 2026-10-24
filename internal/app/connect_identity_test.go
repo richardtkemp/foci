@@ -162,13 +162,15 @@ func TestStallWarn_NamesDeviceAndIP(t *testing.T) {
 	flog.SetLevel(flog.DEBUG)
 	t.Cleanup(func() { flog.SetOutput(os.Stderr); flog.SetLevel(flog.INFO) })
 
-	// enqueueBlockWait is a const, so this test really does wait it out. The
-	// duration is itself evidence the blocking path ran rather than the fast
-	// path returning early.
+	// The warn fires only from the blocking path's timer arm, so its presence
+	// (asserted below) is the evidence that path ran. blockWait shortens that
+	// timer from enqueueBlockWait's two real seconds (#2540); the length itself
+	// is not what this test proves.
 
 	h := newTestHub()
 	c := newWsClient(nil, h, "203.0.113.9") // nil ws: close() documents this as the test shape
 	c.deviceID = "stalled-dev"
+	c.blockWait = 10 * time.Millisecond
 
 	// Premise guard: the blocking path is only reached with a genuinely FULL
 	// queue. Without this a capacity change would make the test pass by never

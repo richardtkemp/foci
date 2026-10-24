@@ -2009,6 +2009,10 @@ func TestReliability_AckTrimsBuffer(t *testing.T) {
 
 func TestReliability_BufferTrimsByDepth(t *testing.T) {
 	c := fakeClient()
+	// Room for every frame: with fakeClient's 64-slot queue the 65th send hit
+	// enqueue's two-second stall wait (#2540). This test is about the replay
+	// buffer, not socket back-pressure.
+	c.send = make(chan []byte, defaultReplayBufferDepth+50)
 	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{c: {}}, seen: make(map[string]struct{})}
 	for i := 0; i < defaultReplayBufferDepth+50; i++ {
 		b.send(fap.Activity{ConversationID: "c1", Kind: "typing"})

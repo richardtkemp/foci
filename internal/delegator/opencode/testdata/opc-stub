@@ -7,7 +7,8 @@
 #
 # Env overrides:
 #   OPC_STUB_EXIT_CODE=<n>   exit immediately with code <n>.
-#   OPC_STUB_SLEEP_SECS=<n>  sleep <n> seconds then exit 0.
+#   OPC_STUB_SLEEP_SECS=<n>  sleep <n> seconds then exit 0 (fractions such as
+#                            0.3 work: GNU and BSD sleep both take them).
 #   OPC_STUB_MARK=<file>     append "S <pid> <ns>" on start and "E <pid> <ns>" on
 #                            exit. Lets a test reconstruct each subprocess's
 #                            LIFETIME and assert that no two overlapped, which is
@@ -43,7 +44,12 @@ if [ -n "${OPC_STUB_SLEEP_SECS:-}" ]; then
 	exit 0
 fi
 
-trap 'mark E; exit 0' TERM
+# sleep in the background and `wait` for it: sh runs a trap only once the
+# foreground command returns, so a foreground `sleep 1` held every SIGTERM up
+# to a second, while `wait` returns as soon as the signal arrives (#2540).
+trap 'kill "$sp" 2>/dev/null; mark E; exit 0' TERM
 while true; do
-	sleep 1
+	sleep 1 &
+	sp=$!
+	wait "$sp"
 done

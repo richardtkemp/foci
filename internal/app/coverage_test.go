@@ -525,12 +525,20 @@ func TestCheckOrigin(t *testing.T) {
 }
 
 func TestEnqueueOverflow_DropsWithoutBlocking(t *testing.T) {
-	c := &wsClient{send: make(chan []byte, 1), done: make(chan struct{})}
-	// Fill the buffer, then overflow — enqueue must not block or panic.
+	// blockWait shortens the stall timer from two real seconds (#2540).
+	c := &wsClient{send: make(chan []byte, 1), done: make(chan struct{}), blockWait: 10 * time.Millisecond}
+	// Fill the buffer, then overflow — enqueue must return (bounded wait, no
+	// panic) without queueing past capacity, and close the stalled client so it
+	// reconnects and replays.
 	c.enqueue("a")
-	c.enqueue("b") // dropped (buffer full)
+	c.enqueue("b") // not queued (buffer full)
 	if len(c.send) != 1 {
 		t.Errorf("send depth = %d, want 1 (overflow dropped)", len(c.send))
+	}
+	select {
+	case <-c.done:
+	case <-time.After(5 * time.Second): // hang guard only
+		t.Error("stalled client was never closed after the overflow")
 	}
 }
 

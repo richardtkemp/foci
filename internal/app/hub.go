@@ -3089,6 +3089,11 @@ type wsClient struct {
 	// hub and never mutated, so the send path reads it without c.mu (#1782).
 	ip string
 
+	// blockWait overrides enqueueBlockWait when positive. Zero (every real
+	// client) means the const. Tests set it so the stall path runs in
+	// milliseconds rather than two real seconds (#2540).
+	blockWait time.Duration
+
 	mu sync.Mutex
 	// No socket-wide "current agent": one socket multiplexes every agent's
 	// conversations concurrently. Each inbound frame names its agent (or its
@@ -3193,7 +3198,11 @@ func (c *wsClient) enqueue(wire string) {
 	// briefly for space, and if the socket still won't drain it's stalled/dead:
 	// close it so the client reconnects and replays from its true contiguous
 	// mark, healing the gap.
-	t := time.NewTimer(enqueueBlockWait)
+	wait := enqueueBlockWait
+	if c.blockWait > 0 {
+		wait = c.blockWait
+	}
+	t := time.NewTimer(wait)
 	defer t.Stop()
 	select {
 	case c.send <- []byte(wire):
@@ -3206,7 +3215,7 @@ func (c *wsClient) enqueue(wire string) {
 		// is what separates a client that BROKE from one that MOVED NETWORK, and
 		// this is precisely where that gets asked.
 		appLog.Warnf("outbound queue stalled %s, closing slow client to force resume: device=%s ip=%s",
-			enqueueBlockWait, c.device(), c.ip)
+			wait, c.device(), c.ip)
 		go c.close() // async: close locks the hub; don't reenter from the send path
 	}
 }

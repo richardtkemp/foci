@@ -60,6 +60,10 @@ func TestServer_Start_LaunchesSubprocess(t *testing.T) {
 	// + reaps the subprocess on its way out. The error must mention the
 	// probe so we know the launch actually ran.
 	srv := newTestServer(t, "agent-launch")
+	// The stub ignores dispose, so the courtesy wait before SIGTERM is pure
+	// delay in this test (#2540); the teardown under test is the SIGTERM and
+	// reap that follow it.
+	srv.closeGracefulWait = 10 * time.Millisecond
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
@@ -847,11 +851,13 @@ func TestServer_Pool_AcquireDoesNotDoubleSpawn(t *testing.T) {
 		hostname:   "127.0.0.1",
 		port:       0,
 	}
-	// SLEEP_SECS keeps each subprocess alive ~1s, which is what makes the window
-	// observable at all: acquireServer passes context.Background(), so the health
-	// probe only returns when the subprocess dies. In production this window is
-	// the full 13s health probe.
-	env := map[string]string{"OPC_STUB_MARK": markFile, "OPC_STUB_SLEEP_SECS": "1"}
+	// SLEEP_SECS keeps each subprocess alive ~0.3s, which is what makes the
+	// window observable at all: acquireServer passes context.Background(), so the
+	// health probe only returns when the subprocess dies. In production this
+	// window is the full 13s health probe. 0.3s (was 1s, #2540) still dwarfs the
+	// gap between two goroutines released together reaching their spawns, and
+	// the fixed code serialises, so a short window can never fail it.
+	env := map[string]string{"OPC_STUB_MARK": markFile, "OPC_STUB_SLEEP_SECS": "0.3"}
 
 	var wg sync.WaitGroup
 	start := make(chan struct{})

@@ -22,19 +22,29 @@ func engageRateLimit(t *testing.T, d httpHandlerDeps, retryAfter time.Duration) 
 	d.agents[testAgentID].ag.EngageRateLimit(ratelimit.Signal{Kind: ratelimit.KindRequest, RetryAfter: retryAfter})
 }
 
-// heldRateLimit is how long the withhold-then-deliver sweep tests keep the gate
-// closed. It must outlast the gap between engaging the gate and the first
+// heldRateLimit is how long the withhold-then-deliver sweep tests close the
+// gate for. It must outlast the gap between engaging the gate and the first
 // sweep's gate check, which is microseconds idle but unbounded under host load
-// with the package's tests running in parallel (#2352): a gate that reopens
-// before that check lets the first sweep deliver and fails the test.
-const heldRateLimit = 2 * time.Second
+// with the package's tests running in parallel (#2352). The tests never wait
+// it out: expireRateLimit reopens the gate when the test is ready (#2540).
+const heldRateLimit = time.Hour
+
+// expireRateLimit reopens the test agent's endpoint gate the way a real one
+// reopens, on its deadline: it re-engages with a deadline that has already
+// passed by the time anything reads it, then waits (hang-guarded) for the
+// gate to read open.
+func expireRateLimit(t *testing.T, d httpHandlerDeps) {
+	t.Helper()
+	engageRateLimit(t, d, time.Nanosecond)
+	waitRateLimitClear(t, d)
+}
 
 // waitRateLimitClear blocks until the test agent's endpoint gate has reopened
 // on its own deadline (hang-guarded), instead of sleeping a fixed margin past
 // it.
 func waitRateLimitClear(t *testing.T, d httpHandlerDeps) {
 	t.Helper()
-	deadline := time.Now().Add(heldRateLimit + 10*time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		if limited, _ := d.agents[testAgentID].ag.SessionRateLimited(testSessionKey); !limited {
 			return
@@ -260,16 +270,20 @@ func TestSweep_WithholdsWhileRateLimited(t *testing.T) {
 	sw := &deferSweeper{store: store, deps: d, isUserActive: isU, isSessionActive: isS}
 
 	sw.sweep()
-	select {
-	case text := <-mock.entered:
-		t.Fatalf("delivered %q while the endpoint was rate limited", text)
-	case <-time.After(200 * time.Millisecond):
-	}
+	// The store is the synchronous observable: sweep deletes a record only
+	// after handing it to delivery, so a record still queued once sweep has
+	// returned was withheld. The channel check catches a delivery that
+	// somehow bypassed the store.
 	if all, _ := store.All(); len(all) != 1 {
 		t.Errorf("queued=%d want 1 (still withheld)", len(all))
 	}
+	select {
+	case text := <-mock.entered:
+		t.Fatalf("delivered %q while the endpoint was rate limited", text)
+	default:
+	}
 
-	waitRateLimitClear(t, d)
+	expireRateLimit(t, d)
 	sw.sweep()
 	select {
 	case text := <-mock.entered:
@@ -596,16 +610,20 @@ func TestSweep_WithholdsBranchWhileRateLimited(t *testing.T) {
 	sw := sweepFor(d, store)
 
 	sw.sweep()
-	select {
-	case text := <-mock.entered:
-		t.Fatalf("delivered branch %q while the endpoint was rate limited", text)
-	case <-time.After(200 * time.Millisecond):
-	}
+	// The store is the synchronous observable: sweep deletes a record only
+	// after handing it to delivery, so a record still queued once sweep has
+	// returned was withheld. The channel check catches a delivery that
+	// somehow bypassed the store.
 	if all, _ := store.All(); len(all) != 1 {
 		t.Errorf("queued=%d want 1 (still withheld)", len(all))
 	}
+	select {
+	case text := <-mock.entered:
+		t.Fatalf("delivered branch %q while the endpoint was rate limited", text)
+	default:
+	}
 
-	waitRateLimitClear(t, d)
+	expireRateLimit(t, d)
 	sw.sweep()
 	select {
 	case <-mock.entered:
