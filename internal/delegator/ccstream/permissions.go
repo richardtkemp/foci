@@ -63,6 +63,11 @@ func (b *Backend) handleToolRequest(msg *PermissionRequest) {
 
 	summary := msg.Request.Summary()
 	text := msg.Request.DisplayText()
+	// A subagent's call: say so, and which one, ahead of everything else. The
+	// prompt otherwise looks exactly like the main thread's (#2522).
+	if agentID := msg.Request.agentID(); agentID != "" {
+		text = b.subagentOrigin(agentID) + "\n\n" + text
+	}
 	// A veto means a rule DID match and the guard overrode it. Say so HERE, in
 	// the prompt, rather than only in the log: this is the moment the user is
 	// wondering why they are being asked about a command they allowlisted, and
@@ -523,6 +528,61 @@ func friendlyReason(reason string) string {
 		return "Command requires manual review"
 	}
 	return reason
+}
+
+// subagentOrigin is the leading line of a permission prompt for a subagent's
+// call: the subagent's task description when foci knows it, else a short form
+// of its id, so the prompt says it comes from a subagent either way (#2522).
+func (b *Backend) subagentOrigin(agentID string) string {
+	if label := b.subagentLabel(agentID); label != "" {
+		return fmt.Sprintf("🤖 **From subagent:** %s", label)
+	}
+	short := agentID
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	return fmt.Sprintf("🤖 **From a background subagent** (%s)", short)
+}
+
+// subagentLabel returns the task description of the subagent whose task_id is
+// agentID, or "" when unknown. The task_started description comes first (any
+// depth); then the run label, which a run rehydrated after a restart carries
+// without a task_started seen in this process; then CC's meta sidecar on disk.
+func (b *Backend) subagentLabel(agentID string) string {
+	b.subagentRunsMu.Lock()
+	label := b.taskDescs[agentID]
+	if label == "" {
+		if run := b.subagentRuns[agentID]; run != nil {
+			label = run.label
+		}
+	}
+	b.subagentRunsMu.Unlock()
+	if label == "" {
+		_, label, _ = b.loadSubagentMeta(agentID)
+	}
+	return strings.TrimSpace(label)
+}
+
+// recordTaskDesc remembers a task's task_started description by task_id, for
+// subagentLabel. An empty description is not recorded.
+func (b *Backend) recordTaskDesc(taskID, desc string) {
+	if taskID == "" || desc == "" {
+		return
+	}
+	b.subagentRunsMu.Lock()
+	defer b.subagentRunsMu.Unlock()
+	if b.taskDescs == nil {
+		b.taskDescs = map[string]string{}
+	}
+	b.taskDescs[taskID] = desc
+}
+
+// forgetTaskDesc drops a finished task's description. A SendMessage resume
+// records it again at its own task_started.
+func (b *Backend) forgetTaskDesc(taskID string) {
+	b.subagentRunsMu.Lock()
+	defer b.subagentRunsMu.Unlock()
+	delete(b.taskDescs, taskID)
 }
 
 // agentID is CC's agent_id, or "" for a main-thread call.

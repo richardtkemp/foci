@@ -1433,9 +1433,9 @@ func TestToolPermissions_KeepPermPromptFnWhenQuestionFnSet(t *testing.T) {
 	}
 
 	for _, tc := range []struct {
-		name    string
-		tool    string
-		input   string
+		name  string
+		tool  string
+		input string
 	}{
 		{"bash", "Bash", `{"command":"rm -rf /"}`},
 		{"exit plan mode", "ExitPlanMode", `{"plan":"# Plan","planFilePath":"` + planFile + `"}`},
@@ -1472,5 +1472,96 @@ func TestToolPermissions_KeepPermPromptFnWhenQuestionFnSet(t *testing.T) {
 				t.Errorf("question fn called %d times, want 0 (a tool permission is not a question)", questionCalls)
 			}
 		})
+	}
+}
+
+// TestHandleToolRequest_SubagentLabel proves a permission prompt for a
+// subagent's call says it comes from a subagent and names it by its
+// task_started description, while a main-thread prompt is unchanged (#2522).
+// CC's can_use_tool carries agent_id for a subagent's call, equal to the
+// task_id of that subagent's task_started (probed on CC 2.1.306, #2123).
+func TestHandleToolRequest_SubagentLabel(t *testing.T) {
+	t.Parallel()
+
+	const taskID = "a6b8500a361d7350a"
+	strp := func(s string) *string { return &s }
+	started := &TaskEvent{Subtype: "task_started", TaskID: taskID, ToolUseID: "toolu_AGENT", Description: "touch probe", TaskType: "local_agent"}
+
+	for _, tc := range []struct {
+		name       string
+		agentID    *string
+		started    *TaskEvent // a task_started replayed before the request
+		want       []string   // substrings the text must contain (case-insensitive)
+		wantSame   bool       // text must equal DisplayText() byte for byte
+		wantAbsent string
+	}{
+		{name: "main thread is unchanged", agentID: nil, started: started, wantSame: true},
+		{name: "known subagent is named", agentID: strp(taskID), started: started, want: []string{"subagent", "touch probe"}},
+		{name: "unknown subagent still says subagent", agentID: strp(taskID), want: []string{"subagent", taskID[:8]}, wantAbsent: "touch probe"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			var gotText, gotSummary string
+			b := &Backend{
+				writer:       NewWriter(nopWriteCloser{&buf}),
+				pendingPerms: make(map[string]*pendingPermission),
+				outstanding:  delegator.NewOutstandingRegistry(),
+				permPromptFn: func(_, text, summary, _ string, _ []delegator.PromptChoice) {
+					gotText, gotSummary = text, summary
+				},
+			}
+			if tc.started != nil {
+				raw, err := json.Marshal(tc.started)
+				if err != nil {
+					t.Fatalf("marshal TaskEvent: %v", err)
+				}
+				b.OnSystem("task_started", raw)
+			}
+			req := PermissionRequestPayload{
+				ToolName:    "Bash",
+				ToolUseID:   "toolu_SUB",
+				Description: "Touch a file",
+				Input:       json.RawMessage(`{"command":"touch /tmp/x"}`),
+				AgentID:     tc.agentID,
+			}
+			b.handleToolRequest(&PermissionRequest{RequestID: "req-sub", Request: req})
+
+			if gotSummary != "Touch a file" {
+				t.Errorf("summary = %q, want %q (unchanged)", gotSummary, "Touch a file")
+			}
+			if tc.wantSame && gotText != req.DisplayText() {
+				t.Errorf("main-thread text changed:\n got %q\nwant %q", gotText, req.DisplayText())
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(strings.ToLower(gotText), strings.ToLower(w)) {
+					t.Errorf("text lacks %q:\n%s", w, gotText)
+				}
+			}
+			if tc.wantAbsent != "" && strings.Contains(gotText, tc.wantAbsent) {
+				t.Errorf("text has %q, want it absent:\n%s", tc.wantAbsent, gotText)
+			}
+		})
+	}
+}
+
+// TestSubagentLabel_Sources proves the label falls back to a subagent run's
+// label (a run rehydrated after a restart has no task_started description in
+// memory), that any subagent's own task_started description is used, and that
+// an unknown id gives "".
+func TestSubagentLabel_Sources(t *testing.T) {
+	t.Parallel()
+	b := &Backend{}
+	b.subagentRuns = map[string]*subagentRun{"task_rehyd": {groupKey: "toolu_R", label: "rehydrated work"}}
+	if got := b.subagentLabel("task_rehyd"); got != "rehydrated work" {
+		t.Errorf("rehydrated label = %q, want %q", got, "rehydrated work")
+	}
+	raw, _ := json.Marshal(TaskEvent{Subtype: "task_started", TaskID: "task_n", ToolUseID: "toolu_N", Description: "nested work", TaskType: "local_agent"})
+	b.OnSystem("task_started", raw)
+	if got := b.subagentLabel("task_n"); got != "nested work" {
+		t.Errorf("task_started label = %q, want %q", got, "nested work")
+	}
+	if got := b.subagentLabel("task_unknown"); got != "" {
+		t.Errorf("unknown label = %q, want empty", got)
 	}
 }

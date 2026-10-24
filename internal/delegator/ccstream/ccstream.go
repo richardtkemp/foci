@@ -286,6 +286,11 @@ type Backend struct {
 	// Bash's tool_use_id) to its CC task_id, recorded at task_started: the
 	// stop_task control request names a task, the tracker names a key (#2138).
 	trackedTaskIDs map[string]string
+	// taskDescs maps a task_id to its task_started description, kept until the
+	// task's terminal task_notification. A subagent's can_use_tool carries that
+	// task_id as agent_id, so its permission prompt can name the subagent
+	// (#2522). Covers nested subagents too, which have no subagentRuns entry.
+	taskDescs map[string]string
 	// mainShellCalls holds the tool_use ids of the main thread's FOREGROUND
 	// shell calls still running, so /stop commands can stop them without
 	// ending the turn (#2140). A call CC registered as a task (task_started;

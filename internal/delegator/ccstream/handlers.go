@@ -674,6 +674,7 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 			// A reactivation's tail reads from byte 0; the ledger adapter books
 			// each call once, and none billed before this process launched, so
 			// the earlier runs are not booked again (#2057, #2087).
+			b.recordTaskDesc(task.TaskID, task.Description)
 			tailKey := task.ToolUseID
 			nestedKey, nested := b.nestedTask(task.TaskID, task.ToolUseID)
 			if nested {
@@ -752,6 +753,7 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 				b.logger().Debugf("task_notification status=%q is not terminal, ignored (task_id=%s tool_use_id=%s)",
 					task.Status, task.TaskID, task.ToolUseID)
 			} else {
+				b.forgetTaskDesc(task.TaskID)
 				// A nested (depth >= 2) subagent finishing (#1554). Stop its OWN tail
 				// (keyed by its own group key, not the id this event carries, which
 				// is a SendMessage's on a resumed run, #2056) and nothing else: it was
