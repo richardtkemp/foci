@@ -63,14 +63,16 @@ make test-one PKG=./internal/<pkg>/ RUN=<Name>
 so the log always has per-test PASS/FAIL/SKIP lines and `t.Logf` output, even on a PASS (`V=1` is
 accepted and does nothing; #2348). `COUNT=N` repeats the run N times, for flake checks.
 
-**`test-one` and `vet` run on a Mac when one is reachable (#2525, #2526).** `.remote.mk` lists build
+**`test-one`, `vet`, `test` and `lint` run on a Mac when one is reachable (#2525, #2526, #2544).** `.remote.mk` lists build
 hosts (`REMOTE_HOSTS`, in preference order, each with or without a build lock); the bare targets
 rsync the checkout to the first that answers and run there (macOS, darwin build tags); else they run
 here. The first output line says which (`>>> test-one: running on build host pro: …, no build lock`
 / `running LOCALLY (<why>)`); the exit code is the Mac's, and its full log is copied back (path
-printed). `local-test-one` / `local-vet` force this host, `remote-*` force a Mac, `REMOTE_PICK=<name>`
-picks one. A Linux-only behaviour (procx caps, Landlock
-sealing, `_linux.go` files) needs `local-test-one`. `make test` (land's gate), `lint`, `build` and
+printed). `local-<target>` forces this host, `remote-*` force a Mac, `REMOTE_PICK=<name>`
+picks one. So `make land`'s gate (`make test`) runs on the Mac too: there `test` first runs
+`GOOS=linux go vet ./...` (Linux-only files must still compile), and `lint` analyses the Linux build
+with this host's Go; the CI runner keeps testing main on Linux. A Linux-only behaviour (procx caps,
+Landlock sealing, `_linux.go` files) needs `local-test-one` / `local-test`. `build` and
 `integration` always run locally; see `mk/remote.mk` for why.
 
 **The tests see a fixed environment, not your shell's (#2348).** `seal-test.sh` starts them from

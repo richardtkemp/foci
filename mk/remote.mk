@@ -27,20 +27,25 @@
 -include $(shell git rev-parse --git-common-dir 2>/dev/null)/../.remote.mk
 -include .remote.mk
 
-# What is in scope, and why (#2525):
+# What is in scope, and why (#2525; test and lint added by Dick's ruling 2026-10-24):
 #   test-one, vet   dispatched: an agent's iteration loop; Go builds and tests on
 #                   macOS since #2521, and a remote run spares the NUC.
-#   test            NOT dispatched. It is make land's gate (LAND_TEST_TARGET) and
-#                   the CI_HOOK history row; production is Linux, so a Mac pass
-#                   cannot stand in for it. remote-test runs it on the Mac on demand.
-#   lint            NOT dispatched: golangci-lint and deadcode are not installed on
-#                   the Mac (and agents never install there).
+#   test            dispatched, so make land's gate (LAND_TEST_TARGET=test) runs on
+#                   the Mac. Production is Linux: on the Mac local-test first runs
+#                   test-linux-compile (GOOS=linux go vet, test files included), and
+#                   the CI runner keeps testing main on Linux. The CI_HOOK row is not
+#                   written by a Mac run (.ci.mk is not synced), so that runner still
+#                   sees main as untested and covers it.
+#   lint            dispatched: the analysers run with GOOS=linux (LINT_ENV), so
+#                   they check the production build, with this host's Go
+#                   (LINT_GOTOOLCHAIN). Needs golangci-lint and deadcode in the
+#                   Mac's $(go env GOPATH)/bin, at the NUC's versions.
 #   build           NOT dispatched: it makes the local bin/foci-gw (a Linux
 #                   binary for this host). remote-build is the cross-compile check.
 #   integration     NOT dispatched: real foci-gw + tmux + cc-stub, Linux-tuned.
 # A caller that runs its own heavy-lock scheme (FGW_HEAVY_LOCK=external, the
 # factory gates) always runs locally: that scheme is about THIS host's lock.
-REMOTE_DISPATCH := test-one vet
+REMOTE_DISPATCH := test-one vet test lint
 
 # Probe timeouts. Defined BEFORE the probe on purpose: the probe is a := and
 # expands them there and then (foci-client mk/remote.mk explains the bug a later
@@ -80,7 +85,7 @@ remote_probe_sh = d=$$(mktemp -d) || exit 0; \
   $(foreach h,$(REMOTE_HOSTS),{ if timeout $(REMOTE_SSH_HARD_TIMEOUT) ssh -o ConnectTimeout=$(REMOTE_SSH_TIMEOUT) -o BatchMode=yes '$(call remote_dest,$(h))' true; then echo ok; else echo no; fi > "$$d/$(h)"; } </dev/null >/dev/null 2>&1 & ) \
   while :; do s=; p=; for h in $(REMOTE_HOSTS); do r=$$(cat "$$d/$$h" 2>/dev/null); case "$$r" in ok) p=$$h; break;; no) s="$$s !$$h";; *) p=-; break;; esac; done; [ "$$p" = - ] || break; sleep 0.1; done; \
   rm -rf "$$d"; echo "$$s $$p"
-REMOTE_PROBE_GOALS := $(REMOTE_DISPATCH) $(addprefix remote-,$(REMOTE_DISPATCH) test build)
+REMOTE_PROBE_GOALS := $(REMOTE_DISPATCH) $(addprefix remote-,$(REMOTE_DISPATCH) build)
 ifeq ($(origin REMOTE_PICK),undefined)
 ifeq ($(strip $(REMOTE_HOSTS)),)
 REMOTE_PICK :=
@@ -92,9 +97,14 @@ REMOTE_PICK := $(filter-out !%,$(REMOTE_PROBED))
 ifneq ($(filter !%,$(REMOTE_PROBED)),)
 $(info >>> build host(s) $(patsubst !%,%,$(filter !%,$(REMOTE_PROBED))) unreachable$(if $(REMOTE_PICK),; using $(REMOTE_PICK)))
 endif
-endif
-endif
+# Exported so the dispatch's own sub-make (remote-<target>) uses this answer
+# instead of probing again. ONLY a probed answer: a non-dispatch goal's empty
+# pick, exported, reached the `make test` that land.sh runs from `make land`
+# and kept make land's gate local (#2544). A pick from the environment or the
+# command line is exported anyway.
 export REMOTE_PICK
+endif
+endif
 REMOTE_PICK := $(strip $(REMOTE_PICK))
 ifneq ($(REMOTE_PICK),)
 ifeq ($(filter $(REMOTE_PICK),$(REMOTE_HOSTS)),)
@@ -122,8 +132,19 @@ REMOTE_HEAVY_LOCK ?= /tmp/foci-heavy-remote.lock
 REMOTE_LOCK_PATH = $(if $(filter no,$(REMOTE_BUILD_LOCK)),../$(notdir $(REMOTE_RUN_DIR)).lock,$(REMOTE_HEAVY_LOCK))
 # What the Mac's make is told: the lock file, and on an unlocked host a run tag
 # so the per-user test dir and source symlink are per worktree too (concurrent
-# runs there would otherwise rm -rf each other's test dir).
-REMOTE_LOCK_ARGS = 'HEAVY_LOCK_PATH=$(REMOTE_LOCK_PATH)'$(if $(filter no,$(REMOTE_BUILD_LOCK)), 'FGW_RUN_TAG=wt-$(notdir $(REMOTE_RUN_DIR))')
+# runs there would otherwise rm -rf each other's test dir). The tag is 8 hex
+# digits of the CRC of user@host:run-dir (cksum: POSIX, in /usr/bin on macOS
+# too), not the worktree's name: the Mac's test dir is every test's TMPDIR, and
+# a long name pushed t.TempDir() unix sockets past macOS's 103-byte limit
+# (#2544). The ssh user is in the hash because the tag replaces the user in
+# the Mac-side names (Makefile, FGW_RUN_TAG).
+REMOTE_RUN_TAG = $(shell printf %08x $$(printf %s '$(REMOTE_SSH_HOST):$(REMOTE_RUN_DIR)' | cksum | cut -d' ' -f1))
+REMOTE_LOCK_ARGS = 'HEAVY_LOCK_PATH=$(REMOTE_LOCK_PATH)'$(if $(filter no,$(REMOTE_BUILD_LOCK)), 'FGW_RUN_TAG=$(REMOTE_RUN_TAG)')
+
+# remote-lint only: lint on the Mac with THIS host's Go (the Makefile's
+# LINT_GOTOOLCHAIN explains why), so its analysis is the one this host runs.
+REMOTE_LINT_ARGS = $(if $(LINT_GOVERSION),'LINT_GOTOOLCHAIN=$(LINT_GOVERSION)')
+LINT_GOVERSION = $(shell go env GOVERSION 2>/dev/null)
 
 # The one-line answer to "where did this run": name, destination, lock mode.
 REMOTE_WHERE = $(REMOTE_PICK): $(REMOTE_SSH_HOST), $(if $(filter no,$(REMOTE_BUILD_LOCK)),no build lock,build lock)
@@ -143,13 +164,7 @@ REMOTE_FWD_VARS := PKG RUN V COUNT TIMEOUT
 # Entry guard of every remote-* target: expands only when that recipe runs.
 REMOTE_GUARD = $(if $(strip $(REMOTE_AVAIL)),@:,$(error $(if $(strip $(REMOTE_HOSTS)),every remote build host is UNREACHABLE (tried: $(strip $(REMOTE_HOSTS))),remote build host is NOT CONFIGURED (no REMOTE_HOSTS in .remote.mk)). $@ has no local fallback: run $(patsubst remote-%,%,$@) (dispatches) or local-$(patsubst remote-%,%,$@). Probe: $(foreach h,$(REMOTE_HOSTS),ssh -o ConnectTimeout=$(REMOTE_SSH_TIMEOUT) -o BatchMode=yes $(call remote_dest,$(h)) true;)))
 
-.PHONY: $(REMOTE_DISPATCH) $(addprefix remote-,$(REMOTE_DISPATCH) test) remote-build
-
-# remote-test runs `make local-test` on the Mac (remote-run.sh passes local-<target>),
-# but `test` is not dispatched, so no local-test existed and remote-test failed with
-# "No rule to make target `local-test'" (found 2026-10-24). It is `test` itself.
-.PHONY: local-test
-local-test: test
+.PHONY: $(REMOTE_DISPATCH) $(addprefix remote-,$(REMOTE_DISPATCH)) remote-build
 
 # Says where it ran, every time: a silent fallback would build somewhere other
 # than where the caller thinks.
@@ -164,10 +179,10 @@ $(REMOTE_DISPATCH):
 
 # rsync this checkout to the Mac, run local-<target> there, copy its log back and
 # exit with the Mac's make status (scripts/remote-run.sh).
-$(addprefix remote-,$(REMOTE_DISPATCH) test):
+$(addprefix remote-,$(REMOTE_DISPATCH)):
 	$(REMOTE_GUARD)
 	@REMOTE_SSH_TIMEOUT='$(REMOTE_SSH_TIMEOUT)' FGW_ROOT='$(FGW_ROOT)' REMOTE_NAME='$(REMOTE_WHERE)' bash scripts/remote-run.sh '$(REMOTE_SSH_HOST)' '$(REMOTE_RUN_DIR)' local-$(patsubst remote-%,%,$@) \
-	  $(REMOTE_LOCK_ARGS) $(foreach v,$(REMOTE_FWD_VARS),$(if $(value $(v)),'$(v)=$(value $(v))'))
+	  $(REMOTE_LOCK_ARGS) $(if $(filter remote-lint,$@),$(REMOTE_LINT_ARGS)) $(foreach v,$(REMOTE_FWD_VARS),$(if $(value $(v)),'$(v)=$(value $(v))'))
 
 # Offload a compile of the whole module to a Mac, cross-compiled for the Linux
 # deploy target (not darwin) so the linux-only files (e.g.

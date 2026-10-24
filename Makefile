@@ -24,7 +24,21 @@ FGW_ROOT := /private/tmp/fgw
 # BSD mktemp rejects a suffix after the X's, and macOS has no nproc.
 MKTEMP := $(BREW_PREFIX)/opt/coreutils/libexec/gnubin/mktemp
 NPROC := $(shell sysctl -n hw.ncpu 2>/dev/null || echo 4)
+# lint on the Mac analyses the LINUX build (production), not darwin: the
+# analysers load packages for this GOOS/GOARCH. foci is pure Go (no cgo), so the
+# analysis is the same one the NUC runs. Only the analysers get it: the find-*
+# helper binaries are built and run natively.
+# LINT_GOTOOLCHAIN: the Go the analysers load packages with. mk/remote.mk's
+# remote-lint passes the dispatching host's own `go env GOVERSION`, so the Mac
+# lints with the NUC's Go, not Homebrew's newer one: golangci-lint v1.64.8
+# cannot read Go 1.27 export data (every file failed typecheck, "export data
+# version 5 is greater than maximum supported version 2"; #2544), and that
+# mismatch is the >12 GB lint of #2501. go fetches the toolchain on first use.
+# Unset (a bare local-lint on the Mac): the Mac's own go.
+LINT_GOTOOLCHAIN ?=
+LINT_ENV := GOOS=linux GOARCH=amd64$(if $(LINT_GOTOOLCHAIN), GOTOOLCHAIN=$(LINT_GOTOOLCHAIN))
 else
+LINT_ENV :=
 FGW_ROOT := /tmp/fgw
 MKTEMP := mktemp
 endif
@@ -141,7 +155,7 @@ heavy_enter = $(if $(call heavy_lazy,$(1)),echo ">>> heavy lock: left to the cal
 heavy_reap = $(if $(call heavy_lazy,$(1)),,$(REAP_GRADLE))
 heavy_held = $(if $(FGW_HEAVY_LOCK),$(if $(1),,HEAVY_LOCK_HELD=$(HEAVY_LOCK_PATH) ))
 
-.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals find-metadata-key-registry-drift llbox test local-test-one integration coverage coverage-report coverage-html coverage-check local-vet lint lint-unlocked lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check bench-test-build land clean setup-hooks
+.PHONY: all build cli $(SIMPLE_BINS) find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals find-metadata-key-registry-drift llbox local-test test-linux-compile local-test-one integration coverage coverage-report coverage-html coverage-check local-vet local-lint lint-unlocked lint-fix lint-dupl lint-deadcode lint-static-config verify-persistence check bench-test-build land clean setup-hooks
 
 all: $(SIMPLE_BINS) nosgid find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals find-metadata-key-registry-drift llbox
 
@@ -287,12 +301,16 @@ fgw_testdir = $(shell mkdir -p $(FGW_ROOT) && $(MKTEMP) -d $(FGW_ROOT)/$(1)-XXXX
 # checkout path in the binary) and scripts/restore-mtime.py first sets every
 # unmodified tracked file to its last commit time (Go keys a file a test read
 # on its mtime, and a fresh checkout writes every file "now").
-# FGW_RUN_TAG (#2526): suffixes both shared names, for runs that do NOT share one
-# heavy lock — scripts/remote-run.sh on a build host without a build lock passes
-# its worktree's name, so concurrent checkouts there keep apart (each keeps its
-# own cache; checkouts no longer share one). Unset here: unchanged.
+# FGW_RUN_TAG (#2526): replaces the user in both shared names, for runs that do
+# NOT share one heavy lock — mk/remote.mk, for a build host without a build lock,
+# passes a short hash of the ssh destination and the worktree's run dir, so
+# concurrent checkouts there keep apart (each keeps its own cache; checkouts no
+# longer share one). The tag must therefore be unique per user on its own. It is
+# short, not readable, on purpose (#2544): the test dir is every test's TMPDIR,
+# and macOS caps a unix socket path at 103 bytes, so a long tag made tests'
+# t.TempDir() sockets fail "bind: invalid argument". Unset here: unchanged.
 FGW_RUN_TAG ?=
-fgw_run_suffix := $(shell id -un)$(if $(FGW_RUN_TAG),-$(FGW_RUN_TAG))
+fgw_run_suffix := $(or $(FGW_RUN_TAG),$(shell id -un))
 fgw_shared_testdir := $(FGW_ROOT)/run-$(fgw_run_suffix)
 # FGW_TESTDIR / FGW_SRCLINK (foci_todo #2396): a caller that runs test calls
 # concurrently with other callers' (it does not hold /tmp/heavy for them, see
@@ -318,7 +336,19 @@ fgw_logfile = $(shell mkdir -p $(FGW_ROOT) && $(MKTEMP) $(FGW_ROOT)/$(1)-XXXXXXX
 # line) when Landlock is unavailable; FOCI_TEST_UNSEALED=1 opts out
 # explicitly, for debugging a test that genuinely needs to write somewhere
 # odd.
-test: llbox
+# On macOS, compile-check the Linux build first, test files included (go vet
+# type-checks _test.go): a gate run on the Mac cannot RUN the _linux.go code
+# and tests, but must not let them stop compiling. A no-op on Linux, where the
+# suite itself covers them.
+test-linux-compile:
+ifeq ($(UNAME_S),Darwin)
+	@echo ">>> test-linux-compile: GOOS=linux go vet ./... (the Linux-only files this Mac cannot run)" >&2
+	GOOS=linux GOARCH=amd64 go vet ./...
+endif
+
+# Local body of `make test`, which dispatches to the Mac when reachable
+# (mk/remote.mk); make land's gate is `make test`, so it follows.
+local-test: llbox test-linux-compile
 	$(eval TESTDIR := $(test_dir))
 	$(eval LOGFILE := $(call fgw_logfile,test))
 	@python3 scripts/restore-mtime.py . || true
@@ -587,7 +617,8 @@ local-vet:
 # memory_guard four times in one afternoon. The body is lint-unlocked; call that
 # directly ONLY from something that already holds /tmp/heavy (flock is not
 # re-entrant across processes, so nesting lint under heavy would deadlock).
-lint:
+# Local body of `make lint`, which dispatches to the Mac when reachable (mk/remote.mk).
+local-lint:
 	@[ -e $(HEAVY_LOCK_PATH) ] || : > $(HEAVY_LOCK_PATH)
 	@( echo ">>> waiting for heavy lock ($(HEAVY_LOCK_PATH); another build may be running) ... [$$(date +%T)]" >&2; flock 9; echo ">>> acquired heavy lock [$$(date +%T)]" >&2; $(REAP_GRADLE) $(MAKE) --no-print-directory lint-unlocked 9<&- || exit $$? ) 9<$(HEAVY_LOCK_PATH)
 
@@ -597,20 +628,20 @@ lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-cap
 	@# instance FAILS ("parallel golangci-lint is running") instead of waiting. The heavy
 	@# lock only serialises foci's own make targets, so a golangci-lint started any other
 	@# way failed peers' pre-commit lint. With the flag, a second instance waits its turn.
-	@bash scripts/check-golangci-go.sh $(GOBIN)/golangci-lint
-	@$(GOBIN)/golangci-lint run --allow-serial-runners
+	@$(LINT_ENV) bash scripts/check-golangci-go.sh $(GOBIN)/golangci-lint
+	@$(LINT_ENV) $(GOBIN)/golangci-lint run --allow-serial-runners
 	@echo "=== find-static-config-reads (static reads of *config.ResolvedAgentConfig) ==="
-	@./bin/find-static-config-reads ./...
+	@$(LINT_ENV) ./bin/find-static-config-reads ./...
 	@echo "=== find-backend-capability-bypass (backend type checks / name compares outside internal/delegator #2154; per-backend config schema #2178) ==="
-	@./bin/find-backend-capability-bypass ./...
+	@$(LINT_ENV) ./bin/find-backend-capability-bypass ./...
 	@echo "=== find-unscoped-logging (any package-level log.Xf component call) ==="
-	@./bin/find-unscoped-logging ./...
+	@$(LINT_ENV) ./bin/find-unscoped-logging ./...
 	@echo "=== find-wiring-drift (docs/WIRING.md dependency tree vs go list) ==="
-	@./bin/find-wiring-drift
+	@$(LINT_ENV) ./bin/find-wiring-drift
 	@echo "=== find-metadata-key-literals (string-literal session_metadata keys; use session.MetaKey*) ==="
-	@./bin/find-metadata-key-literals
+	@$(LINT_ENV) ./bin/find-metadata-key-literals
 	@echo "=== find-metadata-key-registry-drift (MetaKey* constants vs SessionMetadataKeys) ==="
-	@./bin/find-metadata-key-registry-drift
+	@$(LINT_ENV) ./bin/find-metadata-key-registry-drift
 	@echo "=== deadcode (whole-program reachability, app code only) ==="
 	@# internal/testharness and internal/testtemp are test-only scaffolding:
 	# reachable solely from -tags=integration tests and _test.go files, which
@@ -631,11 +662,11 @@ lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-cap
 	# entries with the tree-based MapObjectFileEntries, and #1476 requires
 	# TestMapObjectEntries to keep passing unedited against the production
 	# flat-split helper.
-	@raw=$$($(GOBIN)/deadcode ./...) || { echo "deadcode failed or was killed (exit $$?) — reachability gate did NOT run"; exit 1; }; \
+	@raw=$$($(LINT_ENV) $(GOBIN)/deadcode ./...) || { echo "deadcode failed or was killed (exit $$?) — reachability gate did NOT run"; exit 1; }; \
 	output=$$(printf '%s' "$$raw" | grep -v -e '/testharness/' -e '/testtemp/' -e '/clock/fake.go:' -e '/testmarker/' -e '/mermaidtest/' -e 'config/settablearray.go:.*SetTableArray' -e 'config/configedit.go:.*UnsetInFile' -e 'config/configedit.go:.*MapObjectEntries' || true); \
 	if [ -n "$$output" ]; then echo "$$output"; exit 1; fi
 	@echo "=== find-disconnected-tests (Test* functions that don't touch prod) ==="
-	@./bin/find-disconnected-tests ./...
+	@$(LINT_ENV) ./bin/find-disconnected-tests ./...
 	@echo "=== integration parallel-bucket gate (no bare t.Parallel) ==="
 	@# Every L2 test must declare a concurrency weight via testharness.Parallel*
 	@# (ParallelWait/ParallelHeavy/ParallelWeight) so it is throttled by the

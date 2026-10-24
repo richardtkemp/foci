@@ -211,8 +211,22 @@ fail_baseline() {
     fi
     RC=1
 }
+# has_history: this tree is its own git checkout. scripts/remote-run.sh syncs a
+# build host's copy WITHOUT .git, so there is no pre-#1705 baseline to show (and
+# a git repo around that copy, if any, is not this one): the baseline diffs SKIP
+# there, saying so, and Linux CI still runs them (Dick 2026-10-24, #2544).
+has_history() {
+    local top
+    top=$(git -C "$REPO" rev-parse --show-toplevel 2>/dev/null) || return 1
+    [ "$(cd "$top" && pwd -P)" = "$(cd "$REPO" && pwd -P)" ]
+}
+skip_baseline() {
+    echo "SKIP $1 render-equivalence vs $PRE_1705: $REPO has no git history (a build host's rsynced copy?); CI runs it"
+}
 OLD="$TMP/mdq-old"
-if git -C "$REPO" show "$PRE_1705":shared/scripts/mdq > "$OLD" 2>"$TMP/mdq-test-err-gitshow"; then
+if ! has_history; then
+    skip_baseline mdq
+elif git -C "$REPO" show "$PRE_1705":shared/scripts/mdq > "$OLD" 2>"$TMP/mdq-test-err-gitshow"; then
     chmod +x "$OLD"
     run_both() { # run_both <label> <args...>
         local label=$1; shift
@@ -255,7 +269,9 @@ mds_raw=$("$MDS" "$FIX" "Section A" --raw)
 check "mds --raw matches mdq --raw for the same section" "$raw_out" "$mds_raw"
 
 OLDS="$TMP/mds-old"
-if git -C "$REPO" show "$PRE_1705":shared/scripts/mds > "$OLDS" 2>"$TMP/mds-test-err-gitshow"; then
+if ! has_history; then
+    skip_baseline mds
+elif git -C "$REPO" show "$PRE_1705":shared/scripts/mds > "$OLDS" 2>"$TMP/mds-test-err-gitshow"; then
     chmod +x "$OLDS"
     # mds delegates extraction to whatever `mdq` is on PATH, so the OLD mds must
     # be paired with the OLD mdq or this compares new-against-new and proves

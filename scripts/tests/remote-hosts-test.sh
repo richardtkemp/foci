@@ -70,6 +70,18 @@ EOF
 chmod +x "$TMP/bin/ssh" "$TMP/bin/go"
 export FAKE_SSH_LOG=$TMP/ssh.log FAKE_REMOTE_HOME=$TMP/remote FAKE_GO_DIR=$TMP/go FAKE_GO_LOG=$TMP/vet.log
 export PATH=$TMP/bin:$PATH
+# On macOS the Makefile puts $(BREW_PREFIX)/bin AHEAD of PATH (its GNU tools),
+# and Homebrew's go lives there, so the real go shadowed the fake one and the
+# "remote" make vetted an empty dir (#2544). A stand-in prefix: Homebrew's own
+# opt/ and sbin/, and a bin/ of links to its tools, with go swapped for the fake.
+if [ "$(uname -s)" = Darwin ]; then
+  brew=$(brew --prefix 2>/dev/null || echo /opt/homebrew)
+  mkdir -p "$TMP/brew/bin"
+  ln -s "$brew/opt" "$TMP/brew/opt" && ln -s "$brew/sbin" "$TMP/brew/sbin"
+  for f in "$brew"/bin/*; do ln -s "$f" "$TMP/brew/bin/"; done
+  ln -sf "$TMP/bin/go" "$TMP/brew/bin/go"
+  export BREW_PREFIX=$TMP/brew
+fi
 
 remote_mk() { # remote_mk <REMOTE_HOSTS>: the same .remote.mk in both checkouts
   for r in repoA repoB; do
@@ -143,11 +155,20 @@ expect "locked host: the shared host lock" "'HEAVY_LOCK_PATH=/tmp/foci-heavy-rem
 reject "locked host: the shared test dir" "FGW_RUN_TAG" "$out"
 expect "locked host: the per-worktree run dir" "'tester@locked' '~/git/foci-wt/repoA' local-test-one" "$out"
 out=$(mk -n remote-test-one PKG=./internal/zz/ REMOTE_PICK=free)
-expect "unlocked host: a per-worktree lock" "'HEAVY_LOCK_PATH=../repoA.lock' 'FGW_RUN_TAG=wt-repoA'" "$out"
-out=$(mk -n local-test-one PKG=./internal/zz/ HEAVY_LOCK_PATH=../repoA.lock FGW_RUN_TAG=wt-repoA)
+expect "unlocked host: a per-worktree lock" "'HEAVY_LOCK_PATH=../repoA.lock' 'FGW_RUN_TAG=" "$out"
+# The tag is a short hash, not the worktree's name: the Mac's test dir is every
+# test's TMPDIR, and macOS caps a unix socket path at 103 bytes (#2544).
+tagA=$(grep -o "'FGW_RUN_TAG=[^']*'" <<<"$out" | head -1 | sed "s/'FGW_RUN_TAG=//; s/'//")
+if [[ "$tagA" =~ ^[0-9a-f]{8}$ ]]; then ok "unlocked host: the run tag is 8 hex digits ($tagA)"
+else fail "unlocked host: the run tag is 8 hex digits" "got: $tagA"; fi
+out=$(mk -C "$TMP/repoB" -n remote-test-one PKG=./internal/zz/ REMOTE_PICK=free)
+tagB=$(grep -o "'FGW_RUN_TAG=[^']*'" <<<"$out" | head -1 | sed "s/'FGW_RUN_TAG=//; s/'//")
+if [ -n "$tagB" ] && [ "$tagA" != "$tagB" ]; then ok "unlocked host: each worktree its own tag"
+else fail "unlocked host: each worktree its own tag" "repoA=$tagA repoB=$tagB"; fi
+out=$(mk -n local-test-one PKG=./internal/zz/ HEAVY_LOCK_PATH=../repoA.lock FGW_RUN_TAG=0badcafe)
 expect "the Mac-side make flocks HEAVY_LOCK_PATH" ") 9<../repoA.lock" "$out"
-expect "the Mac-side make keys its test dir on FGW_RUN_TAG" "/run-$user-wt-repoA/home" "$out"
-expect "the Mac-side make keys its source link on FGW_RUN_TAG" "/src-$user-wt-repoA" "$out"
+expect "the Mac-side make keys its test dir on FGW_RUN_TAG" "/run-0badcafe/home" "$out"
+expect "the Mac-side make keys its source link on FGW_RUN_TAG" "/src-0badcafe" "$out"
 out=$(mk -n local-test-one PKG=./internal/zz/)
 expect "unchanged here: /tmp/heavy" ") 9</tmp/heavy" "$out"
 expect "unchanged here: the shared per-user test dir" "/run-$user/home" "$out"
@@ -183,6 +204,26 @@ for t in test test-one vet; do
   out=$(make -n -C "$REPO" --no-print-directory "local-$t" PKG=./internal/zz/ 2>&1)
   reject "local-$t exists (remote-$t runs it on the Mac)" "No rule to make target" "$out"
 done
+# local-lint by its rule, not `make -n`: its recipe line runs $(MAKE), which -n
+# still EXECUTES, and that line takes /tmp/heavy, which the `make test` running
+# this script holds (a deadlock, seen on #2544).
+if grep -q '^local-lint:' "$REPO/Makefile"; then ok "local-lint exists (remote-lint runs it on the Mac)"
+else fail "local-lint exists (remote-lint runs it on the Mac)" "no local-lint: rule in the Makefile"; fi
+
+# --- make land's gate and lint dispatch too (Dick 2026-10-24, #2544) -------
+for t in test lint; do
+  out=$(mk -n "$t" REMOTE_PICK=locked)
+  expect "$t dispatches to the build host" ">>> $t: running on build host locked:" "$out"
+done
+
+# A recipe of a non-dispatch goal that runs `make test` (land.sh, under `make
+# land`) must leave that make free to probe: an exported empty REMOTE_PICK
+# made it run locally, so make land's gate never reached the Mac (#2544).
+# (An extra -f, not --eval: Apple's make 3.81 has no --eval.)
+# shellcheck disable=SC2016 # a make recipe: $$ is make's, for the shell it runs
+printf 'zz-env: ; @echo "pick-exported=[$${REMOTE_PICK+yes}]"\n' > "$TMP/zz-env.mk"
+out=$(mk -f Makefile -f "$TMP/zz-env.mk" zz-env)
+expect "a non-dispatch goal does not export an empty REMOTE_PICK" "pick-exported=[]" "$out"
 
 # --- the old format -------------------------------------------------------
 printf 'REMOTE_HOST := mac\nREMOTE_DIR := ~/git/foci\n' > "$REPO/.remote.mk"

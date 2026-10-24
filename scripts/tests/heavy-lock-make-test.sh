@@ -24,12 +24,17 @@ reject() { if has "$2" "$3"; then printf 'FAIL %s\n       unexpected: %s\n' "$1"
 
 # dry <env assignments...> -- <make args...>: the recipe lines `make -n` prints,
 # from a clean environment (this runs inside `make test`, maybe under a caller's
-# FGW_* settings).
+# FGW_* settings). HEAVY_LOCK_PATH and FGW_RUN_TAG too: make exports its
+# command-line variables, so a run on a build host (mk/remote.mk passes both)
+# leaked them into these dry runs and moved the paths asserted below (#2544).
+# REMOTE_PICK= keeps every run on this host: test and test-one dispatch to a
+# build host when one answers (mk/remote.mk), and the bodies are asserted here.
 dry() {
   local envs=()
   while [ "$1" != -- ]; do envs+=("$1"); shift; done
   shift
   env -u MAKEFLAGS -u MAKELEVEL -u MFLAGS -u FGW_HEAVY_LOCK -u FGW_TESTDIR -u FGW_SRCLINK -u HEAVY_LOCK_HELD \
+    -u HEAVY_LOCK_PATH -u FGW_RUN_TAG REMOTE_PICK= \
     "${envs[@]}" make -n --no-print-directory -C "$REPO" "$@" 2>&1
 }
 user=$(id -un)
