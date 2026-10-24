@@ -120,6 +120,42 @@ out=$(run real)
 expect "real: a real failure" "fails both sealed and unsealed" "$out"
 reject "real: no diagnostic" "DIAGNOSTIC" "$out"
 
+# ---- #2550: the shell-script suites run alongside go test --------------------
+# The go stub holds until $root/release exists; the first fake suite creates it.
+# Serial after go test, the stub would wait its full 20 s; alongside, the run
+# ends in a couple of seconds. The second suite fails: the run must fail, the
+# log must carry both suites in order in the format the loop wrote directly.
+mkdir -p "$TMP/work/scripts/tests" "$TMP/work/shared/scripts/tests"
+cat > "$TMP/work/scripts/tests/zz-a-test.sh" <<SUITE_A
+#!/usr/bin/env bash
+echo "zz-a ran"
+touch "$TMP/goroot/release"
+SUITE_A
+cat > "$TMP/work/scripts/tests/zz-b-test.sh" <<'SUITE_B'
+#!/usr/bin/env bash
+echo "zz-b failing"
+exit 1
+SUITE_B
+rm -f "$TMP/goroot/release" "$TMP/log"; touch "$TMP/goroot/hold"
+t0=$(date +%s)
+out=$(run pass unit); rc=$?
+t1=$(date +%s)
+rm -f "$TMP/goroot/hold" "$TMP/goroot/release" "$TMP/work/scripts/tests/zz-a-test.sh" "$TMP/work/scripts/tests/zz-b-test.sh"
+if [ $((t1 - t0)) -lt 15 ]; then printf 'ok   %s\n' "scripts: run alongside go test (took $((t1 - t0)) s, not the stub's 20 s hold)"
+else printf 'FAIL %s\n' "scripts: run alongside go test (took $((t1 - t0)) s)"; RC=1; fi
+if [ "$rc" -ne 0 ]; then printf 'ok   %s\n' "scripts: a failing suite fails the run"
+else printf 'FAIL %s\n' "scripts: a failing suite fails the run (rc=$rc)"; RC=1; fi
+slog=$(cat "$TMP/log")
+expect "scripts: first suite marker and output in the log" "=== script test: scripts/tests/zz-a-test.sh ===
+zz-a ran" "$slog"
+expect "scripts: second suite marker and FAIL line in the log" "=== script test: scripts/tests/zz-b-test.sh ===
+zz-b failing
+FAIL script test: scripts/tests/zz-b-test.sh" "$slog"
+case "$slog" in
+*"zz-a-test.sh ==="*"zz-b-test.sh ==="*) printf 'ok   %s\n' "scripts: suites are in order in the log" ;;
+*) printf 'FAIL %s\n' "scripts: suites are in order in the log"; RC=1 ;;
+esac
+
 # ---- #2348: the environment and flags go test sees -------------------------
 # A factory snapshot dir first on PATH, and agent-shell vars, must not reach
 # the tests: they would change go's test-cache key for the same code.

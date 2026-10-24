@@ -323,27 +323,63 @@ env_header() {
 
 run_unit() {
   env_header "sealed unit suite"
+  start_script_suites
   go_test_logged "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test "${GOTEST_FLAGS[@]}" -p="$PARALLEL" -timeout "$(test_timeout)" ./...
   local status=$?
 
   diagnostic_rerun -timeout "$(test_timeout)"
 
-  # Shell-script suites. They ran nowhere before, so mdq-test.sh sat red on
-  # main unnoticed (#1976) — and scripts/tests/ (the repo's own tooling, e.g.
-  # ci-failed-tests.sh, test-fail-summary.sh) stayed ungated even after that,
-  # because this loop only named the shared/ dir (#2076). Run unsealed: they
-  # need git and the real mdq/jq binaries. Each prints its own "FAIL ..."
-  # lines, which the Makefile's failure summary picks up.
-  local t
-  for t in scripts/tests/*.sh shared/scripts/tests/*.sh; do
-    [ -e "$t" ] || continue
+  finish_script_suites || status=1
+  return "$status"
+}
+
+# Shell-script suites. They ran nowhere before, so mdq-test.sh sat red on
+# main unnoticed (#1976) — and scripts/tests/ (the repo's own tooling, e.g.
+# ci-failed-tests.sh, test-fail-summary.sh) stayed ungated even after that,
+# because this loop only named the shared/ dir (#2076). Run unsealed: they
+# need git and the real mdq/jq binaries. Each prints its own "FAIL ..."
+# lines, which the Makefile's failure summary picks up.
+#
+# They run at the SAME TIME as go test (#2550), one after another among
+# themselves (some share /tmp/heavy, /tmp/fgw or /tmp/m.md): serial after go
+# test they were 26-47 s of a 52-70 s run. Each writes its own file under
+# $TESTDIR/scripts-out; finish_script_suites waits for the job and appends
+# them to the log in order, in the format the loop used to write directly.
+start_script_suites() {
+  SCRIPTS_OUT="$TESTDIR/scripts-out"
+  rm -rf "$SCRIPTS_OUT" # a TESTDIR reused by a second run must not replay the first's suites
+  mkdir -p "$SCRIPTS_OUT"
+  (
+    n=0
+    for t in scripts/tests/*.sh shared/scripts/tests/*.sh; do
+      [ -e "$t" ] || continue
+      n=$((n + 1))
+      printf '%s\n' "$t" > "$SCRIPTS_OUT/$n.name"
+      bash "$t" > "$SCRIPTS_OUT/$n.log" 2>&1
+      echo $? > "$SCRIPTS_OUT/$n.rc"
+    done
+    exit 0 # a suite's status is its .rc file; the loop's last test must not leak out
+  ) 8<&- &
+  SCRIPTS_PID=$!
+}
+
+# finish_script_suites: wait for the job, append each suite's output to the log;
+# returns 1 if any suite failed. (No namerefs: macOS /bin/bash is 3.2.)
+finish_script_suites() {
+  local f n t failed=0
+  wait "$SCRIPTS_PID"
+  for f in "$SCRIPTS_OUT"/*.name; do
+    [ -e "$f" ] || continue
+    n=$(basename "$f" .name)
+    t=$(cat "$f")
     echo "=== script test: $t ===" >> "$LOGFILE"
-    if ! bash "$t" >> "$LOGFILE" 2>&1; then
+    cat "$SCRIPTS_OUT/$n.log" >> "$LOGFILE"
+    if [ "$(cat "$SCRIPTS_OUT/$n.rc" 2>/dev/null)" != 0 ]; then
       echo "FAIL script test: $t" >> "$LOGFILE"
-      status=1
+      failed=1
     fi
   done
-  return "$status"
+  return "$failed"
 }
 
 # test_timeout [count] — go test's per-package -timeout (foci_todo #2290). go's
