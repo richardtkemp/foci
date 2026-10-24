@@ -19,6 +19,7 @@ Because there's no Claude Code process underneath, an API-loop agent is given fo
 - **`tmux`** — persistent terminal sessions: `start|send|read|list|kill|watch|unwatch` (by name). Async inactivity notifications via `watch`.
 - **`browser`** — headless browser actions (only if the browser feature is enabled in config).
 - **`spawn`** — sub-calls to a model in four context modes: `raw` (no system context, cheapest isolated call), `character` (full system + character files — a copy of you), `clone` (async branch of the current session; result arrives later as a message — the default), `explore` (sync, read-only, cheap model, restricted toolset for investigation). Selects a model group with `powerful|fast|cheap`.
+- **`spawn_send`** / **`spawn_status`** — steer a running clone spawn (or resume a finished one with a new message), and check on your spawns: the list, or one spawn's most recent activity.
 - **`scratchpad`** — working-notes store (only if configured).
 - **`task_list`** — structured task items (only if configured).
 - **`bitwarden_search` / `bitwarden_unlock`** — vault access (only if configured).

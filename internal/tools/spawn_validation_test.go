@@ -17,7 +17,7 @@ func TestSpawnEmptyPrompt(t *testing.T) {
 	// Proves that an empty prompt is rejected with a descriptive error before any API call is made.
 	t.Parallel()
 	deps := SpawnDeps{FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic"}
-	tool := NewSpawnTool(deps, nil)
+	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "",
@@ -41,7 +41,7 @@ func TestSpawnInvalidContext(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic"}
-	tool := NewSpawnTool(deps, nil)
+	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "test",
@@ -71,7 +71,7 @@ func TestSpawnInheritNoParentSession(t *testing.T) {
 		FallbackFormat: "anthropic",
 		MaxInherit:     3,
 	}
-	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
+	tool := NewSpawner(deps, func() SpawnAgent { return mockAgent }).SpawnTool()
 
 	// No session key in context
 	params, _ := json.Marshal(map[string]string{
@@ -103,7 +103,7 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 		MaxInherit:     3,
 		MaxToolLoops:   func() int { return 10 },
 	}
-	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
+	tool := NewSpawner(deps, func() SpawnAgent { return mockAgent }).SpawnTool()
 
 	// Mark context as already inside a spawn inherit
 	ctx := WithSessionKey(context.Background(), "test/imain")
@@ -127,7 +127,7 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 	defer server.Close()
 
 	deps.Client = newTestAnthropicClient(server.URL, "test-token")
-	tool = NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
+	tool = NewSpawner(deps, func() SpawnAgent { return mockAgent }).SpawnTool()
 
 	params, _ = json.Marshal(map[string]string{
 		"prompt":  "simple query",
@@ -169,7 +169,7 @@ func TestSpawnInheritOrientationTemplate(t *testing.T) {
 		MaxInherit:          3,
 		OrientationTemplate: "Type: {branch_type}, key: {branch_key}, parent: {parent_key}.",
 	}
-	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
+	tool := NewSpawner(deps, func() SpawnAgent { return mockAgent }).SpawnTool()
 
 	ctx := WithSessionKey(context.Background(), "test/imain")
 	params, _ := json.Marshal(map[string]string{
@@ -228,7 +228,7 @@ func TestSpawnModelGroups(t *testing.T) {
 
 		client := newTestAnthropicClient(server.URL, "test-token")
 		deps := SpawnDeps{Client: client, GroupResolver: gr, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: func() int { return 10 }}
-		tool := NewSpawnTool(deps, nil)
+		tool := NewSpawner(deps, nil).SpawnTool()
 
 		params, _ := json.Marshal(map[string]string{
 			"model":   tt.group,
@@ -265,7 +265,7 @@ func TestSpawnModelDefault(t *testing.T) {
 	// Powerful defaults all groups to the same model
 	gr := config.NewGroupResolver(config.GroupsConfig{Groups: map[string]string{"powerful": "anthropic/claude-sonnet-4-5"}}, nil, true)
 	deps := SpawnDeps{Client: client, GroupResolver: gr, FallbackModel: "anthropic/claude-sonnet-4-5", FallbackFormat: "anthropic", MaxToolLoops: func() int { return 10 }}
-	tool := NewSpawnTool(deps, nil)
+	tool := NewSpawner(deps, nil).SpawnTool()
 
 	// No model specified — should use parent's default (session model)
 	params, _ := json.Marshal(map[string]string{
@@ -343,7 +343,7 @@ func TestSpawnModelOpenRouter(t *testing.T) {
 				FallbackFormat: "openai",
 				MaxToolLoops:   func() int { return 10 },
 			}
-			tool := NewSpawnTool(deps, nil)
+			tool := NewSpawner(deps, nil).SpawnTool()
 
 			params, _ := json.Marshal(map[string]string{
 				"prompt":  "test",
@@ -372,7 +372,7 @@ func TestSpawnTimeout(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: func() int { return 10 }}
-	tool := NewSpawnTool(deps, nil)
+	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"prompt":  "test",

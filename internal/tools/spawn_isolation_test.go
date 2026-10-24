@@ -26,7 +26,7 @@ func TestSpawnRawCreatesTempDir(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: func() int { return 10 }}
-	tool := NewSpawnTool(deps, nil)
+	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "test",
@@ -75,7 +75,7 @@ func TestSpawnRawIsolationWritesToTempDir(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, Registry: reg, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: func() int { return 10 }}
-	tool := NewSpawnTool(deps, nil)
+	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "test",
@@ -139,7 +139,7 @@ func TestSpawnRawIsolationBlocksAbsolutePath(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, Registry: reg, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: func() int { return 10 }}
-	tool := NewSpawnTool(deps, nil)
+	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "test",
@@ -185,7 +185,7 @@ func TestSpawnRawIsolationBlocksTraversal(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, Registry: reg, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: func() int { return 10 }}
-	tool := NewSpawnTool(deps, nil)
+	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "test",
@@ -241,7 +241,7 @@ func TestSpawnRawFileListMultiple(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, Registry: reg, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: func() int { return 10 }}
-	tool := NewSpawnTool(deps, nil)
+	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "test",

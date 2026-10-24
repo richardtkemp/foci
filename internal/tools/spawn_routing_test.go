@@ -81,7 +81,7 @@ func newSpawnEchoRegistry() *Registry {
 // one-shot); the recorded requests are read from the deps' client afterwards.
 func runCharacterSpawn(t *testing.T, deps SpawnDeps) {
 	t.Helper()
-	tool := NewSpawnTool(deps, nil)
+	tool := NewSpawner(deps, nil).SpawnTool()
 	params, err := json.Marshal(map[string]string{"prompt": "test", "context": "character"})
 	if err != nil {
 		t.Fatalf("marshal params: %v", err)

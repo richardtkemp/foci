@@ -166,7 +166,7 @@ func extractTempDir(result string) string {
 }
 
 func TestSpawnInheritSetsNoCompact(t *testing.T) {
-	// Proves that spawnInherit calls SetNoCompact with the branch key after
+	// Proves that startClone calls SetNoCompact with the branch key after
 	// creating the branch, preventing branch sessions from compacting
 	// independently and sending notifications to the main chat.
 	t.Parallel()
@@ -184,13 +184,11 @@ func TestSpawnInheritSetsNoCompact(t *testing.T) {
 			noCompactValue = v
 		},
 	}
-	sem := make(chan struct{}, 2)
-
 	ctx := WithSessionKey(context.Background(), "test/c123")
 
-	result, err := spawnInherit(ctx, deps, func() SpawnAgent { return agent }, sem, "test prompt", 5*time.Second)
+	result, err := NewSpawner(deps, func() SpawnAgent { return agent }).startClone(ctx, "test prompt", 5*time.Second)
 	if err != nil {
-		t.Fatalf("spawnInherit: %v", err)
+		t.Fatalf("startClone: %v", err)
 	}
 	if result.Text == "" {
 		t.Fatal("expected non-empty result")
@@ -251,10 +249,9 @@ func TestSpawnInherit_BackendCannotFork(t *testing.T) {
 	brancher := &mockSessionBrancher{cannotFork: true}
 	agent := &mockSpawnAgent{response: "should never run"}
 	deps := SpawnDeps{Sessions: brancher, MaxInherit: 2}
-	sem := make(chan struct{}, 2)
 	ctx := WithSessionKey(context.Background(), "test/c123")
 
-	_, err := spawnInherit(ctx, deps, func() SpawnAgent { return agent }, sem, "test prompt", 5*time.Second)
+	_, err := NewSpawner(deps, func() SpawnAgent { return agent }).startClone(ctx, "test prompt", 5*time.Second)
 	if err == nil {
 		t.Fatal("want an error when the backend cannot fork, got nil")
 	}

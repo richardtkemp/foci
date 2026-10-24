@@ -92,7 +92,7 @@ These are no-ops or handled by CC:
 - **Fallback chain** — `[groups.fallbacks]` has no effect; CC picks its own fallback.
 - **Server tools** — web search, web fetch, etc. are provided by CC's own tools, not Anthropic server tools.
 - **MCP** — Foci's MCP integration is unused; add MCP servers to CC directly.
-- **Spawn / sub-agent tool** — CC's own `Agent` tool replaces Foci's spawn mechanism.
+- **Spawn / sub-agent tool** — CC's own `Agent` tool replaces Foci's one-shot spawn modes. Clone-mode `foci_spawn` (with `foci_spawn_send` / `foci_spawn_status`) is available on any backend that can fork a session (#2523): a background fork in its own backend process, for long waits that CC's subagents would hold the turn for.
 - **Foci's session branching** — `/branch` does not copy Foci JSONL; it asks the backend to fork its own session (`ForkSession`: ccstream copies the transcript, opencode calls `POST /session/:id/fork`, codex calls `thread/fork`). A fork always takes the whole session: a truncated fork (`TruncateAfter > 0`) is rejected by all three.
 - **Session repair** — `LoadAndRepairSession` is a no-op; CC owns the JSONL.
 

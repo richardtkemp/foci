@@ -32,12 +32,12 @@ func TestStopSubagents_StopsBackgroundSpawns(t *testing.T) {
 	// app lists as subagents, on an API agent with no delegated backend (#2139).
 	done := make(chan string, 1)
 	ag := untilCancelled{running: make(chan struct{})}
-	tool := tools.NewSpawnTool(tools.SpawnDeps{
+	tool := tools.NewSpawner(tools.SpawnDeps{
 		Sessions:   forkOnce{},
 		MaxInherit: 1,
 		Notifier:   tools.NewAsyncNotifier(func(_, msg, _, _ string, _ *tools.AgentOrigin) { done <- msg }),
 		Tracker:    tools.Spawns,
-	}, func() tools.SpawnAgent { return ag })
+	}, func() tools.SpawnAgent { return ag }).SpawnTool()
 	ctx := tools.WithSessionKey(context.Background(), "agent:stoptest:main")
 	params, _ := json.Marshal(map[string]string{"prompt": "work", "context": "clone"})
 	if _, err := tool.Execute(ctx, params); err != nil {

@@ -497,6 +497,7 @@ func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, 
 	if kind == promptToDefaultChat {
 		text = prependRequestOrigin(d.sessionIdx, d.agentID, conn, sessionKey, text)
 	}
+	text = prependSpawnOrigin(tools.Spawns, sessionKey, text)
 	// Attachment (e.g. the full ExitPlanMode plan markdown) is sent as a
 	// document before the keyboard so the user sees the content, then the
 	// Allow/Deny buttons — to the chat the buttons go to. A send failure is
@@ -570,6 +571,19 @@ func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, 
 			logger.Debugf("prompt cancelled: sk=%s reqID=%s reason=%q", sessionKey, requestID, reason)
 		}
 	})
+}
+
+// prependSpawnOrigin names the spawn a prompt comes from (#2523). A clone
+// spawn runs on its own branch session with its own backend, so its prompts
+// never block the parent's turn, but they reach the same chat and otherwise
+// read exactly like the parent's own: the owner must see which spawn asks.
+// Text from any other session is returned unchanged.
+func prependSpawnOrigin(tr *tools.SpawnTracker, sessionKey, text string) string {
+	_, sp, ok := tr.ForBranch(sessionKey)
+	if !ok {
+		return text
+	}
+	return fmt.Sprintf("🐣 **From spawn %s:** %s", sp.ID, sp.Description) + "\n\n" + text
 }
 
 // backendPromptFuncs returns the two prompt closures the DelegatedManager

@@ -73,7 +73,7 @@ func TestSpawnInherit_ObserverListsAndStopStops(t *testing.T) {
 		Observer:   obs,
 		ModelFor:   func(sk string) string { return "model-for-" + sk },
 	}
-	tool := NewSpawnTool(deps, func() SpawnAgent { return agent })
+	tool := NewSpawner(deps, func() SpawnAgent { return agent }).SpawnTool()
 	ctx := WithSessionKey(context.Background(), "test/imain")
 	params, _ := json.Marshal(map[string]string{"prompt": "Find the bug\n  in   the parser", "context": "clone"})
 	if _, err := tool.Execute(ctx, params); err != nil {

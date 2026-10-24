@@ -38,12 +38,12 @@ func TestSpawnInheritSemaphore(t *testing.T) {
 	}
 
 	// Agent that takes 50ms and tracks concurrency
-	tool := NewSpawnTool(deps, func() SpawnAgent {
+	tool := NewSpawner(deps, func() SpawnAgent {
 		return &concurrentAgent{
 			concurrentCount: &concurrentCount,
 			maxConcurrent:   &maxConcurrent,
 		}
-	})
+	}).SpawnTool()
 
 	ctx := WithSessionKey(context.Background(), "test/imain")
 
@@ -94,7 +94,7 @@ func TestSpawnInheritAsyncDelivery(t *testing.T) {
 		MaxInherit:     3,
 		Notifier:       notifier,
 	}
-	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
+	tool := NewSpawner(deps, func() SpawnAgent { return mockAgent }).SpawnTool()
 
 	ctx := WithSessionKey(context.Background(), "test/imain")
 	params, _ := json.Marshal(map[string]string{
@@ -151,7 +151,7 @@ func TestSpawnInheritAsyncError(t *testing.T) {
 		MaxInherit:     3,
 		Notifier:       notifier,
 	}
-	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
+	tool := NewSpawner(deps, func() SpawnAgent { return mockAgent }).SpawnTool()
 
 	ctx := WithSessionKey(context.Background(), "test/imain")
 	params, _ := json.Marshal(map[string]string{
@@ -197,7 +197,7 @@ func TestSpawnInheritNilNotifierSync(t *testing.T) {
 		MaxInherit:     3,
 		// Notifier intentionally nil
 	}
-	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
+	tool := NewSpawner(deps, func() SpawnAgent { return mockAgent }).SpawnTool()
 
 	ctx := WithSessionKey(context.Background(), "test/imain")
 	params, _ := json.Marshal(map[string]string{

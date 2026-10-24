@@ -68,6 +68,10 @@ type toolDeps struct {
 	defaultFormat    string
 
 	out *toolOutputs
+
+	// spawner is the state spawn, spawn_send and spawn_status share (one
+	// semaphore, one agent getter), built on first use by d.getSpawner.
+	spawner *tools.Spawner
 }
 
 // toolOutputs captures the non-tool side-products of registration that the
@@ -372,47 +376,19 @@ var toolTable = []toolEntry{
 		return t
 	}},
 
-	// MaxConcurrentSpawns stays baked: it sizes a semaphore channel at
-	// construction, which can't be live-resized without a redesign.
-	// MaxToolLoops/ExploreMaxDepth are read fresh per spawn call.
-	// API-only: the one-shot modes run over provider.Client, never the agent's
-	// delegated backend (#1311), so delegated agents don't get it (#1352).
-	{name: "spawn", paths: pathAPI, build: func(d *toolDeps) *tools.Tool {
-		acfg := d.p.acfg
-		fileMode, _ := config.ParseFileMode(d.p.cfg.FileMode)
-		tc := d.p.resolved.Tools // static-cfg:ignore: MaxConcurrentSpawns sizes a semaphore channel at construction, can't be live-resized without a redesign
-		live := d.p.resolvedLive
-		orientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, d.p.cfg.Sessions.BranchOrientationHeadlessPrompt))
-		spawnDeps := tools.SpawnDeps{
-			Client:              d.client,
-			ClientProvider:      d.p.clientProvider,
-			Bootstrap:           d.bootstrap,
-			Registry:            d.registry,
-			Sessions:            &sessionBranchAdapter{store: d.p.sessions, ag: d.agLazy},
-			AgentID:             acfg.ID,
-			GroupResolver:       d.groupResolver,
-			FallbackFunc:        d.fallbackFn,
-			FallbackModel:       d.resolvedModel,
-			FallbackFormat:      d.defaultFormat,
-			ProviderRoutingFor:  config.RoutingFor(modelDefaultsFn(d.p.cfg.Models)),
-			MaxInherit:          tc.MaxConcurrentSpawns,
-			MaxToolLoops:        func() int { return live.Load().Loop.MaxToolLoops },
-			ExploreMaxDepth:     func() int { return live.Load().Tools.ExploreMaxDepth },
-			Notifier:            d.notifier,
-			OrientationTemplate: prompts.ResolveOrientationTemplate(orientPath, false, d.promptSearchDirs...),
-			SetNoCompact:        func(sk string, v bool) { d.agLazy().SetSessionNoCompact(sk, v) },
-			FileMode:            fileMode,
-			Store:               d.p.store,
-			Tracker:             tools.Spawns,
-			Observer:            app.SpawnObserver{},
-			ModelFor: func(sk string) string {
-				if ag := d.agLazy(); ag != nil {
-					return ag.SessionModel(sk)
-				}
-				return ""
-			},
-		}
-		return tools.NewSpawnTool(spawnDeps, func() tools.SpawnAgent { return d.agLazy() })
+	// spawn on BOTH paths (#2523). API agents get every mode. A delegated
+	// agent gets clone mode only (its one-shot modes run over provider.Client,
+	// never the backend, #1311/#1352), and only when its backend can fork a
+	// session, which clone needs (Agent.ForkSession). spawn_send and
+	// spawn_status steer and check on clone spawns; same gate.
+	{name: "spawn", paths: pathBoth, enabled: spawnEnabled, build: func(d *toolDeps) *tools.Tool {
+		return d.getSpawner().SpawnTool()
+	}},
+	{name: "spawn_send", paths: pathBoth, enabled: spawnEnabled, build: func(d *toolDeps) *tools.Tool {
+		return d.getSpawner().SendTool()
+	}},
+	{name: "spawn_status", paths: pathBoth, enabled: spawnEnabled, build: func(d *toolDeps) *tools.Tool {
+		return d.getSpawner().StatusTool()
 	}},
 
 	{name: "remind", paths: pathBoth,
@@ -499,4 +475,75 @@ func sendToChatMermaid(cfg *config.Config) *mermaid.Renderer {
 		cmd, browser = p.App.MermaidCmd, p.App.MermaidBrowser
 	}
 	return mermaid.Shared(cfg.DataDir, cmd, browser)
+}
+
+// spawnEnabled gates the spawn rows: always on the API path; on the exec path
+// only for a backend that can fork a session (clone mode's branch). Decided
+// from the backend's static Spec: the agent's DelegatedManager does not exist
+// yet when the exec registry is built.
+func spawnEnabled(d *toolDeps) bool {
+	if d.path == pathAPI {
+		return true
+	}
+	s, ok := delegator.SpecFor(d.p.acfg.Backend)
+	return ok && s.Supports(delegator.CapBranch)
+}
+
+// getSpawner builds the path's Spawner once. MaxConcurrentSpawns stays baked:
+// it sizes the semaphore at construction, which can't be live-resized without
+// a redesign. MaxToolLoops/ExploreMaxDepth are read fresh per spawn call.
+func (d *toolDeps) getSpawner() *tools.Spawner {
+	if d.spawner != nil {
+		return d.spawner
+	}
+	acfg := d.p.acfg
+	fileMode, _ := config.ParseFileMode(d.p.cfg.FileMode)
+	tc := d.p.resolved.Tools // static-cfg:ignore: MaxConcurrentSpawns sizes a semaphore channel at construction, can't be live-resized without a redesign
+	live := d.p.resolvedLive
+	orientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, d.p.cfg.Sessions.BranchOrientationHeadlessPrompt))
+	spawnDeps := tools.SpawnDeps{
+		Client:              d.client,
+		ClientProvider:      d.p.clientProvider,
+		Bootstrap:           d.bootstrap,
+		Registry:            d.registry,
+		Sessions:            &sessionBranchAdapter{store: d.p.sessions, ag: d.agLazy},
+		AgentID:             acfg.ID,
+		GroupResolver:       d.groupResolver,
+		FallbackFunc:        d.fallbackFn,
+		FallbackModel:       d.resolvedModel,
+		FallbackFormat:      d.defaultFormat,
+		ProviderRoutingFor:  config.RoutingFor(modelDefaultsFn(d.p.cfg.Models)),
+		MaxInherit:          tc.MaxConcurrentSpawns,
+		MaxToolLoops:        func() int { return live.Load().Loop.MaxToolLoops },
+		ExploreMaxDepth:     func() int { return live.Load().Tools.ExploreMaxDepth },
+		Notifier:            d.notifier,
+		OrientationTemplate: prompts.ResolveOrientationTemplate(orientPath, false, d.promptSearchDirs...),
+		SetNoCompact:        func(sk string, v bool) { d.agLazy().SetSessionNoCompact(sk, v) },
+		FileMode:            fileMode,
+		Store:               d.p.store,
+		Tracker:             tools.Spawns,
+		Observer:            app.SpawnObserver{},
+		ModelFor: func(sk string) string {
+			if d.agLazy == nil {
+				return ""
+			}
+			if ag := d.agLazy(); ag != nil {
+				return ag.SessionModel(sk)
+			}
+			return ""
+		},
+		CloneOnly: d.path == pathExec,
+	}
+	d.spawner = tools.NewSpawner(spawnDeps, func() tools.SpawnAgent {
+		// A nil *agent.Agent must stay a nil interface, or the callers'
+		// "agent not available" check could never fire.
+		if d.agLazy == nil {
+			return nil
+		}
+		if ag := d.agLazy(); ag != nil {
+			return ag
+		}
+		return nil
+	})
+	return d.spawner
 }

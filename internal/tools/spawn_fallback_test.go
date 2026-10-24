@@ -50,7 +50,7 @@ func TestSpawnOneShotBooksServedFallbackTuple(t *testing.T) {
 	}
 
 	params, _ := json.Marshal(map[string]string{"prompt": "test", "context": "character"})
-	if _, err := NewSpawnTool(deps, nil).Execute(WithSessionKey(context.Background(), "gil/cfb"), params); err != nil {
+	if _, err := NewSpawner(deps, nil).SpawnTool().Execute(WithSessionKey(context.Background(), "gil/cfb"), params); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
 

@@ -46,7 +46,7 @@ func TestSpawnContextRaw(t *testing.T) {
 		FallbackFormat: "anthropic",
 		MaxToolLoops:   func() int { return 10 },
 	}
-	tool := NewSpawnTool(deps, nil)
+	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "What is the meaning of life?",
@@ -109,7 +109,7 @@ func TestSpawnContextCharacter(t *testing.T) {
 		FallbackFormat: "anthropic",
 		MaxToolLoops:   func() int { return 10 },
 	}
-	tool := NewSpawnTool(deps, nil)
+	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Analyze this deeply",
@@ -156,7 +156,7 @@ func TestSpawnContextClone(t *testing.T) {
 		MaxInherit:     3,
 		Notifier:       notifier,
 	}
-	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
+	tool := NewSpawner(deps, func() SpawnAgent { return mockAgent }).SpawnTool()
 
 	ctx := WithSessionKey(context.Background(), "test/imain")
 
@@ -224,7 +224,7 @@ func TestSpawnContextCloneDefault(t *testing.T) {
 		FallbackFormat: "anthropic",
 		MaxInherit:     3,
 	}
-	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
+	tool := NewSpawner(deps, func() SpawnAgent { return mockAgent }).SpawnTool()
 
 	ctx := WithSessionKey(context.Background(), "test/imain")
 	params, _ := json.Marshal(map[string]string{
@@ -291,7 +291,7 @@ func TestSpawnExploreMode(t *testing.T) {
 		FallbackFormat:  "anthropic",
 		ExploreMaxDepth: func() int { return 10 },
 	}
-	tool := NewSpawnTool(deps, nil)
+	tool := NewSpawner(deps, nil).SpawnTool()
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Find all Go files in the project",

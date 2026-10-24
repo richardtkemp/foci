@@ -39,13 +39,14 @@ func TestToolTable_PerPathSets(t *testing.T) {
 		"http_request", "web_search", "web_fetch", "memory_search",
 		"scratchpad", "todo", "task_list", "bitwarden_search",
 		"bitwarden_unlock", "mcp", "send_to_chat", "send_to_session",
-		"ask", "spawn", "remind", "app_android", "set_session_alias",
-		"whoami",
+		"ask", "spawn", "spawn_send", "spawn_status", "remind", "app_android",
+		"set_session_alias", "whoami",
 	}
 	wantExec := []string{
 		"browser", "summary", "http_request", "web_search", "web_fetch",
 		"memory_search", "todo", "send_to_chat", "send_to_session",
-		"ask", "remind", "app_android", "set_session_alias", "whoami",
+		"ask", "spawn", "spawn_send", "spawn_status", "remind", "app_android",
+		"set_session_alias", "whoami",
 	}
 
 	if !equalStrings(api, wantAPI) {
@@ -103,6 +104,7 @@ func TestToolTable_APISet(t *testing.T) {
 		"web_search": true, "web_fetch": true, "memory_search": true,
 		"scratchpad": true, "todo": true, "send_to_chat": true,
 		"send_to_session": true, "ask": true, "spawn": true, "remind": true,
+		"spawn_send": true, "spawn_status": true,
 		"set_session_alias": true, "whoami": true,
 	}
 	// task_list and bitwarden need their stores; taskListStore/bwStore are left
@@ -161,6 +163,53 @@ func TestToolTable_ExecSet(t *testing.T) {
 		"remind": true, "set_session_alias": true, "whoami": true,
 	}
 	assertRegistrySet(t, registry, want)
+}
+
+// TestToolTable_ExecSpawnGatedOnBranch: a delegated agent gets spawn,
+// spawn_send and spawn_status on its exec bridge only when its backend can
+// fork a session (clone mode's branch), and its spawn offers clone mode only
+// (#2523): no context or model parameter, since the one-shot modes need the
+// direct API client a delegated agent has not got.
+func TestToolTable_ExecSpawnGatedOnBranch(t *testing.T) {
+	t.Parallel()
+	spawnTools := []string{"spawn", "spawn_send", "spawn_status"}
+	for backend, want := range map[string]bool{"claude-code": true, "opencode": true, "codex": true, "": false} {
+		p := minimalSetupParams(t, "test")
+		p.acfg.Backend = backend
+		registry := tools.NewRegistry()
+		registerTools(&toolDeps{
+			p:        p,
+			path:     pathExec,
+			registry: registry,
+			connMgr:  stubConnMgr{},
+			agLazy:   func() *agent.Agent { return nil },
+			wakeFn:   stubWakeFn,
+			out:      &toolOutputs{},
+		})
+		for _, name := range spawnTools {
+			if got := registry.Get(name) != nil; got != want {
+				t.Errorf("backend %q: %s registered = %v, want %v", backend, name, got, want)
+			}
+		}
+		if !want {
+			continue
+		}
+		sp := registry.Get("spawn")
+		if !sp.ExecExport {
+			t.Errorf("backend %q: spawn not exec-exported", backend)
+		}
+		var schema struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		}
+		if err := json.Unmarshal(sp.Parameters, &schema); err != nil {
+			t.Fatalf("spawn schema: %v", err)
+		}
+		for _, k := range []string{"context", "model"} {
+			if _, ok := schema.Properties[k]; ok {
+				t.Errorf("backend %q: clone-only spawn still offers %q", backend, k)
+			}
+		}
+	}
 }
 
 // routingCaptureClient records every MessageRequest a spawn one-shot sends,

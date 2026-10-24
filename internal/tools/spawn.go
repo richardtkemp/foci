@@ -46,6 +46,14 @@ type SpawnAgent interface {
 	HandleMessage(ctx context.Context, sessionKey string, texts []string, attachments []platform.Attachment) error
 }
 
+// SpawnSteerer is the optional agent side of spawn_send (#2523): fold text
+// into the turn running on sessionKey now, as a typed mid-turn message does.
+// False when it could not (no turn in flight, or a backend without live
+// steering); the message then waits for the spawn's next step.
+type SpawnSteerer interface {
+	SteerTurn(ctx context.Context, sessionKey, text string) bool
+}
+
 // spawnRawBlacklist lists tools excluded from "raw" mode spawns.
 // No character context means no awareness of communication conventions.
 // exec and tmux are excluded because they bypass file tool sandboxing —
@@ -136,6 +144,10 @@ type SpawnDeps struct {
 	Observer SpawnObserver
 	// ModelFor returns the model a branch session runs on, for the observer.
 	ModelFor func(sessionKey string) string
+	// CloneOnly offers only the clone mode: a delegated (Claude Code) agent's
+	// spawn, whose one-shot modes would need the direct API client it has not
+	// got (#1311, #2523). The schema then has no model or context parameter.
+	CloneOnly bool
 }
 
 // maxToolLoops calls d.MaxToolLoops(), or returns 0 if unset (tests that
@@ -155,18 +167,71 @@ func (d SpawnDeps) exploreMaxDepth() int {
 	return d.ExploreMaxDepth()
 }
 
-// NewSpawnTool creates the unified spawn tool that replaces request_model.
+// Spawner owns what the spawn tools share: the dependencies, the lazy agent
+// getter and the semaphore that bounds concurrent background runs, so a
+// follow-up run started by spawn_send counts against the same limit as spawn's
+// own (#2523).
+type Spawner struct {
+	deps    SpawnDeps
+	agentFn func() SpawnAgent
+	sem     chan struct{}
+}
+
+// NewSpawner builds the shared state of spawn, spawn_send and spawn_status.
 // agentFn is a lazy getter for the agent (resolved at call time, since the
 // agent struct is assigned after tool registration).
-func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
-	// Semaphore for limiting concurrent inherit spawns.
-	sem := make(chan struct{}, deps.MaxInherit)
+func NewSpawner(deps SpawnDeps, agentFn func() SpawnAgent) *Spawner {
+	// MaxInherit sizes the semaphore once, at construction.
+	return &Spawner{deps: deps, agentFn: agentFn, sem: make(chan struct{}, deps.MaxInherit)}
+}
+
+// cloneOnlySpawnParams is the schema of a CloneOnly spawn: no model, no context.
+const cloneOnlySpawnParams = `{
+	"type": "object",
+	"properties": {
+		"prompt": {
+			"type": "string",
+			"description": "Self-contained task for the spawn. It runs as the first message of a branch session that starts with a copy of your conversation."
+		},
+		"timeout": {
+			"type": "integer",
+			"description": "How long the spawn may run, in seconds (default 120). Give a long wait room: when this runs out the spawn is stopped and reported failed."
+		}
+	},
+	"required": ["prompt"]
+}`
+
+// SpawnTool is the unified spawn tool (it replaced request_model).
+func (s *Spawner) SpawnTool() *Tool {
+	deps := s.deps
+	if deps.CloneOnly {
+		return &Tool{
+			Name:        "spawn",
+			ExecExport:  true,
+			Positional:  []string{"prompt"},
+			Description: "Start a background spawn: a fork of this session (its own process, starting from a copy of your conversation) that works on the prompt while you carry on. Use it for work that must wait on something slow without holding your turn. Its result arrives once, as a [SPAWN RESULT] message, when it finishes. Send it more instructions with spawn_send; check on it with spawn_status. Prints the spawn id.",
+			Parameters:  json.RawMessage(cloneOnlySpawnParams),
+			Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+				p, err := UnmarshalParams[struct {
+					Prompt  string `json:"prompt"`
+					Timeout int    `json:"timeout"`
+				}](params)
+				if err != nil {
+					return ToolResult{}, err
+				}
+				if p.Prompt == "" {
+					return ToolResult{}, fmt.Errorf("prompt is required")
+				}
+				return s.startClone(ctx, p.Prompt, ResolveTimeout(p.Timeout, TimeoutConfig{DefaultSec: 120}))
+			},
+		}
+	}
 
 	return &Tool{
 		Name:        "spawn",
 		ExecExport:  true,
 		Positional:  []string{"prompt"},
-		Description: "Spawn a sub-call to a model. Four context modes: 'raw' (just your prompt, no system context — send_to_chat and send_to_session excluded), 'character' (your prompt + character files), 'clone' (branch session — a headless self-fork), 'explore' (read-only exploration — ls, find, grep, git, read, todo, memory_search, web_search, web_fetch, plus conditional tools like stat, file, head, tail, jq, sqlite when available — no file mutation, no shell exec, no messaging). Use 'raw'/'character' for one-shot queries. Use 'clone' to delegate complex multi-step tasks. Use 'explore' for codebase research and exploration.",
+		Description: "Spawn a sub-call to a model. Four context modes: 'raw' (just your prompt, no system context — send_to_chat and send_to_session excluded), 'character' (your prompt + character files), 'clone' (branch session — a headless self-fork), 'explore' (read-only exploration — ls, find, grep, git, read, todo, memory_search, web_search, web_fetch, plus conditional tools like stat, file, head, tail, jq, sqlite when available — no file mutation, no shell exec, no messaging). Use 'raw'/'character' for one-shot queries. Use 'clone' to delegate complex multi-step tasks; steer a running clone with spawn_send and check on it with spawn_status. Use 'explore' for codebase research and exploration.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -308,7 +373,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				return TextResult(result), nil
 
 			case "clone":
-				return spawnInherit(ctx, deps, agentFn, sem, p.Prompt, timeout)
+				return s.startClone(ctx, p.Prompt, timeout)
 
 			default:
 				return ToolResult{}, fmt.Errorf("invalid context: %q (use raw, character, clone, or explore)", p.Context)
@@ -644,17 +709,19 @@ func spawnOneShot(ctx context.Context, p oneShotParams) (string, error) {
 	return "Max tool call depth reached.", nil
 }
 
-// spawnInherit creates a branch session and runs HandleMessage on it.
-// When a notifier is available, the spawn runs asynchronously in a background
-// goroutine and delivers results via the notifier. When notifier is nil, it
+// startClone creates a branch session and runs the prompt on it. When a
+// notifier is available, the spawn runs asynchronously in a background
+// goroutine and delivers its result via the notifier. When notifier is nil, it
 // falls back to synchronous execution (for tests).
-func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent, sem chan struct{}, prompt string, timeout time.Duration) (ToolResult, error) {
-	// No-recursion guard: reject inherit calls from inside a spawn inherit session.
-	if IsSpawnInherit(ctx) {
+func (s *Spawner) startClone(ctx context.Context, prompt string, timeout time.Duration) (ToolResult, error) {
+	deps := s.deps
+	parentSession := SessionKeyFromContext(ctx)
+	// No-recursion guard: reject clone calls from inside a clone. An API
+	// spawn's tool calls carry the inherit marker; a delegated spawn's come
+	// through its own exec bridge with just its branch key (#2523).
+	if IsSpawnInherit(ctx) || s.isSpawnBranch(parentSession) {
 		return ToolResult{}, fmt.Errorf("nested inherit spawns not allowed — use context='raw' or context='character' instead")
 	}
-
-	parentSession := SessionKeyFromContext(ctx)
 	if parentSession == "" {
 		return ToolResult{}, fmt.Errorf("spawn inherit: no parent session in context")
 	}
@@ -678,7 +745,7 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 		deps.SetNoCompact(branchKey, true)
 	}
 
-	agent := agentFn()
+	agent := s.agentFn()
 	if agent == nil {
 		return ToolResult{}, fmt.Errorf("spawn inherit: agent not available")
 	}
@@ -688,17 +755,11 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 
 	// Async path: launch goroutine, return immediately.
 	if deps.Notifier != nil {
-		// Acquire semaphore slot (non-blocking check against context).
 		select {
-		case sem <- struct{}{}:
+		case s.sem <- struct{}{}:
 		case <-ctx.Done():
 			return ToolResult{}, ctx.Err()
 		}
-
-		var spawnResult string
-		var spawnErr error
-		var stopped bool
-		signal := make(chan struct{})
 		// Registered before the goroutine starts, so a /stop that lands at
 		// once still finds it (#2139).
 		spawnCtx, cancel := buildSpawnContext(ctx, timeout, branchKey, true)
@@ -711,55 +772,20 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 			ID: id, BranchKey: branchKey, Description: spawnDescription(prompt),
 			Model: model, Started: time.Now(),
 		}
-		deps.Tracker.Add(parentSession, running, cancel)
-		obs := deps.Observer
-		if obs != nil {
-			obs.SpawnStarted(parentSession, running, prompt)
+		deps.Tracker.add(parentSession, running, cancel, timeout)
+		deps.Tracker.appendLog(parentSession, id, "prompt", prompt)
+		if deps.Observer != nil {
+			deps.Observer.SpawnStarted(parentSession, running, prompt)
 		}
-		go func() {
-			defer cancel()
-			buf := turnevent.NewBufferSink()
-			var sink turnevent.Sink = buf
-			if obs != nil {
-				sink = &spawnTextSink{BufferSink: buf, obs: obs, parent: parentSession, id: id}
-			}
-			spawnCtx := turnevent.WithSink(spawnCtx, sink)
-			spawnErr = agent.HandleMessage(spawnCtx, branchKey, []string{prompt}, nil)
-			spawnResult = buf.FinalText()
-			stopped = deps.Tracker.remove(parentSession, id)
-			if obs != nil {
-				obs.SpawnEnded(parentSession, id)
-			}
-			close(signal)
-		}()
-
-		promptPreview := truncatePromptPreview(prompt)
-		return RunInBackground(ctx, BackgroundParams{
-			SessionKey:    parentSession,
-			Notifier:      deps.Notifier,
-			ThresholdSecs: 0, // always async
-			Done:          signal,
-			NotifyMessage: func() string {
-				if stopped {
-					return fmt.Sprintf("[SPAWN RESULT] Branch %s was stopped by the user.", branchKey)
-				}
-				if spawnErr != nil {
-					return fmt.Sprintf("[SPAWN RESULT] Branch %s failed:\n\n%v", branchKey, spawnErr)
-				}
-				if spawnResult == "" {
-					spawnResult = "(empty response)"
-				}
-				return fmt.Sprintf("[SPAWN RESULT] Branch %s completed:\n\n%s", branchKey, spawnResult)
-			},
-			Cleanup:       func() { <-sem },
-			PendingResult: TextResult(fmt.Sprintf("Spawn started in background.\nBranch: %s\nPrompt: %s\nResults will be delivered when complete.", branchKey, promptPreview)),
-		})
+		pending := fmt.Sprintf("Spawn started in background.\nSpawn: %s\nBranch: %s\nPrompt: %s\nResults will be delivered when complete. Send it more with spawn_send; check on it with spawn_status.",
+			id, branchKey, truncatePromptPreview(prompt))
+		return s.runBackground(ctx, agent, parentSession, running, []string{prompt}, spawnCtx, cancel, pending)
 	}
 
 	// Synchronous fallback (nil notifier — for tests).
 	select {
-	case sem <- struct{}{}:
-		defer func() { <-sem }()
+	case s.sem <- struct{}{}:
+		defer func() { <-s.sem }()
 	case <-ctx.Done():
 		return ToolResult{}, ctx.Err()
 	}
@@ -776,6 +802,95 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 		return TextResult("(empty response)"), nil
 	}
 	return TextResult(buf.FinalText()), nil
+}
+
+// isSpawnBranch reports whether sessionKey is a tracked spawn's own branch.
+func (s *Spawner) isSpawnBranch(sessionKey string) bool {
+	_, _, ok := s.deps.Tracker.ForBranch(sessionKey)
+	return ok
+}
+
+// runBackground runs texts on the spawn's branch in a goroutine, holding a
+// semaphore slot the caller already took, and delivers ONE [SPAWN RESULT] to
+// the parent when the run ends (#2523 keeps that push as the only one). The
+// spawn is already registered with the tracker under spawnCtx's cancel.
+//
+// Parent messages (spawn_send) that its turn did not take — the API turn
+// drains them at tool boundaries through the Steerer below; a delegated turn
+// gets them folded in by SteerTurn instead, or not at all if its turn had not
+// started — run as a follow-up turn on the same branch before the result is
+// delivered. A stopped, failed or timed-out run takes no follow-up.
+func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent string, running RunningSpawn,
+	texts []string, spawnCtx context.Context, cancel context.CancelFunc, pendingResult string) (ToolResult, error) {
+	tr, obs := s.deps.Tracker, s.deps.Observer
+	id, branchKey := running.ID, running.BranchKey
+
+	var result string
+	var runErr error
+	var stopped bool
+	var dropped int
+	signal := make(chan struct{})
+	go func() {
+		defer cancel()
+		runCtx := turnevent.WithSteerer(spawnCtx, turnevent.SteererFunc(func() []string {
+			return tr.drainPending(parent, id)
+		}))
+		for {
+			buf := turnevent.NewBufferSink()
+			sink := &spawnTextSink{BufferSink: buf, obs: obs, tracker: tr, parent: parent, id: id}
+			runErr = agent.HandleMessage(turnevent.WithSink(runCtx, sink), branchKey, texts, nil)
+			result = buf.FinalText()
+			next, done, wasStopped, n := tr.finishOrNext(parent, id, runErr != nil || spawnCtx.Err() != nil)
+			if done {
+				stopped, dropped = wasStopped, n
+				break
+			}
+			for _, t := range next {
+				tr.appendLog(parent, id, "message", "(follow-up turn) "+t)
+			}
+			texts = next
+		}
+		switch {
+		case stopped:
+			tr.setOutcome(parent, id, "stopped")
+		case runErr != nil:
+			tr.setOutcome(parent, id, "failed")
+			tr.appendLog(parent, id, "error", runErr.Error())
+		default:
+			tr.setOutcome(parent, id, "completed")
+		}
+		if obs != nil {
+			obs.SpawnEnded(parent, id)
+		}
+		close(signal)
+	}()
+
+	return RunInBackground(ctx, BackgroundParams{
+		SessionKey:    parent,
+		Notifier:      s.deps.Notifier,
+		ThresholdSecs: 0, // always async
+		Done:          signal,
+		NotifyMessage: func() string {
+			var msg string
+			switch {
+			case stopped:
+				msg = fmt.Sprintf("[SPAWN RESULT] Branch %s (spawn %s) was stopped by the user.", branchKey, id)
+			case runErr != nil:
+				msg = fmt.Sprintf("[SPAWN RESULT] Branch %s (spawn %s) failed:\n\n%v", branchKey, id, runErr)
+			default:
+				if result == "" {
+					result = "(empty response)"
+				}
+				msg = fmt.Sprintf("[SPAWN RESULT] Branch %s (spawn %s) completed:\n\n%s", branchKey, id, result)
+			}
+			if dropped > 0 {
+				msg += fmt.Sprintf("\n\n(%d message(s) sent with spawn_send arrived too late and were not delivered.)", dropped)
+			}
+			return msg
+		},
+		Cleanup:       func() { <-s.sem },
+		PendingResult: TextResult(pendingResult),
+	})
 }
 
 // resolveSpawnGroup resolves a spawn call to (client, model, format) using the group resolver.

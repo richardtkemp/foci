@@ -29,9 +29,12 @@ How this works: foci generates a shell-functions file and points `BASH_ENV` at i
 A startup parity check guarantees every flag in a tool's `--help` actually has a working handler — so the help text is authoritative.
 
 **The foci tools always available to you as shell functions:**
-`foci_ask`, `foci_send_to_chat`, `foci_send_to_session`, `foci_todo`, `foci_remind`, `foci_memory_search`, `foci_http_request`, `foci_web_fetch`, `foci_web_search`, `foci_summary`, `foci_whoami`.
+`foci_ask`, `foci_send_to_chat`, `foci_send_to_session`, `foci_todo`, `foci_remind`, `foci_memory_search`, `foci_http_request`, `foci_web_fetch`, `foci_web_search`, `foci_summary`, `foci_whoami`, `foci_spawn`, `foci_spawn_send`, `foci_spawn_status`.
 
-There is **no `foci_spawn`** on this backend — `spawn` is API-loop-only (its one-shot modes run over the direct API, never your backend). For sub-calls use CC's native `Agent` tool.
+**`foci_spawn` vs CC's `Agent` tool.** For ordinary sub-tasks use `Agent`. Use `foci_spawn "<task>" [--timeout SECONDS]` for work that must WAIT on something slow (a long build, a deploy, CI) without you or the user's next message waiting for it: it forks this session into its own background Claude Code process, starting from a copy of your conversation, and returns at once with a spawn id. You keep taking messages. When it finishes, its result arrives ONCE as a `[SPAWN RESULT]` message; nothing else wakes you. Only clone mode exists here (no `--context`/`--model`): the one-shot modes run over the direct API. Set `--timeout` to cover the whole wait (default 120 s); a spawn that runs out is stopped and reported failed.
+- `foci_spawn_send --id <spawn-id> "<message>"` — tell a spawn more. A running spawn gets it folded into its current turn; a finished one resumes on its branch with its earlier context and reports a new `[SPAWN RESULT]`.
+- `foci_spawn_status [--id <spawn-id>] [--last N]` — check on spawns, on demand: with no id, the list (running and recently finished); with an id, its state and its last N activity entries (what it was told, its text, its tool calls).
+- A spawn's permission prompts reach the user headed `🐣 From spawn <id>`, and never block your own turn. In auto mode nobody is asked. `/stop` stops your spawns too. A spawn cannot spawn.
 
 There is **no `foci_tmux`** on this backend — that stays API-loop-only. For persistent terminals use `Bash` with `tmux` (see the `coding-agent` skill). foci's file/shell tools are likewise absent — use CC's `Read`/`Write`/`Edit`/`Bash` instead.
 
