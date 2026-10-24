@@ -2134,6 +2134,8 @@ Wired in `main.go` after agent setup. Notification callback sends to agents whos
 
 Background goroutine monitoring total RSS of all processes owned by the foci user. Reads `/proc/[pid]/status` directly — no external commands. Two thresholds (warn at 25%, kill at 40% of RAM), both gated by memory pressure (PSI `avg10` from `/proc/pressure/memory` > configurable threshold). Warn pushes to all agents' `WarningQueue` (surfaces via proactive warning dispatch). Kill finds the largest non-foci process by RSS (excludes `os.Getpid()`), sends SIGTERM, waits 5s, SIGKILL if still alive.
 
+macOS (`memory_guard_darwin.go`): RSS from `ps`, RAM from `sysctl hw.memsize`, and pressure from `kern.memorystatus_vm_pressure_level` mapped onto the PSI scale (normal 0, warning 5, critical 100), so at the default threshold of 10 the guard acts only at "critical". foci runs as the login user there, so the uid alone would cover the user's own apps: the kill candidate is the largest process owned by the uid **that descends from foci-gw** (`largestOwned`).
+
 Wired in `main.go` after tmux memory monitor. Warning callback iterates `agents` map and pushes to any `inst.ag.Warnings` that's non-nil (agents with `inject_agent_warnings` enabled).
 
 ### Backend Expectation Guards (`internal/delegator/expectations.go`, #2013)

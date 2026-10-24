@@ -42,16 +42,36 @@ func platformFindLargest(uid, selfPid int) (int, string, int64, error) {
 	return largestOwned(procs, uid, selfPid)
 }
 
-// largestOwned picks the largest-RSS process owned by uid, excluding selfPid.
+// largestOwned picks the largest-RSS process owned by uid that descends from
+// selfPid (foci-gw). On macOS foci runs as the login user, so "owned by uid"
+// alone covers the user's own apps (browser, IDE, a build over ssh): the guard
+// once killed a 20 GB golangci-lint that foci had not started. Only foci's own
+// process tree is foci's to kill. (On Linux the uid is the dedicated foci user,
+// so ownership already means foci's.)
 func largestOwned(procs []procinfo.Proc, uid, selfPid int) (int, string, int64, error) {
+	children := make(map[int][]int)
+	for _, p := range procs {
+		children[p.PPID] = append(children[p.PPID], p.PID)
+	}
+	ours := make(map[int]bool)
+	stack := append([]int(nil), children[selfPid]...)
+	for len(stack) > 0 {
+		pid := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if ours[pid] {
+			continue
+		}
+		ours[pid] = true
+		stack = append(stack, children[pid]...)
+	}
 	var best procinfo.Proc
 	for _, p := range procs {
-		if p.UID == uid && p.PID != selfPid && p.RSSKB > best.RSSKB {
+		if ours[p.PID] && p.UID == uid && p.RSSKB > best.RSSKB {
 			best = p
 		}
 	}
 	if best.PID == 0 {
-		return 0, "", 0, fmt.Errorf("no eligible process found for uid %d", uid)
+		return 0, "", 0, fmt.Errorf("no eligible process found for uid %d under pid %d", uid, selfPid)
 	}
 	return best.PID, best.Comm, best.RSSKB, nil
 }
@@ -69,18 +89,19 @@ func platformPressure() (float64, error) {
 // written in. macOS reports only three levels, so the mapping is a step:
 //
 //	1 normal   -> 0    never satisfies a positive threshold
-//	2 warning  -> 50   the system is compressing/swapping hard
+//	2 warning  -> 5    below the default threshold of 10
 //	4 critical -> 100  the kernel is about to kill processes
 //
-// With the default threshold of 10, the guard acts at "warning" and above,
-// which is the closest macOS analogue of "PSI says tasks are stalling".
-// An unknown level is treated as critical rather than silently ignored.
+// "warning" means macOS has started compressing memory, which is routine on a
+// busy Mac (a 20 GB golangci-lint on a 48 GB machine reached it), not the
+// sustained stall that PSI >= 10 means on Linux. So by default the guard acts
+// only at "critical". An unknown level is treated as critical.
 func darwinPressure(level uint32) float64 {
 	switch level {
 	case 1:
 		return 0
 	case 2:
-		return 50
+		return 5
 	default:
 		return 100
 	}

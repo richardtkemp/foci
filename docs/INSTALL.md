@@ -207,6 +207,7 @@ in a normal terminal.
 | Runs as | dedicated `foci` user | you |
 | Service | systemd unit `foci` | LaunchAgent `com.github.richardtkemp.foci` (`~/Library/LaunchAgents/`), in your GUI session |
 | Install root (`HOME` of foci-gw) | `/home/foci` | `~/foci` (`FOCI_HOME`) |
+| Memory guard | kills the largest process of the `foci` user when PSI shows memory stalls | kills only foci-gw's own descendants (never your other apps), and only at macOS's "critical" memory-pressure level |
 | Binaries | `/usr/local/bin` (root-owned) | `~/foci/bin` |
 | Logs | journal + `~/logs/foci.log` | `~/foci/logs/foci.log`, launchd stdout/stderr in `~/foci/logs/launchd.*.log` |
 | Restart | `sudo systemctl restart foci` | `launchctl kickstart -k gui/$(id -u)/com.github.richardtkemp.foci` (or `/restart`) |
