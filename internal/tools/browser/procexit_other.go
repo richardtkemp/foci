@@ -1,11 +1,12 @@
-//go:build !linux
+//go:build !linux && !darwin
 
 package browser
 
 import "errors"
 
-// watchExit has no pidfd to wait on outside Linux. Stop then removes the
-// profile dir without waiting for chromium to exit (the pre-#1518 behaviour).
+// watchExit has no pidfd or kqueue to wait on outside Linux and macOS. Stop
+// then removes the profile dir without waiting for chromium to exit (the
+// pre-#1518 behaviour).
 func watchExit(int) (<-chan struct{}, error) {
-	return nil, errors.New("waiting for browser exit is supported on Linux only")
+	return nil, errors.New("waiting for browser exit is supported on Linux and macOS only")
 }
