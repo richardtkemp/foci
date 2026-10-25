@@ -177,6 +177,7 @@ func waitFor(timeout time.Duration, cond func() bool) bool {
 // (no turn in flight) routes the envelope to the session's main channel,
 // and the worker drives a turn for it.
 func TestInbox_Enqueue_Idle_PushesToChannel(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -201,6 +202,7 @@ func TestInbox_Enqueue_Idle_PushesToChannel(t *testing.T) {
 // steer-eligible mid-turn message routes to Backend.ImmediateInject(SourceSteer)
 // when a CC backend is registered, bypassing the buffer entirely.
 func TestInbox_Enqueue_InFlight_CCBackend_InjectsSteer(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.SetInboxSteerMode(true)
@@ -242,6 +244,7 @@ func TestInbox_Enqueue_InFlight_CCBackend_InjectsSteer(t *testing.T) {
 // recognised as mid-turn and steer into the running turn — queueing it as a
 // fresh turn is what clobbered the adopted run's router registration.
 func TestInbox_Enqueue_AdoptedAutonomousRun_SteersFollowUp(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t) // inbox not started — a queued envelope stays observable
 	a.SetInboxSteerMode(true)
 
@@ -286,6 +289,7 @@ func (p *planResponderBackend) CancelPlanWithFeedback(_, feedback string) error 
 // message arriving while an ExitPlanMode permission is pending is converted to a
 // plan denial carrying the text as feedback — and is NOT steered or queued.
 func TestInbox_Enqueue_PendingPlan_CancelsWithFeedback(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.SetInboxSteerMode(true)
@@ -319,6 +323,7 @@ func TestInbox_Enqueue_PendingPlan_CancelsWithFeedback(t *testing.T) {
 // pending plan permission, the intercept is skipped and a mid-turn message
 // steers normally — proving non-plan turns are unaffected.
 func TestInbox_Enqueue_NoPendingPlan_NormalSteer(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.SetInboxSteerMode(true)
@@ -349,6 +354,7 @@ func TestInbox_Enqueue_NoPendingPlan_NormalSteer(t *testing.T) {
 // the idle path, so without the inbox intercept a pending ask loses to any
 // in-flight turn (e.g. the user answering a quiz while the agent is mid-turn).
 func TestInbox_Enqueue_PendingAsk_RoutesToAsk(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.SetInboxSteerMode(true)
@@ -399,6 +405,7 @@ func (*failingSteerBackend) ImmediateInject(context.Context, delegator.Inject) e
 // dispatch fails outright, the message is queued to the session channel for a
 // fresh turn instead of being dropped.
 func TestInbox_Enqueue_SteerFailure_FallsBackToQueue(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t) // inbox not started — channel content stays observable
 	a.SetInboxSteerMode(true)
 
@@ -431,6 +438,7 @@ func TestInbox_Enqueue_SteerFailure_FallsBackToQueue(t *testing.T) {
 // explicitly marked SteerNever (the app's "queue" choice) is pushed to the
 // session channel for a fresh turn — not folded into the running turn.
 func TestInbox_Enqueue_SteerNever_QueuesInsteadOfSteering(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t) // inbox not started — channel content stays observable
 	a.SetInboxSteerMode(true)
 
@@ -464,6 +472,7 @@ func TestInbox_Enqueue_SteerNever_QueuesInsteadOfSteering(t *testing.T) {
 // override: with steer_mode OFF and a turn in flight, an envelope marked
 // SteerAlways dispatches as an urgent steer.
 func TestInbox_Enqueue_SteerAlways_OverridesConfigOff(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t)
 	a.SetInboxSteerMode(false)
 
@@ -488,6 +497,7 @@ func TestInbox_Enqueue_SteerAlways_OverridesConfigOff(t *testing.T) {
 // it must NOT be consumed by CancelPlanWithFeedback — it queues for a fresh
 // turn after the plan flow resolves.
 func TestInbox_Enqueue_SteerNever_PendingPlan_Queues(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t)
 	a.SetInboxSteerMode(true)
 
@@ -516,6 +526,7 @@ func TestInbox_Enqueue_SteerNever_PendingPlan_Queues(t *testing.T) {
 // message is a turn, not an ask answer: with an unpaused foci_ask pending it
 // must NOT be routed to HandleResponse — it queues for a fresh turn.
 func TestInbox_Enqueue_SteerNever_PendingAsk_Queues(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t)
 	a.SetInboxSteerMode(true)
 
@@ -551,6 +562,7 @@ func TestInbox_Enqueue_SteerNever_PendingAsk_Queues(t *testing.T) {
 // pending ask is /paused, the intercept is skipped and a mid-turn message steers
 // normally — /pause is the escape hatch to steer mid-ask.
 func TestInbox_Enqueue_PausedAsk_NormalSteer(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.SetInboxSteerMode(true)
@@ -587,6 +599,7 @@ func TestInbox_Enqueue_PausedAsk_NormalSteer(t *testing.T) {
 // typed-text capture must be skipped and the message steered normally, unlike
 // telegram/discord where a typed reply is the "Other" free-text answer channel.
 func TestInbox_Enqueue_PendingAsk_AppSource_PassesThrough(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.SetInboxSteerMode(true)
@@ -623,6 +636,7 @@ func TestInbox_Enqueue_PendingAsk_AppSource_PassesThrough(t *testing.T) {
 // default capture behaviour is preserved), and an app-backed driver reports
 // "app" (so the carve-out fires).
 func TestEnvelope_platformName(t *testing.T) {
+	t.Parallel()
 	if got := (Envelope{}).platformName(); got != "" {
 		t.Errorf("nil Driver: got %q, want empty", got)
 	}
@@ -649,6 +663,7 @@ func (*errTurnNotInFlightBackend) ImmediateInject(context.Context, delegator.Inj
 // finished underneath it), the inbox re-routes the envelope to the normal idle
 // channel so the worker drives a properly-tracked turn instead of dropping it.
 func TestInbox_Enqueue_Steer_RacesTurnCompletion_ReRoutes(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.SetInboxSteerMode(true)
@@ -682,6 +697,7 @@ func TestInbox_Enqueue_Steer_RacesTurnCompletion_ReRoutes(t *testing.T) {
 // steer-eligible mid-turn message goes to AppendSteer when no backend
 // is registered (API-mode agents).
 func TestInbox_Enqueue_InFlight_APIBackend_AppendsSteer(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.SetInboxSteerMode(true)
@@ -714,6 +730,7 @@ func TestInbox_Enqueue_InFlight_APIBackend_AppendsSteer(t *testing.T) {
 // a steer (the API steer buffer is text-only) and falls through to the channel
 // for the next turn.
 func TestInbox_Enqueue_InFlight_WithAttachments_PushesToChannel(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t)
 	a.SetInboxSteerMode(true)
 	// Don't start the worker — we just check the channel directly.
@@ -766,6 +783,7 @@ func enqueueMidTurn(t *testing.T, be delegator.Delegator, env Envelope) *session
 // turn with the image attached and the saved-file note ahead of the caption,
 // instead of waiting on the channel for the turn to end.
 func TestInbox_Enqueue_InFlight_ImageAttachment_Steers(t *testing.T) {
+	t.Parallel()
 	be := &foldCarrierBackend{}
 	inb := enqueueMidTurn(t, be, Envelope{
 		Text:        "look at this",
@@ -798,6 +816,7 @@ func TestInbox_Enqueue_InFlight_ImageAttachment_Steers(t *testing.T) {
 // TestInbox_Enqueue_InFlight_CaptionlessImage_Steers: a photo with no caption
 // has empty text, which alone never steers; its attachment makes it eligible.
 func TestInbox_Enqueue_InFlight_CaptionlessImage_Steers(t *testing.T) {
+	t.Parallel()
 	be := &foldCarrierBackend{}
 	enqueueMidTurn(t, be, Envelope{
 		Attachments: []platform.Attachment{{MimeType: "image/jpeg", Data: []byte("jpg"), SavedPath: "/tmp/p.jpg"}},
@@ -815,6 +834,7 @@ func TestInbox_Enqueue_InFlight_CaptionlessImage_Steers(t *testing.T) {
 // backend can't deliver from a fold (a PDF on ccstream) must queue — whole, with
 // its image sibling — rather than steer and lose the PDF.
 func TestInbox_Enqueue_InFlight_UnfoldableAttachment_Queues(t *testing.T) {
+	t.Parallel()
 	be := &foldCarrierBackend{}
 	inb := enqueueMidTurn(t, be, Envelope{
 		Text: "both",
@@ -835,6 +855,7 @@ func TestInbox_Enqueue_InFlight_UnfoldableAttachment_Queues(t *testing.T) {
 // carry attachments on a fold (not a FoldAttachmentCarrier) keeps the queue
 // fallback — steering would deliver the caption and drop the image.
 func TestInbox_Enqueue_InFlight_AttachmentNonCarrier_Queues(t *testing.T) {
+	t.Parallel()
 	be := &recordingBackend{}
 	inb := enqueueMidTurn(t, be, Envelope{
 		Text:        "pic",
@@ -852,6 +873,7 @@ func TestInbox_Enqueue_InFlight_AttachmentNonCarrier_Queues(t *testing.T) {
 // becomes text (as on a fresh turn), which any fold carries, so it steers with
 // the converted text leading and no binary attachment.
 func TestInbox_Enqueue_InFlight_ConvertedDocument_Steers(t *testing.T) {
+	t.Parallel()
 	be := &foldCarrierBackend{}
 	enqueueMidTurn(t, be, Envelope{
 		Text:        "numbers",
@@ -873,6 +895,7 @@ func TestInbox_Enqueue_InFlight_ConvertedDocument_Steers(t *testing.T) {
 // TestInbox_Enqueue_InFlight_AttachmentCompacting_Queues: the compaction hold
 // applies to attachment steers as to text ones (#856).
 func TestInbox_Enqueue_InFlight_AttachmentCompacting_Queues(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t)
 	a.SetInboxSteerMode(true)
 	be := &foldCarrierBackend{}
@@ -897,6 +920,7 @@ func TestInbox_Enqueue_InFlight_AttachmentCompacting_Queues(t *testing.T) {
 // when steer_mode is off, mid-turn messages go to the next-turn channel
 // instead of the steer path.
 func TestInbox_Enqueue_SteerMode_Disabled_PushesToChannel(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t)
 	// SetInboxSteerMode default = false.
 	inb := a.getOrCreateInbox("test/s")
@@ -918,6 +942,7 @@ func TestInbox_Enqueue_SteerMode_Disabled_PushesToChannel(t *testing.T) {
 // route to the channel instead, to be dispatched as a clean turn afterwards
 // (#856).
 func TestInbox_Enqueue_Compacting_DoesNotSteer(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t)
 	a.SetInboxSteerMode(true)
 
@@ -944,6 +969,7 @@ func TestInbox_Enqueue_Compacting_DoesNotSteer(t *testing.T) {
 // is scoped to the compaction window, not a blanket steer disable: once
 // compaction clears, a steer-eligible message injects normally (#856).
 func TestInbox_Enqueue_AfterCompaction_ResumesSteer(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t)
 	a.SetInboxSteerMode(true)
 
@@ -973,6 +999,7 @@ func TestInbox_Enqueue_AfterCompaction_ResumesSteer(t *testing.T) {
 // flight, then dispatched once it clears. Covers the manual-/compact case
 // where the worker is free rather than blocked on the compacting turn (#856).
 func TestInbox_Worker_HoldsDuringCompaction(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -997,6 +1024,7 @@ func TestInbox_Worker_HoldsDuringCompaction(t *testing.T) {
 // TestInbox_Enqueue_EmptySessionKey_Drops verifies that envelopes with
 // no session key are dropped (logged) rather than crashing.
 func TestInbox_Enqueue_EmptySessionKey_Drops(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -1020,6 +1048,7 @@ func TestInbox_Enqueue_EmptySessionKey_Drops(t *testing.T) {
 // TestInbox_Worker_BatchesAvailableMessages verifies that messages
 // arriving in quick succession are batched into a single Drive call.
 func TestInbox_Worker_BatchesAvailableMessages(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -1062,6 +1091,7 @@ func TestInbox_Worker_BatchesAvailableMessages(t *testing.T) {
 // The recordingDriver fires OnPrimaryWrittenFromContext after hookCh and
 // before fn(), simulating a real transport's RunInference Inject path.
 func TestInbox_Worker_TurnActiveLifecycle(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -1091,6 +1121,7 @@ func TestInbox_Worker_TurnActiveLifecycle(t *testing.T) {
 // AppendSteer from a separate Enqueue race) is processed as a follow-up
 // turn after the primary turn ends.
 func TestInbox_Worker_DrainsOrphansAfterTurn(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -1128,6 +1159,7 @@ func TestInbox_Worker_DrainsOrphansAfterTurn(t *testing.T) {
 // caught — covering it at the agent level since the orphan loop now
 // lives in agent.driveAndDrainOrphans.
 func TestInbox_Worker_OrphanDrainIsRecursive(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -1184,6 +1216,7 @@ func (d *recursiveDriver) observeBatch(sk string, batch []Envelope) {
 // TestInbox_Worker_NoDriverDropsBatch verifies that an envelope without
 // a Driver doesn't crash the worker — the batch is dropped with a log.
 func TestInbox_Worker_NoDriverDropsBatch(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -1205,6 +1238,7 @@ func TestInbox_Worker_NoDriverDropsBatch(t *testing.T) {
 // their turns concurrently — Session A's slow Drive does not block
 // Session B's worker from running its own Drive.
 func TestInbox_TwoSessionsRunInParallel(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -1235,6 +1269,7 @@ func TestInbox_TwoSessionsRunInParallel(t *testing.T) {
 // flag is independent: Session A in-flight does not make Session B route
 // as in-flight.
 func TestInbox_PerSessionTurnActive(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t)
 	a.SetInboxSteerMode(true)
 
@@ -1267,6 +1302,7 @@ func TestInbox_PerSessionTurnActive(t *testing.T) {
 // TestInbox_LazyWorkerSpawn verifies that each session's worker is
 // spawned exactly once, even across many concurrent Enqueue calls.
 func TestInbox_LazyWorkerSpawn(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -1319,6 +1355,7 @@ func TestInbox_LazyWorkerSpawn(t *testing.T) {
 // TestInbox_StartInbox_Idempotent verifies that calling StartInbox
 // multiple times doesn't double-spawn workers or panic.
 func TestInbox_StartInbox_Idempotent(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1338,6 +1375,7 @@ func TestInbox_StartInbox_Idempotent(t *testing.T) {
 // TestInbox_StartInbox_BeforeEnqueue_SpawnsWorker verifies the normal
 // ordering: StartInbox first, then Enqueue → worker runs.
 func TestInbox_StartInbox_BeforeEnqueue_SpawnsWorker(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -1353,6 +1391,7 @@ func TestInbox_StartInbox_BeforeEnqueue_SpawnsWorker(t *testing.T) {
 // where Enqueue runs before StartInbox: envelopes are buffered in the
 // channel but no worker spawns until StartInbox is called.
 func TestInbox_EnqueueBeforeStart_Buffers(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t)
 
 	d := &recordingDriver{}
@@ -1378,6 +1417,7 @@ func TestInbox_EnqueueBeforeStart_Buffers(t *testing.T) {
 // TestInbox_ContextCancellation_StopsWorker verifies that cancelling
 // the parent context exits the session worker goroutine.
 func TestInbox_ContextCancellation_StopsWorker(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	a.StartInbox(ctx)
@@ -1504,6 +1544,7 @@ func (d *routerObservingDriver) numSeen() int {
 // addresses: the router must outlive any single Drive() invocation so late
 // deliveries from ccstream's rearm path land somewhere live.
 func TestInbox_SessionRouter_LazyConstructedAndReused(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -1530,6 +1571,7 @@ func TestInbox_SessionRouter_LazyConstructedAndReused(t *testing.T) {
 // get different SessionRouter instances. Each session's late-delivery
 // fallback is bound to its own session ID (turn.SessionSink's sessionKey).
 func TestInbox_SessionRouter_DistinctPerSession(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -1560,6 +1602,7 @@ func TestInbox_SessionRouter_DistinctPerSession(t *testing.T) {
 // is non-delivering. Without this gate, a Telegram message arriving during
 // that turn folds into the inject path and goes to NopSink.
 func TestInbox_Worker_SinkDeliveryGate_BlocksNonDelivering(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -1611,6 +1654,7 @@ func TestInbox_Worker_SinkDeliveryGate_BlocksNonDelivering(t *testing.T) {
 // addenda (Dick sending "in London" after "what's the weather"), and the
 // gate must not break it.
 func TestInbox_Worker_SinkDeliveryGate_AllowsDelivering(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -1642,6 +1686,7 @@ func TestInbox_Worker_SinkDeliveryGate_AllowsDelivering(t *testing.T) {
 // the channel and batch together when the gate opens — matching the
 // existing batches-available semantics for the non-gated case.
 func TestInbox_Worker_SinkDeliveryGate_BatchesArrivalsWhileWaiting(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 

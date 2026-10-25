@@ -30,6 +30,7 @@ func askRouterPending(cur *atomic.Value) *tools.AskRouter {
 // The verdict carries the requestID of the ask it came FROM, so the gate can tell
 // it apart from a proactive interruption of the ask that is actually on screen.
 func TestRunInject_AskResultNotHeldByALaterAsk(t *testing.T) {
+	t.Parallel()
 	var cur atomic.Value
 	cur.Store("ask-N1") // ask N is on screen
 	ag := &Agent{AgentID: "test", AskRouter: askRouterPending(&cur)}
@@ -61,6 +62,7 @@ func TestRunInject_AskResultNotHeldByALaterAsk(t *testing.T) {
 // would open the SAME-ask race the gate was written for. An injection carrying the
 // requestID of the ask that is still on screen is still deferred.
 func TestRunInject_AskResultStillHeldBySameAsk(t *testing.T) {
+	t.Parallel()
 	var cur atomic.Value
 	cur.Store("ask-N1")
 	ag := &Agent{AgentID: "test", AskRouter: askRouterPending(&cur)}
@@ -87,6 +89,7 @@ func TestRunInject_AskResultStillHeldBySameAsk(t *testing.T) {
 // one must release only what IT was holding: draining everything would let a
 // proactive injection race the ask still on the user's screen.
 func TestDrainDeferredInjects_ReleasesOnlyThatAsksBacklog(t *testing.T) {
+	t.Parallel()
 	var cur atomic.Value
 	ag := &Agent{AgentID: "test", AskRouter: askRouterPending(&cur)}
 	sk := "test/imain"

@@ -16,6 +16,7 @@ import (
 // since the last reflection" and defeating ReflectionRedundant on delegated
 // agents (where reflection injects into the main session).
 func TestMemoryTriggerSkipsActivityBump(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
 	if err != nil {
@@ -76,6 +77,7 @@ func TestMemoryTriggerSkipsActivityBump(t *testing.T) {
 // `foci send --human` counts as user attention exactly like a platform turn,
 // landing on the turn's own session key.
 func TestRecordTurnActivity_HumanSourceMarkerBumpsUserActivity(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
 	if err != nil {
@@ -111,6 +113,7 @@ func TestRecordTurnActivity_HumanSourceMarkerBumpsUserActivity(t *testing.T) {
 // HTTP /send (foci send from a cron, a webhook-style caller) never counts as
 // user attention.
 func TestRecordTurnActivity_PlainUserTriggerNoUserActivityBump(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
 	if err != nil {

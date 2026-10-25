@@ -16,6 +16,7 @@ import (
 // work and returns true once that clears — released here via the poll backstop
 // since a pending→clear transition has no InFlightWaitCh edge.
 func TestWaitInjectGate_HoldsUntilClear(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t)
 	be := &mockBackendDT{}
 	be.setAwaiting(true)
@@ -51,6 +52,7 @@ func TestWaitInjectGate_HoldsUntilClear(t *testing.T) {
 // sites depend on: a cancelled ctx makes the gate return false so the worker
 // stops rather than spinning.
 func TestWaitInjectGate_CtxCancelReturnsFalse(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t)
 	be := &mockBackendDT{}
 	be.setAwaiting(true)
@@ -89,6 +91,7 @@ func TestWaitInjectGate_CtxCancelReturnsFalse(t *testing.T) {
 // run ends. This test drives the real Enqueue → sessionWorker → runInject path
 // and asserts the injection does not run until the adopted turn clears.
 func TestInbox_Inject_HeldWhileAutonomousDelivering(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -125,6 +128,7 @@ func TestInbox_Inject_HeldWhileAutonomousDelivering(t *testing.T) {
 // poison the run's sink). Release comes via the wait loop's poll backstop, since
 // a pending→clear transition has no InFlightWaitCh edge.
 func TestInbox_Inject_HeldWhileBackendAwaitingPendingWork(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -164,6 +168,7 @@ func TestInbox_Inject_HeldWhileBackendAwaitingPendingWork(t *testing.T) {
 // autonomous run — user input adopts/folds delivering work (spec §3), it is never
 // held on pending work.
 func TestInbox_PlatformTurn_NotBlockedByBackendAwaiting(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -214,6 +219,7 @@ func TestInbox_PlatformTurn_NotBlockedByBackendAwaiting(t *testing.T) {
 // delivering status the fixed code produces, per spec §4: a user's own
 // follow-up must never wait on their own background subagent.
 func TestInbox_PlatformTurn_NotBlockedByOrphanedAutonomousAdoption(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -271,6 +277,7 @@ func TestInbox_PlatformTurn_NotBlockedByOrphanedAutonomousAdoption(t *testing.T)
 // gate must NOT change when #767 is fixed for platform turns; only the
 // platform-turn side should move.
 func TestInbox_Inject_HeldWhileOrphanedAutonomousAdoption(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 

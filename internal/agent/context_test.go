@@ -13,6 +13,7 @@ import (
 // carry the timestamp through the context unchanged, and that absence returns
 // a zero time so callers can fall back to wall clock for system triggers.
 func TestReceivedAtContextRoundtrip(t *testing.T) {
+	t.Parallel()
 	want := time.Date(2026, 4, 11, 13, 49, 0, 0, time.UTC)
 	ctx := WithReceivedAt(context.Background(), want)
 	if got := ReceivedAtFromContext(ctx); !got.Equal(want) {
@@ -27,6 +28,7 @@ func TestReceivedAtContextRoundtrip(t *testing.T) {
 // routes to the ctx sink as an intermediate TextBlock (not a delta or final),
 // and no-ops for empty text.
 func TestEmitIntermediateTextEmitsTextBlock(t *testing.T) {
+	t.Parallel()
 	var events []turnevent.Event
 	ctx := turnevent.WithSink(context.Background(), fnSink(func(_ context.Context, ev turnevent.Event) {
 		events = append(events, ev)
@@ -50,12 +52,14 @@ func TestEmitIntermediateTextEmitsTextBlock(t *testing.T) {
 // TestEmitToolCallNilSafe proves emitToolCall does not panic when ctx has no
 // sink attached — the default NopSink fallback must absorb the emit.
 func TestEmitToolCallNilSafe(t *testing.T) {
+	t.Parallel()
 	emitToolCall(context.Background(), "test", "t1", json.RawMessage(`{}`))
 }
 
 // TestEmitThinkingBlockSkipsEmpty proves the helper avoids emitting empty
 // thinking text so sinks don't receive meaningless ThinkingBlock events.
 func TestEmitThinkingBlockSkipsEmpty(t *testing.T) {
+	t.Parallel()
 	var events []turnevent.Event
 	ctx := turnevent.WithSink(context.Background(), fnSink(func(_ context.Context, ev turnevent.Event) {
 		events = append(events, ev)
@@ -80,6 +84,7 @@ func TestEmitThinkingBlockSkipsEmpty(t *testing.T) {
 // Steerer and wraps each message in a `[user] ...` content block — this is
 // the path the agent uses to drain pending steers between tool calls.
 func TestSteerBlocksViaSteerer(t *testing.T) {
+	t.Parallel()
 	ctx := turnevent.WithSteerer(context.Background(), turnevent.SteererFunc(func() []string {
 		return []string{"wait", "use bun"}
 	}))
@@ -96,6 +101,7 @@ func TestSteerBlocksViaSteerer(t *testing.T) {
 // TestSteerBlocksAbsent proves steerBlocks returns nil when no steerer is set,
 // which is the common path for HTTP and hook-driven turns.
 func TestSteerBlocksAbsent(t *testing.T) {
+	t.Parallel()
 	if blocks := steerBlocks(context.Background()); blocks != nil {
 		t.Errorf("blocks = %v, want nil", blocks)
 	}

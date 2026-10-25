@@ -169,6 +169,7 @@ func (b *chattyBatchBackend) Close() error {
 // still return the model's text to the caller and put nothing, of any kind,
 // in front of the user.
 func TestRunBatch_DeliversNothingToAnyChat(t *testing.T) {
+	t.Parallel()
 	const answer = "BATCH ANSWER — for the caller only"
 	be := &chattyBatchBackend{}
 	be.sendToPaneFn = func(_ context.Context, _ string, h *mockHandler) (*delegator.TurnResult, error) {

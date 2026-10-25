@@ -14,6 +14,7 @@ import (
 // live cap until one of them tripped it again. Each "restart" is a new Agent
 // over the same state.db.
 func TestRateLimitGate_DeadlineSurvivesRestart(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)

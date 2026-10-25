@@ -32,6 +32,7 @@ func (s *captureSink) DeliversToPlatform() bool { return true }
 // old bare Clear() did exactly that and diverted the rest of the run to the
 // late-delivery fallback.
 func TestSessionRouter_ReleaseSparesNewerRegistration(t *testing.T) {
+	t.Parallel()
 	r := newSessionRouter(&captureSink{name: "fallback"})
 
 	sys := &captureSink{name: "system"}

@@ -11,6 +11,7 @@ import (
 // format/client), not the agent default — so the branch launches on the same
 // model the root is live on and reuses the root's per-model prompt cache.
 func TestBranchInheritsRootModelTuple(t *testing.T) {
+	t.Parallel()
 	ag := &Agent{Model: "claude-opus-4-8", Format: "anthropic"}
 
 	root := session.SessionKey{AgentID: "bot", Type: 'c', ID: "100"}
@@ -35,6 +36,7 @@ func TestBranchInheritsRootModelTuple(t *testing.T) {
 // TestBranchOwnModelWins proves a branch with its own explicit model override
 // keeps that override rather than inheriting root's.
 func TestBranchOwnModelWins(t *testing.T) {
+	t.Parallel()
 	ag := &Agent{Model: "claude-opus-4-8"}
 
 	root := session.SessionKey{AgentID: "bot", Type: 'c', ID: "100"}
@@ -51,6 +53,7 @@ func TestBranchOwnModelWins(t *testing.T) {
 // TestBranchFallsToAgentDefaultWhenRootUnset proves that when neither the branch
 // nor the root has a model override, resolution reaches the agent default.
 func TestBranchFallsToAgentDefaultWhenRootUnset(t *testing.T) {
+	t.Parallel()
 	ag := &Agent{Model: "claude-opus-4-8"}
 
 	root := session.SessionKey{AgentID: "bot", Type: 'c', ID: "100"}
@@ -64,6 +67,7 @@ func TestBranchFallsToAgentDefaultWhenRootUnset(t *testing.T) {
 // TestRootModelUnaffectedByFallback proves the root session itself never walks
 // (it is its own root) and simply resolves own override → agent default.
 func TestRootModelUnaffectedByFallback(t *testing.T) {
+	t.Parallel()
 	ag := &Agent{Model: "claude-opus-4-8"}
 	root := session.SessionKey{AgentID: "bot", Type: 'c', ID: "100"}
 

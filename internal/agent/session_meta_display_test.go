@@ -10,6 +10,7 @@ import (
 )
 
 func TestSessionDisplayOverrides(t *testing.T) {
+	t.Parallel()
 	// Proves that all four per-session display settings start empty, can be set to specific values, and are all cleared together by ClearSessionDisplayOverrides.
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -64,6 +65,7 @@ func TestSessionDisplayOverrides(t *testing.T) {
 }
 
 func TestSessionDisplayOverrides_Restore(t *testing.T) {
+	t.Parallel()
 	// Proves that display overrides survive an agent restart by writing to and reading from the shared state store via RestoreSessionOverrides.
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -97,6 +99,7 @@ func TestSessionDisplayOverrides_Restore(t *testing.T) {
 }
 
 func TestSessionShowToolCalls_AgentDefault(t *testing.T) {
+	t.Parallel()
 	// Proves that SessionShowToolCalls returns the agent-level ShowToolCalls default
 	// when no per-session override is set, and that a per-session override takes precedence.
 	ag := &Agent{ShowToolCalls: "preview", AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string, _ *tools.AgentOrigin) {})}
@@ -121,6 +124,7 @@ func TestSessionShowToolCalls_AgentDefault(t *testing.T) {
 }
 
 func TestToolDisplayNote(t *testing.T) {
+	t.Parallel()
 	// Proves that toolDisplayNote returns correct descriptions for each display mode.
 	tests := []struct {
 		mode     string
@@ -144,6 +148,7 @@ func TestToolDisplayNote(t *testing.T) {
 }
 
 func TestSessionDisplayOverrides_ClearedByClearSessionState(t *testing.T) {
+	t.Parallel()
 	// Proves that per-session display overrides (in-memory and their persisted
 	// session_metadata rows) are wiped by ClearSessionState — the reset path —
 	// so a reset session starts with agent-default display settings.

@@ -22,6 +22,7 @@ import (
 // unpaused ask pending, an automated steer folds into the running turn instead
 // of being taken as the ask's answer.
 func TestInbox_Enqueue_Automated_PendingAsk_NotCaptured(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t)
 	a.SetInboxSteerMode(true)
 
@@ -52,6 +53,7 @@ func TestInbox_Enqueue_Automated_PendingAsk_NotCaptured(t *testing.T) {
 // TestInbox_Enqueue_Automated_PendingPlan_NotDenied: mid-turn, with an
 // ExitPlanMode approval pending, an automated steer must not deny the plan.
 func TestInbox_Enqueue_Automated_PendingPlan_NotDenied(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t)
 	a.SetInboxSteerMode(true)
 
@@ -100,6 +102,7 @@ func TestInbox_Relogin_AutomatedNotCapturedAsCode(t *testing.T) {
 // containing ANY automated envelope, wherever it sits — taking the first text
 // would either answer with automation's text or silently drop it.
 func TestTypedAnswerEligible_MixedBatch(t *testing.T) {
+	t.Parallel()
 	human := Envelope{Text: "yes"}
 	auto := Envelope{Text: "cron says hi", Automated: true}
 	for _, tc := range []struct {
@@ -127,6 +130,7 @@ func TestTypedAnswerEligible_MixedBatch(t *testing.T) {
 // marker must survive the buffer and the orphan rebuild (buildFollowUp), or
 // the follow-up turn's ask capture would treat it as the human's reply.
 func TestInbox_Enqueue_Automated_BufferedSteerKeepsMarker(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t)
 	a.SetInboxSteerMode(true)
 	inb := a.getOrCreateInbox("test/s")

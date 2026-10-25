@@ -42,6 +42,7 @@ func renderFor(a *Agent, tmpl, sk string) string {
 // session's running subagents, background commands and spawns on a [running]
 // line (#2127), each with how long it has run.
 func TestStatuslineDefault_RunningLine(t *testing.T) {
+	t.Parallel()
 	ago := func(d time.Duration) time.Time { return time.Now().Add(-d) }
 	a := runningAgent("a/main",
 		[]delegator.RunningSubagent{
@@ -74,6 +75,7 @@ func TestStatuslineDefault_RunningLine(t *testing.T) {
 // TestStatuslineRunning_CapsItems proves a long list is cut to the first few
 // with a count of the rest, and long descriptions are truncated.
 func TestStatuslineRunning_CapsItems(t *testing.T) {
+	t.Parallel()
 	var subs []delegator.RunningSubagent
 	for range 7 {
 		subs = append(subs, delegator.RunningSubagent{Description: strings.Repeat("x", 60)})
@@ -90,6 +92,7 @@ func TestStatuslineRunning_CapsItems(t *testing.T) {
 // TestStatuslineCustom_IncludesDefault proves a custom template can keep the
 // whole default header with {default} and add its own lines (#2127).
 func TestStatuslineCustom_IncludesDefault(t *testing.T) {
+	t.Parallel()
 	a := runningAgent("a/main", nil, tools.RunningSpawn{ID: "spawn-1", Description: "dig", Started: time.Now()})
 	got := renderFor(a, "{default}\n[deploy] undeployed=3", "a/main")
 	want := renderFor(a, "", "a/main") + "\n[deploy] undeployed=3"

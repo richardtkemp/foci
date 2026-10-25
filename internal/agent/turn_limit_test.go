@@ -19,6 +19,7 @@ import (
 // that makes "no limit configured" take no slot, send no notice, and log
 // nothing anywhere in the inbox.
 func TestTurnLimiter_NilMeansUnlimited(t *testing.T) {
+	t.Parallel()
 	if l := NewTurnLimiter(0); l != nil {
 		t.Errorf("NewTurnLimiter(0) = %v, want nil (unlimited)", l)
 	}
@@ -41,6 +42,7 @@ func TestTurnLimiter_NilMeansUnlimited(t *testing.T) {
 // TestTurnLimiter_TryAcquireRespectsLimit proves TryAcquire hands out at
 // most N slots and Release returns one to the pool.
 func TestTurnLimiter_TryAcquireRespectsLimit(t *testing.T) {
+	t.Parallel()
 	l := NewTurnLimiter(2)
 	if !l.TryAcquire() || !l.TryAcquire() {
 		t.Fatal("first two TryAcquire calls should succeed")
@@ -61,6 +63,7 @@ func TestTurnLimiter_TryAcquireRespectsLimit(t *testing.T) {
 // order their Acquire calls reached the semaphore: Release hands the slot
 // to the head waiter, so the grant order matches the enqueue order.
 func TestTurnLimiter_AcquireFIFO(t *testing.T) {
+	t.Parallel()
 	l := NewTurnLimiter(1)
 	if !l.TryAcquire() {
 		t.Fatal("holder TryAcquire failed")
@@ -94,6 +97,7 @@ func TestTurnLimiter_AcquireFIFO(t *testing.T) {
 // ends while queued, and that the abandoned wait leaks no slot: after the
 // holder releases, a fresh acquire still succeeds.
 func TestTurnLimiter_AcquireCtxCancel(t *testing.T) {
+	t.Parallel()
 	l := NewTurnLimiter(1)
 	if !l.TryAcquire() {
 		t.Fatal("holder TryAcquire failed")
@@ -127,6 +131,7 @@ func TestTurnLimiter_AcquireCtxCancel(t *testing.T) {
 // across the start of Acquire with a varying spin; each Acquire must return
 // true. The deadline is only a hang guard for a lost wake-up.
 func TestTurnLimiter_ReleaseDuringAcquireNotLost(t *testing.T) {
+	t.Parallel()
 	var sink atomic.Int64
 	for i := 0; i < 20000; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -217,11 +222,29 @@ func mustRecv(t *testing.T, c chan struct{}, what string) {
 	}
 }
 
+// mustQueue waits until lim has n waiters queued, or fails the test. The
+// queued notice is NOT that event: waitTurnSlot fires it before its Acquire
+// reaches the semaphore, so a test that orders two waiters by their notices
+// alone lets the second enqueue first (seen under t.Parallel load, #2554).
+// FIFO order is fixed by the enqueue, so a test relying on it syncs here.
+func mustQueue(t *testing.T, lim *TurnLimiter, n int, what string) {
+	t.Helper()
+	queued := func() bool {
+		lim.mu.Lock()
+		defer lim.mu.Unlock()
+		return len(lim.waiters) >= n
+	}
+	if !waitFor(2*time.Second, queued) {
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
 // TestTurnLimit_AgentLimit1_SecondSessionWaitsAndNotified proves the core
 // cap: with max_concurrent_turns = 1, session B's turn does not start while
 // session A's turn still runs, B's sender gets exactly ONE queued notice
 // with the exact text, and B runs once A's turn returns.
 func TestTurnLimit_AgentLimit1_SecondSessionWaitsAndNotified(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.TurnLimit = NewTurnLimiter(1)
@@ -272,6 +295,7 @@ func TestTurnLimit_AgentLimit1_SecondSessionWaitsAndNotified(t *testing.T) {
 // first come, first served: with B and C queued behind A (in that order), A's
 // release lets B run, and only B's return lets C run.
 func TestTurnLimit_AgentLimit1_FIFOThirdAfterSecond(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.TurnLimit = NewTurnLimiter(1)
@@ -289,8 +313,10 @@ func TestTurnLimit_AgentLimit1_FIFOThirdAfterSecond(t *testing.T) {
 
 	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "b", Driver: dB})
 	mustRecv(t, notices.signal, "B to queue first")
+	mustQueue(t, a.TurnLimit, 1, "B's wait to reach the semaphore")
 	a.Enqueue(Envelope{SessionKey: "sess/C", Text: "c", Driver: dC})
 	mustRecv(t, notices.signal, "C to queue behind B")
+	mustQueue(t, a.TurnLimit, 2, "C's wait to reach the semaphore behind B")
 
 	close(releaseA)
 	select {
@@ -318,6 +344,7 @@ func TestTurnLimit_AgentLimit1_FIFOThirdAfterSecond(t *testing.T) {
 // is one shared semaphore: a turn on agent 2 waits while agent 1 runs, even
 // though neither agent has a per-agent limit.
 func TestTurnLimit_GlobalLimit1_SharedAcrossAgents(t *testing.T) {
+	t.Parallel()
 	a1, cancel1 := startedAgent(t)
 	defer cancel1()
 	a2, cancel2 := startedAgent(t)
@@ -355,6 +382,7 @@ func TestTurnLimit_GlobalLimit1_SharedAcrossAgents(t *testing.T) {
 // TestTurnLimit_AgentLimit2_TwoConcurrentThirdWaits proves limit 2 lets two
 // sessions run at once with no notice, and the third waits (with one).
 func TestTurnLimit_AgentLimit2_TwoConcurrentThirdWaits(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.TurnLimit = NewTurnLimiter(2)
@@ -396,6 +424,7 @@ func TestTurnLimit_AgentLimit2_TwoConcurrentThirdWaits(t *testing.T) {
 // (characterisation, red-gate-exempt): with no limiters, many sessions run
 // their turns at once and the notice hook never fires.
 func TestTurnLimit_Unlimited_NoNoticeAndParallel(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -429,6 +458,7 @@ func TestTurnLimit_Unlimited_NoNoticeAndParallel(t *testing.T) {
 // its session's batch waits for a slot joins that batch: ONE WrapTurn call
 // carries both envelopes, in arrival order, with no second notice.
 func TestTurnLimit_JoinerMergesIntoWaitingBatch(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.TurnLimit = NewTurnLimiter(1)
@@ -484,6 +514,7 @@ func TestTurnLimit_JoinerMergesIntoWaitingBatch(t *testing.T) {
 // while the batch keeps waiting — before the slot-holding turn finishes —
 // and takes no slot itself (it ran while the only slot was held).
 func TestTurnLimit_InjectionRunsWhileWaitingNoSlot(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.TurnLimit = NewTurnLimiter(1)
@@ -551,6 +582,7 @@ func (d *sequentialGatedDriver) Connection() platform.Connection                
 // second session starts only after the follow-up turn completes, and the
 // follow-up takes no second slot.
 func TestTurnLimit_FollowUpTurnSameSlotNotReleasedEarly(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.TurnLimit = NewTurnLimiter(1)
@@ -611,6 +643,7 @@ func (d *holdForeverDriver) Connection() platform.Connection                 { r
 // joined it while waiting — never reaches the driver, no slot is taken, and
 // A's release lets the NEXT waiter (C) run.
 func TestTurnLimit_StopDropsWaitingBatch(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.TurnLimit = NewTurnLimiter(1)
@@ -627,9 +660,11 @@ func TestTurnLimit_StopDropsWaitingBatch(t *testing.T) {
 
 	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "first", Driver: dB})
 	mustRecv(t, notices.signal, "B to queue first (before C, so B would win a freed slot)")
+	mustQueue(t, a.TurnLimit, 1, "B's wait to reach the semaphore")
 	a.Enqueue(Envelope{SessionKey: "sess/B", Text: "joiner", Driver: dB}) // merged into B's waiting batch
 	a.Enqueue(Envelope{SessionKey: "sess/C", Text: "c", Driver: dC})
 	mustRecv(t, notices.signal, "C to queue behind B")
+	mustQueue(t, a.TurnLimit, 2, "C's wait to reach the semaphore behind B")
 
 	if !a.CancelSession("sess/B") {
 		t.Fatal("CancelSession returned false for a slot-waiting batch")
@@ -651,6 +686,7 @@ func TestTurnLimit_StopDropsWaitingBatch(t *testing.T) {
 // the /stop exit path: cancelling A's RUNNING turn ends it, the slot comes
 // back, and the next waiter runs.
 func TestTurnLimit_StopRunningTurnReleasesSlot(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.TurnLimit = NewTurnLimiter(1)
@@ -693,6 +729,7 @@ func TestTurnLimit_StopRunningTurnReleasesSlot(t *testing.T) {
 // it already held: the next waiter on the same agent proceeds (and then
 // waits on the global slot like B did).
 func TestTurnLimit_StopWhileWaitingGlobalReleasesAgentSlot(t *testing.T) {
+	t.Parallel()
 	a1, cancel1 := startedAgent(t)
 	defer cancel1()
 	a2, cancel2 := startedAgent(t)
@@ -745,6 +782,7 @@ func TestTurnLimit_StopWhileWaitingGlobalReleasesAgentSlot(t *testing.T) {
 // batch never runs. The slot-holder's turn ignores ctx here, so the freed
 // slot cannot reach the waiter — only the wait's own ctx can end it.
 func TestTurnLimit_InboxCtxDoneDuringWait(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	a.TurnLimit = NewTurnLimiter(1)
 
@@ -776,6 +814,7 @@ func TestTurnLimit_InboxCtxDoneDuringWait(t *testing.T) {
 // (B's worker serves it slot-free), EnqueueInjectWait must return nil, and
 // B's queued batch must run afterwards once the holder releases.
 func TestTurnLimit_EnqueueInjectWaitFromSlotHolderNoDeadlock(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.TurnLimit = NewTurnLimiter(1)
@@ -826,6 +865,7 @@ func TestTurnLimit_EnqueueInjectWaitFromSlotHolderNoDeadlock(t *testing.T) {
 // to steer into) and joins the waiting batch: ONE WrapTurn call carries
 // both envelopes, in arrival order, with no second notice.
 func TestTurnLimit_SteerAlwaysJoinerMergesIntoWaitingBatch(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.TurnLimit = NewTurnLimiter(1)
@@ -877,6 +917,7 @@ func TestTurnLimit_SteerAlwaysJoinerMergesIntoWaitingBatch(t *testing.T) {
 // nothing waiting and nothing running: an idle session returns false (and
 // touches no slot state), and an unknown session key returns false.
 func TestTurnLimit_CancelSessionIdleReturnsFalse(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.TurnLimit = NewTurnLimiter(1)
@@ -917,6 +958,7 @@ func TestTurnLimit_CancelSessionIdleReturnsFalse(t *testing.T) {
 // that slot can itself be blocked on this session's injection, so making
 // the released inject queue behind the batch is the #2281 deadlock.
 func TestTurnLimit_StopWhileQueuedKeepsGatedInjection(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.TurnLimit = NewTurnLimiter(1)
@@ -1003,6 +1045,7 @@ func TestTurnLimit_StopWhileQueuedKeepsGatedInjection(t *testing.T) {
 // waited for the batch's slot would deadlock the pair (each blocked on the
 // other's release).
 func TestTurnLimit_HeldInjectRunsWhenGateOpensDuringSlotWait(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.TurnLimit = NewTurnLimiter(1)
@@ -1056,6 +1099,7 @@ func TestTurnLimit_HeldInjectRunsWhenGateOpensDuringSlotWait(t *testing.T) {
 // given back, the #856 hold is waited out, and only then does the batch run
 // (with no second queued notice for the same batch).
 func TestTurnLimit_CompactionDuringWaitHoldsAfterGrant(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.TurnLimit = NewTurnLimiter(1)
@@ -1095,6 +1139,7 @@ func TestTurnLimit_CompactionDuringWaitHoldsAfterGrant(t *testing.T) {
 // goes in flight on the session while its batch queues (e.g. a delegated
 // branch pass run as an in-wait injection) holds the drive until it clears.
 func TestTurnLimit_NonDeliveringInFlightDuringWaitHoldsAfterGrant(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.TurnLimit = NewTurnLimiter(1)
@@ -1168,6 +1213,7 @@ func TestTurnLimit_ReloginNeverHoldsAPIAgent(t *testing.T) {
 // session. The grant observer fires the /stop from inside the exact race
 // window, so this is deterministic.
 func TestTurnLimit_StopAfterGrantDropsBatch(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.TurnLimit = NewTurnLimiter(1)
@@ -1223,6 +1269,7 @@ func TestTurnLimit_StopAfterGrantDropsBatch(t *testing.T) {
 // non-run synchronously: the worker serves the channel in order, so by the
 // time the later message drives, the joiner was either run or dropped.
 func TestTurnLimit_StopDropsUnabsorbedJoiner(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.TurnLimit = NewTurnLimiter(1)

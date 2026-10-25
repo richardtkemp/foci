@@ -13,6 +13,7 @@ import (
 )
 
 func TestAgentCompactionIntegration(t *testing.T) {
+	t.Parallel()
 	// Integration test suite for session compaction, covering the full compaction cycle,
 	// scratchpad inclusion, message preservation, notifications, suppression, and per-session
 	// model-based context-limit selection.

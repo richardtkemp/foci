@@ -40,6 +40,7 @@ func (p tupleClientProvider) ResolveEndpointClient(endpoint, format string) prov
 // endpoint, format or client — those legs fall to the agent defaults, so the
 // child's model name is never sent through the root's provider.
 func TestBranchOwnModelDoesNotInheritRootTupleLegs(t *testing.T) {
+	t.Parallel()
 	defaultClient := tupleClient{name: "default"}
 	ag := &Agent{
 		Model:  "claude-opus-4-8",
@@ -76,6 +77,7 @@ func TestBranchOwnModelDoesNotInheritRootTupleLegs(t *testing.T) {
 // gets the agent default client — the root's client never fills a leg of
 // a tuple the branch already owns.
 func TestBranchOwnModelOwnFormatNilClientKeepsOwnFormatGetsDefaultClient(t *testing.T) {
+	t.Parallel()
 	defaultClient := tupleClient{name: "default"}
 	ag := &Agent{
 		Model:    "claude-opus-4-8",
@@ -110,6 +112,7 @@ func TestBranchOwnModelOwnFormatNilClientKeepsOwnFormatGetsDefaultClient(t *test
 // one-owner rule covers independent (`i`) children too — rootKeyIfChild
 // treats branch `b` and independent `i` children identically.
 func TestIndependentChildOwnModelDoesNotInheritRootTupleLegs(t *testing.T) {
+	t.Parallel()
 	defaultClient := tupleClient{name: "default"}
 	ag := &Agent{
 		Model:  "claude-opus-4-8",
@@ -141,6 +144,7 @@ func TestIndependentChildOwnModelDoesNotInheritRootTupleLegs(t *testing.T) {
 // whose own model is set but whose endpoint/format/client are empty resolves
 // those legs to the agent defaults, never to another session.
 func TestTupleOwnerEmptyLegsFallToAgentDefaults(t *testing.T) {
+	t.Parallel()
 	defaultClient := tupleClient{name: "default"}
 	ag := &Agent{
 		Model:    "claude-opus-4-8",
@@ -173,6 +177,7 @@ func TestTupleOwnerEmptyLegsFallToAgentDefaults(t *testing.T) {
 // the endpoint its inherited client actually sends traffic to — not the agent
 // default.
 func TestBranchInheritsRootWholeTupleIncludingEndpoint(t *testing.T) {
+	t.Parallel()
 	ag := &Agent{
 		Model:    "claude-opus-4-8",
 		Endpoint: "anthropic",
@@ -196,6 +201,7 @@ func TestBranchInheritsRootWholeTupleIncludingEndpoint(t *testing.T) {
 // leg — model, format AND client — to the agent defaults, whether the owner
 // is the session itself or an inherited root.
 func TestSyntheticOwnerModelYieldsAgentDefaultTuple(t *testing.T) {
+	t.Parallel()
 	defaultClient := tupleClient{name: "default"}
 	ag := &Agent{
 		Model:  "claude-opus-4-8",
@@ -239,6 +245,7 @@ func TestSyntheticOwnerModelYieldsAgentDefaultTuple(t *testing.T) {
 // the one-call shape turns and call sites rely on so no owner switch can
 // land between two leg reads.
 func TestSessionModelTupleReturnsWholeTupleFromOneOwner(t *testing.T) {
+	t.Parallel()
 	defaultClient := tupleClient{name: "default"}
 	ag := &Agent{
 		Model:    "claude-opus-4-8",
@@ -279,6 +286,7 @@ func TestSessionModelTupleReturnsWholeTupleFromOneOwner(t *testing.T) {
 // 5dace0047 persistence block, which skipped empty legs and left stale rows
 // for RestoreSessionOverrides to resurrect.
 func TestSetSessionModelLegClearDropsIndexRowsAndRestoreUsesDefaults(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -320,6 +328,7 @@ func TestSetSessionModelLegClearDropsIndexRowsAndRestoreUsesDefaults(t *testing.
 // the clear survives a restart instead of being resurrected by
 // RestoreSessionOverrides from a stale row.
 func TestSetSessionModelClearDeletesEndpointAndFormatRows(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -363,6 +372,7 @@ func TestSetSessionModelClearDeletesEndpointAndFormatRows(t *testing.T) {
 // agent-default format and client — even when its root's full tuple (client
 // included) was restored and rebuilt just before.
 func TestRestoreChildModelOnlyAfterRestartUsesAgentDefaults(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)

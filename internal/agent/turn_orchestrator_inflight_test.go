@@ -57,6 +57,7 @@ const orchestratorTestBranchKey = orchestratorTestKey + "/b1700000000"
 // across the orchestrator call. RunInference closes CompletionChan inline;
 // the markInFlight defer runs as the orchestrator returns.
 func TestOrchestrator_InFlightRisesAndFalls_API(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 
 	if a.IsTurnInFlight(orchestratorTestKey) {
@@ -94,6 +95,7 @@ func TestOrchestrator_InFlightRisesAndFalls_API(t *testing.T) {
 // property hold regardless of scheduling delay — nothing can advance the
 // stub's completion until the test says so.
 func TestOrchestrator_InFlightStaysTrueDuringDelegatedWait(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 
 	started := make(chan struct{})
@@ -155,6 +157,7 @@ func TestOrchestrator_InFlightStaysTrueDuringDelegatedWait(t *testing.T) {
 // OrchestrateFullTurn stamps last_cache_touch on the session's own row. Covers
 // the single chokepoint's promise that "every turn-init path participates".
 func TestOrchestrator_CacheTouchWritesRow(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -198,6 +201,7 @@ func TestOrchestrator_CacheTouchWritesRow(t *testing.T) {
 // warmed the cache, regardless of inference outcome. Touch happens in Phase 1b
 // before RunInference, so the error path doesn't skip it.
 func TestOrchestrator_CacheTouchWritesEvenOnError(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -233,6 +237,7 @@ func TestOrchestrator_CacheTouchWritesEvenOnError(t *testing.T) {
 // inFlight counter nor the cache touch are bumped. Protects the "rate-limited
 // != cache warmed" semantic (the turn never ran, so it touched nothing).
 func TestOrchestrator_RateLimitGateSkipsInFlightAndTouch(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -267,6 +272,7 @@ func TestOrchestrator_RateLimitGateSkipsInFlightAndTouch(t *testing.T) {
 // parent), and the cache touch lands on the branch key ONLY. Root is warmed just
 // once at branch CREATION (TouchRootCacheForBranch), not on every branch turn.
 func TestOrchestrator_BranchTurnKeysInFlightAndCacheByBranchOnly(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -336,6 +342,7 @@ func TestOrchestrator_BranchTurnKeysInFlightAndCacheByBranchOnly(t *testing.T) {
 // stamps last_cache_touch on the branch's ROOT (not the branch key), and is a
 // no-op when handed a root key.
 func TestTouchRootCacheForBranch(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -368,6 +375,7 @@ func TestTouchRootCacheForBranch(t *testing.T) {
 // keepalive turn AND an HTTP /send ("user") warm the cache without counting as
 // user activity — only interactive input (here: voice) does.
 func TestOrchestrator_UserActivityGatedByTrigger(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -413,6 +421,7 @@ func TestOrchestrator_UserActivityGatedByTrigger(t *testing.T) {
 // writes lastMessageTime centrally (after ComposePrompt) — the write that used
 // to live in each transport. Covers the F2 consolidation.
 func TestOrchestrator_CentralLastMessageTimeWrite(t *testing.T) {
+	t.Parallel()
 	a := &Agent{AgentID: "test-agent"}
 	tc := &stubContract{}
 	ts := NewTurnState(context.Background(), orchestratorTestKey, []string{"hi"}, nil)

@@ -27,6 +27,7 @@ func setMissingQueryToolsForTest(missing map[string]bool) func() {
 }
 
 func TestGuardToolResult_UnderLimit(t *testing.T) {
+	t.Parallel()
 	// Proves that results within MaxResultChars are returned unmodified.
 	a := &Agent{MaxResultChars: 100}
 	result := "short result"
@@ -37,6 +38,7 @@ func TestGuardToolResult_UnderLimit(t *testing.T) {
 }
 
 func TestGuardToolResult_Disabled(t *testing.T) {
+	t.Parallel()
 	// Proves that MaxResultChars=0 disables guarding entirely, passing all results through.
 	a := &Agent{MaxResultChars: 0}
 	result := "any length result"
@@ -47,6 +49,7 @@ func TestGuardToolResult_Disabled(t *testing.T) {
 }
 
 func TestGuardToolResult_ExactlyAtLimit(t *testing.T) {
+	t.Parallel()
 	// Proves that the limit is inclusive: a result exactly at MaxResultChars is not truncated.
 	a := &Agent{MaxResultChars: 10}
 	result := "0123456789" // exactly 10 chars
@@ -57,6 +60,7 @@ func TestGuardToolResult_ExactlyAtLimit(t *testing.T) {
 }
 
 func TestGuardToolResult_EngagesOnResultFile(t *testing.T) {
+	t.Parallel()
 	// Proves the guard engages when a tool pre-spilled the full body to disk
 	// (ResultFile set) even if the inline preview is well under MaxResultChars,
 	// so a spilled result is surfaced as a pointer rather than silently returned
@@ -78,6 +82,7 @@ func TestGuardToolResult_EngagesOnResultFile(t *testing.T) {
 }
 
 func TestGuardToolResult_OverLimit_JSONHint(t *testing.T) {
+	t.Parallel()
 	// Proves that oversized JSON results are replaced by a guard message suggesting jq for querying.
 	tmpDir := t.TempDir()
 	a := &Agent{MaxResultChars: 10, ToolResultTempDir: tmpDir}
@@ -99,6 +104,7 @@ func TestGuardToolResult_OverLimit_JSONHint(t *testing.T) {
 }
 
 func TestGuardToolResult_OverLimit_MarkdownHint(t *testing.T) {
+	t.Parallel()
 	// Proves that oversized Markdown results suggest mdq as the query tool.
 	tmpDir := t.TempDir()
 	a := &Agent{MaxResultChars: 10, ToolResultTempDir: tmpDir}
@@ -114,6 +120,7 @@ func TestGuardToolResult_OverLimit_MarkdownHint(t *testing.T) {
 }
 
 func TestGuardToolResult_OverLimit_PlainTextHint(t *testing.T) {
+	t.Parallel()
 	// Proves that oversized plain text results suggest the summary tool as the query approach.
 	tmpDir := t.TempDir()
 	a := &Agent{MaxResultChars: 10, ToolResultTempDir: tmpDir}
@@ -129,6 +136,7 @@ func TestGuardToolResult_OverLimit_PlainTextHint(t *testing.T) {
 }
 
 func TestGuardToolResult_WritesFullContent(t *testing.T) {
+	t.Parallel()
 	// Proves that the full result is written to a temp file even when truncated in the response.
 	tmpDir := t.TempDir()
 	a := &Agent{MaxResultChars: 10, ToolResultTempDir: tmpDir}
@@ -154,6 +162,7 @@ func TestGuardToolResult_WritesFullContent(t *testing.T) {
 }
 
 func TestGuardToolResult_MessageFormat(t *testing.T) {
+	t.Parallel()
 	// Proves that the guard message includes char count, configured limit, and the saved file path.
 	tmpDir := t.TempDir()
 	a := &Agent{MaxResultChars: 10, ToolResultTempDir: tmpDir}
@@ -169,6 +178,7 @@ func TestGuardToolResult_MessageFormat(t *testing.T) {
 }
 
 func TestGuardHint(t *testing.T) {
+	t.Parallel()
 	// Proves that guardHint selects the right query tool hint (jq/mdq/yq/summary) based on content type.
 	path := "/tmp/test-result.txt"
 	tests := []struct {
@@ -204,6 +214,7 @@ func TestGuardHint(t *testing.T) {
 }
 
 func TestLooksLikeTOML(t *testing.T) {
+	t.Parallel()
 	// Proves that looksLikeTOML correctly identifies TOML syntax and rejects non-TOML content.
 	tests := []struct {
 		name    string
@@ -226,6 +237,7 @@ func TestLooksLikeTOML(t *testing.T) {
 }
 
 func TestLooksLikeYAML(t *testing.T) {
+	t.Parallel()
 	// Proves that looksLikeYAML identifies YAML documents and avoids false positives like URLs.
 	tests := []struct {
 		name    string
@@ -248,6 +260,7 @@ func TestLooksLikeYAML(t *testing.T) {
 }
 
 func TestDetectContentExtension(t *testing.T) {
+	t.Parallel()
 	// Proves that detectContentExtension maps content heuristics to the correct file extension.
 	tests := []struct {
 		name    string
@@ -282,6 +295,7 @@ func TestDetectContentExtension(t *testing.T) {
 }
 
 func TestGuardToolResult_FileExtension(t *testing.T) {
+	t.Parallel()
 	// Proves that oversized results are saved with the correct file extension matching the content type.
 	tests := []struct {
 		name     string
@@ -337,6 +351,7 @@ func (stubClient) CountTokens(context.Context, *provider.MessageRequest) (int, e
 func (stubClient) IsCachingAvailable() bool { return false }
 
 func TestGuardToolResult_AutoSummary(t *testing.T) {
+	t.Parallel()
 	// Proves that auto-summarisation is skipped (fallback used) when GroupResolver is nil.
 	tmpDir := t.TempDir()
 	bigResult := strings.Repeat("x", 100)
@@ -369,6 +384,7 @@ func TestGuardToolResult_AutoSummary(t *testing.T) {
 }
 
 func TestGuardToolResult_SkipsSummaryAboveMaxSummaryChars(t *testing.T) {
+	t.Parallel()
 	// Proves that results exceeding MaxSummaryChars bypass summarisation and fall back to the guard message.
 	tmpDir := t.TempDir()
 	bigResult := strings.Repeat("x", 200)
@@ -390,6 +406,7 @@ func TestGuardToolResult_SkipsSummaryAboveMaxSummaryChars(t *testing.T) {
 }
 
 func TestGuardToolResult_FallbackOnNilClient(t *testing.T) {
+	t.Parallel()
 	// Proves that a nil Client causes summarisation to be skipped, using the guard message fallback.
 	tmpDir := t.TempDir()
 	bigResult := strings.Repeat("x", 100)
@@ -410,6 +427,7 @@ func TestGuardToolResult_FallbackOnNilClient(t *testing.T) {
 }
 
 func TestRecentContext_Empty(t *testing.T) {
+	t.Parallel()
 	// Proves that nil and empty message slices produce an empty context string.
 	got := recentContext(nil, 5, 6000)
 	if got != "" {
@@ -423,6 +441,7 @@ func TestRecentContext_Empty(t *testing.T) {
 }
 
 func TestRecentContext_ZeroTurns(t *testing.T) {
+	t.Parallel()
 	// Proves that maxTurns=0 disables context extraction entirely.
 	msgs := []provider.Message{
 		{Role: "user", Content: provider.TextContent("hello")},
@@ -434,6 +453,7 @@ func TestRecentContext_ZeroTurns(t *testing.T) {
 }
 
 func TestRecentContext_ZeroChars(t *testing.T) {
+	t.Parallel()
 	// Proves that maxChars=0 disables context extraction entirely.
 	msgs := []provider.Message{
 		{Role: "user", Content: provider.TextContent("hello")},
@@ -445,6 +465,7 @@ func TestRecentContext_ZeroChars(t *testing.T) {
 }
 
 func TestRecentContext_BasicMessages(t *testing.T) {
+	t.Parallel()
 	// Proves that recentContext formats messages with role prefixes in chronological order.
 	msgs := []provider.Message{
 		{Role: "user", Content: provider.TextContent("What is Go?")},
@@ -473,6 +494,7 @@ func TestRecentContext_BasicMessages(t *testing.T) {
 }
 
 func TestRecentContext_TurnLimit(t *testing.T) {
+	t.Parallel()
 	// Proves that only the most recent N turns are included when maxTurns is set.
 	msgs := []provider.Message{
 		{Role: "user", Content: provider.TextContent("msg1")},
@@ -492,6 +514,7 @@ func TestRecentContext_TurnLimit(t *testing.T) {
 }
 
 func TestRecentContext_CharLimit(t *testing.T) {
+	t.Parallel()
 	// Proves that the total text extracted never exceeds maxChars.
 	msgs := []provider.Message{
 		{Role: "user", Content: provider.TextContent("short")},
@@ -513,6 +536,7 @@ func TestRecentContext_CharLimit(t *testing.T) {
 }
 
 func TestRecentContext_SkipsToolBlocks(t *testing.T) {
+	t.Parallel()
 	// Proves that tool_use and tool_result-only messages are excluded from the context summary.
 	msgs := []provider.Message{
 		{Role: "user", Content: provider.TextContent("run ls")},
@@ -540,6 +564,7 @@ func TestRecentContext_SkipsToolBlocks(t *testing.T) {
 }
 
 func TestGuardToolResult_SkipsSummaryWhenAutoSummariseDisabled(t *testing.T) {
+	t.Parallel()
 	// Proves that AutoSummarise=false prevents summarisation even when all other conditions are met.
 	tmpDir := t.TempDir()
 	bigResult := strings.Repeat("x", 200)
@@ -560,6 +585,7 @@ func TestGuardToolResult_SkipsSummaryWhenAutoSummariseDisabled(t *testing.T) {
 }
 
 func TestCheckMissingQueryTools(t *testing.T) {
+	t.Parallel()
 	// Proves that checkMissingQueryTools returns a map containing only known tool names (jq, mdq, yq) and no unexpected entries.
 	missing := checkMissingQueryTools()
 	// We can't control what's installed, but we can verify the function
@@ -615,6 +641,7 @@ func TestGuardHintPlainTextInstallRecommendation(t *testing.T) {
 }
 
 func TestSummariseToolResultCarriesRouting(t *testing.T) {
+	t.Parallel()
 	// Proves the tool-result auto-summary request carries the SUMMARY
 	// model's [models.*.provider] routing plus the per-model lookup
 	// (RoutingFor) — previously this one-off site sent neither, so a

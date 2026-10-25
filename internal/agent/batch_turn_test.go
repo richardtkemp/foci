@@ -281,6 +281,7 @@ func batchSpecFor(be delegator.Delegator) delegator.Spec {
 // request, the backend's cheap model (CC: haiku); otherwise the backend's
 // batch default (CC: sonnet); otherwise the agent's own model.
 func TestRunBatch_ModelSelection(t *testing.T) {
+	t.Parallel()
 	type batchBackend interface {
 		delegator.Delegator
 		startedOpts() []delegator.StartOptions
@@ -328,6 +329,7 @@ func (b *batchTurnBackend) startedOpts() []delegator.StartOptions {
 // TestRunBatch_RequiresPurpose: an unlabelled batch would be an unattributable
 // api.db row, so it is refused rather than run.
 func TestRunBatch_RequiresPurpose(t *testing.T) {
+	t.Parallel()
 	be := &batchTurnBackend{}
 	be.completeTurns()
 	a := newBatchTestAgent(t, be)
@@ -339,6 +341,7 @@ func TestRunBatch_RequiresPurpose(t *testing.T) {
 // TestRunBatch_NoOwnerGetsSyntheticRoot: with no owner session (nothing in ctx
 // either) the batch is still a well-formed, non-root child key.
 func TestRunBatch_NoOwnerGetsSyntheticRoot(t *testing.T) {
+	t.Parallel()
 	be := &batchTurnBackend{}
 	be.completeTurns()
 	a := newBatchTestAgent(t, be)
@@ -376,6 +379,7 @@ func (b *closeEndsTurnBackend) Close() error {
 // ctx, so a caller that gives up must not be held for the rest of the turn —
 // RunBatch closes the batch backend, which ends it.
 func TestRunBatch_CancelClosesTheBatch(t *testing.T) {
+	t.Parallel()
 	be := &closeEndsTurnBackend{}
 	started := make(chan struct{})
 	be.sendToPaneFn = func(_ context.Context, _ string, h *mockHandler) (*delegator.TurnResult, error) {

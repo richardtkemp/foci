@@ -21,6 +21,7 @@ func renderTmpl(tmpl string, in statuslineInputs) string {
 // historical first-message [meta] line exactly: no prev_cost/prev_tokens,
 // and the empty [state] line is dropped.
 func TestStatuslineDefault_FirstMessage(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 2, 21, 5, 30, 0, 0, time.UTC)
 	got := renderTmpl(DefaultStatuslineTemplate, statuslineInputs{
 		now: now, model: "claude-haiku-4-5", platform: "api", sm: &sessionMeta{},
@@ -35,6 +36,7 @@ func TestStatuslineDefault_FirstMessage(t *testing.T) {
 // cost/token data present carries only time/gap/model/via — prev_cost and
 // prev_tokens are deliberately not in the default template.
 func TestStatuslineDefault_FullLine(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 2, 21, 5, 30, 0, 0, time.UTC)
 	sm := &sessionMeta{
 		lastMessageTime: now.Add(-2 * time.Minute),
@@ -66,6 +68,7 @@ func TestStatuslineDefault_FullLine(t *testing.T) {
 // whenever an alias moves. Both halves are asserted, because a fix that collapsed
 // everything would pass the first half alone while shipping a lie.
 func TestStatuslineModelSpellingCollapses(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 2, 21, 5, 30, 0, 0, time.UTC)
 	render := func(model string) string {
 		return renderTmpl("{model}", statuslineInputs{
@@ -99,6 +102,7 @@ func TestStatuslineModelSpellingCollapses(t *testing.T) {
 // TestStatuslineLineDrop proves rule 3: a line whose every placeholder rendered
 // empty is dropped, while a line with at least one non-empty placeholder stays.
 func TestStatuslineLineDrop(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 2, 21, 5, 30, 0, 0, time.UTC)
 	tmpl := "[meta] {model}\n[empty] {cost}{tokens}\n[lit] no placeholders here"
 	got := renderTmpl(tmpl, statuslineInputs{now: now, model: "m", platform: "api", sm: &sessionMeta{}})
@@ -112,6 +116,7 @@ func TestStatuslineLineDrop(t *testing.T) {
 // TestStatuslinePausedAsk proves the default template's [ask] line renders only
 // while an ask is paused, names the ask id, and is dropped (rule 3) otherwise.
 func TestStatuslinePausedAsk(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 2, 21, 5, 30, 0, 0, time.UTC)
 	paused := true
 	a := &Agent{AskRouter: &tools.AskRouter{
@@ -135,6 +140,7 @@ func TestStatuslinePausedAsk(t *testing.T) {
 // TestStatuslineUnknownField proves an unknown {field} is left verbatim (so
 // typos are visible) and counts as a literal, not a placeholder (line kept).
 func TestStatuslineUnknownField(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 2, 21, 5, 30, 0, 0, time.UTC)
 	got := renderTmpl("x={nope}", statuslineInputs{now: now, sm: &sessionMeta{}})
 	if got != "x={nope}" {
@@ -145,6 +151,7 @@ func TestStatuslineUnknownField(t *testing.T) {
 // TestStatuslineBareFields proves the bare/raw fields always render (no
 // self-omission, no label) even on the first message.
 func TestStatuslineBareFields(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 2, 21, 5, 30, 0, 0, time.UTC)
 	sm := &sessionMeta{prevInput: 7, prevOutput: 3, prevCacheRead: 100, prevCacheWrite: 9}
 	got := renderTmpl("in={tokens_in} out={tokens_out} cR={cache_read} cW={cache_write} c={cost_raw}",
@@ -158,6 +165,7 @@ func TestStatuslineBareFields(t *testing.T) {
 // TestStatuslineCommandEmbedding proves ${...} embeds stdout, flattens newlines,
 // and that a failing command embeds nothing (and drops an all-empty line).
 func TestStatuslineCommandEmbedding(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 2, 21, 5, 30, 0, 0, time.UTC)
 	in := statuslineInputs{now: now, sm: &sessionMeta{}}
 
@@ -193,6 +201,7 @@ func TestStatuslineCommandTimeout(t *testing.T) {
 }
 
 func TestCollapseStatuslineSpaces(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"a  b":      "a b",
 		"  x  y  ":  "x y",

@@ -7,6 +7,7 @@ import (
 )
 
 func TestApplyTransformsQuestion(t *testing.T) {
+	t.Parallel()
 	// Proves that a matching regex rule transforms the message and captures the original via back-reference.
 	rules := CompileTransforms([]config.MessageTransform{
 		{
@@ -23,6 +24,7 @@ func TestApplyTransformsQuestion(t *testing.T) {
 }
 
 func TestApplyTransformsNoMatch(t *testing.T) {
+	t.Parallel()
 	// Proves that messages not matching any rule are returned verbatim.
 	rules := CompileTransforms([]config.MessageTransform{
 		{
@@ -39,6 +41,7 @@ func TestApplyTransformsNoMatch(t *testing.T) {
 }
 
 func TestApplyTransformsChaining(t *testing.T) {
+	t.Parallel()
 	// Proves that rules are applied sequentially, with each rule operating on the output of the previous.
 	rules := CompileTransforms([]config.MessageTransform{
 		{Find: `foo`, Replace: `bar`},
@@ -52,6 +55,7 @@ func TestApplyTransformsChaining(t *testing.T) {
 }
 
 func TestApplyTransformsEmpty(t *testing.T) {
+	t.Parallel()
 	// Proves that nil rules leave the message unchanged without panicking.
 	got := ApplyTransforms(nil, "hello")
 	if got != "hello" {
@@ -60,6 +64,7 @@ func TestApplyTransformsEmpty(t *testing.T) {
 }
 
 func TestCompileTransformsInvalidRegex(t *testing.T) {
+	t.Parallel()
 	// Proves that invalid regex patterns are silently skipped, leaving only the valid rules.
 	rules := CompileTransforms([]config.MessageTransform{
 		{Find: `[invalid`, Replace: "x"},

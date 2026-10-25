@@ -71,6 +71,7 @@ func newDeliveryManager(t *testing.T) (*DelegatedManager, *[]*trackingMockDM, *r
 const deliverySK = "test-agent/c1"
 
 func TestDeliveryStore_PendingThenConsumed(t *testing.T) {
+	t.Parallel()
 	mgr, mocks, lg := newDeliveryManager(t)
 	if _, err := mgr.Get(context.Background(), deliverySK); err != nil {
 		t.Fatal(err)
@@ -94,6 +95,7 @@ func TestDeliveryStore_PendingThenConsumed(t *testing.T) {
 }
 
 func TestDeliveryStore_UndeliveredIsRedelivered(t *testing.T) {
+	t.Parallel()
 	mgr, mocks, lg := newDeliveryManager(t)
 	if _, err := mgr.Get(context.Background(), deliverySK); err != nil {
 		t.Fatal(err)
@@ -116,6 +118,7 @@ func TestDeliveryStore_UndeliveredIsRedelivered(t *testing.T) {
 // /reset means stop: inputs its process never consumed are dropped, and one
 // already handed back and queued for redelivery no longer counts as pending.
 func TestDeliveryStore_ResetDrops(t *testing.T) {
+	t.Parallel()
 	mgr, mocks, lg := newDeliveryManager(t)
 	if _, err := mgr.Get(context.Background(), deliverySK); err != nil {
 		t.Fatal(err)
@@ -139,6 +142,7 @@ func TestDeliveryStore_ResetDrops(t *testing.T) {
 }
 
 func TestDeliveryStore_RemapMovesPending(t *testing.T) {
+	t.Parallel()
 	mgr, mocks, _ := newDeliveryManager(t)
 	if _, err := mgr.Get(context.Background(), deliverySK); err != nil {
 		t.Fatal(err)
@@ -151,6 +155,7 @@ func TestDeliveryStore_RemapMovesPending(t *testing.T) {
 }
 
 func TestRestoreUndelivered(t *testing.T) {
+	t.Parallel()
 	mgr, _, lg := newDeliveryManager(t)
 	ref := delegator.InputRef{ConversationID: "conv", MessageID: "folded-msg"}
 	mgr.upsertUndelivered(deliverySK, delegator.PendingInput{ID: "folded", WorkDir: "/w", SessionID: "s1", Refs: []delegator.InputRef{ref}})

@@ -7,6 +7,7 @@ import (
 )
 
 func TestToolTally_CountsDistinctCalls(t *testing.T) {
+	t.Parallel()
 	tt := newToolTally()
 	tt.start("a", "Read")
 	tt.start("a", "Read") // re-emitted start (opencode)
@@ -26,6 +27,7 @@ func TestToolTally_CountsDistinctCalls(t *testing.T) {
 }
 
 func TestToolTally_IdlessCallsCountByEvent(t *testing.T) {
+	t.Parallel()
 	tt := newToolTally()
 	tt.start("", "x")
 	tt.start("", "y")
@@ -42,6 +44,7 @@ func TestToolTally_IdlessCallsCountByEvent(t *testing.T) {
 // feed the same tally a turn resets and reads, and a reset starts the next
 // turn at zero.
 func TestAttachDelivery_FeedsToolTally(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	be := &mockBackendDT{}
 	const sk = "test/s"

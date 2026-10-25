@@ -52,6 +52,7 @@ func setupAgentWithSetModelBackend(be delegator.Delegator) (*Agent, string) {
 // Agent.SetModel leaves the session's recorded model untouched instead of
 // optimistically claiming the switch happened.
 func TestSetModel_RejectedByBackend_MetadataUnchanged(t *testing.T) {
+	t.Parallel()
 	be := &mockSetModelBackend{err: errors.New(`Model "fake" is not a recognized model id`)}
 	ag, sk := setupAgentWithSetModelBackend(be)
 	ag.SetSessionModel(sk, "claude-sonnet-4-6", "", "", nil)
@@ -69,6 +70,7 @@ func TestSetModel_RejectedByBackend_MetadataUnchanged(t *testing.T) {
 // TestSetModel_ConfirmedByBackend_MetadataUpdated proves the mirror case:
 // once the backend confirms, the new model is recorded.
 func TestSetModel_ConfirmedByBackend_MetadataUpdated(t *testing.T) {
+	t.Parallel()
 	be := &mockSetModelBackend{err: nil}
 	ag, sk := setupAgentWithSetModelBackend(be)
 	ag.SetSessionModel(sk, "claude-sonnet-4-6", "", "", nil)
@@ -86,6 +88,7 @@ func TestSetModel_ConfirmedByBackend_MetadataUpdated(t *testing.T) {
 // is converted before control delivery and foci records the backend's canonical
 // developer-qualified id rather than the user's shorthand.
 func TestSetModel_ResolvedByBackendPersistsCanonicalModel(t *testing.T) {
+	t.Parallel()
 	base := &mockSetModelBackend{}
 	be := &mockResolvingModelBackend{
 		mockSetModelBackend: base,

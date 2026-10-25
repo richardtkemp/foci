@@ -24,6 +24,7 @@ import (
 // its byte cap and fires onOverflow exactly once (used to kill the conversion
 // subprocess), so a zip-bomb expansion can't be buffered into memory. (P2-7.)
 func TestLimitedBufferCapsAndCancels(t *testing.T) {
+	t.Parallel()
 	var cancels int
 	lb := &limitedBuffer{max: 10, onOverflow: func() { cancels++ }}
 
@@ -72,6 +73,7 @@ func TestConvertBoundedKillsRunaway(t *testing.T) {
 }
 
 func TestConvertCSV(t *testing.T) {
+	t.Parallel()
 	// Verifies that CSV documents pass through as plain text
 	// with no external tool dependency.
 	data := []byte("name,age\nAlice,30\nBob,25")
@@ -85,6 +87,7 @@ func TestConvertCSV(t *testing.T) {
 }
 
 func TestConvertPlainText(t *testing.T) {
+	t.Parallel()
 	// Verifies that text/plain documents pass through unchanged.
 	data := []byte("Hello, world!")
 	result := convertDocument(data, mimeTXT, "/tmp/test.txt")
@@ -97,6 +100,7 @@ func TestConvertPlainText(t *testing.T) {
 }
 
 func TestConvertHTML(t *testing.T) {
+	t.Parallel()
 	// Verifies that HTML documents are converted to markdown
 	// using readability extraction.
 	html := []byte(`<html><body>
@@ -122,6 +126,7 @@ func TestConvertHTML(t *testing.T) {
 // web_fetch's readability config (#2049): on the #2011 Lever page, default
 // readability drops the heading-plus-bullets "What We Value" section.
 func TestConvertHTMLKeepsListOnlySections(t *testing.T) {
+	t.Parallel()
 	data, err := os.ReadFile(filepath.Join("..", "tools", "testdata", "webfetch_corpus", "lever_palantir_fdae.html"))
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
@@ -136,6 +141,7 @@ func TestConvertHTMLKeepsListOnlySections(t *testing.T) {
 }
 
 func TestConvertHTMLMinimal(t *testing.T) {
+	t.Parallel()
 	// Verifies that even minimal/broken HTML returns something.
 	html := []byte("<p>Just a paragraph</p>")
 	result := convertDocument(html, mimeHTML, "/tmp/test.html")
@@ -233,6 +239,7 @@ func writeTestXlsx(t *testing.T, path string) {
 // must convert, with every sheet present. The blob has no extension, as app
 // blobs did before #2171.
 func TestConvertXlsxSofficeAllSheets(t *testing.T) {
+	t.Parallel()
 	if _, err := procx.LookPath(procx.Trusted, "soffice"); err != nil {
 		t.Skip("soffice not installed")
 	}
@@ -362,6 +369,7 @@ func TestConvertXlsxCapsFileOutput(t *testing.T) {
 }
 
 func TestConvertUnsupportedMIME(t *testing.T) {
+	t.Parallel()
 	// Verifies that unknown MIME types produce an error.
 	result := convertDocument([]byte("data"), "application/zip", "/tmp/test.zip")
 	if result.Err == "" {
@@ -373,6 +381,7 @@ func TestConvertUnsupportedMIME(t *testing.T) {
 }
 
 func TestIsConvertibleMIME(t *testing.T) {
+	t.Parallel()
 	// Verifies that the MIME type detection is correct, including
 	// parameterized and legacy MIME types.
 	tests := []struct {
@@ -405,6 +414,7 @@ func TestIsConvertibleMIME(t *testing.T) {
 }
 
 func TestLabelForMIME(t *testing.T) {
+	t.Parallel()
 	// Verifies the human-readable labels for MIME types, including
 	// parameterized and legacy MIME types.
 	tests := []struct {
@@ -437,6 +447,7 @@ func TestLabelForMIME(t *testing.T) {
 }
 
 func TestConvertHTMLWithCharsetParam(t *testing.T) {
+	t.Parallel()
 	// Verifies that HTML conversion works when the MIME type includes
 	// a charset parameter (e.g. "text/html; charset=utf-8").
 	html := []byte("<p>Content with charset param</p>")
@@ -477,6 +488,7 @@ func TestConvertLegacyXlsxMIME(t *testing.T) {
 }
 
 func TestConvertPlainTextWithCharset(t *testing.T) {
+	t.Parallel()
 	// Verifies that text/plain with charset parameter passes through unchanged.
 	data := []byte("Plain text with charset")
 	result := convertDocument(data, "text/plain; charset=us-ascii", "/tmp/test.txt")
@@ -489,6 +501,7 @@ func TestConvertPlainTextWithCharset(t *testing.T) {
 }
 
 func TestConvertAttachmentToTextCSV(t *testing.T) {
+	t.Parallel()
 	// Verifies that a CSV attachment is converted
 	// to a text content block with a header and the file contents.
 	ag := &Agent{MaxResultChars: 10000}
@@ -507,6 +520,7 @@ func TestConvertAttachmentToTextCSV(t *testing.T) {
 }
 
 func TestConvertAttachmentToTextTruncation(t *testing.T) {
+	t.Parallel()
 	// Verifies that large converted documents
 	// are truncated with a note pointing to the saved file.
 	ag := &Agent{MaxResultChars: 50}
@@ -544,6 +558,7 @@ func TestConvertAttachmentToTextError(t *testing.T) {
 }
 
 func TestHandleMessageWithCSVAttachment(t *testing.T) {
+	t.Parallel()
 	// Verifies the full pipeline: a CSV attachment
 	// is converted to text and included as a content block in the API request.
 	var receivedReq *provider.MessageRequest
@@ -606,6 +621,7 @@ func TestHandleMessageWithCSVAttachment(t *testing.T) {
 }
 
 func TestHandleMessageWithHTMLAttachment(t *testing.T) {
+	t.Parallel()
 	// Verifies that HTML attachments are
 	// converted to markdown text blocks.
 	var receivedReq *provider.MessageRequest

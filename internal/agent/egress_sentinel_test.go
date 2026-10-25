@@ -103,6 +103,7 @@ func newSentinelTestAgent(t *testing.T, reply string) *Agent {
 // (sentinel included) is delivered. Post-fix the chokepoint strips the trailing
 // sentinel and delivers the clean text.
 func TestAPIEgress_TrailingSentinelStripped(t *testing.T) {
+	t.Parallel()
 	const realReply = "all clean, nothing uncommitted"
 	ag := newSentinelTestAgent(t, realReply+"\n[[NO_RESPONSE]]")
 
@@ -131,6 +132,7 @@ func TestAPIEgress_TrailingSentinelStripped(t *testing.T) {
 // that is *only* the sentinel must be fully suppressed — nothing delivered.
 // This guards against a fix that over-strips into delivering an empty message.
 func TestAPIEgress_PureSentinelSuppressed(t *testing.T) {
+	t.Parallel()
 	ag := newSentinelTestAgent(t, "[[NO_RESPONSE]]")
 
 	sk := "test/iresp"

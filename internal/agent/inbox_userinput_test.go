@@ -26,6 +26,7 @@ func userInputInject(sk, text, askReqID string, run func()) Envelope {
 // run hold — it runs while background work is pending, unlike the same
 // trigger without the user-input marker.
 func TestUserInputInject_RunsWhileBackendPending(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -47,6 +48,7 @@ func TestUserInputInject_RunsWhileBackendPending(t *testing.T) {
 // (ImmediateInject(SourceSteer)) exactly like a typed message, and its Run
 // closure never fires (the in-flight turn delivers).
 func TestUserInputInject_SteersCCWhenTurnInFlight(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.SetInboxSteerMode(true)
@@ -78,6 +80,7 @@ func TestUserInputInject_SteersCCWhenTurnInFlight(t *testing.T) {
 // TestUserInputInject_SteersAPIBuffer: on an API agent (no backend), the
 // answer takes the existing steer path — the API steer buffer.
 func TestUserInputInject_SteersAPIBuffer(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.SetInboxSteerMode(true)
@@ -99,6 +102,7 @@ func TestUserInputInject_SteersAPIBuffer(t *testing.T) {
 // would — requirement 3's "if a text-only user message would steer at this
 // moment, the answer text steers the same way".
 func TestUserInputInject_SteersDuringAdoptedRun(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t) // inbox not started — a queued envelope stays observable
 	a.SetInboxSteerMode(true)
 
@@ -122,6 +126,7 @@ func TestUserInputInject_SteersDuringAdoptedRun(t *testing.T) {
 // inject is NEVER consumed by the pending-ask typed-reply capture (#884) —
 // it IS an ask answer, not a reply to be captured as another answer.
 func TestUserInputInject_NotConsumedByPendingAsk(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.SetInboxSteerMode(true)
@@ -154,6 +159,7 @@ func TestUserInputInject_NotConsumedByPendingAsk(t *testing.T) {
 // message can fall into: a user-input inject must never deny a pending
 // ExitPlanMode plan with its text (#858).
 func TestUserInputInject_NotConsumedByPlanPrompt(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.SetInboxSteerMode(true)
@@ -179,6 +185,7 @@ func TestUserInputInject_NotConsumedByPlanPrompt(t *testing.T) {
 // fails outright, the answer falls back to the session channel for a fresh
 // turn — the same fallback a user message takes, never a drop.
 func TestUserInputInject_SteerDeclinedFallsBackToQueue(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t) // inbox not started — channel content stays observable
 	a.SetInboxSteerMode(true)
 
@@ -203,6 +210,7 @@ func TestUserInputInject_SteerDeclinedFallsBackToQueue(t *testing.T) {
 // the new steer path: during a /compact turn the answer queues for a clean
 // fresh turn instead of folding into the compaction transcript (#856).
 func TestUserInputInject_NoSteerWhenCompacting(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t)
 	a.SetInboxSteerMode(true)
 
@@ -226,6 +234,7 @@ func TestUserInputInject_NoSteerWhenCompacting(t *testing.T) {
 // TestUserInputInject_NoSteerWhenSteerModeOff: with steer mode off the answer
 // queues for a fresh turn, as a user message would.
 func TestUserInputInject_NoSteerWhenSteerModeOff(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t)
 
 	be := &recordingBackend{}
@@ -248,6 +257,7 @@ func TestUserInputInject_NoSteerWhenSteerModeOff(t *testing.T) {
 // waits: the answer waits only for what a user turn waits for — a compaction
 // in flight holds it, and it runs once the compaction clears.
 func TestUserInputInject_WaitsForUserTurnGates(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -270,6 +280,7 @@ func TestUserInputInject_WaitsForUserTurnGates(t *testing.T) {
 // to the answer route: an answer for ask N is not held behind an unrelated,
 // later ask N+1.
 func TestUserInputInject_NotDeferredBehindOtherAsk(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -291,6 +302,7 @@ func TestUserInputInject_NotDeferredBehindOtherAsk(t *testing.T) {
 // same rule: an inject whose AskReqID matches the ask still pending keeps the
 // #1712 same-ask deferral.
 func TestUserInputInject_DeferredBehindSameAsk(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 

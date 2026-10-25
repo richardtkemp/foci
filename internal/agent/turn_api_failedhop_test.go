@@ -38,6 +38,7 @@ func fb429Client() selfRetryingTestClient {
 // gate — the endpoint that limited — leaves the primary's open, and surfaces
 // the usual *RateLimitedError to the user, naming the endpoint that limited.
 func TestFallbackTurn429OnHopClosesHopEndpointGate(t *testing.T) {
+	t.Parallel()
 	ag := fallbackAgent(t, fbStatusClient(529), tupleClientProvider{clients: map[string]provider.Client{
 		"openai/openai": fb429Client(),
 	}})
@@ -68,6 +69,7 @@ func TestFallbackTurn429OnHopClosesHopEndpointGate(t *testing.T) {
 // configured, but 429 is not fallback-eligible, so no hop runs) still closes
 // only the primary's gate — the new hop pairing must not disturb it.
 func TestFallbackTurn429OnPrimaryStillClosesPrimaryGate(t *testing.T) {
+	t.Parallel()
 	ag := fallbackAgent(t, fb429Client(), tupleClientProvider{clients: map[string]provider.Client{
 		"openai/openai": fbEndTurnClient("msg_fh_never"),
 	}})
@@ -168,6 +170,7 @@ func TestFailedTurnRecordsTurnModelAsFinalModel(t *testing.T) {
 // already-closed gate gets the usual *RateLimitedError, and its text names
 // the endpoint whose gate closed — the same rendering the 429 path gives.
 func TestGateBlockedTurnErrorNamesEndpoint(t *testing.T) {
+	t.Parallel()
 	ag := fallbackAgent(t, fbEndTurnClient("msg_ifh_f"), tupleClientProvider{})
 	ag.getOrCreateRateLimitGate("anthropic").Close(time.Now().Add(1 * time.Hour))
 

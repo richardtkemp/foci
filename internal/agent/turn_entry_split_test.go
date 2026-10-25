@@ -148,6 +148,7 @@ func (f *entrySplitFixture) assertTurnRan(t *testing.T) {
 }
 
 func TestEntrySplit_SkippedKeepaliveLeavesNoTurnTrace(t *testing.T) {
+	t.Parallel()
 	f := newEntrySplitFixture(t)
 	f.be.setTurnInFlight(true) // the backend refuses the keepalive's begin
 
@@ -178,6 +179,7 @@ func TestEntrySplit_SkippedKeepaliveLeavesNoTurnTrace(t *testing.T) {
 // that waits in the begin loop and is abandoned there (its context ends). It
 // arrived, so its receipt writes stay; it never ran, so nothing claims it did.
 func TestEntrySplit_AbandonedSystemTurnKeepsReceiptOnly(t *testing.T) {
+	t.Parallel()
 	f := newEntrySplitFixture(t)
 	f.be.setTurnInFlight(true)
 	ctx, cancel := context.WithCancel(WithTrigger(context.Background(), "scheduled_wake"))
@@ -230,6 +232,7 @@ func TestEntrySplit_HumanMessageFailedWriteKeepsReceipt(t *testing.T) {
 }
 
 func TestEntrySplit_AcceptedBeginStampsTurnRan(t *testing.T) {
+	t.Parallel()
 	for _, trigger := range []string{"scheduled_wake", TriggerKeepalive, "voice"} {
 		t.Run(trigger, func(t *testing.T) {
 			f := newEntrySplitFixture(t)
@@ -249,6 +252,7 @@ func TestEntrySplit_AcceptedBeginStampsTurnRan(t *testing.T) {
 // TestEntrySplit_FoldStampsTurnRan: a message folded into the in-flight run
 // reached the model, so it counts as a turn that ran.
 func TestEntrySplit_FoldStampsTurnRan(t *testing.T) {
+	t.Parallel()
 	f := newEntrySplitFixture(t)
 	f.be.setTurnInFlight(true)
 	if err := f.a.HandleMessage(WithTrigger(context.Background(), "voice"), entrySplitKey, []string{"also"}, nil); err != nil {
@@ -264,6 +268,7 @@ func TestEntrySplit_FoldStampsTurnRan(t *testing.T) {
 // to a pending backend question resumes the backend's running turn, so it
 // counts as a turn that ran.
 func TestEntrySplit_TypedAnswerStampsTurnRan(t *testing.T) {
+	t.Parallel()
 	be := &questionBackendDT{mockBackendDT: mockBackendDT{sessionFile: "/tmp/s.jsonl"}, pendingQuestion: "q1"}
 	f := newEntrySplitFixtureOn(t, be, &be.mockBackendDT)
 	if err := f.a.HandleMessage(WithTrigger(context.Background(), "voice"), entrySplitKey, []string{"yes"}, nil); err != nil {
@@ -278,6 +283,7 @@ func TestEntrySplit_TypedAnswerStampsTurnRan(t *testing.T) {
 // TestEntrySplit_StaleRedeliveryLeavesNoTurnTrace: a redelivery whose input
 // was dropped while it queued returns without reaching the backend.
 func TestEntrySplit_StaleRedeliveryLeavesNoTurnTrace(t *testing.T) {
+	t.Parallel()
 	f := newEntrySplitFixture(t)
 	ctx := WithRedelivery(WithTrigger(context.Background(), TriggerRedelivery),
 		Redelivery{Input: delegator.PendingInput{ID: "gone", Text: "old"}, Reason: "restart"})

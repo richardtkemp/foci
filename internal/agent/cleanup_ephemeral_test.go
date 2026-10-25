@@ -52,6 +52,7 @@ func (f *failingBrancher) CleanupSession(_ context.Context, _ delegator.CleanupR
 }
 
 func TestCleanupEphemeralSessions(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -109,6 +110,7 @@ func TestCleanupEphemeralSessions(t *testing.T) {
 }
 
 func TestCleanupEphemeralSessionsDisabled(t *testing.T) {
+	t.Parallel()
 	a := &Agent{AgentID: "alpha"}
 	if n := a.CleanupEphemeralSessions(context.Background(), 0); n != 0 {
 		t.Errorf("disabled (0 days) returned %d, want 0", n)
@@ -128,6 +130,7 @@ func TestCleanupEphemeralSessionsDisabled(t *testing.T) {
 // holding ZERO transcripts older than 30 days on disk. A count that truly
 // reclaimed could not re-report the previous night's total.
 func TestCleanupEphemeral_DoesNotResweep(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -173,6 +176,7 @@ func TestCleanupEphemeral_DoesNotResweep(t *testing.T) {
 // anyway would exempt a real, still-present file from collection forever, and
 // silently — nothing downstream would ever look at it again.
 func TestCleanupEphemeral_FailedDeleteStaysEligible(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)

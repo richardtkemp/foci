@@ -10,6 +10,7 @@ import (
 // TestNewTurnState verifies that the constructor initialises all fields
 // and that CompletionChan is non-nil and open.
 func TestNewTurnState(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	ts := NewTurnState(ctx, "test/session", []string{"hello"}, nil)
 
@@ -38,18 +39,21 @@ func TestNewTurnState(t *testing.T) {
 // TestAPITransportSatisfiesInterface verifies that *APITransport satisfies the
 // TurnContract interface (compile-time check).
 func TestAPITransportSatisfiesInterface(t *testing.T) {
+	t.Parallel()
 	var _ TurnContract = &APITransport{sharedTurnOps{agent: &Agent{}}}
 }
 
 // TestDelegatedTransportSatisfiesInterface verifies that *DelegatedTransport
 // satisfies the TurnContract interface (compile-time check).
 func TestDelegatedTransportSatisfiesInterface(t *testing.T) {
+	t.Parallel()
 	var _ TurnContract = &DelegatedTransport{sharedTurnOps{agent: &Agent{}}}
 }
 
 // TestRunPostTurn_SyncPath verifies that runPostTurn calls post-turn methods
 // inline when CompletionChan is already closed (API path).
 func TestRunPostTurn_SyncPath(t *testing.T) {
+	t.Parallel()
 	ch := make(chan struct{})
 	close(ch) // already completed
 
@@ -77,6 +81,7 @@ func TestRunPostTurn_SyncPath(t *testing.T) {
 // after it closes. This is the delegated path where CC signals completion
 // asynchronously.
 func TestRunPostTurn_BlocksUntilCompletion(t *testing.T) {
+	t.Parallel()
 	ch := make(chan struct{})
 	ts := &TurnState{
 		SessionKey:     "test/blocking",

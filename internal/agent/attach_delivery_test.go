@@ -36,6 +36,7 @@ func (s *eventCaptureSink) snapshot() []turnevent.Event {
 // turnevent.BackendRetry, and never as a RetryNotice, which would post a chat
 // message on Telegram/Discord.
 func TestAttachDelivery_APIRetryReachesRouterAsBackendRetry(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	be := &mockBackendDT{}
 	sk := "test/c2260"
@@ -71,6 +72,7 @@ func TestAttachDelivery_APIRetryReachesRouterAsBackendRetry(t *testing.T) {
 // the closure was never set, so ccstream's nil-check made the call a silent
 // no-op and the app never saw a follow-up prompt.
 func TestAttachDelivery_SubagentPromptReachesRouter(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	be := &mockBackendDT{}
 	sk := "test/c2092"

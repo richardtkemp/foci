@@ -18,6 +18,7 @@ import (
 )
 
 func TestCacheExpiryResolution(t *testing.T) {
+	t.Parallel()
 	at := time.Unix(1_000_000, 0)
 
 	t.Run("config override wins", func(t *testing.T) {
@@ -79,6 +80,7 @@ func TestCacheExpiryResolution(t *testing.T) {
 }
 
 func TestCacheExpiryFromTouch(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -115,6 +117,7 @@ func TestCacheExpiryFromTouch(t *testing.T) {
 // as WARM, which showed a long-cold chat as warm. With no resume id (never
 // ran, or reset cleared it) there is nothing to re-warm, so 0 stays correct.
 func TestCacheExpiry_NoTouchButPriorBackendSessionIsCold(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -141,6 +144,7 @@ func TestCacheExpiry_NoTouchButPriorBackendSessionIsCold(t *testing.T) {
 }
 
 func TestEmitCacheExpiryHook(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -181,6 +185,7 @@ func TestEmitCacheExpiryHook(t *testing.T) {
 }
 
 func TestCacheStrategyInRequest(t *testing.T) {
+	t.Parallel()
 	// Verify that the agent sets CacheStrategy on the API request.
 	var receivedReq *provider.MessageRequest
 
@@ -230,6 +235,7 @@ func TestCacheStrategyInRequest(t *testing.T) {
 }
 
 func TestCacheBustDetection(t *testing.T) {
+	t.Parallel()
 	// Proves that when cache_read_input_tokens drops from a high value to zero on
 	// consecutive turns, the CacheBustAlert hook fires with the correct session and token counts.
 	callCount := 0
@@ -282,6 +288,7 @@ func TestCacheBustDetection(t *testing.T) {
 }
 
 func TestCacheBustSuppressedWhenIdle(t *testing.T) {
+	t.Parallel()
 	// Proves that if a session has been idle longer than CacheBustIdleThreshold,
 	// a cache_read drop is not reported as a bust (cache expiry is expected, not a problem).
 	callCount := 0
@@ -341,6 +348,7 @@ func TestCacheBustSuppressedWhenIdle(t *testing.T) {
 }
 
 func TestCacheBustOnlyOncePerTurn(t *testing.T) {
+	t.Parallel()
 	// A multi-step turn with tool_use iterations should fire at most one cache bust
 	// warning per turn, not one per API call.
 	var callCount atomic.Int32
@@ -440,6 +448,7 @@ func TestCacheBustOnlyOncePerTurn(t *testing.T) {
 }
 
 func TestCacheBustResetAfterManualCompact(t *testing.T) {
+	t.Parallel()
 	// After ResetCacheBaseline (as called by /compact), the next request should
 	// not trigger a false cache bust warning.
 	callCount := 0
@@ -492,6 +501,7 @@ func TestCacheBustResetAfterManualCompact(t *testing.T) {
 }
 
 func TestCacheBustFiresForAllFormats(t *testing.T) {
+	t.Parallel()
 	// Cache bust detection is format-agnostic: any provider that reports
 	// CacheReadInputTokens should trigger alerts when cache reads drop.
 	for _, format := range []string{"gemini", "openai", "anthropic"} {

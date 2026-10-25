@@ -53,6 +53,7 @@ func setupAgentWithMockBackend(t *testing.T, be delegator.Delegator) *Agent {
 // TestSendPermissionResponse_NilManager verifies that a nil DelegatedManager
 // returns nil immediately (no panic, no error).
 func TestSendPermissionResponse_NilManager(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	if err := a.SendPermissionResponse(context.Background(), "test/s", "req-1", "allow"); err != nil {
 		t.Fatalf("expected nil, got %v", err)
@@ -64,6 +65,7 @@ func TestSendPermissionResponse_NilManager(t *testing.T) {
 // is the union of the three shapes it replaced: ccstream/codex (allow, deny,
 // "allow_always:<prefix>" rule) and opencode (allow, deny, "always" remember).
 func TestSendPermissionResponse_ChoiceToDecision(t *testing.T) {
+	t.Parallel()
 	deny := delegator.PermissionDecision{Message: "User denied permission"}
 	for _, tc := range []struct {
 		choice string
@@ -93,6 +95,7 @@ func TestSendPermissionResponse_ChoiceToDecision(t *testing.T) {
 }
 
 func TestSendPermissionResponse_GetError(t *testing.T) {
+	t.Parallel()
 	dm := &DelegatedManager{
 		backends: make(map[string]*managedBackend),
 		NewBackend: func() (delegator.Delegator, error) {
@@ -109,6 +112,7 @@ func TestSendPermissionResponse_GetError(t *testing.T) {
 // TestSendPermissionResponse_EmptyRequestID verifies that a response with no
 // requestID reaches no responder and is reported as an error, not dropped.
 func TestSendPermissionResponse_EmptyRequestID(t *testing.T) {
+	t.Parallel()
 	be := &mockPermBackend{}
 	a := setupAgentWithMockBackend(t, be)
 	if err := a.SendPermissionResponse(context.Background(), "test/s", "", "y"); err == nil {
@@ -122,6 +126,7 @@ func TestSendPermissionResponse_EmptyRequestID(t *testing.T) {
 // TestSendPermissionResponse_NoResponder: a backend without a
 // PermissionResponder can't answer, which is an error rather than a drop.
 func TestSendPermissionResponse_NoResponder(t *testing.T) {
+	t.Parallel()
 	a := setupAgentWithMockBackend(t, noResponderBackend{})
 	if err := a.SendPermissionResponse(context.Background(), "test/s", "req-1", "allow"); err == nil {
 		t.Fatal("expected an error from a backend with no responder, got nil")
@@ -131,6 +136,7 @@ func TestSendPermissionResponse_NoResponder(t *testing.T) {
 // TestSendPermissionResponse_RespondError verifies that the backend's error
 // is propagated.
 func TestSendPermissionResponse_RespondError(t *testing.T) {
+	t.Parallel()
 	be := &mockPermBackend{respondErr: errors.New("protocol error")}
 	a := setupAgentWithMockBackend(t, be)
 	err := a.SendPermissionResponse(context.Background(), "test/s", "req-1", "allow_always:Bash:*")

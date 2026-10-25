@@ -13,6 +13,7 @@ import (
 )
 
 func TestSessionEffort(t *testing.T) {
+	t.Parallel()
 	// Proves that per-session effort overrides are isolated per session and revert to empty when cleared.
 	ag := &Agent{Model: "test"}
 
@@ -40,6 +41,7 @@ func TestSessionEffort(t *testing.T) {
 }
 
 func TestSessionNoCompact(t *testing.T) {
+	t.Parallel()
 	// Proves that per-session no_compact overrides work independently per session and can be cleared to restore the default false value.
 	ag := &Agent{Model: "test"}
 
@@ -67,6 +69,7 @@ func TestSessionNoCompact(t *testing.T) {
 }
 
 func TestSessionSpeed(t *testing.T) {
+	t.Parallel()
 	// Proves that per-session speed overrides are isolated per session and revert to empty when cleared.
 	ag := &Agent{Model: "test"}
 
@@ -94,6 +97,7 @@ func TestSessionSpeed(t *testing.T) {
 }
 
 func TestSessionThinking(t *testing.T) {
+	t.Parallel()
 	// Proves that per-session thinking mode overrides are scoped to a single session and revert to empty when cleared.
 	ag := &Agent{Model: "test"}
 
@@ -121,6 +125,7 @@ func TestSessionThinking(t *testing.T) {
 }
 
 func TestSessionModel(t *testing.T) {
+	t.Parallel()
 	// Proves that per-session model and format overrides replace the agent-wide defaults, are isolated per session, and are fully removed when cleared.
 	ag := &Agent{Model: "anthropic/claude-haiku-4-5", Format: "anthropic"}
 
@@ -151,6 +156,7 @@ func TestSessionModel(t *testing.T) {
 }
 
 func TestSessionContextLimit(t *testing.T) {
+	t.Parallel()
 	// Proves that SessionContextLimit returns config-defined context when
 	// ModelMetaFn matches, and falls back to modelinfo registry otherwise.
 	// Use a genuinely-unknown leaf: the model resolver reduces a
@@ -188,6 +194,7 @@ func TestSessionContextLimit(t *testing.T) {
 // omits the field rather than sending a bogus 0-as-real-limit), else
 // Compactor.EffectiveThreshold applied to SessionContextLimit.
 func TestCompactionLimitTokens(t *testing.T) {
+	t.Parallel()
 	ag := &Agent{Model: "openrouter/z-ai/glm-5-turbo"}
 
 	if got := ag.CompactionLimitTokens("s1"); got != 0 {
@@ -227,6 +234,7 @@ func TestModelCapabilitiesUsesConfiguredBackend(t *testing.T) {
 }
 
 func TestRestoreSessionOverrides(t *testing.T) {
+	t.Parallel()
 	// Proves that session overrides (effort, thinking, speed, model, format, no_compact) survive an agent restart by persisting to and reloading from the session index.
 	dir := t.TempDir()
 	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
@@ -288,6 +296,7 @@ func TestRestoreSessionOverrides(t *testing.T) {
 }
 
 func TestRestoreSessionOverrides_NilSessionIndex(t *testing.T) {
+	t.Parallel()
 	// Proves that RestoreSessionOverrides is safe to call with a nil SessionIndex — it is a no-op that does not panic.
 	ag := &Agent{Model: "test", SessionIndex: nil}
 
@@ -300,6 +309,7 @@ func TestRestoreSessionOverrides_NilSessionIndex(t *testing.T) {
 }
 
 func TestHydrateLastMessageTimeFromCacheTouch(t *testing.T) {
+	t.Parallel()
 	// Proves the restart baseline for lastMessageTime now comes from the DB
 	// (last_cache_touch) via lazy hydration in getSessionMeta — replacing the
 	// old disk-parsing SeedSessionMeta.

@@ -10,6 +10,7 @@ import (
 // the system prompt rebuilt from disk differs from the one the running CC
 // session launched with. Unchanged prompt → no restart, no flow interruption.
 func TestBounceSessionIfPromptChanged(t *testing.T) {
+	t.Parallel()
 	idx := newTestSessionIndex(t)
 	mgr, _ := newTestManager(t, idx)
 	const sk = "test-agent/c1"

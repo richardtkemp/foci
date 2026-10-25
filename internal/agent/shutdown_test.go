@@ -32,6 +32,7 @@ func (c *countingContract) RunInference(ts *TurnState) error {
 func (c *countingContract) RunCompaction(*TurnState) { c.compaction.Add(1) }
 
 func TestOrchestrateFullTurn_RefusesSystemTurnWhileShuttingDown(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	a.BeginShutdown()
 
@@ -53,6 +54,7 @@ func TestOrchestrateFullTurn_RefusesSystemTurnWhileShuttingDown(t *testing.T) {
 // Real-time user input is not refused by the drain gate: it has no durable
 // record to fall back on, so refusing it would lose the message.
 func TestOrchestrateFullTurn_InteractiveTurnRunsWhileShuttingDown(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	a.BeginShutdown()
 
@@ -70,6 +72,7 @@ func TestOrchestrateFullTurn_InteractiveTurnRunsWhileShuttingDown(t *testing.T) 
 // A turn already running when shutdown begins finishes, but its post-turn
 // compaction is skipped — it would run on a backend about to be closed.
 func TestRunPostTurn_SkipsCompactionWhileShuttingDown(t *testing.T) {
+	t.Parallel()
 	for _, shuttingDown := range []bool{false, true} {
 		a := &Agent{}
 		if shuttingDown {
@@ -94,6 +97,7 @@ func TestRunPostTurn_SkipsCompactionWhileShuttingDown(t *testing.T) {
 // An injection reaching the inbox worker after shutdown began is not run, and
 // a caller waiting on it is released with ErrShuttingDown.
 func TestInbox_InjectionRefusedWhileShuttingDown(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.BeginShutdown()
@@ -113,6 +117,7 @@ func TestInbox_InjectionRefusedWhileShuttingDown(t *testing.T) {
 // An injection held at the inject gate (behind background work that will not
 // clear) is released by shutdown and refused, not left holding the worker.
 func TestInbox_InjectGateReleasedByShutdown(t *testing.T) {
+	t.Parallel()
 	be := &mockBackendDT{}
 	be.setAwaiting(true) // background work pending — the gate holds
 	a, cancel := startedAgent(t)
@@ -196,6 +201,7 @@ func TestInbox_InjectionRefusedWhenCtxEndsInReloginGate(t *testing.T) {
 // Dequeue path: the injection is held in the inject gate (a delivering
 // autonomous run in flight) when the inbox ctx ends.
 func TestInbox_InjectionRefusedWhenCtxEndsInInjectGate(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	const sk = "test/s"
 
@@ -303,6 +309,7 @@ func TestInbox_HeldInjectRefusedWhenCtxEndsInPostBatchGate(t *testing.T) {
 // in-flight turn to finish; shutdown begins; the in-flight turn then ends. The
 // system turn must not be dispatched into the draining session.
 func TestDelegatedRunInference_SystemTurnWaitingIsRefusedOnShutdown(t *testing.T) {
+	t.Parallel()
 	be := &mockBackendDT{turnInFlight: true}
 	var dispatched atomic.Bool
 	be.sendToPaneFn = func(_ context.Context, _ string, _ *mockHandler) (*delegator.TurnResult, error) {
@@ -351,6 +358,7 @@ func TestDelegatedRunInference_SystemTurnWaitingIsRefusedOnShutdown(t *testing.T
 }
 
 func TestDelegatedManager_NoBackendCreatedWhileShuttingDown(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		stop func(a *Agent)
@@ -388,6 +396,7 @@ func TestDelegatedManager_NoBackendCreatedWhileShuttingDown(t *testing.T) {
 // Draining refuses NEW backends only: a turn already in flight keeps the
 // running backend it is using.
 func TestDelegatedManager_RunningBackendStillServedWhileShuttingDown(t *testing.T) {
+	t.Parallel()
 	running := &mockBackendDT{}
 	mgr := &DelegatedManager{NewBackend: func() (delegator.Delegator, error) { return running, nil }}
 	a := &Agent{DelegatedManager: mgr}
@@ -402,6 +411,7 @@ func TestDelegatedManager_RunningBackendStillServedWhileShuttingDown(t *testing.
 }
 
 func TestMarkTurnDispatched_StampsOnce(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	a.markTurnDispatched(nil) // nil-safe
 	td := &TurnDetail{StartTime: time.Now().Add(-time.Minute)}
@@ -421,6 +431,7 @@ func TestMarkTurnDispatched_StampsOnce(t *testing.T) {
 // BeginShutdown latches refusal (#2059 regression: Close used to latch it,
 // failing TestL2_Failures_BackendKilledMidTurnByGateway).
 func TestDelegatedManager_CloseAloneAllowsRespawn(t *testing.T) {
+	t.Parallel()
 	var created atomic.Int32
 	mgr := &DelegatedManager{
 		NewBackend: func() (delegator.Delegator, error) {

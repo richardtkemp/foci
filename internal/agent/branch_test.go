@@ -33,6 +33,7 @@ func (b *brancherBackend) CleanupSession(_ context.Context, _ delegator.CleanupR
 // session-end, independent session for background work; API agents always fork
 // a history-reading branch.
 func TestBranchStrategyFor(t *testing.T) {
+	t.Parallel()
 	// A non-nil DelegatedManager marks the agent as delegated. Its zero Spec
 	// declares no CapBranch, so BackendCanBranch() is false → legacy matrix.
 	delegated := &Agent{DelegatedManager: &DelegatedManager{}}
@@ -67,6 +68,7 @@ func TestBranchStrategyFor(t *testing.T) {
 // real backend fork EXCEPT session-end-memory, which stays a plain session fork
 // so its lifecycle can be remapped onto the successor session (#1120).
 func TestBranchStrategyForBranchCapable(t *testing.T) {
+	t.Parallel()
 	mgr := &DelegatedManager{
 		NewBackend: func() (delegator.Delegator, error) { return &brancherBackend{}, nil },
 		Spec:       branchSpec,
@@ -103,6 +105,7 @@ func TestBranchStrategyForBranchCapable(t *testing.T) {
 // for background/consolidation) — and must NOT affect any other branchType,
 // which stays BranchForkBackend (or BranchFork for session-end-memory).
 func TestBranchStrategyForForceInSessionOverride(t *testing.T) {
+	t.Parallel()
 	mgr := &DelegatedManager{
 		NewBackend: func() (delegator.Delegator, error) { return &brancherBackend{}, nil },
 		Spec:       branchSpec,
@@ -183,6 +186,7 @@ func TestBranchStrategyForForceInSessionOverride(t *testing.T) {
 }
 
 func TestForkSession_Routing(t *testing.T) {
+	t.Parallel()
 	t.Run("api agent branches the session store", func(t *testing.T) {
 		a := &Agent{Sessions: session.NewStore(t.TempDir())}
 		bk, ok, err := a.ForkSession(context.Background(), "agent/c123", session.BranchOptions{BranchType: "spawn"})
@@ -224,6 +228,7 @@ func TestForkSession_Routing(t *testing.T) {
 // require inherited context (spawn's clone mode, compaction-memory) still want
 // that answer. This is the other policy, for callers that just want a branch.
 func TestForkOrFreshBranch(t *testing.T) {
+	t.Parallel()
 	newBrancher := func() (delegator.Delegator, error) { return &brancherBackend{}, nil }
 
 	t.Run("can branch but parent has no backend session — fresh branch, nothing inherited", func(t *testing.T) {

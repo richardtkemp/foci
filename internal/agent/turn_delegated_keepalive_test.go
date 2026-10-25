@@ -29,6 +29,7 @@ func runSystemTurn(t *testing.T, a *Agent, trigger string) *TurnState {
 // PendingWorkExempt, so the backend may start it while background work is
 // pending — a two-hour hold would defeat the keepalive's whole purpose.
 func TestRunInference_KeepaliveSetsPendingWorkExempt(t *testing.T) {
+	t.Parallel()
 	be := &mockBackendDT{sessionFile: "/tmp/s.jsonl"}
 	mgr := newMockDelegatedManager(t, be)
 	a := &Agent{Model: "test-model", DelegatedManager: mgr}
@@ -51,6 +52,7 @@ func TestRunInference_KeepaliveSetsPendingWorkExempt(t *testing.T) {
 // control: every other system trigger keeps the pending-work refusal — no
 // exemption, exactly as before.
 func TestRunInference_OtherSystemTriggersNotExempt(t *testing.T) {
+	t.Parallel()
 	for _, trigger := range []string{"reflection", "scheduled_wake", "user", "webhook", "ask_grader"} {
 		t.Run(trigger, func(t *testing.T) {
 			be := &mockBackendDT{sessionFile: "/tmp/s.jsonl"}
@@ -76,6 +78,7 @@ func TestRunInference_OtherSystemTriggersNotExempt(t *testing.T) {
 // waiting for the turn — while another system trigger keeps waiting and
 // retrying (characterisation).
 func TestRunInference_KeepaliveSkippedWhenBeginRefused(t *testing.T) {
+	t.Parallel()
 	be := &mockBackendDT{sessionFile: "/tmp/s.jsonl"}
 	be.setTurnInFlight(true)
 	waits := 0

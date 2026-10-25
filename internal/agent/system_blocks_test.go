@@ -17,6 +17,7 @@ import (
 // layer supports ("auto" and "explicit"), since both mark whatever ends up
 // literally last as the cache breakpoint.
 func TestBuildSystemBlocks_SkillsLast(t *testing.T) {
+	t.Parallel()
 	for _, strategy := range []string{"auto", "explicit"} {
 		t.Run(strategy, func(t *testing.T) {
 			dir := t.TempDir()

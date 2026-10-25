@@ -23,6 +23,7 @@ const (
 // underlying map — true when one or more turns are tracked for that base,
 // false when none are.
 func TestInFlight_CounterReflectsState(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 
 	if a.IsTurnInFlight(testBaseA) {
@@ -44,6 +45,7 @@ func TestInFlight_CounterReflectsState(t *testing.T) {
 // multiple times only decrements once. Defensive guard against accidental
 // double-defer in some future call site.
 func TestInFlight_DoneIdempotent(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	done := a.markInFlight(testBaseA, true)
 	done()
@@ -59,6 +61,7 @@ func TestInFlight_DoneIdempotent(t *testing.T) {
 // cleanly. Each closure is independent — order of done() calls doesn't
 // matter.
 func TestInFlight_MultipleConcurrentTurnsSameBase(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	const N = 10
 	var dones []func()
@@ -84,6 +87,7 @@ func TestInFlight_MultipleConcurrentTurnsSameBase(t *testing.T) {
 // activity under one session base does not leak into IsTurnInFlight reports
 // for another base.
 func TestInFlight_DistinctBases(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 
 	doneA := a.markInFlight(testBaseA, true)
@@ -120,6 +124,7 @@ func TestInFlight_DistinctBases(t *testing.T) {
 // while a root-injected periodic turn (runs under the parent key, no child)
 // must still register under the root identity.
 func TestInFlight_FacetDecoupledFromRoot(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 
 	root := "test-agent/cTEST"
@@ -159,6 +164,7 @@ func TestInFlight_FacetDecoupledFromRoot(t *testing.T) {
 // verify the map-keyed counter doesn't drift under -race. Each goroutine
 // increments and decrements once; each base must end with no in-flight.
 func TestInFlight_RaceSafe(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	const N = 100
 	var wg sync.WaitGroup
@@ -199,6 +205,7 @@ func TestInFlight_RaceSafe(t *testing.T) {
 // must stay zero while a turn is still running and be stamped (within ±1s of
 // now) once the last turn releases.
 func TestInFlight_LastTurnEndRecordedOnZero(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 
 	if got := a.LastTurnEnd(testBaseA); !got.IsZero() {
@@ -228,6 +235,7 @@ func TestInFlight_LastTurnEndRecordedOnZero(t *testing.T) {
 // not on an inner release that leaves the base still in flight — otherwise a
 // back-to-back inner turn boundary would falsely reset the dead-time clock.
 func TestInFlight_LastTurnEndOnlyOnFullZero(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	d1 := a.markInFlight(testBaseA, true)
 	d2 := a.markInFlight(testBaseA, false)
@@ -245,6 +253,7 @@ func TestInFlight_LastTurnEndOnlyOnFullZero(t *testing.T) {
 // TestInFlight_DeliveringSeparate verifies the delivering counter tracks
 // only delivering marks, with the total counter incremented either way.
 func TestInFlight_DeliveringSeparate(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 
 	if a.IsInFlightDelivering(testBaseA) {
@@ -289,6 +298,7 @@ func TestInFlight_DeliveringSeparate(t *testing.T) {
 // channel that closes on the next state change (mark or done) for that base,
 // and that a fresh channel is installed afterwards.
 func TestInFlight_WaitChClosesOnChange(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 
 	ch := a.InFlightWaitCh(testBaseA)
@@ -326,6 +336,7 @@ func TestInFlight_WaitChClosesOnChange(t *testing.T) {
 // TestInFlight_WaitChPerBase verifies that a state change on one base does
 // not wake waiters on another base.
 func TestInFlight_WaitChPerBase(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 
 	chA := a.InFlightWaitCh(testBaseA)
@@ -369,6 +380,7 @@ func recordTurnActivityTS(key, trigger string) *TurnState {
 // TestRecordTurnActivity_WritesCacheTouch verifies the single per-turn write
 // stamps last_cache_touch on the session's own row within ±2s of now.
 func TestRecordTurnActivity_WritesCacheTouch(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -395,6 +407,7 @@ func TestRecordTurnActivity_WritesCacheTouch(t *testing.T) {
 // turn on a key with no index row creates it (subsuming the old
 // RegisterSessionIndex), unlike the former UPDATE-only touchCacheFreshness.
 func TestRecordTurnActivity_CreatesRowIfMissing(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -415,6 +428,7 @@ func TestRecordTurnActivity_CreatesRowIfMissing(t *testing.T) {
 // TestRecordTurnActivity_BranchOwnKeyOnly verifies a branch turn stamps its own
 // cache row but NOT its root's (root is warmed only at branch creation).
 func TestRecordTurnActivity_BranchOwnKeyOnly(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -439,6 +453,7 @@ func TestRecordTurnActivity_BranchOwnKeyOnly(t *testing.T) {
 // TestRecordTurnActivity_NoSessionIndex verifies the write is safe when
 // SessionIndex is nil (partially-constructed Agents).
 func TestRecordTurnActivity_NoSessionIndex(t *testing.T) {
+	t.Parallel()
 	a := &Agent{AgentID: "test-agent"}
 	a.recordTurnActivity(recordTurnActivityTS(testBaseA, "user")) // must not panic
 }
@@ -447,6 +462,7 @@ func TestRecordTurnActivity_NoSessionIndex(t *testing.T) {
 // write advances last_cache_touch but never last_user_activity_at — a round is
 // session progress, not a fresh human interaction.
 func TestTouchTurnActivity_WritesCacheNotUser(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -470,6 +486,7 @@ func TestTouchTurnActivity_WritesCacheNotUser(t *testing.T) {
 // the UPDATE path — the path the heartbeat always hits in practice, since the
 // turn-entry write created the row.
 func TestTouchTurnActivity_MemoryTriggerExcludesActivity(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -521,6 +538,7 @@ func newHeartbeatTestSink(t *testing.T, inFlight bool) (*loggingSink, *session.S
 // TestLoggingSink_HeartbeatTouchesWhenInFlight verifies a per-round event on an
 // in-flight turn, once past the debounce, persists an activity touch.
 func TestLoggingSink_HeartbeatTouchesWhenInFlight(t *testing.T) {
+	t.Parallel()
 	s, idx := newHeartbeatTestSink(t, true)
 	s.lastTouch = time.Now().Add(-time.Minute) // past the debounce window
 	ctx := WithTrigger(context.Background(), "user")
@@ -536,6 +554,7 @@ func TestLoggingSink_HeartbeatTouchesWhenInFlight(t *testing.T) {
 // suppresses a write for a round arriving within the interval (right after the
 // turn-entry stamp).
 func TestLoggingSink_HeartbeatDebounced(t *testing.T) {
+	t.Parallel()
 	s, idx := newHeartbeatTestSink(t, true) // lastTouch seeded to ~now by constructor
 	ctx := WithTrigger(context.Background(), "user")
 
@@ -550,6 +569,7 @@ func TestLoggingSink_HeartbeatDebounced(t *testing.T) {
 // for POST-turn late delivery (no in-flight turn) does not mark phantom
 // activity even when the debounce would otherwise allow it.
 func TestLoggingSink_HeartbeatSkipsWhenNotInFlight(t *testing.T) {
+	t.Parallel()
 	s, idx := newHeartbeatTestSink(t, false) // not in flight
 	s.lastTouch = time.Now().Add(-time.Minute)
 	ctx := WithTrigger(context.Background(), "user")
@@ -564,6 +584,7 @@ func TestLoggingSink_HeartbeatSkipsWhenNotInFlight(t *testing.T) {
 // TestLoggingSink_HeartbeatIgnoresNonRoundEvents verifies fine-grained events
 // (streaming deltas) do not trigger the heartbeat — only completed rounds do.
 func TestLoggingSink_HeartbeatIgnoresNonRoundEvents(t *testing.T) {
+	t.Parallel()
 	s, idx := newHeartbeatTestSink(t, true)
 	s.lastTouch = time.Now().Add(-time.Minute)
 	ctx := WithTrigger(context.Background(), "user")
@@ -616,6 +637,7 @@ func (f *fakeDurableSink) DeliversToPlatform() bool { return false }
 // a platform/chat binding to persist against), autonomousTurnSink must use
 // THAT sink rather than falling to NopSink.
 func TestAutonomousTurnSink_NoConnection_FallsBackToDurableSink(t *testing.T) {
+	t.Parallel()
 	durable := &fakeDurableSink{}
 	a := &Agent{
 		DurableTurnSink: func(sk string) turnevent.Sink {
@@ -653,6 +675,7 @@ func TestAutonomousTurnSink_NoConnection_FallsBackToDurableSink(t *testing.T) {
 // count a reflection's rounds as activity and defeat the reflect-twice guard
 // (isMemoryTrigger).
 func TestLoggingSink_RecordingWrapperNoHeartbeat(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)

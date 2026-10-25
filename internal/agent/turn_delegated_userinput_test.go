@@ -53,6 +53,7 @@ func runUserInputTurn(t *testing.T, a *Agent, texts []string) *TurnState {
 // backend's Pending()>0 refusal (which applies to SourceSystem begins) never
 // applies to it.
 func TestRunInference_UserInput_BeginsAsSourceUser(t *testing.T) {
+	t.Parallel()
 	be := &mockBackendDT{sessionFile: "/tmp/s.jsonl"}
 	mgr := newMockDelegatedManager(t, be)
 	a := &Agent{Model: "test-model", DelegatedManager: mgr}
@@ -70,6 +71,7 @@ func TestRunInference_UserInput_BeginsAsSourceUser(t *testing.T) {
 // TestRunInference_UserInput_FoldsAsSourceUserWhenInFlight pins the in-flight
 // half: with a turn running, the answer folds in as a SourceUser follow-up.
 func TestRunInference_UserInput_FoldsAsSourceUserWhenInFlight(t *testing.T) {
+	t.Parallel()
 	be := &mockBackendDT{sessionFile: "/tmp/s.jsonl", turnInFlight: true}
 	mgr := newMockDelegatedManager(t, be)
 	a := &Agent{Model: "test-model", DelegatedManager: mgr}
@@ -110,6 +112,7 @@ func (b *systemRefusingBackend) ImmediateInject(_ context.Context, inj delegator
 // dispatches — via the SourceUser fold — and never produces a SourceSystem
 // inject.
 func TestRunInference_UserInput_NeverRetriedAsSystem(t *testing.T) {
+	t.Parallel()
 	be := &systemRefusingBackend{}
 	be.sessionFile = "/tmp/s.jsonl"
 	be.turnInFlight = true
@@ -152,6 +155,7 @@ func (b *questionBackend) CancelQuestion(string) error { return nil }
 // an ask answer must never answer a CC AskUserQuestion or elicitation prompt
 // — the answer belongs to the ask; the prompt keeps waiting.
 func TestRunInference_UserInput_DoesNotAnswerBackendPrompt(t *testing.T) {
+	t.Parallel()
 	be := &questionBackend{}
 	be.sessionFile = "/tmp/s.jsonl"
 	mgr := newMockDelegatedManager(t, be)
@@ -171,6 +175,7 @@ func TestRunInference_UserInput_DoesNotAnswerBackendPrompt(t *testing.T) {
 // control: the same trigger WITHOUT the user-input marker keeps the system
 // dispatch (this is the shape ask expiry notices keep, #2233).
 func TestRunInference_NonUserInject_StillSourceSystem(t *testing.T) {
+	t.Parallel()
 	be := &mockBackendDT{sessionFile: "/tmp/s.jsonl"}
 	mgr := newMockDelegatedManager(t, be)
 	a := &Agent{Model: "test-model", DelegatedManager: mgr}

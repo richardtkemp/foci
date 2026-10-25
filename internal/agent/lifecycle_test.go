@@ -33,6 +33,7 @@ func seedSession(t *testing.T, store *session.Store, key string, pairs int) {
 }
 
 func TestResetSession_APIPath(t *testing.T) {
+	t.Parallel()
 	// Proves that ResetSession for a traditional (non-delegated) agent leaves
 	// the session key stable, archives the history in place (the session
 	// reloads empty), clears all per-session state (overrides + metadata
@@ -105,6 +106,7 @@ func TestResetSession_APIPath(t *testing.T) {
 }
 
 func TestResetSession_MemoryAlreadySaved(t *testing.T) {
+	t.Parallel()
 	// Session-end memory enabled, but a prior reflection already covered the
 	// session (nothing substantive since) → the reset saves nothing new and
 	// reports ResetMemoryAlreadySaved. A freshly-registered index row seeds
@@ -142,6 +144,7 @@ func TestResetSession_MemoryAlreadySaved(t *testing.T) {
 }
 
 func TestResetSessionHard_APIPath_ResetsEvenWhenProcessing(t *testing.T) {
+	t.Parallel()
 	// Proves that ResetSessionHard does NOT check the in-flight gate and always
 	// proceeds to archive the session. The whole point of /reset hard is to
 	// recover from a stuck turn — it must never refuse on the in-flight
@@ -175,6 +178,7 @@ func TestResetSessionHard_APIPath_ResetsEvenWhenProcessing(t *testing.T) {
 }
 
 func TestResetSessionHard_NoSessionKey(t *testing.T) {
+	t.Parallel()
 	// Proves that ResetSessionHard rejects an empty session key with a
 	// clear error rather than panicking.
 	ag := &Agent{}
@@ -188,6 +192,7 @@ func TestResetSessionHard_NoSessionKey(t *testing.T) {
 }
 
 func TestResetSessionHard_DelegatedPath_NoMemoryFormation(t *testing.T) {
+	t.Parallel()
 	// Proves that ResetSessionHard for a delegated agent skips the memory
 	// formation prompt entirely (the difference from ResetSession), still
 	// interrupts and closes the backend, and archives the session in place.
@@ -257,6 +262,7 @@ func TestResetSessionHard_DelegatedPath_NoMemoryFormation(t *testing.T) {
 }
 
 func TestResetSession_ErrorWhenProcessing(t *testing.T) {
+	t.Parallel()
 	// Proves that ResetSession returns an error when THIS session is currently
 	// processing a turn, so the user must stop it first.
 	ag := &Agent{}
@@ -272,6 +278,7 @@ func TestResetSession_ErrorWhenProcessing(t *testing.T) {
 }
 
 func TestCompactSession_HappyPath(t *testing.T) {
+	t.Parallel()
 	// Proves the full manual compaction lifecycle: CompactSession calls
 	// doCompact, replaces the history in place under the SAME session key,
 	// fires hooks, and reloads the bootstrap afterward.
@@ -333,6 +340,7 @@ func TestCompactSession_HappyPath(t *testing.T) {
 }
 
 func TestCompactSession_FiresMemoryHook(t *testing.T) {
+	t.Parallel()
 	// Proves that manual /compact fires the CompactionMemoryFunc hook before
 	// summarising, matching auto-compaction behavior. Regression test for the
 	// bug where manual compact silently skipped memory formation, losing the
@@ -381,6 +389,7 @@ func TestCompactSession_FiresMemoryHook(t *testing.T) {
 }
 
 func TestCompactSession_DryRun(t *testing.T) {
+	t.Parallel()
 	// Proves that dry-run mode runs the full compaction pipeline but does NOT
 	// reload the bootstrap and does NOT touch the session content.
 	var turnCount atomic.Int32
@@ -438,6 +447,7 @@ func TestCompactSession_DryRun(t *testing.T) {
 }
 
 func TestCompactSession_ErrorWhenCompactorNil(t *testing.T) {
+	t.Parallel()
 	// Proves that CompactSession returns a clear error when the Compactor
 	// is nil (compaction not configured).
 	ag := &Agent{}
@@ -452,6 +462,7 @@ func TestCompactSession_ErrorWhenCompactorNil(t *testing.T) {
 }
 
 func TestCompactSession_ErrorWhenNoActiveSession(t *testing.T) {
+	t.Parallel()
 	// Proves that CompactSession returns an error when the session key is empty.
 	store := session.NewStore(t.TempDir())
 	compactor := compaction.NewCompactor(store, 0.8)
@@ -470,6 +481,7 @@ func TestCompactSession_ErrorWhenNoActiveSession(t *testing.T) {
 }
 
 func TestCompactSession_ErrorWhenTooFewMessages(t *testing.T) {
+	t.Parallel()
 	// Proves that CompactSession refuses to compact when the session has fewer
 	// than 5 messages, returning a descriptive error with the message count.
 	store := session.NewStore(t.TempDir())
@@ -497,6 +509,7 @@ func TestCompactSession_ErrorWhenTooFewMessages(t *testing.T) {
 }
 
 func TestCompactSession_ErrorWhenEmptySession(t *testing.T) {
+	t.Parallel()
 	// Proves that CompactSession handles a session with zero messages
 	// by returning the "too few messages" error.
 	store := session.NewStore(t.TempDir())
@@ -516,6 +529,7 @@ func TestCompactSession_ErrorWhenEmptySession(t *testing.T) {
 }
 
 func TestCompactSession_Delegated(t *testing.T) {
+	t.Parallel()
 	// Proves that /compact on a delegated agent bypasses the foci message-count
 	// gate, resolves the backend via DelegatedManager, sends "/compact <prompt>"
 	// to CC, and fires start + notify hooks. This is the regression test for
@@ -613,6 +627,7 @@ func (b *summarizingBackendDM) CompactionSummary(context.Context) (string, error
 // notice gets a tappable summary chit (#1390) — and that a failed summary
 // fetch still delivers the notice, just without the chit.
 func TestCompactSession_Delegated_PassesBackendSummary(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		summary string
@@ -656,6 +671,7 @@ func TestCompactSession_Delegated_PassesBackendSummary(t *testing.T) {
 }
 
 func TestCompactSession_Delegated_DryRunUnsupported(t *testing.T) {
+	t.Parallel()
 	// Proves that dry-run mode returns a clear error for delegated agents,
 	// because CC's /compact command has no dry-run counterpart.
 	dm := &DelegatedManager{
@@ -680,6 +696,7 @@ func TestCompactSession_Delegated_DryRunUnsupported(t *testing.T) {
 }
 
 func TestPrepareSessionEndMemory_RemapsBackendAndResumeID(t *testing.T) {
+	t.Parallel()
 	// Proves the reflection-branch handoff for delegated agents:
 	// PrepareSessionEndMemory creates the branch from the still-live history
 	// BEFORE any reset, and RemapSession moves both the live backend and the
@@ -763,6 +780,7 @@ func TestPrepareSessionEndMemory_RemapsBackendAndResumeID(t *testing.T) {
 }
 
 func TestResetDelegatedSession(t *testing.T) {
+	t.Parallel()
 	// Proves the delegated soft reset is non-blocking and key-stable: it
 	// archives the history in place and reloads the bootstrap synchronously,
 	// hands the live backend to the reflection branch, then runs memory
@@ -878,6 +896,7 @@ func TestResetDelegatedSession(t *testing.T) {
 }
 
 func TestResetDelegatedSession_StampsReflectionForRedundancyGuard(t *testing.T) {
+	t.Parallel()
 	// Reproduces #1465: "Memories from the previous session are being saved
 	// in the background" fired even though a session-end-memory reflection
 	// had already run and nothing happened since. RunSessionEndMemory never
@@ -988,6 +1007,7 @@ func TestResetDelegatedSession_StampsReflectionForRedundancyGuard(t *testing.T) 
 }
 
 func TestResetDelegatedSession_MemoryDisabled(t *testing.T) {
+	t.Parallel()
 	// Proves that when SessionEndEnabled is false, the delegated reset skips
 	// memory formation but still closes the backend and archives the session
 	// in place.
@@ -1047,6 +1067,7 @@ func TestResetDelegatedSession_MemoryDisabled(t *testing.T) {
 }
 
 func TestReloadAfterMutation(t *testing.T) {
+	t.Parallel()
 	// Proves that reloadAfterMutation calls Bootstrap.Reload, NudgeReloadFunc,
 	// and InvalidateSystemCaches — the shared reload sequence used by reset,
 	// compact, and reload operations.

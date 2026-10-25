@@ -320,6 +320,7 @@ func newTestSessionIndex(t *testing.T) *session.SessionIndex {
 // ---------------------------------------------------------------------------
 
 func TestGet_ConcurrentSameKeySpawnsOne(t *testing.T) {
+	t.Parallel()
 	// Proves that many concurrent Get calls for the same session key spawn
 	// exactly one backend (not one per caller) and all callers receive the same
 	// instance — the singleflight serialization of creation. Run with -race to
@@ -374,6 +375,7 @@ func TestGet_ConcurrentSameKeySpawnsOne(t *testing.T) {
 }
 
 func TestGet_LazyCreation(t *testing.T) {
+	t.Parallel()
 	// Proves that Get creates a new backend on first call and returns the same
 	// backend on subsequent calls with the same session key base.
 	mgr, mocks := newTestManager(t, nil)
@@ -415,6 +417,7 @@ func TestGet_LazyCreation(t *testing.T) {
 }
 
 func TestGet_DifferentKeys(t *testing.T) {
+	t.Parallel()
 	// Proves that different session key bases produce different backends.
 	mgr, mocks := newTestManager(t, nil)
 
@@ -436,6 +439,7 @@ func TestGet_DifferentKeys(t *testing.T) {
 }
 
 func TestGet_ResumePath(t *testing.T) {
+	t.Parallel()
 	// Proves that a saved session UUID is loaded and passed as ResumeSessionID
 	// on the next Get() call for that session key.
 	idx := newTestSessionIndex(t)
@@ -459,6 +463,7 @@ func TestGet_ResumePath(t *testing.T) {
 }
 
 func TestGet_EffortFuncResolvedPerSession(t *testing.T) {
+	t.Parallel()
 	// Proves the cold-launch effort plumbing (#840): EffortFunc is invoked with
 	// the session key at each Start and its result populates opts.Effort, so a
 	// relaunch re-establishes the level (apply_flag_settings is runtime-only).
@@ -491,6 +496,7 @@ func TestGet_EffortFuncResolvedPerSession(t *testing.T) {
 }
 
 func TestGet_ResumeFailsFallsBackToFresh(t *testing.T) {
+	t.Parallel()
 	// Proves that when Start with a resume ID fails, the manager retries
 	// without the resume ID and succeeds.
 	idx := newTestSessionIndex(t)
@@ -547,6 +553,7 @@ func TestGet_ResumeFailsFallsBackToFresh(t *testing.T) {
 }
 
 func TestGet_NewBackendError(t *testing.T) {
+	t.Parallel()
 	// Proves that Get returns an error when NewBackend fails.
 	mgr := &DelegatedManager{
 		NewBackend: func() (delegator.Delegator, error) {
@@ -566,6 +573,7 @@ func TestGet_NewBackendError(t *testing.T) {
 }
 
 func TestGet_StartError_NoResume(t *testing.T) {
+	t.Parallel()
 	// Proves that Start errors without a resume ID propagate directly.
 	mgr := &DelegatedManager{
 		NewBackend: func() (delegator.Delegator, error) {
@@ -585,6 +593,7 @@ func TestGet_StartError_NoResume(t *testing.T) {
 }
 
 func TestGet_SetsLabelFromBase(t *testing.T) {
+	t.Parallel()
 	// Proves that the StartOptions.Label is derived from the session key base
 	// with slashes replaced by dashes.
 	mgr, mocks := newTestManager(t, nil)
@@ -602,6 +611,7 @@ func TestGet_SetsLabelFromBase(t *testing.T) {
 }
 
 func TestStopSession_InterruptsBackend(t *testing.T) {
+	t.Parallel()
 	// Proves that StopSession calls Interrupt on the correct backend.
 	mgr, mocks := newTestManager(t, nil)
 
@@ -620,6 +630,7 @@ func TestStopSession_InterruptsBackend(t *testing.T) {
 }
 
 func TestStopSession_NoBackend(t *testing.T) {
+	t.Parallel()
 	// Proves that StopSession returns an error when no backend exists.
 	mgr, _ := newTestManager(t, nil)
 
@@ -630,6 +641,7 @@ func TestStopSession_NoBackend(t *testing.T) {
 }
 
 func TestSetPermissionPending_And_IsPermissionPending(t *testing.T) {
+	t.Parallel()
 	// Proves that SetPermissionPending(true) makes IsPermissionPending return
 	// true, and SetPermissionPending(false) clears it.
 	mgr, _ := newTestManager(t, nil)
@@ -656,12 +668,14 @@ func TestSetPermissionPending_And_IsPermissionPending(t *testing.T) {
 }
 
 func TestSetPermissionPending_NoBackend(t *testing.T) {
+	t.Parallel()
 	// Proves that SetPermissionPending is a no-op when no backend exists.
 	mgr, _ := newTestManager(t, nil)
 	mgr.SetPermissionPending("test-agent/nonexistent", true) // should not panic
 }
 
 func TestIsPermissionPending_NoBackend(t *testing.T) {
+	t.Parallel()
 	// Proves that IsPermissionPending returns false when no backend exists.
 	mgr, _ := newTestManager(t, nil)
 	if mgr.IsPermissionPending("test-agent/nonexistent") {
@@ -670,6 +684,7 @@ func TestIsPermissionPending_NoBackend(t *testing.T) {
 }
 
 func TestWaitForPermission_ImmediateReturn(t *testing.T) {
+	t.Parallel()
 	// Proves that WaitForPermission returns immediately when no permission
 	// prompt is pending.
 	mgr, _ := newTestManager(t, nil)
@@ -689,6 +704,7 @@ func TestWaitForPermission_ImmediateReturn(t *testing.T) {
 }
 
 func TestWaitForPermission_NoBackend(t *testing.T) {
+	t.Parallel()
 	// Proves that WaitForPermission returns nil when no backend exists.
 	mgr, _ := newTestManager(t, nil)
 	if err := mgr.WaitForPermission(context.Background(), "test-agent/none"); err != nil {
@@ -697,6 +713,7 @@ func TestWaitForPermission_NoBackend(t *testing.T) {
 }
 
 func TestWaitForPermission_BlocksAndUnblocks(t *testing.T) {
+	t.Parallel()
 	// Proves that WaitForPermission blocks when a permission prompt is pending
 	// and unblocks when SetPermissionPending(false) is called.
 	mgr, _ := newTestManager(t, nil)
@@ -737,6 +754,7 @@ func TestWaitForPermission_BlocksAndUnblocks(t *testing.T) {
 }
 
 func TestWaitForPermission_ContextCancellation(t *testing.T) {
+	t.Parallel()
 	// Proves that WaitForPermission returns ctx.Err() when the context is
 	// cancelled while waiting for a permission prompt to resolve.
 	mgr, _ := newTestManager(t, nil)
@@ -771,6 +789,7 @@ func TestWaitForPermission_ContextCancellation(t *testing.T) {
 }
 
 func TestResetSession_ClosesAndClears(t *testing.T) {
+	t.Parallel()
 	// Proves that ResetSession closes the backend, removes it from the map,
 	// and clears the saved resume ID so the next Get creates a fresh session.
 	idx := newTestSessionIndex(t)
@@ -809,12 +828,14 @@ func TestResetSession_ClosesAndClears(t *testing.T) {
 }
 
 func TestResetSession_NoBackend(t *testing.T) {
+	t.Parallel()
 	// Proves that ResetSession is a no-op when no backend exists (no panic).
 	mgr, _ := newTestManager(t, nil)
 	mgr.ResetSession("test-agent/nonexistent") // should not panic
 }
 
 func TestBounceSession_ClosesButKeepsResumeID(t *testing.T) {
+	t.Parallel()
 	// Proves that BounceSession (#828 Part B) closes the backend and unmaps it
 	// BUT keeps the saved resume ID — so the next Get respawns CC with --resume
 	// <same session>, picking up the now-compacted conversation while Part A's
@@ -855,6 +876,7 @@ func TestBounceSession_ClosesButKeepsResumeID(t *testing.T) {
 }
 
 func TestBounceSession_NoBackend(t *testing.T) {
+	t.Parallel()
 	// Proves that BounceSession is a no-op when no backend exists (no panic).
 	mgr, _ := newTestManager(t, nil)
 	mgr.BounceSession("test-agent/nonexistent") // should not panic
@@ -934,6 +956,7 @@ func TestResetSession_DoesNotHoldManagerLockDuringClose(t *testing.T) {
 }
 
 func TestClose_ShutsDownAll(t *testing.T) {
+	t.Parallel()
 	// Proves that Close shuts down all managed backends and the idle reaper.
 	mgr, mocks := newTestManager(t, nil)
 
@@ -963,6 +986,7 @@ func TestClose_ShutsDownAll(t *testing.T) {
 }
 
 func TestClose_SavesResumeIDs(t *testing.T) {
+	t.Parallel()
 	// Proves that Close persists session UUIDs so backends can be resumed
 	// after restart.
 	idx := newTestSessionIndex(t)
@@ -991,6 +1015,7 @@ func TestClose_SavesResumeIDs(t *testing.T) {
 }
 
 func TestCount(t *testing.T) {
+	t.Parallel()
 	// Proves Count returns the correct number of active backends.
 	mgr, _ := newTestManager(t, nil)
 
@@ -1016,6 +1041,7 @@ func TestCount(t *testing.T) {
 }
 
 func TestSessionFilePath(t *testing.T) {
+	t.Parallel()
 	// Proves that SessionFilePath returns the backend's path when present
 	// and empty string when no backend exists.
 	mgr, mocks := newTestManager(t, nil)
@@ -1041,6 +1067,7 @@ func TestSessionFilePath(t *testing.T) {
 }
 
 func TestWaitForTurn_Success(t *testing.T) {
+	t.Parallel()
 	// Proves that WaitForTurn delegates to the backend's WaitForTurn.
 	mgr, _ := newTestManager(t, nil)
 	sk := "test-agent/c1"
@@ -1056,6 +1083,7 @@ func TestWaitForTurn_Success(t *testing.T) {
 }
 
 func TestWaitForTurn_NoBackend(t *testing.T) {
+	t.Parallel()
 	// Proves that WaitForTurn returns an error when no backend exists.
 	mgr, _ := newTestManager(t, nil)
 
@@ -1066,6 +1094,7 @@ func TestWaitForTurn_NoBackend(t *testing.T) {
 }
 
 func TestCloseIdle(t *testing.T) {
+	t.Parallel()
 	// Proves that closeIdle removes backends that have been idle longer than
 	// the timeout and saves their resume IDs before closing.
 	idx := newTestSessionIndex(t)
@@ -1255,6 +1284,7 @@ func TestClose_DoesNotHoldManagerLockDuringBackendClose(t *testing.T) {
 }
 
 func TestGet_TypingFuncBoundedWhenManagerLockHeld(t *testing.T) {
+	t.Parallel()
 	// Defense-in-depth regression for TODO #749. Even if a future caller
 	// regresses and holds m.mu across be.Close (the original bug), the
 	// typingFunc wrapper must still return when its typingFuncTimeout bound
@@ -1306,6 +1336,7 @@ func TestGet_TypingFuncBoundedWhenManagerLockHeld(t *testing.T) {
 }
 
 func TestGet_TypingFuncRouting(t *testing.T) {
+	t.Parallel()
 	// Proves that SetTypingFunc is called on the backend with a function that
 	// routes typing state through TypingFunc with the correct session key.
 	var gotKey string
@@ -1339,6 +1370,7 @@ func TestGet_TypingFuncRouting(t *testing.T) {
 }
 
 func TestGet_SubagentStatusFuncRouting(t *testing.T) {
+	t.Parallel()
 	// Proves setBackendCallbacks wires the backend's SetOnSubagentStatus (reached
 	// via type assertion, since it is not on the Delegator interface) to route the
 	// running-subagent detail through SubagentStatusFunc with the correct session
@@ -1373,6 +1405,7 @@ func TestGet_SubagentStatusFuncRouting(t *testing.T) {
 }
 
 func TestGet_TypingFuncBoundedWhenDownstreamHangs(t *testing.T) {
+	t.Parallel()
 	// Proves that when the manager's TypingFunc hangs (e.g. Telegram
 	// SetChatTyping waiting on a stale connection), the wrapper returned by
 	// SetTypingFunc returns when its typingFuncTimeout bound fires instead of
@@ -1431,6 +1464,7 @@ func TestGet_TypingFuncBoundedWhenDownstreamHangs(t *testing.T) {
 }
 
 func TestGet_TypingFuncReturnsImmediatelyWhenFast(t *testing.T) {
+	t.Parallel()
 	// Proves that when the manager's TypingFunc returns promptly, the wrapper
 	// returns shortly after — no unnecessary delay introduced by the
 	// bounded-timeout machinery.
@@ -1466,6 +1500,7 @@ func TestGet_TypingFuncReturnsImmediatelyWhenFast(t *testing.T) {
 }
 
 func TestGet_PermissionPromptFuncRouting(t *testing.T) {
+	t.Parallel()
 	// Proves that SetPermissionPromptFunc is called on the backend, and when
 	// invoked it both sets permission pending and calls the manager's func.
 	var gotKey, gotReqID, gotText, gotSummary, gotAttachment string
@@ -1517,6 +1552,7 @@ func TestGet_PermissionPromptFuncRouting(t *testing.T) {
 }
 
 func TestGet_OnPermissionClearedCallback(t *testing.T) {
+	t.Parallel()
 	// Proves that the OnPermissionCleared callback on the backend correctly
 	// clears the permission pending state in the manager.
 	mgr, mocks := newTestManager(t, nil)
@@ -1549,6 +1585,7 @@ func TestGet_OnPermissionClearedCallback(t *testing.T) {
 }
 
 func TestGet_OnSessionReadyPersistsUUID(t *testing.T) {
+	t.Parallel()
 	// Proves that the OnSessionReady callback persists the session UUID via
 	// the SessionIndex.
 	idx := newTestSessionIndex(t)
@@ -1579,6 +1616,7 @@ func TestGet_OnSessionReadyPersistsUUID(t *testing.T) {
 }
 
 func TestResetSession_ClearsPermission(t *testing.T) {
+	t.Parallel()
 	// Proves that ResetSession unblocks any WaitForPermission waiters by
 	// clearing the permission state before closing.
 	mgr, _ := newTestManager(t, nil)
@@ -1612,6 +1650,7 @@ func TestResetSession_ClearsPermission(t *testing.T) {
 }
 
 func TestClose_ClearsPermissions(t *testing.T) {
+	t.Parallel()
 	// Proves that Close unblocks any WaitForPermission waiters on all backends.
 	mgr, _ := newTestManager(t, nil)
 	sk := "test-agent/c1"
@@ -1643,6 +1682,7 @@ func TestClose_ClearsPermissions(t *testing.T) {
 }
 
 func TestGet_StartOptionsPassthrough(t *testing.T) {
+	t.Parallel()
 	// Proves that global StartOpts fields (WorkDir, SystemPrompt, Model) are
 	// passed through to the backend, while Label and SessionKey are overridden.
 	mgr, mocks := newTestManager(t, nil)
@@ -1676,6 +1716,7 @@ func TestGet_StartOptionsPassthrough(t *testing.T) {
 }
 
 func TestGet_SystemPromptFuncOverridesStatic(t *testing.T) {
+	t.Parallel()
 	// Part A (#828/#706): a non-nil SystemPromptFunc returning a non-empty
 	// string takes precedence over the static SystemPrompt at session-start,
 	// so a fresh session picks up character-file edits made after agent setup.
@@ -1703,6 +1744,7 @@ func TestGet_SystemPromptFuncOverridesStatic(t *testing.T) {
 }
 
 func TestGet_SystemPromptFuncEmptyFallsBackToStatic(t *testing.T) {
+	t.Parallel()
 	// If SystemPromptFunc yields empty (e.g. a transient disk read failure),
 	// the static SystemPrompt is preserved rather than shipping an empty prompt.
 	mgr, mocks := newTestManager(t, nil)
@@ -1722,6 +1764,7 @@ func TestGet_SystemPromptFuncEmptyFallsBackToStatic(t *testing.T) {
 }
 
 func TestBackendTurnInFlight(t *testing.T) {
+	t.Parallel()
 	// Proves BackendTurnInFlight reports the running backend's turnActive
 	// (the signal the inbox uses to steer a follow-up into an adopted autonomous
 	// run rather than dispatch a router-clobbering fresh turn, #1274) and is
@@ -1758,6 +1801,7 @@ func TestBackendTurnInFlight(t *testing.T) {
 }
 
 func TestLoadResumeID_NilIndex(t *testing.T) {
+	t.Parallel()
 	// Proves that loadResumeID returns empty string when SessionIndex is nil.
 	mgr := &DelegatedManager{}
 	if got := mgr.loadResumeID("any/key"); got != "" {
@@ -1766,12 +1810,14 @@ func TestLoadResumeID_NilIndex(t *testing.T) {
 }
 
 func TestSaveResumeID_NilIndex(t *testing.T) {
+	t.Parallel()
 	// Proves that saveResumeID is a no-op when SessionIndex is nil (no panic).
 	mgr := &DelegatedManager{}
 	mgr.saveResumeID("any/key", "some-uuid") // should not panic
 }
 
 func TestSaveResumeID_EmptySessionID(t *testing.T) {
+	t.Parallel()
 	// Proves that saveResumeID is a no-op when sessionID is empty.
 	idx := newTestSessionIndex(t)
 	mgr := &DelegatedManager{
@@ -1787,6 +1833,7 @@ func TestSaveResumeID_EmptySessionID(t *testing.T) {
 }
 
 func TestClearResumeID(t *testing.T) {
+	t.Parallel()
 	// Proves that clearResumeID removes the stored session UUID so subsequent
 	// loads return empty.
 	idx := newTestSessionIndex(t)
@@ -1805,12 +1852,14 @@ func TestClearResumeID(t *testing.T) {
 }
 
 func TestClearResumeID_NilIndex(t *testing.T) {
+	t.Parallel()
 	// Proves that clearResumeID is a no-op when SessionIndex is nil.
 	mgr := &DelegatedManager{AgentID: "test-agent"}
 	mgr.clearResumeID("test-agent/c1") // should not panic
 }
 
 func TestRemapSession_MovesBackendAndResumeID(t *testing.T) {
+	t.Parallel()
 	// Proves that RemapSession moves both the live backend map entry and the
 	// persisted cc_resume_id row from oldKey to newKey, leaving the old key
 	// clean — the primitive the reflection-branch handoff is built on.
@@ -1851,6 +1900,7 @@ func TestRemapSession_MovesBackendAndResumeID(t *testing.T) {
 }
 
 func TestRemapSession_ReattachesDeliveryToNewKey(t *testing.T) {
+	t.Parallel()
 	// Proves RemapSession re-points session-scoped delivery (SessionEvents) from
 	// oldKey to newKey. SessionEvents are bound to a router keyed by the string
 	// captured at acquisition (#1068 — attached once, never per turn); without a
@@ -1889,6 +1939,7 @@ func TestRemapSession_ReattachesDeliveryToNewKey(t *testing.T) {
 }
 
 func TestRemapSession_NoOpGuards(t *testing.T) {
+	t.Parallel()
 	// Proves that RemapSession does nothing when oldKey == newKey or newKey is
 	// empty — the backend stays where it is and the resume ID row is untouched.
 	idx := newTestSessionIndex(t)
@@ -1912,6 +1963,7 @@ func TestRemapSession_NoOpGuards(t *testing.T) {
 }
 
 func TestSessionEnd_FreshBridgePathDiffersFromRemapped(t *testing.T) {
+	t.Parallel()
 	// #1120 end-to-end: on /reset the live backend is remapped onto a branch key
 	// (to finish memory formation in the background) while a fresh backend takes
 	// over the original key. Their exec bridges must NOT share a socket path — if
@@ -1951,6 +2003,7 @@ func TestSessionEnd_FreshBridgePathDiffersFromRemapped(t *testing.T) {
 }
 
 func TestGet_RetryAfterInitDeath(t *testing.T) {
+	t.Parallel()
 	// Proves that when a backend starts successfully but dies during init
 	// (WaitReady fails + IsRunning returns false) and a resume ID was used,
 	// the manager clears the stale resume ID and retries without --resume.
@@ -2003,6 +2056,7 @@ func TestGet_RetryAfterInitDeath(t *testing.T) {
 }
 
 func TestGet_NoRetryAfterInitDeath_WithoutResumeID(t *testing.T) {
+	t.Parallel()
 	// Proves that when a backend dies during init but no resume ID was used,
 	// no retry is attempted (there's nothing to clear).
 	var callCount atomic.Int32
@@ -2033,6 +2087,7 @@ func TestGet_NoRetryAfterInitDeath_WithoutResumeID(t *testing.T) {
 }
 
 func TestSetBackendCallbacks(t *testing.T) {
+	t.Parallel()
 	// Proves that setBackendCallbacks wires up callback types on a backend.
 	var typingKey string
 	var typingState bool
@@ -2078,6 +2133,7 @@ func TestSetBackendCallbacks(t *testing.T) {
 // layer reach the right ccstream backend instance. This replaces the
 // pre-Phase-2 PermissionCancelFunc global-callback chain.
 func TestRegisterPromptCancelListener_Routing(t *testing.T) {
+	t.Parallel()
 	idx := newTestSessionIndex(t)
 	mgr, mocks := newTestManager(t, idx)
 
@@ -2113,6 +2169,7 @@ func TestRegisterPromptCancelListener_Routing(t *testing.T) {
 // TestRegisterPromptCancelListener_UnknownSession proves that registering a
 // listener for a session that has no managed backend is a silent no-op.
 func TestRegisterPromptCancelListener_UnknownSession(t *testing.T) {
+	t.Parallel()
 	idx := newTestSessionIndex(t)
 	mgr, _ := newTestManager(t, idx)
 
@@ -2123,6 +2180,7 @@ func TestRegisterPromptCancelListener_UnknownSession(t *testing.T) {
 }
 
 func TestCacheTTL(t *testing.T) {
+	t.Parallel()
 	mgr, _ := newTestManager(t, nil)
 
 	mgr.Spec.CacheTTL = time.Hour
@@ -2162,6 +2220,7 @@ func searchString(s, sub string) bool {
 // the last use is known and older than the retention period; every other
 // case is a plain not-found.
 func TestResumeMissedNotice(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 9, 9, 0, 0, 0, time.UTC)
 	old := now.Add(-31 * 24 * time.Hour)
 	recent := now.Add(-2 * 24 * time.Hour)
@@ -2195,6 +2254,7 @@ func TestResumeMissedNotice(t *testing.T) {
 // TestGet_ResumeFallback_NoticeUsesLastUse proves the manager feeds LastUseFunc
 // and ResumeRetention into the notice on the real fallback path.
 func TestGet_ResumeFallback_NoticeUsesLastUse(t *testing.T) {
+	t.Parallel()
 	idx := newTestSessionIndex(t)
 	var callCount int
 	var noticeText string
@@ -2234,6 +2294,7 @@ func TestGet_ResumeFallback_NoticeUsesLastUse(t *testing.T) {
 // and does the same SetPermissionPending bookkeeping as the permission one,
 // so a blocking question still gates WaitForPermission.
 func TestGet_QuestionPromptFuncRouting(t *testing.T) {
+	t.Parallel()
 	var gotKey, gotReqID, gotText string
 	mgr, mocks := newTestManager(t, nil)
 	mgr.QuestionPromptFunc = func(sk, reqID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
@@ -2278,6 +2339,7 @@ func TestGet_QuestionPromptFuncRouting(t *testing.T) {
 // QuestionPromptFunc is set: no panic, no wiring — that backend keeps
 // presenting its questions through the permission function (#2275).
 func TestGet_QuestionPromptFuncSkippedWithoutSetter(t *testing.T) {
+	t.Parallel()
 	called := false
 	mgr := &DelegatedManager{
 		NewBackend: func() (delegator.Delegator, error) {

@@ -17,6 +17,7 @@ import (
 )
 
 func TestHandleMessageEndTurn(t *testing.T) {
+	t.Parallel()
 	// Proves the basic happy path: a single-turn exchange returns the assistant's
 	// text and saves user+assistant messages to the session store.
 	// Set up mock API server
@@ -65,6 +66,7 @@ func TestHandleMessageEndTurn(t *testing.T) {
 }
 
 func TestHandleMessage_FiresTurnLifecycleHooks(t *testing.T) {
+	t.Parallel()
 	// Proves the session-lifecycle hooks fire at the HandleMessage boundary —
 	// the ONE path every backend turn (platform-driven AND system-injected)
 	// passes through. This is what lets injected turns warm the keepalive
@@ -103,6 +105,7 @@ func TestHandleMessage_FiresTurnLifecycleHooks(t *testing.T) {
 }
 
 func TestHandleMessageWithToolUse(t *testing.T) {
+	t.Parallel()
 	// Proves that tool_use responses trigger tool execution and a follow-up API call,
 	// and that all four messages (user, assistant-with-tool, tool-result, final-assistant)
 	// are persisted in the session.
@@ -186,6 +189,7 @@ func TestHandleMessageWithToolUse(t *testing.T) {
 }
 
 func TestHandleMessageUnknownTool(t *testing.T) {
+	t.Parallel()
 	// Proves that when the model calls a tool that isn't registered, the agent
 	// sends an error tool_result back and the loop continues to a normal end_turn.
 	var callCount atomic.Int32
@@ -241,6 +245,7 @@ func TestHandleMessageUnknownTool(t *testing.T) {
 }
 
 func TestHandleMessageSessionContinuity(t *testing.T) {
+	t.Parallel()
 	// Proves that session history is carried forward between turns: the second
 	// message is sent to the API with the prior exchange already included.
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -281,6 +286,7 @@ func TestHandleMessageSessionContinuity(t *testing.T) {
 }
 
 func TestHandleMessageCancellation(t *testing.T) {
+	t.Parallel()
 	// Verify that a cancelled context causes HandleMessage to return ctx.Err()
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		return &provider.MessageResponse{
@@ -343,6 +349,7 @@ func TestHandleMessageCancellation(t *testing.T) {
 }
 
 func TestTurnInFlight_ClearedAfterHandleMessage(t *testing.T) {
+	t.Parallel()
 	// Proves the per-session in-flight flag is false both before and after a
 	// HandleMessage call, confirming it's correctly cleared on completion.
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -379,6 +386,7 @@ func TestTurnInFlight_ClearedAfterHandleMessage(t *testing.T) {
 }
 
 func TestProcessingDetails(t *testing.T) {
+	t.Parallel()
 	// ProcessingDetails should capture session key, trigger, and timing
 	started := make(chan struct{})
 	var startedOnce sync.Once
@@ -450,6 +458,7 @@ func TestProcessingDetails(t *testing.T) {
 }
 
 func TestTriggerContext(t *testing.T) {
+	t.Parallel()
 	// Proves that WithTrigger stores the trigger string in context and
 	// TriggerFromContext retrieves it, with an empty string as the default.
 	ctx := context.Background()
@@ -464,6 +473,7 @@ func TestTriggerContext(t *testing.T) {
 }
 
 func TestDeferredReply(t *testing.T) {
+	t.Parallel()
 	// Verify that text in tool_use responses is sent via ReplyFunc
 	var callCount atomic.Int32
 
@@ -540,6 +550,7 @@ func TestDeferredReply(t *testing.T) {
 }
 
 func TestNoResponseSentinelPassedThrough(t *testing.T) {
+	t.Parallel()
 	// The agent layer no longer strips [[NO_RESPONSE]] — that's handled
 	// downstream by platform.IsSilent (bot SendText/SendTextToChat and Finalize).
 	// HandleMessage returns the sentinel as-is.

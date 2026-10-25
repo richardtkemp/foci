@@ -13,6 +13,7 @@ import (
 )
 
 func TestHandleMessageRateLimit(t *testing.T) {
+	t.Parallel()
 	// Background trigger: RateLimitFunc must fire so background processes notify users.
 	client := newTestClientWithError(func(_ context.Context, _ *provider.MessageRequest) (*provider.MessageResponse, error) {
 		return nil, &provider.APIError{StatusCode: 429, RetryAfter: "120", Body: "rate limited"}
@@ -94,6 +95,7 @@ func TestHandleMessageRateLimitUserTrigger(t *testing.T) {
 }
 
 func TestHandleMessageOverloaded(t *testing.T) {
+	t.Parallel()
 	// Client returns 529 Overloaded — should get overloaded message, not rate limit.
 	client := newTestClientWithError(func(_ context.Context, _ *provider.MessageRequest) (*provider.MessageResponse, error) {
 		return nil, &provider.APIError{StatusCode: 529, Body: "overloaded"}
@@ -129,6 +131,7 @@ func TestHandleMessageOverloaded(t *testing.T) {
 }
 
 func TestHandleMessageRateLimitNoCallback(t *testing.T) {
+	t.Parallel()
 	// 429 without RateLimitFunc — should still return friendly error, not crash.
 	client := newTestClientWithError(func(_ context.Context, _ *provider.MessageRequest) (*provider.MessageResponse, error) {
 		return nil, &provider.APIError{StatusCode: 429, Body: "rate limited"}
@@ -156,6 +159,7 @@ func TestHandleMessageRateLimitNoCallback(t *testing.T) {
 }
 
 func TestHandleMessageServerError(t *testing.T) {
+	t.Parallel()
 	// Client returns 500 Internal Server Error — should NOT trigger RateLimitFunc.
 	client := newTestClientWithError(func(_ context.Context, _ *provider.MessageRequest) (*provider.MessageResponse, error) {
 		return nil, &provider.APIError{StatusCode: 500, Body: "Internal server error"}
@@ -195,6 +199,7 @@ func TestHandleMessageServerError(t *testing.T) {
 }
 
 func TestHandleMessageServerErrorNoCallback(t *testing.T) {
+	t.Parallel()
 	// 500 without RateLimitFunc — should still return friendly error, not crash.
 	client := newTestClientWithError(func(_ context.Context, _ *provider.MessageRequest) (*provider.MessageResponse, error) {
 		return nil, &provider.APIError{StatusCode: 500, Body: "Internal server error"}

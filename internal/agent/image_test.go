@@ -31,6 +31,7 @@ func makePNG(w, h int) []byte {
 }
 
 func TestDownscaleUnderThreshold(t *testing.T) {
+	t.Parallel()
 	// Proves that images whose pixel count is within the limit are returned byte-for-byte identical with no re-encoding.
 	data := makeJPEG(100, 100) // 10,000 pixels
 	out, mt := maybeDownscaleImage(testImageLogger, "", data, "image/jpeg", 100*100)
@@ -43,6 +44,7 @@ func TestDownscaleUnderThreshold(t *testing.T) {
 }
 
 func TestDownscaleOverThreshold(t *testing.T) {
+	t.Parallel()
 	// Proves that images exceeding the pixel limit are re-encoded at reduced dimensions so the output pixel count does not exceed the threshold.
 	data := makeJPEG(200, 200) // 40,000 pixels
 	maxPixels := 10000         // should trigger downscale
@@ -66,6 +68,7 @@ func TestDownscaleOverThreshold(t *testing.T) {
 }
 
 func TestDownscalePNGtoJPEG(t *testing.T) {
+	t.Parallel()
 	// Proves that PNG input exceeding the pixel limit is converted and returned as valid JPEG (not PNG), normalising the media type for API compatibility.
 	data := makePNG(300, 300) // 90,000 pixels
 	out, mt := maybeDownscaleImage(testImageLogger, "", data, "image/png", 10000)
@@ -79,6 +82,7 @@ func TestDownscalePNGtoJPEG(t *testing.T) {
 }
 
 func TestDownscaleNonImage(t *testing.T) {
+	t.Parallel()
 	// Proves that maybeDownscaleImage is a no-op for non-image MIME types, returning the original data and media type unmodified.
 	data := []byte("not an image")
 	out, mt := maybeDownscaleImage(testImageLogger, "", data, "application/pdf", 1000)
@@ -91,6 +95,7 @@ func TestDownscaleNonImage(t *testing.T) {
 }
 
 func TestDownscaleDisabled(t *testing.T) {
+	t.Parallel()
 	// Proves that passing maxPixels=0 completely disables downscaling, returning even very large images unchanged.
 	data := makeJPEG(1000, 1000)
 	out, mt := maybeDownscaleImage(testImageLogger, "", data, "image/jpeg", 0)
@@ -103,6 +108,7 @@ func TestDownscaleDisabled(t *testing.T) {
 }
 
 func TestDownscaleCorruptData(t *testing.T) {
+	t.Parallel()
 	// Proves that corrupt or undecodable image data does not cause a panic or error — it is passed through unchanged as a safe fallback.
 	data := []byte("corrupt jpeg data that cannot be decoded")
 	out, mt := maybeDownscaleImage(testImageLogger, "", data, "image/jpeg", 1000)

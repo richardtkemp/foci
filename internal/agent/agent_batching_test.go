@@ -13,6 +13,7 @@ import (
 )
 
 func TestThinkingAdaptiveInRequest(t *testing.T) {
+	t.Parallel()
 	// Proves that configuring Thinking="adaptive" on the agent causes the
 	// API request to include a Thinking field with Type="adaptive".
 	var capturedReq *provider.MessageRequest
@@ -54,6 +55,7 @@ func TestThinkingAdaptiveInRequest(t *testing.T) {
 }
 
 func TestThinkingOffOmitsField(t *testing.T) {
+	t.Parallel()
 	// Proves that when Thinking is not configured (empty string), the API request
 	// has no Thinking field, so non-thinking models are not accidentally sent thinking params.
 	var capturedReq *provider.MessageRequest
@@ -92,6 +94,7 @@ func TestThinkingOffOmitsField(t *testing.T) {
 }
 
 func TestThinkingBlocksPreservedInSession(t *testing.T) {
+	t.Parallel()
 	// Proves that thinking content blocks are saved to the session alongside text blocks,
 	// and that the returned string contains only the text (not the thinking content).
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -148,6 +151,7 @@ func TestThinkingBlocksPreservedInSession(t *testing.T) {
 }
 
 func TestBatchPartialAssistantMessages_False(t *testing.T) {
+	t.Parallel()
 	// When batch=false (default), intermediate text should be sent via the
 	// sink as a TextBlock{Intermediate} and the final response text returned
 	// from HandleMessage. This also covers the bug where the second API call
@@ -222,6 +226,7 @@ func TestBatchPartialAssistantMessages_False(t *testing.T) {
 }
 
 func TestBatchPartialAssistantMessages_True(t *testing.T) {
+	t.Parallel()
 	// When batch=true, intermediate text should be accumulated and returned
 	// concatenated from HandleMessage. No intermediate TextBlock events.
 	callCount := 0
@@ -293,6 +298,7 @@ func TestBatchPartialAssistantMessages_True(t *testing.T) {
 }
 
 func TestBatchPartialAssistantMessages_TrueMultipleTexts(t *testing.T) {
+	t.Parallel()
 	// When batch=true with multiple intermediate text blocks and a final text,
 	// all text should be concatenated with double newlines.
 	callCount := 0

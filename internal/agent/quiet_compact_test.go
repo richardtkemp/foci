@@ -23,6 +23,7 @@ import (
 const quietGuardSK = "test-agent/c1"
 
 func TestQuietCompactBlocked_AllGuards(t *testing.T) {
+	t.Parallel()
 	// Proves the one guard set behind quiet compaction, leg by leg: a turn
 	// in flight, a compaction in flight, queued inbox input, and background
 	// work each refuse with a naming reason; a clear session allows "".
@@ -77,6 +78,7 @@ func TestQuietCompactBlocked_AllGuards(t *testing.T) {
 }
 
 func TestQuietCompact_RefusesMidTurn(t *testing.T) {
+	t.Parallel()
 	// Proves QuietCompact refuses while a turn is in flight on the session,
 	// before anything else runs (here: no Compactor is wired at all, so a
 	// non-refusal path would fail loudly with "not configured").
@@ -94,6 +96,7 @@ func TestQuietCompact_RefusesMidTurn(t *testing.T) {
 }
 
 func TestQuietCompact_RefusesBackgroundWorkDespiteUnchangedPrompt(t *testing.T) {
+	t.Parallel()
 	// The deliberate divergence from /compact (#2218): with background work
 	// running and the prompt UNCHANGED — a restart would kill nothing, so
 	// CompactSession proceeds (pinned by
@@ -121,6 +124,7 @@ func TestQuietCompact_RefusesBackgroundWorkDespiteUnchangedPrompt(t *testing.T) 
 }
 
 func TestQuietCompact_APIPath_RunsCompactionPipeline(t *testing.T) {
+	t.Parallel()
 	// Proves QuietCompact on an API agent runs the REAL compactSession
 	// path: the session is compacted in place under the same key, the
 	// pre-compaction memory hook fires, and the notify hooks fire exactly as

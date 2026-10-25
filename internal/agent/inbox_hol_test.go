@@ -91,6 +91,7 @@ func TestInbox_UserMessageRunsWhileInjectHeld(t *testing.T) {
 // batch parks on the held list after the batch, and a later user message
 // still drives while it waits.
 func TestInbox_UserMessageRunsWhileDrainedInjectHeld(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -143,6 +144,7 @@ func TestInbox_UserMessageRunsWhileDrainedInjectHeld(t *testing.T) {
 // (waitTurnSlot). The waiting user batch still drives once the slot frees —
 // the parked inject waits for it — and then runs when the gate opens.
 func TestInbox_UserMessageRunsWhileInjectHeldDuringSlotWait(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	a.TurnLimit = NewTurnLimiter(1)
@@ -194,6 +196,7 @@ func TestInbox_UserMessageRunsWhileInjectHeldDuringSlotWait(t *testing.T) {
 // among themselves once the gate opens (characterisation: the single worker
 // was already serial; the held-list restructure must not reorder).
 func TestInbox_HeldInjectsKeepFIFO(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -258,6 +261,7 @@ func workerlessInbox(t *testing.T, a *Agent, sk string) *sessionInbox {
 // decision): a gate that closed again between the watcher's signal and the
 // release keeps the inject parked.
 func TestInbox_HeldInjectRecheckedBeforeRun(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t)
 
 	sk := "test/s"
@@ -296,6 +300,7 @@ func TestInbox_HeldInjectRecheckedBeforeRun(t *testing.T) {
 // inject parked by the gate when the inbox ctx ends is refused (its waiter
 // released with ErrShuttingDown), never silently dropped.
 func TestInbox_HeldInjectRefusedOnCtxEnd(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -329,6 +334,7 @@ func TestInbox_HeldInjectRefusedOnCtxEnd(t *testing.T) {
 // contract: BeginShutdown opens the gate so the held inject reaches
 // runInject, whose drain gate refuses it (#2059) — run, never a silent drop.
 func TestInbox_HeldInjectRefusedOnShutdown(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -365,6 +371,7 @@ func TestInbox_HeldInjectRefusedOnShutdown(t *testing.T) {
 // is only a hint — after a user turn drives, the inject must STAY held while
 // background work is still in flight, and run only when it actually clears.
 func TestInbox_WatchHintDuringUserTurn_InjectStaysHeld(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -680,6 +687,7 @@ func TestInbox_UserMessageRunsWhileKeepaliveParksBehindAdoptedRun(t *testing.T) 
 // the test itself — the worker-confined held list is quiescent by
 // construction; see workerlessInbox).
 func TestDispatchInject_KeepaliveNotParkedBehindPendingHeldSibling(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t)
 	be := &mockBackendDT{sessionFile: "/tmp/s.jsonl"}
 	be.setAwaiting(true)
@@ -731,6 +739,7 @@ func TestDispatchInject_KeepaliveNotParkedBehindPendingHeldSibling(t *testing.T)
 // it runs at once while the sibling stays parked, and the sibling still runs
 // (behind it, in arrival order) once the gate opens.
 func TestInbox_KeepaliveDoesNotQueueBehindHeldSibling(t *testing.T) {
+	t.Parallel()
 	a, be, release := awaitingHeldAgent(t)
 	defer release()
 
@@ -784,6 +793,7 @@ func TestInbox_KeepaliveDoesNotQueueBehindHeldSibling(t *testing.T) {
 // entry's hold and the release walk runs past still-held siblings — while
 // the wake stays parked until the background work ends.
 func TestInbox_KeepaliveReleasedWhileSiblingStaysHeld(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -885,6 +895,7 @@ func (b *gateFlipBackend) AwaitingAutonomousRun() bool { return b.n.Add(1) == 1 
 // behind A — the walk applies the same same-class FIFO pin dispatch parks by
 // (heldSiblingPins) — rather than run past it.
 func TestReleaseHeld_FIFOWhenGateOpensMidWalk(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t)
 	be := &gateFlipBackend{mockBackendDT: mockBackendDT{sessionFile: "/tmp/s.jsonl"}}
 	a.DelegatedManager = newMockDelegatedManager(t, be)

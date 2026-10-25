@@ -60,6 +60,7 @@ func TestHandleMessageRateLimitGateAllowsSuccessfulUserProbe(t *testing.T) {
 }
 
 func TestHandleMessageRateLimitClosesGate(t *testing.T) {
+	t.Parallel()
 	// A 429 from the API should close the gate so subsequent calls are blocked.
 	client := newTestClientWithError(func(_ context.Context, _ *provider.MessageRequest) (*provider.MessageResponse, error) {
 		return nil, &provider.APIError{StatusCode: 429, RetryAfter: "300", Body: "rate limited"}
@@ -106,6 +107,7 @@ func TestHandleMessageRateLimitClosesGate(t *testing.T) {
 }
 
 func TestDrainRateLimitQueue(t *testing.T) {
+	t.Parallel()
 	// When the gate opens, DrainRateLimitQueue should replay messages.
 	var apiCalls atomic.Int32
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -145,6 +147,7 @@ func TestDrainRateLimitQueue(t *testing.T) {
 }
 
 func TestCanFireBackgroundOperation_RateLimited(t *testing.T) {
+	t.Parallel()
 	// Proves that a closed rate-limit gate makes CanFireBackgroundOperation return false
 	// with a reason that includes "rate limited" and the gate's reset time.
 	ag := &Agent{Endpoint: "anthropic"}
@@ -165,6 +168,7 @@ func TestCanFireBackgroundOperation_RateLimited(t *testing.T) {
 }
 
 func TestCanFireBackgroundOperation_NoSessionKey(t *testing.T) {
+	t.Parallel()
 	// Proves that an empty session key is rejected immediately with "no session key",
 	// without consulting the rate-limit gate.
 	ag := &Agent{}
@@ -180,6 +184,7 @@ func TestCanFireBackgroundOperation_NoSessionKey(t *testing.T) {
 }
 
 func TestCanFireBackgroundOperation_Success(t *testing.T) {
+	t.Parallel()
 	// Proves the full success path: gate open, valid session key, and no
 	// can_run_background gate configured all combine to return canFire=true.
 	ag := &Agent{}
@@ -195,6 +200,7 @@ func TestCanFireBackgroundOperation_Success(t *testing.T) {
 }
 
 func TestCanFireBackgroundOperation_CanRunBackgroundDeclined(t *testing.T) {
+	t.Parallel()
 	// Proves that a can_run_background executable exiting non-zero declines the
 	// operation, while one exiting zero permits it.
 	declined := &Agent{CanRunBackground: "/usr/bin/false"}
@@ -211,6 +217,7 @@ func TestCanFireBackgroundOperation_CanRunBackgroundDeclined(t *testing.T) {
 }
 
 func TestGetOrCreateRateLimitGate(t *testing.T) {
+	t.Parallel()
 	// Proves that getOrCreateRateLimitGate creates gates lazily, returns the same instance
 	// for the same endpoint, uses different instances for different endpoints, and maps
 	// an empty endpoint string to the agent's configured default endpoint.
@@ -242,6 +249,7 @@ func TestGetOrCreateRateLimitGate(t *testing.T) {
 }
 
 func TestPerEndpointRateLimiting(t *testing.T) {
+	t.Parallel()
 	// Proves that rate-limit gates are isolated per endpoint: closing the anthropic gate
 	// blocks only anthropic sessions while gemini sessions remain unaffected.
 	ag := &Agent{
@@ -288,6 +296,7 @@ func TestPerEndpointRateLimiting(t *testing.T) {
 }
 
 func TestDrainRateLimitQueue_MultipleEndpoints(t *testing.T) {
+	t.Parallel()
 	// Proves that rate-limit gate expiry is independent per endpoint: an anthropic gate
 	// with an already-expired time opens while a gemini gate with a future time stays closed.
 	ag := &Agent{Endpoint: "anthropic"}
@@ -315,6 +324,7 @@ func TestDrainRateLimitQueue_MultipleEndpoints(t *testing.T) {
 }
 
 func TestGetOrCreateRateLimitGate_Concurrent(t *testing.T) {
+	t.Parallel()
 	// Proves that concurrent calls to getOrCreateRateLimitGate for the same endpoint
 	// all receive the exact same gate pointer, with no races or duplicate creation.
 	ag := &Agent{}
@@ -351,6 +361,7 @@ func TestGetOrCreateRateLimitGate_Concurrent(t *testing.T) {
 // to: the branch inherits a gemini tuple, the client switches the root to
 // openai inside SendMessage, and the error must close gemini (and only gemini).
 func TestTurnErrorClosesEndpointGateOfTupleUsedByRequest(t *testing.T) {
+	t.Parallel()
 	store := session.NewStore(t.TempDir())
 	ag := &Agent{
 		Client:    tupleClient{name: "default"},
@@ -446,6 +457,7 @@ func TestTurnSuccessReleasesAndBooksTupleUsedByRequest(t *testing.T) {
 // the exact behaviour the 5dace0047 ts.SessionMeta.modelEndpoint fallback
 // broke.
 func TestTurnErrorClosesInheritedRootEndpointGate(t *testing.T) {
+	t.Parallel()
 	client429 := newTestClientWithError(func(_ context.Context, _ *provider.MessageRequest) (*provider.MessageResponse, error) {
 		return nil, &provider.APIError{StatusCode: 429, RetryAfter: "120", Body: "rate limited"}
 	})

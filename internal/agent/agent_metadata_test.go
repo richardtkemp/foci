@@ -24,6 +24,7 @@ func renderDefaultMeta(now time.Time, model, platform string, sm *sessionMeta) s
 }
 
 func TestBuildMetaPrefix(t *testing.T) {
+	t.Parallel()
 	// Proves the default statusline template emits correct timestamp, gap, model,
 	// and platform — and omits prev_cost/prev_tokens — for both the first message
 	// and subsequent messages with prior-turn data.
@@ -75,6 +76,7 @@ func TestBuildMetaPrefix(t *testing.T) {
 }
 
 func TestMetadataInjectedInMessage(t *testing.T) {
+	t.Parallel()
 	// Proves that every outgoing user message has a [meta] prefix containing at least
 	// the model name, and that the original user text is preserved after the prefix.
 	var receivedReq *provider.MessageRequest
@@ -127,6 +129,7 @@ func TestMetadataInjectedInMessage(t *testing.T) {
 // injection time (when the turn was drained) rather than when the user sent
 // the message — producing misleading gap calculations and time= values.
 func TestMetadataUsesReceivedAtNotWallClock(t *testing.T) {
+	t.Parallel()
 	var receivedReq *provider.MessageRequest
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
@@ -275,6 +278,7 @@ func TestRegisterPlatformTrigger(t *testing.T) {
 }
 
 func TestDuplicateMessages(t *testing.T) {
+	t.Parallel()
 	// Proves that DuplicateMessages=true causes the user text to appear twice in the
 	// outgoing message and in the saved session, while [meta] prefix appears only once.
 	var receivedReq *provider.MessageRequest
@@ -324,6 +328,7 @@ func TestDuplicateMessages(t *testing.T) {
 }
 
 func TestDuplicateMessagesDisabled(t *testing.T) {
+	t.Parallel()
 	// Proves that DuplicateMessages=false (the default) sends each user text exactly once.
 	var receivedReq *provider.MessageRequest
 
@@ -455,6 +460,7 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 // is enabled with effort above "low", since thinking already produces
 // high-quality first responses.
 func TestDuplicateMessagesSuppressedWithThinking(t *testing.T) {
+	t.Parallel()
 	var receivedReq *provider.MessageRequest
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {

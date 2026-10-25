@@ -15,6 +15,7 @@ import (
 )
 
 func TestNudgeRegexPrependedToUserMessage(t *testing.T) {
+	t.Parallel()
 	// Proves that regex nudges are prepended as ContentBlocks to the user message
 	// rather than injected as standalone messages. Only one API call is made, and
 	// the nudge blocks appear before the user text in the request.
@@ -97,6 +98,7 @@ func TestNudgeRegexPrependedToUserMessage(t *testing.T) {
 }
 
 func TestNudgePreAnswerDoesNotDropReply(t *testing.T) {
+	t.Parallel()
 	// Proves that when a pre_answer gate fires, the original answer is sent
 	// as an intermediate TextBlock before the gate injects its nudge,
 	// ensuring the initial response is never silently discarded.
@@ -178,6 +180,7 @@ func TestNudgePreAnswerDoesNotDropReply(t *testing.T) {
 }
 
 func TestNudgeRegexBatchMode(t *testing.T) {
+	t.Parallel()
 	// Proves that with BatchPartialAssistantMessages enabled, regex nudges are
 	// prepended to the user message (not standalone messages). Only one API call,
 	// single direct response returned.

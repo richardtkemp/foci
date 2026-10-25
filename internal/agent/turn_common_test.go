@@ -10,6 +10,7 @@ import (
 // TestJoinPrompt_AllFields verifies that JoinPrompt joins all non-empty fields
 // with BLANK-LINE separators and formats follow-up texts with the [follow-up] prefix.
 func TestJoinPrompt_AllFields(t *testing.T) {
+	t.Parallel()
 	p := turnTextParts{
 		MetaPrefix:      "[meta: test]",
 		Reminders:       "reminder1",
@@ -61,6 +62,7 @@ func TestJoinPrompt_AllFields(t *testing.T) {
 // join, an agent cannot tell the injected header from the user's first line.
 // The assertion was a stale contract, not a regression.
 func TestJoinPrompt_SkipsEmptyParts(t *testing.T) {
+	t.Parallel()
 	p := turnTextParts{
 		MetaPrefix: "[meta]",
 		// Reminders, StateDashboard, AttachmentPaths all empty
@@ -80,6 +82,7 @@ func TestJoinPrompt_SkipsEmptyParts(t *testing.T) {
 // TestJoinPrompt_SinglePart verifies that a single non-empty part is returned
 // as-is without any separator.
 func TestJoinPrompt_SinglePart(t *testing.T) {
+	t.Parallel()
 	p := turnTextParts{
 		UserTexts: []string{"only text"},
 	}
@@ -93,6 +96,7 @@ func TestJoinPrompt_SinglePart(t *testing.T) {
 // TestJoinPrompt_Empty verifies that a completely empty turnTextParts produces
 // an empty string.
 func TestJoinPrompt_Empty(t *testing.T) {
+	t.Parallel()
 	p := turnTextParts{}
 
 	got := p.JoinPrompt()
@@ -104,6 +108,7 @@ func TestJoinPrompt_Empty(t *testing.T) {
 // TestJoinPrompt_FollowUpsWithoutPrimary verifies that an empty UserTexts
 // slice produces no user text section at all.
 func TestJoinPrompt_EmptyUserTexts(t *testing.T) {
+	t.Parallel()
 	p := turnTextParts{
 		MetaPrefix: "[meta]",
 		UserTexts:  []string{},
@@ -118,6 +123,7 @@ func TestJoinPrompt_EmptyUserTexts(t *testing.T) {
 // TestJoinPrompt_OnlyFollowUps verifies that when there's a primary text and
 // a single follow-up, the follow-up gets the [follow-up] prefix.
 func TestJoinPrompt_PrimaryAndOneFollowUp(t *testing.T) {
+	t.Parallel()
 	p := turnTextParts{
 		UserTexts: []string{"primary", "extra"},
 	}
@@ -132,6 +138,7 @@ func TestJoinPrompt_PrimaryAndOneFollowUp(t *testing.T) {
 // TestAttachmentPaths_MultipleAttachments verifies that multiple attachments
 // with SavedPath are joined with newlines.
 func TestAttachmentPaths_MultipleAttachments(t *testing.T) {
+	t.Parallel()
 	// We can't call composeTurnText (needs full Agent wiring), but we can
 	// verify the attachment path logic by building turnTextParts manually
 	// and checking JoinPrompt output.
@@ -154,6 +161,7 @@ func TestAttachmentPaths_MultipleAttachments(t *testing.T) {
 // algorithm in isolation: only attachments with non-empty SavedPath produce
 // annotations, and the MIME label comes from labelForMIME.
 func TestAttachmentPathBuilding(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		attachments []platform.Attachment
@@ -227,6 +235,7 @@ func TestAttachmentPathBuilding(t *testing.T) {
 // block) rather than the exact byte layout, so a future statusline change
 // cannot quietly reintroduce the ambiguity.
 func TestJoinPrompt_HeaderIsSeparatedFromUserText(t *testing.T) {
+	t.Parallel()
 	const userText = "Yesterday: social yes, drive 3, self-directed no, feeds low no, cold no, walk yes, drink no"
 	p := turnTextParts{
 		MetaPrefix: "[meta] time=2026-07-29T11:00:02+01:00 gap=none model=opus via=app\n" +

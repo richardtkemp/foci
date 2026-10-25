@@ -9,6 +9,7 @@ import (
 )
 
 func TestRepairDuplicateToolIDs_NoDuplicates(t *testing.T) {
+	t.Parallel()
 	// Proves that sessions with no duplicate tool IDs are returned unchanged with repaired=false.
 	// No duplicates: messages should be returned unchanged.
 	msgs := []provider.Message{
@@ -45,6 +46,7 @@ func TestRepairDuplicateToolIDs_NoDuplicates(t *testing.T) {
 }
 
 func TestRepairDuplicateToolIDs_DuplicateToolUse(t *testing.T) {
+	t.Parallel()
 	// Proves that a repeated tool_use ID is renamed in later occurrences, with matching tool_results updated.
 	// Duplicate tool_use ID: toolu_1 appears in messages 1 and 3.
 	// The second occurrence and its matching tool_result should be rewritten.
@@ -115,6 +117,7 @@ func TestRepairDuplicateToolIDs_DuplicateToolUse(t *testing.T) {
 }
 
 func TestRepairDuplicateToolIDs_DuplicateToolResults(t *testing.T) {
+	t.Parallel()
 	// Proves that duplicate tool_result messages (from defer replay) are collapsed, keeping only the first.
 	// Duplicate tool_results without duplicate tool_uses: happens when the defer
 	// safety-net replays messages that were already saved to disk.
@@ -162,6 +165,7 @@ func TestRepairDuplicateToolIDs_DuplicateToolResults(t *testing.T) {
 }
 
 func TestRepairDuplicateToolIDs_DuplicateResultsSameMessage(t *testing.T) {
+	t.Parallel()
 	// Proves that two tool_results for the same tool_use_id within one message are deduplicated to one.
 	// Two tool_results for the same tool_use_id within a single user message.
 	// Only the first should be kept.
@@ -200,6 +204,7 @@ func TestRepairDuplicateToolIDs_DuplicateResultsSameMessage(t *testing.T) {
 }
 
 func TestSanitizeEmptyTextBlocks(t *testing.T) {
+	t.Parallel()
 	// Proves that empty text blocks are stripped from messages, with all-empty messages replaced by a placeholder.
 	// Empty text blocks should be removed; messages with only empty text
 	// blocks get a placeholder.
@@ -237,6 +242,7 @@ func TestSanitizeEmptyTextBlocks(t *testing.T) {
 }
 
 func TestRepairDuplicateToolIDs_SameMessageBatch(t *testing.T) {
+	t.Parallel()
 	// Proves that Gemini-style batches where all tool_use blocks share one ID are repaired with unique IDs
 	// and the corresponding tool_results are rewritten to match.
 	// Gemini emits ALL tool_use blocks with the same ID in a single message.
@@ -319,6 +325,7 @@ func TestRepairDuplicateToolIDs_SameMessageBatch(t *testing.T) {
 }
 
 func TestRepairDuplicateToolIDs_OrphanedDedupUse(t *testing.T) {
+	t.Parallel()
 	// Proves that orphaned tool_use blocks (no matching tool_result due to partial replay) get synthetic results.
 	// More duplicate tool_use blocks than tool_results (corruption from partial
 	// defer replay that wrote assistant messages but not tool_results).
@@ -377,6 +384,7 @@ func TestRepairDuplicateToolIDs_OrphanedDedupUse(t *testing.T) {
 }
 
 func TestRepairDuplicateToolIDs_EmptyMessages(t *testing.T) {
+	t.Parallel()
 	// Proves that nil input is handled gracefully, returning nil with repaired=false.
 	// Empty messages should be handled gracefully.
 	result, repaired := repairDuplicateToolIDs(nil, func(format string, args ...any) {
@@ -391,6 +399,7 @@ func TestRepairDuplicateToolIDs_EmptyMessages(t *testing.T) {
 }
 
 func TestStripUnmatchedToolUse_MidBatch(t *testing.T) {
+	t.Parallel()
 	// Proves that when only some tool_use blocks have matching tool_results,
 	// the unmatched ones are stripped while thinking and text blocks are kept.
 	content := []provider.ContentBlock{
@@ -419,6 +428,7 @@ func TestStripUnmatchedToolUse_MidBatch(t *testing.T) {
 }
 
 func TestStripUnmatchedToolUse_AllStripped(t *testing.T) {
+	t.Parallel()
 	// Proves that when no tool_use blocks have matching results (steer before
 	// first tool), all are stripped and an "(interrupted)" placeholder is inserted.
 	content := []provider.ContentBlock{
@@ -443,6 +453,7 @@ func TestStripUnmatchedToolUse_AllStripped(t *testing.T) {
 }
 
 func TestRepairMissingAssistantMessages_ConsecutiveUsers(t *testing.T) {
+	t.Parallel()
 	// Proves that two consecutive user messages get a synthetic assistant inserted between them.
 	msgs := []provider.Message{
 		{Role: "user", Content: provider.TextContent("hello")},
@@ -473,6 +484,7 @@ func TestRepairMissingAssistantMessages_ConsecutiveUsers(t *testing.T) {
 }
 
 func TestRepairMissingAssistantMessages_EmptyAssistant(t *testing.T) {
+	t.Parallel()
 	// Proves that an assistant message with zero content blocks gets a placeholder.
 	msgs := []provider.Message{
 		{Role: "user", Content: provider.TextContent("hello")},
@@ -494,6 +506,7 @@ func TestRepairMissingAssistantMessages_EmptyAssistant(t *testing.T) {
 }
 
 func TestRepairMissingAssistantMessages_MultipleConsecutive(t *testing.T) {
+	t.Parallel()
 	// Proves that three consecutive user messages get two synthetic assistants inserted.
 	msgs := []provider.Message{
 		{Role: "user", Content: provider.TextContent("a")},
@@ -519,6 +532,7 @@ func TestRepairMissingAssistantMessages_MultipleConsecutive(t *testing.T) {
 }
 
 func TestRepairMissingAssistantMessages_CleanSession(t *testing.T) {
+	t.Parallel()
 	// Proves that a well-formed session with proper alternation is returned unchanged.
 	msgs := []provider.Message{
 		{Role: "user", Content: provider.TextContent("hello")},
@@ -537,6 +551,7 @@ func TestRepairMissingAssistantMessages_CleanSession(t *testing.T) {
 }
 
 func TestRepairMissingAssistantMessages_MixedCorruption(t *testing.T) {
+	t.Parallel()
 	// Proves that both consecutive users and empty assistant content are repaired in one pass.
 	msgs := []provider.Message{
 		{Role: "user", Content: provider.TextContent("hello")},
@@ -564,6 +579,7 @@ func TestRepairMissingAssistantMessages_MixedCorruption(t *testing.T) {
 }
 
 func TestStripUnmatchedToolUse_NoneStripped(t *testing.T) {
+	t.Parallel()
 	// Proves that when all tool_use blocks have matching results, the content
 	// is returned unchanged with stripped=false.
 	content := []provider.ContentBlock{

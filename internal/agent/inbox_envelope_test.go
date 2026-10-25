@@ -15,6 +15,7 @@ import (
 // dropped field here is dropped for both platforms at once, which is exactly
 // what the unification is for.
 func TestEnvelopeFromQueuedMessage(t *testing.T) {
+	t.Parallel()
 	recv := time.Date(2026, 10, 14, 1, 2, 3, 0, time.UTC)
 	atts := []platform.Attachment{{Type: "photo", Data: []byte{1, 2}, MimeType: "image/png"}}
 	original := "raw-platform-original"

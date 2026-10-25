@@ -15,6 +15,7 @@ import (
 )
 
 func TestSteerCheckFromCtx_NilCallbacks(t *testing.T) {
+	t.Parallel()
 	// Proves that steerBlocks returns nil and does not panic when there is
 	// no Steerer attached to the context.
 	if got := steerBlocks(context.Background()); got != nil {
@@ -23,6 +24,7 @@ func TestSteerCheckFromCtx_NilCallbacks(t *testing.T) {
 }
 
 func TestSteerCheckFromCtx_NilFunc(t *testing.T) {
+	t.Parallel()
 	// Proves that steerBlocks returns nil when a Steerer returns an empty
 	// slice — no [user] blocks should be generated.
 	ctx := turnevent.WithSteerer(context.Background(), turnevent.SteererFunc(func() []string { return nil }))
@@ -32,6 +34,7 @@ func TestSteerCheckFromCtx_NilFunc(t *testing.T) {
 }
 
 func TestSteerCheckFromCtx_ReturnsText(t *testing.T) {
+	t.Parallel()
 	// Proves that steerBlocks pulls from the ctx-attached Steerer and wraps
 	// each pending steer in a `[user] ...` content block.
 	ctx := turnevent.WithSteerer(context.Background(), turnevent.SteererFunc(func() []string {
@@ -44,6 +47,7 @@ func TestSteerCheckFromCtx_ReturnsText(t *testing.T) {
 }
 
 func TestExecuteToolCalls_SteerSkipsRemainingTools(t *testing.T) {
+	t.Parallel()
 	// Proves that when SteerCheckFunc returns a non-empty string after the first tool executes, all subsequent tools in the batch are skipped with error results and the steer text is injected as a [user] text block.
 	registry := tools.NewRegistry()
 	var toolCalls int
@@ -105,6 +109,7 @@ func TestExecuteToolCalls_SteerSkipsRemainingTools(t *testing.T) {
 }
 
 func TestExecuteToolCalls_NoSteer(t *testing.T) {
+	t.Parallel()
 	// Proves that when SteerCheckFunc always returns empty, executeToolCalls runs all tools to completion and returns only tool_result blocks with no injected text.
 	registry := tools.NewRegistry()
 	var toolCalls int
@@ -149,6 +154,7 @@ func TestExecuteToolCalls_NoSteer(t *testing.T) {
 }
 
 func TestExecuteToolCalls_SteerBeforeFirstTool(t *testing.T) {
+	t.Parallel()
 	// Proves that when SteerCheckFunc returns a steer message before the first tool runs, zero tools execute and every tool in the batch gets a synthetic skip result.
 	registry := tools.NewRegistry()
 	var toolCalls int
@@ -193,6 +199,7 @@ func TestExecuteToolCalls_SteerBeforeFirstTool(t *testing.T) {
 }
 
 func TestSteerInjectedAfterToolBatch(t *testing.T) {
+	t.Parallel()
 	// Proves that a steer message polled after the tool batch completes (not between individual tools) is injected as a [user] text block in the next API request, allowing the model to honour the redirect.
 	var callCount atomic.Int32
 
@@ -291,6 +298,7 @@ func TestSteerInjectedAfterToolBatch(t *testing.T) {
 }
 
 func TestSteerMidBatch_AssistantMessageRewritten(t *testing.T) {
+	t.Parallel()
 	// Proves that when a steer fires mid-batch, the assistant message sent
 	// in the next API call has the unexecuted tool_use blocks stripped and
 	// no "Skipped" tool_results appear anywhere.

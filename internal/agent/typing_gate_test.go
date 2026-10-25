@@ -110,6 +110,7 @@ func runTypingTurn(t *testing.T, a *Agent, ctx context.Context, trigger string) 
 // reaches TypingFunc — neither the begin's typing(true) nor the backend's
 // later typing(true)/typing(false) for that turn.
 func TestTypingGate_SystemTurnsDriveNoTyping(t *testing.T) {
+	t.Parallel()
 	for _, trigger := range []string{TriggerKeepalive, "reflection", "scheduled_wake", "user", "webhook"} {
 		t.Run(trigger, func(t *testing.T) {
 			a, be, rec := newTypingTestAgent(t)
@@ -126,6 +127,7 @@ func TestTypingGate_SystemTurnsDriveNoTyping(t *testing.T) {
 // TestTypingGate_HumanTurnsDriveTyping is the regression arm: a turn a human
 // started still drives the indicator, start to finish.
 func TestTypingGate_HumanTurnsDriveTyping(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name    string
 		ctx     context.Context
@@ -152,6 +154,7 @@ func TestTypingGate_HumanTurnsDriveTyping(t *testing.T) {
 // TestTypingGate_UserInputFoldedIntoSystemTurnShowsTyping: a message folded
 // into a running keepalive turn gets its reply's typing indicator.
 func TestTypingGate_UserInputFoldedIntoSystemTurnShowsTyping(t *testing.T) {
+	t.Parallel()
 	a, be, rec := newTypingTestAgent(t)
 	runTypingTurn(t, a, context.Background(), TriggerKeepalive)
 	be.setTurnInFlight(true) // the keepalive turn is still running
@@ -170,6 +173,7 @@ func TestTypingGate_UserInputFoldedIntoSystemTurnShowsTyping(t *testing.T) {
 // waits for a running user turn must not silence that turn's indicator while
 // it waits; it takes the permission only when it begins.
 func TestTypingGate_WaitingSystemTurnLeavesRunningTurnTyping(t *testing.T) {
+	t.Parallel()
 	a, be, rec := newTypingTestAgent(t)
 	runTypingTurn(t, a, context.Background(), "voice") // user turn, typing on
 	rec.reset()
@@ -198,6 +202,7 @@ func TestTypingGate_WaitingSystemTurnLeavesRunningTurnTyping(t *testing.T) {
 // TestTypingGate_RefusedKeepaliveRestoresTyping: a keepalive refused because a
 // turn is in flight is skipped, and hands the typing permission back.
 func TestTypingGate_RefusedKeepaliveRestoresTyping(t *testing.T) {
+	t.Parallel()
 	a, be, rec := newTypingTestAgent(t)
 	runTypingTurn(t, a, context.Background(), "voice")
 	be.setTurnInFlight(true)
@@ -343,6 +348,7 @@ func TestTypingWrapper_StallWarningNamesStage(t *testing.T) {
 // TestTypingGate_SteerIntoSystemTurnShowsTyping: an urgent steer (the inbox's
 // SourceSteer fold) into a running keepalive turn gets its reply's typing.
 func TestTypingGate_SteerIntoSystemTurnShowsTyping(t *testing.T) {
+	t.Parallel()
 	a, be, rec := newTypingTestAgent(t)
 	a.inboxCtx = context.Background()
 	runTypingTurn(t, a, context.Background(), TriggerKeepalive)

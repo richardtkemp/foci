@@ -17,6 +17,7 @@ import (
 // immediately closed (delegated path), post-turn runs asynchronously and
 // completes when the channel closes.
 func TestOrchestrateFullTurn_PostTurnAsyncPath(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	doneCh := make(chan struct{})
 
@@ -42,6 +43,7 @@ func TestOrchestrateFullTurn_PostTurnAsyncPath(t *testing.T) {
 // TestOrchestrateFullTurn_SafetyNetOnError verifies that the orchestrator's safety-net
 // defer calls SaveSession when RunInference returns an error.
 func TestOrchestrateFullTurn_SafetyNetOnError(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	saved := false
 
@@ -63,6 +65,7 @@ func TestOrchestrateFullTurn_SafetyNetOnError(t *testing.T) {
 // TestOrchestrateFullTurn_SafetyNetSkipsOnSuccess verifies the safety-net defer does NOT
 // double-save when the turn completes successfully (NewMessages nil'd by post-turn).
 func TestOrchestrateFullTurn_SafetyNetSkipsOnSuccess(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	saveCount := 0
 
@@ -85,6 +88,7 @@ func TestOrchestrateFullTurn_SafetyNetSkipsOnSuccess(t *testing.T) {
 // routes through the API transport when DelegatedManager is nil, producing
 // a response from the mock client.
 func TestTransportSelection_API(t *testing.T) {
+	t.Parallel()
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		return &provider.MessageResponse{
 			ID:         "msg_api",
@@ -115,6 +119,7 @@ func TestTransportSelection_API(t *testing.T) {
 // TestTransportSelection_Delegated verifies that HandleMessageWithAttachments
 // routes through the delegated transport when DelegatedManager is set.
 func TestTransportSelection_Delegated(t *testing.T) {
+	t.Parallel()
 	ag := &Agent{
 		Sessions:  session.NewStore(t.TempDir()),
 		Tools:     tools.NewRegistry(),

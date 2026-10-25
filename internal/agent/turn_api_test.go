@@ -22,6 +22,7 @@ import (
 
 // TestAPITransport_RegisterTurn verifies turn detail registration and cleanup.
 func TestAPITransport_RegisterTurn(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	tr := &APITransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
@@ -53,6 +54,7 @@ func TestAPITransport_RegisterTurn(t *testing.T) {
 
 // TestAPITransport_AcquireTurnLock verifies serialization and unlock.
 func TestAPITransport_AcquireTurnLock(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	tr := &APITransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
@@ -89,6 +91,7 @@ func TestAPITransport_AcquireTurnLock(t *testing.T) {
 
 // TestAPITransport_ResolveModelEffort verifies model/effort/thinking/speed resolution.
 func TestAPITransport_ResolveModelEffort(t *testing.T) {
+	t.Parallel()
 	a := &Agent{
 		Model: "anthropic/claude-sonnet-4-20250514",
 	}
@@ -108,6 +111,7 @@ func TestAPITransport_ResolveModelEffort(t *testing.T) {
 
 // TestAPITransport_ResolveModelEffort_WithDefaults verifies model defaults apply.
 func TestAPITransport_ResolveModelEffort_WithDefaults(t *testing.T) {
+	t.Parallel()
 	a := &Agent{
 		Model: "anthropic/claude-sonnet-4-20250514",
 		ModelDefaultsFn: func(model string) config.ModelDefaults {
@@ -151,6 +155,7 @@ func testAgentForCompose(t *testing.T) (*Agent, *session.Store) {
 // TestComposePrompt_Basic verifies that ComposePrompt appends a user message
 // with the expected role and text content to both Messages and NewMessages.
 func TestComposePrompt_Basic(t *testing.T) {
+	t.Parallel()
 	a, _ := testAgentForCompose(t)
 	tr := &APITransport{sharedTurnOps{agent: a}}
 
@@ -186,6 +191,7 @@ func TestComposePrompt_Basic(t *testing.T) {
 // API accepts (jpeg/png/gif/webp) must not become an image block — the API
 // rejects the whole request. It is skipped; supported images still go through.
 func TestComposePrompt_UnknownMIMEAttachmentSkipped(t *testing.T) {
+	t.Parallel()
 	a, _ := testAgentForCompose(t)
 	tr := &APITransport{sharedTurnOps{agent: a}}
 
@@ -218,6 +224,7 @@ func TestComposePrompt_UnknownMIMEAttachmentSkipped(t *testing.T) {
 // messages are suppressed when thinking is enabled with effort above "low".
 // This is the "thinking + high effort" case where duplicating hurts more than helps.
 func TestComposePrompt_DuplicateSuppressedWithThinking(t *testing.T) {
+	t.Parallel()
 	a, _ := testAgentForCompose(t)
 	a.DuplicateMessages = true
 	tr := &APITransport{sharedTurnOps{agent: a}}
@@ -242,6 +249,7 @@ func TestComposePrompt_DuplicateSuppressedWithThinking(t *testing.T) {
 // TestComposePrompt_DuplicateAllowedWithLowEffort verifies that duplicate
 // messages remain enabled when effort is "low", even with thinking on.
 func TestComposePrompt_DuplicateAllowedWithLowEffort(t *testing.T) {
+	t.Parallel()
 	a, _ := testAgentForCompose(t)
 	a.DuplicateMessages = true
 	tr := &APITransport{sharedTurnOps{agent: a}}
@@ -266,6 +274,7 @@ func TestComposePrompt_DuplicateAllowedWithLowEffort(t *testing.T) {
 // TestComposePrompt_DuplicateAllowedWithThinkingOff verifies that duplicate
 // messages remain enabled when thinking is off, regardless of effort.
 func TestComposePrompt_DuplicateAllowedWithThinkingOff(t *testing.T) {
+	t.Parallel()
 	a, _ := testAgentForCompose(t)
 	a.DuplicateMessages = true
 	tr := &APITransport{sharedTurnOps{agent: a}}
@@ -291,6 +300,7 @@ func TestComposePrompt_DuplicateAllowedWithThinkingOff(t *testing.T) {
 // included in the user message content blocks when ConsumeOrientation returns
 // a non-empty string.
 func TestComposePrompt_Orientation(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	store := session.NewStore(dir)
 	bs := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -339,6 +349,7 @@ func TestComposePrompt_Orientation(t *testing.T) {
 // TestComposePrompt_AppendsToExistingMessages verifies that ComposePrompt
 // appends to an already-populated Messages slice (e.g. from LoadAndRepairSession).
 func TestComposePrompt_AppendsToExistingMessages(t *testing.T) {
+	t.Parallel()
 	a, _ := testAgentForCompose(t)
 	tr := &APITransport{sharedTurnOps{agent: a}}
 
@@ -373,6 +384,7 @@ func TestComposePrompt_AppendsToExistingMessages(t *testing.T) {
 // TestLoadAndRepairSession_EmptySession verifies LoadAndRepairSession handles
 // a session that doesn't exist yet (returns empty message slice, no error).
 func TestLoadAndRepairSession_EmptySession(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	store := session.NewStore(dir)
 	a := &Agent{Sessions: store}
@@ -390,6 +402,7 @@ func TestLoadAndRepairSession_EmptySession(t *testing.T) {
 // TestLoadAndRepairSession_LoadsExisting verifies that LoadAndRepairSession
 // correctly loads messages from an existing session file.
 func TestLoadAndRepairSession_LoadsExisting(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	store := session.NewStore(dir)
 	key := "bot/c100"
@@ -419,6 +432,7 @@ func TestLoadAndRepairSession_LoadsExisting(t *testing.T) {
 // interrupted tool calls (assistant with tool_use and no following tool_result)
 // are repaired with synthetic results.
 func TestLoadAndRepairSession_RepairsInterruptedToolCalls(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	store := session.NewStore(dir)
 	key := "bot/c100"
@@ -461,6 +475,7 @@ func TestLoadAndRepairSession_RepairsInterruptedToolCalls(t *testing.T) {
 // TestLoadAndRepairSession_RepairsMissingAssistant verifies that consecutive
 // user messages get a synthetic assistant message inserted between them.
 func TestLoadAndRepairSession_RepairsMissingAssistant(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	store := session.NewStore(dir)
 	key := "bot/c100"
@@ -497,6 +512,7 @@ func TestLoadAndRepairSession_RepairsMissingAssistant(t *testing.T) {
 // TestBuildSystemAndTools_BasicBlocks verifies that BuildSystemAndTools
 // populates ts.System from the bootstrap and ts.ToolDefs from the registry.
 func TestBuildSystemAndTools_BasicBlocks(t *testing.T) {
+	t.Parallel()
 	bsDir := t.TempDir()
 	bs := workspace.NewBootstrap(bsDir, []string{})
 
@@ -532,6 +548,7 @@ func TestBuildSystemAndTools_BasicBlocks(t *testing.T) {
 // TestBuildSystemAndTools_ServerToolsMerge verifies that ServerTools are
 // appended to ToolDefs from the registry.
 func TestBuildSystemAndTools_ServerToolsMerge(t *testing.T) {
+	t.Parallel()
 	bsDir := t.TempDir()
 	bs := workspace.NewBootstrap(bsDir, []string{})
 	reg := tools.NewRegistry()
@@ -555,6 +572,7 @@ func TestBuildSystemAndTools_ServerToolsMerge(t *testing.T) {
 // TestBuildSystemAndTools_ExtraSystemBlocks verifies that ExtraSystemBlocks
 // are included in the system prompt output.
 func TestBuildSystemAndTools_ExtraSystemBlocks(t *testing.T) {
+	t.Parallel()
 	bsDir := t.TempDir()
 	bs := workspace.NewBootstrap(bsDir, []string{})
 	reg := tools.NewRegistry()
@@ -590,6 +608,7 @@ func TestBuildSystemAndTools_ExtraSystemBlocks(t *testing.T) {
 
 // TestInjectNudges_NilNudger verifies InjectNudges is a no-op when Nudger is nil.
 func TestInjectNudges_NilNudger(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	tr := &APITransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "bot/c100", []string{"hi"}, nil)
@@ -611,6 +630,7 @@ func TestInjectNudges_NilNudger(t *testing.T) {
 // TestInjectNudges_TurnIntervalFires verifies that nudge blocks are prepended
 // to the user message when an every_n_turns rule fires.
 func TestInjectNudges_TurnIntervalFires(t *testing.T) {
+	t.Parallel()
 	rs := &nudge.RuleSet{
 		Rules: []nudge.Rule{
 			{
@@ -664,6 +684,7 @@ func TestInjectNudges_TurnIntervalFires(t *testing.T) {
 // TestInjectNudges_RegexFires verifies that regex nudge triggers fire when
 // the user message matches the pattern.
 func TestInjectNudges_RegexFires(t *testing.T) {
+	t.Parallel()
 	rs := &nudge.RuleSet{
 		Rules: []nudge.Rule{
 			{
@@ -712,6 +733,7 @@ func TestInjectNudges_RegexFires(t *testing.T) {
 // well-formed <system-reminder>...</system-reminder> block instead of
 // nesting tags.
 func TestInjectNudges_MultipleTriggersShareOneSystemReminderRegion(t *testing.T) {
+	t.Parallel()
 	rs := &nudge.RuleSet{
 		Rules: []nudge.Rule{
 			{
@@ -771,6 +793,7 @@ func TestInjectNudges_MultipleTriggersShareOneSystemReminderRegion(t *testing.T)
 // path bundled with user text) drops it. Both carry the background header.
 // Guards against the bundled-footer fix leaking onto the standalone paths.
 func TestNudgeWrapperContracts(t *testing.T) {
+	t.Parallel()
 	reminder := "be concise."
 	a := &Agent{}
 	standalone := a.wrapStandaloneNudge(reminder)
@@ -800,6 +823,7 @@ func TestNudgeWrapperContracts(t *testing.T) {
 // TestInjectNudges_NoMatch verifies that nudge blocks are NOT prepended when
 // no triggers fire (e.g. regex doesn't match).
 func TestInjectNudges_NoMatch(t *testing.T) {
+	t.Parallel()
 	rs := &nudge.RuleSet{
 		Rules: []nudge.Rule{
 			{
@@ -835,6 +859,7 @@ func TestInjectNudges_NoMatch(t *testing.T) {
 // TestSaveSession_PersistsMessages verifies that SaveSession writes new
 // messages to the session store and nils NewMessages to prevent double-save.
 func TestSaveSession_PersistsMessages(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	store := session.NewStore(dir)
 	a := &Agent{Sessions: store}
@@ -873,6 +898,7 @@ func TestSaveSession_PersistsMessages(t *testing.T) {
 // TestSaveSession_EmptyNewMessages verifies that SaveSession is a no-op
 // when there are no new messages to save.
 func TestSaveSession_EmptyNewMessages(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	store := session.NewStore(dir)
 	a := &Agent{Sessions: store}
@@ -899,6 +925,7 @@ func TestSaveSession_EmptyNewMessages(t *testing.T) {
 // TestSaveSession_NilNewMessages verifies that SaveSession handles nil
 // NewMessages without error.
 func TestSaveSession_NilNewMessages(t *testing.T) {
+	t.Parallel()
 	a := &Agent{Sessions: session.NewStore(t.TempDir())}
 	tr := &APITransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "bot/c100", []string{"hi"}, nil)
@@ -916,6 +943,7 @@ func TestSaveSession_NilNewMessages(t *testing.T) {
 // TestUpdateSessionMeta_Updates verifies that UpdateSessionMeta correctly
 // copies final usage and cost data into the session metadata.
 func TestUpdateSessionMeta_Updates(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	tr := &APITransport{sharedTurnOps{agent: a}}
 
@@ -950,6 +978,7 @@ func TestUpdateSessionMeta_Updates(t *testing.T) {
 // TestUpdateSessionMeta_NilSessionMeta verifies UpdateSessionMeta is a no-op
 // when SessionMeta is nil.
 func TestUpdateSessionMeta_NilSessionMeta(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	tr := &APITransport{sharedTurnOps{agent: a}}
 
@@ -964,6 +993,7 @@ func TestUpdateSessionMeta_NilSessionMeta(t *testing.T) {
 // TestUpdateSessionMeta_NilFinalUsage verifies UpdateSessionMeta is a no-op
 // when FinalUsage is nil.
 func TestUpdateSessionMeta_NilFinalUsage(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	tr := &APITransport{sharedTurnOps{agent: a}}
 
@@ -986,6 +1016,7 @@ func TestUpdateSessionMeta_NilFinalUsage(t *testing.T) {
 // TestRunCompaction_NilFinalUsage verifies RunCompaction is a no-op when
 // FinalUsage is nil (no API response received, e.g. error path).
 func TestRunCompaction_NilFinalUsage(t *testing.T) {
+	t.Parallel()
 	a := &Agent{Sessions: session.NewStore(t.TempDir())}
 	tr := &APITransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "bot/c100", []string{"hi"}, nil)
@@ -999,6 +1030,7 @@ func TestRunCompaction_NilFinalUsage(t *testing.T) {
 // when FinalUsage is populated. We can't easily verify the compact call itself
 // (it requires a Compactor), but we verify it doesn't panic with nil Compactor.
 func TestRunCompaction_WithFinalUsage(t *testing.T) {
+	t.Parallel()
 	a := &Agent{Sessions: session.NewStore(t.TempDir())}
 	tr := &APITransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "bot/c100", []string{"hi"}, nil)
@@ -1021,6 +1053,7 @@ func TestRunCompaction_WithFinalUsage(t *testing.T) {
 // TestLogUsage_NoOp verifies that LogUsage is a no-op for APITransport
 // (API path logs usage per-call inside RunInference via logAPIResponse).
 func TestLogUsage_NoOp(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	tr := &APITransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "bot/c100", []string{"hi"}, nil)
@@ -1035,6 +1068,7 @@ func TestLogUsage_NoOp(t *testing.T) {
 
 // TestToolDisplayNote_Modes verifies the tool display note text for each mode.
 func TestToolDisplayNote_Modes(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		mode     string
 		contains string
@@ -1061,6 +1095,7 @@ func TestToolDisplayNote_Modes(t *testing.T) {
 // TestRateLimitGate_NotLimited verifies RateLimitGate returns nil when
 // the endpoint is not rate-limited.
 func TestRateLimitGate_NotLimited(t *testing.T) {
+	t.Parallel()
 	a := &Agent{Endpoint: "api.anthropic.com"}
 	tr := &APITransport{sharedTurnOps{agent: a}}
 
@@ -1095,6 +1130,7 @@ func TestRateLimitGate_LimitedUserTurnMayProbe(t *testing.T) {
 }
 
 func TestRateLimitGate_LimitedSystemTurnQueues(t *testing.T) {
+	t.Parallel()
 	// Proves non-user API work remains suppressed and queued while the same
 	// endpoint gate is closed.
 	a := &Agent{Endpoint: "api.anthropic.com"}
@@ -1178,6 +1214,7 @@ func newInferenceAgent(t *testing.T, client provider.Client) *Agent {
 // tool_use, RunInference stops after MaxToolLoops iterations and sets
 // FinalText to the max-depth message.
 func TestRunInference_MaxLoopReached(t *testing.T) {
+	t.Parallel()
 	callCount := 0
 	client := &mockClient{
 		sendFn: func(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
@@ -1220,6 +1257,7 @@ func TestRunInference_MaxLoopReached(t *testing.T) {
 // TestRunInference_ContextCancelled verifies that RunInference returns the
 // context error when the context is cancelled before the API call.
 func TestRunInference_ContextCancelled(t *testing.T) {
+	t.Parallel()
 	client := &mockClient{
 		sendFn: func(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
 			return nil, ctx.Err()
@@ -1254,6 +1292,7 @@ func TestRunInference_ContextCancelled(t *testing.T) {
 // TestRunInference_SimpleEndToEnd verifies the happy path where the API
 // returns a text response with stop_reason="end_turn" on the first call.
 func TestRunInference_SimpleEndToEnd(t *testing.T) {
+	t.Parallel()
 	client := &mockClient{
 		sendFn: func(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
 			return &provider.MessageResponse{
@@ -1377,6 +1416,7 @@ func TestRunInference_PersistsCalculatedCost(t *testing.T) {
 }
 
 func TestRunInference_SuccessReleasesRateLimitGate(t *testing.T) {
+	t.Parallel()
 	// Proves a successful API user probe reopens the endpoint immediately and
 	// leaves queued system work available for the normal replay drain.
 	client := &mockClient{sendFn: func(context.Context, *provider.MessageRequest) (*provider.MessageResponse, error) {
@@ -1410,6 +1450,7 @@ func TestRunInference_SuccessReleasesRateLimitGate(t *testing.T) {
 // [[NO_RESPONSE]] sentinel passes through RunInference — filtering is
 // handled downstream by platform.IsSilent (bot SendText/SendTextToChat and Finalize).
 func TestRunInference_NoResponseSentinelPassedThrough(t *testing.T) {
+	t.Parallel()
 	client := &mockClient{
 		sendFn: func(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
 			return &provider.MessageResponse{
@@ -1438,6 +1479,7 @@ func TestRunInference_NoResponseSentinelPassedThrough(t *testing.T) {
 // TestRunInference_PauseTurnContinues verifies that a "pause_turn" stop_reason
 // causes the loop to continue to the next iteration.
 func TestRunInference_PauseTurnContinues(t *testing.T) {
+	t.Parallel()
 	callCount := 0
 	client := &mockClient{
 		sendFn: func(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
@@ -1480,6 +1522,7 @@ func TestRunInference_PauseTurnContinues(t *testing.T) {
 // BatchPartialAssistantMessages is true, intermediate text is accumulated
 // and concatenated into FinalText.
 func TestRunInference_BatchPartialMessages(t *testing.T) {
+	t.Parallel()
 	callCount := 0
 	client := &mockClient{
 		sendFn: func(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
@@ -1527,6 +1570,7 @@ func TestRunInference_BatchPartialMessages(t *testing.T) {
 // TestRunInference_DefaultMaxLoops verifies that MaxToolLoops defaults to 100
 // when set to 0.
 func TestRunInference_DefaultMaxLoops(t *testing.T) {
+	t.Parallel()
 	callCount := 0
 	client := &mockClient{
 		sendFn: func(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
@@ -1561,6 +1605,7 @@ func TestRunInference_DefaultMaxLoops(t *testing.T) {
 // is reached on a tool_use response, error tool_results are injected into
 // NewMessages for all pending tool calls.
 func TestRunInference_MaxLoopToolResultInjection(t *testing.T) {
+	t.Parallel()
 	client := &mockClient{
 		sendFn: func(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
 			return &provider.MessageResponse{
@@ -1603,6 +1648,7 @@ func TestRunInference_MaxLoopToolResultInjection(t *testing.T) {
 // correctly, appending an error assistant message to NewMessages.
 // Uses 400 (Bad Request) to avoid provider retry backoff delays.
 func TestRunInference_APIError(t *testing.T) {
+	t.Parallel()
 	client := &mockClient{
 		sendFn: func(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
 			return nil, &provider.APIError{
@@ -1643,6 +1689,7 @@ func TestRunInference_APIError(t *testing.T) {
 // model's own [models.*.provider] routing. The lookup must answer for ANY
 // model, not just the turn model.
 func TestRunInference_RequestCarriesRoutingLookup(t *testing.T) {
+	t.Parallel()
 	routingA := &provider.ProviderRouting{Order: []string{"prov-a"}}
 	routingR := &provider.ProviderRouting{Order: []string{"prov-r"}}
 	var got *provider.MessageRequest
@@ -1696,6 +1743,7 @@ func TestRunInference_RequestCarriesRoutingLookup(t *testing.T) {
 // that CacheFor — the per-model lookup a fallback hop re-resolves through —
 // answers for a different model with that model's values.
 func TestTurnModelOwnCacheSettings(t *testing.T) {
+	t.Parallel()
 	var got *provider.MessageRequest
 	client := &mockClient{
 		sendFn: func(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
@@ -1749,6 +1797,7 @@ func TestTurnModelOwnCacheSettings(t *testing.T) {
 // still carries the agent's cache strategy (prompt caching stays on) and no
 // TTL, and CacheFor answers with the agent strategy for any model.
 func TestTurnCacheSettingsWithoutModelDefaults(t *testing.T) {
+	t.Parallel()
 	var got *provider.MessageRequest
 	client := &mockClient{
 		sendFn: func(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {

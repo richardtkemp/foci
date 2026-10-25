@@ -7,6 +7,7 @@ import (
 
 // TestCheckStaleContext_OK verifies CheckStaleContext returns nil for a live context.
 func TestCheckStaleContext_OK(t *testing.T) {
+	t.Parallel()
 	s := &sharedTurnOps{agent: &Agent{}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
 
@@ -18,6 +19,7 @@ func TestCheckStaleContext_OK(t *testing.T) {
 // TestCheckStaleContext_Cancelled verifies CheckStaleContext returns the
 // context error when the context is cancelled.
 func TestCheckStaleContext_Cancelled(t *testing.T) {
+	t.Parallel()
 	s := &sharedTurnOps{agent: &Agent{}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -30,6 +32,7 @@ func TestCheckStaleContext_Cancelled(t *testing.T) {
 
 // TestTouchActivity verifies that OnActivity callbacks are fired.
 func TestTouchActivity(t *testing.T) {
+	t.Parallel()
 	var called string
 	a := &Agent{}
 	a.OnActivity = append(a.OnActivity, func(key string) { called = key })
@@ -45,6 +48,7 @@ func TestTouchActivity(t *testing.T) {
 
 // TestLoadSessionMeta verifies that LoadSessionMeta populates ts.SessionMeta.
 func TestLoadSessionMeta(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	s := &sharedTurnOps{agent: a}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
@@ -59,6 +63,7 @@ func TestLoadSessionMeta(t *testing.T) {
 // TestLogConversationRecv_SetsChatID verifies that LogConversationRecv
 // falls back to ChatIDFromKey when Meta.ChatID is zero.
 func TestLogConversationRecv_SetsChatID(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	s := &sharedTurnOps{agent: a}
 	ts := NewTurnState(context.Background(), "clutch/c100", []string{"hi"}, nil)

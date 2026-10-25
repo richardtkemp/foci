@@ -93,6 +93,7 @@ func agentFor(idx *session.SessionIndex, be delegator.Delegator) *Agent {
 // every delete happens while that scope is held. Per-session acquisition would
 // spawn and tear down an opencode server for each expired session.
 func TestCleanupEphemeral_ScopeAcquiredOncePerSweep(t *testing.T) {
+	t.Parallel()
 	const n = 4
 	sb := &scopingBrancher{}
 	a := agentFor(expiredIndex(t, n), sb)
@@ -122,6 +123,7 @@ func TestCleanupEphemeral_ScopeAcquiredOncePerSweep(t *testing.T) {
 // A sweep with nothing to delete must not acquire — otherwise the daily GC
 // spawns an opencode server on every quiet day for no reason.
 func TestCleanupEphemeral_NoScopeWhenNothingExpired(t *testing.T) {
+	t.Parallel()
 	sb := &scopingBrancher{}
 	a := agentFor(expiredIndex(t, 0), sb)
 
@@ -138,6 +140,7 @@ func TestCleanupEphemeral_NoScopeWhenNothingExpired(t *testing.T) {
 // A scope that can't be acquired must not abort the sweep: the deletes still
 // run and fail (or succeed) individually, which is the pre-scope behaviour.
 func TestCleanupEphemeral_ProceedsWhenScopeUnavailable(t *testing.T) {
+	t.Parallel()
 	sb := &scopingBrancher{openErr: errors.New("no server")}
 	a := agentFor(expiredIndex(t, 2), sb)
 
@@ -157,6 +160,7 @@ func TestCleanupEphemeral_ProceedsWhenScopeUnavailable(t *testing.T) {
 // because it has nothing to do. Before #1801 the same expired rows were
 // re-selected forever, so the spawn happened every night in perpetuity.
 func TestCleanupEphemeral_SecondSweepDoesNotAcquire(t *testing.T) {
+	t.Parallel()
 	sb := &scopingBrancher{}
 	a := agentFor(expiredIndex(t, 3), sb)
 
@@ -185,6 +189,7 @@ func TestCleanupEphemeral_SecondSweepDoesNotAcquire(t *testing.T) {
 // session_index. Selecting them is what kept an otherwise-empty sweep opening a
 // scope.
 func TestCleanupEphemeral_SessionWithNoTranscriptNotSelected(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)

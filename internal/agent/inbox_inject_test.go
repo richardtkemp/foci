@@ -14,6 +14,7 @@ import (
 // arriving while a foci_ask is pending is deferred (not run), a control injection
 // is exempt (runs anyway), and resolving the ask redelivers the deferred one.
 func TestRunInject_DefersWhileAskPending(t *testing.T) {
+	t.Parallel()
 	var pending atomic.Bool
 	pending.Store(true)
 	ag := &Agent{
@@ -75,6 +76,7 @@ func TestRunInject_DefersWhileAskPending(t *testing.T) {
 // runInject path: an injection enqueued while an ask is pending is deferred by the
 // worker, and redelivered (and run) once the ask resolves and the buffer is drained.
 func TestInbox_Inject_DefersThroughWorker(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -118,6 +120,7 @@ func TestInbox_Inject_DefersThroughWorker(t *testing.T) {
 // then returns nil — the mechanism behind sync HTTP /send and the delegated
 // reflection/keepalive passes.
 func TestEnqueueInjectWait_RunsAndReturns(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -135,6 +138,7 @@ func TestEnqueueInjectWait_RunsAndReturns(t *testing.T) {
 // worker running (inbox not started), the injection never executes and a
 // cancelled ctx unblocks the caller with ctx.Err().
 func TestEnqueueInjectWait_CtxCancelled(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t) // StartInbox NOT called — nothing drains the channel
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -149,6 +153,7 @@ func TestEnqueueInjectWait_CtxCancelled(t *testing.T) {
 // an error instead of a silent drop — a sync caller must never block forever
 // on an envelope that was never queued.
 func TestEnqueueInjectWait_RejectedQueue(t *testing.T) {
+	t.Parallel()
 	a := newTestAgent(t) // no worker → channel fills and stays full
 	sk := "test/s"
 	inb := a.getOrCreateInbox(sk)
@@ -168,6 +173,7 @@ func TestEnqueueInjectWait_RejectedQueue(t *testing.T) {
 // injection would be lost) — it is returned to the worker and executed after
 // the batch completes.
 func TestDriveAndDrainOrphans_HoldsInjectsFromExtras(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 

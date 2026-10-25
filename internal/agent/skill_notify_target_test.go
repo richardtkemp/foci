@@ -16,6 +16,7 @@ import (
 // is dropped (app: no binding for the key) or misrouted. The notice must go to
 // the branch's root — the chat whose session was reflected.
 func TestDetectAndNotifySkillChanges_BranchNotifiesRootChat(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ reflecting, want string }{
 		{"clutch/c123/b1709596800", "clutch/c123"},
 		{"clutch/c123", "clutch/c123"},

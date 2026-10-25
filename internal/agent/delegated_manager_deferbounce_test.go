@@ -78,6 +78,7 @@ func waitClosed(t *testing.T, be *bgWorkBackend) {
 // reload restart kills CC's in-process background subagents (#1539), so it
 // waits until they finish, then restarts.
 func TestBounceAfterCompaction_DefersWhileSubagentsRun(t *testing.T) {
+	t.Parallel()
 	const sk = "test-agent/c1"
 	mgr, be := newBgWorkManager(t, sk)
 	be.set([]delegator.RunningSubagent{{ID: "t1", Description: "review", Kind: delegator.SubagentKindAgent}}, false)
@@ -102,6 +103,7 @@ func TestBounceAfterCompaction_DefersWhileSubagentsRun(t *testing.T) {
 // TestBounceAfterCompaction_DefersWhileAwaitingAutonomousRun: the
 // background-work window also covers a pending/live autonomous run.
 func TestBounceAfterCompaction_DefersWhileAwaitingAutonomousRun(t *testing.T) {
+	t.Parallel()
 	const sk = "test-agent/c1"
 	mgr, be := newBgWorkManager(t, sk)
 	be.set(nil, true)
@@ -119,6 +121,7 @@ func TestBounceAfterCompaction_DefersWhileAwaitingAutonomousRun(t *testing.T) {
 // TestBounceAfterCompaction_ForceIgnoresSubagents: /compact force restarts CC
 // at once even though that kills the running subagents (Dick's correction).
 func TestBounceAfterCompaction_ForceIgnoresSubagents(t *testing.T) {
+	t.Parallel()
 	const sk = "test-agent/c1"
 	mgr, be := newBgWorkManager(t, sk)
 	be.set([]delegator.RunningSubagent{{ID: "t1", Kind: delegator.SubagentKindAgent}}, true)
@@ -134,6 +137,7 @@ func TestBounceAfterCompaction_ForceIgnoresSubagents(t *testing.T) {
 // TestBounceAfterCompaction_IdleBouncesNow: with no background work the gate
 // behaves exactly as before.
 func TestBounceAfterCompaction_IdleBouncesNow(t *testing.T) {
+	t.Parallel()
 	const sk = "test-agent/c1"
 	mgr, be := newBgWorkManager(t, sk)
 	if !mgr.BounceAfterCompaction(sk, false) {
@@ -147,6 +151,7 @@ func TestBounceAfterCompaction_IdleBouncesNow(t *testing.T) {
 // TestCloseManagedExact_SkipsReplacedBackend: the deferred bounce must not
 // close a backend that replaced the one it was waiting on.
 func TestCloseManagedExact_SkipsReplacedBackend(t *testing.T) {
+	t.Parallel()
 	const sk = "test-agent/c1"
 	mgr, old := newBgWorkManager(t, sk)
 	oldMB, _ := mgr.getManaged(sk)
@@ -190,6 +195,7 @@ func bgCompactAgent(t *testing.T, sk string) (*Agent, *bgWorkBackend, *[]string)
 // TestCompactSession_RefusesWhileSubagentsRun: a plain manual /compact is
 // refused while background work runs, naming it, and sends nothing to CC.
 func TestCompactSession_RefusesWhileSubagentsRun(t *testing.T) {
+	t.Parallel()
 	const sk = "test-agent/c1"
 	ag, be, sent := bgCompactAgent(t, sk)
 
@@ -212,6 +218,7 @@ func TestCompactSession_RefusesWhileSubagentsRun(t *testing.T) {
 // TestCompactSession_AutonomousRunOnlyIsRefused: the pending autonomous run
 // alone (no listed subagent) still refuses, with a description.
 func TestCompactSession_AutonomousRunOnlyIsRefused(t *testing.T) {
+	t.Parallel()
 	const sk = "test-agent/c1"
 	ag, be, _ := bgCompactAgent(t, sk)
 	be.set(nil, true)
@@ -225,6 +232,7 @@ func TestCompactSession_AutonomousRunOnlyIsRefused(t *testing.T) {
 // TestCompactSessionForce_CompactsAndRestartsNow: /compact force ignores the
 // subagents: it compacts and restarts CC at once (killing them).
 func TestCompactSessionForce_CompactsAndRestartsNow(t *testing.T) {
+	t.Parallel()
 	const sk = "test-agent/c1"
 	ag, be, sent := bgCompactAgent(t, sk)
 
@@ -244,6 +252,7 @@ func TestCompactSessionForce_CompactsAndRestartsNow(t *testing.T) {
 // "already waiting" mark, or every later compaction on that backend is
 // skipped as "already waiting" and never restarts CC (#1539 review).
 func TestBounceAfterCompaction_UnchangedPromptRearmsDeferral(t *testing.T) {
+	t.Parallel()
 	const sk = "test-agent/c1"
 	mgr, be := newBgWorkManager(t, sk)
 	var live atomic.Value
@@ -286,6 +295,7 @@ func TestBounceAfterCompaction_UnchangedPromptRearmsDeferral(t *testing.T) {
 // the prompt unchanged there is no restart, so a plain /compact proceeds while
 // subagents run and leaves CC (and them) alone (Dick, 2026-10-06).
 func TestCompactSession_UnchangedPromptCompactsDespiteSubagents(t *testing.T) {
+	t.Parallel()
 	const sk = "test-agent/c1"
 	ag, be, sent := bgCompactAgent(t, sk)
 	ag.DelegatedManager.StartOpts.SystemPromptFunc = func(string) string { return "v1" } // as launched
@@ -307,6 +317,7 @@ func TestCompactSession_UnchangedPromptCompactsDespiteSubagents(t *testing.T) {
 // TestCompactSession_ReloadOffCompactsDespiteSubagents: with reload_on_compact
 // off there is never a post-compaction restart, so nothing blocks /compact.
 func TestCompactSession_ReloadOffCompactsDespiteSubagents(t *testing.T) {
+	t.Parallel()
 	const sk = "test-agent/c1"
 	ag, be, sent := bgCompactAgent(t, sk)
 	ag.ReloadOnCompact = false

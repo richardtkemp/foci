@@ -15,6 +15,7 @@ import (
 // the user already queued a follow-up (which will drive continuation itself) or
 // async self-injection is unavailable.
 func TestMaybeInjectCompactionResume(t *testing.T) {
+	t.Parallel()
 	const sk = "test/s"
 
 	newNotifier := func(got *[]string, mu *sync.Mutex) *tools.AsyncNotifier {

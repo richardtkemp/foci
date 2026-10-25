@@ -15,6 +15,7 @@ import (
 )
 
 func TestConcurrentTurnSerialization(t *testing.T) {
+	t.Parallel()
 	// Verify that concurrent HandleMessage calls on the same session
 	// are serialized — messages never interleave. This is critical for
 	// Anthropic's prefix-matched prompt cache: the conversation history
@@ -152,6 +153,7 @@ func TestConcurrentTurnSerialization(t *testing.T) {
 }
 
 func TestConcurrentTurnsDifferentSessions(t *testing.T) {
+	t.Parallel()
 	// Verify that turns on DIFFERENT sessions can run concurrently
 	// (the per-session lock should not serialize across sessions).
 	var mu sync.Mutex
@@ -213,6 +215,7 @@ func TestConcurrentTurnsDifferentSessions(t *testing.T) {
 }
 
 func TestConcurrentTurnCancellation(t *testing.T) {
+	t.Parallel()
 	// Verify that a cancelled context while waiting for the turn lock
 	// returns immediately without processing.
 	// turnStarted closes the instant the slow turn's request reaches the API
@@ -283,6 +286,7 @@ func TestConcurrentTurnCancellation(t *testing.T) {
 }
 
 func TestTurnInFlight_PerSession(t *testing.T) {
+	t.Parallel()
 	// Proves per-session busy state is isolated: marking session A in-flight
 	// must not make session B report busy, while the agent-wide aggregate
 	// (IsAnyTurnInFlight, used only by shutdown) reflects either. This is the

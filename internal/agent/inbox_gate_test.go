@@ -56,6 +56,7 @@ func newBranchCapableManager(t *testing.T, be delegator.Delegator) *DelegatedMan
 // keepalive is never held by background work — its whole purpose is keeping
 // the prompt cache warm, so a two-hour hold defeats it.
 func TestInjectGate_KeepaliveNotHeld(t *testing.T) {
+	t.Parallel()
 	a, _, release := awaitingHeldAgent(t)
 	defer release()
 
@@ -81,6 +82,7 @@ func TestInjectGate_KeepaliveNotHeld(t *testing.T) {
 // never reaches the parent inbox — is pinned at the real seam by
 // cmd/foci-gw's TestBranchTurn_*UnderParentGate tests.
 func TestInjectGate_InPlaceStaysHeld(t *testing.T) {
+	t.Parallel()
 	t.Run("in-place reflection on non-forking backend", func(t *testing.T) {
 		a, _, release := awaitingHeldAgent(t)
 		defer release()
@@ -143,6 +145,7 @@ func TestInjectGate_InPlaceStaysHeld(t *testing.T) {
 // (user/external), wakes, ask expiry (ask_grader without the user-input
 // marker), send_to_session, webhooks.
 func TestInjectGate_HeldInjectsCharacterisation(t *testing.T) {
+	t.Parallel()
 	for _, trigger := range []string{"user", "external", "scheduled_wake", "ask_grader", "session_notify", "webhook"} {
 		t.Run(trigger, func(t *testing.T) {
 			a, _, release := awaitingHeldAgent(t)
@@ -169,6 +172,7 @@ func TestInjectGate_HeldInjectsCharacterisation(t *testing.T) {
 // pending window, an adopted delivering run with an idle worker, the busy
 // exclusion for a turn the worker itself runs, and the API-agent negative.
 func TestSystemInputHeld(t *testing.T) {
+	t.Parallel()
 	t.Run("pending work", func(t *testing.T) {
 		a, _, release := awaitingHeldAgent(t)
 		defer release()
@@ -212,6 +216,7 @@ func TestSystemInputHeld(t *testing.T) {
 // TestInjectGateApplies unit-pins the classification itself, including the
 // pieces the driven tests above cannot reach (nil meta, user input).
 func TestInjectGateApplies(t *testing.T) {
+	t.Parallel()
 	if injectGateApplies(nil) {
 		t.Error("nil meta must not be gated")
 	}
@@ -234,6 +239,7 @@ func TestInjectGateApplies(t *testing.T) {
 // drives itself; a plain system inject keeps the full hold; and a user-input
 // injection is never held at all.
 func TestInjectHeld_KeepaliveHalfSplit(t *testing.T) {
+	t.Parallel()
 	ka := Envelope{SessionKey: "test/s", Inject: &InjectMeta{Trigger: TriggerKeepalive}}
 
 	t.Run("pending work alone never holds a keepalive", func(t *testing.T) {
@@ -296,6 +302,7 @@ func TestInjectHeld_KeepaliveHalfSplit(t *testing.T) {
 // report itself held) and drifts negative after it (the worker would never
 // read idle again, masking every later adopted run).
 func TestRunInject_BusyBracketsTheInjectedTurn(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	sk := "test/s"
@@ -332,6 +339,7 @@ func TestRunInject_BusyBracketsTheInjectedTurn(t *testing.T) {
 // run does read as held. A missing bracket fails the mid-turn half (the user
 // turn would report itself a hold).
 func TestDriveOnce_BusyBracketsTheUserTurn(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	sk := "test/s"
@@ -371,6 +379,7 @@ func TestDriveOnce_BusyBracketsTheUserTurn(t *testing.T) {
 // so holdActive's busy refinement never sees an adopted delivering run as a
 // hold again and system injects would run during it (#1068, #2233 F4).
 func TestRunInject_PanicInRunKeepsBusyBracket(t *testing.T) {
+	t.Parallel()
 	a, cancel := startedAgent(t)
 	defer cancel()
 	sk := "test/s"

@@ -17,6 +17,7 @@ import (
 // skill description was enough) — and every keepalive fork then rewrote the
 // whole conversation instead of refreshing the parent's entry.
 func TestForkInheritsParentLaunchPrompt(t *testing.T) {
+	t.Parallel()
 	const parent = "test-agent/c1"
 	onDisk := "prompt v1"
 

@@ -31,6 +31,7 @@ import (
 // TestDelegatedTransport_NoOps verifies that no-op methods don't panic and
 // return the expected zero values.
 func TestDelegatedTransport_NoOps(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
@@ -64,6 +65,7 @@ func TestDelegatedTransport_NoOps(t *testing.T) {
 
 // TestDelegatedTransport_ResolveModelEffort verifies it reads agent-level model.
 func TestDelegatedTransport_ResolveModelEffort(t *testing.T) {
+	t.Parallel()
 	a := &Agent{Model: "anthropic/claude-opus-4-6"}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
@@ -78,6 +80,7 @@ func TestDelegatedTransport_ResolveModelEffort(t *testing.T) {
 // TestDelegatedTransport_ComposePrompt verifies it produces a non-empty prompt
 // and updates lastMessageTime.
 func TestDelegatedTransport_ComposePrompt(t *testing.T) {
+	t.Parallel()
 	a := &Agent{Model: "anthropic/claude-opus-4-6"}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hello world"}, nil)
@@ -108,6 +111,7 @@ func TestDelegatedTransport_ComposePrompt(t *testing.T) {
 // base64 document block the API rejects (400: media_type must be
 // application/pdf). Images still go through as binary attachments.
 func TestDelegatedTransport_ConvertibleDocAttachment(t *testing.T) {
+	t.Parallel()
 	be := &mockBackendDT{
 		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
 			if handler != nil && handler.OnTurnComplete != nil {
@@ -398,6 +402,7 @@ func newMockDelegatedManager(t *testing.T, be delegator.Delegator) *DelegatedMan
 // TestDelegatedTransport_InjectNudges_WithNudger verifies that nudge reminders
 // from both CheckTurnInterval and CheckRegex are prepended to the prompt.
 func TestDelegatedTransport_InjectNudges_WithNudger(t *testing.T) {
+	t.Parallel()
 	rs := &nudge.RuleSet{
 		Rules: []nudge.Rule{
 			{Text: "interval-reminder", Trigger: nudge.Trigger{Type: "every_n_turns", N: 1}},
@@ -447,6 +452,7 @@ func TestDelegatedTransport_InjectNudges_WithNudger(t *testing.T) {
 // TestDelegatedTransport_InjectNudges_NilNudger verifies that InjectNudges is
 // a no-op when the agent has no Nudger.
 func TestDelegatedTransport_InjectNudges_NilNudger(t *testing.T) {
+	t.Parallel()
 	a := &Agent{Model: "test-model"}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hello"}, nil)
@@ -462,6 +468,7 @@ func TestDelegatedTransport_InjectNudges_NilNudger(t *testing.T) {
 // TestDelegatedTransport_InjectNudges_EmptyTexts verifies that InjectNudges
 // returns early when Texts is empty (no user message to evaluate regex against).
 func TestDelegatedTransport_InjectNudges_EmptyTexts(t *testing.T) {
+	t.Parallel()
 	rs := &nudge.RuleSet{
 		Rules: []nudge.Rule{
 			{Text: "should-not-appear", Trigger: nudge.Trigger{Type: "every_n_turns", N: 1}},
@@ -484,6 +491,7 @@ func TestDelegatedTransport_InjectNudges_EmptyTexts(t *testing.T) {
 // TestDelegatedTransport_InjectNudges_NoMatchingNudges verifies that a nudger
 // with rules that don't fire leaves the prompt unchanged.
 func TestDelegatedTransport_InjectNudges_NoMatchingNudges(t *testing.T) {
+	t.Parallel()
 	// Regex that won't match the user message, turn interval too high to fire.
 	rs := &nudge.RuleSet{
 		Rules: []nudge.Rule{
@@ -509,6 +517,7 @@ func TestDelegatedTransport_InjectNudges_NoMatchingNudges(t *testing.T) {
 // regex nudges entirely — and, because the early return precedes StartTurn, the
 // every_n_turns lifetime counter is NOT advanced by system turns. (#815)
 func TestDelegatedTransport_InjectNudges_ReflectionTriggerSuppressed(t *testing.T) {
+	t.Parallel()
 	rs := &nudge.RuleSet{
 		Rules: []nudge.Rule{
 			{Text: "interval-reminder", Trigger: nudge.Trigger{Type: "every_n_turns", N: 1}},
@@ -547,6 +556,7 @@ func TestDelegatedTransport_InjectNudges_ReflectionTriggerSuppressed(t *testing.
 // returns a backend, SendToPane is called, and the OnTurnComplete handler
 // populates FinalText/FinalUsage and closes CompletionChan.
 func TestDelegatedTransport_RunInference_Success(t *testing.T) {
+	t.Parallel()
 	be := &mockBackendDT{
 		sessionFile: "/tmp/test-session.jsonl",
 		sendToPaneFn: func(_ context.Context, prompt string, handler *mockHandler) (*delegator.TurnResult, error) {
@@ -624,6 +634,7 @@ func TestDelegatedTransport_RunInference_Success(t *testing.T) {
 // now report post-consume) does not touch the alias again and does not call
 // ConsumeThreadName a second time.
 func TestDelegatedTransport_AutoAlias_ConsumesThreadNameOnSuccess(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -704,6 +715,7 @@ func TestDelegatedTransport_AutoAlias_ConsumesThreadNameOnSuccess(t *testing.T) 
 // that the collision is no longer swallowed with zero signal: previously
 // there was nothing at all logged or observable on this path.
 func TestDelegatedTransport_AutoAlias_CollisionDoesNotConsume(t *testing.T) {
+	t.Parallel()
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
@@ -767,6 +779,7 @@ func TestDelegatedTransport_AutoAlias_CollisionDoesNotConsume(t *testing.T) {
 // completions do not panic, the channel is closed exactly once, and the first
 // completion's result wins.
 func TestDelegatedTransport_RunInference_DoubleComplete(t *testing.T) {
+	t.Parallel()
 	be := &mockBackendDT{
 		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
 			// Simulate the OnResult/finalizeExit race: both fire completion.
@@ -800,6 +813,7 @@ func TestDelegatedTransport_RunInference_DoubleComplete(t *testing.T) {
 // sync.Once must still close CompletionChan exactly once with no panic or data
 // race. (make test does not run -race; run with `go test -race`.)
 func TestDelegatedTransport_RunInference_ConcurrentComplete(t *testing.T) {
+	t.Parallel()
 	var wg sync.WaitGroup
 	be := &mockBackendDT{
 		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
@@ -834,6 +848,7 @@ func TestDelegatedTransport_RunInference_ConcurrentComplete(t *testing.T) {
 // TestDelegatedTransport_RunInference_GetError verifies that an error from
 // DelegatedManager.Get propagates back to the caller.
 func TestDelegatedTransport_RunInference_GetError(t *testing.T) {
+	t.Parallel()
 	mgr := &DelegatedManager{
 		NewBackend: func() (delegator.Delegator, error) {
 			return nil, errors.New("backend unavailable")
@@ -977,6 +992,7 @@ func (v *voiceModeBackendDT) counts() (enter, exit int) {
 // merely once RunInference returns (buildTurnEvents' completion callback is
 // the true end of the turn on the async delegated path).
 func TestDelegatedTransport_RunInference_VoiceMode_EntersBeforeDispatchExitsAfterComplete(t *testing.T) {
+	t.Parallel()
 	be := &voiceModeBackendDT{}
 	var enterAtDispatch int
 	be.mockBackendDT.sendToPaneFn = func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
@@ -1016,6 +1032,7 @@ func TestDelegatedTransport_RunInference_VoiceMode_EntersBeforeDispatchExitsAfte
 // backend implements it — the low-effort switch is scoped to voice-originated
 // turns only.
 func TestDelegatedTransport_RunInference_VoiceMode_SkippedForNonVoiceTrigger(t *testing.T) {
+	t.Parallel()
 	be := &voiceModeBackendDT{}
 	be.mockBackendDT.sendToPaneFn = func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
 		if handler != nil && handler.OnTurnComplete != nil {
@@ -1048,6 +1065,7 @@ func TestDelegatedTransport_RunInference_VoiceMode_SkippedForNonVoiceTrigger(t *
 // mid-flight for a turn that already started, possibly under a different
 // trigger).
 func TestDelegatedTransport_RunInference_VoiceMode_SkippedOnFold(t *testing.T) {
+	t.Parallel()
 	be := &voiceModeBackendDT{}
 	be.mockBackendDT.turnInFlight = true
 	be.mockBackendDT.sendCommandFn = func(_ context.Context, _ string) error { return nil }
@@ -1076,6 +1094,7 @@ func TestDelegatedTransport_RunInference_VoiceMode_SkippedOnFold(t *testing.T) {
 // session would be stuck at low effort until a later turn happened to
 // restore it.
 func TestDelegatedTransport_RunInference_VoiceMode_ExitsOnDispatchError(t *testing.T) {
+	t.Parallel()
 	be := &voiceModeBackendDT{}
 	be.mockBackendDT.sendToPaneFn = func(_ context.Context, _ string, _ *mockHandler) (*delegator.TurnResult, error) {
 		return nil, errors.New("dispatch failed")
@@ -1108,6 +1127,7 @@ func TestDelegatedTransport_RunInference_VoiceMode_ExitsOnDispatchError(t *testi
 // VoiceModer (plain mockBackendDT) runs normally with no panic — VoiceModer
 // is an optional capability, same pattern as every other backend interface.
 func TestDelegatedTransport_RunInference_VoiceMode_BackendWithoutInterface(t *testing.T) {
+	t.Parallel()
 	be := &mockBackendDT{
 		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
 			if handler != nil && handler.OnTurnComplete != nil {
@@ -1168,6 +1188,7 @@ func (e *elicitationBackendDT) RespondToElicitation(reqID, text string) error {
 // empty/whitespace text falls through, and a backend with nothing pending is
 // untouched.
 func TestAnswerPendingBackendPrompt(t *testing.T) {
+	t.Parallel()
 	q := &questionBackendDT{pendingQuestion: "req-q"}
 	if !answerPendingBackendPrompt(log.NewComponentLogger("delegated"), q, "test/s", []string{"  yes please  "}) {
 		t.Fatal("pending question + text: want consumed")
@@ -1201,6 +1222,7 @@ func TestAnswerPendingBackendPrompt(t *testing.T) {
 // AskUserQuestion — the intercept is foldable-input-only, so the system prompt
 // proceeds to the normal (SourceSystem) dispatch path instead.
 func TestDelegatedTransport_RunInference_SystemTurnSkipsQuestionIntercept(t *testing.T) {
+	t.Parallel()
 	var sentToPane string
 	be := &questionBackendDT{pendingQuestion: "req-q"}
 	be.sendToPaneFn = func(_ context.Context, prompt string, handler *mockHandler) (*delegator.TurnResult, error) {
@@ -1288,6 +1310,7 @@ func TestDelegatedTransport_RunInference_QueuedMessageNeverFolds(t *testing.T) {
 // SendCommand. It waits (WaitForTurn) for the in-flight turn to complete and
 // then begins a fresh turn via the exclusive SourceSystem begin.
 func TestDelegatedTransport_RunInference_SystemTurnNeverFolds(t *testing.T) {
+	t.Parallel()
 	var sentToPane string
 	var foldAttempted bool
 	be := &mockBackendDT{
@@ -1340,6 +1363,7 @@ func TestDelegatedTransport_RunInference_SystemTurnNeverFolds(t *testing.T) {
 // RunInference blocks while a permission prompt is outstanding and proceeds
 // once it is cleared.
 func TestDelegatedTransport_RunInference_WaitForPermission(t *testing.T) {
+	t.Parallel()
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
 		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
@@ -1396,6 +1420,7 @@ func TestDelegatedTransport_RunInference_WaitForPermission(t *testing.T) {
 // the tool's OnToolEnd, which a backend delivers before the post-tool callback
 // (#2193); the second end for an already-ended call must not advance it.
 func TestDelegatedTransport_RunInference_PostToolNudgeWired(t *testing.T) {
+	t.Parallel()
 	var capturedNudgeFunc func(string, string, bool) []string
 	var capturedHandler *mockHandler
 	be := &mockBackendDT{
@@ -1472,6 +1497,7 @@ func TestDelegatedTransport_RunInference_PostToolNudgeWired(t *testing.T) {
 // callback is safe when the agent has no Nudger — returns nil without panic
 // so hook_response dispatch keeps working for agents that don't nudge.
 func TestDelegatedTransport_RunInference_PostToolNudgeNilNudger(t *testing.T) {
+	t.Parallel()
 	var capturedNudgeFunc func(string, string, bool) []string
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
@@ -1508,6 +1534,7 @@ func TestDelegatedTransport_RunInference_PostToolNudgeNilNudger(t *testing.T) {
 // so ccstream doesn't re-dispatch indefinitely when the scheduler keeps
 // reporting a pending pre_answer rule.
 func TestDelegatedTransport_RunInference_PreAnswerGateFiresOnce(t *testing.T) {
+	t.Parallel()
 	var capturedPreAnswerFunc func(*delegator.TurnResult) string
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
@@ -1577,6 +1604,7 @@ func TestDelegatedTransport_RunInference_PreAnswerGateFiresOnce(t *testing.T) {
 // trigger gate, PreAnswerNudgeFunc returns "" for any non-user trigger even
 // when the gate is enabled and the tool threshold is met.
 func TestDelegatedTransport_RunInference_PreAnswerGateSuppressedOnReflection(t *testing.T) {
+	t.Parallel()
 	var capturedPreAnswerFunc func(*delegator.TurnResult) string
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
@@ -1626,6 +1654,7 @@ func TestDelegatedTransport_RunInference_PreAnswerGateSuppressedOnReflection(t *
 // PreAnswerNudgeFunc returns "" when the agent hasn't enabled the gate, even
 // if a pre_answer rule exists — the gate config flag is the master switch.
 func TestDelegatedTransport_RunInference_PreAnswerGateDisabled(t *testing.T) {
+	t.Parallel()
 	var capturedPreAnswerFunc func(*delegator.TurnResult) string
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
@@ -1672,6 +1701,7 @@ func TestDelegatedTransport_RunInference_PreAnswerGateDisabled(t *testing.T) {
 // itself (#2193). A start and an end for one call count once, and the
 // backend's own compaction pseudo-tool does not count.
 func TestDelegatedTransport_RunInference_PreAnswerMinToolsFromToolEvents(t *testing.T) {
+	t.Parallel()
 	var capturedPreAnswerFunc func(*delegator.TurnResult) string
 	var capturedHandler *mockHandler
 	be := &mockBackendDT{
@@ -1735,6 +1765,7 @@ func TestDelegatedTransport_RunInference_PreAnswerMinToolsFromToolEvents(t *test
 // round-2 result already IS the whole turn. FinalUsage is taken from it as-is
 // (#1856; the cross-round accumulation itself is tested in ccstream).
 func TestDelegatedTransport_RunInference_PreAnswerFoldsIntoFinal(t *testing.T) {
+	t.Parallel()
 	var capturedHandler *mockHandler
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
@@ -1845,6 +1876,7 @@ func TestDelegatedTransport_GatedTurn_NoSpuriousCompaction(t *testing.T) {
 }
 
 func TestDelegatedTransport_RunCompaction_DeferredWhileSubagentInFlight(t *testing.T) {
+	t.Parallel()
 	// Over-threshold context MUST compact — unless background work (an Agent-tool
 	// subagent / run_in_background Bash / the autonomous run its completion
 	// triggers) is in flight, in which case compaction is deferred so /compact
@@ -1898,6 +1930,7 @@ func TestDelegatedTransport_RunCompaction_DeferredWhileSubagentInFlight(t *testi
 // the platform delivers the answer the agent originally committed to rather
 // than a raw sentinel literal.
 func TestDelegatedTransport_RunInference_PreAnswerSentinelRestoresOriginal(t *testing.T) {
+	t.Parallel()
 	var capturedHandler *mockHandler
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
@@ -1951,6 +1984,7 @@ func TestDelegatedTransport_RunInference_PreAnswerSentinelRestoresOriginal(t *te
 // TestDelegatedTransport_RunInference_NilTurnResult verifies that a nil
 // TurnResult from the watcher doesn't panic (edge case: watcher error).
 func TestDelegatedTransport_RunInference_NilTurnResult(t *testing.T) {
+	t.Parallel()
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
 		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
@@ -2111,6 +2145,7 @@ func (captureTextSink) DeliversToPlatform() bool { return true }
 // whatever the router forwards to. Proven here: a sink registered on the router
 // receives the backend's OnText even though the turn's own ctx carries no sink.
 func TestDelegatedTransport_SinkLessTurnBindsRouterNotNopSink(t *testing.T) {
+	t.Parallel()
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
 		sendToPaneFn: func(_ context.Context, _ string, handler *mockHandler) (*delegator.TurnResult, error) {
@@ -2236,6 +2271,7 @@ func TestDelegatedTransport_ThinkingBufferResetPerTurn(t *testing.T) {
 // TestDelegatedTransport_UpdateSessionMeta_Tracking verifies that token counts
 // and model from the turn result are persisted into sessionMeta.
 func TestDelegatedTransport_UpdateSessionMeta_Tracking(t *testing.T) {
+	t.Parallel()
 	a := &Agent{Model: "test-model"}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
@@ -2275,6 +2311,7 @@ func TestDelegatedTransport_UpdateSessionMeta_Tracking(t *testing.T) {
 // TestDelegatedTransport_UpdateSessionMeta_NilUsage verifies that
 // UpdateSessionMeta is a safe no-op when FinalUsage is nil.
 func TestDelegatedTransport_UpdateSessionMeta_NilUsage(t *testing.T) {
+	t.Parallel()
 	a := &Agent{Model: "test-model"}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
@@ -2292,6 +2329,7 @@ func TestDelegatedTransport_UpdateSessionMeta_NilUsage(t *testing.T) {
 // TestDelegatedTransport_UpdateSessionMeta_NilSessionMeta verifies that
 // UpdateSessionMeta is a safe no-op when SessionMeta is nil.
 func TestDelegatedTransport_UpdateSessionMeta_NilSessionMeta(t *testing.T) {
+	t.Parallel()
 	a := &Agent{Model: "test-model"}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
@@ -2305,6 +2343,7 @@ func TestDelegatedTransport_UpdateSessionMeta_NilSessionMeta(t *testing.T) {
 // TestDelegatedTransport_UpdateSessionMeta_EmptyModel verifies that the model
 // field in sessionMeta is left unchanged when FinalModel is empty.
 func TestDelegatedTransport_UpdateSessionMeta_EmptyModel(t *testing.T) {
+	t.Parallel()
 	a := &Agent{Model: "test-model"}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
@@ -2352,6 +2391,7 @@ func TestDelegatedTransport_LogUsage_BackendThatBooksNothing(t *testing.T) {
 // TestDelegatedTransport_LogUsage_NilUsage verifies that LogUsage is a safe
 // no-op when FinalUsage is nil.
 func TestDelegatedTransport_LogUsage_NilUsage(t *testing.T) {
+	t.Parallel()
 	a := &Agent{Model: "test-model"}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
@@ -2372,6 +2412,7 @@ func TestDelegatedTransport_LogUsage_NilUsage(t *testing.T) {
 // TestDelegatedTransport_RunCompaction_AboveThreshold verifies that when total
 // tokens exceed the compaction threshold, /compact is sent to the backend.
 func TestDelegatedTransport_RunCompaction_AboveThreshold(t *testing.T) {
+	t.Parallel()
 	var capturedCmd string
 	be := &mockBackendDT{
 		sendCommandFn: func(_ context.Context, cmd string) error {
@@ -2428,6 +2469,7 @@ func TestDelegatedTransport_RunCompaction_AboveThreshold(t *testing.T) {
 // TestDelegatedTransport_RunCompaction_BelowThreshold verifies that when tokens
 // are below the compaction threshold, no /compact command is sent.
 func TestDelegatedTransport_RunCompaction_BelowThreshold(t *testing.T) {
+	t.Parallel()
 	cmdSent := false
 	be := &mockBackendDT{
 		sendCommandFn: func(_ context.Context, _ string) error {
@@ -2463,6 +2505,7 @@ func TestDelegatedTransport_RunCompaction_BelowThreshold(t *testing.T) {
 // TestDelegatedTransport_RunCompaction_NilCompactor verifies that RunCompaction
 // is a safe no-op when the Compactor is nil.
 func TestDelegatedTransport_RunCompaction_NilCompactor(t *testing.T) {
+	t.Parallel()
 	a := &Agent{Model: "test-model"}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
@@ -2475,6 +2518,7 @@ func TestDelegatedTransport_RunCompaction_NilCompactor(t *testing.T) {
 // TestDelegatedTransport_RunCompaction_NilUsage verifies that RunCompaction
 // is a safe no-op when FinalUsage is nil.
 func TestDelegatedTransport_RunCompaction_NilUsage(t *testing.T) {
+	t.Parallel()
 	store := session.NewStore(t.TempDir())
 	comp := compaction.NewCompactor(store, 0.8)
 	a := &Agent{Model: "test-model", Compactor: comp}
@@ -2489,6 +2533,7 @@ func TestDelegatedTransport_RunCompaction_NilUsage(t *testing.T) {
 // TestDelegatedTransport_RunCompaction_NoCompactSession verifies that sessions
 // marked as no_compact skip compaction even above the threshold.
 func TestDelegatedTransport_RunCompaction_NoCompactSession(t *testing.T) {
+	t.Parallel()
 	cmdSent := false
 	be := &mockBackendDT{
 		sendCommandFn: func(_ context.Context, _ string) error {
@@ -2529,6 +2574,7 @@ func TestDelegatedTransport_RunCompaction_NoCompactSession(t *testing.T) {
 // after successful compaction, NudgeReloadFunc is called and sessionMeta
 // fields are cleared.
 func TestDelegatedTransport_RunCompaction_NudgeReloadAndMetaReset(t *testing.T) {
+	t.Parallel()
 	be := &mockBackendDT{
 		sendCommandFn: func(_ context.Context, _ string) error { return nil },
 	}
@@ -2571,6 +2617,7 @@ func TestDelegatedTransport_RunCompaction_NudgeReloadAndMetaReset(t *testing.T) 
 // SendCommand fails during compaction, no panic occurs and notify callbacks
 // are not called.
 func TestDelegatedTransport_RunCompaction_SendCommandError(t *testing.T) {
+	t.Parallel()
 	be := &mockBackendDT{
 		sendCommandFn: func(_ context.Context, _ string) error {
 			return errors.New("tmux send error")
@@ -2606,6 +2653,7 @@ func TestDelegatedTransport_RunCompaction_SendCommandError(t *testing.T) {
 // TestDelegatedTransport_RunCompaction_WaitForTurnError verifies that when
 // WaitForTurn times out, the notify callback is not called.
 func TestDelegatedTransport_RunCompaction_WaitForTurnError(t *testing.T) {
+	t.Parallel()
 	be := &mockBackendDT{
 		sendCommandFn: func(_ context.Context, _ string) error { return nil },
 		waitForTurnFn: func(_ context.Context) error {
@@ -2642,6 +2690,7 @@ func TestDelegatedTransport_RunCompaction_WaitForTurnError(t *testing.T) {
 // TestDelegatedTransport_RunCompaction_EmptySummaryPrompt verifies that
 // compaction is skipped when the summary prompt resolves to empty (path="none").
 func TestDelegatedTransport_RunCompaction_EmptySummaryPrompt(t *testing.T) {
+	t.Parallel()
 	cmdSent := false
 	be := &mockBackendDT{
 		sendCommandFn: func(_ context.Context, _ string) error {
@@ -2686,6 +2735,7 @@ func TestDelegatedTransport_RunCompaction_EmptySummaryPrompt(t *testing.T) {
 // session-level model is set (via sessionMeta), it takes precedence over the
 // agent-level model.
 func TestDelegatedTransport_ResolveModelEffort_SessionModel(t *testing.T) {
+	t.Parallel()
 	a := &Agent{Model: "agent-default"}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
@@ -2706,6 +2756,7 @@ func TestDelegatedTransport_ResolveModelEffort_SessionModel(t *testing.T) {
 // session's live model locks branches into an unlaunchable `--model` (the
 // 2026-07-13 keepalive breakage). A real model must still be recorded.
 func TestDelegatedUpdateSessionMeta_SyntheticModelNotRecorded(t *testing.T) {
+	t.Parallel()
 	a := &Agent{Model: "claude-fable-5"}
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 
@@ -2730,6 +2781,7 @@ func TestDelegatedUpdateSessionMeta_SyntheticModelNotRecorded(t *testing.T) {
 // sentinel before the write-guard existed must resolve to the agent default,
 // both directly and via a child session's root fallback.
 func TestSessionModelFiltersSyntheticPollution(t *testing.T) {
+	t.Parallel()
 	a := &Agent{Model: "claude-fable-5"}
 	sm := a.getSessionMeta("bot/c100")
 	a.metaMu.Lock()
@@ -2876,6 +2928,7 @@ type capabilitylessBackend struct{ delegator.Delegator }
 // funcs (#2154). The agent layer used to assume both were supported, so a new
 // backend silently claimed them.
 func TestDelegatedTransport_RunInference_UndeclaredCapabilitiesArmNoMidTurnNudges(t *testing.T) {
+	t.Parallel()
 	var postTool func(string, string, bool) []string
 	var preAnswer func(*delegator.TurnResult) string
 	captured := false

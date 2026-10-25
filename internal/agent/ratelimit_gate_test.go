@@ -10,6 +10,7 @@ import (
 )
 
 func TestRateLimitGate_NotLimitedByDefault(t *testing.T) {
+	t.Parallel()
 	// Proves that a zero-value RateLimitGate is not limited.
 	var g RateLimitGate
 	limited, _ := g.IsLimited()
@@ -19,6 +20,7 @@ func TestRateLimitGate_NotLimitedByDefault(t *testing.T) {
 }
 
 func TestRateLimitGate_CloseAndIsLimited(t *testing.T) {
+	t.Parallel()
 	// Proves that Close() marks the gate as limited until the given time, which IsLimited reports correctly.
 	var g RateLimitGate
 	until := time.Now().Add(1 * time.Hour)
@@ -34,6 +36,7 @@ func TestRateLimitGate_CloseAndIsLimited(t *testing.T) {
 }
 
 func TestRateLimitGate_ExpiredNotLimited(t *testing.T) {
+	t.Parallel()
 	// Proves that a gate whose limit time has passed is no longer considered limited.
 	var g RateLimitGate
 	g.Close(time.Now().Add(-1 * time.Second))
@@ -45,6 +48,7 @@ func TestRateLimitGate_ExpiredNotLimited(t *testing.T) {
 }
 
 func TestEngageRateLimit(t *testing.T) {
+	t.Parallel()
 	var got time.Time
 	ag := &Agent{
 		Endpoint:      "test-endpoint",
@@ -62,6 +66,7 @@ func TestEngageRateLimit(t *testing.T) {
 }
 
 func TestEngageRateLimit_UsageFallback(t *testing.T) {
+	t.Parallel()
 	// Proves a delegated usage signal without a trustworthy reset uses the
 	// shared fallback and still fires the standard notification hook.
 	var got time.Time
@@ -81,6 +86,7 @@ func TestEngageRateLimit_UsageFallback(t *testing.T) {
 }
 
 func TestEngageRateLimitClosesOneAgentWideGate(t *testing.T) {
+	t.Parallel()
 	// Characterisation (#2287): a delegated agent's limit is backend-wide,
 	// so its gate is agent-wide — EngageRateLimit closes the agent's ONE
 	// gate, keyed on its default endpoint, and the hook takes no session
@@ -101,6 +107,7 @@ func TestEngageRateLimitClosesOneAgentWideGate(t *testing.T) {
 }
 
 func TestRateLimitGate_OpenPreservesQueue(t *testing.T) {
+	t.Parallel()
 	// Proves a successful user probe releases the deadline immediately while
 	// preserving already-queued system work for the normal replay drain.
 	var g RateLimitGate
@@ -119,6 +126,7 @@ func TestRateLimitGate_OpenPreservesQueue(t *testing.T) {
 }
 
 func TestRateLimitGate_EnqueueAndDrain(t *testing.T) {
+	t.Parallel()
 	// Proves that queued items are held while the gate is limited and released in order after expiry.
 	var g RateLimitGate
 	g.Close(time.Now().Add(1 * time.Hour))
@@ -154,6 +162,7 @@ func TestRateLimitGate_EnqueueAndDrain(t *testing.T) {
 }
 
 func TestRateLimitGate_DrainClearsGate(t *testing.T) {
+	t.Parallel()
 	// Proves that DrainQueue clears the gate's limited state so subsequent calls show it unlocked.
 	var g RateLimitGate
 	g.Close(time.Now().Add(-1 * time.Millisecond))
@@ -169,6 +178,7 @@ func TestRateLimitGate_DrainClearsGate(t *testing.T) {
 }
 
 func TestRateLimitGate_ConcurrentAccess(t *testing.T) {
+	t.Parallel()
 	// Proves that concurrent Enqueue and IsLimited calls are race-condition-free and all items are preserved.
 	var g RateLimitGate
 	g.Close(time.Now().Add(100 * time.Millisecond))
@@ -208,6 +218,7 @@ func TestRateLimitGate_ConcurrentAccess(t *testing.T) {
 }
 
 func TestRateLimitedError_Message(t *testing.T) {
+	t.Parallel()
 	// Proves that RateLimitedError.Error() produces a human-readable message
 	// with "rate limited" and reset info that NAMES the endpoint whose gate
 	// closed — the endpoint that limited — and keeps an endpoint-less form
@@ -231,6 +242,7 @@ func TestRateLimitedError_Message(t *testing.T) {
 }
 
 func TestSessionRateLimited_UnknownEndpointStaysEndpointless(t *testing.T) {
+	t.Parallel()
 	// Proves the scheduler-facing reason shares the one rendering of a closed
 	// gate: an agent with no endpoint configured gates on its single default
 	// gate, and the reason keeps the endpoint-less form — no dangling
@@ -251,6 +263,7 @@ func TestSessionRateLimited_UnknownEndpointStaysEndpointless(t *testing.T) {
 }
 
 func TestRateLimitGate_DrainEmptyQueueNoItems(t *testing.T) {
+	t.Parallel()
 	// Proves that DrainQueue on an empty, non-limited gate returns nil without panicking.
 	var g RateLimitGate
 	// Not limited, empty queue

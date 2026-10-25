@@ -8,6 +8,7 @@ import (
 )
 
 func TestLiveConfigFnGettersPreferLiveThenFallBack(t *testing.T) {
+	t.Parallel()
 	var cur *config.ResolvedAgentConfig
 	a := &Agent{
 		Streaming:        false, // static fallbacks (direct-constructed agents)
@@ -53,6 +54,7 @@ func TestLiveConfigFnGettersPreferLiveThenFallBack(t *testing.T) {
 // every sub-struct they read from (Loop/Summary/Display/Compaction/Behavior),
 // including turnLockWarnThreshold's per-call duration re-parse.
 func TestBucketEGettersPreferLiveThenFallBack(t *testing.T) {
+	t.Parallel()
 	var cur *config.ResolvedAgentConfig
 	a := &Agent{
 		// static fallbacks (direct-constructed agents / nil LiveConfigFn)

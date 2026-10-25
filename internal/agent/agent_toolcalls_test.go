@@ -20,6 +20,7 @@ import (
 )
 
 func TestRepairInterruptedToolCalls(t *testing.T) {
+	t.Parallel()
 	// Proves that repairInterruptedToolCalls returns nil for benign cases
 	// (empty, last message is user, no tool_use) and produces a
 	// user(tool_result) + assistant(ack) pair for interrupted tool calls.
@@ -107,6 +108,7 @@ func TestRepairInterruptedToolCalls(t *testing.T) {
 }
 
 func TestRepairInterruptedToolCallsPersisted(t *testing.T) {
+	t.Parallel()
 	// Simulate a session with an interrupted tool call, then verify
 	// HandleMessage repairs it before sending to the API.
 	var receivedReq *provider.MessageRequest
@@ -186,6 +188,7 @@ func TestRepairInterruptedToolCallsPersisted(t *testing.T) {
 }
 
 func TestIntermediateTextBeforeToolCalls(t *testing.T) {
+	t.Parallel()
 	// Verify the agent emits the intermediate TextBlock before the ToolCall
 	// event when the API response contains both text and tool_use blocks.
 	// This ordering is critical for platform message display: thinking text
@@ -274,6 +277,7 @@ func TestIntermediateTextBeforeToolCalls(t *testing.T) {
 }
 
 func TestToolResultRedaction(t *testing.T) {
+	t.Parallel()
 	// Proves that the Redact function is applied to tool output before it is saved to the session store, preventing secrets from being persisted in plaintext.
 	var callCount atomic.Int32
 
@@ -343,6 +347,7 @@ func TestToolResultRedaction(t *testing.T) {
 }
 
 func TestToolErrorRedaction(t *testing.T) {
+	t.Parallel()
 	// Proves that the Redact function is applied to tool error messages as well as successful results, so that secrets in error text are not stored in the session.
 	var callCount atomic.Int32
 

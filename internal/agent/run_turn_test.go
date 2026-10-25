@@ -7,6 +7,7 @@ import "testing"
 // of the originating platform; a normal typed message keeps the platform's
 // own trigger (#1436).
 func TestBatchTrigger_VoiceEnvelopeOverridesPlatform(t *testing.T) {
+	t.Parallel()
 	batch := []Envelope{{Text: "hello", Voice: true}}
 	if got := batchTrigger("app", batch); got != "voice" {
 		t.Errorf("batchTrigger = %q, want %q", got, "voice")
@@ -14,6 +15,7 @@ func TestBatchTrigger_VoiceEnvelopeOverridesPlatform(t *testing.T) {
 }
 
 func TestBatchTrigger_TypedEnvelopeKeepsPlatform(t *testing.T) {
+	t.Parallel()
 	batch := []Envelope{{Text: "hello"}}
 	if got := batchTrigger("app", batch); got != "app" {
 		t.Errorf("batchTrigger = %q, want %q", got, "app")
@@ -21,6 +23,7 @@ func TestBatchTrigger_TypedEnvelopeKeepsPlatform(t *testing.T) {
 }
 
 func TestBatchTrigger_MixedVoiceAndTypedCountsAsVoice(t *testing.T) {
+	t.Parallel()
 	// A batch can accumulate more than one envelope (e.g. a follow-up message
 	// queued behind an in-flight turn) — if ANY of them carries transcribed
 	// voice content, the whole turn is tagged voice.
@@ -31,6 +34,7 @@ func TestBatchTrigger_MixedVoiceAndTypedCountsAsVoice(t *testing.T) {
 }
 
 func TestBatchTrigger_EmptyBatchKeepsPlatform(t *testing.T) {
+	t.Parallel()
 	if got := batchTrigger("discord", nil); got != "discord" {
 		t.Errorf("batchTrigger = %q, want %q", got, "discord")
 	}

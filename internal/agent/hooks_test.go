@@ -3,6 +3,7 @@ package agent
 import "testing"
 
 func TestHookListAddAndRange(t *testing.T) {
+	t.Parallel()
 	// Proves that HookList is empty and safe to range over before any Add calls, and that after adding callbacks they are invoked in registration order when iterated.
 	var hooks HookList[func(string)]
 
@@ -30,6 +31,7 @@ func TestHookListAddAndRange(t *testing.T) {
 }
 
 func TestHookListMultiArg(t *testing.T) {
+	t.Parallel()
 	// Proves that HookList is generic enough to hold multi-argument function types and that all registered callbacks receive all arguments correctly.
 	var hooks HookList[func(string, int)]
 

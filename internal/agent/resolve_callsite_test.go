@@ -13,6 +13,7 @@ import (
 // AND format — so a session owning an openai tuple never gets its openai
 // client paired with the agent-default format.
 func TestResolveCallSiteSessionPathsReturnSessionFormat(t *testing.T) {
+	t.Parallel()
 	defaultClient := tupleClient{name: "default"}
 	clientX := tupleClient{name: "openai"}
 	own := session.SessionKey{AgentID: "bot", Type: 'c', ID: "100"}

@@ -17,6 +17,7 @@ import (
 // The api backend needs no counterpart test: an API agent has no
 // DelegatedManager and spawns no subprocess at all.
 func TestGet_SessionEnvIsBackendAgnostic(t *testing.T) {
+	t.Parallel()
 	mgr, mocks := newTestManager(t, nil)
 
 	if _, err := mgr.Get(context.Background(), "test-agent/c1"); err != nil {

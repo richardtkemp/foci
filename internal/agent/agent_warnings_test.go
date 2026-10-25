@@ -24,6 +24,7 @@ func braindeadScheduler(threshold int) *nudge.Scheduler {
 }
 
 func TestMaxTokensWarning(t *testing.T) {
+	t.Parallel()
 	// Proves that when the API returns stop_reason="max_tokens", the MaxTokensWarnFunc callback fires with a message that includes the session key, while still returning the truncated response to the caller.
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		return &provider.MessageResponse{
@@ -73,6 +74,7 @@ func TestMaxTokensWarning(t *testing.T) {
 }
 
 func TestMaxTokensNoWarningOnEndTurn(t *testing.T) {
+	t.Parallel()
 	// Proves that a normal end_turn response does not trigger the MaxTokensWarnFunc — warnings are specific to max_tokens truncation.
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		return &provider.MessageResponse{
@@ -107,6 +109,7 @@ func TestMaxTokensNoWarningOnEndTurn(t *testing.T) {
 }
 
 func TestBraindeadWarningInjected(t *testing.T) {
+	t.Parallel()
 	// Proves that the braindead warning (via nudge system) is injected when
 	// tool calls reach the configured threshold.
 	var callCount atomic.Int32
@@ -175,6 +178,7 @@ func TestBraindeadWarningInjected(t *testing.T) {
 }
 
 func TestBraindeadWarningCooldown(t *testing.T) {
+	t.Parallel()
 	// Proves that the braindead nudge fires only once per cooldown window,
 	// not on every tool batch after the threshold.
 	var callCount atomic.Int32
@@ -246,6 +250,7 @@ func TestBraindeadWarningCooldown(t *testing.T) {
 }
 
 func TestBraindeadDisabledWhenZero(t *testing.T) {
+	t.Parallel()
 	// The braindead rule is always built; a threshold of 0 gates it off in the
 	// Scheduler, so no warning is injected even when the loop runs many iterations.
 	var callCount atomic.Int32
@@ -310,6 +315,7 @@ func TestBraindeadDisabledWhenZero(t *testing.T) {
 }
 
 func TestDisplayNoteInjectedOnce(t *testing.T) {
+	t.Parallel()
 	// Proves that a [display] tool_results note is injected exactly once per turn
 	// (on the first tool batch), reflecting the effective ShowToolCalls mode.
 	var callCount atomic.Int32
@@ -381,6 +387,7 @@ func TestDisplayNoteInjectedOnce(t *testing.T) {
 }
 
 func TestDisplayNoteReflectsSessionOverride(t *testing.T) {
+	t.Parallel()
 	// Proves that the display note reflects per-session overrides, not just the agent default.
 	var callCount atomic.Int32
 

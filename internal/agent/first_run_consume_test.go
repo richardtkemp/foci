@@ -6,6 +6,7 @@ import "testing"
 // returned and cleared exactly once, and OnFirstRunConsumed fires only on the
 // real consumption — the contract both turn paths rely on (#853).
 func TestConsumeFirstRunMessage_OnceAndHook(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	fired := 0
 	a.OnFirstRunConsumed = func() { fired++ }
@@ -31,6 +32,7 @@ func TestConsumeFirstRunMessage_OnceAndHook(t *testing.T) {
 // TestConsumeFirstRunMessage_NonePending verifies a no-op when no onboarding
 // was stored: returns "" and never fires the hook.
 func TestConsumeFirstRunMessage_NonePending(t *testing.T) {
+	t.Parallel()
 	a := &Agent{}
 	fired := false
 	a.OnFirstRunConsumed = func() { fired = true }

@@ -8,6 +8,7 @@ import (
 )
 
 func TestClearSessionState(t *testing.T) {
+	t.Parallel()
 	// Proves that ClearSessionState drops ALL per-session state for a stable
 	// key after its history is reset: in-memory overrides (effort, no_compact),
 	// the turn lock, and every session_metadata row (including cc_resume_id).
@@ -52,6 +53,7 @@ func TestClearSessionState(t *testing.T) {
 }
 
 func TestClearSessionState_OtherSessionsUntouched(t *testing.T) {
+	t.Parallel()
 	// Proves ClearSessionState is scoped to one session key: clearing one
 	// session's state must not disturb a sibling session's overrides or
 	// metadata rows.
