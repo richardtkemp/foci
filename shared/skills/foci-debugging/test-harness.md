@@ -4,9 +4,8 @@
 
 ## Trigger
 
-A test fails under `make test` (often only during a `make land` gate) but you cannot reproduce it
-with a plain `go test`. The difference between the two **is** the answer — and it lives in
-`scripts/seal-test.sh`, not in the test.
+A test fails under `make test` (often in a `make land` gate) but not under a plain `go test`. The
+difference **is** the answer, and it lives in `scripts/seal-test.sh`, not in the test.
 
 ## The environment `make test` actually uses
 
@@ -30,8 +29,8 @@ which ingredient matters, use the manual recipe and table below.
 `go -C`): use `make build`/`vet`/`test-one`, which take the `/tmp/heavy` lock. The manual recipe is for
 a human at a terminal.
 
-**To peel a layer off, copy `TESTENV` verbatim out of `seal-test.sh` — never reconstruct it**; it
-grows, and the variable you omit is the one that mattered. Currently:
+**To peel a layer off, copy `TESTENV` verbatim from `seal-test.sh`, never reconstruct it** (the
+variable you omit is the one that mattered). Currently:
 
 ```bash
 TESTDIR=$(mktemp -d /tmp/fgw/probe-XXXXXX); mkdir -p "$TESTDIR/home"
@@ -60,7 +59,7 @@ split of "sandbox artifact" from "real bug".
 
 ## Isolating which ingredient matters
 
-Run the arms separately; each rules out one variable. Compare **rates**, not single runs.
+Run the arms separately; compare **rates**, not single runs.
 
 | Arm | Isolates |
 |---|---|
@@ -71,30 +70,23 @@ Run the arms separately; each rules out one variable. Compare **rates**, not sin
 | full package, sealed under `llbox` (above) | the Landlock seal |
 | full `make test` | whole-suite context (~70 packages in parallel) |
 
-A failure that only appears in the last row needs the whole-suite context and no single ingredient
-reproduces it — say that plainly rather than picking whichever arm you ran last.
+A failure only in the last row needs the whole suite and no single ingredient reproduces it; say
+so plainly rather than blaming whichever arm you ran last.
 
-The spinner arm is **weak**: `nice -19` yields to everything, under-loading vs real parallel test
-binaries at equal priority.
+The spinner arm is **weak**: `nice -19` under-loads compared with real test binaries.
 
 ## Gotchas that cost real time
 
-- **`go test` without `FOCI_TMPDIR` panics** with a guard telling you to set it — and the panic
+- **`go test` without `FOCI_TMPDIR` panics**, and the panic
   **aborts the whole package**, so a "deterministic failure across 3 runs" can be three runs of
   nothing. Always set it.
-- **Never rely on inherited cwd.** Background tool invocations do not reliably inherit the previous
-  one's directory; a bare `go test ./internal/...` can run from your agent home and die with
-  `cannot find main module, but found .git/config in /home/foci`. Always `make -C <repo> test-one …`.
+- **Never rely on inherited cwd**: a bare run can die with `cannot find main module`. Use `make -C <repo> test-one …`.
 - **`go` needs a writable `TMPDIR`.** Sealing without it fails at
   `go: creating work dir: mkdir /tmp/go-build…: permission denied` before a single test runs.
-- **Never pipe the run into `tail`/`grep`.** The pipe reports the *filter's* status; a failed
-  `make land` is notified as exit 0. Redirect to a file and read that.
-- **Confirm the arm actually ran.** A run that never executed and a clean pass look identical from
-  the exit code. Look for the positive evidence — `ok <pkg> <time>`, a `--- FAIL` line, an artifact
-  on disk.
-- **Anything shelling out to `git` behaves differently under the redirected HOME** — it loses
-  `~/.gitconfig` (e.g. `safe.directory`, so git refuses the rich-owned checkout under the foci
-  runner). Once seen as `error obtaining VCS status: exit status 128` (fixed with `-buildvcs=false`).
+- **Never pipe the run into `tail`/`grep`** (the filter's status hides a failure); redirect to a file.
+- **Confirm the arm ran**: look for `ok <pkg> <time>` or `--- FAIL`, not just the exit code.
+- **`git` under the redirected HOME loses `~/.gitconfig`** (`safe.directory`), so it refuses the
+  rich-owned checkout: seen as `error obtaining VCS status: exit status 128` (fix: `-buildvcs=false`).
 
 ## Reading the result
 
@@ -103,9 +95,7 @@ binaries at equal priority.
 That is real evidence, but it identifies *a* blocked write, not necessarily the cause. Confirm the
 seal alone is sufficient before concluding it, or you will chase an irrelevant whitelist gap.
 
-Only a `--- FAIL:` line is a failure verdict. A `foo_test.go:NNN:` line can be a benign `t.Logf`
-however alarming its wording, and a value in a log line may be an injected test fake — those are
-marked `FAKE-TEST` since #1562, but only where the fake is a *string*; values rendered from
-injected numbers still read as real events.
+Only a `--- FAIL:` line is a failure verdict. A `foo_test.go:NNN:` line can be a benign `t.Logf`, and a
+logged value may be an injected fake (strings are marked `FAKE-TEST`, #1562; injected numbers are not).
 
 For "who broke main?" — a red `[foci-test-runner]` notification — see `ci-triage.md`.

@@ -14,7 +14,7 @@ This file is the entry point: how the two families work and which tools you have
 
 ## 1. CC-native tools
 
-CC gives you its own first-class tools: `Read`, `Write`, `Edit`, `Bash`, `Grep`, `Glob`, `Agent` (sub-agents), `WebFetch`, and more. Use these for files, shell, search, and spawning sub-agents — they're the right tool for anything general-purpose. foci does **not** replace them.
+CC gives you its own first-class tools: `Read`, `Write`, `Edit`, `Bash`, `Grep`, `Glob`, `Agent` (sub-agents), `WebFetch`, and more. Use them for files, shell, search and sub-agents. foci does **not** replace them.
 
 ## 2. foci tools (as shell functions)
 
@@ -26,7 +26,7 @@ foci_todo list --status open
 
 How this works: foci generates a shell-functions file and points `BASH_ENV` at it, so Bash sources it on startup and every `foci_*` function is defined. Each function packages its arguments as JSON and sends them over a Unix socket (`FOCI_SOCK`) to foci, which runs the real tool and returns the result.
 
-A startup parity check guarantees every flag in a tool's `--help` actually has a working handler — so the help text is authoritative.
+A startup parity check gives every `--help` flag a working handler, so the help text is authoritative.
 
 **The foci tools always available to you as shell functions:**
 `foci_ask`, `foci_send_to_chat`, `foci_send_to_session`, `foci_todo`, `foci_remind`, `foci_memory_search`, `foci_http_request`, `foci_web_fetch`, `foci_web_search`, `foci_summary`, `foci_whoami`, `foci_spawn`, `foci_spawn_send`, `foci_spawn_status`.
