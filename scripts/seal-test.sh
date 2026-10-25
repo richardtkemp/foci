@@ -9,7 +9,8 @@
 #
 #   PKG is only used by the `one` mode — see run_one below. RUN
 #   and COUNT also apply to `integration` (e.g. looping one L2 test to repro a
-#   flake, foci_todo #2044); PKG is ignored there.
+#   flake, foci_todo #2044); PKG is ignored there. COUNT also applies to
+#   `unit` (make test COUNT=1: every package runs, uncached, #2559).
 #   VERBOSE (make's V=1) is accepted and ignored: every run now passes go
 #   test's -v (foci_todo #2348, see GOTEST_FLAGS), so a PASSING test's t.Logf
 #   output always reaches LOGFILE (the need behind #1982's V=1).
@@ -204,6 +205,7 @@ PINNED=("PATH=$TEST_PATH" "USER=$(id -un)" "PWD=$PWD" "TMPDIR=$TESTDIR" "FOCI_TM
 # like the Go caches; a copy not run for 12 h is removed here. It is not in the
 # sandbox whitelist: Landlock is Linux-only, and this is macOS-only.
 # FOCI_TEST_BIN_REUSE=0 (read here: the tests' env -i would drop it) turns it off.
+BIN_CACHE=
 if [ "$(uname -s)" = Darwin ] && [ "${FOCI_TEST_BIN_REUSE:-1}" != 0 ]; then
   BIN_CACHE="${FOCI_TEST_BIN_CACHE_DIR:-$HOME/Library/Caches/foci-test-bins}"
   mkdir -p "$BIN_CACHE"
@@ -228,15 +230,19 @@ TESTENV_SHOWN=("${PASSTHRU_SHOWN[@]}" "${PINNED[@]}")
 # (the Makefile's LDFLAGS): stack traces use the pclntab, which stays. A
 # smaller binary links faster and, on macOS, is faster to scan: XProtect reads
 # every new executable before its first run, at about 17 ms per MB on the Pro.
-# MEMCAP: every test binary runs under scripts/test-memcap.sh, which stops it
-# (SIGQUIT goroutine dump, then SIGKILL) if its OWN resident memory passes
-# 1 GB, so a test that spins and allocates fails fast as an ordinary test
-# failure instead of growing until memory_guard kills it under box-wide
-# pressure (foci_todo #2436). Absolute path: go test runs the -exec program
-# from each package's directory. $PWD is the stable /tmp/fgw/src-<user> link,
-# so the path (part of go's test-cache key) is the same in every run.
-MEMCAP=(-exec "$PWD/scripts/test-memcap.sh")
-GOTEST_FLAGS=(-trimpath "-ldflags=-s -w" -parallel=16 -v "${MEMCAP[@]}")
+# MEMCAP: every test binary runs under scripts/test-memcap.sh, on every run
+# (Dick 2026-10-25, foci_todo #2559: "cap everywhere + cached"). On Linux it
+# stops a binary whose OWN resident memory passes 1 GB (SIGQUIT goroutine dump,
+# then SIGKILL), so a test that spins and allocates fails fast as an ordinary
+# test failure instead of growing until memory_guard kills it under box-wide
+# pressure (foci_todo #2436). On macOS it runs each binary from an MD5-named
+# copy XProtect already scanned (#2551). go test passes -test.testlogfile only
+# when there is no -exec program, so the wrapper passes it itself and results
+# stay cacheable. Absolute path: go test runs the -exec program from each
+# package's directory. $PWD is the stable /tmp/fgw/src-<user> link, so the path
+# (part of go's test-cache key) is the same in every run.
+EXEC=(-exec "$PWD/scripts/test-memcap.sh")
+GOTEST_FLAGS=(-trimpath "-ldflags=-s -w" -parallel=16 -v "${EXEC[@]}")
 
 if [ -n "${FOCI_TEST_UNSEALED:-}" ]; then
   echo ">>> FOCI_TEST_UNSEALED=1 set — skipping Landlock sealing entirely" | tee -a "$LOGFILE" >&2
@@ -310,11 +316,11 @@ diagnostic_rerun() {
   while IFS= read -r pkg; do
     [ -z "$pkg" ] && continue
     echo "--- unsealed re-run: $pkg ---" >> "$LOGFILE"
-    if go_test_logged "${env[@]}" nice -n 19 go test -trimpath "-ldflags=-s -w" -count=1 "${MEMCAP[@]}" "${extra_flags[@]}" "$pkg" 8<&-; then
+    if go_test_logged "${env[@]}" nice -n 19 go test -trimpath "-ldflags=-s -w" -count=1 "${EXEC[@]}" "${extra_flags[@]}" "$pkg" 8<&-; then
       # A pass unsealed is also what a flake looks like. Only a second sealed
       # failure pins it on the sandbox (#2132).
       echo "--- sealed re-run: $pkg ---" >> "$LOGFILE"
-      if go_test_logged "${SEAL[@]}" "${env[@]}" nice -n 19 go test -trimpath "-ldflags=-s -w" -count=1 "${MEMCAP[@]}" "${extra_flags[@]}" "$pkg" 8<&-; then
+      if go_test_logged "${SEAL[@]}" "${env[@]}" nice -n 19 go test -trimpath "-ldflags=-s -w" -count=1 "${EXEC[@]}" "${extra_flags[@]}" "$pkg" 8<&-; then
         echo ">>> DIAGNOSTIC: $pkg passes on re-run both UNSEALED and SEALED — the failure is a FLAKE, not a sandbox write." | tee -a "$LOGFILE" >&2
       else
         echo ">>> DIAGNOSTIC: $pkg fails SEALED again but passes UNSEALED — it is writing outside the sandbox. Add the path to the whitelist in scripts/seal-test.sh, or stop writing there." | tee -a "$LOGFILE" >&2
@@ -367,13 +373,22 @@ unit_packages() {
   grep -vxF -f <(printf '%s\n' "${SLOW_FIRST[@]}") <<<"$all"
 }
 
+# run_unit — the whole unit suite. Go serves each unchanged package's result
+# from its test cache ("(cached)" in the log). COUNT=N (make test COUNT=1, the
+# measurement mode, foci_todo #2559) passes -count=N, so every package runs.
 run_unit() {
-  env_header "sealed unit suite"
+  check_count
+  local count_flag=()
+  if [ -n "$COUNT" ]; then
+    count_flag=(-count="$COUNT")
+    echo ">>> make test COUNT=$COUNT: go's test cache is bypassed, every package runs" | tee -a "$LOGFILE" >&2
+  fi
+  env_header "sealed unit suite${COUNT:+ -count=$COUNT (UNCACHED)}"
   start_script_suites
   local pkgs=() p # no mapfile: macOS /bin/bash is 3.2
   while IFS= read -r p; do pkgs+=("$p"); done < <(unit_packages 2>>"$LOGFILE")
   [ "${#pkgs[@]}" -gt 0 ] || pkgs=(./...)
-  go_test_logged "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test "${GOTEST_FLAGS[@]}" -p="$PARALLEL" -timeout "$(test_timeout)" "${pkgs[@]}"
+  go_test_logged "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test "${GOTEST_FLAGS[@]}" "${count_flag[@]}" -p="$PARALLEL" -timeout "$(test_timeout "${COUNT:-1}")" "${pkgs[@]}"
   local status=$?
 
   diagnostic_rerun -timeout "$(test_timeout)"
@@ -466,7 +481,7 @@ run_integration() {
   local extra=(-count="$count" -timeout "$((600 * count))s")
   local filter=()
   [ -n "$RUNFILTER" ] && filter=(-run "$RUNFILTER")
-  go_test_logged "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -tags=integration "${MEMCAP[@]}" "${extra[@]}" "${filter[@]}" \
+  go_test_logged "${SEAL[@]}" "${TESTENV[@]}" nice -n 19 go test -tags=integration "${EXEC[@]}" "${extra[@]}" "${filter[@]}" \
     -parallel="$PARALLEL" -v ./test/integration/... ./internal/testharness/...
   local status=$?
 

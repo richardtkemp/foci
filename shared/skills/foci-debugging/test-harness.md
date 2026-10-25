@@ -21,13 +21,13 @@ things a bare `go test` does not:
    spawn (tmux, git, chrome…).
 
 **To run one package under the harness env, use `make test-one PKG=./internal/<pkg>/ [RUN=<Name>]
-[COUNT=N]`.** `COUNT=N` is `-count` for flake checks. Runs are always `-v` (#2348), so a passing
-test's `t.Logf` lines are logged. It uses the exact `TESTENV`/seal of `make test`, all of it — to find
-which ingredient matters, use the manual recipe and table below.
+[COUNT=N]`.** `COUNT=N` is `-count` for flake checks. Always `-v` (#2348): a passing test's `t.Logf` is
+logged. Same `TESTENV`/seal as `make test`; to find which ingredient matters, use the recipe and
+table below.
 
 **Agents cannot run bare `go build`/`test`/`vet`** (`permissions.deny`, incl. `/usr/bin/go` and
 `go -C`): use `make build`/`vet`/`test-one`, which take the `/tmp/heavy` lock. The manual recipe is for
-a human at a terminal.
+humans.
 
 **To peel a layer off, copy `TESTENV` verbatim from `seal-test.sh`, never reconstruct it** (the
 variable you omit is the one that mattered). Currently:
@@ -48,11 +48,12 @@ Other differences from a bare `go test` (#2551), each a place to look when only 
 - **Linux: `$TESTDIR` is `/dev/shm/fgw-run-<user>` (tmpfs)**, not `/tmp/fgw/run-<user>`, so an
   fsync costs nothing. `FGW_RUN_PREFIX=/tmp/fgw/run-` puts it back on disk.
 - **`-p` is 1.5 x the cores on Linux** (`NPROC`, 6 on the NUC), 8 on the Mac, and the slowest
-  packages start first (`SLOW_FIRST` in `seal-test.sh`), so a test meets more concurrent load.
-- **Every binary runs under `scripts/test-memcap.sh`** (`go test -exec`). On macOS that wrapper
-  runs it from an MD5-named copy in `~/Library/Caches/foci-test-bins`, so `os.Args[0]` is that
-  path; `FOCI_TEST_BIN_REUSE=0` runs the binary go built.
-- **The shell-script suites run at the same time as each other and as `go test`.**
+  packages start first (`SLOW_FIRST` in `seal-test.sh`), so tests meet more load.
+- **Every binary runs under `scripts/test-memcap.sh`** (`-exec`, 1 GB cap on Linux), which passes
+  `-test.testlogfile` itself so results stay cached (#2559): unchanged packages say `(cached)`;
+  `make test COUNT=1` runs all. On macOS it runs an MD5-named copy from
+  `~/Library/Caches/foci-test-bins` (`os.Args[0]`; off: `FOCI_TEST_BIN_REUSE=0`).
+- **The shell-script suites run in parallel with each other and `go test`.**
 
 `FOCI_TEST_UNSEALED=1` makes `seal-test.sh` (and `make test-one`) skip Landlock — the cheapest
 split of "sandbox artifact" from "real bug".

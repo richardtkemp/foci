@@ -303,7 +303,9 @@ fgw_testdir = $(shell mkdir -p $(FGW_ROOT) && $(MKTEMP) -d $(FGW_ROOT)/$(1)-XXXX
 # anything it imports) or a file/env it read changed. To run for real — e.g.
 # to check a flake — pass COUNT=N (any explicit -count bypasses the cache).
 # `integration` stays uncached (-count): its tests run separately built
-# binaries the cache cannot see.
+# binaries the cache cannot see. Every binary runs under scripts/test-memcap.sh
+# (go test -exec), which passes -test.testlogfile itself so go still caches
+# (foci_todo #2559; go passes it only without -exec).
 # Shared ACROSS checkouts too: seal-test.sh builds tests with -trimpath (no
 # checkout path in the binary) and scripts/restore-mtime.py first sets every
 # unmodified tracked file to its last commit time (Go keys a file a test read
@@ -368,8 +370,15 @@ ifeq ($(UNAME_S),Darwin)
 	GOOS=linux GOARCH=amd64 go vet ./...
 endif
 
+# COUNT=N always runs the tests (no cached result), so it is never left to a lazy lock.
+test_cacheable = $(if $(COUNT),,1)
+
 # Local body of `make test`, which dispatches to the Mac when reachable
 # (mk/remote.mk); make land's gate is `make test`, so it follows.
+# Go's test cache serves every package whose test binary and inputs are
+# unchanged, so a re-run of an unchanged tree reports "(cached)" for them
+# (foci_todo #2559). Measurement mode, every package run for real: COUNT=1
+# (`make test COUNT=1`; the log header then says UNCACHED).
 local-test: llbox test-linux-compile
 	$(eval TESTDIR := $(test_dir))
 	$(eval LOGFILE := $(call fgw_logfile,test))
@@ -401,7 +410,7 @@ local-test: llbox test-linux-compile
 	@# #1498). The /tmp/fgw daily cron sweep (entries >24h) remains as a backstop
 	@# for anything this recipe doesn't reach (e.g. an aborted run).
 	@[ -e $(HEAVY_LOCK_PATH) ] || : > $(HEAVY_LOCK_PATH)
-	@( $(call heavy_enter,1) rm -rf $(TESTDIR) && mkdir -p $(TESTDIR)/home && $(src_link_dir)ln -sfn $(CURDIR) $(src_link) && touch -h -d @946684800 $(src_link) && cd $(src_link) && $(call heavy_reap,1) $(call heavy_held,1)TEST_TIMEOUT='$(TIMEOUT)' bash scripts/seal-test.sh unit $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) 9<&- ; STATUS=$$? ; \
+	@( $(call heavy_enter,$(test_cacheable)) rm -rf $(TESTDIR) && mkdir -p $(TESTDIR)/home && $(src_link_dir)ln -sfn $(CURDIR) $(src_link) && touch -h -d @946684800 $(src_link) && cd $(src_link) && $(call heavy_reap,$(test_cacheable)) $(call heavy_held,$(test_cacheable))TEST_TIMEOUT='$(TIMEOUT)' bash scripts/seal-test.sh unit $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) "" "" "" "$(COUNT)" 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; bash scripts/test-fail-summary.sh $(LOGFILE); fi ; \
 	  rm -rf $(TESTDIR) ; \
@@ -426,8 +435,6 @@ local-test: llbox test-linux-compile
 # does nothing.
 # TIMEOUT overrides go test's per-package -timeout (default 180s x COUNT, also
 # used by `make test`; foci_todo #2290) — see test_timeout in scripts/seal-test.sh.
-# COUNT=N always runs the tests (no cached result), so it is never left to a lazy lock.
-test_one_cacheable = $(if $(COUNT),,1)
 # This is the local body; bare `make test-one` runs it on the Mac when it is
 # reachable, else here (mk/remote.mk, #2525).
 local-test-one: llbox
@@ -439,7 +446,7 @@ local-test-one: llbox
 	@# for the rationale (serialises against other heavy builds; read-only lock
 	@# fd so go test's children don't inherit it).
 	@[ -e $(HEAVY_LOCK_PATH) ] || : > $(HEAVY_LOCK_PATH)
-	@( $(call heavy_enter,$(test_one_cacheable)) rm -rf $(TESTDIR) && mkdir -p $(TESTDIR)/home && $(src_link_dir)ln -sfn $(CURDIR) $(src_link) && touch -h -d @946684800 $(src_link) && cd $(src_link) && $(call heavy_reap,$(test_one_cacheable)) $(call heavy_held,$(test_one_cacheable))TEST_TIMEOUT='$(TIMEOUT)' bash scripts/seal-test.sh one $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) $(PKG) "$(RUN)" "$(V)" "$(COUNT)" 9<&- ; STATUS=$$? ; \
+	@( $(call heavy_enter,$(test_cacheable)) rm -rf $(TESTDIR) && mkdir -p $(TESTDIR)/home && $(src_link_dir)ln -sfn $(CURDIR) $(src_link) && touch -h -d @946684800 $(src_link) && cd $(src_link) && $(call heavy_reap,$(test_cacheable)) $(call heavy_held,$(test_cacheable))TEST_TIMEOUT='$(TIMEOUT)' bash scripts/seal-test.sh one $(TESTDIR) $(LOGFILE) $(NPROC) $(GOCACHE_PIN) $(GOMODCACHE_PIN) $(GOPATH_PIN) $(PKG) "$(RUN)" "$(V)" "$(COUNT)" 9<&- ; STATUS=$$? ; \
 	  if [ $$STATUS -eq 0 ]; then echo "PASS — full log: $(LOGFILE)"; \
 	  else echo "FAILED — full log: $(LOGFILE)"; echo "--- failures ---"; bash scripts/test-fail-summary.sh $(LOGFILE); fi ; \
 	  rm -rf $(TESTDIR) ; \

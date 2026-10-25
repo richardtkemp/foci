@@ -7,23 +7,44 @@
 # prints every goroutine's stack and exits 2) and, if still alive 5 s later,
 # SIGKILL. The package then fails like any other test failure.
 #
-# Why: factories run tests against broken code on purpose. A test whose
+# Why: factories (and agents) run tests against broken code. A test whose
 # failure mode is "spin and allocate" otherwise grows to ~10 GB until foci's
 # memory_guard kills it under box-wide memory pressure (foci_todo #2435, #2436).
 #
 # Limit: FOCI_TEST_MEM_LIMIT_MB, default 1024 (Dick, 2026-10-15). Measured
 # 2026-10-15: the largest test binary's own peak was 546 MB (browser.test).
 #
+# seal-test.sh passes it as -exec to EVERY go test call, on the NUC and the Mac,
+# normal and factory runs alike (foci_todo #2559, Dick 2026-10-25: "cap
+# everywhere + cached"). go test passes -test.testlogfile only when there is no
+# -exec program, and caches a result only from that log, so this wrapper adds
+# the flag itself (below): capped runs stay cacheable.
+#
 # Usage: go test -exec /abs/path/scripts/test-memcap.sh ...   (go appends the
 # test binary and its flags). -h/--help prints this header.
 
 if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
-  sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
   exit 0
 fi
 
 limit_mb=${FOCI_TEST_MEM_LIMIT_MB:-1024}
 limit_kb=$((limit_mb * 1024))
+
+# go's test-result cache (foci_todo #2559): go test caches a result only from
+# the log its test binary writes to -test.testlogfile (the env vars and files
+# the tests read), and passes that flag only when there is no -exec program, so
+# under a plain wrapper no result was ever cached. go 1.26 and 1.27 name that
+# log <the binary's dir>/testlog.txt (cmd/go/internal/test/test.go:
+# runAction.Objdir is the test binary's dir) and read it back after the run
+# whatever ran the binary, so the flag is added here. Under -count or another
+# uncacheable flag go ignores the file. A flag go already passed is left alone.
+if [ -f "${1:-}" ] && [[ "$1" == *.test ]]; then
+  case " $* " in
+  *" -test.testlogfile="*) ;;
+  *) set -- "$1" "-test.testlogfile=$(dirname "$1")/testlog.txt" "${@:2}" ;;
+  esac
+fi
 
 # No /proc (macOS): nothing to poll, so run the binary directly, as before
 # (the poll below read nothing there and never tripped).

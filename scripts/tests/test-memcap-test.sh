@@ -48,6 +48,18 @@ out=$(PATH="$TMP:$PATH" timeout 10 bash "$MEMCAP" perl -e 'select(undef, undef, 
 [ "$rc" -eq 0 ] && [ "$out" = hi ] && ok "the output pipe closes with the binary" \
   || fail "the output pipe closes with the binary" "rc $rc out='$out' (124: the pipe stayed open on a 30 s sleep)"
 
+# foci_todo #2559: go passes -test.testlogfile only without -exec, so the wrapper
+# adds it (beside the binary, where go reads it back) and results stay cacheable.
+mkdir -p "$TMP/tl"
+# shellcheck disable=SC2016 # $* belongs to the script being written
+printf '#!/bin/sh\necho "$*"\n' > "$TMP/tl/pkg.test"; chmod +x "$TMP/tl/pkg.test"
+out=$(FOCI_TEST_BIN_REUSE=0 bash "$MEMCAP" "$TMP/tl/pkg.test" -test.v=true)
+[ "$out" = "-test.testlogfile=$TMP/tl/testlog.txt -test.v=true" ] && ok "test log: added beside the binary" || fail "test log: added beside the binary" "got '$out'"
+out=$(FOCI_TEST_BIN_REUSE=0 bash "$MEMCAP" "$TMP/tl/pkg.test" -test.testlogfile=/x/log)
+[ "$out" = "-test.testlogfile=/x/log" ] && ok "test log: a flag go already passed is left alone" || fail "test log: a flag go already passed is left alone" "got '$out'"
+out=$(bash "$MEMCAP" echo plain)
+[ "$out" = "plain" ] && ok "test log: not added to a non-test command" || fail "test log: not added to a non-test command" "got '$out'"
+
 if [ -r /proc/self/status ]; then
   t0=$(now_ms)
   out=$(FOCI_TEST_MEM_LIMIT_MB=20 bash "$MEMCAP" python3 -c 'import signal, time; signal.signal(signal.SIGQUIT, signal.SIG_DFL); a = bytearray(80 * 1024 * 1024); time.sleep(30)' 2>&1); rc=$?
@@ -72,11 +84,13 @@ else
   r2=$(FOCI_TEST_BIN_CACHE="$TMP/cache" bash "$MEMCAP" "$TMP/b/two.test" -x y)
   r3=$(FOCI_TEST_BIN_CACHE="$TMP/cache" bash "$MEMCAP" "$TMP/b/three.test"); rc3=$?
   r4=$(FOCI_TEST_BIN_CACHE="$TMP/cache" FOCI_TEST_BIN_REUSE=0 bash "$MEMCAP" "$TMP/b/one.test")
-  case "$r1" in "$TMP/cache/"*"/one.test -x y") ok "reuse: runs a copy in the cache, with the args";; *) fail "reuse: runs a copy in the cache, with the args" "got '$r1'";; esac
+  # foci_todo #2559: go's test log goes beside the binary go built, so go caches the result.
+  TL="-test.testlogfile=$TMP/b/testlog.txt"
+  case "$r1" in "$TMP/cache/"*"/one.test $TL -x y") ok "reuse: runs a copy in the cache, with the test log and the args";; *) fail "reuse: runs a copy in the cache, with the test log and the args" "got '$r1'";; esac
   [ "$rc1" -eq 5 ] && [ "$rc3" -eq 6 ] && ok "reuse: the exit status passes through" || fail "reuse: the exit status passes through" "rc $rc1, $rc3"
-  [ "${r2%/two.test -x y}" = "${r1%/one.test -x y}" ] && ok "reuse: identical bytes share one copy" || fail "reuse: identical bytes share one copy" "'$r1' vs '$r2'"
-  [ "$(dirname "${r3% }")" != "$(dirname "${r1% -x y}")" ] && ok "reuse: different bytes get their own copy" || fail "reuse: different bytes get their own copy" "'$r1' vs '$r3'"
-  [ "$r4" = "$TMP/b/one.test " ] && ok "reuse: FOCI_TEST_BIN_REUSE=0 runs the binary itself" || fail "reuse: FOCI_TEST_BIN_REUSE=0 runs the binary itself" "got '$r4'"
+  [ "${r2%/two.test "$TL" -x y}" = "${r1%/one.test "$TL" -x y}" ] && ok "reuse: identical bytes share one copy" || fail "reuse: identical bytes share one copy" "'$r1' vs '$r2'"
+  [ "$(dirname "${r3% "$TL"}")" != "$(dirname "${r1% "$TL" -x y}")" ] && ok "reuse: different bytes get their own copy" || fail "reuse: different bytes get their own copy" "'$r1' vs '$r3'"
+  [ "$r4" = "$TMP/b/one.test $TL" ] && ok "reuse: FOCI_TEST_BIN_REUSE=0 runs the binary itself" || fail "reuse: FOCI_TEST_BIN_REUSE=0 runs the binary itself" "got '$r4'"
 fi
 
 exit "$RC"

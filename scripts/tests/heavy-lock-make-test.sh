@@ -5,8 +5,8 @@
 #  - default: test / test-one / integration take /tmp/heavy up front and run
 #    REAP_GRADLE under it, in the shared per-user test dir;
 #  - FGW_HEAVY_LOCK=external: runs the Go cache can cover (test, test-one) take
-#    no lock and never run REAP_GRADLE; runs it cannot cover (COUNT=N,
-#    integration) still lock up front and pass HEAVY_LOCK_HELD;
+#    no lock and never run REAP_GRADLE; runs it cannot cover (COUNT=N on
+#    test or test-one, integration) still lock up front and pass HEAVY_LOCK_HELD;
 #  - FGW_TESTDIR / FGW_SRCLINK replace the per-user test dir and symlink;
 #    external without them, or a bad FGW_HEAVY_LOCK value, is refused;
 #  - external: bin/llbox is rebuilt only when out of date.
@@ -27,6 +27,7 @@ reject() { if has "$2" "$3"; then printf 'FAIL %s\n       unexpected: %s\n' "$1"
 # FGW_* settings). HEAVY_LOCK_PATH and FGW_RUN_TAG too: make exports its
 # command-line variables, so a run on a build host (mk/remote.mk passes both)
 # leaked them into these dry runs and moved the paths asserted below (#2544).
+# COUNT, PKG, RUN, TIMEOUT likewise (`make test COUNT=1` leaked COUNT, #2559).
 # REMOTE_PICK= keeps every run on this host: test and test-one dispatch to a
 # build host when one answers (mk/remote.mk), and the bodies are asserted here.
 dry() {
@@ -34,7 +35,7 @@ dry() {
   while [ "$1" != -- ]; do envs+=("$1"); shift; done
   shift
   env -u MAKEFLAGS -u MAKELEVEL -u MFLAGS -u FGW_HEAVY_LOCK -u FGW_TESTDIR -u FGW_SRCLINK -u HEAVY_LOCK_HELD \
-    -u HEAVY_LOCK_PATH -u FGW_RUN_TAG REMOTE_PICK= \
+    -u HEAVY_LOCK_PATH -u FGW_RUN_TAG -u COUNT -u PKG -u RUN -u TIMEOUT REMOTE_PICK= \
     "${envs[@]}" make -n --no-print-directory -C "$REPO" "$@" 2>&1
 }
 user=$(id -un)
@@ -50,7 +51,7 @@ FLOCK='flock 9; echo ">>> acquired heavy lock'
 REAP='heavy-lock-reap-gradle.sh'
 EXT=(FGW_HEAVY_LOCK=external FGW_TESTDIR=/tmp/fgw/run-zz2396 FGW_SRCLINK=/tmp/fgw/src-zz2396)
 
-for target in test "test-one PKG=./internal/zz/" "test-one PKG=./internal/zz/ COUNT=2" integration; do
+for target in test "test COUNT=1" "test-one PKG=./internal/zz/" "test-one PKG=./internal/zz/ COUNT=2" integration; do
   # shellcheck disable=SC2086 # the target holds make arguments
   out=$(dry -- $target)
   expect "default $target: takes the lock" "$FLOCK" "$out"
@@ -70,13 +71,18 @@ for target in test "test-one PKG=./internal/zz/"; do
   expect "external $target: the run's own test dir" "rm -rf /tmp/fgw/run-zz2396 && mkdir -p /tmp/fgw/run-zz2396/home" "$out"
   expect "external $target: the run's own symlink" "ln -sfn $REPO /tmp/fgw/src-zz2396 && touch -h -d @946684800 /tmp/fgw/src-zz2396 && cd /tmp/fgw/src-zz2396" "$out"
 done
-for target in "test-one PKG=./internal/zz/ COUNT=2" integration; do
+for target in "test-one PKG=./internal/zz/ COUNT=2" "test COUNT=1" integration; do
   # shellcheck disable=SC2086
   out=$(dry "${EXT[@]}" -- $target)
   expect "external $target (not cacheable): takes the lock up front" "$FLOCK" "$out"
   expect "external $target: reaps under it" "$REAP" "$out"
   expect "external $target: tells the tests it is held" "HEAVY_LOCK_HELD=/tmp/heavy " "$out"
 done
+# make test COUNT=N reaches seal-test.sh (its 11th argument), which passes -count (#2559).
+out=$(dry -- local-test COUNT=1)
+expect "test COUNT=1: seal-test.sh gets COUNT" '"" "" "" "1"' "$out"
+out=$(dry -- local-test)
+expect "test: seal-test.sh gets no COUNT" '"" "" "" ""' "$out"
 # These dry runs name local-test-one: bare test-one dispatches through a sub-make (mk/remote.mk, #2525), and the -W flag did not reach its llbox rule (this test failed on it).
 
 # llbox: rebuilt on every call by default; with external only when out of date (a link is always a Go cache miss,

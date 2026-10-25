@@ -10,7 +10,9 @@
 #    reach stderr as they come, every other line only LOGFILE, and the exit
 #    status is still go test's;
 #  - the fixed test environment (#2348): go test sees env -i plus a pinned
-#    PATH, whatever the caller's PATH and env, and every run passes -v.
+#    PATH, whatever the caller's PATH and env, and every run passes -v;
+#  - the memory cap (#2559): every go test call runs its binaries under
+#    scripts/test-memcap.sh (-exec); unit COUNT=N is -count=N.
 #
 # Stubs `go` (in a fake GOROOT, first on PATH) and bin/llbox (in a scratch
 # cwd) so no real test runs. Tests start from env -i, so the stubs read their
@@ -235,6 +237,30 @@ if [ -n "$unitargs" ] && [ "$unitargs" = "$oneargs" ]; then
 else
   printf 'FAIL flags: unit [%s] vs one [%s]\n' "$unitargs" "$oneargs"; RC=1
 fi
+
+# ---- #2559: every run is capped (-exec); COUNT on unit ---------------------
+WRAPPER="-exec $TMP/work/scripts/test-memcap.sh"
+for mode in one unit integration; do
+  run pass "$mode" >/dev/null
+  expect "memcap $mode: the binaries run under the wrapper" "$WRAPPER" "$(grep '^--- call' "$TMP/goroot/seen")"
+done
+run sandbox one >/dev/null
+expect "memcap: the unsealed re-run is capped" "$WRAPPER" "$(grep '^--- call 2' "$TMP/goroot/seen")"
+expect "memcap: the sealed re-run is capped" "$WRAPPER" "$(grep '^--- call 3' "$TMP/goroot/seen")"
+run sandbox one >/dev/null
+expect "re-run: still -count=1 (runs for real)" "-count=1" "$(grep '^--- call 2' "$TMP/goroot/seen")"
+run pass unit >/dev/null
+reject "unit: no -count by default (cached)" "-count" "$(grep '^--- call' "$TMP/goroot/seen")"
+reject "unit: the log header does not say UNCACHED" "UNCACHED" "$(cat "$TMP/log")"
+rm -f "$TMP/goroot/calls" "$TMP/goroot/seen"; echo pass > "$TMP/goroot/mode"
+out=$(cd "$TMP/work" && PATH="$TMP/goroot/bin:$PATH" bash "$SEALTEST" unit "$TMP/testdir" "$TMP/log" 1 \
+  "$TMP/gocache" "$TMP/gomod" "$TMP/gopath" "" "" "" 1 2>&1)
+expect "unit COUNT=1: go test gets -count=1" " -count=1 " "$(grep -m1 '^--- call' "$TMP/goroot/seen")"
+expect "unit COUNT=1: the log header says UNCACHED" "sealed unit suite -count=1 (UNCACHED)" "$(cat "$TMP/log")"
+expect "unit COUNT=1: the caller is told" "go's test cache is bypassed, every package runs" "$out"
+out=$(cd "$TMP/work" && PATH="$TMP/goroot/bin:$PATH" bash "$SEALTEST" unit "$TMP/testdir" "$TMP/log" 1 \
+  "$TMP/gocache" "$TMP/gomod" "$TMP/gopath" "" "" "" x 2>&1); rc=$?
+if [ "$rc" = 2 ]; then echo "ok   unit COUNT=x: refused"; else echo "FAIL unit COUNT=x: rc $rc, want 2"; RC=1; fi
 
 # ---- #2396: the heavy lock with FGW_HEAVY_LOCK=external -------------------
 # The caller locks lazily (on a Go cache miss), so seal-test.sh must take the
