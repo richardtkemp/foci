@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -126,8 +127,12 @@ func TestPeriodicRederiveCarriesQuietCompaction(t *testing.T) {
 // real clock) with an hour of slack either side; the tick is 10ms so the pass
 // lands well inside the poll deadline.
 func TestSetupPeriodicWiresQuietCompaction(t *testing.T) {
+	// The window is built on the wall clock, not as now±1h of absolute time:
+	// in the hour before the clocks go back, now+1h reads the SAME wall time
+	// as now, which left now on the window's end and failed the test (#2553).
 	now := time.Now()
-	quietHours := now.Add(-time.Hour).Format("15:04") + "-" + now.Add(time.Hour).Format("15:04")
+	clock := func(h int) string { return fmt.Sprintf("%02d:%02d", (h+24)%24, now.Minute()) }
+	quietHours := clock(now.Hour()-1) + "-" + clock(now.Hour()+1)
 	const sk = "qa/c1"
 
 	cfg := &config.Config{
