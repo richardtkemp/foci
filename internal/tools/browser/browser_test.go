@@ -93,13 +93,24 @@ func testBrowserManager(t *testing.T) *BrowserManager {
 // sharedBrowserMgr is a lazily-initialized BrowserManager shared across tests
 // that only navigate+interact (no lifecycle testing). This avoids launching a
 // separate Chrome process for each test. Cleaned up via TestMain.
+//
+// The manager drives one page, so its users must not overlap: the tests are
+// parallel (#2555), and sharedBrowserManager holds sharedBrowserMu for the
+// rest of the calling test. They run one at a time against each other while
+// the package's other tests, each on its own browser, run alongside. -parallel
+// (16 in the harness) is well above the number of tests waiting on the lock.
 var (
 	sharedBrowserOnce sync.Once
+	sharedBrowserMu   sync.Mutex
 	sharedBrowserMgr  *BrowserManager
 )
 
+// sharedBrowserManager returns the shared manager, held exclusively by t until
+// t ends. Call it after t.Parallel.
 func sharedBrowserManager(t *testing.T) *BrowserManager {
 	t.Helper()
+	sharedBrowserMu.Lock()
+	t.Cleanup(sharedBrowserMu.Unlock)
 	sharedBrowserOnce.Do(func() {
 		sharedBrowserMgr = NewBrowserManager(&config.ResolvedBrowser{
 			Headless:      true,
@@ -114,6 +125,7 @@ func sharedBrowserManager(t *testing.T) *BrowserManager {
 func TestBrowserNavigateAndSnapshot(t *testing.T) {
 	// Verifies that navigating to a page and
 	// capturing a snapshot returns YAML with element refs and page metadata.
+	t.Parallel()
 	srv := testHTMLServer(t, `<html><head><title>Test Page</title></head>
 		<body><h1>Hello World</h1><button>Click Me</button></body></html>`)
 
@@ -149,6 +161,7 @@ func TestBrowserNavigateAndSnapshot(t *testing.T) {
 func TestBrowserClickByRef(t *testing.T) {
 	// Verifies that after navigating and getting a snapshot,
 	// we can click an element using its ref from the snapshot.
+	t.Parallel()
 	srv := testHTMLServer(t, `<html><body>
 		<button onclick="document.getElementById('out').textContent='clicked'">Click Me</button>
 		<div id="out"></div>
@@ -188,6 +201,7 @@ func TestBrowserClickByRef(t *testing.T) {
 
 func TestBrowserFillByRef(t *testing.T) {
 	// Verifies that we can fill an input field using its ref.
+	t.Parallel()
 	srv := testHTMLServer(t, `<html><body>
 		<label for="name">Name</label>
 		<input id="name" type="text" />
@@ -228,6 +242,7 @@ func TestBrowserFillByRef(t *testing.T) {
 func TestBrowserStaleRef(t *testing.T) {
 	// Verifies that using a ref from a previous generation
 	// (stale snapshot) returns a meaningful error.
+	t.Parallel()
 	srv := testHTMLServer(t, `<html><body><button>Click Me</button></body></html>`)
 
 	mgr := sharedBrowserManager(t)
@@ -273,6 +288,7 @@ func TestBrowserStaleRef(t *testing.T) {
 func TestBrowserInvalidRef(t *testing.T) {
 	// Verifies that using a malformed ref string returns
 	// a validation error.
+	t.Parallel()
 	srv := testHTMLServer(t, `<html><body><button>Test</button></body></html>`)
 
 	mgr := sharedBrowserManager(t)
@@ -300,6 +316,7 @@ func TestBrowserInvalidRef(t *testing.T) {
 func TestBrowserMultiFill(t *testing.T) {
 	// Verifies that the fill action supports a "fields"
 	// array to fill multiple inputs in a single tool call with one snapshot.
+	t.Parallel()
 	srv := testHTMLServer(t, `<html><body>
 		<form>
 			<label for="first">First</label>
@@ -353,6 +370,7 @@ func TestBrowserMultiFill(t *testing.T) {
 func TestBrowserMultiFillBackwardCompat(t *testing.T) {
 	// Verifies that single ref+value fill
 	// still works after adding multi-fill support.
+	t.Parallel()
 	srv := testHTMLServer(t, `<html><body>
 		<form>
 			<label for="email">Email</label>
@@ -395,6 +413,7 @@ func TestBrowserFillScopedSnapshot(t *testing.T) {
 	// Verifies that the snapshot returned after
 	// a fill action is scoped to the form context, not the full page.
 	// Page with a form and lots of unrelated content
+	t.Parallel()
 	srv := testHTMLServer(t, `<html><body>
 		<nav><a href="/">Home</a><a href="/about">About</a><a href="/contact">Contact</a></nav>
 		<h1>Big Page</h1>
@@ -452,6 +471,7 @@ func TestBrowserFillScopedSnapshot(t *testing.T) {
 func TestBrowserFillNoRefOrFields(t *testing.T) {
 	// Verifies that fill returns an error when
 	// neither ref nor fields is provided.
+	t.Parallel()
 	srv := testHTMLServer(t, `<html><body><input type="text" /></body></html>`)
 	mgr := sharedBrowserManager(t)
 	tool := NewBrowserTool(mgr)
@@ -479,6 +499,7 @@ func TestBrowserFillPreservesFullSnapshotRefs(t *testing.T) {
 	// Verifies that after a fill (which triggers a scoped snapshot), refs from
 	// the prior full snapshot remain valid and can be used for subsequent actions
 	// like click. This is the core DOM-stamped-refs guarantee.
+	t.Parallel()
 	srv := testHTMLServer(t, `<html><body>
 		<form>
 			<label for="name">Name</label>
@@ -539,6 +560,7 @@ func TestBrowserScopedSnapshotShowsOriginalRefs(t *testing.T) {
 	// Verifies that the scoped snapshot returned after a fill action shows
 	// refs from the original full snapshot generation (e.g. s1e*), not a new
 	// generation (s2e*). This confirms DOM-stamped refs are read, not generated.
+	t.Parallel()
 	srv := testHTMLServer(t, `<html><body>
 		<form>
 			<label for="email">Email</label>
@@ -613,6 +635,7 @@ func TestBrowserStart(t *testing.T) {
 	// Verifies that the start action launches the browser with the requested
 	// incognito mode, defaults to incognito=true when omitted, and errors
 	// if the browser is already running.
+	t.Parallel()
 	skipIfNoBrowser(t)
 
 	mgr := testBrowserManager(t)
@@ -699,6 +722,7 @@ func extractRef(t *testing.T, snapshot, roleKeyword string) string {
 // configured UserDataDir launches into that dir (creating it if missing) and
 // does not fall back to the host's default chromium profile.
 func TestBrowserPersistentProfile(t *testing.T) {
+	t.Parallel()
 	skipIfNoBrowser(t)
 
 	// Own the temp dir (not t.TempDir) so cleanup runs strictly after Stop.
@@ -738,6 +762,7 @@ func TestBrowserPersistentProfile(t *testing.T) {
 // send the CDP close and remove the dir while chromium was still shutting
 // down, so a late write could land in the dir after the removal.
 func TestBrowserStopWaitsForExit(t *testing.T) {
+	t.Parallel()
 	skipIfNoBrowser(t)
 	if runtime.GOOS != "linux" {
 		t.Skip("finds the chromium process through /proc")
@@ -768,6 +793,7 @@ func TestBrowserStopWaitsForExit(t *testing.T) {
 // was not acknowledged: chromium was never told to shut down, so awaitExit
 // must kill it and still wait for the exit.
 func TestBrowserAwaitExitKillsUnclosedBrowser(t *testing.T) {
+	t.Parallel()
 	skipIfNoBrowser(t)
 	if runtime.GOOS != "linux" {
 		t.Skip("finds the chromium process through /proc")
@@ -838,6 +864,7 @@ func readFakeBrowserRecord(t *testing.T, record string) (pid int, userDataDir st
 // fails removes the owned temp profile dir it created (foci_todo #2090). Stop
 // cannot clean it up, since it returns early when no browser connected.
 func TestBrowserStartLaunchFailureCleansUp(t *testing.T) {
+	t.Parallel()
 	bin, record := fakeBrowser(t, "fake chromium: no debug url", "exit 1")
 	mgr := NewBrowserManager(&config.ResolvedBrowser{
 		Headless:       true,
@@ -865,6 +892,7 @@ func TestBrowserStartLaunchFailureCleansUp(t *testing.T) {
 func TestBrowserStartConnectFailureCleansUp(t *testing.T) {
 	// Serves the /json/version lookup that go-rod resolves the debug URL
 	// through, but refuses the websocket upgrade, so only Connect fails.
+	t.Parallel()
 	var srv *httptest.Server
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/json/version" {
@@ -879,6 +907,7 @@ func TestBrowserStartConnectFailureCleansUp(t *testing.T) {
 
 	for _, incognito := range []bool{true, false} {
 		t.Run(fmt.Sprintf("incognito=%v", incognito), func(t *testing.T) {
+			t.Parallel()
 			// exec keeps the recorded pid; the sleep outlives the test, so
 			// the process is gone only if Start killed it.
 			bin, record := fakeBrowser(t, listening, "exec sleep 600")

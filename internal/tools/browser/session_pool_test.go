@@ -124,6 +124,7 @@ func TestProfileLockExclusive(t *testing.T) {
 // browser: two sessions navigate to different pages, and each one's snapshot
 // must still show its own page.
 func TestSessionBrowserToolIsolatesSessions(t *testing.T) {
+	t.Parallel()
 	skipIfNoBrowser(t)
 
 	srvA := testHTMLServer(t, `<html><head><title>Page Alpha</title></head><body><h1>Alpha</h1></body></html>`)
@@ -166,6 +167,7 @@ func TestSessionBrowserToolIsolatesSessions(t *testing.T) {
 // TestSessionPoolPersistentProfileExclusive verifies a second session cannot
 // open the persistent profile while the first holds it, and gets told why.
 func TestSessionPoolPersistentProfileExclusive(t *testing.T) {
+	t.Parallel()
 	skipIfNoBrowser(t)
 
 	base, err := os.MkdirTemp(testtemp.Dir(), "foci-pool-profile-test-*")

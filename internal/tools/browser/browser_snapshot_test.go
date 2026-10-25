@@ -111,6 +111,7 @@ func TestSnapshotString(t *testing.T) {
 func TestSnapshotJSONContentType(t *testing.T) {
 	// Verifies that navigating to a JSON endpoint
 	// produces a snapshot with ```json code block instead of ```yaml.
+	t.Parallel()
 	srv := testJSONServer(t, `{"status":"ok","count":42}`)
 	mgr := sharedBrowserManager(t)
 	tool := NewBrowserTool(mgr)
@@ -132,6 +133,7 @@ func TestSnapshotJSONContentType(t *testing.T) {
 func TestSnapshotHTMLContentType(t *testing.T) {
 	// Verifies that navigating to an HTML page
 	// produces a snapshot with ```yaml code block (the default for accessibility trees).
+	t.Parallel()
 	srv := testHTMLServer(t, `<html><head><title>Test</title></head><body><h1>Hello</h1></body></html>`)
 	mgr := sharedBrowserManager(t)
 	tool := NewBrowserTool(mgr)
