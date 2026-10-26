@@ -430,6 +430,15 @@ var toolTable = []toolEntry{
 			return tools.NewSetSessionAliasTool(d.p.sessionIndex, app.NotifyAliasChanged)
 		}},
 
+	// close_session: the agent closes the app chat it is running in, the same
+	// open-set removal as the user's Close chat (#2573). Gated like
+	// app_android: there is no open/closed state without the app platform.
+	{name: "close_session", paths: pathBoth,
+		enabled: func(d *toolDeps) bool { return d.p.cfg.Platform("app") != nil },
+		build: func(d *toolDeps) *tools.Tool {
+			return tools.NewCloseSessionTool(app.CloseSessionConversations)
+		}},
+
 	// whoami: read-only identity of the calling session (agent, session key,
 	// chat, platform, backend, transport, model) — the facts agents otherwise
 	// guess, like the chat id send_to_session addressing needs (#1135).

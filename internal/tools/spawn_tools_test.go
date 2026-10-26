@@ -117,7 +117,7 @@ func TestSpawnRawToolAllowlist(t *testing.T) {
 		"memory_search", "scratchpad", "todo",
 		"bitwarden_search", "bitwarden_unlock",
 		"send_to_chat", "send_to_session",
-		"remind", "spawn", "whoami",
+		"remind", "spawn", "whoami", "close_session",
 	}
 	for _, name := range allTools {
 		reg.Register(&Tool{
@@ -207,6 +207,7 @@ func TestSpawnOneShotToolSetsExcludeWhoami(t *testing.T) {
 
 	reg := NewRegistry()
 	reg.Register(NewWhoamiTool(WhoamiDeps{}))
+	reg.Register(NewCloseSessionTool(func(string, string) (int, error) { return 0, nil }))
 	reg.Register(&Tool{
 		Name:       "read",
 		Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
@@ -225,11 +226,15 @@ func TestSpawnOneShotToolSetsExcludeWhoami(t *testing.T) {
 		for _, d := range s.defs {
 			defNames[d.Name()] = true
 		}
-		if _, ok := s.tools["whoami"]; ok {
-			t.Errorf("%s mode: whoami is in the tools map — a one-shot would report the parent's identity", s.mode)
-		}
-		if defNames["whoami"] {
-			t.Errorf("%s mode: whoami is in the defs — the spawned model could call it", s.mode)
+		// close_session (#2573) shares the cause: on the parent's context it
+		// would close the parent's chat.
+		for _, name := range []string{"whoami", "close_session"} {
+			if _, ok := s.tools[name]; ok {
+				t.Errorf("%s mode: %s is in the tools map — a one-shot would act as the parent's session", s.mode, name)
+			}
+			if defNames[name] {
+				t.Errorf("%s mode: %s is in the defs — the spawned model could call it", s.mode, name)
+			}
 		}
 		if _, ok := s.tools["read"]; !ok {
 			t.Errorf("%s mode: read (control) missing from tools map — the exclusion is over-broad", s.mode)

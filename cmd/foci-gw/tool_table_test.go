@@ -40,13 +40,13 @@ func TestToolTable_PerPathSets(t *testing.T) {
 		"scratchpad", "todo", "task_list", "bitwarden_search",
 		"bitwarden_unlock", "mcp", "send_to_chat", "send_to_session",
 		"ask", "spawn", "spawn_send", "spawn_status", "remind", "app_android",
-		"set_session_alias", "whoami",
+		"set_session_alias", "close_session", "whoami",
 	}
 	wantExec := []string{
 		"browser", "summary", "http_request", "web_search", "web_fetch",
 		"memory_search", "todo", "send_to_chat", "send_to_session",
 		"ask", "spawn", "spawn_send", "spawn_status", "remind", "app_android",
-		"set_session_alias", "whoami",
+		"set_session_alias", "close_session", "whoami",
 	}
 
 	if !equalStrings(api, wantAPI) {
@@ -163,6 +163,40 @@ func TestToolTable_ExecSet(t *testing.T) {
 		"remind": true, "set_session_alias": true, "whoami": true,
 	}
 	assertRegistrySet(t, registry, want)
+}
+
+// TestToolTable_CloseSessionGatedOnAppPlatform: close_session (#2573) is
+// registered on both paths, exec-exported (foci_close_session), exactly when
+// the app platform is configured — the only platform with an open/closed chat
+// state — and absent otherwise.
+func TestToolTable_CloseSessionGatedOnAppPlatform(t *testing.T) {
+	t.Parallel()
+	for _, withApp := range []bool{false, true} {
+		for _, path := range []toolPath{pathAPI, pathExec} {
+			p := minimalSetupParams(t, "test")
+			if withApp {
+				p.cfg.Platforms = append(p.cfg.Platforms, config.PlatformConfig{ID: "app"})
+			}
+			registry := tools.NewRegistry()
+			registerTools(&toolDeps{
+				p:        p,
+				path:     path,
+				registry: registry,
+				connMgr:  stubConnMgr{},
+				agLazy:   func() *agent.Agent { return nil },
+				wakeFn:   stubWakeFn,
+				out:      &toolOutputs{},
+			})
+			tool := registry.Get("close_session")
+			if got := tool != nil; got != withApp {
+				t.Errorf("app=%v path=%v: close_session registered = %v, want %v", withApp, path, got, withApp)
+				continue
+			}
+			if tool != nil && !tool.ExecExport {
+				t.Errorf("app=%v path=%v: close_session not exec-exported", withApp, path)
+			}
+		}
+	}
 }
 
 // TestToolTable_ExecSpawnGatedOnBranch: a delegated agent gets spawn,

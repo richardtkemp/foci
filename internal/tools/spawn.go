@@ -62,6 +62,8 @@ type SpawnSteerer interface {
 // whoami is excluded because a one-shot spawn has no session of its own:
 // its tool calls run on the parent's context, so whoami would report the
 // parent's session key, chat and model as if they were the spawn's (#2226).
+// close_session is excluded for the same reason (#2573): on the parent's
+// context it would close the PARENT's chat on a throwaway sub-call's say-so.
 var spawnRawBlacklist = map[string]bool{
 	"shell":           true,
 	"tmux":            true,
@@ -70,6 +72,7 @@ var spawnRawBlacklist = map[string]bool{
 	"scratchpad":      true,
 	"todo":            true,
 	"whoami":          true,
+	"close_session":   true,
 }
 
 // spawnCharacterBlacklist lists tools excluded from "character" mode spawns.
@@ -80,10 +83,12 @@ var spawnRawBlacklist = map[string]bool{
 // raw/explore already exclude it; this brings character into line for that tool.
 // whoami is excluded for the same reason as raw (#2226): a one-shot's tool
 // calls run on the parent's context, so it would report the parent's
-// session key, chat and model.
+// session key, chat and model. close_session likewise (#2573): it would
+// close the parent's chat.
 var spawnCharacterBlacklist = map[string]bool{
 	"send_to_session": true,
 	"whoami":          true,
+	"close_session":   true,
 }
 
 // exploreSystemPrompt is the system prompt for explore spawn mode.

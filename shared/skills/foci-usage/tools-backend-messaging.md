@@ -21,6 +21,11 @@ Per-tool reference for the Claude Code (shell) backend. How `foci_*` shell funct
 - Positional `session_key`: full session key (`scout/c5970082313`, `scout/iresearch`), agent-qualified session name or chat alias (`scout/research`), or bare agent name (`scout` → its default session).
 - `--message` (or stdin). `--reply-to caller|session` (default **caller** — the reply comes back to *you*, not the target's user chat; use `session` to surface it to their chat).
 
+### `foci_close_session` — close this chat
+- No arguments. Closes the app chat you are running in, exactly as if the user closed it: the tab leaves every device, the history stays, and the user's next message in it reopens it.
+- Call it only when the conversation is finished with nothing outstanding, or when the user asks. It is fine in the same turn as your final reply (the reply still lands, unread).
+- Only registered when the app platform is configured; on a non-app session it says there is nothing to close.
+
 ### `foci_set_session_alias` — name this conversation
 - `--alias TEXT` (required). Sets a short descriptive name for the current chat session, shown in the chat list. Call once after the first exchange to name what the conversation is about; keep it under 5 words.
 - **Chat sessions only** — errors on a branch/independent session key.

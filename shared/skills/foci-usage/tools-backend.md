@@ -8,7 +8,7 @@ This file is the entry point: how the two families work and which tools you have
 
 | file | read it when you are about to… |
 |---|---|
-| **tools-backend-messaging.md** | talk to someone: ask the user (`foci_ask`), post to your chat (`foci_send_to_chat`), message another session (`foci_send_to_session`), or name the chat (`foci_set_session_alias`). |
+| **tools-backend-messaging.md** | talk to someone: ask the user (`foci_ask`), post to your chat (`foci_send_to_chat`), message another session (`foci_send_to_session`), name the chat (`foci_set_session_alias`), or close it (`foci_close_session`). |
 | **tools-backend-state.md** | track work or recall: todos (`foci_todo`), reminders (`foci_remind`), searching memory and chat history (`foci_memory_search`). |
 | **tools-backend-external.md** | reach outside: HTTP (`foci_http_request`), web pages and search (`foci_web_fetch`, `foci_web_search`), cheap-model extraction (`foci_summary`), a headless browser (`foci_browser`), the user's Android device (`foci_app_android`). |
 
@@ -38,7 +38,7 @@ A startup parity check gives every `--help` flag a working handler, so the help 
 
 There is **no `foci_tmux`** on this backend — that stays API-loop-only. For persistent terminals use `Bash` with `tmux` (see the `coding-agent` skill). foci's file/shell tools are likewise absent — use CC's `Read`/`Write`/`Edit`/`Bash` instead.
 
-**Three more conditional tools**, present when their backing config is on: `foci_browser` (when `[browser] enabled`, the default — see the `browser` skill), `foci_set_session_alias` (backends that don't auto-name sessions — see tools-backend-messaging.md) and `foci_app_android` (only when the `app` platform is configured).
+**Four more conditional tools**, present when their backing config is on: `foci_browser` (when `[browser] enabled`, the default — see the `browser` skill), `foci_set_session_alias` (backends that don't auto-name sessions — see tools-backend-messaging.md), and `foci_app_android` and `foci_close_session` (only when the `app` platform is configured).
 
 Every tool accepts `-h`/`--help`. **Read the `--help` before first use of any tool this session.**
 
