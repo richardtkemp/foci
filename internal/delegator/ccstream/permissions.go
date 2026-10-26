@@ -72,9 +72,7 @@ func (b *Backend) handleToolRequest(msg *PermissionRequest) {
 	// the prompt, rather than only in the log: this is the moment the user is
 	// wondering why they are being asked about a command they allowlisted, and
 	// a log line they would have to go and find does not answer it (#1906).
-	if vetoReason != "" {
-		text += "\n\n⚠️ " + vetoReason
-	}
+	text = appendVetoReason(text, vetoReason)
 	choices := msg.Request.Choices()
 
 	// ExitPlanMode: the plan markdown is large, and the generic formatter would
@@ -330,6 +328,16 @@ func (b *Backend) removePendingPerm(requestID string) (pp *pendingPermission, fo
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// appendVetoReason adds the "not auto-approved" warning as its own paragraph.
+// DisplayText ends with a paragraph break, so trim it first: appending another
+// "\n\n" left three blank lines above the warning (#2569).
+func appendVetoReason(text, vetoReason string) string {
+	if vetoReason == "" {
+		return text
+	}
+	return strings.TrimRight(text, "\n") + "\n\n⚠️ " + vetoReason
+}
 
 // DisplayText formats the permission request for display.
 func (req *PermissionRequestPayload) DisplayText() string {

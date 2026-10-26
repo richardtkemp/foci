@@ -1565,3 +1565,17 @@ func TestSubagentLabel_Sources(t *testing.T) {
 		t.Errorf("unknown label = %q, want empty", got)
 	}
 }
+
+// #2569: the veto warning follows the command block after exactly one blank
+// line; DisplayText's trailing paragraph break must not stack with it.
+func TestAppendVetoReason(t *testing.T) {
+	req := &PermissionRequestPayload{ToolName: "Bash", Input: json.RawMessage(`{"command":"ls"}`)}
+	got := appendVetoReason(req.DisplayText(), "its directory is writable")
+	want := "```\nls\n```\n\n⚠️ its directory is writable"
+	if !strings.HasSuffix(got, want) {
+		t.Errorf("appendVetoReason:\n  got:  %q\n  want suffix: %q", got, want)
+	}
+	if got := appendVetoReason("body\n\n", ""); got != "body\n\n" {
+		t.Errorf("no veto must leave text unchanged, got %q", got)
+	}
+}
