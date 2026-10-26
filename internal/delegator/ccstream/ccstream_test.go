@@ -189,7 +189,7 @@ func TestSessionFilePath(t *testing.T) {
 		t.Skipf("no home dir: %v", err)
 	}
 	b := &Backend{sessionID: "sess-abc", workDir: "/home/foci/clutch"}
-	want := filepath.Join(home, ccProjectsDir, "-home-foci-clutch", "sess-abc.jsonl")
+	want := filepath.Join(home, ccProjectsRel, "-home-foci-clutch", "sess-abc.jsonl")
 	if p := b.SessionFilePath(); p != want {
 		t.Errorf("SessionFilePath = %q, want %q", p, want)
 	}

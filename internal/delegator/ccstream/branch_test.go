@@ -25,7 +25,7 @@ const (
 func writeParentTranscript(t *testing.T) (home, parentPath string) {
 	t.Helper()
 	home = t.TempDir()
-	dir := filepath.Join(home, ccProjectsDir, projectSlug(testWorkDir))
+	dir := filepath.Join(home, ccProjectsRel, projectSlug(testWorkDir))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestForkSession(t *testing.T) {
 		t.Fatalf("bad forked session id: %q", res.SessionID)
 	}
 
-	newPath := filepath.Join(home, ccProjectsDir, projectSlug(testWorkDir), res.SessionID+".jsonl")
+	newPath := filepath.Join(home, ccProjectsRel, projectSlug(testWorkDir), res.SessionID+".jsonl")
 	data, err := os.ReadFile(newPath)
 	if err != nil {
 		t.Fatalf("read forked transcript: %v", err)
@@ -123,7 +123,7 @@ func TestCleanupSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ForkSession: %v", err)
 	}
-	forkPath := filepath.Join(home, ccProjectsDir, projectSlug(testWorkDir), res.SessionID+".jsonl")
+	forkPath := filepath.Join(home, ccProjectsRel, projectSlug(testWorkDir), res.SessionID+".jsonl")
 	if _, err := os.Stat(forkPath); err != nil {
 		t.Fatalf("fork not created: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestCleanupSession(t *testing.T) {
 		t.Errorf("fork transcript not deleted: stat err = %v", err)
 	}
 	// Parent still present.
-	parentPath := filepath.Join(home, ccProjectsDir, projectSlug(testWorkDir), testParentUUID+".jsonl")
+	parentPath := filepath.Join(home, ccProjectsRel, projectSlug(testWorkDir), testParentUUID+".jsonl")
 	if _, err := os.Stat(parentPath); err != nil {
 		t.Errorf("parent transcript was deleted: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestCleanupSession(t *testing.T) {
 func TestForkSessionExclusive(t *testing.T) {
 	home, _ := writeParentTranscript(t)
 	t.Setenv("HOME", home)
-	dir := filepath.Join(home, ccProjectsDir, projectSlug(testWorkDir))
+	dir := filepath.Join(home, ccProjectsRel, projectSlug(testWorkDir))
 
 	// Pre-create a transcript, then force forkTranscript to that exact dst.
 	collide := filepath.Join(dir, "collision.jsonl")

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"foci/internal/fociroot"
 	"foci/internal/secrets"
 )
 
@@ -502,12 +503,12 @@ func cmdSecrets(args []string) error {
 }
 
 // resolveSecretsPath returns the secrets.toml path derived from configPath,
-// or the default ~/config/secrets.toml if configPath is empty.
+// or the default <install root>/config/secrets.toml if configPath is empty.
 func resolveSecretsPath(configPath string) string {
 	if configPath != "" {
 		return filepath.Join(filepath.Dir(configPath), "secrets.toml")
 	}
-	home, err := os.UserHomeDir()
+	home, err := fociroot.Dir()
 	if err != nil {
 		return "secrets.toml" // fallback
 	}

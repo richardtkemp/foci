@@ -20,9 +20,14 @@
 #   $FOCI_HOME/config    foci.toml, secrets.toml (0600)
 #   $FOCI_HOME/data, logs, shared/
 #
-# foci-gw runs with HOME=$FOCI_HOME (see the plist template): foci derives its
-# install root from $HOME. To use the foci CLI from your own shell, run it as
-#   HOME=~/foci ~/foci/bin/foci <command>
+# foci-gw runs with HOME = your real home and FOCI_HOME = the install root (see
+# the plist template, #2580): foci takes its install root from $FOCI_HOME, so
+# everything foci and its agents start (codex, opencode, gh, git, ssh, Homebrew
+# tools) sees your own logins and config. The Claude Code foci runs is the
+# exception: foci-gw gives it its own config folder, $FOCI_HOME/.claude
+# (CLAUDE_CONFIG_DIR), separate from your interactive ~/.claude. To use the foci
+# CLI from your own shell, export FOCI_HOME=~/foci (e.g. in ~/.zprofile), or run
+#   FOCI_HOME=~/foci ~/foci/bin/foci <command>
 #
 # What is NOT available on macOS (see docs/INSTALL.md "macOS"): the
 # foci-secrets group isolation (agents run as you and can read secrets.toml),
@@ -45,6 +50,9 @@ grep -qs '^module foci$' go.mod || die "run from the foci repo root"
 command -v go >/dev/null || die "go not found — run: make macos-deps"
 
 FOCI_HOME=${FOCI_HOME:-$HOME/foci}
+# Exported for the foci binaries this script runs (first-run, -check-config):
+# they take the install root from it, as foci-gw does under the LaunchAgent.
+export FOCI_HOME
 LABEL=${FOCI_LAUNCHD_LABEL:-com.github.richardtkemp.foci}
 BIN_DIR=$FOCI_HOME/bin
 PLIST=$HOME/Library/LaunchAgents/$LABEL.plist
@@ -52,16 +60,43 @@ DOMAIN=gui/$(id -u)
 BREW=$(brew --prefix 2>/dev/null || echo /opt/homebrew)
 BINS=(foci-gw foci foci-call foci-cc-hook foci-codex-hook)
 
-# The daemon PATH. Same shape as the Linux unit's SERVICE_PATH (FOCI_HOME
-# dirs first, then system dirs), plus the user's ~/.local/bin (where Claude
-# Code installs itself) and Homebrew LAST. Unlike Linux, every non-system
-# directory here is writable by the user foci runs as, so internal/execguard
-# declines to auto-approve a command that resolves into one (correct: the agent
-# could replace that file). The SIP-protected system dirs therefore come before
-# Homebrew, so ls/grep/jq/sqlite3/diff/git resolve to files nobody can swap and
-# their auto-approve rules keep working; Homebrew still supplies what macOS
-# lacks (tmux, rg, go, node), which then asks for approval.
-SERVICE_PATH="$FOCI_HOME/.local/bin:$BIN_DIR:$HOME/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$BREW/bin:$BREW/sbin:/usr/local/bin"
+# migrate_home_root carries an install made before #2580 over to the separate
+# install root. Run only while no foci-gw is running: an old one still runs
+# with HOME=$FOCI_HOME and needs both of the things this moves.
+#  - Claude Code's state file: with HOME=$FOCI_HOME it was $FOCI_HOME/.claude.json;
+#    with CLAUDE_CONFIG_DIR=$FOCI_HOME/.claude CC reads $FOCI_HOME/.claude/.claude.json.
+#    Copied once (so a rollback still finds the old one).
+#  - The $FOCI_HOME/Library/Keychains link this script used to make so Claude
+#    Code found the login keychain under the fake HOME. With the real HOME
+#    macOS finds it itself; the link is removed if it is ours.
+migrate_home_root() {
+	[ "$FOCI_HOME" != "$HOME" ] || return 0
+	local root=${FOCI_HOME:?}
+	if [ -f "$root/.claude.json" ] && [ ! -e "$root/.claude/.claude.json" ]; then
+		say "copying Claude Code's state file to $root/.claude/.claude.json"
+		mkdir -p "$root/.claude"
+		cp -p "$root/.claude.json" "$root/.claude/.claude.json"
+	fi
+	if [ -L "$root/Library/Keychains" ] &&
+		[ "$(readlink "$root/Library/Keychains")" = "$HOME/Library/Keychains" ]; then
+		say "removing the old $root/Library/Keychains link"
+		unlink "$root/Library/Keychains"
+	fi
+}
+
+# The daemon PATH. Same shape as the Linux unit's SERVICE_PATH (FOCI_HOME/bin
+# first, then system dirs), plus the user's ~/.local/bin (where Claude Code
+# installs itself) and, after the system dirs, ~/.opencode/bin (where
+# opencode's official installer puts it, adding it to the interactive shell
+# PATH only) and Homebrew. Unlike Linux, every non-system directory here is
+# writable by the user foci runs as, so internal/execguard declines to
+# auto-approve a command that resolves into one (correct: the agent could
+# replace that file). The SIP-protected system dirs therefore come before
+# ~/.opencode/bin and Homebrew, so ls/grep/jq/sqlite3/diff/git resolve to
+# files nobody can swap and their auto-approve rules keep working; Homebrew
+# still supplies what macOS lacks (tmux, rg, go, node), which then asks for
+# approval.
+SERVICE_PATH="$BIN_DIR:$HOME/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.opencode/bin:$BREW/bin:$BREW/sbin:/usr/local/bin"
 
 say "building ${BINS[*]}"
 make --no-print-directory "${BINS[@]}"
@@ -71,16 +106,6 @@ mkdir -p "$BIN_DIR" "$FOCI_HOME/config" "$FOCI_HOME/data" "$FOCI_HOME/logs" "$FO
 	"$HOME/Library/LaunchAgents"
 chmod 700 "$FOCI_HOME/config"
 
-# macOS finds the login keychain through $HOME/Library/Keychains. foci-gw and
-# its children run with HOME=$FOCI_HOME, so without this link `security` sees
-# only the System keychain and Claude Code reports "Not logged in" (measured:
-# HOME=~/foci `security list-keychains` listed System.keychain alone; with the
-# link it lists login.keychain-db and `claude -p` authenticates). Only the
-# keychain is shared: Claude Code still keeps its own $FOCI_HOME/.claude.
-if [ "$FOCI_HOME" != "$HOME" ]; then
-	mkdir -p "$FOCI_HOME/Library"
-	[ -L "$FOCI_HOME/Library/Keychains" ] || ln -s "$HOME/Library/Keychains" "$FOCI_HOME/Library/Keychains"
-fi
 for b in "${BINS[@]}"; do
 	install -m 755 "bin/$b" "$BIN_DIR/$b"
 done
@@ -108,29 +133,30 @@ if [ ! -f "$CONFIG" ]; then
 	# it, so stop and say what to run.
 	if [ -t 0 ] && [ -t 1 ]; then
 		say "no $CONFIG yet — running the setup wizard"
-		HOME="$FOCI_HOME" "$BIN_DIR/foci" first-run --config-dir "$FOCI_HOME/config"
+		"$BIN_DIR/foci" first-run --config-dir "$FOCI_HOME/config"
 		[ -f "$CONFIG" ] || die "the wizard did not write $CONFIG"
 		[ -f "$SECRETS" ] && chmod 600 "$SECRETS"
 	else
 		say "no $CONFIG yet. Create one, then re-run this script:"
-		echo "      HOME=$FOCI_HOME $BIN_DIR/foci first-run --config-dir $FOCI_HOME/config" >&2
+		echo "      FOCI_HOME=$FOCI_HOME $BIN_DIR/foci first-run --config-dir $FOCI_HOME/config" >&2
 		exit 0
 	fi
 fi
 
 say "checking config against the new binary"
-# HOME and PATH exactly as the LaunchAgent runs it: relative config paths
-# resolve against HOME, and the auto-approve veto report resolves against PATH.
-HOME="$FOCI_HOME" PATH="$SERVICE_PATH" "$BIN_DIR/foci-gw" -check-config -config "$CONFIG"
+# FOCI_HOME and PATH exactly as the LaunchAgent runs it: relative config paths
+# resolve against FOCI_HOME, and the auto-approve veto report resolves against PATH.
+PATH="$SERVICE_PATH" "$BIN_DIR/foci-gw" -check-config -config "$CONFIG"
 
 say "rendering $PLIST"
-sed -e "s|@LABEL@|$LABEL|g" -e "s|@BIN_DIR@|$BIN_DIR|g" -e "s|@FOCI_HOME@|$FOCI_HOME|g" \
+sed -e "s|@LABEL@|$LABEL|g" -e "s|@BIN_DIR@|$BIN_DIR|g" -e "s|@FOCI_HOME@|$FOCI_HOME|g" -e "s|@HOME@|$HOME|g" \
 	-e "s|@SERVICE_PATH@|$SERVICE_PATH|g" \
 	deploy/foci.launchd.plist.tmpl >"$PLIST.tmp"
 plutil -lint -s "$PLIST.tmp"
 mv "$PLIST.tmp" "$PLIST"
 
 if [ "${FOCI_NO_START:-}" = 1 ]; then
+	launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || migrate_home_root
 	say "FOCI_NO_START=1: installed, not started"
 	exit 0
 fi
@@ -145,6 +171,7 @@ if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
 		sleep 1
 	done
 fi
+migrate_home_root
 say "starting foci ($DOMAIN/$LABEL)"
 launchctl bootstrap "$DOMAIN" "$PLIST"
 sleep 2

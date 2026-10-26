@@ -29,7 +29,7 @@ func (b *Backend) subagentTranscriptPath(agentID string) string {
 //	~/.claude/projects/<slug>/<parent-session-uuid>/subagents/agent-<agent_id><suffix>
 //
 // for a given suffix (".jsonl" for the transcript, ".meta.json" for the metadata
-// sidecar). Returns "" if the session id isn't known yet or the home dir can't be
+// sidecar). Returns "" if the session id isn't known yet or the CC config dir can't be
 // found. The parent session uuid is STABLE across a `claude --resume` (verified
 // live 2026-07-20), so this same path resolves the pre-restart subagent files
 // after a foci restart — the basis for identity rehydration (#1433).
@@ -43,11 +43,11 @@ func (b *Backend) subagentFilePath(agentID, suffix string) string {
 	if sessionID == "" || b.workDir == "" {
 		return ""
 	}
-	home, err := os.UserHomeDir()
+	projects, err := ccProjectsDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ccProjectsDir, projectSlug(b.workDir), sessionID,
+	return filepath.Join(projects, projectSlug(b.workDir), sessionID,
 		"subagents", "agent-"+agentID+suffix)
 }
 

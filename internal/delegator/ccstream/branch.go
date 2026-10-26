@@ -17,12 +17,21 @@ import (
 	"github.com/google/uuid"
 
 	"foci/internal/delegator"
+	"foci/internal/fociroot"
 	"foci/internal/log"
 )
 
-// ccProjectsDir is where Claude Code stores per-project session transcripts,
-// relative to the user's home: ~/.claude/projects/<cwd-slug>/<uuid>.jsonl.
-const ccProjectsDir = ".claude/projects"
+// ccProjectsDir returns where Claude Code stores per-project session
+// transcripts: <CC config dir>/projects/<cwd-slug>/<uuid>.jsonl. The config
+// dir is fociroot.CCConfigDir — ~/.claude on a single-home install, the
+// install root's own .claude when foci runs with a separate FOCI_HOME (#2580).
+func ccProjectsDir() (string, error) {
+	dir, err := fociroot.CCConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "projects"), nil
+}
 
 // nonAlnum matches the characters Claude Code replaces when slugging a path.
 var nonAlnum = regexp.MustCompile(`[^A-Za-z0-9]`)
@@ -61,11 +70,11 @@ func (b *Backend) ForkSession(ctx context.Context, req delegator.ForkRequest) (d
 		return delegator.ForkResult{}, fmt.Errorf("ccstream fork: TruncateAfter>0 not supported")
 	}
 
-	home, err := os.UserHomeDir()
+	projects, err := ccProjectsDir()
 	if err != nil {
-		return delegator.ForkResult{}, fmt.Errorf("ccstream fork: home dir: %w", err)
+		return delegator.ForkResult{}, fmt.Errorf("ccstream fork: CC config dir: %w", err)
 	}
-	dir := filepath.Join(home, ccProjectsDir, projectSlug(req.WorkDir))
+	dir := filepath.Join(projects, projectSlug(req.WorkDir))
 	parentPath := filepath.Join(dir, req.ParentSessionID+".jsonl")
 
 	newID := uuid.NewString()
@@ -85,11 +94,11 @@ func (b *Backend) CleanupSession(_ context.Context, req delegator.CleanupRequest
 	if req.SessionID == "" || req.WorkDir == "" {
 		return fmt.Errorf("ccstream cleanup: empty session id or workdir")
 	}
-	home, err := os.UserHomeDir()
+	projects, err := ccProjectsDir()
 	if err != nil {
-		return fmt.Errorf("ccstream cleanup: home dir: %w", err)
+		return fmt.Errorf("ccstream cleanup: CC config dir: %w", err)
 	}
-	path := filepath.Join(home, ccProjectsDir, projectSlug(req.WorkDir), req.SessionID+".jsonl")
+	path := filepath.Join(projects, projectSlug(req.WorkDir), req.SessionID+".jsonl")
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("ccstream cleanup: remove %s: %w", path, err)
 	}

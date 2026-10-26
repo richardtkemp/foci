@@ -4,17 +4,18 @@ import (
 	"os"
 	"path/filepath"
 
+	"foci/internal/fociroot"
 	"foci/internal/provision"
 	"foci/shared"
 )
 
 // seedSharedDefaults seeds all default resources (character files, openclaw files,
-// crontab template, prompts, skills) to ~/shared/ from embedded defaults.
+// crontab template, prompts, skills) to <install root>/shared/ from embedded defaults.
 // Defaults and prompts are written only if missing. Skills follow
 // seedDefaultSkills: a SKILL.md only if missing, every other embedded skill
 // file overwritten on each start.
 func seedSharedDefaults(fileMode os.FileMode, liveBackends map[string]bool) {
-	home, err := os.UserHomeDir()
+	home, err := fociroot.Dir()
 	if err != nil {
 		return
 	}

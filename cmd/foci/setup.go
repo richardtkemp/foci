@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/fociroot"
 	"foci/internal/platform"
 	"foci/internal/provision"
 	"foci/internal/secrets"
@@ -202,8 +203,8 @@ func parseSetupFlags(args []string) setupFlags {
 	}
 
 	// Apply defaults
-	home := ""
-	if h, err := os.UserHomeDir(); err == nil {
+	home := "" // foci's install root ($FOCI_HOME, else $HOME)
+	if h, err := fociroot.Dir(); err == nil {
 		home = h
 	}
 	if f.configDir == "" {

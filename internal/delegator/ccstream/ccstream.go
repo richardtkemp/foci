@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -424,11 +423,11 @@ func (b *Backend) SessionFilePath() string {
 	if sid == "" || b.workDir == "" {
 		return ""
 	}
-	home, err := os.UserHomeDir()
+	projects, err := ccProjectsDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ccProjectsDir, projectSlug(b.workDir), sid+".jsonl")
+	return filepath.Join(projects, projectSlug(b.workDir), sid+".jsonl")
 }
 
 // subagentTails returns the lazily-created foreground subagent transcript

@@ -11,6 +11,8 @@ import (
 	"unicode"
 
 	"github.com/BurntSushi/toml"
+
+	"foci/internal/fociroot"
 )
 
 // boolKeyLineRe matches a TOML key = "on"/"off"/"true"/"false" line,
@@ -265,7 +267,7 @@ func decodeConfig(data []byte, path string, knownBackends []string) (*Config, er
 
 	// Dynamic defaults that can't be expressed as struct tags.
 	if cfg.DataDir == "" {
-		home, _ := os.UserHomeDir()
+		home, _ := fociroot.Dir()
 		cfg.DataDir = filepath.Join(home, "data")
 	}
 	// GoroutineMonitorThreshold: 0 means auto (30 + 25×agents + 5×telegram_bots), computed at startup.
@@ -280,9 +282,9 @@ func decodeConfig(data []byte, path string, knownBackends []string) (*Config, er
 
 	// Apply convention-based defaults before path resolution.
 	for i := range cfg.Agents {
-		// Workspace default: $HOME/$id
+		// Workspace default: <install root>/$id
 		if cfg.Agents[i].Workspace == "" {
-			home, _ := os.UserHomeDir()
+			home, _ := fociroot.Dir()
 			cfg.Agents[i].Workspace = filepath.Join(home, cfg.Agents[i].ID)
 		}
 		// Platform defaults: ensure each agent has platform entries for

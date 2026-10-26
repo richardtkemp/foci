@@ -26,13 +26,13 @@ import (
 // multiple turns.
 
 // ccTranscriptPath is where CC keeps the transcript of sessionID for a process
-// run in workDir: ~/.claude/projects/<slug>/<sessionID>.jsonl.
+// run in workDir: <CC config dir>/projects/<slug>/<sessionID>.jsonl.
 func ccTranscriptPath(workDir, sessionID string) (string, error) {
-	home, err := os.UserHomeDir()
+	projects, err := ccProjectsDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ccProjectsDir, projectSlug(workDir), sessionID+".jsonl"), nil
+	return filepath.Join(projects, projectSlug(workDir), sessionID+".jsonl"), nil
 }
 
 // costStateEntry is the transcript record CC writes as it shuts down (type

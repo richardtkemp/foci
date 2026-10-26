@@ -142,6 +142,8 @@ func processCanExecute(path string) bool {
 // diagnosis for #1900 and the agreement looked like corroboration. To see a
 // running process's live environment, read it from a child it spawned.
 func Live() Env {
+	// The user's home, not foci's install root (#2580): HomeDir expands a
+	// "~" in an agent's command, and the agent shell expands it against $HOME.
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = ""

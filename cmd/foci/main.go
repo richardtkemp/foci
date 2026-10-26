@@ -15,6 +15,7 @@ import (
 	"time"
 
 	_ "foci/internal/delegator/all" // register every delegated backend
+	"foci/internal/fociroot"
 )
 
 // Build info — set via ldflags: go build -ldflags "-X main.version=... -X main.gitCommit=... -X main.buildTime=..."
@@ -131,8 +132,8 @@ func resolveGWSocket(flagValue string) string {
 		}
 		return ""
 	}
-	// Default: $HOME/data/foci-gw.sock
-	home, err := os.UserHomeDir()
+	// Default: <install root>/data/foci-gw.sock ($FOCI_HOME, else $HOME)
+	home, err := fociroot.Dir()
 	if err != nil {
 		return ""
 	}

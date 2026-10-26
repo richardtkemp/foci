@@ -3,10 +3,12 @@ package anthropic
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/fociroot"
 	"foci/internal/modelcaps"
 	"foci/internal/provider"
 	"foci/internal/secrets"
@@ -53,7 +55,12 @@ type AnthropicResolver struct {
 
 // NewResolver creates and initializes an AnthropicResolver.
 func NewResolver(ctx context.Context, anthropicCfg *config.AnthropicConfig, store SecretsStore) (*AnthropicResolver, error) {
-	const ccCredsFile = "~/.claude/.credentials.json"
+	// CC's credential file lives in the config folder of the CC foci runs
+	// (fociroot.CCConfigDir: ~/.claude on a single-home install, #2580).
+	ccCredsFile := "~/.claude/.credentials.json"
+	if dir, err := fociroot.CCConfigDir(); err == nil {
+		ccCredsFile = filepath.Join(dir, ".credentials.json")
+	}
 
 	var ccSrc *CCTokenSource
 	if src, err := NewCCTokenSource(ccCredsFile); err == nil {
@@ -92,7 +99,7 @@ func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName, api
 
 	// Priority 2: Claude Code credentials (lazy disk reads, no polling)
 	if r.ccSrc != nil {
-		anthropicLog.Infof("using CC credentials from ~/.claude/.credentials.json (endpoint %q, lazy)", endpointName)
+		anthropicLog.Infof("using CC credentials from %s (endpoint %q, lazy)", r.ccSrc.path, endpointName)
 		c := NewClient(r.ccSrc.Token, httpTimeout)
 		if baseURL != "" {
 			c.SetBaseURL(baseURL)

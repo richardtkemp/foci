@@ -161,6 +161,8 @@ func Load(cfg *string) (map[string]string, string, bool) {
 // refused. Returns the gate's error (nil when there is no gate or it
 // allowed) alongside Load's three values; a refused file is never captured.
 func LoadGated(cfg *string, gate Gate) (env map[string]string, path string, loaded bool, refused error) {
+	// The operator's rc file lives in the user's home, not foci's install
+	// root (#2580: on macOS they differ).
 	home, err := os.UserHomeDir()
 	if err != nil {
 		shellenvLog.Warnf("cannot resolve home dir: %v", err)

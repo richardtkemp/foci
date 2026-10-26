@@ -6,11 +6,14 @@
   deploy/foci.service.tmpl. It runs as the logged-in user, in that user's GUI
   session, so Claude Code finds its login keychain credentials.
 
-  HOME is FOCI_HOME, not the user's home. foci resolves its install root
-  (config/, data/, logs/, shared/, bin/, agent workspaces) from $HOME, as it does
-  on Linux where HOME=/home/foci; children inherit it, so Claude Code keeps its
-  own ~/.claude under FOCI_HOME (foci reads CC transcripts from there) instead
-  of sharing the user's interactive Claude Code config.
+  HOME is the user's real home and FOCI_HOME the install root (#2580). foci
+  resolves its install root (config/, data/, logs/, shared/, bin/, agent
+  workspaces) from $FOCI_HOME, falling back to $HOME as on Linux where both are
+  /home/foci. Everything foci starts inherits the real HOME, so codex, opencode,
+  gh, git and ssh find the user's own logins and config. Claude Code is the
+  exception: foci-gw sets CLAUDE_CONFIG_DIR=FOCI_HOME/.claude at startup, so the
+  CC foci runs keeps its own config folder (foci reads CC transcripts from
+  there) instead of sharing the user's interactive ~/.claude.
 
   KeepAlive is unconditional (not SuccessfulExit=false): /restart and the app's
   server.restart send foci-gw SIGTERM, and the graceful exit that follows is a
@@ -34,6 +37,8 @@
 		<key>PATH</key>
 		<string>@SERVICE_PATH@</string>
 		<key>HOME</key>
+		<string>@HOME@</string>
+		<key>FOCI_HOME</key>
 		<string>@FOCI_HOME@</string>
 	</dict>
 	<key>RunAtLoad</key>

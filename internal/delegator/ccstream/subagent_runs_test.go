@@ -13,7 +13,7 @@ import (
 // (#1433) hermetically. HOME must already be pointed at a temp dir by the caller.
 func writeSubagentMeta(t *testing.T, home, workDir, sessionID, taskID, toolUseID, description string) {
 	t.Helper()
-	dir := filepath.Join(home, ccProjectsDir, projectSlug(workDir), sessionID, "subagents")
+	dir := filepath.Join(home, ccProjectsRel, projectSlug(workDir), sessionID, "subagents")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir subagents dir: %v", err)
 	}

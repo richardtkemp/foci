@@ -26,6 +26,7 @@ import (
 	"foci/internal/delegator"
 	"foci/internal/display"
 	"foci/internal/execguard"
+	"foci/internal/fociroot"
 	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/modelcaps"
@@ -133,6 +134,19 @@ Subcommands:
 		log.Fatalf("main", "early log init: %v", err)
 	}
 
+	// Install root separate from HOME (#2580, the macOS LaunchAgent sets
+	// FOCI_HOME and leaves HOME as the user's): give the Claude Code foci runs
+	// its own config folder under the install root, so it does not share the
+	// user's interactive ~/.claude. Set once here, before anything spawns:
+	// every child inherits it, and the ccstream transcript readers resolve
+	// the same folder through fociroot.CCConfigDir. A no-op on Linux.
+	if dir, err := fociroot.EnsureCCConfigEnv(); err != nil {
+		mainLog.Warnf("set CLAUDE_CONFIG_DIR for the separate install root: %v", err)
+	} else if dir != "" {
+		root, _ := fociroot.Dir()
+		mainLog.Infof("install root %s is separate from HOME: Claude Code runs with CLAUDE_CONFIG_DIR=%s", root, dir)
+	}
+
 	modelinfo.UnpricedModelHook = func(model string) {
 		modelinfoLog.Warnf("no pricing for model %q — its calls are unpriced (cost unknown, not zero); add it to the registry or a family match in internal/modelinfo", model)
 	}
@@ -193,6 +207,9 @@ Subcommands:
 	// footing (#1914). The env is the same execguard.Live() view the drop
 	// just judged: re-derived from the same populations, which nothing
 	// rewrites between the two calls.
+	// The USER's home, not the install root: the report expands "~/" in the
+	// trusted-PATH exceptions (~/.local/bin, where Claude Code's updater
+	// lives) and judges the agent shells' view, both of which follow $HOME.
 	home, _ := os.UserHomeDir()
 	reportOperatorEnv(cfg, execguard.Live(), operatorEnvFile, home, liveCanWrite())
 

@@ -52,7 +52,7 @@ func compactTestBackend(t *testing.T) (*Backend, string) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	const workDir, sid = "/work/dir", "11111111-2222-3333-4444-555555555555"
-	path := filepath.Join(home, ccProjectsDir, projectSlug(workDir), sid+".jsonl")
+	path := filepath.Join(home, ccProjectsRel, projectSlug(workDir), sid+".jsonl")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}

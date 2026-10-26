@@ -192,13 +192,20 @@ the LaunchAgent. Homebrew itself must already be installed.
 On the first install there is no config yet. At a terminal, the `foci first-run`
 wizard runs and the install continues. Without a terminal it stops after
 creating the directories; write `~/foci/config/foci.toml` (or run
-`HOME=~/foci ~/foci/bin/foci first-run --config-dir ~/foci/config`), then run
+`FOCI_HOME=~/foci ~/foci/bin/foci first-run --config-dir ~/foci/config`), then run
 `make install` again. Re-running it is also how you update: it rebuilds,
 checks the config against the new binary before touching the running daemon,
 reinstalls and restarts.
 
-Claude Code must be installed (`~/.local/bin/claude`) and logged in once as you,
-in a normal terminal.
+Claude Code must be installed (`~/.local/bin/claude`). The Claude Code foci
+runs has its own login, separate from yours (see below): on its first start foci
+finds it logged out and sends a sign-in link to the master agent's chat. To log
+it in yourself instead, run this in a Terminal on the Mac (not over ssh, which
+cannot reach the login keychain):
+
+```bash
+CLAUDE_CONFIG_DIR=~/foci/.claude claude auth login
+```
 
 ### How it differs from Linux
 
@@ -206,20 +213,38 @@ in a normal terminal.
 |---|---|---|
 | Runs as | dedicated `foci` user | you |
 | Service | systemd unit `foci` | LaunchAgent `com.github.richardtkemp.foci` (`~/Library/LaunchAgents/`), in your GUI session |
-| Install root (`HOME` of foci-gw) | `/home/foci` | `~/foci` (`FOCI_HOME`) |
+| Install root | `/home/foci` (foci's `HOME`) | `~/foci` (`FOCI_HOME`; `HOME` stays yours) |
 | Memory guard | kills the largest process of the `foci` user when PSI shows memory stalls | kills only foci-gw's own descendants (never your other apps), and only at macOS's "critical" memory-pressure level |
 | Binaries | `/usr/local/bin` (root-owned) | `~/foci/bin` |
 | Logs | journal + `~/logs/foci.log` | `~/foci/logs/foci.log`, launchd stdout/stderr in `~/foci/logs/launchd.*.log` |
 | Restart | `sudo systemctl restart foci` | `launchctl kickstart -k gui/$(id -u)/com.github.richardtkemp.foci` (or `/restart`) |
 | Stop | `sudo systemctl stop foci` | `launchctl bootout gui/$(id -u)/com.github.richardtkemp.foci` |
 
-**`HOME` is `~/foci`, not your home.** foci takes its install root from `$HOME`
-(as on Linux, where it is `/home/foci`), and its children inherit it, so Claude
-Code keeps its own `~/foci/.claude`, separate from your interactive Claude Code.
-The one shared piece is the login keychain, through a `~/foci/Library/Keychains`
-symlink the installer makes: macOS finds the keychain through `$HOME`, and
-without it Claude Code reports "Not logged in". To use the `foci` CLI from your
-own shell, run it as `HOME=~/foci ~/foci/bin/foci <command>`.
+**The install root is `FOCI_HOME`, and `HOME` stays your home.** foci takes
+its install root from `$FOCI_HOME` (falling back to `$HOME`, which is how Linux
+gets `/home/foci`). Everything foci and its agents start sees your real `HOME`,
+so codex, opencode, `gh`, `git`, `ssh` and Homebrew tools use your own logins
+and config, and an agent's `~` is your home. Agent workspaces are still
+`~/foci/<agent>`.
+
+**Claude Code is the exception.** foci-gw starts it with
+`CLAUDE_CONFIG_DIR=~/foci/.claude`, so the Claude Code foci runs keeps its own
+settings, `CLAUDE.md`, MCP servers, plugins and transcripts, separate from your
+interactive `~/.claude`. Claude Code keys its keychain login by that folder,
+so it also has its own login (see Install above).
+
+To use the `foci` CLI from your own shell, `export FOCI_HOME=~/foci` (for
+example in `~/.zprofile`), or run `FOCI_HOME=~/foci ~/foci/bin/foci <command>`.
+
+The daemon `PATH` is `~/foci/bin`, `~/.local/bin` (Claude Code), the system
+directories, `~/.opencode/bin` (opencode's own installer) and Homebrew.
+
+Installs from before this layout (foci-gw ran with `HOME=~/foci`) are carried
+over by `make install`: it copies `~/foci/.claude.json` to
+`~/foci/.claude/.claude.json` and removes the old `~/foci/Library/Keychains`
+link. What foci's agents had under `~/foci` as their home (`~/foci/.codex`,
+`~/foci/.config`, `~/foci/.local/share/opencode`, `~/foci/.ssh`) is no longer
+read; the agents use yours.
 
 ### What is not available
 

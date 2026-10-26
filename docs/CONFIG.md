@@ -1788,7 +1788,10 @@ For protocol details, what runs on the delegated path vs. what's skipped, comman
 
 ## Path Resolution
 
-All path config fields are resolved at startup:
+All path config fields are resolved at startup. Throughout this document,
+`$HOME` in a path default means foci's **install root**: `$FOCI_HOME` when set
+(the macOS LaunchAgent sets it to `~/foci` and leaves `HOME` as your real home,
+see [INSTALL.md](INSTALL.md#macos)), else `$HOME`, which on Linux is `/home/foci`.
 
 1. **Absolute paths** are used as-is
 2. **Relative paths** resolve against `$HOME` (not the config directory, not CWD)

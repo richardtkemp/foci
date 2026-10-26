@@ -7,7 +7,15 @@ How the pieces connect. Read this before touching the code.
 Each phase is extracted into its own file. `main()` has grown to ~670 lines (still one function, but each phase below is a one/two-line call into its own file).
 
 ```
-config.Load(path)                                        ← validates values; logs to stderr + buffer. No
+fociroot.EnsureCCConfigEnv()                             ← internal/fociroot (#2580), right after the early log
+                                                            init and before config.Load or any spawn. When the
+                                                            install root ($FOCI_HOME) differs from $HOME (the
+                                                            macOS LaunchAgent), sets CLAUDE_CONFIG_DIR=<root>/.claude
+                                                            in the process env so every CC child inherits its own
+                                                            config folder. No-op on Linux (no FOCI_HOME) and when
+                                                            CLAUDE_CONFIG_DIR is already set. See "Install root vs
+                                                            HOME" below.
+→ config.Load(path)                                      ← validates values; logs to stderr + buffer. No
                                                             process-global side effects (#2356), so reloads and
                                                             parallel tests can call it freely
 → log.DebugLogKeySuffix = debug.log_api_key_suffix       ← applied by main, not by config.Load
@@ -252,11 +260,19 @@ DiagnoseRestart(sessionIndex, startTime, logsDir)
 
 **State key:** `system:last_clean_shutdown` holds Unix timestamp of last graceful shutdown.
 
+## Install root vs HOME (#2580)
+
+foci's **install root** (config/, data/, logs/, shared/, bin/, agent workspaces, every relative config path, and a prompt path's leading `~/`) comes from `fociroot.Dir()`: `$FOCI_HOME`, else `$HOME`. On Linux foci runs as its own user with no FOCI_HOME, so the root is `$HOME` (`/home/foci`) exactly as before. On macOS foci runs as the login user, and the LaunchAgent (`deploy/foci.launchd.plist.tmpl`, rendered by `scripts/macos-install.sh`) sets `FOCI_HOME=~/foci` and leaves `HOME` as the user's real home, so everything foci and its agents start (codex, opencode, gh, git, ssh, Homebrew tools) finds the user's own logins and config.
+
+Callers of `fociroot.Dir()`: `config.ResolvePath` / `DefaultConfigPath`, the `data_dir` and agent-workspace defaults in `config.Load`, `seedSharedDefaults`, the `foci` CLI's default socket, secrets path and `first-run` defaults, and `prompts.ResolvePrompt`'s `~/`. Sites that deliberately keep `os.UserHomeDir()` (the user's home): `shellenv` (the operator rc-file ladder), `execguard.Live().HomeDir` and `pretool`'s `$HOME` (an agent's `~`, expanded as its shell does), the files tool's `~`, and `reportOperatorEnv`'s `~/.local/bin` trusted-PATH exception (where Claude Code's updater lives).
+
+**Claude Code is the exception**: the CC foci runs keeps its own config folder, `fociroot.CCConfigDir()` = `$CLAUDE_CONFIG_DIR`, else `<root>/.claude`. `fociroot.EnsureCCConfigEnv()` (startup, above) exports `CLAUDE_CONFIG_DIR` when the root is separate; on Linux nothing is set and CC uses `~/.claude` + `~/.claude.json` as before. Every reader of CC's on-disk state resolves the same folder: `ccstream` transcript paths (`SessionFilePath`, `ccTranscriptPath` for cost baselines, subagent/workflow tails, `ForkSession`, `CleanupSession`), `CleanupPeriod`'s `settings.json`, and `anthropic`'s `.credentials.json`. The relogin tmux pane gets `fociroot.CCEnv()` (HOME + CLAUDE_CONFIG_DIR) explicitly, because a tmux server that predates foci-gw does not carry its environment. On macOS CC keys its keychain login by config folder (a `CLAUDE_CONFIG_DIR` gives a different keychain item from the default `~/.claude`), so foci's CC has its own login, separate from the user's interactive one.
+
 ## Package Dependency Graph
 
 ```
 main
- ├── config        → delegator/pretool, delegator/stoprule, display, execguard, log, modelinfo, provider
+ ├── config        → delegator/pretool, delegator/stoprule, display, execguard, fociroot, log, modelinfo, provider
  ├── sqlite        → modernc.org/sqlite (shared Open, AgentPath, MigrateFile utilities)
  ├── log           → timeutil (the event, API-call JSONL and payload files; api.db belongs to delegator/accounting, conversation storage to convo)
  ├── convo         → log, session, sqlite, timeutil (per-agent conversation SQLite store + memory-index Hook; extracted from log so log stays lean)
@@ -268,7 +284,7 @@ main
  ├── platform      → clock, config, log, question, secrets, session, voice, warnings
  │                  (messaging types, interfaces, provider registry, Messaging facade,
  │                   MessageQueue thin filter+throttle helper + GroupThrottle for group chat batching)
- ├── anthropic     → config, log, modelcaps, modelinfo, provider, secrets, github.com/anthropics/anthropic-sdk-go
+ ├── anthropic     → config, fociroot, log, modelcaps, modelinfo, provider, secrets, github.com/anthropics/anthropic-sdk-go
  ├── gemini        → config, log, messages, provider, google.golang.org/genai
  ├── openai        → config, log, messages, provider, github.com/openai/openai-go/v3
  ├── session       → provider, log, messages, sqlite, timeutil
@@ -295,12 +311,13 @@ main
  ├── workspace     → log, provider
  ├── nudge         → delegator, log, platform, turnevent, workspace (rule extraction, scheduling, file I/O)
  ├── suggestion    → fap, log, platform, session (server-originated suggestions: registry, sender, per-chat mute, #1321)
- ├── prompts       (top-level package, not internal — lives at `shared/prompts/`) → log, timeutil (embedded .md files incl. nudge framing + ResolveOrientationTemplate helpers)
+ ├── prompts       (top-level package, not internal — lives at `shared/prompts/`) → fociroot, log, timeutil (embedded .md files incl. nudge framing + ResolveOrientationTemplate helpers)
  ├── modelinfo     (no deps — stdlib-only leaf package for model attributes: context window, capabilities, pricing)
  ├── ratelimit     (no deps — neutral limit signals + shared reset/fallback policy)
  ├── modelcaps     → delegator, modelinfo, log (near-leaf: delegator only for BackendKey's Spec.ModelcapsKey lookup — per-backend live capability cache; Fetcher + Persister seams injected at startup so it imports no anthropic/session/DB)
  ├── compaction    → config, delegator/accounting, log, memory, messages, modelcaps, modelinfo, prompts, provider, session, tools
  ├── tempdir       (no deps — stdlib-only leaf package for canonical temp dir)
+ ├── fociroot      (no deps — stdlib-only leaf: foci's install root ($FOCI_HOME, else $HOME) and the config folder of the Claude Code foci runs ($CLAUDE_CONFIG_DIR, else <root>/.claude), #2580)
  ├── linkwalk      (no deps — stdlib-only leaf: Up/Down walks over parent/child links that stop at the first repeated key, so a cycle in session_index rows or subagent ancestry ends the walk; used by command `sessionFamily` (/cost) and ccstream `topLevelAncestor`, #1581)
  ├── provision     → modelinfo, procx (agent creation; modelinfo so a bare model alias — "opus", "fable" — resolves to the newest member of that family instead of a literal that goes stale)
  ├── command       → agent, config, delegator, delegator/accounting, display, linkwalk, log, memory, modelinfo, platform, procx, prompts, provider, provision, question, session, tempdir, timeutil, tools, workspace
@@ -312,7 +329,7 @@ main
   │   ├── delegator/accounting → log, modelinfo, sqlite (the per-call cost ledger in api.db, #2111 — schema, SQL cost views, rate render, Book/Report/RecordTurn and their observers (api.jsonl, BookedHook), the direct-API adapter, the legacy-row writer the readers' tests seed history with, the readers, the startup migration; see "Cost ledger")
   │   ├── delegator/all      → delegator/ccstream, delegator/codex, delegator/opencode (blank-imports every backend so each registers its Spec; imported by foci-gw and foci; its tests validate every Spec, the behavioural-capability proofs, the config schema, and the generated tables in BACKENDS.md)
   │   ├── delegator/autoapprove → execguard, secrets (shared by ccstream/codex/opencode — auto-approve rule compilation/matching)
-  │   ├── delegator/ccstream   → clock, delegator, delegator/accounting, delegator/autoapprove, delegator/hookbin, delegator/pretool, delegator/stoprule, linkwalk, log, modelcaps, modelinfo, procx, question, ratelimit, tempdir, timeutil, toolformat (stream-json Claude Code; registers "claude-code" via init())
+  │   ├── delegator/ccstream   → clock, delegator, delegator/accounting, delegator/autoapprove, delegator/hookbin, delegator/pretool, delegator/stoprule, fociroot, linkwalk, log, modelcaps, modelinfo, procx, question, ratelimit, tempdir, timeutil, toolformat (stream-json Claude Code; registers "claude-code" via init())
   │   ├── delegator/pretool    (no foci deps; stdlib + mvdan.cc/sh parser — PreToolUse deny-rule engine, #2028/#2033/#2034; spawns `when` checks with raw os/exec, not procx, as it runs only in foci-cc-hook and the foci CLI; shared by config, ccstream, cmd/foci-cc-hook and cmd/foci `pretool`; `examples.go` adds per-rule test examples (#2039) — decode, validation and the RunExamples engine shared by config validation, `foci pretool test --all` and `foci-gw -check-config`, whose WhenSkip mode never executes a `when` script)
   │   ├── delegator/stoprule   → delegator/pretool (only its Patterns type; stdlib otherwise — Stop-hook rule engine, #2089: matches the turn's final text, scans the CC transcript for the turn's background launches; shared by config, ccstream and cmd/foci-cc-hook)
   │   ├── delegator/sessionenv → tempdir (shared by codex/opencode + cmd/foci-codex-hook — per-session exec-bridge env file format, lifecycle, and the codex command wrap/unwrap)
@@ -1421,7 +1438,7 @@ Two clients (two token types — see [docs/AUTH.md](AUTH.md)):
    - Sets `anthropic-beta: oauth-2025-04-20` header for OAuth token auth
 
 2. **CCTokenSource** (`cctoken.go`) — Claude Code credential reader
-   - Reads `~/.claude/.credentials.json` lazily on each `Token()` call (no polling)
+   - Reads `<CC config dir>/.credentials.json` (`fociroot.CCConfigDir`; `~/.claude` on Linux) lazily on each `Token()` call (no polling)
    - Never refreshes tokens itself — only reads what Claude Code writes
    - If token is expired on read, triggers background refresh (runs `claude`) and returns error
    - `CheckRefresh()` triggers proactive refresh when token is within `cc_expiry_threshold` (default 5m) of expiry

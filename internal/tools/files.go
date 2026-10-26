@@ -246,7 +246,8 @@ func NewIsolatedEditTool(store *secrets.Store, baseDir string, fileMode os.FileM
 	}
 }
 
-// expandTilde replaces a leading ~ with the user's home directory.
+// expandTilde replaces a leading ~ with the user's home directory ($HOME, as
+// the agent's shell expands it; not foci's install root, #2580).
 func expandTilde(path string) string {
 	if path == "~" {
 		if home, err := os.UserHomeDir(); err == nil {

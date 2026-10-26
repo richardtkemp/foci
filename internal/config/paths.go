@@ -10,6 +10,8 @@ import (
 	"sync"
 
 	"github.com/BurntSushi/toml"
+
+	"foci/internal/fociroot"
 )
 
 // SecretGetter is the interface main.go uses to look up secrets.
@@ -58,12 +60,13 @@ func ResolveDiscordToken(botName, botSecret string, secrets SecretGetter) string
 var homeResolveWarnOnce sync.Once
 
 // ResolvePath resolves a path. Absolute paths are returned as-is.
-// Relative paths are resolved against os.UserHomeDir().
+// Relative paths are resolved against foci's install root (fociroot.Dir:
+// $FOCI_HOME, else $HOME).
 func ResolvePath(p string) string {
 	if filepath.IsAbs(p) {
 		return p
 	}
-	home, err := os.UserHomeDir()
+	home, err := fociroot.Dir()
 	if err != nil {
 		// Every relative path hits the same failure; warn once, not per-path.
 		homeResolveWarnOnce.Do(func() {
@@ -169,12 +172,13 @@ func (c *Config) ResolveAllPaths() {
 }
 
 // DefaultConfigPath is the config every foci binary uses when none is named
-// explicitly: $FOCI_CONFIG, else ~/config/foci.toml (the live install's path).
+// explicitly: $FOCI_CONFIG, else <install root>/config/foci.toml (the live
+// install's path; the install root is $FOCI_HOME, else $HOME).
 func DefaultConfigPath() (string, error) {
 	if p := os.Getenv("FOCI_CONFIG"); p != "" {
 		return p, nil
 	}
-	home, err := os.UserHomeDir()
+	home, err := fociroot.Dir()
 	if err != nil {
 		return "", fmt.Errorf("resolve home dir: %w", err)
 	}

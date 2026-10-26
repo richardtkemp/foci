@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"foci/internal/fociroot"
 )
 
 //go:embed *.md
@@ -113,9 +115,10 @@ func ResolvePrompt(path, filename, embeddedDefault string, searchDirs ...string)
 	if path == "none" {
 		return ""
 	}
-	// Expand ~ to home directory
+	// Expand ~ to foci's install root: a prompt path is a config value, and
+	// config paths are install-relative ($FOCI_HOME, else $HOME; #2580).
 	if strings.HasPrefix(path, "~/") {
-		if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if home, err := fociroot.Dir(); err == nil && home != "" {
 			path = home + path[1:]
 		}
 	}

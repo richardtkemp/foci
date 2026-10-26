@@ -14,6 +14,7 @@ import (
 	"foci/internal/delegator/autoapprove"
 	"foci/internal/delegator/pretool"
 	"foci/internal/delegator/stoprule"
+	"foci/internal/fociroot"
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/provider"
@@ -165,8 +166,13 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			AgentID:   agentID,
 			WorkDir:   workDir,
 			ClaudeBin: claudeBin,
-			Gate:      relogin.G,
-			Link:      reloginLinkTarget(connMgr, agentID, sessionKey),
+			// The login pane's claude runs under a tmux server that may
+			// predate this process, so it is told CC's config folder (and
+			// the user's HOME) explicitly: a login written to the wrong
+			// folder would leave the agents logged out (#2580).
+			Env:  fociroot.CCEnv(),
+			Gate: relogin.G,
+			Link: reloginLinkTarget(connMgr, agentID, sessionKey),
 			SendMessage: func(text string) error {
 				// Resolve via the triggering session key so the login URL reaches
 				// the chat that asked for it. An empty key falls back to the

@@ -220,7 +220,7 @@ func TestNestedAgent_PostRestartMetaSpawnDepth(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	const workDir, sessionID = "/work/dir", "11111111-2222-3333-4444-555555555555"
-	dir := filepath.Join(home, ccProjectsDir, projectSlug(workDir), sessionID, "subagents")
+	dir := filepath.Join(home, ccProjectsRel, projectSlug(workDir), sessionID, "subagents")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}

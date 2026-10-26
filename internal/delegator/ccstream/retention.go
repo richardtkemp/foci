@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"foci/internal/fociroot"
 )
 
 // defaultCleanupPeriodDays is Claude Code's built-in transcript retention when
@@ -18,8 +20,8 @@ const defaultCleanupPeriodDays = 30
 // so a session idle past this period will fail to --resume on its next turn.
 func CleanupPeriod() time.Duration {
 	days := defaultCleanupPeriodDays
-	if home, err := os.UserHomeDir(); err == nil {
-		if raw, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json")); err == nil {
+	if ccDir, err := fociroot.CCConfigDir(); err == nil {
+		if raw, err := os.ReadFile(filepath.Join(ccDir, "settings.json")); err == nil {
 			var s struct {
 				CleanupPeriodDays *int `json:"cleanupPeriodDays"`
 			}
