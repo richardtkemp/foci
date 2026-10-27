@@ -58,3 +58,18 @@ func TestWriteJSONLKeepsSameDateOrder(t *testing.T) {
 		}
 	}
 }
+
+// OpenRouter's time-of-day overrides carry no min_prompt_tokens. They must not
+// become price tiers: a tier from 0 tokens makes modelinfo's init panic
+// (models.jsonl sync 2026-10-27 broke every foci build).
+func TestTimeOfDayOverridesAreNotTiers(t *testing.T) {
+	var m orModel
+	m.Pricing = orPricing{Prompt: "0.00000066", Completion: "0.00000198", Overrides: []orPricing{
+		{Prompt: "0.00000132", Completion: "0.00000396"},                          // time-of-day: no min_prompt_tokens
+		{MinPromptTokens: 200000, Prompt: "0.00000132", Completion: "0.00000396"}, // prompt-size tier
+	}}
+	f, _ := apiFields(m)
+	if len(f.tiers) != 1 || f.tiers[0].MinPromptTokens != 200000 {
+		t.Fatalf("tiers = %+v; want only the 200000-token tier", f.tiers)
+	}
+}

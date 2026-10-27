@@ -654,6 +654,13 @@ func apiFields(m orModel) (apiDerived, bool) {
 		intelligence:      m.Benchmarks.ArtificialAnalysis.IntelligenceIndex,
 	}
 	for _, o := range m.Pricing.Overrides {
+		// Only prompt-size tiers are modelled. OpenRouter also publishes
+		// time-of-day overrides (utc_days/utc_start/utc_end, no
+		// min_prompt_tokens); recording them as tiers from 0 tokens makes
+		// modelinfo's init panic, so skip them and keep the base price.
+		if o.MinPromptTokens <= 0 {
+			continue
+		}
 		f.tiers = append(f.tiers, PriceTier{
 			MinPromptTokens:   o.MinPromptTokens,
 			InputPer1M:        pf(o.Prompt) * 1e6,

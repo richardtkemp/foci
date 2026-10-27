@@ -1,6 +1,7 @@
 package modelinfo
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -152,9 +153,13 @@ func TestRealRegistry_VariantSuffixFallsBackToBase(t *testing.T) {
 		if len(unpriced) != 0 {
 			t.Errorf("flatCost(%q) tripped unpriced warning %v — variant didn't fall back to base", m, unpriced)
 		}
-		// deepseek-v4-pro base is 0.435/1M; assert the variant inherits it.
-		if m == "openrouter/deepseek/deepseek-v4-pro:floor" && got != 0.435 {
-			t.Errorf("flatCost(%q) = %v, want 0.435 (base deepseek-v4-pro price)", m, got)
+		// Assert the variant inherits the base model's price. Compare with
+		// the base's own lookup, not a literal: models.jsonl prices change
+		// with every OpenRouter sync.
+		if base := strings.TrimSuffix(m, ":floor"); base != m {
+			if want := flatCost(base, 1_000_000, 0, 0, 0); got != want || want <= 0 {
+				t.Errorf("flatCost(%q) = %v, want %v (base %s price)", m, got, want, base)
+			}
 		}
 	}
 }
