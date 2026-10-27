@@ -106,7 +106,9 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// launch flag differs — see unattendedPermissionArgs.
 	cfgSkip := delegator.SkipPermissions(b.cfg)
 	b.skipPermissions = cfgSkip || opts.SkipPermissions
-	args = append(args, unattendedPermissionArgs(cfgSkip, opts.SkipPermissions)...)
+	permArgs := unattendedPermissionArgs(cfgSkip, opts.SkipPermissions)
+	args = append(args, permArgs...)
+	b.requestedPermMode = requestedPermissionMode(permArgs)
 	// Permission pre-approval rules. cfg["allowed_tools"] is the merged
 	// string produced by cmd/foci-gw/agents_delegated.go (global
 	// [cc_backend] default_allowed_tools combined with the agent's
@@ -777,4 +779,16 @@ func unattendedPermissionArgs(cfgSkip, batch bool) []string {
 	default:
 		return nil
 	}
+}
+
+// requestedPermissionMode returns the value of --permission-mode in args, or
+// "" when there is none. --dangerously-skip-permissions is not counted: the
+// mode CC reports for it was not probed, so foci sets no expectation for it.
+func requestedPermissionMode(args []string) string {
+	for i, a := range args {
+		if a == "--permission-mode" && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
 }

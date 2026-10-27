@@ -240,6 +240,11 @@ type Backend struct {
 	// unattendedPermissionArgs.
 	skipPermissions bool
 
+	// requestedPermMode is the --permission-mode foci launched CC with ("" when
+	// it passed none). checkPermissionMode compares it with the mode CC's init
+	// reports (set in Start, immutable after).
+	requestedPermMode string
+
 	// Hook install state. Set by prepareHooks at Start so
 	// handleHookResponse can filter events belonging to this backend from
 	// events belonging to user-configured hooks. hookCmd is the full

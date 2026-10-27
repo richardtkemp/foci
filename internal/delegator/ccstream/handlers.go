@@ -545,12 +545,16 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		b.permMode = init.PermissionMode
 		b.lastModel = init.Model
 		b.mu.Unlock()
+		b.checkPermissionMode(init.PermissionMode, init.Model)
 		// So an expectation violation can be tied to the CC update behind it.
 		b.expectations().NoteVersion(b.logger(), expectBackend, init.ClaudeCodeVersion)
 		b.readyOnce.Do(func() { close(b.readyCh) })
 		if b.onSessionReady != nil {
 			b.onSessionReady(init.SessionID)
 		}
+
+	case "permission_denied":
+		b.onPermissionDenied(raw)
 
 	case "status":
 		var status StatusMessage
