@@ -1076,6 +1076,11 @@ type PermissionsConfig struct {
 	// idle_timeout) — since a prompt can't outlive the backend that's waiting
 	// on it (the idle reaper clears it). Parsed via time.ParseDuration.
 	PromptTTL string `toml:"prompt_ttl" default:"24h" scope:"global" desc:"How long a permission request or question can sit unanswered before it is automatically denied so the agent is not stuck waiting"`
+	// SubstitutabilityCheck controls execguard's veto of auto-approve rules
+	// whose executable foci could replace (see execguard.Resolve). "auto"
+	// turns it off when foci can replace its own binary — a single-user
+	// install, where the agent could rewrite the allowlist anyway.
+	SubstitutabilityCheck *string `toml:"substitutability_check" default:"auto" scope:"global" choices:"auto,on,off" desc:"Whether auto-approved commands stop auto-approving when foci could replace their program file: auto turns this off when foci can replace its own program (agents run as you, as on a Mac), on always checks, off never checks"`
 }
 
 // AutoApproveCommonReadonlyEnabled returns the resolved value (default: true).

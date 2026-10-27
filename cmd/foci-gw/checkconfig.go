@@ -109,6 +109,10 @@ type checkDeps struct {
 	loadEnvFile    func(cfg *string) (env map[string]string, unsourced string, refused error) // shellenv.LoadGated + the trust gate; unsourced names a configured file that was not sourced (missing or capture failure)
 	setOperatorEnv func(map[string]string)
 	probe          func() execguard.Env
+	// applyMode installs the [permissions] substitutability_check verdict
+	// before probe runs (applySubstitutabilityMode in production). nil skips
+	// it, so tests that inject a probe Env never flip the process-wide switch.
+	applyMode func(cfg *config.Config, logf func(format string, args ...any))
 }
 
 // prodCheckDeps mirrors main()'s derivation: the same loader (shellenv, with
@@ -117,7 +121,8 @@ type checkDeps struct {
 // the operator population by name). The preview therefore judges exactly the
 // PATH startup judges, minus what the gate refused to source.
 var prodCheckDeps = checkDeps{
-	euid: os.Geteuid,
+	applyMode: applySubstitutabilityMode,
+	euid:      os.Geteuid,
 	loadEnvFile: func(cfg *string) (map[string]string, string, error) {
 		return classifyEnvFile(shellenv.LoadGated(cfg, prodEnvFileGate.check))
 	},
@@ -184,6 +189,11 @@ func runConfigCheckWith(path string, stdout, stderr io.Writer, d checkDeps) int 
 		}
 	}
 
+	if d.applyMode != nil {
+		d.applyMode(cfg, func(format string, args ...any) {
+			_, _ = fmt.Fprintf(stderr, "config check: "+format+"\n", args...)
+		})
+	}
 	plan := planAutoApproveCheck(cfg, d)
 	switch {
 	case plan.skip != "":

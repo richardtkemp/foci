@@ -726,6 +726,7 @@ bind = "127.0.0.1"
 # auto_approve_common_readonly = true      # built-in read-only allowlist (ls, cat, git status, ...)
 # auto_approve_common_safe_write = false   # built-in side-effecting allowlist (curl, mkdir, ...); not path-scoped
 # prompt_ttl = "24h"                       # auto-deny an unanswered permission prompt after this (global only)
+# substitutability_check = "auto"          # stop auto-approving a command whose program foci could replace: auto = off when foci can replace its own binary (single-user/macOS), on, off (global only)
 
 # ─── Ask gateway ─────────────────────────────────────────────────────
 # Local socket for external apps to ask humans questions.

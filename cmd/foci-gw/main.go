@@ -196,6 +196,7 @@ Subcommands:
 	// which is a hand-maintained copy of what the dotfiles build and was
 	// measurably out of sync with it (#1900). Keep this call adjacent to
 	// shellenv.Apply — separating them is how the defect comes back.
+	applySubstitutabilityMode(cfg, startupLog.Infof)
 	cfg.DropSubstitutableAutoApproveRules(execguard.Live())
 
 	// One startup report of what the captured operator environment means

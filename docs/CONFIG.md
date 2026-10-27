@@ -771,10 +771,11 @@ Controls foci-level auto-approval of delegated backend permission requests. When
 | `auto_approve_common_readonly` | bool | `true` | Enable built-in allowlist of read-only tools (Search, Glob, Grep, Read, WebSearch, WebFetch) and safe shell commands (ls, cat, grep, jq, etc.). |
 | `auto_approve_common_safe_write` | bool | `false` | Enable built-in allowlist of side-effecting commands that are typically low-risk for a coding agent: `curl`, `wget`, `mkdir`, `touch`. **Opt-in** — see the warning below. |
 | `prompt_ttl` | duration | `3h` | How long an unanswered interactive prompt (permission request, AskUserQuestion) stays live. On expiry it is resolved as a denial/cancel — so a turn blocked waiting on it doesn't orphan — and its message is edited to show it expired. **Effective value is `min(prompt_ttl, 3h)`** — it starts at the delegated-backend `idle_timeout` default (`agent.DefaultIdleTimeout`) and a configured value only ever *lowers* it, so setting anything above 3h has no effect. A prompt must never outlive the backend waiting on it; the idle reaper clears the prompt anyway when it closes that backend. |
+| `substitutability_check` | string | `"auto"` | Global only. Whether the substitutability check below applies: `"on"` always, `"off"` never, `"auto"` only when foci **cannot** replace its own executable. When foci can (every single-user install, including every macOS install), its agents run as the same user and could already rewrite foci, its config and its allowlist, so vetoing a writable `gh` protects nothing; `auto` then turns the check off and logs one INFO line at startup (and one line in `-check-config`) naming the binary and the reason. A Linux install keeps it: `foci-gw` is root-owned in `/usr/local/bin`. If `os.Executable` fails, `auto` keeps the check on. |
 
 Rules from global `[permissions]` and per-agent `[[agents]].permissions` are combined (union) — both sets apply. Both bools follow standard cascade (per-agent overrides global).
 
-> **⚠ A command foci could substitute is never auto-approved.** An allowlist entry is only as
+> **⚠ A command foci could substitute is never auto-approved** (unless `substitutability_check` turns the check off; see above). An allowlist entry is only as
 > trustworthy as the binary behind it, so the executable behind every Bash command is checked **at the
 > moment it is approved** — not once at startup — and the approval is refused if any of these hold:
 >

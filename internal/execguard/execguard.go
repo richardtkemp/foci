@@ -70,6 +70,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"golang.org/x/sys/unix"
 
@@ -90,6 +91,59 @@ type Env struct {
 	IsExecutable func(path string) bool
 	EvalSymlinks func(path string) (string, error)
 	HomeDir      string
+	// Off disables the check: Substitutable and UnresolvedBareName then report
+	// false for every token. Live() sets it from SetEnforced; the zero value
+	// (enforced) is what every hand-built Env, including the unit-test fakes,
+	// gets.
+	Off bool
+}
+
+// enforced is the process-wide switch Live() copies into Env.Off. It starts
+// ON, so nothing is approved unchecked before startup has decided otherwise.
+var enforced atomic.Bool
+
+func init() { enforced.Store(true) }
+
+// SetEnforced turns the check on or off for every Env that Live() builds
+// afterwards. cmd/foci-gw calls it once at startup with Resolve's verdict.
+func SetEnforced(on bool) { enforced.Store(on) }
+
+// Mode values for [permissions] substitutability_check.
+const (
+	ModeAuto = "auto"
+	ModeOn   = "on"
+	ModeOff  = "off"
+)
+
+// Resolve decides whether the check applies, and when it does not, says why.
+//
+// The check guards against an AGENT getting a command auto-approved by
+// rewriting the executable behind an allowlist entry. That only protects
+// anything if the agent cannot already rewrite foci itself. On a single-user
+// install (every macOS install) foci and its agents run as the same user, so an
+// agent can rewrite foci-gw, its config and its allowlist directly; vetoing a
+// writable `gh` then costs approval prompts and protects nothing.
+//
+// ModeAuto (and "") therefore turns the check off exactly when self — the
+// daemon's own executable — is itself substitutable by this process, judged by
+// the same rules as any command. self == "" (os.Executable failed) keeps the
+// check on: an unknown premise is not a failed one. ModeOn always enforces;
+// ModeOff never does.
+func Resolve(mode, self string, env Env) (bool, string) {
+	switch mode {
+	case ModeOff:
+		return false, `disabled by [permissions] substitutability_check = "off"`
+	case ModeOn:
+		return true, ""
+	}
+	if self == "" {
+		return true, ""
+	}
+	env.Off = false
+	if sub, path, reason := checkResolvedPath(self, env); sub {
+		return false, fmt.Sprintf("foci can replace its own executable (%s: %s), so an agent running as the same user could already rewrite foci and its allowlist; a writable allowlisted command grants it nothing more. Set [permissions] substitutability_check = \"on\" to enforce it anyway", path, reason)
+	}
+	return true, ""
 }
 
 // processCanWrite reports whether this process can write path, via a real
@@ -154,6 +208,7 @@ func Live() Env {
 		IsExecutable: processCanExecute,
 		EvalSymlinks: filepath.EvalSymlinks,
 		HomeDir:      home,
+		Off:          !enforced.Load(),
 	}
 }
 
@@ -189,7 +244,7 @@ func hasGlobMeta(token string) bool {
 // a shell builtin, a glob pattern, a relative path with no cwd to resolve
 // against — yields false: it never invents a verdict it cannot support.
 func Substitutable(token string, env Env) (bool, string, string) {
-	if hasGlobMeta(token) {
+	if env.Off || hasGlobMeta(token) {
 		return false, "", ""
 	}
 	if strings.HasPrefix(token, "~") {
@@ -304,7 +359,7 @@ func lookPath(name string, env Env) (string, bool) {
 // anything with a path separator, which is resolved directly) are not
 // "unresolved" and yield false.
 func UnresolvedBareName(token string, env Env) bool {
-	if token == "" || hasGlobMeta(token) || bashBuiltins[token] {
+	if env.Off || token == "" || hasGlobMeta(token) || bashBuiltins[token] {
 		return false
 	}
 	if strings.HasPrefix(token, "~") || strings.Contains(token, "/") {

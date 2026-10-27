@@ -395,6 +395,12 @@ func (cfg *Config) Validate(knownBackends []string) error {
 		return err
 	}
 
+	switch m := DerefStr(cfg.Permissions.SubstitutabilityCheck); m {
+	case "", "auto", "on", "off":
+	default:
+		return fmt.Errorf("[permissions] substitutability_check = %q: must be one of auto, on, off", m)
+	}
+
 	if ttl := cfg.Permissions.PromptTTL; ttl != "" {
 		if _, err := time.ParseDuration(ttl); err != nil {
 			return fmt.Errorf("[permissions] prompt_ttl = %q: %w", ttl, err)
