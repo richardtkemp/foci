@@ -55,14 +55,14 @@ func TestOnSystem_PermissionDenied_WarnsWhenUnattended(t *testing.T) {
 			b := &Backend{skipPermissions: tc.skip, turnEvents: tc.turn}
 			b.startOpts.SessionKey = "cam/b1"
 			b.OnSystem("permission_denied", json.RawMessage(deniedRaw))
-			got := warnLines(out.String(), "Claude Code denied it")
+			got := warnLines(out.String(), "not by foci's rules or a user")
 			if tc.wantLabel == "" {
 				if len(got) != 0 {
 					t.Fatalf("attended session logged an unattended denial: %q", got)
 				}
 				return
 			}
-			want := "unattended: session cam/b1 (trigger=" + tc.wantLabel + ") tried to use Bash; Claude Code denied it (classifier: [Data Exfiltration])"
+			want := "unattended: session cam/b1 (trigger=" + tc.wantLabel + ") tried to use Bash; blocked by Claude Code's auto mode classifier, not by foci's rules or a user (classifier: [Data Exfiltration])"
 			if len(got) != 1 || !strings.Contains(got[0], want) {
 				t.Fatalf("WARN lines = %q, want one containing %q", got, want)
 			}
@@ -120,6 +120,23 @@ func TestRequestedPermissionMode(t *testing.T) {
 	} {
 		if got := requestedPermissionMode(unattendedPermissionArgs(tc.cfgSkip, tc.batch)); got != tc.want {
 			t.Errorf("cfgSkip=%v batch=%v: requested mode %q, want %q", tc.cfgSkip, tc.batch, got, tc.want)
+		}
+	}
+}
+
+// TestCCDeniedLog_NamesTheDenier: the WARN line says which part of Claude Code
+// refused (auto mode classifier, built-in safety check, or CC generically for
+// an unknown type) and that foci's rules and the user did not, so a reader can
+// tell a CC denial from a foci rule denial.
+func TestCCDeniedLog_NamesTheDenier(t *testing.T) {
+	for _, tc := range []struct{ reasonType, want string }{
+		{"classifier", "blocked by Claude Code's auto mode classifier, not by foci's rules or a user"},
+		{"safetyCheck", "blocked by Claude Code's built-in safety check, not by foci's rules or a user"},
+		{"somethingNew", "blocked by Claude Code itself, not by foci's rules or a user"},
+	} {
+		got := ccDeniedLog("cam/b1", "reflection", PermissionDeniedMessage{ToolName: "Bash", DecisionReasonType: tc.reasonType, DecisionReason: "r"})
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("reasonType %q: got %q, want it to contain %q", tc.reasonType, got, tc.want)
 		}
 	}
 }

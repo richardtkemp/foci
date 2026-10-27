@@ -17,10 +17,25 @@ type PermissionDeniedMessage struct {
 
 // ccDeniedLog is the WARN line for a tool call CC itself denied in an
 // unattended session. Same shape as delegator.UnattendedDeniedLog, so one
-// grep for "unattended: session" finds every unattended denial.
+// grep for "unattended: session" finds every unattended denial. It names the
+// part of CC that refused and says outright that neither foci's rules nor a
+// user did, so a reader never mistakes it for a foci rule denial.
 func ccDeniedLog(sessionKey, label string, d PermissionDeniedMessage) string {
-	return fmt.Sprintf("unattended: session %s (trigger=%s) tried to use %s; Claude Code denied it (%s: %s)",
-		sessionKey, label, d.ToolName, d.DecisionReasonType, d.DecisionReason)
+	return fmt.Sprintf("unattended: session %s (trigger=%s) tried to use %s; blocked by %s, not by foci's rules or a user (%s: %s)",
+		sessionKey, label, d.ToolName, ccDenier(d.DecisionReasonType), d.DecisionReasonType, d.DecisionReason)
+}
+
+// ccDenier names the part of Claude Code that refused, from the event's
+// decision_reason_type (values seen on 2.1.311: "classifier", "safetyCheck").
+func ccDenier(reasonType string) string {
+	switch reasonType {
+	case "classifier":
+		return "Claude Code's auto mode classifier"
+	case "safetyCheck":
+		return "Claude Code's built-in safety check"
+	default:
+		return "Claude Code itself"
+	}
 }
 
 // onPermissionDenied logs a WARN for a tool call CC denied on its own, when
