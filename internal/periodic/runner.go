@@ -131,6 +131,7 @@ type Runner struct {
 	maintCfg         config.ResolvedMaintenance
 	tickInterval     time.Duration // poll cadence for the timer loop (resolved from config)
 	cacheTTL         time.Duration // backend/model prompt-cache lifetime; keepalive upper bound (0 = unknown)
+	cacheTTLFor      func(sessionKey string) time.Duration
 	promptSearchDirs []string
 	todoStore        *memory.TodoStore
 	sessionIndex     *session.SessionIndex
@@ -312,6 +313,11 @@ type RunnerConfig struct {
 	// interval alone). Resolved once at setup because it never varies at runtime.
 	CacheTTL time.Duration
 
+	// CacheTTLFor, when set, gives the lifetime per session and overrides
+	// CacheTTL. cmd/foci-gw wires it to agent.SessionCacheTTL — the same
+	// resolution the app's warmth indicator uses — returning 0 when unknown.
+	CacheTTLFor func(sessionKey string) time.Duration
+
 	// EphemeralRetentionDays is the age (days) beyond which ephemeral (branch/
 	// fork) backend transcripts are deleted by the daily cleanup. 0 = disabled.
 	EphemeralRetentionDays int
@@ -398,6 +404,7 @@ func New(cfg RunnerConfig) *Runner {
 		reflectCfg:       cfg.Reflection,
 		maintCfg:         cfg.Maintenance,
 		cacheTTL:         cfg.CacheTTL,
+		cacheTTLFor:      cfg.CacheTTLFor,
 		promptSearchDirs: cfg.PromptSearchDirs,
 		todoStore:        cfg.TodoStore,
 		sessionIndex:     cfg.SessionIndex,

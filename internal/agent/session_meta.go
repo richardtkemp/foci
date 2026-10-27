@@ -379,20 +379,41 @@ var expiredLongAgo = time.UnixMilli(1)
 // for the keepalive-interval sanity check at startup: it builds a throwaway
 // backend (never started) purely to read its constant CacheTTL().
 func (a *Agent) cacheTTLFor(sessionKey string) time.Duration {
+	if d, ok := a.SessionCacheTTL(sessionKey); ok {
+		return d
+	}
+	return 5 * time.Minute
+}
+
+// CacheTTL is THE prompt-cache lifetime for model on this agent — the one
+// resolution both the keepalive runner and the app's warmth indicator use, so
+// the two cannot disagree about when a cache goes cold. Order:
+//  1. an explicit [models.<model>] cache_ttl;
+//  2. the delegated backend's declared lifetime (delegator.Spec.CacheTTL:
+//     CC 1h, codex 1h, ...).
+//
+// ok is false when neither source knows. Callers decide what unknown means:
+// the warmth indicator shows the Anthropic 5-minute default (cacheTTLFor),
+// keepalive treats it as "no ceiling" and quiet compaction as "warmth
+// unprovable" (periodic.Runner). Spec.CacheTTL is static per backend type, so
+// whether the session's backend is currently running does not change it.
+func (a *Agent) CacheTTL(model string) (time.Duration, bool) {
 	if a.ModelDefaultsFn != nil {
-		if d, err := time.ParseDuration(a.ModelDefaultsFn(a.SessionModel(sessionKey)).CacheTTL); err == nil && d > 0 {
-			return d
+		if d, err := time.ParseDuration(a.ModelDefaultsFn(model).CacheTTL); err == nil && d > 0 {
+			return d, true
 		}
 	}
 	if a.DelegatedManager != nil {
-		if d := a.DelegatedManager.CacheTTL(sessionKey); d > 0 {
-			return d
-		}
 		if d := a.DelegatedManager.StaticCacheTTL(); d > 0 {
-			return d
+			return d, true
 		}
 	}
-	return 5 * time.Minute
+	return 0, false
+}
+
+// SessionCacheTTL is CacheTTL for the model sessionKey is running.
+func (a *Agent) SessionCacheTTL(sessionKey string) (time.Duration, bool) {
+	return a.CacheTTL(a.SessionModel(sessionKey))
 }
 
 // CacheExpiryMs returns the session's truthful prompt-cache expiry as unix ms,

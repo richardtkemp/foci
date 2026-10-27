@@ -11,10 +11,15 @@ import (
 // backendName is the [agents].backend value this package registers.
 const backendName = "codex"
 
-// cacheTTL is the prompt-cache time-to-live for OpenAI's API. OpenAI's prompt
-// caching is shorter and less documented than Anthropic's; 5 minutes is a
-// conservative estimate.
-const cacheTTL = 5 * time.Minute
+// cacheTTL is the prompt-cache lifetime codex sessions get. OpenAI documents
+// a 30-minute minimum for GPT-5.6 and later on the API (prompt_cache_options.ttl
+// default "30m"; 5-10 minutes for earlier in-memory models), and says nothing
+// for ChatGPT-login codex. Measured on foci's own ledger (2026-10-27, codex
+// 0.164.0, gpt-6.1-sol, ChatGPT login): calls after 60 and 90 minutes idle read
+// 93% and 99% of their input from cache; after ~5h only the shared prefix
+// survived. 1h sits inside the observed warm range. A [models.*] cache_ttl
+// overrides it (agent.CacheTTL).
+const cacheTTL = time.Hour
 
 // spec declares the Codex backend: what it can do and its static data
 // (#2154, internal/delegator/capabilities.go).

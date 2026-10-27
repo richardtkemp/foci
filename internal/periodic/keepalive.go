@@ -158,7 +158,7 @@ func (r *Runner) keepaliveTargets(interval time.Duration) (ready []string, why s
 		if touchAge < interval {
 			continue // warmed recently — not due yet
 		}
-		if r.cacheTTL > 0 && touchAge >= r.cacheTTL {
+		if ttl := r.ttlFor(sk); ttl > 0 && touchAge >= ttl {
 			continue // cache already expired — don't warm a corpse
 		}
 		if r.parentTurnInFlight(sk) {
@@ -193,5 +193,15 @@ func (r *Runner) lastCacheTouchAge(sessionKey string, now time.Time) (time.Durat
 // touch, or an unknown TTL (cacheTTL == 0, warmth unprovable), is NOT warm.
 func (r *Runner) cacheProvablyWarm(sessionKey string, now time.Time) bool {
 	age, ok := r.lastCacheTouchAge(sessionKey, now)
-	return ok && r.cacheTTL > 0 && age < r.cacheTTL
+	ttl := r.ttlFor(sessionKey)
+	return ok && ttl > 0 && age < ttl
+}
+
+// ttlFor is the session's prompt-cache lifetime: CacheTTLFor when wired,
+// else the static CacheTTL. 0 = unknown.
+func (r *Runner) ttlFor(sessionKey string) time.Duration {
+	if r.cacheTTLFor != nil {
+		return r.cacheTTLFor(sessionKey)
+	}
+	return r.cacheTTL
 }

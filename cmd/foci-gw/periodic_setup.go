@@ -98,10 +98,10 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	// runtime. It must come from the STATIC backend constant, not a per-session
 	// lookup — at startup no session is live, and DelegatedManager.CacheTTL
 	// returns 0 for a non-running backend (0 = unknown → no expiry ceiling).
-	var cacheTTL time.Duration
-	if inst.ag.DelegatedManager != nil {
-		cacheTTL = inst.ag.DelegatedManager.StaticCacheTTL()
-	}
+	// It comes from agent.CacheTTL, the resolution the warmth indicator also
+	// uses ([models.*] cache_ttl, then the backend's constant), for the agent's
+	// default model; the runner re-resolves per session via CacheTTLFor.
+	cacheTTL, _ := inst.ag.CacheTTL(inst.ag.Model)
 
 	// Warn on a self-defeating config: if the interval is >= the cache TTL the
 	// window is empty and keepalive can never fire, so warming is silently off.
@@ -256,14 +256,18 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 
 	ka.Enabled = kaEnabled
 	runner = periodic.New(periodic.RunnerConfig{
-		AgentID:          acfg.ID,
-		Client:           client,
-		CachingOverride:  cachingOverride,
-		Keepalive:        ka,
-		Background:       bg,
-		Reflection:       refl,
-		TickInterval:     inst.LiveConfig().Scheduler.TickInterval,
-		CacheTTL:         cacheTTL,
+		AgentID:         acfg.ID,
+		Client:          client,
+		CachingOverride: cachingOverride,
+		Keepalive:       ka,
+		Background:      bg,
+		Reflection:      refl,
+		TickInterval:    inst.LiveConfig().Scheduler.TickInterval,
+		CacheTTL:        cacheTTL,
+		CacheTTLFor: func(sk string) time.Duration {
+			d, _ := inst.ag.SessionCacheTTL(sk)
+			return d
+		},
 		Maintenance:      maint,
 		PromptSearchDirs: inst.promptSearchDirs,
 		TodoStore:        p.todoStore,

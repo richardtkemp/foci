@@ -550,7 +550,7 @@ enable_keepalive = true
 | `speed` | string | `""` | Speed mode: `"fast"` or empty |
 | `context` | int/string | `0` | Context window size in tokens (e.g. `262000` or `"262k"`) |
 | `enable_keepalive` | bool | `nil` | Enable keepalive pings (`nil` = auto-detect from developer) |
-| `cache_ttl` | string | `""` | Cache TTL as Go duration. For Anthropic: `"5m"` or `"1h"` (sent as cache control TTL, also drives keepalive interval). For Gemini: any Go duration (context cache TTL, `"0"` disables). Empty = auto-detect from developer defaults. |
+| `cache_ttl` | string | `""` | Cache TTL as Go duration. For Anthropic: `"5m"` or `"1h"` (sent as cache control TTL, also drives keepalive interval). For Gemini: any Go duration (context cache TTL, `"0"` disables). Empty = auto-detect from developer defaults. Also the cache lifetime foci assumes for this model everywhere: the app's warmth indicator and the keepalive "already expired, don't warm" ceiling both read it first, then the delegated backend's own lifetime (Claude Code 1h, codex 1h). |
 | `cache_strategy` | string | `""` | Cache marker strategy (Anthropic only): `"auto"` (top-level, API decides breakpoints) or `"explicit"` (manual breakpoints on system prompt and second-to-last message). Empty = `"auto"`. |
 
 **Model defaults hierarchy:** Per-model settings (thinking, effort, speed) act as defaults for any session using that model. Session-level overrides via `/thinking`, `/effort`, `/speed` take precedence. Clearing a session override (e.g. `/effort none`) reverts to the model default.
