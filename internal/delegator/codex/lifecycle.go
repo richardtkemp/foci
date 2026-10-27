@@ -223,8 +223,13 @@ func (b *Backend) launchAppServer(ctx context.Context, opts delegator.StartOptio
 	return nil
 }
 
-// appServerArgs keeps Codex from starting its nested bwrap sandbox: foci already
-// runs inside an outer sandbox that deliberately removes setuid/capability assumptions.
+// appServerArgs sets the app-server's default sandbox to danger-full-access, so
+// Codex does not start a nested bwrap sandbox: foci already runs inside an outer
+// sandbox that deliberately removes setuid/capability assumptions. The config key
+// is `sandbox_mode`; codex rejects `sandbox_policy` as an unknown field (verified
+// against codex 0.164.0 with --strict-config). This is only the default: a
+// thread/start that sends its own `sandbox` (foci always does, via sandboxMode())
+// overrides it for that thread (verified live against codex 0.164.0).
 //
 // When compactPrompt is non-empty it is layered in as a per-process
 // `-c compact_prompt=<value>` config override (the value parses as TOML, via
@@ -233,7 +238,7 @@ func (b *Backend) launchAppServer(ctx context.Context, opts delegator.StartOptio
 // ~/.codex/config.toml, so foci's compaction prompt can't leak into the user's
 // own codex CLI or race a concurrent codex agent (#1327 sub-issue 2).
 func appServerArgs(compactPrompt string) []string {
-	args := []string{"app-server", "-c", "sandbox_policy.mode=danger-full-access"}
+	args := []string{"app-server", "-c", "sandbox_mode=danger-full-access"}
 	if compactPrompt != "" {
 		args = append(args, "-c", "compact_prompt="+tomlBasicString(compactPrompt))
 	}

@@ -47,7 +47,7 @@ func newStartableBackend(t *testing.T, handler func(method string, params json.R
 // outer foci sandbox instead of attempting a nested bwrap sandbox. With no
 // compaction prompt, no compact_prompt override is layered in.
 func TestAppServerArgs_DisablesNestedSandbox(t *testing.T) {
-	want := []string{"app-server", "-c", "sandbox_policy.mode=danger-full-access"}
+	want := []string{"app-server", "-c", "sandbox_mode=danger-full-access"}
 	if got := appServerArgs(""); !reflect.DeepEqual(got, want) {
 		t.Fatalf("appServerArgs(\"\") = %v, want %v", got, want)
 	}
@@ -60,7 +60,7 @@ func TestAppServerArgs_DisablesNestedSandbox(t *testing.T) {
 func TestAppServerArgs_CompactPrompt(t *testing.T) {
 	got := appServerArgs("summarise\tthe \"session\"")
 	want := []string{
-		"app-server", "-c", "sandbox_policy.mode=danger-full-access",
+		"app-server", "-c", "sandbox_mode=danger-full-access",
 		"-c", `compact_prompt="summarise\tthe \"session\""`,
 	}
 	if !reflect.DeepEqual(got, want) {
