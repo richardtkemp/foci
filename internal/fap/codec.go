@@ -150,6 +150,10 @@ func decodeClient(t string, d json.RawMessage) (any, error) {
 		dst = &ConfigPut{}
 	case TypeConfigUnset:
 		dst = &ConfigUnset{}
+	case TypeDepthAck:
+		dst = &DepthAck{}
+	case TypeDepthDismiss:
+		dst = &DepthDismiss{}
 	default:
 		return nil, nil // unknown inbound frame — ignored upstream
 	}
@@ -173,6 +177,10 @@ func derefClient(dst any) any {
 	case *ClientHello:
 		return *v
 	case *ClientMessage:
+		return *v
+	case *DepthAck:
+		return *v
+	case *DepthDismiss:
 		return *v
 	case *Command:
 		return *v

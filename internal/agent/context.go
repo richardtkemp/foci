@@ -391,6 +391,7 @@ func nudgesAllowed(ts *TurnState) bool {
 //   - system: a system-initiated notification (restart changelog, proactive warning)
 //   - tmux: tmux watch inactivity detection
 //   - async: async tool result (shell, http_request, etc.)
+//   - depth: a depth-mode leaf's first turn, the feed's Ack, or a fan-in (#2588)
 //   - cron: fallback for a genuinely-unclassified trigger (should not normally appear)
 func triggerToPlatform(trigger string) string {
 	if _, ok := platformTriggers.Load(trigger); ok {
@@ -417,6 +418,8 @@ func triggerToPlatform(trigger string) string {
 		return "branch"
 	case "scheduled_wake":
 		return "wake"
+	case "depth", "depth_ack", "depth_results":
+		return "depth"
 	case "keepalive", "reflection", "consolidation", "background":
 		return "background"
 	case "compaction_memory", "session_end_memory", "compaction-memory", "session-end-memory":

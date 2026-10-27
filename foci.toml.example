@@ -216,6 +216,7 @@ system_files = [
 # compaction_quiet_hours = ""              # per-agent "" opts this agent out of a global quiet-hours window
 # branch_orientation_facet_prompt = "prompts/orient-facet.md"
 # branch_orientation_headless_prompt = "prompts/orient-headless.md"
+# branch_orientation_depth_prompt = "prompts/orient-depth.md"
 
 # Per-agent tool overrides (from [tools]):
 # [agents.tools]
@@ -322,6 +323,10 @@ system_files = [
 
 # Per-agent browser overrides:
 # [agents.browser]
+# enabled = true
+
+# Per-agent depth-mode override:
+# [agents.depth]
 # enabled = true
 
 # Per-agent reflection pass (memory + skill formation):
@@ -501,6 +506,7 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # max_system_prompt_chars_total = 80000
 # branch_orientation_facet_prompt = ""     # prompt for user-attached facet branches
 # branch_orientation_headless_prompt = ""  # prompt for headless branches (cron, spawn, keepalive)
+# branch_orientation_depth_prompt = ""     # prompt for depth-mode leaf branches ({report_rule} = the leaf's own orientation)
 # archive_after = "24h"                   # gzip idle sessions after 24 hours
 # file_mode = "0600"                      # octal permissions for session files
 # ephemeral_retention_days = 7            # delete ephemeral branch/fork transcripts after N days (0 = never)
@@ -660,6 +666,10 @@ bind = "127.0.0.1"
 # executable_path = ""                   # Chrome binary (empty = auto-detect)
 # dom_stable_sec = 1.0                   # DOM stability check interval
 # dom_stable_diff = 0.2                  # DOM stability diff threshold
+
+# ─── Depth mode (experimental, #2588) ─────────────────────────────────
+# [depth]
+# enabled = false                        # foci_depth_* tools: fan an app chat out into leaves answered in a feed
 
 # ─── Resources ────────────────────────────────────────────────────────
 # [resources]

@@ -147,6 +147,7 @@ func (c *Config) ResolveAllPaths() {
 		c.Sessions.Dir = ResolvePath(c.Sessions.Dir)
 	}
 	ResolvePathPtr(c.Sessions.BranchOrientationFacetPrompt)
+	ResolvePathPtr(c.Sessions.BranchOrientationDepthPrompt)
 	ResolvePathPtr(c.Sessions.BranchOrientationHeadlessPrompt)
 	// Keepalive.Prompt and Background.Prompt: path resolution handled by prompts.ResolvePrompt at runtime.
 	c.WelcomeFile = ResolvePath(c.WelcomeFile)

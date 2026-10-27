@@ -101,19 +101,21 @@ type Agent struct {
 	Sessions        *session.Store
 	Tools           *tools.Registry
 	Bootstrap       *workspace.Bootstrap
-	Compactor       *compaction.Compactor // nil disables auto-compaction
-	AsyncNotifier   *tools.AsyncNotifier  // nil disables async-pending compaction guard
-	AskRouter       *tools.AskRouter      // nil disables typed-answer routing for the foci-native `ask` tool
-	SpawnRestore    func()                // resumes the spawns a restart interrupted (#2589, Spawner.RestoreSpawns); nil = the agent has no spawn tool
-	Reminders       *memory.ReminderStore // nil disables reminder injection
-	TaskListStore   *memory.TaskListStore // nil disables task list in state dashboard
-	TodoStore       *memory.TodoStore     // nil disables todo count in state dashboard
-	ScratchpadStore *memory.Scratchpad    // nil disables scratchpad count in state dashboard
-	AgentID         string                // unique agent identifier (for per-agent DB queries)
-	Model           string                // "developer/model_id" format (e.g. "anthropic/claude-opus-4-6")
-	Format          string                // wire format resolved at startup (e.g. "anthropic", "gemini", "openai")
-	Endpoint        string                // agent's default endpoint (sessions inherit this unless overridden)
-	Log             *log.ComponentLogger  // structured logger for this agent
+	Compactor       *compaction.Compactor   // nil disables auto-compaction
+	AsyncNotifier   *tools.AsyncNotifier    // nil disables async-pending compaction guard
+	AskRouter       *tools.AskRouter        // nil disables typed-answer routing for the foci-native `ask` tool
+	SpawnRestore    func()                  // resumes the spawns a restart interrupted (#2589, Spawner.RestoreSpawns); nil = the agent has no spawn tool
+	DepthRestore    func()                  // rebuilds the depth-mode trees after a restart (#2588, DepthManager.Restore); nil = depth mode off
+	DepthOnReset    func(sessionKey string) // a reset of a depth-mode tree root drops its whole tree (#2588); nil = depth mode off
+	Reminders       *memory.ReminderStore   // nil disables reminder injection
+	TaskListStore   *memory.TaskListStore   // nil disables task list in state dashboard
+	TodoStore       *memory.TodoStore       // nil disables todo count in state dashboard
+	ScratchpadStore *memory.Scratchpad      // nil disables scratchpad count in state dashboard
+	AgentID         string                  // unique agent identifier (for per-agent DB queries)
+	Model           string                  // "developer/model_id" format (e.g. "anthropic/claude-opus-4-6")
+	Format          string                  // wire format resolved at startup (e.g. "anthropic", "gemini", "openai")
+	Endpoint        string                  // agent's default endpoint (sessions inherit this unless overridden)
+	Log             *log.ComponentLogger    // structured logger for this agent
 
 	EnvironmentBlock              string                                  // static environment block (fallback; tests). Prod uses EnvironmentBlockFunc.
 	EnvironmentBlockFunc          func(sessionKey string) string          // per-session environment block (platform-aware); preferred over EnvironmentBlock

@@ -639,6 +639,16 @@ Subcommands:
 		}
 	}
 
+	// Rebuild the depth-mode trees (#2588): leaf views into their root
+	// conversations, first turns and fan-ins the last process left undone.
+	// After StartAll (the root bindings must exist), before
+	// RestoreUndelivered (a leaf's redelivered input needs its leaf view).
+	for _, id := range agentOrder {
+		if r := agents[id].ag.DepthRestore; r != nil {
+			r()
+		}
+	}
+
 	// Re-send inputs a backend never confirmed consuming before the last
 	// shutdown or crash (#2050). After StartAll, so the redelivered turns'
 	// replies have chats to land in.

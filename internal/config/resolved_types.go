@@ -382,6 +382,15 @@ func resolveMemorySearch(m MemoryConfig) ResolvedMemorySearch {
 	}
 }
 
+// ResolvedDepth is the resolved [depth] section (#2588).
+type ResolvedDepth struct {
+	Enabled bool
+}
+
+func resolveDepth(m DepthConfig) ResolvedDepth {
+	return ResolvedDepth{Enabled: DerefBool(m.Enabled)}
+}
+
 type ResolvedBrowser struct {
 	Enabled        bool
 	Headless       bool

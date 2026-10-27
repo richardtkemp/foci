@@ -86,6 +86,10 @@ func (a *Agent) ResetSession(ctx context.Context, sessionKey string) (ResetMemor
 		a.DelegatedManager.ResetSession(sessionKey)
 	}
 
+	// A reset of a depth-mode tree root ends every node of its tree (#2588).
+	if a.DepthOnReset != nil {
+		a.DepthOnReset(sessionKey)
+	}
 	if err := a.Sessions.Reset(sessionKey); err != nil {
 		return ResetMemoryNone, err
 	}
@@ -327,6 +331,10 @@ func (a *Agent) ResetSessionHard(ctx context.Context, sessionKey string) error {
 		a.DelegatedManager.ResetSession(sessionKey)
 	}
 
+	// A reset of a depth-mode tree root ends every node of its tree (#2588).
+	if a.DepthOnReset != nil {
+		a.DepthOnReset(sessionKey)
+	}
 	if err := a.Sessions.Reset(sessionKey); err != nil {
 		return err
 	}

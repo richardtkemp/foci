@@ -283,6 +283,10 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	if out.spawner != nil {
 		ag.SpawnRestore = out.spawner.RestoreSpawns // #2589: main runs it once the platforms are up
 	}
+	if out.depth != nil {
+		ag.DepthRestore = out.depth.Restore // #2588: main runs it once the platforms are up
+		ag.DepthOnReset = out.depth.OnReset
+	}
 
 	// Per-agent environment block, rebuilt per session so the ## Platform block
 	// matches the session's messaging platform (resolved from the durable chat

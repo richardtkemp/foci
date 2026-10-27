@@ -72,6 +72,10 @@ type toolDeps struct {
 	// spawner is the state spawn, spawn_send and spawn_status share (one
 	// semaphore, one agent getter), built on first use by d.getSpawner.
 	spawner *tools.Spawner
+
+	// depth is the depth-mode manager the depth_* tools share (#2588), built
+	// on first use by d.getDepth.
+	depth *tools.DepthManager
 }
 
 // toolOutputs captures the non-tool side-products of registration that the
@@ -83,7 +87,8 @@ type toolOutputs struct {
 	serverTools    []provider.ToolDef
 	mcpMgr         *mcpkg.Manager
 	askRouter      *tools.AskRouter
-	spawner        *tools.Spawner // nil when the agent has no spawn tool
+	spawner        *tools.Spawner      // nil when the agent has no spawn tool
+	depth          *tools.DepthManager // nil when depth mode is off for the agent (#2588)
 }
 
 // toolEntry is one row of the registration table.
@@ -392,6 +397,21 @@ var toolTable = []toolEntry{
 	}},
 	{name: "spawn_status", paths: pathBoth, enabled: spawnCloneEnabled, build: func(d *toolDeps) *tools.Tool {
 		return d.getSpawner().StatusTool()
+	}},
+
+	// Depth mode (#2588), experimental: fan an app conversation out into leaf
+	// branches answered in a feed. Off unless [depth] enabled (depthEnabled).
+	{name: "depth_fanout", paths: pathBoth, enabled: depthEnabled, build: func(d *toolDeps) *tools.Tool {
+		return d.getDepth().Tools()[0]
+	}},
+	{name: "depth_report", paths: pathBoth, enabled: depthEnabled, build: func(d *toolDeps) *tools.Tool {
+		return d.getDepth().Tools()[1]
+	}},
+	{name: "depth_claims", paths: pathBoth, enabled: depthEnabled, build: func(d *toolDeps) *tools.Tool {
+		return d.getDepth().Tools()[2]
+	}},
+	{name: "depth_status", paths: pathBoth, enabled: depthEnabled, build: func(d *toolDeps) *tools.Tool {
+		return d.getDepth().Tools()[3]
 	}},
 
 	{name: "remind", paths: pathBoth,

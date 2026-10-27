@@ -28,7 +28,7 @@ func TestSessionTypesCategorised(t *testing.T) {
 	all := []SessionType{
 		SessionTypeChat, SessionTypeFacet, SessionTypeIndependent,
 		SessionTypeSpawn, SessionTypeReflection, SessionTypeKeepalive,
-		SessionTypeBackgroundTask, SessionTypeUnknown,
+		SessionTypeBackgroundTask, SessionTypeDepth, SessionTypeUnknown,
 	}
 	reflectable := map[SessionType]bool{
 		SessionTypeChat: true, SessionTypeFacet: true, SessionTypeIndependent: true,
@@ -46,7 +46,7 @@ func TestSessionTypesCategorised(t *testing.T) {
 	for _, ty := range all {
 		allSet[ty] = true
 	}
-	for _, bt := range []string{"facet", "spawn", "reflection", "consolidation", "compaction-memory", "session-end-memory", "keepalive", "background", "nudge-extraction", "branch", ""} {
+	for _, bt := range []string{"facet", "spawn", "reflection", "consolidation", "compaction-memory", "session-end-memory", "keepalive", "background", "nudge-extraction", "branch", "depth", ""} {
 		if st := SessionTypeForBranch(bt); !allSet[st] {
 			t.Errorf("SessionTypeForBranch(%q)=%s not in taxonomy", bt, st)
 		}

@@ -19,6 +19,7 @@ func seedDefaultPrompts(dir string, fileMode os.FileMode, liveBackends map[strin
 		"compaction-handoff.md":          prompts.CompactionHandoff,
 		"branch-orientation-headless.md": prompts.BranchOrientationHeadless,
 		"branch-orientation-facet.md":    prompts.BranchOrientationFacet,
+		"branch-orientation-depth.md":    prompts.BranchOrientationDepth,
 		"weekly-character-review.md":     prompts.WeeklyCharacterReview,
 		"nudge-preamble.md":              prompts.NudgePreamble,
 		"nudge-reply-instruction.md":     prompts.NudgeReplyInstruction,

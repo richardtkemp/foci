@@ -191,6 +191,7 @@ func TestResolve_AllFieldsPopulated(t *testing.T) {
 		Scheduler:   SchedulerConfig{TickInterval: Ptr("30s")},
 		Maintenance: MaintenanceConfig{ConsolidationEnabled: Ptr(true), ConsolidationTime: Ptr("20h"), ResetTime: Ptr("04:20"), ResetIdleGuard: Ptr("55m")},
 		Browser:     BrowserConfig{Enabled: Ptr(true)},
+		Depth:       DepthConfig{Enabled: Ptr(true)},
 		Platforms: []PlatformConfig{
 			{ID: "telegram", Display: DisplayConfig{TableWrapLines: Ptr(7), TableStyle: Ptr("markdown")}, Telegram: &TelegramSpecific{LongPollTimeout: "45s"}},
 		},

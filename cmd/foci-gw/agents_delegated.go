@@ -963,6 +963,10 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, wakeC
 			if out.spawner != nil {
 				a.SpawnRestore = out.spawner.RestoreSpawns // #2589: main runs it once the platforms are up
 			}
+			if out.depth != nil {
+				a.DepthRestore = out.depth.Restore // #2588: main runs it once the platforms are up
+				a.DepthOnReset = out.depth.OnReset
+			}
 			// Mirror the API path (agents.go), which sets AsyncNotifier on the
 			// agent. The delegated path built the notifier and wired it into
 			// tools but never stored it here, leaving a.AsyncNotifier nil. That

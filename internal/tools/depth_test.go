@@ -1,0 +1,619 @@
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"foci/internal/fap"
+)
+
+// --- fakes ---
+
+type depthFeedRec struct {
+	root, state string
+	nodes       []fap.DepthNode
+}
+
+type fakeDepthSurface struct {
+	mu       sync.Mutex
+	bound    map[string]bool
+	leaves   map[string]string // branch → root
+	prompts  []string
+	feeds    []depthFeedRec
+	busyKeys map[string]bool
+}
+
+func newFakeDepthSurface(roots ...string) *fakeDepthSurface {
+	s := &fakeDepthSurface{bound: map[string]bool{}, leaves: map[string]string{}, busyKeys: map[string]bool{}}
+	for _, r := range roots {
+		s.bound[r] = true
+	}
+	return s
+}
+
+func (s *fakeDepthSurface) RootBound(k string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.bound[k]
+}
+func (s *fakeDepthSurface) RegisterLeaf(root, branch, _, _ string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.bound[root] {
+		return fmt.Errorf("root %s not bound", root)
+	}
+	s.leaves[branch] = root
+	return nil
+}
+func (s *fakeDepthSurface) UnregisterLeaf(b string) { s.mu.Lock(); delete(s.leaves, b); s.mu.Unlock() }
+func (s *fakeDepthSurface) PushFeed(root, state string, nodes []fap.DepthNode) {
+	s.mu.Lock()
+	s.feeds = append(s.feeds, depthFeedRec{root, state, nodes})
+	s.mu.Unlock()
+}
+func (s *fakeDepthSurface) ShowPrompt(b, text, from string) {
+	s.mu.Lock()
+	s.prompts = append(s.prompts, b+"|"+text+"|"+from)
+	s.mu.Unlock()
+}
+func (s *fakeDepthSurface) LeafBusy(k string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.busyKeys[k]
+}
+
+func (s *fakeDepthSurface) lastFeed(t *testing.T) depthFeedRec {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.feeds) == 0 {
+		t.Fatal("no feed pushed")
+	}
+	return s.feeds[len(s.feeds)-1]
+}
+
+type fakeDepthBrancher struct {
+	mu sync.Mutex
+	n  int
+	// orients records each fork's orientation template.
+	orients []string
+}
+
+func (b *fakeDepthBrancher) ForkSession(_ context.Context, parent string, opts BranchOptions) (string, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if opts.BranchType != "depth" || !opts.NoResetHook {
+		return "", false, fmt.Errorf("unexpected branch options %+v", opts)
+	}
+	b.n++
+	b.orients = append(b.orients, opts.OrientationTemplate)
+	return fmt.Sprintf("%s/b%d", parent, b.n), true, nil
+}
+func (b *fakeDepthBrancher) SessionPath(string) (string, error) { return "", nil }
+
+type depthTurn struct{ key, text, trigger string }
+
+type fakeDepthRunner struct {
+	ch     chan depthTurn
+	mu     sync.Mutex
+	during func(depthTurn) // runs inside the turn, between started and done
+	refuse bool
+}
+
+func newFakeDepthRunner() *fakeDepthRunner { return &fakeDepthRunner{ch: make(chan depthTurn, 100)} }
+
+func (r *fakeDepthRunner) run(key, text, trigger string, started func(), done func(bool)) {
+	t := depthTurn{key, text, trigger}
+	r.mu.Lock()
+	refuse, during := r.refuse, r.during
+	r.mu.Unlock()
+	if refuse {
+		done(false)
+		r.ch <- t
+		return
+	}
+	if started != nil {
+		started()
+	}
+	if during != nil {
+		during(t)
+	}
+	done(true)
+	r.ch <- t
+}
+
+func (r *fakeDepthRunner) wait(t *testing.T, n int) []depthTurn {
+	t.Helper()
+	var out []depthTurn
+	for len(out) < n {
+		select {
+		case x := <-r.ch:
+			out = append(out, x)
+		case <-time.After(10 * time.Second):
+			t.Fatalf("waited for %d turns, got %d: %+v", n, len(out), out)
+		}
+	}
+	return out
+}
+
+type depthDelivery struct{ target, msg, trigger string }
+
+type depthHarness struct {
+	m        *DepthManager
+	store    *memSpawnStore
+	surface  *fakeDepthSurface
+	branch   *fakeDepthBrancher
+	runner   *fakeDepthRunner
+	mu       sync.Mutex
+	delivers []depthDelivery
+	refuse   bool // fan-in delivery refused (shutdown)
+	cancels  []string
+	stops    []string
+	approve  func(sk, id, text string, cb func(bool)) error
+	resume   map[string]bool
+}
+
+const depthRoot = "test/c1"
+
+func newDepthHarness(t *testing.T, store *memSpawnStore) *depthHarness {
+	t.Helper()
+	if store == nil {
+		store = newMemSpawnStore()
+	}
+	h := &depthHarness{store: store, surface: newFakeDepthSurface(depthRoot), branch: &fakeDepthBrancher{}, runner: newFakeDepthRunner(), resume: map[string]bool{}}
+	notifier := NewAsyncNotifier(func(string, string, string, string, *AgentOrigin) {}).
+		WithDeliverThen(func(target, msg, trigger string, done func(bool)) {
+			h.mu.Lock()
+			h.delivers = append(h.delivers, depthDelivery{target, msg, trigger})
+			refuse := h.refuse
+			h.mu.Unlock()
+			done(!refuse)
+		})
+	h.m = NewDepthManager(DepthDeps{
+		AgentID:             "test",
+		Store:               store,
+		Surface:             h.surface,
+		Sessions:            h.branch,
+		CanBranch:           func() bool { return true },
+		SetNoCompact:        func(string, bool) {},
+		OrientationTemplate: "LEAF {branch_key}\n{report_rule}",
+		RunTurn:             h.runner.run,
+		Notifier:            notifier,
+		MaxConcurrent:       2,
+		CancelAsk:           func(k string) { h.mu.Lock(); h.cancels = append(h.cancels, k); h.mu.Unlock() },
+		StopTurn:            func(k string) { h.mu.Lock(); h.stops = append(h.stops, k); h.mu.Unlock() },
+		CostUSD:             func(string) (float64, bool) { return 0.25, true },
+		ContextTokens:       func(string) int { return 4321 },
+		CanResume: func(k string) bool {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			v, ok := h.resume[k]
+			return !ok || v
+		},
+		Approve: func(sk, id, text string, cb func(bool)) error {
+			if h.approve != nil {
+				return h.approve(sk, id, text, cb)
+			}
+			return fmt.Errorf("no approver")
+		},
+	})
+	return h
+}
+
+func (h *depthHarness) deliveries() []depthDelivery {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]depthDelivery(nil), h.delivers...)
+}
+
+func depthCtx(key string) context.Context { return WithSessionKey(context.Background(), key) }
+
+func (h *depthHarness) fanout(t *testing.T, caller string, leaves ...string) []string {
+	t.Helper()
+	var specs []map[string]string
+	for _, l := range leaves {
+		specs = append(specs, map[string]string{"title": l, "prompt": "discuss " + l})
+	}
+	raw, _ := json.Marshal(map[string]any{"leaves": specs, "orientation": "one line"})
+	res, err := h.m.fanoutTool().Execute(depthCtx(caller), raw)
+	if err != nil {
+		t.Fatalf("fanout from %s: %v", caller, err)
+	}
+	if !strings.Contains(res.Text, fmt.Sprintf("waiting on %d leaves", len(leaves))) {
+		t.Fatalf("fanout reply = %q", res.Text)
+	}
+	h.m.mu.Lock()
+	keys := append([]string(nil), h.m.nodes[caller].Children...)
+	h.m.mu.Unlock()
+	h.runner.wait(t, len(leaves))
+	return keys
+}
+
+func (h *depthHarness) node(key string) depthNode {
+	h.m.mu.Lock()
+	defer h.m.mu.Unlock()
+	if n := h.m.nodes[key]; n != nil {
+		return *n
+	}
+	return depthNode{}
+}
+
+func (h *depthHarness) report(t *testing.T, key, text string) error {
+	t.Helper()
+	raw, _ := json.Marshal(map[string]string{"text": text})
+	_, err := h.m.reportTool().Execute(depthCtx(key), raw)
+	return err
+}
+
+// --- tests ---
+
+// The core loop: fan out, every leaf runs its first turn on its own branch
+// with its prompt shown in its item, the leaves report once, and the parent
+// gets ONE [DEPTH RESULTS] turn carrying every report (§2, §3.2, §3.4).
+func TestDepthFanoutReportFanIn(t *testing.T) {
+	h := newDepthHarness(t, nil)
+	kids := h.fanout(t, depthRoot, "Alpha", "Beta")
+	if len(kids) != 2 {
+		t.Fatalf("children = %v", kids)
+	}
+	for _, k := range kids {
+		if h.surface.leaves[k] != depthRoot {
+			t.Errorf("leaf %s routed to %q, want the root conversation", k, h.surface.leaves[k])
+		}
+		if !h.node(k).FirstTurnStarted {
+			t.Errorf("leaf %s first turn not marked started", k)
+		}
+	}
+	if !strings.Contains(h.branch.orients[0], "one line") || strings.Contains(h.branch.orients[0], "{report_rule}") {
+		t.Errorf("leaf orientation = %q: the call's orientation must fill {report_rule}", h.branch.orients[0])
+	}
+	if len(h.surface.prompts) != 2 || !strings.Contains(h.surface.prompts[0], "discuss Alpha|"+depthRoot) {
+		t.Errorf("prompts = %v", h.surface.prompts)
+	}
+	f := h.surface.lastFeed(t)
+	if f.state != depthFanned || len(f.nodes) != 2 || f.nodes[0].Title != "Alpha" || f.nodes[0].Level != 1 {
+		t.Fatalf("feed = %+v", f)
+	}
+	if !f.nodes[0].WaitingForUser || f.nodes[0].CostText != "$0.25" {
+		t.Errorf("idle leaf feed row = %+v, want waiting with a cost", f.nodes[0])
+	}
+
+	if err := h.report(t, depthRoot, "x"); err == nil || !strings.Contains(err.Error(), "root") {
+		t.Errorf("root report err = %v", err)
+	}
+	if err := h.report(t, kids[0], "alpha is fine"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.report(t, kids[0], "again"); err == nil || !strings.Contains(err.Error(), "already reported") {
+		t.Errorf("second report err = %v", err)
+	}
+	if len(h.deliveries()) != 0 {
+		t.Fatal("fan-in before every leaf reported")
+	}
+	if err := h.report(t, kids[1], "beta needs work"); err != nil {
+		t.Fatal(err)
+	}
+	ds := h.deliveries()
+	if len(ds) != 1 || ds[0].target != depthRoot || ds[0].trigger != "depth_results" {
+		t.Fatalf("deliveries = %+v", ds)
+	}
+	for _, want := range []string{"[DEPTH RESULTS] All 2 leaves", "## Alpha (level 1", "alpha is fine", "## Beta", "beta needs work", "$0.25"} {
+		if !strings.Contains(ds[0].msg, want) {
+			t.Errorf("results message lacks %q:\n%s", want, ds[0].msg)
+		}
+	}
+	root := h.node(depthRoot)
+	if root.State != depthActive || root.Results != "" {
+		t.Errorf("root after fan-in = %s results=%q", root.State, root.Results)
+	}
+	if f := h.surface.lastFeed(t); f.state != depthActive || f.nodes[0].State != depthReported || f.nodes[0].ReportPreview != "alpha is fine" {
+		t.Errorf("final feed = %+v", f)
+	}
+	// A done leaf the user writes to again becomes a side thread.
+	h.m.LeafUserMessage(kids[0])
+	if h.node(kids[0]).State != depthSide {
+		t.Errorf("reopened leaf state = %s, want side", h.node(kids[0]).State)
+	}
+}
+
+// Ack = report now (NQ1): the pending ask is cancelled, one [DEPTH ACK] turn
+// runs, and a turn that ends without depth_report reports its final text.
+func TestDepthAckAutoReports(t *testing.T) {
+	h := newDepthHarness(t, nil)
+	kids := h.fanout(t, depthRoot, "Only")
+	h.m.LeafText(kids[0], "old message before the ack")
+
+	h.runner.mu.Lock()
+	h.runner.during = func(tr depthTurn) {
+		if tr.trigger == "depth_ack" {
+			h.m.LeafText(tr.key, "my summary")
+		}
+	}
+	h.runner.mu.Unlock()
+	if err := h.m.Ack(depthRoot, h.node(kids[0]).LeafID); err != nil {
+		t.Fatal(err)
+	}
+	turns := h.runner.wait(t, 1)
+	if turns[0].text != DepthAckText {
+		t.Fatalf("ack turn = %+v", turns[0])
+	}
+	if len(h.cancels) != 1 || h.cancels[0] != kids[0] {
+		t.Errorf("CancelAsk calls = %v", h.cancels)
+	}
+	n := h.node(kids[0])
+	if n.State != depthReported || !strings.HasPrefix(n.Report, "my summary") || !strings.Contains(n.Report, "auto-reported") {
+		t.Fatalf("after ack: %s %q", n.State, n.Report)
+	}
+	if len(h.deliveries()) != 1 {
+		t.Fatalf("fan-in deliveries = %d", len(h.deliveries()))
+	}
+	// Idempotent on a done leaf.
+	if err := h.m.Ack(depthRoot, n.LeafID); err != nil {
+		t.Errorf("second ack: %v", err)
+	}
+}
+
+// An ack turn with nothing said after the ack still closes the leaf.
+func TestDepthAckWithoutSummary(t *testing.T) {
+	h := newDepthHarness(t, nil)
+	kids := h.fanout(t, depthRoot, "Only")
+	h.m.LeafText(kids[0], "said before the ack")
+	h.m.mu.Lock()
+	h.m.nodes[kids[0]].LastLineAt = time.Now().Add(-time.Hour) // well before the ack
+	h.m.mu.Unlock()
+	if err := h.m.Ack(depthRoot, h.node(kids[0]).LeafID); err != nil {
+		t.Fatal(err)
+	}
+	h.runner.wait(t, 1)
+	if r := h.node(kids[0]).Report; r != "(acknowledged by the user; the leaf gave no summary)" {
+		t.Errorf("report = %q", r)
+	}
+}
+
+// Dismiss on a node that fanned out ends its unreported descendants first,
+// stops their turns, and counts as reported for its own parent (Q3).
+func TestDepthDismissNested(t *testing.T) {
+	h := newDepthHarness(t, nil)
+	kids := h.fanout(t, depthRoot, "Parent")
+	grand := h.fanout(t, kids[0], "G1", "G2")
+	if h.node(grand[0]).Level != 2 || h.node(kids[0]).State != depthFanned {
+		t.Fatalf("nested fan-out: level %d, parent %s", h.node(grand[0]).Level, h.node(kids[0]).State)
+	}
+	if h.surface.leaves[grand[0]] != depthRoot {
+		t.Errorf("nested leaf routed to %q, want the tree root", h.surface.leaves[grand[0]])
+	}
+	if err := h.m.Ack(depthRoot, h.node(kids[0]).LeafID); err == nil {
+		t.Error("ack on a fanned node accepted")
+	}
+	if err := h.m.Dismiss(depthRoot, h.node(kids[0]).LeafID); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range append(grand, kids[0]) {
+		if s := h.node(k).State; s != depthDismissed {
+			t.Errorf("%s state = %s, want dismissed", k, s)
+		}
+	}
+	if len(h.stops) != 3 {
+		t.Errorf("StopTurn calls = %v, want the node and both children", h.stops)
+	}
+	ds := h.deliveries()
+	if len(ds) != 1 || ds[0].target != depthRoot || !strings.Contains(ds[0].msg, "## Parent — dismissed by the user") {
+		t.Fatalf("deliveries = %+v", ds)
+	}
+}
+
+// A fan-out from level 5 waits for the user's approval; approved, it runs,
+// denied, the requester stays a leaf (ruling 14:46).
+func TestDepthApprovalGate(t *testing.T) {
+	for _, approve := range []bool{true, false} {
+		t.Run(fmt.Sprint(approve), func(t *testing.T) {
+			h := newDepthHarness(t, nil)
+			deep := depthRoot + "/deep"
+			h.m.mu.Lock()
+			h.m.nodes[depthRoot] = &depthNode{Key: depthRoot, Tree: depthRoot, State: depthFanned, Children: []string{deep}}
+			h.m.nodes[deep] = &depthNode{Key: deep, LeafID: "leaf-deep", Tree: depthRoot, Parent: depthRoot, Level: 5, Title: "Deep", State: depthActive}
+			h.m.mu.Unlock()
+			var cb func(bool)
+			var asked string
+			h.approve = func(sk, id, text string, c func(bool)) error { asked, cb = sk+"|"+text, c; return nil }
+
+			raw := json.RawMessage(`{"leaves": [{"title": "Six", "prompt": "go deeper"}]}`)
+			res, err := h.m.fanoutTool().Execute(depthCtx(deep), raw)
+			if err != nil || !strings.Contains(res.Text, "pending the user's approval") {
+				t.Fatalf("deep fanout = %q, %v", res.Text, err)
+			}
+			if cb == nil || !strings.HasPrefix(asked, deep+"|") || !strings.Contains(asked, "fan out again into 1 leaves") {
+				t.Fatalf("approval prompt = %q", asked)
+			}
+			if h.node(deep).Approval == nil {
+				t.Fatal("pending approval not recorded")
+			}
+			cb(approve)
+			if approve {
+				turns := h.runner.wait(t, 2) // the leaf's first turn and the requester's notice
+				var notice depthTurn
+				for _, tr := range turns {
+					if tr.key == deep {
+						notice = tr
+					}
+				}
+				if !strings.Contains(notice.text, "approved") {
+					t.Errorf("requester notice = %+v", notice)
+				}
+				n := h.node(deep)
+				if n.State != depthFanned || len(n.Children) != 1 || h.node(n.Children[0]).Level != 6 {
+					t.Errorf("after approval: %s children=%v", n.State, n.Children)
+				}
+			} else {
+				turns := h.runner.wait(t, 1)
+				if turns[0].key != deep || !strings.Contains(turns[0].text, "denied") {
+					t.Errorf("deny notice = %+v", turns[0])
+				}
+				if h.node(deep).State != depthActive {
+					t.Errorf("denied requester state = %s", h.node(deep).State)
+				}
+			}
+			if h.node(deep).Approval != nil {
+				t.Error("approval still pending after the answer")
+			}
+		})
+	}
+}
+
+// A reset of the root drops every node of its tree: no fan-in, leaf views
+// gone, the feed shows them dropped (Dick's reset ruling, §3.9).
+func TestDepthResetDropsTree(t *testing.T) {
+	h := newDepthHarness(t, nil)
+	kids := h.fanout(t, depthRoot, "A", "B")
+	if err := h.report(t, kids[0], "done"); err != nil {
+		t.Fatal(err)
+	}
+	h.m.OnReset(kids[1]) // not a root: nothing happens
+	if h.node(kids[1]).State != depthActive {
+		t.Fatal("reset of a leaf touched the tree")
+	}
+	h.m.OnReset(depthRoot)
+	if s := h.node(kids[1]).State; s != depthDropped {
+		t.Errorf("open leaf after reset = %s", s)
+	}
+	if s := h.node(kids[0]).State; s != depthReported {
+		t.Errorf("reported leaf after reset = %s, want kept", s)
+	}
+	if len(h.surface.leaves) != 0 {
+		t.Errorf("leaf views left after reset: %v", h.surface.leaves)
+	}
+	if len(h.deliveries()) != 0 {
+		t.Error("a reset ran the fan-in")
+	}
+	if root := h.node(depthRoot); root.State != depthActive || len(root.Children) != 0 {
+		t.Errorf("root after reset = %+v", root)
+	}
+	if f := h.surface.lastFeed(t); f.state != depthActive || f.nodes[1].State != depthDropped {
+		t.Errorf("feed after reset = %+v", f)
+	}
+}
+
+// A restart rebuilds the leaf views, re-runs a first turn that never started,
+// marks a leaf whose branch cannot resume lost, and delivers the fan-in the
+// last process could not (§3.5).
+func TestDepthRestore(t *testing.T) {
+	store := newMemSpawnStore()
+	h1 := newDepthHarness(t, store)
+	kids := h1.fanout(t, depthRoot, "A", "B", "C")
+	if err := h1.report(t, kids[0], "a done"); err != nil {
+		t.Fatal(err)
+	}
+	// C's first turn "never started" in the old process.
+	h1.m.mu.Lock()
+	h1.m.nodes[kids[2]].FirstTurnStarted = false
+	rec := snap(h1.m.nodes[kids[2]])
+	h1.m.mu.Unlock()
+	h1.m.persist(rec...)
+
+	h2 := newDepthHarness(t, store)
+	h2.resume[kids[1]] = false // B's branch is gone
+	h2.m.Restore()
+	if len(h2.surface.leaves) != 3 {
+		t.Errorf("restored leaf views = %v", h2.surface.leaves)
+	}
+	if s := h2.node(kids[1]).State; s != depthLost {
+		t.Errorf("unresumable leaf = %s, want lost", s)
+	}
+	turns := h2.runner.wait(t, 1)
+	if turns[0].key != kids[2] || !strings.Contains(turns[0].text, "[DEPTH LEAF: C]") {
+		t.Errorf("re-run first turn = %+v", turns[0])
+	}
+	if len(h2.deliveries()) != 0 {
+		t.Fatal("fan-in with C still open")
+	}
+
+	// C reports; the delivery is refused (shutting down) and kept.
+	h2.mu.Lock()
+	h2.refuse = true
+	h2.mu.Unlock()
+	if err := h2.report(t, kids[2], "c done"); err != nil {
+		t.Fatal(err)
+	}
+	if d := h2.deliveries(); len(d) != 1 || !strings.Contains(d[0].msg, "## B — lost") {
+		t.Fatalf("deliveries = %+v", d)
+	}
+	if h2.node(depthRoot).Results == "" {
+		t.Fatal("refused results not kept for the next process")
+	}
+
+	h3 := newDepthHarness(t, store)
+	h3.m.Restore()
+	d := h3.deliveries()
+	if len(d) != 1 || d[0].target != depthRoot || !strings.Contains(d[0].msg, "c done") {
+		t.Fatalf("redelivery = %+v", d)
+	}
+	if h3.node(depthRoot).Results != "" {
+		t.Error("delivered results not cleared")
+	}
+}
+
+// Refusals: a session with no app conversation cannot start a tree; a done
+// leaf cannot fan out; a fanned node cannot fan out again.
+func TestDepthFanoutRefusals(t *testing.T) {
+	h := newDepthHarness(t, nil)
+	raw := json.RawMessage(`{"leaves": [{"title": "A", "prompt": "p"}]}`)
+	if _, err := h.m.fanoutTool().Execute(depthCtx("test/c999"), raw); err == nil || !strings.Contains(err.Error(), "app conversation") {
+		t.Errorf("unbound root err = %v", err)
+	}
+	if _, err := h.m.fanoutTool().Execute(depthCtx(depthRoot), json.RawMessage(`{"leaves": [{"title": "A"}]}`)); err == nil {
+		t.Error("a leaf with no prompt accepted")
+	}
+	kids := h.fanout(t, depthRoot, "A")
+	if _, err := h.m.fanoutTool().Execute(depthCtx(depthRoot), raw); err == nil || !strings.Contains(err.Error(), "already waiting") {
+		t.Errorf("fanned root err = %v", err)
+	}
+	if err := h.report(t, kids[0], "r"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.m.fanoutTool().Execute(depthCtx(kids[0]), raw); err == nil || !strings.Contains(err.Error(), "outside the tree") {
+		t.Errorf("reported leaf err = %v", err)
+	}
+	// The shell form: --leaves as a JSON string.
+	if l, err := parseDepthLeaves(json.RawMessage(`"[{\"title\":\"T\",\"prompt\":\"P\"}]"`)); err != nil || len(l) != 1 || l[0].Title != "T" {
+		t.Errorf("string leaves = %+v, %v", l, err)
+	}
+}
+
+// The claims board lists claims and points out overlap; it never refuses.
+func TestDepthClaims(t *testing.T) {
+	h := newDepthHarness(t, nil)
+	kids := h.fanout(t, depthRoot, "A", "B")
+	run := func(key, args string) string {
+		t.Helper()
+		res, err := h.m.claimsTool().Execute(depthCtx(key), json.RawMessage(args))
+		if err != nil {
+			t.Fatalf("claims %s: %v", args, err)
+		}
+		return res.Text
+	}
+	if got := run(kids[0], `{"text": "list"}`); got != "No claims yet." {
+		t.Errorf("empty list = %q", got)
+	}
+	if got := run(kids[0], `{"text": "add the caching layer"}`); got != "Claimed." {
+		t.Errorf("first claim = %q", got)
+	}
+	got := run(kids[1], `{"action": "add", "text": "cache invalidation in the caching layer"}`)
+	if !strings.Contains(got, "[A] the caching layer") {
+		t.Errorf("overlap = %q", got)
+	}
+	if got := run(depthRoot, `{}`); !strings.Contains(got, "[B] cache invalidation") {
+		t.Errorf("list = %q", got)
+	}
+	if _, err := h.m.claimsTool().Execute(depthCtx("test/c42"), json.RawMessage(`{}`)); err == nil {
+		t.Error("claims outside a tree accepted")
+	}
+	st, _ := h.m.statusTool().Execute(depthCtx(kids[0]), nil)
+	if !strings.Contains(st.Text, "- A [") || !strings.Contains(st.Text, "(you)") {
+		t.Errorf("status = %q", st.Text)
+	}
+}

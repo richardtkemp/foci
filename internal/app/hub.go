@@ -115,7 +115,11 @@ type Hub struct {
 	// (convBinding.sendThen). After that, promptHistory classifies from the frames.
 	closedBatch map[string]batchClosure
 	notifs      map[string]*convBinding // notification messageID → binding (for in-place edit, e.g. compaction ⏳→✅)
-	toolCalls   *toolCallRegistry       // InvocationID → waiting InvokeTool caller
+	// depthLeaves: depthLeafKey(root convID, leafID) → that leaf's view of the
+	// root binding (#2588). The same view is in bySession under the leaf's
+	// branch key; it is never in convs (a leaf is not a conversation).
+	depthLeaves map[string]*convBinding
+	toolCalls   *toolCallRegistry // InvocationID → waiting InvokeTool caller
 
 	// pinsMu serialises the read-modify-write on a chat's pinned-message set
 	// (handlePin). Deliberately not h.mu: it is held across a SessionIndex
@@ -297,6 +301,7 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		prompts:       make(map[string]*convBinding),
 		batchPrompts:  make(map[string]*batchPrompt),
 		notifs:        make(map[string]*convBinding),
+		depthLeaves:   make(map[string]*convBinding),
 		toolCalls:     newToolCallRegistry(),
 		wizards:       make(map[string]*wizardSession),
 		wizardByScope: make(map[string]string),
@@ -2401,6 +2406,12 @@ type convBinding struct {
 	readAfterTurn bool
 
 	cacheExpiryMs int64 // last-emitted prompt-cache expiry (unix ms); seeds the roster snapshot, 0 = unknown/cold
+
+	// leaf is set on a depth-mode leaf view (#2588): a binding for a leaf's
+	// branch session that owns no stream of its own and forwards every frame,
+	// stamped with the leaf's id, to the root conversation's binding. nil on
+	// every ordinary binding. See depth.go.
+	leaf *leafView
 }
 
 // attach points the durable state at a (re)connected socket and registers it in
@@ -2747,6 +2758,10 @@ func (b *convBinding) send(frame fap.ServerFrame) { b.sendThen(frame, nil) }
 // or — with no store — once it is in the in-memory buffer. It also runs if the
 // frame cannot be encoded (there is nothing to wait for). nil = none.
 func (b *convBinding) sendThen(frame fap.ServerFrame, onRecorded func()) {
+	if b.leaf != nil {
+		b.leaf.forward(b, frame, onRecorded)
+		return
+	}
 	b.mu.Lock()
 	b.seq++
 	seq := b.seq
@@ -2767,6 +2782,9 @@ func (b *convBinding) sendThen(frame fap.ServerFrame, onRecorded func()) {
 	now := time.Now()
 	preview, visible := pushPreview(frame)
 	if visible {
+		if t := leafTitleOf(frame); t != "" {
+			preview = t + ": " + preview
+		}
 		b.lastPreview = preview
 		b.lastActMs = now.UnixMilli()
 		// Send order, not id order: devices order their read line by seq, and
@@ -3166,6 +3184,11 @@ func (c *wsClient) device() string {
 // frames, queued and replayed on reconnect. Canonical check: route all capability
 // gating through it.
 func (b *convBinding) supportsFeature(feat string) bool {
+	if b.leaf != nil {
+		// A depth-mode leaf view has no sockets of its own: it renders on the
+		// root conversation's devices (#2588).
+		return b.leaf.root.supportsFeature(feat)
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	_, ok := b.features[feat]

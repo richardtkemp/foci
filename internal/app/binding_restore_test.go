@@ -348,6 +348,10 @@ func TestConvBindingFieldCensus(t *testing.T) {
 		"subagentDetail": true, "subagents": true, "spawns": true, "waitingDetail": true,
 		"activitySent": true, "cacheExpiryMs": true, "lastCmdHash": true,
 		"lastMsgID": true, "readAfterTurn": true,
+		// leaf is nil on every binding ensureBinding builds: a depth-mode leaf
+		// view is made only by registerDepthLeaf, which the depth manager's
+		// Restore re-runs from its own records after a restart (#2588).
+		"leaf": true,
 	}
 
 	rt := reflect.TypeOf(convBinding{})

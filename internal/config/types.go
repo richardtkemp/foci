@@ -432,6 +432,7 @@ type AgentConfig struct {
 	Debug       DebugConfig           `toml:"debug"`       // overrides from [debug]
 	Environment EnvironmentConfig     `toml:"environment"` // overrides from [environment]
 	Browser     BrowserConfig         `toml:"browser"`     // overrides from [browser]
+	Depth       DepthConfig           `toml:"depth"`       // overrides from [depth]
 	Keepalive   KeepaliveConfig       `toml:"keepalive"`   // overrides from [keepalive]
 	Background  BackgroundConfig      `toml:"background"`  // overrides from [background]
 	Reflection  ReflectionConfig      `toml:"reflection"`  // overrides from [reflection]
@@ -456,6 +457,7 @@ type AgentConfig struct {
 type AgentSessionsOverride struct {
 	CompactionConfig
 	BranchOrientationFacetPrompt    *string `toml:"branch_orientation_facet_prompt"    desc:"Overrides the global sessions value for this agent"`
+	BranchOrientationDepthPrompt    *string `toml:"branch_orientation_depth_prompt"    desc:"Overrides the global sessions value for this agent"`
 	BranchOrientationHeadlessPrompt *string `toml:"branch_orientation_headless_prompt" desc:"Overrides the global sessions value for this agent"`
 	MaxSystemPromptFile             *int    `toml:"max_system_prompt_chars_file"  desc:"Logs a server-side warning if any single system prompt file, eg a character file, exceeds this many characters. Overrides the global sessions value for this agent"`
 	MaxSystemPromptTotal            *int    `toml:"max_system_prompt_chars_total" desc:"Logs a server-side warning if this agent's combined system prompt exceeds this many characters total. Overrides the global sessions value for this agent"`
@@ -954,6 +956,7 @@ type SessionsConfig struct {
 	MaxSystemPromptTotal  int `toml:"max_system_prompt_chars_total" default:"80000" desc:"Warn at startup if the combined size of all system prompt files exceeds this many characters; does not block anything"`              // total system prompt char threshold
 
 	BranchOrientationFacetPrompt    *string `toml:"branch_orientation_facet_prompt"    desc:"Path to prompt file for user-attached facet branch orientation"`
+	BranchOrientationDepthPrompt    *string `toml:"branch_orientation_depth_prompt"    desc:"Path to prompt file for depth-mode leaf branch orientation"`
 	BranchOrientationHeadlessPrompt *string `toml:"branch_orientation_headless_prompt" desc:"Path to prompt file for headless branch orientation (cron, spawn, keepalive)"`
 
 	ArchiveAfter string `toml:"archive_after" default:"24h"  desc:"How long a session sits idle before its transcript is gzip-archived (default 24h)" type:"duration"`
@@ -1129,6 +1132,13 @@ type BrowserConfig struct {
 	ExecutablePath *string  `toml:"executable_path"                desc:"Path to the Chrome binary to launch. Leave empty to auto-detect an installed Chrome"`                     // Chrome executable path (empty = auto-detect)
 	DOMStableSec   *float64 `toml:"dom_stable_sec"  default:"1"    desc:"Seconds between page snapshots when waiting for a webpage to stop changing before treating it as loaded"` // DOM stability wait interval in seconds
 	DOMStableDiff  *float64 `toml:"dom_stable_diff" default:"0.2"  desc:"How much a page may differ between snapshots, as a fraction from 0 to 1, and still count as stable"`      // DOM stability diff threshold
+}
+
+// DepthConfig holds configuration for depth mode (#2588): the experimental
+// foci_depth_* tools that fan a conversation out into leaf branches whose
+// chats surface as a feed inside the root's app conversation.
+type DepthConfig struct {
+	Enabled *bool `toml:"enabled" default:"false" desc:"Experimental: give the agent the depth-mode tools (foci_depth_fanout and friends), which fan an app conversation out into leaf branches you answer in a feed inside it. Needs the app platform and a backend that can branch"`
 }
 
 type ToolsConfig struct {
@@ -1334,6 +1344,7 @@ type Config struct {
 	Debug              DebugConfig               `toml:"debug"`
 	Tools              ToolsConfig               `toml:"tools"`
 	Browser            BrowserConfig             `toml:"browser"`
+	Depth              DepthConfig               `toml:"depth"`
 	Keepalive          KeepaliveConfig           `toml:"keepalive"`
 	Background         BackgroundConfig          `toml:"background"`
 	Reflection         ReflectionConfig          `toml:"reflection"`

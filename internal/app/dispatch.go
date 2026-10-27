@@ -186,7 +186,13 @@ func (h *Hub) dispatchInbound(client *wsClient, data []byte) {
 		h.handleServerRestart(client)
 
 	case fap.ClientMessage:
-		h.routeUserTurn(client, f.ConversationID, f.AgentID, f.Text, h.resolveAttachments(f.Attachments), h.echoAttachmentRefs(f.Attachments), in.ID, in.Seq, platform.SteerPreferenceFromWire(f.Steer), f.TranscribeOnly)
+		h.routeUserTurn(client, f.ConversationID, f.AgentID, f.LeafID, f.Text, h.resolveAttachments(f.Attachments), h.echoAttachmentRefs(f.Attachments), in.ID, in.Seq, platform.SteerPreferenceFromWire(f.Steer), f.TranscribeOnly)
+
+	case fap.DepthAck:
+		h.handleDepthAction(client, f.ConversationID, f.LeafID, true)
+
+	case fap.DepthDismiss:
+		h.handleDepthAction(client, f.ConversationID, f.LeafID, false)
 
 	case fap.InteractiveResponse:
 		h.handleInteractiveResponse(client, f)
@@ -736,6 +742,16 @@ func (h *Hub) routeCommand(client *wsClient, f fap.Command) {
 	if existed && f.AgentID != "" && f.AgentID != b.agentID {
 		appLog.Warnf("frame agentId %q disagrees with conversation owner %q (conv=%q) — routing to owner", f.AgentID, b.agentID, f.ConversationID)
 	}
+	if f.LeafID != "" {
+		// A command typed into a depth-mode leaf's item (#2588) runs on the
+		// leaf's session, and its echo and reply go to that item.
+		leaf := h.depthLeaf(f.ConversationID, f.LeafID)
+		if leaf == nil {
+			client.sendRaw(fap.ErrorFrame{ConversationID: f.ConversationID, Code: "no_leaf", Message: "that leaf is no longer part of this conversation"})
+			return
+		}
+		b = leaf
+	}
 	conn := h.PrimaryBot(b.agentID)
 	if conn == nil || conn.commands == nil {
 		client.sendRaw(fap.ErrorFrame{ConversationID: f.ConversationID, Code: "no_commands", Message: "commands unavailable"})
@@ -841,6 +857,10 @@ func inboundConvID(frame any) string {
 		return f.ConversationID
 	case fap.ConversationArchive:
 		return f.ConversationID
+	case fap.DepthAck:
+		return f.ConversationID
+	case fap.DepthDismiss:
+		return f.ConversationID
 	default:
 		return ""
 	}
@@ -860,7 +880,11 @@ func inboundConvID(frame any) string {
 // echoRefs are the message's attachment refs as the client sent them (see
 // echoAttachmentRefs); they ride on the user-role echo so the user's other
 // devices can show the files (#2161). atts is the resolved form the agent gets.
-func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts []platform.Attachment, echoRefs []fap.AttachmentRef, inID string, inSeq int64, steer platform.SteerPreference, transcribeOnly bool) {
+//
+// leafID addresses the message to a depth-mode leaf (#2588) of the
+// conversation: the turn runs on the leaf's branch session, and its echo is
+// stamped with the leaf's id. "" = the conversation's own session.
+func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, leafID, text string, atts []platform.Attachment, echoRefs []fap.AttachmentRef, inID string, inSeq int64, steer platform.SteerPreference, transcribeOnly bool) {
 	if convID == "" || (text == "" && len(atts) == 0) {
 		return
 	}
@@ -886,6 +910,7 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 					AgentID:        agentID,
 					Name:           name,
 					Args:           args,
+					LeafID:         leafID,
 				})
 				return
 			}
@@ -911,6 +936,7 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 							AgentID:        agentID,
 							Name:           name,
 							Args:           args,
+							LeafID:         leafID,
 						})
 						return
 					}
@@ -947,6 +973,17 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 	// mismatch loud so we catch it instead of silently correcting (#906/#907).
 	if existed && frameAgent != "" && frameAgent != b.agentID {
 		appLog.Warnf("frame agentId %q disagrees with conversation owner %q (conv=%q) — routing to owner", frameAgent, b.agentID, convID)
+	}
+
+	// A message to a depth-mode leaf runs on the leaf's session; its echo and
+	// reply are stamped with the leaf's id by the leaf view (#2588).
+	target := b
+	if leafID != "" {
+		target = h.depthLeaf(convID, leafID)
+		if target == nil {
+			client.sendRaw(fap.ErrorFrame{ConversationID: convID, Code: "no_leaf", Message: "that leaf is no longer part of this conversation"})
+			return
+		}
 	}
 
 	conn := h.PrimaryBot(b.agentID)
@@ -996,7 +1033,12 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 	// caption, so other devices show the files as placeholders they fetch on
 	// tap (#2161).
 	if text != "" || len(echoRefs) > 0 {
-		b.send(fap.ServerMessage{ConversationID: convID, MessageID: inID, Role: "user", Text: text, Attachments: echoRefs})
+		target.send(fap.ServerMessage{ConversationID: convID, MessageID: inID, Role: "user", Text: text, Attachments: echoRefs})
+	}
+	if target.leaf != nil {
+		if ctl := depthController(); ctl != nil {
+			ctl.LeafUserMessage(target.sessionKey)
+		}
 	}
 	// User message confirmed bound for the agent — record interaction. The turn
 	// it starts also writes last_user_activity_at, but only once it runs; this
@@ -1006,7 +1048,7 @@ func (h *Hub) routeUserTurn(client *wsClient, convID, agentID, text string, atts
 		conn.OnUserMessage()
 	}
 	conn.agentRef.Enqueue(agent.Envelope{
-		SessionKey:  b.sessionKey,
+		SessionKey:  target.sessionKey,
 		Text:        text,
 		Attachments: atts,
 		UserID:      deviceID,

@@ -75,6 +75,7 @@ var sessionTypeScopes = map[string]bool{
 	string(session.SessionTypeFacet):          true,
 	string(session.SessionTypeIndependent):    true,
 	string(session.SessionTypeSpawn):          true,
+	string(session.SessionTypeDepth):          true,
 	string(session.SessionTypeReflection):     true,
 	string(session.SessionTypeKeepalive):      true,
 	string(session.SessionTypeBackgroundTask): true,

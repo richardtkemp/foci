@@ -217,6 +217,7 @@ func decodeConfig(data []byte, path string, knownBackends []string) (*Config, er
 	// Resolve agent path fields.
 	for i := range cfg.Agents {
 		ResolvePathPtr(cfg.Agents[i].Sessions.BranchOrientationFacetPrompt)
+		ResolvePathPtr(cfg.Agents[i].Sessions.BranchOrientationDepthPrompt)
 		ResolvePathPtr(cfg.Agents[i].Sessions.BranchOrientationHeadlessPrompt)
 	}
 

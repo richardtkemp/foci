@@ -30,6 +30,11 @@ const (
 
 	// Ephemeral agent work — not reflected.
 	SessionTypeSpawn SessionType = "spawn" // agent-initiated, single task, returns to the agent
+	// SessionTypeDepth is one node of a depth-mode fan-out (#2588): a forked
+	// branch whose chat surfaces inside the root's app conversation. The user
+	// talks to it, but it is an event inside another session, not a
+	// conversation of its own: never reflected, and swept like a spawn.
+	SessionTypeDepth SessionType = "depth"
 
 	// System — not reflected.
 	SessionTypeReflection     SessionType = "reflection"      // memory-formation pass (reflection/consolidation/compaction/session-end); must not self-induce
@@ -600,6 +605,7 @@ var EphemeralCleanupTypes = []SessionType{
 	SessionTypeKeepalive,
 	SessionTypeBackgroundTask,
 	SessionTypeSpawn,
+	SessionTypeDepth,
 }
 
 // EphemeralSessionsOlderThan returns the keys of ephemeral system/agent sessions

@@ -595,6 +595,8 @@ func SessionTypeForBranch(branchType string) SessionType {
 		return SessionTypeFacet
 	case "spawn":
 		return SessionTypeSpawn
+	case "depth":
+		return SessionTypeDepth
 	case "reflection", "consolidation", "compaction-memory", "session-end-memory":
 		return SessionTypeReflection
 	case "keepalive":
