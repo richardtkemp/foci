@@ -6,8 +6,9 @@
 #
 # Hermetic: copies Makefile, mk/ and scripts/remote-run.sh into temp dirs, each
 # with its own .remote.mk, and puts a fake `ssh` and a fake `go` first on PATH.
-# The fake ssh fails (exit 255, after 1s; 10s for "verydown") for a host whose name contains "down",
-# answers late for "slow", and otherwise runs the command LOCALLY, so a remote-*
+# The fake ssh fails (exit 255, after 1s) for a host whose name contains "down"
+# ("verydown": only once the test releases it, see g_dead_later), answers late
+# for "slow", and otherwise runs the command LOCALLY, so a remote-*
 # target really rsyncs into a temp "remote" dir and runs the Mac-side make there.
 # The fake go makes `go vet` log its start and end and sleep, so the lock is
 # observed, not inferred. Nothing touches a real Mac.
@@ -49,7 +50,14 @@ while [ $# -gt 0 ]; do
 done
 host=$1; shift
 echo "$host" >> "$FAKE_SSH_LOG"
-case $host in *verydown*) sleep 10; echo "ssh: connect to host $host port 22: Operation timed out" >&2; exit 255 ;; esac
+# "verydown" stays unanswered until the test creates $FAKE_DEAD_GATE (or the
+# probe's `timeout` kills it), and logs how its probe ended to $FAKE_DEAD_LOG.
+case $host in *verydown*)
+  trap 'echo killed >> "$FAKE_DEAD_LOG"; exit 255' TERM
+  until [ -e "$FAKE_DEAD_GATE" ]; do sleep 0.1; done
+  echo released >> "$FAKE_DEAD_LOG"
+  echo "ssh: connect to host $host port 22: Operation timed out" >&2; exit 255 ;;
+esac
 case $host in *down*) sleep 1; echo "ssh: connect to host $host port 22: Operation timed out" >&2; exit 255 ;; esac
 case $host in *slow*) sleep 2 ;; esac
 # A real ssh carries no make state to the remote.
@@ -129,16 +137,24 @@ g_dead_first() {
   expect "the dead host's <name>.REMOTE_HOST was probed" "tester@host-down" "$(cat "$FAKE_SSH_LOG")"
 }
 g_dead_later() {
-  # The dead later host takes 10 s to fail: a probe that waited for it would
-  # take that long, far above any make's parse time on a busy host.
+  # The dead later host answers only once released, and the release comes after
+  # make returns: so a dispatcher that waited for it could only have returned
+  # after its probe was killed by `timeout`, which the host logs. The verdict is
+  # the order of those two events, not a wall-clock time. The probe timeout is
+  # raised so that only a hung make (not a slow one) could see it fire first.
   new_group dead_later; remote_mk "locked deadslow"
-  t0=$(date +%s%N)
+  export FAKE_DEAD_GATE=$G/dead.release FAKE_DEAD_LOG=$G/dead.log
+  : > "$FAKE_DEAD_LOG"
   # shellcheck disable=SC2086
-  out=$(mk -n $DISPATCH)
-  t1=$(date +%s%N)
-  ms=$(( (t1 - t0) / 1000000 ))
+  out=$(mk -n $DISPATCH REMOTE_SSH_HARD_TIMEOUT=120)
+  before=$(cat "$FAKE_DEAD_LOG")
+  touch "$FAKE_DEAD_GATE"
   expect "an answering first host is chosen" "running on build host locked:" "$out"
-  [ "$ms" -lt 5000 ] && ok "a dead LATER host costs no wait (${ms}ms)" || fail "a dead LATER host costs no wait" "took ${ms}ms (the fake dead host answers after 10000ms)"
+  if [ -z "$before" ]; then ok "a dead LATER host costs no wait"
+  else fail "a dead LATER host costs no wait" "make returned only after the dead host's probe ended ($before)"; fi
+  # Premise: the dead host really was probed (its probe ends once released).
+  for _ in $(seq 1300); do [ -s "$FAKE_DEAD_LOG" ] && break; sleep 0.1; done
+  expect "the dead later host was probed, and answered only once released" "released" "$(cat "$FAKE_DEAD_LOG")"
 }
 g_order() {
   new_group order; remote_mk "slowfree locked"
