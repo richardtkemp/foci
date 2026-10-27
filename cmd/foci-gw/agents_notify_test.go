@@ -512,3 +512,33 @@ func TestTurnSinkForConn_AppGetsDriverSink(t *testing.T) {
 		t.Fatalf("driver sink saw no TurnComplete (done=%v text=%q): the injected turn bypassed the app's own sink, so no Activity frames reach the app (#1115)", inner.Done(), inner.FinalText())
 	}
 }
+
+// TestNewAsyncNotifier_DeliverThenReportsShutdownRefusal: InjectToAgentThen
+// reports a result the draining inbox refused as not taken, so a spawn keeps
+// its persisted result for the next process (#2589).
+func TestNewAsyncNotifier_DeliverThenReportsShutdownRefusal(t *testing.T) {
+	t.Parallel()
+	ag := &agent.Agent{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ag.StartInbox(ctx)
+	ag.BeginShutdown()
+
+	notifier := newAsyncNotifier(func() *agent.Agent { return ag }, "test", nil, ctx, stubConnMgr{}, nil)
+	done := make(chan bool, 2)
+	notifier.InjectToAgentThen("test/main", "[SPAWN RESULT] x", "async_notify", func(delivered bool) { done <- delivered })
+
+	select {
+	case delivered := <-done:
+		if delivered {
+			t.Fatal("a result refused by the shutdown drain was reported delivered")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no delivery report for a refused result")
+	}
+	select {
+	case again := <-done:
+		t.Fatalf("delivery reported twice (second: %v)", again)
+	case <-time.After(100 * time.Millisecond):
+	}
+}

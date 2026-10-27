@@ -280,6 +280,9 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 		out:              out,
 	})
 	ag.AskRouter = out.askRouter
+	if out.spawner != nil {
+		ag.SpawnRestore = out.spawner.RestoreSpawns // #2589: main runs it once the platforms are up
+	}
 
 	// Per-agent environment block, rebuilt per session so the ## Platform block
 	// matches the session's messaging platform (resolved from the durable chat

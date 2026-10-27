@@ -21,6 +21,42 @@ type AsyncNotifier struct {
 	// clk arms RunInBackground's auto-background threshold timer. nil means
 	// the wall clock; tests set a *clock.Fake through WithClock.
 	clk clock.Clock
+
+	// thenFn delivers like fn and then reports whether the target's turn
+	// took the message (InjectToAgentThen). nil = fn, reported as taken.
+	thenFn DeliverThenFunc
+}
+
+// DeliverThenFunc delivers message to targetSession as an injected turn, like
+// the notifier's own fn, then calls done(true) once the turn has run, or
+// done(false) when the inbox refused it (a shutdown drain, a full inbox).
+// done is called at most once; never when the process ends first.
+type DeliverThenFunc func(targetSession, message, trigger string, done func(delivered bool))
+
+// WithDeliverThen sets the delivery InjectToAgentThen uses, and returns n. Set
+// it before the notifier is shared; it is not synchronised.
+func (n *AsyncNotifier) WithDeliverThen(fn DeliverThenFunc) *AsyncNotifier {
+	n.thenFn = fn
+	return n
+}
+
+// InjectToAgentThen is InjectToAgent for a caller holding a durable record of
+// the message (a spawn's persisted result, #2589): done reports whether the
+// target's turn took it. Without a WithDeliverThen delivery it injects through
+// fn and reports true at once. Safe on a nil receiver (done is not called).
+func (n *AsyncNotifier) InjectToAgentThen(targetSession, message, trigger string, done func(delivered bool)) {
+	if n == nil {
+		return
+	}
+	if done == nil {
+		done = func(bool) {}
+	}
+	if n.thenFn != nil {
+		n.thenFn(targetSession, message, trigger, done)
+		return
+	}
+	n.inject(targetSession, message, "", trigger, nil)
+	done(true)
 }
 
 // WithClock makes RunInBackground arm its auto-background threshold on c

@@ -104,6 +104,7 @@ type Agent struct {
 	Compactor       *compaction.Compactor // nil disables auto-compaction
 	AsyncNotifier   *tools.AsyncNotifier  // nil disables async-pending compaction guard
 	AskRouter       *tools.AskRouter      // nil disables typed-answer routing for the foci-native `ask` tool
+	SpawnRestore    func()                // resumes the spawns a restart interrupted (#2589, Spawner.RestoreSpawns); nil = the agent has no spawn tool
 	Reminders       *memory.ReminderStore // nil disables reminder injection
 	TaskListStore   *memory.TaskListStore // nil disables task list in state dashboard
 	TodoStore       *memory.TodoStore     // nil disables todo count in state dashboard

@@ -153,6 +153,19 @@ type SpawnDeps struct {
 	// spawn, whose one-shot modes would need the direct API client it has not
 	// got (#1311, #2523). The schema then has no model or context parameter.
 	CloneOnly bool
+	// CanResume reports whether a branch session still has a conversation a
+	// run can continue (a delegated backend's saved resume id; an API
+	// session's history), for a spawn a restart interrupted (#2589). Nil =
+	// assume it can.
+	CanResume func(branchKey string) bool
+	// TakeUndelivered returns, and forgets, the inputs written to a branch's
+	// backend that it never consumed before foci stopped (#2050), so a resumed
+	// spawn gets them in its resume turn instead of a redelivery turn whose
+	// reply would land in no spawn. Nil = none.
+	TakeUndelivered func(branchKey string) []string
+	// Notice shows the user a line in a session's chat without running a turn
+	// (which spawns a restart resumed, which it could not). Nil = log only.
+	Notice func(sessionKey, text string)
 }
 
 // maxToolLoops calls d.MaxToolLoops(), or returns 0 if unset (tests that
@@ -777,7 +790,7 @@ func (s *Spawner) startClone(ctx context.Context, prompt string, timeout time.Du
 			ID: id, BranchKey: branchKey, Description: spawnDescription(prompt),
 			Model: model, Started: time.Now(),
 		}
-		deps.Tracker.add(parentSession, running, cancel, timeout)
+		deps.Tracker.addWithPrompt(parentSession, running, cancel, timeout, prompt)
 		deps.Tracker.appendLog(parentSession, id, "prompt", prompt)
 		if deps.Observer != nil {
 			deps.Observer.SpawnStarted(parentSession, running, prompt)
@@ -832,7 +845,7 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 
 	var result string
 	var runErr error
-	var stopped bool
+	var stopped, interrupted bool
 	var dropped int
 	signal := make(chan struct{})
 	go func() {
@@ -845,9 +858,9 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 			sink := &spawnTextSink{BufferSink: buf, obs: obs, tracker: tr, parent: parent, id: id}
 			runErr = agent.HandleMessage(turnevent.WithSink(runCtx, sink), branchKey, texts, nil)
 			result = buf.FinalText()
-			next, done, wasStopped, n := tr.finishOrNext(parent, id, runErr != nil || spawnCtx.Err() != nil)
+			next, done, wasStopped, cut, n := tr.finishOrNext(parent, id, runErr != nil || spawnCtx.Err() != nil)
 			if done {
-				stopped, dropped = wasStopped, n
+				stopped, interrupted, dropped = wasStopped, cut, n
 				break
 			}
 			for _, t := range next {
@@ -856,6 +869,12 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 			texts = next
 		}
 		switch {
+		case interrupted:
+			// foci is shutting down: the persisted record stays as it is
+			// and the next process resumes the spawn (#2589).
+			spawnLog.Infof("spawn=%s branch=%s cut short by shutdown — left for the next process to resume", id, branchKey)
+			close(signal)
+			return
 		case stopped:
 			tr.setOutcome(parent, id, "stopped")
 		case runErr != nil:
@@ -878,6 +897,8 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 		NotifyMessage: func() string {
 			var msg string
 			switch {
+			case interrupted:
+				return ""
 			case stopped:
 				msg = fmt.Sprintf("[SPAWN RESULT] Branch %s (spawn %s) was stopped by the user.", branchKey, id)
 			case runErr != nil:
@@ -891,8 +912,12 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 			if dropped > 0 {
 				msg += fmt.Sprintf("\n\n(%d message(s) sent with spawn_send arrived too late and were not delivered.)", dropped)
 			}
+			if n := tr.resumeCount(parent, id); n > 0 {
+				msg += fmt.Sprintf("\n\n(This spawn was resumed %d time(s) after a foci restart.)", n)
+			}
 			return msg
 		},
+		Deliver:       func(msg string) { s.deliver(parent, id, msg) },
 		Cleanup:       func() { <-s.sem },
 		PendingResult: TextResult(pendingResult),
 	})

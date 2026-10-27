@@ -138,29 +138,36 @@ func newAsyncNotifier(
 	connMgr platform.ConnectionManager,
 	deliverChit chitDeliverer,
 ) *tools.AsyncNotifier {
-	return tools.NewAsyncNotifier(func(targetSession, message, replyToSession, trigger string, origin *tools.AgentOrigin) {
-		target := targetSession
+	// resolve picks the session a notification goes to and the Agent that owns
+	// it: the caller's Agent (same-agent fast path), or the target's Agent when
+	// the key names a different agent. An unknown agent is a hard drop —
+	// nowhere to go (ok false).
+	resolve := func(targetSession, trigger string) (target string, targetAg *agent.Agent, targetAgentID string, ok bool) {
+		target = targetSession
 		if target == "" {
 			target = defaultSessionKeyFor(getAgent(), agentID)
 		}
-		if trigger == "" {
-			trigger = "async_notify"
-		}
-
-		// Resolve which Agent owns the target session: the caller's Agent
-		// (same-agent fast path), or the target's Agent when the key names a
-		// different agent. An unknown agent is a hard drop — nowhere to go.
-		targetAg, targetAgentID := getAgent(), agentID
+		targetAg, targetAgentID = getAgent(), agentID
 		if sk, err := session.ParseSessionKey(target); err == nil && sk.AgentID != agentID {
 			inst := agentResolverFn(sk.AgentID)
 			if inst == nil {
 				log.NewComponentLogger(trigger).Errorf("unknown target agent %q for session %s, message dropped", sk.AgentID, target)
-				return
+				return "", nil, "", false
 			}
 			targetAg, targetAgentID = inst.ag, sk.AgentID
 		}
 		if targetAg == nil {
 			log.NewComponentLogger(trigger).Errorf("no target agent for session %s, injection dropped", target)
+			return "", nil, "", false
+		}
+		return target, targetAg, targetAgentID, true
+	}
+	return tools.NewAsyncNotifier(func(targetSession, message, replyToSession, trigger string, origin *tools.AgentOrigin) {
+		if trigger == "" {
+			trigger = "async_notify"
+		}
+		target, targetAg, targetAgentID, ok := resolve(targetSession, trigger)
+		if !ok {
 			return
 		}
 
@@ -171,6 +178,23 @@ func newAsyncNotifier(
 		}
 		// DELIVER-TO-CHAT: the result belongs to the target's own chat.
 		deliverToSessionChat(targetAg, ctx, trigger, connMgr, targetAgentID, target, message, agentChitFor(origin, deliverChit), "")
+	}).WithDeliverThen(func(targetSession, message, trigger string, done func(bool)) {
+		// DELIVER-TO-CHAT that reports whether the turn took the message
+		// (InjectToAgentThen): a spawn result stays persisted until it did
+		// (#2589). Refused — by the shutdown drain or a full inbox — it stays
+		// for the next process.
+		if trigger == "" {
+			trigger = "async_notify"
+		}
+		target, targetAg, targetAgentID, ok := resolve(targetSession, trigger)
+		if !ok {
+			return
+		}
+		var once sync.Once
+		finish := func(delivered bool) { once.Do(func() { done(delivered) }) }
+		deliverToSessionChatThen(targetAg, ctx, trigger, connMgr, targetAgentID, target, message, nil, "",
+			func(err error) { finish(!errors.Is(err, agent.ErrShuttingDown)) },
+			onInjectRefused(func() { finish(false) }))
 	})
 }
 

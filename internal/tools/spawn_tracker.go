@@ -42,9 +42,23 @@ type SpawnObserver interface {
 // them (#2127), and the parent can steer a spawn and check on it (#2523). A
 // finished spawn stays known (its last maxFinishedSpawns per parent) so a
 // follow-up message can resume its branch.
+//
+// With a store (SetStore), every spawn that is running or whose result has not
+// reached its parent yet is also kept in state.db, so a foci restart resumes it
+// (#2589, Spawner.RestoreSpawns).
 type SpawnTracker struct {
 	mu     sync.Mutex
 	spawns map[string]map[string]*trackedSpawn // parent session → spawn id → spawn
+
+	// store keeps the persisted records; nil = in memory only.
+	store SpawnStore
+	// shuttingDown is set by BeginShutdown: a run cut short from then on was
+	// cut by the shutdown, and is resumed by the next process instead of
+	// being reported failed.
+	shuttingDown bool
+	// persistMu orders the writes of persist: each write snapshots the
+	// spawn's state under it, so the last write always holds the latest state.
+	persistMu sync.Mutex
 }
 
 type trackedSpawn struct {
@@ -57,6 +71,11 @@ type trackedSpawn struct {
 	outcome string        // last run's end: "completed", "failed" or "stopped"
 	pending []string      // parent messages waiting for the spawn's next step
 	log     []SpawnLogEntry
+	prompt  string // the task it was started with, repeated when a restart resumes it
+	resumes int    // how many times a foci restart has resumed it
+	// result is the [SPAWN RESULT] message on its way to the parent: kept,
+	// and persisted, until the parent's turn has taken it.
+	result string
 }
 
 // SpawnLogEntry is one step of a spawn's activity, kept for spawn_status
@@ -76,6 +95,7 @@ type SpawnSnapshot struct {
 	Ended   time.Time
 	Pending int // parent messages not yet delivered
 	Timeout time.Duration
+	Resumes int // times a foci restart has resumed it
 	Log     []SpawnLogEntry
 }
 
@@ -105,15 +125,22 @@ func (t *SpawnTracker) Add(parent string, s RunningSpawn, cancel context.CancelF
 }
 
 func (t *SpawnTracker) add(parent string, s RunningSpawn, cancel context.CancelFunc, timeout time.Duration) {
+	t.addWithPrompt(parent, s, cancel, timeout, "")
+}
+
+// addWithPrompt registers a running spawn with the task it was given, and
+// persists it so a restart can resume it.
+func (t *SpawnTracker) addWithPrompt(parent string, s RunningSpawn, cancel context.CancelFunc, timeout time.Duration, prompt string) {
 	if t == nil {
 		return
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if t.spawns[parent] == nil {
 		t.spawns[parent] = map[string]*trackedSpawn{}
 	}
-	t.spawns[parent][s.ID] = &trackedSpawn{info: s, cancel: cancel, running: true, timeout: timeout}
+	t.spawns[parent][s.ID] = &trackedSpawn{info: s, cancel: cancel, running: true, timeout: timeout, prompt: prompt}
+	t.mu.Unlock()
+	t.persist(parent, s.ID)
 }
 
 // Running returns the running spawns of parentSession, oldest first (nil when
@@ -193,7 +220,7 @@ func (t *SpawnTracker) find(parent, idOrBranch string) *trackedSpawn {
 func (s *trackedSpawn) snapshot(n int) SpawnSnapshot {
 	snap := SpawnSnapshot{
 		RunningSpawn: s.info, Running: s.running, Ended: s.ended,
-		Pending: len(s.pending), Timeout: s.timeout,
+		Pending: len(s.pending), Timeout: s.timeout, Resumes: s.resumes,
 	}
 	if !s.running {
 		snap.Outcome = s.outcome
@@ -231,13 +258,15 @@ func (t *SpawnTracker) queue(parent, id, text string) bool {
 		return false
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	s := t.spawns[parent][id]
 	if s == nil || !s.running || s.stopped {
+		t.mu.Unlock()
 		return false
 	}
 	s.pending = append(s.pending, text)
 	s.appendLog("message", "(queued) "+text)
+	t.mu.Unlock()
+	t.persist(parent, id)
 	return true
 }
 
@@ -248,13 +277,15 @@ func (t *SpawnTracker) drainPending(parent, id string) []string {
 		return nil
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	s := t.spawns[parent][id]
 	if s == nil || len(s.pending) == 0 {
+		t.mu.Unlock()
 		return nil
 	}
 	out := s.pending
 	s.pending = nil
+	t.mu.Unlock()
+	t.persist(parent, id)
 	return out
 }
 
@@ -264,28 +295,42 @@ func (t *SpawnTracker) drainPending(parent, id string) []string {
 // marks the spawn finished and returns done true, whether /stop ended it, and
 // how many queued messages were never delivered. One lock covers both, so a
 // message queued as the run ends is never lost: queue fails once done.
-func (t *SpawnTracker) finishOrNext(parent, id string, force bool) (next []string, done, stopped bool, dropped int) {
+//
+// A run cut short (force) after BeginShutdown was cut by the shutdown: it
+// returns done and interrupted true and leaves the spawn, and its persisted
+// record, as they are, so the next process resumes it (#2589).
+func (t *SpawnTracker) finishOrNext(parent, id string, force bool) (next []string, done, stopped, interrupted bool, dropped int) {
 	if t == nil {
-		return nil, true, false, 0
+		return nil, true, false, false, 0
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	s := t.spawns[parent][id]
 	if s == nil {
-		return nil, true, false, 0
+		t.mu.Unlock()
+		return nil, true, false, false, 0
+	}
+	if force && t.shuttingDown && !s.stopped {
+		t.mu.Unlock()
+		return nil, true, false, true, 0
 	}
 	if !force && !s.stopped && len(s.pending) > 0 {
 		next = s.pending
 		s.pending = nil
-		return next, false, false, 0
+		t.mu.Unlock()
+		t.persist(parent, id)
+		return next, false, false, false, 0
 	}
+	defer t.mu.Unlock()
 	dropped = len(s.pending)
 	s.pending = nil
 	s.running = false
 	s.ended = time.Now()
 	stopped = s.stopped
 	t.pruneFinished(parent)
-	return nil, true, stopped, dropped
+	// Not persisted here: the record stays "running" until the result is
+	// recorded (setResult), so a crash in between resumes the spawn rather
+	// than losing its result.
+	return nil, true, stopped, false, dropped
 }
 
 // setOutcome records how a spawn's last run ended, for spawn_status.
@@ -325,13 +370,15 @@ func (t *SpawnTracker) restart(parent, id string, cancel context.CancelFunc) boo
 		return false
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	s := t.spawns[parent][id]
 	if s == nil || s.running {
+		t.mu.Unlock()
 		return false
 	}
 	s.running, s.stopped, s.cancel = true, false, cancel
 	s.ended, s.outcome = time.Time{}, ""
+	t.mu.Unlock()
+	t.persist(parent, id)
 	return true
 }
 

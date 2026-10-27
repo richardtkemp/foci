@@ -108,25 +108,8 @@ func (m *DelegatedManager) RestoreUndelivered() {
 }
 
 func (m *DelegatedManager) restoreOne(sk string, p delegator.PendingInput) {
-	sid := p.SessionID
-	if sid == "" {
-		sid = m.loadResumeID(sk)
-	}
-	// A Spec without a TranscriptChecker redelivers every persisted input
-	// (at-least-once).
-	if check := m.Spec.TranscriptChecker; check != nil && sid != "" && p.WorkDir != "" {
-		found, err := check(p.WorkDir, sid, p.ID)
-		switch {
-		case err != nil:
-			m.logger().Warnf("session %s: input %s transcript unreadable (%v) — redelivering (at-least-once)", sk, p.ID, err)
-		case found:
-			m.logger().Infof("session %s: input %s was folded in before the restart — not redelivering", sk, p.ID)
-			m.removeUndelivered(sk, p.ID)
-			if len(p.Refs) > 0 && m.InputConsumed != nil {
-				m.InputConsumed(sk, p.Refs)
-			}
-			return
-		}
+	if m.consumedBeforeRestart(sk, p) {
+		return
 	}
 	if p.Redeliveries >= delegator.MaxRedeliveries {
 		m.logger().Errorf("session %s: input %s never consumed after %d redeliveries — dropping it: %.80q", sk, p.ID, p.Redeliveries, p.Text)
@@ -136,6 +119,59 @@ func (m *DelegatedManager) restoreOne(sk string, p delegator.PendingInput) {
 	p.Redeliveries++
 	m.upsertUndelivered(sk, p)
 	m.redeliver(sk, p, "restart")
+}
+
+// consumedBeforeRestart checks persisted input p against the transcript it was
+// written to. Found there, it was folded in before the old process went away:
+// it is marked consumed and true is returned. A Spec without a
+// TranscriptChecker, or an unreadable transcript, reads as not consumed
+// (at-least-once).
+func (m *DelegatedManager) consumedBeforeRestart(sk string, p delegator.PendingInput) bool {
+	sid := p.SessionID
+	if sid == "" {
+		sid = m.loadResumeID(sk)
+	}
+	check := m.Spec.TranscriptChecker
+	if check == nil || sid == "" || p.WorkDir == "" {
+		return false
+	}
+	found, err := check(p.WorkDir, sid, p.ID)
+	switch {
+	case err != nil:
+		m.logger().Warnf("session %s: input %s transcript unreadable (%v) — redelivering (at-least-once)", sk, p.ID, err)
+		return false
+	case found:
+		m.logger().Infof("session %s: input %s was folded in before the restart — not redelivering", sk, p.ID)
+		m.removeUndelivered(sk, p.ID)
+		if len(p.Refs) > 0 && m.InputConsumed != nil {
+			m.InputConsumed(sk, p.Refs)
+		}
+		return true
+	}
+	return false
+}
+
+// TakeUndelivered returns the text of every persisted input of sessionKey its
+// backend never consumed, in write order, and forgets them all (#2589). A
+// spawn resumed after a restart takes them into its resume turn: a
+// redelivery turn on its branch would run outside the spawn, its reply
+// reaching no parent. Call it before RestoreUndelivered.
+func (m *DelegatedManager) TakeUndelivered(sessionKey string) []string {
+	if m.SessionIndex == nil {
+		return nil
+	}
+	m.deliveryMu.Lock()
+	pending := m.loadUndeliveredLocked(sessionKey)
+	m.deliveryMu.Unlock()
+	var out []string
+	for _, p := range pending {
+		if m.consumedBeforeRestart(sessionKey, p) {
+			continue
+		}
+		out = append(out, p.Text)
+	}
+	m.clearUndelivered(sessionKey)
+	return out
 }
 
 // clearUndelivered drops every persisted input of sessionKey (/reset).

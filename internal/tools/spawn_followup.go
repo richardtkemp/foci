@@ -67,7 +67,7 @@ func (s *Spawner) send(ctx context.Context, idOrBranch, message string, timeoutS
 	parent := SessionKeyFromContext(ctx)
 	snap, ok := tr.Lookup(parent, idOrBranch, 1)
 	if !ok {
-		return ToolResult{}, fmt.Errorf("no spawn %q from this session (spawn_status lists them; spawns are forgotten on restart)", idOrBranch)
+		return ToolResult{}, fmt.Errorf("no spawn %q from this session (spawn_status lists them; a restart forgets finished spawns)", idOrBranch)
 	}
 	text := spawnMessagePrefix + message
 	agent := s.agentFn()
@@ -170,14 +170,18 @@ func (s *Spawner) StatusTool() *Tool {
 }
 
 func spawnState(snap SpawnSnapshot, now time.Time) string {
+	resumed := ""
+	if snap.Resumes > 0 {
+		resumed = fmt.Sprintf(", resumed %d time(s) after a foci restart", snap.Resumes)
+	}
 	if snap.Running {
 		st := "running " + spawnAge(now.Sub(snap.Started))
 		if snap.Pending > 0 {
 			st += fmt.Sprintf(", %d message(s) waiting", snap.Pending)
 		}
-		return st
+		return st + resumed
 	}
-	return fmt.Sprintf("%s %s ago", snap.Outcome, spawnAge(now.Sub(snap.Ended)))
+	return fmt.Sprintf("%s %s ago%s", snap.Outcome, spawnAge(now.Sub(snap.Ended)), resumed)
 }
 
 func formatSpawnList(spawns []SpawnSnapshot, now time.Time) string {

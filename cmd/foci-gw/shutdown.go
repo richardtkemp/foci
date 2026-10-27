@@ -14,6 +14,7 @@ import (
 	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/startup"
+	"foci/internal/tools"
 )
 
 // runShutdown performs the graceful shutdown sequence after a signal is received.
@@ -40,6 +41,11 @@ func runShutdown(
 	}
 
 	mainLog.Infof("shutting down...")
+
+	// Spawns first (#2589): a background spawn the shutdown cuts short from
+	// here on keeps its persisted record, and the next process resumes it,
+	// rather than reporting it failed to a parent that can no longer take it.
+	tools.Spawns.BeginShutdown()
 
 	// Drain mode first (#2059): from here no agent begins a system turn,
 	// post-turn compaction or backend. Turns already running still finish —

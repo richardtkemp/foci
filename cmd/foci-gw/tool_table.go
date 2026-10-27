@@ -83,6 +83,7 @@ type toolOutputs struct {
 	serverTools    []provider.ToolDef
 	mcpMgr         *mcpkg.Manager
 	askRouter      *tools.AskRouter
+	spawner        *tools.Spawner // nil when the agent has no spawn tool
 }
 
 // toolEntry is one row of the registration table.
@@ -542,6 +543,30 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 			return ""
 		},
 		CloneOnly: d.path == pathExec,
+		CanResume: func(bk string) bool {
+			if d.agLazy == nil {
+				return false
+			}
+			ag := d.agLazy()
+			return ag != nil && ag.HasResumableSession(bk)
+		},
+		TakeUndelivered: func(bk string) []string {
+			if d.agLazy == nil {
+				return nil
+			}
+			if ag := d.agLazy(); ag != nil && ag.DelegatedManager != nil {
+				return ag.DelegatedManager.TakeUndelivered(bk)
+			}
+			return nil
+		},
+		Notice: func(sk, text string) {
+			if d.connMgr == nil {
+				return
+			}
+			if conn, _ := route.ConnFor(d.connMgr, acfg.ID, sk, route.PolicyFallback); conn != nil {
+				conn.SendNotification(text)
+			}
+		},
 	}
 	d.spawner = tools.NewSpawner(spawnDeps, func() tools.SpawnAgent {
 		// A nil *agent.Agent must stay a nil interface, or the callers'
@@ -554,5 +579,8 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 		}
 		return nil
 	})
+	if d.out != nil {
+		d.out.spawner = d.spawner
+	}
 	return d.spawner
 }

@@ -265,3 +265,17 @@ func (a *Agent) createMemoryBranch(parentKey, branchType, orientTemplate string)
 	a.TouchRootCacheForBranch(branchKey) // branching warms root's shared prefix once
 	return branchKey, true
 }
+
+// HasResumableSession reports whether a run on sessionKey would continue its
+// conversation rather than start empty (#2589). A delegated backend needs a
+// saved resume id for it: without one the run starts a fresh, empty backend
+// session. An API session always can: a branch reads its parent's history and
+// its own from disk, and whatever the dead process had not written yet is
+// covered by the resume turn restating the task. A restart resumes an
+// interrupted spawn's branch only when this holds.
+func (a *Agent) HasResumableSession(sessionKey string) bool {
+	if a.DelegatedManager != nil {
+		return a.DelegatedManager.loadResumeID(sessionKey) != ""
+	}
+	return true
+}

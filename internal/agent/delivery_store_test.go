@@ -189,3 +189,30 @@ func TestRestoreUndelivered(t *testing.T) {
 		t.Errorf("transcript checks = %v, want the input's own workdir and session", checked)
 	}
 }
+
+// A spawn resumed after a restart takes its branch's unconsumed inputs into
+// its resume turn (#2589): TakeUndelivered returns them in write order, skips
+// one the transcript shows was folded in, forgets them all, and redelivers
+// nothing — so the later RestoreUndelivered finds nothing on that branch.
+func TestTakeUndelivered(t *testing.T) {
+	t.Parallel()
+	mgr, _, lg := newDeliveryManager(t)
+	mgr.upsertUndelivered(deliverySK, delegator.PendingInput{ID: "a", WorkDir: "/w", SessionID: "s1", Text: "first"})
+	mgr.upsertUndelivered(deliverySK, delegator.PendingInput{ID: "folded", WorkDir: "/w", SessionID: "s1", Text: "seen"})
+	mgr.upsertUndelivered(deliverySK, delegator.PendingInput{ID: "b", WorkDir: "/w", SessionID: "s1", Text: "second"})
+	mgr.Spec.TranscriptChecker = func(_, _, id string) (bool, error) { return id == "folded", nil }
+
+	got := mgr.TakeUndelivered(deliverySK)
+	if len(got) != 2 || got[0] != "first" || got[1] != "second" {
+		t.Fatalf("TakeUndelivered = %q, want [first second]", got)
+	}
+	for _, id := range []string{"a", "folded", "b"} {
+		if mgr.stillUndelivered(deliverySK, id) {
+			t.Errorf("input %s still persisted after TakeUndelivered", id)
+		}
+	}
+	mgr.RestoreUndelivered()
+	if len(lg.redeliv) != 0 {
+		t.Errorf("redeliveries after TakeUndelivered = %+v, want none", lg.redeliv)
+	}
+}

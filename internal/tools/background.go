@@ -31,6 +31,12 @@ type BackgroundParams struct {
 	// has been read (it will already be closed when called).
 	NotifyMessage func() string
 
+	// Deliver, when set, hands the notification message to the caller
+	// instead of Notifier.InjectToAgent, for a caller that tracks the
+	// delivery itself (spawn keeps its result persisted until the parent's
+	// turn takes it, #2589). An empty message is never delivered either way.
+	Deliver func(msg string)
+
 	// Cleanup is called after async delivery completes (optional).
 	Cleanup func()
 
@@ -83,7 +89,11 @@ func RunInBackground(ctx context.Context, p BackgroundParams) (ToolResult, error
 		p.PendingResult.Text += "\nBackground ID: " + bgID
 		origNotify := p.NotifyMessage
 		p.NotifyMessage = func() string {
-			return "[Background ID: " + bgID + "]\n" + origNotify()
+			msg := origNotify()
+			if msg == "" {
+				return ""
+			}
+			return "[Background ID: " + bgID + "]\n" + msg
 		}
 	}
 
@@ -96,7 +106,13 @@ func RunInBackground(ctx context.Context, p BackgroundParams) (ToolResult, error
 		}
 		<-p.Done
 		msg := p.NotifyMessage()
-		p.Notifier.InjectToAgent(p.SessionKey, msg, "", "async_notify")
+		switch {
+		case msg == "":
+		case p.Deliver != nil:
+			p.Deliver(msg)
+		default:
+			p.Notifier.InjectToAgent(p.SessionKey, msg, "", "async_notify")
+		}
 	}()
 
 	if ctx.Err() != nil {

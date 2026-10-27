@@ -40,6 +40,7 @@ import (
 	"foci/internal/startup"
 	"foci/internal/tempdir"
 	"foci/internal/timeutil"
+	"foci/internal/tools"
 	"foci/shared/prompts"
 )
 
@@ -609,6 +610,12 @@ Subcommands:
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
+	// Background spawns persist to state.db so a restart can resume them
+	// (#2589). Set before any turn can start a spawn.
+	if si.sessionIndex != nil {
+		tools.Spawns.SetStore(si.sessionIndex)
+	}
+
 	plat.RestoreFacetSessions(platform.RestoreParams{
 		AgentOrder: agentOrder,
 		Resolver: func(agentID string) (platform.MessageHandler, any, any, config.AgentConfig, bool) {
@@ -620,6 +627,16 @@ Subcommands:
 		},
 	})
 	plat.StartAll(ctx)
+
+	// Pick up the background spawns the last process left running, or whose
+	// results it could not deliver (#2589). After StartAll (the resumed runs
+	// and deliveries need chats), and before RestoreUndelivered: a resumed
+	// spawn takes its branch's unconsumed inputs into its resume turn.
+	for _, id := range agentOrder {
+		if r := agents[id].ag.SpawnRestore; r != nil {
+			r()
+		}
+	}
 
 	// Re-send inputs a backend never confirmed consuming before the last
 	// shutdown or crash (#2050). After StartAll, so the redelivered turns'
