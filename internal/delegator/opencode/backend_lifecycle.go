@@ -63,7 +63,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	b.workDir = opts.WorkDir
 	b.autoApproveRules = autoapprove.Compile(opts.AutoApproveRules)
 	// skip_permissions or a batch session (opts.SkipPermissions): never
-	// prompt, as ccstream's --dangerously-skip-permissions (#2153).
+	// prompt; answerUnattended decides each ask from the rules (#2153).
 	b.skipPermissions = delegator.SkipPermissions(b.cfg) || opts.SkipPermissions
 
 	// The foci workspace plugins (session-env routing, blank-system) are

@@ -713,8 +713,8 @@ func TestL2_Nudges_AutoExtractInvocationRunsOnFirstActivity(t *testing.T) {
 	pushUserMessage(t, h, "alpha", userID, "trigger first activity")
 
 	// The extractor runs as a batch session, which spawns cc-stub like any
-	// session but always with --dangerously-skip-permissions — no harness
-	// agent sets skip_permissions, so its presence is a definitive signal
+	// session but always in CC's auto mode (--permission-mode auto) — no
+	// harness agent launches that way, so its presence is a definitive signal
 	// the extractor ran (isBatchInvocation).
 	deadline := time.Now().Add(20 * time.Second)
 	var sawExtract bool

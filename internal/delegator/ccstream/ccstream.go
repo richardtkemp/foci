@@ -235,8 +235,9 @@ type Backend struct {
 	autoApproveRules []autoApproveRule
 	autoApproveEnv   map[string]string // exact environment inherited by Claude
 
-	// skipPermissions: launched with --dangerously-skip-permissions, so no
-	// one is there to answer a prompt (set in Start, immutable after).
+	// skipPermissions: a skip_permissions or batch session, so no one is
+	// there to answer a prompt (set in Start, immutable after). Launch flags:
+	// unattendedPermissionArgs.
 	skipPermissions bool
 
 	// Hook install state. Set by prepareHooks at Start so

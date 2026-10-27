@@ -228,11 +228,11 @@ func parseRecorderEntries(b []byte) ([]recorderEntry, error) {
 // isBatchInvocation reports whether a recorded cc-stub spawn is a batch
 // session (nudge extraction, consolidation, foci_summary): since #1962 a batch
 // is an ordinary stream-json session, and what marks it apart is that it
-// always launches with --dangerously-skip-permissions, which no harness agent
-// does.
+// always launches in CC's auto mode (--permission-mode auto), which no harness
+// agent does.
 func isBatchInvocation(inv recorderEntry) bool {
-	for _, f := range inv.Flags {
-		if f == "--dangerously-skip-permissions" {
+	for i, f := range inv.Flags {
+		if f == "--permission-mode=auto" || (f == "--permission-mode" && i+1 < len(inv.Flags) && inv.Flags[i+1] == "auto") {
 			return true
 		}
 	}

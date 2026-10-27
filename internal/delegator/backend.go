@@ -679,7 +679,7 @@ const (
 
 // SkipPermissions reports whether the backend config disables the permission
 // prompt flow entirely (CC's --dangerously-skip-permissions). A batch session
-// also skips prompts via StartOptions.SkipPermissions, but that is per-session
+// also skips prompts via StartOptions.SkipPermissions (CC: auto mode), but that is per-session
 // and never reaches the agent's environment block. The single config
 // accessor for every reader — the ccstream launch args and the
 // environment block's Command Approval gate — so the system prompt can never

@@ -473,7 +473,9 @@ Notes:
     re-applied only once #666 lands — so with `default_permission = "allow"` and a last
     `/mode plan`, a foci restart leaves the session allow-all even though `/mode` still reports
     `plan`; codex's would be the sandbox/approval policy.
-15. ccstream passes `--dangerously-skip-permissions`; opencode has no launch flag and shares one
+15. ccstream launches a batch session in auto mode (`--permission-mode auto`: CC's classifier
+    decides, and its denials never reach foci) and a `skip_permissions` session with
+    `--dangerously-skip-permissions` (`cc/lifecycle.go:unattendedPermissionArgs`); opencode has no launch flag and shares one
     server across the agent's sessions, so it answers each ask of a skip-permissions session
     itself. Both decide an ask CC still raises, or any opencode ask, the unattended way
     (`delegator/unattended.go`, Dick 2026-10-27): foci's auto-approve rules allow it, otherwise
@@ -606,7 +608,7 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - P2: `cc/permissions.go:respondWithRule` (`RulePrefix`) | `oc/permissions.go:RespondToPermission` (`Remember`) | ✗ only Allow/Deny choices in `cx/permissions.go`
 - `command_approval_allowlist`: `cc/autoapprove.go:autoApprovePermission` | `oc/permissions.go:checkAutoApprove` | `cx/permissions.go:tryAutoApprove`
 - P4: `cc/lifecycle.go:Start` (`--allowedTools` from `cfg["allowed_tools"]`) | n/a | n/a
-- P5: `cc/lifecycle.go:Start` (`--dangerously-skip-permissions`), `cc/permissions.go:denyUnattended` | `oc/backend_lifecycle.go:Start` (`skipPermissions`), `oc/permissions.go:answerUnattended` | ✗ grep `SkipPermissions|skip_permissions|dangerously`
+- P5: `cc/lifecycle.go:unattendedPermissionArgs` (batch `--permission-mode auto`; `skip_permissions` `--dangerously-skip-permissions`), `cc/permissions.go:answerUnattended` | `oc/backend_lifecycle.go:Start` (`skipPermissions`), `oc/permissions.go:answerUnattended` | ✗ grep `SkipPermissions|skip_permissions|dangerously`
 - `control_permission_mode`: `cc/control.go:SendControl` (`set_permission_mode`) | `oc/control.go:SendControl` (`applySessionPermission`, `mapPermissionMode`) | `cx/control.go:SendControl`, `codexApprovalPolicy`
 - P7: `cc/callbacks.go:RegisterPromptCancelListener` + `dg/outstanding.go` | `oc/opencode.go:RegisterPromptCancelListener`, `oc/permissions.go:onPermissionReplied` | ✗ `cx/callbacks.go` TODO
 - P8: `cc/callbacks.go:SetOnPromptsCleared` | `oc/opencode.go:SetOnPromptsCleared` | `cx/permissions.go:respondApproval`, `cx/handlers.go:onServerRequestResolved`

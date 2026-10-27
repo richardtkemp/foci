@@ -354,6 +354,7 @@ func main() {
 		settings        string
 		appendSysPrompt string
 		skipPermissions bool
+		permissionMode  string
 		helpFlag        bool
 	)
 	fs := flag.NewFlagSet("cc-stub", flag.ContinueOnError)
@@ -371,6 +372,7 @@ func main() {
 	fs.StringVar(&settings, "settings", "", "hook settings JSON")
 	fs.StringVar(&appendSysPrompt, "append-system-prompt", "", "")
 	fs.BoolVar(&skipPermissions, "dangerously-skip-permissions", false, "")
+	fs.StringVar(&permissionMode, "permission-mode", "", "CC permission mode (foci batch sessions: auto)")
 	fs.BoolVar(&helpFlag, "h", false, "show usage")
 	fs.BoolVar(&helpFlag, "help", false, "show usage")
 	if err := fs.Parse(os.Args[1:]); err != nil {
@@ -625,7 +627,8 @@ func main() {
 				turnCount++
 				continue
 			}
-			// A skip-permissions session is a foci BATCH run (nudge
+			// A batch session (launched with --permission-mode auto) or a
+			// skip-permissions session is a foci BATCH run (nudge
 			// extraction, consolidation, foci_summary — #1962); no harness
 			// agent sets skip_permissions. It shares the agent's workdir, so
 			// it must not consume the per-workdir script a test wrote for
@@ -633,12 +636,13 @@ func main() {
 			// empty result for nudge extraction (zero rules), ignored by the
 			// other batch callers — the way a compliant model would answer
 			// a structured request, rather than echoing the prompt back.
+			batch := skipPermissions || permissionMode == "auto"
 			var script *stubScript
-			if !skipPermissions {
+			if !batch {
 				script = loadScript(userText)
 			}
 			reply := respText
-			if skipPermissions && reply == "" {
+			if batch && reply == "" {
 				reply = "[]"
 			}
 			if script != nil && script.Text != "" {
@@ -1616,6 +1620,7 @@ Flags accepted (most ignored — stub only cares about --resume, --model):
   --print --input-format --output-format --permission-prompt-tool
   --include-partial-messages --include-hook-events --verbose
   --model --resume --allowedTools --settings --append-system-prompt
+  --dangerously-skip-permissions --permission-mode (either marks a batch run)
   -h / --help
 
 Foci points at this binary by setting [cc_backend].claude_binary in

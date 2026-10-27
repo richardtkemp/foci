@@ -99,15 +99,14 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 			lg.startMainTail(path, offset)
 		}
 	}
-	// skip_permissions bypasses CC permission prompts (unattended). CC can
-	// still ask for a few commands even so; handleToolRequest denies those at
-	// once rather than prompting (#2096). A batch session (opts.SkipPermissions)
-	// always runs this way: it has no user to answer a prompt, and must never
-	// put one in a chat (#1962).
-	b.skipPermissions = delegator.SkipPermissions(b.cfg) || opts.SkipPermissions
-	if b.skipPermissions {
-		args = append(args, "--dangerously-skip-permissions")
-	}
+	// Nobody answers a prompt in a skip_permissions session or a batch
+	// session (opts.SkipPermissions): b.skipPermissions makes handleToolRequest
+	// answer every ask that reaches foci from the rules, never a prompt
+	// (answerUnattended; a batch must never put one in a chat, #1962). The
+	// launch flag differs — see unattendedPermissionArgs.
+	cfgSkip := delegator.SkipPermissions(b.cfg)
+	b.skipPermissions = cfgSkip || opts.SkipPermissions
+	args = append(args, unattendedPermissionArgs(cfgSkip, opts.SkipPermissions)...)
 	// Permission pre-approval rules. cfg["allowed_tools"] is the merged
 	// string produced by cmd/foci-gw/agents_delegated.go (global
 	// [cc_backend] default_allowed_tools combined with the agent's
@@ -749,4 +748,33 @@ func describeExitError(err error) string {
 		return err.Error()
 	}
 	return strings.Join(parts, ", ")
+}
+
+// unattendedPermissionArgs returns the CC permission flags for a session
+// nobody watches.
+//
+//   - backend_config.skip_permissions (an operator's explicit choice) launches
+//     with --dangerously-skip-permissions, as before.
+//   - A batch session (StartOptions.SkipPermissions) launches in CC's auto
+//     mode (--permission-mode auto): CC's classifier allows or denies each
+//     tool call itself (Dick's ruling 2026-10-27). Probed on claude 2.1.311
+//     with --print, stream-json and --permission-prompt-tool stdio: a
+//     classifier block and a safetyCheck rm both came back as CC's own
+//     system/permission_denied event and a denied tool_result; no
+//     can_use_tool request reached the host. Anything that does reach foci
+//     still goes to answerUnattended (rules, then deny). A model without
+//     auto mode (claude-haiku-4-5 in the probe) starts with no error and
+//     reports permissionMode "default" in its init event; its asks then all
+//     reach foci and answerUnattended decides them.
+//
+// The operator's flag wins when both apply. Neither → no flag.
+func unattendedPermissionArgs(cfgSkip, batch bool) []string {
+	switch {
+	case cfgSkip:
+		return []string{"--dangerously-skip-permissions"}
+	case batch:
+		return []string{"--permission-mode", "auto"}
+	default:
+		return nil
+	}
 }

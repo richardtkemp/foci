@@ -43,9 +43,13 @@ func (b *Backend) handleToolRequest(msg *PermissionRequest) {
 	// a can_use_tool answer with no timeout (probed on 2.1.281: no response
 	// and no control_cancel_request after 160s), so a prompt would hang the
 	// turn and, for a batch session, post into the owner's chat (#1962,
-	// #2096). A skip-permissions session reaches here only for the asks CC
+	// #2096). A skip_permissions session reaches here only for the asks CC
 	// raises despite --dangerously-skip-permissions (from 2.1.281, a
-	// recursive rm of a command-substitution target, "safetyCheck").
+	// recursive rm of a command-substitution target, "safetyCheck"). A batch
+	// session runs in auto mode, where CC's classifier denies on its own
+	// (probed 2.1.311: no can_use_tool); its asks reach here only when the
+	// model lacks auto mode and CC fell back to default mode
+	// (unattendedPermissionArgs).
 	if label, ok := b.unattended(); ok {
 		b.answerUnattended(msg, label)
 		return
