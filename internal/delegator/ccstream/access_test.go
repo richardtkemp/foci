@@ -29,7 +29,11 @@ func launchArgs(t *testing.T, cfg map[string]any, batch bool, access delegator.B
 	dir := t.TempDir()
 	out := filepath.Join(dir, "args.txt")
 	script := filepath.Join(dir, "fake-claude")
-	body := "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > " + out + "\nexit 0\n"
+	// The recorder writes to a scratch file and renames it into place: the
+	// rename is atomic, so args.txt appears only once every argument is in
+	// it. Writing args.txt directly let the poll below read it mid-write and
+	// return a truncated list (#2593).
+	body := "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > '" + out + ".tmp' && mv '" + out + ".tmp' '" + out + "'\nexit 0\n"
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatalf("write recorder script: %v", err)
 	}
