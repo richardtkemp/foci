@@ -197,6 +197,15 @@ creating the directories; write `~/foci/config/foci.toml` (or run
 checks the config against the new binary before touching the running daemon,
 reinstalls and restarts.
 
+An agent running inside foci can run `make install` itself. When the
+LaunchAgent plist is unchanged, the restart is `launchctl kickstart -k`:
+launchd stops and restarts foci, so the restart completes even though it
+kills the agent that started it (the macOS counterpart of Linux
+`make update`). When the plist changed, the restart needs `launchctl bootout`
++ `bootstrap`, which would kill the agent before foci comes back. The script
+then installs the binaries, leaves foci running on the old ones and asks you
+to run `make install` from a terminal.
+
 Claude Code must be installed (`~/.local/bin/claude`). The Claude Code foci
 runs has its own login, separate from yours (see below): on its first start foci
 finds it logged out and sends a sign-in link to the master agent's chat. To log

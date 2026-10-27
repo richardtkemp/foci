@@ -7,6 +7,11 @@
 # normally via `make install`. Safe to re-run: it rebuilds, reinstalls the
 # binaries, docs and agent scripts, re-renders the LaunchAgent and restarts foci.
 #
+# Safe to run from inside foci (an agent): with an unchanged plist the restart
+# is launchctl kickstart -k, which launchd completes after this script dies.
+# A changed plist needs bootout + bootstrap; run from inside foci the script
+# refuses that step, and you run it from a terminal.
+#
 # Usage: scripts/macos-install.sh [-h|--help]
 #
 # Environment (all optional):
@@ -153,15 +158,74 @@ sed -e "s|@LABEL@|$LABEL|g" -e "s|@BIN_DIR@|$BIN_DIR|g" -e "s|@FOCI_HOME@|$FOCI_
 	-e "s|@SERVICE_PATH@|$SERVICE_PATH|g" \
 	deploy/foci.launchd.plist.tmpl >"$PLIST.tmp"
 plutil -lint -s "$PLIST.tmp"
-mv "$PLIST.tmp" "$PLIST"
+
+# job_pid prints the running foci-gw's pid, or nothing.
+job_pid() {
+	launchctl print "$DOMAIN/$LABEL" 2>/dev/null | awk '/^\tpid =/ {print $3; exit}'
+}
+
+# under_job succeeds when this script is a descendant of the running foci-gw,
+# i.e. an agent started it. Stopping foci then kills this script too.
+under_job() {
+	local gw p
+	gw=$(job_pid)
+	[ -n "$gw" ] || return 1
+	p=$$
+	while [ -n "$p" ] && [ "$p" -gt 1 ]; do
+		[ "$p" = "$gw" ] && return 0
+		p=$(ps -o ppid= -p "$p" | tr -d ' ')
+	done
+	return 1
+}
+
+# needs_migration mirrors migrate_home_root's conditions: work it must do while
+# no foci-gw is running.
+needs_migration() {
+	[ "$FOCI_HOME" != "$HOME" ] || return 1
+	{ [ -f "$FOCI_HOME/.claude.json" ] && [ ! -e "$FOCI_HOME/.claude/.claude.json" ]; } && return 0
+	[ -L "$FOCI_HOME/Library/Keychains" ] &&
+		[ "$(readlink "$FOCI_HOME/Library/Keychains")" = "$HOME/Library/Keychains" ]
+}
 
 if [ "${FOCI_NO_START:-}" = 1 ]; then
+	mv "$PLIST.tmp" "$PLIST"
 	launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || migrate_home_root
 	say "FOCI_NO_START=1: installed, not started"
 	exit 0
 fi
 
-# bootout + bootstrap (not kickstart alone) so a changed plist takes effect.
+# Fast path: foci is loaded, its plist is unchanged and nothing needs migrating.
+# launchctl kickstart -k makes launchd itself kill and restart foci-gw, so the
+# restart completes even when this script is a child of foci-gw and dies with
+# it — the macOS counterpart of Linux `make update`'s systemctl restart --no-block.
+if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 &&
+	cmp -s "$PLIST.tmp" "$PLIST" && ! needs_migration; then
+	rm "$PLIST.tmp"
+	if under_job; then
+		say "AGENT: the foci restart is queued (launchctl kickstart -k). END YOUR TURN NOW."
+		exec launchctl kickstart -k "$DOMAIN/$LABEL"
+	fi
+	old=$(job_pid)
+	say "restarting foci ($DOMAIN/$LABEL, pid $old)"
+	launchctl kickstart -k "$DOMAIN/$LABEL"
+	sleep 2
+	if ! launchctl print "$DOMAIN/$LABEL" | grep -q 'state = running'; then
+		launchctl print "$DOMAIN/$LABEL" >&2 || true
+		die "foci did not reach state=running; see $FOCI_HOME/logs/launchd.err.log"
+	fi
+	say "foci running: pid $(job_pid)"
+	exit 0
+fi
+
+# Slow path: a changed plist only takes effect through bootout + bootstrap, and
+# migrate_home_root needs foci stopped. bootout kills foci-gw's whole job, so an
+# agent running this would die before bootstrap and leave foci down. Refuse,
+# and leave the old plist in place so the next run still sees the change.
+if under_job; then
+	rm "$PLIST.tmp"
+	die "the LaunchAgent plist changed (or a home-root migration is due), which needs foci stopped and reloaded; this script is running under foci and would kill itself first. Binaries are installed but not running. Run 'make install' from a terminal outside foci."
+fi
+mv "$PLIST.tmp" "$PLIST"
 if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
 	say "stopping the running foci ($DOMAIN/$LABEL)"
 	launchctl bootout "$DOMAIN/$LABEL" || true
@@ -179,4 +243,4 @@ if ! launchctl print "$DOMAIN/$LABEL" | grep -q 'state = running'; then
 	launchctl print "$DOMAIN/$LABEL" >&2 || true
 	die "foci did not reach state=running; see $FOCI_HOME/logs/launchd.err.log"
 fi
-say "foci running: $(launchctl print "$DOMAIN/$LABEL" | awk '/^\tpid =/ {print "pid " $3}')"
+say "foci running: pid $(job_pid)"
