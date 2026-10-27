@@ -266,6 +266,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		AgentID:      agentID,
 		BackendType:  backendName,
 		Spec:         spec,
+		BatchModel:   config.DerefStr(bc.BatchModel),
 		NewBackend: func() (delegator.Delegator, error) {
 			cfgMap := bc.ToMap()
 			cfgMap[delegator.FociVersionConfigKey] = version
@@ -419,9 +420,10 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 //
 //	allowed_tools — merged (per-agent rules appended to global)
 //	binary — global default; per-agent override wins
+//	batch_model — global default (haiku); per-agent override wins
 //
 // [opencode_backend] folded keys: binary, hostname, server_auth, log_level,
-// port, default_permission. default_permission folds only when SET: the
+// port, default_permission, batch_model (when set). default_permission folds only when SET: the
 // field deliberately carries no tag default, so an unset global leaves the
 // agent with no default_permission and Start sends no permission request
 // (#2330) — opencode's own defaults stand.
@@ -434,6 +436,9 @@ func foldGlobalBackendConfig(cfg *config.Config, spec delegator.Spec, bc config.
 		}
 		if bc.Binary == nil && cfg.CCBackend.Binary != "" {
 			bc.Binary = &cfg.CCBackend.Binary
+		}
+		if bc.BatchModel == nil && cfg.CCBackend.BatchModel != "" {
+			bc.BatchModel = &cfg.CCBackend.BatchModel
 		}
 	case delegator.ConfigFamilyOpencode:
 		if bc.Binary == nil {
@@ -453,6 +458,9 @@ func foldGlobalBackendConfig(cfg *config.Config, spec delegator.Spec, bc config.
 		}
 		if bc.DefaultPermission == nil && cfg.OpencodeBackend.DefaultPermission != "" {
 			bc.DefaultPermission = &cfg.OpencodeBackend.DefaultPermission
+		}
+		if bc.BatchModel == nil && cfg.OpencodeBackend.BatchModel != "" {
+			bc.BatchModel = &cfg.OpencodeBackend.BatchModel
 		}
 	}
 	return bc
@@ -902,9 +910,9 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, wakeC
 	// Delegated agents dispatch the summary tool through the agent's own
 	// DelegatedManager.RunBatch (BatchSummariser) — i.e. through whichever
 	// backend (claude-code, codex, opencode) the agent is actually configured
-	// to use (#1317). The model is [tools] summary_model when set, else the
-	// backend's cheap tier (CC: haiku), else the agent's own model — never a
-	// fixed name the backend may not resolve (#2032). (API agents use
+	// to use (#1317). The model is the agent's batch_model (its folded
+	// backend_config) when set, else the agent's own model — never a fixed
+	// name the backend may not resolve (#2032). (API agents use
 	// APISummariser.)
 	//
 	// The runner closure resolves ag.DelegatedManager lazily: buildExecRegistry
@@ -920,7 +928,12 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, wakeC
 			return nil
 		}
 		return a.DelegatedManager
-	}, func() string { return p.resolvedLive.Load().Summary.SummaryModel },
+	}, func() string {
+		if a := agLazy(); a != nil && a.DelegatedManager != nil {
+			return a.DelegatedManager.BatchModel
+		}
+		return ""
+	},
 		acfg.Workspace, acfg.ID, func() int { return p.resolvedLive.Load().Summary.MaxSummaryInputChars })
 
 	// Register the exec-exported subset from the single data-driven table (see

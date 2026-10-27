@@ -57,10 +57,6 @@ func (b *summaryModelBackend) models() []string {
 	return out
 }
 
-// cheapSummaryModelBackend is a backend with a cheap model of its own
-// (Spec.BatchCheapModel), as ccstream has (haiku).
-type cheapSummaryModelBackend struct{ summaryModelBackend }
-
 type startRecorder interface {
 	delegator.Delegator
 	models() []string
@@ -70,14 +66,13 @@ type startRecorder interface {
 // wiring (buildExecRegistry) into a real DelegatedManager, whose session
 // launch is where the batch model is finally chosen. The turn itself is
 // stubbed: it only has to launch the batch session.
-func runDelegatedSummary(t *testing.T, be startRecorder, agentModel, summaryModel string) []string {
+func runDelegatedSummary(t *testing.T, be startRecorder, agentModel, batchModel string) []string {
 	t.Helper()
 	ws := t.TempDir()
 	p := minimalSetupParams(t, "olly")
 	p.acfg.Workspace = ws
 	p.acfg.Backend = "opencode"
 	resolved := &config.ResolvedAgentConfig{}
-	resolved.Summary.SummaryModel = summaryModel
 	p.resolved = resolved
 	p.resolvedLive = config.NewLiveValue(resolved)
 
@@ -85,9 +80,7 @@ func runDelegatedSummary(t *testing.T, be startRecorder, agentModel, summaryMode
 		AgentID:    "olly",
 		StartOpts:  delegator.StartOptions{AgentID: "olly", WorkDir: ws, Model: agentModel},
 		NewBackend: func() (delegator.Delegator, error) { return be, nil },
-	}
-	if _, cheap := be.(*cheapSummaryModelBackend); cheap {
-		mgr.Spec.BatchCheapModel = "haiku"
+		BatchModel: batchModel,
 	}
 	mgr.RunBatchTurn = func(ctx context.Context, sessionKey, _, _ string) (string, error) {
 		if _, err := mgr.Get(ctx, sessionKey); err != nil {
@@ -120,8 +113,8 @@ func runDelegatedSummary(t *testing.T, be startRecorder, agentModel, summaryMode
 // TestDelegatedSummary_OpencodeModelIsResolvable is the #2032 regression: an
 // opencode agent's foci_summary batch launched with the literal "haiku" — a
 // Claude Code alias opencode cannot resolve, so it silently fell back to the
-// opencode server's own default model. With no cheap model of its own and
-// none configured, the batch must run on the agent's own model.
+// opencode server's own default model. With no batch_model configured, the
+// batch must run on the agent's own model.
 func TestDelegatedSummary_OpencodeModelIsResolvable(t *testing.T) {
 	t.Parallel()
 	got := runDelegatedSummary(t, &summaryModelBackend{}, "zai-coding-plan/glm-4.6", "")
@@ -130,22 +123,15 @@ func TestDelegatedSummary_OpencodeModelIsResolvable(t *testing.T) {
 	}
 }
 
-// TestDelegatedSummary_BackendCheapModel: a backend with a cheap model of its
-// own (CC: haiku) runs summaries on it.
-func TestDelegatedSummary_BackendCheapModel(t *testing.T) {
+// TestDelegatedSummary_BatchModelWins proves the agent's batch_model (its
+// folded backend_config, DelegatedManager.BatchModel) reaches the summary
+// batch's launch as written, over the agent's own model — the path that keeps
+// Claude Code summaries on haiku now that no backend has a built-in cheap
+// model.
+func TestDelegatedSummary_BatchModelWins(t *testing.T) {
 	t.Parallel()
-	got := runDelegatedSummary(t, &cheapSummaryModelBackend{}, "opus", "")
+	got := runDelegatedSummary(t, &summaryModelBackend{}, "opus", "haiku")
 	if len(got) != 1 || got[0] != "haiku" {
-		t.Fatalf("summary batch launched with models %q, want the backend's cheap model [haiku]", got)
-	}
-}
-
-// TestDelegatedSummary_ConfiguredModelWins: [tools] summary_model overrides
-// both the backend's cheap model and the agent's model.
-func TestDelegatedSummary_ConfiguredModelWins(t *testing.T) {
-	t.Parallel()
-	got := runDelegatedSummary(t, &cheapSummaryModelBackend{}, "opus", "sonnet")
-	if len(got) != 1 || got[0] != "sonnet" {
-		t.Fatalf("summary batch launched with models %q, want the configured [sonnet]", got)
+		t.Fatalf("summary batch launched with models %q, want the configured batch_model [haiku]", got)
 	}
 }

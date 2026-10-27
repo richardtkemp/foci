@@ -173,6 +173,7 @@ id = "myagent"
 # allowed_tools = ["Bash(git:*)", "Read"] #   pre-approve specific tools (TOML array)
 # binary = ""                             #   override path to backend executable (default: $PATH)
 # idle_timeout = "3h"                     #   session idle shutdown (default 3h)
+# batch_model = "haiku"                   #   model for foci's own small background jobs, as the backend names it (wins over the global)
 # [agents.backend_config.env]             #   environment variables for the backend subprocess
 # CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS = "1"
 
@@ -350,6 +351,7 @@ system_files = [
 # default_allowed_tools = ["Read(/tmp/**)", "Edit(/tmp/**)", "MultiEdit(/tmp/**)"]  # factory default; merged with per-agent allowed_tools
 # binary = ""                              # claude executable (empty = "claude" via $PATH); per-agent backend_config.binary wins
 # background_task_max_age = "2h"           # prune a background task with no completion signal after this long
+# batch_model = "haiku"                    # foci_summary and /prompts diff model (factory default haiku; "" = the agent's own)
 #
 # PreToolUse deny rules (claude-code only), merged by name over the preinstalled
 # rules and under per-agent [[agents.backend_config.pretool_rules]]:
@@ -385,6 +387,7 @@ system_files = [
 # server_auth = ""                         # HTTP basic auth password (empty = none)
 # default_permission = "ask"               # ask, allow, or deny; unset = no Start request
 # log_level = ""                           # opencode --log-level (empty = INFO)
+# batch_model = ""                         # foci_summary and /prompts diff model, as provider/model (empty = the agent's own)
 
 # ─── Gemini ────────────────────────────────────────────────────────────
 # API keys go in secrets.toml as gemini.api_key.

@@ -21,13 +21,13 @@ func (m *mockBatchRunner) RunBatch(_ context.Context, req delegator.BatchRequest
 	return m.resp, m.err
 }
 
-// noModel is an unset [tools] summary_model: the backend picks its cheap tier.
+// noModel is an unset batch_model: the batch runs on the agent's own model.
 func noModel() string { return "" }
 
 func TestBatchSummariser_DispatchesViaRunner(t *testing.T) {
 	// Proves BatchSummariser routes the summarise call through the resolved
-	// BatchRunner, with the configured model and the cheap tier threaded onto
-	// the request.
+	// BatchRunner, with the configured batch_model and foci's default batch
+	// access threaded onto the request.
 	t.Parallel()
 
 	runner := &mockBatchRunner{resp: "  the summary  "}
@@ -41,8 +41,8 @@ func TestBatchSummariser_DispatchesViaRunner(t *testing.T) {
 		t.Errorf("result = %q, want trimmed %q", got, "the summary")
 	}
 
-	if runner.gotReq.Model != "sonnet" || !runner.gotReq.Cheap {
-		t.Errorf("Model/Cheap = %q/%v, want the configured sonnet and the cheap tier", runner.gotReq.Model, runner.gotReq.Cheap)
+	if runner.gotReq.Model != "sonnet" || runner.gotReq.Access != delegator.BatchAccessDefault {
+		t.Errorf("Model/Access = %q/%s, want the configured sonnet, default access", runner.gotReq.Model, runner.gotReq.Access)
 	}
 	if runner.gotReq.WorkDir != "/workdir" || runner.gotReq.AgentID != "agent-1" {
 		t.Errorf("workdir/agent not threaded: %+v", runner.gotReq)

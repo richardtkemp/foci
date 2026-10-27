@@ -279,6 +279,11 @@ func decodeConfig(data []byte, path string, knownBackends []string) (*Config, er
 	if !cfg.DefinedKeys["cc_backend.default_allowed_tools"] && cfg.CCBackend.DefaultAllowedTools == nil {
 		cfg.CCBackend.DefaultAllowedTools = append([]string(nil), DefaultCCAllowedTools...)
 	}
+	// CC batch model default: applied only when the key is absent, so an
+	// explicit "" keeps foci's background batches on the agent's own model.
+	if !cfg.DefinedKeys["cc_backend.batch_model"] {
+		cfg.CCBackend.BatchModel = DefaultCCBatchModel
+	}
 
 	// Apply convention-based defaults before path resolution.
 	for i := range cfg.Agents {

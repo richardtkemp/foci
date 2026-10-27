@@ -377,18 +377,20 @@ var toolTable = []toolEntry{
 		return t
 	}},
 
-	// spawn on BOTH paths (#2523). API agents get every mode. A delegated
-	// agent gets clone mode only (its one-shot modes run over provider.Client,
-	// never the backend, #1311/#1352), and only when its backend can fork a
-	// session, which clone needs (Agent.ForkSession). spawn_send and
-	// spawn_status steer and check on clone spawns; same gate.
+	// spawn on BOTH paths (#2523). API agents get every mode, through foci's
+	// own one-shot loop. A delegated agent's one-shot modes run as batches on
+	// its own backend, never through model groups (tools.DelegatedSpawn); it
+	// gets the modes its backend declares (tools.DelegatedSpawnModes): clone
+	// needs a fork, raw an isolated batch, explore a read-only one.
+	// spawn_send and spawn_status steer and check on clone spawns, so they
+	// need clone's fork.
 	{name: "spawn", paths: pathBoth, enabled: spawnEnabled, build: func(d *toolDeps) *tools.Tool {
 		return d.getSpawner().SpawnTool()
 	}},
-	{name: "spawn_send", paths: pathBoth, enabled: spawnEnabled, build: func(d *toolDeps) *tools.Tool {
+	{name: "spawn_send", paths: pathBoth, enabled: spawnCloneEnabled, build: func(d *toolDeps) *tools.Tool {
 		return d.getSpawner().SendTool()
 	}},
-	{name: "spawn_status", paths: pathBoth, enabled: spawnEnabled, build: func(d *toolDeps) *tools.Tool {
+	{name: "spawn_status", paths: pathBoth, enabled: spawnCloneEnabled, build: func(d *toolDeps) *tools.Tool {
 		return d.getSpawner().StatusTool()
 	}},
 
@@ -487,11 +489,22 @@ func sendToChatMermaid(cfg *config.Config) *mermaid.Renderer {
 	return mermaid.Shared(cfg.DataDir, cmd, browser)
 }
 
-// spawnEnabled gates the spawn rows: always on the API path; on the exec path
-// only for a backend that can fork a session (clone mode's branch). Decided
-// from the backend's static Spec: the agent's DelegatedManager does not exist
-// yet when the exec registry is built.
+// spawnEnabled gates the spawn row: always on the API path; on the exec path
+// for any registered delegated backend, which can run at least character mode
+// as a batch. Decided from the backend's static Spec: the agent's
+// DelegatedManager does not exist yet when the exec registry is built.
 func spawnEnabled(d *toolDeps) bool {
+	if d.path == pathAPI {
+		return true
+	}
+	_, ok := delegator.SpecFor(d.p.acfg.Backend)
+	return ok
+}
+
+// spawnCloneEnabled gates spawn_send and spawn_status, which only act on
+// clone spawns: always on the API path; on the exec path only for a backend
+// that can fork a session (clone mode's branch).
+func spawnCloneEnabled(d *toolDeps) bool {
 	if d.path == pathAPI {
 		return true
 	}
@@ -512,20 +525,10 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 	live := d.p.resolvedLive
 	orientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, d.p.cfg.Sessions.BranchOrientationHeadlessPrompt))
 	spawnDeps := tools.SpawnDeps{
-		Client:              d.client,
-		ClientProvider:      d.p.clientProvider,
-		Bootstrap:           d.bootstrap,
 		Registry:            d.registry,
 		Sessions:            &sessionBranchAdapter{store: d.p.sessions, ag: d.agLazy},
 		AgentID:             acfg.ID,
-		GroupResolver:       d.groupResolver,
-		FallbackFunc:        d.fallbackFn,
-		FallbackModel:       d.resolvedModel,
-		FallbackFormat:      d.defaultFormat,
-		ProviderRoutingFor:  config.RoutingFor(modelDefaultsFn(d.p.cfg.Models)),
 		MaxInherit:          tc.MaxConcurrentSpawns,
-		MaxToolLoops:        func() int { return live.Load().Loop.MaxToolLoops },
-		ExploreMaxDepth:     func() int { return live.Load().Tools.ExploreMaxDepth },
 		Notifier:            d.notifier,
 		OrientationTemplate: prompts.ResolveOrientationTemplate(orientPath, false, d.promptSearchDirs...),
 		SetNoCompact:        func(sk string, v bool) { d.agLazy().SetSessionNoCompact(sk, v) },
@@ -542,7 +545,6 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 			}
 			return ""
 		},
-		CloneOnly: d.path == pathExec,
 		CanResume: func(bk string) bool {
 			if d.agLazy == nil {
 				return false
@@ -567,6 +569,35 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 				conn.SendNotification(text)
 			}
 		},
+	}
+	if d.path == pathExec {
+		// A delegated agent: one-shots run as batches on its own backend.
+		// The API one-shot fields (clients, model groups, fallbacks,
+		// routing, the API tool-loop budgets) stay unset (#spawn-oneshot).
+		spec, _ := delegator.SpecFor(acfg.Backend)
+		spawnDeps.Delegated = &tools.DelegatedSpawn{
+			Spec: spec,
+			Runner: func() tools.BatchRunner {
+				if d.agLazy == nil {
+					return nil
+				}
+				if ag := d.agLazy(); ag != nil && ag.DelegatedManager != nil {
+					return ag.DelegatedManager
+				}
+				return nil
+			},
+		}
+	} else {
+		spawnDeps.Client = d.client
+		spawnDeps.ClientProvider = d.p.clientProvider
+		spawnDeps.Bootstrap = d.bootstrap
+		spawnDeps.GroupResolver = d.groupResolver
+		spawnDeps.FallbackFunc = d.fallbackFn
+		spawnDeps.FallbackModel = d.resolvedModel
+		spawnDeps.FallbackFormat = d.defaultFormat
+		spawnDeps.ProviderRoutingFor = config.RoutingFor(modelDefaultsFn(d.p.cfg.Models))
+		spawnDeps.MaxToolLoops = func() int { return live.Load().Loop.MaxToolLoops }
+		spawnDeps.ExploreMaxDepth = func() int { return live.Load().Tools.ExploreMaxDepth }
 	}
 	d.spawner = tools.NewSpawner(spawnDeps, func() tools.SpawnAgent {
 		// A nil *agent.Agent must stay a nil interface, or the callers'

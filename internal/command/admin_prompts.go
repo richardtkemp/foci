@@ -609,20 +609,16 @@ func buildDiffSummary(ctx context.Context, cc CommandContext, customText, defaul
 
 	// Delegated agents have no model resolver or API client: run the summary
 	// as a batch on the agent's own backend, so it is costed and traced like
-	// any turn. The model is [tools] summary_model when set, else the
-	// backend's cheap tier (CC: haiku), else the agent's own (#2032).
+	// any turn. The model is the agent's batch_model (backend_config), else
+	// the agent's own (#2032).
 	if isDelegated(cc) {
 		callCtx, cancel := context.WithTimeout(ctx, promptDiffDelegatedTimeout)
 		defer cancel()
-		var model string
-		if cc.ResolvedLive != nil {
-			model = cc.ResolvedLive.Load().Summary.SummaryModel
-		}
-		text, err := cc.Agent.DelegatedManager.RunBatch(callCtx, delegator.BatchRequest{
+		mgr := cc.Agent.DelegatedManager
+		text, err := mgr.RunBatch(callCtx, delegator.BatchRequest{
 			Prompt:          prompt,
 			SystemPrompt:    promptDiffSystemPrompt,
-			Model:           model,
-			Cheap:           true,
+			Model:           mgr.BatchModel,
 			OwnerSessionKey: tools.SessionKeyFromContext(ctx),
 			Purpose:         delegator.BatchPurposePromptDiff,
 		})

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/delegator"
 	"foci/internal/platform"
 	"foci/internal/turnevent"
 )
@@ -386,19 +387,21 @@ func TestSpawnTracker_PrunesOldFinished(t *testing.T) {
 	}
 }
 
-func TestCloneOnlySpawnTool(t *testing.T) {
-	// The delegated agent's spawn has no mode choice: any call is a clone.
+// TestDelegatedSpawnTool_DefaultsToClone proves a delegated agent's spawn
+// with no context runs as a clone (a background fork), with its timeout, when
+// its backend can fork.
+func TestDelegatedSpawnTool_DefaultsToClone(t *testing.T) {
 	t.Parallel()
 	agent := newScriptedSpawnAgent(0)
 	h := newFollowupHarness(agent)
-	h.spawner.deps.CloneOnly = true
-	tool := h.spawner.SpawnTool()
-	if strings.Contains(string(tool.Parameters), "context") {
-		t.Errorf("clone-only schema offers context: %s", tool.Parameters)
+	h.spawner.deps.Delegated = &DelegatedSpawn{
+		Spec:   delegator.Spec{Caps: map[delegator.Capability]delegator.Support{delegator.CapBranch: delegator.Yes()}},
+		Runner: func() BatchRunner { return nil },
 	}
+	tool := h.spawner.SpawnTool()
 	res, err := tool.Execute(h.ctx, json.RawMessage(`{"prompt":"wait for CI","timeout":3600}`))
 	if err != nil || !strings.Contains(res.Text, "Spawn started in background") {
-		t.Fatalf("clone-only spawn = %q, %v", res.Text, err)
+		t.Fatalf("delegated spawn = %q, %v", res.Text, err)
 	}
 	snap := h.tracker.List("test/imain")
 	if len(snap) != 1 || snap[0].Timeout != time.Hour {

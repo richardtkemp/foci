@@ -80,6 +80,13 @@ type DelegatedManager struct {
 	// rather than probing an instance (#2154). The zero Spec supports nothing.
 	Spec delegator.Spec
 
+	// BatchModel is the model foci's own small background batches name
+	// (foci_summary, the /prompts diff summary): the agent's folded
+	// backend_config batch_model, passed to the backend as written. Empty =
+	// the agent's own model. RunBatch never applies it by itself: a caller
+	// that wants it puts it in BatchRequest.Model.
+	BatchModel string
+
 	// AttachDelivery binds session-scoped delivery (SessionEvents) to a backend
 	// at creation/respawn (setBackendCallbacks), so it is attached ONCE per
 	// backend rather than rebuilt per turn (#1068 Phase 1). Nil in tests that
@@ -484,29 +491,25 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 	opts.ResumeSessionID = resumeID
 	opts.SessionKey = sessionKey
 
-	// A batch session (RunBatch) launches with the caller's system prompt,
-	// model and workdir instead of the agent's, at the model's default effort,
-	// and never asks for permission. The per-session resolvers are cleared so
-	// no backend re-resolves the agent's own values over these (opencode's
-	// Start calls SystemPromptFunc itself).
+	// A batch session (RunBatch) launches with the caller's system prompt
+	// (or the agent's own, for AgentPrompt), model and workdir, at the model's
+	// default effort, unattended (SkipPermissions) with the batch's access. The per-session resolvers the
+	// batch overrides are cleared so no backend re-resolves the agent's own
+	// values over these (opencode's Start calls SystemPromptFunc itself). A
+	// batch that names no model runs on the agent's own: foci never picks one.
 	if spec, ok := m.batchSpecFor(sessionKey); ok {
-		opts.SystemPrompt = spec.systemPrompt
-		opts.SystemPromptFunc = nil
+		if !spec.agentPrompt {
+			opts.SystemPrompt = spec.systemPrompt
+			opts.SystemPromptFunc = nil
+		}
 		if spec.model != "" {
 			opts.Model = spec.model
-		} else if spec.cheap && m.Spec.BatchCheapModel != "" {
-			opts.Model = m.Spec.BatchCheapModel
-		} else if m.Spec.BatchDefaultModel != "" {
-			opts.Model = m.Spec.BatchDefaultModel
-		} else if opts.ModelFunc != nil {
-			if mdl := opts.ModelFunc(sessionKey); mdl != "" {
-				opts.Model = mdl
-			}
+			opts.ModelFunc = nil
 		}
-		opts.ModelFunc = nil
 		opts.Effort = ""
 		opts.EffortFunc = nil
 		opts.SkipPermissions = true
+		opts.BatchAccess = spec.access
 		if spec.workDir != "" {
 			opts.WorkDir = spec.workDir
 		}
@@ -569,9 +572,12 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 
 	// Create the exec bridge so shell functions (foci_todo, foci_send_to_chat, etc.)
 	// are available in the backend's shell environment. The bridge is created here
-	// (not in individual backends) so all backend types get it automatically.
+	// (not in individual backends) so all backend types get it automatically. A
+	// batch's bridge carries only the tools its BatchAccess allows
+	// (tools.RegistryForAccess); an isolated batch gets no bridge at all.
 	var bridge *tools.ExecBridge
-	if reg, ok := opts.ExecRegistry.(*tools.Registry); ok && reg != nil {
+	agentReg, _ := opts.ExecRegistry.(*tools.Registry)
+	if reg := tools.RegistryForAccess(agentReg, opts.BatchAccess); reg != nil {
 		bridgeCtx := context.Background()
 		if sessionKey != "" {
 			bridgeCtx = tools.WithSessionKey(bridgeCtx, sessionKey)
@@ -1647,6 +1653,12 @@ func (m *DelegatedManager) RunBatch(ctx context.Context, req delegator.BatchRequ
 	if req.Purpose == "" {
 		return "", fmt.Errorf("RunBatch: purpose is required (it labels the api.db row)")
 	}
+	if req.AgentPrompt && req.SystemPrompt != "" {
+		return "", fmt.Errorf("RunBatch: %s batch sets both AgentPrompt and SystemPrompt", req.Purpose)
+	}
+	if err := m.supportsAccess(req.Access); err != nil {
+		return "", fmt.Errorf("RunBatch: %s batch: %w", req.Purpose, err)
+	}
 	agentID := req.AgentID
 	if agentID == "" {
 		agentID = m.StartOpts.AgentID
@@ -1672,7 +1684,7 @@ func (m *DelegatedManager) RunBatch(ctx context.Context, req delegator.BatchRequ
 	}
 	batchKey := fmt.Sprintf("%s/b%d", root, timeutil.UniqueNano()) // UniqueNano: concurrent batches must not share a key on a microsecond clock (macOS)
 
-	m.setBatchSpec(batchKey, batchSpec{systemPrompt: req.SystemPrompt, model: req.Model, cheap: req.Cheap, workDir: req.WorkDir})
+	m.setBatchSpec(batchKey, batchSpec{systemPrompt: req.SystemPrompt, agentPrompt: req.AgentPrompt, model: req.Model, access: req.Access, workDir: req.WorkDir})
 	defer func() {
 		m.ResetSession(batchKey)
 		m.clearBatchSpec(batchKey)
@@ -1722,10 +1734,30 @@ func (m *DelegatedManager) RunBatch(ctx context.Context, req delegator.BatchRequ
 // other session's. Registered by RunBatch for the life of the batch and read
 // by getOrCreate / setBackendCallbacks.
 type batchSpec struct {
-	systemPrompt string // replaces the agent's composed prompt ("" = backend default)
-	model        string // "" = the backend's BatchDefaultModel, else the agent's
-	cheap        bool   // with model "": prefer the backend's BatchCheapModel
-	workDir      string // "" = the agent workspace
+	systemPrompt string                // replaces the agent's composed prompt ("" = backend default)
+	agentPrompt  bool                  // keep the agent's own composed prompt instead
+	model        string                // passed verbatim to the backend; "" = the agent's
+	access       delegator.BatchAccess // what the batch session may do beyond unattended
+	workDir      string                // "" = the agent workspace
+}
+
+// supportsAccess reports an error when the agent's backend cannot run a
+// batch with this access: a restricted access the backend does not declare
+// (CapIsolatedBatch, CapReadOnlyBatch) would otherwise launch unrestricted.
+func (m *DelegatedManager) supportsAccess(access delegator.BatchAccess) error {
+	var need delegator.Capability
+	switch access {
+	case delegator.BatchAccessIsolated:
+		need = delegator.CapIsolatedBatch
+	case delegator.BatchAccessReadOnly:
+		need = delegator.CapReadOnlyBatch
+	default:
+		return nil
+	}
+	if !m.Spec.Supports(need) {
+		return fmt.Errorf("%s cannot run a %s session: %s", m.Spec.DisplayName, access, m.Spec.Support(need).Reason)
+	}
+	return nil
 }
 
 func (m *DelegatedManager) setBatchSpec(sessionKey string, spec batchSpec) {

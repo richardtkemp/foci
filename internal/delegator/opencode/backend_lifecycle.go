@@ -174,7 +174,16 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// (per-agent, or the [opencode_backend] global folded into it) wins;
 	// a failure is a WARN — an unenforceable default must not make the
 	// agent unusable.
-	if rules := defaultPermissionRules(b.cfg); len(rules) > 0 {
+	//
+	// A read-only batch (spawn explore) gets its own ruleset instead, and an
+	// unenforceable one IS a reason to fail Start: the session would otherwise
+	// run with opencode's permissive defaults (batchAccessRules).
+	if rules := batchAccessRules(opts.SkipPermissions, opts.BatchAccess); rules != nil {
+		if err := b.applySessionPermission(ctx, rules); err != nil {
+			b.server.unregisterSession(b.sessionID)
+			return fmt.Errorf("opencode: %s batch session: apply its permission rules: %w", opts.BatchAccess, err)
+		}
+	} else if rules := defaultPermissionRules(b.cfg); len(rules) > 0 {
 		if err := b.applySessionPermission(ctx, rules); err != nil {
 			log.NewComponentLogger(b.logComponent()).Warnf("default_permission apply failed: %v — using opencode defaults", err)
 		}

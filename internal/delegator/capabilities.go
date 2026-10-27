@@ -80,6 +80,8 @@ const (
 	// Sessions.
 	CapBranch
 	CapScopedCleanup
+	CapIsolatedBatch
+	CapReadOnlyBatch
 
 	// Host integration.
 	CapHostHooks
@@ -164,6 +166,8 @@ var capabilityTable = [numCapabilities]CapabilityInfo{
 
 	CapBranch:        {Name: "branch", Kind: KindInterface, Iface: ifaceOf[BackendBrancher](), Doc: "forks and deletes its own sessions (BackendBrancher)"},
 	CapScopedCleanup: {Name: "scoped_cleanup", Kind: KindInterface, Iface: ifaceOf[RunningBackendCleaner](), Requires: []Capability{CapBranch}, Doc: "needs a live server to delete sessions and opens it once per sweep (RunningBackendCleaner)"},
+	CapIsolatedBatch: {Name: "isolated_batch", Kind: KindBehaviour, Doc: "runs a batch session with BatchAccessIsolated: file tools confined to its working directory, no command execution, no MCP, no exec-bridge tools (spawn raw mode)"},
+	CapReadOnlyBatch: {Name: "read_only_batch", Kind: KindBehaviour, Doc: "runs a batch session with BatchAccessReadOnly: no file writes and no mutating commands (spawn explore mode)"},
 
 	CapHostHooks:                {Name: "host_hooks", Kind: KindInterface, Iface: ifaceOf[HostHooksAcceptor](), Doc: "takes the gateway's HostHooks: auth-failure and rate-limit reports, pretool and stop rules (HostHooksAcceptor)"},
 	CapUnstartedReadinessProbe:  {Name: "unstarted_readiness_probe", Kind: KindBehaviour, Doc: "CheckReady works on a constructed but unstarted backend (the startup probe)"},
@@ -255,8 +259,6 @@ type Spec struct {
 	LedgerKey          string        // cost-ledger backend its turns book under (required)
 	ClosesTurnActivity bool          // closes each turn's ledger activity itself (CC: background subagents outlive the turn)
 	CacheTTL           time.Duration // prompt-cache TTL; 0 = unknown, config fallback
-	BatchDefaultModel  string        // batch model when the request names none; "" = the agent's
-	BatchCheapModel    string        // batch model for Cheap requests; "" = BatchDefaultModel
 	ForkNeedsRunning   bool          // fork is an RPC to a live server: start the parent first
 	// ConfigFamily names the global config section folded into the agent's
 	// backend_config: ConfigFamilyClaudeCode, ConfigFamilyOpencode or ""

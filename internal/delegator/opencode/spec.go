@@ -56,6 +56,8 @@ var spec = delegator.Spec{
 
 		delegator.CapBranch:        delegator.Yes(),
 		delegator.CapScopedCleanup: delegator.Yes(),
+		delegator.CapIsolatedBatch: delegator.No("one opencode server per agent runs in the agent workspace: a session cannot be confined to another directory"),
+		delegator.CapReadOnlyBatch: delegator.Yes(),
 
 		delegator.CapHostHooks:                delegator.Yes(),
 		delegator.CapUnstartedReadinessProbe:  delegator.No("CheckReady needs the server that only Start creates"),
@@ -75,7 +77,7 @@ var spec = delegator.Spec{
 	ConfigKeys:   []string{"binary", "hostname", "server_auth", "log_level", "port", "default_permission", "skip_permissions"},
 	StartFields: []string{
 		"WorkDir", "SystemPrompt", "Model", "AgentID", "ResumeSessionID", "SessionKey",
-		"SkipPermissions", "Env", "AutoApproveRules", "CompactionPromptFunc",
+		"SkipPermissions", "BatchAccess", "Env", "AutoApproveRules", "CompactionPromptFunc",
 	},
 
 	PlanDelivery: planDelivery,

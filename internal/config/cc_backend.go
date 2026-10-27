@@ -13,6 +13,12 @@ var DefaultCCAllowedTools = []string{
 	"MultiEdit(/tmp/**)",
 }
 
+// DefaultCCBatchModel is the factory default for CCBackendConfig.BatchModel:
+// foci's own small background batches (foci_summary, the /prompts diff
+// summary) on Claude Code agents run on haiku unless [cc_backend] batch_model
+// says otherwise ("" = the agent's own model).
+const DefaultCCBatchModel = "haiku"
+
 // MergedAllowedTools combines the global DefaultAllowedTools with the
 // per-agent backend_config.allowed_tools value. Duplicates are removed
 // (first occurrence wins, preserving default ordering). The result is

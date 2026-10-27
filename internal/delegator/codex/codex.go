@@ -370,6 +370,13 @@ func (b *Backend) StatusDetail() string {
 }
 
 func (b *Backend) sandboxMode() string {
+	// A read-only batch (spawn explore) runs in codex's read-only sandbox,
+	// whatever the agent's own sandbox is: its commands can read but never
+	// write (verified against codex 0.164.0 — thread/start's sandbox wins
+	// over the app-server default).
+	if b.startOpts.BatchAccess == delegator.BatchAccessReadOnly {
+		return "read-only"
+	}
 	if v, ok := b.cfg["sandbox"].(string); ok && v != "" {
 		return v
 	}

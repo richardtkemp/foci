@@ -257,6 +257,9 @@ var unattendedTriggers = map[string]bool{
 	delegator.BatchPurposeNudgeExtraction: true,
 	delegator.BatchPurposeSummary:         true,
 	delegator.BatchPurposePromptDiff:      true,
+	delegator.BatchPurposeSpawnRaw:        true,
+	delegator.BatchPurposeSpawnCharacter:  true,
+	delegator.BatchPurposeSpawnExplore:    true,
 }
 
 // isUnattendedTrigger reports whether a turn with this trigger has nobody to

@@ -24,8 +24,8 @@ type BatchRunner interface {
 // (claude-code, codex, opencode) the agent is actually configured to use.
 //
 // It never names a model on its own: a model name is backend-specific, so it
-// asks RunBatch for the backend's cheap tier (delegator.BatchRequest.Cheap)
-// unless the operator configured one ([tools] summary_model, #2032).
+// passes the agent's configured batch_model (backend_config, #2032) verbatim,
+// and with none the batch runs on the agent's own model.
 type BatchSummariser struct {
 	// runner is a lazy accessor rather than a captured value: the tool
 	// registry (and this summariser) is built by buildExecRegistry BEFORE
@@ -35,7 +35,7 @@ type BatchSummariser struct {
 	// agent setup has long finished and the manager is live.
 	runner func() BatchRunner
 
-	model         func() string // configured model override; "" = the backend's cheap tier. Called fresh per Summarise
+	model         func() string // the agent's batch_model; "" = the agent's own model. Called fresh per Summarise
 	workDir       string
 	agentID       string
 	maxInputChars func() int // 0 disables cap; called fresh per Summarise
@@ -44,8 +44,7 @@ type BatchSummariser struct {
 // NewBatchSummariser builds the batch-dispatch summariser. runner is called
 // fresh on each Summarise to resolve the current BatchRunner (nil if the
 // agent's delegation isn't wired up yet — reported as an error, not a panic).
-// model returns the configured model override ("" = ask the backend for its
-// cheap tier); workDir/agentID populate the delegator.BatchRequest (empty
+// model returns the agent's batch_model ("" = the agent's own model); workDir/agentID populate the delegator.BatchRequest (empty
 // values fall back to the manager's own StartOpts).
 func NewBatchSummariser(runner func() BatchRunner, model func() string, workDir, agentID string, maxInputChars func() int) *BatchSummariser {
 	return &BatchSummariser{
@@ -75,7 +74,6 @@ func (s *BatchSummariser) Summarise(ctx context.Context, content []byte, prompt,
 		Prompt:          summaryUserMessage(content, prompt, filePath),
 		SystemPrompt:    summarySystemPrompt,
 		Model:           model,
-		Cheap:           true,
 		WorkDir:         s.workDir,
 		AgentID:         s.agentID,
 		OwnerSessionKey: SessionKeyFromContext(ctx),

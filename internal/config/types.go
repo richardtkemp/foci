@@ -288,6 +288,14 @@ type CCBackendConfig struct {
 	// TOML-only ([[cc_backend.pretool_rules]]): not in the app editor's
 	// objectFieldSpecs registry, whose sub-fields can't express the input map.
 	PreToolRules []pretool.Rule `toml:"pretool_rules"`
+
+	// BatchModel is the model foci's own small background jobs (foci_summary,
+	// the /prompts diff summary) run on for every CC-backed agent, passed to
+	// Claude Code as written. Per-agent backend_config.batch_model wins. When
+	// the key is absent it is DefaultCCBatchModel (load.go); set to "" for the
+	// agent's own model. No tag default: a tag would re-apply over an
+	// explicit "".
+	BatchModel string `toml:"batch_model" desc:"Model for foci's own small background jobs (foci_summary, the /prompts diff summary) on Claude Code agents, passed to Claude Code as written. Default haiku; set \"\" for the agent's own model. Per-agent backend_config.batch_model wins"`
 }
 
 // BackendConfig holds per-agent settings for delegated backends
@@ -309,6 +317,7 @@ type BackendConfig struct {
 	LogLevel          *string           `toml:"log_level"          desc:"opencode serve --log-level (empty = INFO)"`
 	Port              *int              `toml:"port"               desc:"TCP port for the opencode serve subprocess (0 = auto-pick)"`
 	DefaultPermission *string           `toml:"default_permission" desc:"opencode permission mode applied at Start to the session's own ruleset: ask, allow, or deny"`
+	BatchModel        *string           `toml:"batch_model"        desc:"Model for foci's own small background jobs on this agent (foci_summary, the /prompts diff summary), passed to the backend as written (e.g. haiku for Claude Code). Unset = the agent's own model. Overrides the [cc_backend] / [opencode_backend] batch_model"`
 }
 
 // ToMap converts the struct to the map[string]any shape the delegator
@@ -506,7 +515,7 @@ type NudgeConfig struct {
 	NudgeCooldown                   *int    `toml:"nudge_cooldown"                                    hot:"turn" desc:"Minimum number of tool calls that must pass before the same nudge reminder can fire again, so it does not repeat every batch. Default 5"`
 	NudgeMaxPerBatch                *int    `toml:"nudge_max_per_batch"                               hot:"turn" desc:"Maximum number of different nudge reminders that can be injected after a single batch of tool calls. Default 1"`
 	NudgeMaxPerTurn                 *int    `toml:"nudge_max_per_turn"                                hot:"turn" desc:"Maximum total nudge reminders injected across a whole turn, summed over every trigger. 0 (default) = unlimited"`
-	NudgeExtractionModel            *string `toml:"nudge_extraction_model"                            hot:"turn" desc:"Model used for the one-shot LLM call that extracts nudge rules from character files. Leave unset to use the backend's own cheap-batch default (currently sonnet)"`
+	NudgeExtractionModel            *string `toml:"nudge_extraction_model"                            hot:"turn" desc:"Model used for the one-shot LLM call that extracts nudge rules from character files. Leave unset to use the agent's own model"`
 	NudgePreAnswerGate              *bool   `toml:"nudge_pre_answer_gate"                             hot:"turn" desc:"Before ending a turn, gives the agent one chance to reconsider against pre-answer reminders once it has made a few tool calls. Off by default"`
 	NudgePreAnswerMinTools          *int    `toml:"nudge_pre_answer_min_tools"          default:"2"   hot:"turn" desc:"Minimum tool calls in the current turn before the pre-answer verification gate is allowed to trigger"`
 	NudgeDefaultEnable              *bool   `toml:"nudge_default_enable"              default:"true"  hot:"turn" desc:"Turns on the built-in reminders that tell the agent which tools and skills are available"`
@@ -526,9 +535,6 @@ type SummaryConfig struct {
 	SummaryContextChars  *int  `toml:"summary_context_chars"                  hot:"immediate" desc:"Maximum characters of conversation context sent to the model when auto-summarizing an oversized tool result. Default 6000"`
 	MaxSummaryInputChars *int  `toml:"max_summary_input_chars"                hot:"immediate" desc:"Maximum characters of the oversized tool result itself fed into the summarizer; the full result is still saved to disk regardless. Default 100000"`
 	MaxImagePixels       *int  `toml:"max_image_pixels"                       hot:"immediate" desc:"Images larger than this many total pixels, width times height, are resized down before being sent to the model. 0 disables downscaling; default is roughly 1920x1080"`
-	// SummaryModel is delegated-only: API agents pick the summary model from
-	// the cheap model group, a namespace a delegated backend can't resolve.
-	SummaryModel *string `toml:"summary_model" hot:"immediate" desc:"Delegated agents only: model for foci_summary and the /prompts diff summary, named as the agent's backend expects it (e.g. haiku for Claude Code, provider/model for opencode). Leave unset for the backend's own cheap model (Claude Code: haiku), or the agent's own model on backends without one. API agents use the cheap model group instead"`
 }
 
 // Voice WebSocket resource limits (P1-10). Defaults live in the VoiceConfig

@@ -783,14 +783,15 @@ func (b *startModelBackend) Start(_ context.Context, opts delegator.StartOptions
 // TestPromptsCommandDiffDelegatedRunsBatch (#2032): on a delegated agent the
 // diff summary is a RunBatch on the agent's own backend (purpose prompt_diff,
 // so it is costed and traced like any turn) — not a `claude --print` shell-out,
-// and not skipped for want of an API client. The model is [tools]
-// summary_model when set.
+// and not skipped for want of an API client. The model is the agent's
+// batch_model (DelegatedManager.BatchModel) when set.
 func TestPromptsCommandDiffDelegatedRunsBatch(t *testing.T) {
 	be := &startModelBackend{}
 	dm := &agent.DelegatedManager{
 		AgentID:    "helen",
 		StartOpts:  delegator.StartOptions{AgentID: "helen", WorkDir: t.TempDir(), Model: "opus"},
 		NewBackend: func() (delegator.Delegator, error) { return be, nil },
+		BatchModel: "sonnet",
 	}
 	var purposes, prompts []string
 	dm.RunBatchTurn = func(ctx context.Context, sessionKey, prompt, purpose string) (string, error) {
@@ -802,7 +803,6 @@ func TestPromptsCommandDiffDelegatedRunsBatch(t *testing.T) {
 		return "BATCH SUMMARY", nil
 	}
 	resolved := &config.ResolvedAgentConfig{}
-	resolved.Summary.SummaryModel = "sonnet"
 
 	cc := promptsCC(PromptsData{
 		AgentID:       "helen",

@@ -100,7 +100,7 @@ All options are available in both `[nudge]` (global) and `[[agents]].nudge.*` (p
 | `nudge_cooldown` | int | `5` | Min tool calls between repeating the same rule (also the shared cross-rule window for `tool_pattern`, #1309) |
 | `nudge_max_per_batch` | int | `1` | Max reminders per tool batch (also caps simultaneous regex matches, #1309) |
 | `nudge_max_per_turn` | int | `0` | Max total reminders injected across a whole turn, summed over every trigger. `0` = unlimited (#1309) |
-| `nudge_extraction_model` | string | `""` | Model for the one-shot nudge-extraction LLM call. `""` uses the backend's own cheap-batch default (currently `sonnet`, #1309) |
+| `nudge_extraction_model` | string | `""` | Model for the one-shot nudge-extraction LLM call. `""` uses the agent's own model |
 | `nudge_pre_answer_gate` | bool | `false` | Enable pre-answer verification gate |
 | `nudge_pre_answer_min_tools` | int | `2` | Min tool iterations before pre-answer gate fires |
 | `nudge_default_enable` | bool | `true` | Enable built-in tool/skill reminders |

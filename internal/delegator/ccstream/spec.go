@@ -9,16 +9,6 @@ import (
 // backendName is the [agents].backend value this package registers.
 const backendName = "claude-code"
 
-const (
-	// batchDefaultModel: a batch run that names no model (consolidation, nudge
-	// extraction) runs on sonnet rather than the agent's own, usually larger,
-	// model.
-	batchDefaultModel = "sonnet"
-	// batchCheapModel: a batch that asks for the cheap tier (foci_summary, the
-	// /prompts diff summary) runs on haiku.
-	batchCheapModel = "haiku"
-)
-
 // spec declares the Claude Code backend: what it can do and its static data
 // (#2154, internal/delegator/capabilities.go).
 var spec = delegator.Spec{
@@ -67,6 +57,8 @@ var spec = delegator.Spec{
 
 		delegator.CapBranch:        delegator.Yes(),
 		delegator.CapScopedCleanup: delegator.No("fork and cleanup are local transcript file operations, no server needed"),
+		delegator.CapIsolatedBatch: delegator.Yes(),
+		delegator.CapReadOnlyBatch: delegator.Yes(),
 
 		delegator.CapHostHooks:                delegator.Yes(),
 		delegator.CapUnstartedReadinessProbe:  delegator.Yes(),
@@ -83,13 +75,11 @@ var spec = delegator.Spec{
 	LedgerKey:          accounting.BackendCCStream,
 	ClosesTurnActivity: true,
 	CacheTTL:           ccStreamCacheTTL,
-	BatchDefaultModel:  batchDefaultModel,
-	BatchCheapModel:    batchCheapModel,
 	ConfigFamily:       delegator.ConfigFamilyClaudeCode,
 	ConfigKeys:         []string{"allowed_tools", "binary", "skip_permissions"},
 	StartFields: []string{
 		"WorkDir", "SystemPrompt", "Model", "AgentID", "Label", "ResumeSessionID", "SessionKey",
-		"SkipPermissions", "Env", "AutoApproveRules", "SubagentMaxAge", "Effort",
+		"SkipPermissions", "BatchAccess", "Env", "AutoApproveRules", "SubagentMaxAge", "Effort",
 	},
 
 	TranscriptChecker: InputInTranscript,

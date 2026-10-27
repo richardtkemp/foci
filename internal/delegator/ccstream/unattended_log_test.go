@@ -118,7 +118,7 @@ func TestRequestedPermissionMode(t *testing.T) {
 		{true, false, ""},
 		{true, true, ""},
 	} {
-		if got := requestedPermissionMode(unattendedPermissionArgs(tc.cfgSkip, tc.batch)); got != tc.want {
+		if got := requestedPermissionMode(unattendedPermissionArgs(tc.cfgSkip, tc.batch, delegator.BatchAccessDefault)); got != tc.want {
 			t.Errorf("cfgSkip=%v batch=%v: requested mode %q, want %q", tc.cfgSkip, tc.batch, got, tc.want)
 		}
 	}

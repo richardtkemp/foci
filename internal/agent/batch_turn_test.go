@@ -256,63 +256,43 @@ func TestRunBatch_RecordsAPIRowAndTrace(t *testing.T) {
 	}
 }
 
-// defaultingBackend is a batch-capable backend with a cheap batch model
-// (Spec.BatchDefaultModel, see batchSpecFor).
-type defaultingBackend struct{ batchTurnBackend }
-
-// cheapBackend also has a cheap tier (Spec.BatchCheapModel), as ccstream does.
-type cheapBackend struct{ defaultingBackend }
-
 // batchSpecFor is the Spec of the batch test backends: every one books its own
-// calls in the cost ledger, as every delegated backend does, and the
-// defaulting/cheap ones carry batch models.
-func batchSpecFor(be delegator.Delegator) delegator.Spec {
-	s := delegator.Spec{LedgerKey: accounting.BackendCCStream}
-	switch be.(type) {
-	case *cheapBackend:
-		s.BatchDefaultModel, s.BatchCheapModel = "sonnet", "haiku"
-	case *defaultingBackend:
-		s.BatchDefaultModel = "sonnet"
-	}
-	return s
+// calls in the cost ledger, as every delegated backend does.
+func batchSpecFor(delegator.Delegator) delegator.Spec {
+	return delegator.Spec{LedgerKey: accounting.BackendCCStream}
 }
 
-// TestRunBatch_ModelSelection: an explicit model wins; otherwise, for a Cheap
-// request, the backend's cheap model (CC: haiku); otherwise the backend's
-// batch default (CC: sonnet); otherwise the agent's own model.
+// batchBackend is a batch test backend whose launches the test inspects.
+type batchBackend interface {
+	delegator.Delegator
+	startedOpts() []delegator.StartOptions
+	completeTurns()
+}
+
+// TestRunBatch_ModelSelection proves a batch's model is the caller's, passed
+// to the backend as written, and with none the agent's own: foci never picks
+// a model for a batch (no backend default, no cheap tier).
 func TestRunBatch_ModelSelection(t *testing.T) {
 	t.Parallel()
-	type batchBackend interface {
-		delegator.Delegator
-		startedOpts() []delegator.StartOptions
-		completeTurns()
-	}
 	cases := []struct {
 		name  string
-		be    batchBackend
 		model string
-		cheap bool
 		want  string
 	}{
-		{"explicit override", &defaultingBackend{}, "haiku", false, "haiku"},
-		{"explicit override beats cheap", &cheapBackend{}, "sonnet", true, "sonnet"},
-		{"backend batch default", &defaultingBackend{}, "", false, "sonnet"},
-		{"cheap not asked: batch default", &cheapBackend{}, "", false, "sonnet"},
-		{"backend cheap model", &cheapBackend{}, "", true, "haiku"},
-		{"cheap, none: batch default", &defaultingBackend{}, "", true, "sonnet"},
-		{"no default: agent model", &batchTurnBackend{}, "", false, "opus"},
-		{"cheap, no defaults: agent model", &batchTurnBackend{}, "", true, "opus"},
+		{"explicit model passes through", "zai-coding-plan/glm-4.6", "zai-coding-plan/glm-4.6"},
+		{"no model: the agent's own", "", "opus"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			c.be.completeTurns()
-			a := newBatchTestAgent(t, c.be)
+			be := &batchTurnBackend{}
+			be.completeTurns()
+			a := newBatchTestAgent(t, be)
 			if _, err := a.DelegatedManager.RunBatch(context.Background(), delegator.BatchRequest{
-				Prompt: "p", Model: c.model, Cheap: c.cheap, OwnerSessionKey: "helen/c1", Purpose: delegator.BatchPurposeSummary,
+				Prompt: "p", Model: c.model, OwnerSessionKey: "helen/c1", Purpose: delegator.BatchPurposeSummary,
 			}); err != nil {
 				t.Fatalf("RunBatch: %v", err)
 			}
-			opts := c.be.startedOpts()
+			opts := be.startedOpts()
 			if len(opts) != 1 || opts[0].Model != c.want {
 				t.Fatalf("started with %+v, want model %q", opts, c.want)
 			}

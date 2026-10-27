@@ -64,6 +64,8 @@ var spec = delegator.Spec{
 
 		delegator.CapBranch:        delegator.Yes(),
 		delegator.CapScopedCleanup: delegator.Yes(),
+		delegator.CapIsolatedBatch: delegator.No("its sandbox confines writes, never reads: a session can read the whole disk"),
+		delegator.CapReadOnlyBatch: delegator.Yes(),
 
 		delegator.CapHostHooks:                delegator.No("reports no auth failures or rate limits foci acts on, and has no pretool or stop hooks"),
 		delegator.CapUnstartedReadinessProbe:  delegator.Yes(),
@@ -84,7 +86,7 @@ var spec = delegator.Spec{
 	ConfigKeys: []string{"binary", "model", "sandbox", "api_key", delegator.FociVersionConfigKey},
 	StartFields: []string{
 		"WorkDir", "SystemPrompt", "Model", "AgentID", "Label", "ResumeSessionID", "SessionKey",
-		"BatchOnly", "Env", "AutoApproveRules", "Effort", "CompactionPromptFunc",
+		"BatchOnly", "BatchAccess", "Env", "AutoApproveRules", "Effort", "CompactionPromptFunc",
 	},
 }
 

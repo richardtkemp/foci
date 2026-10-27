@@ -39,6 +39,8 @@ var gatewayConfigKeys = map[string]func(Spec) bool{
 	"model": func(Spec) bool { return true },
 	// The DelegatedManager's idle shutdown.
 	"idle_timeout": func(Spec) bool { return true },
+	// The model foci's own small background batches name (DelegatedManager.BatchModel).
+	"batch_model": func(Spec) bool { return true },
 	// Passed through as StartOptions.Env.
 	"env": func(s Spec) bool { return slices.Contains(s.StartFields, "Env") },
 	// Installed through HostHooks.

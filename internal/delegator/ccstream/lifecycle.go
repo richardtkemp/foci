@@ -106,15 +106,17 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// launch flag differs — see unattendedPermissionArgs.
 	cfgSkip := delegator.SkipPermissions(b.cfg)
 	b.skipPermissions = cfgSkip || opts.SkipPermissions
-	permArgs := unattendedPermissionArgs(cfgSkip, opts.SkipPermissions)
+	permArgs := unattendedPermissionArgs(cfgSkip, opts.SkipPermissions, opts.BatchAccess)
 	args = append(args, permArgs...)
 	b.requestedPermMode = requestedPermissionMode(permArgs)
 	// Permission pre-approval rules. cfg["allowed_tools"] is the merged
 	// string produced by cmd/foci-gw/agents_delegated.go (global
 	// [cc_backend] default_allowed_tools combined with the agent's
 	// backend_config.allowed_tools). Rules use CC's permission syntax —
-	// e.g. "Write(/tmp/**)", "Bash(git:*)".
-	if v, ok := b.cfg["allowed_tools"].(string); ok && v != "" {
+	// e.g. "Write(/tmp/**)", "Bash(git:*)". A restricted batch carries its
+	// own pre-approval list instead (restrictedBatchArgs): the agent's rules
+	// pre-approve tools (Bash patterns, writes) it must not have.
+	if v, ok := b.cfg["allowed_tools"].(string); ok && v != "" && !restrictedBatch(opts.SkipPermissions, opts.BatchAccess) {
 		args = append(args, "--allowedTools", v)
 	}
 
@@ -770,10 +772,20 @@ func describeExitError(err error) string {
 //     reach foci and answerUnattended decides them.
 //
 // The operator's flag wins when both apply. Neither → no flag.
-func unattendedPermissionArgs(cfgSkip, batch bool) []string {
+//
+// A batch's BatchAccess refines this. A parent-access batch (spawn character)
+// launches exactly as the agent's sessions do: no auto mode, the operator's
+// flag only if set, so it can do what the agent can and its other asks reach
+// answerUnattended. A restricted batch (spawn raw / explore) gets
+// restrictedBatchArgs and never the operator's flag.
+func unattendedPermissionArgs(cfgSkip, batch bool, access delegator.BatchAccess) []string {
 	switch {
+	case restrictedBatch(batch, access):
+		return restrictedBatchArgs(access)
 	case cfgSkip:
 		return []string{"--dangerously-skip-permissions"}
+	case batch && access == delegator.BatchAccessParent:
+		return nil
 	case batch:
 		return []string{"--permission-mode", "auto"}
 	default:

@@ -275,6 +275,42 @@ func TestBuildExecRegistrySkipsRemindWhenWakeFnNil(t *testing.T) {
 	}
 }
 
+// TestFoldGlobalBackendConfig_BatchModel proves the global batch_model of
+// each config family reaches its agents' backend_config (and so
+// DelegatedManager.BatchModel), that a per-agent value wins, that an unset
+// global stays unset, and that a family's value never leaks into another
+// backend's agents.
+func TestFoldGlobalBackendConfig_BatchModel(t *testing.T) {
+	cfg := &config.Config{
+		CCBackend:       config.CCBackendConfig{BatchModel: "haiku"},
+		OpencodeBackend: config.OpencodeBackendConfig{BatchModel: "zai/glm-4.6"},
+	}
+	cc := delegator.Spec{ConfigFamily: delegator.ConfigFamilyClaudeCode}
+	oc := delegator.Spec{ConfigFamily: delegator.ConfigFamilyOpencode}
+	none := delegator.Spec{}
+	agentVal := "sonnet"
+	for _, c := range []struct {
+		name string
+		spec delegator.Spec
+		bc   config.BackendConfig
+		cfg  *config.Config
+		want string // "" = unset
+	}{
+		{"cc global", cc, config.BackendConfig{}, cfg, "haiku"},
+		{"opencode global", oc, config.BackendConfig{}, cfg, "zai/glm-4.6"},
+		{"per-agent wins", cc, config.BackendConfig{BatchModel: &agentVal}, cfg, "sonnet"},
+		{"no family", none, config.BackendConfig{}, cfg, ""},
+		{"unset global", oc, config.BackendConfig{}, &config.Config{}, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := config.DerefStr(foldGlobalBackendConfig(c.cfg, c.spec, c.bc).BatchModel)
+			if got != c.want {
+				t.Errorf("batch_model = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
 // TestFoldGlobalBackendConfig_OpencodeDefaultPermission pins the #2330
 // threat-scan fix: the global [opencode_backend] default_permission must
 // actually reach every opencode agent's backend_config. It was documented

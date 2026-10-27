@@ -42,4 +42,10 @@ type OpencodeBackendConfig struct {
 	// default (INFO). Set to "DEBUG" for verbose projector/persistence
 	// logging when diagnosing session persistence issues.
 	LogLevel string `toml:"log_level" desc:"opencode serve --log-level (empty = INFO)"`
+
+	// BatchModel is the model foci's own small background jobs run on for
+	// every opencode agent, as opencode names it (provider/model). No
+	// default: opencode has no model name foci could assume. Per-agent
+	// backend_config.batch_model wins.
+	BatchModel string `toml:"batch_model" desc:"Model for foci's own small background jobs (foci_summary, the /prompts diff summary) on opencode agents, named as opencode expects (provider/model). Empty = the agent's own model. Per-agent backend_config.batch_model wins"`
 }

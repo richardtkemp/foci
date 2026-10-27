@@ -1028,7 +1028,7 @@ Available in both `[nudge]` and `[agents.nudge]`.
 | `nudge_cooldown` | int | `5` | Minimum tool calls between repeating the same reminder. Prevents spam. Also the shared cross-rule window for `tool_pattern` — see docs/NUDGE.md#1309. |
 | `nudge_max_per_batch` | int | `1` | Maximum reminders injected per tool batch. Also caps simultaneous regex matches on one message. |
 | `nudge_max_per_turn` | int | `0` | Maximum total reminders injected across a whole turn, summed over every trigger type. `0` = unlimited. |
-| `nudge_extraction_model` | string | `""` | Model for the one-shot nudge-extraction LLM call. `""` uses the backend's own cheap-batch default. |
+| `nudge_extraction_model` | string | `""` | Model for the one-shot nudge-extraction LLM call. `""` uses the agent's own model. |
 | `nudge_pre_answer_gate` | bool | `false` | Enable pre-answer verification gate. When the model wants to end a turn after 2+ tool calls, inject pre_answer reminders and let it reconsider once. |
 | `nudge_pre_answer_min_tools` | int | `2` | Minimum tool call iterations before the pre-answer gate fires. |
 | `nudge_default_enable` | bool | `true` | Enable built-in tool/skill reminders. When enabled, periodically reminds the agent which tools and skills are available. |
@@ -1164,7 +1164,6 @@ Global defaults set in `[tools]`, overridable per-agent via `[agents.tools]`. Pe
 | `auto_summarise` | bool | `true` | Auto-summarise oversized tool results via the cheap model. `false` skips summary calls entirely (results are saved to file with hints instead). Global: `[tools]`. Per-agent `unset` inherits from `[tools]`. |
 | `max_summary_input_chars` | int | `100000` | Max chars of tool result text embedded in the summary prompt. Larger results are truncated in the prompt (the full output is on disk). Prevents excessive memory use and token cost during auto-summarisation. Global: `[tools]`. |
 | `max_image_pixels` | int | `2073600` | Max pixels (width × height) for images before downscaling. Images exceeding this are proportionally resized and re-encoded as JPEG (quality 85). Default is 1920×1080. `0` disables downscaling. Global: `[tools]`. |
-| `summary_model` | string | `""` | Delegated agents only: model for `foci_summary` and the `/prompts diff` summary, named as the agent's backend expects it (`haiku` for Claude Code, `provider/model` for opencode). Unset = the backend's own cheap model (Claude Code: `haiku`), or the agent's own model on backends without one (opencode, codex). API agents use the `cheap` model group instead. Global: `[tools]`. |
 | `exec_auto_background` | int | `10` | Seconds before auto-backgrounding long-running exec and http_request calls. `0` disables. Global: `[tools]`. |
 | `max_concurrent_spawns` | int | `3` | Max concurrent `spawn` clone sessions per agent. Global: `[tools]`. |
 | `explore_max_depth` | int | `100` | Max tool loops for `spawn` explore mode. Explore agents do multi-step research so this is higher than the default `max_tool_loops`. Global: `[tools]`. |
@@ -1472,6 +1471,7 @@ workspace = "/home/coder/projects/myapp"
 # allowed_tools = ["Bash(git:*)", "Read"]  # --allowedTools: per-agent CC permission rules
 # binary = ""                 # Override path to backend executable (default: $PATH)
 # idle_timeout = "3h"         # Session idle shutdown duration (default 3h)
+# batch_model = "haiku"       # Model for foci's own small background jobs (see below)
 
 # Environment variables passed to the backend subprocess:
 # [agents.backend_config.env]
@@ -1495,6 +1495,8 @@ numeric version components, so the newest/highest matching model is selected
 ID is sent in `thread/start`. `/model` uses the same resolver for per-session
 overrides and persists the canonical `codex/<id>` value; resumed sessions apply
 that override in their next `turn/start`.
+
+`batch_model` is the model foci's own small background jobs run on — the `foci_summary` tool and the `/prompts diff` summary — named as the agent's backend names models (`haiku` for Claude Code, `provider/model` for opencode) and passed to the backend as written. It wins over the global `[cc_backend]` / `[opencode_backend]` `batch_model`; with none set those jobs run on the agent's own model. foci never picks a model for a batch itself: consolidation, nudge extraction (unless `nudge_extraction_model` is set) and the spawn tool's one-shot modes (unless the spawn names a `model`) run on the agent's own model.
 
 Per-agent `allowed_tools` accepts either a comma-separated string (`"Bash(git:*), Read"`) or a TOML array (`["Bash(git:*)", "Read"]`). It is merged with the global `[cc_backend] default_allowed_tools` list (see below) before launch — you don't need to repeat the defaults here.
 
@@ -1528,6 +1530,13 @@ Applies to every agent whose `backend` is `claude-code`:
 # Raise it above your longest background job's runtime so a genuinely-long job
 # isn't pruned (and its injections released) while still running.
 # background_task_max_age = "2h"
+
+# batch_model — model for foci's own small background jobs (foci_summary, the
+# /prompts diff summary) on every CC agent, passed to Claude Code as written.
+# Factory default (applied when the key is not set in TOML): "haiku".
+# Set "" to run them on each agent's own model. A per-agent
+# backend_config.batch_model overrides this.
+# batch_model = "haiku"
 ```
 
 The factory default grants CC agents free read/write access to `/tmp` so they can use the system scratch directory without a permission round-trip. Override if your deployment uses a different scratch path or wants a tighter default.
@@ -1778,6 +1787,12 @@ Applies to every agent whose `backend` is `opencode`:
 # is folded into every opencode agent's backend_config;
 # [[agents]].backend_config.default_permission wins.
 # default_permission = "deny"
+
+# batch_model — model for foci's own small background jobs (foci_summary, the
+# /prompts diff summary) on every opencode agent, as opencode names it
+# (provider/model). No default: empty = each agent's own model. A per-agent
+# backend_config.batch_model overrides this.
+# batch_model = "zai-coding-plan/glm-4.6"
 ```
 
 ### See also

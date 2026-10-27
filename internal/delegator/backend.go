@@ -8,6 +8,7 @@ package delegator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -629,8 +630,8 @@ type ForkResult struct {
 
 // BatchRequest describes a batch run: a one-shot, non-interactive prompt
 // whose answer goes back to an in-process caller (memory consolidation, nudge
-// extraction, the delegated foci_summary tool and /prompts diff summary) and
-// never to a chat.
+// extraction, the delegated foci_summary tool and /prompts diff summary, and
+// the spawn tool's raw/character/explore modes) and never to a chat.
 //
 // There is no per-backend batch mechanism (#1962). DelegatedManager.RunBatch
 // runs the request as an ordinary delegated turn on a fresh, ephemeral child
@@ -643,17 +644,22 @@ type BatchRequest struct {
 	Prompt string
 	// SystemPrompt REPLACES the agent's composed session prompt for the batch
 	// session (via the backend's normal Start system-prompt handling). Empty
-	// means the backend CLI's own default prompt, not the agent's.
+	// means the backend CLI's own default prompt, not the agent's — unless
+	// AgentPrompt is set.
 	SystemPrompt string
-	// Model, when non-empty, overrides the model. Empty = the backend's cheap
-	// batch default (Spec.BatchDefaultModel; CC: sonnet), else the agent's model.
+	// AgentPrompt launches the batch with the agent's own composed system
+	// prompt (character files and all), exactly as its sessions get it.
+	// SystemPrompt must then be empty.
+	AgentPrompt bool
+	// Model names the model, passed verbatim to the backend, which resolves it
+	// as it resolves any model name. Empty = the agent's own model. foci never
+	// picks a model for a batch: a caller that wants a cheaper one passes it
+	// (the agent's backend_config batch_model, for foci's own background work).
 	Model string
-	// Cheap asks, when Model is empty, for the backend's cheap model
-	// (Spec.BatchCheapModel; CC: haiku) — for trivial one-shots like a summary.
-	// A backend without one runs the batch as if Cheap were unset. A model
-	// name is backend-specific, so a caller that wants "something cheap" sets
-	// this rather than naming a model the backend may not resolve (#2032).
-	Cheap bool
+	// Access narrows what the batch session may do beyond the unattended
+	// semantics every batch has (StartOptions.SkipPermissions). The zero value
+	// is foci's own background batch.
+	Access BatchAccess
 	// WorkDir is the working directory for the run. Empty = the agent
 	// workspace.
 	WorkDir string
@@ -669,12 +675,55 @@ type BatchRequest struct {
 	Purpose string
 }
 
+// BatchAccess is what a batch session may do. Every batch is unattended
+// (StartOptions.SkipPermissions): an ask that reaches foci is decided by the
+// agent's auto-approve rules, else denied, never prompted (unattended.go).
+// BatchAccess adds the launch the backend gives the session.
+type BatchAccess int
+
+const (
+	// BatchAccessDefault is foci's own background batch (consolidation,
+	// nudge extraction, summaries): the agent's tools, launched for unattended
+	// running (Claude Code: auto mode).
+	BatchAccessDefault BatchAccess = iota
+	// BatchAccessParent is the agent's own tools, permission mode and
+	// pre-approval rules, exactly as its sessions launch (no auto mode): what
+	// the agent would have to ask about is denied (spawn character).
+	BatchAccessParent
+	// BatchAccessIsolated confines the file tools to the session's working
+	// directory and allows no command execution, no MCP servers and none of
+	// foci's exec-bridge tools. Needs CapIsolatedBatch (spawn raw).
+	BatchAccessIsolated
+	// BatchAccessReadOnly allows nothing that writes a file or executes a
+	// mutating command; reads anywhere the agent can read. Needs
+	// CapReadOnlyBatch (spawn explore).
+	BatchAccessReadOnly
+)
+
+// String names the access for logs.
+func (a BatchAccess) String() string {
+	switch a {
+	case BatchAccessDefault:
+		return "default"
+	case BatchAccessParent:
+		return "parent"
+	case BatchAccessIsolated:
+		return "isolated"
+	case BatchAccessReadOnly:
+		return "read-only"
+	}
+	return fmt.Sprintf("batch-access(%d)", int(a))
+}
+
 // Batch purposes — the api_calls.purpose label for each RunBatch caller.
 const (
 	BatchPurposeConsolidation   = "consolidation"
 	BatchPurposeNudgeExtraction = "nudge_extraction"
 	BatchPurposeSummary         = "summary"
 	BatchPurposePromptDiff      = "prompt_diff"
+	BatchPurposeSpawnRaw        = "spawn_raw"
+	BatchPurposeSpawnCharacter  = "spawn_character"
+	BatchPurposeSpawnExplore    = "spawn_explore"
 )
 
 // SkipPermissions reports whether the backend config disables the permission
@@ -708,7 +757,10 @@ type StartOptions struct {
 	// SkipPermissions runs this session with no permission prompts at all,
 	// whatever the agent's backend config says. Set for batch sessions, which
 	// run unattended and must never put a prompt in front of a user.
-	SkipPermissions  bool
+	SkipPermissions bool
+	// BatchAccess is a batch session's access (BatchRequest.Access); the zero
+	// value for every other session. Read with SkipPermissions set.
+	BatchAccess      BatchAccess
 	ExecRegistry     any               // *tools.Registry — if set, used by DelegatedManager to create exec bridges
 	Env              map[string]string // extra environment variables to inject (e.g. BASH_ENV, FOCI_SOCK from exec bridge)
 	AutoApproveRules []string          // foci-level auto-approve patterns (e.g. "Bash:git *", "Read")

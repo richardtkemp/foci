@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/delegator/accounting"
 	"foci/internal/display"
 	"foci/internal/modelinfo"
@@ -91,11 +93,11 @@ var spawnCharacterBlacklist = map[string]bool{
 	"close_session":   true,
 }
 
-// exploreSystemPrompt is the system prompt for explore spawn mode.
-const exploreSystemPrompt = `You are a read-only code explorer. You have access to tools but must NOT write, edit, create, or delete anything.
-
-Use grep for searching file contents. Use find for locating files. Use read for examining files. Use git for commit history, diffs, and blame. Use todo to read and update the todo list.
-Use stat, file, wc, head, tail, tree, du for filesystem inspection. Use jq/yq/mdq for structured data queries. Use sqlite for read-only database queries. Use docker, systemctl, crontab, id for system inspection. Not all tools are available in every environment.
+// exploreRolePrompt is the backend-neutral part of the explore system prompt:
+// the read-only role and how to shape the answer. A delegated explore batch
+// gets it alone (its tools are the backend's own); the API explore spawn adds
+// exploreAPIToolsPrompt for foci's tools.
+const exploreRolePrompt = `You are a read-only code explorer. You have access to tools but must NOT write, edit, create, or delete anything.
 
 Match your response to the question type:
 - "Where is X defined?" → file paths and line numbers only
@@ -105,6 +107,13 @@ Match your response to the question type:
 - "Find all X" → list matches, grouped by file
 
 Keep responses concise. Quote code when it clarifies; don't dump entire files. If the codebase is large, start with directory structure before diving in.`
+
+// exploreAPIToolsPrompt names the foci tools an API explore spawn has.
+const exploreAPIToolsPrompt = `Use grep for searching file contents. Use find for locating files. Use read for examining files. Use git for commit history, diffs, and blame. Use todo to read and update the todo list.
+Use stat, file, wc, head, tail, tree, du for filesystem inspection. Use jq/yq/mdq for structured data queries. Use sqlite for read-only database queries. Use docker, systemctl, crontab, id for system inspection. Not all tools are available in every environment.`
+
+// exploreSystemPrompt is the system prompt for an API explore spawn.
+const exploreSystemPrompt = exploreRolePrompt + "\n\n" + exploreAPIToolsPrompt
 
 // spawnExploreAllowed is the explicit allowlist of registry tools for explore mode.
 // New tools do NOT leak into this mode — they must be explicitly opted in.
@@ -149,10 +158,13 @@ type SpawnDeps struct {
 	Observer SpawnObserver
 	// ModelFor returns the model a branch session runs on, for the observer.
 	ModelFor func(sessionKey string) string
-	// CloneOnly offers only the clone mode: a delegated (Claude Code) agent's
-	// spawn, whose one-shot modes would need the direct API client it has not
-	// got (#1311, #2523). The schema then has no model or context parameter.
-	CloneOnly bool
+	// Delegated is set for an agent on a delegated backend (Claude Code,
+	// opencode, codex). Its one-shot modes then run as batches on its own
+	// backend (DelegatedSpawn.Runner), never through the API one-shot loop:
+	// model groups are an API-backend concept, so Client, ClientProvider,
+	// GroupResolver, FallbackFunc/Model/Format and ProviderRoutingFor stay
+	// unset and no code path reads them. Nil = an API agent.
+	Delegated *DelegatedSpawn
 	// CanResume reports whether a branch session still has a conversation a
 	// run can continue (a delegated backend's saved resume id; an API
 	// session's history), for a spawn a restart interrupted (#2589). Nil =
@@ -166,6 +178,31 @@ type SpawnDeps struct {
 	// Notice shows the user a line in a session's chat without running a turn
 	// (which spawns a restart resumed, which it could not). Nil = log only.
 	Notice func(sessionKey, text string)
+}
+
+// apiOneShotField names the first API one-shot field d sets (the clients,
+// model groups, fallbacks, routing and API tool-loop budgets that only
+// runAPIOneShot reads), or "" when none is set.
+func (d SpawnDeps) apiOneShotField() string {
+	switch {
+	case d.Client != nil:
+		return "Client"
+	case d.ClientProvider != nil:
+		return "ClientProvider"
+	case d.GroupResolver != nil:
+		return "GroupResolver"
+	case d.FallbackFunc != nil:
+		return "FallbackFunc"
+	case d.FallbackModel != "" || d.FallbackFormat != "":
+		return "FallbackModel/FallbackFormat"
+	case d.ProviderRoutingFor != nil:
+		return "ProviderRoutingFor"
+	case d.Bootstrap != nil:
+		return "Bootstrap"
+	case d.MaxToolLoops != nil || d.ExploreMaxDepth != nil:
+		return "MaxToolLoops/ExploreMaxDepth"
+	}
+	return ""
 }
 
 // maxToolLoops calls d.MaxToolLoops(), or returns 0 if unset (tests that
@@ -198,81 +235,157 @@ type Spawner struct {
 // NewSpawner builds the shared state of spawn, spawn_send and spawn_status.
 // agentFn is a lazy getter for the agent (resolved at call time, since the
 // agent struct is assigned after tool registration).
+//
+// It panics on a delegated agent's deps that carry any API one-shot field:
+// model groups and API clients are an API-backend concept, and a delegated
+// spawn must have no way to reach them (DelegatedSpawn).
 func NewSpawner(deps SpawnDeps, agentFn func() SpawnAgent) *Spawner {
+	if deps.Delegated != nil {
+		if f := deps.apiOneShotField(); f != "" {
+			panic("tools.NewSpawner: a delegated agent's spawn deps set " + f + ", an API one-shot field")
+		}
+	}
 	// MaxInherit sizes the semaphore once, at construction.
 	return &Spawner{deps: deps, agentFn: agentFn, sem: make(chan struct{}, deps.MaxInherit)}
 }
 
-// cloneOnlySpawnParams is the schema of a CloneOnly spawn: no model, no context.
-const cloneOnlySpawnParams = `{
-	"type": "object",
-	"properties": {
-		"prompt": {
-			"type": "string",
-			"description": "Self-contained task for the spawn. It runs as the first message of a branch session that starts with a copy of your conversation."
-		},
-		"timeout": {
-			"type": "integer",
-			"description": "How long the spawn may run, in seconds (default 120). Give a long wait room: when this runs out the spawn is stopped and reported failed."
-		}
+// DelegatedSpawn is what a delegated agent's spawn needs beyond the common
+// SpawnDeps: the batch runner its one-shot modes run on, and its backend's
+// Spec, which decides the modes it offers (DelegatedSpawnModes).
+type DelegatedSpawn struct {
+	// Runner resolves the agent's DelegatedManager at call time (the exec
+	// registry is built before the manager exists). Nil result = not wired.
+	Runner func() BatchRunner
+	Spec   delegator.Spec
+}
+
+// Spawn modes ("context").
+const (
+	spawnModeRaw       = "raw"
+	spawnModeCharacter = "character"
+	spawnModeClone     = "clone"
+	spawnModeExplore   = "explore"
+)
+
+// apiSpawnModes are the modes an API agent's spawn offers, in schema order.
+var apiSpawnModes = []string{spawnModeRaw, spawnModeCharacter, spawnModeClone, spawnModeExplore}
+
+// DelegatedSpawnModes returns the modes a delegated agent's spawn offers, in
+// schema order, from what its backend declares: raw needs an isolated batch
+// (CapIsolatedBatch), clone a fork (CapBranch), explore a read-only batch
+// (CapReadOnlyBatch). character runs with the agent's own access, which every
+// delegated backend can.
+func DelegatedSpawnModes(spec delegator.Spec) []string {
+	var modes []string
+	if spec.Supports(delegator.CapIsolatedBatch) {
+		modes = append(modes, spawnModeRaw)
+	}
+	modes = append(modes, spawnModeCharacter)
+	if spec.Supports(delegator.CapBranch) {
+		modes = append(modes, spawnModeClone)
+	}
+	if spec.Supports(delegator.CapReadOnlyBatch) {
+		modes = append(modes, spawnModeExplore)
+	}
+	return modes
+}
+
+// modes returns the modes this agent's spawn offers.
+func (s *Spawner) modes() []string {
+	if d := s.deps.Delegated; d != nil {
+		return DelegatedSpawnModes(d.Spec)
+	}
+	return apiSpawnModes
+}
+
+// defaultMode is the mode a spawn with no context runs: clone where the
+// agent can fork, else character (the agent's own abilities, run once).
+func defaultMode(modes []string) string {
+	if slices.Contains(modes, spawnModeClone) {
+		return spawnModeClone
+	}
+	return spawnModeCharacter
+}
+
+// spawnModeDocs describes each mode, for the tool and its context parameter.
+// api is the API agent's wording (foci's own tools and model groups);
+// delegated is a delegated agent's (its backend's own tools and models).
+var spawnModeDocs = map[string]struct{ api, delegated string }{
+	spawnModeRaw: {
+		api:       "'raw': just your prompt, no system context, file tools confined to a temp dir — send_to_chat and send_to_session excluded (sync)",
+		delegated: "'raw': just your prompt, no system context of yours (the backend's own default prompt), file tools confined to a fresh temp dir, no shell, no foci tools (sync)",
 	},
-	"required": ["prompt"]
-}`
+	spawnModeCharacter: {
+		api:       "'character': your prompt + character files (sync)",
+		delegated: "'character': your prompt + your full system prompt, with your own tools and permission rules; anything you would have to ask the user about is refused (sync)",
+	},
+	spawnModeClone: {
+		api:       "'clone': branch session with full tool access — runs asynchronously in the background, result delivered via [SPAWN RESULT] when complete; steer it with spawn_send, check on it with spawn_status",
+		delegated: "'clone': a fork of this session (its own process, starting from a copy of your conversation) — runs in the background, result delivered via [SPAWN RESULT] when complete; steer it with spawn_send, check on it with spawn_status",
+	},
+	spawnModeExplore: {
+		api:       "'explore': read-only exploration agent with ls, find, grep, git, read, todo, memory_search, web_search, web_fetch, plus conditional filesystem/data/system inspection tools (sync, no mutation, uses cheap model group — model param ignored)",
+		delegated: "'explore': read-only exploration — reads and searches files and the web, writes nothing and runs nothing that changes anything (sync)",
+	},
+}
+
+// spawnParams builds the spawn tool's parameter schema for these modes.
+func spawnParams(modes []string, delegated bool) json.RawMessage {
+	docs := make([]string, 0, len(modes))
+	for _, m := range modes {
+		d := spawnModeDocs[m]
+		if delegated {
+			docs = append(docs, d.delegated)
+		} else {
+			docs = append(docs, d.api)
+		}
+	}
+	def := defaultMode(modes)
+	modelDoc := "Model group to use: 'powerful', 'fast', 'cheap'. Empty uses the mode's default group. Ignored for clone and explore modes."
+	promptDoc := "Self-contained prompt with all necessary context. For raw/character: the model gets only this (synchronous, result returned directly). For clone: injected as the user message in the branch session."
+	if delegated {
+		modelDoc = "Model for a raw, character or explore spawn, named as your backend names models; passed to it as written. Empty = your own model. Ignored for clone (a fork runs on your session's model)."
+		promptDoc = "Self-contained task for the spawn. For raw/character/explore it is the whole request (synchronous, result returned directly). For clone it runs as the first message of a fork that starts with a copy of your conversation."
+	}
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"prompt": map[string]any{"type": "string", "description": promptDoc},
+			"model":  map[string]any{"type": "string", "description": modelDoc},
+			"context": map[string]any{
+				"type":        "string",
+				"enum":        modes,
+				"description": "Context mode (default '" + def + "'). " + strings.Join(docs, ". ") + ".",
+			},
+			"timeout": map[string]any{
+				"type":        "integer",
+				"description": "How long the spawn may run, in seconds (default 120). Applies to all modes. Give a long job room: when this runs out the spawn is stopped and reported failed.",
+			},
+		},
+		"required": []string{"prompt"},
+	}
+	out, err := json.Marshal(schema)
+	if err != nil {
+		panic(fmt.Sprintf("spawn schema: %v", err)) // a static map of strings: cannot fail
+	}
+	return out
+}
+
+// spawnToolDescription is the spawn tool's description for these modes.
+func spawnToolDescription(modes []string) string {
+	return "Spawn a sub-call to a model. Context modes: " + strings.Join(modes, ", ") + " (see the context parameter). " +
+		"Use 'raw'/'character' for one-shot queries, 'clone' to delegate complex multi-step tasks in the background, 'explore' for read-only codebase research. Only the modes listed are available."
+}
 
 // SpawnTool is the unified spawn tool (it replaced request_model).
 func (s *Spawner) SpawnTool() *Tool {
-	deps := s.deps
-	if deps.CloneOnly {
-		return &Tool{
-			Name:        "spawn",
-			ExecExport:  true,
-			Positional:  []string{"prompt"},
-			Description: "Start a background spawn: a fork of this session (its own process, starting from a copy of your conversation) that works on the prompt while you carry on. Use it for work that must wait on something slow without holding your turn. Its result arrives once, as a [SPAWN RESULT] message, when it finishes. Send it more instructions with spawn_send; check on it with spawn_status. Prints the spawn id.",
-			Parameters:  json.RawMessage(cloneOnlySpawnParams),
-			Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-				p, err := UnmarshalParams[struct {
-					Prompt  string `json:"prompt"`
-					Timeout int    `json:"timeout"`
-				}](params)
-				if err != nil {
-					return ToolResult{}, err
-				}
-				if p.Prompt == "" {
-					return ToolResult{}, fmt.Errorf("prompt is required")
-				}
-				return s.startClone(ctx, p.Prompt, ResolveTimeout(p.Timeout, TimeoutConfig{DefaultSec: 120}))
-			},
-		}
-	}
-
+	modes := s.modes()
 	return &Tool{
 		Name:        "spawn",
 		ExecExport:  true,
 		Positional:  []string{"prompt"},
-		Description: "Spawn a sub-call to a model. Four context modes: 'raw' (just your prompt, no system context — send_to_chat and send_to_session excluded), 'character' (your prompt + character files), 'clone' (branch session — a headless self-fork), 'explore' (read-only exploration — ls, find, grep, git, read, todo, memory_search, web_search, web_fetch, plus conditional tools like stat, file, head, tail, jq, sqlite when available — no file mutation, no shell exec, no messaging). Use 'raw'/'character' for one-shot queries. Use 'clone' to delegate complex multi-step tasks; steer a running clone with spawn_send and check on it with spawn_status. Use 'explore' for codebase research and exploration.",
-		Parameters: json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"prompt": {
-					"type": "string",
-					"description": "Self-contained prompt with all necessary context. For raw/character: the model gets only this (synchronous, result returned directly). For clone: injected as the user message in the branch session."
-				},
-				"model": {
-					"type": "string",
-					"description": "Model group to use: 'powerful', 'fast', 'cheap'. Empty uses the mode's default group. Ignored for clone and explore modes."
-				},
-				"context": {
-					"type": "string",
-					"enum": ["raw", "character", "clone", "explore"],
-					"description": "Context mode. 'raw': just your prompt, no system context (sync). 'character': your prompt + character files (sync). 'clone' (default): branch session with full tool access — runs asynchronously in the background, result delivered via [SPAWN RESULT] when complete. 'explore': read-only exploration agent with ls, find, grep, git, read, todo, memory_search, web_search, web_fetch, plus conditional filesystem/data/system inspection tools (sync, no mutation, uses cheap model group — model param ignored)."
-				},
-				"timeout": {
-					"type": "integer",
-					"description": "Timeout in seconds (default 120). Applies to all modes."
-				}
-			},
-			"required": ["prompt"]
-		}`),
+		Description: spawnToolDescription(modes),
+		Parameters:  spawnParams(modes, s.deps.Delegated != nil),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			p, err := UnmarshalParams[struct {
 				Prompt  string `json:"prompt"`
@@ -287,117 +400,197 @@ func (s *Spawner) SpawnTool() *Tool {
 				return ToolResult{}, fmt.Errorf("prompt is required")
 			}
 			if p.Context == "" {
-				p.Context = "clone"
+				p.Context = defaultMode(modes)
+			}
+			if !slices.Contains(modes, p.Context) {
+				return ToolResult{}, fmt.Errorf("invalid context: %q (use %s)", p.Context, strings.Join(modes, ", "))
 			}
 			timeout := ResolveTimeout(p.Timeout, TimeoutConfig{DefaultSec: 120})
 
-			switch p.Context {
-			case "raw":
-				client, model, format := resolveSpawnGroup(deps.GroupResolver, p.Model, config.CallSpawnRaw, deps.ClientProvider, deps.Client, deps.FallbackModel, deps.FallbackFormat)
-				tempDir, err := tempdir.SpawnMkdir("foci-spawn-*")
-				if err != nil {
-					return ToolResult{}, fmt.Errorf("create temp dir: %w", err)
-				}
-				toolDefs, tools := spawnIsolatedToolSet(deps.Registry, spawnRawBlacklist, deps.Store, tempDir, deps.FileMode)
-				result, err := spawnOneShot(ctx, oneShotParams{
-					client:         client,
-					model:          model,
-					format:         format,
-					prompt:         p.Prompt,
-					timeout:        timeout,
-					toolDefs:       toolDefs,
-					tools:          tools,
-					sessions:       deps.Sessions,
-					maxResultChars: spawnMaxResultChars,
-					maxLoops:       deps.maxToolLoops(),
-					fallbackFn:     deps.FallbackFunc,
-					clientProvider: deps.ClientProvider,
-					routingFor:     deps.ProviderRoutingFor,
-				})
-				if err != nil {
-					return ToolResult{}, err
-				}
-				filesCreated := listCreatedFiles(tempDir)
-				if filesCreated != "" {
-					// tempDir is now durably quoted in conversation history (same
-					// class of reference as a tool-results/ path or an app blob's
-					// path), but — unlike those — it is NOT excluded from
-					// cleanStaleRoot's unconditional wipe of spawn/'s children
-					// (internal/tempdir/cleanup.go). That's a deliberate choice,
-					// not an oversight (#1506): a later turn re-reading this path
-					// across a gateway restart is rare in practice, and excluding
-					// it would need a new age-based sweep to avoid an unbounded
-					// leak (no session-end hook retires a raw spawn's tempDir).
-					// So a raw-mode spawn's created files do not survive a restart.
-					result += "\n\n---\nFiles created in " + tempDir + "/:\n" + filesCreated
-				} else {
-					_ = os.Remove(tempDir) // clean up empty spawn dir
-				}
-				return TextResult(result), nil
-
-			case "character":
-				client, model, format := resolveSpawnGroup(deps.GroupResolver, p.Model, config.CallSpawnCharacter, deps.ClientProvider, deps.Client, deps.FallbackModel, deps.FallbackFormat)
-				var system []provider.SystemBlock
-				if deps.Bootstrap != nil {
-					system = deps.Bootstrap.SystemBlocks()
-				}
-				toolDefs, tools := spawnToolSet(deps.Registry, spawnCharacterBlacklist)
-				result, err := spawnOneShot(ctx, oneShotParams{
-					client:         client,
-					model:          model,
-					format:         format,
-					system:         system,
-					prompt:         p.Prompt,
-					timeout:        timeout,
-					toolDefs:       toolDefs,
-					tools:          tools,
-					sessions:       deps.Sessions,
-					maxResultChars: spawnMaxResultChars,
-					maxLoops:       deps.maxToolLoops(),
-					fallbackFn:     deps.FallbackFunc,
-					clientProvider: deps.ClientProvider,
-					routingFor:     deps.ProviderRoutingFor,
-				})
-				if err != nil {
-					return ToolResult{}, err
-				}
-				return TextResult(result), nil
-
-			case "explore":
-				client, model, format := resolveSpawnGroup(deps.GroupResolver, "", config.CallSpawnExplore, deps.ClientProvider, deps.Client, deps.FallbackModel, deps.FallbackFormat)
-				system := []provider.SystemBlock{
-					{Type: "text", Text: exploreSystemPrompt},
-				}
-				toolDefs, tools := spawnExploreToolSet(deps.Registry)
-				result, err := spawnOneShot(ctx, oneShotParams{
-					client:         client,
-					model:          model,
-					format:         format,
-					system:         system,
-					prompt:         p.Prompt,
-					timeout:        timeout,
-					toolDefs:       toolDefs,
-					tools:          tools,
-					sessions:       deps.Sessions,
-					maxResultChars: spawnExploreMaxResultChars,
-					maxLoops:       deps.exploreMaxDepth(),
-					fallbackFn:     deps.FallbackFunc,
-					clientProvider: deps.ClientProvider,
-					routingFor:     deps.ProviderRoutingFor,
-				})
-				if err != nil {
-					return ToolResult{}, err
-				}
-				return TextResult(result), nil
-
-			case "clone":
+			if p.Context == spawnModeClone {
 				return s.startClone(ctx, p.Prompt, timeout)
-
-			default:
-				return ToolResult{}, fmt.Errorf("invalid context: %q (use raw, character, clone, or explore)", p.Context)
 			}
+			if s.deps.Delegated != nil {
+				return s.runBatchOneShot(ctx, p.Context, p.Prompt, p.Model, timeout)
+			}
+			return s.runAPIOneShot(ctx, p.Context, p.Prompt, p.Model, timeout)
 		},
 	}
+}
+
+// inSpawnTempDir runs a raw spawn in a fresh temp dir and appends a list of
+// the files it left there to its result; an empty dir is removed.
+func inSpawnTempDir(run func(dir string) (string, error)) (ToolResult, error) {
+	tempDir, err := tempdir.SpawnMkdir("foci-spawn-*")
+	if err != nil {
+		return ToolResult{}, fmt.Errorf("create temp dir: %w", err)
+	}
+	result, err := run(tempDir)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	filesCreated := listCreatedFiles(tempDir)
+	if filesCreated != "" {
+		// tempDir is now durably quoted in conversation history (same
+		// class of reference as a tool-results/ path or an app blob's
+		// path), but — unlike those — it is NOT excluded from
+		// cleanStaleRoot's unconditional wipe of spawn/'s children
+		// (internal/tempdir/cleanup.go). That's a deliberate choice,
+		// not an oversight (#1506): a later turn re-reading this path
+		// across a gateway restart is rare in practice, and excluding
+		// it would need a new age-based sweep to avoid an unbounded
+		// leak (no session-end hook retires a raw spawn's tempDir).
+		// So a raw-mode spawn's created files do not survive a restart.
+		result += "\n\n---\nFiles created in " + tempDir + "/:\n" + filesCreated
+	} else {
+		_ = os.Remove(tempDir) // clean up empty spawn dir
+	}
+	return TextResult(result), nil
+}
+
+// runBatchOneShot runs a delegated agent's raw, character or explore spawn
+// as a batch on its own backend (DelegatedManager.RunBatch): synchronous,
+// its answer returned as the tool result. The model string goes to the
+// backend as written; empty = the agent's own. Nothing here reads a model
+// group or an API client.
+//
+//   - raw: AccessIsolated in a fresh temp dir (file tools confined to it, no
+//     commands, no foci tools), with the backend's own default system prompt.
+//     A blank prompt is the aim, but Claude Code — the one backend that can
+//     isolate a session — rejects a blank system prompt (API 400 "system:
+//     text content blocks must contain non-whitespace text", claude 2.1.311),
+//     so it gets its default.
+//   - character: AccessParent with the agent's own composed system prompt:
+//     the agent's tools and rules; what would prompt is refused.
+//   - explore: AccessReadOnly with the read-only explorer prompt.
+func (s *Spawner) runBatchOneShot(ctx context.Context, mode, prompt, model string, timeout time.Duration) (ToolResult, error) {
+	runner := s.deps.Delegated.Runner()
+	if runner == nil {
+		return ToolResult{}, fmt.Errorf("spawn %s: no batch runner (delegated manager not configured)", mode)
+	}
+	req := delegator.BatchRequest{
+		Prompt:          prompt,
+		Model:           model,
+		OwnerSessionKey: SessionKeyFromContext(ctx),
+	}
+	run := func() (string, error) {
+		callCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		text, err := runner.RunBatch(callCtx, req)
+		if err != nil {
+			return "", fmt.Errorf("spawn %s: %w", mode, err)
+		}
+		return text, nil
+	}
+	switch mode {
+	case spawnModeRaw:
+		req.Access = delegator.BatchAccessIsolated
+		req.Purpose = delegator.BatchPurposeSpawnRaw
+		return inSpawnTempDir(func(dir string) (string, error) {
+			req.WorkDir = dir
+			return run()
+		})
+	case spawnModeCharacter:
+		req.Access = delegator.BatchAccessParent
+		req.AgentPrompt = true
+		req.Purpose = delegator.BatchPurposeSpawnCharacter
+	case spawnModeExplore:
+		req.Access = delegator.BatchAccessReadOnly
+		req.SystemPrompt = exploreRolePrompt
+		req.Purpose = delegator.BatchPurposeSpawnExplore
+	default:
+		return ToolResult{}, fmt.Errorf("spawn: %q is not a one-shot mode", mode)
+	}
+	text, err := run()
+	if err != nil {
+		return ToolResult{}, err
+	}
+	return TextResult(text), nil
+}
+
+// runAPIOneShot runs an API agent's raw, character or explore spawn through
+// foci's own one-shot tool loop (spawnOneShot), on the model its group
+// resolves to.
+func (s *Spawner) runAPIOneShot(ctx context.Context, mode, prompt, modelGroup string, timeout time.Duration) (ToolResult, error) {
+	deps := s.deps
+	switch mode {
+	case spawnModeRaw:
+		client, model, format := resolveSpawnGroup(deps.GroupResolver, modelGroup, config.CallSpawnRaw, deps.ClientProvider, deps.Client, deps.FallbackModel, deps.FallbackFormat)
+		return inSpawnTempDir(func(tempDir string) (string, error) {
+			toolDefs, tools := spawnIsolatedToolSet(deps.Registry, spawnRawBlacklist, deps.Store, tempDir, deps.FileMode)
+			return spawnOneShot(ctx, oneShotParams{
+				client:         client,
+				model:          model,
+				format:         format,
+				prompt:         prompt,
+				timeout:        timeout,
+				toolDefs:       toolDefs,
+				tools:          tools,
+				sessions:       deps.Sessions,
+				maxResultChars: spawnMaxResultChars,
+				maxLoops:       deps.maxToolLoops(),
+				fallbackFn:     deps.FallbackFunc,
+				clientProvider: deps.ClientProvider,
+				routingFor:     deps.ProviderRoutingFor,
+			})
+		})
+
+	case spawnModeCharacter:
+		client, model, format := resolveSpawnGroup(deps.GroupResolver, modelGroup, config.CallSpawnCharacter, deps.ClientProvider, deps.Client, deps.FallbackModel, deps.FallbackFormat)
+		var system []provider.SystemBlock
+		if deps.Bootstrap != nil {
+			system = deps.Bootstrap.SystemBlocks()
+		}
+		toolDefs, tools := spawnToolSet(deps.Registry, spawnCharacterBlacklist)
+		result, err := spawnOneShot(ctx, oneShotParams{
+			client:         client,
+			model:          model,
+			format:         format,
+			system:         system,
+			prompt:         prompt,
+			timeout:        timeout,
+			toolDefs:       toolDefs,
+			tools:          tools,
+			sessions:       deps.Sessions,
+			maxResultChars: spawnMaxResultChars,
+			maxLoops:       deps.maxToolLoops(),
+			fallbackFn:     deps.FallbackFunc,
+			clientProvider: deps.ClientProvider,
+			routingFor:     deps.ProviderRoutingFor,
+		})
+		if err != nil {
+			return ToolResult{}, err
+		}
+		return TextResult(result), nil
+
+	case spawnModeExplore:
+		client, model, format := resolveSpawnGroup(deps.GroupResolver, "", config.CallSpawnExplore, deps.ClientProvider, deps.Client, deps.FallbackModel, deps.FallbackFormat)
+		system := []provider.SystemBlock{
+			{Type: "text", Text: exploreSystemPrompt},
+		}
+		toolDefs, tools := spawnExploreToolSet(deps.Registry)
+		result, err := spawnOneShot(ctx, oneShotParams{
+			client:         client,
+			model:          model,
+			format:         format,
+			system:         system,
+			prompt:         prompt,
+			timeout:        timeout,
+			toolDefs:       toolDefs,
+			tools:          tools,
+			sessions:       deps.Sessions,
+			maxResultChars: spawnExploreMaxResultChars,
+			maxLoops:       deps.exploreMaxDepth(),
+			fallbackFn:     deps.FallbackFunc,
+			clientProvider: deps.ClientProvider,
+			routingFor:     deps.ProviderRoutingFor,
+		})
+		if err != nil {
+			return ToolResult{}, err
+		}
+		return TextResult(result), nil
+	}
+	return ToolResult{}, fmt.Errorf("spawn: %q is not a one-shot mode", mode)
 }
 
 // spawnToolSet builds API tool definitions and a name→Tool map from the
@@ -414,7 +607,7 @@ func spawnToolSet(reg *Registry, blacklist map[string]bool) ([]provider.ToolDef,
 		if blacklist[t.Name] {
 			continue
 		}
-		if t.Name == "spawn" {
+		if spawnToolNames[t.Name] {
 			continue
 		}
 		defs = append(defs, provider.NewCustomTool(t.Name, t.Description, t.Parameters))
@@ -434,7 +627,7 @@ func spawnIsolatedToolSet(reg *Registry, blacklist map[string]bool, store *secre
 		if blacklist[t.Name] {
 			continue
 		}
-		if t.Name == "spawn" {
+		if spawnToolNames[t.Name] {
 			continue
 		}
 		defs = append(defs, provider.NewCustomTool(t.Name, t.Description, t.Parameters))

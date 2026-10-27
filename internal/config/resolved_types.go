@@ -152,7 +152,6 @@ type ResolvedSummary struct {
 	SummaryContextChars  int
 	MaxSummaryInputChars int
 	MaxImagePixels       int
-	SummaryModel         string // delegated-only; "" = the backend's cheap model, else the agent's
 }
 
 func resolveSummary(m SummaryConfig) ResolvedSummary {
@@ -164,7 +163,6 @@ func resolveSummary(m SummaryConfig) ResolvedSummary {
 		SummaryContextChars:  DerefInt(m.SummaryContextChars),
 		MaxSummaryInputChars: DerefInt(m.MaxSummaryInputChars),
 		MaxImagePixels:       DerefInt(m.MaxImagePixels),
-		SummaryModel:         DerefStr(m.SummaryModel),
 	}
 }
 

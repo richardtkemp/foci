@@ -3,6 +3,8 @@ package ccstream
 import (
 	"slices"
 	"testing"
+
+	"foci/internal/delegator"
 )
 
 // TestUnattendedPermissionArgs pins the launch flags per session kind: a
@@ -21,7 +23,7 @@ func TestUnattendedPermissionArgs(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := unattendedPermissionArgs(c.cfgSkip, c.batch)
+			got := unattendedPermissionArgs(c.cfgSkip, c.batch, delegator.BatchAccessDefault)
 			if !slices.Equal(got, c.want) {
 				t.Fatalf("unattendedPermissionArgs(%v, %v) = %q, want %q", c.cfgSkip, c.batch, got, c.want)
 			}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"foci/internal/agent"
@@ -199,33 +200,48 @@ func TestToolTable_CloseSessionGatedOnAppPlatform(t *testing.T) {
 	}
 }
 
-// TestToolTable_ExecSpawnGatedOnBranch: a delegated agent gets spawn,
-// spawn_send and spawn_status on its exec bridge only when its backend can
-// fork a session (clone mode's branch), and its spawn offers clone mode only
-// (#2523): no context or model parameter, since the one-shot modes need the
-// direct API client a delegated agent has not got.
-func TestToolTable_ExecSpawnGatedOnBranch(t *testing.T) {
+// TestToolTable_ExecSpawnModes proves a delegated agent's spawn is built
+// through the production tool table for every registered backend (and not
+// for an unknown one), offers exactly the modes that backend can run safely —
+// raw only where a session can be isolated (Claude Code), explore wherever it
+// can be read-only — and is built without any API one-shot field even when
+// the gateway has them to hand (tools.NewSpawner panics if a delegated spawn
+// carries one). spawn_send and spawn_status follow clone, which every
+// registered backend can fork for.
+func TestToolTable_ExecSpawnModes(t *testing.T) {
 	t.Parallel()
-	spawnTools := []string{"spawn", "spawn_send", "spawn_status"}
-	for backend, want := range map[string]bool{"claude-code": true, "opencode": true, "codex": true, "": false} {
+	client := &routingCaptureClient{}
+	cases := map[string][]string{
+		"claude-code": {"raw", "character", "clone", "explore"},
+		"opencode":    {"character", "clone", "explore"},
+		"codex":       {"character", "clone", "explore"},
+		"":            nil,
+	}
+	for backend, want := range cases {
 		p := minimalSetupParams(t, "test")
 		p.acfg.Backend = backend
+		p.clientProvider = &summariserWireClientProvider{client: client}
 		registry := tools.NewRegistry()
 		registerTools(&toolDeps{
-			p:        p,
-			path:     pathExec,
-			registry: registry,
-			connMgr:  stubConnMgr{},
-			agLazy:   func() *agent.Agent { return nil },
-			wakeFn:   stubWakeFn,
-			out:      &toolOutputs{},
+			p:             p,
+			path:          pathExec,
+			registry:      registry,
+			connMgr:       stubConnMgr{},
+			agLazy:        func() *agent.Agent { return nil },
+			wakeFn:        stubWakeFn,
+			out:           &toolOutputs{},
+			client:        client,
+			groupResolver: &config.GroupResolver{},
+			fallbackFn:    func(string) (string, string, string, bool) { return "", "", "", false },
+			resolvedModel: "anthropic/claude-test",
+			defaultFormat: "anthropic",
 		})
-		for _, name := range spawnTools {
-			if got := registry.Get(name) != nil; got != want {
-				t.Errorf("backend %q: %s registered = %v, want %v", backend, name, got, want)
+		for _, name := range []string{"spawn", "spawn_send", "spawn_status"} {
+			if got := registry.Get(name) != nil; got != (want != nil) {
+				t.Errorf("backend %q: %s registered = %v, want %v", backend, name, got, want != nil)
 			}
 		}
-		if !want {
+		if want == nil {
 			continue
 		}
 		sp := registry.Get("spawn")
@@ -233,15 +249,18 @@ func TestToolTable_ExecSpawnGatedOnBranch(t *testing.T) {
 			t.Errorf("backend %q: spawn not exec-exported", backend)
 		}
 		var schema struct {
-			Properties map[string]json.RawMessage `json:"properties"`
+			Properties map[string]struct {
+				Enum []string `json:"enum"`
+			} `json:"properties"`
 		}
 		if err := json.Unmarshal(sp.Parameters, &schema); err != nil {
 			t.Fatalf("spawn schema: %v", err)
 		}
-		for _, k := range []string{"context", "model"} {
-			if _, ok := schema.Properties[k]; ok {
-				t.Errorf("backend %q: clone-only spawn still offers %q", backend, k)
-			}
+		if got := schema.Properties["context"].Enum; !reflect.DeepEqual(got, want) {
+			t.Errorf("backend %q: spawn modes = %v, want %v", backend, got, want)
+		}
+		if _, ok := schema.Properties["model"]; !ok {
+			t.Errorf("backend %q: spawn offers no model parameter", backend)
 		}
 	}
 }

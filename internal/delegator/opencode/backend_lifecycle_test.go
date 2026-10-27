@@ -745,6 +745,53 @@ func TestBackend_Start_SkipPermissions_NoDefaultPermission(t *testing.T) {
 	_ = b.Close()
 }
 
+// TestBackend_Start_ReadOnlyBatch_RulesetEnforced proves a read-only batch
+// session (spawn explore) gets its own enforced ruleset at Start, in place of
+// default_permission: reading and searching allowed anywhere, editing, bash
+// (and with it every foci shell function) and everything else denied.
+func TestBackend_Start_ReadOnlyBatch_RulesetEnforced(t *testing.T) {
+	rec := &controlRecorder{rules: map[string][]rule{}}
+	_, b := newTestBackendServer(t, rec.serveHTTP)
+	b.cfg = map[string]any{"default_permission": "allow"}
+
+	if err := b.Start(context.Background(), delegator.StartOptions{AgentID: "test-agent", SkipPermissions: true, BatchAccess: delegator.BatchAccessReadOnly}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	for _, c := range []struct{ perm, target, want string }{
+		{PermRead, "/etc/hosts", "allow"},
+		{PermGlob, "**/*.go", "allow"},
+		{PermGrep, "TODO", "allow"},
+		{PermList, "/", "allow"},
+		{PermWebfetch, "https://example.com", "allow"},
+		{PermExternalDirectory, "/elsewhere", "allow"},
+		{PermEdit, "main.go", "deny"},
+		{"write", "main.go", "deny"},
+		{PermBash, "foci_send_to_chat hi", "deny"},
+		{PermTask, "general", "deny"},
+		{PermRead, "prod.env", "ask"},
+	} {
+		if got := rec.evaluate(b.sessionID, c.perm, c.target); got != c.want {
+			t.Errorf("%s %q = %q, want %q", c.perm, c.target, got, c.want)
+		}
+	}
+	_ = b.Close()
+}
+
+// TestBackend_Start_ReadOnlyBatch_ApplyFailureFailsStart proves a read-only
+// batch whose ruleset opencode refuses does not start: it would otherwise run
+// with opencode's permissive defaults, unlike default_permission, whose
+// failure is only a warning.
+func TestBackend_Start_ReadOnlyBatch_ApplyFailureFailsStart(t *testing.T) {
+	rec := &controlRecorder{rules: map[string][]rule{}}
+	rec.failSessionPatches()
+	_, b := newTestBackendServer(t, rec.serveHTTP)
+
+	if err := b.Start(context.Background(), delegator.StartOptions{AgentID: "test-agent", SkipPermissions: true, BatchAccess: delegator.BatchAccessReadOnly}); err == nil {
+		_ = b.Close()
+		t.Fatal("read-only batch started although its ruleset could not be applied")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Close
 // ---------------------------------------------------------------------------

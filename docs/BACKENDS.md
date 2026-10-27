@@ -92,7 +92,7 @@ These are no-ops or handled by CC:
 - **Fallback chain** — `[groups.fallbacks]` has no effect; CC picks its own fallback.
 - **Server tools** — web search, web fetch, etc. are provided by CC's own tools, not Anthropic server tools.
 - **MCP** — Foci's MCP integration is unused; add MCP servers to CC directly.
-- **Spawn / sub-agent tool** — CC's own `Agent` tool replaces Foci's one-shot spawn modes. Clone-mode `foci_spawn` (with `foci_spawn_send` / `foci_spawn_status`) is available on any backend that can fork a session (#2523): a background fork in its own backend process, for long waits that CC's subagents would hold the turn for.
+- **Spawn / sub-agent tool** — `foci_spawn` runs on every delegated backend. Its one-shot modes (`raw`, `character`, `explore`) run as batches on the agent's own backend, never through model groups, and each is offered only where the backend can enforce it (`CapIsolatedBatch` for raw, `CapReadOnlyBatch` for explore). `clone` (with `foci_spawn_send` / `foci_spawn_status`) is available on any backend that can fork a session (#2523): a background fork in its own backend process, for long waits that CC's subagents would hold the turn for. CC's own `Agent` tool remains available alongside.
 - **Foci's session branching** — `/branch` does not copy Foci JSONL; it asks the backend to fork its own session (`ForkSession`: ccstream copies the transcript, opencode calls `POST /session/:id/fork`, codex calls `thread/fork`). A fork always takes the whole session: a truncated fork (`TruncateAfter > 0`) is rejected by all three.
 - **Session repair** — `LoadAndRepairSession` is a no-op; CC owns the JSONL.
 
@@ -166,6 +166,8 @@ Every delegated backend declares every capability in its `delegator.Spec` (`inte
 | `live_model` | reports the model its live process last named, without a turn result (LiveModelReporter) | ✓ | ✗ | ✗ |
 | `branch` | forks and deletes its own sessions (BackendBrancher) | ✓ | ✓ | ✓ |
 | `scoped_cleanup` | needs a live server to delete sessions and opens it once per sweep (RunningBackendCleaner) | ✗ | ✓ | ✓ |
+| `isolated_batch` | runs a batch session with BatchAccessIsolated: file tools confined to its working directory, no command execution, no MCP, no exec-bridge tools (spawn raw mode) | ✓ | ✗ | ✗ |
+| `read_only_batch` | runs a batch session with BatchAccessReadOnly: no file writes and no mutating commands (spawn explore mode) | ✓ | ✓ | ✓ |
 | `host_hooks` | takes the gateway's HostHooks: auth-failure and rate-limit reports, pretool and stop rules (HostHooksAcceptor) | ✓ | ✗ | ✓ |
 | `unstarted_readiness_probe` | CheckReady works on a constructed but unstarted backend (the startup probe) | ✓ | ✓ | ✗ |
 | `pretool_rules` | enforces PreToolUse deny rules (pretool_rules) | ✓ | ✗ | ✗ |
@@ -200,6 +202,7 @@ Why not:
 - `thread_naming`: claude-code: CC does not name its sessions; agents get the set_session_alias tool instead; opencode: foci does not take opencode's session titles.
 - `live_model`: codex: its model reaches foci only through thread start and turn results; opencode: its model is reported only at session idle.
 - `scoped_cleanup`: claude-code: fork and cleanup are local transcript file operations, no server needed.
+- `isolated_batch`: codex: its sandbox confines writes, never reads: a session can read the whole disk; opencode: one opencode server per agent runs in the agent workspace: a session cannot be confined to another directory.
 - `host_hooks`: codex: reports no auth failures or rate limits foci acts on, and has no pretool or stop hooks.
 - `unstarted_readiness_probe`: opencode: CheckReady needs the server that only Start creates.
 - `pretool_rules`: codex: no PreToolUse rule engine is wired to the codex hook; opencode: opencode has no PreToolUse hook.
@@ -318,7 +321,7 @@ grepped for each ✗. Row IDs are not renumbered, so the gaps are the removed ro
 | M1 | Launch model | Model ladder (override, config, default) applied at Start | ✓ | ✓ | ✓ |
 | M4 | Live catalogue | `modelcaps` live model list | ✓ [37] | ✗ | ✓ |
 | M5 | Effort | Launch `EffortFunc` + runtime `ApplyFlagSettingsRequest` | ✓ | n/a [38] | [35] |
-| M7 | Batch models | `Spec.BatchDefaultModel` / `BatchCheapModel` | ✓ | ✗ | ✗ |
+| M7 | Batch models | `backend_config` `batch_model` (gateway-read, passed as written) | ✓ | ✓ | ✓ |
 | M8 | Silent model swap | Backend-side model fallback is surfaced | ✓ | ✗ | [39] |
 
 ### 9. Sessions, resume and branching
@@ -374,6 +377,7 @@ Generated from each backend's `Spec.ConfigKeys` / `Spec.StartFields` (`internal/
 | `log_level` | ✗ | ✗ | ✓ |
 | `port` | ✗ | ✗ | ✓ |
 | `default_permission` | ✗ | ✗ | ✓ |
+| `batch_model` (gateway) | ✓ | ✓ | ✓ |
 
 (gateway) = read by the gateway for the backend, not by the backend package; `env` reaches a backend that reads `StartOptions.Env`, `pretool_rules` / `stop_rules` one declaring `pretool_rules` / `stop_rules`.
 
@@ -392,6 +396,7 @@ Generated from each backend's `Spec.ConfigKeys` / `Spec.StartFields` (`internal/
 | `SessionKey` | ✓ | ✓ | ✓ |
 | `BatchOnly` | ✗ | ✓ | ✗ |
 | `SkipPermissions` | ✓ | ✗ | ✓ |
+| `BatchAccess` | ✓ | ✓ | ✓ |
 | `ExecRegistry` | manager | manager | manager |
 | `Env` | ✓ | ✓ | ✓ |
 | `AutoApproveRules` | ✓ | ✓ | ✓ |
@@ -485,6 +490,13 @@ Notes:
     no hits). Its batch runs are covered instead by the agent layer marking every batch purpose
     an unattended trigger (`ag/context.go:unattendedTriggers`), which codex honours per turn
     (`cx/permissions.go:unattended`) — hence ✓ per turn, ✗ for the session-wide flag.
+    Spawn batches (`foci_spawn` raw/character/explore) are batches like any other: unattended,
+    decided by the rules, never prompted. Their `StartOptions.BatchAccess` changes only the
+    launch: a parent-access (character) batch launches as the agent's sessions do (no auto
+    mode); a read-only or isolated batch is restricted by the backend itself
+    (`cc/access.go:restrictedBatchArgs`, `cx/codex.go:sandboxMode`,
+    `oc/access.go:batchAccessRules`), so CC and opencode refuse the excluded tools without
+    an ask, and codex's read-only sandbox blocks writes whatever the rules approve.
 16. `control_permission_mode`, not live on codex: it queues the approval policy for the next `turn/start` (`cx/control.go:applyPendingControls`);
     `plan` maps to `on-request`, so there is no plan mode.
 17. `cx/callbacks.go:RegisterPromptCancelListener` is a TODO no-op. `serverRequest/resolved` clears
@@ -667,7 +679,7 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - M4: `gw/main.go` modelcaps fetcher for `BackendCCStream` | ✗ grep `modelcaps` | `cx/modelcaps.go:refreshModelCaps` → `publishModelCaps`
 - M5: `cc/lifecycle.go:Start` (`--effort`), `cc/control.go:SendControl` | n/a | `cx/control.go` `pendingEffort`
 - `voice_mode`: `cc/voicemode.go` | n/a | `cx/voicemode.go`
-- M7: `cc/ccstream.go:BatchDefaultModel`, `BatchCheapModel` | ✗ grep `BatchDefaultModel|BatchCheapModel` | ✗ same
+- M7: `gw/agents_delegated.go:foldGlobalBackendConfig` (`batch_model`) → `DelegatedManager.BatchModel` — backend-neutral
 - M8: `cc/handlers.go:OnSystem` `model_refusal_fallback` | ✗ grep `fallback|reroute` | `cx/reader.go` `model/rerouted`
 - `streaming` (thinking): `cc/handlers.go:OnStreamEvent` | `oc/handlers.go:handleReasoningPart` | `cx/handlers.go:onReasoningDelta`
 
@@ -760,11 +772,12 @@ See [Declared capabilities](#declared-capabilities) and
   - `SetOnSubagentStatus` / `SetOnSubagentRunning`: reuse `dg.SubagentTracker` rather than a
     private tracker, so the status line and pending-work gate work.
   - Auth-failure and rate-limit callbacks wired in `gw/agents_delegated.go:configureDelegated`.
-  - Honour `StartOptions.SkipPermissions`.
+  - Honour `StartOptions.BatchAccess`: enforce `BatchAccessReadOnly` / `BatchAccessIsolated`
+    and declare `CapReadOnlyBatch` / `CapIsolatedBatch`, or declare them No.
 - **Feature-specific:** `VoiceModer` and effort (only if the backend has an effort knob),
   `ModelResolver` + modelcaps catalogue, `PlanResponder`, `ElicitationResponder`,
   `DeliveryTracker`, `AutonomousRunAwaiter` / `AdoptRunningTurn`, `FoldAttachmentCarrier`,
-  `ThreadNameConsumer`, `Spec.BatchDefaultModel` / `BatchCheapModel`, `Spec.ClosesTurnActivity`, a
+  `ThreadNameConsumer`, `Spec.ClosesTurnActivity`, a
   per-tool hook (pretool rules, stop rules, post-tool nudges, runtime notes), expectation guards.
 
 ### Host callbacks: HostHooks
