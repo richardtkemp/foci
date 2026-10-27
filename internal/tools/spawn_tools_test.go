@@ -207,7 +207,7 @@ func TestSpawnOneShotToolSetsExcludeWhoami(t *testing.T) {
 
 	reg := NewRegistry()
 	reg.Register(NewWhoamiTool(WhoamiDeps{}))
-	reg.Register(NewCloseSessionTool(func(string, string) (int, error) { return 0, nil }))
+	reg.Register(NewCloseSessionTool(func(string, string) (int, error) { return 0, nil }, func(string, string) (int, error) { return 0, nil }))
 	reg.Register(&Tool{
 		Name:       "read",
 		Parameters: json.RawMessage(`{"type":"object","properties":{}}`),

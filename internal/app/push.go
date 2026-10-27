@@ -549,6 +549,23 @@ func isOwnMessage(frame fap.ServerFrame) bool {
 	return ok && sm.Role == "user"
 }
 
+// readableMessageID returns the id a device stores a visible frame's message
+// row under, the id a Read watermark names, or "" for a frame that is not one
+// message row (an ask is keyed by its prompt, and is never the turn's reply).
+func readableMessageID(frame fap.ServerFrame) string {
+	switch f := frame.(type) {
+	case fap.ServerMessage:
+		return f.MessageID
+	case fap.TextEnd:
+		return f.MessageID
+	case fap.Media:
+		return f.MessageID
+	case fap.Notification:
+		return f.MessageID
+	}
+	return ""
+}
+
 func pushPreview(frame fap.ServerFrame) (string, bool) {
 	switch f := frame.(type) {
 	case fap.ServerMessage:

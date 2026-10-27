@@ -547,6 +547,14 @@ func (h *Hub) handleRead(client *wsClient, f fap.Read) {
 	if b == nil {
 		return
 	}
+	h.applyRead(client, b, f.MessageID)
+}
+
+// applyRead moves b's read watermark to messageID and mirrors it to every
+// connected device except sender. A device's Read (handleRead) passes itself
+// as sender; a server-originated read (close_session's mark_read, #2592)
+// passes nil, so every device, including one showing the chat, follows.
+func (h *Hub) applyRead(sender *wsClient, b *convBinding, messageID string) {
 	advance := true
 	if idx := h.deps.SessionIndex; idx != nil {
 		// The watermark only moves forward: a stale device's Read (it read an older
@@ -555,9 +563,9 @@ func (h *Hub) handleRead(client *wsClient, f fap.Read) {
 		// Compare-and-set under readMu so two devices' reads can't interleave.
 		h.readMu.Lock()
 		cur, _ := idx.GetChatMetadata(b.agentID, "app", b.chatID, "last_read")
-		advance = readWatermarkAdvances(cur, f.MessageID)
+		advance = readWatermarkAdvances(cur, messageID)
 		if advance {
-			_ = idx.SetChatMetadata(b.agentID, "app", b.chatID, "last_read", f.MessageID)
+			_ = idx.SetChatMetadata(b.agentID, "app", b.chatID, "last_read", messageID)
 		}
 		h.readMu.Unlock()
 		// A Read naming the stored watermark itself is still mirrored (#1515): the
@@ -566,17 +574,17 @@ func (h *Hub) handleRead(client *wsClient, f fap.Read) {
 		// stops counting). Each device derives its unread count from the
 		// watermark it applies, so relaying the re-assertion is what lets the
 		// others follow. Only a regression is dropped.
-		if !advance && f.MessageID != cur {
+		if !advance && messageID != cur {
 			return
 		}
 	}
-	h.broadcastExcept(client, fap.ReadSync{ConversationID: f.ConversationID, MessageID: f.MessageID})
+	h.broadcastExcept(sender, fap.ReadSync{ConversationID: b.convID, MessageID: messageID})
 	// A device whose socket is released never hears that ReadSync until it next
 	// connects, so its notification for this chat outlives the read (#2182). A
 	// re-asserted watermark already sent its wake when it first advanced, so only
 	// a real advance sends one; the reconnect's pushReads re-applies it anyway.
 	if advance {
-		h.pusher.notifyRead(f.ConversationID, f.MessageID, h.connectedDeviceIDs)
+		h.pusher.notifyRead(b.convID, messageID, h.connectedDeviceIDs)
 	}
 }
 

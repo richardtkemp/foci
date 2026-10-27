@@ -22,8 +22,9 @@ Per-tool reference for the Claude Code (shell) backend. How `foci_*` shell funct
 - `--message` (or stdin). `--reply-to caller|session` (default **caller** — the reply comes back to *you*, not the target's user chat; use `session` to surface it to their chat).
 
 ### `foci_close_session` — close this chat
-- No arguments. Closes the app chat you are running in, exactly as if the user closed it: the tab leaves every device, the history stays, and the user's next message in it reopens it.
+- Closes the app chat you are running in, exactly as if the user closed it: the tab leaves every device, the history stays, and the user's next message in it reopens it.
 - Call it only when the conversation is finished with nothing outstanding, or when the user asks. It is fine in the same turn as your final reply (the reply still lands, unread).
+- `--mark-read` (flag, default off): also mark the chat read on every device once this turn ends, every message you send this turn included (also ones after the call, e.g. "Closed."), so none shows as unread.
 - Only registered when the app platform is configured; on a non-app session it says there is nothing to close.
 
 ### `foci_set_session_alias` — name this conversation

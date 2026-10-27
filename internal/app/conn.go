@@ -747,6 +747,7 @@ func (c *appConn) NewTurnSink(env agent.Envelope) (turnevent.Sink, func()) {
 	// sink.tts nil, so appSink degrades to text-only — no error.
 	sink.tts = c.tts
 	sink.attachVoice = func(audio []byte) error { return c.sendVoiceModeAttachment(b, audio) }
+	sink.afterTurn = func() { c.hub.finishTurnRead(b) }
 	return sink, sink.cleanup
 }
 

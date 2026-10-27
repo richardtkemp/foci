@@ -71,3 +71,75 @@ func (h *Hub) closeSessionConversations(agentID, sessionKey string) int {
 	appLog.Infof("agent close: agent=%s session=%s closed %d open chat(s) (%d remain)", agentID, sessionKey, closed, len(kept))
 	return closed
 }
+
+// MarkSessionRead marks the app chat bound to sessionKey (agent agentID) read
+// on every device, as if the user had read it (#2592, close_session's
+// mark_read). With a turn in flight on that chat the read waits for the turn's
+// end, so it covers the agent's final reply; otherwise it applies now. It
+// reports how many chats were marked or scheduled (0 or 1: a session binds one
+// chat). Errors only when the app provider is not running.
+func MarkSessionRead(agentID, sessionKey string) (int, error) {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil {
+		return 0, errors.New("app provider not running")
+	}
+	return h.markSessionRead(agentID, sessionKey), nil
+}
+
+// markSessionRead resolves the session's binding (bySession, the binding its
+// turns render to) and either flags it for finishTurnRead or reads it now.
+// "In flight" is the turn-scoped activity appSink drives: non-idle from
+// TurnStart until TurnComplete or the turn's cleanup.
+func (h *Hub) markSessionRead(agentID, sessionKey string) int {
+	if sessionKey == "" {
+		return 0
+	}
+	b := h.bindingForSession(sessionKey)
+	if b == nil {
+		return 0
+	}
+	b.mu.Lock()
+	if b.agentID != agentID {
+		b.mu.Unlock()
+		return 0
+	}
+	inTurn := b.turnKind != "" && b.turnKind != fap.ActivityKindIdle
+	if inTurn {
+		b.readAfterTurn = true
+	}
+	b.mu.Unlock()
+	if !inTurn {
+		h.readThroughLatest(b)
+	}
+	appLog.Infof("agent mark read: agent=%s session=%s conv=%s deferred=%v", agentID, sessionKey, b.convID, inTurn)
+	return 1
+}
+
+// finishTurnRead applies a mark_read deferred to this turn's end, once the
+// turn's final frames are sent. Called from appSink's cleanup; a no-op when
+// none is pending.
+func (h *Hub) finishTurnRead(b *convBinding) {
+	b.mu.Lock()
+	pending := b.readAfterTurn
+	b.readAfterTurn = false
+	b.mu.Unlock()
+	if pending {
+		h.readThroughLatest(b)
+	}
+}
+
+// readThroughLatest moves b's read watermark to the newest message sent on it
+// and mirrors it to every device. Nothing is sent when no message is known
+// (none since the server started).
+func (h *Hub) readThroughLatest(b *convBinding) {
+	b.mu.Lock()
+	id := b.lastMsgID
+	b.mu.Unlock()
+	if id == "" {
+		appLog.Infof("agent mark read: conv=%s has no message to mark read", b.convID)
+		return
+	}
+	h.applyRead(nil, b, id)
+}

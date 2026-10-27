@@ -75,6 +75,11 @@ type appSink struct {
 	// this gate, TurnComplete would re-synthesize that whole accumulation as
 	// one clip, reading past the bubble it belongs to and into the next.
 	voiceBlockDelivered bool
+
+	// afterTurn runs at the end of cleanup, once every frame of the turn is
+	// sent: appConn.NewTurnSink points it at Hub.finishTurnRead, which applies
+	// a close_session mark_read deferred to this turn (#2592). nil = none.
+	afterTurn func()
 }
 
 // newAppSink builds the per-turn app sink: an appBackend (turn.Platform) wrapped
@@ -98,6 +103,9 @@ func newAppSink(b *convBinding) *appSink {
 	s.cleanup = func() {
 		b.setTurnActivity(fap.ActivityKindIdle)
 		renderer.Cleanup()
+		if s.afterTurn != nil {
+			s.afterTurn()
+		}
 	}
 	return s
 }

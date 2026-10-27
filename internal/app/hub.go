@@ -2392,6 +2392,14 @@ type convBinding struct {
 	lastPreview string // last visible frame's preview; seeds the roster row
 	lastActMs   int64  // last visible frame's send time (unix ms); seeds the roster row
 
+	// lastMsgID is the newest message id sent here that a device can hold as a
+	// read watermark (readableMessageID), in-memory only: "" after a restart
+	// until the next message. readAfterTurn is close_session's mark_read
+	// (#2592) deferred to the end of the turn in flight, so the read covers the
+	// agent's final reply; appSink's cleanup consumes it (Hub.finishTurnRead).
+	lastMsgID     string
+	readAfterTurn bool
+
 	cacheExpiryMs int64 // last-emitted prompt-cache expiry (unix ms); seeds the roster snapshot, 0 = unknown/cold
 }
 
@@ -2761,6 +2769,11 @@ func (b *convBinding) sendThen(frame fap.ServerFrame, onRecorded func()) {
 	if visible {
 		b.lastPreview = preview
 		b.lastActMs = now.UnixMilli()
+		// Send order, not id order: devices order their read line by seq, and
+		// ULIDs minted in one millisecond are not monotonic.
+		if id := readableMessageID(frame); id != "" {
+			b.lastMsgID = id
+		}
 	}
 	b.buffer = append(b.buffer, bufferedFrame{seq: seq, wire: wire, sent: now})
 	b.trimBufferLocked()
