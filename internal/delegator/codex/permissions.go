@@ -49,6 +49,17 @@ func (b *Backend) onCommandApproval(line []byte, rpcID int64) {
 		return
 	}
 
+	// A system-triggered turn (Unattended) has nobody watching the chat to
+	// answer an approval: accepting it on the wire keeps the turn running
+	// instead of blocking it forever on a keyboard nobody will click
+	// (incident 2026-10-27). Nothing is stored pending — there is no prompt
+	// to answer.
+	if trigger, unattended := b.unattendedTurn(); unattended {
+		b.logInfof("unattended turn (trigger=%s): accepting command approval: command=%q item=%s", trigger, command, params.ItemID)
+		b.respondApproval(rpcID, "accept")
+		return
+	}
+
 	b.permMu.Lock()
 	b.pendingPerms[rpcID] = &pendingApproval{
 		rpcID:   rpcID,
@@ -84,6 +95,15 @@ func (b *Backend) onFileChangeApproval(line []byte, rpcID int64) {
 	var params fileChangeApprovalParams
 	if err := json.Unmarshal(line, &params); err != nil {
 		b.logWarnf("dropping malformed file approval: %v", err)
+		return
+	}
+
+	// Same unattended semantics as onCommandApproval: a system-triggered
+	// turn may write files without a prompt (owner's decision — the
+	// alternative blocks the turn on an approval nobody answers).
+	if trigger, unattended := b.unattendedTurn(); unattended {
+		b.logInfof("unattended turn (trigger=%s): accepting file-change approval: item=%s", trigger, params.ItemID)
+		b.respondApproval(rpcID, "accept")
 		return
 	}
 
@@ -156,6 +176,21 @@ func (b *Backend) lookupItemDetail(itemID string) string {
 func (b *Backend) onPermissionApproval(_ []byte, rpcID int64) {
 	b.logDebugf("permission approval request (id=%d), auto-denying", rpcID)
 	b.respondApproval(rpcID, "decline")
+}
+
+// unattendedTurn reports the trigger of the in-flight turn when that turn is
+// system-triggered (TurnEvents.Unattended), for labelling the unattended
+// accept. Guarded by turnMu: approvals arrive on the reader goroutine while
+// turns begin/end on the inject path. Returns ("", false) for user turns and
+// between turns — TurnEvents is cleared at turn end, so approvals then
+// surface via permPromptFn again.
+func (b *Backend) unattendedTurn() (trigger string, unattended bool) {
+	b.turnMu.Lock()
+	defer b.turnMu.Unlock()
+	if b.turnEvents != nil && b.turnEvents.Unattended {
+		return b.turnEvents.Trigger, true
+	}
+	return "", false
 }
 
 // respondApproval sends the approval decision back to the app-server.

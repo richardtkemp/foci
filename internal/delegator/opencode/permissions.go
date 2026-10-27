@@ -64,7 +64,12 @@ func (b *Backend) onPermissionAsked(req PermissionRequest) {
 // permissions to handleQuestionPermission and everything else to the binary
 // Allow/Deny/Always keyboard. Shared by both opencode permission models.
 func (b *Backend) surfacePermission(pp pendingPermission) {
-	if b.skipPermissions {
+	// A system-triggered turn (Unattended) is answered exactly like a
+	// skip-permissions session: it runs on a chat nobody is watching, so a
+	// surfaced keyboard would block the turn forever on an unanswered ask
+	// (2026-10-27 incident). Checked before dedup/auto-approve — nothing
+	// may be registered outstanding or prompted for it either way.
+	if b.skipPermissions || b.unattendedTurn() {
 		b.answerUnattended(pp)
 		return
 	}
@@ -137,6 +142,18 @@ func (b *Backend) surfacePermission(pp pendingPermission) {
 		{Label: "Always Allow", Data: "always"},
 	}
 	b.permPromptFn(pp.id, pp.title, pp.title, "", choices)
+}
+
+// unattendedTurn reports whether the in-flight turn is system-triggered
+// (TurnEvents.Unattended). Guarded by turnMu: asks arrive on the dispatcher
+// goroutine while turns begin/end on the inject path (see the -race
+// concurrency test in unattended_turn_test.go). False between turns —
+// TurnEvents is cleared at turn end, so asks on an idle attended session
+// surface to the user again.
+func (b *Backend) unattendedTurn() bool {
+	b.turnMu.Lock()
+	defer b.turnMu.Unlock()
+	return b.turnEvents != nil && b.turnEvents.Unattended
 }
 
 // answerUnattended answers a permission in a skip-permissions session (a

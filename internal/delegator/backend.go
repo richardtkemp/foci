@@ -809,6 +809,23 @@ type TurnEvents struct {
 	// the turn that wrote it, which is the pre-#1880 behaviour.
 	TurnID string
 
+	// Trigger names what started this turn — the TurnState.Trigger the agent
+	// layer dispatched it under ("telegram", "keepalive", "reflection", ...).
+	// Backends use it to label unattended answers in their logs; empty when
+	// the caller has none.
+	Trigger string
+
+	// Unattended marks a system-triggered turn (any non-user trigger:
+	// reflection, keepalive, consolidation, ...) — one running on a session
+	// nobody is watching. A permission ask raised by such a turn must not
+	// surface a prompt: no one would answer it, and the turn would block
+	// forever (incident 2026-10-27: an external_directory ask blocked a
+	// reflection turn 89 minutes). Backends that honour it answer the ask
+	// themselves — allow tool permissions, decline questions — instead of
+	// calling permPromptFn. Turn-scoped: cleared with the rest of TurnEvents
+	// at turn end, so user turns on the same session keep prompting.
+	Unattended bool
+
 	// OnTurnComplete fires once when the turn finishes. The backend
 	// captures-then-nils TurnEvents under turnMu in OnResult so this
 	// invariant holds by construction (no counters needed).
