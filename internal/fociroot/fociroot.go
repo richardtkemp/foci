@@ -31,6 +31,15 @@ const EnvVar = "FOCI_HOME"
 // .claude.json, projects/ transcripts, plugins). CC falls back to ~/.claude.
 const ccConfigEnv = "CLAUDE_CONFIG_DIR"
 
+// ccSecureStorageEnv is Claude Code's variable that picks which stored login
+// it uses. Without it, a set CLAUDE_CONFIG_DIR makes CC name its macOS
+// keychain item "Claude Code-credentials-<8 hex of sha256(config dir)>", so
+// a CC with its own config folder finds no login. Set and EMPTY, CC uses the
+// default item, "Claude Code-credentials" - the login the user already has
+// (CC 2.1.310, read from the binary 2026-10-27). CC tests whether it is set,
+// not whether it is empty, so the empty value is what matters.
+const ccSecureStorageEnv = "CLAUDE_SECURESTORAGE_CONFIG_DIR"
+
 // Dir returns foci's install root: $FOCI_HOME when set (made absolute), else
 // the user's home directory — exactly the old behaviour, so a host that sets
 // nothing (every Linux install) is unchanged.
@@ -89,12 +98,19 @@ func EnsureCCConfigEnv() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Keep the user's existing CC login (see ccSecureStorageEnv).
+	if _, ok := os.LookupEnv(ccSecureStorageEnv); !ok {
+		if err := os.Setenv(ccSecureStorageEnv, ""); err != nil {
+			return "", err
+		}
+	}
 	return dir, os.Setenv(ccConfigEnv, dir)
 }
 
 // CCEnv returns the KEY=VALUE pairs a Claude Code process needs to see when
 // it is started through something that does NOT inherit this process's
 // environment (a tmux server that may predate it): CLAUDE_CONFIG_DIR when set,
+// CLAUDE_SECURESTORAGE_CONFIG_DIR when set (even empty),
 // and HOME when the install root is separate (an older tmux server may still
 // carry HOME=<install root>). Nil on a single-home install with no
 // CLAUDE_CONFIG_DIR, so the caller adds nothing there.
@@ -107,6 +123,9 @@ func CCEnv() []string {
 	}
 	if v := os.Getenv(ccConfigEnv); v != "" {
 		env = append(env, ccConfigEnv+"="+v)
+	}
+	if v, ok := os.LookupEnv(ccSecureStorageEnv); ok {
+		env = append(env, ccSecureStorageEnv+"="+v)
 	}
 	return env
 }

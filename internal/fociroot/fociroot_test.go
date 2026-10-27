@@ -15,6 +15,8 @@ func isolate(t *testing.T) string {
 	t.Setenv("HOME", home)
 	t.Setenv(EnvVar, "")
 	t.Setenv(ccConfigEnv, "")
+	t.Setenv(ccSecureStorageEnv, "") // registers the restore
+	os.Unsetenv(ccSecureStorageEnv)
 	return home
 }
 
@@ -33,6 +35,9 @@ func TestSingleHomeIsUnchanged(t *testing.T) {
 	}
 	if set, err := EnsureCCConfigEnv(); err != nil || set != "" || os.Getenv(ccConfigEnv) != "" {
 		t.Fatalf("EnsureCCConfigEnv() set %q (%v), env %q; want nothing", set, err, os.Getenv(ccConfigEnv))
+	}
+	if _, ok := os.LookupEnv(ccSecureStorageEnv); ok {
+		t.Fatalf("%s set on a single-home install", ccSecureStorageEnv)
 	}
 	if env := CCEnv(); env != nil {
 		t.Fatalf("CCEnv() = %v; want nil", env)
@@ -73,8 +78,11 @@ func TestSeparateInstallRoot(t *testing.T) {
 	if err != nil || set != want || os.Getenv(ccConfigEnv) != want {
 		t.Fatalf("EnsureCCConfigEnv() = %q, %v; env %q; want %q", set, err, os.Getenv(ccConfigEnv), want)
 	}
+	if v, ok := os.LookupEnv(ccSecureStorageEnv); !ok || v != "" {
+		t.Fatalf("%s = %q (set %v); want set and empty, so CC keeps the default keychain login", ccSecureStorageEnv, v, ok)
+	}
 	env := CCEnv()
-	if !slices.Equal(env, []string{"HOME=" + home, ccConfigEnv + "=" + want}) {
+	if !slices.Equal(env, []string{"HOME=" + home, ccConfigEnv + "=" + want, ccSecureStorageEnv + "="}) {
 		t.Fatalf("CCEnv() = %v", env)
 	}
 }
