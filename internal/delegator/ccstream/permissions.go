@@ -38,20 +38,22 @@ type pendingPermission struct {
 func (b *Backend) handleToolRequest(msg *PermissionRequest) {
 	b.logger().Debugf("handleToolRequest: req_id=%s tool=%s", msg.RequestID, msg.Request.ToolName)
 
-	// AskUserQuestion requires user interaction — never auto-approve.
-	if msg.Request.ToolName == "AskUserQuestion" {
-		b.handleUserQuestion(msg)
+	// Nobody can answer this ask (a skip-permissions session, or an
+	// unattended turn): foci's rules decide it, never a prompt. CC waits for
+	// a can_use_tool answer with no timeout (probed on 2.1.281: no response
+	// and no control_cancel_request after 160s), so a prompt would hang the
+	// turn and, for a batch session, post into the owner's chat (#1962,
+	// #2096). A skip-permissions session reaches here only for the asks CC
+	// raises despite --dangerously-skip-permissions (from 2.1.281, a
+	// recursive rm of a command-substitution target, "safetyCheck").
+	if label, ok := b.unattended(); ok {
+		b.answerUnattended(msg, label)
 		return
 	}
 
-	// A skip-permissions session has no one to ask. CC still asks for some
-	// commands even so (from 2.1.281, a recursive rm of a command-substitution
-	// target, decision_reason_type "safetyCheck"), and over stdio it waits
-	// for the answer with no timeout (probed on 2.1.281: no response and no
-	// control_cancel_request after 160s). Prompting would hang the turn and,
-	// for a batch session, post into the owner's chat (#1962, #2096).
-	if b.skipPermissions {
-		b.denyUnattended(msg)
+	// AskUserQuestion requires user interaction — never auto-approve.
+	if msg.Request.ToolName == "AskUserQuestion" {
+		b.handleUserQuestion(msg)
 		return
 	}
 
@@ -115,18 +117,45 @@ func (b *Backend) handleToolRequest(msg *PermissionRequest) {
 	}
 }
 
-// unattendedDenyMessage is what the model sees as an unattended deny's tool
-// result, so it says how to proceed.
-const unattendedDenyMessage = "unattended session: no permission prompts. Rewrite the command so it needs no approval (for rm, name the target path literally)."
+// unattended reports whether an ask raised now has nobody to answer it, and
+// the label its log lines carry (delegator.Unattended). turnEvents is read
+// under turnMu: asks arrive on the reader goroutine while turns begin and end
+// on the inject path.
+func (b *Backend) unattended() (label string, ok bool) {
+	b.turnMu.Lock()
+	defer b.turnMu.Unlock()
+	return delegator.Unattended(b.skipPermissions, b.turnEvents)
+}
 
-// denyUnattended refuses a permission request at once. The message is what
-// the model sees as the tool result, so it says how to proceed.
-func (b *Backend) denyUnattended(msg *PermissionRequest) {
-	b.logger().Warnf("permission denied (unattended session): tool=%s summary=%q reason=%q req_id=%s",
-		msg.Request.ToolName, msg.Request.Summary(), msg.Request.DecisionReason, msg.RequestID)
+// answerUnattended decides an ask nobody can answer from foci's auto-approve
+// rules (delegator.Unattended): allowed when a rule permits it, otherwise
+// denied with a WARN. A question (AskUserQuestion) is declined: there is no
+// one to answer it. Nothing is stored pending or registered outstanding.
+func (b *Backend) answerUnattended(msg *PermissionRequest, label string) {
+	sessionKey := b.startOpts.SessionKey
+	if msg.Request.ToolName == "AskUserQuestion" {
+		b.logger().Warnf("%s req_id=%s", delegator.UnattendedQuestionLog(sessionKey, label, msg.Request.Summary()), msg.RequestID)
+		b.denyUnattended(msg, delegator.UnattendedQuestionMessage)
+		return
+	}
+	approved, vetoReason := b.autoApprovePermission(msg)
+	if approved {
+		return
+	}
+	action := "use " + msg.Request.ToolName + ": " + msg.Request.Summary()
+	if msg.Request.DecisionReason != "" {
+		action += " (CC: " + msg.Request.DecisionReason + ")"
+	}
+	b.logger().Warnf("%s req_id=%s", delegator.UnattendedDeniedLog(sessionKey, label, action, vetoReason), msg.RequestID)
+	b.denyUnattended(msg, delegator.UnattendedDenyMessage)
+}
+
+// denyUnattended refuses a permission request at once. message is what the
+// model sees as the tool result, so it says how to proceed.
+func (b *Backend) denyUnattended(msg *PermissionRequest, message string) {
 	resp := &PermissionDeny{
 		Behavior:               "deny",
-		Message:                unattendedDenyMessage,
+		Message:                message,
 		Interrupt:              false,
 		ToolUseID:              msg.Request.ToolUseID,
 		DecisionClassification: "user_reject",
@@ -135,7 +164,7 @@ func (b *Backend) denyUnattended(msg *PermissionRequest) {
 		b.logger().Warnf("unattended deny send failed: req_id=%s: %v", msg.RequestID, err)
 		return
 	}
-	b.endFociDeniedCall(msg.Request.ToolUseID, msg.Request.ToolName, msg.Request.agentID(), unattendedDenyMessage)
+	b.endFociDeniedCall(msg.Request.ToolUseID, msg.Request.ToolName, msg.Request.agentID(), message)
 }
 
 // sandboxNetworkTool is the tool name of CC's sandbox network ask. It comes

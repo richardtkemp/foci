@@ -64,13 +64,12 @@ func (b *Backend) onPermissionAsked(req PermissionRequest) {
 // permissions to handleQuestionPermission and everything else to the binary
 // Allow/Deny/Always keyboard. Shared by both opencode permission models.
 func (b *Backend) surfacePermission(pp pendingPermission) {
-	// A system-triggered turn (Unattended) is answered exactly like a
-	// skip-permissions session: it runs on a chat nobody is watching, so a
-	// surfaced keyboard would block the turn forever on an unanswered ask
-	// (2026-10-27 incident). Checked before dedup/auto-approve — nothing
-	// may be registered outstanding or prompted for it either way.
-	if b.skipPermissions || b.unattendedTurn() {
-		b.answerUnattended(pp)
+	// Nobody can answer this ask (a skip-permissions session, or an
+	// unattended turn): foci's rules decide it, never a prompt (see
+	// answerUnattended). Checked before dedup/auto-approve — nothing may be
+	// registered outstanding or prompted for it.
+	if label, ok := b.unattended(); ok {
+		b.answerUnattended(pp, label)
 		return
 	}
 	// Store under permMu so RespondToPermission (caller's goroutine) and the
@@ -111,7 +110,7 @@ func (b *Backend) surfacePermission(pp pendingPermission) {
 	// restores the defense-in-depth the ccstream auto-approve engine
 	// provided — bash command segmentation, unsafe-flag rejection, path
 	// traversal canonicalization, symlink escape detection.
-	if b.checkAutoApprove(pp) {
+	if approved, _ := b.checkAutoApprove(pp); approved {
 		log.NewComponentLogger(b.logComponent()).Infof("auto-approved: type=%s patterns=%v id=%s", pp.permType, pp.patterns, pp.id)
 		if err := b.sendPermissionReply(pp, true, false); err != nil {
 			log.NewComponentLogger(b.logComponent()).Warnf("auto-approve reply failed (%v) — falling through to user prompt", err)
@@ -144,36 +143,39 @@ func (b *Backend) surfacePermission(pp pendingPermission) {
 	b.permPromptFn(pp.id, pp.title, pp.title, "", choices)
 }
 
-// unattendedTurn reports whether the in-flight turn is system-triggered
-// (TurnEvents.Unattended). Guarded by turnMu: asks arrive on the dispatcher
-// goroutine while turns begin/end on the inject path (see the -race
-// concurrency test in unattended_turn_test.go). False between turns —
-// TurnEvents is cleared at turn end, so asks on an idle attended session
-// surface to the user again.
-func (b *Backend) unattendedTurn() bool {
+// unattended reports whether an ask raised now has nobody to answer it, and
+// the label its log lines carry (delegator.Unattended). turnEvents is read
+// under turnMu: asks arrive on the dispatcher goroutine while turns begin and
+// end on the inject path. False between turns on an attended session —
+// TurnEvents is cleared at turn end, so its asks surface to the user again.
+func (b *Backend) unattended() (label string, ok bool) {
 	b.turnMu.Lock()
 	defer b.turnMu.Unlock()
-	return b.turnEvents != nil && b.turnEvents.Unattended
+	return delegator.Unattended(b.skipPermissions, b.turnEvents)
 }
 
-// answerUnattended answers a permission in a skip-permissions session (a
-// batch run, or backend_config.skip_permissions) without prompting anyone.
-// ccstream gets this from CC's --dangerously-skip-permissions, which allows
-// every tool; opencode has no such launch flag, and its server is shared with
-// the agent's attended sessions, so the answer is given per ask instead.
-// Permissions are allowed once; a question has nobody to answer it, so it is
-// declined. Never registered as outstanding: nothing waits on it. A failed
-// reply is logged and left: prompting would put a batch's ask in the owner's
-// chat (#2153), and the batch's own timeout closes a session that stalls.
-func (b *Backend) answerUnattended(pp pendingPermission) {
+// answerUnattended decides an ask nobody can answer — a skip-permissions
+// session (a batch run, or backend_config.skip_permissions) or an unattended
+// turn — from foci's auto-approve rules (delegator.Unattended): allowed once
+// when a rule permits every pattern, otherwise rejected with a WARN. A type
+// with no rule mapping (external_directory, unknown types) is always rejected.
+// A question has nobody to answer it, so it is declined. Never registered as
+// outstanding: nothing waits on it. A failed reply is logged and left:
+// prompting would put the ask in a chat nobody is watching (#2153).
+func (b *Backend) answerUnattended(pp pendingPermission, label string) {
 	lg := log.NewComponentLogger(b.logComponent())
+	sessionKey := b.startOpts.SessionKey
 	var err error
-	if pp.permType == PermQuestion {
-		lg.Warnf("question declined (unattended session): id=%s title=%q", pp.id, pp.title)
+	switch approved, vetoReason := b.checkAutoApprove(pp); {
+	case pp.permType == PermQuestion:
+		lg.Warnf("%s id=%s", delegator.UnattendedQuestionLog(sessionKey, label, pp.title), pp.id)
 		err = b.postPermissionResponse(pp.id, "deny", false)
-	} else {
-		lg.Infof("permission allowed (unattended session): type=%s title=%q id=%s", pp.permType, pp.title, pp.id)
+	case approved:
+		lg.Infof("%s id=%s", delegator.UnattendedAllowedLog(sessionKey, label, "use "+pp.title), pp.id)
 		err = b.sendPermissionReply(pp, true, false)
+	default:
+		lg.Warnf("%s id=%s", delegator.UnattendedDeniedLog(sessionKey, label, "use "+pp.title, vetoReason), pp.id)
+		err = b.sendPermissionReply(pp, false, false)
 	}
 	if err != nil {
 		lg.Warnf("unattended reply to %s failed: %v", pp.id, err)
@@ -205,15 +207,16 @@ var permTypeToToolName = map[string]string{
 // structural safety (redirects, process substitution, unsafe flags).
 // For path tools, patterns are workspace-relative paths resolved to
 // absolute so the engine can canonicalize and match against workspace
-// boundaries.
-func (b *Backend) checkAutoApprove(pp pendingPermission) bool {
+// boundaries. vetoReason is the rule engine's veto when a rule matched a
+// pattern but was overridden ("" when nothing matched).
+func (b *Backend) checkAutoApprove(pp pendingPermission) (approved bool, vetoReason string) {
 	if len(b.autoApproveRules) == 0 || len(pp.patterns) == 0 {
-		return false
+		return false, ""
 	}
 
 	toolName, ok := permTypeToToolName[pp.permType]
 	if !ok {
-		return false
+		return false, ""
 	}
 
 	for _, pattern := range pp.patterns {
@@ -238,11 +241,11 @@ func (b *Backend) checkAutoApprove(pp pendingPermission) bool {
 			if vetoReason != "" {
 				log.NewComponentLogger(b.logComponent()).Warnf("auto-approve VETOED: tool=%s — %s", toolName, vetoReason)
 			}
-			return false
+			return false, vetoReason
 		}
 	}
 
-	return true
+	return true, ""
 }
 
 // onPermissionReplied handles a permission.replied SSE event. opencode

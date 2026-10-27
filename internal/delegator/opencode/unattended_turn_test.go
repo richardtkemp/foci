@@ -1,50 +1,99 @@
 package opencode
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
 
 	"foci/internal/delegator"
+	"foci/internal/delegator/autoapprove"
+	"foci/internal/log"
 )
 
 // startAttended is startUnattended (skip_permissions_test.go) with prompting
 // ENABLED: an ordinary attended session. System-turn unattended answering is
 // tested by beginning a turn whose TurnEvents carries Unattended (exactly
-// what buildTurnEvents in the agent layer installs for a non-user trigger).
+// what buildTurnEvents in the agent layer installs for an unattended trigger).
 func startAttended(t *testing.T) (*Backend, func() []permRequest, func() []string) {
 	t.Helper()
 	return startUnattended(t, false, false)
 }
 
-// beginSystemTurn arms the turn-state a system-triggered turn would install:
+// syncBuffer is a goroutine-safe bytes.Buffer for capturing log output.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
+}
+
+// beginSystemTurn arms the turn-state an unattended turn would install:
 // beginTurn with TurnEvents{Trigger, Unattended: true}.
 func beginSystemTurn(b *Backend, trigger string) {
 	b.beginTurn(&delegator.TurnEvents{Trigger: trigger, Unattended: true})
 }
 
-// TestUnattendedTurn_AllowsAskedPermissionWithoutPrompt: a permission.asked
-// raised while a system-triggered turn (reflection) is in flight on an
-// ATTENDED session is answered allow-once by the backend — no prompt, nothing
-// pending, nothing outstanding. Regression for the 2026-10-27 incident
-// (external_directory ask blocking 89 minutes).
-func TestUnattendedTurn_AllowsAskedPermissionWithoutPrompt(t *testing.T) {
+// TestUnattendedTurn_DeniesUnruledAskWithWarning is the 2026-10-27 incident
+// under the ruling: a permission.asked raised while an unattended turn
+// (reflection) is in flight on an ATTENDED session is decided by foci's rules.
+// external_directory has no rule mapping, so it is rejected at once — no
+// prompt, nothing pending, nothing outstanding — with a WARN naming the
+// session, the trigger and what was refused.
+func TestUnattendedTurn_DeniesUnruledAskWithWarning(t *testing.T) {
+	var logBuf syncBuffer
+	log.SetOutput(&logBuf)
+	t.Cleanup(func() { log.SetOutput(nil) })
+
 	b, reqs, prompted := startAttended(t)
+	b.startOpts.SessionKey = "arnix/c1"
+	b.autoApproveRules = autoapprove.Compile(autoapprove.CommonReadonlyRules)
 	beginSystemTurn(b, "reflection")
 	b.onPermissionAsked(PermissionRequest{
 		ID: "per-u1", SessionID: "sess-batch", Permission: "external_directory", Patterns: []string{"../outside/**"},
 	})
-	assertUnattendedReply(t, b, reqs(), prompted(), "/permission/per-u1/reply", "reply", "once")
+	assertUnattendedReply(t, b, reqs(), prompted(), "/permission/per-u1/reply", "reply", "reject")
+
+	want := "unattended: session arnix/c1 (trigger=reflection) tried to use external_directory: ../outside/**; no rule permits it, so it was denied"
+	if got := logBuf.String(); !strings.Contains(got, want) || !strings.Contains(got, "WARN") {
+		t.Errorf("log missing WARN %q; got:\n%s", want, got)
+	}
 }
 
-// TestUnattendedTurn_AllowsLegacyPermissionWithoutPrompt covers the older
-// permission.updated model during a system turn.
-func TestUnattendedTurn_AllowsLegacyPermissionWithoutPrompt(t *testing.T) {
+// TestUnattendedTurn_AllowsRuledAsk: the same unattended turn, an ask a rule
+// permits — allowed once, still without a prompt.
+func TestUnattendedTurn_AllowsRuledAsk(t *testing.T) {
 	b, reqs, prompted := startAttended(t)
+	b.autoApproveRules = autoapprove.Compile([]string{"Bash:ls"})
 	beginSystemTurn(b, "keepalive")
-	b.onPermissionUpdated(Permission{ID: "per-u2", Type: PermBash, Title: "bash: rm -rf build"})
-	assertUnattendedReply(t, b, reqs(), prompted(), "/session/sess-batch/permissions/per-u2", "response", "allow")
+	b.onPermissionAsked(PermissionRequest{
+		ID: "per-u2", SessionID: "sess-batch", Permission: PermBash, Patterns: []string{"ls"},
+	})
+	assertUnattendedReply(t, b, reqs(), prompted(), "/permission/per-u2/reply", "reply", "once")
+}
+
+// TestUnattendedTurn_SubstitutionAskDenied: an rm rule exists but the engine
+// refuses to match a live command-substitution argument — denied, not
+// prompted.
+func TestUnattendedTurn_SubstitutionAskDenied(t *testing.T) {
+	b, reqs, prompted := startAttended(t)
+	b.autoApproveRules = autoapprove.Compile([]string{"Bash:rm *"})
+	beginSystemTurn(b, "reflection")
+	b.onPermissionAsked(PermissionRequest{
+		ID: "per-u5", SessionID: "sess-batch", Permission: PermBash, Patterns: []string{`rm -rf "$(pwd)"`},
+	})
+	assertUnattendedReply(t, b, reqs(), prompted(), "/permission/per-u5/reply", "reply", "reject")
 }
 
 // TestUnattendedTurn_DeclinesQuestionWithoutPrompt: a question during a

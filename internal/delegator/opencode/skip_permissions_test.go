@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"foci/internal/delegator"
+	"foci/internal/delegator/autoapprove"
 )
 
 // startUnattended starts a Backend against an httptest opencode that creates a
@@ -91,11 +92,11 @@ func assertUnattendedReply(t *testing.T, b *Backend, reqs []permRequest, prompte
 	}
 }
 
-// TestSkipPermissions_AllowsAskedPermissionWithoutPrompt is #2153: a batch
-// session launches with StartOptions.SkipPermissions and has no user to ask.
-// ccstream runs it with --dangerously-skip-permissions (every tool allowed);
-// opencode has no launch flag, so the backend answers each ask itself.
-func TestSkipPermissions_AllowsAskedPermissionWithoutPrompt(t *testing.T) {
+// TestSkipPermissions_AnswersFromRules is #2153 under the 2026-10-27 ruling: a
+// batch session (StartOptions.SkipPermissions) or a skip_permissions config has
+// no user to ask, so foci's auto-approve rules decide each ask — allowed once
+// when a rule permits it, rejected otherwise. Never prompted.
+func TestSkipPermissions_AnswersFromRules(t *testing.T) {
 	for _, tc := range []struct {
 		name             string
 		skipCfg, skipOpt bool
@@ -103,22 +104,33 @@ func TestSkipPermissions_AllowsAskedPermissionWithoutPrompt(t *testing.T) {
 		{"StartOptions", false, true},
 		{"backend_config", true, false},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
+		t.Run(tc.name+"/rule permits", func(t *testing.T) {
 			b, reqs, prompted := startUnattended(t, tc.skipCfg, tc.skipOpt)
+			b.autoApproveRules = autoapprove.Compile([]string{"Bash:ls"})
+			b.onPermissionAsked(PermissionRequest{
+				ID: "per-1", SessionID: "sess-batch", Permission: PermBash, Patterns: []string{"ls"},
+			})
+			assertUnattendedReply(t, b, reqs(), prompted(), "/permission/per-1/reply", "reply", "once")
+		})
+		t.Run(tc.name+"/no rule", func(t *testing.T) {
+			b, reqs, prompted := startUnattended(t, tc.skipCfg, tc.skipOpt)
+			b.autoApproveRules = autoapprove.Compile([]string{"Bash:ls"})
 			b.onPermissionAsked(PermissionRequest{
 				ID: "per-1", SessionID: "sess-batch", Permission: PermBash, Patterns: []string{"rm -rf build"},
 			})
-			assertUnattendedReply(t, b, reqs(), prompted(), "/permission/per-1/reply", "reply", "once")
+			assertUnattendedReply(t, b, reqs(), prompted(), "/permission/per-1/reply", "reply", "reject")
 		})
 	}
 }
 
-// TestSkipPermissions_AllowsLegacyPermissionWithoutPrompt covers the older
-// permission.updated model, answered on the per-session endpoint.
-func TestSkipPermissions_AllowsLegacyPermissionWithoutPrompt(t *testing.T) {
+// TestSkipPermissions_DeniesLegacyPermissionWithoutPrompt covers the older
+// permission.updated model, answered on the per-session endpoint. It carries
+// no patterns, so no rule can permit it: denied.
+func TestSkipPermissions_DeniesLegacyPermissionWithoutPrompt(t *testing.T) {
 	b, reqs, prompted := startUnattended(t, false, true)
+	b.autoApproveRules = autoapprove.Compile([]string{"Edit:**"})
 	b.onPermissionUpdated(Permission{ID: "per-2", Type: PermEdit, Title: "edit foo.go"})
-	assertUnattendedReply(t, b, reqs(), prompted(), "/session/sess-batch/permissions/per-2", "response", "allow")
+	assertUnattendedReply(t, b, reqs(), prompted(), "/session/sess-batch/permissions/per-2", "response", "deny")
 }
 
 // TestSkipPermissions_DeclinesQuestionWithoutPrompt: a question has no answer

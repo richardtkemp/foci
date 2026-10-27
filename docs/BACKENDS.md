@@ -260,6 +260,7 @@ grepped for each ✗. Row IDs are not renumbered, so the gaps are the removed ro
 | P2 | Always allow | Persist an approval beyond this call | ✓ | ✓ [12] | ✗ |
 | P4 | Launch allowlist | `allowed_tools` / `[cc_backend] default_allowed_tools` pre-approval | ✓ | n/a [14] | n/a [14] |
 | P5 | Unattended mode | `skip_permissions` and `StartOptions.SkipPermissions` (batch runs): never prompt a chat | ✓ | ✓ [15] | ✗ [15] |
+| P5a | Unattended turns | A turn with an unattended trigger (`TurnEvents.Unattended`: maintenance passes, memory passes, webhook, batch purposes) answers each ask from foci's auto-approve rules — allow on a match, deny + WARN otherwise, decline questions — never prompting | ✓ | ✓ | ✓ |
 | P7 | Prompt cancel listeners | Backend-cancelled prompt disables its stale buttons | ✓ | ✓ | ✗ [17] |
 | P8 | Prompts-cleared drain | `SetOnPromptsCleared` unblocks `WaitForPermission` | ✓ | ✓ | ✓ |
 | P9 | Rich prompt body | Edit diffs; ExitPlanMode plan sent as a document | ✓ | ✗ | [18] |
@@ -472,16 +473,16 @@ Notes:
     re-applied only once #666 lands — so with `default_permission = "allow"` and a last
     `/mode plan`, a foci restart leaves the session allow-all even though `/mode` still reports
     `plan`; codex's would be the sandbox/approval policy.
-15. ccstream passes `--dangerously-skip-permissions` and denies anything CC still asks
-    (`cc/permissions.go:denyUnattended`, #2096). opencode has no launch flag and shares one
-    server across the agent's sessions, so `surfacePermission` answers each ask of a
-    skip-permissions session itself (`oc/permissions.go:answerUnattended`, #2153): permissions
-    are allowed once and questions declined, with no prompt. codex does not read
-    `StartOptions.SkipPermissions` (`grep SkipPermissions|skip_permissions`: no hits), and
-    `DelegatedManager` wires the chat permission prompt for batch sessions too
-    (`ag/delegated_manager.go`, `SetPermissionPromptFunc` is not gated on `isBatch`). So a
-    batch run (consolidation, nudge extraction, summary) on codex can put a permission
-    prompt in the owner's chat; codex has no reachable equivalent (footnote 48).
+15. ccstream passes `--dangerously-skip-permissions`; opencode has no launch flag and shares one
+    server across the agent's sessions, so it answers each ask of a skip-permissions session
+    itself. Both decide an ask CC still raises, or any opencode ask, the unattended way
+    (`delegator/unattended.go`, Dick 2026-10-27): foci's auto-approve rules allow it, otherwise
+    it is denied with a WARN; questions are declined; nothing is prompted
+    (`cc/permissions.go:answerUnattended`, `oc/permissions.go:answerUnattended`; #2096, #2153).
+    codex does not read `StartOptions.SkipPermissions` (`grep SkipPermissions|skip_permissions`:
+    no hits). Its batch runs are covered instead by the agent layer marking every batch purpose
+    an unattended trigger (`ag/context.go:unattendedTriggers`), which codex honours per turn
+    (`cx/permissions.go:unattended`) — hence ✓ per turn, ✗ for the session-wide flag.
 16. `control_permission_mode`, not live on codex: it queues the approval policy for the next `turn/start` (`cx/control.go:applyPendingControls`);
     `plan` maps to `on-request`, so there is no plan mode.
 17. `cx/callbacks.go:RegisterPromptCancelListener` is a TODO no-op. `serverRequest/resolved` clears

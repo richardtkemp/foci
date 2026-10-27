@@ -236,6 +236,17 @@ func (b *Backend) handleElicitation(msg *ElicitationRequest) {
 		answers:       map[string]interface{}{},
 	}
 
+	// An elicitation is a question: with nobody to answer it (a
+	// skip-permissions session or an unattended turn) it is declined at
+	// once, never presented or registered (delegator.Unattended).
+	if label, ok := b.unattended(); ok {
+		b.logger().Warnf("%s req_id=%s", delegator.UnattendedQuestionLog(b.startOpts.SessionKey, label, "MCP elicitation from "+msg.Request.McpServerName+": "+msg.Request.Message), msg.RequestID)
+		if err := b.finishElicitation(pe, "decline"); err != nil {
+			b.logger().Warnf("unattended elicitation decline failed: req_id=%s: %v", msg.RequestID, err)
+		}
+		return
+	}
+
 	if msg.Request.Mode == "url" {
 		b.storePendingElicit(pe)
 		b.outstanding.Register(msg.RequestID, delegator.OutstandingElicitation)

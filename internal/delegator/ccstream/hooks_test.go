@@ -481,7 +481,7 @@ func TestFociDenyEndsCall(t *testing.T) {
 	wantTools := []toolEnd{
 		{"toolu_agent", "Agent", "no", true},
 		{"toolu_plan", "ExitPlanMode", "revise it", true},
-		{"toolu_bash", "Bash", unattendedDenyMessage, true},
+		{"toolu_bash", "Bash", delegator.UnattendedDenyMessage, true},
 	}
 	if !reflect.DeepEqual(toolEnds, wantTools) {
 		t.Errorf("OnToolEnd = %+v, want %+v", toolEnds, wantTools)

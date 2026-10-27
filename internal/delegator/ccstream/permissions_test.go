@@ -439,7 +439,7 @@ func TestHandlePermissionRequest_SkipPermissions_DeniesWithoutPrompt(t *testing.
 	if inner["toolUseID"] != "toolu_SKIP" {
 		t.Errorf("toolUseID = %v, want %q", inner["toolUseID"], "toolu_SKIP")
 	}
-	if msg, _ := inner["message"].(string); !strings.Contains(msg, "unattended session: no permission prompts") {
+	if msg, _ := inner["message"].(string); msg != delegator.UnattendedDenyMessage {
 		t.Errorf("message = %q, want it to name the unattended session", msg)
 	}
 }

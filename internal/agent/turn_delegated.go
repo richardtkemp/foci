@@ -643,14 +643,13 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 
 	turnEvents := &delegator.TurnEvents{
 		TurnID: ts.RowID(),
-		// The backend labels its unattended answers with the trigger and
-		// swaps prompt-surfacing for self-answering on system-triggered
-		// turns (TurnEvents.Unattended): a reflection/keepalive/consolidation
-		// turn runs on a chat nobody is watching, so a surfaced ask would
-		// block the turn forever (2026-10-27 incident). User-triggered turns
-		// prompt exactly as before.
+		// An unattended turn (unattendedTriggers: keepalive, reflection,
+		// memory passes, webhook, ...) has nobody to answer a permission ask,
+		// so the backend answers it from foci's auto-approve rules instead of
+		// prompting (TurnEvents.Unattended; 2026-10-27 incident). Every other
+		// turn prompts as before. Trigger labels the backend's log lines.
 		Trigger:            ts.Trigger,
-		Unattended:         !isUserTrigger(ts.Trigger),
+		Unattended:         isUnattendedTrigger(ts.Trigger),
 		PostToolNudgeFunc:  postToolNudgeFunc,
 		PreAnswerNudgeFunc: preAnswerNudgeFunc,
 	}

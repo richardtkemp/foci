@@ -225,6 +225,46 @@ func isKeepaliveTrigger(trigger string) bool {
 	return trigger == TriggerKeepalive
 }
 
+// unattendedTriggers is THE list of triggers whose turns run with nobody to
+// answer a permission ask (Dick 2026-10-27). The backend answers such an ask
+// itself from foci's auto-approve rules: allowed when a rule permits it,
+// denied otherwise (delegator.TurnEvents.Unattended). The keys are the trigger
+// values that actually reach the turn:
+//   - the periodic self-maintenance passes, dispatched under their branch type
+//     (buildBranchFunc → WithTrigger(branchType)): keepalive, background,
+//     reflection, consolidation (also a batch purpose);
+//   - the memory passes: compaction_memory (FireCompactionMemory) and
+//     session_end_memory (RunSessionEndMemory);
+//   - webhook: an inbound webhook POST, authenticated by its API key;
+//   - the batch purposes (RunBatchTurn triggers a batch turn as its purpose).
+//     ccstream and opencode already treat a batch session as unattended via
+//     SkipPermissions, but codex does not read SkipPermissions, so without
+//     these entries a codex batch ask would land in the owner's chat.
+//
+// Deliberately an allowlist, not "every non-user trigger": a turn someone may
+// be watching must keep prompting. Not listed, so they prompt as before:
+// platform/voice/HTTP-send input, redelivery (the user's own message re-sent
+// after a crash), branch (foci branch / HTTP /branch), autonomous runs,
+// async_notify, session_notify and the other inter-session injections.
+var unattendedTriggers = map[string]bool{
+	TriggerKeepalive:                      true,
+	"background":                          true,
+	"reflection":                          true,
+	delegator.BatchPurposeConsolidation:   true,
+	"compaction_memory":                   true,
+	"session_end_memory":                  true,
+	"webhook":                             true,
+	delegator.BatchPurposeNudgeExtraction: true,
+	delegator.BatchPurposeSummary:         true,
+	delegator.BatchPurposePromptDiff:      true,
+}
+
+// isUnattendedTrigger reports whether a turn with this trigger has nobody to
+// answer a permission ask (see unattendedTriggers).
+func isUnattendedTrigger(trigger string) bool {
+	return unattendedTriggers[trigger]
+}
+
 // isMemoryTrigger reports whether a turn is a memory-formation pass —
 // reflection or end-of-session memory — rather than substantive activity.
 //
