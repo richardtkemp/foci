@@ -19,6 +19,7 @@ func (m *DepthManager) fanoutTool() *Tool {
 		Name:       "depth_fanout",
 		ExecExport: true,
 		Description: "Experimental depth mode: fan this conversation out into leaves, one per point, each a fork of your context that the user discusses separately in a feed inside this chat. " +
+			"Each leaf holds exactly ONE point: never a list of questions. To cover several questions, give each its own leaf. " +
 			"You then end your turn and get ONE [DEPTH RESULTS] message when every leaf has reported. Only from an app conversation (or from a leaf). " +
 			"Each leaf costs a copy of your current context, so prefer fanning out while the context is small.",
 		Parameters: json.RawMessage(`{
@@ -26,7 +27,7 @@ func (m *DepthManager) fanoutTool() *Tool {
 			"properties": {
 				"leaves": {
 					"type": "array",
-					"description": "The leaves, as a JSON array: [{\"title\": \"short point name\", \"prompt\": \"what this leaf discusses\", \"orientation\": \"optional: report format / focus for this leaf\"}, ...].",
+					"description": "The leaves, as a JSON array: [{\"title\": \"short point name\", \"prompt\": \"the ONE point this leaf discusses\", \"orientation\": \"optional: report format / focus for this leaf\"}, ...].",
 					"items": {
 						"type": "object",
 						"properties": {
