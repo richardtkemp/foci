@@ -374,10 +374,19 @@ type itemEnvelope struct {
 	Phase string `json:"phase,omitempty"`
 }
 
-// fileChangeEntry is one file change in a fileChange item's changes array.
+// fileChangeEntry is one file change in a fileChange item's changes array
+// (codex FileUpdateChange).
 type fileChangeEntry struct {
-	Path string `json:"path,omitempty"`
-	Kind string `json:"kind,omitempty"` // "create", "modify", "delete"
+	Path string          `json:"path,omitempty"`
+	Kind patchChangeKind `json:"kind"`
+}
+
+// patchChangeKind is codex's PatchChangeKind: an object, not a string
+// (verified against the codex 0.164.0 generated app-server schema). Type is
+// "add", "delete" or "update"; an update that renames carries MovePath.
+type patchChangeKind struct {
+	Type     string `json:"type"`
+	MovePath string `json:"move_path,omitempty"`
 }
 
 // collabState is one entry in a collabAgentToolCall's agentsStates map.
