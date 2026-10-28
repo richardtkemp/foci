@@ -40,11 +40,11 @@ func TestReminderAddAndDue(t *testing.T) {
 	}
 }
 
-func TestReminderNextKeepalive(t *testing.T) {
-	// Verifies that "next_keepalive" is treated as immediately due (resolves to now), so Due returns it right away.
+func TestReminderNow(t *testing.T) {
+	// Verifies that "now" is treated as immediately due, so Due returns it right away.
 	rs := testReminderStore(t)
 
-	if err := rs.Add("test", "think about caching", "next_keepalive"); err != nil {
+	if err := rs.Add("test", "think about caching", "now"); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
@@ -55,7 +55,7 @@ func TestReminderNextKeepalive(t *testing.T) {
 	if len(reminders) != 1 {
 		t.Fatalf("expected 1 reminder, got %d", len(reminders))
 	}
-	if reminders[0].DueTag != "next_keepalive" {
+	if reminders[0].DueTag != "now" {
 		t.Errorf("due_tag = %q", reminders[0].DueTag)
 	}
 }
@@ -144,15 +144,13 @@ func TestReminderDismissAll(t *testing.T) {
 }
 
 func TestResolveWhen(t *testing.T) {
-	// Verifies resolveWhen correctly maps all supported when strings — "now", "next_keepalive", "tomorrow", date strings, durations, and unknown values — to the expected time.
+	// Verifies resolveWhen correctly maps all supported when strings — "now", "tomorrow", date strings, durations, and unknown values — to the expected time.
 	tests := []struct {
 		when  string
 		check func(t time.Time) bool
 		desc  string
 	}{
 		{"now", func(t time.Time) bool { return time.Since(t) < 5*time.Second }, "should be ~now"},
-		{"next_keepalive", func(t time.Time) bool { return time.Since(t) < 5*time.Second }, "should be ~now"},
-		{"next_session", func(t time.Time) bool { return time.Since(t) < 5*time.Second }, "should be ~now"},
 		{"tomorrow", func(t time.Time) bool { return t.After(time.Now()) }, "should be in the future"},
 		{"2030-06-15", func(t time.Time) bool { return t.Year() == 2030 && t.Month() == 6 && t.Day() == 15 }, "should be that date"},
 		{"2030-06-15T14:30:00Z", func(t time.Time) bool {

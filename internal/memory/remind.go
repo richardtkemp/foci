@@ -45,7 +45,7 @@ type Reminder struct {
 	ID         int64
 	Text       string
 	DueAt      time.Time
-	DueTag     string // original tag: "next_keepalive", "tomorrow", etc.
+	DueTag     string // original tag: "tomorrow", "2h", etc.
 	Created    time.Time
 	SessionKey string // originating session (wake reminders only; empty for legacy rows)
 }
@@ -136,9 +136,8 @@ func NewReminderStore(dbPath string) (*ReminderStore, error) {
 }
 
 // Add creates a new reminder. The when parameter is resolved to a concrete time:
-//   - "next_keepalive" → now (surfaced at next keepalive)
+//   - "now" → now (surfaced at the next message to a root chat)
 //   - "tomorrow" → midnight tomorrow (local time)
-//   - "next_session" → now (surfaced at next message)
 //   - YYYY-MM-DD → that date at midnight (local time)
 func (rs *ReminderStore) Add(agentID, text, when string) error {
 	dueAt := resolveWhen(when)
@@ -251,7 +250,7 @@ func resolveWhen(when string) time.Time {
 	now := timeutil.Now()
 
 	switch when {
-	case "next_keepalive", "next_heartbeat", "next_session", "now":
+	case "now":
 		return now
 	case "tomorrow":
 		tomorrow := now.Add(24 * time.Hour)

@@ -230,18 +230,41 @@ func TestRemind(t *testing.T) {
 	tool := testRemindTool(t)
 	params, _ := json.Marshal(map[string]string{
 		"text": "check FTS5 phrase boosting",
-		"when": "next_keepalive",
+		"when": "30m",
 	})
 
 	result, err := tool.Execute(context.Background(), params)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result.Text, "next_keepalive") {
-		t.Errorf("result = %q, expected mention of next_keepalive", result.Text)
+	if !strings.Contains(result.Text, "30m") {
+		t.Errorf("result = %q, expected mention of 30m", result.Text)
 	}
 	if !strings.Contains(result.Text, "check FTS5 phrase boosting") {
 		t.Errorf("result = %q, expected mention of text", result.Text)
+	}
+}
+
+func TestRemindRejectsRemovedAndUnparseableWhen(t *testing.T) {
+	// Verifies that the removed tags (next_session, next_keepalive, next_heartbeat) and an
+	// unparseable when are rejected for passive AND wake reminders, and nothing is stored
+	// (the store's resolveWhen would otherwise file them as "due now").
+	t.Parallel()
+	for _, when := range []string{"next_session", "next_keepalive", "next_heartbeat", "gibberish"} {
+		for _, wake := range []bool{false, true} {
+			tool, rs := testRemindToolWithCancel(t, nil) // wake configured, so a wake error is about `when`
+			params, _ := json.Marshal(map[string]any{"text": "x", "when": when, "wake": wake})
+			_, err := tool.Execute(context.Background(), params)
+			if err == nil || !strings.Contains(err.Error(), when) {
+				t.Errorf("when=%q wake=%v: err = %v, want an error naming %q", when, wake, err, when)
+			}
+			if due, _ := rs.Due("test"); len(due) != 0 {
+				t.Errorf("when=%q wake=%v: %d passive reminder(s) stored, want 0", when, wake, len(due))
+			}
+			if pend, _ := rs.PendingWakes("test"); len(pend) != 0 {
+				t.Errorf("when=%q wake=%v: %d wake(s) stored, want 0", when, wake, len(pend))
+			}
+		}
 	}
 }
 

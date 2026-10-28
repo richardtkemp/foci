@@ -1242,7 +1242,7 @@ The agent can defer thoughts for later via the `remind` tool. Reminders are stor
 **Storage:** `ReminderStore` in `memory/remind.go`. Table `reminders` with columns: `id`, `agent_id`, `text`, `due_at`, `due_tag`, `created`. Scoped per-agent — each agent sees only its own reminders.
 
 **Time resolution (`resolveWhen`):**
-- `next_session`, `now` → immediate
+- `now` → immediate (`next_session`/`next_keepalive` removed 2026-10-28: they meant the same and misled; the tool rejects them, and rejects any `when` it cannot parse)
 - `tomorrow` → midnight tomorrow UTC
 - `YYYY-MM-DD` → that date at midnight UTC
 - Go duration (e.g., `2h`, `30m`) → now + duration

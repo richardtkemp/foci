@@ -72,7 +72,7 @@ func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWake
 	}
 	return &Tool{
 		Name:        "remind",
-		Description: "Defer a thought for later. By default the reminder surfaces as injected context at the specified time. Set wake=true to actively wake the session (fires a message to yourself at the specified time). Set list=true to show pending wakes, or cancel=<id> to cancel one.",
+		Description: "Defer a thought for later. By default (passive) the reminder is added as context to the next message to ANY of your root chats once it is due: not at an exact time, and possibly in a different chat of yours. Use wake=true ONLY when (a) it must happen at a specific time rather than just \"later\", or (b) it must come back to THIS exact session rather than any of your chats; a wake sends this session a message to yourself at the specified time. Set list=true to show pending wakes, or cancel=<id> to cancel one.",
 		ExecExport:  true,
 		JSONOutput:  `list: [{"id", "due_at" (RFC 3339), "text" (full), "state" ("pending" until the timer fires, then "held" while background work delays the wake or "fired" while it waits to run)}], [] when none pending. Otherwise one object: {"set": "reminder", "when", "text"} for a passive reminder, {"set": "wake", "id", "due_at", "text"} for wake=true, {"cancelled": id, "due_at", "text"} for cancel.`,
 		Parameters: json.RawMessage(`{
@@ -84,11 +84,11 @@ func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWake
 				},
 				"when": {
 					"type": "string",
-					"description": "When to surface: 'next_keepalive', 'next_session', 'tomorrow', a date (YYYY-MM-DD), an ISO timestamp (e.g. '2026-02-26T12:00:00Z'), or a duration (e.g. '2h', '30m'). Required unless list or cancel is set."
+					"description": "When to surface: a duration (e.g. '2h', '30m'), 'tomorrow', a date (YYYY-MM-DD), or an ISO timestamp (e.g. '2026-02-26T12:00:00Z'). Required unless list or cancel is set."
 				},
 				"wake": {
 					"type": "boolean",
-					"description": "If true, actively wake the session at the specified time instead of passively injecting context (default false)"
+					"description": "If true, wake THIS session at the specified time with a message to yourself. Use it only when the reminder needs a specific time or this exact session; otherwise leave it false (default): a passive reminder surfaces on your next message in any of your chats once due."
 				},
 				"list": {
 					"type": "boolean",
@@ -130,7 +130,11 @@ func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWake
 				return remindWake(SessionKeyFromContext(ctx), rs, agentID, p.Text, p.When, wakeFn, WantsJSON(ctx))
 			}
 
-			// Passive reminder — store in ReminderStore
+			// Passive reminder — store in ReminderStore. Validate `when` first: the
+			// store's resolveWhen treats anything it cannot parse as "due now".
+			if _, err := resolveWakeDuration(p.When); err != nil {
+				return ToolResult{}, err
+			}
 			if err := rs.Add(agentID, p.Text, p.When); err != nil {
 				return ToolResult{}, fmt.Errorf("add reminder: %w", err)
 			}
@@ -325,9 +329,13 @@ func resolveWakeDuration(when string) (time.Duration, error) {
 		now := time.Now()
 		tomorrow := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
 		return time.Until(tomorrow), nil
-	case "next_keepalive", "next_heartbeat", "next_session", "now":
+	case "now":
 		return 0, nil
+	case "next_keepalive", "next_heartbeat", "next_session":
+		// Removed (Dick 2026-10-28): all three meant "due now" and surfaced on the
+		// next message to any root chat, not at a keepalive or a new session.
+		return 0, fmt.Errorf("when %q is no longer supported: use a duration (e.g. '30m'), 'tomorrow', a date (YYYY-MM-DD) or an ISO timestamp", when)
 	}
 
-	return 0, fmt.Errorf("cannot parse when %q as duration, timestamp, or date", when)
+	return 0, fmt.Errorf("cannot parse when %q: use a duration (e.g. '30m'), 'tomorrow', a date (YYYY-MM-DD) or an ISO timestamp", when)
 }
