@@ -400,7 +400,7 @@ var toolTable = []toolEntry{
 	}},
 
 	// Depth mode (#2588), experimental: fan an app conversation out into leaf
-	// branches answered in a feed. Off unless [depth] enabled (depthEnabled).
+	// branches answered one at a time. Off unless [depth] enabled (depthEnabled).
 	{name: "depth_fanout", paths: pathBoth, enabled: depthEnabled, build: func(d *toolDeps) *tools.Tool {
 		return d.getDepth().Tools()[0]
 	}},

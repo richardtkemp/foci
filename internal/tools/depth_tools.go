@@ -41,8 +41,8 @@ func (m *DepthManager) fanoutTool() *Tool {
 	return &Tool{
 		Name:       "depth_fanout",
 		ExecExport: true,
-		Description: "Experimental depth mode: fan this conversation out into leaves, one per point, each a fork of your context that the user discusses separately in a feed inside this chat. " +
-			"Each leaf holds exactly ONE point: never a list of questions. To cover several questions, give each its own leaf. " +
+		Description: "Depth mode, for multithreaded interactive work: whenever a user's request opens several discussion threads, use this to fan the conversation out into leaves, ONE point per leaf (never a list of questions), which the user works through one at a time inside this chat. " +
+			"Each leaf is a fork of your context. To cover several questions, give each its own leaf. " +
 			"You then end your turn and get ONE [DEPTH RESULTS] message when every leaf has reported. Only from an app conversation (or from a leaf). " +
 			"Each leaf costs a copy of your current context, so prefer fanning out while the context is small.",
 		Parameters: json.RawMessage(`{

@@ -1159,9 +1159,9 @@ type BrowserConfig struct {
 
 // DepthConfig holds configuration for depth mode (#2588): the experimental
 // foci_depth_* tools that fan a conversation out into leaf branches whose
-// chats surface as a feed inside the root's app conversation.
+// chats surface one at a time inside the root's app conversation (#2605).
 type DepthConfig struct {
-	Enabled *bool `toml:"enabled" default:"false" hot:"turn" desc:"Experimental: give the agent the depth-mode tools (foci_depth_fanout and friends), which fan an app conversation out into leaf branches you answer in a feed inside it. Needs the app platform and a backend that can branch"`
+	Enabled *bool `toml:"enabled" default:"false" hot:"turn" desc:"Give the agent the depth-mode tools (foci_depth_fanout and friends), which fan an app conversation out into leaf branches that you work through one at a time inside it. Needs the app platform and a backend that can branch"`
 }
 
 type ToolsConfig struct {

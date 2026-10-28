@@ -1,7 +1,7 @@
 package tools
 
 // Depth mode (#2588): a conversation fans out into leaf branches the user
-// talks to one by one, in a feed inside the starting (root) app conversation.
+// talks to one by one, one leaf at a time inside the starting (root) app conversation.
 //
 // A node is a forked branch session (branch type "depth") whose app output a
 // leaf view routes into the root conversation, tagged with the node's leaf id
