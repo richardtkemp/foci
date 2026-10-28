@@ -250,28 +250,37 @@ func (c *appDocConn) SendDocumentToChat(int64, string, string) error {
 	return nil
 }
 
-// TestBackendPrompt_NilConnectionDropped proves both prompt closures survive a
+// TestBackendPrompt_NilConnectionRefused proves both prompt closures survive a
 // resolver with no live connection (platform down, prompt arriving during a
-// restart): each prompt is dropped with a WARN naming the session, not a
-// panic — the body dereferences the connection right after the nil check.
-// The WARNs are read through a log tap and tied to this run by its own
-// session key, so the test needs no process-wide hook and runs in parallel.
-func TestBackendPrompt_NilConnectionDropped(t *testing.T) {
+// restart): each prompt is refused back to the backend with a WARN naming the
+// session (#2608: undeliverable must fail, never wait), not a panic and not a
+// silent drop. The WARNs are read through a log tap and tied to this run by its
+// own session key, so the test needs no process-wide hook and runs in parallel.
+func TestBackendPrompt_NilConnectionRefused(t *testing.T) {
 	t.Parallel()
 	logs := captureLog(t, log.WARN)
 	session := "main/" + runToken("nilconn")
 
-	approval, question := promptClosures(nil, nil)
+	rec := &failRecorder{}
+	approval, question := backendPromptFuncs(backendPromptDeps{
+		ag:         &agent.Agent{DelegatedManager: &agent.DelegatedManager{}},
+		connMgr:    oneConnMgr{},
+		agentID:    "main",
+		failPrompt: rec.fail,
+	})
 	approval(session, "req-nil-1", "Allow Bash?", "Bash", "", promptChoices())
 	question(session, "req-nil-2", "Which colour?", "Question", "", promptChoices())
 
+	if rec.calls != 2 {
+		t.Errorf("refusals = %d, want 2 (one per kind)", rec.calls)
+	}
 	warns := logs.Lines("WARN", session)
 	if len(warns) != 2 {
-		t.Fatalf("drop WARNs = %d (%v), want 2 (one per kind, no panic)", len(warns), warns)
+		t.Fatalf("refusal WARNs = %d (%v), want 2 (one per kind, no panic)", len(warns), warns)
 	}
 	for _, l := range warns {
-		if !strings.Contains(l.Msg, "prompt dropped") || !strings.Contains(l.Msg, "session="+session+",") {
-			t.Errorf("drop WARN %q, want it to name the session and the drop", l.Msg)
+		if !strings.Contains(l.Msg, "undeliverable, refused") || !strings.Contains(l.Msg, "sk="+session+" ") {
+			t.Errorf("refusal WARN %q, want it to name the session and the refusal", l.Msg)
 		}
 	}
 }

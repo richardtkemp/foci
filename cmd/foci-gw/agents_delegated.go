@@ -259,7 +259,15 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 
 	// The manager's two prompt surfaces (#2275): approvals land in the
 	// owner's default chat, questions in the asking session's chat.
-	permPromptFn, questionPromptFn := backendPromptFuncs(backendPromptDeps{ag: ag, connMgr: connMgr, sessionIdx: sessionIdx, agentID: agentID})
+	permPromptFn, questionPromptFn := backendPromptFuncs(backendPromptDeps{
+		ag: ag, connMgr: connMgr, sessionIdx: sessionIdx, agentID: agentID,
+		defaultSession: func() string {
+			if sessionIdx == nil {
+				return ""
+			}
+			return sessionIdx.DefaultSessionKeyForAgentOn(agentID, p.cfg.DefaultPlatformFor(agentID))
+		},
+	})
 
 	ag.DelegatedManager = &agent.DelegatedManager{
 		SessionIndex: p.sessionIndex,
@@ -487,41 +495,28 @@ type backendPromptDeps struct {
 	connMgr    platform.ConnectionManager
 	sessionIdx *session.SessionIndex
 	agentID    string
+	// defaultSession returns the agent's default session key, the last chat
+	// a prompt is offered to (#2608). nil or "" skips that step.
+	defaultSession func() string
+	// failPrompt answers a prompt no chat could show (#2608). nil means
+	// ag.FailUndeliverablePrompt; tests replace it to observe the failure.
+	failPrompt func(sessionKey, requestID, reason string) error
 }
 
 // postBackendPrompt is the one body behind the two gateway prompt closures
 // (DelegatedManager.PermissionPromptFunc and QuestionPromptFunc — wired in
-// configureDelegated as one-line delegations). It resolves the connection for
-// the prompt's chat (which one depends on kind), sends the optional attachment
-// to that same chat, posts the interactive prompt with the shared click and
-// expiry callbacks, and registers the per-prompt cancel listener. Everything
-// except the destination chat is identical for both kinds.
+// configureDelegated as one-line delegations). It offers the prompt to each
+// chat of promptTargets in turn (which connection a chat resolves to depends
+// on kind) until one shows it: it sends the optional attachment to that chat,
+// posts the interactive prompt with the shared click and expiry callbacks, and
+// registers the per-prompt cancel listener. Everything except the destination
+// chat is identical for both kinds.
+//
+// A prompt no chat can show is answered as a failure with the reason (#2608,
+// Dick 2026-10-28): before, the send error was only logged, and since a failed
+// send leaves no prompt entry to expire, the backend waited forever.
 func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, requestID, text, summary, attachmentPath string, choices []delegator.PromptChoice) {
 	logger := log.NewComponentLogger("agent:" + d.agentID)
-	resolve := connResolver(d.connMgr, sessionKey, d.agentID)
-	if kind == promptToSessionChat {
-		resolve = sessionChatResolver(d.connMgr, sessionKey, d.agentID)
-	}
-	conn := resolve()
-	if conn == nil {
-		logger.Warnf("backend prompt: ForSessionOrPrimary returned nil for session=%s, prompt dropped", sessionKey)
-		return
-	}
-	logger.Debugf("backend prompt: sending via %s for session=%s summary=%q reqID=%s", conn.PlatformName(), sessionKey, summary, requestID)
-	if kind == promptToDefaultChat {
-		text = prependRequestOrigin(d.sessionIdx, d.agentID, conn, sessionKey, text)
-	}
-	text = prependSpawnOrigin(tools.Spawns, sessionKey, text)
-	// Attachment (e.g. the full ExitPlanMode plan markdown) is sent as a
-	// document before the keyboard so the user sees the content, then the
-	// Allow/Deny buttons — to the chat the buttons go to. A send failure is
-	// non-fatal — fall through to the prompt so the permission gate still
-	// resolves.
-	if attachmentPath != "" {
-		if err := sendPromptAttachment(conn, kind, sessionKey, attachmentPath); err != nil {
-			logger.Warnf("backend prompt: SendDocument(%q) failed for session=%s: %v", attachmentPath, sessionKey, err)
-		}
-	}
 	var buttons []platform.ButtonChoice
 	for _, c := range choices {
 		btn := platform.ButtonChoice{Label: c.Label, Data: c.Data}
@@ -534,13 +529,7 @@ func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, 
 		}
 		buttons = append(buttons, btn)
 	}
-	// Use the requestID as the platform prompt ID so the cancel listener
-	// (registered below) can find and edit this exact message later if the
-	// backend cancels the request before the user responds. The resolver
-	// (not the conn grabbed above) is stored for those later edits so they
-	// survive a reconnect — and, for a question, so the cancel/expiry edits
-	// address the asking session's chat.
-	if _, err := platform.SendInteractiveMessageWithID(resolve, requestID, summary, text, buttons, func(choice platform.ButtonChoice) string {
+	onClick := func(choice platform.ButtonChoice) string {
 		logger.Debugf("prompt button pressed: sk=%s reqID=%s choice=%q", sessionKey, requestID, choice.Data)
 		if err := d.ag.SendPermissionResponse(context.Background(), sessionKey, requestID, choice.Data); err != nil {
 			logger.Errorf("SendPermissionResponse failed: sk=%s reqID=%s choice=%q err=%v", sessionKey, requestID, choice.Data, err)
@@ -559,15 +548,80 @@ func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, 
 			}
 			return "✅ Approved"
 		}
-	}, func() {
+	}
+	onExpire := func() {
 		// Expiry: deny the prompt so a turn blocked in WaitForPermission
 		// unblocks instead of orphaning. The message edit to an "expired"
 		// notice is handled by CleanupExpiredInteractive.
 		if err := d.ag.SendPermissionResponse(context.Background(), sessionKey, requestID, "deny"); err != nil {
 			logger.Warnf("expire prompt deny failed: sk=%s reqID=%s err=%v", sessionKey, requestID, err)
 		}
-	}); err != nil {
-		logger.Warnf("backend prompt send failed: sk=%s reqID=%s err=%v", sessionKey, requestID, err)
+	}
+
+	targets := promptTargets(d, sessionKey)
+	var failures []string
+	delivered := false
+	for _, target := range targets {
+		resolve := connResolver(d.connMgr, target, d.agentID)
+		if kind == promptToSessionChat {
+			resolve = sessionChatResolver(d.connMgr, target, d.agentID)
+		}
+		conn := resolve()
+		if conn == nil {
+			failures = append(failures, target+": no connection")
+			continue
+		}
+		logger.Debugf("backend prompt: sending via %s to %s for session=%s summary=%q reqID=%s", conn.PlatformName(), target, sessionKey, summary, requestID)
+		body := text
+		if kind == promptToDefaultChat {
+			body = prependRequestOrigin(d.sessionIdx, d.agentID, conn, sessionKey, body)
+		}
+		body = prependSpawnOrigin(tools.Spawns, sessionKey, body)
+		if target != sessionKey {
+			body = fmt.Sprintf("↪️ **From session %s** (its own chat cannot show this prompt)", sessionKey) + "\n\n" + body
+		}
+		// Attachment (e.g. the full ExitPlanMode plan markdown) is sent as a
+		// document before the keyboard so the user sees the content, then the
+		// Allow/Deny buttons — to the chat the buttons go to. A send failure is
+		// non-fatal — fall through to the prompt so the permission gate still
+		// resolves.
+		if attachmentPath != "" {
+			if err := sendPromptAttachment(conn, kind, target, attachmentPath); err != nil {
+				logger.Warnf("backend prompt: SendDocument(%q) failed for session=%s: %v", attachmentPath, target, err)
+			}
+		}
+		// Use the requestID as the platform prompt ID so the cancel listener
+		// (registered below) can find and edit this exact message later if the
+		// backend cancels the request before the user responds. The resolver
+		// (not the conn grabbed above) is stored for those later edits so they
+		// survive a reconnect — and, for a question, so the cancel/expiry edits
+		// address the chat that shows it. A failed send leaves no prompt entry,
+		// so the same requestID is free for the next target.
+		if _, err := platform.SendInteractiveMessageWithID(resolve, requestID, summary, body, buttons, onClick, onExpire); err != nil {
+			logger.Warnf("backend prompt send failed: sk=%s target=%s reqID=%s err=%v", sessionKey, target, requestID, err)
+			failures = append(failures, fmt.Sprintf("%s: %v", target, err))
+			continue
+		}
+		if target != sessionKey {
+			logger.Infof("backend prompt: sk=%s reqID=%s shown in %s instead (own chat could not show it)", sessionKey, requestID, target)
+		}
+		delivered = true
+		break
+	}
+	if !delivered {
+		reason := fmt.Sprintf("foci could not show this prompt to the user in any chat (%s), so it was refused automatically. It was not seen or answered by a person.", strings.Join(failures, "; "))
+		fail := d.failPrompt
+		if fail == nil {
+			fail = func(sk, reqID, why string) error {
+				return d.ag.FailUndeliverablePrompt(context.Background(), sk, reqID, why)
+			}
+		}
+		if err := fail(sessionKey, requestID, reason); err != nil {
+			logger.Errorf("backend prompt undeliverable and its refusal failed: sk=%s reqID=%s err=%v (%s)", sessionKey, requestID, err, reason)
+		} else {
+			logger.Warnf("backend prompt undeliverable, refused: sk=%s reqID=%s (%s)", sessionKey, requestID, reason)
+		}
+		return
 	}
 	// Register a cancel listener so the orphaned inline keyboard is
 	// disabled if the backend aborts this prompt before the user responds
@@ -585,6 +639,40 @@ func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, 
 			logger.Debugf("prompt cancelled: sk=%s reqID=%s reason=%q", sessionKey, requestID, reason)
 		}
 	})
+}
+
+// promptTargets lists, in order, the sessions whose chats a backend prompt
+// from sessionKey is offered to (#2608, Dick 2026-10-28): the session's own
+// chat; for a branch (fork, spawn, facet) its parent session, then the root
+// session when the parent is itself a branch; then the agent's default
+// session. Duplicates are dropped. A branch has no app conversation of its
+// own unless it is a depth leaf, so on the app its own chat cannot show a
+// prompt, and before #2608 the prompt was lost.
+func promptTargets(d backendPromptDeps, sessionKey string) []string {
+	targets := []string{sessionKey}
+	add := func(k string) {
+		if k == "" {
+			return
+		}
+		for _, t := range targets {
+			if t == k {
+				return
+			}
+		}
+		targets = append(targets, k)
+	}
+	if sk, err := session.ParseSessionKey(sessionKey); err == nil && !sk.IsRoot() {
+		if d.sessionIdx != nil {
+			if e, err := d.sessionIdx.Get(sessionKey); err == nil {
+				add(e.ParentSessionKey)
+			}
+		}
+		add(sk.Root().String())
+	}
+	if d.defaultSession != nil {
+		add(d.defaultSession())
+	}
+	return targets
 }
 
 // prependSpawnOrigin names the spawn a prompt comes from (#2523). A clone

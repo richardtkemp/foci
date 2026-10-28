@@ -144,3 +144,52 @@ func TestSendPermissionResponse_RespondError(t *testing.T) {
 		t.Fatalf("error = %v, want protocol error", err)
 	}
 }
+
+// questionPermBackend refuses a permission answer for an ID it holds as a
+// question, as ccstream does not and other backends may (#2608).
+type questionPermBackend struct {
+	mockPermBackend
+	cancelled []string
+}
+
+func (q *questionPermBackend) RespondToQuestion(string, string) error { return nil }
+func (q *questionPermBackend) CancelQuestion(requestID string) error {
+	q.cancelled = append(q.cancelled, requestID)
+	return nil
+}
+func (q *questionPermBackend) HasPendingQuestion() string { return "" }
+
+// TestFailUndeliverablePrompt (#2608): a prompt no chat could show is refused
+// to the backend with the reason as its message; a backend that holds the ID
+// as a question has it cancelled instead; one that can answer nothing is an
+// error, never a silent success.
+func TestFailUndeliverablePrompt(t *testing.T) {
+	t.Parallel()
+	t.Run("permission denied with reason", func(t *testing.T) {
+		be := &mockPermBackend{}
+		a := setupAgentWithMockBackend(t, be)
+		if err := a.FailUndeliverablePrompt(context.Background(), "test/s", "req-1", "no chat"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := delegator.PermissionDecision{Message: "no chat"}
+		if len(be.calls) != 1 || be.calls[0].requestID != "req-1" || be.calls[0].d != want {
+			t.Fatalf("calls = %+v, want one deny of req-1 with the reason", be.calls)
+		}
+	})
+	t.Run("question cancelled", func(t *testing.T) {
+		be := &questionPermBackend{mockPermBackend: mockPermBackend{respondErr: errors.New("not a permission")}}
+		a := setupAgentWithMockBackend(t, be)
+		if err := a.FailUndeliverablePrompt(context.Background(), "test/s", "req-q", "no chat"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(be.cancelled) != 1 || be.cancelled[0] != "req-q" {
+			t.Fatalf("cancelled = %v, want [req-q]", be.cancelled)
+		}
+	})
+	t.Run("no responder is an error", func(t *testing.T) {
+		a := setupAgentWithMockBackend(t, noResponderBackend{})
+		if err := a.FailUndeliverablePrompt(context.Background(), "test/s", "req-1", "no chat"); err == nil {
+			t.Fatal("expected an error, got nil")
+		}
+	})
+}

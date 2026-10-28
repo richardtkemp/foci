@@ -108,10 +108,14 @@ var (
 	_ turn.SessionSubagentDeliverer = (*appConn)(nil)
 )
 
-// errNoBinding is returned by ButtonSender sends when the prompt's conversation
-// has no live socket (the device dropped mid-turn). Offline buffering + push is
-// a later slice; until then foci treats the send as failed and the prompt's
-// 24h expiry (onExpire → deny) eventually unblocks the turn.
+// errNoBinding is returned by ButtonSender sends when the session has no app
+// conversation binding at all. A conversation whose device is merely offline
+// keeps its binding (restored at startup, frames buffered for replay), so the
+// usual cause is a branch session (fork, spawn) that is not a depth leaf: it
+// has no conversation of its own. A failed send registers no prompt, so there
+// is no expiry to deny it later; the gateway's backend prompt path offers the
+// prompt to the parent and default sessions instead, and refuses it if none
+// can show it (#2608).
 var errNoBinding = errors.New("app: no live socket for conversation")
 
 // --- identity ---

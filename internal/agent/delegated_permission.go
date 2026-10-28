@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -54,6 +55,49 @@ func (a *Agent) SendPermissionResponse(ctx context.Context, sessionKey string, r
 	}
 
 	return fmt.Errorf("agent: backend cannot answer permission prompt (reqID=%q choice=%q)", requestID, choice)
+}
+
+// FailUndeliverablePrompt answers a backend prompt that could not be shown to
+// anyone (#2608, Dick 2026-10-28: "undeliverable must fail"). Without it the
+// backend waits forever: a failed send leaves no prompt entry, so nothing ever
+// expires or is clicked. The prompt is refused with reason as the message the
+// backend sees; the kinds are tried in turn, permission (deny) then question
+// (cancel) then elicitation (cancel), because the gateway does not know which
+// kind requestID is. A backend that refuses all of them is an error.
+func (a *Agent) FailUndeliverablePrompt(ctx context.Context, sessionKey, requestID, reason string) error {
+	if a.DelegatedManager == nil {
+		return nil
+	}
+	be, err := a.DelegatedManager.Get(ctx, sessionKey)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	if pr, ok := delegator.As[delegator.PermissionResponder](be); ok {
+		err := pr.RespondToPermission(requestID, delegator.PermissionDecision{Message: reason})
+		if err == nil {
+			return nil
+		}
+		errs = append(errs, err)
+	}
+	if qr, ok := delegator.As[delegator.QuestionResponder](be); ok {
+		err := qr.CancelQuestion(requestID)
+		if err == nil {
+			return nil
+		}
+		errs = append(errs, err)
+	}
+	if er, ok := delegator.As[delegator.ElicitationResponder](be); ok {
+		err := er.RespondToElicitation(requestID, "elic:cancel")
+		if err == nil {
+			return nil
+		}
+		errs = append(errs, err)
+	}
+	if len(errs) == 0 {
+		return fmt.Errorf("agent: backend cannot answer prompt %q", requestID)
+	}
+	return errors.Join(errs...)
 }
 
 // permissionDecision turns a prompt button's data into the unified decision
