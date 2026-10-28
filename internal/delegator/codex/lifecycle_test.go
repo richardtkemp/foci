@@ -136,6 +136,25 @@ func TestResumeThread_PassesBaseInstructions(t *testing.T) {
 	}
 }
 
+// TestResumeThread_RecordsModel: the model thread/resume reports becomes the
+// backend's model, so a resumed session's calls are booked against it rather
+// than "" (unpriced, NULL cost).
+func TestResumeThread_RecordsModel(t *testing.T) {
+	b := newStartableBackend(t, func(method string, params json.RawMessage, id int64) (json.RawMessage, error) {
+		return json.RawMessage(`{"thread":{"id":"th_m"},"model":"gpt-6.1-sol"}`), nil
+	})
+	b.workDir = "/tmp"
+	if err := b.resumeThread("th_m"); err != nil {
+		t.Fatalf("resumeThread: %v", err)
+	}
+	b.mu.Lock()
+	got := b.model
+	b.mu.Unlock()
+	if got != "gpt-6.1-sol" {
+		t.Errorf("model after resume = %q, want %q", got, "gpt-6.1-sol")
+	}
+}
+
 // TestStartThread_PassesSandbox verifies the mock app-server receives
 // thread/start with sandbox matching the configured sandbox mode.
 func TestStartThread_PassesSandbox(t *testing.T) {

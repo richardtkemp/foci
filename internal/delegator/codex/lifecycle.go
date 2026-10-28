@@ -503,6 +503,12 @@ func (b *Backend) resumeThread(threadID string) error {
 	if tr.Thread.Status.Type != "" {
 		b.threadStatus = tr.Thread.Status
 	}
+	// thread/resume returns the thread's model (required in codex 0.164.0's
+	// ThreadResumeResponse), exactly as thread/start does. Without it a resumed
+	// session booked every call with model "" — no rate group, NULL cost.
+	if tr.Model != "" {
+		b.model = tr.Model
+	}
 	b.mu.Unlock()
 	b.registerThread(b.startOpts.SessionKey, threadID)
 	b.readyOnce.Do(func() { close(b.readyCh) })
