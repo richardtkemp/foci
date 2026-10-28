@@ -311,3 +311,58 @@ func TestDepthLeaf_RestartRehydratesFromChatMetadata(t *testing.T) {
 		t.Errorf("leaf chat registered = %q, want no row: a leaf is not a routable chat", v)
 	}
 }
+
+// A leaf's conversation follows its root's archive flag (#2613, Dick
+// 2026-10-28): archiving the root archives every leaf of it, unarchiving it
+// brings them back, and a leaf of another root is untouched.
+func TestDepthLeaf_FollowsRootArchive(t *testing.T) {
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+	root := h.ensureBinding(nil, "ag", "conv-root")
+	other := h.ensureBinding(nil, "ag", "conv-other")
+	l1 := registerLeaf(t, h, root, root.sessionKey+"/b1", "leaf-1", "A")
+	l2 := registerLeaf(t, h, root, root.sessionKey+"/b2", "leaf-2", "B")
+	lo := registerLeaf(t, h, other, other.sessionKey+"/b1", "leaf-o", "O")
+
+	archived := func(b *convBinding) bool { return idx.ArchivedChatsForAgent("ag", "app")[b.chatID] }
+
+	h.handleConversationArchive(fakeClient(), fap.ConversationArchive{ConversationID: "conv-root", Archived: true})
+	if !archived(root) || !archived(l1) || !archived(l2) {
+		t.Errorf("archived: root=%v l1=%v l2=%v, want all three", archived(root), archived(l1), archived(l2))
+	}
+	if archived(other) || archived(lo) {
+		t.Errorf("another root's tree archived: root=%v leaf=%v", archived(other), archived(lo))
+	}
+	for _, a := range h.agentRoster() {
+		for _, c := range a.Conversations {
+			if (c.ID == l1.convID || c.ID == l2.convID) && !c.Archived {
+				t.Errorf("roster row %s archived=false, want true", c.ID)
+			}
+		}
+	}
+
+	h.handleConversationArchive(fakeClient(), fap.ConversationArchive{ConversationID: "conv-root", Archived: false})
+	if archived(root) || archived(l1) || archived(l2) {
+		t.Errorf("after unarchive: root=%v l1=%v l2=%v, want none", archived(root), archived(l1), archived(l2))
+	}
+}
+
+// A leaf registered under an archived root (a fan-out from an archived chat,
+// or a restart re-registering a tree whose root was archived before #2613) is
+// archived with it, and comes back when the root does.
+func TestDepthLeaf_RegisteredUnderArchivedRootIsArchived(t *testing.T) {
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+	root := h.ensureBinding(nil, "ag", "conv-root")
+	h.handleConversationArchive(fakeClient(), fap.ConversationArchive{ConversationID: "conv-root", Archived: true})
+	lb := registerLeaf(t, h, root, root.sessionKey+"/b1", "leaf-1", "A")
+	if !idx.ArchivedChatsForAgent("ag", "app")[lb.chatID] {
+		t.Fatal("a leaf registered under an archived root must be archived")
+	}
+	h.handleConversationArchive(fakeClient(), fap.ConversationArchive{ConversationID: "conv-root", Archived: false})
+	if idx.ArchivedChatsForAgent("ag", "app")[lb.chatID] {
+		t.Error("unarchiving the root must unarchive the leaf")
+	}
+}

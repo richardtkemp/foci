@@ -477,7 +477,8 @@ func (h *Hub) handleConversationSetDefault(f fap.ConversationSetDefault) {
 // belt-and-braces guard for other devices/older clients): a default that could
 // be archived would silently degrade session-blind delivery. Mirrors
 // handleConversationSetDefault (the established per-chat-metadata round-trip).
-// (#app-archive-flag)
+// (#app-archive-flag) The root of a depth tree carries its leaves' conversations
+// with it (#2613, syncDepthLeavesArchived).
 //
 // A re-applied archive that MATCHES the current flag is a no-op: skip both the
 // write and the broadcast (#1989, part 2 of #1981). This matters because an
@@ -511,14 +512,25 @@ func (h *Hub) handleConversationArchive(client *wsClient, f fap.ConversationArch
 			h.pushRoster(client)
 			return
 		}
+		changed := true
 		if current, err := idx.GetChatMetadata(b.agentID, "app", b.chatID, "is_archived"); err != nil {
 			appLog.Warnf("archive %s: read current state: %v", f.ConversationID, err)
 		} else if (current == "true") == f.Archived {
+			changed = false
+		}
+		if changed {
+			if err := idx.SetArchivedChat(b.agentID, "app", b.chatID, f.Archived); err != nil {
+				appLog.Warnf("archive %s (archived=%v): %v", f.ConversationID, f.Archived, err)
+			}
+		}
+		// A depth-mode leaf's conversation follows its root (#2613); a leaf
+		// out of step with an unchanged root is still brought into line.
+		if n := h.syncDepthLeavesArchived(b, f.Archived); n > 0 {
+			changed = true
+		}
+		if !changed {
 			appLog.Debugf("archive %s: already archived=%v, no-op (no broadcast)", f.ConversationID, f.Archived)
 			return
-		}
-		if err := idx.SetArchivedChat(b.agentID, "app", b.chatID, f.Archived); err != nil {
-			appLog.Warnf("archive %s (archived=%v): %v", f.ConversationID, f.Archived, err)
 		}
 	}
 	appLog.Infof("archived=%v conversation %s (session %s, frames retained)", f.Archived, f.ConversationID, b.sessionKey)

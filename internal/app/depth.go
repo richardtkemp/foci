@@ -210,10 +210,92 @@ func (h *Hub) registerDepthLeaf(rootKey, branchKey, leafID, title, convID string
 	h.bySession[branchKey] = b
 	h.mu.Unlock()
 	h.attachConnected(b)
-	if minted || cur == nil {
+	// A leaf registered under an archived root (a fan-out from an archived
+	// chat, or a restart re-registering a tree archived before #2613) is
+	// archived with it.
+	archivedChanged := h.syncLeafArchived(root, b)
+	if minted || cur == nil || archivedChanged {
 		h.pushRosterAll()
 	}
 	return convID, nil
+}
+
+// Retention (#2613, Dick 2026-10-28): a leaf's conversation follows its root
+// conversation. It is archived when the root is archived and unarchived with
+// it; there is no time-based expiry. The app has no conversation delete, so
+// there is no delete to follow yet: a future root delete must remove
+// depthLeavesOf(root) with it.
+
+// depthLeavesOf returns the live bindings of every leaf conversation of root,
+// from any of its trees (a leaf's binding outlives its depth record).
+func (h *Hub) depthLeavesOf(root *convBinding) []*convBinding {
+	h.mu.RLock()
+	all := make([]*convBinding, 0, len(h.convs))
+	for _, b := range h.convs {
+		all = append(all, b)
+	}
+	h.mu.RUnlock()
+	var out []*convBinding
+	for _, b := range all {
+		if b == root || b.agentID != root.agentID {
+			continue
+		}
+		b.mu.Lock()
+		leaf := b.depthRoot == root.convID
+		b.mu.Unlock()
+		if leaf {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// syncDepthLeavesArchived sets every leaf conversation of root to archived,
+// and returns how many flags it changed.
+func (h *Hub) syncDepthLeavesArchived(root *convBinding, archived bool) int {
+	idx := h.deps.SessionIndex
+	if idx == nil {
+		return 0
+	}
+	leaves := h.depthLeavesOf(root)
+	if len(leaves) == 0 {
+		return 0
+	}
+	set := idx.ArchivedChatsForAgent(root.agentID, "app")
+	n := 0
+	for _, l := range leaves {
+		if set[l.chatID] == archived {
+			continue
+		}
+		if err := idx.SetArchivedChat(l.agentID, "app", l.chatID, archived); err != nil {
+			appLog.Warnf("archive depth leaf %s with root %s (archived=%v): %v", l.convID, root.convID, archived, err)
+			continue
+		}
+		n++
+	}
+	if n > 0 {
+		appLog.Infof("archived=%v %d depth leaf conversation(s) of %s", archived, n, root.convID)
+	}
+	return n
+}
+
+// syncLeafArchived gives leaf its root's archived flag, and reports whether
+// it changed.
+func (h *Hub) syncLeafArchived(root, leaf *convBinding) bool {
+	idx := h.deps.SessionIndex
+	if idx == nil {
+		return false
+	}
+	set := idx.ArchivedChatsForAgent(root.agentID, "app")
+	want := set[root.chatID]
+	if set[leaf.chatID] == want {
+		return false
+	}
+	if err := idx.SetArchivedChat(leaf.agentID, "app", leaf.chatID, want); err != nil {
+		appLog.Warnf("archive depth leaf %s with root %s (archived=%v): %v", leaf.convID, root.convID, want, err)
+		return false
+	}
+	return true
 }
 
 // attachConnected attaches every connected socket to b, from its current seq,
