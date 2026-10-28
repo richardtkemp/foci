@@ -243,6 +243,62 @@ func TestServer_buildCmdEnv_NoExtraEnv(t *testing.T) {
 	}
 }
 
+// fakeBash points lookBash at a fixed path (or a lookup failure) for one test.
+func fakeBash(t *testing.T, path string, err error) {
+	t.Helper()
+	old := lookBash
+	t.Cleanup(func() { lookBash = old })
+	lookBash = func() (string, error) { return path, err }
+}
+
+func TestServer_buildCmdEnv_ZshShellBecomesBash(t *testing.T) {
+	// #2601: on macOS the operator SHELL is zsh, opencode's bash tool runs
+	// $SHELL, and zsh never reads BASH_ENV, so every foci_* call failed.
+	t.Setenv("SHELL", "/bin/zsh")
+	fakeBash(t, "/opt/x/bash", nil)
+	env := (&Server{}).buildCmdEnv()
+	if got := lastEnvValue(env, "SHELL"); got != "/opt/x/bash" {
+		t.Errorf("SHELL = %q, want /opt/x/bash: opencode's bash tool would run zsh and miss BASH_ENV", got)
+	}
+}
+
+func TestServer_buildCmdEnv_BashShellUnchanged(t *testing.T) {
+	// Linux: SHELL is already bash, so the env is left exactly as it was.
+	t.Setenv("SHELL", "/bin/bash")
+	fakeBash(t, "/opt/x/bash", nil)
+	env := (&Server{}).buildCmdEnv()
+	n := 0
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "SHELL=") {
+			n++
+		}
+	}
+	if got := lastEnvValue(env, "SHELL"); got != "/bin/bash" || n != 1 {
+		t.Errorf("SHELL = %q across %d entries, want the operator's /bin/bash once", got, n)
+	}
+}
+
+func TestServer_buildCmdEnv_ExtraEnvShellWins(t *testing.T) {
+	// A per-agent backend_config.env SHELL overrides foci's bash default.
+	t.Setenv("SHELL", "/bin/zsh")
+	fakeBash(t, "/opt/x/bash", nil)
+	env := (&Server{extraEnv: map[string]string{"SHELL": "/usr/local/bin/fish"}}).buildCmdEnv()
+	if got := lastEnvValue(env, "SHELL"); got != "/usr/local/bin/fish" {
+		t.Errorf("SHELL = %q, want the per-agent /usr/local/bin/fish", got)
+	}
+}
+
+func TestServer_buildCmdEnv_NoBashKeepsShell(t *testing.T) {
+	// No bash on the operator PATH: leave SHELL alone rather than name a
+	// shell that cannot run.
+	t.Setenv("SHELL", "/bin/zsh")
+	fakeBash(t, "", os.ErrNotExist)
+	env := (&Server{}).buildCmdEnv()
+	if got := lastEnvValue(env, "SHELL"); got != "/bin/zsh" {
+		t.Errorf("SHELL = %q, want the operator's /bin/zsh", got)
+	}
+}
+
 func TestServer_Close_NotStarted(t *testing.T) {
 	// Verifies Close on a never-Started Server is a no-op (no panic).
 	srv := newTestServer(t, "agent-nostart")

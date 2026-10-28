@@ -17,6 +17,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -534,16 +535,67 @@ func pickFreePort(hostname string) (int, error) {
 
 // buildCmdEnv assembles the environment for the opencode subprocess.
 // Starts with the OPERATOR population (#1914), adds OPENCODE_SERVER_
-// PASSWORD (if set), then applies extraEnv (BASH_ENV, FOCI_SOCK from
-// the exec bridge). Extracted from Start so tests can verify the env
+// PASSWORD (if set) and a bash SHELL (see bashShellOverride), then applies
+// extraEnv (BASH_ENV, FOCI_SOCK from the exec bridge, any per-agent
+// backend_config.env). Extracted from Start so tests can verify the env
 // composition without spawning a subprocess.
 func (s *Server) buildCmdEnv() []string {
 	env := procx.Env(procx.Operator)
 	if s.serverPassword != "" {
 		env = append(env, "OPENCODE_SERVER_PASSWORD="+s.serverPassword)
 	}
+	if sh := bashShellOverride(env); sh != "" {
+		env = append(env, "SHELL="+sh)
+	}
 	for k, v := range s.extraEnv {
 		env = append(env, k+"="+v)
 	}
 	return env
+}
+
+// bashShellOverride returns the bash SHELL should name for the opencode
+// subprocess, or "" to leave SHELL alone (#2601).
+//
+// foci's foci_* shell functions reach the agent through BASH_ENV, which only
+// bash reads. opencode's bash tool runs the shell named by its config's
+// "shell" key, else $SHELL (opencode 1.19.4: `u5(config.shell)` falling back
+// to process.env.SHELL, then /bin/zsh). On macOS $SHELL is the login shell,
+// zsh, so every foci_* call failed "command not found" — measured on the work
+// Mac with a throwaway `opencode serve` replaying foci's environment; with
+// SHELL set to /bin/bash (3.2) or Homebrew bash 5 the same turn ran
+// foci_whoami. Unlike Claude Code (ccstream/env.go), SHLVL is not needed:
+// opencode runs bash as `bash -l -c`, and the replay had no SHLVL.
+//
+// A SHELL that is already bash is kept, so Linux (SHELL=/bin/bash) is
+// unchanged. An opencode config "shell" key still wins over SHELL, and a
+// per-agent backend_config.env SHELL wins over this (extraEnv is applied
+// after). bash is resolved on the OPERATOR PATH, the PATH opencode's tool
+// shells search.
+func bashShellOverride(env []string) string {
+	if filepath.Base(lastEnvValue(env, "SHELL")) == "bash" {
+		return ""
+	}
+	p, err := lookBash()
+	if err != nil {
+		return ""
+	}
+	return p
+}
+
+// lookBash is overridable for tests.
+var lookBash = func() (string, error) {
+	return procx.LookPath(procx.Operator, "bash")
+}
+
+// lastEnvValue returns the last value of key in a KEY=VALUE list (last wins,
+// as in execve), or "" when absent.
+func lastEnvValue(env []string, key string) string {
+	prefix := key + "="
+	val := ""
+	for _, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			val = kv[len(prefix):]
+		}
+	}
+	return val
 }
