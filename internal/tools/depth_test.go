@@ -749,3 +749,111 @@ func TestDepthRestoreWaitsForEnable(t *testing.T) {
 		t.Error("enabled startup restore did not load the tree")
 	}
 }
+
+// Each fan-out from the root is its own tree (#2614): a later fan-out's
+// status, claims board and feed do not show the nodes of an earlier, finished
+// one from the same root chat.
+func TestDepthEachRootFanoutIsItsOwnTree(t *testing.T) {
+	h := newDepthHarness(t, nil)
+	first := h.fanout(t, depthRoot, "Philosophy", "Parenting")
+	if _, err := h.m.claimsTool().Execute(depthCtx(first[0]), json.RawMessage(`{"text": "add the trolley problem"}`)); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range first {
+		if err := h.report(t, k, "done "+k); err != nil {
+			t.Fatal(err)
+		}
+	}
+	second := h.fanout(t, depthRoot, "Being a leaf", "Orientation")
+
+	f := h.surface.lastFeed(t)
+	if len(f.nodes) != 2 || f.nodes[0].Title != "Being a leaf" || f.nodes[1].Title != "Orientation" {
+		t.Errorf("feed of the second fan-out = %+v, want only its two leaves", f.nodes)
+	}
+	st, _ := h.m.statusTool().Execute(depthCtx(second[0]), nil)
+	if strings.Contains(st.Text, "Philosophy") || strings.Contains(st.Text, "Parenting") || !strings.Contains(st.Text, "Being a leaf") {
+		t.Errorf("status from the second fan-out shows the first:\n%s", st.Text)
+	}
+	if res, err := h.m.claimsTool().Execute(depthCtx(second[0]), json.RawMessage(`{}`)); err != nil || res.Text != "No claims yet." {
+		t.Errorf("claims of the second fan-out = %q, %v; want the first's board gone", res.Text, err)
+	}
+	if h.node(second[0]).TreeID == "" || h.node(second[0]).TreeID == h.node(first[0]).TreeID {
+		t.Errorf("tree ids: first %q, second %q; want distinct", h.node(first[0]).TreeID, h.node(second[0]).TreeID)
+	}
+	// A nested fan-out stays in its parent's tree.
+	nested := h.fanout(t, second[0], "Deeper")
+	if h.node(nested[0]).TreeID != h.node(second[0]).TreeID {
+		t.Errorf("nested leaf tree %q, want its parent's %q", h.node(nested[0]).TreeID, h.node(second[0]).TreeID)
+	}
+	if f := h.surface.lastFeed(t); len(f.nodes) != 3 {
+		t.Errorf("feed with a nested leaf = %+v, want 3 nodes", f.nodes)
+	}
+	// The earlier tree's records are kept (until retention), not deleted.
+	if h.node(first[0]).State != depthReported {
+		t.Errorf("first tree's leaf = %+v, want kept as reported", h.node(first[0]))
+	}
+}
+
+// Records from before #2614 carry no tree id: a restore puts the root's current
+// fan-out (the descendants of its Children) in a tree of its own, so earlier
+// fan-outs drop out of status, claims and the feed.
+func TestDepthRestoreSplitsLegacyTree(t *testing.T) {
+	store := newMemSpawnStore()
+	h1 := newDepthHarness(t, store)
+	old := time.Now().Add(-2 * time.Hour)
+	cur := time.Now().Add(-time.Hour)
+	recs := []depthNode{
+		{Key: depthRoot, Tree: depthRoot, State: depthFanned, Children: []string{"test/c1/b3"}, Created: old, Updated: cur,
+			Claims: []depthClaim{{Node: "Old", Text: "old claim", At: old.Add(time.Minute)}, {Node: "New", Text: "new claim", At: cur.Add(time.Minute)}}},
+		{Key: "test/c1/b1", LeafID: "leaf-1", Tree: depthRoot, Parent: depthRoot, Level: 1, Title: "Old", State: depthReported, Report: "r", Created: old, Updated: old, FirstTurnStarted: true},
+		{Key: "test/c1/b2", LeafID: "leaf-2", Tree: depthRoot, Parent: "test/c1/b1", Level: 2, Title: "Old nested", State: depthReported, Report: "r", Created: old.Add(time.Second), Updated: old, FirstTurnStarted: true},
+		{Key: "test/c1/b3", LeafID: "leaf-3", Tree: depthRoot, Parent: depthRoot, Level: 1, Title: "New", State: depthActive, Created: cur, Updated: cur, FirstTurnStarted: true},
+		{Key: "test/c1/b4", LeafID: "leaf-4", Tree: depthRoot, Parent: "test/c1/b3", Level: 2, Title: "New nested", State: depthReported, Report: "r", Created: cur.Add(time.Second), Updated: cur, FirstTurnStarted: true},
+	}
+	h1.m.persist(recs...)
+
+	h2 := newDepthHarness(t, store)
+	h2.m.Restore()
+	f := h2.surface.lastFeed(t)
+	if len(f.nodes) != 2 || f.nodes[0].Title != "New" || f.nodes[1].Title != "New nested" {
+		t.Errorf("restored feed = %+v, want the current fan-out only", f.nodes)
+	}
+	st, _ := h2.m.statusTool().Execute(depthCtx("test/c1/b3"), nil)
+	if strings.Contains(st.Text, "Old") {
+		t.Errorf("status shows the earlier fan-out:\n%s", st.Text)
+	}
+	if res, _ := h2.m.claimsTool().Execute(depthCtx("test/c1/b3"), json.RawMessage(`{}`)); strings.Contains(res.Text, "old claim") || !strings.Contains(res.Text, "new claim") {
+		t.Errorf("claims = %q, want the current fan-out's only", res.Text)
+	}
+	// The split is persisted: a further restart sees the same trees.
+	h3 := newDepthHarness(t, store)
+	h3.m.Restore()
+	if id := h3.node("test/c1/b4").TreeID; id == "" || id != h3.node(depthRoot).TreeID || h3.node("test/c1/b1").TreeID == id {
+		t.Errorf("persisted tree ids: root %q, current %q, old %q", h3.node(depthRoot).TreeID, id, h3.node("test/c1/b1").TreeID)
+	}
+}
+
+// A finished earlier tree of a root expires on its own after the retention
+// period; the root's current tree is kept.
+func TestDepthRestoreExpiresEarlierTree(t *testing.T) {
+	store := newMemSpawnStore()
+	h1 := newDepthHarness(t, store)
+	old := time.Now().Add(-depthRetention - time.Hour)
+	now := time.Now()
+	h1.m.persist(
+		depthNode{Key: depthRoot, Tree: depthRoot, TreeID: "tree-new", State: depthFanned, Children: []string{"test/c1/b2"}, Created: old, Updated: now},
+		depthNode{Key: "test/c1/b1", LeafID: "leaf-1", Tree: depthRoot, TreeID: "tree-old", Parent: depthRoot, Level: 1, Title: "Old", State: depthReported, Created: old, Updated: old, FirstTurnStarted: true},
+		depthNode{Key: "test/c1/b2", LeafID: "leaf-2", Tree: depthRoot, TreeID: "tree-new", Parent: depthRoot, Level: 1, Title: "New", State: depthActive, Created: now, Updated: now, FirstTurnStarted: true},
+	)
+	h2 := newDepthHarness(t, store)
+	h2.m.Restore()
+	if h2.node("test/c1/b1").Key != "" {
+		t.Error("expired earlier tree kept")
+	}
+	if v, _ := store.AgentMetadataByPrefix("test", depthMetaPrefix+"test/c1/b1"); len(v) != 0 {
+		t.Error("expired earlier tree's record not deleted")
+	}
+	if h2.node("test/c1/b2").Key == "" || h2.node(depthRoot).Key == "" {
+		t.Error("current tree lost")
+	}
+}

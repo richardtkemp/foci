@@ -153,11 +153,17 @@ type depthClaim struct {
 // depthNode is the persisted record of one node. The root (the chat that first
 // fanned out) is a node too, with no LeafID and Level 0.
 type depthNode struct {
-	Key         string    `json:"key"`               // the node's session key
-	LeafID      string    `json:"leaf_id,omitempty"` // "" for the root
-	ConvID      string    `json:"conv_id,omitempty"` // the leaf's own app conversation (#2611); "" for the root
-	Tree        string    `json:"tree"`              // the root's session key
-	Parent      string    `json:"parent,omitempty"`  // the parent node's session key
+	Key    string `json:"key"`               // the node's session key
+	LeafID string `json:"leaf_id,omitempty"` // "" for the root
+	ConvID string `json:"conv_id,omitempty"` // the leaf's own app conversation (#2611); "" for the root
+	Tree   string `json:"tree"`              // the root's session key (the root conversation)
+	// TreeID names the tree the node belongs to (#2614): each fan-out from
+	// the root starts a new one, so a root chat holds a series of trees, of
+	// which only the root's current one (the root's own TreeID) is live.
+	// Nested fan-outs inherit their parent's. "" = a record from before
+	// #2614 (restore splits those, legacySplitLocked).
+	TreeID      string    `json:"tree_id,omitempty"`
+	Parent      string    `json:"parent,omitempty"` // the parent node's session key
 	Level       int       `json:"level"`
 	Title       string    `json:"title,omitempty"`
 	Prompt      string    `json:"prompt,omitempty"`
@@ -345,20 +351,47 @@ func snap(ns ...*depthNode) []depthNode {
 
 // --- tree queries (m.mu held) ---
 
-func (m *DepthManager) treeNodesLocked(tree string) []*depthNode {
+// treeNodesLocked is one tree (#2614): the root of the root conversation tree
+// and the nodes of its tree treeID, oldest first.
+func (m *DepthManager) treeNodesLocked(tree, treeID string) []*depthNode {
+	var out []*depthNode
+	for _, n := range m.nodes {
+		if n.Tree == tree && (n.Key == tree || n.TreeID == treeID) {
+			out = append(out, n)
+		}
+	}
+	sortDepthNodes(out)
+	return out
+}
+
+// rootNodesLocked is every node of the root conversation tree, of all its
+// trees (reset, restore).
+func (m *DepthManager) rootNodesLocked(tree string) []*depthNode {
 	var out []*depthNode
 	for _, n := range m.nodes {
 		if n.Tree == tree {
 			out = append(out, n)
 		}
 	}
+	sortDepthNodes(out)
+	return out
+}
+
+// currentTreeLocked is the id of the root conversation tree's live tree.
+func (m *DepthManager) currentTreeLocked(tree string) string {
+	if r := m.nodes[tree]; r != nil {
+		return r.TreeID
+	}
+	return ""
+}
+
+func sortDepthNodes(out []*depthNode) {
 	sort.Slice(out, func(i, j int) bool {
 		if !out[i].Created.Equal(out[j].Created) {
 			return out[i].Created.Before(out[j].Created)
 		}
 		return out[i].Key < out[j].Key
 	})
-	return out
 }
 
 func (m *DepthManager) leafLocked(tree, leafID string) *depthNode {
@@ -378,7 +411,7 @@ func (m *DepthManager) pushFeed(tree string) {
 		return
 	}
 	m.mu.Lock()
-	ns := m.treeNodesLocked(tree)
+	ns := m.treeNodesLocked(tree, m.currentTreeLocked(tree))
 	root := m.nodes[tree]
 	type row struct {
 		n      depthNode
@@ -557,7 +590,7 @@ func (m *DepthManager) presentApproval(caller string, ap *depthApproval) error {
 		m.mu.Unlock()
 		return fmt.Errorf("node gone")
 	}
-	ns := m.treeNodesLocked(n.Tree)
+	ns := m.treeNodesLocked(n.Tree, n.TreeID)
 	leaves, maxLevel := 0, 0
 	for _, x := range ns {
 		if x.LeafID != "" {
@@ -651,10 +684,17 @@ func (m *DepthManager) doFanout(ctx context.Context, caller string, leaves []dep
 		return "", fmt.Errorf("depth_fanout: you are no longer able to fan out (%s)", parent.State)
 	}
 	tree := parent.Tree
+	if parent.LeafID == "" {
+		// Each fan-out from the root is a tree of its own (#2614): the
+		// earlier ones, all finished, drop out of the feed, status and
+		// claims board. Their records stay until they expire.
+		parent.TreeID = newDepthID("tree-")
+		parent.Claims = nil
+	}
 	var children []*depthNode
 	for i, f := range made {
 		c := &depthNode{
-			Key: f.key, LeafID: newDepthID("leaf-"), Tree: tree, Parent: caller,
+			Key: f.key, LeafID: newDepthID("leaf-"), Tree: tree, TreeID: parent.TreeID, Parent: caller,
 			Level: parent.Level + 1, Title: strings.TrimSpace(f.spec.Title), Prompt: f.spec.Prompt,
 			Orientation: f.spec.Orientation, State: depthActive,
 			// Distinct creation stamps keep the feed in the order asked for.
@@ -1107,7 +1147,7 @@ func (m *DepthManager) OnReset(rootKey string) {
 	}
 	var recs []*depthNode
 	var open, all []string
-	for _, n := range m.treeNodesLocked(rootKey) {
+	for _, n := range m.rootNodesLocked(rootKey) {
 		if n.LeafID == "" {
 			continue
 		}
@@ -1194,30 +1234,11 @@ func (m *DepthManager) restore() {
 	for _, n := range m.nodes {
 		trees[n.Tree] = true
 	}
-	now := m.now()
-	var expired []string
+	var split []*depthNode
 	for tree := range trees {
-		ns := m.treeNodesLocked(tree)
-		allDone, newest := true, time.Time{}
-		for _, n := range ns {
-			if n.LeafID != "" && !n.done() {
-				allDone = false
-			}
-			if n.LeafID == "" && (n.State != depthActive || n.Results != "") {
-				allDone = false
-			}
-			if n.Updated.After(newest) {
-				newest = n.Updated
-			}
-		}
-		if allDone && now.Sub(newest) > depthRetention {
-			for _, n := range ns {
-				expired = append(expired, n.Key)
-				delete(m.nodes, n.Key)
-			}
-			delete(trees, tree)
-		}
+		split = append(split, m.legacySplitLocked(tree)...)
 	}
+	expired := m.expireLocked(trees)
 	type firstTurn struct{ key, title, prompt string }
 	var (
 		register     []*depthNode
@@ -1257,7 +1278,13 @@ func (m *DepthManager) restore() {
 			fanInParents = append(fanInParents, n.Key)
 		}
 	}
-	rec := snap(recs...)
+	var kept []*depthNode
+	for _, n := range split {
+		if m.nodes[n.Key] == n {
+			kept = append(kept, n)
+		}
+	}
+	rec := snap(append(kept, recs...)...)
 	m.mu.Unlock()
 
 	m.forget(expired...)
@@ -1319,6 +1346,113 @@ func (m *DepthManager) restore() {
 	}
 }
 
+// legacySplitLocked gives the root conversation tree's records from before
+// #2614 (no TreeID) tree ids: the root's current fan-out, the descendants of
+// its Children, becomes a tree of its own with the claims made since it
+// began; every earlier fan-out stays in the unnamed tree "", out of view.
+// Returns the nodes it changed.
+func (m *DepthManager) legacySplitLocked(tree string) []*depthNode {
+	root := m.nodes[tree]
+	if root == nil || root.LeafID != "" || root.TreeID != "" {
+		return nil
+	}
+	kids := map[string][]*depthNode{}
+	for _, n := range m.nodes {
+		if n.Tree == tree && n.LeafID != "" && n.TreeID == "" {
+			kids[n.Parent] = append(kids[n.Parent], n)
+		}
+	}
+	id := newDepthID("tree-")
+	root.TreeID = id
+	changed := []*depthNode{root}
+	var since time.Time
+	var walk func(n *depthNode)
+	walk = func(n *depthNode) {
+		n.TreeID = id
+		changed = append(changed, n)
+		if since.IsZero() || n.Created.Before(since) {
+			since = n.Created
+		}
+		for _, c := range kids[n.Key] {
+			walk(c)
+		}
+	}
+	for _, k := range root.Children {
+		if c := m.nodes[k]; c != nil && c.Tree == tree && c.TreeID == "" {
+			walk(c)
+		}
+	}
+	var claims []depthClaim
+	for _, c := range root.Claims {
+		if !since.IsZero() && !c.At.Before(since) {
+			claims = append(claims, c)
+		}
+	}
+	root.Claims = claims
+	return changed
+}
+
+// expireLocked deletes from m.nodes each tree finished and untouched for
+// longer than depthRetention, and returns the deleted keys. A root
+// conversation's earlier trees expire on their own; its current tree goes,
+// with the root record, only once nothing else of the root conversation is
+// left. trees loses the root conversations that are wholly gone.
+func (m *DepthManager) expireLocked(trees map[string]bool) []string {
+	now := m.now()
+	var expired []string
+	expirable := func(ns []*depthNode) bool {
+		newest := time.Time{}
+		for _, n := range ns {
+			if n.LeafID != "" && !n.done() {
+				return false
+			}
+			if n.LeafID == "" && (n.State != depthActive || n.Results != "") {
+				return false
+			}
+			if n.Updated.After(newest) {
+				newest = n.Updated
+			}
+		}
+		return len(ns) > 0 && now.Sub(newest) > depthRetention
+	}
+	drop := func(ns []*depthNode) {
+		for _, n := range ns {
+			expired = append(expired, n.Key)
+			delete(m.nodes, n.Key)
+		}
+	}
+	for tree := range trees {
+		root := m.nodes[tree]
+		groups := map[string][]*depthNode{}
+		for _, n := range m.rootNodesLocked(tree) {
+			if n != root {
+				groups[n.TreeID] = append(groups[n.TreeID], n)
+			}
+		}
+		cur := m.currentTreeLocked(tree)
+		left := 0
+		for id, ns := range groups {
+			if root != nil && id == cur {
+				continue
+			}
+			if expirable(ns) {
+				drop(ns)
+			} else {
+				left++
+			}
+		}
+		if root != nil && left == 0 {
+			if ns := append([]*depthNode{root}, groups[cur]...); expirable(ns) {
+				drop(ns)
+			}
+		}
+		if len(m.rootNodesLocked(tree)) == 0 {
+			delete(trees, tree)
+		}
+	}
+	return expired
+}
+
 // --- claims and status ---
 
 func (m *DepthManager) claims(caller, action, text string) (string, error) {
@@ -1337,6 +1471,9 @@ func (m *DepthManager) claimsLocked(caller, action, text string) (string, []dept
 	root := m.nodes[n.Tree]
 	if root == nil {
 		return "", nil, fmt.Errorf("depth_claims: the tree's root record is missing")
+	}
+	if n.LeafID != "" && n.TreeID != root.TreeID {
+		return "", nil, fmt.Errorf("depth_claims: your tree has finished (the root has fanned out again since); its claims board is closed")
 	}
 	switch action {
 	case "", "list":
@@ -1405,7 +1542,7 @@ func (m *DepthManager) status(caller string) string {
 		m.mu.Unlock()
 		return "This session is not part of a depth-mode tree."
 	}
-	ns := m.treeNodesLocked(n.Tree)
+	ns := m.treeNodesLocked(n.Tree, n.TreeID)
 	cp := make([]depthNode, len(ns))
 	queued := make([]bool, len(ns))
 	for i, x := range ns {
