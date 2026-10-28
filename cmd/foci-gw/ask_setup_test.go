@@ -91,3 +91,16 @@ func TestBatchQuestionsFor_QuizMapping(t *testing.T) {
 		t.Errorf("q2.Quiz = %+v, want nil for a non-quiz question", got[2].Quiz)
 	}
 }
+
+// TestBatchQuestionsFor_MultiSelect: the multiSelect flag (#2308) reaches the
+// app's batched payload so the form can render checkboxes; a single-select
+// question stays false.
+func TestBatchQuestionsFor_MultiSelect(t *testing.T) {
+	got := batchQuestionsFor([]question.Question{
+		{Question: "Which?", MultiSelect: true, Options: []question.Option{{Label: "A"}, {Label: "B"}}},
+		{Question: "One?", Options: []question.Option{{Label: "A"}}},
+	})
+	if !got[0].MultiSelect || got[1].MultiSelect {
+		t.Errorf("MultiSelect = [%v %v], want [true false]", got[0].MultiSelect, got[1].MultiSelect)
+	}
+}

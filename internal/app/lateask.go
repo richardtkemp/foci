@@ -160,7 +160,8 @@ func containsCancel(answers []string) bool {
 // them. A batched form carries them structured; a single prompt carries one
 // question as text plus buttons, the last of which is the ask's Cancel. Quiz
 // data maps back too (fromQuiz), so a late answer to a quiz question still
-// gets its verdict (#1316).
+// gets its verdict (#1316), as does the multiSelect flag, so a late multi-pick
+// resolves to every ticked label (#2308).
 func lateQuestions(in *fap.Interactive) []question.Question {
 	if in == nil {
 		return nil
@@ -168,7 +169,7 @@ func lateQuestions(in *fap.Interactive) []question.Question {
 	if len(in.Questions) > 0 {
 		qs := make([]question.Question, len(in.Questions))
 		for i, fq := range in.Questions {
-			qs[i] = question.Question{Question: fq.Text, Header: fq.Header, Options: optionsOf(fq.Choices), Quiz: fromQuiz(fq.Quiz)}
+			qs[i] = question.Question{Question: fq.Text, Header: fq.Header, Options: optionsOf(fq.Choices), Quiz: fromQuiz(fq.Quiz), MultiSelect: fq.MultiSelect}
 		}
 		return qs
 	}

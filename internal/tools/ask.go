@@ -623,20 +623,21 @@ func (a *askState) handleResponse(requestID, data string) {
 		a.expireLocked(p)
 		return
 	}
-	answer, cancelled, err := question.ResolveAnswer(q, data)
+	res, err := question.Resolve(q, data)
 	if err != nil {
 		a.mu.Unlock()
 		askLog.Warnf("session=%s req=%s invalid response %q: %v", p.sessionKey, requestID, data, err)
 		return
 	}
-	if cancelled {
+	answer := res.Answer
+	if res.Cancelled {
 		answered, total, sk, reqID := p.acc.Index(), p.acc.Total(), p.sessionKey, p.requestID
 		a.resolveLocked(p)
 		a.deliverCancel(sk, reqID, answered, total)
 		return
 	}
 	answeredIdx := p.acc.Index()
-	p.acc.Record(answer)
+	p.acc.RecordResolution(res)
 	done := p.acc.Done()
 	a.persistLocked() // checkpoint the advanced index / new answer
 	a.mu.Unlock()
@@ -657,7 +658,7 @@ func (a *askState) handleResponse(requestID, data string) {
 	// cancel/expiry returned above without recording an answer. Like closeMsg,
 	// fired outside a.mu because the hook reaches into the platform layer.
 	if q.Quiz != nil && a.reveal != nil {
-		a.reveal(p.sessionKey, question.FormatReveal(q, answer))
+		a.reveal(p.sessionKey, question.FormatReveal(q, answer, res.Multi))
 	}
 
 	if !done {
@@ -678,22 +679,23 @@ func (a *askState) handleResponse(requestID, data string) {
 // Caller has already removed p from the registry.
 func (a *askState) deliverBatch(p *pendingAsk) {
 	if p.grader.path == "" {
-		a.deliverMsg(deliverUserInput, p.sessionKey, p.requestID, formatAnswerBatch(p.acc.Questions(), p.acc.Answers()))
+		a.deliverMsg(deliverUserInput, p.sessionKey, p.requestID, formatAnswerBatch(p.acc.Questions(), p.acc.Answers(), p.acc.Multi()))
 		return
 	}
 	// A grader is set: it may run for up to its timeout. Run it (and deliver
 	// its result) off the caller's goroutine so neither the platform button
 	// callback nor a typed-answer turn blocks on the subprocess.
 	go func() {
-		raw := formatAnswerBatch(p.acc.Questions(), p.acc.Answers())
+		raw := formatAnswerBatch(p.acc.Questions(), p.acc.Answers(), p.acc.Multi())
 		total := p.acc.Total()
-		a.deliverMsg(deliverUserInput, p.sessionKey, p.requestID, a.runGrader(p, p.acc.Questions(), p.acc.Answers(), raw, false, total, total))
+		a.deliverMsg(deliverUserInput, p.sessionKey, p.requestID, a.runGrader(p, p.acc.Questions(), p.acc.Answers(), p.acc.Multi(), raw, false, total, total))
 	}()
 }
 
 // handleBatchResponse records every answer of a batched (app) ask at once and
 // delivers the result. answers are positional RAW choice tokens (one per
-// question, in order): "qa:<index>", the "qa:cancel" sentinel, or typed text. A
+// question, in order): "qa:<index>", a multiSelect "qa:m:..." token (#2308), the
+// "qa:cancel" sentinel, or typed text. A
 // cancel in any slot cancels the whole ask, mirroring the sequential Cancel
 // button. This is the batched counterpart to handleResponse.
 func (a *askState) handleBatchResponse(requestID string, answers []string) {
@@ -714,20 +716,20 @@ func (a *askState) handleBatchResponse(requestID string, answers []string) {
 		if q == nil {
 			break // more answers than questions — ignore extras defensively
 		}
-		answer, cancelled, err := question.ResolveAnswer(q, raw)
+		res, err := question.Resolve(q, raw)
 		if err != nil {
 			a.mu.Unlock()
 			askLog.Warnf("session=%s req=%s invalid batched response ans[%d]=%q against Q%d (%d options) %q: %v",
 				p.sessionKey, requestID, ansIdx, raw, p.acc.Index(), len(q.Options), answerEcho(q.Question), err)
 			return
 		}
-		if cancelled {
+		if res.Cancelled {
 			answered, total, sk, reqID := p.acc.Index(), p.acc.Total(), p.sessionKey, p.requestID
 			a.resolveLocked(p)
 			a.deliverCancel(sk, reqID, answered, total)
 			return
 		}
-		p.acc.Record(answer)
+		p.acc.RecordResolution(res)
 	}
 	if !p.acc.Done() {
 		// Fewer answers than questions. The app gates Submit on all-answered, so
@@ -787,17 +789,20 @@ func (a *askState) resolveLocked(p *pendingAsk) {
 // Accumulator's progress is flattened to (Questions, Idx, Answers); the grader's
 // config travels alongside so a restored ask still grades.
 type persistedAsk struct {
-	RequestID     string              `json:"request_id"`
-	SessionKey    string              `json:"session_key"`
-	Questions     []question.Question `json:"questions"`
-	Idx           int                 `json:"idx"`
-	Answers       map[string]string   `json:"answers,omitempty"`
-	OriginalInput json.RawMessage     `json:"original_input,omitempty"`
-	CreatedAt     time.Time           `json:"created_at"`
-	Grader        persistedGrader     `json:"grader,omitempty"`
-	PlatformMsgID string              `json:"platform_msg_id,omitempty"`
-	Paused        bool                `json:"paused,omitempty"`
-	Batched       bool                `json:"batched,omitempty"`
+	RequestID  string              `json:"request_id"`
+	SessionKey string              `json:"session_key"`
+	Questions  []question.Question `json:"questions"`
+	Idx        int                 `json:"idx"`
+	Answers    map[string]string   `json:"answers,omitempty"`
+	// Multi holds the structured answers of multiSelect questions answered so
+	// far (#2308), keyed like Answers.
+	Multi         map[string]question.MultiAnswer `json:"multi,omitempty"`
+	OriginalInput json.RawMessage                 `json:"original_input,omitempty"`
+	CreatedAt     time.Time                       `json:"created_at"`
+	Grader        persistedGrader                 `json:"grader,omitempty"`
+	PlatformMsgID string                          `json:"platform_msg_id,omitempty"`
+	Paused        bool                            `json:"paused,omitempty"`
+	Batched       bool                            `json:"batched,omitempty"`
 	// Queued marks an ask that has never been shown, waiting behind the session's
 	// primary. It must persist: a queued ask is WORSE to lose than a live one
 	// because the user never saw it, and the agent is still waiting on an answer
@@ -843,6 +848,7 @@ func (a *askState) persistLocked() {
 			Questions:     p.acc.Questions(),
 			Idx:           p.acc.Index(),
 			Answers:       p.acc.Answers(),
+			Multi:         p.acc.Multi(),
 			OriginalInput: p.originalInput,
 			CreatedAt:     p.createdAt,
 			Grader: persistedGrader{
@@ -940,7 +946,7 @@ func (a *askState) restorePending() {
 		p := &pendingAsk{
 			requestID:     s.RequestID,
 			sessionKey:    s.SessionKey,
-			acc:           question.NewAccumulatorAt(s.Questions, s.Idx, s.Answers),
+			acc:           question.NewAccumulatorAt(s.Questions, s.Idx, s.Answers, s.Multi),
 			originalInput: s.OriginalInput,
 			createdAt:     s.CreatedAt,
 			grader: graderConfig{
@@ -1115,28 +1121,32 @@ func formatLateAnswer(reqID string, la LateAnswer, now time.Time) string {
 	}
 	fmt.Fprintf(&b, "[SYSTEM: LATE ANSWER. The user has just answered a question from your `ask` request (req %s), asked %s. That ask had already closed (expired or dropped), so this answer was NOT delivered at the time. Treat it as the user's answer, but check it still applies before acting on it.]\n", reqID, asked)
 	answers := make(map[string]string, len(la.Answers))
+	multi := make(map[string]question.MultiAnswer)
 	for i, raw := range la.Answers {
 		if i >= len(la.Questions) {
 			fmt.Fprintf(&b, "\n• (question text no longer on record) → %s", raw)
 			continue
 		}
 		q := &la.Questions[i]
-		ans, _, err := question.ResolveAnswer(q, raw)
+		res, err := question.Resolve(q, raw)
+		ans := res.Answer
 		if err != nil {
 			ans = raw
+		} else if res.Multi != nil {
+			multi[q.Question] = *res.Multi
 		}
 		answers[q.Question] = ans
 		label := q.Question
 		if q.Header != "" && q.Header != q.Question {
 			label = q.Header + ": " + q.Question
 		}
-		fmt.Fprintf(&b, "\n• %s → %s%s", label, ans, quizVerdictMarker(q, ans))
+		fmt.Fprintf(&b, "\n• %s → %s%s", label, ans, quizVerdictMarker(q, ans, multi))
 	}
 	extras := map[string]any{"late": true, "request_id": reqID}
 	if !la.AskedAt.IsZero() {
 		extras["asked_at"] = la.AskedAt.UTC().Format(time.RFC3339)
 	}
-	writeAnswersJSON(&b, la.Questions, answers, extras)
+	writeAnswersJSON(&b, la.Questions, answers, multi, extras)
 	return b.String()
 }
 
@@ -1261,6 +1271,7 @@ func (a *askState) completeSession(sessionKey string) (answered, total int, ok b
 	// ask is removed, so these stay safe to read from the grader goroutine below.
 	answeredQs := p.acc.Questions()[:idx]
 	answers := p.acc.Answers()
+	multi := p.acc.Multi()
 	sess := p.sessionKey
 	curMsgID := questionMsgID(p.requestID, idx) // the still-displayed question
 	hasGrader := p.grader.path != ""
@@ -1273,7 +1284,7 @@ func (a *askState) completeSession(sessionKey string) (answered, total int, ok b
 		a.closeMsg(curMsgID, "⏹ Completed early")
 	}
 
-	raw := formatPartialBatch(answeredQs, answers, idx, total)
+	raw := formatPartialBatch(answeredQs, answers, multi, idx, total)
 	if !hasGrader {
 		a.deliverMsg(deliverUserInput, sess, p.requestID, raw)
 		return idx, total, true
@@ -1282,7 +1293,7 @@ func (a *askState) completeSession(sessionKey string) (answered, total int, ok b
 	// (mirrors the full-answer path) so the slash-command handler returns at once;
 	// the graded result is delivered to the agent when ready.
 	go func() {
-		a.deliverMsg(deliverUserInput, sess, p.requestID, a.runGrader(p, answeredQs, answers, raw, true, idx, total))
+		a.deliverMsg(deliverUserInput, sess, p.requestID, a.runGrader(p, answeredQs, answers, multi, raw, true, idx, total))
 	}()
 	return idx, total, true
 }
@@ -1290,10 +1301,10 @@ func (a *askState) completeSession(sessionKey string) (answered, total int, ok b
 // formatAnswerBatch renders the collected answers as the inbound user message
 // the asking agent receives. Includes a readable Q→A list plus a compact JSON
 // line so the agent can parse the result deterministically if it wants to.
-func formatAnswerBatch(qs []question.Question, answers map[string]string) string {
+func formatAnswerBatch(qs []question.Question, answers map[string]string, multi map[string]question.MultiAnswer) string {
 	var b strings.Builder
 	b.WriteString("[SYSTEM: the user answered your `ask` request. These are their selections — act on them.]\n")
-	writeAnswerBody(&b, qs, answers)
+	writeAnswerBody(&b, qs, answers, multi)
 	return b.String()
 }
 
@@ -1301,17 +1312,17 @@ func formatAnswerBatch(qs []question.Question, answers map[string]string) string
 // /complete): the same Q→A body + JSON payload as a full batch, but a preamble
 // that tells the agent the remaining questions were left unanswered on purpose,
 // so it acts on what it has rather than re-asking the rest.
-func formatPartialBatch(qs []question.Question, answers map[string]string, answered, total int) string {
+func formatPartialBatch(qs []question.Question, answers map[string]string, multi map[string]question.MultiAnswer, answered, total int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[SYSTEM: the user completed your `ask` request early, answering %d of %d questions. Only the answered selections follow; the remaining %d were left unanswered on purpose — act on what you have, don't re-ask the rest unless genuinely needed.]\n", answered, total, total-answered)
-	writeAnswerBody(&b, qs, answers)
+	writeAnswerBody(&b, qs, answers, multi)
 	return b.String()
 }
 
 // writeAnswerBody appends the human-readable "• header → answer" lines and the
 // compact JSON answer payload to b. Shared by the full and partial batch
 // formatters so their body shape can't drift.
-func writeAnswerBody(b *strings.Builder, qs []question.Question, answers map[string]string) {
+func writeAnswerBody(b *strings.Builder, qs []question.Question, answers map[string]string, multi map[string]question.MultiAnswer) {
 	for _, q := range qs {
 		ans := answers[q.Question]
 		label := q.Header
@@ -1320,17 +1331,17 @@ func writeAnswerBody(b *strings.Builder, qs []question.Question, answers map[str
 		}
 		// Quiz option questions carry the verdict inline (#1316), so a plain
 		// multiple-choice drill needs no grader run to interpret.
-		fmt.Fprintf(b, "\n• %s → %s%s", label, ans, quizVerdictMarker(&q, ans))
+		fmt.Fprintf(b, "\n• %s → %s%s", label, ans, quizVerdictMarker(&q, ans, multi))
 	}
-	writeAnswersJSON(b, qs, answers, nil)
+	writeAnswersJSON(b, qs, answers, multi, nil)
 }
 
 // quizVerdictMarker returns the inline verdict appended to a delivered answer
 // line for a quiz OPTION question (#1316): " ✅" when the user chose a correct
 // option, " ❌" when they did not, and "" when there is no mechanical verdict
 // (non-quiz and free-recall questions).
-func quizVerdictMarker(q *question.Question, ans string) string {
-	correct, ok := question.QuizVerdict(q, ans)
+func quizVerdictMarker(q *question.Question, ans string, multi map[string]question.MultiAnswer) string {
+	correct, ok := question.QuizVerdictFor(q, ans, multiFor(q, multi))
 	switch {
 	case !ok:
 		return ""
@@ -1346,7 +1357,13 @@ func quizVerdictMarker(q *question.Question, ans string) string {
 // (the late marker, request id, asked-at time), and the optional keyed extras —
 // "answers_by_id", and the quiz verdict maps when any question has a mechanical
 // verdict. json.Marshal sorts map keys, so the extras merge in any order.
-func writeAnswersJSON(b *strings.Builder, qs []question.Question, answers map[string]string, extras map[string]any) {
+//
+// multiSelect questions (#2308) also get "selections" (question text →
+// {selected: [labels], other?, single_select_fallback?}) and, for those with an
+// id, "selections_by_id": the structured form of the joined "answers" string,
+// so labels containing ", " stay unambiguous. Omitted when no question is
+// multiSelect, so single-select batches are unchanged.
+func writeAnswersJSON(b *strings.Builder, qs []question.Question, answers map[string]string, multi map[string]question.MultiAnswer, extras map[string]any) {
 	payload := map[string]any{"answers": answers}
 	for k, v := range extras {
 		payload[k] = v
@@ -1354,15 +1371,21 @@ func writeAnswersJSON(b *strings.Builder, qs []question.Question, answers map[st
 	if byID := answersByID(qs, answers); len(byID) > 0 {
 		payload["answers_by_id"] = byID
 	}
+	if sel, selByID := selections(qs, multi); len(sel) > 0 {
+		payload["selections"] = sel
+		if len(selByID) > 0 {
+			payload["selections_by_id"] = selByID
+		}
+	}
 	// Quiz verdicts (#1316): per quiz OPTION question, whether the user chose
 	// a correct option — keyed by question text (and by id when the question
 	// carried one), mirroring answers/answers_by_id. Free-recall quiz questions
 	// get no verdict (the agent judges the text), and the keys are omitted
 	// entirely when no verdict exists, so non-quiz batches are unchanged.
-	if results := quizVerdicts(qs, answers, func(q *question.Question) string { return q.Question }); len(results) > 0 {
+	if results := quizVerdicts(qs, answers, multi, func(q *question.Question) string { return q.Question }); len(results) > 0 {
 		payload["quiz_results"] = results
 	}
-	if byID := quizVerdicts(qs, answers, func(q *question.Question) string { return q.ID }); len(byID) > 0 {
+	if byID := quizVerdicts(qs, answers, multi, func(q *question.Question) string { return q.ID }); len(byID) > 0 {
 		payload["quiz_results_by_id"] = byID
 	}
 	if js, err := json.Marshal(payload); err == nil {
@@ -1378,14 +1401,14 @@ func writeAnswersJSON(b *strings.Builder, qs []question.Question, answers map[st
 // never emits an "" key (they would collide and only the last verdict would
 // survive). nil when nothing has a mechanical verdict (non-quiz and
 // free-recall questions never do).
-func quizVerdicts(qs []question.Question, answers map[string]string, key func(q *question.Question) string) map[string]bool {
+func quizVerdicts(qs []question.Question, answers map[string]string, multi map[string]question.MultiAnswer, key func(q *question.Question) string) map[string]bool {
 	var out map[string]bool
 	for _, q := range qs {
 		k := key(&q)
 		if k == "" {
 			continue
 		}
-		if correct, ok := question.QuizVerdict(&q, answers[q.Question]); ok {
+		if correct, ok := question.QuizVerdictFor(&q, answers[q.Question], multiFor(&q, multi)); ok {
 			if out == nil {
 				out = make(map[string]bool)
 			}
@@ -1393,6 +1416,41 @@ func quizVerdicts(qs []question.Question, answers map[string]string, key func(q 
 		}
 	}
 	return out
+}
+
+// multiFor returns q's structured multiSelect answer from multi, or nil when q
+// is single-select or has none.
+func multiFor(q *question.Question, multi map[string]question.MultiAnswer) *question.MultiAnswer {
+	if !q.IsMulti() {
+		return nil
+	}
+	if m, ok := multi[q.Question]; ok {
+		return &m
+	}
+	return nil
+}
+
+// selections returns the structured multiSelect answers (#2308) keyed by
+// question text and, for questions with an id, by id. Only answered
+// multiSelect questions appear; both maps are nil when there are none.
+func selections(qs []question.Question, multi map[string]question.MultiAnswer) (byText, byID map[string]question.MultiAnswer) {
+	for i := range qs {
+		m := multiFor(&qs[i], multi)
+		if m == nil {
+			continue
+		}
+		if byText == nil {
+			byText = make(map[string]question.MultiAnswer)
+		}
+		byText[qs[i].Question] = *m
+		if qs[i].ID != "" {
+			if byID == nil {
+				byID = make(map[string]question.MultiAnswer)
+			}
+			byID[qs[i].ID] = *m
+		}
+	}
+	return byText, byID
 }
 
 // answersByID maps each question's optional opaque ID to its answer, including
@@ -1421,9 +1479,12 @@ type graderInput struct {
 	Questions   []question.Question `json:"questions"`
 	Answers     map[string]string   `json:"answers"`
 	AnswersByID map[string]string   `json:"answers_by_id,omitempty"`
-	Partial     bool                `json:"partial,omitempty"`
-	Answered    int                 `json:"answered,omitempty"`
-	Total       int                 `json:"total,omitempty"`
+	// Selections carries multiSelect questions' structured answers (#2308),
+	// keyed by question text like Answers; omitted when there are none.
+	Selections map[string]question.MultiAnswer `json:"selections,omitempty"`
+	Partial    bool                            `json:"partial,omitempty"`
+	Answered   int                             `json:"answered,omitempty"`
+	Total      int                             `json:"total,omitempty"`
 }
 
 // runGrader executes the configured grader with the answers as JSON on stdin and
@@ -1431,12 +1492,14 @@ type graderInput struct {
 // stdout (verbatim, capped) replaces the raw answer batch. On any failure —
 // missing/blank output is allowed; non-zero exit, timeout, or launch error is not
 // — it applies the on-error policy so the user's real answers are never lost.
-func (a *askState) runGrader(p *pendingAsk, qs []question.Question, answers map[string]string, rawBatch string, partial bool, answered, total int) string {
+func (a *askState) runGrader(p *pendingAsk, qs []question.Question, answers map[string]string, multi map[string]question.MultiAnswer, rawBatch string, partial bool, answered, total int) string {
+	sel, _ := selections(qs, multi)
 	payload, err := json.Marshal(graderInput{
 		RequestID:   p.requestID,
 		Questions:   qs,
 		Answers:     answers,
 		AnswersByID: answersByID(qs, answers),
+		Selections:  sel,
 		Partial:     partial,
 		Answered:    answered,
 		Total:       total,
@@ -1589,7 +1652,7 @@ func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn
 		Name:        "ask",
 		ExecExport:  true,
 		Positional:  []string{"questions"},
-		Description: "Ask the user one or more questions with selectable options, and receive their answers. Mirrors the built-in AskUserQuestion but with NO limit on the number of questions or options. Options are OPTIONAL per question: omit them for an open-ended, typed-answer-only prompt (presented with just a Cancel button; the user types their reply). ASYNC: this call returns immediately after posting the first question — it does NOT block waiting for an answer. End your turn after calling it; the user's answers arrive later as a new message. QUIZ MODE: mark any question with \"quiz\" (\"correct\": 0-based option indexes, or \"answer\": a model answer for a question with no options; optional \"explanation\") and the user's client HIDES the answer until they reveal it — do NOT put the answer in the question text. The delivered answer batch then carries \"quiz_results\" (question text → true/false) for quiz OPTION questions, so plain multiple choice needs no grader; free-recall answers carry no verdict and are yours to judge. Input is JSON only: pass {\"questions\":[...]} as a positional arg, via --json, or piped on stdin. Example: {\"questions\":[{\"question\":\"Which?\",\"header\":\"Pick\",\"options\":[{\"label\":\"A\",\"description\":\"first\"},{\"label\":\"B\"}]}]}. Each option is an object with a \"label\" (and optional \"description\"); a plain string is also accepted and taken as the label.",
+		Description: "Ask the user one or more questions with selectable options, and receive their answers. Mirrors the built-in AskUserQuestion but with NO limit on the number of questions or options. Options are OPTIONAL per question: omit them for an open-ended, typed-answer-only prompt (presented with just a Cancel button; the user types their reply). ASYNC: this call returns immediately after posting the first question — it does NOT block waiting for an answer. End your turn after calling it; the user's answers arrive later as a new message. MULTI-SELECT: set \"multiSelect\": true on a question to let the user tick several options; the answers then carry \"selections\" with every ticked label (see the field). QUIZ MODE: mark any question with \"quiz\" (\"correct\": 0-based option indexes, or \"answer\": a model answer for a question with no options; optional \"explanation\") and the user's client HIDES the answer until they reveal it — do NOT put the answer in the question text. The delivered answer batch then carries \"quiz_results\" (question text → true/false) for quiz OPTION questions, so plain multiple choice needs no grader; free-recall answers carry no verdict and are yours to judge. Input is JSON only: pass {\"questions\":[...]} as a positional arg, via --json, or piped on stdin. Example: {\"questions\":[{\"question\":\"Which?\",\"header\":\"Pick\",\"options\":[{\"label\":\"A\",\"description\":\"first\"},{\"label\":\"B\"}]}]}. Each option is an object with a \"label\" (and optional \"description\"); a plain string is also accepted and taken as the label.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -1602,7 +1665,7 @@ func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn
 							"question": {"type": "string", "description": "The question text shown to the user"},
 							"id": {"type": "string", "description": "Optional opaque identifier, NOT shown to the user. If supplied it is preserved in the output under \"answers_by_id\" (id → answer) so you can correlate answers deterministically without matching on question text."},
 							"header": {"type": "string", "description": "Short label/category for the question (used as the prompt summary)"},
-							"multiSelect": {"type": "boolean", "description": "Reserved; currently single-select only"},
+							"multiSelect": {"type": "boolean", "description": "Let the user tick SEVERAL options (plus optional typed text) instead of picking one. Rendered as checkboxes in the foci app; Telegram/Discord cannot, so there the user picks one option (or types) as usual. The answer line lists every ticked label (\"A, C\"), and the JSON payload adds \"selections\" (question text → {\"selected\": [labels], \"other\": typed text if any, \"single_select_fallback\": true when the user's client could only offer a single pick — then unpicked options are NOT a considered no}). On a quiz question, \"correct\" lists every option that must be ticked; the verdict is right only for exactly that set."},
 							"options": {
 								"type": "array",
 								"description": "Selectable options, shown as buttons. No cap on count. OPTIONAL: omit (or pass an empty array) for a typed-answer-only question — it is presented with just a Cancel button and the user answers by typing their reply.",

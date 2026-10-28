@@ -177,10 +177,10 @@ func TestFormatReveal(t *testing.T) {
 		"✅ Correct.",
 		"Explanation: Oslo has been the capital since 1299.",
 	}, "\n")
-	if got := FormatReveal(q, "Oslo"); got != want {
+	if got := FormatReveal(q, "Oslo", nil); got != want {
 		t.Errorf("correct reveal:\ngot:  %q\nwant: %q", got, want)
 	}
-	if got := FormatReveal(q, "Bergen"); got != strings.Join([]string{
+	if got := FormatReveal(q, "Bergen", nil); got != strings.Join([]string{
 		"Capital of <Norway>?",
 		"Answer: 2. Oslo",
 		"❌ Incorrect — you answered Bergen.",
@@ -192,7 +192,7 @@ func TestFormatReveal(t *testing.T) {
 	// Multiple correct options: comma-joined with their display numbers.
 	multi := quizOptionQuestion(0, 2)
 	multi.Quiz.Explanation = ""
-	got := FormatReveal(multi, "Bergen")
+	got := FormatReveal(multi, "Bergen", nil)
 	if !strings.Contains(got, "Answer: 1. Bergen, 3. Trondheim") {
 		t.Errorf("multi-correct reveal missing joined answer: %q", got)
 	}
@@ -202,7 +202,7 @@ func TestFormatReveal(t *testing.T) {
 
 	// Free recall: model answer, and NO verdict line (the agent judges).
 	free := &Question{Question: `Translate "dog" into Greek`, Quiz: &Quiz{ModelAnswer: quizSecretAnswer, Explanation: quizSecretExplanation}}
-	if got := FormatReveal(free, "σκύλος"); got != strings.Join([]string{
+	if got := FormatReveal(free, "σκύλος", nil); got != strings.Join([]string{
 		`Translate "dog" into Greek`,
 		"Model answer: " + quizSecretAnswer,
 		"Explanation: " + quizSecretExplanation,
@@ -212,9 +212,9 @@ func TestFormatReveal(t *testing.T) {
 
 	// No markdown anywhere, in any variant.
 	for name, g := range map[string]string{
-		"correct":   FormatReveal(q, "Oslo"),
-		"incorrect": FormatReveal(q, "Bergen"),
-		"free":      FormatReveal(free, "x"),
+		"correct":   FormatReveal(q, "Oslo", nil),
+		"incorrect": FormatReveal(q, "Bergen", nil),
+		"free":      FormatReveal(free, "x", nil),
 	} {
 		for _, marker := range []string{"**", "_", "`", "~~"} {
 			if strings.Contains(g, marker) {

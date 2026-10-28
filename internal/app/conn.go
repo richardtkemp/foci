@@ -547,7 +547,7 @@ func (c *appConn) SendInteractiveBatch(promptID string, questions []platform.Bat
 	qs := make([]fap.Question, len(questions))
 	choiceCounts := make([]string, len(questions))
 	for i, q := range questions {
-		qs[i] = fap.Question{Text: q.Text, Header: q.Header, Choices: toChoices(q.Choices), Quiz: toQuiz(q.Quiz)}
+		qs[i] = fap.Question{Text: q.Text, Header: q.Header, Choices: toChoices(q.Choices), Quiz: toQuiz(q.Quiz), MultiSelect: q.MultiSelect}
 		choiceCounts[i] = strconv.Itoa(len(q.Choices))
 	}
 	appLog.Debugf("SendInteractiveBatch: conv=%s prompt=%s questions=%d choicesPerQ=[%s]",

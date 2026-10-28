@@ -74,7 +74,8 @@ func newAskPresentBatchFn(agentID string, connMgr platform.ConnectionManager) to
 // payload. The app renders its own layout, so each question carries STRUCTURED
 // fields — raw text, optional header, per-option label+description, and the
 // question's quiz data verbatim (#1316: the app frame carries the answer the
-// form hides until the user reveals it) — rather than pre-rendered markdown.
+// form hides until the user reveals it) and its multiSelect flag (#2308: the
+// form renders checkboxes) — rather than pre-rendered markdown.
 // Option buttons get "qa:<index>" data and NO Cancel button: the app's
 // full-screen ask form supplies its own Cancel (chat platforms, which DO need a
 // per-question Cancel, take a separate sequential path via question.Choices).
@@ -92,10 +93,11 @@ func batchQuestionsFor(qs []question.Question) []platform.BatchQuestion {
 			}
 		}
 		questions[i] = platform.BatchQuestion{
-			Text:    q.Question,
-			Header:  q.Header,
-			Choices: buttons,
-			Quiz:    q.Quiz,
+			Text:        q.Question,
+			Header:      q.Header,
+			Choices:     buttons,
+			Quiz:        q.Quiz,
+			MultiSelect: q.IsMulti(),
 		}
 	}
 	return questions

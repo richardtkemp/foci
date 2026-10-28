@@ -412,11 +412,19 @@ type Choice struct {
 // Quiz, when set, marks a QUIZ question (#1316) whose answer the app hides until
 // the user reveals it — the frame carries everything (question, options, answer,
 // explanation) in one go and the reveal is purely client-side.
+// MultiSelect (#2308) asks the app to render the choices as CHECKBOXES (plus
+// optional typed text) instead of single-pick buttons; the answer slot then
+// carries "qa:m:<i>,<j>,...[;<typed text>]" — 0-based choice indexes, and
+// everything after the first ";" verbatim. An app that ignores the key sends an
+// ordinary single answer, which the server accepts and flags as a single-pick
+// fallback. omitempty: a single-select question's frame is byte-identical to
+// before.
 type Question struct {
-	Text    string   `json:"text"`
-	Header  string   `json:"header,omitempty"`
-	Choices []Choice `json:"choices,omitempty"`
-	Quiz    *Quiz    `json:"quiz,omitempty"`
+	Text        string   `json:"text"`
+	Header      string   `json:"header,omitempty"`
+	Choices     []Choice `json:"choices,omitempty"`
+	Quiz        *Quiz    `json:"quiz,omitempty"`
+	MultiSelect bool     `json:"multiSelect,omitempty"`
 }
 
 // Quiz is the quiz data of one batched question (#1316): what the app hides

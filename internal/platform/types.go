@@ -432,12 +432,15 @@ type DetailAttacher interface {
 // "qa:<index>" token — the answer's POSITION in the reply identifies its question.
 // Quiz carries the question's quiz data verbatim (#1316) so the app frame holds
 // the answer the form hides until the user reveals it; nil = a plain question
-// (the wire frame omits the key entirely).
+// (the wire frame omits the key entirely). MultiSelect asks the app to render
+// the choices as checkboxes (#2308); the answer is then a multi token (see
+// question.multiPrefix).
 type BatchQuestion struct {
-	Text    string
-	Header  string
-	Choices []ButtonChoice
-	Quiz    *question.Quiz
+	Text        string
+	Header      string
+	Choices     []ButtonChoice
+	Quiz        *question.Quiz
+	MultiSelect bool
 }
 
 // BatchButtonSender is optionally implemented by Connection types that can render

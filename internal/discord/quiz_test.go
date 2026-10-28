@@ -126,7 +126,7 @@ func TestQuizReveal_DeliveredVerbatimOnDiscord(t *testing.T) {
 
 	q := quizTestQuestion(1)
 	q.Quiz.Explanation = "Oslo has been the capital since 1299."
-	b.SendNotificationToSession("main/c222", question.FormatReveal(q, "Bergen"))
+	b.SendNotificationToSession("main/c222", question.FormatReveal(q, "Bergen", nil))
 
 	sent := fs.lastSend(t)
 	if sent.channelID != "222" {
@@ -147,7 +147,7 @@ func TestQuizReveal_DeliveredVerbatimOnDiscord(t *testing.T) {
 		Question: `Translate "dog" into Greek`,
 		Quiz:     &question.Quiz{ModelAnswer: quizTestAnswer, Explanation: quizTestExplanation},
 	}
-	b.SendNotificationToSession("main/c222", question.FormatReveal(free, "σκύλος"))
+	b.SendNotificationToSession("main/c222", question.FormatReveal(free, "σκύλος", nil))
 	sent = fs.lastSend(t)
 	want = strings.Join([]string{
 		`Translate "dog" into Greek`,

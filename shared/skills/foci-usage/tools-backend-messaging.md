@@ -8,6 +8,7 @@ Per-tool reference for the Claude Code (shell) backend. How `foci_*` shell funct
 - **Async.** Posts the question(s) and returns immediately; answers arrive later as a new inbound message. **End your turn after calling it** — do not wait.
 - JSON-only input (questions object). No 4-question cap (unlike the backend's built-in AskUserQuestion — prefer `foci_ask`).
 - Request IDs must be **colon-free** (button payloads are encoded as `<id>:<index>`).
+- **Multi-select:** `"multiSelect": true` on a question lets the user tick several options (plus typed text) in the foci app; the answer lists every label and the JSON adds `selections` (question → `{selected, other, single_select_fallback}`). On Telegram/Discord the user can only pick one — `single_select_fallback: true` then means unpicked options are not a considered "no".
 - **Quiz mode:** mark a question with `quiz` (`correct`: 0-based option indexes, or `answer` for no-options free recall; optional `explanation`) and the client hides the answer until the user reveals it; option questions come back with a true/false verdict in `quiz_results`. See the `quiz` skill.
 - Optional grader: `--grader <abs-path>` runs an executable over `{request_id, questions, answers}` (JSON on stdin) and delivers *its* output to you instead of the raw answers. `--grader-args <json-array>` appends argv after request_id; `--grader-timeout-seconds` (default 15); `--grader-on-error fallback|report`.
 

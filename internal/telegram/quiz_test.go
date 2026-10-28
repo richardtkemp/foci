@@ -131,7 +131,7 @@ func TestQuizReveal_PlainTextNoMarkdown(t *testing.T) {
 
 	q := quizTestQuestion(1)
 	q.Quiz.Explanation = "Oslo has been the capital since 1299."
-	reveal := question.FormatReveal(q, "Bergen")
+	reveal := question.FormatReveal(q, "Bergen", nil)
 
 	if got := b.SendNotificationToSession("agent:test:main", reveal); got != "1" {
 		t.Errorf("SendNotificationToSession id = %q, want the sent message id", got)
@@ -172,7 +172,7 @@ func TestQuizReveal_FreeRecallOnTelegram(t *testing.T) {
 		Question: `Translate "dog" into Greek`,
 		Quiz:     &question.Quiz{ModelAnswer: quizTestAnswer, Explanation: quizTestExplanation},
 	}
-	b.SendNotificationToSession("agent:test:main", question.FormatReveal(q, "σκύλος"))
+	b.SendNotificationToSession("agent:test:main", question.FormatReveal(q, "σκύλος", nil))
 
 	want := strings.Join([]string{
 		`Translate "dog" into Greek`,

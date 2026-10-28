@@ -1460,6 +1460,37 @@ func TestInteractive_BatchFrameCarriesQuiz(t *testing.T) {
 	}
 }
 
+// TestInteractive_BatchFrameCarriesMultiSelect: a multiSelect question (#2308)
+// carries "multiSelect":true on the batched frame so the app renders
+// checkboxes, and a single-select question omits the key (byte-compatible).
+// Mutation arm: drop the MultiSelect mapping in SendInteractiveBatch.
+func TestInteractive_BatchFrameCarriesMultiSelect(t *testing.T) {
+	_, c, b, conn := boundConn(t)
+	c.features = map[string]struct{}{featureInteractiveBatch: {}}
+	b.attach(c)
+
+	choices := []platform.ButtonChoice{{Label: "A", Data: "qa:0"}, {Label: "B", Data: "qa:1"}}
+	if batched, err := conn.SendInteractiveBatch("req-m",
+		[]platform.BatchQuestion{{Text: "Which?", Choices: choices, MultiSelect: true}, {Text: "One?", Choices: choices}},
+		func(answers []string) {}); err != nil || !batched {
+		t.Fatalf("SendInteractiveBatch: batched=%v err=%v", batched, err)
+	}
+	ds := drain(t, c)
+	if len(ds) != 1 || ds[0].t != fap.TypeInteractive {
+		t.Fatalf("present frames = %v, want [interactive]", types(ds))
+	}
+	questions, _ := ds[0].d["questions"].([]any)
+	if len(questions) != 2 {
+		t.Fatalf("frame questions = %v", ds[0].d["questions"])
+	}
+	if questions[0].(map[string]any)["multiSelect"] != true {
+		t.Errorf("multiSelect question frame = %v, want multiSelect:true", questions[0])
+	}
+	if _, has := questions[1].(map[string]any)["multiSelect"]; has {
+		t.Errorf("single-select question's frame must omit multiSelect: %v", questions[1])
+	}
+}
+
 // TestInteractive_BatchProgressSyncAndStreamedResolve: answers streamed one at a
 // time via InteractiveProgress are mirrored to attached clients and accumulated
 // server-side, so the completion frame can carry NO answers and still resolve
