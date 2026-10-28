@@ -88,6 +88,19 @@ func (s *Spawner) ReleaseHeld() {
 	}
 }
 
+// BranchOwner resolves the session that owns the spawn running on branchKey
+// now (#2630): the session that started it, or, once that depth leaf has
+// handed over, the node it passed to, by the same walk as the spawn's results
+// (route). ok is false when branchKey is not one of this agent's spawns.
+// While the route holds, the owner is still the reported leaf.
+func (s *Spawner) BranchOwner(branchKey string) (owner string, ok bool) {
+	parent, _, found := s.deps.Tracker.ForBranch(branchKey)
+	if !found || session.AgentIDFromKey(parent) != s.deps.AgentID {
+		return "", false
+	}
+	return s.route(parent).Owner, true
+}
+
 // ownedLookup finds a spawn the caller owns but did not start: one whose
 // starting session handed it over to caller (#2624). It returns the starting
 // session too, which the tracker keys the spawn under.

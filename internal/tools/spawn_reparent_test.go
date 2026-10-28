@@ -256,3 +256,50 @@ func TestDepthSessionLive(t *testing.T) {
 		}
 	}
 }
+
+// #2630: a spawn's current owner, which its foci_ask is shown to, follows
+// the same walk as its results: the leaf that started it while it is open
+// (and while its report waits on the fan-in), its parent once the parent has
+// fanned in.
+func TestSpawnBranchOwnerFollowsHandover(t *testing.T) {
+	agent := newScriptedSpawnAgent(1)
+	h := newReparentHarness(t, agent, nil)
+	a := h.depth.fanout(t, depthRoot, "Alpha")[0]
+	kids := h.depth.fanout(t, a, "Alpha one", "Alpha two")
+	id := h.spawnFrom(t, kids[0], "dig")
+	<-agent.started
+	snap, ok := h.sp.tracker.Lookup(kids[0], id, 0)
+	if !ok || snap.BranchKey == "" {
+		t.Fatalf("spawn %s not tracked under %s", id, kids[0])
+	}
+	branch := snap.BranchKey
+	owner := func() string {
+		t.Helper()
+		o, ok := h.sp.spawner.BranchOwner(branch)
+		if !ok {
+			t.Fatalf("BranchOwner(%s) not found", branch)
+		}
+		return o
+	}
+
+	if o := owner(); o != kids[0] {
+		t.Errorf("open leaf: owner = %s, want the leaf %s", o, kids[0])
+	}
+	if err := h.depth.report(t, kids[0], "a1 settled"); err != nil {
+		t.Fatal(err)
+	}
+	if o := owner(); o != kids[0] {
+		t.Errorf("reported, fan-in pending: owner = %s, want still the leaf %s", o, kids[0])
+	}
+	if err := h.depth.report(t, kids[1], "a2 settled"); err != nil {
+		t.Fatal(err)
+	}
+	if o := owner(); o != a {
+		t.Errorf("after the parent's fan-in: owner = %s, want the parent %s", o, a)
+	}
+	if _, ok := h.sp.spawner.BranchOwner("test/c1/b-none"); ok {
+		t.Error("an unknown branch has an owner")
+	}
+	close(agent.gates[0])
+	h.sp.nextDelivery(t).done(true)
+}

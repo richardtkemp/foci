@@ -24,7 +24,7 @@ func TestNewAskRevealFn_PostsToSessionChat(t *testing.T) {
 	conn := &sessionNotifyConn{stubConn: &stubConn{sessionKey: "x/c1"}}
 	connMgr := &sessionRoutingConnMgr{conn: conn}
 
-	newAskRevealFn("x", connMgr)("x/c1", "Capital?\nAnswer: 2. Oslo")
+	newAskRevealFn("x", connMgr, nil)("x/c1", "Capital?\nAnswer: 2. Oslo")
 
 	if len(conn.broadcasts) != 0 {
 		t.Errorf("reveal must not broadcast, got %v", conn.broadcasts)

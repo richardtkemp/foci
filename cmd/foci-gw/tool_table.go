@@ -343,21 +343,22 @@ var toolTable = []toolEntry{
 	}},
 
 	{name: "ask", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {
+		chats := d.askChats()
 		t, router := tools.NewAskTool(
-			newAskPresentFn(d.p.acfg.ID, d.connMgr),
-			newAskRestoreFn(d.p.acfg.ID, d.connMgr),
+			newAskPresentFn(d.p.acfg.ID, d.connMgr, chats),
+			newAskRestoreFn(d.p.acfg.ID, d.connMgr, chats),
 			d.askDeliver,
 			func(msgID, finalText string) { _ = platform.CancelInteractiveMessage(msgID, finalText) },
 			d.p.sessionIndex, d.p.acfg.ID,
 			// The user-input delivery route (#2233): answer batches, late
 			// answers and the cancel notice dispatch like typed messages.
 			tools.WithUserInputDeliver(d.askUserDeliver),
-			tools.WithBatchPresent(newAskPresentBatchFn(d.p.acfg.ID, d.connMgr)),
-			tools.WithBatchRestore(newAskRestoreBatchFn(d.p.acfg.ID, d.connMgr)),
-			tools.WithRemove(newAskRemoveFn(d.p.acfg.ID, d.connMgr)),
+			tools.WithBatchPresent(newAskPresentBatchFn(d.p.acfg.ID, d.connMgr, chats)),
+			tools.WithBatchRestore(newAskRestoreBatchFn(d.p.acfg.ID, d.connMgr, chats)),
+			tools.WithRemove(newAskRemoveFn(d.p.acfg.ID, d.connMgr, chats)),
 			// Quiz reveals (#1316): after a chat user answers a quiz question,
 			// post its withheld answer+explanation to the asking session's chat.
-			tools.WithReveal(newAskRevealFn(d.p.acfg.ID, d.connMgr)),
+			tools.WithReveal(newAskRevealFn(d.p.acfg.ID, d.connMgr, chats)),
 			// Per-ask (#1711 ruling 5): release only what THIS ask was holding,
 			// so a sibling ask's backlog stays deferred (#1712).
 			tools.WithOnResolve(func(sk, reqID string) {

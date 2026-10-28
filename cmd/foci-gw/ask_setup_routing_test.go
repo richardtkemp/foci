@@ -169,7 +169,7 @@ func TestAskPrompt_PostsToAskingSessionChat(t *testing.T) {
 	t.Parallel()
 	conn := &chatRoutingConn{stubConn: stubConn{sessionKey: "main/c999"}, defaultSessionKey: "main/c999"}
 
-	id := newAskPresentFn("main", oneConnMgr{conn: conn})("main/c222", "ask-routing-1", "Q?", "Q", askChoices(), func(string) {})
+	id := newAskPresentFn("main", oneConnMgr{conn: conn}, nil)("main/c222", "ask-routing-1", "Q?", "Q", askChoices(), func(string) {})
 
 	if id != "m-session" {
 		t.Errorf("platform msg id = %q, want the session-addressed send's id", id)
@@ -191,7 +191,7 @@ func TestAskPrompt_CancelEditsAskingSessionChat(t *testing.T) {
 	t.Parallel()
 	conn := &chatRoutingConn{stubConn: stubConn{sessionKey: "main/c999"}, defaultSessionKey: "main/c999"}
 
-	newAskPresentFn("main", oneConnMgr{conn: conn})("main/c222", "ask-routing-2", "Q?", "Q", askChoices(), func(string) {})
+	newAskPresentFn("main", oneConnMgr{conn: conn}, nil)("main/c222", "ask-routing-2", "Q?", "Q", askChoices(), func(string) {})
 	if err := platform.CancelInteractiveMessage("ask-routing-2", "❌ Cancelled"); err != nil {
 		t.Fatalf("CancelInteractiveMessage: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestAskPrompt_ExpiryEditsAskingSessionChat(t *testing.T) {
 	t.Parallel()
 	conn := &chatRoutingConn{stubConn: stubConn{sessionKey: "main/c999"}, defaultSessionKey: "main/c999"}
 
-	newAskPresentFn("main", oneConnMgr{conn: conn})("main/c222", "ask-routing-3", "Q?", "Q", askChoices(), func(string) {})
+	newAskPresentFn("main", oneConnMgr{conn: conn}, nil)("main/c222", "ask-routing-3", "Q?", "Q", askChoices(), func(string) {})
 	platform.CleanupExpiredInteractive(-time.Hour) // every entry is older than a cutoff in the future
 
 	_, sText, _, _, dText, _ := conn.counts()
@@ -233,7 +233,7 @@ func TestAskPrompt_RestoreCancelEditsAskingSessionChat(t *testing.T) {
 	t.Parallel()
 	conn := &chatRoutingConn{stubConn: stubConn{sessionKey: "main/c999"}, defaultSessionKey: "main/c999"}
 
-	newAskRestoreFn("main", oneConnMgr{conn: conn})("main/c222", "ask-routing-4", "m-9", askChoices(), func(string) {})
+	newAskRestoreFn("main", oneConnMgr{conn: conn}, nil)("main/c222", "ask-routing-4", "m-9", askChoices(), func(string) {})
 	if err := platform.CancelInteractiveMessage("ask-routing-4", "❌ Cancelled"); err != nil {
 		t.Fatalf("CancelInteractiveMessage: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestAskPrompt_RestoreCancelEditsAskingSessionChat(t *testing.T) {
 func TestAskPrompt_AppConnUsedUnchanged(t *testing.T) {
 	t.Parallel()
 	conn := &appishConn{buttonStubConn: buttonStubConn{stubConn{sessionKey: "main/c222"}}}
-	if id := newAskPresentFn("main", oneConnMgr{conn: conn})("main/c222", "ask-routing-5", "Q?", "Q", askChoices(), func(string) {}); id != "m-1" {
+	if id := newAskPresentFn("main", oneConnMgr{conn: conn}, nil)("main/c222", "ask-routing-5", "Q?", "Q", askChoices(), func(string) {}); id != "m-1" {
 		t.Errorf("platform msg id = %q, want the app connection's own send id (m-1)", id)
 	}
 	platform.CancelInteractiveMessage("ask-routing-5", "done") // keep the global store clean for the sweep tests

@@ -17,14 +17,16 @@ import (
 // button data when the user clicks. Non-blocking: the tool's Execute returns
 // immediately; this fires later on the platform callback. The stored resolver
 // also addresses every later proactive edit (post-click, cancel, expiry) to
-// the session's chat.
-func newAskPresentFn(agentID string, connMgr platform.ConnectionManager) tools.AskPresentFn {
+// the session's chat. An ask from a spawn's branch is shown in the spawn's
+// owner's chat instead, or the next of chats that can show it (#2630), named
+// as the spawn's.
+func newAskPresentFn(agentID string, connMgr platform.ConnectionManager, chats askChats) tools.AskPresentFn {
 	return func(sessionKey, msgID, text, summary string, choices []question.Choice, onResponse func(data string)) string {
 		buttons := make([]platform.ButtonChoice, len(choices))
 		for i, c := range choices {
 			buttons[i] = platform.ButtonChoice{Label: c.Label, Data: c.Data}
 		}
-		platformMsgID, err := platform.SendInteractiveMessageWithID(sessionChatResolver(connMgr, sessionKey, agentID), msgID, summary, text, buttons, func(choice platform.ButtonChoice) string {
+		onClick := func(choice platform.ButtonChoice) string {
 			onResponse(choice.Data)
 			if choice.Data == question.CancelData {
 				return "❌ Cancelled"
@@ -33,16 +35,71 @@ func newAskPresentFn(agentID string, connMgr platform.ConnectionManager) tools.A
 				return "✅ " + summary
 			}
 			return "✅ " + choice.Label
-		}, func() {
-			// Expiry: resolve the ask so the asking session isn't left waiting on
-			// an answer that will never come — as EXPIRED, not as a user cancel (#2091).
-			onResponse(question.ExpiredData)
-		})
-		if err != nil {
-			askLog.Warnf("present question for session=%s failed: %v", sessionKey, err)
-			return ""
 		}
-		return platformMsgID
+		// Expiry: resolve the ask so the asking session isn't left waiting on
+		// an answer that will never come — as EXPIRED, not as a user cancel (#2091).
+		onExpire := func() { onResponse(question.ExpiredData) }
+		// #2630: a spawn's question goes to its current owner, falling back
+		// up the chain when that chat cannot show it. A failed send leaves no
+		// prompt entry, so msgID is free for the next chat.
+		for _, target := range chats.of(sessionKey) {
+			body := text
+			if target != sessionKey {
+				body = prependSpawnOrigin(tools.Spawns, sessionKey, body)
+			}
+			platformMsgID, err := platform.SendInteractiveMessageWithID(sessionChatResolver(connMgr, target, agentID), msgID, summary, body, buttons, onClick, onExpire)
+			if err != nil {
+				askLog.Warnf("present question for session=%s in %s failed: %v", sessionKey, target, err)
+				continue
+			}
+			if target != sessionKey {
+				askLog.Infof("question for session=%s shown in %s (the spawn's owner chain)", sessionKey, target)
+			}
+			return platformMsgID
+		}
+		return ""
+	}
+}
+
+// askChats lists, in order, the sessions whose chats an ask from a session
+// may be shown in (#2630); nil = only the asking session's own.
+type askChats func(sessionKey string) []string
+
+func (c askChats) of(sessionKey string) []string {
+	if c == nil {
+		return []string{sessionKey}
+	}
+	if ts := c(sessionKey); len(ts) > 0 {
+		return ts
+	}
+	return []string{sessionKey}
+}
+
+// first is the chat an ask's later hooks (restore, remove, reveal) address:
+// the first of its chats.
+func (c askChats) first(sessionKey string) string { return c.of(sessionKey)[0] }
+
+// newAskChats is the gateway's askChats (#2630, Dick 2026-10-28: "it should
+// appear in whichever session is the current parent of the spawn, i.e. walk
+// according to the same logic as the spawn"). An ask from a spawn's branch
+// goes to the spawn's current owner (Spawner.BranchOwner: the starting
+// session, or the depth node it was handed over to, by SpawnRoute), then up
+// the chain from there as a backend prompt does (promptTargets: live
+// ancestors, the root, the default session). The owner itself is skipped
+// when it is not live (a reported leaf whose fan-in is still pending). Any
+// other session's ask stays in its own chat. owner is Spawner.BranchOwner
+// in the gateway (toolDeps.askChats).
+func newAskChats(owner func(branchKey string) (string, bool), d backendPromptDeps) askChats {
+	return func(sessionKey string) []string {
+		owner, ok := owner(sessionKey)
+		if !ok {
+			return nil
+		}
+		ts := promptTargets(d, owner)
+		if d.live != nil && !d.live(owner) && len(ts) > 1 {
+			ts = ts[1:]
+		}
+		return ts
 	}
 }
 
@@ -54,19 +111,29 @@ func newAskPresentFn(agentID string, connMgr platform.ConnectionManager) tools.A
 // presenter — for any other transport (Telegram/Discord don't implement
 // BatchButtonSender) or when the app client is offline/uncapable. So chat
 // platforms and legacy app clients keep the one-question-at-a-time flow unchanged.
-func newAskPresentBatchFn(agentID string, connMgr platform.ConnectionManager) tools.AskPresentBatchFn {
+func newAskPresentBatchFn(agentID string, connMgr platform.ConnectionManager, chats askChats) tools.AskPresentBatchFn {
 	return func(sessionKey, promptID string, qs []question.Question, onResponse func(answers []string)) bool {
-		conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
-		bs, ok := conn.(platform.BatchButtonSender)
-		if !ok {
-			return false // not the app (or no addressable conn) — sequential
+		// #2630: the first of the ask's chats that can take the form; none =
+		// sequential, which walks the same chats.
+		for _, target := range chats.of(sessionKey) {
+			bs, ok := connMgr.ForSessionOrPrimary(target, agentID).(platform.BatchButtonSender)
+			if !ok {
+				continue // not the app (or no addressable conn)
+			}
+			bqs := batchQuestionsFor(qs)
+			if target != sessionKey && len(bqs) > 0 {
+				bqs[0].Text = prependSpawnOrigin(tools.Spawns, sessionKey, bqs[0].Text)
+			}
+			batched, err := bs.SendInteractiveBatch(promptID, bqs, onResponse)
+			if err != nil {
+				askLog.Warnf("present batched questions for session=%s in %s failed: %v", sessionKey, target, err)
+				continue
+			}
+			if batched {
+				return true
+			}
 		}
-		batched, err := bs.SendInteractiveBatch(promptID, batchQuestionsFor(qs), onResponse)
-		if err != nil {
-			askLog.Warnf("present batched questions for session=%s failed: %v", sessionKey, err)
-			return false
-		}
-		return batched
+		return false
 	}
 }
 
@@ -112,9 +179,9 @@ func batchQuestionsFor(qs []question.Question) []platform.BatchQuestion {
 // TEXT (it is question.FormatReveal output): Telegram's notification path sends
 // without a parse mode, so a markdown marker would render literally (round-3
 // finding F1).
-func newAskRevealFn(agentID string, connMgr platform.ConnectionManager) tools.AskRevealFn {
+func newAskRevealFn(agentID string, connMgr platform.ConnectionManager, chats askChats) tools.AskRevealFn {
 	return func(sessionKey, text string) {
-		route.NotifySessionChat(connMgr, agentID, sessionKey, text)
+		route.NotifySessionChat(connMgr, agentID, chats.first(sessionKey), text)
 	}
 }
 
@@ -126,9 +193,9 @@ func newAskRevealFn(agentID string, connMgr platform.ConnectionManager) tools.As
 // Answers) matches nothing and is silently dropped (#1473). Returns for any
 // transport that can't batch-restore (no app conn / no live binding); the app hub's
 // answer-time fallback (fix B) then catches the answer.
-func newAskRestoreBatchFn(agentID string, connMgr platform.ConnectionManager) tools.AskRestoreBatchFn {
+func newAskRestoreBatchFn(agentID string, connMgr platform.ConnectionManager, chats askChats) tools.AskRestoreBatchFn {
 	return func(sessionKey, promptID string, questionCount int, onResponse func(answers []string)) {
-		conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
+		conn := connMgr.ForSessionOrPrimary(chats.first(sessionKey), agentID)
 		br, ok := conn.(platform.BatchButtonRestorer)
 		if !ok {
 			return // not the app (or no addressable conn) — nothing to re-register
@@ -141,9 +208,9 @@ func newAskRestoreBatchFn(agentID string, connMgr platform.ConnectionManager) to
 // can delete a prompt outright (platform.InteractiveRemover — the app) it removes
 // the on-screen question of an ask that died unanswered, so it disappears rather
 // than lingering (#2080). Any other transport keeps its prompt as it was.
-func newAskRemoveFn(agentID string, connMgr platform.ConnectionManager) tools.AskRemoveFn {
+func newAskRemoveFn(agentID string, connMgr platform.ConnectionManager, chats askChats) tools.AskRemoveFn {
 	return func(sessionKey, msgID string) {
-		r, ok := connMgr.ForSessionOrPrimary(sessionKey, agentID).(platform.InteractiveRemover)
+		r, ok := connMgr.ForSessionOrPrimary(chats.first(sessionKey), agentID).(platform.InteractiveRemover)
 		if !ok {
 			return
 		}
@@ -166,7 +233,7 @@ func newAskRemoveFn(agentID string, connMgr platform.ConnectionManager) tools.As
 // BEFORE #2275 were posted in the default chat; their restored cancel/expiry
 // edits now address the session's chat and fail with a logged warning — click
 // handling still works (it uses the callback's own message).
-func newAskRestoreFn(agentID string, connMgr platform.ConnectionManager) tools.AskRestoreFn {
+func newAskRestoreFn(agentID string, connMgr platform.ConnectionManager, chats askChats) tools.AskRestoreFn {
 	return func(sessionKey, msgID, platformMsgID string, choices []question.Choice, onResponse func(data string)) {
 		buttons := make([]platform.ButtonChoice, len(choices))
 		for i, c := range choices {
@@ -177,7 +244,7 @@ func newAskRestoreFn(agentID string, connMgr platform.ConnectionManager) tools.A
 		// so an eager lookup would capture nil. The resolver re-queries at edit
 		// time, by when the connection is live. platformMsgID (persisted across
 		// the restart) lets cancel/expiry edit the on-screen message too.
-		platform.RestoreInteractiveCallback(msgID, platformMsgID, sessionChatResolver(connMgr, sessionKey, agentID), buttons, func(choice platform.ButtonChoice) string {
+		platform.RestoreInteractiveCallback(msgID, platformMsgID, sessionChatResolver(connMgr, chats.first(sessionKey), agentID), buttons, func(choice platform.ButtonChoice) string {
 			onResponse(choice.Data)
 			if choice.Data == question.CancelData {
 				return "❌ Cancelled"
@@ -187,4 +254,30 @@ func newAskRestoreFn(agentID string, connMgr platform.ConnectionManager) tools.A
 			onResponse(question.ExpiredData)
 		}, time.Now())
 	}
+}
+
+// askChats builds the path's askChats (#2630) from the gateway's pieces: the
+// spawner (read at call time; nil when the agent has no spawn tool), the
+// session index's parent chain and the agent's default session.
+func (d *toolDeps) askChats() askChats {
+	idx := d.p.sessionIndex
+	agentID := d.p.acfg.ID
+	// The spawner is read at call time: it is built after the ask tool.
+	owner := func(branchKey string) (string, bool) {
+		if sp := d.spawner; sp != nil {
+			return sp.BranchOwner(branchKey)
+		}
+		return "", false
+	}
+	return newAskChats(owner, backendPromptDeps{
+		sessionIdx: idx,
+		agentID:    agentID,
+		live:       depthSessionLive,
+		defaultSession: func() string {
+			if idx == nil || d.p.cfg == nil {
+				return ""
+			}
+			return idx.DefaultSessionKeyForAgentOn(agentID, d.p.cfg.DefaultPlatformFor(agentID))
+		},
+	})
 }
