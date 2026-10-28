@@ -125,6 +125,8 @@ type ResolvedTool struct {
 	SearchProvider      string
 	FetchProvider       string
 	TodoFormat          string
+	AllowTools          []string // empty = no allowlist; see ToolPermitted
+	DenyTools           []string // union of the global and agent lists
 }
 
 func resolveTool(m ToolConfig) ResolvedTool {

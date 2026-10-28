@@ -138,8 +138,21 @@ fociroot.EnsureCCConfigEnv()                             ← internal/fociroot (
          → shared.finalize(ag, params)                      ← commands, platform, nudge rules + suggestion sender (#1321; shared postamble)
      → ELSE (traditional API agent):
        → tools.NewAsyncNotifier()                           ← shared by exec + http_request + tmux, routes by session key
-       → tools.NewRegistry() + registerTools(pathAPI)        ← unified tool table (tool_table.go), one source of truth shared with exec path
-       → mcp.NewManagerForAgent(configDir, agentID)         ← dynamic MCP; re-reads mcp.toml on each tool call; a server that failed to connect is re-dialled when a later call names it (#2042)
+       → tools.NewRegistry() + registerTools(pathAPI)        ← unified tool table (tool_table.go), one source of truth shared with exec path.
+                                                              Tool access (#2278): before a row's enabled/build, registerTools skips
+                                                              it unless resolved.Tools.ToolPermitted(row name) — [tools] / [[agents]]
+                                                              tools allow_tools (agent list replaces global; empty = all) and
+                                                              deny_tools (global ∪ agent, applied after allow). A withheld row is
+                                                              never built (no server tool, browser pool, MCP manager, ask router),
+                                                              and everything derived from the registry lacks it: ToolDefs, the
+                                                              shell's foci_* list (FinalizeShellDescription), spawn sub-agents
+                                                              (SpawnDeps share the registry), and on the exec path
+                                                              (buildExecRegistry, the same driver) the bridge's shell functions and
+                                                              dispatch, FociShellRules and the env block's Foci Shell Tools.
+                                                              Names are config.FociToolNames (kept equal to the toolTable rows by
+                                                              TestFociToolNamesMatchToolTable); an unknown name fails
+                                                              config.Validate (startup, -check-config, the app config editor).
+       → mcp.NewManagerForAgent(configDir, agentID)         ← built by the mcp row; dynamic MCP; re-reads mcp.toml on each tool call; a server that failed to connect is re-dialled when a later call names it (#2042). Not built when mcp is withheld (mcpManager nil; shutdown skips it)
        → workspace.NewBootstrap(agent.Workspace, agent.SystemFiles)
        → buildEnvironmentBlock(acfg, configPath, cfg)       ← if [environment] enabled
        → skills.ResolveDirs(home, workspace, cfg.Skills.Dir, acfg.SkillsDir)

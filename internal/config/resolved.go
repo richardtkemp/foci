@@ -137,13 +137,16 @@ func Resolve(cfg *Config, acfg AgentConfig) *ResolvedAgentConfig {
 		tlpt = atg.Telegram.LongPollTimeout
 	}
 
+	tools := resolveTool(Merge(acfg.Tools.ToolConfig, cfg.Tools.ToolConfig))
+	resolveToolAccess(&tools, acfg.Tools.ToolConfig, cfg.Tools.ToolConfig)
+
 	return &ResolvedAgentConfig{
 		Loop:                    resolveLoop(Merge(acfg.Loop, cfg.AgentLoop)),
 		Behavior:                resolveBehavior(Merge(acfg.Behavior, cfg.Behavior)),
 		Voice:                   resolveVoice(Merge(acfg.Voice, cfg.Voice)),
 		Nudge:                   resolveNudge(Merge(acfg.Nudge, cfg.Nudge)),
 		System:                  resolveSystem(Merge(acfg.System, cfg.System)),
-		Tools:                   resolveTool(Merge(acfg.Tools.ToolConfig, cfg.Tools.ToolConfig)),
+		Tools:                   tools,
 		Summary:                 resolveSummary(Merge(acfg.Tools.SummaryConfig, cfg.Tools.SummaryConfig)),
 		Compaction:              resolveCompaction(Merge(acfg.Sessions.CompactionConfig, cfg.Sessions.CompactionConfig)),
 		Debug:                   resolveDebug(Merge(acfg.Debug, cfg.Debug)),

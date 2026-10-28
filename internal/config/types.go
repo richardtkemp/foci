@@ -650,6 +650,11 @@ type ToolConfig struct {
 	SearchProvider      *string `toml:"search_provider"       default:"brave"     desc:"Backend used for web search: brave calls the Brave Search API, anthropic uses Anthropic's built-in web search" choices:"brave,anthropic"`
 	FetchProvider       *string `toml:"fetch_provider"        default:"builtin"   desc:"Backend used to fetch web pages: builtin fetches directly from this server, anthropic uses Anthropic's hosted fetch tool" choices:"anthropic,builtin"`
 	TodoFormat          *string `toml:"todo_format"                                hot:"immediate" desc:"How the agent's todo list is rendered in chat: lines shows a simple bullet list, table shows a formatted table" choices:"lines,table"`
+	// Tool access (#2278). Slices, not pointers: Merge takes the first
+	// non-nil, so an agent's allow_tools (even an empty one) replaces the
+	// global list; deny_tools is unioned in Resolve instead.
+	AllowTools []string `toml:"allow_tools" desc:"The only foci tools the agent may have (names like shell, browser, send_to_session). The agent's list replaces the global one; an empty or unset list means every tool. Covers foci tools on every backend, not Claude Code or opencode built-in tools. Needs a restart"`
+	DenyTools  []string `toml:"deny_tools"  desc:"Foci tools the agent must never have, applied after allow_tools. The global and the agent's lists add up, so an agent cannot lift a globally denied tool. Covers foci tools on every backend, not Claude Code or opencode built-in tools. Needs a restart"`
 }
 
 type AnthropicConfig struct {

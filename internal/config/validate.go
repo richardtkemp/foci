@@ -234,6 +234,10 @@ func (cfg *Config) Validate(knownBackends []string) error {
 		return err
 	}
 
+	if err := cfg.validateToolLists(); err != nil {
+		return err
+	}
+
 	if err := cfg.validatePreToolRules(); err != nil {
 		return err
 	}

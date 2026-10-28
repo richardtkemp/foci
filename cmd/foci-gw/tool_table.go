@@ -104,9 +104,20 @@ type toolEntry struct {
 // which path, and under what condition — replacing the old hand-maintained
 // registerCoreTools/registerWebTools/... functions AND buildExecRegistry's
 // parallel list.
+//
+// The agent's tool access lists (allow_tools / deny_tools, #2278, resolved in
+// config.ResolvedTool.ToolPermitted) are applied here, BEFORE enabled and
+// build: a withheld row is never constructed, so it has no side effects
+// (no server tool, browser pool or MCP manager) and is absent from everything
+// derived from the registry — the API tools array, the shell tool's foci_*
+// list, spawned sub-agents, the exec bridge's functions and dispatch,
+// FociShellRules and the delegated environment block.
 func registerTools(d *toolDeps) {
 	for _, e := range toolTable {
 		if e.paths&d.path == 0 {
+			continue
+		}
+		if !d.p.resolved.Tools.ToolPermitted(e.name) { // static-cfg:ignore: tools are built once at startup; the access lists need a restart (#2278)
 			continue
 		}
 		if e.enabled != nil && !e.enabled(d) {

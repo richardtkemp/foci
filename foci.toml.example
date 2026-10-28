@@ -650,6 +650,8 @@ bind = "127.0.0.1"
 # search_provider = "brave"              # "brave" (client-side, default) or "anthropic" (server-side, high token cost)
 # fetch_provider = "builtin"             # "builtin" (client-side, default) or "anthropic" (server-side)
 # todo_format = "lines"                  # "lines" (default) or "table"
+# allow_tools = []                      # only these foci tools (agent list replaces this; empty = all)
+# deny_tools = []                       # never these foci tools (global + agent lists add up)
 # web_search_max_uses = 0                # max searches per API call (0 = unlimited, anthropic provider only)
 # web_search_allowed_domains = []        # domain whitelist (mutually exclusive with blocked)
 # web_search_blocked_domains = []        # domain blacklist

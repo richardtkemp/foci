@@ -1175,6 +1175,30 @@ Global defaults set in `[tools]`, overridable per-agent via `[agents.tools]`. Pe
 | `search_provider` | string | `"brave"` | Web search provider: `"brave"` (client-side, needs `brave_api_key`) or `"anthropic"` (server-side). Brave is recommended: Anthropic's server-side search returns encrypted content blobs that massively inflate token counts (observed: 256k tokens from just two searches) and bypass the tool result size guard entirely. Brave results are client-side, guardable, and far more token-efficient. Global: `[tools]`. |
 | `fetch_provider` | string | `"builtin"` | Web fetch provider. See [TOOLS.md](TOOLS.md) for provider details. Global: `[tools]`. |
 | `todo_format` | string | `"lines"` | Todo list rendering format: `"lines"` (one item per line) or `"table"` (tabular layout). Global: `[tools]`. |
+| `allow_tools` | string[] | unset | The only foci tools the agent may have. The agent's list **replaces** the global one; an unset or empty list means every tool (so an agent can set `allow_tools = []` to lift a global allowlist for itself). See [Tool access](#tool-access). Global: `[tools]`, per-agent: `[[agents]].tools`. Needs a restart. |
+| `deny_tools` | string[] | unset | Foci tools the agent must never have, applied after `allow_tools` (a tool in both is withheld). The global and agent lists **add up**: an agent cannot lift a globally denied tool. See [Tool access](#tool-access). Global: `[tools]`, per-agent: `[[agents]].tools`. Needs a restart. |
+
+#### Tool access
+
+`allow_tools` and `deny_tools` decide which **foci tools** each agent gets, on every backend: the native tools of an API agent, and the `foci_*` shell functions (exec bridge) of a Claude Code, opencode or codex agent. With neither set anywhere, every agent keeps every tool, exactly as before.
+
+- Entries are foci tool names — `app_android`, `ask`, `bitwarden_search`, `bitwarden_unlock`, `browser`, `close_session`, `depth_claims`, `depth_fanout`, `depth_report`, `depth_status`, `edit`, `http_request`, `mcp`, `memory_search`, `read`, `remind`, `scratchpad`, `send_to_chat`, `send_to_session`, `set_session_alias`, `shell`, `spawn`, `spawn_send`, `spawn_status`, `summary`, `task_list`, `tmux`, `todo`, `web_fetch`, `web_search`, `whoami`, `write` — not the `foci_`-prefixed shell-function names. Matching is exact and case-sensitive; no globs.
+- **Allow:** the agent's `allow_tools` if it sets one, else the global one. Empty means no allowlist.
+- **Deny:** the union of the global and the agent's `deny_tools`, applied after allow.
+- A withheld tool is never built (a denied `web_search` with `search_provider = "anthropic"` adds no server-side tool; a denied `browser` starts no browser; a denied `mcp` loads no MCP config) and appears nowhere: not in the tool list, the `shell` tool's function list, spawned sub-agents, the delegated `foci_*` functions or their auto-approve rules, or the environment block's Foci Shell Tools list. A direct exec-bridge call to it is refused as an unknown tool.
+- A name that is not a foci tool (a typo, or `foci_todo` instead of `todo`) is a config error: `foci-gw -check-config` prints it with the scope (`tools` or `agents[<id>].tools`), the list and the valid names and exits 1, and the gateway refuses to start. A misspelt deny entry can therefore never leave a tool silently switched on.
+- **Not covered:** Claude Code and opencode built-in tools (`Bash`, `Read`, `Write`, `Edit`, `WebFetch`, ...) are not foci tools. Restrict those with `backend_config.pretool_rules` / `allowed_tools`.
+
+```toml
+[tools]
+deny_tools = ["bitwarden_search", "bitwarden_unlock"]   # no agent gets bitwarden
+
+[[agents]]
+id = "public"
+[agents.tools]
+allow_tools = ["web_search", "web_fetch", "todo", "whoami"]   # only these (bitwarden is still denied globally)
+deny_tools = ["send_to_session"]
+```
 
 ### Notifications & Logging
 
