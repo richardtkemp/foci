@@ -250,10 +250,13 @@ directories, `~/.opencode/bin` (opencode's own installer) and Homebrew.
 
 Installs from before this layout (foci-gw ran with `HOME=~/foci`) are carried
 over by `make install`: it copies `~/foci/.claude.json` to
-`~/foci/.claude/.claude.json` and removes the old `~/foci/Library/Keychains`
-link. What foci's agents had under `~/foci` as their home (`~/foci/.codex`,
-`~/foci/.config`, `~/foci/.local/share/opencode`, `~/foci/.ssh`) is no longer
-read; the agents use yours.
+`~/foci/.claude/.claude.json`, removes the old `~/foci/Library/Keychains`
+link, and copies codex's saved conversations from `~/foci/.codex/sessions` to
+`~/.codex/sessions` (or `$CODEX_HOME/sessions`), once and without overwriting,
+so codex agents resume them instead of starting over. The rest of what foci's
+agents had under `~/foci` as their home (`~/foci/.codex`, `~/foci/.config`,
+`~/foci/.local/share/opencode`, `~/foci/.ssh`) is no longer read; the agents
+use yours.
 
 ### What is not available
 

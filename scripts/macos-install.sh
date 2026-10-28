@@ -74,6 +74,17 @@ BINS=(foci-gw foci foci-call foci-cc-hook foci-codex-hook)
 #  - The $FOCI_HOME/Library/Keychains link this script used to make so Claude
 #    Code found the login keychain under the fake HOME. With the real HOME
 #    macOS finds it itself; the link is removed if it is ours.
+#  - codex's conversations: with HOME=$FOCI_HOME codex kept them in
+#    $FOCI_HOME/.codex/sessions; with the real HOME it looks in
+#    ${CODEX_HOME:-~/.codex}/sessions, so every saved thread failed to resume
+#    ("no rollout found") and foci silently started a fresh one. Copied once,
+#    never overwriting (a marker file records it; the old copy stays for a
+#    rollback). Verified against codex 0.164.0: thread/resume finds a copied
+#    rollout file with no other state.
+CODEX_SESSIONS_MARKER=.sessions-copied-to-home
+codex_sessions_pending() {
+	[ -d "$FOCI_HOME/.codex/sessions" ] && [ ! -e "$FOCI_HOME/.codex/$CODEX_SESSIONS_MARKER" ]
+}
 migrate_home_root() {
 	[ "$FOCI_HOME" != "$HOME" ] || return 0
 	local root=${FOCI_HOME:?}
@@ -86,6 +97,13 @@ migrate_home_root() {
 		[ "$(readlink "$root/Library/Keychains")" = "$HOME/Library/Keychains" ]; then
 		say "removing the old $root/Library/Keychains link"
 		unlink "$root/Library/Keychains"
+	fi
+	if codex_sessions_pending; then
+		local dest=${CODEX_HOME:-$HOME/.codex}/sessions
+		say "copying codex conversations from $root/.codex/sessions to $dest"
+		mkdir -p "$dest"
+		rsync -a --ignore-existing "$root/.codex/sessions/" "$dest/"
+		: >"$root/.codex/$CODEX_SESSIONS_MARKER"
 	fi
 }
 
@@ -183,6 +201,7 @@ under_job() {
 needs_migration() {
 	[ "$FOCI_HOME" != "$HOME" ] || return 1
 	{ [ -f "$FOCI_HOME/.claude.json" ] && [ ! -e "$FOCI_HOME/.claude/.claude.json" ]; } && return 0
+	codex_sessions_pending && return 0
 	[ -L "$FOCI_HOME/Library/Keychains" ] &&
 		[ "$(readlink "$FOCI_HOME/Library/Keychains")" = "$HOME/Library/Keychains" ]
 }
