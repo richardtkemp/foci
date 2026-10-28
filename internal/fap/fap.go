@@ -95,6 +95,10 @@ const (
 	// conversation (#2588), re-sent on every change. Durable and seq'd like
 	// any conversation frame, so a reconnecting device replays the latest.
 	TypeDepthFeed = "depth.feed"
+	// TypeReminders (server->app) carries the WHOLE list of a conversation's
+	// pending wake reminders (#2600), re-sent on every change; an empty list
+	// clears the indicator. Snapshot half: ConversationInfo.Reminders.
+	TypeReminders = "reminders"
 
 	// app -> server
 	TypeCommand                = "command"
@@ -317,6 +321,10 @@ type ConversationInfo struct {
 	// cache whose touch is lost reports a positive PAST value (COLD), never 0
 	// (#2061). Reseeds a reconnecting client.
 	CacheExpiryMs int64 `json:"cacheExpiryMs,omitempty"`
+	// Reminders is the roster snapshot of the Reminders frame: the pending
+	// wake reminders set from this conversation's session (#2600). Reseeds a
+	// reconnecting client; absent = none.
+	Reminders []PendingReminder `json:"reminders,omitempty"`
 }
 
 // Tokens is the token accounting carried by `meta`.
@@ -631,6 +639,28 @@ type CacheExpiry struct {
 }
 
 func (CacheExpiry) Type() string { return TypeCacheExpiry }
+
+// PendingReminder is one pending wake reminder (foci_remind wake=true) set
+// from a conversation's session (#2600). Passive reminders are never sent:
+// they belong to the agent, not to a chat (Dick, 2026-10-28).
+type PendingReminder struct {
+	ID      int64  `json:"id"`
+	Text    string `json:"text"`
+	DueAtMs int64  `json:"dueAtMs"`
+	// State is "pending" until the timer fires, then "held" while background
+	// work delays the wake or "fired" while it waits to run.
+	State string `json:"state"`
+}
+
+// Reminders carries the WHOLE list of a conversation's pending wake reminders
+// (#2600), ordered by due time; re-sent whenever it changes (one set, fired,
+// cancelled or run). An empty list means none. App-only.
+type Reminders struct {
+	ConversationID string            `json:"conversationId"`
+	Reminders      []PendingReminder `json:"reminders"`
+}
+
+func (Reminders) Type() string { return TypeReminders }
 
 // Media references an out-of-band blob the app fetches via GET /app/blob/<id>.
 // The bytes never travel over the WebSocket — only this reference does.

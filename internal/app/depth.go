@@ -107,7 +107,7 @@ func (l *leafView) forward(b *convBinding, frame fap.ServerFrame, onRecorded fun
 func (l *leafView) stamp(frame fap.ServerFrame) (fap.ServerFrame, bool) {
 	id, title := l.id, l.title
 	switch f := frame.(type) {
-	case fap.Meta, fap.CacheExpiry, fap.Commands:
+	case fap.Meta, fap.CacheExpiry, fap.Commands, fap.Reminders:
 		return nil, false
 	case fap.TurnStart:
 		f.LeafID = id

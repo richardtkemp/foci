@@ -421,6 +421,7 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		ConversationAck{ConversationID: "c"},
 		MessageConsumed{ConversationID: "c", MessageID: "m"},
 		MessageEdit{ConversationID: "c", MessageID: "m", Text: "t"},
+		Reminders{ConversationID: "c", Reminders: []PendingReminder{{ID: 1, Text: "x", DueAtMs: 1, State: "pending"}}},
 	}
 	for _, f := range frames {
 		wire, err := Encode(f, 0, 0, "id", "ts")
@@ -436,6 +437,30 @@ func TestEncode_AllServerFrames(t *testing.T) {
 		if env["t"] != f.Type() {
 			t.Errorf("envelope t = %v, want %v", env["t"], f.Type())
 		}
+	}
+}
+
+// TestEncode_RemindersWire pins the Reminders frame's field names, which the
+// Kotlin client decodes by name (#2600), and that an empty list encodes as []
+// (the "none left" signal), not null.
+func TestEncode_RemindersWire(t *testing.T) {
+	wire, err := Encode(Reminders{ConversationID: "c", Reminders: []PendingReminder{
+		{ID: 7, Text: "check build", DueAtMs: 1761650000000, State: "held"},
+	}}, 0, 0, "id", "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"t":"reminders"`, `"conversationId":"c"`, `"id":7`, `"text":"check build"`, `"dueAtMs":1761650000000`, `"state":"held"`} {
+		if !strings.Contains(wire, want) {
+			t.Errorf("wire %s missing %s", wire, want)
+		}
+	}
+	empty, err := Encode(Reminders{ConversationID: "c", Reminders: []PendingReminder{}}, 0, 0, "id", "ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(empty, `"reminders":[]`) {
+		t.Errorf("empty list wire %s, want reminders:[]", empty)
 	}
 }
 

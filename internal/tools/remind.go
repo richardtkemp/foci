@@ -47,22 +47,17 @@ func WithSessionHeld(fn SessionHeldFn) RemindOption {
 // pending until its timer fires; from firing until its turn runs it is held
 // (behind background work) or fired (waiting to run); once the turn runs the
 // row is dismissed and no longer listed.
+// The values live in memory so the app's reminder indicator (#2600) shares
+// them.
 const (
-	wakeStatePending = "pending"
-	wakeStateHeld    = "held"
-	wakeStateFired   = "fired"
+	wakeStatePending = memory.WakeStatePending
+	wakeStateHeld    = memory.WakeStateHeld
+	wakeStateFired   = memory.WakeStateFired
 )
 
 // wakeStateOf classifies one listed row against the store's fired overlay.
 func wakeStateOf(rs *memory.ReminderStore, r memory.Reminder, held SessionHeldFn) string {
-	sk, fired := rs.FiredWake(r.ID)
-	if !fired {
-		return wakeStatePending
-	}
-	if held != nil && held(sk) {
-		return wakeStateHeld
-	}
-	return wakeStateFired
+	return rs.WakeState(r.ID, held)
 }
 
 func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWakeFn, cancelFn CancelWakeFn, opts ...RemindOption) *Tool {

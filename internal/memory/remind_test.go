@@ -387,3 +387,45 @@ func TestReminderStore_FiredLifecycle(t *testing.T) {
 		t.Fatalf("wake rows after DismissAll = %d, want 1 (the wake row survives)", len(wakes))
 	}
 }
+
+// The change hook fires on every pending-wake change and on nothing else, so
+// the app's reminder indicator tracks wakes without polling (#2600).
+func TestReminderOnChange_FiresForWakeChangesOnly(t *testing.T) {
+	rs := testReminderStore(t)
+	n := 0
+	rs.SetOnChange(func() { n++ })
+	step := func(what string, want int, f func()) {
+		t.Helper()
+		before := n
+		f()
+		if got := n - before; got != want {
+			t.Errorf("%s: onChange fired %d times, want %d", what, got, want)
+		}
+	}
+
+	var id int64
+	step("AddWake", 1, func() {
+		var err error
+		if id, err = rs.AddWake("a", "a/c1", "wake", "1h"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	step("MarkWakeFired", 1, func() { rs.MarkWakeFired(id, "a/c1") })
+	step("ClearWakeFired", 1, func() { rs.ClearWakeFired(id) })
+	step("ClearWakeFired again (no marker)", 0, func() { rs.ClearWakeFired(id) })
+	step("passive Add", 0, func() { _ = rs.Add("a", "passive", "now") })
+	step("DismissAll (passive only)", 0, func() { _ = rs.DismissAll("a") })
+	step("Dismiss", 1, func() { _ = rs.Dismiss(id) })
+	step("Dismiss gone row", 0, func() { _ = rs.Dismiss(id) })
+
+	if got := rs.WakeState(id, nil); got != WakeStatePending {
+		t.Errorf("WakeState unfired = %q, want pending", got)
+	}
+	rs.MarkWakeFired(id, "a/c1")
+	if got := rs.WakeState(id, func(string) bool { return true }); got != WakeStateHeld {
+		t.Errorf("WakeState held = %q, want held", got)
+	}
+	if got := rs.WakeState(id, nil); got != WakeStateFired {
+		t.Errorf("WakeState fired = %q, want fired", got)
+	}
+}

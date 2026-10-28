@@ -348,6 +348,10 @@ func TestConvBindingFieldCensus(t *testing.T) {
 		"subagentDetail": true, "subagents": true, "spawns": true, "waitingDetail": true,
 		"activitySent": true, "cacheExpiryMs": true, "lastCmdHash": true,
 		"lastMsgID": true, "readAfterTurn": true,
+		// reminders/remindersSent are setReminders' push-dedup cache (#2600):
+		// unset after a restart means the first change always sends, and the
+		// roster lists from the reminder store, never from this cache.
+		"reminders": true, "remindersSent": true,
 		// leaf is nil on every binding ensureBinding builds: a depth-mode leaf
 		// view is made only by registerDepthLeaf, which the depth manager's
 		// Restore re-runs from its own records after a restart (#2588).

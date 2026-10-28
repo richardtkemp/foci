@@ -537,6 +537,9 @@ Subcommands:
 		// change (turn entry, branch-warms-root, reset) — not only turns that
 		// complete through a live app sink (#1217).
 		inst.ag.SetOnCacheExpiry(app.SetCacheExpiry)
+		// Show each chat's pending wake reminders in the app, kept current on
+		// every set, fire, cancel and run (#2600).
+		app.SetReminderStore(acfg.ID, mem.reminderStores[acfg.ID], inst.ag.SystemInputHeld)
 		// Push a backend-generated alias (Codex thread name) to the app at once,
 		// not on its next reconnect (#2157).
 		inst.ag.SetOnAliasChanged(app.NotifyAliasChanged)

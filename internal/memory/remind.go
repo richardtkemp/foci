@@ -61,6 +61,56 @@ type ReminderStore struct {
 	// definition empty at startup.
 	firedMu sync.Mutex
 	fired   map[int64]string // wake id → resolved session key
+
+	// onChange, when set, runs after any change to the set or state of
+	// pending wakes: one added, fired, un-fired or removed. Wired at gateway
+	// setup so the app's per-chat reminder indicator tracks the store without
+	// polling (#2600). Passive reminders do not fire it: the app never shows
+	// them. Guarded by firedMu.
+	onChange func()
+}
+
+// Wake states (#2233): a wake is pending until its timer fires; from firing
+// until its turn runs it is held (behind background work) or fired (waiting
+// to run); once the turn runs the row is dismissed. Shared by the remind
+// tool's list and the app's reminder indicator (#2600).
+const (
+	WakeStatePending = "pending"
+	WakeStateHeld    = "held"
+	WakeStateFired   = "fired"
+)
+
+// SetOnChange wires the callback run after every pending-wake change (see
+// the onChange field). nil unwires it.
+func (rs *ReminderStore) SetOnChange(fn func()) {
+	rs.firedMu.Lock()
+	rs.onChange = fn
+	rs.firedMu.Unlock()
+}
+
+// notifyChange runs the onChange callback, if wired, outside any lock.
+func (rs *ReminderStore) notifyChange() {
+	rs.firedMu.Lock()
+	fn := rs.onChange
+	rs.firedMu.Unlock()
+	if fn != nil {
+		fn()
+	}
+}
+
+// WakeState classifies wake id against the fired overlay: WakeStatePending
+// until its timer fires, then WakeStateHeld when held reports its session
+// held behind background work, else WakeStateFired. A nil held reads every
+// fired wake as WakeStateFired.
+func (rs *ReminderStore) WakeState(id int64, held func(sessionKey string) bool) string {
+	sk, fired := rs.FiredWake(id)
+	if !fired {
+		return WakeStatePending
+	}
+	if held != nil && held(sk) {
+		return WakeStateHeld
+	}
+	return WakeStateFired
 }
 
 // MarkWakeFired records that wake id's timer has fired on sessionKey and its
@@ -76,14 +126,19 @@ func (rs *ReminderStore) MarkWakeFired(id int64, sessionKey string) {
 	}
 	rs.fired[id] = sessionKey
 	rs.firedMu.Unlock()
+	rs.notifyChange()
 }
 
 // ClearWakeFired drops the fired marker for id — its turn has run, its
 // injection was refused, or the wake is otherwise no longer waiting.
 func (rs *ReminderStore) ClearWakeFired(id int64) {
 	rs.firedMu.Lock()
+	_, was := rs.fired[id]
 	delete(rs.fired, id)
 	rs.firedMu.Unlock()
+	if was {
+		rs.notifyChange()
+	}
 }
 
 // FiredWake reports the session key wake id fired on and whether it is still
@@ -164,7 +219,11 @@ func (rs *ReminderStore) AddWake(agentID, sessionKey, text, when string) (int64,
 	if err != nil {
 		return 0, err
 	}
-	return result.LastInsertId()
+	id, err := result.LastInsertId()
+	if err == nil {
+		rs.notifyChange()
+	}
+	return id, err
 }
 
 // PendingWakes returns all wake reminders for the given agent, ordered by due time.
@@ -223,8 +282,15 @@ func (rs *ReminderStore) Due(agentID string) ([]Reminder, error) {
 // Dismiss removes a reminder by ID. A wake's fired marker goes with the row —
 // its turn ran (the wake path dismisses on completion) or it was cancelled.
 func (rs *ReminderStore) Dismiss(id int64) error {
-	rs.ClearWakeFired(id)
-	_, err := rs.db.Exec("DELETE FROM reminders WHERE id = ?", id)
+	rs.firedMu.Lock()
+	delete(rs.fired, id)
+	rs.firedMu.Unlock()
+	res, err := rs.db.Exec("DELETE FROM reminders WHERE id = ?", id)
+	if err == nil {
+		if n, _ := res.RowsAffected(); n > 0 {
+			rs.notifyChange()
+		}
+	}
 	return err
 }
 

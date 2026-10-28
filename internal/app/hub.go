@@ -1067,6 +1067,13 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 		if conn := h.agents[b.agentID]; conn != nil && conn.agentRef != nil {
 			ci.CacheExpiryMs = conn.agentRef.CacheExpiryMs(b.sessionKey, time.Now())
 		}
+		// Pending wake reminders (#2600), listed live from the store like the
+		// cache expiry above, so a reconnect after a restart sees the truth.
+		if b.leaf == nil {
+			if rs := remindersFor(b.agentID, b.sessionKey); len(rs) > 0 {
+				ci.Reminders = rs
+			}
+		}
 		if dc := memoDefaultChat(idx, defaultChatByAgent, b.agentID); dc != 0 && dc == b.chatID {
 			ci.IsDefault = true
 		}
@@ -2406,6 +2413,12 @@ type convBinding struct {
 	readAfterTurn bool
 
 	cacheExpiryMs int64 // last-emitted prompt-cache expiry (unix ms); seeds the roster snapshot, 0 = unknown/cold
+
+	// reminders is the last Reminders list sent (#2600), the push-dedup cache
+	// for setReminders; remindersSent is false until the first send. The
+	// roster does not read it: it lists from the store (see agentRoster).
+	reminders     []fap.PendingReminder
+	remindersSent bool
 
 	// leaf is set on a depth-mode leaf view (#2588): a binding for a leaf's
 	// branch session that owns no stream of its own and forwards every frame,
