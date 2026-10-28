@@ -125,6 +125,11 @@ type DepthDeps struct {
 	Approve func(sessionKey, promptID, text string, cb func(approved bool)) error
 	// Now is the clock; nil = time.Now.
 	Now func() time.Time
+	// OnHandover runs after each point where a reported node's spawns may
+	// pass to its parent (#2624): a fan-in turn taken, a reset, a restore.
+	// The spawner delivers the results it held (Spawner.ReleaseHeld). Nil =
+	// none.
+	OnHandover func()
 }
 
 // depthLeafSpec is one leaf a fan-out asks for. Prompt is the leaf's question:
@@ -236,10 +241,14 @@ func (n *depthNode) done() bool {
 type DepthManager struct {
 	deps DepthDeps
 
-	mu       sync.Mutex
-	nodes    map[string]*depthNode // session key → node
-	queued   map[string]int        // session key → turns queued by the manager, not yet ended
-	costs    map[string]depthCost  // session key → cached spend
+	mu     sync.Mutex
+	nodes  map[string]*depthNode // session key → node
+	queued map[string]int        // session key → turns queued by the manager, not yet ended
+	costs  map[string]depthCost  // session key → cached spend
+	// fanning marks a parent whose fan-in is being built (between its state
+	// leaving fanned and its Results being set), so SpawnRoute holds its
+	// children's spawns through that gap too.
+	fanning  map[string]bool
 	restored bool
 	// restoreDue is set by the startup Restore call: from then on, turning
 	// depth mode on (OnEnable) runs the restore it skipped while off.
@@ -255,10 +264,11 @@ type depthCost struct {
 // hub's callbacks (DepthDispatch).
 func NewDepthManager(deps DepthDeps) *DepthManager {
 	m := &DepthManager{
-		deps:   deps,
-		nodes:  make(map[string]*depthNode),
-		queued: make(map[string]int),
-		costs:  make(map[string]depthCost),
+		deps:    deps,
+		nodes:   make(map[string]*depthNode),
+		queued:  make(map[string]int),
+		costs:   make(map[string]depthCost),
+		fanning: make(map[string]bool),
 	}
 	registerDepthManager(deps.AgentID, m)
 	return m
@@ -867,10 +877,12 @@ func (m *DepthManager) checkFanIn(parentKey string) {
 	}
 	p.State = depthActive
 	p.Updated = m.now()
+	m.fanning[parentKey] = true
 	m.mu.Unlock()
 
 	msg := m.resultsMessage(kids)
 	m.mu.Lock()
+	delete(m.fanning, parentKey)
 	p.Results = msg
 	rec := snap(p)
 	tree := p.Tree
@@ -931,6 +943,9 @@ func (m *DepthManager) deliverResults(parentKey, msg string) {
 		rec := snap(p)
 		m.mu.Unlock()
 		m.persist(rec...)
+		// The parent has received its leaves' reports: their spawns are
+		// its now (#2624).
+		m.handover()
 	})
 }
 
@@ -1166,6 +1181,8 @@ func (m *DepthManager) OnReset(rootKey string) {
 	if len(open) > 0 {
 		depthLog.Infof("reset of %s dropped %d open node(s) of its tree", rootKey, len(open))
 	}
+	// No fan-in comes after a reset: the root takes its tree's spawns now.
+	m.handover()
 }
 
 // --- restart ---
@@ -1312,6 +1329,9 @@ func (m *DepthManager) restore() {
 	for tree := range trees {
 		m.pushFeed(tree)
 	}
+	// Spawn results restored (and held) before the trees: deliver those
+	// whose handover already happened.
+	m.handover()
 	if len(m.nodes) > 0 || len(expired) > 0 {
 		depthLog.Infof("restored %d depth node(s) in %d tree(s); %d expired record(s) deleted", len(register), len(trees), len(expired))
 	}

@@ -118,20 +118,6 @@ func (t *SpawnTracker) persist(parent, id string) {
 	}
 }
 
-// setResult records the [SPAWN RESULT] on its way to the parent, persisted
-// until clearResult says the parent's turn took it.
-func (t *SpawnTracker) setResult(parent, id, msg string) {
-	if t == nil {
-		return
-	}
-	t.mu.Lock()
-	if s := t.spawns[parent][id]; s != nil {
-		s.result = msg
-	}
-	t.mu.Unlock()
-	t.persist(parent, id)
-}
-
 // clearResult forgets msg once the parent has taken it. A newer result (a
 // resumed run's) is kept. A spawn the tracker has already forgotten just has
 // its row deleted.

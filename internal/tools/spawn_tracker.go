@@ -76,6 +76,10 @@ type trackedSpawn struct {
 	// result is the [SPAWN RESULT] message on its way to the parent: kept,
 	// and persisted, until the parent's turn has taken it.
 	result string
+	// held: result waits for a depth fan-in before it may go to the spawn's
+	// owner (#2624, Spawner.ReleaseHeld). In memory only: a restart
+	// re-routes the persisted result, which holds it again if it must.
+	held bool
 }
 
 // SpawnLogEntry is one step of a spawn's activity, kept for spawn_status
@@ -328,7 +332,7 @@ func (t *SpawnTracker) finishOrNext(parent, id string, force bool) (next []strin
 	stopped = s.stopped
 	t.pruneFinished(parent)
 	// Not persisted here: the record stays "running" until the result is
-	// recorded (setResult), so a crash in between resumes the spawn rather
+	// recorded (pushResult), so a crash in between resumes the spawn rather
 	// than losing its result.
 	return nil, true, stopped, false, dropped
 }

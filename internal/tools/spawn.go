@@ -181,6 +181,11 @@ type SpawnDeps struct {
 	// Notice shows the user a line in a session's chat without running a turn
 	// (which spawns a restart resumed, which it could not). Nil = log only.
 	Notice func(sessionKey, text string)
+	// Route says who owns the spawns a session started (#2624): a depth
+	// leaf's pass up its tree once its report has reached its parent's
+	// fan-in, and are held until then. Nil = the starting session owns its
+	// spawns, never held.
+	Route func(parent string) SpawnRoute
 }
 
 // apiOneShotField names the first API one-shot field d sets (the clients,

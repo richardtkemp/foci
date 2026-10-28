@@ -18,19 +18,20 @@ func spawnRestartNotice(prompt string) string {
 	return msg
 }
 
-// deliver hands a run's [SPAWN RESULT] to the parent. The result stays
-// persisted until the parent's turn has taken it, so one refused by a shutdown
-// (or lost in a crash) is delivered by the next process (#2589).
+// deliver hands a run's [SPAWN RESULT] to the spawn's owner: the parent that
+// started it, or the depth node it has been handed to (#2624), and holds it
+// while a reported leaf's report has not reached its parent's fan-in. The
+// result stays persisted until the owner's turn has taken it, so one refused
+// by a shutdown (or lost in a crash) is delivered, or held again, by the next
+// process (#2589).
 func (s *Spawner) deliver(parent, id, msg string) {
-	tr := s.deps.Tracker
-	tr.setResult(parent, id, msg)
-	s.deps.Notifier.InjectToAgentThen(parent, msg, "async_notify", func(delivered bool) {
-		if delivered {
-			tr.clearResult(parent, id, msg)
-			return
-		}
-		spawnLog.Infof("spawn=%s result not taken by %s (refused) — kept for the next process", id, parent)
-	})
+	r := s.route(parent)
+	msg = s.deps.Tracker.pushResult(parent, id, msg, r.Hold)
+	if r.Hold {
+		spawnLog.Infof("spawn=%s result held: its parent %s has reported and its report has not reached the fan-in yet", id, parent)
+		return
+	}
+	s.inject(parent, id, msg, r)
 }
 
 // spawnRestoreReport collects, per parent session, what RestoreSpawns did, for
@@ -153,9 +154,10 @@ func (s *Spawner) noticeRestore(parent string, r *spawnRestoreReport) {
 	if len(r.lost) > 0 {
 		fmt.Fprintf(&b, " Could not resume %d (its parent has been told): %s.", len(r.lost), strings.Join(r.lost, "; "))
 	}
-	spawnLog.Infof("session=%s %s", parent, b.String())
+	owner := s.route(parent).Owner
+	spawnLog.Infof("session=%s %s", owner, b.String())
 	if s.deps.Notice != nil {
-		s.deps.Notice(parent, b.String())
+		s.deps.Notice(owner, b.String())
 	}
 }
 

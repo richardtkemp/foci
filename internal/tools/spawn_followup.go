@@ -64,8 +64,9 @@ func (s *Spawner) SendTool() *Tool {
 
 func (s *Spawner) send(ctx context.Context, idOrBranch, message string, timeoutSec int) (ToolResult, error) {
 	tr := s.deps.Tracker
-	parent := SessionKeyFromContext(ctx)
-	snap, ok := tr.Lookup(parent, idOrBranch, 1)
+	// parent is the session the spawn is keyed under: the caller, or the one
+	// that handed the spawn over to it (#2624).
+	parent, snap, ok := s.lookupForCaller(SessionKeyFromContext(ctx), idOrBranch, 1)
 	if !ok {
 		return ToolResult{}, fmt.Errorf("no spawn %q from this session (spawn_status lists them; a restart forgets finished spawns)", idOrBranch)
 	}
@@ -154,13 +155,13 @@ func (s *Spawner) StatusTool() *Tool {
 			parent := SessionKeyFromContext(ctx)
 			now := time.Now()
 			if p.ID == "" {
-				return TextResult(formatSpawnList(s.deps.Tracker.List(parent), now)), nil
+				return TextResult(formatSpawnList(s.listForCaller(parent), now)), nil
 			}
 			last := p.Last
 			if last <= 0 {
 				last = spawnStatusDefaultLast
 			}
-			snap, ok := s.deps.Tracker.Lookup(parent, p.ID, last)
+			_, snap, ok := s.lookupForCaller(parent, p.ID, last)
 			if !ok {
 				return ToolResult{}, fmt.Errorf("no spawn %q from this session (spawn_status with no id lists them)", p.ID)
 			}

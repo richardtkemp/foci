@@ -620,6 +620,11 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 		spawnDeps.MaxToolLoops = func() int { return live.Load().Loop.MaxToolLoops }
 		spawnDeps.ExploreMaxDepth = func() int { return live.Load().Tools.ExploreMaxDepth }
 	}
+	if depthEnabled(d) {
+		// #2624: a reported depth leaf's spawns pass up its tree at each
+		// fan-in, held until then.
+		spawnDeps.Route = d.getDepth().SpawnRoute
+	}
 	d.spawner = tools.NewSpawner(spawnDeps, func() tools.SpawnAgent {
 		// A nil *agent.Agent must stay a nil interface, or the callers'
 		// "agent not available" check could never fire.
