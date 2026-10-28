@@ -2,7 +2,9 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -183,5 +185,81 @@ func TestBackendPrompt_UndeliverableIsRefused(t *testing.T) {
 				t.Errorf("a prompt entry is still registered for %s, want none", reqID)
 			}
 		})
+	}
+}
+
+// TestBackendPrompt_WalksDepthChainToLiveAncestor proves #2627: a prompt from
+// a spawn of a nested depth leaf (spawn → L3 → L2 → L1 → root) is offered to
+// every ancestor in turn, skipping the ones that are not live (done leaves),
+// before the root. The old lookup tried only the immediate parent (L3), then
+// the root.
+func TestBackendPrompt_WalksDepthChainToLiveAncestor(t *testing.T) {
+	t.Parallel()
+	const (
+		spawn = "main/c1/b400"
+		l3    = "main/c1/b300"
+		l2    = "main/c1/b200"
+		l1    = "main/c1/b100"
+		root  = "main/c1"
+	)
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { idx.Close() })
+	for child, parent := range map[string]string{spawn: l3, l3: l2, l2: l1, l1: root} {
+		idx.Upsert(session.SessionIndexEntry{SessionKey: child, ParentSessionKey: parent, Status: session.SessionStatusActive})
+	}
+
+	for i, tc := range []struct {
+		name string
+		done map[string]bool // ancestors that are not live
+		want string
+	}{
+		{"intermediate leaf live", map[string]bool{l3: true}, l2},
+		{"intermediate leaf done, next live", map[string]bool{l3: true, l2: true}, l1},
+		{"every leaf done", map[string]bool{l3: true, l2: true, l1: true}, root},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Every chat can show buttons, so only liveness decides; the
+			// spawn's own branch has no conversation.
+			hub := &fakeAppHub{bound: map[string]bool{l3: true, l2: true, l1: true, root: true}}
+			rec := &failRecorder{}
+			reqID := fmt.Sprintf("req-2627-%d", i)
+			approval, _ := backendPromptFuncs(backendPromptDeps{
+				ag:             &agent.Agent{DelegatedManager: &agent.DelegatedManager{}},
+				connMgr:        hub,
+				sessionIdx:     idx,
+				agentID:        "main",
+				defaultSession: func() string { return "main/c9" },
+				failPrompt:     rec.fail,
+				live:           func(k string) bool { return !tc.done[k] },
+			})
+			approval(spawn, reqID, "Allow Bash?", "Bash", "", promptChoices())
+			t.Cleanup(func() { platform.CancelInteractiveMessage(reqID, "done") })
+
+			if rec.calls != 0 || len(hub.shownIn) != 1 || hub.shownIn[0] != tc.want {
+				t.Fatalf("shown in %v (refusals %d), want [%s]", hub.shownIn, rec.calls, tc.want)
+			}
+		})
+	}
+}
+
+// TestPromptTargets_FullAncestorChain: every ancestor is listed in order,
+// then the root, then the default session.
+func TestPromptTargets_FullAncestorChain(t *testing.T) {
+	t.Parallel()
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { idx.Close() })
+	for child, parent := range map[string]string{"main/c1/b3": "main/c1/b2", "main/c1/b2": "main/c1/b1", "main/c1/b1": "main/c1"} {
+		idx.Upsert(session.SessionIndexEntry{SessionKey: child, ParentSessionKey: parent, Status: session.SessionStatusActive})
+	}
+	got := promptTargets(backendPromptDeps{sessionIdx: idx, defaultSession: func() string { return "main/c9" }}, "main/c1/b3")
+	want := []string{"main/c1/b3", "main/c1/b2", "main/c1/b1", "main/c1", "main/c9"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("targets = %v, want %v", got, want)
 	}
 }

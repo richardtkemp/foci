@@ -144,8 +144,11 @@ func (d *toolDeps) getDepth() *tools.DepthManager {
 	if live != nil {
 		m := d.depth
 		live.OnChange(func(old, fresh *config.ResolvedAgentConfig) {
-			if !old.Depth.Enabled && fresh.Depth.Enabled {
+			switch {
+			case !old.Depth.Enabled && fresh.Depth.Enabled:
 				go m.OnEnable() // restores trees skipped while off; OnChange callbacks must not block
+			case old.Depth.Enabled && !fresh.Depth.Enabled:
+				go m.OnDisable() // #2628: held spawn results go up the tree now
 			}
 		})
 	}

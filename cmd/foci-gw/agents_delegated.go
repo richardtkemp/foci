@@ -261,6 +261,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// owner's default chat, questions in the asking session's chat.
 	permPromptFn, questionPromptFn := backendPromptFuncs(backendPromptDeps{
 		ag: ag, connMgr: connMgr, sessionIdx: sessionIdx, agentID: agentID,
+		live: depthSessionLive,
 		defaultSession: func() string {
 			if sessionIdx == nil {
 				return ""
@@ -501,6 +502,18 @@ type backendPromptDeps struct {
 	// failPrompt answers a prompt no chat could show (#2608). nil means
 	// ag.FailUndeliverablePrompt; tests replace it to observe the failure.
 	failPrompt func(sessionKey, requestID, reason string) error
+	// live reports whether an ancestor's chat can still reach the user
+	// (#2627): a done depth leaf's cannot, so promptTargets skips it. nil =
+	// every session is live.
+	live func(sessionKey string) bool
+}
+
+// depthSessionLive is backendPromptDeps.live in the gateway: a session of an
+// agent with depth mode is live unless it is a done depth leaf
+// (DepthManager.SessionLive); every other session is live.
+func depthSessionLive(sessionKey string) bool {
+	m := tools.DepthManagerFor(sessionKey)
+	return m == nil || m.SessionLive(sessionKey)
 }
 
 // postBackendPrompt is the one body behind the two gateway prompt closures
@@ -643,11 +656,14 @@ func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, 
 
 // promptTargets lists, in order, the sessions whose chats a backend prompt
 // from sessionKey is offered to (#2608, Dick 2026-10-28): the session's own
-// chat; for a branch (fork, spawn, facet) its parent session, then the root
-// session when the parent is itself a branch; then the agent's default
-// session. Duplicates are dropped. A branch has no app conversation of its
-// own unless it is a depth leaf, so on the app its own chat cannot show a
-// prompt, and before #2608 the prompt was lost.
+// chat; for a branch (fork, spawn, facet) each of its ancestors in turn, up
+// the recorded parent chain to the root session (#2627: a spawn of a nested
+// depth leaf tries every leaf above it, not only its own); then the agent's
+// default session. An ancestor that is not live (d.live: a done depth leaf,
+// whose conversation the user has left) is skipped; the session's own chat
+// and the root are always tried. Duplicates are dropped. A branch has no app
+// conversation of its own unless it is a depth leaf, so on the app its own
+// chat cannot show a prompt, and before #2608 the prompt was lost.
 func promptTargets(d backendPromptDeps, sessionKey string) []string {
 	targets := []string{sessionKey}
 	add := func(k string) {
@@ -662,12 +678,22 @@ func promptTargets(d backendPromptDeps, sessionKey string) []string {
 		targets = append(targets, k)
 	}
 	if sk, err := session.ParseSessionKey(sessionKey); err == nil && !sk.IsRoot() {
+		root := sk.Root().String()
 		if d.sessionIdx != nil {
-			if e, err := d.sessionIdx.Get(sessionKey); err == nil {
-				add(e.ParentSessionKey)
+			seen := map[string]bool{sessionKey: true}
+			for cur := sessionKey; ; {
+				e, err := d.sessionIdx.Get(cur)
+				if err != nil || e.ParentSessionKey == "" || seen[e.ParentSessionKey] || e.ParentSessionKey == root {
+					break
+				}
+				cur = e.ParentSessionKey
+				seen[cur] = true
+				if d.live == nil || d.live(cur) {
+					add(cur)
+				}
 			}
 		}
-		add(sk.Root().String())
+		add(root)
 	}
 	if d.defaultSession != nil {
 		add(d.defaultSession())

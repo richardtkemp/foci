@@ -73,7 +73,8 @@ func (s *Spawner) inject(parent, id, msg string, r SpawnRoute) {
 
 // ReleaseHeld delivers every held spawn result of this agent whose owner may
 // now take it. The depth manager calls it after each handover point (a fan-in
-// taken, a reset) and after its restore.
+// taken, a reset), after its restore, and when depth mode is turned off
+// (#2628).
 func (s *Spawner) ReleaseHeld() {
 	tr := s.deps.Tracker
 	for _, h := range tr.heldResults(s.deps.AgentID) {

@@ -126,8 +126,8 @@ type DepthDeps struct {
 	// Now is the clock; nil = time.Now.
 	Now func() time.Time
 	// OnHandover runs after each point where a reported node's spawns may
-	// pass to its parent (#2624): a fan-in turn taken, a reset, a restore.
-	// The spawner delivers the results it held (Spawner.ReleaseHeld). Nil =
+	// pass to its parent (#2624): a fan-in turn taken, a reset, a restore,
+	// depth mode turned off (#2628, OnDisable). The spawner delivers the results it held (Spawner.ReleaseHeld). Nil =
 	// none.
 	OnHandover func()
 }
@@ -290,6 +290,14 @@ func (m *DepthManager) OnEnable() {
 	if due {
 		m.restore()
 	}
+}
+
+// OnDisable is called when [depth] enabled turns off (#2628): no fan-in can
+// happen while it is off, so the spawn results held for one are released at
+// once to the first open node up their tree (SpawnRoute holds nothing while
+// off).
+func (m *DepthManager) OnDisable() {
+	m.handover()
 }
 
 func (m *DepthManager) now() time.Time {

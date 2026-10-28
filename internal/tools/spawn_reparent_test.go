@@ -181,3 +181,78 @@ func TestOpenLeafSpawnDeliversToLeaf(t *testing.T) {
 	}
 	d.done(true)
 }
+
+// #2628: with depth mode off no fan-in can happen, so a result is never held.
+// A result arriving while off goes at once to the first open node up the
+// tree (here the root, whose fan-in still waits on Beta).
+func TestDepthOffSpawnResultDeliveredToRoot(t *testing.T) {
+	agent := newScriptedSpawnAgent(1)
+	h := newReparentHarness(t, agent, nil)
+	kids := h.depth.fanout(t, depthRoot, "Alpha", "Beta")
+	h.spawnFrom(t, kids[0], "dig")
+	<-agent.started
+	if err := h.depth.report(t, kids[0], "alpha settled"); err != nil {
+		t.Fatal(err)
+	}
+	h.depth.off.Store(true)
+	close(agent.gates[0])
+	d := h.sp.nextDelivery(t)
+	if d.session != depthRoot || !strings.Contains(d.msg, "[REPARENTED SPAWN]") || !strings.Contains(d.msg, `"Alpha"`) {
+		t.Fatalf("delivered to %s: %q", d.session, d.msg)
+	}
+	d.done(true)
+}
+
+// #2628: a result already held when depth mode is turned off is released
+// then (OnDisable), to the root, with the reparented header.
+func TestDepthTurnedOffReleasesHeldResult(t *testing.T) {
+	agent := newScriptedSpawnAgent(1)
+	h := newReparentHarness(t, agent, nil)
+	kids := h.depth.fanout(t, depthRoot, "Alpha", "Beta")
+	id := h.spawnFrom(t, kids[0], "dig")
+	<-agent.started
+	if err := h.depth.report(t, kids[0], "alpha settled"); err != nil {
+		t.Fatal(err)
+	}
+	close(agent.gates[0])
+	waitResult(t, h.sp.store, id)
+	h.sp.noDelivery(t)
+
+	h.depth.off.Store(true)
+	h.depth.m.OnDisable()
+	d := h.sp.nextDelivery(t)
+	if d.session != depthRoot || !strings.Contains(d.msg, "[REPARENTED SPAWN]") {
+		t.Fatalf("delivered to %s: %q", d.session, d.msg)
+	}
+	d.done(true)
+	if _, ok := h.sp.store.record(t, id); ok {
+		t.Error("record kept after the root took the result")
+	}
+}
+
+// #2627: which depth sessions a prompt may fall back to. A done leaf's chat
+// is not live; the root, an open or fanned leaf, a side thread and a
+// non-depth session are.
+func TestDepthSessionLive(t *testing.T) {
+	h := newDepthHarness(t, nil)
+	kids := h.fanout(t, depthRoot, "Alpha", "Beta", "Gamma")
+	h.fanout(t, kids[2], "Gamma one")
+	if err := h.report(t, kids[0], "alpha settled"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.report(t, kids[1], "beta settled"); err != nil {
+		t.Fatal(err)
+	}
+	h.m.LeafUserMessage(kids[1]) // reopened: a side thread
+	for key, want := range map[string]bool{
+		depthRoot:   true,
+		kids[0]:     false, // reported
+		kids[1]:     true,  // side thread
+		kids[2]:     true,  // fanned
+		"test/c999": true,  // not a depth session
+	} {
+		if got := h.m.SessionLive(key); got != want {
+			t.Errorf("SessionLive(%s) = %v, want %v (state %q)", key, got, want, h.node(key).State)
+		}
+	}
+}

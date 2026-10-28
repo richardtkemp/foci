@@ -25,21 +25,17 @@ const depthMaxWalk = 64
 // the parent, and so on up, node by node, to the root chat. A done node whose
 // report has not reached its parent's fan-in yet holds them (Hold).
 //
+// While depth mode is off (#2628, Dick 2026-10-28) nothing is held: no fan-in
+// can happen then, so a done node hands over at once and the result goes to
+// the first open node up the tree, usually the root chat.
+//
 // Before the trees are restored (spawns restore first at startup, and depth
 // mode may be off) the nodes are read from their persisted records.
 func (m *DepthManager) SpawnRoute(parent string) SpawnRoute {
+	off := !m.Enabled()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var stored map[string]*depthNode
-	lookup := func(key string) *depthNode {
-		if n := m.nodes[key]; n != nil || m.restored {
-			return n
-		}
-		if stored == nil {
-			stored = m.storedNodes()
-		}
-		return stored[key]
-	}
+	lookup := m.lookupLocked()
 
 	r := SpawnRoute{Owner: parent}
 	if start := lookup(parent); start != nil && start.LeafID != "" {
@@ -63,7 +59,7 @@ func (m *DepthManager) SpawnRoute(parent string) SpawnRoute {
 			r.Owner = n.Tree
 			continue
 		}
-		if !m.handedOverLocked(n, q) {
+		if !off && !m.handedOverLocked(n, q) {
 			r.Hold = true
 			return r
 		}
@@ -71,6 +67,37 @@ func (m *DepthManager) SpawnRoute(parent string) SpawnRoute {
 	}
 	depthLog.Warnf("spawn owner walk from %s did not end after %d nodes; using %s", parent, depthMaxWalk, r.Owner)
 	return r
+}
+
+// lookupLocked returns a node lookup by session key: the live nodes, or,
+// before the trees are restored, the persisted records (read once per
+// lookup). Caller holds m.mu while using it.
+func (m *DepthManager) lookupLocked() func(key string) *depthNode {
+	var stored map[string]*depthNode
+	return func(key string) *depthNode {
+		if n := m.nodes[key]; n != nil || m.restored {
+			return n
+		}
+		if stored == nil {
+			stored = m.storedNodes()
+		}
+		return stored[key]
+	}
+}
+
+// SessionLive reports whether a prompt shown in sessionKey's chat can reach
+// the user (#2627): false only for a depth leaf that has reported, been
+// dismissed, lost or dropped, whose conversation the user has left. Any
+// other session is live, including an open or fanned node, the root, and a
+// side thread (a done leaf the user reopened and is talking to).
+func (m *DepthManager) SessionLive(sessionKey string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := m.lookupLocked()(sessionKey)
+	if n == nil || n.LeafID == "" {
+		return true
+	}
+	return !n.done() || n.State == depthSide
 }
 
 // handedOverLocked reports whether done node n's report has reached parent
