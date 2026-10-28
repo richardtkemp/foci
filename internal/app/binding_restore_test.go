@@ -323,6 +323,10 @@ func TestConvBindingFieldCensus(t *testing.T) {
 	// restart, or a restored binding reports a wrong/stale value.
 	durableBacked := map[string]bool{
 		"lastPreview": true, "lastActMs": true, "features": true,
+		// depthRoot: chat_metadata depth_root, so a leaf's conversation stays out
+		// of the roster list and default delivery from the first roster after a
+		// restart, before the depth manager re-registers its view (#2611).
+		"depthRoot": true,
 	}
 	// restartSafe: legitimately empty/zero immediately after a fresh process —
 	// either genuinely-transient runtime state (no live sockets, no turn in
@@ -352,9 +356,9 @@ func TestConvBindingFieldCensus(t *testing.T) {
 		// unset after a restart means the first change always sends, and the
 		// roster lists from the reminder store, never from this cache.
 		"reminders": true, "remindersSent": true,
-		// leaf is nil on every binding ensureBinding builds: a depth-mode leaf
-		// view is made only by registerDepthLeaf, which the depth manager's
-		// Restore re-runs from its own records after a restart (#2588).
+		// leaf (the depth manager's hooks) is nil on every binding ensureBinding
+		// builds: only registerDepthLeaf sets it, which the depth manager's
+		// Restore re-runs from its own records after a restart (#2588, #2611).
 		"leaf": true,
 	}
 

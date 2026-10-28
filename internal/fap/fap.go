@@ -325,6 +325,10 @@ type ConversationInfo struct {
 	// wake reminders set from this conversation's session (#2600). Reseeds a
 	// reconnecting client; absent = none.
 	Reminders []PendingReminder `json:"reminders,omitempty"`
+	// DepthRootID is set on a depth-mode leaf's own conversation (#2611): the
+	// conversation of the tree's root. Such a conversation is not listed in the
+	// roster; the root's depth view shows it. Empty on every ordinary chat.
+	DepthRootID string `json:"depthRootId,omitempty"`
 }
 
 // Tokens is the token accounting carried by `meta`.
@@ -458,9 +462,6 @@ func (HelloServer) Type() string { return TypeHello }
 type TurnStart struct {
 	ConversationID string `json:"conversationId"`
 	TurnID         string `json:"turnId"`
-	// LeafID names the depth-mode leaf (#2588) this frame belongs to, inside
-	// the root conversation ConversationID. Empty = the conversation's own.
-	LeafID string `json:"leafId,omitempty"`
 }
 
 func (TurnStart) Type() string { return TypeTurnStart }
@@ -470,9 +471,6 @@ type TextDelta struct {
 	ConversationID string `json:"conversationId"`
 	TurnID         string `json:"turnId"`
 	Text           string `json:"text"`
-	// LeafID names the depth-mode leaf (#2588) this frame belongs to, inside
-	// the root conversation ConversationID. Empty = the conversation's own.
-	LeafID string `json:"leafId,omitempty"`
 }
 
 func (TextDelta) Type() string { return TypeTextDelta }
@@ -490,12 +488,6 @@ type TextEnd struct {
 	// error") — never a raw provider body. The client renders it as a muted
 	// "audio unavailable" marker on the bubble. Omitted on every other frame.
 	VoiceUnavailable string `json:"voiceUnavailable,omitempty"`
-	// LeafID names the depth-mode leaf (#2588) this frame belongs to, inside
-	// the root conversation ConversationID. Empty = the conversation's own.
-	LeafID string `json:"leafId,omitempty"`
-	// LeafTitle is the leaf's title, for a notification about a leaf's
-	// message (set with LeafID).
-	LeafTitle string `json:"leafTitle,omitempty"`
 }
 
 func (TextEnd) Type() string { return TypeTextEnd }
@@ -515,12 +507,6 @@ type ServerMessage struct {
 	// GET /app/blob/<id>. Only set on Role "user"; omitted when empty, so an
 	// older client never sees it.
 	Attachments []AttachmentRef `json:"attachments,omitempty"`
-	// LeafID names the depth-mode leaf (#2588) this frame belongs to, inside
-	// the root conversation ConversationID. Empty = the conversation's own.
-	LeafID string `json:"leafId,omitempty"`
-	// LeafTitle is the leaf's title, for a notification about a leaf's
-	// message (set with LeafID).
-	LeafTitle string `json:"leafTitle,omitempty"`
 }
 
 func (ServerMessage) Type() string { return TypeMessage }
@@ -541,9 +527,6 @@ type ExternalPrompt struct {
 	FromAgent string `json:"fromAgent,omitempty"`
 	// FromSession is the SENDING session's key — empty for a foci send prompt.
 	FromSession string `json:"fromSession,omitempty"`
-	// LeafID names the depth-mode leaf (#2588) this frame belongs to, inside
-	// the root conversation ConversationID. Empty = the conversation's own.
-	LeafID string `json:"leafId,omitempty"`
 }
 
 func (ExternalPrompt) Type() string { return TypeExternalPrompt }
@@ -568,9 +551,6 @@ type Notification struct {
 	// preview, no unread bump). Server-side only (never on the wire): it is read
 	// by pushPreview at send time, and the stored visible flag carries it after.
 	Ambient bool `json:"-"`
-	// LeafID names the depth-mode leaf (#2588) this frame belongs to, inside
-	// the root conversation ConversationID. Empty = the conversation's own.
-	LeafID string `json:"leafId,omitempty"`
 }
 
 func (Notification) Type() string { return TypeNotification }
@@ -602,9 +582,6 @@ type Activity struct {
 	AgentCommand   string            `json:"agentCommand,omitempty"`
 	AgentShell     bool              `json:"agentShell,omitempty"`
 	Subagents      []RunningSubagent `json:"subagents,omitempty"`
-	// LeafID names the depth-mode leaf (#2588) this frame belongs to, inside
-	// the root conversation ConversationID. Empty = the conversation's own.
-	LeafID string `json:"leafId,omitempty"`
 }
 
 // RunningSubagent is one running subagent (or background command) in an
@@ -686,9 +663,6 @@ type Media struct {
 	// user-sent voice message) which is NOT tagged and plays only on tap.
 	// Omitted (false) for every other Media frame.
 	VoiceMode bool `json:"voiceMode,omitempty"`
-	// LeafID names the depth-mode leaf (#2588) this frame belongs to, inside
-	// the root conversation ConversationID. Empty = the conversation's own.
-	LeafID string `json:"leafId,omitempty"`
 }
 
 func (Media) Type() string { return TypeMedia }
@@ -714,12 +688,6 @@ type Interactive struct {
 	// advertised the "interactiveBatch" feature in their ClientHello; Text/Choices
 	// stay empty in that case. Legacy/uncapable clients never receive this field.
 	Questions []Question `json:"questions,omitempty"`
-	// LeafID names the depth-mode leaf (#2588) this frame belongs to, inside
-	// the root conversation ConversationID. Empty = the conversation's own.
-	LeafID string `json:"leafId,omitempty"`
-	// LeafTitle is the leaf's title, for a notification about a leaf's
-	// message (set with LeafID).
-	LeafTitle string `json:"leafTitle,omitempty"`
 }
 
 func (Interactive) Type() string { return TypeInteractive }
@@ -732,9 +700,6 @@ type InteractiveEdit struct {
 	PromptID       string   `json:"promptId"`
 	Text           string   `json:"text"`
 	Choices        []Choice `json:"choices,omitempty"`
-	// LeafID names the depth-mode leaf (#2588) this frame belongs to, inside
-	// the root conversation ConversationID. Empty = the conversation's own.
-	LeafID string `json:"leafId,omitempty"`
 }
 
 func (InteractiveEdit) Type() string { return TypeInteractiveEdit }
@@ -748,9 +713,6 @@ type InteractiveProgressEdit struct {
 	PromptID       string   `json:"promptId"`
 	Answers        []string `json:"answers"`
 	Done           bool     `json:"done,omitempty"`
-	// LeafID names the depth-mode leaf (#2588) this frame belongs to, inside
-	// the root conversation ConversationID. Empty = the conversation's own.
-	LeafID string `json:"leafId,omitempty"`
 }
 
 func (InteractiveProgressEdit) Type() string { return TypeInteractiveProgressEdit }
@@ -763,9 +725,6 @@ func (InteractiveProgressEdit) Type() string { return TypeInteractiveProgressEdi
 type InteractiveRemove struct {
 	ConversationID string `json:"conversationId"`
 	PromptID       string `json:"promptId"`
-	// LeafID names the depth-mode leaf (#2588) this frame belongs to, inside
-	// the root conversation ConversationID. Empty = the conversation's own.
-	LeafID string `json:"leafId,omitempty"`
 }
 
 func (InteractiveRemove) Type() string { return TypeInteractiveRemove }
@@ -971,9 +930,6 @@ func (ConversationAck) Type() string { return TypeConversationAck }
 type MessageConsumed struct {
 	ConversationID string `json:"conversationId"`
 	MessageID      string `json:"messageId"`
-	// LeafID names the depth-mode leaf (#2588) this frame belongs to, inside
-	// the root conversation ConversationID. Empty = the conversation's own.
-	LeafID string `json:"leafId,omitempty"`
 }
 
 func (MessageConsumed) Type() string { return TypeMessageConsumed }
@@ -989,9 +945,6 @@ type MessageEdit struct {
 	ConversationID string `json:"conversationId"`
 	MessageID      string `json:"messageId"`
 	Text           string `json:"text"`
-	// LeafID names the depth-mode leaf (#2588) this frame belongs to, inside
-	// the root conversation ConversationID. Empty = the conversation's own.
-	LeafID string `json:"leafId,omitempty"`
 }
 
 func (MessageEdit) Type() string { return TypeMessageEdit }
@@ -1033,10 +986,6 @@ type ClientMessage struct {
 	// before sending, instead of being routed to the agent as a turn. Ignored
 	// when there is no voice attachment.
 	TranscribeOnly bool `json:"transcribeOnly,omitempty"`
-	// LeafID addresses the message to a depth-mode leaf (#2588) of the root
-	// conversation ConversationID: it runs as a turn on the leaf's own
-	// session. Empty = the conversation's own session.
-	LeafID string `json:"leafId,omitempty"`
 }
 
 // Command is a slash-command invocation from the app. AgentID names the owning
@@ -1046,9 +995,6 @@ type Command struct {
 	AgentID        string `json:"agentId,omitempty"`
 	Name           string `json:"name"`
 	Args           string `json:"args,omitempty"`
-	// LeafID runs the command on a depth-mode leaf's session (#2588), e.g.
-	// /stop typed into a leaf's feed item. Empty = the conversation's own.
-	LeafID string `json:"leafId,omitempty"`
 }
 
 // InteractiveResponse is a button tap / typed answer to a prompt. For a single
@@ -1601,6 +1547,11 @@ const (
 // DepthNode is one node of a depth-mode tree in a DepthFeed.
 type DepthNode struct {
 	LeafID string `json:"leafId"`
+	// ConversationID is the leaf's own conversation (#2611): every leaf is a
+	// real app conversation, hidden from the roster (ConversationInfo.DepthRootID)
+	// and shown by the root's depth view. Empty for a node whose conversation is
+	// not minted yet.
+	ConversationID string `json:"conversationId,omitempty"`
 	// ParentLeafID is the leaf this node was fanned out from; empty for a child
 	// of the root conversation itself.
 	ParentLeafID string `json:"parentLeafId,omitempty"`

@@ -68,9 +68,11 @@ const DepthAckText = "[DEPTH COMPLETE] The user marked this leaf complete: they 
 type DepthSurface interface {
 	// RootBound reports whether rootKey has an app conversation of its own.
 	RootBound(rootKey string) bool
-	// RegisterLeaf routes branchKey's app output into rootKey's conversation
-	// as leaf leafID; UnregisterLeaf undoes it.
-	RegisterLeaf(rootKey, branchKey, leafID, title string) error
+	// RegisterLeaf binds branchKey to leaf leafID's own app conversation
+	// under rootKey's (#2611): convID, or a new one when "" (the first
+	// registration). Returns the conversation id. UnregisterLeaf drops the
+	// hooks; the conversation and its history stay.
+	RegisterLeaf(rootKey, branchKey, leafID, title, convID string) (string, error)
 	UnregisterLeaf(branchKey string)
 	// PushFeed sends the whole tree to rootKey's conversation.
 	PushFeed(rootKey, rootState string, nodes []fap.DepthNode)
@@ -153,6 +155,7 @@ type depthClaim struct {
 type depthNode struct {
 	Key         string    `json:"key"`               // the node's session key
 	LeafID      string    `json:"leaf_id,omitempty"` // "" for the root
+	ConvID      string    `json:"conv_id,omitempty"` // the leaf's own app conversation (#2611); "" for the root
 	Tree        string    `json:"tree"`              // the root's session key
 	Parent      string    `json:"parent,omitempty"`  // the parent node's session key
 	Level       int       `json:"level"`
@@ -267,6 +270,38 @@ func newDepthID(prefix string) string {
 // --- persistence ---
 
 // persist writes the given nodes' records (snapshots taken under m.mu).
+// registerLeaf binds node key's leaf conversation through the surface (a
+// first registration mints it) and records the conversation id on the node.
+// A node from before #2611 has none, so its first restore mints one: its
+// earlier exchange stays in the root conversation's history.
+func (m *DepthManager) registerLeaf(key string) {
+	m.mu.Lock()
+	n := m.nodes[key]
+	if n == nil {
+		m.mu.Unlock()
+		return
+	}
+	tree, leafID, title, conv := n.Tree, n.LeafID, n.Title, n.ConvID
+	m.mu.Unlock()
+	id, err := m.deps.Surface.RegisterLeaf(tree, key, leafID, title, conv)
+	if err != nil {
+		depthLog.Warnf("register leaf %s (tree %s): %v", key, tree, err)
+		return
+	}
+	if id == conv {
+		return
+	}
+	m.mu.Lock()
+	n = m.nodes[key]
+	var rec []depthNode
+	if n != nil {
+		n.ConvID = id
+		rec = append(rec, *n)
+	}
+	m.mu.Unlock()
+	m.persist(rec...)
+}
+
 func (m *DepthManager) persist(recs ...depthNode) {
 	if m.deps.Store == nil {
 		return
@@ -371,15 +406,16 @@ func (m *DepthManager) pushFeed(tree string) {
 	for _, r := range rows {
 		n := r.n
 		dn := fap.DepthNode{
-			LeafID:       n.LeafID,
-			ParentLeafID: r.parent,
-			Title:        n.Title,
-			Level:        n.Level,
-			State:        n.State,
-			AckPending:   n.AckPending && n.State == depthActive,
-			LastLine:     n.LastLine,
-			CostText:     m.costText(n.Key),
-			UpdatedMs:    n.Updated.UnixMilli(),
+			LeafID:         n.LeafID,
+			ConversationID: n.ConvID,
+			ParentLeafID:   r.parent,
+			Title:          n.Title,
+			Level:          n.Level,
+			State:          n.State,
+			AckPending:     n.AckPending && n.State == depthActive,
+			LastLine:       n.LastLine,
+			CostText:       m.costText(n.Key),
+			UpdatedMs:      n.Updated.UnixMilli(),
 		}
 		if n.State == depthActive && !n.AckPending && !r.queued && !m.deps.Surface.LeafBusy(n.Key) {
 			dn.WaitingForUser = true
@@ -645,9 +681,7 @@ func (m *DepthManager) doFanout(ctx context.Context, caller string, leaves []dep
 			m.deps.SetNoCompact(c.Key, true)
 		}
 		if m.deps.Surface != nil {
-			if err := m.deps.Surface.RegisterLeaf(tree, c.Key, c.LeafID, c.Title); err != nil {
-				depthLog.Warnf("register leaf %s of %s: %v", c.Key, tree, err)
-			}
+			m.registerLeaf(c.Key)
 			m.deps.Surface.ShowPrompt(c.Key, c.Prompt, caller)
 		}
 	}
@@ -1230,9 +1264,7 @@ func (m *DepthManager) restore() {
 	m.persist(rec...)
 	if m.deps.Surface != nil {
 		for _, n := range register {
-			if err := m.deps.Surface.RegisterLeaf(n.Tree, n.Key, n.LeafID, n.Title); err != nil {
-				depthLog.Warnf("restore leaf view %s (tree %s): %v", n.Key, n.Tree, err)
-			}
+			m.registerLeaf(n.Key)
 		}
 	}
 	for _, f := range firsts {

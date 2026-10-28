@@ -1,21 +1,21 @@
 package app
 
-// Depth mode (#2588): leaf views.
+// Depth mode (#2588): leaf conversations.
 //
-// A depth-mode node is an ordinary branch session whose app output belongs to
-// the conversation of the session that started the tree (the root). Nothing is
-// minted for a leaf: no conversation row, no roster entry, no open-set entry.
-// Instead bySession[branchKey] points at a LEAF VIEW of the root's binding — a
-// convBinding whose leaf field is set — so every existing path that finds a
-// binding by session key (the turn sink, asks and permission prompts,
-// send_to_chat, notices, activity) lands in the root conversation, each frame
-// stamped with the leaf's id. The view owns no stream: sendThen forwards to the
-// root binding (leafView.forward), which numbers, stores, replays and pushes
-// the frame as its own. The view keeps only its own activity inputs, so a leaf
-// turn never moves the root's indicator.
+// A depth-mode node is an ordinary branch session with an app conversation of
+// its own (#2611): every per-conversation mechanism (seq stream, replay, the
+// read watermark and its sync, unread, pushes, asks, activity) applies to a
+// leaf exactly as to a chat. What makes it a leaf is the chat_metadata row
+// depth_root = <the root's conversation id>, which keeps it out of the roster
+// list (ConversationInfo.DepthRootID; the client's depth view shows it instead)
+// and out of default-destination resolution. The binding's leaf field adds the
+// depth manager's hooks: the leaf's messages (LeafText), busy flips (LeafBusy)
+// and the user's messages to it (LeafUserMessage).
 //
-// Views hold no durable state: the depth manager (tools.DepthManager) rebuilds
-// them from its node records at startup.
+// The conversation outlives the view: the depth manager rebuilds the views
+// from its node records at startup (RegisterLeaf with the node's stored
+// conversation id), and a view dropped by UnregisterLeaf leaves the
+// conversation, still hidden, with its history.
 
 import (
 	"errors"
@@ -26,18 +26,16 @@ import (
 	"foci/internal/tools"
 )
 
-// leafView is the depth-mode part of a leaf's binding.
+// leafView is the depth-mode part of a leaf conversation's binding.
 type leafView struct {
-	root  *convBinding // the tree root's conversation binding
-	id    string       // leaf id, stamped on every frame
-	title string       // leaf title, stamped where a notification needs it
+	rootConv string // the tree root's conversation id
+	id       string // leaf id (the depth manager's name for the node)
+	title    string // leaf title, prefixed to the leaf's push previews
 
 	mu     sync.Mutex
 	stream map[string]*strings.Builder // turnID → agent text streamed so far
 	busy   bool                        // a turn is running (last Activity was not idle)
 }
-
-func depthLeafKey(convID, leafID string) string { return convID + "\x00" + leafID }
 
 // DepthController is the depth manager side the hub calls back into. Set
 // once at startup (SetDepthController); nil = depth mode off.
@@ -74,21 +72,12 @@ func depthController() DepthController {
 	return depthCtl
 }
 
-// forward stamps frame with the leaf's id and sends it on the root binding.
-// Frames that describe the conversation as a whole (its model and cost, its
-// cache warmth, its command palette) are dropped: a leaf's would overwrite the
-// root's. b is the leaf's own binding (for its session key).
-func (l *leafView) forward(b *convBinding, frame fap.ServerFrame, onRecorded func()) {
-	stamped, ok := l.stamp(frame)
-	if !ok {
-		if onRecorded != nil {
-			onRecorded()
-		}
-		return
-	}
-	text, isText := l.observeText(stamped)
-	busy, busyChanged := l.observeBusy(stamped)
-	l.root.sendThen(stamped, onRecorded)
+// observe runs after frame was sent on the leaf's own conversation: it tells
+// the depth manager about a finished agent message and a busy flip. b is the
+// leaf's binding (for its session key).
+func (l *leafView) observe(b *convBinding, frame fap.ServerFrame) {
+	text, isText := l.observeText(frame)
+	busy, busyChanged := l.observeBusy(frame)
 	ctl := depthController()
 	if ctl == nil {
 		return
@@ -99,60 +88,6 @@ func (l *leafView) forward(b *convBinding, frame fap.ServerFrame, onRecorded fun
 	if busyChanged {
 		ctl.LeafBusy(b.sessionKey, busy)
 	}
-}
-
-// stamp returns frame with LeafID (and LeafTitle where the frame has one) set,
-// or ok=false for a frame a leaf must not send to the root conversation.
-// Frames not listed pass through unchanged.
-func (l *leafView) stamp(frame fap.ServerFrame) (fap.ServerFrame, bool) {
-	id, title := l.id, l.title
-	switch f := frame.(type) {
-	case fap.Meta, fap.CacheExpiry, fap.Commands, fap.Reminders:
-		return nil, false
-	case fap.TurnStart:
-		f.LeafID = id
-		return f, true
-	case fap.TextDelta:
-		f.LeafID = id
-		return f, true
-	case fap.TextEnd:
-		f.LeafID, f.LeafTitle = id, title
-		return f, true
-	case fap.ServerMessage:
-		f.LeafID, f.LeafTitle = id, title
-		return f, true
-	case fap.ExternalPrompt:
-		f.LeafID = id
-		return f, true
-	case fap.Notification:
-		f.LeafID = id
-		return f, true
-	case fap.Activity:
-		f.LeafID = id
-		return f, true
-	case fap.Media:
-		f.LeafID = id
-		return f, true
-	case fap.Interactive:
-		f.LeafID, f.LeafTitle = id, title
-		return f, true
-	case fap.InteractiveEdit:
-		f.LeafID = id
-		return f, true
-	case fap.InteractiveProgressEdit:
-		f.LeafID = id
-		return f, true
-	case fap.InteractiveRemove:
-		f.LeafID = id
-		return f, true
-	case fap.MessageConsumed:
-		f.LeafID = id
-		return f, true
-	case fap.MessageEdit:
-		f.LeafID = id
-		return f, true
-	}
-	return frame, true
 }
 
 // observeText returns the text of an agent message the frame completes: a
@@ -208,84 +143,115 @@ func (l *leafView) observeBusy(frame fap.ServerFrame) (busy, changed bool) {
 	return busy, true
 }
 
-// leafTitleOf returns the leaf title a frame carries, for its push preview.
-func leafTitleOf(frame fap.ServerFrame) string {
-	switch f := frame.(type) {
-	case fap.ServerMessage:
-		return f.LeafTitle
-	case fap.TextEnd:
-		return f.LeafTitle
-	case fap.Interactive:
-		return f.LeafTitle
-	}
-	return ""
-}
-
 var (
 	errDepthNoRoot   = errors.New("the root session is not bound to an app conversation")
 	errDepthBranchIn = errors.New("the branch session already has a conversation of its own")
 )
 
-// registerDepthLeaf binds branchKey to a leaf view of rootKey's conversation,
-// replacing any earlier view of the same branch (a restart rebuild, a retitle).
-func (h *Hub) registerDepthLeaf(rootKey, branchKey, leafID, title string) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+// chatMetaDepthRoot marks a leaf's conversation with its tree root's
+// conversation id (#2611): hidden from the roster list, never a default
+// destination.
+const chatMetaDepthRoot = "depth_root"
+
+// registerDepthLeaf binds branchKey to its leaf conversation convID ("" = mint
+// one) under rootKey's conversation, and returns the conversation id. A
+// re-registration (restart rebuild, retitle) reuses the stored id. Devices
+// already connected are attached at once, so the leaf's first frames reach
+// them live, and learn the conversation from a roster push.
+func (h *Hub) registerDepthLeaf(rootKey, branchKey, leafID, title, convID string) (string, error) {
+	h.mu.RLock()
 	root := h.bySession[rootKey]
-	if root == nil {
-		return errDepthNoRoot
+	cur := h.bySession[branchKey]
+	h.mu.RUnlock()
+	if root == nil || root.isDepthLeaf() {
+		return "", errDepthNoRoot
 	}
-	if root.leaf != nil {
-		root = root.leaf.root
+	if cur != nil && !cur.isDepthLeaf() {
+		return "", errDepthBranchIn
 	}
-	if cur := h.bySession[branchKey]; cur != nil {
-		if cur.leaf == nil {
-			return errDepthBranchIn
-		}
-		delete(h.depthLeaves, depthLeafKey(cur.convID, cur.leaf.id))
+	if cur != nil {
+		convID = cur.convID
 	}
-	lb := &convBinding{
-		convID:     root.convID,
-		sessionKey: branchKey,
-		agentID:    root.agentID,
-		chatID:     root.chatID,
-		leaf:       &leafView{root: root, id: leafID, title: title},
+	minted := convID == ""
+	if minted {
+		convID = fap.NewULID()
 	}
-	h.bySession[branchKey] = lb
-	if h.depthLeaves == nil {
-		h.depthLeaves = make(map[string]*convBinding)
+	chatID := chatIDForConv(convID)
+	if idx := h.deps.SessionIndex; idx != nil {
+		// Written BEFORE ensureBinding, so sessionKeyForChat resolves the branch
+		// key from session_key and never writes registered=true: a leaf is not a
+		// routable chat (DefaultSessionKeyForAgentOn filters on that row).
+		_ = idx.SetChatMetadata(root.agentID, "app", chatID, "session_key", branchKey)
+		_ = idx.SetChatMetadata(root.agentID, "app", chatID, chatMetaDepthRoot, root.convID)
 	}
-	h.depthLeaves[depthLeafKey(root.convID, leafID)] = lb
-	return nil
+	b := h.ensureBinding(nil, root.agentID, convID)
+	root.mu.Lock()
+	rootFeatures := make(map[string]struct{}, len(root.features))
+	for f := range root.features {
+		rootFeatures[f] = struct{}{}
+	}
+	root.mu.Unlock()
+	b.mu.Lock()
+	if len(b.features) == 0 {
+		// A leaf minted while no device is connected still renders its asks the
+		// way the root's devices can show them.
+		b.features = rootFeatures
+	}
+	b.depthRoot = root.convID
+	b.leaf = &leafView{rootConv: root.convID, id: leafID, title: title}
+	derived := b.sessionKey
+	b.sessionKey = branchKey
+	b.mu.Unlock()
+	h.mu.Lock()
+	if derived != branchKey && h.bySession[derived] == b {
+		// No SessionIndex to hold session_key: ensureBinding derived the chat key.
+		delete(h.bySession, derived)
+	}
+	h.bySession[branchKey] = b
+	h.mu.Unlock()
+	h.attachConnected(b)
+	if minted || cur == nil {
+		h.pushRosterAll()
+	}
+	return convID, nil
 }
 
-// unregisterDepthLeaf removes branchKey's leaf view, if it has one.
+// attachConnected attaches every connected socket to b, from its current seq,
+// as a hello's attachUnresumed would.
+func (h *Hub) attachConnected(b *convBinding) {
+	h.mu.RLock()
+	clients := make([]*wsClient, 0, len(h.clients))
+	for c := range h.clients {
+		clients = append(clients, c)
+	}
+	h.mu.RUnlock()
+	for _, c := range clients {
+		if b.isAttached(c) {
+			continue
+		}
+		b.attach(c)
+		b.seedClientAck(c, b.currentSeq())
+	}
+}
+
+// unregisterDepthLeaf drops branchKey's depth hooks. The conversation stays,
+// hidden, with its history.
 func (h *Hub) unregisterDepthLeaf(branchKey string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	cur := h.bySession[branchKey]
-	if cur == nil || cur.leaf == nil {
+	b := h.bindingForSession(branchKey)
+	if b == nil {
 		return
 	}
-	delete(h.bySession, branchKey)
-	delete(h.depthLeaves, depthLeafKey(cur.convID, cur.leaf.id))
+	b.mu.Lock()
+	b.leaf = nil
+	b.mu.Unlock()
 }
 
-// depthLeaf returns the view of leaf leafID in conversation convID, or nil.
-func (h *Hub) depthLeaf(convID, leafID string) *convBinding {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return h.depthLeaves[depthLeafKey(convID, leafID)]
-}
-
-// rootBinding returns the conversation binding sessionKey's output lands in:
-// its own, or for a leaf the root's. nil when it has none.
-func (h *Hub) rootBinding(sessionKey string) *convBinding {
-	b := h.bindingForSession(sessionKey)
-	if b != nil && b.leaf != nil {
-		return b.leaf.root
-	}
-	return b
+// depthLeafOf returns b's depth hooks, or nil for an ordinary conversation (or
+// a leaf whose view is not registered).
+func (b *convBinding) depthLeafOf() *leafView {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.leaf
 }
 
 // handleDepthAction hands the feed's Ack / Dismiss on leafID to the depth
@@ -334,20 +300,20 @@ func (DepthSurface) RootBound(rootKey string) bool {
 		return false
 	}
 	b := h.bindingForSession(rootKey)
-	return b != nil && b.leaf == nil
+	return b != nil && !b.isDepthLeaf()
 }
 
-// RegisterLeaf routes branchKey's app output into rootKey's conversation as
-// leaf leafID.
-func (DepthSurface) RegisterLeaf(rootKey, branchKey, leafID, title string) error {
+// RegisterLeaf binds branchKey to leaf leafID's own conversation under
+// rootKey's (convID; "" = mint one) and returns its id.
+func (DepthSurface) RegisterLeaf(rootKey, branchKey, leafID, title, convID string) (string, error) {
 	h := depthHub()
 	if h == nil {
-		return errors.New("app provider not running")
+		return "", errors.New("app provider not running")
 	}
-	return h.registerDepthLeaf(rootKey, branchKey, leafID, title)
+	return h.registerDepthLeaf(rootKey, branchKey, leafID, title, convID)
 }
 
-// UnregisterLeaf drops branchKey's leaf view.
+// UnregisterLeaf drops branchKey's depth hooks; its conversation stays.
 func (DepthSurface) UnregisterLeaf(branchKey string) {
 	if h := depthHub(); h != nil {
 		h.unregisterDepthLeaf(branchKey)
@@ -361,8 +327,8 @@ func (DepthSurface) PushFeed(rootKey, rootState string, nodes []fap.DepthNode) {
 	if h == nil {
 		return
 	}
-	b := h.rootBinding(rootKey)
-	if b == nil {
+	b := h.bindingForSession(rootKey)
+	if b == nil || b.isDepthLeaf() {
 		return
 	}
 	if nodes == nil {
@@ -384,10 +350,14 @@ func (DepthSurface) LeafBusy(branchKey string) bool {
 		return false
 	}
 	b := h.bindingForSession(branchKey)
-	if b == nil || b.leaf == nil {
+	if b == nil {
 		return false
 	}
-	b.leaf.mu.Lock()
-	defer b.leaf.mu.Unlock()
-	return b.leaf.busy
+	l := b.depthLeafOf()
+	if l == nil {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.busy
 }

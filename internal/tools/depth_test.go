@@ -24,6 +24,7 @@ type fakeDepthSurface struct {
 	mu       sync.Mutex
 	bound    map[string]bool
 	leaves   map[string]string // branch → root
+	minted   int               // leaf conversations minted (RegisterLeaf with no conversation id)
 	prompts  []string
 	feeds    []depthFeedRec
 	busyKeys map[string]bool
@@ -42,14 +43,18 @@ func (s *fakeDepthSurface) RootBound(k string) bool {
 	defer s.mu.Unlock()
 	return s.bound[k]
 }
-func (s *fakeDepthSurface) RegisterLeaf(root, branch, _, _ string) error {
+func (s *fakeDepthSurface) RegisterLeaf(root, branch, _, _, conv string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.bound[root] {
-		return fmt.Errorf("root %s not bound", root)
+		return "", fmt.Errorf("root %s not bound", root)
 	}
 	s.leaves[branch] = root
-	return nil
+	if conv == "" {
+		s.minted++
+		conv = "conv:" + branch
+	}
+	return conv, nil
 }
 func (s *fakeDepthSurface) UnregisterLeaf(b string) { s.mu.Lock(); delete(s.leaves, b); s.mu.Unlock() }
 func (s *fakeDepthSurface) PushFeed(root, state string, nodes []fap.DepthNode) {
@@ -270,6 +275,16 @@ func TestDepthFanoutReportFanIn(t *testing.T) {
 		}
 		if !h.node(k).FirstTurnStarted {
 			t.Errorf("leaf %s first turn not marked started", k)
+		}
+		// #2611: each leaf has its own conversation, recorded on the node and
+		// named in the feed.
+		if c := h.node(k).ConvID; c != "conv:"+k {
+			t.Errorf("leaf %s conversation = %q, want its own", k, c)
+		}
+	}
+	for _, n := range h.surface.lastFeed(t).nodes {
+		if n.ConversationID == "" {
+			t.Errorf("feed node %s has no conversation id", n.LeafID)
 		}
 	}
 	if !strings.Contains(h.branch.orients[0], "one line") || strings.Contains(h.branch.orients[0], "{report_rule}") {
@@ -526,6 +541,10 @@ func TestDepthRestore(t *testing.T) {
 	h2.m.Restore()
 	if len(h2.surface.leaves) != 3 {
 		t.Errorf("restored leaf views = %v", h2.surface.leaves)
+	}
+	// The restored views reuse each leaf's stored conversation (#2611).
+	if h2.surface.minted != 0 {
+		t.Errorf("restore minted %d leaf conversation(s), want 0 (reuse the stored ids)", h2.surface.minted)
 	}
 	if s := h2.node(kids[1]).State; s != depthLost {
 		t.Errorf("unresumable leaf = %s, want lost", s)

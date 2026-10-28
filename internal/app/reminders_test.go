@@ -143,13 +143,3 @@ func TestReminders_WakeShowsOnItsOwnChatAndTracksState(t *testing.T) {
 		t.Fatalf("after dismiss = %v, want one empty list", g)
 	}
 }
-
-// A depth-mode leaf view never gets a reminder list of its own: the frame is
-// conversation-wide, and the stamp drops it rather than forwarding it to the
-// root as a leaf's (#2588).
-func TestReminders_LeafViewDropsFrame(t *testing.T) {
-	l := &leafView{id: "leaf-1"}
-	if _, ok := l.stamp(fap.Reminders{ConversationID: "c", Reminders: []fap.PendingReminder{}}); ok {
-		t.Error("leaf stamp forwarded a Reminders frame, want it dropped")
-	}
-}

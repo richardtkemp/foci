@@ -115,11 +115,7 @@ type Hub struct {
 	// (convBinding.sendThen). After that, promptHistory classifies from the frames.
 	closedBatch map[string]batchClosure
 	notifs      map[string]*convBinding // notification messageID → binding (for in-place edit, e.g. compaction ⏳→✅)
-	// depthLeaves: depthLeafKey(root convID, leafID) → that leaf's view of the
-	// root binding (#2588). The same view is in bySession under the leaf's
-	// branch key; it is never in convs (a leaf is not a conversation).
-	depthLeaves map[string]*convBinding
-	toolCalls   *toolCallRegistry // InvocationID → waiting InvokeTool caller
+	toolCalls   *toolCallRegistry       // InvocationID → waiting InvokeTool caller
 
 	// pinsMu serialises the read-modify-write on a chat's pinned-message set
 	// (handlePin). Deliberately not h.mu: it is held across a SessionIndex
@@ -301,7 +297,6 @@ func newHub(deps platform.ProviderDeps) *Hub {
 		prompts:       make(map[string]*convBinding),
 		batchPrompts:  make(map[string]*batchPrompt),
 		notifs:        make(map[string]*convBinding),
-		depthLeaves:   make(map[string]*convBinding),
 		toolCalls:     newToolCallRegistry(),
 		wizards:       make(map[string]*wizardSession),
 		wizardByScope: make(map[string]string),
@@ -390,7 +385,9 @@ func (h *Hub) pushNotify(p pushPayload) {
 	// offline device would only alert for a message the reader's read receipt
 	// clears a moment later (#2202). Skipped before notify, so no coalescing
 	// window is consumed either.
-	if h.isViewed(p.ConvID) {
+	// A depth-mode leaf is on screen whenever its root is (#2611): the root's
+	// depth view shows it.
+	if h.isViewed(p.ConvID) || h.isViewed(h.depthRootOf(p.ConvID)) {
 		appLog.Debugf("push: skip wake for conv=%s, viewed on a connected device", p.ConvID)
 		return
 	}
@@ -1069,7 +1066,7 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 		}
 		// Pending wake reminders (#2600), listed live from the store like the
 		// cache expiry above, so a reconnect after a restart sees the truth.
-		if b.leaf == nil {
+		if ci.DepthRootID == "" {
 			if rs := remindersFor(b.agentID, b.sessionKey); len(rs) > 0 {
 				ci.Reminders = rs
 			}
@@ -1487,6 +1484,9 @@ func (h *Hub) ensureBinding(client *wsClient, agentID, convID string) *convBindi
 		if v, err := idx.GetChatMetadata(agentID, "app", chatID, "features"); err == nil && v != "" {
 			b.features = featureSet(strings.Split(v, ","))
 		}
+		if v, err := idx.GetChatMetadata(agentID, "app", chatID, chatMetaDepthRoot); err == nil {
+			b.depthRoot = v
+		}
 	}
 	h.convs[convID] = b
 	h.bySession[sk] = b
@@ -1689,7 +1689,7 @@ func (h *Hub) deliverBinding(agentID string) (*convBinding, string) {
 	var latest *convBinding
 	h.mu.RLock()
 	for _, b := range h.convs {
-		if b.agentID != agentID || archived[b.chatID] {
+		if b.agentID != agentID || archived[b.chatID] || b.isDepthLeaf() {
 			continue
 		}
 		if latest == nil || b.lastActivity() > latest.lastActivity() {
@@ -2420,10 +2420,13 @@ type convBinding struct {
 	reminders     []fap.PendingReminder
 	remindersSent bool
 
-	// leaf is set on a depth-mode leaf view (#2588): a binding for a leaf's
-	// branch session that owns no stream of its own and forwards every frame,
-	// stamped with the leaf's id, to the root conversation's binding. nil on
-	// every ordinary binding. See depth.go.
+	// depthRoot is set on a depth-mode leaf's own conversation (#2611): the
+	// tree root's conversation id, from chat_metadata depth_root. Such a
+	// conversation is hidden from the roster list and is never a default
+	// destination. "" on every ordinary chat. Guarded by mu.
+	depthRoot string
+	// leaf holds the depth manager's hooks while the leaf's view is registered
+	// (nil otherwise, and on every ordinary chat). See depth.go. Guarded by mu.
 	leaf *leafView
 }
 
@@ -2551,13 +2554,34 @@ func (b *convBinding) currentSeq() int64 {
 }
 
 // info snapshots the conversation for the roster.
+// depthRootOf returns the tree root's conversation id when convID is a
+// depth-mode leaf's conversation, else "".
+func (h *Hub) depthRootOf(convID string) string {
+	h.mu.RLock()
+	b := h.convs[convID]
+	h.mu.RUnlock()
+	if b == nil {
+		return ""
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.depthRoot
+}
+
+// isDepthLeaf reports whether b is a depth-mode leaf's own conversation.
+func (b *convBinding) isDepthLeaf() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.depthRoot != ""
+}
+
 func (b *convBinding) info() fap.ConversationInfo {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	a := b.activityFrameLocked()
 	return fap.ConversationInfo{ID: b.convID, SessionKey: b.sessionKey, LastSeq: b.seq, Activity: a.Kind, ActivityDetail: a.Detail,
 		ActivityAgentKind: a.AgentKind, ActivityAgentDetail: a.AgentDetail, ActivityAgentCommand: a.AgentCommand, ActivityAgentShell: a.AgentShell, Subagents: a.Subagents,
-		LastActivityTs: b.lastActMs, LastPreview: b.lastPreview, CacheExpiryMs: b.cacheExpiryMs}
+		LastActivityTs: b.lastActMs, LastPreview: b.lastPreview, CacheExpiryMs: b.cacheExpiryMs, DepthRootID: b.depthRoot}
 }
 
 // resolveActivity collapses the turn-scoped and session-scoped inputs to a
@@ -2771,10 +2795,6 @@ func (b *convBinding) send(frame fap.ServerFrame) { b.sendThen(frame, nil) }
 // or — with no store — once it is in the in-memory buffer. It also runs if the
 // frame cannot be encoded (there is nothing to wait for). nil = none.
 func (b *convBinding) sendThen(frame fap.ServerFrame, onRecorded func()) {
-	if b.leaf != nil {
-		b.leaf.forward(b, frame, onRecorded)
-		return
-	}
 	b.mu.Lock()
 	b.seq++
 	seq := b.seq
@@ -2794,9 +2814,12 @@ func (b *convBinding) sendThen(frame fap.ServerFrame, onRecorded func()) {
 	}
 	now := time.Now()
 	preview, visible := pushPreview(frame)
+	leaf := b.leaf
 	if visible {
-		if t := leafTitleOf(frame); t != "" {
-			preview = t + ": " + preview
+		if leaf != nil && leaf.title != "" {
+			// A leaf's push names its point (#2588): the roster never shows the
+			// leaf's own row, so the root's title is not enough context.
+			preview = leaf.title + ": " + preview
 		}
 		b.lastPreview = preview
 		b.lastActMs = now.UnixMilli()
@@ -2860,6 +2883,9 @@ func (b *convBinding) sendThen(frame fap.ServerFrame, onRecorded func()) {
 			SessionKey: sessionKey,
 			ChatID:     b.chatID,
 		})
+	}
+	if leaf != nil {
+		leaf.observe(b, frame)
 	}
 }
 
@@ -3197,11 +3223,6 @@ func (c *wsClient) device() string {
 // frames, queued and replayed on reconnect. Canonical check: route all capability
 // gating through it.
 func (b *convBinding) supportsFeature(feat string) bool {
-	if b.leaf != nil {
-		// A depth-mode leaf view has no sockets of its own: it renders on the
-		// root conversation's devices (#2588).
-		return b.leaf.root.supportsFeature(feat)
-	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	_, ok := b.features[feat]

@@ -106,3 +106,29 @@ func TestPushNotify_SkipsConversationViewedElsewhere(t *testing.T) {
 		t.Errorf("pushes = %+v, want exactly one, for c2", pushes)
 	}
 }
+
+// A depth-mode leaf's conversation counts as viewed while its root is: the
+// root's depth view shows the leaf (#2611).
+func TestPushNotify_SkipsLeafOfViewedRoot(t *testing.T) {
+	h := newTestHub()
+	tk := newPushTokens()
+	tk.set("phone", "tok-phone")
+	p, rec := newRecordingPusher(t, tk)
+	h.pusher = p
+	root := h.ensureBinding(nil, "ag", "c1")
+	leafConv, err := h.registerDepthLeaf(root.sessionKey, root.sessionKey+"/b1", "leaf-1", "A", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mac := deviceClient(h, "mac")
+	h.handleViewingPut(mac, fap.ViewingPut{ConversationID: "c1"})
+
+	h.pushNotify(pushPayload{ConvID: leafConv, Preview: "the leaf asks"})
+	h.pushNotify(pushPayload{ConvID: "c2", Preview: "nobody is looking"})
+	rec.waitFor(t, "tok-phone", 1)
+	time.Sleep(50 * time.Millisecond)
+	pushes := rec.pushes()
+	if len(pushes) != 1 || pushes[0].Data["conversationId"] != "c2" {
+		t.Errorf("pushes = %+v, want exactly one, for c2", pushes)
+	}
+}

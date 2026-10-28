@@ -47,7 +47,7 @@ func TestRouteUserTurn_EnqueuesEnvelope(t *testing.T) {
 	c.hub = h
 	c.deviceID = "dev-1"
 
-	h.routeUserTurn(c, "conv-1", "ag", "", "hello world", nil, nil, "env-1", 1, platform.SteerDefault, false)
+	h.routeUserTurn(c, "conv-1", "ag", "hello world", nil, nil, "env-1", 1, platform.SteerDefault, false)
 
 	if fa.env == nil {
 		t.Fatal("no envelope enqueued")
@@ -84,7 +84,7 @@ func TestRouteUserTurn_VoiceTranscribedEnvelopeTaggedVoice(t *testing.T) {
 	c.deviceID = "dev-1"
 
 	voiceAtt := []platform.Attachment{{Type: fap.MediaVoice, Data: []byte("audio"), MimeType: "audio/mp4"}}
-	h.routeUserTurn(c, "conv-1", "ag", "", "", voiceAtt, nil, "env-1", 1, platform.SteerDefault, false)
+	h.routeUserTurn(c, "conv-1", "ag", "", voiceAtt, nil, "env-1", 1, platform.SteerDefault, false)
 
 	if fa.env == nil {
 		t.Fatal("no envelope enqueued")
@@ -107,7 +107,7 @@ func TestRouteUserTurn_FailedTranscriptionNotTaggedVoice(t *testing.T) {
 	c.deviceID = "dev-1"
 
 	voiceAtt := []platform.Attachment{{Type: fap.MediaVoice, Data: []byte("audio"), MimeType: "audio/mp4"}}
-	h.routeUserTurn(c, "conv-1", "ag", "", "", voiceAtt, nil, "env-1", 1, platform.SteerDefault, false)
+	h.routeUserTurn(c, "conv-1", "ag", "", voiceAtt, nil, "env-1", 1, platform.SteerDefault, false)
 
 	if fa.env == nil {
 		t.Fatal("no envelope enqueued")
@@ -127,7 +127,7 @@ func TestRouteUserTurn_TranscribeOnlyReturnsTranscript(t *testing.T) {
 	c.deviceID = "dev-1"
 
 	voice := []platform.Attachment{{Type: fap.MediaVoice, Data: []byte("audio"), MimeType: "audio/mp4"}}
-	h.routeUserTurn(c, "conv-1", "ag", "", "", voice, nil, "env-1", 1, platform.SteerDefault, true)
+	h.routeUserTurn(c, "conv-1", "ag", "", voice, nil, "env-1", 1, platform.SteerDefault, true)
 
 	if fa.env != nil {
 		t.Fatalf("transcribe-only must not enqueue a turn (got text=%q)", fa.env.Text)
@@ -151,7 +151,7 @@ func TestRouteUserTurn_EchoesUserMessage(t *testing.T) {
 	c := fakeClientFor(h)
 	c.deviceID = "dev-1"
 
-	h.routeUserTurn(c, "conv-1", "ag", "", "hello world", nil, nil, "env-1", 1, platform.SteerDefault, false)
+	h.routeUserTurn(c, "conv-1", "ag", "hello world", nil, nil, "env-1", 1, platform.SteerDefault, false)
 
 	got := drain(t, c)
 	if len(got) == 0 {
@@ -186,7 +186,7 @@ func TestRouteUserTurn_EchoCarriesAttachmentsWithEmptyText(t *testing.T) {
 		{BlobID: pdf.id, Kind: fap.MediaDocument, MIME: "application/pdf", Name: "report.pdf"},
 		{BlobID: png.id, Kind: fap.MediaPhoto, MIME: "image/png"}, // blank name: filled from the blob
 	}
-	h.routeUserTurn(c, "conv-1", "ag", "", "", h.resolveAttachments(refs), h.echoAttachmentRefs(refs), "env-1", 1, platform.SteerDefault, false)
+	h.routeUserTurn(c, "conv-1", "ag", "", h.resolveAttachments(refs), h.echoAttachmentRefs(refs), "env-1", 1, platform.SteerDefault, false)
 
 	got := drain(t, c)
 	var echo map[string]any
@@ -221,7 +221,7 @@ func TestRouteUserTurn_TextEchoOmitsAttachments(t *testing.T) {
 	registerFakeAgent(h, "ag")
 	c := fakeClientFor(h)
 
-	h.routeUserTurn(c, "conv-1", "ag", "", "hi", nil, nil, "env-1", 1, platform.SteerDefault, false)
+	h.routeUserTurn(c, "conv-1", "ag", "hi", nil, nil, "env-1", 1, platform.SteerDefault, false)
 
 	got := drain(t, c)
 	if len(got) == 0 {
@@ -256,7 +256,7 @@ func TestRouteUserTurn_SlashCommandIntercepted(t *testing.T) {
 		c := fakeClient()
 		c.hub = h
 		c.deviceID = "dev-1"
-		h.routeUserTurn(c, "conv-1", "ag", "", "/ping", nil, nil, "env-1", 1, platform.SteerDefault, false)
+		h.routeUserTurn(c, "conv-1", "ag", "/ping", nil, nil, "env-1", 1, platform.SteerDefault, false)
 		if fa.env != nil {
 			t.Fatalf("slash command was enqueued as agent turn (text=%q) — should have been intercepted", fa.env.Text)
 		}
@@ -267,7 +267,7 @@ func TestRouteUserTurn_SlashCommandIntercepted(t *testing.T) {
 		c := fakeClient()
 		c.hub = h
 		c.deviceID = "dev-1"
-		h.routeUserTurn(c, "conv-1", "ag", "", ".ping", nil, nil, "env-1", 1, platform.SteerDefault, false)
+		h.routeUserTurn(c, "conv-1", "ag", ".ping", nil, nil, "env-1", 1, platform.SteerDefault, false)
 		if fa.env != nil {
 			t.Fatalf("dot command was enqueued as agent turn (text=%q) — should have been intercepted", fa.env.Text)
 		}
@@ -278,7 +278,7 @@ func TestRouteUserTurn_SlashCommandIntercepted(t *testing.T) {
 		c := fakeClient()
 		c.hub = h
 		c.deviceID = "dev-1"
-		h.routeUserTurn(c, "conv-1", "ag", "", "/home/foci/x is broken", nil, nil, "env-1", 1, platform.SteerDefault, false)
+		h.routeUserTurn(c, "conv-1", "ag", "/home/foci/x is broken", nil, nil, "env-1", 1, platform.SteerDefault, false)
 		if fa.env == nil {
 			t.Fatal("file path was intercepted as a command — should reach the agent as normal text")
 		}
@@ -292,7 +292,7 @@ func TestRouteUserTurn_SlashCommandIntercepted(t *testing.T) {
 		c := fakeClient()
 		c.hub = h
 		c.deviceID = "dev-1"
-		h.routeUserTurn(c, "conv-1", "ag", "", ".sigh", nil, nil, "env-1", 1, platform.SteerDefault, false)
+		h.routeUserTurn(c, "conv-1", "ag", ".sigh", nil, nil, "env-1", 1, platform.SteerDefault, false)
 		if fa.env == nil {
 			t.Fatal("unknown .cmd was intercepted — should reach the agent as normal text")
 		}
@@ -314,7 +314,7 @@ func TestRouteUserTurn_SeedsDedupForReplay(t *testing.T) {
 	c.deviceID = "dev-1"
 
 	// First delivery on a brand-new conversation: creates + seeds the binding.
-	h.routeUserTurn(c, "conv-dup", "ag", "", "hello", nil, nil, "env-A", 1, platform.SteerDefault, false)
+	h.routeUserTurn(c, "conv-dup", "ag", "hello", nil, nil, "env-A", 1, platform.SteerDefault, false)
 
 	b := h.convForReliability("conv-dup")
 	if b == nil {
@@ -341,7 +341,7 @@ func TestRouteUserTurn_BindingOwnerWinsOverFrameAgent(t *testing.T) {
 	c := fakeClient()
 	c.hub = h
 	c.deviceID = "dev-1"
-	h.routeUserTurn(c, "conv-x", "clutch", "", "first", nil, nil, "env-1", 1, platform.SteerDefault, false)
+	h.routeUserTurn(c, "conv-x", "clutch", "first", nil, nil, "env-1", 1, platform.SteerDefault, false)
 	if clutch.env == nil {
 		t.Fatal("clutch did not receive the first turn")
 	}
@@ -350,7 +350,7 @@ func TestRouteUserTurn_BindingOwnerWinsOverFrameAgent(t *testing.T) {
 	// 2) a later turn for conv-x wrongly carries agentId=helen. It must still land
 	// on clutch (the binding owner), not helen, and must not be dropped.
 	clutch.env, helen.env = nil, nil
-	h.routeUserTurn(c, "conv-x", "helen", "", "second", nil, nil, "env-2", 2, platform.SteerDefault, false)
+	h.routeUserTurn(c, "conv-x", "helen", "second", nil, nil, "env-2", 2, platform.SteerDefault, false)
 
 	if helen.env != nil {
 		t.Fatalf("turn wrongly routed to helen (frame agentId) — sk=%q", helen.env.SessionKey)
@@ -368,7 +368,7 @@ func TestRouteUserTurn_NoAgentEmitsError(t *testing.T) {
 	c := fakeClient()
 	c.hub = h
 
-	h.routeUserTurn(c, "conv-1", "ghost", "", "hi", nil, nil, "env-1", 1, platform.SteerDefault, false) // agent not registered
+	h.routeUserTurn(c, "conv-1", "ghost", "hi", nil, nil, "env-1", 1, platform.SteerDefault, false) // agent not registered
 
 	got := drain(t, c)
 	if len(got) != 1 || got[0].t != fap.TypeError {
@@ -384,7 +384,7 @@ func TestRouteUserTurn_EmptyContentNoOp(t *testing.T) {
 	fa := registerFakeAgent(h, "ag")
 	c := fakeClient()
 	c.hub = h
-	h.routeUserTurn(c, "conv-1", "ag", "", "", nil, nil, "env-1", 1, platform.SteerDefault, false)
+	h.routeUserTurn(c, "conv-1", "ag", "", nil, nil, "env-1", 1, platform.SteerDefault, false)
 	if fa.env != nil {
 		t.Error("empty text + no attachments must not enqueue")
 	}
@@ -682,7 +682,7 @@ func TestRouteUserTurn_FiresOnUserMessage(t *testing.T) {
 	fired := false
 	conn.OnUserMessage = func() { fired = true }
 
-	h.routeUserTurn(c, "conv-1", "ag", "", "hello world", nil, nil, "env-1", 1, platform.SteerDefault, false)
+	h.routeUserTurn(c, "conv-1", "ag", "hello world", nil, nil, "env-1", 1, platform.SteerDefault, false)
 	if !fired {
 		t.Fatal("OnUserMessage did not fire on inbound user message")
 	}
@@ -701,7 +701,7 @@ func TestRouteUserTurn_EmptyMessageDoesNotFire(t *testing.T) {
 	fired := false
 	conn.OnUserMessage = func() { fired = true }
 
-	h.routeUserTurn(c, "conv-1", "ag", "", "", nil, nil, "env-1", 1, platform.SteerDefault, false)
+	h.routeUserTurn(c, "conv-1", "ag", "", nil, nil, "env-1", 1, platform.SteerDefault, false)
 	if fired {
 		t.Fatal("OnUserMessage must not fire for an empty message")
 	}
@@ -787,7 +787,7 @@ func TestRouteUserTurn_EnvelopeCarriesMessageRef(t *testing.T) {
 	fa := registerFakeAgent(h, "ag")
 	c := fakeClientFor(h)
 
-	h.routeUserTurn(c, "conv-1", "ag", "", "hello", nil, nil, "env-42", 1, platform.SteerDefault, false)
+	h.routeUserTurn(c, "conv-1", "ag", "hello", nil, nil, "env-42", 1, platform.SteerDefault, false)
 
 	if fa.env == nil {
 		t.Fatal("no envelope enqueued")
@@ -805,7 +805,7 @@ func TestMarkMessageConsumed_SendsFrame(t *testing.T) {
 	setActiveHub(h)
 	t.Cleanup(func() { setActiveHub(nil) })
 	c := fakeClientFor(h)
-	h.routeUserTurn(c, "conv-1", "ag", "", "hello", nil, nil, "env-42", 1, platform.SteerDefault, false)
+	h.routeUserTurn(c, "conv-1", "ag", "hello", nil, nil, "env-42", 1, platform.SteerDefault, false)
 	drain(t, c)
 
 	MarkMessageConsumed("conv-1", "env-42")
