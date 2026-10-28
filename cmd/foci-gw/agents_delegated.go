@@ -261,7 +261,8 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// owner's default chat, questions in the asking session's chat.
 	permPromptFn, questionPromptFn := backendPromptFuncs(backendPromptDeps{
 		ag: ag, connMgr: connMgr, sessionIdx: sessionIdx, agentID: agentID,
-		live: depthSessionLive,
+		live:  depthSessionLive,
+		owner: tools.SpawnBranchOwner,
 		defaultSession: func() string {
 			if sessionIdx == nil {
 				return ""
@@ -506,6 +507,24 @@ type backendPromptDeps struct {
 	// (#2627): a done depth leaf's cannot, so promptTargets skips it. nil =
 	// every session is live.
 	live func(sessionKey string) bool
+	// owner resolves the current owner of the spawn running on a branch
+	// (#2632; tools.SpawnBranchOwner in the gateway). A spawn's prompts go
+	// to the owner chain, as its foci_ask does (newAskChats). nil = no
+	// spawn routing.
+	owner func(branchKey string) (string, bool)
+}
+
+// backendPromptTargets is the chat list of a prompt from sessionKey: for a
+// spawn's branch, the same as its foci_ask (#2632, Dick 2026-10-28 "Follow
+// the owner": the spawn's current owner, then up the chain from there;
+// spawned=true); for any other session, promptTargets.
+func backendPromptTargets(d backendPromptDeps, sessionKey string) (targets []string, spawned bool) {
+	if d.owner != nil {
+		if ts := newAskChats(d.owner, d)(sessionKey); len(ts) > 0 {
+			return ts, true
+		}
+	}
+	return promptTargets(d, sessionKey), false
 }
 
 // depthSessionLive is backendPromptDeps.live in the gateway: a session of an
@@ -519,7 +538,7 @@ func depthSessionLive(sessionKey string) bool {
 // postBackendPrompt is the one body behind the two gateway prompt closures
 // (DelegatedManager.PermissionPromptFunc and QuestionPromptFunc — wired in
 // configureDelegated as one-line delegations). It offers the prompt to each
-// chat of promptTargets in turn (which connection a chat resolves to depends
+// chat of backendPromptTargets in turn (which connection a chat resolves to depends
 // on kind) until one shows it: it sends the optional attachment to that chat,
 // posts the interactive prompt with the shared click and expiry callbacks, and
 // registers the per-prompt cancel listener. Everything except the destination
@@ -571,7 +590,7 @@ func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, 
 		}
 	}
 
-	targets := promptTargets(d, sessionKey)
+	targets, spawned := backendPromptTargets(d, sessionKey)
 	var failures []string
 	delivered := false
 	for _, target := range targets {
@@ -590,7 +609,9 @@ func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, 
 			body = prependRequestOrigin(d.sessionIdx, d.agentID, conn, sessionKey, body)
 		}
 		body = prependSpawnOrigin(tools.Spawns, sessionKey, body)
-		if target != sessionKey {
+		// A spawn's prompt in its owner's chat is named by the spawn line
+		// above; it was never meant for the branch's own chat.
+		if target != sessionKey && !spawned {
 			body = fmt.Sprintf("↪️ **From session %s** (its own chat cannot show this prompt)", sessionKey) + "\n\n" + body
 		}
 		// Attachment (e.g. the full ExitPlanMode plan markdown) is sent as a
@@ -615,7 +636,10 @@ func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, 
 			failures = append(failures, fmt.Sprintf("%s: %v", target, err))
 			continue
 		}
-		if target != sessionKey {
+		switch {
+		case spawned:
+			logger.Infof("backend prompt: sk=%s reqID=%s shown in %s (the spawn's owner chain)", sessionKey, requestID, target)
+		case target != sessionKey:
 			logger.Infof("backend prompt: sk=%s reqID=%s shown in %s instead (own chat could not show it)", sessionKey, requestID, target)
 		}
 		delivered = true

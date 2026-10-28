@@ -14,6 +14,7 @@ package tools
 import (
 	"fmt"
 	"slices"
+	"sync"
 
 	"foci/internal/session"
 )
@@ -99,6 +100,33 @@ func (s *Spawner) BranchOwner(branchKey string) (owner string, ok bool) {
 		return "", false
 	}
 	return s.route(parent).Owner, true
+}
+
+// spawners maps an agent id to its Spawner (RegisterSpawner), for callers
+// that resolve a spawn's owner without the tool deps: the backend prompt
+// routing of a delegated agent (#2632), built apart from its tools.
+var (
+	spawnersMu sync.RWMutex
+	spawners   = map[string]*Spawner{}
+)
+
+// RegisterSpawner records agentID's Spawner for SpawnBranchOwner.
+func RegisterSpawner(agentID string, s *Spawner) {
+	spawnersMu.Lock()
+	spawners[agentID] = s
+	spawnersMu.Unlock()
+}
+
+// SpawnBranchOwner is BranchOwner on the registered Spawner of branchKey's
+// agent; ok is false when the agent has none or branchKey is not a spawn.
+func SpawnBranchOwner(branchKey string) (owner string, ok bool) {
+	spawnersMu.RLock()
+	s := spawners[session.AgentIDFromAnyKey(branchKey)]
+	spawnersMu.RUnlock()
+	if s == nil {
+		return "", false
+	}
+	return s.BranchOwner(branchKey)
 }
 
 // ownedLookup finds a spawn the caller owns but did not start: one whose

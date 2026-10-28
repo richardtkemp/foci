@@ -297,6 +297,12 @@ func TestSpawnBranchOwnerFollowsHandover(t *testing.T) {
 	if o := owner(); o != a {
 		t.Errorf("after the parent's fan-in: owner = %s, want the parent %s", o, a)
 	}
+	// #2632: the registry the backend prompts resolve it through.
+	RegisterSpawner("test", h.sp.spawner)
+	t.Cleanup(func() { RegisterSpawner("test", nil) })
+	if o, ok := SpawnBranchOwner(branch); !ok || o != a {
+		t.Errorf("SpawnBranchOwner = %s, %v, want %s", o, ok, a)
+	}
 	if _, ok := h.sp.spawner.BranchOwner("test/c1/b-none"); ok {
 		t.Error("an unknown branch has an owner")
 	}

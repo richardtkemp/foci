@@ -637,6 +637,7 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 		}
 		return nil
 	})
+	tools.RegisterSpawner(acfg.ID, d.spawner) // #2632: backend prompts route a spawn's to its owner
 	if d.out != nil {
 		d.out.spawner = d.spawner
 	}
