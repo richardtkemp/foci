@@ -167,7 +167,7 @@ func TestForkSessionExclusive(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := filepath.Join(dir, testParentUUID+".jsonl")
-	if err := forkTranscript(src, collide, testParentUUID, "new", log.NewComponentLogger("test")); err == nil {
+	if err := forkTranscriptPlain(src, collide, testParentUUID, "new", log.NewComponentLogger("test")); err == nil {
 		t.Fatal("expected O_EXCL collision error, got nil")
 	}
 	// Existing file must be intact (not clobbered/removed).
@@ -226,7 +226,7 @@ func TestForkTranscriptTailHandling(t *testing.T) {
 			if err := os.WriteFile(src, []byte(tc.raw), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if err := forkTranscript(src, dst, oldID, newID, log.NewComponentLogger("test")); err != nil {
+			if err := forkTranscriptPlain(src, dst, oldID, newID, log.NewComponentLogger("test")); err != nil {
 				t.Fatalf("forkTranscript: %v", err)
 			}
 			data, err := os.ReadFile(dst)
@@ -271,7 +271,7 @@ func TestForkTranscriptSessionIDReplaceScopedToEnvelope(t *testing.T) {
 	if err := os.WriteFile(src, []byte(line), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := forkTranscript(src, dst, oldID, newID, log.NewComponentLogger("test")); err != nil {
+	if err := forkTranscriptPlain(src, dst, oldID, newID, log.NewComponentLogger("test")); err != nil {
 		t.Fatalf("forkTranscript: %v", err)
 	}
 	data, err := os.ReadFile(dst)
@@ -318,7 +318,7 @@ func TestForkTranscriptSynthesizesEndForOpenAsyncTask(t *testing.T) {
 	if err := os.WriteFile(src, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := forkTranscript(src, dst, oldID, newID, log.NewComponentLogger("test")); err != nil {
+	if err := forkTranscriptPlain(src, dst, oldID, newID, log.NewComponentLogger("test")); err != nil {
 		t.Fatalf("forkTranscript: %v", err)
 	}
 	data, err := os.ReadFile(dst)
@@ -375,7 +375,7 @@ func TestForkTranscriptSkipsClosedAsyncTask(t *testing.T) {
 	if err := os.WriteFile(src, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := forkTranscript(src, dst, oldID, newID, log.NewComponentLogger("test")); err != nil {
+	if err := forkTranscriptPlain(src, dst, oldID, newID, log.NewComponentLogger("test")); err != nil {
 		t.Fatalf("forkTranscript: %v", err)
 	}
 	data, err := os.ReadFile(dst)
@@ -429,7 +429,7 @@ func TestForkTranscriptResolutionForms(t *testing.T) {
 			if err := os.WriteFile(src, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if err := forkTranscript(src, dst, oldID, newID, log.NewComponentLogger("test")); err != nil {
+			if err := forkTranscriptPlain(src, dst, oldID, newID, log.NewComponentLogger("test")); err != nil {
 				t.Fatalf("forkTranscript: %v", err)
 			}
 			data, err := os.ReadFile(dst)
@@ -457,7 +457,7 @@ func forkLines(t *testing.T, lines []string) ([]byte, []map[string]any) {
 	if err := os.WriteFile(src, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := forkTranscript(src, dst, "OLD", "NEW", log.NewComponentLogger("test")); err != nil {
+	if err := forkTranscriptPlain(src, dst, "OLD", "NEW", log.NewComponentLogger("test")); err != nil {
 		t.Fatalf("forkTranscript: %v", err)
 	}
 	data, err := os.ReadFile(dst)
@@ -630,7 +630,7 @@ func TestForkTranscriptConcurrentAppend(t *testing.T) {
 
 	for i := 0; i < 60; i++ {
 		dst := filepath.Join(dir, fmt.Sprintf("dst-%d.jsonl", i))
-		if err := forkTranscript(src, dst, "OLD", "NEW", log.NewComponentLogger("test")); err != nil {
+		if err := forkTranscriptPlain(src, dst, "OLD", "NEW", log.NewComponentLogger("test")); err != nil {
 			t.Fatalf("fork %d: %v", i, err)
 		}
 		data, err := os.ReadFile(dst)
@@ -806,4 +806,90 @@ func TestProjectSlug(t *testing.T) {
 			t.Errorf("projectSlug(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
+}
+
+// forkLinesWith is forkLines with an opening (#2617).
+func forkLinesWith(t *testing.T, lines []string, opening *delegator.ForkOpening) (bool, []byte, []map[string]any) {
+	t.Helper()
+	dir := t.TempDir()
+	src, dst := filepath.Join(dir, "src.jsonl"), filepath.Join(dir, "dst.jsonl")
+	if err := os.WriteFile(src, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	written, err := forkTranscript(src, dst, "OLD", "NEW", opening, log.NewComponentLogger("test"))
+	if err != nil {
+		t.Fatalf("forkTranscript: %v", err)
+	}
+	data, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("read dst: %v", err)
+	}
+	assertAllValidJSONLines(t, t.Name(), data)
+	return written, data, splitJSONLines(t, data)
+}
+
+// TestForkTranscriptOpening locks #2617: a depth leaf's fork keeps the parent's
+// in-flight fan-out call, answers it with the opening's result (other calls of
+// the turn keep the generic fork-boundary text), and ends on the question as an
+// assistant text record chained off the last synthetic record, after any task
+// boundary, so the user's reply on resume follows it.
+func TestForkTranscriptOpening(t *testing.T) {
+	opening := &delegator.ForkOpening{CallMarker: "depth_fanout", ToolResult: "Fanned out into 2 leaves. This conversation is the leaf \"A\".", AgentText: "Which colour do you want?"}
+	fanout := `{"type":"assistant","sessionId":"OLD","uuid":"a2","message":{"id":"msg_1","model":"claude-x","role":"assistant","content":[{"type":"tool_use","id":"toolu_fan","name":"Bash","input":{"command":"foci_depth_fanout --leaves '[...]'","description":"fan out"}}]}}`
+	written, data, recs := forkLinesWith(t, []string{
+		`{"type":"user","sessionId":"OLD","uuid":"u1","message":{"role":"user","content":"plan it"}}`,
+		bgBashUse("a0", "toolu_sh", "build"),
+		bgBashResult("r0", "toolu_sh", "bshell01"),
+		fgUse("a1", "msg_1", "toolu_other", "Read", ""),
+		fanout,
+	}, opening)
+	if !written {
+		t.Fatalf("opening not written:\n%s", data)
+	}
+	if len(recs) != 8 {
+		t.Fatalf("want 5 copied + closure + task boundary + opening, got %d:\n%s", len(recs), data)
+	}
+	if recs[4]["uuid"] != "a2" {
+		t.Fatalf("the fan-out call is not kept:\n%s", data)
+	}
+	blocks := recs[5]["message"].(map[string]any)["content"].([]any)
+	texts := map[string]string{}
+	for _, b := range blocks {
+		m := b.(map[string]any)
+		texts[m["tool_use_id"].(string)] = m["content"].(string)
+	}
+	if texts["toolu_fan"] != opening.ToolResult {
+		t.Errorf("fan-out result = %q, want the opening's", texts["toolu_fan"])
+	}
+	if !strings.Contains(texts["toolu_other"], "[fork boundary]") {
+		t.Errorf("other call's result = %q, want the generic closure", texts["toolu_other"])
+	}
+	last := recs[7]
+	msg := last["message"].(map[string]any)
+	content := msg["content"].([]any)[0].(map[string]any)
+	if last["type"] != "assistant" || msg["role"] != "assistant" || content["type"] != "text" || content["text"] != opening.AgentText {
+		t.Errorf("last record = %v, want the question as assistant text", last)
+	}
+	if last["parentUuid"] != recs[6]["uuid"] || last["sessionId"] != "NEW" || msg["model"] != "claude-x" {
+		t.Errorf("opening parentUuid=%v sessionId=%v model=%v, want the boundary's uuid / NEW / claude-x", last["parentUuid"], last["sessionId"], msg["model"])
+	}
+}
+
+// With no in-flight call matching the marker (an approved deep fan-out runs
+// after its turn ended), the fork is the plain copy and the opening is left
+// to the caller.
+func TestForkTranscriptOpeningNoMatch(t *testing.T) {
+	written, data, recs := forkLinesWith(t, []string{
+		`{"type":"user","sessionId":"OLD","uuid":"u1","message":{"role":"user","content":"go"}}`,
+		`{"type":"assistant","sessionId":"OLD","uuid":"a1","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"waiting"}]}}`,
+	}, &delegator.ForkOpening{CallMarker: "depth_fanout", AgentText: "Q?"})
+	if written || len(recs) != 2 {
+		t.Errorf("written=%v with %d records, want false and the plain copy:\n%s", written, len(recs), data)
+	}
+}
+
+// forkTranscriptPlain is forkTranscript with no opening.
+func forkTranscriptPlain(src, dst, oldID, newID string, lg *log.ComponentLogger) error {
+	_, err := forkTranscript(src, dst, oldID, newID, nil, lg)
+	return err
 }

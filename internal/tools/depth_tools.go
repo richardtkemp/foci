@@ -41,8 +41,9 @@ func (m *DepthManager) fanoutTool() *Tool {
 	return &Tool{
 		Name:       "depth_fanout",
 		ExecExport: true,
-		Description: "Depth mode, for multithreaded interactive work: whenever a user's request opens several discussion threads, use this to fan the conversation out into leaves, ONE point per leaf (never a list of questions), which the user works through one at a time inside this chat. " +
-			"Each leaf is a fork of your context. To cover several questions, give each its own leaf. " +
+		Description: "Depth mode: send the user several points as separate leaves instead of one message. Each leaf's question is exactly the message you would otherwise have sent the user for that point, written to the USER (not to the leaf agent): instead of sending the user A, B and C in one message, fan out into leaves A, B and C. " +
+			"Each question appears as its leaf's first message, from you, and the user replies to it there, one leaf at a time inside this chat. ONE point per leaf, never a list of questions in one leaf. Use it whenever a user's request opens several discussion threads. " +
+			"Each leaf is a fork of your context and runs nothing until the user answers it. " +
 			"You then end your turn and get ONE [DEPTH RESULTS] message when every leaf has reported. Only from an app conversation (or from a leaf). " +
 			"Each leaf costs a copy of your current context, so prefer fanning out while the context is small.",
 		Parameters: json.RawMessage(`{
@@ -50,15 +51,15 @@ func (m *DepthManager) fanoutTool() *Tool {
 			"properties": {
 				"leaves": {
 					"type": "array",
-					"description": "The leaves, as a JSON array: [{\"title\": \"short point name\", \"prompt\": \"the ONE point this leaf discusses\", \"orientation\": \"optional: report format / focus for this leaf\"}, ...].",
+					"description": "The leaves, as a JSON array: [{\"title\": \"short point name\", \"question\": \"the message you would have sent the user about this ONE point\", \"orientation\": \"optional: report format / focus for this leaf\"}, ...]. Each question goes to the user, as that leaf's opening message.",
 					"items": {
 						"type": "object",
 						"properties": {
 							"title": {"type": "string"},
-							"prompt": {"type": "string"},
+							"question": {"type": "string", "description": "Exactly what you would otherwise have sent the user for this point, written for the user; it is shown as the leaf's first message and the user answers it. (\"prompt\" is accepted as an older name.)"},
 							"orientation": {"type": "string"}
 						},
-						"required": ["title", "prompt"]
+						"required": ["title", "question"]
 					}
 				},
 				"orientation": {
@@ -105,7 +106,7 @@ func parseDepthLeaves(raw json.RawMessage) ([]depthLeafSpec, error) {
 			return leaves, nil
 		}
 	}
-	return nil, fmt.Errorf(`depth_fanout: leaves must be a JSON array like [{"title": "...", "prompt": "..."}]`)
+	return nil, fmt.Errorf(`depth_fanout: leaves must be a JSON array like [{"title": "...", "question": "..."}]`)
 }
 
 func (m *DepthManager) reportTool() *Tool {

@@ -45,6 +45,9 @@ type BranchOptions struct {
 	NoResetHook         bool   // skip pre-reset memory hook when this branch is reclaimed
 	BranchType          string // e.g. "cron", "compaction-memory" — resolves {branch_type}
 	OrientationTemplate string // template with {branch_key}, {parent_key}, {branch_type}, {report_rule} placeholders
+	// Opening, when set, is what the fork ends on before its first turn
+	// (#2617, depth leaves). Only Agent.ForkSession reads it; the store does not.
+	Opening *BranchOpening
 }
 
 // resolveOrientation substitutes template placeholders in the orientation text.

@@ -76,8 +76,9 @@ type DepthSurface interface {
 	UnregisterLeaf(branchKey string)
 	// PushFeed sends the whole tree to rootKey's conversation.
 	PushFeed(rootKey, rootState string, nodes []fap.DepthNode)
-	// ShowPrompt opens a leaf's exchange with its prompt, from fromSession.
-	ShowPrompt(branchKey, text, fromSession string)
+	// ShowQuestion opens a leaf's conversation with its question to the user,
+	// shown as the leaf agent's first message (#2617).
+	ShowQuestion(branchKey, text string)
 	// LeafBusy reports whether the leaf on branchKey has a turn running.
 	LeafBusy(branchKey string) bool
 }
@@ -103,14 +104,11 @@ type DepthDeps struct {
 	// RunTurn queues text as an injected turn on sessionKey whose output goes
 	// to that session's app binding (a leaf's goes to its item). started runs
 	// when the turn begins; done(true) once it ran, done(false) when the inbox
-	// refused it (shutdown, full inbox).
+	// refused it (shutdown, full inbox). A leaf never gets one at creation
+	// (#2617): its first turn is the user's reply to its question.
 	RunTurn func(sessionKey, text, trigger string, started func(), done func(ran bool))
 	// Notifier delivers the [DEPTH RESULTS] fan-in durably (InjectToAgentThen).
 	Notifier *AsyncNotifier
-	// MaxConcurrent bounds how many leaves run their FIRST turn at once (the
-	// max_concurrent_spawns limit), so a wide fan-out does not launch every
-	// backend in the same second. 0 = no bound.
-	MaxConcurrent int
 	// CancelAsk cancels the session's pending foci_ask, if any (Ack).
 	CancelAsk func(sessionKey string)
 	// StopTurn stops the session's running turn, if any (Dismiss, reset).
@@ -129,11 +127,42 @@ type DepthDeps struct {
 	Now func() time.Time
 }
 
-// depthLeafSpec is one leaf a fan-out asks for.
+// depthLeafSpec is one leaf a fan-out asks for. Prompt is the leaf's question:
+// the message the caller would otherwise have sent the user for that point,
+// shown as the leaf's first agent message (#2617). The tool takes it as
+// "question" ("prompt" is still read, and is the stored name).
 type depthLeafSpec struct {
 	Title       string `json:"title"`
 	Prompt      string `json:"prompt"`
+	Question    string `json:"question,omitempty"`
 	Orientation string `json:"orientation,omitempty"`
+}
+
+// normalize folds Question into Prompt.
+func (l *depthLeafSpec) normalize() {
+	if strings.TrimSpace(l.Question) != "" {
+		l.Prompt = l.Question
+	}
+	l.Question = ""
+}
+
+// depthCallMarker names the fan-out call in a parent's transcript: the API and
+// MCP tool (depth_fanout) and the shell function (foci_depth_fanout) both
+// contain it.
+const depthCallMarker = "depth_fanout"
+
+// leafOpening is how leaf c's fork ends (#2617): the parent's fan-out call
+// answered, then c's question as the leaf agent's own message. Fallback carries
+// the question on the user's first reply where the backend cannot write that.
+func leafOpening(c *depthNode, leaves int) *session.BranchOpening {
+	return &session.BranchOpening{
+		CallMarker: depthCallMarker,
+		ToolResult: fmt.Sprintf("Fanned out into %d leaves. This conversation is the leaf %q.", leaves, c.Title),
+		AgentText:  c.Prompt,
+		Fallback: "### Your opening message\n" +
+			"You opened this leaf by sending the user the message between the lines below; they saw it as yours, and the text after this orientation is their reply.\n\n" +
+			"---\n" + c.Prompt + "\n---",
+	}
 }
 
 // depthApproval is a fan-out waiting for the user's approval (level > 5).
@@ -176,9 +205,6 @@ type depthNode struct {
 	// Reason says why a node is lost or dropped.
 	Reason string `json:"reason,omitempty"`
 
-	// FirstTurnStarted: the leaf's first turn began running. A restart re-runs
-	// a first turn that never started (its input never reached the backend).
-	FirstTurnStarted bool `json:"first_turn_started,omitempty"`
 	// AckPending: the user acknowledged; the report has not landed yet.
 	AckPending      bool      `json:"ack_pending,omitempty"`
 	AckAt           time.Time `json:"ack_at,omitempty"`
@@ -209,7 +235,6 @@ func (n *depthNode) done() bool {
 // DepthManager owns one agent's depth-mode trees.
 type DepthManager struct {
 	deps DepthDeps
-	sem  chan struct{}
 
 	mu       sync.Mutex
 	nodes    map[string]*depthNode // session key → node
@@ -234,9 +259,6 @@ func NewDepthManager(deps DepthDeps) *DepthManager {
 		nodes:  make(map[string]*depthNode),
 		queued: make(map[string]int),
 		costs:  make(map[string]depthCost),
-	}
-	if deps.MaxConcurrent > 0 {
-		m.sem = make(chan struct{}, deps.MaxConcurrent)
 	}
 	registerDepthManager(deps.AgentID, m)
 	return m
@@ -514,9 +536,10 @@ func (m *DepthManager) fanout(ctx context.Context, caller string, leaves []depth
 	if len(leaves) == 0 {
 		return "", fmt.Errorf("depth_fanout: give at least one leaf")
 	}
-	for i, l := range leaves {
-		if strings.TrimSpace(l.Title) == "" || strings.TrimSpace(l.Prompt) == "" {
-			return "", fmt.Errorf("depth_fanout: leaf %d needs a title and a prompt", i+1)
+	for i := range leaves {
+		leaves[i].normalize()
+		if strings.TrimSpace(leaves[i].Title) == "" || strings.TrimSpace(leaves[i].Prompt) == "" {
+			return "", fmt.Errorf("depth_fanout: leaf %d needs a title and a question", i+1)
 		}
 	}
 	if m.deps.CanBranch != nil && !m.deps.CanBranch() {
@@ -657,6 +680,7 @@ func (m *DepthManager) doFanout(ctx context.Context, caller string, leaves []dep
 			NoResetHook:         true,
 			BranchType:          "depth",
 			OrientationTemplate: tmpl,
+			Opening:             leafOpening(&depthNode{Title: strings.TrimSpace(l.Title), Prompt: l.Prompt}, len(leaves)),
 		})
 		if err != nil {
 			return "", fmt.Errorf("depth_fanout: fork for %q: %w", l.Title, err)
@@ -701,7 +725,6 @@ func (m *DepthManager) doFanout(ctx context.Context, caller string, leaves []dep
 			Created: now.Add(time.Duration(i) * time.Microsecond), Updated: now,
 		}
 		m.nodes[f.key] = c
-		m.queued[f.key]++
 		children = append(children, c)
 	}
 	parent.State = depthFanned
@@ -722,17 +745,16 @@ func (m *DepthManager) doFanout(ctx context.Context, caller string, leaves []dep
 		}
 		if m.deps.Surface != nil {
 			m.registerLeaf(c.Key)
-			m.deps.Surface.ShowPrompt(c.Key, c.Prompt, caller)
+			m.deps.Surface.ShowQuestion(c.Key, c.Prompt)
 		}
 	}
+	// No leaf turn runs now (#2617): each leaf's fork ends on its question,
+	// and its first turn is the user's reply.
 	m.pushFeed(tree)
-	for _, c := range children {
-		m.startFirstTurn(c.Key, c.Title, c.Prompt, true)
-	}
 	depthLog.Infof("fan-out %s → %d leaves (tree %s, level %d)", caller, len(children), tree, children[0].Level)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "You are now waiting on %d leaves; end your turn. You will get one [DEPTH RESULTS] message when all have reported.\n", len(children))
+	fmt.Fprintf(&b, "Each question went to the user as its leaf's opening message. You are now waiting on %d leaves; end your turn. You will get one [DEPTH RESULTS] message when all have reported.\n", len(children))
 	for _, c := range children {
 		fmt.Fprintf(&b, "- %s (%s)\n", c.Title, c.LeafID)
 	}
@@ -740,49 +762,6 @@ func (m *DepthManager) doFanout(ctx context.Context, caller string, leaves []dep
 		fmt.Fprintf(&b, "Each leaf started from a copy of your context: %d tokens.", ctxTokens)
 	}
 	return strings.TrimRight(b.String(), "\n"), nil
-}
-
-// startFirstTurn runs a leaf's first turn under the first-turn bound. counted
-// says the caller already counted it in m.queued.
-func (m *DepthManager) startFirstTurn(key, title, prompt string, counted bool) {
-	if !counted {
-		m.mu.Lock()
-		m.queued[key]++
-		m.mu.Unlock()
-	}
-	text := "[DEPTH LEAF: " + title + "]\n" + prompt
-	go func() {
-		if m.sem != nil {
-			m.sem <- struct{}{}
-		}
-		release := func() {
-			if m.sem != nil {
-				<-m.sem
-			}
-		}
-		if m.deps.RunTurn == nil {
-			release()
-			m.turnEnded(key)
-			return
-		}
-		m.deps.RunTurn(key, text, "depth", func() { m.markFirstTurnStarted(key) }, func(bool) {
-			release()
-			m.turnEnded(key)
-		})
-	}()
-}
-
-func (m *DepthManager) markFirstTurnStarted(key string) {
-	m.mu.Lock()
-	n := m.nodes[key]
-	if n == nil || n.FirstTurnStarted {
-		m.mu.Unlock()
-		return
-	}
-	n.FirstTurnStarted = true
-	rec := snap(n)
-	m.mu.Unlock()
-	m.persist(rec...)
 }
 
 // runTurn queues a manager-originated turn on key (trigger "depth"), counted
@@ -1239,10 +1218,8 @@ func (m *DepthManager) restore() {
 		split = append(split, m.legacySplitLocked(tree)...)
 	}
 	expired := m.expireLocked(trees)
-	type firstTurn struct{ key, title, prompt string }
 	var (
 		register     []*depthNode
-		firsts       []firstTurn
 		acks         []string
 		approvals    []string
 		results      []string
@@ -1254,7 +1231,7 @@ func (m *DepthManager) restore() {
 			register = append(register, n)
 		}
 		live := n.State == depthActive || n.State == depthFanned
-		if n.LeafID != "" && live && m.deps.CanResume != nil && n.FirstTurnStarted && !m.deps.CanResume(n.Key) {
+		if n.LeafID != "" && live && m.deps.CanResume != nil && !m.deps.CanResume(n.Key) {
 			m.finishLocked(n, depthLost, "")
 			n.Reason = "its branch could not be resumed after a restart"
 			n.Approval = nil
@@ -1262,10 +1239,7 @@ func (m *DepthManager) restore() {
 			fanInParents = append(fanInParents, n.Parent)
 			continue
 		}
-		switch {
-		case n.LeafID != "" && n.State == depthActive && !n.FirstTurnStarted:
-			firsts = append(firsts, firstTurn{n.Key, n.Title, n.Prompt})
-		case n.LeafID != "" && n.State == depthActive && n.AckPending:
+		if n.LeafID != "" && n.State == depthActive && n.AckPending {
 			acks = append(acks, n.Key)
 		}
 		if n.Approval != nil && live {
@@ -1293,9 +1267,6 @@ func (m *DepthManager) restore() {
 		for _, n := range register {
 			m.registerLeaf(n.Key)
 		}
-	}
-	for _, f := range firsts {
-		m.startFirstTurn(f.key, f.title, f.prompt, false)
 	}
 	for _, k := range acks {
 		m.mu.Lock()

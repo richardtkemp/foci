@@ -619,6 +619,27 @@ type ForkRequest struct {
 	// conversation. v1 CC support treats any >0 value as unsupported —
 	// reserved; see the backend-branch plan's "Deferred" section.
 	TruncateAfter int
+	// Opening, when set, is what the fork must end on (#2617): the parent's
+	// in-flight call that made the fork answered with Opening.ToolResult,
+	// then Opening.AgentText as the agent's own message, so the fork's next
+	// input is the user's reply to it. A backend that cannot write it leaves
+	// ForkResult.OpeningWritten false and the caller carries the text another
+	// way.
+	Opening *ForkOpening
+}
+
+// ForkOpening is the end a fork is given before its first resume (#2617): a
+// depth leaf's fork ends on the parent's fan-out call, a synthetic result for
+// it, and the leaf's question to the user as agent text.
+type ForkOpening struct {
+	// CallMarker picks the parent's in-flight tool call to answer: a call
+	// whose tool name or input contains it (e.g. "depth_fanout" matches the
+	// MCP tool and the foci_depth_fanout shell function).
+	CallMarker string
+	// ToolResult is that call's result in the fork.
+	ToolResult string
+	// AgentText is the agent's message after the result.
+	AgentText string
 }
 
 // ForkResult carries the new backend session id, ready to be resumed.
@@ -626,6 +647,11 @@ type ForkResult struct {
 	// SessionID is the new backend session id (for CC, a fresh UUID whose
 	// on-disk session is a copy of the parent's, ready for --resume).
 	SessionID string
+	// OpeningWritten reports that ForkRequest.Opening is in the fork: the
+	// marked call was found in flight and answered, and the agent text
+	// follows it. False when there was no Opening, the backend cannot write
+	// one (opencode), or no in-flight call matched.
+	OpeningWritten bool
 }
 
 // BatchRequest describes a batch run: a one-shot, non-interactive prompt

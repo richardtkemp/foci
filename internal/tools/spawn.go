@@ -35,6 +35,9 @@ type BranchOptions struct {
 	NoResetHook         bool
 	BranchType          string
 	OrientationTemplate string
+	// Opening is what the fork ends on before its first turn (#2617, depth
+	// leaves); see session.BranchOpening.
+	Opening *session.BranchOpening
 }
 
 // SessionBrancher is the session ops needed by spawn inherit mode.

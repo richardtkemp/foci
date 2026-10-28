@@ -78,6 +78,13 @@ type threadForkParams struct {
 	Ephemeral bool   `json:"ephemeral,omitempty"`
 }
 
+// threadInjectItemsParams appends raw Responses API items to a thread's
+// model-visible history (thread/inject_items, codex app-server 0.145.0 schema).
+type threadInjectItemsParams struct {
+	ThreadID string `json:"threadId"`
+	Items    []any  `json:"items"`
+}
+
 type threadResumeParams struct {
 	ThreadID string `json:"threadId"`
 	// BaseInstructions re-sends the freshly-generated system prompt on resume

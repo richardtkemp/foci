@@ -231,6 +231,7 @@ func (a *sessionBranchAdapter) ForkSession(ctx context.Context, parentKey string
 		NoResetHook:         opts.NoResetHook,
 		BranchType:          opts.BranchType,
 		OrientationTemplate: opts.OrientationTemplate,
+		Opening:             opts.Opening,
 	})
 }
 

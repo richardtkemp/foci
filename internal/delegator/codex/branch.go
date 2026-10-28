@@ -55,7 +55,68 @@ func (b *Backend) ForkSession(ctx context.Context, req delegator.ForkRequest) (d
 	// to its NEW branch session key and starts a backend with
 	// ResumeSessionID=<forked thread>, and resumeThread already registers
 	// (startOpts.SessionKey -> threadID) for that session.
-	return delegator.ForkResult{SessionID: tr.Thread.ID}, nil
+	res := delegator.ForkResult{SessionID: tr.Thread.ID}
+	if req.Opening != nil {
+		res.OpeningWritten = b.writeOpening(tr.Thread.ID, req.Opening)
+	}
+	return res, nil
+}
+
+// writeOpening ends the forked thread on opening (#2617) with thread/inject_items:
+// a function_call_output answering the parent's in-flight call that made the
+// fork, then opening.AgentText as an assistant message, so the thread's next
+// turn/start (the user's reply) answers it. The call is this facade's own
+// in-flight item (the fork runs inside the parent's tool call, and the parent's
+// backend is the one forking); a codex item id is the Responses call_id. No
+// matching call, or a refused inject, leaves the opening to the caller.
+func (b *Backend) writeOpening(threadID string, opening *delegator.ForkOpening) bool {
+	callID := b.inFlightCall(opening.CallMarker)
+	if callID == "" {
+		b.logInfof("fork %s: no in-flight %q call; the opening is left to the caller", threadID, opening.CallMarker)
+		return false
+	}
+	result := opening.ToolResult
+	if result == "" {
+		result = "Done."
+	}
+	items := []any{
+		map[string]any{"type": "function_call_output", "call_id": callID, "output": result},
+		map[string]any{
+			"type":    "message",
+			"role":    "assistant",
+			"content": []map[string]any{{"type": "output_text", "text": opening.AgentText}},
+		},
+	}
+	if _, err := b.sendAndWait("thread/inject_items", threadInjectItemsParams{ThreadID: threadID, Items: items}); err != nil {
+		b.logWarnf("fork %s: thread/inject_items failed: %v; the opening is left to the caller", threadID, err)
+		return false
+	}
+	return true
+}
+
+// inFlightCall returns the id of a started, not yet completed tool item
+// (command, MCP or dynamic tool call) whose tool name, command or arguments
+// contain marker; "" when none does.
+func (b *Backend) inFlightCall(marker string) string {
+	if marker == "" {
+		return ""
+	}
+	b.itemMu.Lock()
+	defer b.itemMu.Unlock()
+	for id, it := range b.itemCache {
+		if it.Status == "completed" || it.Status == "failed" || it.Status == "declined" {
+			continue
+		}
+		switch it.Type {
+		case "commandExecution", "mcpToolCall", "dynamicToolCall":
+		default:
+			continue
+		}
+		if strings.Contains(it.Tool, marker) || strings.Contains(it.Command, marker) || strings.Contains(string(it.Arguments), marker) {
+			return id
+		}
+	}
+	return ""
 }
 
 // noRolloutFoundMarker is the substring of codex's thread/delete error when

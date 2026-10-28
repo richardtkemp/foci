@@ -263,3 +263,67 @@ func TestCleanupSession_WriterReadUnderLock(t *testing.T) {
 		t.Fatalf("CleanupSession on unstarted backend = %v, want a not-started error", err)
 	}
 }
+
+// TestForkSessionWritesOpening locks #2617 for codex: after thread/fork, the
+// fork is given a function_call_output for the parent's in-flight fan-out call
+// (found among this facade's started, uncompleted items) and the question as
+// an assistant message, through thread/inject_items on the FORK's thread. A
+// completed matching call is never answered; with no in-flight call nothing is
+// injected and the opening is left to the caller.
+func TestForkSessionWritesOpening(t *testing.T) {
+	opening := &delegator.ForkOpening{CallMarker: "depth_fanout", ToolResult: "Fanned out.", AgentText: "Which colour?"}
+	run := func(t *testing.T, items map[string]itemEnvelope) (delegator.ForkResult, []json.RawMessage) {
+		var injects []json.RawMessage
+		b := setupMockBackend(t, func(method string, params json.RawMessage, _ int64) (json.RawMessage, error) {
+			switch method {
+			case "thread/fork":
+				return json.RawMessage(`{"thread":{"id":"thread-fork"}}`), nil
+			case "thread/inject_items":
+				injects = append(injects, params)
+			}
+			return json.RawMessage(`{}`), nil
+		})
+		b.itemCache = items
+		res, err := b.ForkSession(context.Background(), delegator.ForkRequest{ParentSessionID: "thread-1", Opening: opening})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res, injects
+	}
+
+	t.Run("in-flight call", func(t *testing.T) {
+		res, injects := run(t, map[string]itemEnvelope{
+			"call_old": {Type: "commandExecution", ID: "call_old", Command: "foci_depth_fanout --leaves x", Status: "completed"},
+			"call_fan": {Type: "commandExecution", ID: "call_fan", Command: "bash -lc 'foci_depth_fanout --leaves y'", Status: "inProgress"},
+			"call_ls":  {Type: "commandExecution", ID: "call_ls", Command: "ls", Status: "inProgress"},
+		})
+		if !res.OpeningWritten || len(injects) != 1 {
+			t.Fatalf("written=%v injects=%d, want true and one inject", res.OpeningWritten, len(injects))
+		}
+		var p struct {
+			ThreadID string           `json:"threadId"`
+			Items    []map[string]any `json:"items"`
+		}
+		if err := json.Unmarshal(injects[0], &p); err != nil {
+			t.Fatal(err)
+		}
+		if p.ThreadID != "thread-fork" || len(p.Items) != 2 {
+			t.Fatalf("inject = %s", injects[0])
+		}
+		if p.Items[0]["type"] != "function_call_output" || p.Items[0]["call_id"] != "call_fan" || p.Items[0]["output"] != "Fanned out." {
+			t.Errorf("first item = %v", p.Items[0])
+		}
+		if p.Items[1]["type"] != "message" || p.Items[1]["role"] != "assistant" || !strings.Contains(fmt.Sprint(p.Items[1]["content"]), "Which colour?") {
+			t.Errorf("second item = %v", p.Items[1])
+		}
+	})
+
+	t.Run("no in-flight call", func(t *testing.T) {
+		res, injects := run(t, map[string]itemEnvelope{
+			"call_old": {Type: "commandExecution", ID: "call_old", Command: "foci_depth_fanout", Status: "completed"},
+		})
+		if res.OpeningWritten || len(injects) != 0 {
+			t.Errorf("written=%v injects=%d, want false and none", res.OpeningWritten, len(injects))
+		}
+	})
+}

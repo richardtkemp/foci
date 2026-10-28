@@ -80,9 +80,8 @@ func (d *toolDeps) getDepth() *tools.DepthManager {
 				a.SetSessionNoCompact(sk, v)
 			}
 		},
-		RunTurn:       newDepthRunTurn(ag, d.p.ctx, d.connMgr, agentID),
-		Notifier:      d.notifier,
-		MaxConcurrent: d.p.resolved.Tools.MaxConcurrentSpawns, // static-cfg:ignore: sizes a semaphore at construction, like spawn's
+		RunTurn:  newDepthRunTurn(ag, d.p.ctx, d.connMgr, agentID),
+		Notifier: d.notifier,
 		CancelAsk: func(sk string) {
 			r := d.out.askRouter
 			if r == nil || r.PendingForSession == nil || r.HandleResponse == nil {

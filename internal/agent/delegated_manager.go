@@ -1538,17 +1538,24 @@ func (m *DelegatedManager) CleanupBackendSession(ctx context.Context, sessionID 
 // does NOT create a branch session key or persist anything: the caller mints
 // the branch key only on success, so a failed fork leaves no orphan.
 func (m *DelegatedManager) ForkParentSession(ctx context.Context, parentKey string) (string, error) {
+	id, _, err := m.ForkParentSessionWith(ctx, parentKey, nil)
+	return id, err
+}
+
+// ForkParentSessionWith is ForkParentSession ending the fork on opening (#2617)
+// when the backend can write it; openingWritten reports whether it did.
+func (m *DelegatedManager) ForkParentSessionWith(ctx context.Context, parentKey string, opening *delegator.ForkOpening) (id string, openingWritten bool, err error) {
 	parentID := m.parentSessionID(parentKey)
 	if parentID == "" {
-		return "", nil // no known backend session to fork
+		return "", false, nil // no known backend session to fork
 	}
 	be, err := m.NewBackend()
 	if err != nil {
-		return "", fmt.Errorf("fork parent: new backend: %w", err)
+		return "", false, fmt.Errorf("fork parent: new backend: %w", err)
 	}
 	br, ok := delegator.As[delegator.BackendBrancher](be)
 	if !ok {
-		return "", nil // backend can't branch
+		return "", false, nil // backend can't branch
 	}
 	if m.Spec.ForkNeedsRunning {
 		// Some backends (Codex) implement fork as an app-server RPC. Resolve the
@@ -1557,11 +1564,11 @@ func (m *DelegatedManager) ForkParentSession(ctx context.Context, parentKey stri
 		// the fork completes.
 		be, err = m.Get(ctx, parentKey)
 		if err != nil {
-			return "", fmt.Errorf("fork parent %s (%s): start backend: %w", parentKey, parentID, err)
+			return "", false, fmt.Errorf("fork parent %s (%s): start backend: %w", parentKey, parentID, err)
 		}
 		br, ok = delegator.As[delegator.BackendBrancher](be)
 		if !ok {
-			return "", fmt.Errorf("fork parent %s (%s): started backend cannot fork", parentKey, parentID)
+			return "", false, fmt.Errorf("fork parent %s (%s): started backend cannot fork", parentKey, parentID)
 		}
 	}
 	res, err := br.ForkSession(ctx, delegator.ForkRequest{
@@ -1569,14 +1576,15 @@ func (m *DelegatedManager) ForkParentSession(ctx context.Context, parentKey stri
 		FociSessionKey:  parentKey,
 		WorkDir:         m.StartOpts.WorkDir,
 		AgentID:         m.StartOpts.AgentID,
+		Opening:         opening,
 	})
 	if err != nil {
-		return "", fmt.Errorf("fork parent %s (%s): %w", parentKey, parentID, err)
+		return "", false, fmt.Errorf("fork parent %s (%s): %w", parentKey, parentID, err)
 	}
 	if res.SessionID == "" {
-		return "", fmt.Errorf("fork parent %s (%s): empty forked session id", parentKey, parentID)
+		return "", false, fmt.Errorf("fork parent %s (%s): empty forked session id", parentKey, parentID)
 	}
-	return res.SessionID, nil
+	return res.SessionID, res.OpeningWritten, nil
 }
 
 // parentSessionID returns the authoritative backend session id for a key: the

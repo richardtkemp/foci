@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"foci/internal/fap"
+	"foci/internal/session"
 )
 
 // --- fakes ---
@@ -62,9 +63,9 @@ func (s *fakeDepthSurface) PushFeed(root, state string, nodes []fap.DepthNode) {
 	s.feeds = append(s.feeds, depthFeedRec{root, state, nodes})
 	s.mu.Unlock()
 }
-func (s *fakeDepthSurface) ShowPrompt(b, text, from string) {
+func (s *fakeDepthSurface) ShowQuestion(b, text string) {
 	s.mu.Lock()
-	s.prompts = append(s.prompts, b+"|"+text+"|"+from)
+	s.prompts = append(s.prompts, b+"|"+text)
 	s.mu.Unlock()
 }
 func (s *fakeDepthSurface) LeafBusy(k string) bool {
@@ -86,8 +87,9 @@ func (s *fakeDepthSurface) lastFeed(t *testing.T) depthFeedRec {
 type fakeDepthBrancher struct {
 	mu sync.Mutex
 	n  int
-	// orients records each fork's orientation template.
-	orients []string
+	// orients records each fork's orientation template, openings its opening.
+	orients  []string
+	openings []*session.BranchOpening
 }
 
 func (b *fakeDepthBrancher) ForkSession(_ context.Context, parent string, opts BranchOptions) (string, bool, error) {
@@ -98,6 +100,7 @@ func (b *fakeDepthBrancher) ForkSession(_ context.Context, parent string, opts B
 	}
 	b.n++
 	b.orients = append(b.orients, opts.OrientationTemplate)
+	b.openings = append(b.openings, opts.Opening)
 	return fmt.Sprintf("%s/b%d", parent, b.n), true, nil
 }
 func (b *fakeDepthBrancher) SessionPath(string) (string, error) { return "", nil }
@@ -192,7 +195,6 @@ func newDepthHarness(t *testing.T, store *memSpawnStore) *depthHarness {
 		OrientationTemplate: "LEAF {branch_key}\n{report_rule}",
 		RunTurn:             h.runner.run,
 		Notifier:            notifier,
-		MaxConcurrent:       2,
 		CancelAsk:           func(k string) { h.mu.Lock(); h.cancels = append(h.cancels, k); h.mu.Unlock() },
 		StopTurn:            func(k string) { h.mu.Lock(); h.stops = append(h.stops, k); h.mu.Unlock() },
 		CostUSD:             func(string) (float64, bool) { return 0.25, true },
@@ -238,8 +240,17 @@ func (h *depthHarness) fanout(t *testing.T, caller string, leaves ...string) []s
 	h.m.mu.Lock()
 	keys := append([]string(nil), h.m.nodes[caller].Children...)
 	h.m.mu.Unlock()
-	h.runner.wait(t, len(leaves))
 	return keys
+}
+
+// noTurns fails if any turn ran or is queued (#2617: a fan-out runs none).
+func (h *depthHarness) noTurns(t *testing.T) {
+	t.Helper()
+	select {
+	case x := <-h.runner.ch:
+		t.Fatalf("a turn ran: %+v", x)
+	case <-time.After(50 * time.Millisecond):
+	}
 }
 
 func (h *depthHarness) node(key string) depthNode {
@@ -273,9 +284,6 @@ func TestDepthFanoutReportFanIn(t *testing.T) {
 		if h.surface.leaves[k] != depthRoot {
 			t.Errorf("leaf %s routed to %q, want the root conversation", k, h.surface.leaves[k])
 		}
-		if !h.node(k).FirstTurnStarted {
-			t.Errorf("leaf %s first turn not marked started", k)
-		}
 		// #2611: each leaf has its own conversation, recorded on the node and
 		// named in the feed.
 		if c := h.node(k).ConvID; c != "conv:"+k {
@@ -290,8 +298,17 @@ func TestDepthFanoutReportFanIn(t *testing.T) {
 	if !strings.Contains(h.branch.orients[0], "one line") || strings.Contains(h.branch.orients[0], "{report_rule}") {
 		t.Errorf("leaf orientation = %q: the call's orientation must fill {report_rule}", h.branch.orients[0])
 	}
-	if len(h.surface.prompts) != 2 || !strings.Contains(h.surface.prompts[0], "discuss Alpha|"+depthRoot) {
-		t.Errorf("prompts = %v", h.surface.prompts)
+	if len(h.surface.prompts) != 2 || h.surface.prompts[0] != kids[0]+"|discuss Alpha" {
+		t.Errorf("questions shown = %v", h.surface.prompts)
+	}
+	// #2617: no leaf turn runs at creation; each fork ends on its question.
+	h.noTurns(t)
+	for i, o := range h.branch.openings {
+		want := []string{"discuss Alpha", "discuss Beta"}[i]
+		if o == nil || o.AgentText != want || o.CallMarker != "depth_fanout" ||
+			!strings.Contains(o.ToolResult, "2 leaves") || !strings.Contains(o.Fallback, want) {
+			t.Errorf("fork %d opening = %+v", i, o)
+		}
 	}
 	f := h.surface.lastFeed(t)
 	if f.state != depthFanned || len(f.nodes) != 2 || f.nodes[0].Title != "Alpha" || f.nodes[0].Level != 1 {
@@ -456,14 +473,9 @@ func TestDepthApprovalGate(t *testing.T) {
 			}
 			cb(approve)
 			if approve {
-				turns := h.runner.wait(t, 2) // the leaf's first turn and the requester's notice
-				var notice depthTurn
-				for _, tr := range turns {
-					if tr.key == deep {
-						notice = tr
-					}
-				}
-				if !strings.Contains(notice.text, "approved") {
+				turns := h.runner.wait(t, 1) // the requester's notice; the new leaf runs nothing (#2617)
+				notice := turns[0]
+				if notice.key != deep || !strings.Contains(notice.text, "approved") {
 					t.Errorf("requester notice = %+v", notice)
 				}
 				n := h.node(deep)
@@ -519,9 +531,9 @@ func TestDepthResetDropsTree(t *testing.T) {
 	}
 }
 
-// A restart rebuilds the leaf views, re-runs a first turn that never started,
-// marks a leaf whose branch cannot resume lost, and delivers the fan-in the
-// last process could not (§3.5).
+// A restart rebuilds the leaf views, runs no leaf turn (a leaf waits for the
+// user, #2617), marks a leaf whose branch cannot resume lost, and delivers the
+// fan-in the last process could not (§3.5).
 func TestDepthRestore(t *testing.T) {
 	store := newMemSpawnStore()
 	h1 := newDepthHarness(t, store)
@@ -529,13 +541,6 @@ func TestDepthRestore(t *testing.T) {
 	if err := h1.report(t, kids[0], "a done"); err != nil {
 		t.Fatal(err)
 	}
-	// C's first turn "never started" in the old process.
-	h1.m.mu.Lock()
-	h1.m.nodes[kids[2]].FirstTurnStarted = false
-	rec := snap(h1.m.nodes[kids[2]])
-	h1.m.mu.Unlock()
-	h1.m.persist(rec...)
-
 	h2 := newDepthHarness(t, store)
 	h2.resume[kids[1]] = false // B's branch is gone
 	h2.m.Restore()
@@ -549,10 +554,7 @@ func TestDepthRestore(t *testing.T) {
 	if s := h2.node(kids[1]).State; s != depthLost {
 		t.Errorf("unresumable leaf = %s, want lost", s)
 	}
-	turns := h2.runner.wait(t, 1)
-	if turns[0].key != kids[2] || !strings.Contains(turns[0].text, "[DEPTH LEAF: C]") {
-		t.Errorf("re-run first turn = %+v", turns[0])
-	}
+	h2.noTurns(t)
 	if len(h2.deliveries()) != 0 {
 		t.Fatal("fan-in with C still open")
 	}
@@ -805,10 +807,10 @@ func TestDepthRestoreSplitsLegacyTree(t *testing.T) {
 	recs := []depthNode{
 		{Key: depthRoot, Tree: depthRoot, State: depthFanned, Children: []string{"test/c1/b3"}, Created: old, Updated: cur,
 			Claims: []depthClaim{{Node: "Old", Text: "old claim", At: old.Add(time.Minute)}, {Node: "New", Text: "new claim", At: cur.Add(time.Minute)}}},
-		{Key: "test/c1/b1", LeafID: "leaf-1", Tree: depthRoot, Parent: depthRoot, Level: 1, Title: "Old", State: depthReported, Report: "r", Created: old, Updated: old, FirstTurnStarted: true},
-		{Key: "test/c1/b2", LeafID: "leaf-2", Tree: depthRoot, Parent: "test/c1/b1", Level: 2, Title: "Old nested", State: depthReported, Report: "r", Created: old.Add(time.Second), Updated: old, FirstTurnStarted: true},
-		{Key: "test/c1/b3", LeafID: "leaf-3", Tree: depthRoot, Parent: depthRoot, Level: 1, Title: "New", State: depthActive, Created: cur, Updated: cur, FirstTurnStarted: true},
-		{Key: "test/c1/b4", LeafID: "leaf-4", Tree: depthRoot, Parent: "test/c1/b3", Level: 2, Title: "New nested", State: depthReported, Report: "r", Created: cur.Add(time.Second), Updated: cur, FirstTurnStarted: true},
+		{Key: "test/c1/b1", LeafID: "leaf-1", Tree: depthRoot, Parent: depthRoot, Level: 1, Title: "Old", State: depthReported, Report: "r", Created: old, Updated: old},
+		{Key: "test/c1/b2", LeafID: "leaf-2", Tree: depthRoot, Parent: "test/c1/b1", Level: 2, Title: "Old nested", State: depthReported, Report: "r", Created: old.Add(time.Second), Updated: old},
+		{Key: "test/c1/b3", LeafID: "leaf-3", Tree: depthRoot, Parent: depthRoot, Level: 1, Title: "New", State: depthActive, Created: cur, Updated: cur},
+		{Key: "test/c1/b4", LeafID: "leaf-4", Tree: depthRoot, Parent: "test/c1/b3", Level: 2, Title: "New nested", State: depthReported, Report: "r", Created: cur.Add(time.Second), Updated: cur},
 	}
 	h1.m.persist(recs...)
 
@@ -842,8 +844,8 @@ func TestDepthRestoreExpiresEarlierTree(t *testing.T) {
 	now := time.Now()
 	h1.m.persist(
 		depthNode{Key: depthRoot, Tree: depthRoot, TreeID: "tree-new", State: depthFanned, Children: []string{"test/c1/b2"}, Created: old, Updated: now},
-		depthNode{Key: "test/c1/b1", LeafID: "leaf-1", Tree: depthRoot, TreeID: "tree-old", Parent: depthRoot, Level: 1, Title: "Old", State: depthReported, Created: old, Updated: old, FirstTurnStarted: true},
-		depthNode{Key: "test/c1/b2", LeafID: "leaf-2", Tree: depthRoot, TreeID: "tree-new", Parent: depthRoot, Level: 1, Title: "New", State: depthActive, Created: now, Updated: now, FirstTurnStarted: true},
+		depthNode{Key: "test/c1/b1", LeafID: "leaf-1", Tree: depthRoot, TreeID: "tree-old", Parent: depthRoot, Level: 1, Title: "Old", State: depthReported, Created: old, Updated: old},
+		depthNode{Key: "test/c1/b2", LeafID: "leaf-2", Tree: depthRoot, TreeID: "tree-new", Parent: depthRoot, Level: 1, Title: "New", State: depthActive, Created: now, Updated: now},
 	)
 	h2 := newDepthHarness(t, store)
 	h2.m.Restore()
@@ -855,5 +857,27 @@ func TestDepthRestoreExpiresEarlierTree(t *testing.T) {
 	}
 	if h2.node("test/c1/b2").Key == "" || h2.node(depthRoot).Key == "" {
 		t.Error("current tree lost")
+	}
+}
+
+// A leaf's question is given as "question" (#2617); the older "prompt" name
+// still works, and either is what the user sees as the leaf's first message.
+func TestDepthFanoutQuestionField(t *testing.T) {
+	h := newDepthHarness(t, nil)
+	raw := json.RawMessage(`{"leaves": [{"title": "Q", "question": "Which colour do you want?"}, {"title": "P", "prompt": "Old name?"}]}`)
+	if _, err := h.m.fanoutTool().Execute(depthCtx(depthRoot), raw); err != nil {
+		t.Fatal(err)
+	}
+	kids := h.node(depthRoot).Children
+	if len(h.surface.prompts) != 2 || h.surface.prompts[0] != kids[0]+"|Which colour do you want?" || h.surface.prompts[1] != kids[1]+"|Old name?" {
+		t.Errorf("questions shown = %v", h.surface.prompts)
+	}
+	if n := h.node(kids[0]); n.Prompt != "Which colour do you want?" {
+		t.Errorf("stored question = %q", n.Prompt)
+	}
+	h.noTurns(t)
+	raw = json.RawMessage(`{"leaves": [{"title": "Empty"}]}`)
+	if _, err := h.m.fanoutTool().Execute(depthCtx(kids[0]), raw); err == nil || !strings.Contains(err.Error(), "question") {
+		t.Errorf("leaf with no question: err = %v", err)
 	}
 }

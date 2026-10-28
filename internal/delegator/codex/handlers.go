@@ -289,6 +289,14 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 		b.logWarnf("dropping malformed item in item/completed: %v", err)
 		return
 	}
+	// Mark the cached entry finished, so inFlightCall never answers a call
+	// that already has its result (#2617).
+	b.itemMu.Lock()
+	if c, ok := b.itemCache[item.ID]; ok {
+		c.Status = "completed"
+		b.itemCache[item.ID] = c
+	}
+	b.itemMu.Unlock()
 
 	se := b.sessionEvents.Load()
 	switch item.Type {

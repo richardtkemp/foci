@@ -151,7 +151,7 @@ func (a *Agent) ForkBackendBranch(ctx context.Context, parentKey string, opts se
 	}
 	// Fork the backend conversation FIRST — only mint the branch key if it
 	// succeeds, so a failed/impossible fork leaves no orphan branch session.
-	forkedID, err := a.DelegatedManager.ForkParentSession(ctx, parentKey)
+	forkedID, written, err := a.DelegatedManager.ForkParentSessionWith(ctx, parentKey, forkOpening(opts.Opening))
 	if err != nil {
 		a.taggedLog(opts.BranchType).Warnf("backend fork of %s failed: %v", parentKey, err)
 		return "", false
@@ -159,7 +159,7 @@ func (a *Agent) ForkBackendBranch(ctx context.Context, parentKey string, opts se
 	if forkedID == "" {
 		return "", false // nothing to fork (caller falls back)
 	}
-	branchKey, err := a.Sessions.CreateBranchWithOptions(parentKey, opts)
+	branchKey, err := a.Sessions.CreateBranchWithOptions(parentKey, withOpeningFallback(opts, written))
 	if err != nil {
 		a.taggedLog(opts.BranchType).Errorf("fork branch key create for %s: %v", parentKey, err)
 		return "", false
@@ -200,9 +200,18 @@ func (a *Agent) ForkSession(ctx context.Context, parentKey string, opts session.
 		bk, forked := a.ForkBackendBranch(ctx, parentKey, opts)
 		return bk, forked, nil
 	}
-	bk, err := a.Sessions.CreateBranchWithOptions(parentKey, opts)
+	opening := apiOpening(session.UnsavedTurn(ctx), opts.Opening)
+	bk, err := a.Sessions.CreateBranchWithOptions(parentKey, withOpeningFallback(opts, opening != nil))
 	if err != nil {
 		return "", false, err
+	}
+	if opening != nil {
+		// The branch reads the parent's history up to its branch point; the
+		// running turn is not on disk yet, so it goes into the branch with the
+		// opening (#2617).
+		if err := a.Sessions.For(bk).AppendAll(bk, opening); err != nil {
+			a.taggedLog(opts.BranchType).Errorf("branch %s: write opening: %v", bk, err)
+		}
 	}
 	a.TouchRootCacheForBranch(bk) // branching warms root's shared prefix once (ForkBackendBranch does its own)
 	return bk, true, nil

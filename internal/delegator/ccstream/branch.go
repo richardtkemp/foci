@@ -80,10 +80,11 @@ func (b *Backend) ForkSession(ctx context.Context, req delegator.ForkRequest) (d
 	newID := uuid.NewString()
 	newPath := filepath.Join(dir, newID+".jsonl")
 
-	if err := forkTranscript(parentPath, newPath, req.ParentSessionID, newID, b.logger()); err != nil {
+	written, err := forkTranscript(parentPath, newPath, req.ParentSessionID, newID, req.Opening, b.logger())
+	if err != nil {
 		return delegator.ForkResult{}, err
 	}
-	return delegator.ForkResult{SessionID: newID}, nil
+	return delegator.ForkResult{SessionID: newID, OpeningWritten: written}, nil
 }
 
 // CleanupSession implements delegator.BackendBrancher: it deletes the CC
@@ -136,16 +137,22 @@ func (b *Backend) CleanupSession(_ context.Context, req delegator.CleanupRequest
 // Before the task closures, forkTranscript writes a synthetic tool_result for
 // each such call (appendToolClosures), so the fork's first record after its
 // copied history is never a dangling tool_use. See appendToolClosures for why.
-func forkTranscript(src, dst, oldID, newID string, lg *log.ComponentLogger) error {
+//
+// #2617: with opening set, and its call among the calls the copy ends on, the
+// fork ends on the opening: that call's closure
+// carries opening.ToolResult, and an assistant record with opening.AgentText
+// follows every synthetic record, so the fork's next input (the user's reply,
+// on resume) answers it. written reports that the opening went in.
+func forkTranscript(src, dst, oldID, newID string, opening *delegator.ForkOpening, lg *log.ComponentLogger) (written bool, err error) {
 	in, err := os.Open(src)
 	if err != nil {
-		return fmt.Errorf("ccstream fork: open parent transcript %s: %w", src, err)
+		return false, fmt.Errorf("ccstream fork: open parent transcript %s: %w", src, err)
 	}
 	defer in.Close()
 
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
-		return fmt.Errorf("ccstream fork: create branch transcript %s: %w", dst, err)
+		return false, fmt.Errorf("ccstream fork: create branch transcript %s: %w", dst, err)
 	}
 
 	// Scoped to the envelope field itself (#1432) — see the function doc above.
@@ -179,35 +186,45 @@ func forkTranscript(src, dst, oldID, newID string, lg *log.ComponentLogger) erro
 		}
 		scan.observe(line)
 		if _, werr := w.Write(bytes.ReplaceAll(line, oldB, newB)); werr != nil {
-			return finishFork(out, w, dst, fmt.Errorf("ccstream fork: write: %w", werr))
+			return false, finishFork(out, w, dst, fmt.Errorf("ccstream fork: write: %w", werr))
 		}
 		if readErr == io.EOF {
 			break
 		}
 		if readErr != nil {
-			return finishFork(out, w, dst, fmt.Errorf("ccstream fork: read parent: %w", readErr))
+			return false, finishFork(out, w, dst, fmt.Errorf("ccstream fork: read parent: %w", readErr))
 		}
 	}
+	opened := markOpening(scan.pending, opening)
 	lastUUID, err := appendToolClosures(w, newID, scan.lastUUID, scan.pending)
 	if err != nil {
-		return finishFork(out, w, dst, err)
+		return false, finishFork(out, w, dst, err)
 	}
-	if err := appendForkBoundary(w, newID, lastUUID, scan.open); err != nil {
-		return finishFork(out, w, dst, err)
+	lastUUID, err = appendForkBoundary(w, newID, lastUUID, scan.open)
+	if err != nil {
+		return false, finishFork(out, w, dst, err)
+	}
+	if opened != nil {
+		if err := appendOpeningText(w, newID, lastUUID, opened.model, opening.AgentText); err != nil {
+			return false, finishFork(out, w, dst, err)
+		}
 	}
 	if err := w.Flush(); err != nil {
-		return finishFork(out, w, dst, fmt.Errorf("ccstream fork: flush: %w", err))
+		return false, finishFork(out, w, dst, fmt.Errorf("ccstream fork: flush: %w", err))
 	}
 	if err := out.Close(); err != nil {
 		_ = os.Remove(dst)
-		return fmt.Errorf("ccstream fork: close branch transcript: %w", err)
+		return false, fmt.Errorf("ccstream fork: close branch transcript: %w", err)
 	}
 	if cutBeforeEOF {
 		// Normal when forking a live session mid-write; logged so a genuinely
 		// corrupt interior record (which would also cut the fork short) is visible.
 		lg.Debugf("fork: parent %s had an in-flight/partial tail record; branch taken as of the last complete record", src)
 	}
-	return nil
+	if opening != nil && opened == nil {
+		lg.Infof("fork: no in-flight %q call at the end of parent %s; the opening is left to the caller", opening.CallMarker, src)
+	}
+	return opened != nil, nil
 }
 
 // transcriptEnvelope is the minimal subset of a CC transcript line's fields
@@ -224,6 +241,7 @@ type transcriptEnvelope struct {
 	ToolUseResult json.RawMessage `json:"toolUseResult"`
 	Message       *struct {
 		ID      string          `json:"id"`
+		Model   string          `json:"model"`
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
 	// Attachment carries CC's queued_command record: a task-notification that
@@ -254,14 +272,23 @@ type toolUseResult struct {
 // awaiting its result) and tool_result (which call a background shell id belongs
 // to; which call it answers).
 type contentBlock struct {
-	Type      string `json:"type"`
-	Text      string `json:"text"`
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	ToolUseID string `json:"tool_use_id"`
-	Input     *struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text"`
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	ToolUseID string          `json:"tool_use_id"`
+	Input     json.RawMessage `json:"input"`
+}
+
+// description is a tool_use block's input.description, when it has one.
+func (b contentBlock) description() string {
+	var in struct {
 		Description string `json:"description"`
-	} `json:"input"`
+	}
+	if len(b.Input) == 0 || json.Unmarshal(b.Input, &in) != nil {
+		return ""
+	}
+	return in.Description
 }
 
 // taskNotificationIDPattern extracts task-ids out of a task-notification's
@@ -292,6 +319,9 @@ type pendingUse struct {
 	desc          string // input.description, when the tool takes one
 	msgID         string // API message id of the assistant turn that made the call
 	assistantUUID string // uuid of the transcript line holding the tool_use
+	model         string // the assistant turn's model
+	input         string // the call's raw input JSON (markOpening matches on it)
+	result        string // the closure's text when it is not toolClosureText (an opening's)
 }
 
 // forkScan is forkTranscript's running state while copying.
@@ -380,11 +410,10 @@ func (s *forkScan) trackToolUses(env transcriptEnvelope, blocks []contentBlock) 
 		s.pending = kept
 		for _, b := range blocks {
 			if b.Type == "tool_use" && b.ID != "" {
-				p := pendingUse{id: b.ID, name: b.Name, msgID: env.Message.ID, assistantUUID: env.UUID}
-				if b.Input != nil {
-					p.desc = b.Input.Description
-				}
-				s.pending = append(s.pending, p)
+				s.pending = append(s.pending, pendingUse{
+					id: b.ID, name: b.Name, desc: b.description(), msgID: env.Message.ID,
+					assistantUUID: env.UUID, model: env.Message.Model, input: string(b.Input),
+				})
 			}
 		}
 	case "user":
@@ -427,8 +456,8 @@ func (s *forkScan) readContent(raw json.RawMessage) []contentBlock {
 			switch {
 			case b.Type == "text":
 				texts = append(texts, b.Text)
-			case b.Type == "tool_use" && b.Name == "Bash" && b.Input != nil:
-				s.bashDesc[b.ID] = b.Input.Description
+			case b.Type == "tool_use" && b.Name == "Bash" && len(b.Input) > 0:
+				s.bashDesc[b.ID] = b.description()
 			}
 		}
 	}
@@ -473,7 +502,10 @@ func appendToolClosures(w *bufio.Writer, sessionID, lastUUID string, pending []p
 	blocks := make([]map[string]any, 0, len(pending))
 	texts := make([]string, 0, len(pending))
 	for _, p := range pending {
-		text := toolClosureText(p)
+		text := p.result
+		if text == "" {
+			text = toolClosureText(p)
+		}
 		texts = append(texts, text)
 		blocks = append(blocks, map[string]any{
 			"tool_use_id": p.id,
@@ -558,9 +590,11 @@ func toolClosureText(p pendingUse) string {
 // ~20-content-block look-back, and 21+ per-task messages put it out of reach.
 // CC resolves every block in the one message — verified live with two shells
 // and one agent batched.
-func appendForkBoundary(w *bufio.Writer, sessionID, lastUUID string, open map[string]openTask) error {
+// It returns the uuid the next synthetic record must chain off: the
+// boundary's own, or lastUUID unchanged when there was nothing to close.
+func appendForkBoundary(w *bufio.Writer, sessionID, lastUUID string, open map[string]openTask) (string, error) {
 	if len(open) == 0 {
-		return nil
+		return lastUUID, nil
 	}
 	// Deterministic order (map iteration isn't) for reproducible output/tests.
 	ids := make([]string, 0, len(open))
@@ -582,6 +616,7 @@ func appendForkBoundary(w *bufio.Writer, sessionID, lastUUID string, open map[st
 	if lastUUID != "" {
 		parentUUID = lastUUID
 	}
+	id := uuid.NewString()
 	rec := map[string]any{
 		"parentUuid":  parentUUID,
 		"isSidechain": false,
@@ -591,17 +626,82 @@ func appendForkBoundary(w *bufio.Writer, sessionID, lastUUID string, open map[st
 			"role":    "user",
 			"content": strings.Join(notes, "\n"),
 		},
-		"uuid":      uuid.NewString(),
+		"uuid":      id,
 		"timestamp": time.Now().UTC().Format(time.RFC3339Nano),
 		"sessionId": sessionID,
 		"origin":    map[string]any{"kind": "task-notification"},
 	}
 	b, err := json.Marshal(rec)
 	if err != nil {
-		return fmt.Errorf("ccstream fork: marshal fork-boundary closures: %w", err)
+		return "", fmt.Errorf("ccstream fork: marshal fork-boundary closures: %w", err)
 	}
 	if _, err := w.Write(append(b, '\n')); err != nil {
-		return fmt.Errorf("ccstream fork: write fork-boundary closures: %w", err)
+		return "", fmt.Errorf("ccstream fork: write fork-boundary closures: %w", err)
+	}
+	return id, nil
+}
+
+// markOpening finds the call opening answers among the calls the copy ends on
+// (#2617): the LAST one whose tool name or input contains opening.CallMarker
+// (the MCP tool's name, or the foci_depth_fanout shell call in a Bash
+// command). Its closure then carries opening.ToolResult instead of the
+// generic fork-boundary text; other calls of the same turn keep theirs. Nil
+// when there is no opening or no call matches.
+func markOpening(pending []pendingUse, opening *delegator.ForkOpening) *pendingUse {
+	if opening == nil || opening.CallMarker == "" {
+		return nil
+	}
+	for i := len(pending) - 1; i >= 0; i-- {
+		p := &pending[i]
+		if strings.Contains(p.name, opening.CallMarker) || strings.Contains(p.input, opening.CallMarker) {
+			p.result = opening.ToolResult
+			if p.result == "" {
+				p.result = "Done."
+			}
+			return p
+		}
+	}
+	return nil
+}
+
+// appendOpeningText writes the opening's agent message (#2617): an assistant
+// record after the synthetic results, shaped like CC's own text records, so on
+// resume the fork's next user input is the reply to it. The API combines
+// consecutive same-role turns, so the record needs no particular neighbour,
+// but here it always follows the user-role closure of the call that made the
+// fork: the agent speaks after its tool call within the same turn.
+func appendOpeningText(w *bufio.Writer, sessionID, lastUUID, model, text string) error {
+	var parentUUID any
+	if lastUUID != "" {
+		parentUUID = lastUUID
+	}
+	msg := map[string]any{
+		"id":            "msg_fork_" + strings.ReplaceAll(uuid.NewString(), "-", ""),
+		"type":          "message",
+		"role":          "assistant",
+		"content":       []map[string]any{{"type": "text", "text": text}},
+		"stop_reason":   "end_turn",
+		"stop_sequence": nil,
+		"usage":         map[string]any{"input_tokens": 0, "output_tokens": 0},
+	}
+	if model != "" {
+		msg["model"] = model
+	}
+	rec := map[string]any{
+		"parentUuid":  parentUUID,
+		"isSidechain": false,
+		"type":        "assistant",
+		"message":     msg,
+		"uuid":        uuid.NewString(),
+		"timestamp":   time.Now().UTC().Format(time.RFC3339Nano),
+		"sessionId":   sessionID,
+	}
+	b, err := json.Marshal(rec)
+	if err != nil {
+		return fmt.Errorf("ccstream fork: marshal opening: %w", err)
+	}
+	if _, err := w.Write(append(b, '\n')); err != nil {
+		return fmt.Errorf("ccstream fork: write opening: %w", err)
 	}
 	return nil
 }

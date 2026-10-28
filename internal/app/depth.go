@@ -337,10 +337,18 @@ func (DepthSurface) PushFeed(rootKey, rootState string, nodes []fap.DepthNode) {
 	b.send(fap.DepthFeed{ConversationID: b.convID, RootState: rootState, Nodes: nodes})
 }
 
-// ShowPrompt opens a leaf's exchange with the prompt it was given, as a
-// durable prompt row from the parent session.
-func (DepthSurface) ShowPrompt(branchKey, text, fromSession string) {
-	deliverBoundPrompt(branchKey, text, "", fromSession)
+// ShowQuestion opens a leaf's conversation with its question to the user as
+// the leaf agent's first message (#2617): a durable agent row, the same frame
+// an agent reply sends. The leaf's backend fork ends on the same text, so the
+// user's reply is the leaf's first turn.
+func (DepthSurface) ShowQuestion(branchKey, text string) {
+	h := depthHub()
+	if h == nil {
+		return
+	}
+	if b := h.bindingForSession(branchKey); b != nil {
+		b.send(fap.ServerMessage{ConversationID: b.convID, MessageID: fap.NewULID(), Role: "agent", Text: text})
+	}
 }
 
 // LeafBusy reports whether the leaf on branchKey has a turn running.

@@ -9,6 +9,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/convo"
 	"foci/internal/provider"
+	"foci/internal/session"
 )
 
 // ---------------------------------------------------------------------------
@@ -510,7 +511,10 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 		}
 
 		// Execute tool calls.
-		toolResults, err := a.executeToolCalls(ts.Ctx, ts.TurnDetail, ts.TurnClient, ts.SessionKey, ts.TurnModel, resp.Content, ts.Messages)
+		// The turn is saved only when it ends; a fork taken inside a tool call
+		// (depth_fanout) reads the unsaved part from the context (#2617).
+		toolCtx := session.WithUnsavedTurn(ts.Ctx, ts.NewMessages)
+		toolResults, err := a.executeToolCalls(toolCtx, ts.TurnDetail, ts.TurnClient, ts.SessionKey, ts.TurnModel, resp.Content, ts.Messages)
 		if err != nil {
 			return err
 		}
