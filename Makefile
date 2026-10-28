@@ -527,17 +527,15 @@ bucket-audit:
 # taker of the merge lock and always takes it before heavy, so no cycle is
 # possible — just don't add a heavy-holding target that also lands.
 #
-# THE SCRIPT ITSELF IS NOT IN THIS REPO (#1973): foci and foci-client used to
-# each carry their own scripts/land.sh, and the two copies drifted (#1902,
-# #1943 were both defects born from that drift — one fix landing in one copy
-# and not the other). There is now exactly one copy of the bytes, at
-# /home/foci/shared/scripts/land.sh (the shared agent-home repo, already the
-# established home for cross-repo automation — see e.g. foci-client's
-# mk/local.mk referencing shared/scripts/gradle-init-foci-client.gradle the
-# same way). This repo's only per-repo inputs are passed as env vars, never
-# forked into a second copy of the logic: LAND_LOCK (this repo's own merge
-# lock, so foci and foci-client landings never block each other) and
-# LAND_TEST_TARGET (the `make` target land runs as its test gate).
+# THE SCRIPT IS scripts/land.sh, MIRRORED IN foci-client (Dick, 2026-10-28,
+# #2583): the same bytes live at scripts/land.sh in both repos, and any change
+# must be mirrored in the other repo. #1973 had kept one shared copy at
+# /home/foci/shared/scripts/land.sh to stop the copies drifting (#1902, #1943);
+# it moved into the repos so a checkout on the work Mac (no /home/foci) can land.
+# This repo's only per-repo inputs are passed as env vars, never forked into the
+# logic: LAND_LOCK (this repo's own merge lock, so foci and foci-client landings
+# never block each other) and LAND_TEST_TARGET (the `make` target land runs as
+# its test gate).
 #
 # Cheap repo-state work (fetch, rebase, conflict/dirty detection) runs BEFORE
 # the compute step, so merge-lock hold time is ~= the unit suite + heavy
@@ -545,7 +543,7 @@ bucket-audit:
 # best-effort fast-forwards the local main checkout too, and now tells BEHIND
 # from DIVERGED there rather than treating every non-ff the same way (#1973).
 #
-# The logic lives in the external script, NOT inline here, on purpose: an inline
+# The logic lives in the script, NOT inline here, on purpose: an inline
 # recipe would need `$(MAKE) test` for the compute step, and GNU make's
 # recursive-make heuristic RUNS any recipe line containing $(MAKE) even under
 # `make -n` — so a `make -n land` "dry run" on a clean tree would really fetch,
@@ -559,7 +557,7 @@ bench-test-build:
 	@PKG='$(or $(PKG),./cmd/foci-gw/)' REPS='$(or $(REPS),3)' MODE='$(or $(MODE),both)' VARIANTS="$(VARIANTS)" bash scripts/bench-test-build.sh
 
 land:
-	@LAND_LOCK=/tmp/foci-merge.lock LAND_TEST_TARGET=test bash /home/foci/shared/scripts/land.sh
+	@LAND_LOCK=/tmp/foci-merge.lock LAND_TEST_TARGET=test bash scripts/land.sh
 
 coverage:
 	$(eval TESTDIR := $(call fgw_testdir,test))
