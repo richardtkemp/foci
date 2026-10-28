@@ -24,7 +24,6 @@ import (
 	"foci/internal/config"
 	"foci/internal/defersend"
 	"foci/internal/delegator"
-	"foci/internal/display"
 	"foci/internal/execguard"
 	"foci/internal/fociroot"
 	"foci/internal/log"
@@ -257,18 +256,19 @@ Subcommands:
 	}
 
 	// ========== Reclaim orphaned temp state ==========
-	// Wipe the temp root's orphaned per-session state (exec bridge sockets,
-	// spill/pair/browser scratch, spawn sandboxes, …) before anything below
-	// resolves the root for its own use. This is the one moment no session,
-	// exec bridge, spill file, pairing scratch, or browser scratch can be
-	// referenced by a live process — so everything already on disk there is
-	// provably orphaned rather than merely old. The app blob store used to
-	// live here (app-blobs/) and now lives under the data dir (#1556), so
-	// move any surviving blobs across FIRST — the wipe no longer spares it.
+	// Take this gateway's lock on the temp root, then wipe the root's orphaned
+	// per-session state (exec bridge sockets, spill/pair/browser scratch, spawn
+	// sandboxes, …) before anything below resolves the root for its own use.
+	// This process has no session, exec bridge, spill file, pairing scratch or
+	// browser scratch yet, so nothing on disk is its own. But another living
+	// gateway on the same root (no FOCI_TMPDIR on either) may own all of it, so
+	// the wipe is SKIPPED while any other gateway holds the root lock, or when
+	// the lock cannot be checked (#2482); only then is the state provably
+	// orphaned. The lock is held until this process exits. The app blob store
+	// used to live here (app-blobs/) and now lives under the data dir (#1556),
+	// so move any surviving blobs across FIRST — the wipe no longer spares it.
 	app.MigrateLegacyBlobDir(cfg.DataDir)
-	if r := tempdir.CleanStale(); r.Removed > 0 || r.Failed > 0 {
-		startupLog.Infof("temp cleanup: reclaimed %d entries (%s), %d failed", r.Removed, display.FormatBytes(r.Bytes), r.Failed)
-	}
+	logTempCleanup(tempdir.CleanStale())
 
 	// ========== Seed shared defaults ==========
 	wsFileMode, _ := config.ParseFileMode(cfg.FileMode)

@@ -61,45 +61,72 @@ const spawnDirName = "spawn"
 // left to age out via the age-based sweep instead (see CleanOldFiles).
 const toolResultsDir = "tool-results"
 
-// CleanStaleResult summarizes one CleanStale run: how many entries were
-// reclaimed, how many bytes that freed, and how many entries were left in
-// place because removal failed.
+// CleanStaleResult summarizes one CleanStale run: whether the wipe ran, how
+// many entries were reclaimed, how many bytes that freed, and how many entries
+// were left in place because removal failed.
 type CleanStaleResult struct {
 	Removed int   // entries successfully removed
 	Bytes   int64 // total size of removed entries (best-effort)
 	Failed  int   // entries that could not be removed
+
+	// SkipReason is set when the wipe did not run, saying why: another
+	// living gateway uses the root, or this process could not tell (see
+	// LockErr). Empty when the wipe ran.
+	SkipReason string
+	// LockErr is the root-lock failure behind a fail-safe skip, or a failure
+	// to downgrade the lock after a wipe that did run. Nil otherwise.
+	LockErr error
 }
 
-// CleanStale performs a best-effort wipe of orphaned top-level temp state
-// under the resolved root. It is meant to run exactly once, at foci-gw
+// CleanStale takes this gateway's lock on the resolved temp root and, when no
+// other living gateway uses that root, performs a best-effort wipe of its
+// orphaned top-level temp state. It is meant to run exactly once, at foci-gw
 // startup, AFTER the root is resolved (see resolve/resolveRoot) and BEFORE
-// any per-process bridge or spawn-sandbox dir is created.
+// any per-process bridge, spawn-sandbox dir or other temp state is created.
+// The lock is held until the process ends (see lock.go for the protocol).
 //
-// Startup is the one moment "everything already on disk is orphaned" is
-// provable rather than inferred: no session exists yet, so no exec bridge,
-// spill file, pairing scratch, or browser scratch can possibly be referenced
-// by a live process. That's strictly better than an age heuristic — a
-// session idle >24h holds a stale-but-LIVE BASH_ENV funcs.sh that an
-// age-based reaper would delete, breaking every foci_* tool in that session
-// on next wake.
+// The state on disk is provably orphaned only when no other gateway uses the
+// root. This process has no session yet, so nothing on disk can be its own;
+// but two gateways share one root whenever neither sets FOCI_TMPDIR, and a
+// living gateway's exec-bridge sockets and funcs files have their paths baked
+// into its backends' environment, so deleting them breaks every foci_* tool
+// of that gateway until the backend is torn down (#2482). So the wipe is
+// SKIPPED, and nothing is removed, when:
+//   - another living gateway holds the root lock (whichever started first);
+//   - or the lock cannot be taken or checked at all (e.g. the lock file
+//     belongs to another uid and is unreadable): unsure means do not wipe.
 //
-// CleanStale never panics out to the caller and never treats a removal
-// failure as fatal. The root is NOT sticky and NOT world-writable — it's
-// owned by the daemon's uid with a `rich-readers` group (POSIX ACL default
-// grants the group rwx, so any member can create/unlink entries here), and
-// individual entries (e.g. a spawn/ sandbox dir mode 2700, owned by a
-// different `rich-readers` member) can still be unreadable to this process,
-// making removal fail even though it's technically "our" group. Those
-// failures are counted, never aborted on. A cleanup failure here must never
-// block gateway startup.
+// A gateway that died (crash, SIGKILL) holds no lock, even if processes it
+// started are still running, so the next start wipes its leftovers exactly as
+// before, and a restart wipes its predecessor's bridges.
+//
+// When the wipe runs it beats an age heuristic: a session idle >24h holds a
+// stale-but-LIVE BASH_ENV funcs.sh that an age-based reaper would delete,
+// breaking every foci_* tool in that session on next wake.
+//
+// CleanStale never panics out to the caller, and neither a removal failure
+// nor a lock failure is fatal. The root is NOT sticky and NOT world-writable —
+// it's owned by the daemon's uid with a `rich-readers` group (POSIX ACL
+// default grants the group rwx, so any member can create/unlink entries
+// here), and individual entries (e.g. a spawn/ sandbox dir mode 2700, owned
+// by a different `rich-readers` member) can still be unreadable to this
+// process, making removal fail even though it's technically "our" group.
+// Those failures are counted, never aborted on. A cleanup failure here must
+// never block gateway startup.
 func CleanStale() CleanStaleResult {
-	return cleanStaleRoot(Dir())
+	lock, result := claimRoot(Dir())
+	if lock != nil {
+		holdForProcessLife(lock)
+	}
+	return result
 }
 
-// cleanStaleRoot is the testable core of CleanStale: it operates on an
+// cleanStaleRoot is the lock-free wipe core of CleanStale: it operates on an
 // explicit root rather than the process-wide resolved Dir(), so tests can
 // exercise it against a scratch directory without ever touching a live
-// install's /tmp/foci.
+// install's /tmp/foci. Callers must hold the root's exclusive lock (see
+// claimRoot). It never removes the lock file: living gateways hold locks on
+// that inode, and a re-created file would be a different one.
 func cleanStaleRoot(root string) (result CleanStaleResult) {
 	defer func() {
 		// Best-effort: a panic during the wipe must never block startup.
@@ -114,6 +141,9 @@ func cleanStaleRoot(root string) (result CleanStaleResult) {
 	for _, e := range entries {
 		if e.Name() == toolResultsDir {
 			continue // path is referenced from conversation history — see toolResultsDir
+		}
+		if e.Name() == lockFileName {
+			continue // the root lock living gateways hold — see lock.go
 		}
 		path := filepath.Join(root, e.Name())
 		if e.Name() == spawnDirName && e.IsDir() {
