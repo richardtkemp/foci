@@ -271,6 +271,25 @@ func (s *TodoStore) Add(agentID, text, priority, tags string) (int64, error) {
 	return nextID, nil
 }
 
+// timeOrderBy orders by a stored RFC3339(Nano) timestamp column: whole seconds
+// via unixepoch (which also normalises the UTC offset), then the sub-second
+// fraction, then id. The fraction is NOT the column's text (#2621): RFC3339Nano
+// drops trailing zeros, so ".12345Z" compares above ".123456Z" ('Z' > '6') and
+// "05Z" above "05.000001Z". subsecondKey right-pads the digits to a fixed width
+// so a text compare of the key is a numeric compare of the fraction.
+func timeOrderBy(col, dir, idDir string) string {
+	return fmt.Sprintf(` ORDER BY unixepoch(%s) %s, %s %s, id %s`, col, dir, subsecondKey(col), dir, idDir)
+}
+
+// subsecondKey is a SQL expression giving the nanosecond fraction of a stored
+// timestamp as 9 digits. Stored values are "YYYY-MM-DDTHH:MM:SS" (19 chars),
+// then an optional ".digits", then "Z" or "±HH:MM".
+func subsecondKey(col string) string {
+	return fmt.Sprintf(`CASE WHEN substr(%[1]s, 20, 1) = '.'`+
+		` THEN substr(substr(%[1]s, 21, length(%[1]s) - 20 - CASE WHEN substr(%[1]s, -1) = 'Z' THEN 1 ELSE 6 END) || '000000000', 1, 9)`+
+		` ELSE '000000000' END`, col)
+}
+
 // List returns todo items for an agent, optionally filtered by status, tags, and/or priority.
 // sort can be "created", "updated", "closed", or "priority".
 // Default direction is descending (newest/highest first); reverse=true flips it.
@@ -292,11 +311,11 @@ func (s *TodoStore) List(agentID, status string, tags []string, priority, sort s
 	}
 	switch sort {
 	case "created":
-		query += fmt.Sprintf(` ORDER BY unixepoch(created_at) %s, created_at %s, id %s`, dir, dir, idDir)
+		query += timeOrderBy("created_at", dir, idDir)
 	case "updated":
-		query += fmt.Sprintf(` ORDER BY unixepoch(updated_at) %s, updated_at %s, id %s`, dir, dir, idDir)
+		query += timeOrderBy("updated_at", dir, idDir)
 	case "closed":
-		query += fmt.Sprintf(` ORDER BY unixepoch(completed_at) %s, completed_at %s, id %s`, dir, dir, idDir)
+		query += timeOrderBy("completed_at", dir, idDir)
 	case "id":
 		// Needed as its own case even though every arm above already tiebreaks on id:
 		// without it, "id" fell through to the PRIORITY default and returned priority

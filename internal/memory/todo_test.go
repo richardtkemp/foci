@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -1124,6 +1125,67 @@ func TestTodoSortByCreatedIgnoresStatus(t *testing.T) {
 	}
 	if items[3].ID != id1 {
 		t.Errorf("fourth item ID = %d (status=%s), want %d (oldest)", items[3].ID, items[3].Status, id1)
+	}
+}
+
+// TestTodoSortSubSecondOrder pins the order of two timestamps in the SAME second
+// (#2621). RFC3339Nano drops trailing zeros, so the stored fraction has a
+// variable width, and a TEXT compare of it is wrong: ".12345Z" sorts above
+// ".123456Z" because 'Z' > '6'. Mac clocks tick in microseconds, so one such
+// pair in ten consecutive writes made TestTodoSortByCreatedIgnoresStatus flake
+// there (~2% of runs) while the NUC's nanosecond clock never showed it.
+// The pairs are written by hand, so the test does not depend on the clock.
+func TestTodoSortSubSecondOrder(t *testing.T) {
+	cases := []struct {
+		name           string
+		earlier, later string
+	}{
+		{"trimmed fraction is a prefix", "2026-10-28T18:33:05.12345Z", "2026-10-28T18:33:05.123456Z"},
+		{"trimmed fraction with offset", "2026-10-28T18:33:05.5+01:00", "2026-10-28T18:33:05.500001+01:00"},
+		{"whole second vs fraction", "2026-10-28T18:33:05Z", "2026-10-28T18:33:05.000001Z"},
+		{"different offsets", "2026-10-28T19:33:05.9+01:00", "2026-10-28T18:33:05.95Z"},
+	}
+	for _, col := range []struct{ column, sort string }{
+		{"created_at", "created"}, {"updated_at", "updated"}, {"completed_at", "closed"},
+	} {
+		for _, tc := range cases {
+			// Both id orders, so neither the id tiebreak nor insertion order can
+			// make the test pass on its own.
+			for _, laterFirst := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/laterIsID1=%v", col.sort, tc.name, laterFirst), func(t *testing.T) {
+					store := newTestTodoStore(t)
+					idA, _ := store.Add("agent1", "A", "high", "")
+					idB, _ := store.Add("agent1", "B", "high", "")
+					tsA, tsB, wantFirst := tc.earlier, tc.later, idB
+					if laterFirst {
+						tsA, tsB, wantFirst = tc.later, tc.earlier, idA
+					}
+					for id, ts := range map[int64]string{idA: tsA, idB: tsB} {
+						if _, err := store.db.Exec(
+							fmt.Sprintf("UPDATE todos SET %s = ? WHERE id = ? AND agent_id = 'agent1'", col.column), ts, id,
+						); err != nil {
+							t.Fatalf("set %s: %v", col.column, err)
+						}
+					}
+					for _, reverse := range []bool{false, true} {
+						items, err := store.List("agent1", "", nil, "", col.sort, reverse, 0)
+						if err != nil {
+							t.Fatalf("List: %v", err)
+						}
+						if len(items) != 2 {
+							t.Fatalf("expected 2 items, got %d", len(items))
+						}
+						want := wantFirst
+						if reverse {
+							want = idA + idB - wantFirst
+						}
+						if items[0].ID != want {
+							t.Errorf("reverse=%v: first item ID = %d, want %d (A=%s B=%s)", reverse, items[0].ID, want, tsA, tsB)
+						}
+					}
+				})
+			}
+		}
 	}
 }
 
