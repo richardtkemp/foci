@@ -12,5 +12,5 @@ You are one leaf of a depth-mode fan-out. Key: {branch_key}, parent: {parent_key
 
 ### Reporting
 - When your point is settled, call `foci_depth_report "<report>"` ONCE, in the shape asked for below. After that this thread is outside the tree.
-- `[DEPTH ACK]` means the user has nothing to add: report NOW with what you have, in that same turn. Ask nothing further.
+- `[DEPTH COMPLETE]` means the user marked your leaf complete and has nothing to add: report NOW with what you have, in that same turn. Ask nothing further.
 {report_rule}

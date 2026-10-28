@@ -324,7 +324,7 @@ func TestDepthFanoutReportFanIn(t *testing.T) {
 	}
 }
 
-// Ack = report now (NQ1): the pending ask is cancelled, one [DEPTH ACK] turn
+// Ack = report now (NQ1): the pending ask is cancelled, one [DEPTH COMPLETE] turn
 // runs, and a turn that ends without depth_report reports its final text.
 func TestDepthAckAutoReports(t *testing.T) {
 	h := newDepthHarness(t, nil)
@@ -373,7 +373,7 @@ func TestDepthAckWithoutSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.runner.wait(t, 1)
-	if r := h.node(kids[0]).Report; r != "(acknowledged by the user; the leaf gave no summary)" {
+	if r := h.node(kids[0]).Report; r != "(completed by the user; the leaf gave no summary)" {
 		t.Errorf("report = %q", r)
 	}
 }
@@ -400,12 +400,15 @@ func TestDepthDismissNested(t *testing.T) {
 		if s := h.node(k).State; s != depthDismissed {
 			t.Errorf("%s state = %s, want dismissed", k, s)
 		}
+		if n := h.node(k); n.reportLine() != "(cancelled by the user)" {
+			t.Errorf("%s report line = %q, want the cancelled wording", k, n.reportLine())
+		}
 	}
 	if len(h.stops) != 3 {
 		t.Errorf("StopTurn calls = %v, want the node and both children", h.stops)
 	}
 	ds := h.deliveries()
-	if len(ds) != 1 || ds[0].target != depthRoot || !strings.Contains(ds[0].msg, "## Parent — dismissed by the user") {
+	if len(ds) != 1 || ds[0].target != depthRoot || !strings.Contains(ds[0].msg, "## Parent — cancelled by the user") {
 		t.Fatalf("deliveries = %+v", ds)
 	}
 }

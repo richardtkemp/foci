@@ -60,8 +60,9 @@ const (
 	depthDropped   = fap.DepthStateDropped
 )
 
-// DepthAckText is the turn the feed's Ack runs on a leaf (NQ1: Ack = report now).
-const DepthAckText = "[DEPTH ACK] The user has acknowledged your last message and has nothing to add. Report now with foci_depth_report, using what you have; do not ask anything further."
+// DepthAckText is the turn the feed's Ack (the client's "Complete" button) runs on a
+// leaf (NQ1: Ack = report now).
+const DepthAckText = "[DEPTH COMPLETE] The user marked this leaf complete: they have nothing to add. Report now with foci_depth_report, using what you have; do not ask anything further."
 
 // DepthSurface is the app side of depth mode (app.DepthSurface).
 type DepthSurface interface {
@@ -395,7 +396,7 @@ func (m *DepthManager) pushFeed(tree string) {
 func (n *depthNode) reportLine() string {
 	switch n.State {
 	case depthDismissed:
-		return "(dismissed by the user)"
+		return "(cancelled by the user)"
 	case depthLost:
 		return "(lost: " + n.Reason + ")"
 	case depthDropped:
@@ -835,7 +836,7 @@ func (m *DepthManager) resultsMessage(kids []depthNode) string {
 		b.WriteString(c.Title)
 		switch c.State {
 		case depthDismissed:
-			b.WriteString(" — dismissed by the user\n")
+			b.WriteString(" — cancelled by the user\n")
 			continue
 		case depthLost:
 			b.WriteString(" — lost: " + c.Reason + "\n")
@@ -1001,9 +1002,9 @@ func (m *DepthManager) autoReport(key string) {
 		m.mu.Unlock()
 		return
 	}
-	text := "(acknowledged by the user; the leaf gave no summary)"
+	text := "(completed by the user; the leaf gave no summary)"
 	if strings.TrimSpace(n.LastLine) != "" && !n.LastLineAt.Before(n.AckAt) {
-		text = n.LastLine + "\n\n(auto-reported after the user's acknowledgement)"
+		text = n.LastLine + "\n\n(auto-reported after the user marked it complete)"
 	}
 	m.finishLocked(n, depthReported, text)
 	rec := snap(n)
@@ -1408,7 +1409,7 @@ func (m *DepthManager) status(caller string) string {
 			if x.State == depthActive {
 				switch {
 				case x.AckPending:
-					state = "active, wrapping up after the user's ack"
+					state = "active, wrapping up after the user marked it complete"
 				case queued[i] || (m.deps.Surface != nil && m.deps.Surface.LeafBusy(x.Key)):
 					state = "active, running"
 				default:
