@@ -9,9 +9,32 @@ import (
 
 // Tools returns the four depth-mode tools (#2588): depth_fanout, depth_report,
 // depth_claims and depth_status, exported to delegated agents as the
-// foci_depth_* shell functions.
+// foci_depth_* shell functions. Each is gated live on [depth] enabled (#2603):
+// while it is off the tool is hidden from the model's listings (Available) and
+// refuses a call, which still reaches it through a running CC session's shell
+// functions, written once at that session's start.
 func (m *DepthManager) Tools() []*Tool {
-	return []*Tool{m.fanoutTool(), m.reportTool(), m.claimsTool(), m.statusTool()}
+	ts := []*Tool{m.fanoutTool(), m.reportTool(), m.claimsTool(), m.statusTool()}
+	for _, t := range ts {
+		m.gate(t)
+	}
+	return ts
+}
+
+// gate makes t follow the live [depth] enabled switch.
+func (m *DepthManager) gate(t *Tool) {
+	exec := t.Execute
+	t.Available = m.Enabled
+	t.Execute = func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+		if !m.Enabled() {
+			return ToolResult{}, errDepthOff(t.Name)
+		}
+		return exec(ctx, params)
+	}
+}
+
+func errDepthOff(tool string) error {
+	return fmt.Errorf("%s: depth mode is off ([depth] enabled = false); it works again once it is turned back on", tool)
 }
 
 func (m *DepthManager) fanoutTool() *Tool {

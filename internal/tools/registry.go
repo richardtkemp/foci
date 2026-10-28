@@ -59,7 +59,18 @@ type Tool struct {
 	// Execute renders its own JSON (via JSONResult) when WantsJSON(ctx);
 	// empty means the exec bridge's generic {"result": "<text>"} wrapper.
 	JSONOutput string
+
+	// Available is a live gate (#2603, a config switch such as [depth]
+	// enabled); nil = always available. While it reports false the tool is
+	// left out of what the model is shown (ToolDefs, ExportedTools, the shell
+	// tool's description), but stays registered: its shell function and
+	// auto-approve rule exist, so a running session gains it the moment the
+	// gate opens. Execute must therefore refuse by itself while closed.
+	Available func() bool
 }
+
+// available reports whether t is open to the model right now.
+func (t *Tool) available() bool { return t.Available == nil || t.Available() }
 
 // Registry holds all registered tools.
 type Registry struct {
@@ -98,7 +109,9 @@ type ExportedTool struct {
 }
 
 // ExportedNames returns sorted names of tools with ExecExport: true,
-// prefixed with "foci_" (matching the shell function names).
+// prefixed with "foci_" (matching the shell function names). It includes
+// live-gated tools whatever their gate (Tool.Available): it drives the
+// auto-approve rules, built once at startup.
 func (r *Registry) ExportedNames() []string {
 	var names []string
 	for _, t := range r.All() {
@@ -109,11 +122,13 @@ func (r *Registry) ExportedNames() []string {
 	return names
 }
 
-// ExportedTools returns sorted exported tools with names and descriptions.
+// ExportedTools returns sorted exported tools with names and descriptions,
+// for the listing the model reads: a tool whose Available gate is closed is
+// left out.
 func (r *Registry) ExportedTools() []ExportedTool {
 	var out []ExportedTool
 	for _, t := range r.All() {
-		if t.ExecExport {
+		if t.ExecExport && t.available() {
 			out = append(out, ExportedTool{
 				Name:        "foci_" + t.Name,
 				Description: firstSentence(t.Description),
@@ -142,7 +157,14 @@ func (r *Registry) FinalizeShellDescription() {
 	if execTool == nil {
 		return
 	}
-	names := r.ExportedNames()
+	// Written once at startup, so a live-gated tool is left out: the model
+	// learns of it through ToolDefs, which follows the gate.
+	var names []string
+	for _, t := range r.All() {
+		if t.ExecExport && t.Available == nil {
+			names = append(names, "foci_"+t.Name)
+		}
+	}
 	if len(names) == 0 {
 		return
 	}
@@ -154,10 +176,13 @@ func (r *Registry) FinalizeShellDescription() {
 
 // ToolDefs returns tool definitions for the Anthropic API, sorted by name
 // for deterministic ordering (required for prompt caching — tools are part
-// of the cached prefix).
+// of the cached prefix). A tool whose Available gate is closed is left out.
 func (r *Registry) ToolDefs() []provider.ToolDef {
 	defs := make([]provider.ToolDef, 0, len(r.tools))
 	for _, t := range r.tools {
+		if !t.available() {
+			continue
+		}
 		defs = append(defs, provider.NewCustomTool(t.Name, t.Description, t.Parameters))
 	}
 	sort.Slice(defs, func(i, j int) bool { return defs[i].Name() < defs[j].Name() })

@@ -11,6 +11,27 @@ import (
 	"foci/internal/provider"
 )
 
+// NEW CONFIG KEYS MUST BE HOT-RELOADABLE IF AT ALL POSSIBLE (Dick, 2026-10-28,
+// #2603). A key added to this package, to any struct reachable from Config, or
+// to a [[...]] rule list, should take effect on a foci.toml edit or /config set
+// without a foci restart. How:
+//   - tag the field hot:"<when>" (immediate | turn | session | event: how soon
+//     a change is seen) and give it a desc: (an undescribed field has no
+//     registry row, so the hot tag is not seen);
+//   - read it live at the point of use (resolvedLive.Load() / LiveConfig() /
+//     a getter), never a copy taken at startup;
+//   - cover its registry address(es) with an applier in cmd/foci-gw/liveapply.go
+//     (liveApplyResolvedAddrs for a value read from the resolved snapshot; a
+//     dedicated applier when a subsystem holds its own copy).
+//     TestLiveApplyCoversHotFields keeps tags and appliers in lockstep and
+//     prints the exact addresses to list.
+// A key that decides something built once (a registered tool, a listener, a
+// semaphore size) can usually still be live: build it unconditionally and gate
+// its behaviour on the live value ([depth] enabled is the worked example:
+// cmd/foci-gw/depth_setup.go, tools.Tool.Available). Leave a key restart-only
+// only when it genuinely cannot be live, and say why beside the field.
+// Walkthrough: the foci-add-live-config-field skill.
+
 // ToolCallDisplay controls how tool calls are shown in Telegram.
 type ToolCallDisplay string
 
@@ -401,6 +422,8 @@ type GroupsConfig struct {
 	Fallbacks map[string]string `toml:"fallbacks"` // model → fallback model
 }
 
+// AgentConfig is one [[agents]] entry. New keys here follow the hot-reload
+// rule at the top of this file (#2603): hot:"<when>" tag + live read + applier.
 type AgentConfig struct {
 	ID              string `toml:"id" desc:"Unique agent identifier (e.g. clutch, scout)"`
 	Name            string `toml:"name"             desc:"Human-readable name shown in the app and voice endpoint"`
@@ -1138,7 +1161,7 @@ type BrowserConfig struct {
 // foci_depth_* tools that fan a conversation out into leaf branches whose
 // chats surface as a feed inside the root's app conversation.
 type DepthConfig struct {
-	Enabled *bool `toml:"enabled" default:"false" desc:"Experimental: give the agent the depth-mode tools (foci_depth_fanout and friends), which fan an app conversation out into leaf branches you answer in a feed inside it. Needs the app platform and a backend that can branch"`
+	Enabled *bool `toml:"enabled" default:"false" hot:"turn" desc:"Experimental: give the agent the depth-mode tools (foci_depth_fanout and friends), which fan an app conversation out into leaf branches you answer in a feed inside it. Needs the app platform and a backend that can branch"`
 }
 
 type ToolsConfig struct {
@@ -1315,6 +1338,9 @@ type DebugConfig struct {
 	ExtraInboxLogging    *bool `toml:"extra_inbox_logging"    default:"false" hot:"immediate" scope:"global" desc:"Log verbose details (tagged xtra:inbox) of how incoming messages are queued, steered or dropped, for debugging message routing"`          // verbose inbox routing/gate logging
 }
 
+// Config is the whole foci.toml. New keys and sections here follow the
+// hot-reload rule at the top of this file (#2603): hot:"<when>" tag + live
+// read + applier.
 type Config struct {
 	DataDir            string                    `toml:"data_dir" desc:"Directory for databases, sessions, and state files (default: $HOME/data)"`
 	Notify             NotifyConfig              `toml:"notify"`     // global notification defaults

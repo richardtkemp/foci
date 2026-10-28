@@ -37,8 +37,9 @@ type ConfigField struct {
 	// immediate/turn/session/event — how soon a change is observed). A
 	// ",global" suffix (hot:"immediate,global") scopes the tag to the field's
 	// GLOBAL registry row, for shared structs whose agent/platform override
-	// rows have no live consumer. No tag = restart required, the conservative
-	// default for new fields.
+	// rows have no live consumer. No tag = restart required. A NEW field must
+	// be made live (tag + applier) wherever possible: see the rule at the top
+	// of types.go (#2603).
 	NeedsRestart bool
 }
 

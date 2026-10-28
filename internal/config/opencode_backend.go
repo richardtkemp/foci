@@ -6,6 +6,9 @@ package config
 //
 // Mirrors CCBackendConfig in structure but with opencode-specific
 // fields. See OPENCODE_DELEGATOR_PLAN.md §14.1.
+//
+// New keys here follow the hot-reload rule at the top of
+// internal/config/types.go (#2603): hot:"<when>" tag + live read + applier.
 type OpencodeBackendConfig struct {
 	// Binary overrides the path to the `opencode` executable.
 	// Default "" → "opencode" resolved via $PATH. Integration tests

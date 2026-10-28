@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -156,6 +157,7 @@ type depthHarness struct {
 	stops    []string
 	approve  func(sk, id, text string, cb func(bool)) error
 	resume   map[string]bool
+	off      atomic.Bool // [depth] enabled = false (#2603)
 }
 
 const depthRoot = "test/c1"
@@ -176,6 +178,7 @@ func newDepthHarness(t *testing.T, store *memSpawnStore) *depthHarness {
 		})
 	h.m = NewDepthManager(DepthDeps{
 		AgentID:             "test",
+		Enabled:             func() bool { return !h.off.Load() },
 		Store:               store,
 		Surface:             h.surface,
 		Sessions:            h.branch,
@@ -615,5 +618,112 @@ func TestDepthClaims(t *testing.T) {
 	st, _ := h.m.statusTool().Execute(depthCtx(kids[0]), nil)
 	if !strings.Contains(st.Text, "- A [") || !strings.Contains(st.Text, "(you)") {
 		t.Errorf("status = %q", st.Text)
+	}
+}
+
+// [depth] enabled is live (#2603): off hides the four tools from the model's
+// listings and refuses every call, on brings them back, with no rebuild.
+func TestDepthLiveGate(t *testing.T) {
+	h := newDepthHarness(t, nil)
+	tools := h.m.Tools()
+	h.off.Store(true)
+	params := map[string]json.RawMessage{
+		"depth_fanout": json.RawMessage(`{"leaves": [{"title": "A", "prompt": "p"}]}`),
+		"depth_report": json.RawMessage(`{"text": "r"}`),
+		"depth_claims": json.RawMessage(`{"action": "list"}`),
+		"depth_status": json.RawMessage(`{}`),
+	}
+	reg := NewRegistry()
+	for _, tl := range tools {
+		reg.Register(tl)
+		if tl.Available == nil || tl.Available() {
+			t.Errorf("%s available while depth mode is off", tl.Name)
+		}
+		if _, err := tl.Execute(depthCtx(depthRoot), params[tl.Name]); err == nil || !strings.Contains(err.Error(), "depth mode is off") {
+			t.Errorf("%s while off: err = %v", tl.Name, err)
+		}
+	}
+	if d := reg.ToolDefs(); len(d) != 0 {
+		t.Errorf("ToolDefs while off = %d tools", len(d))
+	}
+	if e := reg.ExportedTools(); len(e) != 0 {
+		t.Errorf("ExportedTools while off = %+v", e)
+	}
+	if n := reg.ExportedNames(); len(n) != 4 {
+		t.Errorf("ExportedNames (shell functions, auto-approve) must keep the gated tools: %v", n)
+	}
+	if h.node(depthRoot).Key != "" {
+		t.Error("a refused fan-out left a node behind")
+	}
+
+	h.off.Store(false)
+	for _, tl := range tools {
+		if !tl.Available() {
+			t.Errorf("%s unavailable once depth mode is back on", tl.Name)
+		}
+	}
+	if d := reg.ToolDefs(); len(d) != 4 {
+		t.Errorf("ToolDefs once on = %d tools", len(d))
+	}
+	h.fanout(t, depthRoot, "A")
+}
+
+// A level-5 approval answered after depth mode was turned off does not fan
+// out: the requester hears it was refused (#2603).
+func TestDepthApprovalAfterTurnedOff(t *testing.T) {
+	h := newDepthHarness(t, nil)
+	deep := depthRoot + "/deep"
+	h.m.mu.Lock()
+	h.m.nodes[depthRoot] = &depthNode{Key: depthRoot, Tree: depthRoot, State: depthFanned, Children: []string{deep}}
+	h.m.nodes[deep] = &depthNode{Key: deep, LeafID: "leaf-deep", Tree: depthRoot, Parent: depthRoot, Level: 5, Title: "Deep", State: depthActive}
+	h.m.mu.Unlock()
+	var cb func(bool)
+	h.approve = func(sk, id, text string, c func(bool)) error { cb = c; return nil }
+	if _, err := h.m.fanoutTool().Execute(depthCtx(deep), json.RawMessage(`{"leaves": [{"title": "Six", "prompt": "go"}]}`)); err != nil || cb == nil {
+		t.Fatalf("deep fanout: %v (asked=%v)", err, cb != nil)
+	}
+	h.off.Store(true)
+	cb(true)
+	turns := h.runner.wait(t, 1)
+	if turns[0].key != deep || !strings.Contains(turns[0].text, "turned off") {
+		t.Errorf("notice = %+v", turns[0])
+	}
+	if n := h.node(deep); n.State != depthActive || len(n.Children) != 0 || n.Approval != nil {
+		t.Errorf("after approval while off: %s children=%v approval=%v", n.State, n.Children, n.Approval)
+	}
+}
+
+// Off at startup, the persisted trees stay untouched (as before #2603); turning
+// depth mode on restores them then, once, and never before the startup point.
+func TestDepthRestoreWaitsForEnable(t *testing.T) {
+	store := newMemSpawnStore()
+	h1 := newDepthHarness(t, store)
+	kids := h1.fanout(t, depthRoot, "A")
+
+	h2 := newDepthHarness(t, store)
+	h2.off.Store(true)
+	h2.m.OnEnable() // a config edit before the startup restore point: no-op
+	if h2.node(kids[0]).Key != "" {
+		t.Fatal("restored before the startup restore point")
+	}
+	h2.m.Restore()
+	if h2.node(kids[0]).Key != "" || len(h2.surface.leaves) != 0 {
+		t.Fatal("restored while depth mode is off")
+	}
+	h2.off.Store(false)
+	h2.m.OnEnable()
+	if h2.node(kids[0]).State != depthActive || len(h2.surface.leaves) != 1 {
+		t.Fatalf("after enable: node=%+v leaves=%v", h2.node(kids[0]), h2.surface.leaves)
+	}
+	h2.m.OnEnable() // idempotent
+	if len(h2.surface.leaves) != 1 {
+		t.Errorf("second enable re-registered leaves: %v", h2.surface.leaves)
+	}
+
+	// Enabled at startup: Restore runs at once, as before.
+	h3 := newDepthHarness(t, store)
+	h3.m.Restore()
+	if h3.node(kids[0]).State != depthActive {
+		t.Error("enabled startup restore did not load the tree")
 	}
 }

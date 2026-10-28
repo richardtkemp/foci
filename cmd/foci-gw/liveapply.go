@@ -216,6 +216,9 @@ var (
 		"background.force_in_session", "agent.background.force_in_session",
 		"reflection.force_in_session", "agent.reflection.force_in_session",
 		"maintenance.consolidation_force_in_session", "agent.maintenance.consolidation_force_in_session",
+		// #2603: the depth tools' live gate reads LiveConfig().Depth.Enabled;
+		// an off→on edit restores the trees (getDepth's OnChange).
+		"depth.enabled", "agent.depth.enabled",
 	}
 
 	liveApplyWarningAddrs = []string{

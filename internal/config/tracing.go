@@ -9,6 +9,9 @@ const defaultTracingFlushTimeout = 5 * time.Second
 // TracingConfig configures OpenTelemetry trace export of every agent turn
 // (root span + tool/subagent children + one generation per api.db row) to an
 // OTLP/HTTP collector — in practice a self-hosted Langfuse. Off by default.
+//
+// New keys here follow the hot-reload rule at the top of
+// internal/config/types.go (#2603): hot:"<when>" tag + live read + applier.
 type TracingConfig struct {
 	Enabled       bool   `toml:"enabled" desc:"Export a trace for every agent turn (tool calls, subagents, prompt/reply content, usage and cost) over OTLP/HTTP to the endpoint below"`
 	Endpoint      string `toml:"endpoint" desc:"OTLP/HTTP base URL; spans are POSTed to <endpoint>/v1/traces. For self-hosted Langfuse: http://127.0.0.1:3100/api/public/otel"`

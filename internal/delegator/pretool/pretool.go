@@ -51,6 +51,9 @@ const ActionDeny = "deny"
 // per-agent): a later layer's non-empty fields override the earlier rule's, so
 // `{name = "ask_user_question", enabled = false}` switches a default off and
 // `{name = "cron_create", reason = "..."}` rewords one without restating it.
+//
+// New keys here follow the hot-reload rule at the top of
+// internal/config/types.go (#2603): hot:"<when>" tag + live read + applier.
 type Rule struct {
 	Name string `toml:"name"    json:"name"`
 	Tool string `toml:"tool"    json:"tool"`

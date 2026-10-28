@@ -38,6 +38,9 @@ const MatchPlaceholder = "{match}"
 // Rule is one Stop rule. The same struct is the TOML config shape
 // ([[agents.backend_config.stop_rules]]) and the JSON wire shape handed to
 // the hook binary.
+//
+// New keys here follow the hot-reload rule at the top of
+// internal/config/types.go (#2603): hot:"<when>" tag + live read + applier.
 type Rule struct {
 	Name string `toml:"name" json:"name"`
 	// Text holds regexes matched against the turn's final assistant text;

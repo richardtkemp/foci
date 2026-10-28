@@ -82,6 +82,10 @@ type DepthSurface interface {
 // DepthDeps is what a DepthManager needs from the gateway.
 type DepthDeps struct {
 	AgentID string
+	// Enabled is the live [depth] enabled switch (#2603); nil = always on.
+	// While it is off the tools refuse, a parked approval answered Approve is
+	// refused, and Restore waits for OnEnable.
+	Enabled func() bool
 	Store   SpawnStore
 	Surface DepthSurface
 	// Sessions forks the caller into each leaf (ForkSession).
@@ -202,6 +206,9 @@ type DepthManager struct {
 	queued   map[string]int        // session key → turns queued by the manager, not yet ended
 	costs    map[string]depthCost  // session key → cached spend
 	restored bool
+	// restoreDue is set by the startup Restore call: from then on, turning
+	// depth mode on (OnEnable) runs the restore it skipped while off.
+	restoreDue bool
 }
 
 type depthCost struct {
@@ -223,6 +230,24 @@ func NewDepthManager(deps DepthDeps) *DepthManager {
 	}
 	registerDepthManager(deps.AgentID, m)
 	return m
+}
+
+// Enabled reports the live [depth] enabled switch.
+func (m *DepthManager) Enabled() bool {
+	return m.deps.Enabled == nil || m.deps.Enabled()
+}
+
+// OnEnable is called when [depth] enabled turns on (#2603): it restores the
+// persisted trees a startup Restore skipped while depth mode was off. Before
+// that startup point (the platforms may not be up) and after a restore it
+// does nothing.
+func (m *DepthManager) OnEnable() {
+	m.mu.Lock()
+	due := m.restoreDue
+	m.mu.Unlock()
+	if due {
+		m.restore()
+	}
 }
 
 func (m *DepthManager) now() time.Time {
@@ -525,16 +550,20 @@ func (m *DepthManager) resolveApproval(caller, promptID string, approved bool) {
 	rec := snap(n)
 	m.mu.Unlock()
 	m.persist(rec...)
+	if approved && !m.Enabled() {
+		m.runTurn(caller, "[DEPTH] The user approved your fan-out, but depth mode has since been turned off, so it did not run; you stay a leaf. Carry on with your point.")
+		return
+	}
 	if !approved {
-		m.runTurn(caller, "[DEPTH] Fan-out denied by the user; you stay a leaf. Carry on with your point.", "depth", nil)
+		m.runTurn(caller, "[DEPTH] Fan-out denied by the user; you stay a leaf. Carry on with your point.")
 		return
 	}
 	msg, err := m.doFanout(context.Background(), caller, ap.Leaves, ap.Orientation)
 	if err != nil {
-		m.runTurn(caller, "[DEPTH] The user approved your fan-out, but it failed: "+err.Error(), "depth", nil)
+		m.runTurn(caller, "[DEPTH] The user approved your fan-out, but it failed: "+err.Error())
 		return
 	}
-	m.runTurn(caller, "[DEPTH] The user approved your fan-out. "+msg, "depth", nil)
+	m.runTurn(caller, "[DEPTH] The user approved your fan-out. "+msg)
 }
 
 // doFanout forks caller into one branch per leaf and starts each leaf.
@@ -681,24 +710,16 @@ func (m *DepthManager) markFirstTurnStarted(key string) {
 	m.persist(rec...)
 }
 
-// runTurn queues a manager-originated turn on key, counted as running for the
-// feed until it ends.
-func (m *DepthManager) runTurn(key, text, trigger string, after func(ran bool)) {
+// runTurn queues a manager-originated turn on key (trigger "depth"), counted
+// as running for the feed until it ends.
+func (m *DepthManager) runTurn(key, text string) {
 	if m.deps.RunTurn == nil {
-		if after != nil {
-			after(false)
-		}
 		return
 	}
 	m.mu.Lock()
 	m.queued[key]++
 	m.mu.Unlock()
-	m.deps.RunTurn(key, text, trigger, nil, func(ran bool) {
-		m.turnEnded(key)
-		if after != nil {
-			after(ran)
-		}
-	})
+	m.deps.RunTurn(key, text, "depth", nil, func(bool) { m.turnEnded(key) })
 }
 
 func (m *DepthManager) turnEnded(key string) {
@@ -1099,8 +1120,19 @@ func (m *DepthManager) OnReset(rootKey string) {
 // views, marks nodes whose branch cannot resume lost, re-runs first turns and
 // acks the last process never started, re-presents pending approvals,
 // delivers [DEPTH RESULTS] it could not, and deletes trees finished long ago.
-// Call once, after the app platform is up.
+// Call once, after the app platform is up. While depth mode is off it only
+// marks the startup point, and OnEnable restores once it is turned on.
 func (m *DepthManager) Restore() {
+	m.mu.Lock()
+	m.restoreDue = true
+	m.mu.Unlock()
+	if m.Enabled() {
+		m.restore()
+	}
+}
+
+// restore is Restore's work, run once.
+func (m *DepthManager) restore() {
 	if m.deps.Store == nil {
 		return
 	}

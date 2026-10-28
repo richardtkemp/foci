@@ -8,6 +8,8 @@ var (
 
 const AskgwGroupName = "foci-askgw"
 
+// New keys here follow the hot-reload rule at the top of
+// internal/config/types.go (#2603): hot:"<when>" tag + live read + applier.
 type AskgwConfig struct {
 	Enabled            bool     `toml:"enabled" desc:"Enable the ask-gateway socket server for external apps to ask humans questions"`
 	SocketPath         string   `toml:"socket_path" desc:"Unix socket path for the ask-gateway server (default: data/askgw.sock)"`

@@ -2,8 +2,11 @@ package main
 
 // Depth mode wiring (#2588): builds an agent's tools.DepthManager from the
 // gateway's pieces (forking, injected turns, the ask router, the ledger, the
-// app surface) and registers its four tools. Off unless [depth] enabled, the
-// app platform is configured and the backend can fork a session.
+// app surface) and registers its four tools when the app platform is
+// configured and the backend can fork a session. [depth] enabled is a live
+// gate on top (#2603): the tools are always registered then, and the switch
+// hides and refuses them (DepthManager.Enabled), so a config edit turns depth
+// mode on or off with no restart.
 
 import (
 	"context"
@@ -22,11 +25,12 @@ import (
 	"foci/shared/prompts"
 )
 
-// depthEnabled gates the depth_* rows: the experimental switch, an app
-// platform to show the feed on, and a backend that can fork (always on the
-// API path).
+// depthEnabled gates the depth_* rows on what cannot change without a
+// restart: an app platform to show the feed on, and a backend that can fork
+// (always on the API path). The [depth] enabled switch is NOT read here: it is
+// live, through DepthDeps.Enabled (#2603).
 func depthEnabled(d *toolDeps) bool {
-	if !d.p.resolved.Depth.Enabled || d.p.cfg == nil || d.p.cfg.Platform("app") == nil { // static-cfg:ignore: decides which tools are registered, once at startup
+	if d.p.cfg == nil || d.p.cfg.Platform("app") == nil {
 		return false
 	}
 	if d.path == pathAPI {
@@ -54,8 +58,15 @@ func (d *toolDeps) getDepth() *tools.DepthManager {
 	if d.p.sessionIndex != nil {
 		store = d.p.sessionIndex
 	}
+	live := d.p.resolvedLive
+	enabled := func() bool { return live.Load().Depth.Enabled }
+	if live == nil { // direct-constructed setupParams (tests): the startup value
+		on := d.p.resolved.Depth.Enabled // static-cfg:ignore: fallback only when there is no live snapshot
+		enabled = func() bool { return on }
+	}
 	d.depth = tools.NewDepthManager(tools.DepthDeps{
 		AgentID:             agentID,
+		Enabled:             enabled,
 		Store:               store,
 		Surface:             app.DepthSurface{},
 		Sessions:            &sessionBranchAdapter{store: d.p.sessions, ag: d.agLazy},
@@ -122,6 +133,14 @@ func (d *toolDeps) getDepth() *tools.DepthManager {
 	app.SetDepthController(tools.DepthDispatch{})
 	if d.out != nil {
 		d.out.depth = d.depth
+	}
+	if live != nil {
+		m := d.depth
+		live.OnChange(func(old, fresh *config.ResolvedAgentConfig) {
+			if !old.Depth.Enabled && fresh.Depth.Enabled {
+				go m.OnEnable() // restores trees skipped while off; OnChange callbacks must not block
+			}
+		})
 	}
 	return d.depth
 }
