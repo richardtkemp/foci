@@ -162,6 +162,12 @@ func (b *Backend) onItemStarted(params *itemStartedParams) {
 	case "subAgentActivity":
 		b.openSubagentRun(&item, se)
 	case "collabAgentToolCall":
+		if item.Tool == collabToolWait {
+			if se != nil && se.OnToolStart != nil {
+				se.OnToolStart(item.ID, waitAgentToolName, "")
+			}
+			return
+		}
 		b.logUnhandledCollabItem("item/started", params.Item)
 	}
 }
@@ -245,6 +251,16 @@ func (b *Backend) handleSubagentNotification(threadID, method string, params []b
 // notify.inject_chat_warnings path, so the first real specimen surfaces
 // immediately, with its full payload, instead of being silently consumed by
 // handling built on assumptions.
+//
+// The first specimens arrived from codex 0.164.0: wait_agent reports itself as
+// a collabAgentToolCall with tool "wait", one item/started (status
+// inProgress) and one item/completed (status completed) per call, carrying
+// nothing else — receiverThreadIds and agentsStates empty, prompt and model
+// null, and not even whether the wait timed out (that is only in the model's
+// tool output). spawn_agent and send_message in the same turn still came as
+// subAgentActivity. So wait is handled as a plain tool call (the parent is
+// blocked on its children, which is worth showing) and every other collab
+// tool still reaches this WARN until it too has been seen.
 func (b *Backend) logUnhandledCollabItem(method string, raw json.RawMessage) {
 	b.logWarnf("unhandled collabAgentToolCall on %s — foci has never observed one of these; "+
 		"please capture this payload and see openSubagentRun for the live path: %s", method, string(raw))
@@ -385,9 +401,15 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 		}
 
 	case "collabAgentToolCall":
-		// Not counted as a tool call: the agent layer counts from
-		// OnToolStart/OnToolEnd (#2193), and this item emits neither until a
-		// real specimen shows what it represents.
+		// wait is the one observed tool (codex 0.164.0) and is shown as a tool
+		// call. Any other collab tool is still unverified: it emits no
+		// OnToolStart/OnToolEnd, so the agent layer (#2193) does not count it.
+		if item.Tool == collabToolWait {
+			if se != nil && se.OnToolEnd != nil {
+				se.OnToolEnd(item.ID, waitAgentToolName, "", item.Status == "failed")
+			}
+			return
+		}
 		b.logUnhandledCollabItem("item/completed", params.Item)
 	}
 }

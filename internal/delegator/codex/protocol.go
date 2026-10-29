@@ -396,6 +396,15 @@ type patchChangeKind struct {
 	MovePath string `json:"move_path,omitempty"`
 }
 
+// collabToolWait is the collabAgentToolCall tool value codex 0.164.0 sends for
+// wait_agent, the only collab tool observed on the wire (see
+// logUnhandledCollabItem). waitAgentToolName is what foci shows for it: the
+// name the model itself calls.
+const (
+	collabToolWait    = "wait"
+	waitAgentToolName = "wait_agent"
+)
+
 // collabState is one entry in a collabAgentToolCall's agentsStates map.
 type collabState struct {
 	Status  string `json:"status,omitempty"`
