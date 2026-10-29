@@ -633,9 +633,12 @@ func (a *Agent) turnLock(sessionKey string) *sync.Mutex {
 // attached to ctx (see internal/turnevent). Callers that want the final
 // text wire a BufferSink; callers that want streaming UI wire a StreamingSink.
 //
-// TurnStart fires at entry; TurnComplete always fires via defer, carrying the
+// TurnStart fires at entry; TurnComplete fires via defer, carrying the
 // accumulated FinalText, Usage, Cost, Model, and any error returned by the
-// turn orchestrator.
+// turn orchestrator — except for a turn whose input joined a turn already in
+// flight (TurnState.foldedFollowUp) through the session router, which
+// completes only its trace: the turn it joined owns the router's sink and
+// completes it (#2366).
 func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, texts []string, attachments []platform.Attachment) (err error) {
 	if err := a.validateSessionOwnership(sessionKey); err != nil {
 		return err
@@ -663,15 +666,31 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, texts []st
 		// something dropped the text on the way from CC's stream
 		// through to the renderer. Surface length so it's easy to
 		// correlate with the usage line.
-		a.logger().Debugf("deferred TurnComplete: session=%s final_text_len=%d err=%v",
-			sessionKey, len(ts.FinalText), err)
-		sink.Emit(ctx, turnevent.TurnComplete{
+		a.logger().Debugf("deferred TurnComplete: session=%s final_text_len=%d err=%v folded=%v",
+			sessionKey, len(ts.FinalText), err, ts.foldedFollowUp)
+		complete := turnevent.TurnComplete{
 			FinalText: ts.FinalText,
 			Usage:     ts.FinalUsage,
 			Cost:      ts.FinalCost,
 			Model:     ts.FinalModel,
 			Err:       err,
-		})
+		}
+		if ts.foldedFollowUp && err == nil && a.sessionRouter(sessionKey).routesTo(sink) {
+			// The input joined a turn already in flight, which owns the
+			// session's delivery and ends with its own TurnComplete. On a
+			// platform turn the ctx sink is the session router, so this empty
+			// completion would reach THAT turn's sink and finalize it mid-run:
+			// the reply streamed so far went out as a message, and the full
+			// reply went out again when the run delivered it (#2366). Close
+			// only this turn's trace.
+			//
+			// A caller's OWN sink (an ask answer's SessionSink/appSink, a
+			// BufferSink) still gets it: it pairs that sink's TurnStart (typing
+			// off, activity idle) and reaches no other turn.
+			tspan.Complete(complete.FinalText, complete.Model, complete.Usage, complete.Cost, nil)
+		} else {
+			sink.Emit(ctx, complete)
+		}
 		// Session-lifecycle hooks — fired at the ONE boundary every backend
 		// turn passes through (platform turns via turn.RunTurn→HandleMessage,
 		// injections via HandleMessage directly), so system injections warm
@@ -681,7 +700,7 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, texts []st
 		// whose input never reached the backend (a skipped keepalive, a system
 		// turn abandoned in the begin loop, a failed write, a stale redelivery)
 		// ended no turn, so it fires neither hook (#2446). TurnComplete above
-		// still fires: it pairs the sink's TurnStart and closes the trace.
+		// still fires (unless folded): it pairs the sink's TurnStart and closes the trace.
 		if a.DelegatedManager == nil || ts.inputDelivered {
 			if a.onTurnComplete != nil {
 				a.onTurnComplete()

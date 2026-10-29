@@ -281,6 +281,8 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// completes.
 	if answersPrompts && answerPendingBackendPrompt(t.logger(), be, ts.SessionKey, ts.Texts) {
 		ts.inputDelivered = true // the answer resumes the backend's running turn
+		// ...which owns the run's delivery, as with a folded follow-up below.
+		ts.foldedFollowUp = true
 		close(ts.CompletionChan)
 		return nil
 	}

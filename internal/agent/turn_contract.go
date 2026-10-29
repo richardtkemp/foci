@@ -230,7 +230,12 @@ type TurnState struct {
 	// so this turn has no delivery of its own to register and no sink to
 	// release (#2233: an ask answer folding into an adopted autonomous run
 	// must not clobber the run's registration the way a typed message's
-	// RunTurn fold branch already avoids).
+	// RunTurn fold branch already avoids). A typed answer to a pending backend
+	// prompt sets it too: it resumes the running turn the same way.
+	//
+	// It also keeps this turn's own (empty) TurnComplete off the session
+	// router, where it would finalize the in-flight turn's sink mid-run and
+	// deliver the reply twice (#2366, HandleMessage).
 	foldedFollowUp bool
 	// inputDelivered is set by RunInference once this turn's input reached the
 	// backend: a begin the backend accepted, a fold into the in-flight run, or
