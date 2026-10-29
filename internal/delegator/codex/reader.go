@@ -44,7 +44,9 @@ func (b *Backend) dispatch(line []byte) {
 		var x struct {
 			ThreadID string `json:"threadId"`
 			Thread   struct {
-				ID string `json:"id"`
+				ID             string `json:"id"`
+				ParentThreadID string `json:"parentThreadId"`
+				ForkedFromID   string `json:"forkedFromId"`
 			} `json:"thread"`
 		}
 		_ = json.Unmarshal(env.Params, &x)
@@ -52,7 +54,8 @@ func (b *Backend) dispatch(line []byte) {
 		if id == "" {
 			id = x.Thread.ID
 		}
-		if target := p.facadeForThread(id); target != nil && target != p {
+		target := p.facadeForThread(id)
+		if target != nil && target != p {
 			target.dispatchLocal(line)
 			return
 		}
@@ -61,14 +64,61 @@ func (b *Backend) dispatch(line []byte) {
 		// the owner the child's turn/completed (ending the parent's live turn
 		// with the child's answer), the child's message deltas (streamed into
 		// the user's chat as the parent's text) and the child's token usage.
-		// Same class as the batch-thread leak fixed in f3381eb6. The child's
-		// events belong to the subagent UI, so consume them here.
-		if b.subagents != nil && b.subagents.isChild(id) {
-			b.handleSubagentNotification(id, env.Method, env.Params)
-			return
+		// The child belongs to the session that SPAWNED it, which is the owner
+		// only when that session launched the shared app-server; the
+		// process-wide childParents map answers which. A child's own
+		// thread/started carries parentThreadId (codex 0.164.0 schema: "only
+		// set if this thread is a subagent"), so a child can be bound before
+		// its parent's subAgentActivity item is seen, whichever arrives first.
+		if target == nil && id != "" {
+			parent := p.parentOfChild(id)
+			if parent == nil && x.Thread.ParentThreadID != "" {
+				parent = p.facadeForThread(x.Thread.ParentThreadID)
+				if parent == nil {
+					// A grandchild: its parent is itself a child.
+					parent = p.parentOfChild(x.Thread.ParentThreadID)
+				}
+				if parent != nil {
+					p.registerChild(id, parent)
+				}
+			}
+			if parent == nil && b.subagents != nil && b.subagents.isChild(id) {
+				parent = b
+			}
+			if parent != nil {
+				parent.dispatchChild(id, line, env.ID, env.Method, env.Params)
+				return
+			}
+			// Neither a session's thread nor a known child: nothing says whose
+			// it is. It still goes to the owner (dropping could strand a
+			// prompt nobody answers), but loudly, naming where it came from.
+			// thread/started is the exception: a facade's own thread/started
+			// can arrive before the thread/start or thread/resume response that
+			// registers it, and a fork's before its branch facade resumes it;
+			// the owner treats a thread/started that is not its root as a no-op.
+			if env.Method != "thread/started" {
+				b.logWarnf("lost message: %s for thread %s matches no session and no known subagent; "+
+					"handing it to the app-server owner (session %s), whose chat may show it", env.Method, id, b.startOpts.SessionKey)
+			}
 		}
 	}
 	b.dispatchLocal(line)
+}
+
+// dispatchChild handles one line from a subagent's child thread on the facade
+// that spawned it. A server request (an approval prompt: it has both an id and
+// a method) goes through the parent's ordinary request path, so the prompt
+// lands in the PARENT's chat, is answered through the parent's pending map, and
+// the response goes back over the shared connection with codex's own request
+// id (respondApproval writes via process().writer). Everything else is a
+// notification for the subagent UI. Server requests used to be consumed here
+// as notifications, which left a child's approval unanswered.
+func (b *Backend) dispatchChild(threadID string, line []byte, id *int64, method string, params json.RawMessage) {
+	if id != nil {
+		b.dispatchLocal(line)
+		return
+	}
+	b.handleSubagentNotification(threadID, method, params)
 }
 
 func (b *Backend) dispatchLocal(line []byte) {

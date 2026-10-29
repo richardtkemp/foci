@@ -320,6 +320,10 @@ func (b *Backend) openSubagentRun(item *itemEnvelope, se *delegator.SessionEvent
 	if item.Kind != "started" || b.subagents == nil || item.AgentThreadID == "" {
 		return
 	}
+	// Publish the child on the shared process before anything else: from here
+	// on the owner's reader routes this thread's events to THIS facade, which
+	// is only the owner when this session launched the app-server.
+	b.registerChild(item.AgentThreadID, b)
 	run, created := b.subagents.start(item.AgentThreadID, item.ID, item.AgentPath, b.openTurnID())
 	if !created || se == nil || se.OnSubagentStart == nil {
 		return

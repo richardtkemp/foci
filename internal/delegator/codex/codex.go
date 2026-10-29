@@ -172,6 +172,14 @@ type Backend struct {
 	sessionThreads map[string]string
 	threadSessions map[string]string
 	threadBackends map[string]*Backend
+	// childParents maps a subagent's child thread to the facade whose session
+	// spawned it. Process-wide, like threadBackends, because the shared
+	// app-server streams every session's children down the one connection the
+	// owner reads: a per-facade tracker cannot answer "whose child is this?"
+	// for a child of a facade that is not the owner, and such a child's events
+	// used to fall through to the owner's chat (2026-10-29). Guarded by
+	// threadMapMu.
+	childParents map[string]*Backend
 }
 
 var sharedPool = struct {
@@ -341,6 +349,47 @@ func (b *Backend) registerThread(fociSessionID, codexThreadID string) {
 	// Outside the map lock: this writes a file, and nothing reads it through
 	// threadMapMu.
 	b.bindThreadEnv(codexThreadID)
+}
+
+// registerChild records that childThreadID is a subagent of parent's session,
+// on the shared process so the owner's reader can route the child's events to
+// parent whichever facade owns the app-server. Idempotent.
+func (b *Backend) registerChild(childThreadID string, parent *Backend) {
+	if childThreadID == "" || parent == nil {
+		return
+	}
+	p := b.process()
+	p.threadMapMu.Lock()
+	if p.childParents == nil {
+		p.childParents = make(map[string]*Backend)
+	}
+	p.childParents[childThreadID] = parent
+	p.threadMapMu.Unlock()
+}
+
+// parentOfChild returns the facade a child thread was registered to, or nil.
+func (b *Backend) parentOfChild(childThreadID string) *Backend {
+	if childThreadID == "" {
+		return nil
+	}
+	p := b.process()
+	p.threadMapMu.RLock()
+	defer p.threadMapMu.RUnlock()
+	return p.childParents[childThreadID]
+}
+
+// unregisterChildrenOf drops every child mapped to parent. Called when parent
+// closes while the shared app-server lives on, so a closed facade's children
+// stop resolving to it (their late events then count as lost, see dispatch).
+func (b *Backend) unregisterChildrenOf(parent *Backend) {
+	p := b.process()
+	p.threadMapMu.Lock()
+	for child, owner := range p.childParents {
+		if owner == parent {
+			delete(p.childParents, child)
+		}
+	}
+	p.threadMapMu.Unlock()
 }
 
 func (b *Backend) threadForSession(fociSessionID string) string {

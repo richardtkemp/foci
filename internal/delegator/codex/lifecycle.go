@@ -312,6 +312,7 @@ func (b *Backend) Close() error {
 		if b.subagents != nil {
 			b.subagents.stopAll()
 		}
+		owner.unregisterChildrenOf(b)
 		if threadID != "" {
 			owner.unregisterThread(threadID)
 		}
