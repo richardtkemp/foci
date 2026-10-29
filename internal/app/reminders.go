@@ -102,16 +102,17 @@ func NotifyRemindersChanged(agentID string) {
 	h.pushReminders(agentID)
 }
 
-// pushReminders refreshes the reminder list of every ordinary (non-leaf)
-// conversation bound to agentID. A depth-mode leaf's conversation is skipped:
-// it is not in the roster list, so nothing shows its indicator.
+// pushReminders refreshes the reminder list of every conversation bound to
+// agentID. A depth-mode leaf's conversation is included (#2646): the app's
+// leaf view shows the leaf's own indicator, and a wake set from the leaf's
+// session (its branch key) is listed there, not on the root.
 func (h *Hub) pushReminders(agentID string) {
 	reminderPushMu.Lock()
 	defer reminderPushMu.Unlock()
 	h.mu.RLock()
 	var bindings []*convBinding
 	for _, b := range h.convs {
-		if b.agentID == agentID && !b.isDepthLeaf() {
+		if b.agentID == agentID {
 			bindings = append(bindings, b)
 		}
 	}

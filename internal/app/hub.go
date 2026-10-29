@@ -1065,11 +1065,10 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 			ci.CacheExpiryMs = conn.agentRef.CacheExpiryMs(b.sessionKey, time.Now())
 		}
 		// Pending wake reminders (#2600), listed live from the store like the
-		// cache expiry above, so a reconnect after a restart sees the truth.
-		if ci.DepthRootID == "" {
-			if rs := remindersFor(b.agentID, b.sessionKey); len(rs) > 0 {
-				ci.Reminders = rs
-			}
+		// cache expiry above, so a reconnect after a restart sees the truth. A
+		// depth leaf's conversation carries its own (#2646).
+		if rs := remindersFor(b.agentID, b.sessionKey); len(rs) > 0 {
+			ci.Reminders = rs
 		}
 		if dc := memoDefaultChat(idx, defaultChatByAgent, b.agentID); dc != 0 && dc == b.chatID {
 			ci.IsDefault = true

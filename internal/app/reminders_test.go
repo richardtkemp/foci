@@ -143,3 +143,58 @@ func TestReminders_WakeShowsOnItsOwnChatAndTracksState(t *testing.T) {
 		t.Fatalf("after dismiss = %v, want one empty list", g)
 	}
 }
+
+// A wake set from a depth-mode leaf's session shows on the leaf's own
+// conversation, not the root's, live and in the roster (#2646: "the pins and
+// the remind wake must track the leaf not the root"). The leaf's binding holds
+// the branch session key, which is the key the remind tool stores from a turn
+// on that session.
+func TestReminders_WakeFromALeafShowsOnTheLeaf(t *testing.T) {
+	h := newTestHub()
+	withDepthCtl(t)
+	rs := withReminderStore(t, h, "ag", nil)
+	client := fakeClientFor(h)
+	h.addClient(client)
+	root := h.ensureBinding(client, "ag", "conv-root")
+	lb := registerLeaf(t, h, root, root.sessionKey+"/b1", "leaf-1", "Point A")
+	drain(t, client)
+
+	id, err := rs.AddWake("ag", lb.sessionKey, "check the leaf", "30m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byConv := map[string][][]any{}
+	for _, d := range drain(t, client) {
+		if d.t != fap.TypeReminders {
+			continue
+		}
+		conv, _ := d.d["conversationId"].(string)
+		list, _ := d.d["reminders"].([]any)
+		byConv[conv] = append(byConv[conv], list)
+	}
+	leafFrames := byConv[lb.convID]
+	if len(leafFrames) != 1 || len(leafFrames[0]) != 1 || leafFrames[0][0].(map[string]any)["text"] != "check the leaf" {
+		t.Fatalf("leaf conversation frames = %v, want one list with the wake (all %v)", leafFrames, byConv)
+	}
+	for _, l := range byConv[root.convID] {
+		if len(l) != 0 {
+			t.Errorf("root conversation got %v, want the leaf's wake only on the leaf", l)
+		}
+	}
+
+	registerFakeAgent(h, "ag")
+	for _, ag := range h.agentRoster() {
+		for _, ci := range ag.Conversations {
+			switch ci.ID {
+			case lb.convID:
+				if len(ci.Reminders) != 1 || ci.Reminders[0].ID != id {
+					t.Errorf("roster leaf reminders = %+v, want wake %d", ci.Reminders, id)
+				}
+			default:
+				if len(ci.Reminders) != 0 {
+					t.Errorf("roster %s reminders = %+v, want none", ci.ID, ci.Reminders)
+				}
+			}
+		}
+	}
+}
