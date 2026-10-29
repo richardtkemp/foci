@@ -41,7 +41,7 @@ func (m *DepthManager) fanoutTool() *Tool {
 	return &Tool{
 		Name:       "depth_fanout",
 		ExecExport: true,
-		Description: "Depth mode: send the user several points as separate leaves instead of one message. Each leaf's question is exactly the message you would otherwise have sent the user for that point, written to the USER (not to the leaf agent): instead of sending the user A, B and C in one message, fan out into leaves A, B and C. " +
+		Description: "Send the user several points as separate leaves instead of one message: use it when a reply would carry several independent points (findings, issues, options) that the user may answer or act on one by one. Each leaf's question is exactly the message you would otherwise have sent the user for that point, written to the USER (not to the leaf agent): instead of sending the user A, B and C in one message, fan out into leaves A, B and C. " +
 			"Each question appears as its leaf's first message, from you, and the user replies to it there, one leaf at a time inside this chat. ONE point per leaf, never a list of questions in one leaf. Use it whenever a user's request opens several discussion threads. " +
 			"Each leaf is a fork of your context and runs nothing until the user answers it. " +
 			"You then end your turn and get ONE [DEPTH RESULTS] message when every leaf has reported. Only from an app conversation (or from a leaf). " +
@@ -114,7 +114,7 @@ func (m *DepthManager) reportTool() *Tool {
 		Name:        "depth_report",
 		ExecExport:  true,
 		Positional:  []string{"text"},
-		Description: "Depth mode: report your point back to your parent, ONCE, in the shape your orientation asks for. After this the thread is outside the tree.",
+		Description: "Inside a leaf (a session started by a fanout): report your point back to your parent, ONCE, in the shape your orientation asks for. After this the thread is outside the tree.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -143,7 +143,7 @@ func (m *DepthManager) claimsTool() *Tool {
 		Name:        "depth_claims",
 		ExecExport:  true,
 		Positional:  []string{"text"},
-		Description: "Depth mode: the tree's claims board. 'list' shows what every node has claimed; 'add <text>' claims a sub-point and shows existing claims that look related (informational, never refused).",
+		Description: "Inside a fanout tree: the tree's claims board. 'list' shows what every node has claimed; 'add <text>' claims a sub-point and shows existing claims that look related (informational, never refused).",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -185,7 +185,7 @@ func (m *DepthManager) statusTool() *Tool {
 	return &Tool{
 		Name:        "depth_status",
 		ExecExport:  true,
-		Description: "Depth mode: the tree you are in, as text: each node's title, level, state, spend so far, and the report of the done ones.",
+		Description: "Inside a fanout tree: each node's title, level, state, spend so far, and the report of the done ones.",
 		Parameters:  json.RawMessage(`{"type": "object", "properties": {}}`),
 		Execute: func(ctx context.Context, _ json.RawMessage) (ToolResult, error) {
 			return TextResult(m.status(SessionKeyFromContext(ctx))), nil
