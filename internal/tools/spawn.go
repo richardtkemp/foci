@@ -119,6 +119,10 @@ const exploreAPIToolsPrompt = `Use grep for searching file contents. Use find fo
 Use stat, file, wc, head, tail, tree, du for filesystem inspection. Use jq/yq/mdq for structured data queries. Use sqlite for read-only database queries. Use docker, systemctl, crontab, id for system inspection. Not all tools are available in every environment.`
 
 // exploreSystemPrompt is the system prompt for an API explore spawn.
+// spawnRawUserMessage is a delegated raw spawn's user message: its task is
+// the system prompt (#2643), so the turn needs only a go-ahead.
+const spawnRawUserMessage = "Go."
+
 const exploreSystemPrompt = exploreRolePrompt + "\n\n" + exploreAPIToolsPrompt
 
 // spawnExploreAllowed is the explicit allowlist of registry tools for explore mode.
@@ -554,6 +558,9 @@ func (s *Spawner) runBatchOneShot(ctx context.Context, mode, prompt, model strin
 	case spawnModeRaw:
 		req.Access = delegator.BatchAccessIsolated
 		req.SystemPrompt = prompt
+		// The task is already the system prompt: a short go-ahead as the
+		// user message stops it being sent twice (Dick 2026-10-29).
+		req.Prompt = spawnRawUserMessage
 		req.Purpose = delegator.BatchPurposeSpawnRaw
 		return inSpawnTempDir(func(dir string) (string, error) {
 			req.WorkDir = dir

@@ -166,8 +166,8 @@ func TestDelegatedSpawn_OneShotsRunAsBatches(t *testing.T) {
 
 	// #2643 req 6: the caller's prompt is a raw spawn's only prompt — it
 	// replaces the backend's default system prompt, which an empty one keeps.
-	if raw.Access != delegator.BatchAccessIsolated || raw.Purpose != delegator.BatchPurposeSpawnRaw || raw.AgentPrompt || raw.SystemPrompt != "draft it" {
-		t.Errorf("raw batch = %+v, want isolated, spawn_raw, the caller's prompt as its system prompt", raw)
+	if raw.Access != delegator.BatchAccessIsolated || raw.Purpose != delegator.BatchPurposeSpawnRaw || raw.AgentPrompt || raw.SystemPrompt != "draft it" || raw.Prompt != spawnRawUserMessage {
+		t.Errorf("raw batch = %+v, want isolated, spawn_raw, the caller's prompt as its system prompt and only %q as the user message", raw, spawnRawUserMessage)
 	}
 	if raw.WorkDir == "" || !strings.Contains(raw.WorkDir, "foci-spawn-") {
 		t.Errorf("raw batch WorkDir = %q, want a fresh spawn temp dir", raw.WorkDir)
