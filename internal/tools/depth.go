@@ -62,7 +62,7 @@ const (
 
 // DepthAckText is the turn the feed's Ack (the client's "Complete" button) runs on a
 // leaf (NQ1: Ack = report now).
-const DepthAckText = "[DEPTH COMPLETE] The user marked this leaf complete: they have nothing to add. Report now with foci_depth_report, using what you have; do not ask anything further."
+const DepthAckText = "The user marked this leaf complete: they have nothing to add. Report now with foci_depth_report, in this same turn, using what you have. Do not ask anything further."
 
 // DepthSurface is the app side of depth mode (app.DepthSurface).
 type DepthSurface interface {

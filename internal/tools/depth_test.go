@@ -356,7 +356,7 @@ func TestDepthFanoutReportFanIn(t *testing.T) {
 	}
 }
 
-// Ack = report now (NQ1): the pending ask is cancelled, one [DEPTH COMPLETE] turn
+// Ack = report now (NQ1): the pending ask is cancelled, one completion turn
 // runs, and a turn that ends without depth_report reports its final text.
 func TestDepthAckAutoReports(t *testing.T) {
 	h := newDepthHarness(t, nil)
