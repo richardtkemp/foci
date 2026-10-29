@@ -329,6 +329,15 @@ type sessionInbox struct {
 	// is consumed.
 	heldWatch *gateWatch
 
+	// pending is the worker's queue (#2362): envelopes pulled off ch by a
+	// drain but not yet run — user messages and injections alike — in
+	// enqueue order. The worker runs its head before it reads ch again, so
+	// an injection that an earlier drain pulled off the channel keeps its
+	// place ahead of every user message enqueued after it. Written only by
+	// the worker; pendMu is for InboxHasPendingInput's cross-goroutine read.
+	pendMu  sync.Mutex
+	pending []Envelope
+
 	// busy is >0 while the worker is inside a turn (driveOnce for a user
 	// batch, Inject.Run for an injection) — NOT during the waits around it.
 	// holdActive reads it cross-goroutine to keep a turn the worker itself
@@ -424,6 +433,82 @@ func (inb *sessionInbox) drainAvailable() []Envelope {
 			return out
 		}
 	}
+}
+
+// pushPending appends envs to the worker's queue (#2362), in order.
+func (inb *sessionInbox) pushPending(envs ...Envelope) {
+	if len(envs) == 0 {
+		return
+	}
+	inb.pendMu.Lock()
+	inb.pending = append(inb.pending, envs...)
+	inb.pendMu.Unlock()
+}
+
+// popPending removes and returns the head of the worker's queue.
+func (inb *sessionInbox) popPending() (Envelope, bool) {
+	inb.pendMu.Lock()
+	defer inb.pendMu.Unlock()
+	if len(inb.pending) == 0 {
+		return Envelope{}, false
+	}
+	env := inb.pending[0]
+	inb.pending[0] = Envelope{}
+	inb.pending = inb.pending[1:]
+	return env, true
+}
+
+// pendingHeadIsInject reports whether the head of the worker's queue is an
+// injection: then it runs next, and no queued user message may join the
+// batch or follow-up being built (#2362).
+func (inb *sessionInbox) pendingHeadIsInject() bool {
+	inb.pendMu.Lock()
+	defer inb.pendMu.Unlock()
+	return len(inb.pending) > 0 && inb.pending[0].Inject != nil
+}
+
+// takePendingUsers removes every user message from the worker's queue and
+// returns them in order; the injections stay queued, in their order (#2362:
+// a user message at the head takes every queued user message into its batch,
+// including those enqueued after a still-queued injection).
+func (inb *sessionInbox) takePendingUsers() []Envelope {
+	inb.pendMu.Lock()
+	defer inb.pendMu.Unlock()
+	var users []Envelope
+	kept := inb.pending[:0]
+	for _, env := range inb.pending {
+		if env.Inject == nil {
+			users = append(users, env)
+		} else {
+			kept = append(kept, env)
+		}
+	}
+	for i := len(kept); i < len(inb.pending); i++ {
+		inb.pending[i] = Envelope{}
+	}
+	inb.pending = kept
+	return users
+}
+
+// hasPendingUser reports whether the worker's queue holds a user message.
+func (inb *sessionInbox) hasPendingUser() bool {
+	inb.pendMu.Lock()
+	defer inb.pendMu.Unlock()
+	for _, env := range inb.pending {
+		if env.Inject == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// takeAllPending empties the worker's queue (shutdown).
+func (inb *sessionInbox) takeAllPending() []Envelope {
+	inb.pendMu.Lock()
+	defer inb.pendMu.Unlock()
+	out := inb.pending
+	inb.pending = nil
+	return out
 }
 
 // setWaitCancel registers cancel as this inbox's queued-batch cancel — the
@@ -974,7 +1059,8 @@ func (a *Agent) InboxTurnActive(sk string) bool {
 }
 
 // InboxHasPendingInput reports whether the session has user input waiting —
-// either queued envelopes on the channel or buffered steer text not yet
+// queued envelopes on the channel, a user message on the worker's queue
+// (#2362), or buffered steer text not yet
 // drained. Used by the #845 compaction-resume nudge to avoid self-injecting
 // when the user already queued a follow-up (which drives continuation itself).
 //
@@ -985,7 +1071,7 @@ func (a *Agent) InboxHasPendingInput(sk string) bool {
 	if inb == nil {
 		return false
 	}
-	if len(inb.ch) > 0 {
+	if len(inb.ch) > 0 || inb.hasPendingUser() {
 		return true
 	}
 	inb.steerMu.Lock()
@@ -1037,6 +1123,14 @@ func (a *Agent) getOrCreateInbox(sk string) *sessionInbox {
 // is flipped around each Driver.Drive call so Enqueue's routing decisions
 // see "in-flight" while a turn is running and "idle" between turns.
 //
+// Run order (#2362): the worker runs the head of its own queue
+// (sessionInbox.pending — envelopes a drain pulled off the channel but has not
+// run) before it reads the channel again, so queued items run in enqueue
+// order: an injection at the head runs before any user message enqueued after
+// it; a user message at the head takes every queued user message into its
+// batch (runUserBatch, driveAndDrainOrphans). See docs/WIRING.md "Inbox run
+// order".
+//
 // A system inject held by the pending-work gate no longer blocks the worker
 // (#2233): it is parked on the inbox's held list (dispatchInject) and the
 // worker keeps serving the channel, so a later user message runs as a normal
@@ -1055,6 +1149,11 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 	defer func() {
 		stopHeldWatch(inb)
 		a.refuseHeld(inb)
+		// Injections still queued (#2362) are refused like held ones; user
+		// envelopes dropped at shutdown have no waiter (refuseDroppedInject).
+		for _, env := range inb.takeAllPending() {
+			a.refuseDroppedInject(env)
+		}
 		a.logger().Debugf("inbox: session worker exiting sk=%s", inb.sk)
 	}()
 	for {
@@ -1065,6 +1164,19 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 			a.ensureHeldWatch(ctx, inb)
 		} else {
 			stopHeldWatch(inb)
+		}
+		// The worker's queue first (#2362): an envelope an earlier drain
+		// pulled off the channel runs before anything still on it, so every
+		// item runs in enqueue order (a user batch excepted: it takes every
+		// queued user message with it).
+		if ctx.Err() != nil {
+			return
+		}
+		if env, ok := inb.popPending(); ok {
+			if !a.handleDequeued(ctx, inb, env) {
+				return
+			}
+			continue
 		}
 		var openCh <-chan bool
 		if inb.heldWatch != nil {
@@ -1085,58 +1197,84 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 			// hints with consumeHeldHint instead — same protocol, inline.
 			stopHeldWatch(inb)
 		case env := <-inb.ch:
-			// Queued before a /stop that dropped this session's waiting
-			// batch, but not yet pulled into it: the /stop covers it too
-			// (#2337, see stopThrough). Injections are never dropped here.
-			if env.Inject == nil && env.enqSeq != 0 && env.enqSeq <= inb.stopThrough.Load() {
-				a.logger().Infof("inbox: /stop dropped queued message sk=%s seq=%d", inb.sk, env.enqSeq)
-				continue
-			}
-			// Re-login hold (#1932): no turn or injection may reach a backend
-			// that cannot authenticate. Further arrivals accumulate in inb.ch
-			// and batch via drainAvailable once the gate opens, as with the
-			// compaction hold below.
-			if !a.waitReloginGate(ctx, env.SessionKey) {
-				a.refuseDroppedInject(env)
+			if !a.handleDequeued(ctx, inb, env) {
 				return
-			}
-			// System injection: run it serialised with this session's platform
-			// turns (the worker is idle between turns here) rather than in a
-			// detached goroutine that races them. dispatchInject is the one
-			// decision path — user-input injects wait the user gates, gated
-			// system injects park on the held list, everything else runs.
-			// Injections never take a turn-limit slot (#2281) — a turn holding
-			// a slot can be blocked in EnqueueInjectWait on another session's
-			// injection, so counting them would deadlock at small limits.
-			if env.Inject != nil {
-				if !a.dispatchInject(ctx, inb, env) {
-					return
-				}
-				continue
-			}
-			// A login is owed (#2384): if this user turn ends with no new
-			// attempt started, the credential works again, so the pending
-			// state ends and paused injections resume.
-			attempt, loginPending := a.reloginPendingAttempt()
-			drained, ok := a.runUserBatch(ctx, inb, env)
-			if !ok {
-				return
-			}
-			if loginPending {
-				relogin.G.ClearPendingIf(attempt)
-			}
-			// The just-finished platform turn may have spawned background work
-			// (a subagent / run_in_background Bash) whose autonomous run now owns
-			// delivery — so each drained inject goes through the same dispatch
-			// path as the dequeue site (the Phase 3 bypass fix): it runs now, or
-			// parks on the held list until the gate opens.
-			for _, inj := range drained {
-				if !a.dispatchInject(ctx, inb, inj) {
-					return
-				}
 			}
 		}
 	}
+}
+
+// handleDequeued runs one envelope the worker took from the head of its queue
+// or off the channel: an injection through dispatchInject, a user message as
+// the head of a user batch. It returns false when the worker must stop.
+func (a *Agent) handleDequeued(ctx context.Context, inb *sessionInbox, env Envelope) bool {
+	// Queued before a /stop that dropped this session's waiting
+	// batch, but not yet pulled into it: the /stop covers it too
+	// (#2337, see stopThrough). Injections are never dropped here.
+	if a.stoppedQueued(inb, env) {
+		return true
+	}
+	// Re-login hold (#1932): no turn or injection may reach a backend
+	// that cannot authenticate. Further arrivals accumulate in inb.ch
+	// and batch via drainAvailable once the gate opens, as with the
+	// compaction hold below.
+	if !a.waitReloginGate(ctx, env.SessionKey) {
+		a.refuseDroppedInject(env)
+		return false
+	}
+	// System injection: run it serialised with this session's platform
+	// turns (the worker is idle between turns here) rather than in a
+	// detached goroutine that races them. dispatchInject is the one
+	// decision path — user-input injects and redeliveries wait the user
+	// gates, gated system injects park on the held list, everything else
+	// runs. Injections never take a turn-limit slot (#2281) — a turn
+	// holding a slot can be blocked in EnqueueInjectWait on another
+	// session's injection, so counting them would deadlock at small limits.
+	if env.Inject != nil {
+		return a.dispatchInject(ctx, inb, env)
+	}
+	// A login is owed (#2384): if this user turn ends with no new
+	// attempt started, the credential works again, so the pending
+	// state ends and paused injections resume.
+	attempt, loginPending := a.reloginPendingAttempt()
+	if !a.runUserBatch(ctx, inb, env) {
+		return false
+	}
+	if loginPending {
+		relogin.G.ClearPendingIf(attempt)
+	}
+	// Injections the batch's drains pulled off the channel stay on the
+	// worker's queue, in their place (#2362), and run from the loop top.
+	// The just-finished platform turn may have spawned background work
+	// (a subagent / run_in_background Bash) whose autonomous run now owns
+	// delivery — each still goes through dispatchInject there: it runs,
+	// or parks on the held list until the gate opens.
+	return true
+}
+
+// stoppedQueued reports (and logs) a user envelope that a /stop already
+// covered (#2337, stopThrough). Injections are never dropped here.
+func (a *Agent) stoppedQueued(inb *sessionInbox, env Envelope) bool {
+	if env.Inject == nil && env.enqSeq != 0 && env.enqSeq <= inb.stopThrough.Load() {
+		a.logger().Infof("inbox: /stop dropped queued message sk=%s seq=%d", inb.sk, env.enqSeq)
+		return true
+	}
+	return false
+}
+
+// takeQueuedUsers moves what the channel holds now onto the worker's queue
+// and returns every queued user message that a /stop has not covered: the
+// messages a user batch or follow-up headed by a user message takes with it
+// (#2362). Injections stay queued in their place.
+func (a *Agent) takeQueuedUsers(inb *sessionInbox) []Envelope {
+	inb.pushPending(inb.drainAvailable()...)
+	var out []Envelope
+	for _, env := range inb.takePendingUsers() {
+		if !a.stoppedQueued(inb, env) {
+			out = append(out, env)
+		}
+	}
+	return out
 }
 
 // userTurnGatesClosed reports whether any pre-dispatch hold is active on sk
@@ -1227,10 +1365,11 @@ func (a *Agent) waitUserTurnGates(ctx context.Context, sk string) bool {
 // runUserBatch runs one user (platform) batch on the session worker: the
 // re-login/#767/compaction gates, the turn-limit slot step (#2281), the
 // batching, the driven turn plus its follow-ups (driveAndDrainOrphans), and
-// the turnActive bookkeeping around them. It returns the injections drained
-// alongside the batch (to run slot-free after it returns — the worker's
-// dequeue path treats them identically) and whether the worker should keep
-// going; false means the inbox ctx ended and the worker must return.
+// the turnActive bookkeeping around them. It returns whether the worker
+// should keep going; false means the inbox ctx ended and the worker must
+// return. Injections its drains pull off the channel are not run here: they
+// stay on the worker's queue in their place (#2362) and run, slot-free, from
+// the worker's loop top before any user message enqueued after them.
 //
 // The gates and the slot step alternate: the slot wait can last as long as
 // any turn, long enough for a gate to close while the batch queues, so the
@@ -1244,21 +1383,21 @@ func (a *Agent) waitUserTurnGates(ctx context.Context, sk string) bool {
 // panic) gives it back — so one slot covers the batch AND the follow-up
 // turns driveAndDrainOrphans builds from orphan steers and late arrivals,
 // and the post-batch injections run without holding it.
-func (a *Agent) runUserBatch(ctx context.Context, inb *sessionInbox, env Envelope) (drained []Envelope, keepGoing bool) {
+func (a *Agent) runUserBatch(ctx context.Context, inb *sessionInbox, env Envelope) (keepGoing bool) {
 	batch := []Envelope{env}
 	var notified bool
 	var release turnSlotRelease
 	for {
 		if !a.waitUserTurnGates(ctx, env.SessionKey) {
-			return nil, false
+			return false
 		}
 		var outcome turnSlotOutcome
 		release, batch, outcome = a.acquireTurnSlots(ctx, inb, batch, &notified)
 		switch outcome {
 		case slotShutdown:
-			return nil, false
+			return false
 		case slotDropped:
-			return nil, true
+			return true
 		}
 		if !a.userTurnGatesClosed(env.SessionKey) {
 			break
@@ -1288,20 +1427,16 @@ func (a *Agent) runUserBatch(ctx context.Context, inb *sessionInbox, env Envelop
 	workerCtx := WithOnPrimaryWritten(ctx, func() {
 		once.Do(func() { inb.turnActive.Store(true) })
 	})
-	// Batch consecutive platform messages into this turn, but hold back
-	// any injections drained alongside them — they run individually after
-	// the turn (an inject has no Driver and must not enter driveAndDrainOrphans).
-	for _, d := range inb.drainAvailable() {
-		if d.Inject != nil {
-			drained = append(drained, d)
-		} else {
-			batch = append(batch, d)
-		}
-	}
+	// Batch every queued platform message into this turn (#2362: the
+	// batch's head takes every queued user message, including those
+	// enqueued after a still-queued injection). Injections are never folded
+	// in — an inject has no Driver and no Text, so its Run would never fire —
+	// they stay on the worker's queue, in their place, and run after it.
+	batch = append(batch, a.takeQueuedUsers(inb)...)
 	steerer := turnevent.SteererFunc(inb.drainSteerTexts)
-	drained = append(drained, a.driveAndDrainOrphans(workerCtx, inb, batch, steerer, env)...)
+	a.driveAndDrainOrphans(workerCtx, inb, batch, steerer, env)
 	inb.turnActive.Store(false)
-	return drained, true
+	return true
 }
 
 // turnSlotOutcome classifies how acquireTurnSlots ended.
@@ -1868,32 +2003,33 @@ func (s resolvingLateSink) DeliversToPlatform() bool {
 // turn was text-only) plus any late arrivals on the channel get
 // re-dispatched as follow-up turns until both drains are empty.
 //
-// Injection envelopes drained alongside late arrivals are returned to the
-// caller (the session worker) to run after the batch completes — folding one
-// into a follow-up platform batch would silently drop it (its Run closure
-// would never fire, and an inject carries no Text for the turn to deliver).
-// Mirrors the worker's own held-back filtering at batch time.
-func (a *Agent) driveAndDrainOrphans(ctx context.Context, inb *sessionInbox, batch []Envelope, steerer turnevent.Steerer, seed Envelope) []Envelope {
+// The order rule applies again after every turn (#2362, Dick 2026-10-28):
+// late arrivals join the worker's queue behind what is already queued; when
+// the queue's head is an injection, no queued user message joins a follow-up
+// and the loop ends, so the injection runs (from the worker's loop top)
+// before every user message enqueued after it. When a user message heads
+// the queue it takes every queued user message with it, as one follow-up.
+// Orphan steers still run right after the turn they were sent during.
+// Injections are never folded into a follow-up platform batch: its Run
+// closure would never fire, and an inject carries no Text for the turn to
+// deliver.
+func (a *Agent) driveAndDrainOrphans(ctx context.Context, inb *sessionInbox, batch []Envelope, steerer turnevent.Steerer, seed Envelope) {
 	driver := seed.Driver
 	if driver == nil {
 		a.logger().Warnf("inbox: no driver on envelope sk=%s, dropping batch (%d msgs)", inb.sk, len(batch))
-		return nil
+		return
 	}
 	router := a.sessionRouter(inb.sk)
 	a.driveOnce(ctx, inb, batch, steerer, router, driver)
-	var drained []Envelope
 	for {
 		orphans := inb.drainSteer()
+		inb.pushPending(inb.drainAvailable()...)
 		var extras []Envelope
-		for _, d := range inb.drainAvailable() {
-			if d.Inject != nil {
-				drained = append(drained, d)
-			} else {
-				extras = append(extras, d)
-			}
+		if !inb.pendingHeadIsInject() {
+			extras = a.takeQueuedUsers(inb)
 		}
 		if len(orphans) == 0 && len(extras) == 0 {
-			return drained
+			return
 		}
 		followUp := buildFollowUp(seed, orphans, extras)
 		a.logger().Infof("inbox: follow-up sk=%s orphans=%d extras=%d", inb.sk, len(orphans), len(extras))

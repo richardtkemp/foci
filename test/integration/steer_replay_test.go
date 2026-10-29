@@ -81,9 +81,12 @@ func TestL2_Steer_SurvivesCCDeathBeforeConsumption(t *testing.T) {
 // dead process's transcript and NOT redeliver it — a redelivery would put the
 // same message into the resumed conversation twice.
 //
-// The assertion is ordered, not timed: after the death a follow-up message is
-// queued; any redelivery is enqueued at the death, ahead of it, so once the
-// follow-up reaches the respawned CC every redelivery would already have too.
+// The assertion is ordered, not timed: the follow-up is pushed only once foci
+// logs that the dead process's hand-back has finished, so every redelivery is
+// queued ahead of it. The inbox runs queued items in arrival order (#2362), so
+// once the follow-up reaches the respawned CC every redelivery would already
+// have too. (foci marks the backend dead before the hand-back, so the death
+// alone is not enough to wait for.)
 func TestL2_Steer_FoldedBeforeDeathNotRedelivered(t *testing.T) {
 	testharness.ParallelWait(t)
 	const userID = 20502
@@ -111,6 +114,7 @@ func TestL2_Steer_FoldedBeforeDeathNotRedelivered(t *testing.T) {
 		t.Fatalf("steer never reached cc-stub; recorder:\n%s", recorderTail(t, h.RecorderPath()))
 	}
 	waitForStubExitObserved(t, h, "alpha", userID, "workspaces/alpha")
+	waitForHandBackDone(t, h)
 
 	pushUserMessage(t, h, "alpha", userID, followUp)
 	if !waitForUserMessage(t, h, "workspaces/alpha", followUp, 20*time.Second) {
@@ -132,7 +136,10 @@ func TestL2_Steer_FoldedBeforeDeathNotRedelivered(t *testing.T) {
 // message and a second turn's message — are not redelivered when CC later
 // dies holding an unconsumed steer. Only the steer is. cc-stub keeps no
 // transcript for these, so only the ack can be what spares them. Ordered: the
-// follow-up is pushed only once the steer's redelivery has arrived.
+// follow-up is pushed once foci logs that the hand-back has finished (the
+// steer's redelivery is then queued, not necessarily run), and the test asserts
+// that the redelivery reaches cc-stub before the follow-up does (#2362: the
+// inbox runs queued items in arrival order).
 func TestL2_Steer_AckedInputsNotRedelivered(t *testing.T) {
 	testharness.ParallelWait(t)
 	const userID = 20503
@@ -167,19 +174,26 @@ func TestL2_Steer_AckedInputsNotRedelivered(t *testing.T) {
 	}
 	waitForStubExitObserved(t, h, "alpha", userID, "workspaces/alpha")
 	// foci marks the backend dead (what waitForStubExitObserved sees) before
-	// it hands the unconsumed inputs back, so a follow-up pushed now can be
-	// queued, and run, ahead of the redeliveries (#2334). Wait for the steer's
-	// redelivery first: the hand-back queues every redelivery in write order,
-	// and the steer was written last, so all of them are queued by then.
-	if !waitForUserMessage(t, h, "workspaces/alpha", steer, 20*time.Second) {
-		t.Fatalf("unconsumed steer was never redelivered; recorder:\n%s\nstderr:\n%s",
-			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
-	}
+	// it hands the unconsumed inputs back (#2334), so wait for the hand-back
+	// itself: once it is done, the steer's redelivery is queued.
+	waitForHandBackDone(t, h)
 
 	pushUserMessage(t, h, "alpha", userID, followUp)
 	if !waitForUserMessage(t, h, "workspaces/alpha", followUp, 20*time.Second) {
 		t.Fatalf("follow-up never reached the respawned cc-stub; recorder:\n%s\nstderr:\n%s",
 			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+	// The redelivery was queued before the follow-up, so it reaches cc-stub
+	// first.
+	entries := readRecorderEntries(t, h.RecorderPath())
+	steerAt := recorderIndex(entries, "user_message", steer)
+	followAt := recorderIndex(entries, "user_message", followUp)
+	if steerAt < 0 {
+		t.Fatalf("unconsumed steer was never redelivered; recorder:\n%s\nstderr:\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+	if steerAt > followAt {
+		t.Errorf("the steer's redelivery reached cc-stub after the follow-up (entries %d and %d); it was queued first", steerAt, followAt)
 	}
 	for _, m := range []string{first, second, steer} {
 		if n := countUserMessagesContaining(t, h, "alpha", m); n != 1 {
@@ -234,6 +248,28 @@ func TestL2_Steer_PendingSurvivesGatewayRestart(t *testing.T) {
 	if n := countUserMessagesContaining(t, h, "alpha", primary); n != 1 {
 		t.Errorf("primary (acknowledged before the shutdown) delivered %d times, want 1", n)
 	}
+}
+
+// waitForHandBackDone waits until foci logs that a dead CC process's
+// unconsumed inputs have been handed back (ccstream handBackPending): every
+// redelivery is queued on the session's inbox by then.
+func waitForHandBackDone(t *testing.T, h *testharness.Harness) {
+	t.Helper()
+	if !waitForStderr(h, "input hand-back done", 20*time.Second) {
+		t.Fatalf("foci never finished handing back the dead process's inputs; recorder:\n%s\nstderr:\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+}
+
+// recorderIndex returns the position of the first recorder entry of the given
+// kind whose text contains marker, or -1.
+func recorderIndex(entries []recorderEntry, kind, marker string) int {
+	for i, e := range entries {
+		if e.Kind == kind && strings.Contains(e.TextPrefix, marker) {
+			return i
+		}
+	}
+	return -1
 }
 
 // waitForRecorderKind waits for a recorder entry of the given kind whose text

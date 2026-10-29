@@ -16,7 +16,10 @@ import (
 
 // TriggerRedelivery labels the fresh turn that re-sends an input a backend
 // never consumed. It is a control trigger: the lost message was already due to
-// be processed, so it is not held behind a pending foci_ask.
+// be processed, so it is not held behind a pending foci_ask. Nor is it held by
+// the #2233 pending-work hold (#2362): it waits only for what a queued user
+// message waits for (re-login, a non-delivering turn in flight, compaction),
+// and the inbox runs it before any user message enqueued after it.
 const TriggerRedelivery = "redelivery"
 
 // inputRefsKey is the context key for the platform messages a turn carries.

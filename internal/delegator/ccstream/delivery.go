@@ -212,6 +212,10 @@ func (b *Backend) sweepPendingAtIdle() {
 // drops the ones its transcript shows it folded in (reported as consumed), and
 // hands the rest to OnUndelivered in write order. Must run after the process
 // has been reaped, so nothing can write the transcript any more.
+//
+// It ends by logging handBackDoneLog once OnUndelivered has returned, so the
+// redeliveries are queued by then (the hook enqueues synchronously). The
+// integration tests wait for that line before they push a follow-up (#2362).
 func (b *Backend) handBackPending() {
 	b.turnMu.Lock()
 	pending := b.pendingInputs
@@ -220,6 +224,10 @@ func (b *Backend) handBackPending() {
 	if len(pending) == 0 {
 		return
 	}
+	handedBack := 0
+	defer func() {
+		b.logger().Infof("%s: %d pending, %d handed back for redelivery", handBackDoneLog, len(pending), handedBack)
+	}()
 
 	h := b.hooks()
 	found, err := b.transcriptHolds(pending)
@@ -251,10 +259,15 @@ func (b *Backend) handBackPending() {
 	b.logger().Warnf("process gone with %d input(s) CC never consumed — handing them back for redelivery", len(undelivered))
 	if h.OnUndelivered != nil {
 		h.OnUndelivered(undelivered)
+		handedBack = len(undelivered)
 	} else {
 		b.logger().Warnf("no redelivery hook installed — %d input(s) lost", len(undelivered))
 	}
 }
+
+// handBackDoneLog starts the line handBackPending logs when its hand-back has
+// finished (#2362).
+const handBackDoneLog = "input hand-back done"
 
 // transcriptHolds reports which pending inputs the transcript(s) they were
 // written to already contain. An input's own session and the backend's current

@@ -569,7 +569,10 @@ func (b *Backend) finalizeExit(reason error) {
 		// reaped — until then it could still write its transcript, which is
 		// what decides consumed vs undelivered. Done before OnTurnComplete, so
 		// the redeliveries queue ahead of anything that arrives after the
-		// turn ends (#2050).
+		// turn ends (#2050), and the inbox runs them in that order (#2362).
+		// A message that arrived during the turn, before the death, is
+		// queued ahead of them: it runs first (or, a user message heading
+		// the queue, takes the later user messages into its batch).
 		if reaped {
 			b.handBackPending()
 		} else {

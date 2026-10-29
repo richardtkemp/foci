@@ -88,7 +88,11 @@ func (a *Agent) SystemInputHeld(sk string) bool {
 // injectGateApplies reports whether the pending-work gate (#1068/#1070, spec
 // §4) applies to this injection at all. It does NOT apply to a user-input
 // injection (an ask answer): the user's own action, dispatched with the user
-// path and timing (#2233).
+// path and timing (#2233). Nor does it apply to a redelivery (#2362, Dick
+// 2026-10-28): it re-sends a message the user already sent, which a dead
+// backend never read, so it waits only for what a queued user message waits
+// for (re-login, a non-delivering turn in flight, compaction) — never for
+// background work, from either half of the hold.
 //
 // An inject that runs ON A BRANCH is exempt structurally, not by a field: the
 // branch machinery runs its turn via HandleMessage on the branch's own key —
@@ -108,7 +112,13 @@ func (a *Agent) SystemInputHeld(sk string) bool {
 // in place, webhooks, send_to_session, ask expiry and restore notices — keeps
 // the hold.
 func injectGateApplies(m *InjectMeta) bool {
-	return m != nil && !m.UserInput
+	return m != nil && !m.UserInput && !isRedeliveryInject(m)
+}
+
+// isRedeliveryInject reports whether m is a redelivery (TriggerRedelivery):
+// an input a dead backend never consumed, re-sent as a fresh turn (#2050).
+func isRedeliveryInject(m *InjectMeta) bool {
+	return m != nil && m.Trigger == TriggerRedelivery
 }
 
 // injectHeld is THE single decision "must this system inject wait now": the
@@ -304,13 +314,14 @@ func stopHeldWatch(inb *sessionInbox) {
 }
 
 // dispatchInject is the ONE path an injection takes when it leaves the queue —
-// from the worker's dequeue, from the post-batch drained loop, and from
+// from the worker's dequeue (the channel or the head of its queue, #2362) and from
 // waitTurnSlot's channel service. It returns false when ctx ended while
 // waiting (the worker must stop; the envelope has been refused).
 //
-// Routing: a user-input injection (an ask answer, #2233) waits only for what a
-// user turn waits for (waitUserTurnGates: re-login, a non-delivering turn in
-// flight, compaction) and is never held by the pending-work gate. A gated
+// Routing: a user-input injection (an ask answer, #2233) and a redelivery
+// (#2362) wait only for what a user turn waits for (waitUserTurnGates:
+// re-login, a non-delivering turn in flight, compaction) and are never held
+// by the pending-work gate. A gated
 // system inject parks on the inbox's held list when its OWN hold is active or
 // a same-class sibling is already parked (heldSiblingPins — FIFO among
 // injects held for the same reason must survive a gate that flickers open;
@@ -321,7 +332,7 @@ func stopHeldWatch(inb *sessionInbox) {
 // be blocked in EnqueueInjectWait on another session's injection, so counting
 // them would deadlock at small limits.
 func (a *Agent) dispatchInject(ctx context.Context, inb *sessionInbox, env Envelope) bool {
-	if env.Inject.UserInput {
+	if env.Inject.UserInput || isRedeliveryInject(env.Inject) {
 		if !a.waitUserTurnGates(ctx, env.SessionKey) {
 			a.refuseDroppedInject(env)
 			return false
