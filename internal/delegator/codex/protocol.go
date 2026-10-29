@@ -201,6 +201,9 @@ type turnStartedParams struct {
 	Turn struct {
 		ID     string `json:"id"`
 		Status string `json:"status"`
+		Error  *struct {
+			Message string `json:"message"`
+		} `json:"error,omitempty"`
 	} `json:"turn"`
 }
 

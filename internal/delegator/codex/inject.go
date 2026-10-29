@@ -87,8 +87,16 @@ func (b *Backend) beginTurn(text string, turn *delegator.TurnEvents) error {
 	var tr turnStartedParams
 	if err := json.Unmarshal(result, &tr); err == nil {
 		if tr.Turn.Status == "failed" {
-			b.completeTurn(&delegator.TurnResult{Text: "codex turn/start: turn failed"})
-			return fmt.Errorf("codex: turn/start returned failed status")
+			msg := "unknown error"
+			if tr.Turn.Error != nil && strings.TrimSpace(tr.Turn.Error.Message) != "" {
+				msg = strings.TrimSpace(tr.Turn.Error.Message)
+			}
+			b.logWarnf("turn/start: turn failed: %s", msg)
+			b.mu.Lock()
+			b.lastTurnError = msg
+			b.mu.Unlock()
+			b.completeTurn(&delegator.TurnResult{Text: turnFailedText(msg)})
+			return fmt.Errorf("codex: turn/start returned failed status: %s", msg)
 		}
 		if tr.Turn.ID != "" {
 			b.turnMu.Lock()

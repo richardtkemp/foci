@@ -64,6 +64,11 @@ type Backend struct {
 	threadID        string
 	sessionFilePath string
 	threadStatus    threadStatus
+	// lastTurnError is the error message of the most recent failed turn
+	// (e.g. "Your workspace is out of credits…"). StatusDetail shows it
+	// beside codex's bare thread status ("systemError" says nothing about
+	// the cause); the next turn that completes cleanly clears it.
+	lastTurnError   string
 	model           string
 	launchModel     string
 	catalogueModels []string
@@ -362,11 +367,29 @@ func (b *Backend) StatusDetail() string {
 	detail := "sandbox=" + b.sandboxMode()
 	b.mu.Lock()
 	status := b.threadStatus.String()
+	lastErr := b.lastTurnError
 	b.mu.Unlock()
 	if status != "" {
 		detail += " | codex=" + status
 	}
+	if lastErr != "" {
+		detail += " | last turn failed: " + truncateStatusError(lastErr)
+	}
 	return detail
+}
+
+// statusErrorMax caps the turn-failure message in the status block: the
+// block is a one-line-per-field summary, and the full text is already in the
+// chat and the log.
+const statusErrorMax = 120
+
+func truncateStatusError(msg string) string {
+	msg = strings.Join(strings.Fields(msg), " ")
+	r := []rune(msg)
+	if len(r) <= statusErrorMax {
+		return msg
+	}
+	return string(r[:statusErrorMax-1]) + "…"
 }
 
 func (b *Backend) sandboxMode() string {

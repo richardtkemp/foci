@@ -86,18 +86,54 @@ func (b *Backend) onTurnCompleted(params *turnCompletedParams) {
 	b.mu.Unlock()
 	model = qualifiedModel(model)
 
+	// A failed turn's error (e.g. "Your workspace is out of credits") must
+	// reach the user, not just the log. Deliver it the way ccstream delivers
+	// CC's synthetic API-error message: as assistant text — streamed via
+	// OnText and part of the turn's final text — so the chat shows why the
+	// turn produced nothing. A clean completion clears the status-block error.
+	failMsg := ""
+	if params.Turn.Status == "failed" {
+		failMsg = "unknown error"
+		if params.Turn.Error != nil && strings.TrimSpace(params.Turn.Error.Message) != "" {
+			failMsg = strings.TrimSpace(params.Turn.Error.Message)
+		}
+		b.logWarnf("turn failed: %s", failMsg)
+	}
+	b.mu.Lock()
+	switch params.Turn.Status {
+	case "failed":
+		b.lastTurnError = failMsg
+	case "completed":
+		b.lastTurnError = ""
+	}
+	b.mu.Unlock()
+
+	errText := ""
+	if failMsg != "" {
+		errText = turnFailedText(failMsg)
+	}
+
 	b.turnMu.Lock()
+	if errText != "" {
+		if b.turnText.Len() > 0 {
+			b.turnText.WriteString("\n\n")
+		}
+		b.turnText.WriteString(errText)
+	}
 	usage := b.turnUsageLocked()
 	text := b.turnText.String()
 	b.turnMu.Unlock()
+
+	if errText != "" {
+		if se := b.sessionEvents.Load(); se != nil && se.OnText != nil {
+			se.OnText(errText)
+		}
+	}
 	result := &delegator.TurnResult{
 		Text:       text,
 		Usage:      usage,
 		Model:      model,
 		ThreadName: threadName,
-	}
-	if params.Turn.Status == "failed" && params.Turn.Error != nil {
-		b.logWarnf("turn failed: %s", params.Turn.Error.Message)
 	}
 	b.completeTurn(result)
 }
@@ -679,4 +715,10 @@ func (b *Backend) completeTurn(result *delegator.TurnResult) {
 		default:
 		}
 	}
+}
+
+// turnFailedText is the chat text for a codex turn that failed with msg —
+// the counterpart of the "API Error: …" line CC writes for a failed call.
+func turnFailedText(msg string) string {
+	return "❌ Codex turn failed: " + msg
 }
