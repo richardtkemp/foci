@@ -455,12 +455,10 @@ func TestBuildWakeSchedulerReturnsCallback(t *testing.T) {
 }
 
 func TestBuildWakeSchedulerRestoresPending(t *testing.T) {
-	// On agent startup, buildWakeScheduler must restore any pending wakes
+	// On agent startup, restorePendingWakes must restore any pending wakes
 	// previously stored in the DB so reminders survive restarts. We pre-seed
-	// the store with one due wake and verify buildWakeScheduler returns a
-	// non-nil scheduler — the restoration loop runs synchronously inside the
-	// builder, so a successful return implies pending rows were processed
-	// without panic.
+	// the store with one due wake and verify the restore runs without panic
+	// and without consuming the row (it runs synchronously).
 	t.Parallel()
 	rs, err := memory.NewReminderStore(filepath.Join(t.TempDir(), "reminders.db"))
 	if err != nil {
@@ -478,6 +476,7 @@ func TestBuildWakeSchedulerRestoresPending(t *testing.T) {
 	if fn == nil {
 		t.Fatal("buildWakeScheduler returned nil despite valid store")
 	}
+	restorePendingWakes(rs, "test", fn)
 
 	pending, err := rs.PendingWakes("test")
 	if err != nil {

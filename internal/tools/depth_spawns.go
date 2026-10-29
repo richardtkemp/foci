@@ -134,9 +134,28 @@ func (m *DepthManager) storedNodes() map[string]*depthNode {
 }
 
 // handover tells the spawner a handover point passed, so held spawn results
-// whose owner may now take them are delivered.
+// whose owner may now take them are delivered, and wakes every waiter on
+// HandoverSignal (#2647: a held wake re-resolves its owner).
 func (m *DepthManager) handover() {
+	m.handoverMu.Lock()
+	if m.handoverCh != nil {
+		close(m.handoverCh)
+		m.handoverCh = nil
+	}
+	m.handoverMu.Unlock()
 	if m.deps.OnHandover != nil {
 		m.deps.OnHandover()
 	}
+}
+
+// HandoverSignal returns a channel closed at the next handover point (see
+// DepthDeps.OnHandover). Take it BEFORE reading a route, so a handover
+// between the read and the wait is not missed.
+func (m *DepthManager) HandoverSignal() <-chan struct{} {
+	m.handoverMu.Lock()
+	defer m.handoverMu.Unlock()
+	if m.handoverCh == nil {
+		m.handoverCh = make(chan struct{})
+	}
+	return m.handoverCh
 }

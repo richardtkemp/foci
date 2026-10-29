@@ -147,8 +147,9 @@ func setupAgent(p setupParams) *agentInstance {
 	configureUniversal(ag, p, compactor)
 
 	// Wake scheduler is transport-independent: build the goroutine machinery
-	// and restore pending wakes here so both API and delegated transports can
-	// register the remind tool into their own registries below.
+	// here so both API and delegated transports can register the remind tool
+	// into their own registries below. The stored wakes are re-armed after
+	// the tools (restorePendingWakes).
 	agLazy := func() *agent.Agent { return ag }
 	shared.wakeScheduleFn, shared.wakeCancelFn = buildWakeScheduler(agLazy, p.reminderStore, acfg.ID, p.ctx, p.connMgr)
 
@@ -169,6 +170,9 @@ func setupAgent(p setupParams) *agentInstance {
 	if !ok {
 		return nil
 	}
+	// After the tools: the depth manager a fired wake's owner is resolved
+	// through (#2647) is built by tool registration.
+	restorePendingWakes(p.reminderStore, acfg.ID, shared.wakeScheduleFn)
 
 	fp.compactionThreshold = compactionThreshold
 	return shared.finalize(ag, fp)

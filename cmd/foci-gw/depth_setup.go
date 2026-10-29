@@ -135,6 +135,10 @@ func (d *toolDeps) getDepth() *tools.DepthManager {
 			if sp := d.spawner; sp != nil {
 				sp.ReleaseHeld()
 			}
+			// #2647: a closed leaf's pending wakes now belong to the node
+			// it handed over to; move their chat indicators with them.
+			// (Held wakes re-resolve through DepthManager.HandoverSignal.)
+			app.NotifyRemindersChanged(agentID)
 		},
 	})
 	app.SetDepthController(tools.DepthDispatch{})

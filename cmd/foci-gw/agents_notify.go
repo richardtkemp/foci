@@ -567,8 +567,8 @@ func wakeTurnDone(store *memory.ReminderStore, id int64) func(error) {
 	}
 }
 
-// buildWakeScheduler creates the agent-scoped wake-scheduling machinery and
-// restores any pending wakes from the database. Returns the schedule and
+// buildWakeScheduler creates the agent-scoped wake-scheduling machinery
+// (restorePendingWakes re-arms the stored ones). Returns the schedule and
 // cancel callbacks for use by NewRemindTool. Both are nil if reminderStore is
 // nil (reminder support disabled for this agent).
 //
@@ -646,6 +646,21 @@ func buildWakeScheduler(
 					remindLog.Warnf("no session for agent %s, skipping wake id=%d", agentID, id)
 					return
 				}
+				// #2647: a wake set from a depth leaf that has since closed goes
+				// to the leaf's live owner, by the walk spawn results take
+				// (SpawnRoute); while that route holds, the wake waits here,
+				// still cancellable, for the next handover point.
+				owner, ok := awaitWakeOwner(wakeCtx, sk)
+				if !ok {
+					// Cancelled while held: wakeCancelFn already claimed it.
+					_ = reminderStore.Dismiss(id)
+					return
+				}
+				if owner.Owner != "" && owner.Owner != sk {
+					remindLog.Infof("wake id=%d set from %s goes to its owner %s", id, sk, owner.Owner)
+				}
+				var body string
+				sk, body = wakeDelivery(sk, message, owner)
 				if !claimForFire(id, sk) {
 					// A cancel won the claim while the timer fired; it
 					// cancelled wakeCtx, which this select no longer watches.
@@ -666,7 +681,7 @@ func buildWakeScheduler(
 				// and the refusal hook below clears the overlay when the inbox
 				// declines to run the injection at all.
 				deliverToSessionChatThen(getAgent(), ctx, "scheduled_wake", connMgr, agentID, sk,
-					prompts.FormatInjectedMessage("SCHEDULED WAKE", time.Now(), message), nil, "",
+					prompts.FormatInjectedMessage("SCHEDULED WAKE", time.Now(), body), nil, "",
 					wakeTurnDone(reminderStore, id),
 					onInjectRefused(func() { reminderStore.ClearWakeFired(id) }))
 			case <-wakeCtx.Done():
@@ -690,19 +705,50 @@ func buildWakeScheduler(
 		return true
 	}
 
-	// Restore pending wakes from DB (survives restart).
-	if pending, err := reminderStore.PendingWakes(agentID); err != nil {
+	return wakeScheduleFn, wakeCancelFn
+}
+
+// wakeDelivery returns the session a wake set from sk fires into, given its
+// resolved owner (#2647), and the text it carries: a wake that goes to a
+// session other than the one that set it is headed with the leaf it came
+// from, as a reparented spawn result is.
+func wakeDelivery(sk, message string, owner tools.SpawnRoute) (target, body string) {
+	if owner.Owner == "" || owner.Owner == sk {
+		return sk, message
+	}
+	if owner.Via == "" {
+		return owner.Owner, message
+	}
+	return owner.Owner, tools.ReparentedWakeNote(owner.Via) + "\n\n" + message
+}
+
+// awaitWakeOwner resolves where a fired wake goes (tools.AwaitWakeOwner,
+// #2647). A variable so a test can stand in for the depth manager.
+var awaitWakeOwner = tools.AwaitWakeOwner
+
+// restorePendingWakes re-arms agentID's pending wakes from the DB (they
+// survive a restart). Called once the agent's tools are registered, not from
+// buildWakeScheduler: an overdue wake fires at once, and its owner is resolved
+// through the agent's depth manager (#2647), which tool registration builds.
+// Fired before it exists, a wake from a closed depth leaf would go to the
+// leaf. No-op when schedule is nil.
+func restorePendingWakes(reminderStore *memory.ReminderStore, agentID string, schedule tools.ScheduleWakeFn) {
+	if reminderStore == nil || schedule == nil {
+		return
+	}
+	pending, err := reminderStore.PendingWakes(agentID)
+	if err != nil {
 		remindLog.Errorf("failed to load pending wakes for %s: %v", agentID, err)
-	} else if len(pending) > 0 {
-		for _, r := range pending {
-			delay := time.Until(r.DueAt)
-			if delay < 0 {
-				delay = 0
-			}
-			_ = wakeScheduleFn(r.ID, delay, r.Text, r.SessionKey)
+		return
+	}
+	for _, r := range pending {
+		delay := time.Until(r.DueAt)
+		if delay < 0 {
+			delay = 0
 		}
+		_ = schedule(r.ID, delay, r.Text, r.SessionKey)
+	}
+	if len(pending) > 0 {
 		remindLog.Infof("restored %d pending wake(s) for agent %s", len(pending), agentID)
 	}
-
-	return wakeScheduleFn, wakeCancelFn
 }

@@ -253,6 +253,12 @@ type DepthManager struct {
 	// restoreDue is set by the startup Restore call: from then on, turning
 	// depth mode on (OnEnable) runs the restore it skipped while off.
 	restoreDue bool
+
+	// handoverMu guards handoverCh, the channel the next handover point
+	// closes (HandoverSignal, #2647). Apart from mu: handover runs with mu
+	// free, and a waiter reads it before taking mu for the route.
+	handoverMu sync.Mutex
+	handoverCh chan struct{}
 }
 
 type depthCost struct {

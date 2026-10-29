@@ -198,3 +198,68 @@ func TestReminders_WakeFromALeafShowsOnTheLeaf(t *testing.T) {
 		}
 	}
 }
+
+// #2647: once a depth leaf has closed and handed over, its pending wake is
+// listed on the node that owns it now (here the root), live and in the
+// roster, and no longer on the leaf. The owner walk is the depth manager's
+// (tools.WakeOwner), stubbed here.
+func TestReminders_ClosedLeafWakeShowsOnItsNewOwner(t *testing.T) {
+	h := newTestHub()
+	withDepthCtl(t)
+	rs := withReminderStore(t, h, "ag", nil)
+	client := fakeClientFor(h)
+	h.addClient(client)
+	root := h.ensureBinding(client, "ag", "conv-root")
+	lb := registerLeaf(t, h, root, root.sessionKey+"/b1", "leaf-1", "Point A")
+	handedOver := false
+	prev := wakeOwner
+	wakeOwner = func(sk string) string {
+		if handedOver && sk == lb.sessionKey {
+			return root.sessionKey
+		}
+		return sk
+	}
+	t.Cleanup(func() { wakeOwner = prev })
+	drain(t, client)
+
+	id, err := rs.AddWake("ag", lb.sessionKey, "check the leaf", "30m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	drain(t, client)
+
+	// The leaf hands over (the gateway's OnHandover pushes the lists).
+	handedOver = true
+	NotifyRemindersChanged("ag")
+	byConv := map[string][][]any{}
+	for _, d := range drain(t, client) {
+		if d.t != fap.TypeReminders {
+			continue
+		}
+		conv, _ := d.d["conversationId"].(string)
+		list, _ := d.d["reminders"].([]any)
+		byConv[conv] = append(byConv[conv], list)
+	}
+	if rf := byConv[root.convID]; len(rf) != 1 || len(rf[0]) != 1 || rf[0][0].(map[string]any)["text"] != "check the leaf" {
+		t.Fatalf("root frames = %v, want one list with the leaf's wake (all %v)", rf, byConv)
+	}
+	if lf := byConv[lb.convID]; len(lf) != 1 || len(lf[0]) != 0 {
+		t.Fatalf("leaf frames = %v, want one empty list", lf)
+	}
+
+	registerFakeAgent(h, "ag")
+	for _, ag := range h.agentRoster() {
+		for _, ci := range ag.Conversations {
+			switch ci.ID {
+			case root.convID:
+				if len(ci.Reminders) != 1 || ci.Reminders[0].ID != id {
+					t.Errorf("roster root reminders = %+v, want wake %d", ci.Reminders, id)
+				}
+			default:
+				if len(ci.Reminders) != 0 {
+					t.Errorf("roster %s reminders = %+v, want none", ci.ID, ci.Reminders)
+				}
+			}
+		}
+	}
+}

@@ -6,6 +6,7 @@ import (
 
 	"foci/internal/fap"
 	"foci/internal/memory"
+	"foci/internal/tools"
 )
 
 // Per-chat pending wake reminders (#2600). The app shows an indicator on a
@@ -51,9 +52,17 @@ func SetReminderStore(agentID string, rs *memory.ReminderStore, held func(sessio
 	rs.SetOnChange(func() { NotifyRemindersChanged(agentID) })
 }
 
-// pendingWakesFor converts the store's pending wakes set from sessionKey to
-// wire form, ordered by due time. A wake with no session key (a legacy row)
-// matches no chat. Never nil, so an empty list encodes as [].
+// wakeOwner resolves the session that owns a wake set from a session now
+// (#2647): a depth leaf that has closed hands its wakes up its tree, as it
+// does its spawns (tools.WakeOwner). A variable so a test can stand in for
+// the depth manager.
+var wakeOwner = tools.WakeOwner
+
+// pendingWakesFor converts the store's pending wakes owned by sessionKey to
+// wire form, ordered by due time: those set from it, less any it has handed
+// over, plus those handed to it by a closed depth leaf (#2647). A wake with no
+// session key (a legacy row) matches no chat. Never nil, so an empty list
+// encodes as [].
 func pendingWakesFor(rs *memory.ReminderStore, agentID, sessionKey string, held func(string) bool) []fap.PendingReminder {
 	out := []fap.PendingReminder{}
 	if sessionKey == "" {
@@ -65,7 +74,7 @@ func pendingWakesFor(rs *memory.ReminderStore, agentID, sessionKey string, held 
 		return out
 	}
 	for _, r := range wakes {
-		if r.SessionKey != sessionKey {
+		if r.SessionKey == "" || wakeOwner(r.SessionKey) != sessionKey {
 			continue
 		}
 		var due int64
