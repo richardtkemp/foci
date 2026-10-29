@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 )
 
@@ -78,4 +79,28 @@ func WithSpawnInherit(ctx context.Context) context.Context {
 func IsSpawnInherit(ctx context.Context) bool {
 	v, _ := ctx.Value(spawnInheritKey{}).(bool)
 	return v
+}
+
+// spawnCharacterKey is the context key marking an API agent's character
+// spawn's tool calls (#2643).
+type spawnCharacterKey struct{}
+
+// WithSpawnCharacter marks a context as an API character spawn's: nobody is
+// there to answer it, so a tool that would need the user (ask, close_session)
+// refuses. A delegated character spawn gets the same through its exec
+// bridge's registry (RegistryForAccess, BatchAccessParent).
+func WithSpawnCharacter(ctx context.Context) context.Context {
+	return context.WithValue(ctx, spawnCharacterKey{}, true)
+}
+
+// IsSpawnCharacter reports whether ctx is an API character spawn's.
+func IsSpawnCharacter(ctx context.Context) bool {
+	v, _ := ctx.Value(spawnCharacterKey{}).(bool)
+	return v
+}
+
+// errSpawnNeedsUser is what a tool that needs the user returns in a
+// character spawn.
+func errSpawnNeedsUser(tool string) error {
+	return fmt.Errorf("%s: refused in a character spawn — nobody is there to answer; decide for yourself or put it in your result", tool)
 }

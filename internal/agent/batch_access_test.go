@@ -197,3 +197,40 @@ func TestRunBatch_BridgeToolsFollowAccess(t *testing.T) {
 		})
 	}
 }
+
+// TestCharacterSpawnBranch_LaunchesAsCharacter proves a background character
+// spawn's branch (#2643) launches as a direct character spawn does — the
+// agent's own composed prompt, parent access, unattended, on the requested
+// model — and counts as a batch session for the unattended-turn check, so
+// codex (which reads no SkipPermissions) keeps its asks out of a chat too.
+func TestCharacterSpawnBranch_LaunchesAsCharacter(t *testing.T) {
+	t.Parallel()
+	be := &batchTurnBackend{}
+	be.completeTurns()
+	a := newAccessTestAgent(t, be, bothBatchCaps)
+	a.DelegatedManager.StartOpts.SystemPromptFunc = func(string) string { return "AGENT PROMPT" }
+	const bk = "helen/c1/b1700000000"
+	if a.DelegatedManager.isBatchSession(bk) {
+		t.Fatal("an unprepared branch counts as a batch session")
+	}
+	a.PrepareCharacterSpawnBranch(bk, "zai/glm-4.6")
+	if !a.DelegatedManager.isBatchSession(bk) {
+		t.Fatal("a character spawn branch does not count as a batch session (its turns would prompt)")
+	}
+	if _, err := a.DelegatedManager.Get(context.Background(), bk); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	opts := be.startedOpts()
+	if len(opts) != 1 {
+		t.Fatalf("started %d times, want 1", len(opts))
+	}
+	o := opts[0]
+	if !o.SkipPermissions || o.BatchAccess != delegator.BatchAccessParent || o.SystemPrompt != "AGENT PROMPT" || o.Model != "zai/glm-4.6" {
+		t.Errorf("launched with skip=%v access=%s prompt=%q model=%q; want skip, parent, the agent's prompt, zai/glm-4.6",
+			o.SkipPermissions, o.BatchAccess, o.SystemPrompt, o.Model)
+	}
+	var nilMgr *DelegatedManager
+	if nilMgr.isBatchSession(bk) {
+		t.Error("a nil manager (API agent) reports a batch session")
+	}
+}

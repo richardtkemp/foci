@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -404,10 +405,10 @@ var toolTable = []toolEntry{
 	{name: "spawn", paths: pathBoth, enabled: spawnEnabled, build: func(d *toolDeps) *tools.Tool {
 		return d.getSpawner().SpawnTool()
 	}},
-	{name: "spawn_send", paths: pathBoth, enabled: spawnCloneEnabled, build: func(d *toolDeps) *tools.Tool {
+	{name: "spawn_send", paths: pathBoth, enabled: spawnEnabled, build: func(d *toolDeps) *tools.Tool {
 		return d.getSpawner().SendTool()
 	}},
-	{name: "spawn_status", paths: pathBoth, enabled: spawnCloneEnabled, build: func(d *toolDeps) *tools.Tool {
+	{name: "spawn_status", paths: pathBoth, enabled: spawnEnabled, build: func(d *toolDeps) *tools.Tool {
 		return d.getSpawner().StatusTool()
 	}},
 
@@ -522,10 +523,12 @@ func sendToChatMermaid(cfg *config.Config) *mermaid.Renderer {
 	return mermaid.Shared(cfg.DataDir, cmd, browser)
 }
 
-// spawnEnabled gates the spawn row: always on the API path; on the exec path
-// for any registered delegated backend, which can run at least character mode
-// as a batch. Decided from the backend's static Spec: the agent's
-// DelegatedManager does not exist yet when the exec registry is built.
+// spawnEnabled gates the spawn, spawn_send and spawn_status rows: always on
+// the API path; on the exec path for any registered delegated backend, which
+// can run at least character mode, directly or in the background (#2643: a
+// background character spawn needs no fork, so spawn_send/spawn_status no
+// longer need CapBranch). Decided from the backend's static Spec: the
+// agent's DelegatedManager does not exist yet when the exec registry is built.
 func spawnEnabled(d *toolDeps) bool {
 	if d.path == pathAPI {
 		return true
@@ -534,15 +537,31 @@ func spawnEnabled(d *toolDeps) bool {
 	return ok
 }
 
-// spawnCloneEnabled gates spawn_send and spawn_status, which only act on
-// clone spawns: always on the API path; on the exec path only for a backend
-// that can fork a session (clone mode's branch).
-func spawnCloneEnabled(d *toolDeps) bool {
-	if d.path == pathAPI {
-		return true
+// setAPICharacterModel puts an API agent's background character branch on
+// the model a direct character spawn would run on: the named group, else the
+// spawn_character call site's group, else (neither resolves) the agent's own
+// model, which needs no override. A persisted session override, so a resumed
+// run after a restart keeps it.
+func (d *toolDeps) setAPICharacterModel(ag *agent.Agent, branchKey, group string) {
+	gr := d.groupResolver
+	if gr == nil {
+		return
 	}
-	s, ok := delegator.SpecFor(d.p.acfg.Backend)
-	return ok && s.Supports(delegator.CapBranch)
+	var r *config.ResolvedModel
+	if group != "" {
+		r = gr.ResolveGroup(group)
+	}
+	if r == nil {
+		r = gr.ResolveCall(config.CallSpawnCharacter)
+	}
+	if r == nil {
+		return
+	}
+	var client provider.Client
+	if d.p.clientProvider != nil {
+		client = d.p.clientProvider.GetClient(r.Endpoint, r.Format)
+	}
+	ag.SetSessionModel(branchKey, r.Developer+"/"+r.ModelID, r.Endpoint, r.Format, client)
 }
 
 // getSpawner builds the path's Spawner once. MaxConcurrentSpawns stays baked:
@@ -600,6 +619,32 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 			}
 			if conn, _ := route.ConnFor(d.connMgr, acfg.ID, sk, route.PolicyFallback); conn != nil {
 				conn.SendNotification(text)
+			}
+		},
+		// #2643: a background character spawn's fresh branch.
+		CharacterBranch: func(_ context.Context, parent, model string) (string, error) {
+			if d.agLazy == nil {
+				return "", fmt.Errorf("agent not available")
+			}
+			ag := d.agLazy()
+			if ag == nil {
+				return "", fmt.Errorf("agent not available")
+			}
+			bk, err := ag.NewCharacterSpawnBranch(parent, model)
+			if err != nil {
+				return "", err
+			}
+			if d.path == pathAPI {
+				d.setAPICharacterModel(ag, bk, model)
+			}
+			return bk, nil
+		},
+		PrepareCharacterBranch: func(bk, model string) {
+			if d.agLazy == nil {
+				return
+			}
+			if ag := d.agLazy(); ag != nil {
+				ag.PrepareCharacterSpawnBranch(bk, model)
 			}
 		},
 	}

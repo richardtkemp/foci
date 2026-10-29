@@ -169,7 +169,16 @@ func (s *Spawner) noticeRestore(parent string, r *spawnRestoreReport) {
 func (s *Spawner) resumeAfterRestart(agent SpawnAgent, rec spawnRecord, base context.Context, stop context.CancelFunc, texts []string) {
 	tr := s.deps.Tracker
 	s.sem <- struct{}{}
-	spawnCtx, cancelRun := buildSpawnContext(base, rec.Timeout, rec.BranchKey, false)
+	running := RunningSpawn{
+		ID: rec.ID, BranchKey: rec.BranchKey, Description: rec.Description,
+		Model: rec.Model, Started: rec.Started,
+		Character: rec.Character, SpawnModel: rec.SpawnModel,
+	}
+	if running.Character && s.deps.PrepareCharacterBranch != nil {
+		// Its launch settings were in the last process's memory (#2643).
+		s.deps.PrepareCharacterBranch(rec.BranchKey, rec.SpawnModel)
+	}
+	spawnCtx, cancelRun := s.runContext(base, rec.Timeout, running, false)
 	cancel := func() { cancelRun(); stop() }
 	tr.setCancel(rec.Parent, rec.ID, cancel)
 
@@ -177,10 +186,6 @@ func (s *Spawner) resumeAfterRestart(agent SpawnAgent, rec spawnRecord, base con
 	spawnLog.Infof("resume spawn=%s branch=%s parent=%s after restart (resume %d) timeout=%s inputs=%d",
 		rec.ID, rec.BranchKey, rec.Parent, rec.Resumes+1, rec.Timeout, len(texts))
 
-	running := RunningSpawn{
-		ID: rec.ID, BranchKey: rec.BranchKey, Description: rec.Description,
-		Model: rec.Model, Started: rec.Started,
-	}
 	if s.deps.Observer != nil {
 		shown := running
 		shown.Description = "(resumed after restart) " + running.Description

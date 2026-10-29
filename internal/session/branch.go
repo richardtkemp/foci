@@ -48,6 +48,10 @@ type BranchOptions struct {
 	// Opening, when set, is what the fork ends on before its first turn
 	// (#2617, depth leaves). Only Agent.ForkSession reads it; the store does not.
 	Opening *BranchOpening
+	// Fresh makes the branch start empty (branch point 0): a child of the
+	// parent that reads none of its conversation (#2643, background
+	// character spawns).
+	Fresh bool
 }
 
 // resolveOrientation substitutes template placeholders in the orientation text.
@@ -111,7 +115,7 @@ func (s *Store) CreateBranchWithOptions(parentKey string, opts BranchOptions) (s
 		}
 
 		orientation := resolveOrientation(opts.OrientationTemplate, branchKey, parentKey, opts.BranchType)
-		err = s.createBranchFile(parentKey, branchKey, opts.NoResetHook, orientation, opts.BranchType)
+		err = s.createBranchFile(parentKey, branchKey, opts.NoResetHook, orientation, opts.BranchType, opts.Fresh)
 		if err == nil {
 			return branchKey, nil
 		}
@@ -125,19 +129,23 @@ func (s *Store) CreateBranchWithOptions(parentKey string, opts BranchOptions) (s
 
 // createBranchFile performs a single attempt to create a branch file with
 // exclusive semantics. Returns errBranchFileExists if the file already exists.
-func (s *Store) createBranchFile(parentKey, branchKey string, noResetHook bool, orientation, branchType string) error {
+func (s *Store) createBranchFile(parentKey, branchKey string, noResetHook bool, orientation, branchType string, fresh bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	parentMsgs, err := s.loadUnlocked(parentKey)
-	if err != nil {
-		return fmt.Errorf("load parent: %w", err)
+	branchPoint := 0
+	if !fresh {
+		parentMsgs, err := s.loadUnlocked(parentKey)
+		if err != nil {
+			return fmt.Errorf("load parent: %w", err)
+		}
+		branchPoint = len(parentMsgs)
 	}
 
 	meta := BranchMeta{
 		Type:        "branch_meta",
 		ParentKey:   parentKey,
-		BranchPoint: len(parentMsgs),
+		BranchPoint: branchPoint,
 		NoResetHook: noResetHook,
 		Orientation: orientation,
 		BranchType:  branchType,

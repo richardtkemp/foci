@@ -210,43 +210,6 @@ func TestSpawnContextClone(t *testing.T) {
 	}
 }
 
-func TestSpawnContextCloneDefault(t *testing.T) {
-	// Proves that omitting the context parameter defaults to clone mode, and that a nil notifier
-	// causes execution to be synchronous rather than async.
-	t.Parallel()
-	mockAgent := &mockSpawnAgent{response: "Done."}
-	mockSessions := &mockSessionBrancher{}
-
-	deps := SpawnDeps{
-		Sessions:       mockSessions,
-		AgentID:        "test",
-		FallbackModel:  "anthropic/claude-haiku-4-5",
-		FallbackFormat: "anthropic",
-		MaxInherit:     3,
-	}
-	tool := NewSpawner(deps, func() SpawnAgent { return mockAgent }).SpawnTool()
-
-	ctx := WithSessionKey(context.Background(), "test/imain")
-	params, _ := json.Marshal(map[string]string{
-		"prompt": "Do something",
-	})
-
-	result, err := tool.Execute(ctx, params)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-
-	// Verify branch was created (meaning clone mode was used)
-	if mockSessions.parentKey == "" {
-		t.Error("expected branch creation (clone as default), but no branch was created")
-	}
-
-	// Nil notifier = sync fallback, should get direct result
-	if result.Text != "Done." {
-		t.Errorf("result = %q, want Done.", result.Text)
-	}
-}
-
 func TestSpawnExploreMode(t *testing.T) {
 	// Proves that explore context always uses haiku regardless of the requested model, injects
 	// a read-only explorer system prompt, and provides exploration tools but not shell.

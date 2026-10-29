@@ -44,6 +44,9 @@ type spawnRecord struct {
 	// Result is a [SPAWN RESULT] the parent has not taken yet: a new process
 	// delivers it.
 	Result string `json:"result,omitempty"`
+	// Character and SpawnModel: see RunningSpawn (#2643).
+	Character  bool   `json:"character,omitempty"`
+	SpawnModel string `json:"spawn_model,omitempty"`
 }
 
 // SetStore makes the tracker persist its spawns to store. Call it once at
@@ -80,6 +83,7 @@ func (s *trackedSpawn) record(parent string) *spawnRecord {
 		Description: s.info.Description, Model: s.info.Model, Prompt: s.prompt,
 		Started: s.info.Started, Timeout: s.timeout, Pending: slices.Clone(s.pending),
 		Resumes: s.resumes, Running: s.running, Result: s.result,
+		Character: s.info.Character, SpawnModel: s.info.SpawnModel,
 	}
 }
 
@@ -199,6 +203,7 @@ func (t *SpawnTracker) adopt(rec spawnRecord, running bool, outcome string, canc
 		info: RunningSpawn{
 			ID: rec.ID, BranchKey: rec.BranchKey, Description: rec.Description,
 			Model: rec.Model, Started: rec.Started,
+			Character: rec.Character, SpawnModel: rec.SpawnModel,
 		},
 		cancel: cancel, running: running, timeout: rec.Timeout,
 		prompt: rec.Prompt, resumes: rec.Resumes, result: rec.Result,

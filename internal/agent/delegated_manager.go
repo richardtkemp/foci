@@ -1297,7 +1297,10 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 	// deliver to the owner's chat). Batch sessions launch with SkipPermissions,
 	// but CC can still ask (from 2.1.281, rm -rf "$(pwd)"); ccstream denies
 	// those itself and never reaches the prompt func above (#2096).
-	_, isBatch := m.batchSpecFor(mb.sessionKey)
+	// A background character spawn's branch launches like a batch but is a
+	// spawn branch in every other respect, as a clone's is (#2643).
+	spec, isBatch := m.batchSpecFor(mb.sessionKey)
+	isBatch = isBatch && !spec.spawnBranch
 	if m.TypingFunc != nil && !isBatch {
 		mb.be.SetTypingFunc(func(typing bool) {
 			// A turn no human started (keepalive, reflection, cron, ...) shows
@@ -1747,6 +1750,30 @@ type batchSpec struct {
 	model        string                // passed verbatim to the backend; "" = the agent's
 	access       delegator.BatchAccess // what the batch session may do beyond unattended
 	workDir      string                // "" = the agent workspace
+	// spawnBranch marks a background character spawn's branch (#2643): it
+	// launches as a batch does, but keeps a branch's callbacks (typing,
+	// subagent status, delivery tracking, autonomous-run adoption), as a
+	// clone's branch does, and lives as long as the spawn.
+	spawnBranch bool
+}
+
+// SetCharacterSpawnBranch makes branchKey's backend launch as a character
+// spawn's (#2643): the agent's own composed prompt, its own tools and
+// permission rules (BatchAccessParent), unattended, on model ("" = the
+// agent's own, passed to the backend as written). It holds until the
+// process ends; a restart that resumes the spawn sets it again.
+func (m *DelegatedManager) SetCharacterSpawnBranch(branchKey, model string) {
+	m.setBatchSpec(branchKey, batchSpec{agentPrompt: true, model: model, access: delegator.BatchAccessParent, spawnBranch: true})
+}
+
+// isBatchSession reports whether sessionKey launches as a batch (RunBatch, or
+// a background character spawn's branch). Nil-safe for API agents.
+func (m *DelegatedManager) isBatchSession(sessionKey string) bool {
+	if m == nil {
+		return false
+	}
+	_, ok := m.batchSpecFor(sessionKey)
+	return ok
 }
 
 // supportsAccess reports an error when the agent's backend cannot run a

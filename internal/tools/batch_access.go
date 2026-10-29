@@ -12,11 +12,14 @@ var spawnToolNames = map[string]bool{
 }
 
 // parentBatchExcluded lists the tools a parent-access batch session's exec
-// bridge leaves out of the agent's own set: the spawn family (above), and
-// close_session, which on a batch session (keyed under its owner's root)
-// would close the OWNER's chat on a throwaway session's say-so (#2573).
+// bridge (spawn character) leaves out of the agent's own set: the spawn
+// family (above); close_session, which on a batch session (keyed under its
+// owner's root) would close the OWNER's chat on a throwaway session's say-so
+// (#2573); and ask, since nobody is there to answer a character spawn
+// (#2643: "anything that would need the user is refused").
 var parentBatchExcluded = map[string]bool{
 	"close_session": true,
+	"ask":           true,
 }
 
 // Subset returns a registry holding only the tools keep accepts. The tools
@@ -35,7 +38,7 @@ func (r *Registry) Subset(keep func(name string) bool) *Registry {
 // reach through its exec bridge, or nil for none (no bridge at all):
 //   - default (every non-batch session, and foci's own batches): the agent's
 //     whole registry;
-//   - parent: the agent's registry less the spawn family and close_session;
+//   - parent: the agent's registry less the spawn family, close_session and ask;
 //   - isolated: none — the session runs no commands, so it has no shell to
 //     reach a bridge from, and the bridge's tools are not confined to its
 //     directory;

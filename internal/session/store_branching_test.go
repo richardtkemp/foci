@@ -26,7 +26,7 @@ func TestReplaceBranchPreservesMeta(t *testing.T) {
 	s.TestAppend(parentKey, msg("assistant", "parent4"))
 
 	// Create branch at point 4
-	s.createBranchFile(parentKey, branchKey, true, "", "")
+	s.createBranchFile(parentKey, branchKey, true, "", "", false)
 
 	// Add branch messages
 	s.TestAppend(branchKey, msg("user", "branch q"))
@@ -219,7 +219,7 @@ func TestReplaceBranchRotation(t *testing.T) {
 
 	s.TestAppend(parentKey, msg("user", "parent"))
 	s.TestAppend(parentKey, msg("assistant", "reply"))
-	s.createBranchFile(parentKey, branchKey, false, "", "")
+	s.createBranchFile(parentKey, branchKey, false, "", "", false)
 	s.TestAppend(branchKey, msg("user", "branch q"))
 	s.TestAppend(branchKey, msg("assistant", "branch a"))
 

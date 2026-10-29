@@ -40,7 +40,7 @@ func (s *Spawner) SendTool() *Tool {
 				},
 				"timeout": {
 					"type": "integer",
-					"description": "Seconds a resumed (finished) spawn may run; default: its first run's timeout. Ignored for a running spawn."
+					"description": "Seconds a resumed (finished) spawn may run; default: its first run's timeout; at most 86400 (24 hours). Ignored for a running spawn."
 				}
 			},
 			"required": ["id", "message"]
@@ -89,7 +89,7 @@ func (s *Spawner) send(ctx context.Context, idOrBranch, message string, timeoutS
 
 	timeout := snap.Timeout
 	if timeoutSec > 0 || timeout <= 0 {
-		timeout = ResolveTimeout(timeoutSec, TimeoutConfig{DefaultSec: 120})
+		timeout = resolveSpawnTimeout(timeoutSec, true) // a resumed spawn runs in the background
 	}
 	return s.resume(ctx, agent, parent, snap.RunningSpawn, text, message, timeout)
 }
@@ -106,7 +106,7 @@ func (s *Spawner) resume(ctx context.Context, agent SpawnAgent, parent string, r
 	case <-ctx.Done():
 		return ToolResult{}, ctx.Err()
 	}
-	spawnCtx, cancel := buildSpawnContext(ctx, timeout, running.BranchKey, true)
+	spawnCtx, cancel := s.runContext(ctx, timeout, running, true)
 	if !s.deps.Tracker.restart(parent, running.ID, cancel) {
 		cancel()
 		<-s.sem

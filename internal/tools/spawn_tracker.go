@@ -23,6 +23,14 @@ type RunningSpawn struct {
 	Description string // the prompt's opening, as the agent's own subagent descriptions are
 	Model       string // the branch session's model; empty = unknown
 	Started     time.Time
+	// Character marks a background character spawn (#2643): a fresh branch
+	// with the agent's own prompt, not a fork of the parent's conversation.
+	// Its branch is re-prepared (SpawnDeps.PrepareCharacterBranch) before a
+	// run after a restart.
+	Character bool
+	// SpawnModel is the model the caller asked for ("" = the default), kept
+	// so a restart can prepare a character branch on it again.
+	SpawnModel string
 }
 
 // SpawnObserver is told about each background spawn of a parent session, so a

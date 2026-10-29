@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/delegator"
 	"foci/internal/platform"
 	"foci/internal/turnevent"
 )
@@ -385,27 +384,4 @@ func TestSpawnTracker_PrunesOldFinished(t *testing.T) {
 	if _, ok := tr.Lookup("p", "spawn-00", 0); ok {
 		t.Error("oldest finished spawn not pruned")
 	}
-}
-
-// TestDelegatedSpawnTool_DefaultsToClone proves a delegated agent's spawn
-// with no context runs as a clone (a background fork), with its timeout, when
-// its backend can fork.
-func TestDelegatedSpawnTool_DefaultsToClone(t *testing.T) {
-	t.Parallel()
-	agent := newScriptedSpawnAgent(0)
-	h := newFollowupHarness(agent)
-	h.spawner.deps.Delegated = &DelegatedSpawn{
-		Spec:   delegator.Spec{Caps: map[delegator.Capability]delegator.Support{delegator.CapBranch: delegator.Yes()}},
-		Runner: func() BatchRunner { return nil },
-	}
-	tool := h.spawner.SpawnTool()
-	res, err := tool.Execute(h.ctx, json.RawMessage(`{"prompt":"wait for CI","timeout":3600}`))
-	if err != nil || !strings.Contains(res.Text, "Spawn started in background") {
-		t.Fatalf("delegated spawn = %q, %v", res.Text, err)
-	}
-	snap := h.tracker.List("test/imain")
-	if len(snap) != 1 || snap[0].Timeout != time.Hour {
-		t.Errorf("tracked = %+v, want one spawn with a 1h timeout", snap)
-	}
-	h.result(t)
 }

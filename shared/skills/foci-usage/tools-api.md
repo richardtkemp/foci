@@ -18,8 +18,8 @@ Because there's no Claude Code process underneath, an API-loop agent is given fo
 - **`shell`** — run a shell command (command, optional timeout).
 - **`tmux`** — persistent terminal sessions: `start|send|read|list|kill|watch|unwatch` (by name). Async inactivity notifications via `watch`.
 - **`browser`** — headless browser actions (only if the browser feature is enabled in config).
-- **`spawn`** — sub-calls to a model in four context modes: `raw` (no system context, cheapest isolated call), `character` (full system + character files — a copy of you), `clone` (async branch of the current session; result arrives later as a message — the default), `explore` (sync, read-only, cheap model, restricted toolset for investigation). Selects a model group with `powerful|fast|cheap`.
-- **`spawn_send`** / **`spawn_status`** — steer a running clone spawn (or resume a finished one with a new message), and check on your spawns: the list, or one spawn's most recent activity.
+- **`spawn`** — sub-calls to a model in four context modes: `character` (the default: your full system prompt and tools, not this conversation — write the prompt to carry the whole task; returns directly, or runs in the background with `background=true`), `clone` (a background fork of the current session; result arrives later as a message — only when the task needs so much of the conversation that it cannot be written down), `raw` (just your prompt, cheapest isolated call), `explore` (direct, read-only, cheap model, restricted toolset for investigation). Selects a model group with `powerful|fast|cheap`. Timeout: 120 s default directly, 3600 s in the background, 86400 s max.
+- **`spawn_send`** / **`spawn_status`** — steer a running background spawn — clone or background character — (or resume a finished one with a new message), and check on your spawns: the list, or one spawn's most recent activity.
 - **`scratchpad`** — working-notes store (only if configured).
 - **`task_list`** — structured task items (only if configured).
 - **`bitwarden_search` / `bitwarden_unlock`** — vault access (only if configured).

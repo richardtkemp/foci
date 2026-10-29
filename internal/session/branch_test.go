@@ -35,7 +35,7 @@ func TestCreateBranchAndLoadFull(t *testing.T) {
 	s.TestAppend(parentKey, msg("user", "how are you"))
 	s.TestAppend(parentKey, msg("assistant", "good"))
 
-	if err := s.createBranchFile(parentKey, branchKey, false, "", ""); err != nil {
+	if err := s.createBranchFile(parentKey, branchKey, false, "", "", false); err != nil {
 		t.Fatalf("createBranchFile: %v", err)
 	}
 
@@ -166,7 +166,7 @@ func TestLoadFullRecoversParentPrefixFromArchive(t *testing.T) {
 	s.TestAppend(parentKey, msg("user", "how are you"))
 	s.TestAppend(parentKey, msg("assistant", "good"))
 
-	if err := s.createBranchFile(parentKey, branchKey, false, "", ""); err != nil {
+	if err := s.createBranchFile(parentKey, branchKey, false, "", "", false); err != nil {
 		t.Fatalf("createBranchFile: %v", err)
 	}
 	s.TestAppend(branchKey, msg("user", "branch q"))
@@ -214,7 +214,7 @@ func TestLoadFullRecoversParentPrefixAfterCompaction(t *testing.T) {
 	s.TestAppend(parentKey, msg("assistant", "good"))
 
 	branchKey := "main/c123/b1000000001"
-	if err := s.createBranchFile(parentKey, branchKey, false, "", ""); err != nil {
+	if err := s.createBranchFile(parentKey, branchKey, false, "", "", false); err != nil {
 		t.Fatalf("createBranchFile: %v", err)
 	}
 	s.TestAppend(branchKey, msg("user", "branch q"))
@@ -248,7 +248,7 @@ func TestLoadFullRecoversParentPrefixAfterReset(t *testing.T) {
 	s.TestAppend(parentKey, msg("assistant", "two"))
 
 	branchKey := "main/c123/b1000000001"
-	if err := s.createBranchFile(parentKey, branchKey, false, "", ""); err != nil {
+	if err := s.createBranchFile(parentKey, branchKey, false, "", "", false); err != nil {
 		t.Fatalf("createBranchFile: %v", err)
 	}
 	s.TestAppend(branchKey, msg("user", "branch q"))
@@ -282,7 +282,7 @@ func TestBranchOfBranchMintsSibling(t *testing.T) {
 	s.TestAppend(rootKey, msg("user", "hello"))
 
 	firstBranch := "main/c123/b1000000001"
-	if err := s.createBranchFile(rootKey, firstBranch, false, "", ""); err != nil {
+	if err := s.createBranchFile(rootKey, firstBranch, false, "", "", false); err != nil {
 		t.Fatalf("create first branch: %v", err)
 	}
 	s.TestAppend(firstBranch, msg("user", "branch work"))
@@ -328,7 +328,7 @@ func TestBranchParentContinuesGrowing(t *testing.T) {
 	s.TestAppend(parentKey, msg("user", "one"))
 	s.TestAppend(parentKey, msg("assistant", "two"))
 
-	s.createBranchFile(parentKey, branchKey, false, "", "")
+	s.createBranchFile(parentKey, branchKey, false, "", "", false)
 
 	s.TestAppend(parentKey, msg("user", "three"))
 	s.TestAppend(parentKey, msg("assistant", "four"))
@@ -356,7 +356,7 @@ func TestBranchFromEmptyParent(t *testing.T) {
 	parentKey := "main/imain"
 	branchKey := "main/imain/b1000000001"
 
-	s.createBranchFile(parentKey, branchKey, false, "", "")
+	s.createBranchFile(parentKey, branchKey, false, "", "", false)
 	s.TestAppend(branchKey, msg("user", "branch only"))
 
 	msgs, err := s.LoadFull(branchKey)
@@ -484,7 +484,7 @@ func TestBranchDoesNotContaminateParent(t *testing.T) {
 
 	s.TestAppend(parentKey, msg("user", "parent msg"))
 	s.TestAppend(parentKey, msg("assistant", "parent reply"))
-	s.createBranchFile(parentKey, branchKey, false, "", "")
+	s.createBranchFile(parentKey, branchKey, false, "", "", false)
 
 	s.TestAppend(branchKey, msg("user", "branch only"))
 	s.TestAppend(branchKey, msg("assistant", "branch reply"))
@@ -583,12 +583,12 @@ func TestCreateBranchCollision(t *testing.T) {
 
 	s.TestAppend(parentKey, msg("user", "hello"))
 
-	if err := s.createBranchFile(parentKey, branchKey, false, "first branch orientation", ""); err != nil {
+	if err := s.createBranchFile(parentKey, branchKey, false, "first branch orientation", "", false); err != nil {
 		t.Fatalf("first createBranchFile: %v", err)
 	}
 
 	// Second creation with the same key must fail.
-	err := s.createBranchFile(parentKey, branchKey, false, "OVERWRITE ATTEMPT", "")
+	err := s.createBranchFile(parentKey, branchKey, false, "OVERWRITE ATTEMPT", "", false)
 	if err == nil {
 		t.Fatal("expected error on duplicate branch key, got nil")
 	}
@@ -660,7 +660,7 @@ func TestCreateBranchCollisionRetryLogsInfo(t *testing.T) {
 	taken := "main/imain/b1000000001"
 	fresh := "main/imain/b1000000002"
 	s.TestAppend(parentKey, msg("user", "hello"))
-	if err := s.createBranchFile(parentKey, taken, false, "", ""); err != nil {
+	if err := s.createBranchFile(parentKey, taken, false, "", "", false); err != nil {
 		t.Fatalf("pre-create taken branch: %v", err)
 	}
 
@@ -687,7 +687,7 @@ func TestCreateBranchCollisionGiveUpWarns(t *testing.T) {
 	parentKey := "main/imain"
 	taken := "main/imain/b1000000001"
 	s.TestAppend(parentKey, msg("user", "hello"))
-	if err := s.createBranchFile(parentKey, taken, false, "", ""); err != nil {
+	if err := s.createBranchFile(parentKey, taken, false, "", "", false); err != nil {
 		t.Fatalf("pre-create taken branch: %v", err)
 	}
 
@@ -700,5 +700,32 @@ func TestCreateBranchCollisionGiveUpWarns(t *testing.T) {
 	}
 	if w := logLinesAt(buf, "WARN", "branch key collision"); len(w) != 1 || !strings.Contains(w[0], "giving up") {
 		t.Errorf("WARN lines = %v, want exactly one give-up WARN", w)
+	}
+}
+
+// TestCreateFreshBranchReadsNoParent proves a Fresh branch (#2643, a
+// background character spawn's) is a child of its parent that reads none of
+// the parent's conversation: only its own messages load.
+func TestCreateFreshBranchReadsNoParent(t *testing.T) {
+	s := NewStore(t.TempDir())
+	parentKey := "main/imain"
+	s.TestAppend(parentKey, msg("user", "secret context"))
+	s.TestAppend(parentKey, msg("assistant", "ok"))
+
+	branchKey, err := s.CreateBranchWithOptions(parentKey, BranchOptions{BranchType: "spawn", Fresh: true})
+	if err != nil {
+		t.Fatalf("CreateBranchWithOptions: %v", err)
+	}
+	s.TestAppend(branchKey, msg("user", "the task"))
+	msgs, err := s.LoadFull(branchKey)
+	if err != nil {
+		t.Fatalf("LoadFull: %v", err)
+	}
+	if len(msgs) != 1 || provider.TextOf(msgs[0].Content) != "the task" {
+		t.Fatalf("fresh branch loaded %d messages, want only its own task", len(msgs))
+	}
+	meta, err := s.readBranchMeta(branchKey)
+	if err != nil || meta == nil || meta.ParentKey != parentKey || meta.BranchType != "spawn" {
+		t.Fatalf("fresh branch meta = %+v, %v; want a spawn branch of %s", meta, err, parentKey)
 	}
 }

@@ -35,6 +35,9 @@ func NewCloseSessionTool(closeFn SessionCloser, readFn SessionReader) *Tool {
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"mark_read":{"type":"boolean","description":"Also mark the chat read, up to and including your final reply of this turn. Default false."}}}`),
 		Execute: func(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
+			if IsSpawnCharacter(ctx) {
+				return ToolResult{}, errSpawnNeedsUser("close_session")
+			}
 			var args struct {
 				MarkRead bool `json:"mark_read"`
 			}

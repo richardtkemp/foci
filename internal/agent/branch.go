@@ -256,6 +256,34 @@ func (a *Agent) ForkOrFreshBranch(ctx context.Context, parentKey string, opts se
 	return bk, false, nil
 }
 
+// NewCharacterSpawnBranch creates the branch a background character spawn
+// runs on (#2643): a FRESH child of parentKey (session.BranchOptions.Fresh:
+// none of the parent's conversation), with no orientation, since the
+// spawn's prompt is its whole task. A delegated agent's branch launches as a
+// character spawn (PrepareCharacterSpawnBranch); an API agent's turns on it
+// run with its own system prompt and tools, as every API session does.
+func (a *Agent) NewCharacterSpawnBranch(parentKey, model string) (string, error) {
+	bk, err := a.Sessions.CreateBranchWithOptions(parentKey, session.BranchOptions{
+		NoResetHook: true,
+		BranchType:  "spawn",
+		Fresh:       true,
+	})
+	if err != nil {
+		return "", err
+	}
+	a.PrepareCharacterSpawnBranch(bk, model)
+	return bk, nil
+}
+
+// PrepareCharacterSpawnBranch sets a delegated character spawn branch's
+// launch (DelegatedManager.SetCharacterSpawnBranch); a no-op for an API
+// agent, whose branch model is a persisted session override.
+func (a *Agent) PrepareCharacterSpawnBranch(branchKey, model string) {
+	if a.DelegatedManager != nil {
+		a.DelegatedManager.SetCharacterSpawnBranch(branchKey, model)
+	}
+}
+
 // createMemoryBranch creates the branch session used by the BranchFork strategy:
 // a NoResetHook child of parentKey that reads its history, marked no-compact so
 // it can't summarise itself mid-pass. Shared by the compaction-memory and

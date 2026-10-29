@@ -1699,6 +1699,9 @@ func NewAskTool(present AskPresentFn, restore AskRestoreFn, deliver AskDeliverFn
 			"required": ["questions"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			if IsSpawnCharacter(ctx) {
+				return ToolResult{}, errSpawnNeedsUser("ask")
+			}
 			sessionKey := SessionKeyFromContext(ctx)
 			if sessionKey == "" {
 				return ToolResult{}, fmt.Errorf("ask: no session in context (cannot route answers back)")

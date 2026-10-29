@@ -323,7 +323,7 @@ func TestSessionIndex_Rebuild(t *testing.T) {
 	store.TestAppend("bot/c100", msg("user", "hello"))
 	store.TestAppend("bot/c200", msg("user", "world"))
 	branchKey := "bot/c100/b1000000001"
-	store.createBranchFile("bot/c100", branchKey, false, "", "spawn")
+	store.createBranchFile("bot/c100", branchKey, false, "", "spawn", false)
 
 	// Create index and rebuild
 	idx := tempIndex(t)
@@ -443,7 +443,7 @@ func TestSessionIndex_BranchEventFiring(t *testing.T) {
 	store.TestAppend("bot/c100", msg("user", "hello"))
 
 	// Create branch
-	store.createBranchFile("bot/c100", "bot/c100/b1000000001", false, "", "spawn")
+	store.createBranchFile("bot/c100", "bot/c100/b1000000001", false, "", "spawn", false)
 	count, _ := idx.Count()
 	if count != 2 {
 		t.Fatalf("expected 2 after branch create, got %d", count)

@@ -88,21 +88,21 @@ Unified sub-call to a model with four context modes, all with tool access:
 
 | Mode | System prompt | Tools | Behaviour |
 |------|--------------|-------|-----------|
-| `raw` | None | Most (no `send_to_chat`, `send_to_session`, `whoami`) | One-shot. No character context means no communication awareness. |
-| `character` | Character files only | All except `send_to_session`, `whoami` | One-shot with identity. |
-| `clone` (default) | Full clone | All | Branch session — a headless self-fork. Runs async, delivers result on completion. |
+| `character` (default) | The agent's full system prompt | All except `send_to_session`, `whoami`, `close_session`, `ask` (nothing that needs the user) | Returns its result directly; with `background=true` runs in the background on a fresh branch (none of the conversation) and is steered, checked on and delivered like a clone. |
+| `clone` | Full clone | All | Branch session — a headless self-fork. Always runs in the background, delivers result on completion. Only when the task needs so much of the conversation that it cannot be written into a prompt. |
+| `raw` | None | Most (no `send_to_chat`, `send_to_session`, `whoami`) | One-shot. The caller's prompt is the only prompt. |
 | `explore` | Code explorer | Read-only allowlist (see below) | One-shot. Safe exploration — no file mutation, no shell exec, no messaging. Uses the `cheap` model group (which defaults to the `powerful` model when `cheap` is unset). |
 
 On a **delegated agent** (Claude Code, codex, opencode) the one-shot modes run as a batch on the agent's own backend (`DelegatedManager.RunBatch`), never through model groups: `model` is passed to the backend as written (empty = the agent's own model). Each mode is offered only where the backend can run it safely:
 
 | Mode | Delegated behaviour | Claude Code | codex | opencode |
 |------|--------------------|:-:|:-:|:-:|
-| `raw` | Backend's default system prompt (Claude Code rejects a blank one); file tools confined to a fresh temp dir, no shell, no MCP, no foci tools; created files listed | ✓ | ✗ (sandbox cannot confine reads) | ✗ (one server per agent, rooted in its workspace) |
-| `character` | The agent's full system prompt, tools, permission mode and allow rules, launched as its sessions are; an ask is decided unattended: allowed if foci's auto-approve rules permit it, otherwise denied, never prompted | ✓ | ✓ | ✓ |
+| `raw` | The caller's prompt is also the system prompt, replacing the backend's default (Claude Code rejects a blank one, and still prepends its one-line SDK identity); file tools confined to a fresh temp dir, no shell, no MCP, no foci tools; created files listed | ✓ | ✗ (sandbox cannot confine reads) | ✗ (one server per agent, rooted in its workspace) |
+| `character` | The agent's full system prompt, tools, permission mode and allow rules, launched as its sessions are; an ask is decided unattended: allowed if foci's auto-approve rules permit it, otherwise denied, never prompted; no `foci_ask`, `foci_close_session` or spawn tools. `--background` runs it on a fresh branch, launched the same way | ✓ | ✓ | ✓ |
 | `clone` | Background fork (below) | ✓ | ✓ | ✓ |
 | `explore` | Explorer prompt; reads and searches files and the web, writes nothing, runs nothing mutating (Claude Code: Read/Glob/Grep/WebSearch/WebFetch only; codex: read-only sandbox; opencode: enforced read-only ruleset) | ✓ | ✓ | ✓ |
 
-`clone` creates a branch `{parentKey}/b{TIMESTAMP}`, runs via `AsyncNotifier`, and returns an immediate ack naming its spawn id. Delegated agents get `spawn` with the modes their backend supports (`foci_spawn <prompt> [--context MODE] [--model NAME] [--timeout S]`, #2523); `clone` needs a backend that can fork a session. `spawn_send` (steer a running clone, or resume a finished one on its branch) and `spawn_status` (list, or one spawn's last N activity entries) work on both paths. A spawn reports ONE `[SPAWN RESULT]` per run; messages its turn did not take run as a follow-up turn first. Recursive `clone` is blocked. Concurrent spawns limited by `max_concurrent_spawns` (default 3). `spawn` itself is excluded from one-shot tool sets to prevent recursion. The one-shot modes (`raw`, `character`) also exclude `whoami`: their tool calls run on the parent's context, so it would report the parent's session key, chat and model.
+`clone` creates a branch `{parentKey}/b{TIMESTAMP}`, runs via `AsyncNotifier`, and returns an immediate ack naming its spawn id; a background character spawn does the same on a fresh branch (#2643). Timeouts: 120 s default for a spawn that returns directly, 3600 s for one in the background, at most 86400 s (clamped). Delegated agents get `spawn` with the modes their backend supports (`foci_spawn <prompt> [--context MODE] [--background] [--model NAME] [--timeout S]`, #2523); `clone` needs a backend that can fork a session. `spawn_send` (steer a running background spawn, or resume a finished one on its branch) and `spawn_status` (list, or one spawn's last N activity entries) work on both paths. A spawn reports ONE `[SPAWN RESULT]` per run; messages its turn did not take run as a follow-up turn first. A background spawn cannot start another (clone or background character). Concurrent spawns limited by `max_concurrent_spawns` (default 3). `spawn` itself is excluded from one-shot tool sets to prevent recursion. The one-shot modes (`raw`, `character`) also exclude `whoami`: their tool calls run on the parent's context, so it would report the parent's session key, chat and model.
 
 **`explore` allowlist.** The read-only tool set for `explore` is broader than just the search/read primitives: `git` and `todo` are always available, and the following are enabled conditionally (based on config/availability): `file`, `stat`, `wc`, `head`, `tail`, `tree`, `du`, `jq`, `yq`, `mdq`, `docker`, `systemctl`, `sqlite3`, `crontab`, `id`. None of these can mutate the workspace — they are inspection-only commands wrapped as tools.
 
@@ -179,10 +179,10 @@ foci_todo search "review"
 foci_todo remove 5
 ```
 
-#### `foci_spawn <prompt> [--model M] [--context C]`
-Spawn a sub-call to a model.
+#### `foci_spawn <prompt> [--model M] [--context C] [--background]`
+Spawn a sub-call to a model (default context `character`).
 ```bash
-foci_spawn "Summarize this data" --model haiku --context none
+foci_spawn "Summarize this data" --model haiku --context raw
 ```
 
 ### Composition Examples
@@ -202,7 +202,7 @@ foci_http_request https://api.github.com/repos/golang/go/releases/latest \
 Search memory for context, then ask a model to summarize:
 ```bash
 context=$(foci_memory_search "deployment checklist")
-foci_spawn "Summarize this: $context" --model haiku --context none
+foci_spawn "Summarize this: $context" --model haiku --context raw
 ```
 
 Fetch a page and save processed output:

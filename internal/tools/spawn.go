@@ -90,10 +90,13 @@ var spawnRawBlacklist = map[string]bool{
 // calls run on the parent's context, so it would report the parent's
 // session key, chat and model. close_session likewise (#2573): it would
 // close the parent's chat.
+// ask is excluded because nobody is there to answer a character spawn
+// (#2643).
 var spawnCharacterBlacklist = map[string]bool{
 	"send_to_session": true,
 	"whoami":          true,
 	"close_session":   true,
+	"ask":             true,
 }
 
 // exploreRolePrompt is the backend-neutral part of the explore system prompt:
@@ -186,6 +189,16 @@ type SpawnDeps struct {
 	// fan-in, and are held until then. Nil = the starting session owns its
 	// spawns, never held.
 	Route func(parent string) SpawnRoute
+	// CharacterBranch creates the branch a background character spawn runs
+	// on (#2643): a FRESH child session of parent (none of its conversation),
+	// which runs with the agent's own system prompt, tools and permission
+	// rules, unattended, on model ("" = the character default). Nil = no
+	// background character on this agent.
+	CharacterBranch func(ctx context.Context, parent, model string) (branchKey string, err error)
+	// PrepareCharacterBranch makes an existing character branch run as one
+	// again (its launch settings live in memory), before a run a restart
+	// resumed. Nil = nothing to prepare.
+	PrepareCharacterBranch func(branchKey, model string)
 }
 
 // apiOneShotField names the first API one-shot field d sets (the clients,
@@ -306,68 +319,83 @@ func (s *Spawner) modes() []string {
 	return apiSpawnModes
 }
 
-// defaultMode is the mode a spawn with no context runs: clone where the
-// agent can fork, else character (the agent's own abilities, run once).
+// defaultMode is the mode a spawn with no context runs: character, which
+// every agent offers (Dick 2026-10-29, #2643: clone only when the task needs
+// so much of the conversation that it cannot be written into a prompt).
 func defaultMode(modes []string) string {
-	if slices.Contains(modes, spawnModeClone) {
-		return spawnModeClone
+	if slices.Contains(modes, spawnModeCharacter) {
+		return spawnModeCharacter
 	}
-	return spawnModeCharacter
+	return modes[0]
+}
+
+// Spawn timeouts (Dick 2026-10-29, #2643), in seconds: a spawn that returns
+// its result directly defaults to 2 minutes, one that runs in the background
+// (clone, background character, a resumed spawn) to an hour; none may run
+// longer than 24 hours.
+const (
+	spawnDirectDefaultSec     = 120
+	spawnBackgroundDefaultSec = 3600
+	spawnMaxSec               = 86400
+)
+
+// resolveSpawnTimeout resolves a spawn's timeout parameter: its default by
+// run form, clamped to spawnMaxSec.
+func resolveSpawnTimeout(seconds int, background bool) time.Duration {
+	def := spawnDirectDefaultSec
+	if background {
+		def = spawnBackgroundDefaultSec
+	}
+	return ResolveTimeout(seconds, TimeoutConfig{DefaultSec: def, MaxSec: spawnMaxSec})
 }
 
 // spawnModeDocs describes each mode, for the tool and its context parameter.
 // api is the API agent's wording (foci's own tools and model groups);
 // delegated is a delegated agent's (its backend's own tools and models).
-var spawnModeDocs = map[string]struct{ api, delegated string }{
-	spawnModeRaw: {
-		api:       "'raw': just your prompt, no system context, file tools confined to a temp dir — send_to_chat and send_to_session excluded (sync)",
-		delegated: "'raw': just your prompt, no system context of yours (the backend's own default prompt), file tools confined to a fresh temp dir, no shell, no foci tools (sync)",
-	},
-	spawnModeCharacter: {
-		api:       "'character': your prompt + character files (sync)",
-		delegated: "'character': your prompt + your full system prompt, with your own tools and permission rules; anything you would have to ask the user about is refused (sync)",
-	},
-	spawnModeClone: {
-		api:       "'clone': branch session with full tool access — runs asynchronously in the background, result delivered via [SPAWN RESULT] when complete; steer it with spawn_send, check on it with spawn_status",
-		delegated: "'clone': a fork of this session (its own process, starting from a copy of your conversation) — runs in the background, result delivered via [SPAWN RESULT] when complete; steer it with spawn_send, check on it with spawn_status",
-	},
-	spawnModeExplore: {
-		api:       "'explore': read-only exploration agent with ls, find, grep, git, read, todo, memory_search, web_search, web_fetch, plus conditional filesystem/data/system inspection tools (sync, no mutation, uses cheap model group — model param ignored)",
-		delegated: "'explore': read-only exploration — reads and searches files and the web, writes nothing and runs nothing that changes anything (sync)",
-	},
+//
+// The wording is Dick's approved text (2026-10-29, #2643), the same for API
+// and delegated agents; each sentence must stay true of what the mode does
+// on both. A per-transport detail goes in the parameter docs, not here.
+var spawnModeDocs = map[string]string{
+	spawnModeCharacter: "'character' (default): your prompt plus your full system prompt, with your own tools and permission rules. Anything that would need the user is refused. Runs in the background with background=true; otherwise it returns its result directly.",
+	spawnModeClone:     "'clone': a fork of this session that starts from a copy of your conversation. Always runs in the background. The result arrives as [SPAWN RESULT]; steer it with spawn_send and check on it with spawn_status. Use it only when the context can't be written down.",
+	spawnModeRaw:       "'raw': just your prompt, with no other context or prompt provided.",
+	spawnModeExplore:   "'explore': read-only. Reads and searches files and the web, and changes nothing. Returns directly.",
 }
+
+// spawnModeOrder is the order the context parameter describes the modes in:
+// the default first, as the approved text has it.
+var spawnModeOrder = []string{spawnModeCharacter, spawnModeClone, spawnModeRaw, spawnModeExplore}
 
 // spawnParams builds the spawn tool's parameter schema for these modes.
 func spawnParams(modes []string, delegated bool) json.RawMessage {
 	docs := make([]string, 0, len(modes))
-	for _, m := range modes {
-		d := spawnModeDocs[m]
-		if delegated {
-			docs = append(docs, d.delegated)
-		} else {
-			docs = append(docs, d.api)
+	for _, m := range spawnModeOrder {
+		if slices.Contains(modes, m) {
+			docs = append(docs, "- "+spawnModeDocs[m])
 		}
 	}
-	def := defaultMode(modes)
 	modelDoc := "Model group to use: 'powerful', 'fast', 'cheap'. Empty uses the mode's default group. Ignored for clone and explore modes."
-	promptDoc := "Self-contained prompt with all necessary context. For raw/character: the model gets only this (synchronous, result returned directly). For clone: injected as the user message in the branch session."
 	if delegated {
 		modelDoc = "Model for a raw, character or explore spawn, named as your backend names models; passed to it as written. Empty = your own model. Ignored for clone (a fork runs on your session's model)."
-		promptDoc = "Self-contained task for the spawn. For raw/character/explore it is the whole request (synchronous, result returned directly). For clone it runs as the first message of a fork that starts with a copy of your conversation."
 	}
 	schema := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"prompt": map[string]any{"type": "string", "description": promptDoc},
+			"prompt": map[string]any{"type": "string", "description": "The task. Write it to carry everything the spawn needs: only a clone sees this conversation."},
 			"model":  map[string]any{"type": "string", "description": modelDoc},
 			"context": map[string]any{
 				"type":        "string",
 				"enum":        modes,
-				"description": "Context mode (default '" + def + "'). " + strings.Join(docs, ". ") + ".",
+				"description": "Mode:\n" + strings.Join(docs, "\n"),
+			},
+			"background": map[string]any{
+				"type":        "boolean",
+				"description": "Character only: run in the background (the result arrives as [SPAWN RESULT]; steer it with spawn_send, check on it with spawn_status) instead of returning the result directly. Default false. A clone always runs in the background.",
 			},
 			"timeout": map[string]any{
 				"type":        "integer",
-				"description": "How long the spawn may run, in seconds (default 120). Applies to all modes. Give a long job room: when this runs out the spawn is stopped and reported failed.",
+				"description": fmt.Sprintf("Seconds the spawn may run. The default is %d for a spawn that returns directly, and %d (1 hour) for one that runs in the background. The maximum is %d (24 hours). When it runs out, the spawn is stopped and reported failed.", spawnDirectDefaultSec, spawnBackgroundDefaultSec, spawnMaxSec),
 			},
 		},
 		"required": []string{"prompt"},
@@ -380,9 +408,28 @@ func spawnParams(modes []string, delegated bool) json.RawMessage {
 }
 
 // spawnToolDescription is the spawn tool's description for these modes.
+// It is Dick's approved headline (2026-10-29, #2643); a sentence about a
+// mode this agent does not offer is left out, so the text stays true.
 func spawnToolDescription(modes []string) string {
-	return "Spawn a sub-call to a model. Context modes: " + strings.Join(modes, ", ") + " (see the context parameter). " +
-		"Use 'raw'/'character' for one-shot queries, 'clone' to delegate complex multi-step tasks in the background, 'explore' for read-only codebase research. Only the modes listed are available."
+	var b strings.Builder
+	b.WriteString("Spawn a sub-call to a model. Modes: " + strings.Join(modes, ", ") + ".\n")
+	b.WriteString("Default to 'character' for any task you hand off, including long multi-step work such as a bugfix or feature. " +
+		"It gets your system prompt, tools and permission rules, but not this conversation, so write the prompt to carry everything the task needs: the ticket id, file paths, what done means.")
+	if slices.Contains(modes, spawnModeClone) {
+		b.WriteString("\nUse 'clone' only when the task needs so much of this conversation that you could not reasonably write it into a prompt. " +
+			"A clone copies the whole conversation, which costs far more.")
+	}
+	var rest []string
+	if slices.Contains(modes, spawnModeRaw) {
+		rest = append(rest, "'raw' for a question that needs no context of yours")
+	}
+	if slices.Contains(modes, spawnModeExplore) {
+		rest = append(rest, "'explore' for read-only research")
+	}
+	if len(rest) > 0 {
+		b.WriteString("\nUse " + strings.Join(rest, ", and ") + ".")
+	}
+	return b.String()
 }
 
 // SpawnTool is the unified spawn tool (it replaced request_model).
@@ -396,10 +443,11 @@ func (s *Spawner) SpawnTool() *Tool {
 		Parameters:  spawnParams(modes, s.deps.Delegated != nil),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			p, err := UnmarshalParams[struct {
-				Prompt  string `json:"prompt"`
-				Model   string `json:"model"`
-				Context string `json:"context"`
-				Timeout int    `json:"timeout"`
+				Prompt     string `json:"prompt"`
+				Model      string `json:"model"`
+				Context    string `json:"context"`
+				Background bool   `json:"background"`
+				Timeout    int    `json:"timeout"`
 			}](params)
 			if err != nil {
 				return ToolResult{}, err
@@ -413,10 +461,17 @@ func (s *Spawner) SpawnTool() *Tool {
 			if !slices.Contains(modes, p.Context) {
 				return ToolResult{}, fmt.Errorf("invalid context: %q (use %s)", p.Context, strings.Join(modes, ", "))
 			}
-			timeout := ResolveTimeout(p.Timeout, TimeoutConfig{DefaultSec: 120})
+			if p.Background && p.Context != spawnModeCharacter && p.Context != spawnModeClone {
+				return ToolResult{}, fmt.Errorf("background: only a character spawn can run in the background (a clone always does); %s returns its result directly", p.Context)
+			}
+			background := p.Context == spawnModeClone || p.Background
+			timeout := resolveSpawnTimeout(p.Timeout, background)
 
 			if p.Context == spawnModeClone {
 				return s.startClone(ctx, p.Prompt, timeout)
+			}
+			if background {
+				return s.startBackgroundCharacter(ctx, p.Prompt, p.Model, timeout)
 			}
 			if s.deps.Delegated != nil {
 				return s.runBatchOneShot(ctx, p.Context, p.Prompt, p.Model, timeout)
@@ -463,11 +518,16 @@ func inSpawnTempDir(run func(dir string) (string, error)) (ToolResult, error) {
 // group or an API client.
 //
 //   - raw: AccessIsolated in a fresh temp dir (file tools confined to it, no
-//     commands, no foci tools), with the backend's own default system prompt.
-//     A blank prompt is the aim, but Claude Code — the one backend that can
-//     isolate a session — rejects a blank system prompt (API 400 "system:
-//     text content blocks must contain non-whitespace text", claude 2.1.311),
-//     so it gets its default.
+//     commands, no foci tools), with the caller's prompt as its system prompt
+//     too, replacing the backend's own default (Dick 2026-10-29, #2643: the
+//     caller's prompt is a raw spawn's only prompt). A blank system prompt is
+//     not possible: Claude Code — the one backend that can isolate a session
+//     (CapIsolatedBatch) — rejects one (API 400 "system: text content blocks
+//     must contain non-whitespace text", claude 2.1.311), and an empty one
+//     means its long default. What Claude Code still adds of its own to a
+//     custom system prompt (probed 2026-10-29, #2643): the one-line SDK
+//     identity "You are a Claude agent, built on Anthropic's Claude Agent
+//     SDK." before it, and an account-context system-reminder.
 //   - character: AccessParent with the agent's own composed system prompt:
 //     the agent's tools and rules; what would prompt is refused.
 //   - explore: AccessReadOnly with the read-only explorer prompt.
@@ -493,6 +553,7 @@ func (s *Spawner) runBatchOneShot(ctx context.Context, mode, prompt, model strin
 	switch mode {
 	case spawnModeRaw:
 		req.Access = delegator.BatchAccessIsolated
+		req.SystemPrompt = prompt
 		req.Purpose = delegator.BatchPurposeSpawnRaw
 		return inSpawnTempDir(func(dir string) (string, error) {
 			req.WorkDir = dir
@@ -550,7 +611,7 @@ func (s *Spawner) runAPIOneShot(ctx context.Context, mode, prompt, modelGroup st
 			system = deps.Bootstrap.SystemBlocks()
 		}
 		toolDefs, tools := spawnToolSet(deps.Registry, spawnCharacterBlacklist)
-		result, err := spawnOneShot(ctx, oneShotParams{
+		result, err := spawnOneShot(WithSpawnCharacter(ctx), oneShotParams{
 			client:         client,
 			model:          model,
 			format:         format,
@@ -974,31 +1035,7 @@ func (s *Spawner) startClone(ctx context.Context, prompt string, timeout time.Du
 
 	// Async path: launch goroutine, return immediately.
 	if deps.Notifier != nil {
-		select {
-		case s.sem <- struct{}{}:
-		case <-ctx.Done():
-			return ToolResult{}, ctx.Err()
-		}
-		// Registered before the goroutine starts, so a /stop that lands at
-		// once still finds it (#2139).
-		spawnCtx, cancel := buildSpawnContext(ctx, timeout, branchKey, true)
-		id := newSpawnID()
-		var model string
-		if deps.ModelFor != nil {
-			model = deps.ModelFor(branchKey)
-		}
-		running := RunningSpawn{
-			ID: id, BranchKey: branchKey, Description: spawnDescription(prompt),
-			Model: model, Started: time.Now(),
-		}
-		deps.Tracker.addWithPrompt(parentSession, running, cancel, timeout, prompt)
-		deps.Tracker.appendLog(parentSession, id, "prompt", prompt)
-		if deps.Observer != nil {
-			deps.Observer.SpawnStarted(parentSession, running, prompt)
-		}
-		pending := fmt.Sprintf("Spawn started in background.\nSpawn: %s\nBranch: %s\nPrompt: %s\nResults will be delivered when complete. Send it more with spawn_send; check on it with spawn_status.",
-			id, branchKey, truncatePromptPreview(prompt))
-		return s.runBackground(ctx, agent, parentSession, running, []string{prompt}, spawnCtx, cancel, pending)
+		return s.launchBackground(ctx, agent, parentSession, RunningSpawn{BranchKey: branchKey}, prompt, timeout)
 	}
 
 	// Synchronous fallback (nil notifier — for tests).
@@ -1021,6 +1058,74 @@ func (s *Spawner) startClone(ctx context.Context, prompt string, timeout time.Du
 		return TextResult("(empty response)"), nil
 	}
 	return TextResult(buf.FinalText()), nil
+}
+
+// launchBackground registers a background spawn on its branch (running holds
+// the branch key and, for a character spawn, Character and SpawnModel) and
+// starts its first run; the tool returns at once with where it runs.
+func (s *Spawner) launchBackground(ctx context.Context, agent SpawnAgent, parent string, running RunningSpawn, prompt string, timeout time.Duration) (ToolResult, error) {
+	deps := s.deps
+	select {
+	case s.sem <- struct{}{}:
+	case <-ctx.Done():
+		return ToolResult{}, ctx.Err()
+	}
+	// Registered before the goroutine starts, so a /stop that lands at
+	// once still finds it (#2139).
+	spawnCtx, cancel := s.runContext(ctx, timeout, running, true)
+	running.ID = newSpawnID()
+	running.Description = spawnDescription(prompt)
+	running.Started = time.Now()
+	if deps.ModelFor != nil {
+		running.Model = deps.ModelFor(running.BranchKey)
+	}
+	deps.Tracker.addWithPrompt(parent, running, cancel, timeout, prompt)
+	deps.Tracker.appendLog(parent, running.ID, "prompt", prompt)
+	if deps.Observer != nil {
+		deps.Observer.SpawnStarted(parent, running, prompt)
+	}
+	kind := "Spawn"
+	if running.Character {
+		kind = "Character spawn"
+	}
+	pending := fmt.Sprintf("%s started in background.\nSpawn: %s\nBranch: %s\nTimeout: %s\nPrompt: %s\nResults will be delivered when complete. Send it more with spawn_send; check on it with spawn_status.",
+		kind, running.ID, running.BranchKey, timeout, truncatePromptPreview(prompt))
+	return s.runBackground(ctx, agent, parent, running, []string{prompt}, spawnCtx, cancel, pending)
+}
+
+// startBackgroundCharacter runs a character spawn in the background (#2643):
+// on a fresh branch of the caller (SpawnDeps.CharacterBranch: the agent's own
+// prompt, tools and permission rules, none of this conversation, nobody to
+// answer an ask), run, steered, checked on, resumed and persisted exactly
+// as a clone is.
+func (s *Spawner) startBackgroundCharacter(ctx context.Context, prompt, model string, timeout time.Duration) (ToolResult, error) {
+	deps := s.deps
+	parent := SessionKeyFromContext(ctx)
+	// The same no-recursion guard as clone: a background spawn may not start
+	// another one (a delegated character branch has no spawn tools at all).
+	if IsSpawnInherit(ctx) || s.isSpawnBranch(parent) {
+		return ToolResult{}, fmt.Errorf("a background spawn cannot start another background spawn — run this character spawn without background")
+	}
+	if parent == "" {
+		return ToolResult{}, fmt.Errorf("spawn character: no parent session in context")
+	}
+	if deps.CharacterBranch == nil || deps.Notifier == nil {
+		return ToolResult{}, fmt.Errorf("spawn character: this agent cannot run a character spawn in the background")
+	}
+	agent := s.agentFn()
+	if agent == nil {
+		return ToolResult{}, fmt.Errorf("spawn character: agent not available")
+	}
+	branchKey, err := deps.CharacterBranch(ctx, parent, model)
+	if err != nil {
+		return ToolResult{}, fmt.Errorf("spawn character: create branch: %w", err)
+	}
+	if deps.SetNoCompact != nil {
+		deps.SetNoCompact(branchKey, true)
+	}
+	spawnLog.Infof("background character branch=%s parent=%s model=%q prompt=%d chars timeout=%s",
+		branchKey, parent, model, len(prompt), timeout)
+	return s.launchBackground(ctx, agent, parent, RunningSpawn{BranchKey: branchKey, Character: true, SpawnModel: model}, prompt, timeout)
 }
 
 // isSpawnBranch reports whether sessionKey is a tracked spawn's own branch.
@@ -1151,6 +1256,16 @@ func resolveSpawnGroup(gr *config.GroupResolver, userGroup, defaultCallSite stri
 		}
 	}
 	return client, resolved.Developer + "/" + resolved.ModelID, resolved.Format
+}
+
+// runContext is buildSpawnContext for one run of a background spawn, marked
+// as a character spawn's when it is one (WithSpawnCharacter).
+func (s *Spawner) runContext(ctx context.Context, timeout time.Duration, running RunningSpawn, detached bool) (context.Context, context.CancelFunc) {
+	spawnCtx, cancel := buildSpawnContext(ctx, timeout, running.BranchKey, detached)
+	if running.Character {
+		spawnCtx = WithSpawnCharacter(spawnCtx)
+	}
+	return spawnCtx, cancel
 }
 
 // buildSpawnContext creates a spawn context with timeout and session/inherit markers.
