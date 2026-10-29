@@ -113,6 +113,15 @@
 # before the test target execs so the test process and its children do not
 # inherit — and thus cannot pin — the merge lock.
 #
+# FAIL CLOSED ON THE LOCK (#2583): the merge lock is taken with `flock`, which
+# macOS does not ship (Homebrew's `flock` formula provides it on the work Mac).
+# A missing or failing lock tool stops the landing BEFORE anything else — it
+# prints `LAND_RESULT: FAILED ...` naming the cause and exits non-zero — so a
+# landing never runs the gate or pushes without having held the lock. The
+# script must also run under macOS's /bin/bash 3.2 and BSD userland: keep to
+# bash-3.2 syntax and POSIX tool flags. scripts/test-land.sh exercises it
+# against a throwaway bare origin on either OS.
+#
 # Timestamped progress marker (#1748): mirrors $(SAY) in mk/say.mk so make
 # output and script output interleave in ONE readable format. `+Ns` is seconds
 # since this script started, which is the number that localises a stall: scan
@@ -144,11 +153,25 @@ _sayt0=$(date +%s)
 say() { printf '>>> [%s +%ss] %s\n' "$(date +%H:%M:%S)" "$(( $(date +%s) - _sayt0 ))" "$*"; }
 
 LOCK="$LAND_LOCK"
+if ! command -v flock >/dev/null 2>&1; then
+	echo "ABORT: no flock on PATH — cannot take the merge lock (macOS: brew install flock)" >&2
+	echo ">>> LAND_RESULT: FAILED no flock on PATH (merge lock unavailable)" >&2
+	exit 7
+fi
 [ -e "$LOCK" ] || : > "$LOCK"
+if [ ! -r "$LOCK" ]; then
+	echo "ABORT: merge lock file $LOCK is missing or unreadable" >&2
+	echo ">>> LAND_RESULT: FAILED merge lock file $LOCK unusable" >&2
+	exit 7
+fi
 
 land() {
 	say "waiting for merge lock ($LOCK; another landing may be in progress) ..." >&2
-	flock 9
+	if ! flock 9; then
+		echo "ABORT: flock failed to take the merge lock ($LOCK) — not landing" >&2
+		echo ">>> LAND_RESULT: FAILED could not take merge lock $LOCK" >&2
+		return 7
+	fi
 	say "acquired merge lock" >&2
 
 	local branch

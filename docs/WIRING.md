@@ -15,6 +15,11 @@ fociroot.EnsureCCConfigEnv()                             ← internal/fociroot (
                                                             config folder. No-op on Linux (no FOCI_HOME) and when
                                                             CLAUDE_CONFIG_DIR is already set. See "Install root vs
                                                             HOME" below.
+→ modelinfo hooks + BuiltInRejected() warnings           ← one modelinfo WARN per embedded models.jsonl row the
+                                                            loader skipped at init (bad JSON, no id, tier at <= 0
+                                                            tokens); a bad row is skipped, never a panic (#2583).
+                                                            scripts/sync-modelinfo refuses to commit such a row
+                                                            via modelinfo.ValidateModelsJSONL (same rules)
 → config.Load(path)                                      ← validates values; logs to stderr + buffer. No
                                                             process-global side effects (#2356), so reloads and
                                                             parallel tests can call it freely

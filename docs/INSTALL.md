@@ -285,6 +285,24 @@ Homebrew `sqlite3` ahead of Apple's, which cannot open WAL databases
 `-readonly`. Tests that exercise Linux-only mechanisms (procfs, ETXTBSY, the
 `foci-secrets` group model) skip on macOS.
 
+### Landing on a Mac
+
+A Mac checkout reaches main only through `make land`, as on Linux; never push to
+main directly. `make land` runs `scripts/land.sh`, which needs:
+
+- `flock` on `PATH` for the merge lock. macOS does not ship it; Homebrew's
+  `flock` formula provides it (`make macos-deps` installs it, into
+  `/opt/homebrew/bin`). Without it, land stops before the gate with
+  `LAND_RESULT: FAILED no flock on PATH` and pushes nothing.
+- `git`, `make` and `bash`. Apple's `/bin/bash` 3.2 and `/usr/bin/make` 3.81 are
+  enough; the script avoids bash-4 syntax and GNU-only flags.
+- Everything the gate (`make test`) needs, i.e. `make macos-deps`.
+- An `origin` this checkout can push to.
+
+`bash scripts/test-land.sh` checks the script against a throwaway bare origin
+(red gate, green gate, missing and failing lock, two concurrent landings) on
+either OS, without touching the real origin.
+
 ## Directory Layout
 
 After setup, the foci user's home looks like:

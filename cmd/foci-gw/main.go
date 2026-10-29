@@ -156,6 +156,12 @@ Subcommands:
 	modelinfo.FamilyPricedModelHook = func(model string) {
 		modelinfoLog.Warnf("no exact price for %q — inheriting its family's rates; verify against the pricing page and add a models.jsonl row", model)
 	}
+	// Rows of the embedded models.jsonl that modelinfo skipped at load instead
+	// of panicking (#2583). A model whose only row was skipped is then
+	// unpriced or family-priced, and the hooks above say so on first use.
+	for _, r := range modelinfo.BuiltInRejected() {
+		modelinfoLog.Warnf("skipped a models.jsonl row modelinfo rejects — %s", r)
+	}
 
 	cfg, err := config.Load(configPath, delegator.RegisteredNames())
 	if err != nil {

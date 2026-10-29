@@ -23,8 +23,20 @@
 //  4. Adds the N newest API models not already present (newest by 'created' timestamp,
 //     since the API does not expose usage/popularity metrics).
 //  5. Also ensures the latest N Anthropic and N OpenAI releases are present.
-//  6. Writes the updated JSONL to a git worktree and commits.
-//  7. Prints a summary: "X new models, Y price changes, see <worktree-path>"
+//  6. Checks the file it would commit with internal/modelinfo's own loader
+//     (modelinfo.ValidateModelsJSONL). If modelinfo rejects any row — one the sync
+//     generated or one already in the input — it prints each rejected row's id and
+//     reason, creates no worktree or branch, commits nothing, and exits non-zero
+//     (#2583). There is no second copy of the acceptance rules here.
+//  7. Writes the updated JSONL to a git worktree and commits.
+//  8. Prints a summary: "X new models, Y price changes, see <worktree-path>"
+//
+// Landing the review branch: the reviewer lands it on main with `make land`
+// from the review worktree, on every host including the work Mac. `make land`
+// runs the test gate (which includes the models.jsonl load check) before it
+// pushes. Never fast-forward main to the branch or `git push` it to main
+// directly: on 2026-10-27 a direct push of an unchecked sync broke every foci
+// build (#2583).
 //
 // :nitro variants in the JSONL are verified against their base model (the API
 // does not list :nitro as separate entries).
@@ -44,9 +56,17 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"foci/internal/modelinfo"
 )
 
-const openrouterAPI = "https://openrouter.ai/api/v1/models"
+// openrouterAPI is a var so tests can point the sync at a stub server.
+var openrouterAPI = "https://openrouter.ai/api/v1/models"
+
+// testHookEntries, when set (tests only), rewrites the final entry list after
+// all of the sync's own filtering and just before the modelinfo check — the
+// seam that lets a test plant a row the filters would never generate.
+var testHookEntries func([]jsonlEntry) []jsonlEntry
 
 // jsonlEntry matches the format in internal/modelinfo/models.jsonl.
 type jsonlEntry struct {
@@ -129,19 +149,36 @@ type orResponse struct {
 }
 
 func main() {
-	repoFlag := flag.String("repo", "", "path to the foci repo root (default: auto-detect)")
-	baseFlag := flag.String("base", "main", "branch/commit to fork the review worktree from (use the feature branch while models.jsonl is unmerged)")
-	dryRun := flag.Bool("dry-run", false, "report without creating a worktree")
-	verbose := flag.Bool("verbose", false, "print per-model details")
-	onlyFlag := flag.String("only", "", "comma-separated bare model ids to sync; everything else is left untouched (default: all)")
-	flag.Parse()
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// run is the whole sync; it returns the process exit code. Factored out of main
+// so tests drive the real path against a temp repo and a stub API (#2583).
+func run(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("sync-modelinfo", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	repoFlag := fs.String("repo", "", "path to the foci repo root (default: auto-detect)")
+	baseFlag := fs.String("base", "main", "branch/commit to fork the review worktree from (use the feature branch while models.jsonl is unmerged)")
+	dryRun := fs.Bool("dry-run", false, "report without creating a worktree")
+	verbose := fs.Bool("verbose", false, "print per-model details")
+	onlyFlag := fs.String("only", "", "comma-separated bare model ids to sync; everything else is left untouched (default: all)")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
 	inScope := scopeFilter(*onlyFlag)
+	fail := func(format string, args ...any) int {
+		_, _ = fmt.Fprintf(stderr, "sync-modelinfo: "+format+"\n", args...)
+		return 1
+	}
 
 	repo := *repoFlag
 	if repo == "" {
 		out, err := gitOutput("", "rev-parse", "--show-toplevel")
 		if err != nil {
-			fail("could not determine repo root: %v", err)
+			return fail("could not determine repo root: %v", err)
 		}
 		repo = strings.TrimSpace(out)
 	}
@@ -150,25 +187,34 @@ func main() {
 
 	// --- Read existing entries ---
 
+	// A row modelinfo rejects in the INPUT would be carried into the commit
+	// (the sync never rewrites an existing row's validity), and a line that is
+	// not JSON cannot even be read: refuse up front, naming each (#2583).
+	if data, err := os.ReadFile(jsonlPath); err == nil {
+		if rejected := modelinfo.ValidateModelsJSONL(data); len(rejected) > 0 {
+			reportRejected(stderr, jsonlPath+" (input)", rejected)
+			return 1
+		}
+	}
 	entries, err := readJSONL(jsonlPath)
 	if err != nil {
-		fail("reading %s: %v", jsonlPath, err)
+		return fail("reading %s: %v", jsonlPath, err)
 	}
 	if *verbose {
-		fmt.Fprintf(os.Stderr, "loaded %d entries from %s\n", len(entries), jsonlPath)
+		_, _ = fmt.Fprintf(stderr, "loaded %d entries from %s\n", len(entries), jsonlPath)
 	}
 
 	// --- Fetch OpenRouter API ---
 
 	if *verbose {
-		fmt.Fprintln(os.Stderr, "fetching OpenRouter API...")
+		_, _ = fmt.Fprintln(stderr, "fetching OpenRouter API...")
 	}
 	apiModels, err := fetchAPI()
 	if err != nil {
-		fail("fetching OpenRouter API: %v", err)
+		return fail("fetching OpenRouter API: %v", err)
 	}
 	if *verbose {
-		fmt.Fprintf(os.Stderr, "fetched %d models from API\n", len(apiModels))
+		_, _ = fmt.Fprintf(stderr, "fetched %d models from API\n", len(apiModels))
 	}
 	// The moment this data is known-valid: stamped onto every entry the fetch
 	// still confirms (below), so a stale `fetched` date flags stale pricing.
@@ -260,7 +306,7 @@ func main() {
 		if !ok {
 			unavailable = append(unavailable, cur.ID)
 			if *verbose {
-				fmt.Fprintf(os.Stderr, "  ⚠ %s: not found in API\n", cur.ID)
+				_, _ = fmt.Fprintf(stderr, "  ⚠ %s: not found in API\n", cur.ID)
 			}
 			continue
 		}
@@ -286,7 +332,7 @@ func main() {
 		nr.Fetched = fetchDate
 		appended = append(appended, nr)
 		if *verbose {
-			fmt.Fprintf(os.Stderr, "  ✏ %s: appended new row (fetched %s)\n", cur.ID, fetchDate)
+			_, _ = fmt.Fprintf(stderr, "  ✏ %s: appended new row (fetched %s)\n", cur.ID, fetchDate)
 		}
 	}
 
@@ -313,7 +359,7 @@ func main() {
 		af, ok := apiFields(m)
 		if !ok {
 			if af.negative && *verbose {
-				fmt.Fprintf(os.Stderr, "  ⤫ %s: skipped (negative price $%.4f/$%.4f)\n", bare, af.in, af.out)
+				_, _ = fmt.Fprintf(stderr, "  ⤫ %s: skipped (negative price $%.4f/$%.4f)\n", bare, af.in, af.out)
 			}
 			continue
 		}
@@ -324,7 +370,7 @@ func main() {
 		newEntries = append(newEntries, ne)
 		existing[bare] = true
 		if *verbose {
-			fmt.Fprintf(os.Stderr, "  + %s: added ($%.4f/$%.4f per 1M)\n", bare, af.in, af.out)
+			_, _ = fmt.Fprintf(stderr, "  + %s: added ($%.4f/$%.4f per 1M)\n", bare, af.in, af.out)
 		}
 	}
 
@@ -348,45 +394,89 @@ func main() {
 		summary += fmt.Sprintf("\n  %s %s: $%.4f → $%.4f", pc.id, pc.field, pc.old, pc.new)
 	}
 
-	if *dryRun {
-		fmt.Println(summary)
-		return
+	// --- Check the file with modelinfo's own loader (#2583) ---
+
+	if testHookEntries != nil {
+		entries = testHookEntries(entries)
+	}
+	out, err := marshalJSONL(entries)
+	if err != nil {
+		_, _ = fmt.Fprintln(stdout, summary)
+		return fail("encoding JSONL: %v", err)
+	}
+	if code := checkOutput(out, summary, stdout, stderr); code != 0 {
+		return code
 	}
 
-	// --- Write to worktree ---
+	if *dryRun {
+		_, _ = fmt.Fprintln(stdout, summary)
+		return 0
+	}
 
-	wtPath, branch, err := createWorktree(repo, *baseFlag)
+	return commitReviewBranch(repo, *baseFlag, entries, summary, stdout, stderr)
+}
+
+// checkOutput refuses a models.jsonl that modelinfo would reject: it prints the
+// summary and each rejected row's id and reason, and returns 1. It runs BEFORE
+// any worktree or branch exists, so a refusal leaves nothing behind. Returns 0
+// for a clean file.
+func checkOutput(out []byte, summary string, stdout, stderr io.Writer) int {
+	rejected := modelinfo.ValidateModelsJSONL(out)
+	if len(rejected) == 0 {
+		return 0
+	}
+	_, _ = fmt.Fprintln(stdout, summary)
+	reportRejected(stderr, "the synced models.jsonl", rejected)
+	return 1
+}
+
+func reportRejected(w io.Writer, what string, rejected []modelinfo.RejectedRow) {
+	_, _ = fmt.Fprintf(w, "sync-modelinfo: REFUSING to commit: modelinfo rejects %d row(s) of %s; nothing committed, no worktree or branch created:\n", len(rejected), what)
+	for _, r := range rejected {
+		_, _ = fmt.Fprintf(w, "  %s\n", r)
+	}
+}
+
+// commitReviewBranch writes the already-checked entries into a fresh review
+// worktree on a sync-modelinfo-* branch and commits them. writeJSONL renders
+// through the same marshalJSONL that produced the checked bytes, from the same
+// (already sorted) entries, so the file written is the file checked.
+// Exit-code behaviour on worktree/write/commit errors is unchanged from before
+// #2583 (reported, 0).
+func commitReviewBranch(repo, base string, entries []jsonlEntry, summary string, stdout, stderr io.Writer) int {
+	wtPath, branch, err := createWorktree(repo, base)
 	if err != nil {
 		// If worktree creation fails, we still report what would change.
-		fmt.Fprintln(os.Stderr, "error creating worktree:", err)
-		fmt.Println(summary)
-		fmt.Println("NOTE: no worktree created — run without --dry-run after fixing the error")
-		return
+		_, _ = fmt.Fprintln(stderr, "error creating worktree:", err)
+		_, _ = fmt.Fprintln(stdout, summary)
+		_, _ = fmt.Fprintln(stdout, "NOTE: no worktree created — run without --dry-run after fixing the error")
+		return 0
 	}
 
 	wtJSONL := filepath.Join(wtPath, "internal", "modelinfo", "models.jsonl")
 	if err := writeJSONL(wtJSONL, entries); err != nil {
-		fmt.Fprintln(os.Stderr, "error writing JSONL:", err)
+		_, _ = fmt.Fprintln(stderr, "error writing JSONL:", err)
 		removeWorktree(repo, wtPath, branch)
-		fmt.Println(summary)
-		return
+		_, _ = fmt.Fprintln(stdout, summary)
+		return 0
 	}
 
 	committed, err := gitCommit(wtPath, fmt.Sprintf("modelinfo: sync with OpenRouter API (%s)", timestamp()))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error committing:", err)
+		_, _ = fmt.Fprintln(stderr, "error committing:", err)
 		removeWorktree(repo, wtPath, branch)
-		fmt.Println(summary)
-		return
+		_, _ = fmt.Fprintln(stdout, summary)
+		return 0
 	}
 	if !committed {
 		// Nothing changed — don't leave an empty review worktree/branch behind.
 		removeWorktree(repo, wtPath, branch)
-		fmt.Printf("%s\nno changes — nothing to commit\n", summary)
-		return
+		_, _ = fmt.Fprintf(stdout, "%s\nno changes — nothing to commit\n", summary)
+		return 0
 	}
 
-	fmt.Printf("%s\nchanges at %s\n", summary, wtPath)
+	_, _ = fmt.Fprintf(stdout, "%s\nchanges at %s\n", summary, wtPath)
+	return 0
 }
 
 // --- Types ---
@@ -459,6 +549,16 @@ func readJSONL(path string) ([]jsonlEntry, error) {
 }
 
 func writeJSONL(path string, entries []jsonlEntry) error {
+	out, err := marshalJSONL(entries)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, out, 0644)
+}
+
+// marshalJSONL renders entries as the models.jsonl bytes writeJSONL writes.
+// It sorts entries in place.
+func marshalJSONL(entries []jsonlEntry) ([]byte, error) {
 	// Group each model's history together and order it chronologically:
 	// by ID, then by `fetched` (empty baseline rows first, then oldest→newest).
 	// Stable diffs, and the latest row for a model is always its last line.
@@ -500,12 +600,12 @@ func writeJSONL(path string, entries []jsonlEntry) error {
 		}
 		data, err := json.Marshal(e)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		buf.Write(data)
 		buf.WriteByte('\n')
 	}
-	return os.WriteFile(path, []byte(buf.String()), 0644)
+	return []byte(buf.String()), nil
 }
 
 // round6 rounds to 6 decimal places, clearing the float noise from the
@@ -513,7 +613,7 @@ func writeJSONL(path string, entries []jsonlEntry) error {
 func round6(f float64) float64 { return math.Round(f*1e6) / 1e6 }
 
 func fetchAPI() ([]orModel, error) {
-	resp, err := http.Get(openrouterAPI)
+	resp, err := http.Get(openrouterAPI) //nolint:gosec // G107: a constant URL, reassigned only by tests to a stub server
 	if err != nil {
 		return nil, err
 	}
@@ -736,9 +836,4 @@ func applyAPIFields(e *jsonlEntry, f apiDerived) {
 	if f.ctx > 0 {
 		e.ContextWindow = f.ctx
 	}
-}
-
-func fail(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "sync-modelinfo: "+format+"\n", args...)
-	os.Exit(1)
 }

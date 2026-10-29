@@ -320,11 +320,21 @@ var historyMu sync.RWMutex
 // `builtIn` for `registry` — so ResetToBuiltIn restores both together.
 var builtInHistory = map[string]map[string][]historyRow{}
 
+// builtInRejected holds the rows of the embedded models.jsonl that the loader
+// skipped (#2583). foci-gw logs one warning per row at startup; modelinfo is a
+// leaf package and cannot log itself, and init runs before any logger exists.
+var builtInRejected []RejectedRow
+
+// BuiltInRejected returns the embedded models.jsonl rows that were skipped at
+// load, in file order. Empty for a clean file (the repository's file is kept
+// clean by TestEmbeddedModelsJSONLHasNoRejectedRows).
+func BuiltInRejected() []RejectedRow { return slices.Clone(builtInRejected) }
+
 func init() {
-	reg, hist, known, err := parseModelsJSONL(builtInData)
-	if err != nil {
-		panic(err.Error())
-	}
+	// A rejected row is SKIPPED, not fatal (Dick 2026-10-28, #2583): one bad
+	// row used to panic every binary that imports this package.
+	reg, hist, known, rejected := parseModelsJSONL(builtInData)
+	builtInRejected = rejected
 	registry = reg
 	history = hist
 	knownFields = known
@@ -362,24 +372,27 @@ func init() {
 // order), and an empty `fetched` (pre-history baseline rows) treated as
 // oldest. `history` retains every row (sorted ascending by `fetched`) for the
 // as-of lookups. Factored out of init for testability.
-func parseModelsJSONL(data []byte) (registry map[string]map[string]Model, history map[string]map[string][]historyRow, known map[string]map[string]modelFieldsKnown, err error) {
+//
+// A row checkRow rejects is left out and reported in `rejected` (file order);
+// every other row loads exactly as if the rejected lines were absent from the
+// file — including the good rows of a model that also had a bad one (Dick
+// 2026-10-28, #2583). rejected is nil for a clean file.
+func parseModelsJSONL(data []byte) (registry map[string]map[string]Model, history map[string]map[string][]historyRow, known map[string]map[string]modelFieldsKnown, rejected []RejectedRow) {
 	registry = map[string]map[string]Model{}
 	history = map[string]map[string][]historyRow{}
 	known = map[string]map[string]modelFieldsKnown{}
 	// fetchedAt[id][provider] = the `fetched` of the row currently stored in
 	// `registry`, so we only overwrite with a same-or-newer one.
 	fetchedAt := map[string]map[string]string{}
-	for _, line := range strings.Split(string(data), "\n") {
+	for i, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		var e jsonlEntry
-		if uerr := json.Unmarshal([]byte(line), &e); uerr != nil {
-			return nil, nil, nil, fmt.Errorf("modelinfo: parse models.jsonl line %q: %v", line, uerr)
-		}
-		if e.ID == "" {
-			return nil, nil, nil, fmt.Errorf("modelinfo: models.jsonl entry missing id: %q", line)
+		e, reason := checkRow(line)
+		if reason != "" {
+			rejected = append(rejected, RejectedRow{Line: i + 1, ID: e.ID, Text: line, Reason: reason})
+			continue
 		}
 		provider := strings.ToLower(e.Provider)
 		id := strings.ToLower(e.ID)
@@ -404,9 +417,6 @@ func parseModelsJSONL(data []byte) (registry map[string]map[string]Model, histor
 			}.Rates(),
 		}
 		for _, pt := range e.PriceTiers {
-			if pt.MinPromptTokens <= 0 {
-				return nil, nil, nil, fmt.Errorf("modelinfo: models.jsonl %s: price tier min_prompt_tokens must be > 0, got %d", e.ID, pt.MinPromptTokens)
-			}
 			m.Tiers = append(m.Tiers, Tier{
 				MinPromptTokens: pt.MinPromptTokens,
 				// A tier publishes token rates only; reasoning and web search
@@ -466,7 +476,59 @@ func parseModelsJSONL(data []byte) (registry map[string]map[string]Model, histor
 			byProvider[provider] = rows
 		}
 	}
-	return registry, history, known, nil
+	return registry, history, known, rejected
+}
+
+// RejectedRow is one models.jsonl line the loader refuses (#2583).
+type RejectedRow struct {
+	Line   int    // 1-based line number in the file
+	ID     string // the row's id; "" when the line has none or is not valid JSON
+	Text   string // the line itself
+	Reason string
+}
+
+// String names the row by its id, or by its line when it has no id.
+func (r RejectedRow) String() string {
+	if r.ID != "" {
+		return fmt.Sprintf("models.jsonl line %d (id %q): %s", r.Line, r.ID, r.Reason)
+	}
+	text := r.Text
+	if len(text) > 120 {
+		text = text[:120] + "…"
+	}
+	return fmt.Sprintf("models.jsonl line %d (%s): %s", r.Line, text, r.Reason)
+}
+
+// checkRow is THE definition of an acceptable models.jsonl row: the loader
+// (parseModelsJSONL) and scripts/sync-modelinfo (via ValidateModelsJSONL) both
+// judge rows here, so a rule added here binds the sync with no change to it
+// (#2583). It returns the decoded entry and "" for an accepted row, or a
+// non-empty reason for a rejected one (the entry is then best-effort: its ID
+// is set when the JSON decoded).
+func checkRow(line string) (jsonlEntry, string) {
+	var e jsonlEntry
+	if err := json.Unmarshal([]byte(line), &e); err != nil {
+		return jsonlEntry{}, fmt.Sprintf("not valid JSON: %v", err)
+	}
+	if e.ID == "" {
+		return e, "entry has no id"
+	}
+	for _, pt := range e.PriceTiers {
+		if pt.MinPromptTokens <= 0 {
+			return e, fmt.Sprintf("price tier min_prompt_tokens must be > 0, got %d", pt.MinPromptTokens)
+		}
+	}
+	return e, ""
+}
+
+// ValidateModelsJSONL returns every row of a models.jsonl file that modelinfo
+// would reject at load (and skip), in file order; nil when the file is clean.
+// scripts/sync-modelinfo calls it before committing, so the sync and the
+// loader share one definition of "rejected".
+// It runs the loader itself, so "rejected" cannot drift from what loads.
+func ValidateModelsJSONL(data []byte) []RejectedRow {
+	_, _, _, rejected := parseModelsJSONL(data)
+	return rejected
 }
 
 // Register adds or overrides a registry entry. Called at startup from
