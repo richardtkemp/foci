@@ -168,7 +168,7 @@ Every delegated backend declares every capability in its `delegator.Spec` (`inte
 | `scoped_cleanup` | needs a live server to delete sessions and opens it once per sweep (RunningBackendCleaner) | ✗ | ✓ | ✓ |
 | `isolated_batch` | runs a batch session with BatchAccessIsolated: file tools confined to its working directory, no command execution, no MCP, no exec-bridge tools (spawn raw mode) | ✓ | ✗ | ✗ |
 | `read_only_batch` | runs a batch session with BatchAccessReadOnly: no file writes and no mutating commands (spawn explore mode) | ✓ | ✓ | ✓ |
-| `host_hooks` | takes the gateway's HostHooks: auth-failure and rate-limit reports, pretool and stop rules (HostHooksAcceptor) | ✓ | ✗ | ✓ |
+| `host_hooks` | takes the gateway's HostHooks: auth-failure and rate-limit reports, pretool and stop rules (HostHooksAcceptor) | ✓ | ✓ | ✓ |
 | `unstarted_readiness_probe` | CheckReady works on a constructed but unstarted backend (the startup probe) | ✓ | ✓ | ✗ |
 | `pretool_rules` | enforces PreToolUse deny rules (pretool_rules) | ✓ | ✗ | ✗ |
 | `stop_rules` | enforces Stop-hook rules (stop_rules) | ✓ | ✗ | ✗ |
@@ -203,7 +203,6 @@ Why not:
 - `live_model`: codex: its model reaches foci only through thread start and turn results; opencode: its model is reported only at session idle.
 - `scoped_cleanup`: claude-code: fork and cleanup are local transcript file operations, no server needed.
 - `isolated_batch`: codex: its sandbox confines writes, never reads: a session can read the whole disk; opencode: one opencode server per agent runs in the agent workspace: a session cannot be confined to another directory.
-- `host_hooks`: codex: reports no auth failures or rate limits foci acts on, and has no pretool or stop hooks.
 - `unstarted_readiness_probe`: opencode: CheckReady needs the server that only Start creates.
 - `pretool_rules`: codex: no PreToolUse rule engine is wired to the codex hook; opencode: opencode has no PreToolUse hook.
 - `stop_rules`: codex: no Stop hook; opencode: opencode has no Stop hook.
@@ -310,7 +309,7 @@ grepped for each ✗. Row IDs are not renumbered, so the gaps are the removed ro
 | U3 | Cost divergence check | Backend-reported vs calculated cost | ✓ | ✓ | ✗ |
 | U4 | Expectation guards | `ExpectationGuard` invariants + version tracking | ✓ | ✗ | ✓ |
 | U5 | Resume cost baseline | Cumulative counters on `--resume` | ✓ | n/a [33] | n/a [33] |
-| U6 | Utilisation notice | Rate-limit utilisation notice to the human's chat | ✓ | ✗ | ✗ |
+| U6 | Utilisation notice | Rate-limit utilisation notice to the human's chat | ✓ | ✗ | ✓ |
 | U7 | Limit gate | Usage/session limit engages `Agent.EngageRateLimit` | ✓ | ✓ | ✗ [34] |
 | U9 | Turn usage | Token usage on `TurnResult` | ✓ | ✓ | ✓ |
 
@@ -666,7 +665,7 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - U3: `cc/ccbook.go:checkDivergence` | `oc/ledger.go` via `dg/costcheck.go:CostDivergenceChecker` | ✗ grep `Divergence`
 - U4: `cc/expectations.go` | ✗ grep `ExpectationGuard|violated` | `cx/expectations.go:checkTokenUsage`
 - U5: `cc/cost.go:resumeBaseline` | n/a | n/a
-- U6: `cc/handlers.go:OnRateLimit`, `cc/ratelimit.go:FormatRateLimitNotice`, `HostHooks.OnRateLimitNotice` | ✗ | ✗ grep `rate.?limit`
+- U6: `cc/handlers.go:OnRateLimit`, `cc/ratelimit.go:FormatRateLimitNotice`, `HostHooks.OnRateLimitNotice` | ✗ grep `rate.?limit` | `cx/ratelimits.go:onRateLimitsUpdated` (account/rateLimits/updated) → `HostHooks.OnRateLimitNotice`; usage in `StatusDetail`
 - U7: `cc/handlers.go:OnAssistant` (`syntheticSessionLimitText`) → `HostHooks.EngageRateLimit` | `oc/ratelimit.go:handleRateLimitRetry` → `HostHooks.EngageRateLimit` | ✗ grep `limit`
 - `usage_query`: `cc/usage_oneshot.go:QueryUsage`, `cc/spec.go` `UsageQuery` | ✗ `oc/spec.go` declares `usage_query` No | ✗ same
 - U9: `cc/handlers.go:OnResult` | `oc/handlers.go:onMessageUpdated` | `cx/handlers.go:onTokenUsage`

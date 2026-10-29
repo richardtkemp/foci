@@ -23,6 +23,7 @@ import (
 	"foci/internal/delegator/keyedmutex"
 	"foci/internal/log"
 	"foci/internal/modelcaps"
+	"foci/internal/timeutil"
 )
 
 func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {
@@ -68,13 +69,16 @@ type Backend struct {
 	// (e.g. "Your workspace is out of credits…"). StatusDetail shows it
 	// beside codex's bare thread status ("systemError" says nothing about
 	// the cause); the next turn that completes cleanly clears it.
-	lastTurnError   string
-	model           string
-	launchModel     string
-	catalogueModels []string
-	readyCh         chan struct{}
-	readyOnce       sync.Once
-	startOpts       delegator.StartOptions
+	lastTurnError string
+	// onRateLimitNotice is the gateway's HostHooks.OnRateLimitNotice: a
+	// usage warning for the session's chat (ratelimits.go).
+	onRateLimitNotice func(sessionKey, notice string)
+	model             string
+	launchModel       string
+	catalogueModels   []string
+	readyCh           chan struct{}
+	readyOnce         sync.Once
+	startOpts         delegator.StartOptions
 
 	// JSON-RPC request/response correlation
 	rpcMu      sync.Mutex
@@ -375,7 +379,19 @@ func (b *Backend) StatusDetail() string {
 	if lastErr != "" {
 		detail += " | last turn failed: " + truncateStatusError(lastErr)
 	}
+	if rl := b.rateLimits().statusLine(timeutil.Now()); rl != "" {
+		detail += " | " + rl
+	}
 	return detail
+}
+
+// SetHostHooks implements delegator.HostHooksAcceptor. codex honours only
+// OnRateLimitNotice (usage warnings, ratelimits.go); it has no re-login,
+// pretool or stop hooks.
+func (b *Backend) SetHostHooks(h delegator.HostHooks) {
+	b.mu.Lock()
+	b.onRateLimitNotice = h.OnRateLimitNotice
+	b.mu.Unlock()
 }
 
 // statusErrorMax caps the turn-failure message in the status block: the

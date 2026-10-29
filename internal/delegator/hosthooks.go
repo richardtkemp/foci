@@ -20,8 +20,9 @@ type HostHooks struct {
 	OnAuthFailure func(detail string)
 
 	// OnRateLimitNotice delivers a human-facing utilisation notice (Claude
-	// Code's rate_limit_event past the "allowed" threshold) to the session's
-	// chat. Informational: it does not gate work.
+	// Code's rate_limit_event past the "allowed" threshold; codex's
+	// account/rateLimits/updated crossing a usage threshold or reaching a
+	// limit) to the session's chat. Informational: it does not gate work.
 	OnRateLimitNotice func(sessionKey, notice string)
 
 	// OnModelFallbackNotice delivers a human-facing notice to the session's

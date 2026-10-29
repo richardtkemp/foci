@@ -220,6 +220,10 @@ func (b *Backend) launchAppServer(ctx context.Context, opts delegator.StartOptio
 		b.logWarnf("model/list failed (using persisted/static model details): %v", err)
 	}
 
+	// The usage allowance, for the status block before the first turn.
+	// Off the start path: it is informational and must not delay a session.
+	go b.seedRateLimits()
+
 	return nil
 }
 

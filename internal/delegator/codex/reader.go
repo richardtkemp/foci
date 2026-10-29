@@ -253,6 +253,8 @@ func (b *Backend) handleNotification(line []byte, method string) {
 			b.model = p.ToModel
 			b.mu.Unlock()
 			b.logInfof("model rerouted to %s", p.ToModel)
+		case "account/rateLimits/updated":
+			b.onRateLimitsUpdated(params)
 		case "thread/name/updated":
 			var p threadNameUpdatedParams
 			if err := json.Unmarshal(params, &p); err != nil {

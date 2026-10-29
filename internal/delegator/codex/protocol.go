@@ -413,3 +413,32 @@ type collabState struct {
 	Status  string `json:"status,omitempty"`
 	Message string `json:"message,omitempty"`
 }
+
+// rateLimitSnapshot is codex's RateLimitSnapshot (account/rateLimits/read and
+// account/rateLimits/updated), the fields foci uses. See ratelimits.go for
+// the live-verified shape.
+type rateLimitSnapshot struct {
+	LimitID              string           `json:"limitId,omitempty"`
+	LimitName            *string          `json:"limitName,omitempty"`
+	Primary              *rateLimitWindow `json:"primary,omitempty"`
+	Secondary            *rateLimitWindow `json:"secondary,omitempty"`
+	Credits              *creditsSnapshot `json:"credits,omitempty"`
+	PlanType             *string          `json:"planType,omitempty"`
+	RateLimitReachedType *string          `json:"rateLimitReachedType,omitempty"`
+}
+
+// rateLimitWindow is one usage window. The schema types usedPercent as an
+// integer; it is decoded as a number so a fractional value never fails.
+type rateLimitWindow struct {
+	UsedPercent        float64 `json:"usedPercent"`
+	WindowDurationMins *int64  `json:"windowDurationMins,omitempty"`
+	ResetsAt           *int64  `json:"resetsAt,omitempty"`
+}
+
+func (w rateLimitWindow) usedPercent() int { return int(w.UsedPercent) }
+
+type creditsSnapshot struct {
+	HasCredits bool    `json:"hasCredits"`
+	Unlimited  bool    `json:"unlimited"`
+	Balance    *string `json:"balance,omitempty"`
+}

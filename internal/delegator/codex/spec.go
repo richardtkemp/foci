@@ -72,7 +72,7 @@ var spec = delegator.Spec{
 		delegator.CapIsolatedBatch: delegator.No("its sandbox confines writes, never reads: a session can read the whole disk"),
 		delegator.CapReadOnlyBatch: delegator.Yes(),
 
-		delegator.CapHostHooks:                delegator.No("reports no auth failures or rate limits foci acts on, and has no pretool or stop hooks"),
+		delegator.CapHostHooks:                delegator.Yes(),
 		delegator.CapUnstartedReadinessProbe:  delegator.Yes(),
 		delegator.CapPreToolRules:             delegator.No("no PreToolUse rule engine is wired to the codex hook"),
 		delegator.CapStopRules:                delegator.No("no Stop hook"),
