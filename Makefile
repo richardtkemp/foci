@@ -650,6 +650,18 @@ local-lint:
 	@( echo ">>> waiting for heavy lock ($(HEAVY_LOCK_PATH); another build may be running) ... [$$(date +%T)]" >&2; flock 9; echo ">>> acquired heavy lock [$$(date +%T)]" >&2; $(REAP_GRADLE) $(MAKE) --no-print-directory lint-unlocked 9<&- || exit $$? ) 9<$(HEAVY_LOCK_PATH)
 
 lint-unlocked: find-disconnected-tests find-static-config-reads find-backend-capability-bypass find-unscoped-logging find-wiring-drift find-metadata-key-literals find-metadata-key-registry-drift
+	@echo "=== gofmt (every Go file, _test.go included; #2297) ==="
+	@# Here, not in .golangci.yml: that config sets tests: false, so a golangci
+	@# formatter would never see _test.go files (most of the drift). The pre-commit
+	@# hook checks staged files too, but commits that skip the hook (factory lands)
+	@# still let drift in. This walks directories, not `git ls-files`, because
+	@# remote-lint rsyncs the tree to the Mac without .git. gofmt -l exits 0 when
+	@# files ARE unformatted (it prints their names), so this tests its OUTPUT; a
+	@# non-zero exit means a parse error. The binary is the one in the lint
+	@# toolchain's GOROOT, so the Mac formats with the NUC's Go version.
+	@gofmt="$$($(LINT_ENV) go env GOROOT)/bin/gofmt"; \
+	out=$$("$$gofmt" -l cmd internal scripts shared test) || { echo "gofmt failed (exit $$?): formatting gate did NOT run"; exit 1; }; \
+	if [ -n "$$out" ]; then echo "$$out"; echo "gofmt: the files above are not formatted. Run: gofmt -w" $$out; exit 1; fi
 	@echo "=== golangci-lint ==="
 	@# --allow-serial-runners: golangci-lint has its own lock and by default a second
 	@# instance FAILS ("parallel golangci-lint is running") instead of waiting. The heavy

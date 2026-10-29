@@ -51,12 +51,12 @@ func assertRejectsArgs(t *testing.T, body, fnName string, cases []argRejection) 
 // only zero-property ExecExport tool) rejects EVERY argument left after the
 // prologue with a usage error naming the tool and the first argument (#2271).
 // The old fallback body handed $1 to jq --argjson unchecked — `foci_whoami
-// foo` printed jq's internals plus "invalid JSON argument", `'' foo`
+// foo` printed jq's internals plus "invalid JSON argument", `"" foo`
 // silently DROPPED foo (`set -- '{}'` on an empty $1 replaces all args),
 // `'{}' x` ignored x, and `[1]`/`"x"`/`5`/`{"a":1}` passed through as the
 // params. The empty string is an error too, on purpose: "any argument is an
-// error", like a schema tool's unexpected positional — special-casing ''
-// would bring back the dropped-argument bug.
+// error", like a schema tool's unexpected positional — special-casing the
+// empty string would bring back the dropped-argument bug.
 func TestShellFuncWhoamiRejectsAllArguments(t *testing.T) {
 	t.Parallel()
 	for _, bin := range []string{"bash", "jq"} {

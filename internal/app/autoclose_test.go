@@ -569,29 +569,29 @@ func TestSweepOpenChats_ConcurrentOpenSetNeverLost(t *testing.T) {
 				defer wg.Done()
 				h.sweepOpenChats(now)
 			}()
-		wg.Wait()
-		got := h.loadOpenChats()
-		id := <-minted
-		if !slices.Contains(got, id) {
-			t.Fatalf("the minted tab %s was lost to the racing sweep; stored set = %v", id, got)
-		}
-		for _, stale := range fleet {
-			if slices.Contains(got, stale) {
-				t.Fatalf("the mint's stale copy resurrected swept chat %s; stored set = %v", stale, got)
+			wg.Wait()
+			got := h.loadOpenChats()
+			id := <-minted
+			if !slices.Contains(got, id) {
+				t.Fatalf("the minted tab %s was lost to the racing sweep; stored set = %v", id, got)
 			}
+			for _, stale := range fleet {
+				if slices.Contains(got, stale) {
+					t.Fatalf("the mint's stale copy resurrected swept chat %s; stored set = %v", stale, got)
+				}
+			}
+			// Retire this round's binding: the mint's pushRosterAll re-resolves
+			// every live binding's alias from the index (one query per binding),
+			// so 400 accumulating minted bindings made the round O(n²) in DB
+			// reads — 35s plain, 140s under -race. The mint's open-set effect is
+			// what the round asserts (above); from here the binding is dead
+			// weight, and the next round's adoptSession overwrites the bySession
+			// entry it leaves behind.
+			h.mu.Lock()
+			delete(h.convs, id)
+			h.mu.Unlock()
 		}
-		// Retire this round's binding: the mint's pushRosterAll re-resolves
-		// every live binding's alias from the index (one query per binding),
-		// so 400 accumulating minted bindings made the round O(n²) in DB
-		// reads — 35s plain, 140s under -race. The mint's open-set effect is
-		// what the round asserts (above); from here the binding is dead
-		// weight, and the next round's adoptSession overwrites the bySession
-		// entry it leaves behind.
-		h.mu.Lock()
-		delete(h.convs, id)
-		h.mu.Unlock()
-	}
-})
+	})
 }
 
 // TestHandleConversationOpenSet_MirrorsExactlyOnceWhileAttaching pins the

@@ -68,8 +68,9 @@ func TestQuotedFlagsNotAutoApproved(t *testing.T) {
 
 // TestQuotedCommandNameNotAutoApproved proves requirement 1's command-name
 // half: the command name used to select flag-checking machinery is read from
-// the shell-visible text too, so `"sed" -i …` or `se''d -i …` is flag-checked
-// under a rule broad enough (tool-name-only Bash) to match the quoted form.
+// the shell-visible text too, so `"sed" -i …`, or sed split by an empty
+// single-quoted string (the third case below), is flag-checked under a rule
+// broad enough (tool-name-only Bash) to match the quoted form.
 func TestQuotedCommandNameNotAutoApproved(t *testing.T) {
 	rules := parseAutoApproveRules([]string{"Bash"})
 	for _, cmd := range []string{

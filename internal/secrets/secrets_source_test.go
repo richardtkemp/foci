@@ -926,7 +926,7 @@ func TestDirectoryAtPathKeepsLastGoodAndStaysBlocked(t *testing.T) {
 	if n := strings.Count(buf.String(), reloadWarnMarker); n != 1 {
 		t.Errorf("%d warnings for the directory — want exactly 1", n)
 	}
-	if !view.IsBlockedPath(path) || !view.IsBlockedCommand("cat " + path) {
+	if !view.IsBlockedPath(path) || !view.IsBlockedCommand("cat "+path) {
 		t.Errorf("the secrets path stopped being blocked after failed reloads")
 	}
 }

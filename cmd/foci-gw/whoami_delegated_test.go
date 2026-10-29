@@ -19,25 +19,25 @@ type liveModelBackend struct{}
 
 var _ delegator.Delegator = (*liveModelBackend)(nil)
 
-func (b *liveModelBackend) Start(context.Context, delegator.StartOptions) error                { return nil }
-func (b *liveModelBackend) ImmediateInject(context.Context, delegator.Inject) error            { return nil }
-func (b *liveModelBackend) WaitForTurn(context.Context) error                                  { return nil }
-func (b *liveModelBackend) IsTurnInFlight() bool                                               { return false }
-func (b *liveModelBackend) IsRunning() bool                                                    { return true }
-func (b *liveModelBackend) SetPermissionPromptFunc(delegator.PermissionPromptFunc)             {}
-func (b *liveModelBackend) SetOnPromptsCleared(func())                                         {}
-func (b *liveModelBackend) RegisterPromptCancelListener(string, func(string))                  {}
-func (b *liveModelBackend) SetOnSessionReady(func(string))                                     {}
-func (b *liveModelBackend) SetTypingFunc(func(bool))                                           {}
-func (b *liveModelBackend) AttachSessionEvents(*delegator.SessionEvents)                       {}
-func (b *liveModelBackend) Interrupt(context.Context) error                                    { return nil }
-func (b *liveModelBackend) SessionID() string                                                  { return "" }
-func (b *liveModelBackend) SessionFilePath() string                                            { return "" }
-func (b *liveModelBackend) WaitReady(context.Context) error                                    { return nil }
-func (b *liveModelBackend) CheckReady(context.Context) (bool, error)                           { return true, nil }
-func (b *liveModelBackend) StatusDetail() string                                               { return "" }
-func (b *liveModelBackend) Close() error                                                       { return nil }
-func (b *liveModelBackend) LiveModel() string                                                  { return "claude/claude-opus-5-5" }
+func (b *liveModelBackend) Start(context.Context, delegator.StartOptions) error     { return nil }
+func (b *liveModelBackend) ImmediateInject(context.Context, delegator.Inject) error { return nil }
+func (b *liveModelBackend) WaitForTurn(context.Context) error                       { return nil }
+func (b *liveModelBackend) IsTurnInFlight() bool                                    { return false }
+func (b *liveModelBackend) IsRunning() bool                                         { return true }
+func (b *liveModelBackend) SetPermissionPromptFunc(delegator.PermissionPromptFunc)  {}
+func (b *liveModelBackend) SetOnPromptsCleared(func())                              {}
+func (b *liveModelBackend) RegisterPromptCancelListener(string, func(string))       {}
+func (b *liveModelBackend) SetOnSessionReady(func(string))                          {}
+func (b *liveModelBackend) SetTypingFunc(func(bool))                                {}
+func (b *liveModelBackend) AttachSessionEvents(*delegator.SessionEvents)            {}
+func (b *liveModelBackend) Interrupt(context.Context) error                         { return nil }
+func (b *liveModelBackend) SessionID() string                                       { return "" }
+func (b *liveModelBackend) SessionFilePath() string                                 { return "" }
+func (b *liveModelBackend) WaitReady(context.Context) error                         { return nil }
+func (b *liveModelBackend) CheckReady(context.Context) (bool, error)                { return true, nil }
+func (b *liveModelBackend) StatusDetail() string                                    { return "" }
+func (b *liveModelBackend) Close() error                                            { return nil }
+func (b *liveModelBackend) LiveModel() string                                       { return "claude/claude-opus-5-5" }
 
 // TestBuildExecRegistryWhoamiReportsBackendModel is the #2252 wiring lock:
 // whoami must go through the production tool_table row (buildExecRegistry)

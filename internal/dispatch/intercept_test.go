@@ -101,7 +101,8 @@ func TestIsSlashPath(t *testing.T) {
 		{"/status", false},     // command, no embedded slash
 		{"/status arg", false}, // command with args
 		{"/", false},           // bare slash → empty name
-		{"/home/rich/git/embed/chroma.py:75 - why?", true}, // the scout bug
+		// the scout bug
+		{"/home/rich/git/embed/chroma.py:75 - why?", true},
 		{"/etc/hosts", true},                    // path
 		{"/usr/local/bin/foci is broken", true}, // path with trailing words
 		{"  /etc/hosts", true},                  // leading whitespace trimmed

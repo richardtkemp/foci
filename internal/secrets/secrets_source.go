@@ -71,11 +71,11 @@ func (a fileStamp) same(b fileStamp) bool {
 // cloned (copy-on-write, the with* helpers). Immutability is what lets
 // readers use a state snapshot without copying it under the lock.
 type fileState struct {
-	values             map[string]string               // "section.key" → value
-	allowedHosts       map[string][]string             // section → allowed hosts
-	allowedAgents      map[string][]string             // section → agent whitelist
-	deniedAgents       map[string][]string             // section → agent blacklist
-	allowedInBody      map[string][]string             // section → key names allowed in request body
+	values             map[string]string              // "section.key" → value
+	allowedHosts       map[string][]string            // section → allowed hosts
+	allowedAgents      map[string][]string            // section → agent whitelist
+	deniedAgents       map[string][]string            // section → agent blacklist
+	allowedInBody      map[string][]string            // section → key names allowed in request body
 	agentValues        map[string]map[string]string   // agent ID → "section.key" → value
 	agentHosts         map[string]map[string][]string // agent ID → section → allowed hosts
 	agentAllowedInBody map[string]map[string][]string // agent ID → section → key names allowed in body
