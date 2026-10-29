@@ -17,7 +17,9 @@ type facadeCapture struct {
 	texts    []string
 	ends     int
 	chatText []string
+	deltas   []string
 	prompts  []string
+	promptTx []string
 }
 
 func (c *facadeCapture) attach(b *Backend) {
@@ -26,10 +28,12 @@ func (c *facadeCapture) attach(b *Backend) {
 		OnSubagentText:  func(_, text string, _ int) { c.mu.Lock(); c.texts = append(c.texts, text); c.mu.Unlock() },
 		OnSubagentEnd:   func(string, int) { c.mu.Lock(); c.ends++; c.mu.Unlock() },
 		OnText:          func(s string) { c.mu.Lock(); c.chatText = append(c.chatText, s); c.mu.Unlock() },
+		OnTextDelta:     func(s string) { c.mu.Lock(); c.deltas = append(c.deltas, s); c.mu.Unlock() },
 	})
-	b.permPromptFn = func(itemID, _, _, _ string, _ []delegator.PromptChoice) {
+	b.permPromptFn = func(itemID, text, _, _ string, _ []delegator.PromptChoice) {
 		c.mu.Lock()
 		c.prompts = append(c.prompts, itemID)
+		c.promptTx = append(c.promptTx, text)
 		c.mu.Unlock()
 	}
 }
@@ -200,5 +204,47 @@ func TestUnknownThreadGoesToOwnerAsLost(t *testing.T) {
 	owner.dispatch([]byte(`{"method":"thread/started","params":{"thread":{"id":"fresh-thread"}}}`))
 	if after := warns(); len(after) != before {
 		t.Errorf("thread/started for an unregistered thread WARNed: %v", after[before:])
+	}
+}
+
+// TestLostLineIsMarkedInOwnersChat pins Dick's ruling on lost lines: whatever
+// the owner shows from a thread that matches no session and no subagent — an
+// approval prompt, a streamed message (marked once, on its first delta) and the
+// completed message — leads with the shared redirected-origin marker naming
+// the thread, while the owner's own text and prompts stay unmarked.
+func TestLostLineIsMarkedInOwnersChat(t *testing.T) {
+	owner, _, oc, _, _ := newSharedPair(t)
+	marker := delegator.RedirectedOrigin("codex thread stray-thread", "it matches no session or subagent, so it is shown here")
+
+	owner.dispatch([]byte(`{"id":90,"method":"item/commandExecution/requestApproval","params":{"threadId":"stray-thread","turnId":"t","itemId":"cmd-9","command":"ls"}}`))
+	owner.dispatch([]byte(`{"method":"item/agentMessage/delta","params":{"threadId":"stray-thread","turnId":"t","delta":"Hel"}}`))
+	owner.dispatch([]byte(`{"method":"item/agentMessage/delta","params":{"threadId":"stray-thread","turnId":"t","delta":"lo"}}`))
+	owner.dispatch([]byte(`{"method":"item/completed","params":{"threadId":"stray-thread","turnId":"t","item":{"type":"agentMessage","id":"m1","text":"Hello"}}}`))
+	// The owner's own output after the lost line must not inherit the marker.
+	owner.dispatch([]byte(`{"method":"item/agentMessage/delta","params":{"threadId":"thread-owner","turnId":"to","delta":"Mine"}}`))
+	owner.dispatch([]byte(`{"method":"item/completed","params":{"threadId":"thread-owner","turnId":"to","item":{"type":"agentMessage","id":"m2","text":"Mine"}}}`))
+	owner.dispatch([]byte(`{"id":91,"method":"item/commandExecution/requestApproval","params":{"threadId":"thread-owner","turnId":"to","itemId":"cmd-10","command":"pwd"}}`))
+
+	oc.mu.Lock()
+	defer oc.mu.Unlock()
+	wantPrompts := []string{marker + "\n\nApprove command: ls", "Approve command: pwd"}
+	wantDeltas := []string{marker + "\n\nHel", "lo", "Mine"}
+	wantText := []string{marker + "\n\nHello", "Mine"}
+	check := func(name string, got, want []string) {
+		if len(got) != len(want) {
+			t.Errorf("%s = %q, want %q", name, got, want)
+			return
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("%s[%d] = %q, want %q", name, i, got[i], want[i])
+			}
+		}
+	}
+	check("prompts", oc.promptTx, wantPrompts)
+	check("deltas", oc.deltas, wantDeltas)
+	check("chat text", oc.chatText, wantText)
+	if !strings.HasPrefix(marker, "↪️ **From codex thread stray-thread**") {
+		t.Errorf("marker = %q, want the shared ↪️ From family", marker)
 	}
 }

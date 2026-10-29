@@ -110,7 +110,7 @@ func (b *Backend) onTurnCompleted(params *turnCompletedParams) {
 
 	errText := ""
 	if failMsg != "" {
-		errText = turnFailedText(failMsg)
+		errText = b.lostMarked(turnFailedText(failMsg))
 	}
 
 	b.turnMu.Lock()
@@ -366,13 +366,15 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 		// emit it — the schema's own doc calls this out) keeps the
 		// pre-existing behaviour: accumulate. Commentary still reaches the
 		// live view via OnText below, just excluded from the final text.
+		text := b.lostMarked(item.Text)
+		b.lostDeltaThread = ""
 		if item.Phase != "commentary" {
 			b.turnMu.Lock()
-			b.turnText.WriteString(item.Text)
+			b.turnText.WriteString(text)
 			b.turnMu.Unlock()
 		}
 		if se != nil && se.OnText != nil {
-			se.OnText(item.Text)
+			se.OnText(text)
 		}
 
 	case "commandExecution":
@@ -534,9 +536,16 @@ func truncateArgs(raw json.RawMessage) string {
 // contributing a partial-but-doubled string — an acceptable cost in a rare
 // path for correctness on every normal turn.
 func (b *Backend) onAgentMessageDelta(params *agentMessageDeltaParams) {
+	delta := params.Delta
+	// A lost thread's streamed message is marked once, on its first delta,
+	// matching the marked completed text (lostMarked).
+	if b.lostThread != "" && b.lostDeltaThread != b.lostThread {
+		delta = b.lostMarked(delta)
+		b.lostDeltaThread = b.lostThread
+	}
 	se := b.sessionEvents.Load()
 	if se != nil && se.OnTextDelta != nil {
-		se.OnTextDelta(params.Delta)
+		se.OnTextDelta(delta)
 	}
 }
 

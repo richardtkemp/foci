@@ -100,9 +100,28 @@ func (b *Backend) dispatch(line []byte) {
 				b.logWarnf("lost message: %s for thread %s matches no session and no known subagent; "+
 					"handing it to the app-server owner (session %s), whose chat may show it", env.Method, id, b.startOpts.SessionKey)
 			}
+			// Whatever the owner shows the user from this line (message text,
+			// a turn error, an approval prompt) is marked with where it came
+			// from (lostMarked), so it never reads as the owner's own. Only the
+			// reader goroutine runs dispatch, so the field needs no lock.
+			b.lostThread = id
+			b.dispatchLocal(line)
+			b.lostThread = ""
+			return
 		}
 	}
 	b.dispatchLocal(line)
+}
+
+// lostMarked prefixes text with the origin marker while the owner is handling
+// a lost line (one whose thread matches no session and no known subagent), and
+// returns it unchanged otherwise. Reader goroutine only.
+func (b *Backend) lostMarked(text string) string {
+	if b.lostThread == "" {
+		return text
+	}
+	return delegator.RedirectedOrigin("codex thread "+b.lostThread,
+		"it matches no session or subagent, so it is shown here") + "\n\n" + text
 }
 
 // dispatchChild handles one line from a subagent's child thread on the facade

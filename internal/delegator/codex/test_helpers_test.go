@@ -27,6 +27,13 @@ func newTestBackend(t *testing.T) *Backend {
 	b.writer = NewWriter(nopWriteCloser{&bytes.Buffer{}})
 	b.startOpts.SessionKey = "test/session"
 	b.registerThread("test/session", "thread-1")
+	// Most dispatch tests send their lines as threadId "th_1" and mean them as
+	// this session's own. Route that thread to this facade too, without
+	// re-pointing the session's recorded thread (still "thread-1"), so those
+	// lines are not taken for a lost thread and marked as one (lostMarked).
+	b.threadMapMu.Lock()
+	b.threadBackends["th_1"] = b
+	b.threadMapMu.Unlock()
 	return b
 }
 

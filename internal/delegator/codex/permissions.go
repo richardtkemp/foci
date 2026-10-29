@@ -124,7 +124,7 @@ func (b *Backend) onCommandApproval(line []byte, rpcID int64) {
 	if b.permPromptFn != nil {
 		b.permPromptFn(
 			params.ItemID,
-			"Approve command: "+command,
+			b.lostMarked("Approve command: "+command),
 			summary,
 			"",
 			[]delegator.PromptChoice{
@@ -197,7 +197,7 @@ func (b *Backend) onFileChangeApproval(line []byte, rpcID int64) {
 	if b.permPromptFn != nil {
 		b.permPromptFn(
 			params.ItemID,
-			prompt,
+			b.lostMarked(prompt),
 			summary,
 			"",
 			[]delegator.PromptChoice{

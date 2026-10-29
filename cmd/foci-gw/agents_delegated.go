@@ -612,7 +612,7 @@ func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, 
 		// A spawn's prompt in its owner's chat is named by the spawn line
 		// above; it was never meant for the branch's own chat.
 		if target != sessionKey && !spawned {
-			body = fmt.Sprintf("↪️ **From session %s** (its own chat cannot show this prompt)", sessionKey) + "\n\n" + body
+			body = delegator.RedirectedOrigin("session "+sessionKey, "its own chat cannot show this prompt") + "\n\n" + body
 		}
 		// Attachment (e.g. the full ExitPlanMode plan markdown) is sent as a
 		// document before the keyboard so the user sees the content, then the

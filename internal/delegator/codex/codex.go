@@ -126,6 +126,13 @@ type Backend struct {
 	lastActivity atomic.Int64
 
 	// Callbacks (set before Start, read-only after)
+	// lostThread is the thread of the line being dispatched when it matched
+	// no session and no known subagent and was handed to this (owner) facade;
+	// lostDeltaThread is the lost thread whose current streamed message has
+	// already been marked. Both are touched only on the reader goroutine
+	// (dispatch and the handlers it calls synchronously). See lostMarked.
+	lostThread       string
+	lostDeltaThread  string
 	permPromptFn     delegator.PermissionPromptFunc
 	onSessionReady   func(sessionID string)
 	typingFunc       func(typing bool)

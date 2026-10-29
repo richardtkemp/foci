@@ -610,8 +610,8 @@ func TestDispatch_MalformedJSONDropped(t *testing.T) {
 	})
 
 	b.dispatch([]byte("this is not json at all"))
-	b.dispatch([]byte(`{"method":"item/agentMessage/delta","params":{"threadId":"t1","delta":`))
-	b.dispatch([]byte(`{"method":"item/agentMessage/delta","params":{"threadId":"t1","turnId":"tu1","delta":"ok"}}`))
+	b.dispatch([]byte(`{"method":"item/agentMessage/delta","params":{"threadId":"th_1","delta":`))
+	b.dispatch([]byte(`{"method":"item/agentMessage/delta","params":{"threadId":"th_1","turnId":"tu1","delta":"ok"}}`))
 
 	if got, want := strings.Join(deltas, ""), "ok"; got != want {
 		t.Errorf("deltas = %q, want %q (malformed lines should be dropped)", got, want)
