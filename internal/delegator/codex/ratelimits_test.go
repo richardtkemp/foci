@@ -7,12 +7,13 @@ import (
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/ratelimit"
 	"foci/internal/timeutil"
 )
 
 // Payloads captured from codex 0.164.0 on 2026-10-29 (accountId removed).
 const (
-	liveRateLimitsRead = `{"ordinaryUsageAllowed":false,"rateLimits":{"limitId":"codex","limitName":null,"normalModelSlug":null,"primary":{"usedPercent":100,"windowDurationMins":300,"resetsAt":1793239774},"secondary":{"usedPercent":34,"windowDurationMins":10080,"resetsAt":1793786823},"credits":{"hasCredits":false,"unlimited":false,"balance":null},"individualLimit":null,"spendControlReached":false,"planType":"team","rateLimitReachedType":"workspace_member_credits_depleted"},"rateLimitsByLimitId":{"codex":{"limitId":"codex","limitName":null,"normalModelSlug":null,"primary":{"usedPercent":100,"windowDurationMins":300,"resetsAt":1793239774},"secondary":{"usedPercent":34,"windowDurationMins":10080,"resetsAt":1793786823},"credits":{"hasCredits":false,"unlimited":false,"balance":null},"individualLimit":null,"spendControlReached":false,"planType":"team","rateLimitReachedType":"workspace_member_credits_depleted"}},"rateLimitResetCredits":{"availableCount":0,"credits":[]}}`
+	liveRateLimitsRead  = `{"ordinaryUsageAllowed":false,"rateLimits":{"limitId":"codex","limitName":null,"normalModelSlug":null,"primary":{"usedPercent":100,"windowDurationMins":300,"resetsAt":1793239774},"secondary":{"usedPercent":34,"windowDurationMins":10080,"resetsAt":1793786823},"credits":{"hasCredits":false,"unlimited":false,"balance":null},"individualLimit":null,"spendControlReached":false,"planType":"team","rateLimitReachedType":"workspace_member_credits_depleted"},"rateLimitsByLimitId":{"codex":{"limitId":"codex","limitName":null,"normalModelSlug":null,"primary":{"usedPercent":100,"windowDurationMins":300,"resetsAt":1793239774},"secondary":{"usedPercent":34,"windowDurationMins":10080,"resetsAt":1793786823},"credits":{"hasCredits":false,"unlimited":false,"balance":null},"individualLimit":null,"spendControlReached":false,"planType":"team","rateLimitReachedType":"workspace_member_credits_depleted"}},"rateLimitResetCredits":{"availableCount":0,"credits":[]}}`
 	livePremiumDepleted = `{"method":"account/rateLimits/updated","params":{"rateLimits":{"limitId":"premium","limitName":null,"normalModelSlug":null,"primary":null,"secondary":null,"credits":{"hasCredits":false,"unlimited":false,"balance":null},"individualLimit":null,"spendControlReached":null,"planType":null,"rateLimitReachedType":"workspace_member_credits_depleted"}}}`
 
 	reset5h = int64(1793239774) // 2026-10-29 02:09:34 UTC
@@ -171,5 +172,87 @@ func TestRateLimitsUpdatedNotificationReachesHook(t *testing.T) {
 	}
 	if sd := b.StatusDetail(); !strings.Contains(sd, "limit reached: workspace out of credits") {
 		t.Fatalf("StatusDetail() = %q, want the limit", sd)
+	}
+}
+
+// TestRateLimitsGateEngagesOnReachedLimit proves a live limit-reached update
+// closes the agent's rate-limit gate (pausing background work) until the
+// soonest reset of a window at 100%, and that repeats of the same state do
+// not re-close it while it is still shut.
+func TestRateLimitsGateEngagesOnReachedLimit(t *testing.T) {
+	b := newTestBackend(t)
+	b.startOpts.AgentID = t.Name()
+	var sigs []ratelimit.Signal
+	b.SetHostHooks(delegator.HostHooks{EngageRateLimit: func(s ratelimit.Signal) { sigs = append(sigs, s) }})
+	// The handler reads the real clock, so the window resets relative to it.
+	reset := time.Now().Add(2 * time.Hour).Unix()
+	b.rateLimits().apply(codexWindow(100, reset), time.Now())
+
+	b.dispatch([]byte(livePremiumDepleted))
+	b.dispatch([]byte(livePremiumDepleted))
+
+	if len(sigs) != 1 {
+		t.Fatalf("EngageRateLimit calls = %d, want 1", len(sigs))
+	}
+	if sigs[0].Kind != ratelimit.KindUsage || !sigs[0].ResetAt.Equal(time.Unix(reset, 0)) {
+		t.Fatalf("signal = %+v, want usage limit resetting at the 5h window's reset", sigs[0])
+	}
+}
+
+// TestRateLimitsGateIgnoresFullWindowWithoutLimit proves a window at 100%
+// alone does not pause work: codex keeps running on credits past included
+// usage, and only rateLimitReachedType means turns fail.
+func TestRateLimitsGateIgnoresFullWindowWithoutLimit(t *testing.T) {
+	s := newRLState()
+	s.apply(codexWindow(100, reset5h), rlNow)
+	if sig := s.gateSignal(rlNow); sig != nil {
+		t.Fatalf("gateSignal = %+v, want nil without a reached limit", sig)
+	}
+}
+
+// TestRateLimitsGateNoResetUsesFallbackAndReprobes proves an out-of-credits
+// limit with no window at 100% carries no reset hint (so the shared policy's
+// one-hour usage fallback applies), is not re-engaged while that hour runs,
+// and is re-engaged by the next report after it — one probe per period, not
+// a pause forever.
+func TestRateLimitsGateNoResetUsesFallbackAndReprobes(t *testing.T) {
+	s := newRLState()
+	depleted := "workspace_member_credits_depleted"
+	s.apply(codexWindow(40, reset5h), rlNow)
+	s.apply(rateLimitSnapshot{LimitID: "premium", RateLimitReachedType: &depleted}, rlNow)
+
+	sig := s.gateSignal(rlNow)
+	if sig == nil || !sig.ResetAt.IsZero() {
+		t.Fatalf("gateSignal = %+v, want a signal with no reset hint", sig)
+	}
+	if got, want := ratelimit.Resolve(rlNow, *sig, 0).Until, rlNow.Add(time.Hour); !got.Equal(want) {
+		t.Fatalf("gate until %v, want %v (one-hour usage fallback)", got, want)
+	}
+	if again := s.gateSignal(rlNow.Add(59 * time.Minute)); again != nil {
+		t.Fatalf("re-engaged while the gate is shut: %+v", again)
+	}
+	if again := s.gateSignal(rlNow.Add(61 * time.Minute)); again == nil {
+		t.Fatal("not re-engaged after the gate reopened with the limit still reported")
+	}
+	// Credits added: codex clears rateLimitReachedType; nothing re-closes.
+	s.apply(rateLimitSnapshot{LimitID: "premium"}, rlNow)
+	if again := s.gateSignal(rlNow.Add(3 * time.Hour)); again != nil {
+		t.Fatalf("engaged after the limit cleared: %+v", again)
+	}
+}
+
+// TestRateLimitsSeedDoesNotEngageGate proves the startup read never closes
+// the gate: its deadline survives a restart by itself, and re-closing would
+// re-broadcast the rate-limited notice on every restart.
+func TestRateLimitsSeedDoesNotEngageGate(t *testing.T) {
+	b := newStartableBackend(t, func(string, json.RawMessage, int64) (json.RawMessage, error) {
+		return json.RawMessage(liveRateLimitsRead), nil
+	})
+	b.startOpts.AgentID = t.Name()
+	engaged := 0
+	b.SetHostHooks(delegator.HostHooks{EngageRateLimit: func(ratelimit.Signal) { engaged++ }})
+	b.seedRateLimits()
+	if engaged != 0 {
+		t.Fatalf("seed engaged the gate %d times, want 0", engaged)
 	}
 }

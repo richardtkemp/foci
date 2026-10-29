@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/ratelimit"
 	"foci/internal/timeutil"
 )
 
@@ -42,6 +43,9 @@ type rateLimitState struct {
 	// app-server) must not re-announce a level the user was already told
 	// about. Warnings come from transitions seen while running.
 	marks map[string]rlMark
+	// gateUntil is when the agent's rate-limit gate, last closed from here,
+	// reopens (see gateSignal). Zero = never closed by this process.
+	gateUntil time.Time
 }
 
 // rlNewWindowSlack is how far resetsAt must move before it is a new window.
@@ -194,6 +198,59 @@ func (s *rateLimitState) earliestFullResetLocked(now time.Time) string {
 		}
 	}
 	return resetPhrase(best, now)
+}
+
+// gateSignal returns the signal that should close the agent's rate-limit gate
+// (pausing periodic/background work), or nil when none should.
+//
+// Only rateLimitReachedType blocks a turn. A window at 100% does not by
+// itself: a workspace with credits keeps running on them past its included
+// usage, so pausing on usedPercent alone would stop work that would succeed.
+// When the limit is reached, the gate reopens at the soonest reset of a
+// window at 100% (included usage comes back then). A limit with no such
+// window (credits depleted with windows to spare, a bare rate limit) has no
+// known reset; the signal then carries none and the shared policy
+// (ratelimit.Resolve) gives a usage limit its one-hour fallback — the same
+// treatment as a hint-less CC or OpenCode usage limit.
+//
+// Once closed, the gate is not re-closed until it has reopened: codex
+// repeats the same state on every update, and each close broadcasts a
+// "rate limited" notice. After it reopens, the next background turn is the
+// probe: if the limit still holds, that turn fails at once (no spend), codex
+// reports the limit again, and the gate closes for another period. So an
+// out-of-credits block costs one failed probe per hour, not one per tick,
+// and resumes by itself once credits are added.
+func (s *rateLimitState) gateSignal(now time.Time) *ratelimit.Signal {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if now.Before(s.gateUntil) {
+		return nil
+	}
+	var reached []string
+	var best *int64
+	for _, sn := range s.snaps {
+		if sn.RateLimitReachedType != nil && *sn.RateLimitReachedType != "" {
+			reached = append(reached, *sn.RateLimitReachedType)
+		}
+		for _, w := range []*rateLimitWindow{sn.Primary, sn.Secondary} {
+			if w == nil || w.ResetsAt == nil || w.usedPercent() < 100 || *w.ResetsAt <= now.Unix() {
+				continue
+			}
+			if best == nil || *w.ResetsAt < *best {
+				best = w.ResetsAt
+			}
+		}
+	}
+	if len(reached) == 0 {
+		return nil
+	}
+	sort.Strings(reached)
+	sig := ratelimit.Signal{Kind: ratelimit.KindUsage, Detail: "codex: " + strings.Join(dedupe(reached), ", ")}
+	if best != nil {
+		sig.ResetAt = time.Unix(*best, 0)
+	}
+	s.gateUntil = ratelimit.Resolve(now, sig, 0).Until
+	return &sig
 }
 
 // statusLine renders the current allowance for the status block, e.g.
@@ -356,7 +413,22 @@ func (b *Backend) onRateLimitsUpdated(params json.RawMessage) {
 		return
 	}
 	b.logDebugf("account/rateLimits/updated: %s", string(params))
-	b.deliverRateLimitNotices(b.rateLimits().apply(p.RateLimits, timeutil.Now()))
+	now := timeutil.Now()
+	st := b.rateLimits()
+	b.deliverRateLimitNotices(st.apply(p.RateLimits, now))
+	// The startup read (seedRateLimits) never closes the gate: the gate's
+	// deadline survives a foci restart on its own, and re-closing it would
+	// re-broadcast the "rate limited" notice on every restart. A live update
+	// is what a failed turn produces, so it is the signal to pause.
+	if sig := st.gateSignal(now); sig != nil {
+		b.mu.Lock()
+		fn := b.onRateLimited
+		b.mu.Unlock()
+		b.logInfof("rate limit reached (%s); pausing background work", sig.Detail)
+		if fn != nil {
+			fn(*sig)
+		}
+	}
 }
 
 // seedRateLimits reads the current allowance once at startup so the status

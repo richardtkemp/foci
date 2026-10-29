@@ -310,7 +310,7 @@ grepped for each ✗. Row IDs are not renumbered, so the gaps are the removed ro
 | U4 | Expectation guards | `ExpectationGuard` invariants + version tracking | ✓ | ✗ | ✓ |
 | U5 | Resume cost baseline | Cumulative counters on `--resume` | ✓ | n/a [33] | n/a [33] |
 | U6 | Utilisation notice | Rate-limit utilisation notice to the human's chat | ✓ | ✗ | ✓ |
-| U7 | Limit gate | Usage/session limit engages `Agent.EngageRateLimit` | ✓ | ✓ | ✗ [34] |
+| U7 | Limit gate | Usage/session limit engages `Agent.EngageRateLimit` | ✓ | ✓ | ✓ [34] |
 | U9 | Turn usage | Token usage on `TurnResult` | ✓ | ✓ | ✓ |
 
 ### 8. Models and effort
@@ -538,8 +538,10 @@ Notes:
     handled for codex).
 33. opencode and codex book each message/usage event as it arrives, so there is no cumulative
     counter to rebase.
-34. `grep -i 'limit|ratelimit'` in `cx/`: no handler; unknown notifications fall to
-    `logDebugf("unhandled notification")`.
+34. codex engages on `rateLimitReachedType`, not on a window at 100% (a workspace with credits
+    runs past its included usage). Reset = the soonest window at 100%, else the shared one-hour
+    usage fallback; the gate is not re-closed until it reopens, so the next background turn is
+    the probe. The startup read never engages (`cx/ratelimits.go:gateSignal`).
 35. `control_model` and runtime effort are not live: opencode stores the model for the next prompt body after validating it with
     `opencode models` (`oc/control.go:SendControl`); codex queues model and effort for the next
     `turn/start` (`cx/control.go`). ccstream applies `set_model` / `apply_flag_settings` to the
@@ -666,7 +668,7 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - U4: `cc/expectations.go` | ✗ grep `ExpectationGuard|violated` | `cx/expectations.go:checkTokenUsage`
 - U5: `cc/cost.go:resumeBaseline` | n/a | n/a
 - U6: `cc/handlers.go:OnRateLimit`, `cc/ratelimit.go:FormatRateLimitNotice`, `HostHooks.OnRateLimitNotice` | ✗ grep `rate.?limit` | `cx/ratelimits.go:onRateLimitsUpdated` (account/rateLimits/updated) → `HostHooks.OnRateLimitNotice`; usage in `StatusDetail`
-- U7: `cc/handlers.go:OnAssistant` (`syntheticSessionLimitText`) → `HostHooks.EngageRateLimit` | `oc/ratelimit.go:handleRateLimitRetry` → `HostHooks.EngageRateLimit` | ✗ grep `limit`
+- U7: `cc/handlers.go:OnAssistant` (`syntheticSessionLimitText`) → `HostHooks.EngageRateLimit` | `oc/ratelimit.go:handleRateLimitRetry` → `HostHooks.EngageRateLimit` | `cx/ratelimits.go:onRateLimitsUpdated` → `gateSignal` → `HostHooks.EngageRateLimit`
 - `usage_query`: `cc/usage_oneshot.go:QueryUsage`, `cc/spec.go` `UsageQuery` | ✗ `oc/spec.go` declares `usage_query` No | ✗ same
 - U9: `cc/handlers.go:OnResult` | `oc/handlers.go:onMessageUpdated` | `cx/handlers.go:onTokenUsage`
 

@@ -23,6 +23,7 @@ import (
 	"foci/internal/delegator/keyedmutex"
 	"foci/internal/log"
 	"foci/internal/modelcaps"
+	"foci/internal/ratelimit"
 	"foci/internal/timeutil"
 )
 
@@ -73,12 +74,16 @@ type Backend struct {
 	// onRateLimitNotice is the gateway's HostHooks.OnRateLimitNotice: a
 	// usage warning for the session's chat (ratelimits.go).
 	onRateLimitNotice func(sessionKey, notice string)
-	model             string
-	launchModel       string
-	catalogueModels   []string
-	readyCh           chan struct{}
-	readyOnce         sync.Once
-	startOpts         delegator.StartOptions
+	// onRateLimited is the gateway's HostHooks.EngageRateLimit: it closes the
+	// agent's rate-limit gate, pausing periodic/background work (ratelimits.go
+	// gateSignal).
+	onRateLimited   func(signal ratelimit.Signal)
+	model           string
+	launchModel     string
+	catalogueModels []string
+	readyCh         chan struct{}
+	readyOnce       sync.Once
+	startOpts       delegator.StartOptions
 
 	// JSON-RPC request/response correlation
 	rpcMu      sync.Mutex
@@ -385,12 +390,14 @@ func (b *Backend) StatusDetail() string {
 	return detail
 }
 
-// SetHostHooks implements delegator.HostHooksAcceptor. codex honours only
-// OnRateLimitNotice (usage warnings, ratelimits.go); it has no re-login,
+// SetHostHooks implements delegator.HostHooksAcceptor. codex honours
+// OnRateLimitNotice (usage warnings) and EngageRateLimit (pause background
+// work at a reached limit), both in ratelimits.go; it has no re-login,
 // pretool or stop hooks.
 func (b *Backend) SetHostHooks(h delegator.HostHooks) {
 	b.mu.Lock()
 	b.onRateLimitNotice = h.OnRateLimitNotice
+	b.onRateLimited = h.EngageRateLimit
 	b.mu.Unlock()
 }
 
