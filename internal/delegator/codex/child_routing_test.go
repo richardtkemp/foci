@@ -248,3 +248,94 @@ func TestLostLineIsMarkedInOwnersChat(t *testing.T) {
 		t.Errorf("marker = %q, want the shared ↪️ From family", marker)
 	}
 }
+
+// TestLostTurnCompletedLeavesOwnersTurnOpen: a lost thread's turn lifecycle
+// must not touch the owner's turn. Mid-turn, the owner gets a lost
+// turn/started, agent message and turn/completed; its turn must still be
+// open, the lost message must not join its turn text, and its own later
+// turn/completed must end it with only its own text. Before dispatchLost the
+// lost turn/completed ended the owner's turn with the lost thread's text.
+func TestLostTurnCompletedLeavesOwnersTurnOpen(t *testing.T) {
+	owner, _, oc, _, _ := newSharedPair(t)
+	got := openUsageTurn(owner)
+
+	owner.dispatch([]byte(`{"method":"turn/started","params":{"threadId":"stray-thread","turn":{"id":"ts"}}}`))
+	owner.dispatch([]byte(`{"method":"item/completed","params":{"threadId":"stray-thread","turnId":"ts","item":{"type":"agentMessage","id":"m1","text":"Theirs"}}}`))
+	owner.dispatch([]byte(`{"method":"turn/completed","params":{"threadId":"stray-thread","turn":{"id":"ts","status":"completed"}}}`))
+
+	owner.turnMu.Lock()
+	active := owner.turnActive
+	owner.turnMu.Unlock()
+	if *got != nil || !active {
+		t.Fatalf("lost turn/completed ended the owner's turn (result=%+v, active=%v)", *got, active)
+	}
+
+	owner.dispatch([]byte(`{"method":"item/completed","params":{"threadId":"thread-owner","turnId":"to","item":{"type":"agentMessage","id":"m2","text":"Mine"}}}`))
+	owner.dispatch([]byte(`{"method":"turn/completed","params":{"threadId":"thread-owner","turn":{"id":"to","status":"completed"}}}`))
+	if *got == nil {
+		t.Fatal("the owner's own turn/completed did not end its turn")
+	}
+	if (*got).Text != "Mine" {
+		t.Errorf("owner's turn text = %q, want %q (a lost message must not join it)", (*got).Text, "Mine")
+	}
+	// The lost message was still shown, marked.
+	oc.mu.Lock()
+	defer oc.mu.Unlock()
+	if len(oc.chatText) == 0 || !strings.HasPrefix(oc.chatText[0], "↪️ **From codex thread stray-thread**") || !strings.HasSuffix(oc.chatText[0], "Theirs") {
+		t.Errorf("chat text = %q, want the lost message first, marked", oc.chatText)
+	}
+}
+
+// TestLostTokenUsageNotBookedToOwner: a lost thread's API cycle must not be
+// counted as the owner's turn usage. The same usage line on the owner's own
+// thread is the positive control: it IS booked, so a nil Usage means the lost
+// line was skipped, not that usage is never recorded here.
+func TestLostTokenUsageNotBookedToOwner(t *testing.T) {
+	owner, _, _, _, _ := newSharedPair(t)
+	lost := strings.Replace(usageCycle1, `"threadId":"th_1"`, `"threadId":"stray-thread"`, 1)
+	own := strings.Replace(usageCycle1, `"threadId":"th_1"`, `"threadId":"thread-owner"`, 1)
+	end := `{"method":"turn/completed","params":{"threadId":"thread-owner","turn":{"id":"to","status":"completed"}}}`
+
+	got := openUsageTurn(owner)
+	owner.dispatch([]byte(lost))
+	owner.dispatch([]byte(end))
+	if *got == nil {
+		t.Fatal("owner's turn did not complete")
+	}
+	if (*got).Usage != nil {
+		t.Errorf("lost token usage booked to the owner's turn: %+v", *(*got).Usage)
+	}
+
+	got = openUsageTurn(owner)
+	owner.dispatch([]byte(own))
+	owner.dispatch([]byte(end))
+	if *got == nil || (*got).Usage == nil {
+		t.Fatal("control: the owner's own usage was not recorded, so this test cannot see a leak")
+	}
+}
+
+// TestLostFailedTurnIsANoteNotTheOwnersError: a lost thread's failed turn is
+// shown as a marked note, but it neither ends the owner's turn nor sets the
+// owner's last-turn error.
+func TestLostFailedTurnIsANoteNotTheOwnersError(t *testing.T) {
+	owner, _, oc, _, _ := newSharedPair(t)
+	got := openUsageTurn(owner)
+	owner.dispatch([]byte(`{"method":"turn/completed","params":{"threadId":"stray-thread","turn":{"id":"ts","status":"failed","error":{"message":"out of credits"}}}}`))
+
+	if *got != nil {
+		t.Fatalf("lost failed turn ended the owner's turn: %+v", *got)
+	}
+	owner.mu.Lock()
+	lastErr := owner.lastTurnError
+	owner.mu.Unlock()
+	if lastErr != "" {
+		t.Errorf("owner's lastTurnError = %q, want empty", lastErr)
+	}
+	want := delegator.RedirectedOrigin("codex thread stray-thread", "it matches no session or subagent, so it is shown here") +
+		"\n\n" + turnFailedText("out of credits")
+	oc.mu.Lock()
+	defer oc.mu.Unlock()
+	if len(oc.chatText) != 1 || oc.chatText[0] != want {
+		t.Errorf("chat text = %q, want [%q]", oc.chatText, want)
+	}
+}

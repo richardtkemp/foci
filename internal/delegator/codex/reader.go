@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	"foci/internal/delegator"
 )
@@ -102,10 +103,12 @@ func (b *Backend) dispatch(line []byte) {
 			}
 			// Whatever the owner shows the user from this line (message text,
 			// a turn error, an approval prompt) is marked with where it came
-			// from (lostMarked), so it never reads as the owner's own. Only the
-			// reader goroutine runs dispatch, so the field needs no lock.
+			// from (lostMarked), so it never reads as the owner's own; and
+			// nothing in it may change the owner's own turn or accounting
+			// (dispatchLost). Only the reader goroutine runs dispatch, so the
+			// field needs no lock.
 			b.lostThread = id
-			b.dispatchLocal(line)
+			b.dispatchLost(line, env.ID, env.Method, env.Params)
 			b.lostThread = ""
 			return
 		}
@@ -122,6 +125,74 @@ func (b *Backend) lostMarked(text string) string {
 	}
 	return delegator.RedirectedOrigin("codex thread "+b.lostThread,
 		"it matches no session or subagent, so it is shown here") + "\n\n" + text
+}
+
+// dispatchLost handles a lost line (its thread matches no session and no known
+// subagent) on the app-server owner. Only what the user must see reaches the
+// owner, marked with its origin (lostMarked); nothing touches the owner's own
+// turn or accounting state. Before this, the line went through dispatchLocal
+// like the owner's own, so a lost turn/completed ended the owner's live turn
+// with another thread's result, a lost turn/started reopened it, its token
+// usage was booked to the owner's turn, its agent message was appended to the
+// owner's turn text, and its tool items entered the owner's item cache and
+// tool counts.
+//
+//   - A server request (an approval prompt) goes through the ordinary request
+//     path, so it is prompted (marked), auto-decided, or declined when nobody
+//     can answer — codex is never left waiting — and the answer goes back over
+//     the shared connection with codex's own id. Its pending entry is keyed by
+//     that id, which is the only owner state it adds.
+//   - Message text: deltas stream live (marked on the first one) and the
+//     completed message is shown (marked) — neither enters the owner's turn
+//     text.
+//   - A failed turn's error is shown as a marked note; the owner's turn is
+//     not ended and its last-error status is not touched.
+//   - Everything else (turn/started, turn/completed, token usage, thread
+//     status/name, tool and reasoning items, model reroute, ...) is consumed:
+//     it only describes the lost thread's own lifecycle, and the WARN in
+//     dispatch already records it. Tool items are consumed rather than shown
+//     because a tool event has no text to carry the marker, so it would read
+//     as the owner's own tool call and count toward its turn.
+func (b *Backend) dispatchLost(line []byte, id *int64, method string, params json.RawMessage) {
+	if id != nil {
+		b.dispatchLocal(line)
+		return
+	}
+	se := b.sessionEvents.Load()
+	switch method {
+	case "item/agentMessage/delta":
+		var p agentMessageDeltaParams
+		if json.Unmarshal(params, &p) == nil {
+			b.onAgentMessageDelta(&p)
+		}
+	case "item/completed":
+		var p itemCompletedParams
+		if json.Unmarshal(params, &p) != nil {
+			return
+		}
+		var item itemEnvelope
+		if json.Unmarshal(p.Item, &item) != nil || item.Type != "agentMessage" {
+			return
+		}
+		b.lostDeltaThread = ""
+		if item.Text != "" && se != nil && se.OnText != nil {
+			se.OnText(b.lostMarked(item.Text))
+		}
+	case "turn/completed":
+		var p turnCompletedParams
+		if json.Unmarshal(params, &p) != nil || p.Turn.Status != "failed" {
+			return
+		}
+		msg := "unknown error"
+		if p.Turn.Error != nil && strings.TrimSpace(p.Turn.Error.Message) != "" {
+			msg = strings.TrimSpace(p.Turn.Error.Message)
+		}
+		if se != nil && se.OnText != nil {
+			se.OnText(b.lostMarked(turnFailedText(msg)))
+		}
+	default:
+		b.logDebugf("lost %s for thread %s consumed", method, b.lostThread)
+	}
 }
 
 // dispatchChild handles one line from a subagent's child thread on the facade

@@ -110,7 +110,7 @@ func (b *Backend) onTurnCompleted(params *turnCompletedParams) {
 
 	errText := ""
 	if failMsg != "" {
-		errText = b.lostMarked(turnFailedText(failMsg))
+		errText = turnFailedText(failMsg)
 	}
 
 	b.turnMu.Lock()
@@ -366,8 +366,7 @@ func (b *Backend) onItemCompleted(params *itemCompletedParams) {
 		// emit it — the schema's own doc calls this out) keeps the
 		// pre-existing behaviour: accumulate. Commentary still reaches the
 		// live view via OnText below, just excluded from the final text.
-		text := b.lostMarked(item.Text)
-		b.lostDeltaThread = ""
+		text := item.Text
 		if item.Phase != "commentary" {
 			b.turnMu.Lock()
 			b.turnText.WriteString(text)
