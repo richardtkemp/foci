@@ -1510,6 +1510,7 @@ workspace = "/home/coder/projects/myapp"
 # model = "sonnet"            # CC model name (optional — omit for CC default)
 # skip_permissions = true     # --dangerously-skip-permissions (no approval prompts)
 # allowed_tools = ["Bash(git:*)", "Read"]  # --allowedTools: per-agent CC permission rules
+# sandbox = "workspace-write" # Codex only: read-only, workspace-write, danger-full-access
 # binary = ""                 # Override path to backend executable (default: $PATH)
 # idle_timeout = "3h"         # Session idle shutdown duration (default 3h)
 # batch_model = "haiku"       # Model for foci's own small background jobs (see below)

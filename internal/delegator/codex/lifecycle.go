@@ -158,7 +158,7 @@ func (b *Backend) launchAppServer(ctx context.Context, opts delegator.StartOptio
 		compactPrompt = opts.CompactionPromptFunc("")
 	}
 
-	args := appServerArgs(compactPrompt)
+	args := appServerArgs(compactPrompt, b.sandboxMode())
 	// The session-env hook must be configured at spawn: hook config and its
 	// trust state are session flags on this argv, and there is no way to add
 	// either to a running app-server. See hooks.go.
@@ -227,13 +227,9 @@ func (b *Backend) launchAppServer(ctx context.Context, opts delegator.StartOptio
 	return nil
 }
 
-// appServerArgs sets the app-server's default sandbox to danger-full-access, so
-// Codex does not start a nested bwrap sandbox: foci already runs inside an outer
-// sandbox that deliberately removes setuid/capability assumptions. The config key
-// is `sandbox_mode`; codex rejects `sandbox_policy` as an unknown field (verified
-// against codex 0.164.0 with --strict-config). This is only the default: a
-// thread/start that sends its own `sandbox` (foci always does, via sandboxMode())
-// overrides it for that thread (verified live against codex 0.164.0).
+// appServerArgs applies the configured sandbox, defaulting to workspace-write. Thread
+// creation and resume both explicitly apply the resolved per-agent sandbox;
+// read-only batches remain read-only even on unrestricted agents.
 //
 // When compactPrompt is non-empty it is layered in as a per-process
 // `-c compact_prompt=<value>` config override (the value parses as TOML, via
@@ -241,8 +237,11 @@ func (b *Backend) launchAppServer(ctx context.Context, opts delegator.StartOptio
 // override scoped to THIS app-server process; it never touches the shared
 // ~/.codex/config.toml, so foci's compaction prompt can't leak into the user's
 // own codex CLI or race a concurrent codex agent (#1327 sub-issue 2).
-func appServerArgs(compactPrompt string) []string {
-	args := []string{"app-server", "-c", "sandbox_mode=danger-full-access"}
+func appServerArgs(compactPrompt, sandbox string) []string {
+	if sandbox == "" {
+		sandbox = defaultSandboxMode
+	}
+	args := []string{"app-server", "-c", "sandbox_mode=" + sandbox}
 	if compactPrompt != "" {
 		args = append(args, "-c", "compact_prompt="+tomlBasicString(compactPrompt))
 	}
@@ -492,6 +491,7 @@ func (b *Backend) startThread() (string, error) {
 func (b *Backend) resumeThread(threadID string) error {
 	params := threadResumeParams{
 		ThreadID:         threadID,
+		Sandbox:          b.sandboxMode(),
 		BaseInstructions: b.startOpts.SystemPrompt,
 	}
 	result, err := b.sendAndWait("thread/resume", params)

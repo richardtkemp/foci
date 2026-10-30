@@ -50,7 +50,7 @@ ccstream uses a **two-lifetime callback split** (TODO #747): `SessionEvents` (de
 - **Model catalogue** is fetched live via `model/list` RPC, populating the capability catalogue (`modelcaps`) the same way the Anthropic `/v1/models` fetch does for ccstream.
 - **Compaction** uses Codex's own `thread/compact/start` RPC, not Foci's compaction pipeline.
 - **Server-side session naming.** Codex assigns and tracks session names itself, which is why the `set_session_alias` tool is disabled for this backend — the alias would be overwritten by the server.
-- **Known gaps before re-enabling** are in [Known issues](#known-issues): unreachable `sandbox`/`api_key` config, unanswered server requests, attachments not sent as content.
+- **Known gaps before re-enabling** are in [Known issues](#known-issues): unreachable `api_key` config, unanswered server requests, attachments not sent as content.
 
 ### `opencode` — OpenCode via HTTP/SSE
 
@@ -363,6 +363,7 @@ Generated from each backend's `Spec.ConfigKeys` / `Spec.StartFields` (`internal/
 <!-- BEGIN GENERATED CONFIG SCHEMA: internal/delegator/all TestBackendsDoc_ConfigSchemaTable. Edit the Specs, not this block. -->
 | `backend_config` key | claude-code | codex | opencode |
 |---|---|---|---|
+| `sandbox` | ✗ | ✓ | ✗ |
 | `model` (gateway) | ✓ | ✓ | ✓ |
 | `allowed_tools` | ✓ | ✗ | ✗ |
 | `pretool_rules` (gateway) | ✓ | ✗ | ✗ |
@@ -382,7 +383,7 @@ Generated from each backend's `Spec.ConfigKeys` / `Spec.StartFields` (`internal/
 
 - claude-code folds the global `[cc_backend]` section into its backend_config (Spec.ConfigFamily).
 - opencode folds the global `[opencode_backend]` section into its backend_config (Spec.ConfigFamily).
-- codex also reads `api_key`, `sandbox`, which no config key supplies.
+- codex also reads `api_key`, which no config key supplies.
 
 | `StartOptions` field | claude-code | codex | opencode |
 |---|---|---|---|
@@ -414,7 +415,7 @@ Notes:
 - `skip_permissions` on opencode: per-ask answers, `oc/permissions.go:answerUnattended`.
 - `[cc_backend].background_task_max_age` reaches the backend as `StartOptions.SubagentMaxAge`.
 - `reload_on_compact` (agent level, not `backend_config`) applies to every backend.
-- codex's `api_key` / `sandbox`: footnote 48.
+- codex's `api_key`: footnote 48.
 
 ### Parity footnotes
 
@@ -578,10 +579,10 @@ Notes:
 47. `opencode.ReapOrphanedServers` runs at startup and `CloseAllServers` at shutdown, as the opencode Spec's `OnGatewayStart` / `OnGatewayShutdown` (`gw/main.go`, `gw/shutdown.go` run every Spec's hooks).
     `grep -i reap|orphan` found no equivalent for `claude` or `codex app-server` processes.
     Whether those children survive a gateway crash was not checked.
-48. `cx/codex.go:sandboxMode` reads `cfg["sandbox"]` and `cx/lifecycle.go:buildEnv` reads
-    `cfg["api_key"]`, but `config.BackendConfig` has neither field and `BackendConfig.ToMap`
-    never emits them (`internal/config/types.go`). So the sandbox is always `workspace-write`
-    and `CODEX_API_KEY` can come only from `backend_config.env`. Fix before re-enabling codex.
+48. Codex reads `backend_config.sandbox` (default `workspace-write`) on both thread creation
+    and resume; read-only batches always use `read-only`. `cx/lifecycle.go:buildEnv` still reads
+    `cfg["api_key"]`, which `config.BackendConfig` does not supply; `CODEX_API_KEY` can come
+    only from `backend_config.env`.
 
 
 ### Parity evidence
@@ -716,7 +717,7 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 
 Found by the parity survey, beyond the table:
 
-- **Unreachable codex config:** `sandbox` and `api_key` (footnote 48).
+- **Unreachable codex config:** `api_key` (footnote 48).
 - **codex can hang on an unknown server request** (footnote 21).
 - **Batch runs on opencode/codex can prompt the owner's chat** (footnote 15).
 

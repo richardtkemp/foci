@@ -325,6 +325,7 @@ type CCBackendConfig struct {
 // Pointer types are required for the config cascade (Merge[T] uses
 // reflect.Value.IsNil to distinguish "not set" from zero).
 type BackendConfig struct {
+	Sandbox           *string           `toml:"sandbox" desc:"Codex sandbox: read-only, workspace-write (default), or danger-full-access"`
 	Model             *string           `toml:"model"              desc:"Model ID for the delegated backend (e.g. opus, sonnet)"`
 	AllowedTools      []string          `toml:"allowed_tools"      desc:"Claude Code permission rules (e.g. Edit(/tmp/**)). Merged with global [cc_backend] defaults"`
 	PreToolRules      []pretool.Rule    `toml:"pretool_rules"` // per-agent PreToolUse deny rules, merged by name over [cc_backend] pretool_rules (#2028)
@@ -347,6 +348,9 @@ type BackendConfig struct {
 // AllowedTools is comma-joined because the CC backends read it as a string.
 func (bc BackendConfig) ToMap() map[string]any {
 	m := map[string]any{}
+	if bc.Sandbox != nil {
+		m["sandbox"] = *bc.Sandbox
+	}
 	if bc.Model != nil {
 		m["model"] = *bc.Model
 	}

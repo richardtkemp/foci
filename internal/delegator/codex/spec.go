@@ -87,7 +87,7 @@ var spec = delegator.Spec{
 	CacheTTL:         cacheTTL,
 	ForkNeedsRunning: true,
 	UsageQuery:       QueryUsage,
-	// sandbox and api_key are read but no config path supplies them
+	// api_key is read but no config path supplies it
 	// (docs/BACKENDS.md footnote 48). foci_version is added by the gateway.
 	ConfigKeys: []string{"binary", "model", "sandbox", "api_key", delegator.FociVersionConfigKey},
 	StartFields: []string{

@@ -17,7 +17,7 @@ import (
 // only if the gateway adds them. A known gap (docs/BACKENDS.md footnote 48),
 // listed so it stays visible and no new one can appear unnoticed (#2178).
 var unreachableConfigKeys = map[string][]string{
-	"codex": {"api_key", "sandbox"},
+	"codex": {"api_key"},
 }
 
 // TestSpecs_ConfigKeysAreSettable: every backend_config key a backend reads

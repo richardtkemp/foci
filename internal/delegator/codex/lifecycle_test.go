@@ -43,12 +43,11 @@ func newStartableBackend(t *testing.T, handler func(method string, params json.R
 	return b
 }
 
-// TestAppServerArgs_DisablesNestedSandbox ensures the app-server inherits the
-// outer foci sandbox instead of attempting a nested bwrap sandbox. With no
+// TestAppServerArgs_DefaultSandbox ensures the server defaults to workspace-write. With no
 // compaction prompt, no compact_prompt override is layered in.
-func TestAppServerArgs_DisablesNestedSandbox(t *testing.T) {
-	want := []string{"app-server", "-c", "sandbox_mode=danger-full-access"}
-	if got := appServerArgs(""); !reflect.DeepEqual(got, want) {
+func TestAppServerArgs_DefaultSandbox(t *testing.T) {
+	want := []string{"app-server", "-c", "sandbox_mode=workspace-write"}
+	if got := appServerArgs("", ""); !reflect.DeepEqual(got, want) {
 		t.Fatalf("appServerArgs(\"\") = %v, want %v", got, want)
 	}
 }
@@ -58,9 +57,9 @@ func TestAppServerArgs_DisablesNestedSandbox(t *testing.T) {
 // it never reaches the shared ~/.codex/config.toml. The value must be a valid
 // TOML basic string (escaped), matching the `-c instructions=` batch recipe.
 func TestAppServerArgs_CompactPrompt(t *testing.T) {
-	got := appServerArgs("summarise\tthe \"session\"")
+	got := appServerArgs("summarise\tthe \"session\"", "")
 	want := []string{
-		"app-server", "-c", "sandbox_mode=danger-full-access",
+		"app-server", "-c", "sandbox_mode=workspace-write",
 		"-c", `compact_prompt="summarise\tthe \"session\""`,
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -69,6 +68,56 @@ func TestAppServerArgs_CompactPrompt(t *testing.T) {
 }
 
 // --- startThread ---
+
+// TestThreadLifecycle_PassesResolvedSandbox keeps creation and resume on the
+// same configured policy, including read-only batches on unrestricted agents.
+func TestThreadLifecycle_PassesResolvedSandbox(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		configured string
+		readOnly   bool
+		want       string
+	}{
+		{"default", "", false, "workspace-write"},
+		{"restricted", "read-only", false, "read-only"},
+		{"workspace", "workspace-write", false, "workspace-write"},
+		{"unrestricted", "danger-full-access", false, "danger-full-access"},
+		{"explore", "danger-full-access", true, "read-only"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var methods []string
+			b := newStartableBackend(t, func(method string, params json.RawMessage, _ int64) (json.RawMessage, error) {
+				var p struct {
+					Sandbox string `json:"sandbox"`
+				}
+				if err := json.Unmarshal(params, &p); err != nil {
+					t.Fatal(err)
+				}
+				if p.Sandbox != tc.want {
+					t.Errorf("%s sandbox=%q, want %q", method, p.Sandbox, tc.want)
+				}
+				methods = append(methods, method)
+				return json.RawMessage(`{"thread":{"id":"sandbox-thread"}}`), nil
+			})
+			b.cfg = map[string]any{"sandbox": tc.configured}
+			if tc.readOnly {
+				b.startOpts.BatchAccess = delegator.BatchAccessReadOnly
+			}
+			if got := appServerArgs("", b.sandboxMode()); !reflect.DeepEqual(got, []string{"app-server", "-c", "sandbox_mode=" + tc.want}) {
+				t.Fatalf("server args=%v, want sandbox %q", got, tc.want)
+			}
+			if _, err := b.startThread(); err != nil {
+				t.Fatal(err)
+			}
+			if err := b.resumeThread("sandbox-thread"); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(methods, []string{"thread/start", "thread/resume"}) {
+				t.Fatalf("methods=%v", methods)
+			}
+		})
+	}
+}
 
 // TestStartThread_PassesBaseInstructions verifies the mock app-server receives
 // thread/start with baseInstructions matching StartOptions.SystemPrompt.

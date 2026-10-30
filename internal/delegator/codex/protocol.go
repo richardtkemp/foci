@@ -87,6 +87,7 @@ type threadInjectItemsParams struct {
 
 type threadResumeParams struct {
 	ThreadID string `json:"threadId"`
+	Sandbox  string `json:"sandbox,omitempty"`
 	// BaseInstructions re-sends the freshly-generated system prompt on resume
 	// (verified supported by codex 0.144.5's ThreadResumeParams schema, same
 	// field as ThreadStartParams). Without it a thread surviving a gateway

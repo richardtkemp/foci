@@ -191,6 +191,13 @@ func (cfg *Config) HasAPIAgent() bool {
 func (cfg *Config) Validate(knownBackends []string) error {
 	// Validate agent IDs don't collide with reserved directory names
 	for _, a := range cfg.Agents {
+		if a.BackendConfig.Sandbox != nil {
+			switch *a.BackendConfig.Sandbox {
+			case "", "read-only", "workspace-write", "danger-full-access":
+			default:
+				return fmt.Errorf("agent %q: backend_config.sandbox must be read-only, workspace-write, or danger-full-access", a.ID)
+			}
+		}
 		if a.ID == "" {
 			continue
 		}

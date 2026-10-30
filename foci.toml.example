@@ -168,6 +168,7 @@ id = "myagent"
 # default_platform = ""                   # per-agent override of top-level default_platform
 # backend = "api"                         # "api" (default) or a coding agent: "claude-code", "codex", "opencode"
 # [agents.backend_config]                 # backend-specific settings (typed struct — see docs/CONFIG.md)
+# sandbox = "workspace-write"             # Codex only: read-only, workspace-write, danger-full-access
 # model = "sonnet"                        #   CC model name (omit for default)
 # skip_permissions = true                 #   skip all permission prompts
 # allowed_tools = ["Bash(git:*)", "Read"] #   pre-approve specific tools (TOML array)

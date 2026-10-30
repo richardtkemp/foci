@@ -471,6 +471,8 @@ func truncateStatusError(msg string) string {
 	return string(r[:statusErrorMax-1]) + "…"
 }
 
+const defaultSandboxMode = "workspace-write"
+
 func (b *Backend) sandboxMode() string {
 	// A read-only batch (spawn explore) runs in codex's read-only sandbox,
 	// whatever the agent's own sandbox is: its commands can read but never
@@ -482,7 +484,7 @@ func (b *Backend) sandboxMode() string {
 	if v, ok := b.cfg["sandbox"].(string); ok && v != "" {
 		return v
 	}
-	return "workspace-write"
+	return defaultSandboxMode
 }
 
 func (b *Backend) codexBinary() string {
