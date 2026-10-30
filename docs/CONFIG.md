@@ -1520,6 +1520,8 @@ workspace = "/home/coder/projects/myapp"
 # CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS = "1"
 ```
 
+Codex launches in **Approve for me** mode by default: the `workspace-write` sandbox with `on-request` approvals routed to Codex automatic review. `backend_config.sandbox` can override the sandbox; read-only exploration still forces `read-only`. The launch flags leave `~/.codex/config.toml` unchanged and take effect when the app-server is next launched.
+
 For `backend = "codex"`, `model` may be either an exact app-server catalogue
 ID or a case-insensitive substring alias:
 

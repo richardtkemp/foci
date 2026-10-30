@@ -229,7 +229,8 @@ func (b *Backend) launchAppServer(ctx context.Context, opts delegator.StartOptio
 
 // appServerArgs applies the configured sandbox, defaulting to workspace-write. Thread
 // creation and resume both explicitly apply the resolved per-agent sandbox;
-// read-only batches remain read-only even on unrestricted agents.
+// read-only batches remain read-only even on unrestricted agents. Escalations
+// use Codex automatic review (the CLI Approve for me mode), not human prompts.
 //
 // When compactPrompt is non-empty it is layered in as a per-process
 // `-c compact_prompt=<value>` config override (the value parses as TOML, via
@@ -241,7 +242,11 @@ func appServerArgs(compactPrompt, sandbox string) []string {
 	if sandbox == "" {
 		sandbox = defaultSandboxMode
 	}
-	args := []string{"app-server", "-c", "sandbox_mode=" + sandbox}
+	args := []string{
+		"app-server", "-c", "sandbox_mode=" + sandbox,
+		"-c", "approval_policy=on-request",
+		"-c", "approvals_reviewer=auto_review",
+	}
 	if compactPrompt != "" {
 		args = append(args, "-c", "compact_prompt="+tomlBasicString(compactPrompt))
 	}

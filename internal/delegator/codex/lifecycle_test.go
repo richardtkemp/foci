@@ -43,10 +43,10 @@ func newStartableBackend(t *testing.T, handler func(method string, params json.R
 	return b
 }
 
-// TestAppServerArgs_DefaultSandbox ensures the server defaults to workspace-write. With no
-// compaction prompt, no compact_prompt override is layered in.
+// TestAppServerArgs_DefaultSandbox verifies Approve for me defaults: a workspace
+// sandbox plus on-request approvals routed through the automatic reviewer.
 func TestAppServerArgs_DefaultSandbox(t *testing.T) {
-	want := []string{"app-server", "-c", "sandbox_mode=workspace-write"}
+	want := []string{"app-server", "-c", "sandbox_mode=workspace-write", "-c", "approval_policy=on-request", "-c", "approvals_reviewer=auto_review"}
 	if got := appServerArgs("", ""); !reflect.DeepEqual(got, want) {
 		t.Fatalf("appServerArgs(\"\") = %v, want %v", got, want)
 	}
@@ -60,6 +60,7 @@ func TestAppServerArgs_CompactPrompt(t *testing.T) {
 	got := appServerArgs("summarise\tthe \"session\"", "")
 	want := []string{
 		"app-server", "-c", "sandbox_mode=workspace-write",
+		"-c", "approval_policy=on-request", "-c", "approvals_reviewer=auto_review",
 		"-c", `compact_prompt="summarise\tthe \"session\""`,
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -103,7 +104,7 @@ func TestThreadLifecycle_PassesResolvedSandbox(t *testing.T) {
 			if tc.readOnly {
 				b.startOpts.BatchAccess = delegator.BatchAccessReadOnly
 			}
-			if got := appServerArgs("", b.sandboxMode()); !reflect.DeepEqual(got, []string{"app-server", "-c", "sandbox_mode=" + tc.want}) {
+			if got := appServerArgs("", b.sandboxMode()); !reflect.DeepEqual(got, []string{"app-server", "-c", "sandbox_mode=" + tc.want, "-c", "approval_policy=on-request", "-c", "approvals_reviewer=auto_review"}) {
 				t.Fatalf("server args=%v, want sandbox %q", got, tc.want)
 			}
 			if _, err := b.startThread(); err != nil {
