@@ -300,7 +300,14 @@ var toolTable = []toolEntry{
 
 	{name: "send_to_chat", paths: pathBoth, build: func(d *toolDeps) *tools.Tool {
 		return tools.NewSendToChatTool(func(sessionKey string) platform.Sender {
-			conn := d.connMgr.ForSessionOrPrimary(sessionKey, d.p.acfg.ID)
+			// The primary to fall back on is the session's own agent's: a
+			// cross-agent spawn's send_to_chat resolves to its CALLER's
+			// session, another agent's (#2662).
+			agentID := d.p.acfg.ID
+			if a := session.AgentIDFromKey(sessionKey); a != "" {
+				agentID = a
+			}
+			conn := d.connMgr.ForSessionOrPrimary(sessionKey, agentID)
 			if conn == nil {
 				return nil
 			}
@@ -410,6 +417,15 @@ var toolTable = []toolEntry{
 	}},
 	{name: "spawn_status", paths: pathBoth, enabled: spawnEnabled, build: func(d *toolDeps) *tools.Tool {
 		return d.getSpawner().StatusTool()
+	}},
+	// spawn_stop stops a running spawn of any mode, by id (#2656).
+	{name: "spawn_stop", paths: pathBoth, enabled: spawnEnabled, build: func(d *toolDeps) *tools.Tool {
+		return d.getSpawner().StopTool()
+	}},
+	// send_to_spawner: a spawn, of any mode, messages the session that
+	// spawned it while it runs (#2662). Outside a spawn it refuses.
+	{name: "send_to_spawner", paths: pathBoth, enabled: spawnEnabled, build: func(d *toolDeps) *tools.Tool {
+		return d.getSpawner().SendToSpawnerTool()
 	}},
 
 	// Depth mode (#2588), experimental: fan an app conversation out into leaf
@@ -647,12 +663,22 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 				ag.PrepareCharacterSpawnBranch(bk, model)
 			}
 		},
+		// #2662: every spawn checks the allowance it would spend.
+		ReservePercent: func() int { return live.Load().Tools.SpawnReservePercent },
 	}
 	if d.path == pathExec {
 		// A delegated agent: one-shots run as batches on its own backend.
 		// The API one-shot fields (clients, model groups, fallbacks,
 		// routing, the API tool-loop budgets) stay unset (#spawn-oneshot).
 		spec, _ := delegator.SpecFor(acfg.Backend)
+		if q, ok := delegator.UsageQueryFor(acfg.Backend); ok {
+			// #2662: cached per usage account and read on a 4-14 min
+			// schedule (one Claude Code read is a throwaway CC process and
+			// ~25-60 s); every Claude Code agent shares one account. The
+			// schedule skips while the reserve is 0 (the check is off).
+			spawnDeps.Usage = tools.SpawnUsageReader(acfg.Backend, acfg.ID, q, spec.UsageOperatorWide,
+				func() bool { return live.Load().Tools.SpawnReservePercent > 0 })
+		}
 		spawnDeps.Delegated = &tools.DelegatedSpawn{
 			Spec: spec,
 			Runner: func() tools.BatchRunner {

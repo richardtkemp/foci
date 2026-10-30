@@ -94,10 +94,23 @@ func (s *Spawner) ReleaseHeld() {
 // handed over, the node it passed to, by the same walk as the spawn's results
 // (route). ok is false when branchKey is not one of this agent's spawns.
 // While the route holds, the owner is still the reported leaf.
+//
+// A spawn run as this agent for another one (#2662) is owned by its caller:
+// the walk is the caller's Spawner's, so its prompts go to the caller (Dick
+// 2026-10-30), never to this agent's chats.
 func (s *Spawner) BranchOwner(branchKey string) (owner string, ok bool) {
-	parent, _, found := s.deps.Tracker.ForBranch(branchKey)
-	if !found || session.AgentIDFromKey(parent) != s.deps.AgentID {
+	parent, info, found := s.deps.Tracker.ForBranch(branchKey)
+	if !found {
 		return "", false
+	}
+	if callerAgent := session.AgentIDFromKey(parent); callerAgent != s.deps.AgentID {
+		if info.Agent != s.deps.AgentID {
+			return "", false
+		}
+		if c := spawnerFor(callerAgent); c != nil {
+			return c.route(parent).Owner, true
+		}
+		return parent, true
 	}
 	return s.route(parent).Owner, true
 }

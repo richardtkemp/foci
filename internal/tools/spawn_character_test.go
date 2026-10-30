@@ -84,7 +84,8 @@ func TestSpawnDefaultModeIsCharacter(t *testing.T) {
 
 // TestDelegatedSpawnTool_DefaultsToCharacter proves a delegated agent's spawn
 // with no context runs as a direct character batch on a backend that can
-// fork, with the 120s direct default: no branch, nothing tracked.
+// fork, with the 120s direct default: no branch; tracked only as a finished
+// direct spawn (#2656), never as a background one.
 func TestDelegatedSpawnTool_DefaultsToCharacter(t *testing.T) {
 	t.Parallel()
 	runner := &recordingBatchRunner{}
@@ -101,8 +102,8 @@ func TestDelegatedSpawnTool_DefaultsToCharacter(t *testing.T) {
 	if d := runner.deadlines[0]; d <= 60*time.Second || d > 120*time.Second {
 		t.Errorf("direct character ran with %s left, want the 120s default", d)
 	}
-	if n := len(tr.List("test/c1")); n != 0 {
-		t.Errorf("a direct character spawn was tracked as background (%d)", n)
+	if l := tr.List("test/c1"); len(l) != 1 || !l[0].Direct || l[0].Running || l[0].BranchKey != "" || l[0].Outcome != "completed" {
+		t.Errorf("tracked = %+v, want one finished direct spawn with no branch", l)
 	}
 }
 
@@ -370,6 +371,8 @@ func TestSpawnToolTextIsApproved(t *testing.T) {
 			"It gets your system prompt, tools and permission rules, but not this conversation, so write the prompt to carry everything the task needs: the ticket id, file paths, what done means.",
 			"Use 'clone' only when the task needs so much of this conversation that you could not reasonably write it into a prompt. A clone copies the whole conversation, which costs far more.",
 			"Use 'raw' for a question that needs no context of yours, and 'explore' for read-only research.",
+			// #2662/#2656: new text, listed for Dick's approval.
+			"With agent=<id>, the spawn runs as another agent, in character mode. spawn_status lists your spawns while they run, and spawn_stop stops one.",
 		} {
 			if !strings.Contains(desc, want) {
 				t.Errorf("%s description lacks %q:\n%s", c.name, want, desc)
@@ -400,6 +403,32 @@ func TestSpawnToolTextIsApproved(t *testing.T) {
 		if _, ok := schema.Properties["background"]; !ok {
 			t.Errorf("%s schema has no background parameter", c.name)
 		}
+		if got := schema.Properties["agent"].Description; got != spawnAgentDoc || !strings.Contains(got, "Naming an agent implies character mode: leave context unset.") {
+			t.Errorf("%s agent doc = %q", c.name, got)
+		}
+		if got := schema.Properties["use_reserve"].Description; got != spawnUseReserveDoc || !strings.Contains(got, "(default 10%)") {
+			t.Errorf("%s use_reserve doc = %q", c.name, got)
+		}
+	}
+	// #2662 round 3 (Dick 2026-10-30 12:18): send_to_spawner, listed for
+	// Dick's approval.
+	stsp := (&Spawner{}).SendToSpawnerTool()
+	if want := "Send a message to the session that spawned you, while you run. Only inside a spawn. " +
+		"If you run in the background, it reaches your spawner now, and your spawner can answer with spawn_send. " +
+		"If your spawner is waiting for your result, it cannot read anything until you finish: the message is kept and heads your result. " +
+		"Your final answer still goes back as your result."; stsp.Description != want {
+		t.Errorf("send_to_spawner description = %q, want %q", stsp.Description, want)
+	}
+	var stspSchema struct {
+		Properties map[string]struct {
+			Description string `json:"description"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(stsp.Parameters, &stspSchema); err != nil {
+		t.Fatal(err)
+	}
+	if got := stspSchema.Properties["message"].Description; got != "What to tell your spawner." {
+		t.Errorf("send_to_spawner message doc = %q", got)
 	}
 	// A character-only agent's text names no mode it lacks.
 	only := spawnToolDescription([]string{spawnModeCharacter})

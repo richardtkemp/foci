@@ -85,6 +85,11 @@ func (a *aggregatingConnMgr) AllForAgent(agentID string) []Connection {
 }
 
 func (a *aggregatingConnMgr) ForSession(sessionKey string) Connection {
+	// A cross-agent spawn's session belongs to no chat of the agent it runs as
+	// (#2662): nothing it does may reach that agent's chats.
+	if session.IsCrossAgentSpawnKey(sessionKey) {
+		return nil
+	}
 	// Platform-aware routing: extract agentID and chatID from the session key,
 	// look up which platform owns it, and dispatch directly.
 	claimed := false
@@ -122,6 +127,9 @@ func (a *aggregatingConnMgr) ForSession(sessionKey string) Connection {
 }
 
 func (a *aggregatingConnMgr) ForSessionOrPrimary(sessionKey, agentID string) Connection {
+	if session.IsCrossAgentSpawnKey(sessionKey) {
+		return nil // as ForSession: no primary fallback either (#2662)
+	}
 	if c := a.ForSession(sessionKey); c != nil {
 		return c
 	}

@@ -247,6 +247,7 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	add("tools", "web_fetch_max_bytes", cfg.Tools.WebFetchMaxBytes)
 	add("tools", "max_concurrent_spawns", cfg.Tools.MaxConcurrentSpawns)
 	add("tools", "explore_max_depth", cfg.Tools.ExploreMaxDepth)
+	add("tools", "spawn_reserve_percent", cfg.Tools.SpawnReservePercent)
 	add("tools", "tool_call_preview_chars", cfg.Tools.ToolCallPreviewChars)
 	add("tools", "tmux_memory_check_interval", cfg.Tools.TmuxMemoryCheckInterval)
 	add("tools", "tmux_memory_warn", cfg.Tools.TmuxMemoryWarn)

@@ -70,8 +70,11 @@ func (s *Spawner) send(ctx context.Context, idOrBranch, message string, timeoutS
 	if !ok {
 		return ToolResult{}, fmt.Errorf("no spawn %q from this session (spawn_status lists them; a restart forgets finished spawns)", idOrBranch)
 	}
+	if snap.Direct {
+		return ToolResult{}, fmt.Errorf("spawn %s returns its result directly to the call that started it, so it takes no messages; spawn_stop stops it", snap.ID)
+	}
 	text := spawnMessagePrefix + message
-	agent := s.agentFn()
+	agent := s.agentOf(snap.RunningSpawn)
 	if agent == nil {
 		return ToolResult{}, fmt.Errorf("spawn_send: agent not available")
 	}
@@ -185,20 +188,52 @@ func spawnState(snap SpawnSnapshot, now time.Time) string {
 	return fmt.Sprintf("%s %s ago%s", snap.Outcome, spawnAge(now.Sub(snap.Ended)), resumed)
 }
 
+// spawnKind describes how a spawn runs: its mode, whether it returns
+// directly or runs in the background, and the agent it runs as when that is
+// another one (#2662).
+func spawnKind(sp SpawnSnapshot) string {
+	parts := []string{}
+	if sp.Mode != "" {
+		parts = append(parts, sp.Mode)
+	}
+	if sp.Direct {
+		parts = append(parts, "direct")
+	} else {
+		parts = append(parts, "background")
+	}
+	if sp.Agent != "" {
+		parts = append(parts, "as "+sp.Agent)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// spawnWhere is where a spawn runs, for listing: its branch, or nothing for a
+// direct spawn (whose session the caller cannot reach).
+func spawnWhere(sp SpawnSnapshot) string {
+	if sp.BranchKey == "" {
+		return ""
+	}
+	return "  branch " + sp.BranchKey
+}
+
 func formatSpawnList(spawns []SpawnSnapshot, now time.Time) string {
 	if len(spawns) == 0 {
 		return "No spawns from this session."
 	}
 	var b strings.Builder
 	for _, sp := range spawns {
-		fmt.Fprintf(&b, "%s  %s  branch %s\n  %s\n", sp.ID, spawnState(sp, now), sp.BranchKey, sp.Description)
+		fmt.Fprintf(&b, "%s  %s  (%s)%s\n  %s\n", sp.ID, spawnState(sp, now), spawnKind(sp), spawnWhere(sp), sp.Description)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
 
 func formatSpawnStatus(snap SpawnSnapshot, now time.Time) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Spawn %s: %s\nBranch: %s\nTask: %s\n", snap.ID, spawnState(snap, now), snap.BranchKey, snap.Description)
+	fmt.Fprintf(&b, "Spawn %s: %s (%s)\n", snap.ID, spawnState(snap, now), spawnKind(snap))
+	if snap.BranchKey != "" {
+		fmt.Fprintf(&b, "Branch: %s\n", snap.BranchKey)
+	}
+	fmt.Fprintf(&b, "Task: %s\n", snap.Description)
 	if len(snap.Log) == 0 {
 		b.WriteString("\nNo activity yet.")
 		return b.String()
@@ -221,4 +256,66 @@ func spawnAge(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
 	}
+}
+
+// StopTool is spawn_stop (#2656): the caller stops one of its running spawns,
+// of any mode, by id, or all of them. A background spawn then reports
+// [SPAWN RESULT] stopped; a direct one's call returns as stopped.
+func (s *Spawner) StopTool() *Tool {
+	return &Tool{
+		Name:        "spawn_stop",
+		ExecExport:  true,
+		Positional:  []string{"id"},
+		Description: "Stop one of your running spawns, of any mode: a background one reports [SPAWN RESULT] as stopped; one that returns directly ends its call as stopped. spawn_status lists them and their ids. id 'all' stops every running spawn of this session.",
+		Parameters: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"id": {
+					"type": "string",
+					"description": "The spawn id (spawn-...) or its branch key, as spawn_status prints them; 'all' for every running spawn of this session."
+				}
+			},
+			"required": ["id"]
+		}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			p, err := UnmarshalParams[struct {
+				ID string `json:"id"`
+			}](params)
+			if err != nil {
+				return ToolResult{}, err
+			}
+			id := strings.TrimSpace(p.ID)
+			if id == "" {
+				return ToolResult{}, fmt.Errorf("id is required (spawn_status lists your spawns)")
+			}
+			return s.stop(SessionKeyFromContext(ctx), id)
+		},
+	}
+}
+
+func (s *Spawner) stop(caller, id string) (ToolResult, error) {
+	tr := s.deps.Tracker
+	if id == "all" {
+		n := tr.stopAll(caller, stoppedBySpawnStop)
+		for _, p := range tr.parents(s.deps.AgentID) {
+			if p != caller && s.deps.Route != nil && s.route(p).Owner == caller {
+				n += tr.stopAll(p, stoppedBySpawnStop) // spawns handed over to the caller (#2624)
+			}
+		}
+		if n == 0 {
+			return TextResult("No running spawns to stop."), nil
+		}
+		return TextResult(fmt.Sprintf("Stopping %d spawn(s).", n)), nil
+	}
+	parent, snap, ok := s.lookupForCaller(caller, id, 0)
+	if !ok {
+		return ToolResult{}, fmt.Errorf("no spawn %q from this session (spawn_status lists them)", id)
+	}
+	if _, stopped := tr.stopOne(parent, snap.ID); !stopped {
+		return TextResult(fmt.Sprintf("Spawn %s is not running (%s).", snap.ID, spawnState(snap, time.Now()))), nil
+	}
+	if snap.Direct {
+		return TextResult(fmt.Sprintf("Stopping spawn %s: its call returns as stopped.", snap.ID)), nil
+	}
+	return TextResult(fmt.Sprintf("Stopping spawn %s: its [SPAWN RESULT] will say it was stopped.", snap.ID)), nil
 }

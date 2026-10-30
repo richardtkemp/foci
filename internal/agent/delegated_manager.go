@@ -1299,8 +1299,11 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 	// those itself and never reaches the prompt func above (#2096).
 	// A background character spawn's branch launches like a batch but is a
 	// spawn branch in every other respect, as a clone's is (#2643).
+	// A cross-agent spawn's branch (#2662) keeps only a batch's callbacks: it
+	// belongs to no chat of this agent, so nothing of it may be shown or
+	// delivered in one.
 	spec, isBatch := m.batchSpecFor(mb.sessionKey)
-	isBatch = isBatch && !spec.spawnBranch
+	isBatch = isBatch && (!spec.spawnBranch || session.IsCrossAgentSpawnKey(mb.sessionKey))
 	if m.TypingFunc != nil && !isBatch {
 		mb.be.SetTypingFunc(func(typing bool) {
 			// A turn no human started (keepalive, reflection, cron, ...) shows
@@ -1694,6 +1697,9 @@ func (m *DelegatedManager) RunBatch(ctx context.Context, req delegator.BatchRequ
 		parent = ownerKey
 	}
 	batchKey := fmt.Sprintf("%s/b%d", root, timeutil.UniqueNano()) // UniqueNano: concurrent batches must not share a key on a microsecond clock (macOS)
+	if req.OnSession != nil {
+		req.OnSession(batchKey)
+	}
 
 	m.setBatchSpec(batchKey, batchSpec{systemPrompt: req.SystemPrompt, agentPrompt: req.AgentPrompt, model: req.Model, access: req.Access, workDir: req.WorkDir})
 	defer func() {

@@ -176,6 +176,7 @@ var (
 		"memory.search_backend", "agent.memory.search_backend",
 		"tools.todo_format", "agent.tools.todo_format",
 		"tools.explore_max_depth", "agent.tools.explore_max_depth",
+		"tools.spawn_reserve_percent", "agent.tools.spawn_reserve_percent",
 		"environment.enabled", "agent.environment.enabled",
 		"environment.docs_path", "agent.environment.docs_path",
 		"sessions.compaction_threshold", "agent.sessions.compaction_threshold",

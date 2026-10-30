@@ -47,6 +47,8 @@ type spawnRecord struct {
 	// Character and SpawnModel: see RunningSpawn (#2643).
 	Character  bool   `json:"character,omitempty"`
 	SpawnModel string `json:"spawn_model,omitempty"`
+	// Agent: see RunningSpawn (#2662).
+	Agent string `json:"agent,omitempty"`
 }
 
 // SetStore makes the tracker persist its spawns to store. Call it once at
@@ -84,6 +86,7 @@ func (s *trackedSpawn) record(parent string) *spawnRecord {
 		Started: s.info.Started, Timeout: s.timeout, Pending: slices.Clone(s.pending),
 		Resumes: s.resumes, Running: s.running, Result: s.result,
 		Character: s.info.Character, SpawnModel: s.info.SpawnModel,
+		Agent: s.info.Agent,
 	}
 }
 
@@ -99,6 +102,11 @@ func (t *SpawnTracker) persist(parent, id string) {
 	store := t.store
 	var rec *spawnRecord
 	if s := t.spawns[parent][id]; s != nil {
+		if s.info.Direct {
+			// A direct spawn's caller waits for it in this process only.
+			t.mu.Unlock()
+			return
+		}
 		rec = s.record(parent)
 	}
 	t.mu.Unlock()
@@ -200,11 +208,7 @@ func (t *SpawnTracker) adopt(rec spawnRecord, running bool, outcome string, canc
 		return
 	}
 	s := &trackedSpawn{
-		info: RunningSpawn{
-			ID: rec.ID, BranchKey: rec.BranchKey, Description: rec.Description,
-			Model: rec.Model, Started: rec.Started,
-			Character: rec.Character, SpawnModel: rec.SpawnModel,
-		},
+		info:   recInfo(rec),
 		cancel: cancel, running: running, timeout: rec.Timeout,
 		prompt: rec.Prompt, resumes: rec.Resumes, result: rec.Result,
 	}

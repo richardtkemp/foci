@@ -688,8 +688,16 @@ func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, 
 // and the root are always tried. Duplicates are dropped. A branch has no app
 // conversation of its own unless it is a depth leaf, so on the app its own
 // chat cannot show a prompt, and before #2608 the prompt was lost.
+//
+// A cross-agent spawn's session (#2662) is offered to no chat of this agent:
+// not its root, not its default session. Its only target is itself, which no
+// connection resolves, so a prompt from it that no owner took is answered as
+// undeliverable instead of reaching this agent's chats.
 func promptTargets(d backendPromptDeps, sessionKey string) []string {
 	targets := []string{sessionKey}
+	if session.IsCrossAgentSpawnKey(sessionKey) {
+		return targets
+	}
 	add := func(k string) {
 		if k == "" {
 			return

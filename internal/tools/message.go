@@ -194,6 +194,18 @@ func sendToChatExecute(ctx context.Context, params json.RawMessage, getSender fu
 	p.FilePath = sendPath
 
 	sessionKey := SessionKeyFromContext(ctx)
+	// A spawn run as this agent for another one (#2662) belongs to no chat of
+	// this agent's: its send_to_chat goes to the caller's chat (Dick
+	// 2026-10-30), headed with who sent it.
+	crossHeader := ""
+	if session.IsCrossAgentSpawnKey(sessionKey) {
+		caller, ok := crossAgentChatSession(ctx, sessionKey)
+		if !ok {
+			return ToolResult{}, fmt.Errorf("send_to_chat: this spawn's caller is gone; put what you have to say in your final answer")
+		}
+		crossHeader = "[[ message from " + session.AgentIDFromKey(sessionKey) + "'s spawn ]]\n"
+		sessionKey = caller
+	}
 	bot := getSender(sessionKey)
 	if bot == nil {
 		return ToolResult{}, fmt.Errorf("messaging not configured")
@@ -232,7 +244,9 @@ func sendToChatExecute(ctx context.Context, params json.RawMessage, getSender fu
 	// If the message originates from a different session than the bot's own
 	// session, prepend a header so the user knows which session sent it.
 	// Placed after the TTS early-return so the header isn't spoken.
-	if p.Text != "" && sessionKey != "" {
+	if p.Text != "" && crossHeader != "" {
+		p.Text = crossHeader + p.Text
+	} else if p.Text != "" && sessionKey != "" {
 		botSession := bot.SessionKey()
 		if botSession != "" && sessionKey != botSession {
 			p.Text = "[[ message from " + sessionKey + " ]]\n" + p.Text

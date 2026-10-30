@@ -311,7 +311,7 @@ func TestSpawnExploreToolSet(t *testing.T) {
 		"memory_search", "scratchpad", "todo",
 		"bitwarden_search", "bitwarden_unlock",
 		"send_to_chat", "send_to_session",
-		"remind", "spawn",
+		"remind", "spawn", "send_to_spawner",
 	}
 	for _, name := range allRegistryTools {
 		reg.Register(&Tool{

@@ -31,6 +31,18 @@ type RunningSpawn struct {
 	// SpawnModel is the model the caller asked for ("" = the default), kept
 	// so a restart can prepare a character branch on it again.
 	SpawnModel string
+	// Direct marks a spawn that returns its result straight to the tool call
+	// (raw, explore, character without background): tracked only while that
+	// call waits, so spawn_status lists it and spawn_stop or /stop can end it
+	// (#2656). It has no branch the caller can reach, takes no spawn_send,
+	// and is never persisted: after a restart nobody waits for its result.
+	Direct bool
+	// Mode is the spawn's context ("character", "clone", ...), for listing.
+	Mode string
+	// Agent is the agent the spawn runs as when that is not the caller's own
+	// (#2662, a cross-agent character spawn); "" = the caller's agent. Its
+	// branch is that agent's session, run by that agent's Spawner.
+	Agent string
 }
 
 // SpawnObserver is told about each background spawn of a parent session, so a
@@ -73,14 +85,17 @@ type trackedSpawn struct {
 	info    RunningSpawn
 	cancel  context.CancelFunc
 	stopped bool
-	running bool
-	timeout time.Duration // of its first run: a resumed run gets it again
-	ended   time.Time     // when its last run ended; zero while running
-	outcome string        // last run's end: "completed", "failed" or "stopped"
-	pending []string      // parent messages waiting for the spawn's next step
-	log     []SpawnLogEntry
-	prompt  string // the task it was started with, repeated when a restart resumes it
-	resumes int    // how many times a foci restart has resumed it
+	// stoppedBy says who stopped it, for its result: "the user" (/stop) or
+	// its parent agent (spawn_stop).
+	stoppedBy string
+	running   bool
+	timeout   time.Duration // of its first run: a resumed run gets it again
+	ended     time.Time     // when its last run ended; zero while running
+	outcome   string        // last run's end: "completed", "failed" or "stopped"
+	pending   []string      // parent messages waiting for the spawn's next step
+	log       []SpawnLogEntry
+	prompt    string // the task it was started with, repeated when a restart resumes it
+	resumes   int    // how many times a foci restart has resumed it
 	// result is the [SPAWN RESULT] message on its way to the parent: kept,
 	// and persisted, until the parent's turn has taken it.
 	result string
@@ -88,6 +103,10 @@ type trackedSpawn struct {
 	// owner (#2624, Spawner.ReleaseHeld). In memory only: a restart
 	// re-routes the persisted result, which holds it again if it must.
 	held bool
+	// kept holds the spawn's messages to its spawner (send_to_spawner) that
+	// could not go at once: its spawner's call is waiting on it, or a depth
+	// fan-in holds its owner. They head its result. In memory only.
+	kept []SpawnLogEntry
 }
 
 // SpawnLogEntry is one step of a spawn's activity, kept for spawn_status
@@ -218,6 +237,9 @@ func (t *SpawnTracker) Lookup(parentSession, idOrBranch string, n int) (SpawnSna
 }
 
 func (t *SpawnTracker) find(parent, idOrBranch string) *trackedSpawn {
+	if idOrBranch == "" {
+		return nil
+	}
 	if s := t.spawns[parent][idOrBranch]; s != nil {
 		return s
 	}
@@ -435,9 +457,94 @@ func (s *trackedSpawn) appendLog(kind, text string) {
 	}
 }
 
+// addDirect registers a direct spawn while its tool call waits for it
+// (#2656). Not persisted.
+func (t *SpawnTracker) addDirect(parent string, s RunningSpawn, cancel context.CancelFunc, timeout time.Duration, prompt string) {
+	if t == nil {
+		return
+	}
+	s.Direct = true
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.spawns[parent] == nil {
+		t.spawns[parent] = map[string]*trackedSpawn{}
+	}
+	ts := &trackedSpawn{info: s, cancel: cancel, running: true, timeout: timeout, prompt: prompt}
+	ts.appendLog("prompt", prompt)
+	t.spawns[parent][s.ID] = ts
+}
+
+// endDirect marks a direct spawn finished with outcome ("completed",
+// "failed"; "stopped" when Stop or stopOne ended it, whatever outcome says)
+// and returns who stopped it ("" = nobody) and the messages it kept for its
+// caller (send_to_spawner), taken in the same step that ends it so none can
+// arrive in between and be lost.
+func (t *SpawnTracker) endDirect(parent, id, outcome, detail string) (stoppedBy string, kept []SpawnLogEntry) {
+	if t == nil {
+		return "", nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := t.spawns[parent][id]
+	if s == nil {
+		return "", nil
+	}
+	s.running = false
+	kept, s.kept = s.kept, nil
+	s.ended = time.Now()
+	if s.stopped {
+		outcome = "stopped"
+	}
+	s.outcome = outcome
+	if detail != "" {
+		kind := "result"
+		if outcome != "completed" {
+			kind = "error"
+		}
+		s.appendLog(kind, detail)
+	}
+	t.pruneFinished(parent)
+	if !s.stopped {
+		return "", kept
+	}
+	if s.stoppedBy == "" {
+		return "the user", kept
+	}
+	return s.stoppedBy, kept
+}
+
+// stoppedBySpawnStop is stoppedBy for spawn_stop.
+const stoppedBySpawnStop = "its parent agent (spawn_stop)"
+
+// stopOne cancels parent's running spawn idOrBranch for spawn_stop. It
+// reports whether the spawn is known, and whether it was running (and is now
+// being stopped).
+func (t *SpawnTracker) stopOne(parent, idOrBranch string) (known, stopped bool) {
+	if t == nil {
+		return false, false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := t.find(parent, idOrBranch)
+	if s == nil {
+		return false, false
+	}
+	if !s.running || s.stopped {
+		return true, false
+	}
+	s.stopped, s.stoppedBy = true, stoppedBySpawnStop
+	s.cancel()
+	return true, true
+}
+
 // Stop cancels every running spawn of parentSession and returns how many it
 // stopped. Each spawn's own goroutine then ends it, reporting it stopped.
 func (t *SpawnTracker) Stop(parentSession string) int {
+	return t.stopAll(parentSession, "the user")
+}
+
+// stopAll is Stop, recording who stopped the spawns.
+func (t *SpawnTracker) stopAll(parentSession, by string) int {
 	if t == nil {
 		return 0
 	}
@@ -448,11 +555,24 @@ func (t *SpawnTracker) Stop(parentSession string) int {
 		if !s.running || s.stopped {
 			continue
 		}
-		s.stopped = true
+		s.stopped, s.stoppedBy = true, by
 		s.cancel()
 		n++
 	}
 	return n
+}
+
+// stopper says who stopped a spawn ("the user" when unknown).
+func (t *SpawnTracker) stopper(parent, id string) string {
+	if t == nil {
+		return "the user"
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if s := t.spawns[parent][id]; s != nil && s.stoppedBy != "" {
+		return s.stoppedBy
+	}
+	return "the user"
 }
 
 // spawnDescription is the one-line label a spawn is listed under: its prompt's
@@ -521,4 +641,53 @@ func toolCallSummary(e turnevent.ToolCall) string {
 		return e.Name
 	}
 	return e.Name + " " + args
+}
+
+// runningSpawn reports whether parent's spawn id is running, and its info.
+func (t *SpawnTracker) runningSpawn(parent, id string) (RunningSpawn, bool) {
+	if t == nil {
+		return RunningSpawn{}, false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := t.spawns[parent][id]
+	if s == nil || !s.running {
+		return RunningSpawn{}, false
+	}
+	return s.info, true
+}
+
+// keepMessage keeps a message the running spawn sent its spawner for the
+// head of its result, and reports whether it did (false: the spawn is not
+// running).
+func (t *SpawnTracker) keepMessage(parent, id, text string) bool {
+	if t == nil {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := t.spawns[parent][id]
+	if s == nil || !s.running {
+		return false
+	}
+	s.kept = append(s.kept, SpawnLogEntry{At: time.Now(), Kind: "to-spawner", Text: text})
+	s.appendLog("to-spawner", "(held for the result) "+text)
+	return true
+}
+
+// takeKept returns, and forgets, the messages kept for the head of the
+// spawn's result.
+func (t *SpawnTracker) takeKept(parent, id string) []SpawnLogEntry {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := t.spawns[parent][id]
+	if s == nil {
+		return nil
+	}
+	out := s.kept
+	s.kept = nil
+	return out
 }

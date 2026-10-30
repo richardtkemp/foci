@@ -116,6 +116,7 @@ type ResolvedTool struct {
 	ExecAutoBackground  int
 	MaxConcurrentSpawns int
 	ExploreMaxDepth     int
+	SpawnReservePercent int
 	MaxUploadFileSize   int64
 	MaxFileReadBytes    int64
 	HTTPMaxSpillBytes   int64
@@ -130,7 +131,7 @@ type ResolvedTool struct {
 }
 
 func resolveTool(m ToolConfig) ResolvedTool {
-	return ResolvedTool{
+	r := ResolvedTool{
 		ExecAutoBackground:  DerefInt(m.ExecAutoBackground),
 		MaxConcurrentSpawns: DerefInt(m.MaxConcurrentSpawns),
 		ExploreMaxDepth:     DerefInt(m.ExploreMaxDepth),
@@ -144,6 +145,10 @@ func resolveTool(m ToolConfig) ResolvedTool {
 		FetchProvider:       DerefStr(m.FetchProvider),
 		TodoFormat:          DerefStr(m.TodoFormat),
 	}
+	// Set apart from the literal: with it inside, the literal has the same
+	// shape as resolveNudge's and the dupl linter flags the pair.
+	r.SpawnReservePercent = DerefInt(m.SpawnReservePercent)
+	return r
 }
 
 type ResolvedSummary struct {

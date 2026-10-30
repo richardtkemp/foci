@@ -17,8 +17,8 @@ var FociToolNames = []string{
 	"close_session", "depth_claims", "depth_fanout", "depth_report",
 	"depth_status", "edit", "http_request", "mcp", "memory_search", "read",
 	"remind", "scratchpad", "send_to_chat", "send_to_session",
-	"set_session_alias", "shell", "spawn", "spawn_send", "spawn_status",
-	"summary", "task_list", "tmux", "todo", "web_fetch", "web_search",
+	"send_to_spawner", "set_session_alias", "shell", "spawn", "spawn_send", "spawn_status",
+	"spawn_stop", "summary", "task_list", "tmux", "todo", "web_fetch", "web_search",
 	"whoami", "write",
 }
 

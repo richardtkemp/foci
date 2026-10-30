@@ -241,7 +241,16 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 	}
 
 	execbridgeLog.Debugf("session=%s call tool=%s", SessionKeyFromContext(b.ctx), req.Tool)
-	ctx := b.ctx
+	// The call ends when its caller does (#2656): foci-call never writes after
+	// its request line, so a read that returns means the caller closed the
+	// connection (it was killed, or its Bash call was stopped). The tool's
+	// ctx is then cancelled, so a synchronous spawn stops instead of working
+	// on for a result nobody will read. Work a tool moves to the background
+	// runs on a ctx of its own, as on the API path, so ending this ctx when
+	// Execute returns stops nothing that should go on.
+	ctx, cancel := context.WithCancel(b.ctx)
+	defer cancel()
+	go cancelWhenPeerCloses(conn, cancel)
 	if req.Hints != (OutputHints{}) {
 		ctx = WithOutputHints(ctx, req.Hints)
 	}
@@ -277,6 +286,19 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 		ResultFile: result.ResultFile,
 		ResultSize: result.ResultSize,
 	})
+}
+
+// cancelWhenPeerCloses calls cancel once a read on conn returns: the peer
+// closed it (EOF), or handleConn did when the call ended. Bytes a peer sends
+// after its request are read and ignored.
+func cancelWhenPeerCloses(conn net.Conn, cancel context.CancelFunc) {
+	buf := make([]byte, 512)
+	for {
+		if _, err := conn.Read(buf); err != nil {
+			cancel()
+			return
+		}
+	}
 }
 
 // genericJSONOutput is the --json shape of every exported tool that does not

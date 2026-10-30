@@ -373,6 +373,10 @@ Subcommands:
 			s.OnGatewayStart()
 		}
 	}
+	// The spawn allowance check's scheduled usage reads (#2662): one per
+	// usage account every 4-14 min, for the accounts agents register as
+	// their spawn tools are built.
+	tools.StartSpawnUsageRefresh(ctx)
 
 	// ========== Per-agent setup ==========
 	agents := make(map[string]*agentInstance, len(cfg.Agents))

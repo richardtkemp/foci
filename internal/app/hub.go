@@ -873,7 +873,9 @@ func (h *Hub) PrimaryBot(agentID string) *appConn {
 // copy is a transient throwaway — nobody stores it — and is copy-safe now that
 // appConn carries no mutex.
 func (h *Hub) BotForSession(sessionKey string) *appConn {
-	if sessionKey == "" {
+	// A cross-agent spawn's session is in no conversation of the agent it
+	// runs as (#2662): binding one would open a chat in that agent's list.
+	if sessionKey == "" || session.IsCrossAgentSpawnKey(sessionKey) {
 		return nil
 	}
 	base := h.PrimaryBot(session.AgentIDFromKey(sessionKey))

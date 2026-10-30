@@ -263,3 +263,14 @@ func TestPromptTargets_FullAncestorChain(t *testing.T) {
 		t.Fatalf("targets = %v, want %v", got, want)
 	}
 }
+
+// #2662: a cross-agent spawn's session offers a prompt to no chat of the
+// agent it runs as — not its root, not the agent's default session.
+func TestPromptTargets_CrossAgentSpawnReachesNoChat(t *testing.T) {
+	t.Parallel()
+	key := session.CrossAgentSpawnRoot("helen") + "/b5"
+	got := promptTargets(backendPromptDeps{defaultSession: func() string { return "helen/c9" }}, key)
+	if !slices.Equal(got, []string{key}) {
+		t.Fatalf("targets = %v, want only the spawn's own session", got)
+	}
+}

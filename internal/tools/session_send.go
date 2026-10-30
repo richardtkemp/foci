@@ -124,6 +124,9 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 			}
 
 			originSession := SessionKeyFromContext(ctx)
+			if err := refuseCrossAgentSpawnMessage(ctx, "send_to_session"); err != nil {
+				return ToolResult{}, err
+			}
 
 			// Hard bar (#1409): a reflection/consolidation/compaction pass or
 			// a keepalive cache-warm turn (session.SessionType.

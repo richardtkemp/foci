@@ -1,6 +1,12 @@
 package tools
 
-import "foci/internal/delegator"
+import (
+	"context"
+	"fmt"
+
+	"foci/internal/delegator"
+	"foci/internal/session"
+)
 
 // spawnToolNames are the spawn family. No one-shot gets them: a one-shot that
 // could spawn would recurse with nobody watching (the API one-shots' tool
@@ -9,6 +15,7 @@ var spawnToolNames = map[string]bool{
 	"spawn":        true,
 	"spawn_send":   true,
 	"spawn_status": true,
+	"spawn_stop":   true,
 }
 
 // parentBatchExcluded lists the tools a parent-access batch session's exec
@@ -55,6 +62,29 @@ func RegistryForAccess(reg *Registry, access delegator.BatchAccess) *Registry {
 		return reg.Subset(func(name string) bool { return !spawnToolNames[name] && !parentBatchExcluded[name] })
 	case delegator.BatchAccessReadOnly:
 		return reg.Subset(func(name string) bool { return spawnExploreAllowed[name] })
+	}
+	return nil
+}
+
+// refuseCrossAgentSpawnMessage refuses send_to_session called from a
+// cross-agent spawn's session (#2662): it runs as another agent but belongs
+// to none of that agent's sessions, and its answer goes back to its caller
+// as the spawn's result. (Its send_to_chat goes to the caller's chat
+// instead: crossAgentChatSession.)
+func refuseCrossAgentSpawnMessage(ctx context.Context, tool string) error {
+	if session.IsCrossAgentSpawnKey(SessionKeyFromContext(ctx)) {
+		return fmt.Errorf("%s: this session is a spawn run for another agent; it messages no session. To reach the agent that started you, use send_to_spawner, or put it in your final answer, which goes back to that agent", tool)
+	}
+	return nil
+}
+
+// refuseCrossAgentSpawnRemind refuses remind from a cross-agent spawn's
+// session (Dick 2026-10-30 12:06): a wake would fire on a session no chat
+// owns and a passive reminder would surface in the target's own chats, so it
+// could never reach the caller.
+func refuseCrossAgentSpawnRemind(ctx context.Context) error {
+	if session.IsCrossAgentSpawnKey(SessionKeyFromContext(ctx)) {
+		return fmt.Errorf("remind: this session is a spawn run for another agent; a reminder set here could never reach the agent that started you. Put it in your final answer instead")
 	}
 	return nil
 }

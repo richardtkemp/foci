@@ -699,6 +699,10 @@ type BatchRequest struct {
 	// Purpose labels what the batch is for (BatchPurpose* below). Recorded on
 	// the api.db row and the trace, and used as the turn's trigger.
 	Purpose string
+	// OnSession, when set, is called with the batch's session key once it is
+	// minted and before its turn starts. A cross-agent spawn (#2662) maps the
+	// session to its caller with it, so its send_to_chat reaches the caller.
+	OnSession func(sessionKey string)
 }
 
 // BatchAccess is what a batch session may do. Every batch is unattended

@@ -16,8 +16,9 @@ import (
 
 // usageOneshotTimeout bounds the whole one-shot query, including process
 // spawn. CC's get_usage is a real network round trip to its own
-// account-usage backend and has been observed taking 15-20s.
-const usageOneshotTimeout = 45 * time.Second
+// account-usage backend: observed 15-20 s, and 25-58 s on 2026-10-30 (#2662,
+// 4 samples), so 45 s failed the slow ones (Dick: "raise it").
+const usageOneshotTimeout = 90 * time.Second
 
 // QueryUsage runs an independent, throwaway `claude` subprocess and asks it
 // for the account's plan/rate-limit usage via the get_usage control request

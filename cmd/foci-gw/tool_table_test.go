@@ -40,7 +40,7 @@ func TestToolTable_PerPathSets(t *testing.T) {
 		"http_request", "web_search", "web_fetch", "memory_search",
 		"scratchpad", "todo", "task_list", "bitwarden_search",
 		"bitwarden_unlock", "mcp", "send_to_chat", "send_to_session",
-		"ask", "spawn", "spawn_send", "spawn_status",
+		"ask", "spawn", "spawn_send", "spawn_status", "spawn_stop", "send_to_spawner",
 		"depth_fanout", "depth_report", "depth_claims", "depth_status",
 		"remind", "app_android",
 		"set_session_alias", "close_session", "whoami",
@@ -48,7 +48,7 @@ func TestToolTable_PerPathSets(t *testing.T) {
 	wantExec := []string{
 		"browser", "summary", "http_request", "web_search", "web_fetch",
 		"memory_search", "todo", "send_to_chat", "send_to_session",
-		"ask", "spawn", "spawn_send", "spawn_status",
+		"ask", "spawn", "spawn_send", "spawn_status", "spawn_stop", "send_to_spawner",
 		"depth_fanout", "depth_report", "depth_claims", "depth_status",
 		"remind", "app_android",
 		"set_session_alias", "close_session", "whoami",
@@ -109,7 +109,7 @@ func TestToolTable_APISet(t *testing.T) {
 		"web_search": true, "web_fetch": true, "memory_search": true,
 		"scratchpad": true, "todo": true, "send_to_chat": true,
 		"send_to_session": true, "ask": true, "spawn": true, "remind": true,
-		"spawn_send": true, "spawn_status": true,
+		"spawn_send": true, "spawn_status": true, "spawn_stop": true, "send_to_spawner": true,
 		"set_session_alias": true, "whoami": true,
 	}
 	// task_list and bitwarden need their stores; taskListStore/bwStore are left
@@ -240,7 +240,7 @@ func TestToolTable_ExecSpawnModes(t *testing.T) {
 			resolvedModel: "anthropic/claude-test",
 			defaultFormat: "anthropic",
 		})
-		for _, name := range []string{"spawn", "spawn_send", "spawn_status"} {
+		for _, name := range []string{"spawn", "spawn_send", "spawn_status", "spawn_stop", "send_to_spawner"} {
 			if got := registry.Get(name) != nil; got != (want != nil) {
 				t.Errorf("backend %q: %s registered = %v, want %v", backend, name, got, want != nil)
 			}

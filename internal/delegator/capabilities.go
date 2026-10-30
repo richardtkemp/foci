@@ -276,6 +276,10 @@ type Spec struct {
 	ResumeRetention   func() time.Duration // the backend's own transcript retention; nil = unknown
 	PlanDelivery      PlanDelivery         // required iff CapPlanMode
 	UsageQuery        UsageQuery           // required iff CapUsageQuery
+	// UsageOperatorWide: UsageQuery reports the operator's one account, the
+	// same for every agent on this backend (it ignores agentID), so one read
+	// serves them all (the spawn allowance check's schedule, #2662).
+	UsageOperatorWide bool
 
 	// Process-global lifecycle hooks the gateway runs once for every backend.
 	OnGatewayStart    func()

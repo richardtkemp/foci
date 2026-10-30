@@ -106,6 +106,9 @@ func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWake
 			if err != nil {
 				return ToolResult{}, err
 			}
+			if err := refuseCrossAgentSpawnRemind(ctx); err != nil {
+				return ToolResult{}, err
+			}
 
 			if p.List {
 				return remindListWakes(rs, agentID, cfg.held, WantsJSON(ctx))

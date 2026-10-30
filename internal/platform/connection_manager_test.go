@@ -3,6 +3,8 @@ package platform
 import (
 	"context"
 	"testing"
+
+	"foci/internal/session"
 )
 
 // --- testConnMgr: a ConnectionManager backed by a map of session→connection and a primary ---
@@ -246,5 +248,27 @@ func TestForSessionOrPrimary_UnclaimedStillFallsBack(t *testing.T) {
 	}
 	if got.Username() != "telegram-bot" {
 		t.Errorf("got %q, want telegram-bot (first in order)", got.Username())
+	}
+}
+
+// #2662: a cross-agent spawn's session reaches no chat of the agent it runs
+// as — neither its own (ForSession) nor the agent's primary.
+func TestCrossAgentSpawnSessionReachesNoChat(t *testing.T) {
+	appConn := &namedConn{name: "app-bot"}
+	branch := session.CrossAgentSpawnRoot("helen") + "/b1793349772615083693"
+	appMgr := &testConnMgr{primary: appConn, sessions: map[string]Connection{branch: appConn}}
+	mgr := &aggregatingConnMgr{
+		named: map[string]ConnectionManager{"app": appMgr},
+		order: []string{"app"},
+	}
+	if c := mgr.ForSession(branch); c != nil {
+		t.Errorf("ForSession(%s) = %v, want nil", branch, c)
+	}
+	if c := mgr.ForSessionOrPrimary(branch, "helen"); c != nil {
+		t.Errorf("ForSessionOrPrimary(%s) = %v, want nil", branch, c)
+	}
+	// Control: an ordinary independent session still falls back to the primary.
+	if c := mgr.ForSessionOrPrimary("helen/ibatch/b1", "helen"); c != appConn {
+		t.Errorf("control: ForSessionOrPrimary(helen/ibatch/b1) = %v, want the primary", c)
 	}
 }

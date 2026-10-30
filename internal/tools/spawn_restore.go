@@ -62,8 +62,6 @@ func (s *Spawner) RestoreSpawns() {
 		spawnLog.Errorf("agent=%s %d persisted spawn(s) but no background delivery — left in place", s.deps.AgentID, len(recs))
 		return
 	}
-	agent := s.agentFn()
-
 	reports := map[string]*spawnRestoreReport{}
 	var parents []string
 	report := func(parent string) *spawnRestoreReport {
@@ -78,6 +76,8 @@ func (s *Spawner) RestoreSpawns() {
 
 	type pendingResume struct {
 		rec   spawnRecord
+		host  *Spawner
+		agent SpawnAgent
 		base  context.Context
 		stop  context.CancelFunc
 		texts []string
@@ -91,7 +91,14 @@ func (s *Spawner) RestoreSpawns() {
 			continue
 		}
 		label := fmt.Sprintf("%s (%s)", rec.ID, rec.Description)
-		if reason := s.cannotResume(agent, rec); reason != "" {
+		// The agent the spawn runs as: this one, or another for a
+		// cross-agent spawn (#2662).
+		host := s.hostOf(recInfo(rec))
+		var agent SpawnAgent
+		if host != nil {
+			agent = host.agentFn()
+		}
+		if reason := s.cannotResume(host, agent, rec); reason != "" {
 			tr.adopt(rec, false, "lost", func() {})
 			spawnLog.Warnf("spawn=%s branch=%s cannot be resumed after restart: %s", rec.ID, rec.BranchKey, reason)
 			if rec.Result != "" {
@@ -110,11 +117,11 @@ func (s *Spawner) RestoreSpawns() {
 		}
 		report(rec.Parent).resumed = append(report(rec.Parent).resumed, label)
 		texts := []string{spawnRestartNotice(rec.Prompt)}
-		if s.deps.TakeUndelivered != nil {
-			texts = append(texts, s.deps.TakeUndelivered(rec.BranchKey)...)
+		if host.deps.TakeUndelivered != nil {
+			texts = append(texts, host.deps.TakeUndelivered(rec.BranchKey)...)
 		}
 		texts = append(texts, rec.Pending...)
-		resumes = append(resumes, pendingResume{rec: rec, base: base, stop: stop, texts: texts})
+		resumes = append(resumes, pendingResume{rec: rec, host: host, agent: agent, base: base, stop: stop, texts: texts})
 	}
 
 	for _, parent := range parents {
@@ -125,19 +132,21 @@ func (s *Spawner) RestoreSpawns() {
 	}
 	go func() {
 		for _, r := range resumes {
-			s.resumeAfterRestart(agent, r.rec, r.base, r.stop, r.texts)
+			s.resumeAfterRestart(r.host, r.agent, r.rec, r.base, r.stop, r.texts)
 		}
 	}()
 }
 
 // cannotResume says why a running spawn cannot be resumed, or "" when it can.
-func (s *Spawner) cannotResume(agent SpawnAgent, rec spawnRecord) string {
+// host is the Spawner of the agent the spawn runs as (nil: that agent is
+// gone).
+func (s *Spawner) cannotResume(host *Spawner, agent SpawnAgent, rec spawnRecord) string {
 	switch {
-	case agent == nil:
+	case host == nil || agent == nil:
 		return "its agent is not available"
 	case rec.Resumes >= maxSpawnRestartResumes:
 		return fmt.Sprintf("restarts had already interrupted it %d times", rec.Resumes)
-	case s.deps.CanResume != nil && !s.deps.CanResume(rec.BranchKey):
+	case host.deps.CanResume != nil && !host.deps.CanResume(rec.BranchKey):
 		return "its branch session has no saved conversation to continue"
 	}
 	return ""
@@ -166,17 +175,13 @@ func (s *Spawner) noticeRestore(parent string, r *spawnRestoreReport) {
 // consumed, then the parent messages that were waiting. Its stop handle is
 // stop (base's cancel) from the start, so /stop reaches it while it waits for
 // a slot.
-func (s *Spawner) resumeAfterRestart(agent SpawnAgent, rec spawnRecord, base context.Context, stop context.CancelFunc, texts []string) {
+func (s *Spawner) resumeAfterRestart(host *Spawner, agent SpawnAgent, rec spawnRecord, base context.Context, stop context.CancelFunc, texts []string) {
 	tr := s.deps.Tracker
 	s.sem <- struct{}{}
-	running := RunningSpawn{
-		ID: rec.ID, BranchKey: rec.BranchKey, Description: rec.Description,
-		Model: rec.Model, Started: rec.Started,
-		Character: rec.Character, SpawnModel: rec.SpawnModel,
-	}
-	if running.Character && s.deps.PrepareCharacterBranch != nil {
+	running := recInfo(rec)
+	if running.Character && host.deps.PrepareCharacterBranch != nil {
 		// Its launch settings were in the last process's memory (#2643).
-		s.deps.PrepareCharacterBranch(rec.BranchKey, rec.SpawnModel)
+		host.deps.PrepareCharacterBranch(rec.BranchKey, rec.SpawnModel)
 	}
 	spawnCtx, cancelRun := s.runContext(base, rec.Timeout, running, false)
 	cancel := func() { cancelRun(); stop() }
@@ -192,4 +197,18 @@ func (s *Spawner) resumeAfterRestart(agent SpawnAgent, rec spawnRecord, base con
 		s.deps.Observer.SpawnStarted(rec.Parent, shown, texts[0])
 	}
 	_, _ = s.runBackground(context.Background(), agent, rec.Parent, running, texts, spawnCtx, cancel, "")
+}
+
+// recInfo is the RunningSpawn a persisted record describes.
+func recInfo(rec spawnRecord) RunningSpawn {
+	mode := spawnModeClone
+	if rec.Character {
+		mode = spawnModeCharacter
+	}
+	return RunningSpawn{
+		ID: rec.ID, BranchKey: rec.BranchKey, Description: rec.Description,
+		Model: rec.Model, Started: rec.Started,
+		Character: rec.Character, SpawnModel: rec.SpawnModel,
+		Mode: mode, Agent: rec.Agent,
+	}
 }
