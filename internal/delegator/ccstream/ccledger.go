@@ -34,6 +34,7 @@ const (
 	ccTailClosed
 	ccBoundaryEv
 	ccRefusalEv
+	ccRetractEv
 	ccResultEv
 	ccCostState
 	ccSessionFile
@@ -58,6 +59,7 @@ type ccEvent struct {
 	mu      map[string]ModelUsage
 	running int
 	refusal *ccRefusal    // ccRefusalEv
+	uuids   []string      // ccRetractEv: frame uuids a main-transcript record retracted (#2492)
 	reply   chan struct{} // ccBarrier: closed once the barrier is passed
 }
 
@@ -199,6 +201,8 @@ func (s *ccLedger) run() {
 				r.turn, r.at = e.turn, e.at
 				c.refusalFallback(r)
 				c.retract(r.retracted)
+			case ccRetractEv:
+				c.retract(e.uuids)
 			case ccResultEv:
 				c.result(e.mu, e.running, e.at)
 			case ccCostState:
@@ -353,6 +357,11 @@ func (s *ccLedger) tailMain(path string, offset int64) {
 			partial = partial[:0]
 			// Several lines can land in one read — CC re-appends history in
 			// batch writes (F1b) — so every complete line is handled here.
+			// Before the line itself: CC's final "could not be parsed"
+			// message is an assistant line that also retracts (#2492).
+			if uuids := parseCCRetraction(line); uuids != nil {
+				s.enqueue(ccEvent{kind: ccRetractEv, uuids: uuids})
+			}
 			if l, cs := parseCCRecord(line); l != nil {
 				s.enqueue(ccEvent{kind: ccMainLine, line: l})
 			} else if cs != nil {

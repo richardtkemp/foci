@@ -366,3 +366,40 @@ func TestLedgerFlushGivesUpAfter5sAdapterStall(t *testing.T) {
 		t.Error("flush returned with no WARN; the adapter never passed the barrier")
 	}
 }
+
+// TestLedgerFlushPassesWhenTheTranscriptRetractsACall is #2492 through the
+// real main tail: CC 2.1.307+ retries a reply that had stop_reason tool_use but
+// no parsable tool call. The failed attempt was streamed (so named) but never
+// reaches the transcript; the retry prompt CC writes instead lists its frame
+// uuid in retractedMessageUuids. The tail reads that record, so a turn's flush
+// does not wait for the attempt. Not parallel: it sets the bound.
+func TestLedgerFlushPassesWhenTheTranscriptRetractsACall(t *testing.T) {
+	orig := ccBarrierBound
+	ccBarrierBound = time.Minute // far past the deadline below: waiting it out fails
+	t.Cleanup(func() { ccBarrierBound = orig })
+	b := newTestBackend(&bytes.Buffer{})
+	lg := newCCLedger(b, "cap/c1", "cap", nil)
+	t.Cleanup(lg.close)
+	transcript := filepath.Join(t.TempDir(), "sess.jsonl")
+	if err := os.WriteFile(transcript, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lg.startMainTail(transcript, 0)
+	lg.enqueue(ccEvent{kind: ccNamed, id: "msg_bad", uuid: "u-bad", turn: "T1"})
+	lg.enqueue(ccEvent{kind: ccNamed, id: "msg_good", uuid: "u-good", turn: "T1"})
+	f, err := os.OpenFile(transcript, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = f.WriteString(`{"type":"user","isMeta":true,"uuid":"u-meta","retractedMessageUuids":["u-bad"],"message":{"role":"user","content":[{"type":"text","text":"The previous response failed to produce a valid tool call. Please retry the tool call now."}]}}` + "\n" +
+		`{"type":"assistant","uuid":"u-good","timestamp":"2026-09-29T10:00:00Z","message":{"id":"msg_good","model":"claude-opus-5","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":20}}}` + "\n")
+	_ = f.Close()
+	lg.poke()
+	done := make(chan struct{})
+	go func() { lg.flush(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("flush waited for a call the transcript retracted")
+	}
+}

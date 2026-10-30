@@ -31,6 +31,17 @@ import "foci/internal/linkwalk"
 // suppression in handlers.go is needed. A spawner that ENDS its turn to "wait"
 // never sees its children's results; that is what happened on 2026-09-22 (the
 // scanner went idle at 19:13:48 and all three children finished after it).
+//
+// Foreground by default (probed live on CC 2.1.306 and 2.1.314, #2492): under
+// claude -p a subagent's own Agent call with no run_in_background key runs in
+// the FOREGROUND (meta.json requestShape "foreground"): the spawner blocks on
+// it and gets its result as a tool_result, mid-turn. A top-level Agent call
+// with the key omitted still runs in the background. Nothing above changes:
+// a foreground grandchild still emits task_started and
+// task_notification:completed, in the order child start, grandchild start,
+// grandchild done, child done, with the same spawn-time parentage signals,
+// and its agent-*.jsonl transcript is booked like any other. Only an
+// explicitly backgrounded grandchild can still finish after its spawner.
 
 // registerNestedAgent records that nestedID is an Agent spawn made BY a subagent
 // whose group is parentGroupKey. Idempotent. The two spawn signals race, and the

@@ -53,6 +53,17 @@
 //     no interrupted booking, because CC's modelUsage counts the refused
 //     attempt and the refusal remainder already holds its spend. A FINAL
 //     line that lands anyway still books it, completed, at its counts.
+//   - A MALFORMED TOOL CALL RETRY (#2492, CC 2.1.307+): a reply with
+//     stop_reason tool_use and no parsable tool call streams, is retried (up
+//     to twice) and is tombstoned from the transcript. The record CC writes in
+//     its place lists it in retractedMessageUuids; the main tail feeds those
+//     to ccBook.retract, as above. CC's modelUsage counts the failed attempt,
+//     so its spend lands in the window's remainder. If the tail read the
+//     attempt's line before CC removed it, it books normally (CC counted it).
+//   - A FORK subagent's transcript copies one parent line, the main-thread
+//     call that spawned it, with the same message id (#2492). It is the main
+//     tail's to book: a sub line whose id the main thread named or holds is
+//     skipped, so the call is never booked with the fork as its actor.
 //   - At process exit the last remainder is flushed from the cost-state record
 //     CC appends on a graceful close, else from the last result.
 //   - CHECKS (#2111 §8), once the booked set is what CC counted — at each
@@ -163,6 +174,27 @@ func parseCCRecord(raw []byte) (line *ccLine, costState *ccRecord) {
 	l.tokens, l.method = ccTokens(r.Message.Usage)
 	l.webTool = hasWebTool(r.Message.Content)
 	return l, nil
+}
+
+// parseCCRetraction returns the frame uuids a main-transcript record says CC
+// retracted (#2492). CC tombstones a message it streamed and then took back:
+// on CC 2.1.307+ a model reply with stop_reason tool_use but no parsable tool
+// call is retried up to twice, and each failed attempt is dropped from the
+// transcript. The record written in its place — the retry prompt, or the final
+// "could not be parsed" message — lists the dropped messages' uuids, which are
+// the uuids of the stream frames that named them. A cheap substring check
+// skips the unmarshal on every other line.
+func parseCCRetraction(raw []byte) []string {
+	if !bytes.Contains(raw, []byte(`"retractedMessageUuids"`)) {
+		return nil
+	}
+	var r struct {
+		Retracted []string `json:"retractedMessageUuids"`
+	}
+	if json.Unmarshal(bytes.TrimSpace(raw), &r) != nil || len(r.Retracted) == 0 {
+		return nil
+	}
+	return r.Retracted
 }
 
 // hasWebTool reports whether an assistant message's content holds a WebFetch
@@ -545,8 +577,11 @@ func (c *ccBook) streamNamed(id, uuid, turn string, at time.Time) {
 }
 
 // retract marks every named call whose frame uuids share a member with uuids
-// as retracted by a refusal fallback (#2255): from here on the book does not
-// wait for the call — its spend books with the refused attempt. Unknown uuids
+// as retracted: by a refusal fallback (#2255), whose spend books with the
+// refused attempt, or by a transcript record's retractedMessageUuids (#2492, a
+// malformed tool call CC retried), whose spend CC's modelUsage counts and the
+// window's remainder therefore holds. From here on the book does not wait for
+// the call. Unknown uuids
 // (a tool result's, a subagent frame's) match nothing; a second call changes
 // nothing; a call already booked is no longer named and is not touched. A
 // turn whose last named call this retracts can close its activity now.
@@ -601,6 +636,12 @@ func (c *ccBook) mainLine(l *ccLine) {
 			c.webTools[w] = true
 		}
 		c.copies++
+		// A call still named here was booked by another path before its main
+		// line was read. The line has now come: no invStreamIdBooked for it.
+		if n := c.named[l.id]; n != nil {
+			delete(c.named, l.id)
+			c.closeIfIdle(n.turn, c.now())
+		}
 		return
 	}
 	n := c.named[l.id]
@@ -638,6 +679,13 @@ func (c *ccBook) subLine(agent, turn string, l *ccLine) {
 		c.webTools[a.window] = true
 	}
 	if c.done[l.id] {
+		return
+	}
+	// A main-thread call is the main tail's to book. A fork subagent's
+	// transcript copies one parent line, the call that spawned it, with the
+	// parent's message id and the same timestamp (#2492, live on CC 2.1.314);
+	// booked here it would carry the fork as its actor.
+	if c.named[l.id] != nil || c.held[l.id] != nil {
 		return
 	}
 	// An agent's calls are sequential: a new id finalises the one before it.
@@ -939,7 +987,7 @@ func (c *ccBook) closeWindows(w int) {
 			// The interrupted rule is for calls CC counts nowhere. A later
 			// line for the id is a copy.
 			c.done[id] = true
-			c.lg.Infof("ledger: session %s: call %s was retracted by a refusal fallback; its spend books with the refused attempt",
+			c.lg.Infof("ledger: session %s: call %s was retracted by CC (a refusal fallback or a malformed tool call retry); its spend books with the refused attempt or the window's remainder",
 				c.session, id)
 			continue
 		}
