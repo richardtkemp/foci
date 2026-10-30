@@ -34,7 +34,10 @@ const usageOneshotTimeout = 45 * time.Second
 // backend, not the model — verified live (a bare initialize + get_usage
 // round trip reports total_cost_usd: 0, model_usage: {}, no assistant turn
 // ever runs).
-func QueryUsage(ctx context.Context) (*delegator.UsageInfo, error) {
+//
+// The usage is the operator's Claude Code account's, the same for every
+// Claude Code agent, so agentID is unused.
+func QueryUsage(ctx context.Context, _ string) (*delegator.UsageInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, usageOneshotTimeout)
 	defer cancel()
 
@@ -205,6 +208,7 @@ func parseUsagePayload(raw json.RawMessage) (*delegator.UsageInfo, error) {
 		return nil, fmt.Errorf("ccstream: usage oneshot: unmarshal get_usage payload: %w", err)
 	}
 	return &delegator.UsageInfo{
+		Backend:          displayName,
 		SubscriptionType: p.SubscriptionType,
 		FiveHour:         parseUsageWindow(p.RateLimits.FiveHour),
 		SevenDay:         parseUsageWindow(p.RateLimits.SevenDay),

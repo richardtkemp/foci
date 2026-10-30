@@ -250,12 +250,13 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		cmds.Register(command.PlanCommand(delivery))
 	}
 
-	// /mana (alias /usage) — Claude Code plan usage. Registered iff the backend
-	// contributed a usage query via delegator.RegisterUsage (only the Claude
-	// Code backends do): other agents would otherwise be shown the operator's
-	// Claude plan numbers, which have nothing to do with them (#1543).
+	// /mana (alias /usage) — the backend's plan usage. Registered iff the
+	// backend's Spec carries a UsageQuery (claude-code, codex). Each query
+	// reports only its own backend's account, for this agent: no agent is
+	// shown another backend's numbers, and a backend with no usage source
+	// gets no /mana (#1543).
 	if query, ok := delegator.UsageQueryFor(p.acfg.Backend); ok {
-		cmds.Register(command.ManaCommand(query))
+		cmds.Register(command.ManaCommand(query, p.acfg.ID))
 	}
 
 	// Tmux command (only if tool is available)

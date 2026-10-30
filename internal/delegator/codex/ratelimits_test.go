@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -254,5 +255,127 @@ func TestRateLimitsSeedDoesNotEngageGate(t *testing.T) {
 	b.seedRateLimits()
 	if engaged != 0 {
 		t.Fatalf("seed engaged the gate %d times, want 0", engaged)
+	}
+}
+
+// poolAs registers b as agent's running app-server for the test.
+func poolAs(t *testing.T, agent string, b *Backend) {
+	t.Helper()
+	b.startOpts.AgentID = agent
+	sharedPool.Lock()
+	sharedPool.servers[agent] = b
+	sharedPool.Unlock()
+	t.Cleanup(func() {
+		sharedPool.Lock()
+		delete(sharedPool.servers, agent)
+		sharedPool.Unlock()
+	})
+}
+
+// TestQueryUsage_FreshReadFromRunningServer pins /usage on a codex agent
+// (#2658): with the agent's app-server running, QueryUsage reads the
+// allowance fresh (account/rateLimits/read) and reports it as Codex — each
+// window's used % and reset, the plan type and the limit-reached state.
+func TestQueryUsage_FreshReadFromRunningServer(t *testing.T) {
+	reads := 0
+	b := newStartableBackend(t, func(method string, _ json.RawMessage, _ int64) (json.RawMessage, error) {
+		if method != "account/rateLimits/read" {
+			t.Errorf("method = %q, want account/rateLimits/read", method)
+		}
+		reads++
+		return json.RawMessage(liveRateLimitsRead), nil
+	})
+	poolAs(t, t.Name(), b)
+
+	info, err := QueryUsage(context.Background(), t.Name())
+	if err != nil {
+		t.Fatalf("QueryUsage: %v", err)
+	}
+	if reads != 1 {
+		t.Fatalf("account/rateLimits/read sent %d times, want 1", reads)
+	}
+	if info.Backend != "Codex" || info.Allowance == nil {
+		t.Fatalf("info = %+v, want a Codex allowance", info)
+	}
+	a := info.Allowance
+	if !a.Fresh || a.Note != "" || a.AsOf.IsZero() {
+		t.Errorf("Fresh=%v Note=%q AsOf=%v, want a fresh read", a.Fresh, a.Note, a.AsOf)
+	}
+	if a.PlanType != "team" {
+		t.Errorf("PlanType = %q, want team", a.PlanType)
+	}
+	if len(a.Buckets) != 1 {
+		t.Fatalf("buckets = %+v, want only codex", a.Buckets)
+	}
+	bk := a.Buckets[0]
+	want := []delegator.AllowanceWindow{
+		{Label: "5h", Percent: 100, ResetsAt: time.Unix(reset5h, 0)},
+		{Label: "7d", Percent: 34, ResetsAt: time.Unix(reset7d, 0)},
+	}
+	if bk.Name != "" || len(bk.Windows) != 2 || bk.Windows[0] != want[0] || bk.Windows[1] != want[1] {
+		t.Errorf("codex bucket = %+v, want windows %+v", bk, want)
+	}
+	if bk.LimitReached != "workspace out of credits" {
+		t.Errorf("LimitReached = %q", bk.LimitReached)
+	}
+	// hasCredits:false with no balance is not reported as a credit state.
+	if bk.Credits != "" {
+		t.Errorf("Credits = %q, want none (codex sent no balance)", bk.Credits)
+	}
+}
+
+// TestQueryUsage_NoServerReportsLastPushed pins the stale path: with no
+// running app-server QueryUsage starts nothing, returns the numbers codex
+// last pushed with the time they arrived, and says why they are not fresh.
+// Each agent sees only its own account's numbers.
+func TestQueryUsage_NoServerReportsLastPushed(t *testing.T) {
+	agent, other := t.Name(), t.Name()+"-other"
+	before := time.Now()
+	rateLimitsFor(agent).apply(codexWindow(42, reset5h), timeutil.Now())
+	rateLimitsFor(other).apply(codexWindow(99, reset5h), timeutil.Now())
+
+	info, err := QueryUsage(context.Background(), agent)
+	if err != nil {
+		t.Fatalf("QueryUsage: %v", err)
+	}
+	a := info.Allowance
+	if a.Fresh || !strings.Contains(a.Note, "no codex process is running") {
+		t.Errorf("Fresh=%v Note=%q, want a stale reply that says why", a.Fresh, a.Note)
+	}
+	if a.AsOf.Before(before.Add(-time.Second)) {
+		t.Errorf("AsOf = %v, want the time the numbers arrived", a.AsOf)
+	}
+	if len(a.Buckets) != 1 || len(a.Buckets[0].Windows) != 1 || a.Buckets[0].Windows[0].Percent != 42 {
+		t.Errorf("buckets = %+v, want this agent's 5h at 42%%", a.Buckets)
+	}
+
+	empty, err := QueryUsage(context.Background(), t.Name()+"-never")
+	if err != nil {
+		t.Fatalf("QueryUsage: %v", err)
+	}
+	if len(empty.Allowance.Buckets) != 0 || !empty.Allowance.AsOf.IsZero() {
+		t.Errorf("agent with no reports: %+v, want no buckets and no AsOf", empty.Allowance)
+	}
+}
+
+// TestQueryUsage_ReadFailureFallsBack pins that a failed fresh read is not an
+// error for /usage: it reports the last pushed numbers and the failure.
+func TestQueryUsage_ReadFailureFallsBack(t *testing.T) {
+	b := newStartableBackend(t, func(string, json.RawMessage, int64) (json.RawMessage, error) {
+		return nil, rpcErrorReply{code: -32600, message: "nope"}
+	})
+	poolAs(t, t.Name(), b)
+	rateLimitsFor(t.Name()).apply(codexWindow(10, reset5h), timeutil.Now())
+
+	info, err := QueryUsage(context.Background(), t.Name())
+	if err != nil {
+		t.Fatalf("QueryUsage: %v", err)
+	}
+	a := info.Allowance
+	if a.Fresh || !strings.Contains(a.Note, "the read failed") {
+		t.Errorf("Fresh=%v Note=%q, want a stale reply naming the failed read", a.Fresh, a.Note)
+	}
+	if len(a.Buckets) != 1 || a.Buckets[0].Windows[0].Percent != 10 {
+		t.Errorf("buckets = %+v, want the last pushed 10%%", a.Buckets)
 	}
 }

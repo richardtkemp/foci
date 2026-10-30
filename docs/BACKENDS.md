@@ -175,7 +175,7 @@ Every delegated backend declares every capability in its `delegator.Spec` (`inte
 | `relogin` | reports auth failures that foci's Claude Code re-login driver can fix (/login) | ✓ | ✗ | ✗ |
 | `command_approval_allowlist` | auto-approves prompts matching foci's [permissions] allowlist (StartOptions.AutoApproveRules) | ✓ | ✓ | ✓ |
 | `plan_mode` | has a /plan delivery (Spec.PlanDelivery) | ✓ | ✗ | ✓ |
-| `usage_query` | reports plan usage for /mana (Spec.UsageQuery) | ✓ | ✗ | ✗ |
+| `usage_query` | reports plan usage for /mana (Spec.UsageQuery) | ✓ | ✓ | ✗ |
 
 Why not:
 
@@ -208,7 +208,7 @@ Why not:
 - `stop_rules`: codex: no Stop hook; opencode: opencode has no Stop hook.
 - `relogin`: codex: the re-login driver logs Claude Code in; opencode: the re-login driver logs Claude Code in.
 - `plan_mode`: codex: no /plan delivery.
-- `usage_query`: codex: no plan usage to report; opencode: no plan usage to report.
+- `usage_query`: opencode: no plan usage to report.
 
 <!-- END GENERATED CAPABILITIES -->
 
@@ -669,7 +669,7 @@ Each line is `ID: ccstream | opencode | codex`. A ✗ names the grep run in that
 - U5: `cc/cost.go:resumeBaseline` | n/a | n/a
 - U6: `cc/handlers.go:OnRateLimit`, `cc/ratelimit.go:FormatRateLimitNotice`, `HostHooks.OnRateLimitNotice` | ✗ grep `rate.?limit` | `cx/ratelimits.go:onRateLimitsUpdated` (account/rateLimits/updated) → `HostHooks.OnRateLimitNotice`; usage in `StatusDetail`
 - U7: `cc/handlers.go:OnAssistant` (`syntheticSessionLimitText`) → `HostHooks.EngageRateLimit` | `oc/ratelimit.go:handleRateLimitRetry` → `HostHooks.EngageRateLimit` | `cx/ratelimits.go:onRateLimitsUpdated` → `gateSignal` → `HostHooks.EngageRateLimit`
-- `usage_query`: `cc/usage_oneshot.go:QueryUsage`, `cc/spec.go` `UsageQuery` | ✗ `oc/spec.go` declares `usage_query` No | ✗ same
+- `usage_query`: `cc/usage_oneshot.go:QueryUsage`, `cc/spec.go` `UsageQuery` | ✗ `oc/spec.go` declares `usage_query` No | `cx/ratelimits.go:QueryUsage` (fresh `account/rateLimits/read` on the agent's running app-server, else the last pushed numbers), `cx/spec.go` `UsageQuery`
 - U9: `cc/handlers.go:OnResult` | `oc/handlers.go:onMessageUpdated` | `cx/handlers.go:onTokenUsage`
 
 **Models**

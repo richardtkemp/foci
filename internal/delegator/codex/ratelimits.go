@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -8,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/delegator"
 	"foci/internal/ratelimit"
 	"foci/internal/timeutil"
 )
@@ -30,6 +32,9 @@ import (
 // The state is per foci agent, shared by every app-server process and facade
 // of that agent: limits are account-wide, so a warning must fire once, not
 // once per session.
+//
+// It feeds the status block (statusLine), the chat warnings, the rate-limit
+// gate (gateSignal) and /mana and /usage (QueryUsage).
 
 // rlWarnLevels are the used-% thresholds that produce one chat warning each
 // per window. 100 is "window exhausted".
@@ -46,6 +51,9 @@ type rateLimitState struct {
 	// gateUntil is when the agent's rate-limit gate, last closed from here,
 	// reopens (see gateSignal). Zero = never closed by this process.
 	gateUntil time.Time
+	// updatedAt is when codex last reported any bucket (zero = never, in this
+	// foci process). /usage shows it when it cannot read fresh numbers.
+	updatedAt time.Time
 }
 
 // rlNewWindowSlack is how far resetsAt must move before it is a new window.
@@ -104,8 +112,12 @@ func (s *rateLimitState) apply(snap rateLimitSnapshot, now time.Time) []string {
 	if snap.Credits != nil {
 		cur.Credits = snap.Credits
 	}
+	if snap.PlanType != nil {
+		cur.PlanType = snap.PlanType
+	}
 	cur.RateLimitReachedType = snap.RateLimitReachedType
 	s.snaps[id] = cur
+	s.updatedAt = now
 
 	var notices []string
 	for _, w := range []struct {
@@ -259,19 +271,8 @@ func (s *rateLimitState) gateSignal(now time.Time) *ratelimit.Signal {
 func (s *rateLimitState) statusLine(now time.Time) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	ids := make([]string, 0, len(s.snaps))
-	for id := range s.snaps {
-		ids = append(ids, id)
-	}
-	sort.Slice(ids, func(i, j int) bool {
-		// "codex" (the main bucket) first, then alphabetical.
-		if (ids[i] == "codex") != (ids[j] == "codex") {
-			return ids[i] == "codex"
-		}
-		return ids[i] < ids[j]
-	})
 	var windows, credits, reached []string
-	for _, id := range ids {
+	for _, id := range s.sortedIDsLocked() {
 		sn := s.snaps[id]
 		for _, w := range []*rateLimitWindow{sn.Primary, sn.Secondary} {
 			if w == nil {
@@ -306,6 +307,65 @@ func (s *rateLimitState) statusLine(now time.Time) string {
 		parts = append(parts, "limit reached: "+strings.Join(dedupe(reached), ", "))
 	}
 	return strings.Join(parts, " | ")
+}
+
+// sortedIDsLocked lists the known buckets: "codex" (the main bucket) first,
+// then alphabetical.
+func (s *rateLimitState) sortedIDsLocked() []string {
+	ids := make([]string, 0, len(s.snaps))
+	for id := range s.snaps {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		if (ids[i] == "codex") != (ids[j] == "codex") {
+			return ids[i] == "codex"
+		}
+		return ids[i] < ids[j]
+	})
+	return ids
+}
+
+// allowance renders the state for /usage (delegator.Allowance). It shows only
+// what codex reported: a bucket's windows, its credits when codex gave a
+// balance or "unlimited" (hasCredits alone is not an out-of-credits signal,
+// see the file comment), and its limit-reached state.
+func (s *rateLimitState) allowance() *delegator.Allowance {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := &delegator.Allowance{AsOf: s.updatedAt}
+	for _, id := range s.sortedIDsLocked() {
+		sn := s.snaps[id]
+		if a.PlanType == "" && sn.PlanType != nil {
+			a.PlanType = *sn.PlanType
+		}
+		bk := delegator.AllowanceBucket{}
+		if id != "codex" {
+			bk.Name = id // the main bucket's lines carry no prefix, as in statusLine
+		}
+		for _, w := range []*rateLimitWindow{sn.Primary, sn.Secondary} {
+			if w == nil {
+				continue
+			}
+			aw := delegator.AllowanceWindow{Label: windowLabel("", *w), Percent: w.usedPercent()}
+			if w.ResetsAt != nil && *w.ResetsAt != 0 {
+				aw.ResetsAt = time.Unix(*w.ResetsAt, 0)
+			}
+			bk.Windows = append(bk.Windows, aw)
+		}
+		if c := sn.Credits; c != nil {
+			switch {
+			case c.Unlimited:
+				bk.Credits = "unlimited"
+			case c.Balance != nil && *c.Balance != "":
+				bk.Credits = *c.Balance
+			}
+		}
+		if sn.RateLimitReachedType != nil && *sn.RateLimitReachedType != "" {
+			bk.LimitReached = reachedLabel(*sn.RateLimitReachedType)
+		}
+		a.Buckets = append(a.Buckets, bk)
+	}
+	return a
 }
 
 func dedupe(in []string) []string {
@@ -435,10 +495,20 @@ func (b *Backend) onRateLimitsUpdated(params json.RawMessage) {
 // block shows it before the first turn. Seeding never warns (see marks).
 // Best-effort: a failure is logged, not fatal.
 func (b *Backend) seedRateLimits() {
+	if err := b.readRateLimits(); err != nil {
+		b.logDebugf("%v", err)
+	}
+}
+
+// readRateLimits asks the app-server for the current allowance
+// (account/rateLimits/read) and merges it into the agent's state. Like a
+// startup seed it never closes the rate-limit gate (only a live update does,
+// see onRateLimitsUpdated); notices fire only for a real change since the
+// buckets were last seen.
+func (b *Backend) readRateLimits() error {
 	raw, err := b.sendAndWait("account/rateLimits/read", nil)
 	if err != nil {
-		b.logDebugf("account/rateLimits/read failed: %v", err)
-		return
+		return fmt.Errorf("account/rateLimits/read failed: %w", err)
 	}
 	var r struct {
 		RateLimits          *rateLimitSnapshot           `json:"rateLimits"`
@@ -446,7 +516,7 @@ func (b *Backend) seedRateLimits() {
 	}
 	if err := json.Unmarshal(raw, &r); err != nil {
 		b.logWarnf("malformed account/rateLimits/read response: %v", err)
-		return
+		return fmt.Errorf("malformed account/rateLimits/read response: %w", err)
 	}
 	st := b.rateLimits()
 	now := timeutil.Now()
@@ -464,6 +534,7 @@ func (b *Backend) seedRateLimits() {
 	// Only a second process of an agent that already saw these buckets can
 	// get notices here, and only for a real change since then.
 	b.deliverRateLimitNotices(notices)
+	return nil
 }
 
 func (b *Backend) deliverRateLimitNotices(notices []string) {
@@ -479,4 +550,38 @@ func (b *Backend) deliverRateLimitNotices(notices []string) {
 			fn(b.startOpts.SessionKey, n)
 		}
 	}
+}
+
+// --- /usage ---
+
+// usageDisplayName heads the /usage reply.
+const usageDisplayName = "Codex"
+
+// QueryUsage is the codex Spec's UsageQuery (/mana, /usage): the allowance of
+// agentID's codex account.
+//
+// When the agent has a running app-server it reads fresh numbers first
+// (account/rateLimits/read: one JSON-RPC on a connection that already exists,
+// no model call). With no running app-server it does NOT start one —
+// launching codex for a status check costs a process start and login refresh
+// — and reports the numbers codex last pushed instead (it pushes
+// account/rateLimits/updated after each turn), with the time they arrived.
+func QueryUsage(_ context.Context, agentID string) (*delegator.UsageInfo, error) {
+	st := rateLimitsFor(agentID)
+	fresh := false
+	note := ""
+	if owner := pooledOwner(agentID); owner == nil {
+		note = "no codex process is running for this agent"
+	} else if err := owner.readRateLimits(); err != nil {
+		owner.logInfof("/usage: %v", err)
+		note = "the read failed: " + err.Error()
+	} else {
+		fresh = true
+	}
+	a := st.allowance()
+	a.Fresh = fresh
+	if !fresh {
+		a.Note = note
+	}
+	return &delegator.UsageInfo{Backend: usageDisplayName, Allowance: a}, nil
 }

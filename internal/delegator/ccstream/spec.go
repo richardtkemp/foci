@@ -9,11 +9,16 @@ import (
 // backendName is the [agents].backend value this package registers.
 const backendName = "claude-code"
 
+// displayName is the backend's human name (Spec.DisplayName). A constant so
+// QueryUsage can name its backend without referring to spec, which refers
+// to QueryUsage (an initialization cycle).
+const displayName = "Claude Code"
+
 // spec declares the Claude Code backend: what it can do and its static data
 // (#2154, internal/delegator/capabilities.go).
 var spec = delegator.Spec{
 	Name:        backendName,
-	DisplayName: "Claude Code",
+	DisplayName: displayName,
 	New:         newFromConfig,
 	Prototype:   (*Backend)(nil),
 	Wizard:      true,

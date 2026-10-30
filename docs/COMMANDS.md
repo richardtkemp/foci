@@ -30,7 +30,7 @@ API cost summary for a time period.
 Context window breakdown — total vs limit, compaction threshold, tokens until compaction, system prompt breakdown by section (environment, workspace files, skills), tool token count, conversation breakdown (user/assistant/tool results), last API call token breakdown.
 
 ### `/mana`
-Alias: `/usage`. Claude Code plan and rate-limit usage report. Shows remaining plan quota, rate-limit windows, and recent usage. Only exists for agents on a Claude Code backend (`claude-code`); opencode, codex and API-mode agents have no plan usage to report, so they don't get the command.
+Alias: `/usage`. The agent's backend plan and rate-limit usage report, headed by the backend it describes. Claude Code (`claude-code`): remaining plan quota, rate-limit windows, and recent usage. Codex (`codex`): this agent's codex account allowance — each bucket's windows (used %, reset time), credits when codex reports a balance, and whether a limit is reached; read fresh when the agent's codex process is running, else the last numbers codex reported, with their time. opencode and API-mode agents have no usage source, so they don't get the command.
 
 ### `/todo [subcommand] [args]`
 Manage todo items. Bare `/todo` shows usage (available verbs). Use `/todo list` or `/todo active` to list items.

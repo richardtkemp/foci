@@ -79,13 +79,14 @@ var spec = delegator.Spec{
 		delegator.CapRelogin:                  delegator.No("the re-login driver logs Claude Code in"),
 		delegator.CapCommandApprovalAllowlist: delegator.Yes(),
 		delegator.CapPlanMode:                 delegator.No("no /plan delivery"),
-		delegator.CapUsageQuery:               delegator.No("no plan usage to report"),
+		delegator.CapUsageQuery:               delegator.Yes(),
 	},
 
 	ModelcapsKey:     modelcaps.BackendCodex,
 	LedgerKey:        accounting.BackendCodex,
 	CacheTTL:         cacheTTL,
 	ForkNeedsRunning: true,
+	UsageQuery:       QueryUsage,
 	// sandbox and api_key are read but no config path supplies them
 	// (docs/BACKENDS.md footnote 48). foci_version is added by the gateway.
 	ConfigKeys: []string{"binary", "model", "sandbox", "api_key", delegator.FociVersionConfigKey},
