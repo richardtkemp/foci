@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"foci/internal/delegator"
 )
@@ -106,5 +107,52 @@ func TestSetModel_ResolvedByBackendPersistsCanonicalModel(t *testing.T) {
 	}
 	if got := ag.SessionModel(sk); got != "codex/gpt-5.6-luna" {
 		t.Errorf("persisted model = %q", got)
+	}
+}
+
+// deadlineRecordingBackend records the context deadline each SetModel step
+// receives: ResolveModel (the catalogue lookup) and SendControl(set_model).
+type deadlineRecordingBackend struct {
+	*mockSetModelBackend
+	resolveBudget, controlBudget time.Duration
+}
+
+func (m *deadlineRecordingBackend) ResolveModel(ctx context.Context, model string) (delegator.ModelResolution, error) {
+	if dl, ok := ctx.Deadline(); ok {
+		m.resolveBudget = time.Until(dl)
+	}
+	return delegator.ModelResolution{BackendModel: model, Model: model}, nil
+}
+
+func (m *deadlineRecordingBackend) SendControl(ctx context.Context, req delegator.ControlRequest) error {
+	if _, ok := req.(*delegator.SetModelRequest); ok {
+		if dl, ok := ctx.Deadline(); ok {
+			m.controlBudget = time.Until(dl)
+		}
+	}
+	return m.mockSetModelBackend.SendControl(ctx, req)
+}
+
+// TestSetModel_ControlWaitOutlastsCCConfirmWindow pins #2466. CC 2.1.307+
+// holds the set_model reply until the API confirms the model, for up to 15 s.
+// Live probe on CC 2.1.314 with a delaying proxy: a confirm delayed 12 s gave
+// "success" at 12.7 s and CC ran the new model; a 20 s delay gave
+// check_failed at 15.0 s. foci's wait must outlast that window, or it reports
+// a failure for a switch CC made and never records the new model. The
+// catalogue lookup keeps its own short bound, so a slow lookup cannot make
+// /model hang for the longer control wait.
+func TestSetModel_ControlWaitOutlastsCCConfirmWindow(t *testing.T) {
+	t.Parallel()
+	be := &deadlineRecordingBackend{mockSetModelBackend: &mockSetModelBackend{}}
+	ag, sk := setupAgentWithSetModelBackend(be)
+	if err := ag.SetModel(context.Background(), sk, "claude-haiku-4-5", "", "", nil, "claude-haiku-4-5"); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	const ccConfirmWindow = 15 * time.Second
+	if be.controlBudget <= ccConfirmWindow+2*time.Second {
+		t.Errorf("set_model wait budget = %v, want > %v (CC's confirm window plus margin)", be.controlBudget, ccConfirmWindow+2*time.Second)
+	}
+	if be.resolveBudget == 0 || be.resolveBudget > 10*time.Second {
+		t.Errorf("model resolution budget = %v, want bounded at <= 10s", be.resolveBudget)
 	}
 }

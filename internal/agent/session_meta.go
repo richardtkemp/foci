@@ -554,6 +554,19 @@ func (a *Agent) SetSessionModel(sessionKey, value, endpoint, format string, clie
 	a.persistSessionString(sessionKey, session.MetaKeyModelFormat, format)
 }
 
+// setModelResolveTimeout bounds the backend's model-catalogue lookup in
+// SetModel.
+const setModelResolveTimeout = 10 * time.Second
+
+// setModelControlTimeout bounds the wait for the backend's set_model reply.
+// CC 2.1.307+ holds that reply until the API confirms the model, for up to
+// 15 s. Probe on CC 2.1.314 (#2466, delaying proxy): a confirm delayed 12 s
+// got "success" at 12.7 s and CC ran the new model; a 20 s delay got
+// check_failed at 15.0 s and CC kept the old one. A bound under 15 s reports
+// failure for a switch CC made, and foci never records the new model. 30 s
+// leaves margin for CC's other pre-switch work (hooks, settings write).
+const setModelControlTimeout = 30 * time.Second
+
 // SetModel is the high-level orchestrator for /model. It tells the delegated
 // backend (if any) to switch models FIRST, and only records foci's own
 // session metadata once that's confirmed. Catalogue-backed backends may first
@@ -565,18 +578,23 @@ func (a *Agent) SetModel(ctx context.Context, sessionKey string, model, endpoint
 	// apply_flag_settings) now waits for the backend's confirmation, so a
 	// rejected model (e.g. unrecognized id) must not leave foci's session
 	// metadata claiming a model the backend never actually switched to.
-	// Bound the wait so a wedged backend can't hang the /model command.
-	controlCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
+	// Bound each wait so a wedged backend can't hang the /model command. The
+	// catalogue lookup and the set_model confirmation get separate bounds:
+	// the confirmation needs the longer one (see setModelControlTimeout), and
+	// a slow lookup must not borrow it.
+	resolveCtx, cancelResolve := context.WithTimeout(ctx, setModelResolveTimeout)
+	defer cancelResolve()
 	backendModel := rawModel
 	trackedModel := model
-	if resolved, ok, err := a.ResolveBackendModel(controlCtx, sessionKey, rawModel); err != nil {
+	if resolved, ok, err := a.ResolveBackendModel(resolveCtx, sessionKey, rawModel); err != nil {
 		a.logger().Warnf("session=%s backend model resolution failed: %v", sessionKey, err)
 		return fmt.Errorf("backend model resolution failed: %w", err)
 	} else if ok {
 		backendModel = resolved.BackendModel
 		trackedModel = resolved.Model
 	}
+	controlCtx, cancelControl := context.WithTimeout(ctx, setModelControlTimeout)
+	defer cancelControl()
 	handled, err := a.SendBackendControl(controlCtx, sessionKey, &delegator.SetModelRequest{Model: backendModel})
 	if err != nil {
 		a.logger().Warnf("session=%s backend set_model failed: %v", sessionKey, err)
