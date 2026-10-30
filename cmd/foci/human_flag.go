@@ -13,13 +13,19 @@ type humanFlag struct {
 	human bool
 }
 
-// tryParseHumanArg consumes the bare --human switch at args[i].
-func (h *humanFlag) tryParseHumanArg(args []string, i int) (consumed bool, next int) {
-	if args[i] == "--human" {
-		h.human = true
-		return true, i
+// isHumanWord reports whether tok is the --human spelling — the word half
+// of tryParseHumanArg.
+func (h *humanFlag) isHumanWord(tok string) bool { return tok == "--human" }
+
+// tryParseHumanArg consumes the bare --human switch token tok. --human
+// takes no value, so unlike the gate/wait/session parses there is no next
+// index to report — the caller's scan always resumes at the next token.
+func (h *humanFlag) tryParseHumanArg(tok string) bool {
+	if !h.isHumanWord(tok) {
+		return false
 	}
-	return false, i
+	h.human = true
+	return true
 }
 
 // applyEnvDefault fills an unset flag from FOCI_HUMAN (non-empty = true);

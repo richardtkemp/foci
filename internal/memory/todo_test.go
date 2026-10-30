@@ -1,6 +1,10 @@
 package memory
 
 import (
+	"context"
+	"database/sql"
+	"database/sql/driver"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -1220,6 +1224,187 @@ func TestTodoSortByUpdatedIgnoresStatus(t *testing.T) {
 	}
 	if items[2].ID != id2 {
 		t.Errorf("third item ID = %d (status=%s), want %d", items[2].ID, items[2].Status, id2)
+	}
+}
+
+// TestParseTodoID pins the ONE id grammar every todo surface shares (the
+// /todo verbs, the agent todo tool, `foci todo done`): an id is one or more
+// ASCII digits and nothing else. A signed, decorated, empty, non-ASCII or
+// overflowing token is not an id, so it can never name another ticket.
+func TestParseTodoID(t *testing.T) {
+	tests := []struct {
+		tok    string
+		want   int64
+		wantOK bool
+	}{
+		{tok: "7", want: 7, wantOK: true},
+		{tok: "007", want: 7, wantOK: true},
+		{tok: "0", want: 0, wantOK: true},
+		{tok: "999999999999999999", want: 999999999999999999, wantOK: true},
+		{tok: "", wantOK: false},
+		{tok: "+7", wantOK: false},
+		{tok: "-7", wantOK: false},
+		{tok: "7a", wantOK: false},
+		{tok: "a7", wantOK: false},
+		{tok: "0x1f", wantOK: false},
+		{tok: "7.0", wantOK: false},
+		{tok: " 7", wantOK: false},
+		{tok: "9999999999999999999999", wantOK: false}, // overflows int64
+		{tok: "٣", wantOK: false},                      // Arabic-Indic digit, not ASCII
+	}
+	for _, tt := range tests {
+		got, ok := ParseTodoID(tt.tok)
+		if ok != tt.wantOK || got != tt.want {
+			t.Errorf("ParseTodoID(%q) = (%d, %v), want (%d, %v)", tt.tok, got, ok, tt.want, tt.wantOK)
+		}
+	}
+}
+
+// TestRequireCloseReason pins the one shared close-reason rule: done and
+// dropped refuse an empty reason with the todo tool's exact message, every
+// other status needs none. The tool's todoTransition and the gateway's
+// POST /todo/done both call this function, so their refusals cannot drift.
+func TestRequireCloseReason(t *testing.T) {
+	const doneMsg = "reason is required when transitioning to done (e.g. 'implemented in abc1234', 'no longer relevant')"
+	const droppedMsg = "reason is required when transitioning to dropped (e.g. 'implemented in abc1234', 'no longer relevant')"
+	tests := []struct {
+		status   string
+		reason   string
+		wantErr  string
+		wantNone bool
+	}{
+		{status: "done", reason: "", wantErr: doneMsg},
+		{status: "dropped", reason: "", wantErr: droppedMsg},
+		{status: "done", reason: "landed 3fc608953 (factory run x)", wantNone: true},
+		{status: "dropped", reason: "no longer relevant", wantNone: true},
+		{status: "open", reason: "", wantNone: true},
+		{status: "started", reason: "", wantNone: true},
+	}
+	for _, tt := range tests {
+		err := RequireCloseReason(tt.status, tt.reason)
+		if tt.wantNone {
+			if err != nil {
+				t.Errorf("RequireCloseReason(%q, %q) = %v, want nil", tt.status, tt.reason, err)
+			}
+			continue
+		}
+		if err == nil || err.Error() != tt.wantErr {
+			t.Errorf("RequireCloseReason(%q, %q) = %v, want %q", tt.status, tt.reason, err, tt.wantErr)
+		}
+	}
+}
+
+// TestTodoStore_TransitionNotFoundIsTyped proves Transition's missing-id
+// error is the typed *TodoNotFoundError with the unchanged message text
+// ("todo #N not found"), so POST /todo/done can answer 404 via errors.As. A
+// missing id for a DIFFERENT agent is the same error: ids are per agent.
+func TestTodoStore_TransitionNotFoundIsTyped(t *testing.T) {
+	store := newTestTodoStore(t)
+	store.Add("agent1", "belongs to agent1", "medium", "")
+
+	for _, c := range []struct {
+		agent string
+		id    int64
+	}{
+		{agent: "agent1", id: 99}, // no such id
+		{agent: "agent2", id: 1},  // exists, but for another agent
+	} {
+		err := store.Transition(c.agent, c.id, "done", "reason")
+		var nf *TodoNotFoundError
+		if !errors.As(err, &nf) {
+			t.Fatalf("Transition(%q, %d) error = %v (%T), want *TodoNotFoundError", c.agent, c.id, err, err)
+		}
+		if nf.ID != c.id {
+			t.Errorf("Transition(%q, %d): nf.ID = %d, want %d", c.agent, c.id, nf.ID, c.id)
+		}
+		if want := fmt.Sprintf("todo #%d not found", c.id); err.Error() != want {
+			t.Errorf("Transition(%q, %d) message = %q, want %q", c.agent, c.id, err.Error(), want)
+		}
+	}
+}
+
+// errRowsAffected is the sentinel error a fake driver reports from
+// sql.Result.RowsAffected, so a test can prove Transition propagates a
+// driver-level failure instead of swallowing it.
+var errRowsAffected = errors.New("rows affected failed (fake driver)")
+
+// rowsAffectedErrResult is a driver.Result whose RowsAffected always fails.
+type rowsAffectedErrResult struct{}
+
+func (rowsAffectedErrResult) LastInsertId() (int64, error) { return 0, nil }
+func (rowsAffectedErrResult) RowsAffected() (int64, error) { return 0, errRowsAffected }
+
+// rowsAffectedErrConn is a driver.Conn answering every Exec with a result
+// whose RowsAffected fails. ExecerContext keeps database/sql on the direct
+// Exec path (no Prepare), which is all Transition uses.
+type rowsAffectedErrConn struct{}
+
+func (rowsAffectedErrConn) Prepare(string) (driver.Stmt, error) {
+	return nil, errors.New("fake: prepare not supported")
+}
+func (rowsAffectedErrConn) Close() error { return nil }
+func (rowsAffectedErrConn) Begin() (driver.Tx, error) {
+	return nil, errors.New("fake: begin not supported")
+}
+func (rowsAffectedErrConn) ExecContext(context.Context, string, []driver.NamedValue) (driver.Result, error) {
+	return rowsAffectedErrResult{}, nil
+}
+
+// rowsAffectedErrConnector hands out rowsAffectedErrConn conns.
+type rowsAffectedErrConnector struct{}
+
+func (rowsAffectedErrConnector) Connect(context.Context) (driver.Conn, error) {
+	return rowsAffectedErrConn{}, nil
+}
+func (rowsAffectedErrConnector) Driver() driver.Driver { return nil }
+
+// TestTodoStore_TransitionRowsAffectedError proves Transition propagates a
+// RowsAffected failure from the driver: with the error dropped (n, _ :=), the
+// same call reads n as 0 and misreports the storage fault as
+// *TodoNotFoundError — which POST /todo/done would answer as a 404.
+func TestTodoStore_TransitionRowsAffectedError(t *testing.T) {
+	store := &TodoStore{db: sql.OpenDB(rowsAffectedErrConnector{})}
+	t.Cleanup(func() { _ = store.Close() })
+
+	err := store.Transition("agent1", 7, "done", "reason")
+	if !errors.Is(err, errRowsAffected) {
+		t.Fatalf("Transition error = %v, want the driver's RowsAffected error %v", err, errRowsAffected)
+	}
+	var nf *TodoNotFoundError
+	if errors.As(err, &nf) {
+		t.Errorf("Transition translated a storage fault into a not-found error (%v)", nf)
+	}
+}
+
+// TestTodoStore_NotFoundMessages is a characterisation test: the four
+// not-found producers keep the exact "todo #N not found" text after
+// Transition gained the typed error — every caller formats it with %v and
+// must not see a change.
+func TestTodoStore_NotFoundMessages(t *testing.T) {
+	store := newTestTodoStore(t)
+	id, err := store.Add("agent1", "item", "medium", "")
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	missing := id + 1000
+	want := fmt.Sprintf("todo #%d not found", missing)
+
+	cases := []struct {
+		name string
+		call func() error
+	}{
+		{"Transition", func() error { return store.Transition("agent1", missing, "done", "r") }},
+		{"Get", func() error { _, err := store.Get("agent1", missing); return err }},
+		{"Remove", func() error { return store.Remove("agent1", missing) }},
+		{"Edit", func() error { _, err := store.Edit("agent1", missing, "text", "", "", false, false); return err }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := c.call()
+			if err == nil || err.Error() != want {
+				t.Errorf("%s() = %v, want %q", c.name, err, want)
+			}
+		})
 	}
 }
 

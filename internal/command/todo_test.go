@@ -2,8 +2,11 @@ package command
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"foci/internal/config"
@@ -34,6 +37,132 @@ const testAgent = "test"
 
 // --- Parser Tests ---
 
+// TestParseTodoArgs_DoneReason verifies the done-with-reason parse
+// (Richard, 2026-10-30): when text follows, ONLY THE FIRST word is an id and
+// the raw remainder is the close reason, kept byte for byte (spacing, quotes,
+// $, backticks, a leading dash). A digits-only word after the first one is
+// reason text, not another id.
+func TestParseTodoArgs_DoneReason(t *testing.T) {
+	tests := []struct {
+		name   string
+		raw    string
+		ids    []int64
+		reason string
+	}{
+		{name: "simple", raw: "done 7 landed abc", ids: []int64{7}, reason: "landed abc"},
+		{name: "second number is reason, not an id", raw: "done 3 5 shipped it", ids: []int64{3}, reason: "5 shipped it"},
+		{name: "ruling example", raw: "done 2457 2 commits landed", ids: []int64{2457}, reason: "2 commits landed"},
+		{name: "complete alias", raw: "complete 5 dup of 3", ids: []int64{5}, reason: "dup of 3"},
+		{name: "finish alias", raw: "finish 5 x y", ids: []int64{5}, reason: "x y"},
+		{name: "close alias", raw: "close 5 why", ids: []int64{5}, reason: "why"},
+		{name: "uppercase verb", raw: "DONE 5 Upper Case", ids: []int64{5}, reason: "Upper Case"},
+		{
+			name:   "spec example",
+			raw:    "done 7 landed 3fc608953 (factory run 01M4SWKGRFGSMXBHKPKH3E6VEK)",
+			ids:    []int64{7},
+			reason: "landed 3fc608953 (factory run 01M4SWKGRFGSMXBHKPKH3E6VEK)",
+		},
+		{
+			name:   "quotes dollars backticks",
+			raw:    "done 7 landed abc (run \"x\" $(id) `y`)",
+			ids:    []int64{7},
+			reason: "landed abc (run \"x\" $(id) `y`)",
+		},
+		{name: "leading dash and double spaces", raw: "done 7 -x  a  b", ids: []int64{7}, reason: "-x  a  b"},
+		{name: "newline and inner spaces", raw: "done 7 a  b\n  c", ids: []int64{7}, reason: "a  b\n  c"},
+		{name: "integer after first word stays in reason", raw: "done 7 landed 8", ids: []int64{7}, reason: "landed 8"},
+		{name: "tag-looking word is reason", raw: "done 7 t:shopping", ids: []int64{7}, reason: "t:shopping"},
+		// The id grammar is digits only (memory.ParseTodoID): a signed word
+		// can never be read as another id, so numeric-looking reason text
+		// closes the todos it names and no others.
+		{name: "plus-signed number is reason, not another id", raw: "done 13 +14 for the fix", ids: []int64{13}, reason: "+14 for the fix"},
+		{name: "negative number is reason, not another id", raw: "done 7 -1 penalty", ids: []int64{7}, reason: "-1 penalty"},
+		{name: "leading zeros are still an id", raw: "done 007 x", ids: []int64{7}, reason: "x"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseTodoArgs(tt.raw)
+			assertTodoArgs(t, todoArgs{
+				subcommand: "done",
+				status:     "active",
+				sort:       "priority",
+				limit:      15,
+				ids:        tt.ids,
+				reason:     tt.reason,
+			}, got)
+		})
+	}
+}
+
+// TestParseTodoArgs_DoneRequiresLeadingID pins the done grammar after
+// Richard's 2026-10-17 ruling: /todo done means CLOSE and nothing else,
+// so the words after the verb must start with a digits-only id. A first
+// word that is not one — a mistyped id (14x), a filter word (t:x,
+// reverse), a signed number (+14) — is badID and the verb refuses; no
+// words at all leaves the ids empty for the usage line. Ids-only forms
+// keep the empty reason, as ever.
+func TestParseTodoArgs_DoneRequiresLeadingID(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want todoArgs
+	}{
+		{
+			name: "done single id keeps empty reason",
+			raw:  "done 5",
+			want: todoArgs{subcommand: "done", status: "active", sort: "priority", limit: 15, ids: []int64{5}},
+		},
+		{
+			name: "done batch keeps empty reason",
+			raw:  "done 3 5 7",
+			want: todoArgs{subcommand: "done", status: "active", sort: "priority", limit: 15, ids: []int64{3, 5, 7}},
+		},
+		{
+			name: "mistyped id is refused, not a reason",
+			raw:  "done 14x landed abc",
+			want: todoArgs{subcommand: "done", status: "active", sort: "priority", limit: 15, badID: "14x"},
+		},
+		{
+			name: "tag filter word is refused",
+			raw:  "done t:shopping",
+			want: todoArgs{subcommand: "done", status: "active", sort: "priority", limit: 15, badID: "t:shopping"},
+		},
+		{
+			name: "reverse filter word is refused",
+			raw:  "done reverse 5",
+			want: todoArgs{subcommand: "done", status: "active", sort: "priority", limit: 15, badID: "reverse"},
+		},
+		{
+			name: "reason word first is refused",
+			raw:  "done landed 7",
+			want: todoArgs{subcommand: "done", status: "active", sort: "priority", limit: 15, badID: "landed"},
+		},
+		{
+			// The id grammar is digits only, so a signed number can
+			// never lead: /todo done +14 for the fix is an error naming
+			// "+14" (the base parse read it as id 14 and closed it).
+			name: "signed lead is refused, never id 14",
+			raw:  "done +14 for the fix",
+			want: todoArgs{subcommand: "done", status: "active", sort: "priority", limit: 15, badID: "+14"},
+		},
+		{
+			name: "bare done is the verb with no ids",
+			raw:  "done",
+			want: todoArgs{subcommand: "done", status: "active", sort: "priority", limit: 15},
+		},
+		{
+			name: "bare complete alias is the verb with no ids",
+			raw:  "complete",
+			want: todoArgs{subcommand: "done", status: "active", sort: "priority", limit: 15},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertTodoArgs(t, tt.want, parseTodoArgs(tt.raw))
+		})
+	}
+}
+
 // TestParseTodoArgs verifies the argument parser handles all token combinations
 // correctly, including defaults, status/sort/reverse tokens, t:/p: prefixes,
 // subcommand detection, and the done-ambiguity rule.
@@ -59,9 +188,9 @@ func TestParseTodoArgs(t *testing.T) {
 			want: todoArgs{status: "", sort: "priority", limit: 15},
 		},
 		{
-			name: "done status filter",
+			name: "bare done is the close verb with no ids",
 			raw:  "done",
-			want: todoArgs{status: "done", sort: "priority", limit: 15},
+			want: todoArgs{subcommand: "done", status: "active", sort: "priority", limit: 15},
 		},
 		{
 			name: "closed maps to done",
@@ -192,9 +321,9 @@ func TestParseTodoArgs(t *testing.T) {
 			want: todoArgs{subcommand: "done", status: "active", sort: "priority", limit: 15, ids: []int64{3, 5, 7}},
 		},
 		{
-			name: "done with non-integer is list filter",
+			name: "done with non-integer lead is refused",
 			raw:  "done t:shopping",
-			want: todoArgs{status: "done", sort: "priority", limit: 15, tags: []string{"shopping"}, setTag: true},
+			want: todoArgs{subcommand: "done", status: "active", sort: "priority", limit: 15, badID: "t:shopping"},
 		},
 		{
 			name: "start",
@@ -268,9 +397,9 @@ func TestParseTodoArgs(t *testing.T) {
 			want: todoArgs{subcommand: "done", status: "active", sort: "priority", limit: 15, ids: []int64{5}},
 		},
 		{
-			name: "complete bare is list filter",
+			name: "complete bare is the close verb with no ids",
 			raw:  "complete",
-			want: todoArgs{status: "done", sort: "priority", limit: 15},
+			want: todoArgs{subcommand: "done", status: "active", sort: "priority", limit: 15},
 		},
 		{
 			name: "begin alias for start",
@@ -376,6 +505,12 @@ func assertTodoArgs(t *testing.T, want, got todoArgs) {
 	}
 	if got.text != want.text {
 		t.Errorf("text: got %q, want %q", got.text, want.text)
+	}
+	if got.reason != want.reason {
+		t.Errorf("reason: got %q, want %q", got.reason, want.reason)
+	}
+	if got.badID != want.badID {
+		t.Errorf("badID: got %q, want %q", got.badID, want.badID)
 	}
 	if len(got.ids) != len(want.ids) {
 		t.Errorf("ids: got %v, want %v", got.ids, want.ids)
@@ -739,7 +874,9 @@ func TestTodoDoneTransition(t *testing.T) {
 	}
 }
 
-// TestTodoBatchTransition verifies completing multiple todos at once.
+// TestTodoBatchTransition verifies completing multiple todos at once,
+// each closed with an empty close reason — the ids-only form carries no
+// reason words.
 func TestTodoBatchTransition(t *testing.T) {
 	store := newTestTodoStore(t)
 	cc := newTestCC(store)
@@ -760,6 +897,9 @@ func TestTodoBatchTransition(t *testing.T) {
 	i3, _ := store.Get(testAgent, 3)
 	if i1.Status != "done" || i3.Status != "done" {
 		t.Error("both items should be done")
+	}
+	if i1.CloseReason != "" || i3.CloseReason != "" {
+		t.Errorf("ids-only batch close reasons = %q, %q, want both empty", i1.CloseReason, i3.CloseReason)
 	}
 	i2, _ := store.Get(testAgent, 2)
 	if i2.Status != "open" {
@@ -1013,37 +1153,66 @@ func TestTodoTransitionNoIDs(t *testing.T) {
 	}
 }
 
-// TestTodoDoneAmbiguity verifies the done ambiguity rule: "done" alone is a
-// list filter, "done 5" is a transition, "done t:shopping" is a list filter.
-func TestTodoDoneAmbiguity(t *testing.T) {
+// TestTodoDoneNonIDFormsAreErrors pins Richard's 2026-10-17 ruling through
+// the public entry point: /todo done means CLOSE and nothing else. Bare
+// `done` (and its aliases) answers with the usage line, and a first word
+// after the verb that is not a digits-only id — a mistyped id, a filter
+// word, a signed number — is refused naming the word. Neither lists, and
+// neither changes any todo; listing done todos stays available through
+// /todo list done.
+func TestTodoDoneNonIDFormsAreErrors(t *testing.T) {
 	store := newTestTodoStore(t)
 	cc := newTestCC(store)
 	cmd := TodoCommand()
 
-	store.Add(testAgent, "item 1", "medium", "shopping")
-	store.Transition(testAgent, 1, "done", "bought")
+	closedID, _ := store.Add(testAgent, "closed item", "medium", "")
+	if err := store.Transition(testAgent, closedID, "done", "bought"); err != nil {
+		t.Fatalf("seed closed item: %v", err)
+	}
+	openID, _ := store.Add(testAgent, "open item", "medium", "")
 
-	// "done" alone → list done items
-	resp, err := cmd.Execute(context.Background(), Request{Args: "done"}, cc)
+	for _, tt := range []struct {
+		args string
+		want string
+	}{
+		{args: "done", want: "Usage: /todo done <ids> [reason]"},
+		{args: "complete", want: "Usage: /todo done <ids> [reason]"},
+		{args: "done 14x landed abc", want: `/todo done: "14x" is not a todo id (ids are digits only); nothing was changed`},
+		{args: "done t:shopping", want: `/todo done: "t:shopping" is not a todo id (ids are digits only); nothing was changed`},
+		{args: "done reverse 5", want: `/todo done: "reverse" is not a todo id (ids are digits only); nothing was changed`},
+		{args: "done +14 for the fix", want: `/todo done: "+14" is not a todo id (ids are digits only); nothing was changed`},
+	} {
+		t.Run(tt.args, func(t *testing.T) {
+			resp, err := cmd.Execute(context.Background(), Request{Args: tt.args}, cc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.Text != tt.want {
+				t.Errorf("response = %q, want %q", resp.Text, tt.want)
+			}
+			if contains(resp.Text, "Todos") || contains(resp.Text, "item") {
+				t.Errorf("response = %q, must not be a listing", resp.Text)
+			}
+		})
+	}
+
+	for _, id := range []int64{closedID, openID} {
+		item, err := store.Get(testAgent, id)
+		if err != nil {
+			t.Fatalf("Get #%d: %v", id, err)
+		}
+		if id == openID && item.Status != "open" {
+			t.Errorf("open item = %s, want still open — a refused done must change nothing", item.Status)
+		}
+	}
+
+	// Listing done todos stays available through the list form.
+	resp, err := cmd.Execute(context.Background(), Request{Args: "list done"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !contains(resp.Text, "item 1") {
-		t.Errorf("expected done item in list: %s", resp.Text)
-	}
-
-	// "done 1" on an open item → transition
-	store.Add(testAgent, "item 2", "medium", "")
-	resp, err = cmd.Execute(context.Background(), Request{Args: "done 2"}, cc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !contains(resp.Text, "#2") {
-		t.Errorf("expected transition confirmation: %s", resp.Text)
-	}
-	item, _ := store.Get(testAgent, 2)
-	if item.Status != "done" {
-		t.Errorf("status: got %q, want %q", item.Status, "done")
+	if !contains(resp.Text, "closed item") {
+		t.Errorf("/todo list done = %q, want the done item listed", resp.Text)
 	}
 }
 
@@ -1084,12 +1253,20 @@ func TestTodoListAllStatuses(t *testing.T) {
 	}
 }
 
-// TestTodoKeyboardOptions verifies the keyboard options are returned.
+// TestTodoKeyboardOptions verifies the keyboard options are returned, and
+// that the done button keeps listing done todos through the list form —
+// its data is "list done" because the bare done verb is the usage error
+// since /todo done means close and nothing else (Richard, 2026-10-17).
 func TestTodoKeyboardOptions(t *testing.T) {
 	cmd := TodoCommand()
 	opts := cmd.KeyboardOptions(context.Background(), CommandContext{})
 	if len(opts) != 5 {
 		t.Errorf("expected 5 keyboard options, got %d", len(opts))
+	}
+	for _, opt := range opts {
+		if opt.Label == "done" && opt.Data != "list done" {
+			t.Errorf("done button data = %q, want %q — the bare done verb no longer lists", opt.Data, "list done")
+		}
 	}
 }
 
@@ -1385,5 +1562,358 @@ func TestTodoPriorityAliases(t *testing.T) {
 	}
 	if item, _ := store.Get(testAgent, 1); item.Priority != "medium" {
 		t.Errorf("rejected edit changed priority to %q", item.Priority)
+	}
+}
+
+// TestTodoDoneWithReason proves /todo done <id> <words> closes the id with
+// the words as the close reason — status done, completed_at set, reason
+// stored — instead of silently listing todos.
+func TestTodoDoneWithReason(t *testing.T) {
+	store := newTestTodoStore(t)
+	cc := newTestCC(store)
+	cmd := TodoCommand()
+
+	store.Add(testAgent, "ship it", "medium", "")
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: "done 1 landed abc"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Text != "#1 → done" {
+		t.Errorf("response = %q, want %q (not a listing)", resp.Text, "#1 → done")
+	}
+	item, err := store.Get(testAgent, 1)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if item.Status != "done" || item.CompletedAt == nil {
+		t.Errorf("item = {%s, completed_at=%v}, want done with completed_at set", item.Status, item.CompletedAt)
+	}
+	if item.CloseReason != "landed abc" {
+		t.Errorf("close_reason = %q, want %q", item.CloseReason, "landed abc")
+	}
+}
+
+// TestTodoDoneOnlyFirstIDWhenTextFollows pins Richard's 2026-10-30 ruling:
+// with a reason, only the first word is an id. "/todo done 1 2 commits
+// landed" closes #1 alone, with reason "2 commits landed", and leaves #2
+// open — a number at the start of a reason never closes a second ticket.
+func TestTodoDoneOnlyFirstIDWhenTextFollows(t *testing.T) {
+	store := newTestTodoStore(t)
+	cc := newTestCC(store)
+	cmd := TodoCommand()
+
+	store.Add(testAgent, "first", "medium", "")
+	store.Add(testAgent, "second", "medium", "")
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: "done 1 2 commits landed"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Text != "#1 → done" {
+		t.Errorf("response = %q, want one confirmation line for #1", resp.Text)
+	}
+	first, _ := store.Get(testAgent, 1)
+	if first.Status != "done" || first.CloseReason != "2 commits landed" {
+		t.Errorf("#1 = {%s, %q}, want done with reason %q", first.Status, first.CloseReason, "2 commits landed")
+	}
+	second, _ := store.Get(testAgent, 2)
+	if second.Status == "done" {
+		t.Errorf("#2 status = %q, want it left open — only the first word is an id", second.Status)
+	}
+}
+
+// TestTodoDoneReasonKeepsSpacing proves the reason's inner spacing survives
+// the parse byte for byte — double spaces, newlines, trailing spaces.
+func TestTodoDoneReasonKeepsSpacing(t *testing.T) {
+	store := newTestTodoStore(t)
+	cc := newTestCC(store)
+	cmd := TodoCommand()
+
+	store.Add(testAgent, "spacing", "medium", "")
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: "done 1 a  b\n  c"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(resp.Text, "#1") || contains(resp.Text, "error") {
+		t.Errorf("response = %q, want a clean transition", resp.Text)
+	}
+	item, _ := store.Get(testAgent, 1)
+	if item.CloseReason != "a  b\n  c" {
+		t.Errorf("close_reason = %q, want %q", item.CloseReason, "a  b\n  c")
+	}
+}
+
+// TestTodoDoneUnknownIDWithReason proves a missing id with a reason reports
+// the error per id instead of falling back to listing todos, and that
+// nothing else is closed.
+func TestTodoDoneUnknownIDWithReason(t *testing.T) {
+	store := newTestTodoStore(t)
+	cc := newTestCC(store)
+	cmd := TodoCommand()
+
+	store.Add(testAgent, "survivor", "medium", "")
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: "done 99 landed abc"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Text != "#99: error: todo #99 not found" {
+		t.Errorf("response = %q, want the per-id error", resp.Text)
+	}
+	if contains(resp.Text, "Todos") || contains(resp.Text, "survivor") {
+		t.Errorf("response = %q, must not be a listing", resp.Text)
+	}
+	item, _ := store.Get(testAgent, 1)
+	if item.Status != "open" {
+		t.Errorf("unrelated #1 = %q, want still open", item.Status)
+	}
+}
+
+// TestTodoDoneIDsOnlyKeepsEmptyReason is a characterisation test: /todo done
+// with ids only keeps today's behaviour — closed with an empty close_reason.
+func TestTodoDoneIDsOnlyKeepsEmptyReason(t *testing.T) {
+	store := newTestTodoStore(t)
+	cc := newTestCC(store)
+	cmd := TodoCommand()
+
+	store.Add(testAgent, "plain", "medium", "")
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: "done 1"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Text != "#1 → done" {
+		t.Errorf("response = %q, want %q", resp.Text, "#1 → done")
+	}
+	item, _ := store.Get(testAgent, 1)
+	if item.Status != "done" || item.CloseReason != "" {
+		t.Errorf("item = {%s, %q}, want done with empty reason", item.Status, item.CloseReason)
+	}
+}
+
+// TestTodoDoneSignedWordIsReason proves a plus-signed number after the ids
+// is reason text, never another id: `/todo done 13 +14 for the fix` closes
+// only #13 with that whole reason — the base parse read "+14" as id 14 and
+// closed it too, silently.
+func TestTodoDoneSignedWordIsReason(t *testing.T) {
+	store := newTestTodoStore(t)
+	cc := newTestCC(store)
+	cmd := TodoCommand()
+
+	store.Add(testAgent, "thirteen", "medium", "")
+	store.Add(testAgent, "fourteen", "medium", "")
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: "done 1 +2 for the fix"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Text != "#1 → done" {
+		t.Errorf("response = %q, want only #1 closed (no #2 line, no listing)", resp.Text)
+	}
+	if item, _ := store.Get(testAgent, 1); item.Status != "done" || item.CloseReason != "+2 for the fix" {
+		t.Errorf("#1 = {%s, %q}, want done with the plus-signed reason", item.Status, item.CloseReason)
+	}
+	if item, _ := store.Get(testAgent, 2); item.Status != "open" {
+		t.Errorf("#2 = %s, want still open — a signed word is reason, not an id", item.Status)
+	}
+}
+
+// TestTodoTransitionSignedTokenIsNotID proves the plain transition verbs
+// share the digits-only id grammar: `/todo start +3` names "+3" in a
+// refusal that changes nothing, instead of transitioning todo #3 (which
+// the old ParseInt-based id list once did).
+func TestTodoTransitionSignedTokenIsNotID(t *testing.T) {
+	store := newTestTodoStore(t)
+	cc := newTestCC(store)
+	cmd := TodoCommand()
+
+	store.Add(testAgent, "survivor", "medium", "")
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: "start +1"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Text != `/todo start: "+1" is not a todo id (ids are digits only); nothing was changed` {
+		t.Errorf("response = %q, want the refusal naming the word", resp.Text)
+	}
+	if item, _ := store.Get(testAgent, 1); item.Status != "open" {
+		t.Errorf("#1 = %s, want still open", item.Status)
+	}
+}
+
+// TestTodoGetEditSignedWordIsNotID proves get and edit read their ids
+// with the one digits-only grammar (memory.ParseTodoID) like every other
+// verb: a decorated word like "+7" never selects ticket 7 — for get it
+// is a search term, for edit it leaves no id and the verb answers its
+// usage line — where the old ParseInt read it as 7 and acted on the
+// ticket. The digits-only form still selects.
+func TestTodoGetEditSignedWordIsNotID(t *testing.T) {
+	store := newTestTodoStore(t)
+	cc := newTestCC(store)
+	cmd := TodoCommand()
+
+	id, err := store.Add(testAgent, "probe item", "medium", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed := "+" + strconv.FormatInt(id, 10)
+
+	// get's grammar is filters + search terms: a word that is not an id
+	// IS search text, so the signed word must reach the search query,
+	// never the id list (parsed here; the search itself needs an index
+	// the execute-level tests do not carry).
+	if a := parseTodoArgs("get " + signed); len(a.ids) != 0 || a.text != signed {
+		t.Errorf("parseTodoArgs(get %s) = {ids %v, text %q}, want the signed word as search text only", signed, a.ids, a.text)
+	}
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: "edit " + signed + " probed"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(resp.Text, "Usage: /todo edit") {
+		t.Errorf("edit %s response = %q, want the usage line — a signed word is not an id", signed, resp.Text)
+	}
+	if item, _ := store.Get(testAgent, id); item.Text != "probe item" {
+		t.Errorf("text = %q, want unchanged (the edit must not act on the signed word as an id)", item.Text)
+	}
+
+	resp, err = cmd.Execute(context.Background(), Request{Args: "get " + strconv.FormatInt(id, 10)}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(resp.Text, "probe item") {
+		t.Errorf("get %d response = %q, want the digits-only form to still select the todo", id, resp.Text)
+	}
+}
+
+// TestTodoIDListRefusesNonIDWord proves every id-list verb (start, drop,
+// reopen, show, rm) refuses an argument list containing a word that is not
+// a digits-only id, naming the verb and the word — the whole command
+// changes nothing. Skipping the word (this change's earlier behaviour for
+// signed tokens) and honouring it as an id (the base's ParseInt behaviour,
+// which read "+4" as 4) both act on a list the typist did not spell.
+func TestTodoIDListRefusesNonIDWord(t *testing.T) {
+	for _, tt := range []struct {
+		verb string
+		args string
+		word string
+	}{
+		{verb: "start", args: "start 3 +4", word: "+4"},
+		{verb: "drop", args: "drop 3 +4", word: "+4"},
+		{verb: "reopen", args: "reopen 3 +4", word: "+4"},
+		{verb: "show", args: "show 2 +3", word: "+3"},
+		{verb: "rm", args: "rm 2 +3", word: "+3"},
+		{verb: "drop", args: "drop 3 abc", word: "abc"},
+		{verb: "drop", args: "drop +4 3", word: "+4"},
+	} {
+		t.Run(tt.args, func(t *testing.T) {
+			store := newTestTodoStore(t)
+			cc := newTestCC(store)
+			cmd := TodoCommand()
+
+			store.Add(testAgent, "first", "medium", "")
+			store.Add(testAgent, "second", "medium", "")
+
+			resp, err := cmd.Execute(context.Background(), Request{Args: tt.args}, cc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := fmt.Sprintf("/todo %s: %q is not a todo id (ids are digits only); nothing was changed", tt.verb, tt.word)
+			if resp.Text != want {
+				t.Errorf("response = %q, want %q", resp.Text, want)
+			}
+			for _, id := range []int64{1, 2} {
+				item, err := store.Get(testAgent, id)
+				if err != nil {
+					t.Fatalf("#%d gone — rm must not delete anything on a refused list: %v", id, err)
+				}
+				if item.Status != "open" {
+					t.Errorf("#%d = %s, want still open — a refused list must change nothing", id, item.Status)
+				}
+			}
+		})
+	}
+}
+
+// TestTodoBatchTransitionUsageNamesVerb proves the no-ids usage line names
+// the VERB the command accepts (/todo start), not the target state
+// (/todo started). Bare "done" reaches its own line, which names the
+// reason form (Richard, 2026-10-17: done means close and nothing else).
+func TestTodoBatchTransitionUsageNamesVerb(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want string
+	}{
+		{raw: "start", want: "Usage: /todo start <id> [id...]"},
+		{raw: "begin", want: "Usage: /todo start <id> [id...]"},
+		{raw: "drop", want: "Usage: /todo drop <id> [id...]"},
+		{raw: "cancel", want: "Usage: /todo drop <id> [id...]"},
+		{raw: "reopen", want: "Usage: /todo reopen <id> [id...]"},
+		{raw: "done", want: "Usage: /todo done <ids> [reason]"},
+		{raw: "finish", want: "Usage: /todo done <ids> [reason]"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.raw, func(t *testing.T) {
+			store := newTestTodoStore(t)
+			cc := newTestCC(store)
+			cmd := TodoCommand()
+			resp, err := cmd.Execute(context.Background(), Request{Args: tt.raw}, cc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.Text != tt.want {
+				t.Errorf("/todo %s with no ids = %q, want %q", tt.raw, resp.Text, tt.want)
+			}
+		})
+	}
+}
+
+// TestTodoUsageDocumentsDoneReason proves the /todo help documents the
+// reason form of done and the ruling's boundary, word for word: the words
+// after the verb must start with an id (done never lists; done todos
+// list through /todo list done), and a reason cannot start with a
+// digits-only word (those are read as more ids; a signed word like "+1"
+// is reason). The whole done entry is pinned verbatim — a wording change
+// anywhere in it fails here (a previous round's looser substrings let
+// one through).
+func TestTodoUsageDocumentsDoneReason(t *testing.T) {
+	usage := todoUsage()
+	const wantDoneEntry = "  done <id> [reason]           Mark done, recording the reason (aliases: complete, finish, close).\n" +
+		"  done <id> <id>...            With a reason, only the first word is an id and the rest is the\n" +
+		"                               reason, kept as typed (done 7 2 commits landed closes #7 only).\n" +
+		"                               Ids only (done 7 8) closes them all. Done never lists (use\n" +
+		"                               /todo list done)\n"
+	if !contains(usage, wantDoneEntry) {
+		t.Errorf("todoUsage() = %q, want the done entry to read exactly:\n%s", usage, wantDoneEntry)
+	}
+	for _, sub := range TodoCommand().Subcommands {
+		if sub.Name != "done" {
+			continue
+		}
+		if !contains(sub.Description, "reason") {
+			t.Errorf("done subcommand description = %q, want it to mention the reason", sub.Description)
+		}
+	}
+}
+
+// TestTodoUsageDocumentsIDGrammar proves the /todo help states the id
+// grammar every verb follows, word for word: an <id> is a digits-only
+// ticket number (get and edit included — a signed word is never another
+// ticket), and a word that is not one in an id list (start, drop, reopen,
+// show, rm, and done's first word) is an error naming it that changes
+// nothing — the behaviour TestTodoIDListRefusesNonIDWord and
+// TestTodoDoneNonIDFormsAreErrors pin. The refusals must be documented
+// up front, not discovered on first hit.
+func TestTodoUsageDocumentsIDGrammar(t *testing.T) {
+	usage := todoUsage()
+	const wantGrammar = "An <id> is a digits-only ticket number; get and edit read theirs\n" +
+		"with the same grammar (a signed word like \"+7\" is search text or\n" +
+		"the usage line, never ticket 7). In an id list (start, drop,\n" +
+		"reopen, show, rm, and done's first word) a word that is not one is an error\n" +
+		"naming it, and nothing is changed.\n"
+	if !contains(usage, wantGrammar) {
+		t.Errorf("todoUsage() = %q, want the id-grammar paragraph to read exactly:\n%s", usage, wantGrammar)
 	}
 }

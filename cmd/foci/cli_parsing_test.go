@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -61,10 +63,12 @@ func TestParseSendFlags(t *testing.T) {
 			wantRest:     []string{"hello"},
 		},
 		{
-			name:         "--if-active after text",
-			args:         []string{"hello", "--if-active", "12h"},
-			wantIfActive: "12h",
-			wantRest:     []string{"hello"},
+			// The one placement rule (Dick, 2026-10-17): send's flags are
+			// read only before the message text starts — a gate pair after
+			// the first message word is message text, never a flag.
+			name:     "--if-active after the text is text",
+			args:     []string{"hello", "--if-active", "12h"},
+			wantRest: []string{"hello", "--if-active", "12h"},
 		},
 		{
 			name:     "--if-active without value at end",
@@ -138,7 +142,10 @@ func TestParseSendFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			flags, rest := parseSendFlags(tt.args)
+			flags, rest, err := parseSendFlags(tt.args)
+			if err != nil {
+				t.Fatalf("parseSendFlags(%v): %v", tt.args, err)
+			}
 			if flags.agent != tt.wantAgent {
 				t.Errorf("agent = %q, want %q", flags.agent, tt.wantAgent)
 			}
@@ -192,7 +199,10 @@ func TestParseSendFlagsAsyncSync(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			flags, rest := parseSendFlags(tt.args)
+			flags, rest, err := parseSendFlags(tt.args)
+			if err != nil {
+				t.Fatalf("parseSendFlags(%v): %v", tt.args, err)
+			}
 			if flags.async != tt.wantAsync {
 				t.Errorf("async = %v, want %v", flags.async, tt.wantAsync)
 			}
@@ -210,9 +220,12 @@ func TestParseSendFlagsAsyncSync(t *testing.T) {
 }
 
 func TestParseSendFlagsWait(t *testing.T) {
-	flags, rest := parseSendFlags([]string{
+	flags, rest, err := parseSendFlags([]string{
 		"--wait-cold", "5m", "--wait-active", "30s", "--deadline", "3h", "--no-gate", "hi",
 	})
+	if err != nil {
+		t.Fatalf("parseSendFlags: %v", err)
+	}
 	if flags.waitCold != "5m" {
 		t.Errorf("waitCold = %q, want 5m", flags.waitCold)
 	}
@@ -262,7 +275,10 @@ func TestParseSendFlagsMessageFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			flags, rest := parseSendFlags(tt.args)
+			flags, rest, err := parseSendFlags(tt.args)
+			if err != nil {
+				t.Fatalf("parseSendFlags(%v): %v", tt.args, err)
+			}
 			if flags.messageText != tt.wantMT {
 				t.Errorf("messageText = %q, want %q", flags.messageText, tt.wantMT)
 			}
@@ -279,13 +295,243 @@ func TestParseSendFlagsMessageFlags(t *testing.T) {
 	}
 }
 
+// TestSendFreeTextBoundary pins the one placement rule on `foci send`'s
+// line (Dick, 2026-10-17, applied to send by the round-27 review): send's
+// flags are read only before the message text starts; every word from the
+// first message word on is message verbatim, whatever it looks like. The
+// three boundary refusals the rule carries elsewhere apply here too: a
+// connection flag, a value-flag that ends the line, a second complete -a
+// pair.
+func TestSendFreeTextBoundary(t *testing.T) {
+	t.Setenv("FOCI_AGENT", "")
+	for _, kv := range []string{"FOCI_IF_WARM", "FOCI_WAIT_COLD", "FOCI_HUMAN", "FOCI_SESSION", "FOCI_NO_GATE", "FOCI_STEER", "FOCI_MODEL"} {
+		t.Setenv(kv, "")
+	}
+
+	// Flag look-alikes after the first message word are message words;
+	// the same flags before it keep their meaning.
+	for _, tt := range []struct {
+		name       string
+		args       []string
+		wantText   []string
+		wantIfWarm string
+		wantAgent  string
+	}{
+		{
+			name:     "trailing gate pair is message text",
+			args:     []string{"hello", "--if-warm", "8h"},
+			wantText: []string{"hello", "--if-warm", "8h"},
+		},
+		{
+			name:       "leading gate pair still gates",
+			args:       []string{"--if-warm", "8h", "hello"},
+			wantText:   []string{"hello"},
+			wantIfWarm: "8h",
+		},
+		{
+			name:     "trailing agent pair is message text",
+			args:     []string{"hello", "-a", "research"},
+			wantText: []string{"hello", "-a", "research"},
+		},
+		{
+			name:      "leading agent pair still selects",
+			args:      []string{"-a", "research", "hello"},
+			wantText:  []string{"hello"},
+			wantAgent: "research",
+		},
+		{
+			name:     "a help word inside the message is message",
+			args:     []string{"hello", "-h"},
+			wantText: []string{"hello", "-h"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			flags, rest, err := parseSendFlags(tt.args)
+			if err != nil {
+				t.Fatalf("parseSendFlags(%v): %v", tt.args, err)
+			}
+			if !slices.Equal(rest, tt.wantText) {
+				t.Errorf("rest = %v, want %v", rest, tt.wantText)
+			}
+			if flags.ifWarm != tt.wantIfWarm {
+				t.Errorf("ifWarm = %q, want %q", flags.ifWarm, tt.wantIfWarm)
+			}
+			if flags.agent != tt.wantAgent {
+				t.Errorf("agent = %q, want %q", flags.agent, tt.wantAgent)
+			}
+		})
+	}
+
+	// The three boundary refusals, decided before anything is sent.
+	for _, tt := range []struct {
+		args    []string
+		wantErr string
+	}{
+		{args: []string{"--addr", "h:p", "hello"}, wantErr: "--addr must come before the send command word"},
+		{args: []string{"-a", "clutch", "--socket"}, wantErr: "--socket must come before the send command word"},
+		{args: []string{"--if-warm"}, wantErr: "flag --if-warm needs a value"},
+		{args: []string{"-a", "clutch", "-s"}, wantErr: "flag -s needs a value"},
+		{args: []string{"-mt"}, wantErr: "flag -mt needs a value"},
+		{args: []string{"-a", "a", "-a", "b", "hello"}, wantErr: "only one -a/--agent may precede the text"},
+	} {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			_, _, err := parseSendFlags(tt.args)
+			if err == nil || err.Error() != tt.wantErr {
+				t.Errorf("parseSendFlags(%v) err = %v, want %q", tt.args, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestSendFreeTextBody proves the placement rule at the wire level: a
+// gate pair typed after the message starts reaches the gateway as message
+// text and never as a body flag, while the same pair before the text
+// still gates the send.
+func TestSendFreeTextBody(t *testing.T) {
+	t.Setenv("FOCI_IF_WARM", "")
+	body := captureBody(t, func(base string) error {
+		return cmdSend(base, []string{"-a", "clutch", "hello", "--if-warm", "8h"})
+	})
+	if body["text"] != "hello --if-warm 8h" {
+		t.Errorf("text = %v, want the trailing pair inside the message", body["text"])
+	}
+	if _, ok := body["if_active"]; ok {
+		t.Errorf("body carries if_active = %v — a gate after the text is message, not a gate", body["if_active"])
+	}
+
+	body = captureBody(t, func(base string) error {
+		return cmdSend(base, []string{"-a", "clutch", "--if-warm", "8h", "hello"})
+	})
+	if body["text"] != "hello" {
+		t.Errorf("text = %v, want hello only", body["text"])
+	}
+	if body["if_active"] != "8h" {
+		t.Errorf("if_active = %v, want 8h — the leading gate must keep its meaning", body["if_active"])
+	}
+}
+
+// TestBranchFreeTextBody is TestSendFreeTextBody's branch side: a switch
+// typed after the branch text starts is text; before it, it is the flag.
+func TestBranchFreeTextBody(t *testing.T) {
+	body := captureBody(t, func(base string) error {
+		return cmdBranch(base, []string{"-a", "clutch", "morning check", "--no-gate"})
+	})
+	if body["text"] != "morning check --no-gate" {
+		t.Errorf("text = %v, want the trailing switch inside the message", body["text"])
+	}
+	if v, ok := body["wait_none"]; ok {
+		t.Errorf("body carries wait_none = %v — a switch after the text is message, not a flag", v)
+	}
+
+	body = captureBody(t, func(base string) error {
+		return cmdBranch(base, []string{"-a", "clutch", "--no-gate", "morning check"})
+	})
+	if body["text"] != "morning check" {
+		t.Errorf("text = %v, want morning check only", body["text"])
+	}
+	if body["wait_none"] != true {
+		t.Errorf("wait_none = %v, want true — the leading switch must keep its meaning", body["wait_none"])
+	}
+
+	// The boundary refusals carry to branch's line as well.
+	gw := &recordingGateway{}
+	srv := httptest.NewServer(http.HandlerFunc(gw.handle))
+	defer srv.Close()
+	for _, tt := range []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{name: "connection flag before the text", args: []string{"--addr", "h:p", "check"}, wantErr: "--addr must come before the branch command word"},
+		{name: "dangling gate", args: []string{"--if-warm"}, wantErr: "flag --if-warm needs a value"},
+		{name: "second agent pair", args: []string{"-a", "a", "-a", "b", "check"}, wantErr: "only one -a/--agent may precede the text"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			before := len(gw.requests())
+			err := cmdBranch(srv.URL, tt.args)
+			if err == nil || err.Error() != tt.wantErr {
+				t.Errorf("cmdBranch(%v) err = %v, want %q", tt.args, err, tt.wantErr)
+			}
+			if n := len(gw.requests()) - before; n != 0 {
+				t.Errorf("%d request(s) reached the gateway, want none", n)
+			}
+		})
+	}
+}
+
+// TestEvalFreeText proves `foci eval`'s shell command is free text under
+// the one placement rule: a flag-looking word inside it (the reviewer's
+// repro: `foci eval grep -a foo file.txt`, which selected agent foo and
+// dropped the words on the whole-line scan) is command text verbatim and
+// selects nothing, while the flags before it keep their meaning.
+func TestEvalFreeText(t *testing.T) {
+	t.Setenv("FOCI_AGENT", "")
+	body := captureBody(t, func(base string) error {
+		return cmdEval(base, []string{"grep", "-a", "foo", "file.txt"})
+	})
+	if _, ok := body["agent"]; ok {
+		t.Errorf("body carries agent = %v — an -a inside the command text must not select", body["agent"])
+	}
+	if !strings.Contains(fmt.Sprint(body["text"]), "grep -a foo file.txt") {
+		t.Errorf("text = %v, want the command words verbatim", body["text"])
+	}
+
+	body = captureBody(t, func(base string) error {
+		return cmdEval(base, []string{"-a", "research", "ls", "-la"})
+	})
+	if body["agent"] != "research" {
+		t.Errorf("agent = %v, want research — the leading pair still selects", body["agent"])
+	}
+	// Exact text: the leading "-a research" pair selects the agent and is
+	// not part of the shell command.
+	if want := "Run this command and show the output:\n```\nls -la\n```"; body["text"] != want {
+		t.Errorf("text = %q, want %q — the leading agent pair leaked into the command?", body["text"], want)
+	}
+
+	// The boundary refusals, and help before the text.
+	gw := &recordingGateway{}
+	srv := httptest.NewServer(http.HandlerFunc(gw.handle))
+	defer srv.Close()
+	for _, tt := range []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{name: "connection flag before the text", args: []string{"--addr", "h:p", "ls"}, wantErr: "--addr must come before the eval command word"},
+		{name: "dangling -a", args: []string{"-a"}, wantErr: "flag -a needs a value"},
+		{name: "second agent pair", args: []string{"-a", "a", "-a", "b", "ls"}, wantErr: "only one -a/--agent may precede the text"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			before := len(gw.requests())
+			err := cmdEval(srv.URL, tt.args)
+			if err == nil || err.Error() != tt.wantErr {
+				t.Errorf("cmdEval(%v) err = %v, want %q", tt.args, err, tt.wantErr)
+			}
+			if n := len(gw.requests()) - before; n != 0 {
+				t.Errorf("%d request(s) reached the gateway, want none", n)
+			}
+		})
+	}
+	stderr := captureStderr(t, func() {
+		if err := cmdEval(srv.URL, []string{"-h"}); err != nil {
+			t.Errorf("eval -h returned error: %v", err)
+		}
+	})
+	if !strings.Contains(stderr, "Usage: foci eval") {
+		t.Errorf("eval -h stderr = %q, want the usage", stderr)
+	}
+}
+
 // TestParseBranchFlagsWait proves `foci branch` parses the wait gates with
 // the same names, aliases and env vars as `foci send`, and never leaves one
 // in the message text.
 func TestParseBranchFlagsWait(t *testing.T) {
-	flags, rest := parseBranchFlags([]string{
+	flags, rest, err := parseBranchFlags([]string{
 		"--wait-cold", "55m", "--wait-active", "30s", "--deadline", "3h", "--no-gate", "morning", "check",
 	})
+	if err != nil {
+		t.Fatalf("parseBranchFlags: %v", err)
+	}
 	if flags.waitCold != "55m" {
 		t.Errorf("waitCold = %q, want 55m", flags.waitCold)
 	}
@@ -309,44 +555,84 @@ func TestParseBranchFlagsWaitEnv(t *testing.T) {
 	t.Setenv("FOCI_WAIT_COLD", "55m")
 	t.Setenv("FOCI_WAIT_TIMEOUT", "4h")
 	t.Setenv("FOCI_NO_GATE", "1")
-	flags, _ := parseBranchFlags([]string{"hi"})
+	flags, _, err := parseBranchFlags([]string{"hi"})
+	if err != nil {
+		t.Fatalf("parseBranchFlags: %v", err)
+	}
 	if flags.waitCold != "55m" || flags.waitTimeout != "4h" || !flags.noGate {
 		t.Errorf("env defaults not applied: %+v", flags.waitFlags)
 	}
 
 	// An explicit flag wins over the env var.
-	flags, _ = parseBranchFlags([]string{"--wait-cold", "10m", "hi"})
+	flags, _, err = parseBranchFlags([]string{"--wait-cold", "10m", "hi"})
+	if err != nil {
+		t.Fatalf("parseBranchFlags: %v", err)
+	}
 	if flags.waitCold != "10m" {
 		t.Errorf("waitCold = %q, want the flag value 10m", flags.waitCold)
 	}
 }
 
-// TestParseCommandFlagsWait proves `foci command` parses the wait gates with
-// the same names, aliases and env vars as `foci send`, and never leaves one
-// in the command string.
+// TestParseCommandFlagsWait proves the command family's disposition of the
+// one scan (the ping/pair shorthands) parses the wait gates with the same
+// names, aliases and env vars as `foci send`, and never leaves one in the
+// command words.
 func TestParseCommandFlagsWait(t *testing.T) {
-	flags, rest := parseCommandFlags([]string{
+	var flags commandFlags
+	lead, err := scanCommandLine([]string{
 		"--wait-cold", "55m", "--wait-user-inactive", "2h", "--deadline", "3h", "reset",
-	})
+	}, &flags, commandLead, false)
+	if err != nil {
+		t.Fatalf("scanCommandLine: %v", err)
+	}
+	flags.applyEnvDefaults()
 	if flags.waitCold != "55m" || flags.waitUserInactive != "2h" || flags.waitTimeout != "3h" {
 		t.Errorf("wait flags not parsed: %+v", flags.waitFlags)
 	}
-	if len(rest) != 1 || rest[0] != "reset" {
-		t.Errorf("rest = %v, want the command word only", rest)
+	if len(lead.rest) != 1 || lead.rest[0] != "reset" {
+		t.Errorf("rest = %v, want the command word only", lead.rest)
 	}
 }
 
 // TestParseCommandFlagsWaitEnv proves the FOCI_WAIT_* env defaults flow
-// through parseCommandFlags.
+// through the command family's scan.
 func TestParseCommandFlagsWaitEnv(t *testing.T) {
 	t.Setenv("FOCI_WAIT_COLD", "55m")
 	t.Setenv("FOCI_NO_GATE", "1")
-	flags, rest := parseCommandFlags([]string{"/reset"})
+	var flags commandFlags
+	lead, err := scanCommandLine([]string{"/reset"}, &flags, commandLead, false)
+	if err != nil {
+		t.Fatalf("scanCommandLine: %v", err)
+	}
+	flags.applyEnvDefaults()
 	if flags.waitCold != "55m" || !flags.noGate {
 		t.Errorf("env defaults not applied: %+v", flags.waitFlags)
 	}
-	if len(rest) != 1 || rest[0] != "/reset" {
-		t.Errorf("rest = %v, want [/reset]", rest)
+	if len(lead.rest) != 1 || lead.rest[0] != "/reset" {
+		t.Errorf("rest = %v, want [/reset]", lead.rest)
+	}
+}
+
+// TestParseCommandLineEnvDefaults pins the same env defaults on the
+// free-text disposition `foci command` itself uses: FOCI_WAIT_* and
+// FOCI_HUMAN flow into the flags while the slash text stays untouched —
+// the in-process twin of the black-box command tests, which per-test
+// coverage cannot see.
+func TestParseCommandLineEnvDefaults(t *testing.T) {
+	t.Setenv("FOCI_WAIT_COLD", "55m")
+	t.Setenv("FOCI_NO_GATE", "1")
+	t.Setenv("FOCI_HUMAN", "1")
+	var flags commandFlags
+	lead, err := scanCommandLine([]string{"/reset"}, &flags, commandLead, true)
+	if err != nil {
+		t.Fatalf("scanCommandLine: %v", err)
+	}
+	flags.applyEnvDefaults()
+	if flags.waitCold != "55m" || !flags.noGate || !flags.humanFlag.human {
+		t.Errorf("env defaults not applied: %+v", flags)
+	}
+	if len(lead.rest) != 1 || lead.rest[0] != "/reset" {
+		t.Errorf("text = %v, want [/reset]", lead.rest)
 	}
 }
 
@@ -474,7 +760,9 @@ func TestBranchAndCommandHelpListWaitFlags(t *testing.T) {
 	}
 }
 
-// TestParseAPIKeyFlag tests --api-key flag parsing in various formats.
+// TestParseAPIKeyFlag tests --api-key flag parsing in various formats,
+// through the shared global-flag scanner (parseGlobalFlags) every command
+// uses.
 func TestParseAPIKeyFlag(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -522,9 +810,9 @@ func TestParseAPIKeyFlag(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			key, rest := parseAPIKeyFlag(tt.args)
-			if key != tt.wantKey {
-				t.Errorf("apiKey = %q, want %q", key, tt.wantKey)
+			globals, rest := parseGlobalFlags(tt.args)
+			if globals.apiKey != tt.wantKey {
+				t.Errorf("apiKey = %q, want %q", globals.apiKey, tt.wantKey)
 			}
 			if len(rest) == 0 && len(tt.wantRest) == 0 {
 				return
@@ -631,5 +919,238 @@ func TestParseAgentFlag(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestSplitGlobalFlags pins where the global --addr/--api-key/--socket scan
+// stops: at the command word, the first argument that is not one of them. A
+// command's free-text argument — a todo close reason of "--api-key sekret"
+// or "--addr=x" — must reach the command untouched, while the documented
+// form (global flags before the command) still parses, and anything unknown
+// is left for the command dispatch to refuse as before.
+func TestSplitGlobalFlags(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		wantFlags []string
+		wantRest  []string
+	}{
+		{
+			name:      "no global flags",
+			args:      []string{"send", "hello"},
+			wantFlags: nil,
+			wantRest:  []string{"send", "hello"},
+		},
+		{
+			name:      "global flags before the command",
+			args:      []string{"--socket", "/x.sock", "--api-key=k", "--addr", "a:1", "status"},
+			wantFlags: []string{"--socket", "/x.sock", "--api-key=k", "--addr", "a:1"},
+			wantRest:  []string{"status"},
+		},
+		{
+			name:      "flag look-alikes after the command word are not global",
+			args:      []string{"todo", "done", "-a", "a", "7", "--api-key", "sekret"},
+			wantFlags: nil,
+			wantRest:  []string{"todo", "done", "-a", "a", "7", "--api-key", "sekret"},
+		},
+		{
+			name:      "=attached look-alike after the command word is not global",
+			args:      []string{"todo", "done", "7", "--addr=nowhere:9"},
+			wantFlags: nil,
+			wantRest:  []string{"todo", "done", "7", "--addr=nowhere:9"},
+		},
+		{
+			name:      "unknown -argument ends the global section",
+			args:      []string{"--bogus", "send", "hi"},
+			wantFlags: nil,
+			wantRest:  []string{"--bogus", "send", "hi"},
+		},
+		{
+			name:      "trailing --flag without a value is left for the dispatch",
+			args:      []string{"--addr"},
+			wantFlags: nil,
+			wantRest:  []string{"--addr"},
+		},
+		{
+			name:      "no arguments",
+			args:      nil,
+			wantFlags: nil,
+			wantRest:  nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			flags, rest := splitGlobalFlags(tt.args)
+			if !slices.Equal(flags, tt.wantFlags) {
+				t.Errorf("splitGlobalFlags(%v) flags = %v, want %v", tt.args, flags, tt.wantFlags)
+			}
+			if !slices.Equal(rest, tt.wantRest) {
+				t.Errorf("splitGlobalFlags(%v) rest = %v, want %v", tt.args, rest, tt.wantRest)
+			}
+		})
+	}
+}
+
+// TestParseGlobalFlags pins the whole-line contract every command but
+// `todo` relies on (the F1 side that is base behaviour): the three
+// transport flags are extracted — and removed — from anywhere on the
+// line, in both spellings, and everything else is left for the command.
+// TestMainGlobalFlagScope drives the same rule through the real main().
+func TestParseGlobalFlags(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		wantAddr string
+		wantKey  string
+		wantSock string
+		wantRest []string
+	}{
+		{
+			name:     "flags before the command word",
+			args:     []string{"--addr", "a:1", "--api-key", "k", "--socket", "/s", "send", "hi"},
+			wantAddr: "a:1",
+			wantKey:  "k",
+			wantSock: "/s",
+			wantRest: []string{"send", "hi"},
+		},
+		{
+			name:     "two-token flag after the command word",
+			args:     []string{"send", "-a", "x", "--addr", "a:1", "hi"},
+			wantAddr: "a:1",
+			wantRest: []string{"send", "-a", "x", "hi"},
+		},
+		{
+			name:     "attached flags after the command word",
+			args:     []string{"status", "--addr=a:1", "--api-key=k", "--socket=/s"},
+			wantAddr: "a:1",
+			wantKey:  "k",
+			wantSock: "/s",
+			wantRest: []string{"status"},
+		},
+		{
+			name:     "no flags",
+			args:     []string{"send", "hi"},
+			wantRest: []string{"send", "hi"},
+		},
+		{
+			name:     "trailing flag without a value stays for the command",
+			args:     []string{"send", "--addr"},
+			wantRest: []string{"send", "--addr"},
+		},
+		{
+			name:     "only the exact flag names match",
+			args:     []string{"send", "--addrs", "a:1", "hi"},
+			wantRest: []string{"send", "--addrs", "a:1", "hi"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			globals, rest := parseGlobalFlags(tt.args)
+			if globals.addr != tt.wantAddr || globals.apiKey != tt.wantKey || globals.socket != tt.wantSock {
+				t.Errorf("parseGlobalFlags(%v) = {%q, %q, %q}, want {%q, %q, %q}",
+					tt.args, globals.addr, globals.apiKey, globals.socket, tt.wantAddr, tt.wantKey, tt.wantSock)
+			}
+			if !slices.Equal(rest, tt.wantRest) {
+				t.Errorf("parseGlobalFlags(%v) rest = %v, want %v", tt.args, rest, tt.wantRest)
+			}
+		})
+	}
+}
+
+// TestFlagMatch pins the one spelling authority every flag scan delegates
+// to: exact token, =attached value, and non-matches (including a longer
+// flag that merely starts like the named one).
+func TestFlagMatch(t *testing.T) {
+	for _, tt := range []struct {
+		tok        string
+		name       string
+		wantValue  string
+		wantAttach bool
+		wantOK     bool
+	}{
+		{tok: "--addr", name: "--addr", wantOK: true},
+		{tok: "--addr=a:1", name: "--addr", wantValue: "a:1", wantAttach: true, wantOK: true},
+		{tok: "-a", name: "-a", wantOK: true},
+		{tok: "-a=x", name: "-a", wantValue: "x", wantAttach: true, wantOK: true},
+		{tok: "--addrs", name: "--addr", wantOK: false},
+		{tok: "--agent", name: "-a", wantOK: false},
+		{tok: "addr", name: "--addr", wantOK: false},
+		{tok: "--addr", name: "--api-key", wantOK: false},
+	} {
+		value, attached, ok := flagMatch(tt.tok, tt.name)
+		if value != tt.wantValue || attached != tt.wantAttach || ok != tt.wantOK {
+			t.Errorf("flagMatch(%q, %q) = {%q, %v, %v}, want {%q, %v, %v}",
+				tt.tok, tt.name, value, attached, ok, tt.wantValue, tt.wantAttach, tt.wantOK)
+		}
+	}
+}
+
+// TestSendAndBranchMessageSourceEnvDefaults proves FOCI_MESSAGE_TEXT and
+// FOCI_MESSAGE_FILE are the env fallbacks of -mt and -mf for both send and
+// branch: with no message words on the line, the env value is the text.
+func TestSendAndBranchMessageSourceEnvDefaults(t *testing.T) {
+	file := t.TempDir() + "/msg.txt"
+	if err := os.WriteFile(file, []byte("from the file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, cmd := range []struct {
+		name string
+		run  func(base string, args []string) error
+	}{
+		{"send", cmdSend},
+		{"branch", cmdBranch},
+	} {
+		for _, tc := range []struct {
+			env, value, want string
+		}{
+			{"FOCI_MESSAGE_TEXT", "from the env", "from the env"},
+			{"FOCI_MESSAGE_FILE", file, "from the file"},
+		} {
+			t.Run(cmd.name+"/"+tc.env, func(t *testing.T) {
+				t.Setenv("FOCI_MESSAGE_TEXT", "")
+				t.Setenv("FOCI_MESSAGE_FILE", "")
+				t.Setenv(tc.env, tc.value)
+				body := captureBody(t, func(base string) error { return cmd.run(base, nil) })
+				if body["text"] != tc.want {
+					t.Errorf("text = %v, want %q from %s", body["text"], tc.want, tc.env)
+				}
+			})
+		}
+	}
+}
+
+// TestSendUsageFlagRowsAreParsed proves every row of `foci send -h`'s
+// Flags block is a flag row the parser accepts in the leading position
+// (or the indented continuation of one): the help cannot list a flag the
+// parser lacks, and nothing but flag rows can sit in the block.
+func TestSendUsageFlagRowsAreParsed(t *testing.T) {
+	help := captureStderr(t, sendUsage)
+	_, block, ok := strings.Cut(help, "\nFlags:\n")
+	if !ok {
+		t.Fatalf("send usage has no Flags block:\n%s", help)
+	}
+	block, _, _ = strings.Cut(block, "\n\n")
+	rows := 0
+	for _, line := range strings.Split(block, "\n") {
+		if strings.HasPrefix(line, strings.Repeat(" ", 28)) && strings.TrimSpace(line) != "" {
+			continue // continuation of the row above
+		}
+		if !strings.HasPrefix(line, "  -") {
+			t.Errorf("Flags row %q is not a flag row (\"  -flag  description\") or a continuation", line)
+			continue
+		}
+		rows++
+		flag := strings.TrimSuffix(strings.Fields(line)[0], ",")
+		_, rest, err := parseSendFlags([]string{flag, "1m", "msg"})
+		if err != nil {
+			t.Errorf("help lists %s, but the parser refuses it: %v", flag, err)
+			continue
+		}
+		if len(rest) == 0 || rest[0] == flag || rest[len(rest)-1] != "msg" {
+			t.Errorf("help lists %s, but the parser does not take it as a flag (rest = %q)", flag, rest)
+		}
+	}
+	if rows < 20 {
+		t.Errorf("found %d flag rows, want the full list (block parse broken?):\n%s", rows, block)
 	}
 }

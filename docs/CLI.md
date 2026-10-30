@@ -12,14 +12,14 @@ All commands communicate over HTTP to the gateway. The CLI auto-discovers the ga
 
 ## Global Flags
 
-These flags are accepted by all commands:
+These flags are accepted by all commands. On the commands that take free text (`todo done`, `command`, `send`, `branch`, `eval`) they must come before the text: see [Flag placement](#flag-placement).
 
 | Flag | Short | Env var | Description |
 |------|-------|---------|-------------|
 | `--help` | `-h` | | Show usage for any command (e.g. `foci send -h`). |
-| `--socket <path>` | | `FOCI_GW_SOCK` | Gateway Unix socket path. Auto-detected from `~/data/foci-gw.sock`. No API key needed. |
-| `--addr <host:port>` | | `FOCI_ADDR` | Gateway TCP address. Default: `127.0.0.1:18791`. Used when no Unix socket is available. |
-| `--agent <id>` | `-a` | `FOCI_AGENT` | Target a specific agent. Default: first configured agent. |
+| `--socket <path>` | | `FOCI_GW_SOCK` | Gateway Unix socket path. Auto-detected from `~/data/foci-gw.sock`. No API key needed. An explicit `--socket` path that does not exist or is not a socket is an error naming the path; the CLI never falls back to TCP from it. (`FOCI_GW_SOCK` and the default path do fall back to TCP when no socket is there.) |
+| `--addr <host:port>` | | `FOCI_ADDR` | Gateway TCP address. Default: `127.0.0.1:18791`. Used when no Unix socket is available and no `--socket` was given. |
+| `--agent <id>` | `-a` | `FOCI_AGENT` | Target a specific agent. Default: first configured agent — `todo done` requires one (todo ids are per agent). |
 | `--session <sel>` | `-s` | `FOCI_SESSION` | Target session selector: full session key, session name, or chat alias. Empty = the agent's default session. Send/branch/score read the env var; `command` accepts `-s` but does **not** read `FOCI_SESSION` (see `command`). |
 | `--model <model>` | `-m` | `FOCI_MODEL` | Model override: group name (`powerful`/`fast`/`cheap`), model name, or `developer/model_id`. See [MODELS.md](MODELS.md). |
 | `--if-warm <dur>` (`--if-active`) | | `FOCI_IF_WARM` (`FOCI_IF_ACTIVE`) | **Session-level**: skip if the target session has not run a turn within duration (e.g. `8h`, `30m`). A turn currently in flight always counts as active. |
@@ -44,6 +44,22 @@ These flags are accepted by all commands:
 | `--queue` | | `FOCI_STEER` | **Send**: run as its own fresh turn, behind a running one if any (an idle session starts it at once; never plan feedback, never an ask answer). Mutually exclusive with `--steer` (env value `queue`). |
 
 **Resolution order:** explicit flag > env var > default. Every flag has a corresponding `FOCI_` env var and vice versa. One exception: the delivery-mode pair `--steer`/`--queue` — giving a flag plus the *other* mode's `FOCI_STEER` value is a usage error (two live sources disagreeing), rather than the flag silently winning.
+
+## Flag placement
+
+`todo done`, `command`, `send`, `branch` and `eval` take free text: a close reason, a slash command, a message, a branch text or a shell command. On these commands, flags go **before** the text (Dick, 2026-10-17):
+
+- The connection flags (`--socket`, `--addr`, `--api-key`) go before the command word.
+- The command's own flags (`-a`, `-s`, the gate and wait flags, `--human`, and so on) go after the command word and before the text. `todo done` has one own flag, `-a`, before the id.
+- The text starts at the first word that is not one of those flags. Every word from there on is text, kept as typed, whatever it looks like. `foci send hello -a research` sends `hello -a research` to the default agent. `foci command -a helen /reset --if-warm 8h` dispatches `/reset --if-warm 8h` with no gate. A `-h` inside the text is text; only `-h` before the text prints the usage.
+
+Three shapes are errors, and nothing is sent:
+
+- a connection flag after the command word (`foci send --addr h:p hello` → `--addr must come before the send command word`);
+- a value flag that ends the line with no value (`foci send --if-warm` → `flag --if-warm needs a value`);
+- a second `-a`/`--agent` pair before the text (`only one -a/--agent may precede the text`).
+
+Every other command reads its flags anywhere on the line (`foci pair example.com -a helen` selects helen). On `ping` and `pair`, a value flag at the end of the line stays a word (`foci ping -s` dispatches `/-s /ping`).
 
 ## Environment Variables
 
@@ -71,6 +87,8 @@ Every response carries a **routing receipt** — which session the message resol
 **Wait gates (deferral, not blocking):** an unmet `--wait-*` gate never blocks the CLI — the gateway stores the request (it survives a restart), answers with a "deferred" receipt immediately (even with `--sync`), and delivers it once the condition holds; `--wait-timeout`/`--deadline` (default **2h**) delivers anyway. A send with no if/wait flag defaults to `--wait-cold 1m` (waits for 1m of session idleness first); `--no-gate` opts out of the default and any wait condition.
 
 **Delivery mode (`--steer` / `--queue`):** chooses what the message does when the agent is already mid-turn. `--steer` folds into the running turn at its next tool boundary. On an API-mode agent that is only a turn a user started (a chat message or a choice-carrying send): a system turn in flight (cron, keepalive, webhook, a plain `foci send` with no mode) is never folded, and the message waits for it to finish and then runs as its own fresh turn. On a delegated agent (Claude Code, opencode, codex) the backend's own in-flight flag also counts, so a `--steer` CAN fold into a running cron/keepalive/webhook turn. An idle session delivers at once. `--queue` always runs as its own fresh turn, behind a running one if any. Without `--human`, neither mode ever answers for the human: it is never consumed as plan feedback, an ask answer or a CC re-login code. With `--human`, `--steer` is treated like a typed chat reply and CAN be captured as the answer to a pending ask, as plan feedback or as the re-login code; `--queue` is never consumed by any of them. This holds whether the message is delivered at once, folded or buffered mid-turn and replayed as a follow-up turn. An explicit mode skips only send's implicit `--wait-cold 1m` default — explicit `--if-*`/`--wait-*` gates still apply verbatim (a deferred mode-carrying send keeps its mode), and `--no-gate` still skips everything. With `--sync`, a mode-carrying send against a session with a turn in flight returns the 202 "queued" receipt immediately — the reply belongs to the turns, so the CLI does not block for it — while an idle session blocks and returns the reply as usual (the mode is inert with nothing in flight). With `--broadcast` the mode is ignored. Both flags take their value from `FOCI_STEER` (`steer`/`queue`; other values are ignored); giving both — two flags, or a flag plus the other switch's env value — is a usage error.
+
+Flags go before the message: see [Flag placement](#flag-placement).
 
 **Usage:**
 ```
@@ -171,6 +189,8 @@ A `-s` name that matches no key, named session or alias creates a **new, empty s
 By default, branch is **asynchronous** (fire-and-forget): the CLI returns immediately with "queued" and the agent's response is delivered to Telegram. Use `--sync`/`--wait` to block until the response is available.
 
 **Wait gates (deferral, not blocking):** `foci branch` accepts the same `--wait-*` gates as `foci send`, evaluated against the PARENT session. Unlike send there is **no default gate**: a branch with no if/wait flag runs immediately. An unmet `--wait-*` gate never blocks the CLI — the gateway stores the branch request (it survives a restart), answers with a "deferred" receipt immediately (even with `--sync`), and creates the branch once the condition holds, forking from the parent's state at that moment; `--wait-timeout`/`--deadline` (default **2h**) branches anyway. `--no-gate` ignores any wait condition. One gated request never defers: on a backend that cannot branch (rare — every shipped backend can), a `--wait-*` gate with `-s` naming anything but the default session is refused immediately with the same error as an ungated branch — nothing is queued, because the deferral could only ever end in that refusal.
+
+Flags go before the branch text: see [Flag placement](#flag-placement).
 
 **Usage:**
 ```
@@ -291,6 +311,8 @@ Lists the loaded rubrics (name, version, kind, value shape, agents, whether the 
 
 Wraps a shell command in a prompt asking the agent to execute it and show the output. The command is sent as a message to the agent's main session. Always synchronous (waits for the response).
 
+`-a/--agent` goes before the shell command: see [Flag placement](#flag-placement). `foci eval grep -a foo file.txt` runs `grep -a foo file.txt` and selects no agent.
+
 **Usage:**
 ```
 foci eval [-a agent] <shell command>
@@ -327,6 +349,8 @@ Every response carries the same **routing receipt** as `send` — which session 
 
 **`--human`:** declare a human (not a cron) dispatched this command. A command starts no turn, so the declaration itself stamps the user-attention timestamp on the command's target session once the command dispatches. A command that is skipped, deferred or fails to dispatch records nothing.
 
+Flags go before the slash command: see [Flag placement](#flag-placement). Several words are joined with single spaces. To keep the exact spacing, pass the slash command as ONE quoted argument (`foci command -a clutch "/todo done 7 landed --if-active 8h"` records the reason `landed --if-active 8h`).
+
 **Examples:**
 ```bash
 foci command /cache
@@ -345,6 +369,30 @@ foci command --wait-cold 55m -a helen /reset
 
 # A human-typed command: the session counts as touched by its user
 foci command --human -a helen /reset
+
+# Close a ticket with flag-looking reason words: words after the slash
+# command are dispatched typed exactly, so --if-active is reason text
+# here, not a gate on the close (quoted or unquoted alike); quoting keeps
+# the exact spacing
+foci command -a clutch /todo done 2457 "landed 3fc608953 (factory run 42)"
+```
+
+---
+
+### `todo` — Close a todo with a reason
+
+**Usage:**
+```
+foci todo done [-a agent] <id> <reason...>
+```
+
+Marks one todo of the named agent done through the gateway, recording the reason as the todo's close reason — the script-facing counterpart of the agent's `foci_todo complete`, shown by `/todo show` and `foci_todo get`. The reason is stored byte for byte — any bytes, not only valid text, up to what a command line can carry (the kernel allows 128 KiB per argument and about 2 MiB across the whole command line); pass it as one quoted argument to keep its exact spacing. The id is digits only (`007` is ticket 7; `+7` is refused as a bad id — the id grammar the `/todo done` slash command shares).
+
+Flags: `-a/--agent` goes before `<id>`, and the connection flags before the `todo` word (see [Flag placement](#flag-placement)). Everything after `<id>` is the reason, kept as typed: `-a`, `--addr` and `-n` there are reason words. An empty reason is refused; a reason of spaces only is accepted and stored as-is, like the agent todo tool. The agent is required: todo ids are per agent, so there is no first-agent default. Name it with `-a/--agent` or `FOCI_AGENT`. Exits 0 on success. Exits non-zero with one stderr line naming the todo if the todo or agent does not exist, the reason is empty, or the gateway is unreachable (one attempt, no retry); and with a line naming the path if an explicit `--socket` is not a socket. This is what services without an agent exec, like the factory's landing, use to close their tickets.
+
+**Example:**
+```bash
+foci todo done -a clutch 2457 "landed 3fc608953 (factory run 01M4SWKGRFGSMXBHKPKH3E6VEK)"
 ```
 
 ---

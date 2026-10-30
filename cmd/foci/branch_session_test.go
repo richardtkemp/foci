@@ -24,16 +24,23 @@ func TestParseBranchFlagsSessionConsumed(t *testing.T) {
 		{"--session=value", []string{"--session=Fabro", "question"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, rest := parseBranchFlags(tc.args)
+			_, rest, err := parseBranchFlags(tc.args)
+			if err != nil {
+				t.Fatalf("parseBranchFlags(%v): %v", tc.args, err)
+			}
 			if len(rest) != 1 || rest[0] != "question" {
 				t.Errorf("R1: parseBranchFlags(%v) rest = %v, want only the message words [question] — the session flag leaked into the text", tc.args, rest)
 			}
 		})
 	}
 
-	// A valueless -s at the end of the args stays in the message words,
-	// exactly as `foci send` treats it (no next token to consume).
-	_, rest := parseBranchFlags([]string{"hello", "-s"})
+	// A valueless -s after the text has started is text (the ruling: the
+	// words after the branch text are the text), so it stays in the
+	// message words exactly as before.
+	_, rest, err := parseBranchFlags([]string{"hello", "-s"})
+	if err != nil {
+		t.Fatalf("parseBranchFlags: %v", err)
+	}
 	if len(rest) != 2 || rest[0] != "hello" || rest[1] != "-s" {
 		t.Errorf("rest = %v, want [hello -s] — a bare valueless flag is message text", rest)
 	}

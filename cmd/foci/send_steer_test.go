@@ -100,7 +100,10 @@ func TestSendSteerAndQueueMutuallyExclusive(t *testing.T) {
 // TestParseSendFlags_SteerQueue pins the pure parse: the bare switches are
 // consumed and never leak into the trailing message words.
 func TestParseSendFlags_SteerQueue(t *testing.T) {
-	flags, rest := parseSendFlags([]string{"--steer", "hello", "world"})
+	flags, rest, err := parseSendFlags([]string{"--steer", "hello", "world"})
+	if err != nil {
+		t.Fatalf("parseSendFlags: %v", err)
+	}
 	if !flags.steerFlag || flags.queueFlag {
 		t.Errorf("flags = steer:%v queue:%v, want steer only", flags.steerFlag, flags.queueFlag)
 	}
@@ -108,7 +111,10 @@ func TestParseSendFlags_SteerQueue(t *testing.T) {
 		t.Errorf("rest = %v, want the trailing message words", rest)
 	}
 
-	flags, rest = parseSendFlags([]string{"--queue", "-a", "x", "msg"})
+	flags, rest, err = parseSendFlags([]string{"--queue", "-a", "x", "msg"})
+	if err != nil {
+		t.Fatalf("parseSendFlags: %v", err)
+	}
 	if flags.steerFlag || !flags.queueFlag {
 		t.Errorf("flags = steer:%v queue:%v, want queue only", flags.steerFlag, flags.queueFlag)
 	}

@@ -375,6 +375,7 @@ func TestSubcommandHelp(t *testing.T) {
 		{"status", cmdStatus},
 		{"eval", cmdEval},
 		{"command", cmdCommand},
+		{"todo", cmdTodo},
 	}
 
 	for _, cmd := range cmds {

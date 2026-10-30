@@ -868,9 +868,16 @@ func bodyTooLarge(err error) bool {
 // mistyped body is no longer misreported as a missing field (#2296). An empty
 // body is a decode failure like any other (io.EOF → "bad request: EOF").
 // Returns false once a response has been written; the caller keeps only the
-// required-field check for a body that decodes cleanly.
+// required-field check for a body that decodes cleanly. Routes whose bodies
+// are legitimately larger (POST /todo/done; see todoDoneMaxBodyBytes) call
+// decodeCappedJSONAt with their own cap.
 func decodeCappedJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, jsonMaxBodyBytes)
+	return decodeCappedJSONAt(w, r, v, jsonMaxBodyBytes)
+}
+
+// decodeCappedJSONAt is decodeCappedJSON with the caller's body cap.
+func decodeCappedJSONAt(w http.ResponseWriter, r *http.Request, v any, maxBytes int64) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
 		if bodyTooLarge(err) {
 			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)

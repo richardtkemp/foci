@@ -38,7 +38,7 @@ Manage todo items. Bare `/todo` shows usage (available verbs). Use `/todo list` 
 **Subcommands:**
 
 - `/todo new <text> [p:PRIORITY] [t:TAG]` — create a new todo
-- `/todo done <id> [id...]` — mark as done (ambiguity: `done` alone lists done items, `done 5` transitions)
+- `/todo done <id> [reason]` / `/todo done <id> <id>...` — mark as done, recording the reason. When text follows, only the FIRST word is an id and the rest is the close reason (`/todo done 2457 2 commits landed` closes #2457 alone, reason `2 commits landed`; leading and trailing whitespace is trimmed, everything between the first and last word kept exactly). Ids only (`/todo done 7 8`) closes them all with an empty reason. `done` means close and nothing else: a first word that is not a digits-only id (`done 14x landed abc`, `done t:x`, `done reverse 5`, `done +14 for the fix`) or a bare `done` is an error naming the word (the usage line, for the bare form) and changes nothing, never a listing; done todos list through `/todo list done`
 - `/todo start <id> [id...]` — mark as started
 - `/todo drop <id> [id...]` — mark as dropped
 - `/todo reopen <id> [id...]` — reopen to "open"

@@ -7,8 +7,8 @@ package main
 // targets the agent's default session.
 //
 // `foci command` is a deliberate exception to the env default: it parses and
-// emits the flag but never applies FOCI_SESSION (parseCommandFlags skips
-// applyEnvDefault), so a cron or script that happens to export it keeps
+// emits the flag but never applies FOCI_SESSION (the command family's scan
+// skips applyEnvDefault), so a cron or script that happens to export it keeps
 // dispatching on the agent's default session (#2296 ruling).
 //
 // Centralised here for the same reason as gateFlags/waitFlags/humanFlag: the

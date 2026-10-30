@@ -36,6 +36,23 @@ func tryParseFlagArg(specs []flagSpec, args []string, i int) (consumed bool, nex
 	return false, i
 }
 
+// isDetachedFlagWord reports whether tok is the detached spelling of one of
+// the declared value-flags (spec names carry their dashes: "--if-warm",
+// "-s") — the word half of tryParseFlagArg. The parse half either takes the
+// next token as the value or, when none follows, leaves the word for the
+// caller; this predicate is how the caller tells that leftover apart from
+// an ordinary word.
+func isDetachedFlagWord(specs []flagSpec, tok string) bool {
+	for _, s := range specs {
+		for _, name := range append([]string{s.name}, s.aliases...) {
+			if tok == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // applyFlagEnvDefaults fills any unset flag from its env var(s): flag > env > alt env.
 func applyFlagEnvDefaults(specs []flagSpec) {
 	for _, s := range specs {

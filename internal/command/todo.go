@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"foci/internal/display"
 	"foci/internal/memory"
@@ -17,7 +18,9 @@ import (
 type todoArgs struct {
 	subcommand string   // "", "new", "done", "start", "drop", "reopen", "edit", "show", "search", "rm", "stats" (each has aliases)
 	ids        []int64  // target IDs for transitions/edit/show/rm
+	badID      string   // first word of an id-list verb's arguments that is not a todo id — the verb refuses, changing nothing
 	text       string   // free text (new item text, search query, edit text)
+	reason     string   // close reason: the words after the first id of "done <id> <words>", byte for byte; "" for every other form
 	tags       []string // t:TAG values (multiple for AND filtering)
 	setTag     bool     // true if t: was explicitly provided (allows clearing)
 	priority   string   // p:PRIORITY value
@@ -28,75 +31,122 @@ type todoArgs struct {
 }
 
 // parseTodoArgs parses the raw argument string into a todoArgs struct.
-// Phase 1: detect subcommand from first token.
-// Phase 2: parse remaining tokens based on mode.
+// Phase 1: detect subcommand from the first word (one cutWord split — the
+// raw remainder is kept for verbs that need it verbatim).
+// Phase 2: parse the remaining words based on the mode.
 func parseTodoArgs(raw string) todoArgs {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return todoArgs{status: "active", sort: "priority", limit: 15}
 	}
 
-	tokens := strings.Fields(raw)
 	a := todoArgs{status: "active", sort: "priority", limit: 15}
 
-	first := strings.ToLower(tokens[0])
-	rest := tokens[1:]
+	first, rest := cutWord(raw)
 
-	switch first {
+	switch strings.ToLower(first) {
 	case "new", "add", "create":
 		a.subcommand = "new"
-		parseNewArgs(&a, rest)
+		parseNewArgs(&a, strings.Fields(rest))
 		return a
 	case "start", "begin":
 		a.subcommand = "start"
-		a.ids = parseIDs(rest)
+		a.ids, a.badID = parseIDs(strings.Fields(rest))
 		return a
 	case "drop", "cancel", "abandon":
 		a.subcommand = "drop"
-		a.ids = parseIDs(rest)
+		a.ids, a.badID = parseIDs(strings.Fields(rest))
 		return a
 	case "reopen":
 		a.subcommand = "reopen"
-		a.ids = parseIDs(rest)
+		a.ids, a.badID = parseIDs(strings.Fields(rest))
 		return a
 	case "edit", "update", "modify":
 		a.subcommand = "edit"
-		parseEditArgs(&a, rest)
+		parseEditArgs(&a, strings.Fields(rest))
 		return a
 	case "show", "info", "detail":
 		a.subcommand = "show"
-		a.ids = parseIDs(rest)
+		a.ids, a.badID = parseIDs(strings.Fields(rest))
 		return a
 	case "get":
 		a.subcommand = "get"
-		parseGetArgs(&a, rest)
+		parseGetArgs(&a, strings.Fields(rest))
 		return a
 	case "search", "find":
 		a.subcommand = "search"
-		a.text = strings.Join(rest, " ")
+		a.text = strings.Join(strings.Fields(rest), " ")
 		return a
 	case "rm", "remove", "delete", "del":
 		a.subcommand = "rm"
-		a.ids = parseIDs(rest)
+		a.ids, a.badID = parseIDs(strings.Fields(rest))
 		return a
 	case "stats", "summary":
 		a.subcommand = "stats"
-		parseListArgs(&a, rest)
+		parseListArgs(&a, strings.Fields(rest))
 		return a
 	case "done", "complete", "finish", "close":
-		// Ambiguity rule: if all remaining tokens are integers, it's a transition.
-		if len(rest) > 0 && allIntegers(rest) {
-			a.subcommand = "done"
-			a.ids = parseIDs(rest)
-			return a
-		}
-		// Otherwise it's a list status filter — fall through to list parsing
-		// with all tokens intact so the list parser sees "done" as a status token.
+		// /todo done means CLOSE and nothing else (Richard, 2026-10-17):
+		// the words after the verb must start with a plain decimal id.
+		// Ids only (/todo done 7 8) closes them all with the empty
+		// reason; when any text follows, only the first word is an id and
+		// the rest is the reason, byte for byte (Richard, 2026-10-30:
+		// /todo done 7 landed abc). A first word that is not an id, or no
+		// words at all, is an error — never a listing; done todos list
+		// through /todo list done.
+		a.subcommand = "done"
+		a.ids, a.reason, a.badID = parseDoneArgs(rest)
+		return a
 	}
 
 	// List mode: parse all tokens for status/sort/reverse/limit/t:TAG/p:PRIORITY
-	parseListArgs(&a, tokens)
+	parseListArgs(&a, strings.Fields(raw))
 	return a
+}
+
+// cutWord splits s at its first run of whitespace: the first word, and the
+// rest with leading whitespace removed. The raw remainder (not Fields tokens)
+// is what keeps a done-reason's spacing, quotes and newlines intact.
+func cutWord(s string) (word, rest string) {
+	i := strings.IndexFunc(s, unicode.IsSpace)
+	if i < 0 {
+		return s, ""
+	}
+	return s[:i], strings.TrimLeftFunc(s[i:], unicode.IsSpace)
+}
+
+// parseDoneArgs reads the raw text after the done verb. Two shapes
+// (Richard, 2026-10-30):
+//   - every word is a plain decimal id (memory.ParseTodoID — digits only):
+//     all of them are closed, with the empty reason (done 7 8);
+//   - otherwise ONLY THE FIRST word is an id, and the raw remainder after
+//     it is the close reason, verbatim (done 2457 2 commits landed closes
+//     #2457 alone, reason "2 commits landed").
+//
+// A first word that is not an id (done 14x landed abc, done t:x, done +14)
+// is returned as badID so the verb's refusal names it and changes nothing;
+// an empty rest leaves the ids empty, which the verb answers with its usage
+// line — done never falls back to listing.
+func parseDoneArgs(rest string) (ids []int64, reason, badID string) {
+	first, remainder := cutWord(rest)
+	if first == "" {
+		return nil, "", ""
+	}
+	firstID, isID := memory.ParseTodoID(first)
+	if !isID {
+		return nil, "", first
+	}
+	words := strings.Fields(remainder)
+	all := []int64{firstID}
+	for _, w := range words {
+		id, ok := memory.ParseTodoID(w)
+		if !ok {
+			// Text follows: only the first word is an id.
+			return []int64{firstID}, remainder, ""
+		}
+		all = append(all, id)
+	}
+	return all, "", ""
 }
 
 // parseListArgs extracts list-mode options from tokens in any order.
@@ -186,13 +236,17 @@ func parseNewArgs(a *todoArgs, tokens []string) {
 	a.text = strings.Join(textParts, " ")
 }
 
-// parseEditArgs extracts the first token as an ID, then tag/priority/text from the rest.
+// parseEditArgs extracts the first token as an ID, then tag/priority/text
+// from the rest. The id grammar is the one every todo surface shares
+// (memory.ParseTodoID, digits only): a decorated word like "+14" is not
+// an id, so it leaves ids empty and the verb answers with its usage line
+// instead of editing ticket 14.
 func parseEditArgs(a *todoArgs, tokens []string) {
 	if len(tokens) == 0 {
 		return
 	}
 	// First token must be the ID
-	if id, err := strconv.ParseInt(tokens[0], 10, 64); err == nil {
+	if id, ok := memory.ParseTodoID(tokens[0]); ok {
 		a.ids = []int64{id}
 	}
 	var textParts []string
@@ -267,15 +321,17 @@ func parseGetArgs(a *todoArgs, tokens []string) {
 			// Re-use parseListArgs logic for this single token.
 			parseListArgs(a, []string{tok})
 		default:
-			// #880: a bare positive integer selects a todo by ID (get 500 → #500);
-			// the count-limit form is nN (get n500 → limit 500).
+			// #880: a bare digits-only id selects a todo by ID (get 500 →
+			// #500; the one id grammar, memory.ParseTodoID — a decorated
+			// word like "+500" is not an id, it is a search term); the
+			// count-limit form is nN (get n500 → limit 500).
 			if len(tok) > 1 && (tok[0] == 'n' || tok[0] == 'N') {
 				if n, err := strconv.Atoi(tok[1:]); err == nil && n > 0 {
 					a.limit = n
 					break
 				}
 			}
-			if id, err := strconv.ParseInt(tok, 10, 64); err == nil && id > 0 {
+			if id, ok := memory.ParseTodoID(tok); ok && id > 0 {
 				a.ids = append(a.ids, id)
 			} else {
 				searchParts = append(searchParts, tok)
@@ -285,25 +341,21 @@ func parseGetArgs(a *todoArgs, tokens []string) {
 	a.text = strings.Join(searchParts, " ")
 }
 
-// parseIDs extracts all integer tokens from the list.
-func parseIDs(tokens []string) []int64 {
-	var ids []int64
+// parseIDs reads an id-list verb's argument words as todo ids
+// (memory.ParseTodoID — digits only). A word that is not an id is never
+// skipped: it is returned as bad so the verb can refuse the whole command
+// naming it — acting on the ids so far would change some todos and
+// silently leave the rest (/todo drop 3 +4 once dropped only #3, and
+// before that read +4 as another id and dropped #4 too).
+func parseIDs(tokens []string) (ids []int64, bad string) {
 	for _, tok := range tokens {
-		if id, err := strconv.ParseInt(tok, 10, 64); err == nil {
-			ids = append(ids, id)
+		id, ok := memory.ParseTodoID(tok)
+		if !ok {
+			return ids, tok
 		}
+		ids = append(ids, id)
 	}
-	return ids
-}
-
-// allIntegers returns true if all tokens parse as integers.
-func allIntegers(tokens []string) bool {
-	for _, tok := range tokens {
-		if _, err := strconv.ParseInt(tok, 10, 64); err != nil {
-			return false
-		}
-	}
-	return true
+	return ids, ""
 }
 
 // TodoCommand returns the /todo slash command.
@@ -314,14 +366,13 @@ func TodoCommand() *Command {
 		Category:    "observability",
 		// Declared for /help and the operator gate only (non_operator_commands
 		// can name "todo new"); parseTodoArgs parses the verbs itself, so
-		// Register does not auto-wire dispatch from this list. Keep the names
-		// and aliases in step with parseTodoArgs (#2279). Listing is the bare
-		// command. "done" is judged as the subcommand even where
-		// parseTodoArgs reads it as a list filter (no IDs follow): the gate
-		// errs on the side of asking for the "todo done" entry.
+		// Register does not auto-wire dispatch from this list. Keep the
+		// names and aliases in step with parseTodoArgs (#2279). Listing is
+		// the bare command and the list forms (/todo list done); "done"
+		// itself always closes.
 		Subcommands: []Subcommand{
 			{Name: "new", Aliases: []string{"add", "create"}, Description: "Create a new item"},
-			{Name: "done", Aliases: []string{"complete", "finish", "close"}, Description: "Mark items done"},
+			{Name: "done", Aliases: []string{"complete", "finish", "close"}, Description: "Mark items done (optional reason)"},
 			{Name: "start", Aliases: []string{"begin"}, Description: "Mark items started"},
 			{Name: "drop", Aliases: []string{"cancel", "abandon"}, Description: "Drop items"},
 			{Name: "reopen", Description: "Reopen items"},
@@ -343,17 +394,26 @@ func TodoCommand() *Command {
 			agentID := cc.AgentConfig.ID
 			format := resolveTodoFormat(cc)
 
+			// The one refusal ahead of the dispatch: the id-list verbs and
+			// done flag the first word of their argument list that is not a
+			// todo id (args.badID, from parseIDs or parseDoneArgs), and the
+			// whole command refuses on it before any store call, so a
+			// refused list changes nothing.
+			if args.badID != "" {
+				return todoIDRefusal(args)
+			}
+
 			switch args.subcommand {
 			case "new":
 				return todoNewCmd(cc.TodoStore, agentID, args)
 			case "done":
-				return todoBatchTransition(cc.TodoStore, agentID, args.ids, "done")
+				return todoBatchTransition(cc.TodoStore, agentID, args, "done")
 			case "start":
-				return todoBatchTransition(cc.TodoStore, agentID, args.ids, "started")
+				return todoBatchTransition(cc.TodoStore, agentID, args, "started")
 			case "drop":
-				return todoBatchTransition(cc.TodoStore, agentID, args.ids, "dropped")
+				return todoBatchTransition(cc.TodoStore, agentID, args, "dropped")
 			case "reopen":
-				return todoBatchTransition(cc.TodoStore, agentID, args.ids, "open")
+				return todoBatchTransition(cc.TodoStore, agentID, args, "open")
 			case "edit":
 				return todoEditCmd(cc.TodoStore, agentID, args)
 			case "show":
@@ -363,7 +423,7 @@ func TodoCommand() *Command {
 			case "search":
 				return todoSearchCmd(cc.TodoStore, agentID, args, format)
 			case "rm":
-				return todoRmCmd(cc.TodoStore, agentID, args.ids)
+				return todoRmCmd(cc.TodoStore, agentID, args)
 			case "stats":
 				return todoStatsCmd(cc.TodoStore, agentID, args)
 			default:
@@ -376,7 +436,10 @@ func TodoCommand() *Command {
 				{Label: "new", Data: "new "},
 				{Label: "stats", Data: "stats"},
 				{Label: "all", Data: "all"},
-				{Label: "done", Data: "done"},
+				// "list done", not "done": the done button lists done todos,
+				// and the bare done verb is the usage error since /todo done
+				// means close and nothing else (Richard, 2026-10-17).
+				{Label: "done", Data: "list done"},
 			}
 		},
 	}
@@ -387,7 +450,11 @@ func todoUsage() string {
 	return "Usage: /todo <verb> [args]\n" +
 		"\n" +
 		"  new <text> [p:PRIO] [t:TAG]  Create a new item (aliases: add, create)\n" +
-		"  done <ids>                   Mark done (aliases: complete, finish, close)\n" +
+		"  done <id> [reason]           Mark done, recording the reason (aliases: complete, finish, close).\n" +
+		"  done <id> <id>...            With a reason, only the first word is an id and the rest is the\n" +
+		"                               reason, kept as typed (done 7 2 commits landed closes #7 only).\n" +
+		"                               Ids only (done 7 8) closes them all. Done never lists (use\n" +
+		"                               /todo list done)\n" +
 		"  start <ids>                  Mark started (alias: begin)\n" +
 		"  drop <ids>                   Drop (aliases: cancel, abandon)\n" +
 		"  reopen <ids>                 Reopen\n" +
@@ -397,7 +464,13 @@ func todoUsage() string {
 		"  search <query>               Full-text search (alias: find)\n" +
 		"  rm <ids>                     Delete (aliases: remove, delete, del)\n" +
 		"  stats [filters]              Counts (alias: summary)\n" +
-		"  list [filters]               List items (aliases: all, active, open, done, …)\n" +
+		"  list [filters]               List items (aliases: all, active, open, closed, …)\n" +
+		"\n" +
+		"An <id> is a digits-only ticket number; get and edit read theirs\n" +
+		"with the same grammar (a signed word like \"+7\" is search text or\n" +
+		"the usage line, never ticket 7). In an id list (start, drop,\n" +
+		"reopen, show, rm, and done's first word) a word that is not one is an error\n" +
+		"naming it, and nothing is changed.\n" +
 		"\n" +
 		"Filters: all, open, active, done, started, dropped, t:TAG, p:PRIO, created, updated, priority, reverse, <N> (limit)"
 }
@@ -469,15 +542,30 @@ func todoNewCmd(store *memory.TodoStore, agentID string, args todoArgs) (Respons
 	return Response{Text: fmt.Sprintf("Added #%d (%s): %s", id, pri, args.text)}, nil
 }
 
+// todoIDRefusal is the id-list verbs' answer when their arguments carry a
+// word that is not a todo id (args.badID): one line naming the verb and
+// the word. Asked once in TodoCommand's Execute, before the verb dispatch,
+// so a refused list changes nothing.
+func todoIDRefusal(args todoArgs) (Response, error) {
+	return Response{Text: fmt.Sprintf("/todo %s: %q is not a todo id (ids are digits only); nothing was changed", args.subcommand, args.badID)}, nil
+}
+
 // todoBatchTransition transitions one or more todos to the target state.
-// Command-initiated transitions use an empty reason.
-func todoBatchTransition(store *memory.TodoStore, agentID string, ids []int64, state string) (Response, error) {
-	if len(ids) == 0 {
-		return Response{Text: fmt.Sprintf("Usage: /todo %s <id> [id...]", state)}, nil
+// Command-initiated transitions use an empty reason — except "done", where
+// the words after the first id (args.reason, set only by the done parser) are the
+// recorded close reason. The no-ids usage line is bare `done`'s answer too
+// (Richard, 2026-10-17): done means close and nothing else, so it names the
+// reason form rather than pointing anywhere else.
+func todoBatchTransition(store *memory.TodoStore, agentID string, args todoArgs, state string) (Response, error) {
+	if len(args.ids) == 0 {
+		if args.subcommand == "done" {
+			return Response{Text: "Usage: /todo done <ids> [reason]"}, nil
+		}
+		return Response{Text: fmt.Sprintf("Usage: /todo %s <id> [id...]", args.subcommand)}, nil
 	}
 	var results []string
-	for _, id := range ids {
-		if err := store.Transition(agentID, id, state, ""); err != nil {
+	for _, id := range args.ids {
+		if err := store.Transition(agentID, id, state, args.reason); err != nil {
 			results = append(results, fmt.Sprintf("#%d: error: %v", id, err))
 		} else {
 			results = append(results, fmt.Sprintf("#%d → %s", id, state))
@@ -601,7 +689,8 @@ func todoGetCmd(store *memory.TodoStore, agentID string, args todoArgs, format s
 }
 
 // todoRmCmd hard-deletes one or more todos.
-func todoRmCmd(store *memory.TodoStore, agentID string, ids []int64) (Response, error) {
+func todoRmCmd(store *memory.TodoStore, agentID string, args todoArgs) (Response, error) {
+	ids := args.ids
 	if len(ids) == 0 {
 		return Response{Text: "Usage: /todo rm <id> [id...]"}, nil
 	}

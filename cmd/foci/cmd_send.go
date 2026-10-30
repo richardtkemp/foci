@@ -8,6 +8,20 @@ import (
 	"foci/internal/platform"
 )
 
+// messageSourceSpecs declares the model override and the explicit
+// message source pair `foci send` and `foci branch` share — -m/--model,
+// -mt/--message-text and -mf/--message-file — as flagSpecs so the one
+// scan, the env defaults and the dangling-flag predicate all read one
+// declaration (the gateFlags pattern). The callers hand in their own
+// field pointers; the struct shape stays each command's own.
+func messageSourceSpecs(model, messageText, messageFile *string) []flagSpec {
+	return []flagSpec{
+		{"--model", []string{"-m"}, "FOCI_MODEL", "", "model", model},
+		{"--message-text", []string{"--mt", "-mt"}, "FOCI_MESSAGE_TEXT", "", "", messageText},
+		{"--message-file", []string{"--mf", "-mf"}, "FOCI_MESSAGE_FILE", "", "", messageFile},
+	}
+}
+
 type sendFlags struct {
 	agent       string
 	sessionFlag        // -s/--session selector + FOCI_SESSION (#2284)
@@ -22,6 +36,91 @@ type sendFlags struct {
 	broadcast   bool   // deliver the response to every live surface for the agent
 	steerFlag   bool   // --steer / FOCI_STEER=steer: fold into a running USER turn (#1318)
 	queueFlag   bool   // --queue / FOCI_STEER=queue: fresh turn behind a running one
+	// help is set when -h/--help appears in the leading flag run — the
+	// place where help is a request. A message word that looks like help
+	// is message (help stays false): `foci send hello -h` sends
+	// "hello -h".
+	help bool
+}
+
+// sendLead declares `foci send`'s half of the one placement scan: the
+// message text is the free text.
+var sendLead = leadSpec{word: "send command", landmark: "text"}
+
+// messageSpecs is send's own message-source declaration (see
+// messageSourceSpecs).
+func (flags *sendFlags) messageSpecs() []flagSpec {
+	return messageSourceSpecs(&flags.model, &flags.messageText, &flags.messageFile)
+}
+
+// consumeOwnFlag parses one of `foci send`'s own flags — everything but
+// the agent selector the scan itself owns — at args[i].
+func (flags *sendFlags) consumeOwnFlag(args []string, i int) (next int, consumed bool) {
+	switch args[i] {
+	case "--broadcast":
+		flags.broadcast = true
+		return i, true
+	case "--async", "--no-wait":
+		flags.async = true
+		return i, true
+	case "--sync", "--wait":
+		flags.sync = true
+		return i, true
+	case "--steer":
+		flags.steerFlag = true
+		return i, true
+	case "--queue":
+		flags.queueFlag = true
+		return i, true
+	}
+	if c, ni := flags.sessionFlag.tryParseSessionArg(args, i); c {
+		return ni, true
+	}
+	if c, ni := flags.gateFlags.tryParseGateArg(args, i); c {
+		return ni, true
+	}
+	if c, ni := flags.waitFlags.tryParseWaitArg(args, i); c {
+		return ni, true
+	}
+	if flags.humanFlag.tryParseHumanArg(args[i]) {
+		return i, true
+	}
+	if c, ni := tryParseFlagArg(flags.messageSpecs(), args, i); c {
+		return ni, true
+	}
+	return i, false
+}
+
+// ownValueFlagWord reports the detached spellings of send's own
+// value-taking flags (the bare switches --broadcast, --async, --sync,
+// --steer, --queue and --human are not value flags).
+func (flags *sendFlags) ownValueFlagWord(tok string) bool {
+	return isDetachedFlagWord(flags.sessionFlag.specs(), tok) ||
+		isDetachedFlagWord(flags.gateFlags.specs(), tok) ||
+		isDetachedFlagWord(flags.waitFlags.specs(), tok) ||
+		isDetachedFlagWord(flags.messageSpecs(), tok)
+}
+
+// applyEnvDefaults applies send's env fallbacks (flag > env > default).
+func (flags *sendFlags) applyEnvDefaults() {
+	flags.sessionFlag.applyEnvDefault()
+	applyFlagEnvDefaults(flags.messageSpecs())
+	flags.gateFlags.applyEnvDefaults()
+	flags.waitFlags.applyEnvDefaults()
+	flags.humanFlag.applyEnvDefault()
+	flags.async = envBool(flags.async, "FOCI_ASYNC")
+	flags.sync = envBool(flags.sync, "FOCI_SYNC")
+	// FOCI_STEER sets the delivery mode ("steer"/"queue"); other values are
+	// ignored → absent. Mapped through the one shared wire mapping
+	// (platform.SteerPreferenceFromWire, #1318). A flag plus the OTHER
+	// mode's env value is a usage error (steerBody below) — two live
+	// sources disagreeing is a mistake to surface, not resolve.
+	switch platform.SteerPreferenceFromWire(envDefault("", "FOCI_STEER")) {
+	case platform.SteerAlways:
+		flags.steerFlag = true
+	case platform.SteerNever:
+		flags.queueFlag = true
+	}
 }
 
 // steerBody resolves the mutually-exclusive delivery-mode flags (#1318) to
@@ -41,113 +140,24 @@ func (f sendFlags) steerBody() (string, error) {
 	return "", nil
 }
 
-func parseSendFlags(args []string) (flags sendFlags, rest []string) {
-	var filtered []string
-	for i := 0; i < len(args); i++ {
-		consumed := false
-		if args[i] == "-a" || args[i] == "--agent" {
-			if i+1 < len(args) {
-				flags.agent = args[i+1]
-				i++
-				consumed = true
-			}
-		} else if args[i] == "--broadcast" {
-			flags.broadcast = true
-			consumed = true
-		} else if c, ni := flags.sessionFlag.tryParseSessionArg(args, i); c {
-			i = ni
-			consumed = true
-		} else if strings.HasPrefix(args[i], "--agent=") {
-			flags.agent = args[i][len("--agent="):]
-			consumed = true
-		} else if strings.HasPrefix(args[i], "-a=") {
-			flags.agent = args[i][len("-a="):]
-			consumed = true
-		} else if args[i] == "-m" || args[i] == "--model" {
-			if i+1 < len(args) {
-				flags.model = args[i+1]
-				i++
-				consumed = true
-			}
-		} else if strings.HasPrefix(args[i], "--model=") {
-			flags.model = args[i][len("--model="):]
-			consumed = true
-		} else if strings.HasPrefix(args[i], "-m=") {
-			flags.model = args[i][len("-m="):]
-			consumed = true
-		} else if c, ni := flags.gateFlags.tryParseGateArg(args, i); c {
-			i = ni
-			consumed = true
-		} else if c, ni := flags.waitFlags.tryParseWaitArg(args, i); c {
-			i = ni
-			consumed = true
-		} else if c, ni := flags.humanFlag.tryParseHumanArg(args, i); c {
-			i = ni
-			consumed = true
-		} else if args[i] == "--message-text" || args[i] == "--mt" || args[i] == "-mt" {
-			if i+1 < len(args) {
-				flags.messageText = args[i+1]
-				i++
-				consumed = true
-			}
-		} else if strings.HasPrefix(args[i], "--message-text=") {
-			flags.messageText = args[i][len("--message-text="):]
-			consumed = true
-		} else if strings.HasPrefix(args[i], "--mt=") || strings.HasPrefix(args[i], "-mt=") {
-			flags.messageText = args[i][strings.Index(args[i], "=")+1:]
-			consumed = true
-		} else if args[i] == "--message-file" || args[i] == "--mf" || args[i] == "-mf" {
-			if i+1 < len(args) {
-				flags.messageFile = args[i+1]
-				i++
-				consumed = true
-			}
-		} else if strings.HasPrefix(args[i], "--message-file=") {
-			flags.messageFile = args[i][len("--message-file="):]
-			consumed = true
-		} else if strings.HasPrefix(args[i], "--mf=") || strings.HasPrefix(args[i], "-mf=") {
-			flags.messageFile = args[i][strings.Index(args[i], "=")+1:]
-			consumed = true
-		} else if args[i] == "--async" || args[i] == "--no-wait" {
-			flags.async = true
-			consumed = true
-		} else if args[i] == "--sync" || args[i] == "--wait" {
-			flags.sync = true
-			consumed = true
-		} else if args[i] == "--steer" {
-			flags.steerFlag = true
-			consumed = true
-		} else if args[i] == "--queue" {
-			flags.queueFlag = true
-			consumed = true
-		}
-		if !consumed {
-			filtered = append(filtered, args[i])
-		}
+// parseSendFlags parses `foci send`'s line with the one scan
+// (scanCommandLine, main.go): send's flags are read only before the
+// message text starts, and every word from the text on is message
+// verbatim, whatever it looks like (the one placement rule, Dick,
+// 2026-10-17 — `foci send hello --if-warm 8h` sends "hello --if-warm
+// 8h"; the gate belongs before the text). A connection flag between the
+// "send" word and the text, a value-flag that ends the line before the
+// text, and a second complete -a pair are refused there, naming the
+// rule.
+func parseSendFlags(args []string) (flags sendFlags, rest []string, err error) {
+	lead, err := scanCommandLine(args, &flags, sendLead, true)
+	if err != nil {
+		return sendFlags{}, nil, err
 	}
-	// Apply env var fallbacks (flag > env > default)
-	flags.agent = envDefault(flags.agent, "FOCI_AGENT")
-	flags.sessionFlag.applyEnvDefault()
-	flags.model = envDefault(flags.model, "FOCI_MODEL")
-	flags.gateFlags.applyEnvDefaults()
-	flags.waitFlags.applyEnvDefaults()
-	flags.humanFlag.applyEnvDefault()
-	flags.messageText = envDefault(flags.messageText, "FOCI_MESSAGE_TEXT")
-	flags.messageFile = envDefault(flags.messageFile, "FOCI_MESSAGE_FILE")
-	flags.async = envBool(flags.async, "FOCI_ASYNC")
-	flags.sync = envBool(flags.sync, "FOCI_SYNC")
-	// FOCI_STEER sets the delivery mode ("steer"/"queue"); other values are
-	// ignored → absent. Mapped through the one shared wire mapping
-	// (platform.SteerPreferenceFromWire, #1318). A flag plus the OTHER
-	// mode's env value is a usage error (steerBody below) — two live
-	// sources disagreeing is a mistake to surface, not resolve.
-	switch platform.SteerPreferenceFromWire(envDefault("", "FOCI_STEER")) {
-	case platform.SteerAlways:
-		flags.steerFlag = true
-	case platform.SteerNever:
-		flags.queueFlag = true
-	}
-	return flags, filtered
+	flags.agent = lead.agent
+	flags.help = lead.help
+	flags.applyEnvDefaults()
+	return flags, lead.rest, nil
 }
 
 // resolveMessage determines the message text from flags and trailing args.
@@ -214,6 +224,19 @@ one. Neither mode is consumed as plan feedback or an ask answer unless
 --human is given (then --steer can be; --queue never is). The two are
 mutually exclusive; a deferred send keeps its mode.
 
+Flag placement — the message is free text: send's flags are read only
+BEFORE the message starts (the first word that is none of them starts
+the message), and every word from there on is the message, typed
+exactly, whatever it looks like — a trailing "--if-warm 8h", "-a
+research" or "--api-key sekret" is message text, never a flag, and a
+help word inside the message is message (foci send hello -h sends
+"hello -h"). Three shapes error before anything is sent: a connection
+flag typed between the "send" word and the message ("--addr must come
+before the send command word" — it cannot route the request from
+there), a value-flag that ends the line before the message starts
+("flag --if-warm needs a value"), and a second complete -a/--agent pair
+("only one -a/--agent may precede the text").
+
 Flags:
   -a, --agent <id>          Target agent (env: FOCI_AGENT)
   -s, --session <id|alias>  Target session name or a chat alias (env: FOCI_SESSION, default: main)
@@ -244,16 +267,19 @@ Cannot use both -mt and -mf, or both --steer and --queue.
 }
 
 func cmdSend(base string, args []string) error {
-	if wantsHelp(args) {
+	flags, rest, err := parseSendFlags(args)
+	if err != nil {
+		return err
+	}
+	if flags.help {
 		sendUsage()
 		return nil
 	}
-	flags, args := parseSendFlags(args)
 	steer, err := flags.steerBody()
 	if err != nil {
 		return err
 	}
-	text, err := resolveMessage(flags, args)
+	text, err := resolveMessage(flags, rest)
 	if err != nil {
 		return err
 	}
@@ -315,6 +341,13 @@ user-active/user-inactive):
 Unlike send (which defaults to --wait-cold 1m), a branch with NO if/wait flag
 runs immediately. Use --no-gate to ignore any wait condition.
 
+Flag placement — the branch text is free text, like send's message:
+branch's flags are read only BEFORE the text starts, and every word from
+there on is the text, typed exactly, whatever it looks like. The same
+three shapes error before anything is sent: a connection flag between
+the "branch" word and the text, a value-flag that ends the line before
+the text starts, and a second complete -a/--agent pair.
+
 Flags:
   -a, --agent <id>          Target agent (env: FOCI_AGENT)
   -s, --session <id|alias>  Parent session: key, name or chat alias; a name that
@@ -345,11 +378,11 @@ Flags:
 `)
 }
 
-// branchFlags is the parsed flag set of `foci branch`: the shared if/wait gate
-// flag sets, the -s/--session parent selector, and the branch-specific
-// options, model override, sync/async and message source. Parsed by
-// parseBranchFlags so the flag handling is testable in-process (the
-// parseSendFlags pattern).
+// branchFlags is the parsed flag set of `foci branch`: the shared if/wait
+// gate flag sets, the -s/--session parent selector, the branch-specific
+// options, model override, sync/async and message source. Consumed by the
+// one scan (scanCommandLine, main.go) through its ownFlagLine methods, so
+// the flag handling is testable in-process (the parseSendFlags pattern).
 type branchFlags struct {
 	gateFlags
 	waitFlags
@@ -363,75 +396,82 @@ type branchFlags struct {
 	messageFile string
 	async       bool
 	sync        bool
+	agent       string
+	// help is set when -h/--help appears in the leading flag run; a help
+	// word inside the branch text is text.
+	help bool
 }
 
-// parseBranchFlags consumes `foci branch`'s flags (and their env defaults)
-// from args, returning the flags and the remaining positional text words.
+// branchLead declares `foci branch`'s half of the one placement scan:
+// the optional branch text is the free text.
+var branchLead = leadSpec{word: "branch command", landmark: "text"}
+
+// messageSpecs is branch's own message-source declaration (see
+// messageSourceSpecs).
+func (flags *branchFlags) messageSpecs() []flagSpec {
+	return messageSourceSpecs(&flags.model, &flags.messageText, &flags.messageFile)
+}
+
+// consumeOwnFlag parses one of `foci branch`'s own flags — everything
+// but the agent selector the scan itself owns — at args[i].
 //
 // Note the deliberate --oneshot asymmetry, preserved verbatim from the
-// original inline parsing: the --oneshot FLAG sets no-compact + no-reset-hook
-// + silent, while the FOCI_ONESHOT env var sets only no-compact +
-// no-reset-hook (no silent).
-func parseBranchFlags(args []string) (flags branchFlags, rest []string) {
-	var filtered []string
-	for i := 0; i < len(args); i++ {
-		if c, ni := flags.gateFlags.tryParseGateArg(args, i); c {
-			i = ni
-			continue
-		}
-		if c, ni := flags.waitFlags.tryParseWaitArg(args, i); c {
-			i = ni
-			continue
-		}
-		if c, ni := flags.humanFlag.tryParseHumanArg(args, i); c {
-			i = ni
-			continue
-		}
-		if c, ni := flags.sessionFlag.tryParseSessionArg(args, i); c {
-			i = ni
-			continue
-		}
-		switch {
-		case args[i] == "--no-compact":
-			flags.noCompact = true
-		case args[i] == "--no-reset-hook":
-			flags.noResetHook = true
-		case args[i] == "--silent":
-			flags.silent = true
-		case args[i] == "--oneshot":
-			flags.noCompact = true
-			flags.noResetHook = true
-			flags.silent = true
-		case args[i] == "--async" || args[i] == "--no-wait":
-			flags.async = true
-		case args[i] == "--sync" || args[i] == "--wait":
-			flags.sync = true
-		case (args[i] == "-m" || args[i] == "--model") && i+1 < len(args):
-			flags.model = args[i+1]
-			i++
-		case strings.HasPrefix(args[i], "--model="):
-			flags.model = args[i][len("--model="):]
-		case strings.HasPrefix(args[i], "-m="):
-			flags.model = args[i][len("-m="):]
-		case (args[i] == "--message-text" || args[i] == "--mt" || args[i] == "-mt") && i+1 < len(args):
-			flags.messageText = args[i+1]
-			i++
-		case strings.HasPrefix(args[i], "--message-text="):
-			flags.messageText = args[i][len("--message-text="):]
-		case strings.HasPrefix(args[i], "--mt=") || strings.HasPrefix(args[i], "-mt="):
-			flags.messageText = args[i][strings.Index(args[i], "=")+1:]
-		case (args[i] == "--message-file" || args[i] == "--mf" || args[i] == "-mf") && i+1 < len(args):
-			flags.messageFile = args[i+1]
-			i++
-		case strings.HasPrefix(args[i], "--message-file="):
-			flags.messageFile = args[i][len("--message-file="):]
-		case strings.HasPrefix(args[i], "--mf=") || strings.HasPrefix(args[i], "-mf="):
-			flags.messageFile = args[i][strings.Index(args[i], "=")+1:]
-		default:
-			filtered = append(filtered, args[i])
-		}
+// original inline parsing: the --oneshot FLAG sets no-compact +
+// no-reset-hook + silent, while the FOCI_ONESHOT env var sets only
+// no-compact + no-reset-hook (no silent).
+func (flags *branchFlags) consumeOwnFlag(args []string, i int) (next int, consumed bool) {
+	switch args[i] {
+	case "--no-compact":
+		flags.noCompact = true
+		return i, true
+	case "--no-reset-hook":
+		flags.noResetHook = true
+		return i, true
+	case "--silent":
+		flags.silent = true
+		return i, true
+	case "--oneshot":
+		flags.noCompact = true
+		flags.noResetHook = true
+		flags.silent = true
+		return i, true
+	case "--async", "--no-wait":
+		flags.async = true
+		return i, true
+	case "--sync", "--wait":
+		flags.sync = true
+		return i, true
 	}
-	// Apply env var fallbacks (flag > env > default)
+	if c, ni := flags.gateFlags.tryParseGateArg(args, i); c {
+		return ni, true
+	}
+	if c, ni := flags.waitFlags.tryParseWaitArg(args, i); c {
+		return ni, true
+	}
+	if flags.humanFlag.tryParseHumanArg(args[i]) {
+		return i, true
+	}
+	if c, ni := flags.sessionFlag.tryParseSessionArg(args, i); c {
+		return ni, true
+	}
+	if c, ni := tryParseFlagArg(flags.messageSpecs(), args, i); c {
+		return ni, true
+	}
+	return i, false
+}
+
+// ownValueFlagWord reports the detached spellings of branch's own
+// value-taking flags (the bare switches --no-compact, --no-reset-hook,
+// --silent, --oneshot, --async, --sync and --human are not value flags).
+func (flags *branchFlags) ownValueFlagWord(tok string) bool {
+	return isDetachedFlagWord(flags.gateFlags.specs(), tok) ||
+		isDetachedFlagWord(flags.waitFlags.specs(), tok) ||
+		isDetachedFlagWord(flags.sessionFlag.specs(), tok) ||
+		isDetachedFlagWord(flags.messageSpecs(), tok)
+}
+
+// applyEnvDefaults applies branch's env fallbacks (flag > env > default).
+func (flags *branchFlags) applyEnvDefaults() {
 	flags.noCompact = envBool(flags.noCompact, "FOCI_NO_COMPACT")
 	flags.noResetHook = envBool(flags.noResetHook, "FOCI_NO_RESET_HOOK")
 	if envBool(false, "FOCI_ONESHOT") {
@@ -447,16 +487,32 @@ func parseBranchFlags(args []string) (flags branchFlags, rest []string) {
 	flags.humanFlag.applyEnvDefault()
 	flags.messageText = envDefault(flags.messageText, "FOCI_MESSAGE_TEXT")
 	flags.messageFile = envDefault(flags.messageFile, "FOCI_MESSAGE_FILE")
-	return flags, filtered
+}
+
+// parseBranchFlags parses `foci branch`'s line with the one scan
+// (scanCommandLine, main.go): branch's flags are read only before the
+// branch text starts, and every word from the text on is text verbatim
+// (the one placement rule, Dick, 2026-10-17).
+func parseBranchFlags(args []string) (flags branchFlags, rest []string, err error) {
+	lead, err := scanCommandLine(args, &flags, branchLead, true)
+	if err != nil {
+		return branchFlags{}, nil, err
+	}
+	flags.agent = lead.agent
+	flags.help = lead.help
+	flags.applyEnvDefaults()
+	return flags, lead.rest, nil
 }
 
 func cmdBranch(base string, args []string) error {
-	if wantsHelp(args) {
+	flags, filtered, err := parseBranchFlags(args)
+	if err != nil {
+		return err
+	}
+	if flags.help {
 		branchUsage()
 		return nil
 	}
-	agent, args := parseAgentFlag(args)
-	flags, filtered := parseBranchFlags(args)
 
 	sf := sendFlags{messageText: flags.messageText, messageFile: flags.messageFile}
 	text, err := resolveMessage(sf, filtered)
@@ -471,8 +527,8 @@ func cmdBranch(base string, args []string) error {
 	}
 
 	body := map[string]interface{}{"async": async}
-	if agent != "" {
-		body["agent"] = agent
+	if flags.agent != "" {
+		body["agent"] = flags.agent
 	}
 	flags.sessionFlag.addToBody(body)
 	if text != "" {

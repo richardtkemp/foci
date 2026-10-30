@@ -169,7 +169,16 @@ func authMiddleware(apiKey string, next http.Handler) http.Handler {
 	})
 }
 
-// registerHTTPHandlers registers all HTTP endpoints (/send, /status, /command, /branch, /webhook, /voice).
+// newTCPGatewayHandler returns the handler the gateway serves on its TCP
+// listener: the route mux behind authMiddleware. One constructor shared
+// by main and the tests, so a test asserts the wrap the served handler
+// actually carries (the unix socket serves the mux raw — same-user peer
+// credentials — and never goes through here).
+func newTCPGatewayHandler(apiKey string, mux *http.ServeMux) http.Handler {
+	return authMiddleware(apiKey, mux)
+}
+
+// registerHTTPHandlers registers all HTTP endpoints (/send, /status, /command, /todo/done, /branch, /webhook, /voice).
 func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 	resolveAgent, gate := buildResolvers(d)
 
@@ -178,10 +187,11 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 	mux.HandleFunc("/score", handleScore(d, resolveAgent))
 	mux.HandleFunc("/evals/rubrics", handleEvalsRubrics(d))
 	mux.HandleFunc("/command", handleCommand(d, resolveAgent, gate))
+	mux.HandleFunc("/todo/done", handleTodoDone(resolveAgent))
 	mux.HandleFunc("/branch", handleBranch(d, resolveAgent, gate))
 	mux.HandleFunc("/webhook/", handleWebhook(d, resolveAgent, gate))
 
-	endpointList := "/send, /status, /command, /branch, /webhook/{agent}/{hookid}"
+	endpointList := "/send, /status, /command, /todo/done, /branch, /webhook/{agent}/{hookid}"
 	if d.cfg.HTTP.WSEnabled && len(d.sttMap) > 0 {
 		mux.HandleFunc("/voice", voice.Handler(buildVoiceConfig(d)))
 		endpointList += ", /voice (ws)"

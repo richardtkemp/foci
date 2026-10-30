@@ -78,8 +78,12 @@ func TestCLIIntegration(t *testing.T) {
 		{"send with -s and -a", []string{"send", "--sync", "-s", "feature", "-a", "clutch", "hello"}, "(session:feature) [clutch] echo: hello", false},
 		{"send with -a= and -s=", []string{"send", "--sync", "-a=clutch", "-s=main", "hello"}, "(session:main) [clutch] echo: hello", false},
 
-		// Flag after positional args
-		{"send flag after text", []string{"send", "--sync", "hello", "-a", "research"}, "[research] echo: hello", false},
+		// Flag-shaped words after the text are text (the one placement
+		// rule, Dick 2026-10-17): the message starts at "hello", so the
+		// agent pair rides into the message for the DEFAULT agent
+		// instead of selecting research — the flag belongs before the
+		// text, as the row above shows.
+		{"send flag after text is text", []string{"send", "--sync", "hello", "-a", "research"}, "echo: hello -a research", false},
 
 		// --no-compact flag for branch
 		{"branch with --no-compact", []string{"branch", "--sync", "--no-compact"}, "wake ok (no_compact)", false},

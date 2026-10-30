@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -184,7 +187,8 @@ func TestUnixSocketTransport(t *testing.T) {
 }
 
 func TestParseSocketFlag(t *testing.T) {
-	// Verify --socket flag extraction from args.
+	// Verify --socket flag extraction from args, through the shared
+	// global-flag scanner (parseGlobalFlags) every command uses.
 	tests := []struct {
 		args     []string
 		wantSock string
@@ -208,12 +212,82 @@ func TestParseSocketFlag(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		sock, rest := parseSocketFlag(tt.args)
-		if sock != tt.wantSock {
-			t.Errorf("parseSocketFlag(%v): sock = %q, want %q", tt.args, sock, tt.wantSock)
+		globals, rest := parseGlobalFlags(tt.args)
+		if globals.socket != tt.wantSock {
+			t.Errorf("parseGlobalFlags(%v): socket = %q, want %q", tt.args, globals.socket, tt.wantSock)
 		}
 		if len(rest) != len(tt.wantRest) {
-			t.Errorf("parseSocketFlag(%v): rest = %v, want %v", tt.args, rest, tt.wantRest)
+			t.Errorf("parseGlobalFlags(%v): rest = %v, want %v", tt.args, rest, tt.wantRest)
 		}
+	}
+}
+
+// TestCheckExplicitSocket proves an explicit --socket path must be a Unix
+// socket: a missing path or a regular file is an error naming the path,
+// while no flag and a real socket pass.
+func TestCheckExplicitSocket(t *testing.T) {
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "gw.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	regular := filepath.Join(dir, "regular")
+	if err := os.WriteFile(regular, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "no-such.sock")
+
+	if err := checkExplicitSocket(""); err != nil {
+		t.Errorf("no flag: err = %v, want nil", err)
+	}
+	if err := checkExplicitSocket(sock); err != nil {
+		t.Errorf("real socket: err = %v, want nil", err)
+	}
+	for path, cause := range map[string]string{missing: "no such file", regular: "not a Unix socket"} {
+		err := checkExplicitSocket(path)
+		if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), cause) {
+			t.Errorf("checkExplicitSocket(%q) = %v, want an error naming the path and %q", path, err, cause)
+		}
+	}
+}
+
+// TestCLIExplicitSocketNeverFallsBackToTCP runs the real binary with a
+// --socket path that does not exist while a gateway listens on the TCP
+// address: the CLI must exit non-zero naming the path, and the TCP
+// listener must see no request — a fall-back would send todo done (a
+// write) to whatever listens there.
+//
+// disconnected-test-ok: black-box CLI test; execs compiled binary
+func TestCLIExplicitSocketNeverFallsBackToTCP(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`{"response":"ok"}`))
+	}))
+	defer srv.Close()
+
+	missing := filepath.Join(t.TempDir(), "no-such.sock")
+	for _, args := range [][]string{
+		{"--socket", missing, "todo", "done", "-a", "clutch", "7", "landed"},
+		{"--socket=" + missing, "ping"},
+	} {
+		cmd := exec.Command(testBinary, args...)
+		cmd.Env = []string{
+			"PATH=" + os.Getenv("PATH"),
+			"HOME=" + t.TempDir(),
+			"FOCI_ADDR=" + strings.TrimPrefix(srv.URL, "http://"),
+		}
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Errorf("foci %v: exit 0, want an error (output %q)", args, out)
+		}
+		if !strings.Contains(string(out), missing) {
+			t.Errorf("foci %v: output %q, want it to name %s", args, out, missing)
+		}
+	}
+	if n := hits.Load(); n != 0 {
+		t.Errorf("%d request(s) reached the TCP gateway, want none", n)
 	}
 }

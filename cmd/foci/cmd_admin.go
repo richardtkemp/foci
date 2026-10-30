@@ -41,36 +41,59 @@ func cmdStatus(base string, args []string) error {
 	return printResponse(resp)
 }
 
+// evalUsageLine is the one-line synopsis of `foci eval`, shared by the
+// help text and the shape error so they cannot drift.
+const evalUsageLine = "foci eval [-a agent] <shell command>"
+
+// evalLead declares eval's half of the one placement scan: the shell
+// command is free text (it may look like any flag — `foci eval grep -a
+// foo file.txt` must run `grep -a foo file.txt`, not select agent foo),
+// so the shared agent selector is its only leading flag.
+var evalLead = leadSpec{word: "eval command", landmark: "text"}
+
 func evalUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: foci eval [-a agent] <shell command>
+	fmt.Fprintf(os.Stderr, `Usage: %s
 
 Ask the agent to run a shell command and show output.
 
 Flags:
   -a, --agent <id>        Target agent (env: FOCI_AGENT)
-`)
+
+The shell command is free text: it starts at the first word that is not
+-a/--agent, and every word from there on is the command, verbatim — a
+trailing "-a foo" or "--if-warm 8h" is command text, never a flag. The
+connection flags (--addr, --api-key, --socket) are read only before the
+"eval" word.
+`, evalUsageLine)
 }
 
 func cmdEval(base string, args []string) error {
-	if wantsHelp(args) {
+	lead, err := scanCommandLine(args, noOwnFlags{}, evalLead, true)
+	if err != nil {
+		return err
+	}
+	if lead.help {
 		evalUsage()
 		return nil
 	}
-	agent, args := parseAgentFlag(args)
-	if len(args) == 0 {
-		return fmt.Errorf("usage: foci eval [-a agent] <shell command>")
+	if len(lead.rest) == 0 {
+		return fmt.Errorf("usage: %s", evalUsageLine)
 	}
-	cmd := strings.Join(args, " ")
+	cmd := strings.Join(lead.rest, " ")
 	text := fmt.Sprintf("Run this command and show the output:\n```\n%s\n```", cmd)
 	body := map[string]string{"text": text}
-	if agent != "" {
-		body["agent"] = agent
+	if lead.agent != "" {
+		body["agent"] = lead.agent
 	}
 	return postJSON(base+"/send", body)
 }
 
+// commandUsageLine is the one-line synopsis of `foci command`, shared by
+// the help text and the shape error so they cannot drift.
+const commandUsageLine = "foci command [-a agent] [-s session] [gate flags] </cmd> [args]"
+
 func commandUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: foci command [-a agent] [-s session] [gate flags] </cmd> [args]
+	fmt.Fprintf(os.Stderr, `Usage: %s
 
 Dispatch a slash command via the gateway (bypasses agent conversation).
 
@@ -105,66 +128,96 @@ If the condition never holds, --wait-timeout / --deadline (default 2h) runs
 the command anyway. Unlike send (which defaults to --wait-cold 1m), a command
 with NO if/wait flag runs immediately.
 
+Every flag above is read only BEFORE the slash command's words — move it
+in front of the text — and the connection flags (--addr, --api-key,
+--socket) only before the "command" word itself. From the first word that
+is none of those flags on, everything is the dispatched text, typed
+exactly, whatever it looks like: a trailing "--if-warm 8h" or "-a b"
+after the text has started is command text, not a flag, and is
+dispatched as-is (foci command /todo done 10 -a b closes the default
+agent's todo 10 with the reason "-a b"). Three shapes error before any
+dispatch: a connection flag typed between the "command" word and the
+slash text (it cannot route the request from there), a value-flag that
+ends the line before the text starts ("-s", "--if-warm" with no value to
+take), and a second complete -a/--agent pair before the text (only one
+agent may lead). Several words are
+joined with single spaces — pass the slash command as ONE quoted
+argument when the exact spacing matters. One rule for every command
+whose own argument is free text: send's message, branch's text, eval's
+shell command and todo done's reason carry it too (see their -h). The
+ping and pair shorthands share this scan but have no free text: their
+flags are read wherever they sit, and a valueless flag word that ends
+their line stays a word, dispatched as typed.
+
 Example (overnight reset that runs once the session has been cold for 55m,
 instead of skipping and hoping the next cron tick lands):
   foci command --wait-cold 55m -a helen /reset
-`)
+`, commandUsageLine)
 }
 
 // commandFlags is the parsed flag set of `foci command`: the shared if/wait
 // gate flag sets, the human declaration and the session selector. Everything
-// else is the command string itself. Parsed by parseCommandFlags so the flag
+// else is the command string itself. Consumed by the one scan
+// (scanCommandLine, main.go) through its ownFlagLine methods, so the flag
 // handling is testable in-process (the parseSendFlags pattern).
 type commandFlags struct {
 	gateFlags
 	waitFlags
 	humanFlag
-	sessionFlag // -s/--session target (#2296) — no FOCI_SESSION default, see parseCommandFlags
+	sessionFlag // -s/--session target (#2296) — no FOCI_SESSION default, see applyEnvDefaults
 }
 
-// parseCommandFlags consumes `foci command`'s flags (and their env defaults)
-// from args, returning the flags and the remaining command words.
-func parseCommandFlags(args []string) (flags commandFlags, rest []string) {
-	for i := 0; i < len(args); i++ {
-		if c, ni := flags.gateFlags.tryParseGateArg(args, i); c {
-			i = ni
-			continue
-		}
-		if c, ni := flags.waitFlags.tryParseWaitArg(args, i); c {
-			i = ni
-			continue
-		}
-		if c, ni := flags.humanFlag.tryParseHumanArg(args, i); c {
-			i = ni
-			continue
-		}
-		if c, ni := flags.sessionFlag.tryParseSessionArg(args, i); c {
-			i = ni
-			continue
-		}
-		rest = append(rest, args[i])
+// commandLead declares the command family's half of the one placement
+// scan; ping and pair share it (their own flags are the same set).
+var commandLead = leadSpec{word: "command", landmark: "text"}
+
+// consumeOwnFlag parses one of the command family's own flags — the
+// session selector, the activity gates, the wait gates and --human;
+// -a/--agent belongs to the scan itself — at args[i].
+func (flags *commandFlags) consumeOwnFlag(args []string, i int) (next int, consumed bool) {
+	if c, ni := flags.gateFlags.tryParseGateArg(args, i); c {
+		return ni, true
 	}
+	if c, ni := flags.waitFlags.tryParseWaitArg(args, i); c {
+		return ni, true
+	}
+	if flags.humanFlag.tryParseHumanArg(args[i]) {
+		return i, true
+	}
+	if c, ni := flags.sessionFlag.tryParseSessionArg(args, i); c {
+		return ni, true
+	}
+	return i, false
+}
+
+// ownValueFlagWord reports the detached spellings of the command
+// family's own value-taking flags (the bare switches --no-gate and
+// --human are not value flags) — the words whose value is missing when
+// they end the line where the free text would start.
+func (flags *commandFlags) ownValueFlagWord(tok string) bool {
+	return isDetachedFlagWord(flags.gateFlags.specs(), tok) ||
+		isDetachedFlagWord(flags.waitFlags.specs(), tok) ||
+		isDetachedFlagWord(flags.sessionFlag.specs(), tok)
+}
+
+// applyEnvDefaults applies the command family's env defaults and the one
+// it deliberately skips: unlike send and branch, the command family must
+// not inherit FOCI_SESSION — a cron or script that happens to have it
+// exported keeps dispatching on the agent's default session (#2296
+// ruling). The agent fallback (FOCI_AGENT) is applied by the scan.
+func (flags *commandFlags) applyEnvDefaults() {
 	flags.gateFlags.applyEnvDefaults()
 	flags.waitFlags.applyEnvDefaults()
 	flags.humanFlag.applyEnvDefault()
-	// Deliberately NO flags.sessionFlag.applyEnvDefault(): unlike send and
-	// branch, `foci command` must not inherit FOCI_SESSION — a cron or
-	// script that happens to have it exported keeps dispatching on the
-	// agent's default session (#2296 ruling).
-	return flags, rest
 }
 
-func cmdCommand(base string, args []string) error {
-	if wantsHelp(args) {
-		commandUsage()
-		return nil
-	}
-	agent, args := parseAgentFlag(args)
-	flags, rest := parseCommandFlags(args)
-	if len(rest) == 0 {
-		return fmt.Errorf("usage: foci command [-a agent] [-s session] [gate flags] </cmd> [args]")
-	}
-	cmd := strings.Join(rest, " ")
+// dispatchCommand POSTs one dispatched slash command: the text words
+// joined into the command string (a leading "/" added when the caller
+// did not type one) with the parsed flags and agent selector. Both
+// dispositions of the one scan end here, so the /command wire contract
+// exists once.
+func dispatchCommand(base string, flags commandFlags, agent string, text []string) error {
+	cmd := strings.Join(text, " ")
 	if !strings.HasPrefix(cmd, "/") {
 		cmd = "/" + cmd
 	}
@@ -177,6 +230,68 @@ func cmdCommand(base string, args []string) error {
 	flags.humanFlag.addToBody(body)
 	flags.sessionFlag.addToBody(body)
 	return postJSON(base+"/command", body)
+}
+
+// cmdCommand dispatches a slash command via POST /command. Its own
+// argument is free text — a dispatched slash command carries arbitrary
+// words (a /todo close reason may look like any flag) — which is why
+// `command` registers with freeTextCommands (main.go): main reads its
+// global flags only from the leading run before the "command" word. The
+// one scan (scanCommandLine, main.go) owns the whole placement rule: it
+// finds where the text starts, refuses the words that cannot start it (a
+// connection flag, a valueless own flag, a second agent pair), and from
+// there every word is dispatched typed exactly, whatever it looks like.
+func cmdCommand(base string, args []string) error {
+	var flags commandFlags
+	lead, err := scanCommandLine(args, &flags, commandLead, true)
+	if err != nil {
+		return err
+	}
+	if lead.help {
+		commandUsage()
+		return nil
+	}
+	if len(lead.rest) == 0 {
+		return fmt.Errorf("usage: %s", commandUsageLine)
+	}
+	flags.applyEnvDefaults()
+	return dispatchCommand(base, flags, lead.agent, lead.rest)
+}
+
+// cmdPing dispatches the `foci ping` shorthand: /ping takes no
+// arguments, so its line is flags only — no free text to protect — and
+// keeps the historical whole-line disposition of the one scan; the /ping
+// word lands after them.
+func cmdPing(base string, args []string) error {
+	if wantsHelp(args) {
+		pingUsage()
+		return nil
+	}
+	var flags commandFlags
+	lead, err := scanCommandLine(args, &flags, commandLead, false)
+	if err != nil {
+		return err
+	}
+	flags.applyEnvDefaults()
+	return dispatchCommand(base, flags, lead.agent, append(lead.rest, "/ping"))
+}
+
+// cmdPair dispatches the `foci pair`/`pair-key` shorthand: the host is
+// its one argument — no free text — so the line keeps the historical
+// whole-line disposition of the one scan, and the /pair word lands
+// before the host.
+func cmdPair(base string, args []string) error {
+	if wantsHelp(args) {
+		pairKeyUsage()
+		return nil
+	}
+	var flags commandFlags
+	lead, err := scanCommandLine(args, &flags, commandLead, false)
+	if err != nil {
+		return err
+	}
+	flags.applyEnvDefaults()
+	return dispatchCommand(base, flags, lead.agent, append([]string{"/pair"}, lead.rest...))
 }
 
 func pairKeyUsage() {
@@ -379,7 +494,7 @@ func cmdSecrets(args []string) error {
 	}
 	// Show top-level secrets help only when -h/--help is the first arg
 	// (not a subcommand). Subcommands handle their own help.
-	if args[0] == "-h" || args[0] == "--help" {
+	if isHelpWord(args[0]) {
 		secretsUsage()
 		return nil
 	}

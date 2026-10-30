@@ -710,8 +710,8 @@ func todoTransition(store *memory.TodoStore, agentID string, id int64, ids []int
 	if err != nil {
 		return ToolResult{}, err
 	}
-	if (target == "done" || target == "dropped") && reason == "" {
-		return ToolResult{}, fmt.Errorf("reason is required when transitioning to %s (e.g. 'implemented in abc1234', 'no longer relevant')", target)
+	if err := memory.RequireCloseReason(target, reason); err != nil {
+		return ToolResult{}, err
 	}
 	resolved, err := resolveIDs(id, ids)
 	if err != nil {

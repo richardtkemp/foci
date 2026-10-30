@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -418,6 +419,50 @@ func (s *TodoStore) CountOpenByTag(agentID, tag string) (int, error) {
 	return count, err
 }
 
+// ParseTodoID reads tok as a todo id: one or more ASCII digits and nothing
+// else — the ONE id grammar the word-oriented todo surfaces share (every
+// /todo verb, get and edit included, and `foci todo done` call it; the
+// agent todo tool takes JSON int64 ids and never tokenises). "+14",
+// "-14" and "0x1f" are not ids, and neither is a digits-only token too
+// large for int64, so a signed or decorated word can never name another
+// ticket.
+func ParseTodoID(tok string) (int64, bool) {
+	for i := 0; i < len(tok); i++ {
+		if tok[i] < '0' || tok[i] > '9' {
+			return 0, false
+		}
+	}
+	id, err := strconv.ParseInt(tok, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return id, true
+}
+
+// TodoNotFoundError reports that no todo with ID exists for the agent asked
+// about — including an id that exists for a different agent, since ids are
+// per agent. Typed so HTTP callers can answer 404 via errors.As; the message
+// is the exact text every caller of Transition has always formatted.
+type TodoNotFoundError struct {
+	ID int64
+}
+
+func (e *TodoNotFoundError) Error() string {
+	return fmt.Sprintf("todo #%d not found", e.ID)
+}
+
+// RequireCloseReason refuses closing a todo (status "done" or "dropped") with
+// an empty reason — the rule the agent todo tool has always enforced — and
+// allows everything else. One function for both writers of close_reason: the
+// tool's todoTransition and the gateway's POST /todo/done, so they refuse
+// identically.
+func RequireCloseReason(status, reason string) error {
+	if (status == "done" || status == "dropped") && reason == "" {
+		return fmt.Errorf("reason is required when transitioning to %s (e.g. 'implemented in abc1234', 'no longer relevant')", status)
+	}
+	return nil
+}
+
 // Complete marks a todo item as done with the given reason.
 func (s *TodoStore) Complete(agentID string, id int64, reason string) error {
 	return s.Transition(agentID, id, "done", reason)
@@ -446,9 +491,12 @@ func (s *TodoStore) Transition(agentID string, id int64, status, reason string) 
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
 	if n == 0 {
-		return fmt.Errorf("todo #%d not found", id)
+		return &TodoNotFoundError{ID: id}
 	}
 	return nil
 }

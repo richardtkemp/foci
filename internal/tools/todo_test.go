@@ -1256,3 +1256,39 @@ func TestTodoToolEditAddRemoveTag(t *testing.T) {
 		t.Errorf("a refused edit changed #%d tags to %q", b, item.Tags)
 	}
 }
+
+// TestTodoClosingRequiresReason is a characterisation test: complete and
+// drop refuse an empty reason with the exact message (now via the shared
+// memory.RequireCloseReason — one rule with the gateway's close route),
+// reopen and start need none, and a refused close leaves the item open.
+func TestTodoClosingRequiresReason(t *testing.T) {
+	t.Parallel()
+
+	for _, action := range []string{"complete", "drop"} {
+		store := newTestTodoStore(t)
+		tool := NewTodoTool(store, "agent1")
+		id, _ := store.Add("agent1", "needs a reason", "medium", "")
+
+		_, err := executeTodoTool(tool, map[string]interface{}{"action": action, "id": id})
+		if err == nil {
+			t.Fatalf("%s without a reason: want an error, got none", action)
+		}
+		want := "reason is required when transitioning to"
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%s without a reason: error = %q, want it to contain %q", action, err.Error(), want)
+		}
+		if item, _ := store.Get("agent1", id); item.Status != "open" {
+			t.Errorf("%s without a reason changed #%d to %q, want still open", action, id, item.Status)
+		}
+	}
+
+	for _, action := range []string{"reopen", "start"} {
+		store := newTestTodoStore(t)
+		tool := NewTodoTool(store, "agent1")
+		id, _ := store.Add("agent1", "no reason needed", "medium", "")
+
+		if _, err := executeTodoTool(tool, map[string]interface{}{"action": action, "id": id}); err != nil {
+			t.Errorf("%s without a reason: unexpected error %v", action, err)
+		}
+	}
+}

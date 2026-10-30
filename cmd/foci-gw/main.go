@@ -784,7 +784,7 @@ Subcommands:
 		for ctx.Err() == nil {
 			srv := &http.Server{
 				Addr:              addr,
-				Handler:           authMiddleware(sec.httpAPIKey, mux),
+				Handler:           newTCPGatewayHandler(sec.httpAPIKey, mux),
 				ReadHeaderTimeout: 10 * time.Second,
 				ReadTimeout:       30 * time.Second,
 				WriteTimeout:      30 * time.Second,
