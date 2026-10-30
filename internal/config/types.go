@@ -1175,7 +1175,7 @@ type BrowserConfig struct {
 	Headless       *bool    `toml:"headless"        default:"true" desc:"Run the automated Chrome browser with no visible window"`                                                 // run headless
 	TimeoutSec     *int     `toml:"timeout_sec"     default:"30"   desc:"Seconds to wait for a browser page operation, like a click or navigation, before it times out"`           // page operation timeout in seconds
 	UserDataDir    *string  `toml:"user_data_dir"                  desc:"Directory Chrome stores its browser profile in. Leave empty to use a fresh temporary profile each time"`  // Chrome user data dir (empty = temp profile)
-	ExecutablePath *string  `toml:"executable_path"                desc:"Path to the Chrome binary to launch. Leave empty to auto-detect an installed Chrome"`                     // Chrome executable path (empty = auto-detect)
+	ExecutablePath *string  `toml:"executable_path"                desc:"Path to the Chrome binary to launch. Leave empty to use a Chromium foci downloads, not an installed one"` // Chrome executable path (empty = go-rod's pinned Chromium, downloaded if absent)
 	DOMStableSec   *float64 `toml:"dom_stable_sec"  default:"1"    desc:"Seconds between page snapshots when waiting for a webpage to stop changing before treating it as loaded"` // DOM stability wait interval in seconds
 	DOMStableDiff  *float64 `toml:"dom_stable_diff" default:"0.2"  desc:"How much a page may differ between snapshots, as a fraction from 0 to 1, and still count as stable"`      // DOM stability diff threshold
 }
