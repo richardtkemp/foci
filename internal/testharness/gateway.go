@@ -572,8 +572,8 @@ func seedAgentMetadata(t *testing.T, dbPath string, seed map[string]map[string]s
 }
 
 // spawnGateway forks the foci-gw subprocess, wires up streaming I/O
-// into h.stderrBuf, and blocks until either the terminal "started N
-// agent(s)" log line appears or readyTimeout elapses. The caller is
+// into h.stderrBuf, and blocks until either the terminal "startup
+// complete" log line appears or readyTimeout elapses. The caller is
 // responsible for assigning the harness fields (paths, opts) BEFORE
 // invoking this — spawnGateway only sets h.cmd / h.stderrBuf /
 // h.stoppedCh and registers cleanup.
@@ -1013,7 +1013,12 @@ func startCaptured(cmd *exec.Cmd, buf *syncBuffer) (chan struct{}, error) {
 
 // ----- Internal: ready-signal polling --------------------------------
 
-var readyPattern = regexp.MustCompile(`started \d+ agent\(s\):`)
+// readyPattern matches foci-gw's LAST startup line (cmd/foci-gw/main.go),
+// logged after the delegated readiness probe and handleRestartAndFirstRun.
+// The earlier "started N agent(s):" line is NOT ready: a test that pushes a
+// message on it races the first-run arming, and the first turn can compose
+// before the onboarding prompt is stored (#2438).
+var readyPattern = regexp.MustCompile(`\[main\] startup complete`)
 
 func waitForReady(buf *syncBuffer, stoppedCh chan struct{}, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
@@ -1027,7 +1032,7 @@ func waitForReady(buf *syncBuffer, stoppedCh chan struct{}, timeout time.Duratio
 		default:
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("timed out after %s waiting for 'started N agent(s)' log line", timeout)
+			return fmt.Errorf("timed out after %s waiting for the 'startup complete' log line", timeout)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

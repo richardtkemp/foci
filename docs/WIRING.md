@@ -256,6 +256,10 @@ fociroot.EnsureCCConfigEnv()                             ← internal/fociroot (
   → setupTestharnessControl(ctx, agents)                   ← testharness_control.go; test-only control surface for the L2 integration harness (internal/testharness), no-op in production
   → checkDelegatedReadiness(...)                           ← notifications.go (probe each delegated backend; fire relogin if not ready — gate active before first-run injection)
   → handleRestartAndFirstRun(...)                          ← notifications.go (restart + welcome via HandleMessage)
+  → log "startup complete"                                 ← the LAST startup line, and the L2 harness's ready signal (testharness
+                                                            readyPattern). "started N agent(s)" comes BEFORE the readiness probe and
+                                                            the first-run arming, so a turn composed between the two carries no
+                                                            onboarding; a harness that waited for it raced the arming (#2438)
   → block on signal → runShutdown(...)                     ← shutdown.go
 ```
 

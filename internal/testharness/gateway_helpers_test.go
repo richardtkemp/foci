@@ -83,15 +83,31 @@ func TestSyncBuffer_ConcurrentWrites(t *testing.T) {
 }
 
 // TestWaitForReady_AlreadyReady proves the poll returns nil immediately
-// when the terminal "started N agent(s):" line is already in the buffer.
+// when the terminal "startup complete" line is already in the buffer.
 func TestWaitForReady_AlreadyReady(t *testing.T) {
 	buf := newSyncBuffer()
-	if _, err := buf.Write([]byte("boot...\nstarted 2 agent(s): clutch, fotini\n")); err != nil {
+	if _, err := buf.Write([]byte("boot...\nstarted 2 agent(s): clutch, fotini\n2026-10-30T11:22:25Z INFO  [main] startup complete\n")); err != nil {
 		t.Fatalf("seed buffer: %v", err)
 	}
 	stopped := make(chan struct{})
 	if err := waitForReady(buf, stopped, time.Second); err != nil {
 		t.Errorf("waitForReady = %v, want nil for ready buffer", err)
+	}
+}
+
+// TestWaitForReady_StartedAgentsIsNotReady pins #2438: foci-gw logs
+// "started N agent(s):" BEFORE the readiness probe and the first-run arming,
+// so a harness that returned on it let a test's first message compose before
+// the onboarding prompt was stored. That line alone must not count as ready.
+func TestWaitForReady_StartedAgentsIsNotReady(t *testing.T) {
+	buf := newSyncBuffer()
+	if _, err := buf.Write([]byte("2026-10-30T11:22:24Z INFO  [main] started 1 agent(s): alpha(stub)\n")); err != nil {
+		t.Fatalf("seed buffer: %v", err)
+	}
+	stopped := make(chan struct{}) // never closed: process still alive
+	err := waitForReady(buf, stopped, 100*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("waitForReady = %v, want timeout: 'started N agent(s)' precedes the first-run arming", err)
 	}
 }
 

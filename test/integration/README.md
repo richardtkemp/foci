@@ -41,7 +41,7 @@ go test -tags=integration -count=1 -timeout 60s -run TestL2_CrossAgent ./test/in
 
 Each test:
 
-1. **`testharness.StartGateway`** builds `bin/foci-gw` and `bin/cc-stub` from source (Go's build cache makes this cheap), synthesises a minimal `foci.toml` + `secrets.toml` in `t.TempDir()`, registers per-agent bot tokens with an in-process `TelegramStub`, spawns `foci-gw`, and waits for the deterministic `started N agent(s):` log line.
+1. **`testharness.StartGateway`** builds `bin/foci-gw` and `bin/cc-stub` from source (Go's build cache makes this cheap), synthesises a minimal `foci.toml` + `secrets.toml` in `t.TempDir()`, registers per-agent bot tokens with an in-process `TelegramStub`, spawns `foci-gw`, and waits for the deterministic `[main] startup complete` log line — foci-gw's last startup step, after the readiness probe and the first-run arming (not `started N agent(s):`, which precedes them, #2438).
 2. **Push synthetic Telegram updates** via `h.TelegramStub().PushUpdate(token, gotgbot.Update{...})`. The bot's long-poll drains them within ~1 second.
 3. **Optional: script cc-stub** for an agent to emit specific assistant content. `h.WriteCCStubScript(t, agentID, body)` drops a JSON file that cc-stub reads on its next user message. Scripts can include Bash `tool_use` blocks — cc-stub literally runs `bash -c` so the exec bridge gets hit and foci-exposed tools (e.g. `foci_send_to_session`) dispatch through the normal RPC path.
 4. **Assert on side effects**:

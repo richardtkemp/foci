@@ -838,6 +838,13 @@ Subcommands:
 	// ========== Welcome & first-run ==========
 	handleRestartAndFirstRun(agents, agentOrder, si.sessionIndex, cfg, ctx, connMgr, plat.WhenPrimaryConnected, diagnosis)
 
+	// The last startup step. "started N agent(s)" above comes BEFORE the
+	// readiness probe and the first-run arming, so a turn composed between the
+	// two lines carries no onboarding (#2438). This line is the point at which
+	// every startup step has run; the L2 harness (internal/testharness
+	// readyPattern) waits for it, not for the earlier one.
+	mainLog.Infof("startup complete")
+
 	// ========== Wait for signal & shutdown ==========
 	sig := <-sigCh
 	mainLog.Infof("received %s, starting shutdown", sig)
