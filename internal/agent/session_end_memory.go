@@ -95,9 +95,10 @@ func (a *Agent) RunSessionEndMemory(ctx context.Context, parentKey, branchKey st
 
 	var skillBefore skills.SkillSnapshot
 	var winStart time.Time
-	notifySkills := refl.NotifyOnSkillCreation && len(a.SkillDirs) > 0 && (a.SkillChangeNotify != nil || a.SkillChangeNotifyText != nil)
+	skillDirs := a.SkillDirs.List() // once: before and after scan the same set (#2657)
+	notifySkills := refl.NotifyOnSkillCreation && len(skillDirs) > 0 && (a.SkillChangeNotify != nil || a.SkillChangeNotifyText != nil)
 	if notifySkills {
-		skillBefore = skills.Snapshot(a.SkillDirs)
+		skillBefore = skills.Snapshot(skillDirs)
 		winStart = time.Now()
 	}
 
@@ -123,7 +124,7 @@ func (a *Agent) RunSessionEndMemory(ctx context.Context, parentKey, branchKey st
 	}
 
 	if notifySkills {
-		a.detectAndNotifySkillChanges(ctx, branchKey, skillBefore, winStart, time.Now())
+		a.detectAndNotifySkillChanges(ctx, branchKey, skillDirs, skillBefore, winStart, time.Now())
 	}
 
 	if a.DelegatedManager != nil {
@@ -150,7 +151,8 @@ func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemp
 	a.RunSessionEndMemory(ctx, sessionKey, branchKey)
 }
 
-// detectAndNotifySkillChanges diffs the current skill state against before,
+// detectAndNotifySkillChanges diffs the current state of dirs (the same set
+// before was taken over) against before,
 // then splits the changes on whether their skill dir is a git repo
 // (skills.SplitByGitRepo — #1404, per Dick: a non-git-repo skill dir must
 // keep its EXACT pre-#1404 behaviour):
@@ -172,11 +174,11 @@ func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemp
 // chat is bound to a branch key (the app drops a notice with no binding for
 // its key), so the notice goes to the branch's root: the chat whose session
 // was reflected (#1652).
-func (a *Agent) detectAndNotifySkillChanges(ctx context.Context, sessionKey string, before skills.SkillSnapshot, winStart, winEnd time.Time) {
+func (a *Agent) detectAndNotifySkillChanges(ctx context.Context, sessionKey string, dirs []string, before skills.SkillSnapshot, winStart, winEnd time.Time) {
 	if root, ok := rootKeyIfChild(sessionKey); ok {
 		sessionKey = root
 	}
-	after := skills.Snapshot(a.SkillDirs)
+	after := skills.Snapshot(dirs)
 	changes := skills.Diff(before, after)
 	gitDirChanges, nonGitDirChanges := skills.SplitByGitRepo(ctx, changes)
 

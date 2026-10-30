@@ -31,7 +31,7 @@ type bootstrapResult struct {
 	bootstrap         *workspace.Bootstrap
 	skillRegistry     *skills.Registry
 	extraSystemBlocks []provider.SystemBlock
-	skillsDirs        []string
+	skillsDirs        *skills.LiveDirs // live: extra_dirs edits swap it (liveApplySkillsAddrs)
 }
 
 // setupBootstrapAndSkills loads the workspace bootstrap and skill registry.
@@ -45,16 +45,15 @@ func setupBootstrapAndSkills(p setupParams, agentStore *secrets.Store) bootstrap
 	checkSystemPromptSizes(bootstrap, maxFileChars, maxTotalChars, acfg.ID)
 
 	home := filepath.Dir(acfg.Workspace)
-	skillsDirs := skills.ResolveDirs(home, acfg.Workspace, p.cfg.Skills.Dir, acfg.SkillsDir)
-	// Use the process-shared loader so the shared skills dir (skillsDirs[0]) is
-	// scanned and warned about once, not once per agent. ResolveDirs always
-	// returns [sharedDir, agentDir]. Fall back to a plain Load if no loader was
-	// injected (e.g. a direct test caller).
+	skillsDirs := skills.ResolveDirs(home, acfg.Workspace, p.cfg.Skills.Dir, acfg.SkillsDir, p.cfg.SkillExtraDirs(acfg))
+	// Use the process-shared loader so the shared skills dir is scanned and
+	// warned about once, not once per agent. Fall back to a plain LoadDirs if
+	// no loader was injected (e.g. a direct test caller).
 	var skillRegistry *skills.Registry
-	if p.skillLoader != nil && len(skillsDirs) == 2 {
-		skillRegistry = p.skillLoader.LoadForAgent(skillsDirs[0], skillsDirs[1])
+	if p.skillLoader != nil {
+		skillRegistry = p.skillLoader.LoadForAgent(skillsDirs)
 	} else {
-		skillRegistry = skills.Load(skillsDirs)
+		skillRegistry = skills.LoadDirs(skillsDirs)
 	}
 	var extraSystemBlocks []provider.SystemBlock
 	if skillRegistry.Len() > 0 {
@@ -70,7 +69,7 @@ func setupBootstrapAndSkills(p setupParams, agentStore *secrets.Store) bootstrap
 		bootstrap:         bootstrap,
 		skillRegistry:     skillRegistry,
 		extraSystemBlocks: extraSystemBlocks,
-		skillsDirs:        skillsDirs,
+		skillsDirs:        skills.NewLiveDirs(skillsDirs),
 	}
 }
 

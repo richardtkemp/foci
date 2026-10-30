@@ -77,6 +77,40 @@ func ResolvePath(p string) string {
 	return filepath.Join(home, p)
 }
 
+// ResolveUserPath is ResolvePath plus a leading "~" or "~/", which expands to
+// the user's home directory ($HOME — as a shell expands it, not foci's install
+// root; same rule as the file tools, #2580). Used for list-valued directory
+// keys an operator is likely to write as ~/git/... (#2657).
+func ResolveUserPath(p string) string {
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			configLog.Warnf("could not resolve ~ in config path %q (left as-is): %v", p, err)
+			return p
+		}
+		return filepath.Join(home, strings.TrimPrefix(p[1:], "/"))
+	}
+	return ResolvePath(p)
+}
+
+// resolveUserPaths applies ResolveUserPath to every non-empty entry, in place.
+func resolveUserPaths(ps []string) {
+	for i, p := range ps {
+		if p != "" {
+			ps[i] = ResolveUserPath(p)
+		}
+	}
+}
+
+// SkillExtraDirs returns the extra skill dirs for one agent: the global
+// [skills] extra_dirs, then the agent's [agents.skills] extra_dirs (#2657).
+// Both are already path-resolved by Load.
+func (c *Config) SkillExtraDirs(a AgentConfig) []string {
+	out := make([]string, 0, len(c.Skills.ExtraDirs)+len(a.Skills.ExtraDirs))
+	out = append(out, c.Skills.ExtraDirs...)
+	return append(out, a.Skills.ExtraDirs...)
+}
+
 // ResolvePathPtr resolves a *string path in place if non-nil and non-empty.
 func ResolvePathPtr(p *string) {
 	if p != nil && *p != "" {
@@ -169,6 +203,10 @@ func (c *Config) ResolveAllPaths() {
 		for j := range c.Agents[i].Platforms {
 			ResolvePathPtr(c.Agents[i].Platforms[j].Display.ReceivedFilesDir)
 		}
+	}
+	resolveUserPaths(c.Skills.ExtraDirs)
+	for i := range c.Agents {
+		resolveUserPaths(c.Agents[i].Skills.ExtraDirs)
 	}
 }
 

@@ -53,7 +53,7 @@ type cmdRegParams struct {
 	// Tools & skills
 	registry      *tools.Registry
 	tmuxTool      *tools.Tool
-	skillsDirs    []string
+	skillsDirs    *skills.LiveDirs
 	skillRegistry *skills.Registry
 
 	// Cross-agent

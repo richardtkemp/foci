@@ -29,6 +29,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/delegator"
 	"foci/internal/log"
+	"foci/internal/skills"
 
 	"foci/internal/memory"
 	"foci/internal/provider"
@@ -179,7 +180,7 @@ type Runner struct {
 
 	// skillDirs are the skill directories to scan for creation/update detection
 	// during reflection. nil = feature disabled.
-	skillDirs []string
+	skillDirs *skills.LiveDirs
 	// notifySkillChange is called with (sessionKey, skillName, markdown) for a
 	// GIT-REPO skill change git-attributed to a commit landing during the
 	// reflection window (skills.AttributeToGit) — see #1404. nil = disabled.
@@ -375,7 +376,7 @@ type RunnerConfig struct {
 	// pre-#1404 behaviour, unchanged); a git-repo change is gated on a commit
 	// landing in the reflection window (skills.AttributeToGit) and, if
 	// matched, fires NotifySkillChange.
-	SkillDirs []string
+	SkillDirs *skills.LiveDirs
 
 	// NotifySkillChange is called with (sessionKey, skillName, markdown) for
 	// each GIT-REPO skill change git-attributed to a commit within the

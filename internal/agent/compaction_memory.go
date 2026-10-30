@@ -65,9 +65,10 @@ func (a *Agent) FireCompactionMemory(ctx context.Context, sessionKey, orientTemp
 
 	var skillBefore skills.SkillSnapshot
 	var winStart time.Time
-	notifySkills := refl.NotifyOnSkillCreation && len(a.SkillDirs) > 0 && (a.SkillChangeNotify != nil || a.SkillChangeNotifyText != nil)
+	skillDirs := a.SkillDirs.List() // once: before and after scan the same set (#2657)
+	notifySkills := refl.NotifyOnSkillCreation && len(skillDirs) > 0 && (a.SkillChangeNotify != nil || a.SkillChangeNotifyText != nil)
 	if notifySkills {
-		skillBefore = skills.Snapshot(a.SkillDirs)
+		skillBefore = skills.Snapshot(skillDirs)
 		winStart = time.Now()
 	}
 
@@ -79,6 +80,6 @@ func (a *Agent) FireCompactionMemory(ctx context.Context, sessionKey, orientTemp
 	}
 
 	if notifySkills {
-		a.detectAndNotifySkillChanges(ctx, targetKey, skillBefore, winStart, time.Now())
+		a.detectAndNotifySkillChanges(ctx, targetKey, skillDirs, skillBefore, winStart, time.Now())
 	}
 }

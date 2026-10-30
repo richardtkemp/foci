@@ -569,9 +569,9 @@ func TestLoaderScansSharedOnce(t *testing.T) {
 	agentB := t.TempDir()
 
 	l := NewLoader()
-	l.LoadForAgent(shared, agentA)
-	l.LoadForAgent(shared, agentB)
-	l.LoadForAgent(shared, agentA) // a reload-style repeat must not re-scan
+	l.LoadForAgent(Dirs{Shared: shared, Agent: agentA})
+	l.LoadForAgent(Dirs{Shared: shared, Agent: agentB})
+	l.LoadForAgent(Dirs{Shared: shared, Agent: agentA}) // a reload-style repeat must not re-scan
 
 	if got := l.scanCount[shared]; got != 1 {
 		t.Fatalf("shared dir scanned %d times, want exactly 1", got)
@@ -590,8 +590,8 @@ func TestLoaderMergesSharedAndAgent(t *testing.T) {
 	writeSkillMD(t, agentB, "beta", "---\nname: beta\ndescription: B only\n---\n")
 
 	l := NewLoader()
-	regA := l.LoadForAgent(shared, agentA)
-	regB := l.LoadForAgent(shared, agentB)
+	regA := l.LoadForAgent(Dirs{Shared: shared, Agent: agentA})
+	regB := l.LoadForAgent(Dirs{Shared: shared, Agent: agentB})
 
 	if !hasSkill(regA, "shared") || !hasSkill(regA, "alpha") {
 		t.Errorf("agent A registry = %v, want shared+alpha", names(regA))
@@ -620,8 +620,8 @@ func TestLoaderAgentOverrideDoesNotCorruptSharedCache(t *testing.T) {
 	agentB := t.TempDir() // no override
 
 	l := NewLoader()
-	regA := l.LoadForAgent(shared, agentA)
-	regB := l.LoadForAgent(shared, agentB)
+	regA := l.LoadForAgent(Dirs{Shared: shared, Agent: agentA})
+	regB := l.LoadForAgent(Dirs{Shared: shared, Agent: agentB})
 
 	if got := skillDesc(regA, "shared"); got != "A override" {
 		t.Errorf("agent A shared description = %q, want %q", got, "A override")
@@ -642,7 +642,7 @@ func TestLoaderMissingSharedDir(t *testing.T) {
 	writeSkillMD(t, agentA, "alpha", "---\nname: alpha\ndescription: A only\n---\n")
 
 	l := NewLoader()
-	reg := l.LoadForAgent(shared, agentA)
+	reg := l.LoadForAgent(Dirs{Shared: shared, Agent: agentA})
 	if !hasSkill(reg, "alpha") || reg.Len() != 1 {
 		t.Errorf("registry = %v, want only alpha", names(reg))
 	}

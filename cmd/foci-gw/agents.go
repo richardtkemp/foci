@@ -42,7 +42,7 @@ type agentInstance struct {
 	agentCfg         config.AgentConfig
 	resolved         *config.LiveValue[*config.ResolvedAgentConfig] // hot-swappable pre-merged agent+global config; read via LiveConfig()
 	promptSearchDirs []string                                       // directories to search for prompt files
-	skillsDirs       []string                                       // skill directories (shared + per-agent) for reflection detection
+	skillsDirs       *skills.LiveDirs                               // skill directories (shared, extra, per-agent) for reload + reflection detection; swapped live by liveApplySkillsAddrs
 	tmuxClearAll     func()                                         // clears tmux tool state (watches, owned sessions)
 	tmuxWatchCount   func() int                                     // returns number of active tmux watches
 	kaRunner         *periodic.Runner                               // keepalive & background work timer

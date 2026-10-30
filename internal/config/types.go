@@ -472,6 +472,7 @@ type AgentConfig struct {
 
 	// Per-agent skills and message transforms (empty = use global)
 	SkillsDir         string             `toml:"skills_dir"`         // per-agent skills directory (default: $workspace/skills/)
+	Skills            AgentSkillsConfig  `toml:"skills"`             // [agents.skills]: extra skill dirs added to the global ones (#2657)
 	MessageTransforms []MessageTransform `toml:"message_transforms"` // regex find/replace rules (empty = use global)
 	BlockedPaths      []BlockedPath      `toml:"blocked_paths"`      // path prefixes that write/edit tools refuse (empty = use global)
 }
@@ -1137,6 +1138,18 @@ type EnvironmentConfig struct {
 
 type SkillsConfig struct {
 	Dir string `toml:"dir" desc:"Directory containing shared skills (default: $home/shared/skills/)"`
+	// ExtraDirs are loaded IN ADDITION to the shared and per-agent dirs, for
+	// every agent (#2657). Load order: shared, these, the agent's own
+	// [agents.skills] extra_dirs, the per-agent dir; a later dir wins a name
+	// clash (WARN). Paths: ~ is $HOME, relative is against foci's install
+	// root (ResolveAllPaths). A missing dir is a WARN, not a startup failure.
+	ExtraDirs []string `toml:"extra_dirs" hot:"session" desc:"Additional skill directories loaded for every agent, after the shared dir and before each agent's own; on a name clash the later directory wins. ~ is your home dir; relative paths resolve against the foci home dir"`
+}
+
+// AgentSkillsConfig is [agents.skills]: per-agent additions to [skills].
+// ExtraDirs ADD to the global [skills] extra_dirs (after them), never replace.
+type AgentSkillsConfig struct {
+	ExtraDirs []string `toml:"extra_dirs" hot:"session" desc:"Additional skill directories for this agent only, loaded after the global extra_dirs and before the agent's own skills dir; on a name clash the later directory wins"`
 }
 
 type ResourcesConfig struct {

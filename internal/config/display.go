@@ -265,6 +265,9 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	if cfg.Skills.Dir != "" {
 		add("skills", "dir", cfg.Skills.Dir)
 	}
+	if len(cfg.Skills.ExtraDirs) > 0 {
+		add("skills", "extra_dirs", cfg.Skills.ExtraDirs)
+	}
 
 	// tts
 	for i, e := range cfg.TTS {
@@ -343,6 +346,9 @@ func collectAgentRows(agent AgentConfig) []configRow {
 
 	if len(agent.System.SystemFiles) > 0 {
 		add("system_files", agent.System.SystemFiles)
+	}
+	if len(agent.Skills.ExtraDirs) > 0 {
+		add("skills.extra_dirs", agent.Skills.ExtraDirs)
 	}
 	add("duplicate_messages", agent.Loop.DuplicateMessages)
 	if agent.Sessions.BranchOrientationFacetPrompt != nil {

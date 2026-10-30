@@ -243,7 +243,7 @@ type finalizeParams struct {
 	tmuxWatchCount      func() int              // nil for delegated agents
 	ttsRepls            map[string]string       // nil for delegated agents
 	mcpManager          *mcpkg.Manager          // nil for delegated agents
-	skillsDirs          []string
+	skillsDirs          *skills.LiveDirs
 }
 
 // suggestionCommandDispatcher adapts runAgentCommand — the dispatch core
@@ -256,6 +256,20 @@ func suggestionCommandDispatcher(cmds *command.Registry, cc command.CommandConte
 	return func(ctx context.Context, sessionKey, line string) (string, bool) {
 		resp, ok := runAgentCommand(ctx, cmds, cc, connMgr, agentID, sessionKey, line)
 		return resp.DisplayText(), ok
+	}
+}
+
+// skillsReloadFn returns the agent's ReloadSystemFn: re-load the skills from
+// disk and render the prompt block. It reads ld on every call, so a live
+// extra_dirs edit (#2657, liveApplySkillsAddrs) takes effect at the next
+// reload — the delegated session start (SystemPromptFunc).
+func skillsReloadFn(ld *skills.LiveDirs, workspace string) func() ([]provider.SystemBlock, int) {
+	return func() ([]provider.SystemBlock, int) {
+		reg := skills.LoadDirs(ld.Get())
+		if reg.Len() == 0 {
+			return nil, 0
+		}
+		return []provider.SystemBlock{{Type: "text", Text: reg.SystemBlock(workspace)}}, reg.Len()
 	}
 }
 
@@ -272,14 +286,7 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 	// Reload lifecycle: skills/extra-blocks reload callback.
 	if fp.skillsDirs != nil {
 		reloadSkillsDirs := fp.skillsDirs
-		reloadWorkspace := acfg.Workspace
-		ag.ReloadSystemFn = func() ([]provider.SystemBlock, int) {
-			reg := skills.Load(reloadSkillsDirs)
-			if reg.Len() == 0 {
-				return nil, 0
-			}
-			return []provider.SystemBlock{{Type: "text", Text: reg.SystemBlock(reloadWorkspace)}}, reg.Len()
-		}
+		ag.ReloadSystemFn = skillsReloadFn(reloadSkillsDirs, acfg.Workspace)
 		ag.SkillDirs = reloadSkillsDirs
 		notifyAgentID := acfg.ID
 		ag.SkillChangeNotify = func(sessionKey, skillName, markdown string) {

@@ -875,18 +875,33 @@ auto_approve_common_safe_write = false  # default — opt-in, not path-scoped
 
 ### `[skills]`
 
-Override for the shared skills directory. By default, skills are loaded from two directories in order:
+The shared skills directory, and any number of extra skill directories. Skills are loaded from these directories, in this order:
 
-1. **Shared:** `$home/shared/skills/` (where `$home` is the parent of the agent's workspace)
-2. **Per-agent:** `$workspace/skills/`
+1. **Shared:** `$home/shared/skills/` (where `$home` is the parent of the agent's workspace), or `[skills] dir`
+2. **Global extras:** each entry of `[skills] extra_dirs`, in the order listed
+3. **Per-agent extras:** each entry of `[agents.skills] extra_dirs`, in the order listed
+4. **Per-agent:** `$workspace/skills/`, or `skills_dir`
 
-When both directories contain a skill with the same name, the per-agent version wins.
+When two directories contain a skill with the same name, the **later** directory wins, so the per-agent dir still beats everything and the shared dir still loses to everything. A clash between the shared and per-agent dirs logs an INFO `override:` line, as it always has. A clash where either side is an extra dir logs a WARN `name clash:` line naming both directories, because an extra dir is usually someone else's tree and a clash with it is more likely an accident.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `dir` | string | `""` | Shared skills directory. Empty uses the default `$home/shared/skills/`. |
+| `dir` | string | `""` | Shared skills directory. Empty uses the default `$home/shared/skills/`. Restart required. |
+| `extra_dirs` | string array | `[]` | Extra skill directories for every agent, loaded **in addition to** the shared and per-agent dirs. Live (applies at each agent's next session start). |
 
-Per-agent override: `skills_dir` in `[[agents]]` overrides the per-agent directory (default: `$workspace/skills/`).
+Per-agent: `skills_dir` in `[[agents]]` overrides the per-agent directory (default: `$workspace/skills/`; restart required). `[agents.skills] extra_dirs` adds extra directories for that agent only; they come **after** the global `extra_dirs` and never replace them. Live, like the global key.
+
+Extra-dir paths: a leading `~` is `$HOME`; a relative path resolves against the foci home dir (`$FOCI_HOME`, else `$HOME`), like the other path keys; absolute paths are used as-is. An entry naming the shared or per-agent dir, or repeating an earlier entry, is ignored. A missing or unreadable extra dir logs a WARN (once a day) and is skipped — it never stops startup. Skills in an extra dir appear exactly like the others: listed in the prompt with their real path, re-read at every session start, and included in the reflection pass's skill-change detection (so a reflection edit to one is reported like an edit to a shared skill).
+
+```toml
+[skills]
+extra_dirs = ["~/git/ai-sudo/skills"]
+
+[[agents]]
+id = "clutch"
+[agents.skills]
+extra_dirs = ["~/git/clutch-only-skills"]
+```
 
 Each subdirectory with a `SKILL.md` is loaded. The skill name and description (from YAML frontmatter) are injected into the system prompt. Skills with `command` + `script` frontmatter auto-register as slash commands.
 
@@ -1325,6 +1340,7 @@ Scheduled housekeeping that runs at a wall-clock time of day **or** on a fixed i
 | Key | Type | Default | Global location | Description |
 |-----|------|---------|-----------------|-------------|
 | `skills_dir` | string | `""` | `[skills] dir` | Per-agent skills directory. Empty uses default `$workspace/skills/`. |
+| `skills.extra_dirs` | array | `[]` | `[skills] extra_dirs` | `[agents.skills] extra_dirs`: extra skill dirs for this agent, ADDED after the global list (not a replacement). See [`[skills]`](#skills). |
 | `message_transforms` | array | `[]` | `[[message_transforms]]` | Regex find/replace rules applied to inbound messages. `[]` inherits from global `[[message_transforms]]`. |
 | `blocked_paths` | array | `[]` | `[[blocked_paths]]` | Path prefixes blocked for write/edit tools. `[]` inherits from global `[[blocked_paths]]`. Per-agent replaces global (not merged). |
 

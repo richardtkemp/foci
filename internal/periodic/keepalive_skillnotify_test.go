@@ -11,6 +11,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/session"
+	"foci/internal/skills"
 )
 
 // runGit runs a git command in dir with a fixed identity and (if non-zero)
@@ -86,7 +87,7 @@ func TestReflection_SkillNotifyGoesToReflectedSession(t *testing.T) {
 			NotifyOnSkillCreation: true,
 		},
 		sessionIndex:    idx,
-		skillDirs:       []string{skillRoot},
+		skillDirs:       skills.NewLiveDirs(skills.Dirs{Agent: skillRoot}),
 		lastInteraction: now.Add(-30 * time.Minute),
 		lastReflection:  now.Add(-2 * time.Hour),
 		agent: &fakeBackgroundAgent{
@@ -187,7 +188,7 @@ func TestReflection_SkillNotify_NonGitRepo_UsesTextPath(t *testing.T) {
 			NotifyOnSkillCreation: true,
 		},
 		sessionIndex:    idx,
-		skillDirs:       []string{skillRoot},
+		skillDirs:       skills.NewLiveDirs(skills.Dirs{Agent: skillRoot}),
 		lastInteraction: now.Add(-30 * time.Minute),
 		lastReflection:  now.Add(-2 * time.Hour),
 		agent: &fakeBackgroundAgent{
@@ -273,7 +274,7 @@ func TestReflection_SkillNotify_GitRepoNoCommit_NoNotification(t *testing.T) {
 			NotifyOnSkillCreation: true,
 		},
 		sessionIndex:    idx,
-		skillDirs:       []string{skillRoot},
+		skillDirs:       skills.NewLiveDirs(skills.Dirs{Agent: skillRoot}),
 		lastInteraction: now.Add(-30 * time.Minute),
 		lastReflection:  now.Add(-2 * time.Hour),
 		agent: &fakeBackgroundAgent{

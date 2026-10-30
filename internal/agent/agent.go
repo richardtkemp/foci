@@ -18,6 +18,7 @@ import (
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
+	"foci/internal/skills"
 	"foci/internal/telemetry"
 	"foci/internal/tools"
 	"foci/internal/turnevent"
@@ -175,7 +176,7 @@ type Agent struct {
 	Keepalive                     config.ResolvedKeepalive                // resolved keepalive config (agent+global merged); static-cfg fallback, see keepalive()
 	Background                    config.ResolvedBackground               // resolved background config (agent+global merged); static-cfg fallback, see background()
 	Maintenance                   config.ResolvedMaintenance              // resolved maintenance config (agent+global merged); static-cfg fallback, see maintenance()
-	SkillDirs                     []string                                // skill directories (shared + per-agent) for reflection creation/update detection
+	SkillDirs                     *skills.LiveDirs                        // skill directories (shared, extra, per-agent) for reflection creation/update detection; nil-safe, swapped live (#2657)
 	SkillChangeNotify             func(string, string, string)            // called with (sessionKey, skillName, markdown) when a GIT-REPO skill change is attributed to a commit that landed during the window (see skills.AttributeToGit); nil = disabled
 	SkillChangeNotifyText         func(string, string)                    // called with (sessionKey, formatted message) for a NON-git-repo skill change (skills.FormatChanges) — preserves the pre-#1404 plain-text behaviour there exactly; nil = disabled
 	DefaultPlatform               string                                  // configured default_platform (per-agent, else global); preferred for default-session resolution and delivery fallback

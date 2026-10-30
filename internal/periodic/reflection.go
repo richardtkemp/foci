@@ -133,7 +133,10 @@ func (r *Runner) maybeReflection() {
 
 	r.log.Infof("firing reflection pass for agent %s (%d sessions)", r.agentID, len(keys))
 
-	notifySkills := r.reflectCfg.NotifyOnSkillCreation && len(r.skillDirs) > 0 && (r.notifySkillChange != nil || r.notifySkillChangeText != nil)
+	// Read the dirs once: before and after must scan the same set, or a live
+	// extra_dirs edit mid-pass would report a whole dir as "created" (#2657).
+	skillDirs := r.skillDirs.List()
+	notifySkills := r.reflectCfg.NotifyOnSkillCreation && len(skillDirs) > 0 && (r.notifySkillChange != nil || r.notifySkillChangeText != nil)
 
 	go func() {
 		defer func() {
@@ -157,7 +160,7 @@ func (r *Runner) maybeReflection() {
 		// misattributed to this branch — see #1404.
 		var prev skills.SkillSnapshot
 		if notifySkills {
-			prev = skills.Snapshot(r.skillDirs)
+			prev = skills.Snapshot(skillDirs)
 		}
 		for _, key := range keys {
 			winStart := time.Now()
@@ -167,7 +170,7 @@ func (r *Runner) maybeReflection() {
 			}
 			if notifySkills && ran {
 				winEnd := time.Now()
-				after := skills.Snapshot(r.skillDirs)
+				after := skills.Snapshot(skillDirs)
 				changes := skills.Diff(prev, after)
 				gitDirChanges, nonGitDirChanges := skills.SplitByGitRepo(context.Background(), changes)
 				if r.notifySkillChangeText != nil {
@@ -205,9 +208,10 @@ func (r *Runner) ReflectSessionIfDue(sessionKey string) {
 	}
 
 	var skillBefore skills.SkillSnapshot
-	notifySkills := r.reflectCfg.NotifyOnSkillCreation && len(r.skillDirs) > 0 && (r.notifySkillChange != nil || r.notifySkillChangeText != nil)
+	skillDirs := r.skillDirs.List() // once: before and after scan the same set (#2657)
+	notifySkills := r.reflectCfg.NotifyOnSkillCreation && len(skillDirs) > 0 && (r.notifySkillChange != nil || r.notifySkillChangeText != nil)
 	if notifySkills {
-		skillBefore = skills.Snapshot(r.skillDirs)
+		skillBefore = skills.Snapshot(skillDirs)
 	}
 
 	winStart := time.Now()
@@ -216,7 +220,7 @@ func (r *Runner) ReflectSessionIfDue(sessionKey string) {
 	}
 
 	if notifySkills {
-		after := skills.Snapshot(r.skillDirs)
+		after := skills.Snapshot(skillDirs)
 		changes := skills.Diff(skillBefore, after)
 		gitDirChanges, nonGitDirChanges := skills.SplitByGitRepo(context.Background(), changes)
 		if r.notifySkillChangeText != nil {

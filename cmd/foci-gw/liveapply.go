@@ -9,6 +9,7 @@ import (
 	"foci/internal/delegator/accounting"
 	"foci/internal/log"
 	"foci/internal/modelinfo"
+	"foci/internal/skills"
 )
 
 // liveApply routes a successful config-file edit to the running process, for
@@ -108,6 +109,11 @@ func (la *liveApply) Apply(section, key string) (bool, error) {
 // TestLiveApplyCoversHotFields enforces it.
 var (
 	liveApplyLoggingAddrs = []string{"logging.level"}
+
+	// Extra skill dirs (#2657): a derived handle — each agent's
+	// *skills.LiveDirs, read at every skill reload (session start) and every
+	// reflection snapshot. The shared dir and skills_dir stay restart-only.
+	liveApplySkillsAddrs = []string{"skills.extra_dirs", "agent.skills.extra_dirs"}
 
 	// modelinfo is an object[] section (not scalar hot-tagged fields), so it
 	// has no per-field registry rows. The bare section address is what
@@ -250,6 +256,15 @@ func registerLiveAppliers(la *liveApply, agents map[string]*agentInstance) {
 		return nil
 	})
 
+	la.register(liveApplySkillsAddrs, func(fresh *config.Config) error {
+		for _, freshAcfg := range fresh.Agents {
+			if inst := agents[freshAcfg.ID]; inst != nil {
+				applySkillExtraDirs(inst.skillsDirs, fresh, freshAcfg)
+			}
+		}
+		return nil
+	})
+
 	la.register(liveApplyDebugAddrs, func(fresh *config.Config) error {
 		pprofGate.Store(config.DerefBool(fresh.Debug.EnablePprof))
 		log.SetExtra("ccstream", config.DerefBool(fresh.Debug.ExtraCcstreamLogging))
@@ -362,4 +377,16 @@ func registerLiveAppliers(la *liveApply, agents map[string]*agentInstance) {
 		}
 		return nil
 	})
+}
+
+// applySkillExtraDirs swaps the extra dirs in an agent's live skill dirs for
+// fresh's (global [skills] extra_dirs, then the agent's own). Only Extra
+// changes: the shared dir and skills_dir are restart-only, so a pending file
+// edit to either must not ride in on an extra_dirs edit. A nil ld (an agent
+// built without skills) is a no-op.
+func applySkillExtraDirs(ld *skills.LiveDirs, fresh *config.Config, freshAcfg config.AgentConfig) {
+	if ld == nil {
+		return
+	}
+	ld.Set(ld.Get().WithExtra(fresh.SkillExtraDirs(freshAcfg)))
 }

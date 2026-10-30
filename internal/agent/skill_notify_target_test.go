@@ -24,11 +24,11 @@ func TestDetectAndNotifySkillChanges_BranchNotifiesRootChat(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.reflecting, func(t *testing.T) {
 			skillRoot := t.TempDir()
-			a := &Agent{SkillDirs: []string{skillRoot}}
+			a := &Agent{SkillDirs: skills.NewLiveDirs(skills.Dirs{Agent: skillRoot})}
 			var got []string
 			a.SkillChangeNotifyText = func(sessionKey, _ string) { got = append(got, sessionKey) }
 
-			before := skills.Snapshot(a.SkillDirs)
+			before := skills.Snapshot(a.SkillDirs.List())
 			winStart := time.Now()
 			dir := filepath.Join(skillRoot, "new-skill")
 			if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -38,7 +38,7 @@ func TestDetectAndNotifySkillChanges_BranchNotifiesRootChat(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			a.detectAndNotifySkillChanges(context.Background(), tc.reflecting, before, winStart, time.Now())
+			a.detectAndNotifySkillChanges(context.Background(), tc.reflecting, a.SkillDirs.List(), before, winStart, time.Now())
 
 			if len(got) != 1 || got[0] != tc.want {
 				t.Fatalf("notified %v, want [%s]", got, tc.want)

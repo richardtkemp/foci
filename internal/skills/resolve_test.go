@@ -8,7 +8,7 @@ import (
 func TestResolveDirsDefaults(t *testing.T) {
 	// Verifies that with no overrides, ResolveDirs returns
 	// $home/shared/skills and $workspace/skills.
-	dirs := ResolveDirs("/home/foci", "/home/foci/clutch", "", "")
+	dirs := ResolveDirs("/home/foci", "/home/foci/clutch", "", "", nil).List()
 	if len(dirs) != 2 {
 		t.Fatalf("expected 2 dirs, got %d", len(dirs))
 	}
@@ -22,7 +22,7 @@ func TestResolveDirsDefaults(t *testing.T) {
 
 func TestResolveDirsSharedOverride(t *testing.T) {
 	// Verifies that a global config override replaces the default shared dir.
-	dirs := ResolveDirs("/home/foci", "/home/foci/clutch", "/custom/shared", "")
+	dirs := ResolveDirs("/home/foci", "/home/foci/clutch", "/custom/shared", "", nil).List()
 	if dirs[0] != "/custom/shared" {
 		t.Errorf("shared dir = %q, want /custom/shared", dirs[0])
 	}
@@ -33,7 +33,7 @@ func TestResolveDirsSharedOverride(t *testing.T) {
 
 func TestResolveDirsAgentOverride(t *testing.T) {
 	// Verifies that a per-agent config override replaces the default agent dir.
-	dirs := ResolveDirs("/home/foci", "/home/foci/clutch", "", "/custom/agent")
+	dirs := ResolveDirs("/home/foci", "/home/foci/clutch", "", "/custom/agent", nil).List()
 	if want := filepath.Join("/home/foci", "shared", "skills"); dirs[0] != want {
 		t.Errorf("shared dir = %q, want %q", dirs[0], want)
 	}
@@ -44,7 +44,7 @@ func TestResolveDirsAgentOverride(t *testing.T) {
 
 func TestResolveDirsBothOverrides(t *testing.T) {
 	// Verifies that both overrides are applied simultaneously.
-	dirs := ResolveDirs("/home/foci", "/home/foci/clutch", "/custom/shared", "/custom/agent")
+	dirs := ResolveDirs("/home/foci", "/home/foci/clutch", "/custom/shared", "/custom/agent", nil).List()
 	if dirs[0] != "/custom/shared" {
 		t.Errorf("shared dir = %q, want /custom/shared", dirs[0])
 	}
