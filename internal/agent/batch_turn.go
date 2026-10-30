@@ -24,20 +24,27 @@ import (
 //     emitted in that gap would fall through to late delivery, which resolves
 //     to the owner's chat. A fresh batch key has no concurrent autonomous run
 //     whose delivery this could clobber (the reason the orchestrator waits);
+//     a tee on ctx (turnevent.WithTee) gets every event beside it;
 //   - after the turn, a NopSink stays registered, so nothing the backend emits
 //     before RunBatch closes it can reach a chat either.
 func (a *Agent) RunBatchTurn(ctx context.Context, sessionKey, prompt, purpose string) (string, error) {
 	buf := turnevent.NewBufferSink()
+	// A caller's tee (a direct spawn's app view, #2683) gets every event too.
+	var sink turnevent.Sink = buf
+	if tee := turnevent.TeeFromContext(ctx); tee != nil {
+		sink = turnevent.NewFanout(buf, tee)
+		ctx = turnevent.WithoutTee(ctx)
+	}
 	ctx = WithTrigger(withBatchPurpose(ctx, purpose), purpose)
-	ctx = turnevent.WithSink(ctx, buf)
+	ctx = turnevent.WithSink(ctx, sink)
 
 	// A recorded batch kind (consolidation) is logged from its first event: the
 	// sink registered here is wrapped for conversation logging, because the
 	// orchestrator's own recording registration (recordingSystemSink) only
 	// replaces it after dispatch (#2060).
-	var early turnevent.Sink = buf
+	early := sink
 	if kind := recordedTurnKind(purpose); kind != "" {
-		early = newTurnKindLoggingSink(buf, a, session.ChatIDFromKey(sessionKey), &TurnMetadata{}, sessionKey, kind)
+		early = newTurnKindLoggingSink(sink, a, session.ChatIDFromKey(sessionKey), &TurnMetadata{}, sessionKey, kind)
 	}
 	router := a.sessionRouter(sessionKey)
 	router.Register(early)

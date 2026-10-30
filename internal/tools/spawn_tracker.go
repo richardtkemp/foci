@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"foci/internal/turnevent"
@@ -45,8 +46,9 @@ type RunningSpawn struct {
 	Agent string
 }
 
-// SpawnObserver is told about each background spawn of a parent session, so a
-// platform can show it beside the agent's subagents (#2139). Every method may
+// SpawnObserver is told about each spawn of a parent session, background or
+// direct (#2683), so a platform can show it beside the agent's subagents
+// (#2139). Every method may
 // be called from the spawn's goroutine.
 type SpawnObserver interface {
 	// SpawnStarted reports a spawn started for parentSession with its prompt.
@@ -602,12 +604,15 @@ type spawnTextSink struct {
 	obs        SpawnObserver
 	tracker    *SpawnTracker
 	parent, id string
+	// sawText is set once any assistant text has passed through.
+	sawText atomic.Bool
 }
 
 func (s *spawnTextSink) Emit(ctx context.Context, ev turnevent.Event) {
 	switch e := ev.(type) {
 	case turnevent.TextBlock:
 		if e.Text != "" {
+			s.sawText.Store(true)
 			if s.obs != nil {
 				s.obs.SpawnText(s.parent, s.id, e.Text)
 			}
@@ -617,6 +622,7 @@ func (s *spawnTextSink) Emit(ctx context.Context, ev turnevent.Event) {
 		s.tracker.appendLog(s.parent, s.id, "tool", toolCallSummary(e))
 	case turnevent.TurnComplete:
 		if e.FinalText != "" {
+			s.sawText.Store(true)
 			if s.obs != nil {
 				s.obs.SpawnText(s.parent, s.id, e.FinalText)
 			}

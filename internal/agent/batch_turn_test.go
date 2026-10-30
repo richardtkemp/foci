@@ -16,6 +16,7 @@ import (
 	"foci/internal/delegator/accounting"
 	"foci/internal/modelinfo"
 	"foci/internal/telemetry"
+	"foci/internal/turnevent"
 )
 
 // batchTurnBackend is a delegated backend that serves turns the way the real
@@ -388,5 +389,58 @@ func TestRunBatch_CancelClosesTheBatch(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("RunBatch still waiting on its turn 10s after the caller cancelled")
+	}
+}
+
+// teeRecorder records the text a batch turn's tee receives.
+type teeRecorder struct {
+	mu    sync.Mutex
+	texts []string
+	final []string
+}
+
+func (r *teeRecorder) Emit(_ context.Context, ev turnevent.Event) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	switch e := ev.(type) {
+	case turnevent.TextBlock:
+		r.texts = append(r.texts, e.Text)
+	case turnevent.TurnComplete:
+		r.final = append(r.final, e.FinalText)
+	}
+}
+
+func (r *teeRecorder) DeliversToPlatform() bool { return false }
+
+// TestRunBatch_TeeGetsTheTurnsEvents (#2683): a tee on the caller's ctx (a
+// direct spawn's app view) gets the batch turn's text and its end once each,
+// and the batch still returns its answer.
+func TestRunBatch_TeeGetsTheTurnsEvents(t *testing.T) {
+	t.Parallel()
+	be := &batchTurnBackend{}
+	be.sendToPaneFn = func(_ context.Context, _ string, h *mockHandler) (*delegator.TurnResult, error) {
+		if h != nil && h.OnText != nil {
+			h.OnText("working on it")
+		}
+		if h != nil && h.OnTurnComplete != nil {
+			h.OnTurnComplete(&delegator.TurnResult{Text: "the answer", Model: "claude-sonnet-4-5"})
+		}
+		return nil, nil
+	}
+	a := newBatchTestAgent(t, be)
+	tee := &teeRecorder{}
+	got, err := a.DelegatedManager.RunBatch(turnevent.WithTee(context.Background(), tee), delegator.BatchRequest{
+		Prompt: "p", OwnerSessionKey: "helen/c1", Purpose: delegator.BatchPurposeSpawnExplore,
+	})
+	if err != nil || got != "the answer" {
+		t.Fatalf("RunBatch = %q, %v; want the answer", got, err)
+	}
+	tee.mu.Lock()
+	defer tee.mu.Unlock()
+	if len(tee.texts) != 1 || tee.texts[0] != "working on it" {
+		t.Errorf("tee texts = %q, want the turn's text once", tee.texts)
+	}
+	if len(tee.final) != 1 || tee.final[0] != "the answer" {
+		t.Errorf("tee final = %q, want the answer once", tee.final)
 	}
 }

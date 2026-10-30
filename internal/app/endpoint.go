@@ -165,8 +165,9 @@ func SetSubagents(sessionKey string, running []delegator.RunningSubagent) {
 	b.setSubagents(delegator.FormatSubagentDetail(descs), list)
 }
 
-// SpawnObserver shows each background foci spawn in the app exactly as a Claude
-// Code subagent of the session that spawned it (#2139): the same subagent
+// SpawnObserver shows each foci spawn in the app exactly as a Claude Code
+// subagent of the session that spawned it (#2139; a direct spawn too, while
+// its call waits, #2683): the same subagent
 // start/text/end frames, and an "agent"-kind entry in the activity frame's
 // running list, so the client needs no spawn-specific code. A session no app conversation is
 // bound to is skipped; unlike a reply, a spawn's progress has nowhere better to

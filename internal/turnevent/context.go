@@ -4,6 +4,7 @@ import "context"
 
 type sinkKey struct{}
 type steererKey struct{}
+type teeKey struct{}
 
 // WithSink attaches a Sink to ctx. The agent reads it via SinkFromContext
 // during the turn and emits events through it.
@@ -42,6 +43,35 @@ func WithSteerer(ctx context.Context, s Steerer) context.Context {
 // steering (e.g. HTTP handlers, hook-driven internal turns).
 func SteererFromContext(ctx context.Context) Steerer {
 	if s, ok := ctx.Value(steererKey{}).(Steerer); ok {
+		return s
+	}
+	return nil
+}
+
+// WithTee attaches a sink that a batch turn run under ctx also sends its
+// events to, beside its own result buffer (Agent.RunBatchTurn). A direct
+// spawn uses it to show its batch's text in the app while the call waits
+// (#2683). Only a batch turn reads it, and it removes it from the turn's own
+// ctx, so a nested batch does not send to it too. A nil sink leaves ctx
+// unchanged.
+func WithTee(ctx context.Context, sink Sink) context.Context {
+	if sink == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, teeKey{}, sink)
+}
+
+// WithoutTee returns ctx with no tee attached.
+func WithoutTee(ctx context.Context) context.Context {
+	if TeeFromContext(ctx) == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, teeKey{}, nil)
+}
+
+// TeeFromContext returns the tee attached to ctx, or nil.
+func TeeFromContext(ctx context.Context) Sink {
+	if s, ok := ctx.Value(teeKey{}).(Sink); ok {
 		return s
 	}
 	return nil

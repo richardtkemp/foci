@@ -20,6 +20,30 @@ func (NopSink) DeliversToPlatform() bool { return false }
 
 var nopSinkSingleton Sink = NopSink{}
 
+// Fanout sends every event to each of its sinks, in order. It delivers to a
+// platform when any of them does. A pointer, so sink identity compares work.
+type Fanout struct{ sinks []Sink }
+
+// NewFanout returns a Fanout over sinks.
+func NewFanout(sinks ...Sink) *Fanout { return &Fanout{sinks: sinks} }
+
+// Emit implements Sink.
+func (f *Fanout) Emit(ctx context.Context, ev Event) {
+	for _, s := range f.sinks {
+		s.Emit(ctx, ev)
+	}
+}
+
+// DeliversToPlatform implements Sink.
+func (f *Fanout) DeliversToPlatform() bool {
+	for _, s := range f.sinks {
+		if s.DeliversToPlatform() {
+			return true
+		}
+	}
+	return false
+}
+
 // BufferSink collects the final text and usage from a turn. It ignores
 // intermediate events entirely, so callers that only need the completed
 // answer (HTTP handlers, spawn tool, hooks that log results) can wire it up

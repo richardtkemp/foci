@@ -164,8 +164,9 @@ type SpawnDeps struct {
 	// Tracker registers each background clone spawn so /stop can stop it
 	// (#2139). Nil = untracked (a nil tracker's methods are no-ops).
 	Tracker *SpawnTracker
-	// Observer is told each background clone spawn's start, text and end, so
-	// the app lists it beside the agent's subagents (#2139). Nil = not shown.
+	// Observer is told each spawn's start, text and end, background or direct
+	// (#2683), so the app lists it beside the agent's subagents (#2139). Nil =
+	// not shown.
 	Observer SpawnObserver
 	// ModelFor returns the model a branch session runs on, for the observer.
 	ModelFor func(sessionKey string) string
@@ -541,6 +542,11 @@ func (s *Spawner) SpawnTool() *Tool {
 // the tracker while its call waits (#2656): spawn_status lists it, and
 // spawn_stop or /stop cancels it. Its run ends with the call's ctx too: an
 // exec-bridge call whose caller has gone is cancelled (ExecBridge).
+//
+// The observer shows it as a background spawn is shown (#2683): the app lists
+// it as a subagent while it runs, with its text, and "/stop subagents" stops
+// it. A delegated batch's text arrives as it is written (the batch turn's tee);
+// an API one-shot streams none, so its answer is shown when it ends.
 func (s *Spawner) runDirect(ctx context.Context, host *Spawner, mode, prompt string, timeout time.Duration, run func(context.Context) (ToolResult, error)) (ToolResult, error) {
 	parent := SessionKeyFromContext(ctx)
 	if parent == "" {
@@ -548,22 +554,34 @@ func (s *Spawner) runDirect(ctx context.Context, host *Spawner, mode, prompt str
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	info := RunningSpawn{ID: newSpawnID(), Description: spawnDescription(prompt), Started: time.Now(), Mode: mode}
+	info := RunningSpawn{ID: newSpawnID(), Description: spawnDescription(prompt), Started: time.Now(), Mode: mode, Direct: true}
 	if host != s {
 		info.Agent = host.deps.AgentID
 	}
-	s.deps.Tracker.addDirect(parent, info, cancel, timeout, prompt)
+	tr, obs := s.deps.Tracker, s.deps.Observer
+	tr.addDirect(parent, info, cancel, timeout, prompt)
+	if obs != nil {
+		obs.SpawnStarted(parent, info, prompt)
+	}
 	spawnLog.Infof("direct spawn=%s mode=%s agent=%q parent=%s prompt=%d chars timeout=%s", info.ID, mode, info.Agent, parent, len(prompt), timeout)
 	// Its send_to_spawner finds it through this (#2662).
-	res, err := run(withSpawnLink(runCtx, spawnLink{s: s, parent: parent, id: info.ID}))
+	runCtx = withSpawnLink(runCtx, spawnLink{s: s, parent: parent, id: info.ID})
+	tee := &spawnTextSink{BufferSink: turnevent.NewBufferSink(), obs: obs, tracker: tr, parent: parent, id: info.ID}
+	res, err := run(turnevent.WithTee(runCtx, tee))
 	outcome, detail := "completed", ""
 	switch {
 	case err != nil:
 		outcome, detail = "failed", err.Error()
 	default:
 		detail = res.Text
+		if obs != nil && res.Text != "" && !tee.sawText.Load() {
+			obs.SpawnText(parent, info.ID, res.Text)
+		}
 	}
-	by, kept := s.deps.Tracker.endDirect(parent, info.ID, outcome, detail)
+	by, kept := tr.endDirect(parent, info.ID, outcome, detail)
+	if obs != nil {
+		obs.SpawnEnded(parent, info.ID)
+	}
 	head := keptMessagesHead(info.ID, kept)
 	if by != "" {
 		return ToolResult{}, fmt.Errorf("%sspawn %s was stopped by %s before it finished", head, info.ID, by)
