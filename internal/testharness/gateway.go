@@ -795,8 +795,9 @@ func (h *Harness) Stderr() string {
 // cc-stub reads the file from $CCSTUB_SCRIPT_DIR/<workdir-basename>.json
 // on its NEXT user message after spawn, claims it (the file is gone from
 // the moment that turn loads it — one-shot), and emits the scripted
-// assistant response. A script written while that turn is still running is
-// left for the following turn. Tests can re-write the file between turns if
+// assistant response. The stub claims the script before it records that
+// turn's user_message, so a script written once the user_message is
+// recorded is always left for the following turn (#2681). Tests can re-write the file between turns if
 // multi-turn scripting is needed. Add "match": "<substring>" to bind a
 // script to the one user message containing it; other turns (keepalive,
 // reflection, a message the test did not aim at) leave it in place.

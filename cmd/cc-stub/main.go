@@ -69,6 +69,9 @@
 //	                        Script is consumed one-shot — the file is claimed
 //	                        (renamed away) at the moment a turn loads it, so a
 //	                        script the test writes AFTER that point survives.
+//	                        The claim happens before the turn's user_message
+//	                        is recorded, so seeing that record means the
+//	                        turn's script is already taken (#2681).
 //
 // Usage:
 //
@@ -580,13 +583,36 @@ func main() {
 			// emit stamps it on this message's assistant/result envelopes.
 			ackUUID, _ = env["uuid"].(string)
 			userText, blockTypes := extractUserContent(env)
+			// A batch session (launched with --permission-mode auto) or a
+			// skip-permissions session is a foci BATCH run (nudge
+			// extraction, consolidation, foci_summary — #1962); no harness
+			// agent sets skip_permissions. It shares the agent's workdir, so
+			// it must not consume the per-workdir script a test wrote for
+			// the agent's own next turn, and it answers "[]" — a well-formed
+			// empty result for nudge extraction (zero rules), ignored by the
+			// other batch callers — the way a compliant model would answer
+			// a structured request, rather than echoing the prompt back.
+			batch := skipPermissions || permissionMode == "auto"
+			isCompact := emitCompactBoundary && strings.HasPrefix(strings.TrimSpace(userText), "/compact")
+			willPanic := panicOnMatch != "" && strings.Contains(userText, panicOnMatch)
+			// Claim this turn's script BEFORE recording its user_message
+			// (#2681). Tests treat "user_message recorded" as "this turn
+			// has taken its script" and write the next turn's script at
+			// once; recording first left a window where that write
+			// overwrote the script this turn had not yet claimed, so the
+			// turn ran the NEXT turn's script. Compaction and forced-panic
+			// turns never load a script, as before.
+			var script *stubScript
+			if !batch && !isCompact && !willPanic {
+				script = loadScript(userText)
+			}
 			recordUserMessage(sessionID, userText, blockTypes)
 			// CCSTUB_PANIC_ON_USER_MESSAGE: simulate a crashing CC.
 			// Writes a Go-style panic preamble to stderr (foci's reader
 			// surfaces a tail of stderr in the error log) before exiting
 			// non-zero. Match is substring so tests can target a specific
 			// message without coupling to the full payload.
-			if panicOnMatch != "" && strings.Contains(userText, panicOnMatch) {
+			if willPanic {
 				fmt.Fprintf(os.Stderr, "panic: cc-stub forced crash on user message matching %q\n\ngoroutine 1 [running]:\nmain.main()\n\t/cc-stub/main.go:0 +0x0\n", panicOnMatch)
 				os.Exit(2)
 			}
@@ -596,7 +622,7 @@ func main() {
 			// then compact_boundary — so foci's compaction waiters fire and the
 			// #828 Part B reload bounce runs. No assistant text: real CC emits
 			// none for /compact. The result envelope closes the turn cleanly.
-			if emitCompactBoundary && strings.HasPrefix(strings.TrimSpace(userText), "/compact") {
+			if isCompact {
 				compacting := "compacting"
 				emit(out, map[string]any{
 					"type":       "system",
@@ -626,20 +652,6 @@ func main() {
 				_ = out.Flush()
 				turnCount++
 				continue
-			}
-			// A batch session (launched with --permission-mode auto) or a
-			// skip-permissions session is a foci BATCH run (nudge
-			// extraction, consolidation, foci_summary — #1962); no harness
-			// agent sets skip_permissions. It shares the agent's workdir, so
-			// it must not consume the per-workdir script a test wrote for
-			// the agent's own next turn, and it answers "[]" — a well-formed
-			// empty result for nudge extraction (zero rules), ignored by the
-			// other batch callers — the way a compliant model would answer
-			// a structured request, rather than echoing the prompt back.
-			batch := skipPermissions || permissionMode == "auto"
-			var script *stubScript
-			if !batch {
-				script = loadScript(userText)
 			}
 			reply := respText
 			if batch && reply == "" {
@@ -1514,8 +1526,10 @@ func emitHookResponse(w *bufio.Writer, installID, toolUseID, toolName string, to
 // rather than re-running the script in a loop. It used to be deleted after
 // the turn finished instead, which also deleted any script the test wrote
 // for its NEXT turn while this one was still running — tests arm the next
-// script as soon as they see this turn's user_message, which is recorded
-// before the turn even loads (#2079).
+// script as soon as they see this turn's user_message (#2079). The caller
+// claims BEFORE recording that user_message, so a test that arms the next
+// script on seeing it can never overwrite this turn's unclaimed script
+// (#2681).
 func loadScript(userText string) *stubScript {
 	dir := os.Getenv("CCSTUB_SCRIPT_DIR")
 	if dir == "" {
