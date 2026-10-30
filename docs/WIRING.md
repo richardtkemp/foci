@@ -168,6 +168,8 @@ fociroot.EnsureCCConfigEnv()                             ← internal/fociroot (
                                                               Shared-vs-Agent clash: INFO "override" (unchanged). Clash with an extra
                                                               dir on either side: WARN "name clash" (merger.add). Missing extra dir:
                                                               WARN, dedup'd daily (scanExtraDir); shared/agent stay DEBUG.
+                                                              An extra dir with SKILL.md at its root IS one skill (IsSkillDir):
+                                                              loaded alone, subfolders not scanned; Snapshot tracks it the same way.
                                                               Shared dir scanned once process-wide (Loader cache); extras and
                                                               Agent every call. The result goes into a *skills.LiveDirs held by
                                                               the agentInstance, Agent.SkillDirs and the periodic Runner — ONE
