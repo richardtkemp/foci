@@ -887,7 +887,7 @@ When two directories contain a skill with the same name, the **later** directory
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `dir` | string | `""` | Shared skills directory. Empty uses the default `$home/shared/skills/`. Restart required. |
-| `extra_dirs` | string array | `[]` | Extra skill directories for every agent, loaded **in addition to** the shared and per-agent dirs. Live (applies at each agent's next session start). |
+| `extra_dirs` | string array | `[]` | Extra skill directories for every agent, loaded **in addition to** the shared and per-agent dirs. Each entry is either a folder of skill folders, or one skill folder (`SKILL.md` at its root, e.g. a repo whose root is the skill), which loads as that one skill. Live (applies at each agent's next session start). |
 
 Per-agent: `skills_dir` in `[[agents]]` overrides the per-agent directory (default: `$workspace/skills/`; restart required). `[agents.skills] extra_dirs` adds extra directories for that agent only; they come **after** the global `extra_dirs` and never replace them. Live, like the global key.
 

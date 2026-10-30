@@ -21,6 +21,12 @@ type SkillSnapshot map[string]map[string]time.Time
 func Snapshot(dirs []string) SkillSnapshot {
 	out := make(SkillSnapshot)
 	for _, dir := range dirs {
+		if IsSkillDir(dir) { // an extra dir that is itself one skill
+			if files := scanSkillFiles(dir); len(files) > 0 {
+				out[dir] = files
+			}
+			continue
+		}
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue

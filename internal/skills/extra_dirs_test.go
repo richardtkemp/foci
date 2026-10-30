@@ -182,3 +182,29 @@ func TestLoadDirsMissingExtraWarnsAndContinues(t *testing.T) {
 		t.Errorf("a missing shared dir must not WARN; log:\n%s", out)
 	}
 }
+
+// An extra dir that is itself a skill (SKILL.md at its root) loads as that one
+// skill; its subfolders are not scanned. Reflection's snapshot tracks it too.
+func TestExtraDirThatIsASkill(t *testing.T) {
+	captureSkillsLog(t)
+	root := t.TempDir()
+	single := filepath.Join(root, "repo-skill")
+	writeSkillMD(t, root, "repo-skill", "---\nname: repo-skill\ndescription: repo root is the skill\n---\n")
+	// A subfolder that looks like a skill must NOT load from a single-skill dir.
+	writeSkillMD(t, single, "nested", "---\nname: nested\ndescription: should not load\n---\n")
+	d := Dirs{Shared: filepath.Join(root, "none-shared"), Extra: []string{single}, Agent: filepath.Join(root, "none-agent")}
+	for name, reg := range map[string]*Registry{
+		"LoadDirs":     LoadDirs(d),
+		"LoadForAgent": NewLoader().LoadForAgent(d),
+	} {
+		if !hasSkill(reg, "repo-skill") {
+			t.Errorf("%s: missing repo-skill; have %v", name, names(reg))
+		}
+		if hasSkill(reg, "nested") {
+			t.Errorf("%s: loaded nested from inside a single-skill dir", name)
+		}
+	}
+	if _, ok := Snapshot(d.List())[single]; !ok {
+		t.Errorf("Snapshot does not track the single-skill extra dir %s", single)
+	}
+}

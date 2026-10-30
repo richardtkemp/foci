@@ -167,7 +167,14 @@ func scanDir(dir string) []Skill {
 // scanExtraDir is scanDir for a configured extra dir (#2657): one the
 // operator named explicitly, so its absence is worth a WARN (dedup'd daily,
 // like the other skill warnings), never a startup failure.
+//
+// An extra dir may also BE one skill: a folder with SKILL.md at its root (for
+// example a repo whose root is the skill). It then loads as that one skill and
+// its subfolders are not scanned (Dick 2026-10-30).
 func scanExtraDir(dir string) []Skill {
+	if IsSkillDir(dir) {
+		return scanSkillAt(dir)
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if logDedup.should("extra-missing\x00" + dir + "\x00" + err.Error()) {
@@ -178,6 +185,26 @@ func scanExtraDir(dir string) []Skill {
 	return scanEntries(dir, entries)
 }
 
+// IsSkillDir reports whether dir is itself a skill: it holds a SKILL.md file.
+func IsSkillDir(dir string) bool {
+	info, err := os.Stat(filepath.Join(dir, "SKILL.md"))
+	return err == nil && info.Mode().IsRegular()
+}
+
+// scanSkillAt loads the single skill whose folder is skillDir.
+func scanSkillAt(skillDir string) []Skill {
+	skillFile := filepath.Join(skillDir, "SKILL.md")
+	skill, yamlErr, err := parseSkillFile(skillFile, skillDir)
+	if err != nil {
+		skillsLog.Warnf("skip %s: %v", skillFile, err)
+		return nil
+	}
+	if yamlErr != nil && logDedup.should("yaml\x00"+skillFile+"\x00"+yamlErr.Error()) {
+		skillsLog.Warnf("%s: frontmatter is not valid YAML (%v) — loaded anyway, but strict YAML parsers (e.g. delegate/skills.py) will choke; quote values containing ': '", skillFile, yamlErr)
+	}
+	return []Skill{skill}
+}
+
 func scanEntries(dir string, entries []os.DirEntry) []Skill {
 	var out []Skill
 	for _, entry := range entries {
@@ -185,16 +212,7 @@ func scanEntries(dir string, entries []os.DirEntry) []Skill {
 		if !ok {
 			continue
 		}
-		skillFile := filepath.Join(skillDir, "SKILL.md")
-		skill, yamlErr, err := parseSkillFile(skillFile, skillDir)
-		if err != nil {
-			skillsLog.Warnf("skip %s: %v", skillFile, err)
-			continue
-		}
-		if yamlErr != nil && logDedup.should("yaml\x00"+skillFile+"\x00"+yamlErr.Error()) {
-			skillsLog.Warnf("%s: frontmatter is not valid YAML (%v) — loaded anyway, but strict YAML parsers (e.g. delegate/skills.py) will choke; quote values containing ': '", skillFile, yamlErr)
-		}
-		out = append(out, skill)
+		out = append(out, scanSkillAt(skillDir)...)
 	}
 	return out
 }

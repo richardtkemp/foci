@@ -1148,7 +1148,7 @@ type SkillsConfig struct {
 	// [agents.skills] extra_dirs, the per-agent dir; a later dir wins a name
 	// clash (WARN). Paths: ~ is $HOME, relative is against foci's install
 	// root (ResolveAllPaths). A missing dir is a WARN, not a startup failure.
-	ExtraDirs []string `toml:"extra_dirs" hot:"session" desc:"Additional skill directories loaded for every agent, after the shared dir and before each agent's own; on a name clash the later directory wins. ~ is your home dir; relative paths resolve against the foci home dir"`
+	ExtraDirs []string `toml:"extra_dirs" hot:"session" desc:"Additional skill directories loaded for every agent, after the shared dir and before each agent's own; on a name clash the later directory wins. An entry may also be one skill folder (SKILL.md at its root). ~ is your home dir; relative paths resolve against the foci home dir"`
 }
 
 // AgentSkillsConfig is [agents.skills]: per-agent additions to [skills].
