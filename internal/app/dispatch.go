@@ -638,9 +638,11 @@ func (h *Hub) handleConversationOpenSet(client *wsClient, f fap.ConversationOpen
 	// keepalive warming from the PERSISTED set, precisely because a live-socket
 	// view was abandoned the moment the app backgrounded.
 	h.openSetMu.Lock()
+	prev := h.loadOpenChats()
 	h.storeOpenChats(f.ConversationIDs)
 	h.broadcastExcept(client, fap.ConversationOpenSync{ConversationIDs: f.ConversationIDs})
 	h.openSetMu.Unlock()
+	h.logOpenSetChange(client, prev, f.ConversationIDs)
 	// Attach this socket as a live fan-out target for every open conversation it
 	// already has a binding for but isn't attached to yet. A conversation first
 	// learned AFTER the socket's hello — minted on another device and mirrored via
@@ -663,6 +665,44 @@ func (h *Hub) handleConversationOpenSet(client *wsClient, f fap.ConversationOpen
 		b.attach(client)
 		b.seedClientAck(client, b.currentSeq())
 	}
+}
+
+// logOpenSetChange records which device replaced the shared open-set and what
+// it added and removed, at INFO, so "which device closed my chat" is answerable
+// from the log alone (#2576): the replace is mirrored to every other device,
+// which then closes the removed tabs. A re-send of the same set changes nothing
+// and logs at DEBUG only.
+func (h *Hub) logOpenSetChange(client *wsClient, prev, next []string) {
+	added, removed := setDelta(prev, next)
+	dev := client.device()
+	if len(added) == 0 && len(removed) == 0 {
+		appLog.Debugf("open-set unchanged: device=%s open=%d", dev, len(next))
+		return
+	}
+	appLog.Infof("open-set replaced: device=%s label=%q open=%d added=%v removed=%v",
+		dev, h.devices.label(dev), len(next), added, removed)
+}
+
+// setDelta returns the ids in next but not prev (added) and in prev but not
+// next (removed), each in its source order.
+func setDelta(prev, next []string) (added, removed []string) {
+	inPrev := make(map[string]struct{}, len(prev))
+	for _, id := range prev {
+		inPrev[id] = struct{}{}
+	}
+	inNext := make(map[string]struct{}, len(next))
+	for _, id := range next {
+		inNext[id] = struct{}{}
+		if _, ok := inPrev[id]; !ok {
+			added = append(added, id)
+		}
+	}
+	for _, id := range prev {
+		if _, ok := inNext[id]; !ok {
+			removed = append(removed, id)
+		}
+	}
+	return added, removed
 }
 
 // handleDraft persists a conversation's unsent composer text and mirrors it to

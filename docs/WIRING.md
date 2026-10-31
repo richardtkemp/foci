@@ -2672,7 +2672,7 @@ captured in `setupAgent`) and merged into the turn text before `Enqueue`;
 (`platform.HandleInteractiveCallback` on the echoed `<promptId>:<index>` data →
 `interactive.edit` resolution, suppressed when a follow-up question advanced the
 binding's seq; a miss → `resolveDeadPrompt`: late answer + `interactive.remove`, #2080); `viewing.put`→`handleViewingPut` (viewing presence, #2202, see below); `conversation.openSet`→`handleConversationOpenSet` (records the
-socket's open-set for keepalive, persists + mirrors it, AND attaches the socket to
+socket's open-set for keepalive, persists + mirrors it, logs the sending device and the ids added/removed at INFO via `logOpenSetChange` (#2576; an unchanged set logs at DEBUG), AND attaches the socket to
 each open conversation it has a binding for but isn't yet attached to — a 4th
 attach trigger alongside `resumeConversations`/`conversation.open`/an active send —
 so a conversation learned AFTER hello, mirrored via `conversation.openSync` and

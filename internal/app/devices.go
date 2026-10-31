@@ -150,6 +150,20 @@ func (s *deviceStore) revoke(deviceID string) (*device, bool) {
 	return d, true
 }
 
+// label returns the paired label of deviceID, "" when unknown or unlabelled.
+// For log lines: the id alone does not say which physical device it is.
+func (s *deviceStore) label(deviceID string) string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if d, ok := s.byID[deviceID]; ok {
+		return d.Label
+	}
+	return ""
+}
+
 func (s *deviceStore) list() []deviceInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()
