@@ -151,21 +151,27 @@ func TestTypingGate_HumanTurnsDriveTyping(t *testing.T) {
 	}
 }
 
-// TestTypingGate_UserInputFoldedIntoSystemTurnShowsTyping: a message folded
-// into a running keepalive turn gets its reply's typing indicator.
-func TestTypingGate_UserInputFoldedIntoSystemTurnShowsTyping(t *testing.T) {
+// TestTypingGate_UserInputAfterSystemTurnShowsTyping: a message arriving
+// during a running keepalive no longer folds into it (#2591); it waits, begins
+// its own turn, and that turn's reply gets the typing indicator.
+func TestTypingGate_UserInputAfterSystemTurnShowsTyping(t *testing.T) {
 	t.Parallel()
 	a, be, rec := newTypingTestAgent(t)
 	runTypingTurn(t, a, context.Background(), TriggerKeepalive)
 	be.setTurnInFlight(true) // the keepalive turn is still running
+	be.waitForTurnFn = func(context.Context) error {
+		be.setTurnInFlight(false) // ... and ends
+		return nil
+	}
 
-	runTypingTurn(t, a, context.Background(), "voice") // folds (SourceUser, in flight)
-	if n := len(be.InjectsRecorded()); n != 2 {
-		t.Fatalf("injects = %d, want 2 (keepalive begin + fold)", n)
+	runTypingTurn(t, a, context.Background(), "voice") // waits, then begins
+	injects := be.InjectsRecorded()
+	if len(injects) != 2 || injects[1].Source != delegator.SourceUser {
+		t.Fatalf("injects = %d, want 2 (keepalive begin + the voice turn's own begin)", len(injects))
 	}
 	be.typing(true) // the reply's OnAssistant
-	if got := rec.got(); len(got) != 1 || !got[0] {
-		t.Fatalf("TypingFunc calls after the fold = %v, want [true]", got)
+	if got := rec.got(); len(got) != 2 || !got[0] || !got[1] {
+		t.Fatalf("TypingFunc calls = %v, want [true true] (the begin, then the reply)", got)
 	}
 }
 
@@ -345,14 +351,18 @@ func TestTypingWrapper_StallWarningNamesStage(t *testing.T) {
 	}
 }
 
-// TestTypingGate_SteerIntoSystemTurnShowsTyping: an urgent steer (the inbox's
-// SourceSteer fold) into a running keepalive turn gets its reply's typing.
-func TestTypingGate_SteerIntoSystemTurnShowsTyping(t *testing.T) {
+// TestTypingGate_SteerIntoTypinglessRunShowsTyping: an urgent steer (the
+// inbox's SourceSteer fold) into a running turn whose typing is off gets its
+// reply's typing. A system turn is never steered (#2591), but the record-only
+// run of a keepalive's background work is: the keepalive has completed, its
+// typing is still suppressed, and the run is in flight.
+func TestTypingGate_SteerIntoTypinglessRunShowsTyping(t *testing.T) {
 	t.Parallel()
 	a, be, rec := newTypingTestAgent(t)
 	a.inboxCtx = context.Background()
 	runTypingTurn(t, a, context.Background(), TriggerKeepalive)
-	be.setTurnInFlight(true)
+	a.DelegatedManager.SetSystemTurn("test/s", false) // the keepalive completed
+	be.setTurnInFlight(true)                          // its background run is in flight
 
 	if !a.steerToBackend(be, Envelope{SessionKey: "test/s", Text: "also this"}) {
 		t.Fatal("steer did not fold into the running turn")

@@ -4,7 +4,7 @@
 
 ## Steer vs SourceUser
 
-On a CC backend, a text-only message that arrives **while a turn is in flight** goes through `Backend.Inject(SourceSteer)` and **folds into the running turn** (`internal/agent/inbox.go`). A message with **attachments** folds only if the backend is a `delegator.FoldAttachmentCarrier` that accepts them (ccstream: images only; CC drops a PDF written mid-turn). Otherwise it queues for a fresh turn (#2099).
+On a CC backend, a text-only message that arrives **while a turn is in flight** goes through `Backend.Inject(SourceSteer)` and **folds into the running turn** (`internal/agent/inbox.go`), unless that turn is a **system turn** (keepalive, reflection, cron, notification): then it waits and runs as its own turn (#2591, `DelegatedManager.SystemTurnInFlight`; WIRING "User input never folds into a system turn"). A message with **attachments** folds only if the backend is a `delegator.FoldAttachmentCarrier` that accepts them (ccstream: images only; CC drops a PDF written mid-turn). Otherwise it queues for a fresh turn (#2099).
 
 - **`SourceSteer` (`now`)**: folds into / aborts-and-redirects the current turn.
 - **`SourceUser` (`next`)**: queued; folds in at the next turn boundary.

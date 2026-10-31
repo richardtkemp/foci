@@ -242,7 +242,7 @@ Flags:
   -s, --session <id|alias>  Target session name or a chat alias (env: FOCI_SESSION, default: main)
   --broadcast               Deliver the response to every live surface for the agent (telegram, app, …); with a delivery mode the mode is ignored
   -m, --model <model>       Model override: group name, alias, or developer/model_id (env: FOCI_MODEL)
-  --steer                   Redirect the agent now: fold into a running user turn (a running system turn too on delegated agents; on API agents it is waited out); idle starts at once (env: FOCI_STEER=steer)
+  --steer                   Redirect the agent now: fold into a running user turn (a running system turn is waited out); idle starts at once (env: FOCI_STEER=steer)
   --queue                   Run as its own fresh turn, behind a running one if any (an idle session starts it at once; env: FOCI_STEER=queue)
   --if-warm <dur>           Skip if this session has not run a turn within duration (env: FOCI_IF_WARM; alias --if-active)
   --if-cold <dur>           Skip if this session has run a turn within duration (env: FOCI_IF_COLD; alias --if-inactive)

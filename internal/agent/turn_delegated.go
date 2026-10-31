@@ -316,11 +316,22 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// rather than queuing behind it. This path handles the steer_mode=false
 	// case where messages flow through the channel normally and stack as
 	// follow-ups.
+	//
+	// A running SYSTEM turn is the exception (#2591, Dick's ruling
+	// 2026-10-31): user input never folds into a keepalive, reflection, cron
+	// or notification turn. It waits here for that turn to end, then runs as
+	// its own turn (or folds into a user turn that began meanwhile).
+	if foldable {
+		if err := t.waitOutSystemTurn(ts, be); err != nil {
+			return err
+		}
+	}
 	if foldable && be.IsTurnInFlight() {
 		t.logger().Infof("session=%s follow-up message queued behind in-flight turn", ts.SessionKey)
 		t.logger().Debugf("RunInference: Inject(SourceUser, follow-up) start sk=%s", ts.SessionKey)
 		// User input folding into the running turn: its reply shows typing
-		// even when the turn it joins was a system one (#2320).
+		// (#2320) — the turn it joins is a user turn or an adopted run, never
+		// a system turn (waitOutSystemTurn above).
 		a.DelegatedManager.SetTypingAllowed(ts.SessionKey, true)
 		err := be.ImmediateInject(ts.Ctx, delegator.Inject{
 			Source: delegator.SourceUser,
@@ -360,6 +371,35 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	}
 
 	return t.beginTurn(ts, be, foldable)
+}
+
+// waitOutSystemTurn blocks while a system turn is in flight on ts's session
+// (#2591): user input must not fold into it. It returns once that turn has
+// ended, so RunInference then begins a fresh turn, or folds into a user turn
+// or adopted run that is in flight by then. The timeout bounds a lost
+// completion signal, as in beginTurn's SourceSystem retry loop. Once shutdown
+// starts it stops waiting and leaves the input to today's path, so the input
+// is never stranded behind a turn that shutdown is ending. Returns ts.Ctx's
+// error if the turn is cancelled while it waits.
+func (t *DelegatedTransport) waitOutSystemTurn(ts *TurnState, be delegator.Delegator) error {
+	a := t.agent
+	for waited := false; a.DelegatedManager.SystemTurnInFlight(ts.SessionKey); waited = true {
+		if a.ShuttingDown() {
+			return nil
+		}
+		if !waited {
+			t.logger().Infof("session=%s user input (trigger=%q) waiting for the in-flight system turn to end; it will not fold into it (#2591)", ts.SessionKey, ts.Trigger)
+		}
+		wctx, cancel := context.WithTimeout(ts.Ctx, systemInjectRetryInterval)
+		stopOnShutdown := cancelOnClose(a.shutdown.done(), cancel)
+		werr := be.WaitForTurn(wctx)
+		stopOnShutdown()
+		cancel()
+		if werr != nil && ts.Ctx.Err() != nil {
+			return ts.Ctx.Err()
+		}
+	}
+	return nil
 }
 
 // beginTurn is RunInference's begin-turn half: dispatch ts.Prompt as a fresh,
@@ -435,6 +475,21 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 		src = delegator.SourceSystem
 	}
 	typingAllowed := typingAllowedFor(ts.Ctx, ts.Trigger)
+	// A system turn is one no human started: the #2320 definition the typing
+	// gate uses. While it runs, user input waits instead of folding (#2591).
+	systemTurn := !typingAllowed
+	var prevSystem, systemMarked bool
+	if systemTurn {
+		// The mark clears when the turn completes, so a later run foci did
+		// not begin (an adopted autonomous run) is not mistaken for it.
+		orig := turnEvents.OnTurnComplete
+		turnEvents.OnTurnComplete = func(result *delegator.TurnResult) {
+			a.DelegatedManager.SetSystemTurn(ts.SessionKey, false)
+			if orig != nil {
+				orig(result)
+			}
+		}
+	}
 
 	t.logger().Debugf("RunInference: Inject(%s, begin-turn) start sk=%s attachments=%d", src, ts.SessionKey, len(atts))
 	for waited := false; ; waited = true {
@@ -473,11 +528,16 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 		// not silence that turn's indicator meanwhile (#2320). A refused begin
 		// hands the permission back to the turn still running.
 		prevTyping := a.DelegatedManager.SetTypingAllowed(ts.SessionKey, typingAllowed)
+		// Likewise the system-turn mark (#2591): set just before the begin,
+		// handed back if the begin is refused or fails.
+		prevSystem, systemMarked = a.DelegatedManager.SetSystemTurn(ts.SessionKey, systemTurn), true
 		err = be.ImmediateInject(ts.Ctx, inj)
 		if !errors.Is(err, delegator.ErrTurnInFlight) {
 			break
 		}
 		a.DelegatedManager.SetTypingAllowed(ts.SessionKey, prevTyping)
+		a.DelegatedManager.SetSystemTurn(ts.SessionKey, prevSystem)
+		systemMarked = false
 		if isKeepaliveTrigger(ts.Trigger) {
 			// Never wait on the worker for a keepalive (ErrKeepaliveSkipped).
 			t.logger().Infof("session=%s keepalive skipped: a turn is in flight (the cache is already warm)", ts.SessionKey)
@@ -505,6 +565,11 @@ func (t *DelegatedTransport) beginTurn(ts *TurnState, be delegator.Delegator, fo
 		}
 	}
 	t.logger().Debugf("RunInference: Inject(%s, begin-turn) done sk=%s err=%v", src, ts.SessionKey, err)
+	if err != nil && systemMarked {
+		// The begin failed after the mark was set: no completion will clear
+		// it, so hand back the previous setting.
+		a.DelegatedManager.SetSystemTurn(ts.SessionKey, prevSystem)
+	}
 	if err == nil {
 		ts.inputDelivered = true
 		a.markTurnDispatched(ts.TurnDetail)

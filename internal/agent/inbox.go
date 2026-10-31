@@ -13,7 +13,8 @@
 //     → bot builds Envelope (with platform-supplied Driver)
 //     → bot calls agent.Enqueue(env)                           [hand-off]
 //     → agent routes per-session:                              [agent]
-//         - in-flight + steer-eligible + CC backend → Inject(SourceSteer)
+//         - in-flight (a user turn, never a system one, #2591)
+//           + steer-eligible + CC backend → Inject(SourceSteer)
 //         - in-flight + steer-eligible + API backend → AppendSteer
 //         - a user-input injection (an ask answer) → the same steer
 //           paths, else push to session channel
@@ -603,7 +604,8 @@ func (a *Agent) StartInbox(ctx context.Context) {
 //
 // Routing:
 //
-//	in-flight + text-only + CC backend     → Backend.ImmediateInject(SourceSteer)
+//	in-flight user turn + text-only + CC   → Backend.ImmediateInject(SourceSteer)
+//	in-flight system turn (#2591)          → push to channel (runs after it)
 //	in-flight + text-only + API backend    → AppendSteer (drained at tool boundary)
 //	user-input injection (an ask answer)   → the same steer paths, else push to channel (#2233)
 //	otherwise (idle, or has attachments)   → push to session's channel
@@ -801,6 +803,13 @@ func (a *Agent) trySteer(inb *sessionInbox, env Envelope, active, compacting boo
 	if !(steerMode && active && !compacting && (env.Text != "" || hasAttachments)) {
 		return false
 	}
+	// A running system turn is never steered (#2591, Dick's ruling
+	// 2026-10-31): the message queues and runs as its own turn once the
+	// keepalive / reflection / cron / notification turn ends.
+	if a.DelegatedManager.SystemTurnInFlight(env.SessionKey) {
+		a.logger().Infof("inbox: message waits for the in-flight system turn sk=%s — not steering into it (#2591)", env.SessionKey)
+		return false
+	}
 	be, err := a.resolveSessionBackend(a.inboxCtx, env.SessionKey)
 	switch {
 	case err != nil && hasAttachments:
@@ -860,9 +869,10 @@ func (a *Agent) steerToBackend(be delegator.Delegator, env Envelope) bool {
 		a.logger().Infof("inbox: mid-turn message with %d attachment(s) can't fold into the running turn on this backend sk=%s — queueing for a fresh turn", len(env.Attachments), env.SessionKey)
 		return false
 	}
-	// User input folding into the running turn: its reply shows typing even
-	// when the turn it joins was a system one (#2320). Restored below if the
-	// fold does not land.
+	// User input folding into the running turn: its reply shows typing
+	// (#2320). The turn is never a system one (trySteer, #2591), but may be an
+	// adopted run whose typing was off. Restored below if the fold does not
+	// land.
 	prevTyping := a.DelegatedManager.SetTypingAllowed(env.SessionKey, true)
 	err := be.ImmediateInject(a.inboxCtx, inj)
 	if err != nil {

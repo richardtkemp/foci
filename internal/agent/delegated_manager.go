@@ -286,6 +286,13 @@ type managedBackend struct {
 	// reflection, wake, cron, foci send (#2320). Set by the agent before it
 	// dispatches each turn (SetTypingAllowed); the zero value keeps typing on.
 	typingSuppressed atomic.Bool
+
+	// systemTurn is true while the session's current turn is a system turn:
+	// one no human started (keepalive, reflection, wake, cron, notification —
+	// the #2320 definition, typingAllowedFor false). Set by the agent just
+	// before it begins each turn and cleared when a system turn completes
+	// (SetSystemTurn). User input never folds into such a turn (#2591).
+	systemTurn atomic.Bool
 }
 
 // getManaged looks up the managed backend for a session key under the lock.
@@ -917,7 +924,7 @@ func (m *DelegatedManager) ClearSessionPrompts(sessionKey string) int {
 // SetTypingAllowed records whether the session's current turn may drive the
 // typing indicator (#2320). The agent calls it before every dispatch to the
 // backend: false for a turn no human started, true for user input, including
-// input folded into a running system turn. Until the next call, every typing
+// input folded into a running turn (never a system turn, #2591). Until the next call, every typing
 // call the backend makes for this session follows it, so the background tail
 // of a suppressed turn stays silent too. Returns the previous setting, so a
 // caller whose dispatch is refused can restore it. No-op (returning true) for
@@ -935,6 +942,39 @@ func (m *DelegatedManager) SetTypingAllowed(sessionKey string, allowed bool) (pr
 		m.logger().Debugf("typing allowed=%v for %s", allowed, sessionKey)
 	}
 	return prev
+}
+
+// SetSystemTurn records whether the session's current turn is a system turn
+// (#2591): one no human started. The agent calls it just before every begin and
+// clears it when a system turn completes. Returns the previous setting, so a
+// caller whose begin is refused can restore it. No-op (returning false) for an
+// unknown session or a nil manager.
+func (m *DelegatedManager) SetSystemTurn(sessionKey string, system bool) (prev bool) {
+	if m == nil {
+		return false
+	}
+	mb, ok := m.getManaged(sessionKey)
+	if !ok {
+		return false
+	}
+	return mb.systemTurn.Swap(system)
+}
+
+// SystemTurnInFlight reports whether the session's already-running backend has
+// a turn in flight that a system input began (#2591). Dick's ruling
+// (2026-10-31): user input that arrives then must not fold into that turn; it
+// waits for the turn to end and runs as its own turn. A running user turn, or a
+// backend run foci did not begin (an adopted autonomous run), reports false, so
+// input still folds into it. Non-creating, like BackendTurnInFlight.
+func (m *DelegatedManager) SystemTurnInFlight(sessionKey string) bool {
+	if m == nil {
+		return false
+	}
+	mb, ok := m.getManaged(sessionKey)
+	if !ok || !mb.systemTurn.Load() || !mb.be.IsRunning() {
+		return false
+	}
+	return mb.be.IsTurnInFlight()
 }
 
 // TypingStage records which step of a TypingFunc call is running, so the
