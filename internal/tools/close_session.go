@@ -50,6 +50,13 @@ func NewCloseSessionTool(closeFn SessionCloser, readFn SessionReader) *Tool {
 			if sk == "" {
 				return TextResult("Error: no session key in context"), nil
 			}
+			if InDepthLeaf(sk) {
+				// Dick 2026-10-28 (#2623): "Close session, yes block". The leaf's
+				// chat is part of the tree the root reads; closing it is the user's
+				// or the root's call, not the leaf's.
+				return TextResult("Error: close_session is not available in a depth leaf. This chat belongs to the depth tree: " +
+					"finish with depth_report and end your turn; the user or the root chat closes it."), nil
+			}
 			key, err := session.ParseSessionKey(sk)
 			if err != nil {
 				return TextResult(fmt.Sprintf("Error: parse session key: %v", err)), nil

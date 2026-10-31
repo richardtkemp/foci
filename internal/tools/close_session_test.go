@@ -119,3 +119,39 @@ func TestCloseSession_MarkRead(t *testing.T) {
 		t.Errorf("mark_read=false: result = %q, reader calls = %d; want the plain close", out, len(reads))
 	}
 }
+
+// TestCloseSession_RefusedInDepthLeaf (#2623, Dick 2026-10-28: "Close
+// session, yes block"): a depth leaf's chat belongs to the tree, so the leaf
+// may not close it — before or after it reports. The root chat still can.
+func TestCloseSession_RefusedInDepthLeaf(t *testing.T) {
+	h := newDepthHarness(t, nil)
+	kids := h.fanout(t, depthRoot, "Alpha", "Beta")
+	var closed []string
+	tool := NewCloseSessionTool(func(_, sessionKey string) (int, error) {
+		closed = append(closed, sessionKey)
+		return 1, nil
+	}, func(string, string) (int, error) { return 1, nil })
+
+	check := func(key, when string) {
+		t.Helper()
+		out := runCloseSessionArgs(t, tool, key, `{"mark_read":true}`)
+		if !strings.Contains(out, "depth leaf") || !strings.Contains(out, "depth_report") {
+			t.Errorf("%s: result = %q, want a refusal naming the depth leaf and depth_report", when, out)
+		}
+	}
+	check(kids[0], "open leaf")
+	if err := h.report(t, kids[0], "done"); err != nil {
+		t.Fatalf("report: %v", err)
+	}
+	check(kids[0], "reported leaf")
+	if len(closed) != 0 {
+		t.Fatalf("closer called for %v; a leaf must not close its chat", closed)
+	}
+
+	if out := runCloseSession(t, tool, depthRoot); !strings.HasPrefix(out, "Closed this chat") {
+		t.Errorf("root: result = %q, want it closed", out)
+	}
+	if len(closed) != 1 || closed[0] != depthRoot {
+		t.Errorf("closer calls = %v, want only the root", closed)
+	}
+}

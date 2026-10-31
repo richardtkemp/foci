@@ -1635,6 +1635,20 @@ func registerDepthManager(agentID string, m *DepthManager) {
 	depthMgrMu.Unlock()
 }
 
+// InDepthLeaf reports whether sessionKey is a leaf of a depth tree (open or
+// reported; the root chat is not a leaf). A leaf's chat belongs to the tree,
+// so tools that act on "this chat" check it (#2623: close_session).
+func InDepthLeaf(sessionKey string) bool {
+	m := DepthManagerFor(sessionKey)
+	if m == nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := m.nodes[sessionKey]
+	return n != nil && n.LeafID != ""
+}
+
 // DepthManagerFor returns the depth manager of sessionKey's agent, or nil.
 func DepthManagerFor(sessionKey string) *DepthManager {
 	depthMgrMu.RLock()

@@ -27,6 +27,7 @@ Per-tool reference for the Claude Code (shell) backend. How `foci_*` shell funct
 - Call it only when the conversation is finished with nothing outstanding, or when the user asks. It is fine in the same turn as your final reply (the reply still lands, unread).
 - `--mark-read` (flag, default off): also mark the chat read on every device once this turn ends, every message you send this turn included (also ones after the call, e.g. "Closed."), so none shows as unread.
 - Only registered when the app platform is configured; on a non-app session it says there is nothing to close.
+- Refused in a depth leaf (open or reported): the leaf's chat belongs to the tree. Finish with `foci_depth_report`; the user or the root chat closes it.
 
 ### `foci_set_session_alias` — name this conversation
 - `--alias TEXT` (required). Sets a short descriptive name for the current chat session, shown in the chat list. Call once after the first exchange to name what the conversation is about; keep it under 5 words.
