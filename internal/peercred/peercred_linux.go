@@ -26,3 +26,24 @@ func UID(conn *net.UnixConn) (uint32, error) {
 	}
 	return cred.Uid, nil
 }
+
+// PID returns the process id of the peer connected on conn (SO_PEERCRED):
+// the process that made the connection.
+func PID(conn *net.UnixConn) (int, error) {
+	raw, err := conn.SyscallConn()
+	if err != nil {
+		return 0, err
+	}
+	var cred *syscall.Ucred
+	var credErr error
+	controlErr := raw.Control(func(fd uintptr) {
+		cred, credErr = syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
+	})
+	if controlErr != nil {
+		return 0, controlErr
+	}
+	if credErr != nil {
+		return 0, credErr
+	}
+	return int(cred.Pid), nil
+}

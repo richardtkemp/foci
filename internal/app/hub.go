@@ -20,6 +20,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/command"
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/fap"
 	flog "foci/internal/log"
 	"foci/internal/mermaid"
@@ -2389,8 +2390,12 @@ type convBinding struct {
 	subagentDetail string                // running-subagent descriptions, empty if none
 	subagents      []fap.RunningSubagent // the structured running list behind subagentDetail (#2138)
 	spawns         []fap.RunningSubagent // the session's background spawns, listed after its subagents (#2139)
-	waitingDetail  string                // target agent id we're awaiting, empty if none
-	activitySent   fap.Activity          // last-emitted Activity frame (zero == idle, nothing sent)
+	// spawnShells maps a running direct spawn's id to the shell call it was
+	// started from (tools.RunningSpawn.CallerShell): that call's
+	// background-command entry is hidden while the spawn runs (#2685).
+	spawnShells   map[string]string
+	waitingDetail string       // target agent id we're awaiting, empty if none
+	activitySent  fap.Activity // last-emitted Activity frame (zero == idle, nothing sent)
 
 	// lastCmdHash fingerprints the command palette last sent on this
 	// conversation, so pushCommands is a no-op when nothing changed — the same
@@ -2597,6 +2602,13 @@ func (b *convBinding) info() fap.ConversationInfo {
 func (b *convBinding) resolveActivity() (fap.ActivityKind, string) {
 	if b.subagentDetail != "" || len(b.spawns) > 0 {
 		detail := b.subagentDetail
+		if visible, hid := b.visibleSubagentsLocked(); hid {
+			descs := make([]string, len(visible))
+			for i, r := range visible {
+				descs[i] = r.Description
+			}
+			detail = delegator.FormatSubagentDetail(descs)
+		}
 		for _, s := range b.spawns {
 			if detail != "" {
 				detail += ", "
@@ -2648,10 +2660,48 @@ func (b *convBinding) activityFrameLocked() fap.Activity {
 	if ak, ad, cmd, shell := b.agentActivityLocked(); ak != fap.ActivityKindIdle {
 		a.AgentKind, a.AgentDetail, a.AgentCommand, a.AgentShell = string(ak), ad, cmd, shell
 	}
-	if len(b.subagents)+len(b.spawns) > 0 {
-		a.Subagents = append(append([]fap.RunningSubagent(nil), b.subagents...), b.spawns...)
+	subagents, _ := b.visibleSubagentsLocked()
+	if len(subagents)+len(b.spawns) > 0 {
+		a.Subagents = append(append([]fap.RunningSubagent(nil), subagents...), b.spawns...)
 	}
 	return a
+}
+
+// visibleSubagentsLocked returns the backend's running list without the
+// background-command entry of each shell call a running direct spawn was
+// started from (#2685): the spawn's own entry already shows that work, so it
+// shows once. Per spawn, the longest matching command is the one hidden (the
+// most specific match). Display only: the backend's tracker, its pending-work
+// gate and /stop still see the command. hid reports whether any was hidden.
+// Caller holds mu.
+func (b *convBinding) visibleSubagentsLocked() (visible []fap.RunningSubagent, hid bool) {
+	if len(b.spawnShells) == 0 {
+		return b.subagents, false
+	}
+	hide := map[string]bool{}
+	for _, shell := range b.spawnShells {
+		best, bestLen := "", 0
+		for _, r := range b.subagents {
+			if r.Kind != delegator.SubagentKindCommand {
+				continue
+			}
+			if n := tools.ShellCallMatch(r.Command, shell); n > bestLen {
+				best, bestLen = r.ID, n
+			}
+		}
+		if best != "" {
+			hide[best] = true
+		}
+	}
+	if len(hide) == 0 {
+		return b.subagents, false
+	}
+	for _, r := range b.subagents {
+		if !hide[r.ID] {
+			visible = append(visible, r)
+		}
+	}
+	return visible, true
 }
 
 // setTurnActivity records a detail-less turn-scoped activity kind and re-emits
@@ -2716,13 +2766,24 @@ func (b *convBinding) setSubagents(detail string, running []fap.RunningSubagent)
 
 // addSpawn lists a background spawn of this session beside its subagents
 // (#2139); removeSpawn drops it when it ends.
-func (b *convBinding) addSpawn(s fap.RunningSubagent) {
-	b.applyActivity(func() { b.spawns = append(b.spawns, s) })
+// callerShell is a direct spawn's tools.RunningSpawn.CallerShell ("" = none):
+// while it runs, the background command it was started from is not listed.
+func (b *convBinding) addSpawn(s fap.RunningSubagent, callerShell string) {
+	b.applyActivity(func() {
+		b.spawns = append(b.spawns, s)
+		if callerShell != "" {
+			if b.spawnShells == nil {
+				b.spawnShells = map[string]string{}
+			}
+			b.spawnShells[s.ID] = callerShell
+		}
+	})
 }
 
 func (b *convBinding) removeSpawn(id string) {
 	b.applyActivity(func() {
 		b.spawns = slices.DeleteFunc(b.spawns, func(s fap.RunningSubagent) bool { return s.ID == id })
+		delete(b.spawnShells, id)
 	})
 }
 

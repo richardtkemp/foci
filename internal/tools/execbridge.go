@@ -254,6 +254,12 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 	if req.Hints != (OutputHints{}) {
 		ctx = WithOutputHints(ctx, req.Hints)
 	}
+	// The caller's pid links a direct spawn to the shell call it runs in, so
+	// the app shows the spawn once, not also as that background command
+	// (#2685). A failed lookup only loses that link.
+	if pid, err := peercred.PID(uc); err == nil {
+		ctx = WithCallerPID(ctx, pid)
+	}
 	result, err := tool.Execute(ctx, req.Params)
 	if err != nil {
 		// Convergence-point logging: every exec-bridge tool error surfaces

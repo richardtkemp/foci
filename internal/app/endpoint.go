@@ -197,7 +197,7 @@ func (SpawnObserver) SpawnStarted(parentSession string, s tools.RunningSpawn, pr
 	if !s.Started.IsZero() {
 		started = s.Started.UnixMilli()
 	}
-	b.addSpawn(fap.RunningSubagent{ID: s.ID, Description: s.Description, Kind: "agent", Model: s.Model, SubagentType: "spawn", StartedMs: started})
+	b.addSpawn(fap.RunningSubagent{ID: s.ID, Description: s.Description, Kind: "agent", Model: s.Model, SubagentType: "spawn", StartedMs: started}, s.CallerShell)
 }
 
 // SpawnText adds one block of the spawn's text to its chit.

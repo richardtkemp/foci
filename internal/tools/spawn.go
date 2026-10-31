@@ -526,7 +526,7 @@ func (s *Spawner) SpawnTool() *Tool {
 			case background:
 				res, err = s.startBackgroundCharacter(ctx, host, p.Prompt, p.Model, timeout)
 			default:
-				res, err = s.runDirect(ctx, host, p.Context, p.Prompt, timeout, func(runCtx context.Context) (ToolResult, error) {
+				res, err = s.runDirect(ctx, host, p.Context, p.Prompt, p.Model, timeout, func(runCtx context.Context) (ToolResult, error) {
 					return s.runDirectAs(runCtx, host, p.Context, p.Prompt, p.Model, timeout)
 				})
 			}
@@ -546,18 +546,24 @@ func (s *Spawner) SpawnTool() *Tool {
 // The observer shows it as a background spawn is shown (#2683): the app lists
 // it as a subagent while it runs, with its text, and "/stop subagents" stops
 // it. A delegated batch's text arrives as it is written (the batch turn's tee);
-// an API one-shot streams none, so its answer is shown when it ends.
-func (s *Spawner) runDirect(ctx context.Context, host *Spawner, mode, prompt string, timeout time.Duration, run func(context.Context) (ToolResult, error)) (ToolResult, error) {
+// an API one-shot streams none, so its answer is shown when it ends. Its
+// entry names the model it runs on (directModel, #2685), and the shell call it
+// was started from (CallerShell), whose own entry the app hides meanwhile.
+func (s *Spawner) runDirect(ctx context.Context, host *Spawner, mode, prompt, model string, timeout time.Duration, run func(context.Context) (ToolResult, error)) (ToolResult, error) {
 	parent := SessionKeyFromContext(ctx)
 	if parent == "" {
 		return run(ctx)
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	info := RunningSpawn{ID: newSpawnID(), Description: spawnDescription(prompt), Started: time.Now(), Mode: mode, Direct: true}
+	info := RunningSpawn{ID: newSpawnID(), Description: spawnDescription(prompt), Started: time.Now(), Mode: mode, Direct: true,
+		CallerShell: callerShell(CallerPIDFromContext(ctx))}
+	owner := parent
 	if host != s {
 		info.Agent = host.deps.AgentID
+		owner = session.CrossAgentSpawnRoot(host.deps.AgentID)
 	}
+	info.Model = host.directModel(mode, model, owner)
 	tr, obs := s.deps.Tracker, s.deps.Observer
 	tr.addDirect(parent, info, cancel, timeout, prompt)
 	if obs != nil {
@@ -729,11 +735,49 @@ func (s *Spawner) runBatchOneShot(ctx context.Context, mode, prompt, model strin
 // runAPIOneShot runs an API agent's raw, character or explore spawn through
 // foci's own one-shot tool loop (spawnOneShot), on the model its group
 // resolves to.
+// resolveAPISpawn resolves the client, model and format an API one-shot of
+// mode runs on: the named model group, else the mode's call site, else the
+// agent's own model. An explore spawn takes no group.
+func (s *Spawner) resolveAPISpawn(mode, modelGroup string) (provider.Client, string, string) {
+	deps := s.deps
+	call := config.CallSpawnCharacter
+	switch mode {
+	case spawnModeRaw:
+		call = config.CallSpawnRaw
+	case spawnModeExplore:
+		call, modelGroup = config.CallSpawnExplore, ""
+	}
+	return resolveSpawnGroup(deps.GroupResolver, modelGroup, call, deps.ClientProvider, deps.Client, deps.FallbackModel, deps.FallbackFormat)
+}
+
+// directModel is the model a direct spawn of mode runs on, for its app entry
+// (#2685): what runDirectAs will run it on. A delegated agent's batch runs on
+// the model asked for, else on its session's own model (SessionModel of the
+// batch key, which reads the owner's root); an API one-shot on its resolved
+// group. "" = not known.
+func (s *Spawner) directModel(mode, model, owner string) string {
+	if s.deps.Delegated != nil {
+		if model != "" {
+			return model
+		}
+		if s.deps.ModelFor == nil {
+			return ""
+		}
+		key := owner
+		if sk, err := session.ParseSessionKey(owner); err == nil {
+			key = sk.Root().String()
+		}
+		return s.deps.ModelFor(key)
+	}
+	_, m, _ := s.resolveAPISpawn(mode, model)
+	return m
+}
+
 func (s *Spawner) runAPIOneShot(ctx context.Context, mode, prompt, modelGroup string, timeout time.Duration) (ToolResult, error) {
 	deps := s.deps
 	switch mode {
 	case spawnModeRaw:
-		client, model, format := resolveSpawnGroup(deps.GroupResolver, modelGroup, config.CallSpawnRaw, deps.ClientProvider, deps.Client, deps.FallbackModel, deps.FallbackFormat)
+		client, model, format := s.resolveAPISpawn(spawnModeRaw, modelGroup)
 		return inSpawnTempDir(func(tempDir string) (string, error) {
 			toolDefs, tools := spawnIsolatedToolSet(deps.Registry, spawnRawBlacklist, deps.Store, tempDir, deps.FileMode)
 			return spawnOneShot(ctx, oneShotParams{
@@ -754,7 +798,7 @@ func (s *Spawner) runAPIOneShot(ctx context.Context, mode, prompt, modelGroup st
 		})
 
 	case spawnModeCharacter:
-		client, model, format := resolveSpawnGroup(deps.GroupResolver, modelGroup, config.CallSpawnCharacter, deps.ClientProvider, deps.Client, deps.FallbackModel, deps.FallbackFormat)
+		client, model, format := s.resolveAPISpawn(spawnModeCharacter, modelGroup)
 		var system []provider.SystemBlock
 		if deps.Bootstrap != nil {
 			system = deps.Bootstrap.SystemBlocks()
@@ -782,7 +826,7 @@ func (s *Spawner) runAPIOneShot(ctx context.Context, mode, prompt, modelGroup st
 		return TextResult(result), nil
 
 	case spawnModeExplore:
-		client, model, format := resolveSpawnGroup(deps.GroupResolver, "", config.CallSpawnExplore, deps.ClientProvider, deps.Client, deps.FallbackModel, deps.FallbackFormat)
+		client, model, format := s.resolveAPISpawn(spawnModeExplore, modelGroup)
 		system := []provider.SystemBlock{
 			{Type: "text", Text: exploreSystemPrompt},
 		}

@@ -82,3 +82,14 @@ func TestMatchesRejectsOtherUID(t *testing.T) {
 		t.Fatal("Matches = true for a mismatched UID, want false")
 	}
 }
+
+func TestPIDIsSelf(t *testing.T) {
+	srv := dialedPair(t)
+	pid, err := PID(srv)
+	if err != nil {
+		t.Fatalf("PID: %v", err)
+	}
+	if pid != os.Getpid() {
+		t.Fatalf("PID = %d, want %d (this process dialled)", pid, os.Getpid())
+	}
+}

@@ -44,6 +44,12 @@ type RunningSpawn struct {
 	// (#2662, a cross-agent character spawn); "" = the caller's agent. Its
 	// branch is that agent's session, run by that agent's Spawner.
 	Agent string
+	// CallerShell is, for a direct spawn started over the exec bridge, the
+	// command lines of the shell processes its call came from (callerShell):
+	// the app hides the background-command entry of the shell call that
+	// matches it (ShellCallMatch) while the spawn runs, so the spawn shows
+	// once (#2685). "" = not known.
+	CallerShell string
 }
 
 // SpawnObserver is told about each spawn of a parent session, background or

@@ -209,7 +209,7 @@ func TestSendToSpawnerFromDirectSpawnCallerIdle(t *testing.T) {
 	s := NewSpawner(SpawnDeps{AgentID: "msgidle", MaxInherit: 1, Notifier: notifier, Tracker: NewSpawnTracker()},
 		func() SpawnAgent { return &busyAgent{busy: false} })
 	ctx := WithSessionKey(context.Background(), "msgidle/c1")
-	res, err := s.runDirect(ctx, s, spawnModeRaw, "p", time.Minute, func(runCtx context.Context) (ToolResult, error) {
+	res, err := s.runDirect(ctx, s, spawnModeRaw, "p", "", time.Minute, func(runCtx context.Context) (ToolResult, error) {
 		// An API one-shot's tool calls run on the caller's session key,
 		// with the spawn in their ctx.
 		if r, err := sendToSpawner(s, runCtx, "early news"); err != nil || !strings.HasPrefix(r.Text, "Sent to your spawner") {
@@ -238,7 +238,7 @@ func TestSendToSpawnerDirectFailedAndEnded(t *testing.T) {
 		func() SpawnAgent { return &busyAgent{busy: true} })
 	ctx := WithSessionKey(context.Background(), "msgfail/c1")
 	var linked context.Context
-	_, err := s.runDirect(ctx, s, spawnModeRaw, "p", time.Minute, func(runCtx context.Context) (ToolResult, error) {
+	_, err := s.runDirect(ctx, s, spawnModeRaw, "p", "", time.Minute, func(runCtx context.Context) (ToolResult, error) {
 		linked = runCtx
 		if _, err := sendToSpawner(s, runCtx, "before the crash"); err != nil {
 			t.Error(err)

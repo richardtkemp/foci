@@ -461,7 +461,7 @@ func TestConvBinding_SpawnsListedAfterSubagents(t *testing.T) {
 	// end drops it (#2139).
 	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{fakeClient(): {}}}
 	b.setSubagents("researcher", []fap.RunningSubagent{{ID: "toolu_a", Description: "researcher", Kind: "agent"}})
-	b.addSpawn(fap.RunningSubagent{ID: "spawn-1", Description: "fix the parser", Kind: "agent", Model: "opus", SubagentType: "spawn", StartedMs: 5})
+	b.addSpawn(fap.RunningSubagent{ID: "spawn-1", Description: "fix the parser", Kind: "agent", Model: "opus", SubagentType: "spawn", StartedMs: 5}, "")
 
 	info := b.info()
 	if info.Activity != "subagents" || info.ActivityDetail != "researcher, fix the parser" ||
@@ -476,6 +476,53 @@ func TestConvBinding_SpawnsListedAfterSubagents(t *testing.T) {
 	b.removeSpawn("spawn-1")
 	if info := b.info(); info.Activity != "idle" || len(info.Subagents) != 0 {
 		t.Fatalf("after the spawn ended: snapshot = %+v", info)
+	}
+}
+
+func TestConvBinding_DirectSpawnHidesItsShellCall(t *testing.T) {
+	// #2685: a direct spawn run inside a background shell call is listed once,
+	// as the spawn; its shell call's "background command" entry is hidden while
+	// the spawn runs and comes back if the shell call outlives it. Another
+	// background command is untouched.
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{fakeClient(): {}}}
+	spawnCmd := `foci_spawn --context explore "it's here"; make land`
+	b.setSubagents("background command, background command", []fap.RunningSubagent{
+		{ID: "toolu_short", Description: "background command", Kind: "command", Command: `foci_spawn --context explore "it's here"`},
+		{ID: "toolu_spawn", Description: "background command", Kind: "command", Command: spawnCmd},
+		{ID: "toolu_other", Description: "background command", Kind: "command", Command: "sleep 100"},
+	})
+	// Claude Code runs the command as eval '<command>', each ' as '"'"'.
+	shell := `bash -c source snap.sh && eval 'foci_spawn --context explore "it'"'"'s here"; make land' && pwd -P`
+	b.addSpawn(fap.RunningSubagent{ID: "spawn-1", Description: "look", Kind: "agent", Model: "opus", SubagentType: "spawn"},
+		strings.NewReplacer("'", "", `"`, "").Replace(shell)) // as tools.callerShell normalises it
+
+	ids := func() []string {
+		var out []string
+		for _, r := range b.info().Subagents {
+			out = append(out, r.ID)
+		}
+		return out
+	}
+	if got := strings.Join(ids(), ","); got != "toolu_short,toolu_other,spawn-1" {
+		t.Fatalf("while the spawn runs: list = %s, want its shell call (the longest match) hidden", got)
+	}
+	if d := b.info().ActivityDetail; d != "background command, background command, look" {
+		t.Fatalf("while the spawn runs: detail = %q", d)
+	}
+	b.removeSpawn("spawn-1")
+	if got := strings.Join(ids(), ","); got != "toolu_short,toolu_spawn,toolu_other" {
+		t.Fatalf("after the spawn ended: list = %s, want the shell call back", got)
+	}
+}
+
+func TestConvBinding_SpawnWithoutShellHidesNothing(t *testing.T) {
+	// A spawn with no known caller shell (an API exec, a background spawn)
+	// leaves every command listed.
+	b := &convBinding{convID: "c1", clients: map[*wsClient]struct{}{fakeClient(): {}}}
+	b.setSubagents("background command", []fap.RunningSubagent{{ID: "toolu_a", Description: "background command", Kind: "command", Command: "foci_spawn x"}})
+	b.addSpawn(fap.RunningSubagent{ID: "spawn-1", Description: "x", Kind: "agent"}, "")
+	if n := len(b.info().Subagents); n != 2 {
+		t.Fatalf("list = %+v, want both", b.info().Subagents)
 	}
 }
 

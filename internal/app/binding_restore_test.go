@@ -341,7 +341,8 @@ func TestConvBindingFieldCensus(t *testing.T) {
 	// reconnecting to a fresh process should be told the palette, not have it
 	// suppressed by a hash that survived the restart.
 	// spawns lists background foci spawns, goroutines of this process that a
-	// restart ends, so an empty list is the truth after one (#2139).
+	// restart ends, so an empty list is the truth after one (#2139); spawnShells
+	// belongs to those same spawns (#2685).
 	// readAfterTurn is a mark_read pending on a turn of this process (#2592);
 	// lastMsgID feeds only that read, which a turn applies after sending its
 	// own reply, so "" until the first message after a restart marks nothing
@@ -349,7 +350,7 @@ func TestConvBindingFieldCensus(t *testing.T) {
 	restartSafe := map[string]bool{
 		"mu": true, "clients": true, "clientStates": true, "buffer": true,
 		"seenOrder": true, "turnKind": true, "turnDetail": true, "turnCommand": true, "turnShell": true, "retryDetail": true,
-		"subagentDetail": true, "subagents": true, "spawns": true, "waitingDetail": true,
+		"subagentDetail": true, "subagents": true, "spawns": true, "spawnShells": true, "waitingDetail": true,
 		"activitySent": true, "cacheExpiryMs": true, "lastCmdHash": true,
 		"lastMsgID": true, "readAfterTurn": true,
 		// reminders/remindersSent are setReminders' push-dedup cache (#2600):
