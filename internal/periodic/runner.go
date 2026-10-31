@@ -137,16 +137,12 @@ type Runner struct {
 	todoStore        *memory.TodoStore
 	sessionIndex     *session.SessionIndex
 
-	// openSessionsFn returns the session keys of chats the app currently has open,
-	// used by keepalive when warm_open_app_chats is set. nil = feature unavailable
-	// (non-app agents) → keepalive warms only the default session.
-	openSessionsFn func() []string
-
 	// openChatSessionsFn returns the session keys of every app chat the agent
-	// has open, unconditionally — unlike openSessionsFn, whose nil-ness
-	// encodes warm_open_app_chats. Quiet-hours compaction candidates are ALL
-	// open sessions regardless of keepalive's warming scope (#2218). nil =
-	// no app chats (default session only).
+	// has open. Two consumers: quiet-hours compaction takes ALL of them
+	// (#2218), and keepalive takes them only while the live
+	// kaCfg.WarmOpenAppChats is set (#2641; the flag is read each tick, never
+	// baked into this resolver, so it hot-reloads). nil = no app chats
+	// (default session only).
 	openChatSessionsFn func() []string
 
 	// quietCfg is the resolved quiet-hours compaction trigger (#2218).
@@ -267,10 +263,6 @@ func (r *Runner) UpdateSettings(s Settings) {
 
 // applySettings installs fresh settings; runs on the loop goroutine only.
 func (r *Runner) applySettings(s Settings, ticker *time.Ticker) {
-	// warm_open_app_chats is also baked into the OpenSessionsFn closure at
-	// construction, so a live update cannot fully take effect — keep the boot
-	// value so the two consumers never disagree.
-	s.Keepalive.WarmOpenAppChats = r.kaCfg.WarmOpenAppChats
 	r.kaCfg = s.Keepalive
 	r.bgCfg = s.Background
 	r.reflectCfg = s.Reflection
@@ -327,15 +319,11 @@ type RunnerConfig struct {
 	// cmd/foci-gw/periodic_setup.go to an adapter over the agent instance.
 	Agent BackgroundAgent
 
-	// OpenSessionsFn returns session keys of the app's currently-open chats.
-	// nil for non-app agents (keepalive then warms only the default session).
-	OpenSessionsFn func() []string
-
 	// OpenChatSessionsFn returns session keys of the app's currently-open
-	// chats for quiet-hours compaction candidates (#2218) — wired
-	// unconditionally, independent of keepalive's warm_open_app_chats (whose
-	// on/off state OpenSessionsFn encodes in its nil-ness). nil = no app
-	// chats (candidates are then the default session only).
+	// chats: quiet-hours compaction candidates (#2218), and keepalive's
+	// targets while warm_open_app_chats is on (#2641). Wired unconditionally;
+	// the keepalive gate is the live config, not this func's nil-ness. nil =
+	// no app chats (the default session only).
 	OpenChatSessionsFn func() []string
 
 	// QuietCompaction is the resolved quiet-hours compaction trigger (#2218).
@@ -409,7 +397,6 @@ func New(cfg RunnerConfig) *Runner {
 		promptSearchDirs: cfg.PromptSearchDirs,
 		todoStore:        cfg.TodoStore,
 		sessionIndex:     cfg.SessionIndex,
-		openSessionsFn:   cfg.OpenSessionsFn,
 
 		openChatSessionsFn: cfg.OpenChatSessionsFn,
 		quietCfg:           cfg.QuietCompaction,

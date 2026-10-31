@@ -1287,7 +1287,7 @@ type KeepaliveConfig struct {
 	Enabled          *bool   `toml:"enabled"                  hot:"event" desc:"Enable the keepalive timer, which sends periodic no-op prompts to keep the model provider's prompt cache warm"` // enable keepalive timer
 	Interval         *string `toml:"interval" default:"55m"   hot:"event" desc:"How long since the prompt cache was last warmed before the keepalive timer fires again" type:"duration"`        // time since cache last warmed before firing
 	Prompt           *string `toml:"prompt"                   hot:"event" desc:"Path to a custom keepalive prompt file. Leave unset for the built-in default, or set to none to disable it"`    // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
-	WarmOpenAppChats *bool   `toml:"warm_open_app_chats"      desc:"When true, keepalive warms every chat currently open in the app instead of just the main session, so their caches stay warm too"`
+	WarmOpenAppChats *bool   `toml:"warm_open_app_chats"      hot:"event" desc:"When true, keepalive warms every chat currently open in the app instead of just the main session, so their caches stay warm too"`
 	MaxUserIdle      *string `toml:"max_user_idle" default:"96h" hot:"event" desc:"Only keep a session's cache warm if a human interacted with it within this window. Sessions idle longer than this are left to expire. Set to 0 to disable the gate" type:"duration"`
 	ForceInSession   *bool   `toml:"force_in_session"          hot:"event" desc:"Force keepalive to run in the existing session instead of a real backend fork, even on a backend that can branch. Backends that can't fork already behave this way; this opts a fork-capable backend into the same behaviour for keepalive only"`
 }

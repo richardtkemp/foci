@@ -707,8 +707,8 @@ func TestMaybeQuietCompaction_Guards(t *testing.T) {
 
 func TestMaybeQuietCompaction_AllOpenSessions(t *testing.T) {
 	// Requirement 5: candidates are the default session plus EVERY open app
-	// chat, deduplicated — independent of warm_open_app_chats (the runner's
-	// keepalive openSessionsFn is nil here) — and only those above the
+	// chat, deduplicated — independent of warm_open_app_chats (off here) —
+	// and only those above the
 	// threshold are compacted.
 	f := newQuietFixture(t, quietOpts{
 		openChats: []string{"test/c3", "test/c2", "test/c1"}, // c1 again: dedup

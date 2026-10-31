@@ -26,8 +26,8 @@ func TestApplySettingsUpdatesRunner(t *testing.T) {
 	if !r.kaCfg.Enabled || r.kaCfg.Interval != "10m" {
 		t.Errorf("keepalive not updated: %+v", r.kaCfg)
 	}
-	if !r.kaCfg.WarmOpenAppChats {
-		t.Error("warm_open_app_chats must keep the boot value (its OpenSessionsFn consumer is fixed at construction)")
+	if r.kaCfg.WarmOpenAppChats {
+		t.Error("warm_open_app_chats must take the live value (#2641)")
 	}
 	if !r.bgCfg.Enabled || r.bgCfg.Interval != "5m" {
 		t.Errorf("background not updated: %+v", r.bgCfg)
@@ -65,4 +65,33 @@ func TestUpdateSettingsCoalesces(t *testing.T) {
 func TestUpdateSettingsNilChannelIsNoop(t *testing.T) {
 	r := &Runner{} // struct-literal Runner (test pattern) — must not panic or block
 	r.UpdateSettings(Settings{TickInterval: "1s"})
+}
+
+// TestWarmOpenAppChatsAppliesLive pins #2641: turning warm_open_app_chats on
+// by a live settings update changes which sessions keepalive warms, with no
+// restart. The runner is built exactly as production builds it with the flag
+// off at boot: only the unconditional open-chats resolver is wired.
+func TestWarmOpenAppChatsAppliesLive(t *testing.T) {
+	r := New(RunnerConfig{
+		AgentID:            "test",
+		Keepalive:          config.ResolvedKeepalive{Enabled: true, Interval: "1m"},
+		CacheTTL:           time.Hour,
+		SessionIndex:       indexWithTouch(t, "test/open", 10*time.Minute), // only the open chat is warm
+		Agent:              &fakeBackgroundAgent{sessionKeyFn: func() string { return "test/main" }},
+		OpenChatSessionsFn: func() []string { return []string{"test/open"} },
+	})
+
+	if ready, _ := r.keepaliveTargets(time.Minute); len(ready) != 0 {
+		t.Fatalf("flag off: ready = %v, want none (the default session is not warm)", ready)
+	}
+
+	r.applySettings(Settings{Keepalive: config.ResolvedKeepalive{Enabled: true, Interval: "1m", WarmOpenAppChats: true}}, nil)
+	if ready, _ := r.keepaliveTargets(time.Minute); len(ready) != 1 || ready[0] != "test/open" {
+		t.Errorf("flag turned on live: ready = %v, want [test/open]", ready)
+	}
+
+	r.applySettings(Settings{Keepalive: config.ResolvedKeepalive{Enabled: true, Interval: "1m", WarmOpenAppChats: false}}, nil)
+	if ready, _ := r.keepaliveTargets(time.Minute); len(ready) != 0 {
+		t.Errorf("flag turned off live: ready = %v, want none", ready)
+	}
 }

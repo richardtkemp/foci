@@ -122,8 +122,8 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 func (r *Runner) keepaliveTargets(interval time.Duration) (ready []string, why string) {
 	why = "no session in the warm window"
 	var candidates []string
-	if r.kaCfg.WarmOpenAppChats && r.openSessionsFn != nil {
-		candidates = r.openSessionsFn()
+	if r.kaCfg.WarmOpenAppChats && r.openChatSessionsFn != nil {
+		candidates = r.openChatSessionsFn()
 	}
 	if len(candidates) == 0 {
 		if parentKey := r.defaultParentKey(); parentKey != "" {

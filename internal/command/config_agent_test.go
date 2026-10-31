@@ -185,7 +185,7 @@ func TestConfigSetAgentRefusesUnparseableDuration(t *testing.T) {
 }
 
 // TestConfigSetAgentRefusesRestartOnlyField proves the per-agent set is
-// hot-only: keepalive.warm_open_app_chats (no hot tag) is refused with a
+// hot-only: behavior.enable_stop_aliases (no hot tag) is refused with a
 // message saying it needs a restart and cannot be set per agent from chat,
 // nothing is written, and the refusal is distinguishable from the
 // not-a-per-agent-setting one.
@@ -197,7 +197,7 @@ func TestConfigSetAgentRefusesRestartOnlyField(t *testing.T) {
 	})
 	cc := CommandContext{ConfigSetDeps: &deps}
 
-	text := execConfigCommand(t, cc, "set clutch keepalive.warm_open_app_chats=true")
+	text := execConfigCommand(t, cc, "set clutch behavior.enable_stop_aliases=true")
 
 	if called {
 		t.Error("SetInFileFn must not be called for a restart-only field")
@@ -223,7 +223,7 @@ func TestConfigSetAgentRefusesRestartOnlyFieldForCurrentAgent(t *testing.T) {
 	deps.AgentID = "clutch" // the named agent IS the current agent
 	cc := CommandContext{ConfigSetDeps: &deps}
 
-	text := execConfigCommand(t, cc, "set clutch keepalive.warm_open_app_chats=true")
+	text := execConfigCommand(t, cc, "set clutch behavior.enable_stop_aliases=true")
 
 	if called {
 		t.Error("SetInFileFn must not be called for a restart-only field")
@@ -392,9 +392,9 @@ func TestConfigGetReportsRestartOnlyField(t *testing.T) {
 	deps.ConfigPath = writeAgentConfigFile(t)
 	cc := CommandContext{ConfigSetDeps: &deps}
 
-	text := execConfigCommand(t, cc, "get clutch keepalive.warm_open_app_chats")
+	text := execConfigCommand(t, cc, "get clutch behavior.enable_stop_aliases")
 
-	if !strings.Contains(text, "keepalive.warm_open_app_chats") {
+	if !strings.Contains(text, "behavior.enable_stop_aliases") {
 		t.Errorf("reply = %q", text)
 	}
 	if !strings.Contains(text, "Needs a restart to change") {
@@ -407,7 +407,7 @@ func TestConfigGetReportsRestartOnlyField(t *testing.T) {
 
 // TestConfigGetAgentListsHotKeys proves "get <agent>" lists the keys the
 // per-agent set accepts — the hot agent-section rows — and excludes
-// restart-only ones like keepalive.warm_open_app_chats.
+// restart-only ones like behavior.enable_stop_aliases.
 func TestConfigGetAgentListsHotKeys(t *testing.T) {
 	deps := agentFormDeps(nil)
 	deps.ConfigPath = writeAgentConfigFile(t)
@@ -418,7 +418,7 @@ func TestConfigGetAgentListsHotKeys(t *testing.T) {
 	if !strings.Contains(text, "keepalive.interval") {
 		t.Errorf("reply = %q, want keepalive.interval listed", text)
 	}
-	if strings.Contains(text, "warm_open_app_chats") {
+	if strings.Contains(text, "enable_stop_aliases") {
 		t.Errorf("reply = %q, restart-only keys must be excluded", text)
 	}
 }
@@ -517,9 +517,9 @@ func TestConfigSetDirectAgentFormStillWritesNonHot(t *testing.T) {
 	})
 	cc := CommandContext{ConfigSetDeps: &deps}
 
-	text := execConfigCommand(t, cc, "set agent.keepalive.warm_open_app_chats=true")
+	text := execConfigCommand(t, cc, "set agent.behavior.enable_stop_aliases=true")
 
-	if captured.Section != "agents" || captured.AgentID != "main" || captured.Key != "keepalive.warm_open_app_chats" {
+	if captured.Section != "agents" || captured.AgentID != "main" || captured.Key != "behavior.enable_stop_aliases" {
 		t.Errorf("target = %+v", captured)
 	}
 	if !strings.Contains(text, "Restart to take effect.") {

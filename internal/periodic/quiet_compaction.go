@@ -152,8 +152,8 @@ func (r *Runner) quietCompactionTargets(win config.QuietWindow, now time.Time, m
 
 // quietCandidates returns the deduplicated candidate sessions for quiet
 // compaction (#2218): the agent's default session plus every app-open chat —
-// unconditionally, unlike keepalive's openSessionsFn, whose nil-ness encodes
-// warm_open_app_chats. The trigger applies to ALL open sessions.
+// unconditionally, unlike keepalive, which takes the open chats only while
+// warm_open_app_chats is on. The trigger applies to ALL open sessions.
 func (r *Runner) quietCandidates() []string {
 	var candidates []string
 	if sk := r.defaultParentKey(); sk != "" {
