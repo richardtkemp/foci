@@ -86,21 +86,29 @@ func TestCostDivergenceAlarm(t *testing.T) {
 		model  string
 		factor float64
 		alarms int
+		read   int // cache reads on the counted call: over 100k puts Haiku 5.5 in its prompt-size tier
 	}{
-		{"agrees", opus, 1, 0},
-		{"rate disagrees", opus, 1.10, 1},
-		// #2382: a tiered model (Haiku 5.5) is not checked, whatever the gap.
-		{"tiered model disagrees", "claude-haiku-5-5", 1.50, 0},
+		{"agrees", opus, 1, 0, 0},
+		{"rate disagrees", opus, 1.10, 1, 0},
+		// Tiered models are checked again (the #2382 skip for CC #84223 is gone):
+		// agreement is silent, a gap alarms.
+		// Tier-priced calls, large enough to clear the $0.01 floor.
+		{"tiered model agrees", "claude-haiku-5-5", 1, 0, 150000},
+		{"tiered model disagrees", "claude-haiku-5-5", 1.50, 1, 150000},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tb := newTestBook(t, map[string]ModelUsage{tc.model: {InputTokens: 5000, CostUSD: 3}})
 			tb.streamNamed("m0", "", "T1", tb.clock)
 			tb.mainLine(line("m0", tc.model, tb.clock, "", 300, 1, 0, 0, 0)) // interrupted
 			tb.streamNamed("m1", "", "T1", tb.clock)
-			main := line("m1", tc.model, tb.clock, "end_turn", 10, 20, 0, 0, 4000)
+			main := line("m1", tc.model, tb.clock, "end_turn", 10, 20, tc.read, 0, 4000)
 			tb.mainLine(main)
-			price := mustCost(t, main.tokens)
-			tb.result(map[string]ModelUsage{tc.model: {InputTokens: 5010, OutputTokens: 20, CacheCreationInputTokens: 4000,
+			// Priced at the case's own model: mustCost is Opus-only.
+			price, ok := modelinfo.CostAsOf(tc.model, bookStart, main.tokens)
+			if !ok {
+				t.Fatalf("premise: %s unpriced", tc.model)
+			}
+			tb.result(map[string]ModelUsage{tc.model: {InputTokens: 5010, OutputTokens: 20, CacheReadInputTokens: tc.read, CacheCreationInputTokens: 4000,
 				CostUSD: 3 + tc.factor*price}}, 0, tb.clock)
 			// The next window's call is booked before the result settles.
 			tb.streamNamed("m2", "", "T2", tb.clock)

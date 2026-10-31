@@ -1425,18 +1425,9 @@ func (c *ccBook) checkDivergence(mu map[string]ModelUsage, label string) {
 		if booked == nil {
 			booked = &countedSum{tokens: modelinfo.Tokens{}}
 		}
-		// !!! WORKAROUND — TEMPORARY — REMOVE WHEN CC FIXES #84223 !!!
-		// A tiered model is NOT checked (#2382, Dick 2026-10-13). CC prices each
-		// call by its own prompt size, but a remainder (the true output of
-		// subagent calls whose transcript lacks its final record) has no prompt
-		// size and books at base, so the two sides differ by an amount the
-		// records cannot recover. The cause is CC bug
-		// https://github.com/anthropics/claude-code/issues/84223 (see
-		// ccBugMissingFinalRecord). ONCE THAT ISSUE IS FIXED, DELETE THIS SKIP so
-		// the divergence alarm covers tiered models again.
-		if modelinfo.HasTiers(m) {
-			continue
-		}
+		// Tiered models are checked too: the #2382 skip for CC bug #84223 was
+		// removed 2026-10-31 (Dick), after 0 of 606 subagent calls on CC 2.1.314
+		// were booked without their final record (94% on 2.1.306).
 		if booked.unpriced || (cc < ccDivergenceFloorUSD && booked.cost < ccDivergenceFloorUSD) {
 			continue
 		}
