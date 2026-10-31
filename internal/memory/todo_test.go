@@ -1464,3 +1464,49 @@ func TestTodoSortByID(t *testing.T) {
 		t.Errorf("sortTodoItems(id) = %v, want newest id first", got)
 	}
 }
+
+// TestSortTodoItemsTiesAndDirection pins the in-memory sorter (search path)
+// to the SQL List order: equal sort keys tiebreak on id in the sort's
+// direction, and priority puts high first by default (#2622). Each case runs
+// both input orders, because a comparator without a tiebreak returns true for
+// both (i,j) and (j,i) and the result then depends on the input order.
+func TestSortTodoItemsTiesAndDirection(t *testing.T) {
+	ts := time.Date(2026, 10, 31, 12, 0, 0, 500, time.UTC)
+	same := func(id int64, prio string) TodoItem {
+		c := ts
+		return TodoItem{ID: id, Priority: prio, CreatedAt: ts, UpdatedAt: ts, CompletedAt: &c}
+	}
+	cases := []struct {
+		name    string
+		field   string
+		reverse bool
+		items   []TodoItem
+		want    []int64
+	}{
+		{"created tie desc", "created", false, []TodoItem{same(1, "low"), same(2, "low")}, []int64{2, 1}},
+		{"created tie asc", "created", true, []TodoItem{same(1, "low"), same(2, "low")}, []int64{1, 2}},
+		{"updated tie desc", "updated", false, []TodoItem{same(1, "low"), same(2, "low")}, []int64{2, 1}},
+		{"closed tie desc", "closed", false, []TodoItem{same(1, "low"), same(2, "low")}, []int64{2, 1}},
+		{"closed tie asc", "closed", true, []TodoItem{same(1, "low"), same(2, "low")}, []int64{1, 2}},
+		{"priority high first", "priority", false, []TodoItem{same(1, "low"), same(2, "high"), same(3, "medium")}, []int64{2, 3, 1}},
+		{"priority reverse low first", "priority", true, []TodoItem{same(1, "low"), same(2, "high"), same(3, "medium")}, []int64{1, 3, 2}},
+	}
+	for _, tc := range cases {
+		for _, flip := range []bool{false, true} {
+			items := append([]TodoItem(nil), tc.items...)
+			if flip {
+				for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
+					items[i], items[j] = items[j], items[i]
+				}
+			}
+			sortTodoItems(items, tc.field, tc.reverse)
+			got := make([]int64, len(items))
+			for i, it := range items {
+				got[i] = it.ID
+			}
+			if fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Errorf("%s (input flipped=%v): got %v, want %v", tc.name, flip, got, tc.want)
+			}
+		}
+	}
+}

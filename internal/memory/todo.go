@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"cmp"
 	"database/sql"
 	"fmt"
 	"sort"
@@ -781,44 +782,40 @@ func matchesStatusFilter(status, filter string) bool {
 
 // sortTodoItems sorts items in-place by the given sort field and direction.
 // Default direction is descending (newest/highest first); reverse=true flips it.
+// It must agree with the SQL order in List: equal keys tiebreak on id in the
+// same direction, and "highest" priority means high (#2622). Without the id
+// tiebreak the comparator returned true for both (i,j) and (j,i) on a tie,
+// so equal timestamps came back in an order that depended on the input.
 func sortTodoItems(items []TodoItem, sortField string, reverse bool) {
 	sort.Slice(items, func(i, j int) bool {
-		var less bool
+		a, b := items[i], items[j]
+		var c int // ascending comparison of a against b
 		switch sortField {
 		case "created":
-			less = items[i].CreatedAt.Before(items[j].CreatedAt)
+			c = a.CreatedAt.Compare(b.CreatedAt)
 		case "updated":
-			less = items[i].UpdatedAt.Before(items[j].UpdatedAt)
+			c = a.UpdatedAt.Compare(b.UpdatedAt)
 		case "closed":
-			ti, tj := items[i].CompletedAt, items[j].CompletedAt
 			switch {
-			case ti == nil && tj == nil:
-				less = items[i].ID < items[j].ID
-			case ti == nil:
-				less = true // nil sorts before non-nil
-			case tj == nil:
-				less = false
+			case a.CompletedAt == nil && b.CompletedAt == nil:
+			case a.CompletedAt == nil:
+				c = -1 // nil sorts before non-nil
+			case b.CompletedAt == nil:
+				c = 1
 			default:
-				less = ti.Before(*tj)
+				c = a.CompletedAt.Compare(*b.CompletedAt)
 			}
-		case "id":
-			less = items[i].ID < items[j].ID
 		case "priority":
-			pi := priorityOrd(items[i].Priority)
-			pj := priorityOrd(items[j].Priority)
-			if pi != pj {
-				less = pi < pj
-			} else {
-				less = items[i].ID < items[j].ID
-			}
-		default:
-			less = items[i].ID < items[j].ID
+			// priorityOrd ranks high as 0, so high is the largest value here.
+			c = cmp.Compare(priorityOrd(b.Priority), priorityOrd(a.Priority))
 		}
-		// Default is descending (newest/highest first), so invert.
+		if c == 0 {
+			c = cmp.Compare(a.ID, b.ID)
+		}
 		if !reverse {
-			return !less
+			return c > 0
 		}
-		return less
+		return c < 0
 	})
 }
 
