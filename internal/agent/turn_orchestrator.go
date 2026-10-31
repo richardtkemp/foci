@@ -79,6 +79,7 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	delivering := turnevent.SinkFromContext(ctx).DeliversToPlatform()
 	doneInFlight := a.markInFlight(ts.SessionKey, delivering)
 	defer doneInFlight()
+	defer a.markUnattendedTurn(ts.SessionKey, a.turnUnattended(ts))()
 	unreg := tc.RegisterTurn(ts)
 	defer unreg()
 	if err := tc.CheckStaleContext(ts); err != nil {

@@ -198,7 +198,8 @@ type SpawnDeps struct {
 	// CharacterBranch creates the branch a background character spawn runs
 	// on (#2643): a FRESH child session of parent (none of its conversation),
 	// which runs with the agent's own system prompt, tools and permission
-	// rules, unattended, on model ("" = the character default). Nil = no
+	// rules, its asks going up to the spawner (#2684), on model ("" = the
+	// character default). Nil = no
 	// background character on this agent.
 	CharacterBranch func(ctx context.Context, parent, model string) (branchKey string, err error)
 	// PrepareCharacterBranch makes an existing character branch run as one
@@ -214,6 +215,21 @@ type SpawnDeps struct {
 	// any window is refused unless it passes use_reserve. Read per call. Nil
 	// = defaultSpawnReservePercent.
 	ReservePercent func() int
+	// TurnUnattended reports whether the turn in flight on a session has
+	// nobody to answer a permission prompt (Agent.TurnUnattended), read when
+	// a spawn starts (#2684): the spawn of such a turn runs unattended too;
+	// every other spawn's asks go up to its spawner. Nil = never unattended.
+	TurnUnattended func(sessionKey string) bool
+	// ClearPrompts takes down the permission prompts and questions still
+	// waiting for an answer from a session (Agent.ClearSessionPrompts), when
+	// a background spawn's run ends on it (#2684): nothing can answer them
+	// any more. Nil = nothing to clear.
+	ClearPrompts func(sessionKey string)
+}
+
+// turnUnattended calls d.TurnUnattended, false when unset.
+func (d SpawnDeps) turnUnattended(sessionKey string) bool {
+	return d.TurnUnattended != nil && d.TurnUnattended(sessionKey)
 }
 
 // apiOneShotField names the first API one-shot field d sets (the clients,
@@ -557,7 +573,7 @@ func (s *Spawner) runDirect(ctx context.Context, host *Spawner, mode, prompt, mo
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	info := RunningSpawn{ID: newSpawnID(), Description: spawnDescription(prompt), Started: time.Now(), Mode: mode, Direct: true,
-		CallerShell: callerShell(CallerPIDFromContext(ctx))}
+		CallerShell: callerShell(CallerPIDFromContext(ctx)), SpawnerUnattended: s.deps.turnUnattended(parent)}
 	owner := parent
 	if host != s {
 		info.Agent = host.deps.AgentID
@@ -571,7 +587,7 @@ func (s *Spawner) runDirect(ctx context.Context, host *Spawner, mode, prompt, mo
 	}
 	spawnLog.Infof("direct spawn=%s mode=%s agent=%q parent=%s prompt=%d chars timeout=%s", info.ID, mode, info.Agent, parent, len(prompt), timeout)
 	// Its send_to_spawner finds it through this (#2662).
-	runCtx = withSpawnLink(runCtx, spawnLink{s: s, parent: parent, id: info.ID})
+	runCtx = withSpawnLink(runCtx, spawnLink{s: s, parent: parent, id: info.ID, info: info})
 	tee := &spawnTextSink{BufferSink: turnevent.NewBufferSink(), obs: obs, tracker: tr, parent: parent, id: info.ID}
 	res, err := run(turnevent.WithTee(runCtx, tee))
 	outcome, detail := "completed", ""
@@ -1272,6 +1288,7 @@ func (s *Spawner) launchBackground(ctx context.Context, agent SpawnAgent, parent
 	if running.Mode == "" {
 		running.Mode = spawnModeClone
 	}
+	running.SpawnerUnattended = deps.turnUnattended(parent)
 	if h := s.hostOf(running); h != nil && h.deps.ModelFor != nil {
 		running.Model = h.deps.ModelFor(running.BranchKey)
 	}
@@ -1382,6 +1399,12 @@ func (s *Spawner) runBackground(ctx context.Context, agent SpawnAgent, parent st
 				tr.appendLog(parent, id, "message", "(follow-up turn) "+t)
 			}
 			texts = next
+		}
+		// A prompt the run left unanswered (a stop or timeout cut the turn
+		// while it waited) can no longer be answered: take it down from the
+		// spawner's chat (#2684).
+		if h := s.hostOf(running); h != nil && h.deps.ClearPrompts != nil {
+			h.deps.ClearPrompts(branchKey)
 		}
 		switch {
 		case interrupted:

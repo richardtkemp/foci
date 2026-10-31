@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"foci/internal/delegator"
@@ -497,4 +498,40 @@ func (a *Agent) TouchRootCacheForBranch(branchKey string) {
 			a.emitCacheExpiry(root) // branch warmed the root's shared prefix → refresh client
 		}
 	}
+}
+
+// markUnattendedTurn counts an unattended turn (turnUnattended) in flight on
+// key, for TurnUnattended, and returns its release; an attended turn is not
+// counted and its release does nothing.
+func (a *Agent) markUnattendedTurn(key string, unattended bool) func() {
+	if !unattended {
+		return func() {}
+	}
+	a.inFlightMu.Lock()
+	if a.unattendedTurns == nil {
+		a.unattendedTurns = make(map[string]int32)
+	}
+	a.unattendedTurns[key]++
+	a.inFlightMu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			a.inFlightMu.Lock()
+			defer a.inFlightMu.Unlock()
+			if a.unattendedTurns[key]--; a.unattendedTurns[key] <= 0 {
+				delete(a.unattendedTurns, key)
+			}
+		})
+	}
+}
+
+// TurnUnattended reports whether a turn nobody attends (keepalive,
+// reflection, a webhook, an unattended batch: turnUnattended) is in flight on
+// sessionKey. A spawn started from such a turn runs unattended too (#2684,
+// tools.SpawnDeps.TurnUnattended); any other spawn's asks go up to its
+// spawner.
+func (a *Agent) TurnUnattended(sessionKey string) bool {
+	a.inFlightMu.Lock()
+	defer a.inFlightMu.Unlock()
+	return a.unattendedTurns[sessionKey] > 0
 }

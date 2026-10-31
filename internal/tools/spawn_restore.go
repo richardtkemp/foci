@@ -209,6 +209,6 @@ func recInfo(rec spawnRecord) RunningSpawn {
 		ID: rec.ID, BranchKey: rec.BranchKey, Description: rec.Description,
 		Model: rec.Model, Started: rec.Started,
 		Character: rec.Character, SpawnModel: rec.SpawnModel,
-		Mode: mode, Agent: rec.Agent,
+		Mode: mode, Agent: rec.Agent, SpawnerUnattended: rec.SpawnerUnattended,
 	}
 }

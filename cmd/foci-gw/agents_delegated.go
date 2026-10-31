@@ -263,6 +263,10 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		ag: ag, connMgr: connMgr, sessionIdx: sessionIdx, agentID: agentID,
 		live:  depthSessionLive,
 		owner: tools.SpawnBranchOwner,
+		chatClosed: func(sk string) bool {
+			closed, known := app.SessionChatClosed(agentID, sk)
+			return known && closed
+		},
 		defaultSession: func() string {
 			if sessionIdx == nil {
 				return ""
@@ -397,7 +401,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		// Batch runs (consolidation, nudge extraction, foci_summary) are
 		// ordinary turns on an ephemeral child session (#1962).
 		RunBatchTurn: ag.RunBatchTurn,
-		IdleTimeout:  idleTimeout,
+		// #2684: a spawn starts in its spawner's permission mode.
+		SpawnerPermissionMode: ag.SessionPermissionMode,
+		IdleTimeout:           idleTimeout,
 		// Resume-missed wording reads Spec.ResumeRetention (only claude-code
 		// publishes one).
 		LastUseFunc: ag.PrevRequestTime,
@@ -512,6 +518,11 @@ type backendPromptDeps struct {
 	// to the owner chain, as its foci_ask does (newAskChats). nil = no
 	// spawn routing.
 	owner func(branchKey string) (string, bool)
+	// chatClosed reports that a session's app chat is closed (#2684): a
+	// spawn whose owner's chat is closed has nobody to ask, so its prompt is
+	// decided as an unattended ask is (the rules already declined it: deny).
+	// nil = never closed.
+	chatClosed func(sessionKey string) bool
 }
 
 // backendPromptTargets is the chat list of a prompt from sessionKey: for a
@@ -591,6 +602,10 @@ func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, 
 	}
 
 	targets, spawned := backendPromptTargets(d, sessionKey)
+	if spawned && len(targets) > 0 && d.chatClosed != nil && d.chatClosed(targets[0]) {
+		refuseClosedSpawnerPrompt(d, logger, kind, sessionKey, requestID, summary, targets[0])
+		return
+	}
 	var failures []string
 	delivered := false
 	for _, target := range targets {
@@ -670,12 +685,47 @@ func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, 
 		if summary != "" {
 			finalText = fmt.Sprintf("❌ %s cancelled by follow-up message", summary)
 		}
+		if reason == agent.PromptEndedReason {
+			finalText = "❌ No longer needed: the session that asked has ended"
+			if summary != "" {
+				finalText = fmt.Sprintf("❌ %s: no longer needed, the session that asked has ended", summary)
+			}
+		}
 		if err := platform.CancelInteractiveMessage(requestID, finalText); err != nil {
 			logger.Warnf("cancel interactive message: sk=%s reqID=%s err=%v", sessionKey, requestID, err)
 		} else {
 			logger.Debugf("prompt cancelled: sk=%s reqID=%s reason=%q", sessionKey, requestID, reason)
 		}
 	})
+}
+
+// spawnerChatClosedLabel labels the log line of a spawn's ask refused because
+// its spawner's chat is closed, in the "unattended: session …" shape.
+const spawnerChatClosedLabel = "spawner_chat_closed"
+
+// refuseClosedSpawnerPrompt answers a spawn's prompt whose spawner's chat is
+// closed (#2684 requirement 5): nobody is there to answer it, so it is
+// decided as an unattended ask is. The backend already found no auto-approve
+// rule that permits it, so a permission is denied and a question declined,
+// with the unattended messages and log lines.
+func refuseClosedSpawnerPrompt(d backendPromptDeps, logger *log.ComponentLogger, kind backendPromptKind, sessionKey, requestID, summary, owner string) {
+	reason := delegator.UnattendedDenyMessage
+	line := delegator.UnattendedDeniedLog(sessionKey, spawnerChatClosedLabel, "use "+summary+" (its spawner's chat "+owner+" is closed)", "")
+	if kind == promptToSessionChat {
+		reason = delegator.UnattendedQuestionMessage
+		line = delegator.UnattendedQuestionLog(sessionKey, spawnerChatClosedLabel, summary+" (its spawner's chat "+owner+" is closed)")
+	}
+	fail := d.failPrompt
+	if fail == nil {
+		fail = func(sk, reqID, why string) error {
+			return d.ag.FailUndeliverablePrompt(context.Background(), sk, reqID, why)
+		}
+	}
+	if err := fail(sessionKey, requestID, reason); err != nil {
+		logger.Errorf("%s req_id=%s; the refusal failed: %v", line, requestID, err)
+		return
+	}
+	logger.Warnf("%s req_id=%s", line, requestID)
 }
 
 // promptTargets lists, in order, the sessions whose chats a backend prompt
@@ -737,13 +787,18 @@ func promptTargets(d backendPromptDeps, sessionKey string) []string {
 // spawn runs on its own branch session with its own backend, so its prompts
 // never block the parent's turn, but they reach the same chat and otherwise
 // read exactly like the parent's own: the owner must see which spawn asks.
-// Text from any other session is returned unchanged.
+// A direct spawn's batch session is named too (#2684,
+// tools.SpawnOfSession). Text from any other session is returned unchanged.
 func prependSpawnOrigin(tr *tools.SpawnTracker, sessionKey, text string) string {
-	_, sp, ok := tr.ForBranch(sessionKey)
-	if !ok {
+	id, desc := "", ""
+	if _, sp, ok := tr.ForBranch(sessionKey); ok {
+		id, desc = sp.ID, sp.Description
+	} else if sp, ok := tools.SpawnOfSession(sessionKey); ok && sp.Direct {
+		id, desc = sp.ID, sp.Description
+	} else {
 		return text
 	}
-	return fmt.Sprintf("🐣 **From spawn %s:** %s", sp.ID, sp.Description) + "\n\n" + text
+	return fmt.Sprintf("🐣 **From spawn %s:** %s", id, desc) + "\n\n" + text
 }
 
 // backendPromptFuncs returns the two prompt closures the DelegatedManager

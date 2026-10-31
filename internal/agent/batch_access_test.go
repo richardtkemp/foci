@@ -200,9 +200,10 @@ func TestRunBatch_BridgeToolsFollowAccess(t *testing.T) {
 
 // TestCharacterSpawnBranch_LaunchesAsCharacter proves a background character
 // spawn's branch (#2643) launches as a direct character spawn does — the
-// agent's own composed prompt, parent access, unattended, on the requested
-// model — and counts as a batch session for the unattended-turn check, so
-// codex (which reads no SkipPermissions) keeps its asks out of a chat too.
+// agent's own composed prompt, parent access, on the requested model. A
+// branch no tracked spawn runs on (as here) has no spawner to ask (#2684), so
+// it runs unattended and counts as an unattended session for the turn check,
+// so codex (which reads no SkipPermissions) keeps its asks out of a chat too.
 func TestCharacterSpawnBranch_LaunchesAsCharacter(t *testing.T) {
 	t.Parallel()
 	be := &batchTurnBackend{}
@@ -210,12 +211,12 @@ func TestCharacterSpawnBranch_LaunchesAsCharacter(t *testing.T) {
 	a := newAccessTestAgent(t, be, bothBatchCaps)
 	a.DelegatedManager.StartOpts.SystemPromptFunc = func(string) string { return "AGENT PROMPT" }
 	const bk = "helen/c1/b1700000000"
-	if a.DelegatedManager.isBatchSession(bk) {
-		t.Fatal("an unprepared branch counts as a batch session")
+	if a.DelegatedManager.isUnattendedSession(bk) {
+		t.Fatal("an unprepared branch counts as an unattended session")
 	}
 	a.PrepareCharacterSpawnBranch(bk, "zai/glm-4.6")
-	if !a.DelegatedManager.isBatchSession(bk) {
-		t.Fatal("a character spawn branch does not count as a batch session (its turns would prompt)")
+	if !a.DelegatedManager.isUnattendedSession(bk) {
+		t.Fatal("an untracked character spawn branch does not count as unattended (its turns would prompt with no spawner to ask)")
 	}
 	if _, err := a.DelegatedManager.Get(context.Background(), bk); err != nil {
 		t.Fatalf("Get: %v", err)
@@ -230,7 +231,7 @@ func TestCharacterSpawnBranch_LaunchesAsCharacter(t *testing.T) {
 			o.SkipPermissions, o.BatchAccess, o.SystemPrompt, o.Model)
 	}
 	var nilMgr *DelegatedManager
-	if nilMgr.isBatchSession(bk) {
+	if nilMgr.isUnattendedSession(bk) {
 		t.Error("a nil manager (API agent) reports a batch session")
 	}
 }

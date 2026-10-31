@@ -49,6 +49,8 @@ type spawnRecord struct {
 	SpawnModel string `json:"spawn_model,omitempty"`
 	// Agent: see RunningSpawn (#2662).
 	Agent string `json:"agent,omitempty"`
+	// SpawnerUnattended: see RunningSpawn (#2684).
+	SpawnerUnattended bool `json:"spawner_unattended,omitempty"`
 }
 
 // SetStore makes the tracker persist its spawns to store. Call it once at
@@ -86,7 +88,7 @@ func (s *trackedSpawn) record(parent string) *spawnRecord {
 		Started: s.info.Started, Timeout: s.timeout, Pending: slices.Clone(s.pending),
 		Resumes: s.resumes, Running: s.running, Result: s.result,
 		Character: s.info.Character, SpawnModel: s.info.SpawnModel,
-		Agent: s.info.Agent,
+		Agent: s.info.Agent, SpawnerUnattended: s.info.SpawnerUnattended,
 	}
 }
 

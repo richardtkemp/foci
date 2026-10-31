@@ -9,6 +9,7 @@ import (
 	"foci/internal/delegator"
 	"foci/internal/platform"
 	"foci/internal/provider"
+	"foci/internal/tools"
 	"foci/internal/turnevent"
 )
 
@@ -236,10 +237,13 @@ func isKeepaliveTrigger(trigger string) bool {
 //   - the memory passes: compaction_memory (FireCompactionMemory) and
 //     session_end_memory (RunSessionEndMemory);
 //   - webhook: an inbound webhook POST, authenticated by its API key;
-//   - the batch purposes (RunBatchTurn triggers a batch turn as its purpose).
-//     ccstream and opencode already treat a batch session as unattended via
-//     SkipPermissions, but codex does not read SkipPermissions, so without
-//     these entries a codex batch ask would land in the owner's chat.
+//   - foci's own batch purposes (RunBatchTurn triggers a batch turn as its
+//     purpose). ccstream and opencode already treat a batch session as
+//     unattended via SkipPermissions, but codex does not read SkipPermissions,
+//     so without these entries a codex batch ask would land in the owner's
+//     chat. The spawn purposes are not listed (#2684): a spawn's asks go up to
+//     its spawner, unless the spawner itself was unattended
+//     (DelegatedManager.isUnattendedSession).
 //
 // Deliberately an allowlist, not "every non-user trigger": a turn someone may
 // be watching must keep prompting. Not listed, so they prompt as before:
@@ -257,15 +261,25 @@ var unattendedTriggers = map[string]bool{
 	delegator.BatchPurposeNudgeExtraction: true,
 	delegator.BatchPurposeSummary:         true,
 	delegator.BatchPurposePromptDiff:      true,
-	delegator.BatchPurposeSpawnRaw:        true,
-	delegator.BatchPurposeSpawnCharacter:  true,
-	delegator.BatchPurposeSpawnExplore:    true,
 }
 
 // isUnattendedTrigger reports whether a turn with this trigger has nobody to
 // answer a permission ask (see unattendedTriggers).
 func isUnattendedTrigger(trigger string) bool {
 	return unattendedTriggers[trigger]
+}
+
+// turnUnattended reports whether the turn has nobody to answer a permission
+// ask: its trigger is unattended, or its session is (an unattended batch,
+// DelegatedManager.isUnattendedSession; or any spawn, a clone included, whose
+// spawner's turn was unattended, #2684). It is TurnEvents.Unattended, and
+// what TurnUnattended reports while the turn runs.
+func (a *Agent) turnUnattended(ts *TurnState) bool {
+	if isUnattendedTrigger(ts.Trigger) || a.DelegatedManager.isUnattendedSession(ts.SessionKey) {
+		return true
+	}
+	sp, ok := tools.SpawnOfSession(ts.SessionKey)
+	return ok && sp.SpawnerUnattended
 }
 
 // isMemoryTrigger reports whether a turn is a memory-formation pass —

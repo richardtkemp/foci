@@ -172,6 +172,19 @@ type DelegatedManager struct {
 	// session key (see RunBatch). Guarded by mu.
 	batchSpecs map[string]batchSpec
 
+	// SpawnerPermissionMode returns the permission mode a session was
+	// switched to (Agent.SessionPermissionMode; "" = the agent's default), so
+	// a spawn starts in its spawner's mode (inheritSpawnerMode, #2684). Nil =
+	// spawns start in the agent's default mode.
+	SpawnerPermissionMode func(sessionKey string) string
+
+	// shownPrompts holds, per session, the cancel listeners of the prompts
+	// shown for it that nobody has answered yet (RegisterPromptCancelListener),
+	// so a backend that closes, or a spawn whose run ends, takes them down
+	// (ClearSessionPrompts, #2684). Guarded by promptsMu.
+	promptsMu    sync.Mutex
+	shownPrompts map[string]map[string]func(reason string)
+
 	// forkPrompts holds, per branch session key, the system prompt a backend
 	// fork must launch with: its parent process's launch prompt. Set by
 	// InheritParentPrompt, consumed once by getOrCreate. Guarded by mu.
@@ -493,7 +506,9 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 
 	// A batch session (RunBatch) launches with the caller's system prompt
 	// (or the agent's own, for AgentPrompt), model and workdir, at the model's
-	// default effort, unattended (SkipPermissions) with the batch's access. The per-session resolvers the
+	// default effort, with the batch's access; unattended (SkipPermissions)
+	// unless it is a spawn whose asks go up to its spawner (#2684,
+	// askSpawner). The per-session resolvers the
 	// batch overrides are cleared so no backend re-resolves the agent's own
 	// values over these (opencode's Start calls SystemPromptFunc itself). A
 	// batch that names no model runs on the agent's own: foci never picks one.
@@ -508,7 +523,10 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 		}
 		opts.Effort = ""
 		opts.EffortFunc = nil
-		opts.SkipPermissions = true
+		opts.SkipPermissions = !m.askSpawner(sessionKey, spec)
+		if spec.spawn && opts.SkipPermissions {
+			m.logger().Infof("spawn session %s runs unattended: %s", sessionKey, unattendedSpawnReason(sessionKey))
+		}
 		opts.BatchAccess = spec.access
 		if spec.workDir != "" {
 			opts.WorkDir = spec.workDir
@@ -730,6 +748,7 @@ func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (
 	if resumeID != "" && !resumeFellBack {
 		m.logger().Infof("resumed session %s for %s", resumeID, sessionKey)
 	}
+	m.inheritSpawnerMode(ctx, sessionKey, mb.be)
 
 	return mb.be, nil
 }
@@ -825,12 +844,65 @@ func (m *DelegatedManager) StopCommands(ctx context.Context, sessionKey string) 
 // per-prompt UI (e.g. disable the inline keyboard) so the user can't click
 // an already-resolved button. No-op if no managed backend exists for
 // sessionKey, or if the backend doesn't track outstanding prompts.
+//
+// The listener is also kept until the prompt is answered (ForgetPrompt) or
+// cancelled, so ClearSessionPrompts can fire it when the session's backend
+// closes or its spawn ends (#2684).
 func (m *DelegatedManager) RegisterPromptCancelListener(sessionKey, requestID string, fn func(reason string)) {
 	mb, ok := m.getManaged(sessionKey)
 	if !ok {
 		return
 	}
-	mb.be.RegisterPromptCancelListener(requestID, fn)
+	m.promptsMu.Lock()
+	if m.shownPrompts == nil {
+		m.shownPrompts = make(map[string]map[string]func(string))
+	}
+	if m.shownPrompts[sessionKey] == nil {
+		m.shownPrompts[sessionKey] = make(map[string]func(string))
+	}
+	m.shownPrompts[sessionKey][requestID] = fn
+	m.promptsMu.Unlock()
+	mb.be.RegisterPromptCancelListener(requestID, func(reason string) {
+		m.ForgetPrompt(sessionKey, requestID)
+		fn(reason)
+	})
+}
+
+// PromptEndedReason is the reason ClearSessionPrompts fires a prompt's cancel
+// listener with: the session that asked has ended (its backend closed, or its
+// spawn's run ended), so nothing can answer the prompt any more.
+const PromptEndedReason = "the session that asked has ended"
+
+// ForgetPrompt drops a prompt from the ones ClearSessionPrompts would take
+// down: it was answered.
+func (m *DelegatedManager) ForgetPrompt(sessionKey, requestID string) {
+	m.promptsMu.Lock()
+	defer m.promptsMu.Unlock()
+	if ps := m.shownPrompts[sessionKey]; ps != nil {
+		delete(ps, requestID)
+		if len(ps) == 0 {
+			delete(m.shownPrompts, sessionKey)
+		}
+	}
+}
+
+// ClearSessionPrompts takes down every prompt still shown for sessionKey that
+// nobody answered, by firing its cancel listener with PromptEndedReason
+// (#2684: a spawn that ends while its request waits clears it from the
+// spawner's chat). It returns how many it took down.
+func (m *DelegatedManager) ClearSessionPrompts(sessionKey string) int {
+	if m == nil {
+		return 0
+	}
+	m.promptsMu.Lock()
+	ps := m.shownPrompts[sessionKey]
+	delete(m.shownPrompts, sessionKey)
+	m.promptsMu.Unlock()
+	for reqID, fn := range ps {
+		m.logger().Infof("prompt %s of session %s taken down: %s", reqID, sessionKey, PromptEndedReason)
+		fn(PromptEndedReason)
+	}
+	return len(ps)
 }
 
 // SetTypingAllowed records whether the session's current turn may drive the
@@ -1201,6 +1273,8 @@ func (m *DelegatedManager) closeManagedExact(sessionKey string, want *managedBac
 	if mb.bridge != nil {
 		mb.bridge.Close()
 	}
+	// A prompt the closed backend raised can never be answered now.
+	m.ClearSessionPrompts(sessionKey)
 	return true
 }
 
@@ -1701,7 +1775,8 @@ func (m *DelegatedManager) RunBatch(ctx context.Context, req delegator.BatchRequ
 		req.OnSession(batchKey)
 	}
 
-	m.setBatchSpec(batchKey, batchSpec{systemPrompt: req.SystemPrompt, agentPrompt: req.AgentPrompt, model: req.Model, access: req.Access, workDir: req.WorkDir})
+	m.setBatchSpec(batchKey, batchSpec{systemPrompt: req.SystemPrompt, agentPrompt: req.AgentPrompt, model: req.Model, access: req.Access, workDir: req.WorkDir,
+		spawn: isSpawnPurpose(req.Purpose)})
 	defer func() {
 		m.ResetSession(batchKey)
 		m.clearBatchSpec(batchKey)
@@ -1761,25 +1836,113 @@ type batchSpec struct {
 	// subagent status, delivery tracking, autonomous-run adoption), as a
 	// clone's branch does, and lives as long as the spawn.
 	spawnBranch bool
+	// spawn marks a spawn's session: a direct spawn's batch (purpose
+	// spawn_*) or a background character spawn's branch. Its asks go up to
+	// its spawner instead of being decided unattended (askSpawner, #2684).
+	spawn bool
 }
 
 // SetCharacterSpawnBranch makes branchKey's backend launch as a character
 // spawn's (#2643): the agent's own composed prompt, its own tools and
-// permission rules (BatchAccessParent), unattended, on model ("" = the
+// permission rules (BatchAccessParent), its asks going up to its spawner
+// (#2684; unattended when the spawner was), on model ("" = the
 // agent's own, passed to the backend as written). It holds until the
 // process ends; a restart that resumes the spawn sets it again.
 func (m *DelegatedManager) SetCharacterSpawnBranch(branchKey, model string) {
-	m.setBatchSpec(branchKey, batchSpec{agentPrompt: true, model: model, access: delegator.BatchAccessParent, spawnBranch: true})
+	m.setBatchSpec(branchKey, batchSpec{agentPrompt: true, model: model, access: delegator.BatchAccessParent, spawnBranch: true, spawn: true})
 }
 
-// isBatchSession reports whether sessionKey launches as a batch (RunBatch, or
-// a background character spawn's branch). Nil-safe for API agents.
-func (m *DelegatedManager) isBatchSession(sessionKey string) bool {
+// isUnattendedSession reports whether sessionKey launches as a batch
+// (RunBatch, or a background character spawn's branch) that nobody attends:
+// foci's own batches, and a spawn whose asks cannot go up to its spawner
+// (askSpawner). Nil-safe for API agents.
+func (m *DelegatedManager) isUnattendedSession(sessionKey string) bool {
 	if m == nil {
 		return false
 	}
-	_, ok := m.batchSpecFor(sessionKey)
-	return ok
+	spec, ok := m.batchSpecFor(sessionKey)
+	return ok && !m.askSpawner(sessionKey, spec)
+}
+
+// isSpawnPurpose reports whether a batch purpose is a spawn's.
+func isSpawnPurpose(purpose string) bool {
+	switch purpose {
+	case delegator.BatchPurposeSpawnRaw, delegator.BatchPurposeSpawnCharacter, delegator.BatchPurposeSpawnExplore:
+		return true
+	}
+	return false
+}
+
+// askSpawner reports whether a batch session's asks go up to its spawner
+// (#2684, Dick 2026-10-30: "Spawns (as they are always from interactive
+// sessions) should not skip permissions, they should report their permission
+// requests up to the spawner"), rather than being decided unattended (rules,
+// else deny). True for a spawn's session (spec.spawn) that is a tracked spawn
+// (tools.SpawnOfSession) started by an attended turn. Unattended as before:
+//   - foci's own batches (consolidation, summaries, ...);
+//   - a spawn whose spawner's turn was unattended (keepalive, reflection, a
+//     webhook: RunningSpawn.SpawnerUnattended);
+//   - a cross-agent spawn (#2662), which belongs to no chat of the agent it
+//     runs as;
+//   - a spawn session the tracker does not know (no session started it), so
+//     there is no spawner to ask.
+func (m *DelegatedManager) askSpawner(sessionKey string, spec batchSpec) bool {
+	if !spec.spawn || session.IsCrossAgentSpawnKey(sessionKey) {
+		return false
+	}
+	sp, ok := tools.SpawnOfSession(sessionKey)
+	return ok && !sp.SpawnerUnattended
+}
+
+// unattendedSpawnReason says why a spawn's session runs unattended
+// (askSpawner false), for its launch log line.
+func unattendedSpawnReason(sessionKey string) string {
+	if session.IsCrossAgentSpawnKey(sessionKey) {
+		return "a cross-agent spawn belongs to no chat of the agent it runs as, so its asks are decided by the rules, else denied"
+	}
+	sp, ok := tools.SpawnOfSession(sessionKey)
+	if !ok {
+		return "no tracked spawn runs on it, so it has no spawner to ask; its asks are decided by the rules, else denied"
+	}
+	if sp.SpawnerUnattended {
+		return fmt.Sprintf("its spawner's turn on %s was unattended, so its asks are decided by the rules, else denied", sp.Parent)
+	}
+	return "its asks are decided by the rules, else denied"
+}
+
+// inheritSpawnerMode gives a spawn's freshly started backend its spawner's
+// permission mode (#2684, Dick's #2523 ruling: in auto mode nobody is asked,
+// the classifier decides). A spawn launches as the agent's sessions do, so it
+// already starts in the agent's default mode; only a mode the spawner switched
+// to (/mode, SpawnerPermissionMode) has to be sent. A restricted spawn (raw,
+// explore) keeps its own launch mode, and a spawn that runs unattended has
+// nobody to ask anyway.
+func (m *DelegatedManager) inheritSpawnerMode(ctx context.Context, sessionKey string, be delegator.Delegator) {
+	if m.SpawnerPermissionMode == nil {
+		return
+	}
+	sp, ok := tools.SpawnOfSession(sessionKey)
+	if !ok || sp.SpawnerUnattended {
+		return
+	}
+	if spec, isBatch := m.batchSpecFor(sessionKey); isBatch {
+		if !m.askSpawner(sessionKey, spec) || spec.access != delegator.BatchAccessParent {
+			return
+		}
+	}
+	mode := m.SpawnerPermissionMode(sp.Parent)
+	if mode == "" {
+		return
+	}
+	cs, ok := delegator.As[delegator.ControlSender](be)
+	if !ok {
+		return
+	}
+	if err := cs.SendControl(ctx, &delegator.SetPermissionModeRequest{Mode: mode}); err != nil {
+		m.logger().Warnf("spawn session %s: could not set its spawner's permission mode %q: %v", sessionKey, mode, err)
+		return
+	}
+	m.logger().Infof("spawn session %s: permission mode %q, its spawner's (%s)", sessionKey, mode, sp.Parent)
 }
 
 // supportsAccess reports an error when the agent's backend cannot run a

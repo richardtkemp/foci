@@ -143,3 +143,49 @@ func (h *Hub) readThroughLatest(b *convBinding) {
 	}
 	h.applyRead(nil, b, id)
 }
+
+// SessionChatClosed reports whether the app chat bound to sessionKey (agent
+// agentID) is closed: known is true when the session has an app chat at all,
+// closed when none of its conversations is in the shared open-set (#2684: a
+// spawn whose spawner's chat is closed has nobody to ask). A session with no
+// app chat (another platform's, or a branch with no conversation) is not
+// known; neither is anything while the app provider is not running.
+func SessionChatClosed(agentID, sessionKey string) (closed, known bool) {
+	activeMu.RLock()
+	h := activeHub
+	activeMu.RUnlock()
+	if h == nil || sessionKey == "" {
+		return false, false
+	}
+	return h.sessionChatClosed(agentID, sessionKey)
+}
+
+func (h *Hub) sessionChatClosed(agentID, sessionKey string) (closed, known bool) {
+	bound := map[string]bool{}
+	h.mu.RLock()
+	convs := make(map[string]*convBinding, len(h.convs))
+	for id, b := range h.convs {
+		convs[id] = b
+	}
+	h.mu.RUnlock()
+	for id, b := range convs {
+		if b == nil {
+			continue
+		}
+		b.mu.Lock()
+		sk, ag := b.sessionKey, b.agentID
+		b.mu.Unlock()
+		if ag == agentID && sk == sessionKey {
+			bound[id] = true
+		}
+	}
+	if len(bound) == 0 {
+		return false, false
+	}
+	for _, id := range h.loadOpenChats() {
+		if bound[id] {
+			return false, true
+		}
+	}
+	return true, true
+}

@@ -650,11 +650,12 @@ func (t *DelegatedTransport) buildTurnEvents(ts *TurnState, be delegator.Delegat
 		// so the backend answers it from foci's auto-approve rules instead of
 		// prompting (TurnEvents.Unattended; 2026-10-27 incident). Every other
 		// turn prompts as before. Trigger labels the backend's log lines.
-		// A batch session (a background character spawn's branch too, #2643)
-		// has nobody to answer whatever triggered the turn: codex reads no
-		// SkipPermissions, so this is what keeps its asks out of a chat.
+		// An unattended batch session (foci's own batches; a spawn whose
+		// spawner was unattended, #2684) has nobody to answer whatever
+		// triggered the turn: codex reads no SkipPermissions, so this is what
+		// keeps its asks out of a chat.
 		Trigger:            ts.Trigger,
-		Unattended:         isUnattendedTrigger(ts.Trigger) || a.DelegatedManager.isBatchSession(ts.SessionKey),
+		Unattended:         a.turnUnattended(ts),
 		PostToolNudgeFunc:  postToolNudgeFunc,
 		PreAnswerNudgeFunc: preAnswerNudgeFunc,
 	}

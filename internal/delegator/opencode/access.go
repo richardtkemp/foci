@@ -27,9 +27,12 @@ var readOnlyBatchActions = map[string]any{
 // permissionRuleset emits the "*" catch-all first, so every category not
 // allowed here stays denied — opencode refuses it without an ask. Its .env
 // read guards ask, which the session's unattended handling decides from the
-// rules (answerUnattended), never a prompt.
-func batchAccessRules(batch bool, access delegator.BatchAccess) []permissionRule {
-	if batch && access == delegator.BatchAccessReadOnly {
+// rules (answerUnattended), never a prompt, or, for a spawn whose asks go up
+// to its spawner (#2684), a prompt in the spawner's chat. Keyed on access
+// alone: only a batch carries a non-default access, and a spawn that prompts
+// is still restricted.
+func batchAccessRules(access delegator.BatchAccess) []permissionRule {
+	if access == delegator.BatchAccessReadOnly {
 		return permissionRuleset(readOnlyBatchActions)
 	}
 	return nil

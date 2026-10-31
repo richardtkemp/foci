@@ -682,9 +682,10 @@ type BatchRequest struct {
 	// picks a model for a batch: a caller that wants a cheaper one passes it
 	// (the agent's backend_config batch_model, for foci's own background work).
 	Model string
-	// Access narrows what the batch session may do beyond the unattended
-	// semantics every batch has (StartOptions.SkipPermissions). The zero value
-	// is foci's own background batch.
+	// Access narrows what the batch session may do. The zero value is foci's
+	// own background batch. Every batch is unattended
+	// (StartOptions.SkipPermissions) except a spawn's whose asks go up to its
+	// spawner (#2684, agent.DelegatedManager.askSpawner).
 	Access BatchAccess
 	// WorkDir is the working directory for the run. Empty = the agent
 	// workspace.
@@ -705,10 +706,12 @@ type BatchRequest struct {
 	OnSession func(sessionKey string)
 }
 
-// BatchAccess is what a batch session may do. Every batch is unattended
+// BatchAccess is what a batch session may do. A batch is unattended
 // (StartOptions.SkipPermissions): an ask that reaches foci is decided by the
-// agent's auto-approve rules, else denied, never prompted (unattended.go).
-// BatchAccess adds the launch the backend gives the session.
+// agent's auto-approve rules, else denied, never prompted (unattended.go) —
+// except a spawn's session, whose asks go up to its spawner (#2684). BatchAccess
+// adds the launch the backend gives the session; a backend applies it from
+// the access alone, whether or not the session is unattended.
 type BatchAccess int
 
 const (
@@ -718,7 +721,8 @@ const (
 	BatchAccessDefault BatchAccess = iota
 	// BatchAccessParent is the agent's own tools, permission mode and
 	// pre-approval rules, exactly as its sessions launch (no auto mode): what
-	// the agent would have to ask about is denied (spawn character).
+	// the agent would have to ask about goes up to the spawner, or is denied
+	// when the session is unattended (spawn character).
 	BatchAccessParent
 	// BatchAccessIsolated confines the file tools to the session's working
 	// directory and allows no command execution, no MCP servers and none of
@@ -786,10 +790,12 @@ type StartOptions struct {
 	BatchOnly bool
 	// SkipPermissions runs this session with no permission prompts at all,
 	// whatever the agent's backend config says. Set for batch sessions, which
-	// run unattended and must never put a prompt in front of a user.
+	// run unattended and must never put a prompt in front of a user — but not
+	// for a spawn's session whose asks go up to its spawner (#2684).
 	SkipPermissions bool
 	// BatchAccess is a batch session's access (BatchRequest.Access); the zero
-	// value for every other session. Read with SkipPermissions set.
+	// value for every other session. A backend applies it whether or not
+	// SkipPermissions is set: an attended spawn is still restricted (#2684).
 	BatchAccess      BatchAccess
 	ExecRegistry     any               // *tools.Registry — if set, used by DelegatedManager to create exec bridges
 	Env              map[string]string // extra environment variables to inject (e.g. BASH_ENV, FOCI_SOCK from exec bridge)

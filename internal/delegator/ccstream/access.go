@@ -19,9 +19,11 @@ var (
 )
 
 // restrictedBatch reports whether a session is a batch whose access narrows
-// its tools (spawn raw / explore).
-func restrictedBatch(batch bool, access delegator.BatchAccess) bool {
-	return batch && (access == delegator.BatchAccessIsolated || access == delegator.BatchAccessReadOnly)
+// its tools (spawn raw / explore). Keyed on access alone: only a batch
+// carries a non-default access, and a spawn whose asks go up to its spawner
+// (#2684, no SkipPermissions) is restricted all the same.
+func restrictedBatch(access delegator.BatchAccess) bool {
+	return access == delegator.BatchAccessIsolated || access == delegator.BatchAccessReadOnly
 }
 
 // restrictedBatchArgs returns the launch flags of a restricted batch

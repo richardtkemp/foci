@@ -272,3 +272,31 @@ func TestMarkSessionRead_CoversRepliesAfterTheCall(t *testing.T) {
 		t.Errorf("other device ReadSync = %v, want %s", rs, last)
 	}
 }
+
+// TestSessionChatClosed pins #2684's closed-chat check: a session whose app
+// chat is in the open-set is open, one whose chat left it is closed, and a
+// session with no app chat (or another agent's binding) is not known.
+func TestSessionChatClosed(t *testing.T) {
+	h, _ := sweepHub(t, nil)
+	now := time.Now()
+	open := sweepBinding(h, "open", time.Minute, now)
+	shut := sweepBinding(h, "shut", time.Minute, now)
+	foreign := sweepBinding(h, "foreign", time.Minute, now)
+	foreign.agentID = "cam"
+	h.storeOpenChats([]string{"open", "foreign"})
+
+	for _, tc := range []struct {
+		name, agent, sk     string
+		wantClosed, wantKnw bool
+	}{
+		{"open chat", "clutch", open.sessionKey, false, true},
+		{"closed chat", "clutch", shut.sessionKey, true, true},
+		{"no app chat", "clutch", "clutch/c999", false, false},
+		{"other agent's binding", "clutch", foreign.sessionKey, false, false},
+	} {
+		closed, known := h.sessionChatClosed(tc.agent, tc.sk)
+		if closed != tc.wantClosed || known != tc.wantKnw {
+			t.Errorf("%s: closed=%v known=%v, want %v %v", tc.name, closed, known, tc.wantClosed, tc.wantKnw)
+		}
+	}
+}

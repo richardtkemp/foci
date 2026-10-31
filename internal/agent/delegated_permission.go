@@ -17,6 +17,7 @@ func (a *Agent) SendPermissionResponse(ctx context.Context, sessionKey string, r
 	if a.DelegatedManager == nil {
 		return nil
 	}
+	a.DelegatedManager.ForgetPrompt(sessionKey, requestID)
 	be, err := a.DelegatedManager.Get(ctx, sessionKey)
 	if err != nil {
 		return err
@@ -143,4 +144,13 @@ func (a *Agent) CancelPendingQuestion(ctx context.Context, sessionKey string) bo
 	a.taggedLog("agent/perm").Debugf("cancelling pending question via /stop: reqID=%s session=%s", reqID, sessionKey)
 	_ = qr.CancelQuestion(reqID)
 	return true
+}
+
+// ClearSessionPrompts takes down the prompts still shown for sessionKey that
+// nobody answered (DelegatedManager.ClearSessionPrompts), when the spawn
+// running on it ends (#2684). A no-op for an API agent.
+func (a *Agent) ClearSessionPrompts(sessionKey string) {
+	if a.DelegatedManager != nil {
+		a.DelegatedManager.ClearSessionPrompts(sessionKey)
+	}
 }

@@ -48,6 +48,7 @@ type spawnLink struct {
 	s      *Spawner
 	parent string
 	id     string
+	info   RunningSpawn // as registered with the tracker
 }
 
 type spawnLinkKey struct{}

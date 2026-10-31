@@ -116,7 +116,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// e.g. "Write(/tmp/**)", "Bash(git:*)". A restricted batch carries its
 	// own pre-approval list instead (restrictedBatchArgs): the agent's rules
 	// pre-approve tools (Bash patterns, writes) it must not have.
-	if v, ok := b.cfg["allowed_tools"].(string); ok && v != "" && !restrictedBatch(opts.SkipPermissions, opts.BatchAccess) {
+	if v, ok := b.cfg["allowed_tools"].(string); ok && v != "" && !restrictedBatch(opts.BatchAccess) {
 		args = append(args, "--allowedTools", v)
 	}
 
@@ -779,11 +779,13 @@ func describeExitError(err error) string {
 // A batch's BatchAccess refines this. A parent-access batch (spawn character)
 // launches exactly as the agent's sessions do: no auto mode, the operator's
 // flag only if set, so it can do what the agent can and its other asks reach
-// answerUnattended. A restricted batch (spawn raw / explore) gets
-// restrictedBatchArgs and never the operator's flag.
+// answerUnattended (or, for a spawn whose asks go up to its spawner, #2684,
+// a prompt: batch is false for it and it launches as any session). A
+// restricted batch (spawn raw / explore) gets restrictedBatchArgs and never
+// the operator's flag, whether or not it is unattended.
 func unattendedPermissionArgs(cfgSkip, batch bool, access delegator.BatchAccess) []string {
 	switch {
-	case restrictedBatch(batch, access):
+	case restrictedBatch(access):
 		return restrictedBatchArgs(access)
 	case cfgSkip:
 		return []string{"--dangerously-skip-permissions"}

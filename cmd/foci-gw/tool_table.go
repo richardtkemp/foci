@@ -665,6 +665,24 @@ func (d *toolDeps) getSpawner() *tools.Spawner {
 		},
 		// #2662: every spawn checks the allowance it would spend.
 		ReservePercent: func() int { return live.Load().Tools.SpawnReservePercent },
+		// #2684: a spawn's asks go up to its spawner unless the turn that
+		// started it was unattended; a run that ends takes its unanswered
+		// prompts down.
+		TurnUnattended: func(sk string) bool {
+			if d.agLazy == nil {
+				return false
+			}
+			ag := d.agLazy()
+			return ag != nil && ag.TurnUnattended(sk)
+		},
+		ClearPrompts: func(sk string) {
+			if d.agLazy == nil {
+				return
+			}
+			if ag := d.agLazy(); ag != nil {
+				ag.ClearSessionPrompts(sk)
+			}
+		},
 	}
 	if d.path == pathExec {
 		// A delegated agent: one-shots run as batches on its own backend.

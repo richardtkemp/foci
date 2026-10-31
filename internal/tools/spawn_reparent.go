@@ -99,6 +99,9 @@ func (s *Spawner) ReleaseHeld() {
 // the walk is the caller's Spawner's, so its prompts go to the caller (Dick
 // 2026-10-30), never to this agent's chats.
 func (s *Spawner) BranchOwner(branchKey string) (owner string, ok bool) {
+	if o, ok := s.directBatchOwner(branchKey); ok {
+		return o, true
+	}
 	parent, info, found := s.deps.Tracker.ForBranch(branchKey)
 	if !found {
 		return "", false

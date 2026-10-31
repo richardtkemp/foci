@@ -50,6 +50,12 @@ type RunningSpawn struct {
 	// matches it (ShellCallMatch) while the spawn runs, so the spawn shows
 	// once (#2685). "" = not known.
 	CallerShell string
+	// SpawnerUnattended records that the turn which started the spawn had
+	// nobody to answer a permission prompt (its TurnEvents were unattended:
+	// keepalive, reflection, a webhook, ...; SpawnDeps.TurnUnattended). Such
+	// a spawn runs unattended too, as before #2684; any other spawn's asks go
+	// up to its spawner's chat. Captured at launch and kept across a restart.
+	SpawnerUnattended bool
 }
 
 // SpawnObserver is told about each spawn of a parent session, background or
