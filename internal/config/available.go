@@ -46,10 +46,10 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 		opts = append(opts, availableOption{"agent", "startup_notify", "(platform)", "send startup notification (nil = use platform)"})
 	}
 	if agent.Display.ShowToolCalls == nil && (globalTg == nil || globalTg.Display.ShowToolCalls == nil || *globalTg.Display.ShowToolCalls == ToolCallOff) {
-		opts = append(opts, availableOption{"agent", "show_tool_calls", "(platform)", "tool call display: off/false, preview/medium, full/true"})
+		opts = append(opts, availableOption{"agent", "show_tool_calls", "(platform)", "tool call display: off/false/none/no, preview/medium, full/true"})
 	}
 	if agent.Display.ShowThinking == nil && (globalTg == nil || globalTg.Display.ShowThinking == nil || *globalTg.Display.ShowThinking == ShowThinkingOff) {
-		opts = append(opts, availableOption{"agent", "show_thinking", "(platform)", "thinking display: off/false, compact/medium, true/full"})
+		opts = append(opts, availableOption{"agent", "show_thinking", "(platform)", "thinking display: off/false/none/no, compact/medium, true/full"})
 	}
 	if tg == nil || tg.Display.DisplayWidth == nil {
 		dw := 44
