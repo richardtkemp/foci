@@ -4,14 +4,14 @@
 
 ## Agent / backend model
 
-Foci bridges a messaging channel (Telegram, Discord, HTTP API, voice) to an **LLM backend** and gives an agent tools, persistent memory, and a turn lifecycle. The two backends:
+Foci bridges a messaging channel (Telegram, Discord, HTTP API, voice, the native app) to an **LLM backend**, and gives the agent tools, persistent memory and a turn lifecycle. Two backends:
 
-- **Claude Code (CC)** — most agents. Foci drives a `claude` subprocess (delegated backend); CC handles inference + its own tools, foci owns the platform/session/turn plumbing. **A pure-CC deployment needs NO Anthropic API key** — CC uses its own `~/.claude/.credentials.json`. So a startup `no Anthropic credentials` line is a *caching probe*, not an inference failure.
-- **opencode** — e.g. arnix (glm). Foci talks to a local `opencode serve` over HTTP. See **backends.md**.
+- **Claude Code (CC)**: most agents. Foci drives a `claude` subprocess (delegated backend). CC does inference and its own tools; foci owns platform, session and turn plumbing. **A pure-CC deployment needs NO Anthropic API key** (CC uses `~/.claude/.credentials.json`). A startup `no Anthropic credentials` line is a caching probe, not an inference failure.
+- **opencode**: e.g. arnix (glm). Foci talks HTTP to a local `opencode serve`. See **backends.md**.
 
-## Session keys — stable identities
+## Session keys are stable identities
 
-A session key is `{agentID}/{type}{id}[/{childType}{childTS}]` — and it is a **stable identity** (the `versionTS` segment was removed in the 2026-07 "stable session keys" refactor):
+`{agentID}/{type}{id}[/{childType}{childTS}]` (no `versionTS` segment since the 2026-07 refactor):
 
 ```
 main/c123              chat session (c = chat, id = chatID)
@@ -19,18 +19,14 @@ main/iwork             independent session (i = independent, id = name/epoch)
 main/c123/b1709596800  branch of a chat session (b = branch)
 ```
 
-- Chat keys are **deterministic** (`agent/c<chatID>`), so `chat_metadata` no longer persists keys — it just registers platform *ownership*.
-- **Compaction and /reset archive the live file in place** (`root.jsonl → root.<ts>.jsonl`) instead of minting a new key. The key never changes across a session's life. (This deleted the whole rotation-migration machinery — `RotateKey`, `SessionKeyBase`, `SessionInFlightKey`, etc.: the key IS the identity.)
-- `session.ParseSessionKey` is the single parser; the session index has real `agent_id` / `chat_id` / `is_root` columns (no SQL `LIKE` grammar reconstruction).
+- Chat keys are **deterministic** (`agent/c<chatID>`). `chat_metadata` only registers platform *ownership*; it does not persist keys.
+- **Compaction and /reset archive the live file in place** (`root.jsonl → root.<ts>.jsonl`). The key never changes, so there is no rotation machinery (`RotateKey`, `SessionKeyBase`, `SessionInFlightKey` are gone).
+- `session.ParseSessionKey` is the single parser. The session index has real `agent_id` / `chat_id` / `is_root` columns: never rebuild the grammar with SQL `LIKE`.
 
 ## Agent-id smart defaults
 
-Most per-agent config derives from the **agent ID** — only override the non-defaults. (E.g. clutch's workspace, character dir, data dir all derive from `clutch`.)
+Most per-agent config derives from the **agent ID** (e.g. clutch's workspace, character dir and data dir). Override only the non-defaults.
 
 ## Cross-backend behaviour
 
-When two backends differ in *mechanism* for the same outcome, **find where they already converge** and hook there rather than bolting on N parallel per-backend hooks. (E.g. an opencode 404 and a CLI non-zero exit on a stale resume both land in `DelegatedManager`'s retry-without-resume path — one hook covers both.)
-
-## Docs
-
-`docs/WIRING.md` is the wiring map (startup, packages, callbacks, dispatch, timers) — consult first, and update it whenever you rewire. `SPEC.md` is design intent.
+When backends differ in mechanism for one outcome, hook where they already converge, not with N per-backend hooks. Example: an opencode 404 and a CLI non-zero exit on a stale resume both reach `DelegatedManager`'s retry-without-resume path, so one hook covers both.

@@ -2,8 +2,6 @@
 
 # Reproducing a `make test` failure outside the harness
 
-## Trigger
-
 A test fails under `make test` (often in a `make land` gate) but not under a plain `go test`. The
 difference **is** the answer, and it lives in `scripts/seal-test.sh`, not in the test.
 
@@ -20,14 +18,9 @@ things a bare `go test` does not:
    fork+exec, so one seal at the top covers `go test`, every package binary, and anything they
    spawn (tmux, git, chrome…).
 
-**To run one package under the harness env, use `make test-one PKG=./internal/<pkg>/ [RUN=<Name>]
-[COUNT=N]`.** `COUNT=N` is `-count` for flake checks. Always `-v` (#2348): a passing test's `t.Logf` is
-logged. Same `TESTENV`/seal as `make test`; to find which ingredient matters, use the recipe and
-table below.
-
-**Agents cannot run bare `go build`/`test`/`vet`** (`permissions.deny`, incl. `/usr/bin/go` and
-`go -C`): use `make build`/`vet`/`test-one`, which take the `/tmp/heavy` lock. The manual recipe is for
-humans.
+**One package under the harness env: `make test-one PKG=./internal/<pkg>/ [RUN=<Name>] [COUNT=N]`**
+(always `-v`; same `TESTENV`/seal as `make test`). Agents cannot run bare `go build`/`test`/`vet`
+(`permissions.deny`): the manual recipe below is for humans.
 
 **To peel a layer off, copy `TESTENV` verbatim from `seal-test.sh`, never reconstruct it** (the
 variable you omit is the one that mattered). Currently:
@@ -60,7 +53,7 @@ split of "sandbox artifact" from "real bug".
 
 ## Isolating which ingredient matters
 
-Run the arms separately; compare **rates**, not single runs.
+Run the arms separately. Compare **rates**, not single runs.
 
 | Arm | Isolates |
 |---|---|
@@ -71,9 +64,7 @@ Run the arms separately; compare **rates**, not single runs.
 | full package, sealed under `llbox` (above) | the Landlock seal |
 | full `make test` | whole-suite context (~70 packages in parallel) |
 
-A failure only in the last row needs the whole suite and no single ingredient reproduces it; say
-so plainly rather than blaming whichever arm you ran last.
-
+A failure only in the last row needs the whole suite: say so, do not blame the last arm you ran.
 The spinner arm is **weak**: `nice -19` under-loads compared with real test binaries.
 
 ## Gotchas that cost real time

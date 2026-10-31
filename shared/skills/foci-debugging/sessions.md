@@ -20,37 +20,29 @@ foci debug at clutch 3h                                  # duration ago; bare ag
 Prints the JSONL path covering that moment (live file or archive, with source) and the CC resume ID observed live then. Backed by `session_archives` + `cc_resume_history` in state.db, with archive filename stamps as a state.db-independent fallback.
 
 ```bash
-# Last few messages
 tail -5 /path/to/root.jsonl | jq -r '.role + ": " + (.content[]? | select(.type=="text") | .text)'
-
-# All content (not just text)
-tail -5 /path/to/root.jsonl | jq -r '.role + ": " + (.content[]? | tostring)'
 ```
 
 ## CC Backend Transcripts (JSONL)
 
-When foci runs on the Claude Code backend, the raw CC transcript is richer than foci's own session store above: per-block `thinking`/`text`/`tool_use`/`tool_result`, RFC3339 `timestamp`, and a thinking `signature`. Use this (not the foci store) when you need turn-level *structure* — e.g. distinguishing thinking from output, or diagnosing why a turn's text arrived oddly.
+On the CC backend the raw CC transcript is richer than foci's store: per-block `thinking`/`text`/`tool_use`/`tool_result`, RFC3339 UTC `timestamp`, thinking `signature`. Use it for turn-level *structure*.
 
-**Path:** `<foci-os-user-home>/.claude/projects/<workspace-cwd-slug>/*.jsonl`. The `.claude/` dir lives under the **foci OS user's home** (e.g. `/home/foci`), shared across all agents — NOT inside the agent's own workspace. The project *subdir* is the agent's workspace path slugified (`/` → `-`): workspace `/home/foci/clutch` → `/home/foci/.claude/projects/-home-foci-clutch/`. Most recent session = newest mtime.
+**Path:** `/home/foci/.claude/projects/<workspace-slug>/*.jsonl`: under the foci OS user's home, shared by all agents, NOT in the agent's workspace. Workspace `/home/foci/clutch` → `-home-foci-clutch`. Newest mtime = most recent session.
 
 ```bash
 # Map a turn's block structure (the key move)
 tail -30 SESS.jsonl | jq -rc 'select(.type=="assistant" or .type=="user") | {ts:.timestamp, type, blocks:((.message.content // []) | if type=="array" then map(if .type=="thinking" then "think("+((.thinking|length)|tostring)+")" elif .type=="text" then "text:"+(.text[0:50]) elif .type=="tool_use" then "tool_use:"+.name else .type end) else ["str"] end)}'
 ```
 
-**Gotcha:** a redacted/summarised thinking block has `thinking` length 0 but a non-empty `signature` — it's still a thinking block, just with content stripped. Don't mistake an empty thinking block for "no thinking happened." Conversely, conversational preamble before a tool call is a real `text` (output) block, not thinking — foci joins all of a turn's text blocks into one delivered message with **no separator**.
+**Gotchas:** a thinking block with `thinking` length 0 and a non-empty `signature` is redacted, not absent. Preamble before a tool call is a real `text` block; foci joins all of a turn's text blocks into one delivered message with **no separator**.
 
-**Recovering an uncommitted edit's exact content** ("what did that Edit/Write change, but it was never committed and `tool_details.db` is empty/not applicable"): grep the CC transcripts for the tool call itself — every `Edit`/`Write` shows up as a `tool_use` block with the real `old_string`/`new_string` (or `content`) in `.input`, independent of git history entirely.
+**Recovering an uncommitted edit's exact content** (never committed, `tool_details.db` empty): every `Edit`/`Write` is a `tool_use` block in the CC transcript with the real `old_string`/`new_string` (or `content`) in `.input`.
 
 ```bash
-# Find the right transcript file(s) by mtime when you don't know the session id
-find ~/.claude/projects/<workspace-slug>/ -maxdepth 1 -name "*.jsonl" -newermt "TIME1" ! -newermt "TIME2" -printf "%T@ %p\n" | sort -n
-
-# Pull every Edit/Write on a specific file, with its old/new content
 jq -c 'select(.message.content[]?.type=="tool_use" and (.message.content[]?.input.file_path? // "" | test("TARGET_FILE"))) | .message.content[] | select(.type=="tool_use") | {name, input}' SESS.jsonl
 ```
 
-Works even when the edit was made by a **branch session** — a branch commonly shares/continues the parent's underlying transcript file rather than starting a fresh one, so a branch's tool calls show up interleaved with the parent's history in the same `.jsonl`. This is the artifact of last resort for "what was in this file before someone changed it" when the change never hit git (config repos, scratch files, anything outside the tracked tree) — don't give up at an empty `tool_details.db`.
+A **branch session** often continues the parent's transcript file, so its tool calls sit interleaved in the parent's `.jsonl`. This is the last-resort record for files outside git.
 
 ## Session state (state.db)
 
@@ -64,16 +56,8 @@ Works even when the edit was made by a **branch session** — a branch commonly 
 | `agent_metadata`, `chat_metadata`, `session_metadata` | agent/chat/session metadata (chat_metadata registers platform *ownership*; keys are deterministic so it no longer persists keys) |
 
 ```bash
-# All sessions with status, type, last activity
 sqlite3 ~/data/state.db "SELECT session_key, status, session_type, last_activity_at FROM session_index ORDER BY last_activity_at DESC LIMIT 10"
-
-# Active only
-sqlite3 ~/data/state.db "SELECT session_key, session_type, last_activity_at FROM session_index WHERE status='active' ORDER BY last_activity_at DESC"
-
-# Archive rotations for a session (when compacted/reset, to which file)
 sqlite3 ~/data/state.db "SELECT archived_at, reason, file_path FROM session_archives WHERE session_key='clutch/c5970082313' ORDER BY archived_at"
-
-# CC resume-ID timeline
 sqlite3 ~/data/state.db "SELECT observed_at, resume_id FROM cc_resume_history WHERE session_key='clutch/c5970082313' ORDER BY observed_at"
 ```
 
@@ -91,45 +75,12 @@ grep 'branch created.*cron' ~/logs/foci.log | tail -10
 grep '<SESSION_KEY>' ~/logs/foci.log | head -20
 ```
 
-## "Session stuck after /stop" — verify the interrupt actually reached CC, and whether it orphaned a subagent
+## "Session stuck after /stop": did the interrupt reach CC, and did it orphan a subagent?
 
-`Agent.CancelSession`/`inb.turnCancel` is NOT the only thing `/stop` does in delegated mode —
-`command.StopCommand` calls `DelegatedManager.StopSession` → `Backend.Interrupt` →
-`writer.SendInterrupt()` FIRST, straight to CC's stream, independent of foci's own turn-cancel
-bookkeeping. Checking only `CancelSession`'s log line (`CancelSession sk=... firing turn cancel`)
-can wrongly conclude "/stop did nothing" when it actually reached CC via this separate path — check
-both.
+In delegated mode `/stop` (`command.StopCommand`) FIRST calls `DelegatedManager.StopSession` → `Backend.Interrupt` → `writer.SendInterrupt()`, straight to CC, apart from foci's turn-cancel (`CancelSession sk=... firing turn cancel`). Check both paths before you conclude "/stop did nothing".
 
-**Decisive proof an interrupt landed:** CC's OWN transcript (`~/.claude/projects/<workspace-slug>/<resume-id>.jsonl`
-— find the resume-id via `foci debug at <session-key> <RFC3339-or-duration>`) records a synthetic
-`{"type":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}` message at the
-exact moment. This transcript does NOT carry raw stream-json protocol events (`task_notification`,
-`session_state_changed`, etc.) — only conversational turns (user/assistant/tool_use/tool_result) — so
-it can't show a subagent's raw completion signal, but it's the fastest way to prove an interrupt
-actually reached CC (vs. `/stop` just having been a no-op that returned "Stopped." reflexively).
+**Proof the interrupt landed:** CC's transcript (`~/.claude/projects/<workspace-slug>/<resume-id>.jsonl`; resume-id from `foci debug at <session-key> <time>`) has a synthetic user message `[Request interrupted by user]` at that moment. The transcript holds only conversational turns, not raw stream-json events (`task_notification`, `session_state_changed`).
 
-**Check whether it orphaned a background subagent:** grep the same transcript for the subagent's
-`tool_use_id` (from the earlier `tool_use` block where `name=="Agent"`). If a background/async
-subagent's `tool_result` came back near-instantly ("Async agent launched successfully" — the tool
-call resolves at LAUNCH for a background task, not at completion) and that `tool_use_id` never
-appears again anywhere later in the transcript, the interrupt orphaned it — its real completion
-(`task_notification: completed`) never arrived. `internal/delegator/ccstream/handlers.go`'s
-`task_notification` handler clears `SubagentTracker` on any terminal status (`completed`, `failed`,
-`stopped` — before #2022 only `completed`, and the others were dropped with no log line) and logs
-`subagent_end signal=task_notification status=<s>`. No such line for the subagent = no notification
-arrived, which foci.log alone can't distinguish from "still genuinely running." The tracker's defensive `defaultAgentMaxAge` prune (2h unless `[cc_backend].background_task_max_age` overrides it,
-`internal/delegator/agent_tracker.go`) is the only backstop, and it blocks the WHOLE session's turn
-dispatch for its entire duration (`agents.Pending()>0` gates the pending-work gate, spec §4) — grep
-`subagent tracker: pruned` in foci.log for a definitive "this is what was stuck" line, timestamped
-exactly `defaultAgentMaxAge` after the orphaning event.
+**Orphaned background subagent:** find the `Agent` `tool_use_id`. A background agent's `tool_result` returns at LAUNCH ("Async agent launched successfully"). If that id never appears again, the interrupt orphaned it. The `task_notification` handler (`internal/delegator/ccstream/handlers.go`) clears `SubagentTracker` on any terminal status and logs `subagent_end signal=task_notification status=<s>`; no such line = no notification, which foci.log alone cannot tell from "still running". The backstop is the `defaultAgentMaxAge` prune (2h; `[cc_backend].background_task_max_age`, `internal/delegator/agent_tracker.go`). It blocks the WHOLE session's turn dispatch until then (`agents.Pending()>0`, spec §4). `subagent tracker: pruned` in foci.log, timed exactly `defaultAgentMaxAge` after the orphaning, confirms it.
 
-Fixed 2026-07-17 (clutch #1350) for the common case: `OnResult` now calls `agents.ClearAll()` on any
-non-`"success"` result subtype, mirroring the pre-existing `finalizeExit` precedent ("subprocess gone:
-pending agents can never complete") for the case where only the current ASK aborts (interrupt) while
-the subprocess survives. Does NOT fix a separate gap: `inbox.go`'s sink-delivery gate ("#767") can
-still block a genuine platform/user turn whenever ANY in-flight turn is marked non-delivering
-(`markInFlight(sk, false)`) — independent of the subagent tracker, and NOT scoped to system injects
-the way the spec §4 gate is. Reproduced with `TestInbox_PlatformTurn_NotBlockedByOrphanedAutonomousAdoption`
-(`internal/agent/inbox_autonomous_gate_test.go`) — still red as of the above fix; needs a design call
-on whether autonomous-adopted non-delivering turns should be exempt from #767, or force-released when
-the tracker prunes.
+`OnResult` now calls `agents.ClearAll()` on any non-`"success"` result (#1350), which fixes the common interrupt case. Open gap (check whether it is still red): `inbox.go`'s sink-delivery gate (#767) can block a real user turn whenever ANY in-flight turn is non-delivering (`markInFlight(sk, false)`), not only system injects. Repro: `TestInbox_PlatformTurn_NotBlockedByOrphanedAutonomousAdoption` (`internal/agent/inbox_autonomous_gate_test.go`).

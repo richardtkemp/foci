@@ -2,68 +2,35 @@
 
 # Debugging app (FAP) delivery gaps — "a message never reached the phone"
 
-**Trigger:** the native app user reports missing messages — replies that were
-"sent" but never appeared, or a stretch where nothing arrived. The app transport
-is ack-and-replay, so a missing message is one of a few specific failures, not
-random loss. Don't anchor on connection flapping (`close 1006` every ~15s is
-normal mobile churn the replay design is *built* to absorb) — that's the visible
-symptom, not the cause.
+The app transport is ack-and-replay, so a missing message is one of a few specific failures. Do not anchor on connection flapping: `close 1006` every ~15s is normal mobile churn that replay absorbs.
 
-**First, though, confirm the sockets are usable.** Flapping is only benign when
-the handshake completes; a connect that never sends `hello` delivers nothing,
-and `device connected` is logged for it either way. Count them:
+## First: are the sockets usable?
+
+Flapping is benign only when the handshake completes. A connect that never sends `hello` delivers nothing, and `device connected` is logged either way:
 
 ```
 grep -c 'device connected'  ~/logs/foci.log     # sockets opened
 grep -c '\[app\] hello:'    ~/logs/foci.log     # sockets that became usable
 ```
 
-A large gap means the app is reaching the server and receiving nothing — look
-for `WARN … consecutive app connects closed without completing the handshake`.
-The `resume=N` on each `hello:` line is the discriminator between a socket that
-died before `hello` (no line) and one that asked to resume nothing (`resume=0`);
-both produce zero `replayTo`, so replay counts alone cannot tell them apart.
-`resume=0` does NOT tell you WHY, and it is not a corrupt client DB: the app's
-`onReady` sends an empty resume list both when the minimal-hello degradation is
-active and when its local conversations snapshot is empty — opposite causes,
-identical on the wire. Only the client's own `hello=minimal` line separates them.
+A large gap = the app reaches the server and gets nothing; look for `WARN … consecutive app connects closed without completing the handshake`. `resume=N` on each `hello:` line separates a socket that died before `hello` (no line) from one that resumed nothing (`resume=0`); both give zero `replayTo`. `resume=0` is not a corrupt client DB: the app's `onReady` sends an empty list both under minimal-hello degradation and with an empty local snapshot. Only the client's own `hello=minimal` line separates them.
 
-**Then read the close reason**, and read it out of the code that emits it:
-client-side in foci-client's `FapClient.kt` (`release()` sends `"backgrounded"`;
-the superseded branch sends `"superseded"`; `closeSocket()`'s `pending.cancel()`
-aborts an in-flight handshake with no close frame at all, which the server sees
-as a sub-second `1006`), server-side in `internal/app/hub.go` (`i/o timeout` is
-its own `pongWait`).
+**Read the close reason from the code that emits it.** Client, foci-client `FapClient.kt`: `release()` sends `"backgrounded"`, the superseded branch sends `"superseded"`, `closeSocket()`'s `pending.cancel()` aborts a handshake with no close frame (server sees a sub-second `1006`). Server, `internal/app/hub.go`: `i/o timeout` is its own `pongWait`. If `replay GET` lines succeed in the same seconds the upgrades die, network and device are exonerated: suspect the upgrade path.
 
-The part no code states: if `replay GET` lines succeed in the same seconds the
-upgrades die, network and device are both exonerated — suspect the upgrade path.
+## Approach: read the durable artifact, do not derive from code
 
-## Approach — look at the durable artifact, don't derive from code
-
-1. **Query the durable frame store** (the decisive artifact). Every server→app
-   frame is persisted verbatim to `~/data/app-frames.db`:
+1. **Query the frame store.** Every server→app frame is persisted verbatim to `~/data/app-frames.db`, `app_frames(conv_id, seq, wire, sent_ms, visible, preview)`, PK `(conv_id, seq)`:
    ```
    sqlite3 -readonly ~/data/app-frames.db \
      "SELECT conv_id, count(*), datetime(max(sent_ms)/1000,'unixepoch','localtime') \
       FROM app_frames GROUP BY conv_id ORDER BY max(sent_ms) DESC LIMIT 8;"
    ```
-   Schema: `app_frames(conv_id, seq, wire, sent_ms, visible, preview)`, PK `(conv_id, seq)`.
    Then pull the window on the active conv, `visible=1`, ordered by `seq`.
-2. **Read the seq column, not the clock.** A *consecutive* seq gap (e.g. 11893 →
-   11894) across a several-minute wall-clock jump means **those frames were never
-   persisted at all** → a sink/persistence bug (frame generated but never handed
-   to the binding). A frame that *is* present in the store but the user never saw
-   → a **replay/ack bug** (delivered-then-lost, or app over-acked).
-3. **Cross-check foci.log** for `[app] device connected/disconnected`, and for
-   the turn: `[app] OnReply ... stream_surfaced=true` means delivered; its
-   ABSENCE beside a `deferred TurnComplete` means the turn had no live app sink.
-4. **When the two failure classes are in play, split them with two agents** (one
-   per hypothesis) — server-side self-heal vs client-side over-ack. They converge.
+2. **Read seq, not the clock.** Consecutive seqs across a long wall-clock jump = the frames were **never persisted** → sink/persistence bug. A frame in the store that the user never saw → **replay/ack bug**.
+3. **Cross-check foci.log:** `[app] device connected/disconnected`; `[app] OnReply ... stream_surfaced=true` = delivered; its ABSENCE beside `deferred TurnComplete` = the turn had no live app sink.
+4. With both classes in play, test server-side self-heal and client-side over-ack as separate hypotheses.
 
-## "Is the server sending frame type X at all?"
-
-Tally the frame types actually sent, rather than reasoning about whether the
-producing code path runs:
+**"Is the server sending frame type X at all?"** Tally, do not reason about code paths:
 
 ```bash
 sqlite3 -readonly ~/data/app-frames.db \
@@ -71,164 +38,50 @@ sqlite3 -readonly ~/data/app-frames.db \
    WHERE sent_ms>(strftime('%s','now')-7200)*1000 GROUP BY t ORDER BY 2 DESC"
 ```
 
-Zero rows for an expected type is a **definitive server-side break** — no deploy
-and no extra instrumentation needed. This is the single query that collapses the
-"server isn't sending it" vs "client isn't rendering it" ambiguity, which is
-otherwise expensive to settle. Note transient frames (typing/thinking) are stored
-with `visible=0` but ARE present here, so their absence is meaningful too.
+Zero rows for an expected type = a definitive server-side break. Transient frames (typing/thinking) are stored with `visible=0`, so their absence is meaningful too.
 
-## Gotchas (what surprised me)
+## Gotchas
 
-- **App convIDs are ULIDs** (`01KWN7XZ...`), NOT the session's `cXXXXXXXX` chat
-  component. Find the active one by `max(sent_ms)`. **Corollary trap:** these are
-  TWO id namespaces for the SAME chat — the foci session key is `agent/c<chatID>`,
-  the app frame store keys by ULID `conv_id`. A `SELECT ... WHERE conv_id='c121886…'`
-  returning **zero rows does NOT mean "never delivered"** — the frames are under the
-  ULID. Map between them via `chat_metadata` (`conv_id` row for the chat) in state.db,
-  or just group by `agent_id` and read `preview`.
-- **Delivered-but-invisible = the conversation is ARCHIVED, not a delivery bug.**
-  A separate failure class from the persist/replay ones above: frames ARE persisted
-  AND handed to a live socket, but the conversation is `is_archived=true` in
-  `chat_metadata` → hidden from the app roster, so the human never opens it. Tell:
-  `app_frames.db` shows a full, recent frame window (incl. the turn's `finalText`)
-  under a ULID conv_id, yet the human says they saw nothing. Check
-  `/usr/bin/sqlite3 -readonly ~/data/state.db "SELECT platform,chat_id,key,value FROM
-  chat_metadata WHERE agent_id='<ag>' AND key='is_archived'"`. Root cause when it's a
-  cross-agent `send_to_session`/agent-initiated send: the target had **no pinned
-  `is_default` chat**, so `DefaultSessionKeyForAgentOn` resolved "via default" through
-  the **activity-fallback rung** to whatever root a human touched most recently — which
-  can be an archived (hidden) chat. Fixed foci **7f837286**: all default-resolution
-  rungs + `DefaultChatForAgent` now exclude `is_archived`, and delivery paths mint a
-  fresh visible conversation when only archived ones remain (`route.Resolver.CreateDefault`).
-  If you see this pre-542dab21 behaviour, that's the mechanism.
-- **A bare `strftime` comparison matches NOTHING, silently.** `strftime` returns
-  TEXT and SQLite orders every INTEGER below every TEXT, so
-  `sent_ms/1000 > strftime('%s','2026-...')` is unsatisfiable and reports a
-  confident empty result. Arithmetic rescues it (`(strftime('%s','now')-7200)*1000`
-  forces numeric context, which is why the query above works) — a bare `>`/`BETWEEN`
-  does not. It also reads the string as **UTC**; BST is +1h. Filter with
-  `datetime(sent_ms/1000,'unixepoch','localtime') BETWEEN ...` instead, and treat
-  any zero-row filtered query as needing the UNfiltered one as its positive control.
-- `convBinding.send` (hub.go:~1385) persists to the store **unconditionally**,
-  then enqueues to the live socket only if `client != nil`. So "in store, not
-  delivered" is a real, distinct state from "never generated".
-- `convBinding` is **stable per convID** (`ensureBinding` reuses it, updates
-  `.client` on reconnect). But `appConn.NewTurnSink` (conn.go:~476) captures the
-  binding **once at turn-start** — if disconnected at that instant it returns a
-  nil/Nop sink and the whole turn's output is silently discarded (no error).
-- Replay self-heals *only* if the app's resume `ack` stays below a lost frame.
-  The android dispatcher must advance `conversations.lastSeq` **after** the
-  content write (content-then-watermark) — advancing before lets a crash strand
-  an acked-but-unpersisted frame. (Fixed foci-client e157e23; see #1045 for the
-  open server-side discard-sink half.)
-- `rp.Ack` (resume) and `fromSeq` (GET /app/replay) are logged as of foci
-  4dec25e1 — grep `resumeConversations`/`replayTo`/`replay GET` after a deploy.
-- **Absence of `turn_lifecycle` events in foci.log does NOT mean the session was
-  idle.** When background sub-agents (CC Agent tool) finish, CC *autonomously*
-  resumes the session to process their results, but foci opens no foci-turn for
-  it — an **"orphan run"** (`handlers.go:293`, `turnActive=false`, text delivered
-  via always-live SessionEvents). So foci's ccstream log shows zero turn events
-  while CC is actively producing. **The authoritative artifact is the CC session
-  transcript** (`~/.claude/projects/-home-foci-<agent>/<uuid>.jsonl`), not the
-  ccstream turn log. `jq` it for the window (timestamps are UTC):
-  `jq -rc 'select(.timestamp>="…" and .timestamp<="…")|{ts:.timestamp[11:19],t:.type,tool:([.message.content[]?|select(.type=="tool_use")|.name]|join(",")),txt:([.message.content[]?|select(.type=="text")|.text]|join(" ")|.[0:60])}' <transcript>`.
-  If the transcript shows continuous assistant work but foci logged `in_flight=false`,
-  you've found an orphan-run window — reflection/keepalive can inject into it and
-  its silent sink swallows any user-facing reply produced there (#1047).
-- **Prove the drop is POST-`se.OnText` (not a reader stall) via the global `OnAssistant` log.**
-  `handlers.go:46` logs `[ccstream] OnAssistant: text_blocks=N text_bytes=B` for every
-  assistant message (global tag, not session-keyed). Pull the CC transcript's text-block
-  `(timestamp, length)` for the window and match them 1:1 against these log lines — an exact
-  timestamp+bytes match proves foci *ingested* the block and called `se.OnText` (`handlers.go:130`,
-  `se` is stable, "never nil after AttachSessionEvents"). So if the block matches a log line
-  yet is absent from `app-frames.db`, the loss is entirely **downstream of `se.OnText`** — in
-  the session-router/sink dispatch, NOT the stdout reader. (This killed the "reader stalled"
-  hypothesis for #1068: reader was fine, tools executed, OnAssistant fired for all 11 blocks.)
-- **The "silent sink" identity: `AttachSessionEvents` rebinds the SHARED session-scoped
-  `se.OnText` to NopSink (#1068).** NOT the router `current`-sink — that was a wrong earlier
-  framing. The real mechanism: `se` (`b.sessionEvents`) is **session-scoped, shared across all
-  turns** for a session, not turn-scoped. `RunInference` calls `AttachSessionEvents` on EVERY
-  turn (`turn_delegated.go:301`), binding `se.OnText`'s target to
-  `sessionSink := turnevent.SinkFromContext(ts.Ctx)`. A reflection/system turn has "no sink on
-  ctx" (`inbox.go:698-699`) → `SinkFromContext` returns the **NopSink singleton**
-  (`turnevent/context.go`). Crucially, the reflection reaches `:301` (AttachSessionEvents)
-  BEFORE its backend dispatch blocks on `autonomousActive` (`inject.go:46`). So it rebinds the
-  SHARED `se.OnText` → NopSink; a **concurrent autonomous CC run shares that same `se`**, so its
-  `se.OnText` now emits into NopSink → dropped silently (block 1 delivered before the reflection
-  reached :301; blocks 2..N swallowed after). The reflection then blocks on `autonomousActive`
-  and retries `ImmediateInject` every 5s for the whole autonomous window → drop window == the
-  reflection's wait window. The fix (#1070) adopts the autonomous run as a real in-flight turn so
-  the reflection is held BEFORE it reaches :301.
-- **`in_flight=false` in the Inject log is a HALF-truth — don't trust it as "session idle."**
-  It comes from `IsTurnInFlight()` (`inject.go:212`) which reports only `b.turnActive` (foci-opened
-  turns), NOT `b.autonomousActive`. The system-inject gate `tryBeginTurn` (`inject.go:46`) checks
-  `turnActive || autonomousActive` — so a reflection logging `in_flight=false` can still be correctly
-  BLOCKED (and looping every 5s) by an orphan run. The retry loop is by-design gating, not the bug.
-- **A follow-up message during an adopted autonomous run DUPLICATES the reply (the mirror of the
-  drop above) — #1274, fixed foci `4ff79251`.** foci has THREE "turn active" flags that disagree
-  during an autonomous run: `inb.turnActive` (inbox steer-gate, set only by the worker's dispatch
-  loop `inbox.go:808`), `b.turnActive` (ccstream, ground truth of "CC mid-run"), and `a.inFlight`
-  (agent counter, `markInFlight`). An adopted autonomous run (`OpenAutonomousTurn`) enters via the
-  ccstream reader goroutine, so it sets the backend flag + agent counter but NOT `inb.turnActive` →
-  the inbox thinks the session is IDLE. A user follow-up is then dispatched as a FRESH `RunTurn`,
-  which `router.Register(its own sink)` (clobbering the autonomous run's registered sink) then
-  `defer router.Clear()` on return → router empty → the rest of the run incl. the final aggregate
-  `TurnComplete` falls to the late-delivery fallback and is re-delivered. Tell: intermediate blocks
-  arrive as `message` frames on fresh disposable late-delivery `SessionSink`s (distinct sink
-  pointers per Emit) AND a final aggregate whose length ≈ the SUM of the pieces. Fix = make the
-  steer-gate consult the backend flag (`DelegatedManager.BackendTurnInFlight`, so the follow-up
-  STEERS via `ImmediateInject` and folds through the already-registered sink) + `run_turn.go` skips
-  Register/Clear when a turn's already in-flight for sk. **#777-safe rule: OR the BACKEND flag, NOT
-  the agent counter** — `markInFlight` leads primary-written, so the counter would reopen the
-  header-stripping reorder race; `b.turnActive` flips at primary-written, same instant as
-  `inb.turnActive`, so it only adds the autonomous case.
-- **To settle drop-vs-duplicate root cause, instrument the router Register/Clear sites and REPRODUCE,
-  don't reason from archived logs.** The `RunTurn`/`OpenAutonomousTurn`/orchestrator router calls
-  are the decisive seam; a DEBUG line at each, deployed, then a live repro (spawn a background
-  Agent-tool subagent → fold user messages into the resulting autonomous run) shows exactly which
-  call clobbers. Archived logs that predate the instrumentation structurally CAN'T show it — don't
-  "refute" a hypothesis from them (I did, and was wrong). The failure needs the specific ingredient
-  (a follow-up folding into an ACTIVE autonomous run); a lone quiet trigger just adopts cleanly.
-- **A third failure class: the message was never EMITTED as text — foci and the app are
-  innocent.** On Opus 5.5 / Fable 5.1 this is DOCUMENTED API behaviour, not a bug (Opus 5.5
-  migration guide, "Text between tool calls is returned in thinking blocks"): text written
-  before a tool call comes back as a progress-update THINKING block, at most one per tool call.
-  foci renders only text blocks, so it is dropped; the agent can't tell from inside (its next
-  text may reference the "sent" message). Measured ~9% of opus-5-5 thinking responses. foci #1303.
-  Fingerprint, in the CC transcript (group lines by `message.id` — one response spans several):
-  `thinking`(empty) + `thinking`(readable) + `tool_use`, no `text`. The readable 2nd thinking
-  block is the tell — ordinary thinking persists as `""` — and is a paraphrase of the lost reply.
-  Cross-check: `[ccstream:<agent>-…] OnAssistant` shows `text_bytes=0` for that response; in
-  `app_frames.db` no `text.end` (its `d.finalText` is the per-block payload) between the
-  neighbouring delivered seqs — match the message's exact distinctive string, not an OR-query.
-  Rule (backend-claude-code.md): anything the user must read verbatim goes in the FINAL message,
-  after the last tool call, or via `foci_send_to_chat`. Text before a tool call = short progress
-  notes only.
-- **A fourth class: subagent output rendered in the MAIN chat instead of a collapsible chit.**
-  (foci #1420→#1422/#1424/#1423, 2026-07-20.) Symptom: a background/reactivated Agent-tool
-  subagent's text (or a SendMessage-follow-up prompt) appears as a plain `role="agent"`/`role="user"`
-  bubble in the main conversation. **Do NOT chase the server sink.go `SessionSubagentDeliverer`
-  fallback first** — that was the wrong side. Go to `app_frames.db` and (a) find the exact frame,
-  (b) tally the group's lifecycle:
-  ```
-  # (a) what KIND of frame carried the leaked text? — decode t + payload
-  sqlite3 -readonly ~/data/app-frames.db "SELECT seq,datetime(sent_ms/1000,'unixepoch'),visible,
-    json_extract(wire,'\$.t'), json_extract(wire,'\$.d.groupKey'), json_extract(wire,'\$.d.runIndex')
-    FROM app_frames WHERE wire LIKE '%<distinctive substring>%' ORDER BY sent_ms"
-  # (b) the group's full start/text/end tally — a MISSING subagent.start is the smoking gun
-  sqlite3 -readonly ~/data/app-frames.db "SELECT substr(gk,1,26), SUM(t='subagent.start') starts,
-    SUM(t='subagent.text') texts, SUM(t='subagent.end') ends FROM (SELECT json_extract(wire,'\$.d.groupKey') gk,
-    json_extract(wire,'\$.t') t FROM app_frames WHERE conv_id='<convID>' AND json_extract(wire,'\$.t') LIKE 'subagent%')
-    GROUP BY gk HAVING texts>0 ORDER BY starts"
-  ```
-  If `t="subagent.text"` with a valid groupKey/runIndex, the SERVER framed it correctly — the leak is
-  CLIENT-side: `InboundFrameDispatcher.kt` orphans a `subagent.text`/`subagent.prompt` into an inline
-  main-chat bubble when no base chit row (`db.messages().get(subagentId(groupKey))`) exists, i.e. **no
-  `subagent.start` ever arrived for that group** (run-1 SubagentStart is hook-driven and drops ~7% under
-  bursty dispatch — foci #1423/#1425). Block SIZE and start/end ordering are RED HERRINGS — all blocks
-  for a startless group orphan; size just decides which one the human notices. Client self-heal landed
-  (#1422/#1424): orphan now provisions a chit + adopts a late start.
-- **Timezone when correlating transcript ↔ foci.log ↔ app_frames.** CC subagent transcripts stamp UTC
-  (`…Z`); foci.log stamps BST (`+01:00`); `app_frames.sent_ms` is epoch ms. A block at `13:34:05Z` is
-  `14:34:05 BST` — grep foci.log at the BST wall-clock, not the Z value. A one-hour-off grep window
-  reads as "no matching log line" and sends you down a wrong path.
+- **App convIDs are ULIDs** (`01KWN7XZ...`), not the `c<chatID>` of the session key. `WHERE conv_id='c121886…'` returning zero rows does NOT mean "never delivered". Map them through `chat_metadata` (`conv_id` row) in state.db, or find the active conv by `max(sent_ms)` and read `preview`.
+- **Delivered-but-invisible = the conversation is ARCHIVED.** Frames are persisted and sent, but `chat_metadata` `is_archived=true` hides the conv from the app roster. Check: `/usr/bin/sqlite3 -readonly ~/data/state.db "SELECT platform,chat_id,key,value FROM chat_metadata WHERE agent_id='<ag>' AND key='is_archived'"`. Old mechanism (fixed 7f837286): an agent-initiated send to a target with no pinned `is_default` chat resolved through the activity-fallback rung to an archived chat. Default resolution now excludes archived chats, and delivery mints a fresh conversation when only archived ones remain (`route.Resolver.CreateDefault`).
+- **A bare `strftime` comparison matches NOTHING, silently.** `strftime` returns TEXT, and SQLite orders every INTEGER below every TEXT, so `sent_ms/1000 > strftime('%s','2026-...')` is always false. Arithmetic forces numeric context (`(strftime('%s','now')-7200)*1000`). It also reads the string as UTC. Prefer `datetime(sent_ms/1000,'unixepoch','localtime') BETWEEN ...`, and run the unfiltered query as a positive control for any zero.
+- `convBinding.send` (`hub.go`) persists **unconditionally**, then enqueues to the socket only if `client != nil`. "In store, not delivered" is a real state.
+- `convBinding` is stable per convID (`ensureBinding` updates `.client` on reconnect), but `appConn.NewTurnSink` (`conn.go`) captures the binding **once at turn start**: if disconnected then, it returns a Nop sink and the whole turn's output is discarded with no error (#1045).
+- Replay self-heals only if the app's resume `ack` stays below the lost frame. The Android dispatcher must advance `conversations.lastSeq` **after** the content write (fixed foci-client e157e23). `rp.Ack` and `fromSeq` are logged: grep `resumeConversations`/`replayTo`/`replay GET`.
+- **Timezones:** CC transcripts stamp UTC (`…Z`), foci.log local time (BST `+01:00`), `app_frames.sent_ms` epoch ms. A one-hour-off grep window reads as "no matching line".
+
+## Autonomous ("orphan") CC runs
+
+When background subagents (CC Agent tool) finish, CC **resumes the session on its own** to process the results. Foci opens no turn for it unless it adopts it (`OpenAutonomousTurn`): text goes out via the always-live SessionEvents. So:
+
+- **No `turn_lifecycle` events in foci.log does NOT mean idle.** The authoritative artifact is the CC transcript (`~/.claude/projects/-home-foci-<agent>/<uuid>.jsonl`, UTC):
+  `jq -rc 'select(.timestamp>="…" and .timestamp<="…")|{ts:.timestamp[11:19],t:.type,tool:([.message.content[]?|select(.type=="tool_use")|.name]|join(",")),txt:([.message.content[]?|select(.type=="text")|.text]|join(" ")|.[0:60])}' <transcript>`
+- **`in_flight=false` in the Inject log is a half-truth.** `IsTurnInFlight()` (`inject.go`) reports only `b.turnActive`, not `b.autonomousActive`. The system-inject gate `tryBeginTurn` checks both, so a reflection that logs `in_flight=false` and retries every 5s is correctly blocked, not the bug.
+- **Foci has THREE "turn active" flags that disagree during an autonomous run:** `inb.turnActive` (inbox steer gate), `b.turnActive` (ccstream, ground truth "CC mid-run"), `a.inFlight` (agent counter, `markInFlight`). An adopted run sets the last two, not the inbox flag. When you change a steer/in-flight gate, **OR the BACKEND flag (`DelegatedManager.BackendTurnInFlight`), NOT the agent counter**: the counter leads at primary-written and reopens the #777 header-stripping reorder race.
+- **Past failure shapes** (both fixed; the fingerprints still identify a regression):
+  - *Drop* (#1068, fixed #1070): `AttachSessionEvents` rebinds the session-scoped, shared `se.OnText`; a reflection turn with no sink on ctx rebound it to the NopSink singleton, so a concurrent autonomous run's text vanished. Fingerprint: block 1 delivered, blocks 2..N missing, drop window = the reflection's wait window.
+  - *Duplicate* (#1274, fixed 4ff79251): a follow-up during an adopted run started a fresh `RunTurn` whose `router.Register`/`Clear` clobbered the run's sink, so the rest went through late delivery. Fingerprint: intermediate blocks as `message` frames on distinct disposable `SessionSink`s, plus a final aggregate ≈ the sum of the pieces.
+- **Prove the drop is after `se.OnText`:** `handlers.go` logs `[ccstream] OnAssistant: text_blocks=N text_bytes=B` for every assistant message (global tag). Match the transcript's text blocks (timestamp, length) 1:1 to these lines. A matched block missing from `app-frames.db` = loss downstream of `se.OnText` (router/sink dispatch), not the stdout reader.
+- **Settle drop-vs-duplicate by instrumenting and reproducing**, not from archived logs. Put a DEBUG line at the `RunTurn` / `OpenAutonomousTurn` / orchestrator router Register/Clear sites, deploy, then repro: spawn a background Agent-tool subagent and fold user messages into the autonomous run. Logs from before the instrumentation cannot refute a hypothesis. A lone quiet trigger adopts cleanly; the bug needs a follow-up folding into an ACTIVE run.
+
+## The message was never emitted as text
+
+On Opus 5.5 / Fable 5.1, text written before a tool call can come back as a progress-update THINKING block (documented API behaviour; ~9% of opus-5-5 thinking responses, foci #1303). Foci renders only text blocks, so it is dropped, and the agent cannot tell. Fingerprint in the CC transcript (group lines by `message.id`): `thinking`(empty) + `thinking`(readable, a paraphrase of the lost reply) + `tool_use`, no `text`. Cross-check: `OnAssistant` shows `text_bytes=0`; `app-frames.db` has no `text.end` for it between the neighbouring seqs (match the exact distinctive string). Rule (backend-claude-code.md): text the user must read goes in the FINAL message after the last tool call, or via `foci_send_to_chat`.
+
+## Subagent output in the MAIN chat instead of a collapsible chit
+
+A subagent's text (or a SendMessage follow-up prompt) shows as a plain `role="agent"`/`role="user"` bubble. Do NOT chase the server `SessionSubagentDeliverer` fallback first. Find the frame and tally the group:
+
+```
+# (a) which frame kind carried the leaked text?
+sqlite3 -readonly ~/data/app-frames.db "SELECT seq,datetime(sent_ms/1000,'unixepoch'),visible,
+  json_extract(wire,'\$.t'), json_extract(wire,'\$.d.groupKey'), json_extract(wire,'\$.d.runIndex')
+  FROM app_frames WHERE wire LIKE '%<distinctive substring>%' ORDER BY sent_ms"
+# (b) start/text/end tally per group: a MISSING subagent.start is the smoking gun
+sqlite3 -readonly ~/data/app-frames.db "SELECT substr(gk,1,26), SUM(t='subagent.start') starts,
+  SUM(t='subagent.text') texts, SUM(t='subagent.end') ends FROM (SELECT json_extract(wire,'\$.d.groupKey') gk,
+  json_extract(wire,'\$.t') t FROM app_frames WHERE conv_id='<convID>' AND json_extract(wire,'\$.t') LIKE 'subagent%')
+  GROUP BY gk HAVING texts>0 ORDER BY starts"
+```
+
+`t="subagent.text"` with a valid groupKey/runIndex = the server framed it correctly; the leak is client-side. `InboundFrameDispatcher.kt` orphans `subagent.text`/`subagent.prompt` into a main-chat bubble when no base chit row (`db.messages().get(subagentId(groupKey))`) exists, i.e. no `subagent.start` arrived (run-1 SubagentStart is hook-driven and drops ~7% under bursty dispatch, #1423/#1425). Block size and start/end order are red herrings. The client now self-heals (#1422/#1424): an orphan provisions a chit and adopts a late start.

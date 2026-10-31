@@ -4,11 +4,11 @@
 
 ## Auth
 
-Provider API keys live in `secrets.toml` beside `foci.toml`. `foci auth` prompts, saves, and signals the running gateway to hot-swap (POST `/-/reload-credentials`). For Anthropic, CC credentials (`~/.claude/.credentials.json`) are a fallback — a pure-CC deployment needs no Anthropic key, and the startup `no Anthropic credentials` line is a caching probe, not an inference failure.
+Provider API keys live in `secrets.toml` beside `foci.toml`. `foci auth` prompts, saves, and makes the gateway hot-swap (POST `/-/reload-credentials`). For Anthropic, CC credentials (`~/.claude/.credentials.json`) are a fallback: a pure-CC deployment needs no Anthropic key, and the startup `no Anthropic credentials` line is a caching probe, not an inference failure.
 
 ## The cost ledger — `~/data/api.db`
 
-Every LLM call, durable across restarts (#2111). (`~/logs/api.jsonl` mirrors the current process only — for history always use `api.db`.) **Read cost from the VIEWS, never from a column:** there is no cost column — counts live in `call_tokens` (one row per token class) and the views price them at the rates in effect when each call was billed.
+Every LLM call, durable across restarts (#2111). `~/logs/api.jsonl` holds the current process only: for history use `api.db`. **Read cost from the VIEWS:** there is no cost column. Counts live in `call_tokens` (one row per token class); the views price them at the rates in effect when each call was billed.
 
 - `call_costs` — one row per call: `billed_at` (UTC), `backend` (api / ccstream / opencode / codex), `kind` (call, compaction, summary, spawn, legacy, …), `session`, `agent_id`, `turn_id`, `actor` ('' = the session's own thread, else the subagent), `cost_usd` (NULL = unpriced, never a silent 0).
 - `turn_costs` — per turn (`turns` + its calls): cost, parent/subagent split, `context_fill`, `still_running`.
@@ -20,13 +20,11 @@ sqlite3 -readonly ~/data/api.db "SELECT * FROM daily_costs ORDER BY day DESC LIM
 sqlite3 -readonly ~/data/api.db "SELECT TOTAL(cost_usd) FROM call_costs WHERE billed_at >= '2026-09-29T00:00'"
 ```
 
-**`kind='legacy'` calls are pre-ledger rows** (everything before the cutover, and each delegated backend's turn-level rows until it switched to per-call booking — Claude Code last, 2026-10-01, #2115): one call per turn or per subagent share, priced from their recorded figure when `cost_basis='recorded'`, with the pre-ledger `call_type` in `json_extract(detail,'$.v1_call_type')`. **Before you state a cost figure, read `api-cost-accounting.md`.**
-
-**Do NOT conclude a column is absent from a *grepped* `.schema`** — a keyword filter hides every non-matching line. Read the full `.schema api_calls`.
+**`kind='legacy'` calls are pre-ledger rows** (everything before the cutover; for Claude Code, until 2026-10-01, #2115): one call per turn or per subagent share, priced from the recorded figure when `cost_basis='recorded'`, with the old `call_type` in `json_extract(detail,'$.v1_call_type')`. **Before you state a cost figure, read `api-cost-accounting.md`.**
 
 ## Payload logs (JSONL)
 
-Full request/response per call, on by default (`payload_file` defaults to `logs/api-payload.jsonl`; set it to `""` in `[logging]` to disable; `full_payload` does not gate writing). Archives: `logs/archive/api-payload-*.jsonl.gz`. Filter with jq, never cat.
+Full request/response per call, on by default (`payload_file` defaults to `logs/api-payload.jsonl`; `""` in `[logging]` disables it; `full_payload` does not gate writing). Archives: `logs/archive/api-payload-*.jsonl.gz`. The file is large: filter with jq, never cat.
 
 ```bash
 # Calls in a window with cache stats
@@ -50,8 +48,7 @@ sqlite3 -readonly ~/data/api.db "SELECT turn_id, cost_usd, subagent_cost_usd, ca
 sqlite3 -readonly ~/data/api.db "SELECT c.billed_at, c.cost_usd, w.count FROM call_costs c JOIN call_tokens w ON w.call_id = c.id AND w.class LIKE 'cache_write%' LEFT JOIN call_tokens r ON r.call_id = c.id AND r.class = 'cache_read' WHERE r.call_id IS NULL AND w.count > 10000 ORDER BY c.billed_at DESC LIMIT 10"
 ```
 
-For *why* a cache bust happened (diffing the system prompt), see **cache.md**.
-
+For *why* a cache bust happened, see **cache.md**.
 
 ## Per-agent cost, and joining to `state.db:session_index`
 
@@ -73,7 +70,6 @@ WHERE ac.agent_id='clutch'
 GROUP BY si.session_type ORDER BY total_usd DESC;"
 ```
 
-**Gotchas that will mislead you:**
-- **The `|` in default sqlite output is the column separator, not part of the key.** Stripping it yields zero join hits; use `-column` mode.
+**Gotchas:**
 - **Key form encodes the cost model.** `chat` is root-form (`agent/c<chatID>`, the whole conversation on one key); reflection/keepalive are branch-form (`agent/c<chatID>/b<epoch>`). One chatID mixes types across branches, so a root key's cost can't be split by type.
 - **Join coverage is partial.** Old rows use the legacy `agent:<id>:<kind>:<name>` session grammar and predate `session_index`, so they don't join (`WHERE ac.session LIKE 'agent:%'`). Report the unmatched total as a caveat.

@@ -2,11 +2,9 @@
 
 # Prompts, turns & injections
 
-How foci builds what you see each turn, where its prompt templates live, and how to customise them.
-
 ## Prompt files: where they live & how to customise them
 
-Foci drives several **system-generated turns** from prompt template files — one file per turn type:
+Each **system-generated turn** type has a prompt template file:
 
 | Filename | Drives… |
 |----------|---------|
@@ -19,20 +17,18 @@ Foci drives several **system-generated turns** from prompt template files — on
 | `branch-orientation-headless.md` / `branch-orientation-facet.md` | orientation text for branch sessions (cron, spawn) |
 | `weekly-character-review.md` | the weekly character-review turn |
 
-The shipped defaults are seeded into `~/shared/prompts/` on first start (seed-if-missing — your edits there are never overwritten by a later start). **Two ways to customise a prompt for your purposes:**
+The shipped defaults seed into `~/shared/prompts/` if missing (your edits there persist). **Two ways to customise:**
 
-1. **Copy it into your workspace prompts dir.** Drop a file with the matching filename into `<workspace>/prompts/`. When a turn resolves its prompt, foci searches `<workspace>/prompts/` first, then `~/shared/prompts/`, then falls back to the embedded default — so a same-named file in your workspace wins. This keeps the customisation per-agent and in your own tree.
-2. **Point config at an explicit path.** *Most* turn types have a config key (e.g. the keepalive `prompt`, reflection `interval_prompt` / `session_end_prompt` / `compaction_prompt`, `consolidation_prompt`). Set it to a file path to use that file. Special values: unset or `"default"` → the search-then-embedded behaviour above; `"none"` → that turn is **disabled** entirely.
+1. **Per-agent override:** put a same-named file in `<workspace>/prompts/`. foci searches `<workspace>/prompts/`, then `~/shared/prompts/`, then the embedded default.
+2. **Config path:** *most* turn types have a config key (keepalive `prompt`; reflection `interval_prompt` / `session_end_prompt` / `compaction_prompt`; `consolidation_prompt`). Set it to a file path. Unset or `"default"` → the search above; `"none"` → that turn is **disabled**.
 
 `compaction-summary.md` (and the nudge framing prompts) are **file-only** — they have no config key, so they're customised by method 1 only. Disable the compaction summary prompt by dropping an *empty* `compaction-summary.md` in `<workspace>/prompts/` (the file-only equivalent of `"none"`).
-
-So: tweak wording → copy into `<workspace>/prompts/`; disable a turn → set its config key to `"none"` (or, for the file-only prompts, drop an empty override file); point at a shared file elsewhere → set the key to its path.
 
 The **character files** that make up your identity are separate from these turn templates — they load from your `character/` dir and are reloaded on compaction and restart, so editing them takes effect on the next rebuild.
 
 ## The `[meta]` / `[state]` / `[ask]` header (the statusline)
 
-Every inbound message carries a header built from a configurable **statusline template** (`internal/agent/statusline.go`, #831). The default template is `[meta] time={time} gap={gap} model={model} via={via}` / `[state] {state}` / `[ask] {ask}`; a line whose only placeholders all render empty is dropped entirely, so on a fresh session with nothing to report only `[meta]` appears.
+Every inbound message carries a header built from a configurable **statusline template** (`internal/agent/statusline.go`). The default template is `[meta] time={time} gap={gap} model={model} via={via}` / `[state] {state}` / `[ask] {ask}`; a line whose only placeholders all render empty is dropped entirely, so on a fresh session with nothing to report only `[meta]` appears.
 
 - `time` — RFC3339 receipt timestamp (the user's send time).
 - `gap` — time since the previous message (`none` on first).
@@ -41,7 +37,7 @@ Every inbound message carries a header built from a configurable **statusline te
 - `[state]` — a dashboard line (todos open/high, tasks, scratchpad entries), self-omits when every store is empty.
 - `[ask]` — appears only while a `foci_ask` is paused (`/pause`): names the paused request id as a reminder that plain-text replies are routing to you as normal turns rather than answering it (`/resume` to restore).
 
-**`prev_cost` / `prev_tokens` are deliberately NOT in the default** — a running cost/token figure on every turn was found to nudge the agent toward rationing its own budget. They still exist as `{cost}`/`{tokens}` fields (plus bare `{cost_raw}`/`{tokens_in}`/`{tokens_out}`/`{cache_read}`/`{cache_write}`) for anyone who opts in via a custom `statusline` config (`docs/CONFIG.md`). There is no `mana`/quota field in the statusline — check remaining quota via the `/mana` command (see the `mana` skill) instead; it exists only for agents on a Claude Code backend.
+**`prev_cost` / `prev_tokens` are deliberately NOT in the default**: a per-turn cost figure made agents ration their own budget. They still exist as `{cost}`/`{tokens}` fields (plus bare `{cost_raw}`/`{tokens_in}`/`{tokens_out}`/`{cache_read}`/`{cache_write}`) for anyone who opts in via a custom `statusline` config (`docs/CONFIG.md`). There is no `mana`/quota field in the statusline — check remaining quota via the `/mana` command (see the `mana` skill) instead; it exists only for agents on a Claude Code backend.
 
 ## `[reminders]`
 
@@ -49,13 +45,13 @@ Due reminders, surfaced once then auto-dismissed; only on root sessions, not bra
 
 ## System injections
 
-Host-initiated events arrive as a **user-role message** wrapped with `[SYSTEM INJECTION — …]`. The wrapper tells you: this was sent by the host, the user hasn't seen it; either actively tell the user about it or, if they needn't know, respond `[[NO_RESPONSE]]`. Includes the event's timestamp. Examples: proactive warnings, system update notices.
+Host-initiated events arrive as a **user-role message** wrapped with `[SYSTEM INJECTION — …]`. The user has not seen it: tell the user about it, or respond `[[NO_RESPONSE]]` if they need not know. Examples: proactive warnings, system update notices.
 
 ## Nudges
 
-Behavioural reminders extracted automatically from your character files and prepended to the user message. Trigger types: `every_n_tools`, `pre_answer`, `after_error`, `regex`, `tool_pattern`. They are **heuristic, not corrective** — they fire on patterns, not on whether the guidance applies. If a nudge doesn't fit what you're doing, ignore it and respond `[[NO_RESPONSE]]` (when it's the whole turn) rather than bending your reply to it. Nudges are suppressed on system-internal turns (reflection, consolidation, session-end memory).
+Behavioural reminders extracted automatically from your character files and prepended to the user message. Trigger types: `every_n_tools`, `pre_answer`, `after_error`, `regex`, `tool_pattern`. They fire on patterns, not on whether the guidance applies: if a nudge does not fit, ignore it (respond `[[NO_RESPONSE]]` when it is the whole turn) rather than bend your reply to it. Nudges are suppressed on system-internal turns (reflection, consolidation, session-end memory).
 
-Auto-extraction is controlled by `nudge_auto_extract` (default on, in the `[nudge]` config). Set it to `false` to stop the LLM re-deriving rules from your character files and instead manage them by hand in `nudge-rules.json` (in your character/workspace dir). `nudge_enable` is the master on/off for the whole system.
+Auto-extraction is controlled by `nudge_auto_extract` (default on, in the `[nudge]` config). `false` stops re-deriving rules from your character files; you then manage them by hand in `nudge-rules.json` (character/workspace dir). `nudge_enable` is the master on/off for the whole system.
 
 ## `[[NO_RESPONSE]]`
 
@@ -63,6 +59,6 @@ The silence sentinel. When it is the **entire** message, the turn completes with
 
 ## Compaction
 
-When a session's context grows past its threshold, foci compacts: it summarises the conversation (via `compaction-summary.md`), optionally rotates to a fresh session key, fires the memory hooks, then reloads character files. Triggers: the main token threshold, an optional pre-mana-refresh compaction (start a fresh budget window with a smaller context), or manual `/compact`. A post-compaction hand-off message (`compaction-handoff.md`) gives the next context continuity.
+foci summarises the conversation (`compaction-summary.md`), optionally rotates the session key, fires the memory hooks, reloads character files, then injects a hand-off (`compaction-handoff.md`). Triggers: the token threshold, an optional pre-mana-refresh compaction (a smaller context for the fresh budget window), or `/compact`.
 
 The periodic memory turns (reflection, consolidation) and their scheduling live in **scheduled-tasks.md**.

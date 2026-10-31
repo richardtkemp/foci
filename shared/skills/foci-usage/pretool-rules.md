@@ -49,7 +49,7 @@ reason = "Force-pushing is not allowed. Push normally, or ask the user."
 - **`command`** (Bash only) is matched from the start of **each simple command** of the parsed script, with quotes removed. So `git add` matches inside `cd /r && git add .`, but not inside `echo git add` or a commit message. `(\S+ )*` means "any words".
 - **`input.<field>`** matches a raw tool-input field, e.g. `input.file_path` for `Read`/`Edit`/`Write`.
 - **`background` / `subshell` / `output`** (Bash only) match parsed shell structure. Use them instead of regexing `input.command` for `&`, `cd` or pipes. Raw text cannot tell a real `&` from one in a heredoc or a quoted string.
-- **`when`** is a bash script for live state (the branch, uncommitted edits, a file's header). The rule denies **only if it exits 0**. Exit 1 is "no". Any other exit status or a timeout **fails open** (the call runs and a WARN is logged). Map other statuses explicitly, e.g. `git diff --quiet` exits 1 when there ARE changes. Keep it fast and read-only: it runs on every matching call, with a 2 s limit.
+- **`when`** is a bash script for live state (the branch, uncommitted edits, a file's header). The rule denies **only if it exits 0**. Exit 1 is "no". Any other exit or a timeout **fails open** (the call runs, a WARN is logged). Map other statuses explicitly (`git diff --quiet` exits 1 when there ARE changes). Keep it read-only: it runs on every matching call, 2 s limit.
 - **Set `enabled = false`** under a rule's `name` to switch it off for one agent.
 - **An unknown key is a config load error**, not a warning. A misspelled constraint would otherwise be dropped, and the rule would deny every call to its tool.
 

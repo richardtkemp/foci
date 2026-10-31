@@ -1,30 +1,17 @@
 <!-- GOLDEN: ships with foci (shared/skills/foci-debugging/). Overwritten on restart — edit in the foci repo, not the deployed ~/shared/skills copy. -->
 
-# Anthropic prompt cache
+# Prompt-cache bust diagnosis
 
-## Mechanics
+The cached prefix is the system prompt (environment block + character files) + history, per session. Foci caches character files in memory: edits take effect at the next compaction or restart, not mid-session.
 
-- **Per-session, prefix-matched.** The cached prefix is the system prompt (environment block + character files) + conversation history. Its stability is what makes the cache work.
-- **Switching models rebuilds the cache** — a model switch invalidates the prefix.
-- Multiple prefixes are cached simultaneously — switching *sessions* doesn't evict other sessions' caches.
-- Foci caches character files in memory — edits take effect at the next compaction or restart, not mid-session.
+A "bust" is a call with `cache_read_tokens = 0` where you expect a hit. Find the last call with a cache read before the first zero, then extract and **diff their system-prompt blocks**.
 
-## Cache-bust diagnosis
-
-A "bust" is a call with `cache_read_tokens = 0` where you'd expect a hit. Find the last call with `cache_read_tokens > 0` before the first `cache_read_tokens = 0`, then extract and **diff their system-prompt blocks** to see what changed.
-
-Common causes:
-- a character/system-prompt file edit picked up by `bootstrap.Reload()`,
-- a model switch,
-- a service restart,
-- compaction on another session that shares the prefix.
+Common causes: a character/system-prompt edit picked up by `bootstrap.Reload()`, a model switch, a service restart, compaction on another session that shares the prefix.
 
 ```bash
 # Find the bust boundary
 sqlite3 -readonly ~/data/api.db "SELECT c.billed_at, c.cost_usd, t.class, t.count FROM call_costs c JOIN call_tokens t ON t.call_id = c.id WHERE t.class LIKE 'cache%' ORDER BY c.billed_at DESC LIMIT 40"
-
-# Then pull the two calls' system blocks from the payload log and diff (see api-cost.md
-# for the jq to extract .request.system[] block sizes; extract each to a file, then diff).
+# Then pull both calls' .request.system[] from the payload log (jq in api-cost.md) and diff.
 ```
 
-For a guided, step-by-step bust analysis over the payload logs, use the dedicated **`cache-diagnosis`** skill — it's the deeper tool; this file is the quick reference.
+For a guided, step-by-step analysis use the **`cache-diagnosis`** skill.

@@ -6,7 +6,7 @@ Two kinds of scheduled work touch you: the tasks **foci runs for you automatical
 
 ## 1. Tasks foci runs automatically
 
-Foci's periodic loop fires these on their own schedules — you don't set them up, but it helps to recognise them when they show up as `via=cron` turns (and to know each is driven by a prompt template you can customise — see **prompts.md**):
+They arrive as `via=cron` turns. Each turn's prompt template can be customised (see **prompts.md**):
 
 | Task | What it does | Customise via |
 |------|--------------|---------------|
@@ -25,16 +25,14 @@ The reflection/consolidation turns are **system-internal**: their output is not 
 
 When you want a turn to fire on a schedule you define — a daily check, a weekly digest, a timed reminder-to-self that does real work — use the **user crontab**. It's the one durable mechanism: a backend scheduler such as Claude Code's own cron does **not** survive a restart/reload, so don't rely on it for anything that must persist.
 
-Foci expands `shared/crontab.template` per-agent (substituting the agent ID and home dir, with a stagger offset so agents don't all fire at once) and installs the result into the foci user's crontab. Each entry invokes the `foci` CLI to run a prompt as a one-shot branch session — authenticated over foci's local Unix socket by same-user kernel peer credentials, so no API key sits in the crontab. Editing the crontab is the way to add your own ad-hoc scheduled task; for anything durable, always prefer it over a backend scheduler.
+foci expands `shared/crontab.template` per agent (agent ID, home dir, a stagger offset) into the foci user's crontab. Each entry runs the `foci` CLI to send a prompt as a one-shot branch session. It authenticates over foci's Unix socket by same-user peer credentials, so no API key sits in the crontab. Add your own scheduled task by editing the crontab.
 
 A scheduled turn reaches the user the same way any turn does: reply with text and it's delivered to the platform; reply `[[NO_RESPONSE]]` for a silent check. For a check that should stay quiet unless it trips, have the scheduled command itself decide whether to invoke you at all (see the `silent-cron` skill) rather than waking you every time only to say nothing.
 
 ### Editing the crontab safely
 
-The crontab is shared across **all** agents (~100 lines), so a botched edit has platform-wide blast radius. The classic wipe: piping a `sed`/transform straight into `crontab -` — if the transform errors or emits nothing, `crontab -` silently installs an **empty** crontab, dropping every job. So never pipe an unverified transform into `crontab -`. Instead:
+One crontab is shared by **all** agents. Piping a failed or empty transform into `crontab -` installs an **empty** crontab and drops every agent's job. So:
 
-1. **Back up first:** `crontab -l > /tmp/crontab.bak`.
-2. **Transform with assertions**, not a blind `sed` pipe — e.g. a short Python pass that asserts the target line exists and that the line count changed by exactly the expected delta (removing a job is usually **two** lines: its `# comment` and the job line, so delta `-2`).
-3. **Install only the verified file:** `crontab /tmp/crontab.new`.
-4. **Verify:** `crontab -l | wc -l` matches expectation, and the changed lines are present/absent as intended.
-5. **Restore instantly** if anything looks off: `crontab /tmp/crontab.bak`.
+1. Back up: `crontab -l > /tmp/crontab.bak`.
+2. Edit a copy with assertions: the target line exists, and the line count changed by the expected delta (a job is usually **two** lines: its `# comment` and the job line).
+3. Install only the verified file (`crontab /tmp/crontab.new`), check `crontab -l`, and restore from the backup if anything is off.

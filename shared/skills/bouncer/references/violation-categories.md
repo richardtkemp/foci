@@ -1,182 +1,21 @@
 <!-- GOLDEN: ships with foci (shared/skills/bouncer/). Overwritten on restart — edit in the foci repo, not the deployed ~/shared/skills copy. -->
 
-# Violation Categories — Editable Scanning Rules
+# Violation categories
 
-Bouncer uses these categories when scanning skills. **You can edit this file to add, remove, or modify categories.**
+Reference for reading a scan report. **The scanner never sees this file**: it scans only by the system prompt in `auditing-model-prompt.md`. To add, drop or change a category, edit that prompt (and the JSON keys it names), not this file.
 
-When agents scan skills, they should understand what each category means and why it matters.
+The five categories and their JSON keys:
 
----
+1. **Security** (`security`) — credential theft (`~/.ssh`, `~/.aws`, env vars, browser cookies), code injection (`eval`/`exec`/`new Function` on untrusted input), privilege escalation, reverse shells, encoded payloads that are decoded then run, fetch-and-execute (`curl ... | sh`), destructive commands (`rm -rf`, force-push, DB drops).
+2. **Privacy** (`privacy`) — undisclosed telemetry, phone-home, logging user input or chat history, filesystem or history scans, fingerprinting.
+3. **Behavioral deception** (`behavioral_deception`) — code that does something other than its docs say, hidden functions, obscured instructions, prompt injection.
+4. **Resource abuse** (`resource_abuse`) — unbounded loops, recursion or process spawning, disk fills, unthrottled requests.
+5. **Ethical** (`ethical`) — discrimination on protected attributes, harassment features, license or ToS violations, stolen code.
 
-## 1. Security
+## NOT a violation
 
-**What it covers:**
-- Credential theft (reading ~/.ssh, ~/.aws, process.env, browser cookies, etc.)
-- Code injection (eval, exec, spawn, new Function, dynamic require)
-- Permission escalation (running as root, sudo, filesystem access outside workspace)
-- Reverse shells and backdoors
-- Cryptographic attacks
+- A skill that tells the agent to run a **harmless, read-only command** for its documented job (`git diff`, `git log`, `grep`, `find`, `cat`, `ls`, `gh pr diff`, `gh api` reading a repo file, test or build runners). That is what skills do. It is neither "arbitrary execution" nor "prompt injection".
+- Flag a directed command only when the command itself is dangerous (the Security list above), reads secrets, exfiltrates data, or is built from untrusted input.
+- **"Prompt injection"** means text that turns the agent AGAINST the user: ignore prior or safety instructions, exfiltrate, hide actions, run destructive or credential-reading commands, fetch and run remote code.
 
-**Why it matters:**
-One malicious skill can steal your API keys, SSH credentials, or AWS tokens and give attackers access to your entire system.
-
-**Red flags:**
-- Reading credential/secret locations (~/.ssh, ~/.aws, env vars, browser cookies)
-- Executing DANGEROUS commands — destructive (rm -rf, force-push, DB drops), privilege escalation (sudo/root), fetch-and-execute of remote code (curl ... | sh), reverse shells, or commands built from untrusted input
-- Network requests to unknown/attacker-controlled servers
-- Base64/hex-encoded payloads (especially decoded then executed)
-- Dynamic code execution (eval/exec/new Function on untrusted input)
-
-**NOT a red flag (normal skill behavior — do not penalise):**
-- A skill directing the agent to run HARMLESS, read-only commands as part of its documented purpose — `git diff`, `git log`, `grep`, `find`, `cat`, `ls`, `gh pr diff`, `gh api ... contents` (reading a repo file), test/build runners. Being *instructed to run a benign command* is what skills do; it is neither injection nor arbitrary execution.
-
----
-
-## 2. Privacy
-
-**What it covers:**
-- Undisclosed telemetry or analytics
-- Data collection beyond what's documented
-- Phone-home patterns (sending data back to author)
-- Hidden tracking or monitoring
-- User data leaks
-
-**Why it matters:**
-A skill that secretly collects your data violates your privacy, even if it doesn't steal credentials.
-
-**Red flags:**
-- HTTP requests to external servers not mentioned in docs
-- Collecting environment variables and sending them elsewhere
-- Logging user inputs or conversation history
-- Browser history or filesystem scanning
-- Fingerprinting your system
-
----
-
-## 3. Behavioral Deception
-
-**What it covers:**
-- Skill does something different than documented
-- Manipulation patterns (designed to trick users into running things)
-- Hidden functionality
-- Misleading descriptions
-- Social engineering tactics
-
-**Why it matters:**
-You trust the description and code comments. If they don't match reality, the skill is deceptive.
-
-**Red flags:**
-- Docs say "check weather" but code reads API keys
-- Instructions are intentionally obscured
-- Comments contradict actual behavior
-- Behavior changes based on input validation you can't see
-- Prompt injection attempts
-
-**On "prompt injection":** flag only text that redirects the agent AGAINST the user's interest — ignore prior/safety instructions, exfiltrate data, hide actions, run destructive or credential-reading commands, or fetch+run remote code. A skill legitimately telling the agent to run a benign command for its stated job (e.g. "run `git diff` to review the change") is NOT injection.
-
----
-
-## 4. Resource Abuse
-
-**What it covers:**
-- Resource exhaustion (CPU/memory bombs)
-- Infinite loops or hang risks
-- Spam/flooding patterns (excessive requests, disk fills)
-- Network DoS attacks
-- Process spawning without limits
-- Disk space exhaustion
-
-**Why it matters:**
-A skill that crashes your system or causes runaway resource usage makes your agent unreliable.
-
-**Red flags:**
-- Unbounded loops without exit conditions
-- Recursive calls without depth limits
-- Spawning processes without limits
-- Writing infinite data to disk
-- Fork bombs or thread explosions
-- Repeated network requests without throttling
-
----
-
-## 5. Ethical
-
-**What it covers:**
-- Coded bias or discrimination (treating people differently based on protected attributes)
-- Harassment or abuse features
-- License violations (using code without proper attribution)
-- Terms of service violations
-- Usage policy violations
-- Stolen or plagiarized code
-
-**Why it matters:**
-Even if a skill is technically safe, it might violate ethical principles or laws.
-
-**Red flags:**
-- Code that makes decisions based on race, gender, religion, etc.
-- Harassment functions or abuse patterns
-- Stolen code without attribution
-- Violating third-party ToS (e.g., scraping, API abuse)
-- GPL/copyleft violations
-- Deliberately malicious intent
-
----
-
-## How to Use This File
-
-### As a User
-
-Review these categories when running Bouncer. If a skill gets HIGH or CRITICAL findings in any category, consider whether you trust it.
-
-### As an Agent Maintainer
-
-If you think a category is too strict, too loose, or missing something, edit this file. For example:
-
-- **Add a category:** If you discover a new type of harm, add it
-- **Remove a category:** If a category is generating too many false positives, disable it
-- **Refine descriptions:** If the red flags are unclear, improve them
-
-Changes to this file affect all future scans (until you change it back).
-
-### Example: Disabling a Category
-
-If you're tired of false positives in "Resource Abuse," you can:
-
-1. Edit this file
-2. Change the header to `## 4. Resource Abuse (DISABLED)`
-3. Save and commit
-4. Future scans will skip this category
-
----
-
-## Guidelines for Editing
-
-**Keep it honest:** Categories should reflect real harms, not just things you personally dislike.
-
-**Be specific:** Red flags should be concrete patterns to look for, not vague concerns.
-
-**Consider false positives:** If a category triggers on legitimate code, refine the description.
-
-**Document changes:** Leave a note at the top if you significantly modify categories.
-
----
-
-## Roadmap: Future Categories?
-
-These categories were chosen for:
-- **Semantic detectability** — LLMs can understand them
-- **Agent safety** — They matter for agent integrity
-- **Actionability** — Agents can do something about findings
-
-Other potential categories (not yet included):
-- **Performance** — Skills that are unnecessarily slow
-- **Compatibility** — Skills that break other skills
-- **Accessibility** — Skills that don't work for all users
-- **Sustainability** — Skills with unsustainable dependencies
-
-If you want to add any, feel free!
-
----
-
-**Editable by:** Any agent or user
-**Format:** Keep it readable (this is reference material, not config)
+A finding that breaks these rules is a scanner false positive. Fix it in the system prompt, which carries the same rules.

@@ -2,7 +2,7 @@
 
 # Databases & persistent state
 
-Foci keeps state in SQLite, split into two scopes. As an agent you rarely query these directly — your tools (`foci_todo`, `foci_remind`, `foci_memory_search`) are the front door — but knowing the layout helps when reasoning about what persists.
+foci keeps state in SQLite. Your tools (`foci_todo`, `foci_remind`, `foci_memory_search`) are the front door; query the files directly only when a tool cannot do it.
 
 ## Two scopes
 

@@ -7,22 +7,22 @@ seeded: true
 
 # Foci Debugging — Internals & Investigation
 
-How to investigate a running foci: where the data lives and how to read it. This SKILL.md is a directory; each topic lives in its own file.
+How to investigate a running foci: where the data lives and how to read it. Each topic has its own file.
 
-> **This `SKILL.md` is yours to customise** (seed-if-missing — override it, add your own sibling files). The content files it lists below **ship with foci and are overwritten on restart** — edit those in the foci repo (`shared/skills/foci-debugging/`), not the deployed `~/shared/skills/` copy.
+> **This `SKILL.md` is yours to customise** (seed-if-missing). The subfiles below **ship with foci and are overwritten on restart**: edit them in the foci repo (`shared/skills/foci-debugging/`), not in `~/shared/skills/`.
 
 ## Where to look
 
 | Subfile | Read it when you need… |
 |---|---|
-| **logs.md** | Service logs (`~/logs/foci.log`, the journal), the data-source scope map, per-agent SQLite DBs, and the log-reading gotchas (`.gz` archives, awk-not-grep, panics). |
-| **api-cost.md** | Provider auth, the API call log (`api.db`), payload logs, per-agent cost and the `session_index` join — where the data is. |
-| **api-cost-accounting.md** | The traps before you state a cost NUMBER: CC's own `cost_usd` is cumulative per process, legacy calls hold turn totals, checking CC's price per process (not per session). |
-| **cache.md** | Anthropic prompt-cache mechanics and cache-bust diagnosis (companion to the `cache-diagnosis` skill). |
-| **sessions.md** | Session history files (stable-key JSONL), CC backend transcripts, the `state.db` session/archive/resume tables, and compaction/reset/cron lifecycle. |
-| **test-harness.md** | A test fails under `make test` but not under a plain `go test` — the sealed/redirected environment `scripts/seal-test.sh` builds, how to replicate it for one package, and which arm isolates which variable. |
-| **ci-triage.md** | A `[foci-test-runner]` "tests FAILED" notification — who broke main: same-commit flips, reading parallel test logs, bounding the culprit range, recurring causes, and a deploy changing the machine under the tests. |
-| **permissions.md** | A task fails with `Permission allow rule Write(...) is not matched by file permission checks` — why it's order-dependent, how to audit exposure across agents, and the seed constant that reintroduces it. |
-| **app-delivery.md** | A message never reached the native app — the durable frame store (`~/data/app-frames.db`), reading `seq` to tell a sink bug from a replay/ack bug, and the ULID-vs-chat-id trap. |
+| **logs.md** | Service logs (`~/logs/foci.log`, journal, `.gz` archives), the data-source map, per-agent SQLite DBs, crash-vs-clean restart. |
+| **api-cost.md** | Provider auth, the cost ledger (`api.db`), payload logs, per-agent cost and the `session_index` join. |
+| **api-cost-accounting.md** | The traps before you state a cost NUMBER: CC's `cost_usd` is cumulative per process, legacy calls hold turn totals, checking CC's price per process. |
+| **cache.md** | Prompt-cache bust diagnosis (companion to the `cache-diagnosis` skill). |
+| **sessions.md** | Session JSONL files, CC backend transcripts, `state.db` session/archive/resume tables, compaction/reset/cron, a stuck session after `/stop`. |
+| **test-harness.md** | A test fails under `make test` but not a plain `go test`: the sealed env `scripts/seal-test.sh` builds, and which arm isolates which variable. |
+| **ci-triage.md** | A `[foci-test-runner]` "tests FAILED" notification: who broke main. |
+| **permissions.md** | `Permission allow rule Write(...) is not matched by file permission checks`, and why a command is or is not auto-approved (execguard). |
+| **app-delivery.md** | A message never reached the native app: the frame store (`~/data/app-frames.db`), sink vs replay bugs, the ULID-vs-chat-id trap. |
 
-For **normal operation** (not investigation) — tools, prompts, turn lifecycle, config — see the companion **`foci-usage`** skill.
+For **normal operation** (tools, prompts, turn lifecycle, config) see **`foci-usage`**.

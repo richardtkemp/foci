@@ -9,8 +9,8 @@ ran — usually NOT the cause.** Several sessions land to a shared `main`; treat
 timestamp, not an accusation. Method, in order:
 
 0. **FIRST, check for a same-commit flip** — `grep ',unit,' ~/git/ci-runner/results.csv | tail -15`.
-   If the SAME sha shows `pass` then later `fail`, no commit caused this and steps 2–4 can only find
-   nothing: the machine changed between runs (see below). One query saves a bisect that can't converge.
+   If the SAME sha shows `pass` then later `fail`, no commit caused it: the machine changed between
+   runs (see below), and a bisect cannot converge.
 1. **Read the real failure, not the summary.** `grep -A25 <TestName> /tmp/fgw/test-<ts>.log` (path is
    in the notification) for the actual assertion and its got-vs-want.
    **In a PARALLEL package (all of `test/integration`) the `--- FAIL:` line is a bare verdict.** Each
@@ -28,13 +28,10 @@ timestamp, not an accusation. Method, in order:
 
 ## Recurring causes
 
-- **A shared-semantics change breaks a cross-package assertion.** A commit reworks a shared helper
-  and updates only its own package's test. When you change a shared function, grep other packages
-  for tests asserting the old behaviour.
+- **A shared-helper change breaks another package's test** that asserts the old behaviour.
 - **Error-string reformatting.** Wrapping a transport (e.g. `ratelimit.Transport`) makes net/http's
-  `Client.Timeout` wrapper reword the error, so `strings.Contains(err, "deadline exceeded")` goes red
-  while `errors.Is(err, context.DeadlineExceeded)` and `net.Error.Timeout()` stay true. Verify with
-  a throwaway `_test.go`; assert **semantics (`errors.Is`), never message text**.
+  `Client.Timeout` reword the error, so `strings.Contains(err, "deadline exceeded")` goes red while
+  `errors.Is(err, context.DeadlineExceeded)` stays true. Assert with `errors.Is`, never message text.
 - **The test encodes a contract the commit deliberately CHANGED.** The failure points at the file the
   commit touched, so "fix the code until green" would undo the fix. If the test asserts on a field or
   default the commit demoted, the test is stale (bit twice on `TestL2_SlashCommands_CostTodayReadsAPILog`).
@@ -43,8 +40,9 @@ timestamp, not an accusation. Method, in order:
   nothing; seed a model with real pricing instead of a pre-computed total.
 - **Local main ahead of origin.** A peer committed to the shared checkout without pushing, so the
   runner tests a red local HEAD while `origin/main` is green. Check
-  `git rev-list --left-right --count origin/main...HEAD`; fix on a worktree off local HEAD, ff local
-  main, push. (`make land` exists to prevent this.)
+  `git rev-list --left-right --count origin/main...HEAD`. Do not push local main yourself (main is
+  reached only through `make land`, see `foci-development`): report the unpushed commits and their
+  owner to the orchestrator.
 
 ## Environmental cause: a DEPLOY changed the machine under the tests
 

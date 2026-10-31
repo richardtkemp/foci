@@ -2,10 +2,7 @@
 
 # Cost accounting — the traps before you state a number
 
-*Split out of `api-cost.md`, 2026-09-22. That file is where the data lives; this one is what
-goes wrong when you turn it into a figure. Read this when you are about to report a cost.*
-
-**Total cost from the ledger's views (`call_costs`, `daily_costs`, `turn_costs`) — never from a
+**Total cost from the ledger's views (`call_costs`, `daily_costs`, `turn_costs`), never from a
 stored figure.** A view prices each call from its own counts at the rates in effect when it was billed,
 or, for a pre-ledger delegated row (`kind='legacy'`, `cost_basis='recorded'`), takes the figure foci
 recorded then (`legacy_calculated_cost_usd`), because that row's counts are not what was billed.
@@ -13,7 +10,7 @@ recorded then (`legacy_calculated_cost_usd`), because that row's counts are not 
 WIRING.md "Cost ledger" has the rules.
 
 **The backend's OWN figure is a report, not a cost:** `backend_reports.cost_usd`. For CC it is
-CUMULATIVE over the process — never `SUM` it. Summing inflates ~quadratically in turns-per-process (to
+CUMULATIVE over the process: never `SUM` it. Summing inflates ~quadratically in turns-per-process (to
 ~13x), yet is 1.0x on quiet days, which is what lets it survive review. It does not reconcile against
 a snapshot of counts either: cost / a token count is a ROUND COUNT dressed as a rate — 3 rounds at
 Opus-5's $0.50/M cache-read reads as "$1.50/M". Check per-round usage in the CC transcript before

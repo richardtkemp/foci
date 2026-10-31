@@ -2,9 +2,7 @@
 
 # Permission-rule failures
 
-Claude Code evaluates an agent's permission-allow rules to decide whether a tool call proceeds.
-When a rule is malformed or ordered wrongly, the failure surfaces a long way from its cause — as a
-task failing for no visible reason, not as "your config is wrong."
+A malformed or misordered allow rule surfaces far from its cause: a task fails for no visible reason.
 
 ## `Permission allow rule Write(...) is not matched by file permission checks`
 
@@ -17,17 +15,15 @@ Seen in `~/logs/foci.log` as (the pre-#1962 wording; batch runs now log
  — only Edit(path) rules are...)
 ```
 
-**Where the transcript is.** Since #1962 a batch run (consolidation, nudge extraction,
-foci_summary) is an ordinary stream-json session on an ephemeral child key
-(`<agent>/c<id>/b<ns>`, session_type `background-task`), so it DOES leave a CC transcript (until
-the ephemeral-session GC) and an api.db row with `purpose` set. Before #1962 it was
-`claude --print --no-session-persistence` and left nothing behind. And don't assume the failing task actually tried to write that path: the failure is a
-permission-*list* artifact, raised while validating rules, not evidence about the task's content.
+**Where the transcript is.** A batch run (consolidation, nudge extraction, foci_summary) is a
+stream-json session on an ephemeral child key (`<agent>/c<id>/b<ns>`, session_type
+`background-task`), so it leaves a CC transcript (until ephemeral-session GC) and an api.db row with
+`purpose` set (#1962). The failing task need not have tried to write that path: the error comes from
+validating the rule list, not from the task's content.
 
-**Mechanism.** Claude Code rejects `Write(<path>)` as an invalid rule type for file paths —
-`Edit(...)` is meant to cover every file-editing tool, `Write` included. CC evaluates rules in
-**list order**, first match for a path wins. So whether an agent is affected is *order*-dependent,
-not presence-dependent:
+**Mechanism.** CC rejects `Write(<path>)` as a rule type for file paths (`Edit(...)` covers every
+file-editing tool). CC evaluates rules in **list order**; the first match for a path wins. So exposure
+depends on *order*, not presence:
 
 - If `Edit(<path>)` appears **before** `Write(<path>)` in the effective merged list (project
   `.claude/settings.json` + `settings.local.json`, both checked before the shared global
@@ -48,11 +44,9 @@ Cross-reference with
 An agent can be **latently exposed** — bad order, but its batch runs simply haven't touched that
 path yet — without ever having logged a failure. Absence of a failure is not absence of the bug.
 
-**Fix.** Remove the invalid `Write(path)` lines; `Edit(path)` already grants the same access, per
-CC's own error text, so nothing is lost. Note that **editing `.claude/settings.json` /
-`settings.local.json` directly is blocked by the auto-mode classifier** — self-modifying permission
-config is treated as sensitive — so expect to need explicit user approval, or to have the user make
-the edit. Once they confirm in words ("remove the deprecated rules"), the edit goes through.
+**Fix.** Remove the `Write(path)` lines; `Edit(path)` grants the same access. **The auto-mode
+classifier blocks edits to `.claude/settings.json` / `settings.local.json`**: you need the user's
+explicit approval in words ("remove the deprecated rules"), or the user makes the edit.
 
 **If it resurfaces, check the seed first.** The rules are baked into every CC agent's
 `--allowedTools` at launch from `internal/config/cc_backend.go`'s `DefaultCCAllowedTools`. That
@@ -60,9 +54,6 @@ constant is what would silently reintroduce this for any *newly created* agent, 
 deployed settings files leaves the trap armed. After checking it, re-run the `jq` order-audit above
 across all agents — a new CC release can deprecate a different rule type the same way
 (`NotebookEdit(path)` and `Glob(path)` are already flagged in the changelog as the same category).
-
-*(Swept and fixed everywhere found on 2026-07-17: the shared global settings, several per-agent
-local overrides, and the `DefaultCCAllowedTools` seed.)*
 
 ## "Why is/isn't this command auto-approved?" — read the env a CHILD has, not `/proc/environ`
 
@@ -77,10 +68,10 @@ mp=$(systemctl show -p MainPID --value foci.service)   # pgrep -f foci-gw does N
 tr '\0' '\n' < /proc/$(pgrep -A -P $mp | head -1)/environ | grep '^PATH='
 ```
 
-**Never `/proc/<the daemon's own pid>/environ`.** Since #1914 the operator's dotfile env is
-captured once (`shellenv.Load`) and handed only to agent-shell spawns (`procx.SetOperatorEnv`),
-so the daemon's environ never shows the `PATH` a tool shell searches. It looks authoritative and
-is wrong; it misled two independent investigations of one bug.
+**Never `/proc/<the daemon's own pid>/environ`.** It is the env at exec. The operator's dotfile env
+is captured once (`shellenv.Load`) and handed only to agent-shell spawns (`procx.SetOperatorEnv`,
+#1914), so the daemon's environ never shows the `PATH` a tool shell searches. It looks authoritative
+and is wrong: it misled two independent investigations of one bug.
 
 - **`-check-config` previews the drop only as the service user.** As root it skips the check. As a
   user it sources the rc file only if the file and every directory on its path is writable by

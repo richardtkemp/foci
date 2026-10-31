@@ -2,11 +2,11 @@
 
 # Configuration (`foci.toml` & `secrets.toml`)
 
-Foci is configured by `foci.toml` (with secrets in a parallel `secrets.toml`), both in the config dir. You won't usually edit these mid-conversation, but understanding them explains *why you are the way you are*.
+Foci is configured by `foci.toml` (with secrets in a parallel `secrets.toml`), both in the config dir.
 
 ## Smart defaults: most config derives from the agent ID
 
-A key foci principle — given an agent's `id`, foci auto-derives:
+Given an agent's `id`, foci auto-derives:
 
 | Field | Derivation |
 |-------|-----------|
@@ -34,8 +34,6 @@ So a minimal `[[agents]]` entry is often just `id = "..."` plus a model and any 
 
 For the tool-call deny rules (`[[cc_backend.pretool_rules]]`, `[[agents.backend_config.pretool_rules]]`), see **pretool-rules.md**.
 
-For durable scheduled turns, see **scheduled-tasks.md** (they live in the generated crontab).
-
 Config **cascades** (per-platform-per-agent → per-agent → per-platform-global → global → code default); pointer fields take the first non-nil, slices combine, maps overlay. Per-agent fields must stay nil to inherit — that's how the merge works.
 
 ## Backends & models
@@ -52,13 +50,13 @@ Config **cascades** (per-platform-per-agent → per-agent → per-platform-globa
 
 ## Provisioning / defaults
 
-On startup foci **seeds** embedded default character files, prompts, and skills into `~/shared/` — but only files that don't already exist; existing files are never overwritten. So shipped-skill *edits* don't propagate to installs that already have the file; only brand-new files seed on the next start.
+On startup foci **seeds** embedded default character files, prompts and skills into `~/shared/`. Character files, prompts and each skill's `SKILL.md` seed only if missing, so your edits to them persist (and later shipped edits do not reach you). Every other shipped skill file (marked `GOLDEN`) is **overwritten on each start**: edit those in the foci repo, never the deployed copy.
 
 ## Full reference
 
-Don't reconstruct config from memory — the repo ships the authoritative sources:
+Do not reconstruct config from memory. The repo ships:
 
-- **`foci.toml.example`** (and `secrets.toml.example`) at the repo root — an exhaustive, commented example config covering every table with realistic values. The fastest way to see the actual shape.
-- **`docs/CONFIG.md`** ("Foci Configuration Reference") — the full list of config keys, their types, defaults, and possible values, organised by table.
+- **`foci.toml.example`** (and `secrets.toml.example`) at the repo root: a commented example of every table.
+- **`docs/CONFIG.md`**: every key, its type, default and values, by table.
 
 For durable scheduled turns (crontab), see **scheduled-tasks.md**.

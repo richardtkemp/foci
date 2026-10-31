@@ -1,20 +1,12 @@
 <!-- GOLDEN: ships with foci (shared/skills/bouncer/). Overwritten on restart — edit in the foci repo, not the deployed ~/shared/skills copy. -->
 
-# Enforced Installation — Quarantine Setup Guide
+# Enforced installation — quarantine setup
 
-Scanning only works if the agent actually does it. This guide sets up three components that make it structurally impossible to skip scanning: a quarantine installer script, a CLI wrapper that blocks direct installs, and a config change that hides the raw install instructions.
+Agents skip the scan, even with bold warnings. So make the install command itself scan: a quarantine installer, a wrapper that blocks direct `skill-hub install`, and the raw install instructions hidden from the agent. Written for the `skill-hub` (ClawdHub) CLI; it is not installed on every host (`which skill-hub`).
 
-## The Problem
+### 1. Quarantine installer
 
-Agents forget. Even with bold warnings in TOOLS.md, an excited agent will run `skill-hub install cool-skill` and test it before scanning. The fix is making the install command itself enforce scanning.
-
-## Components
-
-### 1. Quarantine Installer Script
-
-A bash script that downloads skills to a temp directory, scans them with Bouncer, and only moves them to the live skills folder if they pass.
-
-Save this as `{workspace}/scripts/install-skill.sh`:
+Save as `{workspace}/scripts/install-skill.sh`:
 
 ```bash
 #!/usr/bin/env bash
@@ -157,32 +149,18 @@ case "$RISK" in
 esac
 ```
 
-**Requirements:** `python3`, `requests` (pip), `skill-hub` CLI, `OPENROUTER_API_KEY` env var.
+**Requirements:** `python3`, `requests`, the `skill-hub` CLI, and `OPENROUTER_API_KEY` in the environment.
 
-**Customise:** Set `SKILLBOUNCER_MODEL` env var to change the scanning model (default: `openai/gpt-4.1-mini`).
+**Differences from `SKILL.md` → "Quick scan" (check before you rely on it):**
+- A foci agent shell does not export `OPENROUTER_API_KEY` (the secret resolves only inside `foci_http_request`), so export it in the environment that runs the script.
+- `CLAWDBOT_WORKSPACE` is an OpenClaw variable that foci does not set; the script falls back to the current dir, so run it from the workspace.
+- Its default model is `openai/gpt-4.1-mini` (`SKILLBOUNCER_MODEL` overrides it), and its inline system prompt lacks the "NOT a violation" rules in `auditing-model-prompt.md`, so it may flag benign commands that the quick scan passes.
 
 ### 2. CLI Wrapper
 
-Replace the `skill-hub` binary (or its symlink) with a wrapper that blocks `install` and passes everything else through. This means even if the agent runs `skill-hub install` directly, it gets blocked and told to use the quarantine script.
-
-Find your skill-hub binary:
+Replace the `skill-hub` symlink (`ls -la $(which skill-hub)` shows the real entrypoint) with a wrapper that blocks `install` and passes everything else through:
 ```bash
-which skill-hub
-# e.g. /usr/local/bin/skill-hub
-```
-
-Find the real entrypoint:
-```bash
-ls -la $(which skill-hub)
-# e.g. -> ../lib/node_modules/skill-hub/bin/skill-hub.js
-```
-
-Replace the binary/symlink with a wrapper:
-```bash
-# Remove the symlink
 rm $(which skill-hub)
-
-# Create the wrapper (adjust paths to match your system)
 cat > /usr/local/bin/skill-hub << 'WRAP'
 #!/usr/bin/env bash
 if [ "${1:-}" = "install" ]; then
@@ -196,32 +174,8 @@ WRAP
 chmod +x /usr/local/bin/skill-hub
 ```
 
-Replace `<workspace>` and `<path-to-real-skill-hub-entrypoint>` with your actual paths.
+⚠️ **`npm update -g skill-hub` puts the symlink back.** Re-run this step after every update.
 
-⚠️ **After `npm update -g skill-hub`**, the wrapper will be overwritten by a new symlink. Re-run the setup.
+### 3. Hide the `skill-hub` skill
 
-### 3. Disable the ClawdHub Skill
-
-Disable the `skill-hub` skill in your foci config so the agent doesn't see `skill-hub install` instructions in its available skills:
-
-```json
-{
-  "skills": {
-    "entries": {
-      "skill-hub": { "enabled": false }
-    }
-  }
-}
-```
-
-This removes the skill from the agent's context. The CLI binary still works (the wrapper needs it internally), but the agent won't be prompted to use it directly.
-
-## How It All Fits Together
-
-1. Agent wants to install a skill
-2. If it tries `skill-hub install` → blocked by CLI wrapper, told to use quarantine script
-3. If it doesn't know about `skill-hub install` (skill disabled) → only sees quarantine script in TOOLS.md
-4. Quarantine script downloads to `/tmp`, scans, moves to `skills/` only if clean
-5. Skill never touches the live directory unscanned
-
-The scanning is no longer a discipline check on the agent — it's a physical part of the install pipeline.
+Keep the `skill-hub` skill out of every loaded skills dir, so the agent never sees its `skill-hub install` instructions. foci has no per-skill disable key: the skills dirs are listed in `docs/CONFIG.md` → `[skills]`. The wrapper still uses the binary.

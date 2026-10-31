@@ -1,94 +1,60 @@
 ---
 name: foci-development
-description: Developing the foci platform itself (Go server + backends). Architecture, the CC/opencode backends, the routing/delivery model, and the turn/steer/ask lifecycle — the internals you need when CODING foci, not when operating as an agent. Read the relevant subfile before changing that area.
+description: Developing the foci platform itself (Go server + backends). Landing/deploy/rollback rules, running tests, architecture, the CC/opencode backends, routing/delivery, and the turn/steer/ask lifecycle. Read the relevant subfile before changing that area.
 owner: foci
 seeded: true
 ---
 
 # Foci Development — Coding the Platform
 
-For working ON foci's Go codebase (`/home/rich/git/foci`, public `github.com/richardtkemp/foci`). This is *developer* knowledge — the internals — distinct from `foci-usage` (operating as an agent) and `foci-debugging` (investigating a running instance).
+For working ON foci's Go codebase (`/home/rich/git/foci`, public `github.com/richardtkemp/foci`). Operating as an agent is `foci-usage`; investigating a running instance is `foci-debugging`.
 
-> **This `SKILL.md` is yours to customise** (seed-if-missing — override it, add your own sibling files). The content files it lists below **ship with foci and are overwritten on restart** — edit those in the foci repo (`shared/skills/foci-development/`), not the deployed `~/shared/skills/` copy.
+> **This `SKILL.md` is yours to customise** (seed-if-missing). The subfiles below **ship with foci and are overwritten on restart**: edit them in the foci repo (`shared/skills/foci-development/`), not in `~/shared/skills/`.
 
-**Consult `docs/WIRING.md` FIRST for any foci investigation** (startup, packages, callbacks, dispatch, timers); update it whenever you REWIRE (new callback/hook/flow/timer/package). `SPEC.md` = design intent.
+**Read `docs/WIRING.md` FIRST for any foci investigation** (startup, packages, callbacks, dispatch, timers). Update it when you REWIRE (new callback/hook/flow/timer/package). `SPEC.md` = design intent.
 
 ## Where to look
 
-| Subfile | Read it when you're touching… |
+| Subfile | Read it when you touch… |
 |---|---|
-| **architecture.md** | The big picture: CC vs opencode backends, the agent/session model, session-key grammar, agent-id smart defaults. |
-| **backends.md** | Backend-specific wiring: CC cold-launch flags, the CC shell-tool set, idle timeouts, the opencode HTTP contract + session scoping, sqlite DSN pragmas. |
-| **routing.md** | Outbound delivery: the `internal/route` cascade (`ConnFor`, policies, outcomes, `Broadcast`), `send_to_session`, and how an agent-initiated/unsolicited message reaches a chat. |
-| **turns.md** | The turn lifecycle: steer vs SourceUser folding, `foci_ask` (async, persistence), and the app-vs-typed ask-capture gates. |
+| **architecture.md** | CC vs opencode backends, session-key grammar, agent-id defaults, cross-backend hooks. |
+| **backends.md** | CC cold-launch flags, idle timeouts, the opencode HTTP contract + session scoping, sqlite DSN pragmas. |
+| **routing.md** | Outbound delivery: `internal/route` (`ConnFor`, policies, outcomes, `Broadcast`), `send_to_session`, agent-initiated messages. |
+| **turns.md** | Steer vs SourceUser, `foci_ask`, app-vs-typed ask-capture gates, CC delivery tracking. |
 
-> **Adding a server↔app FAP wire frame** (a new WebSocket frame in `internal/fap/`) is a cross-repo task — the Go server half **and** the foci-client Kotlin half must stay byte-compatible. The full end-to-end chain lives in the **foci-client-dev** skill's `add-fap-frame.md` (it includes the Go steps); use it rather than reconstructing the sequence here.
+> **A new server↔app FAP wire frame** (`internal/fap/`) is cross-repo: Go and foci-client Kotlin must stay byte-compatible. Follow the **foci-client-dev** skill's `add-fap-frame.md` (it includes the Go steps).
 
-## Landing & deploy invariants (post-`make land`, #1448)
+## Landing & deploy invariants
 
-Two facts about this repo that only became true once the land-script + deploy-from-origin pieces landed (2026-07-21). They set expectations — hold them so peer churn doesn't read as breakage:
-
-- **main is reached ONLY through `make land`, on every host — the work Mac included.** Never `git push` to main directly, never `push <branch>:main`, never fast-forward local main to a branch and push it — not for a one-liner, not for a `scripts/sync-modelinfo` review branch. A direct push skips the test gate: on 2026-10-27 a sync pushed straight from the Mac put a models.jsonl on main that broke every foci build (#2583). Mac agents may land on foci main (Dick 2026-10-28), but only with `make land` from their own feature-branch worktree; it needs `flock` on PATH (`make macos-deps` installs it, see docs/INSTALL.md "Landing on a Mac") and fails closed with `LAND_RESULT: FAILED ...` if the lock is unavailable.
-- **main is unit-green by invariant.** `make land` rebases onto origin/main, re-runs the unit suite on the *combined* result, and only then pushes `HEAD:main`. So a red **unit** test on a fresh feature branch is **mine** until the base commit proves otherwise — don't reflexively blame a peer's landing. The invariant covers unit tests only: **integration greenness is NOT guaranteed** — don't expect it, and verify integration separately when it matters.
-- **deploys INTEND to track origin/main — but the guard only enforces "not behind", not "equal" (verified 2026-07-27).** `deploy`/`update` run `sync-main`, which does `git merge --ff-only origin/main` and then prints `deploying <sha> (== origin/main)`. **That message can lie.** `--ff-only` is a no-op "Already up to date" when local main is *ahead*, so it does NOT rewind — it cheerfully builds and installs **unpushed local commits** while asserting they are origin/main. This is not hypothetical: six un-landed codex commits reached production this way on 2026-07-26 (manual `merge --ff-only` into main at 23:50, `make update` at 23:51). So: **never infer what's running from that log line.** Verify the live binary against `origin/main` **and** `git log origin/main..main` (unpushed = suspect) **and** the binary's mtime. (Mechanics of the land flow itself: `writing-code`/`git-worktree.md` + MEMORY "Concurrent Sessions & Deploys".)
+- **main is reached ONLY through `make land`, on every host, the work Mac included.** Never `git push` to main, never `push <branch>:main`, never ff local main to a branch and push it, not even for a one-liner or a `scripts/sync-modelinfo` branch. A direct push skips the test gate (#2583: a Mac sync broke every build). Mac agents may land (Dick, 2026-10-28), only with `make land` from their own feature-branch worktree. It needs `flock` on PATH (`make macos-deps`; docs/INSTALL.md "Landing on a Mac") and fails closed with `LAND_RESULT: FAILED ...` without the lock.
+- **main is unit-green by invariant.** `make land` rebases onto origin/main, re-runs the unit suite on the combined result, then pushes `HEAD:main`. So a red **unit** test on a fresh feature branch is yours until the base commit proves otherwise. **Integration greenness is NOT guaranteed**: verify it separately when it matters.
+- **Deploys do not prove they run origin/main.** `deploy`/`update` run `sync-main` (`git merge --ff-only origin/main`) and print `deploying <sha> (== origin/main)`. When local main is *ahead*, ff-only is a no-op, so it builds **unpushed local commits** and still prints that line (six un-landed commits reached production this way, 2026-07-26). To know what runs, check the live binary against `origin/main`, `git log origin/main..main` (unpushed = suspect), and the binary's mtime. (Land mechanics: `writing-code`/`git-worktree.md`.)
 
 ### Rolling back a deploy to last-known-good
 
-Two walls make the obvious approach fail, in this order:
-
-1. **`make update` refuses a detached HEAD** — `sync-main` aborts with *"deploy must run on main (currently on HEAD)"*. So you **cannot** build a clean throwaway worktree at the good commit and deploy that, which is the natural first instinct.
-2. Because of the ff-only hole above, `sync-main` will **not** rewind local main for you either.
-
-So deploying an *older* commit means actually moving local `main` to it. Preconditions first — both are load-bearing:
+`make update` refuses a detached HEAD (*"deploy must run on main (currently on HEAD)"*), so you cannot deploy a throwaway worktree at the good commit. `sync-main` does not rewind main either (ff-only hole above). So you must move local `main`. Both preconditions are load-bearing:
 
 ```sh
 git -C /home/rich/git/foci status --porcelain          # MUST be empty: reset --hard would destroy a peer's WIP
 for c in <each sha being rewound>; do                  # every rewound commit must survive on another branch
   git -C /home/rich/git/foci branch --contains $c | grep -v '^\*\? *main$'
-done
+done                                                   # no other branch holds it = you orphan work
 git -C /home/rich/git/foci reset --hard <lastgood>     # e.g. origin/main
 sudo make -C /home/rich/git/foci update                # then END YOUR TURN IMMEDIATELY
 ```
 
-Gotchas: the changelog line (`foci: changelog staged (<old> -> <new>)`) is the cheapest confirmation the rollback direction was right. Afterwards, check whether the bad build left **residue** the rollback can't undo (it reverts code, not data) — e.g. rows written to `~/data/state.db` while it ran. And `git branch --contains` before resetting is the whole safety argument: if a sibling branch descends from the commits you're rewinding, they survive the reset; if none does, you are about to orphan work.
+The changelog line `foci: changelog staged (<old> -> <new>)` confirms the direction. A rollback reverts code, not data: check for residue the bad build left (e.g. rows in `~/data/state.db`).
 
-## Verifying a change (three traps)
+## Verifying a change
 
-**Running ONE package.** `make test` has no package filter and bare `go test ./<pkg>/` panics — several packages need the sandboxed HOME the Makefile sets. Use `make test-one PKG=./internal/<pkg>/ RUN=<Name>` (foci_todo #1709) — it reuses `scripts/seal-test.sh`'s exact env construction (same TESTENV/SEAL arrays as `make test`), so a fail-arm loop never has to hand-assemble FOCI_TMPDIR/GOCACHE/etc itself, which is the thing that goes silently wrong: a hand-rolled env that's missing something doesn't look like an environment failure, it looks like a test failure (or, worse, a "confirmed" flake — see #1709's repro). Do NOT hand-roll the env yourself:
+**Bare `go build`/`go test`/`go vet` are denied (Dick, 2026-09-23)**, including `/usr/bin/go …` and `go -C <dir> …`. Use `make build` (foci-gw), `make vet` (type-checks every package) and `make test-one`. All take the `/tmp/heavy` lock. `go doc`, `go list`, `go env` and `go version` still run.
 
-```
-make test-one PKG=./internal/<pkg>/ RUN=<Name>
-```
+**Run ONE package with `make test-one PKG=./internal/<pkg>/ [RUN=<Name>] [COUNT=N]`.** `make test` has no package filter, and a bare `go test` panics (packages need the sandboxed HOME). `test-one` uses the exact env of `make test` (`scripts/seal-test.sh`). Never hand-roll that env: a missing var looks like a test failure or a "confirmed" flake (#1709). Every run is `go test -v` (`V=1` does nothing, #2348). `COUNT=N` is for flake checks.
 
-`RUN` is optional — omit it to run the whole package. `PKG` is required. Every run is `go test -v`,
-so the log always has per-test PASS/FAIL/SKIP lines and `t.Logf` output, even on a PASS (`V=1` is
-accepted and does nothing; #2348). `COUNT=N` repeats the run N times, for flake checks.
+**`test-one`, `vet`, `test` and `lint` run on a Mac when one is reachable (#2525, #2526, #2544).** `.remote.mk` lists build hosts (`REMOTE_HOSTS`, in order, with or without a build lock). The bare targets rsync the checkout to the first host that answers and run there (darwin build tags), else run here. The first output line says which (`>>> test-one: running on build host pro: …` / `running LOCALLY (<why>)`). The exit code is the Mac's; its log is copied back (path printed). `local-<target>` forces this host, `remote-*` forces a Mac, `REMOTE_PICK=<name>` picks one. So `make land`'s gate runs on the Mac too: there `test` first runs `GOOS=linux go vet ./...`, and `lint` analyses the Linux build with this host's Go. CI tests main on Linux. Linux-only behaviour (procx caps, Landlock sealing, `_linux.go`) needs `local-test-one` / `local-test`. `build` and `integration` always run locally (`mk/remote.mk` says why).
 
-**`test-one`, `vet`, `test` and `lint` run on a Mac when one is reachable (#2525, #2526, #2544).** `.remote.mk` lists build
-hosts (`REMOTE_HOSTS`, in preference order, each with or without a build lock); the bare targets
-rsync the checkout to the first that answers and run there (macOS, darwin build tags); else they run
-here. The first output line says which (`>>> test-one: running on build host pro: …, no build lock`
-/ `running LOCALLY (<why>)`); the exit code is the Mac's, and its full log is copied back (path
-printed). `local-<target>` forces this host, `remote-*` force a Mac, `REMOTE_PICK=<name>`
-picks one. So `make land`'s gate (`make test`) runs on the Mac too: there `test` first runs
-`GOOS=linux go vet ./...` (Linux-only files must still compile), and `lint` analyses the Linux build
-with this host's Go; the CI runner keeps testing main on Linux. A Linux-only behaviour (procx caps,
-Landlock sealing, `_linux.go` files) needs `local-test-one` / `local-test`. `build` and
-`integration` always run locally; see `mk/remote.mk` for why.
+**Tests see a fixed environment, not your shell's (#2348).** `seal-test.sh` starts them from `env -i` with a pinned system `PATH`, the sandbox dirs, Go caches, the caller's `GO*`/`CGO_*`, and `OPTIN_VARS`. So a tool a test needs must be in a system dir (or come through an opt-in var, like `FOCI_OPENCODE_BIN`), and a new env var a test reads from the caller must be added to `OPTIN_VARS` or it never arrives. Details: `foci-debugging/test-harness.md`.
 
-**The tests see a fixed environment, not your shell's (#2348).** `seal-test.sh` starts them from
-`env -i`: a pinned system `PATH` (GOROOT/bin, then `/usr/local/sbin` … `/bin`), `USER`, the logical
-`PWD`, the sandbox dirs and Go caches, the caller's `GO*`/`CGO_*` settings, and the opt-ins in
-`OPTIN_VARS`. So the same code gets the same go test-cache key from the factory, a gate or an agent
-shell, and an unfiltered `test-one` reuses `make test`'s result. Consequences: a tool a test needs
-must be in a system dir (or passed by an opt-in var, like `FOCI_OPENCODE_BIN`), and a new env var a
-test should read from the caller must be added to `OPTIN_VARS`, or it never arrives.
+**You cannot sandbox a `foci` CLI probe.** The CLI prefers the gateway's unix socket, so `FOCI_ADDR` is ignored when you run as an agent. A `foci send` "as a test" is delivered for real.
 
-**Bare `go build`/`go test`/`go vet` are denied (Dick, 2026-09-23).** Claude Code's `permissions.deny`
-refuses them, including `/usr/bin/go …` and `go -C <dir> …`. Use `make build` (foci-gw), `make vet`
-(type-checks every package) and `make test-one`. All three take the `/tmp/heavy` lock. `go doc`,
-`go list`, `go env` and `go version` still run.
-
-**You cannot sandbox a `foci` CLI probe.** The CLI prefers the gateway's unix socket, so `FOCI_ADDR` is never read when you run as an agent — pointing it at a dead port does nothing and the command really executes. A `foci send` you run "as a test" is delivered for real.
-
-**A `cmd/foci-gw` test cannot reproduce a delegated-transport bug.** `httpTestSetup` builds an API-transport agent; where the API and delegated transports differ (e.g. `LogConversationSent` is real on one, a no-op override on the other), the test passes for the wrong reason and keeps passing with the fix removed. Run the fail-arm before believing any such test.
+**A `cmd/foci-gw` test cannot reproduce a delegated-transport bug.** `httpTestSetup` builds an API-transport agent. Where the transports differ (e.g. `LogConversationSent` is real on one, a no-op on the other), the test passes for the wrong reason. Run the fail-arm before you believe it.

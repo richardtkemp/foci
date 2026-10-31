@@ -10,7 +10,6 @@ Per-tool reference for the Claude Code (shell) backend. How `foci_*` shell funct
 - `list [--status open|started|done|dropped|active|all] [--tag T] [--priority P] [--sort F] [--reverse] [--limit N]`. **Defaults to `--limit 10`** — use `get <id>` or `--limit 100` to see the full backlog.
 - `complete|drop <id>` accept `--reason`/`--note`/`--notes` (all map to the close reason); ID forms `<id>` positional, `--id N`, or `--ids 1,2,3`.
 - **No `reopen` verb.** To reopen a closed item, write the DB directly: `UPDATE todos SET status='open', completed_at=NULL, close_reason='' WHERE agent_id=? AND id=?` on `~/<agent>/.data/todo.db`.
-- Chain with Unix tools to keep output small: `foci_todo list --status open | wc -l`.
 - **Piped output is JSONL:** piped or `$(...)`-captured `list`/`list-all`/`search`/`get` prints one JSON object per item (`id, status, priority, tags[], title, created_at, updated_at, body`; `get` = full body; closed items add `close_reason`/`closed_at`). A capped list ends `{"truncated":true,...}`; no match = empty. `--format jsonl|md` forces either; `--json` = `--format jsonl`.
 - **`--truncate N`** (list/search) caps each item's text at N chars; a cut item ends `… [+K chars: get <id>]`. Default 300 unpiped, none when piped; `0` = none.
 

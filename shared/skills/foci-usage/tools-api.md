@@ -2,26 +2,24 @@
 
 # Tools for API-loop agents
 
-A manual for agents running on foci's **own API loop** (`backend = ""` or `"api"`) rather than the Claude Code backend. Here foci itself drives the request → tool-use → response loop directly against the model endpoint.
-
-## How you call tools
-
-foci hands the model a set of **formal tool definitions** (each a name + JSON schema). You invoke a tool by emitting a **JSON tool-call** with its name and arguments; foci dispatches it, runs the real tool, and returns a tool-result message you see on the next iteration. There is no shell layer and no `foci_*` shell functions — that form exists only on the Claude Code backend. The JSON schema attached to each tool is always authoritative for exact argument names and types.
+For agents on foci's **own API loop** (`backend = ""` or `"api"`): foci drives the model directly and you call tools as JSON tool-calls. There are no `foci_*` shell functions (those exist only on the Claude Code backend). Each tool's JSON schema is authoritative for argument names and types.
 
 ## What you get that backend agents don't
 
-Because there's no Claude Code process underneath, an API-loop agent is given foci's **own** general-purpose tools as first-class definitions — the things a CC agent would instead get from CC natively:
+foci's **own** general-purpose tools, which a CC agent gets from CC instead:
 
-- **`read`** — read a file (path, with optional offset/limit).
-- **`write`** — create or overwrite a file (path, content).
-- **`edit`** — exact string replacement in a file (path, old, new).
-- **`shell`** — run a shell command (command, optional timeout).
-- **`tmux`** — persistent terminal sessions: `start|send|read|list|kill|watch|unwatch` (by name). Async inactivity notifications via `watch`.
+- **`read`**, **`write`**, **`edit`** (exact string replacement), **`shell`** — files and shell.
+- **`tmux`** — persistent terminals by name: `start|send|read|list|kill|watch|unwatch`. `watch` sends async inactivity notifications.
 - **`browser`** — headless browser actions (only if the browser feature is enabled in config).
-- **`spawn`** — sub-calls to a model in four context modes: `character` (the default: your full system prompt and tools, not this conversation — write the prompt to carry the whole task; returns directly, or runs in the background with `background=true`), `clone` (a background fork of the current session; result arrives later as a message — only when the task needs so much of the conversation that it cannot be written down), `raw` (just your prompt, cheapest isolated call), `explore` (direct, read-only, cheap model, restricted toolset for investigation). Selects a model group with `powerful|fast|cheap`. Timeout: 120 s default directly, 3600 s in the background, 86400 s max.
-- **`spawn_send`** / **`spawn_status`** — steer a running background spawn — clone or background character — (or resume a finished one with a new message), and check on your spawns: the list, or one spawn's most recent activity.
+- **`spawn`** — a sub-call to a model. Model group `powerful|fast|cheap`. Timeout: 120 s direct, 3600 s background, 86400 s max. Modes:
+- `character` (default): your system prompt and tools, not this conversation, so the prompt must carry the whole task. Direct, or background with `background=true`.
+- `clone`: a background fork of this session; the result arrives later as a message. Use it only when the task needs too much of the conversation to write down.
+- `raw`: just your prompt, the cheapest isolated call. `explore`: direct, read-only, cheap model, restricted tools.
+- **`spawn_send`** — steer a running background spawn, or resume a finished one with a new message. **`spawn_status`** — the list of your spawns, or one spawn's latest activity.
 - **`send_to_spawner`** — inside a spawn, of any mode: message the session that spawned you while you run. From a background spawn it arrives now (your spawner answers with `spawn_send`); from a spawn your spawner waits on, it is kept and heads your result.
-- **`spawn_stop`** — stop a running spawn of any mode by id (or `all`). `spawn` with `agent=<id>` runs as another agent (its character, tools and model; implies character mode; the result comes back to you, and its `send_to_chat` lands in your chat). Every spawn checks its backend's plan allowance first and is refused under `[tools] spawn_reserve_percent` (default 10%) left, unless `use_reserve=true`.
+- **`spawn_stop`** — stop a running spawn of any mode by id (or `all`).
+- **`spawn` with `agent=<id>`** runs as another agent: its character, tools and model; implies character mode. The result comes back to you, and its `send_to_chat` lands in your chat.
+- Every spawn checks its backend's plan allowance first. It is refused with less than `[tools] spawn_reserve_percent` (default 10%) left, unless `use_reserve=true`.
 - **`scratchpad`** — working-notes store (only if configured).
 - **`task_list`** — structured task items (only if configured).
 - **`bitwarden_search` / `bitwarden_unlock`** — vault access (only if configured).
@@ -31,7 +29,7 @@ Because there's no Claude Code process underneath, an API-loop agent is given fo
 
 ## Shared tools (also on the backend, as shell functions)
 
-Same behaviour as for backend agents, called as JSON tool-calls instead of `foci_*` shell functions. Each tool's schema lists its parameters and is authoritative; below are only the behaviours the schema doesn't tell you.
+Same behaviour as the backend's `foci_*` functions. Below are only the behaviours the schema does not tell you.
 
 - **`ask`** — async: posts and returns at once; answers arrive as a new message, so **end your turn**. No question cap. Request IDs must be **colon-free**. `quiz` questions hide the answer until revealed — see the `quiz` skill. A grader executable gets `{request_id, questions, answers}` on stdin; its output replaces the raw answers.
 - **`send_to_chat`** — always your **own** chat (destination comes from your session); use `send_to_session` for another. Your reply text is already delivered, so use it for attachments, not to repeat a reply.

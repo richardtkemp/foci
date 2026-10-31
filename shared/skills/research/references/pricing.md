@@ -1,29 +1,14 @@
 <!-- GOLDEN: ships with foci (shared/skills/research/). Overwritten on restart — edit in the foci repo, not the deployed ~/shared/skills copy. -->
 
-# OpenRouter Perplexity Cost and Latency
+# OpenRouter Perplexity cost
 
-> **Latency, timeout guidance and the prefer-a-structured-feed rule live in `SKILL.md`** — they are
-> operational rules you need before you call anything, so they belong in the file you open first.
-> Kept here only as the measured backing: `sonar-deep-research` blew a 600s timeout on 2026-08-06 and
-> surfaced ~25 min later as an async `Client.Timeout` while basic `sonar` answered in seconds; token
-> pricing is identical between the tiers, so wall-clock is the differentiating cost.
+Prices change. For current numbers, read the `pricing` field of each model in `https://openrouter.ai/api/v1/models` (USD per token).
 
-## Per-Model Pricing
+Snapshot from that API, 2026-10-31:
 
-| Model | Input | Output | Context |
-|-------|-------|--------|---------|
-| perplexity/sonar | $2/M tokens | $8/M tokens | 128K |
-| perplexity/sonar-deep-research | $2/M tokens | $8/M tokens | 128K |
+| Model | Input | Output | Per web search |
+|-------|-------|--------|------------|
+| `perplexity/sonar` | $1/M tokens | $1/M tokens | $0.005 |
+| `perplexity/sonar-deep-research` | $2/M tokens | $8/M tokens | $0.005 |
 
-## Cost Examples
-
-- Basic query (500 input + 200 output tokens): ~$0.003
-- Longer research (2000 input + 1500 output tokens): ~$0.016
-- Deep research (3000 input + 3000 output tokens): ~$0.030
-
-## Why OpenRouter?
-
-- No separate Perplexity API account needed
-- Centralized billing alongside other models
-- Same pricing as direct Perplexity API
-- Integrates seamlessly with existing OpenRouter setup
+Deep research also runs many searches and long reasoning per call, so one call costs far more than a basic one. Latency and timeout rules are in `SKILL.md`.

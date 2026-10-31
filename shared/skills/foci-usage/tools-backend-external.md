@@ -10,7 +10,6 @@ Per-tool reference for the Claude Code (shell) backend. How `foci_*` shell funct
 - HTTP Basic auth: `--basic-auth 'user:password'` resolves templates, then base64-encodes, e.g. `--basic-auth '{{secret:NAME}}:'` for an API key as username. Don't hand-build `Authorization: Basic {{secret:…}}`: the secret would go unencoded.
 - `--save-to <path>` writes the body to disk (prints `Saved N bytes to <path>`); `--save-from-json-path data.0.url` extracts a field first (and decodes `data:` URIs). `--background` runs async.
 - Output is the body only by default. `--include-headers` prepends the `HTTP <status>` line and every response header (e.g. to read Content-Length, Retry-After or Location) — listed in `--help` like every other flag.
-- Filter responses with jq so only what you need hits context: `foci_http_request URL | jq '.[].name'`.
 
 ### `foci_web_fetch` — URL → clean Markdown
 - Positional `url`. Readability extraction → Markdown; `--raw` returns HTML. SSRF-safe. Not for downloading files (use `foci_http_request`); large pages truncated.
@@ -19,7 +18,7 @@ Per-tool reference for the Claude Code (shell) backend. How `foci_*` shell funct
 - Positional `query`. Returns titles/URLs/descriptions. Requires a Brave API key configured.
 
 ### `foci_summary` — extract from a file via a cheap model
-- `foci_summary "what does this define?" --file path` (or pipe: `… | foci_summary "categorise these"`). For targeted extraction, **not** dumping a whole file. Great for piping noisy data through a cheap model before it hits your context.
+- `foci_summary "what does this define?" --file path` (or pipe: `… | foci_summary "categorise these"`). For targeted extraction, **not** dumping a whole file.
 
 ### `foci_browser` — drive a real headless browser
 - Positional `action`, e.g. `foci_browser navigate --url https://example.com`, then `foci_browser click --ref s1e5`. The `browser` skill has the full action and parameter reference.
