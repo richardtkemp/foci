@@ -738,3 +738,23 @@ func TestMemorySearchLabelsSubagentHits(t *testing.T) {
 		}
 	}
 }
+
+// TestFormatSearchResultLabelsFileTime pins #2640: a memory-file hit's time is
+// the file's last-modified time, not when the matched text happened, so the
+// header must say so. A conversation hit's time IS the message time and stays
+// bare.
+func TestFormatSearchResultLabelsFileTime(t *testing.T) {
+	ts := time.Date(2026, 10, 28, 19, 56, 0, 0, time.Local)
+
+	var file strings.Builder
+	formatSearchResult(&file, memory.Result{Source: "clutch", Path: "2026-10-28.md", Snippet: "s", Time: ts}, "")
+	if want := "[clutch updated 2026-10-28 19:56] 2026-10-28.md: s\n"; file.String() != want {
+		t.Errorf("file hit header = %q, want %q", file.String(), want)
+	}
+
+	var conv strings.Builder
+	formatSearchResult(&conv, memory.Result{Source: "conversation", Path: "sess", RowID: 7, Snippet: "s", Time: ts}, "")
+	if want := "[conversation 2026-10-28 19:56] sess#7: s\n"; conv.String() != want {
+		t.Errorf("conversation hit header = %q, want %q", conv.String(), want)
+	}
+}

@@ -307,7 +307,7 @@ type memoryMessageJSON struct {
 	Match   bool   `json:"match,omitempty"` // the row the search hit or the lookup named
 }
 
-const memorySearchJSONOutput = `a JSON array of hits: [{"source", "kind"?, "time"?, "path", "row_id"?, "ref"?, "snippet", "context"?}], [] when nothing matched. "ref" (session#rowID) is set on conversation hits; "context" (with lines) is the surrounding messages [{"session", "row_id", "time", "kind"?, "text", "match"?}]. A session#rowID query prints that message array directly. Message text is full-length, not cut as in the text output.`
+const memorySearchJSONOutput = `a JSON array of hits: [{"source", "kind"?, "time"?, "path", "row_id"?, "ref"?, "snippet", "context"?}], [] when nothing matched. "time" is the message time on conversation hits, but on file hits it is when the file was last written, not when the matched text happened. "ref" (session#rowID) is set on conversation hits; "context" (with lines) is the surrounding messages [{"session", "row_id", "time", "kind"?, "text", "match"?}]. A session#rowID query prints that message array directly. Message text is full-length, not cut as in the text output.`
 
 func memorySearchJSON(results []memory.Result, kinds map[memory.ConversationRef]string, convReader *memory.ConversationReader, lines int) (ToolResult, error) {
 	hits := make([]memorySearchHitJSON, 0, len(results))
@@ -347,10 +347,18 @@ func memoryMessagesJSON(msgs []memory.ConversationMessage, session string, rowID
 // formatSearchResult writes a single search result line. kind is the
 // conversation row's kind (memory.ConversationMessage.Kind), shown after the
 // source as "[conversation/subagent ...]"; "" for everything else.
+//
+// A conversation hit's time is the message's own time. Any other hit's time is
+// when the file (or todo) was last written, not when the matched text happened,
+// so it is labelled "updated" (#2640): a bare time there was read as the time of
+// the event the snippet describes.
 func formatSearchResult(sb *strings.Builder, r memory.Result, kind string) {
 	ts := ""
 	if !r.Time.IsZero() {
 		ts = " " + r.Time.Format("2006-01-02 15:04")
+		if r.Source != "conversation" {
+			ts = " updated" + ts
+		}
 	}
 	path := r.Path
 	if r.Source == "conversation" && r.RowID > 0 {

@@ -181,6 +181,8 @@ Conversation messages are indexed as they arrive, in both backends:
 
 `memory_search` labels such hits by kind (`[conversation/subagent ...]`, `[conversation/reflection ...]`, `[conversation/background/subagent ...]`); the kind is looked up from `conversation.db` at display time, so the search indexes need no rebuild. Context expansion (`lines`, or a `session#rowID` query) stays within the hit's thread: a subagent hit shows the rest of that subagent (same `subagent_group`), and a chat hit leaves subagent rows out. Rows recorded before #2060 carry no tags.
 
+The time in a hit header means different things by source (#2640). On a conversation hit it is the message time (`[conversation 2026-10-28 12:07]`). On a memory-file hit it is the file's last-modified time, which is not when the matched text happened, so the header says so: `[clutch updated 2026-10-28 19:56]`. The `--json` `time` field keeps its name; its output description states the same distinction.
+
 ---
 
 ## Memory Formation
