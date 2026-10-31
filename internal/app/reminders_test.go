@@ -87,10 +87,11 @@ func TestReminders_WakeShowsOnItsOwnChatAndTracksState(t *testing.T) {
 	if dueAt, _ := got[0][0]["dueAtMs"].(float64); dueAt <= 0 {
 		t.Errorf("dueAtMs = %v, want a positive unix ms", got[0][0]["dueAtMs"])
 	}
-	// Chat B's list was sent once (first push after start, empty) and the other
-	// agent's chat never.
-	if gb := reminderLists(t, cb); len(gb) != 1 || len(gb[0]) != 0 {
-		t.Errorf("chat B frames = %v, want one empty list", gb)
+	// Chat B never had a wake, so its unchanged empty list is not sent, even on
+	// the first push after a start (#2602: that write went to every chat of the
+	// agent); the other agent's chat never.
+	if gb := reminderLists(t, cb); len(gb) != 0 {
+		t.Errorf("chat B frames = %v, want none (its list did not change)", gb)
 	}
 	if gotO := reminderLists(t, co); len(gotO) != 0 {
 		t.Errorf("other agent's chat got %v, want nothing", gotO)
@@ -261,5 +262,53 @@ func TestReminders_ClosedLeafWakeShowsOnItsNewOwner(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// After a restart the push cache is empty, but a device's copy comes from the
+// roster it got on hello. A chat whose wake the roster already advertised is
+// not sent the same list again when another chat's wakes change (#2602).
+func TestReminders_RosterSeedsThePushCache(t *testing.T) {
+	h := newTestHub()
+	rs := withReminderStore(t, h, "ag", nil)
+	registerFakeAgent(h, "ag")
+
+	a := h.ensureBinding(nil, "ag", "conv-a")
+	b := h.ensureBinding(nil, "ag", "conv-b")
+	// A wake that was pending before the "restart": set with the hook off, so
+	// no frame records it in the cache.
+	rs.SetOnChange(nil)
+	idA, err := rs.AddWake("ag", a.sessionKey, "pending across restart", "30m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs.SetOnChange(func() { NotifyRemindersChanged("ag") })
+
+	// The device reconnects: the roster advertises chat A's wake.
+	_ = h.agentRoster()
+	ca := fakeClient()
+	a.attach(ca)
+	cb := fakeClient()
+	b.attach(cb)
+	drain(t, ca)
+	drain(t, cb)
+
+	// A change on chat B only.
+	if _, err := rs.AddWake("ag", b.sessionKey, "on b", "1h"); err != nil {
+		t.Fatal(err)
+	}
+	if g := reminderLists(t, ca); len(g) != 0 {
+		t.Errorf("chat A frames = %v, want none (the roster already sent its list)", g)
+	}
+	if g := reminderLists(t, cb); len(g) != 1 || len(g[0]) != 1 {
+		t.Errorf("chat B frames = %v, want one list with its wake", g)
+	}
+
+	// Chat A's own change still goes out.
+	if err := rs.Dismiss(idA); err != nil {
+		t.Fatal(err)
+	}
+	if g := reminderLists(t, ca); len(g) != 1 || len(g[0]) != 0 {
+		t.Errorf("after dismiss chat A frames = %v, want one empty list", g)
 	}
 }

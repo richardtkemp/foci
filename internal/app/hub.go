@@ -1070,9 +1070,12 @@ func (h *Hub) agentRoster() []fap.AgentInfo {
 		// Pending wake reminders (#2600), listed live from the store like the
 		// cache expiry above, so a reconnect after a restart sees the truth. A
 		// depth leaf's conversation carries its own (#2646).
-		if rs := remindersFor(b.agentID, b.sessionKey); len(rs) > 0 {
+		// The list becomes the push cache too (#2602): the device now holds it.
+		rs := remindersFor(b.agentID, b.sessionKey)
+		if len(rs) > 0 {
 			ci.Reminders = rs
 		}
+		b.noteRemindersAdvertised(rs)
 		if dc := memoDefaultChat(idx, defaultChatByAgent, b.agentID); dc != 0 && dc == b.chatID {
 			ci.IsDefault = true
 		}
@@ -2420,11 +2423,11 @@ type convBinding struct {
 
 	cacheExpiryMs int64 // last-emitted prompt-cache expiry (unix ms); seeds the roster snapshot, 0 = unknown/cold
 
-	// reminders is the last Reminders list sent (#2600), the push-dedup cache
-	// for setReminders; remindersSent is false until the first send. The
-	// roster does not read it: it lists from the store (see agentRoster).
-	reminders     []fap.PendingReminder
-	remindersSent bool
+	// reminders is the devices' copy of the pending wake list (#2600): the
+	// last Reminders list sent, or the last one the roster advertised (#2602).
+	// The push-dedup cache for setReminders; empty after a restart. The roster
+	// lists from the store, never from this.
+	reminders []fap.PendingReminder
 
 	// depthRoot is set on a depth-mode leaf's own conversation (#2611): the
 	// tree root's conversation id, from chat_metadata depth_root. Such a

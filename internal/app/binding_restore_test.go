@@ -353,10 +353,10 @@ func TestConvBindingFieldCensus(t *testing.T) {
 		"subagentDetail": true, "subagents": true, "spawns": true, "spawnShells": true, "waitingDetail": true,
 		"activitySent": true, "cacheExpiryMs": true, "lastCmdHash": true,
 		"lastMsgID": true, "readAfterTurn": true,
-		// reminders/remindersSent are setReminders' push-dedup cache (#2600):
-		// unset after a restart means the first change always sends, and the
-		// roster lists from the reminder store, never from this cache.
-		"reminders": true, "remindersSent": true,
+		// reminders is setReminders' push-dedup cache (#2600): empty after a
+		// restart, then reseeded by each roster the devices get on hello
+		// (#2602); the roster lists from the reminder store, never from it.
+		"reminders": true,
 		// leaf (the depth manager's hooks) is nil on every binding ensureBinding
 		// builds: only registerDepthLeaf sets it, which the depth manager's
 		// Restore re-runs from its own records after a restart (#2588, #2611).

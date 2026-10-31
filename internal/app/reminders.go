@@ -132,23 +132,34 @@ func (h *Hub) pushReminders(agentID string) {
 }
 
 // setReminders records the conversation's pending wake list and sends a
-// Reminders frame when it differs from the last one sent (dedup, so a change
-// on one chat does not write a frame into every chat of the agent). The first
-// call after a restart always sends, because the cache starts unset and the
-// client's copy (from the last roster) is unknown here.
+// Reminders frame when it differs from the last list the devices were given
+// (dedup, so a change on one chat does not write a frame into every chat of
+// the agent). The cache starts empty after a restart, and agentRoster records
+// each list it advertises on hello (noteRemindersAdvertised), so the first
+// change after a restart reaches only the chats whose list actually moved: a
+// chat that never had a wake is not sent [] (#2602).
 func (b *convBinding) setReminders(list []fap.PendingReminder) {
 	if list == nil {
 		list = []fap.PendingReminder{}
 	}
 	b.mu.Lock()
-	changed := !b.remindersSent || !slices.Equal(list, b.reminders)
+	changed := !slices.Equal(list, b.reminders)
 	if changed {
 		b.reminders = list
-		b.remindersSent = true
 	}
 	convID := b.convID
 	b.mu.Unlock()
 	if changed {
 		b.send(fap.Reminders{ConversationID: convID, Reminders: list})
 	}
+}
+
+// noteRemindersAdvertised records list as the devices' copy of this
+// conversation's wakes: the roster just sent it on hello, so a later push of
+// the same list would only repeat it. nil means none. Caller may hold h.mu
+// (lock order h.mu → b.mu).
+func (b *convBinding) noteRemindersAdvertised(list []fap.PendingReminder) {
+	b.mu.Lock()
+	b.reminders = list
+	b.mu.Unlock()
 }
