@@ -432,11 +432,15 @@ func unixSocketTransport(sockPath string) *http.Transport {
 	}
 }
 
+// executablePath is os.Executable, swappable in tests.
+var executablePath = os.Executable
+
 // resolveGWSocket returns the gateway Unix socket path if one is available.
-// Resolution order: --socket flag > FOCI_GW_SOCK env var > default path.
+// Resolution order: --socket flag > FOCI_GW_SOCK env var > the install
+// root's socket ($FOCI_HOME, else $HOME) > the socket beside the binary.
 // Returns empty string if no socket is found. main checks an explicit
 // --socket first (checkExplicitSocket), so only the env var and the
-// default path can come back empty here and fall back to TCP.
+// default paths can come back empty here and fall back to TCP.
 func resolveGWSocket(flagValue string) string {
 	sock := envDefault(flagValue, "FOCI_GW_SOCK")
 	if sock != "" {
@@ -445,14 +449,23 @@ func resolveGWSocket(flagValue string) string {
 		}
 		return ""
 	}
-	// Default: <install root>/data/foci-gw.sock ($FOCI_HOME, else $HOME)
-	home, err := fociroot.Dir()
-	if err != nil {
-		return ""
+	if home, err := fociroot.Dir(); err == nil {
+		if sock = filepath.Join(home, "data", "foci-gw.sock"); isSocket(sock) {
+			return sock
+		}
 	}
-	sock = filepath.Join(home, "data", "foci-gw.sock")
-	if isSocket(sock) {
-		return sock
+	// The binary's own install root, <root>/bin/foci → <root>/data (#2577).
+	// On macOS the daemon's root is ~/foci, set as FOCI_HOME in its
+	// LaunchAgent; a login shell or ssh session sets neither FOCI_HOME nor
+	// HOME=~/foci, so the lookup above misses. Last, and only on a live
+	// socket: the NUC's CLI is /usr/local/bin/foci, whose parent holds none.
+	if exe, err := executablePath(); err == nil {
+		if real, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = real
+		}
+		if sock = filepath.Join(filepath.Dir(filepath.Dir(exe)), "data", "foci-gw.sock"); isSocket(sock) {
+			return sock
+		}
 	}
 	return ""
 }

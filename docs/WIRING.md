@@ -3163,7 +3163,7 @@ Endpoints for external integration. All endpoints accept an optional `agent` par
 
 ## CLI Tool (`cmd/foci/`)
 
-Separate binary (`go build ./cmd/foci`) that wraps the HTTP gateway endpoints for scripts and cron jobs. Auto-discovers the gateway Unix socket at `~/data/foci-gw.sock` (`FOCI_GW_SOCK` env var or `--socket` flag) for same-user auth with no API key. Falls back to TCP + `FOCI_API_KEY` for remote/cross-user access. See [docs/CLI.md](CLI.md) for the full command reference, flags, environment variables, and cron integration examples.
+Separate binary (`go build ./cmd/foci`) that wraps the HTTP gateway endpoints for scripts and cron jobs. Auto-discovers the gateway Unix socket at `<install root>/data/foci-gw.sock`, else beside its own binary (`<root>/bin/foci` → `<root>/data`, so a macOS shell without `FOCI_HOME` still finds `~/foci`, #2577) (`FOCI_GW_SOCK` env var or `--socket` flag) for same-user auth with no API key. Falls back to TCP + `FOCI_API_KEY` for remote/cross-user access. See [docs/CLI.md](CLI.md) for the full command reference, flags, environment variables, and cron integration examples.
 
 **`foci todo done [-a agent] <id> <reason...>`** (`cmd/foci/cmd_todo.go`) — closes one todo of the named agent over `POST /todo/done`. It is the script-facing counterpart of the agent todo tool's `complete`, for services with no agent exec (the factory's landing). The reason goes byte for byte (base64 on the wire). The CLI posts once with no retry; a failure is one stderr line naming the todo and a non-zero exit.
 

@@ -30,9 +30,10 @@
 # everything foci and its agents start (codex, opencode, gh, git, ssh, Homebrew
 # tools) sees your own logins and config. The Claude Code foci runs is the
 # exception: foci-gw gives it its own config folder, $FOCI_HOME/.claude
-# (CLAUDE_CONFIG_DIR), separate from your interactive ~/.claude. To use the foci
-# CLI from your own shell, export FOCI_HOME=~/foci (e.g. in ~/.zprofile), or run
-#   FOCI_HOME=~/foci ~/foci/bin/foci <command>
+# (CLAUDE_CONFIG_DIR), separate from your interactive ~/.claude. The foci CLI
+# needs no FOCI_HOME from your own shell: it finds the gateway socket beside its
+# own binary (~/foci/bin/foci -> ~/foci/data/foci-gw.sock), e.g.
+#   ~/foci/bin/foci <command>
 #
 # What is NOT available on macOS (see docs/INSTALL.md "macOS"): the
 # foci-secrets group isolation (agents run as you and can read secrets.toml),

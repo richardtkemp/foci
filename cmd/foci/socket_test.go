@@ -291,3 +291,78 @@ func TestCLIExplicitSocketNeverFallsBackToTCP(t *testing.T) {
 		t.Errorf("%d request(s) reached the TCP gateway, want none", n)
 	}
 }
+
+// TestResolveGWSocket_BesideBinary is the macOS case (#2577): the daemon's
+// install root is ~/foci (FOCI_HOME in its LaunchAgent), but a login shell or
+// ssh session sets neither FOCI_HOME nor HOME=~/foci. The CLI, installed as
+// <root>/bin/foci, must still find <root>/data/foci-gw.sock.
+func TestResolveGWSocket_BesideBinary(t *testing.T) {
+	root := shortSockRoot(t)
+	os.MkdirAll(filepath.Join(root, "bin"), 0755)
+	os.MkdirAll(filepath.Join(root, "data"), 0755)
+	sockPath := filepath.Join(root, "data", "foci-gw.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	t.Setenv("HOME", t.TempDir()) // the user's real home: no data/ socket
+	t.Setenv("FOCI_HOME", "")
+	t.Setenv("FOCI_GW_SOCK", "")
+	orig := executablePath
+	executablePath = func() (string, error) { return filepath.Join(root, "bin", "foci"), nil }
+	t.Cleanup(func() { executablePath = orig })
+
+	if got := resolveGWSocket(""); got != sockPath {
+		t.Errorf("resolveGWSocket() = %q, want %q (socket beside the binary)", got, sockPath)
+	}
+}
+
+// TestResolveGWSocket_InstallRootBeatsBinary proves the beside-the-binary
+// lookup is only a fallback: when $FOCI_HOME/$HOME has a live socket (the NUC,
+// where the CLI is /usr/local/bin/foci and the root is /home/foci), that socket
+// wins.
+func TestResolveGWSocket_InstallRootBeatsBinary(t *testing.T) {
+	home := shortSockRoot(t)
+	os.MkdirAll(filepath.Join(home, "data"), 0755)
+	homeSock := filepath.Join(home, "data", "foci-gw.sock")
+	ln1, err := net.Listen("unix", homeSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln1.Close() }()
+
+	root := shortSockRoot(t)
+	os.MkdirAll(filepath.Join(root, "data"), 0755)
+	ln2, err := net.Listen("unix", filepath.Join(root, "data", "foci-gw.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln2.Close() }()
+
+	t.Setenv("HOME", home)
+	t.Setenv("FOCI_HOME", "")
+	t.Setenv("FOCI_GW_SOCK", "")
+	orig := executablePath
+	executablePath = func() (string, error) { return filepath.Join(root, "bin", "foci"), nil }
+	t.Cleanup(func() { executablePath = orig })
+
+	if got := resolveGWSocket(""); got != homeSock {
+		t.Errorf("resolveGWSocket() = %q, want %q (install root first)", got, homeSock)
+	}
+}
+
+// shortSockRoot returns a short temp dir for a socket root. t.TempDir() embeds
+// the test name, and a long name pushes <dir>/data/foci-gw.sock past macOS's
+// 104-byte sun_path limit (bind: invalid argument), as in #804. The dir sits
+// in $TMPDIR, which the sealed test sandbox allows, without the test name.
+func shortSockRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "gs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}

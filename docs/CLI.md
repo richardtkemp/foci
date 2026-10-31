@@ -6,7 +6,7 @@ The `foci` CLI is a lightweight client that talks to the `foci-gw` HTTP gateway.
 go build ./cmd/foci
 ```
 
-All commands communicate over HTTP to the gateway. The CLI auto-discovers the gateway's Unix socket at `~/data/foci-gw.sock` (same-user auth via kernel peer credentials — no API key needed). Falls back to TCP at `FOCI_ADDR` (default `127.0.0.1:18791`) with `FOCI_API_KEY` for remote/cross-user access.
+All commands communicate over HTTP to the gateway. The CLI auto-discovers the gateway's Unix socket at `<install root>/data/foci-gw.sock` (`$FOCI_HOME`, else `$HOME`; failing that, beside its own binary: `<root>/bin/foci` → `<root>/data/foci-gw.sock`, the macOS case, #2577) (same-user auth via kernel peer credentials — no API key needed). Falls back to TCP at `FOCI_ADDR` (default `127.0.0.1:18791`) with `FOCI_API_KEY` for remote/cross-user access.
 
 ---
 
@@ -17,7 +17,7 @@ These flags are accepted by all commands. On the commands that take free text (`
 | Flag | Short | Env var | Description |
 |------|-------|---------|-------------|
 | `--help` | `-h` | | Show usage for any command (e.g. `foci send -h`). |
-| `--socket <path>` | | `FOCI_GW_SOCK` | Gateway Unix socket path. Auto-detected from `~/data/foci-gw.sock`. No API key needed. An explicit `--socket` path that does not exist or is not a socket is an error naming the path; the CLI never falls back to TCP from it. (`FOCI_GW_SOCK` and the default path do fall back to TCP when no socket is there.) |
+| `--socket <path>` | | `FOCI_GW_SOCK` | Gateway Unix socket path. Auto-detected from `<install root>/data/foci-gw.sock`, then from beside the binary (see above). No API key needed. An explicit `--socket` path that does not exist or is not a socket is an error naming the path; the CLI never falls back to TCP from it. (`FOCI_GW_SOCK` and the default path do fall back to TCP when no socket is there.) |
 | `--addr <host:port>` | | `FOCI_ADDR` | Gateway TCP address. Default: `127.0.0.1:18791`. Used when no Unix socket is available and no `--socket` was given. |
 | `--agent <id>` | `-a` | `FOCI_AGENT` | Target a specific agent. Default: first configured agent — `todo done` requires one (todo ids are per agent). |
 | `--session <sel>` | `-s` | `FOCI_SESSION` | Target session selector: full session key, session name, or chat alias. Empty = the agent's default session. Send/branch/score read the env var; `command` accepts `-s` but does **not** read `FOCI_SESSION` (see `command`). |

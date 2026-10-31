@@ -242,8 +242,10 @@ settings, `CLAUDE.md`, MCP servers, plugins and transcripts, separate from your
 interactive `~/.claude`. Claude Code keys its keychain login by that folder,
 so it also has its own login (see Install above).
 
-To use the `foci` CLI from your own shell, `export FOCI_HOME=~/foci` (for
-example in `~/.zprofile`), or run `FOCI_HOME=~/foci ~/foci/bin/foci <command>`.
+The `foci` CLI finds the running gateway from your own shell with no setup:
+when `$FOCI_HOME`/`$HOME` has no `data/foci-gw.sock`, it uses the one beside
+its own binary (`~/foci/bin/foci` → `~/foci/data/foci-gw.sock`). Put
+`~/foci/bin` on your `PATH`, or run `~/foci/bin/foci <command>`.
 
 The daemon `PATH` is `~/foci/bin`, `~/.local/bin` (Claude Code), the system
 directories, `~/.opencode/bin` (opencode's own installer) and Homebrew.
