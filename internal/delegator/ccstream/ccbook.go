@@ -20,9 +20,12 @@
 //     completed — as `stopless` at its last-seen counts when a later id appears
 //     in the same file or the tail closes. Stopless calls ARE counted by CC, so
 //     they are in the remainder subtraction — except a call a subagent's stop
-//     aborted mid-stream (#2399): a bare "[Request interrupted by user]" record
-//     right after its line, no tool_result between, means CC never finished the
-//     request and counts it nowhere, so it books `interrupted` like a main call.
+//     aborted mid-stream: a bare "[Request interrupted by user]" record after
+//     its line, with no api-request record between (#2584; CC 2.1.300+ writes
+//     one per request) — or, in an older transcript with none, no tool_result
+//     between (#2399) — means CC never finished the request and counts it
+//     nowhere, so it books `interrupted` like a main call. A tool_result alone
+//     proves nothing: CC runs the tool while the response still streams.
 //     A Workflow run's agents are subagents of the turn that invoked the Workflow (#2130): the run is
 //     opened as an agent on that turn, and each of its agents under it.
 //   - The REMAINDER — what CC's cumulative modelUsage counts and no call record
@@ -225,20 +228,26 @@ type ccSignal int
 
 const (
 	ccSignalNone ccSignal = iota
-	// ccSignalToolResult: a tool_result user record. The assistant message
-	// before it streamed to its end, as the tool ran on its tool_use block.
+	// ccSignalToolResult: a tool_result user record. The tool ran on the
+	// assistant message before it. That message had streamed its tool_use
+	// block, but NOT necessarily to its end: CC runs a tool as soon as its
+	// block closes, while the response still streams (#2584).
 	ccSignalToolResult
 	// ccSignalInterrupt: CC's "[Request interrupted by user]" record, written
 	// when a subagent is stopped. The bare form (not "... for tool use") is the
 	// abort of a request in flight.
 	ccSignalInterrupt
+	// ccSignalRequest: an api-request record (CC 2.1.300+), written as CC
+	// sends a request (#2584).
+	ccSignalRequest
 )
 
 // ccInterruptText is the text of the user record CC writes when it aborts a
 // request in flight.
 const ccInterruptText = "[Request interrupted by user]"
 
-// parseCCSignal classifies a user record of a subagent transcript.
+// parseCCSignal classifies a user or api-request record of a subagent
+// transcript.
 func parseCCSignal(raw []byte) ccSignal {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 || raw[0] != '{' {
@@ -250,7 +259,13 @@ func parseCCSignal(raw []byte) ccSignal {
 			Content json.RawMessage `json:"content"`
 		} `json:"message"`
 	}
-	if json.Unmarshal(raw, &r) != nil || r.Type != "user" {
+	if json.Unmarshal(raw, &r) != nil {
+		return ccSignalNone
+	}
+	if r.Type == "api-request" {
+		return ccSignalRequest
+	}
+	if r.Type != "user" {
 		return ccSignalNone
 	}
 	var blocks []struct {
@@ -345,10 +360,12 @@ type ccAgent struct {
 	window  int
 	open    bool    // its tail is running
 	pending *ccLine // latest line of an id not yet completed
-	// ran: a tool_result came after pending's line, so its message streamed to
-	// its end (the tool ran on it). Without one, an interrupt record that
-	// follows aborted pending's request in flight (#2399).
-	ran bool
+	// ran: a tool_result came after pending's line (the tool ran on it).
+	// sent: an api-request came after pending's line, so pending's request
+	// had finished and CC had counted it before sending the next.
+	// Which one decides whether an interrupt aborted pending: see subSignal.
+	ran  bool
+	sent bool
 }
 
 // ccBoundary is one compact_boundary.
@@ -410,6 +427,10 @@ type ccBook struct {
 	done    map[string]bool // ids booked, or dropped, in this process
 	agents  map[string]*ccAgent
 	runTurn map[int]string
+	// requests: the subagents whose transcript records each request it sends
+	// (an api-request record, CC 2.1.300+, #2584). Kept apart from agents,
+	// as the first record comes before the line that creates an agent.
+	requests map[string]bool
 
 	counted    map[int]map[string]*countedSum // counted bookings per window and model
 	boundaries map[int][]ccBoundary
@@ -514,7 +535,7 @@ func newCCBook(l *accounting.Ledger, lg *log.ComponentLogger, session, agentID s
 		session: session, agentID: agentID, launch: launch.UTC(),
 		scope: fmt.Sprintf("%s@%d", session, launch.UnixNano()), // ScopeLaunch parses it
 		named: map[string]*namedCall{}, held: map[string]*ccLine{}, done: map[string]bool{},
-		agents: map[string]*ccAgent{}, runTurn: map[int]string{},
+		agents: map[string]*ccAgent{}, runTurn: map[int]string{}, requests: map[string]bool{},
 		counted: map[int]map[string]*countedSum{}, boundaries: map[int][]ccBoundary{}, refusals: map[int][]ccRefusal{},
 		webTools: map[int]bool{}, mainWin: map[string]int{},
 		baseline:   maps.Clone(baseline),
@@ -699,16 +720,26 @@ func (c *ccBook) subLine(agent, turn string, l *ccLine) {
 		return
 	}
 	a.pending = l
-	a.ran = false
+	a.ran, a.sent = false, false
 }
 
-// subSignal handles a tool_result or interrupt record of a subagent's
-// transcript. An interrupt right after an assistant line with no tool_result
-// between them aborted that request mid-stream: CC never finished it, so
-// modelUsage counts it nowhere, like an interrupted main-thread call, and it
-// is booked priced and kept out of the remainder subtraction (#2399). One
-// whose tool ran is complete and counted, final record or not.
+// subSignal handles a tool_result, api-request or interrupt record of a
+// subagent's transcript. A bare interrupt aborts the request in flight. When
+// that is the pending call's own request, CC never finished it, so modelUsage
+// counts it nowhere, like an interrupted main-thread call: it is booked
+// priced and kept out of the remainder subtraction (#2399).
+//
+// Whose request was in flight: in a transcript that records each request
+// (CC 2.1.300+), pending's own unless an api-request came after its line
+// (#2584). CC runs a tool while the response still streams, so a tool_result
+// does not settle it: a stop 0–0.2 s after one cut the request off uncounted,
+// and every stop after the next api-request left it counted (probe, CC
+// 2.1.314; incident q39 2026-10-27 on 2.1.306). An older transcript has only
+// the tool_result to go on, the #2399 rule: a call whose tool ran counts.
 func (c *ccBook) subSignal(agent string, sig ccSignal) {
+	if sig == ccSignalRequest {
+		c.requests[agent] = true
+	}
 	a := c.agents[agent]
 	if a == nil || a.pending == nil {
 		return
@@ -716,8 +747,14 @@ func (c *ccBook) subSignal(agent string, sig ccSignal) {
 	switch sig {
 	case ccSignalToolResult:
 		a.ran = true
+	case ccSignalRequest:
+		a.sent = true
 	case ccSignalInterrupt:
-		if a.ran {
+		finished := a.ran
+		if c.requests[agent] {
+			finished = a.sent
+		}
+		if finished {
 			return
 		}
 		c.bookCall(a.pending, a.turn, agent, a.window, accounting.FinalityInterrupted)

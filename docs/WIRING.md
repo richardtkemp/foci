@@ -1885,9 +1885,12 @@ as is a re-append of a call already booked; a named call seen only at a stopless
 `interrupted` — booked and priced from it at the result's settle, excluded from the
 remainder; a subagent call books on its spawning turn, `completed` on its stop_reason line or
 `stopless` at the next id in its file or its tail's close — or `interrupted`, excluded from the
-remainder, when a bare `[Request interrupted by user]` record follows its line with no
-tool_result between (the request was aborted mid-stream; CC counts it nowhere, #2399; the
-transcript's user records reach the book as `ccSubSignal`) — billed at its own line's time (so a
+remainder, when a bare `[Request interrupted by user]` record aborts its own request: in a
+transcript that records each request (`api-request`, CC 2.1.300+), when no `api-request`
+came after its line (#2584: CC runs a tool while the response still streams, so a tool_result
+does not prove the request finished); in an older one, when no tool_result came between
+(#2399). CC counts such a request nowhere. The transcript's user and `api-request` records
+reach the book as `ccSubSignal` — billed at its own line's time (so a
 subagent running past midnight books each call to its own day), and a subagent line billed
 before the process launched is skipped — which is also why a reactivation tail, re-reading
 the transcript from byte 0, books no earlier run again (#2057, #2087); a Workflow run is an

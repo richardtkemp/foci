@@ -576,8 +576,69 @@ func TestSubagentAbortedMidStreamIsInterrupted(t *testing.T) {
 	}
 }
 
-// TestParseCCSignal pins the two user records of a subagent transcript the
-// ledger reads, as CC 2.1.296 wrote them (#2399).
+// TestSubagentStoppedAfterToolRanIsInterrupted is #2584. CC runs a tool as soon
+// as its tool_use block closes, while the response is still streaming, so a
+// tool_result does not mean the request finished. A transcript that records
+// each request (an api-request record, CC 2.1.300+) says which did: a request
+// whose next api-request never came was cut off, and modelUsage counts it
+// nowhere. Shape and counts from clutch q39, 2026-10-27 04:40Z (api_calls
+// 94042): its line, its tool_result, then the bare interrupt 1.2 s later; the
+// probe in notes/2584.md reproduced it and the counted control below.
+func TestSubagentStoppedAfterToolRanIsInterrupted(t *testing.T) {
+	tb := newTestBook(t, nil)
+	tb.tailOpened("agent-a", "T1")
+	tb.subSignal("agent-a", ccSignalRequest)
+	tb.subLine("agent-a", "T1", line("done", opus, tb.clock, "", 2, 3, 47347, 4302, 0))
+	tb.subSignal("agent-a", ccSignalToolResult)
+	tb.subSignal("agent-a", ccSignalRequest) // "done" streamed to its end
+	tb.subLine("agent-a", "T1", line("cut", opus, tb.clock, "", 2, 8, 51649, 2276, 0))
+	tb.subSignal("agent-a", ccSignalToolResult) // its Write ran mid-stream
+	tb.subSignal("agent-a", ccSignalInterrupt)  // stopped before the next request
+	tb.tailClosed("agent-a")
+	// CC counts "done" (true output 40) and nothing of "cut".
+	tb.result(map[string]ModelUsage{opus: {InputTokens: 2, OutputTokens: 40, CacheReadInputTokens: 47347, CacheCreationInputTokens: 4302}}, 0, tb.clock)
+	tb.advance(time.Second)
+
+	calls := tb.calls(t)
+	done, cut := find(calls, "done"), find(calls, "cut")
+	if done == nil || done.finality != accounting.FinalityStopless {
+		t.Errorf("done = %+v, want stopless (the next request went out, CC counts it)", done)
+	}
+	if cut == nil || cut.finality != accounting.FinalityInterrupted || !cut.cost.Valid || cut.cost.Float64 <= 0 {
+		t.Errorf("cut = %+v, want an interrupted, priced call", cut)
+	}
+	if n := tb.alarmsOf(accounting.InvNegativeRemainder); n != 0 {
+		t.Errorf("negative remainder alarmed: %+v", tb.alarms)
+	}
+}
+
+// TestSubagentStoppedAfterNextRequestIsCounted is #2584's control: the stop
+// landed after the next api-request (probe delays 0.4–1.5 s, each time with
+// modelUsage equal to the transcript sums), so the call before it finished and
+// CC counts it; the request in flight has no line and nothing to book.
+func TestSubagentStoppedAfterNextRequestIsCounted(t *testing.T) {
+	tb := newTestBook(t, nil)
+	tb.tailOpened("agent-a", "T1")
+	tb.subSignal("agent-a", ccSignalRequest)
+	tb.subLine("agent-a", "T1", line("ran", opus, tb.clock, "", 2, 16, 27176, 59, 0))
+	tb.subSignal("agent-a", ccSignalToolResult)
+	tb.subSignal("agent-a", ccSignalRequest)
+	tb.subSignal("agent-a", ccSignalInterrupt)
+	tb.tailClosed("agent-a")
+	tb.result(map[string]ModelUsage{opus: {InputTokens: 2, OutputTokens: 51, CacheReadInputTokens: 27176, CacheCreationInputTokens: 59}}, 0, tb.clock)
+	tb.advance(time.Second)
+
+	if ran := find(tb.calls(t), "ran"); ran == nil || ran.finality != accounting.FinalityStopless {
+		t.Errorf("ran = %+v, want stopless (CC counts it)", ran)
+	}
+	if n := tb.alarmsOf(accounting.InvNegativeRemainder); n != 0 {
+		t.Errorf("negative remainder alarmed: %+v", tb.alarms)
+	}
+}
+
+// TestParseCCSignal pins the records of a subagent transcript the ledger
+// reads: the two user records as CC 2.1.296 wrote them (#2399), and the
+// api-request record CC 2.1.300+ writes before each request (#2584).
 func TestParseCCSignal(t *testing.T) {
 	cases := []struct {
 		name, raw string
@@ -589,6 +650,9 @@ func TestParseCCSignal(t *testing.T) {
 		{"prompt string", `{"type":"user","message":{"role":"user","content":"do the thing"}}`, ccSignalNone},
 		{"assistant", `{"type":"assistant","message":{"id":"m","content":[]}}`, ccSignalNone},
 		{"torn", `{"type":"us`, ccSignalNone},
+		{"api request", `{"type":"api-request","sessionId":"s","agentId":"a","id":"8b2f785e","timestamp":"2026-10-27T04:39:31.120Z","version":"2.1.306","querySource":"agent:builtin:general-purpose","params":"{}"}`, ccSignalRequest},
+		{"api request blob", `{"type":"api-request-blob","message":{"content":[{"type":"text","text":"x"}]}}`, ccSignalNone},
+		{"api request shape", `{"type":"api-request-shape","shapeHash":"h"}`, ccSignalNone},
 	}
 	for _, c := range cases {
 		if got := parseCCSignal([]byte(c.raw)); got != c.want {
