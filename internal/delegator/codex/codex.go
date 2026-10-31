@@ -188,6 +188,10 @@ type Backend struct {
 	// used to fall through to the owner's chat (2026-10-29). Guarded by
 	// threadMapMu.
 	childParents map[string]*Backend
+	// unclaimed holds the deferred lost-line WARNs (unclaimed.go), on the
+	// owner only: lines for a thread that matches no session yet, which codex
+	// sends for a fork or resume before foci can register it (#2700).
+	unclaimed unclaimedLines
 }
 
 var sharedPool = struct {
@@ -353,6 +357,8 @@ func (b *Backend) registerThread(fociSessionID, codexThreadID string) {
 	p.threadSessions[codexThreadID] = fociSessionID
 	p.threadBackends[codexThreadID] = b
 	p.threadMapMu.Unlock()
+	// Its early lines (sent before this registration) were not lost.
+	b.claimUnclaimed(codexThreadID)
 
 	// Outside the map lock: this writes a file, and nothing reads it through
 	// threadMapMu.
@@ -373,6 +379,7 @@ func (b *Backend) registerChild(childThreadID string, parent *Backend) {
 	}
 	p.childParents[childThreadID] = parent
 	p.threadMapMu.Unlock()
+	b.claimUnclaimed(childThreadID)
 }
 
 // parentOfChild returns the facade a child thread was registered to, or nil.

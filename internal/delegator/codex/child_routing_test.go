@@ -4,6 +4,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"foci/internal/delegator"
 	"foci/internal/log"
@@ -169,16 +170,22 @@ func TestOwnersOwnChildApprovalIsPrompted(t *testing.T) {
 // TestUnknownThreadGoesToOwnerAsLost pins ruling 2: a line for a thread that
 // is no session's and no known subagent's is still handed to the owner (so a
 // prompt is not stranded), with a WARN naming the method and thread. A closed
-// parent's children count as unknown. thread/started is exempt from the WARN:
-// a facade's own thread/started can precede the response that registers it.
+// parent's children count as unknown. The WARN is deferred until the thread
+// has stayed unclaimed for unclaimedGrace (#2700). thread/started is exempt
+// from the WARN: a facade's own thread/started can precede the response that
+// registers it.
 func TestUnknownThreadGoesToOwnerAsLost(t *testing.T) {
 	owner, peer, oc, pc, _ := newSharedPair(t)
+	stopUnclaimedTimer(t, owner)
 	warns := captureWarns(t)
 
 	owner.dispatch([]byte(`{"id":80,"method":"item/commandExecution/requestApproval","params":{"threadId":"stray-thread","turnId":"t","itemId":"cmd-4","command":"ls"}}`))
 	if len(oc.prompts) != 1 || oc.prompts[0] != "cmd-4" {
 		t.Errorf("owner prompts = %v, want the stray approval handed to the owner", oc.prompts)
 	}
+	// The WARN waits out the grace (#2700); a thread still unclaimed after it
+	// is reported.
+	owner.flushUnclaimed(time.Now().Add(unclaimedGrace+time.Second), false)
 	var lost string
 	for _, w := range warns() {
 		if strings.Contains(w, "lost message") {
@@ -200,8 +207,10 @@ func TestUnknownThreadGoesToOwnerAsLost(t *testing.T) {
 		t.Errorf("owner prompts = %v, want the orphaned child's approval handed to the owner", oc.prompts)
 	}
 
+	owner.flushUnclaimed(time.Now().Add(unclaimedGrace+time.Second), false)
 	before := len(warns())
 	owner.dispatch([]byte(`{"method":"thread/started","params":{"thread":{"id":"fresh-thread"}}}`))
+	owner.flushUnclaimed(time.Now().Add(unclaimedGrace+time.Second), false)
 	if after := warns(); len(after) != before {
 		t.Errorf("thread/started for an unregistered thread WARNed: %v", after[before:])
 	}

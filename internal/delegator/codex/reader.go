@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"foci/internal/delegator"
 )
@@ -92,14 +93,18 @@ func (b *Backend) dispatch(line []byte) {
 			}
 			// Neither a session's thread nor a known child: nothing says whose
 			// it is. It still goes to the owner (dropping could strand a
-			// prompt nobody answers), but loudly, naming where it came from.
-			// thread/started is the exception: a facade's own thread/started
+			// prompt nobody answers), and is reported lost, naming where it
+			// came from — but only if the thread is still unclaimed after
+			// unclaimedGrace (noteUnclaimed). codex sends a fork's and a
+			// resumed thread's first notifications before the response that
+			// lets foci register the thread, so an immediate WARN fired on
+			// every fork and resume (#2700).
+			// thread/started is never reported: a facade's own thread/started
 			// can arrive before the thread/start or thread/resume response that
 			// registers it, and a fork's before its branch facade resumes it;
 			// the owner treats a thread/started that is not its root as a no-op.
 			if env.Method != "thread/started" {
-				b.logWarnf("lost message: %s for thread %s matches no session and no known subagent; "+
-					"handing it to the app-server owner (session %s), whose chat may show it", env.Method, id, b.startOpts.SessionKey)
+				b.noteUnclaimed(id, env.Method, time.Now())
 			}
 			// Whatever the owner shows the user from this line (message text,
 			// a turn error, an approval prompt) is marked with where it came
@@ -436,6 +441,9 @@ func (b *Backend) onReaderStopped(err error) {
 			f.completeTurn(&delegator.TurnResult{Text: text})
 		}
 	}
+
+	// No thread can be registered any more: report the unclaimed ones now.
+	b.stopUnclaimed()
 
 	b.rpcMu.Lock()
 	for id, ch := range b.pendingRPC {
