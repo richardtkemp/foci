@@ -15,6 +15,7 @@ func newTestMonitor(threshold int) (*GoroutineMonitor, *int) {
 		},
 		numGoroutinesFn: func() int { return count },
 	}
+	m.enabled.Store(true)
 	return m, &count
 }
 
@@ -147,7 +148,7 @@ func TestNewGoroutineMonitor(t *testing.T) {
 func TestGoroutineMonitor_DefaultCountFn(t *testing.T) {
 	// Verifies that checkOnce falls back to runtime.NumGoroutine when no count function is
 	// injected, and that the real (small) count stays below a generous threshold without warning.
-	m := NewGoroutineMonitor(GoroutineMonitorConfig{Interval: time.Second, Threshold: 1 << 20})
+	m := NewGoroutineMonitor(GoroutineMonitorConfig{Enabled: true, Interval: time.Second, Threshold: 1 << 20})
 
 	m.checkOnce()
 
@@ -213,5 +214,59 @@ func TestGoroutineMonitor_DynamicExtra_StillCatchesLeak(t *testing.T) {
 	defer m.mu.Unlock()
 	if !m.warnFired {
 		t.Error("expected warning: count 200 exceeds static 100 + dynamic 50")
+	}
+}
+
+func TestGoroutineMonitor_DisabledNeverWarns(t *testing.T) {
+	// #2649: the monitor is off by default. A disabled monitor must not warn
+	// however high the count goes.
+	m := NewGoroutineMonitor(GoroutineMonitorConfig{Interval: time.Second, Threshold: 100})
+	count := 10000
+	m.numGoroutinesFn = func() int { return count }
+
+	m.checkOnce()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.warnFired {
+		t.Error("expected no warning from a monitor built without Enabled")
+	}
+}
+
+func TestGoroutineMonitor_SetEnabledLive(t *testing.T) {
+	// The enable key is hot: SetEnabled toggles the check on a running
+	// monitor. Off→on starts warning; on→off stops it and clears the dedup.
+	m := NewGoroutineMonitor(GoroutineMonitorConfig{Interval: time.Second, Threshold: 100})
+	m.numGoroutinesFn = func() int { return 150 }
+
+	m.checkOnce()
+	if m.warnFired {
+		t.Fatal("disabled monitor warned")
+	}
+
+	m.SetEnabled(true)
+	if !m.enabled.Load() {
+		t.Fatal("enabled = false after SetEnabled(true)")
+	}
+	m.checkOnce()
+	m.mu.Lock()
+	fired := m.warnFired
+	m.mu.Unlock()
+	if !fired {
+		t.Fatal("expected warning after SetEnabled(true)")
+	}
+
+	m.SetEnabled(false)
+	m.mu.Lock()
+	fired = m.warnFired
+	m.mu.Unlock()
+	if fired {
+		t.Fatal("expected SetEnabled(false) to clear the warn dedup")
+	}
+	m.checkOnce()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.warnFired {
+		t.Error("expected no warning after SetEnabled(false)")
 	}
 }

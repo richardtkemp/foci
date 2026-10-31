@@ -131,6 +131,11 @@ var (
 		"debug.log_api_key_suffix",
 	}
 
+	// Goroutine monitor on/off (#2649): a derived handle, the running
+	// *resources.GoroutineMonitor. Registered by setupGoroutineMonitor, which
+	// runs after registerLiveAppliers. Interval and threshold stay restart-only.
+	liveApplyGoroutineMonitorAddrs = []string{"resources.goroutine_monitor_enabled"}
+
 	liveApplyPeriodicAddrs = []string{
 		"keepalive.enabled", "keepalive.interval", "keepalive.prompt", "keepalive.max_user_idle",
 		"keepalive.warm_open_app_chats",

@@ -21,7 +21,7 @@ import (
 func TestLiveApplyCoversHotFields(t *testing.T) {
 	t.Parallel()
 	covered := map[string]bool{}
-	for _, addrs := range [][]string{liveApplyLoggingAddrs, liveApplyDebugAddrs, liveApplyPeriodicAddrs, liveApplyResolvedAddrs, liveApplyWarningAddrs, liveApplyNudgeAddrs, liveApplySkillsAddrs} {
+	for _, addrs := range [][]string{liveApplyLoggingAddrs, liveApplyDebugAddrs, liveApplyPeriodicAddrs, liveApplyResolvedAddrs, liveApplyWarningAddrs, liveApplyNudgeAddrs, liveApplySkillsAddrs, liveApplyGoroutineMonitorAddrs} {
 		for _, a := range addrs {
 			if covered[a] {
 				t.Errorf("duplicate applier address %s", a)

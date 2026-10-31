@@ -152,7 +152,10 @@ func countDiscordBots(cfg *config.Config) int {
 	return count
 }
 
-// setupGoroutineMonitor starts the goroutine count monitor if configured. Returns a stop function (may be nil).
+// setupGoroutineMonitor starts the goroutine count monitor. Returns a stop function (may be nil).
+// The warn check is off unless resources.goroutine_monitor_enabled is set (#2649); the monitor
+// runs either way so that key applies live (applier registered here, not in registerLiveAppliers,
+// because the monitor is built after that call). An interval <= 0 still means no monitor at all.
 func setupGoroutineMonitor(cfg *config.Config, numAgents int, ctx context.Context) func() {
 	interval, _ := time.ParseDuration(cfg.Resources.GoroutineMonitorInterval)
 	if interval <= 0 {
@@ -169,6 +172,7 @@ func setupGoroutineMonitor(cfg *config.Config, numAgents int, ctx context.Contex
 		threshold = 30 + 25*numAgents + 5*numBots + 5*numDiscord
 	}
 	mon := resources.NewGoroutineMonitor(resources.GoroutineMonitorConfig{
+		Enabled:   config.DerefBool(cfg.Resources.GoroutineMonitorEnabled),
 		Interval:  interval,
 		Threshold: threshold,
 		// App (FAP) sockets are dynamic — phones connect/disconnect at will, so
@@ -178,6 +182,12 @@ func setupGoroutineMonitor(cfg *config.Config, numAgents int, ctx context.Contex
 		DynamicExtra: func() int { return 5 * app.ActiveConnCount() },
 	})
 	mon.Start(ctx)
+	if gwLiveApply != nil {
+		gwLiveApply.register(liveApplyGoroutineMonitorAddrs, func(fresh *config.Config) error {
+			mon.SetEnabled(config.DerefBool(fresh.Resources.GoroutineMonitorEnabled))
+			return nil
+		})
+	}
 	return mon.Stop
 }
 

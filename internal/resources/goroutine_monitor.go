@@ -4,6 +4,7 @@ import (
 	"context"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"foci/internal/log"
@@ -19,6 +20,10 @@ var (
 )
 
 type GoroutineMonitorConfig struct {
+	// Enabled is the initial state of the warn check (#2649: off by default).
+	// The ticker runs either way; while disabled each tick does nothing, so
+	// SetEnabled can turn it on live without starting a goroutine.
+	Enabled   bool
 	Interval  time.Duration
 	Threshold int // static base: warn when goroutine count exceeds this
 
@@ -35,6 +40,8 @@ type GoroutineMonitorConfig struct {
 type GoroutineMonitor struct {
 	cfg GoroutineMonitorConfig
 
+	enabled atomic.Bool
+
 	mu        sync.Mutex
 	warnFired bool
 
@@ -47,7 +54,24 @@ type GoroutineMonitor struct {
 
 // NewGoroutineMonitor creates a goroutine monitor.
 func NewGoroutineMonitor(cfg GoroutineMonitorConfig) *GoroutineMonitor {
-	return &GoroutineMonitor{cfg: cfg}
+	m := &GoroutineMonitor{cfg: cfg}
+	m.enabled.Store(cfg.Enabled)
+	return m
+}
+
+// SetEnabled turns the warn check on or off while the monitor runs (the live
+// applier for resources.goroutine_monitor_enabled). Turning it off clears the
+// warn dedup, so a later enable starts fresh.
+func (m *GoroutineMonitor) SetEnabled(on bool) {
+	if m.enabled.Swap(on) == on {
+		return
+	}
+	if !on {
+		m.mu.Lock()
+		m.warnFired = false
+		m.mu.Unlock()
+	}
+	goroutine_monitorLog.Infof("enabled=%v", on)
 }
 
 // Start launches the background monitoring goroutine.
@@ -74,7 +98,7 @@ func (m *GoroutineMonitor) Start(ctx context.Context) {
 			}
 		}
 	}()
-	goroutine_monitorLog.Infof("started (interval=%v, threshold=%d)", m.cfg.Interval, m.cfg.Threshold)
+	goroutine_monitorLog.Infof("started (interval=%v, threshold=%d, enabled=%v)", m.cfg.Interval, m.cfg.Threshold, m.enabled.Load())
 }
 
 // Stop stops the monitor and waits for the goroutine to exit.
@@ -89,6 +113,9 @@ func (m *GoroutineMonitor) Stop() {
 
 // checkOnce runs a single check cycle.
 func (m *GoroutineMonitor) checkOnce() {
+	if !m.enabled.Load() {
+		return
+	}
 	getCount := m.numGoroutinesFn
 	if getCount == nil {
 		getCount = runtime.NumGoroutine

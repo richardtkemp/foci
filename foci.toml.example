@@ -687,6 +687,7 @@ bind = "127.0.0.1"
 # memory_warn_percent = 25
 # memory_kill_percent = 40
 # memory_pressure_threshold = 10.0
+# goroutine_monitor_enabled = false     # off by default; applies live
 # goroutine_monitor_interval = "60s"
 # goroutine_monitor_threshold = 0        # 0 = auto: 30 + 25×agents + 5×telegram_bots
 
