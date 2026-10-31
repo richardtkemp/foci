@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"foci/internal/turnevent"
 )
@@ -618,6 +619,9 @@ type spawnTextSink struct {
 	parent, id string
 	// sawText is set once any assistant text has passed through.
 	sawText atomic.Bool
+	// mu guards blocks: the text blocks forwarded so far, in order.
+	mu     sync.Mutex
+	blocks []string
 }
 
 func (s *spawnTextSink) Emit(ctx context.Context, ev turnevent.Event) {
@@ -625,6 +629,9 @@ func (s *spawnTextSink) Emit(ctx context.Context, ev turnevent.Event) {
 	case turnevent.TextBlock:
 		if e.Text != "" {
 			s.sawText.Store(true)
+			s.mu.Lock()
+			s.blocks = append(s.blocks, e.Text)
+			s.mu.Unlock()
 			if s.obs != nil {
 				s.obs.SpawnText(s.parent, s.id, e.Text)
 			}
@@ -633,19 +640,50 @@ func (s *spawnTextSink) Emit(ctx context.Context, ev turnevent.Event) {
 	case turnevent.ToolCall:
 		s.tracker.appendLog(s.parent, s.id, "tool", toolCallSummary(e))
 	case turnevent.TurnComplete:
-		if e.FinalText != "" {
+		s.mu.Lock()
+		rest := unstreamedText(e.FinalText, s.blocks)
+		s.mu.Unlock()
+		if rest != "" {
 			s.sawText.Store(true)
 			if s.obs != nil {
-				s.obs.SpawnText(s.parent, s.id, e.FinalText)
+				s.obs.SpawnText(s.parent, s.id, rest)
 			}
 			// A backend that already sent the answer as a text block
 			// (Claude Code) is not logged twice.
-			if s.tracker.lastLogText(s.parent, s.id, "text") != e.FinalText {
-				s.tracker.appendLog(s.parent, s.id, "text", e.FinalText)
+			if s.tracker.lastLogText(s.parent, s.id, "text") != rest {
+				s.tracker.appendLog(s.parent, s.id, "text", rest)
 			}
 		}
 	}
 	s.BufferSink.Emit(ctx, ev)
+}
+
+// unstreamedText is the part of a turn's FinalText that its text blocks did
+// not already show. A delegated backend (Claude Code, codex) streams every
+// assistant message as a block and then reports FinalText as all of them
+// joined, with a blank line between messages and nothing between the blocks of
+// one message; codex can append an error after them. So when FinalText starts
+// with the blocks in order, separated only by whitespace, only what follows
+// them is new (#2598). A FinalText that is just the last block repeats it.
+// Otherwise (the API path, whose answer arrives only here) FinalText is all
+// new.
+func unstreamedText(final string, blocks []string) string {
+	if len(blocks) == 0 {
+		return final
+	}
+	if strings.TrimSpace(final) == strings.TrimSpace(blocks[len(blocks)-1]) {
+		return ""
+	}
+	rest := final
+	for _, b := range blocks {
+		b = strings.TrimSpace(b)
+		rest = strings.TrimLeftFunc(rest, unicode.IsSpace)
+		if !strings.HasPrefix(rest, b) {
+			return final
+		}
+		rest = rest[len(b):]
+	}
+	return strings.TrimSpace(rest)
 }
 
 // toolCallSummary is a tool call as one log line: its name and its arguments,

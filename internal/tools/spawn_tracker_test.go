@@ -153,6 +153,72 @@ func TestSpawnTextSink_ForwardsBlocksAndAnswer(t *testing.T) {
 	}
 }
 
+// A delegated backend (Claude Code, codex) streams every assistant message as
+// a text block, then ends the turn with FinalText = all of them joined by a
+// blank line. The chit already holds each block, so the join must not be added
+// again as one long block (#2598: seen live on spawn-26ac4830890a8749, frame
+// 245029 = frames 244951..245028 joined by "\n\n").
+func TestSpawnTextSink_AccumulatedFinalTextNotRepeated(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		blocks []string
+		final  string
+		want   []string
+	}{
+		{"claude code: messages joined by a blank line",
+			[]string{"Checks done.", "Worktree is up.", "🏆 Landed."},
+			"Checks done.\n\nWorktree is up.\n\n🏆 Landed.",
+			[]string{"Checks done.", "Worktree is up.", "🏆 Landed."}},
+		{"claude code: two blocks of one message, joined with no separator",
+			[]string{"Hello ", "world!", "Done."},
+			"Hello world!\n\nDone.",
+			[]string{"Hello ", "world!", "Done."}},
+		{"codex: an error appended after the streamed messages is still shown",
+			[]string{"Working.", "Half done."},
+			"Working.\n\nHalf done.\n\nError: turn failed",
+			[]string{"Working.", "Half done.", "Error: turn failed"}},
+		{"api: the answer arrives only on TurnComplete",
+			[]string{"step"},
+			"answer",
+			[]string{"step", "answer"}},
+		{"api: an answer that only ends like the last block is still shown",
+			[]string{"Done."},
+			"All checks passed. Done.",
+			[]string{"Done.", "All checks passed. Done."}},
+		{"a FinalText that is just the last block is not repeated",
+			[]string{"working", "answer"},
+			"answer",
+			[]string{"working", "answer"}},
+		{"nothing streamed: the whole answer is shown",
+			nil,
+			"one\n\ntwo",
+			[]string{"one\n\ntwo"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			obs := &recordingSpawnObserver{}
+			tr := NewSpawnTracker()
+			buf := turnevent.NewBufferSink()
+			sink := &spawnTextSink{BufferSink: buf, obs: obs, tracker: tr, parent: "p", id: "s"}
+			tr.addDirect("p", RunningSpawn{ID: "s"}, func() {}, time.Minute, "prompt")
+			ctx := context.Background()
+			for _, b := range tc.blocks {
+				sink.Emit(ctx, turnevent.TextBlock{Text: b, Phase: turnevent.PhaseIntermediate})
+			}
+			sink.Emit(ctx, turnevent.TurnComplete{FinalText: tc.final})
+			var want []string
+			for _, w := range tc.want {
+				want = append(want, "s="+w)
+			}
+			if got := strings.Join(obs.texts, "|"); got != strings.Join(want, "|") {
+				t.Errorf("chit texts = %q\nwant        %q", obs.texts, want)
+			}
+			if buf.FinalText() != tc.final {
+				t.Errorf("buffer final = %q, want the full FinalText (the spawn's result)", buf.FinalText())
+			}
+		})
+	}
+}
+
 func TestSpawnDescription(t *testing.T) {
 	long := strings.Repeat("é", 150)
 	for in, want := range map[string]string{

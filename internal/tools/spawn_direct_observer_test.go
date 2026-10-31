@@ -57,9 +57,10 @@ func TestDirectSpawn_ObserverShowsTeedText(t *testing.T) {
 	if obs.parents[0] != "dobs1/c1" || obs.prompts[0] != "Look\n  around" {
 		t.Errorf("started under %q with prompt %q", obs.parents[0], obs.prompts[0])
 	}
-	if want := []string{id + "=working", id + "=answer", id + "=answer"}; strings.Join(obs.texts, "|") != strings.Join(want, "|") {
-		// TextBlock + TurnComplete each forward, as spawnTextSink does for a
-		// background spawn; runDirect adds nothing once text has streamed.
+	if want := []string{id + "=working", id + "=answer"}; strings.Join(obs.texts, "|") != strings.Join(want, "|") {
+		// Each TextBlock forwards; a TurnComplete that only repeats the
+		// streamed text adds nothing (#2598), and runDirect adds nothing once
+		// text has streamed.
 		t.Errorf("texts = %v, want %v", obs.texts, want)
 	}
 	if len(obs.ended) != 1 || obs.ended[0] != id {
