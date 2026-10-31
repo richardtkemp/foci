@@ -761,9 +761,10 @@ func TestL2_SlashCommands_ModeBareShowsCurrent(t *testing.T) {
 		t.Fatalf("/mode bare did not produce a Permission-mode header\nsent so far:\n%v\nstderr tail:\n%s",
 			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
 	}
-	// displayMode("") returns "normal (default)".
-	if !strings.Contains(text, "normal") {
-		t.Errorf("expected current mode to surface as %q in the reply, got: %q", "normal", text)
+	// No override set: displayMode reports the backend default (449819781
+	// moved the mode names into each backend's Spec).
+	if !strings.Contains(text, "backend default") {
+		t.Errorf("expected current mode to surface as %q in the reply, got: %q", "backend default", text)
 	}
 }
 
@@ -837,7 +838,7 @@ func TestL2_SlashCommands_ModeInvalidValueReturnsError(t *testing.T) {
 			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
 	}
 
-	// Bare /mode after the invalid attempt must still be "normal".
+	// Bare /mode after the invalid attempt must still be the backend default.
 	_ = h.TelegramStub().DrainSent(token)
 	pushTelegramText(t, h, "alpha", 7017, "/mode")
 	text = waitForSendMessageText(t, h, token, 15*time.Second, "Permission mode")
@@ -845,8 +846,8 @@ func TestL2_SlashCommands_ModeInvalidValueReturnsError(t *testing.T) {
 		t.Fatalf("/mode bare-query after invalid did not produce header\nsent so far:\n%v",
 			peekSendMessageTexts(h, token))
 	}
-	if !strings.Contains(text, "normal") {
-		t.Errorf("expected mode to still be %q after invalid attempt, got: %q", "normal", text)
+	if !strings.Contains(text, "backend default") {
+		t.Errorf("expected mode to still be %q after invalid attempt, got: %q", "backend default", text)
 	}
 }
 
