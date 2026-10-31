@@ -2,7 +2,10 @@ package sqlite
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -48,11 +51,10 @@ func OpenInit(path string, stmts ...string) (*sql.DB, error) {
 	return OpenInitPragmas(path, nil, stmts...)
 }
 
-// OpenInitPragmas is OpenInit with extra connection pragmas on the DSN. Use it
-// for any pragma that must reach the database as part of opening it rather than
-// as a statement afterwards — auto_vacuum(incremental) is the case this exists
-// for: it can only be set while the file is empty, so running it as a post-open
-// Exec (after the CREATEs) silently does nothing.
+// OpenInitPragmas is OpenInit with extra connection pragmas on the DSN. Every
+// connection the pool opens runs them, so they must be cheap per-connection
+// settings (foreign_keys, query_only). A pragma that only matters when the file
+// is created (auto_vacuum) does NOT belong here: use OpenInitCreatePragmas.
 func OpenInitPragmas(path string, pragmas []string, stmts ...string) (*sql.DB, error) {
 	db, err := openDSN(path, pragmas...)
 	if err != nil {
@@ -65,4 +67,39 @@ func OpenInitPragmas(path string, pragmas []string, stmts ...string) (*sql.DB, e
 		}
 	}
 	return db, nil
+}
+
+// OpenInitCreatePragmas is OpenInit for a database whose file-header pragmas
+// (auto_vacuum(incremental) is the case this exists for) must be set when the
+// file is created and never again.
+//
+// Such a pragma can only take effect while the file is empty, so it has to reach
+// the database as a connection pragma, before the CREATEs (#1942). But it must
+// not stay on the pool's DSN: on a non-empty file, auto_vacuum takes the WRITE
+// lock, so every new pooled connection — a plain read included — queued behind
+// any writer and failed with SQLITE_BUSY after busy_timeout (#2698). So when the
+// file is absent or empty, one single-connection open applies createPragmas and
+// runs stmts; the returned pool then opens with the standard pragmas only.
+func OpenInitCreatePragmas(path string, createPragmas []string, stmts ...string) (*sql.DB, error) {
+	fi, err := os.Stat(path)
+	isNew := errors.Is(err, fs.ErrNotExist) || (err == nil && fi.Size() == 0)
+	if isNew && len(createPragmas) > 0 {
+		db, err := openDSN(path, createPragmas...)
+		if err != nil {
+			return nil, err
+		}
+		// One connection, so the CREATEs run on the connection that applied the
+		// pragmas (openDSN's Ping left it idle in the pool).
+		db.SetMaxOpenConns(1)
+		for _, s := range stmts {
+			if _, err := db.Exec(s); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("init %s: %w", filepath.Base(path), err)
+			}
+		}
+		if err := db.Close(); err != nil {
+			return nil, fmt.Errorf("init %s: %w", filepath.Base(path), err)
+		}
+	}
+	return OpenInitPragmas(path, nil, stmts...)
 }

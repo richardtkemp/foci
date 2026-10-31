@@ -1,6 +1,8 @@
 package app
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -531,5 +533,91 @@ func TestFrameStoreAutoVacuumIncremental(t *testing.T) {
 	// 0 = NONE, 1 = FULL, 2 = INCREMENTAL.
 	if av != 2 {
 		t.Errorf("auto_vacuum = %d, want 2 (INCREMENTAL); incremental_vacuum cannot reclaim anything at %d", av, av)
+	}
+}
+
+// TestFrameStoreFreshConnReadsPastWriter pins #2698: a read on an existing
+// app-frames.db must never wait for the write lock. Every pooled connection
+// used to run auto_vacuum(incremental) from the DSN, and that pragma takes the
+// write lock on a non-empty file, so a burst of replay reads that made the pool
+// open new connections queued behind any writer and failed with SQLITE_BUSY
+// after busy_timeout (5s). The test holds a write transaction on a separate
+// connection, drops the store's idle connections so Range must open a fresh
+// one, and requires Range to return every row well inside the busy timeout.
+func TestFrameStoreFreshConnReadsPastWriter(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "frames.db")
+	s, err := newFrameStore(path, 30*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for i := int64(1); i <= 3; i++ {
+		seed(s, "c1", i, 1000+i)
+	}
+
+	// A second process-style writer holding the write lock.
+	w, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	ctx := context.Background()
+	wc, err := w.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wc.Close()
+	if _, err := wc.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		t.Fatalf("begin immediate: %v", err)
+	}
+	defer func() { _, _ = wc.ExecContext(ctx, `ROLLBACK`) }()
+	if _, err := wc.ExecContext(ctx, `INSERT INTO app_frames (conv_id, seq, wire, sent_ms) VALUES ('c2', 1, 'x', 1)`); err != nil {
+		t.Fatalf("writer insert: %v", err)
+	}
+
+	// Force the next read onto a brand-new pooled connection.
+	s.db.SetMaxIdleConns(0)
+
+	start := time.Now()
+	got := s.Range("c1", 0, 10)
+	took := time.Since(start)
+	if len(got) != 3 {
+		t.Fatalf("Range on a fresh connection behind a writer returned %d rows, want 3 (took %v): the new connection waited for the write lock", len(got), took)
+	}
+	if took > time.Second {
+		t.Errorf("Range took %v behind a writer, want well under the 5s busy_timeout", took)
+	}
+}
+
+// TestFrameStoreReopenKeepsAutoVacuum: reopening an existing app-frames.db must
+// keep the INCREMENTAL header that creation set (#1942), now that the pragma no
+// longer rides every connection (#2698).
+func TestFrameStoreReopenKeepsAutoVacuum(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "frames.db")
+	s, err := newFrameStore(path, 30*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed(s, "c1", 1, 1)
+	s.Close()
+
+	s2, err := newFrameStore(path, 30*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	var av int
+	if err := s2.db.QueryRow(`PRAGMA auto_vacuum`).Scan(&av); err != nil {
+		t.Fatal(err)
+	}
+	if av != 2 {
+		t.Errorf("auto_vacuum after reopen = %d, want 2 (INCREMENTAL)", av)
+	}
+	if got := s2.Range("c1", 0, 10); len(got) != 1 {
+		t.Errorf("reopened store Range = %d rows, want 1", len(got))
 	}
 }

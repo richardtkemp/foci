@@ -44,9 +44,11 @@ type Store struct {
 // is already written by the time OpenInit runs the statement list, so the
 // `PRAGMA auto_vacuum=INCREMENTAL` that used to head that list no-opped even
 // though it preceded the CREATEs. The live tool_details.db proves it — 426 of
-// its 429 pages are on the freelist and auto_vacuum reads NONE (#1942).
+// its 429 pages are on the freelist and auto_vacuum reads NONE (#1942). It is
+// applied only when the file is created: on an existing file it takes the write
+// lock, which a per-connection DSN pragma would demand of every read (#2698).
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sqlite.OpenInitPragmas(dbPath, []string{"auto_vacuum(incremental)"},
+	db, err := sqlite.OpenInitCreatePragmas(dbPath, []string{"auto_vacuum(incremental)"},
 		`CREATE TABLE IF NOT EXISTS tool_call_details (
 			message_id  INTEGER PRIMARY KEY,
 			compact_text TEXT NOT NULL,

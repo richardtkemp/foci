@@ -73,8 +73,11 @@ func newFrameStore(path string, ttl time.Duration) (*frameStore, error) {
 	// INCREMENTAL` that trailed this list never once took effect. Every
 	// app-frames.db this code ever made was auto_vacuum=NONE, which is why the
 	// hourly `PRAGMA incremental_vacuum` below reclaimed nothing and the live
-	// file reached 1.47 GB holding 29 MB of frames (#1942).
-	db, err := sqlite.OpenInitPragmas(path, []string{"auto_vacuum(incremental)"},
+	// file reached 1.47 GB holding 29 MB of frames (#1942). It is applied only
+	// when the file is created: on an existing file the pragma takes the write
+	// lock, so as a pool-wide DSN pragma it made every new connection's replay
+	// read wait behind any writer and fail with SQLITE_BUSY (#2698).
+	db, err := sqlite.OpenInitCreatePragmas(path, []string{"auto_vacuum(incremental)"},
 		`CREATE TABLE IF NOT EXISTS app_frames (
 			conv_id  TEXT    NOT NULL,
 			seq      INTEGER NOT NULL,
