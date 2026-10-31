@@ -52,8 +52,6 @@ A pass is not proof: for critical code, also review it by hand after the pass.
 2. Quick-scan every file.
 3. SAFE or CAUTION: move it to the live skills dir. CONCERNING or worse: delete it unread.
 
-To make the scan impossible to skip, see `references/enforced-installation.md`.
-
 ## Configuration
 
 - Model: `openai/gpt-5.2-codex` (default). `anthropic/claude-opus-4.5` is an alternative.
@@ -63,6 +61,5 @@ To make the scan impossible to skip, see `references/enforced-installation.md`.
 
 - `auditing-model-prompt.md` — the scanner's system and user prompts and its JSON schema. Edit it to change what is scanned.
 - `violation-categories.md` — what each category means, and what is NOT a violation.
-- `enforced-installation.md` — quarantine installer and CLI wrapper.
 
 **License:** MIT
