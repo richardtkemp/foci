@@ -21,7 +21,13 @@ var spec = delegator.Spec{
 	DisplayName: displayName,
 	New:         newFromConfig,
 	Prototype:   (*Backend)(nil),
-	Wizard:      true,
+	PermissionModes: []delegator.PermissionMode{
+		{Name: "normal", Value: "default", Description: "default", Aliases: []string{"default"}},
+		{Name: "accept", Value: "acceptEdits", Description: "auto-accept edits", Aliases: []string{"edits"}},
+		{Name: "plan", Value: "plan", Description: "read-only"},
+		{Name: "auto", Value: "auto", Description: "classifier decides"},
+	},
+	Wizard: true,
 
 	Caps: map[delegator.Capability]delegator.Support{
 		delegator.CapPostToolNudge:  delegator.Yes(),

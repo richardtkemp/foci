@@ -191,6 +191,13 @@ func (cfg *Config) HasAPIAgent() bool {
 func (cfg *Config) Validate(knownBackends []string) error {
 	// Validate agent IDs don't collide with reserved directory names
 	for _, a := range cfg.Agents {
+		if a.BackendConfig.ApprovalsReviewer != nil {
+			switch *a.BackendConfig.ApprovalsReviewer {
+			case "", "auto_review", "user":
+			default:
+				return fmt.Errorf("agent %q: backend_config.approvals_reviewer must be auto_review or user", a.ID)
+			}
+		}
 		if a.BackendConfig.Sandbox != nil {
 			switch *a.BackendConfig.Sandbox {
 			case "", "read-only", "workspace-write", "danger-full-access":

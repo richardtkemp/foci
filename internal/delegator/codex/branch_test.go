@@ -122,7 +122,7 @@ func TestForkSession_Success(t *testing.T) {
 			t.Errorf("parse thread/fork params: %v", err)
 		}
 		gotThreadID = p.ThreadID
-		return json.RawMessage(`{"thread":{"id":"` + newID + `"}}`), nil
+		return json.RawMessage(`{"approvalsReviewer":"auto_review","thread":{"id":"` + newID + `"}}`), nil
 	})
 
 	res, err := b.ForkSession(context.Background(), delegator.ForkRequest{
@@ -277,7 +277,7 @@ func TestForkSessionWritesOpening(t *testing.T) {
 		b := setupMockBackend(t, func(method string, params json.RawMessage, _ int64) (json.RawMessage, error) {
 			switch method {
 			case "thread/fork":
-				return json.RawMessage(`{"thread":{"id":"thread-fork"}}`), nil
+				return json.RawMessage(`{"approvalsReviewer":"auto_review","thread":{"id":"thread-fork"}}`), nil
 			case "thread/inject_items":
 				injects = append(injects, params)
 			}

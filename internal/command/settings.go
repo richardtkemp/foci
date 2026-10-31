@@ -390,91 +390,67 @@ func SpeedCommand() *Command {
 	})
 }
 
-// ModeCommand returns a /mode command to show or switch the delegated
-// backend's permission mode. Visible only on a backend whose Spec declares
-// control_permission_mode; others (and API agents) are rejected.
-//
-// User-facing aliases ("normal", "accept") translate to CC's native mode
-// names ("default", "acceptEdits") before being sent. We bypass
-// newSessionSettingCommand because the setter is async and can fail
-// (unsupported backend, backend send error).
+// ModeCommand uses the backend's declared choices for availability, parsing,
+// help, status and buttons. No CC mode list is imposed on other backends.
 func ModeCommand() *Command {
-	const optionsHint = "Options: 1) normal  2) accept  3) plan  4) auto"
-
-	// User input → (CC mode value, friendly response).
-	type modeChoice struct {
-		aliases  []string // every alias including the canonical label
-		ccMode   string   // CC-native mode value sent over the wire
-		response string   // success message
-	}
-	choices := []modeChoice{
-		{aliases: []string{"normal", "1", "default"}, ccMode: "default", response: "Permission mode: normal (default)"},
-		{aliases: []string{"accept", "2", "edits", "acceptedits"}, ccMode: "acceptEdits", response: "Permission mode: accept (auto-accept edits)"},
-		{aliases: []string{"plan", "3"}, ccMode: "plan", response: "Permission mode: plan (read-only)"},
-		{aliases: []string{"auto", "4"}, ccMode: "auto", response: "Permission mode: auto (classifier decides)"},
-	}
-	// Build alias → choice lookup.
-	lookup := make(map[string]*modeChoice, len(choices)*3)
-	for i := range choices {
-		c := &choices[i]
-		for _, a := range c.aliases {
-			lookup[a] = c
+	modesFor := func(cc CommandContext) []delegator.PermissionMode {
+		if cc.Agent == nil {
+			return nil
 		}
+		return cc.Agent.BackendPermissionModes()
 	}
-
-	// displayMode renders the CC-native mode for the status / no-arg output.
-	displayMode := func(cur string) string {
+	displayMode := func(cc CommandContext, sk string) string {
+		if cc.Agent == nil {
+			return "not supported"
+		}
+		cur := cc.Agent.SessionPermissionMode(sk)
 		if cur == "" {
-			return "normal (default)"
+			return "backend default (not overridden)"
 		}
-		// Reverse-map CC mode → friendly label.
-		for _, c := range choices {
-			if c.ccMode == cur {
-				return c.aliases[0]
+		for _, mode := range modesFor(cc) {
+			if mode.Value == cur {
+				return mode.Name
 			}
 		}
-		return cur // unknown — show raw value
+		return cur
 	}
-
+	optionsHint := func(modes []delegator.PermissionMode) string {
+		var options []string
+		for i, mode := range modes {
+			options = append(options, fmt.Sprintf("%d) %s", i+1, mode.Name))
+		}
+		return "Options: " + strings.Join(options, "  ")
+	}
 	return &Command{
-		Name:        "mode",
-		Description: "Show or set the backend's permission mode",
-		Category:    "operations",
-		Visible: func(_ context.Context, _ Request, cc CommandContext) bool {
-			return cc.Agent != nil && cc.Agent.BackendSupports(delegator.CapControlPermissionMode)
-		},
+		Name: "mode", Description: "Show or set the backend's permission mode", Category: "operations",
+		Visible: func(_ context.Context, _ Request, cc CommandContext) bool { return len(modesFor(cc)) > 0 },
 		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
-			if cc.Agent == nil || !cc.Agent.BackendSupports(delegator.CapControlPermissionMode) {
+			modes := modesFor(cc)
+			if len(modes) == 0 {
 				return Response{Text: "/mode is not supported on this backend"}, nil
 			}
 			sk := tools.SessionKeyFromContext(ctx)
-			if req.Args == "" {
-				cur := cc.Agent.SessionPermissionMode(sk)
-				return Response{Text: fmt.Sprintf("Permission mode: %s\n%s", displayMode(cur), optionsHint)}, nil
+			if strings.TrimSpace(req.Args) == "" {
+				return Response{Text: fmt.Sprintf("Permission mode: %s\n%s", displayMode(cc, sk), optionsHint(modes))}, nil
 			}
-
-			arg := strings.ToLower(strings.TrimSpace(req.Args))
-			c, ok := lookup[arg]
+			mode, ok := delegator.ResolvePermissionMode(modes, req.Args)
 			if !ok {
-				return Response{Text: fmt.Sprintf("Invalid permission mode: %q\n%s", req.Args, optionsHint)}, nil
+				return Response{Text: fmt.Sprintf("Invalid permission mode: %q\n%s", req.Args, optionsHint(modes))}, nil
 			}
-
-			if err := cc.Agent.SetPermissionMode(ctx, sk, c.ccMode); err != nil {
+			if err := cc.Agent.SetPermissionMode(ctx, sk, mode.Value); err != nil {
 				return Response{Text: fmt.Sprintf("Mode switch failed: %v", err)}, nil
 			}
-			return Response{Text: c.response}, nil
+			return Response{Text: fmt.Sprintf("Permission mode: %s (%s)", mode.Name, mode.Description)}, nil
 		},
-		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
-			return []KeyboardOption{
-				{Label: "normal", Data: "normal"},
-				{Label: "accept", Data: "accept"},
-				{Label: "plan", Data: "plan"},
-				{Label: "auto", Data: "auto"},
+		KeyboardOptions: func(_ context.Context, cc CommandContext) []KeyboardOption {
+			var options []KeyboardOption
+			for _, mode := range modesFor(cc) {
+				options = append(options, KeyboardOption{Label: mode.Name, Data: mode.Name})
 			}
+			return options
 		},
 		KeyboardHeader: func(ctx context.Context, _ Request, cc CommandContext) string {
-			cur := cc.Agent.SessionPermissionMode(tools.SessionKeyFromContext(ctx))
-			return fmt.Sprintf("/mode — Permission mode: %s", displayMode(cur))
+			return "/mode — Permission mode: " + displayMode(cc, tools.SessionKeyFromContext(ctx))
 		},
 	}
 }

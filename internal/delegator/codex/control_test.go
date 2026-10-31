@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -62,8 +63,8 @@ func TestSendControl_SetModel(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestSendControl_SetPermissionMode verifies that SetPermissionModeRequest
-// translates foci permission-mode names into Codex approval policies
-// (codexApprovalPolicy) and stores the result as pendingApproval. Codex
+// sets on-request approvals and the selected reviewer, independently
+// of the sandbox. Codex
 // applies it on the next turn/start via turnStartParams.ApprovalPolicy.
 func TestSendControl_SetPermissionMode(t *testing.T) {
 	t.Parallel()
@@ -72,11 +73,8 @@ func TestSendControl_SetPermissionMode(t *testing.T) {
 		mode   string
 		policy string
 	}{
-		{"default", "on-request"},
-		{"acceptEdits", "on-request"},
-		{"plan", "on-request"},
-		{"bypassPermissions", "never"},
-		{"dontAsk", "never"},
+		{"user", "on-request"},
+		{"auto_review", "on-request"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.mode, func(t *testing.T) {
@@ -91,7 +89,11 @@ func TestSendControl_SetPermissionMode(t *testing.T) {
 
 			b.mu.Lock()
 			got := b.pendingApproval
+			reviewer := b.pendingReviewer
 			b.mu.Unlock()
+			if reviewer != tc.mode {
+				t.Errorf("reviewer=%q, want %q", reviewer, tc.mode)
+			}
 			if got != tc.policy {
 				t.Errorf("pendingApproval = %q, want %q", got, tc.policy)
 			}
@@ -247,5 +249,38 @@ func TestApplyPendingControls_PartialMerge(t *testing.T) {
 	}
 	if params2.ApprovalPolicy != "never" {
 		t.Errorf("ApprovalPolicy = %q, want %q", params2.ApprovalPolicy, "never")
+	}
+}
+
+// TestModeAuto_AppliesReviewerOnSubsequentTurns exercises the backend's /mode
+// declaration through native control, JSON serialization and a later turn.
+func TestModeAuto_AppliesReviewerOnSubsequentTurns(t *testing.T) {
+	b := newControlTestBackend(t)
+	for _, input := range []string{"auto", "normal", "auto_review"} {
+		mode, ok := delegator.ResolvePermissionMode(spec.PermissionModes, input)
+		if !ok {
+			t.Fatalf("unknown declared mode %q", input)
+		}
+		if err := b.SendControl(context.Background(), &delegator.SetPermissionModeRequest{Mode: mode.Value}); err != nil {
+			t.Fatal(err)
+		}
+		for range 2 {
+			params := turnStartParams{ThreadID: "thread"}
+			b.applyPendingControls(&params)
+			if params.ApprovalsReviewer != mode.Value || params.ApprovalPolicy != "on-request" {
+				t.Fatalf("turn controls=%+v", params)
+			}
+			raw, err := json.Marshal(params)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wire map[string]any
+			if err := json.Unmarshal(raw, &wire); err != nil {
+				t.Fatal(err)
+			}
+			if wire["approvalsReviewer"] != mode.Value {
+				t.Fatalf("wire=%s", raw)
+			}
+		}
 	}
 }

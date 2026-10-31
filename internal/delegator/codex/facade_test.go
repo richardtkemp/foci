@@ -33,7 +33,7 @@ with open(capture, "w") as f:
     elif method == "thread/start":
       next_thread += 1; tid="thread-%d" % next_thread
       thread={"id":tid,"path":None,"status":{"type":"idle"}}
-      send({"id":ident,"result":{"thread":thread,"model":"test-model"}})
+      send({"id":ident,"result":{"approvalsReviewer":msg.get("params",{}).get("approvalsReviewer","auto_review"),"thread":thread,"model":"test-model"}})
       send({"method":"thread/started","params":{"thread":thread}})
     elif method == "turn/start":
       tid=msg["params"]["threadId"]
@@ -101,7 +101,7 @@ for line in sys.stdin:
     else:
       started += 1; tid="thread-%d" % started
       thread={"id":tid,"path":None,"status":{"type":"idle"}}
-      send({"id":ident,"result":{"thread":thread,"model":"test-model"}})
+      send({"id":ident,"result":{"approvalsReviewer":msg.get("params",{}).get("approvalsReviewer","auto_review"),"thread":thread,"model":"test-model"}})
       send({"method":"thread/started","params":{"thread":thread}})
   elif ident is not None: send({"id":ident,"result":{}})
 `

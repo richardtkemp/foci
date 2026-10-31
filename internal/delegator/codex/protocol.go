@@ -66,11 +66,12 @@ type clientInfo struct {
 // --- Thread ---
 
 type threadStartParams struct {
-	Model            string `json:"model,omitempty"`
-	Cwd              string `json:"cwd,omitempty"`
-	Sandbox          string `json:"sandbox,omitempty"`
-	BaseInstructions string `json:"baseInstructions,omitempty"`
-	Ephemeral        bool   `json:"ephemeral,omitempty"`
+	ApprovalsReviewer string `json:"approvalsReviewer"`
+	Model             string `json:"model,omitempty"`
+	Cwd               string `json:"cwd,omitempty"`
+	Sandbox           string `json:"sandbox,omitempty"`
+	BaseInstructions  string `json:"baseInstructions,omitempty"`
+	Ephemeral         bool   `json:"ephemeral,omitempty"`
 }
 
 type threadForkParams struct {
@@ -86,8 +87,9 @@ type threadInjectItemsParams struct {
 }
 
 type threadResumeParams struct {
-	ThreadID string `json:"threadId"`
-	Sandbox  string `json:"sandbox,omitempty"`
+	ApprovalsReviewer string `json:"approvalsReviewer"`
+	ThreadID          string `json:"threadId"`
+	Sandbox           string `json:"sandbox,omitempty"`
 	// BaseInstructions re-sends the freshly-generated system prompt on resume
 	// (verified supported by codex 0.144.5's ThreadResumeParams schema, same
 	// field as ThreadStartParams). Without it a thread surviving a gateway
@@ -118,8 +120,9 @@ func (s threadStatus) String() string {
 }
 
 type threadResult struct {
-	Thread threadInfo `json:"thread"`
-	Model  string     `json:"model,omitempty"`
+	ApprovalsReviewer string     `json:"approvalsReviewer"`
+	Thread            threadInfo `json:"thread"`
+	Model             string     `json:"model,omitempty"`
 }
 
 type threadStartedParams struct {
@@ -156,13 +159,14 @@ type reasoningEffortOption struct {
 // --- Turn ---
 
 type turnStartParams struct {
-	ThreadID       string         `json:"threadId"`
-	Input          []turnInput    `json:"input"`
-	Cwd            string         `json:"cwd,omitempty"`
-	Model          string         `json:"model,omitempty"`
-	Effort         string         `json:"effort,omitempty"`
-	ApprovalPolicy string         `json:"approvalPolicy,omitempty"`
-	SandboxPolicy  *sandboxPolicy `json:"sandboxPolicy,omitempty"`
+	ApprovalsReviewer string         `json:"approvalsReviewer,omitempty"`
+	ThreadID          string         `json:"threadId"`
+	Input             []turnInput    `json:"input"`
+	Cwd               string         `json:"cwd,omitempty"`
+	Model             string         `json:"model,omitempty"`
+	Effort            string         `json:"effort,omitempty"`
+	ApprovalPolicy    string         `json:"approvalPolicy,omitempty"`
+	SandboxPolicy     *sandboxPolicy `json:"sandboxPolicy,omitempty"`
 }
 
 type turnInput struct {

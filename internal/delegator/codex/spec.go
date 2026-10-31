@@ -28,7 +28,11 @@ var spec = delegator.Spec{
 	DisplayName: "Codex CLI",
 	New:         newFromConfig,
 	Prototype:   (*Backend)(nil),
-	Wizard:      true,
+	PermissionModes: []delegator.PermissionMode{
+		{Name: "normal", Value: "user", Description: "human review; applies next turn", Aliases: []string{"default"}},
+		{Name: "auto", Value: "auto_review", Description: "automatic review; applies next turn"},
+	},
+	Wizard: true,
 
 	Caps: map[delegator.Capability]delegator.Support{
 		delegator.CapPostToolNudge:  delegator.No("no mid-turn injection point is wired for the app-server"),
@@ -89,7 +93,7 @@ var spec = delegator.Spec{
 	UsageQuery:       QueryUsage,
 	// api_key is read but no config path supplies it
 	// (docs/BACKENDS.md footnote 48). foci_version is added by the gateway.
-	ConfigKeys: []string{"binary", "model", "sandbox", "api_key", delegator.FociVersionConfigKey},
+	ConfigKeys: []string{"binary", "model", "sandbox", "approvals_reviewer", "api_key", delegator.FociVersionConfigKey},
 	StartFields: []string{
 		"WorkDir", "SystemPrompt", "Model", "AgentID", "Label", "ResumeSessionID", "SessionKey",
 		"BatchOnly", "BatchAccess", "Env", "AutoApproveRules", "Effort", "CompactionPromptFunc",

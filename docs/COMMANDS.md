@@ -152,14 +152,15 @@ Show or set per-session display options.
 - `/display reset` — clear all per-session display overrides
 
 ### `/mode [mode]`
-Show or set the permission mode for the ccstream (Claude Code stream) backend. Only available for agents on the ccstream backend.
-- `/mode` — show current permission mode
-- `/mode normal` — prompt for side-effecting tools (CC `default`; aliases `1`, `default`)
-- `/mode accept` — auto-accept edits (CC `acceptEdits`; aliases `2`, `edits`, `acceptedits`)
-- `/mode plan` — plan mode (read-only exploration; alias `3`)
-- `/mode auto` — Claude Code's classifier decides each call, no prompts (alias `4`)
+Show or set a delegated backend's permission mode. Availability, buttons, aliases and help come from that backend's `Spec.PermissionModes`; API agents and backends without declared modes do not get this command. With no session override, status says "backend default" rather than guessing its configuration. Native mode values and numbers in the displayed order are accepted as aliases.
 
-Any other value is rejected with the option list. There is no `ask` or `bypassPermissions` value (source: `ModeCommand`, `internal/command/settings.go`).
+| Backend | Choices |
+|---|---|
+| Claude Code | `normal` (default), `accept` (auto-accept edits), `plan` (read-only), `auto` (classifier review) |
+| Codex | `normal` / `user` (human review), `auto` / `auto_review` (automatic review) |
+| opencode | `normal` (ask), `accept` (allow edits), `plan` (deny edits), `allow` (allow every tool without review) |
+
+Codex changes take effect on the next turn and subsequent turns by explicitly setting both `approvalPolicy=on-request` and `approvalsReviewer`; they do not change the sandbox or disable approval checks. Configuration sets the default when a backend is created/resumed; `/mode` is a session override, not a config-file edit. opencode deliberately calls its unrestricted mode `allow`, not `auto`: it has no automatic risk reviewer. Invalid values are rejected with only that backend's applicable choices.
 
 ### `/plan`
 Put a coding-agent backend into plan mode. The agent explores and reasons read-only without making changes. Only available for agents with a delegated coding backend.

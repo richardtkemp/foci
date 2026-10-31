@@ -1512,6 +1512,7 @@ workspace = "/home/coder/projects/myapp"
 # skip_permissions = true     # --dangerously-skip-permissions (no approval prompts)
 # allowed_tools = ["Bash(git:*)", "Read"]  # --allowedTools: per-agent CC permission rules
 # sandbox = "workspace-write" # Codex only: read-only, workspace-write, danger-full-access
+# approvals_reviewer = "auto_review" # Codex only: auto_review (default) or user
 # binary = ""                 # Override path to backend executable (default: $PATH)
 # idle_timeout = "3h"         # Session idle shutdown duration (default 3h)
 # batch_model = "haiku"       # Model for foci's own small background jobs (see below)
@@ -1521,7 +1522,7 @@ workspace = "/home/coder/projects/myapp"
 # CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS = "1"
 ```
 
-Codex launches in **Approve for me** mode by default: the `workspace-write` sandbox with `on-request` approvals routed to Codex automatic review. `backend_config.sandbox` can override the sandbox; read-only exploration still forces `read-only`. The launch flags leave `~/.codex/config.toml` unchanged and take effect when the app-server is next launched.
+Codex launches in **Approve for me** mode by default: the `workspace-write` sandbox with `on-request` approvals routed to Codex automatic review. `backend_config.approvals_reviewer` accepts `auto_review` (the default when unset or empty) or `user` (human review). The same resolved reviewer is explicitly sent on app-server launch, thread creation and resume, so saved thread settings cannot override it. Foci refuses to start/resume if Codex returns a different or missing reviewer. `backend_config.sandbox` can override the sandbox; read-only exploration still forces `read-only`, independently of reviewer selection. These per-agent backend settings require a Foci restart to rebuild the shared backend instances; they do not modify `~/.codex/config.toml`.
 
 For `backend = "codex"`, `model` may be either an exact app-server catalogue
 ID or a case-insensitive substring alias:

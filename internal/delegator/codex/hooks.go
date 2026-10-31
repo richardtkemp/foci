@@ -182,7 +182,7 @@ func probeHookTrust(ctx context.Context, bin string, cfgArgs []string, workDir s
 	ctx, cancel := context.WithTimeout(ctx, hookProbeTimeout)
 	defer cancel()
 
-	args := append(appServerArgs("", ""), cfgArgs...)
+	args := append(appServerArgs("", "", ""), cfgArgs...)
 	// Operator: a disposable codex app-server — same binary as the real launch.
 	cmd := procx.Spawn(ctx, procx.Operator, bin, args...)
 	cmd.Dir = workDir

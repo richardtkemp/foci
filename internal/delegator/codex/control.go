@@ -25,14 +25,14 @@ func (b *Backend) SendControl(ctx context.Context, req delegator.ControlRequest)
 		return nil
 
 	case *delegator.SetPermissionModeRequest:
-		mode := codexApprovalPolicy(r.Mode)
-		if mode == "" {
+		if r.Mode != "user" && r.Mode != "auto_review" {
 			return fmt.Errorf("codex: unknown permission mode %q", r.Mode)
 		}
 		b.mu.Lock()
-		b.pendingApproval = mode
+		b.pendingApproval = "on-request"
+		b.pendingReviewer = r.Mode
 		b.mu.Unlock()
-		b.logInfof("approval policy override queued: %s (applies next turn)", mode)
+		b.logInfof("approval reviewer override queued: %s (applies next turn)", r.Mode)
 		return nil
 
 	case *delegator.ApplyFlagSettingsRequest:
@@ -49,21 +49,6 @@ func (b *Backend) SendControl(ctx context.Context, req delegator.ControlRequest)
 	}
 }
 
-// codexApprovalPolicy translates foci permission mode names to Codex
-// approval policy values for turn/start.
-func codexApprovalPolicy(mode string) string {
-	switch mode {
-	case "default", "acceptEdits":
-		return "on-request"
-	case "bypassPermissions", "dontAsk":
-		return "never"
-	case "plan":
-		return "on-request"
-	default:
-		return ""
-	}
-}
-
 // applyPendingControls merges queued overrides into turn/start params.
 // Called from beginTurn before sending the request.
 func (b *Backend) applyPendingControls(params *turnStartParams) {
@@ -71,6 +56,7 @@ func (b *Backend) applyPendingControls(params *turnStartParams) {
 	model := b.pendingModel
 	effort := b.pendingEffort
 	approval := b.pendingApproval
+	reviewer := b.pendingReviewer
 	b.mu.Unlock()
 
 	if model != "" {
@@ -78,6 +64,9 @@ func (b *Backend) applyPendingControls(params *turnStartParams) {
 	}
 	if effort != "" && effort != "off" {
 		params.Effort = effort
+	}
+	if reviewer != "" {
+		params.ApprovalsReviewer = reviewer
 	}
 	if approval != "" {
 		params.ApprovalPolicy = approval

@@ -161,6 +161,7 @@ type Backend struct {
 	pendingModel    string
 	pendingEffort   string
 	pendingApproval string
+	pendingReviewer string
 	contextWindow   int
 
 	// Voice mode (#1445): EnterVoiceMode saves pendingEffort and forces "low"
@@ -472,6 +473,16 @@ func truncateStatusError(msg string) string {
 }
 
 const defaultSandboxMode = "workspace-write"
+const defaultApprovalsReviewer = "auto_review"
+
+// approvalsReviewer resolves the agent override once for every lifecycle path.
+// An omitted or empty value retains the automatic-review default.
+func (b *Backend) approvalsReviewer() string {
+	if v, ok := b.cfg["approvals_reviewer"].(string); ok && v != "" {
+		return v
+	}
+	return defaultApprovalsReviewer
+}
 
 func (b *Backend) sandboxMode() string {
 	// A read-only batch (spawn explore) runs in codex's read-only sandbox,

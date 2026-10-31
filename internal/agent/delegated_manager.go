@@ -303,6 +303,15 @@ func (a *Agent) BackendSupports(c delegator.Capability) bool {
 	return a.delegatedSpec().Supports(c)
 }
 
+// BackendPermissionModes returns only the choices this backend explicitly
+// declares. An API agent or backend without mode control has no /mode command.
+func (a *Agent) BackendPermissionModes() []delegator.PermissionMode {
+	if !a.BackendSupports(delegator.CapControlPermissionMode) {
+		return nil
+	}
+	return a.delegatedSpec().PermissionModes
+}
+
 // IsDelegated reports whether the agent runs on a delegated backend.
 func (a *Agent) IsDelegated() bool { return a.DelegatedManager != nil }
 

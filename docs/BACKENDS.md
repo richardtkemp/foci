@@ -47,6 +47,7 @@ ccstream uses a **two-lifetime callback split** (TODO #747): `SessionEvents` (de
 
 `backend = "codex"`. Foci drives the OpenAI Codex CLI through `codex app-server`, which speaks JSON-RPC 2.0 over stdio. One app-server process runs per agent, shared by that agent's sessions (threads) and refcounted: the server holds the session state and Foci issues RPC calls to advance turns, list models, and trigger compaction.
 
+- **Approval reviewer** comes from `backend_config.approvals_reviewer`: `auto_review` by default (including empty), or `user`. One resolver supplies launch, creation and resume; each thread response must confirm it so persisted human-review settings cannot silently override the default.
 - **Model catalogue** is fetched live via `model/list` RPC, populating the capability catalogue (`modelcaps`) the same way the Anthropic `/v1/models` fetch does for ccstream.
 - **Compaction** uses Codex's own `thread/compact/start` RPC, not Foci's compaction pipeline.
 - **Server-side session naming.** Codex assigns and tracks session names itself, which is why the `set_session_alias` tool is disabled for this backend — the alias would be overwritten by the server.
@@ -363,6 +364,7 @@ Generated from each backend's `Spec.ConfigKeys` / `Spec.StartFields` (`internal/
 <!-- BEGIN GENERATED CONFIG SCHEMA: internal/delegator/all TestBackendsDoc_ConfigSchemaTable. Edit the Specs, not this block. -->
 | `backend_config` key | claude-code | codex | opencode |
 |---|---|---|---|
+| `approvals_reviewer` | ✗ | ✓ | ✗ |
 | `sandbox` | ✗ | ✓ | ✗ |
 | `model` (gateway) | ✓ | ✓ | ✓ |
 | `allowed_tools` | ✓ | ✗ | ✗ |

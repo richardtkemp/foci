@@ -526,6 +526,9 @@ func TestControlCommandsFollowSpec(t *testing.T) {
 		spec := delegator.Spec{Caps: map[delegator.Capability]delegator.Support{}}
 		for _, c := range caps {
 			spec.Caps[c] = delegator.Yes()
+			if c == delegator.CapControlPermissionMode {
+				spec.PermissionModes = []delegator.PermissionMode{{Name: "test", Value: "test", Description: "test mode"}}
+			}
 		}
 		return modelCC(&agent.Agent{Backend: "x", DelegatedManager: &agent.DelegatedManager{Spec: spec}})
 	}

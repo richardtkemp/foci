@@ -28,7 +28,7 @@ func TestStartThread_ReadOnlyBatchSandbox(t *testing.T) {
 					t.Fatalf("unmarshal thread/start params: %v", err)
 				}
 				got = p.Sandbox
-				return json.RawMessage(`{"thread":{"id":"th_ro"}}`), nil
+				return json.RawMessage(`{"approvalsReviewer":"auto_review","thread":{"id":"th_ro"}}`), nil
 			})
 			b.cfg = map[string]any{"sandbox": "danger-full-access"}
 			b.workDir = "/tmp"

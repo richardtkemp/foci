@@ -22,7 +22,7 @@ func TestStartThreadCapturesSessionFilePath(t *testing.T) {
 		if method != "thread/start" {
 			t.Fatalf("method = %q, want thread/start", method)
 		}
-		return json.RawMessage(`{"thread":{"id":"thread-1","path":"/tmp/rollout.jsonl"}}`), nil
+		return json.RawMessage(`{"approvalsReviewer":"auto_review","thread":{"id":"thread-1","path":"/tmp/rollout.jsonl"}}`), nil
 	})
 
 	if _, err := b.startThread(); err != nil {

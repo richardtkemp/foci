@@ -47,7 +47,8 @@ type ApplyFlagSettingsRequest struct {
 func (*ApplyFlagSettingsRequest) controlRequest() {}
 
 // SetPermissionModeRequest asks the backend to switch its permission mode
-// mid-session. Mode is the backend-native value (for ccstream:
+// mid-session. Spec.PermissionModes declares the supported native values and
+// command aliases for each backend. Mode is the backend-native value (for ccstream:
 // "default" | "acceptEdits" | "plan" | "auto" | "bypassPermissions" |
 // "dontAsk"). The command layer translates user-facing aliases ("normal",
 // "accept") before constructing this. Fire-and-forget — backends MUST NOT

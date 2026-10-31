@@ -33,7 +33,7 @@ for line in sys.stdin:
   elif method == "thread/start":
     next_thread += 1; tid="thread-%d" % next_thread
     thread={"id":tid,"path":None,"status":{"type":"idle"}}
-    send({"id":ident,"result":{"thread":thread,"model":"gpt-5-codex"}})
+    send({"id":ident,"result":{"approvalsReviewer":msg.get("params",{}).get("approvalsReviewer","auto_review"),"thread":thread,"model":"gpt-5-codex"}})
     send({"method":"thread/started","params":{"thread":thread}})
   elif ident is not None: send({"id":ident,"result":{}})
 `
@@ -70,7 +70,7 @@ for line in sys.stdin:
   elif method == "thread/start":
     next_thread += 1; tid="thread-%d" % next_thread
     thread={"id":tid,"path":None,"status":{"type":"idle"}}
-    send({"id":ident,"result":{"thread":thread,"model":"gpt-5-codex"}})
+    send({"id":ident,"result":{"approvalsReviewer":msg.get("params",{}).get("approvalsReviewer","auto_review"),"thread":thread,"model":"gpt-5-codex"}})
     send({"method":"thread/started","params":{"thread":thread}})
   elif ident is not None: send({"id":ident,"result":{}})
 `

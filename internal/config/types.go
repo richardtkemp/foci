@@ -325,6 +325,9 @@ type CCBackendConfig struct {
 // Pointer types are required for the config cascade (Merge[T] uses
 // reflect.Value.IsNil to distinguish "not set" from zero).
 type BackendConfig struct {
+	// Backend policy is captured by long-lived shared app-server/facade instances;
+	// changing this field requires a restart, like the existing sandbox setting.
+	ApprovalsReviewer *string           `toml:"approvals_reviewer" desc:"Codex approval reviewer: auto_review (default) or user; applied on launch, thread creation and resume; requires restart"`
 	Sandbox           *string           `toml:"sandbox" desc:"Codex sandbox: read-only, workspace-write (default), or danger-full-access"`
 	Model             *string           `toml:"model"              desc:"Model ID for the delegated backend (e.g. opus, sonnet)"`
 	AllowedTools      []string          `toml:"allowed_tools"      desc:"Claude Code permission rules (e.g. Edit(/tmp/**)). Merged with global [cc_backend] defaults"`
@@ -348,6 +351,9 @@ type BackendConfig struct {
 // AllowedTools is comma-joined because the CC backends read it as a string.
 func (bc BackendConfig) ToMap() map[string]any {
 	m := map[string]any{}
+	if bc.ApprovalsReviewer != nil {
+		m["approvals_reviewer"] = *bc.ApprovalsReviewer
+	}
 	if bc.Sandbox != nil {
 		m["sandbox"] = *bc.Sandbox
 	}

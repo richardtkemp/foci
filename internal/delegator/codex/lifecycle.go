@@ -158,7 +158,7 @@ func (b *Backend) launchAppServer(ctx context.Context, opts delegator.StartOptio
 		compactPrompt = opts.CompactionPromptFunc("")
 	}
 
-	args := appServerArgs(compactPrompt, b.sandboxMode())
+	args := appServerArgs(compactPrompt, b.sandboxMode(), b.approvalsReviewer())
 	// The session-env hook must be configured at spawn: hook config and its
 	// trust state are session flags on this argv, and there is no way to add
 	// either to a running app-server. See hooks.go.
@@ -230,7 +230,7 @@ func (b *Backend) launchAppServer(ctx context.Context, opts delegator.StartOptio
 // appServerArgs applies the configured sandbox, defaulting to workspace-write. Thread
 // creation and resume both explicitly apply the resolved per-agent sandbox;
 // read-only batches remain read-only even on unrestricted agents. Escalations
-// use Codex automatic review (the CLI Approve for me mode), not human prompts.
+// use the configured reviewer (automatic review by default, or user prompts).
 //
 // When compactPrompt is non-empty it is layered in as a per-process
 // `-c compact_prompt=<value>` config override (the value parses as TOML, via
@@ -238,14 +238,17 @@ func (b *Backend) launchAppServer(ctx context.Context, opts delegator.StartOptio
 // override scoped to THIS app-server process; it never touches the shared
 // ~/.codex/config.toml, so foci's compaction prompt can't leak into the user's
 // own codex CLI or race a concurrent codex agent (#1327 sub-issue 2).
-func appServerArgs(compactPrompt, sandbox string) []string {
+func appServerArgs(compactPrompt, sandbox, reviewer string) []string {
 	if sandbox == "" {
 		sandbox = defaultSandboxMode
+	}
+	if reviewer == "" {
+		reviewer = defaultApprovalsReviewer
 	}
 	args := []string{
 		"app-server", "-c", "sandbox_mode=" + sandbox,
 		"-c", "approval_policy=on-request",
-		"-c", "approvals_reviewer=auto_review",
+		"-c", "approvals_reviewer=" + reviewer,
 	}
 	if compactPrompt != "" {
 		args = append(args, "-c", "compact_prompt="+tomlBasicString(compactPrompt))
@@ -457,10 +460,11 @@ func (b *Backend) initialize() error {
 // startThread creates a new thread and stores the thread ID.
 func (b *Backend) startThread() (string, error) {
 	params := threadStartParams{
-		Cwd:              b.workDir,
-		Sandbox:          b.sandboxMode(),
-		BaseInstructions: b.startOpts.SystemPrompt,
-		Ephemeral:        false,
+		ApprovalsReviewer: b.approvalsReviewer(),
+		Cwd:               b.workDir,
+		Sandbox:           b.sandboxMode(),
+		BaseInstructions:  b.startOpts.SystemPrompt,
+		Ephemeral:         false,
 	}
 	if m := b.modelFromOpts(); m != "" {
 		params.Model = m
@@ -472,6 +476,9 @@ func (b *Backend) startThread() (string, error) {
 	var tr threadResult
 	if err := json.Unmarshal(result, &tr); err != nil {
 		return "", fmt.Errorf("codex: parse thread/start response: %w", err)
+	}
+	if err := b.verifyReviewer("thread/start", tr); err != nil {
+		return "", err
 	}
 	b.mu.Lock()
 	b.threadID = tr.Thread.ID
@@ -492,12 +499,23 @@ func (b *Backend) startThread() (string, error) {
 	return tr.Thread.ID, nil
 }
 
+// verifyReviewer fails closed if a server ignores the explicit posture. In
+// particular, re-resuming an already-loaded thread can retain its old reviewer.
+func (b *Backend) verifyReviewer(method string, result threadResult) error {
+	want := b.approvalsReviewer()
+	if result.ApprovalsReviewer != want {
+		return fmt.Errorf("codex: %s approval reviewer %q, want %q", method, result.ApprovalsReviewer, want)
+	}
+	return nil
+}
+
 // resumeThread resumes an existing thread.
 func (b *Backend) resumeThread(threadID string) error {
 	params := threadResumeParams{
-		ThreadID:         threadID,
-		Sandbox:          b.sandboxMode(),
-		BaseInstructions: b.startOpts.SystemPrompt,
+		ApprovalsReviewer: b.approvalsReviewer(),
+		ThreadID:          threadID,
+		Sandbox:           b.sandboxMode(),
+		BaseInstructions:  b.startOpts.SystemPrompt,
 	}
 	result, err := b.sendAndWait("thread/resume", params)
 	if err != nil {
@@ -506,6 +524,9 @@ func (b *Backend) resumeThread(threadID string) error {
 	var tr threadResult
 	if err := json.Unmarshal(result, &tr); err != nil {
 		return fmt.Errorf("codex: parse thread/resume response: %w", err)
+	}
+	if err := b.verifyReviewer("thread/resume", tr); err != nil {
+		return err
 	}
 	b.mu.Lock()
 	b.threadID = threadID

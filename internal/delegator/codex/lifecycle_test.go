@@ -47,7 +47,7 @@ func newStartableBackend(t *testing.T, handler func(method string, params json.R
 // sandbox plus on-request approvals routed through the automatic reviewer.
 func TestAppServerArgs_DefaultSandbox(t *testing.T) {
 	want := []string{"app-server", "-c", "sandbox_mode=workspace-write", "-c", "approval_policy=on-request", "-c", "approvals_reviewer=auto_review"}
-	if got := appServerArgs("", ""); !reflect.DeepEqual(got, want) {
+	if got := appServerArgs("", "", ""); !reflect.DeepEqual(got, want) {
 		t.Fatalf("appServerArgs(\"\") = %v, want %v", got, want)
 	}
 }
@@ -57,7 +57,7 @@ func TestAppServerArgs_DefaultSandbox(t *testing.T) {
 // it never reaches the shared ~/.codex/config.toml. The value must be a valid
 // TOML basic string (escaped), matching the `-c instructions=` batch recipe.
 func TestAppServerArgs_CompactPrompt(t *testing.T) {
-	got := appServerArgs("summarise\tthe \"session\"", "")
+	got := appServerArgs("summarise\tthe \"session\"", "", "")
 	want := []string{
 		"app-server", "-c", "sandbox_mode=workspace-write",
 		"-c", "approval_policy=on-request", "-c", "approvals_reviewer=auto_review",
@@ -98,13 +98,13 @@ func TestThreadLifecycle_PassesResolvedSandbox(t *testing.T) {
 					t.Errorf("%s sandbox=%q, want %q", method, p.Sandbox, tc.want)
 				}
 				methods = append(methods, method)
-				return json.RawMessage(`{"thread":{"id":"sandbox-thread"}}`), nil
+				return json.RawMessage(`{"approvalsReviewer":"auto_review","thread":{"id":"sandbox-thread"}}`), nil
 			})
 			b.cfg = map[string]any{"sandbox": tc.configured}
 			if tc.readOnly {
 				b.startOpts.BatchAccess = delegator.BatchAccessReadOnly
 			}
-			if got := appServerArgs("", b.sandboxMode()); !reflect.DeepEqual(got, []string{"app-server", "-c", "sandbox_mode=" + tc.want, "-c", "approval_policy=on-request", "-c", "approvals_reviewer=auto_review"}) {
+			if got := appServerArgs("", b.sandboxMode(), b.approvalsReviewer()); !reflect.DeepEqual(got, []string{"app-server", "-c", "sandbox_mode=" + tc.want, "-c", "approval_policy=on-request", "-c", "approvals_reviewer=auto_review"}) {
 				t.Fatalf("server args=%v, want sandbox %q", got, tc.want)
 			}
 			if _, err := b.startThread(); err != nil {
@@ -136,7 +136,7 @@ func TestStartThread_PassesBaseInstructions(t *testing.T) {
 			t.Fatalf("unmarshal thread/start params: %v", err)
 		}
 		gotBaseInstructions = p.BaseInstructions
-		return json.RawMessage(`{"thread":{"id":"th_1"}}`), nil
+		return json.RawMessage(`{"approvalsReviewer":"auto_review","thread":{"id":"th_1"}}`), nil
 	})
 	b.workDir = "/tmp"
 	b.startOpts = delegator.StartOptions{SystemPrompt: wantPrompt}
@@ -170,7 +170,7 @@ func TestResumeThread_PassesBaseInstructions(t *testing.T) {
 			t.Fatalf("unmarshal thread/resume params: %v", err)
 		}
 		gotBaseInstructions = p.BaseInstructions
-		return json.RawMessage(`{"thread":{"id":"th_r"}}`), nil
+		return json.RawMessage(`{"approvalsReviewer":"auto_review","thread":{"id":"th_r"}}`), nil
 	})
 	b.workDir = "/tmp"
 	b.startOpts = delegator.StartOptions{SystemPrompt: wantPrompt}
@@ -191,7 +191,7 @@ func TestResumeThread_PassesBaseInstructions(t *testing.T) {
 // than "" (unpriced, NULL cost).
 func TestResumeThread_RecordsModel(t *testing.T) {
 	b := newStartableBackend(t, func(method string, params json.RawMessage, id int64) (json.RawMessage, error) {
-		return json.RawMessage(`{"thread":{"id":"th_m"},"model":"gpt-6.1-sol"}`), nil
+		return json.RawMessage(`{"approvalsReviewer":"auto_review","thread":{"id":"th_m"},"model":"gpt-6.1-sol"}`), nil
 	})
 	b.workDir = "/tmp"
 	if err := b.resumeThread("th_m"); err != nil {
@@ -217,7 +217,7 @@ func TestStartThread_PassesSandbox(t *testing.T) {
 			t.Fatalf("unmarshal thread/start params: %v", err)
 		}
 		gotSandbox = p.Sandbox
-		return json.RawMessage(`{"thread":{"id":"th_2"}}`), nil
+		return json.RawMessage(`{"approvalsReviewer":"auto_review","thread":{"id":"th_2"}}`), nil
 	})
 	b.cfg = map[string]any{"sandbox": wantSandbox}
 	b.workDir = "/tmp"
@@ -241,7 +241,7 @@ func TestStartThread_SendsResolvedConfiguredModel(t *testing.T) {
 			t.Fatalf("unmarshal thread/start params: %v", err)
 		}
 		gotModel = p.Model
-		return json.RawMessage(`{"thread":{"id":"th_resolved"}}`), nil
+		return json.RawMessage(`{"approvalsReviewer":"auto_review","thread":{"id":"th_resolved"}}`), nil
 	})
 	b.startOpts = delegator.StartOptions{Model: "luna"}
 	b.catalogueModels = []string{"gpt-5.7-luna", "gpt-5.6-luna"}
@@ -263,7 +263,7 @@ func TestStartThread_CapturesModel(t *testing.T) {
 	const serverModel = "gpt-5.6-luna"
 
 	b := newStartableBackend(t, func(method string, params json.RawMessage, id int64) (json.RawMessage, error) {
-		return json.RawMessage(`{"thread":{"id":"th_3"},"model":"` + serverModel + `"}`), nil
+		return json.RawMessage(`{"approvalsReviewer":"auto_review","thread":{"id":"th_3"},"model":"` + serverModel + `"}`), nil
 	})
 	b.workDir = "/tmp"
 
@@ -429,7 +429,7 @@ func TestResumeThread_SendsThreadResume(t *testing.T) {
 			t.Fatalf("unmarshal thread/resume params: %v", err)
 		}
 		gotThreadID = p.ThreadID
-		return json.RawMessage(`{}`), nil
+		return json.RawMessage(`{"approvalsReviewer":"auto_review"}`), nil
 	})
 
 	if err := b.resumeThread(wantThreadID); err != nil {

@@ -15,7 +15,13 @@ var spec = delegator.Spec{
 	DisplayName: "OpenCode",
 	New:         newFromConfig,
 	Prototype:   (*Backend)(nil),
-	Wizard:      true,
+	PermissionModes: []delegator.PermissionMode{
+		{Name: "normal", Value: "default", Description: "ask for tool permissions"},
+		{Name: "accept", Value: "acceptEdits", Description: "allow edits; ask for commands", Aliases: []string{"edits"}},
+		{Name: "plan", Value: "plan", Description: "deny edits; allow reads"},
+		{Name: "allow", Value: "bypassPermissions", Description: "allow all tools without review"},
+	},
+	Wizard: true,
 
 	Caps: map[delegator.Capability]delegator.Support{
 		delegator.CapPostToolNudge:  delegator.No("opencode exposes no per-tool point to inject a nudge at"),

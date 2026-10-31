@@ -268,6 +268,8 @@ type Spec struct {
 	// (config_schema.go). Keys the gateway reads for it (model, idle_timeout,
 	// ...) are not listed here. `make lint` checks the list against the source.
 	ConfigKeys []string
+	// PermissionModes declares /mode choices; required iff runtime mode control is supported.
+	PermissionModes []PermissionMode
 	// StartFields are the StartOptions fields the backend package reads
 	// (config_schema.go). `make lint` checks the list against the source.
 	StartFields []string
@@ -328,6 +330,19 @@ func (s Spec) Validate() error {
 		if c < 0 || c >= numCapabilities {
 			bad("declares unknown capability %d", int(c))
 		}
+	}
+	if s.Supports(CapControlPermissionMode) != (len(s.PermissionModes) > 0) {
+		bad("control_permission_mode and PermissionModes must be declared together")
+	}
+	seenModes := map[string]bool{}
+	for _, mode := range s.PermissionModes {
+		if mode.Name == "" || mode.Value == "" || mode.Description == "" {
+			bad("PermissionModes requires name, value and description")
+		}
+		if seenModes[mode.Value] {
+			bad("duplicate permission mode value %q", mode.Value)
+		}
+		seenModes[mode.Value] = true
 	}
 	var proto reflect.Type
 	if s.Prototype != nil {
