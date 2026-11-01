@@ -441,6 +441,10 @@ func BlobUploadHandler() http.HandlerFunc { return withHub((*Hub).ServeBlobPost)
 // BlobDownloadHandler returns the GET /app/blob/<id> handler.
 func BlobDownloadHandler() http.HandlerFunc { return withHub((*Hub).ServeBlobGet) }
 
+// SkillFileHandler returns the GET /app/skill/<agentId>?path=... handler: the
+// current text of a skill markdown file a "Loaded skill" chip names (#2392).
+func SkillFileHandler() http.HandlerFunc { return withHub((*Hub).ServeSkillFile) }
+
 // PairHandler returns the POST /app/pair handler (mint a device token).
 func PairHandler() http.HandlerFunc { return withHub((*Hub).ServePair) }
 

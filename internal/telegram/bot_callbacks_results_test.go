@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"foci/internal/command"
+	"foci/internal/skills"
 	"foci/internal/turn"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -29,7 +30,7 @@ func TestToolCallFull_InlineKeyboard(t *testing.T) {
 		toolMsgMu.Lock()
 		defer toolMsgMu.Unlock()
 
-		compact := formatToolCallCompact(toolName, params)
+		compact := formatToolCallCompact(toolName, params, skills.ReadScope{})
 		sendOpts := &gotgbot.SendMessageOpts{
 			ParseMode: "HTML",
 			ReplyMarkup: gotgbot.InlineKeyboardMarkup{

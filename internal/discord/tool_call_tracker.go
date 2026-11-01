@@ -7,6 +7,7 @@ import (
 
 	"foci/internal/log"
 	"foci/internal/platform"
+	"foci/internal/skills"
 	"foci/internal/toolformat"
 	"foci/internal/turn"
 
@@ -21,6 +22,16 @@ func newToolCallTracker(bot *Bot, channelID string, d turn.TurnDisplay) *turn.To
 	return turn.NewToolCallTracker(backend, &bot.toolStore, display, compactResultHint)
 }
 
+// skillScope is the scope the "Loaded skill" chip rule judges this bot's
+// agent's reads against (#2392): its live skill roots and workspace. A bot
+// with no agent (tests) gets the zero scope, the root-less SKILL.md rule.
+func (b *Bot) skillScope() skills.ReadScope {
+	if b.agentRef == nil {
+		return skills.ReadScope{}
+	}
+	return b.agentRef.SkillScope()
+}
+
 // discordTrackerBackend implements turn.TrackerBackend for Discord.
 type discordTrackerBackend struct {
 	bot       *Bot
@@ -28,7 +39,7 @@ type discordTrackerBackend struct {
 }
 
 func (b *discordTrackerBackend) FormatCompact(toolName string, params json.RawMessage) string {
-	return formatToolCallCompact(toolName, params)
+	return formatToolCallCompact(toolName, params, b.bot.skillScope())
 }
 
 func (b *discordTrackerBackend) FormatFull(toolName string, params json.RawMessage, showMode string) string {
@@ -125,14 +136,14 @@ func emojiForTool(name string) string {
 // formatToolCallCompact returns a compact one-line summary. A read of a
 // skill's SKILL.md is the whole line: the "📖 Loaded skill: <dir>" chip from
 // toolformat.LoadedSkillLine (#1299).
-func formatToolCallCompact(toolName string, params json.RawMessage) string {
+func formatToolCallCompact(toolName string, params json.RawMessage, scope skills.ReadScope) string {
 	prefix := emojiForTool(toolName)
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(params, &m); err != nil {
 		return fmt.Sprintf("%s**%s**", prefix, toolName)
 	}
 
-	if line := toolformat.LoadedSkillLine(toolName, m); line != "" {
+	if line := toolformat.LoadedSkillLine(toolName, m, scope); line != "" {
 		return line
 	}
 	summary := toolformat.CompactSummary(toolName, m)

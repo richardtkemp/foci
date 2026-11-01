@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"foci/internal/skills"
 )
 
 func TestFormatToolCallCompact(t *testing.T) {
@@ -32,7 +34,7 @@ func TestFormatToolCallCompact(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := formatToolCallCompact(tt.tool, json.RawMessage(tt.params))
+			result := formatToolCallCompact(tt.tool, json.RawMessage(tt.params), skills.ReadScope{})
 			if !strings.Contains(result, tt.emoji) {
 				t.Errorf("expected emoji %s in %q", tt.emoji, result)
 			}
@@ -74,7 +76,7 @@ func TestFormatToolCallCompact_LoadedSkill(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := formatToolCallCompact(tt.tool, json.RawMessage(tt.params)); got != tt.want {
+			if got := formatToolCallCompact(tt.tool, json.RawMessage(tt.params), skills.ReadScope{}); got != tt.want {
 				t.Errorf("formatToolCallCompact(%s) = %q, want %q", tt.tool, got, tt.want)
 			}
 		})
@@ -84,7 +86,7 @@ func TestFormatToolCallCompact_LoadedSkill(t *testing.T) {
 func TestFormatToolCallCompact_HTMLEscape(t *testing.T) {
 	// Verifies that HTML is properly escaped
 	// in compact tool call messages.
-	result := formatToolCallCompact("shell", json.RawMessage(`{"command":"echo <script>"}`))
+	result := formatToolCallCompact("shell", json.RawMessage(`{"command":"echo <script>"}`), skills.ReadScope{})
 	if strings.Contains(result, "<script>") {
 		t.Errorf("HTML not escaped in %q", result)
 	}
@@ -97,7 +99,7 @@ func TestFormatToolCallCompact_Truncation(t *testing.T) {
 	// Verifies that long compact messages
 	// are truncated with ellipsis.
 	longCmd := strings.Repeat("x", 200)
-	result := formatToolCallCompact("shell", json.RawMessage(fmt.Sprintf(`{"command":"%s"}`, longCmd)))
+	result := formatToolCallCompact("shell", json.RawMessage(fmt.Sprintf(`{"command":"%s"}`, longCmd)), skills.ReadScope{})
 	// Should be truncated to ~60 chars + "..."
 	if !strings.Contains(result, "...") {
 		t.Errorf("long command should be truncated: %s", result)
@@ -107,7 +109,7 @@ func TestFormatToolCallCompact_Truncation(t *testing.T) {
 func TestFormatToolCallCompact_EmptyParams(t *testing.T) {
 	// Verifies that compact format handles
 	// empty parameters correctly.
-	result := formatToolCallCompact("unknown", json.RawMessage(`{}`))
+	result := formatToolCallCompact("unknown", json.RawMessage(`{}`), skills.ReadScope{})
 	// Should just be the tool name with no summary; unknown tool gets 🔧
 	if !strings.Contains(result, "🔧") {
 		t.Error("missing fallback tool emoji")

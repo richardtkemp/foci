@@ -8,6 +8,7 @@ import (
 
 	"foci/internal/log"
 	"foci/internal/platform"
+	"foci/internal/skills"
 	"foci/internal/turn"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -21,6 +22,16 @@ func newToolCallTracker(bot *Bot, chatID int64, d turn.TurnDisplay) *turn.ToolCa
 	return turn.NewToolCallTracker(backend, &bot.toolStore, display, compactResultHint)
 }
 
+// skillScope is the scope the "Loaded skill" chip rule judges this bot's
+// agent's reads against (#2392): its live skill roots and workspace. A bot
+// with no agent (tests) gets the zero scope, the root-less SKILL.md rule.
+func (b *Bot) skillScope() skills.ReadScope {
+	if b.agentRef == nil {
+		return skills.ReadScope{}
+	}
+	return b.agentRef.SkillScope()
+}
+
 // telegramTrackerBackend implements turn.TrackerBackend for Telegram.
 type telegramTrackerBackend struct {
 	bot    *Bot
@@ -28,7 +39,7 @@ type telegramTrackerBackend struct {
 }
 
 func (b *telegramTrackerBackend) FormatCompact(toolName string, params json.RawMessage) string {
-	return formatToolCallCompact(toolName, params)
+	return formatToolCallCompact(toolName, params, b.bot.skillScope())
 }
 
 func (b *telegramTrackerBackend) FormatFull(toolName string, params json.RawMessage, showMode string) string {

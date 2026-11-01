@@ -17,11 +17,13 @@ import (
 	"foci/internal/command"
 	"foci/internal/fap"
 	"foci/internal/platform"
+	"foci/internal/skills"
 )
 
 // fakeAgent is a minimal agentCore that captures the enqueued envelope.
 type fakeAgent struct {
-	env *agent.Envelope
+	env   *agent.Envelope
+	scope skills.ReadScope
 }
 
 func (f *fakeAgent) Enqueue(e agent.Envelope) bool { f.env = &e; return true }
@@ -31,6 +33,7 @@ func (f *fakeAgent) CacheExpiryMs(_ string, at time.Time) int64 {
 }
 func (f *fakeAgent) CompactionLimitTokens(string) int64 { return 0 }
 func (f *fakeAgent) TransformMessage(t string) string   { return t }
+func (f *fakeAgent) SkillScope() skills.ReadScope       { return f.scope }
 
 // registerFakeAgent wires a conn backed by a fakeAgent into the hub.
 func registerFakeAgent(h *Hub, agentID string) *fakeAgent {

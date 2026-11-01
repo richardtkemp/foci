@@ -2,7 +2,11 @@ package toolformat
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"foci/internal/skills"
 )
 
 // TestLoadedSkillLine proves the shared chip rule: every read-tool form that
@@ -35,8 +39,62 @@ func TestLoadedSkillLine(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := LoadedSkillLine(tt.toolName, tt.m); got != tt.want {
+			if got := LoadedSkillLine(tt.toolName, tt.m, skills.ReadScope{}); got != tt.want {
 				t.Errorf("LoadedSkillLine(%q) = %q, want %q", tt.toolName, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestLoadedSkill_Scoped proves the root-aware chip rule (#2392): with the
+// agent's skill scope, a SKILL.md under a root keeps today's label and is
+// openable, a sub-file gets its own chip naming the skill and the file, a
+// SKILL.md under no root keeps today's chip with nothing to open, and a
+// non-.md file gives none. The rule is stateless, so the same read twice is
+// two chips.
+func TestLoadedSkill_Scoped(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "skills")
+	ws := filepath.Join(base, "ws")
+	for path, body := range map[string]string{
+		filepath.Join(root, "prediction", "SKILL.md"):  "---\nname: prediction\n---\n",
+		filepath.Join(root, "prediction", "method.md"): "m\n",
+		filepath.Join(root, "prediction", "data.json"): "{}\n",
+		filepath.Join(base, "other", "x", "SKILL.md"):  "---\nname: x\n---\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scope := skills.ReadScope{WorkDir: ws, Dirs: skills.Dirs{Shared: root}}
+	tests := []struct {
+		name     string
+		toolName string
+		m        map[string]json.RawMessage
+		line     string
+		openable bool
+		file     string
+	}{
+		{"SKILL.md under a root", "Read", raw(map[string]string{"file_path": filepath.Join(root, "prediction", "SKILL.md")}), "📖 Loaded skill: prediction", true, "SKILL.md"},
+		{"sub-file under a root", "Read", raw(map[string]string{"file_path": filepath.Join(root, "prediction", "method.md")}), "📖 Loaded skill file: prediction/method.md", true, "method.md"},
+		{"workspace-relative sub-file (API read)", "read", raw(map[string]string{"path": "../skills/prediction/method.md"}), "📖 Loaded skill file: prediction/method.md", true, "method.md"},
+		{"SKILL.md under no root keeps today's chip", "Read", raw(map[string]string{"file_path": filepath.Join(base, "other", "x", "SKILL.md")}), "📖 Loaded skill: x", false, ""},
+		{"non-md file under a root", "Read", raw(map[string]string{"file_path": filepath.Join(root, "prediction", "data.json")}), "", false, ""},
+		{"write to a sub-file is not a load", "write", raw(map[string]string{"path": filepath.Join(root, "prediction", "method.md"), "content": "x"}), "", false, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for i := 0; i < 2; i++ { // the same read twice: a chip each time
+				line, ref, openable := LoadedSkill(tt.toolName, tt.m, scope)
+				if line != tt.line || openable != tt.openable || ref.File != tt.file {
+					t.Errorf("read %d: LoadedSkill = (%q, %+v, %v), want (%q, file %q, %v)", i+1, line, ref, openable, tt.line, tt.file, tt.openable)
+				}
+				if got := LoadedSkillLine(tt.toolName, tt.m, scope); got != tt.line {
+					t.Errorf("read %d: LoadedSkillLine = %q, want %q", i+1, got, tt.line)
+				}
 			}
 		})
 	}

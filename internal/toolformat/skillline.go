@@ -6,17 +6,39 @@ import (
 	"foci/internal/skills"
 )
 
-// LoadedSkillLine returns the chat chip for a tool call that loads a skill —
-// a read of a skill's SKILL.md — or "" when the call is not one. This is the
-// one rule every platform's compact formatter shares (#1299): it resolves the
-// read call's path and lets skills.NameFromReadPath decide, so Telegram,
-// Discord and any future platform show the identical line.
-func LoadedSkillLine(toolName string, m map[string]json.RawMessage) string {
-	name, ok := skills.NameFromReadPath(readToolPath(toolName, m))
-	if !ok {
-		return ""
+// LoadedSkill returns the chat chip for a tool call that loads a skill file,
+// or "" when the call is not one. This is the one rule every platform shares
+// (#1299, #2392): it resolves the read call's path and decides —
+//
+//   - a markdown file inside a skill directory under one of scope's roots
+//     (scope.FileFromReadPath) is a chip, and ref names the file so the app can
+//     fetch its current text (openable = true). Its SKILL.md reads
+//     "📖 Loaded skill: <name>"; any other file reads
+//     "📖 Loaded skill file: <name>/<file>".
+//   - otherwise a SKILL.md anywhere (skills.NameFromReadPath, root-less) is
+//     still today's "📖 Loaded skill: <name>" chip, with nothing to open.
+//
+// Every call gets its own chip: the same file read twice in a turn is two
+// chips, one per read, so the transcript shows each read where it happened.
+func LoadedSkill(toolName string, m map[string]json.RawMessage, scope skills.ReadScope) (line string, ref skills.FileRef, openable bool) {
+	path := readToolPath(toolName, m)
+	if ref, ok := scope.FileFromReadPath(path); ok {
+		if ref.IsSkillMD() {
+			return "📖 Loaded skill: " + ref.Skill, ref, true
+		}
+		return "📖 Loaded skill file: " + ref.Skill + "/" + ref.File, ref, true
 	}
-	return "📖 Loaded skill: " + name
+	if name, ok := skills.NameFromReadPath(path); ok {
+		return "📖 Loaded skill: " + name, skills.FileRef{}, false
+	}
+	return "", skills.FileRef{}, false
+}
+
+// LoadedSkillLine is LoadedSkill's chip text alone, for the platforms that
+// show the chip but cannot open it (Telegram, Discord).
+func LoadedSkillLine(toolName string, m map[string]json.RawMessage, scope skills.ReadScope) string {
+	line, _, _ := LoadedSkill(toolName, m, scope)
+	return line
 }
 
 // readToolPath resolves the file path a read tool call targets, across the

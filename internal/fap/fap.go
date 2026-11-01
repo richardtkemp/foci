@@ -579,6 +579,20 @@ type Notification struct {
 	// summary) — the client renders the notification as a tappable chit that
 	// fetches and shows the blob on tap.
 	DetailBlobID string `json:"detailBlobId,omitempty"`
+	// SkillURL, when set, marks a "Loaded skill" chip the app can open (#2392):
+	// the relative URL ("/app/skill/<agentId>?path=<url-escaped absolute
+	// path>") of the skill markdown file the agent read. A GET with the device
+	// token (same auth as /app/blob) returns the file AS IT IS ON DISK AT
+	// REQUEST TIME — the whole file, frontmatter included, as
+	// text/markdown; charset=utf-8 — not a snapshot from when the chip was
+	// sent. Answers: 200 the file; 404 the path is refused (not a .md file
+	// under one of that agent's skill roots — the same answer whether or not
+	// the file exists); 410 the file is gone; 500 server error; and the
+	// shared device-auth answers (401 no token, 403 bad token, 429 locked out).
+	// Additive and optional: an app that predates it ignores the key and shows
+	// the chip's Text as before; a chip with no SkillURL (older server, or a
+	// SKILL.md read outside every skill root) has nothing to open.
+	SkillURL string `json:"skillUrl,omitempty"`
 	// Ambient marks a notification that is a trace in the transcript, not news:
 	// it is stored, replayed and rendered like any other, but the server does not
 	// treat it as user-facing activity (no offline push, no conversation-list

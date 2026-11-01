@@ -16,6 +16,7 @@ import (
 	"foci/internal/platform"
 	"foci/internal/question"
 	"foci/internal/session"
+	"foci/internal/skills"
 	"foci/internal/tools"
 	"foci/internal/turn"
 	"foci/internal/turnevent"
@@ -45,6 +46,9 @@ type agentCore interface {
 	CacheExpiryMs(sessionKey string, at time.Time) int64
 	CompactionLimitTokens(sessionKey string) int64
 	TransformMessage(text string) string
+	// SkillScope is the agent's live skill scope: what the "Loaded skill" chip
+	// rule and the /app/skill fetch judge a path against (#2392).
+	SkillScope() skills.ReadScope
 }
 
 // interactiveHeaderState holds pending headers for interactive prompts,
@@ -754,6 +758,7 @@ func (c *appConn) NewTurnSink(env agent.Envelope) (turnevent.Sink, func()) {
 		sink.statusFn = func() string { return c.agentRef.MetaStatus(sk) }
 		sink.cacheExpiryFn = func() int64 { return c.agentRef.CacheExpiryMs(sk, time.Now()) }
 		sink.compactionLimitFn = func() int64 { return c.agentRef.CompactionLimitTokens(sk) }
+		sink.skillScopeFn = c.agentRef.SkillScope
 	}
 	// Voice-mode bundling (#1439): reuse the agent's already-resolved TTS
 	// provider (same voice.TTS/ResolveTTS machinery telegram's send_to_chat

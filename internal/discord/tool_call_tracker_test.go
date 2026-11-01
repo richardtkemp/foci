@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"foci/internal/skills"
 	"foci/internal/turn"
 )
 
@@ -34,7 +35,7 @@ func TestFormatToolCallCompact(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := formatToolCallCompact(tt.tool, json.RawMessage(tt.params))
+			got := formatToolCallCompact(tt.tool, json.RawMessage(tt.params), skills.ReadScope{})
 			if !strings.Contains(got, tt.want) {
 				t.Errorf("got %q, want substring %q", got, tt.want)
 			}
@@ -193,7 +194,7 @@ func TestFormatToolCallCompact_LoadedSkill(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := formatToolCallCompact(tt.tool, json.RawMessage(tt.params)); got != tt.want {
+			if got := formatToolCallCompact(tt.tool, json.RawMessage(tt.params), skills.ReadScope{}); got != tt.want {
 				t.Errorf("formatToolCallCompact(%s) = %q, want %q", tt.tool, got, tt.want)
 			}
 		})

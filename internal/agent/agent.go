@@ -176,6 +176,7 @@ type Agent struct {
 	Keepalive                     config.ResolvedKeepalive                // resolved keepalive config (agent+global merged); static-cfg fallback, see keepalive()
 	Background                    config.ResolvedBackground               // resolved background config (agent+global merged); static-cfg fallback, see background()
 	Maintenance                   config.ResolvedMaintenance              // resolved maintenance config (agent+global merged); static-cfg fallback, see maintenance()
+	Workspace                     string                                  // agent workspace dir; a relative read path in a tool call resolves against it (SkillScope, #2392)
 	SkillDirs                     *skills.LiveDirs                        // skill directories (shared, extra, per-agent) for reflection creation/update detection; nil-safe, swapped live (#2657)
 	SkillChangeNotify             func(string, string, string)            // called with (sessionKey, skillName, markdown) when a GIT-REPO skill change is attributed to a commit that landed during the window (see skills.AttributeToGit); nil = disabled
 	SkillChangeNotifyText         func(string, string)                    // called with (sessionKey, formatted message) for a NON-git-repo skill change (skills.FormatChanges) — preserves the pre-#1404 plain-text behaviour there exactly; nil = disabled
@@ -754,4 +755,13 @@ func (a *Agent) validateSessionOwnership(sessionKey string) error {
 type TurnResult struct {
 	Text  string
 	Usage provider.Usage
+}
+
+// SkillScope returns what this agent's read tool calls are judged against
+// when deciding whether they loaded a skill file (#2392): its live skill
+// directories and its workspace. Read at call time, so a live extra_dirs edit
+// (#2657) applies to the next chip and fetch. Nil-safe on SkillDirs: an agent
+// without skill dirs gets a scope with no roots.
+func (a *Agent) SkillScope() skills.ReadScope {
+	return skills.ReadScope{WorkDir: a.Workspace, Dirs: a.SkillDirs.Get()}
 }

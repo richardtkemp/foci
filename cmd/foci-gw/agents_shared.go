@@ -171,6 +171,7 @@ func (s *sharedAgentSetup) newAgent() *agent.Agent {
 		TodoStore:         s.p.todoStore,
 		ScratchpadStore:   s.p.scratchpadStore,
 		AgentID:           acfg.ID,
+		Workspace:         acfg.Workspace,
 		SessionIndex:      s.p.sessionIndex,
 		MessageTransforms: agent.CompileTransforms(resolveMessageTransforms(acfg, s.p.cfg)),
 		PromptSearchDirs:  s.promptSearchDirs,

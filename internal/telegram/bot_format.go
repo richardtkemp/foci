@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"foci/internal/platform"
+	"foci/internal/skills"
 	"foci/internal/toolformat"
 )
 
@@ -215,14 +216,14 @@ func (b *Bot) formatToolCall(toolName string, params json.RawMessage, showMode s
 // e.g. "⚡ exec: ls -la /tmp" or "📡 http_request: GET https://example.com".
 // A read of a skill's SKILL.md is the whole line: the "📖 Loaded skill: <dir>"
 // chip from toolformat.LoadedSkillLine (#1299).
-func formatToolCallCompact(toolName string, params json.RawMessage) string {
+func formatToolCallCompact(toolName string, params json.RawMessage, scope skills.ReadScope) string {
 	emoji := emojiForTool(toolName)
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(params, &m); err != nil {
 		return fmt.Sprintf("%s <b>%s</b>", emoji, htmlEscape(toolName))
 	}
 
-	if line := toolformat.LoadedSkillLine(toolName, m); line != "" {
+	if line := toolformat.LoadedSkillLine(toolName, m, scope); line != "" {
 		return htmlEscape(line)
 	}
 	summary := toolformat.CompactSummary(toolName, m)

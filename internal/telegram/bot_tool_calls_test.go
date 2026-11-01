@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 
+	"foci/internal/skills"
+
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
@@ -173,7 +175,7 @@ func TestShowToolCalls_Full(t *testing.T) {
 		defer toolMsgMu.Unlock()
 
 		if b.display.ShowToolCalls == "full" {
-			compact := formatToolCallCompact(toolName, params)
+			compact := formatToolCallCompact(toolName, params, skills.ReadScope{})
 			sent, _ := b.client.SendMessage(12345, compact, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 			toolMsgID = sent.MessageId
 			return

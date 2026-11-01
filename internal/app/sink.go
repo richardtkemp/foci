@@ -10,6 +10,7 @@ import (
 	"foci/internal/fap"
 	"foci/internal/platform"
 	"foci/internal/ratelimit"
+	"foci/internal/skills"
 	"foci/internal/toolformat"
 	"foci/internal/turn"
 	"foci/internal/turnevent"
@@ -55,6 +56,11 @@ type appSink struct {
 	// as fap.Meta.CompactionLimitTokens. nil = no agent context, so the field
 	// is omitted (0).
 	compactionLimitFn func() int64
+
+	// skillScopeFn returns the agent's live skill scope, which decides whether
+	// a read is a "Loaded skill" chip and whether the app can open it (#2392).
+	// nil = no agent context: the root-less SKILL.md rule only, nothing to open.
+	skillScopeFn func() skills.ReadScope
 
 	// tts is the agent's resolved voice.TTS provider (#1439), reused from the
 	// same voice.TTS/ResolveTTS/VoiceConfig machinery telegram's outbound
@@ -146,12 +152,14 @@ func (s *appSink) Emit(ctx context.Context, ev turnevent.Event) {
 
 	case turnevent.ToolCall:
 		s.b.setTurnTool(fap.ActivityKindTool, toolformat.ActivityLabel(e.Name, e.Args), toolformat.FullCommand(e.Name, e.Args), toolformat.IsShellTool(e.Name))
-		// A read of a skill's SKILL.md leaves the same "Loaded skill" line in the
+		// A read of a skill file leaves the same "Loaded skill" line in the
 		// transcript that Telegram and Discord show (#1299, #2335). The app has no
 		// compact tool lines, so it travels as an ambient notification: stored and
-		// replayed like any system row, but never a push or a list preview.
-		if line := skillLoadLine(e); line != "" {
-			s.b.send(fap.Notification{ConversationID: s.b.convID, MessageID: fap.NewULID(), Text: line, Level: "info", Ambient: true})
+		// replayed like any system row, but never a push or a list preview. A file
+		// under one of the agent's skill roots also carries SkillURL, so the app
+		// can open its current text (#2392).
+		if n, ok := s.skillLoadNotification(e); ok {
+			s.b.send(n)
 		}
 		if s.toolCalls != nil {
 			s.toolCalls.call(e)
@@ -335,12 +343,26 @@ func (s *appSink) emitMeta(e turnevent.TurnComplete) {
 	s.b.send(meta)
 }
 
-// skillLoadLine returns the "Loaded skill" chip for a tool call that reads a
-// skill's SKILL.md, or "" for any other call (including unparseable args).
-func skillLoadLine(e turnevent.ToolCall) string {
+// skillLoadNotification returns the "Loaded skill" chip for a tool call that
+// reads a skill file (toolformat.LoadedSkill), or false for any other call
+// (including unparseable args). One chip per read: the same file read twice
+// is two chips.
+func (s *appSink) skillLoadNotification(e turnevent.ToolCall) (fap.Notification, bool) {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(e.Args, &m); err != nil {
-		return ""
+		return fap.Notification{}, false
 	}
-	return toolformat.LoadedSkillLine(e.Name, m)
+	var scope skills.ReadScope
+	if s.skillScopeFn != nil {
+		scope = s.skillScopeFn()
+	}
+	line, ref, openable := toolformat.LoadedSkill(e.Name, m, scope)
+	if line == "" {
+		return fap.Notification{}, false
+	}
+	n := fap.Notification{ConversationID: s.b.convID, MessageID: fap.NewULID(), Text: line, Level: "info", Ambient: true}
+	if openable {
+		n.SkillURL = skillFileURL(s.b.agentID, ref)
+	}
+	return n, true
 }
