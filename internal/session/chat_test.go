@@ -171,6 +171,61 @@ func TestResolveChatAlias_Ambiguous(t *testing.T) {
 	}
 }
 
+// TestClaimChatAlias pins #2709: a claim moves the alias to the claimer and
+// renames the holder to its displaced name, uniquifying that name if needed,
+// and refuses (writing nothing) when a holder has no displaced name.
+func TestClaimChatAlias(t *testing.T) {
+	idx := newAliasTestIndex(t)
+	mustSet := func(chat int64, alias string) {
+		t.Helper()
+		if err := idx.SetChatAliasUnique("clutch", "app", chat, alias); err != nil {
+			t.Fatal(err)
+		}
+	}
+	alias := func(chat int64) string {
+		t.Helper()
+		v, err := idx.GetChatMetadata("clutch", "app", chat, "alias")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	mustSet(1, "work")
+	mustSet(3, "work 2026-10-31 14:02") // the displaced base is already taken
+
+	holders, err := idx.ChatsHoldingAlias("clutch", "app", " WORK ", 2)
+	if err != nil || len(holders) != 1 || holders[1] != "work" {
+		t.Fatalf("ChatsHoldingAlias = %v, %v; want {1: work}", holders, err)
+	}
+
+	// A holder with no displaced name: refused, nothing written.
+	if _, err := idx.ClaimChatAlias("clutch", "app", 2, "Work", map[int64]string{}); err != ErrAliasTaken {
+		t.Fatalf("claim without displaced name: err = %v, want ErrAliasTaken", err)
+	}
+	if alias(1) != "work" || alias(2) != "" {
+		t.Fatalf("refused claim wrote: chat1=%q chat2=%q", alias(1), alias(2))
+	}
+
+	renamed, err := idx.ClaimChatAlias("clutch", "app", 2, " Work ", map[int64]string{1: "work 2026-10-31 14:02"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "work 2026-10-31 14:02 (2)"; renamed[1] != want || alias(1) != want {
+		t.Fatalf("displaced = %q (returned %q), want %q", alias(1), renamed[1], want)
+	}
+	if alias(2) != "Work" {
+		t.Fatalf("claimer alias = %q, want \"Work\"", alias(2))
+	}
+	if got, err := idx.ResolveChatAlias("clutch", "work"); err != nil || got != "clutch/c2" {
+		t.Fatalf("resolve after claim = %q, %v; want clutch/c2", got, err)
+	}
+
+	// No holder: a claim is a plain set.
+	if renamed, err := idx.ClaimChatAlias("clutch", "app", 4, "fresh", nil); err != nil || len(renamed) != 0 || alias(4) != "fresh" {
+		t.Fatalf("claim of a free alias = %v, %v, alias %q", renamed, err, alias(4))
+	}
+}
+
 func TestSetChatAliasUnique(t *testing.T) {
 	idx := newAliasTestIndex(t)
 	if err := idx.SetChatAliasUnique("clutch", "app", 1, "work"); err != nil {

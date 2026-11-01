@@ -3,6 +3,7 @@ package app
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"foci/internal/fap"
 	"foci/internal/platform"
@@ -58,4 +59,52 @@ func TestHandleConversationRename_Persists(t *testing.T) {
 
 	// Unknown conversation: no panic, no write.
 	h.handleConversationRename(fakeClient(), fap.ConversationRename{ConversationID: "ghost", Title: "x"})
+}
+
+// TestHandleConversationRename_Claim pins #2709: a plain rename to a taken name
+// is refused with alias_taken; the same rename with Claim takes the name and
+// renames the holder to "<name> <its last activity>".
+func TestHandleConversationRename_Claim(t *testing.T) {
+	idx := newTestIndex(t)
+	h := newTestHub()
+	h.deps = platform.ProviderDeps{SessionIndex: idx}
+	act := time.Date(2026, 10, 31, 14, 2, 0, 0, time.Local)
+	old := &convBinding{convID: "c1", agentID: "clutch", chatID: 41, lastActMs: act.UnixMilli()}
+	b := &convBinding{convID: "c2", agentID: "clutch", chatID: 42}
+	h.convs["c1"], h.convs["c2"] = old, b
+	if err := idx.SetChatAliasUnique("clutch", "app", 41, "Holiday"); err != nil {
+		t.Fatal(err)
+	}
+	// A chat with no binding and no stored frames also holds a claimed name.
+	if err := idx.SetChatAliasUnique("clutch", "app", 43, "Work"); err != nil {
+		t.Fatal(err)
+	}
+
+	c := fakeClient()
+	h.handleConversationRename(c, fap.ConversationRename{ConversationID: "c2", Title: "holiday"})
+	var code string
+	for _, f := range drain(t, c) {
+		if f.t == fap.TypeError {
+			code, _ = f.d["code"].(string)
+		}
+	}
+	if code != "alias_taken" {
+		t.Fatalf("plain rename to a taken name: error code = %q, want alias_taken", code)
+	}
+	if got := h.aliasFor(b); got != "" {
+		t.Fatalf("refused rename wrote alias %q", got)
+	}
+
+	h.handleConversationRename(fakeClient(), fap.ConversationRename{ConversationID: "c2", Title: " holiday ", Claim: true})
+	if got := h.aliasFor(b); got != "holiday" {
+		t.Fatalf("claimer alias = %q, want \"holiday\"", got)
+	}
+	if got, want := h.aliasFor(old), "Holiday 2026-10-31 14:02"; got != want {
+		t.Fatalf("displaced alias = %q, want %q", got, want)
+	}
+
+	h.handleConversationRename(fakeClient(), fap.ConversationRename{ConversationID: "c2", Title: "Work", Claim: true})
+	if got, want := h.aliasForChat("clutch", 43), "Work (old)"; got != want {
+		t.Fatalf("displaced alias with no activity = %q, want %q", got, want)
+	}
 }

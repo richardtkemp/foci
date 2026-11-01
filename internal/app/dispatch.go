@@ -416,8 +416,14 @@ func (h *Hub) handleConversationRename(client *wsClient, f fap.ConversationRenam
 		return
 	}
 	if idx := h.deps.SessionIndex; idx != nil {
-		if err := idx.SetChatAliasUnique(b.agentID, "app", b.chatID, f.Title); err != nil {
-			appLog.Warnf("rename %s: persist alias: %v", f.ConversationID, err)
+		var err error
+		if f.Claim {
+			err = h.claimAlias(b, f.Title)
+		} else {
+			err = idx.SetChatAliasUnique(b.agentID, "app", b.chatID, f.Title)
+		}
+		if err != nil {
+			appLog.Warnf("rename %s (claim=%v): persist alias: %v", f.ConversationID, f.Claim, err)
 			code, msg := "rename_failed", "Couldn't save that name."
 			if errors.Is(err, session.ErrAliasTaken) {
 				code, msg = "alias_taken", "That name is already used by another chat."
@@ -432,6 +438,65 @@ func (h *Hub) handleConversationRename(client *wsClient, f fap.ConversationRenam
 		}
 	}
 	h.pushRosterAll()
+}
+
+// claimAlias gives title to b's chat and renames each other chat that held it
+// to "<title> <its last activity>" (#2709). The holders' last activity is hub
+// state, so it is read here; SessionIndex.ClaimChatAlias re-checks the holder
+// set and writes every alias in one transaction.
+func (h *Hub) claimAlias(b *convBinding, title string) error {
+	idx := h.deps.SessionIndex
+	holders, err := idx.ChatsHoldingAlias(b.agentID, "app", title, b.chatID)
+	if err != nil {
+		return err
+	}
+	displaced := make(map[int64]string, len(holders))
+	for chatID, held := range holders {
+		// The holder's own spelling of the name, not the claimer's.
+		displaced[chatID] = displacedAlias(held, h.lastActivityForChat(b.agentID, chatID))
+	}
+	renamed, err := idx.ClaimChatAlias(b.agentID, "app", b.chatID, title, displaced)
+	if err != nil {
+		return err
+	}
+	for chatID, name := range renamed {
+		appLog.Infof("rename %s: claimed %q from chat %d, now %q", b.convID, strings.TrimSpace(title), chatID, name)
+	}
+	return nil
+}
+
+// displacedAlias is the name a chat gets when another chat claims its alias:
+// the alias plus the chat's last activity in the server's local time, or
+// " (old)" when the chat has no recorded activity.
+func displacedAlias(alias string, lastActMs int64) string {
+	if lastActMs <= 0 {
+		return alias + " (old)"
+	}
+	return alias + " " + time.UnixMilli(lastActMs).Local().Format("2006-01-02 15:04")
+}
+
+// lastActivityForChat is the chat's last visible frame time (unix ms): the live
+// binding's when one exists, else the durable frame store's via the chat's
+// conv_id. 0 when neither knows.
+func (h *Hub) lastActivityForChat(agentID string, chatID int64) int64 {
+	h.mu.RLock()
+	var live *convBinding
+	for _, c := range h.convs {
+		if c.agentID == agentID && c.chatID == chatID {
+			live = c
+			break
+		}
+	}
+	h.mu.RUnlock()
+	if live != nil {
+		return live.lastActivity()
+	}
+	convID, err := h.deps.SessionIndex.GetChatMetadata(agentID, "app", chatID, "conv_id")
+	if err != nil || convID == "" {
+		return 0
+	}
+	_, ms, _ := h.frames.LastVisible(convID)
+	return ms
 }
 
 // handleConversationSetDefault sets (f.IsDefault) or clears this conversation as

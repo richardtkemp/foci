@@ -1248,9 +1248,15 @@ func (ViewingSync) Type() string { return TypeViewingSync }
 
 // ConversationRename sets (or clears, when Title is empty) a user-friendly alias
 // for a conversation. Persisted server-side; echoed back in ConversationInfo.Title.
+//
+// A Title already held by another chat of the agent is refused with an
+// "alias_taken" error frame. With Claim set (#2709) the rename instead takes the
+// name: each chat that held it is renamed to "<Title> <its last activity>"
+// (" (old)" when it has none) in the same write, and the roster echo carries both.
 type ConversationRename struct {
 	ConversationID string `json:"conversationId"`
 	Title          string `json:"title"`
+	Claim          bool   `json:"claim,omitempty"`
 }
 
 // ConversationSetDefault sets (IsDefault=true) or clears (IsDefault=false) this

@@ -2665,7 +2665,10 @@ a named `sessionKey`, **broadcasts** an updated roster the app upserts; idempote
 via `ensureBinding`, so a reopen of an id the first message already created
 reuses it); `conversation.rename`→`handleConversationRename`
 (persists a user-friendly session alias in the session index's `chat_metadata`,
-keyed by the stable app `chatID` so it survives restart;
+keyed by the stable app `chatID` so it survives restart; a name another chat holds
+is refused with an `alias_taken` error unless the frame sets `claim`, when
+`claimAlias` renames each holder to "<name> <last activity>" via
+`SessionIndex.ClaimChatAlias`, #2709;
 `agentRoster` surfaces it via `aliasFor` as `ConversationInfo.Title`, replacing the
 raw conversationId the app would otherwise show); `command`→`routeCommand`→ the agent's
 `command.Registry.Dispatch` (captured from `AgentConnectionParams` in

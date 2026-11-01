@@ -1387,6 +1387,135 @@ func (idx *SessionIndex) SetChatAliasUnique(agentID, platform string, chatID int
 	}
 }
 
+// ChatsHoldingAlias returns the chats, other than exceptChatID, whose alias
+// matches alias (case-insensitive, trimmed) under the same agent and platform,
+// each mapped to the alias as that chat stores it.
+// It is the read half of a claim (#2709): the caller derives each holder's
+// displaced name from state the index does not own (last activity), then
+// passes those names to ClaimChatAlias.
+func (idx *SessionIndex) ChatsHoldingAlias(agentID, platform, alias string, exceptChatID int64) (map[int64]string, error) {
+	norm := aliasNorm(alias)
+	if norm == "" {
+		return nil, nil
+	}
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	return idx.chatsHoldingAliasLocked(agentID, platform, norm, exceptChatID)
+}
+
+func (idx *SessionIndex) chatsHoldingAliasLocked(agentID, platform, norm string, exceptChatID int64) (map[int64]string, error) {
+	rows, err := idx.db.Query(
+		`SELECT chat_id, value FROM chat_metadata WHERE agent_id = ? AND platform = ? AND key = 'alias'
+		   AND lower(trim(value)) = ? AND chat_id != ? ORDER BY chat_id`,
+		agentID, platform, norm, exceptChatID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck
+	out := make(map[int64]string)
+	for rows.Next() {
+		var id int64
+		var v string
+		if err := rows.Scan(&id, &v); err != nil {
+			return nil, err
+		}
+		out[id] = strings.TrimSpace(v)
+	}
+	return out, rows.Err()
+}
+
+// ClaimChatAlias gives alias to chatID and renames every other chat that holds
+// it (#2709). displaced maps each holder to the base of its new alias (the
+// caller builds "<alias> <last activity>"). A base that is itself taken gets a
+// " (2)", " (3)", … suffix, so the claim never creates a new collision.
+//
+// The holder set is re-read under the index mutex. A holder missing from
+// displaced (it took the alias after the caller's ChatsHoldingAlias) fails the
+// claim with ErrAliasTaken and writes nothing. All writes are one transaction.
+// Returns the alias each displaced chat now has.
+func (idx *SessionIndex) ClaimChatAlias(agentID, platform string, chatID int64, alias string, displaced map[int64]string) (map[int64]string, error) {
+	trimmed := strings.TrimSpace(alias)
+	if trimmed == "" {
+		return nil, idx.SetChatMetadata(agentID, platform, chatID, "alias", "")
+	}
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	holders, err := idx.chatsHoldingAliasLocked(agentID, platform, aliasNorm(trimmed), chatID)
+	if err != nil {
+		return nil, err
+	}
+	taken, err := idx.aliasesLocked(agentID, platform)
+	if err != nil {
+		return nil, err
+	}
+	// The claimed alias leaves its holders and goes to chatID.
+	delete(taken, aliasNorm(trimmed))
+	renamed := make(map[int64]string, len(holders))
+	for h := range holders {
+		base, ok := displaced[h]
+		if !ok || strings.TrimSpace(base) == "" {
+			return nil, ErrAliasTaken
+		}
+		name := uniqueAlias(strings.TrimSpace(base), trimmed, taken)
+		taken[aliasNorm(name)] = true
+		renamed[h] = name
+	}
+	tx, err := idx.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	for h, name := range renamed {
+		if _, err := tx.Exec(chatMetaTable.upsertSQL, agentID, platform, h, "alias", name); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := tx.Exec(chatMetaTable.upsertSQL, agentID, platform, chatID, "alias", trimmed); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return renamed, nil
+}
+
+// aliasesLocked returns the normalised set of every alias held under the agent
+// and platform.
+func (idx *SessionIndex) aliasesLocked(agentID, platform string) (map[string]bool, error) {
+	rows, err := idx.db.Query(
+		`SELECT value FROM chat_metadata WHERE agent_id = ? AND platform = ? AND key = 'alias' AND trim(value) != ''`,
+		agentID, platform,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck
+	out := make(map[string]bool)
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out[aliasNorm(v)] = true
+	}
+	return out, rows.Err()
+}
+
+// uniqueAlias returns base, or base with the first " (n)" suffix (n ≥ 2) that
+// is neither in taken nor equal to claimed.
+func uniqueAlias(base, claimed string, taken map[string]bool) string {
+	free := func(s string) bool { return !taken[aliasNorm(s)] && aliasNorm(s) != aliasNorm(claimed) }
+	if free(base) {
+		return base
+	}
+	for n := 2; ; n++ {
+		if s := fmt.Sprintf("%s (%d)", base, n); free(s) {
+			return s
+		}
+	}
+}
+
 // PlatformForChat returns the platform name that owns a given chat.
 // Any chat_metadata row with a non-empty platform (the "registered" row
 // written on first contact, is_default, username, …) establishes ownership.

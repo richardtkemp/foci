@@ -123,8 +123,16 @@ func TestDecode_ConversationRename(t *testing.T) {
 	if !ok {
 		t.Fatalf("frame type = %T, want ConversationRename", in.Frame)
 	}
-	if rn.ConversationID != "c1" || rn.Title != "Holiday plans" {
+	if rn.ConversationID != "c1" || rn.Title != "Holiday plans" || rn.Claim {
 		t.Errorf("decoded rename wrong: %+v", rn)
+	}
+	// claim (#2709) decodes when present.
+	in, err = Decode(`{"t":"conversation.rename","id":"r2","seq":4,"ack":1,"v":1,"d":{"conversationId":"c1","title":"x","claim":true}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rn, _ := in.Frame.(ConversationRename); !rn.Claim {
+		t.Errorf("claim not decoded: %+v", in.Frame)
 	}
 }
 
