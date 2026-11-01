@@ -152,7 +152,7 @@ func Resolve(cfg *Config, acfg AgentConfig) *ResolvedAgentConfig {
 		Debug:                   resolveDebug(Merge(acfg.Debug, cfg.Debug)),
 		Environment:             resolveEnvironment(Merge(acfg.Environment, cfg.Environment)),
 		Groups:                  gc,
-		Keepalive:               resolveKeepalive(Merge(acfg.Keepalive, cfg.Keepalive)),
+		Keepalive:               ResolveKeepaliveFor(cfg, acfg),
 		Background:              resolveBackground(Merge(acfg.Background, cfg.Background)),
 		Scheduler:               resolveScheduler(Merge(acfg.Scheduler, cfg.Scheduler)),
 		MemorySearch:            resolveMemorySearch(Merge(acfg.Memory, cfg.Memory)),

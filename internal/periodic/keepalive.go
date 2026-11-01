@@ -86,7 +86,11 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 		return
 	}
 
-	promptText := prompts.ResolvePrompt(r.kaCfg.Prompt, "keepalive.md", prompts.Keepalive(), r.promptSearchDirs...)
+	// The prompt may be a script (#1351): it then runs once per target, just
+	// before that target's keepalive, so it can decide per session (e.g. ask
+	// for routine work in one session a cycle and a bare ping in the rest).
+	src := prompts.ResolveKeepaliveSource(r.kaCfg.Prompt, r.promptSearchDirs...)
+	defaultKey := r.defaultParentKey()
 
 	r.mu.Lock()
 	r.keepaliveRunning = true
@@ -100,7 +104,16 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 			r.keepaliveRunning = false
 			r.mu.Unlock()
 		}()
-		for _, sk := range targets {
+		for i, sk := range targets {
+			promptText := src.Text
+			if src.Script != "" {
+				promptText = r.keepaliveScriptPrompt(ctx, src.Script, keepaliveRun{
+					sessionKey: sk,
+					index:      i,
+					count:      len(targets),
+					isDefault:  sk == defaultKey,
+				})
+			}
 			r.agent.Branch("keepalive", sk, promptText, true)
 		}
 	}()

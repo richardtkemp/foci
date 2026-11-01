@@ -274,6 +274,14 @@ type ResolvedKeepalive struct {
 	ForceInSession   bool // force in-session (no backend fork) even on a fork-capable backend
 }
 
+// ResolveKeepaliveFor is the agent's effective keepalive config: the agent's
+// [keepalive] overlaid on the global one. The ONE merge of the two — the
+// runtime (Resolve) and /prompts both read it, so /prompts cannot show a
+// different keepalive prompt from the one that runs (#1351 F1).
+func ResolveKeepaliveFor(cfg *Config, acfg AgentConfig) ResolvedKeepalive {
+	return resolveKeepalive(Merge(acfg.Keepalive, cfg.Keepalive))
+}
+
 func resolveKeepalive(m KeepaliveConfig) ResolvedKeepalive {
 	return ResolvedKeepalive{
 		Enabled:          DerefBool(m.Enabled),

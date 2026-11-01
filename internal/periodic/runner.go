@@ -134,8 +134,11 @@ type Runner struct {
 	cacheTTL         time.Duration // backend/model prompt-cache lifetime; keepalive upper bound (0 = unknown)
 	cacheTTLFor      func(sessionKey string) time.Duration
 	promptSearchDirs []string
-	todoStore        *memory.TodoStore
-	sessionIndex     *session.SessionIndex
+	// keepaliveScriptTimeout bounds one run of a keepalive prompt script
+	// (#1351); 0 = defaultKeepaliveScriptTimeout. Tests shorten it.
+	keepaliveScriptTimeout time.Duration
+	todoStore              *memory.TodoStore
+	sessionIndex           *session.SessionIndex
 
 	// openChatSessionsFn returns the session keys of every app chat the agent
 	// has open. Two consumers: quiet-hours compaction takes ALL of them

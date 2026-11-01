@@ -28,6 +28,7 @@ type PromptInfo struct {
 	Exists   bool   // whether the file exists on disk (only meaningful when Path != "")
 	Default  bool   // true if resolved text matches embedded default
 	Disabled bool   // true if explicitly set to "none"
+	Script   bool   // Path is an executable whose stdout is the prompt (keepalive only, #1351)
 }
 
 // PromptFile describes a prompt file found on disk.
@@ -115,6 +116,10 @@ func buildPromptsData(cc CommandContext) PromptsData {
 	dirs := cc.PromptSearchDirs
 	acfg := cc.AgentConfig
 	cfg := cc.Config
+	// The keepalive prompt as the runtime sees it: agent overlaid on global
+	// (#1351 F1). The other rows keep their own (agent-only or explicit)
+	// resolution unchanged.
+	keepalivePath := config.ResolveKeepaliveFor(cfg, acfg).Prompt
 
 	allPrompts := []PromptInfo{
 		// compaction-summary is file-only now (no config path field): override
@@ -130,9 +135,7 @@ func buildPromptsData(cc CommandContext) PromptsData {
 		resolvePromptInfo("branch_orient_depth",
 			resolveString(derefStr(acfg.Sessions.BranchOrientationDepthPrompt), derefStr(cfg.Sessions.BranchOrientationDepthPrompt)),
 			"branch-orientation-depth.md", prompts.BranchOrientationDepth(), dirs),
-		resolvePromptInfo("keepalive",
-			derefStr(acfg.Keepalive.Prompt),
-			"keepalive.md", prompts.Keepalive(), dirs),
+		keepalivePromptInfo(keepalivePath, dirs),
 		resolvePromptInfo("background",
 			derefStr(acfg.Background.Prompt),
 			"background.md", prompts.Background(), dirs),
@@ -179,7 +182,7 @@ func buildPromptsData(cc CommandContext) PromptsData {
 		{"branch_orient_facet", resolveString(derefStr(acfg.Sessions.BranchOrientationFacetPrompt), derefStr(cfg.Sessions.BranchOrientationFacetPrompt)), "branch-orientation-facet.md", prompts.BranchOrientationFacet()},
 		{"branch_orient_headless", resolveString(derefStr(acfg.Sessions.BranchOrientationHeadlessPrompt), derefStr(cfg.Sessions.BranchOrientationHeadlessPrompt)), "branch-orientation-headless.md", prompts.BranchOrientationHeadless()},
 		{"branch_orient_depth", resolveString(derefStr(acfg.Sessions.BranchOrientationDepthPrompt), derefStr(cfg.Sessions.BranchOrientationDepthPrompt)), "branch-orientation-depth.md", prompts.BranchOrientationDepth()},
-		{"keepalive", derefStr(acfg.Keepalive.Prompt), "keepalive.md", prompts.Keepalive()},
+		{"keepalive", keepalivePath, "keepalive.md", prompts.Keepalive()},
 		{"background", derefStr(acfg.Background.Prompt), "background.md", prompts.Background()},
 		{"reflection", derefStr(acfg.Reflection.IntervalPrompt), "reflection.md", prompts.Reflection()},
 		{"memory_consolidation", derefStr(acfg.Maintenance.ConsolidationPrompt), "memory-consolidation.md", prompts.MemoryConsolidation()},
@@ -195,6 +198,11 @@ func buildPromptsData(cc CommandContext) PromptsData {
 	for _, d := range fileDefs {
 		resolvedTexts[d.label] = prompts.ResolvePrompt(d.configPath, d.filename, d.embeddedDefault, dirs...)
 		defaultTexts[d.label] = d.embeddedDefault
+	}
+	// A keepalive script's prompt exists only when it runs, per session; it is
+	// never read as a file (#1351 F2), so diff shows what runs instead.
+	if src := prompts.ResolveKeepaliveSource(keepalivePath, dirs...); src.Script != "" {
+		resolvedTexts["keepalive"] = "[script " + src.Script + ": its stdout is the prompt, produced per session each keepalive]"
 	}
 
 	handoffVal := resolveString(derefStr(acfg.Sessions.CompactionHandoffMsg), derefStr(cfg.Sessions.CompactionHandoffMsg))
@@ -313,6 +321,17 @@ func resolvePromptInfo(label, configPath, filename, embeddedDefault string, sear
 	return PromptInfo{Label: label, Path: path, Filename: filename, Exists: err == nil, Default: def}
 }
 
+// keepalivePromptInfo builds the keepalive row from the same resolver the
+// keepalive runner uses, so a script source shows as a script (#1351).
+func keepalivePromptInfo(configPath string, searchDirs []string) PromptInfo {
+	const label, filename = "keepalive", "keepalive.md"
+	src := prompts.ResolveKeepaliveSource(configPath, searchDirs...)
+	if src.Script != "" {
+		return PromptInfo{Label: label, Path: src.Script, Filename: filename, Exists: true, Script: true}
+	}
+	return resolvePromptInfo(label, configPath, filename, prompts.Keepalive(), searchDirs)
+}
+
 // inlinePromptInfo builds a PromptInfo for an inline prompt value.
 func inlinePromptInfo(label, value, embeddedDefault string) PromptInfo {
 	if value == "" {
@@ -355,6 +374,9 @@ func promptsDisplay(data PromptsData) string {
 		case p.Disabled:
 			emoji = "⛔"
 			location = "disabled"
+		case p.Script:
+			emoji = "✏️"
+			location = relPath(p.Path) + " [script]"
 		case p.Inline != "":
 			tag := "default"
 			if !p.Default {

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"golang.org/x/sys/unix"
+
 	"foci/internal/fociroot"
 )
 
@@ -114,19 +116,59 @@ func NudgeUserBoundary() string { return read("nudge-user-boundary.md") }
 //     then returns embeddedDefault if not found
 //   - path = "none": returns "" (explicitly disabled)
 //   - path = "/path/to/file": reads file; on error logs warning + returns embeddedDefault
+//
+// ResolvePrompt never runs a script: only the keepalive prompt can be one
+// (ResolveKeepaliveSource, #1351).
 func ResolvePrompt(path, filename, embeddedDefault string, searchDirs ...string) string {
+	return resolveSource(path, filename, "", embeddedDefault, searchDirs...).Text
+}
+
+// Source is where a prompt comes from. Exactly one of Script and Text applies:
+// when Script is set, the prompt is that executable's stdout, produced per use
+// by the caller; otherwise Text is the prompt (from Path, or the embedded
+// default when Path is ""). Disabled ("none") is Text "" with Disabled set.
+type Source struct {
+	Script   string // executable whose stdout is the prompt; "" = Text applies
+	Text     string // the prompt text when Script == ""
+	Path     string // the file Text was read from; "" = embedded default or disabled
+	Disabled bool   // configured "none"
+}
+
+// KeepaliveScriptName is the script a prompt search dir may hold in place of
+// keepalive.md (#1351).
+const KeepaliveScriptName = "keepalive.sh"
+
+// ResolveKeepaliveSource resolves the keepalive prompt (#1351). It follows
+// ResolvePrompt's rules, with one addition: the prompt may be an executable
+// script. In a search dir, a runnable keepalive.sh beats keepalive.md in the
+// SAME dir (search order across dirs is unchanged); a keepalive.sh that is
+// not executable is ignored. An explicit path that is an executable regular
+// file is a script. A script is never read as a prompt file — its mode may
+// even forbid reading (0711) — so no read failure is logged for one.
+func ResolveKeepaliveSource(path string, searchDirs ...string) Source {
+	return resolveSource(path, "keepalive.md", KeepaliveScriptName, Keepalive(), searchDirs...)
+}
+
+// resolveSource is the one implementation of prompt resolution. scriptName ""
+// disables scripts entirely, which is how every prompt but keepalive resolves.
+func resolveSource(path, filename, scriptName, embeddedDefault string, searchDirs ...string) Source {
 	if path == "" || path == "default" {
 		for _, dir := range searchDirs {
+			if scriptName != "" {
+				if sp := filepath.Join(dir, scriptName); isRunnable(sp) {
+					return Source{Script: sp}
+				}
+			}
 			fp := filepath.Join(dir, filename)
 			data, err := os.ReadFile(fp)
 			if err == nil {
-				return strings.TrimSpace(string(data))
+				return Source{Text: strings.TrimSpace(string(data)), Path: fp}
 			}
 		}
-		return embeddedDefault
+		return Source{Text: embeddedDefault}
 	}
 	if path == "none" {
-		return ""
+		return Source{Disabled: true}
 	}
 	// Expand ~ to foci's install root: a prompt path is a config value, and
 	// config paths are install-relative ($FOCI_HOME, else $HOME; #2580).
@@ -135,12 +177,25 @@ func ResolvePrompt(path, filename, embeddedDefault string, searchDirs ...string)
 			path = home + path[1:]
 		}
 	}
+	if scriptName != "" && isRunnable(path) {
+		return Source{Script: path}
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		promptsLog.Warnf("%s: read %s: %v — using embedded default", filename, path, err)
-		return embeddedDefault
+		return Source{Text: embeddedDefault}
 	}
-	return strings.TrimSpace(string(data))
+	return Source{Text: strings.TrimSpace(string(data)), Path: path}
+}
+
+// isRunnable reports whether path (symlinks followed) is a regular file this
+// process may execute. A directory is X_OK too, hence the regular-file check.
+func isRunnable(path string) bool {
+	fi, err := os.Stat(path)
+	if err != nil || !fi.Mode().IsRegular() {
+		return false
+	}
+	return unix.Access(path, unix.X_OK) == nil
 }
 
 // ResolveOrientationTemplate loads the branch orientation template without

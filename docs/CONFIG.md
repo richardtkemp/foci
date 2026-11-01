@@ -342,7 +342,7 @@ When no config override is set, embedded defaults from `shared/prompts/` are use
 - `shared/prompts/branch-orientation-facet.md` — user-attached facet branches
 - `shared/prompts/compaction-summary.md` — compaction summary prompt
 - `shared/prompts/compaction-handoff.md` — post-compaction handoff message
-- `shared/prompts/keepalive.md` — keepalive ping prompt
+- `shared/prompts/keepalive.md` — keepalive ping prompt (a prompt dir may hold an executable `keepalive.sh` instead, run per session: see [Keepalive prompt scripts](#keepalive-prompt-scripts))
 - `shared/prompts/background.md` — background work prompt
 - `shared/prompts/reflection.md` — reflection pass prompt (memory + skill formation; interval, session-end, and compaction)
 - `shared/prompts/memory-consolidation.md` — MEMORY.md consolidation prompt
@@ -1265,8 +1265,36 @@ Cache keepalive timer. Fires a lightweight branch session to keep the prompt cac
 |-----|------|---------|-------------|
 | `enabled` | bool | `false` | Enable keepalive timer. |
 | `interval` | string | `"55m"` | Time since cache last warmed before firing. Should be less than the model's cache TTL (Anthropic default 1h; configurable per-model via `[models.*] cache_ttl`). |
-| `prompt` | string | `""` | Prompt file path. `""` = embedded default, `"default"` = embedded, `"none"` = disabled, `/path` = custom file. |
+| `prompt` | string | `""` | Prompt file path. `""` = embedded default (or `keepalive.sh` / `keepalive.md` from the prompt dirs), `"default"` = embedded, `"none"` = disabled, `/path` = custom file, or an executable script run once per warmed session (see [Keepalive prompt scripts](#keepalive-prompt-scripts)). |
 | `force_in_session` | bool | `false` | Force keepalive to run in the existing session instead of a real backend fork, even on a backend that can branch (e.g. Claude Code). Backends that can't fork already behave this way; this opts a fork-capable backend into the same behaviour for keepalive only. Live-appliable. |
+
+#### Keepalive prompt scripts
+
+The keepalive prompt (only this prompt) may be an executable script instead of a markdown file. Use it when the prompt must differ by session: with several warmed sessions (`warm_open_app_chats`), a markdown prompt that asks for routine work asks for it once per session every cycle; a script can ask for it once.
+
+- **Where.** A runnable `keepalive.sh` in a prompt dir (agent `workspace/prompts`, then `shared/prompts`) is used in place of `keepalive.md` in the same dir; a `keepalive.sh` without the execute bit is ignored. Or set `prompt` to the path of any executable regular file. `none`, `default`, `~/` and the embedded fallback behave as for a markdown prompt.
+- **When.** Once per warmed session per cycle, just before that session's keepalive is sent.
+- **Input.** Arguments `<agentID> <sessionKey>`. Environment: `FOCI_KEEPALIVE_INDEX` (0-based position of this session among this cycle's targets), `FOCI_KEEPALIVE_COUNT` (number of targets this cycle), `FOCI_KEEPALIVE_DEFAULT` (`1` if this is the agent's default session, else `0`), `FOCI_AGENT_ID`, `FOCI_SESSION_KEY`.
+- **Output.** Trimmed stdout is the prompt, used verbatim (no template processing).
+- **Failure.** A non-zero exit, a run over 15 seconds, a spawn error or empty stdout logs a warning and sends the built-in ping to that session. A script cannot cancel a keepalive.
+- **Privilege.** It runs as the foci user with the foci-secrets group dropped and the operator's shell environment: the same privilege as the agent's own shell tool.
+
+Example: the ping everywhere, plus git stewardship in the first session of each cycle.
+
+```sh
+#!/bin/sh
+# keepalive.sh <agentID> <sessionKey>: keepalive prompt for one session.
+PING='[KEEPALIVE] Cache keepalive ping. Respond with `[[NO_RESPONSE]]` and nothing else.'
+if [ "$FOCI_KEEPALIVE_INDEX" != "0" ]; then
+  echo "$PING"
+  exit 0
+fi
+cat <<'EOT'
+[KEEPALIVE] Cache keepalive, plus routine upkeep (this session only):
+check `git status` in your home repo; commit and push finished changes in one batch.
+Then respond with `[[NO_RESPONSE]]`.
+EOT
+```
 
 ### Background (`[background]` / `[[agents.background]]`)
 
