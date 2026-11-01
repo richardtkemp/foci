@@ -42,7 +42,7 @@ func captureKeepaliveLog(t *testing.T) *bytes.Buffer {
 }
 
 // keepaliveWarnLines returns the WARN lines in a captured log. Reading it after
-// waitIdle is safe: waitIdle's lock gives the happens-before edge.
+// waitKeepaliveDone is safe: isIdle's lock gives the happens-before edge.
 func keepaliveWarnLines(out string) []string {
 	var got []string
 	for _, l := range strings.Split(out, "\n") {
@@ -108,7 +108,30 @@ func scriptRunner(t *testing.T, prompt string, searchDirs []string) (*Runner, *[
 		},
 		done: make(chan struct{}),
 	}
+	// The keepalive goroutine must never outlive its test, even one that
+	// failed early: a leaked run logs into the next test's captured output
+	// and execs scripts from a TempDir being removed (#2752). Registered
+	// after the TempDirs and log capture above, so it runs before them.
+	t.Cleanup(func() { waitKeepaliveDone(t, r, len(keys)) })
 	return r, &calls, &mu
+}
+
+// waitKeepaliveDone waits for a script keepalive's goroutine to finish: the
+// real event, not a guess at how long three script spawns take under load
+// (the 2s waitIdle bound failed the land gate, #2752). The deadline is only
+// a hang-guard set from the code's own contract: each of the targets' script
+// runs is bounded by keepaliveScriptTimeout plus exec's one-second
+// WaitDelay. Hitting it means that bound broke, not that the host was slow.
+func waitKeepaliveDone(t *testing.T, r *Runner, targets int) {
+	t.Helper()
+	bound := time.Duration(targets)*(r.keepaliveScriptTimeout+time.Second) + 5*time.Second
+	deadline := time.Now().Add(bound)
+	for !isIdle(r) {
+		if time.Now().After(deadline) {
+			t.Fatalf("keepalive goroutine still running after %s: the per-script bound did not hold", bound)
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 // TestMaybeKeepalive_ScriptRunsPerSession: a keepalive.sh in the prompt dir
@@ -128,7 +151,7 @@ echo "args=$1,$2 idx=$FOCI_KEEPALIVE_INDEX count=$FOCI_KEEPALIVE_COUNT default=$
 
 	r, calls, mu := scriptRunner(t, "", []string{dir})
 	r.maybeKeepalive(context.Background())
-	waitIdle(t, r)
+	waitKeepaliveDone(t, r, 3)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -160,7 +183,7 @@ func TestMaybeKeepalive_ExplicitScriptPath(t *testing.T) {
 	p := writeScript(t, t.TempDir(), "ka-anything", `echo "explicit $2"`+"\n", 0o700)
 	r, calls, mu := scriptRunner(t, p, nil)
 	r.maybeKeepalive(context.Background())
-	waitIdle(t, r)
+	waitKeepaliveDone(t, r, 3)
 	mu.Lock()
 	defer mu.Unlock()
 	if len(*calls) != 3 || (*calls)[1].prompt != "explicit test/chat2" {
@@ -177,7 +200,7 @@ func TestMaybeKeepalive_MarkdownPromptUnchanged(t *testing.T) {
 	}
 	r, calls, mu := scriptRunner(t, "", []string{dir})
 	r.maybeKeepalive(context.Background())
-	waitIdle(t, r)
+	waitKeepaliveDone(t, r, 3)
 	mu.Lock()
 	defer mu.Unlock()
 	if len(*calls) != 3 {
@@ -271,7 +294,7 @@ func TestKeepaliveScript_UnreadableExecutable(t *testing.T) {
 		t.Setenv(kaHelperEnv, "1")
 		r, calls, mu := scriptRunner(t, "", []string{dir})
 		r.maybeKeepalive(context.Background())
-		waitIdle(t, r)
+		waitKeepaliveDone(t, r, 3)
 		mu.Lock()
 		defer mu.Unlock()
 		if len(*calls) != 3 || (*calls)[0].prompt != "test test/main" {

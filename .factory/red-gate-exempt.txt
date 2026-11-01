@@ -1,3 +1,0 @@
-TestMaybeKeepalive_MarkdownPromptUnchanged: characterisation — a markdown keepalive prompt is sent verbatim to every target, as before #1351
-TestResolveKeepaliveSource_Unchanged: characterisation — none/default/empty/md path/missing path resolve exactly as ResolvePrompt always did
-TestResolvePrompt_NeverRunsScripts: characterisation — every non-keepalive prompt still ignores scripts and reads an executable path as text
