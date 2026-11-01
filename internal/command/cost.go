@@ -23,7 +23,7 @@ func costUsage() string {
 		"  24h              last 24 hours\n" +
 		"  week             last 7 days (calendar-aligned)\n" +
 		"  4h / 30m         Go duration notation\n" +
-		"  3                last N days\n" +
+		"  3 / 3d           last N days (calendar-aligned)\n" +
 		"\n" +
 		"Scopes (any number; multiple intersect):\n" +
 		"  session / self   this session and all descendants\n" +

@@ -139,8 +139,8 @@ func hasOwnershipScope(scopes []string) bool {
 
 // tryParseCostDuration attempts to classify a token as a duration.
 // Recognised forms: "today", "24h", "week", Go duration strings ("4h",
-// "30m"), and bare integers (days). Day-count forms (week, bare integers)
-// are calendar-aligned: the window starts at start-of-day, matching the old
+// "30m"), and day counts as bare or "d"-suffixed integers ("3", "3d").
+// Day-count forms (week, N, Nd) are calendar-aligned: the window starts at start-of-day, matching the old
 // costWeek behaviour. Plain durations ("24h", "4h") are rolling windows
 // measured back from now — "24h" genuinely means the last 24 hours, not
 // "since midnight" (that's what "today" is for).
@@ -156,7 +156,9 @@ func tryParseCostDuration(s string) (kind costDurKind, dur time.Duration, label 
 	if d, err := time.ParseDuration(s); err == nil {
 		return durWindow, d, s, false, true
 	}
-	if n, err := strconv.Atoi(s); err == nil && n > 0 {
+	// Day counts: bare "3" or suffixed "3d". Go durations have no day unit,
+	// so ParseDuration above rejects "3d" and it is handled here.
+	if n, err := strconv.Atoi(strings.TrimSuffix(s, "d")); err == nil && n > 0 {
 		return durWindow, time.Duration(n) * 24 * time.Hour, fmt.Sprintf("%d days", n), true, true
 	}
 	return durNone, 0, "", false, false

@@ -105,6 +105,11 @@ func TestParseCostArgs(t *testing.T) {
 		{"week", "week", false, durWindow, []string{"agent"}, false},
 		{"4h Go duration", "4h", false, durWindow, []string{"agent"}, false},
 		{"3 days numeric", "3", false, durWindow, []string{"agent"}, false},
+		{"2d day suffix", "2d", false, durWindow, []string{"agent"}, false},
+		{"3D day suffix upper", "3D", false, durWindow, []string{"agent"}, false},
+		{"0d rejected", "0d", true, 0, nil, false},
+		{"bare d rejected", "d", true, 0, nil, false},
+		{"two durations day suffix", "3 2d", true, 0, nil, false},
 		{"breakdown only", "breakdown", false, durNone, []string{"agent"}, true},
 		// "all" opts out of the default, leaving no ownership filter.
 		{"all scope", "all", false, durNone, nil, false},
@@ -193,6 +198,25 @@ func TestTimePredicate_RollingVsCalendar(t *testing.T) {
 	}
 	if pred3(startOfWindow.Add(-time.Hour)) {
 		t.Error("3-day calendar window must exclude 1h before its start-of-day boundary")
+	}
+}
+
+// TestParseCostArgs_DaySuffixMatchesBareDays pins #2737: "Nd" is the same
+// calendar-aligned N-day window as bare "N" (same dur, label and alignment).
+func TestParseCostArgs_DaySuffixMatchesBareDays(t *testing.T) {
+	for _, n := range []string{"1", "2", "3", "30"} {
+		bare, err := parseCostArgs(n)
+		if err != nil {
+			t.Fatalf("parseCostArgs(%q): %v", n, err)
+		}
+		suffixed, err := parseCostArgs(n + "d")
+		if err != nil {
+			t.Fatalf("parseCostArgs(%q): %v", n+"d", err)
+		}
+		if suffixed.durKind != bare.durKind || suffixed.durDur != bare.durDur ||
+			suffixed.durCalendar != bare.durCalendar || suffixed.durLabel != bare.durLabel {
+			t.Errorf("%sd = %+v, want same window as %s = %+v", n, suffixed, n, bare)
+		}
 	}
 }
 

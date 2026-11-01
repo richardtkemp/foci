@@ -24,7 +24,7 @@ API cost summary for a time period.
 - `/cost today` — today's costs by session
 - `/cost 24h` — last 24 hours with category breakdown (cache reads/writes, input, output)
 - `/cost week` — 7-day summary with daily breakdown
-- `/cost <N>` — total for last N days
+- `/cost <N>` or `/cost <N>d` — total for last N days
 
 ### `/context`
 Context window breakdown — total vs limit, compaction threshold, tokens until compaction, system prompt breakdown by section (environment, workspace files, skills), tool token count, conversation breakdown (user/assistant/tool results), last API call token breakdown.
