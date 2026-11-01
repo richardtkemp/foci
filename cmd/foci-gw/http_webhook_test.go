@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/config"
 	"foci/internal/session"
 )
 
@@ -336,5 +337,171 @@ func TestWebhook_NoWebhooksConfigured(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// --- #1134: per-hook session setting -------------------------------------
+
+// postWebhookSync POSTs a sync webhook call and returns the decoded receipt.
+func postWebhookSync(t *testing.T, mux http.Handler, path string) map[string]string {
+	t.Helper()
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+	req := httptest.NewRequest(http.MethodPost, path+sep+"sync=true", strings.NewReader("payload"))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("POST %s: status = %d, want 200; body: %s", path, w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("POST %s: decode: %v (%s)", path, err, w.Body.String())
+	}
+	return resp
+}
+
+// webhookSessionSetup builds a harness with one hook "h" (prompt h.md) and
+// the given session setting.
+func webhookSessionSetup(t *testing.T, sessionSetting string) (httpHandlerDeps, http.Handler) {
+	t.Helper()
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "h.md"), []byte("hook prompt"), 0644)
+	d, _ := httpTestSetup(t, httpTestOpts{promptDir: dir, hooks: map[string]config.WebhookConfig{
+		"h": {Prompt: "h.md", Session: sessionSetting},
+	}})
+	return d, newTestMux(d)
+}
+
+func TestWebhookSession_OldFormIsPersistent(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "h.md"), []byte("hook prompt"), 0644)
+	d, _ := httpTestSetup(t, httpTestOpts{promptDir: dir, webhooks: map[string]string{"h": "h.md"}})
+	mux := newTestMux(d)
+	for i := range 2 {
+		if got := postWebhookSync(t, mux, "/webhook/test-agent/h")["session"]; got != "test-agent/ih" {
+			t.Errorf("call %d: session = %q, want test-agent/ih", i, got)
+		}
+	}
+}
+
+func TestWebhookSession_Persistent(t *testing.T) {
+	t.Parallel()
+	_, mux := webhookSessionSetup(t, config.WebhookSessionPersistent)
+	for i := range 2 {
+		if got := postWebhookSync(t, mux, "/webhook/test-agent/h")["session"]; got != "test-agent/ih" {
+			t.Errorf("call %d: session = %q, want test-agent/ih", i, got)
+		}
+	}
+}
+
+func TestWebhookSession_FixedName(t *testing.T) {
+	t.Parallel()
+	_, mux := webhookSessionSetup(t, "ops")
+	if got := postWebhookSync(t, mux, "/webhook/test-agent/h")["session"]; got != "test-agent/iops" {
+		t.Errorf("fixed: session = %q, want test-agent/iops", got)
+	}
+	// ?session= overrides the configured name.
+	if got := postWebhookSync(t, mux, "/webhook/test-agent/h?session=other")["session"]; got != "test-agent/iother" {
+		t.Errorf("override: session = %q, want test-agent/iother", got)
+	}
+}
+
+// A fixed name resolves like ?session=: an existing chat key is reached exactly.
+func TestWebhookSession_FixedNameResolvesLikeQuery(t *testing.T) {
+	t.Parallel()
+	_, mux := webhookSessionSetup(t, testSessionKey)
+	if got := postWebhookSync(t, mux, "/webhook/test-agent/h")["session"]; got != testSessionKey {
+		t.Errorf("session = %q, want %q", got, testSessionKey)
+	}
+}
+
+func assertFreshDistinct(t *testing.T, a, b string) {
+	t.Helper()
+	if a == b {
+		t.Errorf("two calls shared session %q, want distinct fresh sessions", a)
+	}
+	for _, k := range []string{a, b} {
+		if k == "test-agent/ih" {
+			t.Errorf("session = %q: the persistent per-hook session, want a fresh one", k)
+		}
+		if !strings.HasPrefix(k, "test-agent/i") {
+			t.Errorf("session = %q, want an independent root of test-agent", k)
+		}
+		if typ := session.ClassifySessionKey(k); typ != session.SessionTypeIndependent {
+			t.Errorf("session %q type = %q, want independent", k, typ)
+		}
+	}
+}
+
+func TestWebhookSession_NewPerCall(t *testing.T) {
+	t.Parallel()
+	_, mux := webhookSessionSetup(t, config.WebhookSessionNewPerCall)
+	r1 := postWebhookSync(t, mux, "/webhook/test-agent/h")
+	r2 := postWebhookSync(t, mux, "/webhook/test-agent/h")
+	assertFreshDistinct(t, r1["session"], r2["session"])
+	if r1["resolved_via"] != "created" {
+		t.Errorf("resolved_via = %q, want created", r1["resolved_via"])
+	}
+	// ?session= still overrides new-per-call.
+	if got := postWebhookSync(t, mux, "/webhook/test-agent/h?session=pinned")["session"]; got != "test-agent/ipinned" {
+		t.Errorf("override: session = %q, want test-agent/ipinned", got)
+	}
+}
+
+// ?new_session=true asks for a fresh session for one call on any hook.
+func TestWebhookSession_PerCallQueryOnPersistentHook(t *testing.T) {
+	t.Parallel()
+	_, mux := webhookSessionSetup(t, "")
+	r1 := postWebhookSync(t, mux, "/webhook/test-agent/h?new_session=true")
+	r2 := postWebhookSync(t, mux, "/webhook/test-agent/h?new_session=true")
+	assertFreshDistinct(t, r1["session"], r2["session"])
+	// Without it the hook is back on its persistent session.
+	if got := postWebhookSync(t, mux, "/webhook/test-agent/h")["session"]; got != "test-agent/ih" {
+		t.Errorf("session = %q, want test-agent/ih", got)
+	}
+}
+
+// A ?session= value that looks like a config keyword still names a session.
+func TestWebhookSession_QueryKeywordIsAName(t *testing.T) {
+	t.Parallel()
+	_, mux := webhookSessionSetup(t, "")
+	for _, name := range []string{"new", config.WebhookSessionNewPerCall, config.WebhookSessionPersistent} {
+		if got := postWebhookSync(t, mux, "/webhook/test-agent/h?session="+name)["session"]; got != "test-agent/i"+name {
+			t.Errorf("?session=%s: session = %q, want test-agent/i%s", name, got, name)
+		}
+	}
+}
+
+func TestWebhookSession_BadQueryCombos(t *testing.T) {
+	t.Parallel()
+	_, mux := webhookSessionSetup(t, "")
+	for _, q := range []string{"session=x&new_session=true", "new_session=maybe"} {
+		req := httptest.NewRequest(http.MethodPost, "/webhook/test-agent/h?sync=true&"+q, nil)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("?%s: status = %d, want 400; body: %s", q, w.Code, w.Body.String())
+		}
+	}
+}
+
+// A fresh session has no history: if_active skips, if_inactive runs.
+func TestWebhookSession_NewPerCallGates(t *testing.T) {
+	t.Parallel()
+	d, mux := webhookSessionSetup(t, config.WebhookSessionNewPerCall)
+	// Make the persistent per-hook session and the default chat busy, so a
+	// gate that looked at either would answer the other way.
+	for _, k := range []string{"test-agent/ih", testSessionKey} {
+		d.sessionIndex.Upsert(session.SessionIndexEntry{SessionKey: k, FilePath: "x", SessionType: session.SessionTypeIndependent, Status: session.SessionStatusActive})
+		d.sessionIndex.TouchCacheTouch(k, time.Now())
+	}
+	if got := postWebhookSync(t, mux, "/webhook/test-agent/h?if_active=1h")["response"]; got != "skipped: no recent activity" {
+		t.Errorf("if_active=1h: response = %q, want skipped: no recent activity", got)
+	}
+	if got := postWebhookSync(t, mux, "/webhook/test-agent/h?if_inactive=1h")["response"]; got != mockReply {
+		t.Errorf("if_inactive=1h: response = %q, want the turn to run (%q)", got, mockReply)
 	}
 }

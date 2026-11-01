@@ -34,7 +34,7 @@ type ResolvedAgentConfig struct {
 	Permissions ResolvedPermissions
 
 	// Webhooks is the merged System.Webhooks map (global base + agent overlay).
-	Webhooks map[string]string
+	Webhooks map[string]WebhookConfig
 
 	// Per-platform 4-layer resolved display and notify.
 	platformDisplay map[string]ResolvedDisplay

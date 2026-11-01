@@ -149,7 +149,7 @@ func TestLiveApplyForceInSessionOverridesGoLive(t *testing.T) {
 func TestLiveApply_MapSection(t *testing.T) {
 	base := &config.Config{
 		Groups: config.GroupsConfig{Groups: map[string]string{"powerful": "anthropic/claude-opus-4-6"}},
-		System: config.SystemConfig{Webhooks: map[string]string{"deploy": "old.md"}},
+		System: config.SystemConfig{Webhooks: map[string]config.WebhookConfig{"deploy": {Prompt: "old.md"}}},
 		Agents: []config.AgentConfig{{ID: "a"}},
 	}
 	resolved := config.Resolve(base, base.Agents[0])
@@ -204,7 +204,7 @@ id = "a"
 	if r := inst.ag.GroupResolver.ResolveGroup("myteam"); r == nil || r.ModelID != "claude-haiku-4-5" {
 		t.Errorf("after Apply, GroupResolver.ResolveGroup(myteam) = %+v, want claude-haiku-4-5 — new group not picked up", r)
 	}
-	if got := inst.LiveConfig().Webhooks["deploy"]; got != "new.md" {
+	if got := inst.LiveConfig().Webhooks["deploy"].Prompt; got != "new.md" {
 		t.Errorf("after Apply, LiveConfig().Webhooks[deploy] = %q, want %q", got, "new.md")
 	}
 
@@ -440,5 +440,33 @@ func TestLiveApplyCoversLiveObjectSections(t *testing.T) {
 		if !spec.Live && has {
 			t.Errorf("object section %s has an applier but is not marked Live", spec.Section)
 		}
+	}
+}
+
+// TestLiveApply_WebhookSessionForm (#1134): a live edit that changes an
+// existing hook from the old prompt-only form to a table with a session
+// setting reaches the running agent's resolved config.
+func TestLiveApply_WebhookSessionForm(t *testing.T) {
+	base := &config.Config{
+		System: config.SystemConfig{Webhooks: map[string]config.WebhookConfig{"deploy": {Prompt: "deploy.md"}}},
+		Agents: []config.AgentConfig{{ID: "a"}},
+	}
+	inst := &agentInstance{id: "a", ag: &agent.Agent{}, resolved: config.NewLiveValue(config.Resolve(base, base.Agents[0]))}
+	la := newLiveApply("")
+	registerLiveAppliers(la, map[string]*agentInstance{"a": inst})
+
+	configPath := filepath.Join(t.TempDir(), "foci.toml")
+	fresh := "[groups]\npowerful = \"anthropic/claude-opus-4-6\"\n\n[system.webhooks]\ndeploy = { prompt = \"deploy.md\", session = \"new-per-call\" }\n\n[[agents]]\nid = \"a\"\n"
+	if err := os.WriteFile(configPath, []byte(fresh), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	la.configPath = configPath
+	applied, err := la.Apply("system.webhooks", "deploy")
+	if err != nil || !applied {
+		t.Fatalf("Apply = (%v, %v), want applied", applied, err)
+	}
+	h := inst.LiveConfig().Webhooks["deploy"]
+	if _, perCall := h.SessionPolicy(); !perCall || h.Prompt != "deploy.md" {
+		t.Errorf("after Apply, deploy = %+v, want deploy.md with new-per-call", h)
 	}
 }

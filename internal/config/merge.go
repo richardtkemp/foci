@@ -140,9 +140,9 @@ func Dedupe[T comparable](in []T) []T {
 	return DedupeBy(in, func(v T) T { return v })
 }
 
-// MergeMaps merges two string maps with the overlay taking priority.
-// Returns nil if both are nil/empty.
-func MergeMaps(base, overlay map[string]string) map[string]string {
+// MergeMaps merges two maps with the overlay taking priority: an overlay entry
+// replaces the base entry for its key whole. Returns nil if both are nil/empty.
+func MergeMaps[V any](base, overlay map[string]V) map[string]V {
 	if len(base) == 0 && len(overlay) == 0 {
 		return nil
 	}
@@ -152,7 +152,7 @@ func MergeMaps(base, overlay map[string]string) map[string]string {
 	if len(overlay) == 0 {
 		return base
 	}
-	result := make(map[string]string, len(base)+len(overlay))
+	result := make(map[string]V, len(base)+len(overlay))
 	for k, v := range base {
 		result[k] = v
 	}

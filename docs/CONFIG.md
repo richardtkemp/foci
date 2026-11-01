@@ -1352,7 +1352,16 @@ Scheduled housekeeping that runs at a wall-clock time of day **or** on a fixed i
 
 | Key | Type | Default | Global location | Description |
 |-----|------|---------|-----------------|-------------|
-| `webhooks` | map[string]string | `{}` | `[system]` | Maps webhook hook IDs to prompt file paths. Used by `POST /webhook/{agent}/{hookid}`. Per-agent merges with global (agent keys override matching global keys; unmatched global keys are preserved). |
+| `webhooks` | map: hook ID → prompt path string, or table `{ prompt, session }` | `{}` | `[system]` | Maps webhook hook IDs to a prompt file and, optionally, a session setting. Used by `POST /webhook/{agent}/{hookid}`. Per-agent merges with global per hook ID: an agent's entry replaces the global entry for that ID whole (no field-level merge); unmatched global keys are preserved. Live: a `/config set` or app-editor edit applies without a restart. |
+
+Each entry is either a prompt path string (the original form) or a table with these keys:
+
+| Sub-key | Required | Description |
+|---------|----------|-------------|
+| `prompt` | yes | Prompt file path (same resolution as the string form). |
+| `session` | no | `persistent` (default): every call revives the per-hook independent session `agent/i<hookID>`. `new-per-call`: every call gets a fresh independent session. Any other value is a fixed session, resolved exactly like a `?session=` value. A `?session=` query value always overrides it. |
+
+A table without `prompt`, an empty `prompt`, an empty `session`, or any other sub-key is a config error at load that names the hook. `/config set system.webhooks.<id>=<path>` writes the string form; write the table form by editing the file.
 
 Prompt paths are resolved via `prompts.ResolvePrompt`: bare filenames (e.g. `"deploy.md"`) are searched in `{workspace}/shared/prompts/` then `{shared}/prompts/`; absolute paths are read directly.
 
@@ -1364,6 +1373,12 @@ webhooks = { new_commit = "new_commit.md", deploy = "deploy.md" }
 id = "scout"
 [agents.system]
 webhooks = { alert = "alert-handler.md" }  # adds alert; inherits new_commit, deploy from [system]
+
+[[agents]]
+id = "ops"
+[agents.system.webhooks]
+deploy = { prompt = "deploy.md", session = "new-per-call" }  # replaces the global deploy entry whole
+pager = { prompt = "pager.md", session = "oncall" }           # fixed session: ops/ioncall
 ```
 
 ---

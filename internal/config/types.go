@@ -642,8 +642,8 @@ type BehaviorConfig struct {
 // SystemConfig holds system-level agent settings.
 // Global: [system], per-agent: [[agents]].system.*
 type SystemConfig struct {
-	SystemFiles []string          `toml:"system_files"  desc:"Character/instruction files loaded into the system prompt, in order. Paths relative to the agent's working directory"`
-	Webhooks    map[string]string `toml:"webhooks"`
+	SystemFiles []string                 `toml:"system_files"  desc:"Character/instruction files loaded into the system prompt, in order. Paths relative to the agent's working directory"`
+	Webhooks    map[string]WebhookConfig `toml:"webhooks"` // hook ID → entry; see WebhookConfig
 }
 
 // ToolConfig holds per-agent tool behavioral overrides.

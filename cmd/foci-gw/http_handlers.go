@@ -2,12 +2,16 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -917,27 +921,18 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 		}
 
 		// Look up hookID in the agent's configured webhooks.
-		promptPath, ok := inst.LiveConfig().Webhooks[hookID]
+		hook, ok := inst.LiveConfig().Webhooks[hookID]
 		if !ok {
 			http.Error(w, fmt.Sprintf("unknown webhook: %q", hookID), http.StatusNotFound)
 			return
 		}
+		promptPath := hook.Prompt
 
 		q := r.URL.Query()
 
-		// A webhook is an external event source, not a human conversation — its
-		// turns must not land in the user's chat. Absent an explicit ?session=,
-		// default to a per-hook INDEPENDENT session (agent/i<hookID>), created
-		// lazily and classified as session_type "independent". An explicit
-		// ?session= still wins (e.g. to route a hook into a named session).
-		sessionSel := q.Get("session")
-		if sessionSel == "" {
-			sessionSel = hookID
-		}
-
 		// Resolve session before gating so the activity gate can consult
 		// last_activity / IsTurnInFlight for the targeted session.
-		webhookRes, webhookRcpt, ok := resolveTargetSession(d, w, inst.id, sessionSel, "", "/webhook")
+		webhookRes, webhookRcpt, ok := resolveWebhookSession(d, w, inst.id, hookID, hook, q)
 		if !ok {
 			return
 		}
@@ -1010,6 +1005,85 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 		}
 		writeJSONReceipt(w, resp, webhookRcpt)
 	}
+}
+
+// resolveWebhookSession picks the session a webhook call runs in (#1134).
+// A webhook is an external event source, not a human conversation, so its
+// turns never land in the user's chat by default. Precedence:
+//
+//  1. A non-empty ?session= value, resolved like /send's session selector. It
+//     always means the session it names, even if it reads like a config
+//     keyword ("new", "persistent").
+//  2. ?new_session=true: a fresh independent session for this call only, on
+//     any hook. It is a separate parameter so it can never collide with a
+//     session name; combining it with ?session= is a 400.
+//  3. The hook's configured session setting: a fixed selector (resolved like
+//     ?session=), new-per-call (a fresh independent session each call), or
+//     persistent.
+//  4. Persistent (the default): the per-hook independent session
+//     agent/i<hookID>, created lazily.
+func resolveWebhookSession(d httpHandlerDeps, w http.ResponseWriter, agentID, hookID string, hook config.WebhookConfig, q url.Values) (route.Resolution, route.Receipt, bool) {
+	sel := q.Get("session")
+	newSession := false
+	if v := q.Get("new_session"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("bad request: new_session must be true or false, got %q", v), http.StatusBadRequest)
+			return route.Resolution{}, route.Receipt{}, false
+		}
+		newSession = b
+	}
+	if sel != "" && newSession {
+		http.Error(w, "bad request: session and new_session=true are mutually exclusive", http.StatusBadRequest)
+		return route.Resolution{}, route.Receipt{}, false
+	}
+	if sel == "" && !newSession {
+		fixed, perCall := hook.SessionPolicy()
+		switch {
+		case perCall:
+			newSession = true
+		case fixed != "":
+			sel = fixed
+		default:
+			sel = hookID
+		}
+	}
+	if !newSession {
+		return resolveTargetSession(d, w, agentID, sel, "", "/webhook")
+	}
+	key, name, err := freshWebhookSessionKey(d.sessionIndex, agentID, hookID)
+	if err != nil {
+		httpLog.Errorf("POST /webhook: fresh session for %s/%s: %v", agentID, hookID, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return route.Resolution{}, route.Receipt{}, false
+	}
+	// The key is built directly, not resolved through the ladder: a fresh
+	// name must never be read as an existing chat alias.
+	t := route.Target{Agent: agentID, Rest: name, Create: true, Policy: route.PolicyFallback}
+	res := route.Resolution{SessionKey: key, Rung: route.RungCreated, Policy: route.PolicyFallback}
+	return res, res.ReceiptFor(t), true
+}
+
+// freshWebhookSessionKey mints a new independent session key
+// agent/i<hookID>-<unix-nanos>-<random hex> that no existing session uses.
+// The nanosecond clock plus 32 random bits keeps two calls in the same second
+// (or the same nanosecond) apart; the index check guards the rest.
+func freshWebhookSessionKey(idx *session.SessionIndex, agentID, hookID string) (key, name string, err error) {
+	for range 8 {
+		var rnd [4]byte
+		if _, err := rand.Read(rnd[:]); err != nil {
+			return "", "", err
+		}
+		name = fmt.Sprintf("%s-%d-%s", hookID, time.Now().UnixNano(), hex.EncodeToString(rnd[:]))
+		key, err = session.NamedIndependentSessionKey(agentID, name)
+		if err != nil {
+			return "", "", err
+		}
+		if idx == nil || !idx.SessionExists(key) {
+			return key, name, nil
+		}
+	}
+	return "", "", fmt.Errorf("could not mint an unused session name")
 }
 
 // applyModelOverride resolves a model value (group name, alias, or developer/model_id)

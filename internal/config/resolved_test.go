@@ -143,21 +143,21 @@ func TestResolve_WebhooksMerge(t *testing.T) {
 	// as overlay — agent keys override global, global-only keys are kept.
 	cfg := &Config{
 		System: SystemConfig{
-			Webhooks: map[string]string{"on_start": "/shared/start.md", "on_error": "/shared/error.md"},
+			Webhooks: map[string]WebhookConfig{"on_start": {Prompt: "/shared/start.md"}, "on_error": {Prompt: "/shared/error.md"}},
 		},
 	}
 	acfg := AgentConfig{
 		System: SystemConfig{
-			Webhooks: map[string]string{"on_start": "/agent/start.md"}, // override on_start
+			Webhooks: map[string]WebhookConfig{"on_start": {Prompt: "/agent/start.md"}}, // override on_start
 		},
 	}
 
 	rc := Resolve(cfg, acfg)
 
-	if got := rc.Webhooks["on_start"]; got != "/agent/start.md" {
+	if got := rc.Webhooks["on_start"].Prompt; got != "/agent/start.md" {
 		t.Errorf("Webhooks[on_start] = %q, want \"/agent/start.md\" (agent overlay)", got)
 	}
-	if got := rc.Webhooks["on_error"]; got != "/shared/error.md" {
+	if got := rc.Webhooks["on_error"].Prompt; got != "/shared/error.md" {
 		t.Errorf("Webhooks[on_error] = %q, want \"/shared/error.md\" (global base)", got)
 	}
 }
@@ -171,7 +171,7 @@ func TestResolve_AllFieldsPopulated(t *testing.T) {
 		Behavior:  BehaviorConfig{SteerMode: Ptr(true), GroupThrottle: Ptr("1s"), EnableStopAliases: Ptr(true), StopAliases: []string{"stop"}, MaxConcurrentTurns: Ptr(2)},
 		Voice:     VoiceConfig{TTS: Ptr("test")},
 		Nudge:     NudgeConfig{NudgeEnable: Ptr(true), NudgeCooldown: Ptr(1)},
-		System:    SystemConfig{SystemFiles: []string{"a.md"}, Webhooks: map[string]string{"hook": "path"}},
+		System:    SystemConfig{SystemFiles: []string{"a.md"}, Webhooks: map[string]WebhookConfig{"hook": {Prompt: "path"}}},
 		Display:   DisplayConfig{StreamOutput: Ptr(true)},
 		Notify:    NotifyConfig{StartupNotify: Ptr(true)},
 		Tools: ToolsConfig{

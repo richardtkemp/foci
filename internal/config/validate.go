@@ -286,17 +286,14 @@ func (cfg *Config) Validate(knownBackends []string) error {
 		return err
 	}
 
-	// Validate webhook keys contain no path separators (defense in depth)
-	for k := range cfg.System.Webhooks {
-		if strings.ContainsAny(k, "/\\") {
-			return fmt.Errorf("[system] webhooks: key %q must not contain path separators", k)
-		}
+	// Validate webhook entries: hook IDs carry no path separators (defense in
+	// depth), and each entry is well-formed (#1134).
+	if err := validateWebhooks("[system] webhooks", cfg.System.Webhooks); err != nil {
+		return err
 	}
 	for _, a := range cfg.Agents {
-		for k := range a.System.Webhooks {
-			if strings.ContainsAny(k, "/\\") {
-				return fmt.Errorf("agent %q webhooks: key %q must not contain path separators", a.ID, k)
-			}
+		if err := validateWebhooks(fmt.Sprintf("agent %q webhooks", a.ID), a.System.Webhooks); err != nil {
+			return err
 		}
 	}
 

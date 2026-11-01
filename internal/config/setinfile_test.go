@@ -938,8 +938,8 @@ powerful = "anthropic/claude-opus-4-6"
 `), 0o644)
 
 		cfg := setDirectRoundTrip(t, path, "system.webhooks.deploy", "deploy.md")
-		if cfg.System.Webhooks["deploy"] != "deploy.md" {
-			t.Errorf("system.webhooks.deploy = %q", cfg.System.Webhooks["deploy"])
+		if cfg.System.Webhooks["deploy"].Prompt != "deploy.md" {
+			t.Errorf("system.webhooks.deploy = %q", cfg.System.Webhooks["deploy"].Prompt)
 		}
 	})
 
@@ -954,8 +954,8 @@ system_files = ["notes.md"]
 `), 0o644)
 
 		cfg := setDirectRoundTrip(t, path, "system.webhooks.deploy", "deploy.md")
-		if cfg.System.Webhooks["deploy"] != "deploy.md" {
-			t.Errorf("system.webhooks.deploy = %q", cfg.System.Webhooks["deploy"])
+		if cfg.System.Webhooks["deploy"].Prompt != "deploy.md" {
+			t.Errorf("system.webhooks.deploy = %q", cfg.System.Webhooks["deploy"].Prompt)
 		}
 		if len(cfg.System.SystemFiles) != 1 || cfg.System.SystemFiles[0] != "notes.md" {
 			t.Errorf("[system]'s own key corrupted: got %+v", cfg.System.SystemFiles)
@@ -970,15 +970,15 @@ deploy = "old-deploy.md"
 `), 0o644)
 
 		cfg := setDirectRoundTrip(t, path, "system.webhooks.deploy", "new-deploy.md")
-		if cfg.System.Webhooks["deploy"] != "new-deploy.md" {
-			t.Errorf("system.webhooks.deploy = %q, want new-deploy.md", cfg.System.Webhooks["deploy"])
+		if cfg.System.Webhooks["deploy"].Prompt != "new-deploy.md" {
+			t.Errorf("system.webhooks.deploy = %q, want new-deploy.md", cfg.System.Webhooks["deploy"].Prompt)
 		}
 
 		cfg2 := setDirectRoundTrip(t, path, "system.webhooks.alert", "alert.md")
-		if cfg2.System.Webhooks["alert"] != "alert.md" {
-			t.Errorf("system.webhooks.alert = %q", cfg2.System.Webhooks["alert"])
+		if cfg2.System.Webhooks["alert"].Prompt != "alert.md" {
+			t.Errorf("system.webhooks.alert = %q", cfg2.System.Webhooks["alert"].Prompt)
 		}
-		if cfg2.System.Webhooks["deploy"] != "new-deploy.md" {
+		if cfg2.System.Webhooks["deploy"].Prompt != "new-deploy.md" {
 			t.Errorf("earlier update lost after adding a second key: %+v", cfg2.System.Webhooks)
 		}
 	})
@@ -989,8 +989,8 @@ deploy = "old-deploy.md"
 		os.WriteFile(path, []byte("[groups]\npowerful = \"anthropic/claude-opus-4-6\"\n"), 0o644)
 
 		cfg := setDirectRoundTrip(t, path, "system.webhooks.deploy", `prompts/deploy "v2".md`)
-		if cfg.System.Webhooks["deploy"] != `prompts/deploy "v2".md` {
-			t.Errorf("system.webhooks.deploy = %q", cfg.System.Webhooks["deploy"])
+		if cfg.System.Webhooks["deploy"].Prompt != `prompts/deploy "v2".md` {
+			t.Errorf("system.webhooks.deploy = %q", cfg.System.Webhooks["deploy"].Prompt)
 		}
 	})
 }
@@ -1047,7 +1047,7 @@ workspace = "`+filepath.Join(dir, "beta")+`"
 	}
 
 	cfg = set("beta", "agent.system.webhooks.deploy", "deploy.md")
-	if cfg.Agents[1].System.Webhooks["deploy"] != "deploy.md" {
+	if cfg.Agents[1].System.Webhooks["deploy"].Prompt != "deploy.md" {
 		t.Errorf("Agents[1] (beta).System.Webhooks = %+v", cfg.Agents[1].System.Webhooks)
 	}
 	// Alpha's earlier group write must survive beta's independent edit.

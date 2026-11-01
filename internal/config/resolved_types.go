@@ -102,7 +102,7 @@ func resolveNudge(m NudgeConfig) ResolvedNudge {
 
 type ResolvedSystem struct {
 	SystemFiles []string
-	Webhooks    map[string]string
+	Webhooks    map[string]WebhookConfig
 }
 
 func resolveSystem(m SystemConfig) ResolvedSystem {

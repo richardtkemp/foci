@@ -111,11 +111,12 @@ func (m *mockClient) lastText() string {
 // "test-agent" backed by mockClient, with a registered default session
 // (testSessionKey) and an empty command registry.
 type httpTestOpts struct {
-	promptDir string             // prompt search dir (webhook prompt files)
-	webhooks  map[string]string  // hook ID → prompt path
-	commands  []*command.Command // slash commands registered on the agent
-	noSession bool               // skip session registration (no-session error paths)
-	kaRunner  *periodic.Runner   // optional periodic runner on the agent (nil = none, as production tests run); a bare &periodic.Runner{} exposes the in-process interaction receipt
+	promptDir string                          // prompt search dir (webhook prompt files)
+	webhooks  map[string]string               // hook ID → prompt path (old form)
+	hooks     map[string]config.WebhookConfig // full entries (#1134); merged over webhooks
+	commands  []*command.Command              // slash commands registered on the agent
+	noSession bool                            // skip session registration (no-session error paths)
+	kaRunner  *periodic.Runner                // optional periodic runner on the agent (nil = none, as production tests run); a bare &periodic.Runner{} exposes the in-process interaction receipt
 }
 
 // httpTestSetup builds httpHandlerDeps around a single mockClient-backed
@@ -160,7 +161,7 @@ func httpTestSetup(t *testing.T, opts httpTestOpts) (httpHandlerDeps, *mockClien
 		cmds:             cmds,
 		kaRunner:         opts.kaRunner,
 		promptSearchDirs: []string{opts.promptDir},
-		resolved:         config.NewLiveValue(&config.ResolvedAgentConfig{Webhooks: opts.webhooks}),
+		resolved:         config.NewLiveValue(&config.ResolvedAgentConfig{Webhooks: harnessWebhooks(opts)}),
 	}
 	inst.cc = command.CommandContext{
 		Agent:        ag,
@@ -209,4 +210,20 @@ func newTestMux(d httpHandlerDeps) *http.ServeMux {
 	mux := http.NewServeMux()
 	registerHTTPHandlers(mux, d)
 	return mux
+}
+
+// harnessWebhooks builds the resolved webhooks map from the old-form string
+// map plus any full entries.
+func harnessWebhooks(opts httpTestOpts) map[string]config.WebhookConfig {
+	if len(opts.webhooks) == 0 && len(opts.hooks) == 0 {
+		return nil
+	}
+	out := map[string]config.WebhookConfig{}
+	for k, v := range opts.webhooks {
+		out[k] = config.WebhookConfig{Prompt: v}
+	}
+	for k, v := range opts.hooks {
+		out[k] = v
+	}
+	return out
 }

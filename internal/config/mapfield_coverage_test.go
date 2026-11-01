@@ -56,8 +56,8 @@ var mapFieldCoverage = map[string]mapFieldCoverageCase{
 	"system.webhooks": {
 		fixture: "[groups]\npowerful = \"anthropic/claude-opus-4-6\"\n",
 		key:     "deploy", value: "deploy.md",
-		global:       func(cfg *Config) map[string]string { return cfg.System.Webhooks },
-		agent:        func(a AgentConfig) map[string]string { return a.System.Webhooks },
+		global:       func(cfg *Config) map[string]string { return webhookPrompts(cfg.System.Webhooks) },
+		agent:        func(a AgentConfig) map[string]string { return webhookPrompts(a.System.Webhooks) },
 		agentFixture: "[groups]\npowerful = \"anthropic/claude-opus-4-6\"\n\n[[agents]]\nid = \"a\"\n",
 	},
 }
@@ -135,4 +135,14 @@ func TestMapFieldSections_RoundTripCoverage(t *testing.T) {
 			}
 		})
 	}
+}
+
+// webhookPrompts projects a webhooks map to hook ID → prompt path: a
+// /config set write produces the old (prompt-only) form.
+func webhookPrompts(m map[string]WebhookConfig) map[string]string {
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v.Prompt
+	}
+	return out
 }
