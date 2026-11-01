@@ -35,6 +35,21 @@ func newRLState() *rateLimitState {
 
 func hhmm(unix int64) string { return time.Unix(unix, 0).In(timeutil.Location()).Format("15:04") }
 
+// isolateRateLimits removes each agent's entry from the process-wide
+// agentRateLimits registry when the test ends. Tests key that state by
+// t.Name(), so without this a repeat run (-count=N) inherits the previous
+// run's marks and gateUntil (#2701).
+func isolateRateLimits(t *testing.T, agents ...string) {
+	t.Helper()
+	t.Cleanup(func() {
+		agentRateLimitsMu.Lock()
+		defer agentRateLimitsMu.Unlock()
+		for _, a := range agents {
+			delete(agentRateLimits, a)
+		}
+	})
+}
+
 // TestRateLimitsFirstObservationNeverWarns proves the restart rule: the first
 // snapshot of each window and of the limit-reached state only seeds, even when
 // it shows a window used up and the workspace out of credits — a foci restart
@@ -134,6 +149,7 @@ func TestRateLimitsStatusLineFromLiveRead(t *testing.T) {
 		return json.RawMessage(liveRateLimitsRead), nil
 	})
 	b.startOpts.AgentID = t.Name()
+	isolateRateLimits(t, t.Name())
 	var notices []string
 	b.SetHostHooks(delegator.HostHooks{OnRateLimitNotice: func(_, n string) { notices = append(notices, n) }})
 
@@ -161,6 +177,7 @@ func TestRateLimitsStatusLineFromLiveRead(t *testing.T) {
 func TestRateLimitsUpdatedNotificationReachesHook(t *testing.T) {
 	b := newTestBackend(t)
 	b.startOpts.AgentID = t.Name()
+	isolateRateLimits(t, t.Name())
 	type call struct{ key, notice string }
 	var calls []call
 	b.SetHostHooks(delegator.HostHooks{OnRateLimitNotice: func(k, n string) { calls = append(calls, call{k, n}) }})
@@ -183,6 +200,7 @@ func TestRateLimitsUpdatedNotificationReachesHook(t *testing.T) {
 func TestRateLimitsGateEngagesOnReachedLimit(t *testing.T) {
 	b := newTestBackend(t)
 	b.startOpts.AgentID = t.Name()
+	isolateRateLimits(t, t.Name())
 	var sigs []ratelimit.Signal
 	b.SetHostHooks(delegator.HostHooks{EngageRateLimit: func(s ratelimit.Signal) { sigs = append(sigs, s) }})
 	// The handler reads the real clock, so the window resets relative to it.
@@ -250,6 +268,7 @@ func TestRateLimitsSeedDoesNotEngageGate(t *testing.T) {
 		return json.RawMessage(liveRateLimitsRead), nil
 	})
 	b.startOpts.AgentID = t.Name()
+	isolateRateLimits(t, t.Name())
 	engaged := 0
 	b.SetHostHooks(delegator.HostHooks{EngageRateLimit: func(ratelimit.Signal) { engaged++ }})
 	b.seedRateLimits()
@@ -286,6 +305,7 @@ func TestQueryUsage_FreshReadFromRunningServer(t *testing.T) {
 		return json.RawMessage(liveRateLimitsRead), nil
 	})
 	poolAs(t, t.Name(), b)
+	isolateRateLimits(t, t.Name())
 
 	info, err := QueryUsage(context.Background(), t.Name())
 	if err != nil {
@@ -330,6 +350,7 @@ func TestQueryUsage_FreshReadFromRunningServer(t *testing.T) {
 // Each agent sees only its own account's numbers.
 func TestQueryUsage_NoServerReportsLastPushed(t *testing.T) {
 	agent, other := t.Name(), t.Name()+"-other"
+	isolateRateLimits(t, agent, other, t.Name()+"-never")
 	before := time.Now()
 	rateLimitsFor(agent).apply(codexWindow(42, reset5h), timeutil.Now())
 	rateLimitsFor(other).apply(codexWindow(99, reset5h), timeutil.Now())
@@ -365,6 +386,7 @@ func TestQueryUsage_ReadFailureFallsBack(t *testing.T) {
 		return nil, rpcErrorReply{code: -32600, message: "nope"}
 	})
 	poolAs(t, t.Name(), b)
+	isolateRateLimits(t, t.Name())
 	rateLimitsFor(t.Name()).apply(codexWindow(10, reset5h), timeutil.Now())
 
 	info, err := QueryUsage(context.Background(), t.Name())
