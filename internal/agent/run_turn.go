@@ -139,13 +139,7 @@ func (a *Agent) RunTurn(
 	var texts []string
 	var allAttachments []platform.Attachment
 	for _, env := range batch {
-		text := env.Text
-		if env.IsGroupChat && env.SenderName != "" {
-			text = fmt.Sprintf("[%s] %s", env.SenderName, text)
-		} else if env.IsGroupChat && env.UserID != "" {
-			text = fmt.Sprintf("[user:%s] %s", env.UserID, text)
-		}
-		texts = append(texts, text)
+		texts = append(texts, attributedText(env))
 		allAttachments = append(allAttachments, env.Attachments...)
 	}
 
@@ -229,4 +223,18 @@ func batchHuman(batch []Envelope) bool {
 		}
 	}
 	return false
+}
+
+// attributedText is env's text as a turn records and prompts it: a group-chat
+// message gains its sender's attribution so logs and prompts know who said
+// what when several users share one channel. A steer's recv row uses it too
+// (#2661), so a folded message is recorded exactly as a fresh turn would.
+func attributedText(env Envelope) string {
+	switch {
+	case env.IsGroupChat && env.SenderName != "":
+		return fmt.Sprintf("[%s] %s", env.SenderName, env.Text)
+	case env.IsGroupChat && env.UserID != "":
+		return fmt.Sprintf("[user:%s] %s", env.UserID, env.Text)
+	}
+	return env.Text
 }

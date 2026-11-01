@@ -42,10 +42,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"foci/internal/convo"
 	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/relogin"
+	"foci/internal/session"
 	"foci/internal/turn"
 	"foci/internal/turnevent"
 )
@@ -266,11 +268,17 @@ type Driver interface {
 // turn completes and rebuilt as follow-up turns) show accurate meta header
 // timestamps. Automated carries Envelope.Automated through the buffer, so an
 // orphan rebuilt by buildFollowUp keeps it and still never answers for the
-// human (RunTurn's ask capture skips it).
+// human (RunTurn's ask capture skips it). UserID, Username and ChatID are
+// the sender's, and RecvText the text as a turn would record it
+// (attributedText), for the recv row written when the turn drains it (#2661).
 type SteerEntry struct {
 	Text       string
 	ReceivedAt time.Time
 	Automated  bool
+	UserID     string
+	Username   string
+	ChatID     int64
+	RecvText   string
 }
 
 // inboxChanSize is the per-session channel buffer. Matches the legacy
@@ -392,7 +400,33 @@ func (inb *sessionInbox) appendSteer(e SteerEntry) {
 
 // steerEntryFor is the one Envelope→SteerEntry mapping for the steer buffer.
 func steerEntryFor(env Envelope) SteerEntry {
-	return SteerEntry{Text: env.Text, ReceivedAt: env.ReceivedAt, Automated: env.Automated}
+	return SteerEntry{Text: env.Text, ReceivedAt: env.ReceivedAt, Automated: env.Automated,
+		UserID: env.UserID, Username: env.Username, ChatID: env.ChatID, RecvText: attributedText(env)}
+}
+
+// recordSteerRecv writes the recv row for a message that folded into the
+// running turn as a steer (#2661). A folded message never becomes a turn of
+// its own, so LogConversationRecv never sees it: this is its only record.
+// Call it only once the fold has landed. A steer that falls back to the
+// channel, and an API-mode orphan rebuilt by buildFollowUp, become a turn
+// whose LogConversationRecv records them; recording them here as well would
+// write the message twice. A later redelivery of a folded input (#2050) is
+// not recorded again either (LogConversationRecv skips redeliveries).
+//
+// A steer only ever folds into a user turn (trySteer, #2591), so the row
+// carries no turn kind, like the recv row of the turn it joined.
+func recordSteerRecv(sk, userID, username string, chatID int64, text string) {
+	if chatID == 0 {
+		chatID = session.ChatIDFromKey(sk)
+	}
+	convo.Record(convo.Entry{
+		Direction: "recv",
+		UserID:    userID,
+		Username:  username,
+		ChatID:    chatID,
+		Text:      text,
+		Session:   sk,
+	})
 }
 
 func (inb *sessionInbox) drainSteer() []SteerEntry {
@@ -408,7 +442,10 @@ func (inb *sessionInbox) drainSteer() []SteerEntry {
 
 // drainSteerTexts is the Steerer-shaped variant: returns text-only entries
 // for use by turn.RunTurn's tool-boundary drain. Receipt timestamps are
-// discarded — mid-turn paste doesn't render a meta header.
+// discarded — mid-turn paste doesn't render a meta header. The entries fold
+// into the running turn here, so this is where each gets its recv row
+// (#2661); entries drainSteer takes as orphans are recorded by their
+// follow-up turn instead.
 func (inb *sessionInbox) drainSteerTexts() []string {
 	entries := inb.drainSteer()
 	if len(entries) == 0 {
@@ -417,6 +454,7 @@ func (inb *sessionInbox) drainSteerTexts() []string {
 	out := make([]string, len(entries))
 	for i, e := range entries {
 		out[i] = e.Text
+		recordSteerRecv(inb.sk, e.UserID, e.Username, e.ChatID, e.RecvText)
 	}
 	return out
 }
@@ -881,6 +919,10 @@ func (a *Agent) steerToBackend(be delegator.Delegator, env Envelope) bool {
 	switch {
 	case err == nil:
 		a.logger().Debugf("inbox: urgent dispatch sk=%s sent %dB attachments=%d", env.SessionKey, len(inj.Text), len(inj.Attachments))
+		// The sender's text as a turn records it (attributedText), not
+		// inj.Text: a fresh turn's recv row holds what the sender wrote, not
+		// the attachment notes prepended to it.
+		recordSteerRecv(env.SessionKey, env.UserID, env.Username, env.ChatID, attributedText(env))
 		return true
 	case errors.Is(err, delegator.ErrTurnNotInFlight):
 		// The turn finished between the turnActive check and the inject
