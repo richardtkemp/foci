@@ -212,7 +212,6 @@ func TestAskPrompt_CancelEditsAskingSessionChat(t *testing.T) {
 // edit addresses the asking session's chat too. Not parallel: it sweeps the
 // process-global interactive prompt store.
 func TestAskPrompt_ExpiryEditsAskingSessionChat(t *testing.T) {
-	t.Parallel()
 	conn := &chatRoutingConn{stubConn: stubConn{sessionKey: "main/c999"}, defaultSessionKey: "main/c999"}
 
 	newAskPresentFn("main", oneConnMgr{conn: conn}, nil)("main/c222", "ask-routing-3", "Q?", "Q", askChoices(), func(string) {})

@@ -33,8 +33,11 @@ func (m oneConnMgr) ForSessionOrPrimary(string, string) platform.Connection { re
 // restart — the ask layer is fed question.ExpiredData, not the Cancel sentinel,
 // so the agent is told the ask expired rather than that the user cancelled it.
 // Not parallel: CleanupExpiredInteractive sweeps the process-global prompt store.
+// With t.Parallel (added by #2352) the sweep, whose cutoff is in the future,
+// also expired a parallel test's delegated permission prompt and ran its
+// onExpire on a half-built agent: a nil-pointer panic in DelegatedManager
+// (the #2720 land gate, 2026-11-01).
 func TestAskPrompt_ExpiryResolvesAsExpired(t *testing.T) {
-	t.Parallel()
 	mgr := oneConnMgr{conn: &buttonStubConn{stubConn{sessionKey: "a/s"}}}
 	choices := []question.Choice{{Label: "Yes", Data: "qa:0"}, {Label: "Cancel", Data: question.CancelData}}
 
