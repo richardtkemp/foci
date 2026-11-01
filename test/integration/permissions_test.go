@@ -115,11 +115,11 @@ func TestL2_Permissions_AutoApproveUserRuleSkipsPrompt(t *testing.T) {
 	h, token := permTestSetup(t, []testharness.AgentSpec{{
 		ID:          "alpha",
 		UserID:      permTestUserID,
-		AutoApprove: []string{"Bash:git status"},
+		AutoApprove: []string{"Bash:git fetch"},
 	}}, "")
 
 	const reqID = "req-user-rule-1"
-	h.WriteCCStubScript(t, "alpha", permissionScript(reqID, "Bash", map[string]any{"command": "git status"}, nil))
+	h.WriteCCStubScript(t, "alpha", permissionScript(reqID, "Bash", map[string]any{"command": "git fetch"}, nil))
 	pushTrigger(t, h, token, "trigger user rule")
 
 	resp := findControlResponse(t, h, reqID, 10*time.Second)
@@ -297,10 +297,10 @@ func TestL2_Permissions_AllowAlwaysAddsSessionRule(t *testing.T) {
 
 	const reqID = "req-allow-always-1"
 	suggestions := []map[string]any{{"prefix": "Bash:git *"}}
-	h.WriteCCStubScript(t, "alpha", permissionScript(reqID, "Bash", map[string]any{"command": "git status"}, suggestions))
+	h.WriteCCStubScript(t, "alpha", permissionScript(reqID, "Bash", map[string]any{"command": "git fetch"}, suggestions))
 	pushTrigger(t, h, token, "trigger allow-always")
 
-	if _, ok := waitForPermissionPrompt(t, h.TelegramStub(), token, "git status", 10*time.Second); !ok {
+	if _, ok := waitForPermissionPrompt(t, h.TelegramStub(), token, "git fetch", 10*time.Second); !ok {
 		t.Fatalf("prompt never fired")
 	}
 	h.TelegramStub().PushCallbackQuery(token, callbackForAllowAlways(reqID, 0), permTestUserID, permTestUserID, 0)
