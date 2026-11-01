@@ -103,7 +103,10 @@ func (b *Backend) dispatch(line []byte) {
 			// can arrive before the thread/start or thread/resume response that
 			// registers it, and a fork's before its branch facade resumes it;
 			// the owner treats a thread/started that is not its root as a no-op.
-			if env.Method != "thread/started" {
+			// Nor is a thread foci forked whose session has not resumed it yet
+			// (a depth leaf that has not run, #2720): it is known, not lost. Its
+			// lines are the fork's own lifecycle, which dispatchLost consumes.
+			if env.Method != "thread/started" && !p.isPendingFork(id) {
 				b.noteUnclaimed(id, env.Method, time.Now())
 			}
 			// Whatever the owner shows the user from this line (message text,

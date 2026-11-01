@@ -1,6 +1,8 @@
 package codex
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -192,5 +194,88 @@ func TestUnclaimedTimerFires(t *testing.T) {
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("the unclaimed timer never reported the orphan")
+	}
+}
+
+// TestForkedThreadIsClaimedUntilItsLeafRuns is #2720's regression: a depth
+// fan-out forks one thread per leaf, but a leaf's branch facade resumes its
+// thread only when the leaf runs (the user opens or answers it), minutes or
+// hours later. codex sends the fork's mcpServer/startupStatus/updated and
+// thread/tokenUsage/updated during and right after thread/fork, so before the
+// fix every leaf's thread stayed unclaimed past the grace and logged one WARN
+// (14 for a 14-leaf fan-out on the work Mac, 2026-10-31). A thread foci forked
+// is known from the fork onwards: none of its lines may be reported lost, and
+// none may reach the owner's chat or accounting.
+func TestForkedThreadIsClaimedUntilItsLeafRuns(t *testing.T) {
+	const forkID = "leaf-thread"
+	var b *Backend
+	b = setupMockBackend(t, func(method string, _ json.RawMessage, _ int64) (json.RawMessage, error) {
+		if method == "thread/fork" {
+			// Lines codex sends during thread/fork, before the response names
+			// the new thread (the reader dispatches them as they arrive).
+			for _, line := range earlyForkLines(forkID)[:3] {
+				b.dispatch(line)
+			}
+			return json.RawMessage(`{"thread":{"id":"` + forkID + `"}}`), nil
+		}
+		return nil, nil
+	})
+	stopUnclaimedTimer(t, b)
+	warns := captureWarns(t)
+
+	res, err := b.ForkSession(context.Background(), delegator.ForkRequest{ParentSessionID: "thread-1", FociSessionKey: "test/session"})
+	if err != nil || res.SessionID != forkID {
+		t.Fatalf("ForkSession = %+v, %v", res, err)
+	}
+	// Lines after the fork, while the leaf has not run yet.
+	for _, line := range earlyForkLines(forkID)[3:] {
+		b.dispatch(line)
+	}
+
+	b.flushUnclaimed(time.Now().Add(10*unclaimedGrace), false)
+	if got := lostWarns(warns()); len(got) != 0 {
+		t.Errorf("a forked thread whose leaf has not run yet was reported lost: %q", got)
+	}
+	b.turnMu.Lock()
+	stashed := b.stashedUsage
+	b.turnMu.Unlock()
+	if stashed != nil {
+		t.Errorf("the fork's token usage was stashed as the owner's: %+v", stashed)
+	}
+	if got := b.threadForSession("test/session"); got != "thread-1" {
+		t.Errorf("the fork repointed the parent's session to thread %q, want thread-1", got)
+	}
+
+	// A real orphan on the same owner is still reported.
+	b.dispatch([]byte(`{"method":"thread/goal/cleared","params":{"threadId":"orphan-thread"}}`))
+	b.flushUnclaimed(time.Now().Add(10*unclaimedGrace), false)
+	if got := lostWarns(warns()); len(got) != 1 || !strings.Contains(got[0], "orphan-thread") {
+		t.Errorf("want one lost WARN for the orphan, got %q", got)
+	}
+}
+
+// TestDeletedForkIsNoLongerClaimed: once foci deletes a forked thread
+// (CleanupSession), a later line for it is an orphan again and is reported.
+func TestDeletedForkIsNoLongerClaimed(t *testing.T) {
+	const forkID = "deleted-leaf"
+	b := setupMockBackend(t, func(method string, _ json.RawMessage, _ int64) (json.RawMessage, error) {
+		if method == "thread/fork" {
+			return json.RawMessage(`{"thread":{"id":"` + forkID + `"}}`), nil
+		}
+		return nil, nil
+	})
+	stopUnclaimedTimer(t, b)
+	warns := captureWarns(t)
+
+	if _, err := b.ForkSession(context.Background(), delegator.ForkRequest{ParentSessionID: "thread-1"}); err != nil {
+		t.Fatalf("ForkSession: %v", err)
+	}
+	if err := b.CleanupSession(context.Background(), delegator.CleanupRequest{SessionID: forkID}); err != nil {
+		t.Fatalf("CleanupSession: %v", err)
+	}
+	b.dispatch([]byte(`{"method":"thread/goal/cleared","params":{"threadId":"` + forkID + `"}}`))
+	b.flushUnclaimed(time.Now().Add(10*unclaimedGrace), false)
+	if got := lostWarns(warns()); len(got) != 1 {
+		t.Errorf("want one lost WARN for a line after the fork was deleted, got %q", got)
 	}
 }

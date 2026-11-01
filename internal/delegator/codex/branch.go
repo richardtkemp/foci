@@ -55,6 +55,12 @@ func (b *Backend) ForkSession(ctx context.Context, req delegator.ForkRequest) (d
 	// to its NEW branch session key and starts a backend with
 	// ResumeSessionID=<forked thread>, and resumeThread already registers
 	// (startOpts.SessionKey -> threadID) for that session.
+	//
+	// The fork is still recorded as foci's (registerFork), with no session:
+	// its branch session may resume it much later (a depth leaf runs only when
+	// the user opens it), and its lines until then are known, not lost (#2720).
+	// This is done before writeOpening, whose inject may stream more of them.
+	b.registerFork(tr.Thread.ID)
 	res := delegator.ForkResult{SessionID: tr.Thread.ID}
 	if req.Opening != nil {
 		res.OpeningWritten = b.writeOpening(tr.Thread.ID, req.Opening)
@@ -205,9 +211,11 @@ func (b *Backend) CleanupSession(ctx context.Context, req delegator.CleanupReque
 		ThreadID: req.SessionID,
 	})
 	if err == nil {
+		b.forgetFork(req.SessionID)
 		return nil
 	}
 	if strings.Contains(err.Error(), noRolloutFoundMarker) {
+		b.forgetFork(req.SessionID)
 		// Already absent (never existed, or a prior delete already ran) —
 		// documented as not-an-error, matching the contract above.
 		b.logDebugf("thread/delete for %s: already absent: %v", req.SessionID, err)

@@ -188,6 +188,14 @@ type Backend struct {
 	// used to fall through to the owner's chat (2026-10-29). Guarded by
 	// threadMapMu.
 	childParents map[string]*Backend
+	// forkedThreads holds the threads this app-server forked for foci
+	// (ForkSession) that no session has registered yet (#2720). A depth leaf's
+	// branch facade resumes its thread only when the leaf runs, which can be
+	// hours after the fan-out forked it, and codex streams the fork's first
+	// notifications at once; this set is what makes those lines known rather
+	// than lost. registerThread and a successful CleanupSession remove the
+	// entry. Guarded by threadMapMu.
+	forkedThreads map[string]struct{}
 	// unclaimed holds the deferred lost-line WARNs (unclaimed.go), on the
 	// owner only: lines for a thread that matches no session yet, which codex
 	// sends for a fork or resume before foci can register it (#2700).
@@ -356,6 +364,7 @@ func (b *Backend) registerThread(fociSessionID, codexThreadID string) {
 	}
 	p.threadSessions[codexThreadID] = fociSessionID
 	p.threadBackends[codexThreadID] = b
+	delete(p.forkedThreads, codexThreadID) // a fork is now its session's
 	p.threadMapMu.Unlock()
 	// Its early lines (sent before this registration) were not lost.
 	b.claimUnclaimed(codexThreadID)
@@ -380,6 +389,42 @@ func (b *Backend) registerChild(childThreadID string, parent *Backend) {
 	p.childParents[childThreadID] = parent
 	p.threadMapMu.Unlock()
 	b.claimUnclaimed(childThreadID)
+}
+
+// registerFork records that thread id was forked for foci and awaits the
+// session that will resume it (#2720), and forgets any lost-line WARN its
+// early lines (sent during thread/fork) left pending.
+func (b *Backend) registerFork(id string) {
+	if id == "" {
+		return
+	}
+	p := b.process()
+	p.threadMapMu.Lock()
+	if p.forkedThreads == nil {
+		p.forkedThreads = make(map[string]struct{})
+	}
+	p.forkedThreads[id] = struct{}{}
+	p.threadMapMu.Unlock()
+	b.claimUnclaimed(id)
+}
+
+// forgetFork drops thread id from the forked-thread set: the thread was
+// deleted, so a later line for it is an orphan again.
+func (b *Backend) forgetFork(id string) {
+	p := b.process()
+	p.threadMapMu.Lock()
+	delete(p.forkedThreads, id)
+	p.threadMapMu.Unlock()
+}
+
+// isPendingFork reports whether thread id was forked for foci and no session
+// has registered it yet.
+func (b *Backend) isPendingFork(id string) bool {
+	p := b.process()
+	p.threadMapMu.RLock()
+	defer p.threadMapMu.RUnlock()
+	_, ok := p.forkedThreads[id]
+	return ok
 }
 
 // parentOfChild returns the facade a child thread was registered to, or nil.

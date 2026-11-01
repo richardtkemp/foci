@@ -43,7 +43,8 @@ type unclaimedLines struct {
 // noteUnclaimed records that a line for thread id arrived when the thread
 // matched no session and no known subagent. The WARN for it is deferred: it is
 // logged by flushUnclaimed only if the thread is still unclaimed after
-// unclaimedGrace, and never if registerThread or registerChild claims it first.
+// unclaimedGrace, and never if registerThread, registerChild or registerFork
+// claims it first.
 // The line itself is not held back: dispatch hands it to the owner at once
 // (dispatchLost), exactly as before.
 func (b *Backend) noteUnclaimed(id, method string, now time.Time) {
@@ -73,9 +74,9 @@ func (b *Backend) noteUnclaimed(id, method string, now time.Time) {
 }
 
 // claimUnclaimed forgets thread id's deferred lost-line WARN: the thread has
-// been registered to a session or bound as a subagent, so its early lines were
-// not lost, only early. Called by registerThread and registerChild after they
-// release threadMapMu.
+// been registered to a session, bound as a subagent or recorded as a fork, so
+// its early lines were not lost, only early. Called by registerThread,
+// registerChild and registerFork after they release threadMapMu.
 func (b *Backend) claimUnclaimed(id string) {
 	p := b.process()
 	u := &p.unclaimed
@@ -145,7 +146,7 @@ func (b *Backend) stopUnclaimed() {
 // threadClaimed reports whether thread id now belongs to a session or a known
 // subagent. Takes threadMapMu (read) under unclaimed.mu, the permitted order.
 func (b *Backend) threadClaimed(id string) bool {
-	if b.facadeForThread(id) != nil || b.parentOfChild(id) != nil {
+	if b.facadeForThread(id) != nil || b.parentOfChild(id) != nil || b.isPendingFork(id) {
 		return true
 	}
 	return b.subagents != nil && b.subagents.isChild(id)
