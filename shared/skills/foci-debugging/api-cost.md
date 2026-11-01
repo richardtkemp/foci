@@ -24,7 +24,7 @@ sqlite3 -readonly ~/data/api.db "SELECT TOTAL(cost_usd) FROM call_costs WHERE bi
 
 ## Payload logs (JSONL)
 
-Full request/response per call, on by default (`payload_file` defaults to `logs/api-payload.jsonl`; `""` in `[logging]` disables it; `full_payload` does not gate writing). Archives: `logs/archive/api-payload-*.jsonl.gz`. The file is large: filter with jq, never cat.
+Full request/response per call, **only for agents on the direct-API transport (`backend = "api"`)**. Claude Code and opencode agents send their own requests, so their calls never reach this file; an empty `api-payload.jsonl` while those agents work is normal, not a broken writer. `[logging] full_payload = true` is the switch; `payload_file` (default `logs/api-payload.jsonl`) is only the path. Archives: `logs/archive/api-payload-*.jsonl.gz`. The file is large: filter with jq, never cat.
 
 ```bash
 # Calls in a window with cache stats
