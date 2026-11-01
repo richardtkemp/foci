@@ -577,3 +577,45 @@ func TestBehaviorTurnLimitRegistryRows(t *testing.T) {
 		}
 	}
 }
+
+// TestLiveFieldDescriptionsSayHowToApplyLive pins #2672 (Dick's ruling:
+// document it, no file watcher): only /config set and the app config editor
+// call the live applier, so every live-applied field's description must say
+// so, and a restart-required field's description must not claim it.
+func TestLiveFieldDescriptionsSayHowToApplyLive(t *testing.T) {
+	live, restart := 0, 0
+	for _, f := range AllFields() {
+		has := strings.HasSuffix(f.Description, LiveEditNote)
+		switch {
+		case !f.NeedsRestart && !has:
+			t.Errorf("%s.%s is live but its description lacks the live-edit note: %q", f.Section, f.Key, f.Description)
+		case f.NeedsRestart && strings.Contains(f.Description, LiveEditNote):
+			t.Errorf("%s.%s needs a restart but its description claims a live edit: %q", f.Section, f.Key, f.Description)
+		}
+		if f.NeedsRestart {
+			restart++
+		} else {
+			live++
+		}
+	}
+	if live == 0 || restart == 0 {
+		t.Fatalf("registry sample is degenerate: %d live, %d restart-required fields", live, restart)
+	}
+	for _, mf := range MapFields() {
+		if !strings.HasSuffix(mf.Description, LiveEditNote) {
+			t.Errorf("map section %s is live but its description lacks the live-edit note: %q", mf.Section, mf.Description)
+		}
+	}
+	for _, of := range ObjectFields() {
+		if has := strings.HasSuffix(of.Description, LiveEditNote); has != of.Live {
+			t.Errorf("object section %s (Live=%v): live-edit note present=%v in %q", of.Section, of.Live, has, of.Description)
+		}
+	}
+	// The map-key lookup path builds its own ConfigField.
+	if f, ok := LookupField("groups.anything"); !ok || !strings.HasSuffix(f.Description, LiveEditNote) {
+		t.Errorf("LookupField(groups.anything) = %+v, %v; want a live-edit note", f, ok)
+	}
+	if got := withLiveEditNote("Some text"); got != "Some text. "+LiveEditNote {
+		t.Errorf("withLiveEditNote = %q", got)
+	}
+}

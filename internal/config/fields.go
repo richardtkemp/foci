@@ -43,6 +43,27 @@ type ConfigField struct {
 	NeedsRestart bool
 }
 
+// LiveEditNote is appended to the one-line description of every live-applied
+// field (a hot-tagged registry row, every map section, every Live object
+// section), so /config set, the app editor and every other surface that shows
+// a description say plainly WHICH edits apply live. There is no file watcher:
+// only /config set and the app config editor call the live applier
+// (cmd/foci-gw/liveapply.go), so a hand edit to foci.toml waits for a restart
+// (Dick's ruling on #2672: document it, no watcher).
+const LiveEditNote = "Applies live when changed with /config set or the app config editor; a hand edit to foci.toml needs a restart"
+
+// withLiveEditNote returns desc with LiveEditNote appended as its own sentence.
+func withLiveEditNote(desc string) string {
+	desc = strings.TrimSpace(desc)
+	if desc == "" {
+		return LiveEditNote
+	}
+	if !strings.HasSuffix(desc, ".") {
+		desc += "."
+	}
+	return desc + " " + LiveEditNote
+}
+
 // validHotTags are the allowed `hot` struct tag timing values; enforced by test.
 var validHotTags = map[string]bool{"immediate": true, "turn": true, "session": true, "event": true}
 
@@ -258,13 +279,17 @@ func walkType(typ reflect.Type, section, prefix string, fields *[]ConfigField, c
 			key = prefix + "." + tomlTag
 		}
 
+		needsRestart := !hotApplies(f.Tag.Get("hot"), section)
+		if !needsRestart {
+			desc = withLiveEditNote(desc)
+		}
 		*fields = append(*fields, ConfigField{
 			Section:      section,
 			Key:          key,
 			Type:         fieldType,
 			Description:  desc,
 			Default:      f.Tag.Get("default"),
-			NeedsRestart: !hotApplies(f.Tag.Get("hot"), section),
+			NeedsRestart: needsRestart,
 		})
 
 		// Parse constraints from tags
@@ -524,6 +549,11 @@ var objectFieldSpecs = []ObjectFieldSpec{
 func ObjectFields() []ObjectFieldSpec {
 	out := make([]ObjectFieldSpec, len(objectFieldSpecs))
 	copy(out, objectFieldSpecs)
+	for i := range out {
+		if out[i].Live {
+			out[i].Description = withLiveEditNote(out[i].Description)
+		}
+	}
 	return out
 }
 
@@ -707,7 +737,8 @@ type MapFieldInfo struct {
 func MapFields() []MapFieldInfo {
 	out := make([]MapFieldInfo, len(mapFieldSpecs))
 	for i, s := range mapFieldSpecs {
-		out[i] = MapFieldInfo{Section: s.Section, Description: s.Description}
+		// Every map section is live (registerLiveApplyMapSections, cmd/foci-gw).
+		out[i] = MapFieldInfo{Section: s.Section, Description: withLiveEditNote(s.Description)}
 	}
 	return out
 }
@@ -746,7 +777,7 @@ func LookupField(sectionKey string) (ConfigField, bool) {
 			Section:      spec.Section,
 			Key:          key,
 			Type:         spec.ElementType,
-			Description:  spec.Description,
+			Description:  withLiveEditNote(spec.Description),
 			NeedsRestart: false, // registerLiveApplyMapSections (cmd/foci-gw) covers every mapFieldSpecs entry
 		}, true
 	}

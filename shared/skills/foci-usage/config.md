@@ -36,6 +36,10 @@ For the tool-call deny rules (`[[cc_backend.pretool_rules]]`, `[[agents.backend_
 
 Config **cascades** (per-platform-per-agent → per-agent → per-platform-global → global → code default); pointer fields take the first non-nil, slices combine, maps overlay. Per-agent fields must stay nil to inherit — that's how the merge works.
 
+## Changing config on a running server
+
+foci does not watch `foci.toml`. **A hand edit to the file (yours, with Edit/sed, or a person's) does nothing until the next restart, for every field, including ones documented as live or hot-reloadable.** To apply a change live, make it with `/config set section.key=value` (or `/config set <agent> <key>=<value>`) or the app's config editor; the reply says `Applied live.` or `Restart to take effect.` `/config get <agent> <key>` tells you whether a field can apply live.
+
 ## Backends & models
 
 - `backend`: empty or `"api"` = foci's own API loop; `"claude-code"` (Claude Code), `"codex"` or `"opencode"` = delegate turns to that coding agent. See **tools-backend.md** (and its per-tool siblings `tools-backend-*.md`).
