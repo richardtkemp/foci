@@ -6,9 +6,10 @@ package tools
 // a skip-permissions session: an ask its backend raises that the auto-approve
 // rules do not settle is shown in its spawner's chat (the gateway's backend
 // prompt routing, through SpawnBranchOwner), named by SpawnOfSession, and the
-// answer goes back to the spawn's waiting call. Two exceptions run unattended
-// as before: the spawn of a turn nobody attends (RunningSpawn.SpawnerUnattended)
-// and a cross-agent spawn, whose session belongs to no chat of its agent.
+// answer goes back to the spawn's waiting call. The spawn of a turn nobody
+// attends (RunningSpawn.SpawnerUnattended) runs unattended as before. A
+// cross-agent spawn's request goes to its caller's chat (#2730): its session
+// belongs to no chat of the agent it runs as.
 
 // SpawnSession describes the spawn running on a session: the session it was
 // started from (Parent), what the tracker shows for it, and whether the
@@ -46,16 +47,21 @@ func SpawnOfSession(sessionKey string) (SpawnSession, bool) {
 }
 
 // directBatchOwner is BranchOwner for a direct spawn's batch session: the
-// current owner of the session that started it. A cross-agent direct spawn
-// (the batch runs as another agent than the one that started it) has none here,
-// so its asks reach no chat of the agent it runs as.
+// current owner of the session that started it. For a cross-agent direct
+// spawn (#2730: the batch runs as s's agent, started by another agent's
+// session) that is the caller's session, resolved by the caller's Spawner, as
+// a background cross-agent spawn's branch is: its asks and permission
+// requests go to the caller (#2662 ruling), never to a chat of s's agent.
 func (s *Spawner) directBatchOwner(batchKey string) (owner string, ok bool) {
 	v, found := directSpawnBatches.Load(batchKey)
 	if !found {
 		return "", false
 	}
 	l := v.(spawnLink)
-	if l.s == nil || l.s.deps.AgentID != s.deps.AgentID {
+	if l.s == nil {
+		return "", false
+	}
+	if l.s.deps.AgentID != s.deps.AgentID && l.info.Agent != s.deps.AgentID {
 		return "", false
 	}
 	return l.s.route(l.parent).Owner, true

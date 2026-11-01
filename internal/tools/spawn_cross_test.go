@@ -813,3 +813,41 @@ func TestSpawnStopBackgroundSpawn(t *testing.T) {
 		t.Error("spawn_stop of an unknown id succeeded")
 	}
 }
+
+// TestCrossAgentDirectSpawnPromptsGoToCaller proves #2730 (Dick 2026-11-01:
+// "for a spawn as another agent - I want their permission requests to be
+// routed to parent too!"): while a direct cross-agent spawn's batch runs, its
+// session is known as that spawn (SpawnOfSession, so the gateway names it and
+// launches it attended) and its owner is the CALLER's session
+// (SpawnBranchOwner, the gateway's prompt routing), on the target's agent.
+// Fail-arm: before #2730 directBatchOwner refused a batch started by another
+// agent, so the target's prompt had no owner and was refused undelivered.
+func TestCrossAgentDirectSpawnPromptsGoToCaller(t *testing.T) {
+	t.Parallel()
+	caller, _, target, targetRunner := newCrossPair(t, "xperm")
+	callerSession := caller.deps.AgentID + "/c2730"
+	call := runSpawnAsync(caller, WithSessionKey(context.Background(), callerSession), `{"prompt":"run go build","agent":"`+target.deps.AgentID+`"}`)
+	req := waitBatch(t, targetRunner)
+	batchKey := session.CrossAgentSpawnRoot(target.deps.AgentID) + "/b2730"
+	req.OnSession(batchKey)
+	sp, ok := SpawnOfSession(batchKey)
+	if !ok || !sp.Direct || sp.Parent != callerSession || sp.SpawnerUnattended {
+		t.Errorf("SpawnOfSession = %+v, %v; want the attended direct spawn of %s", sp, ok, callerSession)
+	}
+	if owner, ok := SpawnBranchOwner(batchKey); !ok || owner != callerSession {
+		t.Errorf("SpawnBranchOwner = %q, %v; want the caller's session %s", owner, ok, callerSession)
+	}
+	// A third agent's Spawner owns nothing of it.
+	other := newDelegatedSpawner(&recordingBatchRunner{}, allBatchCaps)
+	other.deps.AgentID = "xperm-other"
+	if owner, ok := other.directBatchOwner(batchKey); ok {
+		t.Errorf("an unrelated agent's Spawner resolves it to %q", owner)
+	}
+	close(targetRunner.release)
+	if r := waitCall(t, call); r.err != nil {
+		t.Fatalf("spawn: %v", r.err)
+	}
+	if _, ok := SpawnBranchOwner(batchKey); ok {
+		t.Error("the batch still has an owner after the spawn returned")
+	}
+}

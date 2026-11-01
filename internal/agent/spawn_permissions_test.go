@@ -12,8 +12,8 @@ import (
 )
 
 // #2684: a spawn's asks go up to its spawner instead of being decided
-// unattended — unless its spawner's turn was unattended, it is a cross-agent
-// spawn, or no tracked spawn runs on the session.
+// unattended — unless its spawner's turn was unattended or no tracked spawn
+// runs on the session. A cross-agent spawn's asks go up too (#2730).
 
 // trackSpawnBranch registers a background spawn on branchKey in the
 // process-wide tracker, as Spawner.launchBackground does, and stops it when
@@ -31,12 +31,30 @@ func trackSpawnBranch(t *testing.T, parent, branchKey string, spawnerUnattended 
 // spawn started by an attended turn launches WITHOUT SkipPermissions and its
 // turns are attended, so its asks reach the prompt funcs (the spawner's chat).
 // Fail-arm: before #2684 every spawn session launched with SkipPermissions.
+//
+// The cross-agent case (#2730, Dick 2026-11-01: "for a spawn as another agent
+// - I want their permission requests to be routed to parent too!"): a spawn
+// run as this agent for another agent's session launches attended as well.
+// Fail-arm: before #2730 askSpawner refused every cross-agent key, so it
+// launched with SkipPermissions and its asks were denied.
 func TestSpawnBranch_AttendedSpawnerPrompts(t *testing.T) {
 	t.Parallel()
+	for _, c := range []struct{ name, parent, bk string }{
+		{"same agent", "helen/c26841", "helen/c26841/b1700000001"},
+		{"cross-agent", "clutch/c27301", "helen/ixspawn/b1700000301"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			attendedSpawnLaunch(t, c.parent, c.bk)
+		})
+	}
+}
+
+func attendedSpawnLaunch(t *testing.T, parent, bk string) {
+	t.Helper()
 	be := &batchTurnBackend{}
 	be.completeTurns()
 	a := newAccessTestAgent(t, be, bothBatchCaps)
-	const parent, bk = "helen/c26841", "helen/c26841/b1700000001"
 	trackSpawnBranch(t, parent, bk, false)
 	a.PrepareCharacterSpawnBranch(bk, "")
 	if a.DelegatedManager.isUnattendedSession(bk) {
@@ -61,8 +79,9 @@ func TestSpawnBranch_AttendedSpawnerPrompts(t *testing.T) {
 }
 
 // TestSpawnBranch_UnattendedCases proves the spawns that keep today's
-// unattended behaviour: one whose spawner's turn was unattended, and a
-// cross-agent spawn's branch (no chat of its agent may show its asks).
+// unattended behaviour: one whose spawner's turn was unattended, the same
+// agent's or another's (#2730: a cross-agent spawn of an unattended turn has
+// nobody to ask either).
 func TestSpawnBranch_UnattendedCases(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -70,7 +89,7 @@ func TestSpawnBranch_UnattendedCases(t *testing.T) {
 		spawnerUnattended bool
 	}{
 		{"spawner unattended", "helen/c26842", "helen/c26842/b1700000002", true},
-		{"cross-agent", "clutch/c26843", "helen/ixspawn/b1700000003", false},
+		{"cross-agent, spawner unattended", "clutch/c26843", "helen/ixspawn/b1700000003", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

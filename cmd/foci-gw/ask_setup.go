@@ -47,7 +47,7 @@ func newAskPresentFn(agentID string, connMgr platform.ConnectionManager, chats a
 			if target != sessionKey {
 				body = prependSpawnOrigin(tools.Spawns, sessionKey, body)
 			}
-			platformMsgID, err := platform.SendInteractiveMessageWithID(sessionChatResolver(connMgr, target, agentID), msgID, summary, body, buttons, onClick, onExpire)
+			platformMsgID, err := platform.SendInteractiveMessageWithID(sessionChatResolver(connMgr, target, chatAgentID(target, agentID)), msgID, summary, body, buttons, onClick, onExpire)
 			if err != nil {
 				askLog.Warnf("present question for session=%s in %s failed: %v", sessionKey, target, err)
 				continue
@@ -116,7 +116,7 @@ func newAskPresentBatchFn(agentID string, connMgr platform.ConnectionManager, ch
 		// #2630: the first of the ask's chats that can take the form; none =
 		// sequential, which walks the same chats.
 		for _, target := range chats.of(sessionKey) {
-			bs, ok := connMgr.ForSessionOrPrimary(target, agentID).(platform.BatchButtonSender)
+			bs, ok := connMgr.ForSessionOrPrimary(target, chatAgentID(target, agentID)).(platform.BatchButtonSender)
 			if !ok {
 				continue // not the app (or no addressable conn)
 			}
@@ -195,7 +195,8 @@ func newAskRevealFn(agentID string, connMgr platform.ConnectionManager, chats as
 // answer-time fallback (fix B) then catches the answer.
 func newAskRestoreBatchFn(agentID string, connMgr platform.ConnectionManager, chats askChats) tools.AskRestoreBatchFn {
 	return func(sessionKey, promptID string, questionCount int, onResponse func(answers []string)) {
-		conn := connMgr.ForSessionOrPrimary(chats.first(sessionKey), agentID)
+		target := chats.first(sessionKey)
+		conn := connMgr.ForSessionOrPrimary(target, chatAgentID(target, agentID))
 		br, ok := conn.(platform.BatchButtonRestorer)
 		if !ok {
 			return // not the app (or no addressable conn) — nothing to re-register
@@ -210,7 +211,8 @@ func newAskRestoreBatchFn(agentID string, connMgr platform.ConnectionManager, ch
 // than lingering (#2080). Any other transport keeps its prompt as it was.
 func newAskRemoveFn(agentID string, connMgr platform.ConnectionManager, chats askChats) tools.AskRemoveFn {
 	return func(sessionKey, msgID string) {
-		r, ok := connMgr.ForSessionOrPrimary(chats.first(sessionKey), agentID).(platform.InteractiveRemover)
+		target := chats.first(sessionKey)
+		r, ok := connMgr.ForSessionOrPrimary(target, chatAgentID(target, agentID)).(platform.InteractiveRemover)
 		if !ok {
 			return
 		}

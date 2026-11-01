@@ -262,7 +262,7 @@ grepped for each ✗. Row IDs are not renumbered, so the gaps are the removed ro
 |---|---|---|---|---|---|
 | P2 | Always allow | Persist an approval beyond this call | ✓ | ✓ [12] | ✗ |
 | P4 | Launch allowlist | `allowed_tools` / `[cc_backend] default_allowed_tools` pre-approval | ✓ | n/a [14] | n/a [14] |
-| P5 | Unattended mode | `skip_permissions` and `StartOptions.SkipPermissions` (foci's own batch runs; a spawn only when its spawner was unattended or it is cross-agent, #2684): never prompt a chat | ✓ | ✓ [15] | ✗ [15] |
+| P5 | Unattended mode | `skip_permissions` and `StartOptions.SkipPermissions` (foci's own batch runs; a spawn only when its spawner was unattended, #2684/#2730): never prompt a chat | ✓ | ✓ [15] | ✗ [15] |
 | P5a | Unattended turns | A turn with an unattended trigger (`TurnEvents.Unattended`: maintenance passes, memory passes, webhook, foci's own batch purposes, an unattended spawn's session) answers each ask from foci's auto-approve rules — allow on a match, deny + WARN otherwise, decline questions — never prompting | ✓ | ✓ | ✓ |
 | P7 | Prompt cancel listeners | Backend-cancelled prompt disables its stale buttons | ✓ | ✓ | ✗ [17] |
 | P8 | Prompts-cleared drain | `SetOnPromptsCleared` unblocks `WaitForPermission` | ✓ | ✓ | ✓ |

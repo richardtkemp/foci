@@ -267,7 +267,9 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		live:  depthSessionLive,
 		owner: tools.SpawnBranchOwner,
 		chatClosed: func(sk string) bool {
-			closed, known := app.SessionChatClosed(agentID, sk)
+			// A cross-agent spawn's owner is the caller's session (#2730),
+			// whose chat belongs to the caller's agent.
+			closed, known := app.SessionChatClosed(chatAgentID(sk, agentID), sk)
 			return known && closed
 		},
 		defaultSession: func() string {
@@ -612,9 +614,13 @@ func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, 
 	var failures []string
 	delivered := false
 	for _, target := range targets {
-		resolve := connResolver(d.connMgr, target, d.agentID)
+		// A cross-agent spawn's request is shown in its caller's chat
+		// (#2730): that chat, and its primary-bot fallback, are the caller
+		// agent's, not this one's.
+		chatAgent := chatAgentID(target, d.agentID)
+		resolve := connResolver(d.connMgr, target, chatAgent)
 		if kind == promptToSessionChat {
-			resolve = sessionChatResolver(d.connMgr, target, d.agentID)
+			resolve = sessionChatResolver(d.connMgr, target, chatAgent)
 		}
 		conn := resolve()
 		if conn == nil {
@@ -624,7 +630,7 @@ func postBackendPrompt(d backendPromptDeps, kind backendPromptKind, sessionKey, 
 		logger.Debugf("backend prompt: sending via %s to %s for session=%s summary=%q reqID=%s", conn.PlatformName(), target, sessionKey, summary, requestID)
 		body := text
 		if kind == promptToDefaultChat {
-			body = prependRequestOrigin(d.sessionIdx, d.agentID, conn, sessionKey, body)
+			body = prependRequestOrigin(d.sessionIdx, chatAgent, conn, sessionKey, body)
 		}
 		body = prependSpawnOrigin(tools.Spawns, sessionKey, body)
 		// A spawn's prompt in its owner's chat is named by the spawn line
@@ -745,12 +751,16 @@ func refuseClosedSpawnerPrompt(d backendPromptDeps, logger *log.ComponentLogger,
 // A cross-agent spawn's session (#2662) is offered to no chat of this agent:
 // not its root, not its default session. Its only target is itself, which no
 // connection resolves, so a prompt from it that no owner took is answered as
-// undeliverable instead of reaching this agent's chats.
+// undeliverable instead of reaching this agent's chats. Its owner is the
+// caller's session (#2730), a session of another agent: the walk from there
+// stays in the caller's chain and does not end on this agent's default
+// session either.
 func promptTargets(d backendPromptDeps, sessionKey string) []string {
 	targets := []string{sessionKey}
 	if session.IsCrossAgentSpawnKey(sessionKey) {
 		return targets
 	}
+	otherAgent := d.agentID != "" && chatAgentID(sessionKey, d.agentID) != d.agentID
 	add := func(k string) {
 		if k == "" {
 			return
@@ -780,10 +790,20 @@ func promptTargets(d backendPromptDeps, sessionKey string) []string {
 		}
 		add(root)
 	}
-	if d.defaultSession != nil {
+	if d.defaultSession != nil && !otherAgent {
 		add(d.defaultSession())
 	}
 	return targets
+}
+
+// chatAgentID is the agent whose chat sessionKey is: the agent its key names,
+// else fallback. It differs from the prompting agent only for a cross-agent
+// spawn's request shown in its caller's chat (#2730).
+func chatAgentID(sessionKey, fallback string) string {
+	if a := session.AgentIDFromKey(sessionKey); a != "" {
+		return a
+	}
+	return fallback
 }
 
 // prependSpawnOrigin names the spawn a prompt comes from (#2523). A clone
@@ -791,7 +811,9 @@ func promptTargets(d backendPromptDeps, sessionKey string) []string {
 // never block the parent's turn, but they reach the same chat and otherwise
 // read exactly like the parent's own: the owner must see which spawn asks.
 // A direct spawn's batch session is named too (#2684,
-// tools.SpawnOfSession). Text from any other session is returned unchanged.
+// tools.SpawnOfSession). A cross-agent spawn names the agent it runs as
+// (#2730): its request is shown in the caller's chat, where the human must
+// see which agent asks. Text from any other session is returned unchanged.
 func prependSpawnOrigin(tr *tools.SpawnTracker, sessionKey, text string) string {
 	id, desc := "", ""
 	if _, sp, ok := tr.ForBranch(sessionKey); ok {
@@ -800,6 +822,9 @@ func prependSpawnOrigin(tr *tools.SpawnTracker, sessionKey, text string) string 
 		id, desc = sp.ID, sp.Description
 	} else {
 		return text
+	}
+	if session.IsCrossAgentSpawnKey(sessionKey) {
+		return fmt.Sprintf("🐣 **From %s's spawn %s:** %s", session.AgentIDFromKey(sessionKey), id, desc) + "\n\n" + text
 	}
 	return fmt.Sprintf("🐣 **From spawn %s:** %s", id, desc) + "\n\n" + text
 }

@@ -1934,12 +1934,17 @@ func isSpawnPurpose(purpose string) bool {
 //   - foci's own batches (consolidation, summaries, ...);
 //   - a spawn whose spawner's turn was unattended (keepalive, reflection, a
 //     webhook: RunningSpawn.SpawnerUnattended);
-//   - a cross-agent spawn (#2662), which belongs to no chat of the agent it
-//     runs as;
 //   - a spawn session the tracker does not know (no session started it), so
 //     there is no spawner to ask.
+//
+// A cross-agent spawn (#2662) asks its spawner too (#2730, Dick 2026-11-01:
+// "for a spawn as another agent - I want their permission requests to be
+// routed to parent too!"): its session belongs to no chat of the agent it
+// runs as, so the gateway shows the request in the CALLER's chat
+// (tools.SpawnBranchOwner resolves the caller's session), after this agent's
+// own rules declined it.
 func (m *DelegatedManager) askSpawner(sessionKey string, spec batchSpec) bool {
-	if !spec.spawn || session.IsCrossAgentSpawnKey(sessionKey) {
+	if !spec.spawn {
 		return false
 	}
 	sp, ok := tools.SpawnOfSession(sessionKey)
@@ -1949,9 +1954,6 @@ func (m *DelegatedManager) askSpawner(sessionKey string, spec batchSpec) bool {
 // unattendedSpawnReason says why a spawn's session runs unattended
 // (askSpawner false), for its launch log line.
 func unattendedSpawnReason(sessionKey string) string {
-	if session.IsCrossAgentSpawnKey(sessionKey) {
-		return "a cross-agent spawn belongs to no chat of the agent it runs as, so its asks are decided by the rules, else denied"
-	}
 	sp, ok := tools.SpawnOfSession(sessionKey)
 	if !ok {
 		return "no tracked spawn runs on it, so it has no spawner to ask; its asks are decided by the rules, else denied"
@@ -1968,9 +1970,11 @@ func unattendedSpawnReason(sessionKey string) string {
 // already starts in the agent's default mode; only a mode the spawner switched
 // to (/mode, SpawnerPermissionMode) has to be sent. A restricted spawn (raw,
 // explore) keeps its own launch mode, and a spawn that runs unattended has
-// nobody to ask anyway.
+// nobody to ask anyway. A cross-agent spawn (#2730) keeps this agent's own
+// mode: it runs with this agent's permissions (#2662), and its spawner is a
+// session of another agent, whose mode this agent does not hold.
 func (m *DelegatedManager) inheritSpawnerMode(ctx context.Context, sessionKey string, be delegator.Delegator) {
-	if m.SpawnerPermissionMode == nil {
+	if m.SpawnerPermissionMode == nil || session.IsCrossAgentSpawnKey(sessionKey) {
 		return
 	}
 	sp, ok := tools.SpawnOfSession(sessionKey)
