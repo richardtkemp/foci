@@ -99,12 +99,14 @@ func readOnlyFociFuncs(reg *Registry) []string {
 }
 
 // readOnlyShellCommands returns the command patterns of the read-only rule
-// set (the "Bash:" rules of autoapprove.CommonReadonlyRules), in order.
+// set (the "Bash:" rules of autoapprove.CommonReadonlyRules), in order, as
+// autoapprove.DisplayRule renders them (the read-only git rule names its
+// subcommands).
 func readOnlyShellCommands() []string {
 	var cmds []string
 	for _, r := range autoapprove.CommonReadonlyRules {
-		if c, ok := strings.CutPrefix(r, "Bash:"); ok {
-			cmds = append(cmds, c)
+		if strings.HasPrefix(r, "Bash:") {
+			cmds = append(cmds, autoapprove.DisplayRule(r))
 		}
 	}
 	return cmds
@@ -134,7 +136,7 @@ func ExploreShellPrompt(fociFuncs []string) string {
 	}
 	b.WriteString("\nEverything else is unavailable and is denied at once, with no one to ask: any other command, ")
 	b.WriteString("output redirection to a file (`> file`; `2>/dev/null` is fine), and the writing or executing flags of listed commands ")
-	b.WriteString("(`sed -i`, `find -exec`/`-delete`, `sort -o`, sqlite3 dot-commands like `.shell`). Pipes between listed commands work. ")
+	b.WriteString("(`sed -i`, `find -exec`/`-delete`, `sort -o`, sqlite3 dot-commands like `.shell`, git `--output`/`--ext-diff`/`--textconv`). Pipes between listed commands work. ")
 	b.WriteString("Use `sqlite3 -readonly <db> '<query>'` for SQLite and `jq` for JSON/JSONL. A denial is final: do not retry the same command; find another way with the whitelist.\n\n")
 	b.WriteString("If a tool you needed is missing from this whitelist and you believe you and other explore agents would benefit from it, say so at the end of your answer: name the tool and what you would have used it for.")
 	return b.String()

@@ -199,15 +199,16 @@ func writeCommandApproval(b *strings.Builder, perms config.ResolvedPermissions, 
 	if len(perms.AutoApproveRules) > 0 {
 		fmt.Fprintf(b, "- **configured for this agent**: %s\n", strings.Join(stripBashPrefix(perms.AutoApproveRules), ", "))
 	}
-	b.WriteString("Everything else — e.g. bare `git`, writable `sqlite3`, `gh create`/`merge`, paths outside the above — asks the user for approval.\n")
+	b.WriteString("Everything else — e.g. `git commit`, writable `sqlite3`, `gh create`/`merge`, paths outside the above — asks the user for approval.\n")
 }
 
-// stripBashPrefix drops the "Bash:" prefix from auto-approve rules for readable
-// prose (non-Bash tool rules like "Read" pass through unchanged).
+// stripBashPrefix renders auto-approve rules for readable prose with
+// autoapprove.DisplayRule: the "Bash:" prefix dropped (non-Bash tool rules
+// like "Read" pass through unchanged) and the read-only git rule spelled out.
 func stripBashPrefix(rules []string) []string {
 	out := make([]string, len(rules))
 	for i, r := range rules {
-		out[i] = strings.TrimPrefix(r, "Bash:")
+		out[i] = autoapprove.DisplayRule(r)
 	}
 	return out
 }

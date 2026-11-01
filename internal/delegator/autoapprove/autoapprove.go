@@ -17,6 +17,9 @@ import (
 type Rule struct {
 	ToolName string // e.g. "Bash", "Read", "Edit"
 	Pattern  string // e.g. "git *", "/home/foci/**" — empty means match any input
+	// readonlyGit marks ReadonlyGitRule: the rule matches a git command
+	// only when readonlyGitSegmentSafe accepts it, never by pattern (#2734).
+	readonlyGit bool
 }
 
 // CommonReadonlyRules is the built-in list of safe, read-only tools and
@@ -87,6 +90,10 @@ var CommonReadonlyRules = []string{
 	"Bash:mdq",
 	"Bash:sqlite3 -readonly",
 	"Bash:/usr/bin/sqlite3 -readonly",
+	// git: read-only subcommands only, judged word by word (#2734). See
+	// ReadonlyGitRule for what it refuses and for the configuration-driven
+	// programs it cannot.
+	ReadonlyGitRule,
 }
 
 // FociShellRulesFor returns auto-approve rules for foci shell functions
@@ -157,6 +164,7 @@ func parseAutoApproveRule(rule string) Rule {
 		if pathTypedTools[r.ToolName] {
 			r.Pattern = canonicalPathPattern(r.Pattern)
 		}
+		r.readonlyGit = r.ToolName == "Bash" && r.Pattern == readonlyGitPattern
 		return r
 	}
 	return Rule{ToolName: rule}
@@ -1415,6 +1423,12 @@ func matchBashSegment(rules []Rule, segment string, ce *syntax.CallExpr, vc *var
 	}
 	for _, r := range rules {
 		if r.ToolName != "Bash" {
+			continue
+		}
+		if r.readonlyGit {
+			if readonlyGitSegmentSafe(segment, ce) {
+				return true
+			}
 			continue
 		}
 		if r.Pattern == "" {

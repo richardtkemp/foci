@@ -76,10 +76,10 @@ func TestExploreShellPrompt_ListsTheRules(t *testing.T) {
 	p := delegatedExplorePrompt(reg)
 	n := 0
 	for _, r := range autoapprove.CommonReadonlyRules {
-		c, ok := strings.CutPrefix(r, "Bash:")
-		if !ok {
+		if !strings.HasPrefix(r, "Bash:") {
 			continue
 		}
+		c := autoapprove.DisplayRule(r)
 		n++
 		if !strings.Contains(p, "- `"+c+"`\n") {
 			t.Errorf("prompt lacks whitelisted command %q", c)
@@ -92,6 +92,12 @@ func TestExploreShellPrompt_ListsTheRules(t *testing.T) {
 		if !strings.Contains(p, want) {
 			t.Errorf("prompt lacks %q", want)
 		}
+	}
+	if !strings.Contains(p, "- `git (read-only: blame, branch,") {
+		t.Error("prompt does not spell out the read-only git rule's subcommands")
+	}
+	if strings.Contains(p, "git (read-only)`") {
+		t.Error("prompt lists the read-only git rule by its raw pattern")
 	}
 	if strings.Contains(p, "foci_send_to_chat") {
 		t.Error("prompt lists foci_send_to_chat, which the read-only bridge does not carry")
@@ -125,7 +131,11 @@ func TestReadOnlyBatchRules_DecideCommands(t *testing.T) {
 		{"rm -rf /tmp/x", false},
 		{"sed -i s/a/b/ f", false},
 		{"curl https://example.com", false},
-		{"git log", false},
+		{"git log", true}, // the read-only git rule (#2734)
+		{"git -C /tmp/r show HEAD", true},
+		{"git log --output=/tmp/x", false},
+		{"git branch newname", false},
+		{"git commit -m x", false},
 	} {
 		input, _ := json.Marshal(map[string]string{"command": c.cmd})
 		if got, _ := autoapprove.MatchWithEnv(rules, "Bash", input, nil); got != c.want {
